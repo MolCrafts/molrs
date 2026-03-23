@@ -72,3 +72,70 @@ impl<C: PairCompute, R: Reducer<C::Output>> PairAccumulator<C, R> {
         self.reducer.count()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Frame;
+    use crate::compute::error::ComputeError;
+    use crate::compute::reducer::SumReducer;
+    use crate::compute::traits::Compute;
+
+    /// Mock compute that always returns a fixed f64 value.
+    struct MockCompute(f64);
+
+    impl Compute for MockCompute {
+        type Output = f64;
+
+        fn compute(&self, _frame: &Frame) -> Result<f64, ComputeError> {
+            Ok(self.0)
+        }
+    }
+
+    // ---- 1. new has count 0 ----
+
+    #[test]
+    fn test_accumulator_new_and_count() {
+        let acc = Accumulator::new(MockCompute(1.0), SumReducer::<f64>::new());
+        assert_eq!(acc.count(), 0);
+    }
+
+    // ---- 2. feed and result ----
+
+    #[test]
+    fn test_accumulator_feed_and_result() {
+        let mut acc = Accumulator::new(MockCompute(42.0), SumReducer::<f64>::new());
+        let frame = Frame::new();
+        acc.feed(&frame).unwrap();
+        assert_eq!(acc.count(), 1);
+        let result = acc.result().unwrap();
+        assert!((result - 42.0).abs() < 1e-12);
+    }
+
+    // ---- 3. reset ----
+
+    #[test]
+    fn test_accumulator_reset() {
+        let mut acc = Accumulator::new(MockCompute(10.0), SumReducer::<f64>::new());
+        let frame = Frame::new();
+        acc.feed(&frame).unwrap();
+        assert_eq!(acc.count(), 1);
+        acc.reset();
+        assert_eq!(acc.count(), 0);
+        assert!(acc.result().is_none());
+    }
+
+    // ---- 4. multiple feeds with SumReducer ----
+
+    #[test]
+    fn test_accumulator_multiple_feeds() {
+        let mut acc = Accumulator::new(MockCompute(5.0), SumReducer::<f64>::new());
+        let frame = Frame::new();
+        acc.feed(&frame).unwrap();
+        acc.feed(&frame).unwrap();
+        acc.feed(&frame).unwrap();
+        assert_eq!(acc.count(), 3);
+        let result = acc.result().unwrap();
+        assert!((result - 15.0).abs() < 1e-12);
+    }
+}

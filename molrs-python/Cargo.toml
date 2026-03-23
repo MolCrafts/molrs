@@ -1,6 +1,6 @@
 [package]
 name = "molrs-python"
-version = "0.0.4"
+version = "0.0.5"
 edition = "2024"
 authors = ["MolCrafts"]
 license = "BSD-3-Clause"
@@ -16,9 +16,9 @@ crate-type = ["cdylib"]
 pyo3 = { version = "0.28", features = ["extension-module"] }
 numpy = "0.28"
 ndarray = "0.17"
-molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.0.4" }
-molrs = { path = "../molrs-core", package = "molcrafts-molrs", version = "0.0.4", default-features = false }
-molrs-pack = { path = "../molrs-pack", package = "molcrafts-molrs-pack", version = "0.0.4", default-features = false }
+molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.0.5" }
+molrs = { path = "../molrs-core", package = "molcrafts-molrs", version = "0.0.5", default-features = false }
+molrs-pack = { path = "../molrs-pack", package = "molcrafts-molrs-pack", version = "0.0.5", default-features = false }
 
 [workspace]
 

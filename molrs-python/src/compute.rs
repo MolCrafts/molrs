@@ -155,7 +155,7 @@ impl PyRDF {
     /// Parameters
     /// ----------
     /// nlist : NeighborList
-    ///     Pre-built neighbor list (from :class:`AABBQuery`).
+    ///     Pre-built neighbor list (from :class:`NeighborQuery`).
     /// box : Box
     ///     Simulation box (used for ideal-gas normalization).
     ///

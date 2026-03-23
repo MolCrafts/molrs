@@ -12,9 +12,11 @@ use super::reducer::ConcatReducer;
 use super::traits::Compute;
 use super::util::get_f_slice;
 
-/// Mean squared displacement relative to a stored reference configuration.
+/// Mean squared displacement analysis.
 ///
-/// Computes |r(t) - r_ref|² for each particle and the system average.
+/// Computes MSD = |r(t) - r(0)|² for each particle and the system average.
+/// The first frame fed is automatically used as the reference configuration.
+///
 /// Reference stored as SoA (three separate Vec) for cache-friendly access.
 #[derive(Debug, Clone)]
 pub struct MSD {
@@ -22,36 +24,83 @@ pub struct MSD {
     ref_y: Vec<F>,
     ref_z: Vec<F>,
     n_particles: usize,
+    results: Vec<MSDResult>,
 }
 
 impl MSD {
-    /// Create from a reference frame (reads x, y, z from "atoms" block).
+    /// Create an empty MSD analysis.
+    ///
+    /// The first frame passed to [`feed`](Self::feed) becomes the reference.
+    pub fn new() -> Self {
+        Self {
+            ref_x: Vec::new(),
+            ref_y: Vec::new(),
+            ref_z: Vec::new(),
+            n_particles: 0,
+            results: Vec::new(),
+        }
+    }
+
+    /// Create from an explicit reference frame.
+    #[deprecated(note = "use MSD::new() + feed(); first frame is auto-reference")]
     pub fn from_reference(ref_frame: &Frame) -> Result<Self, ComputeError> {
-        let atoms = ref_frame
+        let mut msd = Self::new();
+        msd.set_reference(ref_frame)?;
+        Ok(msd)
+    }
+
+    /// Feed a frame. The first frame sets the reference; subsequent frames
+    /// compute MSD relative to that reference.
+    pub fn feed(&mut self, frame: &Frame) -> Result<(), ComputeError> {
+        if self.n_particles == 0 {
+            self.set_reference(frame)?;
+            // Reference frame has MSD = 0
+            let n = self.n_particles;
+            self.results.push(MSDResult {
+                per_particle: Array1::<F>::zeros(n),
+                mean: 0.0,
+            });
+            return Ok(());
+        }
+        let result = self.compute_single(frame)?;
+        self.results.push(result);
+        Ok(())
+    }
+
+    /// Return all accumulated MSD results (one per frame fed).
+    pub fn results(&self) -> &[MSDResult] {
+        &self.results
+    }
+
+    /// Reset the analysis, clearing reference and all results.
+    pub fn reset(&mut self) {
+        self.ref_x.clear();
+        self.ref_y.clear();
+        self.ref_z.clear();
+        self.n_particles = 0;
+        self.results.clear();
+    }
+
+    /// Number of frames accumulated.
+    pub fn count(&self) -> usize {
+        self.results.len()
+    }
+
+    fn set_reference(&mut self, frame: &Frame) -> Result<(), ComputeError> {
+        let atoms = frame
             .get("atoms")
             .ok_or(ComputeError::MissingBlock { name: "atoms" })?;
         let x = get_f_slice(atoms, "atoms", "x")?;
         let y = get_f_slice(atoms, "atoms", "y")?;
         let z = get_f_slice(atoms, "atoms", "z")?;
-
-        Ok(Self {
-            n_particles: x.len(),
-            ref_x: x.to_vec(),
-            ref_y: y.to_vec(),
-            ref_z: z.to_vec(),
-        })
+        self.n_particles = x.len();
+        self.ref_x = x.to_vec();
+        self.ref_y = y.to_vec();
+        self.ref_z = z.to_vec();
+        Ok(())
     }
 
-    /// Convenience: wrap in `Accumulator<Self, ConcatReducer<MSDResult>>`.
-    pub fn accumulate_concat(self) -> Accumulator<Self, ConcatReducer<MSDResult>> {
-        Accumulator::new(self, ConcatReducer::new())
-    }
-}
-
-impl Compute for MSD {
-    type Output = MSDResult;
-
-    fn compute(&self, frame: &Frame) -> Result<MSDResult, ComputeError> {
+    fn compute_single(&self, frame: &Frame) -> Result<MSDResult, ComputeError> {
         let atoms = frame
             .get("atoms")
             .ok_or(ComputeError::MissingBlock { name: "atoms" })?;
@@ -83,6 +132,29 @@ impl Compute for MSD {
 
         Ok(MSDResult { per_particle, mean })
     }
+
+    /// Convenience: wrap in `Accumulator<Self, ConcatReducer<MSDResult>>`.
+    #[deprecated(note = "use MSD::new() + feed() instead")]
+    pub fn accumulate_concat(self) -> Accumulator<Self, ConcatReducer<MSDResult>> {
+        Accumulator::new(self, ConcatReducer::new())
+    }
+}
+
+impl Default for MSD {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Compute for MSD {
+    type Output = MSDResult;
+
+    fn compute(&self, frame: &Frame) -> Result<MSDResult, ComputeError> {
+        if self.n_particles == 0 {
+            return Err(ComputeError::MissingBlock { name: "atoms" });
+        }
+        self.compute_single(frame)
+    }
 }
 
 #[cfg(test)]
@@ -108,26 +180,31 @@ mod tests {
     }
 
     #[test]
-    fn uniform_displacement() {
-        let ref_frame = make_frame(&[0.0, 0.0, 0.0], &[0.0, 0.0, 0.0], &[0.0, 0.0, 0.0]);
-        let displaced = make_frame(&[1.0, 1.0, 1.0], &[0.0, 0.0, 0.0], &[0.0, 0.0, 0.0]);
+    fn feed_trajectory() {
+        let f0 = make_frame(&[0.0, 0.0, 0.0], &[0.0, 0.0, 0.0], &[0.0, 0.0, 0.0]);
+        let f1 = make_frame(&[1.0, 1.0, 1.0], &[0.0, 0.0, 0.0], &[0.0, 0.0, 0.0]);
+        let f2 = make_frame(&[2.0, 2.0, 2.0], &[0.0, 0.0, 0.0], &[0.0, 0.0, 0.0]);
 
-        let msd = MSD::from_reference(&ref_frame).unwrap();
-        let result = msd.compute(&displaced).unwrap();
+        let mut msd = MSD::new();
+        msd.feed(&f0).unwrap(); // auto-reference
+        msd.feed(&f1).unwrap();
+        msd.feed(&f2).unwrap();
 
-        assert!((result.mean - 1.0).abs() < 1e-6);
-        for &d2 in result.per_particle.iter() {
-            assert!((d2 - 1.0).abs() < 1e-6);
-        }
+        let results = msd.results();
+        assert_eq!(results.len(), 3);
+        assert!(results[0].mean.abs() < 1e-6); // frame 0 vs itself
+        assert!((results[1].mean - 1.0).abs() < 1e-6); // dx=1 for each particle
+        assert!((results[2].mean - 4.0).abs() < 1e-6); // dx=2 for each particle
     }
 
     #[test]
     fn zero_displacement() {
         let frame = make_frame(&[1.0, 2.0], &[3.0, 4.0], &[5.0, 6.0]);
-        let msd = MSD::from_reference(&frame).unwrap();
-        let result = msd.compute(&frame).unwrap();
+        let mut msd = MSD::new();
+        msd.feed(&frame).unwrap();
+        msd.feed(&frame).unwrap();
 
-        assert!(result.mean.abs() < 1e-6);
+        assert!(msd.results()[1].mean.abs() < 1e-6);
     }
 
     #[test]
@@ -135,8 +212,9 @@ mod tests {
         let ref_frame = make_frame(&[0.0, 0.0], &[0.0, 0.0], &[0.0, 0.0]);
         let bad_frame = make_frame(&[1.0], &[1.0], &[1.0]);
 
-        let msd = MSD::from_reference(&ref_frame).unwrap();
-        let err = msd.compute(&bad_frame).unwrap_err();
+        let mut msd = MSD::new();
+        msd.feed(&ref_frame).unwrap();
+        let err = msd.feed(&bad_frame).unwrap_err();
         assert!(matches!(
             err,
             ComputeError::DimensionMismatch {
@@ -147,23 +225,20 @@ mod tests {
     }
 
     #[test]
-    fn concat_accumulator() {
-        let ref_frame = make_frame(&[0.0], &[0.0], &[0.0]);
-        let msd = MSD::from_reference(&ref_frame).unwrap();
-        let mut acc = msd.accumulate_concat();
-
+    fn reset_clears_state() {
+        let f0 = make_frame(&[0.0], &[0.0], &[0.0]);
         let f1 = make_frame(&[1.0], &[0.0], &[0.0]);
-        let f2 = make_frame(&[2.0], &[0.0], &[0.0]);
-        let f3 = make_frame(&[3.0], &[0.0], &[0.0]);
 
-        acc.feed(&f1).unwrap();
-        acc.feed(&f2).unwrap();
-        acc.feed(&f3).unwrap();
+        let mut msd = MSD::new();
+        msd.feed(&f0).unwrap();
+        msd.feed(&f1).unwrap();
+        assert_eq!(msd.count(), 2);
 
-        let history = acc.result();
-        assert_eq!(history.len(), 3);
-        assert!((history[0].mean - 1.0).abs() < 1e-6);
-        assert!((history[1].mean - 4.0).abs() < 1e-6);
-        assert!((history[2].mean - 9.0).abs() < 1e-6);
+        msd.reset();
+        assert_eq!(msd.count(), 0);
+
+        // Can re-feed after reset
+        msd.feed(&f0).unwrap();
+        assert_eq!(msd.count(), 1);
     }
 }

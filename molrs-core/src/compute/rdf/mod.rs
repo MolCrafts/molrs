@@ -1,3 +1,12 @@
+//! Radial distribution function g(r) computation.
+//!
+//! Computes the pair correlation function by binning neighbor-pair distances
+//! and normalizing by the ideal-gas shell volume. Supports both periodic and
+//! free-boundary (non-periodic) systems.
+//!
+//! For free-boundary systems (Frame without SimBox), the normalization volume
+//! is derived from the axis-aligned bounding box of the atom positions.
+
 mod result;
 
 pub use result::RDFResult;
@@ -22,6 +31,9 @@ use super::traits::PairCompute;
 /// Supports both self-query and cross-query neighbor lists:
 /// - **Self-query**: `g(r) = 2 * n_r / (N * rho * V_shell)`
 /// - **Cross-query**: `g(r) = n_r * V / (N_A * N_B * V_shell)`
+///
+/// When the [`Frame`] has no `simbox`, a non-periodic bounding box is
+/// auto-generated from atom positions for volume normalization.
 #[derive(Debug, Clone)]
 pub struct RDF {
     n_bins: usize,
@@ -32,6 +44,7 @@ pub struct RDF {
 }
 
 impl RDF {
+    /// Create an RDF analysis with `n_bins` histogram bins up to distance `r_max` (angstrom).
     pub fn new(n_bins: usize, r_max: F) -> Self {
         let bin_width = r_max / n_bins as F;
         let bin_edges = Array1::from_iter((0..=n_bins).map(|i| i as F * bin_width));
@@ -97,8 +110,42 @@ impl PairCompute for RDF {
     type Output = RDFResult;
 
     fn compute(&self, frame: &Frame, neighbors: &NeighborList) -> Result<RDFResult, ComputeError> {
-        let simbox = frame.simbox.as_ref().ok_or(ComputeError::MissingSimBox)?;
-        self.compute_from_nlist(neighbors, simbox)
+        let simbox = match frame.simbox.as_ref() {
+            Some(sb) => std::borrow::Cow::Borrowed(sb),
+            None => {
+                // Free-boundary: auto-generate bounding box from positions
+                let atoms = frame
+                    .get("atoms")
+                    .ok_or(ComputeError::MissingBlock { name: "atoms" })?;
+                let xs = atoms.get_float("x").ok_or(ComputeError::MissingColumn {
+                    block: "atoms",
+                    col: "x",
+                })?;
+                let ys = atoms.get_float("y").ok_or(ComputeError::MissingColumn {
+                    block: "atoms",
+                    col: "y",
+                })?;
+                let zs = atoms.get_float("z").ok_or(ComputeError::MissingColumn {
+                    block: "atoms",
+                    col: "z",
+                })?;
+                let n = xs.len();
+                let mut pos = ndarray::Array2::<F>::zeros((n, 3));
+                for i in 0..n {
+                    pos[[i, 0]] = xs[i];
+                    pos[[i, 1]] = ys[i];
+                    pos[[i, 2]] = zs[i];
+                }
+                let r_max = self.r_max_sq.sqrt();
+                let sb = crate::region::simbox::SimBox::free(pos.view(), r_max).map_err(|e| {
+                    ComputeError::MolRs(crate::error::MolRsError::validation(format!(
+                        "failed to create free-boundary box: {e:?}"
+                    )))
+                })?;
+                std::borrow::Cow::Owned(sb)
+            }
+        };
+        self.compute_from_nlist(neighbors, &simbox)
     }
 }
 
@@ -235,7 +282,7 @@ mod tests {
 
     #[test]
     fn compute_from_nlist_works() {
-        use crate::neighbors::AABBQuery;
+        use crate::neighbors::NeighborQuery;
 
         let box_len: F = 10.0;
         let simbox = SimBox::cube(box_len, array![0.0 as F, 0.0, 0.0], [true, true, true]).unwrap();
@@ -243,7 +290,7 @@ mod tests {
         let frame = random_frame(100, box_len, 42);
         let pos = positions(&frame);
 
-        let nq = AABBQuery::new(&simbox, pos.view(), 4.0);
+        let nq = NeighborQuery::new(&simbox, pos.view(), 4.0);
         let nlist = nq.query_self();
 
         let rdf = RDF::new(20, 4.0);
@@ -251,5 +298,91 @@ mod tests {
 
         assert_eq!(result.bin_centers.len(), 20);
         assert!(result.rdf.iter().any(|&g| g > 0.0));
+    }
+
+    #[test]
+    fn free_boundary_rdf_computes() {
+        use crate::neighbors::NeighborQuery;
+
+        let n = 200;
+        let box_len: F = 10.0;
+        let r_max: F = 4.0;
+        let n_bins = 20;
+
+        // Create frame WITHOUT simbox
+        let mut frame = random_frame(n, box_len, 42);
+        frame.simbox = None; // remove the simbox
+
+        let pos = positions(&frame);
+
+        // Build neighbor list with free-boundary box
+        let nq = NeighborQuery::free(pos.view(), r_max);
+        let nbrs = nq.query_self();
+
+        // RDF should still compute (auto-generates bounding box for volume)
+        let rdf = RDF::new(n_bins, r_max);
+        let result = rdf.compute(&frame, &nbrs).unwrap();
+
+        assert_eq!(result.bin_centers.len(), n_bins);
+        assert!(result.volume > 0.0, "volume should be positive");
+        assert!(
+            result.rdf.iter().any(|&g| g > 0.0),
+            "should have non-zero g(r)"
+        );
+    }
+
+    #[test]
+    fn free_boundary_rdf_from_nlist() {
+        use crate::neighbors::NeighborQuery;
+
+        // Small cluster: 5 points, some within cutoff, some not
+        let pos = ndarray::array![
+            [0.0 as F, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [10.0, 10.0, 10.0],
+            [10.5, 10.0, 10.0],
+        ];
+
+        let r_max: F = 2.0;
+        let nq = NeighborQuery::free(pos.view(), r_max);
+        let nbrs = nq.query_self();
+
+        // Expected pairs within r_max=2.0:
+        // (0,1) dist=1.0, (0,2) dist=1.0, (1,2) dist=sqrt(2)~1.41, (3,4) dist=0.5
+        assert_eq!(nbrs.n_pairs(), 4, "should find 4 pairs");
+
+        // Build frame without simbox for PairCompute path
+        let mut block = Block::new();
+        block
+            .insert(
+                "x",
+                A1::from_vec(vec![0.0 as F, 1.0, 0.0, 10.0, 10.5]).into_dyn(),
+            )
+            .unwrap();
+        block
+            .insert(
+                "y",
+                A1::from_vec(vec![0.0 as F, 0.0, 1.0, 10.0, 10.0]).into_dyn(),
+            )
+            .unwrap();
+        block
+            .insert(
+                "z",
+                A1::from_vec(vec![0.0 as F, 0.0, 0.0, 10.0, 10.0]).into_dyn(),
+            )
+            .unwrap();
+        let mut frame = Frame::new();
+        frame.insert("atoms", block);
+        // No simbox
+
+        let rdf = RDF::new(10, r_max);
+        let result = rdf.compute(&frame, &nbrs).unwrap();
+
+        assert!(result.volume > 0.0, "volume should be positive");
+        assert!(
+            result.n_r.iter().any(|&c| c > 0.0),
+            "should have non-zero pair counts"
+        );
     }
 }

@@ -1,11 +1,11 @@
 //! High-level neighbor query API inspired by freud-analysis.
 //!
-//! [`AABBQuery`] wraps a [`LinkCell`] spatial index built from reference points
+//! [`NeighborQuery`] wraps a [`LinkCell`] spatial index built from reference points
 //! and provides two query modes:
 //!
-//! - [`query`](AABBQuery::query) — cross-query: find all pairs `(i, j)` where
+//! - [`query`](NeighborQuery::query) — cross-query: find all pairs `(i, j)` where
 //!   `i` indexes `query_points` and `j` indexes the reference `points`.
-//! - [`query_self`](AABBQuery::query_self) — self-query: find unique pairs
+//! - [`query_self`](NeighborQuery::query_self) — self-query: find unique pairs
 //!   `(i, j)` with `i < j` within the same point set.
 
 use crate::neighbors::linkcell::LinkCell;
@@ -21,12 +21,12 @@ use crate::types::{F, FNx3, FNx3View};
 /// # Example
 ///
 /// ```ignore
-/// let nq = AABBQuery::new(&simbox, points.view(), 3.0);
+/// let nq = NeighborQuery::new(&simbox, points.view(), 3.0);
 /// let nlist = nq.query(query_points.view());   // cross-query
 /// let nlist = nq.query_self();                  // self-query
 /// ```
 #[derive(Debug, Clone)]
-pub struct AABBQuery {
+pub struct NeighborQuery {
     /// The underlying cell-list spatial index (built once at construction).
     lc: LinkCell,
     /// Copy of the reference points (owned for self-query).
@@ -37,7 +37,7 @@ pub struct AABBQuery {
     cutoff: F,
 }
 
-impl AABBQuery {
+impl NeighborQuery {
     /// Build a spatial index from reference points.
     ///
     /// # Panics
@@ -55,6 +55,16 @@ impl AABBQuery {
             simbox: simbox.clone(),
             cutoff,
         }
+    }
+
+    /// Build from free-boundary points (no periodic box).
+    ///
+    /// Auto-generates a non-periodic bounding box from the point cloud,
+    /// using `cutoff` as padding to ensure all particles are well inside.
+    pub fn free(points: FNx3View<'_>, cutoff: F) -> Self {
+        let bx =
+            SimBox::free(points, cutoff).expect("degenerate point cloud for free-boundary box");
+        Self::new(&bx, points, cutoff)
     }
 
     /// Cross-query: find all pairs `(i, j)` where `i` indexes `query_points`
@@ -145,7 +155,7 @@ mod tests {
         let bx = SimBox::cube(4.0, array![0.0, 0.0, 0.0], [true, true, true]).expect("invalid box");
         let pts = array![[0.1, 0.2, 0.3], [0.3, 0.2, 0.1], [3.9, 3.8, 3.7]];
 
-        let nq = AABBQuery::new(&bx, pts.view(), 0.5);
+        let nq = NeighborQuery::new(&bx, pts.view(), 0.5);
         let nlist = nq.query_self();
 
         assert_eq!(nlist.mode(), QueryMode::SelfQuery);
@@ -162,7 +172,7 @@ mod tests {
         let ref_pts = array![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
         let query_pts = array![[0.5, 0.0, 0.0]];
 
-        let nq = AABBQuery::new(&bx, ref_pts.view(), 0.6);
+        let nq = NeighborQuery::new(&bx, ref_pts.view(), 0.6);
         let nlist = nq.query(query_pts.view());
 
         assert_eq!(nlist.mode(), QueryMode::CrossQuery);
@@ -177,7 +187,7 @@ mod tests {
         let bx = SimBox::cube(4.0, array![0.0, 0.0, 0.0], [true, true, true]).expect("invalid box");
         let pts = array![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
 
-        let nq = AABBQuery::new(&bx, pts.view(), 1.5);
+        let nq = NeighborQuery::new(&bx, pts.view(), 1.5);
         let nlist = nq.query_self();
 
         assert_eq!(nlist.n_pairs(), 1);
@@ -190,7 +200,7 @@ mod tests {
         let bx = SimBox::cube(4.0, array![0.0, 0.0, 0.0], [true, true, true]).expect("invalid box");
         let pts = array![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
 
-        let nq = AABBQuery::new(&bx, pts.view(), 1.5);
+        let nq = NeighborQuery::new(&bx, pts.view(), 1.5);
         let nlist = nq.query_self();
 
         let vecs = nlist.vectors();
@@ -205,7 +215,7 @@ mod tests {
         let bx = SimBox::cube(2.0, array![0.0, 0.0, 0.0], [true, true, true]).expect("invalid box");
         let pts = array![[0.1, 0.1, 0.1], [1.9, 1.9, 1.9]];
 
-        let nq = AABBQuery::new(&bx, pts.view(), 0.5);
+        let nq = NeighborQuery::new(&bx, pts.view(), 0.5);
         let nlist = nq.query_self();
 
         assert_eq!(nlist.n_pairs(), 1);
@@ -219,7 +229,7 @@ mod tests {
         // Cross-query with the same point set should produce pairs in both
         // directions (0->1 and 1->0), plus self-pairs (0->0, 1->1), unlike
         // self-query which only produces (0, 1) once.
-        let nq = AABBQuery::new(&bx, pts.view(), 0.6);
+        let nq = NeighborQuery::new(&bx, pts.view(), 0.6);
         let nlist = nq.query(pts.view());
 
         // Each query point finds both reference points (including itself at dist=0)
@@ -229,5 +239,38 @@ mod tests {
         // Compare with self-query which only produces unique pairs (i<j)
         let self_nlist = nq.query_self();
         assert_eq!(self_nlist.n_pairs(), 1);
+    }
+
+    #[test]
+    fn free_boundary_self_query() {
+        let pts = array![[0.0 as F, 0.0, 0.0], [0.5, 0.0, 0.0], [10.0, 10.0, 10.0],];
+        let nq = NeighborQuery::free(pts.view(), 1.0);
+        let nlist = nq.query_self();
+
+        // Only pts[0] and pts[1] are within cutoff=1.0
+        assert_eq!(nlist.n_pairs(), 1);
+        let dists = nlist.distances();
+        assert!((dists[0] - 0.5).abs() < 1e-5);
+    }
+
+    #[test]
+    fn free_boundary_cross_query() {
+        let ref_pts = array![[0.0 as F, 0.0, 0.0], [1.0, 0.0, 0.0], [5.0, 5.0, 5.0],];
+        let query_pts = array![[0.3 as F, 0.0, 0.0]];
+
+        let nq = NeighborQuery::free(ref_pts.view(), 0.5);
+        let nlist = nq.query(query_pts.view());
+
+        // query point at 0.3 is within 0.5 of ref[0] (dist=0.3) but not ref[1] (dist=0.7)
+        assert_eq!(nlist.n_pairs(), 1);
+    }
+
+    #[test]
+    fn free_boundary_no_wrap() {
+        // Points far apart — should NOT be neighbors (no PBC wrapping)
+        let pts = array![[0.0 as F, 0.0, 0.0], [5.0, 5.0, 5.0],];
+        let nq = NeighborQuery::free(pts.view(), 1.0);
+        let nlist = nq.query_self();
+        assert_eq!(nlist.n_pairs(), 0);
     }
 }

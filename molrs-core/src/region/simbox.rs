@@ -34,12 +34,16 @@ pub struct SimBox {
     kind: BoxKind,
 }
 
-// define box error
+/// Error type for simulation box construction.
 #[derive(Debug)]
 pub enum BoxError {
+    /// The cell matrix H is singular (determinant ≈ 0).
     SingularCell,
+    /// The matrix does not have shape 3x3.
     InvalidMatrixShape { rows: usize, cols: usize },
+    /// A vector does not have the expected length.
     InvalidVectorLength { len: usize },
+    /// A required array is not contiguous in memory.
     NonContiguous(&'static str),
 }
 
@@ -89,6 +93,47 @@ impl SimBox {
         Self::new(h, origin, pbc)
     }
 
+    /// Create a non-periodic (free-boundary) box enclosing all points.
+    ///
+    /// Computes the axis-aligned bounding box of `points` and adds `padding`
+    /// on each side. The resulting box has `pbc = [false, false, false]`.
+    ///
+    /// `padding` should be >= the neighbor cutoff distance so that all
+    /// particles sit well inside the box for correct cell assignment.
+    ///
+    /// # Errors
+    /// Returns `BoxError` if padding is non-positive or the resulting box is degenerate.
+    ///
+    /// # Panics
+    /// Panics if `padding <= 0`.
+    pub fn free(points: FNx3View<'_>, padding: F) -> Result<Self, BoxError> {
+        assert!(padding > 0.0, "padding must be positive");
+        let n = points.nrows();
+        if n == 0 {
+            // Empty point set -- return a unit cube at origin
+            return Self::cube(padding, array![0.0 as F, 0.0, 0.0], [false, false, false]);
+        }
+        let mut min = array![points[[0, 0]], points[[0, 1]], points[[0, 2]]];
+        let mut max = min.clone();
+        for i in 1..n {
+            for d in 0..3 {
+                if points[[i, d]] < min[d] {
+                    min[d] = points[[i, d]];
+                }
+                if points[[i, d]] > max[d] {
+                    max[d] = points[[i, d]];
+                }
+            }
+        }
+        let origin = array![min[0] - padding, min[1] - padding, min[2] - padding,];
+        let lengths = array![
+            (max[0] - min[0] + 2.0 * padding).max(padding),
+            (max[1] - min[1] + 2.0 * padding).max(padding),
+            (max[2] - min[2] + 2.0 * padding).max(padding),
+        ];
+        Self::ortho(lengths, origin, [false, false, false])
+    }
+
     /// View of the cell matrix
     pub fn h_view(&self) -> FNx3View<'_> {
         self.h.view()
@@ -107,6 +152,11 @@ impl SimBox {
     /// View of the PBC flags
     pub fn pbc_view(&self) -> ArrayView1<'_, bool> {
         ArrayView1::from_shape(3, &self.pbc).expect("pbc_view shape")
+    }
+
+    /// Per-axis PBC flags
+    pub fn pbc(&self) -> Pbc3 {
+        self.pbc
     }
 
     /// Cell volume (|det(H)|)
@@ -531,5 +581,48 @@ mod tests {
         assert!(mask[0]);
         assert!(!mask[1]);
         assert!(!mask[2]);
+    }
+
+    #[test]
+    fn test_simbox_free_basic() {
+        let pts = array![[1.0 as F, 2.0, 3.0], [4.0, 5.0, 6.0]];
+        let bx = SimBox::free(pts.view(), 1.0).unwrap();
+        assert_eq!(bx.pbc(), [false, false, false]);
+        // origin should be min - padding = [0.0, 1.0, 2.0]
+        let o = bx.origin_view();
+        assert!((o[0] - 0.0).abs() < 1e-5);
+        assert!((o[1] - 1.0).abs() < 1e-5);
+        assert!((o[2] - 2.0).abs() < 1e-5);
+        // lengths should be (max-min) + 2*padding = [5.0, 5.0, 5.0]
+        let l = bx.lengths();
+        assert!((l[0] - 5.0).abs() < 1e-5);
+        assert!((l[1] - 5.0).abs() < 1e-5);
+        assert!((l[2] - 5.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_simbox_free_single_point() {
+        let pts = array![[1.0 as F, 2.0, 3.0]];
+        let bx = SimBox::free(pts.view(), 2.0).unwrap();
+        assert_eq!(bx.pbc(), [false, false, false]);
+        // lengths = max(0 + 4, 2) = 4 on each axis
+        let l = bx.lengths();
+        assert!(l[0] >= 2.0);
+        assert!(l[1] >= 2.0);
+        assert!(l[2] >= 2.0);
+    }
+
+    #[test]
+    fn test_simbox_free_empty() {
+        use ndarray::Array2;
+        let pts = Array2::<F>::zeros((0, 3));
+        let bx = SimBox::free(pts.view(), 1.0).unwrap();
+        assert_eq!(bx.pbc(), [false, false, false]);
+    }
+
+    #[test]
+    fn test_simbox_pbc_accessor() {
+        let bx = SimBox::cube(1.0, array![0.0 as F, 0.0, 0.0], [true, false, true]).unwrap();
+        assert_eq!(bx.pbc(), [true, false, true]);
     }
 }

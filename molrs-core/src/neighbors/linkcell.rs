@@ -91,7 +91,7 @@ impl LinkCell {
 
     /// Visit all reference-point neighbors of an arbitrary query point.
     ///
-    /// Used by [`AABBQuery::query`](super::AABBQuery::query) for cross-query.
+    /// Used by [`NeighborQuery::query`](super::NeighborQuery::query) for cross-query.
     /// Calls `callback(ref_index, dist_sq, [dx, dy, dz])` for each reference
     /// point within range.
     pub(crate) fn visit_neighbors_of<C>(
@@ -265,10 +265,11 @@ impl LinkCell {
         let n_cells = (celldim[0] * celldim[1] * celldim[2]) as usize;
         let n_points = points.nrows();
 
-        // Rebuild neighbor tables only when grid dimensions change.
-        if celldim != self.celldim {
-            let (fwd_neighbors, fwd_neighbor_offsets) = build_fwd_neighbors(celldim);
-            let (all_neighbors, all_neighbor_offsets) = build_all_neighbors(celldim);
+        // Rebuild neighbor tables when grid dimensions or pbc flags change.
+        let pbc = bx.pbc();
+        if celldim != self.celldim || pbc != self.bx.pbc() {
+            let (fwd_neighbors, fwd_neighbor_offsets) = build_fwd_neighbors(celldim, pbc);
+            let (all_neighbors, all_neighbor_offsets) = build_all_neighbors(celldim, pbc);
             self.fwd_neighbors = fwd_neighbors;
             self.fwd_neighbor_offsets = fwd_neighbor_offsets;
             self.all_neighbors = all_neighbors;
@@ -477,7 +478,10 @@ fn get_cell(bx: &SimBox, r: ndarray::ArrayView1<'_, F>, celldim: [u32; 3]) -> us
 // ---------------------------------------------------------------------------
 
 /// Build the CSR-encoded forward-neighbor table for the given grid dimensions.
-fn build_fwd_neighbors(celldim: [u32; 3]) -> (Vec<u32>, Vec<u32>) {
+///
+/// For non-periodic axes, out-of-range neighbor cells are skipped rather than
+/// wrapped around.
+fn build_fwd_neighbors(celldim: [u32; 3], pbc: [bool; 3]) -> (Vec<u32>, Vec<u32>) {
     let n_cells = (celldim[0] * celldim[1] * celldim[2]) as usize;
     let mut offsets = Vec::with_capacity(n_cells + 1);
     let mut neighbors_all = Vec::with_capacity(n_cells * 13);
@@ -495,8 +499,17 @@ fn build_fwd_neighbors(celldim: [u32; 3]) -> (Vec<u32>, Vec<u32>) {
 
         let mark = neighbors_all.len();
         for nk in sk..=ek {
+            if !pbc[2] && (nk < 0 || nk >= celldim[2] as i32) {
+                continue;
+            }
             for nj in sj..=ej {
+                if !pbc[1] && (nj < 0 || nj >= celldim[1] as i32) {
+                    continue;
+                }
                 for ni in si..=ei {
+                    if !pbc[0] && (ni < 0 || ni >= celldim[0] as i32) {
+                        continue;
+                    }
                     let wi = wrap(ni, celldim[0]);
                     let wj = wrap(nj, celldim[1]);
                     let wk = wrap(nk, celldim[2]);
@@ -520,7 +533,10 @@ fn build_fwd_neighbors(celldim: [u32; 3]) -> (Vec<u32>, Vec<u32>) {
 // ---------------------------------------------------------------------------
 
 /// Build the CSR-encoded all-neighbor table (all 26 surrounding cells, excluding self).
-fn build_all_neighbors(celldim: [u32; 3]) -> (Vec<u32>, Vec<u32>) {
+///
+/// For non-periodic axes, out-of-range neighbor cells are skipped rather than
+/// wrapped around.
+fn build_all_neighbors(celldim: [u32; 3], pbc: [bool; 3]) -> (Vec<u32>, Vec<u32>) {
     let n_cells = (celldim[0] * celldim[1] * celldim[2]) as usize;
     let mut offsets = Vec::with_capacity(n_cells + 1);
     let mut neighbors_all = Vec::with_capacity(n_cells * 26);
@@ -538,8 +554,17 @@ fn build_all_neighbors(celldim: [u32; 3]) -> (Vec<u32>, Vec<u32>) {
 
         let mark = neighbors_all.len();
         for nk in sk..=ek {
+            if !pbc[2] && (nk < 0 || nk >= celldim[2] as i32) {
+                continue;
+            }
             for nj in sj..=ej {
+                if !pbc[1] && (nj < 0 || nj >= celldim[1] as i32) {
+                    continue;
+                }
                 for ni in si..=ei {
+                    if !pbc[0] && (ni < 0 || ni >= celldim[0] as i32) {
+                        continue;
+                    }
                     let wi = wrap(ni, celldim[0]);
                     let wj = wrap(nj, celldim[1]);
                     let wk = wrap(nk, celldim[2]);
@@ -783,5 +808,84 @@ mod tests {
                 assert!((a.3[d] - b.3[d]).abs() < 1e-6);
             }
         }
+    }
+
+    #[test]
+    fn non_periodic_no_wrap() {
+        // Two particles at opposite corners of a non-periodic box -- should NOT be neighbors
+        let bx =
+            SimBox::cube(10.0, array![0.0, 0.0, 0.0], [false, false, false]).expect("invalid box");
+        let pts = array![[0.1, 0.1, 0.1], [9.9, 9.9, 9.9]];
+
+        let mut lc = LinkCell::new().cutoff(1.0);
+        lc.build(pts.view(), &bx);
+        let result = lc.query();
+
+        // Distance is ~16.97, far beyond cutoff -- should have 0 pairs
+        assert_eq!(result.n_pairs(), 0, "non-periodic box should not wrap");
+    }
+
+    #[test]
+    fn periodic_does_wrap() {
+        // Same setup but periodic -- particles should be neighbors via wrapping
+        let bx =
+            SimBox::cube(10.0, array![0.0, 0.0, 0.0], [true, true, true]).expect("invalid box");
+        let pts = array![[0.1, 0.1, 0.1], [9.9, 9.9, 9.9]];
+
+        let mut lc = LinkCell::new().cutoff(1.0);
+        lc.build(pts.view(), &bx);
+        let result = lc.query();
+
+        // Via PBC, distance is ~0.35 -- should have 1 pair
+        assert_eq!(result.n_pairs(), 1, "periodic box should wrap");
+    }
+
+    #[test]
+    fn non_periodic_matches_brute_force() {
+        let bx =
+            SimBox::cube(20.0, array![0.0, 0.0, 0.0], [false, false, false]).expect("invalid box");
+        // Cluster of points -- all well inside the box
+        let pts = array![
+            [5.0, 5.0, 5.0],
+            [5.5, 5.0, 5.0],
+            [5.0, 5.5, 5.0],
+            [10.0, 10.0, 10.0],
+            [10.3, 10.0, 10.0],
+        ];
+        let cutoff = 1.0;
+
+        let mut lc = LinkCell::new().cutoff(cutoff);
+        lc.build(pts.view(), &bx);
+        let lc_result = lc.query();
+
+        let mut bf = crate::neighbors::bruteforce::BruteForce::new(cutoff);
+        bf.build(pts.view(), &bx);
+        let bf_result = bf.query();
+
+        // Both should find the same number of pairs
+        assert_eq!(
+            lc_result.n_pairs(),
+            bf_result.n_pairs(),
+            "LinkCell and BruteForce should agree for non-periodic"
+        );
+
+        // Collect and sort pairs for comparison
+        let mut lc_pairs: Vec<(u32, u32)> = lc_result
+            .query_point_indices()
+            .iter()
+            .zip(lc_result.point_indices().iter())
+            .map(|(&i, &j)| if i < j { (i, j) } else { (j, i) })
+            .collect();
+        lc_pairs.sort();
+
+        let mut bf_pairs: Vec<(u32, u32)> = bf_result
+            .query_point_indices()
+            .iter()
+            .zip(bf_result.point_indices().iter())
+            .map(|(&i, &j)| if i < j { (i, j) } else { (j, i) })
+            .collect();
+        bf_pairs.sort();
+
+        assert_eq!(lc_pairs, bf_pairs);
     }
 }

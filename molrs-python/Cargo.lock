@@ -285,7 +285,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "molrs-core"
+name = "molcrafts-molrs"
 version = "0.0.4"
 dependencies = [
  "flate2",
@@ -302,20 +302,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "molrs-ffi"
+name = "molcrafts-molrs-ffi"
 version = "0.0.4"
 dependencies = [
- "molrs-core",
+ "molcrafts-molrs",
  "slotmap",
 ]
 
 [[package]]
-name = "molrs-pack"
+name = "molcrafts-molrs-pack"
 version = "0.0.4"
 dependencies = [
  "env_logger",
  "log",
- "molrs-core",
+ "molcrafts-molrs",
  "ndarray",
  "rand",
 ]
@@ -324,9 +324,9 @@ dependencies = [
 name = "molrs-python"
 version = "0.0.4"
 dependencies = [
- "molrs-core",
- "molrs-ffi",
- "molrs-pack",
+ "molcrafts-molrs",
+ "molcrafts-molrs-ffi",
+ "molcrafts-molrs-pack",
  "ndarray",
  "numpy",
  "pyo3",

@@ -3,7 +3,7 @@ members = ["molrs-core", "molrs-pack"]
 resolver = "3"
 
 [workspace.package]
-version = "0.0.4"
+version = "0.0.5"
 edition = "2024"
 license = "BSD-3-Clause"
 authors = ["MolCrafts"]

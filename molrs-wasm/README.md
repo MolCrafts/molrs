@@ -43,23 +43,26 @@ console.log(writeFrame(mol3d, "xyz"));
 
 - `generate3D(frame, speed?)` — MMFF94 coordinate generation (`"fast"` | `"normal"` | `"thorough"`)
 
-### Analysis (freud-style API)
+### Analysis
 
 ```js
-import { AABBQuery, RDF } from "@molcrafts/molrs";
+import { LinkedCell, RDF } from "@molcrafts/molrs";
 
-const nq = new AABBQuery(box, points, 5.0);
-const nlist = nq.querySelf();
+const lc = new LinkedCell(5.0);           // cutoff = 5.0 A
+const nlist = lc.build(frame);            // self-query (unique pairs i < j)
+const cross = lc.query(refFrame, other);  // cross-query
 
 const rdf = new RDF(100, 5.0);
-const result = rdf.compute(nlist, box);
+const result = rdf.compute(frame, nlist);
 console.log(result.binCenters(), result.rdf());
 ```
 
-- **`AABBQuery`** — spatial neighbor search (`query()`, `querySelf()`)
-- **`RDF`** — radial distribution function (self & cross)
+- **`LinkedCell`** — cell-list neighbor search (`build()` for self-query, `query()` for cross-query)
+- **`RDF`** — radial distribution function (periodic and free-boundary)
 - **`MSD`** — mean squared displacement
 - **`Cluster`** — distance-based cluster analysis
+
+Frames without a simulation box are supported — a non-periodic bounding box is auto-generated.
 
 ### Block column conventions
 

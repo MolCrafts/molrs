@@ -13,7 +13,7 @@
 //!   (e.g., `"atoms"`, `"bonds"`) to typed [`Block`]s.
 //! - **[`Block`]** -- column-oriented data store with typed columns
 //!   (`f32`, `i32`, `u32`, `string`). Accessed via JS typed arrays
-//!   (`Float32Array`, `Int32Array`, `Uint32Array`, `Array<string>`).
+//!   (`Float32Array`, `Int32Array`, `Uint32Array`, `string[]`).
 //! - **[`Box`]** (exported as `Box` in JS) -- simulation box defining
 //!   periodic boundary conditions and coordinate transformations.
 //! - **[`WasmArray`]** -- owned f32 array with ndarray-compatible shape

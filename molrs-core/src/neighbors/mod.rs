@@ -1,7 +1,7 @@
 //! Neighbor-list algorithms for pairwise distance queries.
 //!
 //! This module provides a trait-based framework for neighbor search, plus a
-//! high-level [`AABBQuery`] wrapper inspired by [freud-analysis](https://freud.readthedocs.io/).
+//! high-level [`NeighborQuery`] wrapper inspired by [freud-analysis](https://freud.readthedocs.io/).
 //!
 //! ## Algorithms
 //!
@@ -11,12 +11,12 @@
 //!   correctness testing and small systems.
 //!
 //! Both implement [`NbListAlgo`] and can be used via the lower-level API or
-//! wrapped in [`AABBQuery`] for a freud-style workflow.
+//! wrapped in [`NeighborQuery`] for a freud-style workflow.
 //!
 //! ## High-level API (freud-style)
 //!
 //! ```ignore
-//! let nq = AABBQuery::new(&simbox, points.view(), 3.0);
+//! let nq = NeighborQuery::new(&simbox, points.view(), 3.0);
 //! let nlist = nq.query(query_points.view());   // cross-query
 //! let nlist = nq.query_self();                  // self-query (i < j)
 //!
@@ -44,7 +44,10 @@ mod query;
 
 pub use bruteforce::BruteForce;
 pub use linkcell::LinkCell;
-pub use query::AABBQuery;
+pub use query::NeighborQuery;
+/// Backward-compatible alias.
+#[deprecated(note = "renamed to NeighborQuery")]
+pub type AABBQuery = NeighborQuery;
 
 // ---------------------------------------------------------------------------
 // QueryMode — distinguishes self-query from cross-query

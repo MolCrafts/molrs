@@ -1,6 +1,6 @@
 [package]
 name = "molrs"
-version = "0.0.4"
+version = "0.0.5"
 edition = "2024"
 authors = ["MolCrafts"]
 description = "WASM bindings for molrs"
@@ -20,8 +20,8 @@ serde = { version = "1", features = ["derive"] }
 serde-wasm-bindgen = "0.6"
 js-sys = "0.3"
 web-sys = { version = "0.3", features = ["console"] }
-molrs = { path = "../molrs-core", package = "molcrafts-molrs", version = "0.0.4", features = ["zarr"], default-features = false }
-molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.0.4" }
+molrs = { path = "../molrs-core", package = "molcrafts-molrs", version = "0.0.5", features = ["zarr"], default-features = false }
+molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.0.5" }
 ndarray = "0.17"
 zarrs = { version = "0.23", default-features = false }
 console_error_panic_hook = "0.1"

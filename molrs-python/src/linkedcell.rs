@@ -1,10 +1,10 @@
-//! Python wrappers for neighbor search: `AABBQuery`, `LinkedCell`, and
+//! Python wrappers for neighbor search: `NeighborQuery`, `LinkedCell`, and
 //! `NeighborList`.
 //!
 //! Two APIs are provided:
 //!
-//! - **freud-style** (preferred): build an [`PyAABBQuery`] from reference
-//!   points, then call [`PyAABBQuery::query`] or [`PyAABBQuery::query_self`]
+//! - **freud-style** (preferred): build a [`PyNeighborQuery`] from reference
+//!   points, then call [`PyNeighborQuery::query`] or [`PyNeighborQuery::query_self`]
 //!   to obtain a [`PyNeighborList`].
 //! - **Legacy**: use [`PyLinkedCell`] directly (backward-compatible wrapper
 //!   around `LinkCell`).
@@ -14,7 +14,7 @@
 
 use crate::helpers::NpF;
 use crate::simbox::PyBox;
-use molrs::neighbors::{AABBQuery, NeighborList as RsNeighborList, QueryMode};
+use molrs::neighbors::{NeighborList as RsNeighborList, NeighborQuery, QueryMode};
 use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray2};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -186,12 +186,12 @@ impl PyNeighborList {
 }
 
 // ---------------------------------------------------------------------------
-// PyAABBQuery
+// PyNeighborQuery
 // ---------------------------------------------------------------------------
 
-/// Axis-aligned bounding box spatial query (freud-style API).
+/// Spatial neighbor query (freud-style API).
 ///
-/// Exposed to Python as `molrs.AABBQuery`.
+/// Exposed to Python as `molrs.NeighborQuery`.
 ///
 /// Build a spatial index from reference points and a simulation box, then
 /// query for neighbors within cutoff.
@@ -207,16 +207,16 @@ impl PyNeighborList {
 ///
 /// Examples
 /// --------
-/// >>> aabb = AABBQuery(box, positions, cutoff=3.0)
-/// >>> nlist = aabb.query(query_positions)   # cross-query
-/// >>> nlist = aabb.query_self()             # self-query (unique pairs)
-#[pyclass(name = "AABBQuery")]
-pub struct PyAABBQuery {
-    inner: AABBQuery,
+/// >>> nq = NeighborQuery(box, positions, cutoff=3.0)
+/// >>> nlist = nq.query(query_positions)   # cross-query
+/// >>> nlist = nq.query_self()             # self-query (unique pairs)
+#[pyclass(name = "NeighborQuery")]
+pub struct PyNeighborQuery {
+    inner: NeighborQuery,
 }
 
 #[pymethods]
-impl PyAABBQuery {
+impl PyNeighborQuery {
     /// Build the spatial index.
     ///
     /// Parameters
@@ -243,7 +243,7 @@ impl PyAABBQuery {
         if view.ncols() != 3 {
             return Err(PyValueError::new_err("points must have shape (N,3)"));
         }
-        let inner = AABBQuery::new(&r#box.inner, view, cutoff);
+        let inner = NeighborQuery::new(&r#box.inner, view, cutoff);
         Ok(Self { inner })
     }
 
@@ -290,7 +290,7 @@ impl PyAABBQuery {
 
     fn __repr__(&self) -> String {
         format!(
-            "AABBQuery(num_points={}, cutoff={})",
+            "NeighborQuery(num_points={}, cutoff={})",
             self.inner.points().nrows(),
             self.inner.cutoff(),
         )
@@ -305,7 +305,7 @@ impl PyAABBQuery {
 /// `molrs.LinkedCell`.
 ///
 /// This is a backward-compatible wrapper around the Rust `LinkCell`.
-/// For new code, prefer :class:`AABBQuery`.
+/// For new code, prefer :class:`NeighborQuery`.
 ///
 /// Parameters
 /// ----------

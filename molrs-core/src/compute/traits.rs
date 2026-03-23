@@ -17,7 +17,7 @@ pub trait Compute {
 
 /// Analysis that additionally needs pre-built neighbor pairs.
 ///
-/// The caller builds a [`NeighborList`] (via [`AABBQuery`] or [`NbListAlgo`])
+/// The caller builds a [`NeighborList`] (via [`NeighborQuery`] or [`NbListAlgo`])
 /// and passes `&NeighborList`. Multiple `PairCompute` instances with the same
 /// cutoff can share a single neighbor build.
 pub trait PairCompute {

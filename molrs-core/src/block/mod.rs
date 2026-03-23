@@ -333,18 +333,22 @@ impl Block {
         self.get(key).map(|c| c.dtype())
     }
 
-    /// Safely resize all columns to a new number of rows.
+    /// Resize all columns along axis 0 to `new_nrows`.
     ///
-    /// This method ensures that all columns are resized consistently,
-    /// maintaining the Block's nrows invariant.
+    /// - **Shrink** (`new_nrows` < current): slices each column to keep the first `new_nrows` rows.
+    /// - **Grow** (`new_nrows` > current): extends each column with default values
+    ///   (0.0 for Float, 0 for Int/UInt/U8, false for Bool, empty string for String).
+    /// - **Same size**: no-op, returns `Ok(())`.
+    /// - **Empty block** (no columns): sets `nrows` without touching columns.
+    ///
+    /// Multi-dimensional columns (e.g. Nx3 positions) are resized only along
+    /// axis 0; trailing dimensions are preserved.
     ///
     /// # Arguments
-    /// * `new_nrows` - The new number of rows
-    /// * `fill_fn` - Function that provides fill values for each column
+    /// * `new_nrows` - The desired number of rows after resize.
     ///
     /// # Returns
-    /// * `Ok(())` if resize succeeds
-    /// * `Err(BlockError)` if resize fails
+    /// * `Ok(())` on success.
     ///
     /// # Examples
     ///
@@ -356,20 +360,27 @@ impl Block {
     /// let mut block = Block::new();
     /// block.insert("x", Array1::from_vec(vec![1.0 as F, 2.0 as F]).into_dyn()).unwrap();
     ///
-    /// // Note: resize is not yet fully implemented - this is a placeholder
-    /// // block.resize(3, |_key| 0.0).unwrap();
+    /// block.resize(4).unwrap();
+    /// assert_eq!(block.nrows(), Some(4));
+    /// let x = block.get_float("x").unwrap();
+    /// assert_eq!(x.as_slice_memory_order().unwrap(), &[1.0, 2.0, 0.0, 0.0]);
     /// ```
     pub fn resize(&mut self, new_nrows: usize) -> Result<(), crate::error::MolRsError> {
-        // For now, we only allow resizing empty blocks
-        // Full implementation would require cloning and resizing each column
         if self.is_empty() {
             self.nrows = Some(new_nrows);
-            Ok(())
-        } else {
-            Err(crate::error::MolRsError::validation(
-                "Block resize is not yet fully implemented for non-empty blocks",
-            ))
+            return Ok(());
         }
+
+        let current = self.nrows.unwrap_or(0);
+        if new_nrows == current {
+            return Ok(());
+        }
+
+        for col in self.map.values_mut() {
+            col.resize(new_nrows);
+        }
+        self.nrows = Some(new_nrows);
+        Ok(())
     }
 
     /// Merge another block into this one by concatenating columns along axis-0.
@@ -817,5 +828,169 @@ mod tests {
 
         // Try to rename to existing column name
         assert!(!block.rename_column("position_x", "y"));
+    }
+
+    #[test]
+    fn test_resize_shrink() {
+        let mut block = Block::new();
+        block
+            .insert(
+                "x",
+                Array1::from_vec(vec![1.0 as F, 2.0, 3.0, 4.0]).into_dyn(),
+            )
+            .unwrap();
+        block
+            .insert("id", Array1::from_vec(vec![10 as I, 20, 30, 40]).into_dyn())
+            .unwrap();
+
+        block.resize(2).unwrap();
+
+        assert_eq!(block.nrows(), Some(2));
+        let x = block.get_float("x").unwrap();
+        assert_eq!(x.as_slice_memory_order().unwrap(), &[1.0, 2.0]);
+        let id = block.get_int("id").unwrap();
+        assert_eq!(id.as_slice_memory_order().unwrap(), &[10, 20]);
+    }
+
+    #[test]
+    fn test_resize_grow() {
+        let mut block = Block::new();
+        block
+            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0]).into_dyn())
+            .unwrap();
+        block
+            .insert("id", Array1::from_vec(vec![10 as I, 20]).into_dyn())
+            .unwrap();
+
+        block.resize(4).unwrap();
+
+        assert_eq!(block.nrows(), Some(4));
+        let x = block.get_float("x").unwrap();
+        // Original data preserved, new rows are 0.0
+        assert_eq!(x.as_slice_memory_order().unwrap(), &[1.0, 2.0, 0.0, 0.0]);
+        let id = block.get_int("id").unwrap();
+        // Original data preserved, new rows are 0
+        assert_eq!(id.as_slice_memory_order().unwrap(), &[10, 20, 0, 0]);
+    }
+
+    #[test]
+    fn test_resize_same() {
+        let mut block = Block::new();
+        block
+            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn())
+            .unwrap();
+
+        block.resize(3).unwrap();
+
+        assert_eq!(block.nrows(), Some(3));
+        let x = block.get_float("x").unwrap();
+        assert_eq!(x.as_slice_memory_order().unwrap(), &[1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn test_resize_empty() {
+        let mut block = Block::new();
+
+        block.resize(5).unwrap();
+        assert_eq!(block.nrows(), Some(5));
+        assert!(block.is_empty());
+    }
+
+    #[test]
+    fn test_resize_multidim() {
+        use ndarray::Array2;
+
+        let mut block = Block::new();
+        // 4x3 position array
+        let pos = Array2::from_shape_vec(
+            (4, 3),
+            vec![
+                1.0 as F, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0,
+            ],
+        )
+        .unwrap()
+        .into_dyn();
+        block.insert("pos", pos).unwrap();
+
+        // Shrink 4x3 -> 2x3
+        block.resize(2).unwrap();
+        assert_eq!(block.nrows(), Some(2));
+        let pos = block.get_float("pos").unwrap();
+        assert_eq!(pos.shape(), &[2, 3]);
+        assert_eq!(
+            pos.as_slice_memory_order().unwrap(),
+            &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+        );
+
+        // Grow 2x3 -> 5x3
+        block.resize(5).unwrap();
+        assert_eq!(block.nrows(), Some(5));
+        let pos = block.get_float("pos").unwrap();
+        assert_eq!(pos.shape(), &[5, 3]);
+        // Original data followed by zeros
+        assert_eq!(
+            pos.as_slice_memory_order().unwrap(),
+            &[
+                1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+            ]
+        );
+    }
+
+    #[test]
+    fn test_resize_mixed_dtypes() {
+        let mut block = Block::new();
+        block
+            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn())
+            .unwrap();
+        block
+            .insert("id", Array1::from_vec(vec![10 as I, 20, 30]).into_dyn())
+            .unwrap();
+        block
+            .insert("mask", Array1::from_vec(vec![true, false, true]).into_dyn())
+            .unwrap();
+        block
+            .insert(
+                "name",
+                Array1::from_vec(vec!["a".to_string(), "b".to_string(), "c".to_string()])
+                    .into_dyn(),
+            )
+            .unwrap();
+
+        // Grow from 3 to 5
+        block.resize(5).unwrap();
+        assert_eq!(block.nrows(), Some(5));
+
+        let x = block.get_float("x").unwrap();
+        assert_eq!(
+            x.as_slice_memory_order().unwrap(),
+            &[1.0, 2.0, 3.0, 0.0, 0.0]
+        );
+        let id = block.get_int("id").unwrap();
+        assert_eq!(id.as_slice_memory_order().unwrap(), &[10, 20, 30, 0, 0]);
+        let mask = block.get_bool("mask").unwrap();
+        assert_eq!(
+            mask.as_slice_memory_order().unwrap(),
+            &[true, false, true, false, false]
+        );
+        let name = block.get_string("name").unwrap();
+        assert_eq!(name[[0]], "a");
+        assert_eq!(name[[1]], "b");
+        assert_eq!(name[[2]], "c");
+        assert_eq!(name[[3]], "");
+        assert_eq!(name[[4]], "");
+
+        // Shrink from 5 to 2
+        block.resize(2).unwrap();
+        assert_eq!(block.nrows(), Some(2));
+
+        let x = block.get_float("x").unwrap();
+        assert_eq!(x.as_slice_memory_order().unwrap(), &[1.0, 2.0]);
+        let id = block.get_int("id").unwrap();
+        assert_eq!(id.as_slice_memory_order().unwrap(), &[10, 20]);
+        let mask = block.get_bool("mask").unwrap();
+        assert_eq!(mask.as_slice_memory_order().unwrap(), &[true, false]);
+        let name = block.get_string("name").unwrap();
+        assert_eq!(name[[0]], "a");
+        assert_eq!(name[[1]], "b");
     }
 }

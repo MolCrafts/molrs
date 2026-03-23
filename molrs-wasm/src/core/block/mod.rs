@@ -49,7 +49,7 @@ use super::{SharedStore, js_err};
 /// | `Float32Array` | `f32` | `"f32"` | `setColF32` | `copyColF32` | `viewColF32` |
 /// | `Int32Array` | `i32` | `"i32"` | `setColI32` | `copyColI32` | `viewColI32` |
 /// | `Uint32Array` | `u32` | `"u32"` | `setColU32` | `copyColU32` | `viewColU32` |
-/// | `Array<string>` | `String` | `"string"` | `setColStr` | `copyColStr` | -- |
+/// | `string[]` | `String` | `"string"` | `setColStr` | `copyColStr` | -- |
 ///
 /// # Example (JavaScript)
 ///
@@ -125,7 +125,7 @@ impl Block {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// if (block.isEmpty()) { /* no columns yet */ }
+    /// if (block.isEmpty()) { // no columns yet }
     /// ```
     #[wasm_bindgen(js_name = isEmpty)]
     pub fn is_empty(&self) -> Result<bool, JsValue> {
@@ -150,7 +150,7 @@ impl Block {
         self.with(|b| b.nrows().unwrap_or(0))
     }
 
-    /// Return all column names as a JS `Array<string>`.
+    /// Return all column names as a JS `string[]`.
     ///
     /// # Errors
     ///
@@ -497,7 +497,7 @@ impl Block {
 
     // ---- Str ----
 
-    /// Set a string column from a JS `Array<string>`.
+    /// Set a string column from a JS `string[]`.
     ///
     /// # Arguments
     ///
@@ -525,7 +525,7 @@ impl Block {
         self.insert_col(key, Array1::from(strings).into_dyn())
     }
 
-    /// Owned `Array<string>` copy of a string column.
+    /// Owned `string[]` copy of a string column.
     ///
     /// # Arguments
     ///

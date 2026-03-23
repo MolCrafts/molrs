@@ -3,7 +3,7 @@
 //! This module provides freud-style analysis classes that operate on
 //! [`Frame`] objects. The typical workflow is:
 //!
-//! 1. Build a neighbor list using [`AABBQuery`] or [`NeighborSearch`].
+//! 1. Build a neighbor list using [`LinkedCell`].
 //! 2. Pass the [`NeighborList`] to an analysis class ([`RDF`], [`Cluster`]).
 //! 3. Read the result object.
 //!
@@ -14,8 +14,8 @@
 //!
 //! ```js
 //! // Build neighbor list
-//! const nq = new AABBQuery(frame, 5.0);
-//! const nlist = nq.querySelf();
+//! const lc = new LinkedCell(5.0);
+//! const nlist = lc.build(frame);
 //!
 //! // Compute RDF
 //! const rdf = new RDF(100, 5.0);
@@ -24,9 +24,11 @@
 //! const r  = result.binCenters();    // Float32Array
 //!
 //! // Compute MSD
-//! const msd = MSD.fromReference(refFrame);
-//! const msdResult = msd.compute(currentFrame);
-//! console.log(msdResult.mean); // system-average MSD in A^2
+//! const msd = new MSD();
+//! for (const frame of trajectory) {
+//!     msd.feed(frame);
+//! }
+//! console.log(msd.results()[1].mean); // MSD at frame 1 in A^2
 //! ```
 //!
 //! # References
@@ -42,7 +44,8 @@ use molrs::compute::msd::{MSD as RsMSD, MSDResult as RsMSDResult};
 use molrs::compute::rdf::{RDF as RsRDF, RDFResult as RsRDFResult};
 use molrs::compute::traits::{Compute, PairCompute};
 use molrs::neighbors::{
-    AABBQuery as RsAABBQuery, LinkCell, NbListAlgo, NeighborList as RsNeighborList, QueryMode,
+    NeighborQuery as RsNeighborQuery, LinkCell as RsLinkCell, NbListAlgo, NeighborList as RsNeighborList,
+    QueryMode,
 };
 use molrs::types::F;
 
@@ -85,77 +88,104 @@ fn positions_from_frame(frame: &molrs::frame::Frame) -> Result<ndarray::Array2<F
 }
 
 // ===========================================================================
-// AABBQuery — freud-style spatial query
+// LinkedCell — cell-list based neighbor search
 // ===========================================================================
 
-/// Axis-aligned bounding box spatial query for neighbor search.
+/// Cell-list (linked-cell) based neighbor search.
 ///
-/// Builds a cell-list spatial index from a [`Frame`]'s atom positions
-/// and simulation box, then supports both self-queries (unique pairs
-/// within the reference set) and cross-queries (pairs between a
-/// query set and the reference set).
+/// Creates a spatial index from a [`Frame`]'s atom positions and
+/// simulation box, then finds all neighbor pairs within the cutoff
+/// distance.
 ///
 /// All distances are in angstrom (A).
 ///
 /// # Example (JavaScript)
 ///
 /// ```js
-/// const nq = new AABBQuery(frame, 3.0); // cutoff = 3.0 A
-/// const selfPairs = nq.querySelf();      // unique pairs (i < j)
-/// const crossPairs = nq.query(otherFrame); // cross-query
+/// const lc = new LinkedCell(3.0);       // cutoff = 3.0 A
+/// const nlist = lc.build(frame);         // self-query (unique pairs i < j)
+/// const cross = lc.query(ref, other);    // cross-query
 ///
-/// console.log(selfPairs.numPairs);
+/// console.log(nlist.numPairs);
 /// ```
-#[wasm_bindgen(js_name = AABBQuery)]
-pub struct AABBQuery {
-    inner: RsAABBQuery,
+#[wasm_bindgen(js_name = LinkedCell)]
+pub struct LinkedCell {
+    cutoff: f32,
 }
 
-#[wasm_bindgen(js_class = AABBQuery)]
-impl AABBQuery {
-    /// Create a spatial query from a [`Frame`] with a given distance cutoff.
-    ///
-    /// The frame must have:
-    /// - An `"atoms"` block with `x`, `y`, `z` (f32) columns
-    /// - A `simbox` (simulation box) set on the frame
+#[wasm_bindgen(js_class = LinkedCell)]
+impl LinkedCell {
+    /// Create a linked-cell neighbor search with the given distance cutoff.
     ///
     /// # Arguments
     ///
-    /// * `frame` - Reference frame with atom positions and simbox
     /// * `cutoff` - Maximum neighbor distance in angstrom (A)
-    ///
-    /// # Returns
-    ///
-    /// A new `AABBQuery` ready for `query()` or `querySelf()`.
-    ///
-    /// # Errors
-    ///
-    /// Throws if the frame has no `"atoms"` block, is missing `x`/`y`/`z`
-    /// columns, or has no `simbox`.
     ///
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const nq = new AABBQuery(frame, 5.0);
+    /// const lc = new LinkedCell(5.0);
     /// ```
     #[wasm_bindgen(constructor)]
-    pub fn new(frame: &Frame, cutoff: f32) -> Result<AABBQuery, JsValue> {
-        let rs_frame = frame.clone_core_frame()?;
-        let pos = positions_from_frame(&rs_frame)?;
-        let simbox = rs_frame
-            .simbox
-            .as_ref()
-            .ok_or_else(|| JsValue::from_str("Frame has no SimBox"))?;
-
-        let inner = RsAABBQuery::new(simbox, pos.view(), cutoff);
-        Ok(AABBQuery { inner })
+    pub fn new(cutoff: f32) -> Self {
+        Self { cutoff }
     }
 
-    /// Cross-query: find all pairs where `i` indexes query points and
-    /// `j` indexes the reference points (from the constructor frame).
+    /// Build a neighbor list from a [`Frame`] (self-query).
+    ///
+    /// Finds all unique pairs `(i < j)` of atoms within the cutoff
+    /// distance using the cell-list algorithm.
+    ///
+    /// The frame must have an `"atoms"` block with `x`, `y`, `z` (f32) columns.
+    /// If the frame has a `simbox`, periodic boundary conditions are used.
+    /// Otherwise, a free-boundary bounding box is auto-generated.
     ///
     /// # Arguments
     ///
+    /// * `frame` - Frame with atom positions
+    ///
+    /// # Returns
+    ///
+    /// A [`NeighborList`] containing all unique pairs within the cutoff.
+    ///
+    /// # Errors
+    ///
+    /// Throws if the frame is missing required data.
+    ///
+    /// # Example (JavaScript)
+    ///
+    /// ```js
+    /// const lc = new LinkedCell(3.0);
+    /// const nlist = lc.build(frame);
+    /// const dists = nlist.distances(); // Float32Array
+    /// ```
+    pub fn build(&self, frame: &Frame) -> Result<NeighborList, JsValue> {
+        let rs_frame = frame.clone_core_frame()?;
+        let pos = positions_from_frame(&rs_frame)?;
+
+        let simbox;
+        let bx_ref = match rs_frame.simbox.as_ref() {
+            Some(sb) => sb,
+            None => {
+                simbox = molrs::region::simbox::SimBox::free(pos.view(), self.cutoff)
+                    .map_err(|e| JsValue::from_str(&format!("free-boundary box: {e:?}")))?;
+                &simbox
+            }
+        };
+
+        let mut lc = RsLinkCell::new().cutoff(self.cutoff);
+        lc.build(pos.view(), bx_ref);
+        let result = lc.query().clone();
+
+        Ok(NeighborList { inner: result })
+    }
+
+    /// Cross-query: find all pairs where `i` indexes query points and
+    /// `j` indexes the reference points.
+    ///
+    /// # Arguments
+    ///
+    /// * `ref_frame` - Frame with reference atom positions
     /// * `query_frame` - Frame with query atom positions (must have
     ///   `"atoms"` block with `x`, `y`, `z` columns)
     ///
@@ -166,138 +196,45 @@ impl AABBQuery {
     ///
     /// # Errors
     ///
-    /// Throws if `query_frame` is missing required columns.
+    /// Throws if either frame is missing required columns.
     ///
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const crossPairs = nq.query(otherFrame);
+    /// const lc = new LinkedCell(3.0);
+    /// const crossPairs = lc.query(refFrame, otherFrame);
     /// console.log(crossPairs.numPairs);
     /// ```
-    pub fn query(&self, query_frame: &Frame) -> Result<NeighborList, JsValue> {
-        let qf = query_frame.clone_core_frame()?;
-        let pos = positions_from_frame(&qf)?;
-        let nlist = self.inner.query(pos.view());
-        Ok(NeighborList { inner: nlist })
-    }
+    pub fn query(
+        &self,
+        ref_frame: &Frame,
+        query_frame: &Frame,
+    ) -> Result<NeighborList, JsValue> {
+        let rs_ref = ref_frame.clone_core_frame()?;
+        let ref_pos = positions_from_frame(&rs_ref)?;
 
-    /// Self-query: find all unique pairs `(i < j)` within the reference
-    /// point set (the frame used to construct this query).
-    ///
-    /// # Returns
-    ///
-    /// A [`NeighborList`] containing all unique pairs within the cutoff.
-    /// The `isSelfQuery` property will be `true`.
-    ///
-    /// # Example (JavaScript)
-    ///
-    /// ```js
-    /// const pairs = nq.querySelf();
-    /// console.log(pairs.isSelfQuery); // true
-    /// console.log(pairs.numPairs);    // number of unique pairs
-    /// ```
-    #[wasm_bindgen(js_name = querySelf)]
-    pub fn query_self(&self) -> NeighborList {
-        let nlist = self.inner.query_self();
-        NeighborList { inner: nlist }
-    }
-}
+        let aabb = match rs_ref.simbox.as_ref() {
+            Some(sb) => RsNeighborQuery::new(sb, ref_pos.view(), self.cutoff),
+            None => RsNeighborQuery::free(ref_pos.view(), self.cutoff),
+        };
 
-// ===========================================================================
-// NeighborSearch — backward-compatible wrapper
-// ===========================================================================
-
-/// Neighbor search using the cell-list (link-cell) algorithm.
-///
-/// This is a simpler, backward-compatible interface compared to
-/// [`AABBQuery`]. It performs a self-query in a single `build()` call.
-///
-/// Prefer [`AABBQuery`] for more flexibility (cross-queries, reusable
-/// spatial index).
-///
-/// # Example (JavaScript)
-///
-/// ```js
-/// const ns = new NeighborSearch(3.0); // cutoff = 3.0 A
-/// const nbrs = ns.build(frame);
-/// console.log(nbrs.numPairs);
-/// ```
-#[wasm_bindgen(js_name = NeighborSearch)]
-pub struct NeighborSearch {
-    cutoff: f32,
-}
-
-#[wasm_bindgen(js_class = NeighborSearch)]
-impl NeighborSearch {
-    /// Create a neighbor search with the given distance cutoff.
-    ///
-    /// # Arguments
-    ///
-    /// * `cutoff` - Maximum neighbor distance in angstrom (A)
-    ///
-    /// # Example (JavaScript)
-    ///
-    /// ```js
-    /// const ns = new NeighborSearch(5.0);
-    /// ```
-    #[wasm_bindgen(constructor)]
-    pub fn new(cutoff: f32) -> Self {
-        Self { cutoff }
-    }
-
-    /// Build a neighbor list from a [`Frame`].
-    ///
-    /// Performs a self-query: finds all unique pairs `(i < j)` of atoms
-    /// within the cutoff distance, using the cell-list algorithm.
-    ///
-    /// The frame must have:
-    /// - An `"atoms"` block with `x`, `y`, `z` (f32) columns
-    /// - A `simbox` (simulation box) set on the frame
-    ///
-    /// # Arguments
-    ///
-    /// * `frame` - Frame with atom positions and simbox
-    ///
-    /// # Returns
-    ///
-    /// A [`NeighborList`] containing all pairs within the cutoff.
-    ///
-    /// # Errors
-    ///
-    /// Throws if the frame is missing required data.
-    ///
-    /// # Example (JavaScript)
-    ///
-    /// ```js
-    /// const nbrs = ns.build(frame);
-    /// const dists = nbrs.distances(); // Float32Array
-    /// ```
-    pub fn build(&self, frame: &Frame) -> Result<NeighborList, JsValue> {
-        let rs_frame = frame.clone_core_frame()?;
-        let pos = positions_from_frame(&rs_frame)?;
-        let simbox = rs_frame
-            .simbox
-            .as_ref()
-            .ok_or_else(|| JsValue::from_str("Frame has no SimBox"))?;
-
-        let mut lc = LinkCell::new().cutoff(self.cutoff);
-        lc.build(pos.view(), simbox);
-        let result = lc.query().clone();
+        let rs_query = query_frame.clone_core_frame()?;
+        let query_pos = positions_from_frame(&rs_query)?;
+        let result = aabb.query(query_pos.view());
 
         Ok(NeighborList { inner: result })
     }
 }
 
 // ===========================================================================
-// NeighborList (was NeighborResult)
+// NeighborList
 // ===========================================================================
 
 /// Result of a neighbor search: all atom pairs within a distance cutoff.
 ///
 /// Contains pair indices, distances, and squared distances for every
-/// neighbor pair found. This object is produced by [`AABBQuery`] or
-/// [`NeighborSearch`] and consumed by analysis classes like [`RDF`]
-/// and [`Cluster`].
+/// neighbor pair found. This object is produced by [`LinkedCell`]
+/// and consumed by analysis classes like [`RDF`] and [`Cluster`].
 ///
 /// # Properties
 ///
@@ -311,7 +248,7 @@ impl NeighborSearch {
 /// # Example (JavaScript)
 ///
 /// ```js
-/// const nlist = nq.querySelf();
+/// const nlist = lc.build(frame);
 /// console.log(nlist.numPairs);
 ///
 /// const i = nlist.queryPointIndices(); // Uint32Array
@@ -345,7 +282,7 @@ impl NeighborList {
         self.inner.num_query_points()
     }
 
-    /// Whether this result came from a self-query (`querySelf()`).
+    /// Whether this result came from a self-query (`build()`).
     ///
     /// In self-queries, only unique pairs `(i < j)` are reported.
     #[wasm_bindgen(getter, js_name = isSelfQuery)]
@@ -384,58 +321,6 @@ impl NeighborList {
     pub fn dist_sq(&self) -> Vec<f32> {
         self.inner.dist_sq().to_vec()
     }
-
-    /// **Deprecated**: Use `queryPointIndices()` instead.
-    ///
-    /// First particle index per pair as `Uint32Array`.
-    #[wasm_bindgen(js_name = idxI)]
-    pub fn idx_i(&self) -> Vec<u32> {
-        self.inner.query_point_indices().to_vec()
-    }
-
-    /// **Deprecated**: Use `pointIndices()` instead.
-    ///
-    /// Second particle index per pair as `Uint32Array`.
-    #[wasm_bindgen(js_name = idxJ)]
-    pub fn idx_j(&self) -> Vec<u32> {
-        self.inner.point_indices().to_vec()
-    }
-}
-
-/// **Deprecated**: backward-compatible alias for [`NeighborList`].
-///
-/// Use [`NeighborList`] instead. This type is kept only for API
-/// compatibility with older code.
-#[wasm_bindgen(js_name = NeighborResult)]
-pub struct NeighborResult {
-    inner: RsNeighborList,
-}
-
-#[wasm_bindgen(js_class = NeighborResult)]
-impl NeighborResult {
-    /// Total number of neighbor pairs found.
-    #[wasm_bindgen(getter, js_name = numPairs)]
-    pub fn num_pairs(&self) -> usize {
-        self.inner.n_pairs()
-    }
-
-    /// First particle index per pair as `Uint32Array`.
-    #[wasm_bindgen(js_name = idxI)]
-    pub fn idx_i(&self) -> Vec<u32> {
-        self.inner.query_point_indices().to_vec()
-    }
-
-    /// Second particle index per pair as `Uint32Array`.
-    #[wasm_bindgen(js_name = idxJ)]
-    pub fn idx_j(&self) -> Vec<u32> {
-        self.inner.point_indices().to_vec()
-    }
-
-    /// Squared pairwise distances in A^2 as `Float32Array`.
-    #[wasm_bindgen(js_name = distSq)]
-    pub fn dist_sq(&self) -> Vec<f32> {
-        self.inner.dist_sq().to_vec()
-    }
 }
 
 // ===========================================================================
@@ -458,8 +343,8 @@ impl NeighborResult {
 /// # Example (JavaScript)
 ///
 /// ```js
-/// const nq = new AABBQuery(frame, 5.0);
-/// const nlist = nq.querySelf();
+/// const lc = new LinkedCell(5.0);
+/// const nlist = lc.build(frame);
 ///
 /// const rdf = new RDF(100, 5.0);
 /// const result = rdf.compute(frame, nlist);
@@ -502,8 +387,7 @@ impl RDF {
     /// # Arguments
     ///
     /// * `frame` - Frame with a `simbox` set (for volume normalization)
-    /// * `neighbors` - Pre-built [`NeighborList`] from [`AABBQuery`]
-    ///   or [`NeighborSearch`]
+    /// * `neighbors` - Pre-built [`NeighborList`] from [`LinkedCell`]
     ///
     /// # Returns
     ///
@@ -599,24 +483,23 @@ impl RDFResult {
 // MSD — Mean Squared Displacement
 // ===========================================================================
 
-/// Mean squared displacement (MSD) relative to a reference configuration.
+/// Mean squared displacement (MSD) analysis.
 ///
-/// Computes MSD = <|r(t) - r(0)|^2> for each particle and the
-/// system average. Useful for measuring diffusion coefficients
-/// via the Einstein relation D = MSD / (6t).
+/// Computes MSD = |r(t) - r(0)|^2 for each particle and the system
+/// average. The first frame fed is automatically used as the reference.
+/// Useful for measuring diffusion coefficients via D = MSD / (6t).
 ///
 /// All distances are in angstrom (A), so MSD is in A^2.
 ///
 /// # Example (JavaScript)
 ///
 /// ```js
-/// const msd = MSD.fromReference(refFrame);
-///
-/// for (let t = 0; t < nFrames; t++) {
-///   const frame = reader.read(t);
-///   const result = msd.compute(frame);
-///   console.log(`t=${t}: MSD = ${result.mean} A^2`);
+/// const msd = new MSD();
+/// for (const frame of trajectory) {
+///   msd.feed(frame);         // first frame = reference
 /// }
+/// const results = msd.results();  // MSDResult[] per frame
+/// console.log(results[10].mean);  // MSD at frame 10 in A^2
 /// ```
 ///
 /// # References
@@ -629,67 +512,81 @@ pub struct MSD {
 
 #[wasm_bindgen(js_class = MSD)]
 impl MSD {
-    /// Create an MSD analysis from a reference (t=0) frame.
+    /// Create an empty MSD analysis.
     ///
-    /// The reference frame's `"atoms"` block must have `x`, `y`, `z`
-    /// (f32) columns. These positions are stored internally and used
-    /// as the baseline for all subsequent `compute()` calls.
-    ///
-    /// # Arguments
-    ///
-    /// * `ref_frame` - Reference frame (typically the initial
-    ///   configuration at t=0)
-    ///
-    /// # Returns
-    ///
-    /// A new `MSD` instance.
-    ///
-    /// # Errors
-    ///
-    /// Throws if the frame is missing required columns.
+    /// The first frame passed to [`feed`] becomes the reference
+    /// configuration (t=0).
     ///
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const msd = MSD.fromReference(initialFrame);
+    /// const msd = new MSD();
     /// ```
-    #[wasm_bindgen(js_name = fromReference)]
-    pub fn from_reference(ref_frame: &Frame) -> Result<MSD, JsValue> {
-        let rs_frame = ref_frame.clone_core_frame()?;
-        let inner = RsMSD::from_reference(&rs_frame)
-            .map_err(|e| JsValue::from_str(&format!("MSD init: {e}")))?;
-        Ok(MSD { inner })
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self {
+            inner: RsMSD::new(),
+        }
     }
 
-    /// Compute MSD for a frame relative to the stored reference.
+    /// Feed a frame into the MSD analysis.
+    ///
+    /// The first frame sets the reference configuration.
+    /// Subsequent frames compute MSD relative to that reference.
     ///
     /// # Arguments
     ///
-    /// * `frame` - Current frame with `"atoms"` block containing
+    /// * `frame` - Frame with `"atoms"` block containing
     ///   `x`, `y`, `z` (f32) columns
-    ///
-    /// # Returns
-    ///
-    /// An [`MSDResult`] with per-particle and system-average MSD
-    /// values in A^2.
     ///
     /// # Errors
     ///
-    /// Throws if the frame is missing required columns.
+    /// Throws if the frame is missing required columns or has a
+    /// different number of atoms than the reference.
     ///
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const result = msd.compute(currentFrame);
-    /// console.log(result.mean); // system-average MSD in A^2
+    /// const msd = new MSD();
+    /// msd.feed(frame0);  // sets reference
+    /// msd.feed(frame1);  // computes MSD vs frame0
     /// ```
-    pub fn compute(&self, frame: &Frame) -> Result<MSDResult, JsValue> {
+    pub fn feed(&mut self, frame: &Frame) -> Result<(), JsValue> {
         let rs_frame = frame.clone_core_frame()?;
-        let result = self
-            .inner
-            .compute(&rs_frame)
-            .map_err(|e| JsValue::from_str(&format!("MSD compute: {e}")))?;
-        Ok(MSDResult { inner: result })
+        self.inner
+            .feed(&rs_frame)
+            .map_err(|e| JsValue::from_str(&format!("MSD feed: {e}")))?;
+        Ok(())
+    }
+
+    /// Return all accumulated MSD results as an array.
+    ///
+    /// Returns one [`MSDResult`] per frame fed (including the
+    /// reference frame, which has MSD = 0).
+    ///
+    /// # Example (JavaScript)
+    ///
+    /// ```js
+    /// const results = msd.results();
+    /// results.forEach((r, t) => console.log(`t=${t}: MSD=${r.mean}`));
+    /// ```
+    pub fn results(&self) -> Vec<MSDResult> {
+        self.inner
+            .results()
+            .iter()
+            .map(|r| MSDResult { inner: r.clone() })
+            .collect()
+    }
+
+    /// Number of frames accumulated.
+    #[wasm_bindgen(getter)]
+    pub fn count(&self) -> usize {
+        self.inner.count()
+    }
+
+    /// Reset the analysis, clearing reference and all results.
+    pub fn reset(&mut self) {
+        self.inner.reset();
     }
 }
 
@@ -742,8 +639,8 @@ impl MSDResult {
 /// # Example (JavaScript)
 ///
 /// ```js
-/// const ns = new NeighborSearch(2.0);
-/// const nlist = ns.build(frame);
+/// const lc = new LinkedCell(2.0);
+/// const nlist = lc.build(frame);
 ///
 /// const cluster = new Cluster(5); // min 5 particles per cluster
 /// const result = cluster.compute(frame, nlist);
@@ -893,24 +790,13 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn neighbor_search_finds_pairs() {
+    fn linked_cell_build_finds_pairs() {
         let positions = [[1.0, 1.0, 1.0], [1.5, 1.0, 1.0], [8.0, 8.0, 8.0]];
         let frame = make_frame(&positions, 20.0);
 
-        let ns = NeighborSearch::new(2.0);
-        let nbrs = ns.build(&frame).unwrap();
+        let lc = LinkedCell::new(2.0);
+        let nbrs = lc.build(&frame).unwrap();
         assert!(nbrs.num_pairs() >= 1);
-    }
-
-    #[wasm_bindgen_test]
-    fn aabb_query_self() {
-        let positions = [[1.0, 1.0, 1.0], [1.5, 1.0, 1.0], [8.0, 8.0, 8.0]];
-        let frame = make_frame(&positions, 20.0);
-
-        let nq = AABBQuery::new(&frame, 2.0).unwrap();
-        let nlist = nq.query_self();
-        assert!(nlist.num_pairs() >= 1);
-        assert!(nlist.is_self_query());
     }
 
     #[wasm_bindgen_test]
@@ -923,8 +809,8 @@ mod tests {
             .collect();
         let frame = make_frame(&positions, 10.0);
 
-        let ns = NeighborSearch::new(4.0);
-        let nbrs = ns.build(&frame).unwrap();
+        let lc = LinkedCell::new(4.0);
+        let nbrs = lc.build(&frame).unwrap();
 
         let rdf = RDF::new(20, 4.0);
         let result = rdf.compute(&frame, &nbrs).unwrap();
@@ -935,33 +821,25 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn msd_zero_displacement() {
-        let positions = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
-        let frame = make_frame(&positions, 20.0);
-
-        let msd = MSD::from_reference(&frame).unwrap();
-        let result = msd.compute(&frame).unwrap();
-
-        assert!(result.mean() < 1e-6);
-        let pp = result.per_particle();
-        assert_eq!(pp.len(), 2);
-        for v in pp {
-            assert!(v < 1e-6);
-        }
-    }
-
-    #[wasm_bindgen_test]
-    fn msd_known_displacement() {
+    fn msd_feed_trajectory() {
         let ref_pos = [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]];
         let cur_pos = [[1.0, 0.0, 0.0], [0.0, 2.0, 0.0]];
         let ref_frame = make_frame(&ref_pos, 20.0);
         let cur_frame = make_frame(&cur_pos, 20.0);
 
-        let msd = MSD::from_reference(&ref_frame).unwrap();
-        let result = msd.compute(&cur_frame).unwrap();
+        let mut msd = MSD::new();
+        msd.feed(&ref_frame).unwrap();
+        msd.feed(&cur_frame).unwrap();
 
-        // particle 0: d^2 = 1, particle 1: d^2 = 4, mean = 2.5
-        assert!((result.mean() - 2.5).abs() < 1e-5);
+        assert_eq!(msd.count(), 2);
+        let results = msd.results();
+        assert_eq!(results.len(), 2);
+
+        // frame 0 vs itself = 0
+        assert!(results[0].mean() < 1e-6);
+
+        // frame 1: particle 0: d^2 = 1, particle 1: d^2 = 4, mean = 2.5
+        assert!((results[1].mean() - 2.5).abs() < 1e-5);
     }
 
     #[wasm_bindgen_test]
@@ -974,8 +852,8 @@ mod tests {
         ];
         let frame = make_frame(&positions, 20.0);
 
-        let ns = NeighborSearch::new(2.0);
-        let nbrs = ns.build(&frame).unwrap();
+        let lc = LinkedCell::new(2.0);
+        let nbrs = lc.build(&frame).unwrap();
 
         let cluster = Cluster::new(1);
         let result = cluster.compute(&frame, &nbrs).unwrap();
@@ -997,8 +875,8 @@ mod tests {
         ];
         let frame = make_frame(&positions, 20.0);
 
-        let ns = NeighborSearch::new(2.0);
-        let nbrs = ns.build(&frame).unwrap();
+        let lc = LinkedCell::new(2.0);
+        let nbrs = lc.build(&frame).unwrap();
 
         let cluster = Cluster::new(2);
         let result = cluster.compute(&frame, &nbrs).unwrap();

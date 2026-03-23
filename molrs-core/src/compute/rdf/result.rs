@@ -5,15 +5,15 @@ use ndarray::Array1;
 /// Result of an RDF computation on a single frame.
 #[derive(Debug, Clone)]
 pub struct RDFResult {
-    /// Bin edges (n_bins + 1).
+    /// Bin edges in angstrom (n_bins + 1).
     pub bin_edges: Array1<F>,
-    /// Bin centers (n_bins).
+    /// Bin centers in angstrom (n_bins).
     pub bin_centers: Array1<F>,
-    /// Normalized g(r). Valid for single-frame results.
+    /// Normalized g(r), dimensionless. Valid for single-frame results.
     /// After accumulation via `SumReducer`, call [`normalize`](Self::normalize)
     /// to recompute from accumulated `n_r`.
     pub rdf: Array1<F>,
-    /// Raw pair count per bin.
+    /// Raw pair count per bin (dimensionless).
     pub n_r: Array1<F>,
     /// Number of reference points (for normalization). Sum across frames when accumulated.
     pub n_points: usize,
@@ -21,7 +21,7 @@ pub struct RDFResult {
     pub n_query_points: usize,
     /// Query mode (self-query or cross-query).
     pub mode: QueryMode,
-    /// Box volume (for normalization). Sum across frames when accumulated.
+    /// Box volume in A^3 (for normalization). Sum across frames when accumulated.
     pub volume: F,
 }
 

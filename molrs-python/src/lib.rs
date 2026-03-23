@@ -12,7 +12,7 @@
 //! | `Frame`              | [`PyFrame`]       | Collection of named `Block`s + `SimBox`    |
 //! | `Box`                | [`PyBox`]         | Simulation box / periodic boundaries       |
 //! | `LinkedCell`         | [`PyLinkedCell`]  | Link-cell neighbor list (legacy API)       |
-//! | `AABBQuery`          | [`PyAABBQuery`]   | AABB spatial query (freud-style API)       |
+//! | `NeighborQuery`      | [`PyNeighborQuery`]| Spatial neighbor query (freud-style API)   |
 //! | `NeighborList`       | [`PyNeighborList`]| Query result with pair indices + distances |
 //! | `Atomistic`          | [`PyAtomistic`]   | All-atom molecular graph                   |
 //! | `Packer`             | [`PyPacker`]      | Molecular packing (Packmol port)           |
@@ -35,7 +35,7 @@ mod simbox;
 use simbox::PyBox;
 
 mod linkedcell;
-use linkedcell::{PyAABBQuery, PyLinkedCell, PyNeighborList};
+use linkedcell::{PyLinkedCell, PyNeighborList, PyNeighborQuery};
 
 mod block;
 use block::PyBlock;
@@ -80,7 +80,7 @@ fn molrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // SimBox + neighbors
     m.add_class::<PyBox>()?;
     m.add_class::<PyLinkedCell>()?;
-    m.add_class::<PyAABBQuery>()?;
+    m.add_class::<PyNeighborQuery>()?;
     m.add_class::<PyNeighborList>()?;
 
     // Block + Frame

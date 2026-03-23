@@ -66,7 +66,7 @@ molrs-core ← molrs-pack ← molrs-md
 
 ### Block (heterogeneous column store)
 
-`Block` maps string keys to typed ndarray columns (f32, f64, i64, bool). Enforces consistent `nrows` across all columns. Type-safe access via `get_f32()`, `get_f64()`, etc. (`molrs-core/src/block/`).
+`Block` maps string keys to typed ndarray columns (f32, f64, i64, bool). Enforces consistent `nrows` across all columns. Type-safe access via `get_float()`, `get_int()`, `get_bool()`, `get_uint()`, `get_u8()`, `get_string()`. (`molrs-core/src/block/`).
 
 ### Frame (hierarchical data container)
 
@@ -80,7 +80,7 @@ Graph-based molecular structure with atoms, bonds, stereochemistry, ring detecti
 
 | Trait | Module | Purpose | Key Implementations |
 |---|---|---|---|
-| `NbListAlgo` | `neighbors/` | Neighbor search | `LinkCell` (O(N), default), `BruteForce` (O(N²), testing) |
+| `NbListAlgo` | `neighbors/` | Neighbor search | `LinkCell` (O(N), default), `BruteForce` (O(N²), testing), `NeighborQuery` (high-level wrapper) |
 | `Potential` | `potential/` | Energy/force evaluation | Bond harmonic, MMFF bond/angle/torsion/oop/vdw/ele, LJ/cut, PME |
 | `Fix` | `molrs-md/run/fix.rs` | MD integrator plugins | NVE, NVT, Langevin |
 | `Dump` | `molrs-md/run/dump.rs` | MD output plugins | DumpZarr |
@@ -93,6 +93,10 @@ Graph-based molecular structure with atoms, bonds, stereochemistry, ring detecti
 ### Potential System (molrs-core/src/potential/)
 
 `KernelRegistry` maps `(category, style_name)` → `KernelConstructor`. Categories: bonds, angles, dihedrals, impropers, pairs, kspace. `ForceField::compile(frame)` resolves topology and constructs `Potentials` (aggregate sum). Coordinate format: flat `[x0,y0,z0, x1,y1,z1, ...]` (3N elements). MMFF94 parameters embedded at compile time from `data/mmff94.xml`.
+
+### Free-Boundary Support
+
+`SimBox::free(points, padding)` creates a non-periodic bounding box from atom positions. `NeighborQuery::free(points, cutoff)` and the WASM `LinkedCell` class auto-generate this box when no SimBox is present. RDF normalization falls back to bounding-box volume for free-boundary systems.
 
 ### Gen3D Pipeline (molrs-core/src/gen3d/)
 
