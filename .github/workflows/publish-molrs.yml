@@ -1,0 +1,57 @@
+name: Publish molrs to crates.io
+
+on:
+  push:
+    branches: [ master ]
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Cache test data
+        uses: actions/cache@v4
+        with:
+          path: molrs-core/target/tests-data
+          key: ${{ runner.os }}-test-data-${{ hashFiles('scripts/fetch-test-data.sh') }}
+          restore-keys: |
+            ${{ runner.os }}-test-data-
+
+      - name: Fetch test data
+        run: bash scripts/fetch-test-data.sh
+
+      - name: Verify
+        run: |
+          cargo fmt --check
+          cargo test --workspace --lib --tests --examples
+          cargo bench -p molcrafts-molrs --no-run
+          cargo test -p molcrafts-molrs --lib --tests --examples --features "filesystem f64"
+          cargo bench -p molcrafts-molrs --no-run --features "filesystem f64"
+          cargo test -p molcrafts-molrs-pack --lib --tests --examples --features f64
+          cargo package --manifest-path molrs-core/Cargo.toml --allow-dirty --no-verify
+
+      - name: Authenticate with crates.io (Trusted Publishing)
+        id: crates-io-auth
+        uses: rust-lang/crates-io-auth-action@v1
+
+      - name: Publish to crates.io
+        run: cargo publish --manifest-path molrs-core/Cargo.toml
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-io-auth.outputs.token }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true

@@ -1,0 +1,88 @@
+//! WebAssembly bindings for the molrs molecular simulation toolkit.
+//!
+//! Provides a JavaScript/TypeScript-friendly API for molecular data
+//! manipulation, file I/O, 3D coordinate generation, and trajectory
+//! analysis. Built on top of [`molrs_ffi`] handle-based architecture
+//! for safe, single-threaded WASM usage.
+//!
+//! # Architecture
+//!
+//! The WASM API mirrors the core Rust data model:
+//!
+//! - **[`Frame`]** -- hierarchical container mapping string keys
+//!   (e.g., `"atoms"`, `"bonds"`) to typed [`Block`]s.
+//! - **[`Block`]** -- column-oriented data store with typed columns
+//!   (`f32`, `i32`, `u32`, `string`). Accessed via JS typed arrays
+//!   (`Float32Array`, `Int32Array`, `Uint32Array`, `Array<string>`).
+//! - **[`Box`]** (exported as `Box` in JS) -- simulation box defining
+//!   periodic boundary conditions and coordinate transformations.
+//! - **[`WasmArray`]** -- owned f32 array with ndarray-compatible shape
+//!   metadata for passing multi-dimensional data across the WASM boundary.
+//!
+//! # Modules
+//!
+//! | JS module  | Purpose |
+//! |------------|---------|
+//! | `core`     | Frame, Block, Box, WasmArray |
+//! | `io`       | File readers/writers (XYZ, PDB, LAMMPS, SMILES, Zarr) |
+//! | `gen3d`    | 3D coordinate generation from molecular graphs |
+//! | `compute`  | Analysis: RDF, MSD, Cluster, neighbor search |
+//!
+//! # Quick start (JavaScript)
+//!
+//! ```js
+//! import init, { parseSMILES, generate3D, writeFrame } from "molrs-wasm";
+//!
+//! await init();
+//!
+//! const ir    = parseSMILES("CCO");
+//! const frame = ir.toFrame();
+//! const mol3d = generate3D(frame, "fast");
+//! const xyz   = writeFrame(mol3d, "xyz");
+//! console.log(xyz);
+//! ```
+
+use js_sys::WebAssembly::Memory;
+use wasm_bindgen::JsCast;
+use wasm_bindgen::prelude::*;
+
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = console)]
+    fn log(s: &str);
+}
+
+/// WASM module entry point. Installs the panic hook so that Rust panics
+/// are forwarded to the browser console as readable stack traces.
+#[wasm_bindgen(start)]
+pub fn start() {
+    console_error_panic_hook::set_once();
+}
+
+/// Return a handle to the WASM linear memory.
+///
+/// Useful for advanced interop where JS code needs direct access to the
+/// WASM memory buffer (e.g., for zero-copy typed-array views).
+///
+/// # Example (JavaScript)
+///
+/// ```js
+/// const mem = wasmMemory();
+/// const buf = new Float32Array(mem.buffer, ptr, len);
+/// ```
+#[wasm_bindgen(js_name = wasmMemory)]
+pub fn wasm_memory() -> Memory {
+    wasm_bindgen::memory().unchecked_into()
+}
+
+// Module declarations
+mod compute;
+mod core;
+mod gen3d;
+mod io;
+
+// Re-exports following molrs-core layout.
+pub use compute::*;
+pub use core::{Block, Box, Frame, WasmArray};
+pub use gen3d::*;
+pub use io::*;

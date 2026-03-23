@@ -1,0 +1,27 @@
+[package]
+name = "molcrafts-molrs-ffi"
+version = "0.0.4"
+edition = "2024"
+authors = ["MolCrafts"]
+description = "FFI layer for molrs with handle-based abstractions"
+license = "BSD-3-Clause"
+repository = "https://github.com/MolCrafts/molrs"
+homepage = "https://github.com/MolCrafts/molrs"
+
+[lib]
+name = "molrs_ffi"
+
+[workspace]
+
+[features]
+f64 = ["molrs/f64"]
+i64 = ["molrs/i64"]
+u64 = ["molrs/u64"]
+wide = ["f64", "i64", "u64"]
+
+[dependencies]
+molrs = { path = "../molrs-core", package = "molcrafts-molrs", version = "0.0.4", default-features = false }
+slotmap = "1.0"
+
+[dev-dependencies]
+ndarray = "0.17"

@@ -1,0 +1,152 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ dev, master ]
+    tags: 'v*'
+  pull_request:
+    branches: [ dev, master ]
+  workflow_dispatch:
+
+jobs:
+
+  test-molrs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache test data
+        uses: actions/cache@v4
+        with:
+          path: molrs-core/target/tests-data
+          key: ${{ runner.os }}-test-data-${{ hashFiles('scripts/fetch-test-data.sh') }}
+          restore-keys: |
+            ${{ runner.os }}-test-data-
+
+      - name: Fetch test data
+        run: bash scripts/fetch-test-data.sh
+
+      - name: Clippy
+        run: |
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo clippy -p molcrafts-molrs --all-targets --features "filesystem f64" -- -D warnings
+          cargo clippy -p molcrafts-molrs-pack --all-targets --features f64 -- -D warnings
+
+      - name: Test molrs
+        run: |
+          cargo test --workspace --lib --tests --examples
+          cargo bench -p molcrafts-molrs --no-run
+          cargo test -p molcrafts-molrs --lib --tests --examples --features "filesystem f64"
+          cargo bench -p molcrafts-molrs --no-run --features "filesystem f64"
+          cargo test -p molcrafts-molrs-pack --lib --tests --examples --features f64
+
+  test-python:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache test data
+        uses: actions/cache@v4
+        with:
+          path: molrs-core/target/tests-data
+          key: ${{ runner.os }}-test-data-${{ hashFiles('scripts/fetch-test-data.sh') }}
+          restore-keys: |
+            ${{ runner.os }}-test-data-
+
+      - name: Fetch test data
+        run: bash scripts/fetch-test-data.sh
+
+      - name: Install Python build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install maturin pytest numpy
+
+      - name: Build wheel
+        working-directory: molrs-python
+        run: maturin build
+
+      - name: Install built wheel
+        working-directory: molrs-python
+        run: python -m pip install target/wheels/*.whl
+
+      - name: Test Python package
+        working-directory: molrs-python
+        run: pytest -q
+
+  test-capi-cpp:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build molrs-capi (generates header via cbindgen)
+        run: cargo build --manifest-path molrs-capi/Cargo.toml
+
+      - name: Configure C++ integration tests
+        working-directory: molrs-capi
+        run: cmake -S tests/cpp -B build-test
+
+      - name: Build C++ integration tests
+        working-directory: molrs-capi
+        run: cmake --build build-test
+
+      - name: Run C++ integration tests
+        working-directory: molrs-capi
+        run: ctest --test-dir build-test --output-on-failure
+
+  test-wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+          targets: wasm32-unknown-unknown
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack
+
+      - name: Build wasm
+        working-directory: molrs-wasm
+        run: wasm-pack build --target web
+
+  formatting:
+    name: cargo fmt
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Rustfmt Check
+        run: cargo fmt --check

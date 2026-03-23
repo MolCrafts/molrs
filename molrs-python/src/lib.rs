@@ -1,0 +1,138 @@
+//! Python bindings for the molrs molecular simulation library.
+//!
+//! This crate provides PyO3-based Python bindings (`import molrs`) exposing
+//! the core data model, I/O, neighbor search, force-field evaluation,
+//! 3D coordinate generation, molecular packing, and analysis routines.
+//!
+//! # Module Layout
+//!
+//! | Python class         | Rust wrapper      | Purpose                                    |
+//! |----------------------|-------------------|--------------------------------------------|
+//! | `Block`              | [`PyBlock`]       | Heterogeneous column store (numpy arrays)  |
+//! | `Frame`              | [`PyFrame`]       | Collection of named `Block`s + `SimBox`    |
+//! | `Box`                | [`PyBox`]         | Simulation box / periodic boundaries       |
+//! | `LinkedCell`         | [`PyLinkedCell`]  | Link-cell neighbor list (legacy API)       |
+//! | `AABBQuery`          | [`PyAABBQuery`]   | AABB spatial query (freud-style API)       |
+//! | `NeighborList`       | [`PyNeighborList`]| Query result with pair indices + distances |
+//! | `Atomistic`          | [`PyAtomistic`]   | All-atom molecular graph                   |
+//! | `Packer`             | [`PyPacker`]      | Molecular packing (Packmol port)           |
+//! | `Target`             | [`PyTarget`]      | Molecule specification for packing         |
+//! | `MMFFTypifier`       | [`PyMMFFTypifier`]| MMFF94 atom-type assignment                |
+//! | `Potentials`         | [`PyPotentials`]  | Compiled energy/force evaluator            |
+//! | `RDF` / `MSD` / `Cluster` |              | Structural analysis                        |
+//!
+//! # Float Precision
+//!
+//! By default all floating-point arrays use `f32` (numpy `float32`).
+//! Enable the `f64` feature for double precision (`float64`).
+
+use pyo3::prelude::*;
+
+mod helpers;
+mod store;
+
+mod simbox;
+use simbox::PyBox;
+
+mod linkedcell;
+use linkedcell::{PyAABBQuery, PyLinkedCell, PyNeighborList};
+
+mod block;
+use block::PyBlock;
+
+mod frame;
+use frame::PyFrame;
+
+mod io;
+
+mod region;
+use region::{PyHollowSphere, PyRegion, PySphere};
+
+mod constraint;
+use constraint::{
+    PyAbovePlane, PyBelowPlane, PyInsideBox, PyInsideSphere, PyMoleculeConstraint, PyOutsideSphere,
+};
+
+mod target;
+use target::PyTarget;
+
+mod packer;
+use packer::{PyPackResult, PyPacker};
+
+pub(crate) mod molgraph;
+use molgraph::PyAtomistic;
+
+mod gen3d;
+use gen3d::{PyGen3DOptions, PyGen3DReport, PyGen3DResult, PyStageReport};
+
+mod forcefield;
+use forcefield::{PyMMFFTypifier, PyPotentials};
+
+mod compute;
+use compute::{PyCluster, PyClusterResult, PyMSD, PyMSDResult, PyRDF, PyRDFResult};
+
+/// Root Python module for the molrs library.
+///
+/// Registered classes and free functions are listed in the module-level
+/// documentation above.
+#[pymodule]
+fn molrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // SimBox + neighbors
+    m.add_class::<PyBox>()?;
+    m.add_class::<PyLinkedCell>()?;
+    m.add_class::<PyAABBQuery>()?;
+    m.add_class::<PyNeighborList>()?;
+
+    // Block + Frame
+    m.add_class::<PyBlock>()?;
+    m.add_class::<PyFrame>()?;
+
+    // I/O + SMILES
+    m.add_function(wrap_pyfunction!(io::read_pdb, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_xyz, m)?)?;
+    m.add_function(wrap_pyfunction!(io::parse_smiles, m)?)?;
+    m.add_class::<io::PySmilesIR>()?;
+
+    // Regions
+    m.add_class::<PySphere>()?;
+    m.add_class::<PyHollowSphere>()?;
+    m.add_class::<PyRegion>()?;
+
+    // Constraints
+    m.add_class::<PyInsideBox>()?;
+    m.add_class::<PyInsideSphere>()?;
+    m.add_class::<PyOutsideSphere>()?;
+    m.add_class::<PyAbovePlane>()?;
+    m.add_class::<PyBelowPlane>()?;
+    m.add_class::<PyMoleculeConstraint>()?;
+
+    // Packer
+    m.add_class::<PyTarget>()?;
+    m.add_class::<PyPacker>()?;
+    m.add_class::<PyPackResult>()?;
+
+    // Molecular graph
+    m.add_class::<PyAtomistic>()?;
+
+    // Gen3D
+    m.add_class::<PyGen3DOptions>()?;
+    m.add_class::<PyGen3DReport>()?;
+    m.add_class::<PyGen3DResult>()?;
+    m.add_class::<PyStageReport>()?;
+    m.add_function(wrap_pyfunction!(gen3d::generate_3d_py, m)?)?;
+
+    // Force field
+    m.add_class::<PyMMFFTypifier>()?;
+    m.add_class::<PyPotentials>()?;
+    m.add_function(wrap_pyfunction!(forcefield::extract_coords_py, m)?)?;
+
+    // Compute analyses
+    m.add_class::<PyRDF>()?;
+    m.add_class::<PyRDFResult>()?;
+    m.add_class::<PyMSD>()?;
+    m.add_class::<PyMSDResult>()?;
+    m.add_class::<PyCluster>()?;
+    m.add_class::<PyClusterResult>()?;
+
+    Ok(())
+}

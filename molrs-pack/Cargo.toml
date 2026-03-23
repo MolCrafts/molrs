@@ -1,0 +1,27 @@
+[package]
+name = "molcrafts-molrs-pack"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Faithful Rust port of Packmol molecular packing"
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+name = "molrs_pack"
+
+[dependencies]
+molrs = { path = "../molrs-core", package = "molcrafts-molrs", version = "0.0.4", default-features = false }
+rand = "0.9"
+ndarray = "0.17"
+log = "0.4"
+env_logger = "0.11"
+
+[features]
+default = []
+f64 = ["molrs/f64"]
+i64 = ["molrs/i64"]
+u64 = ["molrs/u64"]
+wide = ["f64", "i64", "u64"]
+filesystem = ["molrs/filesystem"]

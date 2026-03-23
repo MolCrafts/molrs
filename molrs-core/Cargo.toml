@@ -1,0 +1,48 @@
+[package]
+name = "molcrafts-molrs"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "MolCrafts molecular modeling core library"
+homepage.workspace = true
+repository.workspace = true
+
+[lib]
+name = "molrs"
+
+[features]
+default = ["rayon"]
+slow-tests = []
+blas = ["ndarray-linalg"]
+rayon = []
+zarr = ["dep:zarrs", "dep:serde_json"]
+filesystem = ["zarr", "zarrs/filesystem"]
+f64 = []
+i64 = []
+u64 = []
+wide = ["f64", "i64", "u64"]
+
+[dependencies]
+ndarray = "0.17"
+flate2 = { version = "1.0", features = ["rust_backend"] }
+rayon = "1.11"
+ndarray-linalg = { version = "0.18", optional = true, default-features = true }
+rand = "0.9"
+wide = "0.7"
+once_cell = "1.20"
+slotmap = "1"
+petgraph = "0.7"
+zarrs = { version = "0.23", optional = true, features = ["ndarray"], default-features = false }
+serde_json = { version = "1", optional = true }
+rustfft = "6"
+libm = "0.2"
+roxmltree = "0.20"
+
+[dev-dependencies]
+criterion = "0.5"
+tempfile = "3.0"
+
+[[bench]]
+name = "benchmarks"
+harness = false

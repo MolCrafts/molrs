@@ -1,0 +1,235 @@
+//! Target builder for molecular packing.
+
+use crate::constraint::{AtomConstraint, MoleculeConstraint};
+use crate::frame::frame_to_coords_and_elements;
+use crate::hook::Hook;
+use molrs::types::F;
+
+/// Centering behavior for structure coordinates.
+///
+/// Packmol semantics:
+/// - `Auto`: free molecules are centered; fixed molecules are not centered.
+/// - `Center` / `CenterOfMass`: force centering.
+/// - `None`: keep input coordinates unchanged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CenteringMode {
+    #[default]
+    Auto,
+    Center,
+    CenterOfMass,
+    None,
+}
+
+/// Fixed molecule placement (Euler angles in "human" convention + translation).
+#[derive(Debug, Clone)]
+pub struct FixedPlacement {
+    /// Translation vector [x, y, z].
+    pub position: [F; 3],
+    /// Euler angles [beta, gama, teta] in the `eulerfixed` convention (x/y/z rotations).
+    pub euler: [F; 3],
+}
+
+/// Describes one type of molecule to be packed.
+#[derive(Debug, Clone)]
+pub struct Target {
+    /// Input coordinates as provided by the source structure.
+    pub input_coords: Vec<[F; 3]>,
+    /// Flat list of atom positions — the reference (COM-centered) coordinates.
+    /// Shape: natoms × 3, stored as Vec<[F; 3]>.
+    pub ref_coords: Vec<[F; 3]>,
+    /// Van der Waals radii per atom.
+    pub radii: Vec<F>,
+    /// Element symbols per atom (e.g. `"C"`, `"O"`). Defaults to `"X"` if unknown.
+    pub elements: Vec<String>,
+    /// Number of copies to pack.
+    pub count: usize,
+    /// Optional name for logging.
+    pub name: Option<String>,
+    /// Constraint applied to every atom of every molecule copy.
+    pub molecule_constraint: MoleculeConstraint,
+    /// Per-atom constraints (only some atoms are constrained).
+    pub atom_constraints: Vec<AtomConstraint>,
+    /// Optional structure-level limit for movebad (`maxmove` in Packmol).
+    pub maxmove: Option<usize>,
+    /// Centering policy matching Packmol `center` / `centerofmass`.
+    pub centering: CenteringMode,
+    /// Rotation constraints in Euler variable order:
+    /// [beta(y), gama(z), teta(x)] => (center_rad, half_width_rad).
+    pub constrain_rotation: [Option<(F, F)>; 3],
+    /// If Some, this molecule is fixed (one copy, placed at the given location).
+    pub fixed_at: Option<FixedPlacement>,
+    /// Per-target in-loop hooks (e.g. torsion MC). Called in order each iteration.
+    pub hooks: Vec<Box<dyn Hook>>,
+}
+
+impl Target {
+    /// Create a new target from a `molrs::Frame` (read from PDB/XYZ) and a copy count.
+    ///
+    /// Positions are extracted from the `"atoms"` block (`"x"`, `"y"`, `"z"` columns)
+    /// and automatically centered at center of mass.
+    /// VdW radii and element symbols are looked up from the `"element"` column.
+    pub fn new(frame: molrs::Frame, count: usize) -> Self {
+        let (positions, radii, elements) = frame_to_coords_and_elements(&frame);
+        let mut t = Self::from_coords(&positions, &radii, count);
+        t.elements = elements;
+        t
+    }
+
+    /// Create a new target directly from coordinate arrays.
+    ///
+    /// Useful for testing or when coordinates are already available.
+    /// Stores both raw input coordinates and a COM-centered reference copy.
+    /// Effective usage follows [`CenteringMode::Auto`] unless overridden.
+    pub fn from_coords(frame_positions: &[[F; 3]], radii: &[F], count: usize) -> Self {
+        assert_eq!(
+            frame_positions.len(),
+            radii.len(),
+            "positions and radii must have the same length"
+        );
+        let input_coords = frame_positions.to_vec();
+        let ref_coords = centered_coords(frame_positions);
+
+        let n = ref_coords.len();
+        Self {
+            input_coords,
+            ref_coords,
+            radii: radii.to_vec(),
+            elements: vec!["X".to_string(); n],
+            count,
+            name: None,
+            molecule_constraint: MoleculeConstraint::new(),
+            atom_constraints: Vec::new(),
+            maxmove: None,
+            centering: CenteringMode::Auto,
+            constrain_rotation: [None, None, None],
+            fixed_at: None,
+            hooks: Vec::new(),
+        }
+    }
+
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    /// Add a constraint applied to every atom of every molecule copy.
+    pub fn with_constraint(mut self, c: impl Into<MoleculeConstraint>) -> Self {
+        self.molecule_constraint = self.molecule_constraint.and(c.into());
+        self
+    }
+
+    /// Add a constraint for selected atoms of every molecule copy.
+    ///
+    /// # Atom indexing
+    ///
+    /// Indices follow **Packmol's 1-based convention**: atom `1` is the first
+    /// atom in the PDB/XYZ file. They are converted to 0-based internally.
+    /// For example, `&[1, 2, 3]` selects the first three atoms.
+    pub fn with_constraint_for_atoms(
+        mut self,
+        indices: &[usize],
+        c: impl Into<MoleculeConstraint>,
+    ) -> Self {
+        let mc = c.into();
+        // Convert from 1-indexed (Packmol convention, atoms 1..N) to 0-indexed.
+        let zero_indexed: Vec<usize> = indices.iter().map(|&i| i.saturating_sub(1)).collect();
+        self.atom_constraints.push(AtomConstraint {
+            atom_indices: zero_indexed,
+            restraints: mc.restraints,
+        });
+        self
+    }
+
+    /// Attach an in-loop hook for this target.
+    ///
+    /// Multiple hooks can be attached (called in order).
+    /// Hooks require `count == 1` because all copies share reference coords.
+    ///
+    /// Mirrors `with_constraint()` for the constraint system.
+    pub fn with_hook(mut self, hook: impl Hook + 'static) -> Self {
+        assert!(
+            self.count <= 1,
+            "hooks require count == 1 (all copies share ref coords)"
+        );
+        self.hooks.push(Box::new(hook));
+        self
+    }
+
+    /// Set structure-level `maxmove` for movebad heuristic.
+    pub fn with_maxmove(mut self, maxmove: usize) -> Self {
+        self.maxmove = Some(maxmove);
+        self
+    }
+
+    /// Equivalent to Packmol `center` keyword for this structure.
+    pub fn with_center(mut self) -> Self {
+        self.centering = CenteringMode::Center;
+        self
+    }
+
+    /// Equivalent to Packmol `centerofmass` keyword for this structure.
+    pub fn with_center_of_mass(mut self) -> Self {
+        self.centering = CenteringMode::CenterOfMass;
+        self
+    }
+
+    /// Keep input coordinates unchanged (disable automatic centering).
+    pub fn without_centering(mut self) -> Self {
+        self.centering = CenteringMode::None;
+        self
+    }
+
+    /// Equivalent to Packmol `constrain_rotation x center delta` (degrees).
+    pub fn constrain_rotation_x(mut self, center_deg: F, half_width_deg: F) -> Self {
+        self.constrain_rotation[2] = Some((deg_to_rad(center_deg), deg_to_rad(half_width_deg)));
+        self
+    }
+
+    /// Equivalent to Packmol `constrain_rotation y center delta` (degrees).
+    pub fn constrain_rotation_y(mut self, center_deg: F, half_width_deg: F) -> Self {
+        self.constrain_rotation[0] = Some((deg_to_rad(center_deg), deg_to_rad(half_width_deg)));
+        self
+    }
+
+    /// Equivalent to Packmol `constrain_rotation z center delta` (degrees).
+    pub fn constrain_rotation_z(mut self, center_deg: F, half_width_deg: F) -> Self {
+        self.constrain_rotation[1] = Some((deg_to_rad(center_deg), deg_to_rad(half_width_deg)));
+        self
+    }
+
+    /// Fix this molecule at a specific position with zero rotation.
+    pub fn fixed_at(mut self, position: [F; 3]) -> Self {
+        self.fixed_at = Some(FixedPlacement {
+            position,
+            euler: [0.0, 0.0, 0.0],
+        });
+        self.count = 1;
+        self
+    }
+
+    /// Fix this molecule at a specific position and Euler orientation.
+    pub fn fixed_at_with_euler(mut self, position: [F; 3], euler: [F; 3]) -> Self {
+        self.fixed_at = Some(FixedPlacement { position, euler });
+        self.count = 1;
+        self
+    }
+
+    pub fn natoms(&self) -> usize {
+        self.ref_coords.len()
+    }
+}
+
+fn centered_coords(coords: &[[F; 3]]) -> Vec<[F; 3]> {
+    let n = coords.len() as F;
+    let cx = coords.iter().map(|p| p[0]).sum::<F>() / n;
+    let cy = coords.iter().map(|p| p[1]).sum::<F>() / n;
+    let cz = coords.iter().map(|p| p[2]).sum::<F>() / n;
+    coords
+        .iter()
+        .map(|p| [p[0] - cx, p[1] - cy, p[2] - cz])
+        .collect()
+}
+
+fn deg_to_rad(v: F) -> F {
+    v * (std::f64::consts::PI as F) / 180.0
+}

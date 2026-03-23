@@ -1,0 +1,209 @@
+//! `repr(C)` handle types and internal conversion utilities.
+//!
+//! Each public handle type is a plain-old-data struct that fits in two
+//! machine words and can be freely copied, stored, and passed by value
+//! in C code.  Internally, each handle packs a SlotMap key (index +
+//! generation) so that stale handles are detected at runtime.
+//!
+//! The conversion functions in this module are `pub(crate)` and not
+//! part of the C ABI.
+
+use molrs_ffi::{BlockHandle, FrameId};
+use slotmap::{Key, new_key_type};
+
+// --- SlotMap keys for SimBox and ForceField ---
+
+new_key_type! {
+    /// Key for SimBox entries in the CStore.
+    pub struct SimBoxKey;
+}
+
+new_key_type! {
+    /// Key for ForceField entries in the CStore.
+    pub struct FFKey;
+}
+
+// --- repr(C) handle structs ---
+
+/// Opaque handle to a Frame stored in the global object store.
+///
+/// Obtained from [`molrs_frame_new`](crate::frame::molrs_frame_new) or
+/// [`molrs_frame_from_smiles`](crate::frame::molrs_frame_from_smiles).
+/// Freed with [`molrs_frame_drop`](crate::frame::molrs_frame_drop).
+///
+/// # Layout (C)
+///
+/// ```c
+/// typedef struct {
+///     uint32_t idx;      /* slot index       */
+///     uint32_t version;  /* generation count  */
+/// } MolrsFrameHandle;
+/// ```
+///
+/// Both fields are opaque -- C callers should never interpret them
+/// directly.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct MolrsFrameHandle {
+    /// Slot index (opaque).
+    pub idx: u32,
+    /// Generation counter for stale-handle detection (opaque).
+    pub version: u32,
+}
+
+/// Opaque handle to a Block (column group) inside a Frame.
+///
+/// A block handle is obtained from
+/// [`molrs_frame_get_block`](crate::frame::molrs_frame_get_block) and
+/// carries an embedded [`MolrsFrameHandle`], an interned key identifier,
+/// and a version counter for invalidation tracking.
+///
+/// When a block is mutated through `_mut` accessors, the
+/// `block_version` is bumped so that stale handles from earlier reads
+/// are detected.
+///
+/// # Layout (C)
+///
+/// ```c
+/// typedef struct {
+///     MolrsFrameHandle frame;     /* owning frame       */
+///     uint32_t         key_id;    /* interned block key  */
+///     uint64_t         block_version; /* version counter */
+/// } MolrsBlockHandle;
+/// ```
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct MolrsBlockHandle {
+    /// Handle of the frame that owns this block.
+    pub frame: MolrsFrameHandle,
+    /// Interned key identifier (see [`molrs_intern_key`](crate::molrs_intern_key)).
+    pub key_id: u32,
+    /// Version counter; bumped on mutation for stale-handle detection.
+    pub block_version: u64,
+}
+
+/// Opaque handle to a SimBox (simulation cell) in the global store.
+///
+/// Obtained from [`molrs_simbox_new`](crate::simbox::molrs_simbox_new),
+/// [`molrs_simbox_cube`](crate::simbox::molrs_simbox_cube), or
+/// [`molrs_simbox_ortho`](crate::simbox::molrs_simbox_ortho).
+/// Freed with [`molrs_simbox_drop`](crate::simbox::molrs_simbox_drop).
+///
+/// # Layout (C)
+///
+/// ```c
+/// typedef struct {
+///     uint32_t idx;
+///     uint32_t version;
+/// } MolrsSimBoxHandle;
+/// ```
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct MolrsSimBoxHandle {
+    /// Slot index (opaque).
+    pub idx: u32,
+    /// Generation counter (opaque).
+    pub version: u32,
+}
+
+/// Opaque handle to a ForceField in the global store.
+///
+/// Obtained from [`molrs_ff_new`](crate::forcefield::molrs_ff_new) or
+/// [`molrs_ff_from_json`](crate::forcefield::molrs_ff_from_json).
+/// Freed with [`molrs_ff_drop`](crate::forcefield::molrs_ff_drop).
+///
+/// # Layout (C)
+///
+/// ```c
+/// typedef struct {
+///     uint32_t idx;
+///     uint32_t version;
+/// } MolrsForceFieldHandle;
+/// ```
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct MolrsForceFieldHandle {
+    /// Slot index (opaque).
+    pub idx: u32,
+    /// Generation counter (opaque).
+    pub version: u32,
+}
+
+// --- Conversion: FrameId ↔ MolrsFrameHandle ---
+
+pub(crate) fn frame_id_to_handle(id: FrameId) -> MolrsFrameHandle {
+    let ffi = id.data().as_ffi();
+    MolrsFrameHandle {
+        idx: ffi as u32,
+        version: (ffi >> 32) as u32,
+    }
+}
+
+pub(crate) fn handle_to_frame_id(h: MolrsFrameHandle) -> FrameId {
+    let ffi = (h.version as u64) << 32 | h.idx as u64;
+    FrameId::from(slotmap::KeyData::from_ffi(ffi))
+}
+
+// --- Conversion: SimBoxKey ↔ MolrsSimBoxHandle ---
+
+pub(crate) fn simbox_key_to_handle(key: SimBoxKey) -> MolrsSimBoxHandle {
+    let ffi = key.data().as_ffi();
+    MolrsSimBoxHandle {
+        idx: ffi as u32,
+        version: (ffi >> 32) as u32,
+    }
+}
+
+pub(crate) fn handle_to_simbox_key(h: MolrsSimBoxHandle) -> SimBoxKey {
+    let ffi = (h.version as u64) << 32 | h.idx as u64;
+    SimBoxKey::from(slotmap::KeyData::from_ffi(ffi))
+}
+
+// --- Conversion: FFKey ↔ MolrsForceFieldHandle ---
+
+pub(crate) fn ff_key_to_handle(key: FFKey) -> MolrsForceFieldHandle {
+    let ffi = key.data().as_ffi();
+    MolrsForceFieldHandle {
+        idx: ffi as u32,
+        version: (ffi >> 32) as u32,
+    }
+}
+
+pub(crate) fn handle_to_ff_key(h: MolrsForceFieldHandle) -> FFKey {
+    let ffi = (h.version as u64) << 32 | h.idx as u64;
+    FFKey::from(slotmap::KeyData::from_ffi(ffi))
+}
+
+// --- Conversion: BlockHandle ↔ MolrsBlockHandle ---
+
+/// Convert a Rust `BlockHandle` to a C `MolrsBlockHandle`.
+///
+/// Requires the CStore to look up the interned key_id.
+pub(crate) fn block_handle_to_c(
+    bh: &BlockHandle,
+    key_to_id: &std::collections::HashMap<String, u32>,
+) -> Option<MolrsBlockHandle> {
+    let key_id = key_to_id.get(bh.key())?;
+    Some(MolrsBlockHandle {
+        frame: frame_id_to_handle(bh.frame_id()),
+        key_id: *key_id,
+        block_version: bh.version(),
+    })
+}
+
+/// Convert a C `MolrsBlockHandle` to a Rust `BlockHandle`.
+///
+/// Requires the CStore to look up the key string from key_id.
+pub(crate) fn c_to_block_handle(
+    ch: &MolrsBlockHandle,
+    interned_keys: &[std::ffi::CString],
+) -> Option<BlockHandle> {
+    let key_cstr = interned_keys.get(ch.key_id as usize)?;
+    let key_str = key_cstr.to_str().ok()?;
+    let frame_id = handle_to_frame_id(ch.frame);
+    Some(BlockHandle::new(
+        frame_id,
+        key_str.to_owned(),
+        ch.block_version,
+    ))
+}
