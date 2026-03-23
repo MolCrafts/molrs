@@ -14,9 +14,11 @@
 //! | `XYZReader` | XYZ / ExtXYZ | Yes | `"atoms"` block with `element`, `x`, `y`, `z` |
 //! | `PDBReader` | Protein Data Bank | No (step=0 only) | `"atoms"` block with `name`, `resname`, `x`, `y`, `z`, etc. |
 //! | `LAMMPSReader` | LAMMPS data file | No (step=0 only) | `"atoms"` block + `"bonds"` block + simbox |
+//! | `LAMMPSDumpReader` | LAMMPS dump trajectory | Yes | `"atoms"` block with columns from dump header |
 
 use crate::core::frame::Frame;
 use molrs::io::lammps_data::LAMMPSDataReader;
+use molrs::io::lammps_dump::LAMMPSDumpReader;
 use molrs::io::pdb::PDBReader;
 use molrs::io::reader::{FrameReader, TrajReader};
 use molrs::io::xyz::XYZReader;
@@ -353,6 +355,66 @@ impl LammpsReader {
     /// # Errors
     ///
     /// Throws a `JsValue` string on parse errors.
+    #[wasm_bindgen(js_name = isEmpty)]
+    pub fn is_empty(&mut self) -> Result<bool, JsValue> {
+        Ok(self.len()? == 0)
+    }
+}
+
+/// LAMMPS dump trajectory file reader.
+///
+/// Reads multi-frame LAMMPS dump files (the format produced by the
+/// `dump` command). Each frame produces a [`Frame`] containing an
+/// `"atoms"` block with columns matching the dump header (e.g.
+/// `id`, `type`, `x`, `y`, `z`, `vx`, `vy`, `vz`).
+///
+/// # Example (JavaScript)
+///
+/// ```js
+/// const reader = new LAMMPSDumpReader(dumpContent);
+/// console.log(reader.len()); // number of timesteps
+/// const frame = reader.read(0);
+/// const atoms = frame.getBlock("atoms");
+/// ```
+#[wasm_bindgen(js_name = LAMMPSDumpReader)]
+pub struct LammpsDumpReader {
+    inner: LAMMPSDumpReader<Cursor<Vec<u8>>>,
+}
+
+#[wasm_bindgen(js_class = LAMMPSDumpReader)]
+impl LammpsDumpReader {
+    /// Create a new LAMMPS dump reader from string content.
+    #[wasm_bindgen(constructor)]
+    pub fn new(content: &str) -> LammpsDumpReader {
+        let bytes = content.as_bytes().to_vec();
+        LammpsDumpReader {
+            inner: LAMMPSDumpReader::new(Cursor::new(bytes)),
+        }
+    }
+
+    /// Read a frame at the given step index.
+    #[wasm_bindgen]
+    pub fn read(&mut self, step: usize) -> Result<Option<Frame>, JsValue> {
+        let rs_frame = self
+            .inner
+            .read_step(step)
+            .map_err(|e| JsValue::from_str(&format!("LAMMPS dump read error: {}", e)))?;
+
+        match rs_frame {
+            Some(frame_data) => Ok(Some(Frame::from_rs_frame(frame_data)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Return the number of frames in the dump file.
+    #[wasm_bindgen]
+    pub fn len(&mut self) -> Result<usize, JsValue> {
+        self.inner
+            .len()
+            .map_err(|e| JsValue::from_str(&format!("LAMMPS dump len error: {}", e)))
+    }
+
+    /// Check whether the file contains no frames.
     #[wasm_bindgen(js_name = isEmpty)]
     pub fn is_empty(&mut self) -> Result<bool, JsValue> {
         Ok(self.len()? == 0)

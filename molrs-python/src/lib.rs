@@ -90,6 +90,8 @@ fn molrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // I/O + SMILES
     m.add_function(wrap_pyfunction!(io::read_pdb, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_xyz, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_lammps, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_lammps_traj, m)?)?;
     m.add_function(wrap_pyfunction!(io::parse_smiles, m)?)?;
     m.add_class::<io::PySmilesIR>()?;
 

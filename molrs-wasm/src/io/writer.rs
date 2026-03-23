@@ -11,6 +11,7 @@
 //! | `"pdb"` | Protein Data Bank | `element` or `name` (string), `x`, `y`, `z` (f32) |
 
 use crate::core::frame::Frame;
+use molrs::io::lammps_dump::LAMMPSDumpWriter;
 use molrs::io::pdb::PDBWriter;
 use molrs::io::writer::{FrameWriter, Writer};
 use molrs::io::xyz::XYZFrameWriter;
@@ -70,6 +71,12 @@ pub fn write_frame_export(frame: &Frame, format: &str) -> Result<String, JsValue
             writer
                 .write_frame(&rs_frame)
                 .map_err(|e| JsValue::from_str(&format!("PDB writing error: {}", e)))?;
+        }
+        "lammps-dump" | "lammpstrj" => {
+            let mut writer = <LAMMPSDumpWriter<_> as Writer>::new(&mut buffer);
+            writer
+                .write_frame(&rs_frame)
+                .map_err(|e| JsValue::from_str(&format!("LAMMPS dump writing error: {}", e)))?;
         }
         _ => {
             return Err(JsValue::from_str(&format!(

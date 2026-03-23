@@ -5,8 +5,8 @@
 //!
 //! | Module | JS class / function | Formats |
 //! |--------|-------------------|---------|
-//! | [`reader`] | `XYZReader`, `PDBReader`, `LAMMPSReader` | Read XYZ/ExtXYZ, PDB, LAMMPS data files |
-//! | [`writer`] | `writeFrame(frame, format)` | Write XYZ, PDB |
+//! | [`reader`] | `XYZReader`, `PDBReader`, `LAMMPSReader`, `LAMMPSDumpReader` | Read XYZ/ExtXYZ, PDB, LAMMPS data/dump files |
+//! | [`writer`] | `writeFrame(frame, format)` | Write XYZ, PDB, LAMMPS dump |
 //! | [`smiles`] | `parseSMILES(str)` -> `SmilesIR` | Parse SMILES notation |
 //! | [`zarr`] | `SimulationReader` | Read Zarr V3 simulation archives |
 //!
