@@ -47,8 +47,8 @@ use std::path::PathBuf;
 
 use molrs::io::pdb::read_pdb_frame;
 use molrs_pack::{
-    EarlyStopHandler, InsideBoxConstraint, InsideSphereConstraint, Molpack,
-    OutsideSphereConstraint, ProgressHandler, RegionConstraint, Target,
+    InsideBoxConstraint, InsideSphereConstraint, Molpack, OutsideSphereConstraint, ProgressHandler,
+    RegionConstraint, Target,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -93,9 +93,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Target order matches Packmol: water_inner → lipid_inner → lipid_outer → water_outer
     let targets = vec![water_inner, lipid_inner, lipid_outer, water_outer];
-    let mut packer = Molpack::new()
-        .add_handler(ProgressHandler::new())
-        .add_handler(EarlyStopHandler::default());
+    let mut packer = Molpack::new();
+    if std::env::var_os("MOLRS_PACK_EXAMPLE_PROGRESS").is_some() {
+        packer = packer.add_handler(ProgressHandler::new());
+    }
 
     // Match spherical-comment.inp defaults:
     // - nloop defaults to 200 * ntype (ntype = 4 => 800)

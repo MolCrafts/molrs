@@ -8,8 +8,8 @@
 //!
 //! | Block key   | Expected columns | Column types |
 //! |-------------|------------------|--------------|
-//! | `"atoms"`   | `symbol` (string), `x`, `y`, `z` (f32), optionally `mass`, `charge` (f32) | string, f32 |
-//! | `"bonds"`   | `i`, `j` (u32 -- atom indices), `order` (f32 -- 1.0/1.5/2.0/3.0) | u32, f32 |
+//! | `"atoms"`   | `symbol` (string), `x`, `y`, `z` (F), optionally `mass`, `charge` (F) | string, F |
+//! | `"bonds"`   | `i`, `j` (u32 -- atom indices), `order` (F -- 1.0/1.5/2.0/3.0) | u32, F |
 //! | `"angles"`  | `i`, `j`, `k` (u32) | u32 |
 //!
 //! # Example (JavaScript)
@@ -18,14 +18,14 @@
 //! const frame = new Frame();
 //! const atoms = frame.createBlock("atoms");
 //! atoms.setColStr("symbol", ["C", "C", "O"]);
-//! atoms.setColF32("x", new Float32Array([0, 1.5, 2.3]));
-//! atoms.setColF32("y", new Float32Array([0, 0, 0]));
-//! atoms.setColF32("z", new Float32Array([0, 0, 0]));
+//! atoms.setColF("x", xCoords);
+//! atoms.setColF("y", yCoords);
+//! atoms.setColF("z", zCoords);
 //!
 //! const bonds = frame.createBlock("bonds");
 //! bonds.setColU32("i", new Uint32Array([0, 1]));
 //! bonds.setColU32("j", new Uint32Array([1, 2]));
-//! bonds.setColF32("order", new Float32Array([1.0, 1.0]));
+//! bonds.setColF("order", bondOrders);
 //! ```
 
 use std::cell::RefCell;
@@ -48,10 +48,10 @@ use super::{SharedStore, js_err};
 /// # Conventions
 ///
 /// - The `"atoms"` block should contain per-atom properties: `symbol`
-///   (string), `x`/`y`/`z` (f32, coordinates in angstrom), and optionally
-///   `mass` (f32, atomic mass units) and `charge` (f32, elementary charges).
+///   (string), `x`/`y`/`z` (F, coordinates in angstrom), and optionally
+///   `mass` (F, atomic mass units) and `charge` (F, elementary charges).
 /// - The `"bonds"` block should contain bond topology: `i`/`j` (u32,
-///   zero-based atom indices) and `order` (f32, bond order: 1.0 = single,
+///   zero-based atom indices) and `order` (F, bond order: 1.0 = single,
 ///   1.5 = aromatic, 2.0 = double, 3.0 = triple).
 ///
 /// # Example (JavaScript)
@@ -59,7 +59,7 @@ use super::{SharedStore, js_err};
 /// ```js
 /// const frame = new Frame();
 /// const atoms = frame.createBlock("atoms");
-/// atoms.setColF32("x", new Float32Array([0.0, 1.54]));
+/// atoms.setColF("x", xCoords);
 /// ```
 #[wasm_bindgen]
 pub struct Frame {
@@ -104,7 +104,7 @@ impl Frame {
     ///
     /// ```js
     /// const atoms = frame.createBlock("atoms");
-    /// atoms.setColF32("x", new Float32Array([1.0, 2.0]));
+    /// atoms.setColF("x", xCoords);
     /// ```
     #[wasm_bindgen(js_name = createBlock)]
     pub fn create_block(&self, key: &str) -> Result<Block, JsValue> {
@@ -140,7 +140,7 @@ impl Frame {
     /// ```js
     /// const atoms = frame.getBlock("atoms");
     /// if (atoms) {
-    ///   const x = atoms.copyColF32("x");
+    ///   const x = atoms.copyColF("x");
     /// }
     /// ```
     #[wasm_bindgen(js_name = getBlock)]
@@ -334,7 +334,7 @@ impl Frame {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const origin = new Float32Array([0, 0, 0]);
+    /// const origin = originVec;
     /// frame.simbox = Box.cube(10.0, origin, true, true, true);
     /// ```
     #[wasm_bindgen(setter, js_name = simbox)]

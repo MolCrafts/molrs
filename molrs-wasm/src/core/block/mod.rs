@@ -9,7 +9,7 @@
 //!
 //! | Method | JS signature | Semantics | Throws on missing key? |
 //! |--------|-------------|-----------|------------------------|
-//! | `setColF32` | `(key: string, data: Float32Array, shape?: number[])` | Write f32 column | No |
+//! | `setColF` | `(key: string, data: Float32Array|Float64Array, shape?: number[])` | Write float column | No |
 //! | `setColI32` | `(key: string, data: Int32Array)` | Write i32 column | No |
 //! | `setColU32` | `(key: string, data: Uint32Array)` | Write u32 column | No |
 //! | `setColStr` | `(key: string, data: string[])` | Write string column | No |
@@ -23,13 +23,15 @@
 //! (e.g., due to any allocation). Use `copyCol*` if you need to keep
 //! the data across allocations.
 
-use js_sys::{Array as JsArray, Float32Array, Int32Array, Uint32Array};
+use js_sys::{Array as JsArray, Int32Array, Uint32Array};
 use ndarray::Array1;
 use wasm_bindgen::prelude::*;
 
 use molrs::block::{Block as RsBlock, DType};
+use molrs::types::F;
 use molrs_ffi::BlockHandle as FFIBlockHandle;
 
+use super::types::{FLOAT_DTYPE_NAME, JsFloatArray};
 use super::{SharedStore, js_err};
 
 // ---------------------------------------------------------------------------
@@ -39,14 +41,14 @@ use super::{SharedStore, js_err};
 /// Column-oriented data store with typed arrays.
 ///
 /// Each column is identified by a string key and has a fixed data type
-/// (`f32`, `i32`, `u32`, `string`). All columns in a block must have
+/// (`F`, `i32`, `u32`, `string`). All columns in a block must have
 /// the same number of rows.
 ///
 /// # Supported column types
 ///
 /// | JS type | Rust type | dtype string | Setter | Getter (copy) | Getter (view) |
 /// |---------|-----------|-------------|--------|---------------|---------------|
-/// | `Float32Array` | `f32` | `"f32"` | `setColF32` | `copyColF32` | `viewColF32` |
+/// | `Float32Array` / `Float64Array` | `F` | `"f32"` / `"f64"` | `setColF` | `copyColF` | `viewColF` |
 /// | `Int32Array` | `i32` | `"i32"` | `setColI32` | `copyColI32` | `viewColI32` |
 /// | `Uint32Array` | `u32` | `"u32"` | `setColU32` | `copyColU32` | `viewColU32` |
 /// | `string[]` | `String` | `"string"` | `setColStr` | `copyColStr` | -- |
@@ -55,12 +57,12 @@ use super::{SharedStore, js_err};
 ///
 /// ```js
 /// const block = new Block();
-/// block.setColF32("x", new Float32Array([1.0, 2.0, 3.0]));
-/// block.setColF32("y", new Float32Array([0.0, 0.0, 0.0]));
+/// block.setColF("x", coordsX);
+/// block.setColF("y", coordsY);
 /// console.log(block.nrows()); // 3
 /// console.log(block.keys());  // ["x", "y"]
 ///
-/// const x = block.copyColF32("x"); // owned copy, safe to keep
+/// const x = block.copyColF("x"); // owned copy, safe to keep
 /// ```
 #[wasm_bindgen]
 pub struct Block {
@@ -84,7 +86,7 @@ impl Block {
     ///
     /// ```js
     /// const block = new Block();
-    /// block.setColF32("values", new Float32Array([1, 2, 3]));
+    /// block.setColF("values", values);
     /// ```
     #[wasm_bindgen(constructor)]
     pub fn new() -> Result<Block, JsValue> {
@@ -174,7 +176,8 @@ impl Block {
 
     /// Return the data type string for a column.
     ///
-    /// Possible return values: `"f32"`, `"i32"`, `"u32"`, `"bool"`,
+    /// Possible return values: `"f32"` or `"f64"` for float columns,
+    /// plus `"i32"`, `"u32"`, `"bool"`,
     /// `"string"`, `"u8"`. Returns `undefined` if the column does
     /// not exist.
     ///
@@ -189,7 +192,7 @@ impl Block {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// console.log(block.dtype("x"));      // "f32"
+    /// console.log(block.dtype("x"));      // "f32" or "f64"
     /// console.log(block.dtype("symbol")); // "string"
     /// ```
     #[wasm_bindgen(js_name = dtype)]
@@ -199,7 +202,7 @@ impl Block {
             .with_block(&self.handle, |b| {
                 b.dtype(key).map(|dt| {
                     match dt {
-                        DType::Float => "f32",
+                        DType::Float => FLOAT_DTYPE_NAME,
                         DType::Int => "i32",
                         DType::UInt => "u32",
                         DType::U8 => "u8",
@@ -241,14 +244,14 @@ impl Block {
             .map_err(js_err)
     }
 
-    // ---- F32 ----
+    // ---- Float ----
 
-    /// Set a float column from a `Float32Array`.
+    /// Set a float column from a JS float typed array.
     ///
     /// # Arguments
     ///
     /// * `key` - Column name (e.g., `"x"`, `"mass"`, `"charge"`)
-    /// * `data` - `Float32Array` with the column values
+    /// * `data` - JS float typed array with the column values
     /// * `shape` - Optional shape array for multi-dimensional data
     ///   (e.g., `[N, 3]` for an Nx3 matrix stored flat). If omitted,
     ///   the data is stored as a 1D column.
@@ -261,27 +264,27 @@ impl Block {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// block.setColF32("x", new Float32Array([1.0, 2.0, 3.0]));
+    /// block.setColF("x", xCoords);
     /// // Multi-dimensional: 2 rows x 3 columns
-    /// block.setColF32("pos", new Float32Array([1,2,3, 4,5,6]), [2, 3]);
+    /// block.setColF("pos", positions, [2, 3]);
     /// ```
-    #[wasm_bindgen(js_name = setColF32)]
-    pub fn set_col_f32(
+    #[wasm_bindgen(js_name = setColF)]
+    pub fn set_col_f(
         &mut self,
         key: &str,
-        data: &Float32Array,
+        data: &JsFloatArray,
         shape: Option<Box<[usize]>>,
     ) -> Result<(), JsValue> {
-        self.insert_f32(key, data.to_vec(), shape)
+        self.insert_float(key, data.to_vec(), shape)
     }
 
-    /// Zero-copy `Float32Array` view into WASM linear memory.
+    /// Zero-copy JS float typed-array view into WASM linear memory.
     ///
     /// Returns a view backed directly by the block's storage in WASM
     /// memory. This avoids copying but the view becomes **invalid**
     /// if WASM linear memory grows (due to any allocation).
     ///
-    /// Use [`copyColF32`](Block::copy_col_f32) for a safe, long-lived copy.
+    /// Use [`copyColF`](Block::copy_col_f) for a safe, long-lived copy.
     ///
     /// # Arguments
     ///
@@ -289,29 +292,29 @@ impl Block {
     ///
     /// # Returns
     ///
-    /// A `Float32Array` view into WASM memory.
+    /// A JS float typed-array view into WASM memory.
     ///
     /// # Errors
     ///
-    /// Throws if the column does not exist or is not of type `f32`.
+    /// Throws if the column does not exist or is not of the active float type.
     ///
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const view = block.viewColF32("x"); // zero-copy, use immediately
-    /// const copy = block.copyColF32("x"); // safe to keep
+    /// const view = block.viewColF("x"); // zero-copy, use immediately
+    /// const copy = block.copyColF("x"); // safe to keep
     /// ```
-    #[wasm_bindgen(js_name = viewColF32)]
-    pub fn view_col_f32(&self, key: &str) -> Result<Float32Array, JsValue> {
+    #[wasm_bindgen(js_name = viewColF)]
+    pub fn view_col_f(&self, key: &str) -> Result<JsFloatArray, JsValue> {
         self.store
             .borrow()
-            .borrow_col_F(&self.handle, key, |s, _| unsafe { Float32Array::view(s) })
-            .map_err(|e| col_not_found_or(key, "f32", e))
+            .borrow_col_F(&self.handle, key, |s, _| unsafe { JsFloatArray::view(s) })
+            .map_err(|e| col_not_found_or(key, FLOAT_DTYPE_NAME, e))
     }
 
-    /// Owned `Float32Array` copy of a column.
+    /// Owned JS float typed-array copy of a column.
     ///
-    /// Returns a new JS `Float32Array` that is an independent copy of
+    /// Returns a new JS float typed array that is an independent copy of
     /// the column data. Safe to store and use across allocations.
     ///
     /// # Arguments
@@ -320,25 +323,25 @@ impl Block {
     ///
     /// # Returns
     ///
-    /// An owned `Float32Array` copy of the column.
+    /// An owned JS float typed-array copy of the column.
     ///
     /// # Errors
     ///
-    /// Throws if the column does not exist or is not of type `f32`.
+    /// Throws if the column does not exist or is not of the active float type.
     ///
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const x = block.copyColF32("x");
+    /// const x = block.copyColF("x");
     /// console.log(x[0]); // 1.0
     /// ```
-    #[wasm_bindgen(js_name = copyColF32)]
-    pub fn copy_col_f32(&self, key: &str) -> Result<Float32Array, JsValue> {
+    #[wasm_bindgen(js_name = copyColF)]
+    pub fn copy_col_f(&self, key: &str) -> Result<JsFloatArray, JsValue> {
         self.with(|b| {
             b.get_float(key)
                 .and_then(|arr| arr.as_slice_memory_order())
-                .map(Float32Array::from)
-                .ok_or_else(|| col_err(key, "f32"))
+                .map(JsFloatArray::from)
+                .ok_or_else(|| col_err(key, FLOAT_DTYPE_NAME))
         })?
     }
 
@@ -604,10 +607,10 @@ impl Block {
             .map_err(js_err)?
     }
 
-    fn insert_f32(
+    fn insert_float(
         &mut self,
         key: &str,
-        data: Vec<f32>,
+        data: Vec<F>,
         shape: Option<Box<[usize]>>,
     ) -> Result<(), JsValue> {
         let array = if let Some(dims) = shape {
@@ -623,10 +626,10 @@ impl Block {
     pub(crate) fn set_owned_column(
         &mut self,
         key: &str,
-        data: Vec<f32>,
+        data: Vec<F>,
         shape: Box<[usize]>,
     ) -> Result<(), JsValue> {
-        self.insert_f32(key, data, Some(shape))
+        self.insert_float(key, data, Some(shape))
     }
 }
 
@@ -641,13 +644,13 @@ mod tests {
     use wasm_bindgen_test::*;
 
     #[wasm_bindgen_test]
-    fn test_block_set_copy_f32() {
+    fn test_block_set_copy_f() {
         let frame = Frame::new();
         let mut block = frame.create_block("atoms").unwrap();
 
-        let data = Float32Array::from(&[1.0_f32, 2.0, 3.0][..]);
-        block.set_col_f32("x", &data, None).unwrap();
-        let copied = block.copy_col_f32("x").unwrap();
+        let data = JsFloatArray::from(&[1.0, 2.0, 3.0][..]);
+        block.set_col_f("x", &data, None).unwrap();
+        let copied = block.copy_col_f("x").unwrap();
         assert_eq!(copied.length(), 3);
         assert_eq!(copied.get_index(0), 1.0);
     }
@@ -678,6 +681,6 @@ mod tests {
     fn test_missing_key_throws() {
         let frame = Frame::new();
         let block = frame.create_block("atoms").unwrap();
-        assert!(block.copy_col_f32("nonexistent").is_err());
+        assert!(block.copy_col_f("nonexistent").is_err());
     }
 }

@@ -205,7 +205,7 @@ pub fn assign_bond_stereo_from_3d(mol: &MolGraph) -> HashMap<BondId, BondStereo>
                 .max_by_key(|&s| {
                     mol.get_atom(s)
                         .ok()
-                        .and_then(|a| a.get_str("symbol"))
+                        .and_then(|a| a.get_str("element"))
                         .and_then(super::element::Element::by_symbol)
                         .map(|e| e.z())
                         .unwrap_or(0)

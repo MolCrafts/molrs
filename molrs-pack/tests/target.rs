@@ -57,6 +57,39 @@ fn input_coords_preserved() {
     assert!((t.input_coords[0][1] - 20.0).abs() < 1e-6);
 }
 
+#[test]
+fn new_uses_geometric_center_even_when_elements_are_known() {
+    use molrs::block::Block;
+    use ndarray::Array1;
+
+    let mut atoms = Block::new();
+    atoms
+        .insert("x", Array1::from_vec(vec![0.0, 1.0]).into_dyn())
+        .expect("insert x");
+    atoms
+        .insert("y", Array1::from_vec(vec![0.0, 0.0]).into_dyn())
+        .expect("insert y");
+    atoms
+        .insert("z", Array1::from_vec(vec![0.0, 0.0]).into_dyn())
+        .expect("insert z");
+    atoms
+        .insert(
+            "element",
+            Array1::from_vec(vec!["O".to_string(), "H".to_string()]).into_dyn(),
+        )
+        .expect("insert element");
+
+    let mut frame = molrs::Frame::new();
+    frame.insert("atoms", atoms);
+
+    let t = Target::new(frame, 1);
+    let arithmetic_center = (t.ref_coords[0][0] + t.ref_coords[1][0]) / 2.0;
+    assert!(
+        arithmetic_center.abs() < 1e-6,
+        "geometry center should be zero"
+    );
+}
+
 // ── constraints ────────────────────────────────────────────────────────────
 
 #[test]
@@ -131,12 +164,12 @@ fn fixed_target_auto_centering_disabled() {
 }
 
 #[test]
-fn fixed_target_center_of_mass() {
+fn fixed_target_centered() {
     let free = Target::from_coords(&[[0.0, 0.0, 0.0]], &[1.0], 1).with_constraint(
         MoleculeConstraint::new().add(Restraint::inside_box([-5.0, -5.0, -5.0], [5.0, 5.0, 5.0])),
     );
     let fixed = Target::from_coords(&[[10.0, 0.0, 0.0], [12.0, 0.0, 0.0]], &[1.0, 1.0], 1)
-        .with_center_of_mass()
+        .with_center()
         .fixed_at([0.0, 0.0, 0.0]);
 
     let result = Molpack::new()
@@ -156,13 +189,6 @@ fn with_center_mode() {
     use molrs_pack::CenteringMode;
     let t = Target::from_coords(&water_positions(), &water_radii(), 1).with_center();
     assert_eq!(t.centering, CenteringMode::Center);
-}
-
-#[test]
-fn with_center_of_mass_mode() {
-    use molrs_pack::CenteringMode;
-    let t = Target::from_coords(&water_positions(), &water_radii(), 1).with_center_of_mass();
-    assert_eq!(t.centering, CenteringMode::CenterOfMass);
 }
 
 #[test]

@@ -29,19 +29,19 @@ console.log(writeFrame(mol3d, "xyz"));
 ### Data model
 
 - **`Frame`** — container mapping string keys (`"atoms"`, `"bonds"`) to `Block`s
-- **`Block`** — column store with typed arrays (`Float32Array`, `Int32Array`, `Uint32Array`, `string[]`)
+- **`Block`** — column store with typed arrays. Float columns use `Float32Array` by default and `Float64Array` when built with the `f64` feature.
 - **`Box`** — simulation box with periodic boundary conditions
 
 ### I/O
 
 - `parseSMILES(smiles)` → `SmilesIR` → `.toFrame()`
 - `XYZReader`, `PDBReader`, `LAMMPSReader` — file format parsers
-- `writeFrame(frame, "xyz" | "pdb")` — serialize to string
+- `writeFrame(frame, "xyz" | "pdb" | "lammps-data" | "lammps-dump")` — serialize to string
 - `SimulationReader` — Zarr V3 trajectory reader
 
 ### 3D generation
 
-- `generate3D(frame, speed?)` — MMFF94 coordinate generation (`"fast"` | `"normal"` | `"thorough"`)
+- `generate3D(frame, speed?, seed?)` — MMFF94 coordinate generation (`"fast"` | `"medium"` | `"better"`)
 
 ### Analysis
 
@@ -69,11 +69,13 @@ Frames without a simulation box are supported — a non-periodic bounding box is
 | Block | Column | Type | Description |
 |-------|--------|------|-------------|
 | `atoms` | `symbol` | `string` | Element symbol |
-| `atoms` | `x`, `y`, `z` | `f32` | Cartesian coordinates |
-| `atoms` | `mass` | `f32` | Atomic mass |
-| `atoms` | `charge` | `f32` | Partial charge |
+| `atoms` | `x`, `y`, `z` | `F` | Cartesian coordinates |
+| `atoms` | `mass` | `F` | Atomic mass |
+| `atoms` | `charge` | `F` | Partial charge |
 | `bonds` | `i`, `j` | `u32` | Atom indices |
-| `bonds` | `order` | `f32` | Bond order (1.0, 1.5, 2.0, 3.0) |
+| `bonds` | `order` | `F` | Bond order (1.0, 1.5, 2.0, 3.0) |
+
+`F` is the workspace float type from `molrs-core`. In the default WASM build it is `f32`; with `--features f64` it becomes `f64`, and the JS API switches to `Float64Array` at the boundary.
 
 ## Build from source and use it for development
 

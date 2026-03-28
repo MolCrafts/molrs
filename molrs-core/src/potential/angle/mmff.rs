@@ -57,9 +57,9 @@ pub fn mmff_angle_ctor(
     let block = frame
         .get("angles")
         .ok_or("mmff_angle: missing \"angles\" block")?;
-    let ic = block.get_uint("i").ok_or("missing i")?;
-    let jc = block.get_uint("j").ok_or("missing j")?;
-    let kc = block.get_uint("k").ok_or("missing k")?;
+    let ic = block.get_uint("atomi").ok_or("missing atomi")?;
+    let jc = block.get_uint("atomj").ok_or("missing atomj")?;
+    let kc = block.get_uint("atomk").ok_or("missing atomk")?;
     let tc = block.get_string("type").ok_or("missing type")?;
 
     let n = ic.len();
@@ -156,9 +156,9 @@ pub fn mmff_stbn_ctor(
 ) -> Result<Box<dyn Potential>, String> {
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
     let block = frame.get("angles").ok_or("mmff_stbn: missing \"angles\"")?;
-    let ic = block.get_uint("i").ok_or("missing i")?;
-    let jc = block.get_uint("j").ok_or("missing j")?;
-    let kc = block.get_uint("k").ok_or("missing k")?;
+    let ic = block.get_uint("atomi").ok_or("missing atomi")?;
+    let jc = block.get_uint("atomj").ok_or("missing atomj")?;
+    let kc = block.get_uint("atomk").ok_or("missing atomk")?;
     let tc = block.get_string("stbn_type").ok_or("missing stbn_type")?;
 
     let n = ic.len();

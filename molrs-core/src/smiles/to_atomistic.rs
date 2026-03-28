@@ -327,7 +327,7 @@ mod tests {
         assert_eq!(mol.n_atoms(), 1);
         assert_eq!(mol.n_bonds(), 0);
         let (_, atom) = mol.atoms().next().unwrap();
-        assert_eq!(atom.get_str("symbol"), Some("C"));
+        assert_eq!(atom.get_str("element"), Some("C"));
     }
 
     #[test]
@@ -421,7 +421,7 @@ mod tests {
     fn test_charge() {
         let mol = smiles_to_mol("[Fe+2]");
         let (_, atom) = mol.atoms().next().unwrap();
-        assert_eq!(atom.get_str("symbol"), Some("Fe"));
+        assert_eq!(atom.get_str("element"), Some("Fe"));
         assert_eq!(atom.get_f64("formal_charge"), Some(2.0));
     }
 
@@ -439,7 +439,7 @@ mod tests {
         let atoms: Vec<_> = mol.atoms().collect();
         let c_atom = atoms
             .iter()
-            .find(|(_, a)| a.get_str("symbol") == Some("C"))
+            .find(|(_, a)| a.get_str("element") == Some("C"))
             .unwrap()
             .1;
         assert_eq!(c_atom.get_str("stereo"), Some("CW"));

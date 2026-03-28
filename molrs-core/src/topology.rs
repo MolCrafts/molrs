@@ -471,6 +471,16 @@ impl TopologyRingInfo {
         self.atom_rings.get(&idx).map_or(0, Vec::len)
     }
 
+    /// Whether the bond belongs to any ring.
+    pub fn is_bond_in_ring(&self, idx: usize) -> bool {
+        self.bond_rings.get(&idx).is_some_and(|v| !v.is_empty())
+    }
+
+    /// Number of rings containing this bond.
+    pub fn num_bond_rings(&self, idx: usize) -> usize {
+        self.bond_rings.get(&idx).map_or(0, Vec::len)
+    }
+
     /// Size (atom count) of every ring, sorted ascending.
     pub fn ring_sizes(&self) -> Vec<usize> {
         self.rings.iter().map(Vec::len).collect()
@@ -496,6 +506,17 @@ impl TopologyRingInfo {
         let mut mask = vec![false; n_atoms];
         for &idx in self.atom_rings.keys() {
             if idx < n_atoms {
+                mask[idx] = true;
+            }
+        }
+        mask
+    }
+
+    /// Per-bond boolean mask: true if the bond is in any ring.
+    pub fn bond_ring_mask(&self, n_bonds: usize) -> Vec<bool> {
+        let mut mask = vec![false; n_bonds];
+        for &idx in self.bond_rings.keys() {
+            if idx < n_bonds {
                 mask[idx] = true;
             }
         }
@@ -754,16 +775,21 @@ mod tests {
     #[test]
     fn test_find_rings_single_6ring() {
         // Hexagon: 0-1-2-3-4-5-0
-        let topo = Topology::from_edges(
-            6,
-            &[[0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 0]],
-        );
+        let topo = Topology::from_edges(6, &[[0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 0]]);
         let ri = topo.find_rings();
         assert_eq!(ri.num_rings(), 1);
         assert_eq!(ri.ring_sizes(), vec![6]);
         for i in 0..6 {
             assert!(ri.is_atom_in_ring(i));
         }
+        for i in 0..topo.n_bonds() {
+            assert!(ri.is_bond_in_ring(i));
+            assert_eq!(ri.num_bond_rings(i), 1);
+        }
+        assert_eq!(
+            ri.bond_ring_mask(topo.n_bonds()),
+            vec![true; topo.n_bonds()]
+        );
     }
 
     #[test]
@@ -772,8 +798,17 @@ mod tests {
         let topo = Topology::from_edges(
             10,
             &[
-                [0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 0], // ring A
-                [2, 6], [6, 7], [7, 8], [8, 9], [9, 3],         // ring B
+                [0, 1],
+                [1, 2],
+                [2, 3],
+                [3, 4],
+                [4, 5],
+                [5, 0], // ring A
+                [2, 6],
+                [6, 7],
+                [7, 8],
+                [8, 9],
+                [9, 3], // ring B
             ],
         );
         let ri = topo.find_rings();
@@ -781,6 +816,8 @@ mod tests {
         let mut sizes = ri.ring_sizes();
         sizes.sort();
         assert_eq!(sizes, vec![6, 6]);
+        assert!(ri.bond_ring_mask(topo.n_bonds()).into_iter().all(|x| x));
+        assert_eq!(ri.num_bond_rings(2), 2);
     }
 
     #[test]

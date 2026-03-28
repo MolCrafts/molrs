@@ -24,8 +24,9 @@
 //! All lengths are in angstrom (A).
 
 use crate::core::block::Block;
-use crate::core::types::WasmArray;
+use crate::core::types::{JsFloatArray, WasmArray};
 use molrs::region::simbox::SimBox;
+use molrs::types::F;
 use wasm_bindgen::prelude::*;
 
 /// Simulation box defining periodic boundary conditions and coordinate
@@ -40,8 +41,8 @@ use wasm_bindgen::prelude::*;
 /// # Example (JavaScript)
 ///
 /// ```js
-/// const h = new Float32Array([10, 0, 0, 0, 10, 0, 0, 0, 10]);
-/// const origin = new Float32Array([0, 0, 0]);
+/// const h = floatArrayH;
+/// const origin = floatArrayOrigin;
 /// const box = new Box(h, origin, true, true, true);
 /// console.log(box.volume()); // 1000.0
 /// console.log(box.lengths().toCopy()); // [10, 10, 10]
@@ -52,17 +53,17 @@ pub struct Box {
 }
 
 #[inline]
-fn vec3_from_slice(v: &[f32]) -> ndarray::Array1<f32> {
+fn vec3_from_slice(v: &[F]) -> ndarray::Array1<F> {
     ndarray::arr1(&[v[0], v[1], v[2]])
 }
 
 #[inline]
-fn mat3_from_slice(v: &[f32]) -> ndarray::Array2<f32> {
+fn mat3_from_slice(v: &[F]) -> ndarray::Array2<F> {
     ndarray::arr2(&[[v[0], v[1], v[2]], [v[3], v[4], v[5]], [v[6], v[7], v[8]]])
 }
 
 #[inline]
-fn array2_into_parts(arr: ndarray::Array2<f32>) -> (Vec<f32>, std::boxed::Box<[usize]>) {
+fn array2_into_parts(arr: ndarray::Array2<F>) -> (Vec<F>, std::boxed::Box<[usize]>) {
     let shape = std::boxed::Box::new([arr.nrows(), arr.ncols()]);
     let (data, _offset) = arr.into_raw_vec_and_offset();
     (data, shape)
@@ -74,10 +75,10 @@ impl Box {
     ///
     /// # Arguments
     ///
-    /// * `h` - 3x3 cell matrix as `Float32Array` with 9 elements in
+    /// * `h` - 3x3 cell matrix as a float typed array with 9 elements in
     ///   row-major order: `[h00, h01, h02, h10, h11, h12, h20, h21, h22]`.
     ///   All values in angstrom (A).
-    /// * `origin` - 3D origin vector as `Float32Array` with 3 elements
+    /// * `origin` - 3D origin vector as a float typed array with 3 elements
     ///   `[x, y, z]` in angstrom.
     /// * `pbc_x` - Enable periodic boundary in x direction
     /// * `pbc_y` - Enable periodic boundary in y direction
@@ -96,14 +97,14 @@ impl Box {
     ///
     /// ```js
     /// // Triclinic box
-    /// const h = new Float32Array([10, 2, 0, 0, 10, 0, 0, 0, 10]);
-    /// const origin = new Float32Array([0, 0, 0]);
+    /// const h = hMatrix;
+    /// const origin = originVec;
     /// const box = new Box(h, origin, true, true, true);
     /// ```
     #[wasm_bindgen(constructor)]
     pub fn new(
-        h: &js_sys::Float32Array,
-        origin: &js_sys::Float32Array,
+        h: &JsFloatArray,
+        origin: &JsFloatArray,
         pbc_x: bool,
         pbc_y: bool,
         pbc_z: bool,
@@ -130,7 +131,7 @@ impl Box {
     /// # Arguments
     ///
     /// * `a` - Side length of the cube in angstrom (A)
-    /// * `origin` - 3D origin vector as `Float32Array` with 3 elements
+    /// * `origin` - 3D origin vector as a float typed array with 3 elements
     ///   `[x, y, z]` in angstrom
     /// * `pbc_x` - Enable periodic boundary in x direction
     /// * `pbc_y` - Enable periodic boundary in y direction
@@ -147,13 +148,13 @@ impl Box {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const origin = new Float32Array([0, 0, 0]);
+    /// const origin = originVec;
     /// const box = Box.cube(10.0, origin, true, true, true);
     /// console.log(box.volume()); // 1000.0
     /// ```
     pub fn cube(
-        a: f32,
-        origin: &js_sys::Float32Array,
+        a: F,
+        origin: &JsFloatArray,
         pbc_x: bool,
         pbc_y: bool,
         pbc_z: bool,
@@ -171,9 +172,9 @@ impl Box {
     ///
     /// # Arguments
     ///
-    /// * `lengths` - Box dimensions as `Float32Array` with 3 elements
+    /// * `lengths` - Box dimensions as a float typed array with 3 elements
     ///   `[lx, ly, lz]` in angstrom (A)
-    /// * `origin` - 3D origin vector as `Float32Array` with 3 elements
+    /// * `origin` - 3D origin vector as a float typed array with 3 elements
     ///   `[x, y, z]` in angstrom
     /// * `pbc_x` - Enable periodic boundary in x direction
     /// * `pbc_y` - Enable periodic boundary in y direction
@@ -190,13 +191,13 @@ impl Box {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const origin = new Float32Array([0, 0, 0]);
-    /// const box = Box.ortho(new Float32Array([10, 20, 30]), origin, true, true, true);
+    /// const origin = originVec;
+    /// const box = Box.ortho(lengthsVec, origin, true, true, true);
     /// console.log(box.volume()); // 6000.0
     /// ```
     pub fn ortho(
-        lengths: &js_sys::Float32Array,
-        origin: &js_sys::Float32Array,
+        lengths: &JsFloatArray,
+        origin: &JsFloatArray,
         pbc_x: bool,
         pbc_y: bool,
         pbc_z: bool,
@@ -225,7 +226,7 @@ impl Box {
     /// ```js
     /// console.log(box.volume()); // e.g., 1000.0
     /// ```
-    pub fn volume(&self) -> f32 {
+    pub fn volume(&self) -> F {
         self.inner.volume()
     }
 
@@ -240,7 +241,7 @@ impl Box {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const o = box.origin().toCopy(); // Float32Array [0, 0, 0]
+    /// const o = box.origin().toCopy(); // Float32Array or Float64Array [0, 0, 0]
     /// ```
     pub fn origin(&self) -> WasmArray {
         let o = self.inner.origin_view();
@@ -259,7 +260,7 @@ impl Box {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const L = box.lengths().toCopy(); // Float32Array [10, 10, 10]
+    /// const L = box.lengths().toCopy(); // Float32Array or Float64Array [10, 10, 10]
     /// ```
     pub fn lengths(&self) -> WasmArray {
         let l = self.inner.lengths();
@@ -280,7 +281,7 @@ impl Box {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const t = box.tilts().toCopy(); // Float32Array [0, 0, 0]
+    /// const t = box.tilts().toCopy(); // Float32Array or Float64Array [0, 0, 0]
     /// ```
     pub fn tilts(&self) -> WasmArray {
         let t = self.inner.tilts();
@@ -309,7 +310,7 @@ impl Box {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const cart = WasmArray.from(new Float32Array([5, 5, 5]), [1, 3]);
+    /// const cart = WasmArray.from(coords, [1, 3]);
     /// const frac = box.toFrac(cart);
     /// console.log(frac.toCopy()); // [0.5, 0.5, 0.5] for a 10x10x10 box
     /// ```
@@ -346,7 +347,7 @@ impl Box {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const frac = WasmArray.from(new Float32Array([0.5, 0.5, 0.5]), [1, 3]);
+    /// const frac = WasmArray.from(fracCoords, [1, 3]);
     /// const cart = box.toCart(frac);
     /// console.log(cart.toCopy()); // [5, 5, 5] for a 10x10x10 box
     /// ```
@@ -387,7 +388,7 @@ impl Box {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const pos = WasmArray.from(new Float32Array([12, -1, 5]), [1, 3]);
+    /// const pos = WasmArray.from(positions, [1, 3]);
     /// const wrapped = box.wrap(pos); // wraps into [0, lx) x [0, ly) x [0, lz)
     /// ```
     pub fn wrap(&self, coords: &WasmArray) -> Result<WasmArray, JsValue> {
@@ -414,7 +415,7 @@ impl Box {
     /// * `coords` - `WasmArray` with shape `[N, 3]` containing
     ///   Cartesian coordinates in angstrom (A)
     /// * `out_block` - Target [`Block`] to write the result into
-    /// * `out_key` - Column name for the result (f32, shape `[N, 3]`)
+    /// * `out_key` - Column name for the result (float, shape `[N, 3]`)
     ///
     /// # Errors
     ///
@@ -473,8 +474,8 @@ impl Box {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const a = WasmArray.from(new Float32Array([1,1,1]), [1,3]);
-    /// const b = WasmArray.from(new Float32Array([9,9,9]), [1,3]);
+    /// const a = WasmArray.from(aCoords, [1, 3]);
+    /// const b = WasmArray.from(bCoords, [1, 3]);
     /// const d = box.delta(a, b, true); // minimum-image displacement
     /// ```
     pub fn delta(
@@ -516,7 +517,7 @@ impl Box {
     /// * `b` - `WasmArray` with shape `[N, 3]` (target positions in A)
     /// * `minimum_image` - If `true`, apply minimum image convention
     /// * `out_block` - Target [`Block`] to write the result into
-    /// * `out_key` - Column name for the result (f32, shape `[N, 3]`)
+    /// * `out_key` - Column name for the result (float, shape `[N, 3]`)
     ///
     /// # Errors
     ///
@@ -564,7 +565,7 @@ impl Box {
     ///
     /// * `coords` - `WasmArray` with shape `[N, 3]` (Cartesian, A)
     /// * `out_block` - Target [`Block`]
-    /// * `out_key` - Column name for the result (f32, shape `[N, 3]`)
+    /// * `out_key` - Column name for the result (float, shape `[N, 3]`)
     ///
     /// # Errors
     ///
@@ -602,7 +603,7 @@ impl Box {
     ///
     /// * `coords` - `WasmArray` with shape `[N, 3]` (fractional, dimensionless)
     /// * `out_block` - Target [`Block`]
-    /// * `out_key` - Column name for the result (f32, shape `[N, 3]`)
+    /// * `out_key` - Column name for the result (float, shape `[N, 3]`)
     ///
     /// # Errors
     ///
@@ -656,25 +657,27 @@ impl Box {
 mod tests {
     use super::Box as WasmBox;
     use crate::{Frame, WasmArray};
-    use js_sys::Float32Array;
+    use crate::core::types::JsFloatArray;
+    use molrs::types::F;
     #[allow(unused_imports)]
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::wasm_bindgen_test;
 
-    fn f32(values: &[f32]) -> Float32Array {
-        Float32Array::from(values)
+    fn float_array(values: &[F]) -> JsFloatArray {
+        JsFloatArray::from(values)
     }
 
-    fn assert_eq_array(actual: &Float32Array, expected: &[f32]) {
+    fn assert_eq_array(actual: &JsFloatArray, expected: &[F]) {
         assert_eq!(actual.length() as usize, expected.len());
         for (i, value) in expected.iter().enumerate() {
             let got = actual.get_index(i as u32);
+            let expected = *value;
             assert!(
-                (got - value).abs() < 1.0e-5,
+                (got - expected).abs() < 1.0e-5,
                 "index {}: {} != {}",
                 i,
                 got,
-                value
+                expected
             );
         }
     }
@@ -682,11 +685,11 @@ mod tests {
     #[wasm_bindgen_test]
     fn box_coordinate_ops() {
         let mut view = WasmArray::new(Box::new([2_usize, 3_usize]));
-        let view_data = f32(&[0.0, 0.0, 0.0, 2.0, 3.0, 4.0]);
+        let view_data = float_array(&[0.0, 0.0, 0.0, 2.0, 3.0, 4.0]);
         view.write_from(&view_data).expect("write_from failed");
 
-        let h = f32(&[2.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0, 4.0]);
-        let origin = f32(&[0.0, 0.0, 0.0]);
+        let h = float_array(&[2.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0, 4.0]);
+        let origin = float_array(&[0.0, 0.0, 0.0]);
         let sim_box = WasmBox::new(&h, &origin, true, true, true).expect("box new");
 
         let frac = sim_box.to_frac(&view).expect("to_frac failed");
@@ -699,7 +702,7 @@ mod tests {
 
         let mut wrap_view = WasmArray::new(Box::new([1_usize, 3_usize]));
         wrap_view
-            .write_from(&f32(&[2.5, 3.5, 4.5]))
+            .write_from(&float_array(&[2.5, 3.5, 4.5]))
             .expect("write wrap_view");
         let wrapped = sim_box.wrap(&wrap_view).expect("wrap failed");
         let wrapped_js = wrapped.to_copy();
@@ -717,15 +720,17 @@ mod tests {
         let tilts = cube.tilts().to_copy();
         assert_eq_array(&tilts, &[0.0, 0.0, 0.0]);
 
-        let ortho_lengths = f32(&[3.0, 4.0, 5.0]);
+        let ortho_lengths = float_array(&[3.0, 4.0, 5.0]);
         let ortho = WasmBox::ortho(&ortho_lengths, &origin, true, true, true).expect("ortho");
         let ortho_lengths_out = ortho.lengths().to_copy();
         assert_eq_array(&ortho_lengths_out, &[3.0, 4.0, 5.0]);
 
         let mut a = WasmArray::new(Box::new([1_usize, 3_usize]));
         let mut b = WasmArray::new(Box::new([1_usize, 3_usize]));
-        a.write_from(&f32(&[1.0, 1.0, 1.0])).expect("write a");
-        b.write_from(&f32(&[9.0, 9.0, 9.0])).expect("write b");
+        a.write_from(&float_array(&[1.0, 1.0, 1.0]))
+            .expect("write a");
+        b.write_from(&float_array(&[9.0, 9.0, 9.0]))
+            .expect("write b");
 
         let delta_mi = cube.delta(&a, &b, true).expect("delta mi").to_copy();
         let delta_no = cube.delta(&a, &b, false).expect("delta no").to_copy();
@@ -735,7 +740,7 @@ mod tests {
         let mut out = frame.create_block("out").expect("create out");
         cube.wrap_to_block(&wrap_view, &mut out, "wrapped")
             .expect("wrapToBlock");
-        let wrapped_out = out.copy_col_f32("wrapped").expect("copyColF32");
+        let wrapped_out = out.copy_col_f("wrapped").expect("copyColF");
         assert_eq_array(&wrapped_out, &[2.5, 3.5, 4.5]);
     }
 }

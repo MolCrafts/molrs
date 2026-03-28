@@ -38,7 +38,7 @@ pub fn add_hydrogens(mol: &MolGraph) -> MolGraph {
     let additions: Vec<(AtomId, u32)> = new_mol
         .atoms()
         .filter_map(|(id, atom)| {
-            let sym = atom.get_str("symbol")?;
+            let sym = atom.get_str("element")?;
             if sym.eq_ignore_ascii_case("H") {
                 return None; // skip existing hydrogens
             }
@@ -50,7 +50,7 @@ pub fn add_hydrogens(mol: &MolGraph) -> MolGraph {
     for (heavy_id, n) in additions {
         for _ in 0..n {
             let mut h = Atom::new();
-            h.set("symbol", "H");
+            h.set("element", "H");
             h.set("mass", 1.008_f64);
             let h_id = new_mol.add_atom(h);
             if let Ok(bid) = new_mol.add_bond(heavy_id, h_id)
@@ -77,7 +77,7 @@ pub fn remove_hydrogens(mol: &MolGraph) -> MolGraph {
     let h_ids: Vec<AtomId> = new_mol
         .atoms()
         .filter_map(|(id, atom)| {
-            let sym = atom.get_str("symbol")?;
+            let sym = atom.get_str("element")?;
             if !sym.eq_ignore_ascii_case("H") {
                 return None;
             }
@@ -104,7 +104,7 @@ pub fn remove_hydrogens(mol: &MolGraph) -> MolGraph {
 /// element has no defined default valences (e.g. noble gases).
 pub fn implicit_h_count(mol: &MolGraph, atom_id: AtomId) -> Option<u32> {
     let atom = mol.get_atom(atom_id).ok()?;
-    let sym = atom.get_str("symbol")?;
+    let sym = atom.get_str("element")?;
     let element = Element::by_symbol(sym)?;
 
     let valences = element.default_valences();
@@ -188,7 +188,7 @@ mod tests {
 
     fn atom(sym: &str) -> Atom {
         let mut a = Atom::new();
-        a.set("symbol", sym);
+        a.set("element", sym);
         a
     }
 
@@ -214,7 +214,7 @@ mod tests {
         assert_eq!(result.n_bonds(), 4);
         let n_h = result
             .atoms()
-            .filter(|(_, a)| a.get_str("symbol") == Some("H"))
+            .filter(|(_, a)| a.get_str("element") == Some("H"))
             .count();
         assert_eq!(n_h, 4);
         let _ = c; // suppress unused warning
@@ -267,7 +267,7 @@ mod tests {
         let result = add_hydrogens(&g);
         let n_h = result
             .atoms()
-            .filter(|(_, a)| a.get_str("symbol") == Some("H"))
+            .filter(|(_, a)| a.get_str("element") == Some("H"))
             .count();
         assert_eq!(n_h, 6, "Kekule benzene should get 6 H, got {}", n_h);
         assert_eq!(result.n_atoms(), 12); // 6C + 6H
@@ -325,7 +325,7 @@ mod tests {
         // NH4+: formal_charge=1 on N → needs 4 H
         let mut g = MolGraph::new();
         let mut n_atom = Atom::new();
-        n_atom.set("symbol", "N");
+        n_atom.set("element", "N");
         n_atom.set("formal_charge", 1.0_f64);
         let n = g.add_atom(n_atom);
         let count = implicit_h_count(&g, n).unwrap();
@@ -343,7 +343,7 @@ mod tests {
         // C had 1 bond, needs 3 more H; H should remain unchanged
         let n_h = result
             .atoms()
-            .filter(|(_, a)| a.get_str("symbol") == Some("H"))
+            .filter(|(_, a)| a.get_str("element") == Some("H"))
             .count();
         assert_eq!(n_h, 4); // 1 original + 3 new
     }

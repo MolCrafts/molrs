@@ -29,13 +29,13 @@ use crate::core::frame::Frame;
 
 /// Generate 3D coordinates for a molecular [`Frame`].
 ///
-/// The input frame must have an `"atoms"` block with a `"symbol"`
+/// The input frame must have an `"atoms"` block with a `"element"`
 /// string column (element symbols like `"C"`, `"N"`, `"O"`). A
-/// `"bonds"` block with `i`, `j` (u32) and `order` (f32) columns
+/// `"bonds"` block with `i`, `j` (u32) and `order` (F) columns
 /// is required for correct geometry.
 ///
 /// Returns a **new** [`Frame`] with 3D coordinates added as `x`, `y`,
-/// `z` (f32, angstrom) columns in the `"atoms"` block.
+/// `z` (F, angstrom) columns in the `"atoms"` block.
 ///
 /// # Arguments
 ///
@@ -68,9 +68,9 @@ use crate::core::frame::Frame;
 /// const frame3d = generate3D(frame2d, "fast", 42);
 ///
 /// const atoms = frame3d.getBlock("atoms");
-/// const x = atoms.copyColF32("x"); // Float32Array with 3D x-coords
-/// const y = atoms.copyColF32("y");
-/// const z = atoms.copyColF32("z");
+/// const x = atoms.copyColF("x"); // Float32Array or Float64Array with 3D x-coords
+/// const y = atoms.copyColF("y");
+/// const z = atoms.copyColF("z");
 /// ```
 #[wasm_bindgen(js_name = generate3D)]
 pub fn generate_3d_wasm(

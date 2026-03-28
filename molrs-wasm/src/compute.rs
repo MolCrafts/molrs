@@ -20,8 +20,8 @@
 //! // Compute RDF
 //! const rdf = new RDF(100, 5.0);
 //! const result = rdf.compute(frame, nlist);
-//! const gr = result.rdf();           // Float32Array
-//! const r  = result.binCenters();    // Float32Array
+//! const gr = result.rdf();           // Float32Array or Float64Array
+//! const r  = result.binCenters();    // Float32Array or Float64Array
 //!
 //! // Compute MSD
 //! const msd = new MSD();
@@ -67,7 +67,7 @@ use crate::core::frame::Frame;
 /// Extract an Nx3 position matrix from the `"atoms"` block of a core
 /// [`Frame`](molrs::frame::Frame).
 ///
-/// Reads the `x`, `y`, `z` columns (f32, angstrom) and assembles
+/// Reads the `x`, `y`, `z` columns (F, angstrom) and assembles
 /// them into a contiguous row-major matrix.
 fn positions_from_frame(frame: &molrs::frame::Frame) -> Result<ndarray::Array2<F>, JsValue> {
     let atoms = frame
@@ -119,7 +119,7 @@ fn positions_from_frame(frame: &molrs::frame::Frame) -> Result<ndarray::Array2<F
 /// ```
 #[wasm_bindgen(js_name = LinkedCell)]
 pub struct LinkedCell {
-    cutoff: f32,
+    cutoff: F,
 }
 
 #[wasm_bindgen(js_class = LinkedCell)]
@@ -136,7 +136,7 @@ impl LinkedCell {
     /// const lc = new LinkedCell(5.0);
     /// ```
     #[wasm_bindgen(constructor)]
-    pub fn new(cutoff: f32) -> Self {
+    pub fn new(cutoff: F) -> Self {
         Self { cutoff }
     }
 
@@ -145,7 +145,7 @@ impl LinkedCell {
     /// Finds all unique pairs `(i < j)` of atoms within the cutoff
     /// distance using the cell-list algorithm.
     ///
-    /// The frame must have an `"atoms"` block with `x`, `y`, `z` (f32) columns.
+    /// The frame must have an `"atoms"` block with `x`, `y`, `z` (F) columns.
     /// If the frame has a `simbox`, periodic boundary conditions are used.
     /// Otherwise, a free-boundary bounding box is auto-generated.
     ///
@@ -166,7 +166,7 @@ impl LinkedCell {
     /// ```js
     /// const lc = new LinkedCell(3.0);
     /// const nlist = lc.build(frame);
-    /// const dists = nlist.distances(); // Float32Array
+    /// const dists = nlist.distances(); // Float32Array or Float64Array
     /// ```
     pub fn build(&self, frame: &Frame) -> Result<NeighborList, JsValue> {
         let rs_frame = frame.clone_core_frame()?;
@@ -258,7 +258,7 @@ impl LinkedCell {
 ///
 /// const i = nlist.queryPointIndices(); // Uint32Array
 /// const j = nlist.pointIndices();      // Uint32Array
-/// const d = nlist.distances();         // Float32Array (in A)
+/// const d = nlist.distances();         // Float32Array or Float64Array (in A)
 /// ```
 #[wasm_bindgen(js_name = NeighborList)]
 pub struct NeighborList {
@@ -310,20 +310,20 @@ impl NeighborList {
         self.inner.point_indices().to_vec()
     }
 
-    /// Pairwise distances in angstrom (A), as a `Float32Array`.
+    /// Pairwise distances in angstrom (A), as a float typed array.
     ///
     /// `distances()[k]` is the distance between query point
     /// `queryPointIndices()[k]` and reference point `pointIndices()[k]`.
-    pub fn distances(&self) -> Vec<f32> {
+    pub fn distances(&self) -> Vec<F> {
         self.inner.distances()
     }
 
-    /// Squared pairwise distances in A^2, as a `Float32Array`.
+    /// Squared pairwise distances in A^2, as a float typed array.
     ///
     /// More efficient than `distances()` when you only need to
     /// compare or threshold distances.
     #[wasm_bindgen(js_name = distSq)]
-    pub fn dist_sq(&self) -> Vec<f32> {
+    pub fn dist_sq(&self) -> Vec<F> {
         self.inner.dist_sq().to_vec()
     }
 }
@@ -354,8 +354,8 @@ impl NeighborList {
 /// const rdf = new RDF(100, 5.0);
 /// const result = rdf.compute(frame, nlist);
 ///
-/// const r  = result.binCenters();  // Float32Array, bin centers in A
-/// const gr = result.rdf();         // Float32Array, g(r) values
+/// const r  = result.binCenters();  // Float32Array or Float64Array, bin centers in A
+/// const gr = result.rdf();         // Float32Array or Float64Array, g(r) values
 /// ```
 #[wasm_bindgen(js_name = RDF)]
 pub struct RDF {
@@ -378,7 +378,7 @@ impl RDF {
     /// const rdf = new RDF(100, 5.0); // 100 bins up to 5 A
     /// ```
     #[wasm_bindgen(constructor)]
-    pub fn new(n_bins: usize, r_max: f32) -> Self {
+    pub fn new(n_bins: usize, r_max: F) -> Self {
         Self {
             inner: RsRDF::new(n_bins, r_max),
         }
@@ -407,7 +407,7 @@ impl RDF {
     ///
     /// ```js
     /// const result = rdf.compute(frame, nlist);
-    /// const gr = result.rdf(); // Float32Array
+    /// const gr = result.rdf(); // Float32Array or Float64Array
     /// ```
     pub fn compute(&self, frame: &Frame, neighbors: &NeighborList) -> Result<RDFResult, JsValue> {
         let rs_frame = frame.clone_core_frame()?;
@@ -428,9 +428,9 @@ impl RDF {
 ///
 /// ```js
 /// const result = rdf.compute(frame, nlist);
-/// const r  = result.binCenters();  // Float32Array [0.025, 0.075, ...]
-/// const gr = result.rdf();         // Float32Array, normalized g(r)
-/// const nr = result.pairCounts();  // Float32Array, raw counts
+/// const r  = result.binCenters();  // Float32Array or Float64Array [0.025, 0.075, ...]
+/// const gr = result.rdf();         // Float32Array or Float64Array, normalized g(r)
+/// const nr = result.pairCounts();  // Float32Array or Float64Array, raw counts
 /// console.log("Volume:", result.volume, "A^3");
 /// console.log("N_ref:", result.numPoints);
 /// ```
@@ -441,33 +441,33 @@ pub struct RDFResult {
 
 #[wasm_bindgen(js_class = RDFResult)]
 impl RDFResult {
-    /// Bin center positions as `Float32Array` in angstrom (A).
+    /// Bin center positions as a float typed array in angstrom (A).
     ///
     /// Length equals `n_bins` (the value passed to the `RDF` constructor).
     #[wasm_bindgen(js_name = binCenters)]
-    pub fn bin_centers(&self) -> Vec<f32> {
+    pub fn bin_centers(&self) -> Vec<F> {
         self.inner.bin_centers.to_vec()
     }
 
-    /// Bin edge positions as `Float32Array` in angstrom (A).
+    /// Bin edge positions as a float typed array in angstrom (A).
     ///
     /// Length is `n_bins + 1` (one more than bin centers).
     #[wasm_bindgen(js_name = binEdges)]
-    pub fn bin_edges(&self) -> Vec<f32> {
+    pub fn bin_edges(&self) -> Vec<F> {
         self.inner.bin_edges.to_vec()
     }
 
-    /// Normalized g(r) values as `Float32Array` (dimensionless).
+    /// Normalized g(r) values as a float typed array (dimensionless).
     ///
     /// A uniform ideal gas has g(r) = 1.0 everywhere. Peaks indicate
     /// preferred interatomic distances (coordination shells).
-    pub fn rdf(&self) -> Vec<f32> {
+    pub fn rdf(&self) -> Vec<F> {
         self.inner.rdf.to_vec()
     }
 
-    /// Raw (un-normalized) pair counts per bin as `Float32Array`.
+    /// Raw (un-normalized) pair counts per bin as a float typed array.
     #[wasm_bindgen(js_name = pairCounts)]
-    pub fn pair_counts(&self) -> Vec<f32> {
+    pub fn pair_counts(&self) -> Vec<F> {
         self.inner.n_r.to_vec()
     }
 
@@ -479,7 +479,7 @@ impl RDFResult {
 
     /// Simulation box volume used in the normalization, in A^3.
     #[wasm_bindgen(getter)]
-    pub fn volume(&self) -> f32 {
+    pub fn volume(&self) -> F {
         self.inner.volume
     }
 }
@@ -543,7 +543,7 @@ impl MSD {
     /// # Arguments
     ///
     /// * `frame` - Frame with `"atoms"` block containing
-    ///   `x`, `y`, `z` (f32) columns
+    ///   `x`, `y`, `z` (F) columns
     ///
     /// # Errors
     ///
@@ -603,7 +603,7 @@ impl MSD {
 /// ```js
 /// const result = msd.compute(frame);
 /// console.log(result.mean);              // number (A^2)
-/// console.log(result.perParticle());     // Float32Array (A^2)
+/// console.log(result.perParticle());     // Float32Array or Float64Array (A^2)
 /// ```
 #[wasm_bindgen(js_name = MSDResult)]
 pub struct MSDResult {
@@ -617,16 +617,16 @@ impl MSDResult {
     /// This is the arithmetic mean of all per-particle squared
     /// displacements: `mean = sum(|r_i(t) - r_i(0)|^2) / N`.
     #[wasm_bindgen(getter)]
-    pub fn mean(&self) -> f32 {
+    pub fn mean(&self) -> F {
         self.inner.mean
     }
 
-    /// Per-particle squared displacements as `Float32Array` in A^2.
+    /// Per-particle squared displacements as a float typed array in A^2.
     ///
     /// `perParticle()[i]` is `|r_i(t) - r_i(0)|^2` for particle `i`.
     /// Length equals the number of atoms.
     #[wasm_bindgen(js_name = perParticle)]
-    pub fn per_particle(&self) -> Vec<f32> {
+    pub fn per_particle(&self) -> Vec<F> {
         self.inner.per_particle.to_vec()
     }
 }
@@ -773,7 +773,7 @@ mod tests {
     use wasm_bindgen_test::*;
 
     /// Helper: create a Frame with N particles at given positions + cubic simbox.
-    fn make_frame(positions: &[[f32; 3]], box_len: f32) -> Frame {
+    fn make_frame(positions: &[[F; 3]], box_len: F) -> Frame {
         use molrs::block::Block;
         use molrs::region::simbox::SimBox;
         use ndarray::{Array1, array};
@@ -790,7 +790,7 @@ mod tests {
         let mut rs_frame = molrs::frame::Frame::new();
         rs_frame.insert("atoms", block);
         rs_frame.simbox =
-            Some(SimBox::cube(box_len, array![0.0_f32, 0.0, 0.0], [false, false, false]).unwrap());
+            Some(SimBox::cube(box_len, array![0.0 as F, 0.0, 0.0], [false, false, false]).unwrap());
 
         Frame::from_rs_frame(rs_frame).unwrap()
     }
@@ -807,9 +807,9 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn rdf_runs() {
-        let positions: Vec<[f32; 3]> = (0..50)
+        let positions: Vec<[F; 3]> = (0..50)
             .map(|i| {
-                let v = i as f32 * 0.2;
+                let v = i as F * 0.2;
                 [v % 10.0, (v * 1.3) % 10.0, (v * 1.7) % 10.0]
             })
             .collect();
@@ -904,7 +904,7 @@ mod tests {
 ///
 /// ```js
 /// const centers = new ClusterCenters().compute(frame, clusterResult);
-/// // Float32Array [x0,y0,z0, x1,y1,z1, ...]
+/// // Float32Array or Float64Array [x0,y0,z0, x1,y1,z1, ...]
 /// ```
 #[wasm_bindgen(js_name = ClusterCenters)]
 pub struct ClusterCenters {
@@ -921,12 +921,12 @@ impl ClusterCenters {
         }
     }
 
-    /// Compute geometric centers. Returns flat `Float32Array` `[x0,y0,z0, ...]`.
+    /// Compute geometric centers. Returns a flat float typed array `[x0,y0,z0, ...]`.
     pub fn compute(
         &self,
         frame: &Frame,
         cluster_result: &ClusterResult,
-    ) -> Result<Vec<f32>, JsValue> {
+    ) -> Result<Vec<F>, JsValue> {
         let rs_frame = frame.clone_core_frame()?;
         let centers = self
             .inner
@@ -946,8 +946,8 @@ impl ClusterCenters {
 ///
 /// ```js
 /// const com = new CenterOfMass().compute(frame, clusterResult);
-/// com.centersOfMass();   // Float32Array [x0,y0,z0, ...]
-/// com.clusterMasses();   // Float32Array
+/// com.centersOfMass();   // Float32Array or Float64Array [x0,y0,z0, ...]
+/// com.clusterMasses();   // Float32Array or Float64Array
 /// ```
 #[wasm_bindgen(js_name = CenterOfMassResult)]
 pub struct CenterOfMassResult {
@@ -958,7 +958,7 @@ pub struct CenterOfMassResult {
 impl CenterOfMassResult {
     /// Mass-weighted centers, flat `[x0,y0,z0, x1,y1,z1, ...]`.
     #[wasm_bindgen(js_name = centersOfMass)]
-    pub fn centers_of_mass(&self) -> Vec<f32> {
+    pub fn centers_of_mass(&self) -> Vec<F> {
         self.inner
             .centers_of_mass
             .iter()
@@ -968,7 +968,7 @@ impl CenterOfMassResult {
 
     /// Total mass per cluster.
     #[wasm_bindgen(js_name = clusterMasses)]
-    pub fn cluster_masses(&self) -> Vec<f32> {
+    pub fn cluster_masses(&self) -> Vec<F> {
         self.inner.cluster_masses.clone()
     }
 
@@ -982,16 +982,16 @@ impl CenterOfMassResult {
 /// Mass-weighted cluster center calculator.
 #[wasm_bindgen(js_name = CenterOfMass)]
 pub struct CenterOfMass {
-    masses: Option<Vec<f32>>,
+    masses: Option<Vec<F>>,
 }
 
 #[wasm_bindgen(js_class = CenterOfMass)]
 impl CenterOfMass {
     /// Create a center-of-mass calculator.
     ///
-    /// Pass `null` for uniform masses, or a `Float32Array` of per-particle masses.
+    /// Pass `null` for uniform masses, or a float typed array of per-particle masses.
     #[wasm_bindgen(constructor)]
-    pub fn new(masses: Option<Vec<f32>>) -> Self {
+    pub fn new(masses: Option<Vec<F>>) -> Self {
         Self { masses }
     }
 
@@ -1036,12 +1036,12 @@ impl GyrationTensor {
         }
     }
 
-    /// Compute gyration tensors. Returns flat `Float32Array` (9 values per cluster).
+    /// Compute gyration tensors. Returns a flat float typed array (9 values per cluster).
     pub fn compute(
         &self,
         frame: &Frame,
         cluster_result: &ClusterResult,
-    ) -> Result<Vec<f32>, JsValue> {
+    ) -> Result<Vec<F>, JsValue> {
         let rs_frame = frame.clone_core_frame()?;
         let tensors = self
             .inner
@@ -1061,22 +1061,22 @@ impl GyrationTensor {
 /// Moment of inertia tensor per cluster.
 #[wasm_bindgen(js_name = InertiaTensor)]
 pub struct InertiaTensor {
-    masses: Option<Vec<f32>>,
+    masses: Option<Vec<F>>,
 }
 
 #[wasm_bindgen(js_class = InertiaTensor)]
 impl InertiaTensor {
     #[wasm_bindgen(constructor)]
-    pub fn new(masses: Option<Vec<f32>>) -> Self {
+    pub fn new(masses: Option<Vec<F>>) -> Self {
         Self { masses }
     }
 
-    /// Compute inertia tensors. Returns flat `Float32Array` (9 values per cluster).
+    /// Compute inertia tensors. Returns a flat float typed array (9 values per cluster).
     pub fn compute(
         &self,
         frame: &Frame,
         cluster_result: &ClusterResult,
-    ) -> Result<Vec<f32>, JsValue> {
+    ) -> Result<Vec<F>, JsValue> {
         let rs_frame = frame.clone_core_frame()?;
         let calc = if let Some(ref ms) = self.masses {
             RsInertiaTensor::new().with_masses(ms)
@@ -1100,22 +1100,22 @@ impl InertiaTensor {
 /// Radius of gyration per cluster.
 #[wasm_bindgen(js_name = RadiusOfGyration)]
 pub struct RadiusOfGyration {
-    masses: Option<Vec<f32>>,
+    masses: Option<Vec<F>>,
 }
 
 #[wasm_bindgen(js_class = RadiusOfGyration)]
 impl RadiusOfGyration {
     #[wasm_bindgen(constructor)]
-    pub fn new(masses: Option<Vec<f32>>) -> Self {
+    pub fn new(masses: Option<Vec<F>>) -> Self {
         Self { masses }
     }
 
-    /// Compute radii of gyration. Returns `Float32Array` of length `numClusters`.
+    /// Compute radii of gyration. Returns a float typed array of length `numClusters`.
     pub fn compute(
         &self,
         frame: &Frame,
         cluster_result: &ClusterResult,
-    ) -> Result<Vec<f32>, JsValue> {
+    ) -> Result<Vec<F>, JsValue> {
         let rs_frame = frame.clone_core_frame()?;
         let calc = if let Some(ref ms) = self.masses {
             RsRadiusOfGyration::new().with_masses(ms)

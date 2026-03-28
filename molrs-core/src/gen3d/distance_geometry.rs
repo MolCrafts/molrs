@@ -836,7 +836,7 @@ fn recenter(coords: &mut [[f64; 3]]) {
 fn covalent_radius(mol: &MolGraph, atom_id: AtomId) -> f64 {
     mol.get_atom(atom_id)
         .ok()
-        .and_then(|a| a.get_str("symbol"))
+        .and_then(|a| a.get_str("element"))
         .and_then(Element::by_symbol)
         .map(|e| e.covalent_radius() as f64)
         .unwrap_or(0.77)
@@ -845,7 +845,7 @@ fn covalent_radius(mol: &MolGraph, atom_id: AtomId) -> f64 {
 fn vdw_radius(mol: &MolGraph, atom_id: AtomId) -> f64 {
     mol.get_atom(atom_id)
         .ok()
-        .and_then(|a| a.get_str("symbol"))
+        .and_then(|a| a.get_str("element"))
         .and_then(Element::by_symbol)
         .map(|e| e.vdw_radius() as f64)
         .unwrap_or(1.8)

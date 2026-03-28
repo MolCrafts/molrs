@@ -117,7 +117,7 @@ fn parse_array_from_quoted(s: &str) -> ExtValue {
 fn parse_properties(spec: &str) -> Option<Vec<PropertySpec>> {
     // Expect a colon-separated stream of triplets: name:T:m: name2:T:m: ...
     let parts: Vec<&str> = spec.split(':').filter(|s| !s.is_empty()).collect();
-    if parts.len() < 3 || !parts.len().is_multiple_of(3) {
+    if parts.len() < 3 || parts.len() % 3 != 0 {
         return None;
     }
     let mut out = Vec::new();

@@ -1,4 +1,4 @@
-//! Owned f32 multi-dimensional array for WASM-JS interop.
+//! Owned float multi-dimensional array for WASM-JS interop.
 //!
 //! [`WasmArray`] bridges the gap between Rust's ndarray types and
 //! JavaScript typed arrays by storing both the flat data and shape
@@ -6,28 +6,39 @@
 //! that is too large or structured for individual typed-array columns.
 
 use ndarray::{Array2, ArrayView2};
+use molrs::types::F;
 use wasm_bindgen::prelude::*;
 
-/// Owned f32 array with ndarray-compatible shape metadata.
+#[cfg(feature = "f64")]
+pub(crate) type JsFloatArray = js_sys::Float64Array;
+#[cfg(not(feature = "f64"))]
+pub(crate) type JsFloatArray = js_sys::Float32Array;
+
+#[cfg(feature = "f64")]
+pub(crate) const FLOAT_DTYPE_NAME: &str = "f64";
+#[cfg(not(feature = "f64"))]
+pub(crate) const FLOAT_DTYPE_NAME: &str = "f32";
+
+/// Owned float array with ndarray-compatible shape metadata.
 ///
-/// Stores a flat `Vec<f32>` together with a shape descriptor (e.g.,
+/// Stores a flat `Vec<F>` together with a shape descriptor (e.g.,
 /// `[N, 3]` for an Nx3 coordinate matrix). Used for passing
 /// multi-dimensional numeric data across the WASM boundary.
 ///
 /// # Memory layout
 ///
 /// Data is stored in row-major (C) order, matching ndarray's default
-/// and JavaScript's `Float32Array` convention.
+/// and JavaScript's float typed-array convention.
 ///
 /// # Example (JavaScript)
 ///
 /// ```js
 /// // Create a 2x3 zero array
 /// const arr = new WasmArray([2, 3]);
-/// arr.writeFrom(new Float32Array([1,2,3, 4,5,6]));
+/// arr.writeFrom(floatArray);
 ///
 /// // Or from existing data
-/// const arr2 = WasmArray.from(new Float32Array([1,2,3]), [1, 3]);
+/// const arr2 = WasmArray.from(floatArray, [1, 3]);
 ///
 /// // Get data back
 /// const copy = arr.toCopy();       // safe owned copy
@@ -35,7 +46,7 @@ use wasm_bindgen::prelude::*;
 /// ```
 #[wasm_bindgen]
 pub struct WasmArray {
-    data: Vec<f32>,
+    data: Vec<F>,
     shape: Box<[usize]>,
 }
 
@@ -62,11 +73,11 @@ impl WasmArray {
         Self { data, shape }
     }
 
-    /// Create a `WasmArray` from an existing JS `Float32Array`.
+    /// Create a `WasmArray` from an existing JS float typed array.
     ///
     /// # Arguments
     ///
-    /// * `data` - Source `Float32Array`
+    /// * `data` - Source float typed array (`Float32Array` or `Float64Array`)
     /// * `shape` - Optional shape. If omitted, defaults to `[data.length]` (1D).
     ///
     /// # Returns
@@ -80,12 +91,12 @@ impl WasmArray {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const arr = WasmArray.from(new Float32Array([1,2,3,4,5,6]), [2, 3]);
+    /// const arr = WasmArray.from(floatArray, [2, 3]);
     /// console.log(arr.shape()); // [2, 3]
     /// ```
     #[wasm_bindgen(js_name = from)]
     pub fn from_js(
-        data: &js_sys::Float32Array,
+        data: &JsFloatArray,
         shape: Option<Box<[usize]>>,
     ) -> Result<WasmArray, JsValue> {
         let shape = shape.unwrap_or_else(|| Box::new([data.length() as usize]));
@@ -137,23 +148,23 @@ impl WasmArray {
     /// that need direct memory access. The pointer is only valid as
     /// long as this `WasmArray` is alive and no WASM memory growth
     /// has occurred.
-    pub fn ptr(&self) -> *const f32 {
+    pub fn ptr(&self) -> *const F {
         self.data.as_ptr()
     }
 
-    /// Return the data type string. Always `"float"` for `WasmArray`.
+    /// Return the concrete float dtype string for this build.
     pub fn dtype(&self) -> String {
-        "float".to_string()
+        FLOAT_DTYPE_NAME.to_string()
     }
 
-    /// Overwrite the array contents from a JS `Float32Array`.
+    /// Overwrite the array contents from a JS float typed array.
     ///
     /// The source array must have exactly the same number of elements
     /// as this `WasmArray` (i.e., the shape is preserved).
     ///
     /// # Arguments
     ///
-    /// * `arr` - Source `Float32Array` with matching length
+    /// * `arr` - Source float typed array with matching length
     ///
     /// # Errors
     ///
@@ -163,9 +174,9 @@ impl WasmArray {
     ///
     /// ```js
     /// const wa = new WasmArray([3]);
-    /// wa.writeFrom(new Float32Array([1.0, 2.0, 3.0]));
+    /// wa.writeFrom(floatArray);
     /// ```
-    pub fn write_from(&mut self, arr: &js_sys::Float32Array) -> Result<(), JsValue> {
+    pub fn write_from(&mut self, arr: &JsFloatArray) -> Result<(), JsValue> {
         if arr.length() as usize != self.data.len() {
             return Err(JsValue::from_str(&format!(
                 "Array length mismatch: expected {}, got {}",
@@ -177,7 +188,7 @@ impl WasmArray {
         Ok(())
     }
 
-    /// Zero-copy `Float32Array` view over this array's backing storage.
+    /// Zero-copy float typed-array view over this array's backing storage.
     ///
     /// **Warning**: The returned view becomes **invalid** if WASM linear
     /// memory grows (due to any allocation). Use [`toCopy`](WasmArray::to_copy)
@@ -185,7 +196,8 @@ impl WasmArray {
     ///
     /// # Safety (internal)
     ///
-    /// Uses `Float32Array::view` which creates an unowned view into
+    /// Uses the corresponding JS float typed-array `view` constructor,
+    /// which creates an unowned view into
     /// WASM memory. The view must not outlive the `WasmArray` and must
     /// not be used after any allocation that could trigger memory growth.
     ///
@@ -196,14 +208,14 @@ impl WasmArray {
     /// // Do NOT allocate between view creation and use
     /// ```
     #[wasm_bindgen(js_name = toTypedArray)]
-    pub fn to_typed_array(&self) -> js_sys::Float32Array {
+    pub fn to_typed_array(&self) -> JsFloatArray {
         // SAFETY:
         // - `self.data` is contiguous and lives in WASM linear memory.
         // - JS callers must treat this as a short-lived view.
-        unsafe { js_sys::Float32Array::view(self.data.as_slice()) }
+        unsafe { JsFloatArray::view(self.data.as_slice()) }
     }
 
-    /// Create an owned JS `Float32Array` copy of the data.
+    /// Create an owned JS float typed-array copy of the data.
     ///
     /// The returned array is an independent copy that is safe to store
     /// and use regardless of subsequent WASM memory operations.
@@ -214,8 +226,8 @@ impl WasmArray {
     /// const copy = arr.toCopy(); // safe to keep indefinitely
     /// ```
     #[wasm_bindgen(js_name = toCopy)]
-    pub fn to_copy(&self) -> js_sys::Float32Array {
-        js_sys::Float32Array::from(self.data.as_slice())
+    pub fn to_copy(&self) -> JsFloatArray {
+        JsFloatArray::from(self.data.as_slice())
     }
 
     /// Compute the sum of all elements.
@@ -225,17 +237,17 @@ impl WasmArray {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const arr = WasmArray.from(new Float32Array([1, 2, 3]));
+    /// const arr = WasmArray.from(floatArray);
     /// console.log(arr.sum()); // 6.0
     /// ```
-    pub fn sum(&self) -> f32 {
+    pub fn sum(&self) -> F {
         self.data.iter().sum()
     }
 }
 
 // Internal methods not exposed to JavaScript
 impl WasmArray {
-    pub(crate) fn from_vec(data: Vec<f32>, shape: Box<[usize]>) -> Self {
+    pub(crate) fn from_vec(data: Vec<F>, shape: Box<[usize]>) -> Self {
         Self { data, shape }
     }
 
@@ -243,7 +255,7 @@ impl WasmArray {
         &self,
         rows: usize,
         cols: usize,
-    ) -> Result<ArrayView2<'_, f32>, String> {
+    ) -> Result<ArrayView2<'_, F>, String> {
         if rows * cols != self.data.len() {
             return Err(format!(
                 "Shape mismatch: {}x{} = {} but data has {} elements",
@@ -257,22 +269,21 @@ impl WasmArray {
             .map_err(|e| format!("Failed to create array view: {}", e))
     }
 
-    pub(crate) fn from_array2(arr: Array2<f32>) -> Self {
+    pub(crate) fn from_array2(arr: Array2<F>) -> Self {
         let shape = Box::new([arr.nrows(), arr.ncols()]);
         let (data, _offset) = arr.into_raw_vec_and_offset();
         Self { data, shape }
     }
 
     #[allow(dead_code)]
-    pub(crate) fn as_slice(&self) -> &[f32] {
+    pub(crate) fn as_slice(&self) -> &[F] {
         &self.data
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::WasmArray;
-    use js_sys::Float32Array;
+    use super::{JsFloatArray, WasmArray};
     use wasm_bindgen_test::wasm_bindgen_test;
 
     #[wasm_bindgen_test]
@@ -281,7 +292,7 @@ mod tests {
         assert_eq!(view.len(), 6);
         assert_eq!(&*view.shape(), &[2, 3]);
 
-        let data = Float32Array::from(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0][..]);
+        let data = JsFloatArray::from(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0][..]);
         view.write_from(&data).expect("write_from failed");
         assert!((view.sum() - 21.0).abs() < 1.0e-5);
 

@@ -25,6 +25,8 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.so
+*.dSYM
+*.dSYM/
 
 # macOS
 .DS_Store
@@ -54,4 +56,5 @@ pkg/
 molrs-wasm/pkg/
 molrs-python/python/molrs/*.dylib
 molrs-python/python/molrs/*.dll
+molrs-python/python/molrs/*.so
 molrs-python/python/molrs/*.dylib.dSYM/

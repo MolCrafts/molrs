@@ -915,7 +915,7 @@ pub fn pme_ctor(
     // Read exclusions from Frame's "exclusions" block (optional)
     let mut exclusions = Vec::new();
     if let Some(block) = frame.get("exclusions")
-        && let (Some(i_col), Some(j_col)) = (block.get_uint("i"), block.get_uint("j"))
+        && let (Some(i_col), Some(j_col)) = (block.get_uint("atomi"), block.get_uint("atomj"))
     {
         for idx in 0..i_col.len() {
             exclusions.push([i_col[idx] as usize, j_col[idx] as usize]);

@@ -5,6 +5,7 @@ use crate::constraints::EvalMode;
 use crate::context::PackContext;
 use crate::gencan::GencanWorkspace;
 use crate::initial::restmol;
+use crate::random::uniform01;
 use molrs::types::F;
 use rand::Rng;
 
@@ -116,7 +117,7 @@ pub fn movebad(
             .map(|k| {
                 let ibad_mol = sys.work.flash_ind[nmols_itype - 1 - k];
                 let igood_mol = sys.work.flash_ind
-                    [(rng.random::<F>() * nmols_itype as F * frac) as usize % nmols_itype.max(1)];
+                    [(uniform01(rng) * nmols_itype as F * frac) as usize % nmols_itype.max(1)];
                 (ibad_mol, igood_mol)
             })
             .collect();
@@ -129,19 +130,16 @@ pub fn movebad(
 
             let dmax = sys.dmax[itype];
             if cfg.movebadrandom {
-                x[ilubar_bad] =
-                    sys.sizemin[0] + rng.random::<F>() * (sys.sizemax[0] - sys.sizemin[0]);
+                x[ilubar_bad] = sys.sizemin[0] + uniform01(rng) * (sys.sizemax[0] - sys.sizemin[0]);
                 x[ilubar_bad + 1] =
-                    sys.sizemin[1] + rng.random::<F>() * (sys.sizemax[1] - sys.sizemin[1]);
+                    sys.sizemin[1] + uniform01(rng) * (sys.sizemax[1] - sys.sizemin[1]);
                 x[ilubar_bad + 2] =
-                    sys.sizemin[2] + rng.random::<F>() * (sys.sizemax[2] - sys.sizemin[2]);
+                    sys.sizemin[2] + uniform01(rng) * (sys.sizemax[2] - sys.sizemin[2]);
             } else {
                 // Move bad molecule near good molecule with random perturbation.
-                x[ilubar_bad] = x[ilubar_good] - 0.3 * dmax + 0.6 * rng.random::<F>() * dmax;
-                x[ilubar_bad + 1] =
-                    x[ilubar_good + 1] - 0.3 * dmax + 0.6 * rng.random::<F>() * dmax;
-                x[ilubar_bad + 2] =
-                    x[ilubar_good + 2] - 0.3 * dmax + 0.6 * rng.random::<F>() * dmax;
+                x[ilubar_bad] = x[ilubar_good] - 0.3 * dmax + 0.6 * uniform01(rng) * dmax;
+                x[ilubar_bad + 1] = x[ilubar_good + 1] - 0.3 * dmax + 0.6 * uniform01(rng) * dmax;
+                x[ilubar_bad + 2] = x[ilubar_good + 2] - 0.3 * dmax + 0.6 * uniform01(rng) * dmax;
             }
 
             // Copy angles from good molecule

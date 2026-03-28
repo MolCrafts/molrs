@@ -20,6 +20,7 @@ pub fn axis_cell(x: F, pbc_min: F, pbc_length: F, cell_length: F, ncells: usize)
 }
 
 /// Compute the 3D cell indices (0-based) for a position.
+#[inline(always)]
 pub fn setcell(
     pos: &[F; 3],
     pbc_min: &[F; 3],

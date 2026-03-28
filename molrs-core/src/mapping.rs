@@ -244,7 +244,7 @@ impl CGMapping {
                     let atom = aa.get_atom(atom_ids[atom_idx])?;
                     let mass = atom.get_f64("mass").unwrap_or_else(|| {
                         // Fall back to element mass from symbol.
-                        atom.get_str("symbol")
+                        atom.get_str("element")
                             .and_then(crate::element::Element::by_symbol)
                             .map(|e| e.atomic_mass() as f64)
                             .unwrap_or(1.0)

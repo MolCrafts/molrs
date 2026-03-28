@@ -66,8 +66,12 @@ pub fn mmff_bond_ctor(
     let block = frame
         .get("bonds")
         .ok_or("mmff_bond: missing \"bonds\" block")?;
-    let i_col = block.get_uint("i").ok_or("mmff_bond: missing \"i\"")?;
-    let j_col = block.get_uint("j").ok_or("mmff_bond: missing \"j\"")?;
+    let i_col = block
+        .get_uint("atomi")
+        .ok_or("mmff_bond: missing \"atomi\"")?;
+    let j_col = block
+        .get_uint("atomj")
+        .ok_or("mmff_bond: missing \"atomj\"")?;
     let ty_col = block
         .get_string("type")
         .ok_or("mmff_bond: missing \"type\"")?;

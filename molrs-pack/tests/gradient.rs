@@ -3,7 +3,7 @@
 //! Finite-difference gradient consistency tests.
 //! Requires f64 precision for accurate numerical differentiation.
 
-use molrs_pack::objective::{compute_f, compute_g};
+use molrs_pack::objective::{compute_f, compute_fg, compute_g};
 use molrs_pack::{F, PackContext, Restraint};
 
 // ── helpers ────────────────────────────────────────────────────────────────
@@ -273,5 +273,43 @@ fn gradient_combined_constraint_and_pairs() {
             "combined gradient mismatch at var {i}: analytic={} fd={gfd} err={err}",
             g[i]
         );
+    }
+}
+
+#[test]
+fn fused_function_and_gradient_matches_separate_evaluation() {
+    let mut sys = PackContext::new(4, 2, 1);
+    sys.ntype_with_fixed = 1;
+    sys.nmols = vec![2];
+    sys.natoms = vec![2];
+    sys.idfirst = vec![0];
+    sys.comptype = vec![true];
+    sys.coor = vec![[0.0, 0.0, 0.0], [1.0, 0.2, -0.1]];
+
+    sys.radius = vec![1.0; 4];
+    sys.radius_ini = vec![1.0; 4];
+    sys.fscale = vec![1.0; 4];
+
+    sys.restraints = vec![Restraint::inside_box([0.0, 0.0, 0.0], [5.0, 5.0, 5.0])];
+    sys.iratom_offsets = vec![0, 1, 1, 2, 2];
+    sys.iratom_data = vec![0, 0];
+    setup_cells(&mut sys, 2, 5.0);
+
+    let x = vec![1.2, 1.0, 1.1, 2.4, 1.3, 1.2, 0.3, 0.5, 0.7, -0.4, 0.2, -0.6];
+
+    let f_sep = compute_f(&x, &mut sys);
+    let mut g_sep = vec![0.0; x.len()];
+    compute_g(&x, &mut sys, &mut g_sep);
+
+    let mut g_fused = vec![0.0; x.len()];
+    let f_fused = compute_fg(&x, &mut sys, &mut g_fused);
+
+    assert!(
+        (f_sep - f_fused).abs() < 1e-10,
+        "f mismatch: {f_sep} vs {f_fused}"
+    );
+    for (i, (&a, &b)) in g_sep.iter().zip(&g_fused).enumerate() {
+        let err = (a - b).abs();
+        assert!(err < 1e-10, "g mismatch at {i}: {a} vs {b} (err={err})");
     }
 }

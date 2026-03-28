@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "molcrafts-molrs"
-version = "0.0.5"
+version = "0.0.7"
 description = "Python bindings for molrs molecular simulation library"
 requires-python = ">=3.9"
 readme = "README.md"
@@ -15,6 +15,13 @@ dependencies = ["numpy>=2.0"]
 python-source = "python"
 module-name = "molrs.molrs"
 features = ["pyo3/extension-module"]
+exclude = [
+  "python/molrs/*.so",
+  "python/molrs/*.dylib",
+  "python/molrs/*.dll",
+  "python/molrs/*.dSYM",
+  "python/molrs/*.dSYM/**",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

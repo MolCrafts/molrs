@@ -93,8 +93,8 @@ pub fn mmff_vdw_ctor(
         .get_string("type")
         .ok_or("mmff_vdw: missing atom \"type\"")?;
     let pairs = frame.get("pairs").ok_or("mmff_vdw: missing \"pairs\"")?;
-    let ic = pairs.get_uint("i").ok_or("missing i")?;
-    let jc = pairs.get_uint("j").ok_or("missing j")?;
+    let ic = pairs.get_uint("atomi").ok_or("missing atomi")?;
+    let jc = pairs.get_uint("atomj").ok_or("missing atomj")?;
 
     let n = ic.len();
     let (mut ai, mut aj, mut rs_vec, mut eps_vec) = (
@@ -193,8 +193,8 @@ pub fn mmff_ele_ctor(
         .get_float("charge")
         .ok_or("mmff_ele: missing atom \"charge\" column")?;
     let pairs = frame.get("pairs").ok_or("mmff_ele: missing \"pairs\"")?;
-    let ic = pairs.get_uint("i").ok_or("missing i")?;
-    let jc = pairs.get_uint("j").ok_or("missing j")?;
+    let ic = pairs.get_uint("atomi").ok_or("missing atomi")?;
+    let jc = pairs.get_uint("atomj").ok_or("missing atomj")?;
     let is_14 = pairs.get_bool("is_14");
 
     let n = ic.len();

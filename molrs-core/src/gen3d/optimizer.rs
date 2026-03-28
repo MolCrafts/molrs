@@ -95,7 +95,7 @@ impl EnergyModel {
             let radius = mol
                 .get_atom(atom_id)
                 .ok()
-                .and_then(|a| a.get_str("symbol"))
+                .and_then(|a| a.get_str("element"))
                 .and_then(Element::by_symbol)
                 .map(|e| e.vdw_radius() as f64)
                 .unwrap_or(1.7);
@@ -817,8 +817,8 @@ fn ideal_angle_for_center(mol: &MolGraph, center: AtomId) -> f64 {
 }
 
 fn ideal_bond_length(mol: &MolGraph, a: AtomId, b: AtomId) -> f64 {
-    let sym_a = mol.get_atom(a).ok().and_then(|x| x.get_str("symbol"));
-    let sym_b = mol.get_atom(b).ok().and_then(|x| x.get_str("symbol"));
+    let sym_a = mol.get_atom(a).ok().and_then(|x| x.get_str("element"));
+    let sym_b = mol.get_atom(b).ok().and_then(|x| x.get_str("element"));
     let r_a = sym_a
         .and_then(Element::by_symbol)
         .map(|e| e.covalent_radius() as f64)

@@ -2,11 +2,16 @@
 name = "molcrafts-molrs-pack"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 description = "Faithful Rust port of Packmol molecular packing"
 repository.workspace = true
 homepage.workspace = true
+documentation = "https://docs.rs/molcrafts-molrs-pack"
+readme = "README.md"
+keywords = ["packmol", "molecular-modeling", "chemistry", "simulation"]
+categories = ["science", "algorithms"]
 
 [lib]
 name = "molrs_pack"
@@ -17,9 +22,11 @@ rand = "0.9"
 ndarray = "0.17"
 log = "0.4"
 env_logger = "0.11"
+rayon = { version = "1.11", optional = true }
 
 [features]
 default = []
+rayon = ["dep:rayon", "molrs/rayon"]
 f64 = ["molrs/f64"]
 i64 = ["molrs/i64"]
 u64 = ["molrs/u64"]

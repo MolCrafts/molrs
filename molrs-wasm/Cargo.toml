@@ -14,6 +14,11 @@ name = "molwasm"
 
 [workspace]
 
+[features]
+f64 = ["molrs/f64", "molrs-ffi/f64"]
+i64 = ["molrs/i64", "molrs-ffi/i64"]
+u64 = ["molrs/u64", "molrs-ffi/u64"]
+
 [dependencies]
 wasm-bindgen = "0.2.108"
 serde = { version = "1", features = ["derive"] }
@@ -21,7 +26,7 @@ serde-wasm-bindgen = "0.6"
 js-sys = "0.3"
 web-sys = { version = "0.3", features = ["console"] }
 molrs = { path = "../molrs-core", package = "molcrafts-molrs", version = "0.0.7", features = ["zarr"], default-features = false }
-molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.0.7" }
+molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.0.7", default-features = false }
 ndarray = "0.17"
 zarrs = { version = "0.23", default-features = false }
 console_error_panic_hook = "0.1"

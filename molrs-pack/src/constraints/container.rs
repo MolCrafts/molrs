@@ -1,7 +1,7 @@
 //! Unified constraints entrypoint used by optimization layers.
 
 use crate::context::PackContext;
-use crate::objective::{compute_f, compute_g};
+use crate::objective::{compute_f, compute_fg, compute_g};
 use molrs::types::F;
 
 /// Evaluation mode for constraints/objective.
@@ -54,9 +54,8 @@ impl Constraints {
                 }
             }
             EvalMode::FAndGradient | EvalMode::RestMol => {
-                f_total = compute_f(x, ctx);
                 if let Some(g) = gradient {
-                    compute_g(x, ctx, g);
+                    f_total = compute_fg(x, ctx, g);
                 } else {
                     debug_assert!(false, "FAndGradient/RestMol mode requires gradient buffer");
                 }

@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::env;
 
 use crate::constraint::Restraint;
+use crate::numerics::numeric_controls;
 use crate::target::Target;
 
 /// Quantified violation metrics for one packed configuration.
@@ -204,7 +205,7 @@ fn distance_metrics(
     let mut max_violation = 0.0 as F;
     let mut violating_pairs = 0usize;
     let mut violating_atoms = vec![false; coordinates.len()];
-    let eps = precision.max(1.0e-12);
+    let eps = precision.max(numeric_controls().epsrel);
     let debug = env::var("molrs-pack_DEBUG_VALIDATION").is_ok();
     let mut debug_left = 5usize;
 

@@ -8,8 +8,8 @@
 use crate::constraint::extract_molecule_constraint;
 use crate::frame::PyFrame;
 use crate::helpers::NpF;
-use molrs_pack::F;
 use molrs_pack::target::Target;
+use molrs_pack::F;
 use numpy::PyReadonlyArray1;
 use numpy::PyReadonlyArray2;
 use pyo3::exceptions::PyValueError;
@@ -154,6 +154,38 @@ impl PyTarget {
         })
     }
 
+    /// Add a geometric constraint for a subset of atoms using Packmol-style
+    /// 1-based atom indices. Returns a new `Target`.
+    ///
+    /// Parameters
+    /// ----------
+    /// indices : list[int]
+    ///     Atom indices using Packmol's 1-based convention.
+    /// constraint : InsideBox | InsideSphere | OutsideSphere | AbovePlane | BelowPlane | MoleculeConstraint
+    ///     Constraint applied only to the selected atoms.
+    ///
+    /// Returns
+    /// -------
+    /// Target
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If any index is outside ``1..natoms``.
+    /// TypeError
+    ///     If ``constraint`` is not a recognized constraint type.
+    fn with_constraint_for_atoms(
+        &self,
+        indices: Vec<usize>,
+        constraint: &Bound<'_, pyo3::types::PyAny>,
+    ) -> PyResult<Self> {
+        validate_atom_indices(&indices, self.inner.natoms())?;
+        let mc = extract_molecule_constraint(constraint)?;
+        Ok(PyTarget {
+            inner: self.inner.clone().with_constraint_for_atoms(&indices, mc),
+        })
+    }
+
     /// Set the ``maxmove`` parameter for the movebad heuristic.
     /// Returns a new `Target`.
     ///
@@ -194,6 +226,39 @@ impl PyTarget {
         }
     }
 
+    /// Constrain rotation around the x axis in degrees. Returns a new
+    /// `Target`.
+    fn constrain_rotation_x(&self, center_deg: NpF, half_width_deg: NpF) -> Self {
+        PyTarget {
+            inner: self
+                .inner
+                .clone()
+                .constrain_rotation_x(center_deg, half_width_deg),
+        }
+    }
+
+    /// Constrain rotation around the y axis in degrees. Returns a new
+    /// `Target`.
+    fn constrain_rotation_y(&self, center_deg: NpF, half_width_deg: NpF) -> Self {
+        PyTarget {
+            inner: self
+                .inner
+                .clone()
+                .constrain_rotation_y(center_deg, half_width_deg),
+        }
+    }
+
+    /// Constrain rotation around the z axis in degrees. Returns a new
+    /// `Target`.
+    fn constrain_rotation_z(&self, center_deg: NpF, half_width_deg: NpF) -> Self {
+        PyTarget {
+            inner: self
+                .inner
+                .clone()
+                .constrain_rotation_z(center_deg, half_width_deg),
+        }
+    }
+
     /// Fix this molecule at a specific Cartesian position. Returns a new
     /// `Target`.
     ///
@@ -211,6 +276,14 @@ impl PyTarget {
     fn fixed_at(&self, position: [NpF; 3]) -> Self {
         PyTarget {
             inner: self.inner.clone().fixed_at(position),
+        }
+    }
+
+    /// Fix this molecule at a specific Cartesian position and Euler
+    /// orientation. Returns a new `Target`.
+    fn fixed_at_with_euler(&self, position: [NpF; 3], euler: [NpF; 3]) -> Self {
+        PyTarget {
+            inner: self.inner.clone().fixed_at_with_euler(position, euler),
         }
     }
 
@@ -263,4 +336,15 @@ impl PyTarget {
             self.inner.name
         )
     }
+}
+
+fn validate_atom_indices(indices: &[usize], natoms: usize) -> PyResult<()> {
+    for &index in indices {
+        if index == 0 || index > natoms {
+            return Err(PyValueError::new_err(format!(
+                "atom indices must use Packmol 1-based indexing in 1..={natoms}, got {index}",
+            )));
+        }
+    }
+    Ok(())
 }

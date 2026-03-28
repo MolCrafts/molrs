@@ -15,6 +15,7 @@ use crate::handler::{Handler, PhaseInfo, StepInfo};
 use crate::hook::HookRunner;
 use crate::initial::{SwapState, init_xcart_from_x, initial};
 use crate::movebad::{MoveBadConfig, movebad};
+use crate::numerics::objective_small_floor;
 use crate::target::{CenteringMode, Target};
 
 /// Result of a packing run.
@@ -619,7 +620,7 @@ impl Molpack {
                 // Packmol line 846: if(flast>0) fimp = -100*(fx-flast)/flast
                 let mut fimp = if flast > 0.0 {
                     -100.0 * (fx_unscaled - flast) / flast
-                } else if fx_unscaled < 1.0e-10 {
+                } else if fx_unscaled < objective_small_floor() {
                     100.0 // already converged
                 } else {
                     F::INFINITY
@@ -629,34 +630,33 @@ impl Molpack {
                 flast = fx_unscaled;
                 fimp_prev = fimp;
 
-                // Collect hook acceptance rates for progress reporting.
-                let hook_acceptance: Vec<(usize, F)> = hook_runners
-                    .iter()
-                    .flat_map(|(itype, runners)| {
-                        runners.iter().map(move |r| (*itype, r.acceptance_rate()))
-                    })
-                    .collect();
+                if !self.handlers.is_empty() {
+                    let hook_acceptance: Vec<(usize, F)> = hook_runners
+                        .iter()
+                        .flat_map(|(itype, runners)| {
+                            runners.iter().map(move |r| (*itype, r.acceptance_rate()))
+                        })
+                        .collect();
 
-                // Notify handlers (sys.xcart reflects xwork positions)
-                let step_info = StepInfo {
-                    loop_idx,
-                    max_loops,
-                    phase: phase_info,
-                    fdist,
-                    frest,
-                    improvement_pct: fimp,
-                    radscale,
-                    precision: self.precision,
-                    hook_acceptance,
-                };
-                for h in self.handlers.iter_mut() {
-                    h.on_step(&step_info, &sys);
-                }
+                    let step_info = StepInfo {
+                        loop_idx,
+                        max_loops,
+                        phase: phase_info,
+                        fdist,
+                        frest,
+                        improvement_pct: fimp,
+                        radscale,
+                        precision: self.precision,
+                        hook_acceptance,
+                    };
+                    for h in self.handlers.iter_mut() {
+                        h.on_step(&step_info, &sys);
+                    }
 
-                // Check early-stop signal from any handler
-                if self.handlers.iter().any(|h| h.should_stop()) {
-                    log::debug!("  Early stop requested at loop {loop_idx}");
-                    break;
+                    if self.handlers.iter().any(|h| h.should_stop()) {
+                        log::debug!("  Early stop requested at loop {loop_idx}");
+                        break;
+                    }
                 }
 
                 log::debug!(
@@ -739,7 +739,7 @@ impl Molpack {
 
 fn reference_coords(target: &Target) -> &[[F; 3]] {
     match target.centering {
-        CenteringMode::Center | CenteringMode::CenterOfMass => &target.ref_coords,
+        CenteringMode::Center => &target.ref_coords,
         CenteringMode::None => &target.input_coords,
         CenteringMode::Auto => {
             if target.fixed_at.is_some() {

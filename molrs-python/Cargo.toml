@@ -1,7 +1,8 @@
 [package]
 name = "molrs-python"
-version = "0.0.6"
+version = "0.0.7"
 edition = "2024"
+rust-version = "1.85"
 authors = ["MolCrafts"]
 license = "BSD-3-Clause"
 description = "Python bindings for molrs molecular simulation library"
@@ -16,9 +17,9 @@ crate-type = ["cdylib"]
 pyo3 = { version = "0.28", features = ["extension-module"] }
 numpy = "0.28"
 ndarray = "0.17"
-molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.0.6" }
-molrs = { path = "../molrs-core", package = "molcrafts-molrs", version = "0.0.6", default-features = false }
-molrs-pack = { path = "../molrs-pack", package = "molcrafts-molrs-pack", version = "0.0.6", default-features = false }
+molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.0.7" }
+molrs = { path = "../molrs-core", package = "molcrafts-molrs", version = "0.0.7", default-features = false }
+molrs-pack = { path = "../molrs-pack", package = "molcrafts-molrs-pack", version = "0.0.7", default-features = false }
 
 [workspace]
 

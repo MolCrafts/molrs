@@ -84,11 +84,11 @@ pub fn bond_harmonic_ctor(
         .get("bonds")
         .ok_or_else(|| "BondHarmonic: frame missing \"bonds\" block".to_string())?;
     let i_col = block
-        .get_uint("i")
-        .ok_or_else(|| "BondHarmonic: bonds block missing \"i\" column".to_string())?;
+        .get_uint("atomi")
+        .ok_or_else(|| "BondHarmonic: bonds block missing \"atomi\" column".to_string())?;
     let j_col = block
-        .get_uint("j")
-        .ok_or_else(|| "BondHarmonic: bonds block missing \"j\" column".to_string())?;
+        .get_uint("atomj")
+        .ok_or_else(|| "BondHarmonic: bonds block missing \"atomj\" column".to_string())?;
     let type_col = block
         .get_string("type")
         .ok_or_else(|| "BondHarmonic: bonds block missing \"type\" column".to_string())?;
@@ -175,10 +175,10 @@ mod tests {
 
         let mut bonds = Block::new();
         bonds
-            .insert("i", Array1::from_vec(vec![0 as U]).into_dyn())
+            .insert("atomi", Array1::from_vec(vec![0 as U]).into_dyn())
             .unwrap();
         bonds
-            .insert("j", Array1::from_vec(vec![1 as U]).into_dyn())
+            .insert("atomj", Array1::from_vec(vec![1 as U]).into_dyn())
             .unwrap();
         bonds
             .insert(

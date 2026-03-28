@@ -17,8 +17,8 @@ use std::path::PathBuf;
 
 use molrs::io::pdb::read_pdb_frame;
 use molrs_pack::{
-    AbovePlaneConstraint, BelowPlaneConstraint, EarlyStopHandler, InsideBoxConstraint, Molpack,
-    ProgressHandler, Target, XYZHandler,
+    AbovePlaneConstraint, BelowPlaneConstraint, InsideBoxConstraint, Molpack, ProgressHandler,
+    Target, XYZHandler,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -30,21 +30,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let water = read_pdb_frame(base.join("water.pdb"))?;
     let lipid = read_pdb_frame(base.join("palmitoil.pdb"))?;
 
-    let water_low = Target::new(water.clone(), 500)
+    let water_low = Target::new(water.clone(), 50)
         .with_constraint(InsideBoxConstraint::new(
             [0.0, 0.0, -10.0],
             [40.0, 40.0, 0.0],
         ))
         .with_name("water_low");
 
-    let water_high = Target::new(water, 500)
+    let water_high = Target::new(water, 50)
         .with_constraint(InsideBoxConstraint::new(
             [0.0, 0.0, 28.0],
             [40.0, 40.0, 38.0],
         ))
         .with_name("water_high");
 
-    let lipid_low = Target::new(lipid.clone(), 50)
+    let lipid_low = Target::new(lipid.clone(), 10)
         .with_constraint(InsideBoxConstraint::new(
             [0.0, 0.0, 0.0],
             [40.0, 40.0, 14.0],
@@ -53,7 +53,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_constraint_for_atoms(&[1, 2], AbovePlaneConstraint::new([0.0, 0.0, 1.0], 12.0))
         .with_name("lipid_low");
 
-    let lipid_high = Target::new(lipid, 50)
+    let lipid_high = Target::new(lipid, 10)
         .with_constraint(InsideBoxConstraint::new(
             [0.0, 0.0, 14.0],
             [40.0, 40.0, 28.0],
@@ -63,15 +63,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_name("lipid_high");
 
     let targets = vec![water_low, water_high, lipid_low, lipid_high];
-    let out_dir = base.join("out");
-    create_dir_all(&out_dir)?;
+    let mut packer = Molpack::new();
+    if std::env::var_os("MOLRS_PACK_EXAMPLE_PROGRESS").is_some() {
+        packer = packer.add_handler(ProgressHandler::new());
+    }
+    if std::env::var_os("MOLRS_PACK_EXAMPLE_XYZ").is_some() {
+        let out_dir = base.join("out");
+        create_dir_all(&out_dir)?;
+        packer = packer.add_handler(XYZHandler::new(out_dir.join("bilayer.xyz"), 10));
+    }
 
-    let mut packer = Molpack::new()
-        .add_handler(ProgressHandler::new())
-        .add_handler(EarlyStopHandler::default())
-        .add_handler(XYZHandler::new(out_dir.join("bilayer.xyz"), 10));
-
-    packer.pack(&targets, 300, Some(2026))?;
+    packer.pack(&targets, 800, Some(1_234_567))?;
 
     Ok(())
 }

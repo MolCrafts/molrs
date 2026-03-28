@@ -126,14 +126,14 @@ pub fn angle_harmonic_ctor(
         .get("angles")
         .ok_or_else(|| "AngleHarmonic: frame missing \"angles\" block".to_string())?;
     let i_col = block
-        .get_uint("i")
-        .ok_or_else(|| "AngleHarmonic: angles block missing \"i\" column".to_string())?;
+        .get_uint("atomi")
+        .ok_or_else(|| "AngleHarmonic: angles block missing \"atomi\" column".to_string())?;
     let j_col = block
-        .get_uint("j")
-        .ok_or_else(|| "AngleHarmonic: angles block missing \"j\" column".to_string())?;
+        .get_uint("atomj")
+        .ok_or_else(|| "AngleHarmonic: angles block missing \"atomj\" column".to_string())?;
     let k_col = block
-        .get_uint("k")
-        .ok_or_else(|| "AngleHarmonic: angles block missing \"k\" column".to_string())?;
+        .get_uint("atomk")
+        .ok_or_else(|| "AngleHarmonic: angles block missing \"atomk\" column".to_string())?;
     let type_col = block
         .get_string("type")
         .ok_or_else(|| "AngleHarmonic: angles block missing \"type\" column".to_string())?;

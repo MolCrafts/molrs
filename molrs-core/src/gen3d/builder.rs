@@ -96,7 +96,7 @@ pub(crate) fn embed_fragment_rules(
 
     for (i, atom_id) in atom_ids.iter().copied().enumerate() {
         let atom = mol.get_atom_mut(atom_id)?;
-        if atom.get_str("symbol").is_none() {
+        if atom.get_str("element").is_none() {
             warnings.push(format!(
                 "atom {:?} has no symbol; using generic geometry defaults",
                 atom_id
@@ -300,7 +300,7 @@ fn place_regular_ring_template(
         .map(|&idx| {
             mol.get_atom(atom_ids[idx])
                 .ok()
-                .and_then(|a| a.get_str("symbol"))
+                .and_then(|a| a.get_str("element"))
                 .unwrap_or("C")
                 .to_string()
         })
@@ -465,7 +465,7 @@ fn build_fragment_signature(
         let sym = mol
             .get_atom(atom_ids[g])
             .ok()
-            .and_then(|a| a.get_str("symbol"))
+            .and_then(|a| a.get_str("element"))
             .unwrap_or("X")
             .to_string();
         symbols.push(sym);
@@ -1040,8 +1040,8 @@ fn ideal_angle_for_center(mol: &MolGraph, center: AtomId) -> f64 {
 }
 
 fn ideal_bond_length(mol: &MolGraph, a: AtomId, b: AtomId) -> f64 {
-    let sym_a = mol.get_atom(a).ok().and_then(|x| x.get_str("symbol"));
-    let sym_b = mol.get_atom(b).ok().and_then(|x| x.get_str("symbol"));
+    let sym_a = mol.get_atom(a).ok().and_then(|x| x.get_str("element"));
+    let sym_b = mol.get_atom(b).ok().and_then(|x| x.get_str("element"));
     let r_a = sym_a
         .and_then(Element::by_symbol)
         .map(|e| e.covalent_radius() as f64)

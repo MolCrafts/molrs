@@ -40,7 +40,7 @@ fn compute_mmff_props(
     ring_info: &RingInfo,
 ) -> Option<AtomMmffProps> {
     let atom = mol.get_atom(atom_id).ok()?;
-    let sym = atom.get_str("symbol")?;
+    let sym = atom.get_str("element")?;
     let element = Element::by_symbol(sym)?;
     let atno = element as u32;
 

@@ -42,7 +42,7 @@ pub fn sub3(a: &[F], ai: usize, b: &[F], bi: usize) -> [F; 3] {
 #[inline]
 pub fn validate_coords(coords: &[F]) -> usize {
     assert!(
-        coords.len().is_multiple_of(3),
+        coords.len() % 3 == 0,
         "coords length must be multiple of 3, got {}",
         coords.len()
     );

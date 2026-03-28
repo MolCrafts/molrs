@@ -17,11 +17,11 @@
 //!   doi:10.1002/jcc.21224 (Packmol)
 
 use crate::frame::PyFrame;
-use crate::helpers::{NpF, pack_error_to_pyerr};
+use crate::helpers::{pack_error_to_pyerr, NpF};
 use crate::target::PyTarget;
-use molrs_pack::F;
 use molrs_pack::handler::ProgressHandler;
 use molrs_pack::packer::{Molpack, PackResult};
+use molrs_pack::F;
 use numpy::IntoPyArray;
 use numpy::PyArray2;
 use pyo3::prelude::*;
@@ -142,6 +142,16 @@ impl PyPackResult {
         self.inner.frest
     }
 
+    /// Number of atoms in the packed system.
+    ///
+    /// Returns
+    /// -------
+    /// int
+    #[getter]
+    fn natoms(&self) -> usize {
+        self.inner.natoms()
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "PackResult(converged={}, fdist={:.4}, frest={:.4}, natoms={})",
@@ -182,6 +192,12 @@ pub struct PyPacker {
     tolerance: F,
     precision: F,
     maxit: usize,
+    nloop0: usize,
+    sidemax: F,
+    movefrac: F,
+    movebadrandom: bool,
+    disable_movebad: bool,
+    pbc: Option<([F; 3], [F; 3])>,
     progress: bool,
 }
 
@@ -206,6 +222,12 @@ impl PyPacker {
             tolerance,
             precision,
             maxit: 20,
+            nloop0: 0,
+            sidemax: 1000.0,
+            movefrac: 0.05,
+            movebadrandom: false,
+            disable_movebad: false,
+            pbc: None,
             progress: true,
         }
     }
@@ -225,6 +247,12 @@ impl PyPacker {
             tolerance,
             precision: self.precision,
             maxit: self.maxit,
+            nloop0: self.nloop0,
+            sidemax: self.sidemax,
+            movefrac: self.movefrac,
+            movebadrandom: self.movebadrandom,
+            disable_movebad: self.disable_movebad,
+            pbc: self.pbc,
             progress: self.progress,
         }
     }
@@ -244,6 +272,12 @@ impl PyPacker {
             tolerance: self.tolerance,
             precision,
             maxit: self.maxit,
+            nloop0: self.nloop0,
+            sidemax: self.sidemax,
+            movefrac: self.movefrac,
+            movebadrandom: self.movebadrandom,
+            disable_movebad: self.disable_movebad,
+            pbc: self.pbc,
             progress: self.progress,
         }
     }
@@ -264,8 +298,124 @@ impl PyPacker {
             tolerance: self.tolerance,
             precision: self.precision,
             maxit,
+            nloop0: self.nloop0,
+            sidemax: self.sidemax,
+            movefrac: self.movefrac,
+            movebadrandom: self.movebadrandom,
+            disable_movebad: self.disable_movebad,
+            pbc: self.pbc,
             progress: self.progress,
         }
+    }
+
+    /// Return a new packer with updated initialization outer loop count.
+    ///
+    /// Parameters
+    /// ----------
+    /// nloop0 : int
+    ///     Packmol ``nloop0`` value. Use ``0`` for Packmol default.
+    ///
+    /// Returns
+    /// -------
+    /// Packer
+    fn with_nloop0(&self, nloop0: usize) -> Self {
+        PyPacker {
+            tolerance: self.tolerance,
+            precision: self.precision,
+            maxit: self.maxit,
+            nloop0,
+            sidemax: self.sidemax,
+            movefrac: self.movefrac,
+            movebadrandom: self.movebadrandom,
+            disable_movebad: self.disable_movebad,
+            pbc: self.pbc,
+            progress: self.progress,
+        }
+    }
+
+    /// Return a new packer with updated initial global half-size.
+    fn with_sidemax(&self, sidemax: NpF) -> Self {
+        PyPacker {
+            tolerance: self.tolerance,
+            precision: self.precision,
+            maxit: self.maxit,
+            nloop0: self.nloop0,
+            sidemax,
+            movefrac: self.movefrac,
+            movebadrandom: self.movebadrandom,
+            disable_movebad: self.disable_movebad,
+            pbc: self.pbc,
+            progress: self.progress,
+        }
+    }
+
+    /// Return a new packer with updated movebad move fraction.
+    fn with_movefrac(&self, movefrac: NpF) -> Self {
+        PyPacker {
+            tolerance: self.tolerance,
+            precision: self.precision,
+            maxit: self.maxit,
+            nloop0: self.nloop0,
+            sidemax: self.sidemax,
+            movefrac,
+            movebadrandom: self.movebadrandom,
+            disable_movebad: self.disable_movebad,
+            pbc: self.pbc,
+            progress: self.progress,
+        }
+    }
+
+    /// Return a new packer with Packmol ``movebadrandom`` enabled or disabled.
+    fn with_movebadrandom(&self, enabled: bool) -> Self {
+        PyPacker {
+            tolerance: self.tolerance,
+            precision: self.precision,
+            maxit: self.maxit,
+            nloop0: self.nloop0,
+            sidemax: self.sidemax,
+            movefrac: self.movefrac,
+            movebadrandom: enabled,
+            disable_movebad: self.disable_movebad,
+            pbc: self.pbc,
+            progress: self.progress,
+        }
+    }
+
+    /// Return a new packer with Packmol ``disable_movebad`` enabled or disabled.
+    fn with_disable_movebad(&self, disabled: bool) -> Self {
+        PyPacker {
+            tolerance: self.tolerance,
+            precision: self.precision,
+            maxit: self.maxit,
+            nloop0: self.nloop0,
+            sidemax: self.sidemax,
+            movefrac: self.movefrac,
+            movebadrandom: self.movebadrandom,
+            disable_movebad: disabled,
+            pbc: self.pbc,
+            progress: self.progress,
+        }
+    }
+
+    /// Return a new packer with periodic box bounds.
+    fn with_pbc(&self, min: [NpF; 3], max: [NpF; 3]) -> Self {
+        PyPacker {
+            tolerance: self.tolerance,
+            precision: self.precision,
+            maxit: self.maxit,
+            nloop0: self.nloop0,
+            sidemax: self.sidemax,
+            movefrac: self.movefrac,
+            movebadrandom: self.movebadrandom,
+            disable_movebad: self.disable_movebad,
+            pbc: Some((min, max)),
+            progress: self.progress,
+        }
+    }
+
+    /// Return a new packer with a periodic box starting at the origin.
+    fn with_pbc_box(&self, lengths: [NpF; 3]) -> Self {
+        self.with_pbc([0.0, 0.0, 0.0], lengths)
     }
 
     /// Return a new packer with progress output enabled or disabled.
@@ -284,6 +434,12 @@ impl PyPacker {
             tolerance: self.tolerance,
             precision: self.precision,
             maxit: self.maxit,
+            nloop0: self.nloop0,
+            sidemax: self.sidemax,
+            movefrac: self.movefrac,
+            movebadrandom: self.movebadrandom,
+            disable_movebad: self.disable_movebad,
+            pbc: self.pbc,
             progress: enabled,
         }
     }
@@ -298,7 +454,8 @@ impl PyPacker {
     /// max_loops : int, optional
     ///     Maximum outer optimization loops. Default ``200``.
     /// seed : int | None, optional
-    ///     Random seed for initial placement. ``None`` uses an arbitrary seed.
+    ///     Random seed for initial placement. ``None`` uses the deterministic
+    ///     default seed ``0``.
     ///
     /// Returns
     /// -------
@@ -327,7 +484,16 @@ impl PyPacker {
         let mut packer = Molpack::new()
             .tolerance(self.tolerance)
             .precision(self.precision)
-            .maxit(self.maxit);
+            .maxit(self.maxit)
+            .nloop0(self.nloop0)
+            .sidemax(self.sidemax)
+            .movefrac(self.movefrac)
+            .movebadrandom(self.movebadrandom)
+            .disable_movebad(self.disable_movebad);
+
+        if let Some((min, max)) = self.pbc {
+            packer = packer.pbc(min, max);
+        }
 
         if self.progress {
             packer = packer.add_handler(ProgressHandler::new());

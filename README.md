@@ -6,13 +6,18 @@
 [![npm](https://img.shields.io/npm/v/@molcrafts/molrs.svg)](https://www.npmjs.com/package/@molcrafts/molrs)
 [![License](https://img.shields.io/badge/license-BSD--3--Clause-blue.svg)](LICENSE)
 
-A Rust toolkit for molecular modeling and simulation.
+A molecular modeling toolkit with Rust and Python interfaces.
+
+The packing stack is in its first public preview release. Prefer the
+`molcrafts-molrs-pack` crate for Rust packing workflows and `molcrafts-molrs`
+for Python bindings.
 
 ## Install
 
 | Platform | Package | Install |
 |----------|---------|---------|
 | Rust | `molcrafts-molrs` | `cargo add molcrafts-molrs` |
+| Rust packing | `molcrafts-molrs-pack` | `cargo add molcrafts-molrs-pack` |
 | Python | `molcrafts-molrs` | `pip install molcrafts-molrs` |
 | npm | `@molcrafts/molrs` | `npm install @molcrafts/molrs` |
 
@@ -87,6 +92,13 @@ cd molrs-wasm && wasm-pack build --target bundler --scope molcrafts --out-name m
 cargo build --manifest-path molrs-capi/Cargo.toml
 cd molrs-capi && cmake -S tests/cpp -B build-test && cmake --build build-test && ctest --test-dir build-test
 ```
+
+## Support Matrix
+
+- Rust MSRV: 1.85
+- Python: 3.9+
+- Python package name: `molcrafts-molrs`
+- Python import name: `molrs`
 
 ## License
 

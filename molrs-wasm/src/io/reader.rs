@@ -29,7 +29,7 @@ use wasm_bindgen::prelude::*;
 ///
 /// Supports multi-frame trajectory files. Each frame produces a
 /// [`Frame`] with an `"atoms"` block containing `element` (string)
-/// and `x`, `y`, `z` (f32, coordinates in angstrom) columns.
+/// and `x`, `y`, `z` (F, coordinates in angstrom) columns.
 ///
 /// # Example (JavaScript)
 ///
@@ -40,7 +40,7 @@ use wasm_bindgen::prelude::*;
 ///
 /// const frame = reader.read(0); // first frame
 /// const atoms = frame.getBlock("atoms");
-/// const x = atoms.copyColF32("x");
+/// const x = atoms.copyColF("x");
 /// ```
 #[wasm_bindgen(js_name = XYZReader)]
 pub struct XyzReader {
@@ -141,8 +141,8 @@ impl XyzReader {
 ///
 /// PDB files contain a single molecular structure. The reader produces
 /// a [`Frame`] with an `"atoms"` block containing columns such as
-/// `name` (string), `resname` (string), `x`, `y`, `z` (f32, angstrom),
-/// and optionally `occupancy` and `bfactor` (f32).
+/// `name` (string), `resname` (string), `x`, `y`, `z` (F, angstrom),
+/// and optionally `occupancy` and `bfactor` (F).
 ///
 /// # Example (JavaScript)
 ///
@@ -151,7 +151,7 @@ impl XyzReader {
 /// const frame = reader.read(0);
 /// const atoms = frame.getBlock("atoms");
 /// const names = atoms.copyColStr("name"); // ["CA", "CB", ...]
-/// const x = atoms.copyColF32("x");
+/// const x = atoms.copyColF("x");
 /// ```
 #[wasm_bindgen(js_name = PDBReader)]
 pub struct PdbReader {
@@ -251,8 +251,8 @@ impl PdbReader {
 /// Reads LAMMPS data files (the format written by `write_data`). The
 /// reader produces a [`Frame`] containing:
 ///
-/// - `"atoms"` block: `type` (i32), `x`, `y`, `z` (f32, angstrom),
-///   and optionally `charge` (f32)
+/// - `"atoms"` block: `type` (i32), `x`, `y`, `z` (F, angstrom),
+///   and optionally `charge` (F)
 /// - `"bonds"` block (if present): `i`, `j` (u32), `type` (i32)
 /// - Simulation box (`simbox`) with PBC
 ///
@@ -438,7 +438,7 @@ END"#;
 
         let block = frame.get_block("atoms").expect("no atoms block");
 
-        let x = block.copy_col_f32("x").expect("no x column");
+        let x = block.copy_col_f("x").expect("no x column");
         assert_eq!(x.length(), 2);
         assert_eq!(x.get_index(0), 1.0);
         assert_eq!(x.get_index(1), 4.0);

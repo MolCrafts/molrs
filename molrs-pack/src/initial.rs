@@ -21,6 +21,7 @@ use crate::context::PackContext;
 use crate::euler::{compcart, eulerrmat};
 use crate::gencan::{GencanParams, GencanWorkspace, pgencan};
 use crate::movebad::{MoveBadConfig, movebad};
+use crate::random::uniform01;
 
 use rand::Rng;
 
@@ -361,11 +362,9 @@ pub fn initial(
         let mut ilugan = sys.ntotmol * 3;
         for itype in 0..sys.ntype {
             for _imol in 0..sys.nmols[itype] {
-                x[ilubar] = sys.sizemin[0] + rng.random::<F>() * (sys.sizemax[0] - sys.sizemin[0]);
-                x[ilubar + 1] =
-                    sys.sizemin[1] + rng.random::<F>() * (sys.sizemax[1] - sys.sizemin[1]);
-                x[ilubar + 2] =
-                    sys.sizemin[2] + rng.random::<F>() * (sys.sizemax[2] - sys.sizemin[2]);
+                x[ilubar] = sys.sizemin[0] + uniform01(rng) * (sys.sizemax[0] - sys.sizemin[0]);
+                x[ilubar + 1] = sys.sizemin[1] + uniform01(rng) * (sys.sizemax[1] - sys.sizemin[1]);
+                x[ilubar + 2] = sys.sizemin[2] + uniform01(rng) * (sys.sizemax[2] - sys.sizemin[2]);
                 x[ilugan] = random_angle_for_type(itype, 0, sys, rng);
                 x[ilugan + 1] = random_angle_for_type(itype, 1, sys, rng);
                 x[ilugan + 2] = random_angle_for_type(itype, 2, sys, rng);
@@ -562,6 +561,9 @@ pub fn initial(
             &sys.ncells,
         );
         let icell = index_cell(&cell, &sys.ncells);
+        if sys.latomfix[icell].is_none() {
+            sys.fixed_cells.push(icell);
+        }
         sys.latomnext[icart] = sys.latomfix[icell];
         sys.latomfix[icell] = Some(icart);
     }
@@ -600,9 +602,9 @@ pub fn initial(
                 let mut fmol = 1.0 as F;
                 while fmol > precision && ntry < MAX_GUESS_TRY {
                     ntry += 1;
-                    let rx: F = rng.random();
-                    let ry: F = rng.random();
-                    let rz: F = rng.random();
+                    let rx: F = uniform01(rng);
+                    let ry: F = uniform01(rng);
+                    let rz: F = uniform01(rng);
                     x[ilubar] = cm_lo[0] + rx * (cm_hi[0] - cm_lo[0]);
                     x[ilubar + 1] = cm_lo[1] + ry * (cm_hi[1] - cm_lo[1]);
                     x[ilubar + 2] = cm_lo[2] + rz * (cm_hi[2] - cm_lo[2]);
@@ -687,9 +689,9 @@ fn random_angle_for_type(itype: usize, axis: usize, sys: &PackContext, rng: &mut
     if sys.constrain_rot[itype][axis] {
         let center = sys.rot_bound[itype][axis][0];
         let half_width = sys.rot_bound[itype][axis][1].abs();
-        (center - half_width) + 2.0 * rng.random::<F>() * half_width
+        (center - half_width) + 2.0 * uniform01(rng) * half_width
     } else {
-        TWO_PI * rng.random::<F>()
+        TWO_PI * uniform01(rng)
     }
 }
 

@@ -7,6 +7,7 @@ use std::time::Instant;
 
 use crate::context::PackContext;
 use crate::frame::compute_mol_ids;
+use crate::numerics::objective_small_floor;
 
 // ── Info structs ─────────────────────────────────────────────────────────────
 
@@ -310,7 +311,7 @@ impl Handler for EarlyStopHandler {
         }
         let rel_change = if self.prev_violation > 0.0 {
             (self.prev_violation - v) / self.prev_violation
-        } else if v < 1e-10 {
+        } else if v < objective_small_floor() {
             1.0 // already converged
         } else {
             F::INFINITY

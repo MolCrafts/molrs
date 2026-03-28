@@ -444,24 +444,24 @@ impl Frame {
         {
             let natoms = atoms.nrows().unwrap_or(0);
 
-            // Check i indices
-            if let Some(i_col) = bonds.get_uint("i") {
+            // Check atomi indices
+            if let Some(i_col) = bonds.get_uint("atomi") {
                 for &idx in i_col.iter() {
                     if idx as usize >= natoms {
                         return Err(MolRsError::validation(format!(
-                            "Bond i index {} out of range [0, {})",
+                            "Bond atomi index {} out of range [0, {})",
                             idx, natoms
                         )));
                     }
                 }
             }
 
-            // Check j indices
-            if let Some(j_col) = bonds.get_uint("j") {
+            // Check atomj indices
+            if let Some(j_col) = bonds.get_uint("atomj") {
                 for &idx in j_col.iter() {
                     if idx as usize >= natoms {
                         return Err(MolRsError::validation(format!(
-                            "Bond j index {} out of range [0, {})",
+                            "Bond atomj index {} out of range [0, {})",
                             idx, natoms
                         )));
                     }

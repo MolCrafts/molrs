@@ -7,9 +7,9 @@
 //!
 //! | Format string | Description | Required columns in `"atoms"` block |
 //! |---------------|-------------|-------------------------------------|
-//! | `"xyz"` | XYZ / Extended XYZ | `element` (string), `x`, `y`, `z` (f32) |
-//! | `"pdb"` | Protein Data Bank | `element` or `name` (string), `x`, `y`, `z` (f32) |
-//! | `"lammps-data"` / `"lammps"` | LAMMPS data file | `id`, `type` (i32), `x`, `y`, `z` (f32) |
+//! | `"xyz"` | XYZ / Extended XYZ | `element` (string), `x`, `y`, `z` (F) |
+//! | `"pdb"` | Protein Data Bank | `element` or `name` (string), `x`, `y`, `z` (F) |
+//! | `"lammps-data"` / `"lammps"` | LAMMPS data file | `id`, `type` (i32), `x`, `y`, `z` (F) |
 //! | `"lammps-dump"` / `"lammpstrj"` | LAMMPS dump | columns from atoms block |
 
 use crate::core::frame::Frame;
@@ -108,6 +108,7 @@ fn frame_to_core(frame: &Frame) -> Result<molrs::frame::Frame, JsValue> {
 mod tests {
     use super::*;
     use crate::core::frame::Frame;
+    use crate::core::types::JsFloatArray;
     use wasm_bindgen_test::*;
 
     #[wasm_bindgen_test]
@@ -117,13 +118,13 @@ mod tests {
         let frame = Frame::new();
         let mut atoms = frame.create_block("atoms").expect("atoms block");
 
-        let x = js_sys::Float32Array::from(&[0.0_f32, 1.0][..]);
-        let y = js_sys::Float32Array::from(&[0.0_f32, 0.0][..]);
-        let z = js_sys::Float32Array::from(&[0.0_f32, 0.5][..]);
+        let x = JsFloatArray::from(&[0.0, 1.0][..]);
+        let y = JsFloatArray::from(&[0.0, 0.0][..]);
+        let z = JsFloatArray::from(&[0.0, 0.5][..]);
 
-        atoms.set_col_f32("x", &x, None).expect("x");
-        atoms.set_col_f32("y", &y, None).expect("y");
-        atoms.set_col_f32("z", &z, None).expect("z");
+        atoms.set_col_f("x", &x, None).expect("x");
+        atoms.set_col_f("y", &y, None).expect("y");
+        atoms.set_col_f("z", &z, None).expect("z");
 
         let elements = JsArray::new();
         elements.push(&JsValue::from_str("H"));

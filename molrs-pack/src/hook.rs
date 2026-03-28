@@ -17,6 +17,9 @@ use rand::RngCore;
 use std::collections::HashSet;
 use std::f64::consts::PI;
 
+use crate::numerics::near_zero_norm_floor;
+use crate::random::uniform01_core;
+
 // ── Traits ──────────────────────────────────────────────────────────────────
 
 /// Per-target in-loop hook. Stored on `Target` (immutable config).
@@ -348,7 +351,7 @@ fn rotate_around_bond(coords: &mut [[F; 3]], bond: &RotatableBond, angle: F) {
     // Axis direction (j → k), normalized
     let axis = [k[0] - j[0], k[1] - j[1], k[2] - j[2]];
     let len = (axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]).sqrt();
-    if len < 1e-12 {
+    if len < near_zero_norm_floor() {
         return;
     }
     let u = [axis[0] / len, axis[1] / len, axis[2] / len];
@@ -411,8 +414,7 @@ fn metropolis_accept(f_trial: F, f_current: F, temperature: F, rng: &mut dyn Rng
 
 /// Generate a random F in [0, 1).
 fn rng_f(rng: &mut dyn RngCore) -> F {
-    // Use 32 bits of randomness for an f64 in [0, 1).
-    (rng.next_u32() as F) / (u32::MAX as F)
+    uniform01_core(rng)
 }
 
 /// Generate a random usize in [0, max).

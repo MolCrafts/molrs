@@ -85,11 +85,11 @@ pub fn pair_lj_cut_ctor(
         .get("pairs")
         .ok_or_else(|| "PairLJCut: frame missing \"pairs\" block".to_string())?;
     let i_col = block
-        .get_uint("i")
-        .ok_or_else(|| "PairLJCut: pairs block missing \"i\" column".to_string())?;
+        .get_uint("atomi")
+        .ok_or_else(|| "PairLJCut: pairs block missing \"atomi\" column".to_string())?;
     let j_col = block
-        .get_uint("j")
-        .ok_or_else(|| "PairLJCut: pairs block missing \"j\" column".to_string())?;
+        .get_uint("atomj")
+        .ok_or_else(|| "PairLJCut: pairs block missing \"atomj\" column".to_string())?;
     let type_col = block
         .get_string("type")
         .ok_or_else(|| "PairLJCut: pairs block missing \"type\" column".to_string())?;

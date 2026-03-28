@@ -23,8 +23,8 @@ use molrs::io::pdb::read_pdb_frame;
 use molrs::molgraph::{Atom, AtomId, MolGraph};
 use molrs::types::F;
 use molrs_pack::{
-    EarlyStopHandler, InsideBoxConstraint, InsideSphereConstraint, Molpack,
-    OutsideSphereConstraint, ProgressHandler, RegionConstraint, Target, TorsionMcHook, XYZHandler,
+    InsideBoxConstraint, InsideSphereConstraint, Molpack, OutsideSphereConstraint, ProgressHandler,
+    RegionConstraint, Target, TorsionMcHook, XYZHandler,
 };
 use rand::Rng;
 use rand::SeedableRng;
@@ -350,10 +350,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ── Pack ────────────────────────────────────────────────────────────
     let out_dir = PathBuf::from(file!()).parent().unwrap().to_path_buf();
 
-    let mut packer = Molpack::new()
-        .add_handler(ProgressHandler::new())
-        .add_handler(EarlyStopHandler::default())
-        .add_handler(XYZHandler::new(out_dir.join("polymer_vesicle.xyz"), 10));
+    let mut packer = Molpack::new();
+    if std::env::var_os("MOLRS_PACK_EXAMPLE_PROGRESS").is_some() {
+        packer = packer.add_handler(ProgressHandler::new());
+    }
+    if std::env::var_os("MOLRS_PACK_EXAMPLE_XYZ").is_some() {
+        packer = packer.add_handler(XYZHandler::new(out_dir.join("polymer_vesicle.xyz"), 10));
+    }
 
     let result = packer.pack(&targets, 500, Some(42))?;
 

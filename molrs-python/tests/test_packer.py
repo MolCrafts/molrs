@@ -67,6 +67,13 @@ class TestTargetBuilder:
         radii = np.array([1.0], dtype=np.float32)
         return molrs.Target.from_coords(positions, radii, 5)
 
+    def _make_two_atom_target(self):
+        positions = np.array(
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=np.float32
+        )
+        radii = np.array([1.0, 1.0], dtype=np.float32)
+        return molrs.Target.from_coords(positions, radii, 5)
+
     def test_with_name_immutable(self):
         t = self._make_target()
         t2 = t.with_name("water")
@@ -84,6 +91,20 @@ class TestTargetBuilder:
         with pytest.raises(TypeError):
             t.with_constraint("not_a_constraint")
 
+    def test_with_constraint_for_atoms(self):
+        t = self._make_two_atom_target()
+        c = molrs.InsideSphere(5.0, [0.0, 0.0, 0.0])
+        t2 = t.with_constraint_for_atoms([1], c)
+        assert t2 is not t
+
+    def test_with_constraint_for_atoms_validates_packmol_indices(self):
+        t = self._make_two_atom_target()
+        c = molrs.InsideSphere(5.0, [0.0, 0.0, 0.0])
+        with pytest.raises(ValueError, match="1-based indexing"):
+            t.with_constraint_for_atoms([0], c)
+        with pytest.raises(ValueError, match="1-based indexing"):
+            t.with_constraint_for_atoms([3], c)
+
     def test_with_maxmove(self):
         t = self._make_target()
         t2 = t.with_maxmove(100)
@@ -99,12 +120,28 @@ class TestTargetBuilder:
         t2 = t.without_centering()
         assert t2 is not t
 
+    def test_constrain_rotation(self):
+        t = self._make_target()
+        tx = t.constrain_rotation_x(0.0, 10.0)
+        ty = t.constrain_rotation_y(30.0, 5.0)
+        tz = t.constrain_rotation_z(90.0, 15.0)
+        assert tx is not t
+        assert ty is not t
+        assert tz is not t
+
     def test_fixed_at(self):
         t = self._make_target()
         t2 = t.fixed_at([5.0, 5.0, 5.0])
         assert t2.count == 1
         assert t2.is_fixed is True
         assert t.is_fixed is False  # original unchanged
+
+    def test_fixed_at_with_euler(self):
+        t = self._make_target()
+        t2 = t.fixed_at_with_euler([5.0, 5.0, 5.0], [45.0, 0.0, 90.0])
+        assert t2.count == 1
+        assert t2.is_fixed is True
+        assert t.is_fixed is False
 
     def test_repr(self):
         t = self._make_target().with_name("test_mol")
@@ -132,13 +169,27 @@ class TestPacker:
         p2 = p1.with_tolerance(3.0)
         p3 = p1.with_precision(0.5)
         p4 = p1.with_maxit(50)
-        p5 = p1.with_progress(False)
+        p5 = p1.with_nloop0(40)
+        p6 = p1.with_sidemax(200.0)
+        p7 = p1.with_movefrac(0.1)
+        p8 = p1.with_movebadrandom(True)
+        p9 = p1.with_disable_movebad(True)
+        p10 = p1.with_pbc([0.0, 0.0, 0.0], [20.0, 20.0, 20.0])
+        p11 = p1.with_pbc_box([20.0, 20.0, 20.0])
+        p12 = p1.with_progress(False)
         assert "2.00" in repr(p1)
         assert "3.00" in repr(p2)
         assert "0.5000" in repr(p3)
-        # p4 and p5 don't change repr but are distinct objects
+        # new builders don't change repr but return distinct objects
         assert p4 is not p1
         assert p5 is not p1
+        assert p6 is not p1
+        assert p7 is not p1
+        assert p8 is not p1
+        assert p9 is not p1
+        assert p10 is not p1
+        assert p11 is not p1
+        assert p12 is not p1
 
 
 class TestPackerPack:
@@ -168,6 +219,7 @@ class TestPackerPack:
         result = packer.pack([target], max_loops=50, seed=42)
 
         assert len(result.elements) == result.positions.shape[0]
+        assert result.natoms == result.positions.shape[0]
         # from_coords defaults to "X"
         assert all(e == "X" for e in result.elements)
 
@@ -302,3 +354,34 @@ class TestPackerPack:
         assert len(elements) == 6  # 2 water * 3 atoms
         # Should have real elements from PDB, not "X"
         assert "X" not in elements
+
+    def test_extended_target_and_packer_options(self):
+        positions = np.array(
+            [[0.0, 0.0, 0.0], [1.5, 0.0, 0.0]], dtype=np.float32
+        )
+        radii = np.array([1.0, 1.0], dtype=np.float32)
+        target = (
+            molrs.Target.from_coords(positions, radii, 2)
+            .with_constraint(molrs.InsideBox([0.0, 0.0, 0.0], [20.0, 20.0, 20.0]))
+            .with_constraint_for_atoms(
+                [1], molrs.AbovePlane([0.0, 0.0, 1.0], 0.0)
+            )
+            .constrain_rotation_x(0.0, 30.0)
+            .constrain_rotation_y(0.0, 30.0)
+            .constrain_rotation_z(0.0, 30.0)
+        )
+
+        packer = (
+            molrs.Packer(tolerance=2.0, precision=0.01)
+            .with_nloop0(20)
+            .with_sidemax(100.0)
+            .with_movefrac(0.05)
+            .with_movebadrandom(True)
+            .with_disable_movebad(False)
+            .with_pbc_box([20.0, 20.0, 20.0])
+            .with_progress(False)
+        )
+        result = packer.pack([target], max_loops=30, seed=42)
+
+        assert result.positions.shape == (4, 3)
+        assert result.natoms == 4

@@ -313,10 +313,10 @@ mod tests {
 
         let mut pairs = Block::new();
         pairs
-            .insert("i", Array1::from_vec(vec![0 as U]).into_dyn())
+            .insert("atomi", Array1::from_vec(vec![0 as U]).into_dyn())
             .unwrap();
         pairs
-            .insert("j", Array1::from_vec(vec![1 as U]).into_dyn())
+            .insert("atomj", Array1::from_vec(vec![1 as U]).into_dyn())
             .unwrap();
         pairs
             .insert("type", Array1::from_vec(vec!["A".to_string()]).into_dyn())

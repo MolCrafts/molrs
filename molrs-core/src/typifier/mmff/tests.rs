@@ -10,7 +10,7 @@ mod tests {
 
     fn atom(sym: &str) -> Atom {
         let mut a = Atom::new();
-        a.set("symbol", sym);
+        a.set("element", sym);
         a
     }
 
@@ -86,7 +86,7 @@ mod tests {
         assert_eq!(types[&c2], 1, "C2 should be type 1 (CR)");
         // All H should be type 5
         for (aid, atom) in mol.atoms() {
-            if atom.get_str("symbol") == Some("H") {
+            if atom.get_str("element") == Some("H") {
                 assert_eq!(types[&aid], 5, "H should be type 5 (HC)");
             }
         }

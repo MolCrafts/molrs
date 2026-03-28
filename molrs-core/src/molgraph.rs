@@ -95,7 +95,7 @@ impl Atom {
     /// Convenience: create an atom with symbol + xyz.
     pub fn xyz(symbol: &str, x: f64, y: f64, z: f64) -> Self {
         let mut a = Self::new();
-        a.set("symbol", symbol);
+        a.set("element", symbol);
         a.set("x", x);
         a.set("y", y);
         a.set("z", z);
@@ -754,8 +754,8 @@ impl MolGraph {
                     .unwrap_or(1.0);
                 col_order.push(order);
             }
-            let _ = bonds_block.insert("i", Array1::from_vec(col_i).into_dyn());
-            let _ = bonds_block.insert("j", Array1::from_vec(col_j).into_dyn());
+            let _ = bonds_block.insert("atomi", Array1::from_vec(col_i).into_dyn());
+            let _ = bonds_block.insert("atomj", Array1::from_vec(col_j).into_dyn());
             let _ = bonds_block.insert("order", Array1::from_vec(col_order).into_dyn());
             frame.insert("bonds", bonds_block);
         }
@@ -771,9 +771,9 @@ impl MolGraph {
                 cj.push(id_to_row[&angle.atoms[1]] as U);
                 ck.push(id_to_row[&angle.atoms[2]] as U);
             }
-            let _ = angles_block.insert("i", Array1::from_vec(ci).into_dyn());
-            let _ = angles_block.insert("j", Array1::from_vec(cj).into_dyn());
-            let _ = angles_block.insert("k", Array1::from_vec(ck).into_dyn());
+            let _ = angles_block.insert("atomi", Array1::from_vec(ci).into_dyn());
+            let _ = angles_block.insert("atomj", Array1::from_vec(cj).into_dyn());
+            let _ = angles_block.insert("atomk", Array1::from_vec(ck).into_dyn());
             frame.insert("angles", angles_block);
         }
 
@@ -790,10 +790,10 @@ impl MolGraph {
                 ck.push(id_to_row[&d.atoms[2]] as U);
                 cl.push(id_to_row[&d.atoms[3]] as U);
             }
-            let _ = dih_block.insert("i", Array1::from_vec(ci).into_dyn());
-            let _ = dih_block.insert("j", Array1::from_vec(cj).into_dyn());
-            let _ = dih_block.insert("k", Array1::from_vec(ck).into_dyn());
-            let _ = dih_block.insert("l", Array1::from_vec(cl).into_dyn());
+            let _ = dih_block.insert("atomi", Array1::from_vec(ci).into_dyn());
+            let _ = dih_block.insert("atomj", Array1::from_vec(cj).into_dyn());
+            let _ = dih_block.insert("atomk", Array1::from_vec(ck).into_dyn());
+            let _ = dih_block.insert("atoml", Array1::from_vec(cl).into_dyn());
             frame.insert("dihedrals", dih_block);
         }
 
@@ -801,7 +801,7 @@ impl MolGraph {
     }
 
     /// Import from a [`Frame`]. The `"atoms"` block columns become props;
-    /// `"bonds"` block `i`/`j` columns become bonds.
+    /// `"bonds"` block `atomi`/`atomj` columns become bonds.
     pub fn from_frame(frame: &Frame) -> Result<Self, MolRsError> {
         let mut g = MolGraph::new();
 
@@ -849,11 +849,11 @@ impl MolGraph {
         // Bonds.
         if let Some(bonds_block) = frame.get("bonds") {
             let col_i = bonds_block
-                .get_uint("i")
-                .ok_or_else(|| MolRsError::parse("bonds block missing 'i' column"))?;
+                .get_uint("atomi")
+                .ok_or_else(|| MolRsError::parse("bonds block missing 'atomi' column"))?;
             let col_j = bonds_block
-                .get_uint("j")
-                .ok_or_else(|| MolRsError::parse("bonds block missing 'j' column"))?;
+                .get_uint("atomj")
+                .ok_or_else(|| MolRsError::parse("bonds block missing 'atomj' column"))?;
 
             // Bond order can be stored as float or uint
             let col_order_f = bonds_block.get_float("order");
@@ -881,9 +881,9 @@ impl MolGraph {
         // Angles.
         if let Some(angles_block) = frame.get("angles")
             && let (Some(ci), Some(cj), Some(ck)) = (
-                angles_block.get_uint("i"),
-                angles_block.get_uint("j"),
-                angles_block.get_uint("k"),
+                angles_block.get_uint("atomi"),
+                angles_block.get_uint("atomj"),
+                angles_block.get_uint("atomk"),
             )
         {
             let na = angles_block.nrows().unwrap_or(0);
@@ -900,10 +900,10 @@ impl MolGraph {
         // Dihedrals.
         if let Some(dih_block) = frame.get("dihedrals")
             && let (Some(ci), Some(cj), Some(ck), Some(cl)) = (
-                dih_block.get_uint("i"),
-                dih_block.get_uint("j"),
-                dih_block.get_uint("k"),
-                dih_block.get_uint("l"),
+                dih_block.get_uint("atomi"),
+                dih_block.get_uint("atomj"),
+                dih_block.get_uint("atomk"),
+                dih_block.get_uint("atoml"),
             )
         {
             let nd = dih_block.nrows().unwrap_or(0);
@@ -952,11 +952,11 @@ mod tests {
     fn test_atom_dict_api() {
         let mut a = Atom::new();
         a.set("x", 1.5);
-        a.set("symbol", "C");
+        a.set("element", "C");
         a.set("type_id", PropValue::Int(3 as I));
 
         assert_eq!(a.get_f64("x"), Some(1.5));
-        assert_eq!(a.get_str("symbol"), Some("C"));
+        assert_eq!(a.get_str("element"), Some("C"));
         assert_eq!(a.get_int("type_id"), Some(3 as I));
         assert_eq!(a.get_f64("missing"), None);
         assert!(a.contains_key("x"));
@@ -980,7 +980,7 @@ mod tests {
     #[test]
     fn test_atom_xyz_constructor() {
         let a = Atom::xyz("H", 0.96, 0.0, 0.0);
-        assert_eq!(a.get_str("symbol"), Some("H"));
+        assert_eq!(a.get_str("element"), Some("H"));
         assert_eq!(a.get_f64("x"), Some(0.96));
         assert_eq!(a.get_f64("y"), Some(0.0));
         assert_eq!(a.get_f64("z"), Some(0.0));
@@ -996,7 +996,7 @@ mod tests {
         let id = g.add_atom(Atom::xyz("C", 0.0, 0.0, 0.0));
         assert_eq!(g.n_atoms(), 1);
         assert_eq!(
-            g.get_atom(id).expect("get atom").get_str("symbol"),
+            g.get_atom(id).expect("get atom").get_str("element"),
             Some("C")
         );
 

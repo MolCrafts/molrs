@@ -315,10 +315,10 @@ mod tests {
 
         let mut bonds = Block::new();
         bonds
-            .insert("i", Array1::from_vec(vec![0u32]).into_dyn())
+            .insert("atomi", Array1::from_vec(vec![0u32]).into_dyn())
             .unwrap();
         bonds
-            .insert("j", Array1::from_vec(vec![1u32]).into_dyn())
+            .insert("atomj", Array1::from_vec(vec![1u32]).into_dyn())
             .unwrap();
         frame.insert("bonds", bonds);
 

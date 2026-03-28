@@ -23,9 +23,7 @@ use std::fs::create_dir_all;
 use std::path::PathBuf;
 
 use molrs::io::pdb::read_pdb_frame;
-use molrs_pack::{
-    EarlyStopHandler, InsideBoxConstraint, Molpack, ProgressHandler, Target, XYZHandler,
-};
+use molrs_pack::{InsideBoxConstraint, Molpack, ProgressHandler, Target, XYZHandler};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = env_logger::try_init();
@@ -46,16 +44,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_constraint(box_constraint)
         .with_name("urea");
 
-    let out_dir = base.join("out");
-    create_dir_all(&out_dir)?;
-
-    let mut packer = Molpack::new()
-        .add_handler(ProgressHandler::new())
-        .add_handler(EarlyStopHandler::default())
-        .add_handler(XYZHandler::new(out_dir.join("mixture.xyz"), 10));
+    let mut packer = Molpack::new();
+    if std::env::var_os("MOLRS_PACK_EXAMPLE_PROGRESS").is_some() {
+        packer = packer.add_handler(ProgressHandler::new());
+    }
+    if std::env::var_os("MOLRS_PACK_EXAMPLE_XYZ").is_some() {
+        let out_dir = base.join("out");
+        create_dir_all(&out_dir)?;
+        packer = packer.add_handler(XYZHandler::new(out_dir.join("mixture.xyz"), 10));
+    }
 
     let targets = vec![water_target, urea_target];
-    packer.pack(&targets, 200, Some(7u64))?;
+    packer.pack(&targets, 400, Some(1_234_567u64))?;
 
     Ok(())
 }

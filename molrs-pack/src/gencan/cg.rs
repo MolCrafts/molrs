@@ -3,6 +3,7 @@
 
 use crate::constraints::EvalMode;
 use crate::context::PackContext;
+use crate::numerics::{near_zero_norm_floor, positive_norm_floor, residual_small_floor};
 use molrs::types::F;
 
 /// Reusable CG work vectors, matching packmol `cg` workspace roles.
@@ -169,8 +170,9 @@ pub fn cg_solve(
 
     loop {
         // Residual convergence
-        if rnorm2 <= 1.0e-16
-            || (((rnorm2 <= eps * eps * gnorm2) || (rnorm2 <= 1.0e-10 && iter != 0)) && iter >= 4)
+        if rnorm2 <= near_zero_norm_floor() * near_zero_norm_floor()
+            || (((rnorm2 <= eps * eps * gnorm2) || (rnorm2 <= residual_small_floor() && iter != 0))
+                && iter >= 4)
         {
             inform = 0;
             break;
@@ -414,7 +416,7 @@ fn hessian_times_vec_diff(
         .map(|&ii| x[ii].abs())
         .fold(0.0 as F, F::max);
     let dsupn = d[..nind].iter().map(|v| v.abs()).fold(0.0 as F, F::max);
-    let step = (sterel * xsupn).max(steabs) / dsupn.max(1.0e-20);
+    let step = (sterel * xsupn).max(steabs) / dsupn.max(positive_norm_floor());
 
     y[..n].copy_from_slice(&x[..n]);
     for j in 0..nind {

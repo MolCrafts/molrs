@@ -12,11 +12,12 @@
 //! - **[`Frame`]** -- hierarchical container mapping string keys
 //!   (e.g., `"atoms"`, `"bonds"`) to typed [`Block`]s.
 //! - **[`Block`]** -- column-oriented data store with typed columns
-//!   (`f32`, `i32`, `u32`, `string`). Accessed via JS typed arrays
-//!   (`Float32Array`, `Int32Array`, `Uint32Array`, `string[]`).
+//!   (`F`, `i32`, `u32`, `string`). Float columns map to
+//!   `Float32Array` in default builds and `Float64Array` with the
+//!   `f64` feature.
 //! - **[`Box`]** (exported as `Box` in JS) -- simulation box defining
 //!   periodic boundary conditions and coordinate transformations.
-//! - **[`WasmArray`]** -- owned f32 array with ndarray-compatible shape
+//! - **[`WasmArray`]** -- owned float array with ndarray-compatible shape
 //!   metadata for passing multi-dimensional data across the WASM boundary.
 //!
 //! # Modules
@@ -68,7 +69,7 @@ pub fn start() {
 ///
 /// ```js
 /// const mem = wasmMemory();
-/// const buf = new Float32Array(mem.buffer, ptr, len);
+/// const buf = new Float64Array(mem.buffer, ptr, len); // or Float32Array in default builds
 /// ```
 #[wasm_bindgen(js_name = wasmMemory)]
 pub fn wasm_memory() -> Memory {

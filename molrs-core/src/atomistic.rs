@@ -1,7 +1,7 @@
 //! All-atom molecular graph with element-level semantics.
 //!
 //! [`Atomistic`] is a newtype wrapper around [`MolGraph`] that guarantees every
-//! atom carries a `"symbol"` property (element symbol). This invariant is
+//! atom carries a `"element"` property (element symbol). This invariant is
 //! required by subsystems like [`gen3d`](crate::gen3d) and
 //! [`typifier`](crate::typifier) that look up element data.
 //!
@@ -27,7 +27,7 @@ use crate::molgraph::{Atom, AtomId, MolGraph};
 
 /// All-atom molecular graph.
 ///
-/// Invariant: every atom has a `"symbol"` property containing a valid element
+/// Invariant: every atom has a `"element"` property containing a valid element
 /// symbol string.
 #[derive(Debug, Clone)]
 pub struct Atomistic(MolGraph);
@@ -68,14 +68,14 @@ impl Atomistic {
     /// [`gen3d`](crate::gen3d) pipeline will assign coordinates.
     pub fn add_atom_bare(&mut self, symbol: &str) -> AtomId {
         let mut a = Atom::new();
-        a.set("symbol", symbol);
+        a.set("element", symbol);
         self.0.add_atom(a)
     }
 
-    /// Promote from a [`MolGraph`], validating all atoms have `"symbol"`.
+    /// Promote from a [`MolGraph`], validating all atoms have `"element"`.
     pub fn try_from_molgraph(mol: MolGraph) -> Result<Self, MolRsError> {
         for (id, atom) in mol.atoms() {
-            if atom.get_str("symbol").is_none() {
+            if atom.get_str("element").is_none() {
                 return Err(MolRsError::validation(format!(
                     "atom {:?} missing 'symbol' property",
                     id
@@ -114,7 +114,7 @@ mod tests {
 
         assert_eq!(mol.n_atoms(), 2);
         assert_eq!(mol.n_bonds(), 1);
-        assert_eq!(mol.get_atom(c).unwrap().get_str("symbol"), Some("C"));
+        assert_eq!(mol.get_atom(c).unwrap().get_str("element"), Some("C"));
     }
 
     #[test]
@@ -123,7 +123,7 @@ mod tests {
         let o = mol.add_atom_xyz("O", 0.0, 0.0, 0.0);
 
         let atom = mol.get_atom(o).unwrap();
-        assert_eq!(atom.get_str("symbol"), Some("O"));
+        assert_eq!(atom.get_str("element"), Some("O"));
         assert_eq!(atom.get_f64("x"), Some(0.0));
     }
 

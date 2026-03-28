@@ -134,7 +134,7 @@ impl SimulationReader {
     /// ```js
     /// const frame = reader.readFrame(0);
     /// if (frame) {
-    ///   const x = frame.getBlock("atoms").copyColF32("x");
+    ///   const x = frame.getBlock("atoms").copyColF("x");
     /// }
     /// ```
     #[wasm_bindgen(js_name = readFrame)]

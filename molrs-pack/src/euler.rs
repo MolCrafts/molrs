@@ -10,6 +10,7 @@ use molrs::types::F;
 /// Port of Fortran `eulerrmat`.
 ///
 /// Returns (v1, v2, v3) — the three columns of the rotation matrix.
+#[inline(always)]
 pub fn eulerrmat(beta: F, gama: F, teta: F) -> ([F; 3], [F; 3], [F; 3]) {
     let cb = beta.cos();
     let sb = beta.sin();
@@ -27,6 +28,7 @@ pub fn eulerrmat(beta: F, gama: F, teta: F) -> ([F; 3], [F; 3], [F; 3]) {
 
 /// Compute Cartesian coordinates from center-of-mass, reference coordinates, and rotation matrix.
 /// Port of Fortran `compcart`.
+#[inline(always)]
 pub fn compcart(xcm: &[F; 3], xref: &[F; 3], v1: &[F; 3], v2: &[F; 3], v3: &[F; 3]) -> [F; 3] {
     [
         xcm[0] + xref[0] * v1[0] + xref[1] * v2[0] + xref[2] * v3[0],
@@ -42,6 +44,7 @@ pub fn compcart(xcm: &[F; 3], xref: &[F; 3], v1: &[F; 3], v2: &[F; 3], v3: &[F; 
 ///   beta  = counterclockwise rotation around x-axis
 ///   gama  = counterclockwise rotation around y-axis
 ///   teta  = counterclockwise rotation around z-axis
+#[inline(always)]
 pub fn eulerfixed(beta: F, gama: F, teta: F) -> ([F; 3], [F; 3], [F; 3]) {
     let c1 = beta.cos();
     let s1 = beta.sin();

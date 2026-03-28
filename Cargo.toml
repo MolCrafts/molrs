@@ -5,7 +5,12 @@ resolver = "3"
 [workspace.package]
 version = "0.0.7"
 edition = "2024"
+rust-version = "1.85"
 license = "BSD-3-Clause"
 authors = ["MolCrafts"]
 repository = "https://github.com/MolCrafts/molrs"
 homepage = "https://github.com/MolCrafts/molrs"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

@@ -39,7 +39,7 @@ use wasm_bindgen::prelude::*;
 ///
 /// const frame = ir.toFrame();
 /// const atoms = frame.getBlock("atoms");
-/// console.log(atoms.copyColStr("symbol")); // ["C", "C", "O", "H", ...]
+/// console.log(atoms.copyColStr("element")); // ["C", "C", "O", "H", ...]
 /// ```
 #[wasm_bindgen(js_name = SmilesIR)]
 pub struct WasmSmilesIR {
@@ -72,7 +72,7 @@ impl WasmSmilesIR {
     ///   are added. No 3D coordinates are present -- use
     ///   [`generate3D`](crate::generate_3d_wasm) to embed coordinates.
     /// - `"bonds"` block: `i`, `j` (u32, zero-based atom indices),
-    ///   `order` (f32, bond order: 1.0 = single, 1.5 = aromatic,
+    ///   `order` (F, bond order: 1.0 = single, 1.5 = aromatic,
     ///   2.0 = double, 3.0 = triple).
     ///
     /// # Returns
@@ -89,7 +89,7 @@ impl WasmSmilesIR {
     /// ```js
     /// const frame = ir.toFrame();
     /// const bonds = frame.getBlock("bonds");
-    /// const order = bonds.copyColF32("order");
+    /// const order = bonds.copyColF("order");
     /// ```
     #[wasm_bindgen(js_name = toFrame)]
     pub fn to_frame(&self) -> Result<Frame, JsValue> {

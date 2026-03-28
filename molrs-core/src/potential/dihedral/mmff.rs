@@ -59,10 +59,10 @@ pub fn mmff_torsion_ctor(
     let block = frame
         .get("dihedrals")
         .ok_or("mmff_torsion: missing \"dihedrals\"")?;
-    let ic = block.get_uint("i").ok_or("missing i")?;
-    let jc = block.get_uint("j").ok_or("missing j")?;
-    let kc = block.get_uint("k").ok_or("missing k")?;
-    let lc = block.get_uint("l").ok_or("missing l")?;
+    let ic = block.get_uint("atomi").ok_or("missing atomi")?;
+    let jc = block.get_uint("atomj").ok_or("missing atomj")?;
+    let kc = block.get_uint("atomk").ok_or("missing atomk")?;
+    let lc = block.get_uint("atoml").ok_or("missing atoml")?;
     let tc = block.get_string("type").ok_or("missing type")?;
 
     let n = ic.len();

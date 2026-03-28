@@ -8,6 +8,7 @@ pub mod spg;
 
 use crate::constraints::EvalMode;
 use crate::context::PackContext;
+use crate::numerics::{numeric_controls, positive_norm_floor};
 use crate::objective::{compute_f, compute_g};
 
 /// Parameters for the GENCAN call (matches `easygencan` defaults from `pgencan.f90`).
@@ -164,10 +165,6 @@ pub fn gencan(
     workspace.ensure_len(n);
 
     // Constants (from easygencan parameters section)
-    const STEABS: F = 1.0e-10;
-    const STEREL: F = 1.0e-7;
-    const EPSABS: F = 1.0e-20;
-    const EPSREL: F = 1.0e-10;
     const INFREL: F = 1.0e20;
     const INFABS: F = F::MAX;
     const BETA_LS: F = 0.5;
@@ -184,6 +181,7 @@ pub fn gencan(
     const LSPGMI: F = 1.0e-10;
     const FMIN: F = 1.0e-5;
     const EPSGPEN: F = 0.0;
+    let numeric = numeric_controls();
 
     let cgepsi = 0.1 as F;
     let cgepsf = 1.0e-5 as F;
@@ -199,9 +197,11 @@ pub fn gencan(
         x[i] = x[i].clamp(l[i], u[i]);
     }
 
-    // Initial function value.
-    let mut f = sys.evaluate(x, EvalMode::FOnly, None).f_total;
+    // Initial function value + gradient.
     let mut fcnt = 0usize;
+    let g = &mut workspace.g;
+    g.fill(0.0);
+    let mut f = sys.evaluate(x, EvalMode::FAndGradient, Some(g)).f_total;
 
     // Packmol behavior: check packmolprecision before counting this first eval.
     if packmolprecision(sys, precision) {
@@ -216,9 +216,6 @@ pub fn gencan(
         };
     }
     fcnt += 1;
-    let g = &mut workspace.g;
-    g.fill(0.0);
-    sys.evaluate(x, EvalMode::GradientOnly, Some(g));
     let mut gcnt = 1usize;
     let mut cgcnt = 0usize;
 
@@ -326,7 +323,7 @@ pub fn gencan(
         if gieucn2 <= ometa2 * gpeucn2 {
             // SPG iteration: abandon current face
             let lamspg = if iter == 1 || sty <= 0.0 {
-                F::max(1.0, xnorm) / gpeucn2.sqrt().max(1.0e-300)
+                F::max(1.0, xnorm) / gpeucn2.sqrt().max(positive_norm_floor())
             } else {
                 sts / sty
             };
@@ -348,10 +345,10 @@ pub fn gencan(
                 GAMMA,
                 SIGMA1,
                 SIGMA2,
-                STEREL,
-                STEABS,
-                EPSREL,
-                EPSABS,
+                numeric.sterel,
+                numeric.steabs,
+                numeric.epsrel,
+                numeric.epsabs,
                 spg_scratch,
                 sys,
             );
@@ -408,10 +405,10 @@ pub fn gencan(
                 false, // nearlyq = .false. in packmol easygencan defaults
                 1,     // trtype=1 (sup-norm)
                 THETA,
-                STEREL,
-                STEABS,
-                EPSREL,
-                EPSABS,
+                numeric.sterel,
+                numeric.steabs,
+                numeric.epsrel,
+                numeric.epsabs,
                 INFREL,
                 INFABS,
                 d,
@@ -473,12 +470,12 @@ pub fn gencan(
                 gcnt,
                 GAMMA,
                 BETA_LS,
-                STEREL,
-                STEABS,
+                numeric.sterel,
+                numeric.steabs,
                 SIGMA1,
                 SIGMA2,
-                EPSREL,
-                EPSABS,
+                numeric.epsrel,
+                numeric.epsabs,
                 tnls_scratch,
                 sys,
             );
@@ -497,7 +494,7 @@ pub fn gencan(
             // packmol behavior: if tnls stops with inform=6, discard TN step and force SPG.
             if ls_res.inform == 6 {
                 let lamspg = if iter == 1 || sty <= 0.0 {
-                    F::max(1.0, xnorm) / gpeucn2.sqrt().max(1.0e-300)
+                    F::max(1.0, xnorm) / gpeucn2.sqrt().max(positive_norm_floor())
                 } else {
                     sts / sty
                 };
@@ -519,10 +516,10 @@ pub fn gencan(
                     GAMMA,
                     SIGMA1,
                     SIGMA2,
-                    STEREL,
-                    STEABS,
-                    EPSREL,
-                    EPSABS,
+                    numeric.sterel,
+                    numeric.steabs,
+                    numeric.epsrel,
+                    numeric.epsabs,
                     spg_scratch,
                     sys,
                 );
@@ -544,9 +541,9 @@ pub fn gencan(
 
         // Adjust to bounds near machine precision (packmol gencan.f lines 2363-2371).
         for i in 0..n {
-            if x[i] <= l[i] + (EPSREL * l[i].abs()).max(EPSABS) {
+            if x[i] <= l[i] + (numeric.epsrel * l[i].abs()).max(numeric.epsabs) {
                 x[i] = l[i];
-            } else if x[i] >= u[i] - (EPSREL * u[i].abs()).max(EPSABS) {
+            } else if x[i] >= u[i] - (numeric.epsrel * u[i].abs()).max(numeric.epsabs) {
                 x[i] = u[i];
             }
         }

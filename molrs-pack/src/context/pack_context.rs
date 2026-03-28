@@ -59,7 +59,7 @@ pub struct PackContext {
     /// Element per atom: elements[icart]. Size: ntotat. `None` means unknown/"X".
     pub elements: Vec<Option<Element>>,
 
-    // ---- Reference (COM-centered) coordinates ----
+    // ---- Reference (centered) coordinates ----
     /// Reference coordinates coor[idatom] = [x, y, z]. Size: total atoms across all types.
     pub coor: Vec<[F; 3]>,
 
@@ -151,6 +151,10 @@ pub struct PackContext {
     pub lcellnext: Vec<Option<usize>>,
     /// Is cell empty?
     pub empty_cell: Vec<bool>,
+    /// Cells that contain fixed atoms and must be restored on every reset.
+    pub fixed_cells: Vec<usize>,
+    /// Cells touched during the previous objective/gradient evaluation.
+    pub active_cells: Vec<usize>,
     /// Precomputed 13 forward-neighbor cell indices per cell for `compute_f`.
     pub neighbor_cells_f: Vec<[usize; 13]>,
     /// Precomputed 13 forward-neighbor cell indices per cell for `compute_g`.
@@ -233,6 +237,8 @@ impl PackContext {
             lcellfirst: None,
             lcellnext: vec![None; ncell_total],
             empty_cell: vec![true; ncell_total],
+            fixed_cells: Vec::new(),
+            active_cells: Vec::new(),
             neighbor_cells_f: vec![[0; 13]; ncell_total],
             neighbor_cells_g: vec![[0; 13]; ncell_total],
             init1: false,
@@ -281,6 +287,8 @@ impl PackContext {
         self.latomfix = vec![None; nc];
         self.lcellnext = vec![None; nc];
         self.empty_cell = vec![true; nc];
+        self.fixed_cells.clear();
+        self.active_cells.clear();
         self.neighbor_cells_f = vec![[0; 13]; nc];
         self.neighbor_cells_g = vec![[0; 13]; nc];
         self.rebuild_neighbor_cells();
@@ -290,24 +298,25 @@ impl PackContext {
     /// Port of `resetcells.f90`.
     pub fn resetcells(&mut self) {
         self.lcellfirst = None;
-        // Restore fixed atom list into latomfirst
-        let nc = self.ncells[0] * self.ncells[1] * self.ncells[2];
-        for i in 0..nc {
-            self.latomfirst[i] = self.latomfix[i];
-            self.empty_cell[i] = self.latomfix[i].is_none();
+        for &icell in &self.active_cells {
+            self.latomfirst[icell] = None;
+            self.lcellnext[icell] = None;
+            self.empty_cell[icell] = true;
         }
+        self.active_cells.clear();
+
+        for &icell in &self.fixed_cells {
+            self.latomfirst[icell] = self.latomfix[icell];
+            self.empty_cell[icell] = false;
+            self.lcellnext[icell] = self.lcellfirst;
+            self.lcellfirst = Some(icell);
+            self.active_cells.push(icell);
+        }
+
         // Reset latomnext for free atoms only
         let free_atoms = self.ntotat - self.nfixedat;
         for i in 0..free_atoms {
             self.latomnext[i] = None;
-        }
-        self.lcellfirst = None;
-        // Rebuild lcellnext by scanning all cells with fixed atoms
-        for icell in 0..nc {
-            if !self.empty_cell[icell] {
-                self.lcellnext[icell] = self.lcellfirst;
-                self.lcellfirst = Some(icell);
-            }
         }
     }
 

@@ -20,11 +20,11 @@ use super::params::MMFFParams;
 ///
 /// The resulting frame contains:
 /// - `atoms`: x, y, z, type (MMFF type as string), charge
-/// - `bonds`: i, j, type (e.g. "0_1_5")
-/// - `angles`: i, j, k, type (e.g. "0_1_2_1"), stbn_type
-/// - `dihedrals`: i, j, k, l, type (e.g. "0_5_1_1_5")
-/// - `impropers`: i, j, k, l, type (e.g. "1_2_3_4")
-/// - `pairs`: i, j, is_14
+/// - `bonds`: atomi, atomj, type (e.g. "0_1_5")
+/// - `angles`: atomi, atomj, atomk, type (e.g. "0_1_2_1"), stbn_type
+/// - `dihedrals`: atomi, atomj, atomk, atoml, type (e.g. "0_5_1_1_5")
+/// - `impropers`: atomi, atomj, atomk, atoml, type (e.g. "1_2_3_4")
+/// - `pairs`: atomi, atomj, is_14
 pub(crate) fn build_mmff_frame(mol: &MolGraph, params: &MMFFParams) -> Result<Frame, String> {
     // Step 1: Ring detection
     let ring_info = find_rings(mol);
@@ -135,10 +135,10 @@ pub(crate) fn build_mmff_frame(mol: &MolGraph, params: &MMFFParams) -> Result<Fr
 
     let mut bonds_block = Block::new();
     bonds_block
-        .insert("i", Array1::from_vec(bi).into_dyn())
+        .insert("atomi", Array1::from_vec(bi).into_dyn())
         .map_err(|e| e.to_string())?;
     bonds_block
-        .insert("j", Array1::from_vec(bj).into_dyn())
+        .insert("atomj", Array1::from_vec(bj).into_dyn())
         .map_err(|e| e.to_string())?;
     bonds_block
         .insert("type", Array1::from_vec(bond_types).into_dyn())
@@ -176,13 +176,13 @@ pub(crate) fn build_mmff_frame(mol: &MolGraph, params: &MMFFParams) -> Result<Fr
 
     let mut angles_block = Block::new();
     angles_block
-        .insert("i", Array1::from_vec(ai).into_dyn())
+        .insert("atomi", Array1::from_vec(ai).into_dyn())
         .map_err(|e| e.to_string())?;
     angles_block
-        .insert("j", Array1::from_vec(aj).into_dyn())
+        .insert("atomj", Array1::from_vec(aj).into_dyn())
         .map_err(|e| e.to_string())?;
     angles_block
-        .insert("k", Array1::from_vec(ak).into_dyn())
+        .insert("atomk", Array1::from_vec(ak).into_dyn())
         .map_err(|e| e.to_string())?;
     angles_block
         .insert("type", Array1::from_vec(angle_types).into_dyn())
@@ -219,16 +219,16 @@ pub(crate) fn build_mmff_frame(mol: &MolGraph, params: &MMFFParams) -> Result<Fr
 
     let mut dihedrals_block = Block::new();
     dihedrals_block
-        .insert("i", Array1::from_vec(di).into_dyn())
+        .insert("atomi", Array1::from_vec(di).into_dyn())
         .map_err(|e| e.to_string())?;
     dihedrals_block
-        .insert("j", Array1::from_vec(dj).into_dyn())
+        .insert("atomj", Array1::from_vec(dj).into_dyn())
         .map_err(|e| e.to_string())?;
     dihedrals_block
-        .insert("k", Array1::from_vec(dk).into_dyn())
+        .insert("atomk", Array1::from_vec(dk).into_dyn())
         .map_err(|e| e.to_string())?;
     dihedrals_block
-        .insert("l", Array1::from_vec(dl).into_dyn())
+        .insert("atoml", Array1::from_vec(dl).into_dyn())
         .map_err(|e| e.to_string())?;
     dihedrals_block
         .insert("type", Array1::from_vec(dih_types).into_dyn())
@@ -259,16 +259,16 @@ pub(crate) fn build_mmff_frame(mol: &MolGraph, params: &MMFFParams) -> Result<Fr
     let mut impropers_block = Block::new();
     if n_impropers > 0 {
         impropers_block
-            .insert("i", Array1::from_vec(ii).into_dyn())
+            .insert("atomi", Array1::from_vec(ii).into_dyn())
             .map_err(|e| e.to_string())?;
         impropers_block
-            .insert("j", Array1::from_vec(ij).into_dyn())
+            .insert("atomj", Array1::from_vec(ij).into_dyn())
             .map_err(|e| e.to_string())?;
         impropers_block
-            .insert("k", Array1::from_vec(ik).into_dyn())
+            .insert("atomk", Array1::from_vec(ik).into_dyn())
             .map_err(|e| e.to_string())?;
         impropers_block
-            .insert("l", Array1::from_vec(il).into_dyn())
+            .insert("atoml", Array1::from_vec(il).into_dyn())
             .map_err(|e| e.to_string())?;
         impropers_block
             .insert("type", Array1::from_vec(imp_types).into_dyn())
@@ -319,10 +319,10 @@ pub(crate) fn build_mmff_frame(mol: &MolGraph, params: &MMFFParams) -> Result<Fr
     let mut pairs_block = Block::new();
     if !pi.is_empty() {
         pairs_block
-            .insert("i", Array1::from_vec(pi).into_dyn())
+            .insert("atomi", Array1::from_vec(pi).into_dyn())
             .map_err(|e| e.to_string())?;
         pairs_block
-            .insert("j", Array1::from_vec(pj).into_dyn())
+            .insert("atomj", Array1::from_vec(pj).into_dyn())
             .map_err(|e| e.to_string())?;
         pairs_block
             .insert("is_14", Array1::from_vec(p14).into_dyn())

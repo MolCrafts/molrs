@@ -96,7 +96,7 @@ fn hybridization_mode(mol: &MolGraph, id: AtomId) -> &'static str {
         Ok(a) => a,
         Err(_) => return "*",
     };
-    let sym = atom.get_str("symbol").unwrap_or("");
+    let sym = atom.get_str("element").unwrap_or("");
 
     // Hydrogen is always "*"
     if sym.eq_ignore_ascii_case("H") {
@@ -128,7 +128,7 @@ fn hybridization_mode(mol: &MolGraph, id: AtomId) -> &'static str {
             .filter(|&nbr| {
                 mol.get_atom(nbr)
                     .ok()
-                    .and_then(|a| a.get_str("symbol"))
+                    .and_then(|a| a.get_str("element"))
                     .map(|s| s == "O")
                     .unwrap_or(false)
             })
@@ -201,7 +201,7 @@ fn split_charge_conjugated(
             continue; // already processed
         }
 
-        let sym_i = atom_i.get_str("symbol").unwrap_or("");
+        let sym_i = atom_i.get_str("element").unwrap_or("");
         let elem_i = Element::by_symbol(sym_i);
 
         // 2-hop conjugated search for atoms of the same element
@@ -220,7 +220,7 @@ fn split_charge_conjugated(
                 let sym_k = mol
                     .get_atom(k_id)
                     .ok()
-                    .and_then(|a| a.get_str("symbol"))
+                    .and_then(|a| a.get_str("element"))
                     .unwrap_or("");
                 let elem_k = Element::by_symbol(sym_k);
                 if elem_i.is_some()
@@ -257,7 +257,7 @@ pub struct GasteigerCharges {
 /// `mol`.
 ///
 /// # Parameters
-/// - `mol`:  Molecular graph. Atoms need a `"symbol"` prop. Bond orders are
+/// - `mol`:  Molecular graph. Atoms need a `"element"` prop. Bond orders are
 ///   read from the `"order"` prop (default 1.0, aromatic = 1.5).
 ///   Formal charges go in `"formal_charge"` (default 0.0).
 /// - `n_iter`: Equalization iterations. RDKit default is 12.
@@ -269,7 +269,7 @@ pub fn compute_gasteiger_charges(mol: &MolGraph, n_iter: usize) -> Vec<(AtomId, 
     let atom_ids: Vec<AtomId> = mol
         .atoms()
         .filter(|(_, a)| {
-            a.get_str("symbol")
+            a.get_str("element")
                 .map(|s| !s.eq_ignore_ascii_case("H"))
                 .unwrap_or(true)
         })
@@ -295,7 +295,7 @@ pub fn compute_gasteiger_charges(mol: &MolGraph, n_iter: usize) -> Vec<(AtomId, 
             let sym = mol
                 .get_atom(id)
                 .ok()
-                .and_then(|a| a.get_str("symbol"))
+                .and_then(|a| a.get_str("element"))
                 .unwrap_or("");
             let mode = hybridization_mode(mol, id);
             gasteiger_params(sym, mode)
@@ -405,7 +405,7 @@ mod tests {
 
     fn atom(sym: &str) -> Atom {
         let mut a = Atom::new();
-        a.set("symbol", sym);
+        a.set("element", sym);
         a
     }
 

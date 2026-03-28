@@ -6,18 +6,18 @@
 //! structure protein.pdb
 //!   number 1
 //!   fixed 0. 0. 0. 0. 0. 0.
-//!   centerofmass
+//!   center
 //! end structure
 //! structure water.pdb
-//!   number 100
+//!   number 1000
 //!   inside sphere 0. 0. 0. 50.
 //! end structure
 //! structure CLA.pdb
-//!   number 5
+//!   number 20
 //!   inside sphere 0. 0. 0. 50.
 //! end structure
 //! structure SOD.pdb
-//!   number 5
+//!   number 30
 //!   inside sphere 0. 0. 0. 50.
 //! end structure
 //! ```
@@ -31,9 +31,7 @@ use std::fs::create_dir_all;
 use std::path::PathBuf;
 
 use molrs::io::pdb::read_pdb_frame;
-use molrs_pack::{
-    EarlyStopHandler, InsideSphereConstraint, Molpack, ProgressHandler, Target, XYZHandler,
-};
+use molrs_pack::{InsideSphereConstraint, Molpack, ProgressHandler, Target, XYZHandler};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = env_logger::try_init();
@@ -50,10 +48,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let protein_target = Target::new(protein, 1)
         .with_name("protein")
-        .with_center_of_mass()
+        .with_center()
         .fixed_at([0.0, 0.0, 0.0]);
 
-    let water_target = Target::new(water, 500)
+    let water_target = Target::new(water, 1000)
         .with_constraint(sphere.clone())
         .with_name("water");
 
@@ -65,16 +63,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_constraint(sphere)
         .with_name("chloride");
 
-    let out_dir = base.join("out");
-    create_dir_all(&out_dir)?;
-
-    let mut packer = Molpack::new()
-        .add_handler(ProgressHandler::new())
-        .add_handler(EarlyStopHandler::default())
-        .add_handler(XYZHandler::new(out_dir.join("solvprotein.xyz"), 10));
+    let mut packer = Molpack::new();
+    if std::env::var_os("MOLRS_PACK_EXAMPLE_PROGRESS").is_some() {
+        packer = packer.add_handler(ProgressHandler::new());
+    }
+    if std::env::var_os("MOLRS_PACK_EXAMPLE_XYZ").is_some() {
+        let out_dir = base.join("out");
+        create_dir_all(&out_dir)?;
+        packer = packer.add_handler(XYZHandler::new(out_dir.join("solvprotein.xyz"), 10));
+    }
 
     let targets = vec![protein_target, water_target, sodium_target, chloride_target];
-    packer.pack(&targets, 200, Some(42u64))?;
+    packer.pack(&targets, 800, Some(1_234_567))?;
 
     Ok(())
 }

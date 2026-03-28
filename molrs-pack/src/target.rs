@@ -9,14 +9,13 @@ use molrs::types::F;
 ///
 /// Packmol semantics:
 /// - `Auto`: free molecules are centered; fixed molecules are not centered.
-/// - `Center` / `CenterOfMass`: force centering.
+/// - `Center`: force centering.
 /// - `None`: keep input coordinates unchanged.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CenteringMode {
     #[default]
     Auto,
     Center,
-    CenterOfMass,
     None,
 }
 
@@ -34,7 +33,7 @@ pub struct FixedPlacement {
 pub struct Target {
     /// Input coordinates as provided by the source structure.
     pub input_coords: Vec<[F; 3]>,
-    /// Flat list of atom positions — the reference (COM-centered) coordinates.
+    /// Flat list of atom positions — the centered reference coordinates.
     /// Shape: natoms × 3, stored as Vec<[F; 3]>.
     pub ref_coords: Vec<[F; 3]>,
     /// Van der Waals radii per atom.
@@ -51,7 +50,7 @@ pub struct Target {
     pub atom_constraints: Vec<AtomConstraint>,
     /// Optional structure-level limit for movebad (`maxmove` in Packmol).
     pub maxmove: Option<usize>,
-    /// Centering policy matching Packmol `center` / `centerofmass`.
+    /// Centering policy.
     pub centering: CenteringMode,
     /// Rotation constraints in Euler variable order:
     /// [beta(y), gama(z), teta(x)] => (center_rad, half_width_rad).
@@ -66,21 +65,29 @@ impl Target {
     /// Create a new target from a `molrs::Frame` (read from PDB/XYZ) and a copy count.
     ///
     /// Positions are extracted from the `"atoms"` block (`"x"`, `"y"`, `"z"` columns)
-    /// and automatically centered at center of mass.
+    /// and automatically centered at the geometric center.
     /// VdW radii and element symbols are looked up from the `"element"` column.
     pub fn new(frame: molrs::Frame, count: usize) -> Self {
         let (positions, radii, elements) = frame_to_coords_and_elements(&frame);
-        let mut t = Self::from_coords(&positions, &radii, count);
-        t.elements = elements;
-        t
+        Self::from_parts(&positions, &radii, elements, count)
     }
 
     /// Create a new target directly from coordinate arrays.
     ///
     /// Useful for testing or when coordinates are already available.
-    /// Stores both raw input coordinates and a COM-centered reference copy.
+    /// Stores both raw input coordinates and a geometrically centered reference copy.
     /// Effective usage follows [`CenteringMode::Auto`] unless overridden.
     pub fn from_coords(frame_positions: &[[F; 3]], radii: &[F], count: usize) -> Self {
+        let n = frame_positions.len();
+        Self::from_parts(frame_positions, radii, vec!["X".to_string(); n], count)
+    }
+
+    fn from_parts(
+        frame_positions: &[[F; 3]],
+        radii: &[F],
+        elements: Vec<String>,
+        count: usize,
+    ) -> Self {
         assert_eq!(
             frame_positions.len(),
             radii.len(),
@@ -88,13 +95,11 @@ impl Target {
         );
         let input_coords = frame_positions.to_vec();
         let ref_coords = centered_coords(frame_positions);
-
-        let n = ref_coords.len();
         Self {
             input_coords,
             ref_coords,
             radii: radii.to_vec(),
-            elements: vec!["X".to_string(); n],
+            elements,
             count,
             name: None,
             molecule_constraint: MoleculeConstraint::new(),
@@ -167,12 +172,6 @@ impl Target {
         self
     }
 
-    /// Equivalent to Packmol `centerofmass` keyword for this structure.
-    pub fn with_center_of_mass(mut self) -> Self {
-        self.centering = CenteringMode::CenterOfMass;
-        self
-    }
-
     /// Keep input coordinates unchanged (disable automatic centering).
     pub fn without_centering(mut self) -> Self {
         self.centering = CenteringMode::None;
@@ -220,14 +219,22 @@ impl Target {
 }
 
 fn centered_coords(coords: &[[F; 3]]) -> Vec<[F; 3]> {
-    let n = coords.len() as F;
-    let cx = coords.iter().map(|p| p[0]).sum::<F>() / n;
-    let cy = coords.iter().map(|p| p[1]).sum::<F>() / n;
-    let cz = coords.iter().map(|p| p[2]).sum::<F>() / n;
+    let (cx, cy, cz) = geometric_center(coords);
     coords
         .iter()
         .map(|p| [p[0] - cx, p[1] - cy, p[2] - cz])
         .collect()
+}
+
+fn geometric_center(coords: &[[F; 3]]) -> (F, F, F) {
+    if coords.is_empty() {
+        return (0.0, 0.0, 0.0);
+    }
+    let n = coords.len() as F;
+    let cx = coords.iter().map(|p| p[0]).sum::<F>() / n;
+    let cy = coords.iter().map(|p| p[1]).sum::<F>() / n;
+    let cz = coords.iter().map(|p| p[2]).sum::<F>() / n;
+    (cx, cy, cz)
 }
 
 fn deg_to_rad(v: F) -> F {

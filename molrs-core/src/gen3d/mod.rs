@@ -35,8 +35,8 @@ pub fn generate_3d(
 ) -> Result<(Atomistic, Gen3DReport), MolRsError> {
     // Pipeline works on &MolGraph internally (via Deref).
     let (mol_out, report) = pipeline::generate_3d_impl(mol, opts)?;
-    // gen3d only adds atoms via add_hydrogens (which sets "symbol") and never
-    // removes "symbol" from existing atoms, so the invariant holds.
+    // gen3d only adds atoms via add_hydrogens (which sets "element") and never
+    // removes "element" from existing atoms, so the invariant holds.
     let atomistic = Atomistic::try_from_molgraph(mol_out)
         .expect("gen3d pipeline preserves Atomistic invariant");
     Ok((atomistic, report))

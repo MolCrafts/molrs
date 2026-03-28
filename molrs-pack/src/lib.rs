@@ -2,16 +2,22 @@
 //!
 //! # Quick Start
 //!
-//! ```rust,ignore
-//! use molrs_pack::{Target, Molpack, MoleculeConstraint, Restraint, InsideBoxConstraint};
+//! ```rust,no_run
+//! use molrs_pack::{InsideBoxConstraint, Molpack, Target};
 //!
-//! let c = InsideBoxConstraint::new([0.,0.,0.], [40.,40.,40.]);
-//! let target = Target::new(&water_positions, &water_radii, 500)
+//! let water_positions = [
+//!     [0.0, 0.0, 0.0],
+//!     [0.96, 0.0, 0.0],
+//!     [-0.24, 0.93, 0.0],
+//! ];
+//! let water_radii = [1.52, 1.20, 1.20];
+//! let box_constraint = InsideBoxConstraint::new([0.0, 0.0, 0.0], [40.0, 40.0, 40.0]);
+//! let target = Target::from_coords(&water_positions, &water_radii, 500)
 //!     .with_name("water")
-//!     .with_constraint(c);
+//!     .with_constraint(box_constraint);
 //!
-//! let result = Molpack::new()
-//!     .pack(&[target], 20, Some(42))?;
+//! let mut packer = Molpack::new().tolerance(2.0).precision(0.01);
+//! let result = packer.pack(&[target], 200, Some(42)).unwrap();
 //! ```
 
 pub mod api;
@@ -28,8 +34,10 @@ pub mod handler;
 pub mod hook;
 pub mod initial;
 pub mod movebad;
+mod numerics;
 pub mod objective;
 pub mod packer;
+mod random;
 pub mod target;
 pub mod validation;
 
