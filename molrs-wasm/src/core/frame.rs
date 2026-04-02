@@ -31,12 +31,14 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use js_sys::Array as JsArray;
 use wasm_bindgen::prelude::*;
 
 use molrs::block::Block as RsBlock;
 use molrs_ffi::{FrameId as FFIFrameId, Store as FFIStore};
 
 use super::block::Block;
+use super::field::UniformGridField;
 use super::{SharedStore, js_err};
 
 /// Hierarchical data container mapping string keys to typed [`Block`]s.
@@ -290,6 +292,46 @@ impl Frame {
         self.store
             .borrow_mut()
             .with_frame_mut(self.id, |f| f.rename_column(block_key, old_col, new_col))
+            .map_err(js_err)
+    }
+
+    /// Return the names of all field observables attached to this frame.
+    #[wasm_bindgen(js_name = fieldNames)]
+    pub fn field_names(&self) -> Result<JsArray, JsValue> {
+        self.store
+            .borrow()
+            .with_frame(self.id, |frame| {
+                let names = JsArray::new();
+                for name in frame.field_names() {
+                    names.push(&JsValue::from_str(name));
+                }
+                names
+            })
+            .map_err(js_err)
+    }
+
+    /// Return true if a named field is attached to this frame.
+    #[wasm_bindgen(js_name = hasField)]
+    pub fn has_field(&self, name: &str) -> Result<bool, JsValue> {
+        self.store
+            .borrow()
+            .with_frame(self.id, |frame| frame.has_field(name))
+            .map_err(js_err)
+    }
+
+    /// Retrieve a uniform-grid field attached to this frame.
+    #[wasm_bindgen(js_name = getUniformGridField)]
+    pub fn get_uniform_grid_field(&self, name: &str) -> Result<Option<UniformGridField>, JsValue> {
+        self.store
+            .borrow()
+            .with_frame(self.id, |frame| {
+                let field = frame.get_field(name)?;
+                match &field.encoding {
+                    molrs::FieldEncoding::UniformGrid(grid) => {
+                        Some(UniformGridField::from_rs(grid.clone()))
+                    }
+                }
+            })
             .map_err(js_err)
     }
 

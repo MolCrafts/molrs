@@ -8,7 +8,7 @@
 //! | [`reader`] | `XYZReader`, `PDBReader`, `LAMMPSReader`, `LAMMPSDumpReader` | Read XYZ/ExtXYZ, PDB, LAMMPS data/dump files |
 //! | [`writer`] | `writeFrame(frame, format)` | Write XYZ, PDB, LAMMPS dump |
 //! | [`smiles`] | `parseSMILES(str)` -> `SmilesIR` | Parse SMILES notation |
-//! | [`zarr`] | `SimulationReader` | Read Zarr V3 simulation archives |
+//! | [`zarr`] | `MolRecReader` | Read MolRec Zarr V3 archives |
 //!
 //! All readers consume string content (not file handles) since
 //! WASM does not have filesystem access. Use the File API in the

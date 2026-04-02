@@ -899,6 +899,7 @@ dependencies = [
  "rayon",
  "roxmltree",
  "rustfft",
+ "serde",
  "serde_json",
  "slotmap",
  "tempfile",

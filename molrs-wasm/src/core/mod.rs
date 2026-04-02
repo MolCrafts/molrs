@@ -27,11 +27,13 @@ use wasm_bindgen::JsValue;
 use molrs_ffi::{FfiError, Store as FFIStore};
 
 pub mod block;
+pub mod field;
 pub mod frame;
 pub mod region;
 pub mod types;
 
 pub use block::Block;
+pub use field::UniformGridField;
 pub use frame::Frame;
 pub use region::simbox::Box;
 pub use types::WasmArray;

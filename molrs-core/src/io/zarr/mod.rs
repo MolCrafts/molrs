@@ -1,23 +1,14 @@
-//! Zarr V3-based simulation storage.
-//!
-//! A single Zarr store holds one simulation: system topology, force-field
-//! parameters, and streaming trajectory data.  An [`Archive`] groups multiple
-//! simulations for browsing and comparison.
+//! Zarr V3-based MolRec storage.
 
 mod error;
-mod forcefield;
 mod frame_io;
-mod simulation;
-mod trajectory;
+mod molrec;
 
+pub use molrec::{
+    count_molrec_frames_in_store, read_molrec_frame_from_store, read_molrec_store,
+};
 #[cfg(feature = "filesystem")]
-mod archive;
-
-pub use simulation::SimulationStore;
-pub use trajectory::{TrajectoryConfig, TrajectoryFrame, TrajectoryReader, TrajectoryWriter};
-
-#[cfg(feature = "filesystem")]
-pub use archive::Archive;
+pub use molrec::{read_molrec_file, write_molrec_file};
 
 /// Unit system tag stored in root metadata.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

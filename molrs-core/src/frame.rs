@@ -37,6 +37,7 @@ use std::ops::{Index, IndexMut};
 use super::block::Block;
 use super::region::simbox::SimBox;
 use crate::error::MolRsError;
+use crate::field::FieldObservable;
 
 /// A dictionary from string keys to [`Block`]s.
 ///
@@ -47,6 +48,7 @@ use crate::error::MolRsError;
 #[derive(Default, Clone)]
 pub struct Frame {
     map: HashMap<String, Block>,
+    fields: HashMap<String, FieldObservable>,
     /// Arbitrary key-value metadata associated with the frame.
     pub meta: HashMap<String, String>,
     /// Simulation box defining periodic boundary conditions.
@@ -68,6 +70,11 @@ impl std::fmt::Debug for Frame {
         if !self.meta.is_empty() {
             debug_struct.field("meta", &self.meta);
         }
+        if !self.fields.is_empty() {
+            let mut field_names: Vec<_> = self.fields.keys().cloned().collect();
+            field_names.sort();
+            debug_struct.field("fields", &field_names);
+        }
 
         debug_struct.finish()
     }
@@ -87,6 +94,7 @@ impl Frame {
     pub fn new() -> Self {
         Self {
             map: HashMap::new(),
+            fields: HashMap::new(),
             meta: HashMap::new(),
             simbox: None,
         }
@@ -105,6 +113,7 @@ impl Frame {
     pub fn with_capacity(cap: usize) -> Self {
         Self {
             map: HashMap::with_capacity(cap),
+            fields: HashMap::new(),
             meta: HashMap::new(),
             simbox: None,
         }
@@ -128,6 +137,7 @@ impl Frame {
     pub fn from_map(map: HashMap<String, Block>) -> Self {
         Self {
             map,
+            fields: HashMap::new(),
             meta: HashMap::new(),
             simbox: None,
         }
@@ -145,8 +155,9 @@ impl Frame {
     /// frame.insert("atoms", Block::new());
     /// frame.meta.insert("title".into(), "Test".into());
     ///
-    /// let (blocks, meta, simbox) = frame.into_inner();
+    /// let (blocks, fields, meta, simbox) = frame.into_inner();
     /// assert_eq!(blocks.len(), 1);
+    /// assert!(fields.is_empty());
     /// assert_eq!(meta.get("title").unwrap(), "Test");
     /// assert!(simbox.is_none());
     /// ```
@@ -154,10 +165,11 @@ impl Frame {
         self,
     ) -> (
         HashMap<String, Block>,
+        HashMap<String, FieldObservable>,
         HashMap<String, String>,
         Option<SimBox>,
     ) {
-        (self.map, self.meta, self.simbox)
+        (self.map, self.fields, self.meta, self.simbox)
     }
 
     /// Number of blocks (keys) in the frame.
@@ -273,8 +285,48 @@ impl Frame {
     /// ```
     pub fn clear_all(&mut self) {
         self.map.clear();
+        self.fields.clear();
         self.meta.clear();
         self.simbox = None;
+    }
+
+    /// Insert or replace a field observable by name.
+    pub fn add_field(
+        &mut self,
+        name: impl Into<String>,
+        field: FieldObservable,
+    ) -> Option<FieldObservable> {
+        self.fields.insert(name.into(), field)
+    }
+
+    /// Remove a field observable by name.
+    pub fn remove_field(&mut self, name: &str) -> Option<FieldObservable> {
+        self.fields.remove(name)
+    }
+
+    /// Borrow a field observable by name.
+    pub fn get_field(&self, name: &str) -> Option<&FieldObservable> {
+        self.fields.get(name)
+    }
+
+    /// Borrow a field observable mutably by name.
+    pub fn get_field_mut(&mut self, name: &str) -> Option<&mut FieldObservable> {
+        self.fields.get_mut(name)
+    }
+
+    /// Returns true if the frame contains a named field.
+    pub fn has_field(&self, name: &str) -> bool {
+        self.fields.contains_key(name)
+    }
+
+    /// Returns an iterator over `(name, field)` pairs.
+    pub fn fields(&self) -> impl Iterator<Item = (&str, &FieldObservable)> {
+        self.fields.iter().map(|(k, v)| (k.as_str(), v))
+    }
+
+    /// Returns an iterator over field names.
+    pub fn field_names(&self) -> impl Iterator<Item = &str> {
+        self.fields.keys().map(|k| k.as_str())
     }
 
     /// Renames a column in the specified block.
@@ -636,8 +688,9 @@ mod tests {
         frame.insert("atoms", Block::new());
         frame.meta.insert("title".into(), "Test".into());
 
-        let (blocks, meta, simbox) = frame.into_inner();
+        let (blocks, fields, meta, simbox) = frame.into_inner();
         assert_eq!(blocks.len(), 1);
+        assert!(fields.is_empty());
         assert!(blocks.contains_key("atoms"));
         assert_eq!(meta.get("title").unwrap(), "Test");
         assert!(simbox.is_none());

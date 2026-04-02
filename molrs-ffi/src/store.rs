@@ -5,7 +5,8 @@
 #![allow(non_snake_case)]
 
 use crate::error::FfiError;
-use crate::handle::{BlockHandle, FrameId};
+use crate::handle::{BlockHandle, FieldId, FrameId};
+use molrs::field::FieldObservable;
 use molrs::types::{F, I, U};
 use molrs::{block::Block, frame::Frame, region::simbox::SimBox};
 use slotmap::SlotMap;
@@ -21,6 +22,7 @@ struct FrameEntry {
 /// Store owns all frames and mediates access via handles.
 pub struct Store {
     frames: SlotMap<FrameId, FrameEntry>,
+    fields: SlotMap<FieldId, FieldObservable>,
 }
 
 impl Store {
@@ -28,6 +30,7 @@ impl Store {
     pub fn new() -> Self {
         Self {
             frames: SlotMap::with_key(),
+            fields: SlotMap::with_key(),
         }
     }
 
@@ -46,6 +49,52 @@ impl Store {
             .remove(id)
             .ok_or(FfiError::InvalidFrameId)
             .map(|_| ())
+    }
+
+    /// Stores a field observable and returns its stable ID.
+    pub fn field_new(&mut self, field: FieldObservable) -> FieldId {
+        self.fields.insert(field)
+    }
+
+    /// Drops a field from the store.
+    pub fn field_drop(&mut self, id: FieldId) -> Result<(), FfiError> {
+        self.fields
+            .remove(id)
+            .ok_or(FfiError::InvalidFieldId)
+            .map(|_| ())
+    }
+
+    /// Returns an owned clone of a stored field.
+    pub fn clone_field(&self, id: FieldId) -> Result<FieldObservable, FfiError> {
+        self.fields.get(id).cloned().ok_or(FfiError::InvalidFieldId)
+    }
+
+    /// Borrow a field immutably and run a closure on it.
+    pub fn with_field<R>(
+        &self,
+        id: FieldId,
+        f: impl FnOnce(&FieldObservable) -> R,
+    ) -> Result<R, FfiError> {
+        let field = self.fields.get(id).ok_or(FfiError::InvalidFieldId)?;
+        Ok(f(field))
+    }
+
+    /// Materialize a field validation view as a new frame and return its ID.
+    pub fn field_to_point_cloud_frame(
+        &mut self,
+        id: FieldId,
+        threshold: F,
+        stride: usize,
+    ) -> Result<FrameId, FfiError> {
+        let field = self.fields.get(id).ok_or(FfiError::InvalidFieldId)?;
+        let frame = field
+            .to_point_cloud_frame(threshold, stride)
+            .map_err(|_| FfiError::InvalidFieldId)?;
+        let entry = FrameEntry {
+            frame,
+            block_versions: HashMap::new(),
+        };
+        Ok(self.frames.insert(entry))
     }
 
     /// Sets a block in a frame. If the key exists, increments version to invalidate old handles.

@@ -37,7 +37,7 @@ console.log(writeFrame(mol3d, "xyz"));
 - `parseSMILES(smiles)` → `SmilesIR` → `.toFrame()`
 - `XYZReader`, `PDBReader`, `LAMMPSReader` — file format parsers
 - `writeFrame(frame, "xyz" | "pdb" | "lammps-data" | "lammps-dump")` — serialize to string
-- `SimulationReader` — Zarr V3 trajectory reader
+- `MolRecReader` — MolRec Zarr V3 reader
 
 ### 3D generation
 

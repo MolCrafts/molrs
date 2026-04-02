@@ -17,7 +17,7 @@ default = ["rayon"]
 slow-tests = []
 blas = ["ndarray-linalg"]
 rayon = []
-zarr = ["dep:zarrs", "dep:serde_json"]
+zarr = ["dep:zarrs"]
 filesystem = ["zarr", "zarrs/filesystem"]
 f64 = []
 i64 = []
@@ -33,7 +33,8 @@ once_cell = "1.20"
 slotmap = "1"
 petgraph = "0.7"
 zarrs = { version = "0.23", optional = true, features = ["ndarray"], default-features = false }
-serde_json = { version = "1", optional = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1" }
 rustfft = "6"
 libm = "0.2"
 roxmltree = "0.20"

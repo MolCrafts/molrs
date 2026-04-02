@@ -8,6 +8,9 @@ pub enum FfiError {
     /// Frame ID is invalid (frame was dropped or never existed)
     InvalidFrameId,
 
+    /// Field ID is invalid (field was dropped or never existed)
+    InvalidFieldId,
+
     /// Block handle is invalid (block was removed/replaced or frame gone)
     InvalidBlockHandle,
 
@@ -22,6 +25,7 @@ impl fmt::Display for FfiError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             FfiError::InvalidFrameId => write!(f, "Invalid frame ID"),
+            FfiError::InvalidFieldId => write!(f, "Invalid field ID"),
             FfiError::InvalidBlockHandle => write!(f, "Invalid block handle"),
             FfiError::KeyNotFound { key } => write!(f, "Key '{}' not found", key),
             FfiError::NonContiguous { key } => {
