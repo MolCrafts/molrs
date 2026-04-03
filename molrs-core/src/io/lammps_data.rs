@@ -654,10 +654,10 @@ fn build_frame(
             };
 
             bond_block
-                .insert("atom_i", mk_barr_u(atom_i_vec)?)
+                .insert("atomi", mk_barr_u(atom_i_vec)?)
                 .map_err(err_mapper)?;
             bond_block
-                .insert("atom_j", mk_barr_u(atom_j_vec)?)
+                .insert("atomj", mk_barr_u(atom_j_vec)?)
                 .map_err(err_mapper)?;
             bond_block
                 .insert("type", mk_barr_i(bond_type_vec)?)
@@ -726,13 +726,13 @@ fn build_frame(
             };
 
             angle_block
-                .insert("atom_i", mk_aarr_u(atom_i_vec)?)
+                .insert("atomi", mk_aarr_u(atom_i_vec)?)
                 .map_err(err_mapper)?;
             angle_block
-                .insert("atom_j", mk_aarr_u(atom_j_vec)?)
+                .insert("atomj", mk_aarr_u(atom_j_vec)?)
                 .map_err(err_mapper)?;
             angle_block
-                .insert("atom_k", mk_aarr_u(atom_k_vec)?)
+                .insert("atomk", mk_aarr_u(atom_k_vec)?)
                 .map_err(err_mapper)?;
             angle_block
                 .insert("type", mk_aarr_i(angle_type_vec)?)
@@ -809,16 +809,16 @@ fn build_frame(
             };
 
             dihedral_block
-                .insert("atom_i", mk_darr_u(atom_i_vec)?)
+                .insert("atomi", mk_darr_u(atom_i_vec)?)
                 .map_err(err_mapper)?;
             dihedral_block
-                .insert("atom_j", mk_darr_u(atom_j_vec)?)
+                .insert("atomj", mk_darr_u(atom_j_vec)?)
                 .map_err(err_mapper)?;
             dihedral_block
-                .insert("atom_k", mk_darr_u(atom_k_vec)?)
+                .insert("atomk", mk_darr_u(atom_k_vec)?)
                 .map_err(err_mapper)?;
             dihedral_block
-                .insert("atom_l", mk_darr_u(atom_l_vec)?)
+                .insert("atoml", mk_darr_u(atom_l_vec)?)
                 .map_err(err_mapper)?;
             dihedral_block
                 .insert("type", mk_darr_i(dihedral_type_vec)?)
@@ -1264,10 +1264,10 @@ impl<W: Write> FrameWriter for LAMMPSDataWriter<W> {
             writeln!(self.writer)?;
 
             let atom_i = bonds
-                .get_uint("atom_i")
+                .get_uint("atomi")
                 .ok_or_else(|| err_mapper("Missing 'atom_i' column"))?;
             let atom_j = bonds
-                .get_uint("atom_j")
+                .get_uint("atomj")
                 .ok_or_else(|| err_mapper("Missing 'atom_j' column"))?;
             let bond_types = bonds
                 .get_int("type")

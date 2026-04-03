@@ -34,8 +34,8 @@ fn test_read_labelmap() {
     let bonds = frame.get("bonds").expect("bonds block");
     assert_eq!(bonds.nrows(), Some(14));
 
-    let atom_i = bonds.get_uint("atom_i").expect("atom_i");
-    let _atom_j = bonds.get_uint("atom_j").expect("atom_j");
+    let atom_i = bonds.get_uint("atomi").expect("atomi");
+    let _atom_j = bonds.get_uint("atomj").expect("atomj");
     let _bond_types = bonds.get_int("type").expect("bond types");
 
     assert_eq!(atom_i.len(), 14);
@@ -177,10 +177,10 @@ fn test_write_and_read_roundtrip() {
     // Create bonds block
     let mut bonds = Block::new();
     bonds
-        .insert("atom_i", Array1::from_vec(vec![0 as U, 1 as U]).into_dyn())
+        .insert("atomi", Array1::from_vec(vec![0 as U, 1 as U]).into_dyn())
         .unwrap();
     bonds
-        .insert("atom_j", Array1::from_vec(vec![1 as U, 2 as U]).into_dyn())
+        .insert("atomj", Array1::from_vec(vec![1 as U, 2 as U]).into_dyn())
         .unwrap();
     bonds
         .insert("type", Array1::from_vec(vec![1 as I, 1 as I]).into_dyn())
@@ -285,9 +285,9 @@ fn test_read_angles_and_dihedrals() {
     let angles = frame.get("angles").expect("angles block");
     assert_eq!(angles.nrows(), Some(25));
 
-    let atom_i = angles.get_uint("atom_i").expect("atom_i");
-    let atom_j = angles.get_uint("atom_j").expect("atom_j");
-    let atom_k = angles.get_uint("atom_k").expect("atom_k");
+    let atom_i = angles.get_uint("atomi").expect("atomi");
+    let atom_j = angles.get_uint("atomj").expect("atomj");
+    let atom_k = angles.get_uint("atomk").expect("atomk");
     let angle_types = angles.get_int("type").expect("angle types");
 
     assert_eq!(atom_i.len(), 25);
@@ -299,10 +299,10 @@ fn test_read_angles_and_dihedrals() {
     let dihedrals = frame.get("dihedrals").expect("dihedrals block");
     assert_eq!(dihedrals.nrows(), Some(27));
 
-    let atom_i = dihedrals.get_uint("atom_i").expect("atom_i");
-    let atom_j = dihedrals.get_uint("atom_j").expect("atom_j");
-    let atom_k = dihedrals.get_uint("atom_k").expect("atom_k");
-    let atom_l = dihedrals.get_uint("atom_l").expect("atom_l");
+    let atom_i = dihedrals.get_uint("atomi").expect("atomi");
+    let atom_j = dihedrals.get_uint("atomj").expect("atomj");
+    let atom_k = dihedrals.get_uint("atomk").expect("atomk");
+    let atom_l = dihedrals.get_uint("atoml").expect("atoml");
     let dihedral_types = dihedrals.get_int("type").expect("dihedral types");
 
     assert_eq!(atom_i.len(), 27);

@@ -36,7 +36,7 @@ use crate::frame::Frame;
 use crate::io::reader::{FrameIndex, FrameReader, ReadSeek, Reader, TrajReader};
 use crate::io::writer::{FrameWriter, Writer};
 use crate::types::{F, I};
-use ndarray::{Array1, IxDyn};
+use ndarray::{Array1, ArrayD, IxDyn};
 use once_cell::sync::OnceCell;
 use std::fs::File;
 use std::io::{BufRead, Seek, SeekFrom, Write};
@@ -55,18 +55,19 @@ fn err_mapper<E: std::fmt::Display>(e: E) -> std::io::Error {
 enum ColumnType {
     Integer,
     Float,
+    String,
 }
 
 /// Classify a LAMMPS dump column by name.
 ///
-/// Integer columns: id, type, mol, proc, procp1, ix, iy, iz, element.
+/// Integer columns: id, type, mol, proc, procp1, ix, iy, iz.
+/// String columns: element (element symbol, e.g. "C", "H").
 /// Everything else (coordinates, velocities, forces, charges, custom computes)
 /// defaults to float.
 fn classify_column(name: &str) -> ColumnType {
     match name {
-        "id" | "type" | "mol" | "proc" | "procp1" | "ix" | "iy" | "iz" | "element" => {
-            ColumnType::Integer
-        }
+        "id" | "type" | "mol" | "proc" | "procp1" | "ix" | "iy" | "iz" => ColumnType::Integer,
+        "element" => ColumnType::String,
         _ => ColumnType::Float,
     }
 }
@@ -138,8 +139,13 @@ impl DumpBoxBounds {
             .map(|s| s.parse().map_err(err_mapper))
             .collect::<Result<_, _>>()?;
 
+        if vals.len() < 2 {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "box line 1: expected at least 2 values"));
+        }
         let (xlo_bound, xhi_bound) = (vals[0], vals[1]);
-        let xy = if is_triclinic { Some(vals[2]) } else { None };
+        let xy = if is_triclinic {
+            Some(*vals.get(2).ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "triclinic box line 1: missing tilt factor xy"))?)
+        } else { None };
 
         // Line 2: ylo yhi [xz]
         line.clear();
@@ -149,8 +155,13 @@ impl DumpBoxBounds {
             .map(|s| s.parse().map_err(err_mapper))
             .collect::<Result<_, _>>()?;
 
+        if vals.len() < 2 {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "box line 2: expected at least 2 values"));
+        }
         let (ylo_bound, yhi_bound) = (vals[0], vals[1]);
-        let xz = if is_triclinic { Some(vals[2]) } else { None };
+        let xz = if is_triclinic {
+            Some(*vals.get(2).ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "triclinic box line 2: missing tilt factor xz"))?)
+        } else { None };
 
         // Line 3: zlo zhi [yz]
         line.clear();
@@ -160,8 +171,13 @@ impl DumpBoxBounds {
             .map(|s| s.parse().map_err(err_mapper))
             .collect::<Result<_, _>>()?;
 
+        if vals.len() < 2 {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "box line 3: expected at least 2 values"));
+        }
         let (zlo_bound, zhi_bound) = (vals[0], vals[1]);
-        let yz = if is_triclinic { Some(vals[2]) } else { None };
+        let yz = if is_triclinic {
+            Some(*vals.get(2).ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "triclinic box line 3: missing tilt factor yz"))?)
+        } else { None };
 
         // For triclinic, convert bounds to actual box limits
         // See: https://docs.lammps.org/Howto_triclinic.html
@@ -212,21 +228,29 @@ impl DumpBoxBounds {
 fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Frame>> {
     let mut line = String::new();
 
-    // -- ITEM: TIMESTEP --
-    line.clear();
-    if reader.read_line(&mut line)? == 0 {
-        return Ok(None); // EOF
-    }
-    if !line.trim().starts_with("ITEM: TIMESTEP") {
-        return Err(err_mapper(format!(
-            "Expected 'ITEM: TIMESTEP', got: {}",
-            line.trim()
-        )));
-    }
-
-    line.clear();
-    reader.read_line(&mut line)?;
-    let timestep: i64 = line.trim().parse().map_err(err_mapper)?;
+    // -- ITEM: TIMESTEP (skip optional ITEM: UNITS / ITEM: TIME headers) --
+    let timestep: i64 = loop {
+        line.clear();
+        if reader.read_line(&mut line)? == 0 {
+            return Ok(None); // EOF
+        }
+        let trimmed = line.trim();
+        if trimmed.starts_with("ITEM: TIMESTEP") {
+            line.clear();
+            reader.read_line(&mut line)?;
+            break line.trim().parse().map_err(err_mapper)?;
+        }
+        if trimmed.starts_with("ITEM:") {
+            // Unknown optional ITEM (e.g. UNITS, TIME) — skip its value line.
+            line.clear();
+            reader.read_line(&mut line)?;
+        } else {
+            return Err(err_mapper(format!(
+                "Expected 'ITEM: TIMESTEP', got: {}",
+                trimmed
+            )));
+        }
+    };
 
     // -- ITEM: NUMBER OF ATOMS --
     line.clear();
@@ -278,11 +302,13 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
     let ncols = col_names.len();
     let mut int_cols: Vec<Option<Vec<I>>> = vec![None; ncols];
     let mut float_cols: Vec<Option<Vec<F>>> = vec![None; ncols];
+    let mut str_cols: Vec<Option<Vec<std::string::String>>> = vec![None; ncols];
 
     for (i, ct) in col_types.iter().enumerate() {
         match ct {
             ColumnType::Integer => int_cols[i] = Some(Vec::with_capacity(natoms)),
             ColumnType::Float => float_cols[i] = Some(Vec::with_capacity(natoms)),
+            ColumnType::String => str_cols[i] = Some(Vec::with_capacity(natoms)),
         }
     }
 
@@ -317,6 +343,9 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
                     let v: F = tokens[i].parse().map_err(err_mapper)?;
                     float_cols[i].as_mut().unwrap().push(v);
                 }
+                ColumnType::String => {
+                    str_cols[i].as_mut().unwrap().push(tokens[i].to_owned());
+                }
             }
         }
     }
@@ -339,6 +368,14 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
                     .into_shape_with_order(IxDyn(&[natoms]))
                     .map_err(err_mapper)?
                     .into_dyn();
+                atoms_block.insert(name.as_str(), arr).map_err(err_mapper)?;
+            }
+            ColumnType::String => {
+                let arr = ArrayD::from_shape_vec(
+                    IxDyn(&[natoms]),
+                    str_cols[i].take().unwrap(),
+                )
+                .map_err(err_mapper)?;
                 atoms_block.insert(name.as_str(), arr).map_err(err_mapper)?;
             }
         }
@@ -739,6 +776,13 @@ impl<W: Write> FrameWriter for LAMMPSDumpWriter<W> {
                             write!(self.writer, "0.000000")?;
                         }
                     }
+                    ColumnType::String => {
+                        if let Some(arr) = atoms.get_string(name) {
+                            write!(self.writer, "{}", arr[row])?;
+                        } else {
+                            write!(self.writer, "X")?;
+                        }
+                    }
                 }
             }
             writeln!(self.writer)?;
@@ -792,38 +836,7 @@ mod tests {
     use super::*;
     use std::io::Cursor;
 
-    /// Minimal orthogonal dump with 3 atoms.
-    const ORTHO_DUMP: &str = "\
-ITEM: TIMESTEP
-100
-ITEM: NUMBER OF ATOMS
-3
-ITEM: BOX BOUNDS pp pp pp
-0.0 10.0
-0.0 10.0
-0.0 10.0
-ITEM: ATOMS id type x y z
-1 1 1.0 2.0 3.0
-2 1 4.0 5.0 6.0
-3 2 7.0 8.0 9.0
-";
-
-    /// Triclinic dump with tilt factors.
-    const TRICLINIC_DUMP: &str = "\
-ITEM: TIMESTEP
-200
-ITEM: NUMBER OF ATOMS
-2
-ITEM: BOX BOUNDS xy xz yz pp pp ff
--0.5 10.5 0.5
-0.0 10.0 0.0
-0.0 10.0 0.0
-ITEM: ATOMS id type x y z
-1 1 1.0 2.0 3.0
-2 2 4.0 5.0 6.0
-";
-
-    /// Multi-frame dump (2 frames).
+    /// Multi-frame dump (2 frames) — used only by index/random-access/iter tests.
     const MULTI_DUMP: &str = "\
 ITEM: TIMESTEP
 0
@@ -867,77 +880,6 @@ ITEM: ATOMS id type x y z
     }
 
     #[test]
-    fn test_read_single_frame_orthogonal() {
-        let mut reader = LAMMPSDumpReader::new(cursor(ORTHO_DUMP));
-        let frame = reader.read_frame().unwrap().expect("should parse frame");
-
-        // Check timestep
-        assert_eq!(frame.meta.get("timestep").unwrap(), "100");
-
-        // Check atoms
-        let atoms = frame.get("atoms").expect("atoms block");
-        assert_eq!(atoms.nrows(), Some(3));
-
-        let ids = atoms.get_int("id").expect("id column");
-        assert_eq!(ids.as_slice().unwrap(), &[1, 2, 3]);
-
-        let types = atoms.get_int("type").expect("type column");
-        assert_eq!(types.as_slice().unwrap(), &[1, 1, 2]);
-
-        let x = atoms.get_float("x").expect("x column");
-        assert!((x[0] - 1.0).abs() < 1e-6);
-        assert!((x[1] - 4.0).abs() < 1e-6);
-        assert!((x[2] - 7.0).abs() < 1e-6);
-
-        let z = atoms.get_float("z").expect("z column");
-        assert!((z[0] - 3.0).abs() < 1e-6);
-        assert!((z[2] - 9.0).abs() < 1e-6);
-
-        // Check box
-        assert_eq!(frame.meta.get("box").unwrap(), "10 10 10");
-        assert_eq!(frame.meta.get("box_origin").unwrap(), "0 0 0");
-        assert!(!frame.meta.contains_key("box_tilt"));
-        assert_eq!(frame.meta.get("boundary").unwrap(), "pp pp pp");
-    }
-
-    #[test]
-    fn test_read_single_frame_triclinic() {
-        let mut reader = LAMMPSDumpReader::new(cursor(TRICLINIC_DUMP));
-        let frame = reader.read_frame().unwrap().expect("should parse frame");
-
-        assert_eq!(frame.meta.get("timestep").unwrap(), "200");
-
-        // Triclinic should have tilt metadata
-        let tilt = frame.meta.get("box_tilt").expect("should have box_tilt");
-        let tilt_vals: Vec<f64> = tilt
-            .split_whitespace()
-            .map(|s| s.parse().unwrap())
-            .collect();
-        assert!((tilt_vals[0] - 0.5).abs() < 1e-6); // xy
-        assert!((tilt_vals[1] - 0.0).abs() < 1e-6); // xz
-        assert!((tilt_vals[2] - 0.0).abs() < 1e-6); // yz
-
-        // Boundary: pp pp ff
-        assert_eq!(frame.meta.get("boundary").unwrap(), "pp pp ff");
-    }
-
-    #[test]
-    fn test_read_multiframe() {
-        let mut reader = LAMMPSDumpReader::new(cursor(MULTI_DUMP));
-        let frames = reader.read_all().unwrap();
-
-        assert_eq!(frames.len(), 2);
-        assert_eq!(frames[0].meta.get("timestep").unwrap(), "0");
-        assert_eq!(frames[1].meta.get("timestep").unwrap(), "100");
-
-        let x0 = frames[0].get("atoms").unwrap().get_float("x").unwrap();
-        assert!((x0[0] - 1.0).abs() < 1e-6);
-
-        let x1 = frames[1].get("atoms").unwrap().get_float("x").unwrap();
-        assert!((x1[0] - 1.5).abs() < 1e-6);
-    }
-
-    #[test]
     fn test_build_index() {
         let mut reader = LAMMPSDumpReader::new(cursor(MULTI_DUMP));
         reader.build_index().unwrap();
@@ -959,136 +901,6 @@ ITEM: ATOMS id type x y z
 
         // Out of bounds
         assert!(reader.read_step(5).unwrap().is_none());
-    }
-
-    #[test]
-    fn test_write_single_frame_orthogonal() {
-        // Build a frame
-        let mut frame = Frame::new();
-        let mut atoms = Block::new();
-
-        let ids = Array1::from_vec(vec![1 as I, 2 as I])
-            .into_shape_with_order(IxDyn(&[2]))
-            .unwrap()
-            .into_dyn();
-        let types = Array1::from_vec(vec![1 as I, 2 as I])
-            .into_shape_with_order(IxDyn(&[2]))
-            .unwrap()
-            .into_dyn();
-        let x = Array1::from_vec(vec![1.0 as F, 4.0])
-            .into_shape_with_order(IxDyn(&[2]))
-            .unwrap()
-            .into_dyn();
-        let y = Array1::from_vec(vec![2.0 as F, 5.0])
-            .into_shape_with_order(IxDyn(&[2]))
-            .unwrap()
-            .into_dyn();
-        let z = Array1::from_vec(vec![3.0 as F, 6.0])
-            .into_shape_with_order(IxDyn(&[2]))
-            .unwrap()
-            .into_dyn();
-
-        atoms.insert("id", ids).unwrap();
-        atoms.insert("type", types).unwrap();
-        atoms.insert("x", x).unwrap();
-        atoms.insert("y", y).unwrap();
-        atoms.insert("z", z).unwrap();
-        frame.insert("atoms", atoms);
-
-        frame.meta.insert("timestep".to_string(), "42".to_string());
-        frame.meta.insert("box".to_string(), "10 10 10".to_string());
-        frame
-            .meta
-            .insert("box_origin".to_string(), "0 0 0".to_string());
-
-        let mut buf = Vec::new();
-        let mut writer = LAMMPSDumpWriter::new(&mut buf);
-        writer.write_frame(&frame).unwrap();
-
-        let output = String::from_utf8(buf).unwrap();
-        assert!(output.contains("ITEM: TIMESTEP\n42\n"));
-        assert!(output.contains("ITEM: NUMBER OF ATOMS\n2\n"));
-        assert!(output.contains("ITEM: BOX BOUNDS pp pp pp\n"));
-        assert!(output.contains("ITEM: ATOMS id type"));
-    }
-
-    #[test]
-    fn test_write_single_frame_triclinic() {
-        let mut frame = Frame::new();
-        let mut atoms = Block::new();
-
-        let ids = Array1::from_vec(vec![1 as I])
-            .into_shape_with_order(IxDyn(&[1]))
-            .unwrap()
-            .into_dyn();
-        let types = Array1::from_vec(vec![1 as I])
-            .into_shape_with_order(IxDyn(&[1]))
-            .unwrap()
-            .into_dyn();
-        let x = Array1::from_vec(vec![1.0 as F])
-            .into_shape_with_order(IxDyn(&[1]))
-            .unwrap()
-            .into_dyn();
-        let y = Array1::from_vec(vec![2.0 as F])
-            .into_shape_with_order(IxDyn(&[1]))
-            .unwrap()
-            .into_dyn();
-        let z = Array1::from_vec(vec![3.0 as F])
-            .into_shape_with_order(IxDyn(&[1]))
-            .unwrap()
-            .into_dyn();
-
-        atoms.insert("id", ids).unwrap();
-        atoms.insert("type", types).unwrap();
-        atoms.insert("x", x).unwrap();
-        atoms.insert("y", y).unwrap();
-        atoms.insert("z", z).unwrap();
-        frame.insert("atoms", atoms);
-
-        frame.meta.insert("timestep".to_string(), "0".to_string());
-        frame.meta.insert("box".to_string(), "10 10 10".to_string());
-        frame
-            .meta
-            .insert("box_origin".to_string(), "0 0 0".to_string());
-        frame
-            .meta
-            .insert("box_tilt".to_string(), "1.0 0.5 0.0".to_string());
-
-        let mut buf = Vec::new();
-        let mut writer = LAMMPSDumpWriter::new(&mut buf);
-        writer.write_frame(&frame).unwrap();
-
-        let output = String::from_utf8(buf).unwrap();
-        assert!(output.contains("ITEM: BOX BOUNDS xy xz yz pp pp pp\n"));
-    }
-
-    #[test]
-    fn test_roundtrip() {
-        // Read original
-        let mut reader = LAMMPSDumpReader::new(cursor(ORTHO_DUMP));
-        let frame = reader.read_frame().unwrap().expect("read frame");
-
-        // Write
-        let mut buf = Vec::new();
-        let mut writer = LAMMPSDumpWriter::new(&mut buf);
-        writer.write_frame(&frame).unwrap();
-
-        // Read back
-        let mut reader2 = LAMMPSDumpReader::new(Cursor::new(buf));
-        let frame2 = reader2.read_frame().unwrap().expect("read back");
-
-        // Compare
-        assert_eq!(frame.meta.get("timestep"), frame2.meta.get("timestep"));
-
-        let atoms1 = frame.get("atoms").unwrap();
-        let atoms2 = frame2.get("atoms").unwrap();
-        assert_eq!(atoms1.nrows(), atoms2.nrows());
-
-        let x1 = atoms1.get_float("x").unwrap();
-        let x2 = atoms2.get_float("x").unwrap();
-        for i in 0..x1.len() {
-            assert!((x1[i] - x2[i]).abs() < 1e-5);
-        }
     }
 
     #[test]
@@ -1185,26 +997,6 @@ ITEM: ATOMS id type x y z
         let mut reader = LAMMPSDumpReader::new(cursor(dump));
         let frame = reader.read_frame().unwrap().expect("parse");
         assert_eq!(frame.meta.get("boundary").unwrap(), "ff pp ss");
-    }
-
-    #[test]
-    fn test_multiframe_roundtrip() {
-        let mut reader = LAMMPSDumpReader::new(cursor(MULTI_DUMP));
-        let frames = reader.read_all().unwrap();
-
-        let mut buf = Vec::new();
-        let mut writer = LAMMPSDumpWriter::new(&mut buf);
-        for f in &frames {
-            writer.write_frame(f).unwrap();
-        }
-
-        let mut reader2 = LAMMPSDumpReader::new(Cursor::new(buf));
-        let frames2 = reader2.read_all().unwrap();
-
-        assert_eq!(frames.len(), frames2.len());
-        for (f1, f2) in frames.iter().zip(frames2.iter()) {
-            assert_eq!(f1.meta.get("timestep"), f2.meta.get("timestep"));
-        }
     }
 
     #[test]

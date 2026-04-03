@@ -435,10 +435,10 @@ fn build_bonds_block(
     let bn = i_indices.len();
     let mut block = Block::new();
     block
-        .insert("i", to_array_uint(i_indices, bn)?)
+        .insert("atomi", to_array_uint(i_indices, bn)?)
         .map_err(err_mapper)?;
     block
-        .insert("j", to_array_uint(j_indices, bn)?)
+        .insert("atomj", to_array_uint(j_indices, bn)?)
         .map_err(err_mapper)?;
 
     Ok(Some(block))
@@ -648,7 +648,7 @@ pub fn write_pdb_frame<W: Write>(writer: &mut W, _frame: &Frame) -> std::io::Res
             let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n];
 
             let (u32_i, u32_j) =
-                if let (Some(i), Some(j)) = (bonds.get_uint("i"), bonds.get_uint("j")) {
+                if let (Some(i), Some(j)) = (bonds.get_uint("atomi"), bonds.get_uint("atomj")) {
                     (Some(i), Some(j))
                 } else {
                     (None, None)
@@ -806,109 +806,6 @@ mod tests {
     }
 
     #[test]
-    fn test_write_pdb_frame_minimal() {
-        use crate::block::Block;
-        use crate::frame::Frame;
-        use ndarray::{Array1, IxDyn};
-
-        let mut frame = Frame::new();
-        let mut atoms = Block::new();
-        let n = 2;
-
-        let x = Array1::from_vec(vec![0.0 as F, 1.0 as F])
-            .into_shape_with_order(IxDyn(&[n]))
-            .unwrap()
-            .into_dyn();
-        let y = Array1::from_vec(vec![0.0 as F, 0.0 as F])
-            .into_shape_with_order(IxDyn(&[n]))
-            .unwrap()
-            .into_dyn();
-        let z = Array1::from_vec(vec![0.0 as F, 0.0 as F])
-            .into_shape_with_order(IxDyn(&[n]))
-            .unwrap()
-            .into_dyn();
-        let elements = Array1::from_vec(vec!["C".to_string(), "O".to_string()])
-            .into_shape_with_order(IxDyn(&[n]))
-            .unwrap()
-            .into_dyn();
-
-        atoms.insert("x", x).unwrap();
-        atoms.insert("y", y).unwrap();
-        atoms.insert("z", z).unwrap();
-        atoms.insert("element", elements).unwrap();
-        frame.insert("atoms", atoms);
-
-        let mut out = Vec::new();
-        write_pdb_frame(&mut out, &frame).expect("write pdb");
-        let output = String::from_utf8(out).expect("utf8");
-        let lines: Vec<&str> = output.lines().collect();
-        assert!(lines[0].starts_with("ATOM"));
-        assert_eq!(lines.last().copied(), Some("END"));
-    }
-
-    #[test]
-    fn test_write_read_pdb_roundtrip() {
-        use crate::block::Block;
-        use crate::frame::Frame;
-        use ndarray::{Array1, IxDyn};
-        use std::io::{BufReader, Cursor};
-
-        let mut frame = Frame::new();
-        let mut atoms = Block::new();
-        let n = 3;
-
-        let x = Array1::from_vec(vec![0.0 as F, 1.5 as F, -2.0 as F])
-            .into_shape_with_order(IxDyn(&[n]))
-            .unwrap()
-            .into_dyn();
-        let y = Array1::from_vec(vec![0.1 as F, -1.0 as F, 2.2 as F])
-            .into_shape_with_order(IxDyn(&[n]))
-            .unwrap()
-            .into_dyn();
-        let z = Array1::from_vec(vec![3.0 as F, 2.0 as F, -1.5 as F])
-            .into_shape_with_order(IxDyn(&[n]))
-            .unwrap()
-            .into_dyn();
-        let elements = Array1::from_vec(vec!["H".to_string(), "O".to_string(), "C".to_string()])
-            .into_shape_with_order(IxDyn(&[n]))
-            .unwrap()
-            .into_dyn();
-        let ids = Array1::from_vec(vec![1 as U, 2 as U, 3 as U])
-            .into_shape_with_order(IxDyn(&[n]))
-            .unwrap()
-            .into_dyn();
-
-        atoms.insert("x", x).unwrap();
-        atoms.insert("y", y).unwrap();
-        atoms.insert("z", z).unwrap();
-        atoms.insert("element", elements).unwrap();
-        atoms.insert("id", ids).unwrap();
-        frame.insert("atoms", atoms);
-
-        let mut out = Vec::new();
-        write_pdb_frame(&mut out, &frame).expect("write pdb");
-
-        let mut reader = PDBReader::new(BufReader::new(Cursor::new(out)));
-        let roundtrip = reader
-            .read_frame()
-            .expect("read frame")
-            .expect("frame exists");
-
-        let atoms_rt = roundtrip.get("atoms").expect("atoms");
-        assert_eq!(atoms_rt.nrows(), Some(n));
-
-        let x_rt = atoms_rt.get_float("x").expect("x");
-        let y_rt = atoms_rt.get_float("y").expect("y");
-        let z_rt = atoms_rt.get_float("z").expect("z");
-
-        for i in 0..n {
-            assert!((x_rt[i] - [0.0 as F, 1.5 as F, -2.0 as F][i]).abs() < 1e-3 as F);
-            assert!((y_rt[i] - [0.1 as F, -1.0 as F, 2.2 as F][i]).abs() < 1e-3 as F);
-            assert!((z_rt[i] - [3.0 as F, 2.0 as F, -1.5 as F][i]).abs() < 1e-3 as F);
-        }
-    }
-
-    #[test]
     fn test_write_pdb_frame_conect_from_bonds() {
         use crate::block::Block;
         use crate::frame::Frame;
@@ -955,8 +852,8 @@ mod tests {
             .into_shape_with_order(IxDyn(&[2]))
             .unwrap()
             .into_dyn();
-        bonds.insert("i", atom_i).unwrap();
-        bonds.insert("j", atom_j).unwrap();
+        bonds.insert("atomi", atom_i).unwrap();
+        bonds.insert("atomj", atom_j).unwrap();
         frame.insert("bonds", bonds);
 
         let mut out = Vec::new();
@@ -965,82 +862,6 @@ mod tests {
         assert!(output.contains("CONECT   10   30"));
         assert!(output.contains("CONECT   20   30"));
         assert!(output.contains("CONECT   30   10   20"));
-    }
-
-    #[test]
-    fn test_build_frame() {
-        let atoms = vec![
-            AtomRecord {
-                serial: 1,
-                name: "N".to_string(),
-                alt_loc: ' ',
-                res_name: "ALA".to_string(),
-                chain_id: 'A',
-                res_seq: 1,
-                i_code: ' ',
-                x: 1.0,
-                y: 2.0,
-                z: 3.0,
-                occupancy: 1.0,
-                temp_factor: 20.0,
-                element: "N".to_string(),
-                charge: String::new(),
-            },
-            AtomRecord {
-                serial: 2,
-                name: "CA".to_string(),
-                alt_loc: ' ',
-                res_name: "ALA".to_string(),
-                chain_id: 'A',
-                res_seq: 1,
-                i_code: ' ',
-                x: 2.0,
-                y: 3.0,
-                z: 4.0,
-                occupancy: 1.0,
-                temp_factor: 20.0,
-                element: "C".to_string(),
-                charge: String::new(),
-            },
-        ];
-
-        let frame = build_frame(&atoms, None, &[]).expect("Failed to build frame");
-
-        assert!(frame.contains_key("atoms"));
-        let atom_block = frame.get("atoms").unwrap();
-        assert_eq!(atom_block.nrows(), Some(2));
-
-        let elements = atom_block.get_string("element").expect("No element column");
-        assert_eq!(elements[[0]], "N");
-        assert_eq!(elements[[1]], "C");
-    }
-
-    #[test]
-    fn test_parse_pdb_frame() {
-        let pdb_content = r#"CRYST1   50.000   60.000   70.000  90.00  90.00  90.00 P 1           1
-ATOM      1  N   ALA A   1       1.000   2.000   3.000  1.00 20.00           N  
-ATOM      2  CA  ALA A   1       2.000   3.000   4.000  1.00 20.00           C  
-CONECT    1    2
-END
-"#;
-
-        let mut reader = PDBReader::new(std::io::Cursor::new(pdb_content));
-        let frame = reader.read_frame().expect("IO error").expect("No frame");
-
-        assert!(frame.contains_key("atoms"));
-        assert!(frame.contains_key("bonds"));
-
-        let atom_block = frame.get("atoms").expect("No atoms block");
-        let elements = atom_block.get_string("element").expect("No element column");
-        assert_eq!(elements[[0]], "N");
-        assert_eq!(elements[[1]], "C");
-
-        // Check simbox instead of meta
-        let simbox = frame.simbox.as_ref().expect("No simbox");
-        let lengths = simbox.lengths();
-        assert!((lengths[0] - 50.0).abs() < 0.01);
-        assert!((lengths[1] - 60.0).abs() < 0.01);
-        assert!((lengths[2] - 70.0).abs() < 0.01);
     }
 
     #[test]
@@ -1111,8 +932,8 @@ END
             assert!(bonds.nrows().unwrap() > 0, "Should have bonds");
 
             // Bonds should have i and j columns
-            let i_atoms = bonds.get_uint("i").expect("No i column");
-            let j_atoms = bonds.get_uint("j").expect("No j column");
+            let i_atoms = bonds.get_uint("atomi").expect("No atomi column");
+            let j_atoms = bonds.get_uint("atomj").expect("No atomj column");
             assert_eq!(i_atoms.len(), j_atoms.len(), "Bond arrays should match");
         }
     }

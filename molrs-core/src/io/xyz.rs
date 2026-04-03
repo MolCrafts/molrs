@@ -212,7 +212,9 @@ pub fn parse_comment_line(line: &str) -> std::result::Result<XYZComment, String>
 
         skip_ws(&mut idx);
         if idx >= len || bytes[idx] != b'=' {
-            return Err(format!("expected '=' after key '{key}'"));
+            // Bare boolean key (no '=' follows) — valid EXTXYZ, treat as true.
+            kv.insert(key, ExtValue::Primitive(Primitive::Logical(true)));
+            continue;
         }
         idx += 1;
         skip_ws(&mut idx);
@@ -980,74 +982,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_single_frame() {
-        let frame_str = r#"3
-Properties=species:S:1:pos:R:3:velo:R:3 Lattice="10 0 0 0 10 0 0 0 10"
-H 0 0 1 1 0 0
-O 0 1 0 0 1 0
-H 1 0 0 0 0 1"#;
-        let frame = parse_xyz_frame_str(frame_str).expect("parse frame");
-        let atoms = frame.get("atoms").expect("atoms block");
-        assert_eq!(atoms.nrows().unwrap_or(0), 3);
-        assert!(atoms.len() >= 3); // pos_1,pos_2,pos_3 present (species dropped)
-        // Check simbox instead of meta
-        assert!(
-            frame.simbox.is_some(),
-            "Frame should have simbox from Lattice"
-        );
-    }
-
-    #[test]
-    fn test_xyz_frame_reader() {
-        use crate::io::reader::FrameReader;
-        use std::io::Cursor;
-
-        let data = b"3
-Properties=species:S:1:pos:R:3
-H 0.0 0.0 0.0
-O 1.0 0.0 0.0
-H 2.0 0.0 0.0
-";
-        let cursor = Cursor::new(&data[..]);
-        let mut reader = XYZReader::new(cursor);
-
-        let frame = reader
-            .read_frame()
-            .expect("read frame")
-            .expect("frame exists");
-        let atoms = frame.get("atoms").expect("atoms block");
-        assert_eq!(atoms.nrows().unwrap_or(0), 3);
-        assert!(atoms.len() >= 3); // pos_1, pos_2, pos_3 present (species dropped)
-
-        // Should return None on subsequent read (EOF)
-        let eof = reader.read_frame().expect("read ok");
-        assert!(eof.is_none());
-    }
-
-    #[test]
-    fn test_xyz_frame_reader_plain_xyz() {
-        use crate::io::reader::FrameReader;
-        use std::io::Cursor;
-
-        let data = b"2
-Water molecule
-O 0.0 0.0 0.0
-H 1.0 0.0 0.0
-";
-        let cursor = Cursor::new(&data[..]);
-        let mut reader = XYZReader::new(cursor);
-
-        let frame = reader
-            .read_frame()
-            .expect("read frame")
-            .expect("frame exists");
-        let atoms = frame.get("atoms").expect("atoms block");
-        assert_eq!(atoms.nrows().unwrap_or(0), 2);
-        assert!(atoms.len() >= 3); // x, y, z
-        assert!(frame.meta.contains_key("comment"));
-    }
-
-    #[test]
     fn test_xyz_invalid_atom_count() {
         use std::io::Cursor;
 
@@ -1057,137 +991,6 @@ H 1.0 0.0 0.0
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     }
 
-    #[test]
-    fn test_xyz_frame_writer() {
-        use crate::io::writer::FrameWriter;
-        use ndarray::{Array1, IxDyn};
-
-        let mut frame = Frame::new();
-        let mut atoms = Block::new();
-        let n = 2;
-
-        // Add x, y, z
-        let x = Array1::from_vec(vec![0.0, 1.0])
-            .into_shape_with_order(IxDyn(&[n, 1]))
-            .unwrap()
-            .into_dyn();
-        let y = Array1::from_vec(vec![0.0, 0.0])
-            .into_shape_with_order(IxDyn(&[n, 1]))
-            .unwrap()
-            .into_dyn();
-        let z = Array1::from_vec(vec![0.0, 0.0])
-            .into_shape_with_order(IxDyn(&[n, 1]))
-            .unwrap()
-            .into_dyn();
-
-        atoms.insert("x", x).unwrap();
-        atoms.insert("y", y).unwrap();
-        atoms.insert("z", z).unwrap();
-
-        frame.insert("atoms", atoms);
-
-        // Create SimBox instead of adding to meta
-        let h = ndarray::array![
-            [
-                10.0 as crate::types::F,
-                0.0 as crate::types::F,
-                0.0 as crate::types::F
-            ],
-            [
-                0.0 as crate::types::F,
-                10.0 as crate::types::F,
-                0.0 as crate::types::F
-            ],
-            [
-                0.0 as crate::types::F,
-                0.0 as crate::types::F,
-                10.0 as crate::types::F
-            ],
-        ];
-        let origin = ndarray::array![
-            0.0 as crate::types::F,
-            0.0 as crate::types::F,
-            0.0 as crate::types::F
-        ];
-        let pbc = [true, true, true];
-        frame.simbox = Some(SimBox::new(h, origin, pbc).unwrap());
-
-        frame.meta.insert("Energy".into(), "-100.0".into());
-
-        let mut buffer = Vec::new();
-        let mut writer = XYZFrameWriter::new(&mut buffer);
-        writer.write_frame(&frame).expect("write frame");
-
-        let output = String::from_utf8(buffer).expect("utf8");
-        println!("Output:\n{}", output);
-
-        // Verify output
-        let lines: Vec<&str> = output.lines().collect();
-        assert_eq!(lines[0], "2");
-        assert!(lines[1].contains("Lattice=\"10 0 0 0 10 0 0 0 10\""));
-        assert!(lines[1].contains("Energy=-100.0"));
-        assert!(lines[1].contains("Properties="));
-        // Check properties order: x, y, z should be first
-        // Properties=x:R:1:y:R:1:z:R:1 or similar
-
-        // Check atom lines
-        // 0.0 0.0 0.0
-        // 1.0 0.0 0.0
-        assert!(lines[2].contains("0") || lines[2].contains("0.0"));
-        assert!(lines[3].contains("1") || lines[3].contains("1.0"));
-    }
-
-    #[test]
-    fn test_write_read_xyz_roundtrip() {
-        use crate::io::reader::FrameReader;
-        use ndarray::{Array1, IxDyn};
-        use std::io::{BufReader, Cursor};
-
-        let mut frame = Frame::new();
-        let mut atoms = Block::new();
-        let n = 3;
-
-        let x = Array1::from_vec(vec![0.0 as F, 1.0 as F, -1.0 as F])
-            .into_shape_with_order(IxDyn(&[n]))
-            .unwrap()
-            .into_dyn();
-        let y = Array1::from_vec(vec![0.5 as F, -0.5 as F, 2.0 as F])
-            .into_shape_with_order(IxDyn(&[n]))
-            .unwrap()
-            .into_dyn();
-        let z = Array1::from_vec(vec![1.5 as F, 2.5 as F, -2.5 as F])
-            .into_shape_with_order(IxDyn(&[n]))
-            .unwrap()
-            .into_dyn();
-
-        atoms.insert("x", x).unwrap();
-        atoms.insert("y", y).unwrap();
-        atoms.insert("z", z).unwrap();
-        frame.insert("atoms", atoms);
-        frame.meta.insert("elements".into(), "H O H".into());
-
-        let mut out = Vec::new();
-        write_xyz_frame(&mut out, &frame).expect("write xyz");
-
-        let mut reader = XYZReader::new(BufReader::new(Cursor::new(out)));
-        let roundtrip = reader
-            .read_frame()
-            .expect("read frame")
-            .expect("frame exists");
-
-        let atoms_rt = roundtrip.get("atoms").expect("atoms");
-        assert_eq!(atoms_rt.nrows(), Some(n));
-
-        let x_rt = atoms_rt.get_float("x").expect("x");
-        let y_rt = atoms_rt.get_float("y").expect("y");
-        let z_rt = atoms_rt.get_float("z").expect("z");
-
-        for i in 0..n {
-            assert!((x_rt[i] - [0.0 as F, 1.0 as F, -1.0 as F][i]).abs() < 1e-3 as F);
-            assert!((y_rt[i] - [0.5 as F, -0.5 as F, 2.0 as F][i]).abs() < 1e-3 as F);
-            assert!((z_rt[i] - [1.5 as F, 2.5 as F, -2.5 as F][i]).abs() < 1e-3 as F);
-        }
-    }
 }
 
 // =============== XYZFrameWriter ===============

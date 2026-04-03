@@ -10,6 +10,5 @@ echo "Fetching test data to $TARGET_DIR..."
 mkdir -p "$(dirname "$TARGET_DIR")"
 rm -rf "$TARGET_DIR"
 git clone --depth=1 "$REPO_URL" "$TARGET_DIR"
-rm -rf "$TARGET_DIR/.git"
 
 echo "Done. Run: cargo test"

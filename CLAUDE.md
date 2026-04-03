@@ -6,6 +6,28 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 molrs is a Rust workspace for molecular simulation: core data structures, molecular packing, FFI layer, and WebAssembly bindings. Rust edition 2024, resolver "3".
 
+## IO Testing Rules (MANDATORY)
+
+**NEVER write synthetic/hand-crafted test data for IO tests.**
+
+Every file-format reader/writer MUST be tested against **all** real files in
+`molrs-core/target/tests-data/<format>/`. Rules:
+
+1. When adding a new format reader (e.g. CHGCAR), add matching real files to
+   the `tests-data` repo (`https://github.com/MolCrafts/tests-data`) under a
+   new `<format>/` subdirectory before writing tests.
+2. Tests iterate over **every** file in that directory — not a hardcoded subset.
+   Use a helper that globs `tests-data/<format>/*` and runs assertions on each.
+3. Unit tests inside `src/` may use `include_str!` with a **minimal** but
+   structurally valid fixture only to cover parser edge-cases that are hard to
+   produce from real data (e.g. malformed input → expected error). Keep these
+   fixtures as small as possible and document where the snippet comes from.
+4. Integration tests live in `molrs-core/tests/test_io/test_<format>.rs` and
+   use `crate::test_data::get_test_data_path("<format>/<file>")`.
+
+Violation: writing `let content = "..."; read_from_str(content)` for happy-path
+format tests instead of reading a real file is **forbidden**.
+
 ## Build & Test Commands
 
 ```bash
