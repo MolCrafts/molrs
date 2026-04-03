@@ -1288,7 +1288,11 @@ impl WasmTopology {
 
     /// Neighbor atom indices of atom `idx` as `Uint32Array`.
     pub fn neighbors(&self, idx: usize) -> Vec<u32> {
-        self.inner.neighbors(idx).iter().map(|&n| n as u32).collect()
+        self.inner
+            .neighbors(idx)
+            .iter()
+            .map(|&n| n as u32)
+            .collect()
     }
 
     /// Degree (number of bonds) of atom `idx`.

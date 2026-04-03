@@ -5,6 +5,15 @@ use std::path::Path;
 #[cfg(feature = "filesystem")]
 use std::sync::Arc;
 
+use serde_json::Value as JsonValue;
+#[cfg(feature = "filesystem")]
+use zarrs::array::data_type;
+use zarrs::array::data_type::{
+    Float32DataType, Float64DataType, Int64DataType, StringDataType,
+};
+#[cfg(feature = "filesystem")]
+use zarrs::array::ArrayBuilder;
+use zarrs::array::{Array, ArraySubset};
 #[cfg(feature = "filesystem")]
 use zarrs::filesystem::FilesystemStore;
 #[cfg(feature = "filesystem")]
@@ -12,8 +21,16 @@ use zarrs::group::GroupBuilder;
 use zarrs::node::{Node, NodeMetadata};
 use zarrs::storage::ReadableWritableListableStorage;
 
-use crate::error::MolRsError;
-use crate::molrec::MolRec;
+use crate::MolRsError;
+use crate::frame::Frame;
+#[cfg(not(feature = "filesystem"))]
+use crate::io::zarr::frame_io::{join_path, read_column, read_system};
+#[cfg(feature = "filesystem")]
+use crate::io::zarr::frame_io::{join_path, read_column, read_system, write_column, write_system};
+use crate::molrec::{
+    CellBox, MolRec, ObservableData, ObservableKind, ObservableRecord, RecordBox, Trajectory,
+};
+use crate::types::F;
 
 /// Internal Zarr v3 backend state for MolRec.
 pub(crate) struct MolRecZarrBackend {
@@ -48,57 +65,41 @@ impl MolRecZarrBackend {
     ) -> Result<Self, MolRsError> {
         let mut attrs = serde_json::Map::new();
         attrs.insert("molrs_format".into(), "molrec".into());
-        attrs.insert("version".into(), 1.into());
+        attrs.insert("version".into(), 2.into());
         attrs.insert("frame_count".into(), (molrec.count_frames() as u64).into());
         GroupBuilder::new()
             .attributes(attrs)
             .build(store.clone(), prefix)?
             .store_metadata()?;
 
-        write_string_map(&store, &super::frame_io::join_path(prefix, "meta"), &molrec.meta)?;
-        write_string_map(
-            &store,
-            &super::frame_io::join_path(prefix, "method"),
-            &molrec.method,
-        )?;
+        write_json_group(&store, &join_path(prefix, "meta"), &molrec.meta)?;
+        write_json_group(&store, &join_path(prefix, "method"), &molrec.method)?;
+        write_json_group(&store, &join_path(prefix, "parameters"), &molrec.parameters)?;
 
-        let mut base_frame = molrec.frame.clone();
-        let field_names: Vec<String> = base_frame.field_names().map(str::to_string).collect();
-        for name in field_names {
-            let _ = base_frame.remove_field(&name);
+        write_system(&store, &join_path(prefix, "frame"), &molrec.frame)?;
+
+        if let Some(box_data) = &molrec.box_data {
+            write_record_box(&store, &join_path(prefix, "box"), box_data)?;
         }
-        super::frame_io::write_system(
-            &store,
-            &super::frame_io::join_path(prefix, "frame"),
-            &base_frame,
-        )?;
 
-        if molrec.frame.field_names().next().is_some() {
-            let observable_prefix = super::frame_io::join_path(prefix, "observable");
+        if !molrec.observables.is_empty() {
+            let observable_prefix = join_path(prefix, "observables");
             GroupBuilder::new()
                 .build(store.clone(), &observable_prefix)?
                 .store_metadata()?;
-            for (name, field) in molrec.frame.fields() {
-                super::frame_io::write_field_observable(
+            for (name, observable) in &molrec.observables {
+                write_observable(
                     &store,
-                    &super::frame_io::join_path(&observable_prefix, name),
-                    field,
+                    &join_path(&observable_prefix, name),
+                    observable,
                 )?;
             }
         }
 
-        if !molrec.trajectory.is_empty() {
-            let traj_prefix = super::frame_io::join_path(prefix, "trajectory");
-            GroupBuilder::new()
-                .build(store.clone(), &traj_prefix)?
-                .store_metadata()?;
-            for (index, frame) in molrec.trajectory.iter().enumerate() {
-                super::frame_io::write_system(
-                    &store,
-                    &super::frame_io::join_path(&traj_prefix, &index.to_string()),
-                    frame,
-                )?;
-            }
+        if let Some(trajectory) = &molrec.trajectory
+            && !trajectory.frames.is_empty()
+        {
+            write_trajectory(&store, &join_path(prefix, "trajectory"), trajectory)?;
         }
 
         Ok(Self {
@@ -130,17 +131,20 @@ impl MolRecZarrBackend {
     }
 
     pub fn read(&self) -> Result<MolRec, MolRsError> {
-        let mut rec = MolRec::new(super::frame_io::read_system(
-            &self.store,
-            &super::frame_io::join_path(&self.prefix, "frame"),
-        )?);
-        rec.meta = read_string_map(&self.store, &super::frame_io::join_path(&self.prefix, "meta"))?;
-        rec.method = read_string_map(
-            &self.store,
-            &super::frame_io::join_path(&self.prefix, "method"),
-        )?;
+        let frame = read_system(&self.store, &join_path(&self.prefix, "frame"))?;
+        let mut rec = MolRec::new(frame);
+        rec.meta = read_json_group(&self.store, &join_path(&self.prefix, "meta"))?;
+        rec.method = read_json_group(&self.store, &join_path(&self.prefix, "method"))?;
+        rec.parameters = read_json_group(&self.store, &join_path(&self.prefix, "parameters"))?;
 
-        let observable_prefix = super::frame_io::join_path(&self.prefix, "observable");
+        let box_path = join_path(&self.prefix, "box");
+        if Node::open(&self.store, &box_path).is_ok() {
+            rec.box_data = Some(read_record_box(&self.store, &box_path)?);
+        } else {
+            rec.box_data = None;
+        }
+
+        let observable_prefix = join_path(&self.prefix, "observables");
         if let Ok(node) = Node::open(&self.store, &observable_prefix) {
             for child in node.children() {
                 if !matches!(child.metadata(), NodeMetadata::Group(_)) {
@@ -150,33 +154,16 @@ impl MolRecZarrBackend {
                 if name.is_empty() {
                     continue;
                 }
-                let field = super::frame_io::read_field_observable(&self.store, child.path().as_str())?;
-                rec.frame.add_field(name.to_string(), field);
+                let observable = read_observable(&self.store, child.path().as_str())?;
+                rec.observables.insert(name.to_string(), observable);
             }
         }
 
-        let traj_prefix = super::frame_io::join_path(&self.prefix, "trajectory");
-        if let Ok(node) = Node::open(&self.store, &traj_prefix) {
-            let mut children: Vec<_> = node
-                .children()
-                .into_iter()
-                .filter(|child| matches!(child.metadata(), NodeMetadata::Group(_)))
-                .collect();
-            children.sort_by_key(|child| {
-                child
-                    .path()
-                    .as_str()
-                    .rsplit('/')
-                    .next()
-                    .and_then(|s| s.parse::<usize>().ok())
-                    .unwrap_or(usize::MAX)
-            });
-            for child in children {
-                rec.trajectory.push(super::frame_io::read_system(
-                    &self.store,
-                    child.path().as_str(),
-                )?);
-            }
+        let traj_path = join_path(&self.prefix, "trajectory");
+        if Node::open(&self.store, &traj_path).is_ok() {
+            rec.trajectory = Some(read_trajectory(&self.store, &traj_path)?);
+        } else {
+            rec.trajectory = None;
         }
 
         Ok(rec)
@@ -191,7 +178,7 @@ impl MolRecZarrBackend {
             .unwrap_or(1))
     }
 
-    pub fn read_frame(&self, index: usize) -> Result<Option<crate::frame::Frame>, MolRsError> {
+    pub fn read_frame(&self, index: usize) -> Result<Option<Frame>, MolRsError> {
         let rec = self.read()?;
         Ok(rec.frame_at(index))
     }
@@ -208,16 +195,14 @@ pub fn read_molrec_file(path: impl AsRef<Path>) -> Result<MolRec, MolRsError> {
     MolRecZarrBackend::open_file(path)?.read()
 }
 
-pub fn read_molrec_store(
-    store: ReadableWritableListableStorage,
-) -> Result<MolRec, MolRsError> {
+pub fn read_molrec_store(store: ReadableWritableListableStorage) -> Result<MolRec, MolRsError> {
     MolRecZarrBackend::open_store(store)?.read()
 }
 
 pub fn read_molrec_frame_from_store(
     store: ReadableWritableListableStorage,
     index: usize,
-) -> Result<Option<crate::frame::Frame>, MolRsError> {
+) -> Result<Option<Frame>, MolRsError> {
     MolRecZarrBackend::open_store(store)?.read_frame(index)
 }
 
@@ -228,15 +213,16 @@ pub fn count_molrec_frames_in_store(
 }
 
 #[cfg(feature = "filesystem")]
-fn write_string_map(
+fn write_json_group(
     store: &ReadableWritableListableStorage,
     path: &str,
-    map: &std::collections::BTreeMap<String, String>,
+    value: &JsonValue,
 ) -> Result<(), MolRsError> {
     let mut attrs = serde_json::Map::new();
-    for (k, v) in map {
-        attrs.insert(k.clone(), serde_json::Value::String(v.clone()));
-    }
+    attrs.insert(
+        "json".into(),
+        JsonValue::String(serde_json::to_string(value).map_err(json_err)?),
+    );
     GroupBuilder::new()
         .attributes(attrs)
         .build(store.clone(), path)?
@@ -244,91 +230,516 @@ fn write_string_map(
     Ok(())
 }
 
-fn read_string_map(
+fn read_json_group(
     store: &ReadableWritableListableStorage,
     path: &str,
-) -> Result<std::collections::BTreeMap<String, String>, MolRsError> {
-    let mut out = std::collections::BTreeMap::new();
+) -> Result<JsonValue, MolRsError> {
     let group = match zarrs::group::Group::open(store.clone(), path) {
         Ok(group) => group,
-        Err(_) => return Ok(out),
+        Err(_) => return Ok(JsonValue::Object(Default::default())),
     };
-    for (k, v) in group.attributes() {
-        if let Some(s) = v.as_str() {
-            out.insert(k.clone(), s.to_string());
-        } else {
-            out.insert(k.clone(), v.to_string());
-        }
-    }
-    Ok(out)
+    let json_text = group
+        .attributes()
+        .get("json")
+        .and_then(|v| v.as_str())
+        .unwrap_or("{}");
+    serde_json::from_str(json_text).map_err(json_err)
 }
 
 #[cfg(feature = "filesystem")]
-fn zerr<E: std::fmt::Display>(e: E) -> MolRsError {
+fn write_record_box(
+    store: &ReadableWritableListableStorage,
+    path: &str,
+    box_data: &RecordBox,
+) -> Result<(), MolRsError> {
+    let mut attrs = serde_json::Map::new();
+    attrs.insert(
+        "time_dependent".into(),
+        JsonValue::Bool(matches!(box_data, RecordBox::Dynamic { .. })),
+    );
+    GroupBuilder::new()
+        .attributes(attrs)
+        .build(store.clone(), path)?
+        .store_metadata()?;
+
+    match box_data {
+        RecordBox::Static { cell } => {
+            let vectors: Vec<f32> = cell
+                .vectors
+                .iter()
+                .flat_map(|row| row.iter().map(|&v| v as f32))
+                .collect();
+            write_f32_array(store, &format!("{}/vectors", path), &[3, 3], &vectors)?;
+            let origin: Vec<f32> = cell.origin.iter().map(|&v| v as f32).collect();
+            write_f32_array(store, &format!("{}/origin", path), &[3], &origin)?;
+            write_string_array(store, &format!("{}/boundary", path), &[3], &cell.boundary)?;
+        }
+        RecordBox::Dynamic { cells } => {
+            let nt = cells.len() as u64;
+            let vectors: Vec<f32> = cells
+                .iter()
+                .flat_map(|cell| {
+                    cell.vectors
+                        .iter()
+                        .flat_map(|row| row.iter().map(|&v| v as f32))
+                })
+                .collect();
+            write_f32_array(store, &format!("{}/vectors", path), &[nt, 3, 3], &vectors)?;
+            let origin: Vec<f32> = cells
+                .iter()
+                .flat_map(|cell| cell.origin.iter().map(|&v| v as f32))
+                .collect();
+            write_f32_array(store, &format!("{}/origin", path), &[nt, 3], &origin)?;
+            let boundary: Vec<String> = cells
+                .iter()
+                .flat_map(|cell| cell.boundary.iter().cloned())
+                .collect();
+            write_string_array(store, &format!("{}/boundary", path), &[nt, 3], &boundary)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn read_record_box(
+    store: &ReadableWritableListableStorage,
+    path: &str,
+) -> Result<RecordBox, MolRsError> {
+    let group = zarrs::group::Group::open(store.clone(), path)?;
+    let dynamic = group
+        .attributes()
+        .get("time_dependent")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let vectors_arr = Array::open(store.clone(), &format!("{}/vectors", path))?;
+    let origin_arr = Array::open(store.clone(), &format!("{}/origin", path))?;
+    let boundary_arr = Array::open(store.clone(), &format!("{}/boundary", path))?;
+
+    if !dynamic {
+        let vectors = read_f32_values(vectors_arr, &[3, 3])?;
+        let origin = read_f32_values(origin_arr, &[3])?;
+        let boundary = read_string_values(boundary_arr, &[3])?;
+        return Ok(RecordBox::Static {
+            cell: CellBox {
+                vectors: [
+                    [vectors[0] as F, vectors[1] as F, vectors[2] as F],
+                    [vectors[3] as F, vectors[4] as F, vectors[5] as F],
+                    [vectors[6] as F, vectors[7] as F, vectors[8] as F],
+                ],
+                origin: [origin[0] as F, origin[1] as F, origin[2] as F],
+                boundary: [
+                    boundary[0].clone(),
+                    boundary[1].clone(),
+                    boundary[2].clone(),
+                ],
+            },
+        });
+    }
+
+    let shape = vectors_arr.shape().to_vec();
+    let nt = shape.first().copied().unwrap_or(0) as usize;
+    let vectors = read_f32_values(vectors_arr, &[shape[0], 3, 3])?;
+    let origin = read_f32_values(origin_arr, &[shape[0], 3])?;
+    let boundary = read_string_values(boundary_arr, &[shape[0], 3])?;
+    let mut cells = Vec::with_capacity(nt);
+    for i in 0..nt {
+        let v_off = i * 9;
+        let o_off = i * 3;
+        let b_off = i * 3;
+        cells.push(CellBox {
+            vectors: [
+                [
+                    vectors[v_off] as F,
+                    vectors[v_off + 1] as F,
+                    vectors[v_off + 2] as F,
+                ],
+                [
+                    vectors[v_off + 3] as F,
+                    vectors[v_off + 4] as F,
+                    vectors[v_off + 5] as F,
+                ],
+                [
+                    vectors[v_off + 6] as F,
+                    vectors[v_off + 7] as F,
+                    vectors[v_off + 8] as F,
+                ],
+            ],
+            origin: [origin[o_off] as F, origin[o_off + 1] as F, origin[o_off + 2] as F],
+            boundary: [
+                boundary[b_off].clone(),
+                boundary[b_off + 1].clone(),
+                boundary[b_off + 2].clone(),
+            ],
+        });
+    }
+    Ok(RecordBox::Dynamic { cells })
+}
+
+#[cfg(feature = "filesystem")]
+fn write_trajectory(
+    store: &ReadableWritableListableStorage,
+    path: &str,
+    trajectory: &Trajectory,
+) -> Result<(), MolRsError> {
+    trajectory.validate()?;
+    GroupBuilder::new()
+        .build(store.clone(), path)?
+        .store_metadata()?;
+
+    if let Some(step) = &trajectory.step {
+        write_i64_array(store, &format!("{}/step", path), &[step.len() as u64], step)?;
+    }
+    if let Some(time) = &trajectory.time {
+        let data: Vec<f32> = time.iter().map(|&v| v as f32).collect();
+        write_f32_array(store, &format!("{}/time", path), &[time.len() as u64], &data)?;
+    }
+
+    let frames_path = format!("{}/frames", path);
+    GroupBuilder::new()
+        .build(store.clone(), &frames_path)?
+        .store_metadata()?;
+    for (index, frame) in trajectory.frames.iter().enumerate() {
+        write_system(store, &format!("{}/{}", frames_path, index), frame)?;
+    }
+    Ok(())
+}
+
+fn read_trajectory(
+    store: &ReadableWritableListableStorage,
+    path: &str,
+) -> Result<Trajectory, MolRsError> {
+    let step_path = format!("{}/step", path);
+    let time_path = format!("{}/time", path);
+    let step = if let Ok(arr) = Array::open(store.clone(), &step_path) {
+        Some(read_i64_values(arr)?)
+    } else {
+        None
+    };
+    let time = if let Ok(arr) = Array::open(store.clone(), &time_path) {
+        Some(read_float_values(arr)?)
+    } else {
+        None
+    };
+
+    let mut frames = Vec::new();
+    let frames_path = format!("{}/frames", path);
+    if let Ok(node) = Node::open(store, &frames_path) {
+        let mut children: Vec<_> = node
+            .children()
+            .into_iter()
+            .filter(|child| matches!(child.metadata(), NodeMetadata::Group(_)))
+            .collect();
+        children.sort_by_key(|child| {
+            child
+                .path()
+                .as_str()
+                .rsplit('/')
+                .next()
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(usize::MAX)
+        });
+        for child in children {
+            frames.push(read_system(store, child.path().as_str())?);
+        }
+    }
+
+    Ok(Trajectory {
+        frames,
+        step,
+        time,
+        box_data: None,
+    })
+}
+
+#[cfg(feature = "filesystem")]
+fn write_observable(
+    store: &ReadableWritableListableStorage,
+    path: &str,
+    observable: &ObservableRecord,
+) -> Result<(), MolRsError> {
+    observable.validate()?;
+    let mut attrs = serde_json::Map::new();
+    attrs.insert("name".into(), JsonValue::String(observable.name.clone()));
+    attrs.insert(
+        "kind".into(),
+        JsonValue::String(match observable.kind {
+            ObservableKind::Scalar => "scalar".into(),
+            ObservableKind::Vector => "vector".into(),
+        }),
+    );
+    attrs.insert(
+        "description".into(),
+        JsonValue::String(observable.description.clone()),
+    );
+    attrs.insert(
+        "time_dependent".into(),
+        JsonValue::Bool(observable.time_dependent),
+    );
+    attrs.insert(
+        "axes".into(),
+        JsonValue::String(serde_json::to_string(&observable.axes).map_err(json_err)?),
+    );
+    attrs.insert(
+        "extra".into(),
+        JsonValue::String(serde_json::to_string(&observable.extra).map_err(json_err)?),
+    );
+    if let Some(unit) = &observable.unit {
+        attrs.insert("unit".into(), JsonValue::String(unit.clone()));
+    }
+    if let Some(sampling) = &observable.sampling {
+        attrs.insert("sampling".into(), JsonValue::String(sampling.clone()));
+    }
+    if let Some(domain) = &observable.domain {
+        attrs.insert("domain".into(), JsonValue::String(domain.clone()));
+    }
+    if let Some(target) = &observable.target {
+        attrs.insert("target".into(), JsonValue::String(target.clone()));
+    }
+
+    GroupBuilder::new()
+        .attributes(attrs)
+        .build(store.clone(), path)?
+        .store_metadata()?;
+
+    match &observable.data {
+        ObservableData::Column(column) => write_column(store, &format!("{}/data", path), column)?,
+    }
+
+    Ok(())
+}
+
+fn read_observable(
+    store: &ReadableWritableListableStorage,
+    path: &str,
+) -> Result<ObservableRecord, MolRsError> {
+    let group = zarrs::group::Group::open(store.clone(), path)?;
+    let attrs = group.attributes();
+    let kind = match attrs
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .unwrap_or("scalar")
+    {
+        "scalar" => ObservableKind::Scalar,
+        "vector" => ObservableKind::Vector,
+        other => {
+            return Err(MolRsError::zarr(format!(
+                "unsupported observable kind '{}'",
+                other
+            )))
+        }
+    };
+    let description = attrs
+        .get("description")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let time_dependent = attrs
+        .get("time_dependent")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let axes = attrs
+        .get("axes")
+        .and_then(|v| v.as_str())
+        .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+        .unwrap_or_default();
+    let extra = attrs
+        .get("extra")
+        .and_then(|v| v.as_str())
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or_default();
+
+    let data_path = format!("{}/data", path);
+    let data = ObservableData::Column(read_column(store, &data_path)?);
+
+    Ok(ObservableRecord {
+        name: attrs
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or_else(|| path.rsplit('/').next().unwrap_or("observable"))
+            .to_string(),
+        kind,
+        description,
+        time_dependent,
+        unit: attrs
+            .get("unit")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        axes,
+        sampling: attrs
+            .get("sampling")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        domain: attrs
+            .get("domain")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        target: attrs
+            .get("target")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        extra,
+        data,
+    })
+}
+
+#[cfg(feature = "filesystem")]
+fn write_f32_array(
+    store: &ReadableWritableListableStorage,
+    path: &str,
+    shape: &[u64],
+    data: &[f32],
+) -> Result<(), MolRsError> {
+    let arr = ArrayBuilder::new(shape.to_vec(), shape.to_vec(), data_type::float32(), 0.0f32)
+        .build(store.clone(), path)?;
+    arr.store_metadata()?;
+    arr.store_array_subset(&ArraySubset::new_with_shape(shape.to_vec()), data)?;
+    Ok(())
+}
+
+#[cfg(feature = "filesystem")]
+fn write_i64_array(
+    store: &ReadableWritableListableStorage,
+    path: &str,
+    shape: &[u64],
+    data: &[i64],
+) -> Result<(), MolRsError> {
+    let arr = ArrayBuilder::new(shape.to_vec(), shape.to_vec(), data_type::int64(), 0i64)
+        .build(store.clone(), path)?;
+    arr.store_metadata()?;
+    arr.store_array_subset(&ArraySubset::new_with_shape(shape.to_vec()), data)?;
+    Ok(())
+}
+
+#[cfg(feature = "filesystem")]
+fn write_string_array(
+    store: &ReadableWritableListableStorage,
+    path: &str,
+    shape: &[u64],
+    data: &[String],
+) -> Result<(), MolRsError> {
+    let arr = ArrayBuilder::new(shape.to_vec(), shape.to_vec(), data_type::string(), "")
+        .build(store.clone(), path)?;
+    arr.store_metadata()?;
+    arr.store_array_subset(&ArraySubset::new_with_shape(shape.to_vec()), data)?;
+    Ok(())
+}
+
+fn read_f32_values<
+    TStorage: ?Sized + zarrs::storage::ReadableWritableListableStorageTraits + 'static,
+>(
+    arr: Array<TStorage>,
+    shape: &[u64],
+) -> Result<Vec<f32>, MolRsError> {
+    let subset = ArraySubset::new_with_shape(shape.to_vec());
+    let dt = arr.data_type();
+    if dt.is::<Float32DataType>() {
+        arr.retrieve_array_subset(&subset).map_err(zerr)
+    } else if dt.is::<Float64DataType>() {
+        let data: Vec<f64> = arr.retrieve_array_subset(&subset).map_err(zerr)?;
+        Ok(data.into_iter().map(|v| v as f32).collect())
+    } else {
+        Err(MolRsError::zarr(format!(
+            "expected float array, got {:?}",
+            dt
+        )))
+    }
+}
+
+fn read_float_values<
+    TStorage: ?Sized + zarrs::storage::ReadableWritableListableStorageTraits + 'static,
+>(
+    arr: Array<TStorage>,
+) -> Result<Vec<F>, MolRsError> {
+    let shape = arr.shape().to_vec();
+    let subset = ArraySubset::new_with_shape(shape);
+    let dt = arr.data_type();
+    if dt.is::<Float32DataType>() {
+        let data: Vec<f32> = arr.retrieve_array_subset(&subset).map_err(zerr)?;
+        Ok(data.into_iter().map(|v| v as F).collect())
+    } else if dt.is::<Float64DataType>() {
+        let data: Vec<f64> = arr.retrieve_array_subset(&subset).map_err(zerr)?;
+        Ok(data.into_iter().map(|v| v as F).collect())
+    } else {
+        Err(MolRsError::zarr(format!(
+            "expected float array, got {:?}",
+            dt
+        )))
+    }
+}
+
+fn read_i64_values<
+    TStorage: ?Sized + zarrs::storage::ReadableWritableListableStorageTraits + 'static,
+>(
+    arr: Array<TStorage>,
+) -> Result<Vec<i64>, MolRsError> {
+    let subset = ArraySubset::new_with_shape(arr.shape().to_vec());
+    let dt = arr.data_type();
+    if dt.is::<Int64DataType>() {
+        arr.retrieve_array_subset(&subset).map_err(zerr)
+    } else {
+        Err(MolRsError::zarr(format!(
+            "expected int64 array, got {:?}",
+            dt
+        )))
+    }
+}
+
+fn read_string_values<
+    TStorage: ?Sized + zarrs::storage::ReadableWritableListableStorageTraits + 'static,
+>(
+    arr: Array<TStorage>,
+    shape: &[u64],
+) -> Result<Vec<String>, MolRsError> {
+    let subset = ArraySubset::new_with_shape(shape.to_vec());
+    let dt = arr.data_type();
+    if dt.is::<StringDataType>() {
+        arr.retrieve_array_subset(&subset).map_err(zerr)
+    } else {
+        Err(MolRsError::zarr(format!(
+            "expected string array, got {:?}",
+            dt
+        )))
+    }
+}
+
+fn zerr(e: impl std::fmt::Display) -> MolRsError {
     MolRsError::zarr(e.to_string())
 }
 
-#[cfg(all(test, feature = "filesystem"))]
-mod tests {
-    use ndarray::Array1;
+fn json_err(e: impl std::fmt::Display) -> MolRsError {
+    MolRsError::zarr(format!("json error: {}", e))
+}
 
-    use crate::block::Block;
-    use crate::field::{FieldObservable, UniformGridField};
-    use crate::types::F;
+#[cfg(test)]
+mod tests {
+    use tempfile::tempdir;
 
     use super::*;
+    use crate::grid::Grid;
 
     #[test]
-    fn molrec_store_roundtrip_preserves_field() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("molrec.zarr");
+    fn molrec_store_roundtrip_preserves_grid_in_frame() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("record.zarr");
 
-        let mut atoms = Block::new();
-        atoms.insert(
-            "element",
-            Array1::from_vec(vec!["H".to_string(), "H".to_string()]).into_dyn(),
-        )
-        .unwrap();
-        atoms.insert("x", Array1::from_vec(vec![0.0 as F, 0.74 as F]).into_dyn())
-            .unwrap();
-        atoms.insert("y", Array1::from_vec(vec![0.0 as F, 0.0 as F]).into_dyn())
-            .unwrap();
-        atoms.insert("z", Array1::from_vec(vec![0.0 as F, 0.0 as F]).into_dyn())
-            .unwrap();
-
-        let mut frame = crate::Frame::new();
-        frame.insert("atoms", atoms);
-        frame.add_field(
-            "electron_density",
-            FieldObservable::uniform_grid(
-                "electron_density",
-                "electron_density",
-                "e/Angstrom^3",
-                UniformGridField {
-                    shape: [2, 2, 2],
-                    origin: [0.0, 0.0, 0.0],
-                    cell: [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
-                    pbc: [false, false, false],
-                    values: vec![0.0, 0.1, 0.2, 0.3, 0.0, 0.1, 0.0, 0.2],
-                },
-            ),
+        let mut frame = Frame::new();
+        let mut grid = Grid::new(
+            [2, 2, 2],
+            [0.0; 3],
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            [false; 3],
         );
+        grid.insert("density", vec![0.1; 8]).unwrap();
+        frame.insert_grid("electron_density", grid);
 
         let mut rec = MolRec::new(frame);
-        rec.meta.insert("creator".into(), "test".into());
+        rec.meta = serde_json::json!({"version": [0, 2]});
+        rec.method = serde_json::json!({"type": "workflow"});
 
         write_molrec_file(&path, &rec).unwrap();
         let loaded = read_molrec_file(&path).unwrap();
-
-        assert_eq!(loaded.count_frames(), 1);
-        assert_eq!(loaded.meta.get("creator").map(String::as_str), Some("test"));
-        assert!(loaded.frame.has_field("electron_density"));
-        assert_eq!(
-            loaded
-                .frame
-                .get("atoms")
-                .and_then(|atoms| atoms.nrows()),
-            Some(2)
-        );
+        assert!(loaded.frame.has_grid("electron_density"));
+        assert_eq!(loaded.method["type"], "workflow");
     }
 }

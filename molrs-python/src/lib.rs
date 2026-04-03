@@ -41,9 +41,12 @@ mod block;
 use block::PyBlock;
 
 mod frame;
-use frame::PyFrame;
+use frame::{PyFrame, PyGrid};
 
 mod io;
+
+mod molrec;
+use molrec::{PyMolRec, PyObservables, PyScalarObservable, PyTrajectory, PyVectorObservable};
 
 mod region;
 use region::{PyHollowSphere, PyRegion, PySphere};
@@ -66,7 +69,7 @@ mod gen3d;
 use gen3d::{PyGen3DOptions, PyGen3DReport, PyGen3DResult, PyStageReport};
 
 mod forcefield;
-use forcefield::{PyMMFFTypifier, PyPotentials};
+use forcefield::{PyForceField, PyMMFFTypifier, PyPotentials};
 
 mod compute;
 use compute::{
@@ -86,9 +89,10 @@ fn molrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyNeighborQuery>()?;
     m.add_class::<PyNeighborList>()?;
 
-    // Block + Frame
+    // Block + Frame + Grid
     m.add_class::<PyBlock>()?;
     m.add_class::<PyFrame>()?;
+    m.add_class::<PyGrid>()?;
 
     // I/O + SMILES
     // Readers
@@ -97,6 +101,7 @@ fn molrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(io::read_xyz_trajectory, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_lammps, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_lammps_traj, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_chgcar_file, m)?)?;
     // Writers
     m.add_function(wrap_pyfunction!(io::write_pdb, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_xyz, m)?)?;
@@ -105,6 +110,13 @@ fn molrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // SMILES
     m.add_function(wrap_pyfunction!(io::parse_smiles, m)?)?;
     m.add_class::<io::PySmilesIR>()?;
+
+    // MolRec
+    m.add_class::<PyTrajectory>()?;
+    m.add_class::<PyMolRec>()?;
+    m.add_class::<PyObservables>()?;
+    m.add_class::<PyScalarObservable>()?;
+    m.add_class::<PyVectorObservable>()?;
 
     // Regions
     m.add_class::<PySphere>()?;
@@ -135,8 +147,10 @@ fn molrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(gen3d::generate_3d_py, m)?)?;
 
     // Force field
+    m.add_class::<PyForceField>()?;
     m.add_class::<PyMMFFTypifier>()?;
     m.add_class::<PyPotentials>()?;
+    m.add_function(wrap_pyfunction!(forcefield::read_forcefield_xml_py, m)?)?;
     m.add_function(wrap_pyfunction!(forcefield::extract_coords_py, m)?)?;
 
     // Compute analyses

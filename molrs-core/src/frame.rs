@@ -37,7 +37,7 @@ use std::ops::{Index, IndexMut};
 use super::block::Block;
 use super::region::simbox::SimBox;
 use crate::error::MolRsError;
-use crate::field::FieldObservable;
+use crate::grid::Grid;
 
 /// A dictionary from string keys to [`Block`]s.
 ///
@@ -48,7 +48,7 @@ use crate::field::FieldObservable;
 #[derive(Default, Clone)]
 pub struct Frame {
     map: HashMap<String, Block>,
-    fields: HashMap<String, FieldObservable>,
+    grids: HashMap<String, Grid>,
     /// Arbitrary key-value metadata associated with the frame.
     pub meta: HashMap<String, String>,
     /// Simulation box defining periodic boundary conditions.
@@ -70,10 +70,10 @@ impl std::fmt::Debug for Frame {
         if !self.meta.is_empty() {
             debug_struct.field("meta", &self.meta);
         }
-        if !self.fields.is_empty() {
-            let mut field_names: Vec<_> = self.fields.keys().cloned().collect();
-            field_names.sort();
-            debug_struct.field("fields", &field_names);
+        if !self.grids.is_empty() {
+            let mut grid_names: Vec<_> = self.grids.keys().cloned().collect();
+            grid_names.sort();
+            debug_struct.field("grids", &grid_names);
         }
 
         debug_struct.finish()
@@ -94,7 +94,7 @@ impl Frame {
     pub fn new() -> Self {
         Self {
             map: HashMap::new(),
-            fields: HashMap::new(),
+            grids: HashMap::new(),
             meta: HashMap::new(),
             simbox: None,
         }
@@ -113,7 +113,7 @@ impl Frame {
     pub fn with_capacity(cap: usize) -> Self {
         Self {
             map: HashMap::with_capacity(cap),
-            fields: HashMap::new(),
+            grids: HashMap::new(),
             meta: HashMap::new(),
             simbox: None,
         }
@@ -137,13 +137,13 @@ impl Frame {
     pub fn from_map(map: HashMap<String, Block>) -> Self {
         Self {
             map,
-            fields: HashMap::new(),
+            grids: HashMap::new(),
             meta: HashMap::new(),
             simbox: None,
         }
     }
 
-    /// Consumes the Frame and returns the inner HashMap of blocks, metadata, and simbox.
+    /// Consumes the Frame and returns the inner HashMap of blocks, grids, metadata, and simbox.
     ///
     /// # Examples
     ///
@@ -155,9 +155,9 @@ impl Frame {
     /// frame.insert("atoms", Block::new());
     /// frame.meta.insert("title".into(), "Test".into());
     ///
-    /// let (blocks, fields, meta, simbox) = frame.into_inner();
+    /// let (blocks, grids, meta, simbox) = frame.into_inner();
     /// assert_eq!(blocks.len(), 1);
-    /// assert!(fields.is_empty());
+    /// assert!(grids.is_empty());
     /// assert_eq!(meta.get("title").unwrap(), "Test");
     /// assert!(simbox.is_none());
     /// ```
@@ -165,11 +165,11 @@ impl Frame {
         self,
     ) -> (
         HashMap<String, Block>,
-        HashMap<String, FieldObservable>,
+        HashMap<String, Grid>,
         HashMap<String, String>,
         Option<SimBox>,
     ) {
-        (self.map, self.fields, self.meta, self.simbox)
+        (self.map, self.grids, self.meta, self.simbox)
     }
 
     /// Number of blocks (keys) in the frame.
@@ -285,48 +285,44 @@ impl Frame {
     /// ```
     pub fn clear_all(&mut self) {
         self.map.clear();
-        self.fields.clear();
+        self.grids.clear();
         self.meta.clear();
         self.simbox = None;
     }
 
-    /// Insert or replace a field observable by name.
-    pub fn add_field(
-        &mut self,
-        name: impl Into<String>,
-        field: FieldObservable,
-    ) -> Option<FieldObservable> {
-        self.fields.insert(name.into(), field)
+    /// Insert or replace a named grid.
+    pub fn insert_grid(&mut self, name: impl Into<String>, grid: Grid) -> Option<Grid> {
+        self.grids.insert(name.into(), grid)
     }
 
-    /// Remove a field observable by name.
-    pub fn remove_field(&mut self, name: &str) -> Option<FieldObservable> {
-        self.fields.remove(name)
+    /// Remove a named grid.
+    pub fn remove_grid(&mut self, name: &str) -> Option<Grid> {
+        self.grids.remove(name)
     }
 
-    /// Borrow a field observable by name.
-    pub fn get_field(&self, name: &str) -> Option<&FieldObservable> {
-        self.fields.get(name)
+    /// Borrow a grid by name.
+    pub fn get_grid(&self, name: &str) -> Option<&Grid> {
+        self.grids.get(name)
     }
 
-    /// Borrow a field observable mutably by name.
-    pub fn get_field_mut(&mut self, name: &str) -> Option<&mut FieldObservable> {
-        self.fields.get_mut(name)
+    /// Borrow a grid mutably by name.
+    pub fn get_grid_mut(&mut self, name: &str) -> Option<&mut Grid> {
+        self.grids.get_mut(name)
     }
 
-    /// Returns true if the frame contains a named field.
-    pub fn has_field(&self, name: &str) -> bool {
-        self.fields.contains_key(name)
+    /// Returns true if the frame contains a named grid.
+    pub fn has_grid(&self, name: &str) -> bool {
+        self.grids.contains_key(name)
     }
 
-    /// Returns an iterator over `(name, field)` pairs.
-    pub fn fields(&self) -> impl Iterator<Item = (&str, &FieldObservable)> {
-        self.fields.iter().map(|(k, v)| (k.as_str(), v))
+    /// Returns an iterator over `(name, grid)` pairs.
+    pub fn grids(&self) -> impl Iterator<Item = (&str, &Grid)> {
+        self.grids.iter().map(|(k, v)| (k.as_str(), v))
     }
 
-    /// Returns an iterator over field names.
-    pub fn field_names(&self) -> impl Iterator<Item = &str> {
-        self.fields.keys().map(|k| k.as_str())
+    /// Returns an iterator over grid names.
+    pub fn grid_keys(&self) -> impl Iterator<Item = &str> {
+        self.grids.keys().map(|k| k.as_str())
     }
 
     /// Renames a column in the specified block.
@@ -688,9 +684,9 @@ mod tests {
         frame.insert("atoms", Block::new());
         frame.meta.insert("title".into(), "Test".into());
 
-        let (blocks, fields, meta, simbox) = frame.into_inner();
+        let (blocks, grids, meta, simbox) = frame.into_inner();
         assert_eq!(blocks.len(), 1);
-        assert!(fields.is_empty());
+        assert!(grids.is_empty());
         assert!(blocks.contains_key("atoms"));
         assert_eq!(meta.get("title").unwrap(), "Test");
         assert!(simbox.is_none());

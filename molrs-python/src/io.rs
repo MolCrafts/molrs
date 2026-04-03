@@ -11,8 +11,9 @@
 //! | LAMMPS dump | [`read_lammps_traj`] | [`write_lammps_traj`] |
 
 use crate::frame::PyFrame;
-use crate::helpers::{io_error_to_pyerr, smiles_error_to_pyerr};
+use crate::helpers::{io_error_to_pyerr, molrs_error_to_pyerr, smiles_error_to_pyerr};
 use crate::molgraph::PyAtomistic;
+use molrs::io::chgcar::read_chgcar;
 use molrs::io::lammps_data::{read_lammps_data, write_lammps_data};
 use molrs::io::lammps_dump::{read_lammps_dump, write_lammps_dump};
 use molrs::io::pdb::{read_pdb_frame, write_pdb_frame};
@@ -138,6 +139,46 @@ pub fn read_lammps(path: &str) -> PyResult<PyFrame> {
 pub fn read_lammps_traj(path: &str) -> PyResult<Vec<PyFrame>> {
     let frames = read_lammps_dump(path).map_err(io_error_to_pyerr)?;
     frames.into_iter().map(PyFrame::from_core_frame).collect()
+}
+
+/// Read a VASP CHGCAR or CHGDIF file.
+///
+/// Returns a Frame containing:
+///
+/// - ``"atoms"`` block with ``symbol``, ``x``, ``y``, ``z`` (Cartesian Å)
+/// - ``simbox``: triclinic periodic box
+/// - grid ``"chgcar"``: a :class:`Grid` with at least ``"total"`` (and
+///   ``"diff"`` for spin-polarised ISPIN=2 calculations)
+///
+/// The volumetric values are stored **raw** (ρ × V_cell, units e).
+/// Divide by ``simbox.volume()`` to get charge density in e/Å³.
+///
+/// Parameters
+/// ----------
+/// path : str
+///     Path to a CHGCAR or CHGDIF file.
+///
+/// Returns
+/// -------
+/// Frame
+///
+/// Raises
+/// ------
+/// ValueError
+///     On parse errors.
+/// IOError
+///     If the file cannot be opened.
+///
+/// Examples
+/// --------
+/// >>> frame = molrs.read_chgcar("CHGCAR")
+/// >>> grid = frame["chgcar"]
+/// >>> total = grid["total"]          # shape (nx, ny, nz)
+/// >>> density = total / frame.simbox.volume()
+#[pyfunction]
+pub fn read_chgcar_file(path: &str) -> PyResult<PyFrame> {
+    let frame = read_chgcar(path).map_err(molrs_error_to_pyerr)?;
+    PyFrame::from_core_frame(frame)
 }
 
 // ============================================================================

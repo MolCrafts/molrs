@@ -5,8 +5,8 @@
 //! metadata. It is used for bulk coordinate data (e.g., Nx3 positions)
 //! that is too large or structured for individual typed-array columns.
 
-use ndarray::{Array2, ArrayView2};
 use molrs::types::F;
+use ndarray::{Array2, ArrayView2};
 use wasm_bindgen::prelude::*;
 
 #[cfg(feature = "f64")]
@@ -95,10 +95,7 @@ impl WasmArray {
     /// console.log(arr.shape()); // [2, 3]
     /// ```
     #[wasm_bindgen(js_name = from)]
-    pub fn from_js(
-        data: &JsFloatArray,
-        shape: Option<Box<[usize]>>,
-    ) -> Result<WasmArray, JsValue> {
+    pub fn from_js(data: &JsFloatArray, shape: Option<Box<[usize]>>) -> Result<WasmArray, JsValue> {
         let shape = shape.unwrap_or_else(|| Box::new([data.length() as usize]));
         let expected: usize = shape.iter().product();
         if expected != data.length() as usize {
@@ -251,11 +248,7 @@ impl WasmArray {
         Self { data, shape }
     }
 
-    pub(crate) fn as_array2(
-        &self,
-        rows: usize,
-        cols: usize,
-    ) -> Result<ArrayView2<'_, F>, String> {
+    pub(crate) fn as_array2(&self, rows: usize, cols: usize) -> Result<ArrayView2<'_, F>, String> {
         if rows * cols != self.data.len() {
             return Err(format!(
                 "Shape mismatch: {}x{} = {} but data has {} elements",

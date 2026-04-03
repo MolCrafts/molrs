@@ -17,11 +17,6 @@ new_key_type! {
     pub struct FrameId;
 }
 
-new_key_type! {
-    /// Stable identifier for a stored field observable.
-    pub struct FieldId;
-}
-
 /// View handle that refers to a block inside a frame.
 ///
 /// Structure: (frame_id, key)

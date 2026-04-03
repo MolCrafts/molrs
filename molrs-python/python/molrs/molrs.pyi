@@ -90,6 +90,9 @@ class Frame:
 
 def read_pdb(path: str) -> Frame: ...
 def read_xyz(path: str) -> Frame: ...
+def read_xyz_trajectory(path: str) -> list[Frame]: ...
+def read_lammps(path: str) -> Frame: ...
+def read_lammps_traj(path: str) -> list[Frame]: ...
 
 class Sphere:
     """Solid sphere region."""
@@ -259,3 +262,227 @@ class PackResult:
     def frest(self) -> float: ...
     @property
     def natoms(self) -> int: ...
+
+class Trajectory:
+    def __init__(
+        self,
+        frames: list[Frame],
+        step: Optional[npt.NDArray[np.int64]] = None,
+        time: Optional[ArrayF] = None,
+        box: Optional[Box | list[Box]] = None,
+    ) -> None: ...
+    @staticmethod
+    def from_frames(
+        frames: list[Frame],
+        step: Optional[npt.NDArray[np.int64]] = None,
+        time: Optional[ArrayF] = None,
+        box: Optional[Box | list[Box]] = None,
+    ) -> Trajectory: ...
+    def __len__(self) -> int: ...
+    def __getitem__(self, index: int) -> Frame: ...
+    @property
+    def frames(self) -> list[Frame]: ...
+    @property
+    def step(self) -> Optional[npt.NDArray[np.int64]]: ...
+    @property
+    def time(self) -> Optional[ArrayF]: ...
+    @property
+    def box_(self) -> Box | list[Box] | None: ...
+
+class ScalarObservable:
+    def __init__(
+        self,
+        name: str,
+        data: npt.NDArray | float | int | bool | str | list[str],
+        description: str = "",
+        unit: Optional[str] = None,
+        axes: Optional[list[str]] = None,
+        time_dependent: bool = False,
+        sampling: Optional[str] = None,
+        domain: Optional[str] = None,
+        target: Optional[str] = None,
+    ) -> None: ...
+    @property
+    def name(self) -> str: ...
+    @property
+    def data(self) -> npt.NDArray | list[str] | str: ...
+    @property
+    def kind(self) -> str: ...
+
+class VectorObservable:
+    def __init__(
+        self,
+        name: str,
+        data: npt.NDArray | float | int | bool | str | list[str],
+        description: str = "",
+        unit: Optional[str] = None,
+        axes: Optional[list[str]] = None,
+        time_dependent: bool = False,
+        sampling: Optional[str] = None,
+        domain: Optional[str] = None,
+        target: Optional[str] = None,
+    ) -> None: ...
+    @property
+    def name(self) -> str: ...
+    @property
+    def data(self) -> npt.NDArray | list[str] | str: ...
+    @property
+    def kind(self) -> str: ...
+
+class FieldObservable:
+    @staticmethod
+    def uniform_grid(
+        name: str,
+        values: ArrayF,
+        description: str = "",
+        unit: Optional[str] = None,
+        axes: Optional[list[str]] = None,
+        time_dependent: bool = False,
+        sampling: Optional[str] = None,
+        domain: Optional[str] = None,
+        target: Optional[str] = None,
+        origin: Optional[ArrayF] = None,
+        basis_vectors: Optional[npt.NDArray[np.float32]] = None,
+        spacing: Optional[ArrayF] = None,
+        pbc: Optional[ArrayBool] = None,
+    ) -> FieldObservable: ...
+    @property
+    def name(self) -> str: ...
+    @property
+    def kind(self) -> str: ...
+
+class Observables:
+    def __len__(self) -> int: ...
+    def keys(self) -> list[str]: ...
+    def __contains__(self, name: str) -> bool: ...
+    def get(self, name: str) -> ScalarObservable | VectorObservable | FieldObservable | None: ...
+    def add(self, observable: ScalarObservable | VectorObservable | FieldObservable) -> None: ...
+    def add_scalar(
+        self,
+        name: str,
+        data: npt.NDArray | float | int | bool | str | list[str],
+        description: str = "",
+        unit: Optional[str] = None,
+        axes: Optional[list[str]] = None,
+        time_dependent: bool = False,
+        sampling: Optional[str] = None,
+        domain: Optional[str] = None,
+        target: Optional[str] = None,
+    ) -> ScalarObservable: ...
+    def add_vector(
+        self,
+        name: str,
+        data: npt.NDArray | float | int | bool | str | list[str],
+        description: str = "",
+        unit: Optional[str] = None,
+        axes: Optional[list[str]] = None,
+        time_dependent: bool = False,
+        sampling: Optional[str] = None,
+        domain: Optional[str] = None,
+        target: Optional[str] = None,
+    ) -> VectorObservable: ...
+    def add_field(
+        self,
+        name: str,
+        values: ArrayF,
+        description: str = "",
+        unit: Optional[str] = None,
+        axes: Optional[list[str]] = None,
+        time_dependent: bool = False,
+        sampling: Optional[str] = None,
+        domain: Optional[str] = None,
+        target: Optional[str] = None,
+        origin: Optional[ArrayF] = None,
+        basis_vectors: Optional[npt.NDArray[np.float32]] = None,
+        spacing: Optional[ArrayF] = None,
+        pbc: Optional[ArrayBool] = None,
+    ) -> FieldObservable: ...
+
+class MolRec:
+    def __init__(
+        self,
+        frame: Frame,
+        trajectory: Optional[Trajectory] = None,
+        meta: Optional[dict] = None,
+        method: Optional[dict] = None,
+        parameters: Optional[dict] = None,
+        box: Optional[Box | list[Box]] = None,
+    ) -> None: ...
+    @staticmethod
+    def from_frame(
+        frame: Frame,
+        meta: Optional[dict] = None,
+        method: Optional[dict] = None,
+        parameters: Optional[dict] = None,
+        box: Optional[Box | list[Box]] = None,
+    ) -> MolRec: ...
+    @staticmethod
+    def from_frames(
+        frame: Frame,
+        frames: list[Frame],
+        meta: Optional[dict] = None,
+        method: Optional[dict] = None,
+        parameters: Optional[dict] = None,
+        box: Optional[Box | list[Box]] = None,
+    ) -> MolRec: ...
+    @staticmethod
+    def from_trajectory(
+        trajectory: Trajectory,
+        meta: Optional[dict] = None,
+        method: Optional[dict] = None,
+        parameters: Optional[dict] = None,
+        box: Optional[Box | list[Box]] = None,
+    ) -> MolRec: ...
+    @staticmethod
+    def from_forcefield(
+        frame: Frame,
+        forcefield: ForceField,
+        meta: Optional[dict] = None,
+        parameters: Optional[dict] = None,
+        box: Optional[Box | list[Box]] = None,
+    ) -> MolRec: ...
+    @staticmethod
+    def read_zarr(path: str) -> MolRec: ...
+    def write_zarr(self, path: str) -> None: ...
+    def count_frames(self) -> int: ...
+    def frame_at(self, index: int) -> Frame: ...
+    @property
+    def frame(self) -> Frame: ...
+    @property
+    def trajectory(self) -> Optional[Trajectory]: ...
+    @property
+    def observables(self) -> Observables: ...
+    @property
+    def meta(self) -> dict: ...
+    @meta.setter
+    def meta(self, value: dict) -> None: ...
+    @property
+    def method(self) -> dict: ...
+    @method.setter
+    def method(self, value: dict) -> None: ...
+    @property
+    def parameters(self) -> dict: ...
+    @parameters.setter
+    def parameters(self, value: dict) -> None: ...
+    @property
+    def box_(self) -> Box | list[Box] | None: ...
+
+class ForceField:
+    @property
+    def name(self) -> str: ...
+    def style_names(self) -> list[str]: ...
+
+def read_forcefield_xml(path: str) -> ForceField: ...
+
+class Potentials:
+    def __len__(self) -> int: ...
+    def eval(self, coords: ArrayF) -> tuple[float, ArrayF]: ...
+    def energy(self, coords: ArrayF) -> float: ...
+
+class MMFFTypifier:
+    def __init__(self) -> None: ...
+    def typify(self, mol: "Atomistic") -> Frame: ...
+    def build(self, mol: "Atomistic") -> Potentials: ...
+    def forcefield(self) -> ForceField: ...
+
+def extract_coords(frame: Frame) -> ArrayF: ...

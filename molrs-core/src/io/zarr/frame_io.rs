@@ -20,8 +20,8 @@ use ndarray::ArrayD;
 
 use crate::block::{Block, Column};
 use crate::error::MolRsError;
-use crate::field::{FieldEncoding, FieldObservable, UniformGridField};
 use crate::frame::Frame;
+use crate::grid::Grid;
 use crate::region::simbox::SimBox;
 use crate::types::{F, I, U};
 
@@ -302,8 +302,11 @@ pub(crate) fn write_system(
         write_simbox(store, &format!("{}/simbox", prefix), simbox)?;
     }
 
-    // Blocks (atoms, bonds, angles, …)
+    // Blocks (atoms, bonds, angles, …) — skip empty blocks (zarrs requires nrows > 0)
     for (block_name, block) in frame.iter() {
+        if block.nrows().map_or(true, |n| n == 0) {
+            continue;
+        }
         let group_path = format!("{}/{}", prefix, block_name);
         GroupBuilder::new()
             .build(store.clone(), &group_path)?
@@ -315,14 +318,14 @@ pub(crate) fn write_system(
         }
     }
 
-    if frame.field_names().next().is_some() {
-        let fields_prefix = format!("{}/fields", prefix);
+    if frame.grid_keys().next().is_some() {
+        let grids_prefix = format!("{}/grids", prefix);
         GroupBuilder::new()
-            .build(store.clone(), &fields_prefix)?
+            .build(store.clone(), &grids_prefix)?
             .store_metadata()?;
 
-        for (name, field) in frame.fields() {
-            write_field_observable(store, &format!("{}/{}", fields_prefix, name), field)?;
+        for (name, grid) in frame.grids() {
+            write_grid(store, &format!("{}/{}", grids_prefix, name), grid)?;
         }
     }
 
@@ -358,7 +361,7 @@ pub(crate) fn read_system(
         let child_name = child.path().as_str().rsplit('/').next().unwrap_or("");
         if child_name == "meta"
             || child_name == "simbox"
-            || child_name == "fields"
+            || child_name == "grids"
             || child_name.is_empty()
         {
             continue;
@@ -379,9 +382,9 @@ pub(crate) fn read_system(
         frame.insert(child_name, block);
     }
 
-    let fields_path = format!("{}/fields", prefix);
-    if let Ok(fields_node) = Node::open(store, &fields_path) {
-        for child in fields_node.children() {
+    let grids_path = format!("{}/grids", prefix);
+    if let Ok(grids_node) = Node::open(store, &grids_path) {
+        for child in grids_node.children() {
             if !matches!(child.metadata(), NodeMetadata::Group(_)) {
                 continue;
             }
@@ -389,8 +392,8 @@ pub(crate) fn read_system(
             if name.is_empty() {
                 continue;
             }
-            let field = read_field_observable(store, child.path().as_str())?;
-            frame.add_field(name.to_string(), field);
+            let grid = read_grid(store, child.path().as_str())?;
+            frame.insert_grid(name.to_string(), grid);
         }
     }
 
@@ -442,151 +445,139 @@ pub(crate) fn join_path(prefix: &str, child: &str) -> String {
     }
 }
 
+/// Write a [`Grid`] to a zarr group at `path`.
+///
+/// Layout:
+/// ```text
+/// {path}/                   ← group, attrs: dim, origin, cell, pbc
+///   {array_name}            ← zarr array shape (nx, ny, nz), dtype float32
+///   ...
+/// ```
 #[cfg(feature = "filesystem")]
-pub(crate) fn write_field_observable(
+pub(crate) fn write_grid(
     store: &ReadableWritableListableStorage,
     path: &str,
-    field: &FieldObservable,
+    grid: &Grid,
 ) -> Result<(), MolRsError> {
-    field.validate()?;
+    let dim_json: Vec<serde_json::Value> =
+        grid.dim.iter().map(|&v| serde_json::Value::from(v as u64)).collect();
+    let origin_json: Vec<serde_json::Value> =
+        grid.origin.iter().map(|&v| serde_json::Value::from(v as f64)).collect();
+    let cell_json: Vec<serde_json::Value> = grid
+        .cell
+        .iter()
+        .map(|row| {
+            serde_json::Value::Array(
+                row.iter().map(|&v| serde_json::Value::from(v as f64)).collect(),
+            )
+        })
+        .collect();
+    let pbc_json: Vec<serde_json::Value> =
+        grid.pbc.iter().map(|&v| serde_json::Value::Bool(v)).collect();
+
     let mut attrs = serde_json::Map::new();
-    attrs.insert("name".into(), serde_json::Value::String(field.name.clone()));
-    attrs.insert(
-        "quantity".into(),
-        serde_json::Value::String(field.quantity.clone()),
-    );
-    attrs.insert("scope".into(), serde_json::Value::String(field.scope.clone()));
-    attrs.insert(
-        "domain".into(),
-        serde_json::Value::String(field.domain.clone()),
-    );
-    attrs.insert("unit".into(), serde_json::Value::String(field.unit.clone()));
+    attrs.insert("dim".into(), serde_json::Value::Array(dim_json));
+    attrs.insert("origin".into(), serde_json::Value::Array(origin_json));
+    attrs.insert("cell".into(), serde_json::Value::Array(cell_json));
+    attrs.insert("pbc".into(), serde_json::Value::Array(pbc_json));
 
-    match &field.encoding {
-        FieldEncoding::UniformGrid(grid) => {
-            attrs.insert(
-                "encoding_kind".into(),
-                serde_json::Value::String("uniform_grid".into()),
-            );
-            GroupBuilder::new()
-                .attributes(attrs)
-                .build(store.clone(), path)?
-                .store_metadata()?;
+    GroupBuilder::new()
+        .attributes(attrs)
+        .build(store.clone(), path)?
+        .store_metadata()?;
 
-            let origin: Vec<f32> = grid.origin.iter().map(|&v| v as f32).collect();
-            write_f32_array(store, &format!("{}/origin", path), &[3], &origin)?;
-
-            let cell: Vec<f32> = grid
-                .cell
-                .iter()
-                .flat_map(|row| row.iter().map(|&v| v as f32))
-                .collect();
-            write_f32_array(store, &format!("{}/cell", path), &[3, 3], &cell)?;
-
-            let pbc: [u8; 3] = grid.pbc.map(|v| if v { 1 } else { 0 });
-            write_u8_array(store, &format!("{}/pbc", path), &[3], &pbc)?;
-
-            let values: Vec<f32> = grid.values.iter().map(|&v| v as f32).collect();
-            let shape = grid.shape.map(|v| v as u64);
-            write_f32_array(store, &format!("{}/values", path), &shape, &values)?;
-        }
+    let [nx, ny, nz] = grid.dim;
+    for (name, flat) in grid.raw_arrays() {
+        let arr_path = format!("{}/{}", path, name);
+        let data_f32: Vec<f32> = flat.iter().map(|&v| v as f32).collect();
+        write_f32_array(store, &arr_path, &[nx as u64, ny as u64, nz as u64], &data_f32)?;
     }
 
     Ok(())
 }
 
-pub(crate) fn read_field_observable(
+/// Read a [`Grid`] from a zarr group at `path`.
+pub(crate) fn read_grid(
     store: &ReadableWritableListableStorage,
     path: &str,
-) -> Result<FieldObservable, MolRsError> {
-    use ndarray::Array2;
-
+) -> Result<Grid, MolRsError> {
     let group = zarrs::group::Group::open(store.clone(), path)?;
     let attrs = group.attributes();
-    let name = attrs
-        .get("name")
-        .and_then(|v| v.as_str())
-        .unwrap_or_else(|| path.rsplit('/').next().unwrap_or("field"))
-        .to_string();
-    let quantity = attrs
-        .get("quantity")
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown")
-        .to_string();
-    let scope = attrs
-        .get("scope")
-        .and_then(|v| v.as_str())
-        .unwrap_or("field")
-        .to_string();
-    let domain = attrs
-        .get("domain")
-        .and_then(|v| v.as_str())
-        .unwrap_or("real_space")
-        .to_string();
-    let unit = attrs
-        .get("unit")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    let encoding_kind = attrs
-        .get("encoding_kind")
-        .and_then(|v| v.as_str())
-        .unwrap_or("uniform_grid");
 
-    match encoding_kind {
-        "uniform_grid" => {
-            let origin_arr = Array::open(store.clone(), &format!("{}/origin", path))?;
-            let origin_data: Vec<f32> =
-                origin_arr.retrieve_array_subset(&ArraySubset::new_with_shape(vec![3]))?;
-            let origin = [origin_data[0] as F, origin_data[1] as F, origin_data[2] as F];
+    let dim = {
+        let arr = attrs
+            .get("dim")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| MolRsError::zarr("grid missing 'dim' attribute"))?;
+        [
+            arr[0].as_u64().unwrap_or(0) as usize,
+            arr[1].as_u64().unwrap_or(0) as usize,
+            arr[2].as_u64().unwrap_or(0) as usize,
+        ]
+    };
 
-            let cell_arr = Array::open(store.clone(), &format!("{}/cell", path))?;
-            let cell_data: Vec<f32> =
-                cell_arr.retrieve_array_subset(&ArraySubset::new_with_shape(vec![3, 3]))?;
-            let cell_array = Array2::from_shape_vec((3, 3), cell_data).map_err(shape_err)?;
-            let mut cell = [[0.0; 3]; 3];
-            for i in 0..3 {
-                for j in 0..3 {
-                    cell[i][j] = cell_array[[i, j]] as F;
+    let origin = {
+        let arr = attrs
+            .get("origin")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| MolRsError::zarr("grid missing 'origin' attribute"))?;
+        [
+            arr[0].as_f64().unwrap_or(0.0) as F,
+            arr[1].as_f64().unwrap_or(0.0) as F,
+            arr[2].as_f64().unwrap_or(0.0) as F,
+        ]
+    };
+
+    let cell = {
+        let arr = attrs
+            .get("cell")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| MolRsError::zarr("grid missing 'cell' attribute"))?;
+        let mut cell = [[0.0f32 as F; 3]; 3];
+        for (i, row) in arr.iter().enumerate() {
+            if let Some(cols) = row.as_array() {
+                for (j, v) in cols.iter().enumerate() {
+                    cell[i][j] = v.as_f64().unwrap_or(0.0) as F;
                 }
             }
-
-            let pbc_arr = Array::open(store.clone(), &format!("{}/pbc", path))?;
-            let pbc_data: Vec<u8> =
-                pbc_arr.retrieve_array_subset(&ArraySubset::new_with_shape(vec![3]))?;
-            let pbc = [pbc_data[0] != 0, pbc_data[1] != 0, pbc_data[2] != 0];
-
-            let values_arr = Array::open(store.clone(), &format!("{}/values", path))?;
-            let shape: Vec<usize> = values_arr.shape().iter().map(|&v| v as usize).collect();
-            if shape.len() != 3 {
-                return Err(MolRsError::zarr(format!(
-                    "uniform_grid values must be rank-3, got shape {:?}",
-                    shape
-                )));
-            }
-            let values: Vec<f32> =
-                values_arr.retrieve_array_subset(&ArraySubset::new_with_shape(
-                    values_arr.shape().to_vec(),
-                ))?;
-
-            Ok(FieldObservable {
-                name,
-                quantity,
-                scope,
-                domain,
-                unit,
-                encoding: FieldEncoding::UniformGrid(UniformGridField {
-                    shape: [shape[0], shape[1], shape[2]],
-                    origin,
-                    cell,
-                    pbc,
-                    values: values.into_iter().map(|v| v as F).collect(),
-                }),
-            })
         }
-        other => Err(MolRsError::zarr(format!(
-            "unsupported field encoding '{}'",
-            other
-        ))),
+        cell
+    };
+
+    let pbc = {
+        let arr = attrs
+            .get("pbc")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| MolRsError::zarr("grid missing 'pbc' attribute"))?;
+        [
+            arr[0].as_bool().unwrap_or(false),
+            arr[1].as_bool().unwrap_or(false),
+            arr[2].as_bool().unwrap_or(false),
+        ]
+    };
+
+    let mut grid = Grid::new(dim, origin, cell, pbc);
+
+    // Read each child array as a named scalar field.
+    let grid_node = Node::open(store, path)?;
+    for child in grid_node.children() {
+        if !matches!(child.metadata(), NodeMetadata::Array(_)) {
+            continue;
+        }
+        let arr_name = child.path().as_str().rsplit('/').next().unwrap_or("");
+        if arr_name.is_empty() {
+            continue;
+        }
+        let [nx, ny, nz] = dim;
+        let arr = Array::open(store.clone(), child.path().as_str())?;
+        let data: Vec<f32> =
+            arr.retrieve_array_subset(&ArraySubset::new_with_shape(vec![
+                nx as u64, ny as u64, nz as u64,
+            ]))?;
+        let flat: Vec<F> = data.into_iter().map(|v| v as F).collect();
+        grid.insert(arr_name, flat)
+            .map_err(|e| MolRsError::zarr(format!("grid array '{}': {}", arr_name, e)))?;
     }
+
+    Ok(grid)
 }

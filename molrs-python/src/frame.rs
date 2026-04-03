@@ -21,13 +21,170 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::block::PyBlock;
-use crate::helpers::molrs_error_to_pyerr;
+use crate::helpers::{NpF, molrs_error_to_pyerr};
 use crate::simbox::PyBox;
 use crate::store::{SharedStore, ffi_error_to_pyerr};
 use molrs::frame::Frame as CoreFrame;
+use molrs::grid::Grid as CoreGrid;
+use molrs::types::F;
 use molrs_ffi::FrameId;
+use ndarray::Array4;
+use numpy::{IntoPyArray, PyArray1, PyArray2, PyArray4, PyArrayDyn, PyReadonlyArray1, PyReadonlyArray2, PyReadonlyArrayDyn};
+use pyo3::exceptions::{PyKeyError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+
+/// Uniform spatial grid storing multiple named scalar arrays.
+///
+/// A `Grid` groups named scalar fields (e.g. `"electron_density"`,
+/// `"spin_density"`) that share the same spatial definition: same `dim`,
+/// `origin`, `cell`, and `pbc`. Grid positions are computed on demand via
+/// `.grid` — they are not stored.
+///
+/// # Python Examples
+///
+/// ```python
+/// import numpy as np
+/// import molrs
+///
+/// grid = molrs.Grid(
+///     dim=np.array([4, 4, 4], dtype=np.intp),
+///     origin=np.zeros(3, dtype=np.float32),
+///     cell=(np.eye(3) * 10.0).astype(np.float32),
+///     pbc=np.array([True, True, True]),
+/// )
+/// grid['electron_density'] = np.ones((4, 4, 4), dtype=np.float32)
+/// ```
+#[pyclass(name = "Grid", unsendable)]
+#[derive(Clone)]
+pub struct PyGrid {
+    pub(crate) inner: CoreGrid,
+}
+
+#[pymethods]
+impl PyGrid {
+    /// Create a new empty grid.
+    #[new]
+    fn new(
+        dim: [usize; 3],
+        origin: PyReadonlyArray1<'_, NpF>,
+        cell: PyReadonlyArray2<'_, NpF>,
+        pbc: [bool; 3],
+    ) -> PyResult<Self> {
+        let origin_slice = origin.as_slice().map_err(|e| {
+            PyTypeError::new_err(format!("origin must be a contiguous 1-D array: {}", e))
+        })?;
+        if origin_slice.len() != 3 {
+            return Err(PyTypeError::new_err("origin must have length 3"));
+        }
+        let o = [origin_slice[0] as F, origin_slice[1] as F, origin_slice[2] as F];
+
+        let cell_arr = cell.as_array();
+        if cell_arr.dim() != (3, 3) {
+            return Err(PyTypeError::new_err("cell must have shape (3, 3)"));
+        }
+        let c = [
+            [cell_arr[[0, 0]] as F, cell_arr[[0, 1]] as F, cell_arr[[0, 2]] as F],
+            [cell_arr[[1, 0]] as F, cell_arr[[1, 1]] as F, cell_arr[[1, 2]] as F],
+            [cell_arr[[2, 0]] as F, cell_arr[[2, 1]] as F, cell_arr[[2, 2]] as F],
+        ];
+
+        Ok(Self { inner: CoreGrid::new(dim, o, c, pbc) })
+    }
+
+    /// Grid dimensions `[nx, ny, nz]`.
+    #[getter]
+    fn dim<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<usize>> {
+        let v = vec![self.inner.dim[0], self.inner.dim[1], self.inner.dim[2]];
+        v.into_pyarray(py)
+    }
+
+    /// Cartesian origin `[x, y, z]` in Ångström.
+    #[getter]
+    fn origin<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<NpF>> {
+        let v: Vec<NpF> = self.inner.origin.iter().map(|&v| v as NpF).collect();
+        v.into_pyarray(py)
+    }
+
+    /// Cell matrix of shape `(3, 3)` — columns are lattice vectors.
+    #[getter]
+    fn cell<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<NpF>> {
+        let flat: Vec<NpF> = self.inner.cell.iter().flat_map(|row| row.iter().map(|&v| v as NpF)).collect();
+        ndarray::Array2::from_shape_vec((3, 3), flat)
+            .unwrap()
+            .into_pyarray(py)
+    }
+
+    /// Periodic boundary flags `[px, py, pz]`.
+    #[getter]
+    fn pbc<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<bool>> {
+        let v = vec![self.inner.pbc[0], self.inner.pbc[1], self.inner.pbc[2]];
+        v.into_pyarray(py)
+    }
+
+    /// Cartesian position of every voxel. Shape `(nx, ny, nz, 3)`.
+    ///
+    /// Computed on demand: `position[i, j, k] = origin + (i/nx)*col0 + (j/ny)*col1 + (k/nz)*col2`.
+    #[getter]
+    fn grid<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray4<NpF>> {
+        let [nx, ny, nz] = self.inner.dim;
+        let mut data = Vec::with_capacity(nx * ny * nz * 3);
+        for ix in 0..nx {
+            for iy in 0..ny {
+                for iz in 0..nz {
+                    let pos = self.inner.voxel_position(ix, iy, iz);
+                    data.push(pos[0] as NpF);
+                    data.push(pos[1] as NpF);
+                    data.push(pos[2] as NpF);
+                }
+            }
+        }
+        Array4::from_shape_vec((nx, ny, nz, 3), data)
+            .unwrap()
+            .into_pyarray(py)
+    }
+
+    /// Retrieve a named scalar array as a shaped `(nx, ny, nz)` numpy array.
+    fn __getitem__<'py>(&self, py: Python<'py>, name: &str) -> PyResult<Bound<'py, PyArrayDyn<NpF>>> {
+        let arr = self.inner.get(name).ok_or_else(|| PyKeyError::new_err(name.to_string()))?;
+        Ok(arr.mapv(|v| v as NpF).into_pyarray(py))
+    }
+
+    /// Store a named scalar array. Shape must be `(nx, ny, nz)`.
+    fn __setitem__(&mut self, name: &str, data: PyReadonlyArrayDyn<'_, NpF>) -> PyResult<()> {
+        let arr = data.as_array();
+        let [nx, ny, nz] = self.inner.dim;
+        if arr.shape() != [nx, ny, nz] {
+            return Err(PyTypeError::new_err(format!(
+                "array shape {:?} does not match grid dim [{}, {}, {}]",
+                arr.shape(), nx, ny, nz
+            )));
+        }
+        let flat: Vec<F> = arr.iter().map(|&v| v as F).collect();
+        self.inner.insert(name, flat).map_err(molrs_error_to_pyerr)
+    }
+
+    /// Test whether a named array is present.
+    fn __contains__(&self, name: &str) -> bool {
+        self.inner.contains(name)
+    }
+
+    /// Number of named arrays stored in this grid.
+    fn __len__(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// Names of stored arrays.
+    fn keys(&self) -> Vec<String> {
+        self.inner.keys().map(|s| s.to_string()).collect()
+    }
+
+    fn __repr__(&self) -> String {
+        let [nx, ny, nz] = self.inner.dim;
+        let keys: Vec<&str> = self.inner.keys().collect();
+        format!("Grid(dim=[{}, {}, {}], arrays={:?})", nx, ny, nz, keys)
+    }
+}
 
 /// Hierarchical data container exposed to Python as `molrs.Frame`.
 ///
@@ -94,16 +251,17 @@ impl PyFrame {
     /// Examples
     /// --------
     /// >>> atoms = frame["atoms"]
-    fn __getitem__(&self, key: &str) -> PyResult<PyBlock> {
-        let handle = self
-            .store
-            .borrow()
-            .get_block(self.id, key)
-            .map_err(ffi_error_to_pyerr)?;
-        Ok(PyBlock {
-            handle,
-            store: self.store.clone(),
-        })
+    fn __getitem__<'py>(&self, py: Python<'py>, key: &str) -> PyResult<Py<PyAny>> {
+        // Try block first
+        if let Ok(handle) = self.store.borrow().get_block(self.id, key) {
+            let block = PyBlock { handle, store: self.store.clone() };
+            return Ok(Py::new(py, block)?.into_any());
+        }
+        // Try grid
+        if let Some(grid) = self.with_frame(|f| f.get_grid(key).cloned())? {
+            return Ok(Py::new(py, PyGrid { inner: grid })?.into_any());
+        }
+        Err(PyKeyError::new_err(key.to_string()))
     }
 
     /// Assign a block under the given name.
@@ -120,12 +278,25 @@ impl PyFrame {
     /// Examples
     /// --------
     /// >>> frame["atoms"] = atoms_block
-    fn __setitem__(&mut self, key: &str, block: &PyBlock) -> PyResult<()> {
-        let block = block.clone_core_block()?;
-        self.store
-            .borrow_mut()
-            .set_block(self.id, key, block)
-            .map_err(ffi_error_to_pyerr)
+    fn __setitem__(&mut self, key: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        if let Ok(grid) = value.extract::<PyRef<'_, PyGrid>>() {
+            return self
+                .store
+                .borrow_mut()
+                .with_frame_mut(self.id, |f| {
+                    f.insert_grid(key, grid.inner.clone());
+                })
+                .map_err(ffi_error_to_pyerr);
+        }
+        if let Ok(block) = value.extract::<PyRef<'_, PyBlock>>() {
+            let core_block = block.clone_core_block()?;
+            return self
+                .store
+                .borrow_mut()
+                .set_block(self.id, key, core_block)
+                .map_err(ffi_error_to_pyerr);
+        }
+        Err(PyTypeError::new_err("value must be a Block or Grid"))
     }
 
     /// Delete a block by name.
@@ -166,7 +337,7 @@ impl PyFrame {
     /// >>> "atoms" in frame
     /// True
     fn __contains__(&self, key: &str) -> PyResult<bool> {
-        self.with_frame(|f| f.contains_key(key))
+        self.with_frame(|f| f.contains_key(key) || f.has_grid(key))
     }
 
     /// Number of blocks stored in this frame.
@@ -185,6 +356,24 @@ impl PyFrame {
     /// list[str]
     fn keys(&self) -> PyResult<Vec<String>> {
         self.with_frame(|f| f.keys().map(|s| s.to_string()).collect())
+    }
+
+    /// Return all grids as a dict mapping name → Grid.
+    ///
+    /// Returns
+    /// -------
+    /// dict[str, Grid]
+    fn grids<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let dict = PyDict::new(py);
+        let grids = self.with_frame(|f| {
+            f.grids()
+                .map(|(k, v)| (k.to_string(), v.clone()))
+                .collect::<Vec<_>>()
+        })?;
+        for (k, v) in grids {
+            dict.set_item(k, Py::new(py, PyGrid { inner: v })?)?;
+        }
+        Ok(dict)
     }
 
     /// The simulation box attached to this frame, or ``None``.

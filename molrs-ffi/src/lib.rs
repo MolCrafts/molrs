@@ -8,5 +8,5 @@ mod handle;
 mod store;
 
 pub use error::FfiError;
-pub use handle::{BlockHandle, FieldId, FrameId};
+pub use handle::{BlockHandle, FrameId};
 pub use store::Store;

@@ -656,8 +656,8 @@ impl Box {
 #[cfg(test)]
 mod tests {
     use super::Box as WasmBox;
-    use crate::{Frame, WasmArray};
     use crate::core::types::JsFloatArray;
+    use crate::{Frame, WasmArray};
     use molrs::types::F;
     #[allow(unused_imports)]
     use wasm_bindgen::JsCast;

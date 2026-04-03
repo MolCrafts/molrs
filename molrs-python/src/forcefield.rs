@@ -16,6 +16,7 @@
 
 use pyo3::prelude::*;
 
+use molrs::forcefield::ForceField;
 use molrs::potential::{Potentials, extract_coords};
 use molrs::typifier::Typifier;
 use molrs::typifier::mmff::MMFFTypifier;
@@ -41,6 +42,12 @@ use numpy::{PyArray1, ToPyArray};
 #[pyclass(name = "Potentials", unsendable)]
 pub struct PyPotentials {
     inner: Potentials,
+}
+
+/// Force-field definition metadata exposed to Python as `molrs.ForceField`.
+#[pyclass(name = "ForceField", unsendable)]
+pub struct PyForceField {
+    pub(crate) inner: ForceField,
 }
 
 #[pymethods]
@@ -218,6 +225,13 @@ impl PyMMFFTypifier {
         Ok(PyPotentials { inner: potentials })
     }
 
+    /// Return the underlying force-field definition.
+    fn forcefield(&self) -> PyForceField {
+        PyForceField {
+            inner: self.inner.ff().clone(),
+        }
+    }
+
     fn __repr__(&self) -> String {
         format!("MMFFTypifier(forcefield='{}')", self.inner.ff().name)
     }
@@ -258,4 +272,37 @@ pub fn extract_coords_py<'py>(
     let coords = extract_coords(&core_frame)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
     Ok(coords.to_pyarray(py))
+}
+
+/// Read a force-field definition from an XML file.
+#[pyfunction]
+#[pyo3(name = "read_forcefield_xml")]
+pub fn read_forcefield_xml_py(path: &str) -> PyResult<PyForceField> {
+    let forcefield = molrs::read_forcefield_xml(path)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+    Ok(PyForceField { inner: forcefield })
+}
+
+#[pymethods]
+impl PyForceField {
+    #[getter]
+    fn name(&self) -> String {
+        self.inner.name.clone()
+    }
+
+    fn style_names(&self) -> Vec<String> {
+        self.inner
+            .styles()
+            .iter()
+            .map(|style| format!("{}:{}", style.category(), style.name))
+            .collect()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "ForceField(name='{}', styles={})",
+            self.inner.name,
+            self.inner.styles().len()
+        )
+    }
 }

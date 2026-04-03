@@ -84,6 +84,6 @@ mod io;
 
 // Re-exports following molrs-core layout.
 pub use compute::*;
-pub use core::{Block, Box, Frame, UniformGridField, WasmArray};
+pub use core::{Block, Box, Frame, Grid, WasmArray};
 pub use gen3d::*;
 pub use io::*;

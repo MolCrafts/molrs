@@ -38,7 +38,7 @@ use molrs::block::Block as RsBlock;
 use molrs_ffi::{FrameId as FFIFrameId, Store as FFIStore};
 
 use super::block::Block;
-use super::field::UniformGridField;
+use super::grid::Grid;
 use super::{SharedStore, js_err};
 
 /// Hierarchical data container mapping string keys to typed [`Block`]s.
@@ -295,14 +295,20 @@ impl Frame {
             .map_err(js_err)
     }
 
-    /// Return the names of all field observables attached to this frame.
-    #[wasm_bindgen(js_name = fieldNames)]
-    pub fn field_names(&self) -> Result<JsArray, JsValue> {
+    /// Return the names of all grids attached to this frame.
+    ///
+    /// # Example (JavaScript)
+    ///
+    /// ```js
+    /// const names = frame.gridNames(); // e.g. ["chgcar", "spin"]
+    /// ```
+    #[wasm_bindgen(js_name = gridNames)]
+    pub fn grid_names(&self) -> Result<JsArray, JsValue> {
         self.store
             .borrow()
             .with_frame(self.id, |frame| {
                 let names = JsArray::new();
-                for name in frame.field_names() {
+                for name in frame.grid_keys() {
                     names.push(&JsValue::from_str(name));
                 }
                 names
@@ -310,27 +316,107 @@ impl Frame {
             .map_err(js_err)
     }
 
-    /// Return true if a named field is attached to this frame.
-    #[wasm_bindgen(js_name = hasField)]
-    pub fn has_field(&self, name: &str) -> Result<bool, JsValue> {
+    /// Returns `true` if a named grid is attached to this frame.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` — Grid name to look up.
+    ///
+    /// # Example (JavaScript)
+    ///
+    /// ```js
+    /// frame.hasGrid("chgcar"); // true or false
+    /// ```
+    #[wasm_bindgen(js_name = hasGrid)]
+    pub fn has_grid(&self, name: &str) -> Result<bool, JsValue> {
         self.store
             .borrow()
-            .with_frame(self.id, |frame| frame.has_field(name))
+            .with_frame(self.id, |frame| frame.has_grid(name))
             .map_err(js_err)
     }
 
-    /// Retrieve a uniform-grid field attached to this frame.
-    #[wasm_bindgen(js_name = getUniformGridField)]
-    pub fn get_uniform_grid_field(&self, name: &str) -> Result<Option<UniformGridField>, JsValue> {
+    /// Retrieve a named grid attached to this frame.
+    ///
+    /// Returns a cloned [`Grid`] wrapper, or `undefined` if the grid does
+    /// not exist. The returned object is independent of the frame — mutations
+    /// to it are not reflected in the frame without a subsequent
+    /// [`insertGrid`](Frame::insert_grid) call.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` — Grid name to retrieve.
+    ///
+    /// # Example (JavaScript)
+    ///
+    /// ```js
+    /// const g = frame.getGrid("chgcar");
+    /// if (g) {
+    ///   const arr = g.getArray("rho");
+    /// }
+    /// ```
+    #[wasm_bindgen(js_name = getGrid)]
+    pub fn get_grid(&self, name: &str) -> Result<Option<Grid>, JsValue> {
         self.store
             .borrow()
             .with_frame(self.id, |frame| {
-                let field = frame.get_field(name)?;
-                match &field.encoding {
-                    molrs::FieldEncoding::UniformGrid(grid) => {
-                        Some(UniformGridField::from_rs(grid.clone()))
-                    }
-                }
+                frame.get_grid(name).map(|g| Grid::from_rs(g.clone()))
+            })
+            .map_err(js_err)
+    }
+
+    /// Attach a grid to this frame under the given name.
+    ///
+    /// If a grid with the same name already exists it is replaced. The grid
+    /// data is moved into the frame; the JS `Grid` object becomes empty after
+    /// this call and should not be reused.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` — Name to store the grid under (e.g., `"chgcar"`).
+    /// * `grid` — The [`Grid`] to attach.
+    ///
+    /// # Errors
+    ///
+    /// Throws a `JsValue` string if the frame has been dropped.
+    ///
+    /// # Example (JavaScript)
+    ///
+    /// ```js
+    /// const grid = new Grid(10, 10, 10, origin, cell, true, true, true);
+    /// grid.insertArray("rho", rhoData);
+    /// frame.insertGrid("chgcar", grid);
+    /// ```
+    #[wasm_bindgen(js_name = insertGrid)]
+    pub fn insert_grid(&self, name: &str, grid: Grid) -> Result<(), JsValue> {
+        self.store
+            .borrow_mut()
+            .with_frame_mut(self.id, |frame| {
+                frame.insert_grid(name, grid.into_rs());
+            })
+            .map_err(js_err)
+    }
+
+    /// Remove a named grid from this frame.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` — Grid name to remove.
+    ///
+    /// # Errors
+    ///
+    /// Throws a `JsValue` string if the frame has been dropped.
+    ///
+    /// # Example (JavaScript)
+    ///
+    /// ```js
+    /// frame.removeGrid("chgcar");
+    /// ```
+    #[wasm_bindgen(js_name = removeGrid)]
+    pub fn remove_grid(&self, name: &str) -> Result<(), JsValue> {
+        self.store
+            .borrow_mut()
+            .with_frame_mut(self.id, |frame| {
+                frame.remove_grid(name);
             })
             .map_err(js_err)
     }
