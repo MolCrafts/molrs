@@ -6,7 +6,7 @@ use crate::types::F;
 use super::cluster::ClusterResult;
 use super::error::ComputeError;
 use super::traits::Compute;
-use super::util::{get_positions, get_positions_generic, mic_disp};
+use super::util::{get_positions_generic, mic_disp};
 
 /// Computes the moment of inertia tensor for each cluster.
 ///

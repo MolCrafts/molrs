@@ -19,36 +19,19 @@ use crate::potential::Potential;
 use crate::types::F;
 
 // ---------------------------------------------------------------------------
-// Precision-dependent helpers
+// Math helpers
 // ---------------------------------------------------------------------------
 
-#[cfg(not(feature = "f64"))]
-const PI: F = std::f32::consts::PI;
-#[cfg(feature = "f64")]
 const PI: F = std::f64::consts::PI;
 
 #[inline]
 fn erfc_f(x: F) -> F {
-    #[cfg(not(feature = "f64"))]
-    {
-        libm::erfcf(x)
-    }
-    #[cfg(feature = "f64")]
-    {
-        libm::erfc(x)
-    }
+    libm::erfc(x)
 }
 
 #[inline]
 fn erf_f(x: F) -> F {
-    #[cfg(not(feature = "f64"))]
-    {
-        libm::erff(x)
-    }
-    #[cfg(feature = "f64")]
-    {
-        libm::erf(x)
-    }
+    libm::erf(x)
 }
 
 // ---------------------------------------------------------------------------

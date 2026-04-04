@@ -594,7 +594,11 @@ pub fn write_pdb_frame<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> st
     let z = frame
         .get_float("atoms", "z")
         .ok_or_else(|| err_mapper("Missing 'z' column"))?;
-    let n = x.shape().first().copied().ok_or_else(|| err_mapper("Empty 'atoms' block"))?;
+    let n = x
+        .shape()
+        .first()
+        .copied()
+        .ok_or_else(|| err_mapper("Empty 'atoms' block"))?;
 
     let x_slice = x
         .as_slice_memory_order()

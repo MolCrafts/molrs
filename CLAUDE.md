@@ -71,14 +71,22 @@ molrs-core ← molrs-pack
 - `igraph` (default) — graph algorithms for molecular topology
 - `zarr` / `filesystem` — Zarr V3 trajectory I/O
 - `blas` — BLAS-backed linear algebra via `ndarray-linalg`
-- `f64` — double-precision floats (default: f32)
+- `f64` — **deprecated / no-op** (F is now always f64)
 - `slow-tests` — expensive integration tests
 
 ## Core Data Model
 
-### Float Precision
+### Type Precision Principle
 
-`type F = f32` (or `f64` with feature flag). All numeric code uses the `F` alias from `molrs-core/src/types.rs`. Key type aliases: `F3 = Array1<F>`, `F3x3 = Array2<F>`, `FN = Array1<F>`, `FNx3 = Array2<F>`.
+**Scientific algorithms use high precision; estimation / general code uses natural types.**
+
+- `F = f64` always. The `f64` feature flag is deprecated and ignored.
+- `I = i32` always. The `i64` feature flag is deprecated and ignored.
+- `U = u32` always. The `u64` feature flag is deprecated and ignored.
+- Neighbor list internals use `u32` directly — that's the natural type, no alias needed.
+- The CXX bridge to Atomiverse still uses a `{F}` template that is resolved at build time by `cfg!(feature = "f64")` — this feature is set by CMake/corrosion to match Atomiverse's `ATV_REAL`.
+
+Key type aliases: `F3 = Array1<F>`, `F3x3 = Array2<F>`, `FN = Array1<F>`, `FNx3 = Array2<F>`. Since `F = f64`, these are all double precision.
 
 ### Block (heterogeneous column store)
 

@@ -1,7 +1,5 @@
-#![cfg(feature = "f64")]
 #![allow(clippy::needless_range_loop)]
 //! Finite-difference gradient consistency tests.
-//! Requires f64 precision for accurate numerical differentiation.
 
 use molrs_pack::objective::{compute_f, compute_fg, compute_g};
 use molrs_pack::{F, PackContext, Restraint};

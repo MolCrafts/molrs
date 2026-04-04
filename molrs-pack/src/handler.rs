@@ -160,7 +160,7 @@ impl Handler for XYZHandler {
     }
 
     fn on_step(&mut self, info: &StepInfo, sys: &PackContext) {
-        if info.loop_idx.is_multiple_of(self.every) {
+        if info.loop_idx % self.every == 0 {
             self.write_frame(&format!("step {}", info.loop_idx), sys);
         }
     }

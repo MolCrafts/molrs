@@ -48,13 +48,13 @@ fn main() {
 
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
     let bridge_path = out_dir.join("bridge.rs");
-    std::fs::write(&bridge_path, &bridge_src).unwrap();
+    std::fs::write(&bridge_path, bridge_src).unwrap();
 
     // Also write to src/ so corrosion_add_cxxbridge can find it
     let src_path = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap())
         .join("src")
         .join("bridge.rs");
-    std::fs::write(&src_path, &bridge_src).unwrap();
+    std::fs::write(&src_path, bridge_src).unwrap();
 
     cxx_build::bridge(&src_path)
         .std("c++17")

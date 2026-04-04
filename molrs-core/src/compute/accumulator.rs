@@ -59,11 +59,7 @@ mod tests {
         type Args<'a> = ();
         type Output = f64;
 
-        fn compute<FA: FrameAccess>(
-            &self,
-            _frame: &FA,
-            _args: (),
-        ) -> Result<f64, ComputeError> {
+        fn compute<FA: FrameAccess>(&self, _frame: &FA, _args: ()) -> Result<f64, ComputeError> {
             Ok(self.0)
         }
     }

@@ -59,10 +59,14 @@ impl RDF {
     }
 
     /// Bin width in angstrom.
-    pub fn bin_width(&self) -> F { self.bin_width }
+    pub fn bin_width(&self) -> F {
+        self.bin_width
+    }
 
     /// Number of histogram bins.
-    pub fn n_bins(&self) -> usize { self.n_bins }
+    pub fn n_bins(&self) -> usize {
+        self.n_bins
+    }
 
     /// Convenience: wrap this RDF in an `Accumulator<Self, SumReducer<RDFResult>>`.
     pub fn accumulate_sum(self) -> Accumulator<Self, SumReducer<RDFResult>> {
@@ -125,18 +129,24 @@ impl Compute for RDF {
             Some(sb) => std::borrow::Cow::Borrowed(sb),
             None => {
                 // Free-boundary: auto-generate bounding box from positions
-                let xs = frame.get_float("atoms", "x").ok_or(ComputeError::MissingColumn {
-                    block: "atoms",
-                    col: "x",
-                })?;
-                let ys = frame.get_float("atoms", "y").ok_or(ComputeError::MissingColumn {
-                    block: "atoms",
-                    col: "y",
-                })?;
-                let zs = frame.get_float("atoms", "z").ok_or(ComputeError::MissingColumn {
-                    block: "atoms",
-                    col: "z",
-                })?;
+                let xs = frame
+                    .get_float("atoms", "x")
+                    .ok_or(ComputeError::MissingColumn {
+                        block: "atoms",
+                        col: "x",
+                    })?;
+                let ys = frame
+                    .get_float("atoms", "y")
+                    .ok_or(ComputeError::MissingColumn {
+                        block: "atoms",
+                        col: "y",
+                    })?;
+                let zs = frame
+                    .get_float("atoms", "z")
+                    .ok_or(ComputeError::MissingColumn {
+                        block: "atoms",
+                        col: "z",
+                    })?;
                 let n = xs.len();
                 let mut pos = ndarray::Array2::<F>::zeros((n, 3));
                 for i in 0..n {

@@ -37,26 +37,8 @@ pub(crate) fn write_column(
 ) -> Result<(), MolRsError> {
     match col {
         Column::Float(a) => write_float_array(store, path, a),
-        Column::Int(a) => {
-            #[cfg(feature = "i64")]
-            {
-                write_typed_array(store, path, a, data_type::int64(), 0i64)
-            }
-            #[cfg(not(feature = "i64"))]
-            {
-                write_typed_array(store, path, a, data_type::int32(), 0i32)
-            }
-        }
-        Column::UInt(a) => {
-            #[cfg(feature = "u64")]
-            {
-                write_typed_array(store, path, a, data_type::uint64(), 0u64)
-            }
-            #[cfg(not(feature = "u64"))]
-            {
-                write_typed_array(store, path, a, data_type::uint32(), 0u32)
-            }
-        }
+        Column::Int(a) => write_typed_array(store, path, a, data_type::int32(), 0i32),
+        Column::UInt(a) => write_typed_array(store, path, a, data_type::uint32(), 0u32),
         Column::U8(a) => write_typed_array(store, path, a, data_type::uint8(), 0u8),
         Column::Bool(a) => {
             let u8_data: Vec<u8> = a.as_standard_layout().iter().map(|&b| b as u8).collect();
@@ -84,16 +66,7 @@ pub(crate) fn write_column(
     }
 }
 
-#[cfg(all(feature = "filesystem", not(feature = "f64")))]
-fn write_float_array(
-    store: &ReadableWritableListableStorage,
-    path: &str,
-    a: &ArrayD<F>,
-) -> Result<(), MolRsError> {
-    write_typed_array(store, path, a, data_type::float32(), 0.0)
-}
-
-#[cfg(all(feature = "filesystem", feature = "f64"))]
+#[cfg(feature = "filesystem")]
 fn write_float_array(
     store: &ReadableWritableListableStorage,
     path: &str,
@@ -304,7 +277,7 @@ pub(crate) fn write_system(
 
     // Blocks (atoms, bonds, angles, …) — skip empty blocks (zarrs requires nrows > 0)
     for (block_name, block) in frame.iter() {
-        if block.nrows().map_or(true, |n| n == 0) {
+        if block.nrows().is_none_or(|n| n == 0) {
             continue;
         }
         let group_path = format!("{}/{}", prefix, block_name);
@@ -459,21 +432,28 @@ pub(crate) fn write_grid(
     path: &str,
     grid: &Grid,
 ) -> Result<(), MolRsError> {
-    let dim_json: Vec<serde_json::Value> =
-        grid.dim.iter().map(|&v| serde_json::Value::from(v as u64)).collect();
-    let origin_json: Vec<serde_json::Value> =
-        grid.origin.iter().map(|&v| serde_json::Value::from(v as f64)).collect();
+    let dim_json: Vec<serde_json::Value> = grid
+        .dim
+        .iter()
+        .map(|&v| serde_json::Value::from(v as u64))
+        .collect();
+    let origin_json: Vec<serde_json::Value> = grid
+        .origin
+        .iter()
+        .map(|&v| serde_json::Value::from(v))
+        .collect();
     let cell_json: Vec<serde_json::Value> = grid
         .cell
         .iter()
         .map(|row| {
-            serde_json::Value::Array(
-                row.iter().map(|&v| serde_json::Value::from(v as f64)).collect(),
-            )
+            serde_json::Value::Array(row.iter().map(|&v| serde_json::Value::from(v)).collect())
         })
         .collect();
-    let pbc_json: Vec<serde_json::Value> =
-        grid.pbc.iter().map(|&v| serde_json::Value::Bool(v)).collect();
+    let pbc_json: Vec<serde_json::Value> = grid
+        .pbc
+        .iter()
+        .map(|&v| serde_json::Value::Bool(v))
+        .collect();
 
     let mut attrs = serde_json::Map::new();
     attrs.insert("dim".into(), serde_json::Value::Array(dim_json));
@@ -490,7 +470,12 @@ pub(crate) fn write_grid(
     for (name, flat) in grid.raw_arrays() {
         let arr_path = format!("{}/{}", path, name);
         let data_f32: Vec<f32> = flat.iter().map(|&v| v as f32).collect();
-        write_f32_array(store, &arr_path, &[nx as u64, ny as u64, nz as u64], &data_f32)?;
+        write_f32_array(
+            store,
+            &arr_path,
+            &[nx as u64, ny as u64, nz as u64],
+            &data_f32,
+        )?;
     }
 
     Ok(())
@@ -570,10 +555,9 @@ pub(crate) fn read_grid(
         }
         let [nx, ny, nz] = dim;
         let arr = Array::open(store.clone(), child.path().as_str())?;
-        let data: Vec<f32> =
-            arr.retrieve_array_subset(&ArraySubset::new_with_shape(vec![
-                nx as u64, ny as u64, nz as u64,
-            ]))?;
+        let data: Vec<f32> = arr.retrieve_array_subset(&ArraySubset::new_with_shape(vec![
+            nx as u64, ny as u64, nz as u64,
+        ]))?;
         let flat: Vec<F> = data.into_iter().map(|v| v as F).collect();
         grid.insert(arr_name, flat)
             .map_err(|e| MolRsError::zarr(format!("grid array '{}': {}", arr_name, e)))?;

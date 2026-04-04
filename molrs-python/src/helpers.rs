@@ -11,13 +11,7 @@ use numpy::PyReadonlyArray1;
 use pyo3::exceptions::{PyIOError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
-/// Numpy float type matching the `F` alias.
-///
-/// `f32` by default, `f64` when the `f64` feature is enabled.
-#[cfg(not(feature = "f64"))]
-pub type NpF = f32;
-/// See above.
-#[cfg(feature = "f64")]
+/// Numpy float type matching the `F` alias — always `f64`.
 pub type NpF = f64;
 
 /// Parse an optional origin array, defaulting to `[0, 0, 0]`.

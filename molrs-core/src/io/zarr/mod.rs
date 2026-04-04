@@ -4,9 +4,7 @@ mod error;
 mod frame_io;
 mod molrec;
 
-pub use molrec::{
-    count_molrec_frames_in_store, read_molrec_frame_from_store, read_molrec_store,
-};
+pub use molrec::{count_molrec_frames_in_store, read_molrec_frame_from_store, read_molrec_store};
 #[cfg(feature = "filesystem")]
 pub use molrec::{read_molrec_file, write_molrec_file};
 

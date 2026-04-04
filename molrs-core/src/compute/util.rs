@@ -71,17 +71,27 @@ pub type PositionVecs = (Vec<F>, Vec<F>, Vec<F>);
 /// Returns owned `Vec`s rather than borrowed slices, so it works uniformly with
 /// both `Frame` and `FrameView`.
 pub fn get_positions_generic(frame: &impl FrameAccess) -> Result<PositionVecs, ComputeError> {
-    let xs = frame.get_float("atoms", "x").ok_or(ComputeError::MissingColumn {
-        block: "atoms",
-        col: "x",
-    })?;
-    let ys = frame.get_float("atoms", "y").ok_or(ComputeError::MissingColumn {
-        block: "atoms",
-        col: "y",
-    })?;
-    let zs = frame.get_float("atoms", "z").ok_or(ComputeError::MissingColumn {
-        block: "atoms",
-        col: "z",
-    })?;
-    Ok((xs.iter().copied().collect(), ys.iter().copied().collect(), zs.iter().copied().collect()))
+    let xs = frame
+        .get_float("atoms", "x")
+        .ok_or(ComputeError::MissingColumn {
+            block: "atoms",
+            col: "x",
+        })?;
+    let ys = frame
+        .get_float("atoms", "y")
+        .ok_or(ComputeError::MissingColumn {
+            block: "atoms",
+            col: "y",
+        })?;
+    let zs = frame
+        .get_float("atoms", "z")
+        .ok_or(ComputeError::MissingColumn {
+            block: "atoms",
+            col: "z",
+        })?;
+    Ok((
+        xs.iter().copied().collect(),
+        ys.iter().copied().collect(),
+        zs.iter().copied().collect(),
+    ))
 }

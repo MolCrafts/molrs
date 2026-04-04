@@ -45,12 +45,12 @@ pub mod block;
 pub mod coarsegrain;
 pub mod element;
 pub mod forcefield;
-pub mod grid;
 pub mod frame;
 pub mod frame_access;
 pub mod frame_view;
 pub mod gasteiger;
 pub mod gen3d;
+pub mod grid;
 pub mod hydrogens;
 pub mod mapping;
 pub mod molgraph;
@@ -83,12 +83,12 @@ pub use error::MolRsError;
 pub use frame::Frame;
 pub use frame_access::FrameAccess;
 pub use frame_view::FrameView;
-pub use grid::Grid;
 pub use gasteiger::{GasteigerCharges, compute_gasteiger_charges};
 pub use gen3d::{
     EmbedAlgorithm, ForceFieldKind, Gen3DOptions, Gen3DReport, Gen3DSpeed, StageKind, StageReport,
     generate_3d,
 };
+pub use grid::Grid;
 pub use hydrogens::{add_hydrogens, implicit_h_count, remove_hydrogens};
 pub use mapping::{CGMapping, WeightScheme};
 pub use molgraph::{Atom, AtomId, Bead, Bond, BondId, MolGraph, PropValue};
@@ -119,11 +119,9 @@ pub use molrec::{
 };
 
 // Zarr I/O re-exports (only with "zarr" feature)
-#[cfg(feature = "zarr")]
-pub use io::zarr::{
-    count_molrec_frames_in_store, read_molrec_frame_from_store, read_molrec_store,
-};
 #[cfg(all(feature = "zarr", feature = "filesystem"))]
 pub use io::zarr::read_molrec_file;
 #[cfg(all(feature = "zarr", feature = "filesystem"))]
 pub use io::zarr::write_molrec_file;
+#[cfg(feature = "zarr")]
+pub use io::zarr::{count_molrec_frames_in_store, read_molrec_frame_from_store, read_molrec_store};

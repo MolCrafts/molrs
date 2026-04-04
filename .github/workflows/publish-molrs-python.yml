@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   ci:
-    uses: ./.github/workflows/ci-python.yml
+    uses: ./.github/workflows/ci.yml
 
   build-wheels:
     needs: ci

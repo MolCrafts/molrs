@@ -1,40 +1,41 @@
 name: CI Rust
 
 on:
-  push:
-    branches: [dev, master]
-    tags: "v*"
-  pull_request:
-    branches: [dev, master]
   workflow_call:
   workflow_dispatch:
 
 jobs:
-  formatting:
-    name: cargo fmt
+  fmt:
+    name: rustfmt
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
+      - run: cargo fmt --check
 
-      - name: Rustfmt Check
-        run: cargo fmt --check
-
-  test:
+  clippy:
+    name: clippy
+    needs: fmt
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
+          components: clippy
+      - run: |
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo clippy -p molcrafts-molrs --all-targets --features "filesystem f64" -- -D warnings
+          cargo clippy -p molcrafts-molrs-pack --all-targets --features f64 -- -D warnings
+
+  test:
+    name: test
+    needs: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
 
       - name: Cache test data
         uses: actions/cache@v4
@@ -46,12 +47,6 @@ jobs:
 
       - name: Fetch test data
         run: bash scripts/fetch-test-data.sh
-
-      - name: Clippy
-        run: |
-          cargo clippy --workspace --all-targets -- -D warnings
-          cargo clippy -p molcrafts-molrs --all-targets --features "filesystem f64" -- -D warnings
-          cargo clippy -p molcrafts-molrs-pack --all-targets --features f64 -- -D warnings
 
       - name: Test
         run: |

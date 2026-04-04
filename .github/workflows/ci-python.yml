@@ -1,11 +1,6 @@
 name: CI Python
 
 on:
-  push:
-    branches: [dev, master]
-    tags: "v*"
-  pull_request:
-    branches: [dev, master]
   workflow_call:
   workflow_dispatch:
 
@@ -13,7 +8,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         python-version: ["3.9", "3.10", "3.11", "3.12"]
     steps:

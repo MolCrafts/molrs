@@ -128,10 +128,7 @@ mod tests {
         let mut frame = Frame::new();
         let mut atoms = Block::new();
         atoms
-            .insert(
-                "x",
-                Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn(),
-            )
+            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn())
             .unwrap();
         atoms
             .insert("id", Array1::from_vec(vec![10 as I, 20, 30]).into_dyn())
@@ -225,18 +222,8 @@ mod tests {
         let frame = make_frame();
         let view = FrameView::from(&frame);
 
-        let orig_ptr = frame
-            .get("atoms")
-            .unwrap()
-            .get_float("x")
-            .unwrap()
-            .as_ptr();
-        let view_ptr = view
-            .get("atoms")
-            .unwrap()
-            .get_float("x")
-            .unwrap()
-            .as_ptr();
+        let orig_ptr = frame.get("atoms").unwrap().get_float("x").unwrap().as_ptr();
+        let view_ptr = view.get("atoms").unwrap().get_float("x").unwrap().as_ptr();
         assert_eq!(orig_ptr, view_ptr);
     }
 }

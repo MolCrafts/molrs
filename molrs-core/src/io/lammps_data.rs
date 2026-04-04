@@ -1270,8 +1270,7 @@ fn write_lammps_data_frame<W: Write>(
         let atom_j = frame
             .get_uint("bonds", "atomj")
             .ok_or_else(|| err_mapper("Missing 'atomj' column"))?;
-        let bond_types = bonds_type_view
-            .ok_or_else(|| err_mapper("Missing 'type' column"))?;
+        let bond_types = bonds_type_view.ok_or_else(|| err_mapper("Missing 'type' column"))?;
 
         // Convert indices back to IDs
         for i in 0..num_bonds {

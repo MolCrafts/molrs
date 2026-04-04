@@ -147,7 +147,7 @@ impl FrameAccess for FrameView<'_> {
     }
 
     fn block_keys(&self) -> Vec<&str> {
-        self.keys().map(|k| *k).collect()
+        self.keys().copied().collect()
     }
 
     fn contains_block(&self, key: &str) -> bool {
@@ -178,10 +178,7 @@ mod tests {
         let mut frame = Frame::new();
         let mut atoms = Block::new();
         atoms
-            .insert(
-                "x",
-                Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn(),
-            )
+            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn())
             .unwrap();
         atoms
             .insert("id", Array1::from_vec(vec![10 as I, 20, 30]).into_dyn())
@@ -201,10 +198,7 @@ mod tests {
         assert_eq!(FrameAccess::block_count(&frame), 1);
         assert!(FrameAccess::contains_block(&frame, "atoms"));
         assert!(!FrameAccess::is_empty(&frame));
-        assert_eq!(
-            FrameAccess::meta_ref(&frame).get("title").unwrap(),
-            "Test"
-        );
+        assert_eq!(FrameAccess::meta_ref(&frame).get("title").unwrap(), "Test");
         assert!(FrameAccess::simbox_ref(&frame).is_none());
     }
 
@@ -218,10 +212,7 @@ mod tests {
         assert_eq!(FrameAccess::block_count(&view), 1);
         assert!(FrameAccess::contains_block(&view, "atoms"));
         assert!(!FrameAccess::is_empty(&view));
-        assert_eq!(
-            FrameAccess::meta_ref(&view).get("title").unwrap(),
-            "Test"
-        );
+        assert_eq!(FrameAccess::meta_ref(&view).get("title").unwrap(), "Test");
     }
 
     #[test]

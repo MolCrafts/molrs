@@ -55,6 +55,14 @@ pub struct Frame {
     pub simbox: Option<SimBox>,
 }
 
+/// Type alias for the result of into_inner().
+type IntoInnerResult = (
+    HashMap<String, Block>,
+    HashMap<String, Grid>,
+    HashMap<String, String>,
+    Option<SimBox>,
+);
+
 impl std::fmt::Debug for Frame {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut debug_struct = f.debug_struct("Frame");
@@ -161,14 +169,7 @@ impl Frame {
     /// assert_eq!(meta.get("title").unwrap(), "Test");
     /// assert!(simbox.is_none());
     /// ```
-    pub fn into_inner(
-        self,
-    ) -> (
-        HashMap<String, Block>,
-        HashMap<String, Grid>,
-        HashMap<String, String>,
-        Option<SimBox>,
-    ) {
+    pub fn into_inner(self) -> IntoInnerResult {
         (self.map, self.grids, self.meta, self.simbox)
     }
 

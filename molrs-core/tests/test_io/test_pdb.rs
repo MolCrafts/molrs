@@ -64,9 +64,24 @@ fn verify_roundtrip(frame1: &Frame, frame2: &Frame, path: &std::path::Path, tol:
     let z1 = atoms1.get_float("z").unwrap();
     let z2 = atoms2.get_float("z").unwrap();
     for i in 0..x1.len().min(50) {
-        assert!((x1[i] - x2[i]).abs() < tol, "{:?}: x[{}] roundtrip mismatch", path, i);
-        assert!((y1[i] - y2[i]).abs() < tol, "{:?}: y[{}] roundtrip mismatch", path, i);
-        assert!((z1[i] - z2[i]).abs() < tol, "{:?}: z[{}] roundtrip mismatch", path, i);
+        assert!(
+            (x1[i] - x2[i]).abs() < tol,
+            "{:?}: x[{}] roundtrip mismatch",
+            path,
+            i
+        );
+        assert!(
+            (y1[i] - y2[i]).abs() < tol,
+            "{:?}: y[{}] roundtrip mismatch",
+            path,
+            i
+        );
+        assert!(
+            (z1[i] - z2[i]).abs() < tol,
+            "{:?}: z[{}] roundtrip mismatch",
+            path,
+            i
+        );
     }
 }
 
@@ -136,7 +151,11 @@ fn test_triclinic_simbox() {
         "1vln-triclinic.pdb must have a SimBox"
     );
     let vol = frame.simbox.as_ref().unwrap().volume();
-    assert!(vol > 1000.0, "triclinic cell volume must be > 1000 Å³, got {:.1}", vol);
+    assert!(
+        vol > 1000.0,
+        "triclinic cell volume must be > 1000 Å³, got {:.1}",
+        vol
+    );
 }
 
 /// 1avg.pdb has CONECT records — verify bonds block is present.

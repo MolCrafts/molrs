@@ -991,7 +991,6 @@ mod tests {
         let err = read_xyz_frame_from_reader(&mut cursor).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     }
-
 }
 
 // =============== XYZFrameWriter ===============
@@ -1056,7 +1055,7 @@ pub fn write_xyz_frame<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> st
         let mut props_parts = Vec::new();
         props_parts.push("species:S:1".to_string());
 
-        let has_xyz = keys.contains(&&"x") && keys.contains(&&"y") && keys.contains(&&"z");
+        let has_xyz = keys.contains(&"x") && keys.contains(&"y") && keys.contains(&"z");
         if has_xyz {
             props_parts.push("pos:R:3".to_string());
         }
@@ -1082,8 +1081,7 @@ pub fn write_xyz_frame<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> st
         }
 
         for k in &keys {
-            if *k == "x" || *k == "y" || *k == "z" || *k == "element" || priority_keys.contains(k)
-            {
+            if *k == "x" || *k == "y" || *k == "z" || *k == "element" || priority_keys.contains(k) {
                 continue;
             }
             if let (Some(dt), Some(shape)) = (atoms.column_dtype(k), atoms.column_shape(k)) {
@@ -1130,8 +1128,7 @@ pub fn write_xyz_frame<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> st
                             if let Some(arr) = atoms.get_bool_view(k) {
                                 let row = arr.index_axis(ndarray::Axis(0), i);
                                 for val in row.iter() {
-                                    line_parts
-                                        .push(if *val { "T" } else { "F" }.to_string());
+                                    line_parts.push(if *val { "T" } else { "F" }.to_string());
                                 }
                             }
                         }

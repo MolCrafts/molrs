@@ -76,17 +76,31 @@ fn assert_valid_chgcar(path: &std::path::Path) {
     let grid = frame
         .get_grid("chgcar")
         .unwrap_or_else(|| panic!("{:?}: missing chgcar grid", path));
-    assert!(grid.contains("total"), "{:?}: grid has no 'total' array", path);
+    assert!(
+        grid.contains("total"),
+        "{:?}: grid has no 'total' array",
+        path
+    );
 
     let [nx, ny, nz] = grid.dim;
     assert!(nx > 0 && ny > 0 && nz > 0, "{:?}: grid dim is zero", path);
 
     let total = grid.get("total").unwrap();
-    assert_eq!(total.shape(), [nx, ny, nz].as_slice(), "{:?}: dim/shape mismatch", path);
+    assert_eq!(
+        total.shape(),
+        [nx, ny, nz].as_slice(),
+        "{:?}: dim/shape mismatch",
+        path
+    );
 
     // Integrated charge must be positive (ρ·V_cell, sum/N_grid = electrons).
     let charge: f64 = total.iter().map(|&v| v as f64).sum::<f64>() / (nx * ny * nz) as f64;
-    assert!(charge > 0.0, "{:?}: integrated charge ≤ 0 ({:.4})", path, charge);
+    assert!(
+        charge > 0.0,
+        "{:?}: integrated charge ≤ 0 ({:.4})",
+        path,
+        charge
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -142,7 +156,11 @@ fn test_soc_elements_and_grid() {
     let frame = read_chgcar(path.to_str().unwrap()).expect("read CHGCAR.NiO_SOC");
 
     let atoms = frame.get("atoms").expect("atoms");
-    assert_eq!(atoms.nrows().unwrap(), 4, "NiO_SOC has 4 atoms (2 Ni + 2 O)");
+    assert_eq!(
+        atoms.nrows().unwrap(),
+        4,
+        "NiO_SOC has 4 atoms (2 Ni + 2 O)"
+    );
     let symbols = atoms.get_string("symbol").expect("symbol column");
     assert!(symbols.iter().any(|s| s == "Ni"), "NiO_SOC must contain Ni");
     assert!(symbols.iter().any(|s| s == "O"), "NiO_SOC must contain O");
@@ -161,17 +179,17 @@ fn test_fe3o4_composition() {
     assert_eq!(atoms.nrows().unwrap(), 14, "Fe3O4 has 14 atoms");
     let symbols = atoms.get_string("symbol").expect("symbol column");
     let n_fe = symbols.iter().filter(|s| *s == "Fe").count();
-    let n_o  = symbols.iter().filter(|s| *s == "O").count();
+    let n_o = symbols.iter().filter(|s| *s == "O").count();
     assert_eq!(n_fe, 6, "Fe3O4 must have 6 Fe");
-    assert_eq!(n_o,  8, "Fe3O4 must have 8 O");
+    assert_eq!(n_o, 8, "Fe3O4 must have 8 O");
 }
 
 /// CHGCAR.Fe3O4_ref and CHGCAR.Fe3O4 must have the same atom count and
 /// grid dimensions (they are a calculation/reference pair).
 #[test]
 fn test_fe3o4_ref_matches_calc() {
-    let calc = read_chgcar(chgcar_path("CHGCAR.Fe3O4_spin").to_str().unwrap())
-        .expect("read CHGCAR.Fe3O4");
+    let calc =
+        read_chgcar(chgcar_path("CHGCAR.Fe3O4_spin").to_str().unwrap()).expect("read CHGCAR.Fe3O4");
     let refe = read_chgcar(chgcar_path("CHGCAR.Fe3O4_ref").to_str().unwrap())
         .expect("read CHGCAR.Fe3O4_ref");
 
@@ -192,15 +210,16 @@ fn test_fe3o4_ref_matches_calc() {
 #[test]
 fn test_grid_dimensions_match_header() {
     for path in all_chgcar_good_files() {
-        let frame = read_chgcar(path.to_str().unwrap())
-            .unwrap_or_else(|e| panic!("{:?}: {}", path, e));
+        let frame =
+            read_chgcar(path.to_str().unwrap()).unwrap_or_else(|e| panic!("{:?}: {}", path, e));
         let grid = frame.get_grid("chgcar").unwrap();
         let [nx, ny, nz] = grid.dim;
         assert_eq!(
             grid.get("total").unwrap().shape(),
             [nx, ny, nz].as_slice(),
             "{:?}: dim {:?} ≠ array shape",
-            path, grid.dim
+            path,
+            grid.dim
         );
     }
 }

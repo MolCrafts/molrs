@@ -9,15 +9,8 @@ use molrs::types::F;
 use ndarray::{Array2, ArrayView2};
 use wasm_bindgen::prelude::*;
 
-#[cfg(feature = "f64")]
 pub(crate) type JsFloatArray = js_sys::Float64Array;
-#[cfg(not(feature = "f64"))]
-pub(crate) type JsFloatArray = js_sys::Float32Array;
-
-#[cfg(feature = "f64")]
 pub(crate) const FLOAT_DTYPE_NAME: &str = "f64";
-#[cfg(not(feature = "f64"))]
-pub(crate) const FLOAT_DTYPE_NAME: &str = "f32";
 
 /// Owned float array with ndarray-compatible shape metadata.
 ///

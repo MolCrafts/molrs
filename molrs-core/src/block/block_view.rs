@@ -194,10 +194,7 @@ mod tests {
     fn test_from_block() {
         let mut block = Block::new();
         block
-            .insert(
-                "x",
-                Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn(),
-            )
+            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn())
             .unwrap();
         block
             .insert("id", Array1::from_vec(vec![10 as I, 20, 30]).into_dyn())
@@ -215,10 +212,7 @@ mod tests {
     fn test_typed_getters() {
         let mut block = Block::new();
         block
-            .insert(
-                "x",
-                Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn(),
-            )
+            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn())
             .unwrap();
         block
             .insert("id", Array1::from_vec(vec![10 as I, 20, 30]).into_dyn())
@@ -242,10 +236,7 @@ mod tests {
     fn test_to_owned_roundtrip() {
         let mut block = Block::new();
         block
-            .insert(
-                "x",
-                Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn(),
-            )
+            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn())
             .unwrap();
         block
             .insert("id", Array1::from_vec(vec![10 as I, 20, 30]).into_dyn())
@@ -278,10 +269,7 @@ mod tests {
     fn test_zero_copy() {
         let mut block = Block::new();
         block
-            .insert(
-                "x",
-                Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn(),
-            )
+            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn())
             .unwrap();
 
         let view = BlockView::from(&block);
@@ -302,10 +290,7 @@ mod tests {
     fn test_iter_keys() {
         let mut block = Block::new();
         block
-            .insert(
-                "x",
-                Array1::from_vec(vec![1.0 as F, 2.0]).into_dyn(),
-            )
+            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0]).into_dyn())
             .unwrap();
         block
             .insert("id", Array1::from_vec(vec![10 as I, 20]).into_dyn())

@@ -57,6 +57,7 @@ impl WorkBuffers {
         self.cached_geometry_valid = false;
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn matches_cached_geometry(
         &self,
         x: &[F],
@@ -77,6 +78,7 @@ impl WorkBuffers {
             && self.cached_comptype == comptype
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn update_cached_geometry(
         &mut self,
         x: &[F],

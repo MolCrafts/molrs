@@ -20,9 +20,13 @@ fn all_xyz_good_files() -> Vec<std::path::PathBuf> {
         .filter_map(|entry| {
             let p = entry.ok()?.path();
             // skip the bad/ subdirectory and compressed files
-            if !p.is_file() { return None; }
+            if !p.is_file() {
+                return None;
+            }
             let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
-            if matches!(ext, "gz" | "bz2" | "xz" | "zst") { return None; }
+            if matches!(ext, "gz" | "bz2" | "xz" | "zst") {
+                return None;
+            }
             Some(p)
         })
         .collect();
@@ -165,9 +169,7 @@ fn test_velocities_xyz_has_velocity_columns() {
     let frame = read_xyz_frame(path.to_str().unwrap()).expect("read velocities.xyz");
     let atoms = frame.get("atoms").expect("atoms");
     assert!(
-        atoms.get_float("vx").is_some()
-            || atoms.get_float("vel_1").is_some()
-            || atoms.len() > 3, // at minimum x/y/z + at least one velocity column
+        atoms.get_float("vx").is_some() || atoms.get_float("vel_1").is_some() || atoms.len() > 3, // at minimum x/y/z + at least one velocity column
         "velocities.xyz must carry velocity data"
     );
 }

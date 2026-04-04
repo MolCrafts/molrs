@@ -141,12 +141,22 @@ impl DumpBoxBounds {
             .collect::<Result<_, _>>()?;
 
         if vals.len() < 2 {
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "box line 1: expected at least 2 values"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "box line 1: expected at least 2 values",
+            ));
         }
         let (xlo_bound, xhi_bound) = (vals[0], vals[1]);
         let xy = if is_triclinic {
-            Some(*vals.get(2).ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "triclinic box line 1: missing tilt factor xy"))?)
-        } else { None };
+            Some(*vals.get(2).ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "triclinic box line 1: missing tilt factor xy",
+                )
+            })?)
+        } else {
+            None
+        };
 
         // Line 2: ylo yhi [xz]
         line.clear();
@@ -157,12 +167,22 @@ impl DumpBoxBounds {
             .collect::<Result<_, _>>()?;
 
         if vals.len() < 2 {
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "box line 2: expected at least 2 values"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "box line 2: expected at least 2 values",
+            ));
         }
         let (ylo_bound, yhi_bound) = (vals[0], vals[1]);
         let xz = if is_triclinic {
-            Some(*vals.get(2).ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "triclinic box line 2: missing tilt factor xz"))?)
-        } else { None };
+            Some(*vals.get(2).ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "triclinic box line 2: missing tilt factor xz",
+                )
+            })?)
+        } else {
+            None
+        };
 
         // Line 3: zlo zhi [yz]
         line.clear();
@@ -173,12 +193,22 @@ impl DumpBoxBounds {
             .collect::<Result<_, _>>()?;
 
         if vals.len() < 2 {
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "box line 3: expected at least 2 values"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "box line 3: expected at least 2 values",
+            ));
         }
         let (zlo_bound, zhi_bound) = (vals[0], vals[1]);
         let yz = if is_triclinic {
-            Some(*vals.get(2).ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "triclinic box line 3: missing tilt factor yz"))?)
-        } else { None };
+            Some(*vals.get(2).ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "triclinic box line 3: missing tilt factor yz",
+                )
+            })?)
+        } else {
+            None
+        };
 
         // For triclinic, convert bounds to actual box limits
         // See: https://docs.lammps.org/Howto_triclinic.html
@@ -372,11 +402,8 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
                 atoms_block.insert(name.as_str(), arr).map_err(err_mapper)?;
             }
             ColumnType::String => {
-                let arr = ArrayD::from_shape_vec(
-                    IxDyn(&[natoms]),
-                    str_cols[i].take().unwrap(),
-                )
-                .map_err(err_mapper)?;
+                let arr = ArrayD::from_shape_vec(IxDyn(&[natoms]), str_cols[i].take().unwrap())
+                    .map_err(err_mapper)?;
                 atoms_block.insert(name.as_str(), arr).map_err(err_mapper)?;
             }
         }
@@ -745,10 +772,10 @@ fn write_lammps_dump_frame<W: Write>(
             let col_names = atoms.column_keys();
             let mut ordered: Vec<&str> = Vec::with_capacity(col_names.len());
 
-            if col_names.contains(&&"id") {
+            if col_names.contains(&"id") {
                 ordered.push("id");
             }
-            if col_names.contains(&&"type") {
+            if col_names.contains(&"type") {
                 ordered.push("type");
             }
 
@@ -761,8 +788,7 @@ fn write_lammps_dump_frame<W: Write>(
             ordered.extend(remaining);
 
             let header = format!("ITEM: ATOMS {}", ordered.join(" "));
-            let col_types: Vec<ColumnType> =
-                ordered.iter().map(|n| classify_column(n)).collect();
+            let col_types: Vec<ColumnType> = ordered.iter().map(|n| classify_column(n)).collect();
 
             let mut lines = Vec::with_capacity(natoms + 1);
             lines.push(header);

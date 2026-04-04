@@ -122,7 +122,11 @@ fn test_all_lammps_dump_files_roundtrip() {
         for (i, (f1, f2)) in frames1.iter().zip(frames2.iter()).enumerate() {
             let n1 = f1.get("atoms").unwrap().nrows().unwrap_or(0);
             let n2 = f2.get("atoms").unwrap().nrows().unwrap_or(0);
-            assert_eq!(n1, n2, "{:?}: frame {} atom count mismatch after roundtrip", path, i);
+            assert_eq!(
+                n1, n2,
+                "{:?}: frame {} atom count mismatch after roundtrip",
+                path, i
+            );
         }
     }
 }
@@ -186,5 +190,8 @@ fn test_properties_dump_has_custom_columns() {
     assert!(!frames.is_empty());
     let atoms = frames[0].get("atoms").expect("atoms");
     // Should have more columns than just id/type/x/y/z
-    assert!(atoms.len() > 5, "properties dump should have custom columns");
+    assert!(
+        atoms.len() > 5,
+        "properties dump should have custom columns"
+    );
 }

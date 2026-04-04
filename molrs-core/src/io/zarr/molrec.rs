@@ -7,12 +7,10 @@ use std::sync::Arc;
 
 use serde_json::Value as JsonValue;
 #[cfg(feature = "filesystem")]
-use zarrs::array::data_type;
-use zarrs::array::data_type::{
-    Float32DataType, Float64DataType, Int64DataType, StringDataType,
-};
-#[cfg(feature = "filesystem")]
 use zarrs::array::ArrayBuilder;
+#[cfg(feature = "filesystem")]
+use zarrs::array::data_type;
+use zarrs::array::data_type::{Float32DataType, Float64DataType, Int64DataType, StringDataType};
 use zarrs::array::{Array, ArraySubset};
 #[cfg(feature = "filesystem")]
 use zarrs::filesystem::FilesystemStore;
@@ -88,11 +86,7 @@ impl MolRecZarrBackend {
                 .build(store.clone(), &observable_prefix)?
                 .store_metadata()?;
             for (name, observable) in &molrec.observables {
-                write_observable(
-                    &store,
-                    &join_path(&observable_prefix, name),
-                    observable,
-                )?;
+                write_observable(&store, &join_path(&observable_prefix, name), observable)?;
             }
         }
 
@@ -365,7 +359,11 @@ fn read_record_box(
                     vectors[v_off + 8] as F,
                 ],
             ],
-            origin: [origin[o_off] as F, origin[o_off + 1] as F, origin[o_off + 2] as F],
+            origin: [
+                origin[o_off] as F,
+                origin[o_off + 1] as F,
+                origin[o_off + 2] as F,
+            ],
             boundary: [
                 boundary[b_off].clone(),
                 boundary[b_off + 1].clone(),
@@ -392,7 +390,12 @@ fn write_trajectory(
     }
     if let Some(time) = &trajectory.time {
         let data: Vec<f32> = time.iter().map(|&v| v as f32).collect();
-        write_f32_array(store, &format!("{}/time", path), &[time.len() as u64], &data)?;
+        write_f32_array(
+            store,
+            &format!("{}/time", path),
+            &[time.len() as u64],
+            &data,
+        )?;
     }
 
     let frames_path = format!("{}/frames", path);
@@ -427,7 +430,7 @@ fn read_trajectory(
     if let Ok(node) = Node::open(store, &frames_path) {
         let mut children: Vec<_> = node
             .children()
-            .into_iter()
+            .iter()
             .filter(|child| matches!(child.metadata(), NodeMetadata::Group(_)))
             .collect();
         children.sort_by_key(|child| {
@@ -526,7 +529,7 @@ fn read_observable(
             return Err(MolRsError::zarr(format!(
                 "unsupported observable kind '{}'",
                 other
-            )))
+            )));
         }
     };
     let description = attrs

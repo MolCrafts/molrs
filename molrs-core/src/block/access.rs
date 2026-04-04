@@ -237,7 +237,7 @@ impl BlockAccess for BlockView<'_> {
     }
 
     fn column_keys(&self) -> Vec<&str> {
-        self.keys().map(|k| *k).collect()
+        self.keys().copied().collect()
     }
 
     fn column_dtype(&self, key: &str) -> Option<DType> {
@@ -257,10 +257,7 @@ mod tests {
     fn make_block() -> Block {
         let mut block = Block::new();
         block
-            .insert(
-                "x",
-                Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn(),
-            )
+            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn())
             .unwrap();
         block
             .insert("id", Array1::from_vec(vec![10 as I, 20, 30]).into_dyn())

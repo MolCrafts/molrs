@@ -70,8 +70,7 @@ use crate::types::F;
 ///
 /// Returns [`MolRsError`] on any I/O or parse failure.
 pub fn read_chgcar<P: AsRef<Path>>(path: P) -> Result<Frame, MolRsError> {
-    let file = std::fs::File::open(path.as_ref())
-        .map_err(|e| MolRsError::Io(e))?;
+    let file = std::fs::File::open(path.as_ref()).map_err(MolRsError::Io)?;
     read_chgcar_from_reader(BufReader::new(file))
 }
 
@@ -82,9 +81,7 @@ pub fn read_chgcar_from_reader<R: BufRead>(mut reader: R) -> Result<Frame, MolRs
     macro_rules! next_line {
         () => {{
             let mut s = String::new();
-            reader
-                .read_line(&mut s)
-                .map_err(|e| MolRsError::Io(e))?;
+            reader.read_line(&mut s).map_err(|e| MolRsError::Io(e))?;
             line_no += 1;
             s
         }};
@@ -153,11 +150,7 @@ pub fn read_chgcar_from_reader<R: BufRead>(mut reader: R) -> Result<Frame, MolRs
 
     // Line 8: Selective dynamics (optional) or coordinate mode
     let mut mode_line = next_line!();
-    if mode_line
-        .trim()
-        .to_ascii_lowercase()
-        .starts_with('s')
-    {
+    if mode_line.trim().to_ascii_lowercase().starts_with('s') {
         // selective dynamics line — skip and read the real mode line
         mode_line = next_line!();
     }
@@ -169,7 +162,7 @@ pub fn read_chgcar_from_reader<R: BufRead>(mut reader: R) -> Result<Frame, MolRs
     } else {
         return Err(MolRsError::parse_error(
             line_no,
-            &format!(
+            format!(
                 "unrecognised coordinate mode {:?}; expected 'Direct' or 'Cartesian'",
                 mode_line.trim()
             ),
@@ -213,27 +206,35 @@ pub fn read_chgcar_from_reader<R: BufRead>(mut reader: R) -> Result<Frame, MolRs
     }
 
     let mut atoms = Block::new();
-    atoms.insert(
-        "x",
-        Array1::from_vec(cart_x.iter().map(|&v| v as F).collect::<Vec<_>>()).into_dyn(),
-    ).map_err(MolRsError::Block)?;
-    atoms.insert(
-        "y",
-        Array1::from_vec(cart_y.iter().map(|&v| v as F).collect::<Vec<_>>()).into_dyn(),
-    ).map_err(MolRsError::Block)?;
-    atoms.insert(
-        "z",
-        Array1::from_vec(cart_z.iter().map(|&v| v as F).collect::<Vec<_>>()).into_dyn(),
-    ).map_err(MolRsError::Block)?;
+    atoms
+        .insert(
+            "x",
+            Array1::from_vec(cart_x.iter().map(|&v| v as F).collect::<Vec<_>>()).into_dyn(),
+        )
+        .map_err(MolRsError::Block)?;
+    atoms
+        .insert(
+            "y",
+            Array1::from_vec(cart_y.iter().map(|&v| v as F).collect::<Vec<_>>()).into_dyn(),
+        )
+        .map_err(MolRsError::Block)?;
+    atoms
+        .insert(
+            "z",
+            Array1::from_vec(cart_z.iter().map(|&v| v as F).collect::<Vec<_>>()).into_dyn(),
+        )
+        .map_err(MolRsError::Block)?;
     if !atom_syms.is_empty() {
         use ndarray::ArrayD;
         use ndarray::IxDyn;
-        atoms.insert(
-            "symbol",
-            ArrayD::from_shape_vec(IxDyn(&[n_atoms]), atom_syms)
-                .expect("shape matches")
-                .into_dyn(),
-        ).map_err(MolRsError::Block)?;
+        atoms
+            .insert(
+                "symbol",
+                ArrayD::from_shape_vec(IxDyn(&[n_atoms]), atom_syms)
+                    .expect("shape matches")
+                    .into_dyn(),
+            )
+            .map_err(MolRsError::Block)?;
     }
 
     // Build SimBox from cell rows (CHGCAR rows = molrs column convention)
@@ -301,8 +302,9 @@ fn parse_floats(line: &str, expected: usize, line_no: usize) -> Result<Vec<f64>,
         .split_whitespace()
         .take(expected)
         .map(|s| {
-            s.parse::<f64>()
-                .map_err(|_| MolRsError::parse_error(line_no, format!("expected float, got '{}'", s)))
+            s.parse::<f64>().map_err(|_| {
+                MolRsError::parse_error(line_no, format!("expected float, got '{}'", s))
+            })
         })
         .collect::<Result<_, _>>()?;
     if vals.len() < expected {
@@ -317,8 +319,9 @@ fn parse_floats(line: &str, expected: usize, line_no: usize) -> Result<Vec<f64>,
 fn parse_usize_vec(line: &str, line_no: usize) -> Result<Vec<usize>, MolRsError> {
     line.split_whitespace()
         .map(|s| {
-            s.parse::<usize>()
-                .map_err(|_| MolRsError::parse_error(line_no, format!("expected integer, got '{}'", s)))
+            s.parse::<usize>().map_err(|_| {
+                MolRsError::parse_error(line_no, format!("expected integer, got '{}'", s))
+            })
         })
         .collect()
 }
@@ -351,9 +354,7 @@ fn read_volumetric_data<R: BufRead>(
     let mut values = Vec::with_capacity(n_voxels);
     while values.len() < n_voxels {
         let mut line = String::new();
-        let bytes = reader
-            .read_line(&mut line)
-            .map_err(|e| MolRsError::Io(e))?;
+        let bytes = reader.read_line(&mut line).map_err(MolRsError::Io)?;
         *line_no += 1;
         if bytes == 0 {
             return Err(MolRsError::parse_error(
@@ -410,7 +411,9 @@ fn skip_blank_lines<R: BufRead>(reader: &mut R, line_no: &mut usize) -> Result<(
         let newline_pos = buf.iter().position(|&b| b == b'\n');
         let line_is_blank = match newline_pos {
             None => buf.iter().all(|&b| b == b' ' || b == b'\t' || b == b'\r'),
-            Some(pos) => buf[..pos].iter().all(|&b| b == b' ' || b == b'\t' || b == b'\r'),
+            Some(pos) => buf[..pos]
+                .iter()
+                .all(|&b| b == b' ' || b == b'\t' || b == b'\r'),
         };
         if !line_is_blank {
             return Ok(());
