@@ -111,7 +111,7 @@ fn test_valtest_structure() {
     let atoms = frame.get("atoms").expect("atoms");
     assert_eq!(atoms.nrows().unwrap(), 2, "valtest has 2 atoms");
 
-    let symbols = atoms.get_string("symbol").expect("symbol column");
+    let symbols = atoms.get_string("element").expect("element column");
     assert_eq!(symbols[[0]], "H");
     assert_eq!(symbols[[1]], "H");
 

@@ -277,7 +277,7 @@ pub fn read_cube_from_reader<R: BufRead>(mut reader: R) -> Result<Frame, MolRsEr
         .map_err(MolRsError::Block)?;
     atoms
         .insert(
-            "symbol",
+            "element",
             ArrayD::from_shape_vec(IxDyn(&[n_atoms]), symbols)
                 .expect("shape matches")
                 .into_dyn(),
@@ -391,7 +391,7 @@ pub fn write_cube_to_writer<W: Write>(writer: &mut W, frame: &Frame) -> Result<(
     let atom_z = atoms.get_float("z");
     let atom_z_num = atoms.get_int("atomic_number");
     let atom_charge = atoms.get_float("charge");
-    let atom_symbol = atoms.get_string("symbol");
+    let atom_symbol = atoms.get_string("element");
 
     for i in 0..n_atoms {
         let z_num = atom_z_num

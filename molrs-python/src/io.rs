@@ -186,7 +186,7 @@ pub fn read_chgcar_file(path: &str) -> PyResult<PyFrame> {
 ///
 /// Returns a Frame containing:
 ///
-/// - ``"atoms"`` block with ``symbol``, ``x``, ``y``, ``z``,
+/// - ``"atoms"`` block with ``element``, ``x``, ``y``, ``z``,
 ///   ``atomic_number``, ``charge``
 /// - grid ``"cube"``: a :class:`Grid` with ``"density"`` (scalar field)
 ///   or ``"mo_<idx>"`` arrays (MO variant)
