@@ -13,7 +13,6 @@ use super::*;
 pub mod ffi {
     extern "Rust" {
         type AtvMolRec;
-        type Rdf;
 
         // ── MolRec container ─────────────────────────────────────
         fn molrec_new() -> Box<AtvMolRec>;
@@ -36,12 +35,7 @@ pub mod ffi {
         fn molrec_write_zarr(path: &str, rec: &AtvMolRec);
         fn molrec_print_summary(rec: &AtvMolRec);
 
-        // ── RDF (opaque handle wraps molrs::compute::rdf::RDF) ──
-        fn rdf_new(n_bins: i32, r_max: f64) -> Box<Rdf>;
-        fn rdf_accumulate(rdf: &mut Rdf, distances: &[f64], n_pairs: i32);
-        fn rdf_write(rdf: &Rdf, path: &str,
-            n_samples: i32, n_atoms: i32, box_vol: f64);
-
+        // TODO: RDF via molrs (currently pure C++ in Atomiverse)
         // TODO: Mulliken analysis (pending molrs-core implementation)
     }
 }

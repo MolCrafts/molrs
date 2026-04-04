@@ -247,47 +247,4 @@ fn molrec_print_summary(rec: &AtvMolRec) {
     println!("{}\n", "\u{2500}".repeat(57));
 }
 
-// ── RDF ──────────────────────────────────────────────────────────────────────
-
-use molrs::compute::rdf::RDF as RdfCompute;
-
-pub struct Rdf {
-    inner: RdfCompute,
-    histogram: Vec<i64>,
-}
-
-fn rdf_new(n_bins: i32, r_max: f64) -> Box<Rdf> {
-    let n = n_bins as usize;
-    Box::new(Rdf {
-        inner: RdfCompute::new(n, r_max as F),
-        histogram: vec![0i64; n],
-    })
-}
-
-fn rdf_accumulate(rdf: &mut Rdf, distances: &[F], n_pairs: i32) {
-    let bw = rdf.inner.bin_width();
-    let nb = rdf.histogram.len();
-    for i in 0..n_pairs as usize {
-        let bin = (distances[i] / bw) as usize;
-        if bin < nb { rdf.histogram[bin] += 1; }
-    }
-}
-
-fn rdf_write(rdf: &Rdf, path: &str, n_samples: i32, n_atoms: i32, box_vol: f64) {
-    let f = File::create(path).expect("rdf_write: create");
-    let mut w = BufWriter::new(f);
-    writeln!(w, "# r [Angstrom]   g(r)").unwrap();
-    let n = n_atoms as f64;
-    let rho = n / box_vol;
-    let pi = std::f64::consts::PI;
-    let bw = rdf.inner.bin_width() as f64;
-    for i in 0..rdf.histogram.len() {
-        let r = (i as f64 + 0.5) * bw;
-        let r_lo = i as f64 * bw;
-        let r_hi = (i as f64 + 1.0) * bw;
-        let shell = (4.0 / 3.0) * pi * (r_hi.powi(3) - r_lo.powi(3));
-        let ideal = n_samples as f64 * n * rho * shell;
-        let gr = if ideal > 0.0 { 2.0 * rdf.histogram[i] as f64 / ideal } else { 0.0 };
-        writeln!(w, "{:.6}  {:.6}", r, gr).unwrap();
-    }
-}
+// RDF and Mulliken are not yet migrated to molrs — they remain pure C++ in Atomiverse.
