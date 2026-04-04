@@ -109,6 +109,7 @@ pub use smiles::{parse_smarts, parse_smiles, to_atomistic};
 // Re-export IO functions for convenience
 pub use forcefield::xml::{read_forcefield_xml, read_forcefield_xml_str};
 pub use io::chgcar::read_chgcar;
+pub use io::cube::{read_cube, write_cube};
 pub use io::lammps_data::{read_lammps_data, write_lammps_data};
 pub use io::lammps_dump::{open_lammps_dump, read_lammps_dump, write_lammps_dump};
 pub use io::pdb::{read_pdb_frame, write_pdb_frame};
