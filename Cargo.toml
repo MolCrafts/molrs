@@ -1,5 +1,5 @@
 [workspace]
-members = ["molrs-core", "molrs-pack"]
+members = ["molrs-core", "molrs-pack", "molrs-cxxapi"]
 resolver = "3"
 
 [workspace.package]

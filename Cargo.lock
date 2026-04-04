@@ -277,6 +277,7 @@ checksum = "793207c7fa6300a0608d1080b858e5fdbe713cdc1c8db9fb17777d8a13e63df0"
 dependencies = [
  "anstyle",
  "clap_lex",
+ "strsim",
 ]
 
 [[package]]
@@ -284,6 +285,17 @@ name = "clap_lex"
 version = "0.7.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3e64b0cc0439b12df2fa678eae89a1c56a529fd067a9115f7827f1fffd22b32"
+
+[[package]]
+name = "codespan-reporting"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af491d569909a7e4dee0ad7db7f5341fef5c614d5b8ec8cf765732aba3cff681"
+dependencies = [
+ "serde",
+ "termcolor",
+ "unicode-width",
+]
 
 [[package]]
 name = "colorchoice"
@@ -393,6 +405,68 @@ name = "crunchy"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
+
+[[package]]
+name = "cxx"
+version = "1.0.194"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "747d8437319e3a2f43d93b341c137927ca70c0f5dabeea7a005a73665e247c7e"
+dependencies = [
+ "cc",
+ "cxx-build",
+ "cxxbridge-cmd",
+ "cxxbridge-flags",
+ "cxxbridge-macro",
+ "foldhash",
+ "link-cplusplus",
+]
+
+[[package]]
+name = "cxx-build"
+version = "1.0.194"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b0f4697d190a142477b16aef7da8a99bfdc41e7e8b1687583c0d23a79c7afc1e"
+dependencies = [
+ "cc",
+ "codespan-reporting",
+ "indexmap",
+ "proc-macro2",
+ "quote",
+ "scratch",
+ "syn",
+]
+
+[[package]]
+name = "cxxbridge-cmd"
+version = "1.0.194"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d0956799fa8678d4c50eed028f2de1c0552ae183c76e976cf7ca8c4e36a7c328"
+dependencies = [
+ "clap",
+ "codespan-reporting",
+ "indexmap",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "cxxbridge-flags"
+version = "1.0.194"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23384a836ab4f0ad98ace7e3955ad2de39de42378ab487dc28d3990392cb283a"
+
+[[package]]
+name = "cxxbridge-macro"
+version = "1.0.194"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e6acc6b5822b9526adfb4fc377b67128fdd60aac757cc4a741a6278603f763cf"
+dependencies = [
+ "indexmap",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
 
 [[package]]
 name = "derive_more"
@@ -812,6 +886,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "link-cplusplus"
+version = "1.0.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f78c730aaa7d0b9336a299029ea49f9ee53b0ed06e9202e8cb7db9bae7b8c82"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "linux-raw-sys"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -916,6 +999,16 @@ dependencies = [
  "ndarray",
  "rand 0.9.2",
  "rayon",
+]
+
+[[package]]
+name = "molrs-cxxapi"
+version = "0.0.7"
+dependencies = [
+ "cxx",
+ "cxx-build",
+ "molcrafts-molrs",
+ "ndarray",
 ]
 
 [[package]]
@@ -1451,6 +1544,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
+name = "scratch"
+version = "1.0.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d68f2ec51b097e4c1a75b681a8bec621909b5e91f15bb7b840c4f2f7b01148b2"
+
+[[package]]
 name = "semver"
 version = "1.0.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1551,6 +1650,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fe895eb47f22e2ddd4dabc02bce419d2e643c8e3b585c78158b349195bc24d82"
 
 [[package]]
+name = "strsim"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
+
+[[package]]
 name = "syn"
 version = "2.0.114"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1578,6 +1683,15 @@ dependencies = [
  "once_cell",
  "rustix",
  "windows-sys",
+]
+
+[[package]]
+name = "termcolor"
+version = "1.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "06794f8f6c5c898b3275aebefa6b8a1cb24cd2c6c79397ab15774837a0bc5755"
+dependencies = [
+ "winapi-util",
 ]
 
 [[package]]
@@ -1655,6 +1769,12 @@ name = "unicode-segmentation"
 version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f6ccf251212114b54433ec949fd6a7841275f9ada20dddd2f29e9ceea4501493"
+
+[[package]]
+name = "unicode-width"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4ac048d71ede7ee76d585517add45da530660ef4390e49b098733c6e897f254"
 
 [[package]]
 name = "unicode-xid"

@@ -58,6 +58,12 @@ impl RDF {
         }
     }
 
+    /// Bin width in angstrom.
+    pub fn bin_width(&self) -> F { self.bin_width }
+
+    /// Number of histogram bins.
+    pub fn n_bins(&self) -> usize { self.n_bins }
+
     /// Convenience: wrap this RDF in an `Accumulator<Self, SumReducer<RDFResult>>`.
     pub fn accumulate_sum(self) -> Accumulator<Self, SumReducer<RDFResult>> {
         Accumulator::new(self, SumReducer::new())

@@ -58,3 +58,4 @@ molrs-python/python/molrs/*.dylib
 molrs-python/python/molrs/*.dll
 molrs-python/python/molrs/*.so
 molrs-python/python/molrs/*.dylib.dSYM/
+molrs-cxxapi/src/bridge.rs
