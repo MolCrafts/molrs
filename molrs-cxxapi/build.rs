@@ -35,8 +35,9 @@ pub mod ffi {
         fn molrec_write_zarr(path: &str, rec: &AtvMolRec);
         fn molrec_print_summary(rec: &AtvMolRec);
 
+        // Mulliken stays in C++ — depends on electronic structure context (basis
+        // sets, overlap matrix) that is not available from raw simulation data.
         // TODO: RDF via molrs (currently pure C++ in Atomiverse)
-        // TODO: Mulliken analysis (pending molrs-core implementation)
     }
 }
 "#;

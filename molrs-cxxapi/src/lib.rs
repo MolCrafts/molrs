@@ -247,4 +247,5 @@ fn molrec_print_summary(rec: &AtvMolRec) {
     println!("{}\n", "\u{2500}".repeat(57));
 }
 
-// RDF and Mulliken are not yet migrated to molrs — they remain pure C++ in Atomiverse.
+// Mulliken and RDF stay in C++ — they depend on electronic structure / simulation
+// context that is not available from raw per-frame data alone.
