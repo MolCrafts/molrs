@@ -1,6 +1,6 @@
 ---
 name: molrec-compat
-description: Evaluate molrec spec compatibility for a file format. Spawns a product-manager agent to audit naming, metadata, grid mapping, and propose spec improvements.
+description: Evaluate whether a file format's data flows smoothly into molrec. Checks molrs internal conventions, structural fit, cross-format consistency, and user ergonomics.
 argument-hint: "<format-name>"
 user-invocable: true
 ---
@@ -17,64 +17,87 @@ Examples:
 - `/molrec-compat chgcar` — evaluate VASP CHGCAR integration
 - `/molrec-compat lammps-dump` — evaluate LAMMPS dump integration
 
+## Key principles
+
+- **molrec is a universal container** — it defines structure (Frame, Grid, Collection, Observable), NOT field names. The question is "does the data fit in naturally?", not "does it cover every molrec feature?"
+- **molrs has internal naming conventions** — readers MUST map format-specific names to molrs standard names (e.g., always `element`, never `symbol`). Check the reader against molrs conventions, not molrec spec names.
+- **Smooth flow, not perfect coverage** — a cube file doesn't need to fill `method` or `observables`. It just needs to land in `frame/atoms` + `frame/grids` without friction.
+
 ## Workflow
 
 ### Step 1: Gather context (parallel)
 
 Launch up to 3 Explore agents in parallel:
 
-1. **Format reader/writer** — Read `molrs-core/src/io/<format>.rs` to understand what fields are parsed, how they map to Frame/Grid/Block, and what metadata is stored.
+1. **Format reader/writer** — Read `molrs-core/src/io/<format>.rs`. Extract: column names used in Block inserts, grid key, grid array keys, metadata keys, SimBox handling.
 
-2. **MolRec spec** — Read the relevant spec docs:
-   - `/home/jicli594/work/molcrafts/molrec/docs/spec/frame.md`
-   - `/home/jicli594/work/molcrafts/molrec/docs/spec/types.md`
-   - `/home/jicli594/work/molcrafts/molrec/docs/spec/observables.md`
+2. **Cross-format comparison** — Read at least one other reader that handles similar data (e.g., for volumetric formats compare cube vs chgcar). Extract the same field inventory. Flag divergences.
 
-3. **Existing tests & cross-format comparison** — Read:
-   - molrec test for this format: `/home/jicli594/work/molcrafts/molrec/src/molrec/tests/test_<format>.py`
-   - Other format readers for naming comparison (e.g., compare cube vs chgcar field names)
+3. **Existing molrec tests** — Read `molrec/src/molrec/tests/test_<format>.py`. Check: what's tested, what passes, what's missing. Also check the Zarr roundtrip tests.
 
 ### Step 2: Product Manager evaluation
 
-Spawn the **product-manager** agent (see `.claude/agents/product-manager.md`) with full context from Step 1. The agent evaluates 6 dimensions:
+Using the **product-manager** agent persona (`.claude/agents/product-manager.md`), evaluate:
 
-1. **Field naming alignment** — Do column names match molrec spec conventions?
-2. **Grid data model fit** — Are grid/array keys descriptive and consistent?
-3. **Metadata completeness** — Is format-provided information captured structurally?
-4. **Observable readiness** — Can grid data promote to observables without manual metadata?
-5. **Roundtrip fidelity** — Is information preserved through MolRec → Zarr → reload?
-6. **API ergonomics** — Is the Python API discoverable and consistent?
+1. **molrs convention compliance** — Does the reader use molrs internal names?
 
-### Step 3: Cross-format consistency check
+   | molrs standard | Common violations |
+   |----------------|-------------------|
+   | `element` | `symbol`, `type`, `atom_type` |
+   | `x`, `y`, `z` | `pos_x`, `coord_x` |
+   | `atomic_number` | `z`, `Z`, `atnum` |
+   | `charge` (partial) | nuclear charge stored as `charge` |
 
-Compare naming conventions with at least one other format that stores similar data:
+2. **Structural fit** — Does the Frame map to molrec's tree?
+   - `frame/atoms` ← Block with per-atom columns
+   - `frame/grids/<name>` ← Grid with dim/origin/cell/pbc + arrays
+   - `frame/box` ← SimBox (if appropriate)
+   - `frame/meta` ← key-value metadata
 
-| Aspect | Format A | Format B | Consistent? |
-|--------|----------|----------|-------------|
-| Grid key | `"chgcar"` | `"cube"` | Both format-named |
-| Density array | `"total"` | `"density"` | ⚠️ Divergent |
-| Comment | `meta["title"]` | `meta["comment1"]` | ⚠️ Divergent |
-| Atom symbol | `"symbol"` | `"symbol"` | ✅ |
+3. **User ergonomics** — Can a scientist discover and use the data without reading source code?
 
-### Step 4: Generate report
+4. **Cross-format consistency** — Behavioral surprises compared to similar readers?
 
-Output the compatibility report following the product-manager's output format:
+5. **Roundtrip fidelity** — Zarr roundtrip and format roundtrip status.
 
-```
+### Step 3: Generate report
+
+Output format:
+
+```markdown
 # MolRec Compatibility Report: <Format>
-## Summary
-## Mapping Audit
+
+## Verdict
+<One sentence: YES / YES WITH ISSUES / NEEDS WORK>
+
+## molrs Convention Check
+| Field used | Expected | Status |
+|------------|----------|--------|
+
+## Structural Fit
+<How the data maps to frame tree — what fits, what doesn't>
+
 ## Friction Points
-## Recommendations
-## Compatibility Score
+### [P1] <title>
+- **Severity**: HIGH / MEDIUM / LOW
+- **What**: ...
+- **Impact**: ...
+- **Fix**: <file path + change>
+
+## Cross-Format Consistency
+<Table vs similar format>
+
+## Roundtrip Status
+- Zarr: PASS/FAIL
+- Format: PASS/FAIL
 ```
 
-### Step 5: Propose action items
+### Step 4: Action items
 
-For each friction point with severity HIGH or above, propose a concrete action:
+For each friction point, propose a concrete fix:
 
-- **Spec change** → draft the spec diff
-- **Reader change** → describe the code change with file paths
-- **Naming convention** → propose the canonical name and migration path
+- **Reader fix** → file path + what to change
+- **molrec spec gap** → what's missing in the structural model
+- **Convention issue** → which molrs convention is violated and how to fix
 
-Present action items to the user for prioritization.
+Present to user for prioritization. Do NOT auto-implement.
