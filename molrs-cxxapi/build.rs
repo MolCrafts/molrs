@@ -26,13 +26,14 @@ pub mod ffi {
         fn molrec_clear(rec: &mut AtvMolRec);
         fn molrec_n_frames(rec: &AtvMolRec) -> i32;
 
-        // ── XYZ I/O ─────────────────────────────────────────────
+        // ── I/O ──────────────────────────────────────────────────
         fn xyz_write(path: &str, rec: &AtvMolRec);
         fn xyz_write_ext(path: &str, rec: &AtvMolRec);
         fn xyz_append(path: &str, rec: &AtvMolRec);
         fn xyz_append_ext(path: &str, rec: &AtvMolRec);
         fn trajectory_append(path: &str, type_id: &[i32],
             x: &[{F}], y: &[{F}], z: &[{F}], step: i32);
+        fn molrec_write_zarr(path: &str, rec: &AtvMolRec);
         fn molrec_print_summary(rec: &AtvMolRec);
 
         // ── RDF (opaque handle wraps molrs::compute::rdf::RDF) ──

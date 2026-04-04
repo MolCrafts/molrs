@@ -12,8 +12,9 @@ name = "molrs_cxxapi"
 crate-type = ["staticlib"]
 
 [features]
-default = []
+default = ["zarr"]
 f64 = ["molrs/f64"]
+zarr = ["molrs/filesystem"]
 
 [dependencies]
 molrs = { package = "molcrafts-molrs", path = "../molrs-core" }
