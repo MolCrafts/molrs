@@ -12,7 +12,9 @@ use molrs::block::block_view::BlockView;
 use molrs::block::column_view::ColumnView;
 use molrs::frame::Frame;
 use molrs::frame_view::FrameView;
-use molrs::io::xyz::write_xyz_frame;
+use molrs_io::xyz::write_xyz_frame;
+#[cfg(feature = "zarr")]
+use molrs_io::zarr::write_molrec_file;
 use molrs::molrec::MolRec;
 use molrs::region::simbox::SimBox;
 use molrs::types::F;
@@ -294,8 +296,9 @@ fn trajectory_append(path: &str, type_id: &[i32], x: &[F], y: &[F], z: &[F], ste
     }
 }
 
+#[cfg(feature = "zarr")]
 fn molrec_write_zarr(path: &str, rec: &AtvMolRec) {
-    rec.rec.write_zarr(path).expect("molrec_write_zarr: write");
+    write_molrec_file(path, &rec.rec).expect("molrec_write_zarr: write");
 }
 
 fn molrec_print_summary(rec: &AtvMolRec) {

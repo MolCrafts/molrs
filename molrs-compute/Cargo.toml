@@ -1,0 +1,25 @@
+[package]
+name = "molcrafts-molrs-compute"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Trajectory analysis for MolCrafts (RDF, MSD, clustering, gyration tensor)"
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+name = "molrs_compute"
+
+[features]
+default = []
+rayon = ["molrs/rayon"]
+
+[dependencies]
+molrs = { path = "../molrs-core", package = "molcrafts-molrs" }
+ndarray = "0.17"
+rustfft = "6"
+
+[dev-dependencies]
+rand = "0.9"

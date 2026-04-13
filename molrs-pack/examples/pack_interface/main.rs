@@ -26,7 +26,7 @@
 use std::fs::create_dir_all;
 use std::path::PathBuf;
 
-use molrs::io::pdb::read_pdb_frame;
+use molrs_io::pdb::read_pdb_frame;
 use molrs_pack::{InsideBoxConstraint, Molpack, ProgressHandler, Target, XYZHandler};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

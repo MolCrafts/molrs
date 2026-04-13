@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::path::{Path, PathBuf};
 
-use molrs::io::pdb::read_pdb_frame;
+use molrs_io::pdb::read_pdb_frame;
 
 use crate::constraint::RegionConstraint;
 use crate::target::Target;

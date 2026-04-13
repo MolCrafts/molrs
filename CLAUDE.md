@@ -4,14 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-molrs is a Rust workspace for molecular simulation: core data structures, molecular packing, FFI layer, and WebAssembly bindings. Rust edition 2024, resolver "3".
+molrs is a Rust workspace for molecular simulation: core data structures, file I/O, trajectory analysis, force fields, 3D coordinate generation, molecular packing, and a CXX bridge to Atomiverse C++. Rust edition 2024, resolver "3".
 
 ## IO Testing Rules (MANDATORY)
 
 **NEVER write synthetic/hand-crafted test data for IO tests.**
 
 Every file-format reader/writer MUST be tested against **all** real files in
-`molrs-core/target/tests-data/<format>/`. Rules:
+`molrs-core/target/tests-data/<format>/` (the test-data submodule is shared across
+crates from this location). Rules:
 
 1. When adding a new format reader (e.g. CHGCAR), add matching real files to
    the `tests-data` repo (`https://github.com/MolCrafts/tests-data`) under a
@@ -22,7 +23,7 @@ Every file-format reader/writer MUST be tested against **all** real files in
    structurally valid fixture only to cover parser edge-cases that are hard to
    produce from real data (e.g. malformed input → expected error). Keep these
    fixtures as small as possible and document where the snippet comes from.
-4. Integration tests live in `molrs-core/tests/test_io/test_<format>.rs` and
+4. Integration tests live in `molrs-io/tests/test_io/test_<format>.rs` and
    use `crate::test_data::get_test_data_path("<format>/<file>")`.
 
 Violation: writing `let content = "..."; read_from_str(content)` for happy-path
@@ -39,13 +40,11 @@ cargo test --all-features
 cargo test -p molrs-core              # single crate
 cargo test -p molrs-core test_name    # single test
 cargo test --features slow-tests      # expensive integration tests
+cargo test -p molrs-io                # IO format tests (uses tests-data submodule)
 
 # Lint & Format
 cargo fmt --all
 cargo clippy -- -D warnings
-
-# WASM
-cd molrs-wasm && wasm-pack build --release --target web
 
 # Benchmarks (criterion)
 cargo bench -p molrs-core
@@ -53,17 +52,31 @@ cargo bench -p molrs-core
 
 ## Workspace Crates & Dependency Flow
 
+8 active workspace members. `molrs-core` is the foundation; everything else depends on it
+(plus, in a few cases, on each other as listed):
+
 ```
-molrs-core ← molrs-ffi ← molrs-wasm
-molrs-core ← molrs-pack
+molrs-core ── molrs-io ── molrs-cxxapi
+            ── molrs-compute
+            ── molrs-smiles
+            ── molrs-ff (may also depend on molrs-io for parameter files)
+            ── molrs-gen3d
+            ── molrs-pack
 ```
 
 | Crate | Purpose |
 |---|---|
-| `molrs-core` | Core: Frame/Block/MolGraph, I/O (PDB, XYZ, LAMMPS, Zarr), neighbors, potentials, typifiers, gen3d |
+| `molrs-core` | Frame/Block/Grid/MolGraph/MolRec/Topology/Element, neighbors, math, region (SimBox), stereochemistry, rings, Gasteiger charges, hydrogen perception, atom-type mapping |
+| `molrs-io` | File I/O: PDB, XYZ, LAMMPS data/dump, CHGCAR, Gaussian Cube, Zarr V3 trajectories |
+| `molrs-compute` | Trajectory analysis: RDF, MSD, clustering, gyration/inertia tensors |
+| `molrs-smiles` | SMILES parser → MolGraph |
+| `molrs-ff` | Force fields, potentials (KernelRegistry), atom typifier |
+| `molrs-gen3d` | 3D coordinate generation: distance geometry, fragment assembly, optimizer, rotor search |
 | `molrs-pack` | Molecular packing: faithful Packmol port, GENCAN optimizer, geometric constraints |
-| `molrs-ffi` | Handle-based FFI via SlotMap with version-tracked invalidation |
-| `molrs-wasm` | wasm-bindgen browser bindings |
+| `molrs-cxxapi` | CXX bridge to Atomiverse C++ (zero-copy I/O via `FrameView`) |
+
+Dirs `molrs-ffi/`, `molrs-wasm/`, `molrs-capi/`, `molrs-python/` exist on disk but are NOT
+workspace members; treat as inactive / future work.
 
 ## Feature Flags
 
@@ -102,24 +115,24 @@ Graph-based molecular structure with atoms, bonds, stereochemistry, ring detecti
 
 ## Trait-Based Extensibility
 
-| Trait | Module | Purpose | Key Implementations |
+| Trait | Crate | Purpose | Key Implementations |
 |---|---|---|---|
-| `NbListAlgo` | `neighbors/` | Neighbor search | `LinkCell` (O(N), default), `BruteForce` (O(N²), testing), `NeighborQuery` (high-level wrapper) |
-| `Potential` | `potential/` | Energy/force evaluation | Bond harmonic, MMFF bond/angle/torsion/oop/vdw/ele, LJ/cut, PME |
-| `Typifier` | `typifier/` | MolGraph → typed Frame | MMFFTypifier |
-| `Constraint` | `molrs-pack/constraint.rs` | Packing geometry | InsideBox, InsideSphere, OutsideSphere, Plane, Cylinder, Ellipsoid |
+| `NbListAlgo` | `molrs-core::neighbors` | Neighbor search | `LinkCell` (O(N), default), `BruteForce` (O(N²), testing), `NeighborQuery` (high-level wrapper) |
+| `Potential` | `molrs-ff::potential` | Energy/force evaluation | Bond harmonic, MMFF bond/angle/torsion/oop/vdw/ele, LJ/cut, PME |
+| `Typifier` | `molrs-ff::typifier` | MolGraph → typed Frame | MMFFTypifier |
+| `Constraint` | `molrs-pack::constraint` | Packing geometry | InsideBox, InsideSphere, OutsideSphere, Plane, Cylinder, Ellipsoid |
 
 ## Key Subsystems
 
-### Potential System (molrs-core/src/potential/)
+### Potential System (molrs-ff/src/potential/)
 
 `KernelRegistry` maps `(category, style_name)` → `KernelConstructor`. Categories: bonds, angles, dihedrals, impropers, pairs, kspace. `ForceField::compile(frame)` resolves topology and constructs `Potentials` (aggregate sum). Coordinate format: flat `[x0,y0,z0, x1,y1,z1, ...]` (3N elements). MMFF94 parameters embedded at compile time from `data/mmff94.xml`.
 
 ### Free-Boundary Support
 
-`SimBox::free(points, padding)` creates a non-periodic bounding box from atom positions. `NeighborQuery::free(points, cutoff)` and the WASM `LinkedCell` class auto-generate this box when no SimBox is present. RDF normalization falls back to bounding-box volume for free-boundary systems.
+`SimBox::free(points, padding)` creates a non-periodic bounding box from atom positions. `NeighborQuery::free(points, cutoff)` auto-generates this box when no SimBox is present. RDF normalization (`molrs-compute`) falls back to bounding-box volume for free-boundary systems.
 
-### Gen3D Pipeline (molrs-core/src/gen3d/)
+### Gen3D Pipeline (molrs-gen3d/)
 
 Multi-stage 3D coordinate generation: distance geometry → fragment assembly → coarse minimization → rotor search → final minimization → stereo guards. Public API: `generate_3d(mol, opts) -> Result<(MolGraph, Gen3DReport)>`.
 
@@ -127,9 +140,9 @@ Multi-stage 3D coordinate generation: distance geometry → fragment assembly �
 
 Faithful Packmol port with GENCAN optimizer. Three phases: (0) per-type sequential packing, (1) geometric constraint fitting, (2) main loop with inflated tolerance and movebad heuristic. See `.claude/skills/learn-packmol/SKILL.md` for canonical hyperparameters and mandatory Packmol-alignment workflow.
 
-### FFI Layer (molrs-ffi/)
+### FFI Layer (molrs-cxxapi/)
 
-Handle-based design: `FrameId` from SlotMap (index + generation), `BlockHandle` with frame_id + key + version counter. Version increments on block modification for invalidation detection. No raw pointers cross FFI.
+CXX bridge to Atomiverse C++. Zero-copy I/O via `FrameView` (borrowed) into existing `write_xyz_frame`; owned `Frame` only built when persisting to MolRec (Zarr). Bridge generated from `#[cxx::bridge]` in `bridge.rs`. No raw pointers cross the boundary.
 
 ## Critical Conventions
 
@@ -140,4 +153,24 @@ Handle-based design: `FrameId` from SlotMap (index + generation), `BlockHandle` 
 
 ## Development Skills & Agents
 
-Use `/molrs-impl <feature description>` to orchestrate multi-agent feature development. Use `/molrs-spec <natural language requirement>` to generate detailed specs from requirements. Use `/molrec-compat <format>` to evaluate molrec spec compatibility for a new format (spawns product-manager agent). See `.claude/skills/` and `.claude/agents/` for all available skills and agents.
+Skills (the WHAT — reference standards) and agents (the HOW — active executors) are paired
+by domain. Skills define the rules; agents apply them.
+
+| Domain | Skill | Agent |
+|---|---|---|
+| Architecture | `molrs-arch` | `molrs-architect` |
+| Performance | `molrs-perf` | `molrs-optimizer` |
+| Documentation | `molrs-doc` | `molrs-documenter` |
+| Testing | `molrs-test` | `molrs-tester` |
+| Scientific correctness | `molrs-science` | `molrs-scientist` |
+| FFI safety | `molrs-ffi` | (inline review against the skill) |
+
+Standalone skills (no paired agent):
+
+- `/molrs-impl <feature>` — single entry point for feature work; orchestrates the agents above
+- `/molrs-spec <requirement>` — convert NL requirement to a spec doc (also invoked internally by `/molrs-impl` Phase 0)
+- `/molrs-review [path]` — aggregate review across all dimensions
+- `/molrec-compat <format>` — evaluate molrec compatibility for a format
+- `/learn-packmol` — Packmol Fortran reference discipline
+
+See `.claude/skills/` and `.claude/agents/` for the full text.

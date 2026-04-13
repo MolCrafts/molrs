@@ -19,7 +19,7 @@ use std::path::PathBuf;
 
 use molrs::element::Element;
 use molrs::hydrogens::add_hydrogens;
-use molrs::io::pdb::read_pdb_frame;
+use molrs_io::pdb::read_pdb_frame;
 use molrs::molgraph::{Atom, AtomId, MolGraph};
 use molrs::types::F;
 use molrs_pack::{

@@ -1,6 +1,6 @@
 ---
 name: molrs-review
-description: Comprehensive code review aggregating architecture, performance, documentation, and Rust safety checks. Use after writing code or during PR review.
+description: Comprehensive code review aggregating architecture, performance, documentation, scientific correctness, and FFI safety. Use after writing code or during PR review.
 argument-hint: "[path or module]"
 user-invocable: true
 ---
@@ -9,46 +9,42 @@ Review code for: $ARGUMENTS
 
 If no path given, review all files modified in `git diff --name-only HEAD`.
 
-**Invoke all dimensions in parallel:**
+## Workflow
 
-1. **Architecture** → invoke `/molrs-arch` on $ARGUMENTS
-2. **Performance** → invoke `/molrs-perf` on $ARGUMENTS
-3. **Documentation** → invoke `/molrs-doc` on $ARGUMENTS
-4. **Rust & FFI Safety**:
-   - Float precision: all numeric code uses `F` alias, not raw f32/f64
-   - Coordinate convention: flat `[x0,y0,z0, x1,y1,z1, ...]` format
-   - Trait conformance: Potential/Fix/Dump implement required methods
-   - Registration patterns: KernelRegistry used correctly
-   - FFI handle safety: SlotMap handles, no raw pointers across boundary
-   - WASM memory: proper free() calls, no use-after-free
-   - Constraint gradients: TRUE gradient with `+=`, optimizer negates
-   - Rotation: LEFT multiplication `R_new = δR * R_old`
-   - `Cell<f64>` is NOT Sync — use AtomicU64 with to_bits/from_bits
-5. **Code Quality** (inline):
-   - Functions < 50 lines, files < 800 lines
-   - No deep nesting (> 4 levels)
-   - Descriptive naming (no single-letter except loop indices)
-   - `cargo clippy` clean
-   - `cargo fmt` compliant
-6. **Immutability** (inline):
-   - Input Frame/Block not mutated
-   - Clone before modification
-   - Owned vs borrowed semantics correct
+Spawn the relevant `molrs-*` agents in parallel. Each agent applies its corresponding skill's standards and reports findings. Do NOT duplicate the rule lists here — they live in the skills.
 
-**Severity levels**:
-- CRITICAL — must fix (safety issues, architecture violations)
-- HIGH — should fix (missing tests, performance issues)
-- MEDIUM — fix when possible (style, documentation gaps)
-- LOW — nice to have
+| Dimension | Agent | Skill (standards) | When to invoke |
+|---|---|---|---|
+| Architecture | `molrs-architect` | `molrs-arch` | Always |
+| Performance | `molrs-optimizer` | `molrs-perf` | Hot-path code (potentials, neighbors, GENCAN inner loop) |
+| Documentation | `molrs-documenter` | `molrs-doc` | Public API touched |
+| Scientific correctness | `molrs-scientist` | `molrs-science` | Physics touched (potentials, integrators, constraints) |
+| FFI safety | (inline review) | `molrs-ffi` | `molrs-cxxapi` touched |
 
-**Output**: Merged report:
+For code-quality and immutability dimensions that do not have dedicated agents, apply inline:
+
+- **Code quality**: functions < 50 lines, files < 800 lines, nesting ≤ 4 levels, descriptive naming, `cargo clippy` clean, `cargo fmt` compliant
+- **Immutability**: input Frame/Block not mutated; clone before modification; owned vs borrowed semantics correct
+
+## Severity
+
+- **CRITICAL** — safety / architecture violation. Block merge.
+- **HIGH** — missing tests, performance regression, wrong physics.
+- **MEDIUM** — style, documentation gaps.
+- **LOW** — nice to have.
+
+## Output Format
+
 ```
 CODE REVIEW: <path>
-ARCHITECTURE: ✅/❌ per check
-PERFORMANCE: ✅/⚠️ per check
-DOCUMENTATION: ✅/⚠️ per check
-RUST & FFI SAFETY: ✅/❌ per check
-CODE QUALITY: ✅/⚠️ per check
-IMMUTABILITY: ✅/❌ per check
+
+ARCHITECTURE:    <findings from molrs-architect>
+PERFORMANCE:     <findings from molrs-optimizer>
+DOCUMENTATION:   <findings from molrs-documenter>
+SCIENCE:         <findings from molrs-scientist>
+FFI SAFETY:      <inline review against molrs-ffi skill, if applicable>
+CODE QUALITY:    <inline checklist results>
+IMMUTABILITY:    <inline checklist results>
+
 SUMMARY: N CRITICAL, N HIGH, N MEDIUM, N LOW
 ```

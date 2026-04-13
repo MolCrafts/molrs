@@ -13,29 +13,29 @@ Evaluate MolRec compatibility for format: **$ARGUMENTS**
 
 Examples:
 
-- `/molrec-compat cube` — evaluate Gaussian Cube integration
-- `/molrec-compat chgcar` — evaluate VASP CHGCAR integration
-- `/molrec-compat lammps-dump` — evaluate LAMMPS dump integration
+- `/molrec-compat cube` — Gaussian Cube integration
+- `/molrec-compat chgcar` — VASP CHGCAR integration
+- `/molrec-compat lammps-dump` — LAMMPS dump integration
 
 ## Key principles
 
-- **molrec is a universal container** — it defines structure (Frame, Grid, Collection, Observable), NOT field names. The question is "does the data fit in naturally?", not "does it cover every molrec feature?"
+- **molrec is a universal container** — it defines structure (Frame, Grid, Collection, Observable), NOT field names. The question is "does the data fit naturally?", not "does it cover every molrec feature?"
 - **molrs has internal naming conventions** — readers MUST map format-specific names to molrs standard names (e.g., always `element`, never `symbol`). Check the reader against molrs conventions, not molrec spec names.
 - **Smooth flow, not perfect coverage** — a cube file doesn't need to fill `method` or `observables`. It just needs to land in `frame/atoms` + `frame/grids` without friction.
 
 ## Workflow
 
-### Step 1: Gather context (parallel)
+### Step 1 — Gather context (parallel)
 
 Launch up to 3 Explore agents in parallel:
 
-1. **Format reader/writer** — Read `molrs-core/src/io/<format>.rs`. Extract: column names used in Block inserts, grid key, grid array keys, metadata keys, SimBox handling.
+1. **Format reader/writer** — Read `molrs-io/src/<format>.rs`. Extract: column names used in Block inserts, grid key, grid array keys, metadata keys, SimBox handling.
 
-2. **Cross-format comparison** — Read at least one other reader that handles similar data (e.g., for volumetric formats compare cube vs chgcar). Extract the same field inventory. Flag divergences.
+2. **Cross-format comparison** — Read at least one other reader handling similar data (e.g., for volumetric formats compare cube vs chgcar). Same field inventory. Flag divergences.
 
-3. **Existing molrec tests** — Read `molrec/src/molrec/tests/test_<format>.py`. Check: what's tested, what passes, what's missing. Also check the Zarr roundtrip tests.
+3. **Existing molrec tests** — Read `molrec/src/molrec/tests/test_<format>.py`. Check: what's tested, what passes, what's missing. Also check Zarr roundtrip tests.
 
-### Step 2: Product Manager evaluation
+### Step 2 — Product Manager evaluation
 
 Using the **product-manager** agent persona (`.claude/agents/product-manager.md`), evaluate:
 
@@ -60,7 +60,7 @@ Using the **product-manager** agent persona (`.claude/agents/product-manager.md`
 
 5. **Roundtrip fidelity** — Zarr roundtrip and format roundtrip status.
 
-### Step 3: Generate report
+### Step 3 — Generate report
 
 Output format:
 
@@ -92,11 +92,11 @@ Output format:
 - Format: PASS/FAIL
 ```
 
-### Step 4: Action items
+### Step 4 — Action items
 
 For each friction point, propose a concrete fix:
 
-- **Reader fix** → file path + what to change
+- **Reader fix** → file path (`molrs-io/src/<format>.rs`) + what to change
 - **molrec spec gap** → what's missing in the structural model
 - **Convention issue** → which molrs convention is violated and how to fix
 

@@ -7,7 +7,6 @@ use serde_json::{Map as JsonMap, Value as JsonValue, json};
 
 use crate::MolRsError;
 use crate::block::Column;
-use crate::forcefield::ForceField;
 use crate::frame::Frame;
 use crate::grid::Grid;
 use crate::types::F;
@@ -233,32 +232,6 @@ impl MolRec {
         Ok(rec)
     }
 
-    /// Build a MolRec whose method metadata comes from a force field definition.
-    pub fn from_forcefield(frame: Frame, forcefield: &ForceField) -> Self {
-        let mut rec = Self::new(frame);
-        let styles: Vec<JsonValue> = forcefield
-            .styles()
-            .iter()
-            .map(|style| {
-                json!({
-                    "category": style.category(),
-                    "name": style.name,
-                })
-            })
-            .collect();
-        rec.method = json!({
-            "type": "classical",
-            "description": "Force-field-derived molecular record",
-            "classical": {
-                "force_field": {
-                    "name": forcefield.name,
-                    "styles": styles,
-                }
-            }
-        });
-        rec
-    }
-
     /// Total number of accessible frames.
     pub fn count_frames(&self) -> usize {
         match &self.trajectory {
@@ -291,30 +264,6 @@ impl MolRec {
         }
     }
 
-    /// Populate method metadata from a force-field definition.
-    pub fn set_forcefield(&mut self, ff: &ForceField) {
-        let styles: Vec<JsonValue> = ff
-            .styles()
-            .iter()
-            .map(|style| {
-                json!({
-                    "category": style.category(),
-                    "name": style.name,
-                })
-            })
-            .collect();
-        self.method = json!({
-            "type": "classical",
-            "description": "Force-field-derived molecular record",
-            "classical": {
-                "force_field": {
-                    "name": ff.name,
-                    "styles": styles,
-                }
-            }
-        });
-    }
-
     /// Replace the trajectory.
     pub fn set_trajectory(&mut self, trajectory: Option<Trajectory>) {
         self.trajectory = trajectory;
@@ -336,38 +285,6 @@ impl MolRec {
     }
 }
 
-#[cfg(feature = "zarr")]
-impl MolRec {
-    /// Read a MolRec from a Zarr v3 store.
-    pub fn read_zarr_store(
-        store: zarrs::storage::ReadableWritableListableStorage,
-    ) -> Result<Self, crate::error::MolRsError> {
-        crate::io::zarr::read_molrec_store(store)
-    }
-
-    /// Count addressable frames in a MolRec Zarr v3 store.
-    pub fn count_zarr_frames(
-        store: zarrs::storage::ReadableWritableListableStorage,
-    ) -> Result<u64, crate::error::MolRsError> {
-        crate::io::zarr::count_molrec_frames_in_store(store)
-    }
-}
-
-#[cfg(all(feature = "zarr", feature = "filesystem"))]
-impl MolRec {
-    /// Read a MolRec from a Zarr v3 directory.
-    pub fn read_zarr(path: impl AsRef<std::path::Path>) -> Result<Self, crate::error::MolRsError> {
-        crate::io::zarr::read_molrec_file(path)
-    }
-
-    /// Write a MolRec into a Zarr v3 directory.
-    pub fn write_zarr(
-        &self,
-        path: impl AsRef<std::path::Path>,
-    ) -> Result<(), crate::error::MolRsError> {
-        crate::io::zarr::write_molrec_file(path, self)
-    }
-}
 
 fn empty_object() -> JsonValue {
     JsonValue::Object(JsonMap::new())

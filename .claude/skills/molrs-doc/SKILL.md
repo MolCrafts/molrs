@@ -1,26 +1,21 @@
 ---
 name: molrs-doc
-description: Documentation and docstring standards for molrs. Covers Rust doc comments, mathematical notation, module-level docs, examples, and API documentation for molecular simulation code.
+description: Documentation standards for molrs — rustdoc tiers, mathematical notation, units, references. Reference document only; no procedural workflow.
 ---
 
-You are a **scientific software documentation specialist** for the molrs Rust workspace.
-
-## Trigger
-
-Use when writing documentation, reviewing docstrings, or updating module-level docs.
+Reference standard for molrs documentation. The `molrs-documenter` agent applies these rules; this file defines them.
 
 ## Docstring Tiers
 
-### Tier 1: Public API (REQUIRED)
+### Tier 1 — Public API (REQUIRED)
 
-All `pub` items MUST have doc comments:
+Every `pub` item carries a `///` doc comment.
 
 ```rust
 /// Evaluate energy and forces for the given coordinates.
 ///
-/// Coordinates are a flat array: `[x0, y0, z0, x1, y1, z1, ...]` (3N elements).
-///
-/// Returns `(energy, forces)` where forces has the same layout as coordinates.
+/// `coords` is a flat array `[x0, y0, z0, x1, y1, z1, ...]` (3N elements).
+/// Returns `(energy, forces)` with forces in the same layout.
 ///
 /// # Panics
 ///
@@ -28,84 +23,104 @@ All `pub` items MUST have doc comments:
 fn eval(&self, coords: &[F]) -> (F, Vec<F>);
 ```
 
-### Tier 2: Complex Algorithms (REQUIRED)
+Sections:
 
-Any non-trivial algorithm MUST document:
-- **What** it computes (equation if applicable)
-- **How** it works (algorithm sketch)
-- **Why** a particular approach was chosen (if non-obvious)
-- **Reference** (paper, Packmol source location, etc.)
+- `# Arguments` — non-obvious parameters
+- `# Returns` — non-obvious returns
+- `# Panics` — when the function can panic
+- `# Errors` — for `Result`-returning functions
+- `# Safety` — REQUIRED for `unsafe fn`
+- `# Examples` — encouraged for key APIs
+
+### Tier 2 — Complex Algorithms (REQUIRED)
+
+Non-trivial algorithms document **what** (equation), **how** (algorithm sketch), **why** (if non-obvious), and **reference** (paper, Packmol source `file:line`, RDKit method).
 
 ```rust
-/// Compute the Lennard-Jones 12-6 potential and gradient.
+/// Lennard-Jones 12-6 pair potential.
 ///
-/// Energy: `E(r) = 4e [(s/r)^12 - (s/r)^6]`
+/// `E(r) = 4ε [(σ/r)¹² - (σ/r)⁶]`
 ///
-/// Reference: Allen & Tildesley, "Computer Simulation of Liquids", Eq. 1.2
+/// Reference: Allen & Tildesley, *Computer Simulation of Liquids*, Eq. 1.2.
 ```
 
-### Tier 3: Internal Helpers (OPTIONAL)
+### Tier 3 — Internal Helpers (OPTIONAL)
 
-Private functions that are short and self-explanatory may omit docstrings. Add them when:
-- The function name doesn't fully convey its purpose
+Private functions may omit docstrings when the name fully conveys purpose. Add when:
+
 - The implementation uses a non-obvious trick
-- The function has surprising edge case behavior
+- Edge-case behavior would surprise a reader
+- The function is more than ~30 lines
 
 ## Mathematical Notation
 
-Use Unicode math in doc comments for readability. For complex equations, use inline code blocks:
+Unicode in inline code blocks for readability:
+
 ```rust
-/// Energy: `E = D * (1 - exp(-a(r - r0)))^2`
+/// Energy: `E = D · (1 - exp(-α(r - r₀)))²`
 ```
 
-## Module-Level Documentation
+ASCII fallback acceptable: `E = D * (1 - exp(-a * (r - r0)))^2`.
 
-Each module (`mod.rs` or file-level) should have a module doc comment:
+## Module-Level Docs
+
+Every `mod.rs` and crate `lib.rs` carries `//!` documentation:
 
 ```rust
 //! # Potential Kernels
 //!
-//! This module provides the [`Potential`] trait and [`KernelRegistry`] for
+//! Provides the [`Potential`] trait and [`KernelRegistry`] for
 //! energy/force evaluation in molecular simulations.
 //!
-//! ## Adding a New Potential
+//! ## Adding a Kernel
 //!
-//! 1. Implement the [`Potential`] trait
+//! 1. Implement [`Potential`]
 //! 2. Register in [`register_builtins`]
 //! 3. Add tests (numerical gradient + Newton's 3rd law)
 ```
 
 ## Units Convention
 
-Document units explicitly in docstrings:
+molrs uses real units. Document units explicitly in every numeric API:
 
 | Quantity | Unit | Note |
 |---|---|---|
-| Distance | Angstroms | Unless otherwise stated |
+| Distance | Å | unless stated otherwise |
 | Energy | kcal/mol | MMFF convention |
-| Force | kcal/(mol*A) | Energy/distance |
-| Angle | Radians | Internal; degrees in I/O |
+| Force | kcal/(mol·Å) | energy / distance |
+| Angle | radians | internal; degrees in I/O |
 | Mass | amu | atomic mass units |
-| Temperature | Kelvin | In MD |
-| Time | femtoseconds | In MD |
+| Temperature | K | MD |
+| Time | fs | MD |
+| Charge | e | elementary charge units |
 
 ```rust
-/// Set the cutoff distance for pair interactions.
-///
-/// # Arguments
-///
-/// * `cutoff` -- Maximum interaction distance in Angstroms
-pub fn set_cutoff(&mut self, cutoff: F) { ... }
+/// Construct a kernel with the given cutoff (Å).
+pub fn with_cutoff(self, cutoff: F) -> Self { /* ... */ }
 ```
 
-## Documentation Checklist
+Note: prefer immutable builder-style (`with_*` returning `Self`) over `&mut self` mutators — see workspace coding-style rules.
 
-- [ ] All `pub` items have `///` doc comments
-- [ ] Algorithm functions include equations and references
-- [ ] Module-level `//!` docs explain the module's purpose and architecture
-- [ ] Crate-level `//!` docs list key types and subsystems
-- [ ] `# Panics` section for functions that can panic
-- [ ] `# Errors` section for functions returning `Result`
-- [ ] Examples are included for key public APIs
-- [ ] Units are documented (Angstroms, kcal/mol, etc.)
-- [ ] Parameter names match their mathematical symbols where possible
+## References
+
+For published methods, cite DOI / arXiv / Packmol source line:
+
+```rust
+/// ETKDG distance geometry.
+///
+/// Reference: Riniker & Landrum (2015), J. Chem. Inf. Model. 55, 2562–2574.
+/// DOI: 10.1021/acs.jcim.5b00654
+```
+
+## Compliance Checklist
+
+- [ ] All `pub` items have `///` docs
+- [ ] Algorithm functions include equations + references
+- [ ] Module-level `//!` explains purpose and architecture
+- [ ] Crate-level `//!` lists key types and subsystems
+- [ ] `# Panics` for fallible-by-panic functions
+- [ ] `# Errors` for `Result` returners
+- [ ] `# Safety` for `unsafe fn`
+- [ ] `# Examples` for key public APIs
+- [ ] Units documented for every numeric quantity
+- [ ] Parameter names match mathematical symbols where possible

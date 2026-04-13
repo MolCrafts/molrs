@@ -13,10 +13,11 @@ crate-type = ["staticlib"]
 
 [features]
 default = ["zarr"]
-zarr = ["molrs/filesystem"]
+zarr = ["molrs_io/filesystem"]
 
 [dependencies]
 molrs = { package = "molcrafts-molrs", path = "../molrs-core" }
+molrs_io = { path = "../molrs-io", package = "molcrafts-molrs-io" }
 cxx = "1"
 ndarray = "0.17"
 

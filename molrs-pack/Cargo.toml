@@ -18,6 +18,7 @@ name = "molrs_pack"
 
 [dependencies]
 molrs = { path = "../molrs-core", package = "molcrafts-molrs", version = "0.0.7", default-features = false }
+molrs_io = { path = "../molrs-io", package = "molcrafts-molrs-io" }
 rand = "0.9"
 ndarray = "0.17"
 log = "0.4"
@@ -30,4 +31,4 @@ rayon = ["dep:rayon", "molrs/rayon"]
 f64 = ["molrs/f64"]
 i64 = ["molrs/i64"]
 u64 = ["molrs/u64"]
-filesystem = ["molrs/filesystem"]
+filesystem = ["molrs_io/filesystem"]
