@@ -1,19 +1,19 @@
 //! Constraint types for molecular packing.
 //! Exact port of `comprest.f90` and `gwalls.f90` from Packmol.
 //!
-//! Each `Restraint` stores all parameters needed to compute the penalty
+//! Each `BuiltinConstraint` stores all parameters needed to compute the penalty
 //! function value and gradient for a single atom.
 
 use molrs::types::F;
 /// A single restraint on an atom position.
 /// Parameters are stored in the same layout as Packmol's `restpars(irest, 1..9)`.
 #[derive(Debug, Clone)]
-pub struct Restraint {
+pub struct BuiltinConstraint {
     pub kind: u8, // type number 2-15 as in comprest.f90
     pub params: [F; 9],
 }
 
-impl Restraint {
+impl BuiltinConstraint {
     // ---- Constructors matching Packmol constraint types ----
 
     /// Type 2: inside cube (origin + side length).
@@ -634,10 +634,10 @@ impl Restraint {
 }
 
 /// High-level constraint builder used in `Target`.
-/// Wraps one or more `Restraint`s that are applied to all atoms of a molecule.
+/// Wraps one or more `BuiltinConstraint`s that are applied to all atoms of a molecule.
 #[derive(Debug, Clone, Default)]
 pub struct MoleculeConstraint {
-    pub restraints: Vec<Restraint>,
+    pub restraints: Vec<BuiltinConstraint>,
 }
 
 impl MoleculeConstraint {
@@ -648,7 +648,7 @@ impl MoleculeConstraint {
     }
 
     #[allow(clippy::should_implement_trait)]
-    pub fn add(mut self, r: Restraint) -> Self {
+    pub fn add(mut self, r: BuiltinConstraint) -> Self {
         self.restraints.push(r);
         self
     }
@@ -706,41 +706,41 @@ region_constraint_newtype!(BelowPlaneConstraint);
 impl InsideBoxConstraint {
     /// Box constraint from min and max corners.
     pub fn new(min: [F; 3], max: [F; 3]) -> Self {
-        Self(MoleculeConstraint::new().add(Restraint::inside_box(min, max)))
+        Self(MoleculeConstraint::new().add(BuiltinConstraint::inside_box(min, max)))
     }
 
     /// Cube constraint: origin + side in all axes.
     pub fn cube_from_origin(side: F, origin: [F; 3]) -> Self {
         let max = [origin[0] + side, origin[1] + side, origin[2] + side];
-        Self(MoleculeConstraint::new().add(Restraint::inside_box(origin, max)))
+        Self(MoleculeConstraint::new().add(BuiltinConstraint::inside_box(origin, max)))
     }
 }
 
 impl InsideSphereConstraint {
     /// Sphere constraint: radius and center.
     pub fn new(radius: F, center: [F; 3]) -> Self {
-        Self(MoleculeConstraint::new().add(Restraint::inside_sphere(center, radius)))
+        Self(MoleculeConstraint::new().add(BuiltinConstraint::inside_sphere(center, radius)))
     }
 }
 
 impl OutsideSphereConstraint {
     /// Outside-sphere constraint: radius and center.
     pub fn new(radius: F, center: [F; 3]) -> Self {
-        Self(MoleculeConstraint::new().add(Restraint::outside_sphere(center, radius)))
+        Self(MoleculeConstraint::new().add(BuiltinConstraint::outside_sphere(center, radius)))
     }
 }
 
 impl AbovePlaneConstraint {
     /// Above-plane constraint: n·x >= d.
     pub fn new(normal: [F; 3], distance: F) -> Self {
-        Self(MoleculeConstraint::new().add(Restraint::above_plane(normal, distance)))
+        Self(MoleculeConstraint::new().add(BuiltinConstraint::above_plane(normal, distance)))
     }
 }
 
 impl BelowPlaneConstraint {
     /// Below-plane constraint: n·x <= d.
     pub fn new(normal: [F; 3], distance: F) -> Self {
-        Self(MoleculeConstraint::new().add(Restraint::below_plane(normal, distance)))
+        Self(MoleculeConstraint::new().add(BuiltinConstraint::below_plane(normal, distance)))
     }
 }
 
@@ -749,11 +749,11 @@ impl BelowPlaneConstraint {
 pub struct AtomConstraint {
     /// Atom indices (0-based within the molecule) these restraints apply to.
     pub atom_indices: Vec<usize>,
-    pub restraints: Vec<Restraint>,
+    pub restraints: Vec<BuiltinConstraint>,
 }
 
 impl AtomConstraint {
-    pub fn new(atom_indices: impl IntoIterator<Item = usize>, r: Restraint) -> Self {
+    pub fn new(atom_indices: impl IntoIterator<Item = usize>, r: BuiltinConstraint) -> Self {
         Self {
             atom_indices: atom_indices.into_iter().collect(),
             restraints: vec![r],

@@ -19,7 +19,7 @@
 
 **Phase A — 内部重构（公开 API 不变）**
 - [x] **A.1** 基础设施：`molrs-pack/Cargo.toml` 加 `criterion = "0.5"` + `[[bench]]`；`benches/pack_end_to_end.rs` 5 例灾难警报（mixture/bilayer/interface/solvprotein/spherical）— 复用 `cases::ExampleCase`
-- [ ] **A.2** rename：`struct Restraint{kind,params}` → `struct BuiltinConstraint`（仅内部；保留 `pub type Restraint = BuiltinConstraint` 一个 phase 的 deprecated 别名）
+- [x] **A.2** rename：`struct Restraint{kind,params}` → `struct BuiltinConstraint`（仅内部；保留 `pub use BuiltinConstraint as Restraint` 一个 phase 的别名，下游测试无改动）
 - [ ] **A.3** rename：`hook.rs` 的 `Hook`/`HookRunner`/`TorsionMcHook`/`TorsionMcRunner` → `Relaxer`/`RelaxerRunner`/`TorsionMcRelaxer`/`TorsionMcRelaxerRunner`；文件改名 `hook.rs` → `relaxer.rs`；`pub use Relaxer as Hook` 兼容别名
 - [ ] **A.4** 拆 `packer.rs` → `phase/{per_type, geometric_prefit, main_loop}.rs`；**每抽一个 phase 函数都落 sentinel + 函数微基准 + 调用方微基准**（首次真正应用 extract-bench loop）
 - [ ] **A.5** 把 `PackContext::evaluate` 的签名固化为 `trait Objective`；`impl Objective for PackContext`
@@ -45,6 +45,7 @@
 **Commit log** (newest last; one line per landed step)
 - `pre-A` — spec/skill/agent 落地 extract-bench loop 纪律
 - `A.1` — bench infra + 5-example 灾难警报（复用 `ExampleCase`，无 workload 重复）
+- `A.2` — `Restraint` → `BuiltinConstraint` 重命名；`pub use ... as Restraint` 保 API；`pack_mixture` 478→482 ms（噪声内）
 
 ---
 

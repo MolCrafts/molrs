@@ -2,7 +2,7 @@ use molrs::types::F;
 use std::collections::HashMap;
 use std::env;
 
-use crate::constraint::Restraint;
+use crate::constraint::BuiltinConstraint;
 use crate::numerics::numeric_controls;
 use crate::target::Target;
 
@@ -53,7 +53,7 @@ struct ExpandedMol<'a> {
 
 #[derive(Debug, Clone)]
 struct AtomRestraints {
-    restraints: Vec<Restraint>,
+    restraints: Vec<BuiltinConstraint>,
 }
 
 /// Validate packed coordinates against target specification.

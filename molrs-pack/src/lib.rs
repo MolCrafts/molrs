@@ -42,10 +42,11 @@ pub mod target;
 pub mod validation;
 
 pub use cases::{ExampleCase, build_targets, example_dir_from_manifest, render_packmol_input};
+pub use constraint::BuiltinConstraint as Restraint;
 pub use constraint::{
-    AbovePlaneConstraint, AtomConstraint, BelowPlaneConstraint, InsideBoxConstraint,
-    InsideSphereConstraint, MoleculeConstraint, OutsideSphereConstraint, RegionConstraint,
-    Restraint,
+    AbovePlaneConstraint, AtomConstraint, BelowPlaneConstraint, BuiltinConstraint,
+    InsideBoxConstraint, InsideSphereConstraint, MoleculeConstraint, OutsideSphereConstraint,
+    RegionConstraint,
 };
 pub use context::PackContext;
 pub use error::PackError;

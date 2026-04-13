@@ -25,7 +25,7 @@ use crate::random::uniform01_core;
 /// Per-target in-loop hook. Stored on `Target` (immutable config).
 /// Creates a stateful runner inside `pack()`.
 ///
-/// Analogous to `Restraint` in the constraint system:
+/// Analogous to `BuiltinConstraint` in the constraint system:
 /// - Constraints modify the objective function (penalties on atom positions)
 /// - Hooks modify the reference geometry (shape of the molecule itself)
 pub trait Hook: Send + Sync + CloneHook {
@@ -59,7 +59,7 @@ impl std::fmt::Debug for Box<dyn Hook> {
 
 /// Runtime state for a hook. Created by `Hook::build()`, used inside `pack()`.
 ///
-/// Analogous to calling `Restraint::value()`/`gradient()` during evaluation,
+/// Analogous to calling `BuiltinConstraint::value()`/`gradient()` during evaluation,
 /// but stateful (MC acceptance counters, temperature schedule, etc.).
 pub trait HookRunner: Send {
     /// Called between movebad and pgencan in each iteration.
