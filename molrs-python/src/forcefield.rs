@@ -16,10 +16,10 @@
 
 use pyo3::prelude::*;
 
-use molrs::forcefield::ForceField;
-use molrs::potential::{Potentials, extract_coords};
-use molrs::typifier::Typifier;
-use molrs::typifier::mmff::MMFFTypifier;
+use molrs_ff::ForceField;
+use molrs_ff::potential::{Potentials, extract_coords};
+use molrs_ff::typifier::Typifier;
+use molrs_ff::typifier::mmff::MMFFTypifier;
 
 use crate::frame::PyFrame;
 use crate::helpers::NpF;
@@ -278,7 +278,7 @@ pub fn extract_coords_py<'py>(
 #[pyfunction]
 #[pyo3(name = "read_forcefield_xml")]
 pub fn read_forcefield_xml_py(path: &str) -> PyResult<PyForceField> {
-    let forcefield = molrs::read_forcefield_xml(path)
+    let forcefield = molrs_ff::read_forcefield_xml(path)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
     Ok(PyForceField { inner: forcefield })
 }

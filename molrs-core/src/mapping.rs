@@ -7,8 +7,8 @@
 //! # Examples
 //!
 //! ```
-//! use molrs::atomistic::Atomistic;
-//! use molrs::mapping::{CGMapping, WeightScheme};
+//! use molrs_core::atomistic::Atomistic;
+//! use molrs_core::mapping::{CGMapping, WeightScheme};
 //!
 //! // Build a 3-atom molecule: O-H-H
 //! let mut aa = Atomistic::new();

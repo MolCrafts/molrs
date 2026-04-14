@@ -6,7 +6,7 @@
 //!
 //! Run with: `cargo run -p molrs-core --example molgraph_building`
 
-use molrs::{Atom, Bead, MolGraph, PropValue, add_hydrogens, remove_hydrogens};
+use molrs_core::{Atom, Bead, MolGraph, PropValue, add_hydrogens, remove_hydrogens};
 
 fn main() {
     water();

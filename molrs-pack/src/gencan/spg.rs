@@ -2,7 +2,7 @@
 //! Port of `spgls` from `gencan.f`.
 
 use crate::constraints::EvalMode;
-use crate::context::PackContext;
+use crate::objective::Objective;
 use molrs::types::F;
 
 /// Reusable buffers for SPG line search.
@@ -62,7 +62,7 @@ pub fn spgls(
     epsrel: F,
     epsabs: F,
     scratch: &mut SpgScratch,
-    sys: &mut PackContext,
+    obj: &mut dyn Objective,
 ) -> SpgResult {
     scratch.ensure_len(n);
     let xtrial = &mut scratch.xtrial;
@@ -75,7 +75,7 @@ pub fn spgls(
     }
     let gtd: F = g.iter().zip(d.iter()).map(|(gi, di)| gi * di).sum();
 
-    let mut ftrial = sys.evaluate(xtrial, EvalMode::FOnly, None).f_total;
+    let mut ftrial = obj.evaluate(xtrial, EvalMode::FOnly, None).f_total;
     fcnt += 1;
 
     let mut alpha = 1.0 as F;
@@ -133,7 +133,7 @@ pub fn spgls(
             xtrial[i] = x[i] + alpha * d[i];
         }
 
-        ftrial = sys.evaluate(xtrial, EvalMode::FOnly, None).f_total;
+        ftrial = obj.evaluate(xtrial, EvalMode::FOnly, None).f_total;
         fcnt += 1;
 
         // Check for too-small step

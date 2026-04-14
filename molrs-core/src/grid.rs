@@ -63,7 +63,9 @@ impl Grid {
         if data.len() != expected {
             return Err(MolRsError::validation(format!(
                 "grid array '{}' length mismatch: expected {}, got {}",
-                name, expected, data.len()
+                name,
+                expected,
+                data.len()
             )));
         }
         self.arrays.insert(name, data);
@@ -73,12 +75,9 @@ impl Grid {
     /// Return a named array reshaped to `(nx, ny, nz)`, or `None` if absent.
     pub fn get(&self, name: &str) -> Option<ArrayD<F>> {
         self.arrays.get(name).map(|data| {
-            Array3::from_shape_vec(
-                [self.dim[0], self.dim[1], self.dim[2]],
-                data.clone(),
-            )
-            .expect("grid shape matches stored data")
-            .into_dyn()
+            Array3::from_shape_vec([self.dim[0], self.dim[1], self.dim[2]], data.clone())
+                .expect("grid shape matches stored data")
+                .into_dyn()
         })
     }
 
@@ -118,18 +117,9 @@ impl Grid {
         let fy = iy as F / self.dim[1] as F;
         let fz = iz as F / self.dim[2] as F;
         [
-            self.origin[0]
-                + fx * self.cell[0][0]
-                + fy * self.cell[1][0]
-                + fz * self.cell[2][0],
-            self.origin[1]
-                + fx * self.cell[0][1]
-                + fy * self.cell[1][1]
-                + fz * self.cell[2][1],
-            self.origin[2]
-                + fx * self.cell[0][2]
-                + fy * self.cell[1][2]
-                + fz * self.cell[2][2],
+            self.origin[0] + fx * self.cell[0][0] + fy * self.cell[1][0] + fz * self.cell[2][0],
+            self.origin[1] + fx * self.cell[0][1] + fy * self.cell[1][1] + fz * self.cell[2][1],
+            self.origin[2] + fx * self.cell[0][2] + fy * self.cell[1][2] + fz * self.cell[2][2],
         ]
     }
 }
@@ -140,14 +130,24 @@ mod tests {
 
     #[test]
     fn insert_validates_length() {
-        let mut g = Grid::new([2, 2, 2], [0.0; 3], [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], [false; 3]);
+        let mut g = Grid::new(
+            [2, 2, 2],
+            [0.0; 3],
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            [false; 3],
+        );
         assert!(g.insert("rho", vec![0.0; 7]).is_err());
         assert!(g.insert("rho", vec![0.0; 8]).is_ok());
     }
 
     #[test]
     fn get_returns_shaped_array() {
-        let mut g = Grid::new([2, 3, 4], [0.0; 3], [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], [false; 3]);
+        let mut g = Grid::new(
+            [2, 3, 4],
+            [0.0; 3],
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            [false; 3],
+        );
         g.insert("rho", (0..24).map(|x| x as F).collect()).unwrap();
         let arr = g.get("rho").unwrap();
         assert_eq!(arr.shape(), &[2, 3, 4]);

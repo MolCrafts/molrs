@@ -7,9 +7,8 @@ pub mod cg;
 pub mod spg;
 
 use crate::constraints::EvalMode;
-use crate::context::PackContext;
 use crate::numerics::{numeric_controls, positive_norm_floor};
-use crate::objective::{compute_f, compute_g};
+use crate::objective::Objective;
 
 /// Parameters for the GENCAN call (matches `easygencan` defaults from `pgencan.f90`).
 pub struct GencanParams {
@@ -108,45 +107,18 @@ impl Default for GencanWorkspace {
 /// `constrain_rotation` constraints (Packmol pgencan.f90).
 pub fn pgencan(
     x: &mut [F],
-    sys: &mut PackContext,
+    obj: &mut dyn Objective,
     params: &GencanParams,
     precision: F,
     workspace: &mut GencanWorkspace,
 ) -> GencanResult {
     let n = x.len();
 
-    let (l, u) = build_bounds(n, sys);
+    let mut l = vec![0.0 as F; n];
+    let mut u = vec![0.0 as F; n];
+    obj.bounds(&mut l, &mut u);
 
-    gencan(x, &l, &u, sys, params, precision, workspace)
-}
-
-fn build_bounds(n: usize, sys: &PackContext) -> (Vec<F>, Vec<F>) {
-    let mut l = vec![-1.0e20 as F; n];
-    let mut u = vec![1.0e20 as F; n];
-    let mut i = n / 2;
-
-    for itype in 0..sys.ntype {
-        if !sys.comptype[itype] {
-            continue;
-        }
-        for _imol in 0..sys.nmols[itype] {
-            for axis in 0..3 {
-                if sys.constrain_rot[itype][axis] {
-                    let center = sys.rot_bound[itype][axis][0];
-                    let half_width = sys.rot_bound[itype][axis][1].abs();
-                    l[i] = center - half_width;
-                    u[i] = center + half_width;
-                } else {
-                    l[i] = -1.0e20;
-                    u[i] = 1.0e20;
-                }
-                i += 1;
-            }
-        }
-    }
-    debug_assert_eq!(i, n);
-
-    (l, u)
+    gencan(x, &l, &u, obj, params, precision, workspace)
 }
 
 /// Main GENCAN loop.
@@ -156,7 +128,7 @@ pub fn gencan(
     x: &mut [F],
     l: &[F],
     u: &[F],
-    sys: &mut PackContext,
+    obj: &mut dyn Objective,
     params: &GencanParams,
     precision: F,
     workspace: &mut GencanWorkspace,
@@ -201,10 +173,10 @@ pub fn gencan(
     let mut fcnt = 0usize;
     let g = &mut workspace.g;
     g.fill(0.0);
-    let mut f = sys.evaluate(x, EvalMode::FAndGradient, Some(g)).f_total;
+    let mut f = obj.evaluate(x, EvalMode::FAndGradient, Some(g)).f_total;
 
     // Packmol behavior: check packmolprecision before counting this first eval.
-    if packmolprecision(sys, precision) {
+    if packmolprecision(obj, precision) {
         return GencanResult {
             f,
             gpsupn: 0.0,
@@ -264,7 +236,7 @@ pub fn gencan(
     // Main loop
     loop {
         // Packmol behavior: recompute precision test with computef at each iteration.
-        if packmolprecision(sys, precision) {
+        if packmolprecision(obj, precision) {
             break;
         }
 
@@ -350,7 +322,7 @@ pub fn gencan(
                 numeric.epsrel,
                 numeric.epsabs,
                 spg_scratch,
-                sys,
+                obj,
             );
             f = spg_res.f;
             fcnt = spg_res.fcnt;
@@ -361,7 +333,7 @@ pub fn gencan(
                 break;
             }
 
-            sys.evaluate(x, EvalMode::GradientOnly, Some(g.as_mut_slice()));
+            obj.evaluate(x, EvalMode::GradientOnly, Some(g.as_mut_slice()));
             gcnt += 1;
         } else {
             // TN iteration: compute Newton direction via CG
@@ -413,7 +385,7 @@ pub fn gencan(
                 INFABS,
                 d,
                 cg_scratch,
-                sys,
+                obj,
             );
             cgcnt += cg_res.iter;
 
@@ -477,7 +449,7 @@ pub fn gencan(
                 numeric.epsrel,
                 numeric.epsabs,
                 tnls_scratch,
-                sys,
+                obj,
             );
             f = ls_res.f;
             fcnt = ls_res.fcnt;
@@ -521,7 +493,7 @@ pub fn gencan(
                     numeric.epsrel,
                     numeric.epsabs,
                     spg_scratch,
-                    sys,
+                    obj,
                 );
                 f = spg_res.f;
                 fcnt = spg_res.fcnt;
@@ -533,7 +505,7 @@ pub fn gencan(
                 }
 
                 let infotmp = spg_res.inform;
-                sys.evaluate(x, EvalMode::GradientOnly, Some(g.as_mut_slice()));
+                obj.evaluate(x, EvalMode::GradientOnly, Some(g.as_mut_slice()));
                 gcnt += 1;
                 inform = infotmp;
             }
@@ -613,8 +585,8 @@ fn projected_gradient_info(
 
 /// Packmol precision check (`packmolprecision` in `pgencan.f90`):
 /// recompute objective-side violations and test `fdist/frest`.
-fn packmolprecision(sys: &PackContext, precision: F) -> bool {
-    sys.fdist < precision && sys.frest < precision
+fn packmolprecision(obj: &dyn Objective, precision: F) -> bool {
+    obj.fdist() < precision && obj.frest() < precision
 }
 
 /// Compute scaling for CG epsilon.
@@ -712,7 +684,7 @@ fn tn_linesearch(
     epsrel: F,
     epsabs: F,
     scratch: &mut TnLsScratch,
-    sys: &mut PackContext,
+    obj: &mut dyn Objective,
 ) -> LsResult {
     scratch.ensure_len(n);
     let nind = nind.min(ind.len());
@@ -747,7 +719,7 @@ fn tn_linesearch(
         }
     }
 
-    let mut fplus = compute_f(xplus, sys);
+    let mut fplus = obj.evaluate(xplus, EvalMode::FOnly, None).f_total;
     fcnt += 1;
 
     let mut do_extrap = false;
@@ -755,7 +727,7 @@ fn tn_linesearch(
     // Decide between extrapolation and interpolation.
     if amax > 1.0 {
         if fplus <= f0 + gamma * alpha * gtd {
-            compute_g(xplus, sys, gplus);
+            obj.evaluate(xplus, EvalMode::GradientOnly, Some(gplus));
             gcnt += 1;
             gplus_valid = true;
 
@@ -793,7 +765,7 @@ fn tn_linesearch(
                 xret.copy_from_slice(xplus);
                 fret = fplus;
                 if extrap != 0 || amax <= 1.0 {
-                    compute_g(xret, sys, gret);
+                    obj.evaluate(xret, EvalMode::GradientOnly, Some(gret));
                     gcnt += 1;
                 } else if gplus_valid {
                     gret.copy_from_slice(gplus);
@@ -810,7 +782,7 @@ fn tn_linesearch(
                 xret.copy_from_slice(xplus);
                 fret = fplus;
                 if extrap != 0 || amax <= 1.0 {
-                    compute_g(xret, sys, gret);
+                    obj.evaluate(xret, EvalMode::GradientOnly, Some(gret));
                     gcnt += 1;
                 } else if gplus_valid {
                     gret.copy_from_slice(gplus);
@@ -827,7 +799,7 @@ fn tn_linesearch(
                 xret.copy_from_slice(xplus);
                 fret = fplus;
                 if extrap != 0 || amax <= 1.0 {
-                    compute_g(xret, sys, gret);
+                    obj.evaluate(xret, EvalMode::GradientOnly, Some(gret));
                     gcnt += 1;
                 } else if gplus_valid {
                     gret.copy_from_slice(gplus);
@@ -876,7 +848,7 @@ fn tn_linesearch(
                     xret.copy_from_slice(xplus);
                     fret = fplus;
                     if extrap != 0 || amax <= 1.0 {
-                        compute_g(xret, sys, gret);
+                        obj.evaluate(xret, EvalMode::GradientOnly, Some(gret));
                         gcnt += 1;
                     } else if gplus_valid {
                         gret.copy_from_slice(gplus);
@@ -890,7 +862,7 @@ fn tn_linesearch(
                 }
             }
 
-            let ftmp = compute_f(xtmp, sys);
+            let ftmp = obj.evaluate(xtmp, EvalMode::FOnly, None).f_total;
             fcnt += 1;
 
             if ftmp < fplus {
@@ -905,12 +877,12 @@ fn tn_linesearch(
             xret.copy_from_slice(xplus);
             fret = fplus;
             if extrap != 0 || amax <= 1.0 {
-                compute_g(xret, sys, gret);
+                obj.evaluate(xret, EvalMode::GradientOnly, Some(gret));
                 gcnt += 1;
             } else if gplus_valid {
                 gret.copy_from_slice(gplus);
             } else {
-                compute_g(xret, sys, gret);
+                obj.evaluate(xret, EvalMode::GradientOnly, Some(gret));
                 gcnt += 1;
             }
             return LsResult {
@@ -930,7 +902,7 @@ fn tn_linesearch(
         if fplus <= fmin {
             xret.copy_from_slice(xplus);
             fret = fplus;
-            compute_g(xret, sys, gret);
+            obj.evaluate(xret, EvalMode::GradientOnly, Some(gret));
             gcnt += 1;
             return LsResult {
                 f: fret,
@@ -944,7 +916,7 @@ fn tn_linesearch(
             if fplus < f0 {
                 xret.copy_from_slice(xplus);
                 fret = fplus;
-                compute_g(xret, sys, gret);
+                obj.evaluate(xret, EvalMode::GradientOnly, Some(gret));
                 gcnt += 1;
             }
             return LsResult {
@@ -958,7 +930,7 @@ fn tn_linesearch(
         if fplus <= f0 + gamma * alpha * gtd {
             xret.copy_from_slice(xplus);
             fret = fplus;
-            compute_g(xret, sys, gret);
+            obj.evaluate(xret, EvalMode::GradientOnly, Some(gret));
             gcnt += 1;
             return LsResult {
                 f: fret,
@@ -990,7 +962,7 @@ fn tn_linesearch(
             xplus[ii] = x[ii] + alpha * d[ii];
         }
 
-        fplus = compute_f(xplus, sys);
+        fplus = obj.evaluate(xplus, EvalMode::FOnly, None).f_total;
         fcnt += 1;
 
         let mut samep = true;

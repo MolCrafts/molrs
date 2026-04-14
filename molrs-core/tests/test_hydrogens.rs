@@ -1,10 +1,12 @@
 //! Integration tests for hydrogen addition (src/core/hydrogens.rs).
 
-use molrs::{Atom, AtomId, MolGraph, PropValue, add_hydrogens, implicit_h_count, remove_hydrogens};
+use molrs_core::{
+    Atom, AtomId, MolGraph, PropValue, add_hydrogens, implicit_h_count, remove_hydrogens,
+};
 
 fn atom(sym: &str) -> Atom {
     let mut a = Atom::new();
-    a.set("symbol", sym);
+    a.set("element", sym);
     a
 }
 
@@ -19,7 +21,7 @@ fn bond_order(g: &mut MolGraph, a: AtomId, b: AtomId, order: f64) {
 fn count_symbol(g: &MolGraph, sym: &str) -> usize {
     g.atoms()
         .filter(|(_, a)| {
-            a.get_str("symbol")
+            a.get_str("element")
                 .is_some_and(|s| s.eq_ignore_ascii_case(sym))
         })
         .count()
@@ -122,7 +124,7 @@ fn test_nitrogen_1_bond_gets_2h() {
 fn test_nh4_plus_implicit_count_is_4() {
     let mut g = MolGraph::new();
     let mut n_atom = Atom::new();
-    n_atom.set("symbol", "N");
+    n_atom.set("element", "N");
     n_atom.set("formal_charge", 1.0_f64);
     let n = g.add_atom(n_atom);
     let h_count = implicit_h_count(&g, n).unwrap();
@@ -133,7 +135,7 @@ fn test_nh4_plus_implicit_count_is_4() {
 fn test_nh4_plus_add_hydrogens() {
     let mut g = MolGraph::new();
     let mut n_atom = Atom::new();
-    n_atom.set("symbol", "N");
+    n_atom.set("element", "N");
     n_atom.set("formal_charge", 1.0_f64);
     g.add_atom(n_atom);
     let result = add_hydrogens(&g);

@@ -15,7 +15,7 @@ use crate::helpers::NpF;
 use crate::linkedcell::{PyLinkedCell, PyNeighborList};
 use crate::simbox::PyBox;
 
-use molrs::compute::{
+use molrs_compute::{
     CenterOfMass, Cluster, ClusterCenters, ClusterResult, Compute, GyrationTensor, InertiaTensor,
     MSD, MSDResult, RDF, RDFResult, RadiusOfGyration,
 };
@@ -593,7 +593,7 @@ impl PyClusterCenters {
 /// >>> com.cluster_masses   # (nc,)
 #[pyclass(name = "CenterOfMassResult", unsendable)]
 pub struct PyCenterOfMassResult {
-    inner: molrs::compute::CenterOfMassResult,
+    inner: molrs_compute::CenterOfMassResult,
 }
 
 #[pymethods]

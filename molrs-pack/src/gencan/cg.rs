@@ -2,8 +2,8 @@
 //! Exact algorithmic port of `cg` from `gencan.f`.
 
 use crate::constraints::EvalMode;
-use crate::context::PackContext;
 use crate::numerics::{near_zero_norm_floor, positive_norm_floor, residual_small_floor};
+use crate::objective::Objective;
 use molrs::types::F;
 
 /// Reusable CG work vectors, matching packmol `cg` workspace roles.
@@ -98,7 +98,7 @@ pub fn cg_solve(
     infabs: F,
     d_out: &mut [F],
     scratch: &mut CgScratch,
-    sys: &mut PackContext,
+    obj: &mut dyn Objective,
 ) -> CgResult {
     let nind = nind.min(ind.len());
     scratch.ensure_len(n);
@@ -209,7 +209,7 @@ pub fn cg_solve(
         }
 
         // Compute w = H d by finite differences
-        hessian_times_vec_diff(nind, ind, n, x, d, g, sterel, steabs, w, y, gy, sys);
+        hessian_times_vec_diff(nind, ind, n, x, d, g, sterel, steabs, w, y, gy, obj);
         dtw = (0..nind).map(|j| d[j] * w[j]).sum();
 
         // Maximum trust-region step
@@ -409,7 +409,7 @@ fn hessian_times_vec_diff(
     w: &mut [F],
     y: &mut [F],
     gy: &mut [F],
-    sys: &mut PackContext,
+    obj: &mut dyn Objective,
 ) {
     let xsupn = ind[..nind]
         .iter()
@@ -424,7 +424,7 @@ fn hessian_times_vec_diff(
         y[ii] = x[ii] + step * d[j];
     }
 
-    sys.evaluate(y, EvalMode::GradientOnly, Some(gy));
+    obj.evaluate(y, EvalMode::GradientOnly, Some(gy));
 
     for j in 0..nind {
         let ii = ind[j];

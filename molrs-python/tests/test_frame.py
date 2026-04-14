@@ -20,7 +20,7 @@ class TestFrameBlockAccess:
     def test_setitem_getitem(self):
         f = molrs.Frame()
         b = molrs.Block()
-        b.insert("x", np.array([1.0, 2.0], dtype=np.float32))
+        b.insert("x", np.array([1.0, 2.0], dtype=np.float64))
         f["atoms"] = b
         assert "atoms" in f
         assert len(f) == 1
@@ -31,11 +31,11 @@ class TestFrameBlockAccess:
     def test_getitem_returns_live_block_handle(self):
         f = molrs.Frame()
         b = molrs.Block()
-        b.insert("x", np.array([1.0, 2.0], dtype=np.float32))
+        b.insert("x", np.array([1.0, 2.0], dtype=np.float64))
         f["atoms"] = b
 
         atoms = f["atoms"]
-        atoms.insert("y", np.array([3.0, 4.0], dtype=np.float32))
+        atoms.insert("y", np.array([3.0, 4.0], dtype=np.float64))
 
         np.testing.assert_allclose(f["atoms"].view("y"), [3.0, 4.0])
 
@@ -70,12 +70,12 @@ class TestFrameBlockAccess:
     def test_overwrite_block(self):
         f = molrs.Frame()
         b1 = molrs.Block()
-        b1.insert("x", np.array([1.0], dtype=np.float32))
+        b1.insert("x", np.array([1.0], dtype=np.float64))
         f["atoms"] = b1
         assert f["atoms"].nrows == 1
 
         b2 = molrs.Block()
-        b2.insert("x", np.array([1.0, 2.0], dtype=np.float32))
+        b2.insert("x", np.array([1.0, 2.0], dtype=np.float64))
         f["atoms"] = b2
         assert f["atoms"].nrows == 2
 
@@ -130,7 +130,7 @@ class TestFrameValidation:
     def test_validate_consistent(self):
         f = molrs.Frame()
         b = molrs.Block()
-        b.insert("x", np.array([1.0, 2.0, 3.0], dtype=np.float32))
-        b.insert("y", np.array([0.0, 1.0, 2.0], dtype=np.float32))
+        b.insert("x", np.array([1.0, 2.0, 3.0], dtype=np.float64))
+        b.insert("y", np.array([0.0, 1.0, 2.0], dtype=np.float64))
         f["atoms"] = b
         f.validate()

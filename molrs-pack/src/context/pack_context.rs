@@ -1,8 +1,10 @@
 //! Packing runtime context — mirrors Packmol `compute_data` behavior.
 
+use std::sync::Arc;
+
 use crate::cell::{cell_ind, icell_to_cell, index_cell};
-use crate::constraint::Restraint;
 use crate::constraints::{Constraints, EvalMode, EvalOutput};
+use crate::restraint::Restraint;
 use molrs::Element;
 use molrs::types::F;
 
@@ -114,7 +116,7 @@ pub struct PackContext {
 
     // ---- Restraints ----
     /// All restraints pool: restraints[irest].
-    pub restraints: Vec<Restraint>,
+    pub restraints: Vec<Arc<dyn Restraint>>,
     /// CSR offsets for per-atom restraint indices:
     /// restraints of atom `icart` are in `iratom_data[iratom_offsets[icart]..iratom_offsets[icart+1]]`.
     pub iratom_offsets: Vec<usize>,

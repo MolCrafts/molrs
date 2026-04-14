@@ -31,11 +31,8 @@ __pycache__/
 # macOS
 .DS_Store
 
-# Claude Code local state
+# Codex local state
 .agents/
-.claude/agents/
-.claude/plans/
-.claude/projects/
 AGENTS.md
 
 # test data
@@ -54,7 +51,9 @@ molrs-wasm/Cargo.lock
 molrs-capi/include/molrs.h
 pkg/
 molrs-wasm/pkg/
+molrs-wasm/dist/
 molrs-python/python/molrs/*.dylib
 molrs-python/python/molrs/*.dll
 molrs-python/python/molrs/*.so
 molrs-python/python/molrs/*.dylib.dSYM/
+molrs-cxxapi/src/bridge.rs

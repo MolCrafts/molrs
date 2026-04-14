@@ -46,7 +46,10 @@ use frame::{PyFrame, PyGrid};
 mod io;
 
 mod molrec;
-use molrec::{PyMolRec, PyObservables, PyScalarObservable, PyTrajectory, PyVectorObservable};
+use molrec::{
+    PyGridObservable, PyMolRec, PyObservables, PyScalarObservable, PyTrajectory,
+    PyVectorObservable,
+};
 
 mod region;
 use region::{PyHollowSphere, PyRegion, PySphere};
@@ -102,6 +105,8 @@ fn molrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(io::read_lammps, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_lammps_traj, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_chgcar_file, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_cube_file, m)?)?;
+    m.add_function(wrap_pyfunction!(io::write_cube_file, m)?)?;
     // Writers
     m.add_function(wrap_pyfunction!(io::write_pdb, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_xyz, m)?)?;
@@ -117,6 +122,7 @@ fn molrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyObservables>()?;
     m.add_class::<PyScalarObservable>()?;
     m.add_class::<PyVectorObservable>()?;
+    m.add_class::<PyGridObservable>()?;
 
     // Regions
     m.add_class::<PySphere>()?;

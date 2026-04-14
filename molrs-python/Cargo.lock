@@ -716,18 +716,22 @@ dependencies = [
 ]
 
 [[package]]
-name = "molcrafts-molrs"
-version = "0.0.7"
+name = "molcrafts-molrs-compute"
+version = "0.0.8"
 dependencies = [
- "flate2",
+ "molcrafts-molrs-core",
+ "ndarray",
+ "rustfft",
+]
+
+[[package]]
+name = "molcrafts-molrs-core"
+version = "0.0.8"
+dependencies = [
  "libm",
  "ndarray",
- "once_cell",
  "petgraph",
- "rand",
  "rayon",
- "roxmltree",
- "rustfft",
  "serde",
  "serde_json",
  "slotmap",
@@ -735,31 +739,78 @@ dependencies = [
 ]
 
 [[package]]
-name = "molcrafts-molrs-ffi"
-version = "0.0.7"
+name = "molcrafts-molrs-ff"
+version = "0.0.8"
 dependencies = [
- "molcrafts-molrs",
+ "libm",
+ "molcrafts-molrs-core",
+ "ndarray",
+ "roxmltree",
+ "rustfft",
+ "serde_json",
+]
+
+[[package]]
+name = "molcrafts-molrs-ffi"
+version = "0.0.8"
+dependencies = [
+ "molcrafts-molrs-core",
  "slotmap",
 ]
 
 [[package]]
+name = "molcrafts-molrs-gen3d"
+version = "0.0.8"
+dependencies = [
+ "molcrafts-molrs-core",
+ "ndarray",
+ "once_cell",
+ "rand",
+]
+
+[[package]]
+name = "molcrafts-molrs-io"
+version = "0.0.8"
+dependencies = [
+ "flate2",
+ "molcrafts-molrs-core",
+ "ndarray",
+ "once_cell",
+ "serde_json",
+ "zarrs",
+]
+
+[[package]]
 name = "molcrafts-molrs-pack"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "env_logger",
  "log",
- "molcrafts-molrs",
+ "molcrafts-molrs-core",
+ "molcrafts-molrs-io",
  "ndarray",
  "rand",
 ]
 
 [[package]]
-name = "molrs-python"
-version = "0.0.7"
+name = "molcrafts-molrs-smiles"
+version = "0.0.8"
 dependencies = [
- "molcrafts-molrs",
+ "molcrafts-molrs-core",
+]
+
+[[package]]
+name = "molrs-python"
+version = "0.0.8"
+dependencies = [
+ "molcrafts-molrs-compute",
+ "molcrafts-molrs-core",
+ "molcrafts-molrs-ff",
  "molcrafts-molrs-ffi",
+ "molcrafts-molrs-gen3d",
+ "molcrafts-molrs-io",
  "molcrafts-molrs-pack",
+ "molcrafts-molrs-smiles",
  "ndarray",
  "numpy",
  "pyo3",

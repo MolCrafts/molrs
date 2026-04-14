@@ -32,7 +32,7 @@ const MAX_GUESS_TRY: usize = 20;
 // ── swaptype state ─────────────────────────────────────────────────────────
 
 /// Saved state for swaptype operations (mirrors `swaptypemod.f90`).
-pub(crate) struct SwapState {
+pub struct SwapState {
     /// Full x vector (all molecules of all types), indexed [COM...|euler...].
     xfull: Vec<F>,
     /// Original `sys.ntotmol` (all free molecules).
@@ -41,7 +41,7 @@ pub(crate) struct SwapState {
 
 impl SwapState {
     /// action=0: save full x.
-    pub(crate) fn init(x: &[F], sys: &PackContext) -> Self {
+    pub fn init(x: &[F], sys: &PackContext) -> Self {
         SwapState {
             xfull: x.to_vec(),
             ntotmol_full: sys.ntotmol,
@@ -52,7 +52,7 @@ impl SwapState {
     ///
     /// Returns the compact x vector (length = nmols[itype] * 6).
     /// Also updates `sys.ntotmol` and `sys.comptype`.
-    pub(crate) fn set_type(&self, itype: usize, sys: &mut PackContext) -> Vec<F> {
+    pub fn set_type(&self, itype: usize, sys: &mut PackContext) -> Vec<F> {
         // Byte-offsets in xfull for this type's COM/euler variables
         // (Packmol swaptype.f90 action 1, with 0-based indexing)
         let ilubar_start: usize = sys.nmols[0..itype].iter().sum::<usize>() * 3;
@@ -73,7 +73,7 @@ impl SwapState {
     }
 
     /// action=2: save per-type results back into xfull.
-    pub(crate) fn save_type(&mut self, itype: usize, xtype: &[F], sys: &PackContext) {
+    pub fn save_type(&mut self, itype: usize, xtype: &[F], sys: &PackContext) {
         let ilubar_start: usize = sys.nmols[0..itype].iter().sum::<usize>() * 3;
         let ilugan_start: usize = self.ntotmol_full * 3 + ilubar_start;
         let nm = sys.nmols[itype];
@@ -83,7 +83,7 @@ impl SwapState {
     }
 
     /// action=3: restore full x and ntotmol.
-    pub(crate) fn restore(&self, x: &mut [F], sys: &mut PackContext) {
+    pub fn restore(&self, x: &mut [F], sys: &mut PackContext) {
         debug_assert_eq!(x.len(), self.xfull.len());
         x.copy_from_slice(&self.xfull);
         sys.ntotmol = self.ntotmol_full;

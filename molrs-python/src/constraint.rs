@@ -1,98 +1,132 @@
-//! Python wrappers for molecular packing constraints.
+//! Python wrappers for molecular packing restraints.
 //!
-//! Constraints restrict where molecules may be placed during packing. They
-//! can be composed with :meth:`and_` to build compound constraints.
+//! Each concrete restraint (``InsideBox``, ``InsideSphere``, ``OutsideSphere``,
+//! ``AbovePlane``, ``BelowPlane``) can be composed via ``.and_()`` to build a
+//! ``MoleculeConstraint`` — a bundle of restraints applied together.
 //!
-//! | Constraint      | Condition               | Parameters              |
-//! |-----------------|-------------------------|-------------------------|
-//! | `InsideBox`     | Atoms within AABB       | ``min``, ``max`` corners|
-//! | `InsideSphere`  | Atoms within sphere     | ``radius``, ``center``  |
-//! | `OutsideSphere` | Atoms outside sphere    | ``radius``, ``center``  |
-//! | `AbovePlane`    | ``n . x >= d``          | ``normal``, ``distance``|
-//! | `BelowPlane`    | ``n . x <= d``          | ``normal``, ``distance``|
-//!
-//! All length quantities are in the same unit as the input coordinates
-//! (typically angstroms).
+//! When a ``MoleculeConstraint`` (or a single restraint) is passed to
+//! ``Target.with_constraint`` / ``with_constraint_for_atoms``, every restraint
+//! in the bundle is attached to the target independently.
 
 use crate::helpers::NpF;
-use molrs_pack::constraint::{
-    AbovePlaneConstraint, BelowPlaneConstraint, InsideBoxConstraint, InsideSphereConstraint,
-    MoleculeConstraint, OutsideSphereConstraint,
+use molrs_pack::restraint::Restraint;
+use molrs_pack::restraint::{
+    AbovePlaneRestraint, BelowPlaneRestraint, InsideBoxRestraint, InsideSphereRestraint,
+    OutsideSphereRestraint,
 };
 use pyo3::prelude::*;
 
-/// Box constraint: all atoms must lie within an axis-aligned bounding box.
+/// Concrete enum over the built-in restraints. Implements `Restraint` via
+/// dispatch so callers can hand a single value into `Target::with_restraint`.
+#[derive(Clone, Debug)]
+pub(crate) enum AnyRestraint {
+    InsideBox(InsideBoxRestraint),
+    InsideSphere(InsideSphereRestraint),
+    OutsideSphere(OutsideSphereRestraint),
+    AbovePlane(AbovePlaneRestraint),
+    BelowPlane(BelowPlaneRestraint),
+}
+
+impl Restraint for AnyRestraint {
+    fn f(
+        &self,
+        x: &[molrs_pack::F; 3],
+        scale: molrs_pack::F,
+        scale2: molrs_pack::F,
+    ) -> molrs_pack::F {
+        match self {
+            Self::InsideBox(r) => r.f(x, scale, scale2),
+            Self::InsideSphere(r) => r.f(x, scale, scale2),
+            Self::OutsideSphere(r) => r.f(x, scale, scale2),
+            Self::AbovePlane(r) => r.f(x, scale, scale2),
+            Self::BelowPlane(r) => r.f(x, scale, scale2),
+        }
+    }
+    fn fg(
+        &self,
+        x: &[molrs_pack::F; 3],
+        scale: molrs_pack::F,
+        scale2: molrs_pack::F,
+        g: &mut [molrs_pack::F; 3],
+    ) -> molrs_pack::F {
+        match self {
+            Self::InsideBox(r) => r.fg(x, scale, scale2, g),
+            Self::InsideSphere(r) => r.fg(x, scale, scale2, g),
+            Self::OutsideSphere(r) => r.fg(x, scale, scale2, g),
+            Self::AbovePlane(r) => r.fg(x, scale, scale2, g),
+            Self::BelowPlane(r) => r.fg(x, scale, scale2, g),
+        }
+    }
+}
+
+fn extract_single(obj: &Bound<'_, pyo3::types::PyAny>) -> PyResult<AnyRestraint> {
+    if let Ok(c) = obj.extract::<PyInsideBox>() {
+        return Ok(AnyRestraint::InsideBox(c.inner));
+    }
+    if let Ok(c) = obj.extract::<PyInsideSphere>() {
+        return Ok(AnyRestraint::InsideSphere(c.inner));
+    }
+    if let Ok(c) = obj.extract::<PyOutsideSphere>() {
+        return Ok(AnyRestraint::OutsideSphere(c.inner));
+    }
+    if let Ok(c) = obj.extract::<PyAbovePlane>() {
+        return Ok(AnyRestraint::AbovePlane(c.inner));
+    }
+    if let Ok(c) = obj.extract::<PyBelowPlane>() {
+        return Ok(AnyRestraint::BelowPlane(c.inner));
+    }
+    Err(pyo3::exceptions::PyTypeError::new_err(
+        "expected a restraint (InsideBox, InsideSphere, OutsideSphere, AbovePlane, BelowPlane, MoleculeConstraint)",
+    ))
+}
+
+/// Extract a flat list of restraints from any supported Python object.
 ///
-/// Exposed to Python as `molrs.InsideBox`.
-///
-/// Parameters
-/// ----------
-/// min : list[float] | tuple[float, float, float]
-///     Minimum corner ``[xmin, ymin, zmin]``.
-/// max : list[float] | tuple[float, float, float]
-///     Maximum corner ``[xmax, ymax, zmax]``.
-///
-/// Examples
-/// --------
-/// >>> c = InsideBox([0, 0, 0], [10, 10, 10])
-/// >>> target = target.with_constraint(c)
+/// Single restraints become a one-element list; a `MoleculeConstraint` is
+/// unwrapped to its contained restraints.
+pub(crate) fn extract_restraints(
+    obj: &Bound<'_, pyo3::types::PyAny>,
+) -> PyResult<Vec<AnyRestraint>> {
+    if let Ok(mc) = obj.extract::<PyMoleculeConstraint>() {
+        return Ok(mc.restraints);
+    }
+    Ok(vec![extract_single(obj)?])
+}
+
+// ---------------------------------------------------------------------------
+// Concrete restraint wrappers
+// ---------------------------------------------------------------------------
+
+macro_rules! restraint_and {
+    ($self_:expr, $other:expr) => {{
+        let mut rs = vec![AnyRestraint::from($self_.inner.clone())];
+        rs.extend(extract_restraints($other)?);
+        Ok(PyMoleculeConstraint { restraints: rs })
+    }};
+}
+
+/// Box restraint: atoms penalized outside an axis-aligned bounding box.
 #[pyclass(name = "InsideBox", from_py_object)]
 #[derive(Clone)]
 pub struct PyInsideBox {
-    pub(crate) inner: InsideBoxConstraint,
+    pub(crate) inner: InsideBoxRestraint,
 }
 
 #[pymethods]
 impl PyInsideBox {
-    /// Create a box constraint from minimum and maximum corner coordinates.
-    ///
-    /// Parameters
-    /// ----------
-    /// min : list[float]
-    ///     ``[xmin, ymin, zmin]``.
-    /// max : list[float]
-    ///     ``[xmax, ymax, zmax]``.
-    ///
-    /// Returns
-    /// -------
-    /// InsideBox
     #[new]
     fn new(min: [NpF; 3], max: [NpF; 3]) -> Self {
-        PyInsideBox {
-            inner: InsideBoxConstraint::new(min, max),
+        Self {
+            inner: InsideBoxRestraint::new(min, max),
         }
     }
 
-    /// Compose this constraint with another, returning a new compound
-    /// constraint that requires **both** to be satisfied.
-    ///
-    /// Parameters
-    /// ----------
-    /// other : InsideBox | InsideSphere | OutsideSphere | AbovePlane | BelowPlane | MoleculeConstraint
-    ///     The constraint to combine with.
-    ///
-    /// Returns
-    /// -------
-    /// MoleculeConstraint
-    ///
-    /// Raises
-    /// ------
-    /// TypeError
-    ///     If ``other`` is not a recognized constraint type.
-    ///
-    /// Examples
-    /// --------
-    /// >>> compound = InsideBox([0,0,0], [10,10,10]).and_(InsideSphere(5.0, [5,5,5]))
     #[pyo3(name = "and_")]
-    fn and_constraint(
+    fn and_(
         &self,
         other: &Bound<'_, pyo3::types::PyAny>,
     ) -> PyResult<PyMoleculeConstraint> {
-        let other_mc = extract_molecule_constraint(other)?;
-        let mc: MoleculeConstraint = self.inner.clone().into();
-        Ok(PyMoleculeConstraint {
-            inner: mc.and(other_mc),
-        })
+        restraint_and!(self, other)
     }
 
     fn __repr__(&self) -> String {
@@ -100,62 +134,34 @@ impl PyInsideBox {
     }
 }
 
-/// Sphere constraint: all atoms must lie **inside** a sphere.
-///
-/// Exposed to Python as `molrs.InsideSphere`.
-///
-/// Parameters
-/// ----------
-/// radius : float
-///     Sphere radius.
-/// center : list[float] | tuple[float, float, float]
-///     Sphere center ``[cx, cy, cz]``.
-///
-/// Examples
-/// --------
-/// >>> c = InsideSphere(5.0, [0.0, 0.0, 0.0])
+impl From<InsideBoxRestraint> for AnyRestraint {
+    fn from(r: InsideBoxRestraint) -> Self {
+        AnyRestraint::InsideBox(r)
+    }
+}
+
+/// Sphere restraint: atoms penalized outside a sphere.
 #[pyclass(name = "InsideSphere", from_py_object)]
 #[derive(Clone)]
 pub struct PyInsideSphere {
-    pub(crate) inner: InsideSphereConstraint,
+    pub(crate) inner: InsideSphereRestraint,
 }
 
 #[pymethods]
 impl PyInsideSphere {
-    /// Create a sphere-interior constraint.
-    ///
-    /// Parameters
-    /// ----------
-    /// radius : float
-    ///     Sphere radius.
-    /// center : list[float]
-    ///     ``[cx, cy, cz]``.
-    ///
-    /// Returns
-    /// -------
-    /// InsideSphere
     #[new]
     fn new(radius: NpF, center: [NpF; 3]) -> Self {
-        PyInsideSphere {
-            inner: InsideSphereConstraint::new(radius, center),
+        Self {
+            inner: InsideSphereRestraint::new(center, radius),
         }
     }
 
-    /// Compose with another constraint (see :meth:`InsideBox.and_`).
-    ///
-    /// Returns
-    /// -------
-    /// MoleculeConstraint
     #[pyo3(name = "and_")]
-    fn and_constraint(
+    fn and_(
         &self,
         other: &Bound<'_, pyo3::types::PyAny>,
     ) -> PyResult<PyMoleculeConstraint> {
-        let other_mc = extract_molecule_constraint(other)?;
-        let mc: MoleculeConstraint = self.inner.clone().into();
-        Ok(PyMoleculeConstraint {
-            inner: mc.and(other_mc),
-        })
+        restraint_and!(self, other)
     }
 
     fn __repr__(&self) -> String {
@@ -163,62 +169,34 @@ impl PyInsideSphere {
     }
 }
 
-/// Sphere constraint: all atoms must lie **outside** a sphere.
-///
-/// Exposed to Python as `molrs.OutsideSphere`.
-///
-/// Parameters
-/// ----------
-/// radius : float
-///     Exclusion sphere radius.
-/// center : list[float] | tuple[float, float, float]
-///     Sphere center ``[cx, cy, cz]``.
-///
-/// Examples
-/// --------
-/// >>> c = OutsideSphere(2.0, [5.0, 5.0, 5.0])
+impl From<InsideSphereRestraint> for AnyRestraint {
+    fn from(r: InsideSphereRestraint) -> Self {
+        AnyRestraint::InsideSphere(r)
+    }
+}
+
+/// Sphere restraint: atoms penalized inside a sphere.
 #[pyclass(name = "OutsideSphere", from_py_object)]
 #[derive(Clone)]
 pub struct PyOutsideSphere {
-    pub(crate) inner: OutsideSphereConstraint,
+    pub(crate) inner: OutsideSphereRestraint,
 }
 
 #[pymethods]
 impl PyOutsideSphere {
-    /// Create a sphere-exterior constraint.
-    ///
-    /// Parameters
-    /// ----------
-    /// radius : float
-    ///     Exclusion sphere radius.
-    /// center : list[float]
-    ///     ``[cx, cy, cz]``.
-    ///
-    /// Returns
-    /// -------
-    /// OutsideSphere
     #[new]
     fn new(radius: NpF, center: [NpF; 3]) -> Self {
-        PyOutsideSphere {
-            inner: OutsideSphereConstraint::new(radius, center),
+        Self {
+            inner: OutsideSphereRestraint::new(center, radius),
         }
     }
 
-    /// Compose with another constraint (see :meth:`InsideBox.and_`).
-    ///
-    /// Returns
-    /// -------
-    /// MoleculeConstraint
     #[pyo3(name = "and_")]
-    fn and_constraint(
+    fn and_(
         &self,
         other: &Bound<'_, pyo3::types::PyAny>,
     ) -> PyResult<PyMoleculeConstraint> {
-        let other_mc = extract_molecule_constraint(other)?;
-        let mc: MoleculeConstraint = self.inner.clone().into();
-        Ok(PyMoleculeConstraint {
-            inner: mc.and(other_mc),
-        })
+        restraint_and!(self, other)
     }
 
     fn __repr__(&self) -> String {
@@ -226,62 +204,34 @@ impl PyOutsideSphere {
     }
 }
 
-/// Half-space constraint: all atoms must satisfy ``n . x >= d``.
-///
-/// Exposed to Python as `molrs.AbovePlane`.
-///
-/// Parameters
-/// ----------
-/// normal : list[float] | tuple[float, float, float]
-///     Plane normal vector ``[nx, ny, nz]`` (need not be unit length).
-/// distance : float
-///     Signed distance threshold.
-///
-/// Examples
-/// --------
-/// >>> c = AbovePlane([0, 0, 1], 5.0)  # z >= 5
+impl From<OutsideSphereRestraint> for AnyRestraint {
+    fn from(r: OutsideSphereRestraint) -> Self {
+        AnyRestraint::OutsideSphere(r)
+    }
+}
+
+/// Half-space: atoms penalized below the plane `n . x >= d`.
 #[pyclass(name = "AbovePlane", from_py_object)]
 #[derive(Clone)]
 pub struct PyAbovePlane {
-    pub(crate) inner: AbovePlaneConstraint,
+    pub(crate) inner: AbovePlaneRestraint,
 }
 
 #[pymethods]
 impl PyAbovePlane {
-    /// Create an above-plane constraint.
-    ///
-    /// Parameters
-    /// ----------
-    /// normal : list[float]
-    ///     ``[nx, ny, nz]``.
-    /// distance : float
-    ///     Signed distance from origin along normal.
-    ///
-    /// Returns
-    /// -------
-    /// AbovePlane
     #[new]
     fn new(normal: [NpF; 3], distance: NpF) -> Self {
-        PyAbovePlane {
-            inner: AbovePlaneConstraint::new(normal, distance),
+        Self {
+            inner: AbovePlaneRestraint::new(normal, distance),
         }
     }
 
-    /// Compose with another constraint (see :meth:`InsideBox.and_`).
-    ///
-    /// Returns
-    /// -------
-    /// MoleculeConstraint
     #[pyo3(name = "and_")]
-    fn and_constraint(
+    fn and_(
         &self,
         other: &Bound<'_, pyo3::types::PyAny>,
     ) -> PyResult<PyMoleculeConstraint> {
-        let other_mc = extract_molecule_constraint(other)?;
-        let mc: MoleculeConstraint = self.inner.clone().into();
-        Ok(PyMoleculeConstraint {
-            inner: mc.and(other_mc),
-        })
+        restraint_and!(self, other)
     }
 
     fn __repr__(&self) -> String {
@@ -289,62 +239,34 @@ impl PyAbovePlane {
     }
 }
 
-/// Half-space constraint: all atoms must satisfy ``n . x <= d``.
-///
-/// Exposed to Python as `molrs.BelowPlane`.
-///
-/// Parameters
-/// ----------
-/// normal : list[float] | tuple[float, float, float]
-///     Plane normal vector ``[nx, ny, nz]``.
-/// distance : float
-///     Signed distance threshold.
-///
-/// Examples
-/// --------
-/// >>> c = BelowPlane([0, 0, 1], 15.0)  # z <= 15
+impl From<AbovePlaneRestraint> for AnyRestraint {
+    fn from(r: AbovePlaneRestraint) -> Self {
+        AnyRestraint::AbovePlane(r)
+    }
+}
+
+/// Half-space: atoms penalized above the plane `n . x <= d`.
 #[pyclass(name = "BelowPlane", from_py_object)]
 #[derive(Clone)]
 pub struct PyBelowPlane {
-    pub(crate) inner: BelowPlaneConstraint,
+    pub(crate) inner: BelowPlaneRestraint,
 }
 
 #[pymethods]
 impl PyBelowPlane {
-    /// Create a below-plane constraint.
-    ///
-    /// Parameters
-    /// ----------
-    /// normal : list[float]
-    ///     ``[nx, ny, nz]``.
-    /// distance : float
-    ///     Signed distance from origin along normal.
-    ///
-    /// Returns
-    /// -------
-    /// BelowPlane
     #[new]
     fn new(normal: [NpF; 3], distance: NpF) -> Self {
-        PyBelowPlane {
-            inner: BelowPlaneConstraint::new(normal, distance),
+        Self {
+            inner: BelowPlaneRestraint::new(normal, distance),
         }
     }
 
-    /// Compose with another constraint (see :meth:`InsideBox.and_`).
-    ///
-    /// Returns
-    /// -------
-    /// MoleculeConstraint
     #[pyo3(name = "and_")]
-    fn and_constraint(
+    fn and_(
         &self,
         other: &Bound<'_, pyo3::types::PyAny>,
     ) -> PyResult<PyMoleculeConstraint> {
-        let other_mc = extract_molecule_constraint(other)?;
-        let mc: MoleculeConstraint = self.inner.clone().into();
-        Ok(PyMoleculeConstraint {
-            inner: mc.and(other_mc),
-        })
+        restraint_and!(self, other)
     }
 
     fn __repr__(&self) -> String {
@@ -352,87 +274,40 @@ impl PyBelowPlane {
     }
 }
 
-/// Composed constraint formed by combining primitive constraints via
-/// :meth:`and_`.
-///
-/// Exposed to Python as `molrs.MoleculeConstraint`.
-///
-/// All constituent restraints must be satisfied simultaneously.
-///
-/// Examples
-/// --------
-/// >>> c = InsideBox([0,0,0], [10,10,10]).and_(OutsideSphere(2.0, [5,5,5]))
-/// >>> c  # MoleculeConstraint(restraints=2)
+impl From<BelowPlaneRestraint> for AnyRestraint {
+    fn from(r: BelowPlaneRestraint) -> Self {
+        AnyRestraint::BelowPlane(r)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// MoleculeConstraint (composite)
+// ---------------------------------------------------------------------------
+
+/// Bundle of restraints that all apply to the same target. Built by chaining
+/// `.and_()` on primitive constraints or on another ``MoleculeConstraint``.
 #[pyclass(name = "MoleculeConstraint", from_py_object)]
 #[derive(Clone)]
 pub struct PyMoleculeConstraint {
-    pub(crate) inner: MoleculeConstraint,
+    pub(crate) restraints: Vec<AnyRestraint>,
 }
 
 #[pymethods]
 impl PyMoleculeConstraint {
-    /// Compose with another constraint, returning a new compound
-    /// constraint requiring **all** constituents.
-    ///
-    /// Parameters
-    /// ----------
-    /// other : InsideBox | InsideSphere | OutsideSphere | AbovePlane | BelowPlane | MoleculeConstraint
-    ///     The constraint to add.
-    ///
-    /// Returns
-    /// -------
-    /// MoleculeConstraint
-    ///
-    /// Raises
-    /// ------
-    /// TypeError
-    ///     If ``other`` is not a recognized constraint type.
     #[pyo3(name = "and_")]
-    fn and_constraint(
+    fn and_(
         &self,
         other: &Bound<'_, pyo3::types::PyAny>,
     ) -> PyResult<PyMoleculeConstraint> {
-        let other_mc = extract_molecule_constraint(other)?;
-        Ok(PyMoleculeConstraint {
-            inner: self.inner.clone().and(other_mc),
-        })
+        let mut rs = self.restraints.clone();
+        rs.extend(extract_restraints(other)?);
+        Ok(PyMoleculeConstraint { restraints: rs })
     }
 
     fn __repr__(&self) -> String {
         format!(
             "MoleculeConstraint(restraints={})",
-            self.inner.restraints.len()
+            self.restraints.len()
         )
     }
-}
-
-/// Extract a `MoleculeConstraint` from any supported Python constraint
-/// object.
-///
-/// Accepts `InsideBox`, `InsideSphere`, `OutsideSphere`, `AbovePlane`,
-/// `BelowPlane`, or `MoleculeConstraint`.
-pub(crate) fn extract_molecule_constraint(
-    obj: &Bound<'_, pyo3::types::PyAny>,
-) -> PyResult<MoleculeConstraint> {
-    if let Ok(c) = obj.extract::<PyInsideBox>() {
-        return Ok(c.inner.into());
-    }
-    if let Ok(c) = obj.extract::<PyInsideSphere>() {
-        return Ok(c.inner.into());
-    }
-    if let Ok(c) = obj.extract::<PyOutsideSphere>() {
-        return Ok(c.inner.into());
-    }
-    if let Ok(c) = obj.extract::<PyAbovePlane>() {
-        return Ok(c.inner.into());
-    }
-    if let Ok(c) = obj.extract::<PyBelowPlane>() {
-        return Ok(c.inner.into());
-    }
-    if let Ok(c) = obj.extract::<PyMoleculeConstraint>() {
-        return Ok(c.inner);
-    }
-    Err(pyo3::exceptions::PyTypeError::new_err(
-        "expected a constraint type (InsideBox, InsideSphere, OutsideSphere, AbovePlane, BelowPlane, or MoleculeConstraint)",
-    ))
 }

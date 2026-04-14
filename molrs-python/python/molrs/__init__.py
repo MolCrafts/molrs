@@ -1,6 +1,6 @@
 from .molrs import (
     # SimBox + neighbors
-    SimBox,
+    SimBox as Box,
     LinkedCell,
     NeighborQuery,
     NeighborList,
@@ -20,6 +20,8 @@ from .molrs import (
     read_lammps,
     read_lammps_traj,
     read_chgcar_file,
+    read_cube_file,
+    write_cube_file,
     write_pdb,
     write_xyz,
     write_lammps,
@@ -76,6 +78,8 @@ __all__ = [
     "read_lammps",
     "read_lammps_traj",
     "read_chgcar_file",
+    "read_cube_file",
+    "write_cube_file",
     "write_pdb",
     "write_xyz",
     "write_lammps",

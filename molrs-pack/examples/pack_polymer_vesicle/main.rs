@@ -19,12 +19,12 @@ use std::path::PathBuf;
 
 use molrs::element::Element;
 use molrs::hydrogens::add_hydrogens;
-use molrs::io::pdb::read_pdb_frame;
 use molrs::molgraph::{Atom, AtomId, MolGraph};
 use molrs::types::F;
+use molrs_io::pdb::read_pdb_frame;
 use molrs_pack::{
-    InsideBoxConstraint, InsideSphereConstraint, Molpack, OutsideSphereConstraint, ProgressHandler,
-    RegionConstraint, Target, TorsionMcHook, XYZHandler,
+    InsideBoxRestraint, InsideSphereRestraint, Molpack, OutsideSphereRestraint, ProgressHandler,
+    Target, TorsionMcHook, XYZHandler,
 };
 use rand::Rng;
 use rand::SeedableRng;
@@ -315,8 +315,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let mut target = Target::from_coords(&coords, &radii, 1)
             .with_name(format!("PE_{i}"))
-            .with_constraint(InsideSphereConstraint::new(10.0, origin))
-            .with_hook(hook);
+            .with_restraint(InsideSphereRestraint::new(origin, 10.0))
+            .with_relaxer(hook);
         target.elements = elements.iter().map(|s| s.into()).collect();
         targets.push(target);
     }
@@ -325,22 +325,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Inner lipid leaflet
     let lipid_inner = Target::new(lipid.clone(), 90)
-        .with_constraint_for_atoms(&[37], InsideSphereConstraint::new(14.0, origin))
-        .with_constraint_for_atoms(&[5], OutsideSphereConstraint::new(26.0, origin))
+        .with_restraint_for_atoms(&[37], InsideSphereRestraint::new(origin, 14.0))
+        .with_restraint_for_atoms(&[5], OutsideSphereRestraint::new(origin, 26.0))
         .with_name("lipid_inner");
 
     // Outer lipid leaflet
     let lipid_outer = Target::new(lipid, 300)
-        .with_constraint_for_atoms(&[5], InsideSphereConstraint::new(29.0, origin))
-        .with_constraint_for_atoms(&[37], OutsideSphereConstraint::new(41.0, origin))
+        .with_restraint_for_atoms(&[5], InsideSphereRestraint::new(origin, 29.0))
+        .with_restraint_for_atoms(&[37], OutsideSphereRestraint::new(origin, 41.0))
         .with_name("lipid_outer");
 
     // Outer water shell (reduced count for faster demo)
     let water_outer = Target::new(water, 2000)
-        .with_constraint(
-            InsideBoxConstraint::new([-47.5, -47.5, -47.5], [47.5, 47.5, 47.5])
-                .and(OutsideSphereConstraint::new(43.0, origin)),
-        )
+        .with_restraint(InsideBoxRestraint::new(
+            [-47.5, -47.5, -47.5],
+            [47.5, 47.5, 47.5],
+        ))
+        .with_restraint(OutsideSphereRestraint::new(origin, 43.0))
         .with_name("water_outer");
 
     targets.push(lipid_inner);

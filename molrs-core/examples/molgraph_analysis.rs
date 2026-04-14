@@ -5,7 +5,7 @@
 //!
 //! Run with: `cargo run -p molrs-core --example molgraph_analysis`
 
-use molrs::{Atom, MolGraph, PropValue, find_rings};
+use molrs_core::{Atom, MolGraph, PropValue, find_rings};
 
 fn main() {
     let mol = build_benzene();

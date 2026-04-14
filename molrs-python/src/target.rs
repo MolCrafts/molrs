@@ -5,7 +5,7 @@
 //! Targets are passed to [`PyPacker::pack`](crate::packer::PyPacker::pack) to
 //! build a packed system.
 
-use crate::constraint::extract_molecule_constraint;
+use crate::constraint::extract_restraints;
 use crate::frame::PyFrame;
 use crate::helpers::NpF;
 use molrs_pack::target::Target;
@@ -148,10 +148,12 @@ impl PyTarget {
     /// --------
     /// >>> target = target.with_constraint(InsideBox([0,0,0], [30,30,30]))
     fn with_constraint(&self, constraint: &Bound<'_, pyo3::types::PyAny>) -> PyResult<Self> {
-        let mc = extract_molecule_constraint(constraint)?;
-        Ok(PyTarget {
-            inner: self.inner.clone().with_constraint(mc),
-        })
+        let restraints = extract_restraints(constraint)?;
+        let mut target = self.inner.clone();
+        for r in restraints {
+            target = target.with_restraint(r);
+        }
+        Ok(PyTarget { inner: target })
     }
 
     /// Add a geometric constraint for a subset of atoms using Packmol-style
@@ -180,10 +182,12 @@ impl PyTarget {
         constraint: &Bound<'_, pyo3::types::PyAny>,
     ) -> PyResult<Self> {
         validate_atom_indices(&indices, self.inner.natoms())?;
-        let mc = extract_molecule_constraint(constraint)?;
-        Ok(PyTarget {
-            inner: self.inner.clone().with_constraint_for_atoms(&indices, mc),
-        })
+        let restraints = extract_restraints(constraint)?;
+        let mut target = self.inner.clone();
+        for r in restraints {
+            target = target.with_restraint_for_atoms(&indices, r);
+        }
+        Ok(PyTarget { inner: target })
     }
 
     /// Set the ``maxmove`` parameter for the movebad heuristic.

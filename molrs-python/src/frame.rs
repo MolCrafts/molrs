@@ -206,7 +206,7 @@ impl PyGrid {
 /// atoms.insert("z", np.zeros(3, dtype=np.float32))
 /// frame["atoms"] = atoms
 ///
-/// frame.simbox = Box.cube(10.0)
+/// frame.box = Box.cube(10.0)
 /// print(frame)          # Frame(blocks=['atoms'], simbox=yes)
 /// print(frame.keys())   # ['atoms']
 /// ```
@@ -385,10 +385,10 @@ impl PyFrame {
     ///
     /// Examples
     /// --------
-    /// >>> if frame.simbox is not None:
-    /// ...     print(frame.simbox.volume())
-    #[getter]
-    fn simbox(&self) -> PyResult<Option<PyBox>> {
+    /// >>> if frame.box is not None:
+    /// ...     print(frame.box.volume())
+    #[getter(simbox)]
+    fn get_box(&self) -> PyResult<Option<PyBox>> {
         self.store
             .borrow()
             .with_frame_simbox(self.id, |sb| sb.cloned().map(|inner| PyBox { inner }))
@@ -399,15 +399,15 @@ impl PyFrame {
     ///
     /// Parameters
     /// ----------
-    /// simbox : Box | None
+    /// box : Box | None
     ///     Pass ``None`` to remove the simulation box.
     ///
     /// Examples
     /// --------
-    /// >>> frame.simbox = Box.cube(20.0)
-    /// >>> frame.simbox = None  # remove
-    #[setter]
-    fn set_simbox(&mut self, simbox: Option<&PyBox>) -> PyResult<()> {
+    /// >>> frame.box = Box.cube(20.0)
+    /// >>> frame.box = None  # remove
+    #[setter(simbox)]
+    fn set_box(&mut self, simbox: Option<&PyBox>) -> PyResult<()> {
         self.store
             .borrow_mut()
             .set_frame_simbox(self.id, simbox.map(|sb| sb.inner.clone()))

@@ -26,8 +26,8 @@
 use std::fs::create_dir_all;
 use std::path::PathBuf;
 
-use molrs::io::pdb::read_pdb_frame;
-use molrs_pack::{InsideBoxConstraint, Molpack, ProgressHandler, Target, XYZHandler};
+use molrs_io::pdb::read_pdb_frame;
+use molrs_pack::{InsideBoxRestraint, Molpack, ProgressHandler, Target, XYZHandler};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = env_logger::try_init();
@@ -40,17 +40,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let t3 = read_pdb_frame(base.join("t3.pdb"))?;
 
     let water_target = Target::new(water, 100)
-        .with_constraint(InsideBoxConstraint::new(
+        .with_restraint(InsideBoxRestraint::new(
             [-20.0, 0.0, 0.0],
             [0.0, 39.0, 39.0],
         ))
         .with_name("water");
 
     let chloro_target = Target::new(chloroform, 30)
-        .with_constraint(InsideBoxConstraint::new(
-            [0.0, 0.0, 0.0],
-            [21.0, 39.0, 39.0],
-        ))
+        .with_restraint(InsideBoxRestraint::new([0.0, 0.0, 0.0], [21.0, 39.0, 39.0]))
         .with_name("chloroform");
 
     let t3_target = Target::new(t3, 1)

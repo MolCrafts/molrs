@@ -23,6 +23,23 @@ pub struct PhaseInfo {
     pub molecule_type: Option<usize>,
 }
 
+/// Summary report emitted at the end of each packing phase.
+///
+/// Passed to [`Handler::on_phase_end`]. Fields mirror the counters
+/// reported by `ProgressHandler::on_phase_start`; when no summary is
+/// needed (e.g. early termination), callers may omit the handler hook.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PhaseReport {
+    /// Number of outer iterations actually run in this phase.
+    pub iterations: usize,
+    /// Final `fdist` (max inter-molecular overlap) at phase exit.
+    pub fdist: F,
+    /// Final `frest` (max restraint violation) at phase exit.
+    pub frest: F,
+    /// Whether the phase converged under `precision`.
+    pub converged: bool,
+}
+
 /// Per-iteration progress snapshot.
 #[derive(Debug, Clone)]
 pub struct StepInfo {
@@ -72,6 +89,28 @@ pub trait Handler: Send {
     fn should_stop(&self) -> bool {
         false
     }
+
+    // ── v2 additions (spec §6.6) — default no-op, backward compatible ──
+
+    /// Called after each inner GENCAN iteration (more granular than [`on_step`]).
+    ///
+    /// Default: no-op. Implement when you need per-inner-iteration feedback
+    /// (e.g. plotting objective evolution, adaptive stop criteria).
+    ///
+    /// - `iter` — 0-based inner iteration counter within the current outer step
+    /// - `f` — current objective value (pair + restraint)
+    /// - `sys` — read-only view of the packing context
+    ///
+    /// [`on_step`]: Handler::on_step
+    fn on_inner_iter(&mut self, _iter: u32, _f: F, _sys: &PackContext) {}
+
+    /// Called at the end of each packing phase, with a summary report.
+    ///
+    /// Default: no-op. Paired with [`on_phase_start`] for symmetric
+    /// setup / teardown hooks.
+    ///
+    /// [`on_phase_start`]: Handler::on_phase_start
+    fn on_phase_end(&mut self, _info: &PhaseInfo, _report: &PhaseReport) {}
 }
 
 // ── NullHandler ───────────────────────────────────────────────────────────────
@@ -160,7 +199,7 @@ impl Handler for XYZHandler {
     }
 
     fn on_step(&mut self, info: &StepInfo, sys: &PackContext) {
-        if info.loop_idx.is_multiple_of(self.every) {
+        if info.loop_idx % self.every == 0 {
             self.write_frame(&format!("step {}", info.loop_idx), sys);
         }
     }

@@ -13,7 +13,7 @@
 //! ### Element lookup
 //!
 //! ```
-//! use molrs::Element;
+//! use molrs_core::Element;
 //!
 //! // Look up elements by atomic number
 //! let hydrogen = Element::by_number(1).unwrap();
@@ -44,33 +44,27 @@ pub mod atomistic;
 pub mod block;
 pub mod coarsegrain;
 pub mod element;
-pub mod forcefield;
-pub mod grid;
+pub mod field;
 pub mod frame;
+pub mod frame_access;
+pub mod frame_view;
 pub mod gasteiger;
-pub mod gen3d;
+pub mod grid;
 pub mod hydrogens;
 pub mod mapping;
 pub mod molgraph;
 pub mod molrec;
-pub mod potential;
 pub mod region;
 pub mod rings;
 pub mod rotatable;
 pub mod stereo;
 pub mod topology;
 pub mod types;
-pub mod typifier;
-
-// Analysis compute modules
-pub mod compute;
 
 // Other top-level modules
 pub mod error;
-pub mod io;
 pub mod math;
 pub mod neighbors;
-pub mod smiles;
 
 // Public re-exports for common types
 pub use atomistic::Atomistic;
@@ -78,13 +72,12 @@ pub use block::Block;
 pub use coarsegrain::CoarseGrain;
 pub use element::Element;
 pub use error::MolRsError;
+pub use field::UniformGridField;
 pub use frame::Frame;
-pub use grid::Grid;
+pub use frame_access::FrameAccess;
+pub use frame_view::FrameView;
 pub use gasteiger::{GasteigerCharges, compute_gasteiger_charges};
-pub use gen3d::{
-    EmbedAlgorithm, ForceFieldKind, Gen3DOptions, Gen3DReport, Gen3DSpeed, StageKind, StageReport,
-    generate_3d,
-};
+pub use grid::Grid;
 pub use hydrogens::{add_hydrogens, implicit_h_count, remove_hydrogens};
 pub use mapping::{CGMapping, WeightScheme};
 pub use molgraph::{Atom, AtomId, Bead, Bond, BondId, MolGraph, PropValue};
@@ -95,31 +88,6 @@ pub use stereo::{
 };
 pub use topology::{Topology, TopologyRingInfo};
 
-// Typifier re-exports
-pub use typifier::Typifier;
-pub use typifier::mmff::{MMFFAtomProp, MMFFEquiv, MMFFParams, MMFFTypifier};
-
-// SMILES/SMARTS re-exports
-pub use smiles::{parse_smarts, parse_smiles, to_atomistic};
-
-// Re-export IO functions for convenience
-pub use forcefield::xml::{read_forcefield_xml, read_forcefield_xml_str};
-pub use io::chgcar::read_chgcar;
-pub use io::lammps_data::{read_lammps_data, write_lammps_data};
-pub use io::lammps_dump::{open_lammps_dump, read_lammps_dump, write_lammps_dump};
-pub use io::pdb::{read_pdb_frame, write_pdb_frame};
-pub use io::xyz::{read_xyz_frame, read_xyz_traj, write_xyz_frame};
 pub use molrec::{
-    CellBox, MolRec, ObservableData, ObservableKind, ObservableRecord, RecordBox, SchemaValue,
-    Trajectory,
+    MolRec, ObservableData, ObservableKind, ObservableRecord, SchemaValue, Trajectory,
 };
-
-// Zarr I/O re-exports (only with "zarr" feature)
-#[cfg(feature = "zarr")]
-pub use io::zarr::{
-    count_molrec_frames_in_store, read_molrec_frame_from_store, read_molrec_store,
-};
-#[cfg(all(feature = "zarr", feature = "filesystem"))]
-pub use io::zarr::read_molrec_file;
-#[cfg(all(feature = "zarr", feature = "filesystem"))]
-pub use io::zarr::write_molrec_file;

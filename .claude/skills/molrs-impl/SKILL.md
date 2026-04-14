@@ -1,129 +1,150 @@
 ---
 name: molrs-impl
-description: Orchestrate multi-agent feature development for molrs. Takes a feature description or spec and coordinates architecture review, TDD, implementation, code review, performance review, and FFI safety.
+description: Orchestrate multi-agent feature development for molrs. Entry point for any new feature — coordinates spec → architecture → TDD → implementation → review → docs.
 ---
 
-You are the **molrs implementation orchestrator**. Given a feature description or spec, you coordinate the full development lifecycle using specialized agents.
+You are the **molrs implementation orchestrator**. This is the single entry point for new feature work. You coordinate the full lifecycle using in-repo `molrs-*` agents and skills.
 
-**Execution discipline**: Before writing any code, enter **Plan Mode** to lay out the full plan, then create **Tasks** for each phase below. Update task status as work progresses (`in_progress` → `completed`). This enforces a structured, auditable workflow — the agent must not skip phases or jump ahead without completing prior tasks.
+**Execution discipline**: Before writing any code, enter **Plan Mode** to lay out the full plan, then create **Tasks** for each phase below. Update task status as work progresses (`in_progress` → `completed`). Don't skip phases or jump ahead.
 
 ## Trigger
 
 `/molrs-impl <feature description or spec path>`
 
-## Workflow
+## Phase 0 — Spec
 
-### Phase 0: Understand & Plan
+If the input is a natural language description (not a path to an existing spec), invoke the `molrs-spec` skill internally to produce one. Do NOT bounce the user out to `/molrs-spec` — that creates a circular handoff.
 
-1. **Parse the input**: Determine if the input is a natural language description or a path to an existing spec.
-2. **If no spec exists**: Suggest running `/molrs-spec` first to generate one. Offer to proceed with informal planning if the user prefers.
-3. **Read the spec** and identify:
-   - Which crates are affected (`molrs-core`, `molrs-pack`, `molrs-ffi`, `molrs-wasm`)
-   - Which traits are extended or created
-   - Which data structures are modified
-   - Whether FFI/WASM bindings need updates
+If the input is already a spec path, read it.
 
-### Phase 1: Architecture Review
+Identify from the spec:
 
-Launch the **architect** agent (or `everything-claude-code:planner`) to:
-- Validate the feature fits the existing trait-based architecture
-- Check dependency flow: `molrs-core ← molrs-ffi ← molrs-wasm`, `molrs-core ← molrs-pack`
-- Identify which module(s) the feature belongs in
-- Confirm the feature doesn't violate:
-  - Handle-based FFI (no raw pointers crossing boundaries)
-  - Float precision abstraction (use `F` alias, not `f32`/`f64`)
-  - ndarray conventions for coordinates
-  - Immutability principles (return new objects, don't mutate)
-- Output: Implementation plan with file list, trait signatures, and data flow
+- Which crate(s) own the feature (8 active members):
+  `molrs-core`, `molrs-io`, `molrs-compute`, `molrs-smiles`, `molrs-ff`, `molrs-gen3d`, `molrs-pack`, `molrs-cxxapi`
+- Which traits are extended or created
+- Which data structures are modified
+- Whether FFI bindings (`molrs-cxxapi`) need updates
 
-### Phase 2: Interface Design (TDD - RED)
+## Phase 1 — Architecture Review
 
-Launch the **tdd-guide** agent to:
-1. Define the public API (trait signatures, struct definitions, function signatures)
-2. Write test cases FIRST:
-   - Unit tests for each function/method
+Spawn the **molrs-architect** agent (subagent_type: `molrs-architect`) to validate the design against `molrs-arch` standards: crate dependency flow, module ownership, trait conformance, FFI safety, naming.
+
+Output: implementation plan with file list, trait signatures, data flow.
+
+## Phase 2 — Test Design (TDD — RED)
+
+Spawn the **molrs-tester** agent (subagent_type: `molrs-tester`) to:
+
+1. Define the public API (trait signatures, struct fields, function signatures).
+2. Write tests FIRST per `molrs-test` standards:
+   - Unit tests per function/method
    - Integration tests for trait implementations
-   - Numerical accuracy tests (compare against reference implementations)
-   - Edge cases: empty inputs, single-atom systems, zero vectors, PBC wrapping
-3. For potential/force kernels: include numerical gradient verification tests
-4. For packing changes: include Packmol reference comparison tests
-5. Run tests — they should all FAIL (RED)
+   - Numerical gradient verification (for potentials/constraints)
+   - PBC edge cases, round-trip I/O
+   - Edge cases: empty, single atom, collinear, zero distance
+3. For new physics: also spawn **molrs-scientist** to verify equation + units against literature.
+4. Run tests — they should all FAIL (RED).
 
-### Phase 3: Implementation (TDD - GREEN)
+## Phase 3 — Implementation (TDD — GREEN)
 
 Write minimal code to pass all tests:
-- Follow file organization: 200-400 lines per file, 800 max
-- Use the `F` type alias for all floats
-- Implement `Send + Sync` for any trait object that crosses thread boundaries
-- For `Potential` implementations: `eval(&self, coords: &[F]) -> (F, Vec<F>)` signature
-- For `Fix` implementations: declare GPU tier (`Kernel`/`Async`/`Sync`)
-- For `Constraint` implementations: accumulate TRUE gradient with `+=`
-- Run tests — they should all PASS (GREEN)
 
-### Phase 4: Review & Refactor (TDD - IMPROVE)
+- Files 200–400 lines (800 max)
+- `F = f64` alias for floats
+- `Send + Sync` for shared trait objects
+- `Potential` signature: `eval(&self, coords: &[F]) -> (F, Vec<F>)`
+- `Constraint`: accumulate TRUE gradient with `+=`
+- Run tests — they should all PASS (GREEN).
 
-Launch agents in parallel:
+### Phase 3 — special case: hot-path refactors
 
-1. **code-reviewer** agent: Check code quality, readability, Rust idioms
-2. **molrs-perf** skill: Check for performance issues (see `.claude/skills/molrs-perf/`)
-3. **molrs-ffi** skill (if FFI affected): Verify handle safety (see `.claude/skills/molrs-ffi/`)
+When Phase 3 is an incremental refactor of a performance-critical monolith (e.g. `molrs-pack` objective/packer split, `molrs-ff` kernel extraction, `molrs-core` neighbor rewrite), the TDD cycle pairs with a **bench cycle**. Each extracted pure function ships as a **single atomic commit** containing:
+
+1. `#[cfg(bench)] #[inline(never)] fn F_sentinel(...)` holding the pre-extraction body in the origin module.
+2. A unit test pinning behavior (extracted fn vs. sentinel, or against a reference).
+3. A criterion microbench of the extracted function.
+4. A criterion microbench of the caller (catches indirection / vtable cost).
+5. The extraction itself.
+
+Gates (hard): extracted ≤ +1% vs. sentinel; caller ≤ +2%. Do not batch several extractions into one commit — localization of regressions becomes impossible.
+
+End-to-end benches for the crate exist as a **catastrophic-regression alarm** (> +10% blocks merge), never as the per-extraction gate. See the `molrs-perf` skill § "Benchmarking during refactors" for the full discipline. The `molrs-optimizer` agent (Phase 4) enforces this checklist; if sentinel + microbench + caller microbench are missing, the review is blocked.
+
+## Phase 4 — Review & Refactor (TDD — IMPROVE)
+
+Spawn agents in parallel:
+
+| Agent | When |
+|---|---|
+| `molrs-architect` | Always — re-verify dependency flow & boundary rules |
+| `molrs-optimizer` | Performance-sensitive code (potentials, neighbors, hot loops) |
+| `molrs-documenter` | Public API additions/changes |
+| `molrs-scientist` | Anything touching physics (force fields, integrators, constraints) |
+
+For FFI changes (`molrs-cxxapi`): consult `molrs-ffi` skill checklist directly.
 
 Address findings, then:
-- Run `cargo clippy -- -D warnings`
-- Run `cargo fmt --all`
-- Verify test coverage >= 80%
 
-### Phase 5: Documentation
+```bash
+cargo clippy -- -D warnings
+cargo fmt --all
+```
 
-If public API was added/changed:
-- Add doc comments (`///`) on all public items
-- Include usage examples in doc comments
-- Update crate-level docs if a new module was added
+Verify coverage ≥ 80%.
 
-### Phase 6: Integration Verification
+## Phase 5 — Documentation
+
+If public API was added or changed, apply `molrs-doc` standards (docstring tiers, units, references). The `molrs-documenter` agent (already invoked Phase 4) will have flagged gaps.
+
+## Phase 6 — Integration Verification
 
 ```bash
 cargo build --all-features
 cargo test --all-features
 cargo clippy -- -D warnings
-cargo bench -p <affected-crate>    # if performance-sensitive
+cargo bench -p <affected-crate>     # if performance-sensitive
 ```
 
 ## Agent Dispatch Table
 
-| Phase | Agent/Skill | Subagent Type | When |
+| Phase | Agent / Skill | Subagent type | When |
 |---|---|---|---|
-| 1 | architect | `everything-claude-code:planner` | Always |
-| 2 | tdd-guide | `everything-claude-code:tdd-guide` | Always |
+| 0 | `molrs-spec` (skill) | — | If no spec exists |
+| 1 | `molrs-architect` | `molrs-architect` | Always |
+| 2 | `molrs-tester` | `molrs-tester` | Always |
+| 2b | `molrs-scientist` | `molrs-scientist` | New physics |
 | 3 | (self) | — | Always |
-| 4a | code-reviewer | `everything-claude-code:code-reviewer` | Always |
-| 4b | molrs-perf | — | Performance-sensitive code |
-| 4c | molrs-ffi | — | FFI boundary changes |
-| 5 | (self) | — | Public API changes |
-| 6 | build-error-resolver | `everything-claude-code:build-error-resolver` | If build fails |
+| 4a | `molrs-architect` | `molrs-architect` | Always |
+| 4b | `molrs-optimizer` | `molrs-optimizer` | Performance-sensitive |
+| 4c | `molrs-documenter` | `molrs-documenter` | Public API touched |
+| 4d | `molrs-scientist` | `molrs-scientist` | Physics touched |
+| 5 | `molrs-doc` (skill) | — | Public API touched |
+| 6 | (self) | — | Always |
 
 ## Crate-Specific Checklists
 
 ### molrs-core changes
-- [ ] Uses `F` type alias (not raw f32/f64)
-- [ ] ndarray for coordinates (not Vec<Vec<F>>)
+- [ ] Uses `F` type alias (not raw `f64`)
+- [ ] ndarray for coordinates (not `Vec<Vec<F>>`)
 - [ ] Trait objects are `Send + Sync`
-- [ ] No `Cell<f64>` in Sync contexts (use AtomicU64)
-- [ ] Kernel registered in `KernelRegistry` (if new potential)
+- [ ] No `Cell<f64>` in Sync contexts (use `AtomicU64`)
+
+### molrs-ff changes
+- [ ] New kernel registered in `KernelRegistry`
+- [ ] Numerical gradient test included
+- [ ] Equation + reference cited in rustdoc
 
 ### molrs-pack changes
 - [ ] Constraints accumulate TRUE gradient with `+=`
 - [ ] Rotation uses LEFT multiplication
-- [ ] Checked against Packmol source (cite file:line)
-- [ ] Numerical gradient test included
+- [ ] Checked against Packmol source (cite `file:line`)
 
-### molrs-ffi changes
-- [ ] Handle-based (no raw pointers)
-- [ ] Version counter incremented on mutation
-- [ ] Invalid handle returns error (not panic)
-- [ ] `#[no_mangle]` and `extern "C"` on FFI functions
+### molrs-io changes
+- [ ] Tested against all real files in `tests-data/<format>/` (no synthetic strings)
+- [ ] Round-trip test: read → write → read → equality
 
-### molrs-wasm changes
-- [ ] Uses `wasm_bindgen` attributes
-- [ ] Serde for complex type serialization
-- [ ] No panics in WASM-exported functions (use Result)
+### molrs-cxxapi changes
+- [ ] CXX bridge uses `#[cxx::bridge]`, no raw pointers
+- [ ] Zero-copy via `FrameView` where possible
+- [ ] Owned `Frame` only when persisting (Zarr)
+- [ ] No panics in bridge functions

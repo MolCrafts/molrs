@@ -64,16 +64,7 @@ pub use handle::{MolrsBlockHandle, MolrsForceFieldHandle, MolrsFrameHandle, Molr
 
 use store::lock_store;
 
-/// Primary floating-point scalar (`molrs_float_t` in the C header).
-///
-/// Defaults to `f32` (`float` in C).  Enable the `f64` feature for
-/// double precision (`double`).  Matches [`molrs::types::F`].
-#[cfg(not(feature = "f64"))]
-pub type F = f32;
-/// Primary floating-point scalar (`molrs_float_t` in the C header).
-///
-/// Double-precision variant enabled by the `f64` feature.
-#[cfg(feature = "f64")]
+/// Primary floating-point scalar (`molrs_float_t` in the C header) — always `f64`.
 pub type F = f64;
 
 // ---------------------------------------------------------------------------

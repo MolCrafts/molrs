@@ -17,11 +17,11 @@
 //! | `LAMMPSDumpReader` | LAMMPS dump trajectory | Yes | `"atoms"` block with columns from dump header |
 
 use crate::core::frame::Frame;
-use molrs::io::lammps_data::LAMMPSDataReader;
-use molrs::io::lammps_dump::LAMMPSDumpReader;
-use molrs::io::pdb::PDBReader;
-use molrs::io::reader::{FrameReader, TrajReader};
-use molrs::io::xyz::XYZReader;
+use molrs_io::lammps_data::LAMMPSDataReader;
+use molrs_io::lammps_dump::LAMMPSDumpReader;
+use molrs_io::pdb::PDBReader;
+use molrs_io::reader::{FrameReader, TrajReader};
+use molrs_io::xyz::XYZReader;
 use std::io::Cursor;
 use wasm_bindgen::prelude::*;
 
@@ -99,7 +99,7 @@ impl XyzReader {
             .map_err(|e| JsValue::from_str(&format!("XYZ read error: {}", e)))?;
 
         match rs_frame {
-            Some(frame_data) => Ok(Some(Frame::from_rs_frame(frame_data)?)),
+            Some(frame_data) => Ok(Some(Frame::from_rs(frame_data)?)),
             None => Ok(None),
         }
     }
@@ -214,7 +214,7 @@ impl PdbReader {
             .map_err(|e| JsValue::from_str(&format!("PDB read error: {}", e)))?;
 
         match rs_frame {
-            Some(frame_data) => Ok(Some(Frame::from_rs_frame(frame_data)?)),
+            Some(frame_data) => Ok(Some(Frame::from_rs(frame_data)?)),
             None => Ok(None),
         }
     }
@@ -329,7 +329,7 @@ impl LammpsReader {
             .map_err(|e| JsValue::from_str(&format!("LAMMPS read error: {}", e)))?;
 
         match rs_frame {
-            Some(frame_data) => Ok(Some(Frame::from_rs_frame(frame_data)?)),
+            Some(frame_data) => Ok(Some(Frame::from_rs(frame_data)?)),
             None => Ok(None),
         }
     }
@@ -401,7 +401,7 @@ impl LammpsDumpReader {
             .map_err(|e| JsValue::from_str(&format!("LAMMPS dump read error: {}", e)))?;
 
         match rs_frame {
-            Some(frame_data) => Ok(Some(Frame::from_rs_frame(frame_data)?)),
+            Some(frame_data) => Ok(Some(Frame::from_rs(frame_data)?)),
             None => Ok(None),
         }
     }

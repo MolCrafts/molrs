@@ -2,6 +2,7 @@
 //! Exact port of `computef.f90`, `computeg.f90`, `fparc.f90`, `gparc.f90`.
 
 use crate::cell::{index_cell, setcell};
+use crate::constraints::{EvalMode, EvalOutput};
 use crate::context::PackContext;
 use crate::euler::{compcart, eulerrmat, eulerrmat_derivatives};
 use molrs::types::F;
@@ -241,7 +242,7 @@ fn accumulate_constraint_value(icart: usize, pos: &[F; 3], sys: &mut PackContext
     let start = sys.iratom_offsets[icart];
     let end = sys.iratom_offsets[icart + 1];
     for &irest in &sys.iratom_data[start..end] {
-        fplus += sys.restraints[irest].value(pos, sys.scale, sys.scale2);
+        fplus += sys.restraints[irest].f(pos, sys.scale, sys.scale2);
     }
     if fplus > sys.frest {
         sys.frest = fplus;
@@ -260,7 +261,8 @@ fn accumulate_constraint_gradient(icart: usize, pos: &[F; 3], sys: &mut PackCont
     let scale2 = sys.scale2;
     let gc = &mut sys.work.gxcar[icart];
     for &irest in &sys.iratom_data[start..end] {
-        sys.restraints[irest].gradient(pos, scale, scale2, gc);
+        // fg returns the penalty value too; discard it — only gradient accumulation matters here
+        let _ = sys.restraints[irest].fg(pos, scale, scale2, gc);
     }
 }
 
@@ -731,4 +733,205 @@ fn update_cached_geometry(x: &[F], sys: &mut PackContext) {
         sys.pbc_min,
         sys.pbc_length,
     );
+}
+
+// ── Phase A.5 — Objective trait ────────────────────────────────────────────
+//
+// `Objective` is the abstraction the packer's GENCAN loop will talk to. At
+// this checkpoint the trait is defined and implemented for `PackContext` but
+// no call site has been rewired yet (`pgencan` still takes `&mut PackContext`
+// directly). Phase A.6 swaps `pgencan`'s signature to `&mut dyn Objective`
+// and is gated by an explicit extract-bench-loop commit so the dyn-dispatch
+// cost lands with a measurement attached.
+//
+// The trait is intentionally shaped to match what the GENCAN loop reads and
+// writes today — no speculative extra methods.
+
+/// Abstracts the packer's objective function so the optimizer can talk to
+/// any `(f, g)` oracle, not just `PackContext`.
+///
+/// Implementors are responsible for:
+/// - Returning `f`, worst-atom distance violation (`fdist`), worst-molecule
+///   restraint violation (`frest`) in one pass, via [`evaluate`].
+/// - Exposing the cumulative function / gradient counters that the caller
+///   resets between phases and reads for logging.
+///
+/// The trait does **not** own bounds (`l`, `u`): those are problem-specific
+/// and the caller (e.g. `pgencan::build_bounds`) builds them from the
+/// concrete context it has in hand.
+///
+/// See spec `.claude/specs/molrs-pack-plugin-arch.md` §9 Phase A step 5 for
+/// the rationale; Phase B will expose this trait publicly as the extension
+/// hook for custom objectives.
+///
+/// [`evaluate`]: Self::evaluate
+pub trait Objective {
+    /// Unified evaluation entry point. `mode` selects between `f` only,
+    /// gradient only, and both. When a gradient is requested, `gradient`
+    /// must be `Some(buf)` with `buf.len() == x.len()`; when it is not,
+    /// `gradient` is ignored.
+    ///
+    /// On return, the implementor's internal `fdist` / `frest` state
+    /// reflects this call (so a subsequent `self.fdist()` / `self.frest()`
+    /// returns the same values as the `EvalOutput`'s `fdist_max` /
+    /// `frest_max`).
+    fn evaluate(&mut self, x: &[F], mode: EvalMode, gradient: Option<&mut [F]>) -> EvalOutput;
+
+    /// Worst-atom distance violation from the most recent `evaluate` call.
+    fn fdist(&self) -> F;
+
+    /// Worst-molecule restraint violation from the most recent `evaluate`
+    /// call.
+    fn frest(&self) -> F;
+
+    /// Cumulative count of function-value evaluations since the last
+    /// `reset_eval_counters` call.
+    fn ncf(&self) -> usize;
+
+    /// Cumulative count of gradient evaluations since the last
+    /// `reset_eval_counters` call.
+    fn ncg(&self) -> usize;
+
+    /// Zero the function / gradient counters. GENCAN calls this at the
+    /// start of each outer iteration.
+    fn reset_eval_counters(&mut self);
+
+    /// Fill `l` and `u` (each of length `x.len()` at the `pgencan` entry)
+    /// with per-variable bounds. The default implementation sets every
+    /// variable to `[-1e20, +1e20]` (effectively unbounded); `PackContext`
+    /// overrides it to add the Euler-angle bounds implied by
+    /// `constrain_rotation`.
+    ///
+    /// Landed in A.6 so `pgencan` no longer needs `&mut PackContext` for
+    /// anything beyond evaluation — bounds construction is now behind the
+    /// trait too.
+    fn bounds(&self, l: &mut [F], u: &mut [F]) {
+        debug_assert_eq!(l.len(), u.len(), "bounds: l/u length mismatch");
+        l.fill(-1.0e20);
+        u.fill(1.0e20);
+    }
+}
+
+impl Objective for PackContext {
+    #[inline]
+    fn evaluate(&mut self, x: &[F], mode: EvalMode, gradient: Option<&mut [F]>) -> EvalOutput {
+        PackContext::evaluate(self, x, mode, gradient)
+    }
+
+    #[inline]
+    fn fdist(&self) -> F {
+        self.fdist
+    }
+
+    #[inline]
+    fn frest(&self) -> F {
+        self.frest
+    }
+
+    #[inline]
+    fn ncf(&self) -> usize {
+        PackContext::ncf(self)
+    }
+
+    #[inline]
+    fn ncg(&self) -> usize {
+        PackContext::ncg(self)
+    }
+
+    #[inline]
+    fn reset_eval_counters(&mut self) {
+        PackContext::reset_eval_counters(self);
+    }
+
+    /// Port of `gencan::build_bounds` (pre-A.6). COM variables (first `n/2`)
+    /// stay `[-1e20, +1e20]`; Euler variables (last `n/2`) inherit
+    /// `rot_bound` when `constrain_rot` is set for the owning type /
+    /// molecule / axis.
+    fn bounds(&self, l: &mut [F], u: &mut [F]) {
+        debug_assert_eq!(l.len(), u.len(), "bounds: l/u length mismatch");
+        let n = l.len();
+        l.fill(-1.0e20);
+        u.fill(1.0e20);
+        let mut i = n / 2;
+        for itype in 0..self.ntype {
+            if !self.comptype[itype] {
+                continue;
+            }
+            for _imol in 0..self.nmols[itype] {
+                for axis in 0..3 {
+                    if self.constrain_rot[itype][axis] {
+                        let center = self.rot_bound[itype][axis][0];
+                        let half_width = self.rot_bound[itype][axis][1].abs();
+                        l[i] = center - half_width;
+                        u[i] = center + half_width;
+                    }
+                    i += 1;
+                }
+            }
+        }
+        debug_assert_eq!(i, n);
+    }
+}
+
+#[cfg(test)]
+mod objective_trait_tests {
+    use super::*;
+    use crate::PackContext;
+
+    /// Pins `<PackContext as Objective>::evaluate` against the inherent
+    /// `PackContext::evaluate`: calling through a `&mut dyn Objective` must
+    /// return byte-identical `EvalOutput` and leave identical `fdist` /
+    /// `frest` state when fed the same empty-molecule context.
+    ///
+    /// With `ntotmol=0`, `x` is empty; `evaluate(FOnly)` runs the full
+    /// constraints-container dispatch on empty state and returns
+    /// `(0, 0, 0)` deterministically. The test still exercises the trait
+    /// dispatch path so a future behavioural divergence (e.g. the impl
+    /// forwarding to the wrong method) would fail loudly.
+    #[test]
+    fn dyn_objective_matches_inherent_evaluate() {
+        fn build(ntotat: usize) -> PackContext {
+            let mut sys = PackContext::new(ntotat, 0, 0);
+            sys.radius.fill(0.75);
+            sys.radius_ini.fill(1.5);
+            sys.work.radiuswork.resize(ntotat, 0.0);
+            sys
+        }
+        let x: Vec<F> = Vec::new();
+
+        let mut via_inherent = build(4);
+        let out_inherent = PackContext::evaluate(&mut via_inherent, &x, EvalMode::FOnly, None);
+
+        let mut via_trait_owner = build(4);
+        let out_trait = {
+            let obj: &mut dyn Objective = &mut via_trait_owner;
+            obj.evaluate(&x, EvalMode::FOnly, None)
+        };
+
+        assert_eq!(out_inherent.f_total, out_trait.f_total, "f_total mismatch");
+        assert_eq!(
+            out_inherent.fdist_max, out_trait.fdist_max,
+            "fdist_max mismatch"
+        );
+        assert_eq!(
+            out_inherent.frest_max, out_trait.frest_max,
+            "frest_max mismatch"
+        );
+        assert_eq!(
+            via_inherent.fdist, via_trait_owner.fdist,
+            "post-call fdist drift"
+        );
+        assert_eq!(
+            via_inherent.frest, via_trait_owner.frest,
+            "post-call frest drift"
+        );
+
+        // Counter + reset contract
+        let obj: &mut dyn Objective = &mut via_trait_owner;
+        assert_eq!(obj.ncf(), 1, "ncf should be 1 after one FOnly evaluate");
+        assert_eq!(obj.ncg(), 0, "ncg should stay 0 under FOnly");
+        obj.reset_eval_counters();
+        assert_eq!(obj.ncf(), 0, "ncf should be 0 after reset");
+        assert_eq!(obj.ncg(), 0, "ncg should be 0 after reset");
+    }
 }

@@ -6,8 +6,8 @@
 //! # Examples
 //!
 //! ```
-//! use molrs::block::Block;
-//! use molrs::types::{F, I};
+//! use molrs_core::block::Block;
+//! use molrs_core::types::{F, I};
 //! use ndarray::{Array1, ArrayD};
 //!
 //! let mut block = Block::new();
@@ -31,7 +31,14 @@ mod column;
 mod dtype;
 mod error;
 
+pub mod access;
+pub mod block_view;
+pub mod column_view;
+
+pub use access::{BlockAccess, ColumnAccess};
+pub use block_view::BlockView;
 pub use column::Column;
+pub use column_view::ColumnView;
 pub use dtype::{BlockDtype, DType};
 pub use error::BlockError;
 
@@ -114,8 +121,8 @@ impl Block {
     /// # Examples
     ///
     /// ```
-    /// use molrs::block::Block;
-    /// use molrs::types::{F, I};
+    /// use molrs_core::block::Block;
+    /// use molrs_core::types::{F, I};
     /// use ndarray::Array1;
     ///
     /// let mut block = Block::new();
@@ -281,8 +288,8 @@ impl Block {
     /// # Examples
     ///
     /// ```
-    /// use molrs::block::Block;
-    /// use molrs::types::F;
+    /// use molrs_core::block::Block;
+    /// use molrs_core::types::F;
     /// use ndarray::Array1;
     ///
     /// let mut block = Block::new();
@@ -353,8 +360,8 @@ impl Block {
     /// # Examples
     ///
     /// ```
-    /// use molrs::block::Block;
-    /// use molrs::types::F;
+    /// use molrs_core::block::Block;
+    /// use molrs_core::types::F;
     /// use ndarray::Array1;
     ///
     /// let mut block = Block::new();
@@ -398,8 +405,8 @@ impl Block {
     /// # Examples
     ///
     /// ```
-    /// use molrs::block::Block;
-    /// use molrs::types::F;
+    /// use molrs_core::block::Block;
+    /// use molrs_core::types::F;
     /// use ndarray::Array1;
     ///
     /// let mut block1 = Block::new();

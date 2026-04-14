@@ -1,9 +1,7 @@
 //! Tests for Target builder: construction, natoms/count, fixed_at,
-//! centering modes, constraint attachment, and hook validation.
+//! centering modes, restraint attachment, and hook validation.
 
-use molrs_pack::{
-    F, InsideBoxConstraint, InsideSphereConstraint, MoleculeConstraint, Molpack, Restraint, Target,
-};
+use molrs_pack::{F, InsideBoxRestraint, InsideSphereRestraint, Molpack, Target};
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -90,36 +88,32 @@ fn new_uses_geometric_center_even_when_elements_are_known() {
     );
 }
 
-// ── constraints ────────────────────────────────────────────────────────────
+// ── restraints ─────────────────────────────────────────────────────────────
 
 #[test]
-fn with_constraint() {
-    let c =
-        MoleculeConstraint::new().add(Restraint::inside_box([0.0, 0.0, 0.0], [20.0, 20.0, 20.0]));
-    let t = Target::from_coords(&water_positions(), &water_radii(), 5).with_constraint(c);
-    assert_eq!(t.molecule_constraint.restraints.len(), 1);
-}
-
-#[test]
-fn with_constraint_chained() {
+fn with_restraint() {
     let t = Target::from_coords(&water_positions(), &water_radii(), 5)
-        .with_constraint(InsideBoxConstraint::new(
-            [0.0, 0.0, 0.0],
-            [20.0, 20.0, 20.0],
-        ))
-        .with_constraint(InsideSphereConstraint::new(50.0, [10.0, 10.0, 10.0]));
-    assert_eq!(t.molecule_constraint.restraints.len(), 2);
+        .with_restraint(InsideBoxRestraint::new([0.0, 0.0, 0.0], [20.0, 20.0, 20.0]));
+    assert_eq!(t.molecule_restraints.len(), 1);
 }
 
 #[test]
-fn with_constraint_for_atoms() {
-    let t = Target::from_coords(&water_positions(), &water_radii(), 5).with_constraint_for_atoms(
+fn with_restraint_chained() {
+    let t = Target::from_coords(&water_positions(), &water_radii(), 5)
+        .with_restraint(InsideBoxRestraint::new([0.0, 0.0, 0.0], [20.0, 20.0, 20.0]))
+        .with_restraint(InsideSphereRestraint::new([10.0, 10.0, 10.0], 50.0));
+    assert_eq!(t.molecule_restraints.len(), 2);
+}
+
+#[test]
+fn with_restraint_for_atoms() {
+    let t = Target::from_coords(&water_positions(), &water_radii(), 5).with_restraint_for_atoms(
         &[1, 2], // Packmol 1-based → internally 0-based [0, 1]
-        InsideSphereConstraint::new(5.0, [0.0, 0.0, 0.0]),
+        InsideSphereRestraint::new([0.0, 0.0, 0.0], 5.0),
     );
-    assert_eq!(t.atom_constraints.len(), 1);
+    assert_eq!(t.atom_restraints.len(), 1);
     // Indices converted to 0-based
-    assert_eq!(t.atom_constraints[0].atom_indices, vec![0, 1]);
+    assert_eq!(t.atom_restraints[0].0, vec![0, 1]);
 }
 
 // ── fixed placement ────────────────────────────────────────────────────────
@@ -148,9 +142,8 @@ fn fixed_at_with_euler() {
 fn fixed_target_auto_centering_disabled() {
     // When fixed_at is used with Auto centering (default), the fixed molecule
     // should NOT be centered — its input coords are used directly.
-    let free = Target::from_coords(&[[0.0, 0.0, 0.0]], &[1.0], 1).with_constraint(
-        MoleculeConstraint::new().add(Restraint::inside_box([-5.0, -5.0, -5.0], [5.0, 5.0, 5.0])),
-    );
+    let free = Target::from_coords(&[[0.0, 0.0, 0.0]], &[1.0], 1)
+        .with_restraint(InsideBoxRestraint::new([-5.0, -5.0, -5.0], [5.0, 5.0, 5.0]));
     let fixed = Target::from_coords(&[[10.0, 0.0, 0.0], [12.0, 0.0, 0.0]], &[1.0, 1.0], 1)
         .fixed_at([0.0, 0.0, 0.0]);
 
@@ -165,9 +158,8 @@ fn fixed_target_auto_centering_disabled() {
 
 #[test]
 fn fixed_target_centered() {
-    let free = Target::from_coords(&[[0.0, 0.0, 0.0]], &[1.0], 1).with_constraint(
-        MoleculeConstraint::new().add(Restraint::inside_box([-5.0, -5.0, -5.0], [5.0, 5.0, 5.0])),
-    );
+    let free = Target::from_coords(&[[0.0, 0.0, 0.0]], &[1.0], 1)
+        .with_restraint(InsideBoxRestraint::new([-5.0, -5.0, -5.0], [5.0, 5.0, 5.0]));
     let fixed = Target::from_coords(&[[10.0, 0.0, 0.0], [12.0, 0.0, 0.0]], &[1.0, 1.0], 1)
         .with_center()
         .fixed_at([0.0, 0.0, 0.0]);

@@ -1,6 +1,6 @@
 //! Integration tests for stereochemistry (src/core/stereo.rs).
 
-use molrs::{
+use molrs_core::{
     Atom, AtomId, BondStereo, MolGraph, PropValue, TetrahedralStereo, assign_bond_stereo_from_3d,
     assign_stereo_from_3d, chiral_volume, find_chiral_centers,
 };

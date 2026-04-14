@@ -13,11 +13,12 @@
 use crate::frame::PyFrame;
 use crate::helpers::{io_error_to_pyerr, molrs_error_to_pyerr, smiles_error_to_pyerr};
 use crate::molgraph::PyAtomistic;
-use molrs::io::chgcar::read_chgcar;
-use molrs::io::lammps_data::{read_lammps_data, write_lammps_data};
-use molrs::io::lammps_dump::{read_lammps_dump, write_lammps_dump};
-use molrs::io::pdb::{read_pdb_frame, write_pdb_frame};
-use molrs::io::xyz::{read_xyz_frame, read_xyz_traj, write_xyz_frame};
+use molrs_io::chgcar::read_chgcar;
+use molrs_io::cube::{read_cube, write_cube};
+use molrs_io::lammps_data::{read_lammps_data, write_lammps_data};
+use molrs_io::lammps_dump::{read_lammps_dump, write_lammps_dump};
+use molrs_io::pdb::{read_pdb_frame, write_pdb_frame};
+use molrs_io::xyz::{read_xyz_frame, read_xyz_traj, write_xyz_frame};
 use pyo3::prelude::*;
 use std::fs::File;
 use std::io::BufWriter;
@@ -181,6 +182,62 @@ pub fn read_chgcar_file(path: &str) -> PyResult<PyFrame> {
     PyFrame::from_core_frame(frame)
 }
 
+/// Read a Gaussian Cube file.
+///
+/// Returns a Frame containing:
+///
+/// - ``"atoms"`` block with ``element``, ``x``, ``y``, ``z``,
+///   ``atomic_number``, ``charge``
+/// - grid ``"cube"``: a :class:`Grid` with ``"density"`` (scalar field)
+///   or ``"mo_<idx>"`` arrays (MO variant)
+///
+/// Values are stored as-is from the file (no unit conversion).
+/// The unit system is recorded in ``frame.meta["cube_units"]``
+/// (``"bohr"`` or ``"angstrom"``).
+///
+/// Parameters
+/// ----------
+/// path : str
+///     Path to a ``.cube`` file.
+///
+/// Returns
+/// -------
+/// Frame
+///
+/// Raises
+/// ------
+/// ValueError
+///     On parse errors.
+/// IOError
+///     If the file cannot be opened.
+///
+/// Examples
+/// --------
+/// >>> frame = molrs.read_cube_file("density.cube")
+/// >>> grid = frame["cube"]
+/// >>> density = grid["density"]       # shape (nx, ny, nz)
+#[pyfunction]
+pub fn read_cube_file(path: &str) -> PyResult<PyFrame> {
+    let frame = read_cube(path).map_err(molrs_error_to_pyerr)?;
+    PyFrame::from_core_frame(frame)
+}
+
+/// Write a Frame to a Gaussian Cube file.
+///
+/// The Frame must contain a ``"cube"`` grid and an ``"atoms"`` block.
+///
+/// Parameters
+/// ----------
+/// path : str
+///     Output file path.
+/// frame : Frame
+///     Frame to write.
+#[pyfunction]
+pub fn write_cube_file(path: &str, frame: &PyFrame) -> PyResult<()> {
+    let core_frame = frame.clone_core_frame()?;
+    write_cube(path, &core_frame).map_err(molrs_error_to_pyerr)
+}
+
 // ============================================================================
 // Writers
 // ============================================================================
@@ -269,7 +326,7 @@ pub fn write_lammps_traj(path: &str, frames: Vec<PyRef<'_, PyFrame>>) -> PyResul
 /// 3
 #[pyclass(name = "SmilesIR", unsendable)]
 pub struct PySmilesIR {
-    inner: molrs::smiles::SmilesIR,
+    inner: molrs_smiles::SmilesIR,
     input: String,
 }
 
@@ -311,7 +368,7 @@ impl PySmilesIR {
     /// >>> mol.n_atoms
     /// 6
     fn to_atomistic(&self) -> PyResult<PyAtomistic> {
-        let mol = molrs::smiles::to_atomistic(&self.inner).map_err(smiles_error_to_pyerr)?;
+        let mol = molrs_smiles::to_atomistic(&self.inner).map_err(smiles_error_to_pyerr)?;
         Ok(PyAtomistic { inner: mol })
     }
 
@@ -352,7 +409,7 @@ impl PySmilesIR {
 /// 3
 #[pyfunction]
 pub fn parse_smiles(smiles: &str) -> PyResult<PySmilesIR> {
-    let ir = molrs::smiles::parse_smiles(smiles).map_err(smiles_error_to_pyerr)?;
+    let ir = molrs_smiles::parse_smiles(smiles).map_err(smiles_error_to_pyerr)?;
     Ok(PySmilesIR {
         inner: ir,
         input: smiles.to_owned(),

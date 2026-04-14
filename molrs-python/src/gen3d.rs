@@ -16,7 +16,7 @@
 
 use pyo3::prelude::*;
 
-use molrs::gen3d::{Gen3DOptions, Gen3DSpeed, StageKind, generate_3d};
+use molrs_gen3d::{Gen3DOptions, Gen3DSpeed, StageKind, generate_3d};
 
 use crate::helpers::molrs_error_to_pyerr;
 use crate::molgraph::PyAtomistic;
