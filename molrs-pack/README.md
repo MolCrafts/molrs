@@ -150,6 +150,13 @@ cargo bench -p molcrafts-molrs-pack --bench objective_dispatch
 - **Periodic boundary.** Use `Molpack::pbc(min, max)` or `Molpack::pbc_box(lengths)` for periodic systems; free boundary is the default.
 - **Deterministic output.** Pass `Some(seed)` to `pack()` for reproducible placements.
 
+## For contributors
+
+- [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) — system overview, module map, dependency graph, lifecycle of one `pack()` call, hot-path walkthrough, invariants.
+- [`docs/CODE_TOUR.md`](./docs/CODE_TOUR.md) — navigation guide + tutorials for adding custom `Restraint` / `Region` / `Handler` / `Relaxer` types.
+- [`docs/packmol_alignment.md`](./docs/packmol_alignment.md) — Packmol kind number ↔ Rust struct mapping, with pointers into `comprest.f90` / `gwalls.f90`.
+- [`.claude/specs/molrs-pack-plugin-arch.md`](../.claude/specs/molrs-pack-plugin-arch.md) (in the repo root's `.claude` dir) — full spec with direction-3 rules, performance gates, risk register.
+
 ## License
 
 BSD-3-Clause
