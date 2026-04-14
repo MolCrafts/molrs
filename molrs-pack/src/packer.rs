@@ -454,124 +454,29 @@ impl Molpack {
         let total_phases = ntype + 1;
 
         for phase in 0..=(ntype) {
-            let is_all = phase == ntype;
-
-            let phase_info = PhaseInfo {
+            let outcome = run_phase(
                 phase,
+                ntype,
+                ntype_with_fixed,
                 total_phases,
-                molecule_type: if is_all { None } else { Some(phase) },
-            };
-
-            // Reset handler state between phases (e.g. EarlyStopHandler stall counter)
-            for h in self.handlers.iter_mut() {
-                h.on_phase_start(&phase_info);
-            }
-
-            // Set comptype for this phase
-            for itype in 0..ntype_with_fixed {
-                sys.comptype[itype] = if is_all {
-                    true
-                } else {
-                    itype >= ntype || itype == phase
-                };
-            }
-
-            log::debug!(
-                "  Packing phase {phase} ({})",
-                if is_all {
-                    "all".to_string()
-                } else {
-                    format!("type {phase}")
-                }
+                max_loops,
+                self.discale,
+                self.precision,
+                self.disable_movebad,
+                &movebad_cfg,
+                &gencan_params,
+                &mut sys,
+                &mut x,
+                &mut swap,
+                &mut relaxer_runners,
+                &mut self.handlers,
+                &mut gencan_workspace,
+                &mut rng,
             );
-
-            // Compact x to this type (action=1) or restore full x (all-type phase)
-            // Packmol resets radscale = discale at the START of each phase.
-            let mut radscale = self.discale;
-            for icart in 0..sys.ntotat {
-                sys.radius[icart] = self.discale * sys.radius_ini[icart];
-            }
-
-            // Get working x vector (compact for per-type, full for all-type)
-            let mut xwork: Vec<F> = if !is_all {
-                // Compact: n = nmols[phase] * 6
-                // Re-save current x (action=0) then compact (action=1)
-                swap = SwapState::init(&x, &sys);
-                swap.set_type(phase, &mut sys)
-            } else {
-                // All-type: restore full x (action=3), use it directly
-                swap.restore(&mut x, &mut sys);
-                x.clone()
-            };
-
-            // Packmol checks whether the current approximation is already a solution
-            // before entering the GENCAN loop for this phase (packmol.f90 lines 775-782).
-            sys.evaluate(&xwork, EvalMode::FOnly, None);
-            if sys.fdist < self.precision && sys.frest < self.precision {
-                if !is_all {
-                    swap.save_type(phase, &xwork, &sys);
-                    swap.restore(&mut x, &mut sys);
-                    continue;
-                } else {
-                    x.clone_from(&xwork);
+            match outcome {
+                PhaseOutcome::Continue => {}
+                PhaseOutcome::Converged => {
                     converged = true;
-                    break;
-                }
-            }
-
-            // Initialize flast = unscaled f before gencanloop
-            // (Packmol lines 796-803: compute bestf/flast with unscaled radii)
-            let mut flast = evaluate_unscaled(&mut sys, &xwork).0;
-
-            // fimp from previous iteration — used for movebad gate (Packmol packmol.f90 line 798).
-            // Initialized to 1e99 so movebad is NOT called on the first iteration.
-            let mut fimp_prev = F::INFINITY;
-
-            for loop_idx in 0..max_loops {
-                let outcome = run_iteration(
-                    loop_idx,
-                    max_loops,
-                    is_all,
-                    phase,
-                    phase_info,
-                    self.precision,
-                    self.disable_movebad,
-                    &movebad_cfg,
-                    &gencan_params,
-                    &mut sys,
-                    &mut xwork,
-                    &mut swap,
-                    &mut flast,
-                    &mut fimp_prev,
-                    &mut radscale,
-                    &mut relaxer_runners,
-                    &mut self.handlers,
-                    &mut gencan_workspace,
-                    &mut rng,
-                );
-                match outcome {
-                    IterOutcome::Continue => {}
-                    IterOutcome::Converged => {
-                        converged = true;
-                        break;
-                    }
-                    IterOutcome::EarlyStop => break,
-                }
-            }
-
-            // After per-type phase: save results + restore full x
-            // After all-type phase: copy xwork back to x
-            if !is_all {
-                // save_type was called above inside the loop; restore full x now
-                swap.restore(&mut x, &mut sys);
-                // Per-type convergence does NOT exit the outer phase loop.
-                // Packmol continues to the next per-type phase and the all-type phase
-                // regardless of whether this type converged individually.
-                converged = false;
-            } else {
-                x.clone_from(&xwork);
-                // Only the all-type phase convergence exits the outer loop.
-                if converged {
                     break;
                 }
             }
@@ -974,6 +879,302 @@ pub fn run_iteration_sentinel(
     IterOutcome::Continue
 }
 
+/// Outcome of one outer-loop phase in `pack()`.
+///
+/// Pulled out of `pack()` in phase A.4.2 to isolate the outer per-phase scaffold
+/// (handler phase-start notification, comptype reconfiguration, radii reset,
+/// swap setup, pre-loop precision short-circuit, inner GENCAN loop, swap
+/// restore / xwork-back copy). `Continue` means the outer phase loop should
+/// proceed; `Converged` means the all-type phase converged and the outer loop
+/// should break.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PhaseOutcome {
+    Continue,
+    Converged,
+}
+
+/// Run one phase of the main packing loop (per-type or all-type).
+///
+/// Matches the outer `for phase in 0..=ntype` body of Packmol `app/packmol.f90`
+/// lines 740-990 (the swaptype / comptype dance bracketing the GENCAN inner
+/// loop). For a per-type phase (`phase < ntype`), `xwork` is a compact
+/// `nmols[phase] * 6`-element slice produced by `SwapState::set_type`; for the
+/// all-type phase (`phase == ntype`), `xwork` is a full `6 * ntotmol_free`
+/// clone of `x`.
+///
+/// The function takes the outer-loop state (`sys`, `x`, `swap`,
+/// `relaxer_runners`, `handlers`, `gencan_workspace`, `rng`) by `&mut` so that
+/// state persists across phases, exactly as the inlined body did.
+///
+/// Returns `PhaseOutcome::Converged` **only** when the all-type phase
+/// converges (either on its entry precision check or inside the inner loop);
+/// every per-type phase returns `Continue` regardless of whether that type
+/// converged on its own (Packmol lets the all-type phase decide).
+#[allow(clippy::too_many_arguments)]
+pub fn run_phase(
+    phase: usize,
+    ntype: usize,
+    ntype_with_fixed: usize,
+    total_phases: usize,
+    max_loops: usize,
+    discale: F,
+    precision: F,
+    disable_movebad: bool,
+    movebad_cfg: &MoveBadConfig,
+    gencan_params: &GencanParams,
+    sys: &mut PackContext,
+    x: &mut Vec<F>,
+    swap: &mut SwapState,
+    relaxer_runners: &mut Vec<(usize, Vec<Box<dyn RelaxerRunner>>)>,
+    handlers: &mut [Box<dyn Handler>],
+    gencan_workspace: &mut GencanWorkspace,
+    rng: &mut SmallRng,
+) -> PhaseOutcome {
+    let is_all = phase == ntype;
+
+    let phase_info = PhaseInfo {
+        phase,
+        total_phases,
+        molecule_type: if is_all { None } else { Some(phase) },
+    };
+
+    // Reset handler state between phases (e.g. EarlyStopHandler stall counter)
+    for h in handlers.iter_mut() {
+        h.on_phase_start(&phase_info);
+    }
+
+    // Set comptype for this phase
+    for itype in 0..ntype_with_fixed {
+        sys.comptype[itype] = if is_all {
+            true
+        } else {
+            itype >= ntype || itype == phase
+        };
+    }
+
+    log::debug!(
+        "  Packing phase {phase} ({})",
+        if is_all {
+            "all".to_string()
+        } else {
+            format!("type {phase}")
+        }
+    );
+
+    // Compact x to this type (action=1) or restore full x (all-type phase)
+    // Packmol resets radscale = discale at the START of each phase.
+    let mut radscale = discale;
+    for icart in 0..sys.ntotat {
+        sys.radius[icart] = discale * sys.radius_ini[icart];
+    }
+
+    // Get working x vector (compact for per-type, full for all-type)
+    let mut xwork: Vec<F> = if !is_all {
+        // Compact: n = nmols[phase] * 6
+        // Re-save current x (action=0) then compact (action=1)
+        *swap = SwapState::init(x, sys);
+        swap.set_type(phase, sys)
+    } else {
+        // All-type: restore full x (action=3), use it directly
+        swap.restore(x, sys);
+        x.clone()
+    };
+
+    // Packmol checks whether the current approximation is already a solution
+    // before entering the GENCAN loop for this phase (packmol.f90 lines 775-782).
+    sys.evaluate(&xwork, EvalMode::FOnly, None);
+    if sys.fdist < precision && sys.frest < precision {
+        if !is_all {
+            swap.save_type(phase, &xwork, sys);
+            swap.restore(x, sys);
+            return PhaseOutcome::Continue;
+        } else {
+            x.clone_from(&xwork);
+            return PhaseOutcome::Converged;
+        }
+    }
+
+    // Initialize flast = unscaled f before gencanloop
+    // (Packmol lines 796-803: compute bestf/flast with unscaled radii)
+    let mut flast = evaluate_unscaled(sys, &xwork).0;
+
+    // fimp from previous iteration — used for movebad gate (Packmol packmol.f90 line 798).
+    // Initialized to 1e99 so movebad is NOT called on the first iteration.
+    let mut fimp_prev = F::INFINITY;
+    let mut converged_inner = false;
+
+    for loop_idx in 0..max_loops {
+        let outcome = run_iteration(
+            loop_idx,
+            max_loops,
+            is_all,
+            phase,
+            phase_info,
+            precision,
+            disable_movebad,
+            movebad_cfg,
+            gencan_params,
+            sys,
+            &mut xwork,
+            swap,
+            &mut flast,
+            &mut fimp_prev,
+            &mut radscale,
+            relaxer_runners,
+            handlers,
+            gencan_workspace,
+            rng,
+        );
+        match outcome {
+            IterOutcome::Continue => {}
+            IterOutcome::Converged => {
+                converged_inner = true;
+                break;
+            }
+            IterOutcome::EarlyStop => break,
+        }
+    }
+
+    // After per-type phase: save results + restore full x
+    // After all-type phase: copy xwork back to x
+    if !is_all {
+        // save_type was called inside the loop; restore full x now.
+        // Per-type convergence does NOT exit the outer phase loop.
+        swap.restore(x, sys);
+        PhaseOutcome::Continue
+    } else {
+        x.clone_from(&xwork);
+        if converged_inner {
+            PhaseOutcome::Converged
+        } else {
+            PhaseOutcome::Continue
+        }
+    }
+}
+
+/// Sentinel: byte-identical pre-extraction body of `run_phase`, kept as a
+/// `#[inline(never)]` comparison target for the per-extraction microbench gate
+/// (see `molrs-perf` skill § "Benchmarking during refactors"). The extracted
+/// function gates at ≤ +1% vs. this sentinel; the caller microbench gates at
+/// ≤ +2% vs. its sentinel variant.
+///
+/// DELETE after one Phase A refactor cycle stabilizes on main. The microbench
+/// itself stays permanently as a future-regression guard.
+#[inline(never)]
+#[allow(dead_code, clippy::too_many_arguments)]
+pub fn run_phase_sentinel(
+    phase: usize,
+    ntype: usize,
+    ntype_with_fixed: usize,
+    total_phases: usize,
+    max_loops: usize,
+    discale: F,
+    precision: F,
+    disable_movebad: bool,
+    movebad_cfg: &MoveBadConfig,
+    gencan_params: &GencanParams,
+    sys: &mut PackContext,
+    x: &mut Vec<F>,
+    swap: &mut SwapState,
+    relaxer_runners: &mut Vec<(usize, Vec<Box<dyn RelaxerRunner>>)>,
+    handlers: &mut [Box<dyn Handler>],
+    gencan_workspace: &mut GencanWorkspace,
+    rng: &mut SmallRng,
+) -> PhaseOutcome {
+    let is_all = phase == ntype;
+
+    let phase_info = PhaseInfo {
+        phase,
+        total_phases,
+        molecule_type: if is_all { None } else { Some(phase) },
+    };
+
+    for h in handlers.iter_mut() {
+        h.on_phase_start(&phase_info);
+    }
+
+    for itype in 0..ntype_with_fixed {
+        sys.comptype[itype] = if is_all {
+            true
+        } else {
+            itype >= ntype || itype == phase
+        };
+    }
+
+    let mut radscale = discale;
+    for icart in 0..sys.ntotat {
+        sys.radius[icart] = discale * sys.radius_ini[icart];
+    }
+
+    let mut xwork: Vec<F> = if !is_all {
+        *swap = SwapState::init(x, sys);
+        swap.set_type(phase, sys)
+    } else {
+        swap.restore(x, sys);
+        x.clone()
+    };
+
+    sys.evaluate(&xwork, EvalMode::FOnly, None);
+    if sys.fdist < precision && sys.frest < precision {
+        if !is_all {
+            swap.save_type(phase, &xwork, sys);
+            swap.restore(x, sys);
+            return PhaseOutcome::Continue;
+        } else {
+            x.clone_from(&xwork);
+            return PhaseOutcome::Converged;
+        }
+    }
+
+    let mut flast = evaluate_unscaled(sys, &xwork).0;
+    let mut fimp_prev = F::INFINITY;
+    let mut converged_inner = false;
+
+    for loop_idx in 0..max_loops {
+        let outcome = run_iteration(
+            loop_idx,
+            max_loops,
+            is_all,
+            phase,
+            phase_info,
+            precision,
+            disable_movebad,
+            movebad_cfg,
+            gencan_params,
+            sys,
+            &mut xwork,
+            swap,
+            &mut flast,
+            &mut fimp_prev,
+            &mut radscale,
+            relaxer_runners,
+            handlers,
+            gencan_workspace,
+            rng,
+        );
+        match outcome {
+            IterOutcome::Continue => {}
+            IterOutcome::Converged => {
+                converged_inner = true;
+                break;
+            }
+            IterOutcome::EarlyStop => break,
+        }
+    }
+
+    if !is_all {
+        swap.restore(x, sys);
+        PhaseOutcome::Continue
+    } else {
+        x.clone_from(&xwork);
+        if converged_inner {
+            PhaseOutcome::Converged
+        } else {
+            PhaseOutcome::Continue
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1117,6 +1318,104 @@ mod tests {
         assert_eq!(flast_a, flast_b, "flast drift");
         assert_eq!(fimp_prev_a, fimp_prev_b, "fimp_prev drift");
         assert_eq!(radscale_a, radscale_b, "radscale drift");
+        assert_eq!(sys_a.radius, sys_b.radius, "radius drift");
+        assert_eq!(sys_a.fdist, sys_b.fdist, "fdist drift");
+        assert_eq!(sys_a.frest, sys_b.frest, "frest drift");
+    }
+
+    /// Pins `run_phase` and `run_phase_sentinel` to identical outcomes +
+    /// identical post-call state on a minimal empty-molecule context.
+    ///
+    /// With `ntype=0` and `ntotmol=0` the single all-type phase trivially
+    /// converges at the entry precision check (`fdist=0 < precision`), so both
+    /// variants return `PhaseOutcome::Converged` before entering the inner
+    /// loop. The pre-loop scaffolding (handler `on_phase_start`, `comptype`
+    /// reconfiguration, radii reset, swap setup, and the entry precision
+    /// short-circuit) still runs — exactly the bracket of code the extraction
+    /// moved.
+    #[test]
+    fn run_phase_matches_sentinel_on_empty_context() {
+        fn build() -> (
+            PackContext,
+            Vec<F>,
+            SwapState,
+            GencanWorkspace,
+            Vec<(usize, Vec<Box<dyn RelaxerRunner>>)>,
+            Vec<Box<dyn Handler>>,
+            SmallRng,
+        ) {
+            let ntotat = 4;
+            let mut sys = PackContext::new(ntotat, 0, 0);
+            sys.radius.fill(0.75);
+            sys.radius_ini.fill(1.5);
+            sys.work.radiuswork.resize(ntotat, 0.0);
+            let x: Vec<F> = Vec::new();
+            let swap = SwapState::init(&x, &sys);
+            let ws = GencanWorkspace::new();
+            let runners: Vec<(usize, Vec<Box<dyn RelaxerRunner>>)> = Vec::new();
+            let handlers: Vec<Box<dyn Handler>> = Vec::new();
+            let rng = SmallRng::seed_from_u64(42);
+            (sys, x, swap, ws, runners, handlers, rng)
+        }
+        let movebad_cfg = MoveBadConfig {
+            movefrac: 0.05,
+            maxmove_per_type: &[],
+            movebadrandom: false,
+            gencan_maxit: 20,
+        };
+        let gencan_params = GencanParams::default();
+
+        let (mut sys_a, mut x_a, mut swap_a, mut ws_a, mut runners_a, mut handlers_a, mut rng_a) =
+            build();
+        let out_fn = run_phase(
+            0,
+            0,
+            0,
+            1,
+            10,
+            2.0,
+            0.01,
+            true,
+            &movebad_cfg,
+            &gencan_params,
+            &mut sys_a,
+            &mut x_a,
+            &mut swap_a,
+            &mut runners_a,
+            &mut handlers_a,
+            &mut ws_a,
+            &mut rng_a,
+        );
+
+        let (mut sys_b, mut x_b, mut swap_b, mut ws_b, mut runners_b, mut handlers_b, mut rng_b) =
+            build();
+        let out_sent = run_phase_sentinel(
+            0,
+            0,
+            0,
+            1,
+            10,
+            2.0,
+            0.01,
+            true,
+            &movebad_cfg,
+            &gencan_params,
+            &mut sys_b,
+            &mut x_b,
+            &mut swap_b,
+            &mut runners_b,
+            &mut handlers_b,
+            &mut ws_b,
+            &mut rng_b,
+        );
+
+        assert_eq!(out_fn, out_sent, "fn vs sentinel: outcome mismatch");
+        assert_eq!(
+            out_fn,
+            PhaseOutcome::Converged,
+            "expected trivial convergence"
+        );
+        assert_eq!(x_a, x_b, "x drift");
         assert_eq!(sys_a.radius, sys_b.radius, "radius drift");
         assert_eq!(sys_a.fdist, sys_b.fdist, "fdist drift");
         assert_eq!(sys_a.frest, sys_b.frest, "frest drift");

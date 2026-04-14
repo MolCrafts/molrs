@@ -47,3 +47,7 @@ harness = false
 [[bench]]
 name = "run_iteration"
 harness = false
+
+[[bench]]
+name = "run_phase"
+harness = false
