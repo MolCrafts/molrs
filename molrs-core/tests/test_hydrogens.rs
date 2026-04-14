@@ -1,6 +1,8 @@
 //! Integration tests for hydrogen addition (src/core/hydrogens.rs).
 
-use molrs::{Atom, AtomId, MolGraph, PropValue, add_hydrogens, implicit_h_count, remove_hydrogens};
+use molrs_core::{
+    Atom, AtomId, MolGraph, PropValue, add_hydrogens, implicit_h_count, remove_hydrogens,
+};
 
 fn atom(sym: &str) -> Atom {
     let mut a = Atom::new();

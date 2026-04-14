@@ -31,11 +31,11 @@
 //! # }
 //! ```
 
+use crate::reader::{FrameIndex, FrameReader, ReadSeek, Reader, TrajReader};
+use crate::writer::{FrameWriter, Writer};
 use molrs::block::Block;
 use molrs::frame::Frame;
 use molrs::frame_access::FrameAccess;
-use crate::reader::{FrameIndex, FrameReader, ReadSeek, Reader, TrajReader};
-use crate::writer::{FrameWriter, Writer};
 use molrs::types::{F, I};
 use ndarray::{Array1, ArrayD, IxDyn};
 use once_cell::sync::OnceCell;

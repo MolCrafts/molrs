@@ -5,7 +5,7 @@
 //!
 //! Run with: `cargo run -p molrs-core --example molgraph_transforms`
 
-use molrs::{Atom, MolGraph};
+use molrs_core::{Atom, MolGraph};
 
 fn main() {
     let mol = build_methane();

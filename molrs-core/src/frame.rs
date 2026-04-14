@@ -8,9 +8,9 @@
 //! # Examples
 //!
 //! ```
-//! use molrs::frame::Frame;
-//! use molrs::block::Block;
-//! use molrs::types::{F, I};
+//! use molrs_core::frame::Frame;
+//! use molrs_core::block::Block;
+//! use molrs_core::types::{F, I};
 //! use ndarray::Array1;
 //!
 //! let mut frame = Frame::new();
@@ -94,7 +94,7 @@ impl Frame {
     /// # Examples
     ///
     /// ```
-    /// use molrs::frame::Frame;
+    /// use molrs_core::frame::Frame;
     ///
     /// let frame = Frame::new();
     /// assert!(frame.is_empty());
@@ -113,7 +113,7 @@ impl Frame {
     /// # Examples
     ///
     /// ```
-    /// use molrs::frame::Frame;
+    /// use molrs_core::frame::Frame;
     ///
     /// let frame = Frame::with_capacity(10);
     /// assert!(frame.is_empty());
@@ -132,8 +132,8 @@ impl Frame {
     /// # Examples
     ///
     /// ```
-    /// use molrs::frame::Frame;
-    /// use molrs::block::Block;
+    /// use molrs_core::frame::Frame;
+    /// use molrs_core::block::Block;
     /// use std::collections::HashMap;
     ///
     /// let mut map = HashMap::new();
@@ -156,8 +156,8 @@ impl Frame {
     /// # Examples
     ///
     /// ```
-    /// use molrs::frame::Frame;
-    /// use molrs::block::Block;
+    /// use molrs_core::frame::Frame;
+    /// use molrs_core::block::Block;
     ///
     /// let mut frame = Frame::new();
     /// frame.insert("atoms", Block::new());
@@ -178,8 +178,8 @@ impl Frame {
     /// # Examples
     ///
     /// ```
-    /// use molrs::frame::Frame;
-    /// use molrs::block::Block;
+    /// use molrs_core::frame::Frame;
+    /// use molrs_core::block::Block;
     ///
     /// let mut frame = Frame::new();
     /// assert_eq!(frame.len(), 0);
@@ -227,8 +227,8 @@ impl Frame {
     /// # Examples
     ///
     /// ```
-    /// use molrs::frame::Frame;
-    /// use molrs::block::Block;
+    /// use molrs_core::frame::Frame;
+    /// use molrs_core::block::Block;
     ///
     /// let mut frame = Frame::new();
     /// let old = frame.insert("atoms", Block::new());
@@ -253,8 +253,8 @@ impl Frame {
     /// # Examples
     ///
     /// ```
-    /// use molrs::frame::Frame;
-    /// use molrs::block::Block;
+    /// use molrs_core::frame::Frame;
+    /// use molrs_core::block::Block;
     ///
     /// let mut frame = Frame::new();
     /// frame.insert("atoms", Block::new());
@@ -273,8 +273,8 @@ impl Frame {
     /// # Examples
     ///
     /// ```
-    /// use molrs::frame::Frame;
-    /// use molrs::block::Block;
+    /// use molrs_core::frame::Frame;
+    /// use molrs_core::block::Block;
     ///
     /// let mut frame = Frame::new();
     /// frame.insert("atoms", Block::new());
@@ -334,9 +334,9 @@ impl Frame {
     /// # Examples
     ///
     /// ```
-    /// use molrs::frame::Frame;
-    /// use molrs::block::Block;
-    /// use molrs::types::F;
+    /// use molrs_core::frame::Frame;
+    /// use molrs_core::block::Block;
+    /// use molrs_core::types::F;
     /// use ndarray::Array1;
     ///
     /// let mut frame = Frame::new();
@@ -364,9 +364,9 @@ impl Frame {
     /// # Examples
     ///
     /// ```
-    /// use molrs::frame::Frame;
-    /// use molrs::block::Block;
-    /// use molrs::types::F;
+    /// use molrs_core::frame::Frame;
+    /// use molrs_core::block::Block;
+    /// use molrs_core::types::F;
     /// use ndarray::Array1;
     ///
     /// let mut frame = Frame::new();
@@ -403,9 +403,9 @@ impl Frame {
     /// # Examples
     ///
     /// ```
-    /// use molrs::frame::Frame;
-    /// use molrs::block::Block;
-    /// use molrs::types::F;
+    /// use molrs_core::frame::Frame;
+    /// use molrs_core::block::Block;
+    /// use molrs_core::types::F;
     /// use ndarray::Array1;
     ///
     /// let mut frame = Frame::new();
@@ -452,9 +452,9 @@ impl Frame {
     /// # Examples
     ///
     /// ```
-    /// use molrs::frame::Frame;
-    /// use molrs::block::Block;
-    /// use molrs::types::F;
+    /// use molrs_core::frame::Frame;
+    /// use molrs_core::block::Block;
+    /// use molrs_core::types::F;
     /// use ndarray::Array1;
     ///
     /// let mut frame = Frame::new();
@@ -528,8 +528,8 @@ impl Frame {
     /// # Examples
     ///
     /// ```
-    /// use molrs::frame::Frame;
-    /// use molrs::block::Block;
+    /// use molrs_core::frame::Frame;
+    /// use molrs_core::block::Block;
     ///
     /// let frame = Frame::new();
     /// assert!(frame.is_consistent());

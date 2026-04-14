@@ -37,6 +37,7 @@ fn all_chgcar_good_files() -> Vec<std::path::PathBuf> {
     paths
 }
 
+#[allow(dead_code)]
 fn all_chgcar_bad_files() -> Vec<std::path::PathBuf> {
     let dir = crate::test_data::get_test_data_path("chgcar/bad");
     let mut paths: Vec<_> = std::fs::read_dir(&dir)
@@ -94,7 +95,7 @@ fn assert_valid_chgcar(path: &std::path::Path) {
     );
 
     // Integrated charge must be positive (ρ·V_cell, sum/N_grid = electrons).
-    let charge: f64 = total.iter().map(|&v| v as f64).sum::<f64>() / (nx * ny * nz) as f64;
+    let charge: f64 = total.iter().sum::<f64>() / (nx * ny * nz) as f64;
     assert!(
         charge > 0.0,
         "{:?}: integrated charge ≤ 0 ({:.4})",

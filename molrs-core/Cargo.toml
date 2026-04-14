@@ -1,5 +1,5 @@
 [package]
-name = "molcrafts-molrs"
+name = "molcrafts-molrs-core"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,7 +10,7 @@ homepage.workspace = true
 repository.workspace = true
 
 [lib]
-name = "molrs"
+name = "molrs_core"
 
 [features]
 default = ["rayon"]
@@ -37,6 +37,7 @@ libm = "0.2"
 
 [dev-dependencies]
 criterion = "0.5"
+rand = "0.9"
 tempfile = "3.0"
 
 [[bench]]

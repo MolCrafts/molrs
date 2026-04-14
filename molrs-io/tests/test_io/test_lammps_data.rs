@@ -2,9 +2,9 @@
 
 use molrs::block::Block;
 use molrs::frame::Frame;
+use molrs::types::{F, I, U};
 use molrs_io::lammps_data::{LAMMPSDataReader, read_lammps_data, write_lammps_data};
 use molrs_io::reader::FrameReader;
-use molrs::types::{F, I, U};
 use ndarray::Array1;
 use std::fs::File;
 use std::io::BufReader;

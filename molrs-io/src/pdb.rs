@@ -3,11 +3,11 @@
 //! Implements PDB 3.3 specification for coordinate section records:
 //! https://www.wwpdb.org/documentation/file-format-content/format33/sect9.html
 
+use crate::reader::{FrameReader, Reader};
+use crate::writer::FrameWriter;
 use molrs::block::Block;
 use molrs::frame::Frame;
 use molrs::frame_access::FrameAccess;
-use crate::reader::{FrameReader, Reader};
-use crate::writer::FrameWriter;
 use molrs::region::simbox::SimBox;
 use molrs::types::{F, U};
 use ndarray::{Array1, IxDyn, array};
@@ -910,8 +910,8 @@ END
 
     #[test]
     fn test_read_real_pdb_water() {
-        let test_data_dir =
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../molrs-core/target/tests-data");
+        let test_data_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../molrs-core/target/tests-data");
         if !test_data_dir.exists() {
             panic!("Test data not found. Run: scripts/fetch-test-data.sh");
         }
@@ -932,8 +932,8 @@ END
 
     #[test]
     fn test_read_real_pdb_with_bonds() {
-        let test_data_dir =
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../molrs-core/target/tests-data");
+        let test_data_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../molrs-core/target/tests-data");
         if !test_data_dir.exists() {
             panic!("Test data not found. Run: scripts/fetch-test-data.sh");
         }

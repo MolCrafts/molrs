@@ -51,6 +51,7 @@ molrs-wasm/Cargo.lock
 molrs-capi/include/molrs.h
 pkg/
 molrs-wasm/pkg/
+molrs-wasm/dist/
 molrs-python/python/molrs/*.dylib
 molrs-python/python/molrs/*.dll
 molrs-python/python/molrs/*.so

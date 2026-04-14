@@ -1,6 +1,6 @@
 use criterion::{BenchmarkId, Criterion, criterion_group};
-use molrs::neighbors::{BruteForce, LinkCell, NbList};
-use molrs::types::F;
+use molrs_core::neighbors::{BruteForce, LinkCell, NbList};
+use molrs_core::types::F;
 
 use crate::helpers;
 

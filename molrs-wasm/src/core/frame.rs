@@ -503,15 +503,25 @@ impl Default for Frame {
 
 /// Internal helpers (not exposed to JS).
 impl Frame {
-    pub(crate) fn from_rs_frame(rs_frame: molrs::frame::Frame) -> Result<Self, JsValue> {
+    pub(crate) fn from_rs(rs_frame: molrs::frame::Frame) -> Result<Self, JsValue> {
         let store = Rc::new(RefCell::new(FFIStore::new()));
         let id = store.borrow_mut().frame_new();
         store.borrow_mut().set_frame(id, rs_frame).map_err(js_err)?;
         Ok(Frame { id, store })
     }
 
-    pub(crate) fn clone_core_frame(&self) -> Result<molrs::frame::Frame, JsValue> {
-        self.store.borrow().clone_frame(self.id).map_err(js_err)
+    /// Borrow the inner core frame for the duration of a closure.
+    ///
+    /// Zero-copy: no deep clone. The closure runs while the FFI store is
+    /// immutably borrowed, so it must not attempt to mutate the store.
+    pub(crate) fn with_frame<R>(
+        &self,
+        f: impl FnOnce(&molrs::frame::Frame) -> Result<R, JsValue>,
+    ) -> Result<R, JsValue> {
+        self.store
+            .borrow()
+            .with_frame(self.id, f)
+            .map_err(js_err)?
     }
 }
 

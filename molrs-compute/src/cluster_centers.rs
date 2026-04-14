@@ -87,10 +87,10 @@ impl Compute for ClusterCenters {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::Frame;
-    use molrs::block::Block;
     use crate::cluster::Cluster;
     use crate::util::get_positions;
+    use molrs::Frame;
+    use molrs::block::Block;
     use molrs::neighbors::{LinkCell, NbListAlgo};
     use molrs::region::simbox::SimBox;
     use ndarray::{Array1 as A1, array};
@@ -186,7 +186,7 @@ mod tests {
         // center = 0.5 + (-0.5) = 0.0  (or 10.0, same in PBC)
         let cx = centers[0][0];
         assert!(
-            cx < 1.0 || cx > 9.0,
+            !(1.0..=9.0).contains(&cx),
             "center should wrap near boundary, got {cx}"
         );
     }

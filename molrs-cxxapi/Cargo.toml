@@ -16,8 +16,8 @@ default = ["zarr"]
 zarr = ["molrs_io/filesystem"]
 
 [dependencies]
-molrs = { package = "molcrafts-molrs", path = "../molrs-core" }
-molrs_io = { path = "../molrs-io", package = "molcrafts-molrs-io" }
+molrs = { workspace = true }
+molrs_io = { workspace = true }
 cxx = "1"
 ndarray = "0.17"
 

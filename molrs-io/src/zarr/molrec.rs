@@ -10,7 +10,7 @@ use serde_json::Value as JsonValue;
 use zarrs::array::ArrayBuilder;
 #[cfg(feature = "filesystem")]
 use zarrs::array::data_type;
-use zarrs::array::data_type::{Float32DataType, Float64DataType, Int64DataType, StringDataType};
+use zarrs::array::data_type::{Float32DataType, Float64DataType, Int64DataType};
 use zarrs::array::{Array, ArraySubset};
 #[cfg(feature = "filesystem")]
 use zarrs::filesystem::FilesystemStore;
@@ -19,14 +19,14 @@ use zarrs::group::GroupBuilder;
 use zarrs::node::{Node, NodeMetadata};
 use zarrs::storage::ReadableWritableListableStorage;
 
-use molrs::MolRsError;
-use molrs::frame::Frame;
 #[cfg(not(feature = "filesystem"))]
 use crate::zarr::frame_io::{join_path, read_column, read_grid, read_system};
 #[cfg(feature = "filesystem")]
 use crate::zarr::frame_io::{
     join_path, read_column, read_grid, read_system, write_column, write_grid, write_system,
 };
+use molrs::MolRsError;
+use molrs::frame::Frame;
 use molrs::molrec::{MolRec, ObservableData, ObservableKind, ObservableRecord, Trajectory};
 use molrs::types::F;
 
@@ -302,11 +302,7 @@ fn read_trajectory(
         }
     }
 
-    Ok(Trajectory {
-        frames,
-        step,
-        time,
-    })
+    Ok(Trajectory { frames, step, time })
 }
 
 #[cfg(feature = "filesystem")]

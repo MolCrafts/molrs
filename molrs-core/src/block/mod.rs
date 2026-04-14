@@ -6,8 +6,8 @@
 //! # Examples
 //!
 //! ```
-//! use molrs::block::Block;
-//! use molrs::types::{F, I};
+//! use molrs_core::block::Block;
+//! use molrs_core::types::{F, I};
 //! use ndarray::{Array1, ArrayD};
 //!
 //! let mut block = Block::new();
@@ -121,8 +121,8 @@ impl Block {
     /// # Examples
     ///
     /// ```
-    /// use molrs::block::Block;
-    /// use molrs::types::{F, I};
+    /// use molrs_core::block::Block;
+    /// use molrs_core::types::{F, I};
     /// use ndarray::Array1;
     ///
     /// let mut block = Block::new();
@@ -288,8 +288,8 @@ impl Block {
     /// # Examples
     ///
     /// ```
-    /// use molrs::block::Block;
-    /// use molrs::types::F;
+    /// use molrs_core::block::Block;
+    /// use molrs_core::types::F;
     /// use ndarray::Array1;
     ///
     /// let mut block = Block::new();
@@ -360,8 +360,8 @@ impl Block {
     /// # Examples
     ///
     /// ```
-    /// use molrs::block::Block;
-    /// use molrs::types::F;
+    /// use molrs_core::block::Block;
+    /// use molrs_core::types::F;
     /// use ndarray::Array1;
     ///
     /// let mut block = Block::new();
@@ -405,8 +405,8 @@ impl Block {
     /// # Examples
     ///
     /// ```
-    /// use molrs::block::Block;
-    /// use molrs::types::F;
+    /// use molrs_core::block::Block;
+    /// use molrs_core::types::F;
     /// use ndarray::Array1;
     ///
     /// let mut block1 = Block::new();

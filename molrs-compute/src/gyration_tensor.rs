@@ -1,5 +1,7 @@
 //! Gyration tensor computation for clusters.
 
+#![allow(clippy::needless_range_loop)]
+
 use molrs::frame_access::FrameAccess;
 use molrs::types::F;
 

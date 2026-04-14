@@ -22,7 +22,7 @@
 use wasm_bindgen::prelude::*;
 
 use molrs::atomistic::Atomistic;
-use molrs::gen3d::{Gen3DOptions, Gen3DSpeed, generate_3d};
+use molrs_gen3d::{Gen3DOptions, Gen3DSpeed, generate_3d};
 use molrs::molgraph::MolGraph;
 
 use crate::core::frame::Frame;
@@ -78,17 +78,18 @@ pub fn generate_3d_wasm(
     speed: Option<String>,
     seed: Option<u32>,
 ) -> Result<Frame, JsValue> {
-    let rs_frame = frame.clone_core_frame()?;
-    let molgraph = MolGraph::from_frame(&rs_frame)
-        .map_err(|e| JsValue::from_str(&format!("Frame → MolGraph: {e}")))?;
-    let atomistic = Atomistic::try_from_molgraph(molgraph)
-        .map_err(|e| JsValue::from_str(&format!("MolGraph → Atomistic: {e}")))?;
-
     let opts = parse_opts(speed.as_deref(), seed)?;
+    let atomistic = frame.with_frame(|rs_frame| {
+        let molgraph = MolGraph::from_frame(rs_frame)
+            .map_err(|e| JsValue::from_str(&format!("Frame → MolGraph: {e}")))?;
+        Atomistic::try_from_molgraph(molgraph)
+            .map_err(|e| JsValue::from_str(&format!("MolGraph → Atomistic: {e}")))
+    })?;
+
     let (result, _report) =
         generate_3d(&atomistic, &opts).map_err(|e| JsValue::from_str(&format!("gen3d: {e}")))?;
 
-    Frame::from_rs_frame(result.to_frame())
+    Frame::from_rs(result.to_frame())
 }
 
 fn parse_opts(speed: Option<&str>, seed: Option<u32>) -> Result<Gen3DOptions, JsValue> {

@@ -13,7 +13,7 @@
 //! ### Element lookup
 //!
 //! ```
-//! use molrs::Element;
+//! use molrs_core::Element;
 //!
 //! // Look up elements by atomic number
 //! let hydrogen = Element::by_number(1).unwrap();
@@ -44,6 +44,7 @@ pub mod atomistic;
 pub mod block;
 pub mod coarsegrain;
 pub mod element;
+pub mod field;
 pub mod frame;
 pub mod frame_access;
 pub mod frame_view;
@@ -71,6 +72,7 @@ pub use block::Block;
 pub use coarsegrain::CoarseGrain;
 pub use element::Element;
 pub use error::MolRsError;
+pub use field::UniformGridField;
 pub use frame::Frame;
 pub use frame_access::FrameAccess;
 pub use frame_view::FrameView;

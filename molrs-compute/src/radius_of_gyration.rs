@@ -103,9 +103,9 @@ impl Compute for RadiusOfGyration {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::inertia_tensor::InertiaTensor;
     use molrs::Frame;
     use molrs::block::Block;
-    use crate::inertia_tensor::InertiaTensor;
     use molrs::region::simbox::SimBox;
     use ndarray::{Array1 as A1, array};
 

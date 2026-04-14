@@ -3,9 +3,9 @@
 use std::collections::HashMap;
 
 use crate::forcefield::Params;
-use molrs::frame::Frame;
 use crate::potential::Potential;
 use crate::potential::geometry::validate_coords;
+use molrs::frame::Frame;
 use molrs::types::F;
 
 /// Lennard-Jones 12-6 pair potential with pre-resolved flat arrays.

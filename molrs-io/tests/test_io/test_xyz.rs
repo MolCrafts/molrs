@@ -4,8 +4,8 @@
 //! All files in tests-data/xyz/bad/ are expected to fail parsing.
 
 use molrs::frame::Frame;
-use molrs_io::xyz::{read_xyz_frame, write_xyz_frame};
 use molrs::types::F;
+use molrs_io::xyz::{read_xyz_frame, write_xyz_frame};
 use std::io::BufWriter;
 use tempfile::NamedTempFile;
 

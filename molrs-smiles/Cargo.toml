@@ -13,4 +13,4 @@ homepage.workspace = true
 name = "molrs_smiles"
 
 [dependencies]
-molrs = { path = "../molrs-core", package = "molcrafts-molrs" }
+molrs = { workspace = true }

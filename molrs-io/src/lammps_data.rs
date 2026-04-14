@@ -36,11 +36,11 @@
 //! # Ok(())
 //! # }```
 
+use crate::reader::{FrameReader, Reader};
+use crate::writer::FrameWriter;
 use molrs::block::Block;
 use molrs::frame::Frame;
 use molrs::frame_access::FrameAccess;
-use crate::reader::{FrameReader, Reader};
-use crate::writer::FrameWriter;
 use molrs::types::{F, I, U};
 use ndarray::{Array1, IxDyn};
 use once_cell::sync::OnceCell;

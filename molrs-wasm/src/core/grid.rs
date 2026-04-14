@@ -8,7 +8,7 @@
 use js_sys::Array as JsArray;
 use wasm_bindgen::prelude::*;
 
-use crate::core::types::WasmArray;
+use crate::core::types::{JsFloatArray, WasmArray};
 
 /// A uniform spatial grid storing multiple named scalar arrays.
 ///
@@ -82,8 +82,8 @@ impl Grid {
         dim_x: usize,
         dim_y: usize,
         dim_z: usize,
-        origin: &[f32],
-        cell: &[f32],
+        origin: &[f64],
+        cell: &[f64],
         pbc_x: bool,
         pbc_y: bool,
         pbc_z: bool,
@@ -240,27 +240,28 @@ impl Grid {
         self.inner.is_empty()
     }
 
-    /// Retrieve a named scalar array as a flat `WasmArray` with shape `[nx, ny, nz]`.
+    /// Retrieve a named scalar array as a zero-copy `Float64Array` view
+    /// over the underlying WASM memory. Flat row-major order, length
+    /// `nx * ny * nz`. Use [`Grid::dim`] for shape.
+    ///
+    /// **Warning**: the view is invalidated on any WASM memory growth.
+    /// Copy it in JS (`new Float64Array(view)`) if it needs to outlive
+    /// subsequent allocations.
     ///
     /// Returns `undefined` if the named array does not exist.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` — Array name to retrieve.
     ///
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const arr = grid.getArray("rho");
-    /// if (arr) {
-    ///   const flat = arr.toCopy(); // Float32Array of length nx*ny*nz
-    /// }
+    /// const view = grid.getArray("rho");          // zero-copy
+    /// const copy = new Float64Array(view);        // owned copy if needed
     /// ```
     #[wasm_bindgen(js_name = getArray)]
-    pub fn get_array(&self, name: &str) -> Option<WasmArray> {
+    pub fn get_array(&self, name: &str) -> Option<JsFloatArray> {
         let raw = self.inner.get_raw(name)?;
-        let [nx, ny, nz] = self.inner.dim;
-        Some(WasmArray::from_vec(raw.to_vec(), Box::new([nx, ny, nz])))
+        // SAFETY: view borrows WASM linear memory; JS must not retain it
+        // past any allocation that could trigger memory growth.
+        Some(unsafe { JsFloatArray::view(raw) })
     }
 
     /// Insert (or replace) a named scalar array.
@@ -284,7 +285,7 @@ impl Grid {
     /// grid.insertArray("rho", rho);
     /// ```
     #[wasm_bindgen(js_name = insertArray)]
-    pub fn insert_array(&mut self, name: &str, data: &[f32]) -> Result<(), JsValue> {
+    pub fn insert_array(&mut self, name: &str, data: &[f64]) -> Result<(), JsValue> {
         self.inner
             .insert(name, data.to_vec())
             .map_err(|e| JsValue::from_str(&e.to_string()))

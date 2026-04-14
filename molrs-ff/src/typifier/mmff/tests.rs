@@ -3,10 +3,10 @@
 #[cfg(test)]
 #[allow(clippy::module_inception)]
 mod tests {
-    use molrs::molgraph::{Atom, AtomId, MolGraph, PropValue};
-    use molrs::rings::find_rings;
     use crate::typifier::Typifier;
     use crate::typifier::mmff::MMFFTypifier;
+    use molrs::molgraph::{Atom, AtomId, MolGraph, PropValue};
+    use molrs::rings::find_rings;
 
     fn atom(sym: &str) -> Atom {
         let mut a = Atom::new();

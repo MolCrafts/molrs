@@ -1,8 +1,8 @@
+use crate::reader::{FrameIndex, FrameReader, Reader, TrajReader};
+use crate::writer::{FrameWriter, Writer};
 use molrs::block::Block;
 use molrs::frame::Frame;
 use molrs::frame_access::FrameAccess;
-use crate::reader::{FrameIndex, FrameReader, Reader, TrajReader};
-use crate::writer::{FrameWriter, Writer};
 use molrs::region::simbox::SimBox;
 use molrs::types::{F, I};
 use ndarray::{Array1, Array2, ArrayD};

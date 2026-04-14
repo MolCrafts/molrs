@@ -5,8 +5,8 @@
 //! interesting properties of individual files.
 
 use molrs::frame::Frame;
-use molrs_io::pdb::{read_pdb_frame, write_pdb_frame};
 use molrs::types::F;
+use molrs_io::pdb::{read_pdb_frame, write_pdb_frame};
 use std::io::BufWriter;
 use tempfile::NamedTempFile;
 

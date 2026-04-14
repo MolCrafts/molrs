@@ -17,8 +17,8 @@ categories = ["science", "algorithms"]
 name = "molrs_pack"
 
 [dependencies]
-molrs = { path = "../molrs-core", package = "molcrafts-molrs", version = "0.0.7", default-features = false }
-molrs_io = { path = "../molrs-io", package = "molcrafts-molrs-io" }
+molrs = { workspace = true }
+molrs_io = { workspace = true }
 rand = "0.9"
 ndarray = "0.17"
 log = "0.4"

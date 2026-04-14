@@ -7,10 +7,10 @@
 //! Run: cargo run -p molrs-core --example forcefield
 
 use molrs::block::Block;
-use molrs_ff::forcefield::ForceField;
 use molrs::frame::Frame;
-use molrs_ff::potential::extract_coords;
 use molrs::types::{F, U};
+use molrs_ff::forcefield::ForceField;
+use molrs_ff::potential::extract_coords;
 use ndarray::Array1;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

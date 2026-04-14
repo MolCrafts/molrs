@@ -47,10 +47,10 @@ impl<C: Compute, R: Reducer<C::Output>> Accumulator<C, R> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::Frame;
     use crate::error::ComputeError;
     use crate::reducer::SumReducer;
     use crate::traits::Compute;
+    use molrs::Frame;
 
     /// Mock compute that always returns a fixed f64 value.
     struct MockCompute(f64);

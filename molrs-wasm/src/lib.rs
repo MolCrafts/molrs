@@ -77,13 +77,23 @@ pub fn wasm_memory() -> Memory {
 }
 
 // Module declarations
-mod compute;
 mod core;
+#[cfg(feature = "compute")]
+mod compute;
+#[cfg(feature = "gen3d")]
 mod gen3d;
+#[cfg(feature = "io")]
 mod io;
+#[cfg(feature = "smiles")]
+mod smiles;
 
 // Re-exports following molrs-core layout.
-pub use compute::*;
 pub use core::{Block, Box, Frame, Grid, WasmArray};
+#[cfg(feature = "compute")]
+pub use compute::*;
+#[cfg(feature = "gen3d")]
 pub use gen3d::*;
+#[cfg(feature = "io")]
 pub use io::*;
+#[cfg(feature = "smiles")]
+pub use smiles::*;

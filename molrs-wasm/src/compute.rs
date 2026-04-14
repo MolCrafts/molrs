@@ -41,17 +41,17 @@ use wasm_bindgen::prelude::*;
 
 use molrs::topology::{Topology as RsTopology, TopologyRingInfo as RsTopologyRingInfo};
 
-use molrs::compute::center_of_mass::{
+use molrs_compute::center_of_mass::{
     CenterOfMass as RsCenterOfMass, CenterOfMassResult as RsCenterOfMassResult,
 };
-use molrs::compute::cluster::{Cluster as RsCluster, ClusterResult as RsClusterResult};
-use molrs::compute::cluster_centers::ClusterCenters as RsClusterCenters;
-use molrs::compute::gyration_tensor::GyrationTensor as RsGyrationTensor;
-use molrs::compute::inertia_tensor::InertiaTensor as RsInertiaTensor;
-use molrs::compute::msd::{MSD as RsMSD, MSDResult as RsMSDResult};
-use molrs::compute::radius_of_gyration::RadiusOfGyration as RsRadiusOfGyration;
-use molrs::compute::rdf::{RDF as RsRDF, RDFResult as RsRDFResult};
-use molrs::compute::traits::Compute;
+use molrs_compute::cluster::{Cluster as RsCluster, ClusterResult as RsClusterResult};
+use molrs_compute::cluster_centers::ClusterCenters as RsClusterCenters;
+use molrs_compute::gyration_tensor::GyrationTensor as RsGyrationTensor;
+use molrs_compute::inertia_tensor::InertiaTensor as RsInertiaTensor;
+use molrs_compute::msd::{MSD as RsMSD, MSDResult as RsMSDResult};
+use molrs_compute::radius_of_gyration::RadiusOfGyration as RsRadiusOfGyration;
+use molrs_compute::rdf::{RDF as RsRDF, RDFResult as RsRDFResult};
+use molrs_compute::traits::Compute;
 use molrs::neighbors::{
     LinkCell as RsLinkCell, NbListAlgo, NeighborList as RsNeighborList,
     NeighborQuery as RsNeighborQuery, QueryMode,
@@ -59,6 +59,8 @@ use molrs::neighbors::{
 use molrs::types::F;
 
 use crate::core::frame::Frame;
+use crate::core::types::JsFloatArray;
+use js_sys::Uint32Array;
 
 // ---------------------------------------------------------------------------
 // Helper: extract Nx3 position matrix from a core Frame
@@ -169,24 +171,25 @@ impl LinkedCell {
     /// const dists = nlist.distances(); // Float32Array or Float64Array
     /// ```
     pub fn build(&self, frame: &Frame) -> Result<NeighborList, JsValue> {
-        let rs_frame = frame.clone_core_frame()?;
-        let pos = positions_from_frame(&rs_frame)?;
+        frame.with_frame(|rs_frame| {
+            let pos = positions_from_frame(rs_frame)?;
 
-        let simbox;
-        let bx_ref = match rs_frame.simbox.as_ref() {
-            Some(sb) => sb,
-            None => {
-                simbox = molrs::region::simbox::SimBox::free(pos.view(), self.cutoff)
-                    .map_err(|e| JsValue::from_str(&format!("free-boundary box: {e:?}")))?;
-                &simbox
-            }
-        };
+            let simbox;
+            let bx_ref = match rs_frame.simbox.as_ref() {
+                Some(sb) => sb,
+                None => {
+                    simbox = molrs::region::simbox::SimBox::free(pos.view(), self.cutoff)
+                        .map_err(|e| JsValue::from_str(&format!("free-boundary box: {e:?}")))?;
+                    &simbox
+                }
+            };
 
-        let mut lc = RsLinkCell::new().cutoff(self.cutoff);
-        lc.build(pos.view(), bx_ref);
-        let result = lc.query().clone();
+            let mut lc = RsLinkCell::new().cutoff(self.cutoff);
+            lc.build(pos.view(), bx_ref);
+            let result = lc.query().clone();
 
-        Ok(NeighborList { inner: result })
+            Ok(NeighborList { inner: result })
+        })
     }
 
     /// Cross-query: find all pairs where `i` indexes query points and
@@ -215,19 +218,20 @@ impl LinkedCell {
     /// console.log(crossPairs.numPairs);
     /// ```
     pub fn query(&self, ref_frame: &Frame, query_frame: &Frame) -> Result<NeighborList, JsValue> {
-        let rs_ref = ref_frame.clone_core_frame()?;
-        let ref_pos = positions_from_frame(&rs_ref)?;
+        ref_frame.with_frame(|rs_ref| {
+            let ref_pos = positions_from_frame(rs_ref)?;
 
-        let aabb = match rs_ref.simbox.as_ref() {
-            Some(sb) => RsNeighborQuery::new(sb, ref_pos.view(), self.cutoff),
-            None => RsNeighborQuery::free(ref_pos.view(), self.cutoff),
-        };
+            let aabb = match rs_ref.simbox.as_ref() {
+                Some(sb) => RsNeighborQuery::new(sb, ref_pos.view(), self.cutoff),
+                None => RsNeighborQuery::free(ref_pos.view(), self.cutoff),
+            };
 
-        let rs_query = query_frame.clone_core_frame()?;
-        let query_pos = positions_from_frame(&rs_query)?;
-        let result = aabb.query(query_pos.view());
-
-        Ok(NeighborList { inner: result })
+            query_frame.with_frame(|rs_query| {
+                let query_pos = positions_from_frame(rs_query)?;
+                let result = aabb.query(query_pos.view());
+                Ok(NeighborList { inner: result })
+            })
+        })
     }
 }
 
@@ -295,36 +299,37 @@ impl NeighborList {
         self.inner.mode() == QueryMode::SelfQuery
     }
 
-    /// Query point indices (`i`) for each pair, as a `Uint32Array`.
-    ///
-    /// The `k`-th pair connects query point `queryPointIndices()[k]`
-    /// to reference point `pointIndices()[k]`.
+    /// Zero-copy `Uint32Array` view of query point indices (`i`) over
+    /// WASM memory. **Invalidated** on any WASM memory growth — copy
+    /// in JS (`new Uint32Array(view)`) if it needs to outlive later calls.
     #[wasm_bindgen(js_name = queryPointIndices)]
-    pub fn query_point_indices(&self) -> Vec<u32> {
-        self.inner.query_point_indices().to_vec()
+    pub fn query_point_indices(&self) -> Uint32Array {
+        // SAFETY: view borrows wasm memory; short-lived use only.
+        unsafe { Uint32Array::view(self.inner.query_point_indices()) }
     }
 
-    /// Reference point indices (`j`) for each pair, as a `Uint32Array`.
+    /// Zero-copy `Uint32Array` view of reference point indices (`j`).
+    /// Same invalidation caveat as [`queryPointIndices`](Self::query_point_indices).
     #[wasm_bindgen(js_name = pointIndices)]
-    pub fn point_indices(&self) -> Vec<u32> {
-        self.inner.point_indices().to_vec()
+    pub fn point_indices(&self) -> Uint32Array {
+        // SAFETY: view borrows wasm memory; short-lived use only.
+        unsafe { Uint32Array::view(self.inner.point_indices()) }
     }
 
-    /// Pairwise distances in angstrom (A), as a float typed array.
+    /// Pairwise distances in angstrom (A). Computed lazily from `distSq`.
     ///
-    /// `distances()[k]` is the distance between query point
-    /// `queryPointIndices()[k]` and reference point `pointIndices()[k]`.
+    /// Returns an owned copy because distances are derived on the fly
+    /// (`sqrt` per pair) rather than stored.
     pub fn distances(&self) -> Vec<F> {
         self.inner.distances()
     }
 
-    /// Squared pairwise distances in A^2, as a float typed array.
-    ///
-    /// More efficient than `distances()` when you only need to
-    /// compare or threshold distances.
+    /// Zero-copy `Float64Array` view of squared pairwise distances in A^2.
+    /// Same invalidation caveat as [`queryPointIndices`](Self::query_point_indices).
     #[wasm_bindgen(js_name = distSq)]
-    pub fn dist_sq(&self) -> Vec<F> {
-        self.inner.dist_sq().to_vec()
+    pub fn dist_sq(&self) -> JsFloatArray {
+        // SAFETY: view borrows wasm memory; short-lived use only.
+        unsafe { JsFloatArray::view(self.inner.dist_sq()) }
     }
 }
 
@@ -410,12 +415,13 @@ impl RDF {
     /// const gr = result.rdf(); // Float32Array or Float64Array
     /// ```
     pub fn compute(&self, frame: &Frame, neighbors: &NeighborList) -> Result<RDFResult, JsValue> {
-        let rs_frame = frame.clone_core_frame()?;
-        let result = self
-            .inner
-            .compute(&rs_frame, &neighbors.inner)
-            .map_err(|e| JsValue::from_str(&format!("RDF compute: {e}")))?;
-        Ok(RDFResult { inner: result })
+        frame.with_frame(|rs_frame| {
+            let result = self
+                .inner
+                .compute(rs_frame, &neighbors.inner)
+                .map_err(|e| JsValue::from_str(&format!("RDF compute: {e}")))?;
+            Ok(RDFResult { inner: result })
+        })
     }
 }
 
@@ -441,34 +447,36 @@ pub struct RDFResult {
 
 #[wasm_bindgen(js_class = RDFResult)]
 impl RDFResult {
-    /// Bin center positions as a float typed array in angstrom (A).
-    ///
-    /// Length equals `n_bins` (the value passed to the `RDF` constructor).
+    /// Zero-copy `Float64Array` view of bin center positions in A.
+    /// Length equals `n_bins`. **Invalidated** on WASM memory growth;
+    /// copy in JS if it needs to outlive later calls.
     #[wasm_bindgen(js_name = binCenters)]
-    pub fn bin_centers(&self) -> Vec<F> {
-        self.inner.bin_centers.to_vec()
+    pub fn bin_centers(&self) -> JsFloatArray {
+        // SAFETY: view borrows wasm memory; short-lived use only.
+        unsafe { JsFloatArray::view(self.inner.bin_centers.as_slice().unwrap()) }
     }
 
-    /// Bin edge positions as a float typed array in angstrom (A).
-    ///
-    /// Length is `n_bins + 1` (one more than bin centers).
+    /// Zero-copy `Float64Array` view of bin edge positions in A.
+    /// Length is `n_bins + 1`. Same invalidation caveat.
     #[wasm_bindgen(js_name = binEdges)]
-    pub fn bin_edges(&self) -> Vec<F> {
-        self.inner.bin_edges.to_vec()
+    pub fn bin_edges(&self) -> JsFloatArray {
+        // SAFETY: view borrows wasm memory; short-lived use only.
+        unsafe { JsFloatArray::view(self.inner.bin_edges.as_slice().unwrap()) }
     }
 
-    /// Normalized g(r) values as a float typed array (dimensionless).
-    ///
-    /// A uniform ideal gas has g(r) = 1.0 everywhere. Peaks indicate
-    /// preferred interatomic distances (coordination shells).
-    pub fn rdf(&self) -> Vec<F> {
-        self.inner.rdf.to_vec()
+    /// Zero-copy `Float64Array` view of normalized g(r). Same invalidation
+    /// caveat.
+    pub fn rdf(&self) -> JsFloatArray {
+        // SAFETY: view borrows wasm memory; short-lived use only.
+        unsafe { JsFloatArray::view(self.inner.rdf.as_slice().unwrap()) }
     }
 
-    /// Raw (un-normalized) pair counts per bin as a float typed array.
+    /// Zero-copy `Float64Array` view of raw (un-normalized) pair counts
+    /// per bin. Same invalidation caveat.
     #[wasm_bindgen(js_name = pairCounts)]
-    pub fn pair_counts(&self) -> Vec<F> {
-        self.inner.n_r.to_vec()
+    pub fn pair_counts(&self) -> JsFloatArray {
+        // SAFETY: view borrows wasm memory; short-lived use only.
+        unsafe { JsFloatArray::view(self.inner.n_r.as_slice().unwrap()) }
     }
 
     /// Number of reference points used in the normalization.
@@ -558,11 +566,12 @@ impl MSD {
     /// msd.feed(frame1);  // computes MSD vs frame0
     /// ```
     pub fn feed(&mut self, frame: &Frame) -> Result<(), JsValue> {
-        let rs_frame = frame.clone_core_frame()?;
-        self.inner
-            .feed(&rs_frame)
-            .map_err(|e| JsValue::from_str(&format!("MSD feed: {e}")))?;
-        Ok(())
+        frame.with_frame(|rs_frame| {
+            self.inner
+                .feed(rs_frame)
+                .map_err(|e| JsValue::from_str(&format!("MSD feed: {e}")))?;
+            Ok(())
+        })
     }
 
     /// Return all accumulated MSD results as an array.
@@ -621,13 +630,13 @@ impl MSDResult {
         self.inner.mean
     }
 
-    /// Per-particle squared displacements as a float typed array in A^2.
-    ///
-    /// `perParticle()[i]` is `|r_i(t) - r_i(0)|^2` for particle `i`.
-    /// Length equals the number of atoms.
+    /// Zero-copy `Float64Array` view of per-particle squared displacements
+    /// in A². `perParticle()[i]` is `|r_i(t) - r_i(0)|²` for particle `i`.
+    /// **Invalidated** on WASM memory growth; copy in JS if needed.
     #[wasm_bindgen(js_name = perParticle)]
-    pub fn per_particle(&self) -> Vec<F> {
-        self.inner.per_particle.to_vec()
+    pub fn per_particle(&self) -> JsFloatArray {
+        // SAFETY: view borrows wasm memory; short-lived use only.
+        unsafe { JsFloatArray::view(self.inner.per_particle.as_slice().unwrap()) }
     }
 }
 
@@ -707,12 +716,13 @@ impl Cluster {
         frame: &Frame,
         neighbors: &NeighborList,
     ) -> Result<ClusterResult, JsValue> {
-        let rs_frame = frame.clone_core_frame()?;
-        let result = self
-            .inner
-            .compute(&rs_frame, &neighbors.inner)
-            .map_err(|e| JsValue::from_str(&format!("Cluster compute: {e}")))?;
-        Ok(ClusterResult { inner: result })
+        frame.with_frame(|rs_frame| {
+            let result = self
+                .inner
+                .compute(rs_frame, &neighbors.inner)
+                .map_err(|e| JsValue::from_str(&format!("Cluster compute: {e}")))?;
+            Ok(ClusterResult { inner: result })
+        })
     }
 }
 
@@ -792,7 +802,7 @@ mod tests {
         rs_frame.simbox =
             Some(SimBox::cube(box_len, array![0.0 as F, 0.0, 0.0], [false, false, false]).unwrap());
 
-        Frame::from_rs_frame(rs_frame).unwrap()
+        Frame::from_rs(rs_frame).unwrap()
     }
 
     #[wasm_bindgen_test]
@@ -927,12 +937,13 @@ impl ClusterCenters {
         frame: &Frame,
         cluster_result: &ClusterResult,
     ) -> Result<Vec<F>, JsValue> {
-        let rs_frame = frame.clone_core_frame()?;
-        let centers = self
-            .inner
-            .compute(&rs_frame, &cluster_result.inner)
-            .map_err(|e| JsValue::from_str(&format!("ClusterCenters: {e}")))?;
-        Ok(centers.iter().flat_map(|c| [c[0], c[1], c[2]]).collect())
+        frame.with_frame(|rs_frame| {
+            let centers = self
+                .inner
+                .compute(rs_frame, &cluster_result.inner)
+                .map_err(|e| JsValue::from_str(&format!("ClusterCenters: {e}")))?;
+            Ok(centers.iter().flat_map(|c| [c[0], c[1], c[2]]).collect())
+        })
     }
 }
 
@@ -956,20 +967,20 @@ pub struct CenterOfMassResult {
 
 #[wasm_bindgen(js_class = CenterOfMassResult)]
 impl CenterOfMassResult {
-    /// Mass-weighted centers, flat `[x0,y0,z0, x1,y1,z1, ...]`.
+    /// Zero-copy `Float64Array` view of mass-weighted centers, flat
+    /// `[x0,y0,z0, x1,y1,z1, ...]`. **Invalidated** on WASM memory growth.
     #[wasm_bindgen(js_name = centersOfMass)]
-    pub fn centers_of_mass(&self) -> Vec<F> {
-        self.inner
-            .centers_of_mass
-            .iter()
-            .flat_map(|c| [c[0], c[1], c[2]])
-            .collect()
+    pub fn centers_of_mass(&self) -> JsFloatArray {
+        // SAFETY: Vec<[F; 3]> is contiguous; `as_flattened` is safe.
+        unsafe { JsFloatArray::view(self.inner.centers_of_mass.as_flattened()) }
     }
 
-    /// Total mass per cluster.
+    /// Zero-copy `Float64Array` view of total mass per cluster.
+    /// **Invalidated** on WASM memory growth.
     #[wasm_bindgen(js_name = clusterMasses)]
-    pub fn cluster_masses(&self) -> Vec<F> {
-        self.inner.cluster_masses.clone()
+    pub fn cluster_masses(&self) -> JsFloatArray {
+        // SAFETY: view borrows wasm memory; short-lived use only.
+        unsafe { JsFloatArray::view(&self.inner.cluster_masses) }
     }
 
     /// Number of clusters.
@@ -1001,16 +1012,17 @@ impl CenterOfMass {
         frame: &Frame,
         cluster_result: &ClusterResult,
     ) -> Result<CenterOfMassResult, JsValue> {
-        let rs_frame = frame.clone_core_frame()?;
-        let calc = if let Some(ref ms) = self.masses {
-            RsCenterOfMass::new().with_masses(ms)
-        } else {
-            RsCenterOfMass::new()
-        };
-        let result = calc
-            .compute(&rs_frame, &cluster_result.inner)
-            .map_err(|e| JsValue::from_str(&format!("CenterOfMass: {e}")))?;
-        Ok(CenterOfMassResult { inner: result })
+        frame.with_frame(|rs_frame| {
+            let calc = if let Some(ref ms) = self.masses {
+                RsCenterOfMass::new().with_masses(ms)
+            } else {
+                RsCenterOfMass::new()
+            };
+            let result = calc
+                .compute(rs_frame, &cluster_result.inner)
+                .map_err(|e| JsValue::from_str(&format!("CenterOfMass: {e}")))?;
+            Ok(CenterOfMassResult { inner: result })
+        })
     }
 }
 
@@ -1042,15 +1054,16 @@ impl GyrationTensor {
         frame: &Frame,
         cluster_result: &ClusterResult,
     ) -> Result<Vec<F>, JsValue> {
-        let rs_frame = frame.clone_core_frame()?;
-        let tensors = self
-            .inner
-            .compute(&rs_frame, &cluster_result.inner)
-            .map_err(|e| JsValue::from_str(&format!("GyrationTensor: {e}")))?;
-        Ok(tensors
-            .iter()
-            .flat_map(|t| t.iter().flat_map(|row| row.iter().copied()))
-            .collect())
+        frame.with_frame(|rs_frame| {
+            let tensors = self
+                .inner
+                .compute(rs_frame, &cluster_result.inner)
+                .map_err(|e| JsValue::from_str(&format!("GyrationTensor: {e}")))?;
+            Ok(tensors
+                .iter()
+                .flat_map(|t| t.iter().flat_map(|row| row.iter().copied()))
+                .collect())
+        })
     }
 }
 
@@ -1077,19 +1090,20 @@ impl InertiaTensor {
         frame: &Frame,
         cluster_result: &ClusterResult,
     ) -> Result<Vec<F>, JsValue> {
-        let rs_frame = frame.clone_core_frame()?;
-        let calc = if let Some(ref ms) = self.masses {
-            RsInertiaTensor::new().with_masses(ms)
-        } else {
-            RsInertiaTensor::new()
-        };
-        let tensors = calc
-            .compute(&rs_frame, &cluster_result.inner)
-            .map_err(|e| JsValue::from_str(&format!("InertiaTensor: {e}")))?;
-        Ok(tensors
-            .iter()
-            .flat_map(|t| t.iter().flat_map(|row| row.iter().copied()))
-            .collect())
+        frame.with_frame(|rs_frame| {
+            let calc = if let Some(ref ms) = self.masses {
+                RsInertiaTensor::new().with_masses(ms)
+            } else {
+                RsInertiaTensor::new()
+            };
+            let tensors = calc
+                .compute(rs_frame, &cluster_result.inner)
+                .map_err(|e| JsValue::from_str(&format!("InertiaTensor: {e}")))?;
+            Ok(tensors
+                .iter()
+                .flat_map(|t| t.iter().flat_map(|row| row.iter().copied()))
+                .collect())
+        })
     }
 }
 
@@ -1116,16 +1130,17 @@ impl RadiusOfGyration {
         frame: &Frame,
         cluster_result: &ClusterResult,
     ) -> Result<Vec<F>, JsValue> {
-        let rs_frame = frame.clone_core_frame()?;
-        let calc = if let Some(ref ms) = self.masses {
-            RsRadiusOfGyration::new().with_masses(ms)
-        } else {
-            RsRadiusOfGyration::new()
-        };
-        let radii = calc
-            .compute(&rs_frame, &cluster_result.inner)
-            .map_err(|e| JsValue::from_str(&format!("RadiusOfGyration: {e}")))?;
-        Ok(radii)
+        frame.with_frame(|rs_frame| {
+            let calc = if let Some(ref ms) = self.masses {
+                RsRadiusOfGyration::new().with_masses(ms)
+            } else {
+                RsRadiusOfGyration::new()
+            };
+            let radii = calc
+                .compute(rs_frame, &cluster_result.inner)
+                .map_err(|e| JsValue::from_str(&format!("RadiusOfGyration: {e}")))?;
+            Ok(radii)
+        })
     }
 }
 
@@ -1172,39 +1187,39 @@ impl WasmTopology {
     /// `i`, `j` columns (Uint32).
     #[wasm_bindgen(js_name = fromFrame)]
     pub fn from_frame(frame: &Frame) -> Result<WasmTopology, JsValue> {
-        let rs_frame = frame.clone_core_frame()?;
+        frame.with_frame(|rs_frame| {
+            let atoms = rs_frame
+                .get("atoms")
+                .ok_or_else(|| JsValue::from_str("Frame has no 'atoms' block"))?;
+            let n_atoms = atoms
+                .nrows()
+                .ok_or_else(|| JsValue::from_str("atoms block is empty"))?;
 
-        let atoms = rs_frame
-            .get("atoms")
-            .ok_or_else(|| JsValue::from_str("Frame has no 'atoms' block"))?;
-        let n_atoms = atoms
-            .nrows()
-            .ok_or_else(|| JsValue::from_str("atoms block is empty"))?;
+            let mut topo = RsTopology::with_atoms(n_atoms);
 
-        let mut topo = RsTopology::with_atoms(n_atoms);
+            if let Some(bonds) = rs_frame.get("bonds") {
+                use molrs::block::BlockDtype;
+                let col_i = bonds
+                    .get("i")
+                    .and_then(|c| <u32 as BlockDtype>::from_column(c))
+                    .and_then(|a| a.as_slice());
+                let col_j = bonds
+                    .get("j")
+                    .and_then(|c| <u32 as BlockDtype>::from_column(c))
+                    .and_then(|a| a.as_slice());
 
-        if let Some(bonds) = rs_frame.get("bonds") {
-            use molrs::block::BlockDtype;
-            let col_i = bonds
-                .get("i")
-                .and_then(|c| <u32 as BlockDtype>::from_column(c))
-                .and_then(|a| a.as_slice().map(|s| s.to_vec()));
-            let col_j = bonds
-                .get("j")
-                .and_then(|c| <u32 as BlockDtype>::from_column(c))
-                .and_then(|a| a.as_slice().map(|s| s.to_vec()));
-
-            if let (Some(is), Some(js)) = (col_i, col_j) {
-                let pairs: Vec<[usize; 2]> = is
-                    .iter()
-                    .zip(js.iter())
-                    .map(|(&i, &j)| [i as usize, j as usize])
-                    .collect();
-                topo.add_bonds(&pairs);
+                if let (Some(is), Some(js)) = (col_i, col_j) {
+                    let pairs: Vec<[usize; 2]> = is
+                        .iter()
+                        .zip(js.iter())
+                        .map(|(&i, &j)| [i as usize, j as usize])
+                        .collect();
+                    topo.add_bonds(&pairs);
+                }
             }
-        }
 
-        Ok(Self { inner: topo })
+            Ok(Self { inner: topo })
+        })
     }
 
     /// Number of atoms (vertices).

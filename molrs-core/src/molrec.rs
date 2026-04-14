@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Map as JsonMap, Value as JsonValue, json};
+use serde_json::{Map as JsonMap, Value as JsonValue};
 
 use crate::MolRsError;
 use crate::block::Column;
@@ -166,9 +166,7 @@ impl ObservableRecord {
         match (&self.kind, &self.data) {
             (ObservableKind::Scalar | ObservableKind::Vector, ObservableData::Column(_)) => Ok(()),
             (ObservableKind::Grid, ObservableData::Grid(_)) => Ok(()),
-            _ => Err(MolRsError::validation(
-                "observable kind/data mismatch",
-            )),
+            _ => Err(MolRsError::validation("observable kind/data mismatch")),
         }
     }
 }
@@ -284,7 +282,6 @@ impl MolRec {
         self.observables.remove(name)
     }
 }
-
 
 fn empty_object() -> JsonValue {
     JsonValue::Object(JsonMap::new())

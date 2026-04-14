@@ -3,9 +3,9 @@
 use std::collections::HashMap;
 
 use crate::forcefield::Params;
-use molrs::frame::Frame;
 use crate::potential::Potential;
 use crate::potential::geometry::{compute_angle, validate_coords};
+use molrs::frame::Frame;
 use molrs::types::F;
 
 /// Harmonic angle potential with pre-resolved flat arrays.

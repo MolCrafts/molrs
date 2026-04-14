@@ -3,9 +3,9 @@
 use std::collections::HashMap;
 
 use crate::forcefield::Params;
-use molrs::frame::Frame;
 use crate::potential::Potential;
 use crate::potential::geometry::{mag3, sub3, validate_coords};
+use molrs::frame::Frame;
 use molrs::types::F;
 
 /// e^2/(4*pi*eps0) in kcal*A/(mol*e^2).

@@ -63,12 +63,12 @@
 //!
 //! MMFF94 parameters are embedded in the binary — no external data files needed.
 
-use molrs_ff::typifier::Typifier;
 use molrs::atomistic::Atomistic;
 use molrs::molgraph::{Atom, MolGraph, PropValue};
-use molrs_ff::potential::extract_coords;
 use molrs::rings::find_rings;
 use molrs::types::F;
+use molrs_ff::potential::extract_coords;
+use molrs_ff::typifier::Typifier;
 use molrs_ff::typifier::mmff::MMFFTypifier;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

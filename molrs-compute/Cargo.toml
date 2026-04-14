@@ -8,6 +8,7 @@ license.workspace = true
 description = "Trajectory analysis for MolCrafts (RDF, MSD, clustering, gyration tensor)"
 repository.workspace = true
 homepage.workspace = true
+autobenches = false
 
 [lib]
 name = "molrs_compute"
@@ -17,9 +18,14 @@ default = []
 rayon = ["molrs/rayon"]
 
 [dependencies]
-molrs = { path = "../molrs-core", package = "molcrafts-molrs" }
+molrs = { workspace = true }
 ndarray = "0.17"
 rustfft = "6"
 
 [dev-dependencies]
 rand = "0.9"
+criterion = "0.5"
+
+[[bench]]
+name = "benchmarks"
+harness = false

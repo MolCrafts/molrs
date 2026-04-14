@@ -520,6 +520,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[allow(clippy::identity_op, clippy::erasing_op)]
     fn vasp_to_row_major_reorder() {
         // VASP order (x fastest): flat[k] at k = ix + nx*iy + nx*ny*iz
         // Our order (z fastest):  flat[k] at k = ix*ny*nz + iy*nz + iz

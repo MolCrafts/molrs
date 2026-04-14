@@ -1,7 +1,6 @@
 //! WASM bindings for MolRec Zarr v3 archives.
 
 use crate::core::frame::Frame;
-use molrs::MolRec;
 use std::sync::Arc;
 use wasm_bindgen::prelude::*;
 use zarrs::storage::ReadableWritableListableStorage;
@@ -12,6 +11,7 @@ use zarrs::storage::store::MemoryStore;
 #[wasm_bindgen(js_name = MolRecReader)]
 pub struct MolRecReader {
     store: ReadableWritableListableStorage,
+    n_atoms: usize,
 }
 
 #[wasm_bindgen(js_class = MolRecReader)]
@@ -37,35 +37,35 @@ impl MolRecReader {
         }
 
         let store = store as ReadableWritableListableStorage;
-        MolRec::read_zarr_store(store.clone()).map_err(|e| JsValue::from_str(&e.to_string()))?;
-        Ok(MolRecReader { store })
+        let rec = molrs_io::zarr::read_molrec_store(store.clone())
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let n_atoms = rec
+            .frame
+            .get("atoms")
+            .and_then(|block| block.nrows())
+            .unwrap_or(0);
+        Ok(MolRecReader { store, n_atoms })
     }
 
     #[wasm_bindgen(js_name = readFrame)]
     pub fn read_frame(&self, t: usize) -> Result<Option<Frame>, JsValue> {
-        let rs_frame = molrs::read_molrec_frame_from_store(self.store.clone(), t)
+        let rs_frame = molrs_io::zarr::read_molrec_frame_from_store(self.store.clone(), t)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
         match rs_frame {
-            Some(frame) => Ok(Some(Frame::from_rs_frame(frame)?)),
+            Some(frame) => Ok(Some(Frame::from_rs(frame)?)),
             None => Ok(None),
         }
     }
 
     #[wasm_bindgen(js_name = countFrames)]
     pub fn count_frames(&self) -> Result<usize, JsValue> {
-        Ok(molrs::count_molrec_frames_in_store(self.store.clone())
+        Ok(molrs_io::zarr::count_molrec_frames_in_store(self.store.clone())
             .map_err(|e| JsValue::from_str(&e.to_string()))? as usize)
     }
 
     #[wasm_bindgen(js_name = countAtoms)]
-    pub fn count_atoms(&self) -> Result<usize, JsValue> {
-        let rec = MolRec::read_zarr_store(self.store.clone())
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
-        Ok(rec
-            .frame
-            .get("atoms")
-            .and_then(|block| block.nrows())
-            .unwrap_or(0))
+    pub fn count_atoms(&self) -> usize {
+        self.n_atoms
     }
 
     #[wasm_bindgen(js_name = free)]

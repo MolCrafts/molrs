@@ -635,7 +635,7 @@ pub fn run_iteration(
     movebad_cfg: &MoveBadConfig,
     gencan_params: &GencanParams,
     sys: &mut PackContext,
-    xwork: &mut Vec<F>,
+    xwork: &mut [F],
     swap: &mut SwapState,
     flast: &mut F,
     fimp_prev: &mut F,

@@ -3,9 +3,9 @@
 use std::collections::HashMap;
 
 use crate::forcefield::Params;
-use molrs::frame::Frame;
 use crate::potential::Potential;
 use crate::potential::geometry::{cross3, dot3, mag3, sub3, validate_coords};
+use molrs::frame::Frame;
 use molrs::types::F;
 
 /// md/A -> kcal/mol conversion.

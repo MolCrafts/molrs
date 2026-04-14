@@ -14,8 +14,8 @@ use rustfft::num_complex::Complex;
 use rustfft::{Fft, FftPlanner};
 
 use crate::forcefield::Params;
-use molrs::frame::Frame;
 use crate::potential::Potential;
+use molrs::frame::Frame;
 use molrs::types::F;
 
 // ---------------------------------------------------------------------------

@@ -20,9 +20,9 @@
 use std::collections::HashMap;
 
 use crate::forcefield::ForceField;
+use crate::potential::Potentials;
 use molrs::frame::Frame;
 use molrs::molgraph::{AtomId, MolGraph};
-use crate::potential::Potentials;
 use molrs::rings::RingInfo;
 
 use super::Typifier;

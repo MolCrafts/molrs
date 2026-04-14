@@ -10,7 +10,7 @@
 //! # Examples
 //!
 //! ```
-//! use molrs::atomistic::Atomistic;
+//! use molrs_core::atomistic::Atomistic;
 //!
 //! let mut mol = Atomistic::new();
 //! let c = mol.add_atom_bare("C");

@@ -1,6 +1,6 @@
 use criterion::{Criterion, criterion_group};
-use molrs::region::simbox::SimBox;
-use molrs::types::F;
+use molrs_core::region::simbox::SimBox;
+use molrs_core::types::F;
 use ndarray::array;
 
 fn bench_shortest_vector(c: &mut Criterion) {

@@ -4,8 +4,8 @@
 //! in `molrs-core` and cannot take a `ForceField` dep without creating a
 //! circular dependency.
 
-use molrs::molrec::MolRec;
 use molrs::frame::Frame;
+use molrs::molrec::MolRec;
 use serde_json::{Value as JsonValue, json};
 
 use crate::forcefield::ForceField;
