@@ -387,7 +387,7 @@ impl PyFrame {
     /// --------
     /// >>> if frame.box is not None:
     /// ...     print(frame.box.volume())
-    #[getter(r#box)]
+    #[getter(simbox)]
     fn get_box(&self) -> PyResult<Option<PyBox>> {
         self.store
             .borrow()
@@ -406,7 +406,7 @@ impl PyFrame {
     /// --------
     /// >>> frame.box = Box.cube(20.0)
     /// >>> frame.box = None  # remove
-    #[setter(r#box)]
+    #[setter(simbox)]
     fn set_box(&mut self, simbox: Option<&PyBox>) -> PyResult<()> {
         self.store
             .borrow_mut()
