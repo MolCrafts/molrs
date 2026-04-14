@@ -31,7 +31,7 @@ use std::fs::create_dir_all;
 use std::path::PathBuf;
 
 use molrs_io::pdb::read_pdb_frame;
-use molrs_pack::{InsideSphereConstraint, Molpack, ProgressHandler, Target, XYZHandler};
+use molrs_pack::{InsideSphereRestraint, Molpack, ProgressHandler, Target, XYZHandler};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = env_logger::try_init();
@@ -44,7 +44,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let sodium = read_pdb_frame(base.join("sodium.pdb"))?;
     let chloride = read_pdb_frame(base.join("chloride.pdb"))?;
 
-    let sphere = InsideSphereConstraint::new(50.0, [0.0, 0.0, 0.0]);
+    let sphere = InsideSphereRestraint::new([0.0, 0.0, 0.0], 50.0);
 
     let protein_target = Target::new(protein, 1)
         .with_name("protein")
@@ -52,15 +52,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .fixed_at([0.0, 0.0, 0.0]);
 
     let water_target = Target::new(water, 1000)
-        .with_constraint(sphere.clone())
+        .with_restraint(sphere)
         .with_name("water");
 
     let sodium_target = Target::new(sodium, 30)
-        .with_constraint(sphere.clone())
+        .with_restraint(sphere)
         .with_name("sodium");
 
     let chloride_target = Target::new(chloride, 20)
-        .with_constraint(sphere)
+        .with_restraint(sphere)
         .with_name("chloride");
 
     let mut packer = Molpack::new();

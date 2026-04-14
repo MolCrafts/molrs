@@ -242,7 +242,7 @@ fn accumulate_constraint_value(icart: usize, pos: &[F; 3], sys: &mut PackContext
     let start = sys.iratom_offsets[icart];
     let end = sys.iratom_offsets[icart + 1];
     for &irest in &sys.iratom_data[start..end] {
-        fplus += sys.restraints[irest].value(pos, sys.scale, sys.scale2);
+        fplus += sys.restraints[irest].f(pos, sys.scale, sys.scale2);
     }
     if fplus > sys.frest {
         sys.frest = fplus;
@@ -261,7 +261,8 @@ fn accumulate_constraint_gradient(icart: usize, pos: &[F; 3], sys: &mut PackCont
     let scale2 = sys.scale2;
     let gc = &mut sys.work.gxcar[icart];
     for &irest in &sys.iratom_data[start..end] {
-        sys.restraints[irest].gradient(pos, scale, scale2, gc);
+        // fg returns the penalty value too; discard it — only gradient accumulation matters here
+        let _ = sys.restraints[irest].fg(pos, scale, scale2, gc);
     }
 }
 

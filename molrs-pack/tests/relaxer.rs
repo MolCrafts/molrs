@@ -4,8 +4,7 @@
 
 use molrs::molgraph::{Atom, MolGraph};
 use molrs_pack::{
-    F, Hook, InsideBoxConstraint, InsideSphereConstraint, Molpack, NullHandler, Target,
-    TorsionMcHook,
+    F, Hook, InsideBoxRestraint, InsideSphereRestraint, Molpack, NullHandler, Target, TorsionMcHook,
 };
 
 // ── helpers ────────────────────────────────────────────────────────────────
@@ -134,10 +133,7 @@ fn pack_with_torsion_hook_in_box() {
 
     let target = Target::from_coords(&coords, &radii, 1)
         .with_name("chain")
-        .with_constraint(InsideBoxConstraint::new(
-            [0.0, 0.0, 0.0],
-            [20.0, 20.0, 20.0],
-        ))
+        .with_restraint(InsideBoxRestraint::new([0.0, 0.0, 0.0], [20.0, 20.0, 20.0]))
         .with_relaxer(hook);
 
     let result = Molpack::new()
@@ -159,7 +155,7 @@ fn pack_with_torsion_hook_in_sphere() {
 
     let target = Target::from_coords(&coords, &radii, 1)
         .with_name("polymer")
-        .with_constraint(InsideSphereConstraint::new(15.0, [0.0, 0.0, 0.0]))
+        .with_restraint(InsideSphereRestraint::new([0.0, 0.0, 0.0], 15.0))
         .with_relaxer(hook);
 
     let result = Molpack::new()
@@ -180,16 +176,16 @@ fn pack_hook_with_regular_target() {
     let n = 5;
     let (graph, chain_coords, chain_radii) = chain(n, 1.5);
 
-    let constraint = InsideBoxConstraint::new([0.0, 0.0, 0.0], [30.0, 30.0, 30.0]);
+    let restraint = InsideBoxRestraint::new([0.0, 0.0, 0.0], [30.0, 30.0, 30.0]);
 
     let chain_target = Target::from_coords(&chain_coords, &chain_radii, 1)
         .with_name("chain")
-        .with_constraint(constraint.clone())
+        .with_restraint(restraint)
         .with_relaxer(TorsionMcHook::new(&graph).with_steps(5));
 
     let point_target = Target::from_coords(&[[0.0, 0.0, 0.0]], &[1.0], 3)
         .with_name("points")
-        .with_constraint(constraint);
+        .with_restraint(restraint);
 
     let result = Molpack::new()
         .add_handler(NullHandler)

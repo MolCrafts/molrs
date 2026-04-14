@@ -17,8 +17,8 @@ use std::path::PathBuf;
 
 use molrs_io::pdb::read_pdb_frame;
 use molrs_pack::{
-    AbovePlaneConstraint, BelowPlaneConstraint, InsideBoxConstraint, Molpack, ProgressHandler,
-    Target, XYZHandler,
+    AbovePlaneRestraint, BelowPlaneRestraint, InsideBoxRestraint, Molpack, ProgressHandler, Target,
+    XYZHandler,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -31,35 +31,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let lipid = read_pdb_frame(base.join("palmitoil.pdb"))?;
 
     let water_low = Target::new(water.clone(), 50)
-        .with_constraint(InsideBoxConstraint::new(
+        .with_restraint(InsideBoxRestraint::new(
             [0.0, 0.0, -10.0],
             [40.0, 40.0, 0.0],
         ))
         .with_name("water_low");
 
     let water_high = Target::new(water, 50)
-        .with_constraint(InsideBoxConstraint::new(
+        .with_restraint(InsideBoxRestraint::new(
             [0.0, 0.0, 28.0],
             [40.0, 40.0, 38.0],
         ))
         .with_name("water_high");
 
     let lipid_low = Target::new(lipid.clone(), 10)
-        .with_constraint(InsideBoxConstraint::new(
-            [0.0, 0.0, 0.0],
-            [40.0, 40.0, 14.0],
-        ))
-        .with_constraint_for_atoms(&[31, 32], BelowPlaneConstraint::new([0.0, 0.0, 1.0], 2.0))
-        .with_constraint_for_atoms(&[1, 2], AbovePlaneConstraint::new([0.0, 0.0, 1.0], 12.0))
+        .with_restraint(InsideBoxRestraint::new([0.0, 0.0, 0.0], [40.0, 40.0, 14.0]))
+        .with_restraint_for_atoms(&[31, 32], BelowPlaneRestraint::new([0.0, 0.0, 1.0], 2.0))
+        .with_restraint_for_atoms(&[1, 2], AbovePlaneRestraint::new([0.0, 0.0, 1.0], 12.0))
         .with_name("lipid_low");
 
     let lipid_high = Target::new(lipid, 10)
-        .with_constraint(InsideBoxConstraint::new(
+        .with_restraint(InsideBoxRestraint::new(
             [0.0, 0.0, 14.0],
             [40.0, 40.0, 28.0],
         ))
-        .with_constraint_for_atoms(&[1, 2], BelowPlaneConstraint::new([0.0, 0.0, 1.0], 16.0))
-        .with_constraint_for_atoms(&[31, 32], AbovePlaneConstraint::new([0.0, 0.0, 1.0], 26.0))
+        .with_restraint_for_atoms(&[1, 2], BelowPlaneRestraint::new([0.0, 0.0, 1.0], 16.0))
+        .with_restraint_for_atoms(&[31, 32], AbovePlaneRestraint::new([0.0, 0.0, 1.0], 26.0))
         .with_name("lipid_high");
 
     let targets = vec![water_low, water_high, lipid_low, lipid_high];

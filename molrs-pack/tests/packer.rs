@@ -2,8 +2,8 @@
 //! fixed target, error cases.
 
 use molrs_pack::{
-    F, InsideBoxConstraint, InsideSphereConstraint, MoleculeConstraint, Molpack, NullHandler,
-    OutsideSphereConstraint, PackError, RegionConstraint, Restraint, Target,
+    F, InsideBoxRestraint, InsideSphereRestraint, Molpack, NullHandler, OutsideSphereRestraint,
+    PackError, Target,
 };
 
 // ── helpers ────────────────────────────────────────────────────────────────
@@ -28,9 +28,8 @@ fn single_atom() -> (Vec<[F; 3]>, Vec<F>) {
 
 #[test]
 fn pack_single_water_in_box() {
-    let c =
-        MoleculeConstraint::new().add(Restraint::inside_box([0.0, 0.0, 0.0], [40.0, 40.0, 40.0]));
-    let target = Target::from_coords(&water_positions(), &water_radii(), 1).with_constraint(c);
+    let target = Target::from_coords(&water_positions(), &water_radii(), 1)
+        .with_restraint(InsideBoxRestraint::new([0.0, 0.0, 0.0], [40.0, 40.0, 40.0]));
     let result = Molpack::new().pack(&[target], 5, Some(42));
     assert!(result.is_ok());
     assert_eq!(result.unwrap().natoms(), 3);
@@ -38,18 +37,17 @@ fn pack_single_water_in_box() {
 
 #[test]
 fn pack_three_waters_in_box() {
-    let c =
-        MoleculeConstraint::new().add(Restraint::inside_box([0.0, 0.0, 0.0], [40.0, 40.0, 40.0]));
-    let target = Target::from_coords(&water_positions(), &water_radii(), 3).with_constraint(c);
+    let target = Target::from_coords(&water_positions(), &water_radii(), 3)
+        .with_restraint(InsideBoxRestraint::new([0.0, 0.0, 0.0], [40.0, 40.0, 40.0]));
     let result = Molpack::new().pack(&[target], 5, Some(42));
     assert!(result.is_ok());
-    assert_eq!(result.unwrap().natoms(), 9, "3 water * 3 atoms = 9");
+    assert_eq!(result.unwrap().natoms(), 9);
 }
 
 #[test]
 fn pack_in_sphere() {
     let target = Target::from_coords(&water_positions(), &water_radii(), 3)
-        .with_constraint(InsideSphereConstraint::new(20.0, [0.0, 0.0, 0.0]));
+        .with_restraint(InsideSphereRestraint::new([0.0, 0.0, 0.0], 20.0));
     let result = Molpack::new().pack(&[target], 5, Some(42));
     assert!(result.is_ok());
     assert_eq!(result.unwrap().natoms(), 9);
@@ -59,33 +57,29 @@ fn pack_in_sphere() {
 
 #[test]
 fn pack_two_targets_same_box() {
-    let box_c = InsideBoxConstraint::new([0.0, 0.0, 0.0], [40.0, 40.0, 40.0]);
     let (coords, radii) = single_atom();
     let t1 = Target::from_coords(&coords, &radii, 3)
         .with_name("A")
-        .with_constraint(box_c.clone());
+        .with_restraint(InsideBoxRestraint::new([0.0, 0.0, 0.0], [40.0, 40.0, 40.0]));
     let t2 = Target::from_coords(&coords, &radii, 2)
         .with_name("B")
-        .with_constraint(box_c);
+        .with_restraint(InsideBoxRestraint::new([0.0, 0.0, 0.0], [40.0, 40.0, 40.0]));
     let result = Molpack::new().pack(&[t1, t2], 5, Some(42));
     assert!(result.is_ok());
-    assert_eq!(result.unwrap().natoms(), 5); // 3 + 2
+    assert_eq!(result.unwrap().natoms(), 5);
 }
 
 #[test]
 fn pack_mixed_free_and_fixed() {
     let (coords, radii) = single_atom();
-    let free = Target::from_coords(&coords, &radii, 2).with_constraint(InsideBoxConstraint::new(
-        [0.0, 0.0, 0.0],
-        [20.0, 20.0, 20.0],
-    ));
+    let free = Target::from_coords(&coords, &radii, 2)
+        .with_restraint(InsideBoxRestraint::new([0.0, 0.0, 0.0], [20.0, 20.0, 20.0]));
     let fixed = Target::from_coords(&coords, &radii, 1).fixed_at([10.0, 10.0, 10.0]);
     let result = Molpack::new()
         .pack(&[free, fixed], 5, Some(42))
         .expect("should succeed");
-    assert_eq!(result.natoms(), 3); // 2 free + 1 fixed
-    // Fixed atom should be at its placement position
-    let fixed_pos = result.positions()[2]; // fixed atoms come after free
+    assert_eq!(result.natoms(), 3);
+    let fixed_pos = result.positions()[2];
     assert!((fixed_pos[0] - 10.0).abs() < 1e-6);
     assert!((fixed_pos[1] - 10.0).abs() < 1e-6);
 }
@@ -94,9 +88,8 @@ fn pack_mixed_free_and_fixed() {
 
 #[test]
 fn pbc_box_packing() {
-    let c =
-        MoleculeConstraint::new().add(Restraint::inside_box([0.0, 0.0, 0.0], [30.0, 30.0, 30.0]));
-    let target = Target::from_coords(&water_positions(), &water_radii(), 2).with_constraint(c);
+    let target = Target::from_coords(&water_positions(), &water_radii(), 2)
+        .with_restraint(InsideBoxRestraint::new([0.0, 0.0, 0.0], [30.0, 30.0, 30.0]));
     let result = Molpack::new()
         .pbc_box([30.0, 30.0, 30.0])
         .pack(&[target], 5, Some(42));
@@ -106,9 +99,8 @@ fn pbc_box_packing() {
 
 #[test]
 fn invalid_pbc_box_rejected() {
-    let c =
-        MoleculeConstraint::new().add(Restraint::inside_box([0.0, 0.0, 0.0], [40.0, 40.0, 40.0]));
-    let target = Target::from_coords(&water_positions(), &water_radii(), 1).with_constraint(c);
+    let target = Target::from_coords(&water_positions(), &water_radii(), 1)
+        .with_restraint(InsideBoxRestraint::new([0.0, 0.0, 0.0], [40.0, 40.0, 40.0]));
     let result = Molpack::new()
         .pbc([0.0, 0.0, 0.0], [10.0, 0.0, 10.0])
         .pack(&[target], 5, Some(7));
@@ -133,9 +125,8 @@ fn empty_targets_returns_error() {
 
 #[test]
 fn null_handler_accepted() {
-    let target = Target::from_coords(&water_positions(), &water_radii(), 2).with_constraint(
-        InsideBoxConstraint::new([0.0, 0.0, 0.0], [40.0, 40.0, 40.0]),
-    );
+    let target = Target::from_coords(&water_positions(), &water_radii(), 2)
+        .with_restraint(InsideBoxRestraint::new([0.0, 0.0, 0.0], [40.0, 40.0, 40.0]));
     let result = Molpack::new()
         .add_handler(NullHandler)
         .pack(&[target], 5, Some(42));
@@ -147,9 +138,8 @@ fn null_handler_accepted() {
 #[test]
 fn same_seed_same_result() {
     let make_target = || {
-        Target::from_coords(&water_positions(), &water_radii(), 3).with_constraint(
-            InsideBoxConstraint::new([0.0, 0.0, 0.0], [40.0, 40.0, 40.0]),
-        )
+        Target::from_coords(&water_positions(), &water_radii(), 3)
+            .with_restraint(InsideBoxRestraint::new([0.0, 0.0, 0.0], [40.0, 40.0, 40.0]))
     };
     let r1 = Molpack::new().pack(&[make_target()], 5, Some(42)).unwrap();
     let r2 = Molpack::new().pack(&[make_target()], 5, Some(42)).unwrap();
@@ -164,9 +154,8 @@ fn same_seed_same_result() {
 
 #[test]
 fn builder_precision_and_tolerance() {
-    let target = Target::from_coords(&water_positions(), &water_radii(), 2).with_constraint(
-        InsideBoxConstraint::new([0.0, 0.0, 0.0], [40.0, 40.0, 40.0]),
-    );
+    let target = Target::from_coords(&water_positions(), &water_radii(), 2)
+        .with_restraint(InsideBoxRestraint::new([0.0, 0.0, 0.0], [40.0, 40.0, 40.0]));
     let result =
         Molpack::new()
             .precision(0.1)
@@ -176,14 +165,17 @@ fn builder_precision_and_tolerance() {
     assert!(result.is_ok());
 }
 
-// ── composite constraint ───────────────────────────────────────────────────
+// ── composite restraint (multiple independent restraints) ──────────────────
 
 #[test]
-fn pack_with_composite_constraint() {
+fn pack_with_composite_restraints() {
     let (coords, radii) = single_atom();
-    let c = InsideBoxConstraint::new([-20.0, -20.0, -20.0], [20.0, 20.0, 20.0])
-        .and(OutsideSphereConstraint::new(2.0, [0.0, 0.0, 0.0]));
-    let target = Target::from_coords(&coords, &radii, 3).with_constraint(c);
+    let target = Target::from_coords(&coords, &radii, 3)
+        .with_restraint(InsideBoxRestraint::new(
+            [-20.0, -20.0, -20.0],
+            [20.0, 20.0, 20.0],
+        ))
+        .with_restraint(OutsideSphereRestraint::new([0.0, 0.0, 0.0], 2.0));
     let result = Molpack::new().pack(&[target], 10, Some(42));
     assert!(result.is_ok());
     assert_eq!(result.unwrap().natoms(), 3);

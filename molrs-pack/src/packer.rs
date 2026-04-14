@@ -323,20 +323,18 @@ impl Molpack {
         for target in free_targets.iter() {
             for _imol in 0..target.count {
                 for iatom in 0..target.natoms() {
-                    // molecule-level constraint applied to all atoms
-                    for r in &target.molecule_constraint.restraints {
+                    // molecule-level restraints applied to all atoms
+                    for r in &target.molecule_restraints {
                         let irest = irest_pool.len();
-                        irest_pool.push(r.clone());
+                        irest_pool.push(std::sync::Arc::clone(r));
                         iratom_lists[icart].push(irest);
                     }
-                    // atom-level constraints
-                    for ac in &target.atom_constraints {
-                        if ac.atom_indices.contains(&iatom) {
-                            for r in &ac.restraints {
-                                let irest = irest_pool.len();
-                                irest_pool.push(r.clone());
-                                iratom_lists[icart].push(irest);
-                            }
+                    // atom-subset restraints
+                    for (indices, restraint) in &target.atom_restraints {
+                        if indices.contains(&iatom) {
+                            let irest = irest_pool.len();
+                            irest_pool.push(std::sync::Arc::clone(restraint));
+                            iratom_lists[icart].push(irest);
                         }
                     }
                     icart += 1;

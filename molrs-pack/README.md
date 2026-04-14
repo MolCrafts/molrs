@@ -18,7 +18,7 @@ surface is `Molpack`, `Target`, `PackResult`, and the geometric constraint types
 ## Usage
 
 ```rust
-use molrs_pack::{InsideBoxConstraint, Molpack, Target};
+use molrs_pack::{InsideBoxRestraint, Molpack, Target};
 
 let water_positions = [
     [0.0, 0.0, 0.0],
@@ -26,10 +26,10 @@ let water_positions = [
     [-0.24, 0.93, 0.0],
 ];
 let water_radii = [1.52, 1.20, 1.20];
-let box_constraint = InsideBoxConstraint::new([0.0, 0.0, 0.0], [40.0, 40.0, 40.0]);
+let box_restraint = InsideBoxRestraint::new([0.0, 0.0, 0.0], [40.0, 40.0, 40.0]);
 let target = Target::from_coords(&water_positions, &water_radii, 100)
     .with_name("water")
-    .with_constraint(box_constraint);
+    .with_restraint(box_restraint);
 
 let mut packer = Molpack::new().tolerance(2.0).precision(0.01);
 let result = packer

@@ -3,11 +3,10 @@ use std::path::{Path, PathBuf};
 
 use molrs_io::pdb::read_pdb_frame;
 
-use crate::constraint::RegionConstraint;
 use crate::target::Target;
 use crate::{
-    AbovePlaneConstraint, BelowPlaneConstraint, InsideBoxConstraint, InsideSphereConstraint,
-    OutsideSphereConstraint,
+    AbovePlaneRestraint, BelowPlaneRestraint, InsideBoxRestraint, InsideSphereRestraint,
+    OutsideSphereRestraint,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -80,13 +79,13 @@ pub fn build_targets(case: ExampleCase, base: &Path) -> Result<Vec<Target>, Box<
         ExampleCase::Mixture => {
             let water = read_pdb_frame(base.join("water.pdb"))?;
             let urea = read_pdb_frame(base.join("urea.pdb"))?;
-            let box_constraint = InsideBoxConstraint::cube_from_origin(40.0, [0.0, 0.0, 0.0]);
+            let box_restraint = InsideBoxRestraint::cube_from_origin([0.0, 0.0, 0.0], 40.0);
             vec![
                 Target::new(water, 1000)
-                    .with_constraint(box_constraint.clone())
+                    .with_restraint(box_restraint)
                     .with_name("water"),
                 Target::new(urea, 400)
-                    .with_constraint(box_constraint)
+                    .with_restraint(box_restraint)
                     .with_name("urea"),
             ]
         }
@@ -95,43 +94,40 @@ pub fn build_targets(case: ExampleCase, base: &Path) -> Result<Vec<Target>, Box<
             let lipid = read_pdb_frame(base.join("palmitoil.pdb"))?;
             vec![
                 Target::new(water.clone(), 50)
-                    .with_constraint(InsideBoxConstraint::new(
+                    .with_restraint(InsideBoxRestraint::new(
                         [0.0, 0.0, -10.0],
                         [40.0, 40.0, 0.0],
                     ))
                     .with_name("water_low"),
                 Target::new(water, 50)
-                    .with_constraint(InsideBoxConstraint::new(
+                    .with_restraint(InsideBoxRestraint::new(
                         [0.0, 0.0, 28.0],
                         [40.0, 40.0, 38.0],
                     ))
                     .with_name("water_high"),
                 Target::new(lipid.clone(), 10)
-                    .with_constraint(InsideBoxConstraint::new(
-                        [0.0, 0.0, 0.0],
-                        [40.0, 40.0, 14.0],
-                    ))
-                    .with_constraint_for_atoms(
+                    .with_restraint(InsideBoxRestraint::new([0.0, 0.0, 0.0], [40.0, 40.0, 14.0]))
+                    .with_restraint_for_atoms(
                         &[31, 32],
-                        BelowPlaneConstraint::new([0.0, 0.0, 1.0], 2.0),
+                        BelowPlaneRestraint::new([0.0, 0.0, 1.0], 2.0),
                     )
-                    .with_constraint_for_atoms(
+                    .with_restraint_for_atoms(
                         &[1, 2],
-                        AbovePlaneConstraint::new([0.0, 0.0, 1.0], 12.0),
+                        AbovePlaneRestraint::new([0.0, 0.0, 1.0], 12.0),
                     )
                     .with_name("lipid_low"),
                 Target::new(lipid, 10)
-                    .with_constraint(InsideBoxConstraint::new(
+                    .with_restraint(InsideBoxRestraint::new(
                         [0.0, 0.0, 14.0],
                         [40.0, 40.0, 28.0],
                     ))
-                    .with_constraint_for_atoms(
+                    .with_restraint_for_atoms(
                         &[1, 2],
-                        BelowPlaneConstraint::new([0.0, 0.0, 1.0], 16.0),
+                        BelowPlaneRestraint::new([0.0, 0.0, 1.0], 16.0),
                     )
-                    .with_constraint_for_atoms(
+                    .with_restraint_for_atoms(
                         &[31, 32],
-                        AbovePlaneConstraint::new([0.0, 0.0, 1.0], 26.0),
+                        AbovePlaneRestraint::new([0.0, 0.0, 1.0], 26.0),
                     )
                     .with_name("lipid_high"),
             ]
@@ -142,16 +138,13 @@ pub fn build_targets(case: ExampleCase, base: &Path) -> Result<Vec<Target>, Box<
             let t3 = read_pdb_frame(base.join("t3.pdb"))?;
             vec![
                 Target::new(water, 100)
-                    .with_constraint(InsideBoxConstraint::new(
+                    .with_restraint(InsideBoxRestraint::new(
                         [-20.0, 0.0, 0.0],
                         [0.0, 39.0, 39.0],
                     ))
                     .with_name("water"),
                 Target::new(chloroform, 30)
-                    .with_constraint(InsideBoxConstraint::new(
-                        [0.0, 0.0, 0.0],
-                        [21.0, 39.0, 39.0],
-                    ))
+                    .with_restraint(InsideBoxRestraint::new([0.0, 0.0, 0.0], [21.0, 39.0, 39.0]))
                     .with_name("chloroform"),
                 Target::new(t3, 1)
                     .with_name("t3")
@@ -164,20 +157,20 @@ pub fn build_targets(case: ExampleCase, base: &Path) -> Result<Vec<Target>, Box<
             let water = read_pdb_frame(base.join("water.pdb"))?;
             let sodium = read_pdb_frame(base.join("sodium.pdb"))?;
             let chloride = read_pdb_frame(base.join("chloride.pdb"))?;
-            let sphere = InsideSphereConstraint::new(50.0, [0.0, 0.0, 0.0]);
+            let sphere = InsideSphereRestraint::new([0.0, 0.0, 0.0], 50.0);
             vec![
                 Target::new(protein, 1)
                     .with_name("protein")
                     .with_center()
                     .fixed_at([0.0, 0.0, 0.0]),
                 Target::new(water, 1000)
-                    .with_constraint(sphere.clone())
+                    .with_restraint(sphere)
                     .with_name("water"),
                 Target::new(sodium, 30)
-                    .with_constraint(sphere.clone())
+                    .with_restraint(sphere)
                     .with_name("sodium"),
                 Target::new(chloride, 20)
-                    .with_constraint(sphere)
+                    .with_restraint(sphere)
                     .with_name("chloride"),
             ]
         }
@@ -187,21 +180,22 @@ pub fn build_targets(case: ExampleCase, base: &Path) -> Result<Vec<Target>, Box<
             let origin = [0.0, 0.0, 0.0];
             vec![
                 Target::new(water.clone(), 308)
-                    .with_constraint(InsideSphereConstraint::new(13.0, origin))
+                    .with_restraint(InsideSphereRestraint::new(origin, 13.0))
                     .with_name("water_inner"),
                 Target::new(lipid.clone(), 90)
-                    .with_constraint_for_atoms(&[37], InsideSphereConstraint::new(14.0, origin))
-                    .with_constraint_for_atoms(&[5], OutsideSphereConstraint::new(26.0, origin))
+                    .with_restraint_for_atoms(&[37], InsideSphereRestraint::new(origin, 14.0))
+                    .with_restraint_for_atoms(&[5], OutsideSphereRestraint::new(origin, 26.0))
                     .with_name("lipid_inner"),
                 Target::new(lipid, 300)
-                    .with_constraint_for_atoms(&[5], InsideSphereConstraint::new(29.0, origin))
-                    .with_constraint_for_atoms(&[37], OutsideSphereConstraint::new(41.0, origin))
+                    .with_restraint_for_atoms(&[5], InsideSphereRestraint::new(origin, 29.0))
+                    .with_restraint_for_atoms(&[37], OutsideSphereRestraint::new(origin, 41.0))
                     .with_name("lipid_outer"),
                 Target::new(water, 17536)
-                    .with_constraint(
-                        InsideBoxConstraint::new([-47.5, -47.5, -47.5], [47.5, 47.5, 47.5])
-                            .and(OutsideSphereConstraint::new(43.0, origin)),
-                    )
+                    .with_restraint(InsideBoxRestraint::new(
+                        [-47.5, -47.5, -47.5],
+                        [47.5, 47.5, 47.5],
+                    ))
+                    .with_restraint(OutsideSphereRestraint::new(origin, 43.0))
                     .with_name("water_outer"),
             ]
         }

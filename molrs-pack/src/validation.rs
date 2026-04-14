@@ -2,8 +2,10 @@ use molrs::types::F;
 use std::collections::HashMap;
 use std::env;
 
-use crate::constraint::BuiltinConstraint;
+use std::sync::Arc;
+
 use crate::numerics::numeric_controls;
+use crate::restraint::Restraint;
 use crate::target::Target;
 
 /// Quantified violation metrics for one packed configuration.
@@ -51,9 +53,9 @@ struct ExpandedMol<'a> {
     molecule_id: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Default)]
 struct AtomRestraints {
-    restraints: Vec<BuiltinConstraint>,
+    restraints: Vec<Arc<dyn Restraint>>,
 }
 
 /// Validate packed coordinates against target specification.
@@ -129,15 +131,15 @@ fn expand_targets(targets: &[Target]) -> Vec<ExpandedMol<'_>> {
 fn atom_restraints(target: &Target) -> Vec<AtomRestraints> {
     let mut per_atom = vec![
         AtomRestraints {
-            restraints: target.molecule_constraint.restraints.clone(),
+            restraints: target.molecule_restraints.clone(),
         };
         target.natoms()
     ];
 
-    for ac in &target.atom_constraints {
-        for &idx in &ac.atom_indices {
+    for (indices, restraint) in &target.atom_restraints {
+        for &idx in indices {
             if let Some(slot) = per_atom.get_mut(idx) {
-                slot.restraints.extend(ac.restraints.clone());
+                slot.restraints.push(Arc::clone(restraint));
             }
         }
     }
@@ -159,7 +161,7 @@ fn constraint_metrics(
             let pos = coordinates[atom_i];
             let mut atom_penalty = 0.0 as F;
             for r in &per_atom[local_i].restraints {
-                atom_penalty += r.value(&pos, 1.0, 0.01);
+                atom_penalty += r.f(&pos, 1.0, 0.01);
             }
             if atom_penalty > max_penalty {
                 max_penalty = atom_penalty;

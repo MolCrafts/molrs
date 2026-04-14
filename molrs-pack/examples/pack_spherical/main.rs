@@ -36,7 +36,7 @@
 //! end structure
 //! ```
 //!
-//! Lipids use `with_constraint`, same semantics as all other constraints.
+//! Lipids use `with_restraint`, same semantics as all other restraints.
 //!
 //! Run with:
 //! ```sh
@@ -47,8 +47,8 @@ use std::path::PathBuf;
 
 use molrs_io::pdb::read_pdb_frame;
 use molrs_pack::{
-    InsideBoxConstraint, InsideSphereConstraint, Molpack, OutsideSphereConstraint, ProgressHandler,
-    RegionConstraint, Target,
+    InsideBoxRestraint, InsideSphereRestraint, Molpack, OutsideSphereRestraint, ProgressHandler,
+    Target,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -64,31 +64,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 1. Inner water sphere: 308 molecules inside sphere r=13
     let water_inner = Target::new(water.clone(), 308)
-        .with_constraint(InsideSphereConstraint::new(13.0, origin))
+        .with_restraint(InsideSphereRestraint::new(origin, 13.0))
         .with_name("water_inner");
 
     // 2. Inner lipid layer: 90 molecules.
     //    Packmol input constrains only specific atoms:
     //    atom 37 inside sphere r=14, atom 5 outside sphere r=26.
     let lipid_inner = Target::new(lipid.clone(), 90)
-        .with_constraint_for_atoms(&[37], InsideSphereConstraint::new(14.0, origin))
-        .with_constraint_for_atoms(&[5], OutsideSphereConstraint::new(26.0, origin))
+        .with_restraint_for_atoms(&[37], InsideSphereRestraint::new(origin, 14.0))
+        .with_restraint_for_atoms(&[5], OutsideSphereRestraint::new(origin, 26.0))
         .with_name("lipid_inner");
 
     // 3. Outer lipid layer: 300 molecules.
     //    Packmol input constrains only specific atoms:
     //    atom 5 inside sphere r=29, atom 37 outside sphere r=41.
     let lipid_outer = Target::new(lipid, 300)
-        .with_constraint_for_atoms(&[5], InsideSphereConstraint::new(29.0, origin))
-        .with_constraint_for_atoms(&[37], OutsideSphereConstraint::new(41.0, origin))
+        .with_restraint_for_atoms(&[5], InsideSphereRestraint::new(origin, 29.0))
+        .with_restraint_for_atoms(&[37], OutsideSphereRestraint::new(origin, 41.0))
         .with_name("lipid_outer");
 
     // 4. Outer water shell: 17536 molecules, box ±47.5, outside sphere r=43
     let water_outer = Target::new(water, 17536)
-        .with_constraint(
-            InsideBoxConstraint::new([-47.5, -47.5, -47.5], [47.5, 47.5, 47.5])
-                .and(OutsideSphereConstraint::new(43.0, origin)),
-        )
+        .with_restraint(InsideBoxRestraint::new(
+            [-47.5, -47.5, -47.5],
+            [47.5, 47.5, 47.5],
+        ))
+        .with_restraint(OutsideSphereRestraint::new(origin, 43.0))
         .with_name("water_outer");
 
     // Target order matches Packmol: water_inner → lipid_inner → lipid_outer → water_outer

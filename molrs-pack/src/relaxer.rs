@@ -25,9 +25,10 @@ use crate::random::uniform01_core;
 /// Per-target in-loop relaxer. Stored on `Target` (immutable config).
 /// Creates a stateful runner inside `pack()`.
 ///
-/// Analogous to `BuiltinConstraint` in the constraint system:
-/// - Constraints modify the objective function (penalties on atom positions)
-/// - Relaxers modify the reference geometry (shape of the molecule itself)
+/// Analogous to `Restraint` (objective-function penalties) but operates on
+/// a different axis: a `Relaxer` modifies the **reference geometry** of the
+/// molecule (e.g. torsion MC on a polymer backbone), while a `Restraint`
+/// adds a penalty term to the per-atom objective.
 pub trait Relaxer: Send + Sync + CloneRelaxer {
     /// Create a stateful runner for this relaxer.
     /// Called once at the start of `pack()`.
@@ -59,7 +60,7 @@ impl std::fmt::Debug for Box<dyn Relaxer> {
 
 /// Runtime state for a relaxer. Created by `Relaxer::build()`, used inside `pack()`.
 ///
-/// Analogous to calling `BuiltinConstraint::value()`/`gradient()` during evaluation,
+/// Analogous to calling `Restraint::f()`/`fg()` during evaluation,
 /// but stateful (MC acceptance counters, temperature schedule, etc.).
 pub trait RelaxerRunner: Send {
     /// Called between movebad and pgencan in each iteration.

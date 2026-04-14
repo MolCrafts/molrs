@@ -1,8 +1,10 @@
 #![allow(clippy::needless_range_loop)]
 //! Finite-difference gradient consistency tests.
 
+use std::sync::Arc;
+
 use molrs_pack::objective::{compute_f, compute_fg, compute_g};
-use molrs_pack::{F, PackContext, Restraint};
+use molrs_pack::{AbovePlaneRestraint, F, InsideBoxRestraint, InsideSphereRestraint, PackContext};
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -81,12 +83,14 @@ fn gradient_pair_penalty() {
 #[test]
 fn gradient_box_constraint() {
     let mut sys = single_atom_system(1);
-    sys.restraints = vec![Restraint::inside_box([0.0, 0.0, 0.0], [1.0, 1.0, 1.0])];
+    sys.restraints = vec![Arc::new(InsideBoxRestraint::new(
+        [0.0, 0.0, 0.0],
+        [1.0, 1.0, 1.0],
+    ))];
     sys.iratom_offsets = vec![0, 1];
     sys.iratom_data = vec![0];
     sys.init1 = true;
 
-    // Place atom outside the box
     let mut x = vec![0.0; 6];
     x[0] = 1.2;
     x[1] = -0.1;
@@ -113,7 +117,7 @@ fn gradient_box_constraint() {
 #[test]
 fn gradient_sphere_constraint() {
     let mut sys = single_atom_system(1);
-    sys.restraints = vec![Restraint::inside_sphere([0.0, 0.0, 0.0], 3.0)];
+    sys.restraints = vec![Arc::new(InsideSphereRestraint::new([0.0, 0.0, 0.0], 3.0))];
     sys.iratom_offsets = vec![0, 1];
     sys.iratom_data = vec![0];
     sys.init1 = true;
@@ -144,7 +148,7 @@ fn gradient_sphere_constraint() {
 #[test]
 fn gradient_above_plane_constraint() {
     let mut sys = single_atom_system(1);
-    sys.restraints = vec![Restraint::above_plane([0.0, 0.0, 1.0], 5.0)];
+    sys.restraints = vec![Arc::new(AbovePlaneRestraint::new([0.0, 0.0, 1.0], 5.0))];
     sys.iratom_offsets = vec![0, 1];
     sys.iratom_data = vec![0];
     sys.init1 = true;
@@ -239,8 +243,11 @@ fn gradient_combined_constraint_and_pairs() {
     sys.radius_ini = vec![1.0; 3];
     sys.fscale = vec![1.0; 3];
 
-    // Box constraint on all atoms
-    sys.restraints = vec![Restraint::inside_box([0.0, 0.0, 0.0], [5.0, 5.0, 5.0])];
+    // Box restraint on all atoms
+    sys.restraints = vec![Arc::new(InsideBoxRestraint::new(
+        [0.0, 0.0, 0.0],
+        [5.0, 5.0, 5.0],
+    ))];
     sys.iratom_offsets = vec![0, 1, 1, 1]; // only first atom has constraint
     sys.iratom_data = vec![0];
 
@@ -288,7 +295,10 @@ fn fused_function_and_gradient_matches_separate_evaluation() {
     sys.radius_ini = vec![1.0; 4];
     sys.fscale = vec![1.0; 4];
 
-    sys.restraints = vec![Restraint::inside_box([0.0, 0.0, 0.0], [5.0, 5.0, 5.0])];
+    sys.restraints = vec![Arc::new(InsideBoxRestraint::new(
+        [0.0, 0.0, 0.0],
+        [5.0, 5.0, 5.0],
+    ))];
     sys.iratom_offsets = vec![0, 1, 1, 2, 2];
     sys.iratom_data = vec![0, 0];
     setup_cells(&mut sys, 2, 5.0);

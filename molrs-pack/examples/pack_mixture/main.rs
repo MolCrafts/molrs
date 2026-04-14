@@ -23,7 +23,7 @@ use std::fs::create_dir_all;
 use std::path::PathBuf;
 
 use molrs_io::pdb::read_pdb_frame;
-use molrs_pack::{InsideBoxConstraint, Molpack, ProgressHandler, Target, XYZHandler};
+use molrs_pack::{InsideBoxRestraint, Molpack, ProgressHandler, Target, XYZHandler};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = env_logger::try_init();
@@ -34,14 +34,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let water = read_pdb_frame(base.join("water.pdb"))?;
     let urea = read_pdb_frame(base.join("urea.pdb"))?;
 
-    let box_constraint = InsideBoxConstraint::cube_from_origin(40.0, [0.0, 0.0, 0.0]);
+    let box_restraint = InsideBoxRestraint::cube_from_origin([0.0, 0.0, 0.0], 40.0);
 
     let water_target = Target::new(water, 1000)
-        .with_constraint(box_constraint.clone())
+        .with_restraint(box_restraint)
         .with_name("water");
 
     let urea_target = Target::new(urea, 400)
-        .with_constraint(box_constraint)
+        .with_restraint(box_restraint)
         .with_name("urea");
 
     let mut packer = Molpack::new();

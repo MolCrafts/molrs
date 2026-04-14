@@ -1,8 +1,10 @@
 //! Target builder for molecular packing.
 
-use crate::constraint::{AtomConstraint, MoleculeConstraint};
+use std::sync::Arc;
+
 use crate::frame::frame_to_coords_and_elements;
 use crate::relaxer::Relaxer;
+use crate::restraint::Restraint;
 use molrs::types::F;
 
 /// Centering behavior for structure coordinates.
@@ -44,10 +46,12 @@ pub struct Target {
     pub count: usize,
     /// Optional name for logging.
     pub name: Option<String>,
-    /// Constraint applied to every atom of every molecule copy.
-    pub molecule_constraint: MoleculeConstraint,
-    /// Per-atom constraints (only some atoms are constrained).
-    pub atom_constraints: Vec<AtomConstraint>,
+    /// Restraints applied to every atom of every molecule copy.
+    pub molecule_restraints: Vec<Arc<dyn Restraint>>,
+    /// Per-atom-subset restraints: `(atom_indices_0_based, restraint)`.
+    /// Each entry holds the 0-based atom indices (converted from Packmol's
+    /// 1-based convention at registration time) and the restraint applied to them.
+    pub atom_restraints: Vec<(Vec<usize>, Arc<dyn Restraint>)>,
     /// Optional structure-level limit for movebad (`maxmove` in Packmol).
     pub maxmove: Option<usize>,
     /// Centering policy.
@@ -102,8 +106,8 @@ impl Target {
             elements,
             count,
             name: None,
-            molecule_constraint: MoleculeConstraint::new(),
-            atom_constraints: Vec::new(),
+            molecule_restraints: Vec::new(),
+            atom_restraints: Vec::new(),
             maxmove: None,
             centering: CenteringMode::Auto,
             constrain_rotation: [None, None, None],
@@ -117,31 +121,26 @@ impl Target {
         self
     }
 
-    /// Add a constraint applied to every atom of every molecule copy.
-    pub fn with_constraint(mut self, c: impl Into<MoleculeConstraint>) -> Self {
-        self.molecule_constraint = self.molecule_constraint.and(c.into());
+    /// Attach a restraint applied to every atom of every molecule copy.
+    pub fn with_restraint(mut self, r: impl Restraint + 'static) -> Self {
+        self.molecule_restraints.push(Arc::new(r));
         self
     }
 
-    /// Add a constraint for selected atoms of every molecule copy.
+    /// Attach a restraint for selected atoms of every molecule copy.
     ///
     /// # Atom indexing
     ///
     /// Indices follow **Packmol's 1-based convention**: atom `1` is the first
     /// atom in the PDB/XYZ file. They are converted to 0-based internally.
     /// For example, `&[1, 2, 3]` selects the first three atoms.
-    pub fn with_constraint_for_atoms(
+    pub fn with_restraint_for_atoms(
         mut self,
         indices: &[usize],
-        c: impl Into<MoleculeConstraint>,
+        r: impl Restraint + 'static,
     ) -> Self {
-        let mc = c.into();
-        // Convert from 1-indexed (Packmol convention, atoms 1..N) to 0-indexed.
         let zero_indexed: Vec<usize> = indices.iter().map(|&i| i.saturating_sub(1)).collect();
-        self.atom_constraints.push(AtomConstraint {
-            atom_indices: zero_indexed,
-            restraints: mc.restraints,
-        });
+        self.atom_restraints.push((zero_indexed, Arc::new(r)));
         self
     }
 
