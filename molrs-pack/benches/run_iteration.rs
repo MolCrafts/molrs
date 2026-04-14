@@ -1,33 +1,23 @@
-//! Per-extraction microbench for `molrs_pack::packer::run_iteration`.
+//! Permanent microbench for `molrs_pack::packer::run_iteration`.
 //!
-//! Landed in the same commit as the extraction (phase A.4.3) per the
-//! `molrs-perf` skill § "Benchmarking during refactors" rule:
+//! Originally landed in phase A.4.3 alongside a `#[inline(never)]
+//! run_iteration_sentinel` for the +1% extraction-gate check. The
+//! sentinel was deleted at end-of-phase-B per the `molrs-perf` "delete
+//! F_sentinel after the next refactor cycle" rule. The fn + caller
+//! microbenches below stay as future-regression guards.
 //!
-//!   > In the same commit as the extraction, land:
-//!   > - A criterion microbench of the extracted function.
-//!   > - A criterion microbench of the caller.
-//!
-//! Gates (hard):
-//!   - `extracted` ≤ +1% vs. `sentinel`
-//!   - `caller_extracted` ≤ +2% vs. `caller_sentinel`
-//!
-//! Setup: empty-molecule PackContext identical to the unit test in
-//! `packer::tests::run_iteration_matches_sentinel_on_empty_context`. With
-//! `ntotmol=0` the body's pgencan/evaluate/movebad branches run on empty
-//! vectors — this is intentional: the gate measures *function-call boundary
-//! cost* (indirection, inlining decisions) on a trivial body, which is exactly
-//! what the sentinel sibling controls for. A full-workload bench lives in
+//! Setup: empty-molecule PackContext. With `ntotmol=0` the body's
+//! pgencan/evaluate/movebad branches run on empty vectors — this
+//! measures **function-call boundary cost** (indirection, inlining)
+//! on a trivial body. Full-workload benchmarking lives in
 //! `benches/pack_end_to_end.rs` (catastrophic-regression alarm, ≤ +10%).
-//!
-//! This bench stays permanently; the sentinel is deleted one Phase A cycle
-//! after A.4.3 stabilizes.
 
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use molrs_pack::gencan::{GencanParams, GencanWorkspace};
 use molrs_pack::handler::{Handler, PhaseInfo};
 use molrs_pack::initial::SwapState;
 use molrs_pack::movebad::MoveBadConfig;
-use molrs_pack::packer::{IterOutcome, run_iteration, run_iteration_sentinel};
+use molrs_pack::packer::{IterOutcome, run_iteration};
 use molrs_pack::relaxer::RelaxerRunner;
 use molrs_pack::{F, PackContext};
 use rand::SeedableRng;
@@ -79,13 +69,13 @@ fn gencan_params() -> GencanParams {
     GencanParams::default()
 }
 
-fn bench_extracted(c: &mut Criterion) {
+fn bench_fn(c: &mut Criterion) {
     let mut group = c.benchmark_group("run_iteration");
     group.sample_size(50);
     let pi = phase_info();
     let mb = movebad_cfg();
     let gp = gencan_params();
-    group.bench_function("extracted", |b| {
+    group.bench_function("fn", |b| {
         b.iter_batched(
             build_snapshot,
             |(mut sys, mut x, mut swap, mut ws, mut runners, mut handlers, mut rng)| {
@@ -121,20 +111,24 @@ fn bench_extracted(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_sentinel(c: &mut Criterion) {
+/// Caller microbench: one iteration dispatch + `IterOutcome` match,
+/// modeling the phase's inner `for loop_idx in 0..max_loops` scaffold.
+fn bench_caller(c: &mut Criterion) {
     let mut group = c.benchmark_group("run_iteration");
     group.sample_size(50);
     let pi = phase_info();
     let mb = movebad_cfg();
     let gp = gencan_params();
-    group.bench_function("sentinel", |b| {
+
+    group.bench_function("caller", |b| {
         b.iter_batched(
             build_snapshot,
             |(mut sys, mut x, mut swap, mut ws, mut runners, mut handlers, mut rng)| {
                 let mut flast = 0.0_f64;
                 let mut fimp_prev = F::INFINITY;
                 let mut radscale = 1.0_f64;
-                let out = run_iteration_sentinel(
+                let mut converged = false;
+                let out = run_iteration(
                     0,
                     10,
                     true,
@@ -155,108 +149,10 @@ fn bench_sentinel(c: &mut Criterion) {
                     &mut ws,
                     &mut rng,
                 );
-                std::hint::black_box(out);
-            },
-            BatchSize::SmallInput,
-        );
-    });
-    group.finish();
-}
-
-/// Caller microbench: models the phase's `for loop_idx in 0..max_loops`
-/// scaffold (packer.rs lines 530-557) calling `run_iteration` once and
-/// matching on the `IterOutcome` variant. The difference between
-/// `caller_extracted` and `caller_sentinel` captures any indirection /
-/// inlining-boundary cost the function-level bench cannot see.
-fn bench_caller(c: &mut Criterion) {
-    let mut group = c.benchmark_group("run_iteration_caller");
-    group.sample_size(50);
-    let pi = phase_info();
-    let mb = movebad_cfg();
-    let gp = gencan_params();
-
-    group.bench_function("caller_extracted", |b| {
-        b.iter_batched(
-            build_snapshot,
-            |(mut sys, mut x, mut swap, mut ws, mut runners, mut handlers, mut rng)| {
-                let mut flast = 0.0_f64;
-                let mut fimp_prev = F::INFINITY;
-                let mut radscale = 1.0_f64;
-                let mut converged = false;
-                for loop_idx in 0..10 {
-                    let out = run_iteration(
-                        loop_idx,
-                        10,
-                        true,
-                        0,
-                        pi,
-                        0.01,
-                        true,
-                        &mb,
-                        &gp,
-                        &mut sys,
-                        &mut x,
-                        &mut swap,
-                        &mut flast,
-                        &mut fimp_prev,
-                        &mut radscale,
-                        &mut runners,
-                        &mut handlers,
-                        &mut ws,
-                        &mut rng,
-                    );
-                    match out {
-                        IterOutcome::Continue => {}
-                        IterOutcome::Converged => {
-                            converged = true;
-                            break;
-                        }
-                        IterOutcome::EarlyStop => break,
-                    }
-                }
-                std::hint::black_box(converged);
-            },
-            BatchSize::SmallInput,
-        );
-    });
-
-    group.bench_function("caller_sentinel", |b| {
-        b.iter_batched(
-            build_snapshot,
-            |(mut sys, mut x, mut swap, mut ws, mut runners, mut handlers, mut rng)| {
-                let mut flast = 0.0_f64;
-                let mut fimp_prev = F::INFINITY;
-                let mut radscale = 1.0_f64;
-                let mut converged = false;
-                for loop_idx in 0..10 {
-                    let out = run_iteration_sentinel(
-                        loop_idx,
-                        10,
-                        true,
-                        0,
-                        pi,
-                        0.01,
-                        true,
-                        &mb,
-                        &gp,
-                        &mut sys,
-                        &mut x,
-                        &mut swap,
-                        &mut flast,
-                        &mut fimp_prev,
-                        &mut radscale,
-                        &mut runners,
-                        &mut handlers,
-                        &mut ws,
-                        &mut rng,
-                    );
-                    match out {
-                        IterOutcome::Continue => {}
-                        IterOutcome::Converged => {
-                            converged = true;
-                            break;
-                        }
-                        IterOutcome::EarlyStop => break,
+                match out {
+                    IterOutcome::Continue => {}
+                    IterOutcome::Converged | IterOutcome::EarlyStop => {
+                        converged = true;
                     }
                 }
                 std::hint::black_box(converged);
@@ -268,5 +164,5 @@ fn bench_caller(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_extracted, bench_sentinel, bench_caller);
+criterion_group!(benches, bench_fn, bench_caller);
 criterion_main!(benches);

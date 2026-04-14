@@ -149,7 +149,7 @@ impl Target {
     /// Multiple relaxers can be attached (called in order).
     /// Relaxers require `count == 1` because all copies share reference coords.
     ///
-    /// Mirrors `with_constraint()` for the constraint system.
+    /// Mirrors [`with_restraint`](Self::with_restraint) — a per-target builder method.
     pub fn with_relaxer(mut self, relaxer: impl Relaxer + 'static) -> Self {
         assert!(
             self.count <= 1,
