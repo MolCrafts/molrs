@@ -1,6 +1,8 @@
 //! Main packing orchestration.
 //! Port of the outer loop in `app/packmol.f90`.
 
+use std::sync::Arc;
+
 use molrs::Element;
 use molrs::types::F;
 use rand::SeedableRng;
@@ -16,6 +18,7 @@ use crate::initial::{SwapState, init_xcart_from_x, initial};
 use crate::movebad::{MoveBadConfig, movebad};
 use crate::numerics::objective_small_floor;
 use crate::relaxer::RelaxerRunner;
+use crate::restraint::Restraint;
 use crate::target::{CenteringMode, Target};
 
 /// Result of a packing run.
@@ -79,6 +82,10 @@ struct PBCBox {
 /// The packer.
 pub struct Molpack {
     handlers: Vec<Box<dyn Handler>>,
+    /// Global restraints — broadcast to every target at `pack()` time
+    /// (semantic equivalence to calling `target.with_restraint(r.clone())`
+    /// on every target; no separate global-storage code path).
+    global_restraints: Vec<Arc<dyn Restraint>>,
     precision: F,
     discale: F,
     /// Minimum atom-atom distance (Packmol's `tolerance`/`dism`). Default 2.0 Å.
@@ -113,6 +120,7 @@ impl Molpack {
     pub fn new() -> Self {
         Self {
             handlers: Vec::new(),
+            global_restraints: Vec::new(),
             precision: PRECISION,
             discale: DISCALE,
             tolerance: DEFAULT_TOLERANCE,
@@ -128,6 +136,23 @@ impl Molpack {
 
     pub fn add_handler(mut self, h: impl Handler + 'static) -> Self {
         self.handlers.push(Box::new(h));
+        self
+    }
+
+    /// Attach a **global** restraint — applied to every atom of every
+    /// target at `pack()` time.
+    ///
+    /// Semantic equivalence (spec §4 "Scope 等价律"):
+    /// ```text
+    /// molpack.add_restraint(r)
+    ///   ≡ for each target: target.with_restraint(r.clone())
+    /// ```
+    ///
+    /// Implementation mirrors the equivalence — no separate "global
+    /// restraint" storage path in `PackContext`; the restraint is cloned
+    /// into each target's `molecule_restraints` when `pack()` is invoked.
+    pub fn add_restraint(mut self, r: impl Restraint + 'static) -> Self {
+        self.global_restraints.push(Arc::new(r));
         self
     }
 
@@ -215,6 +240,25 @@ impl Molpack {
                 return Err(PackError::EmptyMolecule(i));
             }
         }
+
+        // Scope equivalence (spec §4): broadcast global restraints to each target.
+        // If none were added via `Molpack::add_restraint`, this is a no-op.
+        let broadcast_targets: Vec<Target>;
+        let targets: &[Target] = if self.global_restraints.is_empty() {
+            targets
+        } else {
+            broadcast_targets = targets
+                .iter()
+                .map(|t| {
+                    let mut t = t.clone();
+                    for r in &self.global_restraints {
+                        t.molecule_restraints.push(Arc::clone(r));
+                    }
+                    t
+                })
+                .collect();
+            &broadcast_targets
+        };
         if let Some(pbc) = self.pbc {
             let length = [
                 pbc.max[0] - pbc.min[0],

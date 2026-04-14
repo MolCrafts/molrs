@@ -180,3 +180,55 @@ fn pack_with_composite_restraints() {
     assert!(result.is_ok());
     assert_eq!(result.unwrap().natoms(), 3);
 }
+
+// ── B.3: Molpack::add_restraint broadcast ──────────────────────────────────
+
+#[test]
+fn molpack_add_restraint_broadcasts_to_every_target() {
+    // Spec §4 "Scope 等价律": Molpack::add_restraint(r)
+    // ≡ for each target: target.with_restraint(r.clone())
+    let (coords, radii) = single_atom();
+    let t1 = Target::from_coords(&coords, &radii, 2).with_name("A");
+    let t2 = Target::from_coords(&coords, &radii, 2).with_name("B");
+
+    // Global restraint via Molpack — equivalent to per-target broadcast
+    let result = Molpack::new()
+        .add_restraint(InsideBoxRestraint::new([0.0; 3], [30.0; 3]))
+        .pack(&[t1, t2], 5, Some(42))
+        .expect("global restraint should pack successfully");
+    assert_eq!(result.natoms(), 4);
+
+    // All atoms must land inside the box (all constrained)
+    for pos in result.positions() {
+        for k in 0..3 {
+            assert!(
+                pos[k] >= -0.1 && pos[k] <= 30.1,
+                "global restraint should confine all targets: atom {pos:?} axis {k}"
+            );
+        }
+    }
+}
+
+#[test]
+fn molpack_add_restraint_idempotent_with_with_restraint() {
+    // Both paths must produce byte-identical positions given the same seed.
+    let (coords, radii) = single_atom();
+    let box_r = InsideBoxRestraint::new([0.0; 3], [20.0; 3]);
+
+    // Path A: global via Molpack::add_restraint
+    let ta = Target::from_coords(&coords, &radii, 3);
+    let ra = Molpack::new()
+        .add_restraint(box_r)
+        .pack(&[ta], 5, Some(7))
+        .unwrap();
+
+    // Path B: per-target via with_restraint
+    let tb = Target::from_coords(&coords, &radii, 3).with_restraint(box_r);
+    let rb = Molpack::new().pack(&[tb], 5, Some(7)).unwrap();
+
+    for (a, b) in ra.positions().iter().zip(rb.positions().iter()) {
+        assert!((a[0] - b[0]).abs() < 1e-12);
+        assert!((a[1] - b[1]).abs() < 1e-12);
+        assert!((a[2] - b[2]).abs() < 1e-12);
+    }
+}

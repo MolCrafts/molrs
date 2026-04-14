@@ -47,7 +47,8 @@ pub use context::PackContext;
 pub use error::PackError;
 pub use frame::{compute_mol_ids, context_to_frame, finalize_frame, frame_to_coords};
 pub use handler::{
-    EarlyStopHandler, Handler, NullHandler, PhaseInfo, ProgressHandler, StepInfo, XYZHandler,
+    EarlyStopHandler, Handler, NullHandler, PhaseInfo, PhaseReport, ProgressHandler, StepInfo,
+    XYZHandler,
 };
 pub use molrs::Element;
 pub use molrs::types::F;

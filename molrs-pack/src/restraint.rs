@@ -156,6 +156,21 @@ impl InsideBoxRestraint {
             max: [origin[0] + side, origin[1] + side, origin[2] + side],
         }
     }
+
+    /// Construct an axis-aligned box from a molrs-core `SimBox`.
+    ///
+    /// The restraint bounds are `origin` → `origin + lengths`. Off-axis
+    /// cells (triclinic tilts) are not representable as an axis-aligned
+    /// restraint — write a custom `impl Restraint` for those.
+    pub fn from_simbox(simbox: &molrs::region::SimBox) -> Self {
+        let origin = simbox.origin_view();
+        let lengths = simbox.lengths();
+        let o = [origin[0], origin[1], origin[2]];
+        Self {
+            min: o,
+            max: [o[0] + lengths[0], o[1] + lengths[1], o[2] + lengths[2]],
+        }
+    }
 }
 
 impl Restraint for InsideBoxRestraint {

@@ -313,3 +313,60 @@ fn gradient_accumulates() {
     assert!((g[1] - 100.0).abs() < TOL);
     assert!((g[2] - 100.0).abs() < TOL);
 }
+
+// ── Phase B.6 acceptance: user-plugin type equality + scope equivalence ────
+
+/// User-defined `Restraint` — identical in shape to the 14 built-ins.
+/// Demonstrates direction-3: no ceremony to plug in your own geometry.
+#[derive(Debug, Clone, Copy)]
+struct MyHalfSpaceRestraint {
+    /// Quadratic penalty below `z_min`; zero above.
+    z_min: F,
+}
+
+impl Restraint for MyHalfSpaceRestraint {
+    fn f(&self, pos: &[F; 3], _scale: F, scale2: F) -> F {
+        let v = (self.z_min - pos[2]).max(0.0);
+        scale2 * v * v
+    }
+    fn fg(&self, pos: &[F; 3], scale: F, scale2: F, g: &mut [F; 3]) -> F {
+        let v = (self.z_min - pos[2]).max(0.0);
+        if v > 0.0 {
+            g[2] += -2.0 * scale2 * v;
+        }
+        self.f(pos, scale, scale2)
+    }
+}
+
+#[test]
+fn user_plugin_restraint_is_type_equal_to_builtin() {
+    // The same `with_restraint` call accepts both a built-in and a user type
+    // — there is no second-class citizenship for plugins.
+    use molrs_pack::Target;
+    let t = Target::from_coords(&[[0.0; 3]], &[1.0], 1)
+        .with_restraint(InsideBoxRestraint::new([0.0; 3], [10.0; 3]))
+        .with_restraint(MyHalfSpaceRestraint { z_min: 5.0 });
+    assert_eq!(t.molecule_restraints.len(), 2);
+}
+
+#[test]
+fn user_plugin_restraint_gradient_matches_fd() {
+    let r = MyHalfSpaceRestraint { z_min: 5.0 };
+    let x = [0.0, 0.0, 2.0]; // below z_min → violated
+    let mut g = [0.0; 3];
+    let _ = r.fg(&x, 1.0, 1.0, &mut g);
+
+    let h: F = 1e-5;
+    for k in 0..3 {
+        let mut xp = x;
+        xp[k] += h;
+        let mut xm = x;
+        xm[k] -= h;
+        let fd = (r.f(&xp, 1.0, 1.0) - r.f(&xm, 1.0, 1.0)) / (2.0 * h);
+        assert!(
+            (g[k] - fd).abs() < 1e-4,
+            "user restraint gradient axis {k}: analytic={} fd={fd}",
+            g[k]
+        );
+    }
+}

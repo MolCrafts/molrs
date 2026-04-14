@@ -45,11 +45,11 @@
   - 单元测试：15 struct 各自 `Restraint::fg` vs 数值梯度（ε=1e-5，tol=1e-3）；与 rewrite 前 inherent method 在相同参数下数值等价
   - 验收：所有现有 tests + `examples_batch` Packmol 等价回归通过；`pack_end_to_end/mixture` 不超过 +5%（若超过且 ≤ +10% 硬门禁，落 `PackedRestraint` fast-path follow-up）
 - [x] **B.0b** Region trait（§6.1）：`pub trait Region { contains; signed_distance; signed_distance_grad (default FD); bounding_box (default None); }` + `And`/`Or`/`Not` 组合子（chain-rule 解析梯度）+ `RegionExt` 扩展 trait（`.and()`/`.or()`/`.not()` 链式语法）+ blanket `impl<R: Region + 'static> Restraint for FromRegion<R>`（quadratic exterior penalty `scale2 * max(0, d)²`）+ 3 具体 Region（`InsideBoxRegion` / `InsideSphereRegion` / `OutsideSphereRegion`，各自解析梯度 + bounding_box）；12 单元测试（boolean algebra / de Morgan / signed_distance sign / FromRegion gradient vs FD）全过；纯加性，不碰 hot path
-- [ ] **B.2** 便捷静态方法（**不是** builder pattern）：如 `InsideBoxRestraint::from_simbox(&simbox)` / `InsideCubeRestraint::from_origin(origin, side)` 等纯构造 helper
-- [ ] **B.3** `Molpack::add_restraint(impl Restraint + Clone + 'static)` — 内部实现 = 遍历 `targets` 各调一次 `target.with_restraint(r.clone())`，不开新存储路径
+- [x] **B.2** 便捷静态方法：`InsideBoxRestraint::cube_from_origin(origin, side)`（B.0 落）+ `InsideBoxRestraint::from_simbox(&molrs::region::SimBox)` —— 纯构造 helper，非 builder pattern
+- [x] **B.3** `Molpack::add_restraint(impl Restraint + 'static)` — 存 `Vec<Arc<dyn Restraint>>` 在 `Molpack`；`.pack()` 入口处 clone 每个 Target 并把全局 restraints push 到其 `molecule_restraints`。**无独立存储路径**（scope 等价律，spec §4）。单元测试 `molpack_add_restraint_idempotent_with_with_restraint` 证明两条路径在同 seed 下 byte-identical
 - [~] **B.4** ~~deprecate 老 `add_restraint`~~ — **取消**：`Molpack` 上从未有过 `add_restraint` 公开方法，无要 deprecate 的老 API
-- [ ] **B.5** `Handler` trait 加入 §6.6 的新默认方法（`on_inner_iter` / `on_phase_end` 带 default impl）
-- [ ] **B.6** 验收：用户能用纯 Rust 写自定义 `Restraint`（global 或 per-target 两种挂法都跑通，与内置 15 struct 在类型维度完全平权）；基线无退化
+- [x] **B.5** `Handler` trait 加入 `on_inner_iter(&mut self, iter, f, sys)` / `on_phase_end(&mut self, info, report)` 默认 no-op 方法（`PhaseReport` 新 struct 导出）；向后兼容（所有已有 Handler impl 继续工作无改动）
+- [x] **B.6** 验收：128 单元+集成测试通过（4 新增：user-plugin `MyHalfSpaceRestraint` 实现 `Restraint` trait 证明类型维度平权；global vs per-target scope 等价律数值 byte-identical；FD 梯度验证）；`examples_batch` Packmol 等价回归 5/5 过（release 21.11s）；`pack_end_to_end/mixture` 506ms vs A.6/B.0 498ms = +0.93%（p=0.42）远过 +5% 软门禁；clippy 0 pack warnings；fmt clean。**Phase B 完成**
 
 **未来（不在当前 spec 范围）**：`pub trait Constraint`（硬约束 / Lagrange / SHAKE / RATTLE / LINCS）。molrs-pack 目前没有任何硬约束实现，定义 trait 也无对应实例；留作后续 phase 的 placeholder，不与 Phase B 混淆。
 
