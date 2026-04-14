@@ -142,20 +142,34 @@ cargo bench -p molcrafts-molrs-pack --bench evaluate_unscaled
 cargo bench -p molcrafts-molrs-pack --bench objective_dispatch
 ```
 
-## Design notes
+## Documentation
 
-- **Restraint vs Constraint.** All 15 built-ins are `Restraint` (soft penalty). Packmol's "constraints" are implemented as `scale * max(0, d)` (linear) or `scale2 * max(0, d)²` (quadratic) — honest name is `Restraint`. Hard constraints (Lagrange / SHAKE / RATTLE) are future work; no `Constraint` trait is defined yet.
-- **Rotation convention.** `apply_scaled_step` uses LEFT multiplication `R_new = δR * R_old`. Tests with >1 atom cover this; single-atom tests cannot.
-- **Thread safety.** Trait objects are `Send + Sync`. `Cell<f64>` is NOT `Sync` — internal interior-mutability uses `AtomicU64` with `f64::to_bits` / `f64::from_bits`.
-- **Periodic boundary.** Use `Molpack::pbc(min, max)` or `Molpack::pbc_box(lengths)` for periodic systems; free boundary is the default.
-- **Deterministic output.** Pass `Some(seed)` to `pack()` for reproducible placements.
+Primary documentation is delivered as rustdoc chapters; run `cargo doc
+--open -p molcrafts-molrs-pack` or visit [docs.rs](https://docs.rs/molcrafts-molrs-pack).
+The chapters live under `docs/` and are included into the rustdoc output
+as top-level modules:
 
-## For contributors
+- `molrs_pack::getting_started` — install, hello-world packing, the
+  three restraint scopes, handlers, relaxers, running the canonical
+  examples.
+- `molrs_pack::concepts` — every abstraction defined in one place
+  (Restraint / Region / Relaxer / Handler / Objective / Target /
+  Molpack / PackContext), the scope equivalence law, the two-scale
+  contract, the direction-3 extension pattern.
+- `molrs_pack::architecture` — module map, dependency graph, full
+  `pack()` lifecycle diagram, hot-path `evaluate()` walkthrough,
+  invariants, design decisions.
+- `molrs_pack::extending` — tutorials for writing your own
+  `Restraint` / `Region` / `Handler` / `Relaxer`, testing and
+  benchmarking discipline, common pitfalls, contributing flow.
 
-- [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) — system overview, module map, dependency graph, lifecycle of one `pack()` call, hot-path walkthrough, invariants.
-- [`docs/CODE_TOUR.md`](./docs/CODE_TOUR.md) — navigation guide + tutorials for adding custom `Restraint` / `Region` / `Handler` / `Relaxer` types.
-- [`docs/packmol_alignment.md`](./docs/packmol_alignment.md) — Packmol kind number ↔ Rust struct mapping, with pointers into `comprest.f90` / `gwalls.f90`.
-- [`.claude/specs/molrs-pack-plugin-arch.md`](../.claude/specs/molrs-pack-plugin-arch.md) (in the repo root's `.claude` dir) — full spec with direction-3 rules, performance gates, risk register.
+Reference material outside rustdoc:
+
+- [`docs/packmol_alignment.md`](./docs/packmol_alignment.md) —
+  Packmol kind-number ↔ Rust struct mapping with Fortran pointers.
+- `.claude/specs/molrs-pack-plugin-arch.md` (repo root) — full design
+  spec: direction-3 rules, performance gates, risk register, commit
+  log.
 
 ## License
 
