@@ -1,6 +1,6 @@
 from .molrs import (
     # SimBox + neighbors
-    SimBox,
+    SimBox as Box,
     LinkedCell,
     NeighborQuery,
     NeighborList,

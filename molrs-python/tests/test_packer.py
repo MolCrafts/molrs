@@ -6,38 +6,38 @@ import molrs
 class TestTargetFromCoords:
     def test_basic(self):
         positions = np.array(
-            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=np.float32
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=np.float64
         )
-        radii = np.array([1.0, 1.0], dtype=np.float32)
+        radii = np.array([1.0, 1.0], dtype=np.float64)
         t = molrs.Target.from_coords(positions, radii, 10)
         assert t.natoms == 2
         assert t.count == 10
 
     def test_elements_default_to_x(self):
-        positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
-        radii = np.array([1.0], dtype=np.float32)
+        positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float64)
+        radii = np.array([1.0], dtype=np.float64)
         t = molrs.Target.from_coords(positions, radii, 1)
         assert t.elements == ["X"]
 
     def test_is_fixed_default_false(self):
-        positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
-        radii = np.array([1.0], dtype=np.float32)
+        positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float64)
+        radii = np.array([1.0], dtype=np.float64)
         t = molrs.Target.from_coords(positions, radii, 1)
         assert t.is_fixed is False
 
     def test_bad_positions_shape(self):
         with pytest.raises(ValueError, match="N, 3"):
             molrs.Target.from_coords(
-                np.ones((3, 2), dtype=np.float32),
-                np.ones(3, dtype=np.float32),
+                np.ones((3, 2), dtype=np.float64),
+                np.ones(3, dtype=np.float64),
                 5,
             )
 
     def test_mismatched_lengths(self):
         with pytest.raises(ValueError, match="same length"):
             molrs.Target.from_coords(
-                np.ones((3, 3), dtype=np.float32),
-                np.ones(2, dtype=np.float32),
+                np.ones((3, 3), dtype=np.float64),
+                np.ones(2, dtype=np.float64),
                 5,
             )
 
@@ -63,15 +63,15 @@ class TestTargetFromFrame:
 
 class TestTargetBuilder:
     def _make_target(self):
-        positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
-        radii = np.array([1.0], dtype=np.float32)
+        positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float64)
+        radii = np.array([1.0], dtype=np.float64)
         return molrs.Target.from_coords(positions, radii, 5)
 
     def _make_two_atom_target(self):
         positions = np.array(
-            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=np.float32
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=np.float64
         )
-        radii = np.array([1.0, 1.0], dtype=np.float32)
+        radii = np.array([1.0, 1.0], dtype=np.float64)
         return molrs.Target.from_coords(positions, radii, 5)
 
     def test_with_name_immutable(self):
@@ -194,8 +194,8 @@ class TestPacker:
 
 class TestPackerPack:
     def test_minimal_packing(self):
-        positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
-        radii = np.array([1.0], dtype=np.float32)
+        positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float64)
+        radii = np.array([1.0], dtype=np.float64)
         target = molrs.Target.from_coords(positions, radii, 3).with_constraint(
             molrs.InsideBox([0.0, 0.0, 0.0], [20.0, 20.0, 20.0])
         )
@@ -209,8 +209,8 @@ class TestPackerPack:
         assert isinstance(result.converged, bool)
 
     def test_result_elements_match_positions(self):
-        positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
-        radii = np.array([1.0], dtype=np.float32)
+        positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float64)
+        radii = np.array([1.0], dtype=np.float64)
         target = molrs.Target.from_coords(positions, radii, 3).with_constraint(
             molrs.InsideBox([0.0, 0.0, 0.0], [20.0, 20.0, 20.0])
         )
@@ -242,10 +242,10 @@ class TestPackerPack:
 
     def test_result_elements_order_multiple_targets(self):
         """Elements follow pack order: free targets first, repeated by count."""
-        pos1 = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
-        rad1 = np.array([1.0], dtype=np.float32)
-        pos2 = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=np.float32)
-        rad2 = np.array([1.0, 1.0], dtype=np.float32)
+        pos1 = np.array([[0.0, 0.0, 0.0]], dtype=np.float64)
+        rad1 = np.array([1.0], dtype=np.float64)
+        pos2 = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=np.float64)
+        rad2 = np.array([1.0, 1.0], dtype=np.float64)
 
         box_c = molrs.InsideBox([0.0, 0.0, 0.0], [30.0, 30.0, 30.0])
         t1 = molrs.Target.from_coords(pos1, rad1, 2).with_constraint(box_c)
@@ -259,8 +259,8 @@ class TestPackerPack:
         assert result.positions.shape[0] == 8
 
     def test_with_seed_reproducible(self):
-        positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
-        radii = np.array([1.0], dtype=np.float32)
+        positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float64)
+        radii = np.array([1.0], dtype=np.float64)
         target = molrs.Target.from_coords(positions, radii, 3).with_constraint(
             molrs.InsideBox([0.0, 0.0, 0.0], [20.0, 20.0, 20.0])
         )
@@ -276,8 +276,8 @@ class TestPackerPack:
             packer.pack([], max_loops=10)
 
     def test_multiple_targets(self):
-        positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
-        radii = np.array([1.0], dtype=np.float32)
+        positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float64)
+        radii = np.array([1.0], dtype=np.float64)
         box_constraint = molrs.InsideBox([0.0, 0.0, 0.0], [20.0, 20.0, 20.0])
 
         t1 = molrs.Target.from_coords(positions, radii, 2).with_constraint(box_constraint)
@@ -288,8 +288,8 @@ class TestPackerPack:
         assert result.positions.shape[0] == 5  # 2 + 3
 
     def test_pack_result_repr(self):
-        positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
-        radii = np.array([1.0], dtype=np.float32)
+        positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float64)
+        radii = np.array([1.0], dtype=np.float64)
         target = molrs.Target.from_coords(positions, radii, 2).with_constraint(
             molrs.InsideBox([0.0, 0.0, 0.0], [20.0, 20.0, 20.0])
         )
@@ -300,8 +300,8 @@ class TestPackerPack:
         assert "converged" in r
 
     def test_result_frame_has_atoms_block(self):
-        positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
-        radii = np.array([1.0], dtype=np.float32)
+        positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float64)
+        radii = np.array([1.0], dtype=np.float64)
         target = molrs.Target.from_coords(positions, radii, 3).with_constraint(
             molrs.InsideBox([0.0, 0.0, 0.0], [20.0, 20.0, 20.0])
         )
@@ -319,8 +319,8 @@ class TestPackerPack:
         assert "mol_id" in atoms
 
     def test_result_frame_columns_consistent(self):
-        positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
-        radii = np.array([1.0], dtype=np.float32)
+        positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float64)
+        radii = np.array([1.0], dtype=np.float64)
         target = molrs.Target.from_coords(positions, radii, 3).with_constraint(
             molrs.InsideBox([0.0, 0.0, 0.0], [20.0, 20.0, 20.0])
         )
@@ -357,9 +357,9 @@ class TestPackerPack:
 
     def test_extended_target_and_packer_options(self):
         positions = np.array(
-            [[0.0, 0.0, 0.0], [1.5, 0.0, 0.0]], dtype=np.float32
+            [[0.0, 0.0, 0.0], [1.5, 0.0, 0.0]], dtype=np.float64
         )
-        radii = np.array([1.0, 1.0], dtype=np.float32)
+        radii = np.array([1.0, 1.0], dtype=np.float64)
         target = (
             molrs.Target.from_coords(positions, radii, 2)
             .with_constraint(molrs.InsideBox([0.0, 0.0, 0.0], [20.0, 20.0, 20.0]))

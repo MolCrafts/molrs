@@ -12,7 +12,7 @@ def cubic_box():
 @pytest.fixture
 def ortho_box():
     """A 5x10x15 orthorhombic box."""
-    return molrs.Box.ortho(np.array([5.0, 10.0, 15.0], dtype=np.float32))
+    return molrs.Box.ortho(np.array([5.0, 10.0, 15.0], dtype=np.float64))
 
 
 @pytest.fixture
@@ -26,5 +26,5 @@ def sample_points():
             [0.1, 0.1, 0.1],
             [9.9, 9.9, 9.9],
         ],
-        dtype=np.float32,
+        dtype=np.float64,
     )

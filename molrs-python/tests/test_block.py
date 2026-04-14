@@ -19,7 +19,7 @@ class TestBlockConstruction:
 class TestBlockInsert:
     def test_f32(self):
         b = molrs.Block()
-        b.insert("x", np.array([1.0, 2.0, 3.0], dtype=np.float32))
+        b.insert("x", np.array([1.0, 2.0, 3.0], dtype=np.float64))
         assert b.nrows == 3
         assert len(b) == 1
         assert "x" in b
@@ -46,14 +46,14 @@ class TestBlockInsert:
 
     def test_2d_array(self):
         b = molrs.Block()
-        b.insert("pos", np.zeros((5, 3), dtype=np.float32))
+        b.insert("pos", np.zeros((5, 3), dtype=np.float64))
         assert b.nrows == 5
 
     def test_nrows_enforcement(self):
         b = molrs.Block()
-        b.insert("x", np.array([1.0, 2.0], dtype=np.float32))
+        b.insert("x", np.array([1.0, 2.0], dtype=np.float64))
         with pytest.raises(ValueError):
-            b.insert("y", np.array([1.0, 2.0, 3.0], dtype=np.float32))
+            b.insert("y", np.array([1.0, 2.0, 3.0], dtype=np.float64))
 
     def test_int32_accepted(self):
         b = molrs.Block()
@@ -62,8 +62,8 @@ class TestBlockInsert:
 
     def test_overwrite_key(self):
         b = molrs.Block()
-        b.insert("x", np.array([1.0, 2.0], dtype=np.float32))
-        b.insert("x", np.array([3.0, 4.0], dtype=np.float32))
+        b.insert("x", np.array([1.0, 2.0], dtype=np.float64))
+        b.insert("x", np.array([3.0, 4.0], dtype=np.float64))
         result = b.view("x").flatten()
         np.testing.assert_allclose(result, [3.0, 4.0])
 
@@ -71,7 +71,7 @@ class TestBlockInsert:
 class TestBlockGet:
     def test_roundtrip_f32(self):
         b = molrs.Block()
-        original = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+        original = np.array([1.0, 2.0, 3.0], dtype=np.float64)
         b.insert("x", original)
         result = b.view("x")
         np.testing.assert_allclose(result.flatten(), original, atol=1e-6)
@@ -108,14 +108,14 @@ class TestBlockGet:
 
     def test_roundtrip_2d(self):
         b = molrs.Block()
-        data = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float32)
+        data = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float64)
         b.insert("pos", data)
         result = b.view("pos")
         np.testing.assert_allclose(result, data)
 
     def test_view_returns_numpy_array_with_native_owner(self):
         b = molrs.Block()
-        b.insert("x", np.array([1.0, 2.0, 3.0], dtype=np.float32))
+        b.insert("x", np.array([1.0, 2.0, 3.0], dtype=np.float64))
         view = b.view("x")
         assert isinstance(view, np.ndarray)
         assert view.base is not None
@@ -123,7 +123,7 @@ class TestBlockGet:
 
     def test_get_uses_view_backing_for_numeric_columns(self):
         b = molrs.Block()
-        b.insert("x", np.array([4.0, 5.0], dtype=np.float32))
+        b.insert("x", np.array([4.0, 5.0], dtype=np.float64))
         result = b.view("x")
         assert isinstance(result, np.ndarray)
         assert result.base is not None
@@ -133,20 +133,20 @@ class TestBlockGet:
 class TestBlockOperations:
     def test_keys(self):
         b = molrs.Block()
-        b.insert("x", np.array([1.0], dtype=np.float32))
-        b.insert("y", np.array([2.0], dtype=np.float32))
+        b.insert("x", np.array([1.0], dtype=np.float64))
+        b.insert("y", np.array([2.0], dtype=np.float64))
         keys = sorted(b.keys())
         assert keys == ["x", "y"]
 
     def test_contains(self):
         b = molrs.Block()
-        b.insert("x", np.array([1.0], dtype=np.float32))
+        b.insert("x", np.array([1.0], dtype=np.float64))
         assert "x" in b
         assert "y" not in b
 
     def test_remove(self):
         b = molrs.Block()
-        b.insert("x", np.array([1.0], dtype=np.float32))
+        b.insert("x", np.array([1.0], dtype=np.float64))
         b.remove("x")
         assert "x" not in b
         assert len(b) == 0
@@ -158,7 +158,7 @@ class TestBlockOperations:
 
     def test_dtype(self):
         b = molrs.Block()
-        b.insert("x", np.array([1.0], dtype=np.float32))
+        b.insert("x", np.array([1.0], dtype=np.float64))
         b.insert("id", np.array([1], dtype=np.int64))
         assert b.dtype("x") == "float"
         assert b.dtype("id") == "int"
@@ -170,7 +170,7 @@ class TestBlockOperations:
 
     def test_repr(self):
         b = molrs.Block()
-        b.insert("x", np.array([1.0, 2.0], dtype=np.float32))
+        b.insert("x", np.array([1.0, 2.0], dtype=np.float64))
         r = repr(b)
         assert "Block" in r
         assert "2" in r
