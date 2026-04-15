@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: write
-  id-token: write
 
 # Dependency topology (must publish in this order):
 #
@@ -17,7 +16,7 @@ permissions:
 #     ├── molcrafts-molrs-smiles
 #     ├── molcrafts-molrs-ff
 #     ├── molcrafts-molrs-embed
-#     └── molrs-cxxapi             (also deps on -io)
+#     └── molcrafts-molrs-cxxapi   (also deps on -io)
 #   molcrafts-molrs                (façade, deps on all of the above)
 #
 # Note: molcrafts-molpack lives in its own repo (MolCrafts/molpack) with its
@@ -37,11 +36,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo publish --manifest-path molrs-core/Cargo.toml --dry-run
-      - id: auth
-        uses: rust-lang/crates-io-auth-action@v1
       - run: cargo publish --manifest-path molrs-core/Cargo.toml
         env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
   publish-io:
     needs: publish-core
@@ -51,11 +48,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: sleep 30
       - run: cargo publish --manifest-path molrs-io/Cargo.toml --dry-run
-      - id: auth
-        uses: rust-lang/crates-io-auth-action@v1
       - run: cargo publish --manifest-path molrs-io/Cargo.toml
         env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
   publish-compute:
     needs: publish-core
@@ -65,11 +60,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: sleep 30
       - run: cargo publish --manifest-path molrs-compute/Cargo.toml --dry-run
-      - id: auth
-        uses: rust-lang/crates-io-auth-action@v1
       - run: cargo publish --manifest-path molrs-compute/Cargo.toml
         env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
   publish-smiles:
     needs: publish-core
@@ -79,11 +72,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: sleep 30
       - run: cargo publish --manifest-path molrs-smiles/Cargo.toml --dry-run
-      - id: auth
-        uses: rust-lang/crates-io-auth-action@v1
       - run: cargo publish --manifest-path molrs-smiles/Cargo.toml
         env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
   publish-ff:
     needs: publish-core
@@ -93,11 +84,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: sleep 30
       - run: cargo publish --manifest-path molrs-ff/Cargo.toml --dry-run
-      - id: auth
-        uses: rust-lang/crates-io-auth-action@v1
       - run: cargo publish --manifest-path molrs-ff/Cargo.toml
         env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
   publish-embed:
     needs: publish-core
@@ -107,11 +96,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: sleep 30
       - run: cargo publish --manifest-path molrs-embed/Cargo.toml --dry-run
-      - id: auth
-        uses: rust-lang/crates-io-auth-action@v1
       - run: cargo publish --manifest-path molrs-embed/Cargo.toml
         env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
   publish-cxxapi:
     needs: publish-io
@@ -121,11 +108,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: sleep 30
       - run: cargo publish --manifest-path molrs-cxxapi/Cargo.toml --dry-run
-      - id: auth
-        uses: rust-lang/crates-io-auth-action@v1
       - run: cargo publish --manifest-path molrs-cxxapi/Cargo.toml
         env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
   publish-facade:
     needs:
@@ -141,8 +126,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: sleep 30
       - run: cargo publish --manifest-path molrs/Cargo.toml --dry-run
-      - id: auth
-        uses: rust-lang/crates-io-auth-action@v1
       - run: cargo publish --manifest-path molrs/Cargo.toml
         env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
