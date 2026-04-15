@@ -15,7 +15,7 @@ mod report;
 mod rotor_search;
 mod stereo_guard;
 
-pub use options::{EmbedAlgorithm, ForceFieldKind, EmbedOptions, EmbedSpeed};
+pub use options::{EmbedAlgorithm, EmbedOptions, EmbedSpeed, ForceFieldKind};
 pub use report::{EmbedReport, StageKind, StageReport};
 
 use molrs::atomistic::Atomistic;

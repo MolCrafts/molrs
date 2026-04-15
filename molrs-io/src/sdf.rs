@@ -82,9 +82,18 @@ fn parse_atom_line(line: &str) -> std::io::Result<SdfAtom> {
     if line.len() < 34 {
         return Err(err_mapper("atom line too short"));
     }
-    let x = substr(line, 0, 10).trim().parse::<F>().map_err(err_mapper)?;
-    let y = substr(line, 10, 20).trim().parse::<F>().map_err(err_mapper)?;
-    let z = substr(line, 20, 30).trim().parse::<F>().map_err(err_mapper)?;
+    let x = substr(line, 0, 10)
+        .trim()
+        .parse::<F>()
+        .map_err(err_mapper)?;
+    let y = substr(line, 10, 20)
+        .trim()
+        .parse::<F>()
+        .map_err(err_mapper)?;
+    let z = substr(line, 20, 30)
+        .trim()
+        .parse::<F>()
+        .map_err(err_mapper)?;
     let element = substr(line, 31, 34).trim().to_string();
     Ok(SdfAtom { element, x, y, z })
 }
@@ -100,18 +109,9 @@ fn parse_bond_line(line: &str) -> std::io::Result<SdfBond> {
     if line.len() < 9 {
         return Err(err_mapper("bond line too short"));
     }
-    let i = substr(line, 0, 3)
-        .trim()
-        .parse::<U>()
-        .map_err(err_mapper)?;
-    let j = substr(line, 3, 6)
-        .trim()
-        .parse::<U>()
-        .map_err(err_mapper)?;
-    let order = substr(line, 6, 9)
-        .trim()
-        .parse::<U>()
-        .map_err(err_mapper)?;
+    let i = substr(line, 0, 3).trim().parse::<U>().map_err(err_mapper)?;
+    let j = substr(line, 3, 6).trim().parse::<U>().map_err(err_mapper)?;
+    let order = substr(line, 6, 9).trim().parse::<U>().map_err(err_mapper)?;
     Ok(SdfBond { i, j, order })
 }
 

@@ -5,7 +5,7 @@ use rand::{SeedableRng, random, rngs::StdRng};
 use super::builder::embed_fragment_rules;
 use super::distance_geometry::embed_distance_geometry;
 use super::optimizer::{EnergyModel, lbfgs, steepest_descent};
-use super::options::{EmbedAlgorithm, ForceFieldKind, EmbedOptions};
+use super::options::{EmbedAlgorithm, EmbedOptions, ForceFieldKind};
 use super::report::{EmbedReport, StageKind, StageReport};
 use super::rotor_search;
 use super::stereo_guard;

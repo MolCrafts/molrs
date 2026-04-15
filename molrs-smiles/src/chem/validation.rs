@@ -14,10 +14,7 @@ use crate::error::{SmilesError, SmilesErrorKind};
 ///
 /// This check applies equally to SMILES and SMARTS because ring closure is a
 /// syntactic construct of the shared grammar.
-pub(crate) fn validate_ring_closures(
-    mol: &SmilesIR,
-    input: &str,
-) -> Result<(), SmilesError> {
+pub(crate) fn validate_ring_closures(mol: &SmilesIR, input: &str) -> Result<(), SmilesError> {
     let mut open: HashMap<u16, Span> = HashMap::new();
 
     for component in &mol.components {

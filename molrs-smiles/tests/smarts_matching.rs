@@ -166,7 +166,10 @@ fn recursive_smarts_returns_not_yet_implemented_for_now() {
 fn malformed_smarts_returns_parse_error_not_panic() {
     let result = SmartsPattern::compile("[C;");
     assert!(
-        matches!(result, Err(SmartsError::Parse(_)) | Err(SmartsError::NotYetImplemented)),
+        matches!(
+            result,
+            Err(SmartsError::Parse(_)) | Err(SmartsError::NotYetImplemented)
+        ),
         "malformed SMARTS must error, not panic; got {result:?}"
     );
 }
@@ -175,7 +178,10 @@ fn malformed_smarts_returns_parse_error_not_panic() {
 fn empty_smarts_returns_parse_error_not_panic() {
     let result = SmartsPattern::compile("");
     assert!(
-        matches!(result, Err(SmartsError::Parse(_)) | Err(SmartsError::NotYetImplemented)),
+        matches!(
+            result,
+            Err(SmartsError::Parse(_)) | Err(SmartsError::NotYetImplemented)
+        ),
         "empty SMARTS must error, not panic; got {result:?}"
     );
 }

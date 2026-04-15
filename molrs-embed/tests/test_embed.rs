@@ -1,7 +1,7 @@
 //! Integration tests for Embed generation.
 
 use molrs::{AtomId, Atomistic, MolGraph, PropValue};
-use molrs_embed::{EmbedAlgorithm, ForceFieldKind, EmbedOptions, StageKind, generate_3d};
+use molrs_embed::{EmbedAlgorithm, EmbedOptions, ForceFieldKind, StageKind, generate_3d};
 
 fn bond(g: &mut Atomistic, a: AtomId, b: AtomId, order: f64) {
     let bid = g.add_bond(a, b).expect("add bond");
