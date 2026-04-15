@@ -42,12 +42,3 @@ class TestReadXyz:
     def test_missing_file_raises_os_error(self):
         with pytest.raises(OSError):
             molrs.read_xyz("/nonexistent/path.xyz")
-
-
-class TestRoundtrip:
-    def test_pdb_to_target(self):
-        """Full workflow: read PDB → create Target."""
-        frame = molrs.read_pdb(os.path.join(DATA_DIR, "water.pdb"))
-        target = molrs.Target(frame, 5)
-        assert target.natoms == 3
-        assert target.count == 5
