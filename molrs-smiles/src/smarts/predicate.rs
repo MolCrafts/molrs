@@ -23,7 +23,7 @@
 //!
 //! # References
 //!
-//! - Daylight SMARTS theory manual, §3 Atomic Primitives and §4 Bond Primitives:
+//! - Daylight SMARTS theory manual — Atomic Primitives & Bond Primitives tables:
 //!   <https://daylight.com/dayhtml/doc/theory/theory.smarts.html>
 
 use molrs::element::Element;

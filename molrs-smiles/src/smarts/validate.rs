@@ -14,6 +14,15 @@ use crate::error::SmilesError;
 /// Currently checks ring-closure pairing only. Deeper query-primitive checks
 /// (impossible combinations, contradictory logical queries) are a future
 /// enhancement tracked with the SMARTS matcher rollout.
+///
+/// `input` is the original SMARTS source string; it is used only to attach
+/// source spans to error diagnostics.
+///
+/// # Errors
+///
+/// Returns [`SmilesError`] with
+/// [`SmilesErrorKind::UnmatchedRingClosure`](crate::error::SmilesErrorKind::UnmatchedRingClosure)
+/// if any ring-closure digit lacks a matching partner.
 pub fn validate_smarts(mol: &SmilesIR, input: &str) -> Result<(), SmilesError> {
     validate_ring_closures(mol, input)?;
     Ok(())

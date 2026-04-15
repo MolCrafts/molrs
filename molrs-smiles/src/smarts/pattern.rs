@@ -18,7 +18,8 @@
 //!
 //! let pat = SmartsPattern::compile("[C;X4]").unwrap();
 //! let mol = to_atomistic(&parse_smiles("CC").unwrap()).unwrap();
-//! let matches = pat.find_all(&mol).unwrap();
+//! // `find_all` takes a `&MolGraph`; `Atomistic` exposes one via `as_molgraph`.
+//! let matches = pat.find_all(mol.as_molgraph()).unwrap();
 //! assert_eq!(matches.len(), 2); // both sp3 carbons
 //! ```
 
@@ -102,8 +103,28 @@ impl SmartsPattern {
 
     /// Parse and compile a SMARTS pattern string.
     ///
-    /// Returns [`SmartsError::Parse`] if the input is syntactically invalid or
-    /// fails ring-closure validation.
+    /// Compilation runs [`parse_smarts`] → [`validate_smarts`] →
+    /// per-component lowering into a `petgraph::UnGraph`. The resulting
+    /// pattern is thread-safe (`Send + Sync`) and intended to be compiled
+    /// once and reused across many targets.
+    ///
+    /// Reference: Daylight SMARTS theory manual — pattern grammar:
+    /// <https://daylight.com/dayhtml/doc/theory/theory.smarts.html>
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SmartsError::Parse`] if the input is empty, syntactically
+    /// invalid, or fails ring-closure validation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use molrs_smiles::smarts::SmartsPattern;
+    ///
+    /// let pat = SmartsPattern::compile("[C;X4]").unwrap();
+    /// assert!(SmartsPattern::compile("").is_err());
+    /// # let _ = pat;
+    /// ```
     pub fn compile(pattern: &str) -> Result<Self, SmartsError> {
         if pattern.is_empty() {
             return Err(SmartsError::Parse(SmilesError::new(

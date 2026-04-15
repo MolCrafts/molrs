@@ -13,9 +13,22 @@
 //!
 //! Core matcher is implemented: atom / bond primitives, logical operators
 //! (`!`, `&`, `,`, `;`), ring primitives (`R`, `r`), recursive SMARTS
-//! (`[$(...)]`). Stereochemistry (chirality, directional bonds) returns
-//! `false` from predicates until the stereo-aware pipeline lands; see
-//! [`predicate`] for exact semantics.
+//! (`[$(...)]`).
+//!
+//! # Warning: silent stereochemistry false negatives
+//!
+//! Stereo-dependent primitives — atom chirality (`@`, `@@`) and directional
+//! bonds (`/`, `\`) — are parsed but **always evaluate to `false`** because
+//! the atomistic layer does not yet surface stereo descriptors. A pattern
+//! that relies on them will compile cleanly and then fail to match
+//! structurally correct targets with no error. See
+//! [`predicate`] for the exhaustive list of unsupported primitives, and
+//! [`matcher::SubstructureMatcher`] for the public contract. Track the
+//! stereo-aware pipeline before querying stereo-sensitive structures.
+//!
+//! Reference: Daylight SMARTS theory manual — see the "Atomic Primitives"
+//! and "Bond Primitives" tables:
+//! <https://daylight.com/dayhtml/doc/theory/theory.smarts.html>.
 
 pub mod matcher;
 pub mod pattern;

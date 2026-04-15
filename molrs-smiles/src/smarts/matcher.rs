@@ -35,8 +35,17 @@ use super::predicate::{BondEdge, TargetCtx, eval_atom_query, eval_bond_query};
 /// per query atom in the compiled pattern's first component (multi-component
 /// patterns return one entry per atom in declaration order, concatenated by
 /// component).
+///
+/// Indices are 0-based positions into the iteration order of
+/// [`MolGraph::atoms`](molrs::molgraph::MolGraph::atoms).
+///
+/// Reference: Daylight SMARTS theory manual — substructure matching:
+/// <https://daylight.com/dayhtml/doc/theory/theory.smarts.html>
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Match(pub Vec<usize>);
+pub struct Match(
+    /// Target-atom indices, in the pattern's declaration order.
+    pub Vec<usize>,
+);
 
 /// Run substructure matching against a target molecule.
 ///
@@ -44,15 +53,45 @@ pub struct Match(pub Vec<usize>);
 /// that specialized matchers can share the same entry point while providing
 /// different internal strategies. The `Send + Sync` bound is mandatory —
 /// compiled patterns are shared across rayon-parallel passes.
+///
+/// # Stereochemistry
+///
+/// Chirality (`@`/`@@`) and directional bonds (`/`, `\`) are **not** yet
+/// wired to [`MolGraph`]'s stereo layer; predicates for those primitives
+/// return `false`. Patterns that depend on stereochemistry will therefore
+/// produce silent false negatives — see [`predicate`](super::predicate)
+/// for the exhaustive list of unsupported primitives.
 pub trait SubstructureMatcher: Send + Sync {
     /// Return every subgraph isomorphism of `self` onto `target`.
     ///
-    /// Returns an empty vector if no matches are found. Returns an error
-    /// only if the pattern could not be evaluated (e.g. a recursive SMARTS
-    /// failed to compile).
+    /// Multi-component patterns (`C.O`) return the disjoint cartesian
+    /// product: one entry per component combination where no target atom
+    /// is reused across components.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SmartsError`] only if the pattern could not be evaluated
+    /// (e.g. a recursive `$(...)` inner pattern failed to recompile).
+    /// Returns an empty vector — not an error — when no matches exist.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use molrs_smiles::smarts::{SmartsPattern, SubstructureMatcher};
+    /// use molrs_smiles::{parse_smiles, to_atomistic};
+    ///
+    /// let pat = SmartsPattern::compile("[C;X4]").unwrap();
+    /// let mol = to_atomistic(&parse_smiles("CCO").unwrap()).unwrap();
+    /// let hits = pat.find_all(mol.as_molgraph()).unwrap();
+    /// assert_eq!(hits.len(), 2); // both sp3 carbons
+    /// ```
     fn find_all(&self, target: &MolGraph) -> Result<Vec<Match>, SmartsError>;
 
     /// Return the first match, or `None` if the pattern does not occur.
+    ///
+    /// # Errors
+    ///
+    /// Same conditions as [`find_all`](Self::find_all).
     fn find_first(&self, target: &MolGraph) -> Result<Option<Match>, SmartsError> {
         Ok(self.find_all(target)?.into_iter().next())
     }
@@ -64,8 +103,12 @@ impl SubstructureMatcher for SmartsPattern {
             return Ok(Vec::new());
         }
 
-        let target_graph = build_target_graph(target);
+        // Ring detection is shared between `TargetCtx` (atom-level R / r
+        // predicates) and `build_target_graph` (bond `@` ring flag).
+        // Computing it once and threading it into both saves an O(V+E) pass
+        // per `find_all`.
         let ctx = TargetCtx::new(target);
+        let target_graph = build_target_graph(target, &ctx.rings);
 
         if self.components.len() == 1 {
             return match_component(&self.components[0], &target_graph, &ctx);
@@ -90,7 +133,7 @@ impl SubstructureMatcher for SmartsPattern {
 
 fn match_component(
     component: &ComponentGraph,
-    target_graph: &TargetGraph<'_>,
+    target_graph: &TargetGraph,
     ctx: &TargetCtx<'_>,
 ) -> Result<Vec<Match>, SmartsError> {
     // Precompile any recursive primitives referenced by the component so
@@ -139,12 +182,11 @@ fn match_component(
 // Target-graph construction
 // ---------------------------------------------------------------------------
 
-struct TargetGraph<'m> {
+struct TargetGraph {
     graph: UnGraph<AtomNodeRef, BondEdge>,
     /// Reverse map of `AtomId → petgraph-node-index`, used to anchor
     /// recursive-SMARTS matches onto the parent candidate atom.
     id_to_index: std::collections::HashMap<AtomId, usize>,
-    _phantom: std::marker::PhantomData<&'m MolGraph>,
 }
 
 /// The node weight stored in the target `UnGraph`. Carrying the `AtomId`
@@ -154,18 +196,17 @@ struct AtomNodeRef {
     id: AtomId,
 }
 
-impl<'m> TargetGraph<'m> {
+impl TargetGraph {
     fn index_of(&self, id: AtomId) -> usize {
         self.id_to_index.get(&id).copied().unwrap_or(usize::MAX)
     }
 }
 
-fn build_target_graph(mol: &MolGraph) -> TargetGraph<'_> {
+fn build_target_graph(mol: &MolGraph, rings: &molrs::rings::RingInfo) -> TargetGraph {
     let mut graph = UnGraph::<AtomNodeRef, BondEdge>::with_capacity(mol.n_atoms(), mol.n_bonds());
     let mut id_to_node = std::collections::HashMap::new();
     let mut id_to_index: std::collections::HashMap<AtomId, usize> =
         std::collections::HashMap::new();
-    let rings = molrs::rings::find_rings(mol);
 
     for (idx, (id, _atom)) in mol.atoms().enumerate() {
         let ni = graph.add_node(AtomNodeRef { id });
@@ -205,11 +246,7 @@ fn build_target_graph(mol: &MolGraph) -> TargetGraph<'_> {
         }
     }
 
-    TargetGraph {
-        graph,
-        id_to_index,
-        _phantom: std::marker::PhantomData,
-    }
+    TargetGraph { graph, id_to_index }
 }
 
 // ---------------------------------------------------------------------------
@@ -275,7 +312,7 @@ fn collect_recursive<'a>(q: &'a AtomQuery, out: &mut Vec<&'a SmilesIR>) {
 
 fn recursive_match_anchored(
     inner: &SmartsPattern,
-    target_graph: &TargetGraph<'_>,
+    target_graph: &TargetGraph,
     ctx: &TargetCtx<'_>,
     anchor: AtomId,
 ) -> bool {
