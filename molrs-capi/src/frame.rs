@@ -35,7 +35,7 @@ use crate::{ffi_try, null_check};
 /// The frame will contain an `"atoms"` block with `"symbol"`, `"x"`,
 /// `"y"`, `"z"` columns and a `"bonds"` block with `"i"`, `"j"`,
 /// `"order"` columns.  Initial coordinates are 2D layout coordinates
-/// (not optimised 3D); use `gen3d` for 3D embedding.
+/// (not optimised 3D); use `embed` for 3D embedding.
 ///
 /// # C signature
 ///

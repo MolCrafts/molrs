@@ -13,7 +13,7 @@ molrs-core ── foundational data + algorithms
    ├── molrs-compute  (trajectory analysis: RDF, MSD, clustering, tensors)
    ├── molrs-smiles   (SMILES parser → MolGraph)
    ├── molrs-ff       (force fields, potentials, typifier)
-   ├── molrs-gen3d    (3D coordinate generation pipeline)
+   ├── molrs-embed    (3D coordinate generation pipeline)
    ├── molrs-pack     (Packmol-port molecular packing)
    └── molrs-cxxapi   (CXX bridge to Atomiverse C++)
 ```
@@ -37,7 +37,7 @@ Dirs `molrs-ffi/`, `molrs-wasm/`, `molrs-capi/`, `molrs-python/` exist on disk b
 | `molrs-compute` | `rdf`, `msd`, `cluster`, `accumulator`, `reducer`, gyration/inertia tensor, radius_of_gyration, center_of_mass |
 | `molrs-smiles` | `scanner`, `parser`, `ast`, `validate`, `to_atomistic` |
 | `molrs-ff` | `forcefield`, `potential` (KernelRegistry), `typifier`, `molrec_ext` |
-| `molrs-gen3d` | `distance_geometry`, `fragment_data`, `optimizer`, `rotor_search`, `stereo_guard`, `pipeline` |
+| `molrs-embed` | `distance_geometry`, `fragment_data`, `optimizer`, `rotor_search`, `stereo_guard`, `pipeline` |
 | `molrs-pack` | `constraint`, `gencan`, `objective`, `packer`, `initial`, `movebad`, `hook`, `validation` |
 | `molrs-cxxapi` | CXX bridge to C++ (`bridge.rs` is build.rs-generated) |
 

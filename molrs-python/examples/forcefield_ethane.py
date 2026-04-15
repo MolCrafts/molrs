@@ -7,7 +7,7 @@ Demonstrates the full pipeline:
 import numpy as np
 from molrs import (
     Atomistic,
-    Gen3DOptions,
+    EmbedOptions,
     MMFFTypifier,
     generate_3d,
     extract_coords,
@@ -22,12 +22,12 @@ mol.add_bond(c1, c2)
 print(f"Input: {mol}")
 
 # --- 2. Generate 3D coordinates (adds hydrogens automatically) ---
-opts = Gen3DOptions(speed="medium", seed=42)
+opts = EmbedOptions(speed="medium", seed=42)
 result = generate_3d(mol, opts)
 mol3d = result.mol
 report = result.report
 
-print(f"\nAfter gen3d: {mol3d}")
+print(f"\nAfter embed: {mol3d}")
 print(f"  final_energy (internal UFF) = {report.final_energy:.4f}")
 
 # --- 3. Typify with MMFF94 and build potentials ---
@@ -57,4 +57,4 @@ try:
 
 except Exception as e:
     print(f"\nBuild skipped (incomplete parameter coverage): {e}")
-    print("(gen3d completed successfully)")
+    print("(embed completed successfully)")

@@ -16,10 +16,12 @@ permissions:
 #     ├── molcrafts-molrs-compute
 #     ├── molcrafts-molrs-smiles
 #     ├── molcrafts-molrs-ff
-#     ├── molcrafts-molrs-gen3d
-#     ├── molcrafts-molrs-pack     (also deps on -io)
+#     ├── molcrafts-molrs-embed
 #     └── molrs-cxxapi             (also deps on -io)
 #   molcrafts-molrs                (façade, deps on all of the above)
+#
+# Note: molcrafts-molpack lives in its own repo (MolCrafts/molpack) with its
+# own publish pipeline.
 #
 # Each job publishes one crate, waits for the crates.io index to update,
 # then the next job proceeds. A dry-run runs before every real publish.
@@ -97,31 +99,17 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
-  publish-gen3d:
+  publish-embed:
     needs: publish-core
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: sleep 30
-      - run: cargo publish --manifest-path molrs-gen3d/Cargo.toml --dry-run
+      - run: cargo publish --manifest-path molrs-embed/Cargo.toml --dry-run
       - id: auth
         uses: rust-lang/crates-io-auth-action@v1
-      - run: cargo publish --manifest-path molrs-gen3d/Cargo.toml
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
-
-  publish-pack:
-    needs: publish-io
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: sleep 30
-      - run: cargo publish --manifest-path molrs-pack/Cargo.toml --dry-run
-      - id: auth
-        uses: rust-lang/crates-io-auth-action@v1
-      - run: cargo publish --manifest-path molrs-pack/Cargo.toml
+      - run: cargo publish --manifest-path molrs-embed/Cargo.toml
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
@@ -145,8 +133,7 @@ jobs:
       - publish-compute
       - publish-smiles
       - publish-ff
-      - publish-gen3d
-      - publish-pack
+      - publish-embed
       - publish-cxxapi
     runs-on: ubuntu-latest
     steps:

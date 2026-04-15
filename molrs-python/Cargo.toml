@@ -24,13 +24,12 @@ molrs-io = { path = "../molrs-io", package = "molcrafts-molrs-io", version = "0.
 molrs-smiles = { path = "../molrs-smiles", package = "molcrafts-molrs-smiles", version = "0.0.8" }
 molrs-ff = { path = "../molrs-ff", package = "molcrafts-molrs-ff", version = "0.0.8" }
 molrs-compute = { path = "../molrs-compute", package = "molcrafts-molrs-compute", version = "0.0.8", default-features = false }
-molrs-gen3d = { path = "../molrs-gen3d", package = "molcrafts-molrs-gen3d", version = "0.0.8" }
-molrs-pack = { path = "../molrs-pack", package = "molcrafts-molrs-pack", version = "0.0.8", default-features = false }
+molrs-embed = { path = "../molrs-embed", package = "molcrafts-molrs-embed", version = "0.0.8" }
 
 [workspace]
 
 [features]
 default = []
-f64 = ["molrs/f64", "molrs-pack/f64", "molrs-ffi/f64"]
-i64 = ["molrs/i64", "molrs-pack/i64", "molrs-ffi/i64"]
-u64 = ["molrs/u64", "molrs-pack/u64", "molrs-ffi/u64"]
+f64 = ["molrs/f64", "molrs-ffi/f64"]
+i64 = ["molrs/i64", "molrs-ffi/i64"]
+u64 = ["molrs/u64", "molrs-ffi/u64"]

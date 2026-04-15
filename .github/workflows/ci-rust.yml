@@ -27,7 +27,6 @@ jobs:
       - run: |
           cargo clippy --workspace --all-targets -- -D warnings
           cargo clippy -p molcrafts-molrs --all-targets --features full -- -D warnings
-          cargo clippy -p molcrafts-molrs-pack --all-targets -- -D warnings
 
   test:
     name: test
@@ -54,7 +53,5 @@ jobs:
       - name: Test (façade with all sub-systems)
         run: cargo test -p molcrafts-molrs --lib --tests --features "full filesystem"
 
-      - name: Benches build (core + pack)
-        run: |
-          cargo bench -p molcrafts-molrs-core --no-run
-          cargo bench -p molcrafts-molrs-pack --no-run
+      - name: Benches build (core)
+        run: cargo bench -p molcrafts-molrs-core --no-run

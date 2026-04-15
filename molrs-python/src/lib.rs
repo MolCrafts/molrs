@@ -15,8 +15,6 @@
 //! | `NeighborQuery`      | [`PyNeighborQuery`]| Spatial neighbor query (freud-style API)   |
 //! | `NeighborList`       | [`PyNeighborList`]| Query result with pair indices + distances |
 //! | `Atomistic`          | [`PyAtomistic`]   | All-atom molecular graph                   |
-//! | `Packer`             | [`PyPacker`]      | Molecular packing (Packmol port)           |
-//! | `Target`             | [`PyTarget`]      | Molecule specification for packing         |
 //! | `MMFFTypifier`       | [`PyMMFFTypifier`]| MMFF94 atom-type assignment                |
 //! | `Potentials`         | [`PyPotentials`]  | Compiled energy/force evaluator            |
 //! | `RDF` / `MSD` / `Cluster` |              | Structural analysis                        |
@@ -54,22 +52,11 @@ use molrec::{
 mod region;
 use region::{PyHollowSphere, PyRegion, PySphere};
 
-mod constraint;
-use constraint::{
-    PyAbovePlane, PyBelowPlane, PyInsideBox, PyInsideSphere, PyMoleculeConstraint, PyOutsideSphere,
-};
-
-mod target;
-use target::PyTarget;
-
-mod packer;
-use packer::{PyPackResult, PyPacker};
-
 pub(crate) mod molgraph;
 use molgraph::PyAtomistic;
 
-mod gen3d;
-use gen3d::{PyGen3DOptions, PyGen3DReport, PyGen3DResult, PyStageReport};
+mod embed;
+use embed::{PyEmbedOptions, PyEmbedReport, PyEmbedResult, PyStageReport};
 
 mod forcefield;
 use forcefield::{PyForceField, PyMMFFTypifier, PyPotentials};
@@ -129,28 +116,15 @@ fn molrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyHollowSphere>()?;
     m.add_class::<PyRegion>()?;
 
-    // Constraints
-    m.add_class::<PyInsideBox>()?;
-    m.add_class::<PyInsideSphere>()?;
-    m.add_class::<PyOutsideSphere>()?;
-    m.add_class::<PyAbovePlane>()?;
-    m.add_class::<PyBelowPlane>()?;
-    m.add_class::<PyMoleculeConstraint>()?;
-
-    // Packer
-    m.add_class::<PyTarget>()?;
-    m.add_class::<PyPacker>()?;
-    m.add_class::<PyPackResult>()?;
-
     // Molecular graph
     m.add_class::<PyAtomistic>()?;
 
-    // Gen3D
-    m.add_class::<PyGen3DOptions>()?;
-    m.add_class::<PyGen3DReport>()?;
-    m.add_class::<PyGen3DResult>()?;
+    // Embed
+    m.add_class::<PyEmbedOptions>()?;
+    m.add_class::<PyEmbedReport>()?;
+    m.add_class::<PyEmbedResult>()?;
     m.add_class::<PyStageReport>()?;
-    m.add_function(wrap_pyfunction!(gen3d::generate_3d_py, m)?)?;
+    m.add_function(wrap_pyfunction!(embed::generate_3d_py, m)?)?;
 
     // Force field
     m.add_class::<PyForceField>()?;

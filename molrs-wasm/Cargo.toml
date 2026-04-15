@@ -16,11 +16,11 @@ name = "molwasm"
 
 [features]
 # Default build = full (all subsystems).
-default = ["smiles", "io", "compute", "gen3d"]
+default = ["smiles", "io", "compute", "embed"]
 smiles  = ["dep:molrs-smiles"]
 io      = ["dep:molrs-io"]
 compute = ["dep:molrs-compute"]
-gen3d   = ["dep:molrs-gen3d"]
+embed   = ["dep:molrs-embed"]
 
 [dependencies]
 wasm-bindgen = "0.2.108"
@@ -37,7 +37,7 @@ molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = 
 molrs-io      = { path = "../molrs-io",      package = "molcrafts-molrs-io",      version = "0.0.8", default-features = false, features = ["zarr"], optional = true }
 molrs-smiles  = { path = "../molrs-smiles",  package = "molcrafts-molrs-smiles",  version = "0.0.8", default-features = false, optional = true }
 molrs-compute = { path = "../molrs-compute", package = "molcrafts-molrs-compute", version = "0.0.8", default-features = false, optional = true }
-molrs-gen3d   = { path = "../molrs-gen3d",   package = "molcrafts-molrs-gen3d",   version = "0.0.8", default-features = false, optional = true }
+molrs-embed   = { path = "../molrs-embed",   package = "molcrafts-molrs-embed",   version = "0.0.8", default-features = false, optional = true }
 
 ndarray = "0.17"
 zarrs = { version = "0.23", default-features = false }

@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
-description = "Unified façade for the molrs molecular simulation toolkit (core + IO + compute + force fields + SMILES + 3D generation + packing)"
+description = "Unified façade for the molrs molecular simulation toolkit (core + IO + compute + force fields + SMILES + 3D generation)"
 repository.workspace = true
 homepage.workspace = true
 readme = "../README.md"
@@ -18,14 +18,13 @@ name = "molrs"
 [features]
 default = []
 # Full bundle (every sub-crate).
-full = ["io", "compute", "smiles", "ff", "gen3d", "pack"]
+full = ["io", "compute", "smiles", "ff", "embed"]
 # Sub-crate features.
 io       = ["dep:molrs_io"]
 compute  = ["dep:molrs_compute"]
 smiles   = ["dep:molrs_smiles"]
 ff       = ["dep:molrs_ff"]
-gen3d    = ["dep:molrs_gen3d"]
-pack     = ["dep:molrs_pack"]
+embed    = ["dep:molrs_embed"]
 # Re-export of molrs-core feature flags.
 rayon       = ["molrs/rayon"]
 zarr        = ["molrs/zarr", "molrs_io?/zarr"]
@@ -38,5 +37,4 @@ molrs_io      = { workspace = true, optional = true }
 molrs_compute = { workspace = true, optional = true }
 molrs_smiles  = { workspace = true, optional = true }
 molrs_ff      = { workspace = true, optional = true }
-molrs_gen3d   = { workspace = true, optional = true }
-molrs_pack    = { workspace = true, optional = true }
+molrs_embed   = { workspace = true, optional = true }

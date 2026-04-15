@@ -20,7 +20,7 @@ If the input is already a spec path, read it.
 Identify from the spec:
 
 - Which crate(s) own the feature (8 active members):
-  `molrs-core`, `molrs-io`, `molrs-compute`, `molrs-smiles`, `molrs-ff`, `molrs-gen3d`, `molrs-pack`, `molrs-cxxapi`
+  `molrs-core`, `molrs-io`, `molrs-compute`, `molrs-smiles`, `molrs-ff`, `molrs-embed`, `molrs-pack`, `molrs-cxxapi`
 - Which traits are extended or created
 - Which data structures are modified
 - Whether FFI bindings (`molrs-cxxapi`) need updates

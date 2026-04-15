@@ -16,9 +16,9 @@
 //! rnum         → digit | '%' digit digit
 //! ```
 
-use super::ast::*;
-use super::error::{SmilesError, SmilesErrorKind};
-use super::scanner::Scanner;
+use crate::chem::ast::*;
+use crate::chem::scanner::Scanner;
+use crate::error::{SmilesError, SmilesErrorKind};
 
 /// Controls which grammar extensions are enabled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

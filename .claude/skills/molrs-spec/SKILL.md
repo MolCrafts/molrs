@@ -81,7 +81,7 @@ Map to the molrs workspace (8 active crates):
 | `molrs-compute` | RDF, MSD, clustering, gyration/inertia tensor | `molrs-compute/src/` |
 | `molrs-smiles` | SMILES parser → MolGraph | `molrs-smiles/src/` |
 | `molrs-ff` | Forcefield, potential (KernelRegistry), typifier | `molrs-ff/src/{forcefield,potential,typifier}/` |
-| `molrs-gen3d` | Distance geometry, fragment assembly, optimizer, rotor search | `molrs-gen3d/src/` |
+| `molrs-embed` | Distance geometry, fragment assembly, optimizer, rotor search | `molrs-embed/src/` |
 | `molrs-pack` | Packmol port, constraints, GENCAN | `molrs-pack/src/` |
 | `molrs-cxxapi` | CXX bridge to Atomiverse | `molrs-cxxapi/src/` |
 
