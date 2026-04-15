@@ -6,8 +6,7 @@ members = [
     "molrs-compute",
     "molrs-smiles",
     "molrs-ff",
-    "molrs-gen3d",
-    "molrs-pack",
+    "molrs-embed",
     "molrs-cxxapi",
 ]
 resolver = "3"
@@ -30,9 +29,8 @@ molrs_io      = { path = "molrs-io",      version = "0.0.8", package = "molcraft
 molrs_compute = { path = "molrs-compute", version = "0.0.8", package = "molcrafts-molrs-compute" }
 molrs_smiles  = { path = "molrs-smiles",  version = "0.0.8", package = "molcrafts-molrs-smiles" }
 molrs_ff      = { path = "molrs-ff",      version = "0.0.8", package = "molcrafts-molrs-ff" }
-molrs_gen3d   = { path = "molrs-gen3d",   version = "0.0.8", package = "molcrafts-molrs-gen3d" }
-molrs_pack    = { path = "molrs-pack",    version = "0.0.8", package = "molcrafts-molrs-pack" }
-molrs_cxxapi  = { path = "molrs-cxxapi",  version = "0.0.8" }
+molrs_embed   = { path = "molrs-embed",   version = "0.0.8", package = "molcrafts-molrs-embed" }
+molrs_cxxapi  = { path = "molrs-cxxapi",  version = "0.0.8", package = "molcrafts-molrs-cxxapi" }
 
 [profile.release]
 lto = "thin"

@@ -8,29 +8,31 @@
 
 A molecular modeling toolkit with Rust and Python interfaces.
 
-The packing stack is in its first public preview release. Prefer the
-`molcrafts-molrs-pack` crate for Rust packing workflows and `molcrafts-molrs`
-for Python bindings.
+Molecular packing (Packmol port) was split out into its own repository
+[`MolCrafts/molpack`](https://github.com/MolCrafts/molpack) (crates.io:
+`molcrafts-molpack`, PyPI: `molcrafts-molpack`). Add it as a separate
+dependency when needed.
 
 ## Install
 
 | Platform | Package | Install |
 |----------|---------|---------|
 | Rust | `molcrafts-molrs` | `cargo add molcrafts-molrs` |
-| Rust packing | `molcrafts-molrs-pack` | `cargo add molcrafts-molrs-pack` |
+| Rust packing | `molcrafts-molpack` | `cargo add molcrafts-molpack` |
 | Python | `molcrafts-molrs` | `pip install molcrafts-molrs` |
+| Python packing | `molcrafts-molpack` | `pip install molcrafts-molpack` |
 | npm | `@molcrafts/molrs` | `npm install @molcrafts/molrs` |
 
 ## Features
 
 - **Frame / Block** — hierarchical, column-oriented molecular data model
 - **MolGraph** — petgraph-based molecular topology with SMILES parser
-- **Gen3D** — 3D coordinate generation (distance geometry + MMFF94 minimization)
+- **Embed** — 3D coordinate generation (distance geometry + MMFF94 minimization)
 - **Neighbor search** — O(N) LinkCell with freud-style `AABBQuery` API
 - **Compute** — RDF, MSD, cluster analysis (self-query & cross-query)
 - **Force field** — MMFF94 bond/angle/torsion/vdw/electrostatic potentials
-- **Packing** — Packmol-grade molecular packing (GENCAN optimizer)
 - **I/O** — PDB, XYZ, LAMMPS data, Zarr V3 trajectories
+- **Packing** — see [`molpack`](https://github.com/MolCrafts/molpack) (separate crate)
 - **Bindings** — Python (PyO3/maturin), WASM (wasm-bindgen), C/C++ (cbindgen)
 
 ## Crates
@@ -38,7 +40,7 @@ for Python bindings.
 | Crate | Description |
 |-------|-------------|
 | [`molcrafts-molrs`](https://crates.io/crates/molcrafts-molrs) | Core library |
-| [`molcrafts-molrs-pack`](https://crates.io/crates/molcrafts-molrs-pack) | Molecular packing |
+| [`molcrafts-molpack`](https://crates.io/crates/molcrafts-molpack) | Molecular packing (separate repo) |
 | `molcrafts-molrs-ffi` | Handle-based FFI layer |
 | `molcrafts-molrs-capi` | C/C++ API |
 
@@ -47,11 +49,11 @@ for Python bindings.
 ### Rust
 
 ```rust
-use molrs::{parse_smiles, to_atomistic, generate_3d, Gen3DOptions};
+use molrs::{parse_smiles, to_atomistic, generate_3d, EmbedOptions};
 
 let ir = parse_smiles("c1ccccc1").unwrap();         // benzene
 let mol = to_atomistic(&ir).unwrap();
-let (mol3d, _report) = generate_3d(&mol, Gen3DOptions::default()).unwrap();
+let (mol3d, _report) = generate_3d(&mol, EmbedOptions::default()).unwrap();
 ```
 
 ### Python

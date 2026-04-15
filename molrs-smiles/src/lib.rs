@@ -1,17 +1,32 @@
-//! SMILES and SMARTS string parsing.
+//! SMILES and SMARTS — sibling chemical-notation systems.
 //!
-//! This module provides a hand-written recursive-descent parser that converts
-//! SMILES and SMARTS notation into an intermediate representation ([`SmilesIR`]).
-//! The IR is a pure syntax tree — it does not commit to atomistic or
-//! coarse-grained semantics.
+//! This crate hosts two closely related but deliberately separate systems:
 //!
-//! # Pipeline
+//! * [`smiles`] — the SMILES serialization format: parse a string into an
+//!   intermediate representation, validate it, and convert it into an
+//!   atomistic molecular graph.
+//! * [`smarts`] — the SMARTS query language: parse a pattern, validate it,
+//!   and match it against a target molecule.
+//!
+//! Both systems share a common chemistry vocabulary (AST types, byte scanner,
+//! ring-closure validation) that lives in [`chem`]. Keeping SMILES and SMARTS
+//! as siblings rather than treating one as a superset avoids the long-standing
+//! class of bugs where concrete-structure semantics silently leak into query
+//! evaluation.
+//!
+//! # Pipeline (SMILES)
 //!
 //! ```text
 //! SMILES string → parse_smiles() → SmilesIR → to_atomistic() → Atomistic
 //! ```
 //!
-//! # Examples
+//! # Pipeline (SMARTS)
+//!
+//! ```text
+//! SMARTS string → parse_smarts() → SmilesIR → SmartsPattern::compile() → matches()
+//! ```
+//!
+//! # Example
 //!
 //! ```
 //! use molrs_smiles::{parse_smiles, to_atomistic};
@@ -20,29 +35,24 @@
 //! let mol = to_atomistic(&ir).unwrap();
 //! assert_eq!(mol.n_atoms(), 3);
 //! ```
-//!
-//! # Phases
-//!
-//! 1. **Parsing** — `parse_smiles` / `parse_smarts` produce an IR.
-//! 2. **Validation** — `validate_smiles` / `validate_smarts` check semantic
-//!    correctness (matched ring closures, valid element symbols).
-//! 3. **Conversion** — `to_atomistic` converts the IR into an
-//!    [`Atomistic`](crate::atomistic::Atomistic) molecular graph.
 
-pub mod ast;
+pub mod chem;
 pub mod error;
-pub mod to_atomistic;
-pub mod validate;
+pub mod smarts;
+pub mod smiles;
 
+// The parser is internally unified: a single `Parser` struct dispatches by
+// `ParserMode`. Both sibling modules re-export their respective entry point.
 mod parser;
-mod scanner;
 
-// Public API re-exports.
-pub use ast::{
+// ---------------------------------------------------------------------------
+// Public re-exports (stable surface — downstream callers depend on these).
+// ---------------------------------------------------------------------------
+
+pub use chem::ast::{
     AtomNode, AtomPrimitive, AtomQuery, AtomSpec, BondKind, BondQuery, BracketSymbol, Chain,
     ChainElement, Chirality, SmilesIR, Span,
 };
 pub use error::{SmilesError, SmilesErrorKind};
-pub use parser::{parse_smarts, parse_smiles};
-pub use to_atomistic::to_atomistic;
-pub use validate::{validate_smarts, validate_smiles};
+pub use smarts::{parse_smarts, validate_smarts};
+pub use smiles::{parse_smiles, to_atomistic, validate_smiles};

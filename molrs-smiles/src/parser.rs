@@ -16,9 +16,9 @@
 //! rnum         → digit | '%' digit digit
 //! ```
 
-use super::ast::*;
-use super::error::{SmilesError, SmilesErrorKind};
-use super::scanner::Scanner;
+use crate::chem::ast::*;
+use crate::chem::scanner::Scanner;
+use crate::error::{SmilesError, SmilesErrorKind};
 
 /// Controls which grammar extensions are enabled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,7 +85,7 @@ impl<'a> Parser<'a> {
 
     /// True if `ch` can start a bond in SMARTS mode (includes `~` and `@`).
     fn is_bond_char_smarts(ch: char) -> bool {
-        Self::is_bond_char(ch) || matches!(ch, '~' | '@')
+        Self::is_bond_char(ch) || matches!(ch, '~' | '@' | '!')
     }
 
     /// True if `ch` can start an atom.
@@ -196,7 +196,7 @@ impl<'a> Parser<'a> {
 
     // -- ring closure -------------------------------------------------------
 
-    fn parse_ring_closure(&mut self, bond: Option<BondKind>) -> Result<ChainElement, SmilesError> {
+    fn parse_ring_closure(&mut self, bond: Option<BondQuery>) -> Result<ChainElement, SmilesError> {
         let start = self.scanner.pos();
         let rnum = self.parse_rnum()?;
         Ok(ChainElement::RingClosure {
@@ -440,7 +440,10 @@ impl<'a> Parser<'a> {
 
     // -- bond ---------------------------------------------------------------
 
-    fn parse_bond(&mut self) -> Result<Option<BondKind>, SmilesError> {
+    /// Parse a single bond kind (no logical operators). Returns `None` if
+    /// the next character is not a bond character. Used both directly in
+    /// SMILES mode and as the leaf inside SMARTS bond-query parsing.
+    fn parse_bond_kind(&mut self) -> Result<Option<BondKind>, SmilesError> {
         match self.scanner.peek() {
             Some('-') => {
                 self.scanner.advance();
@@ -474,10 +477,78 @@ impl<'a> Parser<'a> {
                 self.scanner.advance();
                 Ok(Some(BondKind::Any))
             }
-            // Note: '@' as a ring-bond in SMARTS is tricky because '@' is also
-            // used for chirality. In bond context it only appears between atoms,
-            // not inside brackets. We handle it here for SMARTS mode only.
+            Some('@') if self.mode == ParserMode::Smarts => {
+                self.scanner.advance();
+                Ok(Some(BondKind::Ring))
+            }
             _ => Ok(None),
+        }
+    }
+
+    /// Parse a bond (possibly with SMARTS logical operators). Returns
+    /// `Option<BondQuery>` so SMARTS bond operators `!`, `&`, `,` can be
+    /// represented faithfully; SMILES inputs always yield
+    /// `Some(BondQuery::Kind(_))` or `None`.
+    fn parse_bond(&mut self) -> Result<Option<BondQuery>, SmilesError> {
+        if self.mode == ParserMode::Smarts {
+            self.parse_bond_or()
+        } else {
+            Ok(self.parse_bond_kind()?.map(BondQuery::Kind))
+        }
+    }
+
+    /// SMARTS bond `,`-OR: `expr (,expr)*`.
+    fn parse_bond_or(&mut self) -> Result<Option<BondQuery>, SmilesError> {
+        let Some(head) = self.parse_bond_and()? else {
+            return Ok(None);
+        };
+        let mut parts = vec![head];
+        while self.scanner.peek() == Some(',') {
+            self.scanner.advance();
+            let Some(next) = self.parse_bond_and()? else {
+                return Err(self.error(SmilesErrorKind::UnexpectedEnd));
+            };
+            parts.push(next);
+        }
+        Ok(Some(if parts.len() == 1 {
+            parts.pop().unwrap()
+        } else {
+            BondQuery::Or(parts)
+        }))
+    }
+
+    /// SMARTS bond `&`-AND: `expr (&expr)*` (implicit AND via adjacency is
+    /// **not** supported on bonds — use `&` explicitly).
+    fn parse_bond_and(&mut self) -> Result<Option<BondQuery>, SmilesError> {
+        let Some(head) = self.parse_bond_not()? else {
+            return Ok(None);
+        };
+        let mut parts = vec![head];
+        while self.scanner.peek() == Some('&') {
+            self.scanner.advance();
+            let Some(next) = self.parse_bond_not()? else {
+                return Err(self.error(SmilesErrorKind::UnexpectedEnd));
+            };
+            parts.push(next);
+        }
+        Ok(Some(if parts.len() == 1 {
+            parts.pop().unwrap()
+        } else {
+            BondQuery::And(parts)
+        }))
+    }
+
+    /// SMARTS bond `!`-NOT (unary). The inner expression is a single bond
+    /// kind — nested `!!` is allowed but not `!(...)` groups.
+    fn parse_bond_not(&mut self) -> Result<Option<BondQuery>, SmilesError> {
+        if self.scanner.peek() == Some('!') {
+            self.scanner.advance();
+            let Some(inner) = self.parse_bond_not()? else {
+                return Err(self.error(SmilesErrorKind::UnexpectedEnd));
+            };
+            Ok(Some(BondQuery::Not(Box::new(inner))))
+        } else {
+            Ok(self.parse_bond_kind()?.map(BondQuery::Kind))
         }
     }
 
@@ -611,6 +682,7 @@ impl<'a> Parser<'a> {
 
     fn is_smarts_primitive_start(&self, ch: char) -> bool {
         // Characters that can start a SMARTS atom primitive inside brackets.
+        // `:` introduces an atom-class primitive (`:<n>`, Daylight §3.1).
         ch.is_ascii_alphabetic()
             || ch == '*'
             || ch == '#'
@@ -620,10 +692,20 @@ impl<'a> Parser<'a> {
             || ch == '$'
             || ch == '@'
             || ch == '!'
+            || ch == ':'
     }
 
     fn parse_atom_primitive(&mut self) -> Result<AtomPrimitive, SmilesError> {
         match self.scanner.peek() {
+            Some(':') => {
+                // Atom class / map number — Daylight `[atom:<n>]`.
+                self.scanner.advance();
+                let digits = self.scanner.eat_digits();
+                let n: u16 = digits.parse().map_err(|_| {
+                    self.error(SmilesErrorKind::InvalidQueryPrimitive(format!(":{digits}")))
+                })?;
+                Ok(AtomPrimitive::AtomClass(n))
+            }
             Some('*') => {
                 self.scanner.advance();
                 Ok(AtomPrimitive::Wildcard)
@@ -938,7 +1020,7 @@ mod tests {
         assert_eq!(atom_count(&mol), 2);
         match &mol.components[0].tail[0] {
             ChainElement::BondedAtom { bond, .. } => {
-                assert_eq!(*bond, Some(BondKind::Double));
+                assert_eq!(*bond, Some(BondQuery::Kind(BondKind::Double)));
             }
             _ => panic!("expected BondedAtom"),
         }
@@ -949,7 +1031,7 @@ mod tests {
         let mol = smiles("C#N");
         match &mol.components[0].tail[0] {
             ChainElement::BondedAtom { bond, .. } => {
-                assert_eq!(*bond, Some(BondKind::Triple));
+                assert_eq!(*bond, Some(BondQuery::Kind(BondKind::Triple)));
             }
             _ => panic!("expected BondedAtom"),
         }
@@ -970,7 +1052,7 @@ mod tests {
         assert_eq!(atom_count(&mol), 4);
         match &mol.components[0].tail[1] {
             ChainElement::Branch { bond, .. } => {
-                assert_eq!(*bond, Some(BondKind::Double));
+                assert_eq!(*bond, Some(BondQuery::Kind(BondKind::Double)));
             }
             _ => panic!("expected Branch at tail[1]"),
         }
@@ -1256,7 +1338,7 @@ mod tests {
         let mol = smarts("[C]~[N]");
         match &mol.components[0].tail[0] {
             ChainElement::BondedAtom {
-                bond: Some(BondKind::Any),
+                bond: Some(BondQuery::Kind(BondKind::Any)),
                 ..
             } => {}
             other => panic!("expected Any bond, got {other:?}"),

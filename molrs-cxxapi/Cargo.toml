@@ -1,11 +1,13 @@
 [package]
-name = "molrs-cxxapi"
+name = "molcrafts-molrs-cxxapi"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 description = "CXX bridge for Atomiverse C++ integration"
+repository.workspace = true
+homepage.workspace = true
 
 [lib]
 name = "molrs_cxxapi"

@@ -7,7 +7,7 @@ structures, and evaluating MMFF94 energies.
 import numpy as np
 from molrs import (
     Atomistic,
-    Gen3DOptions,
+    EmbedOptions,
     MMFFTypifier,
     generate_3d,
     extract_coords,
@@ -15,7 +15,7 @@ from molrs import (
 
 
 def build_methane() -> Atomistic:
-    """CH4 — just carbon, hydrogens added by gen3d."""
+    """CH4 — just carbon, hydrogens added by embed."""
     mol = Atomistic()
     mol.add_atom("C")
     return mol
@@ -64,7 +64,7 @@ molecules = {
 }
 
 typifier = MMFFTypifier()
-opts = Gen3DOptions(speed="medium", seed=123)
+opts = EmbedOptions(speed="medium", seed=123)
 
 for name, mol in molecules.items():
     print(f"=== {name} ===")
@@ -74,7 +74,7 @@ for name, mol in molecules.items():
     result = generate_3d(mol, opts)
     mol3d = result.mol
     report = result.report
-    print(f"  gen3d: atoms={mol3d.n_atoms}, energy={report.final_energy:.2f}")
+    print(f"  embed: atoms={mol3d.n_atoms}, energy={report.final_energy:.2f}")
 
     # Evaluate MMFF94
     try:

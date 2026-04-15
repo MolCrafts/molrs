@@ -26,7 +26,7 @@
 //! |------------|---------|
 //! | `core`     | Frame, Block, Box, WasmArray |
 //! | `io`       | File readers/writers (XYZ, PDB, LAMMPS, SMILES, Zarr) |
-//! | `gen3d`    | 3D coordinate generation from molecular graphs |
+//! | `embed`    | 3D coordinate generation from molecular graphs |
 //! | `compute`  | Analysis: RDF, MSD, Cluster, neighbor search |
 //!
 //! # Quick start (JavaScript)
@@ -80,8 +80,8 @@ pub fn wasm_memory() -> Memory {
 mod core;
 #[cfg(feature = "compute")]
 mod compute;
-#[cfg(feature = "gen3d")]
-mod gen3d;
+#[cfg(feature = "embed")]
+mod embed;
 #[cfg(feature = "io")]
 mod io;
 #[cfg(feature = "smiles")]
@@ -91,8 +91,8 @@ mod smiles;
 pub use core::{Block, Box, Frame, Grid, WasmArray};
 #[cfg(feature = "compute")]
 pub use compute::*;
-#[cfg(feature = "gen3d")]
-pub use gen3d::*;
+#[cfg(feature = "embed")]
+pub use embed::*;
 #[cfg(feature = "io")]
 pub use io::*;
 #[cfg(feature = "smiles")]

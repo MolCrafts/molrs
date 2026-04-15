@@ -24,14 +24,10 @@
 //! assert_eq!(h.name(), "Hydrogen");
 //! ```
 //!
-//! ### Packing (moved to `molrs-pack`)
+//! ### Packing
 //!
-//! ```ignore
-//! use molrs_pack::Molpack;
-//!
-//! let mut packer = Molpack::new(None).with_precision(1e-3);
-//! let _ = &mut packer;
-//! ```
+//! Molecular packing (Packmol port) lives in the standalone
+//! [`molcrafts-molpack`](https://crates.io/crates/molcrafts-molpack) crate.
 
 #![allow(missing_docs)]
 #![warn(rustdoc::missing_crate_level_docs)]

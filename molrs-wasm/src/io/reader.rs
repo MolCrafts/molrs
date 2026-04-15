@@ -21,6 +21,7 @@ use molrs_io::lammps_data::LAMMPSDataReader;
 use molrs_io::lammps_dump::LAMMPSDumpReader;
 use molrs_io::pdb::PDBReader;
 use molrs_io::reader::{FrameReader, TrajReader};
+use molrs_io::sdf::SDFReader;
 use molrs_io::xyz::XYZReader;
 use std::io::Cursor;
 use wasm_bindgen::prelude::*;
@@ -415,6 +416,90 @@ impl LammpsDumpReader {
     }
 
     /// Check whether the file contains no frames.
+    #[wasm_bindgen(js_name = isEmpty)]
+    pub fn is_empty(&mut self) -> Result<bool, JsValue> {
+        Ok(self.len()? == 0)
+    }
+}
+
+/// MDL molfile / SDF (V2000 CTAB) reader.
+///
+/// Parses the connection table found in `.mol` files and the record
+/// blocks of `.sdf` files. Coordinates come directly from the file —
+/// no 3D generation is performed. Only V2000 is supported; V3000
+/// records throw on read.
+///
+/// Produces a [`Frame`] with:
+/// - `"atoms"` block: `element` (string), `id` (u32, 1-based),
+///   `x`, `y`, `z` (F, angstrom)
+/// - `"bonds"` block (if present): `atomi`, `atomj` (u32, 0-based),
+///   `order` (u32)
+///
+/// Multi-record SDF files expose each record as a separate frame via
+/// `read(step)`.
+///
+/// # Example (JavaScript)
+///
+/// ```js
+/// const reader = new SDFReader(sdfContent);
+/// const frame = reader.read(0);
+/// const atoms = frame.getBlock("atoms");
+/// const x = atoms.copyColF("x");
+/// ```
+#[wasm_bindgen(js_name = SDFReader)]
+pub struct SdfReader {
+    content: Vec<u8>,
+    cached_len: Option<usize>,
+}
+
+#[wasm_bindgen(js_class = SDFReader)]
+impl SdfReader {
+    /// Create a new SDF reader from a string containing the file content.
+    #[wasm_bindgen(constructor)]
+    pub fn new(content: &str) -> SdfReader {
+        SdfReader {
+            content: content.as_bytes().to_vec(),
+            cached_len: None,
+        }
+    }
+
+    /// Read the frame (SDF record) at the given step index.
+    #[wasm_bindgen]
+    pub fn read(&mut self, step: usize) -> Result<Option<Frame>, JsValue> {
+        let mut reader = SDFReader::new(Cursor::new(self.content.as_slice()));
+        for current in 0..=step {
+            let rs_frame = reader
+                .read_frame()
+                .map_err(|e| JsValue::from_str(&format!("SDF read error: {}", e)))?;
+            match rs_frame {
+                Some(frame) if current == step => return Ok(Some(Frame::from_rs(frame)?)),
+                Some(_) => continue, // drop records before the target
+                None => return Ok(None),
+            }
+        }
+        Ok(None)
+    }
+
+    /// Return the total number of records in the SDF file.
+    #[wasm_bindgen]
+    pub fn len(&mut self) -> Result<usize, JsValue> {
+        if let Some(n) = self.cached_len {
+            return Ok(n);
+        }
+        let mut reader = SDFReader::new(Cursor::new(self.content.as_slice()));
+        let mut count = 0usize;
+        while reader
+            .read_frame()
+            .map_err(|e| JsValue::from_str(&format!("SDF len error: {}", e)))?
+            .is_some()
+        {
+            count += 1;
+        }
+        self.cached_len = Some(count);
+        Ok(count)
+    }
+
+    /// Check whether the file contains no records.
     #[wasm_bindgen(js_name = isEmpty)]
     pub fn is_empty(&mut self) -> Result<bool, JsValue> {
         Ok(self.len()? == 0)

@@ -6,7 +6,7 @@
 //! Downstream users add one dependency and opt into sub-systems via features:
 //!
 //! ```toml
-//! molcrafts-molrs = { version = "0.0.8", features = ["io", "smiles", "pack"] }
+//! molcrafts-molrs = { version = "0.0.8", features = ["io", "smiles"] }
 //! ```
 //!
 //! Then:
@@ -15,7 +15,6 @@
 //! use molrs::Frame;              // from molrs-core
 //! use molrs::io::read_xyz;       // feature = "io"
 //! use molrs::smiles::parse;      // feature = "smiles"
-//! use molrs::pack::Molpack;      // feature = "pack"
 //! ```
 //!
 //! ## Features
@@ -24,11 +23,16 @@
 //! - `compute`  — trajectory analysis (RDF, MSD, clustering, tensors)
 //! - `smiles`   — SMILES parser
 //! - `ff`       — force fields (MMFF94, PME, typifier)
-//! - `gen3d`    — 3D coordinate generation
-//! - `pack`     — molecular packing (Packmol port)
+//! - `embed`    — 3D coordinate generation
 //! - `full`     — everything above
 //!
 //! Core flags forwarded to `molrs-core`: `rayon`, `zarr`, `filesystem`, `blas`.
+//!
+//! ## Molecular packing
+//!
+//! The Packmol port lives in the standalone `molcrafts-molpack` crate
+//! (<https://github.com/MolCrafts/molpack>); add it as a separate dependency
+//! when needed.
 
 #![warn(rustdoc::missing_crate_level_docs)]
 
@@ -47,8 +51,5 @@ pub use molrs_smiles as smiles;
 #[cfg(feature = "ff")]
 pub use molrs_ff as ff;
 
-#[cfg(feature = "gen3d")]
-pub use molrs_gen3d as gen3d;
-
-#[cfg(feature = "pack")]
-pub use molrs_pack as pack;
+#[cfg(feature = "embed")]
+pub use molrs_embed as embed;

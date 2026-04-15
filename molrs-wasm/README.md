@@ -99,7 +99,7 @@ needed.
 
 ### Variants (optional)
 
-Default build compiles all subsystems (`smiles`, `io`, `compute`, `gen3d`). To
+Default build compiles all subsystems (`smiles`, `io`, `compute`, `embed`). To
 build a smaller wasm containing only a subset, use Cargo features:
 
 ```bash

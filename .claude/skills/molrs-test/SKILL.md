@@ -13,7 +13,7 @@ molrs-<crate>/src/**/tests.rs  # Unit tests (inline #[cfg(test)] modules)
 molrs-<crate>/benches/       # Criterion benchmarks
 ```
 
-Each workspace crate (`molrs-core`, `molrs-io`, `molrs-compute`, `molrs-smiles`, `molrs-ff`, `molrs-gen3d`, `molrs-pack`, `molrs-cxxapi`) follows the same pattern.
+Each workspace crate (`molrs-core`, `molrs-io`, `molrs-compute`, `molrs-smiles`, `molrs-ff`, `molrs-embed`, `molrs-pack`, `molrs-cxxapi`) follows the same pattern.
 
 ### Running Tests
 

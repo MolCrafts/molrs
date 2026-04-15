@@ -8,7 +8,7 @@ use molrs::region::simbox::BoxError;
 use molrs::types::F;
 use ndarray::{Array1, array};
 use numpy::PyReadonlyArray1;
-use pyo3::exceptions::{PyIOError, PyRuntimeError, PyValueError};
+use pyo3::exceptions::{PyIOError, PyValueError};
 use pyo3::prelude::*;
 
 /// Numpy float type matching the `F` alias — always `f64`.
@@ -58,11 +58,6 @@ pub fn box_error_to_pyerr(e: BoxError) -> PyErr {
 /// Convert a [`std::io::Error`] to a Python `IOError`.
 pub fn io_error_to_pyerr(e: std::io::Error) -> PyErr {
     PyIOError::new_err(e.to_string())
-}
-
-/// Convert a [`molrs_pack::PackError`] to a Python `RuntimeError`.
-pub fn pack_error_to_pyerr(e: molrs_pack::PackError) -> PyErr {
-    PyRuntimeError::new_err(e.to_string())
 }
 
 /// Convert a [`molrs::MolRsError`] to a Python `ValueError`.

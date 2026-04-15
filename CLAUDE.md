@@ -52,7 +52,7 @@ cargo bench -p molrs-core
 
 ## Workspace Crates & Dependency Flow
 
-8 active workspace members. `molrs-core` is the foundation; everything else depends on it
+7 active workspace members. `molrs-core` is the foundation; everything else depends on it
 (plus, in a few cases, on each other as listed):
 
 ```
@@ -60,8 +60,7 @@ molrs-core ── molrs-io ── molrs-cxxapi
             ── molrs-compute
             ── molrs-smiles
             ── molrs-ff (may also depend on molrs-io for parameter files)
-            ── molrs-gen3d
-            ── molrs-pack
+            ── molrs-embed
 ```
 
 | Crate | Purpose |
@@ -71,9 +70,12 @@ molrs-core ── molrs-io ── molrs-cxxapi
 | `molrs-compute` | Trajectory analysis: RDF, MSD, clustering, gyration/inertia tensors |
 | `molrs-smiles` | SMILES parser → MolGraph |
 | `molrs-ff` | Force fields, potentials (KernelRegistry), atom typifier |
-| `molrs-gen3d` | 3D coordinate generation: distance geometry, fragment assembly, optimizer, rotor search |
-| `molrs-pack` | Molecular packing: faithful Packmol port, GENCAN optimizer, geometric constraints |
+| `molrs-embed` | 3D coordinate generation: distance geometry, fragment assembly, optimizer, rotor search |
 | `molrs-cxxapi` | CXX bridge to Atomiverse C++ (zero-copy I/O via `FrameView`) |
+
+Molecular packing (Packmol port) used to live here as `molrs-pack`; it now lives in the
+standalone repo `MolCrafts/molpack` (crates.io: `molcrafts-molpack`, PyPI:
+`molcrafts-molpack`). Add it as a separate dependency when needed.
 
 Dirs `molrs-ffi/`, `molrs-wasm/`, `molrs-capi/`, `molrs-python/` exist on disk but are NOT
 workspace members; treat as inactive / future work.
@@ -120,11 +122,9 @@ Graph-based molecular structure with atoms, bonds, stereochemistry, ring detecti
 | `NbListAlgo` | `molrs-core::neighbors` | Neighbor search | `LinkCell` (O(N), default), `BruteForce` (O(N²), testing), `NeighborQuery` (high-level wrapper) |
 | `Potential` | `molrs-ff::potential` | Energy/force evaluation | Bond harmonic, MMFF bond/angle/torsion/oop/vdw/ele, LJ/cut, PME |
 | `Typifier` | `molrs-ff::typifier` | MolGraph → typed Frame | MMFFTypifier |
-| `Restraint` | `molrs-pack::restraint` | Packing soft-penalty (Packmol convention) | 15 concrete pub structs: `InsideBox`/`InsideCube`/`InsideSphere`/`InsideEllipsoid`/`InsideCylinder` + `Outside*` variants + `AbovePlane`/`BelowPlane` + `AboveGaussian`/`BelowGaussian` (suffix `…Restraint`); user types `impl Restraint` sit in the same type slot |
-| `Region` | `molrs-pack::region` | Geometric predicate + combinators | `InsideBoxRegion`/`InsideSphereRegion`/`OutsideSphereRegion` + `And`/`Or`/`Not` combinators; `FromRegion<R>` lifts any Region to a `Restraint` via quadratic exterior penalty |
-| `Relaxer` | `molrs-pack::relaxer` | Reference-geometry modification between GENCAN calls | `TorsionMcRelaxer` (`Hook` alias retained for one cycle) |
-| `Handler` | `molrs-pack::handler` | Observer callbacks (on_start / on_step / on_phase_start / on_phase_end / on_inner_iter / on_finish) | `NullHandler`, `ProgressHandler`, `EarlyStopHandler`, `XYZHandler` |
-| `Objective` | `molrs-pack::objective` | GENCAN's view of the packing problem (abstraction over `PackContext::evaluate`) | `PackContext` |
+
+Pack-related traits (`Restraint`, `Region`, `Relaxer`, `Handler`, `Objective`) now live
+in the standalone `molcrafts-molpack` crate.
 
 ## Key Subsystems
 
@@ -136,19 +136,17 @@ Graph-based molecular structure with atoms, bonds, stereochemistry, ring detecti
 
 `SimBox::free(points, padding)` creates a non-periodic bounding box from atom positions. `NeighborQuery::free(points, cutoff)` auto-generates this box when no SimBox is present. RDF normalization (`molrs-compute`) falls back to bounding-box volume for free-boundary systems.
 
-### Gen3D Pipeline (molrs-gen3d/)
+### Embed Pipeline (molrs-embed/)
 
-Multi-stage 3D coordinate generation: distance geometry → fragment assembly → coarse minimization → rotor search → final minimization → stereo guards. Public API: `generate_3d(mol, opts) -> Result<(MolGraph, Gen3DReport)>`.
+Multi-stage 3D coordinate generation: distance geometry → fragment assembly → coarse minimization → rotor search → final minimization → stereo guards. Public API: `generate_3d(mol, opts) -> Result<(MolGraph, EmbedReport)>`.
 
-### Packing (molrs-pack/)
+### Packing
 
-Faithful Packmol port with GENCAN optimizer. Three phases: (0) per-type sequential packing, (1) geometric pre-fit, (2) main loop with inflated tolerance + `movebad` heuristic. See `.claude/skills/learn-packmol/SKILL.md` for canonical hyperparameters and the Packmol-alignment workflow.
-
-**Extension points** follow direction 3 (spec `§0 bullet 9`): public trait + N concrete pub structs with own semantically-named fields; user types `impl X` identically. No `Builtin*` wrappers, no tagged-union enum in the public API, no builder pattern. Applies uniformly to `Restraint` / `Region` / `Relaxer` / `Handler`.
-
-**Restraint vs Constraint**: Packmol's "constraints" (InsideBox, Sphere, Plane, Ellipsoid, Cylinder, Gaussian) are implemented as `scale * max(0, d)` / `scale2 * max(0, d)²` soft penalties — honest name is `Restraint`. No hard-constraint (Lagrange / SHAKE / RATTLE) machinery exists in molrs-pack; the `Constraint` trait is reserved for future work.
-
-**Scope equivalence law** (spec `§4`): `Molpack::add_restraint(r)` broadcasts to every target, semantically equivalent to `for t in targets { t.with_restraint(r.clone()) }` — no separate global-storage path in `PackContext`.
+Lives in the standalone `MolCrafts/molpack` repository (crate
+`molcrafts-molpack`, Python package `molcrafts-molpack` exposing `import
+molpack`). Depends on `molcrafts-molrs-core` + `molcrafts-molrs-io`. See that
+repo's docs (and `.claude/skills/learn-packmol/SKILL.md` here for the
+historical Packmol-alignment workflow that still applies).
 
 ### FFI Layer (molrs-cxxapi/)
 
@@ -156,11 +154,11 @@ CXX bridge to Atomiverse C++. Zero-copy I/O via `FrameView` (borrowed) into exis
 
 ## Critical Conventions
 
-- **Restraint gradients**: `Restraint::fg` accumulates the TRUE gradient (∂penalty/∂x) INTO `g` with `+=` (never overwrite). Optimizer negates for descent.
-- **Two-scale contract**: linear penalties (box / cube / plane — Packmol kinds 2/3/6/7/10/11) consume `scale`; quadratic penalties (sphere / ellipsoid / cylinder / gaussian — kinds 4/5/8/9/12/13/14/15) consume `scale2`. Each `impl Restraint` picks one internally.
-- **Rotation convention**: LEFT multiplication `R_new = δR * R_old` for `apply_scaled_step`. RIGHT mult causes gradient/step mismatch.
 - **Coordinate format**: Potentials use flat `[x0,y0,z0, x1,y1,z1, ...]` vectors (3N elements), not Nx3 matrices.
 - **`Cell<f64>` is NOT Sync**: Use `AtomicU64` with `f64::to_bits()`/`f64::from_bits()` for interior mutability in Sync contexts.
+
+Packmol-port specific conventions (gradient sign, two-scale contract, LEFT
+rotation multiplication) now live in the molpack repo's CLAUDE.md.
 
 ## Development Skills & Agents
 

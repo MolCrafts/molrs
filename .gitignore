@@ -35,12 +35,14 @@ __pycache__/
 .agents/
 AGENTS.md
 
+# Claude Code scheduler lock
+.claude/scheduled_tasks.lock
+
 # test data
 tests/tests-data
 
 # Example output files
 *.xyz
-!molrs-pack/examples/*/input*.xyz
 !molrs-python/tests/data/*.xyz
 !molrs-python/tests/data/*.pdb
 
