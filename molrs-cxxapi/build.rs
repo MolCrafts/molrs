@@ -6,8 +6,7 @@ use std::path::PathBuf;
 /// matching Atomiverse's `ATV_REAL`.  Only bulk-data ingestion
 /// (coordinates, per-atom fields, distances) uses `f64`.
 /// Scalars cross as `f64` always.
-const CXX_BRIDGE_SCHEMA: &str = r#"
-use super::*;
+const CXX_BRIDGE_SCHEMA: &str = r#"use super::*;
 
 #[cxx::bridge(namespace = "molrs")]
 pub mod ffi {
@@ -16,8 +15,14 @@ pub mod ffi {
 
         // ── MolRec container ─────────────────────────────────────
         fn molrec_new() -> Box<AtvMolRec>;
-        fn molrec_set_geometry(rec: &mut AtvMolRec, type_id: &[i32],
-            x: &[f64], y: &[f64], z: &[f64], box_mat: &[f64]);
+        fn molrec_set_geometry(
+            rec: &mut AtvMolRec,
+            type_id: &[i32],
+            x: &[f64],
+            y: &[f64],
+            z: &[f64],
+            box_mat: &[f64],
+        );
         fn molrec_add_field(rec: &mut AtvMolRec, name: &str, values: &[f64]);
         fn molrec_add_scalar(rec: &mut AtvMolRec, name: &str, value: f64);
         fn molrec_add_string(rec: &mut AtvMolRec, name: &str, value: &str);
@@ -30,8 +35,14 @@ pub mod ffi {
         fn xyz_write_ext(path: &str, rec: &AtvMolRec);
         fn xyz_append(path: &str, rec: &AtvMolRec);
         fn xyz_append_ext(path: &str, rec: &AtvMolRec);
-        fn trajectory_append(path: &str, type_id: &[i32],
-            x: &[f64], y: &[f64], z: &[f64], step: i32);
+        fn trajectory_append(
+            path: &str,
+            type_id: &[i32],
+            x: &[f64],
+            y: &[f64],
+            z: &[f64],
+            step: i32,
+        );
         fn molrec_write_zarr(path: &str, rec: &AtvMolRec);
         fn molrec_print_summary(rec: &AtvMolRec);
 
