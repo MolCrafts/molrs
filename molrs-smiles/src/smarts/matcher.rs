@@ -1,54 +1,326 @@
 //! Substructure matching: run a compiled [`SmartsPattern`] against a target.
 //!
-//! The matcher finds all subgraph isomorphisms from the pattern's query atoms
-//! onto a target [`MolGraph`](molrs::molgraph::MolGraph). Each match is the
-//! ordered list of target atom indices that correspond to the pattern atoms.
+//! The matcher finds every subgraph isomorphism from a compiled pattern onto
+//! a target [`MolGraph`]. Each match is the ordered list of target
+//! [`AtomId`] indices that correspond to the pattern atoms in declaration
+//! order, exposed to the caller as a `Vec<usize>` of target atom indexes.
 //!
-//! The planned implementation wraps `petgraph::algo::isomorphism` with
-//! predicate-evaluation closures that honor SMARTS semantics (aromaticity,
-//! ring membership, logical query operators, recursive `$(...)` patterns).
+//! # Algorithm
 //!
-//! # Status
+//! This is a thin wrapper over
+//! [`petgraph::algo::subgraph_isomorphisms_iter`], which implements VF2
+//! with caller-supplied node and edge matching closures. We build a
+//! disposable `UnGraph<AtomId, f64>` for the target on every call so we
+//! can hand both graphs to VF2 and then translate node indices back to
+//! [`AtomId`] via a side table. Building the target graph is linear in
+//! `n_atoms + n_bonds`; if this ever becomes a bottleneck the whole
+//! construction can be cached per-target without changing the public API.
 //!
-//! The public API is in place; the implementation lands in session 2 of the
-//! ETKDGv3 port.
+//! Recursive SMARTS (`[$(inner)]`) is evaluated out-of-band after VF2
+//! reports a candidate mapping: for every pattern atom carrying a recursive
+//! primitive, the matcher re-runs the inner pattern with the candidate
+//! target atom as the anchor and requires it to match. This keeps the main
+//! VF2 loop's predicate closures pure and avoids nested recursion through
+//! petgraph.
 
-use molrs::molgraph::MolGraph;
+use molrs::molgraph::{AtomId, MolGraph};
+use petgraph::graph::UnGraph;
 
-use crate::smarts::pattern::{SmartsError, SmartsPattern};
+use crate::chem::ast::{AtomPrimitive, AtomQuery, BondQuery, SmilesIR};
+
+use super::pattern::{ComponentGraph, SmartsError, SmartsPattern};
+use super::predicate::{BondEdge, TargetCtx, eval_atom_query, eval_bond_query};
 
 /// A single substructure match: an ordered list of target-atom indices, one
-/// per query atom in the compiled pattern. The order matches the pattern's
-/// atom declaration order, so callers can index directly (e.g. the torsion
-/// library's `i-j-k-l` quartets map to `m.0[0..4]`).
+/// per query atom in the compiled pattern's first component (multi-component
+/// patterns return one entry per atom in declaration order, concatenated by
+/// component).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Match(pub Vec<usize>);
 
 /// Run substructure matching against a target molecule.
 ///
 /// Kept as a trait (rather than an inherent method on [`SmartsPattern`]) so
-/// that specialized matchers (e.g. a bond-local matcher used by the ETKDG
-/// torsion-preference lookup) can share the same entry point while providing
-/// different internal strategies. The `Send + Sync` bound is mandatory — the
-/// ETKDG multi-conformer pipeline shares compiled patterns across rayon
-/// workers.
+/// that specialized matchers can share the same entry point while providing
+/// different internal strategies. The `Send + Sync` bound is mandatory —
+/// compiled patterns are shared across rayon-parallel passes.
 pub trait SubstructureMatcher: Send + Sync {
     /// Return every subgraph isomorphism of `self` onto `target`.
     ///
-    /// Returns an empty vector if no matches are found. Returns an error only
-    /// if the pattern could not be evaluated (e.g. a recursive SMARTS failed
-    /// to resolve).
+    /// Returns an empty vector if no matches are found. Returns an error
+    /// only if the pattern could not be evaluated (e.g. a recursive SMARTS
+    /// failed to compile).
     fn find_all(&self, target: &MolGraph) -> Result<Vec<Match>, SmartsError>;
 
-    /// Return the first match, or `None` if the pattern does not occur in the
-    /// target. Default impl calls [`Self::find_all`] and takes the head.
+    /// Return the first match, or `None` if the pattern does not occur.
     fn find_first(&self, target: &MolGraph) -> Result<Option<Match>, SmartsError> {
         Ok(self.find_all(target)?.into_iter().next())
     }
 }
 
 impl SubstructureMatcher for SmartsPattern {
-    fn find_all(&self, _target: &MolGraph) -> Result<Vec<Match>, SmartsError> {
-        Err(SmartsError::NotYetImplemented)
+    fn find_all(&self, target: &MolGraph) -> Result<Vec<Match>, SmartsError> {
+        if self.components.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let target_graph = build_target_graph(target);
+        let ctx = TargetCtx::new(target);
+
+        if self.components.len() == 1 {
+            return match_component(&self.components[0], &target_graph, &ctx);
+        }
+
+        // Multi-component SMARTS: compute every component's match set and
+        // form the cartesian product, skipping combinations that reuse
+        // target atoms across components (Daylight requires disjoint maps).
+        let per_component: Vec<Vec<Match>> = self
+            .components
+            .iter()
+            .map(|c| match_component(c, &target_graph, &ctx))
+            .collect::<Result<_, _>>()?;
+
+        Ok(cartesian_disjoint_product(&per_component))
     }
 }
+
+// ---------------------------------------------------------------------------
+// Per-component matching
+// ---------------------------------------------------------------------------
+
+fn match_component(
+    component: &ComponentGraph,
+    target_graph: &TargetGraph<'_>,
+    ctx: &TargetCtx<'_>,
+) -> Result<Vec<Match>, SmartsError> {
+    // Precompile any recursive primitives referenced by the component so
+    // predicate-time evaluation is allocation-free.
+    let recursives = collect_recursive_patterns(&component.graph)?;
+
+    let mut node_match = |q: &AtomQuery, node: &AtomNodeRef| -> bool {
+        if !eval_atom_query(q, node.id, ctx) {
+            return false;
+        }
+        // Recursive-SMARTS tail check: for every `$(...)` primitive in the
+        // query, the candidate target atom must also satisfy an
+        // isomorphism of the inner pattern anchored on itself.
+        recursive_roots(q).into_iter().all(|inner_ir| {
+            let Some(inner_pat) = recursives
+                .iter()
+                .find(|(k, _)| std::ptr::eq(*k, inner_ir))
+                .map(|(_, v)| v)
+            else {
+                return false;
+            };
+            recursive_match_anchored(inner_pat, target_graph, ctx, node.id)
+        })
+    };
+
+    let mut edge_match = eval_bond_query;
+
+    let pattern_ref = &component.graph;
+    let target_ref = &target_graph.graph;
+    let iter = petgraph::algo::subgraph_isomorphisms_iter(
+        &pattern_ref,
+        &target_ref,
+        &mut node_match,
+        &mut edge_match,
+    );
+
+    let Some(iter) = iter else {
+        return Ok(Vec::new());
+    };
+
+    let matches: Vec<Match> = iter.map(Match).collect();
+    Ok(matches)
+}
+
+// ---------------------------------------------------------------------------
+// Target-graph construction
+// ---------------------------------------------------------------------------
+
+struct TargetGraph<'m> {
+    graph: UnGraph<AtomNodeRef, BondEdge>,
+    /// Reverse map of `AtomId → petgraph-node-index`, used to anchor
+    /// recursive-SMARTS matches onto the parent candidate atom.
+    id_to_index: std::collections::HashMap<AtomId, usize>,
+    _phantom: std::marker::PhantomData<&'m MolGraph>,
+}
+
+/// The node weight stored in the target `UnGraph`. Carrying the `AtomId`
+/// on every node lets predicate closures evaluate without side tables.
+#[derive(Clone, Copy)]
+struct AtomNodeRef {
+    id: AtomId,
+}
+
+impl<'m> TargetGraph<'m> {
+    fn index_of(&self, id: AtomId) -> usize {
+        self.id_to_index.get(&id).copied().unwrap_or(usize::MAX)
+    }
+}
+
+fn build_target_graph(mol: &MolGraph) -> TargetGraph<'_> {
+    let mut graph = UnGraph::<AtomNodeRef, BondEdge>::with_capacity(mol.n_atoms(), mol.n_bonds());
+    let mut id_to_node = std::collections::HashMap::new();
+    let mut id_to_index: std::collections::HashMap<AtomId, usize> =
+        std::collections::HashMap::new();
+    let rings = molrs::rings::find_rings(mol);
+
+    for (idx, (id, _atom)) in mol.atoms().enumerate() {
+        let ni = graph.add_node(AtomNodeRef { id });
+        id_to_node.insert(id, ni);
+        id_to_index.insert(id, idx);
+    }
+
+    for (bond_id, bond) in mol.bonds() {
+        let [a, b] = bond.atoms;
+        let stored_order = bond
+            .props
+            .get("order")
+            .and_then(|v| match v {
+                molrs::molgraph::PropValue::F64(f) => Some(*f),
+                _ => None,
+            })
+            .unwrap_or(1.0);
+        // The SMILES → Atomistic pipeline does not attach an explicit order
+        // to implicit aromatic bonds (e.g. `c1ccccc1`); rescue the aromatic
+        // semantics here by upgrading single-order bonds between two aromatic
+        // atoms to order 1.5 for matcher purposes.
+        let both_aromatic = [a, b].iter().all(|id| {
+            mol.get_atom(*id)
+                .ok()
+                .and_then(|atom| atom.get_f64("aromatic"))
+                .map(|v| v == 1.0)
+                .unwrap_or(false)
+        });
+        let order = if both_aromatic && (stored_order - 1.0).abs() < 1e-6 {
+            1.5
+        } else {
+            stored_order
+        };
+        let in_ring = rings.is_bond_in_ring(bond_id);
+        if let (Some(&ai), Some(&bi)) = (id_to_node.get(&a), id_to_node.get(&b)) {
+            graph.add_edge(ai, bi, BondEdge { order, in_ring });
+        }
+    }
+
+    TargetGraph {
+        graph,
+        id_to_index,
+        _phantom: std::marker::PhantomData,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Recursive SMARTS
+// ---------------------------------------------------------------------------
+
+/// Compile every distinct inner SMARTS pattern referenced by a component's
+/// recursive primitives. Identity is by pointer — each `$(...)` node in the
+/// IR is a distinct `SmilesIR` allocation, so pointer equality is both
+/// sufficient and cheaper than structural equality.
+fn collect_recursive_patterns<'g>(
+    component: &'g UnGraph<AtomQuery, BondQuery>,
+) -> Result<Vec<(&'g SmilesIR, SmartsPattern)>, SmartsError> {
+    let mut out: Vec<(&'g SmilesIR, SmartsPattern)> = Vec::new();
+    for node in component.node_weights() {
+        for inner in recursive_roots(node).into_iter() {
+            if out.iter().any(|(k, _)| std::ptr::eq(*k, inner)) {
+                continue;
+            }
+            let inner_pat = compile_from_ir(inner.clone())?;
+            out.push((inner, inner_pat));
+        }
+    }
+    Ok(out)
+}
+
+fn compile_from_ir(ir: SmilesIR) -> Result<SmartsPattern, SmartsError> {
+    // Round-trip via the public compile() would re-parse a serialized form
+    // we don't emit. Instead reuse the component compiler on the IR we
+    // already have.
+    //
+    // A small shim: expose `pattern::compile_component` via a free fn.
+    use super::pattern::compile_component_for_ir;
+
+    let components = ir
+        .components
+        .iter()
+        .map(compile_component_for_ir)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(SmartsPattern::from_components(components))
+}
+
+/// Walk an `AtomQuery` tree yielding every inner `SmilesIR` that appears in
+/// a `Recursive(...)` primitive. This is used to precompile recursives.
+fn recursive_roots(query: &AtomQuery) -> Vec<&SmilesIR> {
+    let mut out: Vec<&SmilesIR> = Vec::new();
+    collect_recursive(query, &mut out);
+    out
+}
+
+fn collect_recursive<'a>(q: &'a AtomQuery, out: &mut Vec<&'a SmilesIR>) {
+    match q {
+        AtomQuery::Primitive(AtomPrimitive::Recursive(ir)) => out.push(ir.as_ref()),
+        AtomQuery::Primitive(_) => {}
+        AtomQuery::Not(inner) => collect_recursive(inner, out),
+        AtomQuery::And(parts) | AtomQuery::Or(parts) | AtomQuery::LowAnd(parts) => {
+            for p in parts {
+                collect_recursive(p, out);
+            }
+        }
+    }
+}
+
+fn recursive_match_anchored(
+    inner: &SmartsPattern,
+    target_graph: &TargetGraph<'_>,
+    ctx: &TargetCtx<'_>,
+    anchor: AtomId,
+) -> bool {
+    // Run the inner pattern and check whether any match starts at `anchor`.
+    // Inner patterns are assumed single-component; multi-component recursion
+    // is not part of Daylight's spec.
+    let matches = match match_component(&inner.components[0], target_graph, ctx) {
+        Ok(m) => m,
+        Err(_) => return false,
+    };
+    let anchor_idx = target_graph.index_of(anchor);
+    matches.iter().any(|m| m.0.first() == Some(&anchor_idx))
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+fn cartesian_disjoint_product(lists: &[Vec<Match>]) -> Vec<Match> {
+    if lists.iter().any(|v| v.is_empty()) {
+        return Vec::new();
+    }
+    let mut out: Vec<Match> = vec![Match(Vec::new())];
+    for list in lists {
+        let mut next = Vec::new();
+        for acc in &out {
+            for m in list {
+                if m.0.iter().any(|i| acc.0.contains(i)) {
+                    continue;
+                }
+                let mut merged = acc.0.clone();
+                merged.extend_from_slice(&m.0);
+                next.push(Match(merged));
+            }
+        }
+        out = next;
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
+// Debug-only: enforce that SubstructureMatcher is object-safe. A build-time
+// error here means `Box<dyn SubstructureMatcher>` lost dyn-compat — see
+// matcher.rs module doc for the rationale.
+// ---------------------------------------------------------------------------
+
+#[allow(dead_code)]
+fn _assert_dyn_matcher(_: &dyn SubstructureMatcher) {}

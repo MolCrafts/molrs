@@ -62,6 +62,24 @@ struct PendingRing {
     span: Span,
 }
 
+/// Reduce a SMARTS-style [`BondQuery`] back to a single [`BondKind`]. The
+/// SMILES → atomistic pipeline cannot represent SMARTS logical bond
+/// operators (there's no single concrete order for `!=` or `-,=`), so a
+/// query that isn't a plain `Kind(_)` is rejected with a clean error.
+fn bond_query_to_kind(q: Option<&BondQuery>) -> Result<Option<BondKind>, SmilesError> {
+    match q {
+        None => Ok(None),
+        Some(BondQuery::Kind(k)) => Ok(Some(*k)),
+        Some(_) => Err(SmilesError::new(
+            SmilesErrorKind::InvalidQueryPrimitive(
+                "SMARTS bond query cannot be atomized".to_owned(),
+            ),
+            crate::chem::ast::Span::new(0, 0),
+            "",
+        )),
+    }
+}
+
 struct Builder<'a> {
     mol: Atomistic,
     /// Maps ring numbers to pending (unmatched) ring-closure openers.
@@ -100,16 +118,21 @@ impl<'a> Builder<'a> {
             match elem {
                 ChainElement::BondedAtom { bond, atom } => {
                     let atom_id = self.add_atom_node(atom)?;
-                    self.add_bond(current, atom_id, *bond)?;
+                    self.add_bond(current, atom_id, bond_query_to_kind(bond.as_ref())?)?;
                     current = atom_id;
                 }
                 ChainElement::Branch { bond, chain, .. } => {
                     // Branch: build sub-chain rooted at `current`.
-                    self.build_chain(chain, Some((current, *bond)))?;
+                    self.build_chain(chain, Some((current, bond_query_to_kind(bond.as_ref())?)))?;
                     // `current` does NOT change — branches don't advance the main chain.
                 }
                 ChainElement::RingClosure { bond, rnum, span } => {
-                    self.handle_ring_closure(current, *rnum, *bond, *span)?;
+                    self.handle_ring_closure(
+                        current,
+                        *rnum,
+                        bond_query_to_kind(bond.as_ref())?,
+                        *span,
+                    )?;
                 }
             }
         }

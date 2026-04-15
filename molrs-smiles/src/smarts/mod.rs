@@ -11,13 +11,15 @@
 //!
 //! # Status
 //!
-//! The parser is functional (see [`parse_smarts`]). The subgraph matcher
-//! ([`SmartsPattern::find_all`]) is under active development — the public API
-//! is stable but the implementation is in progress. Callers currently receive
-//! [`SmartsError::NotYetImplemented`] for matcher operations.
+//! Core matcher is implemented: atom / bond primitives, logical operators
+//! (`!`, `&`, `,`, `;`), ring primitives (`R`, `r`), recursive SMARTS
+//! (`[$(...)]`). Stereochemistry (chirality, directional bonds) returns
+//! `false` from predicates until the stereo-aware pipeline lands; see
+//! [`predicate`] for exact semantics.
 
 pub mod matcher;
 pub mod pattern;
+pub(crate) mod predicate;
 pub mod validate;
 
 pub use crate::parser::parse_smarts;

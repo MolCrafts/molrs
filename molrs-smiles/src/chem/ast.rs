@@ -58,22 +58,27 @@ pub struct Chain {
 }
 
 /// An element following the head atom in a chain.
+///
+/// Bond slots are [`BondQuery`] rather than plain [`BondKind`] so the AST
+/// can faithfully represent SMARTS bond operators (`!`, `,`, `&`) alongside
+/// simple SMILES bond kinds. For SMILES inputs the parser always emits
+/// `Some(BondQuery::Kind(_))` or `None`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChainElement {
     /// An atom bonded to the previous atom.
     BondedAtom {
-        bond: Option<BondKind>,
+        bond: Option<BondQuery>,
         atom: AtomNode,
     },
     /// A parenthesised branch: `(` bond? chain `)`.
     Branch {
-        bond: Option<BondKind>,
+        bond: Option<BondQuery>,
         chain: Chain,
         span: Span,
     },
     /// A ring-closure digit or `%nn`.
     RingClosure {
-        bond: Option<BondKind>,
+        bond: Option<BondQuery>,
         rnum: u16,
         span: Span,
     },
