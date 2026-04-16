@@ -1,6 +1,6 @@
 from .molrs import (
     # SimBox + neighbors
-    SimBox as Box,
+    Box,
     LinkedCell,
     NeighborQuery,
     NeighborList,
@@ -13,6 +13,7 @@ from .molrs import (
     Observables,
     ScalarObservable,
     VectorObservable,
+    GridObservable,
     # I/O
     read_pdb,
     read_xyz,
@@ -60,6 +61,7 @@ __all__ = [
     "Observables",
     "ScalarObservable",
     "VectorObservable",
+    "GridObservable",
     "Grid",
     "read_pdb",
     "read_xyz",

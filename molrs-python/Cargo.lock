@@ -676,6 +676,7 @@ name = "molcrafts-molrs-smiles"
 version = "0.0.8"
 dependencies = [
  "molcrafts-molrs-core",
+ "petgraph",
 ]
 
 [[package]]
