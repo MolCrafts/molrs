@@ -48,7 +48,9 @@ use molrs_compute::cluster::{Cluster as RsCluster, ClusterResult as RsClusterRes
 use molrs_compute::cluster_centers::ClusterCenters as RsClusterCenters;
 use molrs_compute::gyration_tensor::GyrationTensor as RsGyrationTensor;
 use molrs_compute::inertia_tensor::InertiaTensor as RsInertiaTensor;
+use molrs_compute::kmeans::KMeans as RsKMeans;
 use molrs_compute::msd::{MSD as RsMSD, MSDResult as RsMSDResult};
+use molrs_compute::pca::{Pca2 as RsPca2, PcaResult as RsPcaResult};
 use molrs_compute::radius_of_gyration::RadiusOfGyration as RsRadiusOfGyration;
 use molrs_compute::rdf::{RDF as RsRDF, RDFResult as RsRDFResult};
 use molrs_compute::traits::Compute;
@@ -60,7 +62,7 @@ use molrs::types::F;
 
 use crate::core::frame::Frame;
 use crate::core::types::JsFloatArray;
-use js_sys::Uint32Array;
+use js_sys::{Float64Array, Int32Array, Uint32Array};
 
 // ---------------------------------------------------------------------------
 // Helper: extract Nx3 position matrix from a core Frame
@@ -339,15 +341,16 @@ impl NeighborList {
 
 /// Radial distribution function g(r) analysis.
 ///
-/// Computes the pair correlation function by binning neighbor-pair
-/// distances into a histogram and normalizing by the ideal-gas
-/// density (spherical shell volume normalization).
+/// Bins neighbor-pair distances in `[rMin, rMax]` and normalizes by the
+/// ideal-gas pair density. Defaults follow freud (`rMin = 0`). Periodic
+/// systems take their normalization volume from `frame.simbox`; non-periodic
+/// systems must supply it explicitly via [`computeWithVolume`].
 ///
 /// # Algorithm
 ///
 /// g(r) = n(r) / (rho * V_shell(r) * N_ref)
 ///
-/// where `n(r)` is the pair count in bin `r`, `rho` is the number
+/// where `n(r)` is the pair count in bin `r`, `rho = N/V` is the number
 /// density, and `V_shell(r)` is the shell volume for that bin.
 ///
 /// # Example (JavaScript)
@@ -356,11 +359,14 @@ impl NeighborList {
 /// const lc = new LinkedCell(5.0);
 /// const nlist = lc.build(frame);
 ///
-/// const rdf = new RDF(100, 5.0);
+/// const rdf = new RDF(100, 5.0);          // rMin defaults to 0
 /// const result = rdf.compute(frame, nlist);
 ///
-/// const r  = result.binCenters();  // Float32Array or Float64Array, bin centers in A
-/// const gr = result.rdf();         // Float32Array or Float64Array, g(r) values
+/// // Non-periodic frame: supply the normalization volume.
+/// const resultFree = rdf.computeWithVolume(nlist, volumeA3);
+///
+/// const r  = result.binCenters();
+/// const gr = result.rdf();
 /// ```
 #[wasm_bindgen(js_name = RDF)]
 pub struct RDF {
@@ -369,51 +375,41 @@ pub struct RDF {
 
 #[wasm_bindgen(js_class = RDF)]
 impl RDF {
-    /// Create a new RDF analysis with specified binning.
+    /// Create a new RDF analysis.
     ///
     /// # Arguments
     ///
     /// * `n_bins` - Number of histogram bins
-    /// * `r_max` - Maximum radial distance in angstrom (A). Should
-    ///   match or be less than the neighbor-search cutoff.
+    /// * `r_max` - Upper radial cutoff in angstrom (A). Should be ≤ the
+    ///   neighbor-search cutoff.
+    /// * `r_min` - Lower radial cutoff in angstrom (A). Optional, defaults
+    ///   to 0 (freud convention). Pairs with `d < rMin` or `d == 0` are
+    ///   excluded from the histogram.
     ///
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const rdf = new RDF(100, 5.0); // 100 bins up to 5 A
+    /// const rdf = new RDF(100, 5.0);       // rMin = 0
+    /// const rdf2 = new RDF(100, 5.0, 0.5); // exclude d < 0.5 A
     /// ```
     #[wasm_bindgen(constructor)]
-    pub fn new(n_bins: usize, r_max: F) -> Self {
-        Self {
-            inner: RsRDF::new(n_bins, r_max),
-        }
+    pub fn new(n_bins: usize, r_max: F, r_min: Option<F>) -> Result<RDF, JsValue> {
+        let inner = RsRDF::new(n_bins, r_max, r_min.unwrap_or(0.0))
+            .map_err(|e| JsValue::from_str(&format!("RDF: {e}")))?;
+        Ok(Self { inner })
     }
 
-    /// Compute the RDF from a pre-built neighbor list.
-    ///
-    /// The frame is needed to read the simulation box volume for
-    /// normalization.
+    /// Compute g(r) using the simulation-box volume from `frame.simbox`.
     ///
     /// # Arguments
     ///
-    /// * `frame` - Frame with a `simbox` set (for volume normalization)
+    /// * `frame` - Frame with a `simbox` set (used only for volume)
     /// * `neighbors` - Pre-built [`NeighborList`] from [`LinkedCell`]
-    ///
-    /// # Returns
-    ///
-    /// An [`RDFResult`] containing bin centers, g(r) values, and raw
-    /// pair counts.
     ///
     /// # Errors
     ///
-    /// Throws if the frame cannot be cloned or the computation fails.
-    ///
-    /// # Example (JavaScript)
-    ///
-    /// ```js
-    /// const result = rdf.compute(frame, nlist);
-    /// const gr = result.rdf(); // Float32Array or Float64Array
-    /// ```
+    /// Throws if the frame has no `simbox` — use
+    /// [`computeWithVolume`](Self::compute_with_volume) for non-periodic frames.
     pub fn compute(&self, frame: &Frame, neighbors: &NeighborList) -> Result<RDFResult, JsValue> {
         frame.with_frame(|rs_frame| {
             let result = self
@@ -422,6 +418,33 @@ impl RDF {
                 .map_err(|e| JsValue::from_str(&format!("RDF compute: {e}")))?;
             Ok(RDFResult { inner: result })
         })
+    }
+
+    /// Compute g(r) using an explicit normalization volume (A^3).
+    ///
+    /// Use this for non-periodic systems or to override the box volume.
+    ///
+    /// # Arguments
+    ///
+    /// * `neighbors` - Pre-built [`NeighborList`]
+    /// * `volume` - Normalization volume in A^3 (must be finite and > 0)
+    ///
+    /// # Example (JavaScript)
+    ///
+    /// ```js
+    /// const result = rdf.computeWithVolume(nlist, 1000.0);
+    /// ```
+    #[wasm_bindgen(js_name = computeWithVolume)]
+    pub fn compute_with_volume(
+        &self,
+        neighbors: &NeighborList,
+        volume: F,
+    ) -> Result<RDFResult, JsValue> {
+        let result = self
+            .inner
+            .compute_with_volume(&neighbors.inner, volume)
+            .map_err(|e| JsValue::from_str(&format!("RDF computeWithVolume: {e}")))?;
+        Ok(RDFResult { inner: result })
     }
 }
 
@@ -485,10 +508,16 @@ impl RDFResult {
         self.inner.n_points
     }
 
-    /// Simulation box volume used in the normalization, in A^3.
+    /// Normalization volume in A^3 (from the SimBox or the explicit caller value).
     #[wasm_bindgen(getter)]
     pub fn volume(&self) -> F {
         self.inner.volume
+    }
+
+    /// Inner cutoff in A (lower edge of bin 0).
+    #[wasm_bindgen(getter, js_name = rMin)]
+    pub fn r_min(&self) -> F {
+        self.inner.r_min
     }
 }
 
@@ -828,7 +857,7 @@ mod tests {
         let lc = LinkedCell::new(4.0);
         let nbrs = lc.build(&frame).unwrap();
 
-        let rdf = RDF::new(20, 4.0);
+        let rdf = RDF::new(20, 4.0, None).unwrap();
         let result = rdf.compute(&frame, &nbrs).unwrap();
 
         assert_eq!(result.bin_centers().len(), 20);
@@ -1423,5 +1452,156 @@ impl TopologyRingInfo {
             }
         }
         out
+    }
+}
+
+// ===========================================================================
+// PCA — 2-component Principal Component Analysis
+// ===========================================================================
+
+/// Stateless wrapper for [`molrs_compute::pca::Pca2`].
+///
+/// All configuration lives on [`fitTransform`](Self::fit_transform).
+///
+/// # Example (JavaScript)
+///
+/// ```js
+/// const pca = new WasmPca2();
+/// const result = pca.fitTransform(matrix, nRows, nCols);
+/// const coords   = result.coords();    // Float64Array, length 2 * nRows
+/// const variance = result.variance();  // Float64Array, length 2
+/// ```
+#[wasm_bindgen]
+pub struct WasmPca2;
+
+#[allow(clippy::new_without_default)]
+#[wasm_bindgen(js_class = WasmPca2)]
+impl WasmPca2 {
+    /// Create a new PCA calculator. The struct carries no state — all
+    /// parameters are supplied on [`fitTransform`](Self::fit_transform).
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> WasmPca2 {
+        WasmPca2
+    }
+
+    /// Fit 2-component PCA on a row-major observation matrix and return the
+    /// projected coordinates + per-component variance.
+    ///
+    /// # Arguments
+    ///
+    /// * `matrix` — row-major `n_rows × n_cols` observation matrix.
+    /// * `n_rows` — number of observations.
+    /// * `n_cols` — number of features.
+    ///
+    /// # Errors
+    ///
+    /// Throws if `n_rows < 3`, `n_cols < 2`, the length does not match
+    /// `n_rows * n_cols`, any element is non-finite, or any column has
+    /// zero variance.
+    #[wasm_bindgen(js_name = fitTransform)]
+    pub fn fit_transform(
+        &self,
+        matrix: &[F],
+        n_rows: usize,
+        n_cols: usize,
+    ) -> Result<WasmPcaResult, JsValue> {
+        RsPca2::fit_transform(matrix, n_rows, n_cols)
+            .map(|inner| WasmPcaResult { inner })
+            .map_err(|e| JsValue::from_str(&format!("PCA: {e}")))
+    }
+}
+
+/// Result of a [`WasmPca2::fit_transform`] call.
+///
+/// Each accessor returns an **owned** `Float64Array` (copy of the underlying
+/// `Vec`) so JS is free to let this wrapper be GC'd without dangling views.
+#[wasm_bindgen]
+pub struct WasmPcaResult {
+    inner: RsPcaResult,
+}
+
+#[wasm_bindgen(js_class = WasmPcaResult)]
+impl WasmPcaResult {
+    /// Projected 2D coordinates as a row-major `Float64Array` of length
+    /// `2 * n_rows`. `coords[2 * i + 0]` is the PC1 score for row `i`,
+    /// `coords[2 * i + 1]` is PC2.
+    pub fn coords(&self) -> Float64Array {
+        let out = Float64Array::new_with_length(self.inner.coords.len() as u32);
+        out.copy_from(&self.inner.coords);
+        out
+    }
+
+    /// Explained variance per component as `Float64Array` of length 2.
+    /// `variance[0] >= variance[1]` by construction.
+    pub fn variance(&self) -> Float64Array {
+        let out = Float64Array::new_with_length(2);
+        out.copy_from(&self.inner.variance);
+        out
+    }
+}
+
+// ===========================================================================
+// k-means — with k-means++ init
+// ===========================================================================
+
+/// Wrapper for [`molrs_compute::kmeans::KMeans`].
+///
+/// # Example (JavaScript)
+///
+/// ```js
+/// const km = new WasmKMeans(3, 100, 42);
+/// const labels = km.fit(coords, nRows, 2);   // Int32Array
+/// ```
+#[wasm_bindgen]
+pub struct WasmKMeans {
+    inner: RsKMeans,
+}
+
+#[wasm_bindgen(js_class = WasmKMeans)]
+impl WasmKMeans {
+    /// Create a new k-means configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `k` — number of clusters (>= 1).
+    /// * `max_iter` — maximum Lloyd iterations (>= 1).
+    /// * `seed` — RNG seed for k-means++ initialization. Cast to `u64`
+    ///   internally (JS numbers are `f64`; integers up to 2^53 pass
+    ///   through losslessly).
+    ///
+    /// # Errors
+    ///
+    /// Throws if `k == 0` or `max_iter == 0`.
+    #[wasm_bindgen(constructor)]
+    pub fn new(k: usize, max_iter: usize, seed: f64) -> Result<WasmKMeans, JsValue> {
+        let seed_u64 = seed as u64;
+        RsKMeans::new(k, max_iter, seed_u64)
+            .map(|inner| WasmKMeans { inner })
+            .map_err(|e| JsValue::from_str(&format!("KMeans: {e}")))
+    }
+
+    /// Cluster a row-major `n_rows × n_dims` coordinate matrix.
+    ///
+    /// # Returns
+    ///
+    /// Cluster labels in `0..k` as an owned `Int32Array`, one per row.
+    ///
+    /// # Errors
+    ///
+    /// Throws if `k > n_rows`, `n_dims == 0`, the length does not match
+    /// `n_rows * n_dims`, or any element is non-finite.
+    pub fn fit(
+        &self,
+        coords: &[F],
+        n_rows: usize,
+        n_dims: usize,
+    ) -> Result<Int32Array, JsValue> {
+        let labels = self
+            .inner
+            .fit(coords, n_rows, n_dims)
+            .map_err(|e| JsValue::from_str(&format!("KMeans fit: {e}")))?;
+        let out = Int32Array::new_with_length(labels.len() as u32);
+        out.copy_from(&labels);
+        Ok(out)
     }
 }

@@ -17,7 +17,7 @@ fn bench_compute(c: &mut Criterion) {
     for &n in N_ATOMS {
         let Fixture { frame, nlist, .. } = helpers::fixture(n, 42);
         for &bins in N_BINS {
-            let rdf = RDF::new(bins, helpers::CUTOFF);
+            let rdf = RDF::new(bins, helpers::CUTOFF, 0.0).unwrap();
             let id = BenchmarkId::new(format!("n{n}_bins{bins}"), n);
             group.bench_with_input(id, &(), |b, _| {
                 b.iter(|| {

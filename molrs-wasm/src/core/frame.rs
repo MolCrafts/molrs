@@ -421,6 +421,59 @@ impl Frame {
             .map_err(js_err)
     }
 
+    /// Read a per-frame metadata value as a numeric scalar.
+    ///
+    /// Returns `Some(v)` if the meta key exists AND its string value parses
+    /// as an `f64`. Returns `None` if the key is missing or the value is
+    /// non-numeric (e.g., `config="trans"`).
+    ///
+    /// `frame.meta` is a `HashMap<String, String>`; the ExtXYZ parser stores
+    /// all comment-line values as strings. This accessor reads numeric ones
+    /// via `str::parse::<f64>`.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` — Meta key to look up (e.g., `"energy"`, `"temp"`).
+    ///
+    /// # Example (JavaScript)
+    ///
+    /// ```js
+    /// const energy = frame.getMetaScalar("energy");
+    /// if (energy !== undefined) {
+    ///   console.log("Energy:", energy);
+    /// }
+    /// ```
+    #[wasm_bindgen(js_name = getMetaScalar)]
+    pub fn get_meta_scalar(&self, name: &str) -> Option<f64> {
+        self.store
+            .borrow()
+            .with_frame(self.id, |frame| {
+                frame.meta.get(name).and_then(|s| s.parse::<f64>().ok())
+            })
+            .ok()?
+    }
+
+    /// Return the names of all metadata keys on this frame.
+    ///
+    /// Includes all keys regardless of whether their values are numeric
+    /// or categorical. To filter to numeric keys, iterate and call
+    /// [`getMetaScalar`](Self::get_meta_scalar) on each.
+    ///
+    /// # Example (JavaScript)
+    ///
+    /// ```js
+    /// const names = frame.metaNames(); // e.g. ["energy", "config", "temp"]
+    /// ```
+    #[wasm_bindgen(js_name = metaNames)]
+    pub fn meta_names(&self) -> Vec<String> {
+        self.store
+            .borrow()
+            .with_frame(self.id, |frame| {
+                frame.meta.keys().cloned().collect::<Vec<String>>()
+            })
+            .unwrap_or_default()
+    }
+
     /// Get the simulation box attached to this frame (if any).
     ///
     /// # Returns
@@ -536,5 +589,46 @@ mod tests {
         assert!(frame.clear().is_ok());
         frame.drop_frame().unwrap();
         assert!(frame.clear().is_err());
+    }
+
+    /// Helper: build a wrapped `Frame` with two meta entries mirroring what
+    /// an ExtXYZ parser would emit for `energy=-1.23 config=trans`.
+    fn frame_with_meta() -> Frame {
+        let mut rs_frame = molrs::frame::Frame::new();
+        rs_frame
+            .meta
+            .insert("energy".to_string(), "-1.23".to_string());
+        rs_frame
+            .meta
+            .insert("config".to_string(), "trans".to_string());
+        Frame::from_rs(rs_frame).unwrap()
+    }
+
+    #[wasm_bindgen_test]
+    fn get_meta_scalar_parses_numeric() {
+        let frame = frame_with_meta();
+        let energy = frame.get_meta_scalar("energy").unwrap();
+        assert!((energy - (-1.23)).abs() < 1e-10);
+    }
+
+    #[wasm_bindgen_test]
+    fn get_meta_scalar_none_for_non_numeric() {
+        let frame = frame_with_meta();
+        assert!(frame.get_meta_scalar("config").is_none());
+    }
+
+    #[wasm_bindgen_test]
+    fn get_meta_scalar_none_for_missing_key() {
+        let frame = frame_with_meta();
+        assert!(frame.get_meta_scalar("missing").is_none());
+    }
+
+    #[wasm_bindgen_test]
+    fn meta_names_contains_all_keys() {
+        let frame = frame_with_meta();
+        let names = frame.meta_names();
+        assert_eq!(names.len(), 2);
+        assert!(names.contains(&"energy".to_string()));
+        assert!(names.contains(&"config".to_string()));
     }
 }
