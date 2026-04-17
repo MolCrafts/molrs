@@ -50,19 +50,18 @@ impl RDF {
         if n_bins == 0 {
             return Err(ComputeError::Invalid("RDF: n_bins must be > 0".into()));
         }
-        if !(r_min >= 0.0) {
+        if r_min.is_nan() || r_min < 0.0 {
             return Err(ComputeError::Invalid(format!(
                 "RDF: r_min must be >= 0, got {r_min}"
             )));
         }
-        if !(r_max > r_min) {
+        if r_max.is_nan() || r_max <= r_min {
             return Err(ComputeError::Invalid(format!(
                 "RDF: r_max must be > r_min, got r_max={r_max}, r_min={r_min}"
             )));
         }
         let bin_width = (r_max - r_min) / n_bins as F;
-        let bin_edges =
-            Array1::from_iter((0..=n_bins).map(|i| r_min + i as F * bin_width));
+        let bin_edges = Array1::from_iter((0..=n_bins).map(|i| r_min + i as F * bin_width));
         let bin_centers =
             Array1::from_iter((0..n_bins).map(|i| r_min + (i as F + 0.5) * bin_width));
         Ok(Self {
@@ -358,8 +357,7 @@ mod tests {
         use molrs::neighbors::NeighborQuery;
 
         let box_len: F = 10.0;
-        let simbox =
-            SimBox::cube(box_len, array![0.0 as F, 0.0, 0.0], [true, true, true]).unwrap();
+        let simbox = SimBox::cube(box_len, array![0.0 as F, 0.0, 0.0], [true, true, true]).unwrap();
         let frame = random_frame(200, box_len, 99);
         let pos = positions(&frame);
         let nq = NeighborQuery::new(&simbox, pos.view(), 4.0);

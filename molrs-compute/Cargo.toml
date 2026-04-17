@@ -20,10 +20,10 @@ rayon = ["molrs/rayon"]
 [dependencies]
 molrs = { workspace = true }
 ndarray = "0.17"
+rand = "0.9"
 rustfft = "6"
 
 [dev-dependencies]
-rand = "0.9"
 criterion = "0.5"
 
 [[bench]]
