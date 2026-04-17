@@ -26,6 +26,10 @@ use numpy::{IntoPyArray, PyArray1, PyArray2, PyArrayDyn, PyReadonlyArray1};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
+fn py_value_err<E: std::fmt::Display>(e: E) -> PyErr {
+    PyValueError::new_err(e.to_string())
+}
+
 // ---------------------------------------------------------------------------
 // RDF
 // ---------------------------------------------------------------------------
@@ -91,6 +95,24 @@ impl PyRDFResult {
         self.inner.n_r.clone().into_pyarray(py)
     }
 
+    /// Normalization volume in A^3.
+    #[getter]
+    fn volume(&self) -> NpF {
+        self.inner.volume
+    }
+
+    /// Lower radial cutoff in A (lower edge of bin 0).
+    #[getter]
+    fn r_min(&self) -> NpF {
+        self.inner.r_min
+    }
+
+    /// Number of reference points used for normalization.
+    #[getter]
+    fn n_points(&self) -> usize {
+        self.inner.n_points
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "RDFResult(n_bins={}, n_points={})",
@@ -104,24 +126,23 @@ impl PyRDFResult {
 ///
 /// Exposed to Python as `molrs.RDF`.
 ///
-/// Two APIs are available:
-///
-/// - :meth:`compute` (preferred) -- takes a :class:`NeighborList` and
-///   :class:`Box`.
-/// - :meth:`compute_from_frame` (legacy) -- takes a :class:`Frame` and
-///   :class:`LinkedCell`.
-///
 /// Parameters
 /// ----------
 /// n_bins : int
 ///     Number of histogram bins.
 /// r_max : float
-///     Maximum pair distance to consider (same unit as coordinates).
+///     Upper radial cutoff (same unit as coordinates).
+/// r_min : float, optional
+///     Lower radial cutoff. Defaults to 0 (freud convention). Pairs with
+///     ``d < r_min`` or ``d == 0`` are excluded.
 ///
 /// Examples
 /// --------
 /// >>> rdf_calc = RDF(n_bins=100, r_max=10.0)
+/// >>> # Periodic: volume comes from the box
 /// >>> result = rdf_calc.compute(nlist, box)
+/// >>> # Non-periodic: pass an explicit volume (A^3)
+/// >>> result = rdf_calc.compute_with_volume(nlist, 1000.0)
 /// >>> import matplotlib.pyplot as plt
 /// >>> plt.plot(result.bin_centers, result.rdf)
 #[pyclass(name = "RDF", unsendable)]
@@ -138,28 +159,51 @@ impl PyRDF {
     /// n_bins : int
     ///     Number of histogram bins.
     /// r_max : float
-    ///     Maximum distance.
+    ///     Upper radial cutoff.
+    /// r_min : float, optional
+    ///     Lower radial cutoff (default 0).
     ///
     /// Returns
     /// -------
     /// RDF
     #[new]
-    fn new(n_bins: usize, r_max: NpF) -> Self {
-        Self {
-            inner: RDF::new(n_bins, r_max),
-        }
+    #[pyo3(signature = (n_bins, r_max, r_min = 0.0))]
+    fn new(n_bins: usize, r_max: NpF, r_min: NpF) -> PyResult<Self> {
+        let inner = RDF::new(n_bins, r_max, r_min).map_err(py_value_err)?;
+        Ok(Self { inner })
     }
 
     /// Compute g(r) from a neighbor list and simulation box.
-    ///
-    /// This is the preferred (freud-style) API.
     ///
     /// Parameters
     /// ----------
     /// nlist : NeighborList
     ///     Pre-built neighbor list (from :class:`NeighborQuery`).
     /// box : Box
-    ///     Simulation box (used for ideal-gas normalization).
+    ///     Simulation box. Its volume is used for normalization.
+    ///
+    /// Returns
+    /// -------
+    /// RDFResult
+    #[pyo3(name = "compute")]
+    fn compute_nlist(&self, nlist: &PyNeighborList, r#box: &PyBox) -> PyResult<PyRDFResult> {
+        let result = self
+            .inner
+            .compute_with_volume(&nlist.inner, r#box.inner.volume())
+            .map_err(py_value_err)?;
+        Ok(PyRDFResult { inner: result })
+    }
+
+    /// Compute g(r) from a neighbor list with an explicit normalization volume.
+    ///
+    /// Use this for non-periodic systems or to override the box volume.
+    ///
+    /// Parameters
+    /// ----------
+    /// nlist : NeighborList
+    ///     Pre-built neighbor list.
+    /// volume : float
+    ///     Normalization volume in A^3 (must be finite and > 0).
     ///
     /// Returns
     /// -------
@@ -168,21 +212,24 @@ impl PyRDF {
     /// Raises
     /// ------
     /// ValueError
-    ///     If the neighbor list cutoff is smaller than ``r_max``.
-    #[pyo3(name = "compute")]
-    fn compute_nlist(&self, nlist: &PyNeighborList, r#box: &PyBox) -> PyResult<PyRDFResult> {
+    ///     If volume is non-finite or non-positive.
+    #[pyo3(name = "compute_with_volume")]
+    fn compute_with_volume(
+        &self,
+        nlist: &PyNeighborList,
+        volume: NpF,
+    ) -> PyResult<PyRDFResult> {
         let result = self
             .inner
-            .compute_from_nlist(&nlist.inner, &r#box.inner)
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+            .compute_with_volume(&nlist.inner, volume)
+            .map_err(py_value_err)?;
         Ok(PyRDFResult { inner: result })
     }
 
     /// Compute g(r) from a Frame and a LinkedCell.
     ///
-    /// Legacy API for backward compatibility. The frame must have an
-    /// ``"atoms"`` block with ``x``, ``y``, ``z`` columns and a
-    /// :attr:`~Frame.simbox`.
+    /// The frame must have an ``"atoms"`` block with ``x``, ``y``, ``z``
+    /// columns and a :attr:`~Frame.simbox`.
     ///
     /// Parameters
     /// ----------
@@ -206,7 +253,7 @@ impl PyRDF {
         let result = self
             .inner
             .compute(&core_frame, neighbors)
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+            .map_err(py_value_err)?;
         Ok(PyRDFResult { inner: result })
     }
 

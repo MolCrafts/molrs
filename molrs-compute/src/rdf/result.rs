@@ -21,8 +21,12 @@ pub struct RDFResult {
     pub n_query_points: usize,
     /// Query mode (self-query or cross-query).
     pub mode: QueryMode,
-    /// Box volume in A^3 (for normalization). Sum across frames when accumulated.
+    /// Normalization volume in A^3. For periodic frames this is the simulation
+    /// box volume; for non-periodic frames it is whatever the caller passed to
+    /// `compute_with_volume`. Sum across frames when accumulated.
     pub volume: F,
+    /// Inner cutoff (lower edge of bin 0), angstrom.
+    pub r_min: F,
 }
 
 impl RDFResult {

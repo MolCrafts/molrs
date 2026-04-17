@@ -17,6 +17,9 @@ pub enum ComputeError {
     /// Frame has no SimBox but the compute requires one.
     MissingSimBox,
 
+    /// Invalid input argument (out-of-range, non-finite, etc.).
+    Invalid(String),
+
     /// Array dimensions do not match expectations.
     DimensionMismatch { expected: usize, got: usize },
 
@@ -37,6 +40,7 @@ impl fmt::Display for ComputeError {
                 write!(f, "missing column '{col}' in block '{block}'")
             }
             Self::MissingSimBox => write!(f, "Frame has no SimBox"),
+            Self::Invalid(msg) => write!(f, "invalid argument: {msg}"),
             Self::DimensionMismatch { expected, got } => {
                 write!(f, "dimension mismatch: expected {expected}, got {got}")
             }
