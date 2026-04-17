@@ -339,15 +339,16 @@ impl NeighborList {
 
 /// Radial distribution function g(r) analysis.
 ///
-/// Computes the pair correlation function by binning neighbor-pair
-/// distances into a histogram and normalizing by the ideal-gas
-/// density (spherical shell volume normalization).
+/// Bins neighbor-pair distances in `[rMin, rMax]` and normalizes by the
+/// ideal-gas pair density. Defaults follow freud (`rMin = 0`). Periodic
+/// systems take their normalization volume from `frame.simbox`; non-periodic
+/// systems must supply it explicitly via [`computeWithVolume`].
 ///
 /// # Algorithm
 ///
 /// g(r) = n(r) / (rho * V_shell(r) * N_ref)
 ///
-/// where `n(r)` is the pair count in bin `r`, `rho` is the number
+/// where `n(r)` is the pair count in bin `r`, `rho = N/V` is the number
 /// density, and `V_shell(r)` is the shell volume for that bin.
 ///
 /// # Example (JavaScript)
@@ -356,11 +357,14 @@ impl NeighborList {
 /// const lc = new LinkedCell(5.0);
 /// const nlist = lc.build(frame);
 ///
-/// const rdf = new RDF(100, 5.0);
+/// const rdf = new RDF(100, 5.0);          // rMin defaults to 0
 /// const result = rdf.compute(frame, nlist);
 ///
-/// const r  = result.binCenters();  // Float32Array or Float64Array, bin centers in A
-/// const gr = result.rdf();         // Float32Array or Float64Array, g(r) values
+/// // Non-periodic frame: supply the normalization volume.
+/// const resultFree = rdf.computeWithVolume(nlist, volumeA3);
+///
+/// const r  = result.binCenters();
+/// const gr = result.rdf();
 /// ```
 #[wasm_bindgen(js_name = RDF)]
 pub struct RDF {
@@ -369,51 +373,41 @@ pub struct RDF {
 
 #[wasm_bindgen(js_class = RDF)]
 impl RDF {
-    /// Create a new RDF analysis with specified binning.
+    /// Create a new RDF analysis.
     ///
     /// # Arguments
     ///
     /// * `n_bins` - Number of histogram bins
-    /// * `r_max` - Maximum radial distance in angstrom (A). Should
-    ///   match or be less than the neighbor-search cutoff.
+    /// * `r_max` - Upper radial cutoff in angstrom (A). Should be ≤ the
+    ///   neighbor-search cutoff.
+    /// * `r_min` - Lower radial cutoff in angstrom (A). Optional, defaults
+    ///   to 0 (freud convention). Pairs with `d < rMin` or `d == 0` are
+    ///   excluded from the histogram.
     ///
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const rdf = new RDF(100, 5.0); // 100 bins up to 5 A
+    /// const rdf = new RDF(100, 5.0);       // rMin = 0
+    /// const rdf2 = new RDF(100, 5.0, 0.5); // exclude d < 0.5 A
     /// ```
     #[wasm_bindgen(constructor)]
-    pub fn new(n_bins: usize, r_max: F) -> Self {
-        Self {
-            inner: RsRDF::new(n_bins, r_max),
-        }
+    pub fn new(n_bins: usize, r_max: F, r_min: Option<F>) -> Result<RDF, JsValue> {
+        let inner = RsRDF::new(n_bins, r_max, r_min.unwrap_or(0.0))
+            .map_err(|e| JsValue::from_str(&format!("RDF: {e}")))?;
+        Ok(Self { inner })
     }
 
-    /// Compute the RDF from a pre-built neighbor list.
-    ///
-    /// The frame is needed to read the simulation box volume for
-    /// normalization.
+    /// Compute g(r) using the simulation-box volume from `frame.simbox`.
     ///
     /// # Arguments
     ///
-    /// * `frame` - Frame with a `simbox` set (for volume normalization)
+    /// * `frame` - Frame with a `simbox` set (used only for volume)
     /// * `neighbors` - Pre-built [`NeighborList`] from [`LinkedCell`]
-    ///
-    /// # Returns
-    ///
-    /// An [`RDFResult`] containing bin centers, g(r) values, and raw
-    /// pair counts.
     ///
     /// # Errors
     ///
-    /// Throws if the frame cannot be cloned or the computation fails.
-    ///
-    /// # Example (JavaScript)
-    ///
-    /// ```js
-    /// const result = rdf.compute(frame, nlist);
-    /// const gr = result.rdf(); // Float32Array or Float64Array
-    /// ```
+    /// Throws if the frame has no `simbox` — use
+    /// [`computeWithVolume`](Self::compute_with_volume) for non-periodic frames.
     pub fn compute(&self, frame: &Frame, neighbors: &NeighborList) -> Result<RDFResult, JsValue> {
         frame.with_frame(|rs_frame| {
             let result = self
@@ -422,6 +416,33 @@ impl RDF {
                 .map_err(|e| JsValue::from_str(&format!("RDF compute: {e}")))?;
             Ok(RDFResult { inner: result })
         })
+    }
+
+    /// Compute g(r) using an explicit normalization volume (A^3).
+    ///
+    /// Use this for non-periodic systems or to override the box volume.
+    ///
+    /// # Arguments
+    ///
+    /// * `neighbors` - Pre-built [`NeighborList`]
+    /// * `volume` - Normalization volume in A^3 (must be finite and > 0)
+    ///
+    /// # Example (JavaScript)
+    ///
+    /// ```js
+    /// const result = rdf.computeWithVolume(nlist, 1000.0);
+    /// ```
+    #[wasm_bindgen(js_name = computeWithVolume)]
+    pub fn compute_with_volume(
+        &self,
+        neighbors: &NeighborList,
+        volume: F,
+    ) -> Result<RDFResult, JsValue> {
+        let result = self
+            .inner
+            .compute_with_volume(&neighbors.inner, volume)
+            .map_err(|e| JsValue::from_str(&format!("RDF computeWithVolume: {e}")))?;
+        Ok(RDFResult { inner: result })
     }
 }
 
@@ -485,10 +506,16 @@ impl RDFResult {
         self.inner.n_points
     }
 
-    /// Simulation box volume used in the normalization, in A^3.
+    /// Normalization volume in A^3 (from the SimBox or the explicit caller value).
     #[wasm_bindgen(getter)]
     pub fn volume(&self) -> F {
         self.inner.volume
+    }
+
+    /// Inner cutoff in A (lower edge of bin 0).
+    #[wasm_bindgen(getter, js_name = rMin)]
+    pub fn r_min(&self) -> F {
+        self.inner.r_min
     }
 }
 
@@ -828,7 +855,7 @@ mod tests {
         let lc = LinkedCell::new(4.0);
         let nbrs = lc.build(&frame).unwrap();
 
-        let rdf = RDF::new(20, 4.0);
+        let rdf = RDF::new(20, 4.0, None).unwrap();
         let result = rdf.compute(&frame, &nbrs).unwrap();
 
         assert_eq!(result.bin_centers().len(), 20);
