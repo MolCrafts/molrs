@@ -405,7 +405,7 @@ fn build_block_from_props(
 
     // Assemble core::Block: drop string columns (S) as Block stores numeric/boolean arrays only
     let mut block = Block::new();
-    for ((name, ty), buf) in cols.into_iter().zip(buffers.into_iter()) {
+    for ((name, ty), buf) in cols.into_iter().zip(buffers) {
         match (ty, buf) {
             (PropType::I, ColBuf::I(v)) => {
                 // Store as i64

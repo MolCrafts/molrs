@@ -36,8 +36,9 @@ use crate::writer::{FrameWriter, Writer};
 use molrs::block::Block;
 use molrs::frame::Frame;
 use molrs::frame_access::FrameAccess;
-use molrs::types::{F, I};
-use ndarray::{Array1, ArrayD, IxDyn};
+use molrs::region::simbox::SimBox;
+use molrs::types::{F, I, Pbc3};
+use ndarray::{Array1, ArrayD, IxDyn, array};
 use once_cell::sync::OnceCell;
 use std::fs::File;
 use std::io::{BufRead, Seek, SeekFrom, Write};
@@ -411,31 +412,34 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
 
     frame.insert("atoms", atoms_block);
 
-    // Store metadata (matching lammps_data.rs convention)
+    // Timestep is frame-level metadata, not a box property.
     frame
         .meta
         .insert("timestep".to_string(), timestep.to_string());
 
+    // Build the SimBox. Boundary tokens (`pp`, `ff`, `ss`, `fs`, ...) collapse
+    // to a per-axis periodic bool: periodic iff the first char is 'p'.
+    // Shrink-wrap nuance is dropped — `SimBox::pbc` is the canonical source of
+    // truth for boundary information.
+    let pbc: Pbc3 = [
+        bounds.boundary_raw[0].starts_with('p'),
+        bounds.boundary_raw[1].starts_with('p'),
+        bounds.boundary_raw[2].starts_with('p'),
+    ];
+
     let lx = bounds.xhi - bounds.xlo;
     let ly = bounds.yhi - bounds.ylo;
     let lz = bounds.zhi - bounds.zlo;
-    frame
-        .meta
-        .insert("box".to_string(), format!("{} {} {}", lx, ly, lz));
-    frame.meta.insert(
-        "box_origin".to_string(),
-        format!("{} {} {}", bounds.xlo, bounds.ylo, bounds.zlo),
-    );
+    let origin = array![bounds.xlo, bounds.ylo, bounds.zlo];
 
-    if let (Some(xy), Some(xz), Some(yz)) = (bounds.xy, bounds.xz, bounds.yz) {
-        frame
-            .meta
-            .insert("box_tilt".to_string(), format!("{} {} {}", xy, xz, yz));
-    }
-
-    frame
-        .meta
-        .insert("boundary".to_string(), bounds.boundary_raw.join(" "));
+    let simbox = if let (Some(xy), Some(xz), Some(yz)) = (bounds.xy, bounds.xz, bounds.yz) {
+        let h = array![[lx, xy, xz], [0.0, ly, yz], [0.0, 0.0, lz]];
+        SimBox::new(h, origin, pbc).map_err(|e| err_mapper(format!("{:?}", e)))?
+    } else {
+        SimBox::ortho(array![lx, ly, lz], origin, pbc)
+            .map_err(|e| err_mapper(format!("{:?}", e)))?
+    };
+    frame.simbox = Some(simbox);
 
     Ok(Some(frame))
 }
@@ -697,51 +701,38 @@ fn write_lammps_dump_frame<W: Write>(
     writeln!(writer, "{}", natoms)?;
 
     // -- Box bounds --
-    let box_str = meta
-        .get("box")
-        .ok_or_else(|| err_mapper("Frame metadata must contain 'box'"))?;
-    let default_origin = "0.0 0.0 0.0".to_string();
-    let origin_str = meta.get("box_origin").unwrap_or(&default_origin);
+    // The simbox is the canonical source of truth for box geometry + PBC.
+    let simbox = frame
+        .simbox_ref()
+        .ok_or_else(|| err_mapper("Frame must have a simbox"))?;
 
-    let dims: Vec<f64> = box_str
-        .split_whitespace()
-        .map(|s| s.parse().map_err(err_mapper))
-        .collect::<Result<_, _>>()?;
-    let origin: Vec<f64> = origin_str
-        .split_whitespace()
-        .map(|s| s.parse().map_err(err_mapper))
-        .collect::<Result<_, _>>()?;
+    let h = simbox.h_view();
+    let o = simbox.origin_view();
+    let pbc_flags = simbox.pbc();
 
-    if dims.len() != 3 || origin.len() != 3 {
-        return Err(err_mapper("Invalid box dimensions in metadata"));
-    }
+    let lx = h[[0, 0]];
+    let ly = h[[1, 1]];
+    let lz = h[[2, 2]];
+    let xy = h[[0, 1]];
+    let xz = h[[0, 2]];
+    let yz = h[[1, 2]];
+    let xlo = o[0];
+    let ylo = o[1];
+    let zlo = o[2];
+    let xhi = xlo + lx;
+    let yhi = ylo + ly;
+    let zhi = zlo + lz;
 
-    // Boundary flags
-    let boundary = meta.get("boundary");
-    let pbc_str = boundary.map_or("pp pp pp", |s| s.as_str());
+    // Map per-axis pbc bool → LAMMPS boundary token.
+    let pbc_str = format!(
+        "{} {} {}",
+        if pbc_flags[0] { "pp" } else { "ff" },
+        if pbc_flags[1] { "pp" } else { "ff" },
+        if pbc_flags[2] { "pp" } else { "ff" },
+    );
 
-    let has_tilt = meta.contains_key("box_tilt");
-
-    if has_tilt {
-        let tilt_str = meta.get("box_tilt").unwrap();
-        let tilts: Vec<f64> = tilt_str
-            .split_whitespace()
-            .map(|s| s.parse().map_err(err_mapper))
-            .collect::<Result<_, _>>()?;
-
-        if tilts.len() != 3 {
-            return Err(err_mapper("Invalid box_tilt in metadata"));
-        }
-
-        let (xy, xz, yz) = (tilts[0], tilts[1], tilts[2]);
-
-        let xlo = origin[0];
-        let ylo = origin[1];
-        let zlo = origin[2];
-        let xhi = xlo + dims[0];
-        let yhi = ylo + dims[1];
-        let zhi = zlo + dims[2];
-
+    let is_triclinic = xy != 0.0 || xz != 0.0 || yz != 0.0;
+    if is_triclinic {
         let xlo_bound = xlo + f64::min(0.0, f64::min(xy, f64::min(xz, xy + xz)));
         let xhi_bound = xhi + f64::max(0.0, f64::max(xy, f64::max(xz, xy + xz)));
         let ylo_bound = ylo + f64::min(0.0, yz);
@@ -752,13 +743,6 @@ fn write_lammps_dump_frame<W: Write>(
         writeln!(writer, "{} {} {}", ylo_bound, yhi_bound, xz)?;
         writeln!(writer, "{} {} {}", zlo, zhi, yz)?;
     } else {
-        let xlo = origin[0];
-        let ylo = origin[1];
-        let zlo = origin[2];
-        let xhi = xlo + dims[0];
-        let yhi = ylo + dims[1];
-        let zhi = zlo + dims[2];
-
         writeln!(writer, "ITEM: BOX BOUNDS {}", pbc_str)?;
         writeln!(writer, "{} {}", xlo, xhi)?;
         writeln!(writer, "{} {}", ylo, yhi)?;
@@ -1048,7 +1032,9 @@ ITEM: ATOMS id type x y z
 ";
         let mut reader = LAMMPSDumpReader::new(cursor(dump));
         let frame = reader.read_frame().unwrap().expect("parse");
-        assert_eq!(frame.meta.get("boundary").unwrap(), "ff pp ss");
+        let pbc = frame.simbox.as_ref().expect("simbox").pbc();
+        // ff pp ss → [false, true, false]
+        assert_eq!(pbc, [false, true, false]);
     }
 
     #[test]

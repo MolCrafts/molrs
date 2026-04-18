@@ -90,27 +90,19 @@ fn compute_mmff_props(
 
     // Pi lone pair: N, O, S with lone pairs available for pi interaction
     let pilp = match atno {
-        7 => {
-            // N: has lone pair if sp3 or if it's in an aromatic ring (pyrrole-like)
-            if (crd <= 3 && mltb == 0 && arom == 0) || (arom == 1 && crd == 3) {
-                1
-            } else {
-                0
-            }
-        }
-        8 => {
-            // O: always has lone pair unless it's O+ or triple-bonded
-            if crd <= 2 && max_order < 2.5 { 1 } else { 0 }
-        }
+        // N: has lone pair if sp3 or if it's in an aromatic ring (pyrrole-like)
+        7 if (crd <= 3 && mltb == 0 && arom == 0) || (arom == 1 && crd == 3) => 1,
+        7 => 0,
+        // O: always has lone pair unless it's O+ or triple-bonded
+        8 if crd <= 2 && max_order < 2.5 => 1,
+        8 => 0,
         9 | 17 | 35 | 53 => 1, // halogens
-        16 => {
-            // S: has lone pair in sp3 or aromatic
-            if crd <= 2 { 1 } else { 0 }
-        }
-        15 => {
-            // P: has lone pair if crd <= 3
-            if crd <= 3 { 1 } else { 0 }
-        }
+        // S: has lone pair in sp3 or aromatic
+        16 if crd <= 2 => 1,
+        16 => 0,
+        // P: has lone pair if crd <= 3
+        15 if crd <= 3 => 1,
+        15 => 0,
         _ => 0,
     };
 
@@ -200,23 +192,11 @@ fn disambiguate(
     for &tid in candidates {
         match tid {
             // CR4R (20): sp3 C in 4-membered ring
-            20 => {
-                if smallest_ring == Some(4) {
-                    return 20;
-                }
-            }
+            20 if smallest_ring == Some(4) => return 20,
             // CR3R (22): sp3 C in 3-membered ring
-            22 => {
-                if smallest_ring == Some(3) {
-                    return 22;
-                }
-            }
+            22 if smallest_ring == Some(3) => return 22,
             // CE4R (30): sp2 C=C in 4-membered ring
-            30 => {
-                if smallest_ring == Some(4) {
-                    return 30;
-                }
-            }
+            30 if smallest_ring == Some(4) => return 30,
             _ => {}
         }
     }
