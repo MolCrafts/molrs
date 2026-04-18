@@ -187,7 +187,7 @@ mod tests {
             .compute(&frame, &cl)
             .unwrap();
         assert!(
-            (rg[0] as f64 - 0.0699854212).abs() < 1e-4,
+            (rg[0] - 0.0699854212).abs() < 1e-4,
             "rg = {}, expected ~0.0700",
             rg[0]
         );
