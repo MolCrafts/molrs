@@ -41,8 +41,9 @@ use crate::writer::FrameWriter;
 use molrs::block::Block;
 use molrs::frame::Frame;
 use molrs::frame_access::FrameAccess;
-use molrs::types::{F, I, U};
-use ndarray::{Array1, IxDyn};
+use molrs::region::simbox::SimBox;
+use molrs::types::{F, I, Pbc3, U};
+use ndarray::{array, Array1, IxDyn};
 use once_cell::sync::OnceCell;
 use std::collections::HashMap;
 use std::fs::File;
@@ -829,22 +830,25 @@ fn build_frame(
         }
     }
 
-    // Add box metadata
+    // Build SimBox from the header when the file actually declares a box.
+    // Origin = [xlo, ylo, zlo]; box vectors derive from hi-lo lengths plus
+    // optional triclinic tilt factors (xy, xz, yz). LAMMPS data files carry no
+    // boundary flags — assume fully periodic.
     let lx = header.xhi - header.xlo;
     let ly = header.yhi - header.ylo;
     let lz = header.zhi - header.zlo;
-    frame
-        .meta
-        .insert("box".to_string(), format!("{} {} {}", lx, ly, lz));
-    frame.meta.insert(
-        "box_origin".to_string(),
-        format!("{} {} {}", header.xlo, header.ylo, header.zlo),
-    );
+    if lx > 0.0 && ly > 0.0 && lz > 0.0 {
+        let origin = array![header.xlo, header.ylo, header.zlo];
+        let pbc: Pbc3 = [true, true, true];
 
-    if let (Some(xy), Some(xz), Some(yz)) = (header.xy, header.xz, header.yz) {
-        frame
-            .meta
-            .insert("box_tilt".to_string(), format!("{} {} {}", xy, xz, yz));
+        let simbox = if let (Some(xy), Some(xz), Some(yz)) = (header.xy, header.xz, header.yz) {
+            let h = array![[lx, xy, xz], [0.0, ly, yz], [0.0, 0.0, lz]];
+            SimBox::new(h, origin, pbc).map_err(|e| err_mapper(format!("{:?}", e)))?
+        } else {
+            SimBox::ortho(array![lx, ly, lz], origin, pbc)
+                .map_err(|e| err_mapper(format!("{:?}", e)))?
+        };
+        frame.simbox = Some(simbox);
     }
 
     // Add type labels to metadata
@@ -1138,51 +1142,49 @@ fn write_lammps_data_frame<W: Write>(
     }
     writeln!(writer)?;
 
-    // Write box dimensions
-    let meta = frame.meta_ref();
-    let box_str = meta
-        .get("box")
-        .ok_or_else(|| err_mapper("Frame metadata must contain 'box'"))?;
-    let default_origin = "0.0 0.0 0.0".to_string();
-    let box_origin_str = meta.get("box_origin").unwrap_or(&default_origin);
-
-    let box_dims: Vec<f64> = box_str
-        .split_whitespace()
-        .map(|s| s.parse().map_err(err_mapper))
-        .collect::<Result<_, _>>()?;
-    let box_origin: Vec<f64> = box_origin_str
-        .split_whitespace()
-        .map(|s| s.parse().map_err(err_mapper))
-        .collect::<Result<_, _>>()?;
-
-    if box_dims.len() != 3 || box_origin.len() != 3 {
-        return Err(err_mapper("Invalid box dimensions in metadata"));
-    }
+    // Write box dimensions from the canonical SimBox. Fall back to a unit box
+    // if the frame has none — LAMMPS data files require box bounds in the
+    // header, and a default is nicer than failing the whole write.
+    let simbox_ref = frame.simbox_ref();
+    let (box_origin, box_lengths, tilts) = if let Some(sb) = simbox_ref {
+        let origin_view = sb.origin_view();
+        let lengths = sb.lengths();
+        let tilts = sb.tilts();
+        (
+            [origin_view[0], origin_view[1], origin_view[2]],
+            [lengths[0], lengths[1], lengths[2]],
+            [tilts[0], tilts[1], tilts[2]],
+        )
+    } else {
+        ([0.0; 3], [1.0; 3], [0.0; 3])
+    };
 
     writeln!(
         writer,
         "{} {} xlo xhi",
         box_origin[0],
-        box_origin[0] + box_dims[0]
+        box_origin[0] + box_lengths[0]
     )?;
     writeln!(
         writer,
         "{} {} ylo yhi",
         box_origin[1],
-        box_origin[1] + box_dims[1]
+        box_origin[1] + box_lengths[1]
     )?;
     writeln!(
         writer,
         "{} {} zlo zhi",
         box_origin[2],
-        box_origin[2] + box_dims[2]
+        box_origin[2] + box_lengths[2]
     )?;
 
-    // Write tilt factors if present
-    if let Some(tilt_str) = meta.get("box_tilt") {
-        writeln!(writer, "{} xy xz yz", tilt_str)?;
+    // Write tilt factors if the box is triclinic (any nonzero tilt).
+    if tilts.iter().any(|&t| t != 0.0) {
+        writeln!(writer, "{} {} {} xy xz yz", tilts[0], tilts[1], tilts[2])?;
     }
     writeln!(writer)?;
+
+    let meta = frame.meta_ref();
 
     // Write type labels if present
     if let Some(atom_labels_str) = meta.get("atom_type_labels") {

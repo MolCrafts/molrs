@@ -124,7 +124,7 @@ fn test_nospin_structure() {
 
     let atoms = frame.get("atoms").expect("atoms");
     assert_eq!(atoms.nrows().unwrap(), 1, "nospin has 1 Li atom");
-    let symbols = atoms.get_string("symbol").expect("symbol column");
+    let symbols = atoms.get_string("element").expect("element column");
     assert_eq!(symbols[[0]], "Li", "nospin atom is Li");
 
     let grid = frame.get_grid("chgcar").expect("chgcar grid");
@@ -162,7 +162,7 @@ fn test_soc_elements_and_grid() {
         4,
         "NiO_SOC has 4 atoms (2 Ni + 2 O)"
     );
-    let symbols = atoms.get_string("symbol").expect("symbol column");
+    let symbols = atoms.get_string("element").expect("element column");
     assert!(symbols.iter().any(|s| s == "Ni"), "NiO_SOC must contain Ni");
     assert!(symbols.iter().any(|s| s == "O"), "NiO_SOC must contain O");
 
@@ -178,7 +178,7 @@ fn test_fe3o4_composition() {
 
     let atoms = frame.get("atoms").expect("atoms");
     assert_eq!(atoms.nrows().unwrap(), 14, "Fe3O4 has 14 atoms");
-    let symbols = atoms.get_string("symbol").expect("symbol column");
+    let symbols = atoms.get_string("element").expect("element column");
     let n_fe = symbols.iter().filter(|s| *s == "Fe").count();
     let n_o = symbols.iter().filter(|s| *s == "O").count();
     assert_eq!(n_fe, 6, "Fe3O4 must have 6 Fe");
