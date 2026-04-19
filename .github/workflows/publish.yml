@@ -168,5 +168,5 @@ jobs:
         with:
           command: publish
           working-directory: molrs-python
-          args: --no-sdist
+          args: --no-sdist --find-interpreter
           manylinux: auto
