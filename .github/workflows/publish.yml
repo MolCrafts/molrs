@@ -128,17 +128,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: rust-lang/crates-io-auth-action@v1
+        id: auth
       - run: sleep 30
       - run: cargo publish --manifest-path molrs/Cargo.toml --dry-run
       - run: cargo publish --manifest-path molrs/Cargo.toml
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
   # ── WASM (npm) ───────────────────────────────────────────────────────────────
 
   publish-wasm:
     needs: ci
     runs-on: ubuntu-latest
+    environment: release
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
