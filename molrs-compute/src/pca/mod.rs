@@ -356,9 +356,7 @@ mod tests {
     #[test]
     fn err_on_zero_variance_column() {
         // column 1 constant across 5 rows
-        let rows: Vec<Row> = (0..5)
-            .map(|i| Row(vec![i as F, 1.0]))
-            .collect();
+        let rows: Vec<Row> = (0..5).map(|i| Row(vec![i as F, 1.0])).collect();
         let frame = Frame::new();
         let err = Pca2::<Row>::new().compute(&[&frame], &rows).unwrap_err();
         assert!(matches!(err, ComputeError::OutOfRange { .. }));

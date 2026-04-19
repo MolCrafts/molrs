@@ -14,7 +14,7 @@ use molrs::region::simbox::SimBox;
 use molrs::types::F;
 use ndarray::{Array1, Array2, array};
 
-use molrs_compute::center_of_mass::{CenterOfMass, COMResult};
+use molrs_compute::center_of_mass::{COMResult, CenterOfMass};
 use molrs_compute::cluster::{Cluster, ClusterResult};
 use molrs_compute::cluster_centers::{ClusterCenters, ClusterCentersResult};
 use molrs_compute::error::ComputeError;
@@ -177,11 +177,7 @@ fn diamond_reuse_runs_shared_nodes_exactly_once() {
         1,
         "Cluster should run once"
     );
-    assert_eq!(
-        com_counter.load(Ordering::SeqCst),
-        1,
-        "COM should run once"
-    );
+    assert_eq!(com_counter.load(Ordering::SeqCst), 1, "COM should run once");
     assert_eq!(
         centers_counter.load(Ordering::SeqCst),
         1,

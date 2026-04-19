@@ -197,8 +197,8 @@ fn wrap_node_error(node_id: NodeId, err: ComputeError) -> ComputeError {
 mod tests {
     use super::*;
     use molrs::Frame;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     // --- Mock Compute impls (local to tests) ---
 

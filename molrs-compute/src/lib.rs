@@ -64,7 +64,7 @@ pub mod traits;
 pub mod util;
 
 // Re-exports
-pub use center_of_mass::{CenterOfMass, COMResult};
+pub use center_of_mass::{COMResult, CenterOfMass};
 pub use cluster::{Cluster, ClusterResult};
 pub use cluster_centers::{ClusterCenters, ClusterCentersResult};
 pub use error::ComputeError;

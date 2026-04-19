@@ -41,25 +41,19 @@ fn bench_diamond_reuse(c: &mut Criterion) {
     // same dependency three times.
     group.bench_function("manual", |b| {
         b.iter(|| {
-            let clusters_rg = Cluster::new(2)
-                .compute(&frames, &nlists_owned)
-                .unwrap();
+            let clusters_rg = Cluster::new(2).compute(&frames, &nlists_owned).unwrap();
             let com_rg = CenterOfMass::new().compute(&frames, &clusters_rg).unwrap();
             let rg = RadiusOfGyration::new()
                 .compute(&frames, (&clusters_rg, &com_rg))
                 .unwrap();
 
-            let clusters_i = Cluster::new(2)
-                .compute(&frames, &nlists_owned)
-                .unwrap();
+            let clusters_i = Cluster::new(2).compute(&frames, &nlists_owned).unwrap();
             let com_i = CenterOfMass::new().compute(&frames, &clusters_i).unwrap();
             let inertia = InertiaTensor::new()
                 .compute(&frames, (&clusters_i, &com_i))
                 .unwrap();
 
-            let clusters_g = Cluster::new(2)
-                .compute(&frames, &nlists_owned)
-                .unwrap();
+            let clusters_g = Cluster::new(2).compute(&frames, &nlists_owned).unwrap();
             let centers = ClusterCenters::new().compute(&frames, &clusters_g).unwrap();
             let gyr = GyrationTensor::new()
                 .compute(&frames, (&clusters_g, &centers))
@@ -79,10 +73,9 @@ fn bench_diamond_reuse(c: &mut Criterion) {
             let com = g.add(CenterOfMass::new(), move |s: &Store| s.get(clusters));
             let centers = g.add(ClusterCenters::new(), move |s: &Store| s.get(clusters));
 
-            let rg =
-                g.add(RadiusOfGyration::new(), move |s: &Store| {
-                    (s.get(clusters), s.get(com))
-                });
+            let rg = g.add(RadiusOfGyration::new(), move |s: &Store| {
+                (s.get(clusters), s.get(com))
+            });
             let inertia = g.add(InertiaTensor::new(), move |s: &Store| {
                 (s.get(clusters), s.get(com))
             });

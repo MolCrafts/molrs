@@ -215,11 +215,7 @@ mod tests {
         let pos = [[1.0, 1.0, 1.0], [1.0, 1.0, 1.0]];
         let frame = frame_with(&pos, 6.0);
         let cl = manual_clusters(&[0, 0]);
-        let rg = rg_single(
-            &frame,
-            cl,
-            RadiusOfGyration::new().with_masses(&[2.0, 5.0]),
-        );
+        let rg = rg_single(&frame, cl, RadiusOfGyration::new().with_masses(&[2.0, 5.0]));
         assert!(rg.0[0].abs() < 1e-10);
     }
 
@@ -236,11 +232,7 @@ mod tests {
         let pos = [[1.0, 3.0, 1.0], [0.9, 2.9, 1.0]];
         let frame = frame_with(&pos, 6.0);
         let cl = manual_clusters(&[0, 0]);
-        let rg = rg_single(
-            &frame,
-            cl,
-            RadiusOfGyration::new().with_masses(&[3.0, 4.0]),
-        );
+        let rg = rg_single(&frame, cl, RadiusOfGyration::new().with_masses(&[3.0, 4.0]));
         assert!(
             (rg.0[0] - 0.0699854212).abs() < 1e-4,
             "rg = {}, expected ~0.0700",
@@ -277,8 +269,7 @@ mod tests {
             .compute(&[&frame], (&vec![cl], &com))
             .unwrap();
 
-        let trace =
-            inertia[0].0[0][0][0] + inertia[0].0[0][1][1] + inertia[0].0[0][2][2];
+        let trace = inertia[0].0[0][0][0] + inertia[0].0[0][1][1] + inertia[0].0[0][2][2];
         let rg_from_trace = (trace / (2.0 * com[0].cluster_masses[0])).sqrt();
         assert!(
             (rg[0].0[0] - rg_from_trace).abs() < 1e-5,

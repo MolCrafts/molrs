@@ -294,7 +294,8 @@ mod tests {
 
         // Multi-frame batch.
         let frames_owned: Vec<Frame> = (100..110u64).map(|s| random_frame(n, box_len, s)).collect();
-        let nlists: Vec<NeighborList> = frames_owned.iter().map(|f| build_nlist(f, r_max)).collect();
+        let nlists: Vec<NeighborList> =
+            frames_owned.iter().map(|f| build_nlist(f, r_max)).collect();
         let frame_refs: Vec<&Frame> = frames_owned.iter().collect();
         let multi = rdf.compute(&frame_refs, &nlists).unwrap();
         let var_multi: F = multi
@@ -421,5 +422,4 @@ mod tests {
         assert!(RDF::new(10, 0.5, 1.0).is_err());
         assert!(RDF::new(10, 1.0, 0.0).is_ok());
     }
-
 }

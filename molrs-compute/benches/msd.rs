@@ -29,11 +29,7 @@ fn size_sweep(c: &mut Criterion) {
 fn frame_sweep(c: &mut Criterion) {
     let mut group = c.benchmark_group("msd/frame_sweep");
     helpers::configure(&mut group);
-    let (pool_frames, _) = helpers::build_pool(
-        helpers::FRAME_SWEEP_N,
-        helpers::MAX_FRAMES,
-        100,
-    );
+    let (pool_frames, _) = helpers::build_pool(helpers::FRAME_SWEEP_N, helpers::MAX_FRAMES, 100);
 
     for &nf in helpers::FRAME_COUNTS {
         let frames: Vec<&_> = pool_frames.iter().take(nf).collect();

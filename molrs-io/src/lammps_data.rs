@@ -43,7 +43,7 @@ use molrs::frame::Frame;
 use molrs::frame_access::FrameAccess;
 use molrs::region::simbox::SimBox;
 use molrs::types::{F, I, Pbc3, U};
-use ndarray::{array, Array1, IxDyn};
+use ndarray::{Array1, IxDyn, array};
 use once_cell::sync::OnceCell;
 use std::collections::HashMap;
 use std::fs::File;

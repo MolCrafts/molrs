@@ -20,9 +20,7 @@ fn size_sweep(c: &mut Criterion) {
         ));
         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
             b.iter(|| {
-                std::hint::black_box(
-                    rg.compute(&frames, (&deps.cluster, &deps.com)).unwrap(),
-                );
+                std::hint::black_box(rg.compute(&frames, (&deps.cluster, &deps.com)).unwrap());
             })
         });
     }
@@ -34,11 +32,8 @@ fn frame_sweep(c: &mut Criterion) {
     let mut group = c.benchmark_group("radius_of_gyration/frame_sweep");
     helpers::configure(&mut group);
     let rg = RadiusOfGyration::new();
-    let (pool_frames, pool_nlists) = helpers::build_pool(
-        helpers::FRAME_SWEEP_N,
-        helpers::MAX_FRAMES,
-        100,
-    );
+    let (pool_frames, pool_nlists) =
+        helpers::build_pool(helpers::FRAME_SWEEP_N, helpers::MAX_FRAMES, 100);
 
     for &nf in helpers::FRAME_COUNTS {
         let frames: Vec<&_> = pool_frames.iter().take(nf).collect();
@@ -49,9 +44,7 @@ fn frame_sweep(c: &mut Criterion) {
         ));
         group.bench_with_input(BenchmarkId::from_parameter(nf), &nf, |b, _| {
             b.iter(|| {
-                std::hint::black_box(
-                    rg.compute(&frames, (&deps.cluster, &deps.com)).unwrap(),
-                );
+                std::hint::black_box(rg.compute(&frames, (&deps.cluster, &deps.com)).unwrap());
             })
         });
     }

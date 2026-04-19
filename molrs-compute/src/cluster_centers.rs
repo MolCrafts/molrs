@@ -205,9 +205,7 @@ mod tests {
     }
 
     fn centers_single(frame: &Frame, cl: ClusterResult) -> ClusterCentersResult {
-        let out = ClusterCenters::new()
-            .compute(&[frame], &vec![cl])
-            .unwrap();
+        let out = ClusterCenters::new().compute(&[frame], &vec![cl]).unwrap();
         out.into_iter().next().unwrap()
     }
 

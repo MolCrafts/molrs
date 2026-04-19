@@ -221,11 +221,7 @@ mod tests {
         let pos = [[1.0, 1.0, 1.0], [1.0, 1.0, 1.0]];
         let frame = frame_with(&pos, 6.0);
         let cl = manual_clusters(&[0, 0]);
-        let t = inertia_single(
-            &frame,
-            cl,
-            InertiaTensor::new().with_masses(&[2.0, 5.0]),
-        );
+        let t = inertia_single(&frame, cl, InertiaTensor::new().with_masses(&[2.0, 5.0]));
         for a in 0..3 {
             for b in 0..3 {
                 assert!(t.0[0][a][b].abs() < 1e-10);

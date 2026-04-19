@@ -30,16 +30,10 @@ pub enum ComputeError {
     BadShape { expected: String, got: String },
 
     /// Non-finite value (NaN / ±Inf) at the given flat index of the named field.
-    NonFinite {
-        where_: &'static str,
-        index: usize,
-    },
+    NonFinite { where_: &'static str, index: usize },
 
     /// Scalar input out of its valid range.
-    OutOfRange {
-        field: &'static str,
-        value: String,
-    },
+    OutOfRange { field: &'static str, value: String },
 
     /// `frames` slice is empty but the compute needs at least one frame.
     EmptyInput,
@@ -80,8 +74,13 @@ impl fmt::Display for ComputeError {
                 expected,
                 got,
                 what,
-            } => write!(f, "{what} dimension mismatch: expected {expected}, got {got}"),
-            Self::BadShape { expected, got } => write!(f, "bad shape: expected {expected}, got {got}"),
+            } => write!(
+                f,
+                "{what} dimension mismatch: expected {expected}, got {got}"
+            ),
+            Self::BadShape { expected, got } => {
+                write!(f, "bad shape: expected {expected}, got {got}")
+            }
             Self::NonFinite { where_, index } => {
                 write!(f, "non-finite value in {where_} at index {index}")
             }

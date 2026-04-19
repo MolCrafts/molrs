@@ -35,7 +35,9 @@ pub(crate) fn topological_order(
     for (&node, preds) in deps.iter() {
         for &pred in preds {
             successors.entry(pred).or_default().push(node);
-            *in_deg.get_mut(&node).expect("dep node missing from node set") += 1;
+            *in_deg
+                .get_mut(&node)
+                .expect("dep node missing from node set") += 1;
         }
     }
 
