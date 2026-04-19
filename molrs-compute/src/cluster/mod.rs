@@ -154,6 +154,7 @@ impl Compute for Cluster {
         }
         // Cluster has heavy per-frame work (CSR build + BFS, ~100 µs per
         // 5k-atom frame), so rayon pays off from 2 frames onward.
+        #[cfg(feature = "rayon")]
         const PAR_THRESHOLD: usize = 2;
 
         #[cfg(feature = "rayon")]

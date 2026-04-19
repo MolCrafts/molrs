@@ -128,6 +128,7 @@ impl Compute for GyrationTensor {
                 what: "ClusterCentersResult count",
             });
         }
+        #[cfg(feature = "rayon")]
         const PAR_THRESHOLD: usize = 4;
 
         #[cfg(feature = "rayon")]

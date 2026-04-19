@@ -135,6 +135,7 @@ impl Compute for InertiaTensor {
                 what: "COMResult count",
             });
         }
+        #[cfg(feature = "rayon")]
         const PAR_THRESHOLD: usize = 4;
 
         #[cfg(feature = "rayon")]

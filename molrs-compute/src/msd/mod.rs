@@ -86,6 +86,7 @@ impl Compute for MSD {
         // arithmetic, so rayon's task-submission overhead (~5-10 µs)
         // dominates until we have ~8+ frames. Fall back to serial below
         // that threshold.
+        #[cfg(feature = "rayon")]
         const PAR_THRESHOLD: usize = 8;
 
         #[cfg(feature = "rayon")]
