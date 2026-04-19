@@ -63,8 +63,10 @@ use forcefield::{PyForceField, PyMMFFTypifier, PyPotentials};
 
 mod compute;
 use compute::{
-    PyCenterOfMass, PyCenterOfMassResult, PyCluster, PyClusterCenters, PyClusterResult,
-    PyGyrationTensor, PyInertiaTensor, PyMSD, PyMSDResult, PyRDF, PyRDFResult, PyRadiusOfGyration,
+    PyCenterOfMass, PyCenterOfMassResult, PyCluster, PyClusterCenters, PyClusterCentersResult,
+    PyClusterResult, PyDescriptorRow, PyGyrationTensor, PyInertiaTensor, PyKMeans, PyKMeansResult,
+    PyMSD, PyMSDResult, PyMSDTimeSeries, PyPca2, PyPcaResult, PyRDF, PyRDFResult,
+    PyRadiusOfGyration,
 };
 
 /// Root Python module for the molrs library.
@@ -138,14 +140,21 @@ fn molrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyRDFResult>()?;
     m.add_class::<PyMSD>()?;
     m.add_class::<PyMSDResult>()?;
+    m.add_class::<PyMSDTimeSeries>()?;
     m.add_class::<PyCluster>()?;
     m.add_class::<PyClusterResult>()?;
     m.add_class::<PyClusterCenters>()?;
+    m.add_class::<PyClusterCentersResult>()?;
     m.add_class::<PyCenterOfMass>()?;
     m.add_class::<PyCenterOfMassResult>()?;
     m.add_class::<PyGyrationTensor>()?;
     m.add_class::<PyInertiaTensor>()?;
     m.add_class::<PyRadiusOfGyration>()?;
+    m.add_class::<PyDescriptorRow>()?;
+    m.add_class::<PyPca2>()?;
+    m.add_class::<PyPcaResult>()?;
+    m.add_class::<PyKMeans>()?;
+    m.add_class::<PyKMeansResult>()?;
 
     Ok(())
 }

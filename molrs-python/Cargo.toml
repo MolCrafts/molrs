@@ -1,6 +1,6 @@
 [package]
 name = "molrs-python"
-version = "0.0.10"
+version = "0.0.11"
 edition = "2024"
 rust-version = "1.85"
 authors = ["MolCrafts"]
@@ -18,13 +18,13 @@ pyo3 = { version = "0.28", features = ["extension-module"] }
 numpy = "0.28"
 ndarray = "0.17"
 serde_json = "1"
-molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.0.10" }
-molrs = { path = "../molrs-core", package = "molcrafts-molrs-core", version = "0.0.10", default-features = false, features = ["zarr"] }
-molrs-io = { path = "../molrs-io", package = "molcrafts-molrs-io", version = "0.0.10", default-features = false, features = ["filesystem"] }
-molrs-smiles = { path = "../molrs-smiles", package = "molcrafts-molrs-smiles", version = "0.0.10" }
-molrs-ff = { path = "../molrs-ff", package = "molcrafts-molrs-ff", version = "0.0.10" }
-molrs-compute = { path = "../molrs-compute", package = "molcrafts-molrs-compute", version = "0.0.10", default-features = false }
-molrs-embed = { path = "../molrs-embed", package = "molcrafts-molrs-embed", version = "0.0.10" }
+molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.0.11" }
+molrs = { path = "../molrs-core", package = "molcrafts-molrs-core", version = "0.0.11", default-features = false, features = ["zarr"] }
+molrs-io = { path = "../molrs-io", package = "molcrafts-molrs-io", version = "0.0.11", default-features = false, features = ["filesystem"] }
+molrs-smiles = { path = "../molrs-smiles", package = "molcrafts-molrs-smiles", version = "0.0.11" }
+molrs-ff = { path = "../molrs-ff", package = "molcrafts-molrs-ff", version = "0.0.11" }
+molrs-compute = { path = "../molrs-compute", package = "molcrafts-molrs-compute", version = "0.0.11", default-features = false }
+molrs-embed = { path = "../molrs-embed", package = "molcrafts-molrs-embed", version = "0.0.11" }
 
 [workspace]
 

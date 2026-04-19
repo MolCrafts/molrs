@@ -12,7 +12,7 @@ members = [
 resolver = "3"
 
 [workspace.package]
-version = "0.0.10"
+version = "0.0.11"
 edition = "2024"
 rust-version = "1.85"
 license = "BSD-3-Clause"
@@ -24,13 +24,13 @@ homepage = "https://github.com/MolCrafts/molrs"
 # workspace members (e.g. `use molrs::Frame`). The `package =` field points to
 # the actual crates.io name.
 [workspace.dependencies]
-molrs         = { path = "molrs-core",    version = "0.0.10", package = "molcrafts-molrs-core", default-features = false }
-molrs_io      = { path = "molrs-io",      version = "0.0.10", package = "molcrafts-molrs-io" }
-molrs_compute = { path = "molrs-compute", version = "0.0.10", package = "molcrafts-molrs-compute" }
-molrs_smiles  = { path = "molrs-smiles",  version = "0.0.10", package = "molcrafts-molrs-smiles" }
-molrs_ff      = { path = "molrs-ff",      version = "0.0.10", package = "molcrafts-molrs-ff" }
-molrs_embed   = { path = "molrs-embed",   version = "0.0.10", package = "molcrafts-molrs-embed" }
-molrs_cxxapi  = { path = "molrs-cxxapi",  version = "0.0.10", package = "molcrafts-molrs-cxxapi" }
+molrs         = { path = "molrs-core",    version = "0.0.11", package = "molcrafts-molrs-core", default-features = false }
+molrs_io      = { path = "molrs-io",      version = "0.0.11", package = "molcrafts-molrs-io" }
+molrs_compute = { path = "molrs-compute", version = "0.0.11", package = "molcrafts-molrs-compute" }
+molrs_smiles  = { path = "molrs-smiles",  version = "0.0.11", package = "molcrafts-molrs-smiles" }
+molrs_ff      = { path = "molrs-ff",      version = "0.0.11", package = "molcrafts-molrs-ff" }
+molrs_embed   = { path = "molrs-embed",   version = "0.0.11", package = "molcrafts-molrs-embed" }
+molrs_cxxapi  = { path = "molrs-cxxapi",  version = "0.0.11", package = "molcrafts-molrs-cxxapi" }
 
 [profile.release]
 lto = "thin"

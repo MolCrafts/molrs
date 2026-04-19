@@ -14,14 +14,15 @@ autobenches = false
 name = "molrs_compute"
 
 [features]
-default = []
-rayon = ["molrs/rayon"]
+default = ["rayon"]
+rayon = ["molrs/rayon", "dep:rayon"]
 
 [dependencies]
 molrs = { workspace = true }
 ndarray = "0.17"
 rand = "0.9"
 rustfft = "6"
+rayon = { version = "1.10", optional = true }
 
 [dev-dependencies]
 criterion = "0.5"

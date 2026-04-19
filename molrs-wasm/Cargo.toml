@@ -1,6 +1,6 @@
 [package]
 name = "molrs"
-version = "0.0.10"
+version = "0.0.11"
 edition = "2024"
 authors = ["MolCrafts"]
 description = "WASM bindings for molrs"
@@ -30,14 +30,14 @@ js-sys = "0.3"
 web-sys = { version = "0.3", features = ["console"] }
 
 # Core + FFI handle layer are always compiled (all variants need them).
-molrs = { path = "../molrs-core", package = "molcrafts-molrs-core", version = "0.0.10", default-features = false, features = ["zarr"] }
-molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.0.10", default-features = false }
+molrs = { path = "../molrs-core", package = "molcrafts-molrs-core", version = "0.0.11", default-features = false, features = ["zarr"] }
+molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.0.11", default-features = false }
 
 # Optional sub-crates, gated by matching features above.
-molrs-io      = { path = "../molrs-io",      package = "molcrafts-molrs-io",      version = "0.0.10", default-features = false, features = ["zarr"], optional = true }
-molrs-smiles  = { path = "../molrs-smiles",  package = "molcrafts-molrs-smiles",  version = "0.0.10", default-features = false, optional = true }
-molrs-compute = { path = "../molrs-compute", package = "molcrafts-molrs-compute", version = "0.0.10", default-features = false, optional = true }
-molrs-embed   = { path = "../molrs-embed",   package = "molcrafts-molrs-embed",   version = "0.0.10", default-features = false, optional = true }
+molrs-io      = { path = "../molrs-io",      package = "molcrafts-molrs-io",      version = "0.0.11", default-features = false, features = ["zarr"], optional = true }
+molrs-smiles  = { path = "../molrs-smiles",  package = "molcrafts-molrs-smiles",  version = "0.0.11", default-features = false, optional = true }
+molrs-compute = { path = "../molrs-compute", package = "molcrafts-molrs-compute", version = "0.0.11", default-features = false, optional = true }
+molrs-embed   = { path = "../molrs-embed",   package = "molcrafts-molrs-embed",   version = "0.0.11", default-features = false, optional = true }
 
 ndarray = "0.17"
 zarrs = { version = "0.23", default-features = false }

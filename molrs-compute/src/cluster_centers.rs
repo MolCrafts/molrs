@@ -5,45 +5,66 @@ use molrs::types::F;
 
 use super::cluster::ClusterResult;
 use super::error::ComputeError;
+use super::result::{ComputeResult, DescriptorRow};
 use super::traits::Compute;
-use super::util::{get_positions_generic, mic_disp};
+use super::util::{MicHelper, get_positions_ref};
 
-/// Computes the geometric center of each cluster using the minimum image
-/// convention (MIC) for periodic systems.
+/// Per-cluster geometric center for one frame.
+#[derive(Debug, Clone, Default)]
+pub struct ClusterCentersResult {
+    pub centers: Vec<[F; 3]>,
+}
+
+impl ClusterCentersResult {
+    pub fn new(centers: Vec<[F; 3]>) -> Self {
+        Self { centers }
+    }
+
+    pub fn len(&self) -> usize {
+        self.centers.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.centers.is_empty()
+    }
+}
+
+impl ComputeResult for ClusterCentersResult {}
+
+impl DescriptorRow for ClusterCentersResult {
+    fn as_row(&self) -> &[F] {
+        // Flatten [[x,y,z]; n] → &[F; 3n]. Safe: nested arrays are layout-
+        // compatible with a flat [F; 3n] array.
+        // SAFETY: `[F; 3]` has the same memory layout as three consecutive Fs.
+        let len = self.centers.len() * 3;
+        let ptr = self.centers.as_ptr() as *const F;
+        unsafe { std::slice::from_raw_parts(ptr, len) }
+    }
+}
+
+/// Computes the geometric center of each cluster per frame using the minimum
+/// image convention (MIC).
 ///
 /// Algorithm: for each cluster, pick the first particle as reference,
 /// accumulate MIC-corrected displacements, then average.
-///
-/// `center_k = r_ref + (1/N_k) * SUM_i shortest_vector(r_ref, r_i)`
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ClusterCenters;
 
 impl ClusterCenters {
     pub fn new() -> Self {
         Self
     }
-}
 
-impl Default for ClusterCenters {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Compute for ClusterCenters {
-    type Args<'a> = &'a ClusterResult;
-    type Output = Vec<[F; 3]>;
-
-    fn compute<FA: FrameAccess>(
+    fn one_frame<FA: FrameAccess>(
         &self,
         frame: &FA,
         clusters: &ClusterResult,
-    ) -> Result<Vec<[F; 3]>, ComputeError> {
-        let (xs_vec, ys_vec, zs_vec) = get_positions_generic(frame)?;
-        let xs = &xs_vec[..];
-        let ys = &ys_vec[..];
-        let zs = &zs_vec[..];
-        let simbox = frame.simbox_ref();
+    ) -> Result<ClusterCentersResult, ComputeError> {
+        let (xs_p, ys_p, zs_p) = get_positions_ref(frame)?;
+        let xs = xs_p.slice();
+        let ys = ys_p.slice();
+        let zs = zs_p.slice();
+        let mic = MicHelper::from_simbox(frame.simbox_ref());
         let nc = clusters.num_clusters;
 
         let mut ref_pos = vec![[0.0 as F; 3]; nc];
@@ -63,7 +84,7 @@ impl Compute for ClusterCenters {
                 has_ref[c] = true;
             }
 
-            let d = mic_disp(simbox, ref_pos[c], pos);
+            let d = mic.disp(ref_pos[c], pos);
             sum_delta[c][0] += d[0];
             sum_delta[c][1] += d[1];
             sum_delta[c][2] += d[2];
@@ -80,7 +101,47 @@ impl Compute for ClusterCenters {
             }
         }
 
-        Ok(centers)
+        Ok(ClusterCentersResult { centers })
+    }
+}
+
+impl Compute for ClusterCenters {
+    type Args<'a> = &'a Vec<ClusterResult>;
+    type Output = Vec<ClusterCentersResult>;
+
+    fn compute<'a, FA: FrameAccess + Sync + 'a>(
+        &self,
+        frames: &[&'a FA],
+        clusters: &'a Vec<ClusterResult>,
+    ) -> Result<Vec<ClusterCentersResult>, ComputeError> {
+        if frames.is_empty() {
+            return Err(ComputeError::EmptyInput);
+        }
+        if clusters.len() != frames.len() {
+            return Err(ComputeError::DimensionMismatch {
+                expected: frames.len(),
+                got: clusters.len(),
+                what: "ClusterResult count",
+            });
+        }
+        #[cfg(feature = "rayon")]
+        const PAR_THRESHOLD: usize = 4;
+
+        #[cfg(feature = "rayon")]
+        if frames.len() >= PAR_THRESHOLD {
+            use rayon::prelude::*;
+            return frames
+                .par_iter()
+                .zip(clusters.par_iter())
+                .map(|(frame, cl)| self.one_frame(*frame, cl))
+                .collect();
+        }
+
+        let mut out = Vec::with_capacity(frames.len());
+        for (frame, cl) in frames.iter().zip(clusters.iter()) {
+            out.push(self.one_frame(*frame, cl)?);
+        }
+        Ok(out)
     }
 }
 
@@ -122,7 +183,10 @@ mod tests {
         let simbox = frame.simbox.as_ref().unwrap();
         let mut lc = LinkCell::new().cutoff(cutoff);
         lc.build(pos.view(), simbox);
-        Cluster::new(1).compute(frame, lc.query()).unwrap()
+        let out = Cluster::new(1)
+            .compute(&[frame], &vec![lc.query().clone()])
+            .unwrap();
+        out.into_iter().next().unwrap()
     }
 
     fn manual_clusters(idx: &[i64]) -> ClusterResult {
@@ -140,11 +204,13 @@ mod tests {
         }
     }
 
-    // --- freud: test_cluster_props_advanced_unweighted (centers) ---
+    fn centers_single(frame: &Frame, cl: ClusterResult) -> ClusterCentersResult {
+        let out = ClusterCenters::new().compute(&[frame], &vec![cl]).unwrap();
+        out.into_iter().next().unwrap()
+    }
 
     #[test]
     fn coincident_and_offset_clusters() {
-        // p0,p1 at same spot; p2,p3 nearby
         let pos = [
             [1.0, 1.0, 1.0],
             [1.0, 1.0, 1.0],
@@ -155,67 +221,53 @@ mod tests {
         let cl = clusters_via_nlist(&frame, 0.5);
         assert_eq!(cl.num_clusters, 2);
 
-        let centers = ClusterCenters::new().compute(&frame, &cl).unwrap();
         let (ca, cb) = if cl.cluster_idx[0] == 0 {
             (0, 1)
         } else {
             (1, 0)
         };
+        let centers = centers_single(&frame, cl);
 
-        // cluster A: coincident → [1, 1, 1]
-        assert!((centers[ca][0] - 1.0).abs() < 1e-5);
-        assert!((centers[ca][1] - 1.0).abs() < 1e-5);
-
-        // cluster B: mean([1,3,1], [0.9,2.9,1]) = [0.95, 2.95, 1]
-        assert!((centers[cb][0] - 0.95).abs() < 1e-5);
-        assert!((centers[cb][1] - 2.95).abs() < 1e-5);
+        assert!((centers.centers[ca][0] - 1.0).abs() < 1e-5);
+        assert!((centers.centers[ca][1] - 1.0).abs() < 1e-5);
+        assert!((centers.centers[cb][0] - 0.95).abs() < 1e-5);
+        assert!((centers.centers[cb][1] - 2.95).abs() < 1e-5);
     }
-
-    // --- freud: test_cluster_com_periodic ---
 
     #[test]
     fn mic_wrapping_across_boundary() {
-        // box [0, 10), PBC. p0 at 0.5, p1 at 9.5 → MIC dist = 1.0
         let pos = [[0.5, 5.0, 5.0], [9.5, 5.0, 5.0]];
         let frame = frame_with(&pos, 10.0, [true, true, true]);
         let cl = clusters_via_nlist(&frame, 2.0);
         assert_eq!(cl.num_clusters, 1);
 
-        let centers = ClusterCenters::new().compute(&frame, &cl).unwrap();
-        // ref=0.5, MIC(0.5→9.5) = -1.0, mean_delta = (-1+0)/2 = -0.5
-        // center = 0.5 + (-0.5) = 0.0  (or 10.0, same in PBC)
-        let cx = centers[0][0];
+        let centers = centers_single(&frame, cl);
+        let cx = centers.centers[0][0];
         assert!(
             !(1.0..=9.0).contains(&cx),
             "center should wrap near boundary, got {cx}"
         );
     }
 
-    // --- single particle ---
-
     #[test]
     fn single_particle() {
         let pos = [[3.0, 4.0, 5.0]];
         let frame = frame_with(&pos, 10.0, [false, false, false]);
         let cl = manual_clusters(&[0]);
-        let centers = ClusterCenters::new().compute(&frame, &cl).unwrap();
-        assert!((centers[0][0] - 3.0).abs() < 1e-5);
-        assert!((centers[0][1] - 4.0).abs() < 1e-5);
-        assert!((centers[0][2] - 5.0).abs() < 1e-5);
+        let centers = centers_single(&frame, cl);
+        assert!((centers.centers[0][0] - 3.0).abs() < 1e-5);
+        assert!((centers.centers[0][1] - 4.0).abs() < 1e-5);
+        assert!((centers.centers[0][2] - 5.0).abs() < 1e-5);
     }
 
-    // --- empty ---
-
     #[test]
-    fn empty() {
+    fn empty_cluster_set() {
         let pos: Vec<[F; 3]> = vec![];
         let frame = frame_with(&pos, 10.0, [false, false, false]);
         let cl = manual_clusters(&[]);
-        let centers = ClusterCenters::new().compute(&frame, &cl).unwrap();
-        assert!(centers.is_empty());
+        let centers = centers_single(&frame, cl);
+        assert!(centers.centers.is_empty());
     }
-
-    // --- no simbox (free boundary) ---
 
     #[test]
     fn free_boundary() {
@@ -223,7 +275,7 @@ mod tests {
         let mut frame = frame_with(&pos, 10.0, [false, false, false]);
         let cl = manual_clusters(&[0, 0]);
         frame.simbox = None;
-        let centers = ClusterCenters::new().compute(&frame, &cl).unwrap();
-        assert!((centers[0][0] - 2.0).abs() < 1e-5);
+        let centers = centers_single(&frame, cl);
+        assert!((centers.centers[0][0] - 2.0).abs() < 1e-5);
     }
 }

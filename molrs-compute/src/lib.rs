@@ -1,39 +1,57 @@
 //! Analysis compute modules for molrs molecular simulation.
 //!
-//! Provides a trait-based framework for post-simulation analysis,
-//! inspired by [freud-analysis](https://freud.readthedocs.io/).
+//! Trajectory analysis (RDF, MSD, clustering, gyration/inertia, PCA,
+//! k-means) built around a single unified [`Compute`] trait and a
+//! lightweight typed DAG ([`Graph`] / [`Slot`] / [`Store`]).
 //!
 //! # Unified trait
 //!
-//! [`Compute`] — all analyses implement this trait with a GAT `Args` type:
+//! Every analysis implements [`Compute`]. A single frame, a trajectory, and a
+//! whole dataset are the same kind of input — a slice `&[&F]` — and each
+//! impl decides how to interpret it:
 //!
-//! - `Args = ()` for frame-only analyses (MSD)
-//! - `Args = &NeighborList` for pair-based analyses (RDF, Cluster)
-//! - `Args = &ClusterResult` for cluster property analyses
+//! - **Whole-sequence accumulators** (RDF) iterate every frame.
+//! - **Time-series analyses** (MSD) use `frames[0]` as a reference.
+//! - **Per-frame analyses** (Cluster, COM) return one result per frame.
+//! - **Matrix consumers** (PCA, k-means) take upstream per-frame outputs as
+//!   rows (via [`DescriptorRow`]).
 //!
-//! # Accumulation
+//! # Graph
 //!
-//! [`Reducer`] + [`Accumulator`] compose single-frame computes with
-//! trajectory-level reduction (sum, concat, etc.).
+//! [`Graph`] composes Compute nodes into a typed DAG. A [`Slot<T>`] returned
+//! by `add` flows a node's [`Output`](Compute::Output) into later nodes' `Args`.
+//! Execution is single-pass and insertion-ordered; each node runs exactly once
+//! per [`run`](Graph::run) even if many downstream consumers share it — the
+//! canonical diamond `Rg + Inertia + Gyration → COM → Cluster` runs `Cluster`
+//! and `COM` once, not three times.
+//!
+//! # Results
+//!
+//! Every Compute output implements [`ComputeResult`]. Accumulating outputs
+//! (RDF) override [`finalize`](ComputeResult::finalize) to normalize; other
+//! outputs use the default no-op. [`Graph::run`] calls `finalize` once per
+//! node before inserting into the [`Store`].
 //!
 //! # Available analyses
 //!
-//! | Module | Args | Description |
-//! |--------|------|-------------|
-//! | [`rdf`] | `&NeighborList` | Radial distribution function g(r) |
-//! | [`msd`] | `()` | Mean squared displacement |
-//! | [`cluster`] | `&NeighborList` | Distance-based cluster analysis (BFS) |
-//! | [`cluster_centers`] | `&ClusterResult` | Geometric centers (MIC-aware) |
-//! | [`center_of_mass`] | `&ClusterResult` | Mass-weighted centers |
-//! | [`gyration_tensor`] | `&ClusterResult` | Gyration tensor per cluster |
-//! | [`inertia_tensor`] | `&ClusterResult` | Moment of inertia tensor |
-//! | [`radius_of_gyration`] | `&ClusterResult` | Radius of gyration |
+//! | Module | Args | Output |
+//! |--------|------|--------|
+//! | [`rdf`] | `&Vec<NeighborList>` | [`RDFResult`] |
+//! | [`msd`] | `()` | [`MSDTimeSeries`] |
+//! | [`cluster`] | `&Vec<NeighborList>` | `Vec<`[`ClusterResult`]`>` |
+//! | [`cluster_centers`] | `&Vec<ClusterResult>` | `Vec<`[`ClusterCentersResult`]`>` |
+//! | [`center_of_mass`] | `&Vec<ClusterResult>` | `Vec<`[`COMResult`]`>` |
+//! | [`gyration_tensor`] | `(&Vec<ClusterResult>, &Vec<ClusterCentersResult>)` | `Vec<`[`GyrationTensorResult`]`>` |
+//! | [`inertia_tensor`] | `(&Vec<ClusterResult>, &Vec<COMResult>)` | `Vec<`[`InertiaTensorResult`]`>` |
+//! | [`radius_of_gyration`] | `(&Vec<ClusterResult>, &Vec<COMResult>)` | `Vec<`[`RgResult`]`>` |
+//! | [`pca`] | `&Vec<T: DescriptorRow>` | [`PcaResult`] |
+//! | [`kmeans`] | `&PcaResult` | [`KMeansResult`] |
 
-pub mod accumulator;
 pub mod center_of_mass;
 pub mod cluster;
 pub mod cluster_centers;
 pub mod error;
+pub mod graph;
 pub mod gyration_tensor;
 pub mod inertia_tensor;
 pub mod kmeans;
@@ -41,20 +59,22 @@ pub mod msd;
 pub mod pca;
 pub mod radius_of_gyration;
 pub mod rdf;
-pub mod reducer;
+pub mod result;
 pub mod traits;
 pub mod util;
 
 // Re-exports
-pub use accumulator::Accumulator;
-pub use center_of_mass::{CenterOfMass, CenterOfMassResult};
+pub use center_of_mass::{COMResult, CenterOfMass};
 pub use cluster::{Cluster, ClusterResult};
-pub use cluster_centers::ClusterCenters;
+pub use cluster_centers::{ClusterCenters, ClusterCentersResult};
 pub use error::ComputeError;
-pub use gyration_tensor::GyrationTensor;
-pub use inertia_tensor::InertiaTensor;
-pub use msd::{MSD, MSDResult};
-pub use radius_of_gyration::RadiusOfGyration;
+pub use graph::{Graph, Inputs, NodeId, Slot, Store};
+pub use gyration_tensor::{GyrationTensor, GyrationTensorResult};
+pub use inertia_tensor::{InertiaTensor, InertiaTensorResult};
+pub use kmeans::{KMeans, KMeansResult};
+pub use msd::{MSD, MSDResult, MSDTimeSeries};
+pub use pca::{Pca2, PcaResult};
+pub use radius_of_gyration::{RadiusOfGyration, RgResult};
 pub use rdf::{RDF, RDFResult};
-pub use reducer::{ConcatReducer, Reducer, SumReducer};
+pub use result::{ComputeResult, DescriptorRow};
 pub use traits::Compute;

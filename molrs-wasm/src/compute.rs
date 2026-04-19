@@ -41,9 +41,7 @@ use wasm_bindgen::prelude::*;
 
 use molrs::topology::{Topology as RsTopology, TopologyRingInfo as RsTopologyRingInfo};
 
-use molrs_compute::center_of_mass::{
-    CenterOfMass as RsCenterOfMass, CenterOfMassResult as RsCenterOfMassResult,
-};
+use molrs_compute::center_of_mass::{CenterOfMass as RsCenterOfMass, COMResult as RsCOMResult};
 use molrs_compute::cluster::{Cluster as RsCluster, ClusterResult as RsClusterResult};
 use molrs_compute::cluster_centers::ClusterCenters as RsClusterCenters;
 use molrs_compute::gyration_tensor::GyrationTensor as RsGyrationTensor;
@@ -53,6 +51,7 @@ use molrs_compute::msd::{MSD as RsMSD, MSDResult as RsMSDResult};
 use molrs_compute::pca::{Pca2 as RsPca2, PcaResult as RsPcaResult};
 use molrs_compute::radius_of_gyration::RadiusOfGyration as RsRadiusOfGyration;
 use molrs_compute::rdf::{RDF as RsRDF, RDFResult as RsRDFResult};
+use molrs_compute::result::{ComputeResult, DescriptorRow};
 use molrs_compute::traits::Compute;
 use molrs::neighbors::{
     LinkCell as RsLinkCell, NbListAlgo, NeighborList as RsNeighborList,
@@ -412,9 +411,10 @@ impl RDF {
     /// [`computeWithVolume`](Self::compute_with_volume) for non-periodic frames.
     pub fn compute(&self, frame: &Frame, neighbors: &NeighborList) -> Result<RDFResult, JsValue> {
         frame.with_frame(|rs_frame| {
+            let nlist_vec = vec![neighbors.inner.clone()];
             let result = self
                 .inner
-                .compute(rs_frame, &neighbors.inner)
+                .compute(&[rs_frame], &nlist_vec)
                 .map_err(|e| JsValue::from_str(&format!("RDF compute: {e}")))?;
             Ok(RDFResult { inner: result })
         })
@@ -423,6 +423,9 @@ impl RDF {
     /// Compute g(r) using an explicit normalization volume (A^3).
     ///
     /// Use this for non-periodic systems or to override the box volume.
+    /// Internally wraps the supplied volume as a cubic SimBox since the
+    /// underlying [`molrs_compute::RDF`] pulls its normalization volume from
+    /// `frame.simbox`.
     ///
     /// # Arguments
     ///
@@ -440,9 +443,24 @@ impl RDF {
         neighbors: &NeighborList,
         volume: F,
     ) -> Result<RDFResult, JsValue> {
+        if !(volume.is_finite() && volume > 0.0) {
+            return Err(JsValue::from_str(
+                "RDF computeWithVolume: volume must be finite and > 0",
+            ));
+        }
+        let box_len = volume.cbrt();
+        let simbox = molrs::region::simbox::SimBox::cube(
+            box_len,
+            ndarray::array![0.0 as F, 0.0 as F, 0.0 as F],
+            [false, false, false],
+        )
+        .map_err(|e| JsValue::from_str(&format!("RDF computeWithVolume: {e:?}")))?;
+        let mut synth = molrs::frame::Frame::new();
+        synth.simbox = Some(simbox);
+        let nlist_vec = vec![neighbors.inner.clone()];
         let result = self
             .inner
-            .compute_with_volume(&neighbors.inner, volume)
+            .compute(&[&synth], &nlist_vec)
             .map_err(|e| JsValue::from_str(&format!("RDF computeWithVolume: {e}")))?;
         Ok(RDFResult { inner: result })
     }
@@ -549,7 +567,7 @@ impl RDFResult {
 /// - Einstein, A. (1905). *Annalen der Physik*, 322(8), 549-560.
 #[wasm_bindgen(js_name = MSD)]
 pub struct MSD {
-    inner: RsMSD,
+    frames: Vec<molrs::frame::Frame>,
 }
 
 #[allow(clippy::new_without_default)]
@@ -567,46 +585,40 @@ impl MSD {
     /// ```
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
-        Self {
-            inner: RsMSD::new(),
-        }
+        Self { frames: Vec::new() }
     }
 
     /// Feed a frame into the MSD analysis.
     ///
-    /// The first frame sets the reference configuration.
-    /// Subsequent frames compute MSD relative to that reference.
+    /// Internally clones the frame's core data so subsequent mutations on
+    /// the JS side (e.g. trajectory playback overwriting buffers) do not
+    /// race against pending [`results`](Self::results) calls. The first
+    /// frame sets the reference configuration.
     ///
     /// # Arguments
     ///
     /// * `frame` - Frame with `"atoms"` block containing
     ///   `x`, `y`, `z` (F) columns
     ///
-    /// # Errors
-    ///
-    /// Throws if the frame is missing required columns or has a
-    /// different number of atoms than the reference.
-    ///
     /// # Example (JavaScript)
     ///
     /// ```js
     /// const msd = new MSD();
     /// msd.feed(frame0);  // sets reference
-    /// msd.feed(frame1);  // computes MSD vs frame0
+    /// msd.feed(frame1);  // added to trajectory
+    /// const series = msd.results();
     /// ```
     pub fn feed(&mut self, frame: &Frame) -> Result<(), JsValue> {
         frame.with_frame(|rs_frame| {
-            self.inner
-                .feed(rs_frame)
-                .map_err(|e| JsValue::from_str(&format!("MSD feed: {e}")))?;
+            self.frames.push(rs_frame.clone());
             Ok(())
         })
     }
 
-    /// Return all accumulated MSD results as an array.
+    /// Run the stateless [`molrs_compute::MSD`] over every fed frame and
+    /// return the per-frame time series.
     ///
-    /// Returns one [`MSDResult`] per frame fed (including the
-    /// reference frame, which has MSD = 0).
+    /// The first frame is always the reference, so `results()[0].mean ≈ 0`.
     ///
     /// # Example (JavaScript)
     ///
@@ -614,23 +626,30 @@ impl MSD {
     /// const results = msd.results();
     /// results.forEach((r, t) => console.log(`t=${t}: MSD=${r.mean}`));
     /// ```
-    pub fn results(&self) -> Vec<MSDResult> {
-        self.inner
-            .results()
+    pub fn results(&self) -> Result<Vec<MSDResult>, JsValue> {
+        if self.frames.is_empty() {
+            return Ok(Vec::new());
+        }
+        let refs: Vec<&molrs::frame::Frame> = self.frames.iter().collect();
+        let series = RsMSD::new()
+            .compute(&refs, ())
+            .map_err(|e| JsValue::from_str(&format!("MSD results: {e}")))?;
+        Ok(series
+            .data
             .iter()
             .map(|r| MSDResult { inner: r.clone() })
-            .collect()
+            .collect())
     }
 
     /// Number of frames accumulated.
     #[wasm_bindgen(getter)]
     pub fn count(&self) -> usize {
-        self.inner.count()
+        self.frames.len()
     }
 
-    /// Reset the analysis, clearing reference and all results.
+    /// Reset the analysis, clearing the trajectory buffer.
     pub fn reset(&mut self) {
-        self.inner.reset();
+        self.frames.clear();
     }
 }
 
@@ -746,11 +765,15 @@ impl Cluster {
         neighbors: &NeighborList,
     ) -> Result<ClusterResult, JsValue> {
         frame.with_frame(|rs_frame| {
-            let result = self
+            let nlist_vec = vec![neighbors.inner.clone()];
+            let mut results = self
                 .inner
-                .compute(rs_frame, &neighbors.inner)
+                .compute(&[rs_frame], &nlist_vec)
                 .map_err(|e| JsValue::from_str(&format!("Cluster compute: {e}")))?;
-            Ok(ClusterResult { inner: result })
+            let first = results
+                .pop()
+                .ok_or_else(|| JsValue::from_str("Cluster compute: empty result"))?;
+            Ok(ClusterResult { inner: first })
         })
     }
 }
@@ -860,9 +883,9 @@ mod tests {
         let rdf = RDF::new(20, 4.0, None).unwrap();
         let result = rdf.compute(&frame, &nbrs).unwrap();
 
-        assert_eq!(result.bin_centers().len(), 20);
-        assert_eq!(result.rdf().len(), 20);
-        assert_eq!(result.bin_edges().len(), 21);
+        assert_eq!(result.bin_centers().length(), 20);
+        assert_eq!(result.rdf().length(), 20);
+        assert_eq!(result.bin_edges().length(), 21);
     }
 
     #[wasm_bindgen_test]
@@ -877,7 +900,7 @@ mod tests {
         msd.feed(&cur_frame).unwrap();
 
         assert_eq!(msd.count(), 2);
-        let results = msd.results();
+        let results = msd.results().unwrap();
         assert_eq!(results.len(), 2);
 
         // frame 0 vs itself = 0
@@ -967,11 +990,19 @@ impl ClusterCenters {
         cluster_result: &ClusterResult,
     ) -> Result<Vec<F>, JsValue> {
         frame.with_frame(|rs_frame| {
-            let centers = self
+            let clusters_vec = vec![cluster_result.inner.clone()];
+            let mut results = self
                 .inner
-                .compute(rs_frame, &cluster_result.inner)
+                .compute(&[rs_frame], &clusters_vec)
                 .map_err(|e| JsValue::from_str(&format!("ClusterCenters: {e}")))?;
-            Ok(centers.iter().flat_map(|c| [c[0], c[1], c[2]]).collect())
+            let first = results
+                .pop()
+                .ok_or_else(|| JsValue::from_str("ClusterCenters: empty result"))?;
+            Ok(first
+                .centers
+                .iter()
+                .flat_map(|c| [c[0], c[1], c[2]])
+                .collect())
         })
     }
 }
@@ -991,7 +1022,7 @@ impl ClusterCenters {
 /// ```
 #[wasm_bindgen(js_name = CenterOfMassResult)]
 pub struct CenterOfMassResult {
-    inner: RsCenterOfMassResult,
+    inner: RsCOMResult,
 }
 
 #[wasm_bindgen(js_class = CenterOfMassResult)]
@@ -1047,10 +1078,14 @@ impl CenterOfMass {
             } else {
                 RsCenterOfMass::new()
             };
-            let result = calc
-                .compute(rs_frame, &cluster_result.inner)
+            let clusters_vec = vec![cluster_result.inner.clone()];
+            let mut results = calc
+                .compute(&[rs_frame], &clusters_vec)
                 .map_err(|e| JsValue::from_str(&format!("CenterOfMass: {e}")))?;
-            Ok(CenterOfMassResult { inner: result })
+            let first = results
+                .pop()
+                .ok_or_else(|| JsValue::from_str("CenterOfMass: empty result"))?;
+            Ok(CenterOfMassResult { inner: first })
         })
     }
 }
@@ -1078,17 +1113,29 @@ impl GyrationTensor {
     }
 
     /// Compute gyration tensors. Returns a flat float typed array (9 values per cluster).
+    ///
+    /// Internally computes the cluster geometric centers (via
+    /// [`RsClusterCenters`]) since the new compute trait exposes them as a
+    /// required upstream — the old single-frame wasm API hides this detail.
     pub fn compute(
         &self,
         frame: &Frame,
         cluster_result: &ClusterResult,
     ) -> Result<Vec<F>, JsValue> {
         frame.with_frame(|rs_frame| {
-            let tensors = self
+            let clusters_vec = vec![cluster_result.inner.clone()];
+            let centers = RsClusterCenters::new()
+                .compute(&[rs_frame], &clusters_vec)
+                .map_err(|e| JsValue::from_str(&format!("GyrationTensor centers: {e}")))?;
+            let mut tensors = self
                 .inner
-                .compute(rs_frame, &cluster_result.inner)
+                .compute(&[rs_frame], (&clusters_vec, &centers))
                 .map_err(|e| JsValue::from_str(&format!("GyrationTensor: {e}")))?;
-            Ok(tensors
+            let first = tensors
+                .pop()
+                .ok_or_else(|| JsValue::from_str("GyrationTensor: empty result"))?;
+            Ok(first
+                .0
                 .iter()
                 .flat_map(|t| t.iter().flat_map(|row| row.iter().copied()))
                 .collect())
@@ -1114,21 +1161,38 @@ impl InertiaTensor {
     }
 
     /// Compute inertia tensors. Returns a flat float typed array (9 values per cluster).
+    ///
+    /// Internally computes the cluster centers of mass (via
+    /// [`RsCenterOfMass`]) since the new compute trait consumes them as a
+    /// required upstream — the old single-frame wasm API hides this detail.
     pub fn compute(
         &self,
         frame: &Frame,
         cluster_result: &ClusterResult,
     ) -> Result<Vec<F>, JsValue> {
         frame.with_frame(|rs_frame| {
+            let com_calc = if let Some(ref ms) = self.masses {
+                RsCenterOfMass::new().with_masses(ms)
+            } else {
+                RsCenterOfMass::new()
+            };
+            let clusters_vec = vec![cluster_result.inner.clone()];
+            let coms = com_calc
+                .compute(&[rs_frame], &clusters_vec)
+                .map_err(|e| JsValue::from_str(&format!("InertiaTensor COM: {e}")))?;
             let calc = if let Some(ref ms) = self.masses {
                 RsInertiaTensor::new().with_masses(ms)
             } else {
                 RsInertiaTensor::new()
             };
-            let tensors = calc
-                .compute(rs_frame, &cluster_result.inner)
+            let mut tensors = calc
+                .compute(&[rs_frame], (&clusters_vec, &coms))
                 .map_err(|e| JsValue::from_str(&format!("InertiaTensor: {e}")))?;
-            Ok(tensors
+            let first = tensors
+                .pop()
+                .ok_or_else(|| JsValue::from_str("InertiaTensor: empty result"))?;
+            Ok(first
+                .0
                 .iter()
                 .flat_map(|t| t.iter().flat_map(|row| row.iter().copied()))
                 .collect())
@@ -1154,21 +1218,37 @@ impl RadiusOfGyration {
     }
 
     /// Compute radii of gyration. Returns a float typed array of length `numClusters`.
+    ///
+    /// Internally computes the cluster centers of mass so the single-frame
+    /// wasm signature `(frame, cluster)` stays stable despite the new
+    /// compute trait needing explicit COM upstream.
     pub fn compute(
         &self,
         frame: &Frame,
         cluster_result: &ClusterResult,
     ) -> Result<Vec<F>, JsValue> {
         frame.with_frame(|rs_frame| {
+            let com_calc = if let Some(ref ms) = self.masses {
+                RsCenterOfMass::new().with_masses(ms)
+            } else {
+                RsCenterOfMass::new()
+            };
+            let clusters_vec = vec![cluster_result.inner.clone()];
+            let coms = com_calc
+                .compute(&[rs_frame], &clusters_vec)
+                .map_err(|e| JsValue::from_str(&format!("RadiusOfGyration COM: {e}")))?;
             let calc = if let Some(ref ms) = self.masses {
                 RsRadiusOfGyration::new().with_masses(ms)
             } else {
                 RsRadiusOfGyration::new()
             };
-            let radii = calc
-                .compute(rs_frame, &cluster_result.inner)
+            let mut radii = calc
+                .compute(&[rs_frame], (&clusters_vec, &coms))
                 .map_err(|e| JsValue::from_str(&format!("RadiusOfGyration: {e}")))?;
-            Ok(radii)
+            let first = radii
+                .pop()
+                .ok_or_else(|| JsValue::from_str("RadiusOfGyration: empty result"))?;
+            Ok(first.0)
         })
     }
 }
@@ -1505,11 +1585,37 @@ impl WasmPca2 {
         n_rows: usize,
         n_cols: usize,
     ) -> Result<WasmPcaResult, JsValue> {
-        RsPca2::fit_transform(matrix, n_rows, n_cols)
+        if matrix.len() != n_rows * n_cols {
+            return Err(JsValue::from_str(&format!(
+                "PCA: matrix length {} != n_rows * n_cols = {} * {}",
+                matrix.len(),
+                n_rows,
+                n_cols
+            )));
+        }
+        let rows: Vec<PcaRow> = (0..n_rows)
+            .map(|i| PcaRow(matrix[i * n_cols..(i + 1) * n_cols].to_vec()))
+            .collect();
+        let dummy = molrs::frame::Frame::new();
+        RsPca2::<PcaRow>::new()
+            .compute(&[&dummy], &rows)
             .map(|inner| WasmPcaResult { inner })
             .map_err(|e| JsValue::from_str(&format!("PCA: {e}")))
     }
 }
+
+/// Row adapter so the stateless `Pca2` can consume caller matrices without
+/// requiring a downstream molrs-compute type.
+#[derive(Clone)]
+struct PcaRow(Vec<F>);
+
+impl DescriptorRow for PcaRow {
+    fn as_row(&self) -> &[F] {
+        &self.0
+    }
+}
+
+impl ComputeResult for PcaRow {}
 
 /// Result of a [`WasmPca2::fit_transform`] call.
 ///
@@ -1596,12 +1702,30 @@ impl WasmKMeans {
         n_rows: usize,
         n_dims: usize,
     ) -> Result<Int32Array, JsValue> {
+        if n_dims != 2 {
+            return Err(JsValue::from_str(
+                "KMeans wasm binding supports n_dims=2 only (PCA-score input)",
+            ));
+        }
+        if coords.len() != n_rows * n_dims {
+            return Err(JsValue::from_str(&format!(
+                "KMeans: coords length {} != n_rows * n_dims = {} * {}",
+                coords.len(),
+                n_rows,
+                n_dims
+            )));
+        }
+        let pca = molrs_compute::pca::PcaResult {
+            coords: coords.to_vec(),
+            variance: [0.0 as F, 0.0 as F],
+        };
+        let dummy = molrs::frame::Frame::new();
         let labels = self
             .inner
-            .fit(coords, n_rows, n_dims)
+            .compute(&[&dummy], &pca)
             .map_err(|e| JsValue::from_str(&format!("KMeans fit: {e}")))?;
-        let out = Int32Array::new_with_length(labels.len() as u32);
-        out.copy_from(&labels);
+        let out = Int32Array::new_with_length(labels.0.len() as u32);
+        out.copy_from(&labels.0);
         Ok(out)
     }
 }

@@ -1,5 +1,6 @@
 //! Error types for the FFI layer.
 
+use molrs::block::DType;
 use std::fmt;
 
 /// Errors that can occur in FFI operations.
@@ -16,6 +17,15 @@ pub enum FfiError {
 
     /// Array is not contiguous (zero-copy view not possible)
     NonContiguous { key: String },
+
+    /// Column exists but has the wrong dtype for the requested access.
+    /// Distinct from [`KeyNotFound`]: the caller asked the right key but
+    /// mismatched its type expectation — usually a schema-level bug.
+    DTypeMismatch {
+        key: String,
+        expected: DType,
+        actual: DType,
+    },
 }
 
 impl fmt::Display for FfiError {
@@ -27,6 +37,15 @@ impl fmt::Display for FfiError {
             FfiError::NonContiguous { key } => {
                 write!(f, "Column '{}' is not contiguous in memory", key)
             }
+            FfiError::DTypeMismatch {
+                key,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "Column '{}' has dtype {} but expected {}",
+                key, actual, expected
+            ),
         }
     }
 }

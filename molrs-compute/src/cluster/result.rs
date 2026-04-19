@@ -1,6 +1,8 @@
 use ndarray::Array1;
 
-/// Result of a cluster analysis.
+use crate::result::ComputeResult;
+
+/// Result of a cluster analysis on one frame.
 #[derive(Debug, Clone)]
 pub struct ClusterResult {
     /// Particle -> cluster ID (0-indexed). `-1` for unassigned (filtered).
@@ -10,3 +12,5 @@ pub struct ClusterResult {
     /// Size (particle count) of each cluster, indexed by cluster ID.
     pub cluster_sizes: Vec<usize>,
 }
+
+impl ComputeResult for ClusterResult {}

@@ -6,53 +6,62 @@ use molrs::frame_access::FrameAccess;
 use molrs::types::F;
 
 use super::cluster::ClusterResult;
+use super::cluster_centers::ClusterCentersResult;
 use super::error::ComputeError;
+use super::result::ComputeResult;
 use super::traits::Compute;
-use super::util::{get_positions_generic, mic_disp};
+use super::util::{MicHelper, get_positions_ref};
 
-/// Computes the gyration tensor for each cluster.
+/// Per-cluster gyration tensors for one frame.
 ///
-/// The gyration tensor is particle-count-normalized:
+/// `self.0[c][a][b]` is the `(a, b)` component of the gyration tensor of
+/// cluster `c`, in **Å²**. The tensor is particle-count-normalized:
+/// `G[a][b] = (1/N) Σ s_a s_b` where `s` is the MIC displacement from the
+/// cluster's geometric center.
+///
+/// # References
+///
+/// Theodorou & Suter, *Macromolecules* **18**, 1206 (1985).
+#[derive(Debug, Clone, Default)]
+pub struct GyrationTensorResult(pub Vec<[[F; 3]; 3]>);
+
+impl ComputeResult for GyrationTensorResult {}
+
+/// Gyration tensor per cluster, per frame.
 ///
 /// `G_k[a][b] = (1/N_k) * SUM_i s_i[a] * s_i[b]`
-///
-/// where `s_i = shortest_vector(center_k, r_i)` is the MIC displacement
-/// from the geometric center.
-#[derive(Debug, Clone)]
+/// where `s_i = shortest_vector(center_k, r_i)` is the MIC displacement from
+/// the geometric center. Geometric centers come from the
+/// [`ClusterCentersResult`] arg — this Compute does **not** recompute them.
+#[derive(Debug, Clone, Default)]
 pub struct GyrationTensor;
 
 impl GyrationTensor {
     pub fn new() -> Self {
         Self
     }
-}
 
-impl Default for GyrationTensor {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Compute for GyrationTensor {
-    type Args<'a> = &'a ClusterResult;
-    type Output = Vec<[[F; 3]; 3]>;
-
-    fn compute<FA: FrameAccess>(
+    fn one_frame<FA: FrameAccess>(
         &self,
         frame: &FA,
         clusters: &ClusterResult,
-    ) -> Result<Vec<[[F; 3]; 3]>, ComputeError> {
-        let (xs_vec, ys_vec, zs_vec) = get_positions_generic(frame)?;
-        let xs = &xs_vec[..];
-        let ys = &ys_vec[..];
-        let zs = &zs_vec[..];
-        let simbox = frame.simbox_ref();
+        centers: &ClusterCentersResult,
+    ) -> Result<GyrationTensorResult, ComputeError> {
+        let (xs_p, ys_p, zs_p) = get_positions_ref(frame)?;
+        let xs = xs_p.slice();
+        let ys = ys_p.slice();
+        let zs = zs_p.slice();
+        let mic = MicHelper::from_simbox(frame.simbox_ref());
         let nc = clusters.num_clusters;
 
-        // Pass 1: compute geometric centers (MIC-aware)
-        let centers = super::cluster_centers::ClusterCenters::new().compute(frame, clusters)?;
+        if centers.centers.len() != nc {
+            return Err(ComputeError::DimensionMismatch {
+                expected: nc,
+                got: centers.centers.len(),
+                what: "ClusterCentersResult cluster count",
+            });
+        }
 
-        // Pass 2: accumulate gyration tensor
         let mut tensors = vec![[[0.0 as F; 3]; 3]; nc];
         let mut counts = vec![0usize; nc];
 
@@ -62,17 +71,22 @@ impl Compute for GyrationTensor {
             }
             let c = cid as usize;
             let pos = [xs[i], ys[i], zs[i]];
-            let s = mic_disp(simbox, centers[c], pos);
+            let s = mic.disp(centers.centers[c], pos);
 
-            for a in 0..3 {
-                for b in 0..3 {
-                    tensors[c][a][b] += s[a] * s[b];
-                }
-            }
+            // Fully unrolled 3x3 rank-1 update — compiler emits straight-line code.
+            let t = &mut tensors[c];
+            t[0][0] += s[0] * s[0];
+            t[0][1] += s[0] * s[1];
+            t[0][2] += s[0] * s[2];
+            t[1][0] += s[1] * s[0];
+            t[1][1] += s[1] * s[1];
+            t[1][2] += s[1] * s[2];
+            t[2][0] += s[2] * s[0];
+            t[2][1] += s[2] * s[1];
+            t[2][2] += s[2] * s[2];
             counts[c] += 1;
         }
 
-        // Normalize by particle count
         for (tensor, &count) in tensors.iter_mut().zip(counts.iter()) {
             if count > 0 {
                 let n = count as F;
@@ -84,13 +98,62 @@ impl Compute for GyrationTensor {
             }
         }
 
-        Ok(tensors)
+        Ok(GyrationTensorResult(tensors))
+    }
+}
+
+impl Compute for GyrationTensor {
+    type Args<'a> = (&'a Vec<ClusterResult>, &'a Vec<ClusterCentersResult>);
+    type Output = Vec<GyrationTensorResult>;
+
+    fn compute<'a, FA: FrameAccess + Sync + 'a>(
+        &self,
+        frames: &[&'a FA],
+        (clusters, centers): Self::Args<'a>,
+    ) -> Result<Vec<GyrationTensorResult>, ComputeError> {
+        if frames.is_empty() {
+            return Err(ComputeError::EmptyInput);
+        }
+        if clusters.len() != frames.len() {
+            return Err(ComputeError::DimensionMismatch {
+                expected: frames.len(),
+                got: clusters.len(),
+                what: "ClusterResult count",
+            });
+        }
+        if centers.len() != frames.len() {
+            return Err(ComputeError::DimensionMismatch {
+                expected: frames.len(),
+                got: centers.len(),
+                what: "ClusterCentersResult count",
+            });
+        }
+        #[cfg(feature = "rayon")]
+        const PAR_THRESHOLD: usize = 4;
+
+        #[cfg(feature = "rayon")]
+        if frames.len() >= PAR_THRESHOLD {
+            use rayon::prelude::*;
+            return frames
+                .par_iter()
+                .zip(clusters.par_iter())
+                .zip(centers.par_iter())
+                .map(|((frame, cl), cc)| self.one_frame(*frame, cl, cc))
+                .collect();
+        }
+
+        let mut out = Vec::with_capacity(frames.len());
+        for ((frame, cl), cc) in frames.iter().zip(clusters.iter()).zip(centers.iter()) {
+            out.push(self.one_frame(*frame, cl, cc)?);
+        }
+        Ok(out)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cluster_centers::ClusterCenters;
     use molrs::Frame;
     use molrs::block::Block;
     use molrs::region::simbox::SimBox;
@@ -132,32 +195,35 @@ mod tests {
         }
     }
 
-    // --- freud: gyration == 0 for coincident particles ---
+    fn gyration_single(frame: &Frame, cl: ClusterResult) -> GyrationTensorResult {
+        let centers = ClusterCenters::new()
+            .compute(&[frame], &vec![cl.clone()])
+            .unwrap();
+        let out = GyrationTensor::new()
+            .compute(&[frame], (&vec![cl], &centers))
+            .unwrap();
+        out.into_iter().next().unwrap()
+    }
 
     #[test]
     fn zero_for_coincident() {
         let pos = [[1.0, 1.0, 1.0], [1.0, 1.0, 1.0]];
         let frame = frame_with(&pos, 6.0);
         let cl = manual_clusters(&[0, 0]);
-        let g = GyrationTensor::new().compute(&frame, &cl).unwrap();
+        let g = gyration_single(&frame, cl);
         for a in 0..3 {
             for b in 0..3 {
-                assert!(g[0][a][b].abs() < 1e-10);
+                assert!(g.0[0][a][b].abs() < 1e-10);
             }
         }
     }
 
-    // --- freud: test_cluster_props_advanced_unweighted (gyration tensor) ---
-
     #[test]
     fn off_center_cluster() {
-        // center = mean([1,3,1],[0.9,2.9,1]) = [0.95, 2.95, 1]
-        // s0 = [0.05, 0.05, 0], s1 = [-0.05, -0.05, 0]
-        // G = (1/2)(s0⊗s0 + s1⊗s1) = [[.0025,.0025,0],[.0025,.0025,0],[0,0,0]]
         let pos = [[1.0, 3.0, 1.0], [0.9, 2.9, 1.0]];
         let frame = frame_with(&pos, 6.0);
         let cl = manual_clusters(&[0, 0]);
-        let g = GyrationTensor::new().compute(&frame, &cl).unwrap();
+        let g = gyration_single(&frame, cl);
         let expected = [
             [0.0025, 0.0025, 0.0],
             [0.0025, 0.0025, 0.0],
@@ -166,9 +232,9 @@ mod tests {
         for a in 0..3 {
             for b in 0..3 {
                 assert!(
-                    (g[0][a][b] - expected[a][b] as F).abs() < 1e-5,
+                    (g.0[0][a][b] - expected[a][b] as F).abs() < 1e-5,
                     "G[{a}][{b}] = {}, expected {}",
-                    g[0][a][b],
+                    g.0[0][a][b],
                     expected[a][b]
                 );
             }
@@ -180,26 +246,23 @@ mod tests {
         let pos = [[0.0, 0.0, 0.0], [1.0, 2.0, 0.0], [2.0, 1.0, 3.0]];
         let frame = frame_with(&pos, 10.0);
         let cl = manual_clusters(&[0, 0, 0]);
-        let g = GyrationTensor::new().compute(&frame, &cl).unwrap();
+        let g = gyration_single(&frame, cl);
         for a in 0..3 {
             for b in 0..3 {
-                assert!((g[0][a][b] - g[0][b][a]).abs() < 1e-5);
+                assert!((g.0[0][a][b] - g.0[0][b][a]).abs() < 1e-5);
             }
         }
     }
 
     #[test]
     fn two_particles_along_x() {
-        // at (2,3,3) and (4,3,3), center=(3,3,3)
-        // s=(-1,0,0) and (1,0,0)
-        // G_xx = (1/2)(1+1)=1, rest=0
         let pos = [[2.0, 3.0, 3.0], [4.0, 3.0, 3.0]];
         let frame = frame_with(&pos, 10.0);
         let cl = manual_clusters(&[0, 0]);
-        let g = GyrationTensor::new().compute(&frame, &cl).unwrap();
-        assert!((g[0][0][0] - 1.0).abs() < 1e-5);
-        assert!(g[0][1][1].abs() < 1e-5);
-        assert!(g[0][0][1].abs() < 1e-5);
+        let g = gyration_single(&frame, cl);
+        assert!((g.0[0][0][0] - 1.0).abs() < 1e-5);
+        assert!(g.0[0][1][1].abs() < 1e-5);
+        assert!(g.0[0][0][1].abs() < 1e-5);
     }
 
     #[test]
@@ -207,10 +270,10 @@ mod tests {
         let pos = [[5.0, 5.0, 5.0]];
         let frame = frame_with(&pos, 10.0);
         let cl = manual_clusters(&[0]);
-        let g = GyrationTensor::new().compute(&frame, &cl).unwrap();
+        let g = gyration_single(&frame, cl);
         for a in 0..3 {
             for b in 0..3 {
-                assert!(g[0][a][b].abs() < 1e-10);
+                assert!(g.0[0][a][b].abs() < 1e-10);
             }
         }
     }

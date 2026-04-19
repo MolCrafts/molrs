@@ -493,9 +493,15 @@ class MolRec:
 
 # ---------------------------------------------------------------------------
 # Analysis (compute)
+#
+# The Rust crate's unified `Compute` trait consumes batches of frames. Python
+# wrappers accept either a single `Frame` or a `list[Frame]`; single-frame
+# arguments return single results, lists return lists of results (aligned).
 # ---------------------------------------------------------------------------
 
 class RDFResult:
+    """Radial distribution function g(r). Accumulated across all input frames."""
+
     @property
     def bin_centers(self) -> ArrayF: ...
     @property
@@ -510,24 +516,38 @@ class RDFResult:
     def r_min(self) -> float: ...
     @property
     def n_points(self) -> int: ...
+    @property
+    def n_frames(self) -> int: ...
 
 class RDF:
     def __init__(self, n_bins: int, r_max: float, r_min: float = 0.0) -> None: ...
-    def compute(self, nlist: NeighborList, box: Box) -> RDFResult: ...
-    def compute_with_volume(self, nlist: NeighborList, volume: float) -> RDFResult: ...
-    def compute_from_frame(
-        self, frame: Frame, linked_cell: LinkedCell
+    def compute(
+        self,
+        frames: Frame | Sequence[Frame],
+        nlists: NeighborList | Sequence[NeighborList],
     ) -> RDFResult: ...
 
 class MSDResult:
+    """MSD at a single time point."""
+
     @property
     def mean(self) -> float: ...
     @property
     def per_particle(self) -> ArrayF: ...
 
+class MSDTimeSeries:
+    """Time series of per-frame MSD values (frame 0 is the reference)."""
+
+    @property
+    def mean(self) -> ArrayF: ...
+    @property
+    def per_particle(self) -> ArrayF: ...
+    def __len__(self) -> int: ...
+    def __getitem__(self, index: int) -> MSDResult: ...
+
 class MSD:
-    def __init__(self, ref_frame: Frame) -> None: ...
-    def compute(self, frame: Frame) -> MSDResult: ...
+    def __init__(self) -> None: ...
+    def compute(self, frames: Frame | Sequence[Frame]) -> MSDTimeSeries: ...
 
 class ClusterResult:
     @property
@@ -539,18 +559,28 @@ class ClusterResult:
 
 class Cluster:
     def __init__(self, min_cluster_size: int) -> None: ...
-    def compute(self, frame: Frame, nlist: NeighborList) -> ClusterResult: ...
-    def compute_from_frame(
-        self, frame: Frame, linked_cell: LinkedCell
-    ) -> ClusterResult: ...
+    def compute(
+        self,
+        frames: Frame | Sequence[Frame],
+        nlists: NeighborList | Sequence[NeighborList],
+    ) -> ClusterResult | list[ClusterResult]: ...
+
+class ClusterCentersResult:
+    """Geometric cluster centers for one frame, shape `(num_clusters, 3)`."""
+
+    @property
+    def centers(self) -> ArrayF: ...
+    def __len__(self) -> int: ...
 
 class ClusterCenters:
     """Geometric (non-mass-weighted) cluster centers."""
 
     def __init__(self) -> None: ...
     def compute(
-        self, frame: Frame, cluster_result: ClusterResult
-    ) -> ArrayF: ...
+        self,
+        frames: Frame | Sequence[Frame],
+        clusters: ClusterResult | Sequence[ClusterResult],
+    ) -> ClusterCentersResult | list[ClusterCentersResult]: ...
 
 class CenterOfMassResult:
     @property
@@ -563,29 +593,69 @@ class CenterOfMass:
 
     def __init__(self, masses: Optional[ArrayF] = None) -> None: ...
     def compute(
-        self, frame: Frame, cluster_result: ClusterResult
-    ) -> CenterOfMassResult: ...
+        self,
+        frames: Frame | Sequence[Frame],
+        clusters: ClusterResult | Sequence[ClusterResult],
+    ) -> CenterOfMassResult | list[CenterOfMassResult]: ...
 
 class GyrationTensor:
-    """Gyration tensor per cluster (shape `(nc, 3, 3)`)."""
+    """Gyration tensor per cluster; requires geometric cluster centers."""
 
     def __init__(self) -> None: ...
     def compute(
-        self, frame: Frame, cluster_result: ClusterResult
-    ) -> ArrayF: ...
+        self,
+        frames: Frame | Sequence[Frame],
+        clusters: ClusterResult | Sequence[ClusterResult],
+        centers: ClusterCentersResult | Sequence[ClusterCentersResult],
+    ) -> ArrayF | list[ArrayF]: ...
 
 class InertiaTensor:
-    """Inertia tensor per cluster (shape `(nc, 3, 3)`)."""
+    """Inertia tensor per cluster; requires COM results."""
 
     def __init__(self, masses: Optional[ArrayF] = None) -> None: ...
     def compute(
-        self, frame: Frame, cluster_result: ClusterResult
-    ) -> ArrayF: ...
+        self,
+        frames: Frame | Sequence[Frame],
+        clusters: ClusterResult | Sequence[ClusterResult],
+        com: CenterOfMassResult | Sequence[CenterOfMassResult],
+    ) -> ArrayF | list[ArrayF]: ...
 
 class RadiusOfGyration:
-    """Radius of gyration per cluster (shape `(nc,)`)."""
+    """Radius of gyration per cluster; requires COM results."""
 
     def __init__(self, masses: Optional[ArrayF] = None) -> None: ...
     def compute(
-        self, frame: Frame, cluster_result: ClusterResult
-    ) -> ArrayF: ...
+        self,
+        frames: Frame | Sequence[Frame],
+        clusters: ClusterResult | Sequence[ClusterResult],
+        com: CenterOfMassResult | Sequence[CenterOfMassResult],
+    ) -> ArrayF | list[ArrayF]: ...
+
+class DescriptorRow:
+    """1-D descriptor vector used as a PCA / k-means input row."""
+
+    def __init__(self, values: ArrayF) -> None: ...
+    def __len__(self) -> int: ...
+
+class PcaResult:
+    @property
+    def coords(self) -> ArrayF: ...
+    @property
+    def variance(self) -> tuple[float, float]: ...
+
+class Pca2:
+    """Two-component PCA."""
+
+    def __init__(self) -> None: ...
+    def compute(self, rows: Sequence[DescriptorRow]) -> PcaResult: ...
+
+class KMeansResult:
+    @property
+    def labels(self) -> npt.NDArray[np.int32]: ...
+    def __len__(self) -> int: ...
+
+class KMeans:
+    """k-means over a PCA projection (2-D)."""
+
+    def __init__(self, k: int, max_iter: int = 100, seed: int = 0) -> None: ...
+    def compute(self, pca: PcaResult) -> KMeansResult: ...

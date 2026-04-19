@@ -14,18 +14,15 @@
 //! | `bool`           | `bool`                | selection masks               |
 //! | `String`         | `list[str]`           | element symbols               |
 
-use std::cell::RefCell;
-use std::rc::Rc;
-
 use molrs::block::{Block as CoreBlock, BlockDtype, Column};
 use molrs::types::{F, I, U};
-use molrs_ffi::BlockHandle;
+use molrs_ffi::BlockRef;
 use ndarray::Array1;
 use numpy::{PyArrayDyn, PyReadonlyArrayDyn};
 use pyo3::exceptions::{PyKeyError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 
-use crate::store::{SharedStore, ffi_error_to_pyerr};
+use crate::store::ffi_error_to_pyerr;
 
 /// Internal owner that prevents the backing ndarray from being freed while a
 /// numpy view is alive.
@@ -80,8 +77,7 @@ struct UIntArrayOwner {
 #[pyclass(name = "Block", from_py_object, unsendable)]
 #[derive(Clone)]
 pub struct PyBlock {
-    pub(crate) handle: BlockHandle,
-    pub(crate) store: SharedStore,
+    pub(crate) inner: BlockRef,
 }
 
 #[pymethods]
@@ -194,9 +190,8 @@ impl PyBlock {
     /// >>> arr = block.view("x")  # numpy float32 view
     /// >>> syms = block.view("symbol")  # list of str
     fn view<'py>(&self, py: Python<'py>, key: &str) -> PyResult<Py<pyo3::types::PyAny>> {
-        self.store
-            .borrow()
-            .with_block(&self.handle, |b| -> PyResult<Py<pyo3::types::PyAny>> {
+        self.inner
+            .with(|b| -> PyResult<Py<pyo3::types::PyAny>> {
                 let col = b
                     .get(key)
                     .ok_or_else(|| PyKeyError::new_err(key.to_string()))?;
@@ -273,9 +268,8 @@ impl PyBlock {
     ///     If ``key`` does not exist.
     fn remove(&mut self, key: &str) -> PyResult<()> {
         let removed = self
-            .store
-            .borrow_mut()
-            .with_block_mut(&mut self.handle, |b| b.remove(key).is_some())
+            .inner
+            .with_mut(|b| b.remove(key).is_some())
             .map_err(ffi_error_to_pyerr)?;
         if removed {
             Ok(())
@@ -322,7 +316,7 @@ impl PyBlock {
     /// Create a `PyBlock` from a Rust `CoreBlock`, allocating a new
     /// single-frame FFI store.
     pub(crate) fn from_core_block(block: CoreBlock) -> PyResult<Self> {
-        let store = Rc::new(RefCell::new(molrs_ffi::Store::new()));
+        let store = molrs_ffi::new_shared();
         let frame = store.borrow_mut().frame_new();
         store
             .borrow_mut()
@@ -332,23 +326,19 @@ impl PyBlock {
             .borrow()
             .get_block(frame, "__block__")
             .map_err(ffi_error_to_pyerr)?;
-        Ok(Self { handle, store })
+        Ok(Self {
+            inner: BlockRef::new(store, handle),
+        })
     }
 
     /// Clone the underlying `CoreBlock` out of the store (deep copy).
     pub(crate) fn clone_core_block(&self) -> PyResult<CoreBlock> {
-        self.store
-            .borrow()
-            .clone_block(&self.handle)
-            .map_err(ffi_error_to_pyerr)
+        self.inner.clone_block().map_err(ffi_error_to_pyerr)
     }
 
     /// Run a read-only closure on the underlying `CoreBlock`.
     fn with_block<R>(&self, f: impl FnOnce(&CoreBlock) -> R) -> PyResult<R> {
-        self.store
-            .borrow()
-            .with_block(&self.handle, f)
-            .map_err(ffi_error_to_pyerr)
+        self.inner.with(f).map_err(ffi_error_to_pyerr)
     }
 
     /// Insert a typed ndarray column, validating row count.
@@ -357,9 +347,8 @@ impl PyBlock {
         key: &str,
         array: ndarray::ArrayD<T>,
     ) -> PyResult<()> {
-        self.store
-            .borrow_mut()
-            .with_block_mut(&mut self.handle, |b| {
+        self.inner
+            .with_mut(|b| {
                 b.insert(key, array)
                     .map_err(|e| PyValueError::new_err(e.to_string()))
             })

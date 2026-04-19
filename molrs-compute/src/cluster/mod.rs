@@ -6,16 +6,14 @@ use molrs::frame_access::FrameAccess;
 use molrs::neighbors::NeighborList;
 use ndarray::Array1;
 
-use super::error::ComputeError;
-use super::traits::Compute;
+use crate::error::ComputeError;
+use crate::traits::Compute;
 
 /// Distance-based cluster analysis using BFS on the neighbor graph.
 ///
-/// Two particles belong to the same cluster if they are connected
-/// (directly or transitively) within the neighbor cutoff.
-/// Uses CSR (Compressed Sparse Row) adjacency for cache-friendly traversal.
-///
-/// Only supports self-query neighbor lists (will return an error for cross-query).
+/// Two particles belong to the same cluster if they are connected (directly
+/// or transitively) within the neighbor cutoff. Uses CSR adjacency for
+/// cache-friendly traversal. One [`ClusterResult`] per input frame.
 #[derive(Debug, Clone)]
 pub struct Cluster {
     min_cluster_size: usize,
@@ -25,13 +23,8 @@ impl Cluster {
     pub fn new(min_cluster_size: usize) -> Self {
         Self { min_cluster_size }
     }
-}
 
-impl Compute for Cluster {
-    type Args<'a> = &'a NeighborList;
-    type Output = ClusterResult;
-
-    fn compute<FA: FrameAccess>(
+    fn cluster_one<FA: FrameAccess>(
         &self,
         frame: &FA,
         neighbors: &NeighborList,
@@ -48,7 +41,6 @@ impl Compute for Cluster {
             });
         }
 
-        // Build CSR adjacency (3 flat allocations instead of N Vec allocations)
         let n_pairs = neighbors.n_pairs();
         let query_indices = neighbors.query_point_indices();
         let point_indices = neighbors.point_indices();
@@ -75,7 +67,6 @@ impl Compute for Cluster {
             cursor[j] += 1;
         }
 
-        // BFS to assign cluster IDs
         let mut cluster_idx = vec![-1_i64; n];
         let mut current_id: i64 = 0;
         let mut cluster_sizes: Vec<usize> = Vec::new();
@@ -110,7 +101,6 @@ impl Compute for Cluster {
             current_id += 1;
         }
 
-        // Relabel: clusters smaller than min_cluster_size get ID = -1
         if self.min_cluster_size > 1 {
             let mut remap = vec![-1_i64; cluster_sizes.len()];
             let mut new_id: i64 = 0;
@@ -140,6 +130,48 @@ impl Compute for Cluster {
             num_clusters,
             cluster_sizes,
         })
+    }
+}
+
+impl Compute for Cluster {
+    type Args<'a> = &'a Vec<NeighborList>;
+    type Output = Vec<ClusterResult>;
+
+    fn compute<'a, FA: FrameAccess + Sync + 'a>(
+        &self,
+        frames: &[&'a FA],
+        neighbors: &'a Vec<NeighborList>,
+    ) -> Result<Vec<ClusterResult>, ComputeError> {
+        if frames.is_empty() {
+            return Err(ComputeError::EmptyInput);
+        }
+        if neighbors.len() != frames.len() {
+            return Err(ComputeError::DimensionMismatch {
+                expected: frames.len(),
+                got: neighbors.len(),
+                what: "neighbor-list count",
+            });
+        }
+        // Cluster has heavy per-frame work (CSR build + BFS, ~100 µs per
+        // 5k-atom frame), so rayon pays off from 2 frames onward.
+        #[cfg(feature = "rayon")]
+        const PAR_THRESHOLD: usize = 2;
+
+        #[cfg(feature = "rayon")]
+        if frames.len() >= PAR_THRESHOLD {
+            use rayon::prelude::*;
+            return frames
+                .par_iter()
+                .zip(neighbors.par_iter())
+                .map(|(frame, nlist)| self.cluster_one(*frame, nlist))
+                .collect();
+        }
+
+        let mut out = Vec::with_capacity(frames.len());
+        for (frame, nlist) in frames.iter().zip(neighbors.iter()) {
+            out.push(self.cluster_one(*frame, nlist)?);
+        }
+        Ok(out)
     }
 }
 
@@ -194,6 +226,12 @@ mod tests {
         lc.query().clone()
     }
 
+    fn cluster_single(frame: &Frame, nlist: NeighborList, min: usize) -> ClusterResult {
+        let out = Cluster::new(min).compute(&[frame], &vec![nlist]).unwrap();
+        assert_eq!(out.len(), 1);
+        out.into_iter().next().unwrap()
+    }
+
     #[test]
     fn two_separated_groups() {
         let positions = [
@@ -204,12 +242,9 @@ mod tests {
             [8.5, 8.0, 8.0],
             [8.0, 8.5, 8.0],
         ];
-
         let frame = make_frame_with_positions(&positions, 20.0);
         let nbrs = build_neighbors(&frame, 2.0);
-
-        let cluster = Cluster::new(1);
-        let result = cluster.compute(&frame, &nbrs).unwrap();
+        let result = cluster_single(&frame, nbrs, 1);
 
         assert_eq!(result.num_clusters, 2);
         assert_eq!(result.cluster_idx[0], result.cluster_idx[1]);
@@ -222,12 +257,9 @@ mod tests {
     #[test]
     fn min_cluster_size_filters_small() {
         let positions = [[1.0, 1.0, 1.0], [1.5, 1.0, 1.0], [8.0, 8.0, 8.0]];
-
         let frame = make_frame_with_positions(&positions, 20.0);
         let nbrs = build_neighbors(&frame, 2.0);
-
-        let cluster = Cluster::new(2);
-        let result = cluster.compute(&frame, &nbrs).unwrap();
+        let result = cluster_single(&frame, nbrs, 2);
 
         assert_eq!(result.num_clusters, 1);
         assert_eq!(result.cluster_idx[2], -1);
@@ -242,26 +274,16 @@ mod tests {
             [1.0, 1.5, 1.0],
             [1.5, 1.5, 1.0],
         ];
-
         let frame = make_frame_with_positions(&positions, 20.0);
         let nbrs = build_neighbors(&frame, 2.0);
-
-        let cluster = Cluster::new(1);
-        let result = cluster.compute(&frame, &nbrs).unwrap();
+        let result = cluster_single(&frame, nbrs, 1);
 
         assert_eq!(result.num_clusters, 1);
         assert_eq!(result.cluster_sizes[0], 4);
     }
 
-    // --- freud: test_query_ball — 4 collinear particles, count neighbors ---
-
     #[test]
     fn collinear_four_particles() {
-        // freud data: [0,0,0], [1,0,0], [3,0,0], [2,0,0], cutoff=2.01
-        // p0 neighbors: p1(d=1), p3(d=2) → 2 bonds (self-query i<j)
-        // p1 neighbors: p3(d=1), p2(d=2) → but as i<j pairs:
-        // Pairs: (0,1)=1, (0,3)=2, (1,3)=1, (1,2)=2, (2,3)=1 → 5 pairs
-        // All connected transitively → 1 cluster
         let positions = [
             [1.0, 5.0, 5.0],
             [2.0, 5.0, 5.0],
@@ -270,72 +292,56 @@ mod tests {
         ];
         let frame = make_frame_with_positions(&positions, 10.0);
         let nbrs = build_neighbors(&frame, 2.01);
-
-        let result = Cluster::new(1).compute(&frame, &nbrs).unwrap();
+        let result = cluster_single(&frame, nbrs, 1);
         assert_eq!(result.num_clusters, 1);
         assert_eq!(result.cluster_sizes[0], 4);
     }
-
-    // --- freud: all isolated → N clusters of size 1 ---
 
     #[test]
     fn all_isolated() {
         let positions = [[1.0, 1.0, 1.0], [5.0, 5.0, 5.0], [9.0, 9.0, 9.0]];
         let frame = make_frame_with_positions(&positions, 20.0);
         let nbrs = build_neighbors(&frame, 0.5);
-
-        let result = Cluster::new(1).compute(&frame, &nbrs).unwrap();
+        let result = cluster_single(&frame, nbrs, 1);
         assert_eq!(result.num_clusters, 3);
         for &s in &result.cluster_sizes {
             assert_eq!(s, 1);
         }
-        // all different IDs
         assert_ne!(result.cluster_idx[0], result.cluster_idx[1]);
         assert_ne!(result.cluster_idx[1], result.cluster_idx[2]);
     }
-
-    // --- freud: coincident particles → same cluster ---
 
     #[test]
     fn coincident_particles() {
         let positions = [[3.0, 3.0, 3.0], [3.0, 3.0, 3.0], [3.0, 3.0, 3.0]];
         let frame = make_frame_with_positions(&positions, 10.0);
         let nbrs = build_neighbors(&frame, 0.5);
-
-        let result = Cluster::new(1).compute(&frame, &nbrs).unwrap();
+        let result = cluster_single(&frame, nbrs, 1);
         assert_eq!(result.num_clusters, 1);
         assert_eq!(result.cluster_sizes[0], 3);
     }
-
-    // --- empty frame ---
 
     #[test]
     fn empty_frame() {
         let frame = make_frame_with_positions(&[], 10.0);
         let nbrs = build_neighbors(&frame, 1.0);
-        let result = Cluster::new(1).compute(&frame, &nbrs).unwrap();
+        let result = cluster_single(&frame, nbrs, 1);
         assert_eq!(result.num_clusters, 0);
         assert!(result.cluster_idx.is_empty());
     }
-
-    // --- single particle ---
 
     #[test]
     fn single_particle() {
         let positions = [[5.0, 5.0, 5.0]];
         let frame = make_frame_with_positions(&positions, 10.0);
         let nbrs = build_neighbors(&frame, 1.0);
-        let result = Cluster::new(1).compute(&frame, &nbrs).unwrap();
+        let result = cluster_single(&frame, nbrs, 1);
         assert_eq!(result.num_clusters, 1);
         assert_eq!(result.cluster_idx[0], 0);
     }
 
-    // --- transitive connectivity (chain) ---
-
     #[test]
     fn transitive_chain() {
-        // A-B-C-D: each pair within cutoff, but A and D not directly connected
-        // A=1, B=2, C=3, D=4 along x, cutoff=1.5
         let positions = [
             [1.0, 5.0, 5.0],
             [2.0, 5.0, 5.0],
@@ -344,13 +350,10 @@ mod tests {
         ];
         let frame = make_frame_with_positions(&positions, 10.0);
         let nbrs = build_neighbors(&frame, 1.5);
-
-        let result = Cluster::new(1).compute(&frame, &nbrs).unwrap();
-        assert_eq!(result.num_clusters, 1, "chain should form 1 cluster");
+        let result = cluster_single(&frame, nbrs, 1);
+        assert_eq!(result.num_clusters, 1);
         assert_eq!(result.cluster_sizes[0], 4);
     }
-
-    // --- PBC wrapping: two particles near opposite boundaries ---
 
     #[test]
     fn pbc_wrapping_cluster() {
@@ -372,29 +375,29 @@ mod tests {
             )
             .unwrap(),
         );
-
         let nbrs = build_neighbors(&frame, 2.0);
-        let result = Cluster::new(1).compute(&frame, &nbrs).unwrap();
-        // MIC distance = 1.0 < 2.0 → same cluster
+        let result = cluster_single(&frame, nbrs, 1);
         assert_eq!(result.num_clusters, 1);
     }
 
-    // --- cluster_sizes sum == total assigned particles ---
+    #[test]
+    fn multi_frame_runs_per_frame() {
+        let f1 = make_frame_with_positions(&[[1.0, 1.0, 1.0], [1.5, 1.0, 1.0]], 10.0);
+        let f2 = make_frame_with_positions(&[[5.0, 5.0, 5.0], [7.0, 5.0, 5.0]], 10.0);
+        let n1 = build_neighbors(&f1, 1.0);
+        let n2 = build_neighbors(&f2, 1.0);
+        let out = Cluster::new(1).compute(&[&f1, &f2], &vec![n1, n2]).unwrap();
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].num_clusters, 1);
+        assert_eq!(out[1].num_clusters, 2);
+    }
 
     #[test]
-    fn sizes_sum_to_n() {
-        let positions = [
-            [1.0, 1.0, 1.0],
-            [1.5, 1.0, 1.0],
-            [5.0, 5.0, 5.0],
-            [5.5, 5.0, 5.0],
-            [9.0, 9.0, 9.0],
-        ];
-        let frame = make_frame_with_positions(&positions, 20.0);
-        let nbrs = build_neighbors(&frame, 1.0);
-
-        let result = Cluster::new(1).compute(&frame, &nbrs).unwrap();
-        let total: usize = result.cluster_sizes.iter().sum();
-        assert_eq!(total, 5);
+    fn empty_frames_is_error() {
+        let frames: Vec<&Frame> = Vec::new();
+        let err = Cluster::new(1)
+            .compute(&frames, &Vec::<NeighborList>::new())
+            .unwrap_err();
+        assert!(matches!(err, ComputeError::EmptyInput));
     }
 }

@@ -6,7 +6,7 @@
 //! Downstream users add one dependency and opt into sub-systems via features:
 //!
 //! ```toml
-//! molcrafts-molrs = { version = "0.0.8", features = ["io", "smiles"] }
+//! molcrafts-molrs = { version = "0.0.11", features = ["io", "smiles"] }
 //! ```
 //!
 //! Then:

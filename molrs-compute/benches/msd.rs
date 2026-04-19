@@ -1,42 +1,49 @@
-//! MSD::feed — trajectory-wise MSD accumulation hot path.
-//!
-//! Feeds M frames of N atoms into a single `MSD` accumulator.
+//! `MSD::compute` — stateless trajectory MSD across size + frame axes.
 
-use criterion::{BenchmarkId, Criterion, criterion_group};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group};
 use molrs_compute::msd::MSD;
+use molrs_compute::traits::Compute;
 
-use crate::helpers::{self};
+use crate::helpers;
 
-const N_ATOMS: &[usize] = &[500, 2_000, 10_000];
-const N_FRAMES: usize = 20;
+fn size_sweep(c: &mut Criterion) {
+    let mut group = c.benchmark_group("msd/size_sweep");
+    helpers::configure(&mut group);
 
-fn bench_feed(c: &mut Criterion) {
-    let mut group = c.benchmark_group("msd/feed");
-
-    for &n in N_ATOMS {
-        // Pre-build N_FRAMES worth of frames with different RNG seeds
-        // (simulate a trajectory; exact motion unimportant for perf shape).
-        let simbox = helpers::pbc_simbox(helpers::BOX_SIZE);
-        let frames: Vec<_> = (0..N_FRAMES)
-            .map(|t| {
-                let pts = helpers::random_positions(n, helpers::BOX_SIZE, 100 + t as u64);
-                helpers::frame_from_positions(&pts, simbox.clone())
-            })
-            .collect();
-
-        let id = BenchmarkId::new(format!("n{n}_frames{N_FRAMES}"), n);
-        group.bench_with_input(id, &(), |b, _| {
+    for &n in helpers::SIZES {
+        let (frames_owned, _) = helpers::build_pool(n, helpers::SIZE_SWEEP_FRAMES, 42);
+        let frames: Vec<&_> = frames_owned.iter().collect();
+        group.throughput(Throughput::Elements(
+            (n as u64) * helpers::SIZE_SWEEP_FRAMES as u64,
+        ));
+        group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
             b.iter(|| {
-                let mut msd = MSD::new();
-                for f in &frames {
-                    msd.feed(f).expect("msd::feed");
-                }
-                std::hint::black_box(msd);
-            });
+                std::hint::black_box(MSD::new().compute(&frames, ()).unwrap());
+            })
         });
     }
 
     group.finish();
 }
 
-criterion_group!(benches, bench_feed);
+fn frame_sweep(c: &mut Criterion) {
+    let mut group = c.benchmark_group("msd/frame_sweep");
+    helpers::configure(&mut group);
+    let (pool_frames, _) = helpers::build_pool(helpers::FRAME_SWEEP_N, helpers::MAX_FRAMES, 100);
+
+    for &nf in helpers::FRAME_COUNTS {
+        let frames: Vec<&_> = pool_frames.iter().take(nf).collect();
+        group.throughput(Throughput::Elements(
+            (helpers::FRAME_SWEEP_N as u64) * nf as u64,
+        ));
+        group.bench_with_input(BenchmarkId::from_parameter(nf), &nf, |b, _| {
+            b.iter(|| {
+                std::hint::black_box(MSD::new().compute(&frames, ()).unwrap());
+            })
+        });
+    }
+
+    group.finish();
+}
+
+criterion_group!(benches, size_sweep, frame_sweep);

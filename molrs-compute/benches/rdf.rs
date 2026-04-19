@@ -1,34 +1,53 @@
-//! RDF::compute — the radial distribution function hot path.
-//!
-//! Sweeps atom count and bin count with a fixed PBC box + cutoff.
+//! `RDF::compute` — radial distribution function across size + frame axes.
 
-use criterion::{BenchmarkId, Criterion, criterion_group};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group};
 use molrs_compute::rdf::RDF;
 use molrs_compute::traits::Compute;
 
-use crate::helpers::{self, Fixture};
+use crate::helpers;
 
-const N_ATOMS: &[usize] = &[500, 2_000, 10_000];
-const N_BINS: &[usize] = &[50, 200];
+fn size_sweep(c: &mut Criterion) {
+    let mut group = c.benchmark_group("rdf/size_sweep");
+    helpers::configure(&mut group);
+    let rdf = RDF::new(helpers::RDF_BINS, helpers::CUTOFF, 0.0).unwrap();
 
-fn bench_compute(c: &mut Criterion) {
-    let mut group = c.benchmark_group("rdf/compute");
-
-    for &n in N_ATOMS {
-        let Fixture { frame, nlist, .. } = helpers::fixture(n, 42);
-        for &bins in N_BINS {
-            let rdf = RDF::new(bins, helpers::CUTOFF, 0.0).unwrap();
-            let id = BenchmarkId::new(format!("n{n}_bins{bins}"), n);
-            group.bench_with_input(id, &(), |b, _| {
-                b.iter(|| {
-                    let r = rdf.compute(&frame, &nlist).expect("rdf::compute");
-                    std::hint::black_box(r);
-                });
-            });
-        }
+    for &n in helpers::SIZES {
+        let (frames_owned, nlists) = helpers::build_pool(n, helpers::SIZE_SWEEP_FRAMES, 42);
+        let frames: Vec<&_> = frames_owned.iter().collect();
+        group.throughput(Throughput::Elements(
+            (n as u64) * helpers::SIZE_SWEEP_FRAMES as u64,
+        ));
+        group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
+            b.iter(|| {
+                std::hint::black_box(rdf.compute(&frames, &nlists).unwrap());
+            })
+        });
     }
 
     group.finish();
 }
 
-criterion_group!(benches, bench_compute);
+fn frame_sweep(c: &mut Criterion) {
+    let mut group = c.benchmark_group("rdf/frame_sweep");
+    helpers::configure(&mut group);
+    let rdf = RDF::new(helpers::RDF_BINS, helpers::CUTOFF, 0.0).unwrap();
+    let (pool_frames, pool_nlists) =
+        helpers::build_pool(helpers::FRAME_SWEEP_N, helpers::MAX_FRAMES, 100);
+
+    for &nf in helpers::FRAME_COUNTS {
+        let frames: Vec<&_> = pool_frames.iter().take(nf).collect();
+        let nlists: Vec<_> = pool_nlists.iter().take(nf).cloned().collect();
+        group.throughput(Throughput::Elements(
+            (helpers::FRAME_SWEEP_N as u64) * nf as u64,
+        ));
+        group.bench_with_input(BenchmarkId::from_parameter(nf), &nf, |b, _| {
+            b.iter(|| {
+                std::hint::black_box(rdf.compute(&frames, &nlists).unwrap());
+            })
+        });
+    }
+
+    group.finish();
+}
+
+criterion_group!(benches, size_sweep, frame_sweep);

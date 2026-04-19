@@ -16,18 +16,16 @@
 //! The frame itself does **not** enforce cross-block row consistency; that is
 //! the caller's responsibility (use [`PyFrame::validate`] to check).
 
-use std::cell::RefCell;
 use std::collections::HashMap;
-use std::rc::Rc;
 
 use crate::block::PyBlock;
 use crate::helpers::{NpF, molrs_error_to_pyerr};
 use crate::simbox::PyBox;
-use crate::store::{SharedStore, ffi_error_to_pyerr};
+use crate::store::ffi_error_to_pyerr;
 use molrs::frame::Frame as CoreFrame;
 use molrs::grid::Grid as CoreGrid;
 use molrs::types::F;
-use molrs_ffi::FrameId;
+use molrs_ffi::FrameRef;
 use ndarray::Array4;
 use numpy::{IntoPyArray, PyArray1, PyArray2, PyArray4, PyArrayDyn, PyReadonlyArray1, PyReadonlyArray2, PyReadonlyArrayDyn};
 use pyo3::exceptions::{PyKeyError, PyTypeError};
@@ -213,8 +211,7 @@ impl PyGrid {
 #[pyclass(name = "Frame", from_py_object, unsendable)]
 #[derive(Clone)]
 pub struct PyFrame {
-    pub(crate) id: FrameId,
-    pub(crate) store: SharedStore,
+    pub(crate) inner: FrameRef,
 }
 
 #[pymethods]
@@ -227,9 +224,9 @@ impl PyFrame {
     /// Frame
     #[new]
     fn new() -> Self {
-        let store = Rc::new(RefCell::new(molrs_ffi::Store::new()));
-        let id = store.borrow_mut().frame_new();
-        Self { id, store }
+        Self {
+            inner: FrameRef::new_standalone(),
+        }
     }
 
     /// Retrieve a block by name.
@@ -253,9 +250,8 @@ impl PyFrame {
     /// >>> atoms = frame["atoms"]
     fn __getitem__<'py>(&self, py: Python<'py>, key: &str) -> PyResult<Py<PyAny>> {
         // Try block first
-        if let Ok(handle) = self.store.borrow().get_block(self.id, key) {
-            let block = PyBlock { handle, store: self.store.clone() };
-            return Ok(Py::new(py, block)?.into_any());
+        if let Ok(inner) = self.inner.block(key) {
+            return Ok(Py::new(py, PyBlock { inner })?.into_any());
         }
         // Try grid
         if let Some(grid) = self.with_frame(|f| f.get_grid(key).cloned())? {
@@ -281,9 +277,8 @@ impl PyFrame {
     fn __setitem__(&mut self, key: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
         if let Ok(grid) = value.extract::<PyRef<'_, PyGrid>>() {
             return self
-                .store
-                .borrow_mut()
-                .with_frame_mut(self.id, |f| {
+                .inner
+                .with_mut(|f| {
                     f.insert_grid(key, grid.inner.clone());
                 })
                 .map_err(ffi_error_to_pyerr);
@@ -291,9 +286,10 @@ impl PyFrame {
         if let Ok(block) = value.extract::<PyRef<'_, PyBlock>>() {
             let core_block = block.clone_core_block()?;
             return self
+                .inner
                 .store
                 .borrow_mut()
-                .set_block(self.id, key, core_block)
+                .set_block(self.inner.id, key, core_block)
                 .map_err(ffi_error_to_pyerr);
         }
         Err(PyTypeError::new_err("value must be a Block or Grid"))
@@ -315,9 +311,10 @@ impl PyFrame {
     /// --------
     /// >>> del frame["bonds"]
     fn __delitem__(&mut self, key: &str) -> PyResult<()> {
-        self.store
+        self.inner
+            .store
             .borrow_mut()
-            .remove_block(self.id, key)
+            .remove_block(self.inner.id, key)
             .map_err(ffi_error_to_pyerr)
     }
 
@@ -389,10 +386,11 @@ impl PyFrame {
     /// ...     print(frame.box.volume())
     #[getter(simbox)]
     fn get_box(&self) -> PyResult<Option<PyBox>> {
-        self.store
-            .borrow()
-            .with_frame_simbox(self.id, |sb| sb.cloned().map(|inner| PyBox { inner }))
-            .map_err(ffi_error_to_pyerr)
+        Ok(self
+            .inner
+            .simbox_clone()
+            .map_err(ffi_error_to_pyerr)?
+            .map(|inner| PyBox { inner }))
     }
 
     /// Set (or clear) the simulation box.
@@ -408,9 +406,8 @@ impl PyFrame {
     /// >>> frame.box = None  # remove
     #[setter(simbox)]
     fn set_box(&mut self, simbox: Option<&PyBox>) -> PyResult<()> {
-        self.store
-            .borrow_mut()
-            .set_frame_simbox(self.id, simbox.map(|sb| sb.inner.clone()))
+        self.inner
+            .set_simbox(simbox.map(|sb| sb.inner.clone()))
             .map_err(ffi_error_to_pyerr)
     }
 
@@ -449,9 +446,8 @@ impl PyFrame {
             let val: String = v.extract()?;
             map.insert(key, val);
         }
-        self.store
-            .borrow_mut()
-            .with_frame_mut(self.id, |f| {
+        self.inner
+            .with_mut(|f| {
                 f.meta = map;
             })
             .map_err(ffi_error_to_pyerr)?;
@@ -486,28 +482,24 @@ impl PyFrame {
 impl PyFrame {
     /// Create a `PyFrame` from a Rust `CoreFrame`, allocating a new FFI store.
     pub(crate) fn from_core_frame(frame: CoreFrame) -> PyResult<Self> {
-        let store = Rc::new(RefCell::new(molrs_ffi::Store::new()));
+        let store = molrs_ffi::new_shared();
         let id = store.borrow_mut().frame_new();
         store
             .borrow_mut()
             .set_frame(id, frame)
             .map_err(ffi_error_to_pyerr)?;
-        Ok(Self { id, store })
+        Ok(Self {
+            inner: FrameRef::new(store, id),
+        })
     }
 
     /// Clone the underlying `CoreFrame` out of the store (deep copy).
     pub(crate) fn clone_core_frame(&self) -> PyResult<CoreFrame> {
-        self.store
-            .borrow()
-            .clone_frame(self.id)
-            .map_err(ffi_error_to_pyerr)
+        self.inner.clone_frame().map_err(ffi_error_to_pyerr)
     }
 
     /// Run a read-only closure on the underlying `CoreFrame`.
     fn with_frame<R>(&self, f: impl FnOnce(&CoreFrame) -> R) -> PyResult<R> {
-        self.store
-            .borrow()
-            .with_frame(self.id, f)
-            .map_err(ffi_error_to_pyerr)
+        self.inner.with(f).map_err(ffi_error_to_pyerr)
     }
 }

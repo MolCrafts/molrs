@@ -866,7 +866,7 @@ dependencies = [
 
 [[package]]
 name = "molcrafts-molrs"
-version = "0.0.10"
+version = "0.0.11"
 dependencies = [
  "molcrafts-molrs-compute",
  "molcrafts-molrs-core",
@@ -878,18 +878,19 @@ dependencies = [
 
 [[package]]
 name = "molcrafts-molrs-compute"
-version = "0.0.10"
+version = "0.0.11"
 dependencies = [
  "criterion",
  "molcrafts-molrs-core",
  "ndarray",
  "rand 0.9.2",
+ "rayon",
  "rustfft",
 ]
 
 [[package]]
 name = "molcrafts-molrs-core"
-version = "0.0.10"
+version = "0.0.11"
 dependencies = [
  "criterion",
  "libm",
@@ -907,7 +908,7 @@ dependencies = [
 
 [[package]]
 name = "molcrafts-molrs-cxxapi"
-version = "0.0.10"
+version = "0.0.11"
 dependencies = [
  "cxx",
  "cxx-build",
@@ -918,7 +919,7 @@ dependencies = [
 
 [[package]]
 name = "molcrafts-molrs-embed"
-version = "0.0.10"
+version = "0.0.11"
 dependencies = [
  "molcrafts-molrs-core",
  "ndarray",
@@ -928,7 +929,7 @@ dependencies = [
 
 [[package]]
 name = "molcrafts-molrs-ff"
-version = "0.0.10"
+version = "0.0.11"
 dependencies = [
  "libm",
  "molcrafts-molrs-core",
@@ -940,7 +941,7 @@ dependencies = [
 
 [[package]]
 name = "molcrafts-molrs-io"
-version = "0.0.10"
+version = "0.0.11"
 dependencies = [
  "flate2",
  "molcrafts-molrs-core",
@@ -953,7 +954,7 @@ dependencies = [
 
 [[package]]
 name = "molcrafts-molrs-smiles"
-version = "0.0.10"
+version = "0.0.11"
 dependencies = [
  "molcrafts-molrs-core",
  "petgraph",

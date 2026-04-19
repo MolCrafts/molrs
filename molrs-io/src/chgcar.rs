@@ -229,7 +229,7 @@ pub fn read_chgcar_from_reader<R: BufRead>(mut reader: R) -> Result<Frame, MolRs
         use ndarray::IxDyn;
         atoms
             .insert(
-                "symbol",
+                "element",
                 ArrayD::from_shape_vec(IxDyn(&[n_atoms]), atom_syms)
                     .expect("shape matches")
                     .into_dyn(),

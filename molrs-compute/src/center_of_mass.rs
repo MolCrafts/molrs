@@ -5,24 +5,25 @@ use molrs::types::F;
 
 use super::cluster::ClusterResult;
 use super::error::ComputeError;
+use super::result::ComputeResult;
 use super::traits::Compute;
-use super::util::{get_positions_generic, mic_disp};
+use super::util::{MicHelper, get_positions_ref};
 
-/// Result of center-of-mass computation.
-#[derive(Debug, Clone)]
-pub struct CenterOfMassResult {
-    /// Mass-weighted center per cluster (num_clusters x 3).
+/// Per-cluster center of mass and total mass for one frame.
+#[derive(Debug, Clone, Default)]
+pub struct COMResult {
+    /// Mass-weighted center per cluster.
     pub centers_of_mass: Vec<[F; 3]>,
     /// Total mass per cluster.
     pub cluster_masses: Vec<F>,
 }
 
-/// Computes the center of mass of each cluster using MIC.
-///
-/// `com_k = r_ref + (1/M_k) * SUM_i m_i * shortest_vector(r_ref, r_i)`
+impl ComputeResult for COMResult {}
+
+/// Computes the center of mass of each cluster per frame using MIC.
 ///
 /// Masses are optional — defaults to 1.0 for all particles (uniform).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CenterOfMass {
     masses: Option<Vec<F>>,
 }
@@ -32,33 +33,21 @@ impl CenterOfMass {
         Self { masses: None }
     }
 
-    /// Set per-particle masses. Length must match the number of atoms.
     pub fn with_masses(self, masses: &[F]) -> Self {
         Self {
             masses: Some(masses.to_vec()),
         }
     }
-}
 
-impl Default for CenterOfMass {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Compute for CenterOfMass {
-    type Args<'a> = &'a ClusterResult;
-    type Output = CenterOfMassResult;
-
-    fn compute<FA: FrameAccess>(
+    fn one_frame<FA: FrameAccess>(
         &self,
         frame: &FA,
         clusters: &ClusterResult,
-    ) -> Result<CenterOfMassResult, ComputeError> {
-        let (xs_vec, ys_vec, zs_vec) = get_positions_generic(frame)?;
-        let xs = &xs_vec[..];
-        let ys = &ys_vec[..];
-        let zs = &zs_vec[..];
+    ) -> Result<COMResult, ComputeError> {
+        let (xs_p, ys_p, zs_p) = get_positions_ref(frame)?;
+        let xs = xs_p.slice();
+        let ys = ys_p.slice();
+        let zs = zs_p.slice();
         let n = xs.len();
 
         if let Some(ref ms) = self.masses
@@ -67,10 +56,11 @@ impl Compute for CenterOfMass {
             return Err(ComputeError::DimensionMismatch {
                 expected: n,
                 got: ms.len(),
+                what: "CenterOfMass::masses",
             });
         }
 
-        let simbox = frame.simbox_ref();
+        let mic = MicHelper::from_simbox(frame.simbox_ref());
         let nc = clusters.num_clusters;
 
         let mut ref_pos = vec![[0.0 as F; 3]; nc];
@@ -78,20 +68,21 @@ impl Compute for CenterOfMass {
         let mut total_mass = vec![0.0 as F; nc];
         let mut has_ref = vec![false; nc];
 
+        let masses_ref = self.masses.as_deref();
         for (i, &cid) in clusters.cluster_idx.iter().enumerate() {
             if cid < 0 {
                 continue;
             }
             let c = cid as usize;
             let pos = [xs[i], ys[i], zs[i]];
-            let m = self.masses.as_ref().map_or(1.0 as F, |ms| ms[i]);
+            let m = masses_ref.map_or(1.0 as F, |ms| ms[i]);
 
             if !has_ref[c] {
                 ref_pos[c] = pos;
                 has_ref[c] = true;
             }
 
-            let d = mic_disp(simbox, ref_pos[c], pos);
+            let d = mic.disp(ref_pos[c], pos);
             sum_m_delta[c][0] += m * d[0];
             sum_m_delta[c][1] += m * d[1];
             sum_m_delta[c][2] += m * d[2];
@@ -108,10 +99,50 @@ impl Compute for CenterOfMass {
             }
         }
 
-        Ok(CenterOfMassResult {
+        Ok(COMResult {
             centers_of_mass,
             cluster_masses: total_mass,
         })
+    }
+}
+
+impl Compute for CenterOfMass {
+    type Args<'a> = &'a Vec<ClusterResult>;
+    type Output = Vec<COMResult>;
+
+    fn compute<'a, FA: FrameAccess + Sync + 'a>(
+        &self,
+        frames: &[&'a FA],
+        clusters: &'a Vec<ClusterResult>,
+    ) -> Result<Vec<COMResult>, ComputeError> {
+        if frames.is_empty() {
+            return Err(ComputeError::EmptyInput);
+        }
+        if clusters.len() != frames.len() {
+            return Err(ComputeError::DimensionMismatch {
+                expected: frames.len(),
+                got: clusters.len(),
+                what: "ClusterResult count",
+            });
+        }
+        #[cfg(feature = "rayon")]
+        const PAR_THRESHOLD: usize = 4;
+
+        #[cfg(feature = "rayon")]
+        if frames.len() >= PAR_THRESHOLD {
+            use rayon::prelude::*;
+            return frames
+                .par_iter()
+                .zip(clusters.par_iter())
+                .map(|(frame, cl)| self.one_frame(*frame, cl))
+                .collect();
+        }
+
+        let mut out = Vec::with_capacity(frames.len());
+        for (frame, cl) in frames.iter().zip(clusters.iter()) {
+            out.push(self.one_frame(*frame, cl)?);
+        }
+        Ok(out)
     }
 }
 
@@ -153,38 +184,33 @@ mod tests {
         }
     }
 
-    // --- freud: test_cluster_props_advanced_unweighted (uniform = geometric) ---
+    fn com_single(frame: &Frame, cl: ClusterResult, com: CenterOfMass) -> COMResult {
+        let out = com.compute(&[frame], &vec![cl]).unwrap();
+        out.into_iter().next().unwrap()
+    }
 
     #[test]
     fn uniform_mass_equals_geometric_center() {
         let pos = [[1.0, 1.0, 1.0], [3.0, 1.0, 1.0]];
         let frame = frame_with(&pos, 10.0, [false, false, false]);
         let cl = manual_clusters(&[0, 0]);
-        let r = CenterOfMass::new().compute(&frame, &cl).unwrap();
+        let r = com_single(&frame, cl, CenterOfMass::new());
         assert!((r.centers_of_mass[0][0] - 2.0).abs() < 1e-5);
         assert!((r.cluster_masses[0] - 2.0).abs() < 1e-5);
     }
 
-    // --- freud: test_cluster_props_advanced_weighted (COM + masses) ---
-
     #[test]
     fn weighted_shifts_toward_heavy() {
-        // p0(m=3) at [1,1,1], p1(m=1) at [3,1,1]
-        // COM_x = (3×1 + 1×3) / 4 = 1.5
         let pos = [[1.0, 1.0, 1.0], [3.0, 1.0, 1.0]];
         let frame = frame_with(&pos, 10.0, [false, false, false]);
         let cl = manual_clusters(&[0, 0]);
-        let r = CenterOfMass::new()
-            .with_masses(&[3.0, 1.0])
-            .compute(&frame, &cl)
-            .unwrap();
+        let r = com_single(&frame, cl, CenterOfMass::new().with_masses(&[3.0, 1.0]));
         assert!((r.centers_of_mass[0][0] - 1.5).abs() < 1e-5);
         assert!((r.cluster_masses[0] - 4.0).abs() < 1e-5);
     }
 
     #[test]
     fn two_clusters_weighted() {
-        // freud data: p0(m=1),p1(m=2) at [1,1,1]; p2(m=3),p3(m=4) at [1,3,1],[0.9,2.9,1]
         let pos = [
             [1.0, 1.0, 1.0],
             [1.0, 1.0, 1.0],
@@ -194,37 +220,22 @@ mod tests {
         let masses: Vec<F> = vec![1.0, 2.0, 3.0, 4.0];
         let frame = frame_with(&pos, 6.0, [false, false, false]);
         let cl = manual_clusters(&[0, 0, 1, 1]);
-        let r = CenterOfMass::new()
-            .with_masses(&masses)
-            .compute(&frame, &cl)
-            .unwrap();
-
-        // cluster 0: COM = [1,1,1], M=3
+        let r = com_single(&frame, cl, CenterOfMass::new().with_masses(&masses));
         assert!((r.centers_of_mass[0][0] - 1.0).abs() < 1e-5);
         assert!((r.cluster_masses[0] - 3.0).abs() < 1e-5);
-        // cluster 1: COM_x = (3×1 + 4×0.9)/7 = 6.6/7
         assert!((r.centers_of_mass[1][0] - 6.6 / 7.0).abs() < 1e-4);
         assert!((r.cluster_masses[1] - 7.0).abs() < 1e-5);
     }
 
-    // --- freud: test_cluster_com_periodic (PBC wrapping) ---
-
     #[test]
     fn periodic_wrapping() {
-        // box [0,10), p0(m=1) at 1.0, p1(m=3) at 9.0
-        // ref=1.0, MIC(1→9)= -2.0 (wrap: 9-1=8 > 5, so 8-10=-2)
-        // COM = 1.0 + (1×0 + 3×(-2))/4 = 1.0 - 1.5 = -0.5 → wrap to 9.5
         let pos = [[1.0, 5.0, 5.0], [9.0, 5.0, 5.0]];
         let frame = frame_with(&pos, 10.0, [true, true, true]);
         let cl = manual_clusters(&[0, 0]);
-        let r = CenterOfMass::new()
-            .with_masses(&[1.0, 3.0])
-            .compute(&frame, &cl)
-            .unwrap();
-        // -0.5 mod 10 = 9.5; unrwapped is -0.5. Either is fine.
+        let r = com_single(&frame, cl, CenterOfMass::new().with_masses(&[1.0, 3.0]));
         let cx = r.centers_of_mass[0][0];
         assert!(
-            (cx - 9.5).abs() < 0.5 || (cx - (-0.5)).abs() < 0.5,
+            (cx - 9.5).abs() < 0.5 || (cx + 0.5).abs() < 0.5,
             "COM should be near 9.5 (or -0.5), got {cx}"
         );
     }
@@ -235,8 +246,8 @@ mod tests {
         let frame = frame_with(&pos, 10.0, [false, false, false]);
         let cl = manual_clusters(&[0, 0]);
         let err = CenterOfMass::new()
-            .with_masses(&[1.0]) // wrong length
-            .compute(&frame, &cl)
+            .with_masses(&[1.0])
+            .compute(&[&frame], &vec![cl])
             .unwrap_err();
         assert!(matches!(err, ComputeError::DimensionMismatch { .. }));
     }

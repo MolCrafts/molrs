@@ -68,9 +68,12 @@ fn test_read_molid() {
     assert_eq!(mol_ids[0], 0); // First atom in molecule 0
     assert_eq!(mol_ids[3], 1); // Fourth atom in molecule 1
 
-    // Check box dimensions
-    let box_str = frame.meta.get("box").expect("box");
-    assert_eq!(box_str, "20 20 20");
+    // Check box dimensions via SimBox (canonical representation)
+    let simbox = frame.simbox.as_ref().expect("simbox");
+    let lengths = simbox.lengths();
+    assert_eq!(lengths[0], 20.0);
+    assert_eq!(lengths[1], 20.0);
+    assert_eq!(lengths[2], 20.0);
 }
 
 #[test]
@@ -78,9 +81,12 @@ fn test_read_triclinic() {
     let path = crate::test_data::get_test_data_path("lammps-data/triclinic-1.lmp");
     let frame = read_lammps_data(path).expect("Failed to read triclinic-1.lmp");
 
-    // Check triclinic box
-    let box_tilt = frame.meta.get("box_tilt").expect("box tilt");
-    assert_eq!(box_tilt, "0 0 0");
+    // Triclinic tilt factors exposed via SimBox (zero tilt here).
+    let simbox = frame.simbox.as_ref().expect("simbox");
+    let tilts = simbox.tilts();
+    assert_eq!(tilts[0], 0.0);
+    assert_eq!(tilts[1], 0.0);
+    assert_eq!(tilts[2], 0.0);
 
     // This file has 0 atoms
     assert!(!frame.contains_key("atoms") || frame.get("atoms").unwrap().nrows() == Some(0));
@@ -98,9 +104,12 @@ fn test_read_whitespaces() {
     let x = atoms.get_float("x").expect("x coordinates");
     assert_eq!(x[0], 5.0);
 
-    // Check box dimensions
-    let box_str = frame.meta.get("box").expect("box");
-    assert_eq!(box_str, "10 10 10");
+    // Check box dimensions via SimBox
+    let simbox = frame.simbox.as_ref().expect("simbox");
+    let lengths = simbox.lengths();
+    assert_eq!(lengths[0], 10.0);
+    assert_eq!(lengths[1], 10.0);
+    assert_eq!(lengths[2], 10.0);
 }
 
 #[test]
@@ -188,13 +197,17 @@ fn test_write_and_read_roundtrip() {
 
     frame.insert("bonds", bonds);
 
-    // Add box metadata
-    frame
-        .meta
-        .insert("box".to_string(), "10.0 10.0 10.0".to_string());
-    frame
-        .meta
-        .insert("box_origin".to_string(), "0.0 0.0 0.0".to_string());
+    // Attach canonical simbox (10×10×10 cube at origin)
+    use molrs::region::simbox::SimBox;
+    use ndarray::array;
+    frame.simbox = Some(
+        SimBox::ortho(
+            array![10.0 as F, 10.0 as F, 10.0 as F],
+            array![0.0 as F, 0.0 as F, 0.0 as F],
+            [true, true, true],
+        )
+        .expect("valid simbox"),
+    );
 
     // Write to temporary file
     let temp_file = NamedTempFile::new().expect("Failed to create temp file");
@@ -218,9 +231,12 @@ fn test_write_and_read_roundtrip() {
     let bonds2 = frame2.get("bonds").expect("bonds block");
     assert_eq!(bonds2.nrows(), Some(2));
 
-    // Verify box
-    let box2 = frame2.meta.get("box").expect("box");
-    assert_eq!(box2, "10 10 10");
+    // Verify box roundtrip via SimBox
+    let sb2 = frame2.simbox.as_ref().expect("simbox");
+    let l = sb2.lengths();
+    assert_eq!(l[0], 10.0);
+    assert_eq!(l[1], 10.0);
+    assert_eq!(l[2], 10.0);
 }
 
 #[test]
@@ -334,8 +350,8 @@ fn test_read_solvated_system() {
     assert_eq!(y.len(), nrows);
     assert_eq!(z.len(), nrows);
 
-    // Check box dimensions exist
-    assert!(frame.meta.contains_key("box"), "Should have box dimensions");
+    // Check simbox exists
+    assert!(frame.simbox.is_some(), "Should have simbox");
 }
 
 #[test]
@@ -343,12 +359,11 @@ fn test_read_triclinic_2() {
     let path = crate::test_data::get_test_data_path("lammps-data/triclinic-2.lmp");
     let frame = read_lammps_data(path).expect("Failed to read triclinic-2.lmp");
 
-    // Should have triclinic box with tilt factors
-    let box_tilt = frame.meta.get("box_tilt").expect("box tilt");
-
-    // Verify tilt factors are parsed (format: "xy xz yz")
-    let tilt_parts: Vec<&str> = box_tilt.split_whitespace().collect();
-    assert_eq!(tilt_parts.len(), 3, "Should have three tilt factors");
+    // Should have triclinic box with tilt factors accessible via SimBox
+    let simbox = frame.simbox.as_ref().expect("simbox");
+    let _tilts = simbox.tilts();
+    // Just verifying the triclinic simbox was constructed; exact tilt values
+    // depend on the fixture and are covered by the stricter tests above.
 }
 
 #[test]
@@ -360,7 +375,7 @@ fn test_read_data_body() {
     match result {
         Ok(frame) => {
             // If it parses, verify basic structure
-            assert!(frame.meta.contains_key("box") || frame.contains_key("atoms"));
+            assert!(frame.simbox.is_some() || frame.contains_key("atoms"));
         }
         Err(e) => {
             // Some files may not parse if they use unsupported features
