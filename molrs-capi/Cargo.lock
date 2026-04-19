@@ -305,7 +305,7 @@ checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 
 [[package]]
 name = "molcrafts-molrs-capi"
-version = "0.0.8"
+version = "0.0.10"
 dependencies = [
  "cbindgen",
  "molcrafts-molrs-core",
@@ -319,7 +319,7 @@ dependencies = [
 
 [[package]]
 name = "molcrafts-molrs-core"
-version = "0.0.8"
+version = "0.0.10"
 dependencies = [
  "libm",
  "ndarray",
@@ -332,7 +332,7 @@ dependencies = [
 
 [[package]]
 name = "molcrafts-molrs-ff"
-version = "0.0.8"
+version = "0.0.10"
 dependencies = [
  "libm",
  "molcrafts-molrs-core",
@@ -344,7 +344,7 @@ dependencies = [
 
 [[package]]
 name = "molcrafts-molrs-ffi"
-version = "0.0.8"
+version = "0.0.10"
 dependencies = [
  "molcrafts-molrs-core",
  "slotmap",
@@ -352,9 +352,10 @@ dependencies = [
 
 [[package]]
 name = "molcrafts-molrs-smiles"
-version = "0.0.8"
+version = "0.0.10"
 dependencies = [
  "molcrafts-molrs-core",
+ "petgraph",
 ]
 
 [[package]]

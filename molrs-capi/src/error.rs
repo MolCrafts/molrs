@@ -145,5 +145,6 @@ pub(crate) fn ffi_err_to_status(err: &FfiError) -> MolrsStatus {
         FfiError::InvalidBlockHandle => MolrsStatus::InvalidBlockHandle,
         FfiError::KeyNotFound { .. } => MolrsStatus::KeyNotFound,
         FfiError::NonContiguous { .. } => MolrsStatus::NonContiguous,
+        FfiError::DTypeMismatch { .. } => MolrsStatus::TypeMismatch,
     }
 }
