@@ -28,8 +28,7 @@ pub enum MolRsError {
         message: String,
     },
 
-    /// Zarr I/O error (only with "zarr" feature)
-    #[cfg(feature = "zarr")]
+    /// Zarr I/O error
     Zarr {
         /// Error message
         message: String,
@@ -70,7 +69,6 @@ impl fmt::Display for MolRsError {
             MolRsError::NotFound { entity, message } => {
                 write!(f, "{} not found: {}", entity, message)
             }
-            #[cfg(feature = "zarr")]
             MolRsError::Zarr { message } => {
                 write!(f, "Zarr error: {}", message)
             }
@@ -114,6 +112,41 @@ impl From<&str> for MolRsError {
     }
 }
 
+#[cfg(feature = "zarr")]
+impl From<zarrs::group::GroupCreateError> for MolRsError {
+    fn from(e: zarrs::group::GroupCreateError) -> Self {
+        MolRsError::zarr(e.to_string())
+    }
+}
+
+#[cfg(feature = "zarr")]
+impl From<zarrs::storage::StorageError> for MolRsError {
+    fn from(e: zarrs::storage::StorageError) -> Self {
+        MolRsError::zarr(e.to_string())
+    }
+}
+
+#[cfg(feature = "zarr")]
+impl From<zarrs::array::ArrayCreateError> for MolRsError {
+    fn from(e: zarrs::array::ArrayCreateError) -> Self {
+        MolRsError::zarr(e.to_string())
+    }
+}
+
+#[cfg(feature = "zarr")]
+impl From<zarrs::array::ArrayError> for MolRsError {
+    fn from(e: zarrs::array::ArrayError) -> Self {
+        MolRsError::zarr(e.to_string())
+    }
+}
+
+#[cfg(feature = "zarr")]
+impl From<zarrs::node::NodeCreateError> for MolRsError {
+    fn from(e: zarrs::node::NodeCreateError) -> Self {
+        MolRsError::zarr(e.to_string())
+    }
+}
+
 // Helper constructors
 impl MolRsError {
     /// Create a parse error with line number
@@ -148,7 +181,6 @@ impl MolRsError {
     }
 
     /// Create a Zarr I/O error
-    #[cfg(feature = "zarr")]
     pub fn zarr(message: impl Into<String>) -> Self {
         MolRsError::Zarr {
             message: message.into(),

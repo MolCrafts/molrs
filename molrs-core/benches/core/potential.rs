@@ -1,7 +1,7 @@
 use criterion::{Criterion, criterion_group};
-use molrs::potential::Potential;
-use molrs::potential::kernels::{BondHarmonic, PairLJ126};
-use molrs::types::F;
+use molrs_core::potential::Potential;
+use molrs_core::potential::kernels::{BondHarmonic, PairLJ126};
+use molrs_core::types::F;
 
 fn random_coords(n_atoms: usize, seed: u64) -> Vec<F> {
     let mut state = seed;
@@ -60,7 +60,7 @@ fn bench_bond_harmonic_forces(c: &mut Criterion) {
 }
 
 fn bench_potentials_forces(c: &mut Criterion) {
-    use molrs::potential::Potentials;
+    use molrs_core::potential::Potentials;
 
     let n = 1000;
     let coords = random_coords(n + 1, 99999);

@@ -35,7 +35,7 @@ use crate::{ffi_try, null_check};
 /// The frame will contain an `"atoms"` block with `"symbol"`, `"x"`,
 /// `"y"`, `"z"` columns and a `"bonds"` block with `"i"`, `"j"`,
 /// `"order"` columns.  Initial coordinates are 2D layout coordinates
-/// (not optimised 3D); use `gen3d` for 3D embedding.
+/// (not optimised 3D); use `embed` for 3D embedding.
 ///
 /// # C signature
 ///
@@ -77,14 +77,14 @@ pub unsafe extern "C" fn molrs_frame_from_smiles(
             }
         };
 
-        let ir = match molrs::smiles::parse_smiles(smiles_str) {
+        let ir = match molrs_io::smiles::parse_smiles(smiles_str) {
             Ok(ir) => ir,
             Err(e) => {
                 error::set_last_error(format!("{e}"));
                 return MolrsStatus::ParseError;
             }
         };
-        let mol = match molrs::smiles::to_atomistic(&ir) {
+        let mol = match molrs_io::smiles::to_atomistic(&ir) {
             Ok(m) => m,
             Err(e) => {
                 error::set_last_error(format!("{e}"));

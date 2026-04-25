@@ -39,7 +39,7 @@
 
 use std::ffi::{CStr, CString, c_char};
 
-use molrs::forcefield::ForceField;
+use molrs_ff::ForceField;
 
 use crate::error::{self, MolrsStatus};
 use crate::handle::{MolrsForceFieldHandle, ff_key_to_handle, handle_to_ff_key};
@@ -869,7 +869,7 @@ fn json_escape(s: &str) -> String {
     )
 }
 
-fn write_params(json: &mut String, params: &molrs::forcefield::Params) {
+fn write_params(json: &mut String, params: &molrs_ff::forcefield::Params) {
     use std::fmt::Write;
     for (i, (k, v)) in params.iter().enumerate() {
         if i > 0 {

@@ -1,0 +1,27 @@
+[package]
+name = "molcrafts-molrs-cxxapi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "CXX bridge for Atomiverse C++ integration"
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+name = "molrs_cxxapi"
+crate-type = ["staticlib"]
+
+[features]
+default = ["zarr"]
+zarr = ["molrs_io/filesystem"]
+
+[dependencies]
+molrs = { workspace = true }
+molrs_io = { workspace = true }
+cxx = "1"
+ndarray = "0.17"
+
+[build-dependencies]
+cxx-build = "1"

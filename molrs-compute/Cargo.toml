@@ -1,0 +1,32 @@
+[package]
+name = "molcrafts-molrs-compute"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Trajectory analysis for MolCrafts (RDF, MSD, clustering, gyration tensor)"
+repository.workspace = true
+homepage.workspace = true
+autobenches = false
+
+[lib]
+name = "molrs_compute"
+
+[features]
+default = ["rayon"]
+rayon = ["molrs/rayon", "dep:rayon"]
+
+[dependencies]
+molrs = { workspace = true }
+ndarray = "0.17"
+rand = "0.9"
+rustfft = "6"
+rayon = { version = "1.10", optional = true }
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "benchmarks"
+harness = false

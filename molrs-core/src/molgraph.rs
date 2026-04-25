@@ -10,7 +10,7 @@
 //! # Examples
 //!
 //! ```
-//! use molrs::molgraph::{Atom, MolGraph};
+//! use molrs_core::molgraph::{Atom, MolGraph};
 //!
 //! let mut g = MolGraph::new();
 //!

@@ -3,8 +3,8 @@ use std::rc::Rc;
 
 use molrs::block::Column;
 use molrs::molrec::{
-    CellBox, MolRec as CoreMolRec, ObservableData, ObservableKind, ObservableRecord, RecordBox,
-    SchemaValue, Trajectory as CoreTrajectory,
+    MolRec as CoreMolRec, ObservableData, ObservableKind, ObservableRecord, SchemaValue,
+    Trajectory as CoreTrajectory,
 };
 use molrs::types::{F, I, U};
 use ndarray::{ArrayD, IxDyn};
@@ -15,9 +15,8 @@ use pyo3::types::{PyAny, PyDict, PyList};
 use serde_json::{Map as JsonMap, Number as JsonNumber, Value as JsonValue};
 
 use crate::forcefield::PyForceField;
-use crate::frame::PyFrame;
+use crate::frame::{PyFrame, PyGrid};
 use crate::helpers::{NpF, molrs_error_to_pyerr};
-use crate::simbox::PyBox;
 
 #[pyclass(name = "Trajectory", unsendable)]
 #[derive(Clone)]
@@ -49,15 +48,20 @@ pub struct PyVectorObservable {
     pub(crate) inner: ObservableRecord,
 }
 
+#[pyclass(name = "GridObservable", unsendable)]
+#[derive(Clone)]
+pub struct PyGridObservable {
+    pub(crate) inner: ObservableRecord,
+}
+
 #[pymethods]
 impl PyTrajectory {
     #[new]
-    #[pyo3(signature = (frames, step=None, time=None, r#box=None))]
+    #[pyo3(signature = (frames, step=None, time=None))]
     fn new(
         frames: Vec<PyRef<'_, PyFrame>>,
         step: Option<PyReadonlyArray1<'_, i64>>,
         time: Option<PyReadonlyArray1<'_, NpF>>,
-        r#box: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
         let core_frames: Vec<_> = frames
             .iter()
@@ -70,20 +74,18 @@ impl PyTrajectory {
         if let Some(time) = time {
             inner.time = Some(time.as_slice()?.iter().copied().map(|v| v as F).collect());
         }
-        inner.box_data = parse_record_box(r#box)?;
         inner.validate().map_err(molrs_error_to_pyerr)?;
         Ok(Self { inner })
     }
 
     #[staticmethod]
-    #[pyo3(signature = (frames, step=None, time=None, r#box=None))]
+    #[pyo3(signature = (frames, step=None, time=None))]
     fn from_frames(
         frames: Vec<PyRef<'_, PyFrame>>,
         step: Option<PyReadonlyArray1<'_, i64>>,
         time: Option<PyReadonlyArray1<'_, NpF>>,
-        r#box: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
-        Self::new(frames, step, time, r#box)
+        Self::new(frames, step, time)
     }
 
     fn __len__(&self) -> usize {
@@ -91,17 +93,12 @@ impl PyTrajectory {
     }
 
     fn __getitem__(&self, index: usize) -> PyResult<PyFrame> {
-        let mut frame = self
+        let frame = self
             .inner
             .frames
             .get(index)
             .cloned()
             .ok_or_else(|| PyIndexError::new_err(index.to_string()))?;
-        if let Some(cell) = self.inner.box_data.as_ref().and_then(|b| b.cell_at(index)) {
-            if let Ok(simbox) = cell.to_simbox() {
-                frame.simbox = Some(simbox);
-            }
-        }
         PyFrame::from_core_frame(frame)
     }
 
@@ -110,25 +107,17 @@ impl PyTrajectory {
         self.inner
             .frames
             .iter()
-            .enumerate()
-            .map(|(i, f)| {
-                let mut frame = f.clone();
-                if let Some(cell) = self.inner.box_data.as_ref().and_then(|b| b.cell_at(i)) {
-                    if let Ok(simbox) = cell.to_simbox() {
-                        frame.simbox = Some(simbox);
-                    }
-                }
-                PyFrame::from_core_frame(frame)
-            })
+            .map(|f| PyFrame::from_core_frame(f.clone()))
             .collect()
     }
 
     #[getter]
     fn step<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArrayDyn<i64>>> {
-        self.inner
-            .step
-            .as_ref()
-            .map(|step| ArrayD::from_shape_vec(IxDyn(&[step.len()]), step.clone()).unwrap().into_pyarray(py))
+        self.inner.step.as_ref().map(|step| {
+            ArrayD::from_shape_vec(IxDyn(&[step.len()]), step.clone())
+                .unwrap()
+                .into_pyarray(py)
+        })
     }
 
     #[getter]
@@ -139,11 +128,6 @@ impl PyTrajectory {
                 .unwrap()
                 .into_pyarray(py)
         })
-    }
-
-    #[getter]
-    fn box_<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
-        record_box_to_pyobject(py, &self.inner.box_data)
     }
 }
 
@@ -179,22 +163,21 @@ impl PyMolRec {
 
     /// Set the forcefield; auto-populates method metadata.
     fn set_forcefield(&self, forcefield: &PyForceField) {
-        self.inner.borrow_mut().set_forcefield(&forcefield.inner);
+        molrs_ff::set_forcefield_metadata(&mut self.inner.borrow_mut(), &forcefield.inner);
     }
 
     #[staticmethod]
     fn read_zarr(path: &str) -> PyResult<Self> {
-        let inner = CoreMolRec::read_zarr(path).map_err(molrs_error_to_pyerr)?;
+        let inner =
+            molrs_io::zarr::read_molrec_file(path).map_err(|e| molrs_error_to_pyerr(e.into()))?;
         Ok(Self {
             inner: Rc::new(RefCell::new(inner)),
         })
     }
 
     fn write_zarr(&self, path: &str) -> PyResult<()> {
-        self.inner
-            .borrow()
-            .write_zarr(path)
-            .map_err(molrs_error_to_pyerr)
+        molrs_io::zarr::write_molrec_file(path, &self.inner.borrow())
+            .map_err(|e| molrs_error_to_pyerr(e.into()))
     }
 
     fn count_frames(&self) -> usize {
@@ -208,14 +191,18 @@ impl PyMolRec {
 
     #[getter]
     fn trajectory(&self) -> PyResult<Option<PyTrajectory>> {
-        Ok(self.inner.borrow().trajectory.as_ref().map(|traj| PyTrajectory {
-            inner: CoreTrajectory {
-                frames: traj.frames.clone(),
-                step: traj.step.clone(),
-                time: traj.time.clone(),
-                box_data: self.inner.borrow().box_data.clone(),
-            },
-        }))
+        Ok(self
+            .inner
+            .borrow()
+            .trajectory
+            .as_ref()
+            .map(|traj| PyTrajectory {
+                inner: CoreTrajectory {
+                    frames: traj.frames.clone(),
+                    step: traj.step.clone(),
+                    time: traj.time.clone(),
+                },
+            }))
     }
 
     #[getter]
@@ -255,17 +242,6 @@ impl PyMolRec {
     #[setter]
     fn set_parameters(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
         self.inner.borrow_mut().parameters = py_any_to_json(value)?;
-        Ok(())
-    }
-
-    #[getter]
-    fn box_<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
-        record_box_to_pyobject(py, &self.inner.borrow().box_data)
-    }
-
-    #[setter]
-    fn set_box_(&mut self, value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
-        self.inner.borrow_mut().box_data = parse_record_box(value)?;
         Ok(())
     }
 }
@@ -357,6 +333,35 @@ impl PyObservables {
         Ok(observable)
     }
 
+    #[pyo3(signature = (name, grid, description="", unit=None, axes=None, time_dependent=false, sampling=None, domain=None, target=None))]
+    fn add_grid(
+        &self,
+        name: &str,
+        grid: &PyGrid,
+        description: &str,
+        unit: Option<String>,
+        axes: Option<Vec<String>>,
+        time_dependent: bool,
+        sampling: Option<String>,
+        domain: Option<String>,
+        target: Option<String>,
+    ) -> PyResult<PyGridObservable> {
+        let observable = PyGridObservable::new_impl(
+            name,
+            grid,
+            description,
+            unit,
+            axes,
+            time_dependent,
+            sampling,
+            domain,
+            target,
+        )?;
+        self.inner
+            .borrow_mut()
+            .add_observable(observable.inner.clone());
+        Ok(observable)
+    }
 }
 
 #[pymethods]
@@ -447,6 +452,50 @@ impl PyVectorObservable {
     }
 }
 
+#[pymethods]
+impl PyGridObservable {
+    #[new]
+    #[pyo3(signature = (name, grid, description="", unit=None, axes=None, time_dependent=false, sampling=None, domain=None, target=None))]
+    fn new(
+        name: &str,
+        grid: &PyGrid,
+        description: &str,
+        unit: Option<String>,
+        axes: Option<Vec<String>>,
+        time_dependent: bool,
+        sampling: Option<String>,
+        domain: Option<String>,
+        target: Option<String>,
+    ) -> PyResult<Self> {
+        Self::new_impl(
+            name,
+            grid,
+            description,
+            unit,
+            axes,
+            time_dependent,
+            sampling,
+            domain,
+            target,
+        )
+    }
+
+    #[getter]
+    fn name(&self) -> String {
+        self.inner.name.clone()
+    }
+
+    #[getter]
+    fn data<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
+        observable_data_to_pyobject(py, &self.inner.data)
+    }
+
+    #[getter]
+    fn kind(&self) -> &'static str {
+        "grid"
+    }
+}
+
 impl PyScalarObservable {
     fn new_impl(
         name: &str,
@@ -501,6 +550,33 @@ impl PyVectorObservable {
     }
 }
 
+impl PyGridObservable {
+    fn new_impl(
+        name: &str,
+        grid: &PyGrid,
+        description: &str,
+        unit: Option<String>,
+        axes: Option<Vec<String>>,
+        time_dependent: bool,
+        sampling: Option<String>,
+        domain: Option<String>,
+        target: Option<String>,
+    ) -> PyResult<Self> {
+        let mut inner = ObservableRecord::grid(name, grid.inner.clone());
+        apply_common_metadata(
+            &mut inner,
+            description,
+            unit,
+            axes,
+            time_dependent,
+            sampling,
+            domain,
+            target,
+        );
+        Ok(Self { inner })
+    }
+}
+
 fn apply_common_metadata(
     observable: &mut ObservableRecord,
     description: &str,
@@ -527,60 +603,12 @@ fn extract_observable(observable: &Bound<'_, PyAny>) -> PyResult<ObservableRecor
     if let Ok(observable) = observable.extract::<PyRef<'_, PyVectorObservable>>() {
         return Ok(observable.inner.clone());
     }
+    if let Ok(observable) = observable.extract::<PyRef<'_, PyGridObservable>>() {
+        return Ok(observable.inner.clone());
+    }
     Err(PyTypeError::new_err(
-        "expected ScalarObservable or VectorObservable",
+        "expected ScalarObservable, VectorObservable, or GridObservable",
     ))
-}
-
-fn parse_record_box(value: Option<&Bound<'_, PyAny>>) -> PyResult<Option<RecordBox>> {
-    let Some(value) = value else {
-        return Ok(None);
-    };
-    if value.is_none() {
-        return Ok(None);
-    }
-    if let Ok(pybox) = value.extract::<PyRef<'_, PyBox>>() {
-        return Ok(Some(RecordBox::Static {
-            cell: CellBox::from_simbox(&pybox.inner),
-        }));
-    }
-    if let Ok(list) = value.cast::<PyList>() {
-        let mut cells = Vec::with_capacity(list.len());
-        for item in list.iter() {
-            let pybox = item.extract::<PyRef<'_, PyBox>>()?;
-            cells.push(CellBox::from_simbox(&pybox.inner));
-        }
-        return Ok(Some(RecordBox::Dynamic { cells }));
-    }
-    Err(PyTypeError::new_err("box must be a Box, list[Box], or None"))
-}
-
-fn record_box_to_pyobject(py: Python<'_>, box_data: &Option<RecordBox>) -> PyResult<Py<PyAny>> {
-    match box_data {
-        None => Ok(py.None()),
-        Some(RecordBox::Static { cell }) => {
-            let pybox = Py::new(
-                py,
-                PyBox {
-                    inner: cell.to_simbox().map_err(molrs_error_to_pyerr)?,
-                },
-            )?;
-            Ok(pybox.into_bound(py).into_any().unbind())
-        }
-        Some(RecordBox::Dynamic { cells }) => {
-            let mut boxes = Vec::with_capacity(cells.len());
-            for cell in cells {
-                let pybox = Py::new(
-                    py,
-                    PyBox {
-                        inner: cell.to_simbox().map_err(molrs_error_to_pyerr)?,
-                    },
-                )?;
-                boxes.push(pybox);
-            }
-            Ok(PyList::new(py, boxes)?.into_any().unbind())
-        }
-    }
 }
 
 fn py_any_to_json(value: &Bound<'_, PyAny>) -> PyResult<SchemaValue> {
@@ -623,7 +651,10 @@ fn py_any_to_json(value: &Bound<'_, PyAny>) -> PyResult<SchemaValue> {
 fn json_to_pyobject(py: Python<'_>, value: &SchemaValue) -> PyResult<Py<PyAny>> {
     match value {
         JsonValue::Null => Ok(py.None()),
-        JsonValue::Bool(v) => Ok(pyo3::types::PyBool::new(py, *v).to_owned().into_any().unbind()),
+        JsonValue::Bool(v) => Ok(pyo3::types::PyBool::new(py, *v)
+            .to_owned()
+            .into_any()
+            .unbind()),
         JsonValue::Number(v) => {
             if let Some(i) = v.as_i64() {
                 Ok(i64::into_pyobject(i, py)?.unbind().into_any())
@@ -653,43 +684,53 @@ fn json_to_pyobject(py: Python<'_>, value: &SchemaValue) -> PyResult<Py<PyAny>> 
 
 fn py_any_to_column(value: &Bound<'_, PyAny>) -> PyResult<Column> {
     if let Ok(arr) = value.extract::<PyReadonlyArrayDyn<'_, f32>>() {
-        return Ok(Column::Float(arr.as_array().mapv(|v| v as F).into_dyn()));
+        return Ok(Column::from_float(
+            arr.as_array().mapv(|v| v as F).into_dyn(),
+        ));
     }
     if let Ok(arr) = value.extract::<PyReadonlyArrayDyn<'_, f64>>() {
-        return Ok(Column::Float(arr.as_array().mapv(|v| v as F).into_dyn()));
+        return Ok(Column::from_float(
+            arr.as_array().mapv(|v| v as F).into_dyn(),
+        ));
     }
     if let Ok(arr) = value.extract::<PyReadonlyArrayDyn<'_, i32>>() {
-        return Ok(Column::Int(arr.as_array().mapv(|v| v as I).into_dyn()));
+        return Ok(Column::from_int(arr.as_array().mapv(|v| v as I).into_dyn()));
     }
     if let Ok(arr) = value.extract::<PyReadonlyArrayDyn<'_, i64>>() {
-        return Ok(Column::Int(arr.as_array().mapv(|v| v as I).into_dyn()));
+        return Ok(Column::from_int(arr.as_array().mapv(|v| v as I).into_dyn()));
     }
     if let Ok(arr) = value.extract::<PyReadonlyArrayDyn<'_, u32>>() {
-        return Ok(Column::UInt(arr.as_array().mapv(|v| v as U).into_dyn()));
+        return Ok(Column::from_uint(
+            arr.as_array().mapv(|v| v as U).into_dyn(),
+        ));
     }
     if let Ok(arr) = value.extract::<PyReadonlyArrayDyn<'_, u64>>() {
-        return Ok(Column::UInt(arr.as_array().mapv(|v| v as U).into_dyn()));
+        return Ok(Column::from_uint(
+            arr.as_array().mapv(|v| v as U).into_dyn(),
+        ));
     }
     if let Ok(arr) = value.extract::<PyReadonlyArrayDyn<'_, bool>>() {
-        return Ok(Column::Bool(arr.as_array().to_owned().into_dyn()));
+        return Ok(Column::from_bool(arr.as_array().to_owned().into_dyn()));
     }
     if let Ok(strings) = value.extract::<Vec<String>>() {
-        return Ok(Column::String(ArrayD::from_shape_vec(IxDyn(&[strings.len()]), strings).unwrap()));
+        return Ok(Column::from_string(
+            ArrayD::from_shape_vec(IxDyn(&[strings.len()]), strings).unwrap(),
+        ));
     }
     if let Ok(v) = value.extract::<f64>() {
-        return Ok(Column::Float(ArrayD::from_elem(IxDyn(&[]), v as F)));
+        return Ok(Column::from_float(ArrayD::from_elem(IxDyn(&[]), v as F)));
     }
     if let Ok(v) = value.extract::<i64>() {
-        return Ok(Column::Int(ArrayD::from_elem(IxDyn(&[]), v as I)));
+        return Ok(Column::from_int(ArrayD::from_elem(IxDyn(&[]), v as I)));
     }
     if let Ok(v) = value.extract::<u64>() {
-        return Ok(Column::UInt(ArrayD::from_elem(IxDyn(&[]), v as U)));
+        return Ok(Column::from_uint(ArrayD::from_elem(IxDyn(&[]), v as U)));
     }
     if let Ok(v) = value.extract::<bool>() {
-        return Ok(Column::Bool(ArrayD::from_elem(IxDyn(&[]), v)));
+        return Ok(Column::from_bool(ArrayD::from_elem(IxDyn(&[]), v)));
     }
     if let Ok(v) = value.extract::<String>() {
-        return Ok(Column::String(ArrayD::from_elem(IxDyn(&[]), v)));
+        return Ok(Column::from_string(ArrayD::from_elem(IxDyn(&[]), v)));
     }
     Err(PyTypeError::new_err(
         "observable data must be a supported numpy array, scalar, or list[str]",
@@ -706,27 +747,45 @@ fn observable_to_pyobject(py: Python<'_>, observable: ObservableRecord) -> PyRes
             .into_bound(py)
             .into_any()
             .unbind()),
+        ObservableKind::Grid => Ok(Py::new(py, PyGridObservable { inner: observable })?
+            .into_bound(py)
+            .into_any()
+            .unbind()),
     }
 }
 
 fn observable_data_to_pyobject(py: Python<'_>, data: &ObservableData) -> PyResult<Py<PyAny>> {
     match data {
         ObservableData::Column(column) => column_to_pyobject(py, column),
+        ObservableData::Grid(grid) => Ok(Py::new(
+            py,
+            PyGrid {
+                inner: grid.clone(),
+            },
+        )?
+        .into_bound(py)
+        .into_any()
+        .unbind()),
     }
 }
 
 fn column_to_pyobject(py: Python<'_>, column: &Column) -> PyResult<Py<PyAny>> {
     match column {
+        // .mapv through ColumnHolder's Deref produces an owned ArrayD<NpF>.
         Column::Float(array) => Ok(array
-            .clone()
+            .array()
             .mapv(|v| v as NpF)
             .into_pyarray(py)
             .into_any()
             .unbind()),
-        Column::Int(array) => Ok(array.clone().into_pyarray(py).into_any().unbind()),
-        Column::UInt(array) => Ok(array.clone().into_pyarray(py).into_any().unbind()),
-        Column::Bool(array) => Ok(array.clone().into_pyarray(py).into_any().unbind()),
-        Column::U8(array) => Ok(array.clone().into_pyarray(py).into_any().unbind()),
+        // For non-Float columns the caller expects an owned numpy array, so we
+        // deep-clone the inner ArrayD out of the holder. `.array().clone()`
+        // takes &ArrayD<T> and calls ArrayD::clone (deep-copy), detaching from
+        // any foreign-backed holder as a side effect.
+        Column::Int(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
+        Column::UInt(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
+        Column::Bool(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
+        Column::U8(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
         Column::String(array) => {
             if array.ndim() == 0 {
                 let value = array.iter().next().cloned().unwrap_or_default();

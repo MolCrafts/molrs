@@ -1,6 +1,6 @@
 //! Integration tests for ring detection (src/core/rings.rs).
 
-use molrs::{Atom, AtomId, MolGraph, find_rings};
+use molrs_core::{Atom, AtomId, MolGraph, find_rings};
 
 fn carbon() -> Atom {
     let mut a = Atom::new();

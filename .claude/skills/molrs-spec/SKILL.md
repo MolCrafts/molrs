@@ -1,33 +1,34 @@
 ---
 name: molrs-spec
-description: Convert natural language requirements into detailed technical specifications for molrs features. Generates structured spec documents with trait signatures, data flow, test criteria, and implementation constraints.
+description: Convert natural language requirements into a detailed technical spec. Writes `.claude/specs/<slug>.md` and appends a row to `.claude/specs/INDEX.md`. Used standalone or invoked internally by `/molrs-impl` Phase 0.
+argument-hint: "<natural-language requirement>"
+user-invocable: true
 ---
 
 You are a **molecular simulation domain expert and software architect**. Given a natural language description of a feature or change, you produce a detailed technical specification tailored to the molrs Rust workspace.
 
 ## Trigger
 
-`/molrs-spec <natural language requirement>`
+- `/molrs-spec <natural language requirement>` — standalone spec drafting
+- Invoked by `/molrs-impl` Phase 0 when no spec exists yet
 
 ## Output Format
-
-Generate a spec document in this structure:
 
 ```markdown
 # Spec: <Feature Title>
 
 ## Summary
-<1-3 sentences describing what this feature does and why>
+<1–3 sentences describing what this feature does and why>
 
 ## Motivation
-<Why this feature is needed. Link to issues, papers, or user requests if available>
+<Why this is needed. Link to issues, papers, user requests if available>
 
 ## Scope
-- **Crates affected**: <list of molrs-core, molrs-pack, molrs-ffi, molrs-wasm>
-- **Traits extended**: <existing traits that gain implementations>
-- **Traits created**: <new traits, if any>
+- **Crates affected**: <list — see "Workspace Crates" below>
+- **Traits extended**: <existing traits gaining implementations>
+- **Traits created**: <new traits>
 - **Data structures**: <new or modified structs/enums>
-- **Feature flags**: <new feature gates, if any>
+- **Feature flags**: <new gates>
 
 ## Technical Design
 
@@ -35,163 +36,160 @@ Generate a spec document in this structure:
 <Public function/method signatures with doc comments>
 
 ### Data Flow
-<How data moves through the system, from input to output>
+<How data moves through the system, input → output>
 
 ### Algorithm
-<Step-by-step algorithm description with complexity analysis>
+<Step-by-step description with complexity analysis>
 <For numerical methods: reference paper/implementation with equations>
 
 ### Integration Points
 <How this connects to existing subsystems>
 
 ## Constraints & Invariants
-<Rules that MUST hold: gradient sign convention, float type usage, FFI safety>
+<Rules that MUST hold: gradient sign convention, F=f64 usage, FFI safety>
 
 ## Test Criteria
-<Specific test cases that must pass before the feature is considered complete>
+<Specific tests that must pass>
 
 ### Unit Tests
-<Individual function tests>
-
 ### Integration Tests
-<Cross-module tests>
-
 ### Numerical Validation
-<Reference values, analytical solutions, or comparison benchmarks>
 
 ## Performance Requirements
-<Expected time/memory complexity, benchmark targets if applicable>
+<Expected complexity, benchmark targets>
 
 ## Migration & Compatibility
-<Breaking changes, deprecations, backward compatibility notes>
+<Breaking changes, deprecations>
 ```
 
 ## Workflow
 
-### Step 1: Domain Analysis
+### Step 1 — Domain Analysis
 
-Read the natural language requirement and identify:
-- **Domain concepts**: Which molecular simulation concepts are involved? (forces, coordinates, topology, periodic boundaries, etc.)
-- **Computational patterns**: Is this a kernel (per-pair/per-atom), a pipeline stage, or a structural change?
-- **Precision requirements**: Does this need f64? Special numerical care?
+Identify in the requirement:
 
-### Step 2: Codebase Mapping
+- **Domain concepts**: forces, coordinates, topology, periodic boundaries, etc.
+- **Computational pattern**: kernel (per-pair / per-atom), pipeline stage, structural change?
+- **Numerical care**: known stability hazards (`1/r`, exp overflow, cancellation)?
 
-Map the requirement to molrs architecture:
-- Which crate owns this feature?
-- Which existing traits does it extend?
-- What data flows through the system?
-- Are there similar implementations to reference? (e.g., existing potentials, existing constraints)
+### Step 2 — Codebase Mapping
 
-Read relevant source files to understand existing patterns:
-- `molrs-core/src/potential/` for potential kernels
-- `molrs-core/src/neighbors/` for neighbor algorithms
-- `molrs-core/src/typifier/` for type assignment
-- `molrs-core/src/gen3d/` for coordinate generation
-- `molrs-pack/src/` for packing constraints
-- `molrs-ffi/src/` for FFI patterns
+Map to the molrs workspace (8 active crates):
 
-### Step 3: Trait & API Design
+| Crate | Owns | Read these source paths to understand existing patterns |
+|---|---|---|
+| `molrs-core` | Frame, Block, Grid, MolGraph, MolRec, Element, neighbors, math, region (SimBox), stereo, rings, Gasteiger, hydrogen perception | `molrs-core/src/{frame,block,molgraph,neighbors,region}/` |
+| `molrs-io` | PDB, XYZ, LAMMPS data/dump, CHGCAR, cube, Zarr | `molrs-io/src/<format>.rs` |
+| `molrs-compute` | RDF, MSD, clustering, gyration/inertia tensor | `molrs-compute/src/` |
+| `molrs-smiles` | SMILES parser → MolGraph | `molrs-smiles/src/` |
+| `molrs-ff` | Forcefield, potential (KernelRegistry), typifier | `molrs-ff/src/{forcefield,potential,typifier}/` |
+| `molrs-embed` | Distance geometry, fragment assembly, optimizer, rotor search | `molrs-embed/src/` |
+| `molrs-pack` | Packmol port, constraints, GENCAN | `molrs-pack/src/` |
+| `molrs-cxxapi` | CXX bridge to Atomiverse | `molrs-cxxapi/src/` |
 
-Design the public API following molrs conventions:
-- Use `F` type alias (never raw f32/f64)
-- Use ndarray types for coordinates
-- Trait objects must be `Send + Sync`
-- Return `Result<T, E>` at public boundaries
-- Coordinate format: flat `[x0,y0,z0, x1,y1,z1, ...]` for potentials
+### Step 3 — Trait & API Design
 
-### Step 4: Test Specification
+Follow molrs conventions:
 
-Design tests that validate correctness:
-- **Gradient tests**: Numerical vs analytical gradient (central difference, h=1e-5)
-- **Conservation tests**: Energy conservation for MD integrators
-- **Symmetry tests**: Permutation invariance for potentials
-- **Boundary tests**: PBC wrapping, edge cases (zero distance, single atom)
-- **Reference tests**: Compare against known values (Packmol, LAMMPS, RDKit)
+- `F = f64` alias (never raw `f64` in algorithm code)
+- ndarray for structural coordinates; flat `&[F]` for kernels
+- Trait objects `Send + Sync`
+- Public APIs return `Result<T, E>`
+- Coordinate format for potentials: `[x0,y0,z0, x1,y1,z1, ...]`
 
-### Step 5: Write & Present
+### Step 4 — Test Specification
 
-Write the spec document. Present it to the user for review. Suggest running `/molrs-impl` once approved.
+Per `molrs-test` standards:
+
+- **Gradient tests**: numerical vs analytical (`h = 1e-7`, `tol = 1e-6`)
+- **Conservation tests**: energy conservation for MD integrators
+- **Symmetry tests**: permutation invariance for potentials
+- **Boundary tests**: PBC wrapping, edge cases (zero distance, single atom, empty)
+- **Reference tests**: compare against Packmol / LAMMPS / RDKit known values
+- **IO tests**: iterate over `tests-data/<format>/*` (never synthetic strings)
+
+### Step 5 — Present and index
+
+Write the spec document to `.claude/specs/<slug>.md` (kebab-case slug
+derived from the title). Append a row to `.claude/specs/INDEX.md` with
+status `draft`. Present it to the user for review. If invoked by
+`/molrs-impl`, return to that orchestrator with the spec path; do **not**
+suggest the user run `/molrs-impl` separately (that creates a circular
+loop).
+
+## Output
+
+One line: `spec drafted: .claude/specs/<slug>.md (crates: <list>)`.
 
 ## Domain-Specific Templates
 
-### New Potential Kernel
+### New Potential Kernel (`molrs-ff`)
+- Energy function `E(r)` and gradient `dE/dr`
+- Parameter resolution from ForceField
+- Kernel category: bond / angle / dihedral / improper / pair / kspace
+- Numerical gradient verification test
+- Reference implementation comparison (RDKit MMFF, LAMMPS)
 
-When the requirement is a new potential/force kernel:
-- Specify the energy function E(r) and its gradient
-- Specify parameter types and how they're resolved from ForceField
-- Specify the kernel category (bond/angle/dihedral/improper/pair/kspace)
-- Include numerical gradient verification test
-- Include comparison against a reference implementation
+### New MD Fix (future MD crate)
+- Stage methods implemented
+- GPU tier (Kernel / Async / Sync)
+- State variables added to MDState
+- Energy conservation test
+- Temperature/pressure distribution test
 
-### New MD Fix
+### New Packing Constraint (`molrs-pack`)
+- Violation function `V(x)` and gradient `dV/dx`
+- Confirm gradient sign: TRUE gradient with `+=`
+- Numerical gradient verification test
+- Cross-reference Packmol source `file:line` if applicable
 
-When the requirement is a new MD integrator or thermostat:
-- Specify which stage methods are implemented
-- Specify the GPU tier (Kernel/Async/Sync)
-- Specify state variables added to MDState
-- Include energy conservation test
-- Include temperature/pressure distribution test
+### New I/O Format (`molrs-io`)
+- Format grammar / schema
+- Mapping to Frame/Block/Grid structure
+- Real test files added to `tests-data/<format>/` BEFORE writing tests
+- Round-trip test: read → write → read → equality
+- Malformed input handling
 
-### New Packing Constraint
-
-When the requirement is a new geometric constraint:
-- Specify the violation function V(x) and its gradient dV/dx
-- Confirm gradient sign convention: TRUE gradient accumulated with `+=`
-- Include numerical gradient verification test
-- Cross-reference Packmol source if applicable
-
-### New I/O Format
-
-When the requirement is a new file format reader/writer:
-- Specify the format grammar/schema
-- Specify how it maps to Frame/Block structure
-- Include round-trip test (read -> write -> read -> compare)
-- Include malformed input handling tests
-
-### FFI Extension
-
-When the requirement extends the FFI boundary:
-- Specify new handle types or operations
-- Specify version counter behavior
-- Confirm no raw pointers cross the boundary
-- Include invalid handle test
+### FFI Extension (`molrs-cxxapi`)
+- New bridge functions or types
+- Zero-copy via `FrameView` where possible
+- Confirm no raw pointers cross `#[cxx::bridge]`
+- No panics in bridge functions
 
 ## Example
 
 **Input**: "Add Morse potential for bond interactions"
 
-**Output**:
+**Output** (abbreviated):
 
 ```markdown
 # Spec: Morse Bond Potential
 
 ## Summary
-Add a Morse potential kernel for bond interactions: E(r) = D * (1 - exp(-a(r - r0)))^2.
+Add a Morse potential kernel for bond interactions: E(r) = D · (1 - exp(-α(r - r₀)))².
 
 ## Scope
-- **Crates affected**: molrs-core
-- **Traits extended**: Potential (via KernelRegistry)
-- **Data structures**: MorseBondKernel struct
+- Crates affected: molrs-ff
+- Traits extended: Potential (via KernelRegistry)
+- Data structures: MorseBondKernel struct
 
 ## Technical Design
-
 ### API Surface
 Register as `("bond", "morse")` in KernelRegistry.
-Style params: none. Type params: `D` (well depth), `alpha` (width), `r0` (equilibrium).
+Type params: `D` (kcal/mol), `alpha` (1/Å), `r0` (Å).
 
 ### Algorithm
 For each bond (i,j):
-  dr = |r_i - r_j| - r0
-  exp_term = exp(-alpha * dr)
-  E += D * (1 - exp_term)^2
-  dE/dr = 2 * D * alpha * (1 - exp_term) * exp_term
-  F_i += dE/dr * (r_i - r_j) / |r_i - r_j|
+  dr = |r_i - r_j| - r₀
+  exp_term = exp(-α · dr)
+  E += D · (1 - exp_term)²
+  dE/dr = 2 · D · α · (1 - exp_term) · exp_term
+  F_i += dE/dr · (r_i - r_j) / |r_i - r_j|
   F_j -= F_i
 
 ## Test Criteria
-1. Energy at r=r0 is 0
-2. Energy at r->inf approaches D
-3. Gradient matches numerical gradient (h=1e-5, rtol=1e-4)
-4. Forces are equal and opposite (Newton's 3rd law)
+1. Energy at r=r₀ is 0
+2. Energy at r→∞ approaches D
+3. Numerical gradient match (h=1e-7, tol=1e-6)
+4. Newton's 3rd law (Σ forces = 0)
 ```

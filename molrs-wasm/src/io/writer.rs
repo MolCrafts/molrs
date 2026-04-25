@@ -13,11 +13,11 @@
 //! | `"lammps-dump"` / `"lammpstrj"` | LAMMPS dump | columns from atoms block |
 
 use crate::core::frame::Frame;
-use molrs::io::lammps_data::LAMMPSDataWriter;
-use molrs::io::lammps_dump::LAMMPSDumpWriter;
-use molrs::io::pdb::PDBWriter;
-use molrs::io::writer::{FrameWriter, Writer};
-use molrs::io::xyz::XYZFrameWriter;
+use molrs_io::lammps_data::LAMMPSDataWriter;
+use molrs_io::lammps_dump::LAMMPSDumpWriter;
+use molrs_io::pdb::PDBWriter;
+use molrs_io::writer::{FrameWriter, Writer};
+use molrs_io::xyz::XYZFrameWriter;
 use wasm_bindgen::prelude::*;
 
 /// Serialize a [`Frame`] to a string in the specified format.
@@ -58,50 +58,45 @@ use wasm_bindgen::prelude::*;
 /// ```
 #[wasm_bindgen(js_name = writeFrame)]
 pub fn write_frame_export(frame: &Frame, format: &str) -> Result<String, JsValue> {
-    // Get the core frame data by cloning all blocks
-    let rs_frame = frame_to_core(frame)?;
-
-    let mut buffer: Vec<u8> = Vec::new();
-    match format.to_lowercase().as_str() {
-        "xyz" => {
-            let mut writer = <XYZFrameWriter<_> as Writer>::new(&mut buffer);
-            writer
-                .write_frame(&rs_frame)
-                .map_err(|e| JsValue::from_str(&format!("XYZ writing error: {}", e)))?;
+    let buffer = frame.with_frame(|rs_frame| {
+        let mut buf: Vec<u8> = Vec::new();
+        match format.to_lowercase().as_str() {
+            "xyz" => {
+                let mut writer = <XYZFrameWriter<_> as Writer>::new(&mut buf);
+                writer
+                    .write_frame(rs_frame)
+                    .map_err(|e| JsValue::from_str(&format!("XYZ writing error: {}", e)))?;
+            }
+            "pdb" => {
+                let mut writer = <PDBWriter<_> as Writer>::new(&mut buf);
+                writer
+                    .write_frame(rs_frame)
+                    .map_err(|e| JsValue::from_str(&format!("PDB writing error: {}", e)))?;
+            }
+            "lammps-data" | "lammps" => {
+                let mut writer = <LAMMPSDataWriter<_> as Writer>::new(&mut buf);
+                writer
+                    .write_frame(rs_frame)
+                    .map_err(|e| JsValue::from_str(&format!("LAMMPS data writing error: {}", e)))?;
+            }
+            "lammps-dump" | "lammpstrj" => {
+                let mut writer = <LAMMPSDumpWriter<_> as Writer>::new(&mut buf);
+                writer
+                    .write_frame(rs_frame)
+                    .map_err(|e| JsValue::from_str(&format!("LAMMPS dump writing error: {}", e)))?;
+            }
+            _ => {
+                return Err(JsValue::from_str(&format!(
+                    "unsupported format: {}",
+                    format
+                )));
+            }
         }
-        "pdb" => {
-            let mut writer = <PDBWriter<_> as Writer>::new(&mut buffer);
-            writer
-                .write_frame(&rs_frame)
-                .map_err(|e| JsValue::from_str(&format!("PDB writing error: {}", e)))?;
-        }
-        "lammps-data" | "lammps" => {
-            let mut writer = <LAMMPSDataWriter<_> as Writer>::new(&mut buffer);
-            writer
-                .write_frame(&rs_frame)
-                .map_err(|e| JsValue::from_str(&format!("LAMMPS data writing error: {}", e)))?;
-        }
-        "lammps-dump" | "lammpstrj" => {
-            let mut writer = <LAMMPSDumpWriter<_> as Writer>::new(&mut buffer);
-            writer
-                .write_frame(&rs_frame)
-                .map_err(|e| JsValue::from_str(&format!("LAMMPS dump writing error: {}", e)))?;
-        }
-        _ => {
-            return Err(JsValue::from_str(&format!(
-                "unsupported format: {}",
-                format
-            )));
-        }
-    }
+        Ok(buf)
+    })?;
 
     String::from_utf8(buffer)
         .map_err(|e| JsValue::from_str(&format!("UTF-8 conversion error: {}", e)))
-}
-
-/// Helper to convert FFI Frame to core Frame
-fn frame_to_core(frame: &Frame) -> Result<molrs::frame::Frame, JsValue> {
-    frame.clone_core_frame()
 }
 
 #[cfg(test)]

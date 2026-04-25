@@ -14,14 +14,15 @@
 //! | `XYZReader` | XYZ / ExtXYZ | Yes | `"atoms"` block with `element`, `x`, `y`, `z` |
 //! | `PDBReader` | Protein Data Bank | No (step=0 only) | `"atoms"` block with `name`, `resname`, `x`, `y`, `z`, etc. |
 //! | `LAMMPSReader` | LAMMPS data file | No (step=0 only) | `"atoms"` block + `"bonds"` block + simbox |
-//! | `LAMMPSDumpReader` | LAMMPS dump trajectory | Yes | `"atoms"` block with columns from dump header |
+//! | `LAMMPSTrajReader` | LAMMPS dump trajectory | Yes | `"atoms"` block with columns from dump header |
 
 use crate::core::frame::Frame;
-use molrs::io::lammps_data::LAMMPSDataReader;
-use molrs::io::lammps_dump::LAMMPSDumpReader;
-use molrs::io::pdb::PDBReader;
-use molrs::io::reader::{FrameReader, TrajReader};
-use molrs::io::xyz::XYZReader;
+use molrs_io::lammps_data::LAMMPSDataReader;
+use molrs_io::lammps_dump::LAMMPSTrajReader;
+use molrs_io::pdb::PDBReader;
+use molrs_io::reader::{FrameReader, TrajReader};
+use molrs_io::sdf::SDFReader;
+use molrs_io::xyz::XYZReader;
 use std::io::Cursor;
 use wasm_bindgen::prelude::*;
 
@@ -99,7 +100,7 @@ impl XyzReader {
             .map_err(|e| JsValue::from_str(&format!("XYZ read error: {}", e)))?;
 
         match rs_frame {
-            Some(frame_data) => Ok(Some(Frame::from_rs_frame(frame_data)?)),
+            Some(frame_data) => Ok(Some(Frame::from_rs(frame_data)?)),
             None => Ok(None),
         }
     }
@@ -214,7 +215,7 @@ impl PdbReader {
             .map_err(|e| JsValue::from_str(&format!("PDB read error: {}", e)))?;
 
         match rs_frame {
-            Some(frame_data) => Ok(Some(Frame::from_rs_frame(frame_data)?)),
+            Some(frame_data) => Ok(Some(Frame::from_rs(frame_data)?)),
             None => Ok(None),
         }
     }
@@ -269,7 +270,7 @@ impl PdbReader {
 /// ```
 #[wasm_bindgen(js_name = LAMMPSReader)]
 pub struct LammpsReader {
-    inner: LAMMPSDataReader<Cursor<Vec<u8>>>,
+    content: Vec<u8>,
     cached_len: Option<usize>,
 }
 
@@ -288,9 +289,8 @@ impl LammpsReader {
     /// ```
     #[wasm_bindgen(constructor)]
     pub fn new(content: &str) -> LammpsReader {
-        let bytes = content.as_bytes().to_vec();
         LammpsReader {
-            inner: LAMMPSDataReader::new(Cursor::new(bytes)),
+            content: content.as_bytes().to_vec(),
             cached_len: None,
         }
     }
@@ -323,13 +323,17 @@ impl LammpsReader {
             return Ok(None);
         }
 
-        let rs_frame = self
-            .inner
+        // Build a fresh rs reader each call: `FrameReader::read_frame` is a
+        // single-shot cursor API (sets `returned=true` after first call), so
+        // reusing `inner` across `len()` and `read(0)` returned None on the
+        // second call. PDBReader already uses this pattern — mirror it here.
+        let mut reader = LAMMPSDataReader::new(Cursor::new(self.content.as_slice()));
+        let rs_frame = reader
             .read_frame()
             .map_err(|e| JsValue::from_str(&format!("LAMMPS read error: {}", e)))?;
 
         match rs_frame {
-            Some(frame_data) => Ok(Some(Frame::from_rs_frame(frame_data)?)),
+            Some(frame_data) => Ok(Some(Frame::from_rs(frame_data)?)),
             None => Ok(None),
         }
     }
@@ -371,24 +375,24 @@ impl LammpsReader {
 /// # Example (JavaScript)
 ///
 /// ```js
-/// const reader = new LAMMPSDumpReader(dumpContent);
+/// const reader = new LAMMPSTrajReader(dumpContent);
 /// console.log(reader.len()); // number of timesteps
 /// const frame = reader.read(0);
 /// const atoms = frame.getBlock("atoms");
 /// ```
-#[wasm_bindgen(js_name = LAMMPSDumpReader)]
+#[wasm_bindgen(js_name = LAMMPSTrajReader)]
 pub struct LammpsDumpReader {
-    inner: LAMMPSDumpReader<Cursor<Vec<u8>>>,
+    inner: LAMMPSTrajReader<Cursor<Vec<u8>>>,
 }
 
-#[wasm_bindgen(js_class = LAMMPSDumpReader)]
+#[wasm_bindgen(js_class = LAMMPSTrajReader)]
 impl LammpsDumpReader {
     /// Create a new LAMMPS dump reader from string content.
     #[wasm_bindgen(constructor)]
     pub fn new(content: &str) -> LammpsDumpReader {
         let bytes = content.as_bytes().to_vec();
         LammpsDumpReader {
-            inner: LAMMPSDumpReader::new(Cursor::new(bytes)),
+            inner: LAMMPSTrajReader::new(Cursor::new(bytes)),
         }
     }
 
@@ -401,7 +405,7 @@ impl LammpsDumpReader {
             .map_err(|e| JsValue::from_str(&format!("LAMMPS dump read error: {}", e)))?;
 
         match rs_frame {
-            Some(frame_data) => Ok(Some(Frame::from_rs_frame(frame_data)?)),
+            Some(frame_data) => Ok(Some(Frame::from_rs(frame_data)?)),
             None => Ok(None),
         }
     }
@@ -421,10 +425,112 @@ impl LammpsDumpReader {
     }
 }
 
+/// MDL molfile / SDF (V2000 CTAB) reader.
+///
+/// Parses the connection table found in `.mol` files and the record
+/// blocks of `.sdf` files. Coordinates come directly from the file —
+/// no 3D generation is performed. Only V2000 is supported; V3000
+/// records throw on read.
+///
+/// Produces a [`Frame`] with:
+/// - `"atoms"` block: `element` (string), `id` (u32, 1-based),
+///   `x`, `y`, `z` (F, angstrom)
+/// - `"bonds"` block (if present): `atomi`, `atomj` (u32, 0-based),
+///   `order` (u32)
+///
+/// Multi-record SDF files expose each record as a separate frame via
+/// `read(step)`.
+///
+/// # Example (JavaScript)
+///
+/// ```js
+/// const reader = new SDFReader(sdfContent);
+/// const frame = reader.read(0);
+/// const atoms = frame.getBlock("atoms");
+/// const x = atoms.copyColF("x");
+/// ```
+#[wasm_bindgen(js_name = SDFReader)]
+pub struct SdfReader {
+    content: Vec<u8>,
+    cached_len: Option<usize>,
+}
+
+#[wasm_bindgen(js_class = SDFReader)]
+impl SdfReader {
+    /// Create a new SDF reader from a string containing the file content.
+    #[wasm_bindgen(constructor)]
+    pub fn new(content: &str) -> SdfReader {
+        SdfReader {
+            content: content.as_bytes().to_vec(),
+            cached_len: None,
+        }
+    }
+
+    /// Read the frame (SDF record) at the given step index.
+    #[wasm_bindgen]
+    pub fn read(&mut self, step: usize) -> Result<Option<Frame>, JsValue> {
+        let mut reader = SDFReader::new(Cursor::new(self.content.as_slice()));
+        for current in 0..=step {
+            let rs_frame = reader
+                .read_frame()
+                .map_err(|e| JsValue::from_str(&format!("SDF read error: {}", e)))?;
+            match rs_frame {
+                Some(frame) if current == step => return Ok(Some(Frame::from_rs(frame)?)),
+                Some(_) => continue, // drop records before the target
+                None => return Ok(None),
+            }
+        }
+        Ok(None)
+    }
+
+    /// Return the total number of records in the SDF file.
+    #[wasm_bindgen]
+    pub fn len(&mut self) -> Result<usize, JsValue> {
+        if let Some(n) = self.cached_len {
+            return Ok(n);
+        }
+        let mut reader = SDFReader::new(Cursor::new(self.content.as_slice()));
+        let mut count = 0usize;
+        while reader
+            .read_frame()
+            .map_err(|e| JsValue::from_str(&format!("SDF len error: {}", e)))?
+            .is_some()
+        {
+            count += 1;
+        }
+        self.cached_len = Some(count);
+        Ok(count)
+    }
+
+    /// Check whether the file contains no records.
+    #[wasm_bindgen(js_name = isEmpty)]
+    pub fn is_empty(&mut self) -> Result<bool, JsValue> {
+        Ok(self.len()? == 0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use wasm_bindgen_test::*;
+
+    #[wasm_bindgen_test]
+    fn test_lammps_reader_len_then_read() {
+        // Regression: `len()` used to call `read(0)` which flipped the
+        // inner reader's `returned` flag, causing a subsequent `read(0)`
+        // from the lazy FrameProvider in reader.ts to return None
+        // ("lammps reader returned no frame at step 0").
+        let data = "LAMMPS data\n\n\
+                    2 atoms\n1 atom types\n\n\
+                    0.0 10.0 xlo xhi\n0.0 10.0 ylo yhi\n0.0 10.0 zlo zhi\n\n\
+                    Atoms\n\n\
+                    1 1 1.0 2.0 3.0\n2 1 4.0 5.0 6.0\n";
+        let mut reader = LammpsReader::new(data);
+        assert_eq!(reader.len().expect("len"), 1);
+        let frame = reader.read(0).expect("read").expect("frame");
+        let atoms = frame.get_block("atoms").expect("atoms");
+        assert_eq!(atoms.copy_col_f("x").expect("x").length(), 2);
+    }
 
     #[wasm_bindgen_test]
     fn test_pdb_reader() {

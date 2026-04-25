@@ -1,6 +1,6 @@
 [package]
 name = "molrs"
-version = "0.0.7"
+version = "0.0.13"
 edition = "2024"
 authors = ["MolCrafts"]
 description = "WASM bindings for molrs"
@@ -15,9 +15,14 @@ name = "molwasm"
 [workspace]
 
 [features]
-f64 = ["molrs/f64", "molrs-ffi/f64"]
-i64 = ["molrs/i64", "molrs-ffi/i64"]
-u64 = ["molrs/u64", "molrs-ffi/u64"]
+# Default build = full (all subsystems).
+default = ["smiles", "io", "compute", "embed"]
+# `smiles` lives inside molrs-io; activating it pulls in molrs-io with the
+# matching feature flag.
+smiles  = ["dep:molrs-io", "molrs-io/smiles"]
+io      = ["dep:molrs-io"]
+compute = ["dep:molrs-compute"]
+embed   = ["dep:molrs-embed"]
 
 [dependencies]
 wasm-bindgen = "0.2.108"
@@ -25,8 +30,18 @@ serde = { version = "1", features = ["derive"] }
 serde-wasm-bindgen = "0.6"
 js-sys = "0.3"
 web-sys = { version = "0.3", features = ["console"] }
-molrs = { path = "../molrs-core", package = "molcrafts-molrs", version = "0.0.7", features = ["zarr"], default-features = false }
-molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.0.7", default-features = false }
+
+# Core + FFI handle layer are always compiled (all variants need them).
+molrs = { path = "../molrs-core", package = "molcrafts-molrs-core", version = "0.0.13", default-features = false, features = ["zarr"] }
+molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.0.13", default-features = false }
+
+# Optional sub-crates, gated by matching features above.
+# `smiles` is hosted inside molrs-io; the `smiles` feature here forwards to
+# molrs-io's own `smiles` feature flag.
+molrs-io      = { path = "../molrs-io",      package = "molcrafts-molrs-io",      version = "0.0.13", default-features = false, features = ["zarr"], optional = true }
+molrs-compute = { path = "../molrs-compute", package = "molcrafts-molrs-compute", version = "0.0.13", default-features = false, optional = true }
+molrs-embed   = { path = "../molrs-embed",   package = "molcrafts-molrs-embed",   version = "0.0.13", default-features = false, optional = true }
+
 ndarray = "0.17"
 zarrs = { version = "0.23", default-features = false }
 console_error_panic_hook = "0.1"

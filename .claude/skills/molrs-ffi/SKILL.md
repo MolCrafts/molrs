@@ -1,135 +1,126 @@
 ---
 name: molrs-ffi
-description: FFI interface development guide for molrs. Covers handle-based design, SlotMap usage, version-tracked invalidation, WASM bindings, and safety rules for crossing language boundaries.
+description: FFI safety standards for molrs — handle-based design, version-tracked invalidation, no panics across language boundaries. Covers the active CXX bridge in molrs-cxxapi. Reference document only; no procedural workflow.
 ---
 
-You are an **FFI safety specialist** for the molrs Rust workspace. You ensure that all code crossing language boundaries (C, Python, WASM) is safe, correct, and ergonomic.
+Reference standard for molrs FFI safety. Apply when writing or reviewing any code that crosses the Rust ↔ C++ / Python / WASM boundary.
 
-## Trigger
+## Active FFI Crate
 
-Use when writing or reviewing FFI functions, WASM bindings, or any code that crosses the Rust boundary.
+`molrs-cxxapi` — CXX bridge to the Atomiverse C++ project. Zero-copy I/O via `FrameView` (borrowed) into existing `write_xyz_frame` / `write_molrec_file`. Owned `Frame` only built when persisting to MolRec (Zarr).
 
-## Architecture Overview
+Legacy crates `molrs-ffi/` and `molrs-wasm/` exist on disk but are NOT in the workspace; their patterns are referenced below for completeness but do not currently ship.
+
+## Architecture
 
 ```
-Rust (molrs-core)
-  | Handle-based API
-molrs-ffi (SlotMap store)
-  | extern "C" / wasm_bindgen
-C / Python / JavaScript
+Rust (molrs-core, molrs-io)
+   ▲ borrowed views (FrameView, BlockView, ColumnView)
+   │
+molrs-cxxapi  (#[cxx::bridge] in bridge.rs)
+   ▼ zero-copy slices
+C++ (Atomiverse)
 ```
 
-### Handle Types
+For a future handle-based store (e.g. Python bindings), the proven pattern is:
 
 ```rust
-// FrameId: opaque handle to a Frame in the store
-slotmap::new_key_type! { pub struct FrameId; }
-// Contains: (index: u32, generation: u32)
+slotmap::new_key_type! { pub struct FrameId; }   // (index: u32, generation: u32)
 
-// BlockHandle: view into a specific block within a frame
 pub struct BlockHandle {
     pub frame_id: FrameId,
     pub key: String,       // block name (e.g., "atoms")
     pub version: u64,      // snapshot of block version at creation
 }
-```
 
-### Store (central ownership)
-
-```rust
 pub struct Store {
     frames: SlotMap<FrameId, FrameEntry>,
 }
-
 struct FrameEntry {
     frame: Frame,
     block_versions: HashMap<String, u64>,
 }
 ```
 
-## Safety Rules (CRITICAL)
+## Safety Rules
 
-### Rule 1: No Raw Pointers Across FFI
+### Rule 1 — No raw pointers across the boundary
 
 ```rust
-// WRONG: raw pointer
-#[no_mangle]
-pub extern "C" fn get_frame() -> *mut Frame { ... }
+// WRONG
+#[no_mangle] pub extern "C" fn get_frame() -> *mut Frame { ... }
 
-// CORRECT: handle
-#[no_mangle]
-pub extern "C" fn frame_new(store: &mut Store) -> FrameId {
+// CORRECT
+#[no_mangle] pub extern "C" fn frame_new(store: &mut Store) -> FrameId {
     store.frame_new()
 }
 ```
 
-### Rule 2: Version-Tracked Invalidation
+CXX bridge: pass slices and shared structs from `cxx::CxxString` / `Vec<T>` — never raw `*mut`.
 
-Every mutation to a block increments its version counter. Consumers check version before use.
+### Rule 2 — Version-tracked invalidation
 
-### Rule 3: No Panics in FFI Functions
+Every block mutation increments its version counter. Consumers compare before use; stale handles fail with an error code.
 
-FFI functions must never panic (undefined behavior across `extern "C"`):
+### Rule 3 — No panics in extern functions
+
+`extern "C"` and `#[cxx::bridge]` panics are undefined behavior across the FFI seam.
 
 ```rust
-// WRONG: unwrap can panic
+// WRONG
 #[no_mangle]
 pub extern "C" fn frame_get_natoms(store: &Store, id: FrameId) -> i64 {
     store.get(id).unwrap().get("atoms").unwrap().nrows() as i64
 }
 
-// CORRECT: return error indicator
+// CORRECT
 #[no_mangle]
 pub extern "C" fn frame_get_natoms(store: &Store, id: FrameId) -> i64 {
     match store.get(id).and_then(|f| f.get("atoms")) {
-        Some(block) => block.nrows() as i64,
+        Some(b) => b.nrows() as i64,
         None => -1,
     }
 }
 ```
 
-For WASM, use `Result<T, JsValue>` instead.
+For WASM (`wasm_bindgen`): return `Result<T, JsValue>`.
 
-### Rule 4: Ownership Stays in Rust
+### Rule 4 — Ownership stays in Rust
 
-The FFI layer never transfers ownership of Rust objects. Store owns everything, handles are lightweight references.
+The FFI layer never transfers ownership of Rust objects. Store owns everything; handles are lightweight references.
 
-### Rule 5: String Handling
+### Rule 5 — String handling
 
-C FFI: accept `*const c_char`, copy immediately into Rust String.
-WASM: `&str` works directly via wasm_bindgen.
+- C ABI: accept `*const c_char`, copy immediately into Rust `String`.
+- CXX bridge: use `cxx::CxxString` and `let_cxx_string!` for transfer.
+- WASM: `&str` works directly via `wasm_bindgen`.
 
-## WASM-Specific Guidelines
+## Naming
 
-- Use Serde for complex type serialization (`serde_wasm_bindgen::to_value`)
-- Use typed arrays for large data (Float32Array for coordinates)
-- Always set up panic hook: `console_error_panic_hook::set_once()`
-- Return `Result<T, JsValue>` for fallible operations
+| Surface | Convention | Example |
+|---|---|---|
+| `extern "C"` | `molrs_<noun>_<verb>` | `molrs_frame_new`, `molrs_block_get_f64` |
+| CXX bridge | snake_case Rust → snake_case C++ | `write_xyz_frame` |
+| `wasm_bindgen` | snake_case Rust → camelCase JS | `link_cell_new` → `linkCellNew` |
 
-## Naming Conventions
+## WASM-Specific (when re-activated)
 
-### C FFI (`extern "C"`)
-```
-molrs_<noun>_<verb>
-molrs_frame_new
-molrs_frame_drop
-molrs_block_get_f32
-```
+- Set `console_error_panic_hook::set_once()`.
+- Use Serde for complex types: `serde_wasm_bindgen::to_value`.
+- Use typed arrays for large data: `Float64Array` (matches `F = f64`).
+- Always return `Result<T, JsValue>` for fallible operations.
 
-### WASM (`wasm_bindgen`)
-Follow Rust conventions (snake_case), wasm_bindgen converts to camelCase for JS.
-
-## Review Checklist
+## Compliance Checklist
 
 - [ ] No raw pointers cross the FFI boundary
 - [ ] All mutations increment version counters
-- [ ] No `unwrap()` or `expect()` in `extern "C"` functions
+- [ ] No `unwrap()` / `expect()` in `extern "C"` or CXX-bridge functions
 - [ ] Error conditions return error indicators (not panics)
 - [ ] Strings are copied on the Rust side immediately
-- [ ] Ownership stays in Rust (SlotMap store)
-- [ ] `#[no_mangle]` on all C FFI functions
-- [ ] `extern "C"` ABI specified
-- [ ] WASM functions return `Result<T, JsValue>` for fallible ops
-- [ ] Large arrays use typed arrays (Float32Array, etc.)
+- [ ] Ownership stays in Rust
+- [ ] `#[no_mangle]` + `extern "C"` on C ABI functions
+- [ ] CXX bridge uses `#[cxx::bridge]`, no manual pointer marshalling
+- [ ] WASM functions return `Result<T, JsValue>`
+- [ ] Large arrays use typed arrays (`Float64Array`, etc.)
 - [ ] BlockHandle validity checked before use
 - [ ] FrameId generation checked (stale handles detected)

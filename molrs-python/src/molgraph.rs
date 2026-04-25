@@ -3,7 +3,7 @@
 //! An [`PyAtomistic`] represents the molecular connectivity as a graph where
 //! every node is an atom identified by its element symbol and every edge is a
 //! chemical bond. It is the starting point for 3D coordinate generation
-//! ([`crate::gen3d`]) and MMFF94 force-field evaluation
+//! ([`crate::embed`]) and MMFF94 force-field evaluation
 //! ([`crate::forcefield`]).
 
 use pyo3::prelude::*;

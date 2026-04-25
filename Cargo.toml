@@ -1,15 +1,34 @@
 [workspace]
-members = ["molrs-core", "molrs-pack"]
+members = [
+    "molrs",
+    "molrs-core",
+    "molrs-io",
+    "molrs-compute",
+    "molrs-ff",
+    "molrs-embed",
+    "molrs-cxxapi",
+]
 resolver = "3"
 
 [workspace.package]
-version = "0.0.7"
+version = "0.0.13"
 edition = "2024"
 rust-version = "1.85"
 license = "BSD-3-Clause"
 authors = ["MolCrafts"]
 repository = "https://github.com/MolCrafts/molrs"
 homepage = "https://github.com/MolCrafts/molrs"
+
+# Internal crate aliases. The LHS is the extern crate name used inside
+# workspace members (e.g. `use molrs::Frame`). The `package =` field points to
+# the actual crates.io name.
+[workspace.dependencies]
+molrs         = { path = "molrs-core",    version = "0.0.13", package = "molcrafts-molrs-core", default-features = false }
+molrs_io      = { path = "molrs-io",      version = "0.0.13", package = "molcrafts-molrs-io" }
+molrs_compute = { path = "molrs-compute", version = "0.0.13", package = "molcrafts-molrs-compute" }
+molrs_ff      = { path = "molrs-ff",      version = "0.0.13", package = "molcrafts-molrs-ff" }
+molrs_embed   = { path = "molrs-embed",   version = "0.0.13", package = "molcrafts-molrs-embed" }
+molrs_cxxapi  = { path = "molrs-cxxapi",  version = "0.0.13", package = "molcrafts-molrs-cxxapi" }
 
 [profile.release]
 lto = "thin"

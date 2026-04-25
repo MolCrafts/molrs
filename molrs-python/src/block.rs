@@ -14,21 +14,24 @@
 //! | `bool`           | `bool`                | selection masks               |
 //! | `String`         | `list[str]`           | element symbols               |
 
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::Arc;
 
-use molrs::block::{Block as CoreBlock, BlockDtype, Column};
+use molrs::block::{Block as CoreBlock, BlockDtype, Column, ColumnHolder};
 use molrs::types::{F, I, U};
-use molrs_ffi::BlockHandle;
-use ndarray::Array1;
-use numpy::{PyArrayDyn, PyReadonlyArrayDyn};
+use molrs_ffi::BlockRef;
+use ndarray::{Array1, ArrayD, IxDyn};
+use numpy::{PyArrayDyn, PyArrayMethods, PyReadonlyArrayDyn, PyUntypedArrayMethods};
 use pyo3::exceptions::{PyKeyError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 
-use crate::store::{SharedStore, ffi_error_to_pyerr};
+use crate::store::ffi_error_to_pyerr;
 
-/// Internal owner that prevents the backing ndarray from being freed while a
-/// numpy view is alive.
+/// Internal owner that holds an `Arc` reference to the column's backing
+/// ndarray while a numpy view is alive.
+///
+/// The `Arc` shares storage with the Rust-side `Column`, so the numpy view is
+/// a true zero-copy view into the Block's data. The owner keeps the buffer
+/// alive for as long as Python holds the numpy array (numpy's `.base` field).
 ///
 /// # Safety
 ///
@@ -37,25 +40,25 @@ use crate::store::{SharedStore, ffi_error_to_pyerr};
 /// marker ensures the owner (and therefore the view) never crosses threads.
 #[pyclass(unsendable)]
 struct FloatArrayOwner {
-    array: ndarray::ArrayD<F>,
+    array: Arc<ColumnHolder<F>>,
 }
 
 /// See [`FloatArrayOwner`].
 #[pyclass(unsendable)]
 struct IntArrayOwner {
-    array: ndarray::ArrayD<I>,
+    array: Arc<ColumnHolder<I>>,
 }
 
 /// See [`FloatArrayOwner`].
 #[pyclass(unsendable)]
 struct BoolArrayOwner {
-    array: ndarray::ArrayD<bool>,
+    array: Arc<ColumnHolder<bool>>,
 }
 
 /// See [`FloatArrayOwner`].
 #[pyclass(unsendable)]
 struct UIntArrayOwner {
-    array: ndarray::ArrayD<U>,
+    array: Arc<ColumnHolder<U>>,
 }
 
 /// Heterogeneous column store exposed to Python as `molrs.Block`.
@@ -80,8 +83,7 @@ struct UIntArrayOwner {
 #[pyclass(name = "Block", from_py_object, unsendable)]
 #[derive(Clone)]
 pub struct PyBlock {
-    pub(crate) handle: BlockHandle,
-    pub(crate) store: SharedStore,
+    pub(crate) inner: BlockRef,
 }
 
 #[pymethods]
@@ -133,38 +135,56 @@ impl PyBlock {
     /// >>> b.insert("x", np.zeros(10, dtype=np.float32))
     /// >>> b.insert("y", np.ones(10, dtype=np.float32))
     fn insert(&mut self, key: &str, array: &Bound<'_, pyo3::types::PyAny>) -> PyResult<()> {
+        // Matched-dtype, C-contiguous numpy arrays get forged into a
+        // foreign-backed Column (zero memcpy). When the layout forbids
+        // forging, the same numpy array is copied into a Rust-owned column.
+        // Narrowing-cast dtypes (f32→f64, i64→i32, u64→u32) always copy —
+        // there is no zero-copy path across a dtype change.
+        if let Ok(pyarr) = array.downcast::<PyArrayDyn<F>>() {
+            if let Some(col) = try_forge_foreign_column(pyarr, Column::from_float_holder) {
+                return self.insert_column(key, col);
+            }
+            return self.insert_array::<F>(key, pyarr.readonly().as_array().to_owned());
+        }
+        if let Ok(pyarr) = array.downcast::<PyArrayDyn<I>>() {
+            if let Some(col) = try_forge_foreign_column(pyarr, Column::from_int_holder) {
+                return self.insert_column(key, col);
+            }
+            return self.insert_array::<I>(key, pyarr.readonly().as_array().to_owned());
+        }
+        if let Ok(pyarr) = array.downcast::<PyArrayDyn<U>>() {
+            if let Some(col) = try_forge_foreign_column(pyarr, Column::from_uint_holder) {
+                return self.insert_column(key, col);
+            }
+            return self.insert_array::<U>(key, pyarr.readonly().as_array().to_owned());
+        }
+        if let Ok(pyarr) = array.downcast::<PyArrayDyn<bool>>() {
+            if let Some(col) = try_forge_foreign_column(pyarr, Column::from_bool_holder) {
+                return self.insert_column(key, col);
+            }
+            return self.insert_array::<bool>(key, pyarr.readonly().as_array().to_owned());
+        }
+        if let Ok(pyarr) = array.downcast::<PyArrayDyn<u8>>() {
+            if let Some(col) = try_forge_foreign_column(pyarr, Column::from_u8_holder) {
+                return self.insert_column(key, col);
+            }
+            return self.insert_array::<u8>(key, pyarr.readonly().as_array().to_owned());
+        }
+
         if let Ok(arr) = array.extract::<PyReadonlyArrayDyn<'_, f32>>() {
-            let converted = arr.as_array().mapv(|x| x as F);
-            return self.insert_array(key, converted);
-        }
-        if let Ok(arr) = array.extract::<PyReadonlyArrayDyn<'_, f64>>() {
-            let converted = arr.as_array().mapv(|x| x as F);
-            return self.insert_array(key, converted);
-        }
-        if let Ok(arr) = array.extract::<PyReadonlyArrayDyn<'_, i32>>() {
-            let converted = arr.as_array().mapv(|x| x as I);
-            return self.insert_array(key, converted);
+            return self.insert_array::<F>(key, arr.as_array().mapv(|x| x as F));
         }
         if let Ok(arr) = array.extract::<PyReadonlyArrayDyn<'_, i64>>() {
-            let converted = arr.as_array().mapv(|x| x as I);
-            return self.insert_array(key, converted);
-        }
-        if let Ok(arr) = array.extract::<PyReadonlyArrayDyn<'_, u32>>() {
-            let converted = arr.as_array().mapv(|x| x as U);
-            return self.insert_array(key, converted);
+            return self.insert_array::<I>(key, arr.as_array().mapv(|x| x as I));
         }
         if let Ok(arr) = array.extract::<PyReadonlyArrayDyn<'_, u64>>() {
-            let converted = arr.as_array().mapv(|x| x as U);
-            return self.insert_array(key, converted);
-        }
-        if let Ok(arr) = array.extract::<PyReadonlyArrayDyn<'_, bool>>() {
-            return self.insert_array(key, arr.as_array().to_owned().into_dyn());
+            return self.insert_array::<U>(key, arr.as_array().mapv(|x| x as U));
         }
         if let Ok(strings) = array.extract::<Vec<String>>() {
-            return self.insert_array(key, Array1::from(strings).into_dyn());
+            return self.insert_array::<String>(key, Array1::from(strings).into_dyn());
         }
         Err(PyTypeError::new_err(
-            "unsupported dtype: expected float32, float64, int32, int64, bool, uint32, uint64, or list[str]",
+            "unsupported dtype: expected float32, float64, int32, int64, bool, uint32, uint64, u8, or list[str]",
         ))
     }
 
@@ -194,17 +214,20 @@ impl PyBlock {
     /// >>> arr = block.view("x")  # numpy float32 view
     /// >>> syms = block.view("symbol")  # list of str
     fn view<'py>(&self, py: Python<'py>, key: &str) -> PyResult<Py<pyo3::types::PyAny>> {
-        self.store
-            .borrow()
-            .with_block(&self.handle, |b| -> PyResult<Py<pyo3::types::PyAny>> {
+        // Zero-copy path: cloning an Arc<ArrayD<T>> inside the closure is an
+        // O(1) refcount bump. The owner struct carries that Arc out of the
+        // store borrow so the numpy view stays valid even after the closure
+        // returns.
+        self.inner
+            .with(|b| -> PyResult<Py<pyo3::types::PyAny>> {
                 let col = b
                     .get(key)
                     .ok_or_else(|| PyKeyError::new_err(key.to_string()))?;
                 match col {
-                    Column::Float(a) => float_array_view(py, a.clone()),
-                    Column::Int(a) => int_array_view(py, a.clone()),
-                    Column::Bool(a) => bool_array_view(py, a.clone()),
-                    Column::UInt(a) => uint_array_view(py, a.clone()),
+                    Column::Float(a) => float_array_view(py, Arc::clone(a)),
+                    Column::Int(a) => int_array_view(py, Arc::clone(a)),
+                    Column::Bool(a) => bool_array_view(py, Arc::clone(a)),
+                    Column::UInt(a) => uint_array_view(py, Arc::clone(a)),
                     Column::U8(a) => {
                         let arr = numpy::PyArray1::from_iter(py, a.iter().copied());
                         Ok(arr.into_any().unbind())
@@ -273,9 +296,8 @@ impl PyBlock {
     ///     If ``key`` does not exist.
     fn remove(&mut self, key: &str) -> PyResult<()> {
         let removed = self
-            .store
-            .borrow_mut()
-            .with_block_mut(&mut self.handle, |b| b.remove(key).is_some())
+            .inner
+            .with_mut(|b| b.remove(key).is_some())
             .map_err(ffi_error_to_pyerr)?;
         if removed {
             Ok(())
@@ -322,7 +344,7 @@ impl PyBlock {
     /// Create a `PyBlock` from a Rust `CoreBlock`, allocating a new
     /// single-frame FFI store.
     pub(crate) fn from_core_block(block: CoreBlock) -> PyResult<Self> {
-        let store = Rc::new(RefCell::new(molrs_ffi::Store::new()));
+        let store = molrs_ffi::new_shared();
         let frame = store.borrow_mut().frame_new();
         store
             .borrow_mut()
@@ -332,23 +354,19 @@ impl PyBlock {
             .borrow()
             .get_block(frame, "__block__")
             .map_err(ffi_error_to_pyerr)?;
-        Ok(Self { handle, store })
+        Ok(Self {
+            inner: BlockRef::new(store, handle),
+        })
     }
 
     /// Clone the underlying `CoreBlock` out of the store (deep copy).
     pub(crate) fn clone_core_block(&self) -> PyResult<CoreBlock> {
-        self.store
-            .borrow()
-            .clone_block(&self.handle)
-            .map_err(ffi_error_to_pyerr)
+        self.inner.clone_block().map_err(ffi_error_to_pyerr)
     }
 
     /// Run a read-only closure on the underlying `CoreBlock`.
     fn with_block<R>(&self, f: impl FnOnce(&CoreBlock) -> R) -> PyResult<R> {
-        self.store
-            .borrow()
-            .with_block(&self.handle, f)
-            .map_err(ffi_error_to_pyerr)
+        self.inner.with(f).map_err(ffi_error_to_pyerr)
     }
 
     /// Insert a typed ndarray column, validating row count.
@@ -357,10 +375,25 @@ impl PyBlock {
         key: &str,
         array: ndarray::ArrayD<T>,
     ) -> PyResult<()> {
-        self.store
-            .borrow_mut()
-            .with_block_mut(&mut self.handle, |b| {
+        self.inner
+            .with_mut(|b| {
                 b.insert(key, array)
+                    .map_err(|e| PyValueError::new_err(e.to_string()))
+            })
+            .map_err(ffi_error_to_pyerr)??;
+        Ok(())
+    }
+
+    /// Install a pre-built `Column` into the store, validating row count.
+    ///
+    /// Parallel to [`insert_array`](Self::insert_array), which takes an
+    /// `ArrayD<T>` and wraps it into a Rust-owned Column. Use this when the
+    /// caller already holds a Column (typically a foreign-backed one from
+    /// [`try_forge_foreign_column`]).
+    fn insert_column(&mut self, key: &str, col: Column) -> PyResult<()> {
+        self.inner
+            .with_mut(|b| {
+                b.insert_column(key, col)
                     .map_err(|e| PyValueError::new_err(e.to_string()))
             })
             .map_err(ffi_error_to_pyerr)??;
@@ -368,67 +401,145 @@ impl PyBlock {
     }
 }
 
+/// Forge a foreign-backed [`Column`] from a numpy array without copying its
+/// buffer.
+///
+/// Returns `Some(col)` when the numpy array is safe to alias:
+///
+///   * rank >= 1 (Block rejects rank-0 anyway),
+///   * C-contiguous (row-major — `ArrayD::from_shape_vec` assumes this),
+///   * non-empty (degenerate zero-length arrays are cheaper to copy).
+///
+/// Returns `None` otherwise. Callers decide how to recover — typically by
+/// copying the array through [`PyBlock::insert_array`].
+///
+/// The forged Column holds a `ColumnHolder::from_foreign` over numpy's
+/// buffer, pinned alive by a `Py<PyArrayDyn<T>>` keeper. Mutations are
+/// visible in both directions; Rust-side mutation via `as_*_mut` triggers
+/// copy-on-write inside the holder.
+fn try_forge_foreign_column<T>(
+    pyarr: &Bound<'_, PyArrayDyn<T>>,
+    wrap: fn(ColumnHolder<T>) -> Column,
+) -> Option<Column>
+where
+    T: numpy::Element + BlockDtype + Clone,
+{
+    if pyarr.ndim() == 0 || !pyarr.is_c_contiguous() {
+        return None;
+    }
+
+    let shape: Vec<usize> = pyarr.shape().to_vec();
+    let total: usize = shape.iter().product();
+    if total == 0 {
+        return None;
+    }
+
+    let ptr = pyarr.data();
+    // SAFETY:
+    //   * `ptr` points to `total` elements of `T` owned by numpy; the buffer
+    //     stays alive through the `keeper` refcount stored on the holder.
+    //   * `cap == len == total`, so ndarray never calls realloc/reserve on
+    //     the forged Vec.
+    //   * `ColumnHolder::from_foreign` wraps the inner ArrayD in ManuallyDrop,
+    //     suppressing the forged Vec's Drop. Only the keeper's Drop runs,
+    //     which decrefs numpy and lets numpy free the buffer through its own
+    //     allocator.
+    let forged = unsafe {
+        let vec = Vec::from_raw_parts(ptr, total, total);
+        match ArrayD::from_shape_vec(IxDyn(&shape), vec) {
+            Ok(arr) => arr,
+            Err(_) => {
+                // Can't happen (len == product(shape) by construction), but
+                // if it did, leak the Vec rather than double-free: the numpy
+                // keeper would still release the memory on drop, and a Vec
+                // drop here would run Rust's allocator over foreign memory.
+                std::mem::forget(Vec::from_raw_parts(ptr, total, total));
+                return None;
+            }
+        }
+    };
+    let keeper: Py<PyArrayDyn<T>> = pyarr.clone().unbind();
+    // SAFETY: keeper pins numpy's buffer for the holder's lifetime.
+    let holder = unsafe { ColumnHolder::from_foreign(forged, keeper) };
+    Some(wrap(holder))
+}
+
 // ---------------------------------------------------------------------------
-// Zero-copy numpy views backed by PyO3-owned ndarray storage
+// Zero-copy numpy views backed by Arc-shared Rust storage
 // ---------------------------------------------------------------------------
 
-/// Create a zero-copy numpy view of a float ndarray.
+/// Create a zero-copy numpy view of a float column.
+///
+/// The numpy array shares memory with the Rust-side `ColumnHolder<F>` buffer
+/// (which may be Rust-owned OR foreign-borrowed from another numpy array);
+/// no data is copied.
 ///
 /// # Safety
 ///
 /// `borrow_from_array` creates a numpy view whose lifetime is pinned to the
-/// `FloatArrayOwner` Python object. As long as the owner is alive the data
-/// pointer is valid.
-fn float_array_view(py: Python<'_>, array: ndarray::ArrayD<F>) -> PyResult<Py<pyo3::types::PyAny>> {
+/// `FloatArrayOwner` Python object via numpy's `.base` mechanism. The owner
+/// holds an `Arc` clone of the column holder, keeping its buffer alive as
+/// long as the Python array exists.
+fn float_array_view(
+    py: Python<'_>,
+    array: Arc<ColumnHolder<F>>,
+) -> PyResult<Py<pyo3::types::PyAny>> {
     let owner = Py::new(py, FloatArrayOwner { array })?;
     let owner = owner.into_bound(py);
     let view = unsafe {
-        PyArrayDyn::<F>::borrow_from_array(&owner.borrow().array, owner.clone().into_any())
+        // `owner.borrow().array.array()` returns &ArrayD<F> through the holder.
+        PyArrayDyn::<F>::borrow_from_array(owner.borrow().array.array(), owner.clone().into_any())
     };
     Ok(view.into_any().unbind())
 }
 
-/// Create a zero-copy numpy view of an integer ndarray.
+/// Create a zero-copy numpy view of an integer column.
 ///
 /// # Safety
 ///
 /// See [`float_array_view`].
-fn int_array_view(py: Python<'_>, array: ndarray::ArrayD<I>) -> PyResult<Py<pyo3::types::PyAny>> {
+fn int_array_view(py: Python<'_>, array: Arc<ColumnHolder<I>>) -> PyResult<Py<pyo3::types::PyAny>> {
     let owner = Py::new(py, IntArrayOwner { array })?;
     let owner = owner.into_bound(py);
     let view = unsafe {
-        PyArrayDyn::<I>::borrow_from_array(&owner.borrow().array, owner.clone().into_any())
+        PyArrayDyn::<I>::borrow_from_array(owner.borrow().array.array(), owner.clone().into_any())
     };
     Ok(view.into_any().unbind())
 }
 
-/// Create a zero-copy numpy view of a boolean ndarray.
+/// Create a zero-copy numpy view of a boolean column.
 ///
 /// # Safety
 ///
 /// See [`float_array_view`].
 fn bool_array_view(
     py: Python<'_>,
-    array: ndarray::ArrayD<bool>,
+    array: Arc<ColumnHolder<bool>>,
 ) -> PyResult<Py<pyo3::types::PyAny>> {
     let owner = Py::new(py, BoolArrayOwner { array })?;
     let owner = owner.into_bound(py);
     let view = unsafe {
-        PyArrayDyn::<bool>::borrow_from_array(&owner.borrow().array, owner.clone().into_any())
+        PyArrayDyn::<bool>::borrow_from_array(
+            owner.borrow().array.array(),
+            owner.clone().into_any(),
+        )
     };
     Ok(view.into_any().unbind())
 }
 
-/// Create a zero-copy numpy view of an unsigned integer ndarray.
+/// Create a zero-copy numpy view of an unsigned integer column.
 ///
 /// # Safety
 ///
 /// See [`float_array_view`].
-fn uint_array_view(py: Python<'_>, array: ndarray::ArrayD<U>) -> PyResult<Py<pyo3::types::PyAny>> {
+fn uint_array_view(
+    py: Python<'_>,
+    array: Arc<ColumnHolder<U>>,
+) -> PyResult<Py<pyo3::types::PyAny>> {
     let owner = Py::new(py, UIntArrayOwner { array })?;
     let owner = owner.into_bound(py);
     let view = unsafe {
-        PyArrayDyn::<U>::borrow_from_array(&owner.borrow().array, owner.clone().into_any())
+        PyArrayDyn::<U>::borrow_from_array(owner.borrow().array.array(), owner.clone().into_any())
     };
     Ok(view.into_any().unbind())
 }

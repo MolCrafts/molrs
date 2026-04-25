@@ -14,17 +14,19 @@
 //! # Internal details
 //!
 //! All mutable state is managed through a [`SharedStore`] (an
-//! `Rc<RefCell<FFIStore>>`) that is **not** `Send + Sync`. This is
+//! `Rc<RefCell<Store>>`) that is **not** `Send + Sync`. This is
 //! intentional: WebAssembly is single-threaded, so no locking overhead
 //! is required. Native multi-threaded consumers should use
-//! `Arc<Mutex<FFIStore>>` instead.
-
-use std::cell::RefCell;
-use std::rc::Rc;
+//! `Arc<Mutex<Store>>` instead.
+//!
+//! The [`SharedStore`] alias and its paired [`FrameRef`](molrs_ffi::FrameRef) /
+//! [`BlockRef`](molrs_ffi::BlockRef) wrappers live in `molrs-ffi` so every
+//! binding layer (wasm, python, capi) consumes the same canonical
+//! lifetime-management plumbing.
 
 use wasm_bindgen::JsValue;
 
-use molrs_ffi::{FfiError, Store as FFIStore};
+use molrs_ffi::FfiError;
 
 pub mod block;
 pub mod frame;
@@ -37,14 +39,6 @@ pub use frame::Frame;
 pub use grid::Grid;
 pub use region::simbox::Box;
 pub use types::WasmArray;
-
-/// Shared store for single-threaded WASM use.
-///
-/// Wraps the FFI [`Store`](molrs_ffi::Store) in `Rc<RefCell<...>>` so
-/// that multiple WASM-side handles ([`Frame`], [`Block`]) can share
-/// ownership without `Send + Sync` bounds (which are unnecessary in
-/// the single-threaded WASM environment).
-pub(crate) type SharedStore = Rc<RefCell<FFIStore>>;
 
 /// Convert an [`FfiError`] into a [`JsValue`] string for propagation
 /// to JavaScript as a thrown exception.

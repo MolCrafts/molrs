@@ -15,8 +15,6 @@
 //! | `NeighborQuery`      | [`PyNeighborQuery`]| Spatial neighbor query (freud-style API)   |
 //! | `NeighborList`       | [`PyNeighborList`]| Query result with pair indices + distances |
 //! | `Atomistic`          | [`PyAtomistic`]   | All-atom molecular graph                   |
-//! | `Packer`             | [`PyPacker`]      | Molecular packing (Packmol port)           |
-//! | `Target`             | [`PyTarget`]      | Molecule specification for packing         |
 //! | `MMFFTypifier`       | [`PyMMFFTypifier`]| MMFF94 atom-type assignment                |
 //! | `Potentials`         | [`PyPotentials`]  | Compiled energy/force evaluator            |
 //! | `RDF` / `MSD` / `Cluster` |              | Structural analysis                        |
@@ -46,35 +44,28 @@ use frame::{PyFrame, PyGrid};
 mod io;
 
 mod molrec;
-use molrec::{PyMolRec, PyObservables, PyScalarObservable, PyTrajectory, PyVectorObservable};
+use molrec::{
+    PyGridObservable, PyMolRec, PyObservables, PyScalarObservable, PyTrajectory, PyVectorObservable,
+};
 
 mod region;
 use region::{PyHollowSphere, PyRegion, PySphere};
 
-mod constraint;
-use constraint::{
-    PyAbovePlane, PyBelowPlane, PyInsideBox, PyInsideSphere, PyMoleculeConstraint, PyOutsideSphere,
-};
-
-mod target;
-use target::PyTarget;
-
-mod packer;
-use packer::{PyPackResult, PyPacker};
-
 pub(crate) mod molgraph;
 use molgraph::PyAtomistic;
 
-mod gen3d;
-use gen3d::{PyGen3DOptions, PyGen3DReport, PyGen3DResult, PyStageReport};
+mod embed;
+use embed::{PyEmbedOptions, PyEmbedReport, PyEmbedResult, PyStageReport};
 
 mod forcefield;
 use forcefield::{PyForceField, PyMMFFTypifier, PyPotentials};
 
 mod compute;
 use compute::{
-    PyCenterOfMass, PyCenterOfMassResult, PyCluster, PyClusterCenters, PyClusterResult,
-    PyGyrationTensor, PyInertiaTensor, PyMSD, PyMSDResult, PyRDF, PyRDFResult, PyRadiusOfGyration,
+    PyCenterOfMass, PyCenterOfMassResult, PyCluster, PyClusterCenters, PyClusterCentersResult,
+    PyClusterResult, PyDescriptorRow, PyGyrationTensor, PyInertiaTensor, PyKMeans, PyKMeansResult,
+    PyMSD, PyMSDResult, PyMSDTimeSeries, PyPca2, PyPcaResult, PyRDF, PyRDFResult,
+    PyRadiusOfGyration,
 };
 
 /// Root Python module for the molrs library.
@@ -101,7 +92,10 @@ fn molrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(io::read_xyz_trajectory, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_lammps, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_lammps_traj, m)?)?;
+    m.add_class::<io::PyLAMMPSTrajReader>()?;
     m.add_function(wrap_pyfunction!(io::read_chgcar_file, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_cube_file, m)?)?;
+    m.add_function(wrap_pyfunction!(io::write_cube_file, m)?)?;
     // Writers
     m.add_function(wrap_pyfunction!(io::write_pdb, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_xyz, m)?)?;
@@ -117,34 +111,22 @@ fn molrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyObservables>()?;
     m.add_class::<PyScalarObservable>()?;
     m.add_class::<PyVectorObservable>()?;
+    m.add_class::<PyGridObservable>()?;
 
     // Regions
     m.add_class::<PySphere>()?;
     m.add_class::<PyHollowSphere>()?;
     m.add_class::<PyRegion>()?;
 
-    // Constraints
-    m.add_class::<PyInsideBox>()?;
-    m.add_class::<PyInsideSphere>()?;
-    m.add_class::<PyOutsideSphere>()?;
-    m.add_class::<PyAbovePlane>()?;
-    m.add_class::<PyBelowPlane>()?;
-    m.add_class::<PyMoleculeConstraint>()?;
-
-    // Packer
-    m.add_class::<PyTarget>()?;
-    m.add_class::<PyPacker>()?;
-    m.add_class::<PyPackResult>()?;
-
     // Molecular graph
     m.add_class::<PyAtomistic>()?;
 
-    // Gen3D
-    m.add_class::<PyGen3DOptions>()?;
-    m.add_class::<PyGen3DReport>()?;
-    m.add_class::<PyGen3DResult>()?;
+    // Embed
+    m.add_class::<PyEmbedOptions>()?;
+    m.add_class::<PyEmbedReport>()?;
+    m.add_class::<PyEmbedResult>()?;
     m.add_class::<PyStageReport>()?;
-    m.add_function(wrap_pyfunction!(gen3d::generate_3d_py, m)?)?;
+    m.add_function(wrap_pyfunction!(embed::generate_3d_py, m)?)?;
 
     // Force field
     m.add_class::<PyForceField>()?;
@@ -158,14 +140,21 @@ fn molrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyRDFResult>()?;
     m.add_class::<PyMSD>()?;
     m.add_class::<PyMSDResult>()?;
+    m.add_class::<PyMSDTimeSeries>()?;
     m.add_class::<PyCluster>()?;
     m.add_class::<PyClusterResult>()?;
     m.add_class::<PyClusterCenters>()?;
+    m.add_class::<PyClusterCentersResult>()?;
     m.add_class::<PyCenterOfMass>()?;
     m.add_class::<PyCenterOfMassResult>()?;
     m.add_class::<PyGyrationTensor>()?;
     m.add_class::<PyInertiaTensor>()?;
     m.add_class::<PyRadiusOfGyration>()?;
+    m.add_class::<PyDescriptorRow>()?;
+    m.add_class::<PyPca2>()?;
+    m.add_class::<PyPcaResult>()?;
+    m.add_class::<PyKMeans>()?;
+    m.add_class::<PyKMeansResult>()?;
 
     Ok(())
 }

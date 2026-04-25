@@ -3,7 +3,7 @@
 use wasm_bindgen::prelude::*;
 
 use crate::core::frame::Frame;
-use crate::core::types::WasmArray;
+use crate::core::types::{JsFloatArray, WasmArray};
 
 /// Uniform scalar field sampled on a regular real-space grid.
 #[wasm_bindgen(js_name = UniformGridField)]
@@ -45,12 +45,16 @@ impl UniformGridField {
         Box::new(self.inner.pbc.map(|v| if v { 1 } else { 0 }))
     }
 
-    /// Sample values as a flattened array with shape metadata `[nx, ny, nz]`.
-    pub fn values(&self) -> WasmArray {
-        WasmArray::from_vec(
-            self.inner.values.clone(),
-            self.inner.shape.to_vec().into_boxed_slice(),
-        )
+    /// Zero-copy `Float64Array` view of the sample values, flat row-major
+    /// order (shape `[nx, ny, nz]`, use [`UniformGridField::shape`]).
+    ///
+    /// **Warning**: the view is invalidated on any WASM memory growth.
+    /// Copy in JS (`new Float64Array(view)`) if it needs to outlive
+    /// subsequent allocations.
+    pub fn values(&self) -> JsFloatArray {
+        // SAFETY: view borrows WASM linear memory; JS must not retain it
+        // past any allocation that could trigger memory growth.
+        unsafe { JsFloatArray::view(&self.inner.values) }
     }
 
     /// Materialize a coarse point-cloud frame for validation rendering.
@@ -60,6 +64,6 @@ impl UniformGridField {
             .inner
             .to_point_cloud_frame(threshold as molrs::types::F, stride)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
-        Frame::from_rs_frame(rs_frame)
+        Frame::from_rs(rs_frame)
     }
 }

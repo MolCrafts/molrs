@@ -1,5 +1,5 @@
 use criterion::{BenchmarkId, Criterion, criterion_group};
-use molrs::types::F;
+use molrs_core::types::F;
 use ndarray::{Array1, Array2, Zip, s};
 
 use super::SIZES;

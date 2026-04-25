@@ -8,9 +8,9 @@
 //! # Examples
 //!
 //! ```
-//! use molrs::frame::Frame;
-//! use molrs::block::Block;
-//! use molrs::types::{F, I};
+//! use molrs_core::frame::Frame;
+//! use molrs_core::block::Block;
+//! use molrs_core::types::{F, I};
 //! use ndarray::Array1;
 //!
 //! let mut frame = Frame::new();
@@ -55,6 +55,14 @@ pub struct Frame {
     pub simbox: Option<SimBox>,
 }
 
+/// Type alias for the result of into_inner().
+type IntoInnerResult = (
+    HashMap<String, Block>,
+    HashMap<String, Grid>,
+    HashMap<String, String>,
+    Option<SimBox>,
+);
+
 impl std::fmt::Debug for Frame {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut debug_struct = f.debug_struct("Frame");
@@ -86,7 +94,7 @@ impl Frame {
     /// # Examples
     ///
     /// ```
-    /// use molrs::frame::Frame;
+    /// use molrs_core::frame::Frame;
     ///
     /// let frame = Frame::new();
     /// assert!(frame.is_empty());
@@ -105,7 +113,7 @@ impl Frame {
     /// # Examples
     ///
     /// ```
-    /// use molrs::frame::Frame;
+    /// use molrs_core::frame::Frame;
     ///
     /// let frame = Frame::with_capacity(10);
     /// assert!(frame.is_empty());
@@ -124,8 +132,8 @@ impl Frame {
     /// # Examples
     ///
     /// ```
-    /// use molrs::frame::Frame;
-    /// use molrs::block::Block;
+    /// use molrs_core::frame::Frame;
+    /// use molrs_core::block::Block;
     /// use std::collections::HashMap;
     ///
     /// let mut map = HashMap::new();
@@ -148,8 +156,8 @@ impl Frame {
     /// # Examples
     ///
     /// ```
-    /// use molrs::frame::Frame;
-    /// use molrs::block::Block;
+    /// use molrs_core::frame::Frame;
+    /// use molrs_core::block::Block;
     ///
     /// let mut frame = Frame::new();
     /// frame.insert("atoms", Block::new());
@@ -161,14 +169,7 @@ impl Frame {
     /// assert_eq!(meta.get("title").unwrap(), "Test");
     /// assert!(simbox.is_none());
     /// ```
-    pub fn into_inner(
-        self,
-    ) -> (
-        HashMap<String, Block>,
-        HashMap<String, Grid>,
-        HashMap<String, String>,
-        Option<SimBox>,
-    ) {
+    pub fn into_inner(self) -> IntoInnerResult {
         (self.map, self.grids, self.meta, self.simbox)
     }
 
@@ -177,8 +178,8 @@ impl Frame {
     /// # Examples
     ///
     /// ```
-    /// use molrs::frame::Frame;
-    /// use molrs::block::Block;
+    /// use molrs_core::frame::Frame;
+    /// use molrs_core::block::Block;
     ///
     /// let mut frame = Frame::new();
     /// assert_eq!(frame.len(), 0);
@@ -226,8 +227,8 @@ impl Frame {
     /// # Examples
     ///
     /// ```
-    /// use molrs::frame::Frame;
-    /// use molrs::block::Block;
+    /// use molrs_core::frame::Frame;
+    /// use molrs_core::block::Block;
     ///
     /// let mut frame = Frame::new();
     /// let old = frame.insert("atoms", Block::new());
@@ -252,8 +253,8 @@ impl Frame {
     /// # Examples
     ///
     /// ```
-    /// use molrs::frame::Frame;
-    /// use molrs::block::Block;
+    /// use molrs_core::frame::Frame;
+    /// use molrs_core::block::Block;
     ///
     /// let mut frame = Frame::new();
     /// frame.insert("atoms", Block::new());
@@ -272,8 +273,8 @@ impl Frame {
     /// # Examples
     ///
     /// ```
-    /// use molrs::frame::Frame;
-    /// use molrs::block::Block;
+    /// use molrs_core::frame::Frame;
+    /// use molrs_core::block::Block;
     ///
     /// let mut frame = Frame::new();
     /// frame.insert("atoms", Block::new());
@@ -333,9 +334,9 @@ impl Frame {
     /// # Examples
     ///
     /// ```
-    /// use molrs::frame::Frame;
-    /// use molrs::block::Block;
-    /// use molrs::types::F;
+    /// use molrs_core::frame::Frame;
+    /// use molrs_core::block::Block;
+    /// use molrs_core::types::F;
     /// use ndarray::Array1;
     ///
     /// let mut frame = Frame::new();
@@ -363,9 +364,9 @@ impl Frame {
     /// # Examples
     ///
     /// ```
-    /// use molrs::frame::Frame;
-    /// use molrs::block::Block;
-    /// use molrs::types::F;
+    /// use molrs_core::frame::Frame;
+    /// use molrs_core::block::Block;
+    /// use molrs_core::types::F;
     /// use ndarray::Array1;
     ///
     /// let mut frame = Frame::new();
@@ -402,9 +403,9 @@ impl Frame {
     /// # Examples
     ///
     /// ```
-    /// use molrs::frame::Frame;
-    /// use molrs::block::Block;
-    /// use molrs::types::F;
+    /// use molrs_core::frame::Frame;
+    /// use molrs_core::block::Block;
+    /// use molrs_core::types::F;
     /// use ndarray::Array1;
     ///
     /// let mut frame = Frame::new();
@@ -451,9 +452,9 @@ impl Frame {
     /// # Examples
     ///
     /// ```
-    /// use molrs::frame::Frame;
-    /// use molrs::block::Block;
-    /// use molrs::types::F;
+    /// use molrs_core::frame::Frame;
+    /// use molrs_core::block::Block;
+    /// use molrs_core::types::F;
     /// use ndarray::Array1;
     ///
     /// let mut frame = Frame::new();
@@ -527,8 +528,8 @@ impl Frame {
     /// # Examples
     ///
     /// ```
-    /// use molrs::frame::Frame;
-    /// use molrs::block::Block;
+    /// use molrs_core::frame::Frame;
+    /// use molrs_core::block::Block;
     ///
     /// let frame = Frame::new();
     /// assert!(frame.is_consistent());

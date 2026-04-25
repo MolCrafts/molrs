@@ -2,7 +2,7 @@
 //!
 //! [`Atomistic`] is a newtype wrapper around [`MolGraph`] that guarantees every
 //! atom carries a `"element"` property (element symbol). This invariant is
-//! required by subsystems like [`gen3d`](crate::gen3d) and
+//! required by subsystems like [`embed`](crate::embed) and
 //! [`typifier`](crate::typifier) that look up element data.
 //!
 //! All [`MolGraph`] methods are available via `Deref`/`DerefMut`.
@@ -10,7 +10,7 @@
 //! # Examples
 //!
 //! ```
-//! use molrs::atomistic::Atomistic;
+//! use molrs_core::atomistic::Atomistic;
 //!
 //! let mut mol = Atomistic::new();
 //! let c = mol.add_atom_bare("C");
@@ -65,7 +65,7 @@ impl Atomistic {
     /// Add an atom with element symbol only (no coordinates).
     ///
     /// Use this when building molecules for 3D coordinate generation — the
-    /// [`gen3d`](crate::gen3d) pipeline will assign coordinates.
+    /// [`embed`](crate::embed) pipeline will assign coordinates.
     pub fn add_atom_bare(&mut self, symbol: &str) -> AtomId {
         let mut a = Atom::new();
         a.set("element", symbol);

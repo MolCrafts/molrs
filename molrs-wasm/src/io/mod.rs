@@ -5,9 +5,8 @@
 //!
 //! | Module | JS class / function | Formats |
 //! |--------|-------------------|---------|
-//! | [`reader`] | `XYZReader`, `PDBReader`, `LAMMPSReader`, `LAMMPSDumpReader` | Read XYZ/ExtXYZ, PDB, LAMMPS data/dump files |
+//! | [`reader`] | `XYZReader`, `PDBReader`, `LAMMPSReader`, `LAMMPSTrajReader` | Read XYZ/ExtXYZ, PDB, LAMMPS data/dump files |
 //! | [`writer`] | `writeFrame(frame, format)` | Write XYZ, PDB, LAMMPS dump |
-//! | [`smiles`] | `parseSMILES(str)` -> `SmilesIR` | Parse SMILES notation |
 //! | [`zarr`] | `MolRecReader` | Read MolRec Zarr V3 archives |
 //!
 //! All readers consume string content (not file handles) since
@@ -15,11 +14,9 @@
 //! browser to read files, then pass the text content to the reader.
 
 pub mod reader;
-pub mod smiles;
 pub mod writer;
 pub mod zarr;
 
 pub use reader::*;
-pub use smiles::*;
 pub use writer::*;
 pub use zarr::*;

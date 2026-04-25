@@ -1,54 +1,71 @@
 ---
 name: molrs-review
-description: Comprehensive code review aggregating architecture, performance, documentation, and Rust safety checks. Use after writing code or during PR review.
-argument-hint: "[path or module]"
+description: Aggregate multi-axis code review. Fans out to architect, optimizer, documenter, scientist, ffi-safety agents in parallel and renders a single severity report. Does not edit code.
+argument-hint: "[path or module — defaults to `git diff --name-only HEAD`]"
 user-invocable: true
 ---
 
-Review code for: $ARGUMENTS
+# molrs-review
 
-If no path given, review all files modified in `git diff --name-only HEAD`.
+Read `CLAUDE.md` for molrs conventions. This skill orchestrates a review;
+rules for each axis live in the paired reference skills, which the
+corresponding agent loads. Do NOT duplicate rule text here.
 
-**Invoke all dimensions in parallel:**
+## Procedure
 
-1. **Architecture** → invoke `/molrs-arch` on $ARGUMENTS
-2. **Performance** → invoke `/molrs-perf` on $ARGUMENTS
-3. **Documentation** → invoke `/molrs-doc` on $ARGUMENTS
-4. **Rust & FFI Safety**:
-   - Float precision: all numeric code uses `F` alias, not raw f32/f64
-   - Coordinate convention: flat `[x0,y0,z0, x1,y1,z1, ...]` format
-   - Trait conformance: Potential/Fix/Dump implement required methods
-   - Registration patterns: KernelRegistry used correctly
-   - FFI handle safety: SlotMap handles, no raw pointers across boundary
-   - WASM memory: proper free() calls, no use-after-free
-   - Constraint gradients: TRUE gradient with `+=`, optimizer negates
-   - Rotation: LEFT multiplication `R_new = δR * R_old`
-   - `Cell<f64>` is NOT Sync — use AtomicU64 with to_bits/from_bits
-5. **Code Quality** (inline):
-   - Functions < 50 lines, files < 800 lines
-   - No deep nesting (> 4 levels)
-   - Descriptive naming (no single-letter except loop indices)
-   - `cargo clippy` clean
-   - `cargo fmt` compliant
-6. **Immutability** (inline):
-   - Input Frame/Block not mutated
-   - Clone before modification
-   - Owned vs borrowed semantics correct
+1. **Scope** — `$ARGUMENTS` if given, else `git diff --name-only HEAD`.
+   Drop files outside the workspace (generated artifacts, `target/`,
+   `pkg/`).
 
-**Severity levels**:
-- CRITICAL — must fix (safety issues, architecture violations)
-- HIGH — should fix (missing tests, performance issues)
-- MEDIUM — fix when possible (style, documentation gaps)
-- LOW — nice to have
+2. **Dispatch in parallel** — spawn all applicable agents in a single
+   message. Conditional axes skip silently if no matching files:
 
-**Output**: Merged report:
+   | Agent | Paired skill | When to invoke |
+   |---|---|---|
+   | `molrs-architect` | `molrs-arch` | Always |
+   | `molrs-tester` | `molrs-test` | Always |
+   | `molrs-optimizer` | `molrs-perf` | Hot-path code (`molrs-ff/potential/**`, `molrs-core/neighbors/**`, `molrs-pack/objective.rs`, `molrs-pack/packer.rs`) |
+   | `molrs-documenter` | `molrs-doc` | Any `pub` item added or changed |
+   | `molrs-scientist` | `molrs-science` | Physics touched (potentials, integrators, constraints, stereo) |
+   | `molrs-ffi-safety` | `molrs-ffi` | Any change under `molrs-cxxapi/`, `molrs-python/src/`, `molrs-wasm/src/`, `molrs-capi/` |
+   | `molrs-docs-engineer` | `molrs-docs` | PyO3/wasm-bindgen bindings added or renamed, or any `docs/**` change |
+
+   Inline checks (no dedicated agent):
+
+   - **Code quality** — functions < 50 lines, files < 800 lines, nesting
+     ≤ 4 levels, `cargo clippy` clean, `cargo fmt` compliant.
+   - **Immutability** — input Frame/Block not mutated; clone before
+     modification; owned vs borrowed semantics correct.
+
+3. **Aggregate** — collect agent outputs (each agent emits
+   `[SEVERITY] file:line — message` lines). Render the severity table
+   below.
+
+## Severity
+
+- **CRITICAL** — safety / architecture violation, wrong physics, FFI
+  panic risk. Block merge.
+- **HIGH** — missing tests, performance regression, wrong units.
+- **MEDIUM** — style, documentation gaps.
+- **LOW** — nice to have.
+
+## Output
+
 ```
 CODE REVIEW: <path>
-ARCHITECTURE: ✅/❌ per check
-PERFORMANCE: ✅/⚠️ per check
-DOCUMENTATION: ✅/⚠️ per check
-RUST & FFI SAFETY: ✅/❌ per check
-CODE QUALITY: ✅/⚠️ per check
-IMMUTABILITY: ✅/❌ per check
+
+ARCHITECTURE:   <findings>
+TESTING:        <findings>
+PERFORMANCE:    <findings | skipped: no hot-path files>
+DOCUMENTATION:  <findings | skipped: no pub API touched>
+SCIENCE:        <findings | skipped: no physics touched>
+FFI SAFETY:     <findings | skipped: no FFI surface touched>
+DOCS SYSTEM:    <findings | skipped: no bindings/docs touched>
+CODE QUALITY:   <inline checklist>
+IMMUTABILITY:   <inline checklist>
+
 SUMMARY: N CRITICAL, N HIGH, N MEDIUM, N LOW
+VERDICT: APPROVE | REQUEST CHANGES | BLOCK
 ```
+
+End with a one-line recap: `reviewed <N> files, <axes-run> agents, <verdict>`.

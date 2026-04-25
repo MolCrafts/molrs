@@ -66,7 +66,7 @@ impl BlockDtype for F {
     }
 
     fn into_column(arr: ArrayD<Self>) -> Column {
-        Column::Float(arr)
+        Column::from_float(arr)
     }
 
     fn from_column(col: &Column) -> Option<&ArrayD<Self>> {
@@ -84,7 +84,7 @@ impl BlockDtype for I {
     }
 
     fn into_column(arr: ArrayD<Self>) -> Column {
-        Column::Int(arr)
+        Column::from_int(arr)
     }
 
     fn from_column(col: &Column) -> Option<&ArrayD<Self>> {
@@ -102,7 +102,7 @@ impl BlockDtype for bool {
     }
 
     fn into_column(arr: ArrayD<Self>) -> Column {
-        Column::Bool(arr)
+        Column::from_bool(arr)
     }
 
     fn from_column(col: &Column) -> Option<&ArrayD<Self>> {
@@ -120,7 +120,7 @@ impl BlockDtype for U {
     }
 
     fn into_column(arr: ArrayD<Self>) -> Column {
-        Column::UInt(arr)
+        Column::from_uint(arr)
     }
 
     fn from_column(col: &Column) -> Option<&ArrayD<Self>> {
@@ -138,7 +138,7 @@ impl BlockDtype for u8 {
     }
 
     fn into_column(arr: ArrayD<Self>) -> Column {
-        Column::U8(arr)
+        Column::from_u8(arr)
     }
 
     fn from_column(col: &Column) -> Option<&ArrayD<Self>> {
@@ -156,7 +156,7 @@ impl BlockDtype for String {
     }
 
     fn into_column(arr: ArrayD<Self>) -> Column {
-        Column::String(arr)
+        Column::from_string(arr)
     }
 
     fn from_column(col: &Column) -> Option<&ArrayD<Self>> {

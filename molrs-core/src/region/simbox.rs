@@ -235,6 +235,27 @@ impl SimBox {
         }
     }
 
+    /// Fractional coordinates returned as `[F; 3]` (zero-alloc hot path).
+    ///
+    /// Equivalent to [`make_fractional_fast`](Self::make_fractional_fast) but
+    /// avoids the `Array1<F>` heap allocation by returning a stack array.
+    /// Use in tight inner loops (neighbor-list cell assignment, etc.).
+    #[inline(always)]
+    pub fn make_fractional_fast_arr(&self, r: F3View<'_>) -> [F; 3] {
+        match &self.kind {
+            BoxKind::Ortho { inv_len, .. } => {
+                let fx = (r[0] - self.origin[0]) * inv_len[0];
+                let fy = (r[1] - self.origin[1]) * inv_len[1];
+                let fz = (r[2] - self.origin[2]) * inv_len[2];
+                [fx - fx.floor(), fy - fy.floor(), fz - fz.floor()]
+            }
+            BoxKind::Triclinic => {
+                let f = self.make_fractional(r);
+                [f[0], f[1], f[2]]
+            }
+        }
+    }
+
     /// Convert fractional coordinates to Cartesian coordinates
     pub fn make_cartesian(&self, frac: F3View<'_>) -> F3 {
         &self.origin + &self.h.dot(&frac)
@@ -267,6 +288,64 @@ impl SimBox {
                 dr
             }
             BoxKind::Triclinic => self.shortest_vector(a, b),
+        }
+    }
+
+    /// Shortest vector returned as `[F; 3]` (zero-alloc hot path).
+    ///
+    /// Equivalent to [`shortest_vector_fast`](Self::shortest_vector_fast) but
+    /// avoids the `Array1<F>` heap allocation by returning a stack array.
+    /// Use inside neighbor-list pair loops where called O(N·k) times per build.
+    #[inline(always)]
+    pub fn shortest_vector_fast_arr(&self, a: F3View<'_>, b: F3View<'_>) -> [F; 3] {
+        match &self.kind {
+            BoxKind::Ortho { len, inv_len } => {
+                let mut dr = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+                if self.pbc[0] {
+                    dr[0] -= (dr[0] * inv_len[0]).round() * len[0];
+                }
+                if self.pbc[1] {
+                    dr[1] -= (dr[1] * inv_len[1]).round() * len[1];
+                }
+                if self.pbc[2] {
+                    dr[2] -= (dr[2] * inv_len[2]).round() * len[2];
+                }
+                dr
+            }
+            BoxKind::Triclinic => {
+                let v = self.shortest_vector(a, b);
+                [v[0], v[1], v[2]]
+            }
+        }
+    }
+
+    /// Shortest vector from raw `[F; 3]` inputs, returning `[F; 3]`.
+    ///
+    /// Both inputs and output are stack arrays — no `ArrayView` indexing.
+    /// Called from neighbor-list inner loops where positions are stored in a
+    /// flat `[F; 3]` slab instead of an `Array2<F>`.
+    #[inline(always)]
+    pub fn shortest_vector_raw(&self, a: [F; 3], b: [F; 3]) -> [F; 3] {
+        match &self.kind {
+            BoxKind::Ortho { len, inv_len } => {
+                let mut dr = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+                if self.pbc[0] {
+                    dr[0] -= (dr[0] * inv_len[0]).round() * len[0];
+                }
+                if self.pbc[1] {
+                    dr[1] -= (dr[1] * inv_len[1]).round() * len[1];
+                }
+                if self.pbc[2] {
+                    dr[2] -= (dr[2] * inv_len[2]).round() * len[2];
+                }
+                dr
+            }
+            BoxKind::Triclinic => {
+                let av = ndarray::ArrayView1::from(&a[..]);
+                let bv = ndarray::ArrayView1::from(&b[..]);
+                let v = self.shortest_vector(av, bv);
+                [v[0], v[1], v[2]]
+            }
         }
     }
 

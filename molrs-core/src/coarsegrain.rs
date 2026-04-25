@@ -9,7 +9,7 @@
 //! # Examples
 //!
 //! ```
-//! use molrs::coarsegrain::CoarseGrain;
+//! use molrs_core::coarsegrain::CoarseGrain;
 //!
 //! let mut cg = CoarseGrain::new();
 //! let b1 = cg.add_bead("W", 0.0, 0.0, 0.0);

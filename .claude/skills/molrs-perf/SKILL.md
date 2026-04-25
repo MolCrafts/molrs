@@ -1,181 +1,163 @@
 ---
 name: molrs-perf
-description: Performance optimization guidance for molrs molecular simulation code. Covers hot loops, parallelism, memory layout, neighbor lists, and potential kernels.
+description: Performance standards for molrs molecular simulation code — hot loops, memory layout, SIMD, rayon parallelism, benchmarking. Reference document only; no procedural workflow.
 ---
 
-You are a **high-performance computing specialist** for molecular simulation in Rust. You review and optimize molrs code for maximum throughput.
+Reference standard for molrs performance. The `molrs-optimizer` agent applies these rules; this file defines them.
 
-## Trigger
+## Hot Path Hierarchy (most → least critical)
 
-Use when writing or reviewing performance-sensitive code: potential kernels, neighbor lists, packing optimizers, or any code in the inner simulation loop.
+1. **Pair potential evaluation** — O(N·k) with neighbor lists; called every MD step.
+2. **Neighbor list build/update** — O(N) with `LinkCell`; rebuilt periodically.
+3. **Force accumulation** — sum across all potential terms.
+4. **GENCAN inner loop** — objective + gradient evaluation in `molrs-pack`.
 
-## Performance-Critical Paths
+## Memory Layout
 
-### Hot Loop Hierarchy (most to least critical)
+Prefer Structure-of-Arrays (SoA) over Array-of-Structures (AoS):
 
-1. **Pair potential evaluation** -- O(N^2) or O(N*k) with neighbor lists. Called every MD step.
-2. **Neighbor list build/update** -- O(N) with LinkCell, O(N^2) with BruteForce. Rebuilt periodically.
-3. **Force accumulation** -- Summing forces from all potential terms.
-4. **GENCAN inner loop** -- Objective + gradient evaluation in packing optimizer.
-
-### Memory Layout Optimization
-
-**Prefer Structure-of-Arrays (SoA) over Array-of-Structures (AoS)**:
 ```rust
-// GOOD (SoA) -- cache-friendly for component-wise operations
-let x: Array1<F> = ...;  // all x-coordinates contiguous
+// GOOD (SoA) — cache-friendly per-component access
+let x: Array1<F> = ...;
 let y: Array1<F> = ...;
 let z: Array1<F> = ...;
 
-// ACCEPTABLE -- ndarray row-major layout
+// ACCEPTABLE — row-major Array2
 let coords: Array2<F> = Array2::zeros((n_atoms, 3));
 
-// BAD -- pointer chasing, cache-hostile
-let atoms: Vec<Atom> = ...;  // each Atom has x, y, z fields
+// BAD — pointer chasing
+let atoms: Vec<Atom> = ...;
 ```
 
-The Zarr trajectory format uses SoA by design (per-component arrays).
+The Zarr trajectory format and `Block` are SoA by design.
 
-### Flat Coordinate Vectors for Kernels
+### Flat coordinate vectors for kernels
 
-Potential kernels use flat `&[F]` (3N elements): `[x0,y0,z0, x1,y1,z1, ...]`. This enables:
-- Contiguous memory access
-- Compiler auto-vectorization friendly
+Potential kernels use flat `&[F]` (3N elements): `[x0,y0,z0, x1,y1,z1, ...]`. Enables contiguous access and auto-vectorization.
 
-### Neighbor List Performance
+## Neighbor Lists
 
-`LinkCell` (default) is O(N) for build, O(N*k) for traversal (k = avg neighbors). Key optimizations:
-- Cell size >= cutoff ensures only 27 neighboring cells checked
-- `PairVisitor` trait enables zero-allocation traversal
-- Rayon parallelism for build phase (feature-gated)
+`LinkCell` (default) is O(N) build + O(N·k) traversal. Rules:
 
-**Do NOT**:
-- Rebuild neighbor list every step (use Verlet skin distance)
-- Use `BruteForce` in production (O(N^2), testing only)
-- Allocate per-pair during traversal (use `PairVisitor` callback)
+- Cell size ≥ cutoff so only 27 neighboring cells are scanned.
+- Use `PairVisitor` callback for zero-allocation traversal.
+- Apply Verlet skin distance — do **not** rebuild every step.
+- `BruteForce` is O(N²) — testing only, never production.
+- Rayon-parallel build is feature-gated.
 
-## Optimization Techniques
+## Optimization Rules
 
-### 1. Avoid Allocation in Hot Loops
+### 1. No allocation in inner loops
 
-```rust
-// BAD: allocates Vec every call
-fn eval(&self, coords: &[F]) -> (F, Vec<F>) {
-    let mut forces = vec![0.0; coords.len()];  // allocation!
-    // ...
-}
+Reuse buffers via `&mut` parameter or stored field. `Vec::with_capacity` when size is known.
 
-// BETTER: reuse buffer via parameter or self
-fn eval_into(&self, coords: &[F], forces: &mut [F]) -> F {
-    forces.fill(0.0);
-    // ...
-}
-```
-
-For the `Potential` trait, the signature requires returning `Vec<F>`. Minimize internal allocations.
-
-### 2. SIMD-Friendly Patterns
+### 2. SIMD-friendly patterns
 
 ```rust
-// GOOD: simple loop, auto-vectorizable
+// GOOD — vectorizable
 for i in 0..n {
     forces[3*i]   += scale * dx;
     forces[3*i+1] += scale * dy;
     forces[3*i+2] += scale * dz;
 }
 
-// BAD: branch in inner loop prevents vectorization
+// BAD — branch in hot loop
 for i in 0..n {
-    if atoms[i].is_active {  // branch!
-        forces[3*i] += scale * dx;
-    }
+    if atoms[i].is_active { ... }
 }
 ```
 
-### 3. Rayon Parallelism
+### 3. Rayon parallelism
 
-Use rayon for embarrassingly parallel operations:
-- Neighbor list cell processing
-- Independent potential kernel evaluation
-- Force accumulation with thread-local buffers
+Pattern: parallel reduce with thread-local accumulator.
 
 ```rust
-// Pattern: parallel reduce with thread-local accumulation
 use rayon::prelude::*;
 
 let (energy, forces) = pairs.par_chunks(chunk_size)
     .map(|chunk| {
-        let mut local_e = 0.0;
-        let mut local_f = vec![0.0; 3 * n_atoms];
-        for &(i, j) in chunk {
-            // evaluate pair, accumulate into local_e, local_f
-        }
+        let mut local_e = 0.0_f64;
+        let mut local_f = vec![0.0_f64; 3 * n_atoms];
+        for &(i, j) in chunk { /* ... */ }
         (local_e, local_f)
     })
-    .reduce(|| (0.0, vec![0.0; 3 * n_atoms]), |(e1, f1), (e2, f2)| {
-        // sum energies and forces
-    });
+    .reduce(
+        || (0.0_f64, vec![0.0_f64; 3 * n_atoms]),
+        |(e1, mut f1), (e2, f2)| {
+            for k in 0..f1.len() { f1[k] += f2[k]; }
+            (e1 + e2, f1)
+        });
 ```
 
-### 4. Avoid f64 <-> f32 Conversions
+### 4. Float literals
 
-With `type F = f32` (default), avoid accidental promotion:
-```rust
-// BAD: 0.5 is f64, causes conversion
-let half: F = 0.5;  // implicit f64->f32
+`F = f64` always. Use plain `0.5`, `2.0` literals (already `f64`). Avoid `as F` casts and `f32 ↔ f64` conversions.
 
-// GOOD: explicit f32 literal
-let half: F = 0.5 as F;
-```
-
-### 5. Minimize Branching in Kernels
+### 5. Branchless when cheap
 
 ```rust
-// BAD: branch per pair
-if dist < cutoff {
-    energy += lj(dist);
-}
+// BAD — branch per pair
+if dist < cutoff { energy += lj(dist); }
 
-// BETTER: filter before kernel, or use branchless mask
-let mask = if dist < cutoff { 1.0 } else { 0.0 };
+// BETTER — pre-filter or branchless mask
+let mask = (dist < cutoff) as u32 as F;
 energy += mask * lj(dist);
 ```
 
 ## Benchmarking
 
 ```bash
-# Run criterion benchmarks
 cargo bench -p molrs-core
-# Run with specific benchmark
 cargo bench -p molrs-core -- potential
-
-# Generate flamegraph (requires cargo-flamegraph)
 cargo flamegraph --bench potential -p molrs-core
+RUSTFLAGS="-C target-cpu=native" cargo bench -p molrs-core
 ```
 
-### What to Benchmark
+What to benchmark:
 
-- Potential kernel eval time vs atom count (scaling test)
-- Neighbor list build time vs atom count
-- MD step time (all-inclusive)
-- Packing objective+gradient evaluation time
+- Potential kernel eval vs atom count (scaling)
+- Neighbor list build vs atom count
+- Full MD step (all-inclusive)
+- GENCAN objective + gradient eval (`molrs-pack`)
 
-### Performance Regression Rules
+## Benchmarking during refactors
 
-- New code must not regress existing benchmarks by > 5%
-- New kernels must include criterion benchmark
-- O(N^2) algorithms need justification (typically testing-only)
+When extracting pure functions from a monolith (common in `molrs-pack` objective/packer splits, `molrs-ff` kernel extractions, `molrs-core` neighbor rewrites), **do not rely on end-to-end benchmarks to guard the extraction**. Macro-level noise (allocator, cache, OS scheduler) routinely produces ±3% drift independent of the change, which masks real per-function regressions and makes tight gates statistically meaningless.
 
-## Review Checklist
+**Discipline per extraction** (every extracted function is its own atomic commit):
 
-When reviewing performance-sensitive code:
+1. Before moving the function body, add `#[cfg(bench)] #[inline(never)] fn F_sentinel(...)` holding the pre-extraction behavior in the same module. The sentinel compiles only under the `bench` cfg and does not ship in release binaries.
+2. In the same commit as the extraction, land:
+   - A unit test pinning the function's observable behavior against the sentinel (or against a known-good reference).
+   - A criterion microbench of the extracted function.
+   - A criterion microbench of the *caller* (catches indirection / vtable / inlining-boundary costs that the function microbench cannot see).
+3. Gates:
+   - Function microbench: extracted ≤ +1% vs. `F_sentinel`, or improvement.
+   - Caller microbench: ≤ +2% vs. pre-extraction snapshot.
+4. Delete `F_sentinel` once the extraction has been on main for one follow-up refactor cycle. The microbench itself stays permanently as a future-regression guard.
+
+**End-to-end benches** are kept only as a **catastrophic-regression alarm** (> 10% blocks the merge). They are not the primary gate for per-extraction changes. A single representative end-to-end bench per crate is usually enough for this role — do not build matrix baselines (`{1k,10k,100k} × {1,4,16}`) as per-PR gates; the signal-to-noise ratio does not justify the runtime cost.
+
+Rationale: a 17 ms monolithic bench cannot localize which of 12 extracted functions regressed 2%. Per-function microbenches can. This matters whenever the refactor goal states "zero performance loss".
+
+## Performance Budget
+
+- Newly-extracted pure functions MUST include a criterion microbench in the same commit as the extraction. New kernels MUST include a criterion microbench.
+- Per-extraction microbench gate: extracted ≤ +1% vs. `#[inline(never)]` sentinel; caller ≤ +2%.
+- End-to-end bench gate: ≤ +10% (catastrophic alarm only); sustained incremental drift above +5% requires a profiler report and HPC review.
+- O(N²) algorithms require justification (testing-only).
+
+## Compliance Checklist
 
 - [ ] No allocation in inner loops
-- [ ] Flat `&[F]` for coordinate access in kernels
-- [ ] No unnecessary f64<->f32 conversions
-- [ ] Rayon used where applicable (with `#[cfg(feature = "rayon")]`)
-- [ ] No `BruteForce` neighbor list in production paths
-- [ ] PairVisitor used for zero-allocation pair traversal
+- [ ] Flat `&[F]` for kernel coordinate access
+- [ ] No spurious `f32 ↔ f64` conversions
+- [ ] Rayon used where applicable, gated on `#[cfg(feature = "rayon")]`
+- [ ] No `BruteForce` in production paths
+- [ ] `PairVisitor` used for pair traversal
 - [ ] SIMD-friendly loop structure (no branches)
 - [ ] Benchmark included for new kernels
 - [ ] No regression in existing benchmarks
+- [ ] For extractions from hot-path monoliths: `#[cfg(bench)] #[inline(never)]` sentinel + function microbench + caller microbench all landed in the same commit as the extraction
+- [ ] Per-extraction microbench gate ≤ +1% vs. sentinel; caller gate ≤ +2%
+- [ ] End-to-end catastrophic alarm bench present where monolithic paths still exist (≤ +10% gate)

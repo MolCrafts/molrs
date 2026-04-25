@@ -32,7 +32,7 @@ use pyo3::prelude::*;
 /// box = Box.ortho(np.array([10, 20, 30]))    # orthorhombic
 /// print(box.volume())                        # 6000.0
 /// ```
-#[pyclass(name = "SimBox", from_py_object)]
+#[pyclass(name = "Box", from_py_object)]
 #[derive(Clone)]
 pub struct PyBox {
     pub(crate) inner: SimBox,

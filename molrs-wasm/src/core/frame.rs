@@ -28,18 +28,15 @@
 //! bonds.setColF("order", bondOrders);
 //! ```
 
-use std::cell::RefCell;
-use std::rc::Rc;
-
 use js_sys::Array as JsArray;
 use wasm_bindgen::prelude::*;
 
 use molrs::block::Block as RsBlock;
-use molrs_ffi::{FrameId as FFIFrameId, Store as FFIStore};
+use molrs_ffi::{BlockRef, FrameRef};
 
 use super::block::Block;
 use super::grid::Grid;
-use super::{SharedStore, js_err};
+use super::js_err;
 
 /// Hierarchical data container mapping string keys to typed [`Block`]s.
 ///
@@ -65,8 +62,10 @@ use super::{SharedStore, js_err};
 /// ```
 #[wasm_bindgen]
 pub struct Frame {
-    id: FFIFrameId,
-    store: SharedStore,
+    /// Paired frame id + shared store. All lifetime management lives in
+    /// the shared `molrs_ffi::FrameRef` type so each binding layer (wasm,
+    /// python, capi) has only the attribute plumbing to write.
+    pub(crate) inner: FrameRef,
 }
 
 #[wasm_bindgen]
@@ -80,9 +79,9 @@ impl Frame {
     /// ```
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
-        let store = Rc::new(RefCell::new(FFIStore::new()));
-        let id = store.borrow_mut().frame_new();
-        Frame { id, store }
+        Frame {
+            inner: FrameRef::new_standalone(),
+        }
     }
 
     /// Create a new empty [`Block`] and register it under `key`.
@@ -111,18 +110,19 @@ impl Frame {
     #[wasm_bindgen(js_name = createBlock)]
     pub fn create_block(&self, key: &str) -> Result<Block, JsValue> {
         let rs_block = RsBlock::new();
-        self.store
+        self.inner
+            .store
             .borrow_mut()
-            .set_block(self.id, key, rs_block)
+            .set_block(self.inner.id, key, rs_block)
             .map_err(js_err)?;
         let handle = self
+            .inner
             .store
             .borrow()
-            .get_block(self.id, key)
+            .get_block(self.inner.id, key)
             .map_err(js_err)?;
         Ok(Block {
-            handle,
-            store: self.store.clone(),
+            inner: BlockRef::new(self.inner.store.clone(), handle),
         })
     }
 
@@ -147,10 +147,14 @@ impl Frame {
     /// ```
     #[wasm_bindgen(js_name = getBlock)]
     pub fn get_block(&self, key: &str) -> Option<Block> {
-        let handle = self.store.borrow().get_block(self.id, key).ok()?;
+        let handle = self
+            .inner
+            .store
+            .borrow()
+            .get_block(self.inner.id, key)
+            .ok()?;
         Some(Block {
-            handle,
-            store: self.store.clone(),
+            inner: BlockRef::new(self.inner.store.clone(), handle),
         })
     }
 
@@ -180,14 +184,11 @@ impl Frame {
     /// ```
     #[wasm_bindgen(js_name = insertBlock)]
     pub fn insert_block(&self, key: &str, block: Block) -> Result<(), JsValue> {
-        let rs_block = block
+        let rs_block = block.inner.clone_block().map_err(js_err)?;
+        self.inner
             .store
-            .borrow()
-            .clone_block(&block.handle)
-            .map_err(js_err)?;
-        self.store
             .borrow_mut()
-            .set_block(self.id, key, rs_block)
+            .set_block(self.inner.id, key, rs_block)
             .map_err(js_err)
     }
 
@@ -209,9 +210,10 @@ impl Frame {
     /// ```
     #[wasm_bindgen(js_name = removeBlock)]
     pub fn remove_block(&self, key: &str) -> Result<(), JsValue> {
-        self.store
+        self.inner
+            .store
             .borrow_mut()
-            .remove_block(self.id, key)
+            .remove_block(self.inner.id, key)
             .map_err(js_err)
     }
 
@@ -228,7 +230,11 @@ impl Frame {
     /// ```
     #[wasm_bindgen(js_name = clear)]
     pub fn clear(&self) -> Result<(), JsValue> {
-        self.store.borrow_mut().clear_frame(self.id).map_err(js_err)
+        self.inner
+            .store
+            .borrow_mut()
+            .clear_frame(self.inner.id)
+            .map_err(js_err)
     }
 
     /// Rename a block from `old_key` to `new_key`.
@@ -254,9 +260,10 @@ impl Frame {
     /// ```
     #[wasm_bindgen(js_name = renameBlock)]
     pub fn rename_block(&self, old_key: &str, new_key: &str) -> Result<bool, JsValue> {
-        self.store
+        self.inner
+            .store
             .borrow_mut()
-            .with_frame_mut(self.id, |f| f.rename_block(old_key, new_key))
+            .with_frame_mut(self.inner.id, |f| f.rename_block(old_key, new_key))
             .map_err(js_err)
     }
 
@@ -289,9 +296,12 @@ impl Frame {
         old_col: &str,
         new_col: &str,
     ) -> Result<bool, JsValue> {
-        self.store
+        self.inner
+            .store
             .borrow_mut()
-            .with_frame_mut(self.id, |f| f.rename_column(block_key, old_col, new_col))
+            .with_frame_mut(self.inner.id, |f| {
+                f.rename_column(block_key, old_col, new_col)
+            })
             .map_err(js_err)
     }
 
@@ -304,9 +314,10 @@ impl Frame {
     /// ```
     #[wasm_bindgen(js_name = gridNames)]
     pub fn grid_names(&self) -> Result<JsArray, JsValue> {
-        self.store
+        self.inner
+            .store
             .borrow()
-            .with_frame(self.id, |frame| {
+            .with_frame(self.inner.id, |frame| {
                 let names = JsArray::new();
                 for name in frame.grid_keys() {
                     names.push(&JsValue::from_str(name));
@@ -329,9 +340,10 @@ impl Frame {
     /// ```
     #[wasm_bindgen(js_name = hasGrid)]
     pub fn has_grid(&self, name: &str) -> Result<bool, JsValue> {
-        self.store
+        self.inner
+            .store
             .borrow()
-            .with_frame(self.id, |frame| frame.has_grid(name))
+            .with_frame(self.inner.id, |frame| frame.has_grid(name))
             .map_err(js_err)
     }
 
@@ -356,9 +368,10 @@ impl Frame {
     /// ```
     #[wasm_bindgen(js_name = getGrid)]
     pub fn get_grid(&self, name: &str) -> Result<Option<Grid>, JsValue> {
-        self.store
+        self.inner
+            .store
             .borrow()
-            .with_frame(self.id, |frame| {
+            .with_frame(self.inner.id, |frame| {
                 frame.get_grid(name).map(|g| Grid::from_rs(g.clone()))
             })
             .map_err(js_err)
@@ -388,9 +401,10 @@ impl Frame {
     /// ```
     #[wasm_bindgen(js_name = insertGrid)]
     pub fn insert_grid(&self, name: &str, grid: Grid) -> Result<(), JsValue> {
-        self.store
+        self.inner
+            .store
             .borrow_mut()
-            .with_frame_mut(self.id, |frame| {
+            .with_frame_mut(self.inner.id, |frame| {
                 frame.insert_grid(name, grid.into_rs());
             })
             .map_err(js_err)
@@ -413,10 +427,101 @@ impl Frame {
     /// ```
     #[wasm_bindgen(js_name = removeGrid)]
     pub fn remove_grid(&self, name: &str) -> Result<(), JsValue> {
-        self.store
+        self.inner
+            .store
             .borrow_mut()
-            .with_frame_mut(self.id, |frame| {
+            .with_frame_mut(self.inner.id, |frame| {
                 frame.remove_grid(name);
+            })
+            .map_err(js_err)
+    }
+
+    /// Read a per-frame metadata value as a numeric scalar.
+    ///
+    /// Returns `Some(v)` if the meta key exists AND its string value parses
+    /// as an `f64`. Returns `None` if the key is missing or the value is
+    /// non-numeric (e.g., `config="trans"`).
+    ///
+    /// `frame.meta` is a `HashMap<String, String>`; the ExtXYZ parser stores
+    /// all comment-line values as strings. This accessor reads numeric ones
+    /// via `str::parse::<f64>`.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` — Meta key to look up (e.g., `"energy"`, `"temp"`).
+    ///
+    /// # Example (JavaScript)
+    ///
+    /// ```js
+    /// const energy = frame.getMetaScalar("energy");
+    /// if (energy !== undefined) {
+    ///   console.log("Energy:", energy);
+    /// }
+    /// ```
+    #[wasm_bindgen(js_name = getMetaScalar)]
+    pub fn get_meta_scalar(&self, name: &str) -> Option<f64> {
+        self.inner
+            .store
+            .borrow()
+            .with_frame(self.inner.id, |frame| {
+                frame.meta.get(name).and_then(|s| s.parse::<f64>().ok())
+            })
+            .ok()?
+    }
+
+    /// Return the names of all metadata keys on this frame.
+    ///
+    /// Includes all keys regardless of whether their values are numeric
+    /// or categorical. To filter to numeric keys, iterate and call
+    /// [`getMetaScalar`](Self::get_meta_scalar) on each.
+    ///
+    /// # Example (JavaScript)
+    ///
+    /// ```js
+    /// const names = frame.metaNames(); // e.g. ["energy", "config", "temp"]
+    /// ```
+    #[wasm_bindgen(js_name = metaNames)]
+    pub fn meta_names(&self) -> Vec<String> {
+        self.inner
+            .store
+            .borrow()
+            .with_frame(self.inner.id, |frame| {
+                frame.meta.keys().cloned().collect::<Vec<String>>()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Set a per-frame metadata value.
+    ///
+    /// Stores `value` as the string backing for `name` on `frame.meta`.
+    /// Numeric values are read back via
+    /// [`getMetaScalar`](Self::get_meta_scalar) by parsing the string
+    /// form. `frame.meta` is the single source of truth for per-frame
+    /// scalars — no separate aggregation layer is needed on the JS side.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` — Meta key (e.g., `"energy"`, `"temp"`).
+    /// * `value` — String value. For numeric labels, the caller is
+    ///   responsible for converting (e.g., `num.toString()`).
+    ///
+    /// # Errors
+    ///
+    /// Throws a `JsValue` string if the frame has been dropped.
+    ///
+    /// # Example (JavaScript)
+    ///
+    /// ```js
+    /// frame.setMeta("energy", "-3.14");
+    /// frame.setMeta("note", "run-42");
+    /// ```
+    #[wasm_bindgen(js_name = setMeta)]
+    pub fn set_meta(&self, name: &str, value: &str) -> Result<(), JsValue> {
+        self.inner
+            .store
+            .borrow_mut()
+            .with_frame_mut(self.inner.id, |frame| {
+                frame.meta.insert(name.to_string(), value.to_string());
             })
             .map_err(js_err)
     }
@@ -438,9 +543,10 @@ impl Frame {
     /// ```
     #[wasm_bindgen(getter, js_name = simbox)]
     pub fn get_simbox(&self) -> Option<super::region::simbox::Box> {
-        self.store
+        self.inner
+            .store
             .borrow()
-            .with_frame_simbox(self.id, |sb| {
+            .with_frame_simbox(self.inner.id, |sb| {
                 sb.map(|s| super::region::simbox::Box { inner: s.clone() })
             })
             .ok()?
@@ -467,9 +573,10 @@ impl Frame {
     /// ```
     #[wasm_bindgen(setter, js_name = simbox)]
     pub fn set_simbox(&self, simbox: Option<super::region::simbox::Box>) -> Result<(), JsValue> {
-        self.store
+        self.inner
+            .store
             .borrow_mut()
-            .set_frame_simbox(self.id, simbox.map(|b| b.inner))
+            .set_frame_simbox(self.inner.id, simbox.map(|b| b.inner))
             .map_err(js_err)
     }
 
@@ -491,7 +598,11 @@ impl Frame {
     /// ```
     #[wasm_bindgen(js_name = drop)]
     pub fn drop_frame(&self) -> Result<(), JsValue> {
-        self.store.borrow_mut().frame_drop(self.id).map_err(js_err)
+        self.inner
+            .store
+            .borrow_mut()
+            .frame_drop(self.inner.id)
+            .map_err(js_err)
     }
 }
 
@@ -503,15 +614,28 @@ impl Default for Frame {
 
 /// Internal helpers (not exposed to JS).
 impl Frame {
-    pub(crate) fn from_rs_frame(rs_frame: molrs::frame::Frame) -> Result<Self, JsValue> {
-        let store = Rc::new(RefCell::new(FFIStore::new()));
+    pub(crate) fn from_rs(rs_frame: molrs::frame::Frame) -> Result<Self, JsValue> {
+        let store = molrs_ffi::new_shared();
         let id = store.borrow_mut().frame_new();
         store.borrow_mut().set_frame(id, rs_frame).map_err(js_err)?;
-        Ok(Frame { id, store })
+        Ok(Frame {
+            inner: FrameRef::new(store, id),
+        })
     }
 
-    pub(crate) fn clone_core_frame(&self) -> Result<molrs::frame::Frame, JsValue> {
-        self.store.borrow().clone_frame(self.id).map_err(js_err)
+    /// Borrow the inner core frame for the duration of a closure.
+    ///
+    /// Zero-copy: no deep clone. The closure runs while the FFI store is
+    /// immutably borrowed, so it must not attempt to mutate the store.
+    pub(crate) fn with_frame<R>(
+        &self,
+        f: impl FnOnce(&molrs::frame::Frame) -> Result<R, JsValue>,
+    ) -> Result<R, JsValue> {
+        self.inner
+            .store
+            .borrow()
+            .with_frame(self.inner.id, f)
+            .map_err(js_err)?
     }
 }
 
@@ -526,5 +650,46 @@ mod tests {
         assert!(frame.clear().is_ok());
         frame.drop_frame().unwrap();
         assert!(frame.clear().is_err());
+    }
+
+    /// Helper: build a wrapped `Frame` with two meta entries mirroring what
+    /// an ExtXYZ parser would emit for `energy=-1.23 config=trans`.
+    fn frame_with_meta() -> Frame {
+        let mut rs_frame = molrs::frame::Frame::new();
+        rs_frame
+            .meta
+            .insert("energy".to_string(), "-1.23".to_string());
+        rs_frame
+            .meta
+            .insert("config".to_string(), "trans".to_string());
+        Frame::from_rs(rs_frame).unwrap()
+    }
+
+    #[wasm_bindgen_test]
+    fn get_meta_scalar_parses_numeric() {
+        let frame = frame_with_meta();
+        let energy = frame.get_meta_scalar("energy").unwrap();
+        assert!((energy - (-1.23)).abs() < 1e-10);
+    }
+
+    #[wasm_bindgen_test]
+    fn get_meta_scalar_none_for_non_numeric() {
+        let frame = frame_with_meta();
+        assert!(frame.get_meta_scalar("config").is_none());
+    }
+
+    #[wasm_bindgen_test]
+    fn get_meta_scalar_none_for_missing_key() {
+        let frame = frame_with_meta();
+        assert!(frame.get_meta_scalar("missing").is_none());
+    }
+
+    #[wasm_bindgen_test]
+    fn meta_names_contains_all_keys() {
+        let frame = frame_with_meta();
+        let names = frame.meta_names();
+        assert_eq!(names.len(), 2);
+        assert!(names.contains(&"energy".to_string()));
+        assert!(names.contains(&"config".to_string()));
     }
 }

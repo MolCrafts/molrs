@@ -15,6 +15,7 @@
 use crate::helpers::NpF;
 use crate::simbox::PyBox;
 use molrs::neighbors::{NeighborList as RsNeighborList, NeighborQuery, QueryMode};
+use ndarray::ArrayView1;
 use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray2};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -65,25 +66,40 @@ pub struct PyNeighborList {
 impl PyNeighborList {
     /// Query-point indices, one per pair.
     ///
-    /// Returns
-    /// -------
-    /// numpy.ndarray, shape (n_pairs,), dtype uint32
-    #[getter]
-    fn query_point_indices<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<u32>> {
-        self.inner.query_point_indices().to_vec().into_pyarray(py)
-    }
-
-    /// Reference-point indices, one per pair.
+    /// Returns a zero-copy numpy view into the underlying Rust `Vec<u32>`.
+    /// Pinned alive via numpy's `.base` mechanism: the returned array keeps
+    /// this `NeighborList` alive for as long as it is referenced from Python.
     ///
     /// Returns
     /// -------
     /// numpy.ndarray, shape (n_pairs,), dtype uint32
     #[getter]
-    fn point_indices<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<u32>> {
-        self.inner.point_indices().to_vec().into_pyarray(py)
+    fn query_point_indices<'py>(slf: Bound<'py, Self>) -> Bound<'py, PyArray1<u32>> {
+        let owner = slf.clone().into_any();
+        let borrowed = slf.borrow();
+        let view = ArrayView1::from(borrowed.inner.query_point_indices());
+        unsafe { PyArray1::<u32>::borrow_from_array(&view, owner) }
+    }
+
+    /// Reference-point indices, one per pair.
+    ///
+    /// Zero-copy view; see [`query_point_indices`].
+    ///
+    /// Returns
+    /// -------
+    /// numpy.ndarray, shape (n_pairs,), dtype uint32
+    #[getter]
+    fn point_indices<'py>(slf: Bound<'py, Self>) -> Bound<'py, PyArray1<u32>> {
+        let owner = slf.clone().into_any();
+        let borrowed = slf.borrow();
+        let view = ArrayView1::from(borrowed.inner.point_indices());
+        unsafe { PyArray1::<u32>::borrow_from_array(&view, owner) }
     }
 
     /// Euclidean distances, one per pair.
+    ///
+    /// This getter *must* allocate because distances are stored as squared
+    /// distances internally (`sqrt` applied on access).
     ///
     /// Returns
     /// -------
@@ -95,12 +111,17 @@ impl PyNeighborList {
 
     /// Squared distances, one per pair.
     ///
+    /// Zero-copy view into the underlying Rust `Vec<f64>`.
+    ///
     /// Returns
     /// -------
     /// numpy.ndarray, shape (n_pairs,), dtype float
     #[getter]
-    fn dist_sq<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<NpF>> {
-        self.inner.dist_sq().to_vec().into_pyarray(py)
+    fn dist_sq<'py>(slf: Bound<'py, Self>) -> Bound<'py, PyArray1<NpF>> {
+        let owner = slf.clone().into_any();
+        let borrowed = slf.borrow();
+        let view = ArrayView1::from(borrowed.inner.dist_sq());
+        unsafe { PyArray1::<NpF>::borrow_from_array(&view, owner) }
     }
 
     /// Number of neighbor pairs.

@@ -1,0 +1,16 @@
+use std::path::PathBuf;
+
+pub fn get_test_data_path(relative_path: &str) -> PathBuf {
+    // Test data lives in molrs-core/target/tests-data (fetched by scripts/fetch-test-data.sh)
+    let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+    let dir = PathBuf::from(manifest)
+        .parent()
+        .unwrap()
+        .join("molrs-core/target/tests-data");
+
+    if !dir.exists() {
+        panic!("Test data directory not found. Run: scripts/fetch-test-data.sh");
+    }
+
+    dir.join(relative_path)
+}
