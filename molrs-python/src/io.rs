@@ -16,7 +16,9 @@ use crate::molgraph::PyAtomistic;
 use molrs_io::chgcar::read_chgcar;
 use molrs_io::cube::{read_cube, write_cube};
 use molrs_io::lammps_data::{read_lammps_data, write_lammps_data};
-use molrs_io::lammps_dump::{LAMMPSTrajReader, open_lammps_dump, read_lammps_dump, write_lammps_dump};
+use molrs_io::lammps_dump::{
+    LAMMPSTrajReader, open_lammps_dump, read_lammps_dump, write_lammps_dump,
+};
 use molrs_io::pdb::{read_pdb_frame, write_pdb_frame};
 use molrs_io::reader::{ReadSeek, TrajReader};
 use molrs_io::xyz::{read_xyz_frame, read_xyz_traj, write_xyz_frame};
@@ -439,7 +441,7 @@ pub fn write_lammps_traj(path: &str, frames: Vec<PyRef<'_, PyFrame>>) -> PyResul
 /// 3
 #[pyclass(name = "SmilesIR", unsendable)]
 pub struct PySmilesIR {
-    inner: molrs_smiles::SmilesIR,
+    inner: molrs_io::smiles::SmilesIR,
     input: String,
 }
 
@@ -481,7 +483,7 @@ impl PySmilesIR {
     /// >>> mol.n_atoms
     /// 6
     fn to_atomistic(&self) -> PyResult<PyAtomistic> {
-        let mol = molrs_smiles::to_atomistic(&self.inner).map_err(smiles_error_to_pyerr)?;
+        let mol = molrs_io::smiles::to_atomistic(&self.inner).map_err(smiles_error_to_pyerr)?;
         Ok(PyAtomistic { inner: mol })
     }
 
@@ -522,7 +524,7 @@ impl PySmilesIR {
 /// 3
 #[pyfunction]
 pub fn parse_smiles(smiles: &str) -> PyResult<PySmilesIR> {
-    let ir = molrs_smiles::parse_smiles(smiles).map_err(smiles_error_to_pyerr)?;
+    let ir = molrs_io::smiles::parse_smiles(smiles).map_err(smiles_error_to_pyerr)?;
     Ok(PySmilesIR {
         inner: ir,
         input: smiles.to_owned(),
