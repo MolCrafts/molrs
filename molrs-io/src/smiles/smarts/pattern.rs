@@ -13,8 +13,8 @@
 //! # Example
 //!
 //! ```
-//! use molrs_smiles::smarts::{SmartsPattern, SubstructureMatcher};
-//! use molrs_smiles::{parse_smiles, to_atomistic};
+//! use molrs_io::smiles::smarts::{SmartsPattern, SubstructureMatcher};
+//! use molrs_io::smiles::{parse_smiles, to_atomistic};
 //!
 //! let pat = SmartsPattern::compile("[C;X4]").unwrap();
 //! let mol = to_atomistic(&parse_smiles("CC").unwrap()).unwrap();
@@ -27,11 +27,11 @@ use std::fmt;
 
 use petgraph::graph::UnGraph;
 
-use crate::chem::ast::{
+use crate::smiles::chem::ast::{
     AtomNode, AtomPrimitive, AtomQuery, AtomSpec, BondKind, BondQuery, Chain, ChainElement, Span,
 };
-use crate::error::{SmilesError, SmilesErrorKind};
-use crate::parser::parse_smarts;
+use crate::smiles::error::{SmilesError, SmilesErrorKind};
+use crate::smiles::parser::parse_smarts;
 
 use super::validate::validate_smarts;
 
@@ -119,7 +119,7 @@ impl SmartsPattern {
     /// # Examples
     ///
     /// ```
-    /// use molrs_smiles::smarts::SmartsPattern;
+    /// use molrs_io::smiles::smarts::SmartsPattern;
     ///
     /// let pat = SmartsPattern::compile("[C;X4]").unwrap();
     /// assert!(SmartsPattern::compile("").is_err());
@@ -258,13 +258,13 @@ fn atom_spec_to_query(spec: &AtomSpec) -> AtomQuery {
 
 fn bracket_to_query(
     isotope: Option<u16>,
-    symbol: &crate::chem::ast::BracketSymbol,
-    chirality: Option<crate::chem::ast::Chirality>,
+    symbol: &crate::smiles::chem::ast::BracketSymbol,
+    chirality: Option<crate::smiles::chem::ast::Chirality>,
     hcount: Option<u8>,
     charge: Option<i8>,
     atom_class: Option<u16>,
 ) -> AtomQuery {
-    use crate::chem::ast::BracketSymbol;
+    use crate::smiles::chem::ast::BracketSymbol;
 
     let mut parts: Vec<AtomQuery> = Vec::new();
 

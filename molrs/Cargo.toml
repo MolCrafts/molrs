@@ -22,7 +22,9 @@ full = ["io", "compute", "smiles", "ff", "embed"]
 # Sub-crate features.
 io       = ["dep:molrs_io"]
 compute  = ["dep:molrs_compute"]
-smiles   = ["dep:molrs_smiles"]
+# `smiles` lives inside molrs-io; activating it pulls in molrs-io with the
+# matching feature flag.
+smiles   = ["dep:molrs_io", "molrs_io/smiles"]
 ff       = ["dep:molrs_ff"]
 embed    = ["dep:molrs_embed"]
 # Re-export of molrs-core feature flags.
@@ -35,6 +37,5 @@ blas        = ["molrs/blas"]
 molrs         = { workspace = true }
 molrs_io      = { workspace = true, optional = true }
 molrs_compute = { workspace = true, optional = true }
-molrs_smiles  = { workspace = true, optional = true }
 molrs_ff      = { workspace = true, optional = true }
 molrs_embed   = { workspace = true, optional = true }

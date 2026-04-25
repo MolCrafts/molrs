@@ -30,7 +30,7 @@ use molrs::element::Element;
 use molrs::molgraph::{AtomId, MolGraph};
 use molrs::rings::RingInfo;
 
-use crate::chem::ast::{AtomPrimitive, AtomQuery, BondKind, BondQuery};
+use crate::smiles::chem::ast::{AtomPrimitive, AtomQuery, BondKind, BondQuery};
 
 /// Precomputed target-side data shared across all predicate evaluations for a
 /// given target molecule.
@@ -304,7 +304,7 @@ fn bond_kind_matches(kind: BondKind, order: f64, in_ring: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{parse_smiles, to_atomistic};
+    use crate::smiles::{parse_smiles, to_atomistic};
 
     fn mol(smiles: &str) -> molrs::atomistic::Atomistic {
         to_atomistic(&parse_smiles(smiles).unwrap()).unwrap()

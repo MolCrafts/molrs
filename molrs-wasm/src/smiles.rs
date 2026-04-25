@@ -43,7 +43,7 @@ use wasm_bindgen::prelude::*;
 /// ```
 #[wasm_bindgen(js_name = SmilesIR)]
 pub struct WasmSmilesIR {
-    inner: molrs_smiles::SmilesIR,
+    inner: molrs_io::smiles::SmilesIR,
 }
 
 #[wasm_bindgen(js_class = SmilesIR)]
@@ -93,7 +93,7 @@ impl WasmSmilesIR {
     /// ```
     #[wasm_bindgen(js_name = toFrame)]
     pub fn to_frame(&self) -> Result<Frame, JsValue> {
-        let mol = molrs_smiles::to_atomistic(&self.inner)
+        let mol = molrs_io::smiles::to_atomistic(&self.inner)
             .map_err(|e| JsValue::from_str(&format!("IR -> Atomistic: {e}")))?;
         Frame::from_rs(mol.to_frame())
     }
@@ -128,7 +128,7 @@ impl WasmSmilesIR {
 /// ```
 #[wasm_bindgen(js_name = parseSMILES)]
 pub fn parse_smiles(smiles: &str) -> Result<WasmSmilesIR, JsValue> {
-    let inner = molrs_smiles::parse_smiles(smiles)
+    let inner = molrs_io::smiles::parse_smiles(smiles)
         .map_err(|e| JsValue::from_str(&format!("SMILES parse error: {e}")))?;
     Ok(WasmSmilesIR { inner })
 }

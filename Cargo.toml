@@ -4,7 +4,6 @@ members = [
     "molrs-core",
     "molrs-io",
     "molrs-compute",
-    "molrs-smiles",
     "molrs-ff",
     "molrs-embed",
     "molrs-cxxapi",
@@ -27,7 +26,6 @@ homepage = "https://github.com/MolCrafts/molrs"
 molrs         = { path = "molrs-core",    version = "0.0.12", package = "molcrafts-molrs-core", default-features = false }
 molrs_io      = { path = "molrs-io",      version = "0.0.12", package = "molcrafts-molrs-io" }
 molrs_compute = { path = "molrs-compute", version = "0.0.12", package = "molcrafts-molrs-compute" }
-molrs_smiles  = { path = "molrs-smiles",  version = "0.0.12", package = "molcrafts-molrs-smiles" }
 molrs_ff      = { path = "molrs-ff",      version = "0.0.12", package = "molcrafts-molrs-ff" }
 molrs_embed   = { path = "molrs-embed",   version = "0.0.12", package = "molcrafts-molrs-embed" }
 molrs_cxxapi  = { path = "molrs-cxxapi",  version = "0.0.12", package = "molcrafts-molrs-cxxapi" }

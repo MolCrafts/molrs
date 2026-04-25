@@ -3,11 +3,11 @@
 //! SMARTS validation is laxer than SMILES on element symbols — query primitives
 //! may stand in for concrete elements — but ring-closure correctness applies
 //! equally and is delegated to
-//! [`chem::validation::validate_ring_closures`](crate::chem::validation).
+//! [`chem::validation::validate_ring_closures`](crate::smiles::chem::validation).
 
-use crate::chem::ast::SmilesIR;
-use crate::chem::validation::validate_ring_closures;
-use crate::error::SmilesError;
+use crate::smiles::chem::ast::SmilesIR;
+use crate::smiles::chem::validation::validate_ring_closures;
+use crate::smiles::error::SmilesError;
 
 /// Validate a parsed SMARTS pattern.
 ///
@@ -21,7 +21,7 @@ use crate::error::SmilesError;
 /// # Errors
 ///
 /// Returns [`SmilesError`] with
-/// [`SmilesErrorKind::UnmatchedRingClosure`](crate::error::SmilesErrorKind::UnmatchedRingClosure)
+/// [`SmilesErrorKind::UnmatchedRingClosure`](crate::smiles::error::SmilesErrorKind::UnmatchedRingClosure)
 /// if any ring-closure digit lacks a matching partner.
 pub fn validate_smarts(mol: &SmilesIR, input: &str) -> Result<(), SmilesError> {
     validate_ring_closures(mol, input)?;
@@ -31,8 +31,8 @@ pub fn validate_smarts(mol: &SmilesIR, input: &str) -> Result<(), SmilesError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error::SmilesErrorKind;
-    use crate::parser::parse_smarts;
+    use crate::smiles::error::SmilesErrorKind;
+    use crate::smiles::parser::parse_smarts;
 
     #[test]
     fn test_valid_smarts_pattern() {

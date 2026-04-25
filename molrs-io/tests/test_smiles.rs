@@ -8,8 +8,10 @@
 //!
 //! Source of truth: `docs/etkdgv3-port-spec.md` §7.1.
 
-use molrs_smiles::smarts::{Match, SmartsError, SmartsPattern, SubstructureMatcher};
-use molrs_smiles::{parse_smiles, to_atomistic};
+#![cfg(feature = "smiles")]
+
+use molrs_io::smiles::smarts::{Match, SmartsError, SmartsPattern, SubstructureMatcher};
+use molrs_io::smiles::{parse_smiles, to_atomistic};
 
 /// Build a MolGraph target from a SMILES string. Centralized here so every
 /// matcher test exercises the same ingestion path.

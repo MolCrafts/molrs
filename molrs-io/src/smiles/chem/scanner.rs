@@ -2,8 +2,8 @@
 //!
 //! SMILES is pure ASCII, so byte indexing is safe and efficient.
 
-use crate::chem::ast::Span;
-use crate::error::{SmilesError, SmilesErrorKind};
+use crate::smiles::chem::ast::Span;
+use crate::smiles::error::{SmilesError, SmilesErrorKind};
 
 /// Zero-allocation cursor over a SMILES/SMARTS input string.
 pub(crate) struct Scanner<'a> {

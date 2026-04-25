@@ -7,8 +7,8 @@
 
 use std::collections::HashMap;
 
-use crate::chem::ast::{Chain, ChainElement, SmilesIR, Span};
-use crate::error::{SmilesError, SmilesErrorKind};
+use crate::smiles::chem::ast::{Chain, ChainElement, SmilesIR, Span};
+use crate::smiles::error::{SmilesError, SmilesErrorKind};
 
 /// Ensure every ring-closure digit is opened and closed exactly once.
 ///

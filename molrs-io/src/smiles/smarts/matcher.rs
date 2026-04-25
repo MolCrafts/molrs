@@ -26,7 +26,7 @@
 use molrs::molgraph::{AtomId, MolGraph};
 use petgraph::graph::UnGraph;
 
-use crate::chem::ast::{AtomPrimitive, AtomQuery, BondQuery, SmilesIR};
+use crate::smiles::chem::ast::{AtomPrimitive, AtomQuery, BondQuery, SmilesIR};
 
 use super::pattern::{ComponentGraph, SmartsError, SmartsPattern};
 use super::predicate::{BondEdge, TargetCtx, eval_atom_query, eval_bond_query};
@@ -77,8 +77,8 @@ pub trait SubstructureMatcher: Send + Sync {
     /// # Examples
     ///
     /// ```
-    /// use molrs_smiles::smarts::{SmartsPattern, SubstructureMatcher};
-    /// use molrs_smiles::{parse_smiles, to_atomistic};
+    /// use molrs_io::smiles::smarts::{SmartsPattern, SubstructureMatcher};
+    /// use molrs_io::smiles::{parse_smiles, to_atomistic};
     ///
     /// let pat = SmartsPattern::compile("[C;X4]").unwrap();
     /// let mol = to_atomistic(&parse_smiles("CCO").unwrap()).unwrap();

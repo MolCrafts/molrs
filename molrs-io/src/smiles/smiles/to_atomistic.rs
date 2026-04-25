@@ -12,8 +12,8 @@
 
 use std::collections::HashMap;
 
-use crate::chem::ast::*;
-use crate::error::{SmilesError, SmilesErrorKind};
+use crate::smiles::chem::ast::*;
+use crate::smiles::error::{SmilesError, SmilesErrorKind};
 use molrs::atomistic::Atomistic;
 use molrs::molgraph::{AtomId, PropValue};
 
@@ -21,7 +21,7 @@ use molrs::molgraph::{AtomId, PropValue};
 ///
 /// This resolves ring closures into bonds, sets atom properties (charge,
 /// isotope, chirality), and records bond orders. Implicit hydrogens are
-/// **not** added — call [`add_hydrogens`](crate::add_hydrogens) separately
+/// **not** added — call [`add_hydrogens`](crate::smiles::add_hydrogens) separately
 /// if needed.
 ///
 /// # Errors
@@ -32,7 +32,7 @@ use molrs::molgraph::{AtomId, PropValue};
 /// # Examples
 ///
 /// ```
-/// use molrs_smiles::{parse_smiles, to_atomistic};
+/// use molrs_io::smiles::{parse_smiles, to_atomistic};
 ///
 /// let ir = parse_smiles("C(=O)O").unwrap();
 /// let mol = to_atomistic(&ir).unwrap();
@@ -74,7 +74,7 @@ fn bond_query_to_kind(q: Option<&BondQuery>) -> Result<Option<BondKind>, SmilesE
             SmilesErrorKind::InvalidQueryPrimitive(
                 "SMARTS bond query cannot be atomized".to_owned(),
             ),
-            crate::chem::ast::Span::new(0, 0),
+            crate::smiles::chem::ast::Span::new(0, 0),
             "",
         )),
     }
@@ -335,7 +335,7 @@ fn bond_kind_to_order(kind: BondKind) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parse_smiles;
+    use crate::smiles::parse_smiles;
 
     fn smiles_to_mol(input: &str) -> Atomistic {
         let ir = parse_smiles(input).unwrap();
@@ -518,7 +518,7 @@ mod tests {
 
     #[test]
     fn test_smarts_query_rejected() {
-        let ir = crate::parse_smarts("[!C]").unwrap();
+        let ir = crate::smiles::parse_smarts("[!C]").unwrap();
         let err = to_atomistic(&ir);
         assert!(err.is_err());
     }

@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use crate::chem::ast::Span;
+use crate::smiles::chem::ast::Span;
 use molrs::error::MolRsError;
 
 /// Error produced by the SMILES / SMARTS parser or validator.

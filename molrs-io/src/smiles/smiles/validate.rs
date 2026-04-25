@@ -4,13 +4,13 @@
 //! This module adds SMILES-specific semantic checks:
 //!
 //! * Ring closures must come in matched pairs (shared with SMARTS via
-//!   [`chem::validation::validate_ring_closures`](crate::chem::validation)).
+//!   [`chem::validation::validate_ring_closures`](crate::smiles::chem::validation)).
 //! * Element symbols must refer to real elements (SMILES-specific; SMARTS
 //!   permits query primitives in their place).
 
-use crate::chem::ast::*;
-use crate::chem::validation::validate_ring_closures;
-use crate::error::{SmilesError, SmilesErrorKind};
+use crate::smiles::chem::ast::*;
+use crate::smiles::chem::validation::validate_ring_closures;
+use crate::smiles::error::{SmilesError, SmilesErrorKind};
 use molrs::element::Element;
 
 /// Validate a parsed SMILES molecule.
@@ -95,7 +95,7 @@ fn validate_symbol(symbol: &str, span: Span, input: &str) -> Result<(), SmilesEr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::parse_smiles;
+    use crate::smiles::parser::parse_smiles;
 
     #[test]
     fn test_valid_smiles() {

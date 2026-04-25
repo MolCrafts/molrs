@@ -46,7 +46,7 @@ pub use molrs_io as io;
 pub use molrs_compute as compute;
 
 #[cfg(feature = "smiles")]
-pub use molrs_smiles as smiles;
+pub use molrs_io::smiles;
 
 #[cfg(feature = "ff")]
 pub use molrs_ff as ff;

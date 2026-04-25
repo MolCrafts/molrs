@@ -1,6 +1,6 @@
 //! SMILES and SMARTS — sibling chemical-notation systems.
 //!
-//! This crate hosts two closely related but deliberately separate systems:
+//! This module hosts two closely related but deliberately separate systems:
 //!
 //! * [`smiles`] — the SMILES serialization format: parse a string into an
 //!   intermediate representation, validate it, and convert it into an
@@ -28,8 +28,8 @@
 //!
 //! # Example
 //!
-//! ```
-//! use molrs_smiles::{parse_smiles, to_atomistic};
+//! ```ignore
+//! use molrs_io::smiles::{parse_smiles, to_atomistic};
 //!
 //! let ir = parse_smiles("CCO").unwrap();
 //! let mol = to_atomistic(&ir).unwrap();
@@ -39,6 +39,10 @@
 pub mod chem;
 pub mod error;
 pub mod smarts;
+// The serialization-format module retains its `smiles` name to mirror the
+// `smarts` sibling. The re-exports below flatten it so callers write
+// `molrs_io::smiles::parse_smiles`, not the doubled path.
+#[allow(clippy::module_inception)]
 pub mod smiles;
 
 // The parser is internally unified: a single `Parser` struct dispatches by

@@ -36,8 +36,8 @@ impl Span {
 ///
 /// This is a pure syntax tree — it captures the notation faithfully without
 /// committing to atomistic or coarse-grained semantics. Convert to
-/// [`Atomistic`](crate::atomistic::Atomistic) or
-/// [`CoarseGrain`](crate::coarsegrain::CoarseGrain) for domain use.
+/// [`Atomistic`](crate::smiles::atomistic::Atomistic) or
+/// [`CoarseGrain`](crate::smiles::coarsegrain::CoarseGrain) for domain use.
 ///
 /// Multiple disconnected components are separated by `.` in the input.
 #[derive(Debug, Clone, PartialEq)]
