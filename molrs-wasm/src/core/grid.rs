@@ -78,6 +78,7 @@ impl Grid {
     /// const grid = new Grid(10, 10, 10, origin, cell, true, true, true);
     /// ```
     #[wasm_bindgen(constructor)]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         dim_x: usize,
         dim_y: usize,

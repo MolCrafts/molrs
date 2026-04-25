@@ -182,9 +182,8 @@ fn realize_owned_mut<T: Clone>(arc: &mut Arc<ColumnHolder<T>>) -> &mut ArrayD<T>
     // in turn deep-clones the ArrayD — preserving current CoW semantics).
     let holder = Arc::make_mut(arc);
     // Step 3: holder is now guaranteed Rust-owned AND uniquely referenced.
-    // SAFETY: `holder.array` is a ManuallyDrop wrapping a live ArrayD; DerefMut
-    // through ManuallyDrop gives us a safe &mut ArrayD<T>.
-    &mut *holder.array
+    // ManuallyDrop's DerefMut gives auto-deref to &mut ArrayD<T>.
+    &mut holder.array
 }
 
 impl Column {
