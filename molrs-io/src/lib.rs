@@ -1,6 +1,7 @@
 //! IO modules: readers and format parsers.
 pub mod chgcar;
 pub mod cube;
+pub mod dcd;
 pub mod lammps_data;
 pub mod lammps_dump;
 pub mod pdb;
