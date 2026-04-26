@@ -340,7 +340,7 @@ dependencies = [
 
 [[package]]
 name = "molcrafts-molrs-capi"
-version = "0.0.13"
+version = "0.0.14"
 dependencies = [
  "cbindgen",
  "molcrafts-molrs-core",
@@ -354,7 +354,7 @@ dependencies = [
 
 [[package]]
 name = "molcrafts-molrs-core"
-version = "0.0.13"
+version = "0.0.14"
 dependencies = [
  "libm",
  "ndarray",
@@ -367,7 +367,7 @@ dependencies = [
 
 [[package]]
 name = "molcrafts-molrs-ff"
-version = "0.0.13"
+version = "0.0.14"
 dependencies = [
  "libm",
  "molcrafts-molrs-core",
@@ -379,7 +379,7 @@ dependencies = [
 
 [[package]]
 name = "molcrafts-molrs-ffi"
-version = "0.0.13"
+version = "0.0.14"
 dependencies = [
  "molcrafts-molrs-core",
  "slotmap",
@@ -387,7 +387,7 @@ dependencies = [
 
 [[package]]
 name = "molcrafts-molrs-io"
-version = "0.0.13"
+version = "0.0.14"
 dependencies = [
  "flate2",
  "molcrafts-molrs-core",

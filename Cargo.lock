@@ -866,7 +866,7 @@ dependencies = [
 
 [[package]]
 name = "molcrafts-molrs"
-version = "0.0.13"
+version = "0.0.14"
 dependencies = [
  "molcrafts-molrs-compute",
  "molcrafts-molrs-core",
@@ -877,7 +877,7 @@ dependencies = [
 
 [[package]]
 name = "molcrafts-molrs-compute"
-version = "0.0.13"
+version = "0.0.14"
 dependencies = [
  "criterion",
  "molcrafts-molrs-core",
@@ -889,7 +889,7 @@ dependencies = [
 
 [[package]]
 name = "molcrafts-molrs-core"
-version = "0.0.13"
+version = "0.0.14"
 dependencies = [
  "criterion",
  "libm",
@@ -907,7 +907,7 @@ dependencies = [
 
 [[package]]
 name = "molcrafts-molrs-cxxapi"
-version = "0.0.13"
+version = "0.0.14"
 dependencies = [
  "cxx",
  "cxx-build",
@@ -918,7 +918,7 @@ dependencies = [
 
 [[package]]
 name = "molcrafts-molrs-embed"
-version = "0.0.13"
+version = "0.0.14"
 dependencies = [
  "molcrafts-molrs-core",
  "ndarray",
@@ -928,7 +928,7 @@ dependencies = [
 
 [[package]]
 name = "molcrafts-molrs-ff"
-version = "0.0.13"
+version = "0.0.14"
 dependencies = [
  "libm",
  "molcrafts-molrs-core",
@@ -940,7 +940,7 @@ dependencies = [
 
 [[package]]
 name = "molcrafts-molrs-io"
-version = "0.0.13"
+version = "0.0.14"
 dependencies = [
  "flate2",
  "molcrafts-molrs-core",

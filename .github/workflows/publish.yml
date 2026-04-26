@@ -11,13 +11,20 @@ permissions:
 
 # Publish topology:
 #
-#                          ┌─ publish-core ─┬─ publish-io ─┬─ publish-cxxapi ─┐
-#                          │                ├─ publish-compute                 │
-#   ci ────────────────────┤                ├─ publish-smiles                  ├─ publish-facade
-#      │                   │                ├─ publish-ff                      │
-#      │                   │                └─ publish-embed ──────────────────┘
+#                          ┌─ publish-core ─┬─ publish-io ──────┐
+#                          │                ├─ publish-compute  │
+#   ci ────────────────────┤                ├─ publish-ff       ├─ publish-facade
+#      │                   │                └─ publish-embed ───┘
 #      ├─ publish-wasm
 #      └─ publish-python  (maturin publish, manylinux, trusted publishing)
+#
+# Notes:
+#   - molrs-smiles was folded into molrs-io::smiles in v0.0.13; no longer
+#     published as a standalone crate.
+#   - molrs-cxxapi is a `staticlib` consumed by the Atomiverse C++ build via
+#     CMake/corrosion (built from source), and molrs-capi is a `cdylib` linked
+#     by C/C++ apps. Neither is consumed by Rust crates, so neither is
+#     published to crates.io.
 
 jobs:
   ci:
@@ -63,19 +70,6 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
-  publish-smiles:
-    needs: publish-core
-    runs-on: ubuntu-latest
-    environment: release
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: sleep 30
-      - run: cargo publish --manifest-path molrs-smiles/Cargo.toml --dry-run
-      - run: cargo publish --manifest-path molrs-smiles/Cargo.toml
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-
   publish-ff:
     needs: publish-core
     runs-on: ubuntu-latest
@@ -102,27 +96,12 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
-  publish-cxxapi:
-    needs: publish-io
-    runs-on: ubuntu-latest
-    environment: release
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: sleep 30
-      - run: cargo publish --manifest-path molrs-cxxapi/Cargo.toml --dry-run
-      - run: cargo publish --manifest-path molrs-cxxapi/Cargo.toml
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-
   publish-facade:
     needs:
       - publish-io
       - publish-compute
-      - publish-smiles
       - publish-ff
       - publish-embed
-      - publish-cxxapi
     runs-on: ubuntu-latest
     environment: release
     steps:
