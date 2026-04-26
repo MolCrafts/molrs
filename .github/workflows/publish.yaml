@@ -4,6 +4,9 @@ on:
   push:
     tags:
       - "v*"
+  # Manual re-trigger so a single failed publish job (e.g. trusted-publishing
+  # auth glitch) can be retried without cutting a new tag.
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -25,6 +28,9 @@ permissions:
 #     CMake/corrosion (built from source), and molrs-capi is a `cdylib` linked
 #     by C/C++ apps. Neither is consumed by Rust crates, so neither is
 #     published to crates.io.
+#   - Every publish step is idempotent: it queries the registry first and
+#     skips if the current version is already published. So a partial run
+#     can be safely re-driven via workflow_dispatch.
 
 jobs:
   ci:
@@ -39,8 +45,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo publish --manifest-path molrs-core/Cargo.toml --dry-run
-      - run: cargo publish --manifest-path molrs-core/Cargo.toml
+      - name: Publish molcrafts-molrs-core (skip if already on crates.io)
+        run: bash scripts/publish-if-new.sh molrs-core/Cargo.toml molcrafts-molrs-core
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
@@ -52,8 +58,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: sleep 30
-      - run: cargo publish --manifest-path molrs-io/Cargo.toml --dry-run
-      - run: cargo publish --manifest-path molrs-io/Cargo.toml
+      - name: Publish molcrafts-molrs-io (skip if already on crates.io)
+        run: bash scripts/publish-if-new.sh molrs-io/Cargo.toml molcrafts-molrs-io
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
@@ -65,8 +71,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: sleep 30
-      - run: cargo publish --manifest-path molrs-compute/Cargo.toml --dry-run
-      - run: cargo publish --manifest-path molrs-compute/Cargo.toml
+      - name: Publish molcrafts-molrs-compute (skip if already on crates.io)
+        run: bash scripts/publish-if-new.sh molrs-compute/Cargo.toml molcrafts-molrs-compute
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
@@ -78,8 +84,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: sleep 30
-      - run: cargo publish --manifest-path molrs-ff/Cargo.toml --dry-run
-      - run: cargo publish --manifest-path molrs-ff/Cargo.toml
+      - name: Publish molcrafts-molrs-ff (skip if already on crates.io)
+        run: bash scripts/publish-if-new.sh molrs-ff/Cargo.toml molcrafts-molrs-ff
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
@@ -91,8 +97,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: sleep 30
-      - run: cargo publish --manifest-path molrs-embed/Cargo.toml --dry-run
-      - run: cargo publish --manifest-path molrs-embed/Cargo.toml
+      - name: Publish molcrafts-molrs-embed (skip if already on crates.io)
+        run: bash scripts/publish-if-new.sh molrs-embed/Cargo.toml molcrafts-molrs-embed
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
@@ -110,8 +116,8 @@ jobs:
       - uses: rust-lang/crates-io-auth-action@v1
         id: auth
       - run: sleep 30
-      - run: cargo publish --manifest-path molrs/Cargo.toml --dry-run
-      - run: cargo publish --manifest-path molrs/Cargo.toml
+      - name: Publish molcrafts-molrs (skip if already on crates.io)
+        run: bash scripts/publish-if-new.sh molrs/Cargo.toml molcrafts-molrs
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
@@ -134,9 +140,17 @@ jobs:
       - name: Build wasm package
         working-directory: molrs-wasm
         run: wasm-pack build --release --target bundler --scope molcrafts --out-name molrs
-      - name: Publish to npm
+      - name: Publish to npm (skip if already on registry)
         working-directory: molrs-wasm/pkg
-        run: npm publish --access public --provenance
+        run: |
+          set -euo pipefail
+          NAME=$(node -p "require('./package.json').name")
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
+            echo "✓ $NAME@$VERSION already on npm; skipping"
+          else
+            npm publish --access public --provenance
+          fi
 
   # ── Python (PyPI, maturin trusted publishing) ───────────────────────────────
 
@@ -146,7 +160,24 @@ jobs:
     environment: pypi
     steps:
       - uses: actions/checkout@v4
-      - uses: PyO3/maturin-action@v1
+      - name: Read python package version
+        id: pyver
+        run: |
+          set -euo pipefail
+          VERSION=$(grep -E '^version' molrs-python/Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Skip if molrs already on PyPI at this version
+        id: skip
+        run: |
+          set -euo pipefail
+          if curl -sfI "https://pypi.org/pypi/molrs/${{ steps.pyver.outputs.version }}/json" >/dev/null; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "✓ molrs ${{ steps.pyver.outputs.version }} already on PyPI; skipping"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.skip.outputs.skip != 'true'
+        uses: PyO3/maturin-action@v1
         with:
           command: publish
           working-directory: molrs-python
