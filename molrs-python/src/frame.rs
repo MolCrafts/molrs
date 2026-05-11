@@ -429,6 +429,12 @@ impl PyFrame {
             .map(|inner| PyBox { inner }))
     }
 
+    /// Alias for ``simbox`` — matches the molpy API.
+    #[getter(r#box)]
+    fn get_box_alias(&self) -> PyResult<Option<PyBox>> {
+        self.get_box()
+    }
+
     /// Set (or clear) the simulation box.
     ///
     /// Parameters
@@ -445,6 +451,12 @@ impl PyFrame {
         self.inner
             .set_simbox(simbox.map(|sb| sb.inner.clone()))
             .map_err(ffi_error_to_pyerr)
+    }
+
+    /// Setter alias for ``simbox`` — matches the molpy API.
+    #[setter(r#box)]
+    fn set_box_alias(&mut self, simbox: Option<&PyBox>) -> PyResult<()> {
+        self.set_box(simbox)
     }
 
     /// Metadata dictionary (``dict[str, str]``).

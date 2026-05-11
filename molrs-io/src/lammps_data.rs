@@ -74,10 +74,12 @@ struct LAMMPSHeader {
     num_bonds: usize,
     num_angles: usize,
     num_dihedrals: usize,
+    num_impropers: usize,
     num_atom_types: usize,
     num_bond_types: usize,
     num_angle_types: usize,
     num_dihedral_types: usize,
+    num_improper_types: usize,
     xlo: f64,
     xhi: f64,
     ylo: f64,
@@ -96,6 +98,8 @@ struct AtomData {
     molecule_id: Option<I>,
     atom_type: String, // Can be numeric or label
     charge: Option<F>,
+    bodyflag: Option<I>, // atom_style="body" only
+    mass: Option<F>,     // atom_style="body" only (per-atom mass)
     x: F,
     y: F,
     z: F,
@@ -125,6 +129,17 @@ struct AngleData {
 struct DihedralData {
     _id: I,
     dihedral_type: String, // Can be numeric or label
+    atom_i: I,
+    atom_j: I,
+    atom_k: I,
+    atom_l: I,
+}
+
+/// Improper data from Impropers section
+#[derive(Debug, Clone)]
+struct ImproperData {
+    _id: I,
+    improper_type: String, // Can be numeric or label
     atom_i: I,
     atom_j: I,
     atom_k: I,
@@ -191,6 +206,9 @@ fn parse_header_with_first_section<R: BufRead>(
             Some(&"dihedrals") if tokens.len() >= 2 => {
                 header.num_dihedrals = tokens[0].parse().map_err(err_mapper)?;
             }
+            Some(&"impropers") if tokens.len() >= 2 => {
+                header.num_impropers = tokens[0].parse().map_err(err_mapper)?;
+            }
             Some(&"types") if tokens.len() >= 3 => {
                 let count: usize = tokens[0].parse().map_err(err_mapper)?;
                 match tokens[1] {
@@ -198,6 +216,7 @@ fn parse_header_with_first_section<R: BufRead>(
                     "bond" => header.num_bond_types = count,
                     "angle" => header.num_angle_types = count,
                     "dihedral" => header.num_dihedral_types = count,
+                    "improper" => header.num_improper_types = count,
                     _ => {}
                 }
             }
@@ -274,11 +293,20 @@ fn parse_type_labels<R: BufRead>(
     }
 }
 
+/// Parse the `# <style>` hint after an "Atoms" section header line, if any.
+fn parse_atoms_style_hint(section_line: &str) -> Option<String> {
+    section_line
+        .split_once('#')
+        .map(|(_, after)| after.split_whitespace().next().unwrap_or("").to_string())
+        .filter(|s| !s.is_empty())
+}
+
 /// Parse Atoms section
 fn parse_atoms<R: BufRead>(
     reader: &mut R,
     num_atoms: usize,
     _atom_type_labels: &HashMap<String, String>,
+    style_hint: Option<&str>,
 ) -> std::io::Result<Vec<AtomData>> {
     let mut atoms = Vec::with_capacity(num_atoms);
     let mut line = String::new();
@@ -297,6 +325,32 @@ fn parse_atoms<R: BufRead>(
 
         let tokens = tokenize(trimmed);
 
+        // atom_style="body" columns: id type bodyflag mass x y z (7), with
+        // optional trailing image flags. Body atoms must not be confused with
+        // atom_style="full" (id mol type q x y z) which is also 7 columns,
+        // so we rely on the section comment hint.
+        if matches!(style_hint, Some("body")) {
+            if tokens.len() < 7 {
+                return Err(err_mapper(format!(
+                    "Invalid body-style Atoms line: expected at least 7 columns, got {}",
+                    tokens.len()
+                )));
+            }
+            atoms.push(AtomData {
+                id: tokens[0].parse::<I>().map_err(err_mapper)?,
+                molecule_id: None,
+                atom_type: tokens[1].to_string(),
+                charge: None,
+                bodyflag: Some(tokens[2].parse::<I>().map_err(err_mapper)?),
+                mass: Some(tokens[3].parse::<F>().map_err(err_mapper)?),
+                x: tokens[4].parse::<F>().map_err(err_mapper)?,
+                y: tokens[5].parse::<F>().map_err(err_mapper)?,
+                z: tokens[6].parse::<F>().map_err(err_mapper)?,
+            });
+            line.clear();
+            continue;
+        }
+
         // Detect atom style by number of columns
         // atomic: id type x y z (5)
         // charge: id type q x y z (6)
@@ -310,6 +364,8 @@ fn parse_atoms<R: BufRead>(
                 molecule_id: None,
                 atom_type: tokens[1].to_string(),
                 charge: None,
+                bodyflag: None,
+                mass: None,
                 x: tokens[2].parse::<F>().map_err(err_mapper)?,
                 y: tokens[3].parse::<F>().map_err(err_mapper)?,
                 z: tokens[4].parse::<F>().map_err(err_mapper)?,
@@ -324,6 +380,8 @@ fn parse_atoms<R: BufRead>(
                     molecule_id: None,
                     atom_type: tokens[1].to_string(),
                     charge: Some(tokens[2].parse::<F>().map_err(err_mapper)?),
+                    bodyflag: None,
+                    mass: None,
                     x: tokens[3].parse::<F>().map_err(err_mapper)?,
                     y: tokens[4].parse::<F>().map_err(err_mapper)?,
                     z: tokens[5].parse::<F>().map_err(err_mapper)?,
@@ -335,6 +393,8 @@ fn parse_atoms<R: BufRead>(
                     molecule_id: Some(tokens[1].parse::<I>().map_err(err_mapper)?),
                     atom_type: tokens[2].to_string(),
                     charge: None,
+                    bodyflag: None,
+                    mass: None,
                     x: tokens[3].parse::<F>().map_err(err_mapper)?,
                     y: tokens[4].parse::<F>().map_err(err_mapper)?,
                     z: tokens[5].parse::<F>().map_err(err_mapper)?,
@@ -347,6 +407,8 @@ fn parse_atoms<R: BufRead>(
                 molecule_id: Some(tokens[1].parse::<I>().map_err(err_mapper)?),
                 atom_type: tokens[2].to_string(),
                 charge: Some(tokens[3].parse::<F>().map_err(err_mapper)?),
+                bodyflag: None,
+                mass: None,
                 x: tokens[4].parse::<F>().map_err(err_mapper)?,
                 y: tokens[5].parse::<F>().map_err(err_mapper)?,
                 z: tokens[6].parse::<F>().map_err(err_mapper)?,
@@ -495,6 +557,49 @@ fn parse_dihedrals<R: BufRead>(
     Ok(dihedrals)
 }
 
+/// Parse Impropers section. Column layout matches dihedrals:
+/// `id type i j k l` with `j` the central atom by LAMMPS convention.
+fn parse_impropers<R: BufRead>(
+    reader: &mut R,
+    num_impropers: usize,
+    _improper_type_labels: &HashMap<String, String>,
+) -> std::io::Result<Vec<ImproperData>> {
+    let mut impropers = Vec::with_capacity(num_impropers);
+    let mut line = String::new();
+
+    while impropers.len() < num_impropers {
+        line.clear();
+        let bytes_read = reader.read_line(&mut line)?;
+        if bytes_read == 0 {
+            break;
+        }
+
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+
+        let tokens = tokenize(trimmed);
+        if tokens.len() < 6 {
+            return Err(err_mapper(format!(
+                "Invalid Impropers line: expected 6 columns, got {}",
+                tokens.len()
+            )));
+        }
+
+        impropers.push(ImproperData {
+            _id: tokens[0].parse::<I>().map_err(err_mapper)?,
+            improper_type: tokens[1].to_string(),
+            atom_i: tokens[2].parse::<I>().map_err(err_mapper)?,
+            atom_j: tokens[3].parse::<I>().map_err(err_mapper)?,
+            atom_k: tokens[4].parse::<I>().map_err(err_mapper)?,
+            atom_l: tokens[5].parse::<I>().map_err(err_mapper)?,
+        });
+    }
+
+    Ok(impropers)
+}
+
 /// Build Frame from parsed data
 #[allow(clippy::too_many_arguments)]
 fn build_frame(
@@ -503,10 +608,12 @@ fn build_frame(
     bonds: Vec<BondData>,
     angles: Vec<AngleData>,
     dihedrals: Vec<DihedralData>,
+    impropers: Vec<ImproperData>,
     atom_type_labels: HashMap<String, String>,
     bond_type_labels: HashMap<String, String>,
     angle_type_labels: HashMap<String, String>,
     dihedral_type_labels: HashMap<String, String>,
+    improper_type_labels: HashMap<String, String>,
 ) -> std::io::Result<Frame> {
     let mut frame = Frame::new();
 
@@ -522,9 +629,13 @@ fn build_frame(
         let mut type_vec = Vec::with_capacity(n);
         let mut charge_vec = Vec::with_capacity(n);
         let mut mol_id_vec = Vec::with_capacity(n);
+        let mut bodyflag_vec = Vec::with_capacity(n);
+        let mut mass_vec = Vec::with_capacity(n);
 
         let mut has_charge = false;
         let mut has_mol_id = false;
+        let mut has_bodyflag = false;
+        let mut has_mass = false;
 
         // Build atom ID to index map for bonds
         let mut atom_id_map = HashMap::new();
@@ -560,6 +671,20 @@ fn build_frame(
                 has_mol_id = true;
             } else {
                 mol_id_vec.push(0);
+            }
+
+            if let Some(bf) = atom.bodyflag {
+                bodyflag_vec.push(bf);
+                has_bodyflag = true;
+            } else {
+                bodyflag_vec.push(0);
+            }
+
+            if let Some(m) = atom.mass {
+                mass_vec.push(m);
+                has_mass = true;
+            } else {
+                mass_vec.push(0.0 as F);
             }
 
             atom_id_map.insert(atom.id, idx as U);
@@ -603,6 +728,16 @@ fn build_frame(
         if has_mol_id {
             atom_block
                 .insert("molecule_id", to_arr_int(mol_id_vec)?)
+                .map_err(err_mapper)?;
+        }
+        if has_bodyflag {
+            atom_block
+                .insert("bodyflag", to_arr_int(bodyflag_vec)?)
+                .map_err(err_mapper)?;
+        }
+        if has_mass {
+            atom_block
+                .insert("mass", to_arr_float(mass_vec)?)
                 .map_err(err_mapper)?;
         }
 
@@ -828,6 +963,92 @@ fn build_frame(
 
             frame.insert("dihedrals", dihedral_block);
         }
+
+        // Build impropers block
+        if !impropers.is_empty() {
+            let in_ = impropers.len();
+            let mut improper_block = Block::new();
+
+            let mut atom_i_vec = Vec::with_capacity(in_);
+            let mut atom_j_vec = Vec::with_capacity(in_);
+            let mut atom_k_vec = Vec::with_capacity(in_);
+            let mut atom_l_vec = Vec::with_capacity(in_);
+            let mut improper_type_vec = Vec::with_capacity(in_);
+
+            for improper in &impropers {
+                let idx_i = *atom_id_map.get(&improper.atom_i).ok_or_else(|| {
+                    err_mapper(format!(
+                        "Improper references unknown atom ID: {}",
+                        improper.atom_i
+                    ))
+                })?;
+                let idx_j = *atom_id_map.get(&improper.atom_j).ok_or_else(|| {
+                    err_mapper(format!(
+                        "Improper references unknown atom ID: {}",
+                        improper.atom_j
+                    ))
+                })?;
+                let idx_k = *atom_id_map.get(&improper.atom_k).ok_or_else(|| {
+                    err_mapper(format!(
+                        "Improper references unknown atom ID: {}",
+                        improper.atom_k
+                    ))
+                })?;
+                let idx_l = *atom_id_map.get(&improper.atom_l).ok_or_else(|| {
+                    err_mapper(format!(
+                        "Improper references unknown atom ID: {}",
+                        improper.atom_l
+                    ))
+                })?;
+
+                atom_i_vec.push(idx_i);
+                atom_j_vec.push(idx_j);
+                atom_k_vec.push(idx_k);
+                atom_l_vec.push(idx_l);
+
+                let type_num = if let Ok(num) = improper.improper_type.parse::<I>() {
+                    num
+                } else {
+                    improper_type_labels
+                        .iter()
+                        .find(|(_, label)| *label == &improper.improper_type)
+                        .and_then(|(id, _)| id.parse::<I>().ok())
+                        .unwrap_or(1)
+                };
+                improper_type_vec.push(type_num);
+            }
+
+            let mk_iarr_u = |v: Vec<U>| -> std::io::Result<ndarray::ArrayD<U>> {
+                Array1::from_vec(v)
+                    .into_shape_with_order(IxDyn(&[in_]))
+                    .map_err(err_mapper)
+                    .map(|a| a.into_dyn())
+            };
+            let mk_iarr_i = |v: Vec<I>| -> std::io::Result<ndarray::ArrayD<I>> {
+                Array1::from_vec(v)
+                    .into_shape_with_order(IxDyn(&[in_]))
+                    .map_err(err_mapper)
+                    .map(|a| a.into_dyn())
+            };
+
+            improper_block
+                .insert("atomi", mk_iarr_u(atom_i_vec)?)
+                .map_err(err_mapper)?;
+            improper_block
+                .insert("atomj", mk_iarr_u(atom_j_vec)?)
+                .map_err(err_mapper)?;
+            improper_block
+                .insert("atomk", mk_iarr_u(atom_k_vec)?)
+                .map_err(err_mapper)?;
+            improper_block
+                .insert("atoml", mk_iarr_u(atom_l_vec)?)
+                .map_err(err_mapper)?;
+            improper_block
+                .insert("type", mk_iarr_i(improper_type_vec)?)
+                .map_err(err_mapper)?;
+
+            frame.insert("impropers", improper_block);
+        }
     }
 
     // Build SimBox from the header when the file actually declares a box.
@@ -896,6 +1117,17 @@ fn build_frame(
             .insert("dihedral_type_labels".to_string(), labels_str);
     }
 
+    if !improper_type_labels.is_empty() {
+        let labels_str = improper_type_labels
+            .iter()
+            .map(|(id, label)| format!("{}:{}", id, label))
+            .collect::<Vec<_>>()
+            .join(",");
+        frame
+            .meta
+            .insert("improper_type_labels".to_string(), labels_str);
+    }
+
     Ok(frame)
 }
 
@@ -943,6 +1175,9 @@ impl<R: BufRead + Seek> LAMMPSDataReader<R> {
         // Process the first section line that parse_header found
         let mut next_section = first_section_line;
 
+        let mut impropers: Vec<ImproperData> = Vec::new();
+        let mut improper_type_labels: HashMap<String, String> = HashMap::new();
+
         while let Some(line) = next_section.take() {
             let trimmed = line.trim();
             if trimmed.starts_with("Atom Type Labels") {
@@ -961,8 +1196,18 @@ impl<R: BufRead + Seek> LAMMPSDataReader<R> {
                 let (labels, next) = parse_type_labels(&mut self.reader)?;
                 dihedral_type_labels = labels;
                 next_section = next;
+            } else if trimmed.starts_with("Improper Type Labels") {
+                let (labels, next) = parse_type_labels(&mut self.reader)?;
+                improper_type_labels = labels;
+                next_section = next;
             } else if trimmed.starts_with("Atoms") {
-                atoms = parse_atoms(&mut self.reader, header.num_atoms, &atom_type_labels)?;
+                let hint = parse_atoms_style_hint(trimmed);
+                atoms = parse_atoms(
+                    &mut self.reader,
+                    header.num_atoms,
+                    &atom_type_labels,
+                    hint.as_deref(),
+                )?;
                 break; // Atoms section doesn't return next section
             } else if trimmed.starts_with("Bonds") {
                 bonds = parse_bonds(&mut self.reader, header.num_bonds, &bond_type_labels)?;
@@ -977,6 +1222,13 @@ impl<R: BufRead + Seek> LAMMPSDataReader<R> {
                     &dihedral_type_labels,
                 )?;
                 break; // Dihedrals section doesn't return next section
+            } else if trimmed.starts_with("Impropers") {
+                impropers = parse_impropers(
+                    &mut self.reader,
+                    header.num_impropers,
+                    &improper_type_labels,
+                )?;
+                break; // Impropers section doesn't return next section
             } else {
                 break; // Unknown section
             }
@@ -1011,8 +1263,17 @@ impl<R: BufRead + Seek> LAMMPSDataReader<R> {
             } else if trimmed.starts_with("Dihedral Type Labels") {
                 let (labels, _) = parse_type_labels(&mut self.reader)?;
                 dihedral_type_labels = labels;
+            } else if trimmed.starts_with("Improper Type Labels") {
+                let (labels, _) = parse_type_labels(&mut self.reader)?;
+                improper_type_labels = labels;
             } else if trimmed.starts_with("Atoms") {
-                atoms = parse_atoms(&mut self.reader, header.num_atoms, &atom_type_labels)?;
+                let hint = parse_atoms_style_hint(trimmed);
+                atoms = parse_atoms(
+                    &mut self.reader,
+                    header.num_atoms,
+                    &atom_type_labels,
+                    hint.as_deref(),
+                )?;
             } else if trimmed.starts_with("Bonds") {
                 bonds = parse_bonds(&mut self.reader, header.num_bonds, &bond_type_labels)?;
             } else if trimmed.starts_with("Angles") {
@@ -1023,8 +1284,14 @@ impl<R: BufRead + Seek> LAMMPSDataReader<R> {
                     header.num_dihedrals,
                     &dihedral_type_labels,
                 )?;
+            } else if trimmed.starts_with("Impropers") {
+                impropers = parse_impropers(
+                    &mut self.reader,
+                    header.num_impropers,
+                    &improper_type_labels,
+                )?;
             }
-            // Ignore other sections (Masses, Impropers, etc.)
+            // Ignore other sections (Masses, Velocities, Bodies, etc.)
         }
 
         if atoms.is_empty() && header.num_atoms > 0 {
@@ -1037,10 +1304,12 @@ impl<R: BufRead + Seek> LAMMPSDataReader<R> {
             bonds,
             angles,
             dihedrals,
+            impropers,
             atom_type_labels,
             bond_type_labels,
             angle_type_labels,
             dihedral_type_labels,
+            improper_type_labels,
         )?;
         Ok(Some(frame))
     }

@@ -224,14 +224,26 @@ impl PyBox {
         self.inner.pbc_view().to_owned().into_pyarray(py)
     }
 
-    /// Lengths of the three lattice vectors.
-    ///
-    /// Returns
-    /// -------
-    /// numpy.ndarray, shape (3,), dtype float
-    ///     ``[|a|, |b|, |c|]`` in the same length unit as the cell matrix.
+    /// Lengths of the three lattice vectors (property; ``[|a|, |b|, |c|]``).
+    #[getter]
     fn lengths<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<NpF>> {
         self.inner.lengths().into_pyarray(py)
+    }
+
+    /// Box matrix with lattice vectors as columns, shape ``(3, 3)``.
+    /// Alias for ``h`` to mirror the molpy API.
+    #[getter]
+    fn matrix<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<NpF>> {
+        self.h(py)
+    }
+
+    /// LAMMPS-convention tilt factors ``(xy, xz, yz)``. Zero on
+    /// orthogonal boxes.
+    #[getter]
+    fn tilts<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<NpF>> {
+        let h = self.inner.h_view();
+        let arr = ndarray::array![h[(0, 1)], h[(0, 2)], h[(1, 2)]];
+        arr.into_pyarray(py)
     }
 
     /// Convert Cartesian coordinates to fractional coordinates.

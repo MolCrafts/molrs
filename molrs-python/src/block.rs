@@ -283,6 +283,20 @@ impl PyBlock {
         self.with_block(|b| b.contains_key(key))
     }
 
+    /// Mapping-style column access (alias for ``view``).
+    ///
+    /// Parameters
+    /// ----------
+    /// key : str
+    ///     Column name.
+    ///
+    /// Returns
+    /// -------
+    /// numpy.ndarray | list[str]
+    fn __getitem__<'py>(&self, py: Python<'py>, key: &str) -> PyResult<Py<pyo3::types::PyAny>> {
+        self.view(py, key)
+    }
+
     /// Remove a column by name.
     ///
     /// Parameters

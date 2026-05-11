@@ -69,7 +69,7 @@ class TestBoxProperties:
         assert pytest.approx(ortho_box.volume(), abs=1e-2) == 750.0
 
     def test_lengths(self, ortho_box):
-        lengths = ortho_box.lengths()
+        lengths = ortho_box.lengths
         np.testing.assert_allclose(lengths, [5.0, 10.0, 15.0], atol=1e-4)
 
     def test_lattice_vectors(self, cubic_box):
