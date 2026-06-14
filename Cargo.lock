@@ -938,7 +938,7 @@ dependencies = [
 
 [[package]]
 name = "molcrafts-molrs"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "criterion",
  "flate2",
@@ -961,7 +961,7 @@ dependencies = [
 
 [[package]]
 name = "molcrafts-molrs-cxxapi"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "cxx",
  "cxx-build",
@@ -972,7 +972,7 @@ dependencies = [
 
 [[package]]
 name = "molcrafts-molrs-ffi"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "molcrafts-molrs",
  "slotmap",

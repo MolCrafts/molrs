@@ -3,6 +3,21 @@
 This page summarizes recent repository history for documentation readers. The
 authoritative release history remains the Git tags and GitHub releases.
 
+## 0.1.2
+
+Maintenance release. No public API or behavior changes — `0.1.2` is a
+drop-in replacement for `0.1.1`.
+
+- **Documentation accuracy.** Corrected developer-facing docs to match the
+  shipped code: `Topology` is a native adjacency structure (no petgraph; petgraph
+  is pulled in only by the SMARTS VF2 matcher under the `smiles` feature), the
+  force-field entry point is `ForceField::to_potentials(frame)` (the old
+  `compile` name is gone), and the CXX bridge to Atomiverse crosses coordinates
+  as `f64` unconditionally (there is no `cfg!(feature = "f64")` precision switch).
+- **Workspace version bump.** The merged crate and all binders
+  (`molrs-ffi`, `molrs-python`, `molrs-wasm`, `molrs-capi`, `molrs-cxxapi`)
+  move to `0.1.2` in lockstep.
+
 ## 0.1.0
 
 This release makes molrs the single source of truth for the molecular force-field,

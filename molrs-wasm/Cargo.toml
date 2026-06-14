@@ -1,6 +1,6 @@
 [package]
 name = "molrs"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 authors = ["MolCrafts"]
 description = "WASM bindings for molrs"
@@ -32,8 +32,8 @@ web-sys = { version = "0.3", features = ["console"] }
 
 # The merged crate (core always on via `zarr`; sub-system modules pulled in by
 # the wasm features above) + the FFI handle layer.
-molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.1.1", default-features = false, features = ["zarr"] }
-molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.1.1", default-features = false }
+molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.1.2", default-features = false, features = ["zarr"] }
+molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.1.2", default-features = false }
 
 ndarray = "0.17"
 zarrs = { version = "0.23", default-features = false }

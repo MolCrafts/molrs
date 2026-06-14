@@ -11,7 +11,7 @@ exclude = ["molrs-ffi"]
 resolver = "3"
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 rust-version = "1.91"
 license = "BSD-3-Clause"
@@ -22,7 +22,7 @@ homepage = "https://github.com/MolCrafts/molrs"
 # The merged crate. Binders (molrs-cxxapi here, plus the excluded molrs-ffi /
 # molrs-wasm / molrs-python) depend on it directly with the features they need.
 [workspace.dependencies]
-molcrafts-molrs = { path = "molrs", version = "0.1.1", default-features = false }
+molcrafts-molrs = { path = "molrs", version = "0.1.2", default-features = false }
 
 [profile.release]
 lto = "thin"

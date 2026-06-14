@@ -134,7 +134,7 @@ All on the single `molcrafts-molrs` crate (`molrs/Cargo.toml`):
 - `I = i32` always. The `i64` feature flag is deprecated and ignored.
 - `U = u32` always. The `u64` feature flag is deprecated and ignored.
 - Neighbor list internals use `u32` directly — that's the natural type, no alias needed.
-- The CXX bridge to Atomiverse still uses a `{F}` template that is resolved at build time by `cfg!(feature = "f64")` — this feature is set by CMake/corrosion to match Atomiverse's `ATV_REAL`.
+- The CXX bridge to Atomiverse crosses all coordinates / fields / distances as `f64` unconditionally (the merged crate hardcodes `F = f64`); there is no `cfg!(feature = "f64")` precision switch.
 
 Key type aliases: `F3 = Array1<F>`, `F3x3 = Array2<F>`, `FN = Array1<F>`, `FNx3 = Array2<F>`. Since `F = f64`, these are all double precision.
 
@@ -148,7 +148,7 @@ Key type aliases: `F3 = Array1<F>`, `F3x3 = Array2<F>`, `FN = Array1<F>`, `FNx3 
 
 ### MolGraph (molecular topology)
 
-Graph-based molecular structure with atoms, bonds, stereochemistry, ring detection. Built on generational arenas (`slotmap`) with kind-tagged, multi-arity relations over a `smallvec`-backed adjacency map. (`molrs/src/core/system/molgraph.rs`). The petgraph-backed graph is `Topology` (`molrs/src/core/system/topology.rs`), used for connectivity queries (connected components, BFS distances, angle/dihedral enumeration).
+Graph-based molecular structure with atoms, bonds, stereochemistry, ring detection. Built on generational arenas (`slotmap`) with kind-tagged, multi-arity relations over a `smallvec`-backed adjacency map. (`molrs/src/core/system/molgraph.rs`). The connectivity graph is `Topology` (`molrs/src/core/system/topology.rs`), a native adjacency structure (`HashMap`/`VecDeque`, no petgraph) used for connectivity queries (connected components, BFS distances, angle/dihedral enumeration). petgraph is pulled in only by the SMARTS VF2 matcher under the `smiles` feature (`molrs/src/io/smiles/`).
 
 ## Trait-Based Extensibility
 
@@ -165,7 +165,7 @@ in the standalone `molcrafts-molpack` crate.
 
 ### Potential System (molrs/src/ff/potential/)
 
-`KernelRegistry` maps `(category, style_name)` → `KernelConstructor`. Categories: bonds, angles, dihedrals, impropers, pairs, kspace. `ForceField::compile(frame)` resolves topology and constructs `Potentials` (aggregate sum). Coordinate format: flat `[x0,y0,z0, x1,y1,z1, ...]` (3N elements). MMFF94/MMFF94s parameters are embedded at compile time in core (`molrs/data/mmff94.xml`, exposed as `molrs::data::MMFF94_XML`).
+`KernelRegistry` maps `(category, style_name)` → `KernelConstructor`. Categories: bonds, angles, dihedrals, impropers, pairs, kspace. `ForceField::to_potentials(frame)` (with `Style::to_potential`) resolves topology and constructs `Potentials` (aggregate sum) — frame-free, deferred potentials that bind topology and coordinates at evaluation time. Coordinate format: flat `[x0,y0,z0, x1,y1,z1, ...]` (3N elements). MMFF94/MMFF94s parameters are embedded at compile time in core (`molrs/data/mmff94.xml`, exposed as `molrs::data::MMFF94_XML`).
 
 ### Free-Boundary Support
 

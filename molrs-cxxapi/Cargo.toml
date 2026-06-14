@@ -20,8 +20,8 @@ zarr = ["molrs/filesystem"]
 [dependencies]
 # The merged crate, imported under the extern name `molrs`; `io` gives the file
 # I/O module this bridge relies on.
-molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.1.1", default-features = false, features = ["io"] }
-molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.1.1" }
+molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.1.2", default-features = false, features = ["io"] }
+molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.1.2" }
 cxx = "1"
 ndarray = "0.17"
 

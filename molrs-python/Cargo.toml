@@ -1,6 +1,6 @@
 [package]
 name = "molrs-python"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 rust-version = "1.91"
 authors = ["MolCrafts"]
@@ -22,10 +22,10 @@ pyo3 = { version = "0.28", features = [
 numpy = "0.28"
 ndarray = "0.17"
 serde_json = "1"
-molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.1.1" }
+molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.1.2" }
 # The merged crate with every sub-system module (`full`) plus the zarr /
 # filesystem / smiles knobs the bindings exercise.
-molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.1.1", features = ["full", "zarr", "filesystem"] }
+molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.1.2", features = ["full", "zarr", "filesystem"] }
 
 [workspace]
 
