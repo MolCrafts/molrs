@@ -97,8 +97,8 @@ repos:
         stages: [pre-push]
 
       - id: cargo-bench-build
-        name: cargo bench --no-run (molrs-core)
-        entry: cargo bench -p molcrafts-molrs-core --no-run --locked
+        name: cargo bench --no-run (core_benchmarks)
+        entry: cargo bench -p molcrafts-molrs --bench core_benchmarks --no-run --locked
         language: system
         pass_filenames: false
         types: [rust]
