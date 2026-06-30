@@ -5,6 +5,22 @@ All notable changes to molrs are recorded here. This project follows
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-07-01
+
+Version realigned with `molcrafts-molpy`: molrs and molpy now share one version
+line and are released as a pair (jumped 0.1.6 → 0.5.1 to converge).
+
+### Added
+
+- **TRAVIS-parity compute suite (Python-exposed).** Geometric distribution
+  functions (ADF / DDF / distance), combined distribution functions (CDF),
+  spatial distribution function (SDF), Van Hove `G(r, t)` (self + distinct) and
+  Legendre reorientational TCFs, geometric hydrogen-bond detection, native
+  periodic radical (Laguerre) Voronoi tessellation with domain/void analysis and
+  electron-density integration, and vibrational spectra (VDOS / IR / Raman /
+  VCD / ROA / resonance Raman) via the time-correlation route.
+- **Cube trajectory reader** for *ab initio* electron-density trajectories.
+
 ## [0.1.6] - 2026-06-21
 
 No library changes — tooling/CI only (no Rust, Python, or WASM API surface change).
