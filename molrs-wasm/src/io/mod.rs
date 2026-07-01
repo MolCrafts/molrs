@@ -5,7 +5,7 @@
 //!
 //! | Module | JS class / function | Formats |
 //! |--------|-------------------|---------|
-//! | [`reader`] | `XYZReader`, `PDBReader`, `LAMMPSReader`, `LAMMPSTrajReader`, `SDFReader` | Read XYZ/ExtXYZ, PDB, LAMMPS data/dump, SDF (whole-content; deprecated path) |
+//! | [`reader`] | `XYZReader`, `PDBReader`, `CIFReader`, `LAMMPSReader`, `LAMMPSTrajReader`, `SDFReader`, `CubeReader`, `CHGCARReader`, `GROReader`, `MOL2Reader`, `POSCARReader`, `DCDReader`, `TRRReader`, `XTCReader` | Read XYZ/ExtXYZ, PDB, CIF, LAMMPS data/dump, SDF, Cube, CHGCAR, GRO, MOL2, POSCAR, DCD, TRR, XTC (GRO/TRR/XTC convert nm→Å on read) |
 //! | [`streaming`] | `WasmLammpsDumpStream`, `WasmXyzStream`, `WasmPdbStream`, `WasmLammpsDataStream`, `WasmSdfStream` | Streaming readers driven by a chunk-fed `FrameIndexBuilder` |
 //! | [`writer`] | `writeFrame(frame, format)` | Write XYZ, PDB, LAMMPS dump |
 //! | [`zarr`] | `MolRecReader` | Read MolRec Zarr V3 archives |

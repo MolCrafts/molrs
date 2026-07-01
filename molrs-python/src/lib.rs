@@ -76,6 +76,7 @@ use compute::{
 
 mod compute_extra;
 mod compute_fit;
+mod compute_travis;
 mod dielectric;
 mod signal;
 mod transport;
@@ -257,6 +258,11 @@ fn molrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // RunningIntegral / Plateau / DebyeFit / PowerSpectrum / IRSpectrum /
     // RamanSpectrum at the top level (`molrs.VACF`, `molrs.LinearFit`, …).
     compute_fit::register(m)?;
+
+    // TRAVIS-parity computes: geometric distributions (ADF/DDF/distance),
+    // Van Hove, Legendre reorientation, hydrogen bonds, spatial distribution,
+    // radical-Voronoi tessellation + domain/void analysis.
+    compute_travis::register(m)?;
 
     // Signal processing
     m.add_function(wrap_pyfunction!(signal::signal_acf_fft, m)?)?;

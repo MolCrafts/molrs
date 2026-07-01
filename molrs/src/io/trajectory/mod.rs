@@ -6,6 +6,7 @@
 //! shared by all of them is in [`crate::io::streaming`]. The GROMACS readers
 //! share the minimal XDR primitives in [`xdr`].
 
+pub mod cube_traj;
 pub mod dcd;
 pub mod lammps_dump;
 pub mod trr;

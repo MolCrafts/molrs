@@ -3,7 +3,7 @@
 //! The [`LBFGS`] class relaxes a single structure ([`run`](LBFGS::run)) or a
 //! homogeneous batch ([`run_batch`](LBFGS::run_batch)) using the shared L-BFGS
 //! core in [`lbfgs`]. It consumes only the `(energy, forces = -grad)` contract
-//! of [`Potential`](crate::ff::potential::Potential), so it works with any force
+//! of [`Potential`], so it works with any force
 //! field — MMFF94, the harmonic/LJ kernels, or a user-supplied potential.
 //!
 //! Coordinates use the same flat layout as the rest of `molrs-ff`:
@@ -13,7 +13,25 @@
 
 pub mod lbfgs;
 
-use crate::ff::potential::Potential;
+// The contract every potential (force-field kernel or hand-built) implements,
+// and the only thing the optimizer needs. Lives here with the optimizer so
+// optimization does not depend on the force-field (`ff`) feature.
+pub trait Potential: Send + Sync {
+    /// Compute energy and forces (= -gradient) in one pass.
+    /// Returns `(energy, forces)` where forces has length `coords.len()`.
+    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>);
+
+    /// Compute total potential energy (kcal/mol).
+    fn calc_energy(&self, coords: &[F]) -> F {
+        self.calc_energy_forces(coords).0
+    }
+
+    /// Compute forces (= -gradient), a length-3N vector.
+    fn calc_forces(&self, coords: &[F]) -> Vec<F> {
+        self.calc_energy_forces(coords).1
+    }
+}
+
 use lbfgs::{Converge, fmax_from_grad, minimize_core};
 use molrs::types::F;
 

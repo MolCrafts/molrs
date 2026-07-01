@@ -2,7 +2,6 @@ pub(crate) mod constants;
 pub mod forcefield;
 pub mod mmff;
 pub mod molrec_ext;
-pub mod optimize;
 pub mod potential;
 pub mod typifier;
 
@@ -11,4 +10,3 @@ pub use forcefield::readers::{ForceFieldReader, lammps::LammpsFfReader, opls::Op
 pub use forcefield::xml::{read_forcefield_xml, read_forcefield_xml_str};
 pub use forcefield::{ForceField, SpecialBonds};
 pub use molrec_ext::{molrec_from_forcefield, set_forcefield_metadata};
-pub use optimize::{LBFGS, LbfgsConfig, OptReport};

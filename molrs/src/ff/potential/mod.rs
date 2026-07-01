@@ -13,6 +13,7 @@ pub mod improper;
 pub mod kspace;
 pub mod pair;
 pub mod registry;
+pub mod soft;
 
 pub use registry::{KernelConstructor, KernelRegistry, lookup_kernel, register_kernel};
 
@@ -115,21 +116,7 @@ fn end_pairs(frame: &Frame, block: &str, col_a: &str, col_b: &str) -> HashSet<(u
 ///
 /// [`calc_energy`]: Potential::calc_energy
 /// [`calc_forces`]: Potential::calc_forces
-pub trait Potential: Send + Sync {
-    /// Compute energy and forces (= -gradient) in one pass.
-    /// Returns `(energy, forces)` where forces has length `coords.len()`.
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>);
-
-    /// Compute total potential energy (kcal/mol).
-    fn calc_energy(&self, coords: &[F]) -> F {
-        self.calc_energy_forces(coords).0
-    }
-
-    /// Compute forces (= -gradient), a length-3N vector.
-    fn calc_forces(&self, coords: &[F]) -> Vec<F> {
-        self.calc_energy_forces(coords).1
-    }
-}
+pub use crate::optimize::Potential;
 
 // ---------------------------------------------------------------------------
 // Potentials collection
@@ -219,7 +206,7 @@ impl Default for Potentials {
 }
 
 /// Make the aggregate usable wherever a single [`Potential`] is expected (e.g.
-/// the geometry optimizer in [`crate::ff::optimize`]), forwarding to the summed
+/// the geometry optimizer in [`crate::optimize`]), forwarding to the summed
 /// evaluation over all kernels.
 impl Potential for Potentials {
     fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {

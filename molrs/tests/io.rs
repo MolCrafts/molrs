@@ -14,6 +14,8 @@ mod chgcar;
 mod cif;
 #[path = "io/data/cube.rs"]
 mod cube;
+#[path = "io/data/cube_traj.rs"]
+mod cube_traj;
 #[path = "io/trajectory/dcd.rs"]
 mod dcd;
 #[path = "io/data/gro.rs"]

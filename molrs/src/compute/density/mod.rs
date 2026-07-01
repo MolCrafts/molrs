@@ -15,12 +15,15 @@
 
 pub mod correlation_function;
 pub mod gaussian_density;
+pub mod kabsch;
 pub mod local_density;
+pub mod spatial;
 pub mod sphere_voxelization;
 
 pub use correlation_function::{CorrelationFunction, CorrelationFunctionResult};
 pub use gaussian_density::{GaussianDensity, GaussianDensityResult};
 pub use local_density::{LocalDensity, LocalDensityResult};
+pub use spatial::{GridSpec, SpatialDistribution, SpatialDistributionResult};
 pub use sphere_voxelization::{SphereVoxelization, SphereVoxelizationResult};
 
 /// Map a (possibly out-of-range) grid index onto a valid voxel.

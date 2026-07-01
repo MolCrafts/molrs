@@ -35,7 +35,7 @@ tempfile = "3.0"
 [features]
 default = ["rayon"]
 # Full bundle (every sub-system).
-full = ["io", "compute", "smiles", "ff", "conformer", "signal"]
+full = ["io", "compute", "smiles", "ff", "conformer", "signal", "voronoi"]
 
 # Sub-system modules (each gates its module + its unique optional deps).
 io        = ["dep:flate2", "dep:once_cell"]
@@ -44,6 +44,9 @@ smiles    = ["io", "dep:petgraph"]
 signal    = ["dep:rustfft"]
 # `compute` depends on the `signal` module (gets rustfft via it).
 compute   = ["signal", "dep:rand"]
+# Radical (Laguerre) Voronoi tessellation + domain/void analysis. Native
+# pure-Rust (WASM-clean); lives in the `compute` module.
+voronoi   = ["compute"]
 ff        = ["dep:rustfft", "dep:roxmltree"]
 # `conformer` depends on the `ff` module.
 conformer = ["ff", "dep:once_cell", "dep:rand"]
@@ -75,6 +78,12 @@ petgraph       = { version = "0.8", optional = true }                           
 rustfft        = { version = "6", optional = true }                                                 # signal + ff + compute
 roxmltree      = { version = "0.21", optional = true }                                              # ff (XML force-field readers)
 rand           = { version = "0.10", optional = true }                                              # compute + conformer
+
+# wasm32 has no OS RNG: when `rand` is pulled in (compute/conformer), its
+# transitive `getrandom` needs the `wasm_js` backend to build for the browser
+# target. Target-gated so native builds are unaffected. Mirrors molrs-wasm.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.4", features = ["wasm_js"] }
 
 # ── Integration tests (gated on the sub-system module they exercise) ─────────
 [[test]]

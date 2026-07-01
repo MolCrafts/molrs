@@ -26,7 +26,7 @@ use molrs::ff::potential::{Potentials, extract_coords};
 use molrs::ff::typifier::Typifier;
 use molrs::ff::typifier::mmff::MMFFTypifier;
 use molrs::ff::typifier::opls::OplsTypifier;
-use molrs::ff::{LBFGS, LbfgsConfig, OptReport};
+use molrs::optimize::{LBFGS, LbfgsConfig, OptReport};
 use molrs_ffi::ForceFieldRef;
 
 use crate::block::PyBlock;
@@ -384,11 +384,17 @@ impl PyMMFFTypifier {
         Ok(Self { inner: typifier })
     }
 
-    /// Assign MMFF94 atom types to a molecular graph.
+    /// Assign MMFF94 atom types to a molecular graph and return a
+    /// ``to_potentials``-ready :class:`Frame`.
     ///
-    /// Returns a typed :class:`Frame` with an ``"atoms"`` block containing
-    /// the assigned ``type`` (int) column and topology blocks
-    /// (``"bonds"``, ``"angles"``, ``"dihedrals"``, ``"impropers"``).
+    /// Returns a typed :class:`Frame` with an ``"atoms"`` block containing the
+    /// assigned ``type`` (int) column and topology blocks (``"bonds"``,
+    /// ``"angles"``, ``"dihedrals"``, ``"impropers"``). The frame is
+    /// assembly-complete: the stretch-bend reference lengths (``r0_ij``,
+    /// ``r0_kj``, ``theta0``) are merged onto the ``"angles"`` block and the
+    /// intramolecular ``"pairs"`` neighbour list is inserted, so the frame can
+    /// be passed straight to :meth:`ForceField.to_potentials` (the ``mmff_stbn``
+    /// kernel would otherwise error on a bare labeled frame).
     ///
     /// Parameters
     /// ----------
@@ -398,20 +404,21 @@ impl PyMMFFTypifier {
     /// Returns
     /// -------
     /// Frame
-    ///     Typed molecular data.
+    ///     Typed, ``to_potentials``-ready molecular data.
     ///
     /// Raises
     /// ------
     /// ValueError
     ///     If atom types cannot be determined (e.g. unsupported elements).
     fn typify(&self, mol: &PyAtomistic) -> PyResult<PyFrame> {
-        // `typify` returns a labeled Atomistic; materialize it to the Frame this
-        // Python method is documented to return.
-        let labeled = self
+        // Materialize the labeled graph to a frame that is ready for
+        // `ForceField.to_potentials` (stretch-bend merge + pair list applied),
+        // matching the assembly `build` performs.
+        let frame = self
             .inner
-            .typify(mol.core())
+            .typify_frame(mol.core())
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-        PyFrame::from_core_frame(labeled.to_frame())
+        PyFrame::from_core_frame(frame)
     }
 
     /// Typify and compile potentials in one step.

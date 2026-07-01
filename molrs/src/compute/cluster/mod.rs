@@ -6,7 +6,9 @@ pub use result::ClusterResult;
 
 use molrs::spatial::neighbors::NeighborList;
 use molrs::store::frame_access::FrameAccess;
+use molrs::types::U;
 use ndarray::Array1;
+use std::collections::HashMap;
 
 use crate::compute::error::ComputeError;
 use crate::compute::traits::Compute;
@@ -40,6 +42,7 @@ impl Cluster {
                 cluster_idx: Array1::zeros(0),
                 num_clusters: 0,
                 cluster_sizes: vec![],
+                cluster_keys: vec![],
             });
         }
 
@@ -131,7 +134,110 @@ impl Cluster {
             cluster_idx: Array1::from_vec(cluster_idx),
             num_clusters,
             cluster_sizes,
+            cluster_keys: vec![],
         })
+    }
+
+    /// Cluster a single frame by membership key (one cluster per distinct key).
+    fn keyed_one<FA: FrameAccess>(
+        &self,
+        frame: &FA,
+        keys: &[U],
+    ) -> Result<ClusterResult, ComputeError> {
+        let n = frame
+            .visit_block("atoms", |b| b.nrows().unwrap_or(0))
+            .ok_or(ComputeError::MissingBlock { name: "atoms" })?;
+
+        if keys.len() != n {
+            return Err(ComputeError::DimensionMismatch {
+                expected: n,
+                got: keys.len(),
+                what: "membership-key count",
+            });
+        }
+
+        if n == 0 {
+            return Ok(ClusterResult {
+                cluster_idx: Array1::zeros(0),
+                num_clusters: 0,
+                cluster_sizes: vec![],
+                cluster_keys: vec![],
+            });
+        }
+
+        // Group by key, assigning cluster ids in order of first appearance.
+        let mut key_to_id: HashMap<U, usize> = HashMap::new();
+        let mut order_keys: Vec<U> = Vec::new();
+        let mut sizes: Vec<usize> = Vec::new();
+        let mut raw_idx = vec![0usize; n];
+        for (i, &k) in keys.iter().enumerate() {
+            let id = *key_to_id.entry(k).or_insert_with(|| {
+                order_keys.push(k);
+                sizes.push(0);
+                order_keys.len() - 1
+            });
+            raw_idx[i] = id;
+            sizes[id] += 1;
+        }
+
+        let mut cluster_idx = vec![-1_i64; n];
+
+        // Drop groups below min_cluster_size, mirroring the spatial path.
+        if self.min_cluster_size > 1 {
+            let mut remap = vec![-1_i64; sizes.len()];
+            let mut new_id: i64 = 0;
+            let mut new_sizes = Vec::new();
+            let mut new_keys = Vec::new();
+            for (old, &sz) in sizes.iter().enumerate() {
+                if sz >= self.min_cluster_size {
+                    remap[old] = new_id;
+                    new_sizes.push(sz);
+                    new_keys.push(vec![order_keys[old]]);
+                    new_id += 1;
+                }
+            }
+            for (i, &raw) in raw_idx.iter().enumerate() {
+                cluster_idx[i] = remap[raw];
+            }
+            return Ok(ClusterResult {
+                cluster_idx: Array1::from_vec(cluster_idx),
+                num_clusters: new_sizes.len(),
+                cluster_sizes: new_sizes,
+                cluster_keys: new_keys,
+            });
+        }
+
+        for (i, &raw) in raw_idx.iter().enumerate() {
+            cluster_idx[i] = raw as i64;
+        }
+        Ok(ClusterResult {
+            cluster_idx: Array1::from_vec(cluster_idx),
+            num_clusters: sizes.len(),
+            cluster_sizes: sizes,
+            cluster_keys: order_keys.into_iter().map(|k| vec![k]).collect(),
+        })
+    }
+
+    /// Cluster every frame by membership key: all particles sharing a key
+    /// (e.g. a molecule id) form one cluster, independent of geometry. Unlike
+    /// [`Cluster::compute`], this needs no neighbor list and is robust for
+    /// per-molecule properties (e.g. per-chain radius of gyration) even when
+    /// molecules overlap in space or a bond exceeds any spatial cutoff
+    /// (freud's `Cluster.compute(..., keys=...)`). The same `keys` apply to
+    /// every frame; their length must equal each frame's atom count.
+    pub fn compute_keyed<'a, FA: FrameAccess + Sync + 'a>(
+        &self,
+        frames: &[&'a FA],
+        keys: &[U],
+    ) -> Result<Vec<ClusterResult>, ComputeError> {
+        if frames.is_empty() {
+            return Err(ComputeError::EmptyInput);
+        }
+        let mut out = Vec::with_capacity(frames.len());
+        for frame in frames {
+            out.push(self.keyed_one(*frame, keys)?);
+        }
+        Ok(out)
     }
 }
 
@@ -400,6 +506,83 @@ mod tests {
         let err = Cluster::new(1)
             .compute(&frames, &Vec::<NeighborList>::new())
             .unwrap_err();
+        assert!(matches!(err, ComputeError::EmptyInput));
+    }
+
+    #[test]
+    fn keyed_groups_by_key_ignoring_geometry() {
+        // Six atoms all packed within one spatial cutoff (a single spatial
+        // cluster), but split into two molecules by key. Keyed clustering must
+        // recover the two molecules regardless of proximity.
+        let positions = [
+            [1.0, 1.0, 1.0],
+            [1.2, 1.0, 1.0],
+            [1.4, 1.0, 1.0],
+            [1.1, 1.1, 1.0],
+            [1.3, 1.1, 1.0],
+            [1.5, 1.1, 1.0],
+        ];
+        let frame = make_frame_with_positions(&positions, 20.0);
+        // Spatial clustering merges all six into one.
+        let nbrs = build_neighbors(&frame, 2.0);
+        let spatial = cluster_single(&frame, nbrs, 1);
+        assert_eq!(spatial.num_clusters, 1);
+
+        // Keyed clustering by mol-id splits into two clusters of three.
+        let keys = [0u32, 0, 0, 1, 1, 1];
+        let out = Cluster::new(1).compute_keyed(&[&frame], &keys).unwrap();
+        assert_eq!(out.len(), 1);
+        let r = &out[0];
+        assert_eq!(r.num_clusters, 2);
+        assert_eq!(r.cluster_sizes, vec![3, 3]);
+        assert_eq!(r.cluster_idx[0], r.cluster_idx[1]);
+        assert_eq!(r.cluster_idx[0], r.cluster_idx[2]);
+        assert_eq!(r.cluster_idx[3], r.cluster_idx[5]);
+        assert_ne!(r.cluster_idx[0], r.cluster_idx[3]);
+        // freud-style cluster_keys: one key per cluster.
+        assert_eq!(r.cluster_keys, vec![vec![0u32], vec![1u32]]);
+    }
+
+    #[test]
+    fn keyed_respects_first_appearance_order() {
+        let positions = [[0.0, 0.0, 0.0]; 4];
+        let frame = make_frame_with_positions(&positions, 20.0);
+        let keys = [7u32, 3, 7, 3];
+        let out = Cluster::new(1).compute_keyed(&[&frame], &keys).unwrap();
+        let r = &out[0];
+        assert_eq!(r.num_clusters, 2);
+        // key 7 seen first -> cluster 0, key 3 -> cluster 1
+        assert_eq!(r.cluster_idx.to_vec(), vec![0, 1, 0, 1]);
+        assert_eq!(r.cluster_keys, vec![vec![7u32], vec![3u32]]);
+    }
+
+    #[test]
+    fn keyed_min_cluster_size_filters() {
+        let positions = [[0.0, 0.0, 0.0]; 4];
+        let frame = make_frame_with_positions(&positions, 20.0);
+        // key 0 has 3 members, key 1 has 1 member.
+        let keys = [0u32, 0, 0, 1];
+        let out = Cluster::new(2).compute_keyed(&[&frame], &keys).unwrap();
+        let r = &out[0];
+        assert_eq!(r.num_clusters, 1);
+        assert_eq!(r.cluster_sizes, vec![3]);
+        assert_eq!(r.cluster_idx[3], -1);
+        assert_eq!(r.cluster_keys, vec![vec![0u32]]);
+    }
+
+    #[test]
+    fn keyed_length_mismatch_is_error() {
+        let frame = make_frame_with_positions(&[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], 20.0);
+        let err = Cluster::new(1)
+            .compute_keyed(&[&frame], &[0u32])
+            .unwrap_err();
+        assert!(matches!(err, ComputeError::DimensionMismatch { .. }));
+    }
+
+    #[test]
+    fn keyed_empty_frames_is_error() {
+        let frames: Vec<&Frame> = Vec::new();
+        let err = Cluster::new(1).compute_keyed(&frames, &[]).unwrap_err();
         assert!(matches!(err, ComputeError::EmptyInput));
     }
 }

@@ -312,6 +312,14 @@ impl PyClusterResult {
         self.inner.cluster_sizes.clone()
     }
 
+    /// The membership keys present in each cluster (freud's `cluster_keys`).
+    /// Empty for spatial clustering; one key per cluster for `keys=`-based
+    /// grouping.
+    #[getter]
+    fn cluster_keys(&self) -> Vec<Vec<u32>> {
+        self.inner.cluster_keys.clone()
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "ClusterResult(num_clusters={}, largest={})",
@@ -338,29 +346,60 @@ impl PyCluster {
 
     /// Compute one cluster result per input frame.
     ///
+    /// Two modes (mirroring freud's `Cluster.compute`):
+    /// * spatial — pass `nlists` (a `NeighborList` per frame); particles within
+    ///   the cutoff and transitively connected form a cluster.
+    /// * by key — pass `keys` (one non-negative integer per atom, e.g. a
+    ///   molecule id); all atoms sharing a key form one cluster, independent of
+    ///   geometry. Robust for per-molecule properties (e.g. per-chain Rg) even
+    ///   when molecules overlap or a bond exceeds any spatial cutoff. `nlists`
+    ///   is then ignored.
+    ///
     /// Returns a single `ClusterResult` when a single frame is passed, or a
     /// `list[ClusterResult]` when a list is passed.
+    #[pyo3(signature = (frames, nlists=None, keys=None))]
     fn compute<'py>(
         &self,
         py: Python<'py>,
         frames: &Bound<'py, PyAny>,
-        nlists: &Bound<'py, PyAny>,
+        nlists: Option<&Bound<'py, PyAny>>,
+        keys: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         let batched = was_batched(frames);
         let owned = collect_frames(frames)?;
         let refs: Vec<&CoreFrame> = owned.iter().collect();
-        let nlists_vec = collect_nlists(nlists)?;
-        if nlists_vec.len() != refs.len() {
-            return Err(PyValueError::new_err(format!(
-                "len(nlists)={} must equal len(frames)={}",
-                nlists_vec.len(),
-                refs.len()
-            )));
-        }
-        let out = self
-            .inner
-            .compute(&refs, &nlists_vec)
-            .map_err(py_value_err)?;
+        let out = if let Some(keys_obj) = keys {
+            let keys_i: Vec<i64> = keys_obj
+                .extract()
+                .map_err(|_| PyValueError::new_err("keys must be a 1-D sequence of integers"))?;
+            let mut keys_u: Vec<u32> = Vec::with_capacity(keys_i.len());
+            for k in keys_i {
+                if k < 0 {
+                    return Err(PyValueError::new_err("keys must be non-negative"));
+                }
+                keys_u.push(k as u32);
+            }
+            self.inner
+                .compute_keyed(&refs, &keys_u)
+                .map_err(py_value_err)?
+        } else {
+            let nlists = nlists.ok_or_else(|| {
+                PyValueError::new_err(
+                    "compute requires either nlists (spatial) or keys (group-by-key)",
+                )
+            })?;
+            let nlists_vec = collect_nlists(nlists)?;
+            if nlists_vec.len() != refs.len() {
+                return Err(PyValueError::new_err(format!(
+                    "len(nlists)={} must equal len(frames)={}",
+                    nlists_vec.len(),
+                    refs.len()
+                )));
+            }
+            self.inner
+                .compute(&refs, &nlists_vec)
+                .map_err(py_value_err)?
+        };
         if !batched {
             let single = out.into_iter().next().unwrap();
             return Ok(Py::new(py, PyClusterResult { inner: single })?.into_any());

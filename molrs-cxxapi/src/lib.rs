@@ -44,6 +44,106 @@ fn symbol_for_z(z: i32) -> &'static str {
         16 => "S",
         17 => "Cl",
         18 => "Ar",
+        19 => "K",
+        20 => "Ca",
+        21 => "Sc",
+        22 => "Ti",
+        23 => "V",
+        24 => "Cr",
+        25 => "Mn",
+        26 => "Fe",
+        27 => "Co",
+        28 => "Ni",
+        29 => "Cu",
+        30 => "Zn",
+        31 => "Ga",
+        32 => "Ge",
+        33 => "As",
+        34 => "Se",
+        35 => "Br",
+        36 => "Kr",
+        37 => "Rb",
+        38 => "Sr",
+        39 => "Y",
+        40 => "Zr",
+        41 => "Nb",
+        42 => "Mo",
+        43 => "Tc",
+        44 => "Ru",
+        45 => "Rh",
+        46 => "Pd",
+        47 => "Ag",
+        48 => "Cd",
+        49 => "In",
+        50 => "Sn",
+        51 => "Sb",
+        52 => "Te",
+        53 => "I",
+        54 => "Xe",
+        55 => "Cs",
+        56 => "Ba",
+        57 => "La",
+        58 => "Ce",
+        59 => "Pr",
+        60 => "Nd",
+        61 => "Pm",
+        62 => "Sm",
+        63 => "Eu",
+        64 => "Gd",
+        65 => "Tb",
+        66 => "Dy",
+        67 => "Ho",
+        68 => "Er",
+        69 => "Tm",
+        70 => "Yb",
+        71 => "Lu",
+        72 => "Hf",
+        73 => "Ta",
+        74 => "W",
+        75 => "Re",
+        76 => "Os",
+        77 => "Ir",
+        78 => "Pt",
+        79 => "Au",
+        80 => "Hg",
+        81 => "Tl",
+        82 => "Pb",
+        83 => "Bi",
+        84 => "Po",
+        85 => "At",
+        86 => "Rn",
+        87 => "Fr",
+        88 => "Ra",
+        89 => "Ac",
+        90 => "Th",
+        91 => "Pa",
+        92 => "U",
+        93 => "Np",
+        94 => "Pu",
+        95 => "Am",
+        96 => "Cm",
+        97 => "Bk",
+        98 => "Cf",
+        99 => "Es",
+        100 => "Fm",
+        101 => "Md",
+        102 => "No",
+        103 => "Lr",
+        104 => "Rf",
+        105 => "Db",
+        106 => "Sg",
+        107 => "Bh",
+        108 => "Hs",
+        109 => "Mt",
+        110 => "Ds",
+        111 => "Rg",
+        112 => "Cn",
+        113 => "Nh",
+        114 => "Fl",
+        115 => "Mc",
+        116 => "Lv",
+        117 => "Ts",
+        118 => "Og",
         _ => "X",
     }
 }
@@ -245,6 +345,61 @@ fn molrec_n_frames(rec: &AtvMolRec) -> i32 {
     rec.n_frames
 }
 
+// ── Trajectory analysis (molrs compute kernels) ──────────────────────────────
+
+/// Mean squared displacement over the accumulated trajectory.
+///
+/// `MsdMode::Direct` — `MSD(t) = ⟨|r(t) − r(0)|²⟩_i` with the first committed
+/// frame as reference (LAMMPS `compute msd` semantics). All analysis math lives
+/// in molrs (`compute::MSD`); this only marshals frames in and the curve out.
+/// Returns one mean value per committed frame (index 0 is the reference, 0.0);
+/// empty on fewer than two frames or a compute error — never panics.
+fn analyze_msd(rec: &AtvMolRec) -> Vec<f64> {
+    use molrs::compute::{Compute, MSD};
+    let n = rec.rec.count_frames();
+    if n < 2 {
+        return Vec::new();
+    }
+    let frames: Vec<Frame> = (0..n).filter_map(|i| rec.rec.frame_at(i)).collect();
+    if frames.len() < 2 {
+        return Vec::new();
+    }
+    let refs: Vec<&Frame> = frames.iter().collect();
+    match MSD::new().compute(&refs, ()) {
+        Ok(ts) => ts.data.iter().map(|r| r.mean).collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Einstein self-diffusion coefficient `D = slope / (2*dims)` from the
+/// windowed-MSD slope over the lag window `[fit_lo, fit_hi]` (fractions of the
+/// last lag). All math is molrs (`EinsteinDiffusion` + `LinearFit`). Returns
+/// `NaN` on fewer than two frames, bad args, or a fit error — never panics.
+fn analyze_diffusion(rec: &AtvMolRec, dt: f64, dims: i32, fit_lo: f64, fit_hi: f64) -> f64 {
+    use molrs::compute::{Compute, EinsteinDiffusion, EinsteinDiffusionArgs, Fit, LinearFit};
+    let n = rec.rec.count_frames();
+    if n < 2 || dt <= 0.0 || dt.is_nan() || dims <= 0 {
+        return f64::NAN;
+    }
+    let frames: Vec<Frame> = (0..n).filter_map(|i| rec.rec.frame_at(i)).collect();
+    if frames.len() < 2 {
+        return f64::NAN;
+    }
+    let refs: Vec<&Frame> = frames.iter().collect();
+    let ed = match EinsteinDiffusion.compute(&refs, EinsteinDiffusionArgs { dt }) {
+        Ok(r) => r,
+        Err(_) => return f64::NAN,
+    };
+    match (LinearFit {
+        window: (fit_lo, fit_hi),
+    })
+    .fit((&ed.lag_times, &ed.msd))
+    {
+        Ok(fit) => fit.slope / (2.0 * dims as f64),
+        Err(_) => f64::NAN,
+    }
+}
+
 // ── I/O ──────────────────────────────────────────────────────────────────────
 
 fn xyz_write(path: &str, rec: &AtvMolRec) {
@@ -323,6 +478,48 @@ fn molrec_read_zarr_first_frame(path: &str) -> Box<FrameRef> {
         })
         .expect("molrec_read_zarr_first_frame: populate");
     Box::new(FrameRef(inner))
+}
+
+/// Atomic number for a chemical symbol — inverse of [`symbol_for_z`].
+///
+/// Reuses the same table (no duplicate periodic table). No fallback:
+/// panics on an unrecognized symbol, matching Atomiverse's "lookup tables
+/// throw on unsupported input" convention.
+fn z_for_symbol(sym: &str) -> i32 {
+    (1..=118)
+        .find(|&z| symbol_for_z(z).eq_ignore_ascii_case(sym))
+        .unwrap_or_else(|| panic!("z_for_symbol: unknown element symbol '{sym}'"))
+}
+
+/// Read the first frame of an (ext)XYZ file into a materialize-ready `FrameRef`.
+///
+/// All parsing (atom table, `Lattice="..."` -> simbox) is done by the molrs
+/// core ExtXYZ reader. The species/element symbol column is mapped to a `type`
+/// (atomic number Z) i32 column so the result satisfies the schema that
+/// `cpu::materialize` requires (`atoms.{x,y,z,type}`).
+fn xyz_read_first_frame(path: &str) -> Box<FrameRef> {
+    let frame = molrs::io::data::xyz::read_xyz_frame(path).expect("xyz_read_first_frame: read");
+    let inner = molrs_ffi::FrameRef::new_standalone();
+    inner
+        .with_mut(|f| {
+            *f = frame;
+        })
+        .expect("xyz_read_first_frame: populate");
+    let mut fref = Box::new(FrameRef(inner));
+
+    // Derive atoms.type (Z) from the species/element symbol column.
+    let cols = frame_block_columns(&fref, "atoms");
+    let sym_col = if cols.iter().any(|c| c == "species") {
+        "species"
+    } else if cols.iter().any(|c| c == "element") {
+        "element"
+    } else {
+        panic!("xyz_read_first_frame: atoms block has no species/element column");
+    };
+    let syms = frame_column_str(&fref, "atoms", sym_col);
+    let zs: Vec<i32> = syms.iter().map(|s| z_for_symbol(s)).collect();
+    frame_set_column_i32(&mut fref, "atoms", "type", &zs);
+    fref
 }
 
 fn molrec_print_summary(rec: &AtvMolRec) {

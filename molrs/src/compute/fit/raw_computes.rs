@@ -717,6 +717,279 @@ impl Compute for DebyeRelaxation {
     }
 }
 
+// ── VCD / ROA / resonance-Raman raw cross-correlations (chiral-spectra inputs) ─
+
+/// Linear cross-correlation `C_ab[t] = Σ_τ a[τ]·b[τ+t]` for `t = 0..=max_lag`,
+/// via the Wiener–Khinchin cross spectrum (`IFFT(conj(A)·B)`), using the same
+/// zero-pad-to-`(2n).next_power_of_two()` and `1/n_pad` scaling as
+/// [`acf_fft`](molrs::signal::acf_fft) — so `cross_correlate(a, a, …)` exactly
+/// reproduces the autocorrelation. Both inputs must share the same length.
+///
+/// Ported from the cross-correlation step in `CROAEngine::ComputeACFPair`
+/// (`src/roa.cpp`), which feeds each moment-component pair through
+/// `m_pCrossCorr->CrossCorrelate(&in1, &in2, &out)`.
+fn cross_correlate(
+    planner: &mut FftPlanner<f64>,
+    a: &Array1<f64>,
+    b: &Array1<f64>,
+    max_lag: usize,
+) -> Array1<f64> {
+    use rustfft::num_complex::Complex64;
+    let n = a.len();
+    let n_pad = (2 * n).next_power_of_two();
+    let fwd = planner.plan_fft_forward(n_pad);
+    let inv = planner.plan_fft_inverse(n_pad);
+    let mut ca: Vec<Complex64> = a.iter().map(|&x| Complex64::new(x, 0.0)).collect();
+    let mut cb: Vec<Complex64> = b.iter().map(|&x| Complex64::new(x, 0.0)).collect();
+    ca.resize(n_pad, Complex64::new(0.0, 0.0));
+    cb.resize(n_pad, Complex64::new(0.0, 0.0));
+    fwd.process(&mut ca);
+    fwd.process(&mut cb);
+    let mut prod: Vec<Complex64> = (0..n_pad).map(|i| ca[i].conj() * cb[i]).collect();
+    inv.process(&mut prod);
+    let scale = 1.0 / n_pad as f64;
+    prod[..=max_lag]
+        .iter()
+        .map(|c| c.re * scale)
+        .collect::<Vec<_>>()
+        .into()
+}
+
+/// Central-difference time derivative `ẋ[t] = (x[t+1] − x[t−1]) / (2·dt)` of one
+/// column `col` of an `(n_frames, n_cols)` series, dropping the first and last
+/// frame (length `n_frames − 2`) — the same flux convention as [`IRFlux`].
+fn central_diff_col(series: &Array2<f64>, col: usize, dt: f64) -> Array1<f64> {
+    let n = series.shape()[0];
+    let inv_2dt = 0.5 / dt;
+    (1..n - 1)
+        .map(|t| (series[[t + 1, col]] - series[[t - 1, col]]) * inv_2dt)
+        .collect()
+}
+
+/// Raw VCD cross-correlation — the VCD-spectrum raw input.
+#[derive(Debug, Clone)]
+pub struct VcdCrossResult {
+    /// Lag times τ = i·dt, length `max_lag + 1`.
+    pub lag_times: Array1<f64>,
+    /// VCD cross-correlation `C(τ) = Σ_d ⟨μ̇_d(0)·ṁ_d(τ)⟩` summed over the 3
+    /// Cartesian components — the (signed) ACF the
+    /// [`VcdSpectrum`](super::VcdSpectrum) transform consumes.
+    pub acf: Array1<f64>,
+}
+
+impl ComputeResult for VcdCrossResult {}
+
+/// Raw VCD cross-flux compute: cross-correlation of the electric-dipole
+/// derivative `μ̇` with the magnetic-dipole derivative `ṁ`.
+///
+/// Ported from `CROAEngine::ComputeACFPair`, `ROA_SPECTRUM_VCD` branch
+/// (`src/roa.cpp`): for each Cartesian component it cross-correlates
+/// `m_vaDElDip` (μ̇) with `m_vaDMagDip` (ṁ) and sums the three components.
+///
+/// **Deviation from the spec's literal `⟨μ̇·m⟩`:** TRAVIS correlates the two
+/// *derivatives* (`μ̇` × `ṁ`); the two conventions differ only by a frequency-
+/// domain factor and share the same peak positions and enantiomer sign law.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct VcdCrossFlux;
+
+/// `(electric_dipole (n,3), magnetic_dipole (n,3), dt, resolution)` for
+/// [`VcdCrossFlux`]. Both series are `(n_frames, 3)`; the central-difference
+/// derivatives drop the first and last frame.
+pub type VcdCrossArgs<'a> = (&'a Array2<f64>, &'a Array2<f64>, f64, usize);
+
+impl Compute for VcdCrossFlux {
+    type Args<'a> = VcdCrossArgs<'a>;
+    type Output = VcdCrossResult;
+
+    fn compute<'a, FA: FrameAccess + Sync + 'a>(
+        &self,
+        _frames: &[&'a FA],
+        args: Self::Args<'a>,
+    ) -> Result<Self::Output, ComputeError> {
+        let (electric, magnetic, dt, resolution) = args;
+        let n_frames = electric.shape()[0];
+        if electric.shape()[1] != 3 || magnetic.shape()[1] != 3 {
+            return Err(ComputeError::DimensionMismatch {
+                expected: 3,
+                got: electric.shape()[1].max(magnetic.shape()[1]),
+                what: "VCD (electric, magnetic) dipoles (expected (n_frames, 3))",
+            });
+        }
+        if magnetic.shape()[0] != n_frames {
+            return Err(ComputeError::DimensionMismatch {
+                expected: n_frames,
+                got: magnetic.shape()[0],
+                what: "VCD electric/magnetic frame counts",
+            });
+        }
+        if n_frames < 3 {
+            return Err(ComputeError::EmptyInput);
+        }
+        if dt <= 0.0 {
+            return Err(ComputeError::OutOfRange {
+                field: "dt",
+                value: dt.to_string(),
+            });
+        }
+        let flux_len = n_frames - 2;
+        let max_lag = resolution.min(flux_len.saturating_sub(1));
+        let mut planner = FftPlanner::new();
+        let mut acf = Array1::<f64>::zeros(max_lag + 1);
+        for d in 0..3 {
+            let mu_dot = central_diff_col(electric, d, dt);
+            let m_dot = central_diff_col(magnetic, d, dt);
+            let c = cross_correlate(&mut planner, &mu_dot, &m_dot, max_lag);
+            for k in 0..=max_lag {
+                acf[k] += c[k];
+            }
+        }
+        let lag_times = Array1::from_iter((0..=max_lag).map(|i| i as f64 * dt));
+        Ok(VcdCrossResult { lag_times, acf })
+    }
+}
+
+/// Raw ROA cross-correlation iso/aniso curves — the ROA-spectrum raw input.
+#[derive(Debug, Clone)]
+pub struct RoaCrossResult {
+    /// Lag times τ = i·dt, length `max_lag + 1`.
+    pub lag_times: Array1<f64>,
+    /// Isotropic ROA cross-correlation of `α̇` (electric polarizability
+    /// derivative) with `Ġ′` (magnetic-dipole polarizability / optical-activity
+    /// tensor derivative).
+    pub acf_iso: Array1<f64>,
+    /// Weighted anisotropic ROA cross-correlation (same diagonal/off-diagonal
+    /// weighting as the Raman anisotropy).
+    pub acf_aniso: Array1<f64>,
+}
+
+impl ComputeResult for RoaCrossResult {}
+
+/// Raw ROA cross-tensor compute: cross-correlation of the electric
+/// polarizability derivative `α̇` with the optical-activity tensor derivative
+/// `Ġ′` (and, in the full theory, the electric-quadrupole tensor `A`).
+///
+/// Ported from `CROAEngine::ComputeACFPair`, `ROA_SPECTRUM_ROA` branch
+/// (`src/roa.cpp`): the iso part cross-correlates the polarizability trace with
+/// the (negated) `G′` trace, and the anisotropic parts mirror the Raman
+/// deviatoric decomposition. Both tensors are passed in Voigt form
+/// `[xx, yy, zz, xy, xz, yz]`; the same diagonal (½) / off-diagonal (3) weights
+/// as [`RamanTensor`] are used so ROA shares the Raman normal-mode frequencies.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RoaCrossTensor;
+
+/// `(electric_pol (n,6), g_tensor (n,6), dt, resolution)` for [`RoaCrossTensor`],
+/// both in Voigt notation `[xx, yy, zz, xy, xz, yz]`.
+pub type RoaCrossArgs<'a> = (&'a Array2<f64>, &'a Array2<f64>, f64, usize);
+
+impl Compute for RoaCrossTensor {
+    type Args<'a> = RoaCrossArgs<'a>;
+    type Output = RoaCrossResult;
+
+    fn compute<'a, FA: FrameAccess + Sync + 'a>(
+        &self,
+        _frames: &[&'a FA],
+        args: Self::Args<'a>,
+    ) -> Result<Self::Output, ComputeError> {
+        let (el_pol, g_tensor, dt, resolution) = args;
+        let n_frames = el_pol.shape()[0];
+        if el_pol.shape()[1] != 6 || g_tensor.shape()[1] != 6 {
+            return Err(ComputeError::DimensionMismatch {
+                expected: 6,
+                got: el_pol.shape()[1].max(g_tensor.shape()[1]),
+                what: "ROA (electric_pol, g_tensor) (expected (n_frames, 6) Voigt)",
+            });
+        }
+        if g_tensor.shape()[0] != n_frames {
+            return Err(ComputeError::DimensionMismatch {
+                expected: n_frames,
+                got: g_tensor.shape()[0],
+                what: "ROA electric_pol/g_tensor frame counts",
+            });
+        }
+        if n_frames < 3 {
+            return Err(ComputeError::EmptyInput);
+        }
+        if dt <= 0.0 {
+            return Err(ComputeError::OutOfRange {
+                field: "dt",
+                value: dt.to_string(),
+            });
+        }
+        let flux_len = n_frames - 2;
+        let max_lag = resolution.min(flux_len.saturating_sub(1));
+        let mut planner = FftPlanner::new();
+
+        // Central-difference derivatives of all six Voigt components.
+        let a: Vec<Array1<f64>> = (0..6).map(|c| central_diff_col(el_pol, c, dt)).collect();
+        let g: Vec<Array1<f64>> = (0..6).map(|c| central_diff_col(g_tensor, c, dt)).collect();
+
+        // Isotropic: trace × trace.
+        let a_iso: Array1<f64> = (0..flux_len)
+            .map(|t| (a[0][t] + a[1][t] + a[2][t]) / 3.0)
+            .collect();
+        let g_iso: Array1<f64> = (0..flux_len)
+            .map(|t| (g[0][t] + g[1][t] + g[2][t]) / 3.0)
+            .collect();
+        let acf_iso = cross_correlate(&mut planner, &a_iso, &g_iso, max_lag);
+
+        // Anisotropic: 3 diagonal differences (weight ½) + 3 off-diagonals
+        // (weight 3) — the RamanTensor deviatoric decomposition, cross-correlated.
+        let mut acf_aniso = Array1::<f64>::zeros(max_lag + 1);
+        let diag_pairs = [(0usize, 1usize), (1, 2), (2, 0)];
+        for (i, j) in diag_pairs {
+            let av: Array1<f64> = (0..flux_len).map(|t| a[i][t] - a[j][t]).collect();
+            let gv: Array1<f64> = (0..flux_len).map(|t| g[i][t] - g[j][t]).collect();
+            let c = cross_correlate(&mut planner, &av, &gv, max_lag);
+            for k in 0..=max_lag {
+                acf_aniso[k] += DIAG_ANISO_WEIGHT * c[k];
+            }
+        }
+        for off in 3..6 {
+            let c = cross_correlate(&mut planner, &a[off], &g[off], max_lag);
+            for k in 0..=max_lag {
+                acf_aniso[k] += OFFDIAG_ANISO_WEIGHT * c[k];
+            }
+        }
+
+        let lag_times = Array1::from_iter((0..=max_lag).map(|i| i as f64 * dt));
+        Ok(RoaCrossResult {
+            lag_times,
+            acf_iso,
+            acf_aniso,
+        })
+    }
+}
+
+/// Raw resonance-Raman iso/aniso ACFs — identical machinery to [`RamanTensor`]
+/// but consuming a caller-supplied **resonant** (excitation-frequency-dependent)
+/// polarizability series instead of the static one.
+///
+/// molrs does not compute the excited-state response; the caller supplies the
+/// resonant polarizability time series and this compute produces the same raw
+/// iso/aniso ACFs (Voigt `[xx, yy, zz, xy, xz, yz]`) that [`RamanTensor`] /
+/// `raman.cpp` produce, so the resonance-Raman spectrum reuses the Raman fit.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ResonanceRamanTensor;
+
+/// `(resonant_polarizabilities (n,6), dt, resolution)` for
+/// [`ResonanceRamanTensor`] — same shape/convention as [`RamanTensorArgs`].
+pub type ResonanceRamanArgs<'a> = (&'a Array2<f64>, f64, usize);
+
+impl Compute for ResonanceRamanTensor {
+    type Args<'a> = ResonanceRamanArgs<'a>;
+    type Output = RamanTensorResult;
+
+    fn compute<'a, FA: FrameAccess + Sync + 'a>(
+        &self,
+        frames: &[&'a FA],
+        args: Self::Args<'a>,
+    ) -> Result<Self::Output, ComputeError> {
+        // Structurally identical to the static Raman tensor; only the input
+        // polarizability differs (resonant vs static). Reuse, do not duplicate.
+        RamanTensor.compute(frames, args)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

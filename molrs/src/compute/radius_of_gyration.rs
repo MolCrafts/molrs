@@ -196,6 +196,7 @@ mod tests {
             cluster_idx: ndarray::Array1::from_vec(idx.to_vec()),
             num_clusters: nc,
             cluster_sizes: sizes,
+            cluster_keys: vec![],
         }
     }
 

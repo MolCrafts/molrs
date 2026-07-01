@@ -11,4 +11,4 @@
 
 /// RMS-gradient L-BFGS, the historical ETKDG cleanup entry point.
 /// Returns `(energy, grad_rms, steps, converged)`.
-pub use molrs::ff::optimize::minimize_lbfgs_rms as minimize_lbfgs;
+pub use molrs::optimize::minimize_lbfgs_rms as minimize_lbfgs;

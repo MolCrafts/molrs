@@ -12,6 +12,7 @@ pub mod continuous_coordination;
 pub mod cubatic;
 pub mod hexatic;
 pub mod nematic;
+pub mod reorientation_legendre;
 pub mod rotational_autocorrelation;
 pub mod solid_liquid;
 pub mod steinhardt;
@@ -20,6 +21,7 @@ pub use continuous_coordination::{ContinuousCoordination, ContinuousCoordination
 pub use cubatic::{Cubatic, CubaticResult};
 pub use hexatic::{Hexatic, HexaticResult};
 pub use nematic::{Nematic, NematicResult};
+pub use reorientation_legendre::{LegendreReorientation, LegendreReorientationResult};
 pub use rotational_autocorrelation::{RotationalAutocorrelation, RotationalAutocorrelationResult};
 pub use solid_liquid::{SolidLiquid, SolidLiquidResult};
 pub use steinhardt::{Steinhardt, SteinhardtResult, compute_qlm};

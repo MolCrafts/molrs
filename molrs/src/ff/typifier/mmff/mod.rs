@@ -24,6 +24,7 @@
 
 #![allow(clippy::type_complexity)]
 
+use crate::Frame;
 use crate::ff::forcefield::ForceField;
 use crate::ff::potential::{Potentials, intramolecular_pairs};
 use molrs::Atomistic;
@@ -82,6 +83,22 @@ impl MMFFTypifier {
     /// Requires [`Atomistic`](molrs::system::atomistic::Atomistic) because MMFF94
     /// typing depends on element symbols, bond orders, and ring membership.
     pub fn build(&self, mol: &Atomistic) -> Result<Potentials, String> {
+        let frame = self.typify_frame(mol)?;
+        self.ff.to_potentials(&frame)
+    }
+
+    /// Typify a molecule into a `to_potentials`-ready [`Frame`].
+    ///
+    /// Assigns MMFF94 types, then performs the same assembly that
+    /// [`build`](Self::build) does before compiling: merges each angle's two
+    /// reference bond lengths (`r0_ij`, `r0_kj`) and reference angle (`theta0`)
+    /// onto the `angles` block — the per-bond params the stretch-bend kernel
+    /// reads — and inserts the intramolecular `pairs` neighbour list. The
+    /// returned `Frame` can be passed straight to
+    /// [`ForceField::to_potentials`](crate::ff::potential), unlike the bare
+    /// labeled frame from [`typify`](Typifier::typify), which still lacks those
+    /// columns and would make the `mmff_stbn` kernel error.
+    pub fn typify_frame(&self, mol: &Atomistic) -> Result<Frame, String> {
         // typify → labeled Atomistic → Frame (the generic `to_potentials` input).
         // The typifier bakes every per-instance numeric parameter (bond kb/r0,
         // angle ka/theta0, stretch-bend kba + reference r0/theta0, torsion
@@ -91,7 +108,7 @@ impl MMFFTypifier {
         // The neighbour list is the consumer's concern: build it here.
         let pairs = intramolecular_pairs(&frame);
         frame.insert("pairs", pairs);
-        self.ff.to_potentials(&frame)
+        Ok(frame)
     }
 
     /// Classify MMFF bond type: 0=normal, 1=delocalized/aromatic.

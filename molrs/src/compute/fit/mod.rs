@@ -56,10 +56,13 @@ pub use raw_computes::{
     DebyeRelaxation, DebyeRelaxationResult, EinsteinConductivity, EinsteinConductivityResult,
     EinsteinDiffusion, EinsteinDiffusionArgs, EwaldBoundary, GreenKuboConductivity,
     GreenKuboConductivityResult, GreenKuboDiffusion, IRFlux, IRFluxResult, RamanTensor,
-    RamanTensorResult, VACF, VacfResult,
+    RamanTensorResult, ResonanceRamanArgs, ResonanceRamanTensor, RoaCrossArgs, RoaCrossResult,
+    RoaCrossTensor, VACF, VacfResult, VcdCrossArgs, VcdCrossFlux, VcdCrossResult,
 };
 pub use running_integral::{RunningIntegral, RunningIntegralResult};
-pub use spectral::{IRSpectrum, PowerSpectrum, RamanSpectrum};
+pub use spectral::{
+    IRSpectrum, PowerSpectrum, RamanSpectrum, ResonanceRamanSpectrum, RoaSpectrum, VcdSpectrum,
+};
 
 use rustfft::FftPlanner;
 use rustfft::num_complex::Complex64;

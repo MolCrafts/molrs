@@ -1,11 +1,17 @@
 //! Rotatable bond detection and downstream atom BFS.
 //!
-//! Provides utilities to identify rotatable bonds in an [`Atomistic`] and
-//! compute the set of atoms downstream of a given bond (for torsion rotation).
+//! Identifies the rotatable bonds of an [`Atomistic`] and the atoms downstream
+//! of a bond (the set rotated during a torsion move). Connectivity, degree, ring
+//! membership, and traversal are all delegated to the canonical
+//! [`Topology`](crate::system::topology::Topology) snapshot built from the graph
+//! bonds — this module no longer re-implements ring perception or BFS, so the
+//! result tracks `Topology`'s SSSR (correct for fused/bridged rings) instead of
+//! the previous hand-rolled union-find heuristic.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::system::atomistic::{AtomId, Atomistic};
+use crate::system::topology::Topology;
 
 /// A rotatable bond between atoms `j` and `k`, with the set of downstream
 /// atom indices (0-based positional indices, not `AtomId`s) on the `k`-side.
@@ -19,23 +25,56 @@ pub struct RotatableBond {
     pub downstream: Vec<usize>,
 }
 
-/// Detect rotatable bonds in a molecular graph.
-///
-/// A bond is considered rotatable if:
-/// - It is a single bond (order == 1.0)
-/// - It is acyclic (removing it disconnects the graph)
-/// - Both endpoints have degree > 1 (non-terminal)
-///
-/// Returns a list of `(AtomId, AtomId)` pairs representing rotatable bonds.
-pub fn detect_rotatable_bonds(graph: &Atomistic) -> Vec<(AtomId, AtomId)> {
-    let ring_bonds = find_ring_bonds(graph);
-
+/// Build a positional index map from `AtomId` to 0-based index, following the
+/// iteration order of [`Atomistic::atoms`].
+pub fn atom_id_to_index(graph: &Atomistic) -> HashMap<AtomId, usize> {
     graph
-        .bonds()
-        .filter_map(|(bid, bond)| {
-            let a = bond.nodes[0];
-            let b = bond.nodes[1];
+        .atoms()
+        .enumerate()
+        .map(|(idx, (id, _))| (id, idx))
+        .collect()
+}
 
+/// Build the [`Topology`] snapshot for `graph`, indexing atoms by the order of
+/// [`Atomistic::atoms`] and edges by the order of [`Atomistic::bonds`].
+///
+/// Because [`Topology::from_edges`] preserves edge insertion order, a
+/// [`Topology::bond_ring_mask`] over the returned topology aligns positionally
+/// with `graph.bonds()`.
+fn build_topology(graph: &Atomistic, id_to_idx: &HashMap<AtomId, usize>) -> Topology {
+    let edges: Vec<[usize; 2]> = graph
+        .bonds()
+        .map(|(_, b)| [id_to_idx[&b.nodes[0]], id_to_idx[&b.nodes[1]]])
+        .collect();
+    Topology::from_edges(id_to_idx.len(), &edges)
+}
+
+/// Shared detection core. Returns the positional `(j, k)` index pair of every
+/// rotatable bond together with the `Topology` they were derived from (reused by
+/// the caller for downstream BFS) and the reverse `idx -> AtomId` table.
+///
+/// A bond is rotatable when it is a single bond (order ≈ 1.0, defaulting to 1.0
+/// when unset), both endpoints are non-terminal (degree > 1), and it is acyclic
+/// (not part of any ring per [`Topology::find_rings`]).
+fn scan_rotatable(graph: &Atomistic) -> (Vec<AtomId>, Topology, Vec<(usize, usize)>) {
+    let ids: Vec<AtomId> = graph.atoms().map(|(id, _)| id).collect();
+    let id_to_idx: HashMap<AtomId, usize> =
+        ids.iter().enumerate().map(|(i, &id)| (id, i)).collect();
+
+    // Collect bonds once so the edge index used for `bond_ring_mask` and the
+    // index used for per-bond filtering are guaranteed identical.
+    let bonds: Vec<_> = graph.bonds().collect();
+    let edges: Vec<[usize; 2]> = bonds
+        .iter()
+        .map(|(_, b)| [id_to_idx[&b.nodes[0]], id_to_idx[&b.nodes[1]]])
+        .collect();
+    let topo = Topology::from_edges(ids.len(), &edges);
+    let ring_mask = topo.find_rings().bond_ring_mask(topo.n_bonds());
+
+    let rotatable = bonds
+        .iter()
+        .enumerate()
+        .filter_map(|(bi, (_, bond))| {
             // Single bond only (order defaults to 1.0 if unset). Accept order
             // stored as either F64 or Int via PropValue::as_f64.
             let order = bond
@@ -47,18 +86,59 @@ pub fn detect_rotatable_bonds(graph: &Atomistic) -> Vec<(AtomId, AtomId)> {
                 return None;
             }
 
-            // Non-terminal: both endpoints must have degree > 1
-            if graph.neighbors(a).count() <= 1 || graph.neighbors(b).count() <= 1 {
+            let j = id_to_idx[&bond.nodes[0]];
+            let k = id_to_idx[&bond.nodes[1]];
+
+            // Non-terminal: both endpoints must have degree > 1.
+            if topo.degree(j) <= 1 || topo.degree(k) <= 1 {
                 return None;
             }
 
-            // Acyclic: not in a ring
-            if ring_bonds.contains(&bid) {
+            // Acyclic: bond is not part of any ring.
+            if ring_mask[bi] {
                 return None;
             }
 
-            Some((a, b))
+            Some((j, k))
         })
+        .collect();
+
+    (ids, topo, rotatable)
+}
+
+/// BFS over `topo` from `k`, never crossing back through `j`. Returns the k-side
+/// atom indices (including `k`).
+fn downstream_indices(topo: &Topology, j: usize, k: usize) -> Vec<usize> {
+    let mut visited = HashSet::new();
+    visited.insert(j); // block traversal back through j
+    visited.insert(k);
+
+    let mut queue = VecDeque::new();
+    queue.push_back(k);
+
+    let mut result = vec![k];
+
+    while let Some(current) = queue.pop_front() {
+        for neighbor in topo.neighbors(current) {
+            if visited.insert(neighbor) {
+                result.push(neighbor);
+                queue.push_back(neighbor);
+            }
+        }
+    }
+
+    result
+}
+
+/// Detect rotatable bonds in a molecular graph.
+///
+/// Returns a list of `(AtomId, AtomId)` pairs. See [`scan_rotatable`] for the
+/// rotatable-bond criteria.
+pub fn detect_rotatable_bonds(graph: &Atomistic) -> Vec<(AtomId, AtomId)> {
+    let (ids, _topo, rotatable) = scan_rotatable(graph);
+    rotatable
+        .into_iter()
+        .map(|(j, k)| (ids[j], ids[k]))
         .collect()
 }
 
@@ -70,153 +150,24 @@ pub fn downstream_atoms(
     j: AtomId,
     k: AtomId,
     graph: &Atomistic,
-    id_to_idx: &std::collections::HashMap<AtomId, usize>,
+    id_to_idx: &HashMap<AtomId, usize>,
 ) -> Vec<usize> {
-    let mut visited = HashSet::new();
-    visited.insert(j); // block traversal back through j
-    visited.insert(k);
-
-    let mut queue = VecDeque::new();
-    queue.push_back(k);
-
-    let mut result = vec![id_to_idx[&k]];
-
-    while let Some(current) = queue.pop_front() {
-        for neighbor in graph.neighbors(current) {
-            if visited.insert(neighbor) {
-                result.push(id_to_idx[&neighbor]);
-                queue.push_back(neighbor);
-            }
-        }
-    }
-
-    result
+    let topo = build_topology(graph, id_to_idx);
+    downstream_indices(&topo, id_to_idx[&j], id_to_idx[&k])
 }
 
-/// Build a positional index map from AtomId to 0-based index.
-pub fn atom_id_to_index(graph: &Atomistic) -> std::collections::HashMap<AtomId, usize> {
-    graph
-        .atoms()
-        .enumerate()
-        .map(|(idx, (id, _))| (id, idx))
-        .collect()
-}
-
-/// Detect rotatable bonds and return them as [`RotatableBond`] structs
-/// with positional indices and downstream atom sets.
+/// Detect rotatable bonds and return them as [`RotatableBond`] structs with
+/// positional indices and downstream atom sets.
 pub fn detect_rotatable_bonds_with_downstream(graph: &Atomistic) -> Vec<RotatableBond> {
-    let id_to_idx = atom_id_to_index(graph);
-    let bond_pairs = detect_rotatable_bonds(graph);
-
-    bond_pairs
+    let (_ids, topo, rotatable) = scan_rotatable(graph);
+    rotatable
         .into_iter()
-        .map(|(j_id, k_id)| {
-            let downstream = downstream_atoms(j_id, k_id, graph, &id_to_idx);
-            RotatableBond {
-                j: id_to_idx[&j_id],
-                k: id_to_idx[&k_id],
-                downstream,
-            }
+        .map(|(j, k)| RotatableBond {
+            j,
+            k,
+            downstream: downstream_indices(&topo, j, k),
         })
         .collect()
-}
-
-// --- Ring detection (simple DFS-based) ---
-
-use crate::system::atomistic::BondId;
-
-/// Find all bonds that are part of a ring (cycle) in the graph.
-fn find_ring_bonds(graph: &Atomistic) -> HashSet<BondId> {
-    let mut ring_bonds = HashSet::new();
-
-    // Union-Find approach: for each bond, if both endpoints are already
-    // connected, the bond closes a ring.
-    let atom_ids: Vec<AtomId> = graph.atoms().map(|(id, _)| id).collect();
-    let mut parent: std::collections::HashMap<AtomId, AtomId> =
-        atom_ids.iter().map(|&id| (id, id)).collect();
-
-    fn find(parent: &mut std::collections::HashMap<AtomId, AtomId>, x: AtomId) -> AtomId {
-        let p = parent[&x];
-        if p == x {
-            return x;
-        }
-        let root = find(parent, p);
-        parent.insert(x, root);
-        root
-    }
-
-    fn union(parent: &mut std::collections::HashMap<AtomId, AtomId>, a: AtomId, b: AtomId) {
-        let ra = find(parent, a);
-        let rb = find(parent, b);
-        if ra != rb {
-            parent.insert(ra, rb);
-        }
-    }
-
-    // First pass: identify ring bonds
-    let mut ring_bond_endpoints: Vec<(AtomId, AtomId)> = Vec::new();
-    for (bid, bond) in graph.bonds() {
-        let a = bond.nodes[0];
-        let b = bond.nodes[1];
-        let ra = find(&mut parent, a);
-        let rb = find(&mut parent, b);
-        if ra == rb {
-            // This bond closes a cycle
-            ring_bonds.insert(bid);
-            ring_bond_endpoints.push((a, b));
-        } else {
-            union(&mut parent, a, b);
-        }
-    }
-
-    // The union-find only catches one bond per cycle. For complete ring bond
-    // detection, we need to mark ALL bonds in every cycle.
-    // For each ring-closing bond, BFS to find the shortest path between
-    // endpoints (not using the closing bond), then mark all bonds on the path.
-    for (a, b) in ring_bond_endpoints {
-        mark_ring_path(graph, a, b, &mut ring_bonds);
-    }
-
-    ring_bonds
-}
-
-/// BFS from `a` to `b` avoiding the direct a-b bond, marking all bonds
-/// on the shortest path as ring bonds.
-fn mark_ring_path(graph: &Atomistic, a: AtomId, b: AtomId, ring_bonds: &mut HashSet<BondId>) {
-    let mut visited = HashSet::new();
-    visited.insert(a);
-    let mut queue: VecDeque<(AtomId, Vec<AtomId>)> = VecDeque::new();
-    queue.push_back((a, vec![a]));
-
-    while let Some((current, path)) = queue.pop_front() {
-        for neighbor in graph.neighbors(current) {
-            // Skip the direct a-b edge at the start
-            if current == a && neighbor == b && path.len() == 1 {
-                continue;
-            }
-            if visited.insert(neighbor) {
-                let mut new_path = path.clone();
-                new_path.push(neighbor);
-                if neighbor == b {
-                    // Found path: mark all bonds on this path
-                    for window in new_path.windows(2) {
-                        let u = window[0];
-                        let v = window[1];
-                        // Find the bond between u and v
-                        for (bid, bond) in graph.bonds() {
-                            if (bond.nodes[0] == u && bond.nodes[1] == v)
-                                || (bond.nodes[0] == v && bond.nodes[1] == u)
-                            {
-                                ring_bonds.insert(bid);
-                            }
-                        }
-                    }
-                    return;
-                }
-                queue.push_back((neighbor, new_path));
-            }
-        }
-    }
 }
 
 #[cfg(test)]
@@ -254,6 +205,24 @@ mod tests {
         g.add_bond(b, c).expect("add bond");
         g.add_bond(c, a).expect("add bond");
 
+        assert_eq!(detect_rotatable_bonds(&g).len(), 0);
+    }
+
+    #[test]
+    fn test_fused_ring_no_rotatable_bonds() {
+        // Naphthalene-like fused bicyclic: two six-membered rings sharing the
+        // 0-1 edge. Every bond is a ring bond -> none rotatable. The previous
+        // union-find heuristic could mis-mark shared/bridge bonds; SSSR cannot.
+        let mut g = Atomistic::new();
+        let v: Vec<_> = (0..10).map(|_| g.add_atom(Atom::new())).collect();
+        // ring A: 0-1-2-3-4-5-0
+        for (a, b) in [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 0)] {
+            g.add_bond(v[a], v[b]).expect("add bond");
+        }
+        // ring B: 0-1 shared, plus 1-6-7-8-9-0
+        for (a, b) in [(1, 6), (6, 7), (7, 8), (8, 9), (9, 0)] {
+            g.add_bond(v[a], v[b]).expect("add bond");
+        }
         assert_eq!(detect_rotatable_bonds(&g).len(), 0);
     }
 

@@ -57,6 +57,8 @@ pub mod signal;
 #[cfg(feature = "compute")]
 pub mod compute;
 
+pub mod optimize;
+
 #[cfg(feature = "ff")]
 pub mod ff;
 

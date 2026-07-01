@@ -23,7 +23,7 @@ use molrs::compute::fit::{
     DebyeFit, DebyeRelaxation, EinsteinConductivity, EinsteinDiffusion, EinsteinDiffusionArgs,
     EinsteinHelfandSpectrum, EwaldBoundary, GreenKuboConductivity, GreenKuboDiffusion,
     GreenKuboSpectrum, IRSpectrum, LinearFit, Plateau, PowerSpectrum, RamanSpectrum,
-    RunningIntegral, VACF,
+    ResonanceRamanSpectrum, RoaSpectrum, RunningIntegral, VACF, VcdSpectrum,
 };
 use molrs::compute::traits::{Compute, Fit};
 use molrs::store::frame::Frame as CoreFrame;
@@ -719,6 +719,150 @@ impl PyGreenKuboSpectrum {
 // Registration
 // ═══════════════════════════════════════════════════════════════════════════
 
+// ── Chiral / resonance spectra (TRAVIS parity) ───────────────────────────────
+
+/// Build the Raman-family result dict (shared by ROA / resonance-Raman).
+fn raman_dict<'py>(
+    py: Python<'py>,
+    r: molrs::compute::RamanSpectrumResult,
+) -> PyResult<Bound<'py, PyDict>> {
+    let d = PyDict::new(py);
+    d.set_item("frequencies_cm1", r.frequencies_cm1.into_pyarray(py))?;
+    d.set_item("isotropic", r.isotropic.into_pyarray(py))?;
+    d.set_item("anisotropic", r.anisotropic.into_pyarray(py))?;
+    match r.parallel {
+        Some(p) => d.set_item("parallel", p.into_pyarray(py))?,
+        None => d.set_item("parallel", py.None())?,
+    }
+    match r.perpendicular {
+        Some(p) => d.set_item("perpendicular", p.into_pyarray(py))?,
+        None => d.set_item("perpendicular", py.None())?,
+    }
+    d.set_item("resolution", r.resolution)?;
+    d.set_item("n_frames", r.n_frames)?;
+    Ok(d)
+}
+
+/// Vibrational circular dichroism (VCD) transform of a **raw electric/magnetic
+/// dipole cross-flux ACF** (same window+FFT pipeline as `IRSpectrum`; the signed
+/// cross-flux ACF differs).
+#[pyclass(name = "VcdSpectrum")]
+pub struct PyVcdSpectrum;
+
+#[pymethods]
+impl PyVcdSpectrum {
+    #[new]
+    fn new() -> Self {
+        Self
+    }
+
+    /// Window + FFT the raw VCD cross-flux ACF (timestep ``dt_fs``).
+    ///
+    /// Returns ``{"frequencies_cm1", "intensities", "resolution", "n_frames"}``.
+    fn fit<'py>(
+        &self,
+        py: Python<'py>,
+        acf: PyReadonlyArray1<'py, f64>,
+        dt_fs: f64,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let a = acf.as_array().to_owned();
+        let r = VcdSpectrum.fit((&a, dt_fs)).map_err(py_value_err)?;
+        spectrum_dict(
+            py,
+            r.frequencies_cm1,
+            r.intensities,
+            r.resolution,
+            r.n_frames,
+        )
+    }
+}
+
+/// Raman optical activity (ROA) transform of **raw iso/aniso ROA
+/// cross-correlations** (shares the Raman window+FFT+prefactor pipeline).
+#[pyclass(name = "RoaSpectrum")]
+pub struct PyRoaSpectrum {
+    inner: RoaSpectrum,
+}
+
+#[pymethods]
+impl PyRoaSpectrum {
+    /// ``RoaSpectrum(incident_frequency_cm1=0.0, temperature_k=0.0, averaged=False)``.
+    #[new]
+    #[pyo3(signature = (incident_frequency_cm1=0.0, temperature_k=0.0, averaged=false))]
+    fn new(incident_frequency_cm1: f64, temperature_k: f64, averaged: bool) -> Self {
+        Self {
+            inner: RoaSpectrum {
+                incident_frequency_cm1,
+                temperature_k,
+                averaged,
+            },
+        }
+    }
+
+    /// Window + FFT the raw iso/aniso ROA ACFs (timestep ``dt_fs``).
+    ///
+    /// Returns ``{"frequencies_cm1", "isotropic", "anisotropic", "parallel",
+    /// "perpendicular", "resolution", "n_frames"}``.
+    fn fit<'py>(
+        &self,
+        py: Python<'py>,
+        acf_iso: PyReadonlyArray1<'py, f64>,
+        acf_aniso: PyReadonlyArray1<'py, f64>,
+        dt_fs: f64,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let iso = acf_iso.as_array().to_owned();
+        let aniso = acf_aniso.as_array().to_owned();
+        let r = self
+            .inner
+            .fit((&iso, &aniso, dt_fs))
+            .map_err(py_value_err)?;
+        raman_dict(py, r)
+    }
+}
+
+/// Resonance-Raman transform of **raw resonant iso/aniso ACFs** (identical
+/// pipeline to `RamanSpectrum`; the ACFs come from a resonant polarizability
+/// series upstream).
+#[pyclass(name = "ResonanceRamanSpectrum")]
+pub struct PyResonanceRamanSpectrum {
+    inner: ResonanceRamanSpectrum,
+}
+
+#[pymethods]
+impl PyResonanceRamanSpectrum {
+    /// ``ResonanceRamanSpectrum(incident_frequency_cm1=0.0, temperature_k=0.0, averaged=False)``.
+    #[new]
+    #[pyo3(signature = (incident_frequency_cm1=0.0, temperature_k=0.0, averaged=false))]
+    fn new(incident_frequency_cm1: f64, temperature_k: f64, averaged: bool) -> Self {
+        Self {
+            inner: ResonanceRamanSpectrum {
+                incident_frequency_cm1,
+                temperature_k,
+                averaged,
+            },
+        }
+    }
+
+    /// Window + FFT the raw resonant iso/aniso ACFs (timestep ``dt_fs``).
+    ///
+    /// Returns the same dict as ``RoaSpectrum.fit``.
+    fn fit<'py>(
+        &self,
+        py: Python<'py>,
+        acf_iso: PyReadonlyArray1<'py, f64>,
+        acf_aniso: PyReadonlyArray1<'py, f64>,
+        dt_fs: f64,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let iso = acf_iso.as_array().to_owned();
+        let aniso = acf_aniso.as_array().to_owned();
+        let r = self
+            .inner
+            .fit((&iso, &aniso, dt_fs))
+            .map_err(py_value_err)?;
+        raman_dict(py, r)
+    }
+}
+
 /// Register the raw-compute + fit classes at the top level of the `molrs`
 /// module (`molrs.VACF`, `molrs.LinearFit`, …).
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -739,5 +883,9 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyRamanSpectrum>()?;
     m.add_class::<PyEinsteinHelfandSpectrum>()?;
     m.add_class::<PyGreenKuboSpectrum>()?;
+    // Chiral / resonance spectra (TRAVIS parity).
+    m.add_class::<PyVcdSpectrum>()?;
+    m.add_class::<PyRoaSpectrum>()?;
+    m.add_class::<PyResonanceRamanSpectrum>()?;
     Ok(())
 }

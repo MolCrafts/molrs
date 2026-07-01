@@ -1012,13 +1012,16 @@ class ClusterResult:
     def cluster_idx(self) -> ArrayI64: ...
     @property
     def cluster_sizes(self) -> list[int]: ...
+    @property
+    def cluster_keys(self) -> list[list[int]]: ...
 
 class Cluster:
     def __init__(self, min_cluster_size: int) -> None: ...
     def compute(
         self,
         frames: Frame | Sequence[Frame],
-        nlists: NeighborList | Sequence[NeighborList],
+        nlists: NeighborList | Sequence[NeighborList] | None = ...,
+        keys: Sequence[int] | None = ...,
     ) -> ClusterResult | list[ClusterResult]: ...
 
 class ClusterCentersResult:
@@ -1227,3 +1230,302 @@ class PMFTXY:
         nlists: NeighborList | Sequence[NeighborList],
         orientations: Sequence[Sequence[float]] | None = None,
     ) -> list[tuple[npt.NDArray[np.uint64], ArrayF, ArrayF]]: ...
+
+# ---------------------------------------------------------------------------
+# TRAVIS-parity computes
+# ---------------------------------------------------------------------------
+
+class DistributionResult:
+    """Geometric distribution result (ADF / DDF / distance-DF)."""
+
+    @property
+    def bin_centers(self) -> ArrayF: ...
+    @property
+    def bin_edges(self) -> ArrayF: ...
+    @property
+    def counts(self) -> ArrayF: ...
+    @property
+    def density(self) -> ArrayF: ...
+    @property
+    def density_sin_corrected(self) -> Optional[ArrayF]: ...
+    @property
+    def bin_width(self) -> float: ...
+    @property
+    def n_binned(self) -> float: ...
+    @property
+    def n_raw_samples(self) -> int: ...
+    @property
+    def n_frames(self) -> int: ...
+    @property
+    def angular(self) -> bool: ...
+
+class AngleDistribution:
+    """Angular distribution function (ADF) over `(i, j, k)` triplets."""
+
+    def __init__(self, n_bins: int, min: float = 0.0, max: float = 180.0) -> None: ...
+    def compute(
+        self, frames: Frame | Sequence[Frame], groups: ArrayI64
+    ) -> DistributionResult: ...
+
+class DihedralDistribution:
+    """Dihedral distribution function (DDF) over `(i, j, k, l)` quadruplets."""
+
+    def __init__(
+        self, n_bins: int, min: float = -180.0, max: float = 180.0
+    ) -> None: ...
+    def compute(
+        self, frames: Frame | Sequence[Frame], groups: ArrayI64
+    ) -> DistributionResult: ...
+
+class DistanceDistribution:
+    """Distance distribution function over `(i, j)` pairs."""
+
+    def __init__(self, n_bins: int, min: float, max: float) -> None: ...
+    def compute(
+        self, frames: Frame | Sequence[Frame], groups: ArrayI64
+    ) -> DistributionResult: ...
+
+class VanHoveResult:
+    """Van Hove correlation function G(r, t) (self + distinct)."""
+
+    @property
+    def r_edges(self) -> ArrayF: ...
+    @property
+    def r_centers(self) -> ArrayF: ...
+    @property
+    def lags(self) -> List[int]: ...
+    @property
+    def g_self(self) -> ArrayF: ...
+    @property
+    def g_distinct(self) -> ArrayF: ...
+    @property
+    def dr(self) -> float: ...
+    @property
+    def has_distinct(self) -> bool: ...
+
+class VanHove:
+    """Van Hove correlation function G(r, t)."""
+
+    def __init__(
+        self, n_rbins: int, r_max: float, lags: Sequence[int], stride: int = 1
+    ) -> None: ...
+    def compute(self, frames: Frame | Sequence[Frame]) -> VanHoveResult: ...
+
+class LegendreReorientationResult:
+    """First/second Legendre reorientational TCFs C1(t), C2(t)."""
+
+    @property
+    def lags(self) -> List[int]: ...
+    @property
+    def c1(self) -> ArrayF: ...
+    @property
+    def c2(self) -> ArrayF: ...
+
+class LegendreReorientation:
+    """Legendre reorientational correlation of bond vectors."""
+
+    def __init__(self, max_lag: int, stride: int = 1) -> None: ...
+    def compute(
+        self, frames: Frame | Sequence[Frame], pairs: ArrayI64
+    ) -> LegendreReorientationResult: ...
+
+class HBondCriterion:
+    """Geometric hydrogen-bond criterion (Luzar–Chandler defaults)."""
+
+    def __init__(
+        self,
+        dist_cutoff: float = 3.5,
+        dist_kind: str = "donor_acceptor",
+        angle_cutoff: float = 150.0,
+    ) -> None: ...
+
+class HBondsResult:
+    """Per-frame hydrogen bonds."""
+
+    @property
+    def per_frame(self) -> List[List[Tuple[int, int, int, float, float]]]: ...
+    @property
+    def counts(self) -> List[int]: ...
+
+class HBonds:
+    """Detect hydrogen bonds per frame from explicit donors/acceptors."""
+
+    def __init__(
+        self,
+        donors: ArrayI64,
+        acceptors: ArrayI64,
+        criterion: Optional[HBondCriterion] = None,
+    ) -> None: ...
+    def compute(self, frames: Frame | Sequence[Frame]) -> HBondsResult: ...
+
+class SpatialDistributionResult:
+    """Spatial distribution function on a body-fixed grid."""
+
+    @property
+    def counts(self) -> ArrayF: ...
+    @property
+    def density(self) -> ArrayF: ...
+    @property
+    def g_sdf(self) -> Optional[ArrayF]: ...
+    @property
+    def orientation(self) -> Optional[ArrayF]: ...
+    @property
+    def n(self) -> Tuple[int, int, int]: ...
+    @property
+    def extent(self) -> Tuple[float, float, float]: ...
+    @property
+    def voxel_volume(self) -> float: ...
+    @property
+    def n_frames(self) -> int: ...
+
+class SpatialDistribution:
+    """Spatial distribution function (SDF), Kabsch-aligned to a template."""
+
+    def __init__(
+        self,
+        reference: Sequence[int],
+        template: ArrayF,
+        target: Sequence[int],
+        n: Tuple[int, int, int],
+        extent: Tuple[float, float, float],
+        bulk_density: Optional[float] = None,
+        orientation_pairs: Optional[ArrayI64] = None,
+    ) -> None: ...
+    def compute(
+        self, frames: Frame | Sequence[Frame]
+    ) -> SpatialDistributionResult: ...
+
+class VoronoiCells:
+    """Per-cell radical-Voronoi tessellation."""
+
+    @property
+    def volumes(self) -> ArrayF: ...
+    @property
+    def total_volume(self) -> float: ...
+    def __len__(self) -> int: ...
+    def neighbors(self, i: int) -> List[int]: ...
+
+class RadicalVoronoi:
+    """Radical (Laguerre) Voronoi tessellation — native periodic builder."""
+
+    def __init__(self) -> None: ...
+    def build(self, positions: ArrayF, radii: ArrayF, box: Box) -> VoronoiCells: ...
+
+def voronoi_domains(
+    cells: VoronoiCells, labels: Sequence[int]
+) -> dict[str, Any]: ...
+def voronoi_voids(
+    cells: VoronoiCells, is_void: Sequence[bool], box_volume: float
+) -> dict[str, Any]: ...
+
+class VcdSpectrum:
+    """Vibrational circular dichroism (VCD) spectrum transform."""
+
+    def __init__(self) -> None: ...
+    def fit(self, acf: ArrayF, dt_fs: float) -> dict[str, Any]: ...
+
+class RoaSpectrum:
+    """Raman optical activity (ROA) spectrum transform."""
+
+    def __init__(
+        self,
+        incident_frequency_cm1: float = 0.0,
+        temperature_k: float = 0.0,
+        averaged: bool = False,
+    ) -> None: ...
+    def fit(
+        self, acf_iso: ArrayF, acf_aniso: ArrayF, dt_fs: float
+    ) -> dict[str, Any]: ...
+
+class ResonanceRamanSpectrum:
+    """Resonance-Raman spectrum transform."""
+
+    def __init__(
+        self,
+        incident_frequency_cm1: float = 0.0,
+        temperature_k: float = 0.0,
+        averaged: bool = False,
+    ) -> None: ...
+    def fit(
+        self, acf_iso: ArrayF, acf_aniso: ArrayF, dt_fs: float
+    ) -> dict[str, Any]: ...
+
+class CombinedDistributionResult:
+    """Joint multi-axis distribution (flat row-major counts/density)."""
+
+    @property
+    def edges(self) -> List[ArrayF]: ...
+    @property
+    def centers(self) -> List[ArrayF]: ...
+    @property
+    def counts(self) -> ArrayF: ...
+    @property
+    def density(self) -> ArrayF: ...
+    @property
+    def binned(self) -> float: ...
+    @property
+    def n_raw_samples(self) -> int: ...
+    @property
+    def n_frames(self) -> int: ...
+    @property
+    def ndim(self) -> int: ...
+    def flat_index(self, idx: Sequence[int]) -> int: ...
+    def bin_width_product(self) -> float: ...
+
+class CombinedDistribution:
+    """Joint distribution over several geometric observables (combined-DF).
+
+    Each axis is ``(kind, bins, min, max, sin_weight)`` where ``kind`` is
+    ``"distance"`` / ``"angle"`` / ``"dihedral"``.
+    """
+
+    def __init__(
+        self, axes: Sequence[Tuple[str, int, float, float, bool]]
+    ) -> None: ...
+    def compute(
+        self, frames: Frame | Sequence[Frame], groups: Sequence[ArrayI64]
+    ) -> CombinedDistributionResult: ...
+
+class DensityGrid:
+    """Volumetric electron density on a voxel grid."""
+
+    def __init__(
+        self,
+        origin: ArrayF,
+        basis: ArrayF,
+        dims: Tuple[int, int, int],
+        density: ArrayF,
+    ) -> None: ...
+
+class MolecularMoments:
+    """Per-molecule electromagnetic moments for one frame."""
+
+    @property
+    def charges(self) -> ArrayF: ...
+    @property
+    def dipoles(self) -> ArrayF: ...
+    @property
+    def references(self) -> ArrayF: ...
+
+class VoronoiIntegration:
+    """Integrate an electron density over radical-Voronoi cells into
+    per-molecule charges + dipoles."""
+
+    def __init__(self) -> None: ...
+    def integrate(
+        self,
+        positions: ArrayF,
+        radii: ArrayF,
+        atomic_numbers: ArrayI64,
+        atom_to_mol: ArrayI64,
+        n_mol: int,
+        grid: DensityGrid,
+        box: Box,
+    ) -> MolecularMoments: ...
+
+def polarizability_finite_field(
+    moments_zero: MolecularMoments,
+    plus: MolecularMoments,
+    minus: MolecularMoments,
+    field: float,
+) -> ArrayF: ...

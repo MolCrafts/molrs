@@ -48,6 +48,8 @@
 //! | [`radius_of_gyration`] | `(&Vec<ClusterResult>, &Vec<COMResult>)` | `Vec<`[`RgResult`]`>` |
 //! | [`pca`] | `&Vec<T: DescriptorRow>` | [`PcaResult`] |
 //! | [`kmeans`] | `&PcaResult` | [`KMeansResult`] |
+//! | [`distribution`] | `&AtomGroups` | [`DistributionResult`](distribution::DistributionResult) |
+//! | [`distribution::CombinedDistribution`] | `&[AtomGroups]` | [`CombinedDistributionResult`](distribution::CombinedDistributionResult) |
 
 pub mod center_of_mass;
 pub mod cluster;
@@ -55,10 +57,12 @@ pub mod cluster_centers;
 pub mod density;
 pub mod dielectric;
 pub mod diffraction;
+pub mod distribution;
 pub mod environment;
 pub mod error;
 pub mod fit;
 pub mod gyration_tensor;
+pub mod hbond;
 pub mod inertia_tensor;
 pub mod jacf;
 pub mod kmeans;
@@ -75,6 +79,9 @@ pub mod spectra;
 pub mod traits;
 pub mod util;
 pub mod validate;
+pub mod van_hove;
+#[cfg(feature = "voronoi")]
+pub mod voronoi;
 
 // Re-exports
 pub use center_of_mass::{COMResult, CenterOfMass};
@@ -82,7 +89,8 @@ pub use cluster::{Cluster, ClusterProperties, ClusterPropertiesResult, ClusterRe
 pub use cluster_centers::{ClusterCenters, ClusterCentersResult};
 pub use density::{
     CorrelationFunction, CorrelationFunctionResult, GaussianDensity, GaussianDensityResult,
-    LocalDensity, LocalDensityResult, SphereVoxelization, SphereVoxelizationResult,
+    GridSpec, LocalDensity, LocalDensityResult, SpatialDistribution, SpatialDistributionResult,
+    SphereVoxelization, SphereVoxelizationResult,
 };
 pub use dielectric::{
     StaticDielectricResult, compute_current_density, compute_dipole_moment, decompose_current,
@@ -93,6 +101,7 @@ pub use diffraction::{
     StaticStructureFactorDebyeResult, StaticStructureFactorDirect,
     StaticStructureFactorDirectResult,
 };
+pub use distribution::{AxisSpec, CombinedDistribution, CombinedDistributionResult};
 pub use environment::{
     AngularSeparationGlobal, AngularSeparationGlobalResult, AngularSeparationNeighbor,
     AngularSeparationNeighborResult, BondOrder, BondOrderResult, LocalBondProjection,
@@ -105,9 +114,15 @@ pub use fit::{
     EinsteinHelfandSpectrum, EwaldBoundary, GreenKuboConductivity, GreenKuboConductivityResult,
     GreenKuboDiffusion, GreenKuboSpectrum, IRFlux, IRFluxResult, IRSpectrum, LinearFit,
     LinearFitResult, Plateau, PlateauResult, PowerSpectrum, RamanSpectrum, RamanTensor,
-    RamanTensorResult, RunningIntegral, RunningIntegralResult, VACF, VacfResult,
+    RamanTensorResult, ResonanceRamanSpectrum, ResonanceRamanTensor, RoaCrossResult,
+    RoaCrossTensor, RoaSpectrum, RunningIntegral, RunningIntegralResult, VACF, VacfResult,
+    VcdCrossFlux, VcdCrossResult, VcdSpectrum,
 };
 pub use gyration_tensor::{GyrationTensor, GyrationTensorResult};
+pub use hbond::{
+    DistKind, HBond, HBondCriterion, HBonds, HBondsResult, LifetimeResult, NetworkResult,
+    hbond_components, hbond_lifetimes, presence_from_hbonds,
+};
 pub use inertia_tensor::{InertiaTensor, InertiaTensorResult};
 // `jacf` is now a documentation-only module: the Green–Kubo conductivity is the
 // `GreenKuboConductivity` (raw ACF) + `fit::RunningIntegral` composition. Its
@@ -117,8 +132,9 @@ pub use msd::{MSD, MSDResult, MSDTimeSeries, MsdMode};
 pub use onsager::{OnsagerCorrelation, OnsagerResult};
 pub use order::{
     ContinuousCoordination, ContinuousCoordinationResult, Cubatic, CubaticResult, Hexatic,
-    HexaticResult, Nematic, NematicResult, RotationalAutocorrelation,
-    RotationalAutocorrelationResult, SolidLiquid, SolidLiquidResult, Steinhardt, SteinhardtResult,
+    HexaticResult, LegendreReorientation, LegendreReorientationResult, Nematic, NematicResult,
+    RotationalAutocorrelation, RotationalAutocorrelationResult, SolidLiquid, SolidLiquidResult,
+    Steinhardt, SteinhardtResult,
 };
 pub use pca::{Pca2, PcaResult};
 pub use persist::{PersistResult, SurvivalMethod, pair_survival_tcf};
@@ -131,3 +147,9 @@ pub use rdf::{RDF, RDFResult};
 pub use result::{ComputeResult, DescriptorRow};
 pub use spectra::{RamanSpectrumResult, SpectrumResult};
 pub use traits::{Compute, Fit};
+pub use van_hove::{VanHove, VanHoveResult};
+#[cfg(feature = "voronoi")]
+pub use voronoi::{
+    DensityGrid, DomainAnalysis, DomainResult, Face, MolecularMoments, RadicalVoronoi,
+    VoidAnalysis, VoidResult, VoronoiCells, VoronoiIntegration, polarizability_finite_field,
+};

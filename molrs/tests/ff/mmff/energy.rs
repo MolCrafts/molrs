@@ -334,7 +334,7 @@ fn timing_baseline_50_atoms() {
 
 #[test]
 fn lbfgs_minimize_relaxes_mmff_ethane() {
-    use molrs::ff::{LBFGS, LbfgsConfig};
+    use molrs::optimize::{LBFGS, LbfgsConfig};
 
     let (ff, coords0) = build_ff("e_ethane");
     let e_start = ff.calc_energy_forces(&coords0).0;
@@ -364,7 +364,7 @@ fn lbfgs_minimize_relaxes_mmff_ethane() {
 
 #[test]
 fn lbfgs_minimize_batch_matches_single() {
-    use molrs::ff::{LBFGS, LbfgsConfig};
+    use molrs::optimize::{LBFGS, LbfgsConfig};
 
     let (ff, coords0) = build_ff("e_ethane");
     let n_atoms = coords0.len() / 3;
