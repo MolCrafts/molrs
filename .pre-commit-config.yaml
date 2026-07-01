@@ -67,18 +67,10 @@ repos:
         pass_filenames: false
         types: [rust]
 
-      # ─── ci-rust.yml::test (pre-push: too slow for every commit) ──────────
-      # CI runs `bash scripts/fetch-test-data.sh` before cargo test (with
-      # actions/cache wrapping it). Locally we just run the fetch — it
-      # does `git clone --depth=1` which is small and fast. Without this
-      # the pdb / lammps / cif tests panic on "Test data not found".
-      - id: fetch-test-data
-        name: fetch-test-data.sh (clones MolCrafts/tests-data into <root>/tests-data/)
-        entry: bash scripts/fetch-test-data.sh
-        language: system
-        pass_filenames: false
-        types: [rust]
-        stages: [pre-push]
+      # NOTE: tests-data (100+ MB) is NOT fetched in the local pre-push gate.
+      # Only the data-dependent integration/python tests need it, and those run
+      # in CI (ci-rust.yml / ci-python.yml, with actions/cache). The pre-push
+      # gate runs only data-free checks, so it never downloads test data.
 
       # Pre-push runs only the fast, orthogonal src unit tests (--lib). The heavy
       # integration / e2e / TRAVIS-parity tests under tests/ stay in the repo and
@@ -151,10 +143,6 @@ repos:
         types: [rust]
         stages: [pre-push]
 
-      - id: python-pytest
-        name: pytest (molrs-python, after wheel install)
-        entry: bash -c 'cd molrs-python && uv pip install --quiet --force-reinstall target/wheels/*.whl && pytest -q'
-        language: system
-        pass_filenames: false
-        types: [rust]
-        stages: [pre-push]
+      # python-pytest moved to CI (ci-python.yml): it needs the 100+ MB
+      # tests-data, which the local pre-push gate must not download. The
+      # maturin build above still validates the wheel compiles locally.
