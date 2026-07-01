@@ -1,6 +1,6 @@
 [package]
 name = "molrs-python"
-version = "0.1.6"
+version = "0.5.1"
 edition = "2024"
 rust-version = "1.91"
 authors = ["MolCrafts"]
@@ -26,10 +26,10 @@ serde_json = "1"
 # `ForceField._ffi_forcefield_capsule()` (the force-field analogue of the frame
 # capsule). molrs-python already pulls `molrs/ff` via `full`, so this only turns
 # on the matching molrs-ffi handle.
-molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.1.6", features = ["ff"] }
+molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.5.1", features = ["ff"] }
 # The merged crate with every sub-system module (`full`) plus the zarr /
 # filesystem / smiles knobs the bindings exercise.
-molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.1.6", features = ["full", "zarr", "filesystem"] }
+molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.5.1", features = ["full", "zarr", "filesystem"] }
 
 [workspace]
 
