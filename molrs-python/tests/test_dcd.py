@@ -29,7 +29,9 @@ WRITER_REJECTS = {"4d-dynamic.dcd"}
 def _all_dcd_files():
     files = sorted(glob.glob(os.path.join(DCD_DATA_DIR, "*.dcd")))
     if not files:
-        pytest.skip(f"no DCD test data found in {DCD_DATA_DIR}")
+        # Called during collection (parametrize); skip the whole module cleanly
+        # when the DCD test data is absent instead of erroring.
+        pytest.skip(f"no DCD test data found in {DCD_DATA_DIR}", allow_module_level=True)
     return files
 
 

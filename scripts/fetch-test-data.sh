@@ -13,12 +13,15 @@ REPO_URL="https://github.com/MolCrafts/tests-data.git"
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TARGET_DIR="${MOLRS_TESTS_DATA:-$PROJECT_ROOT/tests-data}"
 
-if [ -d "$TARGET_DIR/.git" ]; then
+# Reuse only a *valid* clone; a broken/partial one (from an interrupted run)
+# must be re-fetched, not reused.
+if [ -d "$TARGET_DIR/.git" ] && git -C "$TARGET_DIR" rev-parse --verify HEAD >/dev/null 2>&1; then
     echo "Test data already present at $TARGET_DIR — reusing."
     exit 0
 fi
 
 echo "Fetching test data to $TARGET_DIR..."
+rm -rf "$TARGET_DIR"   # drop any broken/partial clone before re-fetching
 mkdir -p "$(dirname "$TARGET_DIR")"
 git clone --depth=1 "$REPO_URL" "$TARGET_DIR"
 echo "Done. Run: cargo test"
