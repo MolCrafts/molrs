@@ -74,6 +74,25 @@ pub mod ffi {
         fn xyz_read_first_frame(path: &str) -> Box<FrameRef>;
         fn molrec_print_summary(rec: &AtvMolRec);
 
+        // ── Trajectory analysis (molrs `compute` kernels) ────────────
+        // The C++ engine measures (accumulates frames into the MolRec); molrs
+        // analyzes. No analysis math in C++. See molrs/src/compute/.
+        //
+        // Mean squared displacement, MsdMode::Direct: MSD(t) = <|r(t) - r(0)|^2>
+        // with the first committed frame as reference (LAMMPS `compute msd`
+        // semantics). Returns the mean-MSD curve, one value per committed frame
+        // (element 0 is the reference, always 0). Empty when < 2 frames or on a
+        // compute error -- never panics/aborts.
+        fn analyze_msd(rec: &AtvMolRec) -> Vec<f64>;
+
+        // Einstein self-diffusion coefficient D from the windowed-MSD slope:
+        // D = slope / (2 * dims), where slope is an OLS linear fit of MSD(t) over
+        // the lag window [fit_lo, fit_hi] (fractions of the last lag, 0<=lo<hi<=1).
+        // `dt` = time between committed frames. Returns NaN on < 2 frames or a
+        // fit error -- never panics/aborts. All math is molrs (EinsteinDiffusion
+        // + LinearFit).
+        fn analyze_diffusion(rec: &AtvMolRec, dt: f64, dims: i32, fit_lo: f64, fit_hi: f64) -> f64;
+
         // Mulliken stays in C++ — depends on electronic structure context (basis
         // sets, overlap matrix) that is not available from raw simulation data.
         // TODO: RDF via molrs (currently pure C++ in Atomiverse)

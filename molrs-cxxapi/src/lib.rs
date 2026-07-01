@@ -345,6 +345,61 @@ fn molrec_n_frames(rec: &AtvMolRec) -> i32 {
     rec.n_frames
 }
 
+// ── Trajectory analysis (molrs compute kernels) ──────────────────────────────
+
+/// Mean squared displacement over the accumulated trajectory.
+///
+/// `MsdMode::Direct` — `MSD(t) = ⟨|r(t) − r(0)|²⟩_i` with the first committed
+/// frame as reference (LAMMPS `compute msd` semantics). All analysis math lives
+/// in molrs (`compute::MSD`); this only marshals frames in and the curve out.
+/// Returns one mean value per committed frame (index 0 is the reference, 0.0);
+/// empty on fewer than two frames or a compute error — never panics.
+fn analyze_msd(rec: &AtvMolRec) -> Vec<f64> {
+    use molrs::compute::{Compute, MSD};
+    let n = rec.rec.count_frames();
+    if n < 2 {
+        return Vec::new();
+    }
+    let frames: Vec<Frame> = (0..n).filter_map(|i| rec.rec.frame_at(i)).collect();
+    if frames.len() < 2 {
+        return Vec::new();
+    }
+    let refs: Vec<&Frame> = frames.iter().collect();
+    match MSD::new().compute(&refs, ()) {
+        Ok(ts) => ts.data.iter().map(|r| r.mean).collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Einstein self-diffusion coefficient `D = slope / (2*dims)` from the
+/// windowed-MSD slope over the lag window `[fit_lo, fit_hi]` (fractions of the
+/// last lag). All math is molrs (`EinsteinDiffusion` + `LinearFit`). Returns
+/// `NaN` on fewer than two frames, bad args, or a fit error — never panics.
+fn analyze_diffusion(rec: &AtvMolRec, dt: f64, dims: i32, fit_lo: f64, fit_hi: f64) -> f64 {
+    use molrs::compute::{Compute, EinsteinDiffusion, EinsteinDiffusionArgs, Fit, LinearFit};
+    let n = rec.rec.count_frames();
+    if n < 2 || dt <= 0.0 || dt.is_nan() || dims <= 0 {
+        return f64::NAN;
+    }
+    let frames: Vec<Frame> = (0..n).filter_map(|i| rec.rec.frame_at(i)).collect();
+    if frames.len() < 2 {
+        return f64::NAN;
+    }
+    let refs: Vec<&Frame> = frames.iter().collect();
+    let ed = match EinsteinDiffusion.compute(&refs, EinsteinDiffusionArgs { dt }) {
+        Ok(r) => r,
+        Err(_) => return f64::NAN,
+    };
+    match (LinearFit {
+        window: (fit_lo, fit_hi),
+    })
+    .fit((&ed.lag_times, &ed.msd))
+    {
+        Ok(fit) => fit.slope / (2.0 * dims as f64),
+        Err(_) => f64::NAN,
+    }
+}
+
 // ── I/O ──────────────────────────────────────────────────────────────────────
 
 fn xyz_write(path: &str, rec: &AtvMolRec) {
