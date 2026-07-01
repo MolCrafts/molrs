@@ -7,17 +7,17 @@
 //! resonance spectra (`VcdSpectrum` / `RoaSpectrum` / `ResonanceRamanSpectrum`)
 //! live in [`crate::compute_fit`] alongside the other spectral transforms.
 
+use molrs::compute::Compute;
 use molrs::compute::distribution::{
     AngleObservable, AnyObservable, AtomGroups, AxisSpec, CombinedDistribution,
     CombinedDistributionResult, DihedralObservable, DistanceObservable, DistributionFunction,
     DistributionResult, Observable,
 };
-use molrs::compute::Compute;
 use molrs::compute::{
-    polarizability_finite_field, DensityGrid, DistKind, DomainAnalysis, GridSpec, HBondCriterion,
-    HBonds, HBondsResult, LegendreReorientation, LegendreReorientationResult, MolecularMoments,
-    RadicalVoronoi, SpatialDistribution, SpatialDistributionResult, VanHove, VanHoveResult,
-    VoidAnalysis, VoronoiCells, VoronoiIntegration,
+    DensityGrid, DistKind, DomainAnalysis, GridSpec, HBondCriterion, HBonds, HBondsResult,
+    LegendreReorientation, LegendreReorientationResult, MolecularMoments, RadicalVoronoi,
+    SpatialDistribution, SpatialDistributionResult, VanHove, VanHoveResult, VoidAnalysis,
+    VoronoiCells, VoronoiIntegration, polarizability_finite_field,
 };
 use molrs::store::frame::Frame as CoreFrame;
 use molrs::types::F;
@@ -30,7 +30,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use crate::helpers::{collect_frames, py_value_err, NpF};
+use crate::helpers::{NpF, collect_frames, py_value_err};
 use crate::simbox::PyBox;
 
 /// Build an [`AtomGroups`] of the given `arity` from an `(N, arity)` integer
@@ -513,12 +513,15 @@ pub struct PyHBondsResult {
     inner: HBondsResult,
 }
 
+/// Per-frame hydrogen bonds: lists of `(donor, hydrogen, acceptor, distance, angle)`.
+type PerFrameHBonds = Vec<Vec<(u32, u32, u32, NpF, NpF)>>;
+
 #[pymethods]
 impl PyHBondsResult {
     /// Per-frame hydrogen bonds as a list of lists of
     /// `(donor, hydrogen, acceptor, distance, angle)` tuples.
     #[getter]
-    fn per_frame(&self) -> Vec<Vec<(u32, u32, u32, NpF, NpF)>> {
+    fn per_frame(&self) -> PerFrameHBonds {
         self.inner
             .per_frame
             .iter()

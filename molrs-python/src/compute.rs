@@ -369,9 +369,9 @@ impl PyCluster {
         let owned = collect_frames(frames)?;
         let refs: Vec<&CoreFrame> = owned.iter().collect();
         let out = if let Some(keys_obj) = keys {
-            let keys_i: Vec<i64> = keys_obj.extract().map_err(|_| {
-                PyValueError::new_err("keys must be a 1-D sequence of integers")
-            })?;
+            let keys_i: Vec<i64> = keys_obj
+                .extract()
+                .map_err(|_| PyValueError::new_err("keys must be a 1-D sequence of integers"))?;
             let mut keys_u: Vec<u32> = Vec::with_capacity(keys_i.len());
             for k in keys_i {
                 if k < 0 {
@@ -396,7 +396,9 @@ impl PyCluster {
                     refs.len()
                 )));
             }
-            self.inner.compute(&refs, &nlists_vec).map_err(py_value_err)?
+            self.inner
+                .compute(&refs, &nlists_vec)
+                .map_err(py_value_err)?
         };
         if !batched {
             let single = out.into_iter().next().unwrap();

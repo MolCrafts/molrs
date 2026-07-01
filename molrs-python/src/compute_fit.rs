@@ -23,7 +23,7 @@ use molrs::compute::fit::{
     DebyeFit, DebyeRelaxation, EinsteinConductivity, EinsteinDiffusion, EinsteinDiffusionArgs,
     EinsteinHelfandSpectrum, EwaldBoundary, GreenKuboConductivity, GreenKuboDiffusion,
     GreenKuboSpectrum, IRSpectrum, LinearFit, Plateau, PowerSpectrum, RamanSpectrum,
-    ResonanceRamanSpectrum, RoaSpectrum, RunningIntegral, VcdSpectrum, VACF,
+    ResonanceRamanSpectrum, RoaSpectrum, RunningIntegral, VACF, VcdSpectrum,
 };
 use molrs::compute::traits::{Compute, Fit};
 use molrs::store::frame::Frame as CoreFrame;
@@ -719,8 +719,6 @@ impl PyGreenKuboSpectrum {
 // Registration
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Register the raw-compute + fit classes at the top level of the `molrs`
-/// module (`molrs.VACF`, `molrs.LinearFit`, …).
 // ── Chiral / resonance spectra (TRAVIS parity) ───────────────────────────────
 
 /// Build the Raman-family result dict (shared by ROA / resonance-Raman).
@@ -865,6 +863,8 @@ impl PyResonanceRamanSpectrum {
     }
 }
 
+/// Register the raw-compute + fit classes at the top level of the `molrs`
+/// module (`molrs.VACF`, `molrs.LinearFit`, …).
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Raw computes.
     m.add_class::<PyVACF>()?;

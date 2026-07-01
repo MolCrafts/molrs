@@ -80,17 +80,21 @@ repos:
         types: [rust]
         stages: [pre-push]
 
+      # Pre-push runs only the fast, orthogonal src unit tests (--lib). The heavy
+      # integration / e2e / TRAVIS-parity tests under tests/ stay in the repo and
+      # run in full CI (ci-rust.yml keeps --tests --examples), so the gate is fast
+      # without dropping coverage of the compute kernels.
       - id: cargo-test-workspace
-        name: cargo test --workspace --lib --tests --examples --locked
-        entry: cargo test --workspace --lib --tests --examples --locked
+        name: cargo test --workspace --lib --locked (unit tests)
+        entry: cargo test --workspace --lib --locked
         language: system
         pass_filenames: false
         types: [rust]
         stages: [pre-push]
 
       - id: cargo-test-facade-full
-        name: cargo test facade --features "full filesystem"
-        entry: cargo test -p molcrafts-molrs --lib --tests --features "full filesystem" --locked
+        name: cargo test facade --lib --features "full filesystem"
+        entry: cargo test -p molcrafts-molrs --lib --features "full filesystem" --locked
         language: system
         pass_filenames: false
         types: [rust]
