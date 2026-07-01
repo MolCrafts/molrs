@@ -26,5 +26,12 @@ fi
 echo "Cloning test data to $TARGET_DIR..."
 rm -rf "$TARGET_DIR"   # only reached when missing/broken
 mkdir -p "$(dirname "$TARGET_DIR")"
-git clone --depth=1 "$REPO_URL" "$TARGET_DIR"
+# Exclude `con/` at checkout: tests-data is a fork of chemfiles/tests-data, whose
+# EON fixtures live under `con/`. `con` is a reserved device name on Windows and
+# git cannot materialize it there, breaking the whole checkout. Nothing reads
+# con/ data. It has been removed from the fork, but the sparse-checkout guards
+# against an upstream chemfiles sync re-introducing it.
+git clone --depth=1 --no-checkout "$REPO_URL" "$TARGET_DIR"
+git -C "$TARGET_DIR" sparse-checkout set --no-cone '/*' '!/con/'
+git -C "$TARGET_DIR" checkout
 echo "Done. Run: cargo test"
