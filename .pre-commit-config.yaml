@@ -1,11 +1,10 @@
 # Mirrors every check in .github/workflows/ci-*.yml. Any divergence is a
 # bug — when you add/modify a CI step, update this file in the same commit.
 #
-# Stages:
-#   pre-commit (default): fast checks (fmt, clippy). Runs on every commit.
-#   pre-push:            slow checks (full workspace test, wasm build,
-#                        python build+test, C API cmake+ctest). Runs before
-#                        push only.
+# Two-tier gate:
+#   Common fast gate (fmt + clippy): runs at BOTH pre-commit and pre-push —
+#     the shared first-line check, fail-fast before anything heavy.
+#   Heavy gate (tests, bench, wasm/capi/python builds): pre-push only.
 #
 # Install both stages:
 #   pre-commit install --hook-type pre-commit --hook-type pre-push
@@ -13,38 +12,27 @@
 repos:
   - repo: local
     hooks:
-      # ─── ci-rust.yml::fmt ─────────────────────────────────────────────────
+      # ─── Common fast gate: fmt + clippy (ci-rust.yml::fmt + ::clippy) ─────
+      # Mirrors CI's fmt (1 command) + clippy (2 commands) exactly. Runs at BOTH
+      # pre-commit (fast feedback) and pre-push (fail-fast before the heavy hooks
+      # below) — the shared first-line gate. molrs-python and molrs-wasm are
+      # separate workspaces that CI does not fmt/clippy, so this gate doesn't
+      # either (they are built by the wasm/python pre-push hooks, as in CI).
       - id: cargo-fmt
-        name: cargo fmt --check (workspace)
-        entry: cargo fmt --all -- --check
+        name: cargo fmt --check
+        entry: cargo fmt --check
         language: system
         pass_filenames: false
         types: [rust]
+        stages: [pre-commit, pre-push]
 
-      - id: cargo-fmt-python
-        name: cargo fmt --check (molrs-python)
-        entry: bash -c 'cd molrs-python && cargo fmt -- --check'
-        language: system
-        pass_filenames: false
-        types: [rust]
-
-      - id: cargo-fmt-wasm
-        name: cargo fmt --check (molrs-wasm)
-        entry: bash -c 'cd molrs-wasm && cargo fmt -- --check'
-        language: system
-        pass_filenames: false
-        types: [rust]
-
-      # ─── ci-rust.yml::clippy ──────────────────────────────────────────────
-      # CI runs (verbatim — no --locked):
-      #   cargo clippy --workspace --all-targets -- -D warnings
-      #   cargo clippy -p molcrafts-molrs --all-targets --features full -- -D warnings
       - id: cargo-clippy-workspace
         name: cargo clippy --workspace --all-targets (-D warnings)
         entry: cargo clippy --workspace --all-targets -- -D warnings
         language: system
         pass_filenames: false
         types: [rust]
+        stages: [pre-commit, pre-push]
 
       - id: cargo-clippy-facade-full
         name: cargo clippy facade --features full (-D warnings)
@@ -52,20 +40,7 @@ repos:
         language: system
         pass_filenames: false
         types: [rust]
-
-      - id: cargo-clippy-python
-        name: cargo clippy (molrs-python)
-        entry: bash -c 'cd molrs-python && cargo clippy -- -D warnings'
-        language: system
-        pass_filenames: false
-        types: [rust]
-
-      - id: cargo-clippy-wasm
-        name: cargo clippy (molrs-wasm)
-        entry: bash -c 'cd molrs-wasm && cargo clippy -- -D warnings'
-        language: system
-        pass_filenames: false
-        types: [rust]
+        stages: [pre-commit, pre-push]
 
       # ─── ci-rust.yml::test (Fetch test data) ──────────────────────────────
       # CI's test job clones MolCrafts/tests-data before running --tests. The
