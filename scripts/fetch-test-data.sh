@@ -5,23 +5,26 @@ set -euo pipefail
 # crate (and the Python / C / WASM bindings) resolves the same copy, and
 # `cargo clean` does not wipe it.
 #
-# Fetch-once: if a valid clone is already present it is reused. Pre-push therefore
-# does NOT re-clone on every run (the old `rm -rf` + clone was slow, network-flaky,
-# and left no data if the clone failed mid-way). To force a refresh, delete the
-# directory; to share an existing copy, point MOLRS_TESTS_DATA at it.
+# Never delete an existing clone: if a valid one is present, just update it to
+# the latest (so newly added fixtures land without a full re-clone). Only clone
+# from scratch when it is missing or broken. Point MOLRS_TESTS_DATA at an
+# existing copy to share it.
 REPO_URL="https://github.com/MolCrafts/tests-data.git"
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TARGET_DIR="${MOLRS_TESTS_DATA:-$PROJECT_ROOT/tests-data}"
 
-# Reuse only a *valid* clone; a broken/partial one (from an interrupted run)
-# must be re-fetched, not reused.
+# Present and valid → refresh in place (fetch the latest tip, fast-forward to
+# it). A broken/partial clone (from an interrupted run) falls through to a
+# clean re-clone below.
 if [ -d "$TARGET_DIR/.git" ] && git -C "$TARGET_DIR" rev-parse --verify HEAD >/dev/null 2>&1; then
-    echo "Test data already present at $TARGET_DIR — reusing."
+    echo "Test data present at $TARGET_DIR — updating to latest."
+    git -C "$TARGET_DIR" fetch --depth=1 origin
+    git -C "$TARGET_DIR" reset --hard "@{u}"
     exit 0
 fi
 
-echo "Fetching test data to $TARGET_DIR..."
-rm -rf "$TARGET_DIR"   # drop any broken/partial clone before re-fetching
+echo "Cloning test data to $TARGET_DIR..."
+rm -rf "$TARGET_DIR"   # only reached when missing/broken
 mkdir -p "$(dirname "$TARGET_DIR")"
 git clone --depth=1 "$REPO_URL" "$TARGET_DIR"
 echo "Done. Run: cargo test"
