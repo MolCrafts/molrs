@@ -63,7 +63,7 @@ res["lag_times"], res["correlation"]
 
 ---
 
-## JACF — `green_kubo_conductivity`
+## JACF — Green–Kubo conductivity
 
 Green–Kubo DC ionic conductivity from the charge-current autocorrelation:
 
@@ -75,33 +75,20 @@ $$
 
 with the collective charge current $\mathbf{J}(t)=\sum_a q_a\mathbf{v}_a(t)$
 assembled by the caller. The autocorrelation is the unbiased windowed estimator
-$C(\tau)=\tfrac{1}{N-\tau}\sum_t\mathbf{J}(t)\cdot\mathbf{J}(t+\tau)$; the
-integral is trapezoidal. The MD→SI prefactor folds in $e^2$, Å→m, ps→s (same
-factors as `dielectric::einstein_helfand_conductivity`, with the Green–Kubo
-$1/3$ replacing the Einstein $1/6$), so $\sigma$ is returned in S·m⁻¹.
+$C(\tau)=\tfrac{1}{N-\tau}\sum_t\mathbf{J}(t)\cdot\mathbf{J}(t+\tau)$; the running
+integral is trapezoidal.
 
-| Argument | Type | Meaning |
-|----------|------|---------|
-| `current` | `Array2<f64>` `(n_frames, 3)` | charge current $\mathbf{J}$, e·Å·ps⁻¹ |
-| `dt` | `f64` | frame spacing, ps (> 0) |
-| `volume` | `f64` | system volume, Å³ (> 0) |
-| `temperature` | `f64` | temperature, K (> 0) |
-| `max_correlation_time` | `usize` | longest ACF lag in frames |
+!!! note "API — compose the raw-compute classes"
 
-**Returns** `JacfResult { lag_times, jacf, sigma_running, sigma }`. `jacf` is
-$C(\tau)$ in (e·Å·ps⁻¹)²; `sigma_running` is the running integral $\sigma(\tau)$
-(S·m⁻¹, for convergence checking); `sigma` is its final value.
-
-**Errors** `DimensionMismatch` (non-`(_,3)`), `EmptyInput` (< 2 frames),
-`NonFinite`, `OutOfRange` (`dt`, `volume`, or `temperature` ≤ 0).
-
-```python
-from molrs.transport import Jacf
-res = Jacf.green_kubo_conductivity(J, dt=0.001, volume=V, temperature=300.0,
-                                   max_correlation_time=5000)
-res["sigma"]          # S/m
-res["jacf"], res["sigma_running"]
-```
+    The bundled `transport.Jacf.green_kubo_conductivity` kernel was removed in
+    `compute-fit-03-cleanup`. Build the conductivity from the raw-compute
+    classes instead: `molrs.GreenKuboConductivity` produces the raw current ACF
+    $C(\tau)$, `molrs.RunningIntegral` forms $\int_0^\tau C\,d\tau'$, and a
+    `1/(3·V·k_B·T)` MD→SI prefactor (folding in $e^2$, Å→m, ps→s — the same
+    factors as the Einstein–Helfand route, with the Green–Kubo $1/3$ replacing
+    the Einstein $1/6$) converts the result to S·m⁻¹. This mirrors the
+    Einstein–Helfand route documented with the
+    [dielectric kernels](trajectory-analysis.md).
 
 ---
 

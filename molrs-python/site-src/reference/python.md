@@ -258,6 +258,4 @@ worked examples.
 
 ::: molrs.transport.Onsager
 
-::: molrs.transport.Jacf
-
 ::: molrs.transport.Persist
