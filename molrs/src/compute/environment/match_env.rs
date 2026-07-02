@@ -25,6 +25,18 @@
 //!
 //! After per-pair match decisions, particles are clustered into
 //! environment classes by union-find.
+//!
+//! # Performance
+//!
+//! Per-particle bond fingerprints are built in a **single O(n_pairs)
+//! pass** over the neighbor list — linear in the total neighbor count
+//! (≈ O(N·k) for `N` particles with `k` neighbors each). Particles are
+//! then bucketed by neighbor count, and matching compares every pair
+//! *within* a bucket: O(b²) per bucket of size `b`. That quadratic
+//! comparison is intrinsic to environment matching (freud does the same)
+//! and is the dominant cost at scale. In registration mode each
+//! comparison additionally enumerates up to `n!` permutations, bounded by
+//! [`MatchEnv::with_max_neighbors_for_registration`].
 
 use std::collections::HashMap;
 
@@ -52,6 +64,10 @@ pub struct MatchEnvResult {
 impl ComputeResult for MatchEnvResult {}
 
 /// `MatchEnv` analyzer.
+///
+/// See the [module documentation](self) for the two matching modes and
+/// their complexity (linear fingerprint build; quadratic per-bucket
+/// comparison).
 #[derive(Debug, Clone, Copy)]
 pub struct MatchEnv {
     rmsd_threshold: F,
