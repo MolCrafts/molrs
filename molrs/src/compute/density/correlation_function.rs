@@ -188,6 +188,18 @@ impl Compute for CorrelationFunction {
                 what: "CorrelationFunction frame-aligned inputs",
             });
         }
+        #[cfg(feature = "rayon")]
+        const PAR_THRESHOLD: usize = 2;
+
+        #[cfg(feature = "rayon")]
+        if nf >= PAR_THRESHOLD {
+            use rayon::prelude::*;
+            return (0..nf)
+                .into_par_iter()
+                .map(|k| self.one_frame(&args.nlists[k], &args.values_a[k], &args.values_b[k]))
+                .collect();
+        }
+
         let mut out = Vec::with_capacity(nf);
         for k in 0..nf {
             out.push(self.one_frame(&args.nlists[k], &args.values_a[k], &args.values_b[k])?);
@@ -353,5 +365,47 @@ mod tests {
         assert!(CorrelationFunction::new(0, 1.0, 0.0).is_err());
         assert!(CorrelationFunction::new(10, 1.0, 1.0).is_err());
         assert!(CorrelationFunction::new(10, 0.5, 1.0).is_err());
+    }
+
+    /// The `nf >= PAR_THRESHOLD` rayon branch must match the serial path
+    /// exactly, in frame order (frame-aligned nlists / values indexing).
+    #[test]
+    fn parallel_matches_serial() {
+        let positions = [
+            [1.0_f64, 1.0, 1.0],
+            [2.0, 1.0, 1.0],
+            [3.0, 1.0, 1.0],
+            [4.0, 1.0, 1.0],
+        ];
+        let frame = frame_with(&positions, 20.0);
+        let nl = build_nlist(&frame, 5.0);
+        let vals = vec![1.0_f64; positions.len()];
+        let cf = CorrelationFunction::new(10, 5.0, 0.0).unwrap();
+        let solo = cf
+            .compute(
+                &[&frame],
+                CorrelationArgs {
+                    nlists: std::slice::from_ref(&nl),
+                    values_a: std::slice::from_ref(&vals),
+                    values_b: std::slice::from_ref(&vals),
+                },
+            )
+            .unwrap();
+        let nls = vec![nl.clone(), nl.clone()];
+        let vs = vec![vals.clone(), vals.clone()];
+        let par = cf
+            .compute(
+                &[&frame, &frame],
+                CorrelationArgs {
+                    nlists: &nls,
+                    values_a: &vs,
+                    values_b: &vs,
+                },
+            )
+            .unwrap();
+        assert_eq!(par.len(), 2);
+        assert_eq!(par[0].correlation, solo[0].correlation);
+        assert_eq!(par[0].bin_counts, solo[0].bin_counts);
+        assert_eq!(par[1].correlation, solo[0].correlation);
     }
 }
