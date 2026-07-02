@@ -123,6 +123,19 @@ impl Compute for Hexatic {
                 what: "neighbor-list count",
             });
         }
+        #[cfg(feature = "rayon")]
+        const PAR_THRESHOLD: usize = 2;
+
+        #[cfg(feature = "rayon")]
+        if frames.len() >= PAR_THRESHOLD {
+            use rayon::prelude::*;
+            return frames
+                .par_iter()
+                .zip(nlists.par_iter())
+                .map(|(f, nl)| self.one_frame(*f, nl))
+                .collect();
+        }
+
         let mut out = Vec::with_capacity(frames.len());
         for (f, nl) in frames.iter().zip(nlists.iter()) {
             out.push(self.one_frame(*f, nl)?);
@@ -333,5 +346,22 @@ mod tests {
             mag,
             b[0].psi[0].norm(),
         );
+    }
+
+    /// The `frames.len() >= PAR_THRESHOLD` rayon branch must return exactly
+    /// what the serial path does, in frame order: two identical frames →
+    /// two identical results, each equal to the single-frame result.
+    #[test]
+    fn parallel_matches_serial() {
+        let frame = hex_environment(20.0);
+        let nl = build_nlist(&frame, 1.2);
+        let hx = Hexatic::new(6).unwrap();
+        let solo = hx.compute(&[&frame], &vec![nl.clone()]).unwrap();
+        let par = hx
+            .compute(&[&frame, &frame], &vec![nl.clone(), nl])
+            .unwrap();
+        assert_eq!(par.len(), 2);
+        assert_eq!(par[0].psi, solo[0].psi);
+        assert_eq!(par[1].psi, solo[0].psi);
     }
 }

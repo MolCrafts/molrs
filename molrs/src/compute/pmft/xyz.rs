@@ -266,6 +266,23 @@ impl Compute for PMFTXYZ {
                 what: "PMFTXYZ orientations frame count",
             });
         }
+        #[cfg(feature = "rayon")]
+        const PAR_THRESHOLD: usize = 2;
+
+        #[cfg(feature = "rayon")]
+        if frames.len() >= PAR_THRESHOLD {
+            use rayon::prelude::*;
+            return frames
+                .par_iter()
+                .enumerate()
+                .map(|(k, f)| {
+                    let nl = &args.nlists[k];
+                    let o = args.query_orientations.map(|o| o[k].as_slice());
+                    self.one_frame(*f, nl, o)
+                })
+                .collect();
+        }
+
         let mut out = Vec::with_capacity(frames.len());
         for (k, f) in frames.iter().enumerate() {
             let nl = &args.nlists[k];
