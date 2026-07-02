@@ -1,6 +1,6 @@
 //! Hydrogen-bond network topology.
 //!
-//! Ported from TRAVIS aggregation topology (`src/aggrtopo.cpp` — the connected
+//! Ported from the reference implementation aggregation topology (`src/aggrtopo.cpp` — the connected
 //! aggregate / cluster assembly over the per-step bond graph). molrs assembles
 //! the undirected graph with the native [`Topology`] connectivity
 //! (connected-components BFS) — **no petgraph** (petgraph stays confined to the

@@ -1,6 +1,6 @@
 //! Void (cavity / free-volume) analysis over a radical-Voronoi tessellation.
 //!
-//! Following TRAVIS's domain-style void aggregation (`src/void.cpp`): a set of
+//! Following the reference implementation's domain-style void aggregation (`src/void.cpp`): a set of
 //! **probe generators** is tessellated *together with* the atoms, and the cells
 //! belonging to probes are the unoccupied regions. Face-adjacent probe cells are
 //! merged (union-find) into cavities; each cavity's volume is the sum of its
@@ -69,18 +69,25 @@ impl VoidAnalysis {
             }
         }
 
-        let mut vol_of: std::collections::HashMap<usize, F> = std::collections::HashMap::new();
+        // Cavity ids are cell indices in `0..n`, so flat `Vec`s keyed by the
+        // union-find root replace the `HashMap` (no hashing). Volumes are summed in
+        // the same ascending-`i` order as before → bit-identical floats; `seen`
+        // marks the roots that owned ≥ 1 probe cell, exactly the `HashMap`'s keys
+        // (independent of whether an accumulated volume happens to be 0).
+        let mut vol_of = vec![0.0 as F; n];
+        let mut seen = vec![false; n];
         let mut total = 0.0;
         for (i, &vi) in is_void.iter().enumerate() {
             if !vi {
                 continue;
             }
             let r = uf.find(i);
-            *vol_of.entry(r).or_insert(0.0) += cells.volumes[i];
+            vol_of[r] += cells.volumes[i];
+            seen[r] = true;
             total += cells.volumes[i];
         }
 
-        let mut cavity_volumes: Vec<F> = vol_of.values().copied().collect();
+        let mut cavity_volumes: Vec<F> = (0..n).filter(|&r| seen[r]).map(|r| vol_of[r]).collect();
         cavity_volumes.sort_unstable_by(|a, b| b.partial_cmp(a).unwrap());
 
         Ok(VoidResult {

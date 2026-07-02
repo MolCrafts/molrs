@@ -20,8 +20,10 @@
 //! intermittent definitions to the geometric presence series produced by
 //! [`HBonds`](super::detect::HBonds), rather than re-deriving a different TCF.
 
+use molrs::signal as sig;
 use molrs::types::F;
 use ndarray::Array1;
+use rustfft::FftPlanner;
 use std::collections::HashMap;
 
 use super::detect::HBondsResult;
@@ -89,32 +91,16 @@ pub fn hbond_lifetimes(
     let n_series = present.len();
 
     // acc_*[tau] = Σ over (bond, origin t0) of the survival indicator at lag tau.
-    let mut acc_c = vec![0.0_f64; max_lag + 1];
-    let mut acc_i = vec![0.0_f64; max_lag + 1];
-    for h in present {
-        for t0 in 0..n_frames {
-            if !h[t0] {
-                continue;
-            }
-            let lmax = max_lag.min(n_frames - 1 - t0);
-            acc_c[0] += 1.0;
-            acc_i[0] += 1.0;
-            // Continuous: stop at the first absence.
-            for tau in 1..=lmax {
-                if h[t0 + tau] {
-                    acc_c[tau] += 1.0;
-                } else {
-                    break;
-                }
-            }
-            // Intermittent: count every present lag, gaps allowed.
-            for tau in 1..=lmax {
-                if h[t0 + tau] {
-                    acc_i[tau] += 1.0;
-                }
-            }
-        }
-    }
+    //
+    // Continuous (`acc_c`) stops at the first absence — a forward walk, not an
+    // autocorrelation — so it stays a direct sum. Intermittent (`acc_i`) counts
+    // every present lag: `acc_i[tau] = Σ_series Σ_{t0} h[t0]·h[t0+tau]`, i.e. the
+    // un-normalized autocorrelation of the binary presence series (Wiener–
+    // Khinchin), evaluated in O(n log n) per series with the FFT. Each series is
+    // independent, so both accumulators fan out over series and reduce.
+    let (acc_c, acc_i) = accumulate_survival(present, n_frames, max_lag);
+    let acc_c = acc_c.as_slice().expect("contiguous acc_c");
+    let acc_i = acc_i.as_slice().expect("contiguous acc_i");
 
     // Per-lag normalization: divide by the number of valid (bond, origin) pairs
     // at that lag → ⟨h(0)h(tau)⟩, then divide by the tau=0 value so C(0)=1.
@@ -128,19 +114,11 @@ pub fn hbond_lifetimes(
             0.0
         }
     };
-    let c0 = mean(&acc_c, 0);
-    let i0 = mean(&acc_i, 0);
+    let c0 = mean(acc_c, 0);
+    let i0 = mean(acc_i, 0);
     for tau in 0..=max_lag {
-        cont[tau] = if c0 > 0.0 {
-            mean(&acc_c, tau) / c0
-        } else {
-            0.0
-        };
-        inter[tau] = if i0 > 0.0 {
-            mean(&acc_i, tau) / i0
-        } else {
-            0.0
-        };
+        cont[tau] = if c0 > 0.0 { mean(acc_c, tau) / c0 } else { 0.0 };
+        inter[tau] = if i0 > 0.0 { mean(acc_i, tau) / i0 } else { 0.0 };
     }
 
     let lag_times = Array1::from_iter((0..=max_lag).map(|i| i as F * dt));
@@ -154,6 +132,76 @@ pub fn hbond_lifetimes(
         tau_continuous,
         tau_intermittent,
     })
+}
+
+/// Accumulate the continuous and intermittent survival numerators over all
+/// presence series.
+///
+/// For one series `h`:
+/// * continuous `c[tau]` — count origins `t0` (present) whose bond survives
+///   unbroken through lag `tau` (walk forward, stop at the first absence);
+/// * intermittent `i[tau]` — the un-normalized autocorrelation
+///   `Σ_{t0} h[t0]·h[t0+tau]`, computed via FFT (Wiener–Khinchin).
+///
+/// Series are independent, so with `rayon` the per-series `(c, i)` pairs are
+/// produced in parallel — each worker reusing its own `FftPlanner` — and summed
+/// by the reduction. `acf_fft_with_planner` cannot error here: `max_lag` is
+/// clamped to `n_frames − 1 < n_frames = series length`.
+fn accumulate_survival(
+    present: &[Vec<bool>],
+    n_frames: usize,
+    max_lag: usize,
+) -> (Array1<f64>, Array1<f64>) {
+    let per_series = |planner: &mut FftPlanner<f64>, h: &Vec<bool>| -> (Array1<f64>, Array1<f64>) {
+        // Continuous: forward survival with an early break at the first absence.
+        let mut c = Array1::<f64>::zeros(max_lag + 1);
+        for t0 in 0..n_frames {
+            if !h[t0] {
+                continue;
+            }
+            let lmax = max_lag.min(n_frames - 1 - t0);
+            c[0] += 1.0;
+            for tau in 1..=lmax {
+                if h[t0 + tau] {
+                    c[tau] += 1.0;
+                } else {
+                    break;
+                }
+            }
+        }
+        // Intermittent: FFT autocorrelation of the 0/1 presence series.
+        let series = Array1::from_iter(h.iter().map(|&b| if b { 1.0 } else { 0.0 }));
+        let i = sig::acf_fft_with_planner(planner, &series, max_lag)
+            .expect("max_lag < n_frames guaranteed by clamp");
+        (c, i)
+    };
+
+    let zeros = || {
+        (
+            Array1::<f64>::zeros(max_lag + 1),
+            Array1::<f64>::zeros(max_lag + 1),
+        )
+    };
+
+    #[cfg(feature = "rayon")]
+    {
+        use rayon::prelude::*;
+        present
+            .par_iter()
+            .map_init(FftPlanner::<f64>::new, |planner, h| per_series(planner, h))
+            .reduce(zeros, |(ca, ia), (cb, ib)| (ca + cb, ia + ib))
+    }
+    #[cfg(not(feature = "rayon"))]
+    {
+        let mut planner = FftPlanner::<f64>::new();
+        let (mut acc_c, mut acc_i) = zeros();
+        for h in present {
+            let (c, i) = per_series(&mut planner, h);
+            acc_c += &c;
+            acc_i += &i;
+        }
+        (acc_c, acc_i)
+    }
 }
 
 /// Build per-bond presence series from an [`HBondsResult`], keyed by the ordered

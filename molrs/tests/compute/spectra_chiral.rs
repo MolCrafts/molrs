@@ -1,5 +1,5 @@
 //! Chiral / advanced vibrational spectra (VCD, ROA, resonance Raman) —
-//! travis-parity-08.
+//! analysis-parity-08.
 //!
 //! Synthetic trajectories exercise the defining physical signatures: the
 //! enantiomer sign law (VCD/ROA flip sign between mirror images, vanish for

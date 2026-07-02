@@ -18,8 +18,8 @@
 //! encodes a proper rotation, so the reflection guard is automatic — there is
 //! no `det = −1` branch to get wrong.
 //!
-//! This is a deliberate, documented deviation from TRAVIS's own alignment
-//! bookkeeping in `CSDFMap` (`src/sdfmap.cpp`): TRAVIS aligns onto a reference
+//! This is a deliberate, documented deviation from the reference implementation's own alignment
+//! bookkeeping in `CSDFMap` (`src/sdfmap.cpp`): reference implementation aligns onto a reference
 //! atom triple by explicit axis construction, whereas molrs uses the
 //! mathematically-equivalent quaternion least-squares fit so it can reuse the
 //! existing eigensolver and stay BLAS-free / WASM-clean. The accumulated SDF

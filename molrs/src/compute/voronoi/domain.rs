@@ -1,7 +1,7 @@
 //! Domain (microheterogeneity) analysis over a radical-Voronoi tessellation.
 //!
 //! Merges face-adjacent cells that share the same user label into connected
-//! domains via union-find over the cell-adjacency graph — the aggregation TRAVIS
+//! domains via union-find over the cell-adjacency graph — the aggregation reference implementation
 //! performs in `src/domain.cpp` / `src/posdomain.cpp` (e.g. polar vs. apolar
 //! domains in ionic liquids). Returns the domain size distribution, count, and
 //! largest-domain fraction.
@@ -55,15 +55,19 @@ impl DomainAnalysis {
             }
         }
 
+        // Domain ids are cell indices in `0..n`, so a flat `Vec` keyed by the
+        // union-find root replaces the `HashMap` (no hashing): each root's tally is
+        // an integer count, and roots with a non-zero count are exactly the
+        // `HashMap`'s keys — an identical size multiset.
         let mut domain_of = vec![0usize; n];
-        let mut size_of: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+        let mut size_of = vec![0usize; n];
         for (i, d) in domain_of.iter_mut().enumerate() {
             let r = uf.find(i);
             *d = r;
-            *size_of.entry(r).or_insert(0) += 1;
+            size_of[r] += 1;
         }
 
-        let mut sizes: Vec<usize> = size_of.values().copied().collect();
+        let mut sizes: Vec<usize> = size_of.into_iter().filter(|&c| c > 0).collect();
         sizes.sort_unstable_by(|a, b| b.cmp(a));
         let count = sizes.len();
         let largest_fraction = if n == 0 {

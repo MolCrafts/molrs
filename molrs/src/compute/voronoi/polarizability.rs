@@ -1,10 +1,10 @@
 //! Finite-field molecular polarizability from Voronoi dipoles.
 //!
-//! Ported from TRAVIS's polarizability workflow (`src/dpol.cpp`): three external
+//! Ported from the reference implementation's polarizability workflow (`src/dpol.cpp`): three external
 //! field directions, each a ±E pair of Voronoi-integrated dipole sets, combined
 //! by central difference. The `2.0` denominator here is the same central-finite
-//! difference TRAVIS uses (`dpol.cpp`, the `... / estrength ... * 2.0 ...`
-//! prefactor, stripped of TRAVIS's Debye/SI unit conversions — molrs stays in
+//! difference reference implementation uses (`dpol.cpp`, the `... / estrength ... * 2.0 ...`
+//! prefactor, stripped of the reference implementation's Debye/SI unit conversions — molrs stays in
 //! `e·Å` / `e·Å²·V⁻¹`-style natural units).
 //!
 //! # Definition
@@ -26,7 +26,7 @@ use crate::compute::error::ComputeError;
 /// `(n_mol, 3)`, from the `+E` and `−E` dipole sets at field magnitude `field`.
 ///
 /// `moments_zero` (the field-off set) is accepted for API symmetry with
-/// TRAVIS's three-point workflow and to validate molecule alignment; the
+/// the reference implementation's three-point workflow and to validate molecule alignment; the
 /// central difference itself uses only `plus`/`minus`.
 pub fn polarizability_finite_field(
     moments_zero: &MolecularMoments,

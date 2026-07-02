@@ -477,21 +477,47 @@ impl Compute for EinsteinConductivity {
             });
         }
         let max_lag = max_correlation_time.min(n_frames - 1);
+        let n = n_frames;
+
+        // Collective-dipole MSD via the FFT algorithm (Kneller / nMoldyn):
+        //   MSD(τ) = S1(τ) − 2·S2(τ)/(n−τ),
+        // where S2(τ) = Σ_d acf_d(τ) is the per-component autocorrelation (FFT)
+        // and S1(τ) = (1/(n−τ)) Σ_{t} (D[t] + D[t+τ]) with D[t] = |M(t)|², built
+        // by an O(n) running-sum recurrence. Algebraically identical to the
+        // direct time-origin double sum, at O(n log n) instead of O(n·τ).
+        let sq: Vec<f64> = (0..n)
+            .map(|t| (0..3).map(|d| dipole[[t, d]] * dipole[[t, d]]).sum::<f64>())
+            .collect();
+
+        let mut planner = FftPlanner::new();
+        let mut s2 = Array1::<f64>::zeros(max_lag + 1);
+        for d in 0..3 {
+            let col: Array1<f64> = (0..n).map(|t| dipole[[t, d]]).collect();
+            let acf = sig::acf_fft_with_planner(&mut planner, &col, max_lag).map_err(|e| {
+                ComputeError::OutOfRange {
+                    field: "acf_fft",
+                    value: e.to_string(),
+                }
+            })?;
+            for k in 0..=max_lag {
+                s2[k] += acf[k];
+            }
+        }
 
         let mut msd = Array1::<f64>::zeros(max_lag + 1);
-        for tau in 1..=max_lag {
-            let count = n_frames - tau;
-            let mut acc = 0.0;
-            for t in 0..count {
-                let mut s = 0.0;
-                for d in 0..3 {
-                    let dx = dipole[[t + tau, d]] - dipole[[t, d]];
-                    s += dx * dx;
-                }
-                acc += s;
+        let mut q = 2.0 * sq.iter().sum::<f64>();
+        for tau in 0..=max_lag {
+            // Running sum of D[t] + D[t+τ] over valid origins: peel D[τ−1] and
+            // D[n−τ] as τ advances (both zero at τ = 0, i.e. D[−1] = D[n] = 0).
+            if tau >= 1 {
+                q -= sq[tau - 1] + sq[n - tau];
             }
-            msd[tau] = acc / count as f64;
+            let count = (n - tau) as f64;
+            msd[tau] = q / count - 2.0 * s2[tau] / count;
         }
+        // MSD(0) is exactly 0 by definition (the FFT S2(0) carries roundoff).
+        msd[0] = 0.0;
+
         let lag_times = Array1::from_iter((0..=max_lag).map(|i| i as f64 * dt));
         Ok(EinsteinConductivityResult { lag_times, msd })
     }
@@ -552,18 +578,25 @@ impl Compute for GreenKuboConductivity {
         }
         let max_lag = max_correlation_time.min(n_frames - 1);
 
+        // ⟨J(0)·J(τ)⟩ over time origins is the sum of the three Cartesian
+        // current autocorrelations — evaluate each with the FFT (Wiener–Khinchin)
+        // like VACF / Debye, then apply the unbiased 1/(n − τ) normalization.
+        let mut planner = FftPlanner::new();
         let mut jacf = Array1::<f64>::zeros(max_lag + 1);
-        for tau in 0..=max_lag {
-            let count = n_frames - tau;
-            let mut acc = 0.0;
-            for t in 0..count {
-                let mut s = 0.0;
-                for d in 0..3 {
-                    s += current[[t, d]] * current[[t + tau, d]];
+        for d in 0..3 {
+            let col: Array1<f64> = (0..n_frames).map(|t| current[[t, d]]).collect();
+            let acf = sig::acf_fft_with_planner(&mut planner, &col, max_lag).map_err(|e| {
+                ComputeError::OutOfRange {
+                    field: "acf_fft",
+                    value: e.to_string(),
                 }
-                acc += s;
+            })?;
+            for k in 0..=max_lag {
+                jacf[k] += acf[k];
             }
-            jacf[tau] = acc / count as f64;
+        }
+        for tau in 0..=max_lag {
+            jacf[tau] /= (n_frames - tau) as f64;
         }
         let lag_times = Array1::from_iter((0..=max_lag).map(|i| i as f64 * dt));
         Ok(GreenKuboConductivityResult { lag_times, jacf })
@@ -734,25 +767,12 @@ fn cross_correlate(
     b: &Array1<f64>,
     max_lag: usize,
 ) -> Array1<f64> {
-    use rustfft::num_complex::Complex64;
-    let n = a.len();
-    let n_pad = (2 * n).next_power_of_two();
-    let fwd = planner.plan_fft_forward(n_pad);
-    let inv = planner.plan_fft_inverse(n_pad);
-    let mut ca: Vec<Complex64> = a.iter().map(|&x| Complex64::new(x, 0.0)).collect();
-    let mut cb: Vec<Complex64> = b.iter().map(|&x| Complex64::new(x, 0.0)).collect();
-    ca.resize(n_pad, Complex64::new(0.0, 0.0));
-    cb.resize(n_pad, Complex64::new(0.0, 0.0));
-    fwd.process(&mut ca);
-    fwd.process(&mut cb);
-    let mut prod: Vec<Complex64> = (0..n_pad).map(|i| ca[i].conj() * cb[i]).collect();
-    inv.process(&mut prod);
-    let scale = 1.0 / n_pad as f64;
-    prod[..=max_lag]
-        .iter()
-        .map(|c| c.re * scale)
-        .collect::<Vec<_>>()
-        .into()
+    // Delegate to the shared signal primitive — one implementation of the
+    // zero-pad / cross-spectrum / scale recipe, guaranteeing `cross_correlate(a,
+    // a, …)` matches `acf_fft`. Callers pass equal-length series with
+    // `max_lag < n` (from `resolution.min(flux_len - 1)`), so this never errors.
+    sig::xcorr_fft_with_planner(planner, a, b, max_lag)
+        .expect("cross_correlate: equal-length inputs with max_lag < n by construction")
 }
 
 /// Central-difference time derivative `ẋ[t] = (x[t+1] − x[t−1]) / (2·dt)` of one
@@ -786,7 +806,7 @@ impl ComputeResult for VcdCrossResult {}
 /// (`src/roa.cpp`): for each Cartesian component it cross-correlates
 /// `m_vaDElDip` (μ̇) with `m_vaDMagDip` (ṁ) and sums the three components.
 ///
-/// **Deviation from the spec's literal `⟨μ̇·m⟩`:** TRAVIS correlates the two
+/// **Deviation from the spec's literal `⟨μ̇·m⟩`:** reference implementation correlates the two
 /// *derivatives* (`μ̇` × `ṁ`); the two conventions differ only by a frequency-
 /// domain factor and share the same peak positions and enantiomer sign law.
 #[derive(Debug, Clone, Copy, Default)]

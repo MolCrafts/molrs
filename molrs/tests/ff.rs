@@ -15,8 +15,8 @@ mod helpers;
 
 #[path = "ff/forcefield.rs"]
 mod forcefield;
-#[path = "ff/molrec_ext.rs"]
-mod molrec_ext;
+#[path = "ff/forcefield_meta.rs"]
+mod forcefield_meta;
 #[path = "ff/readers/lammps.rs"]
 mod readers_lammps;
 #[path = "ff/readers/opls.rs"]

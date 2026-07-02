@@ -4,7 +4,7 @@
 //! backend is a **native pure-Rust** cell-by-cell radical tessellation
 //! ([`RadicalVoronoi`]) — no C/C++ FFI, WASM-clean — ported from voro++
 //! (`src/v_cell.cpp`, `src/v_rad_option.h`, `src/v_container_prd.cpp`) as used
-//! by TRAVIS (`vorowrapper.cpp`). Two real consumers ship with it:
+//! by the reference implementation (`vorowrapper.cpp`). Two real consumers ship with it:
 //! [`DomainAnalysis`] (microheterogeneity / ionic-liquid domains, `domain.cpp`)
 //! and [`VoidAnalysis`] (cavity / free-volume, `void.cpp`).
 //!

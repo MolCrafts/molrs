@@ -12,7 +12,7 @@ line and are released as a pair (jumped 0.1.6 → 0.5.1 to converge).
 
 ### Added
 
-- **TRAVIS-parity compute suite (Python-exposed).** Geometric distribution
+- **analysis-parity compute suite (Python-exposed).** Geometric distribution
   functions (ADF / DDF / distance), combined distribution functions (CDF),
   spatial distribution function (SDF), Van Hove `G(r, t)` (self + distinct) and
   Legendre reorientational TCFs, geometric hydrogen-bond detection, native

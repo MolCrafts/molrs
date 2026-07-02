@@ -16,16 +16,16 @@
 //!
 //! # Provenance
 //!
-//! TRAVIS (the reference implementation for this `travis-parity` chain) does
+//! reference implementation (the reference implementation for this `analysis-parity` chain) does
 //! **not** ship a dedicated Van Hove analyzer — only its RDF and ACF machinery.
 //! Accordingly the **definition** follows van Hove 1954 / Hansen-McDonald, the
 //! **distinct-part binning + shell normalization** mirror the RDF pair-binning
-//! convention molrs already ports (`CDF::AddToBin`, TRAVIS `src/df.cpp`, here
+//! convention molrs already ports (`CDF::AddToBin`, reference implementation `src/df.cpp`, here
 //! reused through [`Histogram1d`](crate::compute::distribution::Histogram1d) and
 //! the `4π/3 (r_o³−r_i³)` shell volume of [`rdf`](crate::compute::rdf)), and the
 //! **multi-time-origin averaging** mirrors the ACF origin accumulation in
-//! TRAVIS `src/reordyn.cpp` / `src/acf.cpp`. Any deviation from a literal
-//! TRAVIS port is therefore unavoidable (no source to port) and is documented
+//! reference implementation `src/reordyn.cpp` / `src/acf.cpp`. Any deviation from a literal
+//! reference implementation port is therefore unavoidable (no source to port) and is documented
 //! here.
 //!
 //! # Conventions
@@ -45,7 +45,6 @@ use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 use ndarray::{Array1, Array2};
 
-use crate::compute::distribution::Histogram1d;
 use crate::compute::error::ComputeError;
 use crate::compute::result::ComputeResult;
 use crate::compute::traits::Compute;
@@ -170,64 +169,137 @@ impl Compute for VanHove {
         let mut g_self = Array2::<F>::zeros((n_lags, self.n_rbins));
         let mut g_distinct = Array2::<F>::zeros((n_lags, self.n_rbins));
 
-        for (li, &lag) in used_lags.iter().enumerate() {
-            let mut hist_self = Histogram1d::new(self.n_rbins, 0.0, self.r_max);
-            let mut hist_dist = Histogram1d::new(self.n_rbins, 0.0, self.r_max);
-            let mut n_origins: usize = 0;
+        let n_rbins = self.n_rbins;
+        let r_max = self.r_max;
+        // Nearest-bin factor, identical to `Histogram1d::new(n_rbins, 0.0, r_max)`
+        // (`fac = n_bins / (max − min)`, `min = 0`).
+        let fac = n_rbins as F / r_max;
 
-            let mut tau = 0usize;
-            while tau + lag < n_frames {
+        // Deposit one in-range magnitude with the exact `Histogram1d::add_nearest`
+        // rule: with `min = 0` the range test is `0 ≤ d ≤ r_max` and the bin index
+        // is `⌊d·fac⌋` clamped to the last bin. Counts are integer `+1.0`
+        // increments, so accumulating them across origins/lags in any order (serial
+        // or the rayon reduce below) is bit-identical.
+        let bin = |counts: &mut [F], base: usize, d: F| {
+            if d < 0.0 || d > r_max {
+                return;
+            }
+            let mut ip = (d * fac) as usize;
+            if ip >= n_rbins {
+                ip = n_rbins - 1;
+            }
+            counts[base + ip] += 1.0;
+        };
+
+        // Per-origin work: build the `NeighborQuery` spatial index over r_i(τ)
+        // ONCE, then reuse it for every realizable lag (each lag queries a
+        // different r_j(τ+lag) set). This drops the neighbor-index construction
+        // from once-per-(lag, origin) to once-per-origin while producing the exact
+        // same pair set the old per-(lag, origin) `NeighborQuery::new(...).query()`
+        // did — the query takes `&self` and never mutates the index.
+        //
+        // Distinct part uses the same cutoff-`r_max` search as `compute::rdf`
+        // (O(N·neighbours), not O(N²)); every pair beyond `r_max` would be dropped
+        // by the histogram anyway. The self pair (i == j) is excluded. Self part
+        // uses the raw (unwrapped) displacement magnitude — matching `msd`.
+        let accumulate =
+            |tau: usize, self_counts: &mut [F], dist_counts: &mut [F], n_origins: &mut [usize]| {
                 let a = &pos[tau];
-                let b = &pos[tau + lag];
-                // Self: raw (unwrapped) displacement magnitude — matches msd.
-                for i in 0..n {
-                    let dx = b[[i, 0]] - a[[i, 0]];
-                    let dy = b[[i, 1]] - a[[i, 1]];
-                    let dz = b[[i, 2]] - a[[i, 2]];
-                    // Nearest-bin (RDF convention): Van Hove is the RDF's
-                    // space-/time-resolved generalization, so its distinct part
-                    // G_d(r,0) must equal `compute::rdf`'s nearest-bin g(r). Use
-                    // add_nearest, not the geometric DF's TRAVIS cloud-in-cell.
-                    hist_self.add_nearest((dx * dx + dy * dy + dz * dz).sqrt());
-                }
-                // Distinct: min-image distance from r_i(τ) to r_j(τ+lag), j≠i.
-                // Use the same `NeighborQuery` spatial search as `compute::rdf`
-                // (cutoff = r_max): every pair within r_max is found and binned,
-                // every pair beyond it would be dropped by the histogram anyway,
-                // so the result is identical to the old all-pairs loop but
-                // O(N·neighbours) instead of O(N²). The self pair (i == j, the
-                // self part) is excluded.
-                if let Some(sb) = simbox {
-                    let nlist = NeighborQuery::new(sb, a.view(), self.r_max).query(b.view());
-                    let ref_i = nlist.point_indices(); // index into a (= r_i(τ))
-                    let oth_j = nlist.query_point_indices(); // index into b (= r_j(τ+lag))
-                    let d2 = nlist.dist_sq();
-                    for k in 0..nlist.n_pairs() {
-                        if ref_i[k] == oth_j[k] {
-                            continue;
+                let a_flat = a.as_slice().expect("pos is row-major contiguous");
+                let nq = simbox.map(|sb| NeighborQuery::new(sb, a.view(), r_max));
+                for (li, &lag) in used_lags.iter().enumerate() {
+                    if tau + lag >= n_frames {
+                        continue;
+                    }
+                    n_origins[li] += 1;
+                    let base = li * n_rbins;
+                    let b = &pos[tau + lag];
+                    let b_flat = b.as_slice().expect("pos is row-major contiguous");
+                    for i in 0..n {
+                        let dx = b_flat[i * 3] - a_flat[i * 3];
+                        let dy = b_flat[i * 3 + 1] - a_flat[i * 3 + 1];
+                        let dz = b_flat[i * 3 + 2] - a_flat[i * 3 + 2];
+                        bin(self_counts, base, (dx * dx + dy * dy + dz * dz).sqrt());
+                    }
+                    if let Some(ref nq) = nq {
+                        let nlist = nq.query(b.view());
+                        let ref_i = nlist.point_indices(); // index into a (= r_i(τ))
+                        let oth_j = nlist.query_point_indices(); // index into b (= r_j(τ+lag))
+                        let d2 = nlist.dist_sq();
+                        for k in 0..nlist.n_pairs() {
+                            if ref_i[k] == oth_j[k] {
+                                continue;
+                            }
+                            bin(dist_counts, base, d2[k].sqrt());
                         }
-                        hist_dist.add_nearest(d2[k].sqrt());
                     }
                 }
-                n_origins += 1;
-                tau += self.stride;
-            }
+            };
 
-            // g_self: probability density of |Δr| (∫ = 1).
-            let self_density = hist_self.density();
-            for k in 0..self.n_rbins {
-                g_self[[li, k]] = self_density[k];
-            }
+        // Time origins τ = 0, stride, 2·stride, … < n_frames: exactly the set the
+        // old per-lag `while tau + lag < n_frames` loop visited, gathered once and
+        // fanned out over lags inside `accumulate`.
+        let origins: Vec<usize> = (0..n_frames).step_by(self.stride).collect();
 
-            // g_distinct: number density of others at r → ρ g(r) at lag 0.
-            if let Some(vol) = volume {
-                let _ = vol; // ρ = N/V is folded per-bin below via shell volume.
-                let counts = hist_dist.counts();
-                let denom = (n as F) * (n_origins.max(1) as F);
-                for k in 0..self.n_rbins {
+        let n_cells = n_lags * self.n_rbins;
+        let zero = || {
+            (
+                vec![0.0 as F; n_cells],
+                vec![0.0 as F; n_cells],
+                vec![0usize; n_lags],
+            )
+        };
+
+        #[cfg(feature = "rayon")]
+        let (self_counts, dist_counts, origins_per_lag) = {
+            use rayon::prelude::*;
+            origins
+                .par_iter()
+                .fold(zero, |(mut sc, mut dc, mut no), &tau| {
+                    accumulate(tau, &mut sc, &mut dc, &mut no);
+                    (sc, dc, no)
+                })
+                .reduce(zero, |(mut sca, mut dca, mut noa), (scb, dcb, nob)| {
+                    for (x, y) in sca.iter_mut().zip(scb.iter()) {
+                        *x += *y;
+                    }
+                    for (x, y) in dca.iter_mut().zip(dcb.iter()) {
+                        *x += *y;
+                    }
+                    for (x, y) in noa.iter_mut().zip(nob.iter()) {
+                        *x += *y;
+                    }
+                    (sca, dca, noa)
+                })
+        };
+        #[cfg(not(feature = "rayon"))]
+        let (self_counts, dist_counts, origins_per_lag) = {
+            let (mut sc, mut dc, mut no) = zero();
+            for &tau in &origins {
+                accumulate(tau, &mut sc, &mut dc, &mut no);
+            }
+            (sc, dc, no)
+        };
+
+        // g_self: probability density of |Δr| (`Histogram1d::density`:
+        // counts / (binned · bin_width), binned = Σ counts, bin_width = dr).
+        // g_distinct: number density of others at r → ρ g(r) at lag 0.
+        for (li, &n_orig) in origins_per_lag.iter().enumerate() {
+            let base = li * self.n_rbins;
+            let self_slice = &self_counts[base..base + self.n_rbins];
+            let binned: F = self_slice.iter().sum();
+            if binned > 0.0 {
+                let denom = binned * dr;
+                for (k, gk) in g_self.row_mut(li).iter_mut().enumerate() {
+                    *gk = self_slice[k] / denom;
+                }
+            }
+            if volume.is_some() {
+                let denom = (n as F) * (n_orig.max(1) as F);
+                for (k, gk) in g_distinct.row_mut(li).iter_mut().enumerate() {
                     let shell = self.shell_volume(edges[k], edges[k + 1]);
                     if shell > 0.0 {
-                        g_distinct[[li, k]] = counts[k] / (denom * shell);
+                        *gk = dist_counts[base + k] / (denom * shell);
                     }
                 }
             }

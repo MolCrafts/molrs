@@ -1,6 +1,6 @@
 //! Per-frame geometric hydrogen-bond detection.
 //!
-//! Ported from TRAVIS `CHBond::AnalyzeStep` / the bond test in `src/hbond.cpp`
+//! Ported from the reference implementation `CHBond::AnalyzeStep` / the bond test in `src/hbond.cpp`
 //! (lines ~900–965): candidate donor/acceptor pairs are gathered by a cutoff
 //! neighbour search, then gated by the distance and angle criterion (see
 //! [`HBondCriterion`]). molrs gathers candidates with the existing
@@ -194,10 +194,34 @@ impl Compute for HBonds {
         if frames.is_empty() {
             return Err(ComputeError::EmptyInput);
         }
-        let mut per_frame = Vec::with_capacity(frames.len());
-        for frame in frames {
-            per_frame.push(self.detect_frame(*frame)?);
-        }
+
+        // Each frame's detection is independent (own NeighborQuery + geometry),
+        // so fan out over frames. `collect::<Result<Vec<_>>>()` on `par_iter`
+        // keeps the per-frame order and short-circuits on the first error, so
+        // the bond lists are identical to the serial pass.
+        #[cfg(feature = "rayon")]
+        const PAR_THRESHOLD: usize = 4;
+
+        #[cfg(feature = "rayon")]
+        let per_frame: Vec<Vec<HBond>> = if frames.len() >= PAR_THRESHOLD {
+            use rayon::prelude::*;
+            frames
+                .par_iter()
+                .map(|frame| self.detect_frame(*frame))
+                .collect::<Result<Vec<_>, _>>()?
+        } else {
+            frames
+                .iter()
+                .map(|frame| self.detect_frame(*frame))
+                .collect::<Result<Vec<_>, _>>()?
+        };
+
+        #[cfg(not(feature = "rayon"))]
+        let per_frame: Vec<Vec<HBond>> = frames
+            .iter()
+            .map(|frame| self.detect_frame(*frame))
+            .collect::<Result<Vec<_>, _>>()?;
+
         let counts = per_frame.iter().map(Vec::len).collect();
         Ok(HBondsResult { per_frame, counts })
     }

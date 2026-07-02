@@ -1,7 +1,7 @@
 //! Dihedral observable: the IUPAC-signed torsion φ ∈ (−π, π] of atom quadruples.
 //!
-//! Ported from TRAVIS `Dihedral(vec1, vec2, norm, absolute)` in
-//! `src/xdvector3.cpp`: TRAVIS projects the two outer bond vectors onto the
+//! Ported from the reference implementation `Dihedral(vec1, vec2, norm, absolute)` in
+//! `src/xdvector3.cpp`: reference implementation projects the two outer bond vectors onto the
 //! plane perpendicular to the central bond and takes their angle, flipping the
 //! sign by the half-plane test `|angle(p1, t2)| > 90°`. The algebraically
 //! equivalent `atan2` form used here reproduces the same signed value while
@@ -11,12 +11,14 @@
 //! `b1 = r_j − r_i`, `b2 = r_k − r_j`, `b3 = r_l − r_k`.
 //!
 //! This is the Blondel–Karplus convention; φ = 0 for a cis/eclipsed (planar)
-//! arrangement and ±π for trans, matching TRAVIS's signed DDF output.
+//! arrangement and ±π for trans, matching the reference implementation's signed DDF output.
 
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 
 use crate::compute::error::ComputeError;
+
+use crate::compute::util::MicHelper;
 
 use super::observable::{AtomGroups, Observable, cross, displacement, dot, norm, positions};
 
@@ -44,21 +46,34 @@ impl Observable for DihedralObservable {
         frame: &FA,
         groups: &AtomGroups,
     ) -> Result<Vec<F>, ComputeError> {
+        let mut out = Vec::with_capacity(groups.len());
+        self.sample_into(frame, groups, &mut out)?;
+        Ok(out)
+    }
+
+    fn sample_into<FA: FrameAccess>(
+        &self,
+        frame: &FA,
+        groups: &AtomGroups,
+        out: &mut Vec<F>,
+    ) -> Result<(), ComputeError> {
         if groups.arity() != 4 {
             return Err(ComputeError::BadShape {
                 expected: "arity 4".to_string(),
                 got: format!("arity {}", groups.arity()),
             });
         }
-        let pos = positions(frame)?;
-        let simbox = frame.simbox_ref();
-        let mut out = Vec::with_capacity(groups.len());
+        let (xp, yp, zp) = positions(frame)?;
+        let (xs, ys, zs) = (xp.slice(), yp.slice(), zp.slice());
+        let mic = MicHelper::from_simbox(frame.simbox_ref());
+        out.clear();
+        out.reserve(groups.len());
         for g in 0..groups.len() {
             let t = groups.tuple(g);
             let (i, j, k, l) = (t[0] as usize, t[1] as usize, t[2] as usize, t[3] as usize);
-            let b1 = displacement(simbox, &pos, i, j); // j - i
-            let b2 = displacement(simbox, &pos, j, k); // k - j
-            let b3 = displacement(simbox, &pos, k, l); // l - k
+            let b1 = displacement(&mic, xs, ys, zs, i, j); // j - i
+            let b2 = displacement(&mic, xs, ys, zs, j, k); // k - j
+            let b3 = displacement(&mic, xs, ys, zs, k, l); // l - k
             let n2 = norm(b2);
             if n2 == 0.0 {
                 return Err(ComputeError::NonFinite {
@@ -78,6 +93,6 @@ impl Observable for DihedralObservable {
                 out.push(y.atan2(x));
             }
         }
-        Ok(out)
+        Ok(())
     }
 }

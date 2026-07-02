@@ -15,11 +15,11 @@
 //!
 //! # Provenance
 //!
-//! Ported from TRAVIS's reorientation-dynamics analyzer `CReorDyn`
+//! Ported from the reference implementation's reorientation-dynamics analyzer `CReorDyn`
 //! (`src/reordyn.cpp`): per-molecule unit vectors (cf. `src/order_vector.cpp`),
 //! the 1st/2nd-Legendre selection (`m_bLegendre2`), and the multi-time-origin
 //! correlation-depth accumulation (`m_iDepth`, the ACF origin sums in
-//! `src/acf.cpp`). TRAVIS evaluates the origin average via FFT; molrs uses the
+//! `src/acf.cpp`). The reference implementation evaluates the origin average via FFT; molrs uses the
 //! algebraically-identical **direct** multi-origin double sum here (exact,
 //! O(T²·N)), which the spec permits — the Legendre polynomials are applied to
 //! the dot product *before* averaging, so an FFT factorization does not apply to
@@ -48,7 +48,7 @@ use ndarray::Array1;
 use crate::compute::error::ComputeError;
 use crate::compute::result::ComputeResult;
 use crate::compute::traits::Compute;
-use crate::compute::util::{get_positions_ref, mic_disp};
+use crate::compute::util::{MicHelper, get_positions_ref};
 
 /// Legendre reorientational TCF analyzer.
 ///
@@ -105,13 +105,16 @@ impl Compute for LegendreReorientation {
         let n_frames = frames.len();
         let n_vec = pairs.len();
 
-        // Per-frame unit vectors [frame][mol] = [x,y,z].
-        let mut vecs: Vec<Vec<[F; 3]>> = Vec::with_capacity(n_frames);
+        // Unit vectors in one contiguous, frame-major buffer: `vecs[f * n_vec +
+        // m]` is molecule `m`'s unit vector in frame `f`. A flat layout (vs a
+        // `Vec<Vec<…>>`) keeps each frame's vectors adjacent so the lag-striding
+        // correlation loop below reads them with unit stride.
+        let mut vecs: Vec<[F; 3]> = Vec::with_capacity(n_frames * n_vec);
         for frame in frames {
             let (xp, yp, zp) = get_positions_ref(*frame)?;
             let (xs, ys, zs) = (xp.slice(), yp.slice(), zp.slice());
-            let simbox = frame.simbox_ref();
-            let mut fv = Vec::with_capacity(n_vec);
+            // Resolve the minimum-image state once per frame, not per pair.
+            let mic = MicHelper::from_simbox(frame.simbox_ref());
             for &(a, b) in pairs {
                 let (a, b) = (a as usize, b as usize);
                 if a >= xs.len() || b >= xs.len() {
@@ -121,7 +124,7 @@ impl Compute for LegendreReorientation {
                         what: "LegendreReorientation atom index",
                     });
                 }
-                let d = mic_disp(simbox, [xs[a], ys[a], zs[a]], [xs[b], ys[b], zs[b]]);
+                let d = mic.disp([xs[a], ys[a], zs[a]], [xs[b], ys[b], zs[b]]);
                 let norm = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
                 if !(norm.is_finite() && norm > 0.0) {
                     return Err(ComputeError::NonFinite {
@@ -129,40 +132,58 @@ impl Compute for LegendreReorientation {
                         index: 0,
                     });
                 }
-                fv.push([d[0] / norm, d[1] / norm, d[2] / norm]);
+                // One reciprocal + three multiplies instead of three divides.
+                let inv = norm.recip();
+                vecs.push([d[0] * inv, d[1] * inv, d[2] * inv]);
             }
-            vecs.push(fv);
         }
 
         let max_lag = self.max_lag.min(n_frames - 1);
-        let mut c1 = Array1::<F>::zeros(max_lag + 1);
-        let mut c2 = Array1::<F>::zeros(max_lag + 1);
+        let stride = self.stride;
 
-        for t in 0..=max_lag {
+        // Multi-time-origin average at a single lag `t`. C1 and C2 share the one
+        // dot product; the per-lag summation order is identical to the original
+        // serial loop, so parallelizing across lags is bit-for-bit reproducible
+        // (each `c1[t]`/`c2[t]` is still a single sequential origin×molecule
+        // sum). Kept direct — as the provenance note above records, the P₂
+        // nonlinearity means the origin average does not FFT-factorize, so a
+        // direct pass (which also yields C1 for free) is both exact and the
+        // cheapest route once C2 stays direct.
+        let corr_at = |t: usize| -> (F, F) {
             let mut s1 = 0.0;
             let mut s2 = 0.0;
             let mut count: usize = 0;
             let mut tau = 0usize;
             while tau + t < n_frames {
-                let a = &vecs[tau];
-                let b = &vecs[tau + t];
+                let base_a = tau * n_vec;
+                let base_b = (tau + t) * n_vec;
                 for m in 0..n_vec {
-                    let x = a[m][0] * b[m][0] + a[m][1] * b[m][1] + a[m][2] * b[m][2];
+                    let a = vecs[base_a + m];
+                    let b = vecs[base_b + m];
+                    let x = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
                     s1 += p1(x);
                     s2 += p2(x);
                     count += 1;
                 }
-                tau += self.stride;
+                tau += stride;
             }
             let inv = if count > 0 { 1.0 / count as F } else { 0.0 };
-            c1[t] = s1 * inv;
-            c2[t] = s2 * inv;
-        }
+            (s1 * inv, s2 * inv)
+        };
+
+        // Each lag is an independent reduction over origins → fan out over lags.
+        #[cfg(feature = "rayon")]
+        let (c1v, c2v): (Vec<F>, Vec<F>) = {
+            use rayon::prelude::*;
+            (0..=max_lag).into_par_iter().map(corr_at).unzip()
+        };
+        #[cfg(not(feature = "rayon"))]
+        let (c1v, c2v): (Vec<F>, Vec<F>) = (0..=max_lag).map(corr_at).unzip();
 
         Ok(LegendreReorientationResult {
             lags: (0..=max_lag).collect(),
-            c1,
-            c2,
+            c1: Array1::from_vec(c1v),
+            c2: Array1::from_vec(c2v),
         })
     }
 }

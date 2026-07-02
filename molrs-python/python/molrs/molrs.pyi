@@ -1232,7 +1232,7 @@ class PMFTXY:
     ) -> list[tuple[npt.NDArray[np.uint64], ArrayF, ArrayF]]: ...
 
 # ---------------------------------------------------------------------------
-# TRAVIS-parity computes
+# analysis-parity computes
 # ---------------------------------------------------------------------------
 
 class DistributionResult:

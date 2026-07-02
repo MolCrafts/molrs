@@ -10,25 +10,6 @@ const CXX_BRIDGE_SCHEMA: &str = r#"use super::*;
 #[cxx::bridge(namespace = "molrs")]
 pub mod ffi {
     extern "Rust" {
-        type AtvMolRec;
-
-        // ── MolRec container ─────────────────────────────────────
-        fn molrec_new() -> Box<AtvMolRec>;
-        fn molrec_set_geometry(
-            rec: &mut AtvMolRec,
-            type_id: &[i32],
-            x: &[f64],
-            y: &[f64],
-            z: &[f64],
-            box_mat: &[f64],
-        );
-        fn molrec_add_field(rec: &mut AtvMolRec, name: &str, values: &[f64]);
-        fn molrec_add_scalar(rec: &mut AtvMolRec, name: &str, value: f64);
-        fn molrec_add_string(rec: &mut AtvMolRec, name: &str, value: &str);
-        fn molrec_commit_frame(rec: &mut AtvMolRec);
-        fn molrec_clear(rec: &mut AtvMolRec);
-        fn molrec_n_frames(rec: &AtvMolRec) -> i32;
-
         // ── Frame bridge (molrs.Frame via molrs-ffi FrameRef) ─────
         type FrameRef;
 
@@ -61,10 +42,17 @@ pub mod ffi {
         fn frame_set_simbox(fref: &mut FrameRef, h: &[f64]);
 
         // ── I/O ──────────────────────────────────────────────────
-        fn xyz_write(path: &str, rec: &AtvMolRec);
-        fn xyz_write_ext(path: &str, rec: &AtvMolRec);
-        fn xyz_append(path: &str, rec: &AtvMolRec);
-        fn xyz_append_ext(path: &str, rec: &AtvMolRec);
+        // Write one frame to an XYZ file (standard element+coords). append=false
+        // truncates (create); append=true appends the frame.
+        fn write_frame_xyz(
+            path: &str,
+            type_id: &[i32],
+            x: &[f64],
+            y: &[f64],
+            z: &[f64],
+            box_mat: &[f64],
+            append: bool,
+        );
         fn trajectory_append(
             path: &str,
             type_id: &[i32],
@@ -73,36 +61,82 @@ pub mod ffi {
             z: &[f64],
             step: i32,
         );
-        fn molrec_write_zarr(path: &str, rec: &AtvMolRec);
-        fn molrec_read_zarr_first_frame(path: &str) -> Box<FrameRef>;
+        // Write one frame + named per-atom fields (field_data reshaped
+        // [n_fields, n_atoms]) to a single-frame Zarr store.
+        fn write_frame_zarr(
+            path: &str,
+            type_id: &[i32],
+            x: &[f64],
+            y: &[f64],
+            z: &[f64],
+            box_mat: &[f64],
+            field_names: Vec<String>,
+            field_data: &[f64],
+        );
+        fn read_frame_zarr_first(path: &str) -> Box<FrameRef>;
         // Read the first frame of an (ext)XYZ file into a materialize-ready
         // FrameRef (atoms.{x,y,z,type} + simbox). `type` is derived from the
         // species/element symbol column (Z). All XYZ parsing lives in molrs.
         fn xyz_read_first_frame(path: &str) -> Box<FrameRef>;
-        fn molrec_print_summary(rec: &AtvMolRec);
 
         // ── Trajectory analysis (molrs `compute` kernels) ────────────
-        // The C++ engine measures (accumulates frames into the MolRec); molrs
-        // analyzes. No analysis math in C++. See molrs/src/compute/.
+        // Raw-array in, curve out — no C++ accumulator. Each fn rebuilds
+        // transient molrs frames from flat buffers and delegates the math to
+        // molrs (compute::*). No analysis math in C++. See molrs/src/compute/.
         //
         // Mean squared displacement, MsdMode::Direct: MSD(t) = <|r(t) - r(0)|^2>
-        // with the first committed frame as reference (LAMMPS `compute msd`
-        // semantics). Returns the mean-MSD curve, one value per committed frame
-        // (element 0 is the reference, always 0). Empty when < 2 frames or on a
-        // compute error -- never panics/aborts.
-        fn analyze_msd(rec: &AtvMolRec) -> Vec<f64>;
+        // over a row-major [n_frames, n_dof] position buffer (per frame blocked
+        // x|y|z, n_dof = 3*n_atoms), first frame = reference (LAMMPS `compute
+        // msd`). Returns the mean-MSD curve (index 0 = 0). Empty on < 2 frames /
+        // bad shape.
+        fn analyze_msd(positions: &[f64], n_frames: i64, n_dof: i64) -> Vec<f64>;
 
-        // Einstein self-diffusion coefficient D from the windowed-MSD slope:
-        // D = slope / (2 * dims), where slope is an OLS linear fit of MSD(t) over
-        // the lag window [fit_lo, fit_hi] (fractions of the last lag, 0<=lo<hi<=1).
-        // `dt` = time between committed frames. Returns NaN on < 2 frames or a
-        // fit error -- never panics/aborts. All math is molrs (EinsteinDiffusion
-        // + LinearFit).
-        fn analyze_diffusion(rec: &AtvMolRec, dt: f64, dims: i32, fit_lo: f64, fit_hi: f64) -> f64;
+        // Einstein self-diffusion coefficient D = slope / (2*dims) from the
+        // windowed-MSD slope over [fit_lo, fit_hi] (fractions of the last lag),
+        // over the same [n_frames, n_dof] position buffer as analyze_msd. `dt` =
+        // time between frames. Returns NaN on < 2 frames / bad shape / fit error.
+        // All math is molrs (EinsteinDiffusion + LinearFit).
+        fn analyze_diffusion(
+            positions: &[f64],
+            n_frames: i64,
+            n_dof: i64,
+            dt: f64,
+            dims: i32,
+            fit_lo: f64,
+            fit_hi: f64,
+        ) -> f64;
 
-        // Mulliken stays in C++ — depends on electronic structure context (basis
-        // sets, overlap matrix) that is not available from raw simulation data.
-        // TODO: RDF via molrs (currently pure C++ in Atomiverse)
+        // Velocity autocorrelation function (VDOS / Green-Kubo-diffusion input).
+        // `velocities` is a row-major [n_frames, n_dof] flat buffer (n_dof =
+        // 3*n_atoms); `resolution` caps the max lag. Returns the DOF-averaged VACF
+        // curve, one value per lag (index 0 = zero lag). Empty on < 2 frames / bad
+        // args. molrs owns the FFT-ACF math (compute::VACF). frames are unused.
+        fn analyze_vacf(
+            velocities: &[f64],
+            n_frames: i64,
+            n_dof: i64,
+            dt: f64,
+            resolution: i64,
+        ) -> Vec<f64>;
+
+        // Radial distribution function g(r) over raw [n_frames, 3*n_atoms]
+        // positions (blocked x|y|z per frame) + [n_frames, 9] per-frame cell
+        // matrices (supports NPT). Rebuilds a LinkCell self-neighbor list per
+        // frame (cutoff = r_max), then batch-accumulates pair distances into
+        // `n_bins` bins over [r_min, r_max] (Å), normalized by the ideal-gas
+        // shell volume. Returns the g(r) curve, one value per bin; the caller
+        // derives bin-center radii (r_min + (i+0.5)*bin_width). Empty on bad
+        // args/shape, a missing SimBox, or a compute error. All math is molrs
+        // (compute::RDF).
+        fn analyze_rdf(
+            positions: &[f64],
+            boxes: &[f64],
+            n_frames: i64,
+            n_atoms: i64,
+            r_max: f64,
+            n_bins: i64,
+            r_min: f64,
+        ) -> Vec<f64>;
     }
 }
 "#;

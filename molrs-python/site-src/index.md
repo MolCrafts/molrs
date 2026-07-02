@@ -87,7 +87,7 @@ the hosted site reserves `/reference/wasm/` for that generated reference.
 - [Force fields](guides/force-field.md): typify an `Atomistic`, compile
   potentials, then evaluate energy and forces on flat `3N` coordinate arrays.
 - [I/O](guides/io-formats.md): read and write PDB, XYZ, LAMMPS, CHGCAR, Cube,
-  and MolRec/Zarr data through frames.
+  and frame-sequence Zarr data through frames.
 - [Trajectory analysis](guides/trajectory-analysis.md): run RDF, MSD, cluster,
   tensor, PCA, and k-means workflows on one frame or a sequence of frames.
 

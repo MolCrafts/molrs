@@ -75,13 +75,16 @@ pub fn read_cube<P: AsRef<Path>>(path: P) -> Result<Frame, MolRsError> {
 /// Read a Gaussian Cube file from any [`BufRead`] source.
 pub fn read_cube_from_reader<R: BufRead>(mut reader: R) -> Result<Frame, MolRsError> {
     let mut line_no = 0usize;
+    // Reused across every header/atom line so the parse loop allocates no
+    // per-line String (the volumetric reader below reuses its own buffer too).
+    let mut line_buf = String::new();
 
     macro_rules! next_line {
         () => {{
-            let mut s = String::new();
-            reader.read_line(&mut s).map_err(MolRsError::Io)?;
+            line_buf.clear();
+            reader.read_line(&mut line_buf).map_err(MolRsError::Io)?;
             line_no += 1;
-            s
+            line_buf.as_str()
         }};
     }
 
@@ -585,8 +588,11 @@ fn read_volumetric_data<R: BufRead>(
     line_no: &mut usize,
 ) -> Result<Vec<F>, MolRsError> {
     let mut values = Vec::with_capacity(count);
+    // Reuse one buffer across the (potentially millions of) data lines instead
+    // of allocating a fresh String per line.
+    let mut line = String::new();
     while values.len() < count {
-        let mut line = String::new();
+        line.clear();
         let bytes = reader.read_line(&mut line).map_err(MolRsError::Io)?;
         *line_no += 1;
         if bytes == 0 {

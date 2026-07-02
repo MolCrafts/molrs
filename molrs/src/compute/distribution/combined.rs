@@ -5,7 +5,7 @@
 //! (RDF×ADF, distance×dihedral, angle×angle, …) whose marginals recover the
 //! link-01 1-D [`DistributionResult`](super::DistributionResult)s.
 //!
-//! Ported from TRAVIS (`src/2df.cpp`, `src/2df.h`, `src/3df.h`):
+//! Ported from the reference implementation (`src/2df.cpp`, `src/2df.h`, `src/3df.h`):
 //! - The flat **row-major** bin layout `m_pBin[iy*m_iRes[0]+ix]` of `C2DF`
 //!   (axis 0 fastest-varying) — generalized here to N axes with
 //!   `flat = Σ_a idx[a]·stride[a]`, `stride[0]=1`.
@@ -18,11 +18,11 @@
 //!   Because it is the tensor product of the same per-axis CIC scheme, summing
 //!   the joint histogram over the other axes reproduces the link-01 1-D CIC
 //!   distribution *exactly* — the defining CDF marginal-consistency contract
-//!   (ac-001) holds, now bit-for-bit with TRAVIS rather than via a nearest-bin
+//!   (ac-001) holds, now bit-for-bit with reference implementation rather than via a nearest-bin
 //!   approximation.
 //!
 //! # References
-//! - Brehm & Kirchner, *J. Chem. Inf. Model.* **2011**, 51, 2007–2023 (TRAVIS).
+//! - Brehm & Kirchner, *J. Chem. Inf. Model.* **2011**, 51, 2007–2023 (reference implementation).
 //! - Brehm et al., *J. Chem. Phys.* **2020**, 152, 164105.
 
 use molrs::store::frame_access::FrameAccess;
@@ -91,11 +91,11 @@ impl AxisSpec {
         self.bins as F / (self.max - self.min)
     }
 
-    /// Per-axis **cloud-in-cell** contribution (TRAVIS `C2DF`/`C3DF::AddToBin`,
+    /// Per-axis **cloud-in-cell** contribution (reference implementation `C2DF`/`C3DF::AddToBin`,
     /// the multidimensional extension of link-01's [`Histogram1d::add`]
     /// (super::Histogram1d)): returns the two straddling bin indices and their
     /// weights `[(ip, 1−frac), (ip+1, frac)]`, or `None` if `d` is outside
-    /// `[min, max]` (TRAVIS `m_fSkipEntries`). The N-D deposit is the tensor
+    /// `[min, max]` (reference implementation `m_fSkipEntries`). The N-D deposit is the tensor
     /// product of these per-axis contributions, so summing the joint histogram
     /// over the other axes reproduces the link-01 1-D CIC histogram (marginal
     /// consistency). For a single-bin axis both contributions point at bin 0
@@ -104,19 +104,14 @@ impl AxisSpec {
         if d < self.min || d > self.max {
             return None;
         }
-        if self.bins == 1 {
-            return Some(([0, 0], [1.0, 0.0]));
-        }
-        let praw = (d - self.min) * self.fac() - 0.5;
-        let ipf = praw.floor();
-        let (ip, frac) = if ipf < 0.0 {
-            (0usize, 0.0)
-        } else if ipf > (self.bins - 2) as F {
-            (self.bins - 2, 1.0)
-        } else {
-            (ipf as usize, praw - ipf)
-        };
-        Some(([ip, ip + 1], [1.0 - frac, frac]))
+        // Reuse the shared 1-D cloud-in-cell primitive so the CDF axis binning
+        // and the link-01 `Histogram1d` never drift (marginal consistency).
+        Some(super::histogram1d::cic_split(
+            d,
+            self.min,
+            self.fac(),
+            self.bins,
+        ))
     }
 
     fn edges(&self) -> Array1<F> {
@@ -160,15 +155,17 @@ impl AnyObservable {
         }
     }
 
-    fn sample<FA: FrameAccess>(
+    /// Sample into a reused buffer (see [`Observable::sample_into`]).
+    fn sample_into<FA: FrameAccess>(
         &self,
         frame: &FA,
         groups: &AtomGroups,
-    ) -> Result<Vec<F>, ComputeError> {
+        out: &mut Vec<F>,
+    ) -> Result<(), ComputeError> {
         match self {
-            Self::Distance(o) => o.sample(frame, groups),
-            Self::Angle(o) => o.sample(frame, groups),
-            Self::Dihedral(o) => o.sample(frame, groups),
+            Self::Distance(o) => o.sample_into(frame, groups, out),
+            Self::Angle(o) => o.sample_into(frame, groups, out),
+            Self::Dihedral(o) => o.sample_into(frame, groups, out),
         }
     }
 }
@@ -228,7 +225,7 @@ impl CombinedDistribution {
         self.axes.len()
     }
 
-    /// Row-major strides, axis 0 fastest (TRAVIS `m_pBin[iy*nx+ix]` layout).
+    /// Row-major strides, axis 0 fastest (reference implementation `m_pBin[iy*nx+ix]` layout).
     fn strides(&self) -> Vec<usize> {
         let mut s = vec![1usize; self.axes.len()];
         for a in 1..self.axes.len() {
@@ -239,6 +236,155 @@ impl CombinedDistribution {
 
     fn total_bins(&self) -> usize {
         self.axes.iter().map(|a| a.bins).product()
+    }
+
+    /// Deposit one frame's N-tuples into `counts` (flat row-major), advancing
+    /// `binned` and `n_raw_samples`. `cols` is a reused per-axis sample buffer
+    /// (one `Vec<F>` per observable) so no allocation happens per frame. This is
+    /// the per-frame body shared by the serial and rayon accumulation paths.
+    #[allow(clippy::too_many_arguments)]
+    fn accumulate_frame<FA: FrameAccess>(
+        &self,
+        frame: &FA,
+        groups: &[AtomGroups],
+        strides: &[usize],
+        n_tuples: usize,
+        cols: &mut Vec<Vec<F>>,
+        counts: &mut Array1<F>,
+        binned: &mut F,
+        n_raw_samples: &mut usize,
+    ) -> Result<(), ComputeError> {
+        let n = self.observables.len();
+        if cols.len() < n {
+            cols.resize_with(n, Vec::new);
+        }
+        // Sample every observable on its own groups into the reused buffers.
+        for (a, (obs, g)) in self.observables.iter().zip(groups.iter()).enumerate() {
+            obs.sample_into(frame, g, &mut cols[a])?;
+        }
+        // Defensive: an observable must honour its AtomGroups length.
+        for c in cols.iter().take(n) {
+            if c.len() != n_tuples {
+                return Err(ComputeError::DimensionMismatch {
+                    expected: n_tuples,
+                    got: c.len(),
+                    what: "observable sample count",
+                });
+            }
+        }
+        *n_raw_samples += n_tuples;
+        // `t` indexes the parallel per-axis sample columns `cols[a][t]`, not
+        // a single collection — a genuine range loop, not a needless one.
+        #[allow(clippy::needless_range_loop)]
+        for t in 0..n_tuples {
+            // Per-axis cloud-in-cell contributions. Skip the whole N-tuple
+            // if any axis is out of range (reference implementation C2DF: m_fSkipEntries when
+            // any coordinate is outside its range).
+            let mut contribs: [([usize; 2], [F; 2]); 3] = [([0, 0], [0.0, 0.0]); 3];
+            let mut in_range = true;
+            for a in 0..n {
+                match self.axes[a].cic(cols[a][t]) {
+                    Some(c) => contribs[a] = c,
+                    None => {
+                        in_range = false;
+                        break;
+                    }
+                }
+            }
+            if !in_range {
+                continue;
+            }
+            // Tensor-product deposit over the 2^n straddling bins; the
+            // per-axis weights sum to 1, so each tuple deposits total
+            // weight 1 (mass-conserving) — reference implementation bilinear/trilinear CIC.
+            for corner in 0..(1usize << n) {
+                let mut flat = 0usize;
+                let mut w = 1.0;
+                for a in 0..n {
+                    let pick = (corner >> a) & 1;
+                    flat += contribs[a].0[pick] * strides[a];
+                    w *= contribs[a].1[pick];
+                }
+                if w != 0.0 {
+                    counts[flat] += w;
+                }
+            }
+            *binned += 1.0;
+        }
+        Ok(())
+    }
+
+    /// Accumulate the joint histogram over all frames → `(counts, binned,
+    /// n_raw_samples)`.
+    ///
+    /// Frames are independent, so with `rayon` they are folded into per-thread
+    /// count buffers and merged; each thread reuses its per-axis sample buffers.
+    /// Falls back to a serial fold below [`PAR_THRESHOLD`] frames (and always
+    /// when `rayon` is off). An empty selection (`n_tuples == 0`) contributes
+    /// nothing.
+    fn accumulate<'a, FA: FrameAccess + Sync + 'a>(
+        &self,
+        frames: &[&'a FA],
+        groups: &[AtomGroups],
+        strides: &[usize],
+        n_tuples: usize,
+    ) -> Result<(Array1<F>, F, usize), ComputeError> {
+        let total_bins = self.total_bins();
+        if n_tuples == 0 {
+            return Ok((Array1::<F>::zeros(total_bins), 0.0, 0));
+        }
+
+        #[cfg(feature = "rayon")]
+        const PAR_THRESHOLD: usize = 4;
+
+        #[cfg(feature = "rayon")]
+        if frames.len() >= PAR_THRESHOLD {
+            use rayon::prelude::*;
+            return frames
+                .par_iter()
+                .try_fold(
+                    || (Array1::<F>::zeros(total_bins), 0.0 as F, 0usize, Vec::new()),
+                    |(mut counts, mut binned, mut nrs, mut cols), frame| {
+                        self.accumulate_frame(
+                            *frame,
+                            groups,
+                            strides,
+                            n_tuples,
+                            &mut cols,
+                            &mut counts,
+                            &mut binned,
+                            &mut nrs,
+                        )?;
+                        Ok((counts, binned, nrs, cols))
+                    },
+                )
+                .map(|r| r.map(|(c, b, nrs, _)| (c, b, nrs)))
+                .try_reduce(
+                    || (Array1::<F>::zeros(total_bins), 0.0 as F, 0usize),
+                    |(mut ca, ba, nra), (cb, bb, nrb)| {
+                        ca += &cb;
+                        Ok((ca, ba + bb, nra + nrb))
+                    },
+                );
+        }
+
+        let mut counts = Array1::<F>::zeros(total_bins);
+        let mut binned: F = 0.0;
+        let mut n_raw_samples: usize = 0;
+        let mut cols: Vec<Vec<F>> = Vec::new();
+        for frame in frames {
+            self.accumulate_frame(
+                *frame,
+                groups,
+                strides,
+                n_tuples,
+                &mut cols,
+                &mut counts,
+                &mut binned,
+                &mut n_raw_samples,
+            )?;
+        }
+        Ok((counts, binned, n_raw_samples))
     }
 }
 
@@ -285,69 +431,8 @@ impl Compute for CombinedDistribution {
         }
 
         let strides = self.strides();
-        let mut counts = Array1::<F>::zeros(self.total_bins());
-        let mut binned: F = 0.0;
-        let mut n_raw_samples: usize = 0;
-
-        for frame in frames {
-            if n_tuples == 0 {
-                continue;
-            }
-            // Sample every observable on its own groups for this frame.
-            let mut cols: Vec<Vec<F>> = Vec::with_capacity(n);
-            for (obs, g) in self.observables.iter().zip(groups.iter()) {
-                cols.push(obs.sample(*frame, g)?);
-            }
-            // Defensive: an observable must honour its AtomGroups length.
-            for c in &cols {
-                if c.len() != n_tuples {
-                    return Err(ComputeError::DimensionMismatch {
-                        expected: n_tuples,
-                        got: c.len(),
-                        what: "observable sample count",
-                    });
-                }
-            }
-            n_raw_samples += n_tuples;
-            // `t` indexes the parallel per-axis sample columns `cols[a][t]`, not
-            // a single collection — a genuine range loop, not a needless one.
-            #[allow(clippy::needless_range_loop)]
-            for t in 0..n_tuples {
-                // Per-axis cloud-in-cell contributions. Skip the whole N-tuple
-                // if any axis is out of range (TRAVIS C2DF: m_fSkipEntries when
-                // any coordinate is outside its range).
-                let mut contribs: [([usize; 2], [F; 2]); 3] = [([0, 0], [0.0, 0.0]); 3];
-                let mut in_range = true;
-                for a in 0..n {
-                    match self.axes[a].cic(cols[a][t]) {
-                        Some(c) => contribs[a] = c,
-                        None => {
-                            in_range = false;
-                            break;
-                        }
-                    }
-                }
-                if !in_range {
-                    continue;
-                }
-                // Tensor-product deposit over the 2^n straddling bins; the
-                // per-axis weights sum to 1, so each tuple deposits total
-                // weight 1 (mass-conserving) — TRAVIS bilinear/trilinear CIC.
-                for corner in 0..(1usize << n) {
-                    let mut flat = 0usize;
-                    let mut w = 1.0;
-                    for a in 0..n {
-                        let pick = (corner >> a) & 1;
-                        flat += contribs[a].0[pick] * strides[a];
-                        w *= contribs[a].1[pick];
-                    }
-                    if w != 0.0 {
-                        counts[flat] += w;
-                    }
-                }
-                binned += 1.0;
-            }
-        }
+        let (counts, binned, n_raw_samples) =
+            self.accumulate(frames, groups, &strides, n_tuples)?;
 
         let bin_widths: Vec<F> = self.axes.iter().map(|a| a.bin_width()).collect();
         let cell_volume: F = bin_widths.iter().product();

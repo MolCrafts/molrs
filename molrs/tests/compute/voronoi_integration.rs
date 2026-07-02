@@ -1,5 +1,5 @@
 //! Integration tests for Voronoi electron-density integration → molecular
-//! moments (travis-parity-07). Densities are constructed in memory (compute
+//! moments (analysis-parity-07). Densities are constructed in memory (compute
 //! testing, not IO-format testing), so the IO real-fixture rule does not apply.
 
 use molrs::compute::voronoi::{

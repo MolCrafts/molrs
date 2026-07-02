@@ -1,7 +1,7 @@
 //! Voronoi integration of a volumetric electron density into per-molecule
 //! electromagnetic moments (charge + dipole).
 //!
-//! Ported from TRAVIS's Voronoi charge/dipole gathering (`CalcVoronoiCharges` /
+//! Ported from the reference implementation's Voronoi charge/dipole gathering (`CalcVoronoiCharges` /
 //! dipole accumulation in `src/gather.cpp`), which assigns each density grid
 //! point to its enclosing radical-Voronoi cell and sums the electronic charge
 //! `q = −∫ρ dV` and dipole `μ = −∫ρ (r − r_ref) dV` per cell, then per molecule.
@@ -39,6 +39,7 @@ use molrs::types::F;
 use ndarray::{Array2, ArrayView2};
 
 use crate::compute::error::ComputeError;
+use crate::compute::result::ComputeResult;
 
 /// Bohr → Å (CODATA, matches the cube reader's constant).
 pub const BOHR_TO_ANG: F = 0.529_177_210_67;
@@ -158,6 +159,8 @@ pub struct MolecularMoments {
     pub references: Array2<F>,
 }
 
+impl ComputeResult for MolecularMoments {}
+
 /// Voronoi electron-density integrator.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct VoronoiIntegration;
@@ -211,7 +214,15 @@ impl VoronoiIntegration {
         let l = simbox.lengths();
         let lbox = [l[0], l[1], l[2]];
 
-        let genpos = |a: usize| [positions[[a, 0]], positions[[a, 1]], positions[[a, 2]]];
+        // Hoist the generator positions into a contiguous `[F; 3]` buffer and
+        // precompute the squared radii once — Pass B's voxel loop reads both
+        // millions of times, so paying the ndarray indexing / `r·r` per voxel is
+        // pure overhead.
+        let gens: Vec<[F; 3]> = (0..n)
+            .map(|a| [positions[[a, 0]], positions[[a, 1]], positions[[a, 2]]])
+            .collect();
+        let radii_sq: Vec<F> = radii.iter().map(|&r| r * r).collect();
+        let genpos = |a: usize| gens[a];
 
         // --- Pass A: per-molecule reference = centre of nuclear charge,
         // built on atoms unwrapped to each molecule's first-seen atom. ---
@@ -266,27 +277,50 @@ impl VoronoiIntegration {
                 what: "density length vs grid dims",
             });
         }
-        for m in 0..n_voxels {
+
+        // Build a uniform periodic cell list over the generators so Pass B gathers
+        // only nearby candidates instead of scanning all `n` generators per voxel.
+        // `w_max` bounds every generator's radius² and drives the pruning guard.
+        let w_max = radii_sq.iter().copied().fold(0.0_f64, f64::max);
+        let r_max = radii.iter().copied().fold(0.0_f64, |m, r| m.max(r.abs()));
+        let vol = lbox[0] * lbox[1] * lbox[2];
+        let mean_spacing = if vol > 0.0 && n > 0 {
+            (vol / n as F).cbrt()
+        } else {
+            0.0
+        };
+        // Cutoff generous enough that the 27-cell gather almost always already
+        // contains the winning generator (guard passes → no fallback): a few mean
+        // spacings plus the radius spread. Correctness never depends on this value
+        // — the guard + brute-force fallback keep every result bit-identical to the
+        // exhaustive search regardless of `r_cut`.
+        let r_cut = {
+            let base = 3.0 * mean_spacing + 2.0 * r_max;
+            if base.is_finite() && base > 0.0 {
+                base
+            } else {
+                lbox.iter().copied().fold(0.0_f64, f64::max).max(1.0)
+            }
+        };
+        let cell_list = CellList::build(&gens, lbox, r_cut);
+
+        // Electronic contribution of one voxel, deposited into per-molecule
+        // charge / dipole accumulators. Each voxel is independent, so this is the
+        // body of both the serial loop and the rayon fold below. The nearest
+        // radical site is the power-distance argmin with a low-index tie-break —
+        // resolved by a spatial-index gather (`CellList::nearest`) that is proven
+        // bit-identical to the original exhaustive search via the pruning guard,
+        // falling back to brute force when the guard cannot certify the winner.
+        let deposit = |m: usize, charge: &mut [F], dip: &mut Array2<F>| {
             let rho = grid.density[m];
             if rho == 0.0 {
-                continue;
+                return;
             }
             let x = grid.point(m);
-            // nearest radical site (power distance), deterministic tie-break.
-            let mut best = 0usize;
-            let mut best_pow = F::INFINITY;
-            #[allow(clippy::needless_range_loop)] // body indexes both positions and radii by `a`
-            for a in 0..n {
-                let d = min_image(sub(x, genpos(a)), lbox);
-                let pow = d[0] * d[0] + d[1] * d[1] + d[2] * d[2] - radii[a] * radii[a];
-                if pow < best_pow {
-                    best_pow = pow;
-                    best = a;
-                }
-            }
+            let best = cell_list.nearest(x, &gens, &radii_sq, w_max, r_cut, n);
             let mol = atom_to_mol[best];
             let n_elec = rho * grid.dv; // electrons in this voxel
-            charges[mol] -= n_elec;
+            charge[mol] -= n_elec;
             let rref = [
                 references[[mol, 0]],
                 references[[mol, 1]],
@@ -294,7 +328,46 @@ impl VoronoiIntegration {
             ];
             let disp = min_image(sub(x, rref), lbox);
             for c in 0..3 {
-                dipoles[[mol, c]] -= n_elec * disp[c];
+                dip[[mol, c]] -= n_elec * disp[c];
+            }
+        };
+
+        // Pass B: accumulate the electronic charge/dipole per molecule. Nuclear
+        // terms are already in `charges`/`dipoles`; the electronic sum lands in
+        // its own accumulators (fanned out over voxels with rayon, then merged)
+        // and is added on afterwards, so nuclear-then-electronic ordering is
+        // preserved and only the electronic sum is reassociated.
+        let zeros = || (vec![0.0_f64; n_mol], Array2::<F>::zeros((n_mol, 3)));
+        #[cfg(feature = "rayon")]
+        let (elec_charge, elec_dipole) = {
+            use rayon::prelude::*;
+            (0..n_voxels)
+                .into_par_iter()
+                .fold(zeros, |(mut c, mut d), m| {
+                    deposit(m, &mut c, &mut d);
+                    (c, d)
+                })
+                .reduce(zeros, |(mut ca, mut da), (cb, db)| {
+                    for (x, y) in ca.iter_mut().zip(cb.iter()) {
+                        *x += *y;
+                    }
+                    da += &db;
+                    (ca, da)
+                })
+        };
+        #[cfg(not(feature = "rayon"))]
+        let (elec_charge, elec_dipole) = {
+            let (mut c, mut d) = zeros();
+            for m in 0..n_voxels {
+                deposit(m, &mut c, &mut d);
+            }
+            (c, d)
+        };
+
+        for m in 0..n_mol {
+            charges[m] += elec_charge[m];
+            for c in 0..3 {
+                dipoles[[m, c]] += elec_dipole[[m, c]];
             }
         }
 
@@ -334,6 +407,190 @@ fn min_image(mut d: [F; 3], l: [F; 3]) -> [F; 3] {
 fn unwrap(r: [F; 3], anchor: [F; 3], l: [F; 3]) -> [F; 3] {
     let d = min_image(sub(r, anchor), l);
     [anchor[0] + d[0], anchor[1] + d[1], anchor[2] + d[2]]
+}
+
+/// Radical (power / Laguerre) distance of point `x` to generator `g` with
+/// squared radius `r_sq`, using the exact same orthorhombic min-image arithmetic
+/// as the original Pass-B loop. Keeping this the single source of the formula is
+/// what makes the spatial-index gather and the brute-force fallback yield
+/// bit-identical `pow` values.
+#[inline]
+fn power_dist(x: [F; 3], g: [F; 3], r_sq: F, l: [F; 3]) -> F {
+    let d = min_image(sub(x, g), l);
+    d[0] * d[0] + d[1] * d[1] + d[2] * d[2] - r_sq
+}
+
+// --- uniform periodic cell list over the generators (Pass-B acceleration) ---
+//
+// Replaces the O(n_voxels · n_generators) argmin with a gather over the voxel's
+// own cell + the 26 periodic neighbours, plus an exact pruning guard. Any
+// generator outside the gathered region has min-image distance ≥ `r_cut` (cell
+// edge ≥ `r_cut`), hence power distance ≥ `r_cut² − w_max`; if a candidate
+// already beats that bound the gathered argmin is provably the global argmin.
+// When the guard cannot certify it (empty region, or a candidate not yet inside
+// the bound) Pass B falls back to the exhaustive search, so results are
+// bit-identical to brute force for every voxel, whatever `r_cut` is.
+
+/// Cell index of coordinate `p` along one axis (periodic, wrapped to `[0, l)`).
+#[inline]
+fn cell_index_1d(p: F, l: F, edge: F, ncell: usize) -> usize {
+    if l <= 0.0 || ncell <= 1 {
+        return 0;
+    }
+    let w = p - l * (p / l).floor(); // wrap into [0, l)
+    let c = (w / edge).floor();
+    if !c.is_finite() || c < 0.0 {
+        0
+    } else {
+        (c as usize).min(ncell - 1)
+    }
+}
+
+/// The (deduplicated) periodic neighbour cell indices along one axis: the cell
+/// itself plus its two neighbours, collapsing to fewer when `ncell < 3` so no
+/// cell is ever visited twice.
+#[inline]
+fn axis_cells(ic: usize, ncell: usize) -> ([usize; 3], usize) {
+    match ncell {
+        0 | 1 => ([0, 0, 0], 1),
+        2 => ([ic, 1 - ic, 0], 2),
+        _ => {
+            let lo = if ic == 0 { ncell - 1 } else { ic - 1 };
+            let hi = if ic + 1 == ncell { 0 } else { ic + 1 };
+            ([lo, ic, hi], 3)
+        }
+    }
+}
+
+/// Uniform periodic cell list over the generator positions, built once and
+/// shared read-only across the rayon-over-voxels Pass B.
+struct CellList {
+    /// Cells per axis (`≥ 1`).
+    ncell: [usize; 3],
+    /// Cell edge length per axis (`= lbox / ncell ≥ r_cut`; `∞` for a degenerate
+    /// axis with `lbox ≤ 0`).
+    cell_edge: [F; 3],
+    /// Orthorhombic box lengths (same array used by the min-image compare).
+    lbox: [F; 3],
+    /// CSR offsets: cell `c` owns `cell_gens[cell_start[c]..cell_start[c + 1]]`.
+    cell_start: Vec<usize>,
+    /// Generator indices grouped by owning cell, ascending within each cell.
+    cell_gens: Vec<usize>,
+}
+
+impl CellList {
+    /// Bin `gens` into a periodic cell list with edge `≥ r_cut` on each periodic
+    /// axis (via a stable counting sort, so generator indices stay ascending
+    /// within a cell).
+    fn build(gens: &[[F; 3]], lbox: [F; 3], r_cut: F) -> Self {
+        let mut ncell = [1usize; 3];
+        let mut cell_edge = [F::INFINITY; 3];
+        for d in 0..3 {
+            if lbox[d] > 0.0 {
+                let nd = (lbox[d] / r_cut).floor();
+                let nd = if nd.is_finite() && nd >= 1.0 {
+                    nd as usize
+                } else {
+                    1
+                };
+                ncell[d] = nd.max(1);
+                cell_edge[d] = lbox[d] / ncell[d] as F;
+            }
+        }
+        let ncells = ncell[0] * ncell[1] * ncell[2];
+        let cell_of = |p: [F; 3]| -> usize {
+            let ix = cell_index_1d(p[0], lbox[0], cell_edge[0], ncell[0]);
+            let iy = cell_index_1d(p[1], lbox[1], cell_edge[1], ncell[1]);
+            let iz = cell_index_1d(p[2], lbox[2], cell_edge[2], ncell[2]);
+            (ix * ncell[1] + iy) * ncell[2] + iz
+        };
+        let mut cell_start = vec![0usize; ncells + 1];
+        for g in gens {
+            cell_start[cell_of(*g) + 1] += 1;
+        }
+        for c in 0..ncells {
+            cell_start[c + 1] += cell_start[c];
+        }
+        let mut cursor = cell_start.clone();
+        let mut cell_gens = vec![0usize; gens.len()];
+        for (a, g) in gens.iter().enumerate() {
+            let c = cell_of(*g);
+            cell_gens[cursor[c]] = a;
+            cursor[c] += 1;
+        }
+        CellList {
+            ncell,
+            cell_edge,
+            lbox,
+            cell_start,
+            cell_gens,
+        }
+    }
+
+    /// Index of the generator minimising the power distance to `x`, identical
+    /// (value and lowest-index tie-break) to the exhaustive `0..n` argmin.
+    fn nearest(
+        &self,
+        x: [F; 3],
+        gens: &[[F; 3]],
+        radii_sq: &[F],
+        w_max: F,
+        r_cut: F,
+        n: usize,
+    ) -> usize {
+        let icx = cell_index_1d(x[0], self.lbox[0], self.cell_edge[0], self.ncell[0]);
+        let icy = cell_index_1d(x[1], self.lbox[1], self.cell_edge[1], self.ncell[1]);
+        let icz = cell_index_1d(x[2], self.lbox[2], self.cell_edge[2], self.ncell[2]);
+        let (ax, nax) = axis_cells(icx, self.ncell[0]);
+        let (ay, nay) = axis_cells(icy, self.ncell[1]);
+        let (az, naz) = axis_cells(icz, self.ncell[2]);
+
+        let mut best = usize::MAX;
+        let mut best_pow = F::INFINITY;
+        let mut any = false;
+        for &cx in &ax[..nax] {
+            for &cy in &ay[..nay] {
+                for &cz in &az[..naz] {
+                    let c = (cx * self.ncell[1] + cy) * self.ncell[2] + cz;
+                    for &a in &self.cell_gens[self.cell_start[c]..self.cell_start[c + 1]] {
+                        any = true;
+                        let pow = power_dist(x, gens[a], radii_sq[a], self.lbox);
+                        // argmin with a lowest-index tie-break, tolerant of the
+                        // grouped (non-index-order) candidate visiting: strictly
+                        // smaller wins, exact ties go to the lower index. Uses only
+                        // `<`/`<=` on the power distance so it matches the brute
+                        // force's exact selection without a float `==`.
+                        if pow < best_pow || (pow <= best_pow && a < best) {
+                            best_pow = pow;
+                            best = a;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Pruning guard: any generator not gathered has min-image distance ≥
+        // r_cut, so power ≥ r_cut² − w_max. If a candidate already beats that
+        // (strict), no outside generator can tie or win → the gathered argmin is
+        // the global argmin.
+        if any && r_cut * r_cut - w_max > best_pow {
+            return best;
+        }
+
+        // Fallback: exhaustive argmin over all generators — byte-for-byte the
+        // original single-threaded search (same arithmetic, same strict-`<`
+        // lowest-index tie-break).
+        let mut fb_best = 0usize;
+        let mut fb_pow = F::INFINITY;
+        for a in 0..n {
+            let pow = power_dist(x, gens[a], radii_sq[a], self.lbox);
+            if pow < fb_pow {
+                fb_pow = pow;
+                fb_best = a;
+            }
+        }
+        fb_best
+    }
 }
 
 #[inline]
@@ -376,5 +633,66 @@ mod tests {
     fn min_image_wraps_half_box() {
         let d = min_image([0.9, 0.0, 0.0], [1.0, 1.0, 1.0]);
         assert!((d[0] - (-0.1)).abs() < 1e-12);
+    }
+
+    /// The spatial-index nearest-generator search must return **exactly** the
+    /// same index (value + lowest-index tie-break) as the exhaustive argmin for
+    /// every query point — with the pruning guard active (`ncell > 1`), when it
+    /// must fall back (tiny `r_cut`), and in the single-cell case (`ncell == 1`).
+    #[test]
+    fn cell_list_nearest_matches_brute_force() {
+        let lbox = [12.0_f64, 10.0, 8.0];
+        let n = 200usize;
+        // Deterministic LCG → f64 in [0, 1); no external rng dependency.
+        let mut state = 0x2545_F491_4F6C_DD1Du64;
+        let mut rng = || {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            ((state >> 11) as f64) / ((1u64 << 53) as f64)
+        };
+        let gens: Vec<[F; 3]> = (0..n)
+            .map(|_| [rng() * lbox[0], rng() * lbox[1], rng() * lbox[2]])
+            .collect();
+        let radii_sq: Vec<F> = (0..n).map(|_| (rng() * 1.5).powi(2)).collect();
+        let w_max = radii_sq.iter().copied().fold(0.0_f64, f64::max);
+
+        // Reference: byte-for-byte the exhaustive Pass-B search.
+        let brute = |x: [F; 3]| -> usize {
+            let mut best = 0usize;
+            let mut best_pow = F::INFINITY;
+            for a in 0..n {
+                let pow = power_dist(x, gens[a], radii_sq[a], lbox);
+                if pow < best_pow {
+                    best_pow = pow;
+                    best = a;
+                }
+            }
+            best
+        };
+
+        // Query points spanning (and spilling outside) the box to exercise wrap.
+        let queries: Vec<[F; 3]> = (0..600)
+            .map(|_| {
+                [
+                    rng() * lbox[0] * 1.3 - 1.0,
+                    rng() * lbox[1] * 1.3 - 1.0,
+                    rng() * lbox[2] * 1.3 - 1.0,
+                ]
+            })
+            .collect();
+
+        // r_cut = 0.6 → tiny cells, frequent fallback; 3.0/5.0 → guard prunes;
+        // 50.0 → single cell (ncell == 1).
+        for &r_cut in &[0.6_f64, 3.0, 5.0, 50.0] {
+            let cl = CellList::build(&gens, lbox, r_cut);
+            for &x in &queries {
+                assert_eq!(
+                    cl.nearest(x, &gens, &radii_sq, w_max, r_cut, n),
+                    brute(x),
+                    "spatial index diverged from brute force at r_cut={r_cut}, x={x:?}"
+                );
+            }
+        }
     }
 }
