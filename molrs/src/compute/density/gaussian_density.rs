@@ -24,6 +24,7 @@
 //! - PBC is honoured per-axis via wrap-around grid indexing when the
 //!   corresponding `pbc` flag is true.
 
+use crate::compute::result::ComputeResult;
 use ndarray::Array3;
 
 use molrs::spatial::region::simbox::BoxKind;
@@ -32,18 +33,8 @@ use molrs::types::F;
 
 use super::wrap_index;
 use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
 use crate::compute::traits::Compute;
 use crate::compute::util::get_positions_ref;
-
-/// Per-frame Gaussian-density grid.
-#[derive(Debug, Clone, Default)]
-pub struct GaussianDensityResult {
-    /// Voxel grid `(nx, ny, nz)` of density values.
-    pub density: Array3<F>,
-}
-
-impl ComputeResult for GaussianDensityResult {}
 
 /// Gaussian-density calculator.
 #[derive(Debug, Clone, Copy)]
@@ -223,6 +214,15 @@ impl Compute for GaussianDensity {
         Ok(out)
     }
 }
+
+/// Per-frame Gaussian-density grid.
+#[derive(Debug, Clone, Default)]
+pub struct GaussianDensityResult {
+    /// Voxel grid `(nx, ny, nz)` of density values.
+    pub density: Array3<F>,
+}
+
+impl ComputeResult for GaussianDensityResult {}
 
 #[cfg(test)]
 mod tests {

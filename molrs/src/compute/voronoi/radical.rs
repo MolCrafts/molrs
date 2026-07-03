@@ -4,7 +4,7 @@
 //! convex polyhedron against the radical plane of nearby periodic neighbours
 //! ([`super::cell::Poly::clip`]). This is the cell-by-cell strategy of voro++
 //! (`container_periodic::compute_cell`, `src/v_container_prd.cpp`, driven as in
-//! TRAVIS `vorowrapper.cpp`), with the radical/power plane offset from
+//! reference implementation `vorowrapper.cpp`), with the radical/power plane offset from
 //! `radius_poly` (`src/v_rad_option.h`).
 //!
 //! # Candidate search — O(N) at constant density
@@ -116,25 +116,40 @@ impl RadicalVoronoi {
         let r_cut = 4.0 * mean_spacing + 2.0 * r_star2.sqrt();
         let grid = CellGrid::new(positions, &l, r_cut);
 
-        let mut volumes = Vec::with_capacity(n);
-        let mut faces = Vec::with_capacity(n);
-        let mut cand: Vec<(F, [F; 3], usize)> = Vec::new();
-
-        for i in 0..n {
+        // Each generator's cell is built independently from the shared read-only
+        // grid, so the per-cell loop is embarrassingly parallel: `map_init` gives
+        // every worker its own reusable `cand` scratch buffer (matching the serial
+        // buffer reuse) and `collect` preserves generator order, so the result is
+        // bit-identical to the serial build — only the geometry algorithm's driver
+        // loop is parallelized, never the geometry itself.
+        let build = |i: usize, cand: &mut Vec<(F, [F; 3], usize)>| -> (F, Vec<Face>) {
             let gi = [positions[[i, 0]], positions[[i, 1]], positions[[i, 2]]];
             let ri2 = radii[i] * radii[i];
-
-            match self.build_cell_fast(&grid, &gi, ri2, r_star2, radii, &l, r_cut, &mut cand) {
-                Some((vol, cf)) => {
-                    volumes.push(vol);
-                    faces.push(cf);
-                }
-                None => {
-                    let (vol, cf) = self.build_cell_exhaustive(positions, radii, i, &gi, ri2, &l);
-                    volumes.push(vol);
-                    faces.push(cf);
-                }
+            match self.build_cell_fast(&grid, &gi, ri2, r_star2, radii, &l, r_cut, cand) {
+                Some(res) => res,
+                None => self.build_cell_exhaustive(positions, radii, i, &gi, ri2, &l),
             }
+        };
+
+        #[cfg(feature = "rayon")]
+        let cells: Vec<(F, Vec<Face>)> = {
+            use rayon::prelude::*;
+            (0..n)
+                .into_par_iter()
+                .map_init(Vec::new, |cand, i| build(i, cand))
+                .collect()
+        };
+        #[cfg(not(feature = "rayon"))]
+        let cells: Vec<(F, Vec<Face>)> = {
+            let mut cand: Vec<(F, [F; 3], usize)> = Vec::new();
+            (0..n).map(|i| build(i, &mut cand)).collect()
+        };
+
+        let mut volumes = Vec::with_capacity(n);
+        let mut faces = Vec::with_capacity(n);
+        for (vol, cf) in cells {
+            volumes.push(vol);
+            faces.push(cf);
         }
 
         Ok(VoronoiCells { volumes, faces })

@@ -17,26 +17,15 @@
 //! that the configuration is genuinely planar (typically `Lz = 1`,
 //! `pbc.z = false`).
 
+use crate::compute::result::ComputeResult;
 use molrs::math::complex::Complex;
 use molrs::spatial::neighbors::NeighborList;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 
 use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
 use crate::compute::traits::Compute;
 use crate::compute::util::get_positions_ref;
-
-/// Per-frame hexatic order parameter result.
-#[derive(Debug, Clone, Default)]
-pub struct HexaticResult {
-    /// Rotational symmetry order `k`.
-    pub k: u32,
-    /// Per-particle complex `ψ_k(i)`.
-    pub psi: Vec<Complex>,
-}
-
-impl ComputeResult for HexaticResult {}
 
 /// Hexatic order parameter calculator.
 #[derive(Debug, Clone, Copy)]
@@ -45,6 +34,7 @@ pub struct Hexatic {
 }
 
 impl Hexatic {
+    /// k-fold symmetry of `ψ_k` (6 = hexatic).
     pub fn new(k: u32) -> Result<Self, ComputeError> {
         if k == 0 {
             return Err(ComputeError::OutOfRange {
@@ -144,11 +134,22 @@ impl Compute for Hexatic {
     }
 }
 
+/// Per-frame hexatic order parameter result.
+#[derive(Debug, Clone, Default)]
+pub struct HexaticResult {
+    /// Rotational symmetry order `k`.
+    pub k: u32,
+    /// Per-particle complex `ψ_k(i)`.
+    pub psi: Vec<Complex>,
+}
+
+impl ComputeResult for HexaticResult {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compute::test_support::nlist_from_frame;
     use molrs::Frame;
-    use molrs::spatial::neighbors::{LinkCell, NbListAlgo};
     use molrs::spatial::region::simbox::SimBox;
     use molrs::store::block::Block;
     use ndarray::{Array1 as A1, array};
@@ -175,44 +176,7 @@ mod tests {
     }
 
     fn build_nlist(frame: &Frame, cutoff: F) -> NeighborList {
-        let xp = frame
-            .get("atoms")
-            .unwrap()
-            .get("x")
-            .and_then(<F as molrs::store::block::BlockDtype>::from_column)
-            .unwrap()
-            .as_slice()
-            .unwrap()
-            .to_vec();
-        let yp = frame
-            .get("atoms")
-            .unwrap()
-            .get("y")
-            .and_then(<F as molrs::store::block::BlockDtype>::from_column)
-            .unwrap()
-            .as_slice()
-            .unwrap()
-            .to_vec();
-        let zp = frame
-            .get("atoms")
-            .unwrap()
-            .get("z")
-            .and_then(<F as molrs::store::block::BlockDtype>::from_column)
-            .unwrap()
-            .as_slice()
-            .unwrap()
-            .to_vec();
-        let n = xp.len();
-        let mut pos = ndarray::Array2::<F>::zeros((n, 3));
-        for i in 0..n {
-            pos[[i, 0]] = xp[i];
-            pos[[i, 1]] = yp[i];
-            pos[[i, 2]] = zp[i];
-        }
-        let simbox = frame.simbox.as_ref().unwrap();
-        let mut lc = LinkCell::new().cutoff(cutoff);
-        lc.build(pos.view(), simbox);
-        lc.query().clone()
+        nlist_from_frame(frame, cutoff)
     }
 
     /// Six neighbors on a regular hexagon around a centre particle.

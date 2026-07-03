@@ -1,4 +1,4 @@
-//! WASM bindings for MolRec Zarr v3 archives.
+//! WASM bindings for frame-sequence Zarr v3 archives.
 
 use crate::core::frame::Frame;
 use std::sync::Arc;
@@ -7,17 +7,17 @@ use zarrs::storage::ReadableWritableListableStorage;
 use zarrs::storage::WritableStorageTraits;
 use zarrs::storage::store::MemoryStore;
 
-/// Reader for MolRec Zarr v3 archives.
-#[wasm_bindgen(js_name = MolRecReader)]
-pub struct MolRecReader {
+/// Reader for frame-sequence Zarr v3 archives.
+#[wasm_bindgen(js_name = RecordReader)]
+pub struct RecordReader {
     store: ReadableWritableListableStorage,
     n_atoms: usize,
 }
 
-#[wasm_bindgen(js_class = MolRecReader)]
-impl MolRecReader {
+#[wasm_bindgen(js_class = RecordReader)]
+impl RecordReader {
     #[wasm_bindgen(constructor)]
-    pub fn new(files: js_sys::Map) -> Result<MolRecReader, JsValue> {
+    pub fn new(files: js_sys::Map) -> Result<RecordReader, JsValue> {
         let store = Arc::new(MemoryStore::new());
 
         for key_res in files.keys() {
@@ -37,19 +37,16 @@ impl MolRecReader {
         }
 
         let store = store as ReadableWritableListableStorage;
-        let rec = molrs::io::store::zarr::read_molrec_store(store.clone())
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
-        let n_atoms = rec
-            .frame
-            .get("atoms")
-            .and_then(|block| block.nrows())
+        let n_atoms = molrs::io::store::zarr::read_frame_from_store(store.clone(), 0)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?
+            .and_then(|frame| frame.get("atoms").and_then(|block| block.nrows()))
             .unwrap_or(0);
-        Ok(MolRecReader { store, n_atoms })
+        Ok(RecordReader { store, n_atoms })
     }
 
     #[wasm_bindgen(js_name = readFrame)]
     pub fn read_frame(&self, t: usize) -> Result<Option<Frame>, JsValue> {
-        let rs_frame = molrs::io::store::zarr::read_molrec_frame_from_store(self.store.clone(), t)
+        let rs_frame = molrs::io::store::zarr::read_frame_from_store(self.store.clone(), t)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
         match rs_frame {
             Some(frame) => Ok(Some(Frame::from_rs(frame)?)),
@@ -60,7 +57,7 @@ impl MolRecReader {
     #[wasm_bindgen(js_name = countFrames)]
     pub fn count_frames(&self) -> Result<usize, JsValue> {
         Ok(
-            molrs::io::store::zarr::count_molrec_frames_in_store(self.store.clone())
+            molrs::io::store::zarr::count_frames_in_store(self.store.clone())
                 .map_err(|e| JsValue::from_str(&e.to_string()))? as usize,
         )
     }

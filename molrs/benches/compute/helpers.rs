@@ -1,8 +1,11 @@
-//! Shared fixtures + sweep constants for `molrs-compute` benches.
+//! Shared fixtures + regression sizing for the `molrs` compute benches.
 //!
-//! Every per-kernel bench file (`rdf.rs`, `cluster.rs`, …) imports the same
-//! sweep axes from here so the matrix stays consistent and the individual
-//! files stay short.
+//! These are **regression** benchmarks, not peak-performance sweeps: every
+//! kernel bench runs ONE small representative input ([`REG_N`] atoms over
+//! [`REG_FRAMES`] frames) with a reduced criterion sample budget
+//! ([`configure`]). The goal is "does it still run + catch a perf regression",
+//! not throughput scaling. Every per-kernel bench file imports its fixtures
+//! from here so the inputs stay consistent and the files stay short.
 
 use std::time::Duration;
 
@@ -17,46 +20,40 @@ use ndarray::{Array2, ArrayD, IxDyn, array};
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
 
-use molrs::compute::center_of_mass::{COMResult, CenterOfMass};
 use molrs::compute::cluster::{Cluster, ClusterResult};
-use molrs::compute::cluster_centers::{ClusterCenters, ClusterCentersResult};
+use molrs::compute::shape::center_of_mass::{COMResult, CenterOfMass};
+use molrs::compute::shape::cluster_centers::{ClusterCenters, ClusterCentersResult};
 use molrs::compute::traits::Compute;
 
-// --- sweep constants ------------------------------------------------------
+// --- regression sizing ----------------------------------------------------
 
 /// Neighbor cutoff shared by every fixture so nlists are reusable.
 pub const CUTOFF: F = 4.0;
 /// Liquid-like number density (atoms / Å³). Keeps the per-particle neighbor
-/// count roughly constant across `N`.
+/// count roughly constant.
 pub const DENSITY: F = 0.03;
-/// Bin count for the RDF sweeps.
+/// Bin count for radial kernels (RDF, van Hove, correlation function).
 pub const RDF_BINS: usize = 100;
 
-/// Atom counts for the size-sweep axis (single-threaded scaling).
-pub const SIZES: &[usize] = &[100, 500, 2_000, 10_000, 50_000];
-/// Frames per size-sweep point. Small enough that setup doesn't dominate,
-/// large enough that rayon stays engaged.
-pub const SIZE_SWEEP_FRAMES: usize = 4;
-
-/// Atom count for the frame-sweep axis (parallel scaling).
-pub const FRAME_SWEEP_N: usize = 5_000;
-/// Frame counts for the frame-sweep axis.
-pub const FRAME_COUNTS: &[usize] = &[1, 2, 4, 8, 16, 32, 64];
-/// Max frames in the frame-sweep pool (= last entry of FRAME_COUNTS).
-pub const MAX_FRAMES: usize = 64;
+/// Single representative particle count for every regression bench (~1k atoms).
+pub const REG_N: usize = 1_000;
+/// Frames per trajectory fixture. A handful — enough for time-series kernels
+/// (MSD, van Hove lags) without turning a regression check into a sweep.
+pub const REG_FRAMES: usize = 3;
 
 // --- box / fixture helpers ------------------------------------------------
 
-/// Cubic box length that yields the target `DENSITY` for `n` atoms.
+/// Cubic box length that yields the target [`DENSITY`] for `n` atoms.
 pub fn box_for_density(n: usize) -> F {
     (n as F / DENSITY).cbrt()
 }
 
-/// Apply the standard warm-up / sample-count tuning to a criterion group.
+/// Regression sampling: small sample count + short measurement window so each
+/// bench completes in well under a second while still catching a regression.
 pub fn configure<M: Measurement>(group: &mut BenchmarkGroup<'_, M>) {
-    group.warm_up_time(Duration::from_secs(1));
-    group.measurement_time(Duration::from_secs(2));
-    group.sample_size(15);
+    group.warm_up_time(Duration::from_millis(200));
+    group.measurement_time(Duration::from_millis(500));
+    group.sample_size(10);
 }
 
 pub fn random_positions(n: usize, box_size: F, seed: u64) -> Array2<F> {
@@ -71,7 +68,7 @@ pub fn random_positions(n: usize, box_size: F, seed: u64) -> Array2<F> {
 }
 
 /// Build a Frame with an `"atoms"` block holding `x`/`y`/`z` columns
-/// plus a PBC simbox. Positions are the columns of `pts` (shape `[n, 3]`).
+/// plus a PBC simbox. Positions are the rows of `pts` (shape `[n, 3]`).
 pub fn frame_from_positions(pts: &Array2<F>, simbox: SimBox) -> Frame {
     let n = pts.nrows();
     let col = |axis: usize| -> ArrayD<F> {
@@ -121,6 +118,12 @@ pub fn build_pool(n: usize, n_frames: usize, base_seed: u64) -> (Vec<Frame>, Vec
     (frames, nlists)
 }
 
+/// The standard single-input regression pool: [`REG_N`] atoms over
+/// [`REG_FRAMES`] frames.
+pub fn reg_pool() -> (Vec<Frame>, Vec<NeighborList>) {
+    build_pool(REG_N, REG_FRAMES, 42)
+}
+
 /// Precomputed upstream results reused by dependent kernel benches.
 pub struct Deps {
     pub cluster: Vec<ClusterResult>,
@@ -138,43 +141,5 @@ pub fn build_deps(frames: &[&Frame], nlists: &Vec<NeighborList>) -> Deps {
         cluster,
         com,
         centers,
-    }
-}
-
-// --- legacy narrow-bench fixtures (kept for graph benches) ---------------
-
-#[allow(dead_code)]
-pub const BOX_SIZE: F = 30.0;
-
-#[allow(dead_code)]
-pub fn pbc_simbox(size: F) -> SimBox {
-    SimBox::cube(
-        size,
-        array![0.0 as F, 0.0 as F, 0.0 as F],
-        [true, true, true],
-    )
-    .expect("invalid box length")
-}
-
-/// One-shot single-frame fixture used by the Graph overhead bench.
-#[allow(dead_code)]
-pub struct Fixture {
-    pub positions: Array2<F>,
-    pub simbox: SimBox,
-    pub frame: Frame,
-    pub nlist: NeighborList,
-}
-
-#[allow(dead_code)]
-pub fn fixture(n: usize, seed: u64) -> Fixture {
-    let positions = random_positions(n, BOX_SIZE, seed);
-    let simbox = pbc_simbox(BOX_SIZE);
-    let nlist = build_nlist(&positions, &simbox, CUTOFF);
-    let frame = frame_from_positions(&positions, simbox.clone());
-    Fixture {
-        positions,
-        simbox,
-        frame,
-        nlist,
     }
 }

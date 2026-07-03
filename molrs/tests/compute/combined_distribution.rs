@@ -1,7 +1,7 @@
 //! End-to-end tests for Combined Distribution Functions (CDF).
 //!
 //! Covers acceptance criteria ac-001..ac-005 of
-//! `travis-parity-02-combined-distribution-functions`: marginal consistency
+//! `analysis-parity-02-combined-distribution-functions`: marginal consistency
 //! with the link-01 1-D distributions, correlation-vs-independence resolution,
 //! joint normalization (2-D and 3-D), sample-count validation, and the
 //! free-energy floor.
@@ -144,7 +144,7 @@ fn correlated_data_lies_on_diagonal_band() {
 
     // frac↦(r,θ) are both linear with identical fractional bin position, so
     // each sample's cloud-in-cell deposit lands in the 2×2 block {ip,ip+1}²:
-    // occupied cells lie on the diagonal BAND |ix−iy| ≤ 1 (TRAVIS bilinear CIC
+    // occupied cells lie on the diagonal BAND |ix−iy| ≤ 1 (reference implementation bilinear CIC
     // widens a sharp diagonal by one bin). Cells further off-diagonal are
     // exactly empty — the correlation is still resolved as a tight band.
     for ix in 0..NX {

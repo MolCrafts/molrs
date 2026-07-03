@@ -277,8 +277,7 @@ pub enum NoMatch {
 /// One bonded term awaiting parameters: its arity-tagged endpoint types.
 ///
 /// Handed to an [`Estimator`] when no force-field candidate matches. Kept small
-/// and owned so the estimator (a separate, not-yet-built subsystem) needs no
-/// access to `Atomistic` internals.
+/// and owned so an estimator needs no access to `Atomistic` internals.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BondedTerm {
     /// A bond: the two endpoint `opls_NNN` types.
@@ -289,20 +288,19 @@ pub enum BondedTerm {
     Dihedral([String; 4]),
 }
 
-/// No-match seam for the [`ff-parameter-estimator`].
+/// No-match seam for filling uncovered bonded terms.
 ///
-/// `assign_bonded` calls [`estimate`](Estimator::estimate) for any bonded term
-/// the force-field tables do not cover. An implementation returns:
+/// [`assign_bonded_with`] calls [`estimate`](Estimator::estimate) for any bonded
+/// term the force-field tables do not cover. An implementation returns:
 /// - `Ok(Some(params))` — estimated params to write onto the term;
 /// - `Ok(None)` — declined; fall back to the strict policy;
 /// - `Err(_)` — hard failure, propagated.
 ///
-/// The estimator is **not built yet** (chain-shared work); the default path
-/// attaches none and the strict flag decides. When the estimator lands it
-/// implements this trait and is passed via
-/// [`assign_bonded_with`](assign_bonded_with).
-///
-/// [`ff-parameter-estimator`]: https://github.com/MolCrafts/molrs
+/// This is a force-field-agnostic extension point: molrs ships no estimator
+/// (parameter estimation for uncovered terms is delegated to external tooling
+/// such as AmberTools). A consumer that wants automatic fill-in implements this
+/// trait and passes it to [`assign_bonded_with`]. The default [`assign_bonded`]
+/// path attaches none and the [`NoMatch`] policy decides.
 pub trait Estimator {
     /// Estimate parameters for an uncovered bonded `term`, or decline (`None`).
     fn estimate(&self, term: &BondedTerm) -> Result<Option<Params>, String>;
@@ -456,11 +454,11 @@ fn write_match(out: &mut Atomistic, kind: BondedKind, m: &Match<'_>) -> Result<(
     write_params(out, kind, m.params)
 }
 
-/// Copy every param onto the bonded term (no `type` label; used by the estimator
-/// path, which synthesizes params with no force-field type name). Both the
-/// numeric params (`k0`/`r0`/…) and any string params are written — the latter
-/// carries the estimator's provenance convention (`estimate_method` /
-/// `estimate_analog`); see [`ParameterEstimator`](crate::ff::typifier::ParameterEstimator).
+/// Copy every param onto the bonded term (no `type` label; used by the
+/// [`Estimator`] path, which synthesizes params with no force-field type name).
+/// Both the numeric params (`k0`/`r0`/…) and any string params are written — the
+/// latter carries an estimator's provenance convention (e.g. `estimate_method` /
+/// `estimate_analog`) when one is supplied.
 fn write_params(out: &mut Atomistic, kind: BondedKind, params: &Params) -> Result<(), String> {
     for (key, val) in params.iter() {
         set_term_prop(out, &kind, key, val)?;

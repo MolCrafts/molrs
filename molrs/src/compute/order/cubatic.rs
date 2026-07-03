@@ -28,6 +28,7 @@
 //! The output is `(order, director_basis)` where `director_basis` is the
 //! 3 × 3 rotation matrix sending the lab frame to the optimal cubic frame.
 
+use crate::compute::result::ComputeResult;
 use rand::RngExt;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
@@ -36,19 +37,7 @@ use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 
 use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
 use crate::compute::traits::Compute;
-
-/// Per-frame cubatic order parameter result.
-#[derive(Debug, Clone, Default)]
-pub struct CubaticResult {
-    pub order: F,
-    /// Rotation matrix from the lab frame into the optimal cubic frame
-    /// (columns are the cubic axes).
-    pub director_basis: [[F; 3]; 3],
-}
-
-impl ComputeResult for CubaticResult {}
 
 /// Cubatic calculator. Stateless: SA seed, schedule, and chain count live
 /// on the struct.
@@ -71,6 +60,7 @@ impl Default for Cubatic {
 }
 
 impl Cubatic {
+    /// Defaults: seed 0, initial temp 1.0, cooling rate 0.95, 500 steps, 4 chains.
     pub fn new() -> Self {
         Self {
             seed: 0,
@@ -81,22 +71,27 @@ impl Cubatic {
         }
     }
 
+    /// RNG seed for the annealing chains.
     pub fn with_seed(mut self, seed: u64) -> Self {
         self.seed = seed;
         self
     }
+    /// Initial annealing temperature (dimensionless).
     pub fn with_initial_temp(mut self, t: F) -> Self {
         self.initial_temp = t;
         self
     }
+    /// Multiplicative cooling rate per annealing step (0 < r < 1).
     pub fn with_cooling_rate(mut self, r: F) -> Self {
         self.cooling_rate = r;
         self
     }
+    /// Annealing steps per chain.
     pub fn with_n_steps(mut self, n: usize) -> Self {
         self.n_steps = n;
         self
     }
+    /// Independent annealing chains (min 1); the best result wins.
     pub fn with_n_chains(mut self, n: usize) -> Self {
         self.n_chains = n.max(1);
         self
@@ -258,6 +253,17 @@ impl Compute for Cubatic {
         Ok(out)
     }
 }
+
+/// Per-frame cubatic order parameter result.
+#[derive(Debug, Clone, Default)]
+pub struct CubaticResult {
+    pub order: F,
+    /// Rotation matrix from the lab frame into the optimal cubic frame
+    /// (columns are the cubic axes).
+    pub director_basis: [[F; 3]; 3],
+}
+
+impl ComputeResult for CubaticResult {}
 
 #[cfg(test)]
 mod tests {

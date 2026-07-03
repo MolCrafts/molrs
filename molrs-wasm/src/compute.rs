@@ -41,15 +41,14 @@ use wasm_bindgen::prelude::*;
 
 use molrs::system::topology::{Topology as RsTopology, TopologyRingInfo as RsTopologyRingInfo};
 
-use molrs::compute::center_of_mass::{COMResult as RsCOMResult, CenterOfMass as RsCenterOfMass};
 use molrs::compute::cluster::{Cluster as RsCluster, ClusterResult as RsClusterResult};
-use molrs::compute::cluster_centers::ClusterCenters as RsClusterCenters;
-use molrs::compute::gyration_tensor::GyrationTensor as RsGyrationTensor;
-use molrs::compute::inertia_tensor::InertiaTensor as RsInertiaTensor;
-use molrs::compute::kmeans::KMeans as RsKMeans;
+use molrs::compute::ml::{KMeans as RsKMeans, Pca2 as RsPca2, PcaResult as RsPcaResult};
 use molrs::compute::msd::{MSD as RsMSD, MSDResult as RsMSDResult};
-use molrs::compute::pca::{Pca2 as RsPca2, PcaResult as RsPcaResult};
-use molrs::compute::radius_of_gyration::RadiusOfGyration as RsRadiusOfGyration;
+use molrs::compute::shape::{
+    COMResult as RsCOMResult, CenterOfMass as RsCenterOfMass,
+    ClusterCenters as RsClusterCenters, GyrationTensor as RsGyrationTensor,
+    InertiaTensor as RsInertiaTensor, RadiusOfGyration as RsRadiusOfGyration,
+};
 use molrs::compute::rdf::{RDF as RsRDF, RDFResult as RsRDFResult};
 use molrs::compute::result::{ComputeResult, DescriptorRow};
 use molrs::compute::traits::Compute;
@@ -1539,7 +1538,7 @@ impl TopologyRingInfo {
 // PCA — 2-component Principal Component Analysis
 // ===========================================================================
 
-/// Stateless wrapper for [`molrs::compute::pca::Pca2`].
+/// Stateless wrapper for [`molrs::compute::ml::pca::Pca2`].
 ///
 /// All configuration lives on [`fitTransform`](Self::fit_transform).
 ///
@@ -1650,7 +1649,7 @@ impl WasmPcaResult {
 // k-means — with k-means++ init
 // ===========================================================================
 
-/// Wrapper for [`molrs::compute::kmeans::KMeans`].
+/// Wrapper for [`molrs::compute::ml::kmeans::KMeans`].
 ///
 /// # Example (JavaScript)
 ///
@@ -1710,7 +1709,7 @@ impl WasmKMeans {
                 n_dims
             )));
         }
-        let pca = molrs::compute::pca::PcaResult {
+        let pca = molrs::compute::PcaResult {
             coords: coords.to_vec(),
             variance: [0.0 as F, 0.0 as F],
         };

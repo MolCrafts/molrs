@@ -26,8 +26,6 @@ from .molrs import (
     Block,
     Frame,
     Trajectory,
-    MolRec,
-    Observables,
     ScalarObservable,
     VectorObservable,
     # I/O
@@ -121,7 +119,7 @@ from .molrs import (
     RamanSpectrum,
     EinsteinHelfandSpectrum,
     GreenKuboSpectrum,
-    # TRAVIS-parity computes (geometric distributions, Van Hove, reorientation,
+    # analysis-parity computes (geometric distributions, Van Hove, reorientation,
     # hydrogen bonds, spatial distribution, radical Voronoi, chiral spectra).
     AngleDistribution,
     DihedralDistribution,
@@ -222,8 +220,6 @@ __all__ = [
     "Block",
     "Frame",
     "Trajectory",
-    "MolRec",
-    "Observables",
     "ScalarObservable",
     "VectorObservable",
     "read_pdb",
@@ -322,7 +318,7 @@ __all__ = [
     "RamanSpectrum",
     "EinsteinHelfandSpectrum",
     "GreenKuboSpectrum",
-    # TRAVIS-parity computes.
+    # analysis-parity computes.
     "AngleDistribution",
     "DihedralDistribution",
     "DistanceDistribution",

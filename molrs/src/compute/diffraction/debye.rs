@@ -26,27 +26,14 @@
 //!   PBC should usually be turned off for a meaningful Debye calculation
 //!   (the formula assumes an open system).
 
+use crate::compute::result::ComputeResult;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 use ndarray::Array1;
 
 use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
 use crate::compute::traits::Compute;
 use crate::compute::util::get_positions_ref;
-
-/// Per-frame Debye structure-factor result.
-#[derive(Debug, Clone, Default)]
-pub struct StaticStructureFactorDebyeResult {
-    /// k values (Å⁻¹), copied from input.
-    pub k_values: Array1<F>,
-    /// `S(k)` at each k.
-    pub sk: Array1<F>,
-    /// Particle count used in the normalisation.
-    pub n_particles: usize,
-}
-
-impl ComputeResult for StaticStructureFactorDebyeResult {}
 
 /// Debye structure-factor calculator.
 #[derive(Debug, Clone)]
@@ -224,6 +211,19 @@ impl Compute for StaticStructureFactorDebye {
         Ok(out)
     }
 }
+
+/// Per-frame Debye structure-factor result.
+#[derive(Debug, Clone, Default)]
+pub struct StaticStructureFactorDebyeResult {
+    /// k values (Å⁻¹), copied from input.
+    pub k_values: Array1<F>,
+    /// `S(k)` at each k.
+    pub sk: Array1<F>,
+    /// Particle count used in the normalisation.
+    pub n_particles: usize,
+}
+
+impl ComputeResult for StaticStructureFactorDebyeResult {}
 
 #[cfg(test)]
 mod tests {

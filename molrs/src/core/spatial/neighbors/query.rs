@@ -138,6 +138,89 @@ impl NeighborQuery {
     pub fn cutoff(&self) -> F {
         self.cutoff
     }
+
+    /// SoA sibling of [`new`](Self::new): build a spatial index from
+    /// column-major `x`/`y`/`z` reference-point slices.
+    ///
+    /// Byte-for-byte equivalent to `new` on the same coordinates — the index is
+    /// built via [`LinkCell::build_index_soa`] and an owned interleaved copy of
+    /// the points is retained for [`query_self`](Self::query_self), exactly as
+    /// `new` does. Lets callers holding SoA columns skip the interleave.
+    ///
+    /// # Panics
+    /// Panics if `cutoff <= 0` or the three slices differ in length.
+    pub fn from_columns(simbox: &SimBox, xs: &[F], ys: &[F], zs: &[F], cutoff: F) -> Self {
+        assert!(cutoff > 0.0, "cutoff must be positive");
+        assert!(
+            xs.len() == ys.len() && ys.len() == zs.len(),
+            "x/y/z slices must have equal length"
+        );
+
+        let mut lc = LinkCell::new().cutoff(cutoff);
+        lc.build_index_soa(xs, ys, zs, simbox);
+
+        // Owned interleaved copy for self-query, mirroring `new`.
+        let n = xs.len();
+        let mut points = FNx3::zeros((n, 3));
+        for i in 0..n {
+            points[[i, 0]] = xs[i];
+            points[[i, 1]] = ys[i];
+            points[[i, 2]] = zs[i];
+        }
+
+        Self {
+            lc,
+            points,
+            simbox: simbox.clone(),
+            cutoff,
+        }
+    }
+
+    /// SoA sibling of [`free`](Self::free): build from free-boundary points
+    /// held as column-major `x`/`y`/`z` slices.
+    ///
+    /// Uses [`SimBox::free_columns`] to derive the same bounding box `free`
+    /// would produce from the interleaved points, so the result is
+    /// byte-identical.
+    pub fn free_columns(xs: &[F], ys: &[F], zs: &[F], cutoff: F) -> Self {
+        let bx = SimBox::free_columns(xs, ys, zs, cutoff)
+            .expect("degenerate point cloud for free-boundary box");
+        Self::from_columns(&bx, xs, ys, zs, cutoff)
+    }
+
+    /// SoA sibling of [`query`](Self::query): cross-query reading each query
+    /// point from column-major `qx`/`qy`/`qz` slices.
+    ///
+    /// Same pair order and cutoff test as `query`, so the returned
+    /// [`NeighborList`] is byte-identical to `query` on the same coordinates.
+    ///
+    /// # Panics
+    /// Panics if the three query slices differ in length.
+    pub fn query_columns(&self, qx: &[F], qy: &[F], qz: &[F]) -> NeighborList {
+        assert!(
+            qx.len() == qy.len() && qy.len() == qz.len(),
+            "query x/y/z slices must have equal length"
+        );
+
+        let n_query = qx.len();
+        let n_ref = self.points.nrows();
+        let cutoff_sq = self.cutoff * self.cutoff;
+
+        let mut nlist = NeighborList::with_mode(QueryMode::CrossQuery, n_ref, n_query);
+
+        // For each query point, check all 27 neighboring cells
+        for qi in 0..n_query {
+            let qp = [qx[qi], qy[qi], qz[qi]];
+            self.lc
+                .visit_neighbors_of_pt(qp, &self.simbox, |rj, dist_sq, diff| {
+                    if dist_sq <= cutoff_sq {
+                        nlist.push(qi as u32, rj, dist_sq, diff);
+                    }
+                });
+        }
+
+        nlist
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -272,5 +355,76 @@ mod tests {
         let nq = NeighborQuery::free(pts.view(), 1.0);
         let nlist = nq.query_self();
         assert_eq!(nlist.n_pairs(), 0);
+    }
+
+    // --- SoA cross-query is bit-identical to the Array2 cross-query ---
+
+    /// Split an `Array2` (N×3) into three column vectors (SoA layout).
+    fn columns(pts: &ndarray::Array2<F>) -> (Vec<F>, Vec<F>, Vec<F>) {
+        let n = pts.nrows();
+        let mut xs = Vec::with_capacity(n);
+        let mut ys = Vec::with_capacity(n);
+        let mut zs = Vec::with_capacity(n);
+        for i in 0..n {
+            xs.push(pts[[i, 0]]);
+            ys.push(pts[[i, 1]]);
+            zs.push(pts[[i, 2]]);
+        }
+        (xs, ys, zs)
+    }
+
+    /// Bitwise (not approximate) equality of two neighbor lists.
+    fn assert_bitwise_equal(a: &NeighborList, b: &NeighborList) {
+        assert_eq!(a.n_pairs(), b.n_pairs(), "n_pairs differ");
+        let da = a.vectors();
+        let db = b.vectors();
+        for k in 0..a.n_pairs() {
+            assert_eq!(
+                a.query_point_indices()[k],
+                b.query_point_indices()[k],
+                "idx_i"
+            );
+            assert_eq!(a.point_indices()[k], b.point_indices()[k], "idx_j");
+            assert_eq!(a.dist_sq()[k], b.dist_sq()[k], "dist_sq bitwise");
+            for d in 0..3 {
+                assert_eq!(da[[k, d]], db[[k, d]], "diff[{}] bitwise", d);
+            }
+        }
+    }
+
+    #[test]
+    fn columns_query_matches_query_bitwise() {
+        // Periodic cube fixture.
+        let bx = SimBox::cube(10.0, array![0.0, 0.0, 0.0], [true, true, true]).unwrap();
+        let refp = array![
+            [1.0, 1.0, 1.0],
+            [1.5, 1.0, 1.0],
+            [9.5, 1.0, 1.0],
+            [5.0, 5.0, 5.0],
+            [5.3, 5.0, 5.0],
+            [2.2, 8.1, 3.3],
+        ];
+        let qp = array![[1.2, 1.0, 1.0], [5.1, 5.0, 5.0], [9.9, 1.1, 1.0],];
+        let (rx, ry, rz) = columns(&refp);
+        let (qx, qy, qz) = columns(&qp);
+
+        let nq_a = NeighborQuery::new(&bx, refp.view(), 2.0);
+        let nl_a = nq_a.query(qp.view());
+
+        let nq_s = NeighborQuery::from_columns(&bx, &rx, &ry, &rz, 2.0);
+        let nl_s = nq_s.query_columns(&qx, &qy, &qz);
+
+        assert!(nl_a.n_pairs() > 0, "fixture should produce pairs");
+        assert_bitwise_equal(&nl_a, &nl_s);
+
+        // Free / non-periodic fixture (query points overlap the reference set).
+        let nq_af = NeighborQuery::free(refp.view(), 2.0);
+        let nl_af = nq_af.query(qp.view());
+
+        let nq_sf = NeighborQuery::free_columns(&rx, &ry, &rz, 2.0);
+        let nl_sf = nq_sf.query_columns(&qx, &qy, &qz);
+
+        assert!(nl_af.n_pairs() > 0, "fixture should produce pairs");
+        assert_bitwise_equal(&nl_af, &nl_sf);
     }
 }

@@ -8,10 +8,12 @@
 use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group};
 use molrs::system::atomistic::{AtomId, Atomistic};
 
+use crate::helpers;
+
 // Linear-chain lengths in atoms. A chain has degree-2 interior nodes, so angle
 // (N-2) and dihedral (N-3) perception is O(N) — super-linear scaling here flags
 // a regression in the path-enumeration walk.
-const SIZES: &[usize] = &[1_000, 10_000, 100_000];
+const SIZES: &[usize] = &[helpers::REG_N];
 
 /// Linear carbon chain of `n` atoms (`n-1` bonds), returning the molecule and
 /// its atom ids in chain order (ids[0] is an endpoint).
@@ -28,6 +30,7 @@ fn make_chain(n: usize) -> (Atomistic, Vec<AtomId>) {
 
 fn bench_generate_topology(c: &mut Criterion) {
     let mut group = c.benchmark_group("graph/generate_topology");
+    helpers::configure(&mut group);
     for &n in SIZES {
         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, &n| {
             // Rebuild a fresh chain each iteration so perception always runs on
@@ -44,6 +47,7 @@ fn bench_generate_topology(c: &mut Criterion) {
 
 fn bench_topo_distances(c: &mut Criterion) {
     let mut group = c.benchmark_group("graph/topo_distances");
+    helpers::configure(&mut group);
     for &n in SIZES {
         let (mol, ids) = make_chain(n);
         let source = ids[0];

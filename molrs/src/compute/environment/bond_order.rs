@@ -15,33 +15,18 @@
 //! orientations or per-pair query orientations and can be added in
 //! follow-up phases.
 
+use crate::compute::result::ComputeResult;
 use molrs::spatial::neighbors::NeighborList;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 use ndarray::Array2;
 
 use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
 use crate::compute::traits::Compute;
 use crate::compute::util::get_positions_ref;
 
 const PI: F = std::f64::consts::PI;
 const TWO_PI: F = 2.0 * PI;
-
-/// Per-frame bond-order histogram result.
-#[derive(Debug, Clone, Default)]
-pub struct BondOrderResult {
-    /// `(n_θ, n_φ)` bond-count histogram normalised by solid angle.
-    pub bond_order: Array2<F>,
-    /// Raw bond counts per bin (before solid-angle normalisation).
-    pub raw_counts: Array2<u64>,
-    /// θ bin edges (length `n_θ + 1`), in radians.
-    pub theta_edges: Vec<F>,
-    /// φ bin edges (length `n_φ + 1`), in radians.
-    pub phi_edges: Vec<F>,
-}
-
-impl ComputeResult for BondOrderResult {}
 
 /// Bond-order diagram calculator.
 #[derive(Debug, Clone, Copy)]
@@ -51,6 +36,7 @@ pub struct BondOrder {
 }
 
 impl BondOrder {
+    /// `n_theta × n_phi` angular bins over the unit sphere.
     pub fn new(n_theta: usize, n_phi: usize) -> Result<Self, ComputeError> {
         if n_theta == 0 || n_phi == 0 {
             return Err(ComputeError::OutOfRange {
@@ -178,11 +164,26 @@ impl Compute for BondOrder {
     }
 }
 
+/// Per-frame bond-order histogram result.
+#[derive(Debug, Clone, Default)]
+pub struct BondOrderResult {
+    /// `(n_θ, n_φ)` bond-count histogram normalised by solid angle.
+    pub bond_order: Array2<F>,
+    /// Raw bond counts per bin (before solid-angle normalisation).
+    pub raw_counts: Array2<u64>,
+    /// θ bin edges (length `n_θ + 1`), in radians.
+    pub theta_edges: Vec<F>,
+    /// φ bin edges (length `n_φ + 1`), in radians.
+    pub phi_edges: Vec<F>,
+}
+
+impl ComputeResult for BondOrderResult {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compute::test_support::nlist_from_frame;
     use molrs::Frame;
-    use molrs::spatial::neighbors::{LinkCell, NbListAlgo};
     use molrs::spatial::region::simbox::SimBox;
     use molrs::store::block::Block;
     use ndarray::{Array1 as A1, array};
@@ -203,44 +204,7 @@ mod tests {
     }
 
     fn build_nlist(frame: &Frame, cutoff: F) -> NeighborList {
-        let xp = frame
-            .get("atoms")
-            .unwrap()
-            .get("x")
-            .and_then(<F as molrs::store::block::BlockDtype>::from_column)
-            .unwrap()
-            .as_slice()
-            .unwrap()
-            .to_vec();
-        let yp = frame
-            .get("atoms")
-            .unwrap()
-            .get("y")
-            .and_then(<F as molrs::store::block::BlockDtype>::from_column)
-            .unwrap()
-            .as_slice()
-            .unwrap()
-            .to_vec();
-        let zp = frame
-            .get("atoms")
-            .unwrap()
-            .get("z")
-            .and_then(<F as molrs::store::block::BlockDtype>::from_column)
-            .unwrap()
-            .as_slice()
-            .unwrap()
-            .to_vec();
-        let n = xp.len();
-        let mut pos = ndarray::Array2::<F>::zeros((n, 3));
-        for i in 0..n {
-            pos[[i, 0]] = xp[i];
-            pos[[i, 1]] = yp[i];
-            pos[[i, 2]] = zp[i];
-        }
-        let simbox = frame.simbox.as_ref().unwrap();
-        let mut lc = LinkCell::new().cutoff(cutoff);
-        lc.build(pos.view(), simbox);
-        lc.query().clone()
+        nlist_from_frame(frame, cutoff)
     }
 
     #[test]

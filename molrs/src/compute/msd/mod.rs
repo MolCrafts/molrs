@@ -13,8 +13,10 @@
 //! Both modes produce the same `MSDTimeSeries` output shape; callers select
 //! via [`MSD::with_mode`] (default is `Direct` for backward compatibility).
 
+mod accumulator;
 mod result;
 
+pub use accumulator::MSDAccumulator;
 pub use result::{MSDResult, MSDTimeSeries};
 
 use molrs::store::frame_access::FrameAccess;

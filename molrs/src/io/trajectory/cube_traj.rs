@@ -2,7 +2,7 @@
 //!
 //! AIMD spectroscopy workflows emit one volumetric electron-density cube per
 //! step. molrs reads a single cube in [`crate::io::data::cube`]; this adds the
-//! trajectory case as TRAVIS consumes it (`src/bqb_cubeframe.cpp` reads a
+//! trajectory case as the reference implementation consumes it (`src/bqb_cubeframe.cpp` reads a
 //! sequence of cube frames from a concatenated stream). Two ingest shapes:
 //!
 //! - [`read_cube_trajectory`] — one file holding N cubes back-to-back (no blank

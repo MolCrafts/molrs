@@ -1,7 +1,7 @@
 //! Error conversion and re-exports for the shared FFI store.
 //!
-//! All [`PyFrame`](crate::frame::PyFrame) and
-//! [`PyBlock`](crate::block::PyBlock) instances hold the canonical
+//! All [`PyFrame`](crate::core::store::frame::PyFrame) and
+//! [`PyBlock`](crate::core::store::block::PyBlock) instances hold the canonical
 //! [`molrs_ffi::SharedStore`] (an `Rc<RefCell<Store>>`) via
 //! [`FrameRef`](molrs_ffi::FrameRef) / [`BlockRef`](molrs_ffi::BlockRef).
 //! This module only re-exports the alias and maps FFI errors onto

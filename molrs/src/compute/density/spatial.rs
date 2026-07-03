@@ -10,13 +10,13 @@
 //! them into a grid centred on that COM. The result is the familiar "density
 //! cloud" of *where, relative to this molecule*, a second species sits.
 //!
-//! # TRAVIS provenance
+//! # reference implementation provenance
 //!
-//! - The reference-frame fix on a 3-atom reference set mirrors TRAVIS's global
+//! - The reference-frame fix on a 3-atom reference set mirrors the reference implementation's global
 //!   `g_iFixMol` / `g_iFixAtom[0..2]` alignment (the SDF "fix" in `engine.cpp`),
 //!   here realized as a least-squares quaternion superposition so the whole
 //!   reference set — not just three atoms — is used and no BLAS is needed.
-//! - 3-D voxel accumulation follows TRAVIS's `C3DF::AddToBin` (`src/3df.cpp`):
+//! - 3-D voxel accumulation follows the reference implementation's `C3DF::AddToBin` (`src/3df.cpp`):
 //!   nearest-voxel deposition, out-of-grid samples skipped.
 //! - The per-voxel mean-orientation field is `Σ value / count` exactly as
 //!   `CSDFMap::Finish` averages its value bins (`src/sdfmap.cpp:418-424`).
@@ -33,7 +33,7 @@ use super::kabsch::{kabsch, rotate};
 use crate::compute::error::ComputeError;
 use crate::compute::result::ComputeResult;
 use crate::compute::traits::Compute;
-use crate::compute::util::{get_positions_ref, mic_disp};
+use crate::compute::util::{MicHelper, get_positions_ref};
 
 /// A regular axis-aligned voxel grid centred on the reference COM.
 ///
@@ -169,6 +169,64 @@ impl SpatialDistribution {
         }
         a
     }
+
+    /// Bin one frame's targets into `counts` (and, when supplied, the orientation
+    /// accumulators). Factored out of [`Compute::compute`] so the same body serves
+    /// both the serial loop and the frame-parallel fast path.
+    ///
+    /// The minimum-image convention is resolved **once per frame** here (box kind
+    /// and PBC mask), so the per-target displacement is pure scalar arithmetic — a
+    /// bit-identical replacement for the previous per-target `mic_disp` dispatch.
+    fn accumulate_frame<FA: FrameAccess>(
+        &self,
+        frame: &FA,
+        counts: &mut Array3<F>,
+        mut orient: Option<(&mut Array4<F>, &mut Array3<F>)>,
+    ) -> Result<(), ComputeError> {
+        let simbox = frame.simbox_ref();
+        let mic = MicHelper::from_simbox(simbox);
+        let (xs_p, ys_p, zs_p) = get_positions_ref(frame)?;
+        let xs = xs_p.slice();
+        let ys = ys_p.slice();
+        let zs = zs_p.slice();
+
+        // Align this frame's reference set onto the template.
+        let ref_coords = self.reference_coords(xs, ys, zs);
+        let (r, _rmsd) = kabsch(self.template.view(), ref_coords.view())?;
+
+        // Reference COM (lab frame) = centroid of the reference atoms.
+        let com = centroid(&ref_coords);
+
+        for (t, &ai) in self.target.iter().enumerate() {
+            // Minimum-image vector COM → target, then rotate into body frame.
+            let disp = mic.disp(com, [xs[ai], ys[ai], zs[ai]]);
+            let body = rotate(&r, disp);
+            let Some([ix, iy, iz]) = self.grid.index(body) else {
+                continue;
+            };
+            counts[[ix, iy, iz]] += 1.0;
+
+            if let Some((osum, ocount)) = orient.as_mut()
+                && let Some(pairs) = &self.orientation
+            {
+                let (tail, head) = pairs[t];
+                let v = mic.disp(
+                    [xs[tail], ys[tail], zs[tail]],
+                    [xs[head], ys[head], zs[head]],
+                );
+                let n = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+                if n > 0.0 {
+                    let u = [v[0] / n, v[1] / n, v[2] / n];
+                    let bu = rotate(&r, u);
+                    for d in 0..3 {
+                        osum[[ix, iy, iz, d]] += bu[d];
+                    }
+                    ocount[[ix, iy, iz]] += 1.0;
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Compute for SpatialDistribution {
@@ -204,51 +262,38 @@ impl Compute for SpatialDistribution {
             .as_ref()
             .map(|_| Array3::zeros((nx, ny, nz)));
 
-        for frame in frames {
-            let simbox = frame.simbox_ref();
-            let (xs_p, ys_p, zs_p) = get_positions_ref(*frame)?;
-            let xs = xs_p.slice();
-            let ys = ys_p.slice();
-            let zs = zs_p.slice();
+        // Frame-parallel fast path when no orientation field is requested: per-voxel
+        // counts are integer (+1.0) increments, so summing per-frame partial grids
+        // in frame order is bit-identical to the serial accumulation. With an
+        // orientation field the per-voxel vector sum is floating and order-sensitive,
+        // so that case stays serial to keep results exactly reproducible.
+        #[cfg(feature = "rayon")]
+        const PAR_THRESHOLD: usize = 4;
 
-            // Align this frame's reference set onto the template.
-            let ref_coords = self.reference_coords(xs, ys, zs);
-            let (r, _rmsd) = kabsch(self.template.view(), ref_coords.view())?;
-
-            // Reference COM (lab frame) = centroid of the reference atoms.
-            let com = centroid(&ref_coords);
-
-            for (t, &ai) in self.target.iter().enumerate() {
-                // Minimum-image vector COM → target, then rotate into body frame.
-                let disp = mic_disp(simbox, com, [xs[ai], ys[ai], zs[ai]]);
-                let body = rotate(&r, disp);
-                let Some([ix, iy, iz]) = self.grid.index(body) else {
-                    continue;
-                };
-                counts[[ix, iy, iz]] += 1.0;
-
-                if let (Some(pairs), Some(osum), Some(ocount)) = (
-                    &self.orientation,
-                    orient_sum.as_mut(),
-                    orient_count.as_mut(),
-                ) {
-                    let (tail, head) = pairs[t];
-                    let v = mic_disp(
-                        simbox,
-                        [xs[tail], ys[tail], zs[tail]],
-                        [xs[head], ys[head], zs[head]],
-                    );
-                    let n = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
-                    if n > 0.0 {
-                        let u = [v[0] / n, v[1] / n, v[2] / n];
-                        let bu = rotate(&r, u);
-                        for d in 0..3 {
-                            osum[[ix, iy, iz, d]] += bu[d];
-                        }
-                        ocount[[ix, iy, iz]] += 1.0;
-                    }
-                }
+        #[cfg(feature = "rayon")]
+        if self.orientation.is_none() && frames.len() >= PAR_THRESHOLD {
+            use rayon::prelude::*;
+            let partials: Result<Vec<Array3<F>>, ComputeError> = frames
+                .par_iter()
+                .map(|frame| {
+                    let mut c = Array3::<F>::zeros((nx, ny, nz));
+                    self.accumulate_frame(*frame, &mut c, None)?;
+                    Ok(c)
+                })
+                .collect();
+            for partial in partials? {
+                counts += &partial;
             }
+        } else {
+            for frame in frames {
+                let orient = orient_sum.as_mut().zip(orient_count.as_mut());
+                self.accumulate_frame(*frame, &mut counts, orient)?;
+            }
+        }
+        #[cfg(not(feature = "rayon"))]
+        for frame in frames {
+            let orient = orient_sum.as_mut().zip(orient_count.as_mut());
+            self.accumulate_frame(*frame, &mut counts, orient)?;
         }
 
         let mut result = SpatialDistributionResult {

@@ -3,7 +3,7 @@
 //! Consumes an `(x, y)` curve (e.g. `(lag_times, msd)`) and returns the OLS
 //! slope, intercept, coefficient of determination, and the inclusive index
 //! bounds of the window actually fitted. The slope arithmetic is the same OLS
-//! lifted into [`ols_slope_intercept_r2`](super::ols_slope_intercept_r2) from
+//! lifted into `ols_slope_intercept_r2` from
 //! the Einstein–Helfand ionic-conductivity OLS, so a `LinearFit` over the same
 //! curve and fractions reproduces that function's slope bit-for-bit.
 

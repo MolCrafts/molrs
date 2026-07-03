@@ -13,7 +13,7 @@ pub const MMFF94S_XML: &str =
 /// Canonical OPLS-AA parameter XML (embedded at compile time).
 ///
 /// This is the durable, committed-in-molrs copy that backs
-/// [`OplsTypifier::oplsaa`](crate::ff::typifier::opls::OplsTypifier::oplsaa) — the
+/// `OplsTypifier::oplsaa` — the
 /// OPLS typifier ships standalone and does not depend on any external file.
 ///
 /// Aromatic ring carbons / hydrogens use lowercase SMARTS `c` (RDKit-faithful

@@ -21,34 +21,17 @@
 //! Unlike [`super::debye`], this analyzer respects the supplied SimBox: the
 //! reciprocal-lattice spacing comes from `2π / L_d` along each axis.
 
+use crate::compute::result::ComputeResult;
 use molrs::spatial::region::simbox::BoxKind;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 use ndarray::Array1;
 
 use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
 use crate::compute::traits::Compute;
 use crate::compute::util::get_positions_ref;
 
 const TWO_PI: F = 2.0 * std::f64::consts::PI;
-
-/// Per-frame direct-SSF result.
-///
-/// When the analyzer was constructed via [`StaticStructureFactorDirect::new`]
-/// (explicit k-vectors), `sk` holds `S(k_vec)` for each input k-vector and
-/// `k_magnitudes` holds their magnitudes. With
-/// [`isotropic`](StaticStructureFactorDirect::isotropic), `sk` is the
-/// spherically averaged `S(|k|)` and `k_magnitudes` is the bin-centres
-/// array.
-#[derive(Debug, Clone, Default)]
-pub struct StaticStructureFactorDirectResult {
-    pub k_magnitudes: Array1<F>,
-    pub sk: Array1<F>,
-    pub n_particles: usize,
-}
-
-impl ComputeResult for StaticStructureFactorDirectResult {}
 
 #[derive(Debug, Clone)]
 enum KMode {
@@ -81,7 +64,7 @@ impl StaticStructureFactorDirect {
 
     /// Build the spherically averaged form. `n_bins` magnitude bins between
     /// 0 and `k_max`. Reciprocal-lattice points are read from the SimBox
-    /// during [`compute`].
+    /// during `compute`.
     pub fn isotropic(k_max: F, n_bins: usize) -> Result<Self, ComputeError> {
         if k_max.is_nan() || k_max <= 0.0 || n_bins == 0 {
             return Err(ComputeError::OutOfRange {
@@ -243,6 +226,23 @@ impl Compute for StaticStructureFactorDirect {
         Ok(out)
     }
 }
+
+/// Per-frame direct-SSF result.
+///
+/// When the analyzer was constructed via [`StaticStructureFactorDirect::new`]
+/// (explicit k-vectors), `sk` holds `S(k_vec)` for each input k-vector and
+/// `k_magnitudes` holds their magnitudes. With
+/// [`isotropic`](StaticStructureFactorDirect::isotropic), `sk` is the
+/// spherically averaged `S(|k|)` and `k_magnitudes` is the bin-centres
+/// array.
+#[derive(Debug, Clone, Default)]
+pub struct StaticStructureFactorDirectResult {
+    pub k_magnitudes: Array1<F>,
+    pub sk: Array1<F>,
+    pub n_particles: usize,
+}
+
+impl ComputeResult for StaticStructureFactorDirectResult {}
 
 #[cfg(test)]
 mod tests {

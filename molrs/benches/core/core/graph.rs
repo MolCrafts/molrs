@@ -8,8 +8,10 @@ use molrs::chem::aromaticity::perceive_aromaticity;
 use molrs::chem::rings::find_rings;
 use molrs::system::atomistic::Atomistic;
 
-// Sizes are *ring counts*; total atoms = 6 x this.
-const SIZES: &[usize] = &[100, 200, 400, 800];
+use crate::helpers;
+
+// Sizes are *ring counts*; total atoms = 6 x this. One small regression size.
+const SIZES: &[usize] = &[200];
 
 /// `n_rings` independent 6-membered carbon rings (6 atoms + 6 bonds each).
 /// Ring atoms are exactly what drives `perceive_aromaticity`'s per-atom
@@ -32,6 +34,7 @@ fn make_rings(n_rings: usize) -> Atomistic {
 
 fn bench_perceive_aromaticity(c: &mut Criterion) {
     let mut group = c.benchmark_group("graph/perceive_aromaticity");
+    helpers::configure(&mut group);
     for &n in SIZES {
         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, &n| {
             b.iter_batched(
@@ -46,6 +49,7 @@ fn bench_perceive_aromaticity(c: &mut Criterion) {
 
 fn bench_find_rings(c: &mut Criterion) {
     let mut group = c.benchmark_group("graph/find_rings");
+    helpers::configure(&mut group);
     for &n in SIZES {
         let mol = make_rings(n);
         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {

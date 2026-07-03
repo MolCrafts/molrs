@@ -1,3 +1,6 @@
+//! Result type for [`Cluster`](super::Cluster): per-particle cluster IDs,
+//! cluster count, sizes, and per-cluster membership keys.
+
 use ndarray::Array1;
 
 use crate::compute::result::ComputeResult;

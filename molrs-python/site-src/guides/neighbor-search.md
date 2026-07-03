@@ -12,7 +12,7 @@ periodic `Box`, distances use minimum-image behavior where requested. Without a
 box, molrs can treat the data as a free-boundary system and construct a
 non-periodic bounding volume around the points.
 
-## Self and Cross Queries
+## Neighbor queries are either self or cross
 
 A self query searches one set of points against itself and reports unique
 pairs. This is the usual path for RDF and cluster analysis. A cross query

@@ -5,14 +5,14 @@
 //! shared [`Histogram1d`] binning and the `SimBox` minimum-image convention so
 //! the distance DF agrees with [`compute::rdf`](crate::compute::rdf).
 //!
-//! Ported from TRAVIS (`src/tddf.cpp`, `src/geodens.cpp`, `src/df.cpp`); see
+//! Ported from the reference implementation (`src/tddf.cpp`, `src/geodens.cpp`, `src/df.cpp`); see
 //! each submodule for the specific function each routine derives from. The
 //! angular distribution additionally exposes a sin θ solid-angle correction —
 //! both the raw and corrected densities are returned, because conflating them
 //! is the most common ADF mistake.
 //!
 //! # References
-//! - Brehm & Kirchner, *J. Chem. Inf. Model.* **2011**, 51, 2007–2023 (TRAVIS).
+//! - Brehm & Kirchner, *J. Chem. Inf. Model.* **2011**, 51, 2007–2023 (reference implementation).
 //! - Brehm, Thomas, Gehrke, Kirchner, *J. Chem. Phys.* **2020**, 152, 164105.
 
 mod angle;
@@ -87,9 +87,77 @@ impl<O: Observable> DistributionFunction<O> {
         })?;
         Self::new(observable, n_bins, min, max)
     }
+
+    /// Histogram the observable's samples over all frames (non-empty selection).
+    ///
+    /// Frames are independent, so above `PAR_THRESHOLD` frames they are folded
+    /// into per-thread partial histograms with `rayon` and merged (each thread
+    /// reuses its own sample buffer); below the threshold, and whenever `rayon`
+    /// is off, a serial fold reuses one buffer across every frame. The `O: Sync`
+    /// bound on the [`Compute`] impl is what unlocks the parallel fold — the
+    /// built-in observables are all `Sync`. Merging sums the per-thread bin
+    /// counts, so the total matches the serial accumulation up to floating-point
+    /// summation order (the same tolerance the cloud-in-cell deposition already
+    /// carries), consistent with
+    /// [`CombinedDistribution`](combined::CombinedDistribution)'s frame fold.
+    fn accumulate<'a, FA: FrameAccess + Sync + 'a>(
+        &self,
+        frames: &[&'a FA],
+        groups: &AtomGroups,
+    ) -> Result<(Histogram1d, usize), ComputeError>
+    where
+        O: Sync,
+    {
+        #[cfg(feature = "rayon")]
+        const PAR_THRESHOLD: usize = 4;
+
+        #[cfg(feature = "rayon")]
+        if frames.len() >= PAR_THRESHOLD {
+            use rayon::prelude::*;
+            return frames
+                .par_iter()
+                .try_fold(
+                    || {
+                        (
+                            Histogram1d::new(self.n_bins, self.min, self.max),
+                            0usize,
+                            Vec::<F>::new(),
+                        )
+                    },
+                    |(mut hist, mut nrs, mut scratch), frame| {
+                        self.observable.sample_into(*frame, groups, &mut scratch)?;
+                        nrs += scratch.len();
+                        for &s in &scratch {
+                            hist.add(s);
+                        }
+                        Ok((hist, nrs, scratch))
+                    },
+                )
+                .map(|r| r.map(|(hist, nrs, _)| (hist, nrs)))
+                .try_reduce(
+                    || (Histogram1d::new(self.n_bins, self.min, self.max), 0usize),
+                    |(mut ha, nra), (hb, nrb)| {
+                        ha.merge(&hb);
+                        Ok((ha, nra + nrb))
+                    },
+                );
+        }
+
+        let mut hist = Histogram1d::new(self.n_bins, self.min, self.max);
+        let mut n_raw_samples: usize = 0;
+        let mut scratch: Vec<F> = Vec::new();
+        for frame in frames {
+            self.observable.sample_into(*frame, groups, &mut scratch)?;
+            n_raw_samples += scratch.len();
+            for &s in &scratch {
+                hist.add(s);
+            }
+        }
+        Ok((hist, n_raw_samples))
+    }
 }
 
-impl<O: Observable> Compute for DistributionFunction<O> {
+impl<O: Observable + Sync> Compute for DistributionFunction<O> {
     type Args<'a> = &'a AtomGroups;
     type Output = DistributionResult;
 
@@ -108,19 +176,12 @@ impl<O: Observable> Compute for DistributionFunction<O> {
             });
         }
 
-        let mut hist = Histogram1d::new(self.n_bins, self.min, self.max);
-        let mut n_raw_samples: usize = 0;
-        for frame in frames {
-            // Empty selection contributes no samples (ac-006: no panic).
-            if groups.is_empty() {
-                continue;
-            }
-            let samples = self.observable.sample(*frame, groups)?;
-            n_raw_samples += samples.len();
-            for s in samples {
-                hist.add(s);
-            }
-        }
+        // Empty selection contributes no samples (ac-006: no panic).
+        let (hist, n_raw_samples) = if groups.is_empty() {
+            (Histogram1d::new(self.n_bins, self.min, self.max), 0usize)
+        } else {
+            self.accumulate(frames, groups)?
+        };
 
         let mut result = DistributionResult {
             bin_centers: hist.centers(),

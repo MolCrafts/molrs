@@ -4,7 +4,7 @@
 //!
 //! ## Module layout
 //!
-//! - [`store`] — columnar data containers (`Block`, `Frame`, `MolRec`, keys)
+//! - [`store`] — columnar data containers (`Block`, `Frame`, `Trajectory`, keys)
 //! - [`system`] — molecular representations (`Atomistic`, `MolGraph`, `Topology`, elements)
 //! - [`chem`] — chemical perception (aromaticity, charges, rings, stereo, SMARTS)
 //! - [`spatial`] — regions, neighbor lists, geometry
@@ -64,8 +64,8 @@ pub use store::block::Block;
 pub use store::frame::Frame;
 pub use store::frame_access::FrameAccess;
 pub use store::frame_view::FrameView;
-pub use store::molrec::{
-    MolRec, ObservableData, ObservableKind, ObservableRecord, SchemaValue, Trajectory,
+pub use store::trajectory::{
+    ObservableData, ObservableKind, ObservableRecord, SchemaValue, Trajectory,
 };
 pub use system::atomistic::{AngleId, AtomId, Atomistic, Bond, BondId, DihedralId, ImproperId};
 pub use system::coarsegrain::CoarseGrain;

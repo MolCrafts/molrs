@@ -1,10 +1,10 @@
 //! Geometric hydrogen-bond criterion.
 //!
-//! Ported from TRAVIS `CHBond` (`src/hbond.cpp`, the `m_frAD` / `m_frAH` /
+//! Ported from the reference implementation `CHBond` (`src/hbond.cpp`, the `m_frAD` / `m_frAH` /
 //! `m_fwinkel` gate around lines 914–961): a D–H···A bond requires the
 //! acceptor–donor distance `rAD` below a cutoff, the acceptor–hydrogen distance
 //! `rAH` below a cutoff, and an angle test on `cos(winkel)` where `winkel` is the
-//! angle **at the donor** between the D→A and D→H vectors (TRAVIS default
+//! angle **at the donor** between the D→A and D→H vectors (reference implementation default
 //! ≤ 30° from collinear).
 //!
 //! **Documented deviation (per the spec's acceptance contract):** molrs gates on
@@ -19,9 +19,9 @@ use molrs::types::F;
 /// Which interatomic distance the cutoff applies to when pairing candidates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DistKind {
-    /// Cutoff on the donor–acceptor distance r(D···A) (TRAVIS `m_frAD`).
+    /// Cutoff on the donor–acceptor distance r(D···A) (reference implementation `m_frAD`).
     DonorAcceptor,
-    /// Cutoff on the hydrogen–acceptor distance r(H···A) (TRAVIS `m_frAH`).
+    /// Cutoff on the hydrogen–acceptor distance r(H···A) (reference implementation `m_frAH`).
     HydrogenAcceptor,
 }
 

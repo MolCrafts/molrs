@@ -83,7 +83,7 @@ pub fn py_value_err<E: std::fmt::Display>(e: E) -> PyErr {
 pub(crate) fn collect_frames(
     frames: &Bound<'_, PyAny>,
 ) -> PyResult<Vec<molrs::store::frame::Frame>> {
-    use crate::frame::PyFrame;
+    use crate::core::store::frame::PyFrame;
     if let Ok(single) = frames.extract::<PyRef<'_, PyFrame>>() {
         return Ok(vec![single.clone_core_frame()?]);
     }
@@ -97,7 +97,7 @@ pub(crate) fn collect_frames(
 pub(crate) fn collect_nlists(
     arg: &Bound<'_, PyAny>,
 ) -> PyResult<Vec<molrs::spatial::neighbors::NeighborList>> {
-    use crate::linkedcell::PyNeighborList;
+    use crate::core::spatial::linkedcell::PyNeighborList;
     if let Ok(single) = arg.extract::<PyRef<'_, PyNeighborList>>() {
         return Ok(vec![single.inner.clone()]);
     }

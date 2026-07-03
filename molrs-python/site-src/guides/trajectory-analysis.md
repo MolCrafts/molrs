@@ -10,7 +10,7 @@ alongside frames to analyses that need distance connectivity. That keeps the
 cutoff and boundary model explicit. It also lets several analyses share the
 same neighbor search result instead of recomputing pair lists independently.
 
-## Batch Semantics
+## One call handles one frame or many
 
 Python wrappers accept either one frame or a sequence of frames for several
 analyses. A single frame returns a single result where that is meaningful; a

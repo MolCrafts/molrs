@@ -59,6 +59,7 @@ pub struct ClusterProperties {
 }
 
 impl ClusterProperties {
+    /// No parameters.
     pub fn new() -> Self {
         Self { masses: None }
     }

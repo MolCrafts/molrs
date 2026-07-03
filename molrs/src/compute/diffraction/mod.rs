@@ -1,13 +1,11 @@
 //! Diffraction / structure-factor analyzers ported from
 //! `freud.diffraction`.
 //!
-//! Currently implemented:
-//! - [`StaticStructureFactorDebye`](debye::StaticStructureFactorDebye) — the
-//!   closed-form Debye structure factor `S(k) = N⁻¹ Σ_{i,j} sin(k r_ij) /
-//!   (k r_ij)` evaluated on a user-supplied k grid.
-//!
-//! Phase 9 will follow with `StaticStructureFactorDirect` and
-//! `DiffractionPattern` (both FFT-based).
+//! | Method | Measures |
+//! |--------|----------|
+//! | [`StaticStructureFactorDebye`] | closed-form Debye `S(k) = N⁻¹ Σ_{i,j} sin(k·r_ij)/(k·r_ij)` on a user k grid (Å⁻¹) |
+//! | [`StaticStructureFactorDirect`] | direct k-grid evaluation of `S(k)` from `⟨\|ρ(k)\|²⟩` |
+//! | [`DiffractionPattern`] | 2-D FFT diffraction image of a projected frame |
 
 pub mod debye;
 pub mod diffraction_pattern;

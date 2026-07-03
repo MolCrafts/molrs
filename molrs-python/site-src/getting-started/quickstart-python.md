@@ -171,7 +171,7 @@ print("roundtrip atoms:", roundtrip["atoms"].nrows)
 
 The XYZ format stores coordinates and element symbols, but it does not preserve
 the full force-field state or every topology detail. Use richer formats or
-MolRec/Zarr when a workflow needs trajectory data and observables.
+frame-sequence Zarr when a workflow needs trajectory data.
 
 ## Summary
 

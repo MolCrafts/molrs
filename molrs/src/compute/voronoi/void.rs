@@ -1,11 +1,11 @@
 //! Void (cavity / free-volume) analysis over a radical-Voronoi tessellation.
 //!
-//! Following TRAVIS's domain-style void aggregation (`src/void.cpp`): a set of
+//! Following the reference implementation's domain-style void aggregation (`src/void.cpp`): a set of
 //! **probe generators** is tessellated *together with* the atoms, and the cells
 //! belonging to probes are the unoccupied regions. Face-adjacent probe cells are
-//! merged (union-find) into cavities; each cavity's volume is the sum of its
-//! probe-cell volumes, and the total void fraction is the probe volume over the
-//! box volume.
+//! merged (connected-components) into cavities; each cavity's volume is the sum
+//! of its probe-cell volumes, and the total void fraction is the probe volume
+//! over the box volume.
 //!
 //! The caller builds one [`VoronoiCells`] over `atoms ++ probes` and passes a
 //! boolean mask marking which generators are probes — keeping this a pure
@@ -13,9 +13,9 @@
 
 use molrs::types::F;
 
-use super::UnionFind;
 use super::cell::VoronoiCells;
 use crate::compute::error::ComputeError;
+use crate::core::system::topology::Topology;
 
 /// Outcome of a [`VoidAnalysis`].
 #[derive(Debug, Clone)]
@@ -56,7 +56,11 @@ impl VoidAnalysis {
             });
         }
 
-        let mut uf = UnionFind::new(n);
+        // Build the void-cell adjacency graph and cluster it with the native
+        // connected-components (BFS) facility instead of a local union-find:
+        // only void cells are linked; non-void cells stay isolated and never
+        // contribute.
+        let mut topo = Topology::with_atoms(n);
         for (i, &vi) in is_void.iter().enumerate() {
             if !vi {
                 continue;
@@ -64,23 +68,32 @@ impl VoidAnalysis {
             for j in cells.neighbors(i) {
                 let j = j as usize;
                 if j < n && j > i && is_void[j] {
-                    uf.union(i, j);
+                    topo.add_bond(i, j);
                 }
             }
         }
+        let component_of = topo.connected_components();
 
-        let mut vol_of: std::collections::HashMap<usize, F> = std::collections::HashMap::new();
+        // Cavity ids are contiguous 0-based component labels, so flat `Vec`s
+        // keyed by that label replace the `HashMap` (no hashing). Connected
+        // components are a graph invariant, so each cavity holds the same cells
+        // as the old union-find roots, and volumes are still summed in ascending
+        // `i` order → bit-identical floats; `seen` marks the labels that owned
+        // ≥ 1 probe cell.
+        let mut vol_of = vec![0.0 as F; n];
+        let mut seen = vec![false; n];
         let mut total = 0.0;
         for (i, &vi) in is_void.iter().enumerate() {
             if !vi {
                 continue;
             }
-            let r = uf.find(i);
-            *vol_of.entry(r).or_insert(0.0) += cells.volumes[i];
+            let c = component_of[i] as usize;
+            vol_of[c] += cells.volumes[i];
+            seen[c] = true;
             total += cells.volumes[i];
         }
 
-        let mut cavity_volumes: Vec<F> = vol_of.values().copied().collect();
+        let mut cavity_volumes: Vec<F> = (0..n).filter(|&c| seen[c]).map(|c| vol_of[c]).collect();
         cavity_volumes.sort_unstable_by(|a, b| b.partial_cmp(a).unwrap());
 
         Ok(VoidResult {

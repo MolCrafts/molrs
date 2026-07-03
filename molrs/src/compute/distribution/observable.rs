@@ -1,17 +1,17 @@
 //! The `Observable` abstraction: frame + atom-group selection → scalar samples.
 //!
-//! Mirrors TRAVIS's separation between *what* atoms an analysis runs over
+//! Mirrors the reference implementation's separation between *what* atoms an analysis runs over
 //! (`CAtomGroup` / the observation list assembled in `src/tddf.cpp` and
 //! `src/geodens.cpp`) and the geometric quantity extracted per tuple. Here the
 //! selection is the frozen [`AtomGroups`] index container and the extractor is
 //! any [`Observable`] (distance / angle / dihedral).
 
-use molrs::spatial::region::simbox::SimBox;
 use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
-use ndarray::Array2;
+use molrs::store::keys;
+use molrs::types::{F, U};
 
 use crate::compute::error::ComputeError;
+use crate::compute::util::{MicHelper, Positions, get_positions_ref};
 
 /// A frozen container of atom-index tuples, all of one arity.
 ///
@@ -43,6 +43,51 @@ impl AtomGroups {
             });
         }
         Ok(Self { arity, flat })
+    }
+
+    /// Build atom groups of the given `arity` from a Frame topology `block`
+    /// (e.g. `"bonds"`, `"angles"`, `"dihedrals"`), reading the first `arity`
+    /// endpoint columns (`atomi`, `atomj`, …) row-major over the block's rows.
+    ///
+    /// Returns [`ComputeError::MissingBlock`] / [`ComputeError::MissingColumn`]
+    /// if the block or a required endpoint column is absent, or
+    /// [`ComputeError::BadShape`] if the endpoint columns differ in length.
+    /// Endpoint indices are stored as unsigned integers.
+    pub fn from_frame<FA: FrameAccess>(
+        frame: &FA,
+        block: &'static str,
+        arity: usize,
+    ) -> Result<Self, ComputeError> {
+        if arity == 0 || arity > keys::ENDPOINTS.len() {
+            return Err(ComputeError::OutOfRange {
+                field: "AtomGroups::arity",
+                value: arity.to_string(),
+            });
+        }
+        if !frame.contains_block(block) {
+            return Err(ComputeError::MissingBlock { name: block });
+        }
+        let mut columns: Vec<Vec<U>> = Vec::with_capacity(arity);
+        for &col in &keys::ENDPOINTS[..arity] {
+            let view = frame
+                .get_uint(block, col)
+                .ok_or(ComputeError::MissingColumn { block, col })?;
+            columns.push(view.iter().copied().collect());
+        }
+        let n = columns[0].len();
+        if columns.iter().any(|c| c.len() != n) {
+            return Err(ComputeError::BadShape {
+                expected: format!("{arity} endpoint columns of equal length"),
+                got: "mismatched endpoint column lengths".to_string(),
+            });
+        }
+        let mut flat = Vec::with_capacity(n * arity);
+        for row in 0..n {
+            for col in &columns {
+                flat.push(col[row]);
+            }
+        }
+        Self::new(arity, flat)
     }
 
     /// Convenience: pairs (arity 2) from `[(i, j), ...]`.
@@ -126,42 +171,70 @@ pub trait Observable {
         frame: &FA,
         groups: &AtomGroups,
     ) -> Result<Vec<F>, ComputeError>;
+
+    /// Sample into a caller-provided buffer (cleared first), reusing its
+    /// allocation across frames.
+    ///
+    /// The default delegates to [`sample`](Self::sample); the built-in
+    /// observables override it to fill `out` in place, so the per-frame
+    /// histogram loop avoids allocating a fresh `Vec` for every frame. Values
+    /// are identical to [`sample`](Self::sample) — this is a pure allocation
+    /// optimization.
+    fn sample_into<FA: FrameAccess>(
+        &self,
+        frame: &FA,
+        groups: &AtomGroups,
+        out: &mut Vec<F>,
+    ) -> Result<(), ComputeError> {
+        out.clear();
+        out.extend(self.sample(frame, groups)?);
+        Ok(())
+    }
 }
 
-/// Read the `atoms` x/y/z columns of a frame into an `N×3` array.
+/// The x/y/z columns of a frame's `atoms` block as three parallel slices.
+///
+/// Each entry is a [`Positions`] — a zero-copy borrow for the contiguous
+/// `Frame`/`FrameView` case, an owned `Vec` only for non-contiguous views.
+/// Reach the raw `&[F]` via [`Positions::slice`].
+pub(crate) type PosCols<'a> = (Positions<'a>, Positions<'a>, Positions<'a>);
+
+/// Borrow the `atoms` x/y/z columns as three parallel slices.
 ///
 /// Thin wrapper over [`compute::util::get_positions_ref`](crate::compute::util)
-/// (the shared column extractor) materialized into an owned `Array2` so the
-/// observables can index per tuple.
-pub(crate) fn positions<FA: FrameAccess>(frame: &FA) -> Result<Array2<F>, ComputeError> {
-    let (xp, yp, zp) = crate::compute::util::get_positions_ref(frame)?;
-    let (xs, ys, zs) = (xp.slice(), yp.slice(), zp.slice());
-    let n = xs.len();
-    if ys.len() != n || zs.len() != n {
+/// (the shared column extractor). Unlike a materialized `N×3` array this keeps
+/// the columns in their native SoA layout — observables index `xs[i]`/`ys[i]`/
+/// `zs[i]` directly, with no per-frame copy.
+pub(crate) fn positions<FA: FrameAccess>(frame: &FA) -> Result<PosCols<'_>, ComputeError> {
+    let (xp, yp, zp) = get_positions_ref(frame)?;
+    let n = xp.slice().len();
+    if yp.slice().len() != n || zp.slice().len() != n {
         return Err(ComputeError::DimensionMismatch {
             expected: n,
-            got: ys.len().min(zs.len()),
+            got: yp.slice().len().min(zp.slice().len()),
             what: "atoms x/y/z length",
         });
     }
-    let mut pos = Array2::<F>::zeros((n, 3));
-    for i in 0..n {
-        pos[[i, 0]] = xs[i];
-        pos[[i, 1]] = ys[i];
-        pos[[i, 2]] = zs[i];
-    }
-    Ok(pos)
+    Ok((xp, yp, zp))
 }
 
-/// Minimum-image displacement `b - a` when a `SimBox` is present, else the raw
-/// separation. Routes through the shared
-/// [`compute::util::mic_disp`](crate::compute::util) so there is one
-/// minimum-image implementation across `compute`, and distance DFs agree with
+/// Minimum-image displacement `b - a` using a per-frame [`MicHelper`] hoisted by
+/// the caller (built once with [`MicHelper::from_simbox`] rather than resolved
+/// per pair). Free boundaries fall back to the raw separation. This is the one
+/// minimum-image implementation across `compute`, so distance DFs agree with
 /// [`compute::rdf`](crate::compute::rdf) on the same pair (ac-003).
-pub(crate) fn displacement(simbox: Option<&SimBox>, pos: &Array2<F>, a: usize, b: usize) -> [F; 3] {
-    let from = [pos[[a, 0]], pos[[a, 1]], pos[[a, 2]]];
-    let to = [pos[[b, 0]], pos[[b, 1]], pos[[b, 2]]];
-    crate::compute::util::mic_disp(simbox, from, to)
+#[inline]
+pub(crate) fn displacement(
+    mic: &MicHelper,
+    xs: &[F],
+    ys: &[F],
+    zs: &[F],
+    a: usize,
+    b: usize,
+) -> [F; 3] {
+    let from = [xs[a], ys[a], zs[a]];
+    let to = [xs[b], ys[b], zs[b]];
+    mic.disp(from, to)
 }
 
 pub(crate) fn norm(v: [F; 3]) -> F {
@@ -198,5 +271,34 @@ mod tests {
         let g = AtomGroups::pairs(&[]);
         assert!(g.is_empty());
         assert_eq!(g.len(), 0);
+    }
+
+    #[test]
+    fn from_frame_reads_topology_block() {
+        use molrs::store::block::Block;
+        use molrs::store::frame::Frame;
+        use ndarray::Array1;
+
+        let mut frame = Frame::new();
+        let mut angles = Block::new();
+        angles
+            .insert("atomi", Array1::from_vec(vec![0 as U, 3]).into_dyn())
+            .unwrap();
+        angles
+            .insert("atomj", Array1::from_vec(vec![1 as U, 4]).into_dyn())
+            .unwrap();
+        angles
+            .insert("atomk", Array1::from_vec(vec![2 as U, 5]).into_dyn())
+            .unwrap();
+        frame.insert("angles", angles);
+
+        let g = AtomGroups::from_frame(&frame, "angles", 3).unwrap();
+        assert_eq!(g.len(), 2);
+        assert_eq!(g.tuple(0), &[0, 1, 2]);
+        assert_eq!(g.tuple(1), &[3, 4, 5]);
+
+        // Missing block and missing endpoint column both error.
+        assert!(AtomGroups::from_frame(&frame, "bonds", 2).is_err());
+        assert!(AtomGroups::from_frame(&frame, "angles", 4).is_err());
     }
 }

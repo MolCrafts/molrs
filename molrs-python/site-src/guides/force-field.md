@@ -10,7 +10,7 @@ when user-facing code displays coordinates as three columns. Potential kernels
 operate on a contiguous `3N` vector so energy and force evaluation can stay
 close to the numerical representation used by optimizers.
 
-## MMFF94 Workflow
+## The MMFF94 workflow is typify, then evaluate
 
 MMFF94 typing starts from an `Atomistic` graph. The typifier assigns atom
 types, builds the force-field terms, and returns a compiled `Potentials`
@@ -62,7 +62,7 @@ can succeed even when potential compilation reports missing parameter coverage.
 That distinction is useful: it tells you whether the failure is in chemistry
 typing or in the stricter energy-evaluation path.
 
-## Typing vs Evaluation
+## Typing and evaluation are separate steps
 
 Typing and evaluation answer different questions:
 

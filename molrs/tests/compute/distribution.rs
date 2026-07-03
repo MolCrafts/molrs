@@ -2,7 +2,7 @@
 //! distance DF), asserting against closed-form geometry and the PBC contract.
 //!
 //! Covers acceptance criteria ac-001..ac-006 of
-//! `travis-parity-01-geometric-distributions`.
+//! `analysis-parity-01-geometric-distributions`.
 
 use molrs::Frame;
 use molrs::compute::distribution::{

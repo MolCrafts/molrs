@@ -1,6 +1,6 @@
 //! Per-frame geometric hydrogen-bond detection.
 //!
-//! Ported from TRAVIS `CHBond::AnalyzeStep` / the bond test in `src/hbond.cpp`
+//! Ported from the reference implementation `CHBond::AnalyzeStep` / the bond test in `src/hbond.cpp`
 //! (lines ~900–965): candidate donor/acceptor pairs are gathered by a cutoff
 //! neighbour search, then gated by the distance and angle criterion (see
 //! [`HBondCriterion`]). molrs gathers candidates with the existing
@@ -10,7 +10,6 @@
 use molrs::spatial::neighbors::NeighborQuery;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
-use ndarray::Array2;
 
 use super::criterion::{DistKind, HBondCriterion};
 use crate::compute::error::ComputeError;
@@ -111,25 +110,44 @@ impl HBonds {
 
         // Candidate search: query points are the donor heavy atom (DonorAcceptor)
         // or the bridging hydrogen (HydrogenAcceptor); reference points are the
-        // acceptors. NeighborQuery returns cross pairs within `dist_cutoff`.
-        let acc_xyz = Array2::from_shape_fn((self.acceptors.len(), 3), |(i, d)| {
-            pos(self.acceptors[i])[d]
-        });
-        let q_xyz = Array2::from_shape_fn((self.donors.len(), 3), |(i, d)| {
-            let (don, hyd) = self.donors[i];
+        // acceptors. Gather each selection into contiguous SoA x/y/z columns
+        // (molrs-native layout) and hand them to `NeighborQuery`'s SoA entry —
+        // no interleaved `Array2`. It returns cross pairs within `dist_cutoff`.
+        let na = self.acceptors.len();
+        let (mut acc_x, mut acc_y, mut acc_z) = (
+            Vec::with_capacity(na),
+            Vec::with_capacity(na),
+            Vec::with_capacity(na),
+        );
+        for &a in &self.acceptors {
+            let p = pos(a);
+            acc_x.push(p[0]);
+            acc_y.push(p[1]);
+            acc_z.push(p[2]);
+        }
+        let nd = self.donors.len();
+        let (mut q_x, mut q_y, mut q_z) = (
+            Vec::with_capacity(nd),
+            Vec::with_capacity(nd),
+            Vec::with_capacity(nd),
+        );
+        for &(don, hyd) in &self.donors {
             let src = match self.criterion.dist_kind {
                 DistKind::DonorAcceptor => don,
                 DistKind::HydrogenAcceptor => hyd,
             };
-            pos(src)[d]
-        });
+            let p = pos(src);
+            q_x.push(p[0]);
+            q_y.push(p[1]);
+            q_z.push(p[2]);
+        }
 
+        let cutoff = self.criterion.dist_cutoff;
         let nlist = match frame.simbox_ref() {
-            Some(sb) => NeighborQuery::new(sb, acc_xyz.view(), self.criterion.dist_cutoff)
-                .query(q_xyz.view()),
-            None => {
-                NeighborQuery::free(acc_xyz.view(), self.criterion.dist_cutoff).query(q_xyz.view())
-            }
+            Some(sb) => NeighborQuery::from_columns(sb, &acc_x, &acc_y, &acc_z, cutoff)
+                .query_columns(&q_x, &q_y, &q_z),
+            None => NeighborQuery::free_columns(&acc_x, &acc_y, &acc_z, cutoff)
+                .query_columns(&q_x, &q_y, &q_z),
         };
 
         let qi = nlist.query_point_indices();
@@ -194,10 +212,34 @@ impl Compute for HBonds {
         if frames.is_empty() {
             return Err(ComputeError::EmptyInput);
         }
-        let mut per_frame = Vec::with_capacity(frames.len());
-        for frame in frames {
-            per_frame.push(self.detect_frame(*frame)?);
-        }
+
+        // Each frame's detection is independent (own NeighborQuery + geometry),
+        // so fan out over frames. `collect::<Result<Vec<_>>>()` on `par_iter`
+        // keeps the per-frame order and short-circuits on the first error, so
+        // the bond lists are identical to the serial pass.
+        #[cfg(feature = "rayon")]
+        const PAR_THRESHOLD: usize = 4;
+
+        #[cfg(feature = "rayon")]
+        let per_frame: Vec<Vec<HBond>> = if frames.len() >= PAR_THRESHOLD {
+            use rayon::prelude::*;
+            frames
+                .par_iter()
+                .map(|frame| self.detect_frame(*frame))
+                .collect::<Result<Vec<_>, _>>()?
+        } else {
+            frames
+                .iter()
+                .map(|frame| self.detect_frame(*frame))
+                .collect::<Result<Vec<_>, _>>()?
+        };
+
+        #[cfg(not(feature = "rayon"))]
+        let per_frame: Vec<Vec<HBond>> = frames
+            .iter()
+            .map(|frame| self.detect_frame(*frame))
+            .collect::<Result<Vec<_>, _>>()?;
+
         let counts = per_frame.iter().map(Vec::len).collect();
         Ok(HBondsResult { per_frame, counts })
     }

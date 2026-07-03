@@ -1,3 +1,7 @@
+//! [`ComputeError`] — the single error enum shared by every `Compute` and
+//! `Fit`; variants name the offending input (missing block/column/SimBox,
+//! shape or range violations, non-finite values).
+
 use std::fmt;
 
 use molrs::MolRsError;
