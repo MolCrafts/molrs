@@ -65,10 +65,24 @@ class TestSteinhardt:
 
 class TestNematic:
     def test_aligned_gives_unity(self):
-        frame, _ = _octahedron_frame()
-        order, eigs, director, q = Nematic().compute(
-            frame, [[0.0, 0.0, 1.0]] * 5
+        # Directors are unit (head - tail) vectors of the "orientations" block
+        # (atomi=head, atomj=tail). Five pairs all pointing +z -> order == 1.
+        pts = np.array(
+            [
+                [0.0, 0.0, 1.0], [0.0, 0.0, 0.0],
+                [1.0, 0.0, 1.0], [1.0, 0.0, 0.0],
+                [2.0, 0.0, 1.0], [2.0, 0.0, 0.0],
+                [3.0, 0.0, 1.0], [3.0, 0.0, 0.0],
+                [4.0, 0.0, 1.0], [4.0, 0.0, 0.0],
+            ],
+            dtype=np.float64,
         )
+        frame = _make_frame(pts, box_len=20.0)
+        ori = molrs.Block()
+        ori.insert("atomi", np.array([0, 2, 4, 6, 8], dtype=np.uint32))
+        ori.insert("atomj", np.array([1, 3, 5, 7, 9], dtype=np.uint32))
+        frame["orientations"] = ori
+        order, eigs, director, q = Nematic().compute(frame)
         assert abs(order - 1.0) < 1e-10
         assert eigs.shape == (3,)
         assert q.shape == (3, 3)
