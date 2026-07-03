@@ -8,9 +8,3 @@ mod opls;
 
 #[path = "opls_parity.rs"]
 mod opls_parity;
-
-#[path = "estimate.rs"]
-mod estimate;
-
-#[path = "estimate_parity.rs"]
-mod estimate_parity;

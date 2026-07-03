@@ -26,8 +26,6 @@ from .molrs import (
     Block,
     Frame,
     Trajectory,
-    MolRec,
-    Observables,
     ScalarObservable,
     VectorObservable,
     # I/O
@@ -222,8 +220,6 @@ __all__ = [
     "Block",
     "Frame",
     "Trajectory",
-    "MolRec",
-    "Observables",
     "ScalarObservable",
     "VectorObservable",
     "read_pdb",

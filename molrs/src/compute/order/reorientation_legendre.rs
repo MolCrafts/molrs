@@ -41,12 +41,12 @@
 //! `Φ(t) → τ` decay) to extract the rotational correlation time — no new fitting
 //! code is needed.
 
+use crate::compute::result::ComputeResult;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 use ndarray::Array1;
 
 use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
 use crate::compute::traits::Compute;
 use crate::compute::util::{MicHelper, get_positions_ref};
 

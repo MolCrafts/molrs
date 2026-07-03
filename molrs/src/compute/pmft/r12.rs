@@ -1,3 +1,5 @@
+//! 2-D `(r, θ₁, θ₂)` Pair Mode Fourier Transform.
+
 // Parallel iteration over (frames, nlists, orientations) by index reads
 // more clearly than nested zips.
 #![allow(clippy::needless_range_loop)]
@@ -23,6 +25,7 @@
 //! orientations are scalar angles (radians). Caller is responsible for
 //! the planar configuration.
 
+use crate::compute::result::ComputeResult;
 use molrs::spatial::neighbors::NeighborList;
 use molrs::spatial::region::simbox::BoxKind;
 use molrs::store::frame_access::FrameAccess;
@@ -30,23 +33,9 @@ use molrs::types::F;
 use ndarray::Array3;
 
 use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
 use crate::compute::traits::Compute;
 
 const TWO_PI: F = 2.0 * std::f64::consts::PI;
-
-/// Per-frame PMFTR12 result.
-#[derive(Debug, Clone, Default)]
-pub struct PMFTR12Result {
-    pub density: Array3<F>,
-    pub raw_counts: Array3<u64>,
-    pub pmf: Array3<F>,
-    pub r_edges: Vec<F>,
-    pub t1_edges: Vec<F>,
-    pub t2_edges: Vec<F>,
-}
-
-impl ComputeResult for PMFTR12Result {}
 
 /// `PMFTR12` analyzer.
 #[derive(Debug, Clone, Copy)]
@@ -58,6 +47,7 @@ pub struct PMFTR12 {
 }
 
 impl PMFTR12 {
+    /// Radial range `r_max` (Å); `n_r × n_t1 × n_t2` (r, θ₁, θ₂) bins.
     pub fn new(r_max: F, n_r: usize, n_t1: usize, n_t2: usize) -> Result<Self, ComputeError> {
         if r_max.is_nan() || r_max <= 0.0 {
             return Err(ComputeError::OutOfRange {
@@ -237,11 +227,24 @@ impl Compute for PMFTR12 {
     }
 }
 
+/// Per-frame PMFTR12 result.
+#[derive(Debug, Clone, Default)]
+pub struct PMFTR12Result {
+    pub density: Array3<F>,
+    pub raw_counts: Array3<u64>,
+    pub pmf: Array3<F>,
+    pub r_edges: Vec<F>,
+    pub t1_edges: Vec<F>,
+    pub t2_edges: Vec<F>,
+}
+
+impl ComputeResult for PMFTR12Result {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compute::test_support::nlist_from_frame;
     use molrs::Frame;
-    use molrs::spatial::neighbors::{LinkCell, NbListAlgo};
     use molrs::spatial::region::simbox::SimBox;
     use molrs::store::block::Block;
     use ndarray::{Array1 as A1, array};
@@ -268,44 +271,7 @@ mod tests {
     }
 
     fn build_nlist(frame: &Frame, cutoff: F) -> NeighborList {
-        let xp = frame
-            .get("atoms")
-            .unwrap()
-            .get("x")
-            .and_then(<F as molrs::store::block::BlockDtype>::from_column)
-            .unwrap()
-            .as_slice()
-            .unwrap()
-            .to_vec();
-        let yp = frame
-            .get("atoms")
-            .unwrap()
-            .get("y")
-            .and_then(<F as molrs::store::block::BlockDtype>::from_column)
-            .unwrap()
-            .as_slice()
-            .unwrap()
-            .to_vec();
-        let zp = frame
-            .get("atoms")
-            .unwrap()
-            .get("z")
-            .and_then(<F as molrs::store::block::BlockDtype>::from_column)
-            .unwrap()
-            .as_slice()
-            .unwrap()
-            .to_vec();
-        let n = xp.len();
-        let mut pos = ndarray::Array2::<F>::zeros((n, 3));
-        for i in 0..n {
-            pos[[i, 0]] = xp[i];
-            pos[[i, 1]] = yp[i];
-            pos[[i, 2]] = zp[i];
-        }
-        let simbox = frame.simbox.as_ref().unwrap();
-        let mut lc = LinkCell::new().cutoff(cutoff);
-        lc.build(pos.view(), simbox);
-        lc.query().clone()
+        nlist_from_frame(frame, cutoff)
     }
 
     #[test]

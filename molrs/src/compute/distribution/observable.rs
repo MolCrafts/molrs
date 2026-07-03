@@ -7,7 +7,8 @@
 //! any [`Observable`] (distance / angle / dihedral).
 
 use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
+use molrs::store::keys;
+use molrs::types::{F, U};
 
 use crate::compute::error::ComputeError;
 use crate::compute::util::{MicHelper, Positions, get_positions_ref};
@@ -42,6 +43,51 @@ impl AtomGroups {
             });
         }
         Ok(Self { arity, flat })
+    }
+
+    /// Build atom groups of the given `arity` from a Frame topology `block`
+    /// (e.g. `"bonds"`, `"angles"`, `"dihedrals"`), reading the first `arity`
+    /// endpoint columns (`atomi`, `atomj`, …) row-major over the block's rows.
+    ///
+    /// Returns [`ComputeError::MissingBlock`] / [`ComputeError::MissingColumn`]
+    /// if the block or a required endpoint column is absent, or
+    /// [`ComputeError::BadShape`] if the endpoint columns differ in length.
+    /// Endpoint indices are stored as unsigned integers.
+    pub fn from_frame<FA: FrameAccess>(
+        frame: &FA,
+        block: &'static str,
+        arity: usize,
+    ) -> Result<Self, ComputeError> {
+        if arity == 0 || arity > keys::ENDPOINTS.len() {
+            return Err(ComputeError::OutOfRange {
+                field: "AtomGroups::arity",
+                value: arity.to_string(),
+            });
+        }
+        if !frame.contains_block(block) {
+            return Err(ComputeError::MissingBlock { name: block });
+        }
+        let mut columns: Vec<Vec<U>> = Vec::with_capacity(arity);
+        for &col in &keys::ENDPOINTS[..arity] {
+            let view = frame
+                .get_uint(block, col)
+                .ok_or(ComputeError::MissingColumn { block, col })?;
+            columns.push(view.iter().copied().collect());
+        }
+        let n = columns[0].len();
+        if columns.iter().any(|c| c.len() != n) {
+            return Err(ComputeError::BadShape {
+                expected: format!("{arity} endpoint columns of equal length"),
+                got: "mismatched endpoint column lengths".to_string(),
+            });
+        }
+        let mut flat = Vec::with_capacity(n * arity);
+        for row in 0..n {
+            for col in &columns {
+                flat.push(col[row]);
+            }
+        }
+        Self::new(arity, flat)
     }
 
     /// Convenience: pairs (arity 2) from `[(i, j), ...]`.
@@ -225,5 +271,34 @@ mod tests {
         let g = AtomGroups::pairs(&[]);
         assert!(g.is_empty());
         assert_eq!(g.len(), 0);
+    }
+
+    #[test]
+    fn from_frame_reads_topology_block() {
+        use molrs::store::block::Block;
+        use molrs::store::frame::Frame;
+        use ndarray::Array1;
+
+        let mut frame = Frame::new();
+        let mut angles = Block::new();
+        angles
+            .insert("atomi", Array1::from_vec(vec![0 as U, 3]).into_dyn())
+            .unwrap();
+        angles
+            .insert("atomj", Array1::from_vec(vec![1 as U, 4]).into_dyn())
+            .unwrap();
+        angles
+            .insert("atomk", Array1::from_vec(vec![2 as U, 5]).into_dyn())
+            .unwrap();
+        frame.insert("angles", angles);
+
+        let g = AtomGroups::from_frame(&frame, "angles", 3).unwrap();
+        assert_eq!(g.len(), 2);
+        assert_eq!(g.tuple(0), &[0, 1, 2]);
+        assert_eq!(g.tuple(1), &[3, 4, 5]);
+
+        // Missing block and missing endpoint column both error.
+        assert!(AtomGroups::from_frame(&frame, "bonds", 2).is_err());
+        assert!(AtomGroups::from_frame(&frame, "angles", 4).is_err());
     }
 }

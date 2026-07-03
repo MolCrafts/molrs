@@ -1,9 +1,12 @@
 name: Bench
 
-# Runs the core criterion benchmarks (Frame, graph/topology, region,
-# neighbors) and tracks them over time. Criterion's `--output-format bencher`
-# emits the libtest `bench: N ns/iter` lines that github-action-benchmark's
-# `cargo` tool parses.
+# Runs the criterion regression benchmarks — core (Frame, graph/topology,
+# region, neighbors) plus compute (rdf/msd/shape/transport/spectroscopy/…) —
+# and tracks them over time. Criterion's `--output-format bencher` emits the
+# libtest `bench: N ns/iter` lines that github-action-benchmark's `cargo` tool
+# parses. The compute suite needs the `full` feature (its category kernels live
+# behind `compute` + `voronoi`; `full` avoids the openblas requirement of the
+# separate `blas` feature).
 #
 # Like the cross-implementation suite, the full criterion run is too heavy /
 # too noisy to gate every PR (PRs already get a `cargo bench --no-run` compile
@@ -20,7 +23,7 @@ permissions:
 
 jobs:
   bench:
-    name: core criterion
+    name: criterion regression
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -31,6 +34,11 @@ jobs:
         run: |
           cargo bench -p molcrafts-molrs --bench core_benchmarks -- \
             --output-format bencher | tee output.txt
+
+      - name: Run compute benchmarks (bencher output)
+        run: |
+          cargo bench -p molcrafts-molrs --bench compute_benchmarks --features full -- \
+            --output-format bencher | tee -a output.txt
 
       - name: Upload raw bench output
         if: always()

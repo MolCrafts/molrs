@@ -12,29 +12,14 @@
 //! variant requires only a handful of extra lines and will follow when the
 //! first downstream consumer (e.g. `LocalDescriptors` in Phase 6) needs it.
 
+use crate::compute::result::ComputeResult;
 use molrs::spatial::neighbors::NeighborList;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 use ndarray::Array1;
 
 use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
 use crate::compute::traits::Compute;
-
-/// Per-frame correlation result.
-#[derive(Debug, Clone, Default)]
-pub struct CorrelationFunctionResult {
-    /// Bin edges (length `n_bins + 1`).
-    pub bin_edges: Array1<F>,
-    /// Bin centres (length `n_bins`).
-    pub bin_centers: Array1<F>,
-    /// Running pair count per bin (length `n_bins`).
-    pub bin_counts: Array1<u64>,
-    /// `⟨A · B⟩(r)` per bin (length `n_bins`); zero for empty bins.
-    pub correlation: Array1<F>,
-}
-
-impl ComputeResult for CorrelationFunctionResult {}
 
 /// Correlation-function calculator. Stateless container of bin parameters.
 #[derive(Debug, Clone)]
@@ -48,6 +33,7 @@ pub struct CorrelationFunction {
 }
 
 impl CorrelationFunction {
+    /// `n_bins` radial bins over `[r_min, r_max]` (Å).
     pub fn new(n_bins: usize, r_max: F, r_min: F) -> Result<Self, ComputeError> {
         if n_bins == 0 {
             return Err(ComputeError::OutOfRange {
@@ -196,11 +182,26 @@ impl Compute for CorrelationFunction {
     }
 }
 
+/// Per-frame correlation result.
+#[derive(Debug, Clone, Default)]
+pub struct CorrelationFunctionResult {
+    /// Bin edges (length `n_bins + 1`).
+    pub bin_edges: Array1<F>,
+    /// Bin centres (length `n_bins`).
+    pub bin_centers: Array1<F>,
+    /// Running pair count per bin (length `n_bins`).
+    pub bin_counts: Array1<u64>,
+    /// `⟨A · B⟩(r)` per bin (length `n_bins`); zero for empty bins.
+    pub correlation: Array1<F>,
+}
+
+impl ComputeResult for CorrelationFunctionResult {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compute::test_support::nlist_from_frame;
     use molrs::Frame;
-    use molrs::spatial::neighbors::{LinkCell, NbListAlgo};
     use molrs::spatial::region::simbox::SimBox;
     use molrs::store::block::Block;
     use ndarray::{Array1 as A1, array};
@@ -221,44 +222,7 @@ mod tests {
     }
 
     fn build_nlist(frame: &Frame, cutoff: F) -> NeighborList {
-        let xp = frame
-            .get("atoms")
-            .unwrap()
-            .get("x")
-            .and_then(<F as molrs::store::block::BlockDtype>::from_column)
-            .unwrap()
-            .as_slice()
-            .unwrap()
-            .to_vec();
-        let yp = frame
-            .get("atoms")
-            .unwrap()
-            .get("y")
-            .and_then(<F as molrs::store::block::BlockDtype>::from_column)
-            .unwrap()
-            .as_slice()
-            .unwrap()
-            .to_vec();
-        let zp = frame
-            .get("atoms")
-            .unwrap()
-            .get("z")
-            .and_then(<F as molrs::store::block::BlockDtype>::from_column)
-            .unwrap()
-            .as_slice()
-            .unwrap()
-            .to_vec();
-        let n = xp.len();
-        let mut pos = ndarray::Array2::<F>::zeros((n, 3));
-        for i in 0..n {
-            pos[[i, 0]] = xp[i];
-            pos[[i, 1]] = yp[i];
-            pos[[i, 2]] = zp[i];
-        }
-        let simbox = frame.simbox.as_ref().unwrap();
-        let mut lc = LinkCell::new().cutoff(cutoff);
-        lc.build(pos.view(), simbox);
-        lc.query().clone()
+        nlist_from_frame(frame, cutoff)
     }
 
     #[test]

@@ -3,8 +3,8 @@
 //! - [`ComputeResult`] — "finalize into a fully-usable value". Multi-frame
 //!   accumulations can return a not-yet-normalized intermediate value from
 //!   `Compute::compute`; `ComputeResult::finalize` turns it into the
-//!   user-facing final form. [`Graph::run`](crate::compute::Graph) calls it once for
-//!   every node before inserting into the [`Store`](crate::compute::Store).
+//!   user-facing final form; callers (or the Python-side `Workflow`
+//!   orchestrator) invoke it once after `compute`.
 //! - [`DescriptorRow`] — "flatten into an `&[F]` row". Used by downstream
 //!   matrix consumers such as PCA and k-means to treat any prior Compute
 //!   output as a descriptor row without an extra conversion step.
@@ -13,8 +13,8 @@ use molrs::types::F;
 
 /// Marker + finalization hook for Compute outputs.
 ///
-/// `finalize` is called **once** by [`Graph::run`](crate::compute::Graph) on the output
-/// of every node before the value is moved into the [`Store`](crate::compute::Store).
+/// `finalize` is called **once** on the output of `compute` before the
+/// value is consumed downstream.
 /// The default is a no-op, which suits outputs already in their final form
 /// (cluster assignments, per-frame observables, etc.). Accumulating outputs
 /// (notably RDF's raw pair histogram) override it to perform their

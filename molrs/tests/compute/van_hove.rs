@@ -2,10 +2,10 @@
 //! the self second moment) plus multi-origin stability and edge cases.
 
 use molrs::Frame;
+use molrs::compute::dynamics::van_hove::VanHove;
 use molrs::compute::msd::MSD;
 use molrs::compute::rdf::RDF;
 use molrs::compute::traits::Compute;
-use molrs::compute::van_hove::VanHove;
 use molrs::spatial::neighbors::{LinkCell, NbListAlgo, NeighborList};
 use molrs::spatial::region::simbox::SimBox;
 use molrs::store::block::Block;

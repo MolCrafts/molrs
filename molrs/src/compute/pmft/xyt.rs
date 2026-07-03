@@ -1,3 +1,5 @@
+//! 2-D `(x, y, θ)` Pair Mode Fourier Transform.
+
 // Parallel iteration over (frames, nlists, orientations) by index reads
 // more clearly than nested zips.
 #![allow(clippy::needless_range_loop)]
@@ -20,6 +22,7 @@
 //! PMF is `−ln(ρ / ρ_ref)`. The lab z-axis is ignored; orientations are
 //! scalar 2-D angles in radians.
 
+use crate::compute::result::ComputeResult;
 use molrs::spatial::neighbors::NeighborList;
 use molrs::spatial::region::simbox::BoxKind;
 use molrs::store::frame_access::FrameAccess;
@@ -27,23 +30,9 @@ use molrs::types::F;
 use ndarray::Array3;
 
 use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
 use crate::compute::traits::Compute;
 
 const TWO_PI: F = 2.0 * std::f64::consts::PI;
-
-/// Per-frame PMFTXYT result.
-#[derive(Debug, Clone, Default)]
-pub struct PMFTXYTResult {
-    pub density: Array3<F>,
-    pub raw_counts: Array3<u64>,
-    pub pmf: Array3<F>,
-    pub x_edges: Vec<F>,
-    pub y_edges: Vec<F>,
-    pub t_edges: Vec<F>,
-}
-
-impl ComputeResult for PMFTXYTResult {}
 
 /// `PMFTXYT` analyzer.
 #[derive(Debug, Clone, Copy)]
@@ -56,6 +45,7 @@ pub struct PMFTXYT {
 }
 
 impl PMFTXYT {
+    /// Body-frame window `±x_max × ±y_max` (Å); `n_x × n_y × n_t` (x, y, θ) bins.
     pub fn new(
         x_max: F,
         y_max: F,
@@ -241,11 +231,24 @@ impl Compute for PMFTXYT {
     }
 }
 
+/// Per-frame PMFTXYT result.
+#[derive(Debug, Clone, Default)]
+pub struct PMFTXYTResult {
+    pub density: Array3<F>,
+    pub raw_counts: Array3<u64>,
+    pub pmf: Array3<F>,
+    pub x_edges: Vec<F>,
+    pub y_edges: Vec<F>,
+    pub t_edges: Vec<F>,
+}
+
+impl ComputeResult for PMFTXYTResult {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compute::test_support::nlist_from_frame;
     use molrs::Frame;
-    use molrs::spatial::neighbors::{LinkCell, NbListAlgo};
     use molrs::spatial::region::simbox::SimBox;
     use molrs::store::block::Block;
     use ndarray::{Array1 as A1, array};
@@ -272,44 +275,7 @@ mod tests {
     }
 
     fn build_nlist(frame: &Frame, cutoff: F) -> NeighborList {
-        let xp = frame
-            .get("atoms")
-            .unwrap()
-            .get("x")
-            .and_then(<F as molrs::store::block::BlockDtype>::from_column)
-            .unwrap()
-            .as_slice()
-            .unwrap()
-            .to_vec();
-        let yp = frame
-            .get("atoms")
-            .unwrap()
-            .get("y")
-            .and_then(<F as molrs::store::block::BlockDtype>::from_column)
-            .unwrap()
-            .as_slice()
-            .unwrap()
-            .to_vec();
-        let zp = frame
-            .get("atoms")
-            .unwrap()
-            .get("z")
-            .and_then(<F as molrs::store::block::BlockDtype>::from_column)
-            .unwrap()
-            .as_slice()
-            .unwrap()
-            .to_vec();
-        let n = xp.len();
-        let mut pos = ndarray::Array2::<F>::zeros((n, 3));
-        for i in 0..n {
-            pos[[i, 0]] = xp[i];
-            pos[[i, 1]] = yp[i];
-            pos[[i, 2]] = zp[i];
-        }
-        let simbox = frame.simbox.as_ref().unwrap();
-        let mut lc = LinkCell::new().cutoff(cutoff);
-        lc.build(pos.view(), simbox);
-        lc.query().clone()
+        nlist_from_frame(frame, cutoff)
     }
 
     #[test]

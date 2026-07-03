@@ -11,7 +11,7 @@ docs.rs, while Python reference is injected from the installed binding module.
 The WebAssembly package emits TypeScript declarations during the docs build;
 the hosted site reserves `/reference/wasm/` for that generated reference.
 
-## Representative Workflows
+## The same workflow runs in Python, Rust, and TypeScript
 
 === "Python"
 
@@ -74,7 +74,7 @@ the hosted site reserves `/reference/wasm/` for that generated reference.
     console.log(writeFrame(frame3d, "xyz"));
     ```
 
-## Core Capabilities
+## One data model powers every subsystem
 
 - [Data model](guides/data-model.md): `Atomistic` is the graph view,
   `Frame` is the columnar data view, and `Block` is the typed column store.
@@ -91,7 +91,7 @@ the hosted site reserves `/reference/wasm/` for that generated reference.
 - [Trajectory analysis](guides/trajectory-analysis.md): run RDF, MSD, cluster,
   tensor, PCA, and k-means workflows on one frame or a sequence of frames.
 
-## Documentation Map
+## Find your starting point
 
 Start with [Installation](getting-started/installation.md), then choose the
 quickstart for your host language:

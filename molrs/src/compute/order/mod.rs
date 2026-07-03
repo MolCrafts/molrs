@@ -1,12 +1,19 @@
 //! Bond-orientational order parameters ported from `freud.order`.
 //!
-//! Currently implemented:
-//! - [`Steinhardt`](steinhardt::Steinhardt) — per-particle `q_ℓ`, `w_ℓ`,
-//!   averaged variants, and the underlying `q_ℓm` array. Drives the
-//!   downstream `SolidLiquid` and `ContinuousCoordination` analyzers.
+//! | Method | Measures |
+//! |--------|----------|
+//! | [`Steinhardt`] | per-particle `q_ℓ` / `w_ℓ` (+ averaged variants and the raw `q_ℓm` array) |
+//! | [`Hexatic`] | 2-D k-atic bond order `ψ_k` |
+//! | [`Nematic`] | nematic director + scalar order parameter from particle orientations |
+//! | [`Cubatic`] | cubatic order parameter via simulated annealing |
+//! | [`SolidLiquid`] | Frenkel–ten Wolde solid/liquid bond classification from `q_ℓm` |
+//! | [`ContinuousCoordination`] | continuous (Voronoi-weighted) coordination numbers |
+//! | [`LegendreReorientation`] | Legendre reorientational TCFs `C_ℓ(t)` over lag time |
+//! | [`RotationalAutocorrelation`] | rotational autocorrelation of an orientation time series |
 //!
-//! Future phases will add `Nematic`, `Hexatic`, `Cubatic`, `SolidLiquid`,
-//! `ContinuousCoordination`, `RotationalAutocorrelation`.
+//! Every method is a [`Compute`](crate::compute::Compute): construct with its
+//! parameters, then `compute(&frames, args)` — `args` carries per-frame
+//! neighbor lists / orientations where the method needs them.
 
 pub mod continuous_coordination;
 pub mod cubatic;

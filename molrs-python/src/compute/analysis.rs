@@ -11,7 +11,7 @@ use molrs::compute::Compute;
 use molrs::compute::distribution::{
     AngleObservable, AnyObservable, AtomGroups, AxisSpec, CombinedDistribution,
     CombinedDistributionResult, DihedralObservable, DistanceObservable, DistributionFunction,
-    DistributionResult, Observable,
+    DistributionResult,
 };
 use molrs::compute::{
     DensityGrid, DistKind, DomainAnalysis, GridSpec, HBondCriterion, HBonds, HBondsResult,
@@ -20,6 +20,7 @@ use molrs::compute::{
     VoronoiCells, VoronoiIntegration, polarizability_finite_field,
 };
 use molrs::store::frame::Frame as CoreFrame;
+use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 
 use ndarray::Array2;
@@ -32,42 +33,6 @@ use pyo3::types::PyDict;
 
 use crate::core::spatial::simbox::PyBox;
 use crate::helpers::{NpF, collect_frames, py_value_err};
-
-/// Build an [`AtomGroups`] of the given `arity` from an `(N, arity)` integer
-/// array of atom indices (row-major flattened).
-fn atom_groups(arity: usize, groups: PyReadonlyArray2<'_, i64>) -> PyResult<AtomGroups> {
-    let a = groups.as_array();
-    if a.ncols() != arity {
-        return Err(PyValueError::new_err(format!(
-            "groups must have {arity} columns, got {}",
-            a.ncols()
-        )));
-    }
-    let mut flat = Vec::with_capacity(a.len());
-    for &v in a.iter() {
-        if v < 0 {
-            return Err(PyValueError::new_err("atom indices must be non-negative"));
-        }
-        flat.push(v as u32);
-    }
-    AtomGroups::new(arity, flat).map_err(py_value_err)
-}
-
-/// Run one geometric distribution function over `frames` for `(N, arity)`
-/// `groups`. Shared by the angle/dihedral/distance wrappers, which differ only
-/// in their observable type and arity.
-fn run_distribution<O: Observable + Sync>(
-    f: &DistributionFunction<O>,
-    frames: &Bound<'_, PyAny>,
-    arity: usize,
-    groups: PyReadonlyArray2<'_, i64>,
-) -> PyResult<PyDistributionResult> {
-    let g = atom_groups(arity, groups)?;
-    let owned = collect_frames(frames)?;
-    let refs: Vec<&CoreFrame> = owned.iter().collect();
-    let inner = f.compute(&refs, &g).map_err(py_value_err)?;
-    Ok(PyDistributionResult { inner })
-}
 
 // ---------------------------------------------------------------------------
 // Distribution functions (ADF / DDF / distance-DF)
@@ -143,13 +108,18 @@ impl PyAngleDistribution {
         Ok(Self { inner })
     }
 
-    /// `groups`: `(N, 3)` int array of `(i, j, k)` atom triplets.
-    fn compute(
-        &self,
-        frames: &Bound<'_, PyAny>,
-        groups: PyReadonlyArray2<'_, i64>,
-    ) -> PyResult<PyDistributionResult> {
-        run_distribution(&self.inner, frames, 3, groups)
+    /// Atom triplets (angle vertex in the middle) are read from the `angles`
+    /// topology block of the first frame.
+    fn compute(&self, frames: &Bound<'_, PyAny>) -> PyResult<PyDistributionResult> {
+        let owned = collect_frames(frames)?;
+        let refs: Vec<&CoreFrame> = owned.iter().collect();
+        let first = refs
+            .first()
+            .copied()
+            .ok_or_else(|| PyValueError::new_err("no frames provided"))?;
+        let groups = AtomGroups::from_frame(first, "angles", 3).map_err(py_value_err)?;
+        let inner = self.inner.compute(&refs, &groups).map_err(py_value_err)?;
+        Ok(PyDistributionResult { inner })
     }
 }
 
@@ -169,13 +139,18 @@ impl PyDihedralDistribution {
         Ok(Self { inner })
     }
 
-    /// `groups`: `(N, 4)` int array of `(i, j, k, l)` atom quadruplets.
-    fn compute(
-        &self,
-        frames: &Bound<'_, PyAny>,
-        groups: PyReadonlyArray2<'_, i64>,
-    ) -> PyResult<PyDistributionResult> {
-        run_distribution(&self.inner, frames, 4, groups)
+    /// Atom quadruplets are read from the `dihedrals` topology block of the
+    /// first frame.
+    fn compute(&self, frames: &Bound<'_, PyAny>) -> PyResult<PyDistributionResult> {
+        let owned = collect_frames(frames)?;
+        let refs: Vec<&CoreFrame> = owned.iter().collect();
+        let first = refs
+            .first()
+            .copied()
+            .ok_or_else(|| PyValueError::new_err("no frames provided"))?;
+        let groups = AtomGroups::from_frame(first, "dihedrals", 4).map_err(py_value_err)?;
+        let inner = self.inner.compute(&refs, &groups).map_err(py_value_err)?;
+        Ok(PyDistributionResult { inner })
     }
 }
 
@@ -195,13 +170,17 @@ impl PyDistanceDistribution {
         Ok(Self { inner })
     }
 
-    /// `groups`: `(N, 2)` int array of `(i, j)` atom pairs.
-    fn compute(
-        &self,
-        frames: &Bound<'_, PyAny>,
-        groups: PyReadonlyArray2<'_, i64>,
-    ) -> PyResult<PyDistributionResult> {
-        run_distribution(&self.inner, frames, 2, groups)
+    /// Atom pairs are read from the `bonds` topology block of the first frame.
+    fn compute(&self, frames: &Bound<'_, PyAny>) -> PyResult<PyDistributionResult> {
+        let owned = collect_frames(frames)?;
+        let refs: Vec<&CoreFrame> = owned.iter().collect();
+        let first = refs
+            .first()
+            .copied()
+            .ok_or_else(|| PyValueError::new_err("no frames provided"))?;
+        let groups = AtomGroups::from_frame(first, "bonds", 2).map_err(py_value_err)?;
+        let inner = self.inner.compute(&refs, &groups).map_err(py_value_err)?;
+        Ok(PyDistributionResult { inner })
     }
 }
 
@@ -210,17 +189,6 @@ impl PyDistanceDistribution {
 // ---------------------------------------------------------------------------
 
 /// Map an observable-kind string to its `AnyObservable` variant + arity.
-fn any_observable(kind: &str) -> PyResult<(AnyObservable, usize)> {
-    match kind {
-        "distance" => Ok((DistanceObservable.into(), 2)),
-        "angle" => Ok((AngleObservable.into(), 3)),
-        "dihedral" => Ok((DihedralObservable.into(), 4)),
-        other => Err(PyValueError::new_err(format!(
-            "observable kind must be 'distance', 'angle', or 'dihedral', got {other:?}"
-        ))),
-    }
-}
-
 #[pyclass(name = "CombinedDistributionResult")]
 pub struct PyCombinedDistributionResult {
     inner: CombinedDistributionResult,
@@ -300,7 +268,7 @@ impl PyCombinedDistribution {
         let mut specs = Vec::with_capacity(axes.len());
         let mut arities = Vec::with_capacity(axes.len());
         for (kind, bins, min, max, sin_weight) in &axes {
-            let (obs, arity) = any_observable(kind)?;
+            let (obs, arity) = AnyObservable::from_kind(kind).map_err(py_value_err)?;
             observables.push(obs);
             arities.push(arity);
             specs.push(
@@ -313,27 +281,32 @@ impl PyCombinedDistribution {
         Ok(Self { inner, arities })
     }
 
-    /// `groups`: one `(N, arity)` int array per axis (same atom count across
-    /// axes), aligned with the axis order given to the constructor.
-    fn compute(
-        &self,
-        frames: &Bound<'_, PyAny>,
-        groups: Vec<PyReadonlyArray2<'_, i64>>,
-    ) -> PyResult<PyCombinedDistributionResult> {
-        if groups.len() != self.arities.len() {
-            return Err(PyValueError::new_err(format!(
-                "expected {} group arrays (one per axis), got {}",
-                self.arities.len(),
-                groups.len()
-            )));
-        }
-        let group_objs: Vec<AtomGroups> = groups
-            .into_iter()
-            .zip(self.arities.iter())
-            .map(|(g, &arity)| atom_groups(arity, g))
-            .collect::<PyResult<_>>()?;
+    /// Per-axis atom groups are read from the first frame's topology block that
+    /// matches each axis arity (2 → `bonds`, 3 → `angles`, 4 → `dihedrals`).
+    fn compute(&self, frames: &Bound<'_, PyAny>) -> PyResult<PyCombinedDistributionResult> {
         let owned = collect_frames(frames)?;
         let refs: Vec<&CoreFrame> = owned.iter().collect();
+        let first = refs
+            .first()
+            .copied()
+            .ok_or_else(|| PyValueError::new_err("no frames provided"))?;
+        let group_objs: Vec<AtomGroups> = self
+            .arities
+            .iter()
+            .map(|&arity| {
+                let block = match arity {
+                    2 => "bonds",
+                    3 => "angles",
+                    4 => "dihedrals",
+                    _ => {
+                        return Err(PyValueError::new_err(format!(
+                            "no topology block for axis arity {arity}"
+                        )));
+                    }
+                };
+                AtomGroups::from_frame(first, block, arity).map_err(py_value_err)
+            })
+            .collect::<PyResult<_>>()?;
         let inner = self
             .inner
             .compute(&refs, &group_objs)
@@ -450,26 +423,26 @@ impl PyLegendreReorientation {
         }
     }
 
-    /// `pairs`: `(N, 2)` int array of `(tail, head)` atom indices defining each
-    /// tracked bond vector. `frames` are time-ordered.
+    /// The `(tail, head)` atom-index pairs defining each tracked bond vector are
+    /// read from the `bonds` topology block of the first frame. `frames` are
+    /// time-ordered.
     fn compute(
         &self,
         frames: &Bound<'_, PyAny>,
-        pairs: PyReadonlyArray2<'_, i64>,
     ) -> PyResult<PyLegendreReorientationResult> {
-        let a = pairs.as_array();
-        if a.ncols() != 2 {
-            return Err(PyValueError::new_err("pairs must have 2 columns"));
-        }
-        let mut tuples: Vec<(u32, u32)> = Vec::with_capacity(a.nrows());
-        for row in a.rows() {
-            if row[0] < 0 || row[1] < 0 {
-                return Err(PyValueError::new_err("atom indices must be non-negative"));
-            }
-            tuples.push((row[0] as u32, row[1] as u32));
-        }
         let owned = collect_frames(frames)?;
         let refs: Vec<&CoreFrame> = owned.iter().collect();
+        let first = refs
+            .first()
+            .copied()
+            .ok_or_else(|| PyValueError::new_err("no frames provided"))?;
+        let groups = AtomGroups::from_frame(first, "bonds", 2).map_err(py_value_err)?;
+        let tuples: Vec<(u32, u32)> = (0..groups.len())
+            .map(|i| {
+                let t = groups.tuple(i);
+                (t[0], t[1])
+            })
+            .collect();
         let inner = self.inner.compute(&refs, &tuples).map_err(py_value_err)?;
         Ok(PyLegendreReorientationResult { inner })
     }
@@ -621,7 +594,7 @@ impl PySpatialDistributionResult {
             .map(|g| g.clone().into_pyarray(py))
     }
     /// Per-voxel mean body-frame orientation `(nx, ny, nz, 3)` (only present
-    /// when the SDF was built with `orientation_pairs`).
+    /// when the frames carried an `"orientations"` topology block).
     #[getter]
     fn orientation<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray4<NpF>>> {
         self.inner
@@ -668,11 +641,12 @@ impl PySpatialDistribution {
     ///     Grid extent (Å) per axis.
     /// bulk_density : float, optional
     ///     If set, also produce ``g_sdf = density / bulk_density``.
-    /// orientation_pairs : (T, 2) int array, optional
-    ///     One `(tail, head)` index pair per target atom; attaches a per-voxel
-    ///     mean body-frame orientation of the unit `head − tail` vector.
+    ///
+    /// A per-voxel mean orientation field is produced when the frames carry an
+    /// ``"orientations"`` topology block — one `(head, tail)` atom pair per
+    /// target atom — read at compute time (no constructor array).
     #[new]
-    #[pyo3(signature = (reference, template, target, n, extent, bulk_density=None, orientation_pairs=None))]
+    #[pyo3(signature = (reference, template, target, n, extent, bulk_density=None))]
     fn new(
         reference: Vec<usize>,
         template: PyReadonlyArray2<'_, f64>,
@@ -680,7 +654,6 @@ impl PySpatialDistribution {
         n: [usize; 3],
         extent: [F; 3],
         bulk_density: Option<F>,
-        orientation_pairs: Option<PyReadonlyArray2<'_, i64>>,
     ) -> PyResult<Self> {
         let tmpl: Array2<F> = template.as_array().to_owned();
         let grid = GridSpec { n, extent };
@@ -689,30 +662,41 @@ impl PySpatialDistribution {
         if let Some(rho) = bulk_density {
             sdf = sdf.with_bulk_density(rho);
         }
-        if let Some(pairs) = orientation_pairs {
-            let a = pairs.as_array();
-            if a.ncols() != 2 {
-                return Err(PyValueError::new_err(
-                    "orientation_pairs must have 2 columns",
-                ));
-            }
-            let mut tuples: Vec<(usize, usize)> = Vec::with_capacity(a.nrows());
-            for row in a.rows() {
-                if row[0] < 0 || row[1] < 0 {
-                    return Err(PyValueError::new_err("atom indices must be non-negative"));
-                }
-                tuples.push((row[0] as usize, row[1] as usize));
-            }
-            sdf = sdf.with_orientation(tuples);
-        }
         Ok(Self { inner: sdf })
     }
 
     /// Accumulate the SDF over a trajectory (list of frames).
+    ///
+    /// If the first frame carries an `"orientations"` topology block (one
+    /// `(head, tail)` atom pair per target atom, in `target` order), a per-voxel
+    /// mean body-frame orientation of the unit `head − tail` vector is
+    /// accumulated; otherwise the SDF is orientation-free (the old `None` case).
     fn compute(&self, frames: &Bound<'_, PyAny>) -> PyResult<PySpatialDistributionResult> {
         let owned = collect_frames(frames)?;
         let refs: Vec<&CoreFrame> = owned.iter().collect();
-        let inner = self.inner.compute(&refs, ()).map_err(py_value_err)?;
+        let first = refs
+            .first()
+            .copied()
+            .ok_or_else(|| PyValueError::new_err("no frames provided"))?;
+        let inner = if first.contains_block("orientations") {
+            let groups = AtomGroups::from_frame(first, "orientations", 2).map_err(py_value_err)?;
+            // The block stores `(head, tail)`; `with_orientation` expects
+            // `(tail, head)` and forms the unit `head − tail` vector internally
+            // (with minimum-image), so swap the endpoint order.
+            let tuples: Vec<(usize, usize)> = (0..groups.len())
+                .map(|i| {
+                    let t = groups.tuple(i);
+                    (t[1] as usize, t[0] as usize)
+                })
+                .collect();
+            self.inner
+                .clone()
+                .with_orientation(tuples)
+                .compute(&refs, ())
+                .map_err(py_value_err)?
+        } else {
+            self.inner.compute(&refs, ()).map_err(py_value_err)?
+        };
         Ok(PySpatialDistributionResult { inner })
     }
 }

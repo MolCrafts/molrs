@@ -20,7 +20,7 @@
 //!   vector `r_j − r_i`. The Steinhardt accumulator visits each pair once and
 //!   updates both particles, exploiting `Y_ℓm(−r̂) = (−1)^ℓ Y_ℓm(r̂)`.
 //! - `Y_ℓm` follows the Condon-Shortley + physics-normalization convention
-//!   (see [`crate::compute::math::spherical_harmonics`]).
+//!   (see [`molrs::math::spherical_harmonics`]).
 //!
 //! # References
 //!
@@ -28,6 +28,7 @@
 //! - Lechner & Dellago, *J. Chem. Phys.* **129**, 114707 (2008) — averaged
 //!   variant.
 
+use crate::compute::result::ComputeResult;
 use std::cmp::Ordering;
 
 use molrs::math::complex::Complex;
@@ -38,7 +39,6 @@ use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 
 use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
 use crate::compute::traits::Compute;
 use crate::compute::util::get_positions_ref;
 
@@ -94,25 +94,6 @@ impl Steinhardt {
         &self.l
     }
 }
-
-/// Per-frame Steinhardt result for one or more ℓ values.
-///
-/// Each `Vec` is parallel to `l`: `qlm[k]` has shape `(N, 2·l[k]+1)`,
-/// `ql[k]` has shape `(N,)`.
-#[derive(Debug, Clone, Default)]
-pub struct SteinhardtResult {
-    /// ℓ values, in the order requested.
-    pub l: Vec<u32>,
-    /// Per-ℓ `q_ℓm` table, flattened in row-major `[particle, m+ℓ]` order
-    /// (length `N · (2ℓ+1)`).
-    pub qlm: Vec<Vec<Complex>>,
-    /// Per-ℓ scalar `q_ℓ` per particle (length `N`).
-    pub ql: Vec<Vec<F>>,
-    /// Per-ℓ `w_ℓ` per particle, present only if [`Steinhardt::with_wl`] was set.
-    pub wl: Option<Vec<Vec<F>>>,
-}
-
-impl ComputeResult for SteinhardtResult {}
 
 /// Public helper used by `SolidLiquid` and `ContinuousCoordination`: compute
 /// the raw `q_ℓm(i)` table for a single ℓ on a single frame.
@@ -352,11 +333,30 @@ impl Compute for Steinhardt {
     }
 }
 
+/// Per-frame Steinhardt result for one or more ℓ values.
+///
+/// Each `Vec` is parallel to `l`: `qlm[k]` has shape `(N, 2·l[k]+1)`,
+/// `ql[k]` has shape `(N,)`.
+#[derive(Debug, Clone, Default)]
+pub struct SteinhardtResult {
+    /// ℓ values, in the order requested.
+    pub l: Vec<u32>,
+    /// Per-ℓ `q_ℓm` table, flattened in row-major `[particle, m+ℓ]` order
+    /// (length `N · (2ℓ+1)`).
+    pub qlm: Vec<Vec<Complex>>,
+    /// Per-ℓ scalar `q_ℓ` per particle (length `N`).
+    pub ql: Vec<Vec<F>>,
+    /// Per-ℓ `w_ℓ` per particle, present only if [`Steinhardt::with_wl`] was set.
+    pub wl: Option<Vec<Vec<F>>>,
+}
+
+impl ComputeResult for SteinhardtResult {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compute::test_support::nlist_from_frame;
     use molrs::Frame;
-    use molrs::spatial::neighbors::{LinkCell, NbListAlgo};
     use molrs::spatial::region::simbox::SimBox;
     use molrs::store::block::Block;
     use ndarray::{Array1 as A1, array};
@@ -377,47 +377,7 @@ mod tests {
     }
 
     fn build_nlist(frame: &Frame, cutoff: F) -> NeighborList {
-        let pos = {
-            let xp = frame
-                .get("atoms")
-                .unwrap()
-                .get("x")
-                .and_then(<F as molrs::store::block::BlockDtype>::from_column)
-                .unwrap()
-                .as_slice()
-                .unwrap()
-                .to_vec();
-            let yp = frame
-                .get("atoms")
-                .unwrap()
-                .get("y")
-                .and_then(<F as molrs::store::block::BlockDtype>::from_column)
-                .unwrap()
-                .as_slice()
-                .unwrap()
-                .to_vec();
-            let zp = frame
-                .get("atoms")
-                .unwrap()
-                .get("z")
-                .and_then(<F as molrs::store::block::BlockDtype>::from_column)
-                .unwrap()
-                .as_slice()
-                .unwrap()
-                .to_vec();
-            let n = xp.len();
-            let mut pos = ndarray::Array2::<F>::zeros((n, 3));
-            for i in 0..n {
-                pos[[i, 0]] = xp[i];
-                pos[[i, 1]] = yp[i];
-                pos[[i, 2]] = zp[i];
-            }
-            pos
-        };
-        let simbox = frame.simbox.as_ref().unwrap();
-        let mut lc = LinkCell::new().cutoff(cutoff);
-        lc.build(pos.view(), simbox);
-        lc.query().clone()
+        nlist_from_frame(frame, cutoff)
     }
 
     // -- 1) Trivial single-pair --------------------------------------------------

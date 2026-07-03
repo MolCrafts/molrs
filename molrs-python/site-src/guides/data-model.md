@@ -13,7 +13,7 @@ columns without rewriting the topology. The contract is local: columns in the
 same block agree on row count, and code that needs specific columns checks for
 them at the subsystem boundary.
 
-## Frames and Blocks
+## A frame holds named blocks of columns
 
 `Frame` is a dictionary-like container. `Block` is a column store backed by
 typed arrays. In Python those columns are NumPy arrays; in WASM they appear as
@@ -27,7 +27,7 @@ deprecated no-ops. This matters for interop because external packages often
 default to single precision for visualization, while molrs algorithms assume
 double precision for geometry and force-field work.
 
-## Simulation Boxes
+## A box adds periodicity to a frame
 
 A simulation box is attached to a frame when periodic boundary conditions
 matter. The box stores the lattice matrix, origin, and per-axis periodic flags.

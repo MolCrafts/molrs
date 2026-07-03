@@ -6,12 +6,13 @@
 //! For each particle of radius `r_max`, every voxel whose centre lies inside
 //! that sphere is set to `1`. The output is the boolean overlap mask
 //! (stored as a `u32` grid so callers can also use it for "count of
-//! overlapping particles per voxel" by reading the [`raw_counts`] field).
+//! overlapping particles per voxel" by reading the `raw_counts` field).
 //!
 //! Like [`GaussianDensity`](super::gaussian_density::GaussianDensity), this
 //! is orthorhombic-box only and PBC-aware via wrap-around grid indexing.
 
 use super::wrap_index;
+use crate::compute::result::ComputeResult;
 use ndarray::Array3;
 
 use molrs::spatial::region::simbox::BoxKind;
@@ -19,21 +20,8 @@ use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 
 use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
 use crate::compute::traits::Compute;
 use crate::compute::util::get_positions_ref;
-
-/// Per-frame sphere-voxelisation result.
-#[derive(Debug, Clone, Default)]
-pub struct SphereVoxelizationResult {
-    /// Boolean voxel grid: `1` if any particle's sphere covers the voxel
-    /// centre, `0` otherwise.
-    pub voxels: Array3<u8>,
-    /// Optional accumulating count of overlapping particles per voxel.
-    pub raw_counts: Array3<u32>,
-}
-
-impl ComputeResult for SphereVoxelizationResult {}
 
 /// Sphere-voxelisation calculator.
 #[derive(Debug, Clone, Copy)]
@@ -45,6 +33,7 @@ pub struct SphereVoxelization {
 }
 
 impl SphereVoxelization {
+    /// `nx × ny × nz` voxel grid; particles rasterised as spheres of radius `r_max` (Å).
     pub fn new(nx: usize, ny: usize, nz: usize, r_max: F) -> Result<Self, ComputeError> {
         if nx == 0 || ny == 0 || nz == 0 {
             return Err(ComputeError::OutOfRange {
@@ -166,6 +155,18 @@ impl Compute for SphereVoxelization {
         Ok(out)
     }
 }
+
+/// Per-frame sphere-voxelisation result.
+#[derive(Debug, Clone, Default)]
+pub struct SphereVoxelizationResult {
+    /// Boolean voxel grid: `1` if any particle's sphere covers the voxel
+    /// centre, `0` otherwise.
+    pub voxels: Array3<u8>,
+    /// Optional accumulating count of overlapping particles per voxel.
+    pub raw_counts: Array3<u32>,
+}
+
+impl ComputeResult for SphereVoxelizationResult {}
 
 #[cfg(test)]
 mod tests {

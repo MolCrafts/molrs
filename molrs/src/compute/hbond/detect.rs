@@ -10,7 +10,6 @@
 use molrs::spatial::neighbors::NeighborQuery;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
-use ndarray::Array2;
 
 use super::criterion::{DistKind, HBondCriterion};
 use crate::compute::error::ComputeError;
@@ -111,25 +110,44 @@ impl HBonds {
 
         // Candidate search: query points are the donor heavy atom (DonorAcceptor)
         // or the bridging hydrogen (HydrogenAcceptor); reference points are the
-        // acceptors. NeighborQuery returns cross pairs within `dist_cutoff`.
-        let acc_xyz = Array2::from_shape_fn((self.acceptors.len(), 3), |(i, d)| {
-            pos(self.acceptors[i])[d]
-        });
-        let q_xyz = Array2::from_shape_fn((self.donors.len(), 3), |(i, d)| {
-            let (don, hyd) = self.donors[i];
+        // acceptors. Gather each selection into contiguous SoA x/y/z columns
+        // (molrs-native layout) and hand them to `NeighborQuery`'s SoA entry —
+        // no interleaved `Array2`. It returns cross pairs within `dist_cutoff`.
+        let na = self.acceptors.len();
+        let (mut acc_x, mut acc_y, mut acc_z) = (
+            Vec::with_capacity(na),
+            Vec::with_capacity(na),
+            Vec::with_capacity(na),
+        );
+        for &a in &self.acceptors {
+            let p = pos(a);
+            acc_x.push(p[0]);
+            acc_y.push(p[1]);
+            acc_z.push(p[2]);
+        }
+        let nd = self.donors.len();
+        let (mut q_x, mut q_y, mut q_z) = (
+            Vec::with_capacity(nd),
+            Vec::with_capacity(nd),
+            Vec::with_capacity(nd),
+        );
+        for &(don, hyd) in &self.donors {
             let src = match self.criterion.dist_kind {
                 DistKind::DonorAcceptor => don,
                 DistKind::HydrogenAcceptor => hyd,
             };
-            pos(src)[d]
-        });
+            let p = pos(src);
+            q_x.push(p[0]);
+            q_y.push(p[1]);
+            q_z.push(p[2]);
+        }
 
+        let cutoff = self.criterion.dist_cutoff;
         let nlist = match frame.simbox_ref() {
-            Some(sb) => NeighborQuery::new(sb, acc_xyz.view(), self.criterion.dist_cutoff)
-                .query(q_xyz.view()),
-            None => {
-                NeighborQuery::free(acc_xyz.view(), self.criterion.dist_cutoff).query(q_xyz.view())
-            }
+            Some(sb) => NeighborQuery::from_columns(sb, &acc_x, &acc_y, &acc_z, cutoff)
+                .query_columns(&q_x, &q_y, &q_z),
+            None => NeighborQuery::free_columns(&acc_x, &acc_y, &acc_z, cutoff)
+                .query_columns(&q_x, &q_y, &q_z),
         };
 
         let qi = nlist.query_point_indices();

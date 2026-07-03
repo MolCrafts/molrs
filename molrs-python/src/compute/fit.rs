@@ -19,11 +19,14 @@
 //! analyst's explicit, parameterized choice — and a raw result can never
 //! silently fabricate a transport coefficient.
 
-use molrs::compute::fit::{
-    DebyeFit, DebyeRelaxation, EinsteinConductivity, EinsteinDiffusion, EinsteinDiffusionArgs,
-    EinsteinHelfandSpectrum, EwaldBoundary, GreenKuboConductivity, GreenKuboDiffusion,
-    GreenKuboSpectrum, IRSpectrum, LinearFit, Plateau, PowerSpectrum, RamanSpectrum,
-    ResonanceRamanSpectrum, RoaSpectrum, RunningIntegral, VACF, VcdSpectrum,
+use molrs::compute::fit::{DebyeFit, LinearFit, Plateau, RunningIntegral};
+use molrs::compute::spectroscopy::{
+    EinsteinHelfandSpectrum, GreenKuboSpectrum, IRSpectrum, PowerSpectrum, RamanSpectrum,
+    ResonanceRamanSpectrum, RoaSpectrum, VcdSpectrum,
+};
+use molrs::compute::transport::{
+    DebyeRelaxation, EinsteinConductivity, EinsteinDiffusion, EinsteinDiffusionArgs,
+    EwaldBoundary, GreenKuboConductivity, GreenKuboDiffusion, VACF,
 };
 use molrs::compute::traits::{Compute, Fit};
 use molrs::store::frame::Frame as CoreFrame;
@@ -35,9 +38,7 @@ use pyo3::types::PyDict;
 use crate::helpers::{collect_frames, py_value_err};
 
 /// Empty frame slice for the series-based raw computes (`frames` is unused).
-fn no_frames() -> Vec<&'static CoreFrame> {
-    Vec::new()
-}
+const EMPTY_FRAMES: &[&CoreFrame] = &[];
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Raw computes
@@ -72,7 +73,7 @@ impl PyVACF {
     ) -> PyResult<Bound<'py, PyDict>> {
         let v = velocities.as_array().to_owned();
         let r = VACF
-            .compute(&no_frames(), (&v, dt, resolution))
+            .compute(EMPTY_FRAMES, (&v, dt, resolution))
             .map_err(py_value_err)?;
         let d = PyDict::new(py);
         d.set_item("lag_times", r.lag_times.into_pyarray(py))?;
@@ -106,7 +107,7 @@ impl PyGreenKuboDiffusion {
     ) -> PyResult<Bound<'py, PyDict>> {
         let v = velocities.as_array().to_owned();
         let r = GreenKuboDiffusion
-            .compute(&no_frames(), (&v, dt, resolution))
+            .compute(EMPTY_FRAMES, (&v, dt, resolution))
             .map_err(py_value_err)?;
         let d = PyDict::new(py);
         d.set_item("lag_times", r.lag_times.into_pyarray(py))?;
@@ -180,7 +181,7 @@ impl PyEinsteinConductivity {
     ) -> PyResult<Bound<'py, PyDict>> {
         let td = translational_dipole.as_array().to_owned();
         let r = EinsteinConductivity
-            .compute(&no_frames(), (&td, dt, max_correlation_time))
+            .compute(EMPTY_FRAMES, (&td, dt, max_correlation_time))
             .map_err(py_value_err)?;
         let d = PyDict::new(py);
         d.set_item("lag_times", r.lag_times.into_pyarray(py))?;
@@ -218,7 +219,7 @@ impl PyGreenKuboConductivity {
     ) -> PyResult<Bound<'py, PyDict>> {
         let j = current.as_array().to_owned();
         let r = GreenKuboConductivity
-            .compute(&no_frames(), (&j, dt, max_correlation_time))
+            .compute(EMPTY_FRAMES, (&j, dt, max_correlation_time))
             .map_err(py_value_err)?;
         let d = PyDict::new(py);
         d.set_item("lag_times", r.lag_times.into_pyarray(py))?;
@@ -228,16 +229,6 @@ impl PyGreenKuboConductivity {
 }
 
 // ── DebyeRelaxation (raw dipole ACF + V/T/BC metadata) ────────────────────────
-
-fn parse_boundary(boundary: &str) -> PyResult<EwaldBoundary> {
-    match boundary.to_ascii_lowercase().as_str() {
-        "tinfoil" | "tin-foil" | "tin_foil" | "conducting" => Ok(EwaldBoundary::TinFoil),
-        "vacuum" => Ok(EwaldBoundary::Vacuum),
-        other => Err(pyo3::exceptions::PyValueError::new_err(format!(
-            "boundary must be 'tinfoil' or 'vacuum', got {other:?}"
-        ))),
-    }
-}
 
 /// Raw dipole-ACF compute for the Debye relaxation route. Carries the
 /// unnormalized ACF, the zero-lag variance ⟨M(0)²⟩, and the V/T/Ewald-BC
@@ -258,7 +249,7 @@ impl PyDebyeRelaxation {
             inner: DebyeRelaxation {
                 volume,
                 temperature,
-                boundary: parse_boundary(boundary)?,
+                boundary: EwaldBoundary::from_name(boundary).map_err(py_value_err)?,
             },
         })
     }
@@ -278,7 +269,7 @@ impl PyDebyeRelaxation {
         let dm = dipole_moments.as_array().to_owned();
         let r = self
             .inner
-            .compute(&no_frames(), (&dm, dt, max_correlation_time))
+            .compute(EMPTY_FRAMES, (&dm, dt, max_correlation_time))
             .map_err(py_value_err)?;
         let d = PyDict::new(py);
         d.set_item("lag_times", r.lag_times.into_pyarray(py))?;

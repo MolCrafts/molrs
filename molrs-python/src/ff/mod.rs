@@ -478,10 +478,7 @@ impl PyMMFFTypifier {
 /// ----------
 /// strict : bool, default True
 ///     When True, a bonded term with no force-field match is an error. When
-///     False, the (optional) estimator fills missing parameters.
-/// estimator : bool, default False
-///     Attach the similarity-based parameter estimator to the no-match seam
-///     (only consulted when ``strict=False``).
+///     False, such terms are skipped (left unparametrized).
 ///
 /// Examples
 /// --------
@@ -497,18 +494,15 @@ pub struct PyOplsTypifier {
 impl PyOplsTypifier {
     /// Create an OPLS-AA typifier from the embedded canonical parameter set.
     #[new]
-    #[pyo3(signature = (strict = true, estimator = false))]
-    fn new(strict: bool, estimator: bool) -> PyResult<Self> {
-        let mut typifier = OplsTypifier::oplsaa()
+    #[pyo3(signature = (strict = true))]
+    fn new(strict: bool) -> PyResult<Self> {
+        let typifier = OplsTypifier::oplsaa()
             .map_err(|e| {
                 pyo3::exceptions::PyRuntimeError::new_err(format!(
                     "failed to initialize OPLS-AA: {e}"
                 ))
             })?
             .with_strict(strict);
-        if estimator {
-            typifier = typifier.with_default_estimator();
-        }
         Ok(Self { inner: typifier })
     }
 

@@ -139,6 +139,24 @@ pub enum AnyObservable {
 }
 
 impl AnyObservable {
+    /// Parse an observable-kind string into the variant and its arity:
+    /// `"distance"` → 2, `"angle"` → 3, `"dihedral"` → 4.
+    pub fn from_kind(kind: &str) -> Result<(Self, usize), ComputeError> {
+        let obs = match kind {
+            "distance" => Self::Distance(DistanceObservable),
+            "angle" => Self::Angle(AngleObservable),
+            "dihedral" => Self::Dihedral(DihedralObservable),
+            other => {
+                return Err(ComputeError::OutOfRange {
+                    field: "AnyObservable::kind",
+                    value: other.to_string(),
+                });
+            }
+        };
+        let arity = obs.arity();
+        Ok((obs, arity))
+    }
+
     fn arity(&self) -> usize {
         match self {
             Self::Distance(o) => o.arity(),

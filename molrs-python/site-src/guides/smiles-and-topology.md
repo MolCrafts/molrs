@@ -11,7 +11,7 @@ that connectivity into a three-dimensional molecule. Keeping those phases
 separate makes failures easier to diagnose: parser errors are syntax or
 valence problems, while embedding errors are geometry or optimization problems.
 
-## Atomistic Graphs
+## Atomistic is the editable graph view
 
 `Atomistic` stores atoms and bonds directly. It is the right abstraction when
 building small molecules, adjusting bond orders, or passing topology into

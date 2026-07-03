@@ -1,16 +1,16 @@
 //! Domain (microheterogeneity) analysis over a radical-Voronoi tessellation.
 //!
 //! Merges face-adjacent cells that share the same user label into connected
-//! domains via union-find over the cell-adjacency graph — the aggregation reference implementation
-//! performs in `src/domain.cpp` / `src/posdomain.cpp` (e.g. polar vs. apolar
-//! domains in ionic liquids). Returns the domain size distribution, count, and
-//! largest-domain fraction.
+//! domains via the native connected-components over the cell-adjacency graph —
+//! the aggregation reference implementation performs in `src/domain.cpp` /
+//! `src/posdomain.cpp` (e.g. polar vs. apolar domains in ionic liquids).
+//! Returns the domain size distribution, count, and largest-domain fraction.
 
 use molrs::types::F;
 
-use super::UnionFind;
 use super::cell::VoronoiCells;
 use crate::compute::error::ComputeError;
+use crate::core::system::topology::Topology;
 
 /// Outcome of a [`DomainAnalysis`].
 #[derive(Debug, Clone)]
@@ -21,7 +21,7 @@ pub struct DomainResult {
     pub count: usize,
     /// Fraction of labelled atoms in the largest domain.
     pub largest_fraction: F,
-    /// Domain id (a representative cell index) per cell.
+    /// Domain id (0-based component label) per cell.
     pub domain_of: Vec<usize>,
 }
 
@@ -45,26 +45,33 @@ impl DomainAnalysis {
                 what: "domain labels length",
             });
         }
-        let mut uf = UnionFind::new(n);
+        // Build the same-label cell-adjacency graph and cluster it with the
+        // native connected-components (BFS) facility instead of a local
+        // union-find: each cell is a node, and a face-adjacency between two
+        // same-label cells is an edge.
+        let mut topo = Topology::with_atoms(n);
         for i in 0..n {
             for j in cells.neighbors(i) {
                 let j = j as usize;
                 if j < n && j > i && labels[i] == labels[j] {
-                    uf.union(i, j);
+                    topo.add_bond(i, j);
                 }
             }
         }
+        let component_of = topo.connected_components();
 
-        // Domain ids are cell indices in `0..n`, so a flat `Vec` keyed by the
-        // union-find root replaces the `HashMap` (no hashing): each root's tally is
-        // an integer count, and roots with a non-zero count are exactly the
-        // `HashMap`'s keys — an identical size multiset.
+        // `connected_components` labels every cell in `0..n` with a contiguous
+        // 0-based component id (isolated cells get their own), so a flat `Vec`
+        // keyed by that id tallies domain sizes without hashing. Connected
+        // components are a graph invariant, so the partition — and thus the size
+        // multiset — is identical to the old union-find roots; only the label
+        // integers differ.
         let mut domain_of = vec![0usize; n];
         let mut size_of = vec![0usize; n];
         for (i, d) in domain_of.iter_mut().enumerate() {
-            let r = uf.find(i);
-            *d = r;
-            size_of[r] += 1;
+            let c = component_of[i] as usize;
+            *d = c;
+            size_of[c] += 1;
         }
 
         let mut sizes: Vec<usize> = size_of.into_iter().filter(|&c| c > 0).collect();

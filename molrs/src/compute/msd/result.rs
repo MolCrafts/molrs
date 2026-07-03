@@ -1,3 +1,6 @@
+//! Result types for [`MSD`](super::MSD): one [`MSDResult`] per lag time,
+//! collected in an [`MSDTimeSeries`]. Distances squared, (Å²).
+
 use molrs::types::F;
 use ndarray::Array1;
 
@@ -30,6 +33,7 @@ pub struct MSDTimeSeries {
 }
 
 impl MSDTimeSeries {
+    /// Wrap per-lag results (index = lag frame).
     pub fn new(data: Vec<MSDResult>) -> Self {
         Self { data }
     }

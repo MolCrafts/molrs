@@ -1,3 +1,14 @@
+//! Distance-based cluster detection and per-cluster properties, ported from
+//! `freud.cluster`.
+//!
+//! | Method | Measures |
+//! |--------|----------|
+//! | [`Cluster`] | connected components on the neighbor graph (BFS); per-particle cluster IDs + sizes |
+//! | [`ClusterProperties`] | per-cluster center of mass, gyration tensor, and radius of gyration (Å) |
+//!
+//! Typical flow: run [`Cluster`] first, feed its [`ClusterResult`] to
+//! [`ClusterProperties`] as `Args`.
+
 mod properties;
 mod result;
 
@@ -24,6 +35,7 @@ pub struct Cluster {
 }
 
 impl Cluster {
+    /// Keep only clusters with at least `min_cluster_size` particles.
     pub fn new(min_cluster_size: usize) -> Self {
         Self { min_cluster_size }
     }
@@ -286,8 +298,8 @@ impl Compute for Cluster {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compute::test_support::nlist_from_frame;
     use molrs::Frame;
-    use molrs::spatial::neighbors::{LinkCell, NbListAlgo};
     use molrs::spatial::region::simbox::SimBox;
     use molrs::store::block::Block;
     use molrs::types::F;
@@ -317,21 +329,7 @@ mod tests {
     }
 
     fn build_neighbors(frame: &Frame, cutoff: F) -> NeighborList {
-        let atoms = frame.get("atoms").unwrap();
-        let xs = super::super::util::get_f_slice(atoms, "atoms", "x").unwrap();
-        let ys = super::super::util::get_f_slice(atoms, "atoms", "y").unwrap();
-        let zs = super::super::util::get_f_slice(atoms, "atoms", "z").unwrap();
-        let n = xs.len();
-        let mut pos = ndarray::Array2::<F>::zeros((n, 3));
-        for i in 0..n {
-            pos[[i, 0]] = xs[i];
-            pos[[i, 1]] = ys[i];
-            pos[[i, 2]] = zs[i];
-        }
-        let simbox = frame.simbox.as_ref().unwrap();
-        let mut lc = LinkCell::new().cutoff(cutoff);
-        lc.build(pos.view(), simbox);
-        lc.query().clone()
+        nlist_from_frame(frame, cutoff)
     }
 
     fn cluster_single(frame: &Frame, nlist: NeighborList, min: usize) -> ClusterResult {

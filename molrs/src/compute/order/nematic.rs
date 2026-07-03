@@ -1,3 +1,5 @@
+//! Nematic order parameter and director from particle orientations.
+
 // 3×3 tensor traceless adjustment reads cleanest with index loops.
 #![allow(clippy::needless_range_loop)]
 
@@ -23,6 +25,7 @@
 //! choose different conventions (atom orientations vs molecular long axes
 //! vs bond directions), so the caller passes them in directly.
 
+use crate::compute::result::ComputeResult;
 use ndarray::array;
 
 use molrs::math::diagonalize::eigh_sym_3x3;
@@ -30,29 +33,14 @@ use molrs::store::frame_access::FrameAccess;
 use molrs::types::{F, F3, F3x3};
 
 use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
 use crate::compute::traits::Compute;
-
-/// Per-frame nematic order parameter.
-#[derive(Debug, Clone, Default)]
-pub struct NematicResult {
-    /// Largest eigenvalue of `Q` (scalar order parameter).
-    pub order: F,
-    /// All three eigenvalues, descending.
-    pub eigenvalues: [F; 3],
-    /// Director (eigenvector for the largest eigenvalue), unit vector.
-    pub director: [F; 3],
-    /// Full traceless symmetric `Q` tensor, row-major 3×3.
-    pub q_tensor: [[F; 3]; 3],
-}
-
-impl ComputeResult for NematicResult {}
 
 /// Nematic order parameter calculator.
 #[derive(Debug, Clone, Default)]
 pub struct Nematic;
 
 impl Nematic {
+    /// No parameters — the director comes from the orientations in `Args`.
     pub fn new() -> Self {
         Self
     }
@@ -128,6 +116,21 @@ impl Compute for Nematic {
         Ok(out)
     }
 }
+
+/// Per-frame nematic order parameter.
+#[derive(Debug, Clone, Default)]
+pub struct NematicResult {
+    /// Largest eigenvalue of `Q` (scalar order parameter).
+    pub order: F,
+    /// All three eigenvalues, descending.
+    pub eigenvalues: [F; 3],
+    /// Director (eigenvector for the largest eigenvalue), unit vector.
+    pub director: [F; 3],
+    /// Full traceless symmetric `Q` tensor, row-major 3×3.
+    pub q_tensor: [[F; 3]; 3],
+}
+
+impl ComputeResult for NematicResult {}
 
 #[cfg(test)]
 mod tests {

@@ -1,53 +1,47 @@
-//! `RDF::compute` — radial distribution function across size + frame axes.
+//! `rdf` category — radial distribution function g(r).
+//!
+//! Two regression points: the batch [`RDF::compute`] and the streaming
+//! [`RDFAccumulator`] hot path (per-frame `accumulate` + `finalize`).
 
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group};
-use molrs::compute::rdf::RDF;
+use criterion::{Criterion, criterion_group};
+use molrs::compute::rdf::{RDF, RDFAccumulator};
 use molrs::compute::traits::Compute;
 
 use crate::helpers;
 
-fn size_sweep(c: &mut Criterion) {
-    let mut group = c.benchmark_group("rdf/size_sweep");
+fn bench_batch(c: &mut Criterion) {
+    let mut group = c.benchmark_group("rdf/batch");
     helpers::configure(&mut group);
     let rdf = RDF::new(helpers::RDF_BINS, helpers::CUTOFF, 0.0).unwrap();
+    let (frames_owned, nlists) = helpers::reg_pool();
+    let frames: Vec<&_> = frames_owned.iter().collect();
 
-    for &n in helpers::SIZES {
-        let (frames_owned, nlists) = helpers::build_pool(n, helpers::SIZE_SWEEP_FRAMES, 42);
-        let frames: Vec<&_> = frames_owned.iter().collect();
-        group.throughput(Throughput::Elements(
-            (n as u64) * helpers::SIZE_SWEEP_FRAMES as u64,
-        ));
-        group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
-            b.iter(|| {
-                std::hint::black_box(rdf.compute(&frames, &nlists).unwrap());
-            })
-        });
-    }
+    group.bench_function("reg", |b| {
+        b.iter(|| {
+            std::hint::black_box(rdf.compute(&frames, &nlists).unwrap());
+        })
+    });
 
     group.finish();
 }
 
-fn frame_sweep(c: &mut Criterion) {
-    let mut group = c.benchmark_group("rdf/frame_sweep");
+fn bench_accumulator(c: &mut Criterion) {
+    let mut group = c.benchmark_group("rdf/accumulator");
     helpers::configure(&mut group);
-    let rdf = RDF::new(helpers::RDF_BINS, helpers::CUTOFF, 0.0).unwrap();
-    let (pool_frames, pool_nlists) =
-        helpers::build_pool(helpers::FRAME_SWEEP_N, helpers::MAX_FRAMES, 100);
+    let (frames_owned, nlists) = helpers::reg_pool();
 
-    for &nf in helpers::FRAME_COUNTS {
-        let frames: Vec<&_> = pool_frames.iter().take(nf).collect();
-        let nlists: Vec<_> = pool_nlists.iter().take(nf).cloned().collect();
-        group.throughput(Throughput::Elements(
-            (helpers::FRAME_SWEEP_N as u64) * nf as u64,
-        ));
-        group.bench_with_input(BenchmarkId::from_parameter(nf), &nf, |b, _| {
-            b.iter(|| {
-                std::hint::black_box(rdf.compute(&frames, &nlists).unwrap());
-            })
-        });
-    }
+    group.bench_function("reg", |b| {
+        b.iter(|| {
+            let rdf = RDF::new(helpers::RDF_BINS, helpers::CUTOFF, 0.0).unwrap();
+            let mut acc = RDFAccumulator::new(rdf);
+            for (f, nl) in frames_owned.iter().zip(nlists.iter()) {
+                acc.accumulate(f, nl).unwrap();
+            }
+            std::hint::black_box(acc.finalize().unwrap());
+        })
+    });
 
     group.finish();
 }
 
-criterion_group!(benches, size_sweep, frame_sweep);
+criterion_group!(benches, bench_batch, bench_accumulator);

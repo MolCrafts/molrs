@@ -36,7 +36,7 @@ use crate::types::{F, I, U};
 ///
 /// See the module-level docs for the full story. Readers access the inner
 /// array via `Deref<Target = ArrayD<T>>`. Writers must go through
-/// [`realize_owned_mut`] to ensure mutation never touches foreign memory.
+/// `realize_owned_mut` to ensure mutation never touches foreign memory.
 pub struct ColumnHolder<T> {
     array: ManuallyDrop<ArrayD<T>>,
     /// Optional keep-alive for a foreign-allocated buffer.

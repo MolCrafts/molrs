@@ -1,10 +1,10 @@
 //! Limited-memory BFGS (L-BFGS) core, force-field agnostic.
 //!
 //! This is the shared minimization engine consumed both by the public
-//! geometry optimizer ([`super::minimize`] / [`super::minimize_batch`]) and by
+//! geometry optimizer (`optimize::minimize` / `optimize::minimize_batch`) and by
 //! the ETKDG conformer pipeline (via [`minimize_lbfgs_rms`]). It operates on a
 //! flat `3·n_atoms` coordinate buffer and any `(energy, forces = -grad)`
-//! evaluator, exactly the contract that [`crate::ff::potential::Potential`]
+//! evaluator, exactly the contract that `crate::ff::potential::Potential`
 //! exposes — the force field itself is untouched.
 //!
 //! The two-loop recursion + backtracking line search is an acknowledged port
@@ -271,7 +271,7 @@ where
 /// RMS-gradient-tolerance L-BFGS entry point for the ETKDG MMFF cleanup.
 ///
 /// Preserves the historical signature and convergence behaviour (RMS gradient,
-/// no trust region, history size [`HISTORY`]) so conformer generation is
+/// no trust region, history size `HISTORY`) so conformer generation is
 /// unchanged. `coords` is updated in place; returns `(energy, grad_rms, steps,
 /// converged)`.
 pub fn minimize_lbfgs_rms<F>(

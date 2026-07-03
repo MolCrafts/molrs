@@ -799,7 +799,7 @@ class MMFFTypifier:
     def forcefield(self) -> ForceField: ...
 
 class OplsTypifier:
-    def __init__(self, strict: bool = True, estimator: bool = False) -> None: ...
+    def __init__(self, strict: bool = True) -> None: ...
     @staticmethod
     def from_xml_str(xml: str, strict: bool = True) -> OplsTypifier: ...
     def typify(self, mol: Atomistic) -> Frame: ...
@@ -1146,7 +1146,6 @@ class Nematic:
     def compute(
         self,
         frames: Frame | Sequence[Frame],
-        directors: Sequence[Sequence[float]],
     ) -> tuple[float, ArrayF, ArrayF, ArrayF]: ...
 
 class Hexatic:
@@ -1228,7 +1227,6 @@ class PMFTXY:
         self,
         frames: Frame | Sequence[Frame],
         nlists: NeighborList | Sequence[NeighborList],
-        orientations: Sequence[Sequence[float]] | None = None,
     ) -> list[tuple[npt.NDArray[np.uint64], ArrayF, ArrayF]]: ...
 
 # ---------------------------------------------------------------------------
@@ -1263,9 +1261,7 @@ class AngleDistribution:
     """Angular distribution function (ADF) over `(i, j, k)` triplets."""
 
     def __init__(self, n_bins: int, min: float = 0.0, max: float = 180.0) -> None: ...
-    def compute(
-        self, frames: Frame | Sequence[Frame], groups: ArrayI64
-    ) -> DistributionResult: ...
+    def compute(self, frames: Frame | Sequence[Frame]) -> DistributionResult: ...
 
 class DihedralDistribution:
     """Dihedral distribution function (DDF) over `(i, j, k, l)` quadruplets."""
@@ -1273,17 +1269,13 @@ class DihedralDistribution:
     def __init__(
         self, n_bins: int, min: float = -180.0, max: float = 180.0
     ) -> None: ...
-    def compute(
-        self, frames: Frame | Sequence[Frame], groups: ArrayI64
-    ) -> DistributionResult: ...
+    def compute(self, frames: Frame | Sequence[Frame]) -> DistributionResult: ...
 
 class DistanceDistribution:
     """Distance distribution function over `(i, j)` pairs."""
 
     def __init__(self, n_bins: int, min: float, max: float) -> None: ...
-    def compute(
-        self, frames: Frame | Sequence[Frame], groups: ArrayI64
-    ) -> DistributionResult: ...
+    def compute(self, frames: Frame | Sequence[Frame]) -> DistributionResult: ...
 
 class VanHoveResult:
     """Van Hove correlation function G(r, t) (self + distinct)."""
@@ -1389,7 +1381,6 @@ class SpatialDistribution:
         n: Tuple[int, int, int],
         extent: Tuple[float, float, float],
         bulk_density: Optional[float] = None,
-        orientation_pairs: Optional[ArrayI64] = None,
     ) -> None: ...
     def compute(
         self, frames: Frame | Sequence[Frame]
@@ -1483,7 +1474,7 @@ class CombinedDistribution:
         self, axes: Sequence[Tuple[str, int, float, float, bool]]
     ) -> None: ...
     def compute(
-        self, frames: Frame | Sequence[Frame], groups: Sequence[ArrayI64]
+        self, frames: Frame | Sequence[Frame]
     ) -> CombinedDistributionResult: ...
 
 class DensityGrid:

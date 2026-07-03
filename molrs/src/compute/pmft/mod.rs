@@ -4,13 +4,16 @@
 //! frames, ported from `freud.pmft`
 //! ([source](https://github.com/glotzerlab/freud/blob/main/freud/pmft/)).
 //!
-//! Currently implemented:
-//! - [`PMFTXY`](xy::PMFTXY) — 2-D `(x, y)` PMF (lab frame).
+//! | Method | Bins pair vectors in |
+//! |--------|----------------------|
+//! | [`PMFTR12`] | `(r, θ₁, θ₂)` — distance + the two body-frame angles (2-D systems) |
+//! | [`PMFTXY`] | `(x, y)` — the reference particle's body frame (2-D) |
+//! | [`PMFTXYT`] | `(x, y, θ)` — body frame + relative orientation (2-D) |
+//! | [`PMFTXYZ`] | `(x, y, z)` — the reference particle's body frame (3-D) |
 //!
-//! Other variants (R12, XYT, XYZ) and the orientation-rotated forms will
-//! land in follow-up phases. The 2-D / 3-D thread-local accumulator
-//! pattern needed for full PMFTXYZ-with-orientations is encapsulated by
-//! this module's eventual `base.rs`.
+//! Each takes per-frame neighbor lists plus per-particle orientations via its
+//! `Args` struct and produces a binned free-energy surface
+//! `-ln g(...)` (see each `*Result`).
 
 pub mod r12;
 pub mod xy;

@@ -10,7 +10,7 @@
 //! ```
 //!
 //! The continuous / intermittent accumulation mirrors molrs's
-//! [`pair_survival_tcf`](crate::compute::persist::pair_survival_tcf) exactly
+//! [`pair_survival_tcf`](crate::compute::dynamics::persist::pair_survival_tcf) exactly
 //! (`SurvivalMethod::Continuous` walks forward until the first absence;
 //! `Intermittent` counts every lag where the bond is present).
 //!

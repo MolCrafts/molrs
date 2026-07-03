@@ -8,8 +8,10 @@
 //! Each frame contributes its own `SimBox` volume; non-periodic frames error
 //! out — the compute never fabricates a bounding box.
 
+mod accumulator;
 mod result;
 
+pub use accumulator::RDFAccumulator;
 pub use result::RDFResult;
 
 use molrs::spatial::neighbors::NeighborList;
@@ -156,61 +158,24 @@ impl Compute for RDF {
             });
         }
 
-        let mode = neighbors[0].mode();
-        let mut n_r = Array1::<F>::zeros(self.n_bins);
-        let mut n_points: usize = 0;
-        let mut n_query_points: usize = 0;
-        let mut volume: F = 0.0;
-
-        for (i, (frame, nlist)) in frames.iter().zip(neighbors.iter()).enumerate() {
-            if nlist.mode() != mode {
-                return Err(ComputeError::BadShape {
-                    expected: format!("{mode:?} (frame 0)"),
-                    got: format!("{:?} (frame {i})", nlist.mode()),
-                });
-            }
-            let simbox = frame.simbox_ref().ok_or(ComputeError::MissingSimBox)?;
-            let vol = simbox.volume();
-            if !(vol.is_finite() && vol > 0.0) {
-                return Err(ComputeError::OutOfRange {
-                    field: "RDF::volume",
-                    value: vol.to_string(),
-                });
-            }
-            self.accumulate_into(nlist, &mut n_r);
-            n_points += nlist.num_points();
-            n_query_points += nlist.num_query_points();
-            volume += vol;
+        // The batch path is the streaming accumulator driven over the frame
+        // slice — one source of truth for the accumulation + normalization.
+        let mut acc = RDFAccumulator::new(self.clone());
+        for (frame, nlist) in frames.iter().zip(neighbors.iter()) {
+            acc.accumulate(*frame, nlist)?;
         }
-
-        let mut result = RDFResult {
-            bin_edges: self.bin_edges.clone(),
-            bin_centers: self.bin_centers.clone(),
-            rdf: Array1::zeros(self.n_bins),
-            n_r,
-            n_points,
-            n_query_points,
-            mode,
-            volume,
-            r_min: self.r_min,
-            n_frames: frames.len(),
-            dimensionality: self.dimensionality,
-            finalized: false,
-        };
-        // Normalize eagerly so direct callers (outside Graph) can read `rdf`
-        // without having to call `finalize` themselves. `finalize` is idempotent.
-        use crate::compute::result::ComputeResult;
-        result.finalize();
-        Ok(result)
+        // `finalize` normalizes eagerly so direct callers (outside Graph) can
+        // read `rdf` without having to call `finalize` themselves.
+        acc.finalize()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::super::util::get_f_slice;
+    use super::super::util::get_positions;
     use super::*;
+    use crate::compute::test_support::nlist_from_frame;
     use molrs::Frame;
-    use molrs::spatial::neighbors::{LinkCell, NbListAlgo};
     use molrs::spatial::region::simbox::SimBox;
     use molrs::store::block::Block;
     use ndarray::{Array1 as A1, array};
@@ -242,27 +207,8 @@ mod tests {
         frame
     }
 
-    fn positions(frame: &Frame) -> ndarray::Array2<F> {
-        let atoms = frame.get("atoms").unwrap();
-        let xs = get_f_slice(atoms, "atoms", "x").unwrap();
-        let ys = get_f_slice(atoms, "atoms", "y").unwrap();
-        let zs = get_f_slice(atoms, "atoms", "z").unwrap();
-        let n = xs.len();
-        let mut pos = ndarray::Array2::<F>::zeros((n, 3));
-        for i in 0..n {
-            pos[[i, 0]] = xs[i];
-            pos[[i, 1]] = ys[i];
-            pos[[i, 2]] = zs[i];
-        }
-        pos
-    }
-
     fn build_nlist(frame: &Frame, r_max: F) -> NeighborList {
-        let pos = positions(frame);
-        let simbox = frame.simbox.as_ref().unwrap();
-        let mut lc = LinkCell::new().cutoff(r_max);
-        lc.build(pos.view(), simbox);
-        lc.query().clone()
+        nlist_from_frame(frame, r_max)
     }
 
     #[test]
@@ -332,6 +278,51 @@ mod tests {
     }
 
     #[test]
+    fn streaming_accumulator_matches_batch_bitwise() {
+        // The batch compute is implemented on the accumulator, but assert the
+        // public streaming contract explicitly: frame-by-frame accumulate +
+        // finalize == one-shot compute, bit-for-bit, including under per-frame
+        // box changes (NPT-style).
+        let n = 200;
+        let r_max: F = 4.0;
+        let n_bins = 20;
+
+        let frames_owned: Vec<Frame> = (0..8u64)
+            .map(|s| random_frame(n, 10.0 + 0.05 * s as F, 200 + s))
+            .collect();
+        let nlists: Vec<NeighborList> =
+            frames_owned.iter().map(|f| build_nlist(f, r_max)).collect();
+
+        let rdf = RDF::new(n_bins, r_max, 0.0).unwrap();
+
+        let frame_refs: Vec<&Frame> = frames_owned.iter().collect();
+        let batch = rdf.compute(&frame_refs, &nlists).unwrap();
+
+        let mut acc = RDFAccumulator::new(rdf);
+        for (f, nl) in frames_owned.iter().zip(nlists.iter()) {
+            acc.accumulate(f, nl).unwrap();
+        }
+        assert_eq!(acc.n_frames(), frames_owned.len());
+        let streamed = acc.finalize().unwrap();
+
+        assert_eq!(streamed.n_r, batch.n_r);
+        assert_eq!(streamed.rdf, batch.rdf);
+        assert_eq!(streamed.n_points, batch.n_points);
+        assert_eq!(streamed.volume, batch.volume);
+        assert_eq!(streamed.n_frames, batch.n_frames);
+    }
+
+    #[test]
+    fn accumulator_finalize_before_any_frame_is_error() {
+        let rdf = RDF::new(10, 4.0, 0.0).unwrap();
+        let acc = RDFAccumulator::new(rdf);
+        assert!(matches!(
+            acc.finalize().unwrap_err(),
+            ComputeError::EmptyInput
+        ));
+    }
+
+    #[test]
     fn empty_frames_is_error() {
         let rdf = RDF::new(10, 4.0, 0.0).unwrap();
         let frames: Vec<&Frame> = Vec::new();
@@ -356,8 +347,8 @@ mod tests {
         frame.simbox = None;
         let nlist = {
             use molrs::spatial::neighbors::NeighborQuery;
-            let pos = positions(&frame);
-            NeighborQuery::free(pos.view(), 4.0).query_self()
+            let (xs, ys, zs) = get_positions(&frame).unwrap();
+            NeighborQuery::free_columns(xs, ys, zs, 4.0).query_self()
         };
         let rdf = RDF::new(10, 4.0, 0.0).unwrap();
         let err = rdf.compute(&[&frame], &vec![nlist]).unwrap_err();
@@ -389,7 +380,6 @@ mod tests {
 
     #[test]
     fn zero_distance_pairs_are_skipped() {
-        use molrs::spatial::neighbors::NeighborQuery;
         use molrs::store::block::Block;
 
         let mut block = Block::new();
@@ -407,9 +397,7 @@ mod tests {
         let simbox = SimBox::cube(10.0, array![0.0 as F, 0.0, 0.0], [true, true, true]).unwrap();
         frame.simbox = Some(simbox.clone());
 
-        let pos = positions(&frame);
-        let nq = NeighborQuery::new(&simbox, pos.view(), 2.0);
-        let nlist = nq.query_self();
+        let nlist = nlist_from_frame(&frame, 2.0);
 
         let rdf = RDF::new(10, 2.0, 0.0).unwrap();
         let result = rdf.compute(&[&frame], &vec![nlist]).unwrap();
@@ -477,12 +465,9 @@ mod tests {
         .unwrap();
         frame.simbox = Some(simbox.clone());
 
-        // Build neighbor list (3-D LinkCell — z is identical so it's a
+        // Build the neighbor list via the native SoA path (z is identical, so a
         // single-cell column).
-        let pos = positions(&frame);
-        let mut lc = LinkCell::new().cutoff(r_max);
-        lc.build(pos.view(), &simbox);
-        let nlist = lc.query().clone();
+        let nlist = nlist_from_frame(&frame, r_max);
 
         let rdf = RDF::new(n_bins, r_max, 0.0).unwrap().with_dimensionality(2);
         let result = rdf.compute(&[&frame], &vec![nlist]).unwrap();

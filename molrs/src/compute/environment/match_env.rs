@@ -1,3 +1,5 @@
+//! Environment matching / clustering by neighbor-vector geometry.
+
 // Union-Find traversal and per-bucket O(b²) compare loops read more
 // clearly with explicit indexing than iterator combinators.
 #![allow(clippy::needless_range_loop, clippy::if_same_then_else)]
@@ -26,6 +28,7 @@
 //! After per-pair match decisions, particles are clustered into
 //! environment classes by union-find.
 
+use crate::compute::result::ComputeResult;
 use std::collections::HashMap;
 
 use molrs::math::diagonalize::eigh_largest_sym_4x4;
@@ -34,22 +37,8 @@ use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 
 use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
 use crate::compute::traits::Compute;
 use crate::compute::util::get_positions_ref;
-
-/// Per-frame environment-matching result.
-#[derive(Debug, Clone, Default)]
-pub struct MatchEnvResult {
-    /// Particle → environment-class label (`0..n_clusters`).
-    pub cluster_idx: Vec<u32>,
-    /// Number of distinct environment classes.
-    pub n_clusters: usize,
-    /// Per-particle sorted-bond fingerprint (the raw feature).
-    pub fingerprints: Vec<Vec<F>>,
-}
-
-impl ComputeResult for MatchEnvResult {}
 
 /// `MatchEnv` analyzer.
 #[derive(Debug, Clone, Copy)]
@@ -63,6 +52,7 @@ pub struct MatchEnv {
 }
 
 impl MatchEnv {
+    /// Environments match when their best-fit RMSD ≤ `rmsd_threshold` (Å).
     pub fn new(rmsd_threshold: F) -> Result<Self, ComputeError> {
         if rmsd_threshold.is_nan() || rmsd_threshold < 0.0 {
             return Err(ComputeError::OutOfRange {
@@ -379,11 +369,24 @@ impl Compute for MatchEnv {
     }
 }
 
+/// Per-frame environment-matching result.
+#[derive(Debug, Clone, Default)]
+pub struct MatchEnvResult {
+    /// Particle → environment-class label (`0..n_clusters`).
+    pub cluster_idx: Vec<u32>,
+    /// Number of distinct environment classes.
+    pub n_clusters: usize,
+    /// Per-particle sorted-bond fingerprint (the raw feature).
+    pub fingerprints: Vec<Vec<F>>,
+}
+
+impl ComputeResult for MatchEnvResult {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compute::test_support::nlist_from_frame;
     use molrs::Frame;
-    use molrs::spatial::neighbors::{LinkCell, NbListAlgo};
     use molrs::spatial::region::simbox::SimBox;
     use molrs::store::block::Block;
     use ndarray::{Array1 as A1, array};
@@ -404,44 +407,7 @@ mod tests {
     }
 
     fn build_nlist(frame: &Frame, cutoff: F) -> NeighborList {
-        let xp = frame
-            .get("atoms")
-            .unwrap()
-            .get("x")
-            .and_then(<F as molrs::store::block::BlockDtype>::from_column)
-            .unwrap()
-            .as_slice()
-            .unwrap()
-            .to_vec();
-        let yp = frame
-            .get("atoms")
-            .unwrap()
-            .get("y")
-            .and_then(<F as molrs::store::block::BlockDtype>::from_column)
-            .unwrap()
-            .as_slice()
-            .unwrap()
-            .to_vec();
-        let zp = frame
-            .get("atoms")
-            .unwrap()
-            .get("z")
-            .and_then(<F as molrs::store::block::BlockDtype>::from_column)
-            .unwrap()
-            .as_slice()
-            .unwrap()
-            .to_vec();
-        let n = xp.len();
-        let mut pos = ndarray::Array2::<F>::zeros((n, 3));
-        for i in 0..n {
-            pos[[i, 0]] = xp[i];
-            pos[[i, 1]] = yp[i];
-            pos[[i, 2]] = zp[i];
-        }
-        let simbox = frame.simbox.as_ref().unwrap();
-        let mut lc = LinkCell::new().cutoff(cutoff);
-        lc.build(pos.view(), simbox);
-        lc.query().clone()
+        nlist_from_frame(frame, cutoff)
     }
 
     /// Two identical octahedra at different centres should be classed

@@ -12,8 +12,8 @@ use molrs::store::block::Block;
 use molrs::types::F;
 use ndarray::{Array1, Array2, array};
 
-use molrs::compute::center_of_mass::CenterOfMass;
 use molrs::compute::cluster::Cluster;
+use molrs::compute::shape::center_of_mass::CenterOfMass;
 use molrs::compute::traits::Compute;
 
 // ---------------------------------------------------------------------------

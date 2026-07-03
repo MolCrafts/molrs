@@ -27,7 +27,7 @@
 //! ownership — **not** a fixed-arity peer relation — and is therefore **not**
 //! modeled as a relation kind (doing so would put group handles into the node
 //! arena and contaminate every consumer that iterates [`MolGraph::nodes`]). The
-//! [`GroupId`] / [`Group`] / [`MolGraph::groups`] field is **reserved** for a
+//! [`GroupId`] / [`Group`] / `MolGraph::groups` field is **reserved** for a
 //! future, independent containment axis; it carries no behavior in this module.
 //!
 //! # Examples

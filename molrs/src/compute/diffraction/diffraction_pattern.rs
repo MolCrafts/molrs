@@ -1,3 +1,5 @@
+//! 2-D FFT diffraction pattern of a projected frame.
+
 // 2-D grid kernel reads naturally with double index loops; FFT2 helper
 // also needs explicit row/column index ordering.
 #![allow(clippy::needless_range_loop)]
@@ -24,6 +26,7 @@
 //! - Square grid `(n_grid × n_grid)`; rectangular grids are a follow-up.
 //! - Orthorhombic boxes only (matches `freud.DiffractionPattern.compute`).
 
+use crate::compute::result::ComputeResult;
 use molrs::spatial::region::simbox::BoxKind;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
@@ -32,22 +35,8 @@ use rustfft::FftPlanner;
 use rustfft::num_complex::Complex as RfComplex;
 
 use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
 use crate::compute::traits::Compute;
 use crate::compute::util::get_positions_ref;
-
-/// Per-frame diffraction-pattern result.
-#[derive(Debug, Clone, Default)]
-pub struct DiffractionPatternResult {
-    /// Power spectrum `|F(k)|²`, shape `(n_grid, n_grid)`. FFT-shifted so
-    /// the k=0 component is at the centre.
-    pub diffraction: Array2<F>,
-    /// Real-space Gaussian-smeared image used as the FFT input
-    /// (`(n_grid, n_grid)`).
-    pub image: Array2<F>,
-}
-
-impl ComputeResult for DiffractionPatternResult {}
 
 /// `DiffractionPattern` analyzer.
 #[derive(Debug, Clone, Copy)]
@@ -234,6 +223,19 @@ impl Compute for DiffractionPattern {
         Ok(out)
     }
 }
+
+/// Per-frame diffraction-pattern result.
+#[derive(Debug, Clone, Default)]
+pub struct DiffractionPatternResult {
+    /// Power spectrum `|F(k)|²`, shape `(n_grid, n_grid)`. FFT-shifted so
+    /// the k=0 component is at the centre.
+    pub diffraction: Array2<F>,
+    /// Real-space Gaussian-smeared image used as the FFT input
+    /// (`(n_grid, n_grid)`).
+    pub image: Array2<F>,
+}
+
+impl ComputeResult for DiffractionPatternResult {}
 
 #[cfg(test)]
 mod tests {

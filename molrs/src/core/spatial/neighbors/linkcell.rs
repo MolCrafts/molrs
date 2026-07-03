@@ -94,8 +94,28 @@ impl LinkCell {
         &self,
         query_point: ndarray::ArrayView1<'_, F>,
         bx: &SimBox,
-        mut callback: C,
+        callback: C,
     ) where
+        C: FnMut(u32, F, [F; 3]),
+    {
+        self.visit_neighbors_of_pt(
+            [query_point[0], query_point[1], query_point[2]],
+            bx,
+            callback,
+        );
+    }
+
+    /// Zero-view variant of [`visit_neighbors_of`](Self::visit_neighbors_of):
+    /// reads the query point as a stack `[F; 3]` instead of an `ArrayView1`.
+    ///
+    /// Bit-identical to `visit_neighbors_of` for the same coordinate — the cell
+    /// assignment routes through
+    /// [`make_fractional_fast_arr3`](SimBox::make_fractional_fast_arr3), the
+    /// stack mirror of the `ArrayView1` fractional helper, and all downstream
+    /// math is unchanged. Used by
+    /// [`NeighborQuery::query_columns`](super::NeighborQuery::query_columns).
+    pub(crate) fn visit_neighbors_of_pt<C>(&self, query_point: [F; 3], bx: &SimBox, mut callback: C)
+    where
         C: FnMut(u32, F, [F; 3]),
     {
         let n_cells = (self.celldim[0] * self.celldim[1] * self.celldim[2]) as usize;
@@ -103,8 +123,8 @@ impl LinkCell {
             return;
         }
 
-        let query_cell = get_cell(bx, query_point, self.celldim);
-        let qp = [query_point[0], query_point[1], query_point[2]];
+        let query_cell = get_cell3(bx, query_point, self.celldim);
+        let qp = query_point;
 
         // Check the query cell itself + all 26 neighbor cells
         let pbc = bx.pbc();
@@ -231,11 +251,83 @@ impl NbListAlgo for LinkCell {
 }
 
 impl LinkCell {
-    /// Counting sort particles by cell index.
+    /// SoA sibling of [`build`](NbListAlgo::build): build the self-query pair
+    /// list from column-major `x`/`y`/`z` slices.
     ///
-    /// Sets up `celldim`, `bx`, `cell_start`, `sorted_idx`, `sorted_pos`,
-    /// and `occupied_cells`. Does NOT compute pairs.
+    /// Shares the same counting-sort + pair-search core as `build`, so the
+    /// resulting [`NeighborList`] is byte-identical to `build` on the same
+    /// coordinates. Lets callers holding SoA columns skip the interleave into
+    /// an owned `Array2`.
+    ///
+    /// # Panics
+    /// Panics if the cutoff is not positive or the three slices differ in length.
+    pub fn build_soa(&mut self, xs: &[F], ys: &[F], zs: &[F], bx: &SimBox) {
+        assert!(self.cutoff > 0.0, "cutoff must be positive");
+        assert!(
+            xs.len() == ys.len() && ys.len() == zs.len(),
+            "x/y/z slices must have equal length"
+        );
+
+        self.counting_sort_soa(xs, ys, zs, bx);
+        let n_points = xs.len();
+
+        #[cfg(feature = "rayon")]
+        self.compute_pairs_parallel();
+        #[cfg(not(feature = "rayon"))]
+        self.compute_pairs_serial();
+
+        self.result.mode = QueryMode::SelfQuery;
+        self.result.num_points = n_points;
+        self.result.num_query_points = n_points;
+    }
+
+    /// SoA sibling of [`build_index`](NbListAlgo::build_index): build the
+    /// spatial index only (no pair pre-computation) from column-major slices.
+    ///
+    /// # Panics
+    /// Panics if the cutoff is not positive or the three slices differ in length.
+    pub fn build_index_soa(&mut self, xs: &[F], ys: &[F], zs: &[F], bx: &SimBox) {
+        assert!(self.cutoff > 0.0, "cutoff must be positive");
+        assert!(
+            xs.len() == ys.len() && ys.len() == zs.len(),
+            "x/y/z slices must have equal length"
+        );
+        self.counting_sort_soa(xs, ys, zs, bx);
+    }
+
+    /// Counting sort particles by cell index (interleaved `Array2` input).
+    ///
+    /// Thin adapter over [`counting_sort_impl`](Self::counting_sort_impl).
     fn counting_sort(&mut self, points: FNx3View<'_>, bx: &SimBox) {
+        let n_points = points.nrows();
+        self.counting_sort_impl(
+            n_points,
+            |i| [points[[i, 0]], points[[i, 1]], points[[i, 2]]],
+            bx,
+        );
+    }
+
+    /// Counting sort particles by cell index (SoA `x`/`y`/`z` slices).
+    ///
+    /// SoA sibling of [`counting_sort`](Self::counting_sort); shares the same
+    /// [`counting_sort_impl`](Self::counting_sort_impl) core, so the resulting
+    /// `sorted_pos` / `cell_start` / `occupied_cells` are byte-identical to the
+    /// `Array2` path for the same coordinates.
+    fn counting_sort_soa(&mut self, xs: &[F], ys: &[F], zs: &[F], bx: &SimBox) {
+        let n_points = xs.len();
+        self.counting_sort_impl(n_points, |i| [xs[i], ys[i], zs[i]], bx);
+    }
+
+    /// Shared counting-sort core: cell assignment + prefix sum + scatter.
+    ///
+    /// Reads each particle position via `get_pt(i) -> [x, y, z]`, so both the
+    /// interleaved (`Array2`) and column-major (SoA) entry points funnel
+    /// through identical arithmetic. Sets up `celldim`, `bx`, `cell_start`,
+    /// `sorted_idx`, `sorted_pos`, and `occupied_cells`. Does NOT compute pairs.
+    fn counting_sort_impl<G>(&mut self, n_points: usize, get_pt: G, bx: &SimBox)
+    where
+        G: Fn(usize) -> [F; 3],
+    {
         let cutoff = self.cutoff;
         let npd = bx.nearest_plane_distance();
         let celldim = [
@@ -244,7 +336,6 @@ impl LinkCell {
             ((npd[2] / cutoff).floor() as u32).max(1),
         ];
         let n_cells = (celldim[0] * celldim[1] * celldim[2]) as usize;
-        let n_points = points.nrows();
 
         self.celldim = celldim;
         self.bx = bx.clone();
@@ -256,7 +347,7 @@ impl LinkCell {
         self.cell_start.resize(n_cells + 1, 0);
         self.cell_of.resize(n_points, 0);
         for i in 0..n_points {
-            let cell = get_cell(bx, points.row(i), celldim);
+            let cell = get_cell3(bx, get_pt(i), celldim);
             self.cell_of[i] = cell as u32;
             self.cell_start[cell] += 1;
         }
@@ -291,9 +382,10 @@ impl LinkCell {
             self.cursor[cell] += 1;
             self.sorted_idx[dst] = i as u32;
             let base = dst * 3;
-            self.sorted_pos[base] = points[[i, 0]];
-            self.sorted_pos[base + 1] = points[[i, 1]];
-            self.sorted_pos[base + 2] = points[[i, 2]];
+            let p = get_pt(i);
+            self.sorted_pos[base] = p[0];
+            self.sorted_pos[base + 1] = p[1];
+            self.sorted_pos[base + 2] = p[2];
         }
     }
 
@@ -601,10 +693,10 @@ fn stencil_all_into(
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-/// Map a position to its cell index using fractional coordinates.
+/// Map a `[F; 3]` position to its cell index using fractional coordinates.
 #[inline(always)]
-fn get_cell(bx: &SimBox, r: ndarray::ArrayView1<'_, F>, celldim: [u32; 3]) -> usize {
-    let frac = bx.make_fractional_fast_arr(r);
+fn get_cell3(bx: &SimBox, r: [F; 3], celldim: [u32; 3]) -> usize {
+    let frac = bx.make_fractional_fast_arr3(r);
     let cx = (frac[0] * celldim[0] as F).floor() as u32 % celldim[0];
     let cy = (frac[1] * celldim[1] as F).floor() as u32 % celldim[1];
     let cz = (frac[2] * celldim[2] as F).floor() as u32 % celldim[2];
@@ -1001,5 +1093,81 @@ mod tests {
         assert_eq!(nlist.n_pairs(), 1);
         let dists = nlist.distances();
         assert!((dists[0] - 1.0).abs() < 1e-5);
+    }
+
+    // --- SoA path is bit-identical to the Array2 path ---
+
+    /// Split an `Array2` (N×3) into three column vectors (SoA layout).
+    fn columns(pts: &ndarray::Array2<F>) -> (Vec<F>, Vec<F>, Vec<F>) {
+        let n = pts.nrows();
+        let mut xs = Vec::with_capacity(n);
+        let mut ys = Vec::with_capacity(n);
+        let mut zs = Vec::with_capacity(n);
+        for i in 0..n {
+            xs.push(pts[[i, 0]]);
+            ys.push(pts[[i, 1]]);
+            zs.push(pts[[i, 2]]);
+        }
+        (xs, ys, zs)
+    }
+
+    /// Bitwise (not approximate) equality of two neighbor lists.
+    fn assert_bitwise_equal(a: &NeighborList, b: &NeighborList) {
+        assert_eq!(a.n_pairs(), b.n_pairs(), "n_pairs differ");
+        let da = a.vectors();
+        let db = b.vectors();
+        for k in 0..a.n_pairs() {
+            assert_eq!(
+                a.query_point_indices()[k],
+                b.query_point_indices()[k],
+                "idx_i"
+            );
+            assert_eq!(a.point_indices()[k], b.point_indices()[k], "idx_j");
+            // Bitwise f64 equality — the arithmetic is identical, so it must match.
+            assert_eq!(a.dist_sq()[k], b.dist_sq()[k], "dist_sq bitwise");
+            for d in 0..3 {
+                assert_eq!(da[[k, d]], db[[k, d]], "diff[{}] bitwise", d);
+            }
+        }
+    }
+
+    #[test]
+    fn build_soa_matches_build_bitwise() {
+        // Periodic cube fixture: several pairs, including a PBC-wrap pair.
+        let bx = SimBox::cube(10.0, array![0.0, 0.0, 0.0], [true, true, true]).unwrap();
+        let pts = array![
+            [1.0, 1.0, 1.0],
+            [1.5, 1.0, 1.0],
+            [9.5, 1.0, 1.0],
+            [5.0, 5.0, 5.0],
+            [5.3, 5.0, 5.0],
+            [2.2, 8.1, 3.3],
+            [7.7, 2.4, 9.6],
+        ];
+        let (xs, ys, zs) = columns(&pts);
+        let mut lc_a = LinkCell::new().cutoff(2.0);
+        lc_a.build(pts.view(), &bx);
+        let mut lc_s = LinkCell::new().cutoff(2.0);
+        lc_s.build_soa(&xs, &ys, &zs, &bx);
+        assert!(lc_a.query().n_pairs() > 0, "fixture should produce pairs");
+        assert_bitwise_equal(lc_a.query(), lc_s.query());
+
+        // Free / non-periodic fixture.
+        let bxf = SimBox::cube(20.0, array![0.0, 0.0, 0.0], [false, false, false]).unwrap();
+        let ptsf = array![
+            [5.0, 5.0, 5.0],
+            [5.5, 5.0, 5.0],
+            [5.0, 5.5, 5.0],
+            [10.0, 10.0, 10.0],
+            [10.3, 10.0, 10.0],
+            [1.0, 18.0, 3.0],
+        ];
+        let (fxs, fys, fzs) = columns(&ptsf);
+        let mut lc_af = LinkCell::new().cutoff(1.0);
+        lc_af.build(ptsf.view(), &bxf);
+        let mut lc_sf = LinkCell::new().cutoff(1.0);
+        lc_sf.build_soa(&fxs, &fys, &fzs, &bxf);
+        assert!(lc_af.query().n_pairs() > 0, "fixture should produce pairs");
+        assert_bitwise_equal(lc_af.query(), lc_sf.query());
     }
 }

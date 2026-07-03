@@ -14,7 +14,7 @@
 //! | Python class                  | Args                                | Output                                  |
 //! |-------------------------------|-------------------------------------|------------------------------------------|
 //! | `Steinhardt`                  | list[NeighborList]                  | dict {ql, wl?, qlm}                      |
-//! | `Nematic`                     | list[director]                       | (order, eigenvalues, director, q_tensor) |
+//! | `Nematic`                     | frames (dir from `orientations` block) | (order, eigenvalues, director, q_tensor) |
 //! | `Hexatic`                     | list[NeighborList]                  | complex ψ_k per particle                 |
 //! | `SolidLiquid`                 | list[NeighborList]                  | (n_solid_bonds, is_solid)                |
 //! | `ClusterProperties`           | list[ClusterResult]                 | dict of cluster scalars / tensors        |
@@ -22,22 +22,55 @@
 //! | `GaussianDensity`             | —                                   | 3-D density grid                         |
 //! | `BondOrder`                   | list[NeighborList]                  | (raw_counts, bond_order, edges)          |
 //! | `StaticStructureFactorDebye`  | —                                   | (k_values, S(k))                         |
-//! | `PMFTXY`                      | list[NeighborList], orientations?   | (raw_counts, density, pmf)               |
+//! | `PMFTXY`                      | list[NeighborList] (angle from `orientations`?) | (raw_counts, density, pmf)     |
 
 use crate::compute::{PyClusterResult, py_value_err};
 use crate::helpers::{NpF, collect_frames, collect_nlists};
 
+use molrs::compute::distribution::AtomGroups;
 use molrs::compute::{
     BondOrder, ClusterProperties, Compute, GaussianDensity, Hexatic, LocalDensity, Nematic, PMFTXY,
     PMFTXYArgs, SolidLiquid, StaticStructureFactorDebye, Steinhardt,
 };
 use molrs::store::frame::Frame as CoreFrame;
+use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 
 use ndarray::{Array1, Array2, Array3};
 use numpy::{IntoPyArray, PyArray1, PyArray2, PyArray3};
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList};
+use pyo3::types::PyDict;
+
+// ---------------------------------------------------------------------------
+// Shared: per-particle orientation axes from a frame's `orientations` block
+// ---------------------------------------------------------------------------
+
+/// Read the `atoms` block `x`/`y`/`z` columns of `frame` as three owned `f64`
+/// vectors (indexed by atom index).
+fn atom_positions(frame: &CoreFrame) -> PyResult<(Vec<F>, Vec<F>, Vec<F>)> {
+    let col = |c: &str| -> PyResult<Vec<F>> {
+        frame
+            .get_float("atoms", c)
+            .map(|a| a.iter().copied().collect())
+            .ok_or_else(|| PyValueError::new_err(format!("frame `atoms` block has no `{c}` column")))
+    };
+    Ok((col("x")?, col("y")?, col("z")?))
+}
+
+/// Read the per-particle `(head, tail)` orientation-axis pairs from `frame`'s
+/// `"orientations"` topology block (same on-disk schema as `bonds`: the two
+/// endpoint columns `atomi`/`atomj`). Each row is one particle's axis; the
+/// director vector is the internal expansion `pos[head] − pos[tail]`.
+fn orientation_pairs(frame: &CoreFrame) -> PyResult<Vec<(usize, usize)>> {
+    let groups = AtomGroups::from_frame(frame, "orientations", 2).map_err(py_value_err)?;
+    Ok((0..groups.len())
+        .map(|i| {
+            let t = groups.tuple(i);
+            (t[0] as usize, t[1] as usize)
+        })
+        .collect())
+}
 
 // ---------------------------------------------------------------------------
 // Steinhardt
@@ -113,12 +146,15 @@ impl PyNematic {
         }
     }
 
+    /// Per-particle orientation directors are the unit `head − tail` vectors of
+    /// the `"orientations"` topology block, read from the first frame (one
+    /// `(head, tail)` atom pair per row). No external director array is passed.
+    ///
     /// Returns `(order: float, eigenvalues: ndarray[3], director: ndarray[3], q_tensor: ndarray[3,3])`.
     fn compute<'py>(
         &self,
         py: Python<'py>,
         frames: &Bound<'py, PyAny>,
-        directors: Vec<[NpF; 3]>,
     ) -> PyResult<(
         NpF,
         Bound<'py, PyArray1<NpF>>,
@@ -127,6 +163,26 @@ impl PyNematic {
     )> {
         let owned = collect_frames(frames)?;
         let refs: Vec<&CoreFrame> = owned.iter().collect();
+        let first = refs
+            .first()
+            .copied()
+            .ok_or_else(|| PyValueError::new_err("no frames provided"))?;
+        let pairs = orientation_pairs(first)?;
+        let (xs, ys, zs) = atom_positions(first)?;
+        let n = xs.len();
+        let mut directors: Vec<[F; 3]> = Vec::with_capacity(pairs.len());
+        for (head, tail) in pairs {
+            if head >= n || tail >= n {
+                return Err(PyValueError::new_err(
+                    "orientations atom index out of range",
+                ));
+            }
+            directors.push([
+                xs[head] - xs[tail],
+                ys[head] - ys[tail],
+                zs[head] - zs[tail],
+            ]);
+        }
         let mut results = self
             .inner
             .compute(&refs, directors.as_slice())
@@ -514,17 +570,17 @@ impl PyPMFTXY {
         })
     }
 
-    /// Returns per-frame `(raw_counts, density, pmf)`. `orientations` is
-    /// an optional `list[list[float]]` of per-particle 2-D angles
-    /// (radians) — if supplied, every bond is rotated into the query
-    /// particle's local frame.
-    #[pyo3(signature = (frames, nlists, orientations=None))]
+    /// Returns per-frame `(raw_counts, density, pmf)`. If the first frame carries
+    /// an `"orientations"` topology block (one `(head, tail)` atom pair per query
+    /// particle), every bond is rotated into that particle's local frame — the
+    /// per-particle 2-D angle is `atan2` of its `head − tail` axis, recomputed per
+    /// frame from that frame's positions. Without the block the analyzer works in
+    /// the lab frame.
     fn compute<'py>(
         &self,
         py: Python<'py>,
         frames: &Bound<'py, PyAny>,
         nlists: &Bound<'py, PyAny>,
-        orientations: Option<Vec<Vec<NpF>>>,
     ) -> PyResult<
         Vec<(
             Bound<'py, PyArray2<u64>>,
@@ -535,10 +591,36 @@ impl PyPMFTXY {
         let owned = collect_frames(frames)?;
         let refs: Vec<&CoreFrame> = owned.iter().collect();
         let nl = collect_nlists(nlists)?;
-        let orient_ref = orientations.as_deref();
+        let first = refs
+            .first()
+            .copied()
+            .ok_or_else(|| PyValueError::new_err("no frames provided"))?;
+        // Per-frame per-particle orientation angles derived from the frame's
+        // `orientations` block, or `None` (lab frame) when the block is absent.
+        let orient_angles: Option<Vec<Vec<F>>> = if first.contains_block("orientations") {
+            let pairs = orientation_pairs(first)?;
+            let mut per_frame = Vec::with_capacity(refs.len());
+            for f in &refs {
+                let (xs, ys, _zs) = atom_positions(f)?;
+                let n = xs.len();
+                let mut angles = Vec::with_capacity(pairs.len());
+                for &(head, tail) in &pairs {
+                    if head >= n || tail >= n {
+                        return Err(PyValueError::new_err(
+                            "orientations atom index out of range",
+                        ));
+                    }
+                    angles.push((ys[head] - ys[tail]).atan2(xs[head] - xs[tail]));
+                }
+                per_frame.push(angles);
+            }
+            Some(per_frame)
+        } else {
+            None
+        };
         let args = PMFTXYArgs {
             nlists: &nl,
-            query_orientations: orient_ref,
+            query_orientations: orient_angles.as_deref(),
         };
         let results = self.inner.compute(&refs, args).map_err(py_value_err)?;
         Ok(results
@@ -571,8 +653,3 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPMFTXY>()?;
     Ok(())
 }
-
-// Suppress unused-import lints for collectors that may be wrapped via
-// other helpers in the future.
-#[allow(dead_code)]
-fn _suppress(_: Bound<'_, PyList>) {}

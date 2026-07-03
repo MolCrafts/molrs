@@ -7,7 +7,8 @@
 //! matching the dielectric binding style.
 
 use molrs::compute::traits::Compute;
-use molrs::compute::{OnsagerCorrelation, persist};
+use molrs::compute::OnsagerCorrelation;
+use molrs::compute::dynamics::persist;
 use molrs::store::frame::Frame as CoreFrame;
 use numpy::{IntoPyArray, PyReadonlyArray2, PyReadonlyArray3};
 use pyo3::prelude::*;
@@ -15,9 +16,7 @@ use pyo3::prelude::*;
 use crate::helpers::py_value_err;
 
 /// Empty frame slice for the series-based `OnsagerCorrelation` compute.
-fn no_frames() -> Vec<&'static CoreFrame> {
-    Vec::new()
-}
+const EMPTY_FRAMES: &[&CoreFrame] = &[];
 
 #[pyfunction]
 #[pyo3(signature = (p_i, p_j, dt, max_correlation_time))]
@@ -31,7 +30,7 @@ pub(crate) fn transport_onsager_correlation<'py>(
     let pi = p_i.as_array().to_owned();
     let pj = p_j.as_array().to_owned();
     let result = OnsagerCorrelation
-        .compute(&no_frames(), (&pi, &pj, dt, max_correlation_time))
+        .compute(EMPTY_FRAMES, (&pi, &pj, dt, max_correlation_time))
         .map_err(py_value_err)?;
     let dict = pyo3::types::PyDict::new(py);
     dict.set_item("lag_times", result.lag_times.into_pyarray(py))?;
