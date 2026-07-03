@@ -198,6 +198,15 @@ impl Compute for GaussianDensity {
         if frames.is_empty() {
             return Err(ComputeError::EmptyInput);
         }
+        #[cfg(feature = "rayon")]
+        const PAR_THRESHOLD: usize = 2;
+
+        #[cfg(feature = "rayon")]
+        if frames.len() >= PAR_THRESHOLD {
+            use rayon::prelude::*;
+            return frames.par_iter().map(|f| self.one_frame(*f)).collect();
+        }
+
         let mut out = Vec::with_capacity(frames.len());
         for f in frames {
             out.push(self.one_frame(*f)?);
@@ -331,5 +340,20 @@ mod tests {
             .compute(&[&frame], ())
             .unwrap_err();
         assert!(matches!(err, ComputeError::MissingSimBox));
+    }
+
+    /// The `frames.len() >= PAR_THRESHOLD` rayon branch must match the
+    /// serial path exactly, in frame order.
+    #[test]
+    fn parallel_matches_serial() {
+        let frame = frame_with(&[[3.0, 5.0, 5.0], [7.0, 5.0, 5.0]], 10.0, [false; 3]);
+        let gd = GaussianDensity::new(16, 16, 16, 0.5)
+            .unwrap()
+            .with_r_max(2.0);
+        let solo = gd.compute(&[&frame], ()).unwrap();
+        let par = gd.compute(&[&frame, &frame], ()).unwrap();
+        assert_eq!(par.len(), 2);
+        assert_eq!(par[0].density, solo[0].density);
+        assert_eq!(par[1].density, solo[0].density);
     }
 }

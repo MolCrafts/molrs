@@ -244,6 +244,23 @@ impl Compute for PMFTXY {
                 what: "PMFTXY orientations frame count",
             });
         }
+        #[cfg(feature = "rayon")]
+        const PAR_THRESHOLD: usize = 2;
+
+        #[cfg(feature = "rayon")]
+        if frames.len() >= PAR_THRESHOLD {
+            use rayon::prelude::*;
+            return frames
+                .par_iter()
+                .enumerate()
+                .map(|(k, f)| {
+                    let nl = &args.nlists[k];
+                    let o = args.query_orientations.map(|o| o[k].as_slice());
+                    self.one_frame(*f, nl, o)
+                })
+                .collect();
+        }
+
         let mut out = Vec::with_capacity(frames.len());
         for (k, f) in frames.iter().enumerate() {
             let nl = &args.nlists[k];
@@ -425,5 +442,36 @@ mod tests {
             found_y_negative,
             "rotated-frame bond should land in y < 0 bins"
         );
+    }
+
+    /// The `frames.len() >= PAR_THRESHOLD` rayon branch must match the
+    /// serial path exactly, in frame order (enumerate + per-frame nlist).
+    #[test]
+    fn parallel_matches_serial() {
+        let frame = frame_with(&[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], 10.0, [false; 3]);
+        let nl = build_nlist(&frame, 1.5);
+        let p = PMFTXY::new(2.0, 2.0, 8, 8).unwrap();
+        let solo = p
+            .compute(
+                &[&frame],
+                PMFTXYArgs {
+                    nlists: std::slice::from_ref(&nl),
+                    query_orientations: None,
+                },
+            )
+            .unwrap();
+        let nls = vec![nl.clone(), nl.clone()];
+        let par = p
+            .compute(
+                &[&frame, &frame],
+                PMFTXYArgs {
+                    nlists: &nls,
+                    query_orientations: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(par.len(), 2);
+        assert_eq!(par[0].raw_counts, solo[0].raw_counts);
+        assert_eq!(par[1].raw_counts, solo[0].raw_counts);
     }
 }

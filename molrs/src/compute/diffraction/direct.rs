@@ -196,6 +196,23 @@ impl Compute for StaticStructureFactorDirect {
         if frames.is_empty() {
             return Err(ComputeError::EmptyInput);
         }
+        #[cfg(feature = "rayon")]
+        const PAR_THRESHOLD: usize = 2;
+
+        #[cfg(feature = "rayon")]
+        if frames.len() >= PAR_THRESHOLD {
+            use rayon::prelude::*;
+            return frames
+                .par_iter()
+                .map(|f| match &self.mode {
+                    KMode::Explicit { k_vecs } => Self::evaluate_explicit(*f, k_vecs),
+                    KMode::Isotropic { k_max, n_bins } => {
+                        Self::evaluate_isotropic(*f, *k_max, *n_bins)
+                    }
+                })
+                .collect();
+        }
+
         let mut out = Vec::with_capacity(frames.len());
         for f in frames {
             let r = match &self.mode {
@@ -342,5 +359,23 @@ mod tests {
             .unwrap()[0];
         assert_eq!(r.n_particles, 0);
         assert_eq!(r.sk[0], 0.0);
+    }
+
+    /// The `frames.len() >= PAR_THRESHOLD` rayon branch must match the
+    /// serial path exactly, in frame order.
+    #[test]
+    fn parallel_matches_serial() {
+        let frame = frame_with(
+            &[[0.0, 0.0, 0.0], [1.5, 0.0, 0.0], [0.0, 1.5, 0.0]],
+            10.0,
+            [false; 3],
+        );
+        let k_vecs: Vec<[F; 3]> = [0.5_f64, 1.2, 2.7].iter().map(|&k| [k, 0.0, 0.0]).collect();
+        let s = StaticStructureFactorDirect::new(&k_vecs).unwrap();
+        let solo = s.compute(&[&frame], ()).unwrap();
+        let par = s.compute(&[&frame, &frame], ()).unwrap();
+        assert_eq!(par.len(), 2);
+        assert_eq!(par[0].sk, solo[0].sk);
+        assert_eq!(par[1].sk, solo[0].sk);
     }
 }

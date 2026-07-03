@@ -27,6 +27,18 @@
 //!
 //! After per-pair match decisions, particles are clustered into
 //! environment classes by union-find.
+//!
+//! # Performance
+//!
+//! Per-particle bond fingerprints are built in a **single O(n_pairs)
+//! pass** over the neighbor list — linear in the total neighbor count
+//! (≈ O(N·k) for `N` particles with `k` neighbors each). Particles are
+//! then bucketed by neighbor count, and matching compares every pair
+//! *within* a bucket: O(b²) per bucket of size `b`. That quadratic
+//! comparison is intrinsic to environment matching (freud does the same)
+//! and is the dominant cost at scale. In registration mode each
+//! comparison additionally enumerates up to `n!` permutations, bounded by
+//! [`MatchEnv::with_max_neighbors_for_registration`].
 
 use crate::compute::result::ComputeResult;
 use std::collections::HashMap;
@@ -41,6 +53,10 @@ use crate::compute::traits::Compute;
 use crate::compute::util::get_positions_ref;
 
 /// `MatchEnv` analyzer.
+///
+/// See the [module documentation](self) for the two matching modes and
+/// their complexity (linear fingerprint build; quadratic per-bucket
+/// comparison).
 #[derive(Debug, Clone, Copy)]
 pub struct MatchEnv {
     rmsd_threshold: F,
@@ -86,11 +102,16 @@ impl MatchEnv {
     }
 }
 
-/// Bond-vector fingerprint for one particle. In self-query mode bonds
-/// are collected from both directions; in cross-query only the
-/// query-side bonds are included.
-fn bond_vectors(particle: usize, nlist: &NeighborList) -> Vec<[F; 3]> {
-    let mut bonds: Vec<[F; 3]> = Vec::new();
+/// Bond-vector fingerprints for every particle, built in a single
+/// O(n_pairs) pass over the neighbor list. In self-query mode each pair
+/// contributes to both endpoints (the `j`-side bond reversed); in
+/// cross-query only the query-side (`i`) endpoint. Within each
+/// particle's list bonds land in ascending pair-index order — the same
+/// order a per-particle scan would produce — so downstream fingerprints,
+/// magnitude sorting, and registration RMSD are unchanged. Pair indices
+/// outside `0..n` are ignored, matching the old per-particle scan.
+fn build_all_bond_vectors(n: usize, nlist: &NeighborList) -> Vec<Vec<[F; 3]>> {
+    let mut bonds: Vec<Vec<[F; 3]>> = vec![Vec::new(); n];
     let i_idx = nlist.query_point_indices();
     let j_idx = nlist.point_indices();
     let vectors = nlist.vectors();
@@ -99,11 +120,18 @@ fn bond_vectors(particle: usize, nlist: &NeighborList) -> Vec<[F; 3]> {
         molrs::spatial::neighbors::QueryMode::SelfQuery
     );
     for k in 0..nlist.n_pairs() {
-        if i_idx[k] as usize == particle {
-            bonds.push([vectors[[k, 0]], vectors[[k, 1]], vectors[[k, 2]]]);
-        } else if symmetric && j_idx[k] as usize == particle {
-            // j-side bond is reversed.
-            bonds.push([-vectors[[k, 0]], -vectors[[k, 1]], -vectors[[k, 2]]]);
+        let i = i_idx[k] as usize;
+        let v = [vectors[[k, 0]], vectors[[k, 1]], vectors[[k, 2]]];
+        if i < n {
+            bonds[i].push(v);
+        }
+        if symmetric {
+            let j = j_idx[k] as usize;
+            // Skip self-pairs so the reversed bond is not double-counted
+            // (matches the old `else if` that fired only when `i != j`).
+            if j != i && j < n {
+                bonds[j].push([-v[0], -v[1], -v[2]]);
+            }
         }
     }
     bonds
@@ -274,7 +302,7 @@ impl MatchEnv {
         let (xs_p, _, _) = get_positions_ref(frame)?;
         let n = xs_p.slice().len();
 
-        let bonds: Vec<Vec<[F; 3]>> = (0..n).map(|i| bond_vectors(i, nlist)).collect();
+        let bonds = build_all_bond_vectors(n, nlist);
 
         // Group particles by neighbor count first — only same-length
         // bond sets can match.
@@ -500,6 +528,49 @@ mod tests {
             .compute(&[&frame], &vec![nl])
             .unwrap()[0];
         assert_ne!(split.cluster_idx[0], split.cluster_idx[5]);
+    }
+
+    /// Regression guard for the single-pass `build_all_bond_vectors`
+    /// dispatch: an asymmetric chain with two *distinct* bond lengths
+    /// pins each particle's collected bond set via the public
+    /// `fingerprints`. A mis-dispatch — dropping the reversed `j`-side
+    /// bond, assigning to the wrong endpoint, or double-counting a pair —
+    /// changes at least one fingerprint here.
+    ///
+    /// Geometry: three collinear atoms at x = 0.0, 1.0, 2.5 with cutoff
+    /// 1.6 Å. Neighbor pairs: (0,1) at 1.0 and (1,2) at 1.5; (0,2) at 2.5
+    /// is outside the cutoff. Expected sorted magnitudes:
+    ///   atom 0 → [1.0]   atom 1 → [1.0, 1.5]   atom 2 → [1.5]
+    #[test]
+    fn fingerprints_dispatch_forward_and_reversed_bonds() {
+        let frame = frame_with(
+            &[[0.0_f64, 0.0, 0.0], [1.0, 0.0, 0.0], [2.5, 0.0, 0.0]],
+            10.0,
+        );
+        let nl = build_nlist(&frame, 1.6);
+        let r = &MatchEnv::new(1e-9)
+            .unwrap()
+            .compute(&[&frame], &vec![nl])
+            .unwrap()[0];
+
+        let approx = |a: &[F], b: &[F]| {
+            a.len() == b.len() && a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-9)
+        };
+        assert!(
+            approx(&r.fingerprints[0], &[1.0]),
+            "atom 0 fingerprint = {:?}",
+            r.fingerprints[0]
+        );
+        assert!(
+            approx(&r.fingerprints[1], &[1.0, 1.5]),
+            "atom 1 fingerprint = {:?}",
+            r.fingerprints[1]
+        );
+        assert!(
+            approx(&r.fingerprints[2], &[1.5]),
+            "atom 2 fingerprint = {:?}",
+            r.fingerprints[2]
+        );
     }
 
     #[test]

@@ -148,6 +148,15 @@ impl Compute for SphereVoxelization {
         if frames.is_empty() {
             return Err(ComputeError::EmptyInput);
         }
+        #[cfg(feature = "rayon")]
+        const PAR_THRESHOLD: usize = 2;
+
+        #[cfg(feature = "rayon")]
+        if frames.len() >= PAR_THRESHOLD {
+            use rayon::prelude::*;
+            return frames.par_iter().map(|f| self.one_frame(*f)).collect();
+        }
+
         let mut out = Vec::with_capacity(frames.len());
         for f in frames {
             out.push(self.one_frame(*f)?);

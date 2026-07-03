@@ -110,27 +110,39 @@ impl StaticStructureFactorDebye {
         }
 
         // Off-diagonal: each unordered pair contributes 2 · sin(k r) / (k r)
-        // (factor 2 from i↔j symmetry).
+        // (factor 2 from i↔j symmetry). This O(N²·n_k) pair sum is the
+        // dominant cost and Debye is typically run on a single frame, so the
+        // outer particle loop is parallelised over thread-local `sk`
+        // accumulators (mirroring freud's OpenMP reduction). Cross-thread
+        // summation is reassociated, so the parallel result can differ from
+        // the serial path in the last ULPs — deterministic for a fixed
+        // thread count and far below the physical tolerances on S(k).
         let inv_n = 1.0 / n as F;
+        #[cfg(feature = "rayon")]
+        {
+            use rayon::prelude::*;
+            let k_values = &self.k_values;
+            let off = (0..n)
+                .into_par_iter()
+                .fold(
+                    || Array1::<F>::zeros(n_k),
+                    |mut acc, i| {
+                        accumulate_row(&mut acc, xs, ys, zs, k_values, i);
+                        acc
+                    },
+                )
+                .reduce(
+                    || Array1::<F>::zeros(n_k),
+                    |mut a, b| {
+                        a += &b;
+                        a
+                    },
+                );
+            sk += &off;
+        }
+        #[cfg(not(feature = "rayon"))]
         for i in 0..n {
-            for j in (i + 1)..n {
-                let dx = xs[i] - xs[j];
-                let dy = ys[i] - ys[j];
-                let dz = zs[i] - zs[j];
-                let r = (dx * dx + dy * dy + dz * dz).sqrt();
-                if r == 0.0 {
-                    // Treat coincident pair as contributing 2 (lim sinx/x = 1).
-                    for v in sk.iter_mut() {
-                        *v += 2.0;
-                    }
-                    continue;
-                }
-                for (idx, &k) in self.k_values.iter().enumerate() {
-                    let kr = k * r;
-                    let term = if kr.abs() < 1e-9 { 1.0 } else { kr.sin() / kr };
-                    sk[idx] += 2.0 * term;
-                }
-            }
+            accumulate_row(&mut sk, xs, ys, zs, &self.k_values, i);
         }
 
         // Normalise by N: S(k) = (1/N) Σ_{i, j} sin(k r_ij) / (k r_ij)
@@ -143,6 +155,40 @@ impl StaticStructureFactorDebye {
             sk,
             n_particles: n,
         })
+    }
+}
+
+/// Accumulate particle `i`'s off-diagonal Debye contributions (all pairs
+/// `j > i`) into `acc`, one term per k value. Shared verbatim by the
+/// serial and rayon-parallel paths so the pair math lives in exactly one
+/// place — the serial path stays bit-for-bit identical to the pre-parallel
+/// implementation.
+fn accumulate_row(
+    acc: &mut Array1<F>,
+    xs: &[F],
+    ys: &[F],
+    zs: &[F],
+    k_values: &Array1<F>,
+    i: usize,
+) {
+    let n = xs.len();
+    for j in (i + 1)..n {
+        let dx = xs[i] - xs[j];
+        let dy = ys[i] - ys[j];
+        let dz = zs[i] - zs[j];
+        let r = (dx * dx + dy * dy + dz * dz).sqrt();
+        if r == 0.0 {
+            // Treat coincident pair as contributing 2 (lim sinx/x = 1).
+            for v in acc.iter_mut() {
+                *v += 2.0;
+            }
+            continue;
+        }
+        for (idx, &k) in k_values.iter().enumerate() {
+            let kr = k * r;
+            let term = if kr.abs() < 1e-9 { 1.0 } else { kr.sin() / kr };
+            acc[idx] += 2.0 * term;
+        }
     }
 }
 

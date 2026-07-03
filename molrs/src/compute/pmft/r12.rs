@@ -219,6 +219,18 @@ impl Compute for PMFTR12 {
                 what: "PMFTR12 frame-aligned inputs",
             });
         }
+        #[cfg(feature = "rayon")]
+        const PAR_THRESHOLD: usize = 2;
+
+        #[cfg(feature = "rayon")]
+        if nf >= PAR_THRESHOLD {
+            use rayon::prelude::*;
+            return (0..nf)
+                .into_par_iter()
+                .map(|k| self.one_frame(frames[k], &args.nlists[k], &args.orientations[k]))
+                .collect();
+        }
+
         let mut out = Vec::with_capacity(nf);
         for k in 0..nf {
             out.push(self.one_frame(frames[k], &args.nlists[k], &args.orientations[k])?);

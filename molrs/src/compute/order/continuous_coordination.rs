@@ -137,6 +137,19 @@ impl Compute for ContinuousCoordination {
                 what: "neighbor-list count",
             });
         }
+        #[cfg(feature = "rayon")]
+        const PAR_THRESHOLD: usize = 2;
+
+        #[cfg(feature = "rayon")]
+        if frames.len() >= PAR_THRESHOLD {
+            use rayon::prelude::*;
+            return frames
+                .par_iter()
+                .zip(nlists.par_iter())
+                .map(|(f, nl)| self.one_frame(*f, nl))
+                .collect();
+        }
+
         let mut out = Vec::with_capacity(frames.len());
         for (f, nl) in frames.iter().zip(nlists.iter()) {
             out.push(self.one_frame(*f, nl)?);
