@@ -424,13 +424,19 @@ impl Transform {
     }
 
     /// Apply the transform to `mol` in place at the occurrence pinned by
-    /// `binding` (map label → molecule atom id). See [`Reaction::apply`].
+    /// `binding` (map label → molecule atom id). Returns the deduplicated,
+    /// deterministically-ordered set of *surviving* touched atom ids (the seed
+    /// for a retype region). See [`Reaction::apply`].
     fn apply(
         &self,
         mol: &mut Atomistic,
         binding: &HashMap<u32, AtomId>,
         reactants: &[SmartsPattern],
-    ) -> Result<(), MolRsError> {
+    ) -> Result<Vec<AtomId>, MolRsError> {
+        // Surviving atoms whose local environment changed: bond endpoints, added
+        // atoms, deleted atoms' surviving neighbours, and prop-set atoms.
+        let mut touched: Vec<AtomId> = Vec::new();
+
         // 1. Resolve + delete leaving atoms (re-match each component to the binding).
         let mut leaving: HashSet<AtomId> = HashSet::new();
         for spec in &self.delete {
@@ -455,7 +461,17 @@ impl Transform {
                 }
             }
         }
-        for aid in leaving {
+        // Capture the *surviving* neighbours of the leaving atoms before the
+        // delete: their environment changes, and the leaving atoms' own ids are
+        // gone afterwards (so they can never enter the touched set).
+        for &aid in &leaving {
+            for (_, other) in mol.incident_bond_ids(aid) {
+                if !leaving.contains(&other) {
+                    touched.push(other);
+                }
+            }
+        }
+        for &aid in &leaving {
             mol.remove_atom(aid)?; // cascades incident bonds / angles / dihedrals
         }
 
@@ -467,6 +483,7 @@ impl Transform {
                 mol.set_atom(id, "formal_charge", spec.charge)?;
             }
             added.insert(spec.product_idx, id);
+            touched.push(id);
         }
 
         let resolve = |n: &NodeRef| -> Result<AtomId, MolRsError> {
@@ -492,6 +509,8 @@ impl Transform {
             let (ida, idb) = (mapped(&a)?, mapped(&b)?);
             if let Some(bid) = bond_between(mol, ida, idb) {
                 mol.remove_bond(bid)?;
+                touched.push(ida);
+                touched.push(idb);
             }
         }
 
@@ -500,6 +519,8 @@ impl Transform {
             let (ida, idb) = (resolve(na)?, resolve(nb)?);
             let bid = mol.add_bond(ida, idb)?;
             mol.set_bond_prop(bid, "order", *order)?;
+            touched.push(ida);
+            touched.push(idb);
         }
 
         // 5. Change order of preserved bonds.
@@ -511,6 +532,8 @@ impl Transform {
                 ))
             })?;
             mol.set_bond_prop(bid, "order", order)?;
+            touched.push(ida);
+            touched.push(idb);
         }
 
         // 6. Property changes on preserved atoms.
@@ -522,12 +545,17 @@ impl Transform {
             if let Some(c) = pd.charge {
                 mol.set_atom(id, "formal_charge", c)?;
             }
+            touched.push(id);
         }
 
         // 7. Refresh derived topology, then re-perceive aromaticity.
         mol.generate_topology(true, true, false)?;
         crate::core::chem::aromaticity::perceive_aromaticity(mol);
-        Ok(())
+
+        // Dedup with a deterministic order (sort by the stable atom handle).
+        touched.sort_unstable();
+        touched.dedup();
+        Ok(touched)
     }
 }
 
@@ -636,11 +664,19 @@ impl Reaction {
     /// → add unmapped-RHS atoms → break/form bonds + set order → set preserved
     /// props → regenerate topology → re-perceive aromaticity. Added atoms get no
     /// coordinates. Every edit goes through the core `Atomistic` primitives.
+    ///
+    /// Returns the deduplicated, deterministically-ordered set of *surviving*
+    /// touched atom ids — the atoms whose local environment changed and so need
+    /// re-typification: endpoints of every formed / broken / order-changed bond,
+    /// newly added atoms, the surviving neighbours of deleted atoms, and atoms
+    /// whose props were set. Deleted atoms' own ids are never included (they no
+    /// longer exist). The caller (molpy) expands this seed set into a
+    /// retype-safe radius-N ball.
     pub fn apply(
         &self,
         mol: &mut Atomistic,
         binding: &HashMap<u32, AtomId>,
-    ) -> Result<(), MolRsError> {
+    ) -> Result<Vec<AtomId>, MolRsError> {
         self.transform.apply(mol, binding, &self.reactants)
     }
 }
@@ -770,7 +806,7 @@ mod tests {
 
         let n_before = mol.n_atoms();
         let binding = HashMap::from([(1u32, n0), (2u32, c0)]);
-        rxn.apply(&mut mol, &binding).unwrap();
+        let touched = rxn.apply(&mut mol, &binding).unwrap();
 
         // two leaving atoms removed
         assert_eq!(mol.n_atoms(), n_before - 2);
@@ -779,6 +815,15 @@ mod tests {
         assert!(bond_between(&mol, c0, o1).is_some());
         // topology regenerated around the new bond
         assert!(mol.n_angles() > 0);
+
+        // touched = formed-bond endpoints (N, C) + the ester O's surviving
+        // neighbour (C again); the deleted leaving atoms (o2, c3) are absent.
+        assert!(touched.contains(&n0));
+        assert!(touched.contains(&c0));
+        assert!(!touched.contains(&o2));
+        assert!(!touched.contains(&c3));
+        // deduped + sorted
+        assert!(touched.windows(2).all(|w| w[0] < w[1]));
     }
 
     #[test]
@@ -790,7 +835,7 @@ mod tests {
         mol.add_bond(c0, br).unwrap();
 
         let binding = HashMap::from([(1u32, c0)]);
-        rxn.apply(&mut mol, &binding).unwrap();
+        let touched = rxn.apply(&mut mol, &binding).unwrap();
 
         assert_eq!(mol.n_atoms(), 2);
         // the surviving neighbour of C is the new O
@@ -802,5 +847,35 @@ mod tests {
             .collect();
         assert!(elements.contains(&"O".to_string()));
         assert!(!elements.contains(&"Br".to_string()));
+
+        // touched = surviving carbon (leaving Br's neighbour) + the added O;
+        // the deleted Br handle never appears.
+        assert!(touched.contains(&c0));
+        assert!(!touched.contains(&br));
+        // exactly one touched id is the freshly added atom (neither c0 nor br)
+        assert_eq!(touched.iter().filter(|&&t| t != c0 && t != br).count(), 1);
+    }
+
+    #[test]
+    fn apply_thiol_ene_touched_is_two_carbons_and_sulfur() {
+        let rxn = Reaction::parse("[C:1]=[C:2].[S;H1:3] >> [C:1][C:2][S:3]").unwrap();
+        let mut mol = Atomistic::new();
+        let c1 = mol.add_atom_xyz("C", 0.0, 0.0, 0.0);
+        let c2 = mol.add_atom_xyz("C", 1.3, 0.0, 0.0);
+        let s3 = mol.add_atom_xyz("S", 3.0, 0.0, 0.0);
+        let hs = mol.add_atom_xyz("H", 3.0, 1.0, 0.0);
+        let b = mol.add_bond(c1, c2).unwrap();
+        mol.set_bond_prop(b, "order", 2.0).unwrap();
+        mol.add_bond(s3, hs).unwrap();
+
+        // No leaving group; the binding pins the three reacting atoms directly.
+        let binding = HashMap::from([(1u32, c1), (2u32, c2), (3u32, s3)]);
+        let touched = rxn.apply(&mut mol, &binding).unwrap();
+
+        // C1-C2 order change (2->1) touches both carbons; C2-S3 form touches
+        // C2 and S3; the spectator H is untouched.
+        let mut expected = [c1, c2, s3];
+        expected.sort_unstable();
+        assert_eq!(touched, expected.to_vec());
     }
 }

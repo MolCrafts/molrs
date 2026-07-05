@@ -776,13 +776,20 @@ impl PyReaction {
     /// `binding` (``{map_number: atom_handle}``). Deletes unmapped-LHS atoms,
     /// adds unmapped-RHS atoms (no coordinates), forms/breaks bonds, then
     /// regenerates angle/dihedral topology and re-perceives aromaticity.
-    fn apply(&self, mol: &mut PyAtomistic, binding: HashMap<u32, u64>) -> PyResult<()> {
+    ///
+    /// Returns the deduplicated, deterministically-ordered list of *surviving*
+    /// touched atom handles (formed/broken/order-changed bond endpoints, added
+    /// atoms, deleted atoms' surviving neighbours, and prop-set atoms). Deleted
+    /// atoms' own handles are never included. The caller expands this seed set
+    /// into a retype-safe region.
+    fn apply(&self, mol: &mut PyAtomistic, binding: HashMap<u32, u64>) -> PyResult<Vec<u64>> {
         let resolved: HashMap<u32, NodeId> = binding
             .into_iter()
             .map(|(k, v)| (k, node_from_u64(v)))
             .collect();
         self.inner
             .apply(mol.core_mut(), &resolved)
+            .map(|touched| touched.into_iter().map(node_to_u64).collect())
             .map_err(molrs_error_to_pyerr)
     }
 

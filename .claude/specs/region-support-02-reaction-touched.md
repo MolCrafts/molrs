@@ -1,6 +1,6 @@
 ---
 title: Region-support 2/2 — Reaction.apply returns touched atom handles
-status: draft
+status: done
 created: 2026-07-05
 depends_on: reaction-smarts-02-smirks-applier
 ---
@@ -63,10 +63,10 @@ fn apply(&self, mol: &mut PyAtomistic, binding: HashMap<u32,u64>) -> PyResult<Ve
 
 ## Tasks
 
-- [ ] **T1**: collect touched (surviving) atom ids in `Reaction::apply`'s edit steps; dedup; return `Vec<AtomId>`
-- [ ] **T2**: `PyReaction.apply -> Vec<u64>`; update stub
-- [ ] **T3**: tests — touched set = bond-forming endpoints + added + deleted-neighbors + prop-set atoms; deleted atoms' own ids absent
-- [ ] **T4**: quality gate — fmt/clippy/check/test all green; Python smoke
+- [x] **T1**: collect touched (surviving) atom ids in `Reaction::apply`'s edit steps; dedup; return `Vec<AtomId>`
+- [x] **T2**: `PyReaction.apply -> Vec<u64>`; update stub
+- [x] **T3**: tests — touched set = bond-forming endpoints + added + deleted-neighbors + prop-set atoms; deleted atoms' own ids absent
+- [x] **T4**: quality gate — fmt/clippy/check/test all green; Python smoke
 
 ## Testing strategy
 

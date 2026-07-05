@@ -115,8 +115,11 @@ def test_apply_amide_forms_bond_and_drops_leaving_group():
 
     binding = _bind(rxn, mol)
     assert set(binding) == {1, 2}
-    rxn.apply(mol, binding)
+    touched = rxn.apply(mol, binding)
 
+    # apply now reports the touched (surviving) atom handles as a list[int]
+    assert isinstance(touched, list)
+    assert all(isinstance(t, int) for t in touched)
     # leaving atoms (ester O + alkyl C) removed -> exactly 2 fewer atoms
     assert mol.n_atoms == n_before - 2
     # new N-C(=O) amide linkage present; carbonyl O preserved (not re-added)
@@ -129,7 +132,8 @@ def test_apply_reuses_core_and_leaves_binding_atoms_alive():
     rxn = molrs.Reaction("[N;H2:1].[C:2](=O)OC >> [N:1][C:2]=O")
     mol, h = _amine_plus_ester()
     binding = _bind(rxn, mol)
-    rxn.apply(mol, binding)
+    touched = rxn.apply(mol, binding)
+    assert isinstance(touched, list)
     # the mapped atoms survive and are now bonded
     n_nbrs = {other for (_, other) in mol.incident_relations(binding[1], "bonds")}
     assert binding[2] in n_nbrs
@@ -150,7 +154,8 @@ def test_apply_adds_unmapped_product_atom():
 
     binding = _bind(rxn, mol)
     assert set(binding) == {1}
-    rxn.apply(mol, binding)
+    touched = rxn.apply(mol, binding)
+    assert isinstance(touched, list)
 
     # Br removed, O added -> still 2 atoms
     assert mol.n_atoms == 2
@@ -174,3 +179,64 @@ def test_smarts_matcher_still_works():
     o = mol.add_atom("O", 1.4, 0.0, 0.0)
     mol.add_bond(c, o)
     assert molrs.SmartsPattern("[C:1][O:2]").has_match(mol)
+
+
+# ---------------------------------------------------------------------------
+# region-support-02: apply reports the touched (surviving) atom handles
+# ---------------------------------------------------------------------------
+
+
+def test_apply_touched_amide_endpoints_and_leaving_neighbor():
+    """ac-001: touched has the formed-bond endpoints N/C plus the leaving
+    group's surviving neighbor; the deleted atoms' own handles are absent; the
+    result is deduped."""
+    rxn = molrs.Reaction("[N;H2:1].[C:2](=O)OC >> [N:1][C:2]=O")
+    mol, h = _amine_plus_ester()
+    binding = _bind(rxn, mol)
+    touched = rxn.apply(mol, binding)
+    touched_set = set(touched)
+
+    # formed N-C bond endpoints (C is also the ester O's surviving neighbor)
+    assert binding[1] in touched_set  # amine N
+    assert binding[2] in touched_set  # ester carbonyl C
+    # deleted atoms (ester O + alkyl C) own handles must NOT appear
+    assert h["o2"] not in touched_set
+    assert h["c3"] not in touched_set
+    # deduped
+    assert len(touched) == len(touched_set)
+
+
+def test_apply_touched_includes_added_atom():
+    """ac-002: a reaction adding an RHS atom includes the new atom's handle;
+    the surviving carbon is touched, the deleted Br handle is not."""
+    rxn = molrs.Reaction("[C:1]Br >> [C:1]O")
+    mol = molrs.Atomistic()
+    c0 = mol.add_atom("C", 0.0, 0.0, 0.0)
+    br = mol.add_atom("Br", 1.9, 0.0, 0.0)
+    mol.add_bond(c0, br)
+
+    binding = _bind(rxn, mol)
+    touched = set(rxn.apply(mol, binding))
+
+    o_handle = next(e for e in mol.entities() if mol.get(e, "element") == "O")
+    assert o_handle in touched  # newly added atom
+    assert c0 in touched  # surviving neighbor of the leaving Br
+    assert br not in touched  # deleted atom's own handle absent
+
+
+def test_apply_touched_thiol_ene_two_carbons_and_sulfur():
+    """ac-002: thiol-ene touched = the two carbons (order change) + the sulfur
+    (formed bond); the sulfur's spectator H is not touched."""
+    rxn = molrs.Reaction("[C:1]=[C:2].[S;H1:3] >> [C:1][C:2][S:3]")
+    mol = molrs.Atomistic()
+    c1 = mol.add_atom("C", 0.0, 0.0, 0.0)
+    c2 = mol.add_atom("C", 1.3, 0.0, 0.0)
+    s3 = mol.add_atom("S", 3.0, 0.0, 0.0)
+    hs = mol.add_atom("H", 3.0, 1.0, 0.0)  # explicit H so [S;H1] matches
+    b = mol.add_bond(c1, c2)
+    mol.set_bond_order(b, 2.0)
+    mol.add_bond(s3, hs)
+
+    binding = _bind(rxn, mol)
+    touched = set(rxn.apply(mol, binding))
+    assert touched == {c1, c2, s3}
