@@ -54,7 +54,7 @@ pub use chem::aromaticity::perceive_aromaticity;
 pub use chem::gasteiger::{GasteigerCharges, compute_gasteiger_charges};
 pub use chem::hydrogens::{add_hydrogens, implicit_h_count, remove_hydrogens};
 pub use chem::rings::{RingInfo, find_rings};
-pub use chem::smarts::SmartsPattern;
+pub use chem::smarts::{Reaction, SmartsPattern};
 pub use chem::stereo::{
     BondStereo, TetrahedralStereo, assign_bond_stereo_from_3d, assign_stereo_from_3d,
     chiral_volume, find_chiral_centers,

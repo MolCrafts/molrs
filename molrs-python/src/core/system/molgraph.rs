@@ -25,7 +25,7 @@ use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 
 use molrs::chem::aromaticity::perceive_aromaticity as core_perceive_aromaticity;
-use molrs::chem::smarts::SmartsPattern;
+use molrs::chem::smarts::{Reaction, SmartsPattern};
 use molrs::system::atomistic::Atomistic;
 use molrs::system::coarsegrain::CoarseGrain;
 use molrs::system::entity_table::Cell;
@@ -687,6 +687,83 @@ impl PySmartsPattern {
         format!(
             "SmartsPattern(num_query_atoms={})",
             self.inner.num_query_atoms()
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PyReaction — Daylight reaction-SMARTS (SMIRKS) transform over an Atomistic
+// ---------------------------------------------------------------------------
+
+/// Compiled reaction SMARTS, exposed to Python as `molrs.Reaction`.
+///
+/// A thin wrapper over the core [`Reaction`] (`molrs/src/core/chem/smarts`).
+/// Parses ``reactants >> products`` (tolerating an ignored ``>agent>`` field),
+/// derives the graph edit from the Daylight atom-map diff, and applies it to one
+/// matched occurrence in place. Reacting atoms may carry SMARTS queries
+/// (RDKit-style reaction SMARTS); only concrete product atoms are addable.
+///
+/// Examples
+/// --------
+/// >>> rxn = molrs.Reaction("[N;H2:1].[C:2](=O)OC >> [N:1][C:2]=O")
+/// >>> rxn.forming_bonds                 # [(1, 2)]
+/// >>> binding = {}                       # match each reactant component ...
+/// >>> for pat in rxn.reactant_patterns:  # ... and merge the map->atom dicts
+/// ...     binding.update(pat.find_matches_mapped(mol)[0])
+/// >>> rxn.apply(mol, binding)            # edits `mol` in place
+#[pyclass(name = "Reaction")]
+pub struct PyReaction {
+    inner: Reaction,
+}
+
+#[pymethods]
+impl PyReaction {
+    /// Parse a reaction SMARTS. Raises ``ValueError`` on a syntax or
+    /// map-consistency error (e.g. an atom map that appears on only one side).
+    #[new]
+    fn new(reaction_smarts: &str) -> PyResult<Self> {
+        let inner = Reaction::parse(reaction_smarts).map_err(molrs_error_to_pyerr)?;
+        Ok(Self { inner })
+    }
+
+    /// The reactant components (LHS), one :class:`SmartsPattern` per top-level
+    /// ``.`` component, for matching / pairing each independently.
+    #[getter]
+    fn reactant_patterns(&self) -> Vec<PySmartsPattern> {
+        self.inner
+            .reactants()
+            .iter()
+            .map(|p| PySmartsPattern { inner: p.clone() })
+            .collect()
+    }
+
+    /// The ``(map_a, map_b)`` pairs of newly formed bonds between preserved
+    /// atoms — the distance criterion for picking a reacting occurrence. Bonds
+    /// that merely change order, and bonds to added atoms, are excluded.
+    #[getter]
+    fn forming_bonds(&self) -> Vec<(u32, u32)> {
+        self.inner.forming_bonds()
+    }
+
+    /// Apply the transform to `mol` in place at the occurrence pinned by
+    /// `binding` (``{map_number: atom_handle}``). Deletes unmapped-LHS atoms,
+    /// adds unmapped-RHS atoms (no coordinates), forms/breaks bonds, then
+    /// regenerates angle/dihedral topology and re-perceives aromaticity.
+    fn apply(&self, mol: &mut PyAtomistic, binding: HashMap<u32, u64>) -> PyResult<()> {
+        let resolved: HashMap<u32, NodeId> = binding
+            .into_iter()
+            .map(|(k, v)| (k, node_from_u64(v)))
+            .collect();
+        self.inner
+            .apply(mol.core_mut(), &resolved)
+            .map_err(molrs_error_to_pyerr)
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "Reaction(reactants={}, forming_bonds={:?})",
+            self.inner.reactants().len(),
+            self.inner.forming_bonds()
         )
     }
 }

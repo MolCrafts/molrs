@@ -41,7 +41,9 @@ use crate::core::spatial::simbox::PyBox;
 use crate::core::store::block::PyBlock;
 use crate::core::store::frame::PyFrame;
 use crate::core::store::trajectory::{PyScalarObservable, PyTrajectory, PyVectorObservable};
-use crate::core::system::molgraph::{PyAtomistic, PyCoarseGrain, PyGraph, PySmartsPattern};
+use crate::core::system::molgraph::{
+    PyAtomistic, PyCoarseGrain, PyGraph, PyReaction, PySmartsPattern,
+};
 use crate::core::system::molgraph::{
     add_hydrogens, compute_gasteiger_charges, find_rings, perceive_aromaticity, rotate, scale,
     translate,
@@ -173,6 +175,7 @@ fn molrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyAtomistic>()?;
     m.add_class::<PyCoarseGrain>()?;
     m.add_class::<PySmartsPattern>()?;
+    m.add_class::<PyReaction>()?;
 
     // Systems = module-level free functions (no algorithm methods on the classes)
     m.add_function(wrap_pyfunction!(translate, m)?)?;

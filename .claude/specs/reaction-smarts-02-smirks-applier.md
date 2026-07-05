@@ -1,6 +1,6 @@
 ---
 title: Reaction-SMARTS 2/2 — Daylight reaction-SMARTS (SMIRKS) parser + applier
-status: draft
+status: done
 created: 2026-07-05
 depends_on: reaction-smarts-01-python-matcher
 ---
@@ -126,13 +126,13 @@ struct PyReaction { inner: Reaction }
 
 ## Tasks
 
-- [ ] **T1**: `Reaction::parse` — top-level `>>` split (+ `>agent>` tolerate), LHS `.`-split components, each side via chain-`01` parser
-- [ ] **T2**: `compile` → `Transform` — LHS↔RHS map diff (form/break/set_order/delete/add/set_props); pairwise-map validation
-- [ ] **T3**: `Reaction::apply` — order delete→add→break/form→set→`generate_topology`→`perceive_aromaticity`; reuse core edit fns
-- [ ] **T4**: `AddAtomSpec` handling — unmapped RHS atoms element/charge from template, no coords
-- [ ] **T5**: `PyReaction` — `new`/`reactant_patterns`/`forming_bonds`/`apply`; register
-- [ ] **T6**: tests — parse, transform compile (Daylight semantics), single-occurrence apply + topology refresh
-- [ ] **T7**: quality gate — fmt/clippy/check/test all green; Python smoke
+- [x] **T1**: `Reaction::parse` — top-level `>>` split (+ `>agent>` tolerate), LHS `.`-split components, each side via chain-`01` parser
+- [x] **T2**: `compile` → `Transform` — LHS↔RHS map diff (form/break/set_order/delete/add/set_props); pairwise-map validation
+- [x] **T3**: `Reaction::apply` — order delete→add→break/form→set→`generate_topology`→`perceive_aromaticity`; reuse core edit fns
+- [x] **T4**: `AddAtomSpec` handling — unmapped RHS atoms element/charge from template, no coords
+- [x] **T5**: `PyReaction` — `new`/`reactant_patterns`/`forming_bonds`/`apply`; register
+- [x] **T6**: tests — parse, transform compile (Daylight semantics), single-occurrence apply + topology refresh
+- [x] **T7**: quality gate — fmt/clippy/check/test all green; Python smoke
 
 ## Testing strategy
 

@@ -335,6 +335,22 @@ class SmartsPattern:
     def num_query_atoms(self) -> int: ...
     def map_label(self, query_atom: int) -> Optional[int]: ...
 
+class Reaction:
+    """Compiled Daylight reaction SMARTS (SMIRKS) transform.
+
+    Parses ``reactants >> products`` (tolerating an ignored ``>agent>`` field),
+    derives the graph edit from the atom-map diff, and applies it to one matched
+    occurrence in place. Reacting atoms may carry SMARTS queries (RDKit-style);
+    only concrete product atoms are addable.
+    """
+
+    def __init__(self, reaction_smarts: str) -> None: ...
+    @property
+    def reactant_patterns(self) -> List[SmartsPattern]: ...
+    @property
+    def forming_bonds(self) -> List[Tuple[int, int]]: ...
+    def apply(self, mol: Atomistic, binding: dict[int, int]) -> None: ...
+
 # ---------------------------------------------------------------------------
 # Systems — module-level free functions over a graph world
 # ---------------------------------------------------------------------------

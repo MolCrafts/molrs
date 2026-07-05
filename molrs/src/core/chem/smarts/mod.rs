@@ -58,11 +58,14 @@
 mod ast;
 mod matcher;
 mod parser;
+mod reaction;
 
 use crate::error::MolRsError;
 use crate::system::atomistic::{AtomId, Atomistic};
 
 use parser::QueryGraph;
+
+pub use reaction::Reaction;
 
 /// A compiled SMARTS query.
 #[derive(Debug, Clone)]
