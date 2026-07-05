@@ -534,6 +534,27 @@ impl Atomistic {
         &mut self.graph
     }
 
+    // ---- structural graph hash (see [`crate::system::graph_hash`]) ----
+
+    /// Isomorphism-invariant Weisfeiler–Lehman structural hash of the molecule
+    /// (element / charge / aromatic node labels, bond-order edge labels). A
+    /// stable, reproducible dedup key — identical for a node-permuted copy.
+    pub fn structural_hash(&self) -> u64 {
+        crate::system::graph_hash::structural_hash(&self.graph)
+    }
+
+    /// Deterministic canonical atom ordering from the WL refinement, so two
+    /// isomorphic molecules line up node-by-node (see
+    /// [`crate::system::graph_hash::canonical_order`]).
+    pub fn canonical_order(&self) -> Vec<AtomId> {
+        crate::system::graph_hash::canonical_order(&self.graph)
+    }
+
+    /// Whether `self` and `other` are isomorphic as labeled molecular graphs.
+    pub fn is_isomorphic(&self, other: &Atomistic) -> bool {
+        crate::system::graph_hash::is_isomorphic(&self.graph, &other.graph)
+    }
+
     // Aromaticity perception is a free-function *system*:
     // [`crate::chem::aromaticity::perceive_aromaticity`]. No algorithm method here.
 }

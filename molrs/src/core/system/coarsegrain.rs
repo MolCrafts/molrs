@@ -227,6 +227,26 @@ impl CoarseGrain {
     pub fn as_molgraph_mut(&mut self) -> &mut MolGraph {
         &mut self.graph
     }
+
+    // ---- structural graph hash (see [`crate::system::graph_hash`]) ----
+
+    /// Isomorphism-invariant Weisfeiler–Lehman structural hash of the bead graph
+    /// (bead-type node labels, bond-order edge labels). Shares the same
+    /// [`MolGraph`] primitive that serves the all-atom case.
+    pub fn structural_hash(&self) -> u64 {
+        crate::system::graph_hash::structural_hash(&self.graph)
+    }
+
+    /// Deterministic canonical bead ordering from the WL refinement (see
+    /// [`crate::system::graph_hash::canonical_order`]).
+    pub fn canonical_order(&self) -> Vec<BeadId> {
+        crate::system::graph_hash::canonical_order(&self.graph)
+    }
+
+    /// Whether `self` and `other` are isomorphic as labeled bead graphs.
+    pub fn is_isomorphic(&self, other: &CoarseGrain) -> bool {
+        crate::system::graph_hash::is_isomorphic(&self.graph, &other.graph)
+    }
 }
 
 #[cfg(test)]

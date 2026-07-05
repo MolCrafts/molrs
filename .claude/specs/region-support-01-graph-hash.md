@@ -1,6 +1,6 @@
 ---
 title: Region-support 1/2 — structural graph hash + canonical order + isomorphism on MolGraph
-status: draft
+status: done
 created: 2026-07-05
 ---
 
@@ -92,13 +92,13 @@ On `PyAtomistic` (and `PyCoarseGrain`): `structural_hash() -> u64`, `canonical_o
 
 ## Tasks
 
-- [ ] **T1**: WL `structural_hash(&MolGraph)` — label init + neighbor-multiset refinement to convergence
-- [ ] **T2**: `canonical_order(&MolGraph)` — stable ordering from final colors
-- [ ] **T3**: `is_isomorphic(a,b)` — hash pre-reject + WL-pruned VF2/backtracking
-- [ ] **T4**: thin `Atomistic`/`CoarseGrain` methods delegating to MolGraph
-- [ ] **T5**: PyO3 `structural_hash`/`canonical_order`/`is_isomorphic` on `PyAtomistic`/`PyCoarseGrain` + register + stubs
-- [ ] **T6**: tests — invariance under node-order permutation; two identical junctions hash equal; non-isomorphic differ; charge/aromatic/bond-order sensitivity; CG bead-type graphs
-- [ ] **T7**: quality gate — `cargo fmt --all --check` / `clippy -D warnings` / `check` / `test --all-features`; Python smoke
+- [x] **T1**: WL `structural_hash(&MolGraph)` — label init + neighbor-multiset refinement to convergence
+- [x] **T2**: `canonical_order(&MolGraph)` — stable ordering from final colors
+- [x] **T3**: `is_isomorphic(a,b)` — hash pre-reject + WL-pruned VF2/backtracking
+- [x] **T4**: thin `Atomistic`/`CoarseGrain` methods delegating to MolGraph
+- [x] **T5**: PyO3 `structural_hash`/`canonical_order`/`is_isomorphic` on `PyAtomistic`/`PyCoarseGrain` + register + stubs
+- [x] **T6**: tests — invariance under node-order permutation; two identical junctions hash equal; non-isomorphic differ; charge/aromatic/bond-order sensitivity; CG bead-type graphs
+- [x] **T7**: quality gate — `cargo fmt --all --check` / `clippy -D warnings` / `check` / `test --all-features`; Python smoke
 
 ## Testing strategy
 

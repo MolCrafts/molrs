@@ -576,6 +576,33 @@ impl PyAtomistic {
     fn copy(&self, py: Python<'_>) -> PyResult<Py<PyAtomistic>> {
         PyAtomistic::from_core(py, self.inner.clone())
     }
+
+    // ---- structural graph hash (WL) ----
+
+    /// Isomorphism-invariant Weisfeiler–Lehman structural hash (``int``).
+    ///
+    /// A stable, reproducible dedup key over the molecular graph
+    /// (element / charge / aromatic node labels, bond-order edge labels):
+    /// identical for a node-permuted copy, sensitive to any label or
+    /// connectivity change. Reproducible across runs and processes.
+    fn structural_hash(&self) -> u64 {
+        self.inner.structural_hash()
+    }
+
+    /// Deterministic canonical atom ordering (a list of atom handles) from the
+    /// WL refinement, so two isomorphic molecules line up node-by-node.
+    fn canonical_order(&self) -> Vec<u64> {
+        self.inner
+            .canonical_order()
+            .into_iter()
+            .map(node_to_u64)
+            .collect()
+    }
+
+    /// Whether `self` and `other` are isomorphic as labeled molecular graphs.
+    fn is_isomorphic(&self, other: &PyAtomistic) -> bool {
+        self.inner.is_isomorphic(other.core())
+    }
 }
 graph_world_impl!(PyAtomistic);
 
@@ -858,6 +885,30 @@ impl PyCoarseGrain {
         let core = frame.clone_core_frame()?;
         let inner = CoarseGrain::from_frame(&core).map_err(molrs_error_to_pyerr)?;
         PyCoarseGrain::from_core(py, inner)
+    }
+
+    // ---- structural graph hash (WL) ----
+
+    /// Isomorphism-invariant Weisfeiler–Lehman structural hash (``int``) of the
+    /// bead graph (bead-type node labels, bond-order edge labels). Shares the
+    /// same [`MolGraph`] primitive that serves the all-atom case.
+    fn structural_hash(&self) -> u64 {
+        self.inner.structural_hash()
+    }
+
+    /// Deterministic canonical bead ordering (a list of bead handles) from the
+    /// WL refinement.
+    fn canonical_order(&self) -> Vec<u64> {
+        self.inner
+            .canonical_order()
+            .into_iter()
+            .map(node_to_u64)
+            .collect()
+    }
+
+    /// Whether `self` and `other` are isomorphic as labeled bead graphs.
+    fn is_isomorphic(&self, other: &PyCoarseGrain) -> bool {
+        self.inner.is_isomorphic(&other.inner)
     }
 }
 graph_world_impl!(PyCoarseGrain);
