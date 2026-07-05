@@ -67,6 +67,7 @@ from .molrs import (
     Graph,
     Atomistic,
     CoarseGrain,
+    SmartsPattern,
     # Systems (module-level free functions over a graph)
     translate,
     rotate,
@@ -258,6 +259,7 @@ __all__ = [
     "Graph",
     "Atomistic",
     "CoarseGrain",
+    "SmartsPattern",
     "translate",
     "rotate",
     "scale",

@@ -10,6 +10,8 @@ third-party-library analysis.
 
 | Date | Slug | Status | Owner crate(s) | Summary |
 |---|---|---|---|---|
+| 2026-07-05 | reaction-smarts-01-python-matcher | draft | molcrafts-molrs, molrs-python | Expose the existing atom-map-aware SMARTS engine (`molrs::SmartsPattern`, `core/chem/smarts/`, already parses `[C:1]`) to Python as `SmartsPattern` with map-keyed matches; add `PyAtomistic` graph-edit conveniences (`remove_atom`/`remove_bond`/`set_bond_order`/`copy`). Pure binding, no algorithm change. Consumed by molpy `crosslink-*`. |
+| 2026-07-05 | reaction-smarts-02-smirks-applier | draft | molcrafts-molrs, molrs-python | Daylight reaction-SMARTS (SMIRKS) engine: parse `LHS>>RHS`, compile the atom-map diff to a `Transform` (Daylight SMIRKS semantics: pairwise maps preserved, unmapped LHS deleted, unmapped RHS added, bond diff→form/break/order), apply to one occurrence via existing core edits + `generate_topology`. Expose `Reaction` to Python. Greenfield, on top of 01. Permissive reaction SMARTS (no strict mode). Depends on 01. |
 | 2026-06-26 | analysis-parity-01-geometric-distributions | draft | molcrafts-molrs | ADF / dihedral / distance distribution functions + reusable `Observable` extractors (foundation for CDF/SDF). |
 | 2026-06-26 | analysis-parity-02-combined-distribution-functions | draft | molcrafts-molrs | Joint 2-D/3-D histograms (CDF) correlating 2–3 observables; the reference implementation's most-used analysis. |
 | 2026-06-26 | analysis-parity-03-spatial-distribution-function | draft | molcrafts-molrs | Reference-molecule-frame 3-D density + solvent orientation via native (BLAS-free) Kabsch. |
