@@ -5,6 +5,32 @@ All notable changes to molrs are recorded here. This project follows
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-08
+
+molrs and `molcrafts-molpy` continue to share one version line and release as a
+pair; downstream exact-pins move to `0.7.0`.
+
+### Added
+
+- **`molrs.typifier` Python submodule.** `MMFFTypifier` and `OPLSAATypifier` are
+  exposed as a first-class `molrs.typifier` module (also re-exported at the
+  `molrs` top level), giving the Python bindings a native
+  typify → typed `Atomistic` → `Frame` path. molpy's OPLS-AA / MMFF typifiers are
+  now thin re-exports of these.
+- **Daylight reaction-SMARTS (SMIRKS) transform engine** (`chem`) — apply
+  reaction templates as graph edits; `Reaction.apply` returns handles to the
+  atoms it touched.
+- **Atom-map SMARTS matcher and graph-edit conveniences** exposed to Python.
+- **Isomorphism-invariant structural graph hash on `MolGraph`** — a canonical
+  hash stable under atom re-indexing, backing region-scoped retype caching in
+  downstream consumers.
+- **Frame serialization foundation** — the `serde` feature adds
+  `Serialize`/`Deserialize` for `Frame`/`Block`/`Column`/`SimBox`, and the
+  `stream` feature adds MessagePack/JSON wire encoding
+  (`frame_to_bytes`/`bytes_to_frame`). WASM-clean; intentionally not in `full`.
+  (The WebSocket streaming/control layer on top of this is deferred; see the
+  `net-streaming` spec.)
+
 ## [0.6.0] - 2026-07-03
 
 molrs and `molcrafts-molpy` continue to share one version line and release as a

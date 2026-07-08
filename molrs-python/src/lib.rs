@@ -16,7 +16,7 @@
 //! | `NeighborList`       | [`PyNeighborList`]| Query result with pair indices + distances |
 //! | `Atomistic`          | [`PyAtomistic`]   | All-atom molecular graph                   |
 //! | `MMFFTypifier`       | [`PyMMFFTypifier`]| MMFF94 atom-type assignment                |
-//! | `OplsTypifier`       | [`PyOplsTypifier`]| OPLS-AA atom-type + bonded assignment      |
+//! | `OPLSAATypifier`     | [`PyOPLSAATypifier`]| OPLS-AA atom-type + bonded assignment    |
 //! | `Potentials`         | [`PyPotentials`]  | Compiled energy/force evaluator            |
 //! | `RDF` / `MSD` / `Cluster` |              | Structural analysis                        |
 //!
@@ -41,7 +41,9 @@ use crate::core::spatial::simbox::PyBox;
 use crate::core::store::block::PyBlock;
 use crate::core::store::frame::PyFrame;
 use crate::core::store::trajectory::{PyScalarObservable, PyTrajectory, PyVectorObservable};
-use crate::core::system::molgraph::{PyAtomistic, PyCoarseGrain, PyGraph};
+use crate::core::system::molgraph::{
+    PyAtomistic, PyCoarseGrain, PyGraph, PyReaction, PySmartsMatch, PySmartsPattern,
+};
 use crate::core::system::molgraph::{
     add_hydrogens, compute_gasteiger_charges, find_rings, perceive_aromaticity, rotate, scale,
     translate,
@@ -53,7 +55,7 @@ mod conformer;
 use conformer::{PyConformer, PyConformerReport, PyConformerStageReport};
 
 mod ff;
-use ff::{PyForceField, PyLBFGS, PyMMFFTypifier, PyOplsTypifier, PyOptReport, PyPotentials};
+use ff::{PyForceField, PyLBFGS, PyMMFFTypifier, PyOPLSAATypifier, PyOptReport, PyPotentials};
 
 mod compute;
 use compute::{
@@ -172,6 +174,9 @@ fn molrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyGraph>()?;
     m.add_class::<PyAtomistic>()?;
     m.add_class::<PyCoarseGrain>()?;
+    m.add_class::<PySmartsMatch>()?;
+    m.add_class::<PySmartsPattern>()?;
+    m.add_class::<PyReaction>()?;
 
     // Systems = module-level free functions (no algorithm methods on the classes)
     m.add_function(wrap_pyfunction!(translate, m)?)?;
@@ -193,7 +198,7 @@ fn molrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Force field
     m.add_class::<PyForceField>()?;
     m.add_class::<PyMMFFTypifier>()?;
-    m.add_class::<PyOplsTypifier>()?;
+    m.add_class::<PyOPLSAATypifier>()?;
     m.add_class::<PyPotentials>()?;
     m.add_class::<PyOptReport>()?;
     m.add_class::<PyLBFGS>()?;

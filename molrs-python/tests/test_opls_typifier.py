@@ -1,11 +1,4 @@
-"""Python-binding coverage for the native OPLS-AA typifier.
-
-Mirrors the MMFFTypifier binding: ``molrs.OplsTypifier`` surfaces the validated
-Rust ``OplsTypifier`` (embedded canonical OPLS-AA), so molpy can delegate instead
-of carrying its own Python OPLS typifier. The typing/assignment logic itself is
-exercised in Rust (``ff::typifier::opls``); these tests only assert the PyO3
-surface.
-"""
+"""Python-binding coverage for the native OPLS-AA typifier."""
 
 import math
 
@@ -36,16 +29,19 @@ def _ethane() -> "molrs.Atomistic":
 
 
 def test_opls_typifier_is_exposed():
-    """molrs.OplsTypifier exists and constructs from embedded OPLS-AA."""
-    assert "OplsTypifier" in dir(molrs)
-    typifier = molrs.OplsTypifier()
+    """OPLSAATypifier exists and constructs from embedded OPLS-AA."""
+    assert "OPLSAATypifier" in dir(molrs)
+    assert molrs.typifier.OPLSAATypifier is molrs.OPLSAATypifier
+    typifier = molrs.OPLSAATypifier()
     assert typifier is not None
 
 
 def test_typify_assigns_atom_types():
-    """typify() returns a Frame whose atoms block carries assigned types."""
-    typifier = molrs.OplsTypifier()
-    frame = typifier.typify(_ethane())
+    """typify() returns a typed Atomistic graph."""
+    typifier = molrs.OPLSAATypifier()
+    typed = typifier.typify(_ethane())
+    assert isinstance(typed, molrs.Atomistic)
+    frame = typed.to_frame()
     atoms = frame["atoms"]
     assert atoms.nrows == 8
     types = atoms["type"]
@@ -53,22 +49,25 @@ def test_typify_assigns_atom_types():
     assert all(str(t) != "" for t in types)
 
 
-def test_typify_full_and_build():
-    """typify_full() adds bonded blocks; build() yields finite energy."""
-    typifier = molrs.OplsTypifier()
+def test_typify_and_build():
+    """typify() adds bonded blocks; build() yields finite energy."""
+    typifier = molrs.OPLSAATypifier()
     mol = _ethane()
-    full = typifier.typify_full(mol)
-    assert full["bonds"].nrows > 0
+    typed = typifier.typify(mol)
+    frame = typed.to_frame()
+    assert frame["bonds"].nrows == 7
+    assert frame["angles"].nrows == 12
+    assert frame["dihedrals"].nrows == 9
 
     pots = typifier.build(mol)
-    coords = molrs.extract_coords(typifier.typify(mol))
+    coords = molrs.extract_coords(frame)
     energy, forces = pots.calc_energy_forces(coords)
     assert math.isfinite(energy)
     assert np.isfinite(np.asarray(forces)).all()
 
 
-def test_from_xml_str_constructs():
-    """from_xml_str builds a typifier from OPLS-AA XML text."""
+def test_xml_source_constructs():
+    """The constructor accepts OPLS-AA XML text."""
     # The embedded canonical set is also reachable via the reader; round-trip a
     # minimal well-formed OPLS-AA forcefield document.
     xml = (
@@ -76,11 +75,18 @@ def test_from_xml_str_constructs():
         '<Type name="opls_135" class="CT" element="C" mass="12.011"/>'
         "</AtomTypes></ForceField>"
     )
-    typifier = molrs.OplsTypifier.from_xml_str(xml)
+    typifier = molrs.OPLSAATypifier(xml)
     assert typifier is not None
 
 
 def test_invalid_xml_raises_not_panics():
     """Malformed input raises a Python exception rather than aborting."""
     with pytest.raises((ValueError, RuntimeError)):
-        molrs.OplsTypifier.from_xml_str("not valid xml <<<")
+        molrs.OPLSAATypifier("<not valid xml <<<")
+
+
+def test_oplsaa_rejects_coarse_grain():
+    typifier = molrs.OPLSAATypifier()
+    cg = molrs.CoarseGrain()
+    with pytest.raises(TypeError):
+        typifier.typify(cg)

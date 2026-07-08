@@ -130,11 +130,12 @@ array.
 ```python
 typifier = molrs.MMFFTypifier()
 typed = typifier.typify(mol3d)
-print("typed blocks:", typed.keys())
+typed_frame = typed.to_frame()
+print("typed blocks:", typed_frame.keys())
 
 try:
     potentials = typifier.build(mol3d)
-    coords = molrs.extract_coords(frame)
+    coords = molrs.extract_coords(typed_frame)
 
     energy, forces = potentials.eval(coords)
     print("energy:", energy)
@@ -145,10 +146,10 @@ except ValueError as exc:
 ```
 
 MMFF94 typing and potential compilation are separate. Typing is useful when you
-want the typed frame; potential compilation is stricter because every term must
-resolve to a supported parameter. During the preview phase, some molecules can
-typify successfully while potential compilation still reports incomplete
-coverage.
+want the typed `Atomistic` graph or its frame representation. Potential
+compilation is stricter because every term must resolve to a supported
+parameter. During the preview phase, some molecules can typify successfully
+while potential compilation still reports incomplete coverage.
 
 When potential compilation succeeds, the coordinate shape is `(3 * n_atoms,)`,
 not `(n_atoms, 3)`. Reshape only for display:

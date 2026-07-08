@@ -3,14 +3,14 @@
 //! Mirrors [`mmff`](crate::ff::typifier::mmff): typing metadata
 //! ([`OplsTypingMeta`]) is read *separately* from the potential
 //! [`ForceField`](crate::ff::forcefield::ForceField), both from the same OPLS-AA
-//! XML. [`OplsTypifier`] owns both and implements [`Typifier`], assigning
+//! XML. [`OPLSAATypifier`] owns both and implements [`Typifier`], assigning
 //! `opls_NNN` atom types by SMARTS matching with overrides / priority / layer
-//! conflict resolution (replicating molpy's `_OplsAtomTypifier`).
+//! conflict resolution.
 //!
-//! After atom typing, [`OplsTypifier::typify`] runs
-//! [`assign_bonded`](assign::assign_bonded): every bond / angle / dihedral is
+//! After atom typing, [`OPLSAATypifier::typify`] runs
+//! [`typify_bonded`](assign::typify_bonded): every bond / angle / dihedral is
 //! matched against the force field's bonded tables by OPLS specificity + overlay
-//! layer (chain 2). [`OplsTypifier::build`] closes the loop to evaluable
+//! layer (chain 2). [`OPLSAATypifier::build`] closes the loop to evaluable
 //! potentials (`typify → to_frame → to_potentials`).
 //!
 //! # B-line reversal
@@ -26,7 +26,7 @@
 //! matching and pair/charge assignment are out of scope. Uncovered bonded terms
 //! follow the [`NoMatch`](assign::NoMatch) policy; a consumer that wants to fill
 //! them can supply its own [`Estimator`](assign::Estimator) via
-//! [`assign_bonded_with`](assign::assign_bonded_with).
+//! [`typify_bonded_with`](assign::typify_bonded_with).
 
 use molrs::Atomistic;
 
@@ -43,10 +43,10 @@ pub mod meta;
 pub mod typing;
 
 pub use assign::{
-    BondedTerm, CandidateTables, Estimator, NoMatch, assign_bonded, assign_bonded_with,
+    BondedTerm, CandidateTables, Estimator, NoMatch, typify_bonded, typify_bonded_with,
 };
 pub use meta::{LAYER_PRIORITY_STRIDE, OplsTypeRow, OplsTypingMeta};
-pub use typing::annotate_opls;
+pub use typing::typify_atoms;
 
 /// OPLS-AA typifier — owns typing metadata and force-field parameters.
 ///
@@ -54,7 +54,7 @@ pub use typing::annotate_opls;
 /// typing metadata ([`OplsTypingMeta`]) and the potential parameters
 /// ([`ForceField`]) from a single OPLS-AA XML string, then precomputes the
 /// bonded candidate tables ([`CandidateTables`]) once.
-pub struct OplsTypifier {
+pub struct OPLSAATypifier {
     meta: OplsTypingMeta,
     ff: ForceField,
     tables: CandidateTables,
@@ -62,7 +62,7 @@ pub struct OplsTypifier {
     no_match: NoMatch,
 }
 
-impl OplsTypifier {
+impl OPLSAATypifier {
     /// Build a typifier from an OPLS-AA / GROMACS XML string.
     ///
     /// Reads typing metadata and potential parameters in one call. The two are
@@ -132,16 +132,21 @@ impl OplsTypifier {
 
     /// Typify atoms and assign bonded parameters in one step.
     ///
-    /// `annotate_opls` types/charges the atoms, then
-    /// [`assign_bonded`](assign::assign_bonded) labels every bond / angle /
+    /// [`typify_atoms`](typing::typify_atoms) types/charges the atoms, then
+    /// [`typify_bonded`](assign::typify_bonded) labels every bond / angle /
     /// dihedral with the most specific matching force-field parameters.
     ///
     /// # Errors
     ///
     /// Propagates atom-typing and bonded-assignment errors.
-    pub fn typify_full(&self, mol: &Atomistic) -> Result<Atomistic, String> {
-        let typed = annotate_opls(mol, &self.meta, &self.ff)?;
-        assign_bonded(&typed, &self.tables, self.no_match)
+    fn typify_labeled_graph(&self, mol: &Atomistic) -> Result<Atomistic, String> {
+        let typed = typify_atoms(mol, &self.meta, &self.ff)?;
+        typify_bonded(&typed, &self.tables, self.no_match)
+    }
+
+    /// Full OPLS-AA typing (`opls_NNN` atom labels plus bonded-term labels).
+    pub fn typify(&self, mol: &Atomistic) -> Result<Atomistic, String> {
+        self.typify_labeled_graph(mol)
     }
 
     /// Typify a molecule and compile potentials in one step.
@@ -156,22 +161,18 @@ impl OplsTypifier {
     ///
     /// Propagates typing / assignment / compilation errors.
     pub fn build(&self, mol: &Atomistic) -> Result<Potentials, String> {
-        let mut frame = self.typify_full(mol)?.to_frame();
+        let mut frame = self.typify(mol)?.to_frame();
         let pairs = intramolecular_pairs(&frame);
         frame.insert("pairs", pairs);
         self.ff.to_potentials(&frame)
     }
 }
 
-impl Typifier for OplsTypifier {
-    /// Atom typing only (`opls_NNN` type / class / charge per atom).
-    ///
-    /// Bonded-parameter assignment is a deliberately separate step
-    /// ([`typify_full`](Self::typify_full)) so callers can type atoms without
-    /// requiring every bonded term to resolve — the chain-1 coverage gap means
-    /// many real molecules are only partially typed. [`build`](Self::build)
-    /// runs the full pipeline.
+impl Typifier for OPLSAATypifier {
+    type Mol = Atomistic;
+
+    /// Full OPLS-AA typing (`opls_NNN` atom labels plus bonded-term labels).
     fn typify(&self, mol: &Atomistic) -> Result<Atomistic, String> {
-        annotate_opls(mol, &self.meta, &self.ff)
+        OPLSAATypifier::typify(self, mol)
     }
 }

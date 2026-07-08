@@ -15,6 +15,7 @@
 //! - Halgren, T.A. (1996). J. Comput. Chem. 17, 490-519. (MMFF94 force field)
 
 use std::ffi::CString;
+use std::fs;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -23,9 +24,8 @@ use pyo3::types::{PyCapsule, PyDict, PyList};
 use molrs::ff::ForceField;
 use molrs::ff::mmff::{MmffForceField, MmffMolProperties, MmffVariant};
 use molrs::ff::potential::{Potentials, extract_coords};
-use molrs::ff::typifier::Typifier;
 use molrs::ff::typifier::mmff::MMFFTypifier;
-use molrs::ff::typifier::opls::OplsTypifier;
+use molrs::ff::typifier::opls::OPLSAATypifier;
 use molrs::optimize::{LBFGS, LbfgsConfig, OptReport};
 use molrs_ffi::ForceFieldRef;
 
@@ -356,7 +356,7 @@ impl PyLBFGS {
 /// Examples
 /// --------
 /// >>> typifier = MMFFTypifier()
-/// >>> frame = typifier.typify(mol)   # typed Frame
+/// >>> typed = typifier.typify(mol)   # typed Atomistic
 /// >>> potentials = typifier.build(mol)  # compiled Potentials
 #[pyclass(name = "MMFFTypifier")]
 pub struct PyMMFFTypifier {
@@ -384,17 +384,7 @@ impl PyMMFFTypifier {
         Ok(Self { inner: typifier })
     }
 
-    /// Assign MMFF94 atom types to a molecular graph and return a
-    /// ``to_potentials``-ready :class:`Frame`.
-    ///
-    /// Returns a typed :class:`Frame` with an ``"atoms"`` block containing the
-    /// assigned ``type`` (int) column and topology blocks (``"bonds"``,
-    /// ``"angles"``, ``"dihedrals"``, ``"impropers"``). The frame is
-    /// assembly-complete: the stretch-bend reference lengths (``r0_ij``,
-    /// ``r0_kj``, ``theta0``) are merged onto the ``"angles"`` block and the
-    /// intramolecular ``"pairs"`` neighbour list is inserted, so the frame can
-    /// be passed straight to :meth:`ForceField.to_potentials` (the ``mmff_stbn``
-    /// kernel would otherwise error on a bare labeled frame).
+    /// Assign MMFF94 atom types to a molecular graph.
     ///
     /// Parameters
     /// ----------
@@ -403,22 +393,20 @@ impl PyMMFFTypifier {
     ///
     /// Returns
     /// -------
-    /// Frame
-    ///     Typed, ``to_potentials``-ready molecular data.
+    /// Atomistic
+    ///     Typed molecular graph. Call ``typed.to_frame()`` explicitly when a
+    ///     tabular representation is needed.
     ///
     /// Raises
     /// ------
     /// ValueError
     ///     If atom types cannot be determined (e.g. unsupported elements).
-    fn typify(&self, mol: &PyAtomistic) -> PyResult<PyFrame> {
-        // Materialize the labeled graph to a frame that is ready for
-        // `ForceField.to_potentials` (stretch-bend merge + pair list applied),
-        // matching the assembly `build` performs.
-        let frame = self
+    fn typify(&self, py: Python<'_>, mol: &PyAtomistic) -> PyResult<Py<PyAtomistic>> {
+        let typed = self
             .inner
-            .typify_frame(mol.core())
+            .typify(mol.core())
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-        PyFrame::from_core_frame(frame)
+        PyAtomistic::from_core(py, typed)
     }
 
     /// Typify and compile potentials in one step.
@@ -467,104 +455,82 @@ impl PyMMFFTypifier {
     }
 }
 
+fn oplsaa_source_xml(source: Option<&Bound<'_, PyAny>>) -> PyResult<Option<String>> {
+    let Some(source) = source else {
+        return Ok(None);
+    };
+    let raw = match source.extract::<String>() {
+        Ok(value) => value,
+        Err(_) => source.call_method0("__fspath__")?.extract::<String>()?,
+    };
+    if raw.trim_start().starts_with('<') {
+        return Ok(Some(raw));
+    }
+    fs::read_to_string(&raw).map(Some).map_err(|err| {
+        PyValueError::new_err(format!("failed to read OPLS-AA XML source {raw:?}: {err}"))
+    })
+}
+
 /// OPLS-AA atom-type assigner and potential builder.
 ///
-/// Exposed to Python as `molrs.OplsTypifier`. Mirrors :class:`MMFFTypifier`:
-/// loads the embedded canonical OPLS-AA parameter set at construction, assigns
-/// `opls_NNN` atom types by SMARTS matching (:meth:`typify`), assigns bonded
-/// parameters (:meth:`typify_full`), and compiles potentials (:meth:`build`).
+/// Exposed to Python as `molrs.OPLSAATypifier`. It loads the embedded canonical
+/// OPLS-AA parameter set by default, or reads one XML source at construction.
+/// :meth:`typify` returns a typed :class:`Atomistic`; use :meth:`build` for the
+/// one-step potential compilation path.
 ///
 /// Parameters
 /// ----------
+/// source : str or path-like, optional
+///     OPLS-AA XML text or a path to an XML file. ``None`` uses the embedded
+///     canonical OPLS-AA table.
 /// strict : bool, default True
 ///     When True, a bonded term with no force-field match is an error. When
 ///     False, such terms are skipped (left unparametrized).
 ///
 /// Examples
 /// --------
-/// >>> typifier = OplsTypifier()
-/// >>> frame = typifier.typify(mol)        # atom types
+/// >>> typifier = OPLSAATypifier()
+/// >>> typed = typifier.typify(mol)        # typed Atomistic
 /// >>> potentials = typifier.build(mol)    # compiled Potentials
-#[pyclass(name = "OplsTypifier")]
-pub struct PyOplsTypifier {
-    inner: OplsTypifier,
+#[pyclass(name = "OPLSAATypifier")]
+pub struct PyOPLSAATypifier {
+    inner: OPLSAATypifier,
 }
 
 #[pymethods]
-impl PyOplsTypifier {
-    /// Create an OPLS-AA typifier from the embedded canonical parameter set.
+impl PyOPLSAATypifier {
+    /// Create an OPLS-AA typifier from embedded data, XML text, or an XML path.
     #[new]
-    #[pyo3(signature = (strict = true))]
-    fn new(strict: bool) -> PyResult<Self> {
-        let typifier = OplsTypifier::oplsaa()
-            .map_err(|e| {
+    #[pyo3(signature = (source = None, *, strict = true))]
+    fn new(source: Option<&Bound<'_, PyAny>>, strict: bool) -> PyResult<Self> {
+        let typifier = match oplsaa_source_xml(source)? {
+            Some(xml) => OPLSAATypifier::from_xml_str(&xml)
+                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?,
+            None => OPLSAATypifier::oplsaa().map_err(|e| {
                 pyo3::exceptions::PyRuntimeError::new_err(format!(
                     "failed to initialize OPLS-AA: {e}"
                 ))
-            })?
-            .with_strict(strict);
+            })?,
+        }
+        .with_strict(strict);
         Ok(Self { inner: typifier })
     }
 
-    /// Build a typifier from an OPLS-AA / GROMACS XML string.
-    ///
-    /// Parameters
-    /// ----------
-    /// xml : str
-    ///     OPLS-AA forcefield XML (OpenMM / GROMACS layout).
-    /// strict : bool, default True
-    ///     See :class:`OplsTypifier`.
-    ///
-    /// Raises
-    /// ------
-    /// ValueError
-    ///     If the XML cannot be parsed.
-    #[staticmethod]
-    #[pyo3(signature = (xml, strict = true))]
-    fn from_xml_str(xml: &str, strict: bool) -> PyResult<Self> {
-        let typifier = OplsTypifier::from_xml_str(xml)
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?
-            .with_strict(strict);
-        Ok(Self { inner: typifier })
-    }
-
-    /// Assign OPLS-AA atom types to a molecular graph.
-    ///
-    /// Returns a typed :class:`Frame` with an ``"atoms"`` block carrying the
-    /// assigned ``type`` column. Bonded-parameter assignment is the separate
-    /// :meth:`typify_full` step (atoms can type even when not every bonded term
-    /// resolves).
+    /// Assign OPLS-AA atom and bonded-term types to a molecular graph.
     ///
     /// Raises
     /// ------
     /// ValueError
     ///     If atom typing fails.
-    fn typify(&self, mol: &PyAtomistic) -> PyResult<PyFrame> {
+    fn typify(&self, py: Python<'_>, mol: &PyAtomistic) -> PyResult<Py<PyAtomistic>> {
         let labeled = self
             .inner
             .typify(mol.core())
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-        PyFrame::from_core_frame(labeled.to_frame())
+        PyAtomistic::from_core(py, labeled)
     }
 
-    /// Assign atom types **and** bonded parameters in one step.
-    ///
-    /// Returns a typed :class:`Frame` with atom + bonded blocks labeled with the
-    /// most specific matching force-field parameters.
-    ///
-    /// Raises
-    /// ------
-    /// ValueError
-    ///     If atom typing or bonded assignment fails (under ``strict``).
-    fn typify_full(&self, mol: &PyAtomistic) -> PyResult<PyFrame> {
-        let labeled = self
-            .inner
-            .typify_full(mol.core())
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-        PyFrame::from_core_frame(labeled.to_frame())
-    }
-
-    /// Typify and compile potentials in one step (``typify_full`` → ``Potentials``).
+    /// Typify and compile potentials in one step.
     ///
     /// Raises
     /// ------
@@ -588,7 +554,7 @@ impl PyOplsTypifier {
     }
 
     fn __repr__(&self) -> String {
-        format!("OplsTypifier(forcefield='{}')", self.inner.ff().name)
+        format!("OPLSAATypifier(forcefield='{}')", self.inner.ff().name)
     }
 }
 

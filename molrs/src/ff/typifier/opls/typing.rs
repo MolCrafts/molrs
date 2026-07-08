@@ -1,6 +1,6 @@
 //! OPLS-AA SMARTS atom typing (dependency-aware, layered).
 //!
-//! [`annotate_opls`] drives the [`LayeredTypingEngine`]: it processes the type
+//! [`typify_atoms`] drives the [`LayeredTypingEngine`]: it processes the type
 //! defs level by level so that a def referencing a
 //! previously-assigned type via `%opls_NNN` (e.g. benzene's aromatic-H type
 //! `opls_146` = `[H][C;%opls_145]`) is matched only after its dependency is
@@ -12,7 +12,7 @@
 //!
 //! Matching uses the always-compiled molrs SMARTS engine
 //! ([`SmartsPattern`](molrs::SmartsPattern)) with the context-label extension
-//! ([`find_matches_with_labels`](molrs::SmartsPattern::find_matches_with_labels)):
+//! ([`MatchOptions::labels`](molrs::MatchOptions::labels)):
 //! the engine feeds back the current assignment map as the label context so
 //! `%opls_NNN` predicates can read it. Each `def` is the SMARTS for the type's
 //! *target* atom: by RDKit convention the engine roots a match at query atom 0,
@@ -49,7 +49,7 @@ use crate::ff::forcefield::ForceField;
 use super::layered::LayeredTypingEngine;
 use super::meta::OplsTypingMeta;
 
-/// Annotate `mol` with OPLS-AA atom types, returning a labeled copy.
+/// Typify atoms with OPLS-AA atom types, returning a labeled copy.
 ///
 /// Drives the [`LayeredTypingEngine`] over `meta`: every atom assigned a type
 /// gets that type's `type` (`opls_NNN`), `class`, and `charge` (`e`, from the
@@ -64,7 +64,7 @@ use super::meta::OplsTypingMeta;
 ///
 /// Returns `Err` if any SMARTS `def` is malformed (fail-fast), or if writing a
 /// label onto the graph fails.
-pub fn annotate_opls(
+pub fn typify_atoms(
     mol: &Atomistic,
     meta: &OplsTypingMeta,
     ff: &ForceField,
@@ -145,7 +145,7 @@ mod tests {
             ("opls_140", row("HC", Some("H[C;X4]"), &[])),
         ]);
         let ff = ForceField::new("OPLS-AA");
-        let typed = annotate_opls(&ethane(), &m, &ff).unwrap();
+        let typed = typify_atoms(&ethane(), &m, &ff).unwrap();
 
         let mut n_ct = 0;
         let mut n_hc = 0;
@@ -172,7 +172,7 @@ mod tests {
             ("opls_special", row("CS", Some("[C;X4]"), &["opls_generic"])),
         ]);
         let ff = ForceField::new("OPLS-AA");
-        let typed = annotate_opls(&ethane(), &m, &ff).unwrap();
+        let typed = typify_atoms(&ethane(), &m, &ff).unwrap();
         for (id, a) in typed.atoms() {
             if matches!(a.get_str("element"), Some("C")) {
                 assert_eq!(
@@ -190,7 +190,7 @@ mod tests {
         let mut ff = ForceField::new("OPLS-AA");
         ff.def_atomstyle("full")
             .def_atomtype("opls_140", &[("mass", 1.008), ("charge", 0.06)]);
-        let typed = annotate_opls(&ethane(), &m, &ff).unwrap();
+        let typed = typify_atoms(&ethane(), &m, &ff).unwrap();
         let h = typed
             .atoms()
             .find(|(_, a)| a.get_str("type") == Some("opls_140"))
@@ -203,7 +203,7 @@ mod tests {
         // Unbalanced bracket — a broken force-field def, must Err (never drop).
         let m = meta_with(&[("opls_bad", row("X", Some("[C"), &[]))]);
         let ff = ForceField::new("OPLS-AA");
-        let err = annotate_opls(&ethane(), &m, &ff).unwrap_err();
+        let err = typify_atoms(&ethane(), &m, &ff).unwrap_err();
         assert!(err.contains("opls_bad"), "err names the type: {err}");
     }
 
@@ -214,7 +214,7 @@ mod tests {
         // candidate atom). Both ethane carbons match.
         let m = meta_with(&[("opls_rec", row("CT", Some("[$([CX4][CX4])]"), &[]))]);
         let ff = ForceField::new("OPLS-AA");
-        let typed = annotate_opls(&ethane(), &m, &ff).unwrap();
+        let typed = typify_atoms(&ethane(), &m, &ff).unwrap();
         let n = typed
             .atoms()
             .filter(|(_, a)| a.get_str("type") == Some("opls_rec"))
@@ -231,7 +231,7 @@ mod tests {
         // src/ff/typifier/opls/layered.rs and tests/ff/typifier/opls.rs.)
         let m = meta_with(&[("opls_ref", row("HA", Some("[H][C;%opls_145]"), &[]))]);
         let ff = ForceField::new("OPLS-AA");
-        let typed = annotate_opls(&ethane(), &m, &ff).unwrap();
+        let typed = typify_atoms(&ethane(), &m, &ff).unwrap();
         assert!(typed.atoms().all(|(_, a)| a.get_str("type").is_none()));
     }
 
@@ -239,7 +239,7 @@ mod tests {
     fn layered_dependency_def_types_after_its_dependency() {
         // opls_154 (alcohol O) then opls_155 (H[O;%opls_154]): the hydroxyl H
         // is typed only after the O is typed opls_154 — exercising the full
-        // annotate_opls layered path end to end on a constructed ethanol.
+        // typify_atoms layered path end to end on a constructed ethanol.
         let mut g = Atomistic::new();
         let cm = g.add_atom(Atom::xyz("C", 0.0, 0.0, 0.0));
         let ch = g.add_atom(Atom::xyz("C", 1.5, 0.0, 0.0));
@@ -262,7 +262,7 @@ mod tests {
             ("opls_155", row("HO", Some("H[O;%opls_154]"), &[])),
         ]);
         let ff = ForceField::new("OPLS-AA");
-        let typed = annotate_opls(&g, &m, &ff).unwrap();
+        let typed = typify_atoms(&g, &m, &ff).unwrap();
 
         assert_eq!(
             typed.get_atom(o).unwrap().get_str("type"),

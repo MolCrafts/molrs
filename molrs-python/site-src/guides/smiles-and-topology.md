@@ -79,6 +79,24 @@ This graph has no coordinates unless you passed `x`, `y`, and `z` to
 `add_atom`. That is valid input for `Conformer.generate`, which is designed to assign
 coordinates from topology.
 
+## SMARTS Matching Returns Bindings
+
+SMARTS matching is a graph query API. It returns match bindings, not a copied
+subgraph and not a frame:
+
+```python
+pattern = molrs.SmartsPattern("[C:1][O:2]")
+matches = pattern.find_matches(mol)
+
+first = matches[0]
+print(first.atoms)    # atom ids in query order
+print(first.mapping)  # SMARTS map labels, when present
+```
+
+Use these bindings inside higher-level code such as a typifier or a reaction
+builder. If you need a typed molecule, call a typifier; if you need columnar
+arrays, convert the graph with `.to_frame()` after the graph operation is done.
+
 ## When to Use Frame Instead
 
 Use `Atomistic` when topology is the main object: parsing SMILES, editing

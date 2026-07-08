@@ -65,6 +65,16 @@ pub mod ff;
 #[cfg(feature = "conformer")]
 pub mod conformer;
 
+// `serde::Serialize`/`Deserialize` for the core model (Frame/Block/Column/
+// SimBox). Impls only; no public items. Enabled by `serde` (and by `stream`).
+#[cfg(feature = "serde")]
+mod serialize;
+
+/// Live `Frame` streaming: a WASM-clean, MolRec-aligned transport encoding
+/// (MessagePack / JSON) over the `serde`-serializable core model. Not in `full`.
+#[cfg(feature = "stream")]
+pub mod stream;
+
 // `smiles` is a sub-module of `io`; expose it at the top level for ergonomics.
 #[cfg(feature = "smiles")]
 pub use crate::io::smiles;

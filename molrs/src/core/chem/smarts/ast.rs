@@ -28,8 +28,8 @@ use crate::system::molgraph::PropValue;
 /// domain-neutral mechanism: a caller (e.g. an iterative typifier) supplies a
 /// "current assignment" map and a `%LABEL` token matches an atom iff that map
 /// assigns it the exact label. [`MolContext::new`] leaves the map empty, so the
-/// legacy [`find_matches`](super::matcher::find_matches) path behaves exactly as
-/// before.
+/// default label-free [`SmartsPattern::find`](super::SmartsPattern::find) path
+/// behaves exactly as before.
 pub struct MolContext<'m> {
     pub mol: &'m Atomistic,
     pub rings: RingInfo,
@@ -53,8 +53,8 @@ static EMPTY_LABELS: std::sync::LazyLock<HashMap<AtomId, String>> =
 
 impl<'m> MolContext<'m> {
     /// Build the context for `mol` (runs ring perception once), with **no**
-    /// external label map — `%LABEL` predicates never match. This is the legacy
-    /// path used by [`find_matches`](super::matcher::find_matches).
+    /// external label map — `%LABEL` predicates never match. This is the
+    /// default label-free path used by [`SmartsPattern::find`](super::SmartsPattern::find).
     pub fn new(mol: &'m Atomistic) -> Self {
         Self::with_labels(mol, &EMPTY_LABELS)
     }

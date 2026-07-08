@@ -1,7 +1,6 @@
-//! End-to-end MMFF94 typification: MolGraph (built in code) -> typed Frame,
-//! atom-type assignment, bond/angle/torsion classification, and full build.
+//! End-to-end MMFF94 typification: MolGraph (built in code) -> typed Atomistic
+//! -> Frame, atom/bond/angle/dihedral labels, and full build.
 
-use molrs::ff::typifier::Typifier;
 use molrs::ff::typifier::mmff::MMFFTypifier;
 use molrs::system::molgraph::{Atom, PropValue};
 use molrs::{AtomId, Atomistic};
@@ -34,34 +33,30 @@ fn embedded_mmff94_loads_atom_prop_table() {
 }
 
 // ---------------------------------------------------------------------------
-// Bond / angle / torsion classification
+// Bond / angle / torsion typification
 // ---------------------------------------------------------------------------
 
 #[test]
-fn bond_classification_normal_vs_aromatic() {
+fn bond_typification_normal_vs_aromatic() {
     let t = typifier();
-    assert_eq!(t.classify_bond_type(1, 1, 1.0), 0, "sp3 single -> normal");
-    assert_eq!(
-        t.classify_bond_type(37, 37, 1.5),
-        1,
-        "aromatic -> delocalized"
-    );
+    assert_eq!(t.typify_bond(1, 1, 1.0), 0, "sp3 single -> normal");
+    assert_eq!(t.typify_bond(37, 37, 1.5), 1, "aromatic -> delocalized");
 }
 
 #[test]
-fn angle_classification_counts_delocalized_bonds() {
+fn angle_typification_counts_delocalized_bonds() {
     let t = typifier();
-    assert_eq!(t.classify_angle_type(0, 0), 0);
-    assert_eq!(t.classify_angle_type(1, 0), 1);
-    assert_eq!(t.classify_angle_type(0, 1), 1);
-    assert_eq!(t.classify_angle_type(1, 1), 2);
+    assert_eq!(t.typify_angle(0, 0), 0);
+    assert_eq!(t.typify_angle(1, 0), 1);
+    assert_eq!(t.typify_angle(0, 1), 1);
+    assert_eq!(t.typify_angle(1, 1), 2);
 }
 
 #[test]
-fn torsion_classification_central_bond_delocalized() {
+fn torsion_typification_central_bond_delocalized() {
     let t = typifier();
-    assert_eq!(t.classify_torsion_type(0, 0, 0), 0);
-    assert_eq!(t.classify_torsion_type(0, 1, 0), 1, "central delocalized");
+    assert_eq!(t.typify_dihedral(0, 0, 0), 0);
+    assert_eq!(t.typify_dihedral(0, 1, 0), 1, "central delocalized");
 }
 
 // ---------------------------------------------------------------------------

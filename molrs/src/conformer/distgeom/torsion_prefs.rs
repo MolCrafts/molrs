@@ -35,7 +35,7 @@
 
 use std::collections::HashMap;
 
-use molrs::chem::smarts::SmartsPattern;
+use molrs::chem::smarts::{MatchOptions, SmartsPattern};
 use molrs::system::atomistic::{AtomId, Atomistic};
 use molrs::system::molgraph::PropValue;
 
@@ -192,11 +192,11 @@ pub fn assign_with_provenance(mol: &Atomistic, p: &Perceived) -> Vec<AssignedTor
     let mut out: Vec<AssignedTorsion> = Vec::new();
 
     for cp in &patterns {
-        for m in cp.pattern.find_matches(&work) {
+        for m in cp.pattern.find(&work, MatchOptions::default()) {
             // Resolve atom-map labels :1..:4 to mol-atom indices.
             let mut idx = [usize::MAX; 4];
             let mut ok = true;
-            for (qi, &aid) in m.iter().enumerate() {
+            for (qi, &aid) in m.atoms.iter().enumerate() {
                 if let Some(lbl) = cp.pattern.map_label(qi)
                     && (1..=4).contains(&lbl)
                 {

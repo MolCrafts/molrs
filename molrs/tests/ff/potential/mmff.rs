@@ -13,7 +13,6 @@
 //! canonical equivalence-degraded key the typifier emits, so `build()` yields a
 //! complete `Potentials` with finite energy and forces.
 
-use molrs::ff::typifier::Typifier;
 use molrs::ff::typifier::mmff::MMFFTypifier;
 use molrs::system::molgraph::PropValue;
 use molrs::types::F;

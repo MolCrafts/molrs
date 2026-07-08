@@ -52,7 +52,7 @@ fn bench_topo_distances(c: &mut Criterion) {
         let (mol, ids) = make_chain(n);
         let source = ids[0];
         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
-            b.iter(|| mol.topo_distances(source));
+            b.iter(|| mol.topo_distances(source, None));
         });
     }
     group.finish();
