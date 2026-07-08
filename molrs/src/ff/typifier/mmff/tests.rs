@@ -3,7 +3,6 @@
 #[cfg(test)]
 #[allow(clippy::module_inception)]
 mod tests {
-    use crate::ff::typifier::Typifier;
     use crate::ff::typifier::mmff::MMFFTypifier;
     use molrs::system::molgraph::{Atom, PropValue};
     use molrs::{AtomId, Atomistic};
@@ -124,14 +123,14 @@ mod tests {
     fn test_bond_type_normal() {
         let typifier = test_typifier();
         // Normal single bond between sp3 atoms
-        assert_eq!(typifier.classify_bond_type(1, 1, 1.0), 0);
+        assert_eq!(typifier.typify_bond(1, 1, 1.0), 0);
     }
 
     #[test]
     fn test_bond_type_aromatic() {
         let typifier = test_typifier();
         // Aromatic bond
-        assert_eq!(typifier.classify_bond_type(37, 37, 1.5), 1);
+        assert_eq!(typifier.typify_bond(37, 37, 1.5), 1);
     }
 
     // -----------------------------------------------------------------------
@@ -141,20 +140,20 @@ mod tests {
     #[test]
     fn test_angle_type_normal() {
         let typifier = test_typifier();
-        assert_eq!(typifier.classify_angle_type(0, 0), 0);
+        assert_eq!(typifier.typify_angle(0, 0), 0);
     }
 
     #[test]
     fn test_angle_type_one_delocalized() {
         let typifier = test_typifier();
-        assert_eq!(typifier.classify_angle_type(1, 0), 1);
-        assert_eq!(typifier.classify_angle_type(0, 1), 1);
+        assert_eq!(typifier.typify_angle(1, 0), 1);
+        assert_eq!(typifier.typify_angle(0, 1), 1);
     }
 
     #[test]
     fn test_angle_type_both_delocalized() {
         let typifier = test_typifier();
-        assert_eq!(typifier.classify_angle_type(1, 1), 2);
+        assert_eq!(typifier.typify_angle(1, 1), 2);
     }
 
     // -----------------------------------------------------------------------
@@ -164,13 +163,13 @@ mod tests {
     #[test]
     fn test_torsion_type_normal() {
         let typifier = test_typifier();
-        assert_eq!(typifier.classify_torsion_type(0, 0, 0), 0);
+        assert_eq!(typifier.typify_dihedral(0, 0, 0), 0);
     }
 
     #[test]
     fn test_torsion_type_central_delocalized() {
         let typifier = test_typifier();
-        assert_eq!(typifier.classify_torsion_type(0, 1, 0), 1);
+        assert_eq!(typifier.typify_dihedral(0, 1, 0), 1);
     }
 
     // -----------------------------------------------------------------------

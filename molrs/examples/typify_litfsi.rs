@@ -10,7 +10,6 @@
 //! Run:
 //!   cargo run -p molcrafts-molrs --example typify_litfsi --features ff
 
-use molrs::ff::typifier::Typifier;
 use molrs::ff::typifier::mmff::MMFFTypifier;
 use molrs::system::molgraph::{Atom, PropValue};
 use molrs::{AtomId, Atomistic};

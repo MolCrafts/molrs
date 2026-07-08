@@ -51,7 +51,7 @@
 //! g.add_bond(c1, n).unwrap();
 //!
 //! let pat = SmartsPattern::parse("[$([CX3]=[OX1]):1]~[*:2]").unwrap();
-//! assert!(pat.has_match(&g));
+//! assert!(pat.has_match(&g, molrs::MatchOptions::default()));
 //! assert_eq!(pat.map_label(0), Some(1));
 //! ```
 
@@ -60,12 +60,37 @@ mod matcher;
 mod parser;
 mod reaction;
 
+use std::collections::HashMap;
+
 use crate::error::MolRsError;
 use crate::system::atomistic::{AtomId, Atomistic};
 
 use parser::QueryGraph;
 
 pub use reaction::Reaction;
+
+/// Matching controls for [`SmartsPattern::find`].
+#[derive(Debug, Clone, Copy, Default)]
+pub struct MatchOptions<'a> {
+    /// Optional `%LABEL` context (`atom -> current label`).
+    pub labels: Option<&'a HashMap<AtomId, String>>,
+    /// Optional root pin for query atom 0.
+    pub root: Option<AtomId>,
+    /// Optional maximum number of matches to return.
+    pub limit: Option<usize>,
+}
+
+/// One SMARTS match, indexed by query atom order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SmartsMatch {
+    pub atoms: Vec<AtomId>,
+}
+
+impl SmartsMatch {
+    pub fn atoms(&self) -> &[AtomId] {
+        &self.atoms
+    }
+}
 
 /// A compiled SMARTS query.
 #[derive(Debug, Clone)]
@@ -80,39 +105,23 @@ impl SmartsPattern {
         Ok(SmartsPattern { graph })
     }
 
-    /// All matches (non-uniquified). Each match is a vector indexed by
-    /// query-atom order: element `i` is the [`AtomId`] matched by query atom
-    /// `i`. Use [`map_label`](Self::map_label) to recover `:n` atom-map labels.
-    pub fn find_matches(&self, mol: &Atomistic) -> Vec<Vec<AtomId>> {
-        matcher::find_matches(&self.graph, mol)
+    /// All matches (non-uniquified), controlled by [`MatchOptions`].
+    pub fn find(&self, mol: &Atomistic, options: MatchOptions<'_>) -> Vec<SmartsMatch> {
+        matcher::find(&self.graph, mol, options)
     }
 
     /// Whether at least one match exists.
-    pub fn has_match(&self, mol: &Atomistic) -> bool {
-        matcher::has_match(&self.graph, mol)
+    pub fn has_match(&self, mol: &Atomistic, options: MatchOptions<'_>) -> bool {
+        matcher::has_match(&self.graph, mol, options)
     }
 
-    /// Like [`find_matches`](Self::find_matches), but resolving `%LABEL`
-    /// context-label predicates against an external `labels` map
-    /// (`atom → current label`).
-    ///
-    /// A `%LABEL` token inside a bracket atom (a molrs extension over standard
-    /// SMARTS) matches an atom iff `labels[atom] == "LABEL"`. This is a general,
-    /// domain-neutral mechanism for iterative / dependency-aware matching: a
-    /// caller supplies a "current assignment" map and patterns can require a
-    /// neighbour to already carry a specific label. OPLS-AA layered typing, for
-    /// example, passes the per-atom assigned `opls_NNN` type map so that a def
-    /// like `[H][O;%opls_154]` matches only after the oxygen was typed
-    /// `opls_154` in a prior pass.
-    ///
-    /// Passing an empty map is identical to [`find_matches`](Self::find_matches);
-    /// that legacy entry point is unaffected by this method.
-    pub fn find_matches_with_labels(
-        &self,
-        mol: &Atomistic,
-        labels: &std::collections::HashMap<AtomId, String>,
-    ) -> Vec<Vec<AtomId>> {
-        matcher::find_matches_with_labels(&self.graph, mol, labels)
+    /// Project a match into `{atom_map_label -> molecule atom}`.
+    pub fn mapped(&self, m: &SmartsMatch) -> HashMap<u32, AtomId> {
+        m.atoms
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &atom)| self.map_label(i).map(|label| (label, atom)))
+            .collect()
     }
 
     /// The SMARTS atom-map label (`:1` etc.) of query atom `query_atom`, or

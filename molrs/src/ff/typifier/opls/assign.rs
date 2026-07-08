@@ -1,7 +1,7 @@
 //! OPLS-AA bonded-parameter matching (bonds / angles / dihedrals).
 //!
 //! Given a typed [`Atomistic`] (atoms carry `type` = `opls_NNN` and `class` from
-//! [`annotate_opls`](super::annotate_opls)), this module enumerates every bond /
+//! [`typify_atoms`](super::typify_atoms)), this module enumerates every bond /
 //! angle / dihedral and resolves the most specific matching bonded type from the
 //! potential [`ForceField`](crate::ff::forcefield::ForceField)'s `bond` /
 //! `angle` / `dihedral` style tables, writing the winning type's numeric params
@@ -290,7 +290,7 @@ pub enum BondedTerm {
 
 /// No-match seam for filling uncovered bonded terms.
 ///
-/// [`assign_bonded_with`] calls [`estimate`](Estimator::estimate) for any bonded
+/// [`typify_bonded_with`] calls [`estimate`](Estimator::estimate) for any bonded
 /// term the force-field tables do not cover. An implementation returns:
 /// - `Ok(Some(params))` — estimated params to write onto the term;
 /// - `Ok(None)` — declined; fall back to the strict policy;
@@ -299,32 +299,32 @@ pub enum BondedTerm {
 /// This is a force-field-agnostic extension point: molrs ships no estimator
 /// (parameter estimation for uncovered terms is delegated to external tooling
 /// such as AmberTools). A consumer that wants automatic fill-in implements this
-/// trait and passes it to [`assign_bonded_with`]. The default [`assign_bonded`]
+/// trait and passes it to [`typify_bonded_with`]. The default [`typify_bonded`]
 /// path attaches none and the [`NoMatch`] policy decides.
 pub trait Estimator {
     /// Estimate parameters for an uncovered bonded `term`, or decline (`None`).
     fn estimate(&self, term: &BondedTerm) -> Result<Option<Params>, String>;
 }
 
-/// Assign bonded parameters onto a typed molecule, with the strict no-match
+/// Typify bonded parameters onto a typed molecule, with the strict no-match
 /// policy and no estimator (the default closed-loop path).
 ///
-/// Convenience wrapper over [`assign_bonded_with`] with `estimator = None`. See
+/// Convenience wrapper over [`typify_bonded_with`] with `estimator = None`. See
 /// that function for the full contract.
 ///
 /// # Errors
 ///
 /// Returns `Err` if a term matches no candidate and `policy` is
 /// [`NoMatch::Error`], or if writing a label onto the graph fails.
-pub fn assign_bonded(
+pub fn typify_bonded(
     mol_typed: &Atomistic,
     tables: &CandidateTables,
     policy: NoMatch,
 ) -> Result<Atomistic, String> {
-    assign_bonded_with(mol_typed, tables, policy, None)
+    typify_bonded_with(mol_typed, tables, policy, None)
 }
 
-/// Assign bonded parameters onto a typed molecule, choosing each term's params
+/// Typify bonded parameters onto a typed molecule, choosing each term's params
 /// by the OPLS specificity + layer ranking, with an optional estimator seam.
 ///
 /// For every enumerated bond / angle / dihedral:
@@ -337,8 +337,8 @@ pub fn assign_bonded(
 ///    `policy`.
 ///
 /// Angles and dihedrals are enumerated from the bond graph via
-/// [`Atomistic::generate_topology`] (clearing any pre-existing ones), mirroring
-/// the MMFF frame builder. Only atoms that chain-1 actually typed participate:
+/// the shared typifier topology helper (clearing any pre-existing generated
+/// ones), mirroring the MMFF typifier. Only atoms that chain-1 actually typed participate:
 /// a term with any untyped endpoint is skipped (its params are the consumer's
 /// concern, not a hard error here) — full per-atom coverage is chain 3.
 ///
@@ -347,7 +347,7 @@ pub fn assign_bonded(
 /// Returns `Err` if a term matches no candidate, the estimator declines, and
 /// `policy` is [`NoMatch::Error`]; if the estimator itself errors; or if a
 /// graph write / topology enumeration fails.
-pub fn assign_bonded_with(
+pub fn typify_bonded_with(
     mol_typed: &Atomistic,
     tables: &CandidateTables,
     policy: NoMatch,
@@ -382,8 +382,7 @@ pub fn assign_bonded_with(
     }
 
     // --- enumerate angles + dihedrals from the bond graph (clear existing) ---
-    out.generate_topology(true, true, true)
-        .map_err(|e| e.to_string())?;
+    crate::ff::typifier::topology::typify_bonded_topology(&mut out)?;
 
     // --- angles ---
     let angle_rows: Vec<_> = out

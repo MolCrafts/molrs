@@ -1,18 +1,16 @@
-//! SMILES and SMARTS — sibling chemical-notation systems.
+//! SMILES parsing plus the shared SMARTS parser frontend.
 //!
-//! This module hosts two closely related but deliberately separate systems:
+//! This module hosts the SMILES serialization pipeline and exposes
+//! [`parse_smarts`] for the canonical SMARTS engine in
+//! [`crate::chem::smarts`]. SMARTS matching lives there; this module owns only
+//! syntax parsing shared with SMILES.
 //!
 //! * [`smiles`] — the SMILES serialization format: parse a string into an
 //!   intermediate representation, validate it, and convert it into an
 //!   atomistic molecular graph.
-//! * [`smarts`] — the SMARTS query language: parse a pattern, validate it,
-//!   and match it against a target molecule.
 //!
-//! Both systems share a common chemistry vocabulary (AST types, byte scanner,
-//! ring-closure validation) that lives in [`chem`]. Keeping SMILES and SMARTS
-//! as siblings rather than treating one as a superset avoids the long-standing
-//! class of bugs where concrete-structure semantics silently leak into query
-//! evaluation.
+//! Both SMILES and SMARTS share a common chemistry vocabulary (AST types, byte
+//! scanner, ring-closure validation) that lives in [`chem`].
 //!
 //! # Pipeline (SMILES)
 //!
@@ -23,7 +21,7 @@
 //! # Pipeline (SMARTS)
 //!
 //! ```text
-//! SMARTS string → parse_smarts() → SmilesIR → SmartsPattern::compile() → matches()
+//! SMARTS string → parse_smarts() → SmilesIR → crate::chem::smarts::SmartsPattern
 //! ```
 //!
 //! # Example
@@ -38,10 +36,9 @@
 
 pub mod chem;
 pub mod error;
-pub mod smarts;
-// The serialization-format module retains its `smiles` name to mirror the
-// `smarts` sibling. The re-exports below flatten it so callers write
-// `molrs::io::smiles::parse_smiles`, not the doubled path.
+// The serialization-format module retains its `smiles` name internally. The
+// re-exports below flatten it so callers write `molrs::io::smiles::parse_smiles`,
+// not the doubled path.
 #[allow(clippy::module_inception)]
 pub mod smiles;
 
@@ -58,5 +55,5 @@ pub use chem::ast::{
     ChainElement, Chirality, SmilesIR, Span,
 };
 pub use error::{SmilesError, SmilesErrorKind};
-pub use smarts::{parse_smarts, validate_smarts};
+pub use parser::parse_smarts;
 pub use smiles::{parse_smiles, to_atomistic, validate_smiles};

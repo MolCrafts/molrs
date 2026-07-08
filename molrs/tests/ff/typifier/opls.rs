@@ -10,10 +10,9 @@
 use std::path::Path;
 
 use molrs::ff::forcefield::Params;
-use molrs::ff::typifier::Typifier;
 use molrs::ff::typifier::opls::{
-    BondedTerm, CandidateTables, Estimator, NoMatch, OplsTypeRow, OplsTypifier, OplsTypingMeta,
-    annotate_opls, assign_bonded, assign_bonded_with,
+    BondedTerm, CandidateTables, Estimator, NoMatch, OPLSAATypifier, OplsTypeRow, OplsTypingMeta,
+    typify_atoms, typify_bonded, typify_bonded_with,
 };
 use molrs::{Atom, Atomistic};
 
@@ -158,7 +157,7 @@ fn oplsaa_xml() -> String {
 fn typifier_builds_from_real_oplsaa_xml() {
     // ac-001/ac-003: construction parses both typing-meta and the potential FF
     // from one XML, additively (the potential reader is unchanged).
-    let typifier = OplsTypifier::from_xml_str(&oplsaa_xml()).expect("build OplsTypifier");
+    let typifier = OPLSAATypifier::from_xml_str(&oplsaa_xml()).expect("build OPLSAATypifier");
     assert!(
         !typifier.meta().is_empty(),
         "typing metadata should have rows"
@@ -175,7 +174,7 @@ fn typifier_builds_from_real_oplsaa_xml() {
 fn ethane_atoms_typed_with_type_class_charge() {
     // ac-004: a real alkane (ethane.mol2 carries explicit H) is fully typed —
     // CT carbons + HC hydrogens — and typed atoms carry type/class/charge.
-    let typifier = OplsTypifier::from_xml_str(&oplsaa_xml()).expect("build OplsTypifier");
+    let typifier = OPLSAATypifier::from_xml_str(&oplsaa_xml()).expect("build OPLSAATypifier");
     let mol = load_mol2(&helpers::data_path("mol2/ethane.mol2"));
     let typed = typifier.typify(&mol).expect("typify ethane");
 
@@ -204,7 +203,7 @@ fn ethane_atoms_typed_with_type_class_charge() {
 fn typing_runs_over_every_mol2_molecule() {
     // ac-004: iterate every real mol2 in tests-data — typing must never panic
     // or error, and at least one molecule must receive at least one opls type.
-    let typifier = OplsTypifier::from_xml_str(&oplsaa_xml()).expect("build OplsTypifier");
+    let typifier = OPLSAATypifier::from_xml_str(&oplsaa_xml()).expect("build OPLSAATypifier");
     let files = helpers::format_files("mol2");
     assert!(!files.is_empty(), "tests-data/mol2 has files");
 
@@ -214,9 +213,8 @@ fn typing_runs_over_every_mol2_molecule() {
         if mol.n_atoms() == 0 {
             continue;
         }
-        let typed = typifier
-            .typify(&mol)
-            .unwrap_or_else(|e| panic!("typify {:?} failed: {e}", path.file_name().unwrap()));
+        let typed = typify_atoms(&mol, typifier.meta(), typifier.ff())
+            .unwrap_or_else(|e| panic!("typify_atoms {:?} failed: {e}", path.file_name().unwrap()));
         // Every typed atom carries a well-formed opls_NNN type.
         for (_, a) in typed.atoms() {
             if let Some(ty) = a.get_str("type") {
@@ -237,7 +235,7 @@ fn recursive_dollar_def_types_a_real_molecule() {
     // happens to carry no $() def, so we inject a single recursive def into the
     // typing metadata and confirm it types atoms of a REAL molecule (ethane).
     // (Engine-level recursive support is also unit-tested in src/.)
-    let ff = OplsTypifier::from_xml_str(&oplsaa_xml())
+    let ff = OPLSAATypifier::from_xml_str(&oplsaa_xml())
         .expect("build")
         .ff()
         .clone();
@@ -254,7 +252,7 @@ fn recursive_dollar_def_types_a_real_molecule() {
         },
     );
     let mol = load_mol2(&helpers::data_path("mol2/ethane.mol2"));
-    let typed = annotate_opls(&mol, &meta, &ff).expect("typify with recursive def");
+    let typed = typify_atoms(&mol, &meta, &ff).expect("typify with recursive def");
     let n = typed
         .atoms()
         .filter(|(_, a)| a.get_str("type") == Some("opls_135"))
@@ -268,7 +266,7 @@ fn recursive_dollar_def_types_a_real_molecule() {
 //
 // These exercise the previously-skipped %opls_NNN defs end to end through the
 // real bundled oplsaa.xml. Per-atom expectations are the ground truth produced
-// by molpy's own `OplsTypifier` on the same molecule (verified out-of-band):
+// by molpy's own `OPLSAATypifier` on the same molecule (verified out-of-band):
 // methanol → C opls_157, O opls_154, hydroxyl-H opls_155, methyl-H opls_156.
 // The hydroxyl H (opls_155, def `H[O;%opls_154]`) and methyl H (opls_156, def
 // `HC[O;%opls_154]`) are %opls_154-dependent — exactly the layered defs chain-1
@@ -304,8 +302,8 @@ fn methanol_layered_types_match_molpy() {
     // ac-005: the alcohol layered chain. O types opls_154 (level 0); the
     // hydroxyl H types opls_155 (def `H[O;%opls_154]`, level 1) only after the
     // O is typed; the methyl H types opls_156 (def `HC[O;%opls_154]`, level 1).
-    // Per-atom types equal molpy's OplsTypifier on the same molecule.
-    let typifier = OplsTypifier::from_xml_str(&oplsaa_xml()).expect("build OplsTypifier");
+    // Per-atom types equal molpy's OPLSAATypifier on the same molecule.
+    let typifier = OPLSAATypifier::from_xml_str(&oplsaa_xml()).expect("build OPLSAATypifier");
     let (g, c, o, ho, methyl_h) = methanol();
     let typed = typifier.typify(&g).expect("typify methanol");
 
@@ -338,7 +336,7 @@ fn percent_defs_now_covered() {
     // opls_155 (`H[O;%opls_154]`) is a %opls_NNN-dependent type chain-1 could
     // never assign; its presence after layered typing proves the `%opls_NNN`
     // defs in the bundled oplsaa.xml are now covered.
-    let typifier = OplsTypifier::from_xml_str(&oplsaa_xml()).expect("build OplsTypifier");
+    let typifier = OPLSAATypifier::from_xml_str(&oplsaa_xml()).expect("build OPLSAATypifier");
     let (g, _c, _o, _ho, _mh) = methanol();
     let typed = typifier.typify(&g).expect("typify methanol");
     assert!(
@@ -354,14 +352,17 @@ fn layered_typing_terminates_over_every_mol2() {
     // ac-005 (breadth): the full layered pipeline (incl. the %opls_NNN defs and
     // any circular groups in the real oplsaa.xml) must terminate and never panic
     // over every real mol2 molecule, and assign well-formed types throughout.
-    let typifier = OplsTypifier::from_xml_str(&oplsaa_xml()).expect("build OplsTypifier");
+    let typifier = OPLSAATypifier::from_xml_str(&oplsaa_xml()).expect("build OPLSAATypifier");
     for path in &helpers::format_files("mol2") {
         let mol = load_mol2(path);
         if mol.n_atoms() == 0 {
             continue;
         }
-        let typed = typifier.typify(&mol).unwrap_or_else(|e| {
-            panic!("layered typify {:?} failed: {e}", path.file_name().unwrap())
+        let typed = typify_atoms(&mol, typifier.meta(), typifier.ff()).unwrap_or_else(|e| {
+            panic!(
+                "layered typify_atoms {:?} failed: {e}",
+                path.file_name().unwrap()
+            )
         });
         for (_, a) in typed.atoms() {
             if let Some(ty) = a.get_str("type") {
@@ -372,7 +373,7 @@ fn layered_typing_terminates_over_every_mol2() {
 }
 
 // ===========================================================================
-// Chain 2: bonded-parameter assignment (assign_bonded / build)
+// Chain 2: bonded-parameter typification (typify_bonded / build)
 // ===========================================================================
 
 /// Read a numeric prop off a materialized bond/angle/dihedral relation (whose
@@ -397,9 +398,9 @@ fn ethane_bond_angle_dihedral_match_opls_reference() {
     //   HC-CT-HC ang: θ0 1.88146 rad, k0 276.144/4.184 = 66.0 kcal/mol/rad²
     //   HC-CT-CT ang: θ0 1.93208 rad, k0 313.8/4.184  = 75.0
     //   HC-CT-CT-HC dih: f1 0, f2 0, f3 0.3, f4 0 (RB→OPLS of [.,1.8828,0,-2.5104,..])
-    let typifier = OplsTypifier::from_xml_str(&oplsaa_xml()).expect("build OplsTypifier");
+    let typifier = OPLSAATypifier::from_xml_str(&oplsaa_xml()).expect("build OPLSAATypifier");
     let mol = load_mol2(&helpers::data_path("mol2/ethane.mol2"));
-    let typed = typifier.typify_full(&mol).expect("typify + assign ethane");
+    let typed = typifier.typify(&mol).expect("typify + assign ethane");
 
     const FK_RTOL: f64 = 0.10;
     const R0_ATOL: f64 = 0.02; // Å
@@ -438,7 +439,7 @@ fn ethane_bond_angle_dihedral_match_opls_reference() {
     }
     assert!(saw_ct_ct && saw_ct_hc, "ethane has CT-CT and CT-HC bonds");
 
-    // --- angles (enumerated by assign_bonded) ---
+    // --- angles (enumerated by typify_bonded) ---
     let mut saw_hch = false;
     let mut saw_hcc = false;
     for (_, a) in typed.angles() {
@@ -495,15 +496,15 @@ fn ethane_bond_angle_dihedral_match_opls_reference() {
 }
 
 #[test]
-fn assign_bonded_over_every_mol2_only_touches_typed_terms() {
-    // ac-004 (breadth): assign_bonded must never panic over real molecules.
+fn typify_bonded_over_every_mol2_only_touches_typed_terms() {
+    // ac-004 (breadth): typify_bonded must never panic over real molecules.
     // Because chain-1 has a coverage gap (only %def types are SMARTS-typed),
     // many atoms are untyped — terms touching them are skipped, so non-strict
     // assignment is always Ok. Bonded parity is only meaningful for the subset
     // chain-1 actually typed; here we just assert no panic + that ethane (fully
     // typed) yields fully-parametrized bonds.
-    let typifier = OplsTypifier::from_xml_str(&oplsaa_xml())
-        .expect("build OplsTypifier")
+    let typifier = OPLSAATypifier::from_xml_str(&oplsaa_xml())
+        .expect("build OPLSAATypifier")
         .with_strict(false);
     for path in &helpers::format_files("mol2") {
         let mol = load_mol2(path);
@@ -511,7 +512,7 @@ fn assign_bonded_over_every_mol2_only_touches_typed_terms() {
             continue;
         }
         let typed = typifier
-            .typify_full(&mol)
+            .typify(&mol)
             .unwrap_or_else(|e| panic!("assign {:?} failed: {e}", path.file_name().unwrap()));
         // Any bond whose two endpoints are both typed and that received a `type`
         // proxy (r0) must carry numeric params (no half-written terms).
@@ -559,11 +560,11 @@ fn no_match_seam_strict_errors_lenient_skips() {
     mol.set_atom(b, "type", "opls_oh").unwrap();
 
     // strict -> Err naming the term.
-    let err = assign_bonded(&mol, &tables, NoMatch::Error).unwrap_err();
+    let err = typify_bonded(&mol, &tables, NoMatch::Error).unwrap_err();
     assert!(err.contains("opls_oh"), "strict err names the term: {err}");
 
     // lenient -> Ok, bond left unparametrized (no k0/r0).
-    let typed = assign_bonded(&mol, &tables, NoMatch::Skip).expect("lenient ok");
+    let typed = typify_bonded(&mol, &tables, NoMatch::Skip).expect("lenient ok");
     let (_, bond) = typed.bonds().next().expect("the bond survives");
     assert!(
         rel_f64(&bond, "k0").is_none(),
@@ -611,7 +612,7 @@ fn no_match_seam_estimator_fills_params() {
 
     // Even under strict, the estimator fills in and avoids the error.
     let est = FixedEstimator;
-    let typed = assign_bonded_with(&mol, &tables, NoMatch::Error, Some(&est))
+    let typed = typify_bonded_with(&mol, &tables, NoMatch::Error, Some(&est))
         .expect("estimator fills the gap");
     let (_, bond) = typed.bonds().next().expect("bond");
     assert_eq!(rel_f64(&bond, "k0"), Some(111.0), "estimator k0 written");
@@ -626,7 +627,7 @@ fn build_closes_to_potentials_with_finite_energy() {
     // (Numeric parity against molpy's OPLS energy is the bm-molrs-molpy harness;
     // here we assert the loop closes and is finite/sane — the kernel parity
     // itself is covered by tests/ff/potential/opls.rs.)
-    let typifier = OplsTypifier::from_xml_str(&oplsaa_xml()).expect("build OplsTypifier");
+    let typifier = OPLSAATypifier::from_xml_str(&oplsaa_xml()).expect("build OPLSAATypifier");
     let mol = load_mol2(&helpers::data_path("mol2/ethane.mol2"));
     let pots = typifier.build(&mol).expect("build potentials for ethane");
 

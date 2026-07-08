@@ -37,9 +37,9 @@ use crate::error::MolRsError;
 use crate::system::atomistic::{AtomId, Atomistic, BondId};
 use crate::system::element::Element;
 
-use super::SmartsPattern;
 use super::ast::{AtomPrimitive, AtomQuery, BondPrimitive, BondQuery};
 use super::parser::QueryGraph;
+use super::{MatchOptions, SmartsPattern};
 
 const ORDER_EPS: f64 = 1e-6;
 
@@ -432,6 +432,8 @@ impl Transform {
         mol: &mut Atomistic,
         binding: &HashMap<u32, AtomId>,
         reactants: &[SmartsPattern],
+        labels: &HashMap<AtomId, String>,
+        refresh: bool,
     ) -> Result<Vec<AtomId>, MolRsError> {
         // Surviving atoms whose local environment changed: bond endpoints, added
         // atoms, deleted atoms' surviving neighbours, and prop-set atoms.
@@ -440,13 +442,34 @@ impl Transform {
         // 1. Resolve + delete leaving atoms (re-match each component to the binding).
         let mut leaving: HashSet<AtomId> = HashSet::new();
         for spec in &self.delete {
-            let matches = reactants[spec.component].find_matches(mol);
+            // Re-anchor the reactant to the binding to resolve its leaving atoms.
+            // When the root query atom (index 0) is pinned — the usual case, e.g.
+            // `[C;%cx:1][H]` — seed the match at its already-bound image so the
+            // search grows locally from that anchor instead of scanning the whole
+            // (possibly huge) graph: O(local), not O(N) per apply. The `%LABEL`
+            // context is threaded so a labelled reactant still resolves; an empty
+            // map behaves like plain matching.
+            let root = spec
+                .pins
+                .iter()
+                .find(|&&(qi, _)| qi == 0)
+                .and_then(|&(_, l)| binding.get(&l).copied());
+            let matches = reactants[spec.component].find(
+                mol,
+                MatchOptions {
+                    labels: Some(labels),
+                    root,
+                    limit: None,
+                },
+            );
             let chosen = matches
                 .iter()
                 .find(|m| {
-                    spec.pins
-                        .iter()
-                        .all(|&(qi, l)| binding.get(&l).is_some_and(|&aid| m.get(qi) == Some(&aid)))
+                    spec.pins.iter().all(|&(qi, l)| {
+                        binding
+                            .get(&l)
+                            .is_some_and(|&aid| m.atoms.get(qi) == Some(&aid))
+                    })
                 })
                 .ok_or_else(|| {
                     MolRsError::validation(format!(
@@ -456,7 +479,7 @@ impl Transform {
                     ))
                 })?;
             for &qi in &spec.delete_idxs {
-                if let Some(&aid) = chosen.get(qi) {
+                if let Some(&aid) = chosen.atoms.get(qi) {
                     leaving.insert(aid);
                 }
             }
@@ -548,9 +571,15 @@ impl Transform {
             touched.push(id);
         }
 
-        // 7. Refresh derived topology, then re-perceive aromaticity.
-        mol.generate_topology(true, true, false)?;
-        crate::core::chem::aromaticity::perceive_aromaticity(mol);
+        // 7. Refresh derived topology, then re-perceive aromaticity. A batch
+        // caller applying many edits (e.g. crosslinking) passes refresh=false and
+        // does this ONCE at the end — the per-apply whole-graph refresh is O(N)
+        // and dominates otherwise. Matching only needs bonds, which are already
+        // updated in place above.
+        if refresh {
+            mol.generate_topology(true, true, false)?;
+            crate::core::chem::aromaticity::perceive_aromaticity(mol);
+        }
 
         // Dedup with a deterministic order (sort by the stable atom handle).
         touched.sort_unstable();
@@ -676,8 +705,11 @@ impl Reaction {
         &self,
         mol: &mut Atomistic,
         binding: &HashMap<u32, AtomId>,
+        labels: &HashMap<AtomId, String>,
+        refresh: bool,
     ) -> Result<Vec<AtomId>, MolRsError> {
-        self.transform.apply(mol, binding, &self.reactants)
+        self.transform
+            .apply(mol, binding, &self.reactants, labels, refresh)
     }
 }
 
@@ -806,7 +838,9 @@ mod tests {
 
         let n_before = mol.n_atoms();
         let binding = HashMap::from([(1u32, n0), (2u32, c0)]);
-        let touched = rxn.apply(&mut mol, &binding).unwrap();
+        let touched = rxn
+            .apply(&mut mol, &binding, &HashMap::new(), true)
+            .unwrap();
 
         // two leaving atoms removed
         assert_eq!(mol.n_atoms(), n_before - 2);
@@ -835,7 +869,9 @@ mod tests {
         mol.add_bond(c0, br).unwrap();
 
         let binding = HashMap::from([(1u32, c0)]);
-        let touched = rxn.apply(&mut mol, &binding).unwrap();
+        let touched = rxn
+            .apply(&mut mol, &binding, &HashMap::new(), true)
+            .unwrap();
 
         assert_eq!(mol.n_atoms(), 2);
         // the surviving neighbour of C is the new O
@@ -870,7 +906,9 @@ mod tests {
 
         // No leaving group; the binding pins the three reacting atoms directly.
         let binding = HashMap::from([(1u32, c1), (2u32, c2), (3u32, s3)]);
-        let touched = rxn.apply(&mut mol, &binding).unwrap();
+        let touched = rxn
+            .apply(&mut mol, &binding, &HashMap::new(), true)
+            .unwrap();
 
         // C1-C2 order change (2->1) touches both carbons; C2-S3 form touches
         // C2 and S3; the spectator H is untouched.

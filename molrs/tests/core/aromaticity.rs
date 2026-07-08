@@ -21,7 +21,9 @@ use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::path::PathBuf;
 
-use molrs::{Atom, AtomId, Atomistic, BondId, PropValue, SmartsPattern, perceive_aromaticity};
+use molrs::{
+    Atom, AtomId, Atomistic, BondId, MatchOptions, PropValue, SmartsPattern, perceive_aromaticity,
+};
 use serde_json::Value;
 
 const MOLECULES: &[&str] = &[
@@ -196,9 +198,9 @@ fn test_smarts_primitives_match_rdkit() {
         for p in &patterns {
             let pat = SmartsPattern::parse(p).unwrap_or_else(|e| panic!("parse {p:?}: {e}"));
             let got: BTreeSet<Vec<usize>> = pat
-                .find_matches(&g)
+                .find(&g, MatchOptions::default())
                 .iter()
-                .map(|m| m.iter().map(|id| row_of[id]).collect())
+                .map(|m| m.atoms().iter().map(|id| row_of[id]).collect())
                 .collect();
             let want: BTreeSet<Vec<usize>> = smarts_ref["matches"][name][p]
                 .as_array()

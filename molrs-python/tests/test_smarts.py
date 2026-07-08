@@ -76,11 +76,11 @@ def test_smarts_pattern_is_exposed():
     assert pat is not None
 
 
-def test_find_matches_mapped_captures_map_numbers():
-    """find_matches_mapped returns list[dict[int,int]] keyed by atom-map number."""
+def test_mapped_true_captures_map_numbers():
+    """find_matches(..., mapped=True) returns map-number keyed matches."""
     mol, c, o, ho = _methanol()
     pat = molrs.SmartsPattern("[C:1][O:2][H:3]")
-    matches = pat.find_matches_mapped(mol)
+    matches = pat.find_matches(mol, mapped=True)
     assert isinstance(matches, list)
     assert len(matches) == 1
     m = matches[0]
@@ -94,11 +94,25 @@ def test_find_matches_mapped_captures_map_numbers():
     assert mol.get(m[3], "element") == "H"
 
 
-def test_find_matches_mapped_empty_on_non_match():
+def test_default_matches_are_objects():
+    """find_matches() returns SmartsMatch objects by default."""
+    mol, c, o, ho = _methanol()
+    pat = molrs.SmartsPattern("[C:1][O:2][H:3]")
+    matches = pat.find_matches(mol)
+    assert len(matches) == 1
+    match = matches[0]
+    assert isinstance(match, molrs.SmartsMatch)
+    assert match.atoms == [c, o, ho]
+    assert match.mapping == {1: c, 2: o, 3: ho}
+    assert match.as_list() == [c, o, ho]
+    assert match.as_dict() == {1: c, 2: o, 3: ho}
+
+
+def test_mapped_true_empty_on_non_match():
     """A molecule lacking the group yields an empty match list."""
     mol, _c1, _c2 = _ethane()
     pat = molrs.SmartsPattern("[C:1][O:2][H:3]")
-    assert pat.find_matches_mapped(mol) == []
+    assert pat.find_matches(mol, mapped=True) == []
     assert pat.has_match(mol) is False
 
 
@@ -106,12 +120,12 @@ def test_primary_amine_matches_NH2():
     """[N;H2:1] matches a primary amine nitrogen (2 explicit H)."""
     mol, n = _methylamine()
     pat = molrs.SmartsPattern("[N;H2:1]")
-    matches = pat.find_matches_mapped(mol)
+    matches = pat.find_matches(mol, mapped=True)
     assert len(matches) == 1
     assert matches[0] == {1: n}
     # Ethane (no N) does not match.
     ethane, _c1, _c2 = _ethane()
-    assert pat.find_matches_mapped(ethane) == []
+    assert pat.find_matches(ethane, mapped=True) == []
 
 
 # ---------------------------------------------------------------------------
@@ -124,8 +138,8 @@ def test_map_number_adds_no_constraint():
     mol, c1, c2 = _ethane()
     mapped = molrs.SmartsPattern("[C:1]").find_matches(mol)
     plain = molrs.SmartsPattern("[C]").find_matches(mol)
-    # Each match is a single-atom list; compare the flat atom sets.
-    assert {m[0] for m in mapped} == {m[0] for m in plain} == {c1, c2}
+    # Each match is a single-atom SmartsMatch; compare the flat atom sets.
+    assert {m.atoms[0] for m in mapped} == {m.atoms[0] for m in plain} == {c1, c2}
 
 
 def test_map_label_and_num_query_atoms():

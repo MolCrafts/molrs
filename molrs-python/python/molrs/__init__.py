@@ -67,6 +67,7 @@ from .molrs import (
     Graph,
     Atomistic,
     CoarseGrain,
+    SmartsMatch,
     SmartsPattern,
     Reaction,
     # Systems (module-level free functions over a graph)
@@ -83,7 +84,7 @@ from .molrs import (
     ConformerStageReport,
     # Force field
     MMFFTypifier,
-    OplsTypifier,
+    OPLSAATypifier,
     ForceField,
     Potentials,
     OptReport,
@@ -206,6 +207,7 @@ from . import signal
 from . import validate
 from . import dielectric
 from . import transport
+from . import typifier
 
 __all__ = [
     "io",
@@ -214,6 +216,7 @@ __all__ = [
     "validate",
     "dielectric",
     "transport",
+    "typifier",
     "BlockDtypeError",
     "Box",
     "LinkedCell",
@@ -260,6 +263,7 @@ __all__ = [
     "Graph",
     "Atomistic",
     "CoarseGrain",
+    "SmartsMatch",
     "SmartsPattern",
     "Reaction",
     "translate",
@@ -274,7 +278,7 @@ __all__ = [
     "ConformerReport",
     "ConformerStageReport",
     "MMFFTypifier",
-    "OplsTypifier",
+    "OPLSAATypifier",
     "ForceField",
     "Style",
     "AtomStyle",

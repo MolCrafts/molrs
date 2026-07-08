@@ -404,7 +404,7 @@ impl Atomistic {
     /// filtered to the bond kind), keyed by a `SecondaryMap` (O(1),
     /// slot-indexed) — no `Topology` materialization and no
     /// AtomId→contiguous-index remap.
-    pub fn topo_distances(&self, source: AtomId) -> Vec<(AtomId, i64)> {
+    pub fn topo_distances(&self, source: AtomId, max_hops: Option<i64>) -> Vec<(AtomId, i64)> {
         use slotmap::SecondaryMap;
         use std::collections::VecDeque;
 
@@ -417,6 +417,9 @@ impl Atomistic {
         queue.push_back(source);
         while let Some(cur) = queue.pop_front() {
             let d = dist[cur];
+            if max_hops.is_some_and(|limit| d >= limit) {
+                continue; // atom is at the boundary; do not expand past the radius
+            }
             for (kind, _rid, other) in self.graph.neighbor_relations(cur) {
                 if kind == self.bond && !dist.contains_key(other) {
                     dist.insert(other, d + 1);
@@ -689,7 +692,7 @@ mod tests {
         ];
         for (i, &src) in atoms.iter().enumerate() {
             assert_eq!(
-                sorted_hops(eth.topo_distances(src)),
+                sorted_hops(eth.topo_distances(src, None)),
                 sorted_hops(expected_per_source[i].iter().map(|&d| (src, d)).collect()),
                 "ethane source {src:?}"
             );
@@ -702,12 +705,12 @@ mod tests {
             chain.add_bond(ids[k], ids[k + 1]).unwrap();
         }
         assert_eq!(
-            sorted_hops(chain.topo_distances(ids[0])),
+            sorted_hops(chain.topo_distances(ids[0], None)),
             (0..12).collect::<Vec<_>>(),
         );
         // The mid-chain atom 5 sees a symmetric profile.
         assert_eq!(
-            hops(chain.topo_distances(ids[0])),
+            hops(chain.topo_distances(ids[0], None)),
             (0..12).collect::<Vec<_>>(),
             "chain endpoint ordered by atom id"
         );
@@ -719,7 +722,7 @@ mod tests {
         let mut solo = Atomistic::new();
         let stale = solo.add_atom_bare("C");
         solo.remove_atom(stale).unwrap();
-        assert!(solo.topo_distances(stale).is_empty());
+        assert!(solo.topo_distances(stale, None).is_empty());
     }
 
     #[test]

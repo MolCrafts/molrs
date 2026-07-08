@@ -20,6 +20,7 @@ use crate::system::molgraph::PropValue;
 
 use super::ast::{BondFacts, MolContext, RecursiveEval};
 use super::parser::QueryGraph;
+use super::{MatchOptions, SmartsMatch};
 
 /// Resolve bond facts between two molecule atoms, if they are bonded.
 fn bond_facts(ctx: &MolContext, a: AtomId, b: AtomId) -> Option<BondFacts> {
@@ -246,44 +247,36 @@ fn backtrack(
 }
 
 /// Find every non-uniquified embedding of `query` in `mol`.
-///
-/// Each result is a vector indexed by query-atom order: `result[i]` is the
-/// `AtomId` matched by query atom `i`.
-pub fn find_matches(query: &QueryGraph, mol: &Atomistic) -> Vec<Vec<AtomId>> {
-    let ctx = MolContext::new(mol);
+pub fn find(query: &QueryGraph, mol: &Atomistic, options: MatchOptions<'_>) -> Vec<SmartsMatch> {
+    let ctx = match options.labels {
+        Some(labels) => MolContext::with_labels(mol, labels),
+        None => MolContext::new(mol),
+    };
+    let Some(limit) = options.limit else {
+        let mut out = Vec::new();
+        enumerate_matches(query, &ctx, options.root, &mut |assign| {
+            out.push(SmartsMatch {
+                atoms: assign.to_vec(),
+            });
+            true
+        });
+        return out;
+    };
+    if limit == 0 {
+        return Vec::new();
+    }
     let mut out = Vec::new();
-    enumerate_matches(query, &ctx, None, &mut |assign| {
-        out.push(assign.to_vec());
-        true
+    enumerate_matches(query, &ctx, options.root, &mut |assign| {
+        out.push(SmartsMatch {
+            atoms: assign.to_vec(),
+        });
+        out.len() < limit
     });
     out
 }
 
 /// Whether at least one embedding exists.
-pub fn has_match(query: &QueryGraph, mol: &Atomistic) -> bool {
-    let ctx = MolContext::new(mol);
-    let mut found = false;
-    enumerate_matches(query, &ctx, None, &mut |_| {
-        found = true;
-        false
-    });
-    found
-}
-
-/// Like [`find_matches`], but evaluating `%LABEL` context predicates against an
-/// external `labels` map (`atom → current label`). A `[...;%L]` atom matches
-/// only when `labels[atom] == "L"`. With an empty map this is identical to
-/// [`find_matches`].
-pub fn find_matches_with_labels(
-    query: &QueryGraph,
-    mol: &Atomistic,
-    labels: &std::collections::HashMap<AtomId, String>,
-) -> Vec<Vec<AtomId>> {
-    let ctx = MolContext::with_labels(mol, labels);
-    let mut out = Vec::new();
-    enumerate_matches(query, &ctx, None, &mut |assign| {
-        out.push(assign.to_vec());
-        true
-    });
-    out
+pub fn has_match(query: &QueryGraph, mol: &Atomistic, mut options: MatchOptions<'_>) -> bool {
+    options.limit = Some(1);
+    !find(query, mol, options).is_empty()
 }

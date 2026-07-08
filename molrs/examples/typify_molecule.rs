@@ -66,7 +66,6 @@
 use molrs::Atomistic;
 use molrs::chem::rings::find_rings;
 use molrs::ff::potential::extract_coords;
-use molrs::ff::typifier::Typifier;
 use molrs::ff::typifier::mmff::MMFFTypifier;
 use molrs::system::molgraph::{Atom, PropValue};
 use molrs::types::F;
@@ -152,43 +151,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     print_atom_types("\nAcetic acid", &typifier, &acetic_acid)?;
 
     // =========================================================================
-    // Part 5: Bond / Angle / Torsion type classification
+    // Part 5: Bond / Angle / Torsion typification
     // =========================================================================
 
-    println!("\n=== Part 5: Interaction Type Classification ===\n");
+    println!("\n=== Part 5: Interaction Typification ===\n");
 
     println!("Bond types:");
     println!(
         "  C(1)–C(1) single:    bt={}",
-        typifier.classify_bond_type(1, 1, 1.0)
+        typifier.typify_bond(1, 1, 1.0)
     );
     println!(
         "  C(37)–C(37) arom:    bt={}",
-        typifier.classify_bond_type(37, 37, 1.5)
+        typifier.typify_bond(37, 37, 1.5)
     );
     println!(
         "  C(1)–H(5) single:    bt={}",
-        typifier.classify_bond_type(1, 5, 1.0)
+        typifier.typify_bond(1, 5, 1.0)
     );
 
     println!("\nAngle types:");
-    println!("  (bt=0, bt=0) → at={}", typifier.classify_angle_type(0, 0));
-    println!("  (bt=1, bt=0) → at={}", typifier.classify_angle_type(1, 0));
-    println!("  (bt=1, bt=1) → at={}", typifier.classify_angle_type(1, 1));
+    println!("  (bt=0, bt=0) → at={}", typifier.typify_angle(0, 0));
+    println!("  (bt=1, bt=0) → at={}", typifier.typify_angle(1, 0));
+    println!("  (bt=1, bt=1) → at={}", typifier.typify_angle(1, 1));
 
     println!("\nTorsion types:");
-    println!(
-        "  (0, 0, 0) → tt={}",
-        typifier.classify_torsion_type(0, 0, 0)
-    );
-    println!(
-        "  (0, 1, 0) → tt={}",
-        typifier.classify_torsion_type(0, 1, 0)
-    );
-    println!(
-        "  (1, 0, 1) → tt={}",
-        typifier.classify_torsion_type(1, 0, 1)
-    );
+    println!("  (0, 0, 0) → tt={}", typifier.typify_dihedral(0, 0, 0));
+    println!("  (0, 1, 0) → tt={}", typifier.typify_dihedral(0, 1, 0));
+    println!("  (1, 0, 1) → tt={}", typifier.typify_dihedral(1, 0, 1));
 
     // =========================================================================
     // Part 6: Inspect a typed Frame (optional — for debugging)

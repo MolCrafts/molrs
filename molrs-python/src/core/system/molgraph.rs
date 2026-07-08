@@ -25,7 +25,7 @@ use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 
 use molrs::chem::aromaticity::perceive_aromaticity as core_perceive_aromaticity;
-use molrs::chem::smarts::{Reaction, SmartsPattern};
+use molrs::chem::smarts::{MatchOptions, Reaction, SmartsPattern};
 use molrs::system::atomistic::Atomistic;
 use molrs::system::coarsegrain::CoarseGrain;
 use molrs::system::entity_table::Cell;
@@ -517,9 +517,10 @@ impl PyAtomistic {
     /// reachable from `source` (including `source` itself at distance 0).
     /// Unreachable atoms (a different connected component) are omitted; an
     /// unknown `source` handle yields an empty list.
-    fn topo_distances(&self, source: u64) -> Vec<(u64, i64)> {
+    #[pyo3(signature = (source, max_hops = None))]
+    fn topo_distances(&self, source: u64, max_hops: Option<i64>) -> Vec<(u64, i64)> {
         self.inner
-            .topo_distances(node_from_u64(source))
+            .topo_distances(node_from_u64(source), max_hops)
             .into_iter()
             .map(|(a, d)| (node_to_u64(a), d))
             .collect()
@@ -634,24 +635,69 @@ impl PyAtomistic {
 }
 
 // ---------------------------------------------------------------------------
-// PySmartsPattern — atom-map-aware SMARTS matcher over an Atomistic
+// PySmartsMatch / PySmartsPattern — atom-map-aware SMARTS matcher over Atomistic
 // ---------------------------------------------------------------------------
+
+/// One SMARTS match, exposed to Python as `molrs.SmartsMatch`.
+///
+/// ``atoms`` stores molecule atom handles in query-atom order. ``mapping``
+/// stores the Daylight atom-map projection (``:1`` → atom handle), and is empty
+/// when the query carries no map labels.
+#[pyclass(name = "SmartsMatch", skip_from_py_object)]
+#[derive(Clone)]
+pub struct PySmartsMatch {
+    atoms: Vec<u64>,
+    mapping: HashMap<u32, u64>,
+}
+
+#[pymethods]
+impl PySmartsMatch {
+    /// Molecule atom handles in query-atom order.
+    #[getter]
+    fn atoms(&self) -> Vec<u64> {
+        self.atoms.clone()
+    }
+
+    /// Daylight atom-map projection (``:n`` label -> molecule atom handle).
+    #[getter]
+    fn mapping(&self) -> HashMap<u32, u64> {
+        self.mapping.clone()
+    }
+
+    fn as_list(&self) -> Vec<u64> {
+        self.atoms.clone()
+    }
+
+    fn as_dict(&self) -> HashMap<u32, u64> {
+        self.mapping.clone()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "SmartsMatch(atoms={:?}, mapping={:?})",
+            self.atoms, self.mapping
+        )
+    }
+}
 
 /// Compiled SMARTS query, exposed to Python as `molrs.SmartsPattern`.
 ///
 /// A thin wrapper over the core [`SmartsPattern`] (`molrs/src/core/chem/smarts`)
 /// — the same backtracking subgraph-isomorphism engine that drives the OPLS-AA
 /// typifier. Matching is non-uniquified (RDKit ``uniquify=False``): every
-/// distinct query-atom → mol-atom embedding is reported.
+/// distinct query-atom → mol-atom embedding is reported as a
+/// :class:`SmartsMatch`.
 ///
 /// Daylight atom maps (``[C:1]``) are parsed and carried through but add **no**
-/// match constraint (they are "ignored in molecule SMARTS"); use
-/// :meth:`find_matches_mapped` to read them back as ``{map_number: atom_handle}``.
+/// match constraint (they are "ignored in molecule SMARTS"); pass
+/// ``mapped=True`` to :meth:`find_matches` for the legacy shortcut returning
+/// ``{map_number: atom_handle}`` dictionaries.
 ///
 /// Examples
 /// --------
 /// >>> pat = molrs.SmartsPattern("[C:1][O:2][H:3]")
-/// >>> pat.find_matches_mapped(methanol)   # [{1: <C>, 2: <O>, 3: <H>}]
+/// >>> pat.find_matches(methanol)[0].mapping
+/// {1: <C>, 2: <O>, 3: <H>}
 #[pyclass(name = "SmartsPattern")]
 pub struct PySmartsPattern {
     inner: SmartsPattern,
@@ -667,35 +713,84 @@ impl PySmartsPattern {
     }
 
     /// Whether at least one match exists in `mol`.
-    fn has_match(&self, mol: &PyAtomistic) -> bool {
-        self.inner.has_match(mol.core())
+    #[pyo3(signature = (mol, *, labels=None, root=None))]
+    fn has_match(
+        &self,
+        mol: &PyAtomistic,
+        labels: Option<HashMap<u64, String>>,
+        root: Option<u64>,
+    ) -> bool {
+        let core_labels = labels.map(|labels| {
+            labels
+                .into_iter()
+                .map(|(h, l)| (node_from_u64(h), l))
+                .collect::<HashMap<NodeId, String>>()
+        });
+        self.inner.has_match(
+            mol.core(),
+            MatchOptions {
+                labels: core_labels.as_ref(),
+                root: root.map(node_from_u64),
+                limit: None,
+            },
+        )
     }
 
-    /// All matches, each as a list of atom handles in query-atom order.
-    fn find_matches(&self, mol: &PyAtomistic) -> Vec<Vec<u64>> {
-        self.inner
-            .find_matches(mol.core())
-            .into_iter()
-            .map(|m| m.into_iter().map(node_to_u64).collect())
-            .collect()
-    }
-
-    /// All matches, each as a ``{atom_map_number: atom_handle}`` dict. Only
-    /// query atoms carrying a ``:n`` map label appear; unlabelled query atoms
-    /// still constrain the match but are omitted from the dict.
-    fn find_matches_mapped(&self, mol: &PyAtomistic) -> Vec<HashMap<u32, u64>> {
-        self.inner
-            .find_matches(mol.core())
-            .into_iter()
-            .map(|m| {
-                m.iter()
-                    .enumerate()
-                    .filter_map(|(i, &atom)| {
-                        self.inner.map_label(i).map(|n| (n, node_to_u64(atom)))
-                    })
-                    .collect()
+    /// All matches. By default each match is a :class:`SmartsMatch`; with
+    /// ``mapped=True`` each match is returned as a ``{atom_map_number:
+    /// atom_handle}`` dict. ``labels`` supplies the ``%LABEL`` context, ``root``
+    /// pins query atom 0 to one atom handle, and ``limit`` stops after N
+    /// embeddings.
+    #[pyo3(signature = (mol, *, labels=None, root=None, mapped=false, limit=None))]
+    fn find_matches(
+        &self,
+        py: Python<'_>,
+        mol: &PyAtomistic,
+        labels: Option<HashMap<u64, String>>,
+        root: Option<u64>,
+        mapped: bool,
+        limit: Option<usize>,
+    ) -> PyResult<Py<PyAny>> {
+        let core_labels = labels.map(|labels| {
+            labels
+                .into_iter()
+                .map(|(h, l)| (node_from_u64(h), l))
+                .collect::<HashMap<NodeId, String>>()
+        });
+        let matches = self.inner.find(
+            mol.core(),
+            MatchOptions {
+                labels: core_labels.as_ref(),
+                root: root.map(node_from_u64),
+                limit,
+            },
+        );
+        if mapped {
+            let out: Vec<HashMap<u32, u64>> = matches
+                .iter()
+                .map(|m| {
+                    self.inner
+                        .mapped(m)
+                        .into_iter()
+                        .map(|(label, atom)| (label, node_to_u64(atom)))
+                        .collect()
+                })
+                .collect();
+            return Ok(out.into_pyobject(py)?.into_any().unbind());
+        }
+        let out: Vec<PySmartsMatch> = matches
+            .iter()
+            .map(|m| PySmartsMatch {
+                atoms: m.atoms().iter().map(|&atom| node_to_u64(atom)).collect(),
+                mapping: self
+                    .inner
+                    .mapped(m)
+                    .into_iter()
+                    .map(|(label, atom)| (label, node_to_u64(atom)))
+                    .collect(),
             })
-            .collect()
+            .collect();
+        Ok(out.into_pyobject(py)?.into_any().unbind())
     }
 
     /// Number of query atoms in the pattern.
@@ -736,7 +831,7 @@ impl PySmartsPattern {
 /// >>> rxn.forming_bonds                 # [(1, 2)]
 /// >>> binding = {}                       # match each reactant component ...
 /// >>> for pat in rxn.reactant_patterns:  # ... and merge the map->atom dicts
-/// ...     binding.update(pat.find_matches_mapped(mol)[0])
+/// ...     binding.update(pat.find_matches(mol, mapped=True)[0])
 /// >>> rxn.apply(mol, binding)            # edits `mol` in place
 #[pyclass(name = "Reaction")]
 pub struct PyReaction {
@@ -782,13 +877,31 @@ impl PyReaction {
     /// atoms, deleted atoms' surviving neighbours, and prop-set atoms). Deleted
     /// atoms' own handles are never included. The caller expands this seed set
     /// into a retype-safe region.
-    fn apply(&self, mol: &mut PyAtomistic, binding: HashMap<u32, u64>) -> PyResult<Vec<u64>> {
+    ///
+    /// ``refresh=False`` skips the per-apply whole-graph angle/dihedral
+    /// regeneration + aromaticity re-perception: a batch caller (crosslinking a
+    /// melt with many edits) passes it and refreshes ONCE at the end, turning an
+    /// O(edits × N) cost into O(edits × local). Matching only needs bonds, which
+    /// are updated in place regardless.
+    #[pyo3(signature = (mol, binding, labels=None, refresh=true))]
+    fn apply(
+        &self,
+        mol: &mut PyAtomistic,
+        binding: HashMap<u32, u64>,
+        labels: Option<HashMap<u64, String>>,
+        refresh: bool,
+    ) -> PyResult<Vec<u64>> {
         let resolved: HashMap<u32, NodeId> = binding
             .into_iter()
             .map(|(k, v)| (k, node_from_u64(v)))
             .collect();
+        let core_labels: HashMap<NodeId, String> = labels
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(h, l)| (node_from_u64(h), l))
+            .collect();
         self.inner
-            .apply(mol.core_mut(), &resolved)
+            .apply(mol.core_mut(), &resolved, &core_labels, refresh)
             .map(|touched| touched.into_iter().map(node_to_u64).collect())
             .map_err(molrs_error_to_pyerr)
     }

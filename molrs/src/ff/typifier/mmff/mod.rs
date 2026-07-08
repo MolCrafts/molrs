@@ -24,7 +24,6 @@
 
 #![allow(clippy::type_complexity)]
 
-use crate::Frame;
 use crate::ff::forcefield::ForceField;
 use crate::ff::potential::{Potentials, intramolecular_pairs};
 use molrs::Atomistic;
@@ -76,6 +75,11 @@ impl MMFFTypifier {
         &self.ff
     }
 
+    /// Assign MMFF94 labels to an all-atom graph.
+    pub fn typify(&self, mol: &Atomistic) -> Result<Atomistic, String> {
+        frame_builder::annotate_mmff(mol, &self.params)
+    }
+
     /// Typify a molecule and compile potentials in one step.
     ///
     /// `mol → Frame → Potentials`. The intermediate `Frame` is not retained.
@@ -83,52 +87,32 @@ impl MMFFTypifier {
     /// Requires [`Atomistic`](molrs::system::atomistic::Atomistic) because MMFF94
     /// typing depends on element symbols, bond orders, and ring membership.
     pub fn build(&self, mol: &Atomistic) -> Result<Potentials, String> {
-        let frame = self.typify_frame(mol)?;
+        let mut frame = self.typify(mol)?.to_frame();
+        let pairs = intramolecular_pairs(&frame);
+        frame.insert("pairs", pairs);
         self.ff.to_potentials(&frame)
     }
 
-    /// Typify a molecule into a `to_potentials`-ready [`Frame`].
-    ///
-    /// Assigns MMFF94 types, then performs the same assembly that
-    /// [`build`](Self::build) does before compiling: merges each angle's two
-    /// reference bond lengths (`r0_ij`, `r0_kj`) and reference angle (`theta0`)
-    /// onto the `angles` block — the per-bond params the stretch-bend kernel
-    /// reads — and inserts the intramolecular `pairs` neighbour list. The
-    /// returned `Frame` can be passed straight to
-    /// [`ForceField::to_potentials`](crate::ff::potential), unlike the bare
-    /// labeled frame from [`typify`](Typifier::typify), which still lacks those
-    /// columns and would make the `mmff_stbn` kernel error.
-    pub fn typify_frame(&self, mol: &Atomistic) -> Result<Frame, String> {
-        // typify → labeled Atomistic → Frame (the generic `to_potentials` input).
-        // The typifier bakes every per-instance numeric parameter (bond kb/r0,
-        // angle ka/theta0, stretch-bend kba + reference r0/theta0, torsion
-        // v1/v2/v3, oop koop) onto the frame via the RDKit-validated energy
-        // resolvers, so no post-hoc parameter merge is needed here.
-        let mut frame = self.typify(mol)?.to_frame();
-        // The neighbour list is the consumer's concern: build it here.
-        let pairs = intramolecular_pairs(&frame);
-        frame.insert("pairs", pairs);
-        Ok(frame)
+    /// Typify an MMFF bond: 0=normal, 1=delocalized/aromatic.
+    pub fn typify_bond(&self, t1: u32, t2: u32, bond_order: f64) -> u32 {
+        classify::typify_bond(t1, t2, bond_order, &self.params)
     }
 
-    /// Classify MMFF bond type: 0=normal, 1=delocalized/aromatic.
-    pub fn classify_bond_type(&self, t1: u32, t2: u32, bond_order: f64) -> u32 {
-        classify::classify_bond_type(t1, t2, bond_order, &self.params)
+    /// Typify an MMFF angle from the two MMFF bond classes forming the angle.
+    pub fn typify_angle(&self, bt_ij: u32, bt_jk: u32) -> u32 {
+        classify::typify_angle(bt_ij, bt_jk)
     }
 
-    /// Classify MMFF angle type from bond types of the two bonds forming the angle.
-    pub fn classify_angle_type(&self, bt_ij: u32, bt_jk: u32) -> u32 {
-        classify::classify_angle_type(bt_ij, bt_jk)
-    }
-
-    /// Classify MMFF torsion type from the three bond types in the dihedral.
-    pub fn classify_torsion_type(&self, bt_ij: u32, bt_jk: u32, bt_kl: u32) -> u32 {
-        classify::classify_torsion_type(bt_ij, bt_jk, bt_kl)
+    /// Typify an MMFF dihedral from the three MMFF bond classes in the dihedral.
+    pub fn typify_dihedral(&self, bt_ij: u32, bt_jk: u32, bt_kl: u32) -> u32 {
+        classify::typify_dihedral(bt_ij, bt_jk, bt_kl)
     }
 }
 
 impl Typifier for MMFFTypifier {
+    type Mol = Atomistic;
+
     fn typify(&self, mol: &Atomistic) -> Result<Atomistic, String> {
-        frame_builder::annotate_mmff(mol, &self.params)
+        MMFFTypifier::typify(self, mol)
     }
 }

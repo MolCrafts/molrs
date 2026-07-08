@@ -7,7 +7,7 @@
 //! for the generic `ForceField::to_potentials` path is the caller's job (via
 //! [`Atomistic::to_frame`]); building the neighbour list is the consumer's. Atom
 //! types + partial charges are reused from the RDKit-validated MMFF front-end
-//! ([`MmffMolProperties`]); the bond/angle/dihedral *labels* (classify) are
+//! ([`MmffMolProperties`]); the bond/angle/dihedral type-label rules are
 //! MMFF-specific and live here.
 
 use std::collections::HashMap;
@@ -19,8 +19,7 @@ use crate::ff::mmff::energy::params as eparams;
 use crate::ff::mmff::{MmffMolProperties, MmffVariant};
 
 use super::classify::{
-    classify_angle_type, classify_bond_type, classify_torsion_type, resolve_angle_label,
-    resolve_oop_label,
+    resolve_angle_label, resolve_oop_label, typify_angle, typify_bond, typify_dihedral,
 };
 use super::params::MMFFParams;
 
@@ -69,7 +68,7 @@ pub(crate) fn annotate_mmff(mol: &Atomistic, params: &MMFFParams) -> Result<Atom
             .map_err(|e| e.to_string())?;
     }
 
-    // 2. Bonds: classify the MMFF bond type; cache it for angle/dihedral classify.
+    // 2. Bonds: typify the MMFF bond type; cache it for angle/dihedral typing.
     let bond_rows: Vec<(_, AtomId, AtomId, f64)> = mol
         .bonds()
         .map(|(bid, bond)| {
@@ -84,7 +83,7 @@ pub(crate) fn annotate_mmff(mol: &Atomistic, params: &MMFFParams) -> Result<Atom
     for (bid, a, b, order) in &bond_rows {
         let (ia, ib) = (idx_of[a], idx_of[b]);
         let (t1, t2) = (type_of(*a), type_of(*b));
-        let bt = classify_bond_type(t1, t2, *order, params);
+        let bt = typify_bond(t1, t2, *order, params);
         let (lo, hi) = if t1 <= t2 { (t1, t2) } else { (t2, t1) };
         out.set_bond_prop(*bid, "type", format!("{}_{}_{}", bt, lo, hi))
             .map_err(|e| e.to_string())?;
@@ -104,10 +103,9 @@ pub(crate) fn annotate_mmff(mol: &Atomistic, params: &MMFFParams) -> Result<Atom
     };
 
     // 3. Enumerate angles + dihedrals on the graph (impropers handled below).
-    out.generate_topology(true, true, true)
-        .map_err(|e| e.to_string())?;
+    crate::ff::typifier::topology::typify_bonded_topology(&mut out)?;
 
-    // 4. Angles: classify + label. Collect first — `set_angle_prop` borrows `out`
+    // 4. Angles: typify + label. Collect first — `set_angle_prop` borrows `out`
     //    mutably while `angles()` borrows it immutably.
     let angle_rows: Vec<_> = out
         .angles()
@@ -115,7 +113,7 @@ pub(crate) fn annotate_mmff(mol: &Atomistic, params: &MMFFParams) -> Result<Atom
         .collect();
     for (id, a, b, c) in angle_rows {
         let (ia, ib, ic) = (idx_of[&a], idx_of[&b], idx_of[&c]);
-        let at = classify_angle_type(get_bt(ia, ib), get_bt(ib, ic));
+        let at = typify_angle(get_bt(ia, ib), get_bt(ib, ic));
         let label = resolve_angle_label(at, type_of(a), type_of(b), type_of(c));
         out.set_angle_prop(id, "type", label.clone())
             .map_err(|e| e.to_string())?;
@@ -154,14 +152,14 @@ pub(crate) fn annotate_mmff(mol: &Atomistic, params: &MMFFParams) -> Result<Atom
             .map_err(|e| e.to_string())?;
     }
 
-    // 5. Dihedrals: classify + label.
+    // 5. Dihedrals: typify + label.
     let dih_rows: Vec<_> = out
         .dihedrals()
         .map(|(id, d)| (id, d.nodes[0], d.nodes[1], d.nodes[2], d.nodes[3]))
         .collect();
     for (id, a, b, c, d) in dih_rows {
         let (ia, ib, ic, il) = (idx_of[&a], idx_of[&b], idx_of[&c], idx_of[&d]);
-        let tt = classify_torsion_type(get_bt(ia, ib), get_bt(ib, ic), get_bt(ic, il));
+        let tt = typify_dihedral(get_bt(ia, ib), get_bt(ib, ic), get_bt(ic, il));
         let label = format!(
             "{}_{}_{}_{}_{}",
             tt,
