@@ -3,7 +3,7 @@
 //! Identifies the rotatable bonds of an [`Atomistic`] and the atoms downstream
 //! of a bond (the set rotated during a torsion move). Connectivity, degree, ring
 //! membership, and traversal are all delegated to the canonical
-//! [`Topology`](crate::system::topology::Topology) snapshot built from the graph
+//! [`Topology`] snapshot built from the graph
 //! bonds — this module no longer re-implements ring perception or BFS, so the
 //! result tracks `Topology`'s SSSR (correct for fused/bridged rings) instead of
 //! the previous hand-rolled union-find heuristic.
@@ -132,7 +132,7 @@ fn downstream_indices(topo: &Topology, j: usize, k: usize) -> Vec<usize> {
 
 /// Detect rotatable bonds in a molecular graph.
 ///
-/// Returns a list of `(AtomId, AtomId)` pairs. See [`scan_rotatable`] for the
+/// Returns a list of `(AtomId, AtomId)` pairs. See `scan_rotatable` for the
 /// rotatable-bond criteria.
 pub fn detect_rotatable_bonds(graph: &Atomistic) -> Vec<(AtomId, AtomId)> {
     let (ids, _topo, rotatable) = scan_rotatable(graph);

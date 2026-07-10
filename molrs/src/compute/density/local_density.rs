@@ -20,27 +20,16 @@
 //! which collapses to the standard `1.0` count when `diameter = 0`. The
 //! identical formula appears in `LocalDensity::compute` in freud.
 
+use crate::compute::result::ComputeResult;
 use molrs::spatial::neighbors::NeighborList;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 
 use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
 use crate::compute::traits::Compute;
 use crate::compute::util::get_positions_ref;
 
 const FOUR_THIRDS_PI: F = 4.0 / 3.0 * std::f64::consts::PI;
-
-/// Per-frame local-density result.
-#[derive(Debug, Clone, Default)]
-pub struct LocalDensityResult {
-    /// Fractional (or integer when `diameter = 0`) neighbor count per particle.
-    pub num_neighbors: Vec<F>,
-    /// Number density per particle: `num_neighbors / (4/3 π r_max³)`.
-    pub density: Vec<F>,
-}
-
-impl ComputeResult for LocalDensityResult {}
 
 /// Local-density calculator.
 #[derive(Debug, Clone, Copy)]
@@ -164,11 +153,22 @@ impl Compute for LocalDensity {
     }
 }
 
+/// Per-frame local-density result.
+#[derive(Debug, Clone, Default)]
+pub struct LocalDensityResult {
+    /// Fractional (or integer when `diameter = 0`) neighbor count per particle.
+    pub num_neighbors: Vec<F>,
+    /// Number density per particle: `num_neighbors / (4/3 π r_max³)`.
+    pub density: Vec<F>,
+}
+
+impl ComputeResult for LocalDensityResult {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compute::test_support::nlist_from_frame;
     use molrs::Frame;
-    use molrs::spatial::neighbors::{LinkCell, NbListAlgo};
     use molrs::spatial::region::simbox::SimBox;
     use molrs::store::block::Block;
     use ndarray::{Array1 as A1, array};
@@ -189,44 +189,7 @@ mod tests {
     }
 
     fn build_nlist(frame: &Frame, cutoff: F) -> NeighborList {
-        let xp = frame
-            .get("atoms")
-            .unwrap()
-            .get("x")
-            .and_then(<F as molrs::store::block::BlockDtype>::from_column)
-            .unwrap()
-            .as_slice()
-            .unwrap()
-            .to_vec();
-        let yp = frame
-            .get("atoms")
-            .unwrap()
-            .get("y")
-            .and_then(<F as molrs::store::block::BlockDtype>::from_column)
-            .unwrap()
-            .as_slice()
-            .unwrap()
-            .to_vec();
-        let zp = frame
-            .get("atoms")
-            .unwrap()
-            .get("z")
-            .and_then(<F as molrs::store::block::BlockDtype>::from_column)
-            .unwrap()
-            .as_slice()
-            .unwrap()
-            .to_vec();
-        let n = xp.len();
-        let mut pos = ndarray::Array2::<F>::zeros((n, 3));
-        for i in 0..n {
-            pos[[i, 0]] = xp[i];
-            pos[[i, 1]] = yp[i];
-            pos[[i, 2]] = zp[i];
-        }
-        let simbox = frame.simbox.as_ref().unwrap();
-        let mut lc = LinkCell::new().cutoff(cutoff);
-        lc.build(pos.view(), simbox);
-        lc.query().clone()
+        nlist_from_frame(frame, cutoff)
     }
 
     #[test]

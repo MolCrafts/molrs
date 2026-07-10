@@ -6,12 +6,12 @@
 //! - [`GAFF_EMPIRICAL_JSON`] — `molrs/data/gaff_empirical.json`: the Badger
 //!   bond-`k` per-element-pair `ln Kij` table, the GAFF angle `Z`/`C` per-element
 //!   factors, and the `143.9` / `m = 4.5` constants. Transcribed verbatim from
-//!   AmberTools `dat/antechamber/PARM_BLBA_GAFF.DAT` and Wang et al.
+//!   embedded reference `dat/antechamber/PARM_BLBA_GAFF.DAT` and Wang et al.
 //!   *J. Comput. Chem.* 2004, 25:1157–1174 (Eqs. 3, 5, 6; Tables 3, 4).
 //! - [`GAFF_EQUIV_JSON`] — `molrs/data/gaff_equiv.json`: the parmchk2 equivalent
 //!   (`EQUA`) / corresponding (`CORR`) atom-type substitution table with per-row
 //!   penalties + the global penalty weights / defaults. Transcribed verbatim from
-//!   AmberTools `dat/antechamber/PARMCHK.DAT`.
+//!   embedded reference `dat/antechamber/PARMCHK.DAT`.
 //!
 //! # Units
 //!

@@ -4,8 +4,8 @@
 
 WebAssembly bindings for the [molrs](https://github.com/MolCrafts/molrs) molecular modeling toolkit.
 
-Full documentation lives at <https://molcrafts.github.io/molrs/>. The WASM
-reference is published at <https://molcrafts.github.io/molrs/reference/wasm/>.
+Full documentation lives at <https://molrs.molcrafts.org/>. The WASM
+reference is published at <https://molrs.molcrafts.org/reference/wasm/>.
 
 ## Install
 

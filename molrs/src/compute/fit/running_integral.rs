@@ -2,7 +2,7 @@
 //!
 //! Consumes a curve `y` sampled on uniform step `dt` and returns the running
 //! integral `∫₀^{k·dt} y(t) dt` at every point. The trapezoid recurrence is the
-//! same one lifted into [`running_trapezoid`](super::running_trapezoid) from
+//! same one lifted into `running_trapezoid` from
 //! the Green–Kubo ionic conductivity, so a `RunningIntegral` over the same JACF
 //! and `dt` reproduces that function's running integral bit-for-bit (before the
 //! Green–Kubo prefactor).

@@ -4,7 +4,7 @@
 //!
 //! ## Module layout
 //!
-//! - [`store`] — columnar data containers (`Block`, `Frame`, `MolRec`, keys)
+//! - [`store`] — columnar data containers (`Block`, `Frame`, `Trajectory`, keys)
 //! - [`system`] — molecular representations (`Atomistic`, `MolGraph`, `Topology`, elements)
 //! - [`chem`] — chemical perception (aromaticity, charges, rings, stereo, SMARTS)
 //! - [`spatial`] — regions, neighbor lists, geometry
@@ -54,7 +54,7 @@ pub use chem::aromaticity::perceive_aromaticity;
 pub use chem::gasteiger::{GasteigerCharges, compute_gasteiger_charges};
 pub use chem::hydrogens::{add_hydrogens, implicit_h_count, remove_hydrogens};
 pub use chem::rings::{RingInfo, find_rings};
-pub use chem::smarts::SmartsPattern;
+pub use chem::smarts::{MatchOptions, Reaction, SmartsMatch, SmartsPattern};
 pub use chem::stereo::{
     BondStereo, TetrahedralStereo, assign_bond_stereo_from_3d, assign_stereo_from_3d,
     chiral_volume, find_chiral_centers,
@@ -64,12 +64,13 @@ pub use store::block::Block;
 pub use store::frame::Frame;
 pub use store::frame_access::FrameAccess;
 pub use store::frame_view::FrameView;
-pub use store::molrec::{
-    MolRec, ObservableData, ObservableKind, ObservableRecord, SchemaValue, Trajectory,
+pub use store::trajectory::{
+    ObservableData, ObservableKind, ObservableRecord, SchemaValue, Trajectory,
 };
 pub use system::atomistic::{AngleId, AtomId, Atomistic, Bond, BondId, DihedralId, ImproperId};
 pub use system::coarsegrain::CoarseGrain;
 pub use system::element::Element;
+pub use system::graph_hash::{canonical_order, is_isomorphic, structural_hash};
 pub use system::mapping::{CGMapping, WeightScheme};
 pub use system::molgraph::{Atom, Bead, KindId, MolGraph, NodeId, PropValue, Relation};
 pub use system::topology::{Topology, TopologyRingInfo};

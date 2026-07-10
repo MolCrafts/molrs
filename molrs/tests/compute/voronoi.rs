@@ -1,5 +1,5 @@
 //! Integration tests for the radical (Laguerre) Voronoi tessellation and its
-//! domain / void consumers (spec travis-parity-06).
+//! domain / void consumers (spec analysis-parity-06).
 
 use molrs::compute::voronoi::{DomainAnalysis, RadicalVoronoi, VoidAnalysis};
 use molrs::spatial::region::simbox::SimBox;

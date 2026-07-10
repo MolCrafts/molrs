@@ -1,3 +1,5 @@
+//! Frenkel–ten Wolde solid/liquid classification from `q_ℓm` bond correlations.
+
 // Index-based loops over flat qℓm arrays read naturally; iterator forms
 // would require chunks_exact + enumerate without gaining clarity.
 #![allow(clippy::needless_range_loop)]
@@ -19,9 +21,10 @@
 //! bonds. The output is a per-particle solid-bond count plus the boolean
 //! solid mask.
 //!
-//! This phase reuses [`compute_qlm`](super::steinhardt::compute_qlm) directly
+//! This phase reuses [`compute_qlm`] directly
 //! — no qℓm recomputation, no duplicate spherical-harmonic evaluations.
 
+use crate::compute::result::ComputeResult;
 use molrs::math::complex::Complex;
 use molrs::spatial::neighbors::NeighborList;
 use molrs::store::frame_access::FrameAccess;
@@ -29,22 +32,8 @@ use molrs::types::F;
 
 use super::steinhardt::compute_qlm;
 use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
 use crate::compute::traits::Compute;
 use crate::compute::util::get_positions_ref;
-
-/// Per-frame solid/liquid classification.
-#[derive(Debug, Clone, Default)]
-pub struct SolidLiquidResult {
-    /// ℓ used for the qℓm dot product.
-    pub l: u32,
-    /// Solid-like bond count per particle.
-    pub n_solid_bonds: Vec<u32>,
-    /// `true` if the particle has ≥ `n_threshold` solid-like bonds.
-    pub is_solid: Vec<bool>,
-}
-
-impl ComputeResult for SolidLiquidResult {}
 
 /// Frenkel-ten Wolde solid/liquid classifier.
 #[derive(Debug, Clone, Copy)]
@@ -56,6 +45,7 @@ pub struct SolidLiquid {
 }
 
 impl SolidLiquid {
+    /// Steinhardt order `l`; defaults: q_threshold 0.7, n_threshold 6, normalized `q_ℓm`.
     pub fn new(l: u32) -> Self {
         Self {
             l,
@@ -65,11 +55,13 @@ impl SolidLiquid {
         }
     }
 
+    /// Dot-product threshold for a solid-like bond (default 0.7).
     pub fn with_q_threshold(mut self, t: F) -> Self {
         self.q_threshold = t;
         self
     }
 
+    /// Minimum solid-like bonds for a solid particle (default 6).
     pub fn with_n_threshold(mut self, n: u32) -> Self {
         self.n_threshold = n;
         self
@@ -162,6 +154,19 @@ impl Compute for SolidLiquid {
                 what: "neighbor-list count",
             });
         }
+        #[cfg(feature = "rayon")]
+        const PAR_THRESHOLD: usize = 2;
+
+        #[cfg(feature = "rayon")]
+        if frames.len() >= PAR_THRESHOLD {
+            use rayon::prelude::*;
+            return frames
+                .par_iter()
+                .zip(nlists.par_iter())
+                .map(|(f, nl)| self.one_frame(*f, nl))
+                .collect();
+        }
+
         let mut out = Vec::with_capacity(frames.len());
         for (f, nl) in frames.iter().zip(nlists.iter()) {
             out.push(self.one_frame(*f, nl)?);
@@ -170,11 +175,24 @@ impl Compute for SolidLiquid {
     }
 }
 
+/// Per-frame solid/liquid classification.
+#[derive(Debug, Clone, Default)]
+pub struct SolidLiquidResult {
+    /// ℓ used for the qℓm dot product.
+    pub l: u32,
+    /// Solid-like bond count per particle.
+    pub n_solid_bonds: Vec<u32>,
+    /// `true` if the particle has ≥ `n_threshold` solid-like bonds.
+    pub is_solid: Vec<bool>,
+}
+
+impl ComputeResult for SolidLiquidResult {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compute::test_support::nlist_from_frame;
     use molrs::Frame;
-    use molrs::spatial::neighbors::{LinkCell, NbListAlgo};
     use molrs::spatial::region::simbox::SimBox;
     use molrs::store::block::Block;
     use ndarray::{Array1 as A1, array};
@@ -195,44 +213,7 @@ mod tests {
     }
 
     fn build_nlist(frame: &Frame, cutoff: F) -> NeighborList {
-        let xp = frame
-            .get("atoms")
-            .unwrap()
-            .get("x")
-            .and_then(<F as molrs::store::block::BlockDtype>::from_column)
-            .unwrap()
-            .as_slice()
-            .unwrap()
-            .to_vec();
-        let yp = frame
-            .get("atoms")
-            .unwrap()
-            .get("y")
-            .and_then(<F as molrs::store::block::BlockDtype>::from_column)
-            .unwrap()
-            .as_slice()
-            .unwrap()
-            .to_vec();
-        let zp = frame
-            .get("atoms")
-            .unwrap()
-            .get("z")
-            .and_then(<F as molrs::store::block::BlockDtype>::from_column)
-            .unwrap()
-            .as_slice()
-            .unwrap()
-            .to_vec();
-        let n = xp.len();
-        let mut pos = ndarray::Array2::<F>::zeros((n, 3));
-        for i in 0..n {
-            pos[[i, 0]] = xp[i];
-            pos[[i, 1]] = yp[i];
-            pos[[i, 2]] = zp[i];
-        }
-        let simbox = frame.simbox.as_ref().unwrap();
-        let mut lc = LinkCell::new().cutoff(cutoff);
-        lc.build(pos.view(), simbox);
-        lc.query().clone()
+        nlist_from_frame(frame, cutoff)
     }
 
     /// Two octahedra sharing the same orientation: every neighbor pair across

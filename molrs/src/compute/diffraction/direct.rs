@@ -21,34 +21,17 @@
 //! Unlike [`super::debye`], this analyzer respects the supplied SimBox: the
 //! reciprocal-lattice spacing comes from `2π / L_d` along each axis.
 
+use crate::compute::result::ComputeResult;
 use molrs::spatial::region::simbox::BoxKind;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 use ndarray::Array1;
 
 use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
 use crate::compute::traits::Compute;
 use crate::compute::util::get_positions_ref;
 
 const TWO_PI: F = 2.0 * std::f64::consts::PI;
-
-/// Per-frame direct-SSF result.
-///
-/// When the analyzer was constructed via [`StaticStructureFactorDirect::new`]
-/// (explicit k-vectors), `sk` holds `S(k_vec)` for each input k-vector and
-/// `k_magnitudes` holds their magnitudes. With
-/// [`isotropic`](StaticStructureFactorDirect::isotropic), `sk` is the
-/// spherically averaged `S(|k|)` and `k_magnitudes` is the bin-centres
-/// array.
-#[derive(Debug, Clone, Default)]
-pub struct StaticStructureFactorDirectResult {
-    pub k_magnitudes: Array1<F>,
-    pub sk: Array1<F>,
-    pub n_particles: usize,
-}
-
-impl ComputeResult for StaticStructureFactorDirectResult {}
 
 #[derive(Debug, Clone)]
 enum KMode {
@@ -81,7 +64,7 @@ impl StaticStructureFactorDirect {
 
     /// Build the spherically averaged form. `n_bins` magnitude bins between
     /// 0 and `k_max`. Reciprocal-lattice points are read from the SimBox
-    /// during [`compute`].
+    /// during `compute`.
     pub fn isotropic(k_max: F, n_bins: usize) -> Result<Self, ComputeError> {
         if k_max.is_nan() || k_max <= 0.0 || n_bins == 0 {
             return Err(ComputeError::OutOfRange {
@@ -213,6 +196,23 @@ impl Compute for StaticStructureFactorDirect {
         if frames.is_empty() {
             return Err(ComputeError::EmptyInput);
         }
+        #[cfg(feature = "rayon")]
+        const PAR_THRESHOLD: usize = 2;
+
+        #[cfg(feature = "rayon")]
+        if frames.len() >= PAR_THRESHOLD {
+            use rayon::prelude::*;
+            return frames
+                .par_iter()
+                .map(|f| match &self.mode {
+                    KMode::Explicit { k_vecs } => Self::evaluate_explicit(*f, k_vecs),
+                    KMode::Isotropic { k_max, n_bins } => {
+                        Self::evaluate_isotropic(*f, *k_max, *n_bins)
+                    }
+                })
+                .collect();
+        }
+
         let mut out = Vec::with_capacity(frames.len());
         for f in frames {
             let r = match &self.mode {
@@ -226,6 +226,23 @@ impl Compute for StaticStructureFactorDirect {
         Ok(out)
     }
 }
+
+/// Per-frame direct-SSF result.
+///
+/// When the analyzer was constructed via [`StaticStructureFactorDirect::new`]
+/// (explicit k-vectors), `sk` holds `S(k_vec)` for each input k-vector and
+/// `k_magnitudes` holds their magnitudes. With
+/// [`isotropic`](StaticStructureFactorDirect::isotropic), `sk` is the
+/// spherically averaged `S(|k|)` and `k_magnitudes` is the bin-centres
+/// array.
+#[derive(Debug, Clone, Default)]
+pub struct StaticStructureFactorDirectResult {
+    pub k_magnitudes: Array1<F>,
+    pub sk: Array1<F>,
+    pub n_particles: usize,
+}
+
+impl ComputeResult for StaticStructureFactorDirectResult {}
 
 #[cfg(test)]
 mod tests {
@@ -342,5 +359,23 @@ mod tests {
             .unwrap()[0];
         assert_eq!(r.n_particles, 0);
         assert_eq!(r.sk[0], 0.0);
+    }
+
+    /// The `frames.len() >= PAR_THRESHOLD` rayon branch must match the
+    /// serial path exactly, in frame order.
+    #[test]
+    fn parallel_matches_serial() {
+        let frame = frame_with(
+            &[[0.0, 0.0, 0.0], [1.5, 0.0, 0.0], [0.0, 1.5, 0.0]],
+            10.0,
+            [false; 3],
+        );
+        let k_vecs: Vec<[F; 3]> = [0.5_f64, 1.2, 2.7].iter().map(|&k| [k, 0.0, 0.0]).collect();
+        let s = StaticStructureFactorDirect::new(&k_vecs).unwrap();
+        let solo = s.compute(&[&frame], ()).unwrap();
+        let par = s.compute(&[&frame, &frame], ()).unwrap();
+        assert_eq!(par.len(), 2);
+        assert_eq!(par[0].sk, solo[0].sk);
+        assert_eq!(par[1].sk, solo[0].sk);
     }
 }

@@ -11,15 +11,15 @@
 //! and patches the sign of the smallest singular vector to forbid an improper
 //! (`det = −1`) reflection. molrs ships no SVD, but it does ship a symmetric
 //! `4 × 4` Jacobi eigensolver
-//! ([`eigh_largest_sym_4x4`](molrs::math::diagonalize::eigh_largest_sym_4x4)).
+//! ([`eigh_largest_sym_4x4`]).
 //! Horn's method (Horn, *J. Opt. Soc. Am. A* **1987**, 4, 629) builds a `4 × 4`
 //! key matrix `N` from the cross-covariance whose largest-eigenvalue
 //! eigenvector *is* the optimal rotation quaternion. A unit quaternion always
 //! encodes a proper rotation, so the reflection guard is automatic — there is
 //! no `det = −1` branch to get wrong.
 //!
-//! This is a deliberate, documented deviation from TRAVIS's own alignment
-//! bookkeeping in `CSDFMap` (`src/sdfmap.cpp`): TRAVIS aligns onto a reference
+//! This is a deliberate, documented deviation from the reference implementation's own alignment
+//! bookkeeping in `CSDFMap` (`src/sdfmap.cpp`): reference implementation aligns onto a reference
 //! atom triple by explicit axis construction, whereas molrs uses the
 //! mathematically-equivalent quaternion least-squares fit so it can reuse the
 //! existing eigensolver and stay BLAS-free / WASM-clean. The accumulated SDF

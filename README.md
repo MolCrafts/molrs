@@ -17,7 +17,7 @@
 </p>
 
 <p>
-  <a href="https://molcrafts.github.io/molrs/"><b>Documentation</b></a> &nbsp;&middot;&nbsp;
+  <a href="https://molrs.molcrafts.org/"><b>Documentation</b></a> &nbsp;&middot;&nbsp;
   <a href="#quick-start"><b>Quick start</b></a> &nbsp;&middot;&nbsp;
   <a href="#molcrafts-ecosystem"><b>Ecosystem</b></a>
 </p>
@@ -107,9 +107,9 @@ cd molrs-wasm
 wasm-pack build --release --target bundler --scope molcrafts --out-name molrs
 ```
 
-See the [installation guide](https://molcrafts.github.io/molrs/getting-started/installation/)
+See the [installation guide](https://molrs.molcrafts.org/getting-started/installation/)
 for environment-verification snippets and the
-[contributing guide](https://molcrafts.github.io/molrs/contributing/) for the
+[contributing guide](https://molrs.molcrafts.org/contributing/) for the
 documentation loop.
 
 ## Quick start
@@ -127,9 +127,9 @@ Python and JavaScript/TypeScript quickstarts live in the documentation.
 
 ## Documentation
 
-- [Documentation site](https://molcrafts.github.io/molrs/) — guides and references
-- [Getting started](https://molcrafts.github.io/molrs/getting-started/installation/) — Rust, Python, and WASM quickstarts
-- [Guides](https://molcrafts.github.io/molrs/guides/data-model/) — data model, SMILES, neighbor search, 3D embedding, force fields, I/O, trajectory analysis
+- [Documentation site](https://molrs.molcrafts.org/) — guides and references
+- [Getting started](https://molrs.molcrafts.org/getting-started/installation/) — Rust, Python, and WASM quickstarts
+- [Guides](https://molrs.molcrafts.org/guides/data-model/) — data model, SMILES, neighbor search, 3D embedding, force fields, I/O, trajectory analysis
 - [Rust API reference](https://docs.rs/molcrafts-molrs) — full rustdoc on docs.rs
 
 ## MolCrafts ecosystem
@@ -151,7 +151,7 @@ Python and JavaScript/TypeScript quickstarts live in the documentation.
 
 ## Contributing
 
-See [CONTRIBUTING](https://molcrafts.github.io/molrs/contributing/) for development setup and guidelines.
+See [CONTRIBUTING](https://molrs.molcrafts.org/contributing/) for development setup and guidelines.
 
 ## License
 

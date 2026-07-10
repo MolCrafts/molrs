@@ -24,7 +24,7 @@
 
 use std::collections::HashMap;
 
-use molrs::{AtomId, Atomistic, SmartsPattern};
+use molrs::{AtomId, Atomistic, MatchOptions, SmartsPattern};
 
 use super::deps::OplsDependencyAnalyzer;
 use super::meta::OplsTypingMeta;
@@ -54,7 +54,7 @@ struct Rank {
 
 impl Rank {
     /// Whether `self` beats `other` — higher priority, then higher specificity,
-    /// then EARLIER definition order (reused from chain-1's `annotate_opls`).
+    /// then EARLIER definition order (reused from chain-1's `typify_atoms`).
     fn beats(&self, other: &Rank) -> bool {
         (
             self.priority,
@@ -158,9 +158,18 @@ impl LayeredTypingEngine {
                 specificity: d.specificity,
                 order: d.order,
             };
-            for m in d.pattern.find_matches_with_labels(mol, &current) {
+            for m in d.pattern.find(
+                mol,
+                MatchOptions {
+                    labels: Some(&current),
+                    root: None,
+                    limit: None,
+                },
+            ) {
                 // Target atom is the root (query atom 0), per RDKit convention.
-                let Some(&target) = m.first() else { continue };
+                let Some(&target) = m.atoms.first() else {
+                    continue;
+                };
                 match best.get(&target) {
                     Some((_, cur)) if !rank.beats(cur) => {}
                     _ => {

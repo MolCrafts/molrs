@@ -9,6 +9,7 @@ use crate::helpers;
 
 fn bench_create_zeros(c: &mut Criterion) {
     let mut group = c.benchmark_group("ndarray_vs_vec/create_zeros");
+    helpers::configure(&mut group);
 
     for &n in SIZES {
         group.bench_with_input(BenchmarkId::new("ndarray", n), &n, |b, &n| {
@@ -26,6 +27,7 @@ fn bench_create_zeros(c: &mut Criterion) {
 
 fn bench_create_from_iter(c: &mut Criterion) {
     let mut group = c.benchmark_group("ndarray_vs_vec/create_from_iter");
+    helpers::configure(&mut group);
 
     for &n in SIZES {
         group.bench_with_input(BenchmarkId::new("ndarray", n), &n, |b, &n| {
@@ -43,6 +45,7 @@ fn bench_create_from_iter(c: &mut Criterion) {
 
 fn bench_index(c: &mut Criterion) {
     let mut group = c.benchmark_group("ndarray_vs_vec/index");
+    helpers::configure(&mut group);
 
     for &n in SIZES {
         let nd = helpers::random_points(n, 10.0, 42);
@@ -76,6 +79,7 @@ fn bench_index(c: &mut Criterion) {
 
 fn bench_slice(c: &mut Criterion) {
     let mut group = c.benchmark_group("ndarray_vs_vec/slice");
+    helpers::configure(&mut group);
 
     for &n in SIZES {
         let nd = helpers::random_1d_ndarray(n, 42);
@@ -104,6 +108,7 @@ fn bench_slice(c: &mut Criterion) {
 
 fn bench_sum(c: &mut Criterion) {
     let mut group = c.benchmark_group("ndarray_vs_vec/sum");
+    helpers::configure(&mut group);
 
     for &n in SIZES {
         let nd = helpers::random_1d_ndarray(n, 42);
@@ -124,6 +129,7 @@ fn bench_sum(c: &mut Criterion) {
 
 fn bench_update_scaled_add(c: &mut Criterion) {
     let mut group = c.benchmark_group("ndarray_vs_vec/update_scaled_add");
+    helpers::configure(&mut group);
 
     for &n in SIZES {
         let x_nd_orig = helpers::random_1d_ndarray(n, 42);
@@ -157,6 +163,7 @@ fn bench_update_scaled_add(c: &mut Criterion) {
 
 fn bench_scatter(c: &mut Criterion) {
     let mut group = c.benchmark_group("ndarray_vs_vec/scatter");
+    helpers::configure(&mut group);
 
     for &n in SIZES {
         let pairs: Vec<(usize, usize)> = (0..n).map(|i| (i % n, (i * 7 + 3) % n)).collect();
@@ -206,8 +213,10 @@ fn bench_scatter(c: &mut Criterion) {
 
 fn bench_matmul(c: &mut Criterion) {
     let mut group = c.benchmark_group("ndarray_vs_vec/matmul");
+    helpers::configure(&mut group);
 
-    let mat_sizes: &[usize] = &[16, 64, 128, 512];
+    // One small regression size (the sweep was 16 / 64 / 128 / 512).
+    let mat_sizes: &[usize] = &[64];
 
     for &n in mat_sizes {
         let a_nd = random_square(n, 42);

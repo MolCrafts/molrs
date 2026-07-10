@@ -1,6 +1,6 @@
 //! Hydrogen-bond analysis: geometric detection, network topology, and lifetimes.
 //!
-//! Ported from TRAVIS (`src/hbond.cpp`, `src/aggrtopo.cpp`). Three pieces:
+//! Ported from the reference implementation (`src/hbond.cpp`, `src/aggrtopo.cpp`). Three pieces:
 //!
 //! 1. [`HBonds`] — per-frame geometric D–H···A detection over donor `(D, H)` and
 //!    acceptor selections, using the existing [`NeighborQuery`] candidate search

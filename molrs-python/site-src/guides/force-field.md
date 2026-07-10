@@ -1,8 +1,9 @@
 # Force Fields
 
 molrs force-field code separates typing from evaluation. Typing reads a
-molecular graph and produces the frame-level parameters needed by potential
-kernels. Evaluation then consumes flat coordinate arrays in the form
+molecular graph and returns a typed graph with atom, bond, angle, dihedral, and
+force-field-specific topology labels. Evaluation starts after that graph is
+materialized as a `Frame` and consumes flat coordinate arrays in the form
 `[x0, y0, z0, x1, y1, z1, ...]`.
 
 That flat coordinate contract is important. It is not an `N x 3` matrix, even
@@ -10,17 +11,40 @@ when user-facing code displays coordinates as three columns. Potential kernels
 operate on a contiguous `3N` vector so energy and force evaluation can stay
 close to the numerical representation used by optimizers.
 
-## MMFF94 Workflow
+## The MMFF94 workflow is typify, then evaluate
 
 MMFF94 typing starts from an `Atomistic` graph. The typifier assigns atom
-types, builds the force-field terms, and returns a compiled `Potentials`
-object. The same compiled object can evaluate energy or energy plus forces for
+types, charges, bond labels, angle labels, dihedral labels, and MMFF
+out-of-plane terms, then returns a new typed `Atomistic`. `build(mol)` is a
+separate convenience that compiles a `Potentials` object from the same typed
+topology. The compiled object can evaluate energy or energy plus forces for
 compatible coordinates.
 
 Units should be treated as part of the interface. MMFF94 energies are reported
 in kcal/mol, and coordinates are interpreted in angstrom. When molrs data is
 passed to another codebase, convert units at the boundary instead of hiding the
 conversion inside analysis code.
+
+## OPLS-AA uses the same typifier contract
+
+`OPLSAATypifier` also accepts and returns `Atomistic`:
+
+```python
+typifier = molrs.OPLSAATypifier(strict=True)
+typed = typifier.typify(mol3d)
+frame = typed.to_frame()
+```
+
+The constructor loads the embedded OPLS-AA XML by default. Pass a path or XML
+string only when you need a different parameter source:
+
+```python
+typifier = molrs.OPLSAATypifier("oplsaa.xml", strict=False)
+```
+
+`typify()` writes atom labels and every bonded topology class supported by the
+loaded OPLS-AA data. The bundled OPLS-AA data defines bonds, angles, and
+dihedrals; it does not define an improper table.
 
 ## Worked Example: Energy and Forces
 
@@ -34,11 +58,12 @@ frame = mol3d.to_frame()
 
 typifier = molrs.MMFFTypifier()
 typed = typifier.typify(mol3d)
-print("typed blocks:", typed.keys())
+typed_frame = typed.to_frame()
+print("typed blocks:", typed_frame.keys())
 
 try:
     potentials = typifier.build(mol3d)
-    coords = molrs.extract_coords(frame)
+    coords = molrs.extract_coords(typed_frame)
 
     energy, forces = potentials.eval(coords)
 
@@ -62,11 +87,11 @@ can succeed even when potential compilation reports missing parameter coverage.
 That distinction is useful: it tells you whether the failure is in chemistry
 typing or in the stricter energy-evaluation path.
 
-## Typing vs Evaluation
+## Typing and evaluation are separate steps
 
 Typing and evaluation answer different questions:
 
-- `MMFFTypifier.typify(mol)` creates a typed `Frame` representation.
+- `MMFFTypifier.typify(mol)` returns a new typed `Atomistic`.
 - `MMFFTypifier.build(mol)` compiles a `Potentials` object.
 - `Potentials.energy(coords)` returns only energy.
 - `Potentials.eval(coords)` returns energy and forces.

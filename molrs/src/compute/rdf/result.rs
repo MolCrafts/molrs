@@ -1,3 +1,6 @@
+//! Result type for [`RDF`](super::RDF): binned pair counts plus the
+//! normalized `g(r)` curve (bin edges/centers in Å).
+
 use molrs::spatial::neighbors::QueryMode;
 use molrs::types::F;
 use ndarray::Array1;

@@ -158,6 +158,53 @@ impl SimBox {
         Self::ortho(lengths, origin, [false, false, false])
     }
 
+    /// Create a non-periodic (free-boundary) box enclosing all points, reading
+    /// positions from three separate `x`/`y`/`z` slices (SoA layout).
+    ///
+    /// Arithmetically identical to [`free`](Self::free): computes the same
+    /// axis-aligned bounding box (min/max over all points) plus `padding` on
+    /// each side, and returns a box byte-identical to `free` on the same
+    /// points. Provided so callers holding column-major (SoA) coordinates need
+    /// not interleave them into an owned `Array2` first.
+    ///
+    /// # Errors
+    /// Returns `BoxError` if the resulting box is degenerate.
+    ///
+    /// # Panics
+    /// Panics if `padding <= 0` or the three slices do not have equal length.
+    pub fn free_columns(xs: &[F], ys: &[F], zs: &[F], padding: F) -> Result<Self, BoxError> {
+        assert!(padding > 0.0, "padding must be positive");
+        assert!(
+            xs.len() == ys.len() && ys.len() == zs.len(),
+            "x/y/z slices must have equal length"
+        );
+        let n = xs.len();
+        if n == 0 {
+            // Empty point set -- return a unit cube at origin
+            return Self::cube(padding, array![0.0 as F, 0.0, 0.0], [false, false, false]);
+        }
+        let mut min = array![xs[0], ys[0], zs[0]];
+        let mut max = min.clone();
+        for i in 1..n {
+            let p = [xs[i], ys[i], zs[i]];
+            for d in 0..3 {
+                if p[d] < min[d] {
+                    min[d] = p[d];
+                }
+                if p[d] > max[d] {
+                    max[d] = p[d];
+                }
+            }
+        }
+        let origin = array![min[0] - padding, min[1] - padding, min[2] - padding,];
+        let lengths = array![
+            (max[0] - min[0] + 2.0 * padding).max(padding),
+            (max[1] - min[1] + 2.0 * padding).max(padding),
+            (max[2] - min[2] + 2.0 * padding).max(padding),
+        ];
+        Self::ortho(lengths, origin, [false, false, false])
+    }
+
     /// View of the cell matrix
     pub fn h_view(&self) -> FNx3View<'_> {
         self.h.view()
@@ -293,6 +340,30 @@ impl SimBox {
             }
             BoxKind::Triclinic => {
                 let f = self.make_fractional(r);
+                [f[0], f[1], f[2]]
+            }
+        }
+    }
+
+    /// Fractional coordinates from a `[F; 3]` point (zero-alloc hot path).
+    ///
+    /// Byte-for-byte mirror of
+    /// [`make_fractional_fast_arr`](Self::make_fractional_fast_arr) — same
+    /// formula, same rounding — but takes a stack `[F; 3]` instead of an
+    /// `ArrayView1`. Lets SoA hot loops (column-major neighbor-list cell
+    /// assignment) avoid constructing an ndarray view per point.
+    #[inline(always)]
+    pub fn make_fractional_fast_arr3(&self, r: [F; 3]) -> [F; 3] {
+        match &self.kind {
+            BoxKind::Ortho { inv_len, .. } => {
+                let fx = (r[0] - self.origin[0]) * inv_len[0];
+                let fy = (r[1] - self.origin[1]) * inv_len[1];
+                let fz = (r[2] - self.origin[2]) * inv_len[2];
+                [fx - fx.floor(), fy - fy.floor(), fz - fz.floor()]
+            }
+            BoxKind::Triclinic => {
+                let rv = ArrayView1::from_shape(3, &r).expect("make_fractional_fast_arr3 shape");
+                let f = self.make_fractional(rv);
                 [f[0], f[1], f[2]]
             }
         }
@@ -750,5 +821,54 @@ mod tests {
     fn test_simbox_pbc_accessor() {
         let bx = SimBox::cube(1.0, array![0.0 as F, 0.0, 0.0], [true, false, true]).unwrap();
         assert_eq!(bx.pbc(), [true, false, true]);
+    }
+
+    #[test]
+    fn free_columns_matches_free_bitwise() {
+        let pts = array![[1.0 as F, 2.0, 3.0], [4.0, -5.0, 6.0], [-2.5, 5.5, 0.25]];
+        let xs = vec![1.0 as F, 4.0, -2.5];
+        let ys = vec![2.0 as F, -5.0, 5.5];
+        let zs = vec![3.0 as F, 6.0, 0.25];
+        let a = SimBox::free(pts.view(), 1.5).unwrap();
+        let b = SimBox::free_columns(&xs, &ys, &zs, 1.5).unwrap();
+
+        let (oa, ob) = (a.origin_view(), b.origin_view());
+        let (ha, hb) = (a.h_view(), b.h_view());
+        for d in 0..3 {
+            assert_eq!(oa[d], ob[d], "origin bitwise");
+        }
+        for i in 0..3 {
+            for j in 0..3 {
+                assert_eq!(ha[[i, j]], hb[[i, j]], "H bitwise");
+            }
+        }
+        assert_eq!(a.pbc(), b.pbc());
+    }
+
+    #[test]
+    fn make_fractional_fast_arr3_matches_arr_bitwise() {
+        // Both ortho (fast path) and triclinic (general path) must match the
+        // `ArrayView1` helper to the bit.
+        let ortho = SimBox::ortho(
+            array![2.0, 3.0, 4.0],
+            array![0.5, -1.0, 2.0],
+            [true, true, true],
+        )
+        .unwrap();
+        let tri = SimBox::new(
+            array![[2.0, 1.0, 0.5], [0.0, 3.0, 0.7], [0.0, 0.0, 4.0]],
+            array![0.1, 0.2, 0.3],
+            [true, true, true],
+        )
+        .unwrap();
+        let pt = [1.3 as F, -0.7, 5.2];
+        let pv = array![pt[0], pt[1], pt[2]];
+        for bx in [&ortho, &tri] {
+            let a = bx.make_fractional_fast_arr(pv.view());
+            let b = bx.make_fractional_fast_arr3(pt);
+            for d in 0..3 {
+                assert_eq!(a[d], b[d], "frac bitwise");
+            }
+        }
     }
 }

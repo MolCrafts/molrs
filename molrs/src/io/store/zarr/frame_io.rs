@@ -1,6 +1,6 @@
 //! Low-level Zarr ↔ Block/Column/SimBox/Frame helpers.
 //!
-//! These functions are shared by MolRec Zarr backends. They convert between
+//! These functions are shared by the frame/trajectory Zarr backend. They convert between
 //! molrs in-memory types and
 //! Zarr V3 arrays/groups, always relative to a caller-supplied path prefix.
 

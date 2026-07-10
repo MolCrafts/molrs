@@ -142,6 +142,10 @@ The native force-field model exposes a `Style`/`Type` hierarchy
 
 ::: molrs.MMFFTypifier
 
+::: molrs.OPLSAATypifier
+
+::: molrs.typifier.Typifier
+
 ::: molrs.Potentials
 
 ::: molrs.build_mmff_potentials
@@ -156,13 +160,9 @@ The native force-field model exposes a `Style`/`Type` hierarchy
 
 ::: molrs.extract_coords
 
-## MolRec
+## Trajectory
 
 ::: molrs.Trajectory
-
-::: molrs.MolRec
-
-::: molrs.Observables
 
 ::: molrs.ScalarObservable
 

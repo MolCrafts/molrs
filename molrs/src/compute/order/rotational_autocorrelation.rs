@@ -24,25 +24,12 @@
 //! ensemble decorrelates. The system-wide order parameter is the mean of
 //! `Ψ_ℓ(i)` across particles.
 
+use crate::compute::result::ComputeResult;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 
 use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
 use crate::compute::traits::Compute;
-
-/// Per-frame rotational-autocorrelation result.
-#[derive(Debug, Clone, Default)]
-pub struct RotationalAutocorrelationResult {
-    /// Angular momentum order.
-    pub l: u32,
-    /// Per-particle Ψ_ℓ values (length `N`).
-    pub psi: Vec<F>,
-    /// System-averaged Ψ_ℓ.
-    pub mean: F,
-}
-
-impl ComputeResult for RotationalAutocorrelationResult {}
 
 /// Rotational autocorrelation calculator.
 #[derive(Debug, Clone, Copy)]
@@ -51,6 +38,7 @@ pub struct RotationalAutocorrelation {
 }
 
 impl RotationalAutocorrelation {
+    /// Hyperspherical correlation order `l`.
     pub fn new(l: u32) -> Self {
         Self { l }
     }
@@ -153,6 +141,19 @@ impl Compute for RotationalAutocorrelation {
         Ok(out)
     }
 }
+
+/// Per-frame rotational-autocorrelation result.
+#[derive(Debug, Clone, Default)]
+pub struct RotationalAutocorrelationResult {
+    /// Angular momentum order.
+    pub l: u32,
+    /// Per-particle Ψ_ℓ values (length `N`).
+    pub psi: Vec<F>,
+    /// System-averaged Ψ_ℓ.
+    pub mean: F,
+}
+
+impl ComputeResult for RotationalAutocorrelationResult {}
 
 #[cfg(test)]
 mod tests {

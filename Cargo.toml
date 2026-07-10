@@ -11,15 +11,16 @@ exclude = ["molrs-ffi"]
 resolver = "3"
 
 [workspace.package]
-# BREAKING (compute-fit-03-cleanup): removed the bundled conductivity result
-# fields + free functions (ConductivityResult sigma/slope/fit_start/fit_end +
-# einstein_helfand_conductivity; JacfResult sigma/sigma_running +
-# green_kubo_conductivity), converted onsager/power/ir/raman free fns to OOP
-# Compute structs, and relocated the spectral window+FFT helpers into
-# compute::fit. Pre-1.0 SemVer: minor bump = breaking. Downstream exact-pins
-# (molpack, molpy) MUST update their molcrafts-molrs pin to ^0.2 before this
-# is published. Do NOT publish/tag from this change.
-version = "0.1.6"
+# BREAKING (0.6.0): freud-style `compute` reorganization into per-category
+# folders (transport / spectroscopy / shape / ml / dynamics / dielectric) —
+# crate-root re-exports of every relocated type are preserved, only
+# fully-qualified `compute::<old_submodule>::` paths change. Removed the native
+# GAFF/AMBER parameter estimator (`ParameterEstimator`, the `estimate` module,
+# and its `gaff_*.json` data) — parameter estimation for uncovered bonded terms
+# is delegated to embedded reference; the FF-agnostic `Estimator`/`assign_bonded_with`
+# seam is kept. See CHANGELOG.md for the full 0.6.0 delta. molrs / molcrafts-molrs
+# PyPI / molpy share one version line; downstream exact-pins update to 0.7.0.
+version = "0.7.0"
 edition = "2024"
 rust-version = "1.91"
 license = "BSD-3-Clause"
@@ -30,7 +31,7 @@ homepage = "https://github.com/MolCrafts/molrs"
 # The merged crate. Binders (molrs-cxxapi here, plus the excluded molrs-ffi /
 # molrs-wasm / molrs-python) depend on it directly with the features they need.
 [workspace.dependencies]
-molcrafts-molrs = { path = "molrs", version = "0.1.6", default-features = false }
+molcrafts-molrs = { path = "molrs", version = "0.7.0", default-features = false }
 
 [profile.release]
 lto = "thin"

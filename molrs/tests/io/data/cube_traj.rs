@@ -1,5 +1,5 @@
 //! Integration tests for the multi-frame Cube trajectory reader
-//! (travis-parity-07, ac-001).
+//! (analysis-parity-07, ac-001).
 //!
 //! Per the mandatory IO Testing Rule (CLAUDE.md), these iterate **every real
 //! file** under `tests-data/cube_traj/` — never synthetic cubes. The fixtures

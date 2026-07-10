@@ -404,7 +404,7 @@ impl Atomistic {
     /// filtered to the bond kind), keyed by a `SecondaryMap` (O(1),
     /// slot-indexed) — no `Topology` materialization and no
     /// AtomId→contiguous-index remap.
-    pub fn topo_distances(&self, source: AtomId) -> Vec<(AtomId, i64)> {
+    pub fn topo_distances(&self, source: AtomId, max_hops: Option<i64>) -> Vec<(AtomId, i64)> {
         use slotmap::SecondaryMap;
         use std::collections::VecDeque;
 
@@ -417,6 +417,9 @@ impl Atomistic {
         queue.push_back(source);
         while let Some(cur) = queue.pop_front() {
             let d = dist[cur];
+            if max_hops.is_some_and(|limit| d >= limit) {
+                continue; // atom is at the boundary; do not expand past the radius
+            }
             for (kind, _rid, other) in self.graph.neighbor_relations(cur) {
                 if kind == self.bond && !dist.contains_key(other) {
                     dist.insert(other, d + 1);
@@ -532,6 +535,27 @@ impl Atomistic {
     /// Mutably borrow the inner [`MolGraph`].
     pub fn as_molgraph_mut(&mut self) -> &mut MolGraph {
         &mut self.graph
+    }
+
+    // ---- structural graph hash (see [`crate::system::graph_hash`]) ----
+
+    /// Isomorphism-invariant Weisfeiler–Lehman structural hash of the molecule
+    /// (element / charge / aromatic node labels, bond-order edge labels). A
+    /// stable, reproducible dedup key — identical for a node-permuted copy.
+    pub fn structural_hash(&self) -> u64 {
+        crate::system::graph_hash::structural_hash(&self.graph)
+    }
+
+    /// Deterministic canonical atom ordering from the WL refinement, so two
+    /// isomorphic molecules line up node-by-node (see
+    /// [`crate::system::graph_hash::canonical_order`]).
+    pub fn canonical_order(&self) -> Vec<AtomId> {
+        crate::system::graph_hash::canonical_order(&self.graph)
+    }
+
+    /// Whether `self` and `other` are isomorphic as labeled molecular graphs.
+    pub fn is_isomorphic(&self, other: &Atomistic) -> bool {
+        crate::system::graph_hash::is_isomorphic(&self.graph, &other.graph)
     }
 
     // Aromaticity perception is a free-function *system*:
@@ -668,7 +692,7 @@ mod tests {
         ];
         for (i, &src) in atoms.iter().enumerate() {
             assert_eq!(
-                sorted_hops(eth.topo_distances(src)),
+                sorted_hops(eth.topo_distances(src, None)),
                 sorted_hops(expected_per_source[i].iter().map(|&d| (src, d)).collect()),
                 "ethane source {src:?}"
             );
@@ -681,12 +705,12 @@ mod tests {
             chain.add_bond(ids[k], ids[k + 1]).unwrap();
         }
         assert_eq!(
-            sorted_hops(chain.topo_distances(ids[0])),
+            sorted_hops(chain.topo_distances(ids[0], None)),
             (0..12).collect::<Vec<_>>(),
         );
         // The mid-chain atom 5 sees a symmetric profile.
         assert_eq!(
-            hops(chain.topo_distances(ids[0])),
+            hops(chain.topo_distances(ids[0], None)),
             (0..12).collect::<Vec<_>>(),
             "chain endpoint ordered by atom id"
         );
@@ -698,7 +722,7 @@ mod tests {
         let mut solo = Atomistic::new();
         let stale = solo.add_atom_bare("C");
         solo.remove_atom(stale).unwrap();
-        assert!(solo.topo_distances(stale).is_empty());
+        assert!(solo.topo_distances(stale, None).is_empty());
     }
 
     #[test]

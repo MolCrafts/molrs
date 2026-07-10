@@ -47,7 +47,7 @@ impl OplsDependencyAnalyzer {
     ///
     /// Each def is parsed once to collect its `%opls_NNN` context-label
     /// references; unparseable defs are skipped here (they fail-fast later in
-    /// [`annotate_opls`](super::typing::annotate_opls) / engine compilation).
+    /// [`typify_atoms`](super::typing::typify_atoms) / engine compilation).
     /// A def with no `def` string is not a node.
     pub fn new(meta: &OplsTypingMeta) -> Self {
         // Node set: every type carrying a (parseable) def.

@@ -1,14 +1,14 @@
 //! Density-related analyzers ported from `freud.density`.
 //!
-//! Currently implemented:
-//! - [`LocalDensity`](local_density::LocalDensity) — per-particle number
-//!   density inside a sphere of radius `r_max`.
-//! - [`GaussianDensity`](gaussian_density::GaussianDensity) — 3-D / 2-D grid
-//!   smearing of point particles with a Gaussian kernel.
-//! - [`CorrelationFunction`](correlation_function::CorrelationFunction) —
-//!   generic distance-binned correlation `⟨A·B*⟩(r)` for arbitrary scalar
-//!   (real or complex) per-particle fields.
+//! | Method | Measures |
+//! |--------|----------|
+//! | [`LocalDensity`] | per-particle number density in a sphere of radius `r_max` (Å) |
+//! | [`GaussianDensity`] | grid-smeared density (Gaussian kernel, 2-D / 3-D grids) |
+//! | [`CorrelationFunction`] | distance-binned correlation `⟨A_i · B_j⟩(r)` of per-particle fields |
+//! | [`SpatialDistribution`] | 3-D number density of a target species in a reference molecule's body-fixed frame ([`GridSpec`]) |
+//! | [`SphereVoxelization`] | boolean voxel rasterisation of particles as hard spheres |
 //!
+//! [`kabsch`] hosts the shared BLAS-free Kabsch superposition helper.
 //! [`crate::compute::RDF`] (the radial distribution function) lives in `crate::compute::rdf`
 //! and is the prototypical member of this family; the others reuse the same
 //! histogram and SimBox conventions.

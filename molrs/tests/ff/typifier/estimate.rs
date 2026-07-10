@@ -9,12 +9,12 @@
 //! strict-unaffected seam.
 
 use molrs::ff::forcefield::{ForceField, Params};
-use molrs::ff::typifier::ParameterEstimator;
 use molrs::ff::typifier::estimate::{EstimateMethod, PenaltyTier};
 use molrs::ff::typifier::opls::{
-    BondedTerm, CandidateTables, Estimator, NoMatch, OplsTypeRow, OplsTypifier, OplsTypingMeta,
-    assign_bonded, assign_bonded_with,
+    BondedTerm, CandidateTables, Estimator, NoMatch, OPLSAATypifier, OplsTypeRow, OplsTypingMeta,
+    typify_bonded, typify_bonded_with,
 };
+use molrs::ff::typifier::{ParameterEstimator, ParameterInterpolator};
 use molrs::{Atom, Atomistic};
 
 // ---------------------------------------------------------------------------
@@ -391,7 +391,7 @@ fn dihedral_multi_periodicity_group_copied_whole() {
 
 #[test]
 fn estimator_absent_behaviour_unchanged() {
-    // With NO estimator injected, assign_bonded is identical to chain-2: a term
+    // With NO estimator injected, typify_bonded is identical to chain-2: a term
     // matching no candidate errors (strict) or is skipped (lenient).
     let mut ff = ForceField::new("mini");
     ff.def_bondstyle("harmonic")
@@ -408,8 +408,8 @@ fn estimator_absent_behaviour_unchanged() {
     mol.set_atom(b, "type", "opls_oh").unwrap();
 
     // strict errors; lenient skips (no estimator).
-    assert!(assign_bonded(&mol, &tables, NoMatch::Error).is_err());
-    let typed = assign_bonded(&mol, &tables, NoMatch::Skip).expect("lenient ok");
+    assert!(typify_bonded(&mol, &tables, NoMatch::Error).is_err());
+    let typed = typify_bonded(&mol, &tables, NoMatch::Skip).expect("lenient ok");
     let (_, bond) = typed.bonds().next().unwrap();
     assert!(
         !bond.props.contains_key("k0"),
@@ -426,10 +426,10 @@ fn estimator_strict_true_does_not_interfere() {
     // bond table entry and no estimable analog... use a type absent from the FF.
     let mut m2 = meta.clone();
     m2.insert("xx", row("XX"));
-    let typifier_strict = OplsTypifier::new(meta.clone(), ff.clone())
+    let typifier_strict = OPLSAATypifier::new(meta.clone(), ff.clone())
         .with_strict(true)
         .with_default_estimator();
-    let typifier_lenient = OplsTypifier::new(meta, ff)
+    let typifier_lenient = OPLSAATypifier::new(meta, ff)
         .with_strict(false)
         .with_default_estimator();
 
@@ -446,9 +446,7 @@ fn estimator_strict_true_does_not_interfere() {
     mol.set_atom(b, "type", "os").unwrap();
 
     // Lenient + estimator: the os-os bond gets estimated (Badger O-O), no error.
-    let typed = typifier_lenient
-        .typify_full(&mol)
-        .expect("lenient estimates");
+    let typed = typifier_lenient.typify(&mol).expect("lenient estimates");
     let (_, bond) = typed.bonds().next().unwrap();
     assert!(
         bond.props.contains_key("k0"),
@@ -457,7 +455,7 @@ fn estimator_strict_true_does_not_interfere() {
 
     // Strict + estimator: the estimator is NOT consulted -> hard error.
     let err = typifier_strict
-        .typify_full(&mol)
+        .typify(&mol)
         .expect_err("strict still errors despite attached estimator");
     assert!(err.contains("no bonded type"), "strict err: {err}");
     let _ = m2;
@@ -466,7 +464,7 @@ fn estimator_strict_true_does_not_interfere() {
 #[test]
 fn estimator_drops_into_assign_seam() {
     // ac-008: the ParameterEstimator implements the chain-2 Estimator trait and
-    // drops into assign_bonded_with, filling an uncovered bond with provenance.
+    // drops into typify_bonded_with, filling an uncovered bond with provenance.
     let (mut ff, meta) = small_gaff();
     // remove os-anything so an os-c3 bond is uncovered and gets estimated.
     ff.get_style_mut("bond", "harmonic")
@@ -482,7 +480,7 @@ fn estimator_drops_into_assign_seam() {
     mol.set_atom(a, "type", "os").unwrap();
     mol.set_atom(c, "type", "c3").unwrap();
 
-    let typed = assign_bonded_with(&mol, &tables, NoMatch::Error, Some(&est as &dyn Estimator))
+    let typed = typify_bonded_with(&mol, &tables, NoMatch::Error, Some(&est as &dyn Estimator))
         .expect("estimator fills os-c3 via the seam");
     let (_, bond) = typed.bonds().next().unwrap();
     assert!(bond.props.contains_key("k0"), "k0 written via seam");
@@ -521,7 +519,7 @@ fn estimator_declines_with_no_fallback() {
     let est = ParameterEstimator::new(&ff, &meta);
     let term = BondedTerm::Bond(["he".into(), "he".into()]);
     assert!(
-        est.estimate(&term).expect("no hard error").is_none(),
+        est.interpolate(&term).expect("no hard error").is_none(),
         "declines when neither analogy nor empirical can produce params"
     );
 }

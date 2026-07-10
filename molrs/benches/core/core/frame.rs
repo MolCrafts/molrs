@@ -12,7 +12,7 @@ use ndarray::{ArrayD, IxDyn};
 
 use crate::helpers;
 
-const SIZES: &[usize] = &[500, 2_000, 10_000];
+const SIZES: &[usize] = &[helpers::REG_N];
 const BOX_SIZE: F = 30.0;
 
 fn make_frame(n: usize, seed: u64) -> Frame {
@@ -38,6 +38,7 @@ fn make_frame(n: usize, seed: u64) -> Frame {
 
 fn bench_clone(c: &mut Criterion) {
     let mut group = c.benchmark_group("frame/clone");
+    helpers::configure(&mut group);
     for &n in SIZES {
         let frame = make_frame(n, 42);
         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
@@ -51,6 +52,7 @@ fn bench_clone(c: &mut Criterion) {
 
 fn bench_get(c: &mut Criterion) {
     let mut group = c.benchmark_group("frame/get");
+    helpers::configure(&mut group);
     for &n in SIZES {
         let frame = make_frame(n, 42);
         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
@@ -67,6 +69,7 @@ fn bench_col_slice(c: &mut Criterion) {
     // Simulates the inner hot operation: pull x/y/z columns as &[F] slices
     // (what `positions_from_frame` in molrs-wasm does before Nx3 assembly).
     let mut group = c.benchmark_group("frame/col_slice");
+    helpers::configure(&mut group);
     for &n in SIZES {
         let frame = make_frame(n, 42);
         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {

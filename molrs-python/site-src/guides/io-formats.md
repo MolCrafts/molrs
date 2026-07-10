@@ -8,8 +8,8 @@ the source format provides one.
 
 PDB and XYZ are common coordinate-oriented inputs. LAMMPS data and dump files
 carry simulation-oriented structure. CHGCAR and Gaussian Cube introduce grid
-data in addition to atoms. Zarr-based MolRec stores trajectories and observable
-data in a layout designed for repeated analysis.
+data in addition to atoms. Zarr-based frame-sequence storage keeps trajectories
+in a layout designed for repeated analysis.
 
 ## Reader Expectations
 
@@ -55,7 +55,7 @@ LAMMPS formats can carry more simulation topology and box information.
 | LAMMPS data | atoms, bonds, box, simulation topology | Used for simulation setup and engine interop |
 | LAMMPS dump | trajectory frames | Often read lazily when files are large |
 | CHGCAR / Cube | atoms plus grid fields | Useful for volumetric scalar data |
-| MolRec / Zarr | frames, trajectories, observables | Designed for repeated analysis and richer metadata |
+| Trajectory / Zarr | frames, trajectories | Designed for repeated analysis and richer metadata |
 
 ## Lazy LAMMPS Trajectory Access
 

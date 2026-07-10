@@ -31,7 +31,7 @@ pub trait Region: Send + Sync {
 
     /// Batched containment test for a set of 3D points.
     ///
-    /// Returns a boolean NdArray of shape [N] where each entry indicates whether
+    /// Returns a boolean NdArray of shape `[N]` where each entry indicates whether
     /// the corresponding row in the N×3 array lies inside the region.
     ///
     /// Panics

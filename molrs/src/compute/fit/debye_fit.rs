@@ -26,7 +26,7 @@
 //! For a properly **normalized** Φ with `Φ(0) = 1` the recovered `A ≈ 1`. For an
 //! **unnormalized** ACF the amplitude carries the zero-lag variance ⟨M(0)²⟩;
 //! pass the normalized curve here and read the amplitude scale from the raw
-//! [`DebyeRelaxationResult`](super::DebyeRelaxationResult) zero-lag field
+//! [`DebyeRelaxationResult`](crate::compute::transport::DebyeRelaxationResult) zero-lag field
 //! separately (the Debye *amplitude* ε₀−ε∞ comes from ⟨M²⟩, not from the
 //! relaxation *shape* — see the spec invariant (b)).
 

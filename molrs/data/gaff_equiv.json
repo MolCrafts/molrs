@@ -1,5 +1,5 @@
 {
- "_source": "AmberTools dat/antechamber/PARMCHK.DAT (GAFF, AmberTools25). EQUA = equivalent atom types (penalty 0). CORR = corresponding atom types with substitution penalties. Columns transcribed: bond = bl (bond-length penalty), angle = ba, angle_ctr = cba (angle-center penalty), torsion = tor. -1 means 'use default'. Penalty weights/defaults below are the PARMCHK.DAT WEIGHT_*/DEFAULT_* values.",
+ "_source": "embedded reference dat/antechamber/PARMCHK.DAT (GAFF, embedded reference25). EQUA = equivalent atom types (penalty 0). CORR = corresponding atom types with substitution penalties. Columns transcribed: bond = bl (bond-length penalty), angle = ba, angle_ctr = cba (angle-center penalty), torsion = tor. -1 means 'use default'. Penalty weights/defaults below are the PARMCHK.DAT WEIGHT_*/DEFAULT_* values.",
  "weights": {
   "bond": 0.5,
   "angle": 0.5,

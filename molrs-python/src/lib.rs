@@ -16,7 +16,7 @@
 //! | `NeighborList`       | [`PyNeighborList`]| Query result with pair indices + distances |
 //! | `Atomistic`          | [`PyAtomistic`]   | All-atom molecular graph                   |
 //! | `MMFFTypifier`       | [`PyMMFFTypifier`]| MMFF94 atom-type assignment                |
-//! | `OplsTypifier`       | [`PyOplsTypifier`]| OPLS-AA atom-type + bonded assignment      |
+//! | `OPLSAATypifier`     | [`PyOPLSAATypifier`]| OPLS-AA atom-type + bonded assignment    |
 //! | `Potentials`         | [`PyPotentials`]  | Compiled energy/force evaluator            |
 //! | `RDF` / `MSD` / `Cluster` |              | Structural analysis                        |
 //!
@@ -30,41 +30,32 @@ use pyo3::prelude::*;
 mod error;
 mod helpers;
 mod store;
+mod validate;
 
-mod simbox;
-use simbox::PyBox;
-
-mod linkedcell;
-use linkedcell::{PyLinkedCell, PyNeighborList, PyNeighborQuery};
-
-mod block;
-use block::PyBlock;
-
-mod frame;
-use frame::PyFrame;
-
-mod io;
-
-mod molrec;
-use molrec::{PyMolRec, PyObservables, PyScalarObservable, PyTrajectory, PyVectorObservable};
-
-mod region;
-use region::{PyCuboid, PyHollowSphere, PyRegion, PySphere};
-
-pub(crate) mod molgraph;
-use molgraph::{PyAtomistic, PyCoarseGrain, PyGraph};
-use molgraph::{
+// Mirrors the molrs core module layout: core/ (store · spatial · system), io/,
+// compute/, ff/, conformer/, signal/.
+mod core;
+use crate::core::spatial::linkedcell::{PyLinkedCell, PyNeighborList, PyNeighborQuery};
+use crate::core::spatial::region::{PyCuboid, PyHollowSphere, PyRegion, PySphere};
+use crate::core::spatial::simbox::PyBox;
+use crate::core::store::block::PyBlock;
+use crate::core::store::frame::PyFrame;
+use crate::core::store::trajectory::{PyScalarObservable, PyTrajectory, PyVectorObservable};
+use crate::core::system::molgraph::{
+    PyAtomistic, PyCoarseGrain, PyGraph, PyReaction, PySmartsMatch, PySmartsPattern,
+};
+use crate::core::system::molgraph::{
     add_hydrogens, compute_gasteiger_charges, find_rings, perceive_aromaticity, rotate, scale,
     translate,
 };
 
+mod io;
+
 mod conformer;
 use conformer::{PyConformer, PyConformerReport, PyConformerStageReport};
 
-mod forcefield;
-use forcefield::{
-    PyForceField, PyLBFGS, PyMMFFTypifier, PyOplsTypifier, PyOptReport, PyPotentials,
-};
+mod ff;
+use ff::{PyForceField, PyLBFGS, PyMMFFTypifier, PyOPLSAATypifier, PyOptReport, PyPotentials};
 
 mod compute;
 use compute::{
@@ -74,13 +65,7 @@ use compute::{
     PyRadiusOfGyration,
 };
 
-mod compute_extra;
-mod compute_fit;
-mod compute_travis;
-mod dielectric;
 mod signal;
-mod transport;
-mod validate;
 
 /// Register the `keys` submodule mirroring `molrs_core::store::keys` so Python code
 /// references the field-name convention by name (`molrs.keys.X`) instead of
@@ -174,10 +159,8 @@ fn molrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(io::parse_smiles, m)?)?;
     m.add_class::<io::PySmilesIR>()?;
 
-    // MolRec
+    // Trajectory (frame sequence) + observable records
     m.add_class::<PyTrajectory>()?;
-    m.add_class::<PyMolRec>()?;
-    m.add_class::<PyObservables>()?;
     m.add_class::<PyScalarObservable>()?;
     m.add_class::<PyVectorObservable>()?;
 
@@ -191,6 +174,9 @@ fn molrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyGraph>()?;
     m.add_class::<PyAtomistic>()?;
     m.add_class::<PyCoarseGrain>()?;
+    m.add_class::<PySmartsMatch>()?;
+    m.add_class::<PySmartsPattern>()?;
+    m.add_class::<PyReaction>()?;
 
     // Systems = module-level free functions (no algorithm methods on the classes)
     m.add_function(wrap_pyfunction!(translate, m)?)?;
@@ -212,22 +198,19 @@ fn molrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Force field
     m.add_class::<PyForceField>()?;
     m.add_class::<PyMMFFTypifier>()?;
-    m.add_class::<PyOplsTypifier>()?;
+    m.add_class::<PyOPLSAATypifier>()?;
     m.add_class::<PyPotentials>()?;
     m.add_class::<PyOptReport>()?;
     m.add_class::<PyLBFGS>()?;
-    m.add_function(wrap_pyfunction!(forcefield::read_forcefield_xml_py, m)?)?;
-    m.add_function(wrap_pyfunction!(forcefield::read_forcefield_xml_str_py, m)?)?;
-    m.add_function(wrap_pyfunction!(forcefield::read_opls_xml_py, m)?)?;
-    m.add_function(wrap_pyfunction!(forcefield::read_opls_xml_str_py, m)?)?;
-    m.add_function(wrap_pyfunction!(forcefield::read_lammps_forcefield_py, m)?)?;
-    m.add_function(wrap_pyfunction!(
-        forcefield::read_lammps_forcefield_str_py,
-        m
-    )?)?;
-    m.add_function(wrap_pyfunction!(forcefield::intramolecular_pairs_py, m)?)?;
-    m.add_function(wrap_pyfunction!(forcefield::extract_coords_py, m)?)?;
-    m.add_function(wrap_pyfunction!(forcefield::build_mmff_potentials_py, m)?)?;
+    m.add_function(wrap_pyfunction!(ff::read_forcefield_xml_py, m)?)?;
+    m.add_function(wrap_pyfunction!(ff::read_forcefield_xml_str_py, m)?)?;
+    m.add_function(wrap_pyfunction!(ff::read_opls_xml_py, m)?)?;
+    m.add_function(wrap_pyfunction!(ff::read_opls_xml_str_py, m)?)?;
+    m.add_function(wrap_pyfunction!(ff::read_lammps_forcefield_py, m)?)?;
+    m.add_function(wrap_pyfunction!(ff::read_lammps_forcefield_str_py, m)?)?;
+    m.add_function(wrap_pyfunction!(ff::intramolecular_pairs_py, m)?)?;
+    m.add_function(wrap_pyfunction!(ff::extract_coords_py, m)?)?;
+    m.add_function(wrap_pyfunction!(ff::build_mmff_potentials_py, m)?)?;
 
     // Compute analyses
     m.add_class::<PyRDF>()?;
@@ -251,18 +234,18 @@ fn molrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyKMeansResult>()?;
 
     // Additional analyzers ported from freud (Steinhardt, Nematic, …).
-    compute_extra::register(m)?;
+    compute::extra::register(m)?;
 
     // Raw-compute + explicit-fit classes (phase-02 compute/fit repoint):
     // VACF / EinsteinConductivity / GreenKuboConductivity / … + LinearFit /
     // RunningIntegral / Plateau / DebyeFit / PowerSpectrum / IRSpectrum /
     // RamanSpectrum at the top level (`molrs.VACF`, `molrs.LinearFit`, …).
-    compute_fit::register(m)?;
+    compute::fit::register(m)?;
 
-    // TRAVIS-parity computes: geometric distributions (ADF/DDF/distance),
+    // analysis-parity computes: geometric distributions (ADF/DDF/distance),
     // Van Hove, Legendre reorientation, hydrogen bonds, spatial distribution,
     // radical-Voronoi tessellation + domain/void analysis.
-    compute_travis::register(m)?;
+    compute::analysis::register(m)?;
 
     // Signal processing
     m.add_function(wrap_pyfunction!(signal::signal_acf_fft, m)?)?;
@@ -270,8 +253,8 @@ fn molrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(signal::signal_frequency_grid, m)?)?;
 
     // Dielectric
-    dielectric::register_dielectric(m)?;
-    transport::register_transport(m)?;
+    compute::dielectric::register_dielectric(m)?;
+    compute::transport::register_transport(m)?;
 
     // Validation
     validate::register_validate(m)?;

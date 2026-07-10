@@ -1,7 +1,7 @@
 //! OPLS-AA bonded-parameter matching (bonds / angles / dihedrals).
 //!
 //! Given a typed [`Atomistic`] (atoms carry `type` = `opls_NNN` and `class` from
-//! [`annotate_opls`](super::annotate_opls)), this module enumerates every bond /
+//! [`typify_atoms`](super::typify_atoms)), this module enumerates every bond /
 //! angle / dihedral and resolves the most specific matching bonded type from the
 //! potential [`ForceField`](crate::ff::forcefield::ForceField)'s `bond` /
 //! `angle` / `dihedral` style tables, writing the winning type's numeric params
@@ -30,22 +30,21 @@
 //! molpy's matcher, [`end_score`] treats `""`, `"*"`, and `"X"` all as the
 //! score-0 wildcard.
 //!
-//! # No-match seam (estimator)
+//! # No-match seam (parameter interpolation)
 //!
-//! A term that matches no candidate is routed through the [`Estimator`] seam: if
-//! an estimator is attached, it is asked to estimate the missing params;
-//! otherwise the configured strict policy applies (`strict=true` → `Err`,
-//! `strict=false` → the term is left unparametrized). The
-//! [`ff-parameter-estimator`] is not built yet; this is the opt-in injection
-//! point it will wire into.
-//!
-//! [`ff-parameter-estimator`]: https://github.com/MolCrafts/molrs
+//! A term that matches no candidate is routed through the [`Estimator`] seam, an
+//! OPLS-bonded specialization of the generic
+//! [`ParameterInterpolator`](crate::ff::typifier::estimate::ParameterInterpolator)
+//! trait. If an interpolator is attached, it is asked to fill the missing
+//! params; otherwise the configured strict policy applies (`strict=true` →
+//! `Err`, `strict=false` → the term is left unparametrized).
 
 use std::collections::HashMap;
 
 use molrs::{AtomId, Atomistic};
 
 use crate::ff::forcefield::{ForceField, Params, StyleDefs};
+use crate::ff::typifier::estimate::ParameterInterpolator;
 
 use super::meta::OplsTypingMeta;
 
@@ -277,8 +276,7 @@ pub enum NoMatch {
 /// One bonded term awaiting parameters: its arity-tagged endpoint types.
 ///
 /// Handed to an [`Estimator`] when no force-field candidate matches. Kept small
-/// and owned so the estimator (a separate, not-yet-built subsystem) needs no
-/// access to `Atomistic` internals.
+/// and owned so an interpolator needs no access to `Atomistic` internals.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BondedTerm {
     /// A bond: the two endpoint `opls_NNN` types.
@@ -289,44 +287,42 @@ pub enum BondedTerm {
     Dihedral([String; 4]),
 }
 
-/// No-match seam for the [`ff-parameter-estimator`].
+/// OPLS bonded specialization of the generic parameter interpolation seam.
 ///
-/// `assign_bonded` calls [`estimate`](Estimator::estimate) for any bonded term
-/// the force-field tables do not cover. An implementation returns:
-/// - `Ok(Some(params))` — estimated params to write onto the term;
+/// [`typify_bonded_with`] calls
+/// [`interpolate`](ParameterInterpolator::interpolate) for any bonded term the
+/// force-field tables do not cover. An implementation returns:
+/// - `Ok(Some(params))` — interpolated params to write onto the term;
 /// - `Ok(None)` — declined; fall back to the strict policy;
 /// - `Err(_)` — hard failure, propagated.
 ///
-/// The estimator is **not built yet** (chain-shared work); the default path
-/// attaches none and the strict flag decides. When the estimator lands it
-/// implements this trait and is passed via
-/// [`assign_bonded_with`](assign_bonded_with).
-///
-/// [`ff-parameter-estimator`]: https://github.com/MolCrafts/molrs
-pub trait Estimator {
-    /// Estimate parameters for an uncovered bonded `term`, or decline (`None`).
-    fn estimate(&self, term: &BondedTerm) -> Result<Option<Params>, String>;
-}
+/// The default [`typify_bonded`] path attaches none and the [`NoMatch`] policy
+/// decides. Future typifier parameter families should implement
+/// [`ParameterInterpolator`] for their own term query type rather than extending
+/// [`BondedTerm`].
+pub trait Estimator: ParameterInterpolator<Term = BondedTerm> {}
 
-/// Assign bonded parameters onto a typed molecule, with the strict no-match
+impl<T> Estimator for T where T: ParameterInterpolator<Term = BondedTerm> + ?Sized {}
+
+/// Typify bonded parameters onto a typed molecule, with the strict no-match
 /// policy and no estimator (the default closed-loop path).
 ///
-/// Convenience wrapper over [`assign_bonded_with`] with `estimator = None`. See
+/// Convenience wrapper over [`typify_bonded_with`] with `estimator = None`. See
 /// that function for the full contract.
 ///
 /// # Errors
 ///
 /// Returns `Err` if a term matches no candidate and `policy` is
 /// [`NoMatch::Error`], or if writing a label onto the graph fails.
-pub fn assign_bonded(
+pub fn typify_bonded(
     mol_typed: &Atomistic,
     tables: &CandidateTables,
     policy: NoMatch,
 ) -> Result<Atomistic, String> {
-    assign_bonded_with(mol_typed, tables, policy, None)
+    typify_bonded_with(mol_typed, tables, policy, None)
 }
 
-/// Assign bonded parameters onto a typed molecule, choosing each term's params
+/// Typify bonded parameters onto a typed molecule, choosing each term's params
 /// by the OPLS specificity + layer ranking, with an optional estimator seam.
 ///
 /// For every enumerated bond / angle / dihedral:
@@ -339,8 +335,8 @@ pub fn assign_bonded(
 ///    `policy`.
 ///
 /// Angles and dihedrals are enumerated from the bond graph via
-/// [`Atomistic::generate_topology`] (clearing any pre-existing ones), mirroring
-/// the MMFF frame builder. Only atoms that chain-1 actually typed participate:
+/// the shared typifier topology helper (clearing any pre-existing generated
+/// ones), mirroring the MMFF typifier. Only atoms that chain-1 actually typed participate:
 /// a term with any untyped endpoint is skipped (its params are the consumer's
 /// concern, not a hard error here) — full per-atom coverage is chain 3.
 ///
@@ -349,7 +345,7 @@ pub fn assign_bonded(
 /// Returns `Err` if a term matches no candidate, the estimator declines, and
 /// `policy` is [`NoMatch::Error`]; if the estimator itself errors; or if a
 /// graph write / topology enumeration fails.
-pub fn assign_bonded_with(
+pub fn typify_bonded_with(
     mol_typed: &Atomistic,
     tables: &CandidateTables,
     policy: NoMatch,
@@ -384,8 +380,7 @@ pub fn assign_bonded_with(
     }
 
     // --- enumerate angles + dihedrals from the bond graph (clear existing) ---
-    out.generate_topology(true, true, true)
-        .map_err(|e| e.to_string())?;
+    crate::ff::typifier::topology::typify_bonded_topology(&mut out)?;
 
     // --- angles ---
     let angle_rows: Vec<_> = out
@@ -456,11 +451,11 @@ fn write_match(out: &mut Atomistic, kind: BondedKind, m: &Match<'_>) -> Result<(
     write_params(out, kind, m.params)
 }
 
-/// Copy every param onto the bonded term (no `type` label; used by the estimator
-/// path, which synthesizes params with no force-field type name). Both the
-/// numeric params (`k0`/`r0`/…) and any string params are written — the latter
-/// carries the estimator's provenance convention (`estimate_method` /
-/// `estimate_analog`); see [`ParameterEstimator`](crate::ff::typifier::ParameterEstimator).
+/// Copy every param onto the bonded term (no `type` label; used by the
+/// [`Estimator`] path, which synthesizes params with no force-field type name).
+/// Both the numeric params (`k0`/`r0`/…) and any string params are written — the
+/// latter carries an estimator's provenance convention (e.g. `estimate_method` /
+/// `estimate_analog`) when one is supplied.
 fn write_params(out: &mut Atomistic, kind: BondedKind, params: &Params) -> Result<(), String> {
     for (key, val) in params.iter() {
         set_term_prop(out, &kind, key, val)?;
@@ -496,7 +491,7 @@ fn resolve_no_match(
     estimator: Option<&dyn Estimator>,
 ) -> Result<(), String> {
     if let Some(est) = estimator
-        && let Some(params) = est.estimate(term)?
+        && let Some(params) = est.interpolate(term)?
     {
         return write_params(out, kind, &params);
     }

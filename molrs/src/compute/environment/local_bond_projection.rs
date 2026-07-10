@@ -13,23 +13,14 @@
 //! reference direction by the particle's quaternion before projection);
 //! that flavour is exposed via the `with_query_orientations` builder.
 
+use crate::compute::result::ComputeResult;
 use molrs::spatial::neighbors::NeighborList;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 use ndarray::Array2;
 
 use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
 use crate::compute::traits::Compute;
-
-/// Per-frame projection result.
-#[derive(Debug, Clone, Default)]
-pub struct LocalBondProjectionResult {
-    /// `(n_pairs, n_proj_vectors)` cosines.
-    pub projections: Array2<F>,
-}
-
-impl ComputeResult for LocalBondProjectionResult {}
 
 /// `LocalBondProjection` analyzer.
 #[derive(Debug, Clone, Default)]
@@ -40,10 +31,12 @@ pub struct LocalBondProjection {
 }
 
 impl LocalBondProjection {
+    /// Default: reference directions are used as-is (lab frame).
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Rotate each reference direction by the query particle's quaternion when `on`.
     pub fn with_query_orientations(mut self, on: bool) -> Self {
         self.use_orientations = on;
         self
@@ -162,11 +155,20 @@ impl Compute for LocalBondProjection {
     }
 }
 
+/// Per-frame projection result.
+#[derive(Debug, Clone, Default)]
+pub struct LocalBondProjectionResult {
+    /// `(n_pairs, n_proj_vectors)` cosines.
+    pub projections: Array2<F>,
+}
+
+impl ComputeResult for LocalBondProjectionResult {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compute::test_support::nlist_from_frame;
     use molrs::Frame;
-    use molrs::spatial::neighbors::{LinkCell, NbListAlgo};
     use molrs::spatial::region::simbox::SimBox;
     use molrs::store::block::Block;
     use ndarray::{Array1 as A1, array};
@@ -189,44 +191,7 @@ mod tests {
     }
 
     fn build_nlist(frame: &Frame, cutoff: F) -> NeighborList {
-        let xp = frame
-            .get("atoms")
-            .unwrap()
-            .get("x")
-            .and_then(<F as molrs::store::block::BlockDtype>::from_column)
-            .unwrap()
-            .as_slice()
-            .unwrap()
-            .to_vec();
-        let yp = frame
-            .get("atoms")
-            .unwrap()
-            .get("y")
-            .and_then(<F as molrs::store::block::BlockDtype>::from_column)
-            .unwrap()
-            .as_slice()
-            .unwrap()
-            .to_vec();
-        let zp = frame
-            .get("atoms")
-            .unwrap()
-            .get("z")
-            .and_then(<F as molrs::store::block::BlockDtype>::from_column)
-            .unwrap()
-            .as_slice()
-            .unwrap()
-            .to_vec();
-        let n = xp.len();
-        let mut pos = ndarray::Array2::<F>::zeros((n, 3));
-        for i in 0..n {
-            pos[[i, 0]] = xp[i];
-            pos[[i, 1]] = yp[i];
-            pos[[i, 2]] = zp[i];
-        }
-        let simbox = frame.simbox.as_ref().unwrap();
-        let mut lc = LinkCell::new().cutoff(cutoff);
-        lc.build(pos.view(), simbox);
-        lc.query().clone()
+        nlist_from_frame(frame, cutoff)
     }
 
     #[test]

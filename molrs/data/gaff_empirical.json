@@ -1,5 +1,5 @@
 {
-  "_source": "AmberTools dat/antechamber/PARM_BLBA_GAFF.DAT (GAFF, AmberTools25) + Wang et al. J. Comput. Chem. 2004, 25:1157-1174 Eqs. 3-6 & Tables 3-4. Transcribed verbatim. Units: r in Angstrom, K in kcal/mol/A^2 (bond) and kcal/mol/rad^2 (angle), angle theta in degrees.",
+  "_source": "embedded reference dat/antechamber/PARM_BLBA_GAFF.DAT (GAFF, embedded reference25) + Wang et al. J. Comput. Chem. 2004, 25:1157-1174 Eqs. 3-6 & Tables 3-4. Transcribed verbatim. Units: r in Angstrom, K in kcal/mol/A^2 (bond) and kcal/mol/rad^2 (angle), angle theta in degrees.",
   "bond_power_m": 4.5,
   "_bond_formula": "K_r = exp(ln_kij) / r_ij^m   (Wang2004 Eq.3, m = bond_power_m). ln_kij is the per-element-pair coefficient (Table 3 'ln Kij' column = PARM_BLBA_GAFF.DAT BL second value). r_ij is the actual bond length in Angstrom.",
   "bond_lnk": [

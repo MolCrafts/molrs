@@ -3,8 +3,11 @@ use molrs::spatial::region::simbox::SimBox;
 use molrs::types::F;
 use ndarray::array;
 
+use crate::helpers;
+
 fn bench_shortest_vector(c: &mut Criterion) {
     let mut group = c.benchmark_group("core/region/simbox/shortest_vector");
+    helpers::configure(&mut group);
 
     let bx = SimBox::cube(
         10.0 as F,
@@ -35,6 +38,7 @@ fn bench_shortest_vector(c: &mut Criterion) {
 
 fn bench_make_fractional(c: &mut Criterion) {
     let mut group = c.benchmark_group("core/region/simbox/make_fractional");
+    helpers::configure(&mut group);
 
     let bx = SimBox::cube(
         10.0 as F,
@@ -53,6 +57,7 @@ fn bench_make_fractional(c: &mut Criterion) {
 
 fn bench_calc_distance(c: &mut Criterion) {
     let mut group = c.benchmark_group("core/region/simbox/calc_distance");
+    helpers::configure(&mut group);
 
     let bx = SimBox::cube(
         10.0 as F,
@@ -114,6 +119,7 @@ fn bench_mic_variants_loop(c: &mut Criterion) {
     }
 
     let mut group = c.benchmark_group("core/region/simbox/mic_pair_loop_100pts");
+    helpers::configure(&mut group);
 
     group.bench_function("shortest_vector (F3View → Array1)", |bencher| {
         bencher.iter(|| {

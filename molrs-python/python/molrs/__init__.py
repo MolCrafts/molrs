@@ -26,8 +26,6 @@ from .molrs import (
     Block,
     Frame,
     Trajectory,
-    MolRec,
-    Observables,
     ScalarObservable,
     VectorObservable,
     # I/O
@@ -69,6 +67,9 @@ from .molrs import (
     Graph,
     Atomistic,
     CoarseGrain,
+    SmartsMatch,
+    SmartsPattern,
+    Reaction,
     # Systems (module-level free functions over a graph)
     translate,
     rotate,
@@ -83,7 +84,7 @@ from .molrs import (
     ConformerStageReport,
     # Force field
     MMFFTypifier,
-    OplsTypifier,
+    OPLSAATypifier,
     ForceField,
     Potentials,
     OptReport,
@@ -121,7 +122,7 @@ from .molrs import (
     RamanSpectrum,
     EinsteinHelfandSpectrum,
     GreenKuboSpectrum,
-    # TRAVIS-parity computes (geometric distributions, Van Hove, reorientation,
+    # analysis-parity computes (geometric distributions, Van Hove, reorientation,
     # hydrogen bonds, spatial distribution, radical Voronoi, chiral spectra).
     AngleDistribution,
     DihedralDistribution,
@@ -206,6 +207,7 @@ from . import signal
 from . import validate
 from . import dielectric
 from . import transport
+from . import typifier
 
 __all__ = [
     "io",
@@ -214,6 +216,7 @@ __all__ = [
     "validate",
     "dielectric",
     "transport",
+    "typifier",
     "BlockDtypeError",
     "Box",
     "LinkedCell",
@@ -222,8 +225,6 @@ __all__ = [
     "Block",
     "Frame",
     "Trajectory",
-    "MolRec",
-    "Observables",
     "ScalarObservable",
     "VectorObservable",
     "read_pdb",
@@ -262,6 +263,9 @@ __all__ = [
     "Graph",
     "Atomistic",
     "CoarseGrain",
+    "SmartsMatch",
+    "SmartsPattern",
+    "Reaction",
     "translate",
     "rotate",
     "scale",
@@ -274,7 +278,7 @@ __all__ = [
     "ConformerReport",
     "ConformerStageReport",
     "MMFFTypifier",
-    "OplsTypifier",
+    "OPLSAATypifier",
     "ForceField",
     "Style",
     "AtomStyle",
@@ -322,7 +326,7 @@ __all__ = [
     "RamanSpectrum",
     "EinsteinHelfandSpectrum",
     "GreenKuboSpectrum",
-    # TRAVIS-parity computes.
+    # analysis-parity computes.
     "AngleDistribution",
     "DihedralDistribution",
     "DistanceDistribution",

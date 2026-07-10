@@ -1,9 +1,13 @@
-//! Fitting / smoothing / spectral-transform layer — the [`Fit`] companion of
+//! Generic curve fitting / smoothing — the [`Fit`](crate::compute::Fit) companion of
 //! [`Compute`](crate::compute::Compute).
 //!
 //! Where a [`Compute`](crate::compute::Compute) measures a raw observable from
-//! frames (an MSD curve, a current ACF, a velocity ACF), a [`Fit`] post-processes
-//! that observable into a derived quantity:
+//! frames (an MSD curve, a current ACF, a velocity ACF), a
+//! [`Fit`](crate::compute::Fit) post-processes
+//! that observable into a derived quantity. This module hosts the
+//! **domain-agnostic** curve transforms; the physical raw computes live in
+//! [`transport`](crate::compute::transport) and the spectral transforms in
+//! [`spectroscopy`](crate::compute::spectroscopy).
 //!
 //! | Fit | Input | Output | Lifted from |
 //! |-----|-------|--------|-------------|
@@ -11,58 +15,31 @@
 //! | [`RunningIntegral`] | curve + dt | [`RunningIntegralResult`] (cumulative trapezoid) | Green–Kubo conductivity trapezoid |
 //! | [`Plateau`] | curve | [`PlateauResult`] (windowed mean/std) | new |
 //! | [`DebyeFit`] | normalized Φ(t) + dt | [`DebyeFitResult`] (τ, amplitude) | molpy ad-hoc DebyeFit |
-//! | [`PowerSpectrum`] | raw [`VACF`] ACF + dt | [`SpectrumResult`](crate::compute::SpectrumResult) | window + FFT |
-//! | [`IRSpectrum`] | raw [`IRFlux`] ACF + dt | [`SpectrumResult`](crate::compute::SpectrumResult) | window + FFT |
-//! | [`RamanSpectrum`] | raw [`RamanTensor`] iso/aniso ACFs + dt | [`RamanSpectrumResult`](crate::compute::RamanSpectrumResult) | window + FFT + prefactors |
-//! | [`EinsteinHelfandSpectrum`] | raw [`DebyeRelaxation`] dipole ACF + V/T/ε_∞/⟨M²⟩ | [`DielectricSpectrumResult`] | cos² taper + derivative-FT |
-//! | [`GreenKuboSpectrum`] | raw [`GreenKuboConductivity`] current ACF + V/T/ε_∞ | [`DielectricSpectrumResult`] | window + FFT + σ→ε |
-//!
-//! This module also hosts the raw-only [`Compute`](crate::compute::Compute)
-//! structs ([`VACF`], [`IRFlux`], [`RamanTensor`], [`EinsteinDiffusion`],
-//! [`GreenKuboDiffusion`], [`EinsteinConductivity`], [`GreenKuboConductivity`],
-//! [`DebyeRelaxation`]) that return only raw curves + scalar metadata, so the
-//! fit step is the analyst's explicit, parameterized choice.
 //!
 //! # Shared numerical primitives
 //!
 //! Helpers are lifted here so the fits share one implementation:
 //!
-//! - [`ols_slope_intercept_r2`] — ordinary-least-squares line fit (the
+//! - `ols_slope_intercept_r2` — ordinary-least-squares line fit (the
 //!   Einstein–Helfand conductivity slope).
-//! - [`running_trapezoid`] — cumulative trapezoidal integral (the Green–Kubo
+//! - `running_trapezoid` — cumulative trapezoidal integral (the Green–Kubo
 //!   conductivity integral).
-//! - [`forward_fft_onesided`] — the genuinely-shared "resize to `n_pad`,
+//! - `forward_fft_onesided` — the genuinely-shared "resize to `n_pad`,
 //!   forward FFT, take `n_pad/2 + 1` bins" complex core. Each caller keeps its
 //!   own scaling/units wrapper: the spectral path
-//!   ([`spectral::window_and_fft`]) scales by `1/n_pad` and emits cm⁻¹
-//!   frequencies; the dielectric path scales by `·dt` and emits a
-//!   `(freq_rad, re, im)` triple.
+//!   ([`spectroscopy::window_and_fft`](crate::compute::spectroscopy)) scales by
+//!   `1/n_pad` and emits cm⁻¹ frequencies; the dielectric path scales by `·dt`
+//!   and emits a `(freq_rad, re, im)` triple.
 
 pub mod debye_fit;
-pub mod dielectric_spectrum;
 pub mod linear_fit;
 pub mod plateau;
-pub mod raw_computes;
 pub mod running_integral;
-pub mod spectral;
 
 pub use debye_fit::{DebyeFit, DebyeFitResult};
-pub use dielectric_spectrum::{
-    DielectricSpectrumResult, EinsteinHelfandSpectrum, GreenKuboSpectrum,
-};
 pub use linear_fit::{LinearFit, LinearFitResult};
 pub use plateau::{Plateau, PlateauResult};
-pub use raw_computes::{
-    DebyeRelaxation, DebyeRelaxationResult, EinsteinConductivity, EinsteinConductivityResult,
-    EinsteinDiffusion, EinsteinDiffusionArgs, EwaldBoundary, GreenKuboConductivity,
-    GreenKuboConductivityResult, GreenKuboDiffusion, IRFlux, IRFluxResult, RamanTensor,
-    RamanTensorResult, ResonanceRamanArgs, ResonanceRamanTensor, RoaCrossArgs, RoaCrossResult,
-    RoaCrossTensor, VACF, VacfResult, VcdCrossArgs, VcdCrossFlux, VcdCrossResult,
-};
 pub use running_integral::{RunningIntegral, RunningIntegralResult};
-pub use spectral::{
-    IRSpectrum, PowerSpectrum, RamanSpectrum, ResonanceRamanSpectrum, RoaSpectrum, VcdSpectrum,
-};
 
 use rustfft::FftPlanner;
 use rustfft::num_complex::Complex64;

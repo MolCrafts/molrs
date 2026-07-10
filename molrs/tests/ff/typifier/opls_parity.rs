@@ -1,8 +1,8 @@
-//! OPLS-AA typifier parity harness vs molpy's `OplsTypifier` (spec
+//! OPLS-AA typifier parity harness vs molpy's `OPLSAATypifier` (spec
 //! `opls-typifier-03-parity`, ac-001 … ac-004).
 //!
 //! Ground truth is a set of per-molecule JSON fixtures under `tests-data/opls/`,
-//! produced by molpy's own `OplsTypifier` over a fixed real-molecule set
+//! produced by molpy's own `OPLSAATypifier` over a fixed real-molecule set
 //! (`molpy/scripts/gen_opls_fixtures.py`). Each fixture carries:
 //!
 //! * the molecule definition (element + xyz per atom, bonds as `[i, j, order]`)
@@ -14,7 +14,7 @@
 //!   that script's header).
 //!
 //! molrs types from its **embedded canonical** OPLS-AA force field
-//! ([`molrs::data::OPLSAA_XML`] via [`OplsTypifier::oplsaa`]) — the durable,
+//! ([`molrs::data::OPLSAA_XML`] via [`OPLSAATypifier::oplsaa`]) — the durable,
 //! committed-in-molrs copy — so the force-field source is independent of
 //! `scripts/fetch-test-data.sh`. The generator fed molpy that same canonical
 //! (c-corrected) XML, so this isolates *engine* semantics rather than
@@ -51,7 +51,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use molrs::ff::typifier::opls::OplsTypifier;
+use molrs::ff::typifier::opls::OPLSAATypifier;
 use molrs::{Atom, AtomId, Atomistic};
 use serde_json::Value;
 
@@ -453,8 +453,8 @@ fn opls_parity_agreeable_set_exact_per_atom_and_params() {
     // Source the FF from the embedded canonical OPLS-AA XML (durable, committed
     // in molrs — independent of `fetch-test-data.sh`), not the gitignored
     // tests-data copy. The fixtures (ground truth) stay gated separately.
-    let typifier = OplsTypifier::oplsaa()
-        .expect("build OplsTypifier from embedded OPLS-AA XML")
+    let typifier = OPLSAATypifier::oplsaa()
+        .expect("build OPLSAATypifier from embedded OPLS-AA XML")
         // ac-004: lenient (no estimator) — matches the molpy non-strict run; a
         // term with no candidate is left bare, never estimated.
         .with_strict(false);
@@ -476,8 +476,8 @@ fn opls_parity_agreeable_set_exact_per_atom_and_params() {
 
         let mol = build_mol(&fx);
         let typed = typifier
-            .typify_full(&mol)
-            .unwrap_or_else(|e| panic!("{}: typify_full failed: {e}", fx.name));
+            .typify(&mol)
+            .unwrap_or_else(|e| panic!("{}: typify failed: {e}", fx.name));
         let idx = id_to_index(&typed);
 
         // --- per-atom (ac-001) ---
@@ -618,8 +618,8 @@ fn opls_parity_aromatic_per_atom_now_matches_molpy() {
 
     // Embedded canonical OPLS-AA XML — same durable source as the agreeable-set
     // test (independent of fetch-test-data).
-    let typifier = OplsTypifier::oplsaa()
-        .expect("build OplsTypifier from embedded OPLS-AA XML")
+    let typifier = OPLSAATypifier::oplsaa()
+        .expect("build OPLSAATypifier from embedded OPLS-AA XML")
         .with_strict(false);
 
     let mut gap_molecules = 0;
@@ -632,8 +632,8 @@ fn opls_parity_aromatic_per_atom_now_matches_molpy() {
 
         let mol = build_mol(&fx);
         let typed = typifier
-            .typify_full(&mol)
-            .unwrap_or_else(|e| panic!("{}: typify_full failed: {e}", fx.name));
+            .typify(&mol)
+            .unwrap_or_else(|e| panic!("{}: typify failed: {e}", fx.name));
         let ap = atom_parity(&fx, &typed);
 
         eprintln!(

@@ -12,29 +12,14 @@
 //! variant requires only a handful of extra lines and will follow when the
 //! first downstream consumer (e.g. `LocalDescriptors` in Phase 6) needs it.
 
+use crate::compute::result::ComputeResult;
 use molrs::spatial::neighbors::NeighborList;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 use ndarray::Array1;
 
 use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
 use crate::compute::traits::Compute;
-
-/// Per-frame correlation result.
-#[derive(Debug, Clone, Default)]
-pub struct CorrelationFunctionResult {
-    /// Bin edges (length `n_bins + 1`).
-    pub bin_edges: Array1<F>,
-    /// Bin centres (length `n_bins`).
-    pub bin_centers: Array1<F>,
-    /// Running pair count per bin (length `n_bins`).
-    pub bin_counts: Array1<u64>,
-    /// `⟨A · B⟩(r)` per bin (length `n_bins`); zero for empty bins.
-    pub correlation: Array1<F>,
-}
-
-impl ComputeResult for CorrelationFunctionResult {}
 
 /// Correlation-function calculator. Stateless container of bin parameters.
 #[derive(Debug, Clone)]
@@ -48,6 +33,7 @@ pub struct CorrelationFunction {
 }
 
 impl CorrelationFunction {
+    /// `n_bins` radial bins over `[r_min, r_max]` (Å).
     pub fn new(n_bins: usize, r_max: F, r_min: F) -> Result<Self, ComputeError> {
         if n_bins == 0 {
             return Err(ComputeError::OutOfRange {
@@ -188,6 +174,18 @@ impl Compute for CorrelationFunction {
                 what: "CorrelationFunction frame-aligned inputs",
             });
         }
+        #[cfg(feature = "rayon")]
+        const PAR_THRESHOLD: usize = 2;
+
+        #[cfg(feature = "rayon")]
+        if nf >= PAR_THRESHOLD {
+            use rayon::prelude::*;
+            return (0..nf)
+                .into_par_iter()
+                .map(|k| self.one_frame(&args.nlists[k], &args.values_a[k], &args.values_b[k]))
+                .collect();
+        }
+
         let mut out = Vec::with_capacity(nf);
         for k in 0..nf {
             out.push(self.one_frame(&args.nlists[k], &args.values_a[k], &args.values_b[k])?);
@@ -196,11 +194,26 @@ impl Compute for CorrelationFunction {
     }
 }
 
+/// Per-frame correlation result.
+#[derive(Debug, Clone, Default)]
+pub struct CorrelationFunctionResult {
+    /// Bin edges (length `n_bins + 1`).
+    pub bin_edges: Array1<F>,
+    /// Bin centres (length `n_bins`).
+    pub bin_centers: Array1<F>,
+    /// Running pair count per bin (length `n_bins`).
+    pub bin_counts: Array1<u64>,
+    /// `⟨A · B⟩(r)` per bin (length `n_bins`); zero for empty bins.
+    pub correlation: Array1<F>,
+}
+
+impl ComputeResult for CorrelationFunctionResult {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compute::test_support::nlist_from_frame;
     use molrs::Frame;
-    use molrs::spatial::neighbors::{LinkCell, NbListAlgo};
     use molrs::spatial::region::simbox::SimBox;
     use molrs::store::block::Block;
     use ndarray::{Array1 as A1, array};
@@ -221,44 +234,7 @@ mod tests {
     }
 
     fn build_nlist(frame: &Frame, cutoff: F) -> NeighborList {
-        let xp = frame
-            .get("atoms")
-            .unwrap()
-            .get("x")
-            .and_then(<F as molrs::store::block::BlockDtype>::from_column)
-            .unwrap()
-            .as_slice()
-            .unwrap()
-            .to_vec();
-        let yp = frame
-            .get("atoms")
-            .unwrap()
-            .get("y")
-            .and_then(<F as molrs::store::block::BlockDtype>::from_column)
-            .unwrap()
-            .as_slice()
-            .unwrap()
-            .to_vec();
-        let zp = frame
-            .get("atoms")
-            .unwrap()
-            .get("z")
-            .and_then(<F as molrs::store::block::BlockDtype>::from_column)
-            .unwrap()
-            .as_slice()
-            .unwrap()
-            .to_vec();
-        let n = xp.len();
-        let mut pos = ndarray::Array2::<F>::zeros((n, 3));
-        for i in 0..n {
-            pos[[i, 0]] = xp[i];
-            pos[[i, 1]] = yp[i];
-            pos[[i, 2]] = zp[i];
-        }
-        let simbox = frame.simbox.as_ref().unwrap();
-        let mut lc = LinkCell::new().cutoff(cutoff);
-        lc.build(pos.view(), simbox);
-        lc.query().clone()
+        nlist_from_frame(frame, cutoff)
     }
 
     #[test]
@@ -353,5 +329,47 @@ mod tests {
         assert!(CorrelationFunction::new(0, 1.0, 0.0).is_err());
         assert!(CorrelationFunction::new(10, 1.0, 1.0).is_err());
         assert!(CorrelationFunction::new(10, 0.5, 1.0).is_err());
+    }
+
+    /// The `nf >= PAR_THRESHOLD` rayon branch must match the serial path
+    /// exactly, in frame order (frame-aligned nlists / values indexing).
+    #[test]
+    fn parallel_matches_serial() {
+        let positions = [
+            [1.0_f64, 1.0, 1.0],
+            [2.0, 1.0, 1.0],
+            [3.0, 1.0, 1.0],
+            [4.0, 1.0, 1.0],
+        ];
+        let frame = frame_with(&positions, 20.0);
+        let nl = build_nlist(&frame, 5.0);
+        let vals = vec![1.0_f64; positions.len()];
+        let cf = CorrelationFunction::new(10, 5.0, 0.0).unwrap();
+        let solo = cf
+            .compute(
+                &[&frame],
+                CorrelationArgs {
+                    nlists: std::slice::from_ref(&nl),
+                    values_a: std::slice::from_ref(&vals),
+                    values_b: std::slice::from_ref(&vals),
+                },
+            )
+            .unwrap();
+        let nls = vec![nl.clone(), nl.clone()];
+        let vs = vec![vals.clone(), vals.clone()];
+        let par = cf
+            .compute(
+                &[&frame, &frame],
+                CorrelationArgs {
+                    nlists: &nls,
+                    values_a: &vs,
+                    values_b: &vs,
+                },
+            )
+            .unwrap();
+        assert_eq!(par.len(), 2);
+        assert_eq!(par[0].correlation, solo[0].correlation);
+        assert_eq!(par[0].bin_counts, solo[0].bin_counts);
+        assert_eq!(par[1].correlation, solo[0].correlation);
     }
 }

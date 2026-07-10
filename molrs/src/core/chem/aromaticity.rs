@@ -2,7 +2,7 @@
 //! (`AROMATICITY_RDKIT`).
 //!
 //! This is a BSD-3 port of RDKit's `setAromaticity` default-model code path,
-//! re-expressed against [`MolGraph`]. It perceives aromaticity from scratch
+//! re-expressed against `MolGraph`. It perceives aromaticity from scratch
 //! (Kekulé bond orders + element + formal charge), writing back an
 //! `is_aromatic` atom property and bond order `1.5` so that
 //! [`crate::SmartsPattern`]'s `a` / `c` / `:` primitives match RDKit after
@@ -12,7 +12,7 @@
 //!
 //! 1. Compute SSSR rings ([`crate::chem::rings::find_rings`]).
 //! 2. For each ring atom, classify its π-electron donor type
-//!    (`getAtomDonorTypeArom` → [`ElectronDonor`]) using a per-atom electron
+//!    (`getAtomDonorTypeArom` → `ElectronDonor`) using a per-atom electron
 //!    count (`countAtomElec`) plus exocyclic / cyclic multiple-bond rules, and
 //!    test atom candidacy (`isAtomCandForArom`).
 //! 3. Keep rings where *every* atom is a candidate (and not all dummy).

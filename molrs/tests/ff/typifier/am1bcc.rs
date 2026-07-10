@@ -1,0 +1,299 @@
+//! AM1-BCC typifier integration tests.
+
+use molrs::ff::charge::ChargeAssigner;
+use molrs::ff::typifier::Typifier;
+use molrs::ff::typifier::am1bcc::{
+    AM1BCCTypifier, AM1ChargeBackend, AM1ChargeResult, AM1ChargeTypifier, BCCAtomTypifier,
+    BCCCorrectionTable,
+};
+use molrs::store::keys;
+use molrs::{AtomId, Atomistic, Element};
+
+#[derive(Clone)]
+struct FakeAM1Backend {
+    charges: Vec<f64>,
+}
+
+impl AM1ChargeBackend for FakeAM1Backend {
+    fn compute_am1_charges(&self, _mol: &Atomistic) -> Result<AM1ChargeResult, String> {
+        Ok(AM1ChargeResult {
+            charges: self.charges.clone(),
+            total_charge: None,
+            heat_of_formation_kcal_mol: None,
+            reference: "test fake backend".to_owned(),
+        })
+    }
+}
+
+fn methane() -> (Atomistic, AtomId, Vec<AtomId>) {
+    let mut mol = Atomistic::new();
+    let c = mol.add_atom_xyz("C", 0.0, 0.0, 0.0);
+    let mut hs = Vec::new();
+    for [x, y, z] in [
+        [0.63, 0.63, 0.63],
+        [-0.63, -0.63, 0.63],
+        [-0.63, 0.63, -0.63],
+        [0.63, -0.63, -0.63],
+    ] {
+        let h = mol.add_atom_xyz("H", x, y, z);
+        mol.add_bond(c, h).expect("add C-H");
+        hs.push(h);
+    }
+    (mol, c, hs)
+}
+
+fn bcc_typed_methane() -> (Atomistic, AtomId, Vec<AtomId>) {
+    let (mut mol, c, hs) = methane();
+    mol.set_atom(c, keys::TYPE, "11")
+        .expect("set carbon BCC type");
+    for h in &hs {
+        mol.set_atom(*h, keys::TYPE, "91")
+            .expect("set hydrogen BCC type");
+    }
+    let bond_ids: Vec<_> = mol.bonds().map(|(bid, _)| bid).collect();
+    for bid in bond_ids {
+        mol.set_bond_prop(bid, keys::TYPE, 1.0)
+            .expect("set BCC bond type");
+    }
+    (mol, c, hs)
+}
+
+fn methanol() -> Atomistic {
+    let mut mol = Atomistic::new();
+    let c = mol.add_atom_xyz("C", 0.0, 0.0, 0.0);
+    let o = mol.add_atom_xyz("O", 1.43, 0.0, 0.0);
+    let h1 = mol.add_atom_xyz("H", -0.63, 0.63, 0.63);
+    let h2 = mol.add_atom_xyz("H", -0.63, -0.63, 0.63);
+    let h3 = mol.add_atom_xyz("H", -0.63, 0.0, -0.89);
+    let ho = mol.add_atom_xyz("H", 1.76, 0.89, 0.0);
+    for (a, b) in [(c, o), (c, h1), (c, h2), (c, h3), (o, ho)] {
+        mol.add_bond(a, b).expect("add bond");
+    }
+    mol
+}
+
+#[allow(dead_code)] // WIP fixture — kept for the upcoming parity cases
+fn bcc_typed_methanol() -> Atomistic {
+    let mut mol = methanol();
+    let atoms: Vec<_> = mol.atoms().map(|(aid, _)| aid).collect();
+    for (aid, bcc_type) in [
+        (atoms[0], "11"),
+        (atoms[1], "31"),
+        (atoms[2], "91"),
+        (atoms[3], "91"),
+        (atoms[4], "91"),
+        (atoms[5], "91"),
+    ] {
+        mol.set_atom(aid, keys::TYPE, bcc_type)
+            .expect("set BCC atom type");
+    }
+    let bond_ids: Vec<_> = mol.bonds().map(|(bid, _)| bid).collect();
+    for bid in bond_ids {
+        mol.set_bond_prop(bid, keys::TYPE, 1.0)
+            .expect("set BCC bond type");
+    }
+    mol
+}
+
+fn chloromethane() -> Atomistic {
+    let mut mol = Atomistic::new();
+    let c = mol.add_atom_xyz("C", 0.0, 0.0, 0.0);
+    let cl = mol.add_atom_xyz("Cl", 1.78, 0.0, 0.0);
+    let h1 = mol.add_atom_xyz("H", -0.63, 0.63, 0.63);
+    let h2 = mol.add_atom_xyz("H", -0.63, -0.63, 0.63);
+    let h3 = mol.add_atom_xyz("H", -0.63, 0.0, -0.89);
+    for (a, b) in [(c, cl), (c, h1), (c, h2), (c, h3)] {
+        mol.add_bond(a, b).expect("add bond");
+    }
+    mol
+}
+
+#[allow(dead_code)] // WIP fixture — kept for the upcoming parity cases
+fn bcc_typed_chloromethane() -> Atomistic {
+    let mut mol = chloromethane();
+    let atoms: Vec<_> = mol.atoms().map(|(aid, _)| aid).collect();
+    for (aid, bcc_type) in [
+        (atoms[0], "11"),
+        (atoms[1], "72"),
+        (atoms[2], "91"),
+        (atoms[3], "91"),
+        (atoms[4], "91"),
+    ] {
+        mol.set_atom(aid, keys::TYPE, bcc_type)
+            .expect("set BCC atom type");
+    }
+    let bond_ids: Vec<_> = mol.bonds().map(|(bid, _)| bid).collect();
+    for bid in bond_ids {
+        mol.set_bond_prop(bid, keys::TYPE, 1.0)
+            .expect("set BCC bond type");
+    }
+    mol
+}
+
+#[test]
+fn default_am1bcc_typifier_is_guarded_until_backend_is_configured() {
+    let (mol, _, _) = methane();
+    let err = AM1BCCTypifier::default()
+        .typify(&mol)
+        .expect_err("default backend should be unavailable");
+    assert!(err.contains("AM1ChargeBackend"), "{err}");
+}
+
+#[test]
+fn am1_charge_typifier_writes_base_charges_without_bcc() {
+    let (mol, c, hs) = methane();
+    let typifier = AM1ChargeTypifier::new(FakeAM1Backend {
+        charges: vec![-0.2, 0.05, 0.05, 0.05, 0.05],
+    });
+
+    let typed = typifier.typify(&mol).expect("typify AM1 charges");
+    assert!((typed.get_atom(c).unwrap().get_f64(keys::CHARGE).unwrap() + 0.2).abs() < 1e-12);
+    for h in hs {
+        assert!((typed.get_atom(h).unwrap().get_f64(keys::CHARGE).unwrap() - 0.05).abs() < 1e-12);
+    }
+}
+
+#[test]
+fn fake_backend_plus_explicit_bcc_table_writes_charges() {
+    let (mol, c, hs) = bcc_typed_methane();
+    let table = BCCCorrectionTable::new().insert("11", "91", 0.01);
+    let typifier = AM1BCCTypifier::new(FakeAM1Backend {
+        charges: vec![0.0; 5],
+    })
+    .with_correction_table(table);
+
+    let typed = typifier.typify(&mol).expect("typify methane");
+    let c_atom = typed.get_atom(c).expect("carbon");
+    assert_eq!(c_atom.get_str(keys::TYPE), Some("11"));
+    assert!((c_atom.get_f64(keys::CHARGE).unwrap() - 0.04).abs() < 1e-12);
+    for h in hs {
+        let h_atom = typed.get_atom(h).expect("hydrogen");
+        assert_eq!(h_atom.get_str(keys::TYPE), Some("91"));
+        assert!((h_atom.get_f64(keys::CHARGE).unwrap() + 0.01).abs() < 1e-12);
+    }
+    let total: f64 = typed
+        .atoms()
+        .map(|(_, a)| a.get_f64(keys::CHARGE).unwrap())
+        .sum();
+    assert!(total.abs() < 1e-12);
+}
+
+#[test]
+fn charge_assigner_runs_struct_typifier_and_reports_result() {
+    let (mut mol, _, _) = bcc_typed_methane();
+    let table = BCCCorrectionTable::new().insert("11", "91", 0.01);
+    let typifier = AM1BCCTypifier::new(FakeAM1Backend {
+        charges: vec![0.0; 5],
+    })
+    .with_correction_table(table);
+
+    let result = ChargeAssigner::new(typifier)
+        .with_method("AM1-BCC")
+        .assign_atomistic(&mut mol)
+        .expect("assign charges");
+    assert_eq!(result.method, "AM1-BCC");
+    assert_eq!(result.charges.len(), 5);
+    assert!(result.total_charge.abs() < 1e-12);
+    for (_, atom) in mol.atoms() {
+        assert!(atom.get_f64(keys::CHARGE).is_some());
+    }
+}
+
+#[test]
+fn embedded_bcc_table_applies_known_methane_row() {
+    let (mol, c, hs) = bcc_typed_methane();
+    let typifier = AM1BCCTypifier::bcc(FakeAM1Backend {
+        charges: vec![0.0; 5],
+    })
+    .expect("load embedded BCC table");
+
+    let typed = typifier.typify(&mol).expect("typify methane");
+    assert!((typed.get_atom(c).unwrap().get_f64(keys::CHARGE).unwrap() - 0.1572).abs() < 1e-12);
+    for h in hs {
+        assert!((typed.get_atom(h).unwrap().get_f64(keys::CHARGE).unwrap() + 0.0393).abs() < 1e-12);
+    }
+}
+
+#[test]
+fn embedded_table_reproduces_reference25_oracle_vectors() {
+    let cases = [
+        (
+            methane().0,
+            vec![-0.266000, 0.066000, 0.066000, 0.066000, 0.066000],
+            vec![-0.108800, 0.026700, 0.026700, 0.026700, 0.026700],
+        ),
+        (
+            methanol(),
+            vec![-0.073000, -0.326000, 0.068000, 0.068000, 0.068000, 0.195000],
+            vec![0.116700, -0.598800, 0.028700, 0.028700, 0.028700, 0.396000],
+        ),
+        (
+            chloromethane(),
+            vec![-0.177000, -0.117000, 0.098000, 0.098000, 0.098000],
+            vec![0.014300, -0.190400, 0.058700, 0.058700, 0.058700],
+        ),
+    ];
+
+    for (mol, pre_bcc, expected) in cases {
+        let typifier = AM1BCCTypifier::bcc(FakeAM1Backend { charges: pre_bcc })
+            .expect("load embedded BCC table");
+        let typed = typifier.typify(&mol).expect("apply BCC corrections");
+        let actual: Vec<_> = typed
+            .atoms()
+            .map(|(_, atom)| atom.get_f64(keys::CHARGE).unwrap())
+            .collect();
+        assert_eq!(actual.len(), expected.len());
+        for (q, q_ref) in actual.iter().zip(expected.iter()) {
+            assert!((q - q_ref).abs() < 5.0e-7, "{q} != {q_ref}");
+        }
+    }
+}
+
+#[test]
+fn atom_typifier_assigns_bcc_types_to_untyped_methane() {
+    let (mol, c, hs) = methane();
+    let typed = BCCAtomTypifier::bcc()
+        .typify(&mol)
+        .expect("typify methane atoms");
+
+    assert_eq!(typed.get_atom(c).unwrap().get_str(keys::TYPE), Some("11"));
+    for h in hs {
+        assert_eq!(typed.get_atom(h).unwrap().get_str(keys::TYPE), Some("91"));
+    }
+    for (_, bond) in typed.bonds() {
+        assert_eq!(
+            bond.props.get(keys::TYPE).and_then(|v| v.as_f64()),
+            Some(1.0)
+        );
+    }
+}
+
+#[test]
+fn atom_typifier_covers_reference_element_rows_through_mt() {
+    for z in 1..=109 {
+        if z == 16 {
+            continue;
+        }
+        let element = Element::by_number(z).expect("element");
+        let mut mol = Atomistic::new();
+        let aid = mol.add_atom_xyz(element.symbol(), 0.0, 0.0, 0.0);
+        let typed = BCCAtomTypifier::bcc()
+            .typify(&mol)
+            .unwrap_or_else(|e| panic!("z={z} {}: {e}", element.symbol()));
+        assert!(typed.get_atom(aid).unwrap().get_str(keys::TYPE).is_some());
+    }
+}
+
+#[test]
+fn missing_bcc_correction_row_is_an_error_not_zero() {
+    let (mol, _, _) = bcc_typed_methane();
+    let typifier = AM1BCCTypifier::new(FakeAM1Backend {
+        charges: vec![0.0; 5],
+    })
+    .with_correction_table(BCCCorrectionTable::new());
+
+    let err = typifier
+        .typify(&mol)
+        .expect_err("missing BCC row must be rejected");
+    assert!(err.contains("missing BCC correction"), "{err}");
+}

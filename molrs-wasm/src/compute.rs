@@ -37,27 +37,29 @@
 //!   high throughput analysis of particle simulation data. *Computer
 //!   Physics Communications*, 254, 107275.
 
+use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
 use molrs::system::topology::{Topology as RsTopology, TopologyRingInfo as RsTopologyRingInfo};
 
-use molrs::compute::center_of_mass::{COMResult as RsCOMResult, CenterOfMass as RsCenterOfMass};
 use molrs::compute::cluster::{Cluster as RsCluster, ClusterResult as RsClusterResult};
-use molrs::compute::cluster_centers::ClusterCenters as RsClusterCenters;
-use molrs::compute::gyration_tensor::GyrationTensor as RsGyrationTensor;
-use molrs::compute::inertia_tensor::InertiaTensor as RsInertiaTensor;
-use molrs::compute::kmeans::KMeans as RsKMeans;
+use molrs::compute::ml::{KMeans as RsKMeans, Pca2 as RsPca2, PcaResult as RsPcaResult};
 use molrs::compute::msd::{MSD as RsMSD, MSDResult as RsMSDResult};
-use molrs::compute::pca::{Pca2 as RsPca2, PcaResult as RsPcaResult};
-use molrs::compute::radius_of_gyration::RadiusOfGyration as RsRadiusOfGyration;
 use molrs::compute::rdf::{RDF as RsRDF, RDFResult as RsRDFResult};
 use molrs::compute::result::{ComputeResult, DescriptorRow};
-use molrs::compute::traits::Compute;
+use molrs::compute::shape::{
+    COMResult as RsCOMResult, CenterOfMass as RsCenterOfMass, ClusterCenters as RsClusterCenters,
+    GyrationTensor as RsGyrationTensor, InertiaTensor as RsInertiaTensor,
+    RadiusOfGyration as RsRadiusOfGyration,
+};
+use molrs::compute::traits::{Compute, Fit};
 use molrs::spatial::neighbors::{
     LinkCell as RsLinkCell, NbListAlgo, NeighborList as RsNeighborList,
     NeighborQuery as RsNeighborQuery, QueryMode,
 };
+use molrs::store::keys;
 use molrs::types::F;
+use ndarray::{Array1, Array2, Array3};
 
 use crate::core::frame::Frame;
 use crate::core::types::JsFloatArray;
@@ -370,6 +372,9 @@ impl NeighborList {
 #[wasm_bindgen(js_name = RDF)]
 pub struct RDF {
     inner: RsRDF,
+    /// Explicit normalization volume (A^3). When unset, `compute` takes the
+    /// volume from `frame.simbox`.
+    volume: Option<F>,
 }
 
 #[wasm_bindgen(js_class = RDF)]
@@ -384,18 +389,32 @@ impl RDF {
     /// * `r_min` - Lower radial cutoff in angstrom (A). Optional, defaults
     ///   to 0 (freud convention). Pairs with `d < rMin` or `d == 0` are
     ///   excluded from the histogram.
+    /// * `volume` - Explicit normalization volume in A^3. Optional; when unset,
+    ///   [`compute`](Self::compute) reads the volume from `frame.simbox`.
+    ///   Required by [`computeWithVolume`](Self::compute_with_volume).
     ///
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const rdf = new RDF(100, 5.0);       // rMin = 0
-    /// const rdf2 = new RDF(100, 5.0, 0.5); // exclude d < 0.5 A
+    /// const rdf  = new RDF(100, 5.0);                  // rMin = 0, box volume
+    /// const rdf2 = new RDF(100, 5.0, 0.5);             // exclude d < 0.5 A
+    /// const rdf3 = new RDF(100, 5.0, null, 1000.0);    // non-periodic frame
     /// ```
     #[wasm_bindgen(constructor)]
-    pub fn new(n_bins: usize, r_max: F, r_min: Option<F>) -> Result<RDF, JsValue> {
+    pub fn new(
+        n_bins: usize,
+        r_max: F,
+        r_min: Option<F>,
+        volume: Option<F>,
+    ) -> Result<RDF, JsValue> {
+        if let Some(v) = volume
+            && !(v.is_finite() && v > 0.0)
+        {
+            return Err(JsValue::from_str("RDF: volume must be finite and > 0"));
+        }
         let inner = RsRDF::new(n_bins, r_max, r_min.unwrap_or(0.0))
             .map_err(|e| JsValue::from_str(&format!("RDF: {e}")))?;
-        Ok(Self { inner })
+        Ok(Self { inner, volume })
     }
 
     /// Compute g(r) using the simulation-box volume from `frame.simbox`.
@@ -430,24 +449,24 @@ impl RDF {
     /// # Arguments
     ///
     /// * `neighbors` - Pre-built [`NeighborList`]
-    /// * `volume` - Normalization volume in A^3 (must be finite and > 0)
+    ///
+    /// # Errors
+    ///
+    /// Throws unless the instance was constructed with a `volume`.
     ///
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const result = rdf.computeWithVolume(nlist, 1000.0);
+    /// const rdf = new RDF(100, 5.0, null, 1000.0);
+    /// const result = rdf.computeWithVolume(nlist);
     /// ```
     #[wasm_bindgen(js_name = computeWithVolume)]
-    pub fn compute_with_volume(
-        &self,
-        neighbors: &NeighborList,
-        volume: F,
-    ) -> Result<RDFResult, JsValue> {
-        if !(volume.is_finite() && volume > 0.0) {
-            return Err(JsValue::from_str(
-                "RDF computeWithVolume: volume must be finite and > 0",
-            ));
-        }
+    pub fn compute_with_volume(&self, neighbors: &NeighborList) -> Result<RDFResult, JsValue> {
+        let volume = self.volume.ok_or_else(|| {
+            JsValue::from_str(
+                "RDF computeWithVolume: construct the RDF with an explicit volume first",
+            )
+        })?;
         let box_len = volume.cbrt();
         let simbox = molrs::spatial::region::simbox::SimBox::cube(
             box_len,
@@ -1539,7 +1558,7 @@ impl TopologyRingInfo {
 // PCA — 2-component Principal Component Analysis
 // ===========================================================================
 
-/// Stateless wrapper for [`molrs::compute::pca::Pca2`].
+/// Stateless wrapper for [`molrs::compute::ml::pca::Pca2`].
 ///
 /// All configuration lives on [`fitTransform`](Self::fit_transform).
 ///
@@ -1650,7 +1669,7 @@ impl WasmPcaResult {
 // k-means — with k-means++ init
 // ===========================================================================
 
-/// Wrapper for [`molrs::compute::kmeans::KMeans`].
+/// Wrapper for [`molrs::compute::ml::kmeans::KMeans`].
 ///
 /// # Example (JavaScript)
 ///
@@ -1710,7 +1729,7 @@ impl WasmKMeans {
                 n_dims
             )));
         }
-        let pca = molrs::compute::pca::PcaResult {
+        let pca = molrs::compute::PcaResult {
             coords: coords.to_vec(),
             variance: [0.0 as F, 0.0 as F],
         };
@@ -1722,5 +1741,4009 @@ impl WasmKMeans {
         let out = Int32Array::new_with_length(labels.0.len() as u32);
         out.copy_from(&labels.0);
         Ok(out)
+    }
+}
+
+// ===========================================================================
+// Extended molrs compute API
+// ===========================================================================
+
+fn js_value<T: Serialize>(value: &T) -> Result<JsValue, JsValue> {
+    serde_wasm_bindgen::to_value(value)
+        .map_err(|e| JsValue::from_str(&format!("serialize wasm result: {e}")))
+}
+
+fn array1(data: &[F]) -> Array1<F> {
+    Array1::from_vec(data.to_vec())
+}
+
+fn array2(data: &[F], rows: usize, cols: usize, name: &str) -> Result<Array2<F>, JsValue> {
+    if data.len() != rows * cols {
+        return Err(JsValue::from_str(&format!(
+            "{name}: data length {} != rows * cols = {} * {}",
+            data.len(),
+            rows,
+            cols
+        )));
+    }
+    Array2::from_shape_vec((rows, cols), data.to_vec())
+        .map_err(|e| JsValue::from_str(&format!("{name}: {e}")))
+}
+
+fn array3(
+    data: &[F],
+    dim0: usize,
+    dim1: usize,
+    dim2: usize,
+    name: &str,
+) -> Result<Array3<F>, JsValue> {
+    if data.len() != dim0 * dim1 * dim2 {
+        return Err(JsValue::from_str(&format!(
+            "{name}: data length {} != dim0 * dim1 * dim2 = {} * {} * {}",
+            data.len(),
+            dim0,
+            dim1,
+            dim2
+        )));
+    }
+    Array3::from_shape_vec((dim0, dim1, dim2), data.to_vec())
+        .map_err(|e| JsValue::from_str(&format!("{name}: {e}")))
+}
+
+fn vectors3(data: &[F], name: &str) -> Result<Vec<[F; 3]>, JsValue> {
+    if !data.len().is_multiple_of(3) {
+        return Err(JsValue::from_str(&format!(
+            "{name}: expected flat [x,y,z,...] length divisible by 3"
+        )));
+    }
+    Ok(data.chunks_exact(3).map(|v| [v[0], v[1], v[2]]).collect())
+}
+
+fn quats(data: &[F], name: &str) -> Result<Vec<[F; 4]>, JsValue> {
+    if !data.len().is_multiple_of(4) {
+        return Err(JsValue::from_str(&format!(
+            "{name}: expected flat [w,x,y,z,...] length divisible by 4"
+        )));
+    }
+    Ok(data
+        .chunks_exact(4)
+        .map(|v| [v[0], v[1], v[2], v[3]])
+        .collect())
+}
+
+fn u32_pairs(data: &[u32], name: &str) -> Result<Vec<(u32, u32)>, JsValue> {
+    if !data.len().is_multiple_of(2) {
+        return Err(JsValue::from_str(&format!("{name}: expected pairs")));
+    }
+    Ok(data.chunks_exact(2).map(|p| (p[0], p[1])).collect())
+}
+
+fn usize_pairs(data: &[u32], name: &str) -> Result<Vec<(usize, usize)>, JsValue> {
+    Ok(u32_pairs(data, name)?
+        .into_iter()
+        .map(|(a, b)| (a as usize, b as usize))
+        .collect())
+}
+
+fn usize_vec(data: &[u32]) -> Vec<usize> {
+    data.iter().map(|&v| v as usize).collect()
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SeriesOut {
+    lag_times: Vec<F>,
+    values: Vec<F>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SpectrumOut {
+    frequencies: Vec<F>,
+    intensities: Vec<F>,
+    resolution: usize,
+    n_frames: usize,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RamanSpectrumOut {
+    frequencies: Vec<F>,
+    isotropic: Vec<F>,
+    anisotropic: Vec<F>,
+    parallel: Option<Vec<F>>,
+    perpendicular: Option<Vec<F>>,
+    resolution: usize,
+    n_frames: usize,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DielectricSpectrumOut {
+    frequencies: Vec<F>,
+    eps_real: Vec<F>,
+    eps_imag: Vec<F>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Grid2Out {
+    data: Vec<F>,
+    shape: [usize; 2],
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Grid3Out<T: Serialize> {
+    data: Vec<T>,
+    shape: [usize; 3],
+}
+
+fn spectrum_out(r: molrs::compute::SpectrumResult) -> SpectrumOut {
+    SpectrumOut {
+        frequencies: r.frequencies_cm1.to_vec(),
+        intensities: r.intensities.to_vec(),
+        resolution: r.resolution,
+        n_frames: r.n_frames,
+    }
+}
+
+fn raman_out(r: molrs::compute::RamanSpectrumResult) -> RamanSpectrumOut {
+    RamanSpectrumOut {
+        frequencies: r.frequencies_cm1.to_vec(),
+        isotropic: r.isotropic.to_vec(),
+        anisotropic: r.anisotropic.to_vec(),
+        parallel: r.parallel.map(|v| v.to_vec()),
+        perpendicular: r.perpendicular.map(|v| v.to_vec()),
+        resolution: r.resolution,
+        n_frames: r.n_frames,
+    }
+}
+
+fn dielectric_spectrum_out(r: molrs::compute::DielectricSpectrumResult) -> DielectricSpectrumOut {
+    DielectricSpectrumOut {
+        frequencies: r.frequencies.to_vec(),
+        eps_real: r.eps_real.to_vec(),
+        eps_imag: r.eps_imag.to_vec(),
+    }
+}
+
+// ===========================================================================
+// Compute catalog — the single source of truth for downstream UIs
+// ===========================================================================
+//
+// Everything a caller needs to present, configure and dispatch an analysis
+// lives here, so no consumer has to keep a parallel hand-written table that
+// can drift out of sync with the bindings above.
+
+/// Default value of a [`ParamSpec`], serialized untagged so JS sees a bare
+/// `number`, `boolean` or `string`.
+#[derive(Serialize, Clone, Copy)]
+#[serde(untagged)]
+enum ParamDefault {
+    Num(F),
+    Bool(bool),
+    Text(&'static str),
+}
+
+/// One user-facing knob of an analysis.
+///
+/// These are **UI-level** parameters, not a literal mirror of the WASM
+/// constructor: `diffraction.static_structure_factor` exposes `kMin`/`kMax`/`nK`
+/// and the caller expands them into the `k_values` array the constructor wants.
+/// `kind` tells the caller how to render and coerce the value:
+///
+/// | `kind` | JS value |
+/// |--------|----------|
+/// | `int`, `float` | `number` |
+/// | `bool` | `boolean` |
+/// | `select` | one of `options` |
+/// | `intList`, `floatList` | comma-separated `string` → typed array |
+#[derive(Serialize, Clone, Copy)]
+#[serde(rename_all = "camelCase")]
+struct ParamSpec {
+    key: &'static str,
+    label: &'static str,
+    kind: &'static str,
+    default: ParamDefault,
+    /// `true` when the binding accepts `null` for this argument.
+    optional: bool,
+    /// `"ctor"` — a positional constructor argument, in declaration order,
+    /// after any leading arguments the dispatch shape supplies itself. Every
+    /// piece of configuration lives here: `compute` / `fit` take only data.
+    /// `"call"` — the knob configures a *different* object the caller builds
+    /// first (`LinkedCell`'s cutoff, `Cluster`'s min size), never this one.
+    slot: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    min: Option<F>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max: Option<F>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    unit: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    options: Option<&'static [&'static str]>,
+}
+
+const fn base(
+    key: &'static str,
+    label: &'static str,
+    kind: &'static str,
+    default: ParamDefault,
+) -> ParamSpec {
+    ParamSpec {
+        key,
+        label,
+        kind,
+        default,
+        optional: false,
+        slot: "ctor",
+        min: None,
+        max: None,
+        unit: None,
+        options: None,
+    }
+}
+
+fn p_int(key: &'static str, label: &'static str, default: u32, min: F, max: F) -> ParamSpec {
+    ParamSpec {
+        min: Some(min),
+        max: Some(max),
+        ..base(key, label, "int", ParamDefault::Num(F::from(default)))
+    }
+}
+
+fn p_float(
+    key: &'static str,
+    label: &'static str,
+    default: F,
+    unit: Option<&'static str>,
+) -> ParamSpec {
+    ParamSpec {
+        unit,
+        ..base(key, label, "float", ParamDefault::Num(default))
+    }
+}
+
+fn p_bool(key: &'static str, label: &'static str, default: bool) -> ParamSpec {
+    base(key, label, "bool", ParamDefault::Bool(default))
+}
+
+fn p_select(
+    key: &'static str,
+    label: &'static str,
+    default: &'static str,
+    options: &'static [&'static str],
+) -> ParamSpec {
+    ParamSpec {
+        options: Some(options),
+        ..base(key, label, "select", ParamDefault::Text(default))
+    }
+}
+
+fn p_list(
+    key: &'static str,
+    label: &'static str,
+    kind: &'static str,
+    default: &'static str,
+) -> ParamSpec {
+    base(key, label, kind, ParamDefault::Text(default))
+}
+
+fn optional(spec: ParamSpec) -> ParamSpec {
+    ParamSpec {
+        optional: true,
+        ..spec
+    }
+}
+
+/// Mark a knob as configuring a helper object the caller builds, not this one.
+fn call(spec: ParamSpec) -> ParamSpec {
+    ParamSpec {
+        slot: "call",
+        ..spec
+    }
+}
+
+/// The `cutoff` knob every neighbor-driven analysis needs to build its
+/// `LinkedCell` before `compute(frame, nlist)`.
+fn p_cutoff(default: F) -> ParamSpec {
+    call(p_float("cutoff", "Neighbor cutoff", default, Some("Å")))
+}
+
+/// A menu category, in the order a picker should present it.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CatalogCategory {
+    id: &'static str,
+    label: &'static str,
+}
+
+/// One analysis: what it is, how to call it, and what it needs.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ComputeCatalogEntry {
+    id: &'static str,
+    category: &'static str,
+    label: &'static str,
+    /// Class exported from this module. Always present — the catalog never
+    /// names a binding that does not exist.
+    wasm_export: &'static str,
+    /// How to drive the binding. The caller dispatches on this, not on `id`.
+    ///
+    /// | `input_kind` | invocation |
+    /// |--------------|-----------|
+    /// | `frame` | `compute(frame)` |
+    /// | `frameNeighbors` | `compute(frame, nlist)`, `nlist` from `cutoff` |
+    /// | `frameClusters` | `compute(frame, clusterResult)` |
+    /// | `frameGroups` | `compute(frame, atomIndexTuples)` |
+    /// | `frameGroupSets` | `compute(frame, number[][])` |
+    /// | `frameRadii` | `compute(frame, radii, …)` — Voronoi family |
+    /// | `accumulate` | `feed(frame)` per frame, then `compute()` / `results()` |
+    /// | `series` | `compute(…)` / `fit(…)` over raw arrays; no `Frame` |
+    input_kind: &'static str,
+    /// Shape of the payload, for picking a renderer.
+    result_kind: &'static str,
+    /// Per-atom or per-trajectory inputs needed **beyond positions**. A caller
+    /// that cannot supply one of these should disable the entry and say which.
+    requires: &'static [&'static str],
+    params: Vec<ParamSpec>,
+}
+
+const CATEGORIES: [CatalogCategory; 18] = [
+    CatalogCategory {
+        id: "rdf",
+        label: "RDF",
+    },
+    CatalogCategory {
+        id: "msd",
+        label: "MSD",
+    },
+    CatalogCategory {
+        id: "transport",
+        label: "Transport",
+    },
+    CatalogCategory {
+        id: "dynamics",
+        label: "Dynamics",
+    },
+    CatalogCategory {
+        id: "spectroscopy",
+        label: "Spectroscopy",
+    },
+    CatalogCategory {
+        id: "dielectric",
+        label: "Dielectric",
+    },
+    CatalogCategory {
+        id: "fit",
+        label: "Fit",
+    },
+    CatalogCategory {
+        id: "cluster",
+        label: "Cluster",
+    },
+    CatalogCategory {
+        id: "shape",
+        label: "Shape",
+    },
+    CatalogCategory {
+        id: "density",
+        label: "Density",
+    },
+    CatalogCategory {
+        id: "order",
+        label: "Order",
+    },
+    CatalogCategory {
+        id: "environment",
+        label: "Environment",
+    },
+    CatalogCategory {
+        id: "diffraction",
+        label: "Diffraction",
+    },
+    CatalogCategory {
+        id: "distribution",
+        label: "Distribution",
+    },
+    CatalogCategory {
+        id: "pmft",
+        label: "PMFT",
+    },
+    CatalogCategory {
+        id: "hbond",
+        label: "Hydrogen Bonds",
+    },
+    CatalogCategory {
+        id: "voronoi",
+        label: "Voronoi",
+    },
+    CatalogCategory {
+        id: "ml",
+        label: "ML",
+    },
+];
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ComputeCatalog {
+    /// Bump whenever an entry's `id`, `input_kind` or param keys change.
+    version: u32,
+    categories: &'static [CatalogCategory],
+    analyses: Vec<ComputeCatalogEntry>,
+}
+
+fn entry(
+    id: &'static str,
+    category: &'static str,
+    label: &'static str,
+    wasm_export: &'static str,
+    input_kind: &'static str,
+    result_kind: &'static str,
+    requires: &'static [&'static str],
+    params: Vec<ParamSpec>,
+) -> ComputeCatalogEntry {
+    ComputeCatalogEntry {
+        id,
+        category,
+        label,
+        wasm_export,
+        input_kind,
+        result_kind,
+        requires,
+        params,
+    }
+}
+
+/// Describe every analysis this module exports.
+///
+/// Returns `{ version, categories, analyses }`. Consumers should group
+/// `analyses` by `category` in `categories` order to build a menu.
+#[wasm_bindgen(js_name = molrsComputeCatalog)]
+pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
+    let analyses = vec![
+        // --- rdf ------------------------------------------------------------
+        entry(
+            "rdf.radial_distribution",
+            "rdf",
+            "Radial distribution g(r)",
+            "RDF",
+            "frameNeighbors",
+            "lineSeries",
+            &[],
+            vec![
+                p_cutoff(10.0),
+                p_int("nBins", "Bins", 100, 1.0, 4096.0),
+                p_float("rMax", "r max", 10.0, Some("Å")),
+                optional(p_float("rMin", "r min", 0.0, Some("Å"))),
+            ],
+        ),
+        // --- msd ------------------------------------------------------------
+        entry(
+            "msd.mean_squared_displacement",
+            "msd",
+            "Mean squared displacement",
+            "MSD",
+            "accumulate",
+            "trajectorySeries",
+            &[],
+            vec![],
+        ),
+        // --- transport ------------------------------------------------------
+        entry(
+            "transport.vacf",
+            "transport",
+            "VACF",
+            "WasmVACF",
+            "series",
+            "lineSeries",
+            &["velocity"],
+            // `n_dof` is the column count of the velocity matrix (3 x atoms),
+            // so the caller derives it from the data rather than asking.
+            vec![
+                p_float("dt", "Timestep", 1.0, Some("fs")),
+                p_int("resolution", "Max lag", 200, 1.0, 1e6),
+            ],
+        ),
+        entry(
+            "transport.einstein_diffusion",
+            "transport",
+            "Einstein diffusion",
+            "WasmEinsteinDiffusion",
+            "accumulate",
+            "lineSeries",
+            &[],
+            vec![p_float("dt", "Timestep", 1.0, Some("fs"))],
+        ),
+        entry(
+            "transport.green_kubo_diffusion",
+            "transport",
+            "Green-Kubo diffusion",
+            "WasmGreenKuboDiffusion",
+            "series",
+            "lineSeries",
+            &["velocity"],
+            // `n_dof` is the column count of the velocity matrix (3 x atoms),
+            // so the caller derives it from the data rather than asking.
+            vec![
+                p_float("dt", "Timestep", 1.0, Some("fs")),
+                p_int("resolution", "Max lag", 200, 1.0, 1e6),
+            ],
+        ),
+        entry(
+            "transport.conductivity",
+            "transport",
+            "Conductivity",
+            "WasmGreenKuboConductivity",
+            "series",
+            "lineSeries",
+            &["charge", "velocity"],
+            vec![
+                p_float("dt", "Timestep", 1.0, Some("fs")),
+                p_int("maxLag", "Max lag", 200, 1.0, 1e6),
+            ],
+        ),
+        entry(
+            "transport.einstein_conductivity",
+            "transport",
+            "Einstein conductivity",
+            "WasmEinsteinConductivity",
+            "series",
+            "lineSeries",
+            &["charge"],
+            vec![
+                p_float("dt", "Timestep", 1.0, Some("fs")),
+                p_int("maxLag", "Max lag", 200, 1.0, 1e6),
+            ],
+        ),
+        entry(
+            "transport.onsager_correlation",
+            "transport",
+            "Onsager correlation",
+            "WasmOnsagerCorrelation",
+            "series",
+            "lineSeries",
+            &["charge", "velocity"],
+            vec![
+                p_float("dt", "Timestep", 1.0, Some("fs")),
+                p_int("maxLag", "Max lag", 200, 1.0, 1e6),
+            ],
+        ),
+        // --- dynamics -------------------------------------------------------
+        entry(
+            "dynamics.van_hove_function",
+            "dynamics",
+            "Van Hove function",
+            "WasmVanHove",
+            "accumulate",
+            "matrix",
+            &[],
+            vec![
+                p_int("nRBins", "r bins", 100, 1.0, 4096.0),
+                p_float("rMax", "r max", 10.0, Some("Å")),
+                p_list("lags", "Lags", "intList", "1,2,5,10"),
+                optional(p_int("stride", "Stride", 1, 1.0, 1e6)),
+            ],
+        ),
+        entry(
+            "dynamics.pair_persistence",
+            "dynamics",
+            "Pair persistence",
+            "WasmPairPersistence",
+            "series",
+            "lineSeries",
+            &["atomPairs"],
+            vec![
+                p_float("r0", "Birth radius r0", 3.0, Some("Å")),
+                p_float("r1", "Break radius r1", 3.5, Some("Å")),
+                p_select(
+                    "method",
+                    "Survival method",
+                    "continuous",
+                    &["continuous", "intermittent", "ssp"],
+                ),
+                p_float("dt", "Timestep", 1.0, Some("fs")),
+                p_int("maxLag", "Max lag", 200, 1.0, 1e6),
+                p_bool("excludeSelf", "Exclude self pairs", true),
+            ],
+        ),
+        // --- spectroscopy ---------------------------------------------------
+        entry(
+            "spectroscopy.power_spectrum",
+            "spectroscopy",
+            "Power spectrum",
+            "WasmPowerSpectrum",
+            "series",
+            "lineSeries",
+            &["velocity"],
+            vec![
+                p_float("dtFs", "Timestep", 1.0, Some("fs")),
+                call(p_int("resolution", "Max lag", 200, 1.0, 1e6)),
+            ],
+        ),
+        entry(
+            "spectroscopy.ir_spectrum",
+            "spectroscopy",
+            "IR spectrum",
+            "WasmIRSpectrum",
+            "series",
+            "lineSeries",
+            &["dipole"],
+            vec![
+                p_float("dtFs", "Timestep", 1.0, Some("fs")),
+                call(p_int("resolution", "Max lag", 200, 1.0, 1e6)),
+            ],
+        ),
+        entry(
+            "spectroscopy.raman_spectrum",
+            "spectroscopy",
+            "Raman spectrum",
+            "WasmRamanSpectrum",
+            "series",
+            "lineSeries",
+            &["polarizability"],
+            vec![
+                optional(p_float(
+                    "incidentFrequencyCm1",
+                    "Incident frequency",
+                    0.0,
+                    Some("cm^-1"),
+                )),
+                optional(p_float("temperatureK", "Temperature", 0.0, Some("K"))),
+                optional(p_bool("averaged", "Orientation averaged", false)),
+                p_float("dtFs", "Timestep", 1.0, Some("fs")),
+                call(p_int("resolution", "Max lag", 200, 1.0, 1e6)),
+            ],
+        ),
+        entry(
+            "spectroscopy.vcd_spectrum",
+            "spectroscopy",
+            "VCD spectrum",
+            "WasmVcdSpectrum",
+            "series",
+            "lineSeries",
+            &["dipole", "magneticDipole"],
+            vec![
+                p_float("dtFs", "Timestep", 1.0, Some("fs")),
+                call(p_int("resolution", "Max lag", 200, 1.0, 1e6)),
+            ],
+        ),
+        entry(
+            "spectroscopy.roa_spectrum",
+            "spectroscopy",
+            "ROA spectrum",
+            "WasmRoaSpectrum",
+            "series",
+            "lineSeries",
+            &["polarizability", "gTensor"],
+            vec![
+                optional(p_float(
+                    "incidentFrequencyCm1",
+                    "Incident frequency",
+                    0.0,
+                    Some("cm^-1"),
+                )),
+                optional(p_float("temperatureK", "Temperature", 0.0, Some("K"))),
+                optional(p_bool("averaged", "Orientation averaged", false)),
+                p_float("dtFs", "Timestep", 1.0, Some("fs")),
+                call(p_int("resolution", "Max lag", 200, 1.0, 1e6)),
+            ],
+        ),
+        entry(
+            "spectroscopy.dielectric_spectrum",
+            "spectroscopy",
+            "Dielectric spectrum",
+            "WasmGreenKuboDielectricSpectrum",
+            "series",
+            "lineSeries",
+            &["charge", "velocity"],
+            vec![
+                p_float("dt", "Timestep", 1.0, Some("fs")),
+                p_float("volume", "Box volume", 0.0, Some("Å³")),
+                p_float("temperature", "Temperature", 300.0, Some("K")),
+                optional(p_float("epsilonInf", "ε∞", 1.0, None)),
+            ],
+        ),
+        // --- dielectric -----------------------------------------------------
+        entry(
+            "dielectric.static_dielectric_constant",
+            "dielectric",
+            "Static dielectric constant",
+            "WasmStaticDielectric",
+            "series",
+            "scalar",
+            &["dipole"],
+            vec![
+                p_float("volume", "Box volume", 0.0, Some("Å³")),
+                p_float("temperature", "Temperature", 300.0, Some("K")),
+                optional(p_float("epsilonInf", "ε∞", 1.0, None)),
+            ],
+        ),
+        // --- fit ------------------------------------------------------------
+        entry(
+            "fit.linear_fit",
+            "fit",
+            "Linear fit",
+            "WasmLinearFit",
+            "series",
+            "scalar",
+            &["xySeries"],
+            vec![
+                p_float("startFrac", "Window start", 0.2, None),
+                p_float("endFrac", "Window end", 0.8, None),
+            ],
+        ),
+        entry(
+            "fit.running_integral",
+            "fit",
+            "Running integral",
+            "WasmRunningIntegral",
+            "series",
+            "lineSeries",
+            &["series"],
+            vec![
+                p_float("dt", "Timestep", 1.0, Some("fs")),
+                optional(p_int("nLags", "Lags", 200, 1.0, 1e6)),
+            ],
+        ),
+        entry(
+            "fit.plateau",
+            "fit",
+            "Plateau",
+            "WasmPlateau",
+            "series",
+            "scalar",
+            &["series"],
+            vec![
+                p_float("startFrac", "Window start", 0.2, None),
+                p_float("endFrac", "Window end", 0.8, None),
+            ],
+        ),
+        entry(
+            "fit.debye_fit",
+            "fit",
+            "Debye fit",
+            "WasmDebyeFit",
+            "series",
+            "scalar",
+            &["series"],
+            vec![p_float("dt", "Timestep", 1.0, Some("fs"))],
+        ),
+        // --- cluster --------------------------------------------------------
+        entry(
+            "cluster.connected_components",
+            "cluster",
+            "Cluster analysis",
+            "Cluster",
+            "frameNeighbors",
+            "barSeries",
+            &[],
+            vec![
+                p_cutoff(3.0),
+                p_int("minClusterSize", "Min cluster size", 1, 1.0, 1e6),
+            ],
+        ),
+        // --- shape ----------------------------------------------------------
+        entry(
+            "shape.cluster_properties",
+            "shape",
+            "Radius of gyration",
+            "RadiusOfGyration",
+            "frameClusters",
+            "table",
+            &[],
+            vec![
+                p_cutoff(3.0),
+                call(p_int("minClusterSize", "Min cluster size", 1, 1.0, 1e6)),
+            ],
+        ),
+        entry(
+            "shape.center_of_mass",
+            "shape",
+            "Center of mass",
+            "CenterOfMass",
+            "frameClusters",
+            "table",
+            &[],
+            vec![
+                p_cutoff(3.0),
+                call(p_int("minClusterSize", "Min cluster size", 1, 1.0, 1e6)),
+            ],
+        ),
+        entry(
+            "shape.gyration_tensor",
+            "shape",
+            "Gyration tensor",
+            "GyrationTensor",
+            "frameClusters",
+            "matrix",
+            &[],
+            vec![
+                p_cutoff(3.0),
+                call(p_int("minClusterSize", "Min cluster size", 1, 1.0, 1e6)),
+            ],
+        ),
+        entry(
+            "shape.inertia_tensor",
+            "shape",
+            "Inertia tensor",
+            "InertiaTensor",
+            "frameClusters",
+            "matrix",
+            &[],
+            vec![
+                p_cutoff(3.0),
+                call(p_int("minClusterSize", "Min cluster size", 1, 1.0, 1e6)),
+            ],
+        ),
+        // --- density --------------------------------------------------------
+        entry(
+            "density.correlation_function",
+            "density",
+            "Correlation function",
+            "WasmCorrelationFunction",
+            "frameNeighbors",
+            "lineSeries",
+            &["scalarField"],
+            vec![
+                p_cutoff(10.0),
+                p_int("nBins", "Bins", 100, 1.0, 4096.0),
+                p_float("rMax", "r max", 10.0, Some("Å")),
+                optional(p_float("rMin", "r min", 0.0, Some("Å"))),
+            ],
+        ),
+        entry(
+            "density.gaussian_density",
+            "density",
+            "Gaussian density",
+            "WasmGaussianDensity",
+            "frame",
+            "grid3",
+            &[],
+            vec![
+                p_int("nx", "Grid x", 32, 1.0, 512.0),
+                p_int("ny", "Grid y", 32, 1.0, 512.0),
+                p_int("nz", "Grid z", 32, 1.0, 512.0),
+                p_float("sigma", "Sigma", 1.0, Some("Å")),
+                optional(p_float("rMax", "Cutoff", 5.0, Some("Å"))),
+            ],
+        ),
+        entry(
+            "density.local_density",
+            "density",
+            "Local density",
+            "WasmLocalDensity",
+            "frameNeighbors",
+            "lineSeries",
+            &[],
+            vec![
+                p_cutoff(5.0),
+                p_float("rMax", "r max", 5.0, Some("Å")),
+                optional(p_float("diameter", "Particle diameter", 1.0, Some("Å"))),
+            ],
+        ),
+        entry(
+            "density.spatial_distribution",
+            "density",
+            "Spatial distribution",
+            "WasmSpatialDistribution",
+            "accumulate",
+            "grid3",
+            &["referenceAtoms", "template", "targetAtoms"],
+            vec![
+                p_int("nx", "Grid x", 32, 1.0, 512.0),
+                p_int("ny", "Grid y", 32, 1.0, 512.0),
+                p_int("nz", "Grid z", 32, 1.0, 512.0),
+                p_float("extentX", "Extent x", 10.0, Some("Å")),
+                p_float("extentY", "Extent y", 10.0, Some("Å")),
+                p_float("extentZ", "Extent z", 10.0, Some("Å")),
+                optional(p_float("bulkDensity", "Bulk density", 0.0, Some("Å⁻³"))),
+            ],
+        ),
+        entry(
+            "density.sphere_voxelization",
+            "density",
+            "Sphere voxelization",
+            "WasmSphereVoxelization",
+            "frame",
+            "grid3",
+            &[],
+            vec![
+                p_int("nx", "Grid x", 32, 1.0, 512.0),
+                p_int("ny", "Grid y", 32, 1.0, 512.0),
+                p_int("nz", "Grid z", 32, 1.0, 512.0),
+                p_float("rMax", "Sphere radius", 2.0, Some("Å")),
+            ],
+        ),
+        // --- order ----------------------------------------------------------
+        entry(
+            "order.steinhardt",
+            "order",
+            "Steinhardt",
+            "WasmSteinhardt",
+            "frameNeighbors",
+            "matrix",
+            &[],
+            vec![
+                p_cutoff(3.0),
+                p_list("lValues", "l values", "intList", "6"),
+                optional(p_bool("average", "Averaged", false)),
+                optional(p_bool("wl", "Compute w_l", false)),
+                optional(p_bool("wlNormalize", "Normalize w_l", false)),
+            ],
+        ),
+        entry(
+            "order.hexatic",
+            "order",
+            "Hexatic",
+            "WasmHexatic",
+            "frameNeighbors",
+            "lineSeries",
+            &[],
+            vec![p_cutoff(3.0), p_int("k", "Symmetry k", 6, 1.0, 32.0)],
+        ),
+        entry(
+            "order.nematic",
+            "order",
+            "Nematic",
+            "WasmNematic",
+            "series",
+            "scalar",
+            &["orientation"],
+            vec![],
+        ),
+        entry(
+            "order.cubatic",
+            "order",
+            "Cubatic",
+            "WasmCubatic",
+            "series",
+            "scalar",
+            &["orientation"],
+            vec![
+                optional(p_int("seed", "Seed", 0, 0.0, 4.294e9)),
+                optional(p_float("initialTemp", "Initial temperature", 5.0, None)),
+                optional(p_float("coolingRate", "Cooling rate", 0.9, None)),
+                optional(p_int("nSteps", "Steps", 100, 1.0, 1e6)),
+                optional(p_int("nChains", "Chains", 10, 1.0, 1e4)),
+            ],
+        ),
+        entry(
+            "order.solid_liquid",
+            "order",
+            "Solid-liquid",
+            "WasmSolidLiquid",
+            "frameNeighbors",
+            "table",
+            &[],
+            vec![
+                p_cutoff(3.0),
+                p_int("l", "l", 6, 0.0, 32.0),
+                optional(p_float("qThreshold", "q threshold", 0.7, None)),
+                optional(p_int("nThreshold", "Neighbor threshold", 6, 0.0, 64.0)),
+                optional(p_bool("normalizeQ", "Normalize q", true)),
+            ],
+        ),
+        entry(
+            "order.rotational_autocorrelation",
+            "order",
+            "Rotational autocorrelation",
+            "WasmRotationalAutocorrelation",
+            "series",
+            "lineSeries",
+            &["orientation"],
+            vec![p_int("l", "l", 2, 0.0, 32.0)],
+        ),
+        // --- environment ----------------------------------------------------
+        entry(
+            "environment.bond_order",
+            "environment",
+            "Bond order",
+            "WasmBondOrder",
+            "frameNeighbors",
+            "matrix",
+            &[],
+            vec![
+                p_cutoff(3.0),
+                p_int("nTheta", "θ bins", 60, 1.0, 512.0),
+                p_int("nPhi", "φ bins", 30, 1.0, 512.0),
+            ],
+        ),
+        entry(
+            "environment.local_descriptors",
+            "environment",
+            "Local descriptors",
+            "WasmLocalDescriptors",
+            "frameNeighbors",
+            "matrix",
+            &[],
+            vec![p_cutoff(3.0), p_int("lMax", "l max", 6, 0.0, 32.0)],
+        ),
+        entry(
+            "environment.angular_separation",
+            "environment",
+            "Angular separation",
+            "WasmAngularSeparation",
+            "series",
+            "lineSeries",
+            &["orientation"],
+            vec![optional(p_bool(
+                "equivalentOrientations",
+                "Fold equivalent orientations",
+                false,
+            ))],
+        ),
+        entry(
+            "environment.environment_matching",
+            "environment",
+            "Environment matching",
+            "WasmMatchEnv",
+            "frameNeighbors",
+            "table",
+            &[],
+            vec![
+                p_cutoff(3.0),
+                p_float("rmsdThreshold", "RMSD threshold", 0.1, Some("Å")),
+                optional(p_bool("registration", "Registration", false)),
+                optional(p_int(
+                    "maxNeighborsForRegistration",
+                    "Max neighbors",
+                    12,
+                    1.0,
+                    128.0,
+                )),
+            ],
+        ),
+        // --- diffraction ----------------------------------------------------
+        entry(
+            "diffraction.static_structure_factor",
+            "diffraction",
+            "Static structure factor S(k)",
+            "WasmStaticStructureFactorDebye",
+            "frame",
+            "lineSeries",
+            &[],
+            vec![
+                p_float("kMin", "k min", 0.1, Some("Å⁻¹")),
+                p_float("kMax", "k max", 10.0, Some("Å⁻¹")),
+                p_int("nK", "k samples", 100, 1.0, 4096.0),
+            ],
+        ),
+        entry(
+            "diffraction.diffraction_pattern",
+            "diffraction",
+            "Diffraction pattern",
+            "WasmDiffractionPattern",
+            "frame",
+            "matrix",
+            &[],
+            vec![
+                p_int("nGrid", "Grid", 512, 8.0, 4096.0),
+                p_float("sigma", "Sigma", 1.0, None),
+                optional(p_int("axis", "Zone axis", 2, 0.0, 2.0)),
+            ],
+        ),
+        // --- distribution ---------------------------------------------------
+        entry(
+            "distribution.distance_distribution",
+            "distribution",
+            "Distance distribution",
+            "WasmDistanceDistribution",
+            "frameGroups",
+            "lineSeries",
+            &["atomPairs"],
+            vec![
+                p_int("nBins", "Bins", 100, 1.0, 4096.0),
+                p_float("min", "Min", 0.0, Some("Å")),
+                p_float("max", "Max", 10.0, Some("Å")),
+            ],
+        ),
+        entry(
+            "distribution.angle_distribution",
+            "distribution",
+            "Angle distribution",
+            "WasmAngleDistribution",
+            "frameGroups",
+            "lineSeries",
+            &["atomTriples"],
+            vec![p_int("nBins", "Bins", 100, 1.0, 4096.0)],
+        ),
+        entry(
+            "distribution.dihedral_distribution",
+            "distribution",
+            "Dihedral distribution",
+            "WasmDihedralDistribution",
+            "frameGroups",
+            "lineSeries",
+            &["atomQuads"],
+            vec![p_int("nBins", "Bins", 100, 1.0, 4096.0)],
+        ),
+        entry(
+            "distribution.combined_distribution",
+            "distribution",
+            "Combined distribution",
+            "WasmCombinedDistribution",
+            "frameGroupSets",
+            "matrix",
+            &["atomGroups"],
+            vec![
+                p_list("kinds", "Observables", "textList", "distance,angle"),
+                p_list("bins", "Bins per axis", "intList", "50,50"),
+                p_list("mins", "Axis minima", "floatList", "0,0"),
+                p_list("maxs", "Axis maxima", "floatList", "10,3.14159265"),
+                optional(p_list("sinWeight", "sin θ weighting", "intList", "0,1")),
+            ],
+        ),
+        // --- pmft -----------------------------------------------------------
+        entry(
+            "pmft.pmft_r12",
+            "pmft",
+            "PMFT R12",
+            "WasmPMFTR12",
+            "frameNeighbors",
+            "matrix",
+            &["orientation"],
+            vec![
+                p_cutoff(5.0),
+                p_float("rMax", "r max", 5.0, Some("Å")),
+                p_int("nR", "r bins", 50, 1.0, 1024.0),
+                p_int("nT1", "θ₁ bins", 36, 1.0, 1024.0),
+                p_int("nT2", "θ₂ bins", 36, 1.0, 1024.0),
+            ],
+        ),
+        entry(
+            "pmft.pmft_xy",
+            "pmft",
+            "PMFT XY",
+            "WasmPMFTXY",
+            "frameNeighbors",
+            "matrix",
+            &[],
+            vec![
+                p_cutoff(5.0),
+                p_float("xMax", "x max", 5.0, Some("Å")),
+                p_float("yMax", "y max", 5.0, Some("Å")),
+                p_int("nX", "x bins", 50, 1.0, 1024.0),
+                p_int("nY", "y bins", 50, 1.0, 1024.0),
+            ],
+        ),
+        entry(
+            "pmft.pmft_xyt",
+            "pmft",
+            "PMFT XYT",
+            "WasmPMFTXYT",
+            "frameNeighbors",
+            "matrix",
+            &["orientation"],
+            vec![
+                p_cutoff(5.0),
+                p_float("xMax", "x max", 5.0, Some("Å")),
+                p_float("yMax", "y max", 5.0, Some("Å")),
+                p_int("nX", "x bins", 50, 1.0, 1024.0),
+                p_int("nY", "y bins", 50, 1.0, 1024.0),
+                p_int("nT", "θ bins", 36, 1.0, 1024.0),
+            ],
+        ),
+        entry(
+            "pmft.pmft_xyz",
+            "pmft",
+            "PMFT XYZ",
+            "WasmPMFTXYZ",
+            "frameNeighbors",
+            "matrix",
+            &[],
+            vec![
+                p_cutoff(5.0),
+                p_float("xMax", "x max", 5.0, Some("Å")),
+                p_float("yMax", "y max", 5.0, Some("Å")),
+                p_float("zMax", "z max", 5.0, Some("Å")),
+                p_int("nX", "x bins", 30, 1.0, 512.0),
+                p_int("nY", "y bins", 30, 1.0, 512.0),
+                p_int("nZ", "z bins", 30, 1.0, 512.0),
+            ],
+        ),
+        // --- hbond ----------------------------------------------------------
+        entry(
+            "hbond.hydrogen_bond_detection",
+            "hbond",
+            "Hydrogen-bond detection",
+            "WasmHBonds",
+            "accumulate",
+            "table",
+            &["donors", "acceptors"],
+            vec![
+                optional(p_float("distCutoff", "Distance cutoff", 3.5, Some("Å"))),
+                optional(p_select(
+                    "distKind",
+                    "Distance criterion",
+                    "donor_acceptor",
+                    &["donor_acceptor", "hydrogen_acceptor"],
+                )),
+                optional(p_float("angleCutoff", "Angle cutoff", 150.0, Some("°"))),
+            ],
+        ),
+        entry(
+            "hbond.lifetime",
+            "hbond",
+            "Lifetime",
+            "WasmHBondLifetime",
+            "series",
+            "lineSeries",
+            &["hbondPresence"],
+            vec![
+                p_float("dt", "Timestep", 1.0, Some("fs")),
+                p_int("maxLag", "Max lag", 200, 1.0, 1e6),
+            ],
+        ),
+        entry(
+            "hbond.network_components",
+            "hbond",
+            "Network components",
+            "WasmHBondNetwork",
+            "series",
+            "table",
+            &["hbondEdges"],
+            vec![],
+        ),
+        // --- voronoi --------------------------------------------------------
+        entry(
+            "voronoi.radical_voronoi",
+            "voronoi",
+            "Radical Voronoi",
+            "WasmRadicalVoronoi",
+            "frameRadii",
+            "table",
+            &[],
+            vec![p_bool("useAtomRadii", "Weight by covalent radii", true)],
+        ),
+        entry(
+            "voronoi.domain_analysis",
+            "voronoi",
+            "Domain analysis",
+            "WasmVoronoiDomainAnalysis",
+            "frameRadii",
+            "table",
+            &["labels"],
+            vec![
+                p_bool("useAtomRadii", "Weight by covalent radii", true),
+                call(p_select(
+                    "labelBy",
+                    "Label cells by",
+                    "element",
+                    &[keys::ELEMENT, keys::MOL_ID, keys::TYPE],
+                )),
+            ],
+        ),
+        entry(
+            "voronoi.void_analysis",
+            "voronoi",
+            "Void analysis",
+            "WasmVoronoiVoidAnalysis",
+            "frameRadii",
+            "table",
+            &["voidMask"],
+            vec![
+                p_bool("useAtomRadii", "Weight by covalent radii", true),
+                optional(p_float("boxVolume", "Box volume", 0.0, Some("Å³"))),
+            ],
+        ),
+        // --- ml -------------------------------------------------------------
+        entry(
+            "ml.pca",
+            "ml",
+            "PCA",
+            "WasmPca2",
+            "series",
+            "custom",
+            &["descriptorMatrix"],
+            vec![],
+        ),
+        entry(
+            "ml.kmeans",
+            "ml",
+            "k-means",
+            "WasmKMeans",
+            "series",
+            "custom",
+            &["descriptorMatrix"],
+            vec![
+                p_int("k", "Clusters", 3, 1.0, 1024.0),
+                p_int("maxIter", "Max iterations", 100, 1.0, 1e5),
+                p_int("seed", "Seed", 0, 0.0, 4.294e9),
+            ],
+        ),
+    ];
+
+    js_value(&ComputeCatalog {
+        version: 1,
+        categories: &CATEGORIES,
+        analyses,
+    })
+}
+
+#[wasm_bindgen(js_name = WasmVACF)]
+pub struct WasmVACF {
+    dt: F,
+    resolution: usize,
+}
+
+#[wasm_bindgen(js_class = WasmVACF)]
+impl WasmVACF {
+    #[wasm_bindgen(constructor)]
+    pub fn new(dt: F, resolution: usize) -> Self {
+        Self { dt, resolution }
+    }
+
+    pub fn compute(
+        &self,
+        velocities: &[F],
+        n_frames: usize,
+        n_dof: usize,
+    ) -> Result<JsValue, JsValue> {
+        let dt = self.dt;
+        let resolution = self.resolution;
+        let v = array2(velocities, n_frames, n_dof, "VACF velocities")?;
+        let frames: [&molrs::store::frame::Frame; 0] = [];
+        let calc = molrs::compute::VACF;
+        let r = calc
+            .compute(&frames, (&v, dt, resolution))
+            .map_err(|e| JsValue::from_str(&format!("VACF: {e}")))?;
+        js_value(&SeriesOut {
+            lag_times: r.lag_times.to_vec(),
+            values: r.acf.to_vec(),
+        })
+    }
+}
+
+#[wasm_bindgen(js_name = WasmGreenKuboDiffusion)]
+pub struct WasmGreenKuboDiffusion {
+    dt: F,
+    resolution: usize,
+}
+
+#[wasm_bindgen(js_class = WasmGreenKuboDiffusion)]
+impl WasmGreenKuboDiffusion {
+    #[wasm_bindgen(constructor)]
+    pub fn new(dt: F, resolution: usize) -> Self {
+        Self { dt, resolution }
+    }
+
+    pub fn compute(
+        &self,
+        velocities: &[F],
+        n_frames: usize,
+        n_dof: usize,
+    ) -> Result<JsValue, JsValue> {
+        let dt = self.dt;
+        let resolution = self.resolution;
+        let v = array2(velocities, n_frames, n_dof, "GreenKuboDiffusion velocities")?;
+        let frames: [&molrs::store::frame::Frame; 0] = [];
+        let calc = molrs::compute::GreenKuboDiffusion;
+        let r = calc
+            .compute(&frames, (&v, dt, resolution))
+            .map_err(|e| JsValue::from_str(&format!("GreenKuboDiffusion: {e}")))?;
+        js_value(&SeriesOut {
+            lag_times: r.lag_times.to_vec(),
+            values: r.acf.to_vec(),
+        })
+    }
+}
+
+#[wasm_bindgen(js_name = WasmGreenKuboConductivity)]
+pub struct WasmGreenKuboConductivity {
+    dt: F,
+    max_lag: usize,
+}
+
+#[wasm_bindgen(js_class = WasmGreenKuboConductivity)]
+impl WasmGreenKuboConductivity {
+    #[wasm_bindgen(constructor)]
+    pub fn new(dt: F, max_lag: usize) -> Self {
+        Self { dt, max_lag }
+    }
+
+    pub fn compute(&self, current: &[F], n_frames: usize) -> Result<JsValue, JsValue> {
+        let dt = self.dt;
+        let max_lag = self.max_lag;
+        let c = array2(current, n_frames, 3, "GreenKuboConductivity current")?;
+        let frames: [&molrs::store::frame::Frame; 0] = [];
+        let calc = molrs::compute::GreenKuboConductivity;
+        let r = calc
+            .compute(&frames, (&c, dt, max_lag))
+            .map_err(|e| JsValue::from_str(&format!("GreenKuboConductivity: {e}")))?;
+        js_value(&SeriesOut {
+            lag_times: r.lag_times.to_vec(),
+            values: r.jacf.to_vec(),
+        })
+    }
+}
+
+#[wasm_bindgen(js_name = WasmEinsteinConductivity)]
+pub struct WasmEinsteinConductivity {
+    dt: F,
+    max_lag: usize,
+}
+
+#[wasm_bindgen(js_class = WasmEinsteinConductivity)]
+impl WasmEinsteinConductivity {
+    #[wasm_bindgen(constructor)]
+    pub fn new(dt: F, max_lag: usize) -> Self {
+        Self { dt, max_lag }
+    }
+
+    pub fn compute(&self, translational_dipole: &[F], n_frames: usize) -> Result<JsValue, JsValue> {
+        let dt = self.dt;
+        let max_lag = self.max_lag;
+        let d = array2(
+            translational_dipole,
+            n_frames,
+            3,
+            "EinsteinConductivity translationalDipole",
+        )?;
+        let frames: [&molrs::store::frame::Frame; 0] = [];
+        let calc = molrs::compute::EinsteinConductivity;
+        let r = calc
+            .compute(&frames, (&d, dt, max_lag))
+            .map_err(|e| JsValue::from_str(&format!("EinsteinConductivity: {e}")))?;
+        js_value(&SeriesOut {
+            lag_times: r.lag_times.to_vec(),
+            values: r.msd.to_vec(),
+        })
+    }
+}
+
+#[wasm_bindgen(js_name = WasmOnsagerCorrelation)]
+pub struct WasmOnsagerCorrelation {
+    dt: F,
+    max_lag: usize,
+}
+
+#[wasm_bindgen(js_class = WasmOnsagerCorrelation)]
+impl WasmOnsagerCorrelation {
+    #[wasm_bindgen(constructor)]
+    pub fn new(dt: F, max_lag: usize) -> Self {
+        Self { dt, max_lag }
+    }
+
+    pub fn compute(&self, pi: &[F], pj: &[F], n_frames: usize) -> Result<JsValue, JsValue> {
+        let dt = self.dt;
+        let max_lag = self.max_lag;
+        let pi = array2(pi, n_frames, 3, "Onsager p_i")?;
+        let pj = array2(pj, n_frames, 3, "Onsager p_j")?;
+        let frames: [&molrs::store::frame::Frame; 0] = [];
+        let calc = molrs::compute::OnsagerCorrelation;
+        let r = calc
+            .compute(&frames, (&pi, &pj, dt, max_lag))
+            .map_err(|e| JsValue::from_str(&format!("OnsagerCorrelation: {e}")))?;
+        js_value(&SeriesOut {
+            lag_times: r.lag_times.to_vec(),
+            values: r.correlation.to_vec(),
+        })
+    }
+}
+
+#[wasm_bindgen(js_name = WasmEinsteinDiffusion)]
+pub struct WasmEinsteinDiffusion {
+    dt: F,
+    frames: Vec<molrs::store::frame::Frame>,
+}
+
+#[wasm_bindgen(js_class = WasmEinsteinDiffusion)]
+impl WasmEinsteinDiffusion {
+    #[wasm_bindgen(constructor)]
+    pub fn new(dt: F) -> Self {
+        Self {
+            dt,
+            frames: Vec::new(),
+        }
+    }
+
+    pub fn feed(&mut self, frame: &Frame) -> Result<(), JsValue> {
+        frame.with_frame(|rs_frame| {
+            self.frames.push(rs_frame.clone());
+            Ok(())
+        })
+    }
+
+    pub fn compute(&self) -> Result<JsValue, JsValue> {
+        let dt = self.dt;
+        let refs: Vec<&molrs::store::frame::Frame> = self.frames.iter().collect();
+        let calc = molrs::compute::EinsteinDiffusion;
+        let r = calc
+            .compute(&refs, molrs::compute::EinsteinDiffusionArgs { dt })
+            .map_err(|e| JsValue::from_str(&format!("EinsteinDiffusion: {e}")))?;
+        js_value(&SeriesOut {
+            lag_times: r.lag_times.to_vec(),
+            values: r.msd.to_vec(),
+        })
+    }
+
+    pub fn reset(&mut self) {
+        self.frames.clear();
+    }
+}
+
+#[wasm_bindgen(js_name = WasmDebyeRelaxation)]
+pub struct WasmDebyeRelaxation {
+    dt: F,
+    max_lag: usize,
+    volume: F,
+    temperature: F,
+    boundary: String,
+}
+
+#[wasm_bindgen(js_class = WasmDebyeRelaxation)]
+impl WasmDebyeRelaxation {
+    #[wasm_bindgen(constructor)]
+    pub fn new(volume: F, temperature: F, boundary: Option<String>, dt: F, max_lag: usize) -> Self {
+        Self {
+            dt,
+            max_lag,
+            volume,
+            temperature,
+            boundary: boundary.unwrap_or_else(|| "tinfoil".to_string()),
+        }
+    }
+
+    pub fn compute(&self, dipoles: &[F], n_frames: usize) -> Result<JsValue, JsValue> {
+        let dt = self.dt;
+        let max_lag = self.max_lag;
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Out {
+            lag_times: Vec<F>,
+            acf: Vec<F>,
+            zero_lag_variance: F,
+            volume: F,
+            temperature: F,
+            boundary: String,
+        }
+
+        let dipoles = array2(dipoles, n_frames, 3, "DebyeRelaxation dipoles")?;
+        let boundary = molrs::compute::EwaldBoundary::from_name(&self.boundary)
+            .map_err(|e| JsValue::from_str(&format!("DebyeRelaxation boundary: {e}")))?;
+        let calc = molrs::compute::DebyeRelaxation {
+            volume: self.volume,
+            temperature: self.temperature,
+            boundary,
+        };
+        let frames: [&molrs::store::frame::Frame; 0] = [];
+        let r = calc
+            .compute(&frames, (&dipoles, dt, max_lag))
+            .map_err(|e| JsValue::from_str(&format!("DebyeRelaxation: {e}")))?;
+        js_value(&Out {
+            lag_times: r.lag_times.to_vec(),
+            acf: r.acf.to_vec(),
+            zero_lag_variance: r.zero_lag_variance,
+            volume: r.volume,
+            temperature: r.temperature,
+            boundary: self.boundary.clone(),
+        })
+    }
+}
+
+#[wasm_bindgen(js_name = WasmIRFlux)]
+pub struct WasmIRFlux {
+    dt: F,
+    resolution: usize,
+}
+
+#[wasm_bindgen(js_class = WasmIRFlux)]
+impl WasmIRFlux {
+    #[wasm_bindgen(constructor)]
+    pub fn new(dt: F, resolution: usize) -> Self {
+        Self { dt, resolution }
+    }
+
+    pub fn compute(&self, dipoles: &[F], n_frames: usize) -> Result<JsValue, JsValue> {
+        let dt = self.dt;
+        let resolution = self.resolution;
+        let dipoles = array2(dipoles, n_frames, 3, "IRFlux dipoles")?;
+        let frames: [&molrs::store::frame::Frame; 0] = [];
+        let calc = molrs::compute::IRFlux;
+        let r = calc
+            .compute(&frames, (&dipoles, dt, resolution))
+            .map_err(|e| JsValue::from_str(&format!("IRFlux: {e}")))?;
+        js_value(&SeriesOut {
+            lag_times: r.lag_times.to_vec(),
+            values: r.acf.to_vec(),
+        })
+    }
+}
+
+#[wasm_bindgen(js_name = WasmRamanTensor)]
+pub struct WasmRamanTensor {
+    dt: F,
+    resolution: usize,
+}
+
+#[wasm_bindgen(js_class = WasmRamanTensor)]
+impl WasmRamanTensor {
+    #[wasm_bindgen(constructor)]
+    pub fn new(dt: F, resolution: usize) -> Self {
+        Self { dt, resolution }
+    }
+
+    pub fn compute(&self, polarizabilities: &[F], n_frames: usize) -> Result<JsValue, JsValue> {
+        let dt = self.dt;
+        let resolution = self.resolution;
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Out {
+            lag_times: Vec<F>,
+            acf_iso: Vec<F>,
+            acf_aniso: Vec<F>,
+        }
+        let p = array2(
+            polarizabilities,
+            n_frames,
+            6,
+            "RamanTensor polarizabilities",
+        )?;
+        let frames: [&molrs::store::frame::Frame; 0] = [];
+        let calc = molrs::compute::RamanTensor;
+        let r = calc
+            .compute(&frames, (&p, dt, resolution))
+            .map_err(|e| JsValue::from_str(&format!("RamanTensor: {e}")))?;
+        js_value(&Out {
+            lag_times: r.lag_times.to_vec(),
+            acf_iso: r.acf_iso.to_vec(),
+            acf_aniso: r.acf_aniso.to_vec(),
+        })
+    }
+}
+
+#[wasm_bindgen(js_name = WasmVcdCrossFlux)]
+pub struct WasmVcdCrossFlux {
+    dt: F,
+    resolution: usize,
+}
+
+#[wasm_bindgen(js_class = WasmVcdCrossFlux)]
+impl WasmVcdCrossFlux {
+    #[wasm_bindgen(constructor)]
+    pub fn new(dt: F, resolution: usize) -> Self {
+        Self { dt, resolution }
+    }
+
+    pub fn compute(
+        &self,
+        electric: &[F],
+        magnetic: &[F],
+        n_frames: usize,
+    ) -> Result<JsValue, JsValue> {
+        let dt = self.dt;
+        let resolution = self.resolution;
+        let e = array2(electric, n_frames, 3, "VcdCrossFlux electric")?;
+        let m = array2(magnetic, n_frames, 3, "VcdCrossFlux magnetic")?;
+        let frames: [&molrs::store::frame::Frame; 0] = [];
+        let calc = molrs::compute::VcdCrossFlux;
+        let r = calc
+            .compute(&frames, (&e, &m, dt, resolution))
+            .map_err(|e| JsValue::from_str(&format!("VcdCrossFlux: {e}")))?;
+        js_value(&SeriesOut {
+            lag_times: r.lag_times.to_vec(),
+            values: r.acf.to_vec(),
+        })
+    }
+}
+
+#[wasm_bindgen(js_name = WasmRoaCrossTensor)]
+pub struct WasmRoaCrossTensor {
+    dt: F,
+    resolution: usize,
+}
+
+#[wasm_bindgen(js_class = WasmRoaCrossTensor)]
+impl WasmRoaCrossTensor {
+    #[wasm_bindgen(constructor)]
+    pub fn new(dt: F, resolution: usize) -> Self {
+        Self { dt, resolution }
+    }
+
+    pub fn compute(
+        &self,
+        electric_pol: &[F],
+        g_tensor: &[F],
+        n_frames: usize,
+    ) -> Result<JsValue, JsValue> {
+        let dt = self.dt;
+        let resolution = self.resolution;
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Out {
+            lag_times: Vec<F>,
+            acf_iso: Vec<F>,
+            acf_aniso: Vec<F>,
+        }
+        let a = array2(electric_pol, n_frames, 6, "RoaCrossTensor electricPol")?;
+        let g = array2(g_tensor, n_frames, 6, "RoaCrossTensor gTensor")?;
+        let frames: [&molrs::store::frame::Frame; 0] = [];
+        let calc = molrs::compute::RoaCrossTensor;
+        let r = calc
+            .compute(&frames, (&a, &g, dt, resolution))
+            .map_err(|e| JsValue::from_str(&format!("RoaCrossTensor: {e}")))?;
+        js_value(&Out {
+            lag_times: r.lag_times.to_vec(),
+            acf_iso: r.acf_iso.to_vec(),
+            acf_aniso: r.acf_aniso.to_vec(),
+        })
+    }
+}
+
+macro_rules! spectrum_fit_class {
+    ($name:ident, $calc:expr) => {
+        #[wasm_bindgen(js_name = $name)]
+        pub struct $name {
+            dt_fs: F,
+        }
+        #[wasm_bindgen(js_class = $name)]
+        impl $name {
+            /// `dt_fs` is the trajectory timestep in femtoseconds.
+            #[wasm_bindgen(constructor)]
+            pub fn new(dt_fs: F) -> Self {
+                Self { dt_fs }
+            }
+            pub fn fit(&self, acf: &[F]) -> Result<JsValue, JsValue> {
+                let y = array1(acf);
+                let r = $calc
+                    .fit((&y, self.dt_fs))
+                    .map_err(|e| JsValue::from_str(&format!("spectrum fit: {e}")))?;
+                js_value(&spectrum_out(r))
+            }
+        }
+    };
+}
+
+spectrum_fit_class!(WasmPowerSpectrum, molrs::compute::PowerSpectrum);
+spectrum_fit_class!(WasmIRSpectrum, molrs::compute::IRSpectrum);
+spectrum_fit_class!(WasmVcdSpectrum, molrs::compute::VcdSpectrum);
+
+#[wasm_bindgen(js_name = WasmRamanSpectrum)]
+pub struct WasmRamanSpectrum {
+    dt_fs: F,
+    incident_frequency_cm1: F,
+    temperature_k: F,
+    averaged: bool,
+}
+
+#[wasm_bindgen(js_class = WasmRamanSpectrum)]
+impl WasmRamanSpectrum {
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        incident_frequency_cm1: Option<F>,
+        temperature_k: Option<F>,
+        averaged: Option<bool>,
+        dt_fs: F,
+    ) -> Self {
+        Self {
+            dt_fs,
+            incident_frequency_cm1: incident_frequency_cm1.unwrap_or(0.0),
+            temperature_k: temperature_k.unwrap_or(0.0),
+            averaged: averaged.unwrap_or(false),
+        }
+    }
+
+    pub fn fit(&self, acf_iso: &[F], acf_aniso: &[F]) -> Result<JsValue, JsValue> {
+        let dt_fs = self.dt_fs;
+        let iso = array1(acf_iso);
+        let aniso = array1(acf_aniso);
+        let calc = molrs::compute::RamanSpectrum {
+            incident_frequency_cm1: self.incident_frequency_cm1,
+            temperature_k: self.temperature_k,
+            averaged: self.averaged,
+        };
+        let r = calc
+            .fit((&iso, &aniso, dt_fs))
+            .map_err(|e| JsValue::from_str(&format!("RamanSpectrum: {e}")))?;
+        js_value(&raman_out(r))
+    }
+}
+
+#[wasm_bindgen(js_name = WasmRoaSpectrum)]
+pub struct WasmRoaSpectrum(WasmRamanSpectrum);
+
+#[wasm_bindgen(js_class = WasmRoaSpectrum)]
+impl WasmRoaSpectrum {
+    /// Same optical configuration as [`WasmRamanSpectrum`]; ROA differs only in
+    /// which cross-correlations are supplied to [`fit`](Self::fit).
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        incident_frequency_cm1: Option<F>,
+        temperature_k: Option<F>,
+        averaged: Option<bool>,
+        dt_fs: F,
+    ) -> Self {
+        Self(WasmRamanSpectrum::new(
+            incident_frequency_cm1,
+            temperature_k,
+            averaged,
+            dt_fs,
+        ))
+    }
+
+    pub fn fit(&self, acf_iso: &[F], acf_aniso: &[F]) -> Result<JsValue, JsValue> {
+        let iso = array1(acf_iso);
+        let aniso = array1(acf_aniso);
+        let calc = molrs::compute::RoaSpectrum {
+            incident_frequency_cm1: self.0.incident_frequency_cm1,
+            temperature_k: self.0.temperature_k,
+            averaged: self.0.averaged,
+        };
+        let r = calc
+            .fit((&iso, &aniso, self.0.dt_fs))
+            .map_err(|e| JsValue::from_str(&format!("RoaSpectrum: {e}")))?;
+        js_value(&raman_out(r))
+    }
+}
+
+#[wasm_bindgen(js_name = WasmEinsteinHelfandDielectricSpectrum)]
+pub struct WasmEinsteinHelfandDielectricSpectrum {
+    dt: F,
+    volume: F,
+    temperature: F,
+    epsilon_inf: F,
+    zero_lag_variance: F,
+}
+
+#[wasm_bindgen(js_class = WasmEinsteinHelfandDielectricSpectrum)]
+impl WasmEinsteinHelfandDielectricSpectrum {
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        dt: F,
+        volume: F,
+        temperature: F,
+        epsilon_inf: Option<F>,
+        zero_lag_variance: F,
+    ) -> Self {
+        Self {
+            dt,
+            volume,
+            temperature,
+            epsilon_inf: epsilon_inf.unwrap_or(1.0),
+            zero_lag_variance,
+        }
+    }
+
+    pub fn fit(&self, acf: &[F]) -> Result<JsValue, JsValue> {
+        let acf = array1(acf);
+        let calc = molrs::compute::EinsteinHelfandSpectrum {
+            dt: self.dt,
+            volume: self.volume,
+            temperature: self.temperature,
+            epsilon_inf: self.epsilon_inf,
+            zero_lag_variance: self.zero_lag_variance,
+        };
+        let r = calc
+            .fit(&acf)
+            .map_err(|e| JsValue::from_str(&format!("EinsteinHelfandDielectricSpectrum: {e}")))?;
+        js_value(&dielectric_spectrum_out(r))
+    }
+}
+
+#[wasm_bindgen(js_name = WasmGreenKuboDielectricSpectrum)]
+pub struct WasmGreenKuboDielectricSpectrum {
+    dt: F,
+    volume: F,
+    temperature: F,
+    epsilon_inf: F,
+    window_type: String,
+}
+
+#[wasm_bindgen(js_class = WasmGreenKuboDielectricSpectrum)]
+impl WasmGreenKuboDielectricSpectrum {
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        dt: F,
+        volume: F,
+        temperature: F,
+        epsilon_inf: Option<F>,
+        window_type: Option<String>,
+    ) -> Self {
+        Self {
+            dt,
+            volume,
+            temperature,
+            epsilon_inf: epsilon_inf.unwrap_or(1.0),
+            window_type: window_type.unwrap_or_else(|| "cosine_sq".to_string()),
+        }
+    }
+
+    pub fn fit(&self, jacf: &[F]) -> Result<JsValue, JsValue> {
+        let jacf = array1(jacf);
+        let calc = molrs::compute::GreenKuboSpectrum {
+            dt: self.dt,
+            volume: self.volume,
+            temperature: self.temperature,
+            epsilon_inf: self.epsilon_inf,
+            window_type: self.window_type.clone(),
+        };
+        let r = calc
+            .fit(&jacf)
+            .map_err(|e| JsValue::from_str(&format!("GreenKuboDielectricSpectrum: {e}")))?;
+        js_value(&dielectric_spectrum_out(r))
+    }
+}
+
+#[wasm_bindgen(js_name = WasmLinearFit)]
+pub struct WasmLinearFit {
+    start_frac: F,
+    end_frac: F,
+}
+
+#[wasm_bindgen(js_class = WasmLinearFit)]
+impl WasmLinearFit {
+    #[wasm_bindgen(constructor)]
+    pub fn new(start_frac: F, end_frac: F) -> Self {
+        Self {
+            start_frac,
+            end_frac,
+        }
+    }
+
+    pub fn fit(&self, x: &[F], y: &[F]) -> Result<JsValue, JsValue> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Out {
+            slope: F,
+            intercept: F,
+            r2: F,
+            fit_start: usize,
+            fit_end: usize,
+        }
+        let x = array1(x);
+        let y = array1(y);
+        let r = molrs::compute::LinearFit {
+            window: (self.start_frac, self.end_frac),
+        }
+        .fit((&x, &y))
+        .map_err(|e| JsValue::from_str(&format!("LinearFit: {e}")))?;
+        js_value(&Out {
+            slope: r.slope,
+            intercept: r.intercept,
+            r2: r.r2,
+            fit_start: r.fit_start,
+            fit_end: r.fit_end,
+        })
+    }
+}
+
+#[wasm_bindgen(js_name = WasmRunningIntegral)]
+pub struct WasmRunningIntegral {
+    dt: F,
+    n_lags: Option<usize>,
+}
+
+#[wasm_bindgen(js_class = WasmRunningIntegral)]
+impl WasmRunningIntegral {
+    #[wasm_bindgen(constructor)]
+    pub fn new(dt: F, n_lags: Option<usize>) -> Self {
+        Self { dt, n_lags }
+    }
+
+    pub fn fit(&self, y: &[F]) -> Result<JsFloatArray, JsValue> {
+        let dt = self.dt;
+        let n_lags = self.n_lags;
+        let y = array1(y);
+        let r = molrs::compute::RunningIntegral
+            .fit((&y, dt, n_lags))
+            .map_err(|e| JsValue::from_str(&format!("RunningIntegral: {e}")))?;
+        Ok(JsFloatArray::from(r.integral.as_slice().unwrap()))
+    }
+}
+
+#[wasm_bindgen(js_name = WasmPlateau)]
+pub struct WasmPlateau {
+    start_frac: F,
+    end_frac: F,
+}
+
+#[wasm_bindgen(js_class = WasmPlateau)]
+impl WasmPlateau {
+    #[wasm_bindgen(constructor)]
+    pub fn new(start_frac: F, end_frac: F) -> Self {
+        Self {
+            start_frac,
+            end_frac,
+        }
+    }
+
+    pub fn fit(&self, y: &[F]) -> Result<JsValue, JsValue> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Out {
+            value: F,
+            n_samples: usize,
+            std: F,
+        }
+        let y = array1(y);
+        let r = molrs::compute::Plateau {
+            window: (self.start_frac, self.end_frac),
+        }
+        .fit(&y)
+        .map_err(|e| JsValue::from_str(&format!("Plateau: {e}")))?;
+        js_value(&Out {
+            value: r.value,
+            n_samples: r.n_samples,
+            std: r.std,
+        })
+    }
+}
+
+#[wasm_bindgen(js_name = WasmDebyeFit)]
+pub struct WasmDebyeFit {
+    dt: F,
+}
+
+#[wasm_bindgen(js_class = WasmDebyeFit)]
+impl WasmDebyeFit {
+    #[wasm_bindgen(constructor)]
+    pub fn new(dt: F) -> Self {
+        Self { dt }
+    }
+
+    pub fn fit(&self, phi: &[F]) -> Result<JsValue, JsValue> {
+        let dt = self.dt;
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Out {
+            tau: F,
+            amplitude: F,
+            n_samples: usize,
+        }
+        let phi = array1(phi);
+        let r = molrs::compute::DebyeFit
+            .fit((&phi, dt))
+            .map_err(|e| JsValue::from_str(&format!("DebyeFit: {e}")))?;
+        js_value(&Out {
+            tau: r.tau,
+            amplitude: r.amplitude,
+            n_samples: r.n_samples,
+        })
+    }
+}
+
+#[wasm_bindgen(js_name = WasmStaticDielectric)]
+pub struct WasmStaticDielectric {
+    volume: F,
+    temperature: F,
+    epsilon_inf: Option<F>,
+}
+
+#[wasm_bindgen(js_class = WasmStaticDielectric)]
+impl WasmStaticDielectric {
+    #[wasm_bindgen(constructor)]
+    pub fn new(volume: F, temperature: F, epsilon_inf: Option<F>) -> Self {
+        Self {
+            volume,
+            temperature,
+            epsilon_inf,
+        }
+    }
+
+    pub fn compute(&self, dipoles: &[F], n_frames: usize) -> Result<JsValue, JsValue> {
+        let volume = self.volume;
+        let temperature = self.temperature;
+        let epsilon_inf = self.epsilon_inf;
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Out {
+            epsilon: F,
+            eps: Vec<F>,
+            eps_mean: F,
+            fluctuation: Vec<F>,
+            dipole_mean: Vec<F>,
+            dipole_sq_mean: Vec<F>,
+            epsilon_inf: F,
+            n_frames: usize,
+        }
+        let dipoles = array2(dipoles, n_frames, 3, "StaticDielectric dipoles")?;
+        let eps_inf = epsilon_inf.unwrap_or(1.0);
+        let epsilon =
+            molrs::compute::static_dielectric_constant(&dipoles, volume, temperature, eps_inf)
+                .map_err(|e| JsValue::from_str(&format!("StaticDielectric: {e}")))?;
+        let c = molrs::compute::static_dielectric_constant_components(
+            &dipoles,
+            volume,
+            temperature,
+            eps_inf,
+        )
+        .map_err(|e| JsValue::from_str(&format!("StaticDielectric components: {e}")))?;
+        js_value(&Out {
+            epsilon,
+            eps: c.eps.to_vec(),
+            eps_mean: c.eps_mean,
+            fluctuation: c.fluctuation.to_vec(),
+            dipole_mean: c.dipole_mean.to_vec(),
+            dipole_sq_mean: c.dipole_sq_mean.to_vec(),
+            epsilon_inf: c.epsilon_inf,
+            n_frames: c.n_frames,
+        })
+    }
+}
+
+#[wasm_bindgen(js_name = WasmVanHove)]
+pub struct WasmVanHove {
+    frames: Vec<molrs::store::frame::Frame>,
+    n_r_bins: usize,
+    r_max: F,
+    lags: Vec<usize>,
+    stride: usize,
+}
+
+#[wasm_bindgen(js_class = WasmVanHove)]
+impl WasmVanHove {
+    #[wasm_bindgen(constructor)]
+    pub fn new(n_r_bins: usize, r_max: F, lags: Vec<usize>, stride: Option<usize>) -> Self {
+        Self {
+            frames: Vec::new(),
+            n_r_bins,
+            r_max,
+            lags,
+            stride: stride.unwrap_or(1),
+        }
+    }
+
+    pub fn feed(&mut self, frame: &Frame) -> Result<(), JsValue> {
+        frame.with_frame(|rs_frame| {
+            self.frames.push(rs_frame.clone());
+            Ok(())
+        })
+    }
+
+    pub fn compute(&self) -> Result<JsValue, JsValue> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Out {
+            r_edges: Vec<F>,
+            r_centers: Vec<F>,
+            lags: Vec<usize>,
+            g_self: Vec<F>,
+            g_distinct: Vec<F>,
+            shape: [usize; 2],
+            dr: F,
+            has_distinct: bool,
+        }
+        let refs: Vec<&molrs::store::frame::Frame> = self.frames.iter().collect();
+        let calc = molrs::compute::VanHove::new(self.n_r_bins, self.r_max, self.lags.clone())
+            .map_err(|e| JsValue::from_str(&format!("VanHove: {e}")))?
+            .with_stride(self.stride);
+        let r = calc
+            .compute(&refs, ())
+            .map_err(|e| JsValue::from_str(&format!("VanHove compute: {e}")))?;
+        let shape = [r.g_self.nrows(), r.g_self.ncols()];
+        js_value(&Out {
+            r_edges: r.r_edges.to_vec(),
+            r_centers: r.r_centers.to_vec(),
+            lags: r.lags,
+            g_self: r.g_self.iter().copied().collect(),
+            g_distinct: r.g_distinct.iter().copied().collect(),
+            shape,
+            dr: r.dr,
+            has_distinct: r.has_distinct,
+        })
+    }
+
+    pub fn reset(&mut self) {
+        self.frames.clear();
+    }
+}
+
+#[wasm_bindgen(js_name = WasmPairPersistence)]
+pub struct WasmPairPersistence {
+    r0: F,
+    r1: F,
+    method: String,
+    dt: F,
+    max_lag: usize,
+    exclude_self: bool,
+}
+
+#[wasm_bindgen(js_class = WasmPairPersistence)]
+impl WasmPairPersistence {
+    #[wasm_bindgen(constructor)]
+    pub fn new(r0: F, r1: F, method: String, dt: F, max_lag: usize, exclude_self: bool) -> Self {
+        Self {
+            r0,
+            r1,
+            method,
+            dt,
+            max_lag,
+            exclude_self,
+        }
+    }
+
+    pub fn compute(
+        &self,
+        coords_i: &[F],
+        n_frames: usize,
+        n_i: usize,
+        coords_j: &[F],
+        n_j: usize,
+        box_lengths: &[F],
+    ) -> Result<JsValue, JsValue> {
+        let r0 = self.r0;
+        let r1 = self.r1;
+        let method = self.method.clone();
+        let dt = self.dt;
+        let max_lag = self.max_lag;
+        let exclude_self = self.exclude_self;
+        let ci = array3(coords_i, n_frames, n_i, 3, "PairPersistence coords_i")?;
+        let cj = array3(coords_j, n_frames, n_j, 3, "PairPersistence coords_j")?;
+        let bl = array2(box_lengths, n_frames, 3, "PairPersistence box_lengths")?;
+        let method = molrs::compute::SurvivalMethod::parse(&method)
+            .map_err(|e| JsValue::from_str(&format!("PairPersistence method: {e}")))?;
+        let r = molrs::compute::pair_survival_tcf(
+            &ci,
+            &cj,
+            &bl,
+            r0,
+            r1,
+            method,
+            dt,
+            max_lag,
+            exclude_self,
+        )
+        .map_err(|e| JsValue::from_str(&format!("PairPersistence: {e}")))?;
+        js_value(&SeriesOut {
+            lag_times: r.lag_times.to_vec(),
+            values: r.correlation.to_vec(),
+        })
+    }
+}
+
+#[wasm_bindgen(js_name = WasmCorrelationFunction)]
+pub struct WasmCorrelationFunction {
+    inner: molrs::compute::CorrelationFunction,
+}
+
+#[wasm_bindgen(js_class = WasmCorrelationFunction)]
+impl WasmCorrelationFunction {
+    #[wasm_bindgen(constructor)]
+    pub fn new(n_bins: usize, r_max: F, r_min: Option<F>) -> Result<Self, JsValue> {
+        Ok(Self {
+            inner: molrs::compute::CorrelationFunction::new(n_bins, r_max, r_min.unwrap_or(0.0))
+                .map_err(|e| JsValue::from_str(&format!("CorrelationFunction: {e}")))?,
+        })
+    }
+
+    pub fn compute(
+        &self,
+        frame: &Frame,
+        neighbors: &NeighborList,
+        values_a: &[F],
+        values_b: &[F],
+    ) -> Result<JsValue, JsValue> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Out {
+            bin_edges: Vec<F>,
+            bin_centers: Vec<F>,
+            bin_counts: Vec<u64>,
+            correlation: Vec<F>,
+        }
+        frame.with_frame(|rs_frame| {
+            let nlists = vec![neighbors.inner.clone()];
+            let va = vec![values_a.to_vec()];
+            let vb = vec![values_b.to_vec()];
+            let args = molrs::compute::density::correlation_function::CorrelationArgs {
+                nlists: &nlists,
+                values_a: &va,
+                values_b: &vb,
+            };
+            let mut out = self
+                .inner
+                .compute(&[rs_frame], args)
+                .map_err(|e| JsValue::from_str(&format!("CorrelationFunction compute: {e}")))?;
+            let r = out
+                .pop()
+                .ok_or_else(|| JsValue::from_str("CorrelationFunction: empty result"))?;
+            js_value(&Out {
+                bin_edges: r.bin_edges.to_vec(),
+                bin_centers: r.bin_centers.to_vec(),
+                bin_counts: r.bin_counts.to_vec(),
+                correlation: r.correlation.to_vec(),
+            })
+        })
+    }
+}
+
+#[wasm_bindgen(js_name = WasmLocalDensity)]
+pub struct WasmLocalDensity {
+    inner: molrs::compute::LocalDensity,
+}
+
+#[wasm_bindgen(js_class = WasmLocalDensity)]
+impl WasmLocalDensity {
+    #[wasm_bindgen(constructor)]
+    pub fn new(r_max: F, diameter: Option<F>) -> Result<Self, JsValue> {
+        let mut inner = molrs::compute::LocalDensity::new(r_max)
+            .map_err(|e| JsValue::from_str(&format!("LocalDensity: {e}")))?;
+        if let Some(d) = diameter {
+            inner = inner.with_diameter(d);
+        }
+        Ok(Self { inner })
+    }
+
+    pub fn compute(&self, frame: &Frame, neighbors: &NeighborList) -> Result<JsValue, JsValue> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Out {
+            num_neighbors: Vec<F>,
+            density: Vec<F>,
+        }
+        frame.with_frame(|rs_frame| {
+            let nlists = vec![neighbors.inner.clone()];
+            let mut out = self
+                .inner
+                .compute(&[rs_frame], &nlists)
+                .map_err(|e| JsValue::from_str(&format!("LocalDensity compute: {e}")))?;
+            let r = out
+                .pop()
+                .ok_or_else(|| JsValue::from_str("LocalDensity: empty result"))?;
+            js_value(&Out {
+                num_neighbors: r.num_neighbors,
+                density: r.density,
+            })
+        })
+    }
+}
+
+#[wasm_bindgen(js_name = WasmGaussianDensity)]
+pub struct WasmGaussianDensity {
+    inner: molrs::compute::GaussianDensity,
+}
+
+#[wasm_bindgen(js_class = WasmGaussianDensity)]
+impl WasmGaussianDensity {
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        nx: usize,
+        ny: usize,
+        nz: usize,
+        sigma: F,
+        r_max: Option<F>,
+    ) -> Result<Self, JsValue> {
+        let mut inner = molrs::compute::GaussianDensity::new(nx, ny, nz, sigma)
+            .map_err(|e| JsValue::from_str(&format!("GaussianDensity: {e}")))?;
+        if let Some(r) = r_max {
+            inner = inner.with_r_max(r);
+        }
+        Ok(Self { inner })
+    }
+
+    pub fn compute(&self, frame: &Frame) -> Result<JsValue, JsValue> {
+        frame.with_frame(|rs_frame| {
+            let mut out = self
+                .inner
+                .compute(&[rs_frame], ())
+                .map_err(|e| JsValue::from_str(&format!("GaussianDensity compute: {e}")))?;
+            let r = out
+                .pop()
+                .ok_or_else(|| JsValue::from_str("GaussianDensity: empty result"))?;
+            let shape = [
+                r.density.shape()[0],
+                r.density.shape()[1],
+                r.density.shape()[2],
+            ];
+            js_value(&Grid3Out {
+                data: r.density.iter().copied().collect::<Vec<F>>(),
+                shape,
+            })
+        })
+    }
+}
+
+#[wasm_bindgen(js_name = WasmSphereVoxelization)]
+pub struct WasmSphereVoxelization {
+    inner: molrs::compute::SphereVoxelization,
+}
+
+#[wasm_bindgen(js_class = WasmSphereVoxelization)]
+impl WasmSphereVoxelization {
+    #[wasm_bindgen(constructor)]
+    pub fn new(nx: usize, ny: usize, nz: usize, r_max: F) -> Result<Self, JsValue> {
+        Ok(Self {
+            inner: molrs::compute::SphereVoxelization::new(nx, ny, nz, r_max)
+                .map_err(|e| JsValue::from_str(&format!("SphereVoxelization: {e}")))?,
+        })
+    }
+
+    pub fn compute(&self, frame: &Frame) -> Result<JsValue, JsValue> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Out {
+            voxels: Grid3Out<u8>,
+            raw_counts: Grid3Out<u32>,
+        }
+        frame.with_frame(|rs_frame| {
+            let mut out = self
+                .inner
+                .compute(&[rs_frame], ())
+                .map_err(|e| JsValue::from_str(&format!("SphereVoxelization compute: {e}")))?;
+            let r = out
+                .pop()
+                .ok_or_else(|| JsValue::from_str("SphereVoxelization: empty result"))?;
+            let shape = [
+                r.voxels.shape()[0],
+                r.voxels.shape()[1],
+                r.voxels.shape()[2],
+            ];
+            js_value(&Out {
+                voxels: Grid3Out {
+                    data: r.voxels.iter().copied().collect::<Vec<u8>>(),
+                    shape,
+                },
+                raw_counts: Grid3Out {
+                    data: r.raw_counts.iter().copied().collect::<Vec<u32>>(),
+                    shape,
+                },
+            })
+        })
+    }
+}
+
+#[wasm_bindgen(js_name = WasmSpatialDistribution)]
+pub struct WasmSpatialDistribution {
+    inner: molrs::compute::SpatialDistribution,
+    frames: Vec<molrs::store::frame::Frame>,
+    bulk_density: Option<F>,
+}
+
+#[wasm_bindgen(js_class = WasmSpatialDistribution)]
+impl WasmSpatialDistribution {
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        reference: &[u32],
+        template: &[F],
+        target: &[u32],
+        nx: usize,
+        ny: usize,
+        nz: usize,
+        extent_x: F,
+        extent_y: F,
+        extent_z: F,
+        bulk_density: Option<F>,
+    ) -> Result<Self, JsValue> {
+        let reference_usize = usize_vec(reference);
+        let target_usize = usize_vec(target);
+        let template = array2(
+            template,
+            reference_usize.len(),
+            3,
+            "SpatialDistribution template",
+        )?;
+        let grid = molrs::compute::GridSpec {
+            n: [nx, ny, nz],
+            extent: [extent_x, extent_y, extent_z],
+        };
+        let mut inner =
+            molrs::compute::SpatialDistribution::new(reference_usize, template, target_usize, grid)
+                .map_err(|e| JsValue::from_str(&format!("SpatialDistribution: {e}")))?;
+        if let Some(rho) = bulk_density {
+            inner = inner.with_bulk_density(rho);
+        }
+        Ok(Self {
+            inner,
+            frames: Vec::new(),
+            bulk_density,
+        })
+    }
+
+    #[wasm_bindgen(js_name = setOrientationPairs)]
+    pub fn set_orientation_pairs(&mut self, pairs: &[u32]) -> Result<(), JsValue> {
+        self.inner = self
+            .inner
+            .clone()
+            .with_orientation(usize_pairs(pairs, "SpatialDistribution orientationPairs")?);
+        Ok(())
+    }
+
+    pub fn feed(&mut self, frame: &Frame) -> Result<(), JsValue> {
+        frame.with_frame(|rs_frame| {
+            self.frames.push(rs_frame.clone());
+            Ok(())
+        })
+    }
+
+    pub fn compute(&self) -> Result<JsValue, JsValue> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Out {
+            counts: Grid3Out<F>,
+            density: Grid3Out<F>,
+            g_sdf: Option<Grid3Out<F>>,
+            orientation: Option<Vec<F>>,
+            orientation_shape: Option<[usize; 4]>,
+            voxel_volume: F,
+            n_frames: usize,
+            bulk_density: Option<F>,
+        }
+        let refs: Vec<&molrs::store::frame::Frame> = self.frames.iter().collect();
+        let r = self
+            .inner
+            .compute(&refs, ())
+            .map_err(|e| JsValue::from_str(&format!("SpatialDistribution compute: {e}")))?;
+        let shape = [r.n[0], r.n[1], r.n[2]];
+        let g_sdf = r.g_sdf.as_ref().map(|g| Grid3Out {
+            data: g.iter().copied().collect::<Vec<F>>(),
+            shape,
+        });
+        let (orientation, orientation_shape) = match r.orientation.as_ref() {
+            Some(o) => (
+                Some(o.iter().copied().collect::<Vec<F>>()),
+                Some([r.n[0], r.n[1], r.n[2], 3]),
+            ),
+            None => (None, None),
+        };
+        js_value(&Out {
+            counts: Grid3Out {
+                data: r.counts.iter().copied().collect::<Vec<F>>(),
+                shape,
+            },
+            density: Grid3Out {
+                data: r.density.iter().copied().collect::<Vec<F>>(),
+                shape,
+            },
+            g_sdf,
+            orientation,
+            orientation_shape,
+            voxel_volume: r.voxel_volume,
+            n_frames: r.n_frames,
+            bulk_density: self.bulk_density,
+        })
+    }
+
+    pub fn reset(&mut self) {
+        self.frames.clear();
+    }
+}
+
+#[wasm_bindgen(js_name = WasmSteinhardt)]
+pub struct WasmSteinhardt {
+    inner: molrs::compute::Steinhardt,
+}
+
+#[wasm_bindgen(js_class = WasmSteinhardt)]
+impl WasmSteinhardt {
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        l_values: &[u32],
+        average: Option<bool>,
+        wl: Option<bool>,
+        wl_normalize: Option<bool>,
+    ) -> Result<Self, JsValue> {
+        let mut inner = molrs::compute::Steinhardt::new(l_values)
+            .map_err(|e| JsValue::from_str(&format!("Steinhardt: {e}")))?;
+        inner = inner
+            .with_average(average.unwrap_or(false))
+            .with_wl(wl.unwrap_or(false))
+            .with_wl_normalize(wl_normalize.unwrap_or(false));
+        Ok(Self { inner })
+    }
+
+    pub fn compute(&self, frame: &Frame, neighbors: &NeighborList) -> Result<JsValue, JsValue> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Out {
+            l: Vec<u32>,
+            ql: Vec<Vec<F>>,
+            wl: Option<Vec<Vec<F>>>,
+            qlm_re_im: Vec<Vec<F>>,
+        }
+        frame.with_frame(|rs_frame| {
+            let nlists = vec![neighbors.inner.clone()];
+            let mut out = self
+                .inner
+                .compute(&[rs_frame], &nlists)
+                .map_err(|e| JsValue::from_str(&format!("Steinhardt compute: {e}")))?;
+            let r = out
+                .pop()
+                .ok_or_else(|| JsValue::from_str("Steinhardt: empty result"))?;
+            let qlm_re_im = r
+                .qlm
+                .iter()
+                .map(|band| band.iter().flat_map(|c| [c.re, c.im]).collect())
+                .collect();
+            js_value(&Out {
+                l: r.l,
+                ql: r.ql,
+                wl: r.wl,
+                qlm_re_im,
+            })
+        })
+    }
+}
+
+#[wasm_bindgen(js_name = WasmHexatic)]
+pub struct WasmHexatic {
+    inner: molrs::compute::Hexatic,
+}
+
+#[wasm_bindgen(js_class = WasmHexatic)]
+impl WasmHexatic {
+    #[wasm_bindgen(constructor)]
+    pub fn new(k: u32) -> Result<Self, JsValue> {
+        Ok(Self {
+            inner: molrs::compute::Hexatic::new(k)
+                .map_err(|e| JsValue::from_str(&format!("Hexatic: {e}")))?,
+        })
+    }
+
+    pub fn compute(&self, frame: &Frame, neighbors: &NeighborList) -> Result<JsValue, JsValue> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Out {
+            k: u32,
+            psi_re_im: Vec<F>,
+        }
+        frame.with_frame(|rs_frame| {
+            let nlists = vec![neighbors.inner.clone()];
+            let mut out = self
+                .inner
+                .compute(&[rs_frame], &nlists)
+                .map_err(|e| JsValue::from_str(&format!("Hexatic compute: {e}")))?;
+            let r = out
+                .pop()
+                .ok_or_else(|| JsValue::from_str("Hexatic: empty result"))?;
+            js_value(&Out {
+                k: r.k,
+                psi_re_im: r.psi.iter().flat_map(|c| [c.re, c.im]).collect(),
+            })
+        })
+    }
+}
+
+#[wasm_bindgen(js_name = WasmNematic)]
+pub struct WasmNematic;
+
+#[wasm_bindgen(js_class = WasmNematic)]
+impl WasmNematic {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub fn compute(&self, directors: &[F]) -> Result<JsValue, JsValue> {
+        let directors = vectors3(directors, "Nematic directors")?;
+        let dummy = molrs::store::frame::Frame::new();
+        let calc = molrs::compute::Nematic::new();
+        let mut out = calc
+            .compute(&[&dummy], &directors)
+            .map_err(|e| JsValue::from_str(&format!("Nematic: {e}")))?;
+        let r = out
+            .pop()
+            .ok_or_else(|| JsValue::from_str("Nematic: empty result"))?;
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Out {
+            order: F,
+            eigenvalues: [F; 3],
+            director: [F; 3],
+            q_tensor: [[F; 3]; 3],
+        }
+        js_value(&Out {
+            order: r.order,
+            eigenvalues: r.eigenvalues,
+            director: r.director,
+            q_tensor: r.q_tensor,
+        })
+    }
+}
+
+#[wasm_bindgen(js_name = WasmCubatic)]
+pub struct WasmCubatic {
+    seed: u64,
+    initial_temp: F,
+    cooling_rate: F,
+    n_steps: usize,
+    n_chains: usize,
+}
+
+#[wasm_bindgen(js_class = WasmCubatic)]
+impl WasmCubatic {
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        seed: Option<f64>,
+        initial_temp: Option<F>,
+        cooling_rate: Option<F>,
+        n_steps: Option<usize>,
+        n_chains: Option<usize>,
+    ) -> Self {
+        Self {
+            seed: seed.unwrap_or(0.0) as u64,
+            initial_temp: initial_temp.unwrap_or(1.0),
+            cooling_rate: cooling_rate.unwrap_or(0.95),
+            n_steps: n_steps.unwrap_or(500),
+            n_chains: n_chains.unwrap_or(4),
+        }
+    }
+
+    pub fn compute(&self, directors: &[F]) -> Result<JsValue, JsValue> {
+        let directors = vectors3(directors, "Cubatic directors")?;
+        let dummy = molrs::store::frame::Frame::new();
+        let calc = molrs::compute::Cubatic::new()
+            .with_seed(self.seed)
+            .with_initial_temp(self.initial_temp)
+            .with_cooling_rate(self.cooling_rate)
+            .with_n_steps(self.n_steps)
+            .with_n_chains(self.n_chains);
+        let mut out = calc
+            .compute(&[&dummy], &directors)
+            .map_err(|e| JsValue::from_str(&format!("Cubatic: {e}")))?;
+        let r = out
+            .pop()
+            .ok_or_else(|| JsValue::from_str("Cubatic: empty result"))?;
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Out {
+            order: F,
+            director_basis: [[F; 3]; 3],
+        }
+        js_value(&Out {
+            order: r.order,
+            director_basis: r.director_basis,
+        })
+    }
+}
+
+#[wasm_bindgen(js_name = WasmSolidLiquid)]
+pub struct WasmSolidLiquid {
+    inner: molrs::compute::SolidLiquid,
+}
+
+#[wasm_bindgen(js_class = WasmSolidLiquid)]
+impl WasmSolidLiquid {
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        l: u32,
+        q_threshold: Option<F>,
+        n_threshold: Option<u32>,
+        normalize_q: Option<bool>,
+    ) -> Self {
+        let mut inner = molrs::compute::SolidLiquid::new(l);
+        if let Some(t) = q_threshold {
+            inner = inner.with_q_threshold(t);
+        }
+        if let Some(n) = n_threshold {
+            inner = inner.with_n_threshold(n);
+        }
+        if let Some(on) = normalize_q {
+            inner = inner.with_normalize_q(on);
+        }
+        Self { inner }
+    }
+
+    pub fn compute(&self, frame: &Frame, neighbors: &NeighborList) -> Result<JsValue, JsValue> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Out {
+            l: u32,
+            n_solid_bonds: Vec<u32>,
+            is_solid: Vec<bool>,
+        }
+        frame.with_frame(|rs_frame| {
+            let nlists = vec![neighbors.inner.clone()];
+            let mut out = self
+                .inner
+                .compute(&[rs_frame], &nlists)
+                .map_err(|e| JsValue::from_str(&format!("SolidLiquid compute: {e}")))?;
+            let r = out
+                .pop()
+                .ok_or_else(|| JsValue::from_str("SolidLiquid: empty result"))?;
+            js_value(&Out {
+                l: r.l,
+                n_solid_bonds: r.n_solid_bonds,
+                is_solid: r.is_solid,
+            })
+        })
+    }
+}
+
+#[wasm_bindgen(js_name = WasmRotationalAutocorrelation)]
+pub struct WasmRotationalAutocorrelation {
+    l: u32,
+}
+
+#[wasm_bindgen(js_class = WasmRotationalAutocorrelation)]
+impl WasmRotationalAutocorrelation {
+    #[wasm_bindgen(constructor)]
+    pub fn new(l: u32) -> Self {
+        Self { l }
+    }
+
+    pub fn compute(&self, reference: &[F], orientations: &[F]) -> Result<JsValue, JsValue> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Out {
+            l: u32,
+            psi: Vec<F>,
+            mean: F,
+        }
+        let reference = quats(reference, "RotationalAutocorrelation reference")?;
+        let orientations = quats(orientations, "RotationalAutocorrelation orientations")?;
+        let dummy = molrs::store::frame::Frame::new();
+        let calc = molrs::compute::RotationalAutocorrelation::new(self.l);
+        let args =
+            molrs::compute::order::rotational_autocorrelation::RotationalAutocorrelationArgs {
+                ref_orientations: &reference,
+                orientations: &orientations,
+            };
+        let mut out = calc
+            .compute(&[&dummy], args)
+            .map_err(|e| JsValue::from_str(&format!("RotationalAutocorrelation: {e}")))?;
+        let r = out
+            .pop()
+            .ok_or_else(|| JsValue::from_str("RotationalAutocorrelation: empty result"))?;
+        js_value(&Out {
+            l: r.l,
+            psi: r.psi,
+            mean: r.mean,
+        })
+    }
+}
+
+#[wasm_bindgen(js_name = WasmBondOrder)]
+pub struct WasmBondOrder {
+    inner: molrs::compute::BondOrder,
+}
+
+#[wasm_bindgen(js_class = WasmBondOrder)]
+impl WasmBondOrder {
+    #[wasm_bindgen(constructor)]
+    pub fn new(n_theta: usize, n_phi: usize) -> Result<Self, JsValue> {
+        Ok(Self {
+            inner: molrs::compute::BondOrder::new(n_theta, n_phi)
+                .map_err(|e| JsValue::from_str(&format!("BondOrder: {e}")))?,
+        })
+    }
+
+    pub fn compute(&self, frame: &Frame, neighbors: &NeighborList) -> Result<JsValue, JsValue> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Out {
+            bond_order: Grid2Out,
+            raw_counts: Vec<u64>,
+            shape: [usize; 2],
+            theta_edges: Vec<F>,
+            phi_edges: Vec<F>,
+        }
+        frame.with_frame(|rs_frame| {
+            let nlists = vec![neighbors.inner.clone()];
+            let mut out = self
+                .inner
+                .compute(&[rs_frame], &nlists)
+                .map_err(|e| JsValue::from_str(&format!("BondOrder compute: {e}")))?;
+            let r = out
+                .pop()
+                .ok_or_else(|| JsValue::from_str("BondOrder: empty result"))?;
+            let shape = [r.bond_order.nrows(), r.bond_order.ncols()];
+            js_value(&Out {
+                bond_order: Grid2Out {
+                    data: r.bond_order.iter().copied().collect(),
+                    shape,
+                },
+                raw_counts: r.raw_counts.iter().copied().collect(),
+                shape,
+                theta_edges: r.theta_edges,
+                phi_edges: r.phi_edges,
+            })
+        })
+    }
+}
+
+#[wasm_bindgen(js_name = WasmLocalDescriptors)]
+pub struct WasmLocalDescriptors {
+    inner: molrs::compute::LocalDescriptors,
+}
+
+#[wasm_bindgen(js_class = WasmLocalDescriptors)]
+impl WasmLocalDescriptors {
+    #[wasm_bindgen(constructor)]
+    pub fn new(l_max: u32) -> Self {
+        Self {
+            inner: molrs::compute::LocalDescriptors::new(l_max),
+        }
+    }
+
+    pub fn compute(&self, frame: &Frame, neighbors: &NeighborList) -> Result<JsValue, JsValue> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Out {
+            l_max: u32,
+            n_sphs: usize,
+            descriptors_re_im: Vec<F>,
+        }
+        frame.with_frame(|rs_frame| {
+            let nlists = vec![neighbors.inner.clone()];
+            let mut out = self
+                .inner
+                .compute(&[rs_frame], &nlists)
+                .map_err(|e| JsValue::from_str(&format!("LocalDescriptors compute: {e}")))?;
+            let r = out
+                .pop()
+                .ok_or_else(|| JsValue::from_str("LocalDescriptors: empty result"))?;
+            js_value(&Out {
+                l_max: r.l_max,
+                n_sphs: r.n_sphs,
+                descriptors_re_im: r.descriptors.iter().flat_map(|c| [c.re, c.im]).collect(),
+            })
+        })
+    }
+}
+
+#[wasm_bindgen(js_name = WasmAngularSeparation)]
+pub struct WasmAngularSeparation {
+    equivalent_orientations: bool,
+}
+
+#[wasm_bindgen(js_class = WasmAngularSeparation)]
+impl WasmAngularSeparation {
+    #[wasm_bindgen(constructor)]
+    pub fn new(equivalent_orientations: Option<bool>) -> Self {
+        Self {
+            equivalent_orientations: equivalent_orientations.unwrap_or(true),
+        }
+    }
+
+    #[wasm_bindgen(js_name = computeGlobal)]
+    pub fn compute_global(&self, query: &[F], global: &[F]) -> Result<JsValue, JsValue> {
+        let query = quats(query, "AngularSeparation query")?;
+        let global = quats(global, "AngularSeparation global")?;
+        let dummy = molrs::store::frame::Frame::new();
+        let calc = molrs::compute::AngularSeparationGlobal::new()
+            .with_equivalent_orientations(self.equivalent_orientations);
+        let args = molrs::compute::environment::angular_separation::AngularSeparationGlobalArgs {
+            query: &query,
+            global: &global,
+        };
+        let mut out = calc
+            .compute(&[&dummy], args)
+            .map_err(|e| JsValue::from_str(&format!("AngularSeparationGlobal: {e}")))?;
+        let r = out
+            .pop()
+            .ok_or_else(|| JsValue::from_str("AngularSeparationGlobal: empty result"))?;
+        let shape = [r.angles.nrows(), r.angles.ncols()];
+        js_value(&Grid2Out {
+            data: r.angles.iter().copied().collect(),
+            shape,
+        })
+    }
+
+    #[wasm_bindgen(js_name = computeNeighbor)]
+    pub fn compute_neighbor(
+        &self,
+        frame: &Frame,
+        neighbors: &NeighborList,
+        query: &[F],
+        points: &[F],
+    ) -> Result<JsFloatArray, JsValue> {
+        let query = quats(query, "AngularSeparation query")?;
+        let points = quats(points, "AngularSeparation points")?;
+        frame.with_frame(|rs_frame| {
+            let nlists = vec![neighbors.inner.clone()];
+            let q = vec![query];
+            let p = vec![points];
+            let calc = molrs::compute::AngularSeparationNeighbor::new()
+                .with_equivalent_orientations(self.equivalent_orientations);
+            let args =
+                molrs::compute::environment::angular_separation::AngularSeparationNeighborArgs {
+                    nlists: &nlists,
+                    query_orientations: &q,
+                    point_orientations: &p,
+                };
+            let mut out = calc
+                .compute(&[rs_frame], args)
+                .map_err(|e| JsValue::from_str(&format!("AngularSeparationNeighbor: {e}")))?;
+            let r = out
+                .pop()
+                .ok_or_else(|| JsValue::from_str("AngularSeparationNeighbor: empty result"))?;
+            Ok(JsFloatArray::from(r.angles.as_slice()))
+        })
+    }
+}
+
+#[wasm_bindgen(js_name = WasmMatchEnv)]
+pub struct WasmMatchEnv {
+    inner: molrs::compute::MatchEnv,
+}
+
+#[wasm_bindgen(js_class = WasmMatchEnv)]
+impl WasmMatchEnv {
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        rmsd_threshold: F,
+        registration: Option<bool>,
+        max_neighbors_for_registration: Option<usize>,
+    ) -> Result<Self, JsValue> {
+        let mut inner = molrs::compute::MatchEnv::new(rmsd_threshold)
+            .map_err(|e| JsValue::from_str(&format!("MatchEnv: {e}")))?;
+        inner = inner.with_registration(registration.unwrap_or(false));
+        if let Some(n) = max_neighbors_for_registration {
+            inner = inner.with_max_neighbors_for_registration(n);
+        }
+        Ok(Self { inner })
+    }
+
+    pub fn compute(&self, frame: &Frame, neighbors: &NeighborList) -> Result<JsValue, JsValue> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Out {
+            cluster_idx: Vec<u32>,
+            n_clusters: usize,
+            fingerprints: Vec<Vec<F>>,
+        }
+        frame.with_frame(|rs_frame| {
+            let nlists = vec![neighbors.inner.clone()];
+            let mut out = self
+                .inner
+                .compute(&[rs_frame], &nlists)
+                .map_err(|e| JsValue::from_str(&format!("MatchEnv compute: {e}")))?;
+            let r = out
+                .pop()
+                .ok_or_else(|| JsValue::from_str("MatchEnv: empty result"))?;
+            js_value(&Out {
+                cluster_idx: r.cluster_idx,
+                n_clusters: r.n_clusters,
+                fingerprints: r.fingerprints,
+            })
+        })
+    }
+}
+
+#[wasm_bindgen(js_name = WasmStaticStructureFactorDebye)]
+pub struct WasmStaticStructureFactorDebye {
+    inner: molrs::compute::StaticStructureFactorDebye,
+}
+
+#[wasm_bindgen(js_class = WasmStaticStructureFactorDebye)]
+impl WasmStaticStructureFactorDebye {
+    /// Sample `n_k` scattering vectors evenly over `[k_min, k_max]` (A^-1).
+    #[wasm_bindgen(constructor)]
+    pub fn new(k_min: F, k_max: F, n_k: usize) -> Result<Self, JsValue> {
+        Ok(Self {
+            inner: molrs::compute::StaticStructureFactorDebye::linspace(k_min, k_max, n_k)
+                .map_err(|e| JsValue::from_str(&format!("StaticStructureFactorDebye: {e}")))?,
+        })
+    }
+
+    /// Sample an explicit, possibly non-uniform, set of scattering vectors.
+    #[wasm_bindgen(js_name = fromKValues)]
+    pub fn from_k_values(k_values: &[F]) -> Result<Self, JsValue> {
+        Ok(Self {
+            inner: molrs::compute::StaticStructureFactorDebye::new(k_values)
+                .map_err(|e| JsValue::from_str(&format!("StaticStructureFactorDebye: {e}")))?,
+        })
+    }
+
+    pub fn compute(&self, frame: &Frame) -> Result<JsValue, JsValue> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Out {
+            k_values: Vec<F>,
+            sk: Vec<F>,
+            n_particles: usize,
+        }
+        frame.with_frame(|rs_frame| {
+            let mut out = self.inner.compute(&[rs_frame], ()).map_err(|e| {
+                JsValue::from_str(&format!("StaticStructureFactorDebye compute: {e}"))
+            })?;
+            let r = out
+                .pop()
+                .ok_or_else(|| JsValue::from_str("StaticStructureFactorDebye: empty result"))?;
+            js_value(&Out {
+                k_values: r.k_values.to_vec(),
+                sk: r.sk.to_vec(),
+                n_particles: r.n_particles,
+            })
+        })
+    }
+}
+
+#[wasm_bindgen(js_name = WasmDiffractionPattern)]
+pub struct WasmDiffractionPattern {
+    inner: molrs::compute::DiffractionPattern,
+}
+
+#[wasm_bindgen(js_class = WasmDiffractionPattern)]
+impl WasmDiffractionPattern {
+    #[wasm_bindgen(constructor)]
+    pub fn new(n_grid: usize, sigma: F, axis: Option<usize>) -> Result<Self, JsValue> {
+        let mut inner = molrs::compute::DiffractionPattern::new(n_grid, sigma)
+            .map_err(|e| JsValue::from_str(&format!("DiffractionPattern: {e}")))?;
+        if let Some(axis) = axis {
+            inner = inner.with_axis(axis);
+        }
+        Ok(Self { inner })
+    }
+
+    pub fn compute(&self, frame: &Frame) -> Result<JsValue, JsValue> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Out {
+            diffraction: Grid2Out,
+            image: Grid2Out,
+        }
+        frame.with_frame(|rs_frame| {
+            let mut out = self
+                .inner
+                .compute(&[rs_frame], ())
+                .map_err(|e| JsValue::from_str(&format!("DiffractionPattern compute: {e}")))?;
+            let r = out
+                .pop()
+                .ok_or_else(|| JsValue::from_str("DiffractionPattern: empty result"))?;
+            let shape = [r.diffraction.nrows(), r.diffraction.ncols()];
+            js_value(&Out {
+                diffraction: Grid2Out {
+                    data: r.diffraction.iter().copied().collect(),
+                    shape,
+                },
+                image: Grid2Out {
+                    data: r.image.iter().copied().collect(),
+                    shape,
+                },
+            })
+        })
+    }
+}
+
+fn distribution_compute<O: molrs::compute::distribution::Observable + Sync>(
+    frame: &Frame,
+    calc: molrs::compute::distribution::DistributionFunction<O>,
+    groups: molrs::compute::distribution::AtomGroups,
+) -> Result<JsValue, JsValue> {
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Out {
+        bin_centers: Vec<F>,
+        bin_edges: Vec<F>,
+        counts: Vec<F>,
+        density: Vec<F>,
+        density_sin_corrected: Option<Vec<F>>,
+        bin_width: F,
+        n_binned: F,
+        n_raw_samples: usize,
+        n_frames: usize,
+        angular: bool,
+    }
+    frame.with_frame(|rs_frame| {
+        let r = calc
+            .compute(&[rs_frame], &groups)
+            .map_err(|e| JsValue::from_str(&format!("Distribution compute: {e}")))?;
+        js_value(&Out {
+            bin_centers: r.bin_centers.to_vec(),
+            bin_edges: r.bin_edges.to_vec(),
+            counts: r.counts.to_vec(),
+            density: r.density.to_vec(),
+            density_sin_corrected: r.density_sin_corrected.map(|v| v.to_vec()),
+            bin_width: r.bin_width,
+            n_binned: r.n_binned,
+            n_raw_samples: r.n_raw_samples,
+            n_frames: r.n_frames,
+            angular: r.angular,
+        })
+    })
+}
+
+#[wasm_bindgen(js_name = WasmDistanceDistribution)]
+pub struct WasmDistanceDistribution {
+    n_bins: usize,
+    min: F,
+    max: F,
+}
+
+#[wasm_bindgen(js_class = WasmDistanceDistribution)]
+impl WasmDistanceDistribution {
+    #[wasm_bindgen(constructor)]
+    pub fn new(n_bins: usize, min: F, max: F) -> Self {
+        Self { n_bins, min, max }
+    }
+
+    pub fn compute(&self, frame: &Frame, pairs: &[u32]) -> Result<JsValue, JsValue> {
+        let groups = molrs::compute::distribution::AtomGroups::new(2, pairs.to_vec())
+            .map_err(|e| JsValue::from_str(&format!("DistanceDistribution groups: {e}")))?;
+        let calc = molrs::compute::distribution::DistributionFunction::new(
+            molrs::compute::distribution::DistanceObservable,
+            self.n_bins,
+            self.min,
+            self.max,
+        )
+        .map_err(|e| JsValue::from_str(&format!("DistanceDistribution: {e}")))?;
+        distribution_compute(frame, calc, groups)
+    }
+}
+
+#[wasm_bindgen(js_name = WasmAngleDistribution)]
+pub struct WasmAngleDistribution {
+    n_bins: usize,
+}
+
+#[wasm_bindgen(js_class = WasmAngleDistribution)]
+impl WasmAngleDistribution {
+    #[wasm_bindgen(constructor)]
+    pub fn new(n_bins: usize) -> Self {
+        Self { n_bins }
+    }
+
+    pub fn compute(&self, frame: &Frame, triples: &[u32]) -> Result<JsValue, JsValue> {
+        let groups = molrs::compute::distribution::AtomGroups::new(3, triples.to_vec())
+            .map_err(|e| JsValue::from_str(&format!("AngleDistribution groups: {e}")))?;
+        let calc = molrs::compute::distribution::DistributionFunction::over_natural_range(
+            molrs::compute::distribution::AngleObservable,
+            self.n_bins,
+        )
+        .map_err(|e| JsValue::from_str(&format!("AngleDistribution: {e}")))?;
+        distribution_compute(frame, calc, groups)
+    }
+}
+
+#[wasm_bindgen(js_name = WasmDihedralDistribution)]
+pub struct WasmDihedralDistribution {
+    n_bins: usize,
+}
+
+#[wasm_bindgen(js_class = WasmDihedralDistribution)]
+impl WasmDihedralDistribution {
+    #[wasm_bindgen(constructor)]
+    pub fn new(n_bins: usize) -> Self {
+        Self { n_bins }
+    }
+
+    pub fn compute(&self, frame: &Frame, quads: &[u32]) -> Result<JsValue, JsValue> {
+        let groups = molrs::compute::distribution::AtomGroups::new(4, quads.to_vec())
+            .map_err(|e| JsValue::from_str(&format!("DihedralDistribution groups: {e}")))?;
+        let calc = molrs::compute::distribution::DistributionFunction::over_natural_range(
+            molrs::compute::distribution::DihedralObservable,
+            self.n_bins,
+        )
+        .map_err(|e| JsValue::from_str(&format!("DihedralDistribution: {e}")))?;
+        distribution_compute(frame, calc, groups)
+    }
+}
+
+#[wasm_bindgen(js_name = WasmHBonds)]
+pub struct WasmHBonds {
+    donors: Vec<(u32, u32)>,
+    acceptors: Vec<u32>,
+    dist_cutoff: F,
+    dist_kind: String,
+    angle_cutoff: F,
+    frames: Vec<molrs::store::frame::Frame>,
+}
+
+#[wasm_bindgen(js_class = WasmHBonds)]
+impl WasmHBonds {
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        donors: &[u32],
+        acceptors: &[u32],
+        dist_cutoff: Option<F>,
+        dist_kind: Option<String>,
+        angle_cutoff: Option<F>,
+    ) -> Result<Self, JsValue> {
+        Ok(Self {
+            donors: u32_pairs(donors, "HBonds donors")?,
+            acceptors: acceptors.to_vec(),
+            dist_cutoff: dist_cutoff.unwrap_or(3.5),
+            dist_kind: dist_kind.unwrap_or_else(|| "donor_acceptor".to_string()),
+            angle_cutoff: angle_cutoff.unwrap_or(150.0),
+            frames: Vec::new(),
+        })
+    }
+
+    pub fn feed(&mut self, frame: &Frame) -> Result<(), JsValue> {
+        frame.with_frame(|rs_frame| {
+            self.frames.push(rs_frame.clone());
+            Ok(())
+        })
+    }
+
+    pub fn compute(&self) -> Result<JsValue, JsValue> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct BondOut {
+            donor: u32,
+            hydrogen: u32,
+            acceptor: u32,
+            distance: F,
+            angle: F,
+        }
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Out {
+            per_frame: Vec<Vec<BondOut>>,
+            counts: Vec<usize>,
+        }
+        let dist_kind = match self.dist_kind.to_ascii_lowercase().as_str() {
+            "donor_acceptor" | "donor-acceptor" | "da" => molrs::compute::DistKind::DonorAcceptor,
+            "hydrogen_acceptor" | "hydrogen-acceptor" | "ha" => {
+                molrs::compute::DistKind::HydrogenAcceptor
+            }
+            other => {
+                return Err(JsValue::from_str(&format!(
+                    "HBonds distKind: unknown {other}"
+                )));
+            }
+        };
+        let criterion =
+            molrs::compute::HBondCriterion::new(self.dist_cutoff, dist_kind, self.angle_cutoff);
+        let calc =
+            molrs::compute::HBonds::new(self.donors.clone(), self.acceptors.clone(), criterion);
+        let refs: Vec<&molrs::store::frame::Frame> = self.frames.iter().collect();
+        let r = calc
+            .compute(&refs, ())
+            .map_err(|e| JsValue::from_str(&format!("HBonds: {e}")))?;
+        let per_frame = r
+            .per_frame
+            .into_iter()
+            .map(|frame| {
+                frame
+                    .into_iter()
+                    .map(|b| BondOut {
+                        donor: b.donor,
+                        hydrogen: b.hydrogen,
+                        acceptor: b.acceptor,
+                        distance: b.distance,
+                        angle: b.angle,
+                    })
+                    .collect()
+            })
+            .collect();
+        js_value(&Out {
+            per_frame,
+            counts: r.counts,
+        })
+    }
+
+    pub fn reset(&mut self) {
+        self.frames.clear();
+    }
+}
+
+#[wasm_bindgen(js_name = WasmHBondLifetime)]
+pub struct WasmHBondLifetime {
+    dt: F,
+    max_lag: usize,
+}
+
+#[wasm_bindgen(js_class = WasmHBondLifetime)]
+impl WasmHBondLifetime {
+    #[wasm_bindgen(constructor)]
+    pub fn new(dt: F, max_lag: usize) -> Self {
+        Self { dt, max_lag }
+    }
+
+    pub fn compute(
+        &self,
+        presence: &[u8],
+        n_bonds: usize,
+        n_frames: usize,
+    ) -> Result<JsValue, JsValue> {
+        let dt = self.dt;
+        let max_lag = self.max_lag;
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Out {
+            lag_times: Vec<F>,
+            continuous: Vec<F>,
+            intermittent: Vec<F>,
+            tau_continuous: F,
+            tau_intermittent: F,
+        }
+        if presence.len() != n_bonds * n_frames {
+            return Err(JsValue::from_str("HBondLifetime: presence length mismatch"));
+        }
+        let present: Vec<Vec<bool>> = presence
+            .chunks_exact(n_frames)
+            .map(|row| row.iter().map(|&v| v != 0).collect())
+            .collect();
+        let r = molrs::compute::hbond_lifetimes(&present, dt, max_lag)
+            .map_err(|e| JsValue::from_str(&format!("HBondLifetime: {e}")))?;
+        js_value(&Out {
+            lag_times: r.lag_times.to_vec(),
+            continuous: r.continuous.to_vec(),
+            intermittent: r.intermittent.to_vec(),
+            tau_continuous: r.tau_continuous,
+            tau_intermittent: r.tau_intermittent,
+        })
+    }
+}
+
+#[wasm_bindgen(js_name = WasmHBondNetwork)]
+pub struct WasmHBondNetwork;
+
+#[wasm_bindgen(js_class = WasmHBondNetwork)]
+impl WasmHBondNetwork {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub fn compute(&self, n_nodes: usize, edges: &[u32]) -> Result<JsValue, JsValue> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Out {
+            component_sizes: Vec<usize>,
+            num_components: usize,
+        }
+        let edges = usize_pairs(edges, "HBondNetwork edges")?;
+        let r = molrs::compute::hbond_components(n_nodes, &edges);
+        js_value(&Out {
+            component_sizes: r.component_sizes,
+            num_components: r.num_components,
+        })
+    }
+}
+
+// ===========================================================================
+// Per-atom orientations — the input PMFT needs beyond bare positions
+// ===========================================================================
+
+/// Borrow an `F`-typed column of a block as a contiguous slice.
+fn f_col<'a>(atoms: &'a molrs::store::block::Block, col: &str) -> Option<&'a [F]> {
+    use molrs::store::block::BlockDtype;
+    <F as BlockDtype>::from_column(atoms.get(col)?)?.as_slice()
+}
+
+/// Per-atom unit quaternions `(w, i, j, k)`, normalized. `None` when the atoms
+/// block does not carry the canonical [`keys::QUAT`] columns.
+fn quaternions_from_frame(frame: &molrs::store::frame::Frame) -> Option<Vec<[F; 4]>> {
+    let atoms = frame.get("atoms")?;
+    let [w, i, j, k] = keys::QUAT.map(|col| f_col(atoms, col));
+    let (w, i, j, k) = (w?, i?, j?, k?);
+    Some(
+        (0..w.len())
+            .map(|n| {
+                let q = [w[n], i[n], j[n], k[n]];
+                let norm = (q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]).sqrt();
+                if norm > 0.0 {
+                    [q[0] / norm, q[1] / norm, q[2] / norm, q[3] / norm]
+                } else {
+                    [1.0, 0.0, 0.0, 0.0]
+                }
+            })
+            .collect(),
+    )
+}
+
+/// Per-atom 2-D orientation angle (radians), the z-rotation of the stored
+/// quaternion: `θ = 2·atan2(q_k, q_w)`.
+///
+/// There is deliberately no separate angle column — the quaternion already
+/// encodes the orientation, and a second column would be a second truth.
+fn angles_from_frame(frame: &molrs::store::frame::Frame) -> Option<Vec<F>> {
+    quaternions_from_frame(frame)
+        .map(|quats| quats.iter().map(|q| 2.0 * q[3].atan2(q[0])).collect())
+}
+
+/// `angles_from_frame` for the analyses whose orientations are mandatory.
+fn require_angles(frame: &molrs::store::frame::Frame, what: &str) -> Result<Vec<F>, JsValue> {
+    angles_from_frame(frame).ok_or_else(|| {
+        JsValue::from_str(&format!(
+            "{what} needs per-atom orientations: add the {} columns to the atoms block",
+            keys::QUAT.join(", ")
+        ))
+    })
+}
+
+// ===========================================================================
+// PMFT — potentials of mean force and torque (freud.pmft)
+// ===========================================================================
+
+/// Binned free-energy surface, shared by every PMFT variant. `density`,
+/// `rawCounts` and `pmf` are row-major over `shape`; `edges[k]` holds the
+/// `shape[k] + 1` bin edges of axis `axes[k]`.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PmftOut {
+    axes: Vec<&'static str>,
+    shape: Vec<usize>,
+    edges: Vec<Vec<F>>,
+    density: Vec<F>,
+    raw_counts: Vec<u64>,
+    pmf: Vec<F>,
+}
+
+#[wasm_bindgen(js_name = WasmPMFTR12)]
+pub struct WasmPMFTR12 {
+    inner: molrs::compute::PMFTR12,
+}
+
+#[wasm_bindgen(js_class = WasmPMFTR12)]
+impl WasmPMFTR12 {
+    /// Radial range `r_max` (A); `n_r × n_t1 × n_t2` bins over `(r, θ₁, θ₂)`.
+    #[wasm_bindgen(constructor)]
+    pub fn new(r_max: F, n_r: usize, n_t1: usize, n_t2: usize) -> Result<Self, JsValue> {
+        Ok(Self {
+            inner: molrs::compute::PMFTR12::new(r_max, n_r, n_t1, n_t2)
+                .map_err(|e| JsValue::from_str(&format!("PMFTR12: {e}")))?,
+        })
+    }
+
+    /// Requires per-atom orientation angles on the frame.
+    pub fn compute(&self, frame: &Frame, neighbors: &NeighborList) -> Result<JsValue, JsValue> {
+        frame.with_frame(|rs_frame| {
+            let orientations = vec![require_angles(rs_frame, "PMFTR12")?];
+            let nlists = vec![neighbors.inner.clone()];
+            let mut out = self
+                .inner
+                .compute(
+                    &[rs_frame],
+                    molrs::compute::PMFTR12Args {
+                        nlists: &nlists,
+                        orientations: &orientations,
+                    },
+                )
+                .map_err(|e| JsValue::from_str(&format!("PMFTR12 compute: {e}")))?;
+            let r = out
+                .pop()
+                .ok_or_else(|| JsValue::from_str("PMFTR12: empty result"))?;
+            js_value(&PmftOut {
+                axes: vec!["r", "theta1", "theta2"],
+                shape: r.density.shape().to_vec(),
+                edges: vec![r.r_edges, r.t1_edges, r.t2_edges],
+                density: r.density.iter().copied().collect(),
+                raw_counts: r.raw_counts.iter().copied().collect(),
+                pmf: r.pmf.iter().copied().collect(),
+            })
+        })
+    }
+}
+
+#[wasm_bindgen(js_name = WasmPMFTXY)]
+pub struct WasmPMFTXY {
+    inner: molrs::compute::PMFTXY,
+}
+
+#[wasm_bindgen(js_class = WasmPMFTXY)]
+impl WasmPMFTXY {
+    /// Body-frame window `±x_max × ±y_max` (A); `n_x × n_y` bins.
+    #[wasm_bindgen(constructor)]
+    pub fn new(x_max: F, y_max: F, n_x: usize, n_y: usize) -> Result<Self, JsValue> {
+        Ok(Self {
+            inner: molrs::compute::PMFTXY::new(x_max, y_max, n_x, n_y)
+                .map_err(|e| JsValue::from_str(&format!("PMFTXY: {e}")))?,
+        })
+    }
+
+    /// Orientations are optional: without them every query particle is treated
+    /// as unrotated, which is the isotropic reference the freud docs describe.
+    pub fn compute(&self, frame: &Frame, neighbors: &NeighborList) -> Result<JsValue, JsValue> {
+        frame.with_frame(|rs_frame| {
+            let orientations = angles_from_frame(rs_frame).map(|angles| vec![angles]);
+            let nlists = vec![neighbors.inner.clone()];
+            let mut out = self
+                .inner
+                .compute(
+                    &[rs_frame],
+                    molrs::compute::PMFTXYArgs {
+                        nlists: &nlists,
+                        query_orientations: orientations.as_deref(),
+                    },
+                )
+                .map_err(|e| JsValue::from_str(&format!("PMFTXY compute: {e}")))?;
+            let r = out
+                .pop()
+                .ok_or_else(|| JsValue::from_str("PMFTXY: empty result"))?;
+            js_value(&PmftOut {
+                axes: vec!["x", "y"],
+                shape: r.density.shape().to_vec(),
+                edges: vec![r.x_edges, r.y_edges],
+                density: r.density.iter().copied().collect(),
+                raw_counts: r.raw_counts.iter().copied().collect(),
+                pmf: r.pmf.iter().copied().collect(),
+            })
+        })
+    }
+}
+
+#[wasm_bindgen(js_name = WasmPMFTXYT)]
+pub struct WasmPMFTXYT {
+    inner: molrs::compute::PMFTXYT,
+}
+
+#[wasm_bindgen(js_class = WasmPMFTXYT)]
+impl WasmPMFTXYT {
+    /// Body-frame window `±x_max × ±y_max` (A); `n_x × n_y × n_t` bins over
+    /// `(x, y, θ)` where `θ` is the relative orientation.
+    #[wasm_bindgen(constructor)]
+    pub fn new(x_max: F, y_max: F, n_x: usize, n_y: usize, n_t: usize) -> Result<Self, JsValue> {
+        Ok(Self {
+            inner: molrs::compute::PMFTXYT::new(x_max, y_max, n_x, n_y, n_t)
+                .map_err(|e| JsValue::from_str(&format!("PMFTXYT: {e}")))?,
+        })
+    }
+
+    /// Requires per-atom orientation angles on the frame.
+    pub fn compute(&self, frame: &Frame, neighbors: &NeighborList) -> Result<JsValue, JsValue> {
+        frame.with_frame(|rs_frame| {
+            let orientations = vec![require_angles(rs_frame, "PMFTXYT")?];
+            let nlists = vec![neighbors.inner.clone()];
+            let mut out = self
+                .inner
+                .compute(
+                    &[rs_frame],
+                    molrs::compute::PMFTXYTArgs {
+                        nlists: &nlists,
+                        orientations: &orientations,
+                    },
+                )
+                .map_err(|e| JsValue::from_str(&format!("PMFTXYT compute: {e}")))?;
+            let r = out
+                .pop()
+                .ok_or_else(|| JsValue::from_str("PMFTXYT: empty result"))?;
+            js_value(&PmftOut {
+                axes: vec!["x", "y", "theta"],
+                shape: r.density.shape().to_vec(),
+                edges: vec![r.x_edges, r.y_edges, r.t_edges],
+                density: r.density.iter().copied().collect(),
+                raw_counts: r.raw_counts.iter().copied().collect(),
+                pmf: r.pmf.iter().copied().collect(),
+            })
+        })
+    }
+}
+
+#[wasm_bindgen(js_name = WasmPMFTXYZ)]
+pub struct WasmPMFTXYZ {
+    inner: molrs::compute::PMFTXYZ,
+}
+
+#[wasm_bindgen(js_class = WasmPMFTXYZ)]
+impl WasmPMFTXYZ {
+    /// Body-frame window `±x_max × ±y_max × ±z_max` (A); `n_x × n_y × n_z` bins.
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        x_max: F,
+        y_max: F,
+        z_max: F,
+        n_x: usize,
+        n_y: usize,
+        n_z: usize,
+    ) -> Result<Self, JsValue> {
+        Ok(Self {
+            inner: molrs::compute::PMFTXYZ::new(x_max, y_max, z_max, n_x, n_y, n_z)
+                .map_err(|e| JsValue::from_str(&format!("PMFTXYZ: {e}")))?,
+        })
+    }
+
+    /// Uses the frame's per-atom quaternions when present; otherwise every
+    /// query particle is treated as unrotated.
+    pub fn compute(&self, frame: &Frame, neighbors: &NeighborList) -> Result<JsValue, JsValue> {
+        frame.with_frame(|rs_frame| {
+            let orientations = quaternions_from_frame(rs_frame).map(|quats| vec![quats]);
+            let nlists = vec![neighbors.inner.clone()];
+            let mut out = self
+                .inner
+                .compute(
+                    &[rs_frame],
+                    molrs::compute::PMFTXYZArgs {
+                        nlists: &nlists,
+                        query_orientations: orientations.as_deref(),
+                    },
+                )
+                .map_err(|e| JsValue::from_str(&format!("PMFTXYZ compute: {e}")))?;
+            let r = out
+                .pop()
+                .ok_or_else(|| JsValue::from_str("PMFTXYZ: empty result"))?;
+            js_value(&PmftOut {
+                axes: vec!["x", "y", "z"],
+                shape: r.density.shape().to_vec(),
+                edges: vec![r.x_edges, r.y_edges, r.z_edges],
+                density: r.density.iter().copied().collect(),
+                raw_counts: r.raw_counts.iter().copied().collect(),
+                pmf: r.pmf.iter().copied().collect(),
+            })
+        })
+    }
+}
+
+// ===========================================================================
+// CombinedDistribution — N-dimensional joint distribution over observables
+// ===========================================================================
+
+#[wasm_bindgen(js_name = WasmCombinedDistribution)]
+pub struct WasmCombinedDistribution {
+    kinds: Vec<String>,
+    axes: Vec<molrs::compute::AxisSpec>,
+}
+
+#[wasm_bindgen(js_class = WasmCombinedDistribution)]
+impl WasmCombinedDistribution {
+    /// `kinds[i]` is `"distance" | "angle" | "dihedral"`; axis `i` bins
+    /// observable `i` into `bins[i]` bins over `[mins[i], maxs[i]]`. A non-zero
+    /// `sinWeight[i]` marks axis `i` angular so its marginal carries the
+    /// sin θ solid-angle correction.
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        kinds: Vec<String>,
+        bins: &[u32],
+        mins: &[F],
+        maxs: &[F],
+        sin_weight: Option<Vec<u8>>,
+    ) -> Result<Self, JsValue> {
+        let n = kinds.len();
+        if bins.len() != n || mins.len() != n || maxs.len() != n {
+            return Err(JsValue::from_str(
+                "CombinedDistribution: kinds, bins, mins and maxs must have equal length",
+            ));
+        }
+        let sin = sin_weight.unwrap_or_default();
+        let axes = (0..n)
+            .map(|i| {
+                let spec = molrs::compute::AxisSpec::new(bins[i] as usize, mins[i], maxs[i])
+                    .map_err(|e| {
+                        JsValue::from_str(&format!("CombinedDistribution axis {i}: {e}"))
+                    })?;
+                Ok(spec.with_sin_weight(sin.get(i).is_some_and(|&v| v != 0)))
+            })
+            .collect::<Result<Vec<_>, JsValue>>()?;
+        Ok(Self { kinds, axes })
+    }
+
+    /// `groups` is `number[][]`: one flat atom-index array per observable, each
+    /// of length `arity × nGroups` (arity 2/3/4 for distance/angle/dihedral).
+    pub fn compute(&self, frame: &Frame, groups: JsValue) -> Result<JsValue, JsValue> {
+        use molrs::compute::distribution::{AnyObservable, AtomGroups};
+
+        let raw: Vec<Vec<u32>> = serde_wasm_bindgen::from_value(groups)
+            .map_err(|e| JsValue::from_str(&format!("CombinedDistribution groups: {e}")))?;
+        if raw.len() != self.kinds.len() {
+            return Err(JsValue::from_str(
+                "CombinedDistribution: one atom-index group array per observable is required",
+            ));
+        }
+
+        let mut observables = Vec::with_capacity(self.kinds.len());
+        let mut atom_groups = Vec::with_capacity(self.kinds.len());
+        for (i, kind) in self.kinds.iter().enumerate() {
+            let (obs, arity) = AnyObservable::from_kind(kind).map_err(|e| {
+                JsValue::from_str(&format!("CombinedDistribution observable {i}: {e}"))
+            })?;
+            observables.push(obs);
+            atom_groups.push(AtomGroups::new(arity, raw[i].clone()).map_err(|e| {
+                JsValue::from_str(&format!("CombinedDistribution groups {i}: {e}"))
+            })?);
+        }
+        let calc = molrs::compute::CombinedDistribution::new(observables, self.axes.clone())
+            .map_err(|e| JsValue::from_str(&format!("CombinedDistribution: {e}")))?;
+
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Out {
+            shape: Vec<usize>,
+            edges: Vec<Vec<F>>,
+            centers: Vec<Vec<F>>,
+            counts: Vec<F>,
+            density: Vec<F>,
+            n_binned: F,
+            n_raw_samples: usize,
+            n_frames: usize,
+        }
+        frame.with_frame(|rs_frame| {
+            let r = calc
+                .compute(&[rs_frame], &atom_groups)
+                .map_err(|e| JsValue::from_str(&format!("CombinedDistribution compute: {e}")))?;
+            js_value(&Out {
+                shape: r.centers.iter().map(|c| c.len()).collect(),
+                edges: r.edges.iter().map(|e| e.to_vec()).collect(),
+                centers: r.centers.iter().map(|c| c.to_vec()).collect(),
+                counts: r.counts.to_vec(),
+                density: r.density.to_vec(),
+                n_binned: r.binned,
+                n_raw_samples: r.n_raw_samples,
+                n_frames: r.n_frames,
+            })
+        })
+    }
+}
+
+// ===========================================================================
+// Radical (Laguerre) Voronoi + its domain / void consumers
+// ===========================================================================
+
+/// Per-atom covalent radii from the frame's `element` column.
+#[cfg(feature = "voronoi")]
+fn covalent_radii_from_frame(frame: &molrs::store::frame::Frame) -> Result<Vec<F>, JsValue> {
+    let atoms = frame
+        .get("atoms")
+        .ok_or_else(|| JsValue::from_str("Frame has no 'atoms' block"))?;
+    let column = atoms
+        .get("element")
+        .and_then(|c| c.as_string())
+        .ok_or_else(|| {
+            JsValue::from_str(
+                "radii weighting needs a string 'element' column on the atoms block; \
+             construct with useAtomRadii = false for a plain Voronoi diagram",
+            )
+        })?;
+    column
+        .iter()
+        .map(|symbol| {
+            molrs::Element::by_symbol(symbol)
+                .map(|el| F::from(el.covalent_radius()))
+                .ok_or_else(|| JsValue::from_str(&format!("unknown element symbol {symbol}")))
+        })
+        .collect()
+}
+
+/// Tessellate a frame and report the box volume used for normalization.
+///
+/// With `use_atom_radii` the cells are Laguerre-weighted by covalent radius;
+/// without it every generator has radius zero, which is a plain Voronoi diagram.
+#[cfg(feature = "voronoi")]
+fn voronoi_cells(
+    frame: &molrs::store::frame::Frame,
+    use_atom_radii: bool,
+) -> Result<(molrs::compute::VoronoiCells, F), JsValue> {
+    let positions = positions_from_frame(frame)?;
+    let n = positions.nrows();
+    let simbox = frame.simbox.as_ref().ok_or_else(|| {
+        JsValue::from_str("Radical Voronoi needs a periodic simulation box (frame.simbox is unset)")
+    })?;
+    let radii = if use_atom_radii {
+        covalent_radii_from_frame(frame)?
+    } else {
+        vec![0.0; n]
+    };
+    if radii.len() != n {
+        return Err(JsValue::from_str(
+            "Radical Voronoi: the element column length does not match the atom count",
+        ));
+    }
+    let cells = molrs::compute::RadicalVoronoi
+        .build(positions.view(), &radii, simbox)
+        .map_err(|e| JsValue::from_str(&format!("RadicalVoronoi: {e}")))?;
+    Ok((cells, simbox.volume()))
+}
+
+#[cfg(feature = "voronoi")]
+#[wasm_bindgen(js_name = WasmRadicalVoronoi)]
+pub struct WasmRadicalVoronoi {
+    use_atom_radii: bool,
+}
+
+#[cfg(feature = "voronoi")]
+#[wasm_bindgen(js_class = WasmRadicalVoronoi)]
+impl WasmRadicalVoronoi {
+    /// With `use_atom_radii` the tessellation is Laguerre-weighted by each
+    /// atom's covalent radius, read from the frame's `element` column.
+    #[wasm_bindgen(constructor)]
+    pub fn new(use_atom_radii: bool) -> Self {
+        Self { use_atom_radii }
+    }
+
+    /// Cell volumes plus the face graph. `faceNeighbors` / `faceAreas` are the
+    /// concatenation of every cell's faces; cell `i` owns the slice
+    /// `[faceOffsets[i], faceOffsets[i + 1])`. A negative neighbour id is a box
+    /// boundary rather than another cell.
+    pub fn compute(&self, frame: &Frame) -> Result<JsValue, JsValue> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Out {
+            volumes: Vec<F>,
+            total_volume: F,
+            box_volume: F,
+            face_neighbors: Vec<i64>,
+            face_areas: Vec<F>,
+            face_offsets: Vec<usize>,
+        }
+        frame.with_frame(|rs_frame| {
+            let (cells, box_volume) = voronoi_cells(rs_frame, self.use_atom_radii)?;
+            let mut face_neighbors = Vec::new();
+            let mut face_areas = Vec::new();
+            let mut face_offsets = Vec::with_capacity(cells.len() + 1);
+            face_offsets.push(0);
+            for faces in &cells.faces {
+                for face in faces {
+                    face_neighbors.push(face.neighbor);
+                    face_areas.push(face.area);
+                }
+                face_offsets.push(face_neighbors.len());
+            }
+            js_value(&Out {
+                total_volume: cells.total_volume(),
+                volumes: cells.volumes.clone(),
+                box_volume,
+                face_neighbors,
+                face_areas,
+                face_offsets,
+            })
+        })
+    }
+}
+
+#[cfg(feature = "voronoi")]
+#[wasm_bindgen(js_name = WasmVoronoiDomainAnalysis)]
+pub struct WasmVoronoiDomainAnalysis {
+    use_atom_radii: bool,
+}
+
+#[cfg(feature = "voronoi")]
+#[wasm_bindgen(js_class = WasmVoronoiDomainAnalysis)]
+impl WasmVoronoiDomainAnalysis {
+    #[wasm_bindgen(constructor)]
+    pub fn new(use_atom_radii: bool) -> Self {
+        Self { use_atom_radii }
+    }
+
+    /// Merge face-adjacent cells that share a `labels` value into domains.
+    pub fn compute(&self, frame: &Frame, labels: &[i32]) -> Result<JsValue, JsValue> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Out {
+            sizes: Vec<usize>,
+            count: usize,
+            largest_fraction: F,
+            domain_of: Vec<usize>,
+        }
+        frame.with_frame(|rs_frame| {
+            let (cells, _) = voronoi_cells(rs_frame, self.use_atom_radii)?;
+            if labels.len() != cells.len() {
+                return Err(JsValue::from_str(
+                    "VoronoiDomainAnalysis: labels must have one entry per atom",
+                ));
+            }
+            let labels: Vec<i64> = labels.iter().map(|&v| i64::from(v)).collect();
+            let r = molrs::compute::DomainAnalysis
+                .analyze(&cells, &labels)
+                .map_err(|e| JsValue::from_str(&format!("VoronoiDomainAnalysis: {e}")))?;
+            js_value(&Out {
+                sizes: r.sizes,
+                count: r.count,
+                largest_fraction: r.largest_fraction,
+                domain_of: r.domain_of,
+            })
+        })
+    }
+}
+
+#[cfg(feature = "voronoi")]
+#[wasm_bindgen(js_name = WasmVoronoiVoidAnalysis)]
+pub struct WasmVoronoiVoidAnalysis {
+    use_atom_radii: bool,
+    box_volume: Option<F>,
+}
+
+#[cfg(feature = "voronoi")]
+#[wasm_bindgen(js_class = WasmVoronoiVoidAnalysis)]
+impl WasmVoronoiVoidAnalysis {
+    /// `box_volume` overrides the frame's box volume when normalizing the void
+    /// fraction; pass `null` to use the frame's own box.
+    #[wasm_bindgen(constructor)]
+    pub fn new(use_atom_radii: bool, box_volume: Option<F>) -> Self {
+        Self {
+            use_atom_radii,
+            box_volume,
+        }
+    }
+
+    /// A non-zero `isVoid[i]` marks cell `i` a void probe; adjacent probe cells
+    /// merge into one cavity. `boxVolume` defaults to the frame's box volume.
+    pub fn compute(&self, frame: &Frame, is_void: &[u8]) -> Result<JsValue, JsValue> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Out {
+            cavity_volumes: Vec<F>,
+            total_void_volume: F,
+            void_fraction: F,
+        }
+        frame.with_frame(|rs_frame| {
+            let (cells, frame_volume) = voronoi_cells(rs_frame, self.use_atom_radii)?;
+            if is_void.len() != cells.len() {
+                return Err(JsValue::from_str(
+                    "VoronoiVoidAnalysis: isVoid must have one entry per atom",
+                ));
+            }
+            let mask: Vec<bool> = is_void.iter().map(|&v| v != 0).collect();
+            let r = molrs::compute::VoidAnalysis
+                .analyze(&cells, &mask, self.box_volume.unwrap_or(frame_volume))
+                .map_err(|e| JsValue::from_str(&format!("VoronoiVoidAnalysis: {e}")))?;
+            js_value(&Out {
+                cavity_volumes: r.cavity_volumes,
+                total_void_volume: r.total_void_volume,
+                void_fraction: r.void_fraction,
+            })
+        })
     }
 }

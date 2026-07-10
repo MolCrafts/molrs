@@ -3,14 +3,14 @@
 //! Mirrors [`mmff`](crate::ff::typifier::mmff): typing metadata
 //! ([`OplsTypingMeta`]) is read *separately* from the potential
 //! [`ForceField`](crate::ff::forcefield::ForceField), both from the same OPLS-AA
-//! XML. [`OplsTypifier`] owns both and implements [`Typifier`], assigning
+//! XML. [`OPLSAATypifier`] owns both and implements [`Typifier`], assigning
 //! `opls_NNN` atom types by SMARTS matching with overrides / priority / layer
-//! conflict resolution (replicating molpy's `_OplsAtomTypifier`).
+//! conflict resolution.
 //!
-//! After atom typing, [`OplsTypifier::typify`] runs
-//! [`assign_bonded`](assign::assign_bonded): every bond / angle / dihedral is
+//! After atom typing, [`OPLSAATypifier::typify`] runs
+//! [`typify_bonded`](assign::typify_bonded): every bond / angle / dihedral is
 //! matched against the force field's bonded tables by OPLS specificity + overlay
-//! layer (chain 2). [`OplsTypifier::build`] closes the loop to evaluable
+//! layer (chain 2). [`OPLSAATypifier::build`] closes the loop to evaluable
 //! potentials (`typify → to_frame → to_potentials`).
 //!
 //! # B-line reversal
@@ -23,14 +23,18 @@
 //!
 //! Only types carrying a SMARTS `def` participate; legacy `oplsaa.xml` rows
 //! (`opls_001`–`opls_134`, no `def`) are out of scope for auto-typing. Improper
-//! matching, pair/charge assignment, and the missing-parameter estimator body
-//! are out of scope (the estimator has only a [seam](assign::Estimator) here).
+//! matching and pair/charge assignment are out of scope. Uncovered bonded terms
+//! follow the [`NoMatch`](assign::NoMatch) policy; a consumer that wants to fill
+//! them can supply its own [`Estimator`](assign::Estimator) via
+//! [`typify_bonded_with`](assign::typify_bonded_with), or attach the restored
+//! [`ParameterEstimator`](crate::ff::typifier::estimate::ParameterEstimator).
 
 use molrs::Atomistic;
 
 use crate::ff::forcefield::ForceField;
 use crate::ff::forcefield::readers::{ForceFieldReader, opls::OplsXmlReader};
 use crate::ff::potential::{Potentials, intramolecular_pairs};
+use crate::ff::typifier::estimate::ParameterEstimator;
 
 use super::Typifier;
 
@@ -41,12 +45,10 @@ pub mod meta;
 pub mod typing;
 
 pub use assign::{
-    BondedTerm, CandidateTables, Estimator, NoMatch, assign_bonded, assign_bonded_with,
+    BondedTerm, CandidateTables, Estimator, NoMatch, typify_bonded, typify_bonded_with,
 };
 pub use meta::{LAYER_PRIORITY_STRIDE, OplsTypeRow, OplsTypingMeta};
-pub use typing::annotate_opls;
-
-use super::ParameterEstimator;
+pub use typing::typify_atoms;
 
 /// OPLS-AA typifier — owns typing metadata and force-field parameters.
 ///
@@ -54,23 +56,17 @@ use super::ParameterEstimator;
 /// typing metadata ([`OplsTypingMeta`]) and the potential parameters
 /// ([`ForceField`]) from a single OPLS-AA XML string, then precomputes the
 /// bonded candidate tables ([`CandidateTables`]) once.
-pub struct OplsTypifier {
+pub struct OPLSAATypifier {
     meta: OplsTypingMeta,
     ff: ForceField,
     tables: CandidateTables,
     /// No-match policy for bonded terms with no force-field candidate.
     no_match: NoMatch,
-    /// Optional similarity-based estimator for the bonded no-match seam.
-    ///
-    /// `None` (the default) keeps the assign path byte-identical to the
-    /// estimator-free behaviour. When attached via [`with_estimator`](Self::with_estimator),
-    /// the estimator is consulted for any bonded term the force-field tables do
-    /// not cover (unless `strict` — exact matches always win first; `strict=true`
-    /// still errors). FF-agnostic: GAFF can attach the same estimator.
-    estimator: Option<ParameterEstimator>,
+    /// Optional missing-parameter interpolator for bonded terms.
+    estimator: Option<Box<dyn Estimator + Send + Sync>>,
 }
 
-impl OplsTypifier {
+impl OPLSAATypifier {
     /// Build a typifier from an OPLS-AA / GROMACS XML string.
     ///
     /// Reads typing metadata and potential parameters in one call. The two are
@@ -129,26 +125,24 @@ impl OplsTypifier {
         self
     }
 
-    /// Attach a similarity-based [`ParameterEstimator`] to the bonded no-match
-    /// seam (chaining, opt-in).
+    /// Attach a bonded-term parameter estimator (chaining, opt-in).
     ///
-    /// With an estimator attached, any bonded term the force-field tables do not
-    /// cover is routed to the estimator (which fills in similarity / empirical
-    /// parameters with provenance). Exact / wildcard matches still win first, and
-    /// `strict=true` is **unaffected** — a still-uncovered term errors regardless.
-    /// The default ([`new`](Self::new)) attaches no estimator, leaving behaviour
-    /// byte-identical to the estimator-free path.
-    pub fn with_estimator(mut self, estimator: ParameterEstimator) -> Self {
-        self.estimator = Some(estimator);
+    /// Exact force-field table matches still win first. To keep strict mode's
+    /// contract stable, attached estimators are consulted only when this
+    /// typifier is configured with [`NoMatch::Skip`] via [`with_strict(false)`](Self::with_strict).
+    pub fn with_estimator<E>(mut self, estimator: E) -> Self
+    where
+        E: Estimator + Send + Sync + 'static,
+    {
+        self.estimator = Some(Box::new(estimator));
         self
     }
 
-    /// Build the matching [`ParameterEstimator`] from this typifier's own force
-    /// field + metadata and attach it (convenience over
-    /// [`with_estimator`](Self::with_estimator)).
+    /// Attach the default GAFF/parmchk2-style similarity estimator built from
+    /// this typifier's force field and typing metadata.
     pub fn with_default_estimator(self) -> Self {
-        let est = ParameterEstimator::new(&self.ff, &self.meta);
-        self.with_estimator(est)
+        let estimator = ParameterEstimator::new(&self.ff, &self.meta);
+        self.with_estimator(estimator)
     }
 
     /// Access the typing metadata.
@@ -163,23 +157,25 @@ impl OplsTypifier {
 
     /// Typify atoms and assign bonded parameters in one step.
     ///
-    /// `annotate_opls` types/charges the atoms, then
-    /// [`assign_bonded`](assign::assign_bonded) labels every bond / angle /
+    /// [`typify_atoms`](typing::typify_atoms) types/charges the atoms, then
+    /// [`typify_bonded`](assign::typify_bonded) labels every bond / angle /
     /// dihedral with the most specific matching force-field parameters.
     ///
     /// # Errors
     ///
     /// Propagates atom-typing and bonded-assignment errors.
-    pub fn typify_full(&self, mol: &Atomistic) -> Result<Atomistic, String> {
-        let typed = annotate_opls(mol, &self.meta, &self.ff)?;
-        // strict=true (NoMatch::Error) is a hard contract: the estimator is NOT
-        // consulted, so a still-uncovered term errors. Only the lenient policy
-        // routes through the attached estimator's no-match seam.
-        let estimator: Option<&dyn Estimator> = match self.no_match {
+    fn typify_labeled_graph(&self, mol: &Atomistic) -> Result<Atomistic, String> {
+        let typed = typify_atoms(mol, &self.meta, &self.ff)?;
+        let estimator = match self.no_match {
             NoMatch::Error => None,
-            NoMatch::Skip => self.estimator.as_ref().map(|e| e as &dyn Estimator),
+            NoMatch::Skip => self.estimator.as_deref().map(|e| e as &dyn Estimator),
         };
-        assign_bonded_with(&typed, &self.tables, self.no_match, estimator)
+        typify_bonded_with(&typed, &self.tables, self.no_match, estimator)
+    }
+
+    /// Full OPLS-AA typing (`opls_NNN` atom labels plus bonded-term labels).
+    pub fn typify(&self, mol: &Atomistic) -> Result<Atomistic, String> {
+        self.typify_labeled_graph(mol)
     }
 
     /// Typify a molecule and compile potentials in one step.
@@ -194,22 +190,18 @@ impl OplsTypifier {
     ///
     /// Propagates typing / assignment / compilation errors.
     pub fn build(&self, mol: &Atomistic) -> Result<Potentials, String> {
-        let mut frame = self.typify_full(mol)?.to_frame();
+        let mut frame = self.typify(mol)?.to_frame();
         let pairs = intramolecular_pairs(&frame);
         frame.insert("pairs", pairs);
         self.ff.to_potentials(&frame)
     }
 }
 
-impl Typifier for OplsTypifier {
-    /// Atom typing only (`opls_NNN` type / class / charge per atom).
-    ///
-    /// Bonded-parameter assignment is a deliberately separate step
-    /// ([`typify_full`](Self::typify_full)) so callers can type atoms without
-    /// requiring every bonded term to resolve — the chain-1 coverage gap means
-    /// many real molecules are only partially typed. [`build`](Self::build)
-    /// runs the full pipeline.
+impl Typifier for OPLSAATypifier {
+    type Mol = Atomistic;
+
+    /// Full OPLS-AA typing (`opls_NNN` atom labels plus bonded-term labels).
     fn typify(&self, mol: &Atomistic) -> Result<Atomistic, String> {
-        annotate_opls(mol, &self.meta, &self.ff)
+        OPLSAATypifier::typify(self, mol)
     }
 }

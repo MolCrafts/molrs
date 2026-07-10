@@ -8,12 +8,12 @@
 //! Eq.5 angle `K_θ`, and a never-fabricate dihedral rule). **No ab-initio / QM
 //! fitting is ever performed.**
 //!
-//! It is an opt-in no-match seam, not an eager pass: it implements the chain-2
-//! [`Estimator`](super::opls::assign::Estimator) trait and is injected via
-//! [`assign_bonded_with`](super::opls::assign::assign_bonded_with). Exact matches
-//! always win first; with `strict=true` the estimator is never consulted; with no
-//! estimator attached the assign path is byte-identical to pre-estimator
-//! behaviour.
+//! It is an opt-in no-match seam, not an eager pass: it implements the generic
+//! [`ParameterInterpolator`] trait for the OPLS bonded-term query and is injected
+//! via [`typify_bonded_with`](super::opls::assign::typify_bonded_with). Exact
+//! matches always win first; with `strict=true` the interpolator is never
+//! consulted; with no interpolator attached the assign path is byte-identical to
+//! pre-interpolator behaviour.
 //!
 //! # Provenance convention (new)
 //!
@@ -50,13 +50,87 @@ use molrs::Element;
 
 use crate::ff::forcefield::{ForceField, Params, StyleDefs};
 
-use super::opls::assign::{BondedTerm, Estimator};
+use super::opls::assign::BondedTerm;
 use super::opls::meta::OplsTypingMeta;
 use tables::{EmpiricalTable, EquivTable};
 
 /// 143.9 prefactor in the GAFF empirical angle force-constant formula
 /// (Wang et al. 2004, Eq. 5). Units bake out to kcal/mol/rad².
 const ANGLE_K_PREFACTOR: f64 = 143.9;
+
+/// Generic interpolation seam for typifier parameter families.
+///
+/// `Term` is intentionally an associated type: OPLS bonded parameters use
+/// [`BondedTerm`], while future typifiers can introduce their own query structs
+/// for atom, pair, improper, stretch-bend, or charge-correction parameters
+/// without changing this trait.
+pub trait ParameterInterpolator {
+    /// Query type understood by this interpolator.
+    type Term;
+
+    /// Interpolate parameters for `term`, or return `Ok(None)` to decline.
+    fn interpolate(&self, term: &Self::Term) -> Result<Option<Params>, String>;
+}
+
+/// Reusable atom-type metadata used by parameter interpolation.
+///
+/// The estimator needs two pieces of typifier-side context: a type-to-class map
+/// for class-keyed force fields and a type-to-element map for empirical
+/// fallbacks. Keeping them in this context lets future typifiers construct the
+/// same estimator without pretending to be OPLS.
+#[derive(Debug, Clone, Default)]
+pub struct TypifierParameterContext {
+    type_to_class: HashMap<String, String>,
+    type_to_element: HashMap<String, String>,
+}
+
+impl TypifierParameterContext {
+    /// Create an empty interpolation context.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Build a context from `(type_name, class_name)` pairs.
+    pub fn from_type_classes<I, K, V>(classes: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<String>,
+        V: Into<String>,
+    {
+        let mut out = Self::new();
+        for (name, class) in classes {
+            out.insert_class(name, class);
+        }
+        out
+    }
+
+    /// Insert or replace a type-to-class entry.
+    pub fn insert_class(&mut self, name: impl Into<String>, class: impl Into<String>) {
+        self.type_to_class.insert(name.into(), class.into());
+    }
+
+    /// Insert or replace a type-to-element entry.
+    pub fn insert_element(&mut self, name: impl Into<String>, element: impl Into<String>) {
+        self.type_to_element.insert(name.into(), element.into());
+    }
+
+    /// Add element inference from force-field atom masses.
+    pub fn with_forcefield_elements(mut self, ff: &ForceField) -> Self {
+        self.type_to_element.extend(build_type_to_element(ff));
+        self
+    }
+
+    fn class_of(&self, name: &str) -> Option<&str> {
+        self.type_to_class.get(name).map(String::as_str)
+    }
+
+    fn element_of(&self, name: &str) -> Option<String> {
+        self.type_to_element
+            .get(name)
+            .cloned()
+            .or_else(|| element_from_token(name))
+    }
+}
 
 /// Penalty tier for an estimate, following the CGenFF confidence bands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,19 +190,17 @@ struct AnalogCandidate {
 
 /// Similarity-based missing-parameter estimator.
 ///
-/// Constructed once from a [`ForceField`] + its [`OplsTypingMeta`] (for the
-/// `opls_NNN → class` map) + the embedded GAFF/parmchk2 constant tables. It
-/// caches the analog candidate tables and the per-type element/class maps so
-/// each [`estimate`](Estimator::estimate) call is a cheap scan.
+/// Constructed once from a [`ForceField`] + typifier metadata + the embedded
+/// GAFF/parmchk2 constant tables. It caches the analog candidate tables and the
+/// per-type element/class maps so each [`interpolate`](ParameterInterpolator::interpolate)
+/// call is a cheap scan.
 pub struct ParameterEstimator {
     /// Analog candidate tables (one per arity), scanned by the cascade.
     bonds: Vec<AnalogCandidate>,
     angles: Vec<AnalogCandidate>,
     dihedrals: Vec<AnalogCandidate>,
-    /// `opls_NNN` (or GAFF type) → class.
-    type_to_class: HashMap<String, String>,
-    /// type name → element symbol (mass→nearest-element inference).
-    type_to_element: HashMap<String, String>,
+    /// Typifier-side type metadata used by the analogy and empirical fallback.
+    context: TypifierParameterContext,
     /// GAFF Badger / angle empirical constants.
     empirical: EmpiricalTable,
     /// parmchk2 equivalent / corresponding substitution table + weights.
@@ -156,12 +228,18 @@ impl ParameterEstimator {
     /// works on type/class names); element is consulted only by the empirical
     /// last-resort fallback.
     pub fn new(ff: &ForceField, meta: &OplsTypingMeta) -> Self {
-        let type_to_class = meta
-            .iter()
-            .map(|(name, row)| (name.clone(), row.class.clone()))
-            .collect();
-        let type_to_element = build_type_to_element(ff);
+        let context = TypifierParameterContext::from_type_classes(
+            meta.iter()
+                .map(|(name, row)| (name.clone(), row.class.clone())),
+        )
+        .with_forcefield_elements(ff);
 
+        Self::with_context(ff, context)
+    }
+
+    /// Build an estimator from a force field and an explicit interpolation
+    /// context. This is the constructor future non-OPLS typifiers should use.
+    pub fn with_context(ff: &ForceField, context: TypifierParameterContext) -> Self {
         let bonds = extract_candidates(ff, "bond", "harmonic");
         let angles = extract_candidates(ff, "angle", "harmonic");
         let dihedrals = extract_candidates(ff, "dihedral", "opls");
@@ -170,8 +248,7 @@ impl ParameterEstimator {
             bonds,
             angles,
             dihedrals,
-            type_to_class,
-            type_to_element,
+            context,
             empirical: EmpiricalTable::load(),
             equiv: EquivTable::load(),
         }
@@ -331,7 +408,7 @@ impl ParameterEstimator {
             return Some(0.0);
         }
         // class match (OPLS bonded forces key on class).
-        if let Some(cls) = self.type_to_class.get(q)
+        if let Some(cls) = self.context.class_of(q)
             && pattern == cls
         {
             return Some(0.0);
@@ -532,16 +609,15 @@ impl ParameterEstimator {
     /// inference), then treats the name itself as an element symbol (GAFF lower
     /// types like `c3` reduce to `C`).
     fn element_of(&self, name: &str) -> Option<String> {
-        if let Some(e) = self.type_to_element.get(name) {
-            return Some(e.clone());
-        }
-        element_from_token(name)
+        self.context.element_of(name)
     }
 }
 
-impl Estimator for ParameterEstimator {
+impl ParameterInterpolator for ParameterEstimator {
+    type Term = BondedTerm;
+
     /// Chain-2 seam: dispatch a missing bonded term to the right `estimate_*`.
-    fn estimate(&self, term: &BondedTerm) -> Result<Option<Params>, String> {
+    fn interpolate(&self, term: &BondedTerm) -> Result<Option<Params>, String> {
         Ok(match term {
             BondedTerm::Bond(t) => self.estimate_bond(t),
             BondedTerm::Angle(t) => self.estimate_angle(t),

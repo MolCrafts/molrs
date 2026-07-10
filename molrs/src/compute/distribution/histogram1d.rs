@@ -1,10 +1,10 @@
 //! Shared 1-D histogram with probability-density normalization.
 //!
-//! Ported from TRAVIS `src/df.cpp` (`CDF::AddToBin(double)` and `CDF::Create`,
+//! Ported from the reference implementation `src/df.cpp` (`CDF::AddToBin(double)` and `CDF::Create`,
 //! commit 220729): linear binning with `m_fFac = resolution / (max - min)`,
-//! out-of-range samples skipped (TRAVIS `m_fSkipEntries`), and running
+//! out-of-range samples skipped (reference implementation `m_fSkipEntries`), and running
 //! sum / sum-of-squares / input min-max bookkeeping. The probability-density
-//! normalization (∫ p dx = 1) is the molrs reading of TRAVIS's binned
+//! normalization (∫ p dx = 1) is the molrs reading of the reference implementation's binned
 //! distribution divided by the total entry count and bin width.
 //!
 //! This is the single 1-D histogram implementation behind every geometric
@@ -15,7 +15,7 @@ use ndarray::Array1;
 
 /// A linear 1-D histogram over `[min, max]` with `n_bins` equal-width bins.
 ///
-/// Mirrors TRAVIS `CDF`: samples outside `[min, max]` are counted as skipped
+/// Mirrors the reference implementation `CDF`: samples outside `[min, max]` are counted as skipped
 /// (not binned), and the in-range count plus running statistics are retained.
 #[derive(Debug, Clone)]
 pub struct Histogram1d {
@@ -23,12 +23,12 @@ pub struct Histogram1d {
     min: F,
     max: F,
     bin_width: F,
-    /// `n_bins / (max - min)` — TRAVIS `m_fFac`.
+    /// `n_bins / (max - min)` — reference implementation `m_fFac`.
     fac: F,
     counts: Array1<F>,
-    /// In-range binned entries (TRAVIS `m_fBinEntries`).
+    /// In-range binned entries (reference implementation `m_fBinEntries`).
     binned: F,
-    /// Out-of-range entries (TRAVIS `m_fSkipEntries`).
+    /// Out-of-range entries (reference implementation `m_fSkipEntries`).
     skipped: F,
     sum: F,
     sq_sum: F,
@@ -57,14 +57,14 @@ impl Histogram1d {
         }
     }
 
-    /// Bin one sample (weight 1). Ported from TRAVIS `CDF::AddToBin(double d)`.
+    /// Bin one sample (weight 1). Ported from the reference implementation `CDF::AddToBin(double d)`.
     pub fn add(&mut self, d: F) {
         self.add_weighted(d, 1.0);
     }
 
-    /// Bin one sample with an explicit weight (TRAVIS `CDF::AddToBin(d, v)`).
+    /// Bin one sample with an explicit weight (reference implementation `CDF::AddToBin(d, v)`).
     ///
-    /// **Cloud-in-cell (linear-interpolation) deposition**, ported from TRAVIS
+    /// **Cloud-in-cell (linear-interpolation) deposition**, ported from the reference implementation
     /// `CDF::AddToBin` (`src/df.cpp`): the sample is split between the two bins
     /// whose **centers** straddle it. With `fac = n_bins / (max − min)`, let
     /// `p = (d − min)·fac − 0.5` (position relative to bin centers — the center
@@ -72,7 +72,7 @@ impl Histogram1d {
     /// to `[0, n_bins − 2]`, and `frac = p − ip`; deposit `(1 − frac)·w` into
     /// bin `ip` and `frac·w` into bin `ip + 1`. Samples in the first/last
     /// half-bin clamp entirely into bin 0 / bin `n_bins − 1`; out-of-range
-    /// samples are skipped (TRAVIS `m_fSkipEntries`). Total deposited weight per
+    /// samples are skipped (reference implementation `m_fSkipEntries`). Total deposited weight per
     /// sample is `w`, so `sum(counts) == binned`.
     pub fn add_weighted(&mut self, d: F, w: F) {
         self.sum += d * w;
@@ -83,23 +83,9 @@ impl Histogram1d {
         }
         self.binned += w;
 
-        // A single bin can't interpolate — deposit the whole weight.
-        if self.n_bins == 1 {
-            self.counts[0] += w;
-            return;
-        }
-
-        let praw = (d - self.min) * self.fac - 0.5;
-        let ipf = praw.floor();
-        let (ip, frac) = if ipf < 0.0 {
-            (0usize, 0.0)
-        } else if ipf > (self.n_bins - 2) as F {
-            (self.n_bins - 2, 1.0)
-        } else {
-            (ipf as usize, praw - ipf)
-        };
-        self.counts[ip] += (1.0 - frac) * w;
-        self.counts[ip + 1] += frac * w;
+        let (idx, wt) = cic_split(d, self.min, self.fac, self.n_bins);
+        self.counts[idx[0]] += wt[0] * w;
+        self.counts[idx[1]] += wt[1] * w;
     }
 
     /// **Nearest-bin** deposition (the simple `floor((d−min)·fac)` rule, *not*
@@ -107,7 +93,7 @@ impl Histogram1d {
     /// [`compute::rdf`](crate::compute::rdf)'s nearest-bin convention — namely
     /// the Van Hove distinct part `G_d`, whose `G_d(r,0) = ρ g(r)` contract is
     /// checked against `compute::rdf`. The geometric ADF/DDF/distance and CDF
-    /// family use the TRAVIS cloud-in-cell [`add`](Self::add) instead.
+    /// family use the reference implementation cloud-in-cell [`add`](Self::add) instead.
     pub fn add_nearest(&mut self, d: F) {
         self.sum += d;
         self.sq_sum += d * d;
@@ -121,6 +107,24 @@ impl Histogram1d {
         }
         self.counts[ip] += 1.0;
         self.binned += 1.0;
+    }
+
+    /// Merge another histogram with identical binning into this one, summing
+    /// every running tally: per-bin counts, in-range (`binned`) and out-of-range
+    /// (`skipped`) entries, and the running `sum` / sum-of-squares. Used to fold
+    /// the per-thread partial histograms of a frame-parallel accumulation back
+    /// into one total; the merged counts match a serial accumulation up to
+    /// floating-point summation order (the tolerance the cloud-in-cell
+    /// deposition already carries).
+    pub fn merge(&mut self, other: &Self) {
+        debug_assert_eq!(self.n_bins, other.n_bins, "merge: bin count mismatch");
+        debug_assert_eq!(self.min, other.min, "merge: min mismatch");
+        debug_assert_eq!(self.max, other.max, "merge: max mismatch");
+        self.counts += &other.counts;
+        self.binned += other.binned;
+        self.skipped += other.skipped;
+        self.sum += other.sum;
+        self.sq_sum += other.sq_sum;
     }
 
     /// Bin edges (`n_bins + 1` values).
@@ -163,6 +167,37 @@ impl Histogram1d {
     }
 }
 
+/// Per-axis **cloud-in-cell** split for an already **in-range** sample `d`
+/// (the caller has checked `min ≤ d ≤ max`).
+///
+/// Returns the two straddling bin indices and their weights
+/// `[(ip, 1−frac), (ip+1, frac)]` for the linear-interpolation deposit, or
+/// `[(0, 1), (0, 0)]` for a single-bin axis (no interpolation possible). Ported
+/// from the reference implementation `CDF`/`C2DF`/`C3DF::AddToBin` (`src/df.cpp`): with
+/// `fac = n_bins / (max − min)`, `p = (d − min)·fac − 0.5` positions the sample
+/// relative to bin centers; `ip = floor(p)` is clamped to `[0, n_bins − 2]`.
+///
+/// Shared by [`Histogram1d::add_weighted`] and the combined-distribution axis
+/// binning (`AxisSpec::cic`) so the 1-D histogram and the N-D CDF marginals use
+/// bit-identical deposition.
+#[inline]
+pub(crate) fn cic_split(d: F, min: F, fac: F, n_bins: usize) -> ([usize; 2], [F; 2]) {
+    // A single bin can't interpolate — deposit the whole weight into bin 0.
+    if n_bins == 1 {
+        return ([0, 0], [1.0, 0.0]);
+    }
+    let praw = (d - min) * fac - 0.5;
+    let ipf = praw.floor();
+    let (ip, frac) = if ipf < 0.0 {
+        (0usize, 0.0)
+    } else if ipf > (n_bins - 2) as F {
+        (n_bins - 2, 1.0)
+    } else {
+        (ipf as usize, praw - ipf)
+    };
+    ([ip, ip + 1], [1.0 - frac, frac])
+}
+
 /// Renormalize an arbitrary per-bin weight array to unit integral over bins of
 /// width `bin_width` (∫ p dx = 1). Used for the sin θ-corrected ADF, whose raw
 /// weights are `density / sin θ` before renormalization.
@@ -179,7 +214,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn binning_matches_travis_indexing() {
+    fn binning_matches_reference_indexing() {
         // Bin width 1, centers at 0.5/1.5/2.5/3.5. Center-aligned samples land
         // wholly in one bin under cloud-in-cell (frac = 0).
         let mut h = Histogram1d::new(4, 0.0, 4.0);
@@ -196,7 +231,7 @@ mod tests {
     #[test]
     fn cloud_in_cell_splits_between_bin_centers() {
         // A sample at 1.0 sits exactly halfway between center 0 (0.5) and
-        // center 1 (1.5) → split 50/50 (TRAVIS CDF::AddToBin).
+        // center 1 (1.5) → split 50/50 (reference implementation CDF::AddToBin).
         let mut h = Histogram1d::new(4, 0.0, 4.0);
         h.add(1.0);
         assert!((h.counts()[0] - 0.5).abs() < 1e-12);

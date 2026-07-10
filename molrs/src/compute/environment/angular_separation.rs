@@ -25,13 +25,13 @@
 //! - [`AngularSeparationNeighbor`]: sparse, one angular distance per
 //!   neighbor pair, driven by a `NeighborList`.
 
+use crate::compute::result::ComputeResult;
 use molrs::spatial::neighbors::NeighborList;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 use ndarray::Array2;
 
 use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
 use crate::compute::traits::Compute;
 
 /// Quaternion (w, x, y, z), unit-normalised by convention.
@@ -69,14 +69,6 @@ pub fn angular_distance(q1: Quat, q2: Quat, equivalent_orientations: bool) -> F 
 // Global: dense (N_query × N_global) table
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Default)]
-pub struct AngularSeparationGlobalResult {
-    /// `(n_query, n_global)` table of angular distances (radians).
-    pub angles: Array2<F>,
-}
-
-impl ComputeResult for AngularSeparationGlobalResult {}
-
 #[derive(Debug, Clone)]
 pub struct AngularSeparationGlobal {
     equivalent_orientations: bool,
@@ -89,12 +81,14 @@ impl Default for AngularSeparationGlobal {
 }
 
 impl AngularSeparationGlobal {
+    /// Defaults: symmetry-equivalent orientations enabled.
     pub fn new() -> Self {
         Self {
             equivalent_orientations: true,
         }
     }
 
+    /// Also minimize over symmetry-equivalent orientations when `on` (default true).
     pub fn with_equivalent_orientations(mut self, on: bool) -> Self {
         self.equivalent_orientations = on;
         self
@@ -149,15 +143,6 @@ impl Compute for AngularSeparationGlobal {
 // Neighbor: sparse, one angle per pair
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Default)]
-pub struct AngularSeparationNeighborResult {
-    /// One angle per neighbor pair, in radians; index matches the
-    /// underlying [`NeighborList`] pair index.
-    pub angles: Vec<F>,
-}
-
-impl ComputeResult for AngularSeparationNeighborResult {}
-
 #[derive(Debug, Clone)]
 pub struct AngularSeparationNeighbor {
     equivalent_orientations: bool,
@@ -170,12 +155,14 @@ impl Default for AngularSeparationNeighbor {
 }
 
 impl AngularSeparationNeighbor {
+    /// Defaults: symmetry-equivalent orientations enabled.
     pub fn new() -> Self {
         Self {
             equivalent_orientations: true,
         }
     }
 
+    /// Also minimize over symmetry-equivalent orientations when `on` (default true).
     pub fn with_equivalent_orientations(mut self, on: bool) -> Self {
         self.equivalent_orientations = on;
         self
@@ -242,6 +229,23 @@ impl Compute for AngularSeparationNeighbor {
         Ok(out)
     }
 }
+
+#[derive(Debug, Clone, Default)]
+pub struct AngularSeparationGlobalResult {
+    /// `(n_query, n_global)` table of angular distances (radians).
+    pub angles: Array2<F>,
+}
+
+impl ComputeResult for AngularSeparationGlobalResult {}
+
+#[derive(Debug, Clone, Default)]
+pub struct AngularSeparationNeighborResult {
+    /// One angle per neighbor pair, in radians; index matches the
+    /// underlying [`NeighborList`] pair index.
+    pub angles: Vec<F>,
+}
+
+impl ComputeResult for AngularSeparationNeighborResult {}
 
 #[cfg(test)]
 mod tests {

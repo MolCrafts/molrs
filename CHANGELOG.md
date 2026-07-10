@@ -5,6 +5,69 @@ All notable changes to molrs are recorded here. This project follows
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-08
+
+molrs and `molcrafts-molpy` continue to share one version line and release as a
+pair; downstream exact-pins move to `0.7.0`.
+
+### Added
+
+- **`molrs.typifier` Python submodule.** `MMFFTypifier` and `OPLSAATypifier` are
+  exposed as a first-class `molrs.typifier` module (also re-exported at the
+  `molrs` top level), giving the Python bindings a native
+  typify → typed `Atomistic` → `Frame` path. molpy's OPLS-AA / MMFF typifiers are
+  now thin re-exports of these.
+- **Daylight reaction-SMARTS (SMIRKS) transform engine** (`chem`) — apply
+  reaction templates as graph edits; `Reaction.apply` returns handles to the
+  atoms it touched.
+- **Atom-map SMARTS matcher and graph-edit conveniences** exposed to Python.
+- **Isomorphism-invariant structural graph hash on `MolGraph`** — a canonical
+  hash stable under atom re-indexing, backing region-scoped retype caching in
+  downstream consumers.
+- **Frame serialization foundation** — the `serde` feature adds
+  `Serialize`/`Deserialize` for `Frame`/`Block`/`Column`/`SimBox`, and the
+  `stream` feature adds MessagePack/JSON wire encoding
+  (`frame_to_bytes`/`bytes_to_frame`). WASM-clean; intentionally not in `full`.
+  (The WebSocket streaming/control layer on top of this is deferred; see the
+  `net-streaming` spec.)
+
+## [0.6.0] - 2026-07-03
+
+molrs and `molcrafts-molpy` continue to share one version line and release as a
+pair; downstream exact-pins move to `0.6.0`.
+
+### Changed (breaking)
+
+- **Freud-style `compute` reorganization.** Trajectory analyses are grouped into
+  per-category folders — `transport`, `spectroscopy`, `shape`, `ml`, `dynamics`,
+  `dielectric` — replacing the flat per-analysis modules (`van_hove`, `pca`,
+  `kmeans`, `gyration_tensor`, `inertia_tensor`, `onsager`, `spectra`, …).
+  **Crate-root re-exports of every relocated type are preserved**
+  (`molrs::compute::VanHove`, `::KMeans`, `::OnsagerCorrelation`,
+  `::CenterOfMass`, … still resolve); only fully-qualified
+  `compute::<old_submodule>::` paths change.
+
+### Removed (breaking)
+
+- **Native GAFF/AMBER parameter estimator.** `ParameterEstimator`, the
+  `ff::typifier::estimate` module, and its embedded `gaff_empirical.json` /
+  `gaff_equiv.json` tables are removed; estimating parameters for uncovered
+  bonded terms is delegated to embedded reference. `OplsTypifier::with_estimator` /
+  `with_default_estimator` and the Python `OplsTypifier(estimator=…)` argument
+  are gone. The force-field-agnostic `Estimator` trait + `assign_bonded_with`
+  seam is **kept** as an extension point (molrs ships no in-tree estimator).
+- `compute::jacf::{JacfResult, green_kubo_conductivity}` — the Green–Kubo
+  conductivity is now `GreenKuboConductivity` (raw ACF) composed with
+  `fit::RunningIntegral`; `jacf` is a documentation-only module.
+- Python top level: `molrs.MolRec` and `molrs.Observables` (the
+  `ScalarObservable` / `VectorObservable` types are kept).
+
+### Added
+
+- **Streaming accumulators** `RDFAccumulator`, `MSDAccumulator`,
+  `VACFAccumulator` — bounded-memory online accumulation for long trajectories
+  (Rust API).
+
 ## [0.5.1] - 2026-07-01
 
 Version realigned with `molcrafts-molpy`: molrs and molpy now share one version
@@ -12,7 +75,7 @@ line and are released as a pair (jumped 0.1.6 → 0.5.1 to converge).
 
 ### Added
 
-- **TRAVIS-parity compute suite (Python-exposed).** Geometric distribution
+- **analysis-parity compute suite (Python-exposed).** Geometric distribution
   functions (ADF / DDF / distance), combined distribution functions (CDF),
   spatial distribution function (SDF), Van Hove `G(r, t)` (self + distinct) and
   Legendre reorientational TCFs, geometric hydrogen-bond detection, native

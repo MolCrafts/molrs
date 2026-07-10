@@ -2,7 +2,7 @@
 //! Kabsch front-end.
 //!
 //! Covers acceptance criteria ac-001..ac-006 of
-//! `travis-parity-03-spatial-distribution-function`.
+//! `analysis-parity-03-spatial-distribution-function`.
 
 use molrs::Frame;
 use molrs::compute::density::kabsch::{det3, kabsch};

@@ -15,7 +15,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 
-use molrs::{Atom, AtomId, Atomistic, PropValue, SmartsPattern};
+use molrs::{Atom, AtomId, Atomistic, MatchOptions, PropValue, SmartsPattern};
 use serde_json::Value;
 
 fn fixtures_dir() -> PathBuf {
@@ -146,9 +146,9 @@ fn test_matches_equal_rdkit() {
             total += 1;
             let pat = SmartsPattern::parse(p).unwrap_or_else(|e| panic!("parse {p:?}: {e}"));
             let got: BTreeSet<Vec<usize>> = pat
-                .find_matches(&g)
+                .find(&g, MatchOptions::default())
                 .iter()
-                .map(|m| match_to_indices(m, &id_to_row))
+                .map(|m| match_to_indices(m.atoms(), &id_to_row))
                 .collect();
             let want: BTreeSet<Vec<usize>> = fixtures["matches"][name][p]
                 .as_array()
@@ -192,10 +192,16 @@ fn test_recursive_carbonyl() {
     // acetamide + methyl acetate have a carbonyl; butane does not.
     for name in ["acetamide", "methyl_acetate"] {
         let (g, _) = build_mol(name, &fixtures);
-        assert!(pat.has_match(&g), "{name} should match carbonyl pattern");
+        assert!(
+            pat.has_match(&g, MatchOptions::default()),
+            "{name} should match carbonyl pattern"
+        );
     }
     let (butane, _) = build_mol("butane", &fixtures);
-    assert!(!pat.has_match(&butane), "butane has no carbonyl");
+    assert!(
+        !pat.has_match(&butane, MatchOptions::default()),
+        "butane has no carbonyl"
+    );
 }
 
 // ── ac-003: atom-map labels preserved + addressable ─────────────────────────
@@ -210,14 +216,14 @@ fn test_atom_map_labels_torsion() {
 
     let fixtures = load_fixtures();
     let (g, _) = build_mol("methyl_acetate", &fixtures);
-    let matches = pat.find_matches(&g);
+    let matches = pat.find(&g, MatchOptions::default());
     assert!(
         !matches.is_empty(),
         "methyl acetate should match O=C-O-C torsion"
     );
     for m in &matches {
         // Four mutually distinct atoms.
-        let set: BTreeSet<_> = m.iter().collect();
+        let set: BTreeSet<_> = m.atoms().iter().collect();
         assert_eq!(set.len(), 4, "torsion atoms must be distinct");
     }
 }
@@ -238,8 +244,8 @@ fn test_invalid_smarts_returns_err() {
 // atom expression matches an atom iff an external "current label map"
 // (`HashMap<AtomId, String>`) assigns that atom the exact label `LABEL`. OPLS
 // layered typing supplies the per-atom assigned-type map as the label context;
-// the engine itself knows nothing about OPLS. The legacy `find_matches` entry
-// uses an empty label map and is unaffected.
+// the engine itself knows nothing about OPLS. The default `find` entry uses no
+// label map and is unaffected.
 
 /// Build a minimal ethanol skeleton C-C-O with explicit Hs and return the
 /// graph plus the (C_methyl, C_hydroxyl, O, H_on_O) atom ids.
@@ -273,9 +279,9 @@ fn test_bracket_h_leading_is_element() {
 
     // `[H]` alone matches every hydrogen atom (the hydroxyl H included).
     let h_elem = SmartsPattern::parse("[H]").unwrap();
-    let h_matches = h_elem.find_matches(&g);
+    let h_matches = h_elem.find(&g, MatchOptions::default());
     assert!(
-        h_matches.iter().any(|m| m[0] == ho),
+        h_matches.iter().any(|m| m.atoms[0] == ho),
         "[H] (leading) matches the hydroxyl H atom"
     );
     // ethanol has 1 (OH) + 3 (CH3) + 2 (CH2) = 6 hydrogens.
@@ -283,7 +289,7 @@ fn test_bracket_h_leading_is_element() {
 
     // `[CH3]` is carbon-with-3-H (a count), NOT an H atom: matches the methyl C.
     let ch3 = SmartsPattern::parse("[CH3]").unwrap();
-    let ch3_matches = ch3.find_matches(&g);
+    let ch3_matches = ch3.find(&g, MatchOptions::default());
     assert_eq!(ch3_matches.len(), 1, "[CH3] matches the one methyl carbon");
 
     // `[C;H1]` (H after another primitive) is the H-count form: the CH2 carbon
@@ -291,13 +297,13 @@ fn test_bracket_h_leading_is_element() {
     // one H, so zero matches.
     let ch1 = SmartsPattern::parse("[C;H1]").unwrap();
     assert!(
-        ch1.find_matches(&g).is_empty(),
+        ch1.find(&g, MatchOptions::default()).is_empty(),
         "[C;H1] is a count form (no ethanol C has exactly 1 H)"
     );
 
     // `[!H]` is "not the hydrogen element": matches every non-H atom.
     let not_h = SmartsPattern::parse("[!H]").unwrap();
-    let non_h = not_h.find_matches(&g).len();
+    let non_h = not_h.find(&g, MatchOptions::default()).len();
     assert_eq!(
         non_h,
         g.n_atoms() - 6,
@@ -334,17 +340,30 @@ fn test_context_label_matches_only_when_assigned() {
     // Empty context: nothing has the label, so no match.
     let empty: HashMap<AtomId, String> = HashMap::new();
     assert!(
-        pat.find_matches_with_labels(&g, &empty).is_empty(),
+        pat.find(
+            &g,
+            MatchOptions {
+                labels: Some(&empty),
+                ..MatchOptions::default()
+            }
+        )
+        .is_empty(),
         "no label assigned -> no match"
     );
 
     // Assign opls_154 to the oxygen: the H[O] match now succeeds and roots on H.
     let mut labels: HashMap<AtomId, String> = HashMap::new();
     labels.insert(o, "opls_154".to_string());
-    let matches = pat.find_matches_with_labels(&g, &labels);
+    let matches = pat.find(
+        &g,
+        MatchOptions {
+            labels: Some(&labels),
+            ..MatchOptions::default()
+        },
+    );
     assert_eq!(matches.len(), 1, "exactly the hydroxyl H matches");
     assert_eq!(
-        matches[0][0], ho,
+        matches[0].atoms[0], ho,
         "match roots on the hydroxyl H (query atom 0)"
     );
 
@@ -352,32 +371,45 @@ fn test_context_label_matches_only_when_assigned() {
     let mut wrong: HashMap<AtomId, String> = HashMap::new();
     wrong.insert(o, "opls_155".to_string());
     assert!(
-        pat.find_matches_with_labels(&g, &wrong).is_empty(),
+        pat.find(
+            &g,
+            MatchOptions {
+                labels: Some(&wrong),
+                ..MatchOptions::default()
+            }
+        )
+        .is_empty(),
         "wrong label -> no match"
     );
 }
 
 #[test]
-fn test_context_label_legacy_find_matches_unaffected() {
-    // ac-002: the legacy find_matches (no label context) is byte-for-byte
-    // unaffected on non-%-patterns; a %-pattern simply never matches under it
-    // (empty label context), never panics.
+fn test_context_label_default_find_unaffected() {
+    // ac-002: the default find path (no label context) is byte-for-byte
+    // unaffected on non-%-patterns; a %-pattern simply never matches under it,
+    // never panics.
     let (g, _cm, _ch, _o, _ho) = ethanol();
 
     // Non-% pattern: identical result via both entries (empty labels).
     use std::collections::HashMap;
     let empty: HashMap<AtomId, String> = HashMap::new();
     let plain = SmartsPattern::parse("[O;X2]").unwrap();
-    let legacy = plain.find_matches(&g);
-    let with_empty = plain.find_matches_with_labels(&g, &empty);
-    assert_eq!(legacy, with_empty, "empty-label path == legacy path");
-    assert_eq!(legacy.len(), 1, "one hydroxyl oxygen");
+    let default = plain.find(&g, MatchOptions::default());
+    let with_empty = plain.find(
+        &g,
+        MatchOptions {
+            labels: Some(&empty),
+            ..MatchOptions::default()
+        },
+    );
+    assert_eq!(default, with_empty, "empty-label path == default path");
+    assert_eq!(default.len(), 1, "one hydroxyl oxygen");
 
-    // A %-pattern under the legacy entry: empty context, so no match, no panic.
+    // A %-pattern under the default entry: no context, so no match, no panic.
     let labeled = SmartsPattern::parse("[H][O;%opls_154]").unwrap();
     assert!(
-        labeled.find_matches(&g).is_empty(),
-        "legacy entry sees empty label context"
+        labeled.find(&g, MatchOptions::default()).is_empty(),
+        "default entry sees no label context"
     );
 }
 
@@ -391,14 +423,29 @@ fn test_context_label_composes_with_other_primitives() {
 
     let mut labels: HashMap<AtomId, String> = HashMap::new();
     labels.insert(o, "mylabel".to_string());
-    let m = pat.find_matches_with_labels(&g, &labels);
+    let m = pat.find(
+        &g,
+        MatchOptions {
+            labels: Some(&labels),
+            ..MatchOptions::default()
+        },
+    );
     assert_eq!(m.len(), 1, "the labeled degree-2 O matches");
-    assert_eq!(m[0][0], o);
+    assert_eq!(m[0].atoms[0], o);
 
     // Label present but on a wrong-degree atom would not match; here only O has
     // it, and O is X2, so the single match is correct. Remove the label -> none.
     let empty: HashMap<AtomId, String> = HashMap::new();
-    assert!(pat.find_matches_with_labels(&g, &empty).is_empty());
+    assert!(
+        pat.find(
+            &g,
+            MatchOptions {
+                labels: Some(&empty),
+                ..MatchOptions::default()
+            }
+        )
+        .is_empty()
+    );
 }
 
 // ── has_match consistent with find_matches ──────────────────────────────────
@@ -417,8 +464,8 @@ fn test_has_match_consistency() {
         for p in &patterns {
             let pat = SmartsPattern::parse(p).unwrap();
             assert_eq!(
-                pat.has_match(&g),
-                !pat.find_matches(&g).is_empty(),
+                pat.has_match(&g, MatchOptions::default()),
+                !pat.find(&g, MatchOptions::default()).is_empty(),
                 "has_match disagrees with find_matches for {name} :: {p}"
             );
         }

@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "molcrafts-molrs"
-version = "0.5.1"
+version = "0.7.0"
 description = "Python bindings for molrs molecular simulation library"
 requires-python = ">=3.12"
 readme = "README.md"
@@ -18,6 +18,9 @@ dependencies = ["numpy>=2.0"]
 doc = [
     "zensical",
     "mkdocstrings[python]",
+    # Shared MolCrafts brand theme (zensical.toml sets `theme.name = "molcrafts"`),
+    # matching molpy / molcfg / mollog so `pip install .[doc]` builds standalone.
+    "molcrafts-zensical-theme>=0.1.1",
 ]
 
 [tool.maturin]

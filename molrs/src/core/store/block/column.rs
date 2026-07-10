@@ -36,7 +36,7 @@ use crate::types::{F, I, U};
 ///
 /// See the module-level docs for the full story. Readers access the inner
 /// array via `Deref<Target = ArrayD<T>>`. Writers must go through
-/// [`realize_owned_mut`] to ensure mutation never touches foreign memory.
+/// `realize_owned_mut` to ensure mutation never touches foreign memory.
 pub struct ColumnHolder<T> {
     array: ManuallyDrop<ArrayD<T>>,
     /// Optional keep-alive for a foreign-allocated buffer.
@@ -285,6 +285,53 @@ impl Column {
             Column::UInt(a) => a.shape(),
             Column::U8(a) => a.shape(),
             Column::String(a) => a.shape(),
+        }
+    }
+
+    /// Owned little-endian byte buffer of this column's numeric backing store,
+    /// in row-major (standard) layout.
+    ///
+    /// Returns `None` only for the [`Column::String`] variant, whose
+    /// variable-length elements have no fixed byte representation. A strided or
+    /// sliced numeric column is materialized into standard layout first, so any
+    /// valid numeric column yields `Some` with length
+    /// `product(shape) * size_of::<element>()`. `Bool` is emitted as one byte
+    /// per element (`0`/`1`).
+    pub fn raw_bytes(&self) -> Option<Vec<u8>> {
+        match self {
+            Column::Float(h) => {
+                let a = h.array().as_standard_layout();
+                let mut out = Vec::with_capacity(a.len() * 8);
+                for &v in a.iter() {
+                    out.extend_from_slice(&v.to_le_bytes());
+                }
+                Some(out)
+            }
+            Column::Int(h) => {
+                let a = h.array().as_standard_layout();
+                let mut out = Vec::with_capacity(a.len() * 4);
+                for &v in a.iter() {
+                    out.extend_from_slice(&v.to_le_bytes());
+                }
+                Some(out)
+            }
+            Column::UInt(h) => {
+                let a = h.array().as_standard_layout();
+                let mut out = Vec::with_capacity(a.len() * 4);
+                for &v in a.iter() {
+                    out.extend_from_slice(&v.to_le_bytes());
+                }
+                Some(out)
+            }
+            Column::U8(h) => Some(h.array().as_standard_layout().iter().copied().collect()),
+            Column::Bool(h) => Some(
+                h.array()
+                    .as_standard_layout()
+                    .iter()
+                    .map(|&b| b as u8)
+                    .collect(),
+            ),
+            Column::String(_) => None,
         }
     }
 
@@ -814,5 +861,47 @@ mod tests {
         assert!(holder.is_foreign());
         assert!(!holder_clone.is_foreign());
         assert_eq!(holder_clone.array().as_slice().unwrap(), &[7.0, 8.0]);
+    }
+
+    // ---- raw_bytes ----
+
+    #[test]
+    fn test_raw_bytes_lengths() {
+        assert_eq!(float_col(3).raw_bytes().map(|b| b.len()), Some(24));
+        assert_eq!(int_col(4).raw_bytes().map(|b| b.len()), Some(16));
+        assert_eq!(uint_col(2).raw_bytes().map(|b| b.len()), Some(8));
+        assert_eq!(u8_col(5).raw_bytes().map(|b| b.len()), Some(5));
+        assert_eq!(bool_col(7).raw_bytes().map(|b| b.len()), Some(7));
+        assert!(string_col(3).raw_bytes().is_none());
+    }
+
+    #[test]
+    fn test_raw_bytes_little_endian_values() {
+        let col = Column::from_float(Array1::from_vec(vec![1.0 as F, 2.0]).into_dyn());
+        let b = col.raw_bytes().unwrap();
+        assert_eq!(&b[0..8], &1.0f64.to_le_bytes());
+        assert_eq!(&b[8..16], &2.0f64.to_le_bytes());
+    }
+
+    #[test]
+    fn test_raw_bytes_multidim_length() {
+        // A [2,3] int column flattens to 6 elements * 4 bytes.
+        let col = Column::from_int(
+            ArrayD::<I>::from_shape_vec(ndarray::IxDyn(&[2, 3]), vec![0 as I; 6]).unwrap(),
+        );
+        assert_eq!(col.raw_bytes().map(|b| b.len()), Some(24));
+    }
+
+    #[test]
+    fn test_raw_bytes_strided_materializes() {
+        // A strided (sliced) numeric column still yields Some, in logical order.
+        let base = Array1::from_vec(vec![1.0 as F, 2.0, 3.0, 4.0, 5.0, 6.0]);
+        let strided = base.slice_move(ndarray::s![..;2]).into_dyn(); // [1, 3, 5]
+        let col = Column::from_float(strided);
+        let b = col.raw_bytes().unwrap();
+        assert_eq!(b.len(), 24);
+        assert_eq!(&b[0..8], &1.0f64.to_le_bytes());
+        assert_eq!(&b[8..16], &3.0f64.to_le_bytes());
+        assert_eq!(&b[16..24], &5.0f64.to_le_bytes());
     }
 }

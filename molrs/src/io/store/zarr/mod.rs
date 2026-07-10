@@ -1,12 +1,12 @@
-//! Zarr V3-based MolRec storage.
+//! Zarr V3-based frame-sequence (`Trajectory`) storage.
 
 mod error;
 mod frame_io;
-mod molrec;
+mod trajectory_store;
 
-pub use molrec::{count_molrec_frames_in_store, read_molrec_frame_from_store, read_molrec_store};
+pub use trajectory_store::{count_frames_in_store, read_frame_from_store, read_trajectory_store};
 #[cfg(feature = "filesystem")]
-pub use molrec::{read_molrec_file, write_molrec_file};
+pub use trajectory_store::{read_trajectory_file, write_trajectory_file};
 
 /// Unit system tag stored in root metadata.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

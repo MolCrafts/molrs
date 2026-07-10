@@ -21,6 +21,7 @@
 //! `query_orientations` argument). Without orientations the analyzer
 //! works in the lab frame.
 
+use crate::compute::result::ComputeResult;
 use molrs::spatial::neighbors::NeighborList;
 use molrs::spatial::region::simbox::BoxKind;
 use molrs::store::frame_access::FrameAccess;
@@ -28,26 +29,7 @@ use molrs::types::F;
 use ndarray::Array2;
 
 use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
 use crate::compute::traits::Compute;
-
-/// Per-frame PMFTXY result.
-#[derive(Debug, Clone, Default)]
-pub struct PMFTXYResult {
-    /// Number-density histogram, `(n_x, n_y)`, normalised to the bin area
-    /// and total expected pair count.
-    pub density: Array2<F>,
-    /// Raw pair counts per bin.
-    pub raw_counts: Array2<u64>,
-    /// Potential of mean force, `−ln(density / ρ_ref)`. Empty bins → `+∞`.
-    pub pmf: Array2<F>,
-    /// `x` bin edges (length `n_x + 1`).
-    pub x_edges: Vec<F>,
-    /// `y` bin edges (length `n_y + 1`).
-    pub y_edges: Vec<F>,
-}
-
-impl ComputeResult for PMFTXYResult {}
 
 /// `PMFTXY` analyzer.
 #[derive(Debug, Clone, Copy)]
@@ -59,6 +41,7 @@ pub struct PMFTXY {
 }
 
 impl PMFTXY {
+    /// Body-frame window `±x_max × ±y_max` (Å); `n_x × n_y` bins.
     pub fn new(x_max: F, y_max: F, n_x: usize, n_y: usize) -> Result<Self, ComputeError> {
         if x_max.is_nan() || x_max <= 0.0 || y_max.is_nan() || y_max <= 0.0 {
             return Err(ComputeError::OutOfRange {
@@ -261,6 +244,23 @@ impl Compute for PMFTXY {
                 what: "PMFTXY orientations frame count",
             });
         }
+        #[cfg(feature = "rayon")]
+        const PAR_THRESHOLD: usize = 2;
+
+        #[cfg(feature = "rayon")]
+        if frames.len() >= PAR_THRESHOLD {
+            use rayon::prelude::*;
+            return frames
+                .par_iter()
+                .enumerate()
+                .map(|(k, f)| {
+                    let nl = &args.nlists[k];
+                    let o = args.query_orientations.map(|o| o[k].as_slice());
+                    self.one_frame(*f, nl, o)
+                })
+                .collect();
+        }
+
         let mut out = Vec::with_capacity(frames.len());
         for (k, f) in frames.iter().enumerate() {
             let nl = &args.nlists[k];
@@ -271,11 +271,29 @@ impl Compute for PMFTXY {
     }
 }
 
+/// Per-frame PMFTXY result.
+#[derive(Debug, Clone, Default)]
+pub struct PMFTXYResult {
+    /// Number-density histogram, `(n_x, n_y)`, normalised to the bin area
+    /// and total expected pair count.
+    pub density: Array2<F>,
+    /// Raw pair counts per bin.
+    pub raw_counts: Array2<u64>,
+    /// Potential of mean force, `−ln(density / ρ_ref)`. Empty bins → `+∞`.
+    pub pmf: Array2<F>,
+    /// `x` bin edges (length `n_x + 1`).
+    pub x_edges: Vec<F>,
+    /// `y` bin edges (length `n_y + 1`).
+    pub y_edges: Vec<F>,
+}
+
+impl ComputeResult for PMFTXYResult {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compute::test_support::nlist_from_frame;
     use molrs::Frame;
-    use molrs::spatial::neighbors::{LinkCell, NbListAlgo};
     use molrs::spatial::region::simbox::SimBox;
     use molrs::store::block::Block;
     use ndarray::{Array1 as A1, array};
@@ -296,44 +314,7 @@ mod tests {
     }
 
     fn build_nlist(frame: &Frame, cutoff: F) -> NeighborList {
-        let xp = frame
-            .get("atoms")
-            .unwrap()
-            .get("x")
-            .and_then(<F as molrs::store::block::BlockDtype>::from_column)
-            .unwrap()
-            .as_slice()
-            .unwrap()
-            .to_vec();
-        let yp = frame
-            .get("atoms")
-            .unwrap()
-            .get("y")
-            .and_then(<F as molrs::store::block::BlockDtype>::from_column)
-            .unwrap()
-            .as_slice()
-            .unwrap()
-            .to_vec();
-        let zp = frame
-            .get("atoms")
-            .unwrap()
-            .get("z")
-            .and_then(<F as molrs::store::block::BlockDtype>::from_column)
-            .unwrap()
-            .as_slice()
-            .unwrap()
-            .to_vec();
-        let n = xp.len();
-        let mut pos = ndarray::Array2::<F>::zeros((n, 3));
-        for i in 0..n {
-            pos[[i, 0]] = xp[i];
-            pos[[i, 1]] = yp[i];
-            pos[[i, 2]] = zp[i];
-        }
-        let simbox = frame.simbox.as_ref().unwrap();
-        let mut lc = LinkCell::new().cutoff(cutoff);
-        lc.build(pos.view(), simbox);
-        lc.query().clone()
+        nlist_from_frame(frame, cutoff)
     }
 
     #[test]
@@ -461,5 +442,36 @@ mod tests {
             found_y_negative,
             "rotated-frame bond should land in y < 0 bins"
         );
+    }
+
+    /// The `frames.len() >= PAR_THRESHOLD` rayon branch must match the
+    /// serial path exactly, in frame order (enumerate + per-frame nlist).
+    #[test]
+    fn parallel_matches_serial() {
+        let frame = frame_with(&[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], 10.0, [false; 3]);
+        let nl = build_nlist(&frame, 1.5);
+        let p = PMFTXY::new(2.0, 2.0, 8, 8).unwrap();
+        let solo = p
+            .compute(
+                &[&frame],
+                PMFTXYArgs {
+                    nlists: std::slice::from_ref(&nl),
+                    query_orientations: None,
+                },
+            )
+            .unwrap();
+        let nls = vec![nl.clone(), nl.clone()];
+        let par = p
+            .compute(
+                &[&frame, &frame],
+                PMFTXYArgs {
+                    nlists: &nls,
+                    query_orientations: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(par.len(), 2);
+        assert_eq!(par[0].raw_counts, solo[0].raw_counts);
+        assert_eq!(par[1].raw_counts, solo[0].raw_counts);
     }
 }

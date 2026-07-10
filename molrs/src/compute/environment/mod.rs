@@ -1,15 +1,12 @@
 //! Local-environment analyzers ported from `freud.environment`.
 //!
-//! Currently implemented:
-//! - [`AngularSeparation`](angular_separation::AngularSeparationGlobal) —
-//!   pairwise angular separation between two sets of unit quaternions
-//!   (rotational orientations). Both the global variant (all-vs-all
-//!   reference) and a per-neighbor variant are exposed.
-//! - [`BondOrder`](bond_order::BondOrder) — 2-D `(θ, φ)` histogram of
-//!   neighbor bond vectors in the local frame.
-//!
-//! Future phases will add `LocalBondProjection`, `LocalDescriptors`, and
-//! `MatchEnv`.
+//! | Method | Measures |
+//! |--------|----------|
+//! | [`AngularSeparationGlobal`] / [`AngularSeparationNeighbor`] | pairwise angular separation between unit quaternions (all-vs-global-refs / per-neighbor) |
+//! | [`BondOrder`] | 2-D `(θ, φ)` histogram of neighbor bond directions on the unit sphere |
+//! | [`LocalBondProjection`] | projection of neighbor bond vectors onto reference directions |
+//! | [`LocalDescriptors`] | per-particle spherical-harmonic descriptors of the local neighborhood |
+//! | [`MatchEnv`] | environment matching / clustering by neighbor-vector geometry |
 
 pub mod angular_separation;
 pub mod bond_order;

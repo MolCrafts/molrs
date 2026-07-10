@@ -2,7 +2,7 @@
 site_name = "molrs"
 site_description = "Unified documentation for the molrs molecular modeling toolkit."
 site_author = "MolCrafts"
-site_url = "https://molcrafts.github.io/molrs/"
+site_url = "https://molrs.molcrafts.org/"
 repo_url = "https://github.com/MolCrafts/molrs"
 repo_name = "MolCrafts/molrs"
 docs_dir = "site-src"
@@ -36,32 +36,25 @@ nav = [
   { "Changelog" = "changelog.md" },
 ]
 
+# Shared MolCrafts brand theme (bundled with zensical). Palette, color scheme
+# toggle, and navigation features are owned by the theme, so they are not
+# redeclared here — this keeps molrs visually consistent with the other
+# molcrafts.org sites (molpy, molpack, …).
 [project.theme]
+name = "molcrafts"
 language = "en"
-features = [
-  "content.code.copy",
-  "content.tabs.link",
-  "navigation.footer",
-  "navigation.indexes",
-  "navigation.sections",
-  "navigation.tracking",
-  "navigation.top",
-  "search.highlight",
-]
 
-[[project.theme.palette]]
-scheme = "default"
-primary = "teal"
-accent = "indigo"
-toggle.icon = "lucide/sun"
-toggle.name = "Switch to dark mode"
+# molrs owns its brand colours here. The shared molcrafts theme holds only the
+# common palette/layout and reads these two values from config — nothing in
+# molcrafts-zensical-theme needs to change to restyle molrs.
+[project.extra.molcrafts]
+product = "molrs"
+accent = "#c2410c"                       # primary (主) — molrs signature colour
+accent_soft = "rgba(194, 65, 12, 0.14)"  # secondary (副) — soft fill behind it
 
-[[project.theme.palette]]
-scheme = "slate"
-primary = "teal"
-accent = "indigo"
-toggle.icon = "lucide/moon"
-toggle.name = "Switch to light mode"
+[[project.extra.social]]
+icon = "fontawesome/brands/github"
+link = "https://github.com/MolCrafts/molrs"
 
 [project.plugins.search]
 
@@ -72,7 +65,7 @@ default_handler = "python"
 paths = ["python"]
 
 [project.plugins.mkdocstrings.handlers.python.options]
-docstring_style = "numpy"
+docstring_style = "google"
 members_order = "source"
 show_root_heading = true
 show_root_full_path = false

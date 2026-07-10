@@ -12,11 +12,15 @@ registered in `molrs-python/src/lib.rs` is declared in the stub.
 For WASM, build declarations with the same `wasm-pack` flags used by npm
 publishing. The generated `pkg/` directory is ignored and must not be committed.
 
-Local documentation loop:
+Local documentation loop. The Zensical config lives at
+`molrs-python/zensical.toml`, so build and serve from that directory (its
+`[doc]` extra pulls in Zensical plus the mkdocstrings Python handler):
 
 ```bash
-python scripts/check-python-stub-exports.py
-maturin develop -m molrs-python/Cargo.toml
-zensical build -f docs/zensical.toml
-zensical serve -f docs/zensical.toml -a localhost:8000
+cd molrs-python
+pip install -e ".[doc]"                 # zensical + mkdocstrings[python]
+python ../scripts/check-python-stub-exports.py
+maturin develop                         # build the molrs module so the API reference can introspect it
+zensical build                          # reads ./zensical.toml, writes ./site
+zensical serve -a localhost:8000        # live preview
 ```

@@ -1,3 +1,5 @@
+//! Continuous (Voronoi-weighted) coordination numbers.
+
 // Flat qℓm row layout is most readable with explicit (particle, m) indexing.
 #![allow(clippy::needless_range_loop)]
 
@@ -21,6 +23,7 @@
 //!
 //! The output is one scalar per particle per requested ℓ value.
 
+use crate::compute::result::ComputeResult;
 use molrs::math::complex::Complex;
 use molrs::spatial::neighbors::NeighborList;
 use molrs::store::frame_access::FrameAccess;
@@ -28,20 +31,8 @@ use molrs::types::F;
 
 use super::steinhardt::compute_qlm;
 use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
 use crate::compute::traits::Compute;
 use crate::compute::util::get_positions_ref;
-
-/// Per-frame continuous-coordination result.
-#[derive(Debug, Clone, Default)]
-pub struct ContinuousCoordinationResult {
-    /// Requested ℓ values.
-    pub l: Vec<u32>,
-    /// `Vec<Vec<F>>` of shape `(n_l, n_particles)`.
-    pub coord: Vec<Vec<F>>,
-}
-
-impl ComputeResult for ContinuousCoordinationResult {}
 
 /// Continuous-coordination calculator.
 #[derive(Debug, Clone)]
@@ -51,6 +42,8 @@ pub struct ContinuousCoordination {
 }
 
 impl ContinuousCoordination {
+    /// `l` — Steinhardt orders entering the coordination weight (non-empty);
+    /// `power` — weighting exponent (≥ 0).
     pub fn new(l: &[u32], power: F) -> Result<Self, ComputeError> {
         if l.is_empty() {
             return Err(ComputeError::OutOfRange {
@@ -144,6 +137,19 @@ impl Compute for ContinuousCoordination {
                 what: "neighbor-list count",
             });
         }
+        #[cfg(feature = "rayon")]
+        const PAR_THRESHOLD: usize = 2;
+
+        #[cfg(feature = "rayon")]
+        if frames.len() >= PAR_THRESHOLD {
+            use rayon::prelude::*;
+            return frames
+                .par_iter()
+                .zip(nlists.par_iter())
+                .map(|(f, nl)| self.one_frame(*f, nl))
+                .collect();
+        }
+
         let mut out = Vec::with_capacity(frames.len());
         for (f, nl) in frames.iter().zip(nlists.iter()) {
             out.push(self.one_frame(*f, nl)?);
@@ -152,11 +158,22 @@ impl Compute for ContinuousCoordination {
     }
 }
 
+/// Per-frame continuous-coordination result.
+#[derive(Debug, Clone, Default)]
+pub struct ContinuousCoordinationResult {
+    /// Requested ℓ values.
+    pub l: Vec<u32>,
+    /// `Vec<Vec<F>>` of shape `(n_l, n_particles)`.
+    pub coord: Vec<Vec<F>>,
+}
+
+impl ComputeResult for ContinuousCoordinationResult {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compute::test_support::nlist_from_frame;
     use molrs::Frame;
-    use molrs::spatial::neighbors::{LinkCell, NbListAlgo};
     use molrs::spatial::region::simbox::SimBox;
     use molrs::store::block::Block;
     use ndarray::{Array1 as A1, array};
@@ -177,44 +194,7 @@ mod tests {
     }
 
     fn build_nlist(frame: &Frame, cutoff: F) -> NeighborList {
-        let xp = frame
-            .get("atoms")
-            .unwrap()
-            .get("x")
-            .and_then(<F as molrs::store::block::BlockDtype>::from_column)
-            .unwrap()
-            .as_slice()
-            .unwrap()
-            .to_vec();
-        let yp = frame
-            .get("atoms")
-            .unwrap()
-            .get("y")
-            .and_then(<F as molrs::store::block::BlockDtype>::from_column)
-            .unwrap()
-            .as_slice()
-            .unwrap()
-            .to_vec();
-        let zp = frame
-            .get("atoms")
-            .unwrap()
-            .get("z")
-            .and_then(<F as molrs::store::block::BlockDtype>::from_column)
-            .unwrap()
-            .as_slice()
-            .unwrap()
-            .to_vec();
-        let n = xp.len();
-        let mut pos = ndarray::Array2::<F>::zeros((n, 3));
-        for i in 0..n {
-            pos[[i, 0]] = xp[i];
-            pos[[i, 1]] = yp[i];
-            pos[[i, 2]] = zp[i];
-        }
-        let simbox = frame.simbox.as_ref().unwrap();
-        let mut lc = LinkCell::new().cutoff(cutoff);
-        lc.build(pos.view(), simbox);
-        lc.query().clone()
+        nlist_from_frame(frame, cutoff)
     }
 
     fn paired_octahedra() -> Frame {
