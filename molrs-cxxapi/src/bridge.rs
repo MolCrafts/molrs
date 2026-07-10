@@ -25,6 +25,7 @@ pub mod ffi {
         fn frame_column_i32(fref: &FrameRef, block: &str, col: &str) -> Vec<i32>;
         fn frame_column_u32(fref: &FrameRef, block: &str, col: &str) -> Vec<u32>;
         fn frame_column_str(fref: &FrameRef, block: &str, col: &str) -> Vec<String>;
+        fn frame_atomic_numbers(fref: &FrameRef) -> Vec<i32>;
         fn frame_simbox(fref: &FrameRef) -> Vec<f64>;
 
         // create-or-update writers
@@ -33,6 +34,14 @@ pub mod ffi {
         fn frame_set_column_u32(fref: &mut FrameRef, block: &str, col: &str, data: &[u32]);
         fn frame_set_column_str(fref: &mut FrameRef, block: &str, col: &str, data: &[String]);
         fn frame_set_simbox(fref: &mut FrameRef, h: &[f64]);
+
+        // AM1-BCC: Atomiverse supplies AM1 base charges; molrs owns BCC typing.
+        fn am1_bcc_assign_frame_from_base(
+            fref: &mut FrameRef,
+            am1_charges: &[f64],
+            total_charge: f64,
+            normalize_total_charge: bool,
+        ) -> Vec<f64>;
 
         // ── I/O ──────────────────────────────────────────────────
         // Write one frame to an XYZ file (standard element+coords). append=false

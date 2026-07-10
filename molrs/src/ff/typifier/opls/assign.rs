@@ -30,22 +30,21 @@
 //! molpy's matcher, [`end_score`] treats `""`, `"*"`, and `"X"` all as the
 //! score-0 wildcard.
 //!
-//! # No-match seam (estimator)
+//! # No-match seam (parameter interpolation)
 //!
-//! A term that matches no candidate is routed through the [`Estimator`] seam: if
-//! an estimator is attached, it is asked to estimate the missing params;
-//! otherwise the configured strict policy applies (`strict=true` → `Err`,
-//! `strict=false` → the term is left unparametrized). The
-//! [`ff-parameter-estimator`] is not built yet; this is the opt-in injection
-//! point it will wire into.
-//!
-//! [`ff-parameter-estimator`]: https://github.com/MolCrafts/molrs
+//! A term that matches no candidate is routed through the [`Estimator`] seam, an
+//! OPLS-bonded specialization of the generic
+//! [`ParameterInterpolator`](crate::ff::typifier::estimate::ParameterInterpolator)
+//! trait. If an interpolator is attached, it is asked to fill the missing
+//! params; otherwise the configured strict policy applies (`strict=true` →
+//! `Err`, `strict=false` → the term is left unparametrized).
 
 use std::collections::HashMap;
 
 use molrs::{AtomId, Atomistic};
 
 use crate::ff::forcefield::{ForceField, Params, StyleDefs};
+use crate::ff::typifier::estimate::ParameterInterpolator;
 
 use super::meta::OplsTypingMeta;
 
@@ -277,7 +276,7 @@ pub enum NoMatch {
 /// One bonded term awaiting parameters: its arity-tagged endpoint types.
 ///
 /// Handed to an [`Estimator`] when no force-field candidate matches. Kept small
-/// and owned so an estimator needs no access to `Atomistic` internals.
+/// and owned so an interpolator needs no access to `Atomistic` internals.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BondedTerm {
     /// A bond: the two endpoint `opls_NNN` types.
@@ -288,23 +287,22 @@ pub enum BondedTerm {
     Dihedral([String; 4]),
 }
 
-/// No-match seam for filling uncovered bonded terms.
+/// OPLS bonded specialization of the generic parameter interpolation seam.
 ///
-/// [`typify_bonded_with`] calls [`estimate`](Estimator::estimate) for any bonded
-/// term the force-field tables do not cover. An implementation returns:
-/// - `Ok(Some(params))` — estimated params to write onto the term;
+/// [`typify_bonded_with`] calls
+/// [`interpolate`](ParameterInterpolator::interpolate) for any bonded term the
+/// force-field tables do not cover. An implementation returns:
+/// - `Ok(Some(params))` — interpolated params to write onto the term;
 /// - `Ok(None)` — declined; fall back to the strict policy;
 /// - `Err(_)` — hard failure, propagated.
 ///
-/// This is a force-field-agnostic extension point: molrs ships no estimator
-/// (parameter estimation for uncovered terms is delegated to external tooling
-/// such as AmberTools). A consumer that wants automatic fill-in implements this
-/// trait and passes it to [`typify_bonded_with`]. The default [`typify_bonded`]
-/// path attaches none and the [`NoMatch`] policy decides.
-pub trait Estimator {
-    /// Estimate parameters for an uncovered bonded `term`, or decline (`None`).
-    fn estimate(&self, term: &BondedTerm) -> Result<Option<Params>, String>;
-}
+/// The default [`typify_bonded`] path attaches none and the [`NoMatch`] policy
+/// decides. Future typifier parameter families should implement
+/// [`ParameterInterpolator`] for their own term query type rather than extending
+/// [`BondedTerm`].
+pub trait Estimator: ParameterInterpolator<Term = BondedTerm> {}
+
+impl<T> Estimator for T where T: ParameterInterpolator<Term = BondedTerm> + ?Sized {}
 
 /// Typify bonded parameters onto a typed molecule, with the strict no-match
 /// policy and no estimator (the default closed-loop path).
@@ -493,7 +491,7 @@ fn resolve_no_match(
     estimator: Option<&dyn Estimator>,
 ) -> Result<(), String> {
     if let Some(est) = estimator
-        && let Some(params) = est.estimate(term)?
+        && let Some(params) = est.interpolate(term)?
     {
         return write_params(out, kind, &params);
     }

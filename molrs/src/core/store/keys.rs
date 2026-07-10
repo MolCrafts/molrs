@@ -61,6 +61,32 @@ pub const VZ: &str = "vz";
 /// The three Cartesian velocity component keys, in axis order.
 pub const VELOCITIES: [&str; 3] = [VX, VY, VZ];
 
+/// Real part of a per-atom orientation quaternion.
+pub const QUATW: &str = "quatw";
+/// First imaginary component of a per-atom orientation quaternion.
+pub const QUATI: &str = "quati";
+/// Second imaginary component of a per-atom orientation quaternion.
+pub const QUATJ: &str = "quatj";
+/// Third imaginary component of a per-atom orientation quaternion.
+pub const QUATK: &str = "quatk";
+/// The four orientation-quaternion component keys, in `(w, i, j, k)` order.
+///
+/// Names follow LAMMPS `compute property/atom quatw quati quatj quatk`, the same
+/// provenance as [`VELOCITIES`]. Consumers that need a 2-D orientation angle
+/// derive it as `θ = 2·atan2(k, w)` rather than storing a separate column.
+pub const QUAT: [&str; 4] = [QUATW, QUATI, QUATJ, QUATK];
+
+/// Cartesian x-component of a per-atom electric dipole moment.
+pub const MUX: &str = "mux";
+/// Cartesian y-component of a per-atom electric dipole moment.
+pub const MUY: &str = "muy";
+/// Cartesian z-component of a per-atom electric dipole moment.
+pub const MUZ: &str = "muz";
+/// The three dipole-moment component keys, in axis order.
+///
+/// Names follow LAMMPS `atom_style dipole`.
+pub const DIPOLE: [&str; 3] = [MUX, MUY, MUZ];
+
 /// Position 3-vector key, when coordinates are stored as one `xyz` column
 /// instead of decomposed `x`/`y`/`z` scalars.
 pub const XYZ: &str = "xyz";
@@ -99,6 +125,7 @@ pub fn canonical_dtype(key: &str) -> Option<DType> {
         // an int (e.g. a velocity `0`) is stored as `0.0` so a later fractional
         // write is accepted rather than rejected by an int column.
         X | Y | Z | VX | VY | VZ | CHARGE | ORDER | MASS => Some(DType::Float),
+        QUATW | QUATI | QUATJ | QUATK | MUX | MUY | MUZ => Some(DType::Float),
         // Integer ids and string labels (id/mol_id/res_id/type/element/name/…)
         // and the UInt relation endpoints (atomi/atomj/…) intentionally take the
         // dtype of their first write — they are written with a consistent type

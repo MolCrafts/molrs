@@ -52,7 +52,7 @@ pair; downstream exact-pins move to `0.6.0`.
 - **Native GAFF/AMBER parameter estimator.** `ParameterEstimator`, the
   `ff::typifier::estimate` module, and its embedded `gaff_empirical.json` /
   `gaff_equiv.json` tables are removed; estimating parameters for uncovered
-  bonded terms is delegated to AmberTools. `OplsTypifier::with_estimator` /
+  bonded terms is delegated to embedded reference. `OplsTypifier::with_estimator` /
   `with_default_estimator` and the Python `OplsTypifier(estimator=…)` argument
   are gone. The force-field-agnostic `Estimator` trait + `assign_bonded_with`
   seam is **kept** as an extension point (molrs ships no in-tree estimator).

@@ -10,8 +10,9 @@
 use std::path::Path;
 
 use molrs::ff::forcefield::Params;
+use molrs::ff::typifier::ParameterInterpolator;
 use molrs::ff::typifier::opls::{
-    BondedTerm, CandidateTables, Estimator, NoMatch, OPLSAATypifier, OplsTypeRow, OplsTypingMeta,
+    BondedTerm, CandidateTables, NoMatch, OPLSAATypifier, OplsTypeRow, OplsTypingMeta,
     typify_atoms, typify_bonded, typify_bonded_with,
 };
 use molrs::{Atom, Atomistic};
@@ -578,8 +579,10 @@ fn no_match_seam_estimator_fills_params() {
     // ac-005 (seam shape): an attached Estimator is consulted for unmatched
     // terms; its returned params are written, overriding the strict policy.
     struct FixedEstimator;
-    impl Estimator for FixedEstimator {
-        fn estimate(&self, term: &BondedTerm) -> Result<Option<Params>, String> {
+    impl ParameterInterpolator for FixedEstimator {
+        type Term = BondedTerm;
+
+        fn interpolate(&self, term: &BondedTerm) -> Result<Option<Params>, String> {
             match term {
                 BondedTerm::Bond(_) => Ok(Some(Params::from_pairs(&[("k0", 111.0), ("r0", 1.2)]))),
                 _ => Ok(None),

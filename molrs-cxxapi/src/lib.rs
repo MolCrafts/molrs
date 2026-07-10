@@ -8,12 +8,16 @@
 use std::fs::{File, OpenOptions};
 use std::io::BufWriter;
 
+use molrs::Element;
+use molrs::ff::charge::ChargeAssigner;
+use molrs::ff::typifier::am1bcc::{AM1BCCTypifier, AM1ChargeBackend, AM1ChargeResult};
 use molrs::io::data::xyz::write_xyz_frame;
 #[cfg(feature = "zarr")]
 use molrs::io::store::zarr::{read_trajectory_file, write_trajectory_file};
 use molrs::spatial::region::simbox::SimBox;
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
+use molrs::store::keys;
 #[cfg(feature = "zarr")]
 use molrs::store::trajectory::Trajectory;
 use molrs::types::F;
@@ -765,12 +769,11 @@ fn read_frame_zarr_first(path: &str) -> Box<FrameRef> {
 
 /// Atomic number for a chemical symbol — inverse of [`symbol_for_z`].
 ///
-/// Reuses the same table (no duplicate periodic table). No fallback:
-/// panics on an unrecognized symbol, matching Atomiverse's "lookup tables
-/// throw on unsupported input" convention.
+/// Delegates to molrs' canonical periodic table. No fallback: panics on an
+/// unrecognized symbol, matching Atomiverse's explicit-error convention.
 fn z_for_symbol(sym: &str) -> i32 {
-    (1..=118)
-        .find(|&z| symbol_for_z(z).eq_ignore_ascii_case(sym))
+    Element::by_symbol(sym)
+        .map(|element| i32::from(element.z()))
         .unwrap_or_else(|| panic!("z_for_symbol: unknown element symbol '{sym}'"))
 }
 
@@ -981,6 +984,75 @@ fn frame_column_str(fref: &FrameRef, block: &str, col: &str) -> Vec<String> {
     }
 }
 
+/// Resolve atom atomic numbers from a frame.
+///
+/// The Atomiverse AM1 path consumes atomic numbers. molrs graph frames usually
+/// carry canonical `atoms.element`; older Atomiverse materialized frames carry
+/// integer `atoms.type`. This helper keeps the symbol→Z mapping in molrs and
+/// fails explicitly when neither source is well-formed.
+fn frame_atomic_numbers(fref: &FrameRef) -> Vec<i32> {
+    frame_atomic_numbers_result(fref).expect("frame_atomic_numbers")
+}
+
+fn frame_atomic_numbers_result(fref: &FrameRef) -> Result<Vec<i32>, String> {
+    let n = frame_block_nrows(fref, "atoms");
+    if n <= 0 {
+        return Err("frame_atomic_numbers: frame has no atoms rows".to_owned());
+    }
+    let n = n as usize;
+
+    let z = frame_column_i32(fref, "atoms", keys::TYPE);
+    if !z.is_empty() {
+        if z.len() != n {
+            return Err(format!(
+                "frame_atomic_numbers: atoms.type row count {} does not match atoms rows {}",
+                z.len(),
+                n
+            ));
+        }
+        for (i, value) in z.iter().enumerate() {
+            if !(1..=118).contains(value) {
+                return Err(format!(
+                    "frame_atomic_numbers: atoms.type[{i}]={value} is not an atomic number"
+                ));
+            }
+        }
+        return Ok(z);
+    }
+
+    for col in [keys::ELEMENT, "species"] {
+        let symbols = frame_column_str(fref, "atoms", col);
+        if symbols.is_empty() {
+            continue;
+        }
+        if symbols.len() != n {
+            return Err(format!(
+                "frame_atomic_numbers: atoms.{col} row count {} does not match atoms rows {}",
+                symbols.len(),
+                n
+            ));
+        }
+        return symbols
+            .iter()
+            .enumerate()
+            .map(|(i, symbol)| {
+                Element::by_symbol(symbol)
+                    .map(|element| i32::from(element.z()))
+                    .ok_or_else(|| {
+                        format!(
+                            "frame_atomic_numbers: unknown element symbol at atom {i}: {symbol}"
+                        )
+                    })
+            })
+            .collect();
+    }
+
+    Err(
+        "frame_atomic_numbers: atoms block has neither integer type nor element/species symbols"
+            .to_owned(),
+    )
+}
+
 /// Read the simulation-cell matrix as 9 row-major `f64` (3x3 H).
 ///
 /// @param fref frame handle
@@ -1091,6 +1163,71 @@ fn frame_set_simbox(fref: &mut FrameRef, h: &[f64]) {
         .expect("frame_set_simbox: set_simbox");
 }
 
+#[derive(Debug, Clone)]
+struct ProvidedAM1ChargeBackend {
+    charges: Vec<f64>,
+    total_charge: Option<f64>,
+}
+
+impl AM1ChargeBackend for ProvidedAM1ChargeBackend {
+    fn compute_am1_charges(&self, _mol: &molrs::Atomistic) -> Result<AM1ChargeResult, String> {
+        Ok(AM1ChargeResult {
+            charges: self.charges.clone(),
+            total_charge: self.total_charge,
+            heat_of_formation_kcal_mol: None,
+            reference: "Atomiverse AM1".to_owned(),
+        })
+    }
+}
+
+/// Apply AM1-BCC corrections to a molrs frame using AM1 base
+/// charges supplied by Atomiverse.
+///
+/// All BCC atom typing and correction lookup stays in molrs. The bridge only
+/// injects Atomiverse's AM1 base charges into the existing AM1ChargeBackend
+/// seam, runs `ChargeAssigner<AM1BCCTypifier<_>>`, and writes the resulting
+/// `atoms.charge` column back onto the same frame. Other frame blocks and
+/// non-charge atom columns are left untouched.
+fn am1_bcc_assign_frame_from_base(
+    fref: &mut FrameRef,
+    am1_charges: &[f64],
+    total_charge: f64,
+    normalize_total_charge: bool,
+) -> Vec<f64> {
+    am1_bcc_assign_frame_from_base_result(fref, am1_charges, total_charge, normalize_total_charge)
+        .expect("am1_bcc_assign_frame_from_base")
+}
+
+fn am1_bcc_assign_frame_from_base_result(
+    fref: &mut FrameRef,
+    am1_charges: &[f64],
+    total_charge: f64,
+    normalize_total_charge: bool,
+) -> Result<Vec<f64>, String> {
+    fref.0
+        .with_mut(|frame| -> Result<Vec<f64>, String> {
+            let mut mol = molrs::Atomistic::from_frame(frame).map_err(|e| e.to_string())?;
+            let backend = ProvidedAM1ChargeBackend {
+                charges: am1_charges.to_vec(),
+                total_charge: normalize_total_charge.then_some(total_charge),
+            };
+            let model = AM1BCCTypifier::bcc(backend)?;
+            let result = ChargeAssigner::new(model)
+                .with_method("AM1-BCC")
+                .assign_atomistic(&mut mol)?;
+
+            with_block_inserted(frame, "atoms", |blk| {
+                blk.insert(
+                    keys::CHARGE,
+                    Array1::from_vec(result.charges.clone()).into_dyn(),
+                )
+                .expect("am1_bcc_assign_frame_from_base: insert charge");
+            });
+            Ok(result.charges)
+        })
+        .map_err(|e| e.to_string())?
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -1181,5 +1318,60 @@ mod tests {
         // ...and vice versa.
         frame_set_column_i32(&mut original, "atoms", "id", &[1, 2, 3]);
         assert_eq!(frame_column_i32(&recovered, "atoms", "id"), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn frame_atomic_numbers_resolves_canonical_element_symbols() {
+        let mut fref = frame_new();
+        frame_set_column_str(
+            &mut fref,
+            "atoms",
+            keys::ELEMENT,
+            &["C".to_owned(), "Cl".to_owned(), "Br".to_owned()],
+        );
+
+        assert_eq!(frame_atomic_numbers(&fref), vec![6, 17, 35]);
+    }
+
+    #[test]
+    fn am1_bcc_bridge_applies_molrs_typifier_to_frame_from_base_charges() {
+        let mut mol = molrs::Atomistic::new();
+        let c = mol.add_atom_xyz("C", 0.0, 0.0, 0.0);
+        let mut hydrogens = Vec::new();
+        for [x, y, z] in [
+            [0.63, 0.63, 0.63],
+            [-0.63, -0.63, 0.63],
+            [-0.63, 0.63, -0.63],
+            [0.63, -0.63, -0.63],
+        ] {
+            let h = mol.add_atom_xyz("H", x, y, z);
+            mol.add_bond(c, h).expect("add C-H");
+            hydrogens.push(h);
+        }
+
+        let mut fref = frame_new();
+        fref.0.with_mut(|frame| *frame = mol.to_frame()).unwrap();
+        let charges = am1_bcc_assign_frame_from_base(
+            &mut fref,
+            &[-0.266000, 0.066000, 0.066000, 0.066000, 0.066000],
+            0.0,
+            false,
+        );
+        let expected = [-0.1088, 0.0267, 0.0267, 0.0267, 0.0267];
+        for (actual, expected) in charges.iter().zip(expected) {
+            assert!(
+                (actual - expected).abs() <= 1.0e-12,
+                "{actual} != {expected}"
+            );
+        }
+
+        let written = frame_column_f64(&fref, "atoms", keys::CHARGE);
+        assert_eq!(written.len(), charges.len());
+        for (actual, expected) in written.iter().zip(charges) {
+            assert!(
+                (actual - expected).abs() <= 1.0e-12,
+                "{actual} != {expected}"
+            );
+        }
     }
 }
