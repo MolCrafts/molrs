@@ -28,6 +28,7 @@ use std::ops::{Deref, DerefMut};
 
 use crate::error::MolRsError;
 use crate::store::frame::Frame;
+use crate::store::keys;
 use crate::system::molgraph::{Atom, KindId, MolGraph, NodeId, PropValue, Relation, RelationId};
 
 /// Result of [`Atomistic::extract_subgraph`].
@@ -66,7 +67,7 @@ pub type Improper = Relation;
 
 /// All-atom molecular graph.
 ///
-/// Invariant: every atom carries an `"element"` property (element symbol).
+/// Invariant: every atom carries the canonical [`keys::ELEMENT`] property.
 #[derive(Debug, Clone)]
 pub struct Atomistic {
     graph: MolGraph,
@@ -126,9 +127,12 @@ impl Atomistic {
     }
 
     /// Add an atom with element symbol only (no coordinates).
+    ///
+    /// Writes the chemical identity under the canonical [`keys::ELEMENT`] field
+    /// (not a format alias such as `"symbol"`).
     pub fn add_atom_bare(&mut self, symbol: &str) -> AtomId {
         let mut a = Atom::new();
-        a.set("element", symbol);
+        a.set(keys::ELEMENT, symbol);
         self.graph.add_node_with(a)
     }
 
@@ -513,14 +517,15 @@ impl Atomistic {
 
     // ---- conversions ----
 
-    /// Promote from a [`MolGraph`], validating all atoms have `"element"`. The
-    /// graph's relation kinds are re-registered to the standard set.
+    /// Promote from a [`MolGraph`], validating all atoms have [`keys::ELEMENT`].
+    /// The graph's relation kinds are re-registered to the standard set.
     pub fn try_from_molgraph(mol: MolGraph) -> Result<Self, MolRsError> {
         for (id, atom) in mol.nodes() {
-            if atom.get_str("element").is_none() {
+            if atom.get_str(keys::ELEMENT).is_none() {
                 return Err(MolRsError::validation(format!(
-                    "node {:?} missing 'element' property",
-                    id
+                    "node {:?} missing '{}' property",
+                    id,
+                    keys::ELEMENT
                 )));
             }
         }
@@ -557,14 +562,16 @@ impl Atomistic {
     /// Induced subgraph on an explicit atom set. Stale handles fail-fast.
     /// Returns `(subgraph, parent→new handle map)`.
     ///
-    /// Does **not** re-validate `"element"` on every node — the subgraph is a
-    /// subset of an already-constructed [`Atomistic`].
+    /// Re-wraps via [`Self::try_from_molgraph`] so the `"element"` invariant is
+    /// enforced — chemical identity is the canonical ELEMENT field, never a
+    /// format alias such as `"symbol"`.
     pub fn induced_subgraph(
         &self,
         atoms: &[AtomId],
     ) -> Result<(Atomistic, HashMap<AtomId, AtomId>), MolRsError> {
         let induced = self.graph.induced_subgraph(atoms)?;
-        Ok((Self::wrap_subgraph(induced.graph), induced.node_map))
+        let atomistic = Atomistic::try_from_molgraph(induced.graph)?;
+        Ok((atomistic, induced.node_map))
     }
 
     /// Radius ball around `centers` over the bond graph.
@@ -585,7 +592,7 @@ impl Atomistic {
             self.bond,
             /* copy_higher_order */ !regenerate_topology,
         )?;
-        let mut atomistic = Self::wrap_subgraph(ball.graph);
+        let mut atomistic = Atomistic::try_from_molgraph(ball.graph)?;
         if regenerate_topology {
             atomistic.generate_topology(true, true, false)?;
         }
@@ -596,22 +603,6 @@ impl Atomistic {
             hops: ball.hops,
             node_map: ball.node_map,
         })
-    }
-
-    /// Wrap a materialised subgraph MolGraph as [`Atomistic`] without the
-    /// `"element"` invariant check (subset of a parent that already decided).
-    fn wrap_subgraph(graph: MolGraph) -> Atomistic {
-        let bond = graph.kind_id("bonds").unwrap_or(KindId(0));
-        let angle = graph.kind_id("angles").unwrap_or(KindId(1));
-        let dihedral = graph.kind_id("dihedrals").unwrap_or(KindId(2));
-        let improper = graph.kind_id("impropers").unwrap_or(KindId(3));
-        Atomistic {
-            graph,
-            bond,
-            angle,
-            dihedral,
-            improper,
-        }
     }
 
     /// Structural merge of `other` into `self`. Returns `handle in other → handle
