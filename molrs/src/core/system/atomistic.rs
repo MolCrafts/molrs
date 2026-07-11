@@ -556,13 +556,15 @@ impl Atomistic {
 
     /// Induced subgraph on an explicit atom set. Stale handles fail-fast.
     /// Returns `(subgraph, parent→new handle map)`.
+    ///
+    /// Does **not** re-validate `"element"` on every node — the subgraph is a
+    /// subset of an already-constructed [`Atomistic`].
     pub fn induced_subgraph(
         &self,
         atoms: &[AtomId],
     ) -> Result<(Atomistic, HashMap<AtomId, AtomId>), MolRsError> {
         let induced = self.graph.induced_subgraph(atoms)?;
-        let atomistic = Atomistic::try_from_molgraph(induced.graph)?;
-        Ok((atomistic, induced.node_map))
+        Ok((Self::wrap_subgraph(induced.graph), induced.node_map))
     }
 
     /// Radius ball around `centers` over the bond graph.
@@ -583,7 +585,7 @@ impl Atomistic {
             self.bond,
             /* copy_higher_order */ !regenerate_topology,
         )?;
-        let mut atomistic = Atomistic::try_from_molgraph(ball.graph)?;
+        let mut atomistic = Self::wrap_subgraph(ball.graph);
         if regenerate_topology {
             atomistic.generate_topology(true, true, false)?;
         }
@@ -594,6 +596,22 @@ impl Atomistic {
             hops: ball.hops,
             node_map: ball.node_map,
         })
+    }
+
+    /// Wrap a materialised subgraph MolGraph as [`Atomistic`] without the
+    /// `"element"` invariant check (subset of a parent that already decided).
+    fn wrap_subgraph(graph: MolGraph) -> Atomistic {
+        let bond = graph.kind_id("bonds").unwrap_or(KindId(0));
+        let angle = graph.kind_id("angles").unwrap_or(KindId(1));
+        let dihedral = graph.kind_id("dihedrals").unwrap_or(KindId(2));
+        let improper = graph.kind_id("impropers").unwrap_or(KindId(3));
+        Atomistic {
+            graph,
+            bond,
+            angle,
+            dihedral,
+            improper,
+        }
     }
 
     /// Structural merge of `other` into `self`. Returns `handle in other → handle
