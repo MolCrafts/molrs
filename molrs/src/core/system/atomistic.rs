@@ -23,11 +23,26 @@
 //! assert_eq!(mol.n_bonds(), 1);
 //! ```
 
+use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
 
 use crate::error::MolRsError;
 use crate::store::frame::Frame;
 use crate::system::molgraph::{Atom, KindId, MolGraph, NodeId, PropValue, Relation, RelationId};
+
+/// Result of [`Atomistic::extract_subgraph`].
+#[derive(Debug, Clone)]
+pub struct ExtractedAtomistic {
+    pub graph: Atomistic,
+    /// Selected parent atoms with a bond-neighbor outside the ball.
+    pub boundary: Vec<AtomId>,
+    /// New atom id → parent atom id.
+    pub parent_of: HashMap<AtomId, AtomId>,
+    /// Parent atom id → hops from nearest center.
+    pub hops: HashMap<AtomId, i64>,
+    /// Parent atom id → new atom id.
+    pub node_map: HashMap<AtomId, AtomId>,
+}
 
 /// Handle to an atom (a graph node).
 pub type AtomId = NodeId;
@@ -537,6 +552,61 @@ impl Atomistic {
         &mut self.graph
     }
 
+    // ---- subgraph extraction (see [`crate::system::extract`]) ----
+
+    /// Induced subgraph on an explicit atom set. Stale handles fail-fast.
+    /// Returns `(subgraph, parent→new handle map)`.
+    pub fn induced_subgraph(
+        &self,
+        atoms: &[AtomId],
+    ) -> Result<(Atomistic, HashMap<AtomId, AtomId>), MolRsError> {
+        let induced = self.graph.induced_subgraph(atoms)?;
+        let atomistic = Atomistic::try_from_molgraph(induced.graph)?;
+        Ok((atomistic, induced.node_map))
+    }
+
+    /// Radius ball around `centers` over the bond graph.
+    ///
+    /// When `regenerate_topology` is true, only bonds are copied from the parent
+    /// and angles/dihedrals are perceived on the ball (O(ball)). When false,
+    /// higher-order terms fully contained in the ball are copied (may scan the
+    /// parent's higher-order tables — small-graph / verbatim path).
+    pub fn extract_subgraph(
+        &self,
+        centers: &[AtomId],
+        radius: i64,
+        regenerate_topology: bool,
+    ) -> Result<ExtractedAtomistic, MolRsError> {
+        let ball = self.graph.extract_ball(
+            centers,
+            radius,
+            self.bond,
+            /* copy_higher_order */ !regenerate_topology,
+        )?;
+        let mut atomistic = Atomistic::try_from_molgraph(ball.graph)?;
+        if regenerate_topology {
+            atomistic.generate_topology(true, true, false)?;
+        }
+        Ok(ExtractedAtomistic {
+            graph: atomistic,
+            boundary: ball.boundary,
+            parent_of: ball.parent_of,
+            hops: ball.hops,
+            node_map: ball.node_map,
+        })
+    }
+
+    /// Structural merge of `other` into `self`. Returns `handle in other → handle
+    /// in self`. Handles are remapped (not identity-preserving).
+    pub fn merge(&mut self, other: Atomistic) -> HashMap<AtomId, AtomId> {
+        self.graph.merge(other.graph)
+    }
+
+    /// Independent deep copy. **Handles are preserved** (same generational keys).
+    pub fn copy(&self) -> Self {
+        self.clone()
+    }
+
     // ---- structural graph hash (see [`crate::system::graph_hash`]) ----
 
     /// Isomorphism-invariant Weisfeiler–Lehman structural hash of the molecule
@@ -577,6 +647,47 @@ fn canonical_path(nodes: &[NodeId]) -> Vec<NodeId> {
 mod tests {
     use super::*;
     use crate::system::molgraph::Atom;
+    use std::collections::HashSet;
+
+    #[test]
+    fn merge_returns_complete_node_map() {
+        let mut a = Atomistic::new();
+        let c1 = a.add_atom_bare("C");
+        let c2 = a.add_atom_bare("C");
+        a.add_bond(c1, c2).unwrap();
+
+        let mut b = Atomistic::new();
+        let o = b.add_atom_bare("O");
+        let h = b.add_atom_bare("H");
+        b.add_bond(o, h).unwrap();
+
+        let map = a.merge(b);
+        assert_eq!(map.len(), 2);
+        assert_eq!(a.n_atoms(), 4);
+        assert_eq!(a.n_bonds(), 2);
+        let new_o = map[&o];
+        let new_h = map[&h];
+        assert!(a.get_atom(new_o).unwrap().get_str("element") == Some("O"));
+        assert!(a.get_atom(new_h).unwrap().get_str("element") == Some("H"));
+        // remapped bond endpoints resolve
+        let mut ends = HashSet::new();
+        for (_, bond) in a.bonds() {
+            ends.extend(bond.nodes.iter().copied());
+        }
+        assert!(ends.contains(&new_o) && ends.contains(&new_h));
+    }
+
+    #[test]
+    fn copy_preserves_handles() {
+        let mut mol = Atomistic::new();
+        let c = mol.add_atom_bare("C");
+        let h = mol.add_atom_bare("H");
+        let bid = mol.add_bond(c, h).unwrap();
+        let cloned = mol.copy();
+        assert!(cloned.get_atom(c).is_ok());
+        assert!(cloned.get_atom(h).is_ok());
+        assert!(cloned.get_bond(bid).is_ok());
+    }
 
     #[test]
     fn test_new_and_add() {

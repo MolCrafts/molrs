@@ -549,7 +549,7 @@ impl MolGraph {
     }
 
     /// Materialize node `id`'s set components into an [`Atom`].
-    fn read_atom(&self, id: NodeId) -> Atom {
+    pub(crate) fn read_atom(&self, id: NodeId) -> Atom {
         let mut atom = Atom::new();
         for (key, cell) in self.nodes.row_cells(id) {
             match cell {
@@ -740,7 +740,7 @@ impl MolGraph {
     }
 
     /// Materialize a relation's endpoints + properties.
-    fn read_relation(&self, kind: KindId, id: RelationId) -> Relation {
+    pub(crate) fn read_relation(&self, kind: KindId, id: RelationId) -> Relation {
         let k = &self.kinds[kind.0 as usize];
         let nodes = k.endpoints.get(id).cloned().unwrap_or_default();
         let mut props = HashMap::new();
@@ -757,7 +757,7 @@ impl MolGraph {
     }
 
     /// Write a property bag into a relation's columns.
-    fn write_relation_props(
+    pub(crate) fn write_relation_props(
         &mut self,
         kind: KindId,
         id: RelationId,
@@ -814,7 +814,11 @@ impl MolGraph {
     /// Registry-driven: every relation of every kind in `other` is transferred
     /// (kinds matched by name, registered on `self` if missing) — so all kinds
     /// are carried across.
-    pub fn merge(&mut self, other: MolGraph) {
+    ///
+    /// **Handle contract:** every node of `other` is remapped to a fresh handle in
+    /// `self`. Returns the map `NodeId in other → NodeId in self`. (By contrast,
+    /// [`Clone`] **preserves** handles in the independent copy.)
+    pub fn merge(&mut self, other: MolGraph) -> HashMap<NodeId, NodeId> {
         let mut node_map: HashMap<NodeId, NodeId> = HashMap::new();
         for old_id in other.nodes.handles() {
             let payload = other.read_atom(old_id);
@@ -836,6 +840,7 @@ impl MolGraph {
                 }
             }
         }
+        node_map
     }
 
     // =====================================================================
@@ -1334,10 +1339,25 @@ mod tests {
         let f = dst.add_node();
         dst.add_relation(dbond, &[e, f]).unwrap();
 
-        dst.merge(src);
+        let map = dst.merge(src);
         assert_eq!(dst.n_nodes(), 6);
         assert_eq!(dst.n_relations(dbond), 2);
         assert_eq!(dst.n_relations(dimp), 1, "merge must carry impropers");
+        assert_eq!(map.len(), 4, "merge returns one entry per node of other");
+    }
+
+    #[test]
+    fn test_clone_preserves_handles() {
+        let mut g = MolGraph::new();
+        let bond = g.register_kind("bonds", 2);
+        let a = g.add_node_with(Atom::xyz("C", 0.0, 0.0, 0.0));
+        let b = g.add_node_with(Atom::xyz("H", 1.0, 0.0, 0.0));
+        let rid = g.add_relation(bond, &[a, b]).unwrap();
+        let g2 = g.clone();
+        assert!(g2.get_node(a).is_ok());
+        assert!(g2.get_node(b).is_ok());
+        assert!(g2.get_relation(bond, rid).is_ok());
+        assert_eq!(g2.get_node(a).unwrap().get_str("element"), Some("C"));
     }
 
     // ----- Clone independence -----

@@ -26,8 +26,8 @@ use pyo3::prelude::*;
 
 use molrs::chem::aromaticity::perceive_aromaticity as core_perceive_aromaticity;
 use molrs::chem::smarts::{MatchOptions, Reaction, SmartsPattern};
-use molrs::system::atomistic::Atomistic;
-use molrs::system::coarsegrain::CoarseGrain;
+use molrs::system::atomistic::{Atomistic, ExtractedAtomistic};
+use molrs::system::coarsegrain::{CoarseGrain, ExtractedCoarseGrain};
 use molrs::system::entity_table::Cell;
 use molrs::system::molgraph::{
     KindId, MolGraph, NodeId, PropValue, node_from_u64, node_to_u64, relation_from_u64,
@@ -368,6 +368,110 @@ macro_rules! graph_world_impl {
 }
 
 // ---------------------------------------------------------------------------
+// ExtractedSubgraph — result of radius-ball extraction
+// ---------------------------------------------------------------------------
+
+/// Result of :meth:`Atomistic.extract_subgraph` / :meth:`CoarseGrain.extract_subgraph`.
+///
+/// * ``graph`` — the extracted leaf (``Atomistic`` or ``CoarseGrain``)
+/// * ``boundary`` — parent handles with a neighbor outside the ball
+/// * ``parent_of`` — ``{new_handle: parent_handle}``
+/// * ``hops`` — ``{parent_handle: hops_from_nearest_center}``
+/// * ``node_map`` — ``{parent_handle: new_handle}``
+#[pyclass(name = "ExtractedSubgraph", skip_from_py_object)]
+pub struct PyExtractedSubgraph {
+    graph: Py<PyAny>,
+    boundary: Vec<u64>,
+    parent_of: HashMap<u64, u64>,
+    hops: HashMap<u64, i64>,
+    node_map: HashMap<u64, u64>,
+}
+
+#[pymethods]
+impl PyExtractedSubgraph {
+    #[getter]
+    fn graph(&self, py: Python<'_>) -> Py<PyAny> {
+        self.graph.clone_ref(py)
+    }
+
+    #[getter]
+    fn boundary(&self) -> Vec<u64> {
+        self.boundary.clone()
+    }
+
+    #[getter]
+    fn parent_of(&self) -> HashMap<u64, u64> {
+        self.parent_of.clone()
+    }
+
+    #[getter]
+    fn hops(&self) -> HashMap<u64, i64> {
+        self.hops.clone()
+    }
+
+    #[getter]
+    fn node_map(&self) -> HashMap<u64, u64> {
+        self.node_map.clone()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "ExtractedSubgraph(n_boundary={}, n_nodes_mapped={})",
+            self.boundary.len(),
+            self.node_map.len()
+        )
+    }
+}
+
+impl PyExtractedSubgraph {
+    fn from_atomistic(py: Python<'_>, ext: ExtractedAtomistic) -> PyResult<Self> {
+        let graph = PyAtomistic::from_core(py, ext.graph)?.into_any();
+        Ok(Self {
+            graph,
+            boundary: ext.boundary.into_iter().map(node_to_u64).collect(),
+            parent_of: ext
+                .parent_of
+                .into_iter()
+                .map(|(k, v)| (node_to_u64(k), node_to_u64(v)))
+                .collect(),
+            hops: ext
+                .hops
+                .into_iter()
+                .map(|(k, v)| (node_to_u64(k), v))
+                .collect(),
+            node_map: ext
+                .node_map
+                .into_iter()
+                .map(|(k, v)| (node_to_u64(k), node_to_u64(v)))
+                .collect(),
+        })
+    }
+
+    fn from_coarsegrain(py: Python<'_>, ext: ExtractedCoarseGrain) -> PyResult<Self> {
+        let graph = PyCoarseGrain::from_core(py, ext.graph)?.into_any();
+        Ok(Self {
+            graph,
+            boundary: ext.boundary.into_iter().map(node_to_u64).collect(),
+            parent_of: ext
+                .parent_of
+                .into_iter()
+                .map(|(k, v)| (node_to_u64(k), node_to_u64(v)))
+                .collect(),
+            hops: ext
+                .hops
+                .into_iter()
+                .map(|(k, v)| (node_to_u64(k), v))
+                .collect(),
+            node_map: ext
+                .node_map
+                .into_iter()
+                .map(|(k, v)| (node_to_u64(k), node_to_u64(v)))
+                .collect(),
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
 // PyGraph — the generic world
 // ---------------------------------------------------------------------------
 
@@ -573,9 +677,63 @@ impl PyAtomistic {
             .map_err(molrs_error_to_pyerr)
     }
 
-    /// Return an independent deep copy of this `Atomistic` (handles preserved).
+    /// Return an independent deep copy of this `Atomistic`.
+    ///
+    /// **Handles are preserved** (same generational keys as in ``self``).
     fn copy(&self, py: Python<'_>) -> PyResult<Py<PyAtomistic>> {
         PyAtomistic::from_core(py, self.inner.clone())
+    }
+
+    /// Structural merge of ``other`` into ``self``.
+    ///
+    /// Consumes ``other``'s storage (``other`` is left empty). Every node handle
+    /// from ``other`` is remapped; returns ``{old_handle: new_handle}``.
+    fn merge(&mut self, other: &mut Self) -> HashMap<u64, u64> {
+        let taken = std::mem::take(&mut other.inner);
+        self.inner
+            .merge(taken)
+            .into_iter()
+            .map(|(k, v)| (node_to_u64(k), node_to_u64(v)))
+            .collect()
+    }
+
+    /// Induced subgraph on an explicit list of atom handles.
+    ///
+    /// Returns ``(subgraph, {parent_handle: new_handle})``. Stale handles raise.
+    fn induced_subgraph(
+        &self,
+        py: Python<'_>,
+        nodes: Vec<u64>,
+    ) -> PyResult<(Py<PyAtomistic>, HashMap<u64, u64>)> {
+        let ids: Vec<_> = nodes.into_iter().map(node_from_u64).collect();
+        let (sub, map) = self.inner.induced_subgraph(&ids).map_err(molrs_error_to_pyerr)?;
+        let py_sub = PyAtomistic::from_core(py, sub)?;
+        let py_map = map
+            .into_iter()
+            .map(|(k, v)| (node_to_u64(k), node_to_u64(v)))
+            .collect();
+        Ok((py_sub, py_map))
+    }
+
+    /// Radius ball around ``centers`` over the bond graph.
+    ///
+    /// When ``regenerate_topology`` is true, only bonds are copied and
+    /// angles/dihedrals are perceived on the ball. When false, higher-order
+    /// terms fully inside the ball are copied from the parent.
+    #[pyo3(signature = (centers, radius, *, regenerate_topology=false))]
+    fn extract_subgraph(
+        &self,
+        py: Python<'_>,
+        centers: Vec<u64>,
+        radius: i64,
+        regenerate_topology: bool,
+    ) -> PyResult<PyExtractedSubgraph> {
+        let ids: Vec<_> = centers.into_iter().map(node_from_u64).collect();
+        let ext = self
+            .inner
+            .extract_subgraph(&ids, radius, regenerate_topology)
+            .map_err(molrs_error_to_pyerr)?;
+        PyExtractedSubgraph::from_atomistic(py, ext)
     }
 
     // ---- structural graph hash (WL) ----
@@ -1029,6 +1187,54 @@ impl PyCoarseGrain {
     /// Whether `self` and `other` are isomorphic as labeled bead graphs.
     fn is_isomorphic(&self, other: &PyCoarseGrain) -> bool {
         self.inner.is_isomorphic(&other.inner)
+    }
+
+    /// Independent deep copy. **Handles are preserved**.
+    fn copy(&self, py: Python<'_>) -> PyResult<Py<PyCoarseGrain>> {
+        PyCoarseGrain::from_core(py, self.inner.clone())
+    }
+
+    /// Structural merge of ``other`` into ``self``; ``other`` is emptied.
+    /// Returns ``{old_handle: new_handle}``.
+    fn merge(&mut self, other: &mut Self) -> HashMap<u64, u64> {
+        let taken = std::mem::take(&mut other.inner);
+        self.inner
+            .merge(taken)
+            .into_iter()
+            .map(|(k, v)| (node_to_u64(k), node_to_u64(v)))
+            .collect()
+    }
+
+    /// Induced subgraph on bead handles. Returns ``(subgraph, node_map)``.
+    fn induced_subgraph(
+        &self,
+        py: Python<'_>,
+        nodes: Vec<u64>,
+    ) -> PyResult<(Py<PyCoarseGrain>, HashMap<u64, u64>)> {
+        let ids: Vec<_> = nodes.into_iter().map(node_from_u64).collect();
+        let (sub, map) = self.inner.induced_subgraph(&ids).map_err(molrs_error_to_pyerr)?;
+        let py_sub = PyCoarseGrain::from_core(py, sub)?;
+        let py_map = map
+            .into_iter()
+            .map(|(k, v)| (node_to_u64(k), node_to_u64(v)))
+            .collect();
+        Ok((py_sub, py_map))
+    }
+
+    /// Radius ball around bead ``centers`` over CG bonds.
+    #[pyo3(signature = (centers, radius))]
+    fn extract_subgraph(
+        &self,
+        py: Python<'_>,
+        centers: Vec<u64>,
+        radius: i64,
+    ) -> PyResult<PyExtractedSubgraph> {
+        let ids: Vec<_> = centers.into_iter().map(node_from_u64).collect();
+        let ext = self
+            .inner
+            .extract_subgraph(&ids, radius)
+            .map_err(molrs_error_to_pyerr)?;
+        PyExtractedSubgraph::from_coarsegrain(py, ext)
     }
 }
 graph_world_impl!(PyCoarseGrain);

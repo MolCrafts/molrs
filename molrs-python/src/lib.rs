@@ -42,7 +42,8 @@ use crate::core::store::block::PyBlock;
 use crate::core::store::frame::PyFrame;
 use crate::core::store::trajectory::{PyScalarObservable, PyTrajectory, PyVectorObservable};
 use crate::core::system::molgraph::{
-    PyAtomistic, PyCoarseGrain, PyGraph, PyReaction, PySmartsMatch, PySmartsPattern,
+    PyAtomistic, PyCoarseGrain, PyExtractedSubgraph, PyGraph, PyReaction, PySmartsMatch,
+    PySmartsPattern,
 };
 use crate::core::system::molgraph::{
     add_hydrogens, compute_gasteiger_charges, find_rings, perceive_aromaticity, rotate, scale,
@@ -174,6 +175,7 @@ fn molrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyGraph>()?;
     m.add_class::<PyAtomistic>()?;
     m.add_class::<PyCoarseGrain>()?;
+    m.add_class::<PyExtractedSubgraph>()?;
     m.add_class::<PySmartsMatch>()?;
     m.add_class::<PySmartsPattern>()?;
     m.add_class::<PyReaction>()?;

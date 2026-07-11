@@ -206,7 +206,7 @@ impl CGMapping {
             let dz = bz - tcz;
             crate::spatial::geometry::translate(&mut fragment, [dx, dy, dz]);
 
-            result.merge(fragment.into_inner());
+            let _ = result.as_molgraph_mut().merge(fragment.into_inner());
         }
 
         Ok(result)

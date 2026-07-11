@@ -36,6 +36,14 @@ use crate::system::molgraph::Atom;
 /// heavy atom that has unfilled valence.
 ///
 /// Hydrogen atoms already present (symbol == "H") are not modified.
+///
+/// When a heavy atom has `x`/`y`/`z` components, each new H is placed at a
+/// standard X–H length along a tetrahedral valence-completing direction
+/// (initial geometry only — force fields may refine). When the heavy lacks
+/// coordinates, H is added without `x`/`y`/`z` (topology-only path).
+///
+/// Starts from [`Clone`] of `mol` (handles preserved on the skeleton); only
+/// new H atoms and bonds are appended, so parent angles/dihedrals remain.
 pub fn add_hydrogens(mol: &Atomistic) -> Atomistic {
     let mut new_mol = mol.clone();
 
@@ -54,10 +62,46 @@ pub fn add_hydrogens(mol: &Atomistic) -> Atomistic {
         .collect();
 
     for (heavy_id, n) in additions {
-        for _ in 0..n {
+        let heavy = new_mol.get_atom(heavy_id).ok();
+        let place = heavy.as_ref().and_then(|a| {
+            Some((
+                a.get_f64("x")?,
+                a.get_f64("y")?,
+                a.get_f64("z")?,
+                a.get_str("element").unwrap_or("C"),
+            ))
+        });
+
+        let positions: Vec<[f64; 3]> = if let Some((hx, hy, hz, elem)) = place {
+            let p = [hx, hy, hz];
+            let mut existing: Vec<[f64; 3]> = Vec::new();
+            for (nb, _) in new_mol.neighbor_bonds(heavy_id) {
+                if let Ok(na) = new_mol.get_atom(nb)
+                    && let (Some(x), Some(y), Some(z)) =
+                        (na.get_f64("x"), na.get_f64("y"), na.get_f64("z"))
+                {
+                    existing.push(unit([x - p[0], y - p[1], z - p[2]]));
+                }
+            }
+            let dirs = cap_directions(&existing, n as usize);
+            let len = cap_length(elem);
+            dirs.into_iter()
+                .map(|d| [p[0] + len * d[0], p[1] + len * d[1], p[2] + len * d[2]])
+                .collect()
+        } else {
+            vec![[0.0, 0.0, 0.0]; n as usize] // placeholder; coords omitted below
+        };
+
+        let place_coords = place.is_some();
+        for pos in positions.iter().take(n as usize) {
             let mut h = Atom::new();
             h.set("element", "H");
             h.set("mass", 1.008_f64);
+            if place_coords {
+                h.set("x", pos[0]);
+                h.set("y", pos[1]);
+                h.set("z", pos[2]);
+            }
             let h_id = new_mol.add_atom(h);
             if let Ok(bid) = new_mol.add_bond(heavy_id, h_id) {
                 let _ = new_mol.set_bond_prop(bid, "order", 1.0_f64);
@@ -66,6 +110,127 @@ pub fn add_hydrogens(mol: &Atomistic) -> Atomistic {
     }
 
     new_mol
+}
+
+// ---------------------------------------------------------------------------
+// Initial X–H geometry (port of molpy.core.capping; values are starting
+// guesses for downstream minimization, not equilibrium force-field lengths).
+// ---------------------------------------------------------------------------
+
+/// Cap X–H bond length (Å) keyed by heavy element; default 1.0 Å.
+fn cap_length(element: &str) -> f64 {
+    match element {
+        "C" | "c" => 1.09,
+        "N" | "n" => 1.01,
+        "O" | "o" => 0.96,
+        "S" | "s" => 1.34,
+        _ => 1.0,
+    }
+}
+
+fn unit(v: [f64; 3]) -> [f64; 3] {
+    let n = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+    if n > 1e-9 {
+        [v[0] / n, v[1] / n, v[2] / n]
+    } else {
+        v
+    }
+}
+
+fn orthogonal(v: [f64; 3]) -> [f64; 3] {
+    let seed = if v[0].abs() < 0.9 {
+        [1.0, 0.0, 0.0]
+    } else {
+        [0.0, 1.0, 0.0]
+    };
+    unit([
+        v[1] * seed[2] - v[2] * seed[1],
+        v[2] * seed[0] - v[0] * seed[2],
+        v[0] * seed[1] - v[1] * seed[0],
+    ])
+}
+
+fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+}
+
+fn norm(v: [f64; 3]) -> f64 {
+    (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt()
+}
+
+/// `k` unit directions completing ~sp3 (tetrahedral) coordination.
+fn cap_directions(existing: &[[f64; 3]], k: usize) -> Vec<[f64; 3]> {
+    let n = existing.len();
+    let mut caps: Vec<[f64; 3]> = if n >= 3 {
+        let s = [
+            existing[0][0] + existing[1][0] + existing[2][0],
+            existing[0][1] + existing[1][1] + existing[2][1],
+            existing[0][2] + existing[1][2] + existing[2][2],
+        ];
+        vec![unit([-s[0], -s[1], -s[2]])]
+    } else if n == 2 {
+        let u1 = existing[0];
+        let u2 = existing[1];
+        let bisector = unit([-(u1[0] + u2[0]), -(u1[1] + u2[1]), -(u1[2] + u2[2])]);
+        let cr = cross(u1, u2);
+        let normal = if norm(cr) < 1e-6 {
+            orthogonal(u1)
+        } else {
+            unit(cr)
+        };
+        let half = 54.75_f64.to_radians();
+        let (c, s) = (half.cos(), half.sin());
+        vec![
+            unit([
+                c * bisector[0] + s * normal[0],
+                c * bisector[1] + s * normal[1],
+                c * bisector[2] + s * normal[2],
+            ]),
+            unit([
+                c * bisector[0] - s * normal[0],
+                c * bisector[1] - s * normal[1],
+                c * bisector[2] - s * normal[2],
+            ]),
+        ]
+    } else if n == 1 {
+        let u = existing[0];
+        let e1 = orthogonal(u);
+        let e2 = unit(cross(u, e1));
+        let theta = 109.47_f64.to_radians();
+        let (ct, st) = (theta.cos(), theta.sin());
+        [0.0_f64, 120.0, 240.0]
+            .into_iter()
+            .map(|phi_deg| {
+                let phi = phi_deg.to_radians();
+                let (cp, sp) = (phi.cos(), phi.sin());
+                unit([
+                    ct * u[0] + st * (cp * e1[0] + sp * e2[0]),
+                    ct * u[1] + st * (cp * e1[1] + sp * e2[1]),
+                    ct * u[2] + st * (cp * e1[2] + sp * e2[2]),
+                ])
+            })
+            .collect()
+    } else {
+        [
+            [1.0, 1.0, 1.0],
+            [1.0, -1.0, -1.0],
+            [-1.0, 1.0, -1.0],
+            [-1.0, -1.0, 1.0],
+        ]
+        .into_iter()
+        .map(unit)
+        .collect()
+    };
+    caps.truncate(k);
+    // If fewer directions than k (shouldn't for tetrahedral cases), pad with +x-ish
+    while caps.len() < k {
+        caps.push([1.0, 0.0, 0.0]);
+    }
+    caps
 }
 
 /// Return a new [`Atomistic`] with all terminal explicit hydrogen atoms removed.
@@ -556,5 +721,57 @@ mod tests {
         assert_eq!(stripped.n_atoms(), 1);
         assert_eq!(stripped.n_bonds(), 0);
         assert_eq!(stripped.n_angles(), 0);
+    }
+
+    #[test]
+    fn test_add_hydrogens_places_coords_when_heavy_has_xyz() {
+        let mut g = Atomistic::new();
+        let c = g.add_atom_xyz("C", 0.0, 0.0, 0.0);
+        let result = add_hydrogens(&g);
+        assert_eq!(result.n_atoms(), 5);
+        let mut n_h = 0;
+        for (id, a) in result.atoms() {
+            if a.get_str("element") != Some("H") {
+                continue;
+            }
+            n_h += 1;
+            let x = a.get_f64("x").expect("H must have x");
+            let y = a.get_f64("y").expect("H must have y");
+            let z = a.get_f64("z").expect("H must have z");
+            let dist = (x * x + y * y + z * z).sqrt();
+            assert!(
+                (dist - 1.09).abs() < 0.02,
+                "C–H distance {dist} for H {id:?}"
+            );
+        }
+        assert_eq!(n_h, 4);
+        let _ = c;
+    }
+
+    #[test]
+    fn test_add_hydrogens_no_xyz_when_heavy_lacks_coords() {
+        let mut g = Atomistic::new();
+        g.add_atom(atom("C"));
+        let result = add_hydrogens(&g);
+        for (_, a) in result.atoms() {
+            if a.get_str("element") == Some("H") {
+                assert!(a.get_f64("x").is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn test_add_hydrogens_preserves_parent_angles() {
+        let mut g = Atomistic::new();
+        let c1 = g.add_atom_xyz("C", 0.0, 0.0, 0.0);
+        let c2 = g.add_atom_xyz("C", 1.5, 0.0, 0.0);
+        let c3 = g.add_atom_xyz("C", 3.0, 0.0, 0.0);
+        bond_with_order(&mut g, c1, c2, 1.0);
+        bond_with_order(&mut g, c2, c3, 1.0);
+        g.generate_topology(true, false, false).unwrap();
+        let n_ang = g.n_angles();
+        assert!(n_ang > 0);
+        let result = add_hydrogens(&g);
+        assert!(result.n_angles() >= n_ang);
     }
 }

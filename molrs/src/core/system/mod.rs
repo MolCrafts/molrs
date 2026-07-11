@@ -6,7 +6,10 @@ pub mod atomistic;
 pub mod coarsegrain;
 pub mod element;
 pub mod entity_table;
+pub mod extract;
 pub mod graph_hash;
 pub mod mapping;
 pub mod molgraph;
 pub mod topology;
+
+pub use extract::{ExtractedBall, InducedSubgraph};

@@ -31,6 +31,16 @@ use crate::store::frame::Frame;
 use crate::system::atomistic::{Bond, BondId};
 use crate::system::molgraph::{Atom, KindId, MolGraph, NodeId};
 
+/// Result of [`CoarseGrain::extract_subgraph`].
+#[derive(Debug, Clone)]
+pub struct ExtractedCoarseGrain {
+    pub graph: CoarseGrain,
+    pub boundary: Vec<BeadId>,
+    pub parent_of: HashMap<BeadId, BeadId>,
+    pub hops: HashMap<BeadId, i64>,
+    pub node_map: HashMap<BeadId, BeadId>,
+}
+
 /// Handle to a bead (a graph node).
 pub type BeadId = NodeId;
 
@@ -226,6 +236,69 @@ impl CoarseGrain {
     /// Mutably borrow the inner [`MolGraph`].
     pub fn as_molgraph_mut(&mut self) -> &mut MolGraph {
         &mut self.graph
+    }
+
+    // ---- subgraph extraction / composition ----
+
+    /// Induced subgraph on an explicit bead set. Stale handles fail-fast.
+    pub fn induced_subgraph(
+        &self,
+        beads: &[BeadId],
+    ) -> Result<(CoarseGrain, HashMap<BeadId, BeadId>), MolRsError> {
+        let induced = self.graph.induced_subgraph(beads)?;
+        let mut cg = CoarseGrain::try_from_molgraph(induced.graph)?;
+        for (&old, &new) in &induced.node_map {
+            let mem = self.bead_members(old);
+            if !mem.is_empty() {
+                cg.set_bead_members(new, mem.to_vec());
+            }
+        }
+        Ok((cg, induced.node_map))
+    }
+
+    /// Radius ball around `centers` over CG bonds. Membership (opaque foreign
+    /// atom handles) is copied for selected beads unchanged.
+    pub fn extract_subgraph(
+        &self,
+        centers: &[BeadId],
+        radius: i64,
+    ) -> Result<ExtractedCoarseGrain, MolRsError> {
+        let ball = self.graph.extract_ball(
+            centers, radius, self.bond, /* copy_higher_order */ true,
+        )?;
+        let mut cg = CoarseGrain::try_from_molgraph(ball.graph)?;
+        for (&old, &new) in &ball.node_map {
+            let mem = self.bead_members(old);
+            if !mem.is_empty() {
+                cg.set_bead_members(new, mem.to_vec());
+            }
+        }
+        Ok(ExtractedCoarseGrain {
+            graph: cg,
+            boundary: ball.boundary,
+            parent_of: ball.parent_of,
+            hops: ball.hops,
+            node_map: ball.node_map,
+        })
+    }
+
+    /// Structural merge. Returns `handle in other → handle in self`. Remaps bead
+    /// membership keys; foreign atom handles inside membership stay as-is.
+    pub fn merge(&mut self, other: CoarseGrain) -> HashMap<BeadId, BeadId> {
+        let node_map = self.graph.merge(other.graph);
+        for (old_bead, members) in other.members {
+            if let Some(&new_bead) = node_map.get(&old_bead)
+                && !members.is_empty()
+            {
+                self.members.insert(new_bead, members);
+            }
+        }
+        node_map
+    }
+
+    /// Independent deep copy. **Handles are preserved**.
+    pub fn copy(&self) -> Self {
+        self.clone()
     }
 
     // ---- structural graph hash (see [`crate::system::graph_hash`]) ----
