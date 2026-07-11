@@ -14,6 +14,3 @@ mod mmff;
 
 #[path = "opls.rs"]
 mod opls;
-
-#[path = "opls_parity.rs"]
-mod opls_parity;
