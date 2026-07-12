@@ -6,7 +6,6 @@
 //!
 //! - [`store`] — columnar data containers (`Block`, `Frame`, `Trajectory`, keys)
 //! - [`system`] — molecular representations (`Atomistic`, `MolGraph`, `Topology`, elements)
-//! - [`chem`] — chemical perception (aromaticity, charges, rings, stereo, SMARTS)
 //! - [`spatial`] — regions, neighbor lists, geometry
 //! - [`math`], [`units`] — numerical and unit-system foundations
 //!

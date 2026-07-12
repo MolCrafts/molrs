@@ -1,6 +1,6 @@
 ---
 title: "chem-perceive 1/14 — perceive 层：core 之上、ff 之下的化学感知层"
-status: in-progress
+status: done
 created: 2026-07-12
 chain: chem-perceive
 depends_on: ""
@@ -115,13 +115,13 @@ GPL atomtype.c"*——现在这个顾虑以更大规模重现。参数**表**（
 
 ## Tasks
 
-- [ ] Write failing tests for the `Perceive` builder (graph-in / graph-out, non-mutating) — RED before GREEN
-- [ ] Create `molrs/src/perceive/{mod,aromaticity,gasteiger,hydrogens,rings,rotatable,stereo}.rs` by moving `core/chem/*` verbatim; move `core/chem/smarts/{mod,ast,parser,matcher,reaction}.rs` to `perceive/smarts/`
-- [ ] Add the `Perceive` builder with `find_rings` / `find_aromaticity` / `find_hydrogens` / `find_stereo` / `find_rotatable`
-- [ ] RELOCATE the `core/mod.rs:53-61` re-export block into `lib.rs`, retargeted at `perceive` — preserves all 18 flat crate-root names (`molrs::find_rings`, `molrs::SmartsPattern`, …). DO NOT delete it: 13 call sites depend on those names, 4 of them in `ff/`, 2 as clippy-only broken intra-doc links.
-- [ ] Add `pub use crate::perceive as chem;` compat alias in `lib.rs` so the separate `molrs-python` workspace keeps building (deleted in spec 13)
-- [ ] Rename `conformer/distgeom/perceive.rs` → `conformer/distgeom/mol_features.rs` to avoid the module-name collision with the new top-level `perceive` layer (it is `mod`-private to `distgeom`; the rename is contained)
-- [ ] Update the module table in `CLAUDE.md`: add the `perceive` row (ALWAYS compiled); also fix the 6 pre-existing staleness items the architecture check found (missing `optimize` + `stream` rows, missing `voronoi` feature, SMARTS located in `core/chem/` not `io/smiles/`, the false petgraph-VF2 claim, and the `core` row still listing rings/stereo/Gasteiger/hydrogens)
+- [x] Write failing tests for the `Perceive` builder (graph-in / graph-out, non-mutating) — RED before GREEN
+- [x] Create `molrs/src/perceive/{mod,aromaticity,gasteiger,hydrogens,rings,rotatable,stereo}.rs` by moving `core/chem/*` verbatim; move `core/chem/smarts/{mod,ast,parser,matcher,reaction}.rs` to `perceive/smarts/`
+- [x] Add the `Perceive` builder with `find_rings` / `find_aromaticity` / `find_hydrogens` / `find_stereo` / `find_rotatable`
+- [x] RELOCATE the `core/mod.rs:53-61` re-export block into `lib.rs`, retargeted at `perceive` — preserves all 18 flat crate-root names (`molrs::find_rings`, `molrs::SmartsPattern`, …). DO NOT delete it: 13 call sites depend on those names, 4 of them in `ff/`, 2 as clippy-only broken intra-doc links.
+- [x] Add `pub use crate::perceive as chem;` compat alias in `lib.rs` so the separate `molrs-python` workspace keeps building (deleted in spec 13)
+- [x] Rename `conformer/distgeom/perceive.rs` → `conformer/distgeom/mol_features.rs` to avoid the module-name collision with the new top-level `perceive` layer (it is `mod`-private to `distgeom`; the rename is contained)
+- [x] Update the module table in `CLAUDE.md`: add the `perceive` row (ALWAYS compiled); also fix the 6 pre-existing staleness items the architecture check found (missing `optimize` + `stream` rows, missing `voronoi` feature, SMARTS located in `core/chem/` not `io/smiles/`, the false petgraph-VF2 claim, and the `core` row still listing rings/stereo/Gasteiger/hydrogens)
 
 ## Testing strategy
 

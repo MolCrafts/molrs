@@ -80,24 +80,35 @@ cargo bench -p molcrafts-molrs --bench core_benchmarks
 ## Crate Structure & Modules
 
 molrs is a **single published crate** `molcrafts-molrs` (lib name `molrs`, dir
-`molrs/`). Its sub-systems are **feature-gated modules** under `molrs/src/`:
-`core` is always compiled and re-exported at the crate root (so `molrs::Frame`,
-`molrs::system::…` resolve); the rest gate on a matching feature. `core` is the
-foundation; everything else depends on it (`compute` → `signal`, `conformer` →
-`ff`). In-crate paths use `crate::core::…` / `crate::io::…` (and `molrs::…` via
+`molrs/`). Sub-systems are modules under `molrs/src/`. **Three are always
+compiled** — `core`, `perceive`, `optimize` — and the rest gate on a matching
+feature. `core` and `perceive` are re-exported at the crate root (so
+`molrs::Frame`, `molrs::system::…`, `molrs::find_rings`, `molrs::SmartsPattern`
+resolve). The dependency spine is `core → perceive → {io, ff} → conformer`
+(`compute` → `signal`, `conformer` → `ff`). In-crate paths use `crate::core::…` /
+`crate::perceive::…` / `crate::io::…` (and `molrs::…` via
 `extern crate self as molrs;`).
 
 | Module (`molrs/src/`) | Feature | Purpose |
 |---|---|---|
-| `core` | always on | Frame/Block/Grid/MolGraph/MolRec/Topology/Element, neighbors, math, region (SimBox), stereochemistry, rings, Gasteiger charges, hydrogen perception, atom-type mapping |
-| `io` | `io` | File I/O: PDB, XYZ, LAMMPS data/dump, CHGCAR/POSCAR, Gaussian Cube, CIF, mol2, SDF, GRO, DCD, GROMACS TRR/XTC, Zarr V3 trajectories; SMILES/SMARTS parsing in `io/smiles/` (gated by the `smiles` feature) |
+| `core` | always on | Frame/Block/Grid/MolGraph/MolRec/Topology/Element, neighbors, math, region (SimBox), graph hash, atom-type mapping |
+| `perceive` | always on | **Chemical perception**, one layer above `core` and below `ff`/`io`/`conformer`: rings (SSSR), aromaticity, hydrogen perception, stereochemistry, rotatable bonds, Gasteiger charges, SMARTS/SMIRKS. Builder API `Perceive::new().find_*(&MolGraph) -> MolGraph` (graph-in/graph-out, non-mutating); the free functions it wraps are also re-exported at the crate root |
+| `optimize` | always on | Numerical optimizers |
+| `io` | `io` | File I/O: PDB, XYZ, LAMMPS data/dump, CHGCAR/POSCAR, Gaussian Cube, CIF, mol2, SDF, GRO, DCD, GROMACS TRR/XTC, Zarr V3 trajectories; SMILES parsing in `io/smiles/` (gated by `smiles`). **SMARTS lives in `perceive/smarts/`, not here** |
 | `signal` | `signal` | Signal processing: FFT-based autocorrelation, window functions, frequency grids |
 | `compute` | `compute` (→ `signal`) | Trajectory analysis: RDF, MSD, clustering, gyration/inertia tensors |
+| `stream` | `stream` | Frame/Block serde + MessagePack/JSON `frame_to_bytes` |
 | `ff` | `ff` | Force fields, potentials (KernelRegistry), atom typifier |
 | `conformer` | `conformer` (→ `ff`) | 3D conformer generation: distance geometry, fragment assembly, optimizer, rotor search |
 
-The umbrella feature `full` enables every sub-system module; core knobs are
-`rayon` (default), `zarr`, `filesystem`, `blas`.
+The umbrella feature `full` enables every gated sub-system module; core knobs are
+`rayon` (default), `zarr`, `filesystem`, `blas`, `voronoi`.
+
+**Why `perceive` is always-on rather than feature-gated:** `core` is always
+compiled and this code used to live *inside* it, so every consumer configuration
+already compiled it. Keeping it unconditional reproduces the existing build graph
+exactly — gating it would be a behaviour change, not a refactor. (Gating it later
+to shrink the WASM bundle is a legitimate, separately-measured follow-up.)
 
 The other workspace member is `molrs-cxxapi` (`molcrafts-molrs-cxxapi`, a
 `staticlib` CXX bridge to Atomiverse C++ via `FrameView`); it depends on the

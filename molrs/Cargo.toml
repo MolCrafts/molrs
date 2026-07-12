@@ -97,6 +97,10 @@ name = "core"
 path = "tests/core.rs"
 
 [[test]]
+name = "perceive"
+path = "tests/perceive.rs"
+
+[[test]]
 name = "test_units"
 path = "tests/test_units.rs"
 
