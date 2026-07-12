@@ -6,6 +6,7 @@
 //! is the graph's `to_frame` job; typifiers stay on the graph boundary.
 
 pub mod am1bcc;
+pub mod atd;
 pub mod estimate;
 pub mod mmff;
 pub mod opls;
@@ -15,6 +16,7 @@ pub use am1bcc::{
     AM1BCCTypifier, AM1ChargeTypifier, BCCAtomTypifier, BCCCorrectionTable, BCCCorrector,
     BccParameterSet,
 };
+pub use atd::{AtdParameterSet, AtdTypifier};
 pub use estimate::{ParameterEstimator, ParameterInterpolator, TypifierParameterContext};
 pub use opls::OPLSAATypifier;
 

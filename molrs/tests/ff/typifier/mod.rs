@@ -7,13 +7,31 @@
 #[path = "antechamber_oracle.rs"]
 pub mod antechamber_oracle;
 
+/// Shared oracle -> `Atomistic` builder, so a new oracle test cannot quietly
+/// build its molecule from antechamber's *answers* instead of a user's input.
+#[path = "oracle_mol.rs"]
+pub mod oracle_mol;
+
+/// Shared source scanner for the two structural gates (`atd_no_runtime_parse`,
+/// `parameter_set_required`).
+#[path = "source_gate.rs"]
+pub mod source_gate;
+
 #[path = "am1bcc.rs"]
 mod am1bcc;
 #[path = "am1bcc_antechamber.rs"]
 mod am1bcc_antechamber;
 
+#[path = "atd_antechamber.rs"]
+mod atd_antechamber;
+#[path = "atd_no_runtime_parse.rs"]
+mod atd_no_runtime_parse;
+
 #[path = "bcc_bond_type.rs"]
 mod bcc_bond_type;
+
+#[path = "parameter_set_required.rs"]
+mod parameter_set_required;
 
 #[path = "equivalence_antechamber.rs"]
 mod equivalence_antechamber;

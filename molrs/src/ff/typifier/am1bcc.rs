@@ -7,18 +7,20 @@
 //! The implementation is a native port surface: external programs are reference
 //! material only, not runtime dependencies. Missing AM1 backends, BCC atom
 //! types, bond types, or correction rows return errors.
+//!
+//! Atom typing itself lives one module over, in [`atd`](super::atd): the rules
+//! that assign `11` / `91` / `24` are antechamber's ATD language, shared by every
+//! `ATOMTYPE_*.DEF` table, and this module drives that one engine with the BCC
+//! (or ABCG2) table rather than owning a second copy of it. What is BCC-specific
+//! is what stays here: the **correction** table, which no other parameter set has.
 
-use molrs::perceive::Perceive;
 use molrs::store::keys;
-use molrs::system::molgraph::PropValue;
-use molrs::{AtomId, Atomistic, Bond, BondId, Element, find_rings};
+use molrs::{AtomId, Atomistic};
 use std::collections::HashMap;
 
 use super::Typifier;
-use crate::ff::params::{
-    AtdRule, AtdTable, AtomPattern, AtomProp, BccAlias, BccCorrectionRow, EnvBond, EnvBondType,
-    PatternAtom, PropExpr, PropRelation, PropUnit,
-};
+use super::atd::{AtdParameterSet, AtdTypifier, antechamber_bond_type};
+use crate::ff::params::{BccAlias, BccCorrectionRow};
 
 /// AM1 base-charge result supplied by an AM1 backend.
 #[derive(Debug, Clone, PartialEq)]
@@ -41,6 +43,12 @@ impl AM1ChargeResult {
 }
 
 /// AM1-BCC correction-family selector.
+///
+/// The two variants are exactly the two `BCCPARM*.DAT` files that exist. This is
+/// a **narrower** axis than [`AtdParameterSet`]: every correction family names an
+/// atom-type table (via [`BccParameterSet::atd_set`]), but not every atom-type
+/// table has a correction family — `ATOMTYPE_GAS.DEF` has no `BCCPARM_GAS.DAT`,
+/// so GAS is reachable through [`AtdTypifier`] and cannot be a variant here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BccParameterSet {
     /// Original AM1-BCC corrections (`BCCPARM.DAT`, `-c bcc`).
@@ -66,11 +74,17 @@ impl BccParameterSet {
         }
     }
 
-    /// The set's atom-type definition rules.
-    fn atd_table(self) -> AtdTable {
+    /// The atom-type table this correction family is defined against.
+    ///
+    /// A correction row is keyed on atom types, so a correction family is only
+    /// meaningful next to the table those types come from: `BCCPARM.DAT` rows
+    /// speak `ATOMTYPE_BCC.DEF`, `BCCPARM_ABCG2.DAT` rows speak
+    /// `ATOMTYPE_ABCG2.DEF`. Pairing them any other way silently looks up the
+    /// wrong rows.
+    pub fn atd_set(self) -> AtdParameterSet {
         match self {
-            Self::Bcc => crate::ff::params::ATOMTYPE_BCC,
-            Self::Abcg2 => crate::ff::params::ATOMTYPE_ABCG2,
+            Self::Bcc => AtdParameterSet::Bcc,
+            Self::Abcg2 => AtdParameterSet::Abcg2,
         }
     }
 }
@@ -150,7 +164,13 @@ where
     }
 }
 
-/// Graph-based BCC atom/bond typifier.
+/// Graph-based BCC atom typifier: the [`AtdTypifier`] bound to a BCC table.
+///
+/// This is a named shorthand, not a second engine — `BCCAtomTypifier::bcc()` and
+/// `AtdTypifier::new(AtdParameterSet::Bcc)` label every atom identically because
+/// the former *is* the latter. It exists because the AM1-BCC pipeline needs the
+/// atom-type table and the correction family chosen together, and
+/// [`BccParameterSet`] is the type that keeps that pair honest.
 #[derive(Debug, Clone)]
 pub struct BCCAtomTypifier {
     model: BccParameterSet,
@@ -175,7 +195,8 @@ impl BCCAtomTypifier {
         Self::parameter_set(BccParameterSet::Abcg2)
     }
 
-    /// Perceive BCC bond types, then label every atom from `ATOMTYPE_BCC.DEF`.
+    /// Perceive BCC bond types, then label every atom from the set's
+    /// `ATOMTYPE_*.DEF` rules.
     ///
     /// The bond types are always **perceived** (via
     /// [`Perceive::find_bond_types`](molrs::perceive::Perceive::find_bond_types)),
@@ -185,494 +206,7 @@ impl BCCAtomTypifier {
     /// precursor (10), which must be resolved, not trusted. To apply corrections
     /// with types of your own, drive [`BCCCorrector`] directly.
     pub fn typify(&self, mol: &Atomistic) -> Result<Atomistic, String> {
-        let table = self.model.atd_table();
-        let mut out = Perceive::new().find_bond_types(mol);
-
-        let facts = BCCMolFacts::new(&out)?;
-        let atom_ids: Vec<AtomId> = out.atoms().map(|(aid, _)| aid).collect();
-        for aid in atom_ids {
-            let atom_type = assign_atom_type(&table, aid, &facts)
-                .ok_or_else(|| format!("missing BCC atom type for {aid:?}"))?;
-            out.set_atom(aid, keys::TYPE, atom_type)
-                .map_err(|e| e.to_string())?;
-        }
-        Ok(out)
-    }
-}
-
-/// Assign the first [`AtdRule`] of `table` that matches `aid`.
-///
-/// Rule order is the `.DEF` file's order and is load-bearing: the table is
-/// written most-specific-first, so the first match wins.
-fn assign_atom_type(table: &AtdTable, aid: AtomId, facts: &BCCMolFacts) -> Option<&'static str> {
-    table
-        .rules
-        .iter()
-        .find(|rule| rule_matches(rule, aid, facts))
-        .map(|rule| rule.atom_type)
-}
-
-/// Test one pre-parsed `ATD` rule against an atom.
-fn rule_matches(rule: &AtdRule, aid: AtomId, facts: &BCCMolFacts) -> bool {
-    let Ok(i) = facts.index_of(aid) else {
-        return false;
-    };
-    if rule.residue != "*" && rule.residue != facts.residue[i].as_str() {
-        return false;
-    }
-    if rule
-        .atomic_number
-        .is_some_and(|z| z != facts.atomic_number[i])
-    {
-        return false;
-    }
-    if rule.degree.is_some_and(|degree| degree != facts.degree[i]) {
-        return false;
-    }
-    if rule
-        .hydrogen_count
-        .is_some_and(|h_count| h_count != facts.hydrogen_count[i])
-    {
-        return false;
-    }
-    if rule.ewd_count.is_some_and(|n| {
-        facts
-            .ewd_count_around_attachment(aid)
-            .is_none_or(|actual| actual != n)
-    }) {
-        return false;
-    }
-    if let Some(prop) = rule.atom_property
-        && !facts.atom_property_matches(aid, None, &prop)
-    {
-        return false;
-    }
-    if let Some(env) = rule.environment
-        && !facts.environment_matches(aid, env, rule.environment_bonds)
-    {
-        return false;
-    }
-    true
-}
-
-#[derive(Debug, Clone)]
-struct BCCMolFacts {
-    index: HashMap<AtomId, usize>,
-    atomic_number: Vec<u8>,
-    degree: Vec<usize>,
-    hydrogen_count: Vec<usize>,
-    ewd: Vec<bool>,
-    residue: Vec<String>,
-    props: Vec<AtomPropertyFacts>,
-    neighbors: Vec<Vec<(AtomId, i32, BondId)>>,
-}
-
-impl BCCMolFacts {
-    fn new(mol: &Atomistic) -> Result<Self, String> {
-        let atom_ids: Vec<_> = mol.atoms().map(|(aid, _)| aid).collect();
-        let index: HashMap<AtomId, usize> = atom_ids
-            .iter()
-            .copied()
-            .enumerate()
-            .map(|(i, aid)| (aid, i))
-            .collect();
-        let mut atomic_number = Vec::with_capacity(atom_ids.len());
-        let mut residue = Vec::with_capacity(atom_ids.len());
-        for aid in &atom_ids {
-            let atom = mol.get_atom(*aid).map_err(|e| e.to_string())?;
-            let symbol = atom.get_str(keys::ELEMENT).ok_or_else(|| {
-                format!("BCC atom typing requires `{}` for {aid:?}", keys::ELEMENT)
-            })?;
-            let element = Element::by_symbol(symbol)
-                .ok_or_else(|| format!("unsupported element symbol `{symbol}` for {aid:?}"))?;
-            atomic_number.push(element.z());
-            residue.push(atom.get_str(keys::RES_NAME).unwrap_or("*").to_owned());
-        }
-
-        let mut neighbors = vec![Vec::new(); atom_ids.len()];
-        for (bid, bond) in mol.bonds() {
-            let bond_type = bcc_bond_type(&bond)?;
-            let a = bond.nodes[0];
-            let b = bond.nodes[1];
-            let ia = index[&a];
-            let ib = index[&b];
-            neighbors[ia].push((b, bond_type, bid));
-            neighbors[ib].push((a, bond_type, bid));
-        }
-        let degree: Vec<usize> = neighbors.iter().map(Vec::len).collect();
-        let mut hydrogen_count = vec![0; atom_ids.len()];
-        for (i, nbs) in neighbors.iter().enumerate() {
-            hydrogen_count[i] = nbs
-                .iter()
-                .filter(|(nb, _, _)| atomic_number[index[nb]] == 1)
-                .count();
-        }
-        let ewd: Vec<bool> = atomic_number
-            .iter()
-            .map(|z| matches!(*z, 7 | 8 | 9 | 16 | 17 | 35 | 53))
-            .collect();
-
-        let ring_info = find_rings(mol);
-        let mut props = vec![AtomPropertyFacts::default(); atom_ids.len()];
-        for ring in ring_info.rings() {
-            let size = ring.len();
-            for aid in ring {
-                let p = &mut props[index[aid]];
-                p.rg[0] += 1;
-                if size < p.rg.len() {
-                    p.rg[size] += 1;
-                }
-            }
-        }
-        for (i, aid) in atom_ids.iter().copied().enumerate() {
-            props[i].nr = usize::from(props[i].rg[0] == 0);
-            if is_aromatic_atom(mol, aid)? {
-                props[i].ar1 = 1;
-            } else if props[i].rg[0] > 0 {
-                props[i].ar5 = 1;
-            }
-        }
-        for (i, nbs) in neighbors.iter().enumerate() {
-            for (_, bond_type, _) in nbs {
-                props[i].add_bond_type(*bond_type);
-            }
-        }
-
-        Ok(Self {
-            index,
-            atomic_number,
-            degree,
-            hydrogen_count,
-            ewd,
-            residue,
-            props,
-            neighbors,
-        })
-    }
-
-    fn index_of(&self, aid: AtomId) -> Result<usize, String> {
-        self.index
-            .get(&aid)
-            .copied()
-            .ok_or_else(|| format!("unknown atom id {aid:?}"))
-    }
-
-    fn ewd_count_around_attachment(&self, aid: AtomId) -> Option<usize> {
-        let i = self.index_of(aid).ok()?;
-        let attached = self.neighbors[i].first()?.0;
-        let j = self.index_of(attached).ok()?;
-        Some(
-            self.neighbors[j]
-                .iter()
-                .filter(|(nb, _, _)| self.ewd[self.index[nb]])
-                .count(),
-        )
-    }
-
-    /// Walk a pre-parsed `[...]` expression: an AND of ORs.
-    fn atom_property_matches(&self, aid: AtomId, prev: Option<AtomId>, expr: &PropExpr) -> bool {
-        expr.constraints.iter().all(|constraint| {
-            constraint
-                .units
-                .iter()
-                .any(|unit| self.atom_property_unit_matches(aid, prev, unit))
-        })
-    }
-
-    fn atom_property_unit_matches(
-        &self,
-        aid: AtomId,
-        prev: Option<AtomId>,
-        unit: &PropUnit,
-    ) -> bool {
-        let Ok(i) = self.index_of(aid) else {
-            return false;
-        };
-        let count = self.props[i].count(unit.prop);
-        let count_matches = unit.count.map_or(count > 0, |n| count == n);
-        if !count_matches {
-            return false;
-        }
-        match unit.relation {
-            Some(PropRelation::BondedToPrev) => {
-                prev.is_some_and(|prev| self.bond_to_prev_matches(aid, prev, unit.prop))
-            }
-            Some(PropRelation::NotBondedToPrev) => {
-                prev.is_some_and(|prev| !self.bond_to_prev_matches(aid, prev, unit.prop))
-            }
-            None => true,
-        }
-    }
-
-    fn bond_to_prev_matches(&self, aid: AtomId, prev: AtomId, prop: AtomProp) -> bool {
-        let Ok(i) = self.index_of(aid) else {
-            return false;
-        };
-        self.neighbors[i]
-            .iter()
-            .find(|(nb, _, _)| *nb == prev)
-            .is_some_and(|(_, bond_type, _)| bond_type_matches_property(*bond_type, prop))
-    }
-
-    fn environment_matches(
-        &self,
-        aid: AtomId,
-        patterns: &'static [AtomPattern],
-        env_bonds: Option<&'static [EnvBond]>,
-    ) -> bool {
-        let mut labels = HashMap::new();
-        self.match_pattern_list(aid, None, patterns, &mut labels)
-            && env_bonds.is_none_or(|bonds| self.environment_bonds_match(bonds, &labels))
-    }
-
-    fn environment_bonds_match(
-        &self,
-        bonds: &[EnvBond],
-        labels: &HashMap<&'static str, AtomId>,
-    ) -> bool {
-        for constraint in bonds {
-            let Some(&a) = labels.get(constraint.a) else {
-                return false;
-            };
-            let Some(&b) = labels.get(constraint.b) else {
-                return false;
-            };
-            let Ok(i) = self.index_of(a) else {
-                return false;
-            };
-            let Some((_, bond_type, _)) = self.neighbors[i].iter().find(|(nb, _, _)| *nb == b)
-            else {
-                return false;
-            };
-            if !environment_bond_type_matches(*bond_type, constraint.bond) {
-                return false;
-            }
-        }
-        true
-    }
-
-    fn match_pattern_list(
-        &self,
-        parent: AtomId,
-        prev: Option<AtomId>,
-        patterns: &'static [AtomPattern],
-        labels: &mut HashMap<&'static str, AtomId>,
-    ) -> bool {
-        let mut used = Vec::new();
-        self.match_pattern_list_rec(parent, prev, patterns, 0, labels, &mut used)
-    }
-
-    fn match_pattern_list_rec(
-        &self,
-        parent: AtomId,
-        prev: Option<AtomId>,
-        patterns: &'static [AtomPattern],
-        pos: usize,
-        labels: &mut HashMap<&'static str, AtomId>,
-        used: &mut Vec<AtomId>,
-    ) -> bool {
-        if pos == patterns.len() {
-            return true;
-        }
-        let Ok(parent_i) = self.index_of(parent) else {
-            return false;
-        };
-        for (candidate, _, _) in &self.neighbors[parent_i] {
-            if Some(*candidate) == prev || used.contains(candidate) {
-                continue;
-            }
-            let mut labels_next = labels.clone();
-            if self.atom_pattern_matches(*candidate, parent, &patterns[pos], &mut labels_next) {
-                used.push(*candidate);
-                if self.match_pattern_list_rec(
-                    parent,
-                    prev,
-                    patterns,
-                    pos + 1,
-                    &mut labels_next,
-                    used,
-                ) {
-                    *labels = labels_next;
-                    return true;
-                }
-                used.pop();
-            }
-        }
-        false
-    }
-
-    fn atom_pattern_matches(
-        &self,
-        aid: AtomId,
-        prev: AtomId,
-        pattern: &'static AtomPattern,
-        labels: &mut HashMap<&'static str, AtomId>,
-    ) -> bool {
-        let Ok(i) = self.index_of(aid) else {
-            return false;
-        };
-        if !self.pattern_atom_matches(i, pattern.atom) {
-            return false;
-        }
-        if pattern
-            .degree
-            .is_some_and(|degree| degree != self.degree[i])
-        {
-            return false;
-        }
-        if let Some(prop) = pattern.property
-            && !self.atom_property_matches(aid, Some(prev), &prop)
-        {
-            return false;
-        }
-        if let Some(label) = pattern.label
-            && labels.insert(label, aid).is_some_and(|old| old != aid)
-        {
-            return false;
-        }
-        self.match_pattern_list(aid, Some(prev), pattern.children, labels)
-    }
-
-    /// Match a pattern atom whose name the generator already resolved.
-    ///
-    /// `EW` / `WILDATOM` / element resolution happened at table-generation time,
-    /// so there is no name table to consult here.
-    fn pattern_atom_matches(&self, atom_index: usize, atom: PatternAtom) -> bool {
-        match atom {
-            PatternAtom::ElectronWithdrawing => self.ewd[atom_index],
-            PatternAtom::Wild(specs) => specs.iter().any(|spec| {
-                spec.z == self.atomic_number[atom_index]
-                    && spec
-                        .degree
-                        .is_none_or(|degree| degree == self.degree[atom_index])
-            }),
-            PatternAtom::Element(z) => z == self.atomic_number[atom_index],
-        }
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-struct AtomPropertyFacts {
-    rg: [usize; 12],
-    nr: usize,
-    ar1: usize,
-    ar2: usize,
-    ar3: usize,
-    ar4: usize,
-    ar5: usize,
-    sb: usize,
-    sb_strict: usize,
-    db: usize,
-    db_strict: usize,
-    tb: usize,
-    tb_strict: usize,
-    ab: usize,
-    dl: usize,
-}
-
-impl AtomPropertyFacts {
-    fn add_bond_type(&mut self, bond_type: i32) {
-        match bond_type {
-            1 => {
-                self.sb += 1;
-                self.sb_strict += 1;
-            }
-            2 => {
-                self.db += 1;
-                self.db_strict += 1;
-            }
-            3 => {
-                self.tb += 1;
-                self.tb_strict += 1;
-            }
-            7 => {
-                self.ab += 1;
-                self.sb += 1;
-            }
-            8 => {
-                self.ab += 1;
-                self.db += 1;
-            }
-            9 => {
-                self.sb += 1;
-                self.sb_strict += 1;
-                self.dl += 1;
-            }
-            10 => {
-                self.ab += 1;
-            }
-            _ => {}
-        }
-    }
-
-    fn count(&self, prop: AtomProp) -> usize {
-        match prop {
-            AtomProp::Rg => self.rg[0],
-            AtomProp::Rg3 => self.rg[3],
-            AtomProp::Rg4 => self.rg[4],
-            AtomProp::Rg5 => self.rg[5],
-            AtomProp::Rg6 => self.rg[6],
-            AtomProp::Rg7 => self.rg[7],
-            AtomProp::Rg8 => self.rg[8],
-            AtomProp::Rg9 => self.rg[9],
-            AtomProp::Rg10 => self.rg[10],
-            AtomProp::Nr => self.nr,
-            AtomProp::Ar1 => self.ar1,
-            AtomProp::Ar2 => self.ar2,
-            AtomProp::Ar3 => self.ar3,
-            AtomProp::Ar4 => self.ar4,
-            AtomProp::Ar5 => self.ar5,
-            AtomProp::SbStrict => self.sb_strict,
-            AtomProp::SbAny => self.sb,
-            AtomProp::DbStrict => self.db_strict,
-            AtomProp::DbAny => self.db,
-            AtomProp::TbStrict => self.tb_strict,
-            AtomProp::TbAny => self.tb,
-            AtomProp::Ab => self.ab,
-            AtomProp::Dl => self.dl,
-        }
-    }
-}
-
-/// Does a BCC bond type satisfy a bond-valued [`AtomProp`]?
-///
-/// Ring and aromaticity properties (`RG*`, `AR*`, `NR`) are atom-valued, not
-/// bond-valued, so they never constrain a bond.
-fn bond_type_matches_property(bond_type: i32, prop: AtomProp) -> bool {
-    match prop {
-        AtomProp::SbStrict => matches!(bond_type, 1 | 9),
-        AtomProp::SbAny => matches!(bond_type, 1 | 7 | 9 | 10),
-        AtomProp::DbStrict => matches!(bond_type, 2 | 9),
-        AtomProp::DbAny => matches!(bond_type, 2 | 8 | 9 | 10),
-        AtomProp::TbStrict | AtomProp::TbAny => bond_type == 3,
-        AtomProp::Dl => bond_type == 9,
-        AtomProp::Ab => matches!(bond_type, 7 | 8 | 10),
-        AtomProp::Rg
-        | AtomProp::Rg3
-        | AtomProp::Rg4
-        | AtomProp::Rg5
-        | AtomProp::Rg6
-        | AtomProp::Rg7
-        | AtomProp::Rg8
-        | AtomProp::Rg9
-        | AtomProp::Rg10
-        | AtomProp::Nr
-        | AtomProp::Ar1
-        | AtomProp::Ar2
-        | AtomProp::Ar3
-        | AtomProp::Ar4
-        | AtomProp::Ar5 => false,
-    }
-}
-
-/// Does a BCC bond type satisfy an `a:b:TYPE` environment-bond constraint?
-fn environment_bond_type_matches(bond_type: i32, bond: EnvBondType) -> bool {
-    match bond {
-        EnvBondType::Any => true,
-        EnvBondType::Single => bond_type_matches_property(bond_type, AtomProp::SbAny),
-        EnvBondType::Double => bond_type_matches_property(bond_type, AtomProp::DbAny),
-        EnvBondType::Triple => bond_type_matches_property(bond_type, AtomProp::TbAny),
-        EnvBondType::Aromatic => bond_type_matches_property(bond_type, AtomProp::Ab),
+        AtdTypifier::new(self.model.atd_set()).typify(mol)
     }
 }
 
@@ -681,15 +215,39 @@ fn environment_bond_type_matches(bond_type: i32, bond: EnvBondType) -> bool {
 /// A row `(left, right, bond_type, delta)` means a bond typed
 /// `left|right|bond_type` adds `+delta` to the left atom and `-delta` to the
 /// right atom. A reversed bond applies the same magnitude with reversed sign.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct BCCCorrectionTable {
     corrections: HashMap<(String, String, i32), f64>,
     aliases: HashMap<String, String>,
 }
 
 impl BCCCorrectionTable {
-    pub fn new() -> Self {
-        Self::default()
+    /// A table built from explicit rows.
+    ///
+    /// This is the only way to build a table from scratch, and it *names its
+    /// content*: what goes in comes out, and no parameter set leaks in behind the
+    /// caller's back. There is deliberately no empty-by-default form — an empty
+    /// correction table is not a default, it is a table that fails on every bond
+    /// (`missing BCC correction for bond ..`) long after it was constructed. To get
+    /// the corrections of a published set, name it: [`Self::bcc`], [`Self::abcg2`],
+    /// or [`Self::parameter_set`].
+    ///
+    /// Aliases (`CORR` rows) are not rows and cannot be expressed here; add them
+    /// with [`Self::alias`].
+    pub fn from_rows(rows: &[BccCorrectionRow]) -> Self {
+        let corrections = rows
+            .iter()
+            .map(|row| {
+                (
+                    (row.left.to_owned(), row.right.to_owned(), row.bond_type),
+                    row.delta,
+                )
+            })
+            .collect();
+        Self {
+            corrections,
+            aliases: HashMap::new(),
+        }
     }
 
     /// Build the table for a parameter set from its compile-time rows.
@@ -697,10 +255,7 @@ impl BCCCorrectionTable {
     /// Fallible only to keep the call shape of the former text-parsing
     /// constructor; the tables are typed Rust data, so this cannot fail.
     pub fn parameter_set(model: BccParameterSet) -> Result<Self, String> {
-        let mut table = Self::new();
-        for row in model.corrections() {
-            table = table.insert_bond_type(row.left, row.right, row.bond_type, row.delta);
-        }
+        let mut table = Self::from_rows(model.corrections());
         for alias in model.aliases() {
             table = table.alias(alias.atom_type, alias.reference);
         }
@@ -786,12 +341,18 @@ impl BCCCorrectionTable {
     }
 }
 
+/// Applies a [`BCCCorrectionTable`] to the AM1 base charges of a typed molecule.
+///
+/// A corrector *is* its table, so there is no way to build one without naming it:
+/// a corrector with an empty table constructs happily and then rejects the first
+/// bond it sees, which is a runtime failure standing in for a compile-time one.
 #[derive(Debug, Clone)]
 pub struct BCCCorrector {
     table: BCCCorrectionTable,
 }
 
 impl BCCCorrector {
+    /// A corrector that applies `table`.
     pub fn new(table: BCCCorrectionTable) -> Self {
         Self { table }
     }
@@ -808,7 +369,7 @@ impl BCCCorrector {
         for (bid, bond) in bond_rows {
             let a = bond.nodes[0];
             let b = bond.nodes[1];
-            let bond_type = bcc_bond_type(&bond)?;
+            let bond_type = antechamber_bond_type(&bond)?;
             let a_label = mol
                 .get_atom(a)
                 .map_err(|e| e.to_string())?
@@ -844,12 +405,6 @@ impl BCCCorrector {
     }
 }
 
-impl Default for BCCCorrector {
-    fn default() -> Self {
-        Self::new(BCCCorrectionTable::new())
-    }
-}
-
 /// AM1-BCC typifier: AM1 backend + BCC atom typifier + correction table.
 #[derive(Debug, Clone)]
 pub struct AM1BCCTypifier<B = UnavailableAM1Backend> {
@@ -859,54 +414,66 @@ pub struct AM1BCCTypifier<B = UnavailableAM1Backend> {
     total_charge: Option<f64>,
 }
 
-impl Default for AM1BCCTypifier<UnavailableAM1Backend> {
-    fn default() -> Self {
-        Self::new(UnavailableAM1Backend)
-    }
-}
-
 impl<B> AM1BCCTypifier<B> {
-    pub fn new(backend: B) -> Self {
+    /// An AM1-BCC typifier over `backend`, correcting with `table`.
+    ///
+    /// The correction table is an argument because there is no default one: the
+    /// two that exist are `BCCPARM.DAT` and `BCCPARM_ABCG2.DAT`, and the caller
+    /// must say which — hence no parameterless form and no `Default`. To pair a
+    /// published correction family with the atom-type table it is defined against
+    /// (which is what you almost always want), use [`Self::bcc`] / [`Self::abcg2`]
+    /// rather than assembling the pair by hand.
+    ///
+    /// Atoms are typed with [`BCCAtomTypifier::default`] — i.e. `ATOMTYPE_BCC.DEF`.
+    /// A table whose rows speak a *different* atom-type language (ABCG2) needs the
+    /// matching typifier too; see [`BccParameterSet::atd_set`] for why the pair
+    /// must be kept honest, and override with [`Self::with_atom_typifier`].
+    pub fn new(backend: B, table: BCCCorrectionTable) -> Self {
         Self {
             backend,
-            atom_typifier: BCCAtomTypifier::bcc(),
-            corrector: BCCCorrector::default(),
+            atom_typifier: BCCAtomTypifier::default(),
+            corrector: BCCCorrector::new(table),
             total_charge: None,
         }
     }
 
+    /// The original AM1-BCC parameter set: `ATOMTYPE_BCC.DEF` + `BCCPARM.DAT`.
     pub fn bcc(backend: B) -> Result<Self, String> {
-        Ok(Self::new(backend)
-            .with_atom_typifier(BCCAtomTypifier::bcc())
-            .with_correction_table(BCCCorrectionTable::bcc()?))
+        Ok(Self::new(backend, BCCCorrectionTable::bcc()?)
+            .with_atom_typifier(BCCAtomTypifier::bcc()))
     }
 
+    /// The ABCG2 parameter set: `ATOMTYPE_ABCG2.DEF` + `BCCPARM_ABCG2.DAT`.
     pub fn abcg2(backend: B) -> Result<Self, String> {
-        Ok(Self::new(backend)
-            .with_atom_typifier(BCCAtomTypifier::abcg2())
-            .with_correction_table(BCCCorrectionTable::abcg2()?))
+        Ok(Self::new(backend, BCCCorrectionTable::abcg2()?)
+            .with_atom_typifier(BCCAtomTypifier::abcg2()))
     }
 
+    /// Replace the atom typifier (e.g. to match an ABCG2 correction table).
     pub fn with_atom_typifier(mut self, atom_typifier: BCCAtomTypifier) -> Self {
         self.atom_typifier = atom_typifier;
         self
     }
 
+    /// Replace the correction table.
     pub fn with_correction_table(mut self, table: BCCCorrectionTable) -> Self {
         self.corrector = BCCCorrector::new(table);
         self
     }
 
+    /// Replace the corrector wholesale.
     pub fn with_corrector(mut self, corrector: BCCCorrector) -> Self {
         self.corrector = corrector;
         self
     }
 
+    /// Normalize the corrected charges to sum to `total_charge`.
     pub fn with_total_charge(mut self, total_charge: f64) -> Self {
         self.total_charge = Some(total_charge);
         self
     }
 
+    /// The AM1 backend supplying base charges.
     pub fn backend(&self) -> &B {
         &self.backend
     }
@@ -976,60 +543,4 @@ fn normalize_total_charge(mol: &mut Atomistic, target: f64) -> Result<(), String
             .map_err(|e| e.to_string())?;
     }
     Ok(())
-}
-
-fn is_aromatic_atom(mol: &Atomistic, aid: AtomId) -> Result<bool, String> {
-    let atom = mol.get_atom(aid).map_err(|e| e.to_string())?;
-    if prop_truthy(atom.get("is_aromatic")) {
-        return Ok(true);
-    }
-    for (bid, _) in mol.incident_bond_ids(aid) {
-        let bond = mol.get_bond(bid).map_err(|e| e.to_string())?;
-        if is_aromatic_bond(&bond) {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-fn is_aromatic_bond(bond: &Bond) -> bool {
-    prop_truthy(bond.props.get("is_aromatic"))
-        || bond
-            .props
-            .get(keys::ORDER)
-            .and_then(PropValue::as_f64)
-            .is_some_and(|order| (order - 1.5).abs() < 1.0e-6)
-        || bond
-            .props
-            .get(keys::TYPE)
-            .and_then(|v| match v {
-                PropValue::Int(v) => Some(*v),
-                PropValue::F64(v) if (*v - v.round()).abs() < 1.0e-6 => Some(v.round() as i32),
-                PropValue::Str(s) => s.parse::<i32>().ok(),
-                PropValue::F64(_) | PropValue::Bool(_) => None,
-            })
-            .is_some_and(|t| matches!(t, 7 | 8 | 10))
-}
-
-fn prop_truthy(prop: Option<&PropValue>) -> bool {
-    match prop {
-        Some(PropValue::Bool(v)) => *v,
-        Some(PropValue::Int(v)) => *v != 0,
-        Some(PropValue::F64(v)) => *v != 0.0,
-        Some(PropValue::Str(v)) => matches!(v.as_str(), "1" | "true" | "True" | "TRUE" | "ar"),
-        None => false,
-    }
-}
-
-fn bcc_bond_type(bond: &Bond) -> Result<i32, String> {
-    match bond.props.get(keys::TYPE) {
-        Some(PropValue::Int(v)) => Ok(*v),
-        Some(PropValue::F64(v)) if (*v - v.round()).abs() < 1.0e-6 => Ok(v.round() as i32),
-        Some(PropValue::F64(v)) => Err(format!("BCC bond `type` must be integral, got {v}")),
-        Some(PropValue::Str(s)) => s
-            .parse::<i32>()
-            .map_err(|e| format!("BCC bond `type` must be an integer string: {e}")),
-        Some(PropValue::Bool(_)) => Err("BCC bond `type` must be numeric, not bool".to_owned()),
-        None => Err("BCC correction requires BCC bond `type`".to_owned()),
-    }
 }

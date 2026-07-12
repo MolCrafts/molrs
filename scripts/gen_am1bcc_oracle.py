@@ -6,10 +6,19 @@ that the BCC stage can be regression-tested in ISOLATION from AM1:
   geometry + bonds/orders      <- the input molrs must be able to build
   am1_charges (equivalenced)   <- ANTECHAMBER_AM1BCC_PRE.AC  (BCC stage INPUT)
   bcc_atom_types               <- `-at bcc` run                (typifier oracle)
+  abcg2_atom_types             <- `-at abcg2` run              (typifier oracle)
+  gas_atom_types               <- `-at gas` run                (typifier oracle)
   bcc_charges (final)          <- output mol2                  (BCC stage OUTPUT)
 
-molrs owns: bcc_atom_types and (am1_charges -> bcc_charges).
+molrs owns: the atom types and (am1_charges -> bcc_charges).
 Atomiverse owns: producing am1_charges.  antechamber stands in for it here.
+
+The three type columns are the SAME ATD/WILDATOM rule engine driven by three
+different `ATOMTYPE_*.DEF` tables, so they are what pins "one engine, N tables":
+a table-specific hack shows up as a regression in the other two columns.
+Note GAS has an atom-type table but no BCC *correction* table, which is why it
+can only be reached through the table-generic typifier, never through the
+BCC-correction-family selector.
 """
 
 import json
@@ -165,9 +174,16 @@ def main() -> int:
             # rows would not line up with the molrs-side input.
             assert els == in_elements, f"{name}: atom order drift {els} vs {in_elements}"
 
-            # run 2: -at bcc -> the BCC atom types antechamber assigned
-            run_antechamber(work, sdf, work / f"{name}_bcc.mol2", nc, "bcc")
-            _, _, _, bcc_types = parse_mol2(work / f"{name}_bcc.mol2")
+            # runs 2-4: one run per atom-type table. Same molecule, same engine
+            # upstream -- only `-at` changes -- so the three columns are directly
+            # comparable and a table-specific special case cannot hide.
+            # `-pf n` is mandatory: `-pf y` deletes ANTECHAMBER_AM1BCC_PRE.AC.
+            atom_types = {}
+            for at in ("bcc", "abcg2", "gas"):
+                out_mol2 = work / f"{name}_{at}.mol2"
+                run_antechamber(work, sdf, out_mol2, nc, at)
+                _, _, _, atom_types[at] = parse_mol2(out_mol2)
+            bcc_types = atom_types["bcc"]
 
             # raw (non-equivalenced) sqm Mulliken, to document the -eq averaging
             raw = []
@@ -183,7 +199,9 @@ def main() -> int:
                     break
 
             n = len(els)
-            assert len(am1_charges) == n and len(bcc_charges) == n and len(bcc_types) == n, name
+            assert len(am1_charges) == n and len(bcc_charges) == n, name
+            for at, types in atom_types.items():
+                assert len(types) == n, f"{name}: -at {at} typed {len(types)}/{n} atoms"
 
             records.append({
                 "name": name,
@@ -198,7 +216,9 @@ def main() -> int:
                 # --- ORACLE molrs must reproduce ---
                 "am1_charges": am1_charges,        # after antechamber -eq equivalencing
                 "bcc_bond_types": bonds,           # (i, j, bcc_bond_type) 1/2/3/7/8/9
-                "bcc_atom_types": bcc_types,       # ATOMTYPE_BCC.DEF codes
+                "bcc_atom_types": bcc_types,               # ATOMTYPE_BCC.DEF codes
+                "abcg2_atom_types": atom_types["abcg2"],   # ATOMTYPE_ABCG2.DEF codes
+                "gas_atom_types": atom_types["gas"],       # ATOMTYPE_GAS.DEF codes
                 "bcc_charges": bcc_charges,        # final AM1-BCC charges
             })
             eq = "EQ" if raw and any(
@@ -228,7 +248,12 @@ def emit_rust(recs):
     w("//!            aromatic flag, formal charge, plus the AM1 base charges that")
     w("//!            Atomiverse (here: antechamber's sqm) supplies.")
     w("//!   ORACLE — what antechamber produced and molrs must reproduce: BCC bond")
-    w("//!            types, BCC atom types, and the final AM1-BCC charges.")
+    w("//!            types, the BCC / ABCG2 / GAS atom types, and the final AM1-BCC")
+    w("//!            charges.")
+    w("//!")
+    w("//! The three atom-type columns come from `-at {bcc,abcg2,gas}` on the SAME")
+    w("//! molecule: one rule engine, three `ATOMTYPE_*.DEF` tables. They are what pins")
+    w("//! the engine as table-generic — a per-table special case regresses the others.")
     w("//!")
     w("//! `am1_charges` are antechamber's PRE-BCC charges (ANTECHAMBER_AM1BCC_PRE.AC),")
     w("//! i.e. sqm Mulliken AFTER topological-equivalence averaging (`-eq 1`, default).")
@@ -259,8 +284,14 @@ def emit_rust(recs):
     w("    /// (i, j, bcc_bond_type) — 1/2/3 = single/double/triple,")
     w("    /// 7 = aromatic-single, 8 = aromatic-double, 9 = delocalized")
     w("    pub bcc_bond_types: &'static [(usize, usize, i32)],")
-    w("    /// ATOMTYPE_BCC.DEF codes")
+    w("    /// ATOMTYPE_BCC.DEF codes (`antechamber -at bcc`)")
     w("    pub bcc_atom_types: &'static [&'static str],")
+    w("    /// ATOMTYPE_ABCG2.DEF codes (`antechamber -at abcg2`)")
+    w("    pub abcg2_atom_types: &'static [&'static str],")
+    w("    /// ATOMTYPE_GAS.DEF codes (`antechamber -at gas`) — the Gasteiger table.")
+    w("    /// GAS has no BCC correction table, so it is reachable only through the")
+    w("    /// table-generic typifier.")
+    w("    pub gas_atom_types: &'static [&'static str],")
     w("    /// final AM1-BCC charges")
     w("    pub bcc_charges: &'static [f64],")
     w("}")
@@ -295,8 +326,9 @@ def emit_rust(recs):
         for i, j, t in r["bcc_bond_types"]:
             w(f"            ({i}, {j}, {t}),")
         w("        ],")
-        ats = ", ".join(f'"{t}"' for t in r["bcc_atom_types"])
-        w(f"        bcc_atom_types: &[{ats}],")
+        for field in ("bcc_atom_types", "abcg2_atom_types", "gas_atom_types"):
+            ats = ", ".join(f'"{t}"' for t in r[field])
+            w(f"        {field}: &[{ats}],")
         w(f"        bcc_charges: &[{fl(r['bcc_charges'])}],")
         w("    },")
     w("];")

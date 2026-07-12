@@ -1,10 +1,11 @@
 //! AM1-BCC typifier integration tests.
 
 use molrs::ff::charge::ChargeAssigner;
+use molrs::ff::params::BccCorrectionRow;
 use molrs::ff::typifier::Typifier;
 use molrs::ff::typifier::am1bcc::{
     AM1BCCTypifier, AM1ChargeBackend, AM1ChargeResult, AM1ChargeTypifier, BCCAtomTypifier,
-    BCCCorrectionTable,
+    BCCCorrectionTable, UnavailableAM1Backend,
 };
 use molrs::store::keys;
 use molrs::{AtomId, Atomistic, Element};
@@ -130,13 +131,74 @@ fn bcc_typed_chloromethane() -> Atomistic {
     mol
 }
 
+/// A one-row synthetic correction table: C (`11`) – H (`91`) single bond, δ = +0.01 e.
+///
+/// The δ is deliberately **not** the embedded table's 0.0393: a typifier that
+/// quietly fell back to `BCCPARM.DAT` instead of applying the table it was handed
+/// would fail the charge assertions below rather than pass them.
+///
+/// Applied to methane, carbon is the `left` of four such bonds (+4 × 0.01 = +0.04 e)
+/// and each hydrogen the `right` of one (−0.01 e); the molecule stays neutral.
+fn synthetic_ch_table() -> BCCCorrectionTable {
+    BCCCorrectionTable::from_rows(&[BccCorrectionRow {
+        left: "11",
+        right: "91",
+        bond_type: 1,
+        delta: 0.01,
+    }])
+}
+
+/// A table built from explicit rows holds exactly those rows — nothing else.
+///
+/// `from_rows` is the constructor that replaces the empty-`HashMap`
+/// `BCCCorrectionTable::new()` (ac-004), so the property that matters is that it
+/// *names its content*: what goes in comes out, and no parameter set leaks in
+/// behind the caller's back.
 #[test]
-fn default_am1bcc_typifier_is_guarded_until_backend_is_configured() {
+fn from_rows_builds_exactly_the_rows_it_is_given() {
+    let table = synthetic_ch_table();
+
+    assert_eq!(table.len(), 1, "one row in, one row out");
+    let dq = table
+        .correction("11", "91", 1)
+        .expect("the row the table was built from");
+    assert!((dq - 0.01).abs() < 1e-12, "{dq}");
+
+    let reversed = table
+        .correction("91", "11", 1)
+        .expect("a reversed bond is the same row");
+    assert!((reversed + 0.01).abs() < 1e-12, "{reversed}");
+
+    assert!(
+        table.correction("11", "31", 1).is_none(),
+        "C–O is a row of the embedded BCC table, not of this one — `from_rows` \
+         must not fall back to a parameter set the caller never named"
+    );
+}
+
+/// No AM1 backend configured → a clear error, never an invented charge.
+///
+/// This was spelled `AM1BCCTypifier::default()`, which asserted the behaviour of a
+/// typifier with *neither* a backend *nor* a parameter set. The missing parameter
+/// set was the ac-004 footgun; the missing backend is the real guarantee, and it
+/// stands on its own — here the correction table is the full embedded BCC set, so
+/// the backend guard is the only thing that can fire.
+#[test]
+fn am1bcc_without_an_am1_backend_is_an_error() {
     let (mol, _, _) = methane();
-    let err = AM1BCCTypifier::default()
+    let typifier = AM1BCCTypifier::bcc(UnavailableAM1Backend).expect("load embedded BCC table");
+
+    let err = typifier
         .typify(&mol)
-        .expect_err("default backend should be unavailable");
-    assert!(err.contains("AM1ChargeBackend"), "{err}");
+        .expect_err("no AM1 backend is configured");
+    assert!(
+        err.contains("AM1ChargeBackend"),
+        "the error must name the backend that is missing, got: {err}"
+    );
+    assert!(
+        !err.contains("missing BCC correction"),
+        "the table is fully populated — the backend guard is what must fire, got: {err}"
+    );
 }
 
 #[test]
@@ -156,11 +218,12 @@ fn am1_charge_typifier_writes_base_charges_without_bcc() {
 #[test]
 fn fake_backend_plus_explicit_bcc_table_writes_charges() {
     let (mol, c, hs) = bcc_typed_methane();
-    let table = BCCCorrectionTable::new().insert("11", "91", 0.01);
-    let typifier = AM1BCCTypifier::new(FakeAM1Backend {
-        charges: vec![0.0; 5],
-    })
-    .with_correction_table(table);
+    let typifier = AM1BCCTypifier::new(
+        FakeAM1Backend {
+            charges: vec![0.0; 5],
+        },
+        synthetic_ch_table(),
+    );
 
     let typed = typifier.typify(&mol).expect("typify methane");
     let c_atom = typed.get_atom(c).expect("carbon");
@@ -181,11 +244,12 @@ fn fake_backend_plus_explicit_bcc_table_writes_charges() {
 #[test]
 fn charge_assigner_runs_struct_typifier_and_reports_result() {
     let (mut mol, _, _) = bcc_typed_methane();
-    let table = BCCCorrectionTable::new().insert("11", "91", 0.01);
-    let typifier = AM1BCCTypifier::new(FakeAM1Backend {
-        charges: vec![0.0; 5],
-    })
-    .with_correction_table(table);
+    let typifier = AM1BCCTypifier::new(
+        FakeAM1Backend {
+            charges: vec![0.0; 5],
+        },
+        synthetic_ch_table(),
+    );
 
     let result = ChargeAssigner::new(typifier)
         .with_method("AM1-BCC")
@@ -284,16 +348,52 @@ fn atom_typifier_covers_reference_element_rows_through_mt() {
     }
 }
 
+/// A bond whose row is absent from the table is an ERROR — never a silent 0.0.
+///
+/// The table here is **populated** and real (two rows copied verbatim from
+/// `BCCPARM.DAT`); it simply does not cover the only bond methane has. It knows
+/// C–C and C–O single bonds, and methane is all C–H.
+///
+/// This used to be spelled with an *empty* table, which conflated two different
+/// failures: "this model was built with no parameter set" (the ac-004 footgun —
+/// now unconstructible) and "this row is not in the parameter set" (a real,
+/// permanent error path). Only the latter is pinned here, and it is pinned on the
+/// object a user can actually build.
 #[test]
 fn missing_bcc_correction_row_is_an_error_not_zero() {
     let (mol, _, _) = bcc_typed_methane();
-    let typifier = AM1BCCTypifier::new(FakeAM1Backend {
-        charges: vec![0.0; 5],
-    })
-    .with_correction_table(BCCCorrectionTable::new());
+    let table = BCCCorrectionTable::from_rows(&[
+        BccCorrectionRow {
+            left: "11",
+            right: "11",
+            bond_type: 1,
+            delta: 0.0000,
+        },
+        BccCorrectionRow {
+            left: "11",
+            right: "31",
+            bond_type: 1,
+            delta: 0.0718,
+        },
+    ]);
+    assert!(
+        !table.is_empty(),
+        "the premise of this test is a populated table that lacks ONE row; an \
+         empty table would test the deleted footgun instead"
+    );
+    let typifier = AM1BCCTypifier::new(
+        FakeAM1Backend {
+            charges: vec![0.0; 5],
+        },
+        table,
+    );
 
     let err = typifier
         .typify(&mol)
-        .expect_err("missing BCC row must be rejected");
+        .expect_err("an uncorrectable bond must be rejected, not silently left at 0.0");
     assert!(err.contains("missing BCC correction"), "{err}");
+    assert!(
+        err.contains("11|91|1") || err.contains("91|11|1"),
+        "the error must name the C–H bond it could not correct, got: {err}"
+    );
 }

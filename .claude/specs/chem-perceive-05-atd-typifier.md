@@ -1,6 +1,6 @@
 ---
 title: "chem-perceive 5/14 — AtdTypifier：把 ATD 规则引擎参数化抽出（一个引擎 + N 张表）"
-status: in-progress
+status: done
 created: 2026-07-12
 chain: chem-perceive
 depends_on: "chem-perceive-02-param-rs; chem-perceive-03-bondtype"
@@ -66,11 +66,11 @@ GPL atomtype.c"*——现在这个顾虑以更大规模重现。参数**表**（
 
 ## Tasks
 
-- [ ] Extract the ATD/WILDATOM rule engine from `ff/typifier/am1bcc.rs` into a parameterized `AtdTypifier`
-- [ ] Drive it from the generated `.rs` tables (02) — one engine, N tables
-- [ ] Wire BCC / ABCG2 / GAS atom typing through it
-- [ ] Assert the per-typify() table re-parse (am1bcc.rs:164) is gone (moot after 02, but assert it)
-- [ ] Remove the `AM1BCCTypifier::new()` empty-table footgun (am1bcc.rs:1190) — a constructible but non-functional object, forbidden by molrs's no-fallback-values rule
+- [x] Extract the ATD/WILDATOM rule engine from `ff/typifier/am1bcc.rs` into a parameterized `AtdTypifier`
+- [x] Drive it from the generated `.rs` tables (02) — one engine, N tables
+- [x] Wire BCC / ABCG2 / GAS atom typing through it
+- [x] Assert the per-typify() table re-parse (am1bcc.rs:164) is gone (moot after 02, but assert it)
+- [x] Remove the `AM1BCCTypifier::new()` empty-table footgun (am1bcc.rs:1190) — a constructible but non-functional object, forbidden by molrs's no-fallback-values rule
 - [x] Establish and document the clean-room / licensing posture for reimplementing antechamber's atomtype.c before merging
 
 ## Testing strategy
