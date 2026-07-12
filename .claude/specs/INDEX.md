@@ -4,7 +4,6 @@ One row per spec produced by `/mol:spec`. Newest on top.
 
 | Date | Slug | Status | Owner crate(s) | Summary |
 |---|---|---|---|---|
-| 2026-07-12 | chem-perceive-05-atd-typifier | approved | molcrafts-molrs | 把 ATD/WILDATOM 规则引擎从 am1bcc.rs 抽出为参数化 `AtdTypifier`（一个引擎 + N 张生成表），BCC/ABCG2/GAS 原子类型跑绿。硬依赖 03——pyridine/imidazole 的 `missing BCC correction 17|25|10` 其实是原子类型 bug 的伪装。链 5/13。 |
 | 2026-07-12 | chem-perceive-06-gaff-types | approved | molcrafts-molrs | 同一 AtdTypifier 再挂 GAFF/GAFF2/AMBER/SYBYL 四张 .DEF（引擎零改动，纯加表），各自 37/37 对 `antechamber -at <x>`。**显式推翻 2026-06-19 的「GAFF 只走 AmberTools」决定**（情况已变：ATD 引擎已存在且验证过），用户已授权。链 6/13。 |
 | 2026-07-12 | chem-perceive-07-charge-trait | approved | molcrafts-molrs | `ChargeModel` trait 托起 Mulliken(QM直通) / BCC+ABCG2(QM+键增量) / Gasteiger(无QM) 的 2×2 泛化证明；BCC 换成纯函数 push API `correct(&mol,&am1)`；删掉三个实现全是假的 `AM1ChargeBackend` 拉模型 trait、删掉会让 molrs 偏离 antechamber 的 `normalize_total_charge`；终结 `keys::TYPE` 污染。链 7/13。 |
 | 2026-07-12 | chem-perceive-08-gasteiger | approved | molcrafts-molrs | `GasteigerModel` 对齐 `antechamber -c gas`（37/37）：χ=a+b·q+c·q²，**`d` 列是 χ⁺ 分母不是四次项系数**（H 特例 20.02 ≠ a+b+c=12.85），阻尼收敛循环（非固定 6 次）。它**不需要 QM 输入**——这是 ChargeModel 抽象没有偷偷假设 QM 基电荷的证明。链 8/13。 |
