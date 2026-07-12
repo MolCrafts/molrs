@@ -3,7 +3,7 @@
 //! Parses a LAMMPS force-field include — `pair_style`/`pair_coeff`,
 //! `bond_style harmonic`, `angle_style harmonic`, `dihedral_style fourier`
 //! (+ optional `improper_style harmonic`) with **type-label** coefficients — into
-//! a molrs [`ForceField`](crate::ff::forcefield::ForceField) in molrs units
+//! a molrs [`ForceField`] in molrs units
 //! (Å, kcal/mol, radians, e). This is the format the molpy
 //! `LAMMPSForceFieldWriter` emits, e.g.:
 //!

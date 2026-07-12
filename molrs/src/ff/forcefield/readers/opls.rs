@@ -1,9 +1,8 @@
 //! OPLS-AA / GROMACS force-field XML reader.
 //!
 //! Parses the OpenMM-style OPLS-AA XML (as bundled with molpy, GROMACS units —
-//! nm, kJ/mol, Ryckaert–Bellemans torsions) into a molrs
-//! [`ForceField`](crate::ff::forcefield::ForceField) in molrs units (Å, kcal/mol,
-//! radians, e). The schema:
+//! nm, kJ/mol, Ryckaert–Bellemans torsions) into a molrs [`ForceField`] in molrs
+//! units (Å, kcal/mol, radians, e). The schema:
 //!
 //! ```xml
 //! <ForceField name="OPLS-AA" combining_rule="geometric">
@@ -41,8 +40,8 @@
 //! - bond `k` kJ/mol/nm² → kcal/mol/Å² (÷ 4.184 ÷ 100). molrs and GROMACS both
 //!   use the `½k(r−r₀)²` form, so no extra ½ factor (unlike a LAMMPS target).
 //! - angle `k` kJ/mol/rad² → kcal/mol/rad² (÷ 4.184); `angle` already in radians.
-//! - RB `c0..c5` → OPLS 4-cosine `f1..f4` via [`rb_to_opls`] (GROMACS Eqs.
-//!   200–201), in kcal/mol — matching the `dihedral:opls` kernel.
+//! - RB `c0..c5` → OPLS 4-cosine `f1..f4` via the private `rb_to_opls` helper
+//!   (GROMACS Eqs. 200–201), in kcal/mol — matching the `dihedral:opls` kernel.
 //! - charge `e`, mass `amu`: unchanged.
 
 use roxmltree::Node;

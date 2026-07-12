@@ -31,6 +31,38 @@ AM1-BCC charges authoritatively; reimplementing it in molrs is not worth the
 maintenance + correctness burden.
 **Status:** provisional
 
+## 2026-07-12 — ONE SSSR in the tree: `core::system::topology::Topology::find_rings`
+**Decision:** There is exactly **one** ring-perception algorithm in molrs, and it lives in
+`core::system::topology`. `perceive::rings::find_rings(&Atomistic) -> RingInfo` is now a
+thin **handle-keyed chemistry decoration** over it: it projects the graph into core's index
+space, calls `Topology::find_rings`, and lifts `usize` back to `AtomId`/`BondId`. Do NOT
+add a second SSSR; if you need rings, go through one of these two.
+**Why:** The tree carried **two independent Horton-style SSSR implementations** — the
+index-keyed one in core (used by `perceive::rotatable` and molrs-wasm) and a separate
+handle-keyed one in `perceive::rings` (used by aromaticity, SMARTS, MMFF, AM1-BCC,
+conformer, molrs-python). Before merging them I verified empirically that they agree on ring
+**membership**, not merely ring sizes — identical canonicalised ring atom-sets and per-atom
+ring counts across benzene, cyclopropane, naphthalene (fused), **cubane** (8v/12e — 5 SSSR
+rings chosen from 6 faces, the classic ambiguous case), bicyclo[2.2.2], spiro, an acyclic
+chain, and an adamantane-like cage. That mattered: SSSR is **not unique**, so if the two had
+disagreed, delegating would have silently changed aromaticity / MMFF / SMARTS results.
+Consolidation removed **193 lines** and the full suite stayed exactly on snapshot
+(1746 passing), which independently corroborates the equivalence — every one of those
+consumers reads `find_rings` and none moved.
+**Status:** stable
+
+## 2026-07-12 — rustdoc is a THIRD build gate, not a subset of fmt/clippy/check
+**Decision:** `$META.build.check` and `.pre-commit-config.yaml` now both run
+`RUSTDOCFLAGS='-D warnings' cargo doc --no-deps -p molcrafts-molrs --all-features`.
+**Why:** A broken intra-doc link (`[`chem`]` in `core/mod.rs`, left behind when the module
+moved to `perceive`) passed `cargo fmt`, `cargo clippy -D warnings` AND `cargo check`, and
+was only caught by an out-of-band `cargo doc` run. Public-doc-links-to-private-item has the
+same property. Turning the gate on required clearing **37 pre-existing rustdoc errors** across
+20 files first (redundant explicit link targets, links to `Grid`/`Frame`/`FrameView` that had
+moved or been deleted, 7 public→private links, and a malformed doctest fence in
+`io/data/lammps_data.rs` whose ```no_run block had silently never compiled).
+**Status:** stable
+
 ## 2026-07-12 — petgraph is GONE: molrs has zero petgraph dependency
 **Decision:** petgraph is removed entirely (`molrs/Cargo.toml`: dropped the
 `petgraph` optional dep and `dep:petgraph` from the `smiles` feature). molrs now

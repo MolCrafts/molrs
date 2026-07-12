@@ -32,7 +32,8 @@
 //! ## Unit handling
 //!
 //! Atom coordinates and the simulation box are normalised to **Å** on read
-//! (Bohr → Å conversion via [`BOHR_TO_ANG`] when the file uses Bohr units).
+//! (Bohr → Å conversion by the private `BOHR_TO_ANG` constant — the Bohr radius,
+//! 0.529 177 210 67 Å — when the file uses Bohr units).
 //! The original unit system is recorded in `frame.meta["cube_units"]` so
 //! [`write_cube_to_writer`] can round-trip the file without surprising the
 //! producing toolchain.

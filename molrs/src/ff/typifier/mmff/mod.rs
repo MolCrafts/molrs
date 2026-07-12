@@ -1,6 +1,6 @@
 //! MMFF94 atom/bond/angle/torsion/improper typifier.
 //!
-//! Annotates an [`Atomistic`](molrs::Atomistic) with MMFF94 type labels and
+//! Annotates an [`Atomistic`] with MMFF94 type labels and
 //! partial charges (the typifier's job). MMFF carries no bespoke energy path —
 //! it is a parameter set plus a topology labeler — so the
 //! [`build`](MMFFTypifier::build) convenience just materializes the labeled graph
@@ -84,7 +84,7 @@ impl MMFFTypifier {
     ///
     /// `mol → Frame → Potentials`. The intermediate `Frame` is not retained.
     ///
-    /// Requires [`Atomistic`](molrs::system::atomistic::Atomistic) because MMFF94
+    /// Requires [`Atomistic`] because MMFF94
     /// typing depends on element symbols, bond orders, and ring membership.
     pub fn build(&self, mol: &Atomistic) -> Result<Potentials, String> {
         let mut frame = self.typify(mol)?.to_frame();

@@ -599,7 +599,9 @@ fn bond_between(mol: &Atomistic, a: AtomId, b: AtomId) -> Option<BondId> {
 // Reaction (parsed reaction SMARTS)
 // ---------------------------------------------------------------------------
 
-/// A parsed Daylight reaction SMARTS and its compiled [`Transform`].
+/// A parsed Daylight reaction SMARTS and its compiled graph edit (the private
+/// `Transform`: the atom/bond additions, deletions and property changes the
+/// reaction applies to a match).
 #[derive(Debug, Clone)]
 pub struct Reaction {
     reactants: Vec<SmartsPattern>,

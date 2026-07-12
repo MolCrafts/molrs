@@ -13,6 +13,19 @@
 //! * atom `"stereo"` → `"CW"` | `"CCW"` | `"unspecified"`
 //! * bond `"stereo"` → `"E"` | `"Z"` | `"either"` | `"none"`
 //!
+//! Two of those strings are *sentinels* rather than descriptors: `"unspecified"`
+//! ([`TetrahedralStereo::Unspecified`]) means "this atom is not a stereocentre",
+//! and `"none"` ([`BondStereo::None`]) means "this bond is not a stereo bond".
+//! They record the **absence** of a stereochemical fact, not a perceived one.
+//! Accordingly, the builder [`Perceive::find_stereo`](crate::perceive::Perceive::find_stereo)
+//! writes **only** the real descriptors — `"CW"` / `"CCW"` on atoms and `"E"` /
+//! `"Z"` / `"either"` on bonds — and omits the sentinels entirely, so a `"stereo"`
+//! prop is present exactly where stereochemistry was perceived and absent
+//! everywhere else. The full four-way vocabulary above still applies to graphs
+//! written by other producers (a file reader, or a caller persisting the maps
+//! returned by [`assign_stereo_from_3d`] / [`assign_bond_stereo_from_3d`], both of
+//! which are total and do carry the sentinel variants).
+//!
 //! # Chiral-volume sign convention
 //! Positive volume → CCW (S configuration when substituents are in CIP order).
 //! Negative volume → CW  (R configuration).

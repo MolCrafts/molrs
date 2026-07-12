@@ -5,7 +5,7 @@ mol_project:
   stage: experimental
   build:
     install: "cargo build && bash scripts/fetch-test-data.sh"
-    check: "cargo fmt --all --check && cargo clippy -- -D warnings && cargo check"
+    check: "cargo fmt --all --check && cargo clippy --all-targets --all-features -- -D warnings && cargo check --all-features && RUSTDOCFLAGS='-D warnings' cargo doc --no-deps -p molcrafts-molrs"
     test: "cargo test --all-features"
     test_single: "cargo test {path}"
   arch:

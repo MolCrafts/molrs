@@ -1,7 +1,7 @@
 //! LAMMPS data file format reader and writer.
 //!
 //! Implements support for LAMMPS data files as specified in:
-//! https://docs.lammps.org/read_data.html
+//! <https://docs.lammps.org/read_data.html>
 //!
 //! # Supported Features
 //!
@@ -34,7 +34,8 @@
 //! // Write to new file
 //! write_lammps_data("output.data", &frame)?;
 //! # Ok(())
-//! # }```
+//! # }
+//! ```
 
 use crate::io::reader::{FrameReader, Reader};
 use crate::io::writer::FrameWriter;
@@ -1374,7 +1375,7 @@ impl<W: Write> FrameWriter for LAMMPSDataWriter<W> {
 /// Write a single frame in LAMMPS data file format.
 ///
 /// Accepts any type implementing [`FrameAccess`], including both [`Frame`] and
-/// [`FrameView`](crate::io::frame_view::FrameView).
+/// [`FrameView`](molrs::store::frame_view::FrameView).
 fn write_lammps_data_frame<W: Write>(
     writer: &mut W,
     frame: &impl FrameAccess,
@@ -1571,7 +1572,7 @@ pub fn read_lammps_data<P: AsRef<Path>>(path: P) -> std::io::Result<Frame> {
 /// Write a Frame to a LAMMPS data file.
 ///
 /// Accepts any type implementing [`FrameAccess`], including both [`Frame`] and
-/// [`FrameView`](crate::io::frame_view::FrameView).
+/// [`FrameView`](molrs::store::frame_view::FrameView).
 pub fn write_lammps_data<P: AsRef<Path>>(path: P, frame: &impl FrameAccess) -> std::io::Result<()> {
     let file = File::create(path)?;
     let mut writer = std::io::BufWriter::new(file);

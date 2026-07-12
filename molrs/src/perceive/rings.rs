@@ -1,31 +1,37 @@
-//! Ring detection for molecular graphs.
+//! Ring detection for molecular graphs — the **handle-keyed chemistry
+//! decoration** over the core graph primitive.
 //!
-//! Computes the **Smallest Set of Smallest Rings (SSSR)** — equivalently the
-//! minimum cycle basis — using a Horton-style algorithm with a native
-//! adjacency BFS.
+//! There is exactly **one** SSSR implementation in the tree and it lives in
+//! [`crate::system::topology`]: [`Topology::find_rings`] computes the
+//! **Smallest Set of Smallest Rings** (equivalently the minimum cycle basis)
+//! over contiguous `usize` vertex/edge indices. This module owns no ring
+//! algorithm of its own; it only:
 //!
-//! # Algorithm
-//! 1. Build a native adjacency snapshot from the molecular bonds.
-//! 2. For each edge `(u, v)`, temporarily remove it and BFS from `u` to `v`.
-//!    If a path exists, the path + the removed edge = a candidate cycle.
-//! 3. Sort candidates by length (ascending).
-//! 4. Greedily select linearly independent cycles via Gaussian elimination
-//!    over GF(2) on edge-incidence bit vectors.
-//! 5. Result = minimum cycle basis = SSSR.
+//! 1. projects an [`Atomistic`] onto that index space — atom index `i` is the
+//!    `i`-th atom of [`Atomistic::atoms`], edge index `i` the `i`-th bond of
+//!    [`Atomistic::bonds`],
+//! 2. calls [`Topology::find_rings`],
+//! 3. lifts the resulting `usize` indices back onto the [`AtomId`] / [`BondId`]
+//!    handles chemistry code (aromaticity, SMARTS, MMFF, AM1-BCC, the conformer
+//!    pipeline) actually holds, as a [`RingInfo`].
 //!
-//! # Complexity
-//! O(E × (V + E)) for candidate generation, O(R × E²) for independence check.
-//! For typical molecular graphs (small, sparse) this is fast.
+//! Ring selection, ordering and complexity are therefore whatever the core
+//! primitive says they are — see [`Topology::find_rings`].
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 
 use crate::system::atomistic::{AtomId, Atomistic, BondId};
+use crate::system::topology::Topology;
 
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
 /// All ring information for an [`Atomistic`], produced by [`find_rings`].
+///
+/// The handle-keyed counterpart of
+/// [`crate::system::topology::TopologyRingInfo`]: the same rings, addressed by
+/// [`AtomId`] / [`BondId`] instead of by graph index.
 #[derive(Debug, Clone)]
 pub struct RingInfo {
     /// Each ring is an ordered list of `AtomId`s forming a closed path.
@@ -37,14 +43,6 @@ pub struct RingInfo {
 }
 
 impl RingInfo {
-    fn empty() -> Self {
-        Self {
-            rings: Vec::new(),
-            atom_rings: HashMap::new(),
-            bond_rings: HashMap::new(),
-        }
-    }
-
     /// Whether the atom belongs to any ring.
     pub fn is_atom_in_ring(&self, id: AtomId) -> bool {
         self.atom_rings.get(&id).is_some_and(|v| !v.is_empty())
@@ -100,12 +98,16 @@ impl RingInfo {
 // ---------------------------------------------------------------------------
 
 /// Compute the ring information (SSSR / minimum cycle basis) for `mol`.
+///
+/// Delegates the actual cycle search to the core graph primitive
+/// [`Topology::find_rings`] and lifts its `usize` indices back onto
+/// [`AtomId`] / [`BondId`] handles. Rings come back smallest-first, exactly as
+/// the primitive orders them.
 pub fn find_rings(mol: &Atomistic) -> RingInfo {
-    if mol.n_atoms() == 0 {
-        return RingInfo::empty();
-    }
-
-    // ---- 1. Build stable atom/bond orderings --------------------------------
+    // ---- 1. Project onto the core index space ------------------------------
+    // Atom index `i` == the `i`-th atom of `mol.atoms()`; edge index `i` == the
+    // `i`-th bond of `mol.bonds()` (`Topology::from_edges` preserves edge
+    // insertion order), so the mapping back below is unambiguous.
     let atom_vec: Vec<AtomId> = mol.atoms().map(|(id, _)| id).collect();
     let atom_to_idx: HashMap<AtomId, usize> = atom_vec
         .iter()
@@ -115,106 +117,34 @@ pub fn find_rings(mol: &Atomistic) -> RingInfo {
 
     let bond_vec: Vec<BondId> = mol.bonds().map(|(id, _)| id).collect();
 
-    // ---- 2. Build native adjacency snapshot over atom_vec indices ----------
-    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); atom_vec.len()];
     let mut edges: Vec<[usize; 2]> = Vec::with_capacity(bond_vec.len());
+    // Fast (AtomId, AtomId) → BondId lookup, used to lift ring edges back.
+    let mut bond_map: HashMap<(AtomId, AtomId), BondId> = HashMap::new();
     for &bid in &bond_vec {
         let (n0, n1) = mol.bond_endpoints(bid).expect("bond must exist");
-        let u = atom_to_idx[&n0];
-        let v = atom_to_idx[&n1];
-        edges.push([u, v]);
-        adj[u].push(v);
-        adj[v].push(u);
+        edges.push([atom_to_idx[&n0], atom_to_idx[&n1]]);
+        bond_map.insert((n0, n1), bid);
+        bond_map.insert((n1, n0), bid);
     }
 
-    let n_edges = edges.len();
+    // ---- 2. The one and only SSSR in the tree -------------------------------
+    let topo = Topology::from_edges(atom_vec.len(), &edges);
+    let info = topo.find_rings();
 
-    // ---- 3. Expected cycle basis size = E - V + C ---------------------------
-    // (C = number of connected components)
-    let n_components = count_components(&adj);
-    let cycle_rank = n_edges as isize - atom_vec.len() as isize + n_components as isize;
-    if cycle_rank <= 0 {
-        return RingInfo::empty();
-    }
-    let cycle_rank = cycle_rank as usize;
-
-    // ---- 4. Generate candidate cycles (Horton-style) ------------------------
-    // For each edge, remove it, BFS for shortest path, reconstruct cycle.
-    let mut candidates: Vec<Vec<usize>> = Vec::new(); // each is a list of node indices
-
-    for edge in &edges {
-        let (u, v) = (edge[0], edge[1]);
-        let skip = if u < v { (u, v) } else { (v, u) };
-
-        // BFS from u to v, skipping the direct edge between u and v.
-        if let Some(path) = bfs_shortest_path(&adj, u, v, skip) {
-            // path is [u, ..., v], which forms a cycle with the edge u-v
-            candidates.push(path);
-        }
-    }
-
-    // Sort by cycle length (shortest first)
-    candidates.sort_by_key(|c| c.len());
-
-    // ---- 5. Select linearly independent cycles (GF(2) Gaussian elimination) -
-    // Represent each cycle as a bit vector over edges.
-    // Build a lookup: (min_node, max_node) → edge index for quick edge lookup
-    let mut edge_lookup: HashMap<(usize, usize), usize> = HashMap::new();
-    for (ei, edge) in edges.iter().enumerate() {
-        let (a, b) = (edge[0], edge[1]);
-        let key = if a < b { (a, b) } else { (b, a) };
-        edge_lookup.insert(key, ei);
-    }
-
-    let mut basis_vectors: Vec<Vec<u64>> = Vec::new();
-    let words = n_edges.div_ceil(64);
-    let mut selected_cycles: Vec<Vec<usize>> = Vec::new();
-
-    for cycle in &candidates {
-        if selected_cycles.len() >= cycle_rank {
-            break;
-        }
-
-        // Build edge-incidence bit vector for this cycle
-        let mut bitvec = vec![0u64; words];
-        let n = cycle.len();
-        for i in 0..n {
-            let a = cycle[i];
-            let b = cycle[(i + 1) % n];
-            let key = if a < b { (a, b) } else { (b, a) };
-            if let Some(&ei) = edge_lookup.get(&key) {
-                bitvec[ei / 64] |= 1u64 << (ei % 64);
-            }
-        }
-
-        // Check linear independence via Gaussian elimination
-        if is_linearly_independent(&mut basis_vectors, bitvec, words) {
-            selected_cycles.push(cycle.clone());
-        }
-    }
-
-    // ---- 6. Convert node-index cycles → AtomId rings ------------------------
-    let mut raw_rings: Vec<Vec<AtomId>> = selected_cycles
-        .into_iter()
+    // ---- 3. Lift node-index cycles → AtomId rings ---------------------------
+    let rings: Vec<Vec<AtomId>> = info
+        .rings()
+        .iter()
         .map(|cycle| cycle.iter().map(|&ni| atom_vec[ni]).collect())
         .collect();
 
-    // Sort smallest first (SSSR convention).
-    raw_rings.sort_by_key(Vec::len);
-
-    // ---- 7. Build reverse-lookup maps ---------------------------------------
-    // Fast (AtomId, AtomId) → BondId lookup table.
-    let mut bond_map: HashMap<(AtomId, AtomId), BondId> = HashMap::new();
-    for &bid in &bond_vec {
-        let (a, bb) = mol.bond_endpoints(bid).expect("bond must exist");
-        bond_map.insert((a, bb), bid);
-        bond_map.insert((bb, a), bid);
-    }
-
+    // ---- 4. Build the handle-keyed reverse-lookup maps ----------------------
+    // Each ring is a closed path, so its cyclically consecutive atom pairs are
+    // exactly its bonds.
     let mut atom_rings: HashMap<AtomId, Vec<usize>> = HashMap::new();
     let mut bond_rings: HashMap<BondId, Vec<usize>> = HashMap::new();
 
-    for (ri, ring) in raw_rings.iter().enumerate() {
+    for (ri, ring) in rings.iter().enumerate() {
         let n = ring.len();
         for i in 0..n {
             let a = ring[i];
@@ -227,133 +157,10 @@ pub fn find_rings(mol: &Atomistic) -> RingInfo {
     }
 
     RingInfo {
-        rings: raw_rings,
+        rings,
         atom_rings,
         bond_rings,
     }
-}
-
-// ---------------------------------------------------------------------------
-// Connected-component count (native flood fill)
-// ---------------------------------------------------------------------------
-
-/// Count connected components of an undirected graph given as adjacency lists.
-fn count_components(adj: &[Vec<usize>]) -> usize {
-    let n = adj.len();
-    let mut visited = vec![false; n];
-    let mut components = 0usize;
-    for start in 0..n {
-        if visited[start] {
-            continue;
-        }
-        components += 1;
-        let mut queue = VecDeque::new();
-        visited[start] = true;
-        queue.push_back(start);
-        while let Some(current) = queue.pop_front() {
-            for &neighbor in &adj[current] {
-                if !visited[neighbor] {
-                    visited[neighbor] = true;
-                    queue.push_back(neighbor);
-                }
-            }
-        }
-    }
-    components
-}
-
-// ---------------------------------------------------------------------------
-// BFS shortest path avoiding a specific edge
-// ---------------------------------------------------------------------------
-
-/// BFS from `start` to `goal` over `adj`, but do not traverse the edge whose
-/// endpoint pair equals `skip = (min, max)`. Returns the node-index path
-/// `[start, ..., goal]` if reachable.
-fn bfs_shortest_path(
-    adj: &[Vec<usize>],
-    start: usize,
-    goal: usize,
-    skip: (usize, usize),
-) -> Option<Vec<usize>> {
-    let n = adj.len();
-    let mut visited = vec![false; n];
-    let mut parent: Vec<i64> = vec![-1; n];
-    let mut queue = VecDeque::new();
-
-    visited[start] = true;
-    queue.push_back(start);
-
-    while let Some(current) = queue.pop_front() {
-        if current == goal {
-            // Reconstruct path
-            let mut path = vec![goal];
-            let mut node = goal;
-            while node != start {
-                node = parent[node] as usize;
-                path.push(node);
-            }
-            path.reverse();
-            return Some(path);
-        }
-
-        for &neighbor in &adj[current] {
-            let key = if current < neighbor {
-                (current, neighbor)
-            } else {
-                (neighbor, current)
-            };
-            if key == skip {
-                continue;
-            }
-            if !visited[neighbor] {
-                visited[neighbor] = true;
-                parent[neighbor] = current as i64;
-                queue.push_back(neighbor);
-            }
-        }
-    }
-
-    None
-}
-
-// ---------------------------------------------------------------------------
-// GF(2) linear independence check
-// ---------------------------------------------------------------------------
-
-/// Try to add `vec` to `basis`. If `vec` is linearly independent of the
-/// existing basis vectors (over GF(2)), add it and return `true`.
-/// Otherwise return `false`.
-fn is_linearly_independent(basis: &mut Vec<Vec<u64>>, mut vec: Vec<u64>, words: usize) -> bool {
-    // Reduce vec against existing basis
-    for basis_vec in basis.iter() {
-        // Find the leading bit of basis_vec
-        let lead = leading_bit(basis_vec, words);
-        if let Some(lead) = lead
-            && (vec[lead / 64] >> (lead % 64)) & 1 == 1
-        {
-            // XOR to eliminate
-            for w in 0..words {
-                vec[w] ^= basis_vec[w];
-            }
-        }
-    }
-
-    // If vec is non-zero, it's linearly independent
-    let is_nonzero = vec.iter().any(|&w| w != 0);
-    if is_nonzero {
-        basis.push(vec);
-    }
-    is_nonzero
-}
-
-/// Find the position of the highest set bit in the bitvector.
-fn leading_bit(vec: &[u64], words: usize) -> Option<usize> {
-    for w in (0..words).rev() {
-        if vec[w] != 0 {
-            return Some(w * 64 + (63 - vec[w].leading_zeros() as usize));
-        }
-    }
-    None
 }
 
 // ---------------------------------------------------------------------------

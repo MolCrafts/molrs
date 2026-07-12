@@ -36,7 +36,9 @@ pub enum ConformerSpeed {
     Better,
 }
 
-/// Options for [`super::generate_3d`].
+/// Options for [`Conformer`](super::Conformer): pass them to
+/// [`Conformer::new`](super::Conformer::new), which
+/// [`generate`](super::Conformer::generate) then runs against.
 #[derive(Debug, Clone)]
 pub struct ConformerOptions {
     /// Stage-1 embedding algorithm.

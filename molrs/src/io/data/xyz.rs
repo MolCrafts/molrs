@@ -1272,7 +1272,7 @@ impl<W: Write> FrameWriter for XYZFrameWriter<W> {
 /// Write a single frame to the writer in Extended XYZ format.
 ///
 /// Accepts any type implementing [`FrameAccess`], including both [`Frame`] and
-/// [`FrameView`](crate::io::frame_view::FrameView). Existing callers passing `&Frame`
+/// [`FrameView`](molrs::store::frame_view::FrameView). Existing callers passing `&Frame`
 /// continue to work without changes.
 pub fn write_xyz_frame<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> std::io::Result<()> {
     use molrs::store::block::DType;

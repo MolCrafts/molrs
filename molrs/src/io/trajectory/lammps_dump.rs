@@ -834,7 +834,7 @@ impl<W: Write> FrameWriter for LAMMPSDumpWriter<W> {
 /// Write a single frame in LAMMPS dump format.
 ///
 /// Accepts any type implementing [`FrameAccess`], including both [`Frame`] and
-/// [`FrameView`](crate::io::frame_view::FrameView).
+/// [`FrameView`](molrs::store::frame_view::FrameView).
 fn write_lammps_dump_frame<W: Write>(
     writer: &mut W,
     frame: &impl FrameAccess,

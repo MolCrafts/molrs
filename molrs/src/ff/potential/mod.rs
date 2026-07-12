@@ -227,9 +227,9 @@ impl crate::ff::forcefield::Style {
     /// Returns `Ok(None)` for a style that carries no pairwise kernel (an atom
     /// style — types/charges only), `Err` for an unknown `(category, name)`.
     ///
-    /// The `(category, name)` → constructor mapping lives in the
-    /// [`registry`](crate::ff::potential::registry); a new potential is added by
-    /// registering its kernel, not by editing this dispatch.
+    /// The `(category, name)` → constructor mapping lives in the [`registry`]; a
+    /// new potential is added by registering its kernel, not by editing this
+    /// dispatch.
     pub fn to_potential(
         &self,
         frame: &Frame,

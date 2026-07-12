@@ -1,17 +1,15 @@
 //! OPLS-AA SMARTS atom typifier.
 //!
 //! Mirrors [`mmff`](crate::ff::typifier::mmff): typing metadata
-//! ([`OplsTypingMeta`]) is read *separately* from the potential
-//! [`ForceField`](crate::ff::forcefield::ForceField), both from the same OPLS-AA
-//! XML. [`OPLSAATypifier`] owns both and implements [`Typifier`], assigning
-//! `opls_NNN` atom types by SMARTS matching with overrides / priority / layer
-//! conflict resolution.
+//! ([`OplsTypingMeta`]) is read *separately* from the potential [`ForceField`],
+//! both from the same OPLS-AA XML. [`OPLSAATypifier`] owns both and implements
+//! [`Typifier`], assigning `opls_NNN` atom types by SMARTS matching with
+//! overrides / priority / layer conflict resolution.
 //!
-//! After atom typing, [`OPLSAATypifier::typify`] runs
-//! [`typify_bonded`](assign::typify_bonded): every bond / angle / dihedral is
-//! matched against the force field's bonded tables by OPLS specificity + overlay
-//! layer (chain 2). [`OPLSAATypifier::build`] closes the loop to evaluable
-//! potentials (`typify → to_frame → to_potentials`).
+//! After atom typing, [`OPLSAATypifier::typify`] runs [`typify_bonded`]: every
+//! bond / angle / dihedral is matched against the force field's bonded tables by
+//! OPLS specificity + overlay layer (chain 2). [`OPLSAATypifier::build`] closes
+//! the loop to evaluable potentials (`typify → to_frame → to_potentials`).
 //!
 //! # B-line reversal
 //!
@@ -24,10 +22,9 @@
 //! Only types carrying a SMARTS `def` participate; legacy `oplsaa.xml` rows
 //! (`opls_001`–`opls_134`, no `def`) are out of scope for auto-typing. Improper
 //! matching and pair/charge assignment are out of scope. Uncovered bonded terms
-//! follow the [`NoMatch`](assign::NoMatch) policy; a consumer that wants to fill
-//! them can supply its own [`Estimator`](assign::Estimator) via
-//! [`typify_bonded_with`](assign::typify_bonded_with), or attach the restored
-//! [`ParameterEstimator`](crate::ff::typifier::estimate::ParameterEstimator).
+//! follow the [`NoMatch`] policy; a consumer that wants to fill them can supply
+//! its own [`Estimator`] via [`typify_bonded_with`], or attach the restored
+//! [`ParameterEstimator`].
 
 use molrs::Atomistic;
 
