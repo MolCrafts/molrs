@@ -1,7 +1,7 @@
 //! Integration tests for the `perceive` module — the `Perceive` builder.
 //!
 //! The module tree mirrors `src/perceive/`: one test module per perception
-//! (`rings`, `aromaticity`, `hydrogens`, `stereo`, `rotatable`) plus three
+//! (`rings`, `aromaticity`, `bond_type`, `hydrogens`, `stereo`, `rotatable`) plus three
 //! cross-cutting modules for the properties the builder exists to provide —
 //! `immutability` (every `find_*` clones; the input is never touched),
 //! `composition` (graph-out means the finders chain), and `edge_cases`.
@@ -15,6 +15,8 @@
 
 #[path = "perceive/aromaticity.rs"]
 mod aromaticity;
+#[path = "perceive/bond_type.rs"]
+mod bond_type;
 #[path = "perceive/composition.rs"]
 mod composition;
 #[path = "perceive/edge_cases.rs"]

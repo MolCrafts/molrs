@@ -1,6 +1,6 @@
 ---
 title: "chem-perceive 3/14 — Perceive::find_bond_types — BCC 键型感知（缺失算法之一）"
-status: in-progress
+status: done
 created: 2026-07-12
 chain: chem-perceive
 depends_on: "chem-perceive-01-layer; chem-perceive-02-param-rs"
@@ -117,11 +117,11 @@ GPL atomtype.c"*——现在这个顾虑以更大规模重现。参数**表**（
 
 ## Tasks
 
-- [ ] Implement `Perceive::find_bond_types(&MolGraph) -> MolGraph` writing a BCC bond-type component
-- [ ] Implement aromatic 7/8 promotion with the correct boundary (see Domain basis)
-- [ ] Implement type-9 (delocalized) via the three local connectivity rules
-- [ ] Handle type 10 as the unresolved precursor (SYBYL `ar`), resolving it to 7/8
-- [ ] Investigate BCC bond types 6 and 11 reachability against AmberTools25; if unreachable, assert unreachable in a test rather than implementing dead branches
+- [x] Implement `Perceive::find_bond_types(&MolGraph) -> MolGraph` writing a BCC bond-type component
+- [x] Implement aromatic 7/8 promotion with the correct boundary (see Domain basis)
+- [x] Implement type-9 (delocalized) via the three local connectivity rules
+- [x] Handle type 10 as the unresolved precursor (SYBYL `ar`), resolving it to 7/8
+- [x] Investigate BCC bond types 6 and 11 reachability against AmberTools25; if unreachable, assert unreachable in a test rather than implementing dead branches
 - [x] Establish and document the clean-room / licensing posture for reimplementing antechamber algorithms (bondtype.c) before merging
 
 ## Testing strategy

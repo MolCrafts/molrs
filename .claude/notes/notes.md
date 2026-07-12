@@ -31,6 +31,51 @@ AM1-BCC charges authoritatively; reimplementing it in molrs is not worth the
 maintenance + correctness burden.
 **Status:** provisional
 
+## 2026-07-12 — BCC bond typing: two things that are NOT what we assumed
+**1. Kekulé choice IS charge-relevant end-to-end — my earlier "spend no budget there" was WRONG.**
+It is true that the *table* is Kekulé-invariant: BCCPARM holds identical deltas for bond
+types 7, 8 and 10 (7-vs-10: 25/25 keys identical; 8-vs-10: 15/15). I concluded from that
+the Kekulé phase could not affect charges. **That conclusion is false**, because the Kekulé
+structure also determines the **ATOM** types: imidazolium has two degenerate (equal-penalty)
+Kekulé structures that place the N=C double bond on *different* nitrogens, and those two N
+then get different BCC atom types → different charges. So the tie-break is load-bearing and
+had to be calibrated (`min endpoint asc, max endpoint desc`, doubles first) to reproduce
+AmberTools on all 9 aromatic oracle molecules. Table-invariance ⇏ pipeline-invariance.
+
+**2. Aromatic bond types are NOT resolved from the `ar` precursor — they are re-perceived.**
+antechamber does not walk adjacency to turn the SYBYL `ar` token (type 10) into 7/8. It
+**re-derives the Kekulé structure from scratch** via the APS.DAT valence-state penalty
+search (verified: flipping benzene's Kekulé phase in the input SDF does not move the
+output). The sequential precursor rule in `finalize()` gives benzene the *opposite* phase
+from the oracle. molrs therefore implements penalty-minimising kekulization over the
+aromatic subsystem using antechamber's own APS numbers — not a precursor resolution.
+**Status:** stable
+
+## 2026-07-12 — BCC type 6: nitrate divergence is deliberate (owner decision)
+**Decision:** molrs fixes antechamber's input-order dependence in `bondtype.c` part3 and
+accepts two divergences. Rule shipped: *N of degree 2–3, bonded to a terminal O/S, NOT a
+conjugated centre, carrying another terminal O/S* → type 6. Exhaustive neighbour scan,
+symmetric in endpoints.
+
+| molecule | antechamber | molrs | |
+|---|---|---|---|
+| nitrite / nitromethane / nitrobenzene / TMAO | 6,6 / 9,9 / 9,9 / 9 | same | match |
+| **nitrate** | 6, 9, 9 | **9, 9, 9** | divergence — symmetry fix |
+| **pyridine-N-oxide** | 6 | **9** | divergence — branch-B artifact |
+
+**Why:** antechamber's part3 has an unbraced `break` (branch A stops at the first neighbour
+→ depends on input bond order) and an unconditional assignment (branch B skips the check
+entirely). Measured: nitrate's three N–O get 6/9/9, so two *topologically identical* O⁻ get
+different types → final charges −0.6997 / −0.4180 / −0.4180, a **0.28 e break across three
+equivalent oxygens**. Charge equivalencing cannot save it (`-eq` averages AM1 charges
+*before* BCC; the damage is in the bond types applied *after*). Both divergences were shown
+to be pure coin-flips: writing pyridine-N-oxide's bond as `O-N` gives 6, as `N-O` gives 9 —
+same molecule, same file format.
+**The conjugated gate is what preserves nitromethane** (without it an exhaustive scan types
+its N–O as 6, a +0.1317 vs −0.1500 swing); it is the source's own stated intent
+(`bondtype.c:312` — *"index6 >= 2 makes NO2 bonds are delocalized bonds"*).
+**Status:** stable — do not "restore parity" on nitrate; it is a deliberate correctness win.
+
 ## 2026-07-12 — antechamber reimplementation: licensing posture (owner decision)
 **Decision (project owner, 2026-07-12):** Proceed with reimplementing antechamber's
 perception algorithms (`bondtype.c` → spec 03, `equatom.c` → spec 04, `atomtype.c` →

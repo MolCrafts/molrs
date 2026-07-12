@@ -36,7 +36,7 @@ use antechamber_oracle::{AntechamberCase, CASES};
 const CHARGE_TOL: f64 = 1.0e-4;
 
 #[derive(Clone)]
-struct SuppliedAM1(Vec<f64>);
+pub(crate) struct SuppliedAM1(pub(crate) Vec<f64>);
 
 impl AM1ChargeBackend for SuppliedAM1 {
     fn compute_am1_charges(&self, _mol: &Atomistic) -> Result<AM1ChargeResult, String> {

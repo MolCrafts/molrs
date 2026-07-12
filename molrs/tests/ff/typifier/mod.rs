@@ -5,6 +5,9 @@ mod am1bcc;
 #[path = "am1bcc_antechamber.rs"]
 mod am1bcc_antechamber;
 
+#[path = "bcc_bond_type.rs"]
+mod bcc_bond_type;
+
 #[path = "estimate.rs"]
 mod estimate;
 

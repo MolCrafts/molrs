@@ -9,6 +9,7 @@
 //! the raw side table / map.
 
 pub mod aromaticity;
+pub mod bond_type;
 pub mod builder;
 pub mod gasteiger;
 pub mod hydrogens;

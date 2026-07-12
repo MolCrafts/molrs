@@ -8,6 +8,7 @@
 //! material only, not runtime dependencies. Missing AM1 backends, BCC atom
 //! types, bond types, or correction rows return errors.
 
+use molrs::perceive::Perceive;
 use molrs::store::keys;
 use molrs::system::molgraph::PropValue;
 use molrs::{AtomId, Atomistic, Bond, BondId, Element, find_rings};
@@ -174,22 +175,18 @@ impl BCCAtomTypifier {
         Self::parameter_set(BccParameterSet::Abcg2)
     }
 
+    /// Perceive BCC bond types, then label every atom from `ATOMTYPE_BCC.DEF`.
+    ///
+    /// The bond types are always **perceived** (via
+    /// [`Perceive::find_bond_types`](molrs::perceive::Perceive::find_bond_types)),
+    /// never read off the input: the atom-type rules count `sb`/`db`/`ab`/`DL`
+    /// bonds, so they need the delocalized (9) and aromatic (7/8) types that a bond
+    /// *order* cannot express — and an input `type` may be the unresolved aromatic
+    /// precursor (10), which must be resolved, not trusted. To apply corrections
+    /// with types of your own, drive [`BCCCorrector`] directly.
     pub fn typify(&self, mol: &Atomistic) -> Result<Atomistic, String> {
         let table = self.model.atd_table();
-        let mut out = mol.clone();
-
-        let bond_ids: Vec<_> = out.bonds().map(|(bid, _)| bid).collect();
-        for bid in bond_ids {
-            let bond = out.get_bond(bid).map_err(|e| e.to_string())?;
-            if bond.props.contains_key(keys::TYPE) {
-                bcc_bond_type(&bond).map_err(|e| format!("{e} for BCC bond type on {bid:?}"))?;
-                continue;
-            }
-            let bond_type = infer_bcc_bond_type(&bond)
-                .map_err(|e| format!("{e} while assigning BCC bond type on {bid:?}"))?;
-            out.set_bond_prop(bid, keys::TYPE, bond_type)
-                .map_err(|e| e.to_string())?;
-        }
+        let mut out = Perceive::new().find_bond_types(mol);
 
         let facts = BCCMolFacts::new(&out)?;
         let atom_ids: Vec<AtomId> = out.atoms().map(|(aid, _)| aid).collect();
@@ -979,28 +976,6 @@ fn normalize_total_charge(mol: &mut Atomistic, target: f64) -> Result<(), String
             .map_err(|e| e.to_string())?;
     }
     Ok(())
-}
-
-fn infer_bcc_bond_type(bond: &Bond) -> Result<i32, String> {
-    if is_aromatic_bond(bond) {
-        return Ok(10);
-    }
-    let order = bond
-        .props
-        .get(keys::ORDER)
-        .and_then(PropValue::as_f64)
-        .ok_or_else(|| "BCC bond typification requires numeric bond `order`".to_owned())?;
-    if (order - 1.0).abs() < 1.0e-6 {
-        Ok(1)
-    } else if (order - 2.0).abs() < 1.0e-6 {
-        Ok(2)
-    } else if (order - 3.0).abs() < 1.0e-6 {
-        Ok(3)
-    } else {
-        Err(format!(
-            "cannot infer BCC bond type from bond order {order}"
-        ))
-    }
 }
 
 fn is_aromatic_atom(mol: &Atomistic, aid: AtomId) -> Result<bool, String> {

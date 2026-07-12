@@ -24,11 +24,12 @@
 //! | [`Perceive::find_hydrogens`] | — (adds H atoms) | — (adds H bonds) |
 //! | [`Perceive::find_stereo`] | `stereo` (`"CW"` / `"CCW"`) | `stereo` (`"E"` / `"Z"` / `"either"`) |
 //! | [`Perceive::find_rotatable`] | — | `is_rotatable` (0/1) |
+//! | [`Perceive::find_bond_types`] | — | `type` (BCC bond type: 1/2/3/6/7/8/9) |
 
 use std::collections::HashSet;
 
 use super::stereo::{BondStereo, TetrahedralStereo};
-use super::{aromaticity, hydrogens, rings, rotatable, stereo};
+use super::{aromaticity, bond_type, hydrogens, rings, rotatable, stereo};
 use crate::system::atomistic::{AtomId, Atomistic, BondId};
 
 /// Atom / bond prop: `1` when the atom / bond lies on at least one SSSR ring.
@@ -212,6 +213,26 @@ impl Perceive {
         }
 
         out
+    }
+
+    /// Perceive BCC bond types and project them onto the graph.
+    ///
+    /// Wraps [`bond_type::find_bond_types`], which is already graph-in /
+    /// graph-out. Every bond receives a `type` prop in `{1, 2, 3, 6, 7, 8, 9}` —
+    /// the alphabet AM1-BCC's atom-type rules and correction table are keyed on,
+    /// which distinguishes aromatic bonds (7/8) and *delocalized* ones (9, e.g. a
+    /// carboxylate's two equivalent C–O bonds) from plain orders. See that
+    /// module's docs for the promotion boundary and the delocalization rules.
+    ///
+    /// # Arguments
+    ///
+    /// * `mol` — the molecule to perceive; left untouched.
+    ///
+    /// # Returns
+    ///
+    /// A clone of `mol` with a BCC `type` on every bond.
+    pub fn find_bond_types(&self, mol: &Atomistic) -> Atomistic {
+        bond_type::find_bond_types(mol)
     }
 }
 
