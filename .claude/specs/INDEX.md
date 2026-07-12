@@ -4,7 +4,6 @@ One row per spec produced by `/mol:spec`. Newest on top.
 
 | Date | Slug | Status | Owner crate(s) | Summary |
 |---|---|---|---|---|
-| 2026-07-12 | chem-perceive-02-param-rs | approved | molcrafts-molrs | Python 生成器把 BCCPARM/BCCPARM_ABCG2/GASPARM + 全部 7 张 ATOMTYPE_*.DEF 直接翻成提交的 Rust 数据结构；删掉 `parse_str` 与 `include_str!`，运行期不再解析文本，解析错误变编译错误。含 drift guard。链 2/13。 |
 | 2026-07-12 | chem-perceive-03-bondtype | approved | molcrafts-molrs | `Perceive::find_bond_types`：芳香 7/8 提升边界（须同处全芳香 5/6 元环）+ 离域 9 的三条局部规则 + 10 作为未解析前身。修 acetate 羧酸氧对称性破缺(0.20 e)与 nitro/pyridine/imidazole 硬报错。实测 7/8/10 增量恒等 ⇒ Kekulé 交替对电荷不可见。链 3/13。 |
 | 2026-07-12 | chem-perceive-04-equivalence | approved | molcrafts-molrs | `Perceive::find_equivalence_classes`：实现 antechamber 的 path-score 算法（式 I），**不是**自同构轨道——score 只依赖 (L, ΣZ) 故对路径顺序盲视，轨道是其真子集，用 WL/Morgan 必然偏离 oracle。修构象依赖/对称性破缺电荷（20/37 分子，最大 0.036 e）。链 4/13。 |
 | 2026-07-12 | chem-perceive-05-atd-typifier | approved | molcrafts-molrs | 把 ATD/WILDATOM 规则引擎从 am1bcc.rs 抽出为参数化 `AtdTypifier`（一个引擎 + N 张生成表），BCC/ABCG2/GAS 原子类型跑绿。硬依赖 03——pyridine/imidazole 的 `missing BCC correction 17|25|10` 其实是原子类型 bug 的伪装。链 5/13。 |
