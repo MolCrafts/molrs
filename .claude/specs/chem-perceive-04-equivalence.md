@@ -1,6 +1,6 @@
 ---
 title: "chem-perceive 4/14 — Perceive::find_equivalence_classes — 电荷等价化（缺失算法之二）"
-status: approved
+status: done
 created: 2026-07-12
 chain: chem-perceive
 depends_on: "chem-perceive-01-layer"
@@ -94,11 +94,11 @@ GPL atomtype.c"*——现在这个顾虑以更大规模重现。参数**表**（
 
 ## Tasks
 
-- [ ] Implement `Perceive::find_equivalence_classes(&MolGraph) -> MolGraph` using antechamber's PATH-SCORE algorithm
-- [ ] Enumerate all simple paths from each atom to every terminal atom; score, sort, compare exactly
-- [ ] Support the `-eq` levels: 0 (off), 1 (paths, default for bcc/abcg2), 2 (paths + E/Z, strictly FINER)
-- [ ] Add class-mean averaging as a separate, explicit step consumed by ChargeModel (07)
-- [ ] Establish and document the clean-room / licensing posture for reimplementing antechamber's equatom.c before merging
+- [x] Implement `Perceive::find_equivalence_classes(&MolGraph) -> MolGraph` using antechamber's PATH-SCORE algorithm
+- [x] Enumerate all simple paths from each atom to every terminal atom; score, sort, compare exactly
+- [x] Support the `-eq` levels: 0 (off), 1 (paths, default for bcc/abcg2), 2 (paths + E/Z, strictly FINER)
+- [x] Add class-mean averaging as a separate, explicit step consumed by ChargeModel (07)
+- [x] Establish and document the clean-room / licensing posture for reimplementing antechamber's equatom.c before merging
 
 ## Testing strategy
 

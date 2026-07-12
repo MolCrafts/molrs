@@ -26,9 +26,7 @@ use molrs::ff::typifier::am1bcc::{
 use molrs::store::keys;
 use molrs::{AtomId, Atomistic};
 
-#[path = "antechamber_oracle.rs"]
-mod antechamber_oracle;
-use antechamber_oracle::{AntechamberCase, CASES};
+use super::antechamber_oracle::{AntechamberCase, CASES};
 
 /// antechamber writes charges with 4 significant decimals; the BCC increments
 /// in BCCPARM.DAT carry 4. Anything above 1e-4 is a real disagreement, not

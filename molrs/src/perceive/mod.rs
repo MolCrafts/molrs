@@ -11,6 +11,7 @@
 pub mod aromaticity;
 pub mod bond_type;
 pub mod builder;
+pub mod equivalence;
 pub mod gasteiger;
 pub mod hydrogens;
 pub mod rings;

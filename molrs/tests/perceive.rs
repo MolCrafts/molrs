@@ -21,6 +21,8 @@ mod bond_type;
 mod composition;
 #[path = "perceive/edge_cases.rs"]
 mod edge_cases;
+#[path = "perceive/equivalence.rs"]
+mod equivalence;
 #[path = "perceive/fixtures.rs"]
 mod fixtures;
 #[path = "perceive/hydrogens.rs"]

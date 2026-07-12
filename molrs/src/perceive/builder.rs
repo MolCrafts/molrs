@@ -25,11 +25,13 @@
 //! | [`Perceive::find_stereo`] | `stereo` (`"CW"` / `"CCW"`) | `stereo` (`"E"` / `"Z"` / `"either"`) |
 //! | [`Perceive::find_rotatable`] | — | `is_rotatable` (0/1) |
 //! | [`Perceive::find_bond_types`] | — | `type` (BCC bond type: 1/2/3/6/7/8/9) |
+//! | [`Perceive::find_equivalence_classes`] | `equiv_class` (0-based class id) | — |
 
 use std::collections::HashSet;
 
+use super::equivalence::{EQUIV_CLASS, EquivalenceOptions};
 use super::stereo::{BondStereo, TetrahedralStereo};
-use super::{aromaticity, bond_type, hydrogens, rings, rotatable, stereo};
+use super::{aromaticity, bond_type, equivalence, hydrogens, rings, rotatable, stereo};
 use crate::system::atomistic::{AtomId, Atomistic, BondId};
 
 /// Atom / bond prop: `1` when the atom / bond lies on at least one SSSR ring.
@@ -233,6 +235,54 @@ impl Perceive {
     /// A clone of `mol` with a BCC `type` on every bond.
     pub fn find_bond_types(&self, mol: &Atomistic) -> Atomistic {
         bond_type::find_bond_types(mol)
+    }
+
+    /// Perceive charge-equivalence classes and project them onto the graph.
+    ///
+    /// Wraps [`equivalence::find_equivalence_classes`] at antechamber's default
+    /// `-eq 1` — the path-score partition AM1-BCC averages its AM1 charges over.
+    /// Use [`Self::find_equivalence_classes_with`] for another `-eq` level or a
+    /// `-pl` path-length cap.
+    ///
+    /// Perception stops at the classes: the class-mean itself is
+    /// [`equivalence::average_charges`], an explicit step the charge model calls,
+    /// because whether to average is a property of the charge model (only
+    /// `bcc` / `abcg2` / `resp` default to `-eq 1`) and not of the graph.
+    ///
+    /// # Arguments
+    ///
+    /// * `mol` — the molecule to perceive; left untouched.
+    ///
+    /// # Returns
+    ///
+    /// A clone of `mol` with an `equiv_class` id on every atom.
+    pub fn find_equivalence_classes(&self, mol: &Atomistic) -> Atomistic {
+        self.find_equivalence_classes_with(mol, EquivalenceOptions::default())
+    }
+
+    /// Perceive charge-equivalence classes under explicit `-eq` / `-pl` options.
+    ///
+    /// # Arguments
+    ///
+    /// * `mol` — the molecule to perceive; left untouched.
+    /// * `opts` — the equivalence level and path-length cap.
+    ///
+    /// # Returns
+    ///
+    /// A clone of `mol` with an `equiv_class` id on every atom.
+    pub fn find_equivalence_classes_with(
+        &self,
+        mol: &Atomistic,
+        opts: EquivalenceOptions,
+    ) -> Atomistic {
+        let classes = equivalence::find_equivalence_classes(mol, opts);
+        let mut out = mol.clone();
+        for (class, members) in classes.classes().enumerate() {
+            for id in members {
+                let _ = out.set_atom(*id, EQUIV_CLASS, saturating_i32(class));
+            }
+        }
+        out
     }
 }
 

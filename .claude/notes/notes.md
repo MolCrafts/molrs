@@ -232,3 +232,35 @@ Frame meta), not as privileged types in the core data model.
   code path, separate wasm index path, separate Python class).
 
 **Status:** provisional
+
+## 2026-07-13 — charge equivalencing: three corrections worth keeping
+**1. It is PATH-SCORE, not automorphism orbits — and the witness is acetate.**
+`equatom.c` scores every simple path (`Score = Σ (j+1)·0.11 + Z_j·0.08`), sorts, and
+compares EXACTLY. Orbits are a strict subset of path-score classes. The concrete
+divergence is NOT the theoretical order-blindness (a sweep of every valence-legal
+fragment ≤5 heavy atoms found no ordinary molecule that merges two non-automorphic
+atoms that way) — it is **bond-order / formal-charge blindness**, and acetate is in
+the oracle: raw sqm −0.595/−0.597 → antechamber −0.596/−0.596, MERGED. But
+`core/system/graph_hash.rs` folds bond order (line 143) and formal charge into its
+colours, so an orbit engine would SPLIT the Kekulé C=O from the C–O⁻ and ship a
+symmetry-broken carboxylate. Do not use graph_hash as the class engine.
+
+**2. "Conserves total charge bitwise" is mathematically impossible.** A class mean is a
+rounded f64, so `n·fl(Σq/n) ≠ Σq` unless n is a power of two. It also CONTRADICTS
+"class members carry identical bits". Measured: 19/37 molecules happen to be bitwise
+equal, 18/37 drift, worst 3.7e-16. antechamber carries the identical residual and does
+not renormalize. The honest contract: total conserved to ULP scale, PLUS the bit-exact
+half that does hold (singletons keep their bits; class members share bits).
+
+**3. `scorepath()` scores every simple path, not just paths to terminal atoms.** It emits
+once per DFS node (including the trivial one-atom path), and a 6-coordinate atom
+terminates no scored path (the `con[6]` quirk). The "paths to terminal atoms" reading
+gives a different path count and does not reproduce the oracle.
+
+`-eq 2` is implemented (E/Z refinement, strictly FINER than `-eq 1`; verified on methyl
+methacrylate: `-eq 2` keeps the cis/trans vinyl H apart at 0.139/0.125 where `-eq 1`
+merges to 0.132). Note `ATOM_EQU.TYPE` gates E/Z on GAFF type names molrs never assigns,
+so the gate is translated natively (C=C doubles + amide C–N).
+
+Gotcha for oracle regeneration: `-pf y` DELETES `ANTECHAMBER_AM1BCC_PRE.AC`. Use `-pf n`.
+**Status:** stable
