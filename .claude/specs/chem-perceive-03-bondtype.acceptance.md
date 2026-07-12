@@ -54,7 +54,7 @@ criteria:
     pass_when: |
       A written decision (in .claude/notes/) records the licensing posture for reimplementing
               antechamber's GPL bondtype.c, reviewed before merge.
-    status: pending
-    last_checked: 
-    evidence: 
+    status: verified
+    last_checked: 2026-07-12
+    evidence: owner decision recorded in .claude/notes/notes.md (2026-07-12) — proceed on an educational/research basis with the AmberTools developers' permission to read their source; the BSD-3 vs GPL-3 context and the source-derived (not clean-room) nature of the work are recorded there. Explicitly waived by the owner before spec 03 began.
 ---

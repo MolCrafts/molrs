@@ -1,6 +1,6 @@
 ---
 title: "chem-perceive 3/14 — Perceive::find_bond_types — BCC 键型感知（缺失算法之一）"
-status: approved
+status: in-progress
 created: 2026-07-12
 chain: chem-perceive
 depends_on: "chem-perceive-01-layer; chem-perceive-02-param-rs"
@@ -47,6 +47,37 @@ Kekulé 结构，否则电荷就是共振任意的。
 
 即"离域" ≡ *共轭/超价中心上连到端位硫族原子的键*。羧酸根与硝基都落在这里。
 
+### 类型 6：已实测查清，并由 owner 定调（不再是 OPEN）
+
+**可达性（实测，33 个探针分子跑真 AmberTools25）：** 发射的键型是 {1,2,3,6,7,8,9}，
+**从不发射 10 或 11**。类型 6 **可达**——nitrate、nitrite、pyridine-N-oxide。
+类型 11 **任何探针都没有触发**（BCCPARM 里 26 行全是同类型对角线、值全 0.0000，
+源码里也找不到发射点）⇒ 断言不可达，**不要实现死分支**。
+
+**类型 6 不是电荷不变的**（与 7/8/10 相反）：BCCPARM 对 `23|31` 在 type 6 是 `+0.1317`、
+在 type 9 是 `-0.1500`；而且 6 个 type-6 对里有 **5 个根本没有 type-9 行**——判错就是硬报错。
+所以必须实现。
+
+**antechamber 的 part3 有两个缺陷**（`bondtype.c:897-933`）：
+- **branch A**（`bondi` 是 N）：`break` **没有加括号**，邻居扫描在**第一个**非配对邻居就停 ⇒
+  结果依赖 `con[]` 顺序，也就是**依赖输入文件里键的书写顺序**。
+- **branch B**（`bondj` 是 N）：`bond[i].type = 6;` 在循环**外面无条件执行** ⇒ 完全不检查
+  第二个硫族原子。
+
+**实测后果：** nitrate 的三根 N–O 拿到 **6, 9, 9**——两个**拓扑完全等价**的单键 O⁻ 拿到了
+不同键型 ⇒ 最终 AM1-BCC 电荷 `-0.6997 / -0.4180 / -0.4180`，三个等价氧相差 **0.28 e**。
+（等价化救不了它：`-eq` 平均的是 BCC **之前**的 AM1 电荷，而损坏发生在 BCC 的键型上。）
+
+**Owner 决定（2026-07-12，权威）：只修对称性/顺序依赖这个 bug，其余一律跟 antechamber。**
+- **确定性**：键型不得依赖输入里键的顺序。置换键顺序必须得到完全相同的结果（硬性，要有测试）。
+- **对称性**：同一个原子连到**拓扑等价**的末端硫族原子的键，必须拿到**同一个**键型。
+  nitrate 那两个单键 O⁻ 必须一致。
+- **其余照抄 antechamber**：nitrite 仍是 6/6，nitromethane 仍是 9/9，37 个 oracle 分子的键型
+  一个都不许动。
+- **不发明新的化学规则。** 若任何去偏方案会改动 nitrite 或 nitromethane ⇒ 停下来报 blocked。
+
+**oracle 里没有任何 type-6 键**（只有 1,2,3,7,8,9），所以上面这个决定不会影响 ac-001。
+
 **类型 6 与 11 是 OPEN，不要猜。** 6 的规则存在（N，connum 2–3，连到端位 O/S，且自身另带一个端位 O/S），
 但 part2 会先把共轭 N=O 判成 9，所以 6 的可达性未确认。11 的 26 行全是同原子类型对角线、值全为 0.0000，
 **没有找到任何发射它的代码路径**。
@@ -91,7 +122,7 @@ GPL atomtype.c"*——现在这个顾虑以更大规模重现。参数**表**（
 - [ ] Implement type-9 (delocalized) via the three local connectivity rules
 - [ ] Handle type 10 as the unresolved precursor (SYBYL `ar`), resolving it to 7/8
 - [ ] Investigate BCC bond types 6 and 11 reachability against AmberTools25; if unreachable, assert unreachable in a test rather than implementing dead branches
-- [ ] Establish and document the clean-room / licensing posture for reimplementing antechamber algorithms (bondtype.c) before merging
+- [x] Establish and document the clean-room / licensing posture for reimplementing antechamber algorithms (bondtype.c) before merging
 
 ## Testing strategy
 

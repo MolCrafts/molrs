@@ -31,6 +31,22 @@ AM1-BCC charges authoritatively; reimplementing it in molrs is not worth the
 maintenance + correctness burden.
 **Status:** provisional
 
+## 2026-07-12 — antechamber reimplementation: licensing posture (owner decision)
+**Decision (project owner, 2026-07-12):** Proceed with reimplementing antechamber's
+perception algorithms (`bondtype.c` → spec 03, `equatom.c` → spec 04, `atomtype.c` →
+specs 05/06) in molrs. Stated basis: **学习用途 (educational/research use), and the
+AmberTools developers have given permission to read their code.**
+**Context this decision was taken against (recorded so it is not lost, not re-litigated):**
+- molrs is **BSD-3-Clause** (`Cargo.toml:26`); AmberTools/antechamber is **GPL-3**.
+- The chem-perceive work is **source-derived, not clean-room**: the algorithm rules
+  (bondtype.c `finalize()` part2/4/5 ordering, equatom.c Eq.(I) path-score, the
+  `-eq` levels) were obtained by reading the antechamber C source.
+- molrs also now ships ~27k lines of Rust generated from AmberTools' `.DAT`/`.DEF`
+  parameter tables (spec 02).
+- This was raised before spec 03 began and explicitly waived by the owner.
+**Status:** stable — do NOT re-raise per-spec. If molrs's distribution posture ever
+changes (e.g. a commercial redistribution question), revisit then, not before.
+
 ## 2026-07-12 — ONE SSSR in the tree: `core::system::topology::Topology::find_rings`
 **Decision:** There is exactly **one** ring-perception algorithm in molrs, and it lives in
 `core::system::topology`. `perceive::rings::find_rings(&Atomistic) -> RingInfo` is now a
