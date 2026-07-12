@@ -39,7 +39,7 @@ use molrs::chem::smarts::{MatchOptions, SmartsPattern};
 use molrs::system::atomistic::{AtomId, Atomistic};
 use molrs::system::molgraph::PropValue;
 
-use super::perceive::Perceived;
+use super::mol_features::Perceived;
 use super::torsion_tables::{self, TorsionRow};
 
 /// One assigned experimental torsion: four atoms + the M6 `(signs, V)` set.

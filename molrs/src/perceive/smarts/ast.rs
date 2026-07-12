@@ -11,7 +11,7 @@
 
 use std::collections::HashMap;
 
-use crate::chem::rings::{RingInfo, find_rings};
+use crate::perceive::rings::{RingInfo, find_rings};
 use crate::system::atomistic::{AtomId, Atomistic};
 use crate::system::molgraph::PropValue;
 

@@ -14,7 +14,7 @@
 
 use std::collections::HashMap;
 
-use crate::chem::hydrogens::implicit_h_count;
+use crate::perceive::hydrogens::implicit_h_count;
 use crate::system::atomistic::{AtomId, Atomistic};
 use crate::system::element::Element;
 

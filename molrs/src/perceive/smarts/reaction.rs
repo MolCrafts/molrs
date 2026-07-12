@@ -578,7 +578,7 @@ impl Transform {
         // updated in place above.
         if refresh {
             mol.generate_topology(true, true, false)?;
-            crate::core::chem::aromaticity::perceive_aromaticity(mol);
+            crate::perceive::aromaticity::perceive_aromaticity(mol);
         }
 
         // Dedup with a deterministic order (sort by the stable atom handle).

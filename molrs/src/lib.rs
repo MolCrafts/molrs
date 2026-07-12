@@ -48,6 +48,34 @@ extern crate self as molrs;
 pub mod core;
 pub use crate::core::*;
 
+// Chemical perception: one layer above `core`, below `ff` / `io` / `conformer`.
+// Always compiled — every consumer configuration already compiled these modules
+// when they lived inside `core`, so keeping them unconditional reproduces the
+// existing build graph exactly (feature-gating them would be a behaviour change,
+// not a refactor). `optimize` above is the same shape: always on, no feature.
+pub mod perceive;
+
+// Compatibility alias for the old module path `molrs::chem::…`. The separate
+// `molrs-python` workspace imports through it and is a path dependency, so the
+// main workspace's `cargo check` cannot catch its breakage. Removed in
+// chem-perceive-13-python-bind once the binder is migrated.
+pub use crate::perceive as chem;
+
+// The crate-root surface that `core::chem` used to publish via `pub use core::*`.
+// It moves here verbatim, retargeted at `perceive`, so `molrs::find_rings`,
+// `molrs::SmartsPattern`, `molrs::add_hydrogens`, … keep resolving. Deleting it
+// would silently break 13 call sites — four of them in `ff/`, two of those only
+// visible under `clippy -D warnings` as broken intra-doc links.
+pub use crate::perceive::aromaticity::perceive_aromaticity;
+pub use crate::perceive::gasteiger::{GasteigerCharges, compute_gasteiger_charges};
+pub use crate::perceive::hydrogens::{add_hydrogens, implicit_h_count, remove_hydrogens};
+pub use crate::perceive::rings::{RingInfo, find_rings};
+pub use crate::perceive::smarts::{MatchOptions, Reaction, SmartsMatch, SmartsPattern};
+pub use crate::perceive::stereo::{
+    BondStereo, TetrahedralStereo, assign_bond_stereo_from_3d, assign_stereo_from_3d,
+    chiral_volume, find_chiral_centers,
+};
+
 #[cfg(feature = "io")]
 pub mod io;
 

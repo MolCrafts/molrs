@@ -14,7 +14,7 @@
 //! types fall back to a crude vdW estimate, matching RDKit's behaviour when
 //! `getAtomTypes` cannot type an atom.
 
-use super::perceive::{Hybridization, PerceivedAtom};
+use super::mol_features::{Hybridization, PerceivedAtom};
 
 /// `lambda` scaling factor for the Pauling bond-order correction (UFF).
 const LAMBDA: f64 = 0.1332;

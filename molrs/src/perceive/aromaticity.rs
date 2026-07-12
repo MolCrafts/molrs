@@ -10,7 +10,7 @@
 //!
 //! # Algorithm (RDKit `aromaticityHelper(mol, srings, 0, 0, true)`)
 //!
-//! 1. Compute SSSR rings ([`crate::chem::rings::find_rings`]).
+//! 1. Compute SSSR rings ([`crate::perceive::rings::find_rings`]).
 //! 2. For each ring atom, classify its π-electron donor type
 //!    (`getAtomDonorTypeArom` → `ElectronDonor`) using a per-atom electron
 //!    count (`countAtomElec`) plus exocyclic / cyclic multiple-bond rules, and
@@ -39,7 +39,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::chem::rings::find_rings;
+use crate::perceive::rings::find_rings;
 use crate::system::atomistic::{AtomId, Atomistic, BondId};
 use crate::system::element::Element;
 use crate::system::molgraph::PropValue;
@@ -233,7 +233,7 @@ fn explicit_valence(mol: &Atomistic, id: AtomId) -> i32 {
 /// non-ring bond. Returns the partner atom if found.
 fn incident_noncyclic_multiple_bond(
     mol: &Atomistic,
-    rings: &crate::chem::rings::RingInfo,
+    rings: &crate::perceive::rings::RingInfo,
     id: AtomId,
 ) -> Option<AtomId> {
     for (bid, other, order) in incident_bonds(mol, id) {
@@ -248,7 +248,7 @@ fn incident_noncyclic_multiple_bond(
 /// ring.
 fn incident_cyclic_multiple_bond(
     mol: &Atomistic,
-    rings: &crate::chem::rings::RingInfo,
+    rings: &crate::perceive::rings::RingInfo,
     id: AtomId,
 ) -> bool {
     incident_bonds(mol, id).any(|(bid, _, order)| rings.is_bond_in_ring(bid) && order >= 2.0)
@@ -304,7 +304,7 @@ fn count_atom_elec(mol: &Atomistic, id: AtomId) -> i32 {
 /// (the default-model setting).
 fn atom_donor_type(
     mol: &Atomistic,
-    rings: &crate::chem::rings::RingInfo,
+    rings: &crate::perceive::rings::RingInfo,
     id: AtomId,
 ) -> ElectronDonor {
     let z = atomic_num(mol, id);

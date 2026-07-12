@@ -35,7 +35,7 @@ mod bounds;
 mod chirality;
 mod knowledge;
 mod matrix;
-mod perceive;
+mod mol_features;
 mod smooth;
 mod torsion_prefs;
 mod torsion_tables;
@@ -79,7 +79,7 @@ pub struct DgConstraints {
 /// validation against RDKit `getExperimentalTorsions`. Perceives aromaticity /
 /// rings internally, then drives the full SMARTS-table matcher.
 pub fn experimental_torsions_with_provenance(mol: &Atomistic) -> Vec<AssignedTorsion> {
-    let p = perceive::perceive(mol);
+    let p = mol_features::perceive(mol);
     assign_with_provenance(mol, &p)
 }
 
@@ -90,7 +90,7 @@ pub fn build_bounds(mol: &Atomistic) -> Result<BoundsMatrix, MolRsError> {
     if n == 0 {
         return Err(MolRsError::validation("molecule has no atoms"));
     }
-    let p = perceive::perceive(mol);
+    let p = mol_features::perceive(mol);
     Ok(bounds::set_topol_bounds(&p))
 }
 
@@ -110,7 +110,7 @@ pub fn build_constraints(
     if n == 0 {
         return Err(MolRsError::validation("molecule has no atoms"));
     }
-    let p = perceive::perceive(mol);
+    let p = mol_features::perceive(mol);
 
     let mut bounds = bounds::set_topol_bounds(&p);
     smooth::smooth_bounds(&mut bounds)?;
