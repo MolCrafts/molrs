@@ -236,9 +236,9 @@ def emit_rust(recs):
     w("//! stage can be tested on its own.")
     w("")
     w("#![allow(dead_code)]")
-    # generated geometry: literal coordinates occasionally approximate a math
-    # constant (e.g. z = 0.3180 A vs 1/pi = 0.31831). Not constants — data.
-w("#![allow(clippy::approx_constant)]")
+    w("// Generated geometry: a literal coordinate can approximate a math constant")
+    w("// (e.g. z = 0.3180 A vs 1/pi = 0.31831). These are data, not constants.")
+    w("#![allow(clippy::approx_constant)]")
     w("")
     w("/// One antechamber reference molecule.")
     w("pub struct AntechamberCase {")
@@ -304,6 +304,9 @@ w("#![allow(clippy::approx_constant)]")
 
     out = Path(__file__).resolve().parent.parent / "molrs/tests/ff/typifier/antechamber_oracle.rs"
     out.write_text("\n".join(L))
+    # rustfmt in place: without this the emitted file drifts from the committed one
+    # the moment anyone runs `cargo fmt --all`, and the fixture stops round-tripping.
+    subprocess.run(["rustfmt", "--edition", "2024", str(out)], check=True)
     print(f"wrote {out}  ({len(L)} lines, {len(recs)} cases)")
 
 if __name__ == "__main__":

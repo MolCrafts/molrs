@@ -254,3 +254,40 @@ fn every_atomtype_def_became_a_typed_table() {
         .expect("GFF declares XB");
     assert_eq!(gff_xb.specs.len(), 2);
 }
+
+/// Every script in `scripts/` must at least parse.
+///
+/// `gen_am1bcc_oracle.py` sat with an `IndentationError` for several commits: the
+/// oracle drift guard covers `gen_param_tables.py`, and nothing else ever ran the
+/// other scripts, so a generator that could not start looked exactly like one that
+/// was simply not needed.
+#[test]
+fn every_generator_script_compiles() {
+    let scripts = repo_root().join("scripts");
+    let python = std::env::var("MOLRS_PYTHON").unwrap_or_else(|_| "python3".to_owned());
+    let mut broken = Vec::new();
+    for entry in std::fs::read_dir(&scripts).expect("read scripts/") {
+        let path = entry.expect("dir entry").path();
+        if path.extension().and_then(|e| e.to_str()) != Some("py") {
+            continue;
+        }
+        let out = Command::new(&python)
+            .arg("-m")
+            .arg("py_compile")
+            .arg(&path)
+            .output()
+            .unwrap_or_else(|e| panic!("could not run `{python} -m py_compile`: {e}"));
+        if !out.status.success() {
+            broken.push(format!(
+                "{}: {}",
+                path.file_name().expect("file name").to_string_lossy(),
+                String::from_utf8_lossy(&out.stderr).trim().to_owned()
+            ));
+        }
+    }
+    assert!(
+        broken.is_empty(),
+        "scripts that do not compile:\n{}",
+        broken.join("\n")
+    );
+}
