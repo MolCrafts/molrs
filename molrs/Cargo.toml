@@ -30,6 +30,10 @@ name = "molrs"
 [dev-dependencies]
 criterion = "0.8"
 rand = "0.10"
+# Test-only: the ff::params manifest guard recomputes the SHA-256 of every
+# committed generated table. It is the only drift check that runs without
+# AmberTools, i.e. the only one CI actually executes.
+sha2 = "0.10"
 tempfile = "3.0"
 
 [features]

@@ -1,6 +1,6 @@
 ---
 title: "chem-perceive 2/14 — 参数表 → committed .rs（molrs 不再解析文本）"
-status: approved
+status: done
 created: 2026-07-12
 chain: chem-perceive
 depends_on: ""
@@ -83,11 +83,11 @@ GPL atomtype.c"*——现在这个顾虑以更大规模重现。参数**表**（
 
 ## Tasks
 
-- [ ] Write `scripts/gen_param_tables.py`: reads the source tables from `$AMBERHOME` and emits committed `.rs` (typed consts / static slices)
-- [ ] Generate `.rs` for BCCPARM.DAT (405), BCCPARM_ABCG2.DAT (475), GASPARM.DAT (40), and all 7 ATOMTYPE_*.DEF (BCC/ABCG2/GAS/GFF/GFF2/AMBER/SYBYL)
-- [ ] Delete `BCCAtomTypeRules::parse_str`, `BCCCorrectionTable::parse_str`, and the antechamber `include_str!` consts in `core/data.rs:29-50`
-- [ ] DELETE the raw `.DAT`/`.DEF` files from `molrs/data/antechamber/` — the committed `.rs` is the single in-repo source of truth
-- [ ] Add a drift-guard test: with `$AMBERHOME` set, the generator byte-reproduces every committed `.rs`; skip cleanly when it is not set
+- [x] Write `scripts/gen_param_tables.py`: reads the source tables from `$AMBERHOME` and emits committed `.rs` (typed consts / static slices)
+- [x] Generate `.rs` for BCCPARM.DAT (405), BCCPARM_ABCG2.DAT (475), GASPARM.DAT (40), and all 7 ATOMTYPE_*.DEF (BCC/ABCG2/GAS/GFF/GFF2/AMBER/SYBYL)
+- [x] Delete `BCCAtomTypeRules::parse_str`, `BCCCorrectionTable::parse_str`, and the antechamber `include_str!` consts in `core/data.rs:29-50`
+- [x] DELETE the raw `.DAT`/`.DEF` files from `molrs/data/antechamber/` — the committed `.rs` is the single in-repo source of truth
+- [x] Add a drift-guard test: with `$AMBERHOME` set, the generator byte-reproduces every committed `.rs`; skip cleanly when it is not set
 
 ## Testing strategy
 

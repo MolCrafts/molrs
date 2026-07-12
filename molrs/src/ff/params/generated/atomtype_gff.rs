@@ -1,0 +1,7741 @@
+//! Antechamber atom-type definition rules — `ATOMTYPE_GFF.DEF`.
+//!
+//! DO NOT HAND-EDIT — regenerate with `scripts/gen_param_tables.py`.
+//!
+//! Source: `$AMBERHOME/dat/antechamber/ATOMTYPE_GFF.DEF` (AmberTools).
+
+use crate::ff::params::{
+    AtdRule, AtdTable, AtomPattern, AtomProp, PatternAtom, PropConstraint, PropExpr, PropRelation,
+    PropUnit, WildAtom, WildAtomSpec,
+};
+
+/// `WILDATOM XX C N O S P`
+#[rustfmt::skip]
+const WILD_XX: &[WildAtomSpec] = &[
+    WildAtomSpec { z: 6, degree: None },
+    WildAtomSpec { z: 7, degree: None },
+    WildAtomSpec { z: 8, degree: None },
+    WildAtomSpec { z: 16, degree: None },
+    WildAtomSpec { z: 15, degree: None },
+];
+
+/// `WILDATOM XA O S`
+#[rustfmt::skip]
+const WILD_XA: &[WildAtomSpec] = &[
+    WildAtomSpec { z: 8, degree: None },
+    WildAtomSpec { z: 16, degree: None },
+];
+
+/// `WILDATOM XB N P`
+#[rustfmt::skip]
+const WILD_XB: &[WildAtomSpec] = &[
+    WildAtomSpec { z: 7, degree: None },
+    WildAtomSpec { z: 15, degree: None },
+];
+
+/// `WILDATOM XC F Cl Br I`
+#[rustfmt::skip]
+const WILD_XC: &[WildAtomSpec] = &[
+    WildAtomSpec { z: 9, degree: None },
+    WildAtomSpec { z: 17, degree: None },
+    WildAtomSpec { z: 35, degree: None },
+    WildAtomSpec { z: 53, degree: None },
+];
+
+/// `WILDATOM XD S P`
+#[rustfmt::skip]
+const WILD_XD: &[WildAtomSpec] = &[
+    WildAtomSpec { z: 16, degree: None },
+    WildAtomSpec { z: 15, degree: None },
+];
+
+/// The 5 `WILDATOM` aliases declared by `ATOMTYPE_GFF.DEF`.
+#[rustfmt::skip]
+pub const WILDATOMS: &[WildAtom] = &[
+    WildAtom { name: "XX", specs: WILD_XX },
+    WildAtom { name: "XA", specs: WILD_XA },
+    WildAtom { name: "XB", specs: WILD_XB },
+    WildAtom { name: "XC", specs: WILD_XC },
+    WildAtom { name: "XD", specs: WILD_XD },
+];
+
+/// The 295 `ATD` rules of `ATOMTYPE_GFF.DEF`, in file order.
+///
+/// Order is significant: the FIRST rule that matches wins. `DU` (dummy) rows and
+/// the residue-less catch-all carry no constraints and are not emitted.
+pub const RULES: &[AtdRule] = &[
+    AtdRule {
+        atom_type: "cx",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(4),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::Rg3,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "cy",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(4),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::Rg4,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "c3",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(4),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "c",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: Some(2),
+                    prop: AtomProp::Dl,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XA),
+            degree: Some(1),
+            property: None,
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "c",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: Some(1),
+                        prop: AtomProp::DbStrict,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: Some(0),
+                        prop: AtomProp::Dl,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XA),
+            degree: Some(1),
+            property: None,
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "c",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: Some(3),
+                    prop: AtomProp::SbAny,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XA),
+            degree: Some(1),
+            property: None,
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "cz",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: Some(&[
+            AtomPattern {
+                atom: PatternAtom::Element(7),
+                degree: Some(3),
+                property: None,
+                label: None,
+                children: &[],
+            },
+            AtomPattern {
+                atom: PatternAtom::Element(7),
+                degree: Some(3),
+                property: None,
+                label: None,
+                children: &[],
+            },
+            AtomPattern {
+                atom: PatternAtom::Element(7),
+                degree: Some(3),
+                property: None,
+                label: None,
+                children: &[],
+            },
+        ]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "cp",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar1,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: Some(1),
+                        prop: AtomProp::Rg6,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[
+            AtomPattern {
+                atom: PatternAtom::Wild(WILD_XX),
+                degree: None,
+                property: Some(PropExpr {
+                    constraints: &[PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::Ar1,
+                            relation: None,
+                        }],
+                    }],
+                }),
+                label: None,
+                children: &[],
+            },
+            AtomPattern {
+                atom: PatternAtom::Wild(WILD_XX),
+                degree: None,
+                property: Some(PropExpr {
+                    constraints: &[PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::Ar1,
+                            relation: None,
+                        }],
+                    }],
+                }),
+                label: None,
+                children: &[],
+            },
+            AtomPattern {
+                atom: PatternAtom::Wild(WILD_XX),
+                degree: None,
+                property: Some(PropExpr {
+                    constraints: &[PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::Ar1,
+                            relation: None,
+                        }],
+                    }],
+                }),
+                label: None,
+                children: &[],
+            },
+        ]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "ca",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::Ar1,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "cc",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar2,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(3),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Element(6),
+                degree: Some(3),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "cc",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar2,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(3),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Element(6),
+                degree: Some(2),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "cc",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar2,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(3),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Wild(WILD_XB),
+                degree: Some(2),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "cc",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar2,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XB),
+            degree: Some(2),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Wild(WILD_XB),
+                degree: Some(2),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "cc",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar2,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XB),
+            degree: Some(2),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Element(6),
+                degree: Some(2),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "cc",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar2,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XB),
+            degree: Some(2),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Element(6),
+                degree: Some(3),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "cc",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar2,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(3),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: Some(PropRelation::BondedToPrev),
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "cc",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar2,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XB),
+            degree: Some(2),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: Some(PropRelation::BondedToPrev),
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "cc",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar2,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XD),
+            degree: Some(3),
+            property: Some(PropExpr {
+                constraints: &[
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::SbAny,
+                            relation: Some(PropRelation::BondedToPrev),
+                        }],
+                    },
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::DbAny,
+                            relation: None,
+                        }],
+                    },
+                ],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "cc",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar2,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XD),
+            degree: Some(4),
+            property: Some(PropExpr {
+                constraints: &[
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::SbAny,
+                            relation: Some(PropRelation::BondedToPrev),
+                        }],
+                    },
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::DbAny,
+                            relation: None,
+                        }],
+                    },
+                ],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "cc",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar3,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(3),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Element(6),
+                degree: Some(3),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "cc",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar3,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(3),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Element(6),
+                degree: Some(2),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "cc",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar3,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(3),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Wild(WILD_XB),
+                degree: Some(2),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "cc",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar3,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XB),
+            degree: Some(2),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Wild(WILD_XB),
+                degree: Some(2),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "cc",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar3,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XB),
+            degree: Some(2),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Element(6),
+                degree: Some(2),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "cc",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar3,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XB),
+            degree: Some(2),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Element(6),
+                degree: Some(3),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "cc",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar3,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(3),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: Some(PropRelation::BondedToPrev),
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "cc",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar3,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XB),
+            degree: Some(2),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: Some(PropRelation::BondedToPrev),
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "cc",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar3,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XD),
+            degree: Some(3),
+            property: Some(PropExpr {
+                constraints: &[
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::SbAny,
+                            relation: Some(PropRelation::BondedToPrev),
+                        }],
+                    },
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::DbAny,
+                            relation: None,
+                        }],
+                    },
+                ],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "cc",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar3,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XD),
+            degree: Some(4),
+            property: Some(PropExpr {
+                constraints: &[
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::SbAny,
+                            relation: Some(PropRelation::BondedToPrev),
+                        }],
+                    },
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::DbAny,
+                            relation: None,
+                        }],
+                    },
+                ],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "cc",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar2,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "cc",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar3,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "ce",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(3),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbStrict,
+                        relation: Some(PropRelation::BondedToPrev),
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "ce",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(2),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbStrict,
+                        relation: Some(PropRelation::BondedToPrev),
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "ce",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XB),
+            degree: Some(2),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbStrict,
+                        relation: Some(PropRelation::BondedToPrev),
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "ce",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XD),
+            degree: Some(3),
+            property: Some(PropExpr {
+                constraints: &[
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::SbStrict,
+                            relation: Some(PropRelation::BondedToPrev),
+                        }],
+                    },
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::DbAny,
+                            relation: None,
+                        }],
+                    },
+                ],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "ce",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XD),
+            degree: Some(4),
+            property: Some(PropExpr {
+                constraints: &[
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::SbStrict,
+                            relation: Some(PropRelation::BondedToPrev),
+                        }],
+                    },
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::DbAny,
+                            relation: None,
+                        }],
+                    },
+                ],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "cu",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::Rg3,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "cv",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::Rg4,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "c2",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "cg",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::TbAny,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(2),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbStrict,
+                        relation: Some(PropRelation::BondedToPrev),
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "cg",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::TbAny,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(3),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbStrict,
+                        relation: Some(PropRelation::BondedToPrev),
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "cg",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::TbAny,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(7),
+            degree: Some(1),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbStrict,
+                        relation: Some(PropRelation::BondedToPrev),
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "cg",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::TbAny,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XB),
+            degree: Some(2),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbStrict,
+                        relation: Some(PropRelation::BondedToPrev),
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "c1",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "c1",
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(1),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "hn",
+        residue: "*",
+        atomic_number: Some(1),
+        degree: Some(1),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(7),
+            degree: None,
+            property: None,
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "ho",
+        residue: "*",
+        atomic_number: Some(1),
+        degree: Some(1),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(8),
+            degree: None,
+            property: None,
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "hs",
+        residue: "*",
+        atomic_number: Some(1),
+        degree: Some(1),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(16),
+            degree: None,
+            property: None,
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "hp",
+        residue: "*",
+        atomic_number: Some(1),
+        degree: Some(1),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(15),
+            degree: None,
+            property: None,
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "hx",
+        residue: "*",
+        atomic_number: Some(1),
+        degree: Some(1),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: None,
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Element(7),
+                degree: Some(4),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "hw",
+        residue: "*",
+        atomic_number: Some(1),
+        degree: Some(1),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(8),
+            degree: None,
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Element(1),
+                degree: Some(1),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "h3",
+        residue: "*",
+        atomic_number: Some(1),
+        degree: Some(1),
+        hydrogen_count: None,
+        ewd_count: Some(3),
+        atom_property: None,
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(4),
+            property: None,
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "h2",
+        residue: "*",
+        atomic_number: Some(1),
+        degree: Some(1),
+        hydrogen_count: None,
+        ewd_count: Some(2),
+        atom_property: None,
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(4),
+            property: None,
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "h1",
+        residue: "*",
+        atomic_number: Some(1),
+        degree: Some(1),
+        hydrogen_count: None,
+        ewd_count: Some(1),
+        atom_property: None,
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(4),
+            property: None,
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "hc",
+        residue: "*",
+        atomic_number: Some(1),
+        degree: Some(1),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(4),
+            property: None,
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "h5",
+        residue: "*",
+        atomic_number: Some(1),
+        degree: Some(1),
+        hydrogen_count: None,
+        ewd_count: Some(2),
+        atom_property: None,
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(3),
+            property: None,
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "h4",
+        residue: "*",
+        atomic_number: Some(1),
+        degree: Some(1),
+        hydrogen_count: None,
+        ewd_count: Some(1),
+        atom_property: None,
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(3),
+            property: None,
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "ha",
+        residue: "*",
+        atomic_number: Some(1),
+        degree: Some(1),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "f",
+        residue: "*",
+        atomic_number: Some(9),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "cl",
+        residue: "*",
+        atomic_number: Some(17),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "br",
+        residue: "*",
+        atomic_number: Some(35),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "i",
+        residue: "*",
+        atomic_number: Some(53),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "pc",
+        residue: "*",
+        atomic_number: Some(15),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar2,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(3),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Element(6),
+                degree: Some(3),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "pc",
+        residue: "*",
+        atomic_number: Some(15),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar2,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(3),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Element(6),
+                degree: Some(2),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "pc",
+        residue: "*",
+        atomic_number: Some(15),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar2,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(3),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Wild(WILD_XB),
+                degree: Some(2),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "pc",
+        residue: "*",
+        atomic_number: Some(15),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar2,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XB),
+            degree: Some(2),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Element(6),
+                degree: Some(3),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "pc",
+        residue: "*",
+        atomic_number: Some(15),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar2,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XB),
+            degree: Some(2),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Element(6),
+                degree: Some(2),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "pc",
+        residue: "*",
+        atomic_number: Some(15),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar2,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XB),
+            degree: Some(2),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Wild(WILD_XB),
+                degree: Some(2),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "pc",
+        residue: "*",
+        atomic_number: Some(15),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar2,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(3),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: Some(PropRelation::BondedToPrev),
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "pc",
+        residue: "*",
+        atomic_number: Some(15),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar2,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(2),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: Some(PropRelation::BondedToPrev),
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "pc",
+        residue: "*",
+        atomic_number: Some(15),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar2,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XB),
+            degree: Some(2),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: Some(PropRelation::BondedToPrev),
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "pc",
+        residue: "*",
+        atomic_number: Some(15),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar2,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XD),
+            degree: Some(3),
+            property: Some(PropExpr {
+                constraints: &[
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::SbAny,
+                            relation: Some(PropRelation::BondedToPrev),
+                        }],
+                    },
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::DbAny,
+                            relation: None,
+                        }],
+                    },
+                ],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "pc",
+        residue: "*",
+        atomic_number: Some(15),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar2,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XD),
+            degree: Some(4),
+            property: Some(PropExpr {
+                constraints: &[
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::SbAny,
+                            relation: Some(PropRelation::BondedToPrev),
+                        }],
+                    },
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::DbAny,
+                            relation: None,
+                        }],
+                    },
+                ],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "pc",
+        residue: "*",
+        atomic_number: Some(15),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar3,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(3),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Element(6),
+                degree: Some(3),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "pc",
+        residue: "*",
+        atomic_number: Some(15),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar3,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(3),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Element(6),
+                degree: Some(2),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "pc",
+        residue: "*",
+        atomic_number: Some(15),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar3,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(3),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Wild(WILD_XB),
+                degree: Some(2),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "pc",
+        residue: "*",
+        atomic_number: Some(15),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar3,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XB),
+            degree: Some(2),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Element(6),
+                degree: Some(3),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "pc",
+        residue: "*",
+        atomic_number: Some(15),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar3,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XB),
+            degree: Some(2),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Element(6),
+                degree: Some(2),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "pc",
+        residue: "*",
+        atomic_number: Some(15),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar3,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XB),
+            degree: Some(2),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Wild(WILD_XB),
+                degree: Some(2),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "pc",
+        residue: "*",
+        atomic_number: Some(15),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar3,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(3),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: Some(PropRelation::BondedToPrev),
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "pc",
+        residue: "*",
+        atomic_number: Some(15),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar3,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(2),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: Some(PropRelation::BondedToPrev),
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "pc",
+        residue: "*",
+        atomic_number: Some(15),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar3,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XB),
+            degree: Some(2),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: Some(PropRelation::BondedToPrev),
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "pc",
+        residue: "*",
+        atomic_number: Some(15),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar3,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XD),
+            degree: Some(3),
+            property: Some(PropExpr {
+                constraints: &[
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::SbAny,
+                            relation: Some(PropRelation::BondedToPrev),
+                        }],
+                    },
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::DbAny,
+                            relation: None,
+                        }],
+                    },
+                ],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "pc",
+        residue: "*",
+        atomic_number: Some(15),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar3,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XD),
+            degree: Some(4),
+            property: Some(PropExpr {
+                constraints: &[
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::SbAny,
+                            relation: Some(PropRelation::BondedToPrev),
+                        }],
+                    },
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::DbAny,
+                            relation: None,
+                        }],
+                    },
+                ],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "pb",
+        residue: "*",
+        atomic_number: Some(15),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::Ar1,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "pe",
+        residue: "*",
+        atomic_number: Some(15),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(3),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: Some(PropRelation::BondedToPrev),
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "pe",
+        residue: "*",
+        atomic_number: Some(15),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(2),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbStrict,
+                        relation: Some(PropRelation::BondedToPrev),
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "pe",
+        residue: "*",
+        atomic_number: Some(15),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XA),
+            degree: Some(1),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbStrict,
+                        relation: Some(PropRelation::BondedToPrev),
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "pe",
+        residue: "*",
+        atomic_number: Some(15),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XB),
+            degree: Some(2),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbStrict,
+                        relation: Some(PropRelation::BondedToPrev),
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "pe",
+        residue: "*",
+        atomic_number: Some(15),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XD),
+            degree: Some(3),
+            property: Some(PropExpr {
+                constraints: &[
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::SbStrict,
+                            relation: Some(PropRelation::BondedToPrev),
+                        }],
+                    },
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::DbStrict,
+                            relation: None,
+                        }],
+                    },
+                ],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "pe",
+        residue: "*",
+        atomic_number: Some(15),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XD),
+            degree: Some(4),
+            property: Some(PropExpr {
+                constraints: &[
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::SbStrict,
+                            relation: Some(PropRelation::BondedToPrev),
+                        }],
+                    },
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::DbStrict,
+                            relation: None,
+                        }],
+                    },
+                ],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "p2",
+        residue: "*",
+        atomic_number: Some(15),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "p2",
+        residue: "*",
+        atomic_number: Some(15),
+        degree: Some(1),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "px",
+        residue: "*",
+        atomic_number: Some(15),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::DbAny,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XB),
+            degree: Some(2),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: Some(PropRelation::BondedToPrev),
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "px",
+        residue: "*",
+        atomic_number: Some(15),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::DbAny,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(3),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: Some(PropRelation::BondedToPrev),
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "px",
+        residue: "*",
+        atomic_number: Some(15),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::DbAny,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XD),
+            degree: Some(3),
+            property: Some(PropExpr {
+                constraints: &[
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::SbAny,
+                            relation: Some(PropRelation::BondedToPrev),
+                        }],
+                    },
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::DbAny,
+                            relation: None,
+                        }],
+                    },
+                ],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "px",
+        residue: "*",
+        atomic_number: Some(15),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::DbAny,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XD),
+            degree: Some(4),
+            property: Some(PropExpr {
+                constraints: &[
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::SbAny,
+                            relation: Some(PropRelation::BondedToPrev),
+                        }],
+                    },
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::DbAny,
+                            relation: None,
+                        }],
+                    },
+                ],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "p4",
+        residue: "*",
+        atomic_number: Some(15),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::DbAny,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XA),
+            degree: Some(1),
+            property: None,
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "p3",
+        residue: "*",
+        atomic_number: Some(15),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "py",
+        residue: "*",
+        atomic_number: Some(15),
+        degree: Some(4),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::DbAny,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XB),
+            degree: Some(2),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: Some(PropRelation::BondedToPrev),
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "py",
+        residue: "*",
+        atomic_number: Some(15),
+        degree: Some(4),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::DbAny,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(3),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: Some(PropRelation::BondedToPrev),
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "py",
+        residue: "*",
+        atomic_number: Some(15),
+        degree: Some(4),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::DbAny,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XD),
+            degree: Some(3),
+            property: Some(PropExpr {
+                constraints: &[
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::SbAny,
+                            relation: Some(PropRelation::BondedToPrev),
+                        }],
+                    },
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::DbAny,
+                            relation: None,
+                        }],
+                    },
+                ],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "py",
+        residue: "*",
+        atomic_number: Some(15),
+        degree: Some(4),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::DbAny,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XD),
+            degree: Some(4),
+            property: Some(PropExpr {
+                constraints: &[
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::SbAny,
+                            relation: Some(PropRelation::BondedToPrev),
+                        }],
+                    },
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::DbAny,
+                            relation: None,
+                        }],
+                    },
+                ],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "p5",
+        residue: "*",
+        atomic_number: Some(15),
+        degree: Some(4),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "p5",
+        residue: "*",
+        atomic_number: Some(15),
+        degree: Some(5),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "p5",
+        residue: "*",
+        atomic_number: Some(15),
+        degree: Some(6),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "ni",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::Rg3,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(3),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Wild(WILD_XA),
+                degree: Some(1),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "nj",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::Rg4,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(3),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Wild(WILD_XA),
+                degree: Some(1),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "n",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(3),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Wild(WILD_XA),
+                degree: Some(1),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "nk",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(4),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::Rg3,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "nl",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(4),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::Rg4,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "n4",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(4),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "no",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: Some(&[
+            AtomPattern {
+                atom: PatternAtom::Element(8),
+                degree: Some(1),
+                property: None,
+                label: None,
+                children: &[],
+            },
+            AtomPattern {
+                atom: PatternAtom::Element(8),
+                degree: Some(1),
+                property: None,
+                label: None,
+                children: &[],
+            },
+        ]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "na",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[
+                    PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar1,
+                        relation: None,
+                    },
+                    PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar2,
+                        relation: None,
+                    },
+                    PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar3,
+                        relation: None,
+                    },
+                ],
+            }],
+        }),
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "nm",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::Rg3,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XX),
+            degree: None,
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[
+                        PropUnit {
+                            count: None,
+                            prop: AtomProp::Ar1,
+                            relation: None,
+                        },
+                        PropUnit {
+                            count: None,
+                            prop: AtomProp::Ar2,
+                            relation: None,
+                        },
+                        PropUnit {
+                            count: None,
+                            prop: AtomProp::Ar3,
+                            relation: None,
+                        },
+                    ],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "nm",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::Rg3,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(3),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbStrict,
+                        relation: None,
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "nm",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::Rg3,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(7),
+            degree: Some(2),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbStrict,
+                        relation: None,
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "nm",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::Rg3,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(15),
+            degree: Some(2),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbStrict,
+                        relation: None,
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "nn",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::Rg4,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XX),
+            degree: None,
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[
+                        PropUnit {
+                            count: None,
+                            prop: AtomProp::Ar1,
+                            relation: None,
+                        },
+                        PropUnit {
+                            count: None,
+                            prop: AtomProp::Ar2,
+                            relation: None,
+                        },
+                        PropUnit {
+                            count: None,
+                            prop: AtomProp::Ar3,
+                            relation: None,
+                        },
+                    ],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "nn",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::Rg4,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(3),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbStrict,
+                        relation: None,
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "nn",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::Rg4,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(7),
+            degree: Some(2),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbStrict,
+                        relation: None,
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "nn",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::Rg4,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(15),
+            degree: Some(2),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbStrict,
+                        relation: None,
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "nh",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XX),
+            degree: None,
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[
+                        PropUnit {
+                            count: None,
+                            prop: AtomProp::Ar1,
+                            relation: None,
+                        },
+                        PropUnit {
+                            count: None,
+                            prop: AtomProp::Ar2,
+                            relation: None,
+                        },
+                        PropUnit {
+                            count: None,
+                            prop: AtomProp::Ar3,
+                            relation: None,
+                        },
+                    ],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "nh",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(3),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbStrict,
+                        relation: None,
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "nh",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(7),
+            degree: Some(2),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbStrict,
+                        relation: None,
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "nh",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(15),
+            degree: Some(2),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbStrict,
+                        relation: None,
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "np",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::Rg3,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "nq",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::Rg4,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "n3",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "nb",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::Ar1,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "nc",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar2,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(3),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Element(6),
+                degree: Some(3),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "nc",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar2,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(3),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Element(6),
+                degree: Some(2),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "nc",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar2,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(3),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Wild(WILD_XB),
+                degree: Some(2),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "nc",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar2,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XB),
+            degree: Some(2),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Element(6),
+                degree: Some(3),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "nc",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar2,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XB),
+            degree: Some(2),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Element(6),
+                degree: Some(2),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "nc",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar2,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XB),
+            degree: Some(2),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Wild(WILD_XB),
+                degree: Some(2),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "nc",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar2,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(3),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: Some(PropRelation::BondedToPrev),
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "nc",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar2,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XB),
+            degree: Some(2),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: Some(PropRelation::BondedToPrev),
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "nc",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar2,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XD),
+            degree: Some(3),
+            property: Some(PropExpr {
+                constraints: &[
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::SbAny,
+                            relation: Some(PropRelation::BondedToPrev),
+                        }],
+                    },
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::DbAny,
+                            relation: None,
+                        }],
+                    },
+                ],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "nc",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar2,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XD),
+            degree: Some(4),
+            property: Some(PropExpr {
+                constraints: &[
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::SbAny,
+                            relation: Some(PropRelation::BondedToPrev),
+                        }],
+                    },
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::DbAny,
+                            relation: None,
+                        }],
+                    },
+                ],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "nc",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar3,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(3),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Element(6),
+                degree: Some(3),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "nc",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar3,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(3),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Element(6),
+                degree: Some(2),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "nc",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar3,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(3),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Wild(WILD_XB),
+                degree: Some(2),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "nc",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar3,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XB),
+            degree: Some(2),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Element(6),
+                degree: Some(3),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "nc",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar3,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XB),
+            degree: Some(2),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Element(6),
+                degree: Some(2),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "nc",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar3,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XB),
+            degree: Some(2),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Wild(WILD_XB),
+                degree: Some(2),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "nc",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar3,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(3),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: Some(PropRelation::BondedToPrev),
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "nc",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar3,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XB),
+            degree: Some(2),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: Some(PropRelation::BondedToPrev),
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "nc",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar3,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XD),
+            degree: Some(3),
+            property: Some(PropExpr {
+                constraints: &[
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::SbAny,
+                            relation: Some(PropRelation::BondedToPrev),
+                        }],
+                    },
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::DbAny,
+                            relation: None,
+                        }],
+                    },
+                ],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "nc",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar3,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XD),
+            degree: Some(4),
+            property: Some(PropExpr {
+                constraints: &[
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::SbAny,
+                            relation: Some(PropRelation::BondedToPrev),
+                        }],
+                    },
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::DbAny,
+                            relation: None,
+                        }],
+                    },
+                ],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "nc",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::Rg5,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(7),
+            degree: Some(2),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Rg5,
+                        relation: None,
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Element(7),
+                degree: Some(2),
+                property: Some(PropExpr {
+                    constraints: &[PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::Rg5,
+                            relation: None,
+                        }],
+                    }],
+                }),
+                label: None,
+                children: &[AtomPattern {
+                    atom: PatternAtom::Element(7),
+                    degree: Some(2),
+                    property: Some(PropExpr {
+                        constraints: &[PropConstraint {
+                            units: &[PropUnit {
+                                count: None,
+                                prop: AtomProp::Rg5,
+                                relation: None,
+                            }],
+                        }],
+                    }),
+                    label: None,
+                    children: &[],
+                }],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "nc",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::Rg5,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: Some(&[
+            AtomPattern {
+                atom: PatternAtom::Element(7),
+                degree: Some(2),
+                property: Some(PropExpr {
+                    constraints: &[PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::Rg5,
+                            relation: None,
+                        }],
+                    }],
+                }),
+                label: None,
+                children: &[],
+            },
+            AtomPattern {
+                atom: PatternAtom::Element(7),
+                degree: Some(2),
+                property: Some(PropExpr {
+                    constraints: &[PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::Rg5,
+                            relation: None,
+                        }],
+                    }],
+                }),
+                label: None,
+                children: &[AtomPattern {
+                    atom: PatternAtom::Element(7),
+                    degree: Some(2),
+                    property: Some(PropExpr {
+                        constraints: &[PropConstraint {
+                            units: &[PropUnit {
+                                count: None,
+                                prop: AtomProp::Rg5,
+                                relation: None,
+                            }],
+                        }],
+                    }),
+                    label: None,
+                    children: &[],
+                }],
+            },
+        ]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "ne",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(2),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbStrict,
+                        relation: Some(PropRelation::BondedToPrev),
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "ne",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(3),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbStrict,
+                        relation: Some(PropRelation::BondedToPrev),
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "ne",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XA),
+            degree: Some(1),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbStrict,
+                        relation: Some(PropRelation::BondedToPrev),
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "ne",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XB),
+            degree: Some(2),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbStrict,
+                        relation: Some(PropRelation::BondedToPrev),
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "ne",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XD),
+            degree: Some(3),
+            property: Some(PropExpr {
+                constraints: &[
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::SbStrict,
+                            relation: Some(PropRelation::BondedToPrev),
+                        }],
+                    },
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::DbAny,
+                            relation: None,
+                        }],
+                    },
+                ],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "ne",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XD),
+            degree: Some(4),
+            property: Some(PropExpr {
+                constraints: &[
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::SbStrict,
+                            relation: Some(PropRelation::BondedToPrev),
+                        }],
+                    },
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::DbAny,
+                            relation: None,
+                        }],
+                    },
+                ],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "n1",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: Some(2),
+                    prop: AtomProp::DbAny,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "n1",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::TbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "n2",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "n1",
+        residue: "*",
+        atomic_number: Some(7),
+        degree: Some(1),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "o",
+        residue: "*",
+        atomic_number: Some(8),
+        degree: Some(1),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "oh",
+        residue: "*",
+        atomic_number: Some(8),
+        degree: Some(2),
+        hydrogen_count: Some(1),
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "oh",
+        residue: "*",
+        atomic_number: Some(8),
+        degree: Some(2),
+        hydrogen_count: Some(2),
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "oh",
+        residue: "*",
+        atomic_number: Some(8),
+        degree: Some(3),
+        hydrogen_count: Some(1),
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "oh",
+        residue: "*",
+        atomic_number: Some(8),
+        degree: Some(3),
+        hydrogen_count: Some(2),
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "oh",
+        residue: "*",
+        atomic_number: Some(8),
+        degree: Some(3),
+        hydrogen_count: Some(3),
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "op",
+        residue: "*",
+        atomic_number: Some(8),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::Rg3,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "oq",
+        residue: "*",
+        atomic_number: Some(8),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::Rg4,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "os",
+        residue: "*",
+        atomic_number: Some(8),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "os",
+        residue: "*",
+        atomic_number: Some(8),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "os",
+        residue: "*",
+        atomic_number: Some(8),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "s",
+        residue: "*",
+        atomic_number: Some(16),
+        degree: Some(1),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "s2",
+        residue: "*",
+        atomic_number: Some(16),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::DbStrict,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "s2",
+        residue: "*",
+        atomic_number: Some(16),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::TbStrict,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "sh",
+        residue: "*",
+        atomic_number: Some(16),
+        degree: Some(2),
+        hydrogen_count: Some(1),
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "sh",
+        residue: "*",
+        atomic_number: Some(16),
+        degree: Some(2),
+        hydrogen_count: Some(2),
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "sp",
+        residue: "*",
+        atomic_number: Some(16),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::Rg3,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "sq",
+        residue: "*",
+        atomic_number: Some(16),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::Rg4,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "ss",
+        residue: "*",
+        atomic_number: Some(16),
+        degree: Some(2),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "sx",
+        residue: "*",
+        atomic_number: Some(16),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::DbAny,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XB),
+            degree: Some(2),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: Some(PropRelation::BondedToPrev),
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "sx",
+        residue: "*",
+        atomic_number: Some(16),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::DbAny,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(3),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: Some(PropRelation::BondedToPrev),
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "sx",
+        residue: "*",
+        atomic_number: Some(16),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::DbAny,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XD),
+            degree: Some(3),
+            property: Some(PropExpr {
+                constraints: &[
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::SbAny,
+                            relation: Some(PropRelation::BondedToPrev),
+                        }],
+                    },
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::DbAny,
+                            relation: None,
+                        }],
+                    },
+                ],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "sx",
+        residue: "*",
+        atomic_number: Some(16),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::DbAny,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XD),
+            degree: Some(4),
+            property: Some(PropExpr {
+                constraints: &[
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::SbAny,
+                            relation: Some(PropRelation::BondedToPrev),
+                        }],
+                    },
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::DbAny,
+                            relation: None,
+                        }],
+                    },
+                ],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "s4",
+        residue: "*",
+        atomic_number: Some(16),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "sy",
+        residue: "*",
+        atomic_number: Some(16),
+        degree: Some(4),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::DbAny,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XB),
+            degree: Some(2),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: Some(PropRelation::BondedToPrev),
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "sy",
+        residue: "*",
+        atomic_number: Some(16),
+        degree: Some(4),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::DbAny,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(3),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: Some(PropRelation::BondedToPrev),
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "sy",
+        residue: "*",
+        atomic_number: Some(16),
+        degree: Some(4),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::DbAny,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XD),
+            degree: Some(3),
+            property: Some(PropExpr {
+                constraints: &[
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::SbAny,
+                            relation: Some(PropRelation::BondedToPrev),
+                        }],
+                    },
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::DbAny,
+                            relation: None,
+                        }],
+                    },
+                ],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "sy",
+        residue: "*",
+        atomic_number: Some(16),
+        degree: Some(4),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[PropConstraint {
+                units: &[PropUnit {
+                    count: None,
+                    prop: AtomProp::DbAny,
+                    relation: None,
+                }],
+            }],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XD),
+            degree: Some(4),
+            property: Some(PropExpr {
+                constraints: &[
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::SbAny,
+                            relation: Some(PropRelation::BondedToPrev),
+                        }],
+                    },
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::DbAny,
+                            relation: None,
+                        }],
+                    },
+                ],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "s6",
+        residue: "*",
+        atomic_number: Some(16),
+        degree: Some(4),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "s6",
+        residue: "*",
+        atomic_number: Some(16),
+        degree: Some(5),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "s6",
+        residue: "*",
+        atomic_number: Some(16),
+        degree: Some(6),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "He",
+        residue: "*",
+        atomic_number: Some(2),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Li",
+        residue: "*",
+        atomic_number: Some(3),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Be",
+        residue: "*",
+        atomic_number: Some(4),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "B",
+        residue: "*",
+        atomic_number: Some(5),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Ne",
+        residue: "*",
+        atomic_number: Some(10),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Na",
+        residue: "*",
+        atomic_number: Some(11),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Mg",
+        residue: "*",
+        atomic_number: Some(12),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Al",
+        residue: "*",
+        atomic_number: Some(13),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Si",
+        residue: "*",
+        atomic_number: Some(14),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Ar",
+        residue: "*",
+        atomic_number: Some(18),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "K",
+        residue: "*",
+        atomic_number: Some(19),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Ca",
+        residue: "*",
+        atomic_number: Some(20),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Sc",
+        residue: "*",
+        atomic_number: Some(21),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Ti",
+        residue: "*",
+        atomic_number: Some(22),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "V",
+        residue: "*",
+        atomic_number: Some(23),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Cr",
+        residue: "*",
+        atomic_number: Some(24),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Mn",
+        residue: "*",
+        atomic_number: Some(25),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Fe",
+        residue: "*",
+        atomic_number: Some(26),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Co",
+        residue: "*",
+        atomic_number: Some(27),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Ni",
+        residue: "*",
+        atomic_number: Some(28),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Cu",
+        residue: "*",
+        atomic_number: Some(29),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Zn",
+        residue: "*",
+        atomic_number: Some(30),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Ga",
+        residue: "*",
+        atomic_number: Some(31),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Ge",
+        residue: "*",
+        atomic_number: Some(32),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "As",
+        residue: "*",
+        atomic_number: Some(33),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Se",
+        residue: "*",
+        atomic_number: Some(34),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Kr",
+        residue: "*",
+        atomic_number: Some(36),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Rb",
+        residue: "*",
+        atomic_number: Some(37),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Sr",
+        residue: "*",
+        atomic_number: Some(38),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Y",
+        residue: "*",
+        atomic_number: Some(39),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Zr",
+        residue: "*",
+        atomic_number: Some(40),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Nb",
+        residue: "*",
+        atomic_number: Some(41),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Mo",
+        residue: "*",
+        atomic_number: Some(42),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Tc",
+        residue: "*",
+        atomic_number: Some(43),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Ru",
+        residue: "*",
+        atomic_number: Some(44),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Rh",
+        residue: "*",
+        atomic_number: Some(45),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Pd",
+        residue: "*",
+        atomic_number: Some(46),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Ag",
+        residue: "*",
+        atomic_number: Some(47),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Cd",
+        residue: "*",
+        atomic_number: Some(48),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "In",
+        residue: "*",
+        atomic_number: Some(49),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Sn",
+        residue: "*",
+        atomic_number: Some(50),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Sb",
+        residue: "*",
+        atomic_number: Some(51),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Te",
+        residue: "*",
+        atomic_number: Some(52),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Xe",
+        residue: "*",
+        atomic_number: Some(54),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Cs",
+        residue: "*",
+        atomic_number: Some(55),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Ba",
+        residue: "*",
+        atomic_number: Some(56),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "La",
+        residue: "*",
+        atomic_number: Some(57),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Ce",
+        residue: "*",
+        atomic_number: Some(58),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Pr",
+        residue: "*",
+        atomic_number: Some(59),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Nd",
+        residue: "*",
+        atomic_number: Some(60),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Pm",
+        residue: "*",
+        atomic_number: Some(61),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Sm",
+        residue: "*",
+        atomic_number: Some(62),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Eu",
+        residue: "*",
+        atomic_number: Some(63),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Gd",
+        residue: "*",
+        atomic_number: Some(64),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Tb",
+        residue: "*",
+        atomic_number: Some(65),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Dy",
+        residue: "*",
+        atomic_number: Some(66),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Ho",
+        residue: "*",
+        atomic_number: Some(67),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Er",
+        residue: "*",
+        atomic_number: Some(68),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Tm",
+        residue: "*",
+        atomic_number: Some(69),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Yb",
+        residue: "*",
+        atomic_number: Some(70),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Lu",
+        residue: "*",
+        atomic_number: Some(71),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Hf",
+        residue: "*",
+        atomic_number: Some(72),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Ta",
+        residue: "*",
+        atomic_number: Some(73),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "W",
+        residue: "*",
+        atomic_number: Some(74),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Re",
+        residue: "*",
+        atomic_number: Some(75),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Os",
+        residue: "*",
+        atomic_number: Some(76),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Ir",
+        residue: "*",
+        atomic_number: Some(77),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Pt",
+        residue: "*",
+        atomic_number: Some(78),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Au",
+        residue: "*",
+        atomic_number: Some(79),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Hg",
+        residue: "*",
+        atomic_number: Some(80),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Tl",
+        residue: "*",
+        atomic_number: Some(81),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Pb",
+        residue: "*",
+        atomic_number: Some(82),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Bi",
+        residue: "*",
+        atomic_number: Some(83),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Po",
+        residue: "*",
+        atomic_number: Some(84),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "At",
+        residue: "*",
+        atomic_number: Some(85),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Rn",
+        residue: "*",
+        atomic_number: Some(86),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Fr",
+        residue: "*",
+        atomic_number: Some(87),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Ra",
+        residue: "*",
+        atomic_number: Some(88),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Ac",
+        residue: "*",
+        atomic_number: Some(89),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Th",
+        residue: "*",
+        atomic_number: Some(90),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Pa",
+        residue: "*",
+        atomic_number: Some(91),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "U",
+        residue: "*",
+        atomic_number: Some(92),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Np",
+        residue: "*",
+        atomic_number: Some(93),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Pu",
+        residue: "*",
+        atomic_number: Some(94),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Am",
+        residue: "*",
+        atomic_number: Some(95),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Cm",
+        residue: "*",
+        atomic_number: Some(96),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Bk",
+        residue: "*",
+        atomic_number: Some(97),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Cf",
+        residue: "*",
+        atomic_number: Some(98),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Es",
+        residue: "*",
+        atomic_number: Some(99),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Fm",
+        residue: "*",
+        atomic_number: Some(100),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Md",
+        residue: "*",
+        atomic_number: Some(101),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "No",
+        residue: "*",
+        atomic_number: Some(102),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Lr",
+        residue: "*",
+        atomic_number: Some(103),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Rf",
+        residue: "*",
+        atomic_number: Some(104),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Db",
+        residue: "*",
+        atomic_number: Some(105),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Sg",
+        residue: "*",
+        atomic_number: Some(106),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Bh",
+        residue: "*",
+        atomic_number: Some(107),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Hs",
+        residue: "*",
+        atomic_number: Some(108),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Mt",
+        residue: "*",
+        atomic_number: Some(109),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "Ds",
+        residue: "*",
+        atomic_number: Some(103),
+        degree: None,
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "LP",
+        residue: "*",
+        atomic_number: Some(0),
+        degree: Some(1),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "lp",
+        residue: "*",
+        atomic_number: Some(0),
+        degree: Some(1),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+];
+
+/// `ATOMTYPE_GFF.DEF` as one typed table.
+pub const ATOMTYPE_GFF: AtdTable = AtdTable {
+    name: "ATOMTYPE_GFF.DEF",
+    wildatoms: WILDATOMS,
+    rules: RULES,
+};

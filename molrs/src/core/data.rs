@@ -23,28 +23,8 @@ pub const MMFF94S_XML: &str =
 /// nitrogens keep uppercase atomic-number SMARTS.
 pub const OPLSAA_XML: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/data/oplsaa.xml"));
 
-/// Embedded Antechamber AM1-BCC bond-charge correction table.
-///
-/// Consumed by the AM1-BCC typifier as native table data.
-pub const ANTECHAMBER_BCCPARM_DAT: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/data/antechamber/BCCPARM.DAT"
-));
-
-/// Embedded Antechamber ABCG2 bond-charge correction table.
-pub const ANTECHAMBER_BCCPARM_ABCG2_DAT: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/data/antechamber/BCCPARM_ABCG2.DAT"
-));
-
-/// Embedded Antechamber AM1-BCC atom type definition rules.
-pub const ANTECHAMBER_ATOMTYPE_BCC_DEF: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/data/antechamber/ATOMTYPE_BCC.DEF"
-));
-
-/// Embedded Antechamber ABCG2 atom type definition rules.
-pub const ANTECHAMBER_ATOMTYPE_ABCG2_DEF: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/data/antechamber/ATOMTYPE_ABCG2.DEF"
-));
+// The Antechamber tables (BCCPARM*.DAT, ATOMTYPE_*.DEF) are deliberately NOT
+// embedded as text. They are translated into typed Rust `const`s by
+// `scripts/gen_param_tables.py` and committed under `ff::params::generated`, so
+// molrs parses no parameter text at runtime and a malformed table is a compile
+// error. See `molrs/src/ff/params/mod.rs`.

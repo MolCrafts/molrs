@@ -14,6 +14,10 @@ use molrs::{AtomId, Atomistic, Bond, BondId, Element, find_rings};
 use std::collections::HashMap;
 
 use super::Typifier;
+use crate::ff::params::{
+    AtdRule, AtdTable, AtomPattern, AtomProp, BccAlias, BccCorrectionRow, EnvBond, EnvBondType,
+    PatternAtom, PropExpr, PropRelation, PropUnit,
+};
 
 /// AM1 base-charge result supplied by an AM1 backend.
 #[derive(Debug, Clone, PartialEq)]
@@ -45,17 +49,27 @@ pub enum BccParameterSet {
 }
 
 impl BccParameterSet {
-    fn embedded_table(self) -> &'static str {
+    /// The set's bond charge corrections, as compile-time table data.
+    fn corrections(self) -> &'static [BccCorrectionRow] {
         match self {
-            Self::Bcc => molrs::data::ANTECHAMBER_BCCPARM_DAT,
-            Self::Abcg2 => molrs::data::ANTECHAMBER_BCCPARM_ABCG2_DAT,
+            Self::Bcc => crate::ff::params::BCC_CORRECTIONS,
+            Self::Abcg2 => crate::ff::params::ABCG2_CORRECTIONS,
         }
     }
 
-    fn embedded_atom_type_def(self) -> &'static str {
+    /// The set's `CORR` alias rows.
+    fn aliases(self) -> &'static [BccAlias] {
         match self {
-            Self::Bcc => molrs::data::ANTECHAMBER_ATOMTYPE_BCC_DEF,
-            Self::Abcg2 => molrs::data::ANTECHAMBER_ATOMTYPE_ABCG2_DEF,
+            Self::Bcc => crate::ff::params::BCC_ALIASES,
+            Self::Abcg2 => crate::ff::params::ABCG2_ALIASES,
+        }
+    }
+
+    /// The set's atom-type definition rules.
+    fn atd_table(self) -> AtdTable {
+        match self {
+            Self::Bcc => crate::ff::params::ATOMTYPE_BCC,
+            Self::Abcg2 => crate::ff::params::ATOMTYPE_ABCG2,
         }
     }
 }
@@ -161,7 +175,7 @@ impl BCCAtomTypifier {
     }
 
     pub fn typify(&self, mol: &Atomistic) -> Result<Atomistic, String> {
-        let rules = BCCAtomTypeRules::parse_str(self.model.embedded_atom_type_def())?;
+        let table = self.model.atd_table();
         let mut out = mol.clone();
 
         let bond_ids: Vec<_> = out.bonds().map(|(bid, _)| bid).collect();
@@ -180,8 +194,7 @@ impl BCCAtomTypifier {
         let facts = BCCMolFacts::new(&out)?;
         let atom_ids: Vec<AtomId> = out.atoms().map(|(aid, _)| aid).collect();
         for aid in atom_ids {
-            let atom_type = rules
-                .assign_type(aid, &facts)
+            let atom_type = assign_atom_type(&table, aid, &facts)
                 .ok_or_else(|| format!("missing BCC atom type for {aid:?}"))?;
             out.set_atom(aid, keys::TYPE, atom_type)
                 .map_err(|e| e.to_string())?;
@@ -190,215 +203,59 @@ impl BCCAtomTypifier {
     }
 }
 
-#[derive(Debug, Clone)]
-struct BCCAtomTypeRules {
-    wildatoms: HashMap<String, Vec<WildAtomSpec>>,
-    rules: Vec<BCCAtomRule>,
+/// Assign the first [`AtdRule`] of `table` that matches `aid`.
+///
+/// Rule order is the `.DEF` file's order and is load-bearing: the table is
+/// written most-specific-first, so the first match wins.
+fn assign_atom_type(table: &AtdTable, aid: AtomId, facts: &BCCMolFacts) -> Option<&'static str> {
+    table
+        .rules
+        .iter()
+        .find(|rule| rule_matches(rule, aid, facts))
+        .map(|rule| rule.atom_type)
 }
 
-impl BCCAtomTypeRules {
-    fn parse_str(input: &str) -> Result<Self, String> {
-        let mut wildatoms: HashMap<String, Vec<WildAtomSpec>> = HashMap::new();
-        let mut rules = Vec::new();
-        for (lineno, raw) in input.lines().enumerate() {
-            let line = raw.trim();
-            if line.is_empty()
-                || line.starts_with('#')
-                || line.starts_with("//")
-                || line.starts_with('-')
-                || line.starts_with('=')
-            {
-                continue;
-            }
-            let fields: Vec<&str> = line.split_whitespace().collect();
-            if fields.is_empty() {
-                continue;
-            }
-            if fields[0] == "WILDATOM" {
-                if fields.len() < 3 {
-                    return Err(format!("invalid WILDATOM row at line {}", lineno + 1));
-                }
-                let specs = fields[2..]
-                    .iter()
-                    .map(|s| WildAtomSpec::parse(s))
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(|e| format!("{e} at line {}", lineno + 1))?;
-                wildatoms.insert(fields[1].to_owned(), specs);
-                continue;
-            }
-            if fields[0] != "ATD" {
-                continue;
-            }
-            let Some(rule) = BCCAtomRule::parse(&fields, lineno + 1)? else {
-                continue;
-            };
-            rules.push(rule);
-        }
-        Ok(Self { wildatoms, rules })
+/// Test one pre-parsed `ATD` rule against an atom.
+fn rule_matches(rule: &AtdRule, aid: AtomId, facts: &BCCMolFacts) -> bool {
+    let Ok(i) = facts.index_of(aid) else {
+        return false;
+    };
+    if rule.residue != "*" && rule.residue != facts.residue[i].as_str() {
+        return false;
     }
-
-    fn assign_type(&self, aid: AtomId, facts: &BCCMolFacts) -> Option<&str> {
-        self.rules
-            .iter()
-            .find(|rule| rule.matches(aid, facts, self))
-            .map(|rule| rule.atom_type.as_str())
+    if rule
+        .atomic_number
+        .is_some_and(|z| z != facts.atomic_number[i])
+    {
+        return false;
     }
-}
-
-#[derive(Debug, Clone)]
-struct WildAtomSpec {
-    z: u8,
-    degree: Option<usize>,
-}
-
-impl WildAtomSpec {
-    fn parse(input: &str) -> Result<Self, String> {
-        let split = input
-            .char_indices()
-            .find_map(|(i, c)| c.is_ascii_digit().then_some(i))
-            .unwrap_or(input.len());
-        let symbol = &input[..split];
-        let degree = if split < input.len() {
-            Some(
-                input[split..]
-                    .parse::<usize>()
-                    .map_err(|e| format!("invalid WILDATOM degree `{input}`: {e}"))?,
-            )
-        } else {
-            None
-        };
-        let element = Element::by_symbol(symbol)
-            .ok_or_else(|| format!("invalid WILDATOM element symbol `{symbol}`"))?;
-        Ok(Self {
-            z: element.z(),
-            degree,
-        })
+    if rule.degree.is_some_and(|degree| degree != facts.degree[i]) {
+        return false;
     }
-}
-
-#[derive(Debug, Clone)]
-struct BCCAtomRule {
-    atom_type: String,
-    residue: String,
-    atomic_number: Option<u8>,
-    degree: Option<usize>,
-    hydrogen_count: Option<usize>,
-    ewd_count: Option<usize>,
-    atom_property: Option<String>,
-    environment: Option<String>,
-    environment_bonds: Option<String>,
-}
-
-impl BCCAtomRule {
-    fn parse(fields: &[&str], lineno: usize) -> Result<Option<Self>, String> {
-        if fields.len() < 3 {
-            return Err(format!("invalid ATD row at line {lineno}"));
-        }
-        let atom_type = fields[1];
-        if atom_type == "DU" {
-            return Ok(None);
-        }
-        let residue = fields.get(2).copied().unwrap_or("&");
-        if residue == "&" {
-            return Ok(None);
-        }
-        let atomic_number = parse_optional_u8(fields.get(3).copied(), lineno, "atomic number")?;
-        let degree = parse_optional_usize(fields.get(4).copied(), lineno, "degree")?;
-        let hydrogen_count =
-            parse_optional_usize(fields.get(5).copied(), lineno, "hydrogen count")?;
-        let ewd_count = parse_optional_usize(fields.get(6).copied(), lineno, "EW count")?;
-        let atom_property = parse_optional_str(fields.get(7).copied());
-        let environment = parse_optional_str(fields.get(8).copied());
-        let environment_bonds = parse_optional_str(fields.get(9).copied());
-        Ok(Some(Self {
-            atom_type: atom_type.to_owned(),
-            residue: residue.to_owned(),
-            atomic_number,
-            degree,
-            hydrogen_count,
-            ewd_count,
-            atom_property,
-            environment,
-            environment_bonds,
-        }))
+    if rule
+        .hydrogen_count
+        .is_some_and(|h_count| h_count != facts.hydrogen_count[i])
+    {
+        return false;
     }
-
-    fn matches(&self, aid: AtomId, facts: &BCCMolFacts, rules: &BCCAtomTypeRules) -> bool {
-        let Ok(i) = facts.index_of(aid) else {
-            return false;
-        };
-        if self.residue != "*" && self.residue.as_str() != facts.residue[i].as_str() {
-            return false;
-        }
-        if self
-            .atomic_number
-            .is_some_and(|z| z != facts.atomic_number[i])
-        {
-            return false;
-        }
-        if self.degree.is_some_and(|degree| degree != facts.degree[i]) {
-            return false;
-        }
-        if self
-            .hydrogen_count
-            .is_some_and(|h_count| h_count != facts.hydrogen_count[i])
-        {
-            return false;
-        }
-        if self.ewd_count.is_some_and(|n| {
-            facts
-                .ewd_count_around_attachment(aid)
-                .is_none_or(|actual| actual != n)
-        }) {
-            return false;
-        }
-        if let Some(prop) = &self.atom_property
-            && !facts.atom_property_matches(aid, None, prop)
-        {
-            return false;
-        }
-        if let Some(env) = &self.environment
-            && !facts.environment_matches(aid, env, self.environment_bonds.as_deref(), rules)
-        {
-            return false;
-        }
-        true
+    if rule.ewd_count.is_some_and(|n| {
+        facts
+            .ewd_count_around_attachment(aid)
+            .is_none_or(|actual| actual != n)
+    }) {
+        return false;
     }
-}
-
-fn parse_optional_str(field: Option<&str>) -> Option<String> {
-    match field {
-        Some("*" | "&") | None => None,
-        Some(v) => Some(v.to_owned()),
+    if let Some(prop) = rule.atom_property
+        && !facts.atom_property_matches(aid, None, &prop)
+    {
+        return false;
     }
-}
-
-fn parse_optional_usize(
-    field: Option<&str>,
-    lineno: usize,
-    label: &str,
-) -> Result<Option<usize>, String> {
-    match field {
-        Some("*" | "&") | None => Ok(None),
-        Some(v) => v
-            .parse::<usize>()
-            .map(Some)
-            .map_err(|e| format!("invalid ATD {label} `{v}` at line {lineno}: {e}")),
+    if let Some(env) = rule.environment
+        && !facts.environment_matches(aid, env, rule.environment_bonds)
+    {
+        return false;
     }
-}
-
-fn parse_optional_u8(
-    field: Option<&str>,
-    lineno: usize,
-    label: &str,
-) -> Result<Option<u8>, String> {
-    match field {
-        Some("*" | "&") | None => Ok(None),
-        Some(v) => v
-            .parse::<u8>()
-            .map(Some)
-            .map_err(|e| format!("invalid ATD {label} `{v}` at line {lineno}: {e}")),
-    }
+    true
 }
 
 #[derive(Debug, Clone)]
@@ -515,55 +372,42 @@ impl BCCMolFacts {
         )
     }
 
-    fn atom_property_matches(&self, aid: AtomId, prev: Option<AtomId>, expr: &str) -> bool {
-        let Some(inner) = expr.strip_prefix('[').and_then(|s| s.strip_suffix(']')) else {
-            return false;
-        };
-        inner.split(',').all(|constraint| {
+    /// Walk a pre-parsed `[...]` expression: an AND of ORs.
+    fn atom_property_matches(&self, aid: AtomId, prev: Option<AtomId>, expr: &PropExpr) -> bool {
+        expr.constraints.iter().all(|constraint| {
             constraint
-                .split('.')
+                .units
+                .iter()
                 .any(|unit| self.atom_property_unit_matches(aid, prev, unit))
         })
     }
 
-    fn atom_property_unit_matches(&self, aid: AtomId, prev: Option<AtomId>, unit: &str) -> bool {
-        let digit_end = unit
-            .char_indices()
-            .take_while(|(_, c)| c.is_ascii_digit())
-            .map(|(i, c)| i + c.len_utf8())
-            .last()
-            .unwrap_or(0);
-        let required_count = if digit_end == 0 {
-            None
-        } else {
-            unit[..digit_end].parse::<usize>().ok()
-        };
-        let mut prop = &unit[digit_end..];
-        let relation = if let Some(base) = prop.strip_suffix("''") {
-            prop = base;
-            Some(false)
-        } else if let Some(base) = prop.strip_suffix('\'') {
-            prop = base;
-            Some(true)
-        } else {
-            None
-        };
+    fn atom_property_unit_matches(
+        &self,
+        aid: AtomId,
+        prev: Option<AtomId>,
+        unit: &PropUnit,
+    ) -> bool {
         let Ok(i) = self.index_of(aid) else {
             return false;
         };
-        let count = self.props[i].count(prop);
-        let count_matches = required_count.map_or(count > 0, |n| count == n);
+        let count = self.props[i].count(unit.prop);
+        let count_matches = unit.count.map_or(count > 0, |n| count == n);
         if !count_matches {
             return false;
         }
-        match relation {
-            Some(true) => prev.is_some_and(|prev| self.bond_to_prev_matches(aid, prev, prop)),
-            Some(false) => prev.is_some_and(|prev| !self.bond_to_prev_matches(aid, prev, prop)),
+        match unit.relation {
+            Some(PropRelation::BondedToPrev) => {
+                prev.is_some_and(|prev| self.bond_to_prev_matches(aid, prev, unit.prop))
+            }
+            Some(PropRelation::NotBondedToPrev) => {
+                prev.is_some_and(|prev| !self.bond_to_prev_matches(aid, prev, unit.prop))
+            }
             None => true,
         }
     }
 
-    fn bond_to_prev_matches(&self, aid: AtomId, prev: AtomId, prop: &str) -> bool {
+    fn bond_to_prev_matches(&self, aid: AtomId, prev: AtomId, prop: AtomProp) -> bool {
         let Ok(i) = self.index_of(aid) else {
             return false;
         };
@@ -576,28 +420,24 @@ impl BCCMolFacts {
     fn environment_matches(
         &self,
         aid: AtomId,
-        env: &str,
-        env_bonds: Option<&str>,
-        rules: &BCCAtomTypeRules,
+        patterns: &'static [AtomPattern],
+        env_bonds: Option<&'static [EnvBond]>,
     ) -> bool {
-        let Ok(patterns) = parse_environment(env) else {
-            return false;
-        };
         let mut labels = HashMap::new();
-        self.match_pattern_list(aid, None, &patterns, rules, &mut labels)
-            && env_bonds.is_none_or(|spec| self.environment_bonds_match(spec, &labels))
+        self.match_pattern_list(aid, None, patterns, &mut labels)
+            && env_bonds.is_none_or(|bonds| self.environment_bonds_match(bonds, &labels))
     }
 
-    fn environment_bonds_match(&self, spec: &str, labels: &HashMap<String, AtomId>) -> bool {
-        for raw in spec.split(',') {
-            let parts: Vec<_> = raw.split(':').collect();
-            if parts.len() != 3 {
-                return false;
-            }
-            let Some(&a) = labels.get(parts[0]) else {
+    fn environment_bonds_match(
+        &self,
+        bonds: &[EnvBond],
+        labels: &HashMap<&'static str, AtomId>,
+    ) -> bool {
+        for constraint in bonds {
+            let Some(&a) = labels.get(constraint.a) else {
                 return false;
             };
-            let Some(&b) = labels.get(parts[1]) else {
+            let Some(&b) = labels.get(constraint.b) else {
                 return false;
             };
             let Ok(i) = self.index_of(a) else {
@@ -607,7 +447,7 @@ impl BCCMolFacts {
             else {
                 return false;
             };
-            if !environment_bond_type_matches(*bond_type, parts[2]) {
+            if !environment_bond_type_matches(*bond_type, constraint.bond) {
                 return false;
             }
         }
@@ -618,23 +458,20 @@ impl BCCMolFacts {
         &self,
         parent: AtomId,
         prev: Option<AtomId>,
-        patterns: &[AtomPattern],
-        rules: &BCCAtomTypeRules,
-        labels: &mut HashMap<String, AtomId>,
+        patterns: &'static [AtomPattern],
+        labels: &mut HashMap<&'static str, AtomId>,
     ) -> bool {
         let mut used = Vec::new();
-        self.match_pattern_list_rec(parent, prev, patterns, 0, rules, labels, &mut used)
+        self.match_pattern_list_rec(parent, prev, patterns, 0, labels, &mut used)
     }
 
-    #[allow(clippy::too_many_arguments)] // private recursive matcher (same precedent as smarts/matcher.rs)
     fn match_pattern_list_rec(
         &self,
         parent: AtomId,
         prev: Option<AtomId>,
-        patterns: &[AtomPattern],
+        patterns: &'static [AtomPattern],
         pos: usize,
-        rules: &BCCAtomTypeRules,
-        labels: &mut HashMap<String, AtomId>,
+        labels: &mut HashMap<&'static str, AtomId>,
         used: &mut Vec<AtomId>,
     ) -> bool {
         if pos == patterns.len() {
@@ -648,20 +485,13 @@ impl BCCMolFacts {
                 continue;
             }
             let mut labels_next = labels.clone();
-            if self.atom_pattern_matches(
-                *candidate,
-                parent,
-                &patterns[pos],
-                rules,
-                &mut labels_next,
-            ) {
+            if self.atom_pattern_matches(*candidate, parent, &patterns[pos], &mut labels_next) {
                 used.push(*candidate);
                 if self.match_pattern_list_rec(
                     parent,
                     prev,
                     patterns,
                     pos + 1,
-                    rules,
                     &mut labels_next,
                     used,
                 ) {
@@ -678,14 +508,13 @@ impl BCCMolFacts {
         &self,
         aid: AtomId,
         prev: AtomId,
-        pattern: &AtomPattern,
-        rules: &BCCAtomTypeRules,
-        labels: &mut HashMap<String, AtomId>,
+        pattern: &'static AtomPattern,
+        labels: &mut HashMap<&'static str, AtomId>,
     ) -> bool {
         let Ok(i) = self.index_of(aid) else {
             return false;
         };
-        if !self.pattern_atom_name_matches(i, &pattern.name, rules) {
+        if !self.pattern_atom_matches(i, pattern.atom) {
             return false;
         }
         if pattern
@@ -694,40 +523,34 @@ impl BCCMolFacts {
         {
             return false;
         }
-        if let Some(prop) = &pattern.property
-            && !self.atom_property_matches(aid, Some(prev), prop)
+        if let Some(prop) = pattern.property
+            && !self.atom_property_matches(aid, Some(prev), &prop)
         {
             return false;
         }
-        if let Some(label) = &pattern.label
-            && labels
-                .insert(label.clone(), aid)
-                .is_some_and(|old| old != aid)
+        if let Some(label) = pattern.label
+            && labels.insert(label, aid).is_some_and(|old| old != aid)
         {
             return false;
         }
-        self.match_pattern_list(aid, Some(prev), &pattern.children, rules, labels)
+        self.match_pattern_list(aid, Some(prev), pattern.children, labels)
     }
 
-    fn pattern_atom_name_matches(
-        &self,
-        atom_index: usize,
-        name: &str,
-        rules: &BCCAtomTypeRules,
-    ) -> bool {
-        if name == "EW" {
-            return self.ewd[atom_index];
-        }
-        if let Some(specs) = rules.wildatoms.get(name) {
-            return specs.iter().any(|spec| {
+    /// Match a pattern atom whose name the generator already resolved.
+    ///
+    /// `EW` / `WILDATOM` / element resolution happened at table-generation time,
+    /// so there is no name table to consult here.
+    fn pattern_atom_matches(&self, atom_index: usize, atom: PatternAtom) -> bool {
+        match atom {
+            PatternAtom::ElectronWithdrawing => self.ewd[atom_index],
+            PatternAtom::Wild(specs) => specs.iter().any(|spec| {
                 spec.z == self.atomic_number[atom_index]
                     && spec
                         .degree
                         .is_none_or(|degree| degree == self.degree[atom_index])
-            });
+            }),
+            PatternAtom::Element(z) => z == self.atomic_number[atom_index],
         }
-        Element::by_symbol(name)
-            .is_some_and(|element| element.z() == self.atomic_number[atom_index])
     }
 }
 
@@ -785,184 +608,74 @@ impl AtomPropertyFacts {
         }
     }
 
-    fn count(&self, prop: &str) -> usize {
+    fn count(&self, prop: AtomProp) -> usize {
         match prop {
-            "RG" => self.rg[0],
-            "RG3" => self.rg[3],
-            "RG4" => self.rg[4],
-            "RG5" => self.rg[5],
-            "RG6" => self.rg[6],
-            "RG7" => self.rg[7],
-            "RG8" => self.rg[8],
-            "RG9" => self.rg[9],
-            "RG10" => self.rg[10],
-            "NR" => self.nr,
-            "AR1" => self.ar1,
-            "AR2" => self.ar2,
-            "AR3" => self.ar3,
-            "AR4" => self.ar4,
-            "AR5" => self.ar5,
-            "SB" => self.sb_strict,
-            "sb" => self.sb,
-            "DB" => self.db_strict,
-            "db" => self.db,
-            "TB" => self.tb_strict,
-            "tb" => self.tb,
-            "AB" => self.ab,
-            "DL" => self.dl,
-            _ => 0,
+            AtomProp::Rg => self.rg[0],
+            AtomProp::Rg3 => self.rg[3],
+            AtomProp::Rg4 => self.rg[4],
+            AtomProp::Rg5 => self.rg[5],
+            AtomProp::Rg6 => self.rg[6],
+            AtomProp::Rg7 => self.rg[7],
+            AtomProp::Rg8 => self.rg[8],
+            AtomProp::Rg9 => self.rg[9],
+            AtomProp::Rg10 => self.rg[10],
+            AtomProp::Nr => self.nr,
+            AtomProp::Ar1 => self.ar1,
+            AtomProp::Ar2 => self.ar2,
+            AtomProp::Ar3 => self.ar3,
+            AtomProp::Ar4 => self.ar4,
+            AtomProp::Ar5 => self.ar5,
+            AtomProp::SbStrict => self.sb_strict,
+            AtomProp::SbAny => self.sb,
+            AtomProp::DbStrict => self.db_strict,
+            AtomProp::DbAny => self.db,
+            AtomProp::TbStrict => self.tb_strict,
+            AtomProp::TbAny => self.tb,
+            AtomProp::Ab => self.ab,
+            AtomProp::Dl => self.dl,
         }
     }
 }
 
-#[derive(Debug, Clone)]
-struct AtomPattern {
-    name: String,
-    degree: Option<usize>,
-    property: Option<String>,
-    label: Option<String>,
-    children: Vec<AtomPattern>,
-}
-
-fn parse_environment(input: &str) -> Result<Vec<AtomPattern>, String> {
-    let inner = input
-        .strip_prefix('(')
-        .and_then(|s| s.strip_suffix(')'))
-        .ok_or_else(|| format!("invalid BCC environment `{input}`"))?;
-    parse_pattern_list(inner)
-}
-
-fn parse_pattern_list(input: &str) -> Result<Vec<AtomPattern>, String> {
-    let mut out = Vec::new();
-    for part in split_top_level(input, ',') {
-        if part.is_empty() {
-            continue;
-        }
-        let (pattern, pos) = parse_atom_pattern(part, 0)?;
-        if pos != part.len() {
-            return Err(format!("unparsed BCC environment fragment `{part}`"));
-        }
-        out.push(pattern);
-    }
-    Ok(out)
-}
-
-fn parse_atom_pattern(input: &str, mut pos: usize) -> Result<(AtomPattern, usize), String> {
-    let name_start = pos;
-    while pos < input.len() && input.as_bytes()[pos].is_ascii_alphabetic() {
-        pos += 1;
-    }
-    if pos == name_start {
-        return Err(format!("expected atom name in `{input}`"));
-    }
-    let name = input[name_start..pos].to_owned();
-    let degree_start = pos;
-    while pos < input.len() && input.as_bytes()[pos].is_ascii_digit() {
-        pos += 1;
-    }
-    let degree = if pos > degree_start {
-        Some(
-            input[degree_start..pos]
-                .parse::<usize>()
-                .map_err(|e| format!("invalid atom-pattern degree in `{input}`: {e}"))?,
-        )
-    } else {
-        None
-    };
-    let mut property = None;
-    let mut label = None;
-    let mut children = Vec::new();
-    loop {
-        if pos >= input.len() {
-            break;
-        }
-        let ch = input.as_bytes()[pos] as char;
-        match ch {
-            '[' => {
-                let end = find_matching(input, pos, '[', ']')?;
-                property = Some(input[pos..=end].to_owned());
-                pos = end + 1;
-            }
-            '<' => {
-                let end = find_matching(input, pos, '<', '>')?;
-                label = Some(input[pos + 1..end].to_owned());
-                pos = end + 1;
-            }
-            '(' => {
-                let end = find_matching(input, pos, '(', ')')?;
-                children = parse_pattern_list(&input[pos + 1..end])?;
-                pos = end + 1;
-            }
-            _ => break,
-        }
-    }
-    Ok((
-        AtomPattern {
-            name,
-            degree,
-            property,
-            label,
-            children,
-        },
-        pos,
-    ))
-}
-
-fn split_top_level(input: &str, sep: char) -> Vec<&str> {
-    let mut out = Vec::new();
-    let mut start = 0;
-    let mut depth = 0_i32;
-    for (i, ch) in input.char_indices() {
-        match ch {
-            '(' | '[' | '<' => depth += 1,
-            ')' | ']' | '>' => depth -= 1,
-            _ if ch == sep && depth == 0 => {
-                out.push(input[start..i].trim());
-                start = i + ch.len_utf8();
-            }
-            _ => {}
-        }
-    }
-    out.push(input[start..].trim());
-    out
-}
-
-fn find_matching(input: &str, start: usize, open: char, close: char) -> Result<usize, String> {
-    let mut depth = 0_i32;
-    for (offset, ch) in input[start..].char_indices() {
-        if ch == open {
-            depth += 1;
-        } else if ch == close {
-            depth -= 1;
-            if depth == 0 {
-                return Ok(start + offset);
-            }
-        }
-    }
-    Err(format!("unmatched `{open}` in `{input}`"))
-}
-
-fn bond_type_matches_property(bond_type: i32, prop: &str) -> bool {
+/// Does a BCC bond type satisfy a bond-valued [`AtomProp`]?
+///
+/// Ring and aromaticity properties (`RG*`, `AR*`, `NR`) are atom-valued, not
+/// bond-valued, so they never constrain a bond.
+fn bond_type_matches_property(bond_type: i32, prop: AtomProp) -> bool {
     match prop {
-        "SB" => matches!(bond_type, 1 | 9),
-        "sb" => matches!(bond_type, 1 | 7 | 9 | 10),
-        "DB" => matches!(bond_type, 2 | 9),
-        "db" => matches!(bond_type, 2 | 8 | 9 | 10),
-        "TB" | "tb" => bond_type == 3,
-        "DL" => bond_type == 9,
-        "AB" => matches!(bond_type, 7 | 8 | 10),
-        _ => false,
+        AtomProp::SbStrict => matches!(bond_type, 1 | 9),
+        AtomProp::SbAny => matches!(bond_type, 1 | 7 | 9 | 10),
+        AtomProp::DbStrict => matches!(bond_type, 2 | 9),
+        AtomProp::DbAny => matches!(bond_type, 2 | 8 | 9 | 10),
+        AtomProp::TbStrict | AtomProp::TbAny => bond_type == 3,
+        AtomProp::Dl => bond_type == 9,
+        AtomProp::Ab => matches!(bond_type, 7 | 8 | 10),
+        AtomProp::Rg
+        | AtomProp::Rg3
+        | AtomProp::Rg4
+        | AtomProp::Rg5
+        | AtomProp::Rg6
+        | AtomProp::Rg7
+        | AtomProp::Rg8
+        | AtomProp::Rg9
+        | AtomProp::Rg10
+        | AtomProp::Nr
+        | AtomProp::Ar1
+        | AtomProp::Ar2
+        | AtomProp::Ar3
+        | AtomProp::Ar4
+        | AtomProp::Ar5 => false,
     }
 }
 
-fn environment_bond_type_matches(bond_type: i32, prop: &str) -> bool {
-    match prop {
-        "any" | "ANY" | "Any" => true,
-        "SB" | "sb" => bond_type_matches_property(bond_type, "sb"),
-        "DB" | "db" => bond_type_matches_property(bond_type, "db"),
-        "TB" | "tb" => bond_type_matches_property(bond_type, "tb"),
-        "AB" | "ab" => bond_type_matches_property(bond_type, "AB"),
-        _ => false,
+/// Does a BCC bond type satisfy an `a:b:TYPE` environment-bond constraint?
+fn environment_bond_type_matches(bond_type: i32, bond: EnvBondType) -> bool {
+    match bond {
+        EnvBondType::Any => true,
+        EnvBondType::Single => bond_type_matches_property(bond_type, AtomProp::SbAny),
+        EnvBondType::Double => bond_type_matches_property(bond_type, AtomProp::DbAny),
+        EnvBondType::Triple => bond_type_matches_property(bond_type, AtomProp::TbAny),
+        EnvBondType::Aromatic => bond_type_matches_property(bond_type, AtomProp::Ab),
     }
 }
 
@@ -982,46 +695,19 @@ impl BCCCorrectionTable {
         Self::default()
     }
 
-    /// Parse a `BCCPARM*.DAT` table.
+    /// Build the table for a parameter set from its compile-time rows.
     ///
-    /// `CORR` rows become explicit aliases; ordinary rows become corrections.
-    pub fn parse_str(input: &str) -> Result<Self, String> {
+    /// Fallible only to keep the call shape of the former text-parsing
+    /// constructor; the tables are typed Rust data, so this cannot fail.
+    pub fn parameter_set(model: BccParameterSet) -> Result<Self, String> {
         let mut table = Self::new();
-        for (lineno, raw) in input.lines().enumerate() {
-            let line = raw.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-            let fields: Vec<_> = line.split_whitespace().collect();
-            if fields[0].eq_ignore_ascii_case("CORR") {
-                if fields.len() < 3 {
-                    return Err(format!(
-                        "invalid BCC CORR row at line {}: {raw}",
-                        lineno + 1
-                    ));
-                }
-                table = table.alias(fields[1], fields[2]);
-                continue;
-            }
-            if fields.len() < 5 {
-                return Err(format!(
-                    "invalid BCC parameter row at line {}: {raw}",
-                    lineno + 1
-                ));
-            }
-            let bond_type = fields[3]
-                .parse::<i32>()
-                .map_err(|e| format!("invalid BCC bond type at line {}: {e}", lineno + 1))?;
-            let delta = fields[4]
-                .parse::<f64>()
-                .map_err(|e| format!("invalid BCC delta at line {}: {e}", lineno + 1))?;
-            table = table.insert_bond_type(fields[1], fields[2], bond_type, delta);
+        for row in model.corrections() {
+            table = table.insert_bond_type(row.left, row.right, row.bond_type, row.delta);
+        }
+        for alias in model.aliases() {
+            table = table.alias(alias.atom_type, alias.reference);
         }
         Ok(table)
-    }
-
-    pub fn parameter_set(model: BccParameterSet) -> Result<Self, String> {
-        Self::parse_str(model.embedded_table())
     }
 
     pub fn bcc() -> Result<Self, String> {

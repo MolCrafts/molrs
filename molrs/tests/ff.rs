@@ -18,6 +18,8 @@ mod forcefield;
 mod forcefield_meta;
 #[path = "ff/frcmod.rs"]
 mod frcmod;
+#[path = "ff/params.rs"]
+mod params;
 #[path = "ff/readers/lammps.rs"]
 mod readers_lammps;
 #[path = "ff/readers/opls.rs"]

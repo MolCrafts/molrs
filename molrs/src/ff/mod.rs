@@ -4,6 +4,7 @@ pub mod forcefield;
 pub mod forcefield_meta;
 pub mod frcmod;
 pub mod mmff;
+pub mod params;
 pub mod potential;
 pub mod typifier;
 
