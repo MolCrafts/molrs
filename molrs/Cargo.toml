@@ -40,7 +40,7 @@ full = ["io", "compute", "smiles", "ff", "conformer", "signal", "voronoi"]
 # Sub-system modules (each gates its module + its unique optional deps).
 io        = ["dep:flate2", "dep:once_cell"]
 # `smiles` lives inside the `io` module.
-smiles    = ["io", "dep:petgraph"]
+smiles    = ["io"]
 signal    = ["dep:rustfft"]
 # `compute` depends on the `signal` module (gets rustfft via it).
 compute   = ["signal", "dep:rand"]
@@ -80,7 +80,6 @@ zarrs          = { version = "0.23", optional = true, default-features = false, 
 ndarray-linalg = { version = "0.18", optional = true, default-features = true }                     # blas
 flate2         = { version = "1.1", optional = true, features = ["rust_backend"] }                  # io (compressed formats)
 once_cell      = { version = "1.21", optional = true }                                              # io + conformer
-petgraph       = { version = "0.8", optional = true }                                               # smiles (VF2)
 rustfft        = { version = "6", optional = true }                                                 # signal + ff + compute
 roxmltree      = { version = "0.21", optional = true }                                              # ff (XML force-field readers)
 rand           = { version = "0.10", optional = true }                                              # compute + conformer

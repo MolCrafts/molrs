@@ -114,7 +114,7 @@ standalone repo `MolCrafts/molpack` (crates.io: `molcrafts-molpack`, PyPI:
 All on the single `molcrafts-molrs` crate (`molrs/Cargo.toml`):
 
 - Sub-system modules: `io`, `signal`, `compute` (→ `signal`), `ff`,
-  `conformer` (→ `ff`), `smiles` (→ `io`, pulls in `petgraph`); `full` enables
+  `conformer` (→ `ff`), `smiles` (→ `io`); `full` enables
   all of them. Each gates its module **and** its unique optional deps, so a build
   with a sub-system off does not compile that sub-system's dependency.
 - Core knobs: `rayon` (default; parallel neighbor lists / potentials),
@@ -144,7 +144,7 @@ Key type aliases: `F3 = Array1<F>`, `F3x3 = Array2<F>`, `FN = Array1<F>`, `FNx3 
 
 ### MolGraph (molecular topology)
 
-Graph-based molecular structure with atoms, bonds, stereochemistry, ring detection. Built on generational arenas (`slotmap`) with kind-tagged, multi-arity relations over a `smallvec`-backed adjacency map. (`molrs/src/core/system/molgraph.rs`). The connectivity graph is `Topology` (`molrs/src/core/system/topology.rs`), a native adjacency structure (`HashMap`/`VecDeque`, no petgraph) used for connectivity queries (connected components, BFS distances, angle/dihedral enumeration). petgraph is pulled in only by the SMARTS VF2 matcher under the `smiles` feature (`molrs/src/io/smiles/`).
+Graph-based molecular structure with atoms, bonds, stereochemistry, ring detection. Built on generational arenas (`slotmap`) with kind-tagged, multi-arity relations over a `smallvec`-backed adjacency map. (`molrs/src/core/system/molgraph.rs`). The connectivity graph is `Topology` (`molrs/src/core/system/topology.rs`), a native adjacency structure (`HashMap`/`VecDeque`, no petgraph) used for connectivity queries (connected components, BFS distances, angle/dihedral enumeration). SMARTS lives in `molrs/src/core/chem/smarts/` (moving to `molrs/src/perceive/smarts/`), and its subgraph-isomorphism matcher is hand-rolled (a backtracking VF2-style port of RDKit's `SubstructMatch.cpp`) — molrs has **no petgraph dependency at all**.
 
 ## Trait-Based Extensibility
 

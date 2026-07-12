@@ -600,7 +600,7 @@ impl PyAtomistic {
     /// Perceive angle and dihedral relations from the bond graph.
     ///
     /// Angles are 2-edge paths ``i-j-k`` and proper dihedrals 3-edge paths
-    /// ``i-j-k-l`` over the bonds (graph-theory via the petgraph-backed
+    /// ``i-j-k-l`` over the bonds (graph-theory via the native `Topology`-backed
     /// ``Topology``). Idempotent; ``clear_existing`` wipes existing
     /// angle/dihedral relations first. Returns ``(n_angles_added,
     /// n_dihedrals_added)``.

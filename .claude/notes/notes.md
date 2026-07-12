@@ -31,7 +31,29 @@ AM1-BCC charges authoritatively; reimplementing it in molrs is not worth the
 maintenance + correctness burden.
 **Status:** provisional
 
-## 2026-06-12 — petgraph: removed from molrs-core, KEPT in molrs-io (VF2)
+## 2026-07-12 — petgraph is GONE: molrs has zero petgraph dependency
+**Decision:** petgraph is removed entirely (`molrs/Cargo.toml`: dropped the
+`petgraph` optional dep and `dep:petgraph` from the `smiles` feature). molrs now
+has **no petgraph dependency at all**.
+**Why:** It had become a **dead dependency**. The 2026-06-12 note below kept it on
+the premise that "petgraph does real work: `subgraph_isomorphisms_iter` (VF2) powers
+SMARTS substructure matching". That premise is **false in the current code**: the
+SMARTS matcher (`core/chem/smarts/matcher.rs`, moving to `perceive/smarts/`) is a
+**hand-rolled** backtracking VF2-style matcher, a semantics-only port of RDKit's
+`SubstructMatch.cpp`. At some point after that note the VF2 was reimplemented and
+the dep was simply left behind. Verified before removal: `use petgraph` / `petgraph::`
+appear **zero** times in every `.rs` across molrs, molrs-python, molrs-cxxapi,
+molrs-ffi, molrs-wasm, molrs-capi, tests, benches and examples — the only hits are
+comments *asserting petgraph is not used*, plus a grep-gate test
+(`tests/compute/hbond.rs::hbond_source_has_no_petgraph`). `cargo check --features smiles`
+passes without it; `cargo tree -i petgraph` no longer resolves.
+Also corrected the two CLAUDE.md claims this invalidated (the `smiles` feature no
+longer "pulls in petgraph"; SMARTS lives in `core/chem/smarts/`, not `io/smiles/`).
+**Status:** stable
+**Supersedes:** the 2026-06-12 decision below, whose "do NOT remove it" rests on the
+now-false VF2 premise. Kept for history.
+
+## 2026-06-12 — petgraph: removed from molrs-core, KEPT in molrs-io (VF2) — SUPERSEDED 2026-07-12
 **Decision:** `molrs-core` no longer depends on petgraph (spec `core-drop-petgraph`,
 commit eedc1e6): `Topology`/`topo_distances`/`chem::rings` run on native MolGraph
 adjacency. `molrs-io` **keeps** petgraph (feature-gated behind `smiles`) — do NOT
@@ -48,7 +70,8 @@ MIT/Apache, and only pulled when `smiles` is enabled. Moving VF2 into molgraph i
 wrong layer (core uses no VF2; query semantics don't fit the domain-agnostic graph).
 Revisit ONLY under a hard constraint (WASM size budget, zero-dep policy, petgraph
 deprecation).
-**Status:** provisional
+**Status:** SUPERSEDED — the VF2 was later hand-rolled (RDKit `SubstructMatch.cpp`
+port) and the dep was left behind dead. See the 2026-07-12 entry above.
 
 ## 2026-05-28 — BLAS/LAPACK backend selection is the binary's job, not molrs's
 
