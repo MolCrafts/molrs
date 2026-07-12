@@ -2,6 +2,8 @@
 
 #[path = "am1bcc.rs"]
 mod am1bcc;
+#[path = "am1bcc_antechamber.rs"]
+mod am1bcc_antechamber;
 
 #[path = "estimate.rs"]
 mod estimate;
