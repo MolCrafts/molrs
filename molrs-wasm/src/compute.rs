@@ -2089,46 +2089,35 @@ struct ComputeCatalogEntry {
     params: Vec<ParamSpec>,
 }
 
-const CATEGORIES: [CatalogCategory; 18] = [
+/// Menu categories — freud top-level analysis modules first, then molrs
+/// extensions. Not 1:1 with every Rust `compute/` folder.
+///
+/// freud mappings:
+/// - `density` — g(r) (`freud.density.RDF`) + Local/Gaussian density, …
+/// - `locality` — Voronoi (`freud.locality.Voronoi`); neighbor queries are infra
+/// - `msd` / `cluster` / `order` / `environment` / `diffraction` / `pmft` — 1:1
+///
+/// molrs extensions (no freud top-level):
+/// - `transport` — VACF/diffusion/conductivity **and** van Hove / pair persistence
+/// - `spectroscopy` — IR/Raman/… **and** static dielectric constant
+/// - `distribution` / `hbond` / `shape` / `fit` / `ml`
+const CATEGORIES: [CatalogCategory; 15] = [
+    // --- freud core ---------------------------------------------------------
     CatalogCategory {
-        id: "rdf",
-        label: "RDF",
+        id: "density",
+        label: "Density",
+    },
+    CatalogCategory {
+        id: "locality",
+        label: "Locality",
     },
     CatalogCategory {
         id: "msd",
         label: "MSD",
     },
     CatalogCategory {
-        id: "transport",
-        label: "Transport",
-    },
-    CatalogCategory {
-        id: "dynamics",
-        label: "Dynamics",
-    },
-    CatalogCategory {
-        id: "spectroscopy",
-        label: "Spectroscopy",
-    },
-    CatalogCategory {
-        id: "dielectric",
-        label: "Dielectric",
-    },
-    CatalogCategory {
-        id: "fit",
-        label: "Fit",
-    },
-    CatalogCategory {
         id: "cluster",
         label: "Cluster",
-    },
-    CatalogCategory {
-        id: "shape",
-        label: "Shape",
-    },
-    CatalogCategory {
-        id: "density",
-        label: "Density",
     },
     CatalogCategory {
         id: "order",
@@ -2143,20 +2132,33 @@ const CATEGORIES: [CatalogCategory; 18] = [
         label: "Diffraction",
     },
     CatalogCategory {
-        id: "distribution",
-        label: "Distribution",
-    },
-    CatalogCategory {
         id: "pmft",
         label: "PMFT",
+    },
+    // --- molrs extensions ---------------------------------------------------
+    CatalogCategory {
+        id: "transport",
+        label: "Transport",
+    },
+    CatalogCategory {
+        id: "spectroscopy",
+        label: "Spectroscopy",
     },
     CatalogCategory {
         id: "hbond",
         label: "Hydrogen Bonds",
     },
     CatalogCategory {
-        id: "voronoi",
-        label: "Voronoi",
+        id: "distribution",
+        label: "Distribution",
+    },
+    CatalogCategory {
+        id: "shape",
+        label: "Shape",
+    },
+    CatalogCategory {
+        id: "fit",
+        label: "Fit",
     },
     CatalogCategory {
         id: "ml",
@@ -2202,10 +2204,12 @@ fn entry(
 #[wasm_bindgen(js_name = molrsComputeCatalog)]
 pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
     let analyses = vec![
-        // --- rdf ------------------------------------------------------------
+        // --- density (freud.density: RDF + local/gaussian density, …) -------
+        // Analysis id keeps the `rdf.*` prefix for stable clients; the menu
+        // category is `density` to match freud.density.RDF.
         entry(
             "rdf.radial_distribution",
-            "rdf",
+            "density",
             "Radial distribution g(r)",
             "RDF",
             "frameNeighbors",
@@ -2312,7 +2316,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
         // --- dynamics -------------------------------------------------------
         entry(
             "dynamics.van_hove_function",
-            "dynamics",
+            "transport",
             "Van Hove function",
             "WasmVanHove",
             "accumulate",
@@ -2327,7 +2331,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
         ),
         entry(
             "dynamics.pair_persistence",
-            "dynamics",
+            "transport",
             "Pair persistence",
             "WasmPairPersistence",
             "series",
@@ -2447,7 +2451,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
         // --- dielectric -----------------------------------------------------
         entry(
             "dielectric.static_dielectric_constant",
-            "dielectric",
+            "spectroscopy",
             "Static dielectric constant",
             "WasmStaticDielectric",
             "series",
@@ -2526,7 +2530,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
         // --- shape ----------------------------------------------------------
         entry(
             "shape.cluster_properties",
-            "shape",
+            "cluster",
             "Radius of gyration",
             "RadiusOfGyration",
             "frameClusters",
@@ -2985,10 +2989,11 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             &["hbondEdges"],
             vec![],
         ),
-        // --- voronoi --------------------------------------------------------
+        // --- locality (freud.locality: Voronoi; neighbor queries are infra) --
+        // Analysis ids keep the `voronoi.*` prefix for stable clients.
         entry(
             "voronoi.radical_voronoi",
-            "voronoi",
+            "locality",
             "Radical Voronoi",
             "WasmRadicalVoronoi",
             "frameRadii",
@@ -2998,7 +3003,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
         ),
         entry(
             "voronoi.domain_analysis",
-            "voronoi",
+            "locality",
             "Domain analysis",
             "WasmVoronoiDomainAnalysis",
             "frameRadii",
@@ -3016,7 +3021,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
         ),
         entry(
             "voronoi.void_analysis",
-            "voronoi",
+            "locality",
             "Void analysis",
             "WasmVoronoiVoidAnalysis",
             "frameRadii",
@@ -3055,7 +3060,9 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
     ];
 
     js_value(&ComputeCatalog {
-        version: 1,
+        // v3: freud core order + molrs extensions — dynamics→transport,
+        // static dielectric→spectroscopy; cluster_properties→cluster.
+        version: 3,
         categories: &CATEGORIES,
         analyses,
     })
