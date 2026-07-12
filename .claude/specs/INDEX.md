@@ -4,7 +4,6 @@ One row per spec produced by `/mol:spec`. Newest on top.
 
 | Date | Slug | Status | Owner crate(s) | Summary |
 |---|---|---|---|---|
-| 2026-07-12 | chem-perceive-03-bondtype | approved | molcrafts-molrs | `Perceive::find_bond_types`：芳香 7/8 提升边界（须同处全芳香 5/6 元环）+ 离域 9 的三条局部规则 + 10 作为未解析前身。修 acetate 羧酸氧对称性破缺(0.20 e)与 nitro/pyridine/imidazole 硬报错。实测 7/8/10 增量恒等 ⇒ Kekulé 交替对电荷不可见。链 3/13。 |
 | 2026-07-12 | chem-perceive-04-equivalence | approved | molcrafts-molrs | `Perceive::find_equivalence_classes`：实现 antechamber 的 path-score 算法（式 I），**不是**自同构轨道——score 只依赖 (L, ΣZ) 故对路径顺序盲视，轨道是其真子集，用 WL/Morgan 必然偏离 oracle。修构象依赖/对称性破缺电荷（20/37 分子，最大 0.036 e）。链 4/13。 |
 | 2026-07-12 | chem-perceive-05-atd-typifier | approved | molcrafts-molrs | 把 ATD/WILDATOM 规则引擎从 am1bcc.rs 抽出为参数化 `AtdTypifier`（一个引擎 + N 张生成表），BCC/ABCG2/GAS 原子类型跑绿。硬依赖 03——pyridine/imidazole 的 `missing BCC correction 17|25|10` 其实是原子类型 bug 的伪装。链 5/13。 |
 | 2026-07-12 | chem-perceive-06-gaff-types | approved | molcrafts-molrs | 同一 AtdTypifier 再挂 GAFF/GAFF2/AMBER/SYBYL 四张 .DEF（引擎零改动，纯加表），各自 37/37 对 `antechamber -at <x>`。**显式推翻 2026-06-19 的「GAFF 只走 AmberTools」决定**（情况已变：ATD 引擎已存在且验证过），用户已授权。链 6/13。 |
