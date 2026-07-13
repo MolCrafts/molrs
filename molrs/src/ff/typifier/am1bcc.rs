@@ -142,9 +142,10 @@ impl BCCAtomTypifier {
     /// [`Perceive::find_bond_types`](molrs::perceive::Perceive::find_bond_types)),
     /// never read off the input: the atom-type rules count `sb`/`db`/`ab`/`DL`
     /// bonds, so they need the delocalized (9) and aromatic (7/8) types that a bond
-    /// *order* cannot express — and an input `type` may be the unresolved aromatic
-    /// precursor (10), which must be resolved, not trusted. To apply corrections
-    /// with types of your own, drive [`BCCCorrector`] directly.
+    /// *order* cannot express — and a supplied
+    /// [`BCC_BOND_TYPE`](molrs::perceive::bond_type::BCC_BOND_TYPE) may be the
+    /// unresolved aromatic precursor (10), which must be resolved, not trusted. To
+    /// apply corrections with types of your own, drive [`BCCCorrector`] directly.
     ///
     /// # Arguments
     ///
@@ -153,7 +154,9 @@ impl BCCAtomTypifier {
     /// # Returns
     ///
     /// A clone of `mol` whose atoms carry BCC codes in [`keys::TYPE`] and whose
-    /// bonds carry perceived antechamber bond types.
+    /// bonds carry perceived antechamber bond types in
+    /// [`BCC_BOND_TYPE`](molrs::perceive::bond_type::BCC_BOND_TYPE) — the bond's own
+    /// [`keys::TYPE`], the caller's force-field label, is left untouched.
     ///
     /// # Errors
     ///
@@ -524,8 +527,8 @@ impl BCCCorrector {
     /// # Arguments
     ///
     /// * `mol` — a molecule carrying BCC atom types ([`keys::TYPE`]), BCC bond types
-    ///   and AM1 base charges ([`keys::CHARGE`]). Its charges are replaced by the
-    ///   corrected ones.
+    ///   ([`BCC_BOND_TYPE`](molrs::perceive::bond_type::BCC_BOND_TYPE)) and AM1 base
+    ///   charges ([`keys::CHARGE`]). Its charges are replaced by the corrected ones.
     ///
     /// # Errors
     ///

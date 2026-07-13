@@ -17,6 +17,7 @@
 //! only.
 
 use molrs::perceive::Perceive;
+use molrs::perceive::bond_type::BCC_BOND_TYPE;
 use molrs::store::keys;
 use molrs::{AtomId, Atomistic, BondId};
 
@@ -52,7 +53,7 @@ fn bond_type(g: &Atomistic, a: AtomId, b: AtomId) -> i32 {
     g.get_bond(bid)
         .expect("bond is live")
         .props
-        .get(keys::TYPE)
+        .get(BCC_BOND_TYPE)
         .and_then(|v| v.as_f64())
         .expect("perceived BCC bond type") as i32
 }
@@ -72,7 +73,7 @@ fn types_by_pair(g: &Atomistic, ids: &[AtomId]) -> Vec<((usize, usize), i32)> {
             let (a, b) = (index[&bond.nodes[0]], index[&bond.nodes[1]]);
             let ty = bond
                 .props
-                .get(keys::TYPE)
+                .get(BCC_BOND_TYPE)
                 .and_then(|v| v.as_f64())
                 .unwrap_or_else(|| panic!("bond {bid:?} has no perceived type"))
                 as i32;
@@ -183,7 +184,7 @@ fn benzene_ring_bonds_are_aromatic_types_and_alternate() {
             .any(|a| !ring.contains(a));
         if is_ch {
             assert_eq!(
-                bond.props.get(keys::TYPE).and_then(|v| v.as_f64()),
+                bond.props.get(BCC_BOND_TYPE).and_then(|v| v.as_f64()),
                 Some(1.0)
             );
         }
@@ -395,7 +396,11 @@ fn type_11_is_unreachable() {
     for g in &molecules {
         let typed = Perceive::new().find_bond_types(g);
         for (bid, bond) in typed.bonds() {
-            let t = bond.props.get(keys::TYPE).and_then(|v| v.as_f64()).unwrap() as i32;
+            let t = bond
+                .props
+                .get(BCC_BOND_TYPE)
+                .and_then(|v| v.as_f64())
+                .unwrap() as i32;
             assert!(
                 matches!(t, 1 | 2 | 3 | 6 | 7 | 8 | 9),
                 "bond {bid:?} got type {t}, which is outside the emitted alphabet"
@@ -417,7 +422,8 @@ fn aromatic_type_10_input_is_resolved_to_7_or_8() {
         let bond = g.get_bond(bid).expect("bond");
         let ring_bond = ring.contains(&bond.nodes[0]) && ring.contains(&bond.nodes[1]);
         if ring_bond {
-            g.set_bond_prop(bid, keys::TYPE, 10).expect("set type 10");
+            g.set_bond_prop(bid, BCC_BOND_TYPE, 10)
+                .expect("set type 10");
         }
     }
 
@@ -549,14 +555,14 @@ fn find_bond_types_does_not_touch_the_input() {
     let (g, ids) = acetate();
     let before: Vec<Option<f64>> = g
         .bonds()
-        .map(|(_, b)| b.props.get(keys::TYPE).and_then(|v| v.as_f64()))
+        .map(|(_, b)| b.props.get(BCC_BOND_TYPE).and_then(|v| v.as_f64()))
         .collect();
 
     let typed = Perceive::new().find_bond_types(&g);
 
     let after: Vec<Option<f64>> = g
         .bonds()
-        .map(|(_, b)| b.props.get(keys::TYPE).and_then(|v| v.as_f64()))
+        .map(|(_, b)| b.props.get(BCC_BOND_TYPE).and_then(|v| v.as_f64()))
         .collect();
     assert_eq!(before, after, "the input graph was mutated");
     assert!(before.iter().all(Option::is_none));

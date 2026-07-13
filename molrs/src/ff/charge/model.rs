@@ -153,12 +153,18 @@ pub(super) fn equivalence_average(mol: &Atomistic, qm: &[f64]) -> Result<Vec<f64
 /// A copy of `mol` with both `type` columns removed.
 ///
 /// What a model perceives from: the caller's atom types (GAFF `c3`, OPLS `opls_135`)
-/// and bond types (LAMMPS bond-type ids) are *their* labels, in the same props the
-/// model's own perception uses. Perception reads a bond's `type` as an aromaticity
-/// hint, so a LAMMPS molecule whose bond-type id happened to be 7 would be perceived
-/// as aromatic; stripping the columns first makes the model's answer a function of
-/// the molecule alone, which is what
-/// `bcc::correct_ignores_the_atom_types_the_molecule_arrives_with` asserts to the bit.
+/// and bond types (LAMMPS bond-type ids) are *their* labels, and a model's answer
+/// must be a function of the molecule alone — which is what
+/// `bcc::correct_ignores_the_{atom,bond}_types_the_molecule_arrives_with` assert to
+/// the bit.
+///
+/// The **atom** column is the load-bearing one: the ATD engine labels atoms *into*
+/// [`keys::TYPE`], so a molecule arriving with an incompatible column there (LAMMPS
+/// integer atom-type ids, say) would refuse the write. The **bond** column is
+/// stripped as defence in depth only: perception now keeps its perceived bond types
+/// in their own [`BCC_BOND_TYPE`](molrs::perceive::bond_type::BCC_BOND_TYPE) prop and
+/// neither reads nor writes a bond's `type`, so nothing downstream can be steered by
+/// a caller's bond labels even when they are left in place.
 ///
 /// Shared by every model that types a molecule for itself ([`BccModel`] against
 /// `ATOMTYPE_BCC.DEF`, [`GasteigerModel`] against `ATOMTYPE_GAS.DEF`). One copy: a

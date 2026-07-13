@@ -83,6 +83,22 @@
 //! well-behaved cases are unmoved (nitrite stays 6/6, nitromethane stays 9/9,
 //! nitrobenzene 9/9, TMAO 9); the only outputs that move are the ones antechamber
 //! itself cannot reproduce under a permutation of its own input.
+//!
+//! # The perceived type is a *perceived fact*, and lives in its own key
+//!
+//! The type is written to [`BCC_BOND_TYPE`] — never to the bond's [`keys::TYPE`],
+//! which belongs to the **caller**: it is where a bond's force-field type *name*
+//! (`c3-c3`) or a reader's LAMMPS bond-type id lives, and it is what `to_frame` puts
+//! in the `bonds` block's `type` column for every bonded kernel to resolve its
+//! parameters by. Two facts, two keys — a
+//! component column is typed by its first write and molrs (deliberately) refuses to
+//! coerce it, so an `i32` BCC code sitting in `type` makes the molecule unusable for
+//! the force field that must later put a `String` name there.
+//!
+//! This is the same rule the charge models keep (`ff::charge`, ac-004): perception
+//! neither reads nor writes `keys::TYPE`, so a molecule's own labels — GAFF names,
+//! hostile LAMMPS ids, nothing at all — survive perception **byte-identical** and
+//! cannot steer its answer.
 
 use std::collections::HashMap;
 
@@ -92,6 +108,18 @@ use crate::store::keys;
 use crate::system::atomistic::{AtomId, Atomistic, BondId};
 use crate::system::element::Element;
 use crate::system::molgraph::PropValue;
+
+/// Bond prop holding the perceived BCC bond type, as an `i32` in
+/// `{1, 2, 3, 6, 7, 8, 9}`.
+///
+/// Written by [`find_bond_types`] and read by everything keyed on the antechamber
+/// alphabet — the `ATOMTYPE_*.DEF` rule engine
+/// ([`AtdTypifier`](crate::ff::typifier::AtdTypifier)) and the `BCCPARM.DAT`
+/// corrector ([`BCCCorrector`](crate::ff::typifier::am1bcc::BCCCorrector)).
+///
+/// Deliberately **not** [`keys::TYPE`]: that key is the caller's, and holds the
+/// force-field type *name*. See the [module docs](self).
+pub const BCC_BOND_TYPE: &str = "bcc_bond_type";
 
 /// BCC bond type: a plain single bond.
 const SINGLE: i32 = 1;
@@ -122,21 +150,22 @@ const FORBIDDEN: u32 = 1000;
 /// Perceive the BCC bond type of every bond.
 ///
 /// Graph in / graph out and **non-mutating**: `mol` is cloned, the clone's bonds
-/// receive a [`keys::TYPE`] prop holding the perceived type, and the clone is
+/// receive a [`BCC_BOND_TYPE`] prop holding the perceived type, and the clone is
 /// returned. Bond `order` is *not* rewritten — the perceived Kekulé structure is
-/// consumed internally and does not leak into the graph.
+/// consumed internally and does not leak into the graph. Neither is the bond's
+/// [`keys::TYPE`], which is the caller's (see the [module docs](self)).
 ///
-/// The type is always (re)derived from structure: a `type` prop already on the
-/// input is read only as an aromaticity *hint* (7, 8 and 10 mark an aromatic
+/// The type is always (re)derived from structure: a [`BCC_BOND_TYPE`] already on
+/// the input is read only as an aromaticity *hint* (7, 8 and 10 mark an aromatic
 /// bond), never trusted as an answer. That is what resolves the unresolved
 /// aromatic precursor, type 10, into 7 or 8. To bypass perception entirely and
 /// supply your own types, drive [`crate::ff::typifier::am1bcc::BCCCorrector`]
 /// directly.
 ///
 /// Aromaticity is taken from the graph when it carries any aromatic marking
-/// (a truthy `is_aromatic` bond prop, an `order` of 1.5, or a `type` of 7/8/10);
-/// when it carries none, [`perceive_aromaticity`] is run on the clone to supply
-/// it.
+/// (a truthy `is_aromatic` bond prop, an `order` of 1.5, or a [`BCC_BOND_TYPE`] of
+/// 7/8/10); when it carries none, [`perceive_aromaticity`] is run on the clone to
+/// supply it.
 ///
 /// # Arguments
 ///
@@ -144,7 +173,7 @@ const FORBIDDEN: u32 = 1000;
 ///
 /// # Returns
 ///
-/// A clone of `mol` whose every bond carries a [`keys::TYPE`] prop in
+/// A clone of `mol` whose every bond carries a [`BCC_BOND_TYPE`] prop in
 /// `{1, 2, 3, 6, 7, 8, 9}`.
 ///
 /// # Determinism
@@ -157,6 +186,7 @@ const FORBIDDEN: u32 = 1000;
 /// ```
 /// use molrs::Atomistic;
 /// use molrs::perceive::Perceive;
+/// use molrs::perceive::bond_type::BCC_BOND_TYPE;
 /// use molrs::store::keys;
 ///
 /// // Acetate: both C–O bonds are delocalized, so both oxygens must correct
@@ -172,9 +202,45 @@ const FORBIDDEN: u32 = 1000;
 /// mol.add_bond(c, me).unwrap();
 ///
 /// let typed = Perceive::new().find_bond_types(&mol);
-/// let bond_type = |b| typed.get_bond(b).unwrap().props.get(keys::TYPE).unwrap().as_f64();
+/// let bond_type = |b| typed.get_bond(b).unwrap().props.get(BCC_BOND_TYPE).unwrap().as_f64();
 /// assert_eq!(bond_type(b1), Some(9.0)); // was a double
 /// assert_eq!(bond_type(b2), Some(9.0)); // was a single
+/// ```
+///
+/// The caller's own bond labels are untouched — perception neither reads nor
+/// writes [`keys::TYPE`], so a molecule already carrying force-field bond-type
+/// *names* (a `String` column an `i32` could never share) survives it unchanged
+/// and is still usable to build a force field:
+///
+/// ```
+/// use molrs::Atomistic;
+/// use molrs::perceive::Perceive;
+/// use molrs::perceive::bond_type::BCC_BOND_TYPE;
+/// use molrs::store::keys;
+/// use molrs::system::molgraph::PropValue;
+///
+/// let mut mol = Atomistic::new();
+/// let c = mol.add_atom_xyz("C", 0.86, 0.12, 0.13);
+/// let o1 = mol.add_atom_xyz("O", 1.18, 1.25, 0.59);
+/// let o2 = mol.add_atom_xyz("O", 1.59, -0.86, -0.19);
+/// let me = mol.add_atom_xyz("C", -0.63, -0.09, -0.09);
+/// let b1 = mol.add_bond(c, o1).unwrap();
+/// mol.set_bond_prop(b1, keys::ORDER, 2.0).unwrap();
+/// mol.set_bond_prop(b1, keys::TYPE, "c-o").unwrap(); // the caller's FF bond type NAME
+/// let b2 = mol.add_bond(c, o2).unwrap();
+/// mol.set_bond_prop(b2, keys::TYPE, "c-o").unwrap();
+/// let b3 = mol.add_bond(c, me).unwrap();
+/// mol.set_bond_prop(b3, keys::TYPE, "c-c3").unwrap();
+///
+/// let typed = Perceive::new().find_bond_types(&mol);
+/// let props = |b| typed.get_bond(b).unwrap().props;
+/// // The perceived fact went to its own key …
+/// assert_eq!(props(b1).get(BCC_BOND_TYPE).unwrap().as_f64(), Some(9.0));
+/// assert_eq!(props(b2).get(BCC_BOND_TYPE).unwrap().as_f64(), Some(9.0));
+/// // … and the caller's name came through byte-identical.
+/// let name = PropValue::Str("c-o".to_owned());
+/// assert_eq!(props(b1).get(keys::TYPE), Some(&name));
+/// assert_eq!(props(b2).get(keys::TYPE), Some(&name));
 /// ```
 pub fn find_bond_types(mol: &Atomistic) -> Atomistic {
     let mut out = mol.clone();
@@ -189,7 +255,7 @@ pub fn find_bond_types(mol: &Atomistic) -> Atomistic {
     let types = graph.perceive();
 
     for (bid, ty) in graph.bond_ids.iter().zip(types) {
-        let _ = out.set_bond_prop(*bid, keys::TYPE, ty);
+        let _ = out.set_bond_prop(*bid, BCC_BOND_TYPE, ty);
     }
     out
 }
@@ -200,22 +266,30 @@ pub fn find_bond_types(mol: &Atomistic) -> Atomistic {
 /// aromatic markings keeps them, so a caller's own aromaticity model wins over
 /// ours.
 fn has_aromatic_marking(mol: &Atomistic) -> bool {
-    mol.bonds().any(|(_, bond)| {
-        prop_truthy(bond.props.get(IS_AROMATIC))
-            || bond
-                .props
-                .get(keys::ORDER)
-                .and_then(PropValue::as_f64)
-                .is_some_and(|o| (o - 1.5).abs() < ORDER_EPS)
-            || bond
-                .props
-                .get(keys::TYPE)
-                .and_then(PropValue::as_f64)
-                .is_some_and(|t| {
-                    let t = t.round() as i32;
-                    matches!(t, AROMATIC_SINGLE | AROMATIC_DOUBLE | AROMATIC_UNRESOLVED)
-                })
-    })
+    mol.bonds().any(|(_, bond)| aromatic_marking(&bond.props))
+}
+
+/// Is this bond marked aromatic by any of the three markings we accept: an
+/// `is_aromatic` prop, an `order` of 1.5, or a [`BCC_BOND_TYPE`] of 7/8/10 (the
+/// aromatic single, the aromatic double, and the unresolved `ar` precursor)?
+///
+/// The last of the three is what makes perception idempotent, and what resolves a
+/// caller-supplied type 10 into 7 or 8. It reads **our own** key: the bond's
+/// `keys::TYPE` is the caller's, and a LAMMPS bond-type id that happened to be 7
+/// must not make a bond aromatic.
+fn aromatic_marking(props: &HashMap<String, PropValue>) -> bool {
+    prop_truthy(props.get(IS_AROMATIC))
+        || props
+            .get(keys::ORDER)
+            .and_then(PropValue::as_f64)
+            .is_some_and(|o| (o - 1.5).abs() < ORDER_EPS)
+        || props
+            .get(BCC_BOND_TYPE)
+            .and_then(PropValue::as_f64)
+            .is_some_and(|t| {
+                let t = t.round() as i32;
+                matches!(t, AROMATIC_SINGLE | AROMATIC_DOUBLE | AROMATIC_UNRESOLVED)
+            })
 }
 
 /// Bond / atom prop marking aromaticity.
@@ -298,16 +372,7 @@ impl BondGraph {
                 .get(keys::ORDER)
                 .and_then(PropValue::as_f64)
                 .unwrap_or(1.0);
-            let is_aromatic = prop_truthy(bond.props.get(IS_AROMATIC))
-                || (o - 1.5).abs() < ORDER_EPS
-                || bond
-                    .props
-                    .get(keys::TYPE)
-                    .and_then(PropValue::as_f64)
-                    .is_some_and(|t| {
-                        let t = t.round() as i32;
-                        matches!(t, AROMATIC_SINGLE | AROMATIC_DOUBLE | AROMATIC_UNRESOLVED)
-                    });
+            let is_aromatic = aromatic_marking(&bond.props);
 
             adj[i].push(j);
             adj[j].push(i);

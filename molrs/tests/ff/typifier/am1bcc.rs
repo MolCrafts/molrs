@@ -16,6 +16,7 @@
 
 use molrs::ff::params::BccCorrectionRow;
 use molrs::ff::typifier::am1bcc::{BCCAtomTypifier, BCCCorrectionTable, BCCCorrector};
+use molrs::perceive::bond_type::BCC_BOND_TYPE;
 use molrs::store::keys;
 use molrs::{AtomId, Atomistic, Element};
 
@@ -52,7 +53,7 @@ fn bcc_typed_methane() -> (Atomistic, AtomId, Vec<AtomId>) {
     }
     let bond_ids: Vec<_> = mol.bonds().map(|(bid, _)| bid).collect();
     for bid in bond_ids {
-        mol.set_bond_prop(bid, keys::TYPE, 1.0)
+        mol.set_bond_prop(bid, BCC_BOND_TYPE, 1.0)
             .expect("set BCC bond type");
     }
     (mol, c, hs)
@@ -216,7 +217,7 @@ fn atom_typifier_assigns_bcc_types_to_untyped_methane() {
     }
     for (_, bond) in typed.bonds() {
         assert_eq!(
-            bond.props.get(keys::TYPE).and_then(|v| v.as_f64()),
+            bond.props.get(BCC_BOND_TYPE).and_then(|v| v.as_f64()),
             Some(1.0)
         );
     }

@@ -12,6 +12,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use molrs::perceive::bond_type::BCC_BOND_TYPE;
 use molrs::store::keys;
 use molrs::system::molgraph::PropValue;
 use molrs::{AtomId, Atomistic, Bond, BondId, Element, find_rings};
@@ -43,8 +44,8 @@ pub(super) struct MolFacts {
 }
 
 impl MolFacts {
-    /// Derive the facts of `mol`, whose bonds must already carry antechamber
-    /// bond `type`s (see
+    /// Derive the facts of `mol`, whose bonds must already carry perceived
+    /// antechamber bond types under [`BCC_BOND_TYPE`] (see
     /// [`Perceive::find_bond_types`](molrs::perceive::Perceive::find_bond_types)).
     pub(super) fn new(mol: &Atomistic) -> Result<Self, String> {
         let atom_ids: Vec<_> = mol.atoms().map(|(aid, _)| aid).collect();
@@ -424,17 +425,24 @@ fn is_double_bond_type(bond_type: i32) -> bool {
 /// The antechamber bond type a bond carries: 1 single, 2 double, 3 triple,
 /// 7/8/10 aromatic, 9 delocalized.
 ///
+/// Read from [`BCC_BOND_TYPE`] — the key
+/// [`Perceive::find_bond_types`](molrs::perceive::Perceive::find_bond_types) writes
+/// it to — and **never** from the bond's `type`, which is the caller's and holds
+/// their force-field bond-type *name*.
+///
 /// Shared with the BCC corrector, whose correction rows are keyed on the same
 /// integer. A bond without one is an error, never a guessed single bond.
 pub(crate) fn antechamber_bond_type(bond: &Bond) -> Result<i32, String> {
-    match bond.props.get(keys::TYPE) {
+    match bond.props.get(BCC_BOND_TYPE) {
         Some(PropValue::Int(v)) => Ok(*v),
         Some(PropValue::F64(v)) if (*v - v.round()).abs() < 1.0e-6 => Ok(v.round() as i32),
-        Some(PropValue::F64(v)) => Err(format!("BCC bond `type` must be integral, got {v}")),
+        Some(PropValue::F64(v)) => Err(format!("`{BCC_BOND_TYPE}` must be integral, got {v}")),
         Some(PropValue::Str(s)) => s
             .parse::<i32>()
-            .map_err(|e| format!("BCC bond `type` must be an integer string: {e}")),
-        Some(PropValue::Bool(_)) => Err("BCC bond `type` must be numeric, not bool".to_owned()),
-        None => Err("BCC correction requires BCC bond `type`".to_owned()),
+            .map_err(|e| format!("`{BCC_BOND_TYPE}` must be an integer string: {e}")),
+        Some(PropValue::Bool(_)) => Err(format!("`{BCC_BOND_TYPE}` must be numeric, not bool")),
+        None => Err(format!(
+            "BCC correction requires a perceived `{BCC_BOND_TYPE}` on every bond"
+        )),
     }
 }

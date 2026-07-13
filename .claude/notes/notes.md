@@ -295,3 +295,24 @@ so the gate is translated natively (C=C doubles + amide C–N).
 
 Gotcha for oracle regeneration: `-pf y` DELETES `ANTECHAMBER_AM1BCC_PRE.AC`. Use `-pf n`.
 **Status:** stable
+
+## 2026-07-13 — perception writes `bcc_bond_type`, NEVER `keys::TYPE`
+**Decision:** `Perceive::find_bond_types` writes the perceived antechamber bond type to a
+dedicated `BCC_BOND_TYPE` ("bcc_bond_type") prop. `keys::TYPE` on a BOND belongs to the
+caller — it holds the force field's bond-type NAME (a String), which is what `to_frame` puts
+in the bonds block and what every bonded kernel resolves by. Perception must neither read nor
+write it. (`AtdTypifier::typify` writing the ATOM type to `keys::TYPE` as a String IS correct
+— that is a typifier's job; `types_of()` exists for callers who want types without mutation.)
+**Why:** it was writing an **i32** into the same column the force field needs as a **String**.
+A component column is typed on first write and molrs correctly refuses to coerce — so on a
+molecule that already carried FF bond-type names, **the write silently failed** (the error was
+swallowed by a `let _ =`). `gaff_forcefield` (spec 09) had to copy the molecule into a fresh
+graph stripped of that column just to build a force field; that workaround (`frame_ready_copy`)
+is now deleted, and it had also been silently dropping angles/dihedrals and re-minting handles.
+This is the same class of bug spec 07 closed for charge models (ac-004: charges come out
+bitwise identical whatever `keys::TYPE` holds) — perception had simply never been brought
+under that rule.
+**Convention (already implicit, now explicit):** `keys.rs` holds core canonical, molpy-synced
+fields. Every *perceived fact* is a const in the `perceive` layer — `is_aromatic`, `is_in_ring`,
+`n_rings`, `is_rotatable`, `stereo`, `equiv_class`, and now `bcc_bond_type`.
+**Status:** stable

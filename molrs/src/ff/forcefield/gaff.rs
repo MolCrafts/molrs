@@ -183,6 +183,17 @@ impl std::error::Error for GaffError {}
 /// — in AMBER's central-atom-third order — wherever the table has an exact row
 /// for a 3-coordinate centre.
 ///
+/// # The bond `type` column is the force field's
+///
+/// The molecule arrives *perceived* — the ATD engine types an atom by counting its
+/// `sb`/`db`/`ab`/`DL` bonds — but perception keeps its answer in its own
+/// [`BCC_BOND_TYPE`](molrs::perceive::bond_type::BCC_BOND_TYPE) prop, so the bond's
+/// [`keys::TYPE`] is free for what this function puts there: the bond's
+/// force-field type *name* (`c3-hc`), which is what `to_frame` writes to the
+/// `bonds` block's `type` column and what every bonded kernel resolves its
+/// parameters by. A perceived molecule is therefore consumable **directly**; no
+/// stripping copy stands in between.
+///
 /// # Errors
 ///
 /// [`GaffError::Untyped`] if an atom carries no [`keys::TYPE`];
@@ -191,17 +202,40 @@ impl std::error::Error for GaffError {}
 ///
 /// # Example
 ///
-/// ```no_run
+/// Methane, end to end — perceive + type, parameterise, evaluate:
+///
+/// ```
 /// use molrs::Atomistic;
 /// use molrs::ff::forcefield::gaff::{GaffParameterSet, gaff_forcefield};
 /// use molrs::ff::potential::intramolecular_pairs;
 /// use molrs::ff::typifier::Typifier;
 /// use molrs::ff::typifier::atd::{AtdParameterSet, AtdTypifier};
+/// use molrs::store::keys;
+/// use molrs::system::molgraph::PropValue;
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let mol = Atomistic::new();
+/// let mut mol = Atomistic::new();
+/// let c = mol.add_atom_xyz("C", 0.000, 0.000, 0.000);
+/// for (x, y, z) in [
+///     (0.629, 0.629, 0.629),
+///     (-0.629, -0.629, 0.629),
+///     (-0.629, 0.629, -0.629),
+///     (0.629, -0.629, -0.629),
+/// ] {
+///     let h = mol.add_atom_xyz("H", x, y, z);
+///     mol.add_bond(c, h)?;
+/// }
+///
+/// // Typing perceives the BCC bond types on the way through …
 /// let typed = AtdTypifier::new(AtdParameterSet::Gff).typify(&mol)?;
+/// // … and the perceived molecule builds a force field directly.
 /// let (labelled, ff) = gaff_forcefield(GaffParameterSet::Gaff, &typed)?;
+///
+/// // Every bond's `type` is now the force field's NAME, not a perceived integer.
+/// let name = PropValue::Str("c3-hc".to_owned());
+/// for (_, bond) in labelled.bonds() {
+///     assert_eq!(bond.props.get(keys::TYPE), Some(&name));
+/// }
 ///
 /// let mut frame = labelled.to_frame();
 /// let pairs = intramolecular_pairs(&frame);
@@ -215,7 +249,7 @@ pub fn gaff_forcefield(
     typed: &Atomistic,
 ) -> Result<(Atomistic, ForceField), GaffError> {
     let index = TableIndex::new(set.table());
-    let mut out = frame_ready_copy(typed)?;
+    let mut out = typed.clone();
     let type_of = intern_atom_types(&index, &out)?;
     let mut missed = Misses::default();
 
@@ -315,47 +349,6 @@ pub fn gaff_forcefield(
         &improper_types,
     );
     Ok((out, ff))
-}
-
-/// Copy `typed` into a graph whose bonds can carry a force-field type name.
-///
-/// The ATD engine types a molecule by first *perceiving* antechamber bond types,
-/// and [`Perceive::find_bond_types`](molrs::perceive::Perceive::find_bond_types)
-/// records each one under the bond's [`keys::TYPE`] — as an **integer** (1/2/3
-/// single/double/triple, 7/8 aromatic, 9 delocalized). The force field needs the
-/// same key to hold the bond's *type name* (`c3-c3`), because that is what
-/// `to_frame` puts in the `bonds` block's `type` column and what every bonded
-/// kernel resolves its parameters by.
-///
-/// A component column is typed by its first write and molrs refuses to coerce it
-/// (deliberately — a silently re-typed column is how a force field ends up with
-/// nonsense parameters), and clearing the values does not un-type the column. So
-/// the two facts cannot share a graph: this copies the molecule into a fresh one
-/// where the bond `type` column has never existed, dropping the perceived bond
-/// types — an *input* to typing, already consumed by it, and not part of the
-/// force-field contract. Everything else — every atom property, atom order, bond
-/// order, aromatic flags — is carried across.
-///
-/// Atom handles are re-minted; atom **order** is not, so the caller's frame rows
-/// still line up with the input's.
-fn frame_ready_copy(typed: &Atomistic) -> Result<Atomistic, GaffError> {
-    let mut out = Atomistic::new();
-    let mut remap: HashMap<AtomId, AtomId> = HashMap::new();
-    for (id, atom) in typed.atoms() {
-        remap.insert(id, out.add_atom(atom));
-    }
-    for (_, bond) in typed.bonds() {
-        let id = out
-            .add_bond(remap[&bond.nodes[0]], remap[&bond.nodes[1]])
-            .map_err(malformed)?;
-        for (key, value) in bond.props {
-            if key == keys::TYPE {
-                continue;
-            }
-            out.set_bond_prop(id, &key, value).map_err(malformed)?;
-        }
-    }
-    Ok(out)
 }
 
 /// Resolve every atom's label to the table's [`ParmType`].

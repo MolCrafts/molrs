@@ -24,7 +24,7 @@
 //! | [`Perceive::find_hydrogens`] | — (adds H atoms) | — (adds H bonds) |
 //! | [`Perceive::find_stereo`] | `stereo` (`"CW"` / `"CCW"`) | `stereo` (`"E"` / `"Z"` / `"either"`) |
 //! | [`Perceive::find_rotatable`] | — | `is_rotatable` (0/1) |
-//! | [`Perceive::find_bond_types`] | — | `type` (BCC bond type: 1/2/3/6/7/8/9) |
+//! | [`Perceive::find_bond_types`] | — | `bcc_bond_type` (1/2/3/6/7/8/9) |
 //! | [`Perceive::find_equivalence_classes`] | `equiv_class` (0-based class id) | — |
 
 use std::collections::HashSet;
@@ -220,11 +220,15 @@ impl Perceive {
     /// Perceive BCC bond types and project them onto the graph.
     ///
     /// Wraps [`bond_type::find_bond_types`], which is already graph-in /
-    /// graph-out. Every bond receives a `type` prop in `{1, 2, 3, 6, 7, 8, 9}` —
-    /// the alphabet AM1-BCC's atom-type rules and correction table are keyed on,
-    /// which distinguishes aromatic bonds (7/8) and *delocalized* ones (9, e.g. a
-    /// carboxylate's two equivalent C–O bonds) from plain orders. See that
-    /// module's docs for the promotion boundary and the delocalization rules.
+    /// graph-out. Every bond receives a [`BCC_BOND_TYPE`](bond_type::BCC_BOND_TYPE)
+    /// prop in `{1, 2, 3, 6, 7, 8, 9}` — the alphabet AM1-BCC's atom-type rules and
+    /// correction table are keyed on, which distinguishes aromatic bonds (7/8) and
+    /// *delocalized* ones (9, e.g. a carboxylate's two equivalent C–O bonds) from
+    /// plain orders. See that module's docs for the promotion boundary and the
+    /// delocalization rules.
+    ///
+    /// The bond's `type` — the caller's force-field label — is neither read nor
+    /// written: a perceived fact gets its own key.
     ///
     /// # Arguments
     ///
@@ -232,7 +236,8 @@ impl Perceive {
     ///
     /// # Returns
     ///
-    /// A clone of `mol` with a BCC `type` on every bond.
+    /// A clone of `mol` with a [`BCC_BOND_TYPE`](bond_type::BCC_BOND_TYPE) on every
+    /// bond.
     pub fn find_bond_types(&self, mol: &Atomistic) -> Atomistic {
         bond_type::find_bond_types(mol)
     }

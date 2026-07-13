@@ -31,6 +31,7 @@
 
 use molrs::ff::charge::{BccModel, BccParameterSet};
 use molrs::ff::typifier::am1bcc::{BCCAtomTypifier, BCCCorrectionTable, BCCCorrector};
+use molrs::perceive::bond_type::BCC_BOND_TYPE;
 use molrs::store::keys;
 use molrs::{AtomId, Atomistic};
 
@@ -89,7 +90,7 @@ fn apply_reference_types(mol: &mut Atomistic, ids: &[AtomId], case: &Antechamber
     for (bid, nodes) in bond_ids {
         let (a, b) = (index[&nodes[0]], index[&nodes[1]]);
         let t = by_pair[&(a.min(b), a.max(b))];
-        mol.set_bond_prop(bid, keys::TYPE, t)
+        mol.set_bond_prop(bid, BCC_BOND_TYPE, t)
             .expect("set bcc bond type");
     }
 }
@@ -136,7 +137,7 @@ fn bcc_bond_types_match_antechamber() {
         for (_, bond) in typed.bonds() {
             let (a, b) = (index[&bond.nodes[0]], index[&bond.nodes[1]]);
             let key = (a.min(b), a.max(b));
-            let got = bond.props.get(keys::TYPE).and_then(|v| match v {
+            let got = bond.props.get(BCC_BOND_TYPE).and_then(|v| match v {
                 molrs::system::molgraph::PropValue::Int(v) => Some(*v),
                 molrs::system::molgraph::PropValue::F64(v) => Some(v.round() as i32),
                 _ => None,
