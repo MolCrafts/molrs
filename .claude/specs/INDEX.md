@@ -4,7 +4,6 @@ One row per spec produced by `/mol:spec`. Newest on top.
 
 | Date | Slug | Status | Owner crate(s) | Summary |
 |---|---|---|---|---|
-| 2026-07-12 | chem-perceive-09-gaff-params | approved | molcrafts-molrs | gaff.dat(7312)/gaff2.dat(13181) → 提交的 Rust 静态表（含通配符行），用 GAFF/GAFF2 原子类型填 ForceField；精确命中即可，缺参报错（回退在 11）。硬 Task：实测 13k 行生成表的编译时间影响，过重就换 phf/二分布局而**不是**退回文本解析。链 9/13。 |
 | 2026-07-12 | chem-perceive-10-parmchk-tables | approved | molcrafts-molrs | `gaff_equiv.json`(6159)/`gaff_empirical.json`(87) → 提交的 .rs，删掉 estimate/tables.rs 里 `include_str!` + 运行期 `serde_json.expect()`（FF 路径最后一处文本解析）。同时落地 parmchk2 frcmod 的 37 分子 RED oracle，供 11 转绿。链 10/13。 |
 | 2026-07-12 | chem-perceive-11-param-estimate | approved | molcrafts-molrs | 在既有 `ParameterEstimator`/`ParameterInterpolator` 上原生实现 parmchk2 式缺参估计（精确→通配符→等价类替代→经验公式），**删掉 `Frcmod::parse_str`/`write_string`，molrs 不再依赖任何外部 frcmod 文件**。数据侧（gaff_equiv/gaff_empirical）本就在仓库里。链 11/13。 |
 | 2026-07-12 | chem-perceive-12-cxx-bridge | approved | molrs-cxxapi | cxx bridge 改成返回 `Result<Vec<f64>>`——现在它声明 `-> Vec<f64>` 且函数体 `.expect()`，于是缺 BCC 参数这类**用户化学错误直接 abort 进程**而非抛可捕获的 C++ 异常；同时去掉 normalize 参数、加 parameter-set 选择器打通 ABCG2（现全文 0 命中）。跨仓：需 Atomiverse 配套改。链 12/13。 |
