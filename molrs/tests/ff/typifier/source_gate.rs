@@ -14,9 +14,19 @@
 
 use std::path::{Path, PathBuf};
 
-/// The typifier source tree — the path both gates are scoped to.
+/// The typifier source tree.
 pub fn typifier_src_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ff/typifier")
+}
+
+/// The charge-model source tree — where `BccModel` and the push API live.
+///
+/// The ac-004 gate has to follow the model here. `AM1BCCTypifier` used to be the
+/// parameter-table-owning model under `src/ff/typifier/`, and it is now `BccModel`
+/// under `src/ff/charge/`; a gate still scoped to the tree the model has LEFT is a
+/// gate that passes because it is looking at nothing.
+pub fn charge_src_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ff/charge")
 }
 
 /// Every `.rs` under the typifier tree, with line comments stripped.
@@ -33,6 +43,47 @@ pub fn typifier_sources() -> Vec<(PathBuf, String)> {
         "no .rs found under {} — the gate would pass vacuously",
         typifier_src_dir().display()
     );
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
+/// Every `.rs` of the charge-model tree, with line comments stripped.
+///
+/// Accepts both shapes the module can have — the `charge.rs` single file it was,
+/// and the `charge/` directory the models split it into — because a gate that only
+/// knew one of them would read an empty tree across the change and report no
+/// violations from a source it never opened.
+pub fn charge_sources() -> Vec<(PathBuf, String)> {
+    let dir = charge_src_dir();
+    let mut out = Vec::new();
+    if dir.is_dir() {
+        collect(&dir, &mut out);
+    } else {
+        let file = dir.with_extension("rs");
+        if file.is_file() {
+            let src = std::fs::read_to_string(&file).expect("read the charge source file");
+            out.push((file, strip_line_comments(&src)));
+        }
+    }
+    assert!(
+        !out.is_empty(),
+        "no charge source found at {} (or {}.rs) — the gate would pass vacuously",
+        dir.display(),
+        dir.display()
+    );
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
+/// Every source that may own a parameter table: the typifier tree AND the charge
+/// tree.
+///
+/// The ac-004 footgun is "a model you can construct without naming its parameter
+/// set", and it does not care which module the model sits in. Scoping the gate to
+/// one tree would let the next `Default` land in the other.
+pub fn parameterized_model_sources() -> Vec<(PathBuf, String)> {
+    let mut out = typifier_sources();
+    out.extend(charge_sources());
     out.sort_by(|a, b| a.0.cmp(&b.0));
     out
 }
@@ -80,9 +131,14 @@ fn strip_line_comments(src: &str) -> String {
         .join("\n")
 }
 
-/// `file:line: <text>` for every line of the tree containing `needle`.
+/// `file:line: <text>` for every line of the typifier tree containing `needle`.
 pub fn lines_containing(needle: &str) -> Vec<String> {
-    typifier_sources()
+    lines_containing_in(&typifier_sources(), needle)
+}
+
+/// `file:line: <text>` for every line of `sources` containing `needle`.
+pub fn lines_containing_in(sources: &[(PathBuf, String)], needle: &str) -> Vec<String> {
+    sources
         .iter()
         .flat_map(|(path, src)| {
             src.lines()
@@ -100,7 +156,11 @@ pub fn lines_containing(needle: &str) -> Vec<String> {
 /// object exists, type-checks and then fails on every single bond with
 /// `missing BCC correction` — the "constructible but non-functional" shape
 /// molrs's no-fallback-values rule forbids.
-const PARAMETERIZED_MODELS: [&str; 3] = ["BCCCorrectionTable", "BCCCorrector", "AM1BCCTypifier"];
+///
+/// `BccModel` replaces `AM1BCCTypifier` here: same object (the model that owns a
+/// BCCPARM table), new module and new seam. The gate follows the model, not the
+/// name — otherwise deleting the typifier would silently retire the criterion.
+const PARAMETERIZED_MODELS: [&str; 3] = ["BCCCorrectionTable", "BCCCorrector", "BccModel"];
 
 /// Every `Default` a [`PARAMETERIZED_MODELS`] type gets, derived or hand-written.
 ///
@@ -113,7 +173,7 @@ const PARAMETERIZED_MODELS: [&str; 3] = ["BCCCorrectionTable", "BCCCorrector", "
 ///   * `impl Default for X` (today: `BCCCorrector`, `AM1BCCTypifier`).
 pub fn default_impls_of_parameterized_models() -> Vec<String> {
     let mut found = Vec::new();
-    for (path, src) in typifier_sources() {
+    for (path, src) in parameterized_model_sources() {
         let mut derives_default = false;
         for (n, line) in src.lines().enumerate() {
             let text = line.trim();
@@ -168,10 +228,10 @@ fn struct_name(text: &str) -> Option<&str> {
 ///   * `fn new(..) -> Result<Self, _>`             — may refuse to build.
 ///
 /// Forbidden: `fn new() -> Self` and `fn new(backend: B) -> Self`, which is
-/// exactly today's `BCCCorrectionTable::new` and `AM1BCCTypifier::new`.
+/// exactly what `BCCCorrectionTable::new` and `AM1BCCTypifier::new` used to be.
 pub fn parameterless_constructors() -> Vec<String> {
     let mut found = Vec::new();
-    for (path, src) in typifier_sources() {
+    for (path, src) in parameterized_model_sources() {
         let mut current_impl: Option<String> = None;
         for (n, line) in src.lines().enumerate() {
             let text = line.trim();

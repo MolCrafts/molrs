@@ -9,16 +9,11 @@
 //! * **the symmetry** that type 9 exists to produce — a carboxylate's two oxygens,
 //!   and nitrate's two identical O⁻, must come out with the same charge.
 
+use molrs::ff::charge::{BccModel, BccParameterSet};
 use molrs::ff::params::BCC_CORRECTIONS;
-use molrs::ff::typifier::Typifier;
-use molrs::ff::typifier::am1bcc::AM1BCCTypifier;
 use molrs::store::keys;
 use molrs::{AtomId, Atomistic};
 use std::collections::HashMap;
-
-/// AM1 base charges are Atomiverse's job; here they are supplied, so that what is
-/// under test is only the BCC half.
-use crate::typifier::am1bcc_antechamber::SuppliedAM1;
 
 /// Build a molecule from elements and `(i, j, order)` bonds.
 fn mol(elements: &[&str], bonds: &[(usize, usize, f64)]) -> (Atomistic, Vec<AtomId>) {
@@ -37,20 +32,16 @@ fn mol(elements: &[&str], bonds: &[(usize, usize, f64)]) -> (Atomistic, Vec<Atom
 }
 
 /// Final AM1-BCC charges, given supplied AM1 base charges.
-fn charges(mol: &Atomistic, ids: &[AtomId], am1: &[f64]) -> Vec<f64> {
-    let typed = AM1BCCTypifier::bcc(SuppliedAM1(am1.to_vec()))
-        .expect("build AM1BCCTypifier")
-        .typify(mol)
-        .expect("typify");
-    ids.iter()
-        .map(|aid| {
-            typed
-                .get_atom(*aid)
-                .expect("atom")
-                .get_f64(keys::CHARGE)
-                .expect("charge")
-        })
-        .collect()
+///
+/// AM1 itself is Atomiverse's job, so the base charges are an ARGUMENT — the push
+/// API takes them as a slice, in atom order, and hands the corrected charges back
+/// in the same order. (This used to require faking an `AM1ChargeBackend` whose
+/// `mol` argument it then ignored, which is precisely the seam that got deleted.)
+fn charges(mol: &Atomistic, am1: &[f64]) -> Vec<f64> {
+    BccModel::new(BccParameterSet::Bcc)
+        .expect("build the BCC charge model")
+        .correct(mol, am1)
+        .expect("apply BCC corrections")
 }
 
 // ── ac-002: the BCC increments are Kekulé-invariant ─────────────────────────
@@ -116,7 +107,7 @@ fn acetate_carboxylate_oxygens_receive_identical_charges() {
     //
     // AM1 base charges are antechamber's own (equivalenced), so the two oxygens
     // arrive equal; the assertion is that the BCC stage keeps them that way.
-    let (g, ids) = mol(
+    let (g, _) = mol(
         &["C", "C", "O", "O", "H", "H", "H"],
         &[
             (0, 1, 1.0),
@@ -130,7 +121,7 @@ fn acetate_carboxylate_oxygens_receive_identical_charges() {
     let am1 = [
         -0.268, 0.321, -0.596, -0.596, 0.046_333, 0.046_333, 0.046_333,
     ];
-    let q = charges(&g, &ids, &am1);
+    let q = charges(&g, &am1);
 
     assert!(
         (q[2] - q[3]).abs() < 1.0e-12,
@@ -153,7 +144,7 @@ fn nitrate_identical_oxygens_receive_identical_charges() {
     // (23|31 at type 6 = +0.1317, at type 9 = -0.1500) drive the two oxygens
     // 0.28 e apart (-0.6997 vs -0.4180). molrs repairs the scan, so both bonds type
     // 9 and both oxygens correct identically.
-    let (g, ids) = mol(
+    let (g, _) = mol(
         &["O", "N", "O", "O"],
         &[
             (0, 1, 1.0), // N-O(-)
@@ -165,7 +156,7 @@ fn nitrate_identical_oxygens_receive_identical_charges() {
     // averaging does this before the BCC stage); the three oxygens of nitrate are
     // one equivalence class.
     let am1 = [-0.633, 0.899, -0.633, -0.633];
-    let q = charges(&g, &ids, &am1);
+    let q = charges(&g, &am1);
 
     assert!(
         (q[0] - q[3]).abs() < 1.0e-12,

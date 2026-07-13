@@ -4,7 +4,6 @@ One row per spec produced by `/mol:spec`. Newest on top.
 
 | Date | Slug | Status | Owner crate(s) | Summary |
 |---|---|---|---|---|
-| 2026-07-12 | chem-perceive-07-charge-trait | approved | molcrafts-molrs | `ChargeModel` trait 托起 Mulliken(QM直通) / BCC+ABCG2(QM+键增量) / Gasteiger(无QM) 的 2×2 泛化证明；BCC 换成纯函数 push API `correct(&mol,&am1)`；删掉三个实现全是假的 `AM1ChargeBackend` 拉模型 trait、删掉会让 molrs 偏离 antechamber 的 `normalize_total_charge`；终结 `keys::TYPE` 污染。链 7/13。 |
 | 2026-07-12 | chem-perceive-08-gasteiger | approved | molcrafts-molrs | `GasteigerModel` 对齐 `antechamber -c gas`（37/37）：χ=a+b·q+c·q²，**`d` 列是 χ⁺ 分母不是四次项系数**（H 特例 20.02 ≠ a+b+c=12.85），阻尼收敛循环（非固定 6 次）。它**不需要 QM 输入**——这是 ChargeModel 抽象没有偷偷假设 QM 基电荷的证明。链 8/13。 |
 | 2026-07-12 | chem-perceive-09-gaff-params | approved | molcrafts-molrs | gaff.dat(7312)/gaff2.dat(13181) → 提交的 Rust 静态表（含通配符行），用 GAFF/GAFF2 原子类型填 ForceField；精确命中即可，缺参报错（回退在 11）。硬 Task：实测 13k 行生成表的编译时间影响，过重就换 phf/二分布局而**不是**退回文本解析。链 9/13。 |
 | 2026-07-12 | chem-perceive-10-parmchk-tables | approved | molcrafts-molrs | `gaff_equiv.json`(6159)/`gaff_empirical.json`(87) → 提交的 .rs，删掉 estimate/tables.rs 里 `include_str!` + 运行期 `serde_json.expect()`（FF 路径最后一处文本解析）。同时落地 parmchk2 frcmod 的 37 分子 RED oracle，供 11 转绿。链 10/13。 |

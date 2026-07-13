@@ -6,10 +6,18 @@ that the BCC stage can be regression-tested in ISOLATION from AM1:
   geometry + bonds/orders      <- the input molrs must be able to build
   am1_charges (equivalenced)   <- ANTECHAMBER_AM1BCC_PRE.AC  (BCC stage INPUT)
   <table>_atom_types           <- one `-at <mode>` run each    (typifier oracle)
-  bcc_charges (final)          <- output mol2                  (BCC stage OUTPUT)
+  bcc_charges (final)          <- `-c bcc` mol2                (BCC stage OUTPUT)
+  abcg2_charges (final)        <- `-c abcg2` mol2              (ABCG2 stage OUTPUT)
 
-molrs owns: the atom types and (am1_charges -> bcc_charges).
+molrs owns: the atom types and (am1_charges -> bcc_charges / abcg2_charges).
 Atomiverse owns: producing am1_charges.  antechamber stands in for it here.
+
+The two CHARGE columns are the second axis, orthogonal to the seven TYPE columns:
+`bcc` and `abcg2` are the only two BCC correction families that exist
+(BCCPARM.DAT / BCCPARM_ABCG2.DAT), they consume the SAME AM1 base charges (the
+script asserts it per molecule), and they must come out of ONE `BccModel` with
+nothing but the parameter set changed.  A model that special-cased either family
+regresses the other column.
 
 The seven type columns (see AT_MODES) are the SAME ATD/WILDATOM rule engine
 driven by seven different `ATOMTYPE_*.DEF` tables, so they are what pins
@@ -121,12 +129,22 @@ def embed(smiles: str, path: Path):
     return in_elements, in_bonds, formal
 
 
-def run_antechamber(work: Path, sdf: Path, out: Path, nc: int, at: str) -> None:
+def run_antechamber(work: Path, sdf: Path, out: Path, nc: int, at: str,
+                    charge: str = "bcc") -> None:
+    """One antechamber run.
+
+    `charge` selects the CHARGE model (`-c bcc` / `-c abcg2`), `at` the ATOM-TYPE
+    table (`-at ...`).  They are independent: `-c abcg2` applies the ABCG2
+    corrections through ABCG2's own internal typing whatever `-at` says, so the
+    output mol2's type column is the `-at` table and its charge column is the `-c`
+    model.  `-pf n` is mandatory throughout: `-pf y` deletes the intermediate
+    ANTECHAMBER_AM1BCC_PRE.AC this oracle reads its AM1 base charges from.
+    """
     cmd = [
         str(ANTECHAMBER),
         "-i", sdf.name, "-fi", "sdf",
         "-o", out.name, "-fo", "mol2",
-        "-c", "bcc", "-nc", str(nc),
+        "-c", charge, "-nc", str(nc),
         "-at", at, "-pf", "n",
     ]
     r = subprocess.run(cmd, cwd=work, capture_output=True, text=True)
@@ -200,6 +218,28 @@ def main() -> int:
                 run_antechamber(work, sdf, out_mol2, nc, at)
                 _, _, _, atom_types[col] = parse_mol2(out_mol2)
 
+            # run 9: the OTHER correction family. Same molecule, same AM1 base
+            # charges -- only BCCPARM.DAT -> BCCPARM_ABCG2.DAT changes. It gets its
+            # own directory because it rewrites ANTECHAMBER_AM1BCC_PRE.AC, which we
+            # read back to prove the two families really do share one AM1 column.
+            abcg2_work = work / "abcg2"
+            abcg2_work.mkdir()
+            abcg2_sdf = abcg2_work / sdf.name
+            abcg2_sdf.write_text(sdf.read_text())
+            run_antechamber(abcg2_work, abcg2_sdf, abcg2_work / f"{name}.mol2",
+                            nc, "gaff2", charge="abcg2")
+            abcg2_am1, _, _ = parse_ac(abcg2_work / "ANTECHAMBER_AM1BCC_PRE.AC")
+            _, _, abcg2_charges, _ = parse_mol2(abcg2_work / f"{name}.mol2")
+
+            # ONE am1_charges column, honestly shared. If `-c abcg2` ever fed its
+            # correction stage a different base (a different sqm run, a different
+            # `-eq` level), the fixture would be quietly lying to the ABCG2 test and
+            # the Rust side would be chasing a mismatch that is not its own.
+            assert abcg2_am1 == am1_charges, (
+                f"{name}: `-c abcg2` consumed different AM1 base charges than "
+                f"`-c bcc`; the shared `am1_charges` column is no longer valid"
+            )
+
             # raw (non-equivalenced) sqm Mulliken, to document the -eq averaging
             raw = []
             sqm = (work / "sqm.out").read_text().splitlines()
@@ -215,6 +255,7 @@ def main() -> int:
 
             n = len(els)
             assert len(am1_charges) == n and len(bcc_charges) == n, name
+            assert len(abcg2_charges) == n, name
             for col, types in atom_types.items():
                 assert len(types) == n, f"{name}: {col} typed {len(types)}/{n} atoms"
 
@@ -233,7 +274,8 @@ def main() -> int:
                 "bcc_bond_types": bonds,           # (i, j, bcc_bond_type) 1/2/3/7/8/9
                 # one column per ATOMTYPE_*.DEF table (see AT_MODES)
                 **atom_types,
-                "bcc_charges": bcc_charges,        # final AM1-BCC charges
+                "bcc_charges": bcc_charges,        # final AM1-BCC charges (-c bcc)
+                "abcg2_charges": abcg2_charges,    # final ABCG2 charges  (-c abcg2)
             })
             eq = "EQ" if raw and any(
                 abs(a - b) > 1e-9 for a, b in zip(am1_charges, raw)
@@ -262,8 +304,14 @@ def emit_rust(recs):
     w("//!            aromatic flag, formal charge, plus the AM1 base charges that")
     w("//!            Atomiverse (here: antechamber's sqm) supplies.")
     w("//!   ORACLE — what antechamber produced and molrs must reproduce: BCC bond")
-    w("//!            types, the seven atom-type columns, and the final AM1-BCC")
-    w("//!            charges.")
+    w("//!            types, the seven atom-type columns, and the final charges of")
+    w("//!            BOTH correction families (`-c bcc` and `-c abcg2`).")
+    w("//!")
+    w("//! The two charge columns are one axis (which BCCPARM table), the seven type")
+    w("//! columns another (which ATOMTYPE table). `bcc_charges` and `abcg2_charges`")
+    w("//! are corrections of the SAME `am1_charges` — the generator asserts that the")
+    w("//! two antechamber runs consumed identical AM1 base charges — so a charge model")
+    w("//! that special-cased one family regresses the other column.")
     w("//!")
     w("//! The seven atom-type columns come from `-at {bcc,abcg2,gas,gaff,gaff2,amber,")
     w("//! sybyl}` on the SAME molecule: one rule engine, seven `ATOMTYPE_*.DEF` tables.")
@@ -317,8 +365,15 @@ def emit_rust(recs):
     w("    pub amber_atom_types: &'static [&'static str],")
     w("    /// ATOMTYPE_SYBYL.DEF codes (`antechamber -at sybyl`) — SYBYL atom types")
     w("    pub sybyl_atom_types: &'static [&'static str],")
-    w("    /// final AM1-BCC charges")
+    w("    /// final AM1-BCC charges (`antechamber -c bcc`): `am1_charges` + BCCPARM.DAT")
     w("    pub bcc_charges: &'static [f64],")
+    w("    /// final ABCG2 charges (`antechamber -c abcg2`): the SAME `am1_charges`,")
+    w("    /// corrected with BCCPARM_ABCG2.DAT against ATOMTYPE_ABCG2.DEF types.")
+    w("    ///")
+    w("    /// The second correction family is the generality proof of the charge model:")
+    w("    /// one engine, two parameter sets, no special case. That both families")
+    w("    /// consume the same `am1_charges` is asserted by the generator, not assumed.")
+    w("    pub abcg2_charges: &'static [f64],")
     w("}")
     w("")
 
@@ -355,6 +410,7 @@ def emit_rust(recs):
             ats = ", ".join(f'"{t}"' for t in r[col])
             w(f"        {col}: &[{ats}],")
         w(f"        bcc_charges: &[{fl(r['bcc_charges'])}],")
+        w(f"        abcg2_charges: &[{fl(r['abcg2_charges'])}],")
         w("    },")
     w("];")
     w("")

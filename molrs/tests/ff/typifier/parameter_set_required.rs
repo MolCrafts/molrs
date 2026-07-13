@@ -27,7 +27,8 @@
 use molrs::ff::typifier::am1bcc::BCCCorrectionTable;
 
 use super::source_gate::{
-    default_impls_of_parameterized_models, lines_containing, parameterless_constructors,
+    charge_sources, default_impls_of_parameterized_models, lines_containing, lines_containing_in,
+    parameterless_constructors,
 };
 
 /// The scanner must be able to see the source, or every gate below is vacuous.
@@ -43,6 +44,23 @@ fn the_source_gate_can_read_the_typifier_tree() {
         "the source gate found no mention of `BCCCorrectionTable` under \
          molrs/src/ff/typifier/ — it is reading the wrong tree, and every gate \
          in this file is passing vacuously"
+    );
+}
+
+/// The same, for the tree the parameterized MODEL moved to.
+///
+/// `BccModel` owns a BCCPARM table and lives in `src/ff/charge/`, so the ac-004
+/// gate now spans two trees. This is the half that catches the specific way this
+/// criterion could rot: the model moves, the gate keeps scanning the directory it
+/// left, and "no violations" starts meaning "nothing was read".
+#[test]
+fn the_source_gate_can_read_the_charge_tree() {
+    let hits = lines_containing_in(&charge_sources(), "BccModel");
+    assert!(
+        !hits.is_empty(),
+        "the source gate found no mention of `BccModel` under molrs/src/ff/charge/ \
+         — the parameterized-model gate is passing vacuously over the tree the \
+         model actually lives in"
     );
 }
 

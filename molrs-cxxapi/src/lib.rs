@@ -9,8 +9,7 @@ use std::fs::{File, OpenOptions};
 use std::io::BufWriter;
 
 use molrs::Element;
-use molrs::ff::charge::ChargeAssigner;
-use molrs::ff::typifier::am1bcc::{AM1BCCTypifier, AM1ChargeBackend, AM1ChargeResult};
+use molrs::ff::charge::{BccModel, BccParameterSet};
 use molrs::io::data::xyz::write_xyz_frame;
 #[cfg(feature = "zarr")]
 use molrs::io::store::zarr::{read_trajectory_file, write_trajectory_file};
@@ -1163,31 +1162,23 @@ fn frame_set_simbox(fref: &mut FrameRef, h: &[f64]) {
         .expect("frame_set_simbox: set_simbox");
 }
 
-#[derive(Debug, Clone)]
-struct ProvidedAM1ChargeBackend {
-    charges: Vec<f64>,
-    total_charge: Option<f64>,
-}
-
-impl AM1ChargeBackend for ProvidedAM1ChargeBackend {
-    fn compute_am1_charges(&self, _mol: &molrs::Atomistic) -> Result<AM1ChargeResult, String> {
-        Ok(AM1ChargeResult {
-            charges: self.charges.clone(),
-            total_charge: self.total_charge,
-            heat_of_formation_kcal_mol: None,
-            reference: "Atomiverse AM1".to_owned(),
-        })
-    }
-}
-
 /// Apply AM1-BCC corrections to a molrs frame using AM1 base
 /// charges supplied by Atomiverse.
 ///
-/// All BCC atom typing and correction lookup stays in molrs. The bridge only
-/// injects Atomiverse's AM1 base charges into the existing AM1ChargeBackend
-/// seam, runs `ChargeAssigner<AM1BCCTypifier<_>>`, and writes the resulting
-/// `atoms.charge` column back onto the same frame. Other frame blocks and
-/// non-charge atom columns are left untouched.
+/// All BCC atom typing and correction lookup stays in molrs. The bridge hands the
+/// engine's AM1 base charges to `BccModel::correct(&mol, &am1)` — a pure function
+/// that returns the corrected charges without touching the molecule — and writes
+/// them into the frame's `atoms.charge` column. Other frame blocks and non-charge
+/// atom columns are left untouched; in particular the caller's `atoms.type` column
+/// survives, because the model keeps its BCC codes to itself.
+///
+/// `total_charge` / `normalize_total_charge` are vestigial: antechamber does not
+/// renormalize (`am1bcc.c` ends at the increment loop), so molrs does not either —
+/// spreading the AM1 rounding residual over the atoms would make molrs *diverge*
+/// from the reference and would hide a non-converged AM1 behind a plausible-looking
+/// answer. Passing `true` is therefore refused rather than silently ignored. The
+/// arguments are dropped, and a parameter-set selector added, when the bridge is
+/// reworked; until then this keeps the C++ signature stable.
 fn am1_bcc_assign_frame_from_base(
     fref: &mut FrameRef,
     am1_charges: &[f64],
@@ -1201,29 +1192,31 @@ fn am1_bcc_assign_frame_from_base(
 fn am1_bcc_assign_frame_from_base_result(
     fref: &mut FrameRef,
     am1_charges: &[f64],
-    total_charge: f64,
+    _total_charge: f64,
     normalize_total_charge: bool,
 ) -> Result<Vec<f64>, String> {
+    if normalize_total_charge {
+        return Err(
+            "AM1-BCC charges are not renormalized to a target total: antechamber carries the \
+             AM1 rounding residual through, and rescaling would both diverge from it and mask \
+             a non-converged AM1"
+                .to_owned(),
+        );
+    }
+
     fref.0
         .with_mut(|frame| -> Result<Vec<f64>, String> {
-            let mut mol = molrs::Atomistic::from_frame(frame).map_err(|e| e.to_string())?;
-            let backend = ProvidedAM1ChargeBackend {
-                charges: am1_charges.to_vec(),
-                total_charge: normalize_total_charge.then_some(total_charge),
-            };
-            let model = AM1BCCTypifier::bcc(backend)?;
-            let result = ChargeAssigner::new(model)
-                .with_method("AM1-BCC")
-                .assign_atomistic(&mut mol)?;
+            let mol = molrs::Atomistic::from_frame(frame).map_err(|e| e.to_string())?;
+            let charges = BccModel::new(BccParameterSet::Bcc)
+                .map_err(|e| e.to_string())?
+                .correct(&mol, am1_charges)
+                .map_err(|e| e.to_string())?;
 
             with_block_inserted(frame, "atoms", |blk| {
-                blk.insert(
-                    keys::CHARGE,
-                    Array1::from_vec(result.charges.clone()).into_dyn(),
-                )
-                .expect("am1_bcc_assign_frame_from_base: insert charge");
+                blk.insert(keys::CHARGE, Array1::from_vec(charges.clone()).into_dyn())
+                    .expect("am1_bcc_assign_frame_from_base: insert charge");
             });
-            Ok(result.charges)
+            Ok(charges)
         })
         .map_err(|e| e.to_string())?
 }

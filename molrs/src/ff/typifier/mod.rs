@@ -12,10 +12,7 @@ pub mod mmff;
 pub mod opls;
 pub(crate) mod topology;
 
-pub use am1bcc::{
-    AM1BCCTypifier, AM1ChargeTypifier, BCCAtomTypifier, BCCCorrectionTable, BCCCorrector,
-    BccParameterSet,
-};
+pub use am1bcc::{BCCAtomTypifier, BCCCorrectionTable, BCCCorrector, BccParameterSet};
 pub use atd::{AtdParameterSet, AtdTypifier};
 pub use estimate::{ParameterEstimator, ParameterInterpolator, TypifierParameterContext};
 pub use opls::OPLSAATypifier;

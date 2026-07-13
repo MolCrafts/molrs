@@ -9,7 +9,7 @@ pub mod potential;
 pub mod typifier;
 
 // Common API re-exports so callers don't have to spell the deep module path.
-pub use charge::{ChargeAssigner, ChargeResult};
+pub use charge::{BccModel, BccParameterSet, ChargeError, ChargeModel, MullikenModel};
 pub use forcefield::readers::{ForceFieldReader, lammps::LammpsFfReader, opls::OplsXmlReader};
 pub use forcefield::xml::{read_forcefield_xml, read_forcefield_xml_str};
 pub use forcefield::{ForceField, SpecialBonds};

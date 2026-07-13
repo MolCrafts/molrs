@@ -31,5 +31,12 @@ mod potential;
 #[path = "ff/typifier/mod.rs"]
 mod typifier;
 
+/// The charge models (`ff::charge`). Declared after `typifier` because it consumes
+/// that module's AmberTools oracle and molecule builder — one fixture for the target,
+/// so no test can build its molecule from antechamber's answers instead of a user's
+/// input.
+#[path = "ff/charge/mod.rs"]
+mod charge;
+
 #[path = "ff/mmff/mod.rs"]
 mod mmff;

@@ -1,46 +1,32 @@
-//! AM1-BCC charge typifiers.
+//! The AM1-BCC *tables*: the atom-type table and the bond charge corrections.
 //!
-//! The public shape is intentionally parallel to `MMFFTypifier` and
-//! `OPLSAATypifier`: a struct owns the model/backend state, `typify()` returns
-//! a labeled `Atomistic`, and `charge` is written as a canonical atom property.
+//! This module owns what the BCC parameter sets are — [`BccParameterSet`] names a
+//! pair (`ATOMTYPE_*.DEF` + `BCCPARM*.DAT`), [`BCCAtomTypifier`] walks the first and
+//! [`BCCCorrectionTable`] / [`BCCCorrector`] apply the second. The charge *model*
+//! that composes them — the push API `BccModel::correct(&mol, &am1)` — lives one
+//! module over in [`ff::charge`](crate::ff::charge), because a charge model is not a
+//! typifier: it returns charges rather than a relabelled graph, and it must never
+//! write its internal BCC codes into the caller's [`keys::TYPE`] column, where their
+//! GAFF / OPLS force-field types live.
+//!
+//! Atom typing itself lives one module over the other way, in [`atd`](super::atd):
+//! the rules that assign `11` / `91` / `24` are antechamber's ATD language, shared
+//! by every `ATOMTYPE_*.DEF` table, and this module drives that one engine with the
+//! BCC (or ABCG2) table rather than owning a second copy of it. What is BCC-specific
+//! is what stays here: the **correction** table, which no other parameter set has.
 //!
 //! The implementation is a native port surface: external programs are reference
-//! material only, not runtime dependencies. Missing AM1 backends, BCC atom
-//! types, bond types, or correction rows return errors.
-//!
-//! Atom typing itself lives one module over, in [`atd`](super::atd): the rules
-//! that assign `11` / `91` / `24` are antechamber's ATD language, shared by every
-//! `ATOMTYPE_*.DEF` table, and this module drives that one engine with the BCC
-//! (or ABCG2) table rather than owning a second copy of it. What is BCC-specific
-//! is what stays here: the **correction** table, which no other parameter set has.
+//! material only, not runtime dependencies. A missing BCC atom type, bond type or
+//! correction row is an error, never a defaulted value.
 
 use molrs::store::keys;
-use molrs::{AtomId, Atomistic};
+use molrs::{AtomId, Atomistic, BondId};
 use std::collections::HashMap;
+use std::fmt;
 
 use super::Typifier;
 use super::atd::{AtdParameterSet, AtdTypifier, antechamber_bond_type};
 use crate::ff::params::{BccAlias, BccCorrectionRow};
-
-/// AM1 base-charge result supplied by an AM1 backend.
-#[derive(Debug, Clone, PartialEq)]
-pub struct AM1ChargeResult {
-    pub charges: Vec<f64>,
-    pub total_charge: Option<f64>,
-    pub heat_of_formation_kcal_mol: Option<f64>,
-    pub reference: String,
-}
-
-impl AM1ChargeResult {
-    pub fn new(charges: Vec<f64>) -> Self {
-        Self {
-            charges,
-            total_charge: None,
-            heat_of_formation_kcal_mol: None,
-            reference: String::new(),
-        }
-    }
-}
 
 /// AM1-BCC correction-family selector.
 ///
@@ -81,86 +67,15 @@ impl BccParameterSet {
     /// speak `ATOMTYPE_BCC.DEF`, `BCCPARM_ABCG2.DAT` rows speak
     /// `ATOMTYPE_ABCG2.DEF`. Pairing them any other way silently looks up the
     /// wrong rows.
+    ///
+    /// # Returns
+    ///
+    /// The [`AtdParameterSet`] whose atom types this family's rows are written in.
     pub fn atd_set(self) -> AtdParameterSet {
         match self {
             Self::Bcc => AtdParameterSet::Bcc,
             Self::Abcg2 => AtdParameterSet::Abcg2,
         }
-    }
-}
-
-/// Backend trait for obtaining AM1 base charges.
-pub trait AM1ChargeBackend {
-    fn compute_am1_charges(&self, mol: &Atomistic) -> Result<AM1ChargeResult, String>;
-}
-
-/// Guarded default backend used until Atomiverse's AM1 solver is linked in.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct UnavailableAM1Backend;
-
-impl AM1ChargeBackend for UnavailableAM1Backend {
-    fn compute_am1_charges(&self, _mol: &Atomistic) -> Result<AM1ChargeResult, String> {
-        Err("AM1-BCC requires an AM1ChargeBackend backed by Atomiverse AM1; no backend is configured".to_owned())
-    }
-}
-
-/// AM1 base-charge typifier without bond charge corrections.
-#[derive(Debug, Clone)]
-pub struct AM1ChargeTypifier<B = UnavailableAM1Backend> {
-    backend: B,
-    total_charge: Option<f64>,
-}
-
-impl Default for AM1ChargeTypifier<UnavailableAM1Backend> {
-    fn default() -> Self {
-        Self::new(UnavailableAM1Backend)
-    }
-}
-
-impl<B> AM1ChargeTypifier<B> {
-    pub fn new(backend: B) -> Self {
-        Self {
-            backend,
-            total_charge: None,
-        }
-    }
-
-    pub fn with_total_charge(mut self, total_charge: f64) -> Self {
-        self.total_charge = Some(total_charge);
-        self
-    }
-
-    pub fn backend(&self) -> &B {
-        &self.backend
-    }
-}
-
-impl<B> Typifier for AM1ChargeTypifier<B>
-where
-    B: AM1ChargeBackend,
-{
-    type Mol = Atomistic;
-
-    fn typify(&self, mol: &Atomistic) -> Result<Atomistic, String> {
-        let am1 = self.backend.compute_am1_charges(mol)?;
-        if am1.charges.len() != mol.n_atoms() {
-            return Err(format!(
-                "AM1 backend returned {} charges for {} atoms",
-                am1.charges.len(),
-                mol.n_atoms()
-            ));
-        }
-
-        let mut out = mol.clone();
-        let atom_ids: Vec<AtomId> = out.atoms().map(|(id, _)| id).collect();
-        for (i, aid) in atom_ids.iter().copied().enumerate() {
-            out.set_atom(aid, keys::CHARGE, am1.charges[i])
-                .map_err(|e| e.to_string())?;
-        }
-        if let Some(target) = self.total_charge {
-            normalize_total_charge(&mut out, target)?;
-        }
-        Ok(out)
     }
 }
 
@@ -171,6 +86,12 @@ where
 /// the former *is* the latter. It exists because the AM1-BCC pipeline needs the
 /// atom-type table and the correction family chosen together, and
 /// [`BccParameterSet`] is the type that keeps that pair honest.
+///
+/// It **writes** its labels into the graph's [`keys::TYPE`] column, so it is for
+/// callers who want a BCC-typed molecule and nothing else. Charges do **not** go
+/// through it: `BccModel` keeps its BCC types to itself precisely so that a molecule
+/// can carry GAFF types and BCC charges at the same time, which is what the standard
+/// AM1-BCC workflow is.
 #[derive(Debug, Clone)]
 pub struct BCCAtomTypifier {
     model: BccParameterSet,
@@ -183,14 +104,33 @@ impl Default for BCCAtomTypifier {
 }
 
 impl BCCAtomTypifier {
+    /// A typifier for the atom-type table `model` names.
+    ///
+    /// # Arguments
+    ///
+    /// * `model` — the correction family whose atom-type table to walk.
+    ///
+    /// # Returns
+    ///
+    /// The typifier bound to that table.
     pub fn parameter_set(model: BccParameterSet) -> Self {
         Self { model }
     }
 
+    /// `ATOMTYPE_BCC.DEF` — the original AM1-BCC atom types.
+    ///
+    /// # Returns
+    ///
+    /// The typifier bound to `ATOMTYPE_BCC.DEF`.
     pub fn bcc() -> Self {
         Self::parameter_set(BccParameterSet::Bcc)
     }
 
+    /// `ATOMTYPE_ABCG2.DEF` — the ABCG2 atom types.
+    ///
+    /// # Returns
+    ///
+    /// The typifier bound to `ATOMTYPE_ABCG2.DEF`.
     pub fn abcg2() -> Self {
         Self::parameter_set(BccParameterSet::Abcg2)
     }
@@ -205,6 +145,19 @@ impl BCCAtomTypifier {
     /// *order* cannot express — and an input `type` may be the unresolved aromatic
     /// precursor (10), which must be resolved, not trusted. To apply corrections
     /// with types of your own, drive [`BCCCorrector`] directly.
+    ///
+    /// # Arguments
+    ///
+    /// * `mol` — the molecule to type; left untouched.
+    ///
+    /// # Returns
+    ///
+    /// A clone of `mol` whose atoms carry BCC codes in [`keys::TYPE`] and whose
+    /// bonds carry perceived antechamber bond types.
+    ///
+    /// # Errors
+    ///
+    /// A message naming the atom no rule of the table matched.
     pub fn typify(&self, mol: &Atomistic) -> Result<Atomistic, String> {
         AtdTypifier::new(self.model.atd_set()).typify(mol)
     }
@@ -234,6 +187,14 @@ impl BCCCorrectionTable {
     ///
     /// Aliases (`CORR` rows) are not rows and cannot be expressed here; add them
     /// with [`Self::alias`].
+    ///
+    /// # Arguments
+    ///
+    /// * `rows` — the correction rows to hold.
+    ///
+    /// # Returns
+    ///
+    /// A table holding exactly `rows`, with no aliases.
     pub fn from_rows(rows: &[BccCorrectionRow]) -> Self {
         let corrections = rows
             .iter()
@@ -252,8 +213,18 @@ impl BCCCorrectionTable {
 
     /// Build the table for a parameter set from its compile-time rows.
     ///
-    /// Fallible only to keep the call shape of the former text-parsing
-    /// constructor; the tables are typed Rust data, so this cannot fail.
+    /// # Arguments
+    ///
+    /// * `model` — the correction family to load.
+    ///
+    /// # Returns
+    ///
+    /// The family's rows and `CORR` aliases.
+    ///
+    /// # Errors
+    ///
+    /// Never, in practice: the tables are typed Rust data. The `Result` keeps the
+    /// call shape of the former text-parsing constructor.
     pub fn parameter_set(model: BccParameterSet) -> Result<Self, String> {
         let mut table = Self::from_rows(model.corrections());
         for alias in model.aliases() {
@@ -262,18 +233,57 @@ impl BCCCorrectionTable {
         Ok(table)
     }
 
+    /// `BCCPARM.DAT` — the original AM1-BCC corrections.
+    ///
+    /// # Returns
+    ///
+    /// The BCC family's table.
+    ///
+    /// # Errors
+    ///
+    /// Never, in practice; see [`Self::parameter_set`].
     pub fn bcc() -> Result<Self, String> {
         Self::parameter_set(BccParameterSet::Bcc)
     }
 
+    /// `BCCPARM_ABCG2.DAT` — the ABCG2 corrections.
+    ///
+    /// # Returns
+    ///
+    /// The ABCG2 family's table.
+    ///
+    /// # Errors
+    ///
+    /// Never, in practice; see [`Self::parameter_set`].
     pub fn abcg2() -> Result<Self, String> {
         Self::parameter_set(BccParameterSet::Abcg2)
     }
 
+    /// Add a single-bond row.
+    ///
+    /// # Arguments
+    ///
+    /// * `left` / `right` — the two BCC atom types.
+    /// * `delta` — the increment added to `left` and subtracted from `right`.
+    ///
+    /// # Returns
+    ///
+    /// The table, with the row inserted.
     pub fn insert(self, left: impl Into<String>, right: impl Into<String>, delta: f64) -> Self {
         self.insert_bond_type(left, right, 1, delta)
     }
 
+    /// Add a row for one bond type.
+    ///
+    /// # Arguments
+    ///
+    /// * `left` / `right` — the two BCC atom types.
+    /// * `bond_type` — the antechamber bond type the row applies to.
+    /// * `delta` — the increment added to `left` and subtracted from `right`.
+    ///
+    /// # Returns
+    ///
+    /// The table, with the row inserted.
     pub fn insert_bond_type(
         mut self,
         left: impl Into<String>,
@@ -286,23 +296,59 @@ impl BCCCorrectionTable {
         self
     }
 
+    /// Add a `CORR` alias: `atom_type` corrects as `reference` does.
+    ///
+    /// # Arguments
+    ///
+    /// * `atom_type` — the type with no rows of its own.
+    /// * `reference` — the type whose rows it borrows.
+    ///
+    /// # Returns
+    ///
+    /// The table, with the alias registered.
     pub fn alias(mut self, atom_type: impl Into<String>, reference: impl Into<String>) -> Self {
         self.aliases.insert(atom_type.into(), reference.into());
         self
     }
 
+    /// The number of correction rows.
+    ///
+    /// # Returns
+    ///
+    /// The row count (aliases are not rows; see [`Self::alias_len`]).
     pub fn len(&self) -> usize {
         self.corrections.len()
     }
 
+    /// Has the table no rows at all?
+    ///
+    /// # Returns
+    ///
+    /// `true` when it would fail on every bond.
     pub fn is_empty(&self) -> bool {
         self.corrections.is_empty()
     }
 
+    /// The number of `CORR` aliases.
+    ///
+    /// # Returns
+    ///
+    /// The alias count.
     pub fn alias_len(&self) -> usize {
         self.aliases.len()
     }
 
+    /// The increment for a typed bond, following `CORR` aliases.
+    ///
+    /// # Arguments
+    ///
+    /// * `left` / `right` — the endpoints' BCC atom types.
+    /// * `bond_type` — the perceived antechamber bond type.
+    ///
+    /// # Returns
+    ///
+    /// The increment to add to `left` and subtract from `right`, or `None` when no
+    /// row (and no aliased row) covers the bond.
     pub fn correction(&self, left: &str, right: &str, bond_type: i32) -> Option<f64> {
         if let Some(v) = self.direct_correction(left, right, bond_type) {
             return Some(v);
@@ -341,11 +387,119 @@ impl BCCCorrectionTable {
     }
 }
 
+/// Why a correction pass could not be applied.
+///
+/// Kept typed rather than a message so that the charge model can hand the C++ and
+/// Python bridges a `ChargeError` they can discriminate on: a bond with no row is a
+/// permanent property of the parameter set, a malformed graph is the caller's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum BccIncrementError {
+    /// No row (and no aliased row) covers this bond.
+    MissingRow {
+        /// The bond, for the message.
+        bond: BondId,
+        /// BCC atom type of one endpoint.
+        left: String,
+        /// BCC atom type of the other endpoint.
+        right: String,
+        /// The perceived antechamber bond type.
+        bond_type: i32,
+    },
+    /// The graph could not be read.
+    Malformed {
+        /// What the graph layer said.
+        detail: String,
+    },
+}
+
+impl fmt::Display for BccIncrementError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingRow {
+                bond,
+                left,
+                right,
+                bond_type,
+            } => write!(
+                f,
+                "missing BCC correction for bond {bond:?}: {left}|{right}|{bond_type}"
+            ),
+            Self::Malformed { detail } => write!(f, "{detail}"),
+        }
+    }
+}
+
+/// The per-atom BCC increment of every atom, in graph atom order.
+///
+/// The one place the corrections are applied. Every row is added to one endpoint and
+/// subtracted from the other, so the increments sum to zero and the pass conserves
+/// the molecule's total charge exactly.
+///
+/// The atom types are an **argument**, not something read off `mol`: the charge model
+/// perceives its BCC types into a `Vec` and never writes them into the caller's
+/// graph, while [`BCCCorrector`] reads them from a graph the caller typed on purpose.
+/// One loop, two ways to say what the types are.
+///
+/// # Arguments
+///
+/// * `table` — the correction rows to apply.
+/// * `mol` — the molecule, whose bonds carry perceived antechamber bond types.
+/// * `types` — the BCC atom type of every atom, in graph atom order.
+///
+/// # Returns
+///
+/// The increment for every atom, in graph atom order.
+///
+/// # Errors
+///
+/// [`BccIncrementError::MissingRow`] for a bond the table does not cover;
+/// [`BccIncrementError::Malformed`] for a bond with no usable `type`.
+pub(crate) fn bcc_increments(
+    table: &BCCCorrectionTable,
+    mol: &Atomistic,
+    types: &[&str],
+) -> Result<Vec<f64>, BccIncrementError> {
+    let atom_ids: Vec<AtomId> = mol.atoms().map(|(id, _)| id).collect();
+    let index: HashMap<AtomId, usize> = atom_ids
+        .iter()
+        .enumerate()
+        .map(|(i, aid)| (*aid, i))
+        .collect();
+
+    let mut delta = vec![0.0; atom_ids.len()];
+    for (bid, bond) in mol.bonds() {
+        let (Some(&i), Some(&j)) = (index.get(&bond.nodes[0]), index.get(&bond.nodes[1])) else {
+            return Err(BccIncrementError::Malformed {
+                detail: format!("bond {bid:?} has an endpoint that is not an atom of the molecule"),
+            });
+        };
+        let bond_type = antechamber_bond_type(&bond)
+            .map_err(|detail| BccIncrementError::Malformed { detail })?;
+        let Some(dq) = table.correction(types[i], types[j], bond_type) else {
+            return Err(BccIncrementError::MissingRow {
+                bond: bid,
+                left: types[i].to_owned(),
+                right: types[j].to_owned(),
+                bond_type,
+            });
+        };
+        delta[i] += dq;
+        delta[j] -= dq;
+    }
+    Ok(delta)
+}
+
 /// Applies a [`BCCCorrectionTable`] to the AM1 base charges of a typed molecule.
 ///
 /// A corrector *is* its table, so there is no way to build one without naming it:
 /// a corrector with an empty table constructs happily and then rejects the first
 /// bond it sees, which is a runtime failure standing in for a compile-time one.
+///
+/// This is the LOW-level half of AM1-BCC: the molecule must already carry BCC atom
+/// types and BCC bond types, so the types are the caller's argument rather than the
+/// corrector's job. The high-level half — perceive the types, correct, hand the
+/// charges back without touching the graph — is `BccModel::correct` in
+/// [`ff::charge`](crate::ff::charge).
 #[derive(Debug, Clone)]
 pub struct BCCCorrector {
     table: BCCCorrectionTable,
@@ -353,44 +507,45 @@ pub struct BCCCorrector {
 
 impl BCCCorrector {
     /// A corrector that applies `table`.
+    ///
+    /// # Arguments
+    ///
+    /// * `table` — the correction rows, built from a parameter set (or explicit rows).
+    ///
+    /// # Returns
+    ///
+    /// The corrector.
     pub fn new(table: BCCCorrectionTable) -> Self {
         Self { table }
     }
 
+    /// Add the table's increments to a typed molecule's `charge` column, in place.
+    ///
+    /// # Arguments
+    ///
+    /// * `mol` — a molecule carrying BCC atom types ([`keys::TYPE`]), BCC bond types
+    ///   and AM1 base charges ([`keys::CHARGE`]). Its charges are replaced by the
+    ///   corrected ones.
+    ///
+    /// # Errors
+    ///
+    /// A message when an atom has no `type`, an atom has no base `charge`, or the
+    /// table has no row for a bond — never a silent zero for any of them.
     pub fn apply(&self, mol: &mut Atomistic) -> Result<(), String> {
         let atom_ids: Vec<AtomId> = mol.atoms().map(|(id, _)| id).collect();
-        let mut index = HashMap::new();
-        for (i, aid) in atom_ids.iter().copied().enumerate() {
-            index.insert(aid, i);
-        }
+        let types: Vec<String> = atom_ids
+            .iter()
+            .map(|aid| {
+                mol.get_atom(*aid)
+                    .map_err(|e| e.to_string())?
+                    .get_str(keys::TYPE)
+                    .map(str::to_owned)
+                    .ok_or_else(|| "BCCCorrector requires atom `type` labels".to_owned())
+            })
+            .collect::<Result<_, String>>()?;
+        let types: Vec<&str> = types.iter().map(String::as_str).collect();
 
-        let mut delta = vec![0.0; atom_ids.len()];
-        let bond_rows: Vec<_> = mol.bonds().collect();
-        for (bid, bond) in bond_rows {
-            let a = bond.nodes[0];
-            let b = bond.nodes[1];
-            let bond_type = antechamber_bond_type(&bond)?;
-            let a_label = mol
-                .get_atom(a)
-                .map_err(|e| e.to_string())?
-                .get_str(keys::TYPE)
-                .ok_or_else(|| "BCCCorrector requires atom `type` labels".to_owned())?
-                .to_owned();
-            let b_label = mol
-                .get_atom(b)
-                .map_err(|e| e.to_string())?
-                .get_str(keys::TYPE)
-                .ok_or_else(|| "BCCCorrector requires atom `type` labels".to_owned())?
-                .to_owned();
-            let Some(dq) = self.table.correction(&a_label, &b_label, bond_type) else {
-                return Err(format!(
-                    "missing BCC correction for bond {:?}: {a_label}|{b_label}|{bond_type}",
-                    bid
-                ));
-            };
-            delta[index[&a]] += dq;
-            delta[index[&b]] -= dq;
-        }
+        let delta = bcc_increments(&self.table, mol, &types).map_err(|e| e.to_string())?;
 
         for (i, aid) in atom_ids.iter().copied().enumerate() {
             let q0 = mol
@@ -403,144 +558,4 @@ impl BCCCorrector {
         }
         Ok(())
     }
-}
-
-/// AM1-BCC typifier: AM1 backend + BCC atom typifier + correction table.
-#[derive(Debug, Clone)]
-pub struct AM1BCCTypifier<B = UnavailableAM1Backend> {
-    backend: B,
-    atom_typifier: BCCAtomTypifier,
-    corrector: BCCCorrector,
-    total_charge: Option<f64>,
-}
-
-impl<B> AM1BCCTypifier<B> {
-    /// An AM1-BCC typifier over `backend`, correcting with `table`.
-    ///
-    /// The correction table is an argument because there is no default one: the
-    /// two that exist are `BCCPARM.DAT` and `BCCPARM_ABCG2.DAT`, and the caller
-    /// must say which — hence no parameterless form and no `Default`. To pair a
-    /// published correction family with the atom-type table it is defined against
-    /// (which is what you almost always want), use [`Self::bcc`] / [`Self::abcg2`]
-    /// rather than assembling the pair by hand.
-    ///
-    /// Atoms are typed with [`BCCAtomTypifier::default`] — i.e. `ATOMTYPE_BCC.DEF`.
-    /// A table whose rows speak a *different* atom-type language (ABCG2) needs the
-    /// matching typifier too; see [`BccParameterSet::atd_set`] for why the pair
-    /// must be kept honest, and override with [`Self::with_atom_typifier`].
-    pub fn new(backend: B, table: BCCCorrectionTable) -> Self {
-        Self {
-            backend,
-            atom_typifier: BCCAtomTypifier::default(),
-            corrector: BCCCorrector::new(table),
-            total_charge: None,
-        }
-    }
-
-    /// The original AM1-BCC parameter set: `ATOMTYPE_BCC.DEF` + `BCCPARM.DAT`.
-    pub fn bcc(backend: B) -> Result<Self, String> {
-        Ok(Self::new(backend, BCCCorrectionTable::bcc()?)
-            .with_atom_typifier(BCCAtomTypifier::bcc()))
-    }
-
-    /// The ABCG2 parameter set: `ATOMTYPE_ABCG2.DEF` + `BCCPARM_ABCG2.DAT`.
-    pub fn abcg2(backend: B) -> Result<Self, String> {
-        Ok(Self::new(backend, BCCCorrectionTable::abcg2()?)
-            .with_atom_typifier(BCCAtomTypifier::abcg2()))
-    }
-
-    /// Replace the atom typifier (e.g. to match an ABCG2 correction table).
-    pub fn with_atom_typifier(mut self, atom_typifier: BCCAtomTypifier) -> Self {
-        self.atom_typifier = atom_typifier;
-        self
-    }
-
-    /// Replace the correction table.
-    pub fn with_correction_table(mut self, table: BCCCorrectionTable) -> Self {
-        self.corrector = BCCCorrector::new(table);
-        self
-    }
-
-    /// Replace the corrector wholesale.
-    pub fn with_corrector(mut self, corrector: BCCCorrector) -> Self {
-        self.corrector = corrector;
-        self
-    }
-
-    /// Normalize the corrected charges to sum to `total_charge`.
-    pub fn with_total_charge(mut self, total_charge: f64) -> Self {
-        self.total_charge = Some(total_charge);
-        self
-    }
-
-    /// The AM1 backend supplying base charges.
-    pub fn backend(&self) -> &B {
-        &self.backend
-    }
-}
-
-impl<B> AM1BCCTypifier<B>
-where
-    B: AM1ChargeBackend,
-{
-    fn typify_am1bcc(&self, mol: &Atomistic) -> Result<Atomistic, String> {
-        let am1 = self.backend.compute_am1_charges(mol)?;
-        if am1.charges.len() != mol.n_atoms() {
-            return Err(format!(
-                "AM1 backend returned {} charges for {} atoms",
-                am1.charges.len(),
-                mol.n_atoms()
-            ));
-        }
-
-        let mut out = self.atom_typifier.typify(mol)?;
-        let atom_ids: Vec<AtomId> = out.atoms().map(|(id, _)| id).collect();
-        for (i, aid) in atom_ids.iter().copied().enumerate() {
-            out.set_atom(aid, keys::CHARGE, am1.charges[i])
-                .map_err(|e| e.to_string())?;
-        }
-
-        self.corrector.apply(&mut out)?;
-        if let Some(target) = self.total_charge.or(am1.total_charge) {
-            normalize_total_charge(&mut out, target)?;
-        }
-        Ok(out)
-    }
-}
-
-impl<B> Typifier for AM1BCCTypifier<B>
-where
-    B: AM1ChargeBackend,
-{
-    type Mol = Atomistic;
-
-    fn typify(&self, mol: &Atomistic) -> Result<Atomistic, String> {
-        self.typify_am1bcc(mol)
-    }
-}
-
-fn normalize_total_charge(mol: &mut Atomistic, target: f64) -> Result<(), String> {
-    let atom_ids: Vec<AtomId> = mol.atoms().map(|(id, _)| id).collect();
-    if atom_ids.is_empty() {
-        return Ok(());
-    }
-    let mut sum = 0.0;
-    for aid in &atom_ids {
-        sum += mol
-            .get_atom(*aid)
-            .map_err(|e| e.to_string())?
-            .get_f64(keys::CHARGE)
-            .ok_or_else(|| "cannot normalize missing charge".to_owned())?;
-    }
-    let shift = (target - sum) / atom_ids.len() as f64;
-    for aid in atom_ids {
-        let q = mol
-            .get_atom(aid)
-            .map_err(|e| e.to_string())?
-            .get_f64(keys::CHARGE)
-            .ok_or_else(|| "cannot normalize missing charge".to_owned())?;
-        mol.set_atom(aid, keys::CHARGE, q + shift)
-            .map_err(|e| e.to_string())?;
-    }
-    Ok(())
 }
