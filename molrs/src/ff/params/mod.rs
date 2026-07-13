@@ -20,6 +20,17 @@
 //! The environment and property mini-languages are **pre-parsed** into the
 //! static AST below, so the typifier walks a tree instead of re-parsing a
 //! string for every atom and every candidate rule.
+//!
+//! # The `parm` force fields
+//!
+//! [`GAFF`] and [`GAFF2`] are the same idea applied to AMBER's `parm` format:
+//! `gaff.dat` and `gaff2.dat` become [`ParmTable`]s of MASS / BOND / ANGLE /
+//! DIHE / IMPROPER / NONBON rows. Values are kept in the **upstream's own units
+//! and conventions** — degrees, and AMBER's un-halved force constants — because
+//! the table is a transcription of the file, not a force field: converting to
+//! molrs's radians-and-half-k kernel convention is the job of the reader that
+//! populates a [`ForceField`](crate::ff::forcefield::ForceField) from it (see
+//! [`crate::ff::forcefield::gaff`]).
 
 pub mod generated;
 
@@ -32,6 +43,8 @@ pub use generated::atomtype_gff2::ATOMTYPE_GFF2;
 pub use generated::atomtype_sybyl::ATOMTYPE_SYBYL;
 pub use generated::bccparm::{BCC_ALIASES, BCC_CORRECTIONS};
 pub use generated::bccparm_abcg2::{ABCG2_ALIASES, ABCG2_CORRECTIONS};
+pub use generated::gaff::GAFF;
+pub use generated::gaff2::GAFF2;
 pub use generated::gasparm::GASTEIGER_PARAMS;
 
 /// One oriented bond charge correction from a `BCCPARM*.DAT` table.
@@ -318,4 +331,203 @@ pub struct AtdTable {
     pub wildatoms: &'static [WildAtom],
     /// The `ATD` rules, in file order. The first match wins.
     pub rules: &'static [AtdRule],
+}
+
+// ---------------------------------------------------------------------------
+// AMBER `parm` force fields — gaff.dat / gaff2.dat
+// ---------------------------------------------------------------------------
+
+/// An atom type of a [`ParmTable`], as an index into its [`masses`](ParmTable::masses).
+///
+/// **Why an index and not a `&'static str`.** The two `parm` tables hold about
+/// 60,000 atom-type slots between them, and a `&str` is a 16-byte fat pointer
+/// that also needs a load-time relocation. Spelling every slot out cost **1416
+/// KB** of stripped release binary, measured; interning to one byte costs
+/// [see the module docs of `generated`] a fraction of that, and the table stays
+/// just as readable because the generator emits a named `const` per type
+/// (`T_C3`), never a bare number.
+///
+/// The index is the type's row in the `MASS` section — the section that
+/// *declares* the atom types — so [`ParmTable::name_of`] is an array read, and a
+/// type with no `MASS` row is a generator error rather than a dangling index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ParmType(pub u8);
+
+/// One `MASS` row of an AMBER `parm` table.
+///
+/// The row order of this section **is** the [`ParmType`] numbering.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ParmMassRow {
+    /// GAFF atom type (`c3`, `ha`, `os`, …).
+    pub atom_type: &'static str,
+    /// Atomic mass, in amu.
+    pub mass: f64,
+    /// Atomic polarizability, in Å³. Read by the polarizable force fields only;
+    /// a fixed-charge GAFF run never touches it.
+    pub polarizability: f64,
+}
+
+/// One `BOND` row: `E = force_constant · (r − length)²`.
+///
+/// That is **AMBER's** convention and it carries no ½ — unlike molrs's
+/// [`BondHarmonic`](crate::ff::potential::bond::harmonic::BondHarmonic), whose
+/// `k0` is `2 · force_constant`. The factor is applied where the units are
+/// normalised (the [`gaff`](crate::ff::forcefield::gaff) reader), never here:
+/// this row is what the file says.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ParmBondRow {
+    /// Atom type of the first endpoint.
+    pub i: ParmType,
+    /// Atom type of the second endpoint.
+    pub j: ParmType,
+    /// Force constant, in kcal/mol/Å².
+    pub force_constant: f64,
+    /// Equilibrium bond length, in Å.
+    pub length: f64,
+}
+
+/// One `ANGLE` row: `E = force_constant · (θ − angle_deg)²`, θ in radians.
+///
+/// Again AMBER's un-halved convention, and again the equilibrium angle is left
+/// in the **degrees** the file writes it in — molrs consumes radians, and that
+/// conversion belongs to the reader boundary, not to a transcription.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ParmAngleRow {
+    /// Atom type of the first leg.
+    pub i: ParmType,
+    /// Atom type of the vertex.
+    pub j: ParmType,
+    /// Atom type of the second leg.
+    pub k: ParmType,
+    /// Force constant, in kcal/mol/rad².
+    pub force_constant: f64,
+    /// Equilibrium angle, in **degrees**.
+    pub angle_deg: f64,
+}
+
+/// One `DIHE` row — a single cosine term of a proper torsion:
+///
+/// ```text
+/// E = (barrier / divisor) · [1 + cos(periodicity · φ − phase_deg)]
+/// ```
+///
+/// A slot is `None` where the file writes the `X` wildcard, which matches any
+/// atom type. Modelling that as `Option` rather than as a distinguished index is
+/// what makes a wildcard impossible to read as a concrete type by accident:
+/// there are 607 such rows per table, and the exact-match population path has to
+/// skip every one of them while the parmchk2-style fallback lives on them.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ParmDihedralRow {
+    /// Atom type of the first atom, or `None` for the `X` wildcard.
+    pub i: Option<ParmType>,
+    /// Atom type of the second (bonded-pair) atom, or `None`.
+    pub j: Option<ParmType>,
+    /// Atom type of the third (bonded-pair) atom, or `None`.
+    pub k: Option<ParmType>,
+    /// Atom type of the fourth atom, or `None`.
+    pub l: Option<ParmType>,
+    /// `IDIVF` — the number of torsions sharing this barrier. The per-torsion
+    /// force constant is `barrier / divisor`.
+    pub divisor: u32,
+    /// `PK` — the **total** barrier height, in kcal/mol, before division.
+    pub barrier: f64,
+    /// Phase, in **degrees**.
+    pub phase_deg: f64,
+    /// `|PN|` — the multiplicity.
+    pub periodicity: u32,
+    /// Upstream wrote `PN` negative: another cosine term for the *same* quartet
+    /// follows on the next row. The sign is a structural fact about the file
+    /// rather than a number, so it becomes a flag of its own and `periodicity`
+    /// stays a magnitude no kernel can be handed a negative multiplicity from.
+    pub more_terms: bool,
+}
+
+/// One `IMPROPER` row: `E = barrier · [1 + cos(periodicity · φ − phase_deg)]`.
+///
+/// **The central atom is [`k`](Self::k) — the third** — which is AMBER's
+/// convention, not molrs's (`Atomistic::add_improper` documents `i` as
+/// conventionally central, and MMFF's Wilson out-of-plane puts it second). φ is
+/// the I-J-K-L dihedral, so the slot order is load-bearing: an improper relation
+/// built from this row must be written in it.
+///
+/// There is no `divisor`: an improper's barrier is never divided.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ParmImproperRow {
+    /// Atom type of the first peripheral atom, or `None` for the `X` wildcard.
+    pub i: Option<ParmType>,
+    /// Atom type of the second peripheral atom, or `None`.
+    pub j: Option<ParmType>,
+    /// Atom type of the **central** atom, or `None`.
+    pub k: Option<ParmType>,
+    /// Atom type of the third peripheral atom, or `None`.
+    pub l: Option<ParmType>,
+    /// Barrier height, in kcal/mol.
+    pub barrier: f64,
+    /// Phase, in **degrees** (180 for every GAFF improper).
+    pub phase_deg: f64,
+    /// Multiplicity (2 for every GAFF improper).
+    pub periodicity: u32,
+}
+
+/// One `NONBON` row, under the `MOD4  RE` label: R\* and ε.
+///
+/// `RE` is what declares these two columns to be a radius and a well depth;
+/// under an `AC` label they would be the A/C coefficients of the same 12-6 form
+/// instead. The generator refuses any other label rather than reinterpret them.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ParmNonbondedRow {
+    /// The atom type these parameters belong to.
+    pub atom_type: ParmType,
+    /// R\* — **half** the LJ minimum-energy separation, in Å. Not σ:
+    /// `σ = 2·R* / 2^(1/6)`.
+    pub r_min_half: f64,
+    /// Well depth ε, in kcal/mol.
+    pub epsilon: f64,
+}
+
+/// One AMBER `parm` force field (`gaff.dat`, `gaff2.dat`) as a typed table.
+///
+/// Rows keep file order in every section, which is load-bearing twice over: for
+/// `dihedrals`, consecutive rows sharing a quartet are the cosine terms of one
+/// torsion; for `impropers`, the first matching row wins.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ParmTable {
+    /// Upstream file name, e.g. `gaff.dat`.
+    pub name: &'static str,
+    /// The `MASS` section. Its row order is the [`ParmType`] numbering.
+    pub masses: &'static [ParmMassRow],
+    /// The `BOND` section.
+    pub bonds: &'static [ParmBondRow],
+    /// The `ANGLE` section.
+    pub angles: &'static [ParmAngleRow],
+    /// The `DIHE` section.
+    pub dihedrals: &'static [ParmDihedralRow],
+    /// The `IMPROPER` section.
+    pub impropers: &'static [ParmImproperRow],
+    /// The `NONBON` section.
+    pub nonbonded: &'static [ParmNonbondedRow],
+}
+
+impl ParmTable {
+    /// The name of an interned atom type, e.g. `c3`.
+    ///
+    /// # Panics
+    ///
+    /// If `ty` is not a type of this table. Every [`ParmType`] in a table's rows
+    /// indexes that table's own `MASS` section by construction, so this can only
+    /// fire if one table's type is used against another's.
+    pub fn name_of(&self, ty: ParmType) -> &'static str {
+        self.masses[usize::from(ty.0)].atom_type
+    }
+
+    /// The interned form of a type name, or `None` if this table has no such type.
+    ///
+    /// Linear over the `MASS` section (83 / 99 rows). Callers that resolve many
+    /// labels should build a map once instead of calling this per atom.
+    pub fn type_of(&self, name: &str) -> Option<ParmType> {
+        self.masses
+            .iter()
+            .position(|row| row.atom_type == name)
+            .map(|idx| ParmType(idx as u8))
+    }
 }

@@ -1,4 +1,4 @@
-//! Antechamber parameter tables, compiled to typed Rust `const`s.
+//! Antechamber and AMBER `parm` parameter tables, compiled to typed Rust `const`s.
 //!
 //! DO NOT HAND-EDIT — regenerate with `scripts/gen_param_tables.py`.
 //!
@@ -13,4 +13,6 @@ pub mod atomtype_gff2;
 pub mod atomtype_sybyl;
 pub mod bccparm;
 pub mod bccparm_abcg2;
+pub mod gaff;
+pub mod gaff2;
 pub mod gasparm;

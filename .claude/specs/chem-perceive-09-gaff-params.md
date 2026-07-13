@@ -1,6 +1,6 @@
 ---
 title: "chem-perceive 9/14 — gaff.dat / gaff2.dat → committed .rs + ForceField 填充"
-status: approved
+status: done
 created: 2026-07-12
 chain: chem-perceive
 depends_on: "chem-perceive-02-param-rs"
@@ -66,9 +66,9 @@ GPL atomtype.c"*——现在这个顾虑以更大规模重现。参数**表**（
 
 ## Tasks
 
-- [ ] Extend `scripts/gen_param_tables.py` to emit `.rs` for gaff.dat and gaff2.dat (MASS/BOND/ANGLE/DIHE/IMPROPER/NONBON), preserving wildcard (X) rows
-- [ ] Populate `ForceField` from GAFF/GAFF2 atom types (exact-match terms only; fallback is 11)
-- [ ] Confirm the measured budget holds in-tree (baseline: +1071 KB / 0.37 s for 15,474 rows)
+- [x] Extend `scripts/gen_param_tables.py` to emit `.rs` for gaff.dat and gaff2.dat (MASS/BOND/ANGLE/DIHE/IMPROPER/NONBON), preserving wildcard (X) rows
+- [x] Populate `ForceField` from GAFF/GAFF2 atom types (exact-match terms only; fallback is 11)
+- [x] Confirm the measured budget holds in-tree (baseline: +1071 KB / 0.37 s for 15,474 rows)
 
 ## Testing strategy
 

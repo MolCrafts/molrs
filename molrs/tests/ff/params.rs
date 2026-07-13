@@ -85,8 +85,8 @@ fn committed_tables_match_the_manifest_hashes() {
     }
 
     assert_eq!(
-        checked, 11,
-        "manifest should cover all 11 generated files (10 tables + mod.rs)"
+        checked, 13,
+        "manifest should cover all 13 generated files (12 tables + mod.rs)"
     );
 }
 
@@ -130,8 +130,8 @@ fn generator_byte_reproduces_the_committed_tables() {
     // shows up here even when the emitted tables happen to be unaffected.
     assert_eq!(
         names.len(),
-        12,
-        "expected 10 tables + mod.rs + MANIFEST.sha256"
+        14,
+        "expected 12 tables + mod.rs + MANIFEST.sha256"
     );
 
     let mut drifted = Vec::new();

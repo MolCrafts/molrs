@@ -6,6 +6,7 @@
 //! into computational [`Potential`](super::potential::Potential) objects via
 //! [`ForceField::to_potentials`].
 
+pub mod gaff;
 pub mod readers;
 pub mod xml;
 

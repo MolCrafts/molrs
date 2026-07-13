@@ -1,21 +1,26 @@
-"""Translate the antechamber parameter tables into committed Rust data structures.
+"""Translate the antechamber / AMBER parameter tables into committed Rust data.
 
 molrs parses NO parameter text at runtime. This script reads the upstream tables
-from `$AMBERHOME/dat/antechamber/` and emits typed Rust `const`s into
+from `$AMBERHOME` and emits typed Rust `const`s into
 `molrs/src/ff/params/generated/`. The emitted `.rs` is the single in-repo source
 of truth: the raw `.DAT` / `.DEF` files are NOT vendored.
 
-Ten tables:
+Twelve tables, from two upstream directories:
 
-  BCCPARM.DAT          -> bccparm.rs        (corrections + CORR aliases)
-  BCCPARM_ABCG2.DAT    -> bccparm_abcg2.rs  (corrections + CORR aliases)
-  GASPARM.DAT          -> gasparm.rs        (Gasteiger PEOE parameters)
-  ATOMTYPE_{BCC,ABCG2,GAS,GFF,GFF2,AMBER,SYBYL}.DEF -> atomtype_*.rs
+  dat/antechamber/
+    BCCPARM.DAT          -> bccparm.rs        (corrections + CORR aliases)
+    BCCPARM_ABCG2.DAT    -> bccparm_abcg2.rs  (corrections + CORR aliases)
+    GASPARM.DAT          -> gasparm.rs        (Gasteiger PEOE parameters)
+    ATOMTYPE_{BCC,ABCG2,GAS,GFF,GFF2,AMBER,SYBYL}.DEF -> atomtype_*.rs
+  dat/leap/parm/
+    gaff.dat             -> gaff.rs           (MASS/BOND/ANGLE/DIHE/IMPROPER/NONBON)
+    gaff2.dat            -> gaff2.rs          (idem)
 
 All seven `.DEF` files share ONE ATD / WILDATOM grammar, so there is one parser
-here and seven outputs.
+here and seven outputs. Both `gaff*.dat` are AMBER's sectioned `parm` format, so
+they likewise share one parser (`parse_parm`) and two outputs.
 
-An eleventh upstream table is READ but not emitted on its own: `PARMCHK.DAT`
+An additional upstream table is READ but not emitted on its own: `PARMCHK.DAT`
 supplies the `AtdRule.alternate` column (see `parse_parmchk`). The `.DEF` files
 emit only the phase-1 name of a conjugated system (`cc`); antechamber renames one
 colour of each conjugated system to a partner (`cd`) that no `.DEF` row declares,
@@ -52,8 +57,12 @@ HEADER = """//! {title}
 //!
 //! DO NOT HAND-EDIT — regenerate with `scripts/gen_param_tables.py`.
 //!
-//! Source: `$AMBERHOME/dat/antechamber/{source}` (AmberTools).
+//! Source: `$AMBERHOME/{source}` (AmberTools).
 """
+
+#: The two upstream directories this generator reads.
+ANTECHAMBER_DIR = "dat/antechamber"
+PARM_DIR = "dat/leap/parm"
 
 # rustfmt's `struct_lit_width` default (18) explodes every flat data row across
 # six lines, which destroys the one-row-per-line grep-ability that is half the
@@ -130,14 +139,32 @@ ATOMTYPE_FILES = [
 #: is the only in-repo source of the phase-2 names (`cd`, `cf`, ...).
 PARMCHK_FILE = "PARMCHK.DAT"
 
-#: Every upstream table this generator consumes. Hashed into MANIFEST.sha256 so
-#: the provenance of the committed `.rs` is recorded, not merely asserted.
+# (file, module, const prefix) — AMBER `parm`-format force-field parameter files.
+# One grammar (`parse_parm`), two outputs. Unlike the `.DEF` tables these live
+# under `dat/leap/parm/`, because they are LEaP's force fields rather than
+# antechamber's typing rules.
+PARM_FILES = [
+    ("gaff.dat", "gaff", "GAFF"),
+    ("gaff2.dat", "gaff2", "GAFF2"),
+]
+
+#: Every upstream table this generator consumes, as a path relative to
+#: `$AMBERHOME`. Hashed into MANIFEST.sha256 so the provenance of the committed
+#: `.rs` is recorded, not merely asserted. The path is part of the record: the
+#: `.DEF`/`.DAT` typing tables and the `parm` force fields come from two
+#: different upstream directories.
 SOURCE_FILES: list[str] = [
-    "BCCPARM.DAT",
-    "BCCPARM_ABCG2.DAT",
-    "GASPARM.DAT",
-    PARMCHK_FILE,
-    *[name for name, _, _, _ in ATOMTYPE_FILES],
+    *[
+        f"{ANTECHAMBER_DIR}/{name}"
+        for name in (
+            "BCCPARM.DAT",
+            "BCCPARM_ABCG2.DAT",
+            "GASPARM.DAT",
+            PARMCHK_FILE,
+            *[f for f, _, _, _ in ATOMTYPE_FILES],
+        )
+    ],
+    *[f"{PARM_DIR}/{name}" for name, _, _ in PARM_FILES],
 ]
 
 
@@ -209,7 +236,7 @@ def emit_bccparm(path: Path, prefix: str) -> str:
     corrections, aliases = parse_bccparm(path)
     L = [HEADER.format(
         title=f"AM1-BCC bond charge corrections — `{path.name}`.",
-        source=path.name,
+        source=f"{ANTECHAMBER_DIR}/{path.name}",
     )]
     w = L.append
     w("use crate::ff::params::{BccAlias, BccCorrectionRow};")
@@ -267,7 +294,7 @@ def emit_gasparm(path: Path) -> str:
 
     L = [HEADER.format(
         title=f"Gasteiger–Marsili PEOE parameters — `{path.name}`.",
-        source=path.name,
+        source=f"{ANTECHAMBER_DIR}/{path.name}",
     )]
     w = L.append
     w("use crate::ff::params::GasteigerRow;")
@@ -751,9 +778,501 @@ def emit_atomtype(path: Path, const: str, eq: Equivalents | None) -> str:
     used = [t for t in PARAM_TYPES if re.search(rf"\b{t}\b", body)]
     head = HEADER.format(
         title=f"Antechamber atom-type definition rules — `{path.name}`.",
-        source=path.name,
+        source=f"{ANTECHAMBER_DIR}/{path.name}",
     )
     return f"{head}\nuse crate::ff::params::{{{', '.join(used)}}};\n\n{body}"
+
+
+# ---------------------------------------------------------------------------
+# gaff.dat / gaff2.dat — AMBER's `parm` format (one parser, two outputs)
+# ---------------------------------------------------------------------------
+#
+# The `parm` format is POSITIONAL, not labelled: no section carries a heading,
+# and each is terminated by a blank line. Reading it therefore means walking the
+# sections in the order the format fixes them (LEaP's own reader does the same):
+#
+#     title
+#     MASS        rows      -> emitted
+#     hydrophilic list      (one line, no blank terminator)   -> not emitted
+#     BOND        rows      -> emitted
+#     ANGLE       rows      -> emitted
+#     DIHE        rows      -> emitted
+#     IMPROPER    rows      -> emitted
+#     10-12 H-bond rows     -> not emitted
+#     equivalence rows      -> not emitted (and guarded: see `parse_parm`)
+#     `MOD4  RE` label      (declares the units of the NONBON columns)
+#     NONBON      rows      -> emitted
+#     END
+#
+# Three sections carry no force-field parameter and are not emitted. That is not
+# a silent drop — each is accounted for:
+#
+# * the **hydrophilic list** is a solvation hint for LEaP's `solvateBox`, not a
+#   parameter, and antechamber ignores it too;
+# * the **10-12 H-bond** section is the pre-ff94 hydrogen-bond potential, dead
+#   since 1994; both files carry exactly one row there, the `hw`/`ow` fast-water
+#   flag, and `parse_parm` errors if that ever changes rather than guessing at
+#   the column meanings of a format nothing documents any more;
+# * the **equivalence** section would make one atom type borrow another's NONBON
+#   row. It is empty in both files, and `parse_parm` errors if it stops being —
+#   a non-empty one silently changes what a NONBON lookup means.
+#
+# The atom-type columns are FIXED-WIDTH (`A2,1X,A2,...`), which is load-bearing:
+# a wildcard row reads `X -c -c -X `, and splitting that on whitespace yields
+# `['X', '-c', '-c', '-X']` — four wrong types. They are cut by column instead.
+
+#: The `X` atom type of a DIHE / IMPROPER row: matches any type. Emitted as
+#: `None`, so a consumer cannot read a wildcard slot as a concrete type by
+#: accident. gaff.dat and gaff2.dat carry 615 wildcard rows each and spec 11's
+#: parmchk2-style fallback matching is built on them.
+PARM_WILDCARD = "X"
+
+
+@dataclass(frozen=True)
+class ParmTables:
+    """The six parameter sections of one `parm` file, in file order."""
+
+    #: `(atom_type, mass, polarizability)`
+    masses: list[tuple[str, str, str]]
+    #: `(i, j, force_constant, length)`
+    bonds: list[tuple[str, str, str, str]]
+    #: `(i, j, k, force_constant, angle_deg)`
+    angles: list[tuple[str, str, str, str, str]]
+    #: `(i, j, k, l, divisor, barrier, phase_deg, periodicity, more_terms)`
+    dihedrals: list[tuple[str, str, str, str, int, str, str, int, bool]]
+    #: `(i, j, k, l, barrier, phase_deg, periodicity)` — `k` is the CENTRAL atom
+    impropers: list[tuple[str, str, str, str, str, str, int]]
+    #: `(atom_type, r_min_half, epsilon)`
+    nonbonded: list[tuple[str, str, str]]
+
+
+class ParmCursor:
+    """A line cursor over a `parm` file, because the format is positional."""
+
+    def __init__(self, path: Path) -> None:
+        self.name = path.name
+        self.lines = path.read_text().splitlines()
+        self.pos = 0
+
+    def line(self) -> tuple[int, str]:
+        """The next line, consumed. Returns `(lineno, text)`."""
+        if self.pos >= len(self.lines):
+            raise GrammarError(f"{self.name}: file ended early")
+        self.pos += 1
+        return self.pos, self.lines[self.pos - 1]
+
+    def section(self) -> list[tuple[int, str]]:
+        """Rows up to (and consuming) the blank line that terminates the section."""
+        rows: list[tuple[int, str]] = []
+        while self.pos < len(self.lines):
+            self.pos += 1
+            raw = self.lines[self.pos - 1]
+            if not raw.strip():
+                return rows
+            rows.append((self.pos, raw))
+        raise GrammarError(f"{self.name}: unterminated section at end of file")
+
+
+def parm_atom_types(name: str, lineno: int, raw: str, arity: int) -> list[str]:
+    """The fixed-width `A2,1X,A2,...` atom-type columns of a bonded row."""
+    types = []
+    for n in range(arity):
+        if n and raw[3 * n - 1 : 3 * n] != "-":
+            raise GrammarError(
+                f"{name}:{lineno}: expected `-` between atom-type columns: {raw!r}"
+            )
+        token = raw[3 * n : 3 * n + 2].strip()
+        if not token:
+            raise GrammarError(f"{name}:{lineno}: empty atom-type column {n}: {raw!r}")
+        types.append(token)
+    return types
+
+
+def parm_values(name: str, lineno: int, raw: str, arity: int, count: int) -> list[str]:
+    """The first `count` numeric columns after the atom types.
+
+    Taken POSITIONALLY, exactly as the FORTRAN format reads them: the trailing
+    provenance columns of a gaff row (`SOURCE1`, a sample count, an RMS error)
+    are prose and are not parameters.
+    """
+    fields = raw[3 * arity - 1 :].split()
+    if len(fields) < count:
+        raise GrammarError(f"{name}:{lineno}: expected {count} values: {raw!r}")
+    out = []
+    for value in fields[:count]:
+        try:
+            float(value)
+        except ValueError as exc:
+            raise GrammarError(f"{name}:{lineno}: non-numeric column {value!r}") from exc
+        out.append(value)
+    return out
+
+
+def parm_integer(name: str, lineno: int, token: str, what: str) -> int:
+    """A column the format declares integral (`IDIVF`, `PN`), verified as such."""
+    value = float(token)
+    if value != int(value):
+        raise GrammarError(f"{name}:{lineno}: {what} must be an integer, got {token!r}")
+    return int(value)
+
+
+def no_wildcards(name: str, lineno: int, section: str, types: list[str]) -> None:
+    """`X` may appear in DIHE and IMPROPER rows only.
+
+    The other sections index by concrete atom type, and a consumer of this table
+    relies on that: it is why `ParmBondRow` can hold a `&str` where a dihedral row
+    has to hold an `Option<&str>`.
+    """
+    if PARM_WILDCARD in types:
+        raise GrammarError(
+            f"{name}:{lineno}: a wildcard `{PARM_WILDCARD}` appeared in the {section} "
+            f"section, which upstream indexes by concrete atom type only"
+        )
+
+
+def no_reversed_duplicate(
+    name: str, section: str, keys: list[tuple[str, ...]]
+) -> None:
+    """A bonded term matches its row in either orientation, so a table holding
+    BOTH `a-b-c` and `c-b-a` would make the lookup order-dependent. Neither gaff
+    table does; if one ever did, the resolution rule would have to be derived
+    from LEaP rather than guessed at here."""
+    seen = set(keys)
+    for key in keys:
+        reverse = tuple(reversed(key))
+        if reverse != key and reverse in seen:
+            raise GrammarError(
+                f"{name}: the {section} section holds both `{'-'.join(key)}` and its "
+                f"reverse `{'-'.join(reverse)}`; which one an unordered term matches is "
+                f"then undefined"
+            )
+
+
+def parse_parm(path: Path) -> ParmTables:
+    """Parse an AMBER `parm` file (`gaff.dat`, `gaff2.dat`) into its six sections."""
+    cur = ParmCursor(path)
+    name = path.name
+    cur.line()  # title
+
+    masses = []
+    for lineno, raw in cur.section():
+        atom_type = raw[:2].strip()
+        if not atom_type:
+            raise GrammarError(f"{name}:{lineno}: MASS row has no atom type: {raw!r}")
+        no_wildcards(name, lineno, "MASS", [atom_type])
+        mass, polarizability = parm_values(name, lineno, raw, 1, 2)
+        masses.append((atom_type, rust_float(mass), rust_float(polarizability)))
+
+    cur.line()  # hydrophilic-atom list: a solvation hint, not a parameter
+
+    bonds, bond_keys = [], []
+    for lineno, raw in cur.section():
+        i, j = parm_atom_types(name, lineno, raw, 2)
+        no_wildcards(name, lineno, "BOND", [i, j])
+        force_constant, length = parm_values(name, lineno, raw, 2, 2)
+        bonds.append((i, j, rust_float(force_constant), rust_float(length)))
+        bond_keys.append((i, j))
+    no_reversed_duplicate(name, "BOND", bond_keys)
+
+    angles, angle_keys = [], []
+    for lineno, raw in cur.section():
+        i, j, k = parm_atom_types(name, lineno, raw, 3)
+        no_wildcards(name, lineno, "ANGLE", [i, j, k])
+        force_constant, angle = parm_values(name, lineno, raw, 3, 2)
+        angles.append((i, j, k, rust_float(force_constant), rust_float(angle)))
+        angle_keys.append((i, j, k))
+    no_reversed_duplicate(name, "ANGLE", angle_keys)
+
+    dihedrals, dihedral_keys = [], []
+    for lineno, raw in cur.section():
+        i, j, k, l = parm_atom_types(name, lineno, raw, 4)
+        divisor, barrier, phase, pn = parm_values(name, lineno, raw, 4, 4)
+        idivf = parm_integer(name, lineno, divisor, "IDIVF")
+        if idivf < 1:
+            raise GrammarError(f"{name}:{lineno}: IDIVF must be positive, got {idivf}")
+        periodicity = parm_integer(name, lineno, pn, "PN")
+        # A NEGATIVE periodicity is upstream's continuation flag: another cosine
+        # term for the same quartet follows on the next line. The magnitude is
+        # the periodicity; the sign is a structural fact about the file, so it is
+        # emitted as its own `more_terms` field rather than as a signed number a
+        # kernel could feed straight into `cos(n*phi)`.
+        dihedrals.append((
+            i, j, k, l, idivf,
+            rust_float(barrier), rust_float(phase),
+            abs(periodicity), periodicity < 0,
+        ))
+        dihedral_keys.append((i, j, k, l))
+    no_reversed_duplicate(name, "DIHE", dihedral_keys)
+    check_dihedral_terms(name, dihedrals)
+
+    impropers = []
+    for lineno, raw in cur.section():
+        i, j, k, l = parm_atom_types(name, lineno, raw, 4)
+        barrier, phase, pn = parm_values(name, lineno, raw, 4, 3)
+        periodicity = parm_integer(name, lineno, pn, "PN")
+        if periodicity < 1:
+            raise GrammarError(
+                f"{name}:{lineno}: an IMPROPER row carries no multi-term continuation "
+                f"flag, so its PN must be positive; got {periodicity}"
+            )
+        impropers.append((i, j, k, l, rust_float(barrier), rust_float(phase), periodicity))
+
+    hbond = cur.section()
+    for lineno, raw in hbond:
+        fields = raw.split()
+        if fields[:2] != ["hw", "ow"]:
+            raise GrammarError(
+                f"{name}:{lineno}: the 10-12 H-bond section holds a row this generator "
+                f"cannot read ({raw!r}). Upstream it holds only the `hw ow` fast-water "
+                f"flag; the 10-12 potential itself has been dead since ff94 and its "
+                f"column layout is not something to guess at"
+            )
+
+    equivalence = cur.section()
+    if equivalence:
+        raise GrammarError(
+            f"{name}: the nonbonded equivalence section is no longer empty "
+            f"({len(equivalence)} rows). Those rows make one atom type borrow another's "
+            f"NONBON parameters, which changes what every NONBON lookup means — they "
+            f"have to be emitted and honoured, not skipped"
+        )
+
+    _, label = cur.line()
+    if label.split() != ["MOD4", "RE"]:
+        raise GrammarError(
+            f"{name}: expected the NONBON label `MOD4  RE`, got {label!r}. `RE` is what "
+            f"declares the two columns to be R* and epsilon; under `AC` they would be "
+            f"the A/C coefficients of the 12-6 form instead"
+        )
+
+    nonbonded = []
+    for lineno, raw in cur.section():
+        fields = raw.split()
+        if len(fields) < 3:
+            raise GrammarError(f"{name}:{lineno}: short NONBON row: {raw!r}")
+        no_wildcards(name, lineno, "NONBON", [fields[0]])
+        nonbonded.append((fields[0], rust_float(fields[1]), rust_float(fields[2])))
+
+    return ParmTables(
+        masses=masses,
+        bonds=bonds,
+        angles=angles,
+        dihedrals=dihedrals,
+        impropers=impropers,
+        nonbonded=nonbonded,
+    )
+
+
+def check_dihedral_terms(name: str, dihedrals: list) -> None:
+    """The multi-term continuation flag must agree with the file's own grouping.
+
+    A dihedral quartet with several cosine terms is written as consecutive rows,
+    every one but the last carrying a negative PN. Two independent facts — the
+    sign column and the row adjacency — say the same thing, so they are checked
+    against each other: a consumer that groups terms by quartet key (as the
+    ForceField population path does) must land on the same grouping as one that
+    follows the sign.
+    """
+    for idx, row in enumerate(dihedrals):
+        key, more_terms = row[:4], row[8]
+        if not more_terms:
+            continue
+        if idx + 1 >= len(dihedrals):
+            raise GrammarError(
+                f"{name}: the last DIHE row flags a continuation term that never comes"
+            )
+        if dihedrals[idx + 1][:4] != key:
+            raise GrammarError(
+                f"{name}: the DIHE row `{'-'.join(key)}` flags a continuation term "
+                f"(negative PN) but the next row is a different quartet "
+                f"`{'-'.join(dihedrals[idx + 1][:4])}`"
+            )
+
+
+class TypeInterner:
+    """Names the atom types of one `parm` table, and numbers them.
+
+    The number is the type's row in the `MASS` section — the section that
+    declares the atom types — so `ParmTable::name_of` is one array read. Every
+    type a bonded row names must be declared there; one that is not is an
+    upstream defect, not something to invent an index for.
+
+    Types are emitted as a named `const` (`c3` -> `T_C3`), never as a bare
+    number: the whole point of committing these tables is that a row can be read
+    and grepped, and `i: T_C3, j: T_C3` reads as well as `i: "c3", j: "c3"` did
+    while costing one byte instead of a 16-byte fat pointer.
+    """
+
+    #: An atom type is not always a Rust identifier: `gaff2.dat` declares one
+    #: literally named `n+` (a protonated nitrogen). The mangling is explicit and
+    #: an unmapped character is a generator error — an ad-hoc mangle could quietly
+    #: fold two atom types onto one `const` and swap their parameters.
+    MANGLE = {"+": "_PLUS", "-": "_MINUS", "*": "_STAR"}
+
+    def __init__(self, name: str, masses: list[tuple[str, str, str]]) -> None:
+        self.name = name
+        self.index = {atom_type: n for n, (atom_type, _, _) in enumerate(masses)}
+        if len(self.index) != len(masses):
+            raise GrammarError(f"{name}: the MASS section declares a type twice")
+        if len(self.index) > 256:
+            raise GrammarError(
+                f"{name}: {len(self.index)} atom types no longer fit a `ParmType(u8)`"
+            )
+        self.consts = {t: self._mangle(t) for t in self.index}
+        collisions = len(self.consts) - len(set(self.consts.values()))
+        if collisions:
+            raise GrammarError(
+                f"{name}: {collisions} atom types mangle onto the same const name; two types "
+                f"sharing one const would silently swap their parameters"
+            )
+
+    def _mangle(self, atom_type: str) -> str:
+        out = []
+        for ch in atom_type:
+            if ch.isalnum():
+                out.append(ch.upper())
+            elif ch in self.MANGLE:
+                out.append(self.MANGLE[ch])
+            else:
+                raise GrammarError(
+                    f"{self.name}: the atom type `{atom_type}` carries `{ch}`, which is neither "
+                    f"alphanumeric nor a character this generator knows how to mangle into a "
+                    f"Rust identifier"
+                )
+        return "T_" + "".join(out)
+
+    def const(self, atom_type: str) -> str:
+        """The `const` naming `atom_type`, e.g. `T_C3` (and `n+` -> `T_N_PLUS`)."""
+        if atom_type not in self.consts:
+            raise GrammarError(
+                f"{self.name}: a parameter row names the atom type `{atom_type}`, which the "
+                f"MASS section never declares — so the table has no mass, no index and no "
+                f"name for it"
+            )
+        return self.consts[atom_type]
+
+    def slot(self, token: str) -> str:
+        """A DIHE / IMPROPER atom-type slot: `X` -> `None`, else `Some(T_..)`."""
+        return "None" if token == PARM_WILDCARD else f"Some({self.const(token)})"
+
+    def declarations(self) -> list[str]:
+        out = []
+        for atom_type, n in self.index.items():
+            out.append(f"/// `{atom_type}` — row {n} of the `MASS` section.")
+            out.append(f"const {self.const(atom_type)}: ParmType = ParmType({n});")
+        return out
+
+
+def emit_parm(path: Path, prefix: str) -> str:
+    t = parse_parm(path)
+    types = TypeInterner(path.name, t.masses)
+    source = f"{PARM_DIR}/{path.name}"
+    wildcards = sum(
+        1
+        for row in (*t.dihedrals, *t.impropers)
+        if PARM_WILDCARD in row[:4]
+    )
+
+    L = [HEADER.format(
+        title=f"AMBER general force field parameters — `{path.name}`.",
+        source=source,
+    )]
+    w = L.append
+    # These tables are MEASURED numbers. gaff2's `c1-c1` bond is 1.4426 A long and
+    # clippy reads that as a fat-fingered `LOG2_E`; three more rows land near PI.
+    # The lint cannot tell data from a mistyped constant, and there is no constant
+    # here to mistype.
+    w("#![allow(clippy::approx_constant)]")
+    w("")
+    w("use crate::ff::params::{")
+    w("    ParmAngleRow, ParmBondRow, ParmDihedralRow, ParmImproperRow, ParmMassRow,")
+    w("    ParmNonbondedRow, ParmTable, ParmType,")
+    w("};")
+    w("")
+    w(f"// The {len(t.masses)} atom types of `{path.name}`, interned to their MASS row.")
+    for line in types.declarations():
+        w(line)
+    w("")
+
+    w(f"/// The {len(t.masses)} `MASS` rows of `{path.name}` — the atom-type declarations.")
+    w("///")
+    w("/// This section's row order IS the [`ParmType`] numbering.")
+    w(RUSTFMT_SKIP)
+    w(f"pub const {prefix}_MASSES: &[ParmMassRow] = &[")
+    for atom_type, mass, polarizability in t.masses:
+        w(f"    ParmMassRow {{ atom_type: {rust_str(atom_type)}, mass: {mass}, "
+          f"polarizability: {polarizability} }},")
+    w("];")
+    w("")
+
+    w(f"/// The {len(t.bonds)} `BOND` rows of `{path.name}`.")
+    w(RUSTFMT_SKIP)
+    w(f"pub const {prefix}_BONDS: &[ParmBondRow] = &[")
+    for i, j, force_constant, length in t.bonds:
+        w(f"    ParmBondRow {{ i: {types.const(i)}, j: {types.const(j)}, "
+          f"force_constant: {force_constant}, length: {length} }},")
+    w("];")
+    w("")
+
+    w(f"/// The {len(t.angles)} `ANGLE` rows of `{path.name}`.")
+    w(RUSTFMT_SKIP)
+    w(f"pub const {prefix}_ANGLES: &[ParmAngleRow] = &[")
+    for i, j, k, force_constant, angle in t.angles:
+        w(f"    ParmAngleRow {{ i: {types.const(i)}, j: {types.const(j)}, k: {types.const(k)}, "
+          f"force_constant: {force_constant}, angle_deg: {angle} }},")
+    w("];")
+    w("")
+
+    wild_dihedrals = sum(1 for row in t.dihedrals if PARM_WILDCARD in row[:4])
+    w(f"/// The {len(t.dihedrals)} `DIHE` rows of `{path.name}`, in file order.")
+    w("///")
+    w(f"/// {wild_dihedrals} of them carry a wildcard slot (`None`), and the order is")
+    w("/// significant: consecutive rows with the same quartet are the cosine terms of one")
+    w("/// torsion, all but the last flagged [`more_terms`](ParmDihedralRow::more_terms).")
+    w(RUSTFMT_SKIP)
+    w(f"pub const {prefix}_DIHEDRALS: &[ParmDihedralRow] = &[")
+    for i, j, k, l, divisor, barrier, phase, periodicity, more_terms in t.dihedrals:
+        w(f"    ParmDihedralRow {{ i: {types.slot(i)}, j: {types.slot(j)}, k: {types.slot(k)}, "
+          f"l: {types.slot(l)}, divisor: {divisor}, barrier: {barrier}, phase_deg: {phase}, "
+          f"periodicity: {periodicity}, more_terms: {str(more_terms).lower()} }},")
+    w("];")
+    w("")
+
+    wild_impropers = sum(1 for row in t.impropers if PARM_WILDCARD in row[:4])
+    w(f"/// The {len(t.impropers)} `IMPROPER` rows of `{path.name}`, in file order.")
+    w("///")
+    w(f"/// {wild_impropers} of them carry a wildcard slot (`None`). The CENTRAL atom is")
+    w("/// [`k`](ParmImproperRow::k), the third — that is AMBER's convention, not molrs's.")
+    w(RUSTFMT_SKIP)
+    w(f"pub const {prefix}_IMPROPERS: &[ParmImproperRow] = &[")
+    for i, j, k, l, barrier, phase, periodicity in t.impropers:
+        w(f"    ParmImproperRow {{ i: {types.slot(i)}, j: {types.slot(j)}, k: {types.slot(k)}, "
+          f"l: {types.slot(l)}, barrier: {barrier}, phase_deg: {phase}, "
+          f"periodicity: {periodicity} }},")
+    w("];")
+    w("")
+
+    w(f"/// The {len(t.nonbonded)} `NONBON` rows of `{path.name}` (`MOD4  RE`: R* and epsilon).")
+    w(RUSTFMT_SKIP)
+    w(f"pub const {prefix}_NONBONDED: &[ParmNonbondedRow] = &[")
+    for atom_type, r_min_half, epsilon in t.nonbonded:
+        w(f"    ParmNonbondedRow {{ atom_type: {types.const(atom_type)}, "
+          f"r_min_half: {r_min_half}, epsilon: {epsilon} }},")
+    w("];")
+    w("")
+
+    w(f"/// `{path.name}` as one typed table — {wildcards} of its rows are wildcard rows.")
+    w(f"pub const {prefix}: ParmTable = ParmTable {{")
+    w(f"    name: {rust_str(path.name)},")
+    w(f"    masses: {prefix}_MASSES,")
+    w(f"    bonds: {prefix}_BONDS,")
+    w(f"    angles: {prefix}_ANGLES,")
+    w(f"    dihedrals: {prefix}_DIHEDRALS,")
+    w(f"    impropers: {prefix}_IMPROPERS,")
+    w(f"    nonbonded: {prefix}_NONBONDED,")
+    w("};")
+    w("")
+    return "\n".join(L)
 
 
 # ---------------------------------------------------------------------------
@@ -761,7 +1280,7 @@ def emit_atomtype(path: Path, const: str, eq: Equivalents | None) -> str:
 # ---------------------------------------------------------------------------
 
 def emit_mod(modules: list[str]) -> str:
-    L = ["//! Antechamber parameter tables, compiled to typed Rust `const`s.",
+    L = ["//! Antechamber and AMBER `parm` parameter tables, compiled to typed Rust `const`s.",
          "//!",
          "//! DO NOT HAND-EDIT — regenerate with `scripts/gen_param_tables.py`.",
          "//!",
@@ -796,9 +1315,13 @@ def main() -> int:
     amberhome = os.environ.get("AMBERHOME")
     if not amberhome:
         raise SystemExit("AMBERHOME is not set; point it at an AmberTools install")
-    src = Path(amberhome) / "dat/antechamber"
+    root = Path(amberhome)
+    src = root / ANTECHAMBER_DIR
+    parm = root / PARM_DIR
     if not src.is_dir():
         raise SystemExit(f"no antechamber tables under {src}")
+    if not parm.is_dir():
+        raise SystemExit(f"no LEaP parm tables under {parm}")
 
     # Emit into a tempdir first: a mid-run GrammarError must not leave a
     # half-written table behind in the repo.
@@ -816,6 +1339,8 @@ def main() -> int:
             staged[f"{module}.rs"] = emit_atomtype(
                 src / filename, const, equivalents if gaff_namespace else None
             )
+        for filename, module, prefix in PARM_FILES:
+            staged[f"{module}.rs"] = emit_parm(parm / filename, prefix)
         modules = [name[:-3] for name in staged]
         staged["mod.rs"] = emit_mod(modules)
 
@@ -833,16 +1358,17 @@ def main() -> int:
         # MANIFEST.sha256 — the ONLY drift check that works without AmberTools.
         # The byte-regeneration guard needs $AMBERHOME, which CI does not have,
         # so it is permanently skipped there. Hashing the emitted files lets CI
-        # still catch a hand-edit to the 27k lines of generated tables.
-        # Source hashes record provenance and are checked only when $AMBERHOME
-        # is available.
+        # still catch a hand-edit to the ~48k lines of generated tables.
+        # Source hashes record provenance (path included: the tables come from
+        # two upstream directories) and are checked only when $AMBERHOME is
+        # available.
         lines = ["# Generated by scripts/gen_param_tables.py — DO NOT HAND-EDIT.",
                  "# emitted <sha256>  <file>"]
         for p in sorted(tmp_paths, key=lambda q: q.name):
             lines.append(f"emitted {sha256_of(args.out_dir / p.name)}  {p.name}")
-        lines.append("# source  <sha256>  <upstream table>")
+        lines.append("# source  <sha256>  <upstream table, relative to $AMBERHOME>")
         for name in sorted(SOURCE_FILES):
-            lines.append(f"source  {sha256_of(src / name)}  {name}")
+            lines.append(f"source  {sha256_of(root / name)}  {name}")
         (args.out_dir / "MANIFEST.sha256").write_text("\n".join(lines) + "\n")
 
     for name in sorted(staged):
