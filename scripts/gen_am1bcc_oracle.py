@@ -8,16 +8,27 @@ that the BCC stage can be regression-tested in ISOLATION from AM1:
   <table>_atom_types           <- one `-at <mode>` run each    (typifier oracle)
   bcc_charges (final)          <- `-c bcc` mol2                (BCC stage OUTPUT)
   abcg2_charges (final)        <- `-c abcg2` mol2              (ABCG2 stage OUTPUT)
+  gas_charges (final)          <- `-c gas` mol2                (Gasteiger, NO QM)
 
-molrs owns: the atom types and (am1_charges -> bcc_charges / abcg2_charges).
-Atomiverse owns: producing am1_charges.  antechamber stands in for it here.
+molrs owns: the atom types and (am1_charges -> bcc_charges / abcg2_charges), and
+the whole of gas_charges.  Atomiverse owns: producing am1_charges.  antechamber
+stands in for it here.
 
-The two CHARGE columns are the second axis, orthogonal to the seven TYPE columns:
-`bcc` and `abcg2` are the only two BCC correction families that exist
+The three CHARGE columns are the second axis, orthogonal to the seven TYPE
+columns.  `bcc` and `abcg2` are the only two BCC correction families that exist
 (BCCPARM.DAT / BCCPARM_ABCG2.DAT), they consume the SAME AM1 base charges (the
 script asserts it per molecule), and they must come out of ONE `BccModel` with
 nothing but the parameter set changed.  A model that special-cased either family
 regresses the other column.
+
+`gas_charges` is the corner of that axis with NO QM input at all: Gasteiger/PEOE
+(GASPARM.DAT + ATOMTYPE_GAS.DEF) iterates on the topology alone, so antechamber
+never calls sqm for it.  It is what proves the `ChargeModel` trait has not
+quietly assumed "QM base charges plus a correction" -- the same trait, the same
+`assign`, and this column comes out of an argument-free molecule.  Being purely
+topological it is also inherently symmetric (methanol's three methyl H come out
+IDENTICAL: 0.052691 x3), which is why it runs with `needs_equivalencing = false`
+and yet never shows the conformer artefacts `-eq 1` exists to remove.
 
 The seven type columns (see AT_MODES) are the SAME ATD/WILDATOM rule engine
 driven by seven different `ATOMTYPE_*.DEF` tables, so they are what pins
@@ -231,6 +242,28 @@ def main() -> int:
             abcg2_am1, _, _ = parse_ac(abcg2_work / "ANTECHAMBER_AM1BCC_PRE.AC")
             _, _, abcg2_charges, _ = parse_mol2(abcg2_work / f"{name}.mol2")
 
+            # run 10: the ZERO-QM corner. `-c gas` runs no sqm at all -- it
+            # iterates GASPARM.DAT electronegativities over the bond graph -- so
+            # it shares no column with the two above. Own directory for the same
+            # reason abcg2 has one: antechamber's intermediates are named after
+            # the run, not the molecule, and a second run in the same cwd would
+            # overwrite the first one's.
+            gas_work = work / "gas"
+            gas_work.mkdir()
+            gas_sdf = gas_work / sdf.name
+            gas_sdf.write_text(sdf.read_text())
+            run_antechamber(gas_work, gas_sdf, gas_work / f"{name}.mol2",
+                            nc, "gaff2", charge="gas")
+            _, _, gas_charges, _ = parse_mol2(gas_work / f"{name}.mol2")
+
+            # Gasteiger is a TOPOLOGY-only model, so it cannot produce the
+            # conformer artefact `-eq 1` exists to remove: equivalent atoms come
+            # out bit-identical without any averaging. If this ever fired, the
+            # `needs_equivalencing = false` half of the 2x2 would be wrong.
+            assert not (gas_work / "sqm.out").exists(), (
+                f"{name}: `-c gas` called sqm -- it is supposed to need no QM input"
+            )
+
             # ONE am1_charges column, honestly shared. If `-c abcg2` ever fed its
             # correction stage a different base (a different sqm run, a different
             # `-eq` level), the fixture would be quietly lying to the ABCG2 test and
@@ -256,6 +289,7 @@ def main() -> int:
             n = len(els)
             assert len(am1_charges) == n and len(bcc_charges) == n, name
             assert len(abcg2_charges) == n, name
+            assert len(gas_charges) == n, name
             for col, types in atom_types.items():
                 assert len(types) == n, f"{name}: {col} typed {len(types)}/{n} atoms"
 
@@ -276,6 +310,7 @@ def main() -> int:
                 **atom_types,
                 "bcc_charges": bcc_charges,        # final AM1-BCC charges (-c bcc)
                 "abcg2_charges": abcg2_charges,    # final ABCG2 charges  (-c abcg2)
+                "gas_charges": gas_charges,        # Gasteiger/PEOE       (-c gas)
             })
             eq = "EQ" if raw and any(
                 abs(a - b) > 1e-9 for a, b in zip(am1_charges, raw)
@@ -305,13 +340,16 @@ def emit_rust(recs):
     w("//!            Atomiverse (here: antechamber's sqm) supplies.")
     w("//!   ORACLE — what antechamber produced and molrs must reproduce: BCC bond")
     w("//!            types, the seven atom-type columns, and the final charges of")
-    w("//!            BOTH correction families (`-c bcc` and `-c abcg2`).")
+    w("//!            all three charge models (`-c bcc`, `-c abcg2` and `-c gas`).")
     w("//!")
-    w("//! The two charge columns are one axis (which BCCPARM table), the seven type")
+    w("//! The three charge columns are one axis (which charge model), the seven type")
     w("//! columns another (which ATOMTYPE table). `bcc_charges` and `abcg2_charges`")
     w("//! are corrections of the SAME `am1_charges` — the generator asserts that the")
     w("//! two antechamber runs consumed identical AM1 base charges — so a charge model")
-    w("//! that special-cased one family regresses the other column.")
+    w("//! that special-cased one family regresses the other column. `gas_charges` is")
+    w("//! the zero-QM corner: `-c gas` runs no sqm at all (the generator asserts no")
+    w("//! `sqm.out` is written), so it shares no input with the other two and a trait")
+    w("//! that had assumed QM base charges could not reach it.")
     w("//!")
     w("//! The seven atom-type columns come from `-at {bcc,abcg2,gas,gaff,gaff2,amber,")
     w("//! sybyl}` on the SAME molecule: one rule engine, seven `ATOMTYPE_*.DEF` tables.")
@@ -374,6 +412,20 @@ def emit_rust(recs):
     w("    /// one engine, two parameter sets, no special case. That both families")
     w("    /// consume the same `am1_charges` is asserted by the generator, not assumed.")
     w("    pub abcg2_charges: &'static [f64],")
+    w("    /// Gasteiger/PEOE charges (`antechamber -c gas`): GASPARM.DAT iterated over")
+    w("    /// the bond graph, with `gas_atom_types` as the key.")
+    w("    ///")
+    w("    /// The ZERO-QM corner of the charge model: antechamber runs no sqm for this")
+    w("    /// column (the generator asserts no `sqm.out` was written), so it shares")
+    w("    /// NOTHING with `am1_charges` -- not a base charge, not a correction. A")
+    w("    /// `ChargeModel` that could only be reached with QM charges in hand cannot")
+    w("    /// produce it at all.")
+    w("    ///")
+    w("    /// Being purely topological it is also inherently symmetric: methanol's three")
+    w("    /// methyl H are IDENTICAL here (0.052691 x3) where sqm splits them")
+    w("    /// 0.053/0.098/0.053. That is why the model runs `needs_equivalencing = false`")
+    w("    /// and still never carries a conformer artefact.")
+    w("    pub gas_charges: &'static [f64],")
     w("}")
     w("")
 
@@ -411,6 +463,7 @@ def emit_rust(recs):
             w(f"        {col}: &[{ats}],")
         w(f"        bcc_charges: &[{fl(r['bcc_charges'])}],")
         w(f"        abcg2_charges: &[{fl(r['abcg2_charges'])}],")
+        w(f"        gas_charges: &[{fl(r['gas_charges'])}],")
         w("    },")
     w("];")
     w("")

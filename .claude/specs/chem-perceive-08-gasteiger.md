@@ -1,6 +1,6 @@
 ---
 title: "chem-perceive 8/14 — GasteigerModel — antechamber `-c gas` 对齐（无 QM 的泛化证明）"
-status: approved
+status: done
 created: 2026-07-12
 chain: chem-perceive
 depends_on: "chem-perceive-02-param-rs; chem-perceive-05-atd-typifier; chem-perceive-07-charge-trait"
@@ -88,12 +88,12 @@ GPL atomtype.c"*——现在这个顾虑以更大规模重现。参数**表**（
 
 ## Tasks
 
-- [ ] Verify antechamber `rmscal()` buffer discipline (Jacobi vs Gauss-Seidel) BEFORE encoding the PEOE update loop
-- [ ] Implement `GasteigerModel` on the ChargeModel trait with `needs_equivalencing = false`
-- [ ] Use the generated GASPARM table: chi = a + b*q + c*q^2; `d` is the chi-plus DIVISOR; `formal_charge` is the seed q0
-- [ ] Implement the H special case: chi_plus(H) = 20.02 (NOT a+b+c = 12.85)
-- [ ] Implement the damped convergence loop (CONVERG 1e-5, GASMAXITER 500, DAMPFACTOR 0.5) — do NOT hardcode 6 iterations
-- [ ] Fold / delete `core/chem/gasteiger.rs` (or `perceive/gasteiger.rs` after 01)
+- [x] Verify antechamber `rmscal()` buffer discipline (Jacobi vs Gauss-Seidel) BEFORE encoding the PEOE update loop
+- [x] Implement `GasteigerModel` on the ChargeModel trait with `needs_equivalencing = false`
+- [x] Use the generated GASPARM table: chi = a + b*q + c*q^2; `d` is the chi-plus DIVISOR; `formal_charge` is the seed q0
+- [x] Implement the H special case: chi_plus(H) = 20.02 (NOT a+b+c = 12.85)
+- [x] Implement the damped convergence loop (CONVERG 1e-5, GASMAXITER 500, DAMPFACTOR 0.5) — do NOT hardcode 6 iterations
+- [x] Fold / delete `core/chem/gasteiger.rs` (or `perceive/gasteiger.rs` after 01)
 
 ## Testing strategy
 

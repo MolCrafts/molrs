@@ -68,7 +68,6 @@ pub use crate::perceive as chem;
 // would silently break 13 call sites — four of them in `ff/`, two of those only
 // visible under `clippy -D warnings` as broken intra-doc links.
 pub use crate::perceive::aromaticity::perceive_aromaticity;
-pub use crate::perceive::gasteiger::{GasteigerCharges, compute_gasteiger_charges};
 pub use crate::perceive::hydrogens::{add_hydrogens, implicit_h_count, remove_hydrogens};
 pub use crate::perceive::rings::{RingInfo, find_rings};
 pub use crate::perceive::smarts::{MatchOptions, Reaction, SmartsMatch, SmartsPattern};
@@ -90,6 +89,16 @@ pub mod optimize;
 
 #[cfg(feature = "ff")]
 pub mod ff;
+
+/// Gasteiger/PEOE partial charges, at the crate root — `molrs::compute_gasteiger_charges`.
+///
+/// The name predates the charge models and the binders still reach for it here, so it
+/// keeps resolving; it is a re-export of the **one** Gasteiger in the tree
+/// ([`ff::charge::GasteigerModel`], `antechamber -c gas`), not a second one. It moved
+/// out of `perceive` because a charge model belongs with the charge models, which is
+/// also why it is now gated on `ff` — the layer that owns `GASPARM.DAT`.
+#[cfg(feature = "ff")]
+pub use crate::ff::charge::compute_gasteiger_charges;
 
 #[cfg(feature = "conformer")]
 pub mod conformer;

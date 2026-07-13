@@ -16,5 +16,14 @@ mod bcc;
 #[path = "antechamber.rs"]
 mod antechamber;
 
+/// The zero-QM corner of the 2×2 (`chem-perceive-08`): Gasteiger/PEOE against
+/// `antechamber -c gas`, reached through the same trait with `assign(&mol, None)`.
+#[path = "gasteiger.rs"]
+mod gasteiger;
+/// ac-002 / ac-004's structural halves: the `d` column is never a cubic coefficient,
+/// and the plumbing never branches on the concrete model.
+#[path = "gasteiger_source.rs"]
+mod gasteiger_source;
+
 #[path = "pull_trait_deleted.rs"]
 mod pull_trait_deleted;

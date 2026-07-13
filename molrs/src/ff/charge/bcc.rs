@@ -27,16 +27,18 @@
 //!   word. So the working copy is stripped of both `type` columns before perception.
 
 use molrs::Atomistic;
-use molrs::store::keys;
 
 use crate::ff::typifier::am1bcc::{
     BCCCorrectionTable, BccIncrementError, BccParameterSet, bcc_increments,
 };
-use crate::ff::typifier::atd::{AtdError, AtdTypifier, DUMMY_TYPE};
+use crate::ff::typifier::atd::AtdTypifier;
 use molrs::perceive::Perceive;
 
 use super::error::ChargeError;
-use super::model::{ChargeModel, atom_ids, check_count, equivalence_average};
+use super::model::{
+    ChargeModel, charge_error, check_count, equivalence_average, reject_dummy_types,
+    without_type_columns,
+};
 
 /// The AM1-BCC family: QM base charges plus bond charge corrections.
 ///
@@ -178,82 +180,6 @@ impl ChargeModel for BccModel {
     }
 }
 
-/// A copy of `mol` with both `type` columns removed.
-///
-/// What the model perceives from: the caller's atom types (GAFF `c3`, OPLS `opls_135`)
-/// and bond types (LAMMPS bond-type ids) are *their* labels, in the same props BCC
-/// uses for its own. Perception reads a bond's `type` as an aromaticity hint, so a
-/// LAMMPS molecule whose bond-type id happened to be 7 would be perceived as aromatic;
-/// stripping the columns first makes the model's answer a function of the molecule
-/// alone, which is what `correct_ignores_the_atom_types_the_molecule_arrives_with`
-/// asserts to the bit.
-fn without_type_columns(mol: &Atomistic) -> Result<Atomistic, ChargeError> {
-    let mut work = mol.clone();
-    let malformed = |e: molrs::MolRsError| ChargeError::Malformed {
-        detail: e.to_string(),
-    };
-
-    for aid in atom_ids(mol) {
-        work.clear_atom(aid, keys::TYPE).map_err(malformed)?;
-    }
-    let bond_kind = work.bond_kind();
-    let bond_ids: Vec<_> = work.bonds().map(|(bid, _)| bid).collect();
-    for bid in bond_ids {
-        work.clear_relation_prop(bond_kind, bid, keys::TYPE)
-            .map_err(malformed)?;
-    }
-    Ok(work)
-}
-
-/// Refuse a molecule whose atoms the BCC table could not name.
-///
-/// `ATOMTYPE_BCC.DEF` and `ATOMTYPE_ABCG2.DEF` end with an unconditional catch-all
-/// row that labels an unmatched atom [`DUMMY_TYPE`], so the engine returns a type for
-/// *every* atom and "no rule matched" arrives as a label rather than an error. For
-/// AM1-BCC that label is a refusal: `BCCPARM.DAT` has no `DU` row, and neither
-/// correction family assigns `DU` to any atom of the 37-molecule antechamber oracle.
-///
-/// A bonded `DU` atom would fail anyway, at the correction lookup. A **bondless** one
-/// would not — nothing looks its type up — so a bare sulfur (the one element whose
-/// BCC rules all require at least one bond) would come back with its AM1 charge
-/// silently uncorrected, which is exactly the plausible-looking answer molrs's
-/// no-fallback-values rule exists to prevent.
-fn reject_dummy_types(
-    perceived: &Atomistic,
-    types: &[&str],
-    table: &'static str,
-) -> Result<(), ChargeError> {
-    let Some((atom, _)) = types.iter().enumerate().find(|(_, ty)| **ty == DUMMY_TYPE) else {
-        return Ok(());
-    };
-    let element = atom_ids(perceived)
-        .get(atom)
-        .and_then(|aid| perceived.get_atom(*aid).ok())
-        .and_then(|a| a.get_str(keys::ELEMENT).map(str::to_owned))
-        .unwrap_or_default();
-    Err(ChargeError::MissingAtomType {
-        table,
-        atom,
-        element,
-    })
-}
-
-/// An atom-typing failure, as a charge failure.
-fn charge_error(err: AtdError) -> ChargeError {
-    match err {
-        AtdError::MissingAtomType {
-            table,
-            atom,
-            element,
-        } => ChargeError::MissingAtomType {
-            table,
-            atom,
-            element,
-        },
-        AtdError::Malformed { detail } => ChargeError::Malformed { detail },
-    }
-}
-
 /// A correction-lookup failure, as a charge failure.
 fn charge_error_row(err: BccIncrementError) -> ChargeError {
     match err {
@@ -274,6 +200,7 @@ fn charge_error_row(err: BccIncrementError) -> ChargeError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use molrs::store::keys;
 
     /// Methane, untyped — the molecule a user has.
     fn methane() -> Atomistic {

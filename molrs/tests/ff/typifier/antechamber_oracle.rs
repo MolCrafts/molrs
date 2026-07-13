@@ -8,13 +8,16 @@
 //!            Atomiverse (here: antechamber's sqm) supplies.
 //!   ORACLE — what antechamber produced and molrs must reproduce: BCC bond
 //!            types, the seven atom-type columns, and the final charges of
-//!            BOTH correction families (`-c bcc` and `-c abcg2`).
+//!            all three charge models (`-c bcc`, `-c abcg2` and `-c gas`).
 //!
-//! The two charge columns are one axis (which BCCPARM table), the seven type
+//! The three charge columns are one axis (which charge model), the seven type
 //! columns another (which ATOMTYPE table). `bcc_charges` and `abcg2_charges`
 //! are corrections of the SAME `am1_charges` — the generator asserts that the
 //! two antechamber runs consumed identical AM1 base charges — so a charge model
-//! that special-cased one family regresses the other column.
+//! that special-cased one family regresses the other column. `gas_charges` is
+//! the zero-QM corner: `-c gas` runs no sqm at all (the generator asserts no
+//! `sqm.out` is written), so it shares no input with the other two and a trait
+//! that had assumed QM base charges could not reach it.
 //!
 //! The seven atom-type columns come from `-at {bcc,abcg2,gas,gaff,gaff2,amber,
 //! sybyl}` on the SAME molecule: one rule engine, seven `ATOMTYPE_*.DEF` tables.
@@ -77,6 +80,20 @@ pub struct AntechamberCase {
     /// one engine, two parameter sets, no special case. That both families
     /// consume the same `am1_charges` is asserted by the generator, not assumed.
     pub abcg2_charges: &'static [f64],
+    /// Gasteiger/PEOE charges (`antechamber -c gas`): GASPARM.DAT iterated over
+    /// the bond graph, with `gas_atom_types` as the key.
+    ///
+    /// The ZERO-QM corner of the charge model: antechamber runs no sqm for this
+    /// column (the generator asserts no `sqm.out` was written), so it shares
+    /// NOTHING with `am1_charges` -- not a base charge, not a correction. A
+    /// `ChargeModel` that could only be reached with QM charges in hand cannot
+    /// produce it at all.
+    ///
+    /// Being purely topological it is also inherently symmetric: methanol's three
+    /// methyl H are IDENTICAL here (0.052691 x3) where sqm splits them
+    /// 0.053/0.098/0.053. That is why the model runs `needs_equivalencing = false`
+    /// and still never carries a conformer artefact.
+    pub gas_charges: &'static [f64],
 }
 
 /// 37 molecules spanning the BCC chemistry molcrafts actually uses.
@@ -112,6 +129,7 @@ pub const CASES: &[AntechamberCase] = &[
         sybyl_atom_types: &["C.3", "H", "H", "H", "H"],
         bcc_charges: &[-0.108800, 0.026700, 0.026700, 0.026700, 0.026700],
         abcg2_charges: &[-0.108800, 0.026700, 0.026700, 0.026700, 0.026700],
+        gas_charges: &[-0.077576, 0.019394, 0.019394, 0.019394, 0.019394],
     },
     AntechamberCase {
         name: "ethane",
@@ -166,6 +184,9 @@ pub const CASES: &[AntechamberCase] = &[
         abcg2_charges: &[
             -0.094100, -0.094100, 0.031700, 0.031700, 0.031700, 0.031700, 0.031700, 0.031700,
         ],
+        gas_charges: &[
+            -0.068249, -0.068249, 0.022750, 0.022750, 0.022750, 0.022750, 0.022750, 0.022750,
+        ],
     },
     AntechamberCase {
         name: "ethene",
@@ -200,6 +221,7 @@ pub const CASES: &[AntechamberCase] = &[
         sybyl_atom_types: &["C.2", "C.2", "H", "H", "H", "H"],
         bcc_charges: &[-0.218000, -0.218000, 0.109000, 0.109000, 0.109000, 0.109000],
         abcg2_charges: &[-0.318000, -0.318000, 0.159000, 0.159000, 0.159000, 0.159000],
+        gas_charges: &[-0.106311, -0.106311, 0.053156, 0.053156, 0.053156, 0.053156],
     },
     AntechamberCase {
         name: "acetylene",
@@ -226,6 +248,7 @@ pub const CASES: &[AntechamberCase] = &[
         sybyl_atom_types: &["C.1", "C.1", "H", "H"],
         bcc_charges: &[-0.160500, -0.160500, 0.160500, 0.160500],
         abcg2_charges: &[-0.248000, -0.248000, 0.248000, 0.248000],
+        gas_charges: &[-0.123552, -0.123552, 0.123552, 0.123552],
     },
     AntechamberCase {
         name: "water",
@@ -251,6 +274,7 @@ pub const CASES: &[AntechamberCase] = &[
         sybyl_atom_types: &["O.3", "H", "H"],
         bcc_charges: &[-0.785000, 0.392000, 0.392000],
         abcg2_charges: &[-0.863000, 0.431000, 0.431000],
+        gas_charges: &[-0.411518, 0.205759, 0.205759],
     },
     AntechamberCase {
         name: "ammonia",
@@ -277,6 +301,7 @@ pub const CASES: &[AntechamberCase] = &[
         sybyl_atom_types: &["N.3", "H", "H", "H"],
         bcc_charges: &[-1.010400, 0.336800, 0.336800, 0.336800],
         abcg2_charges: &[-1.176000, 0.392000, 0.392000, 0.392000],
+        gas_charges: &[-0.343915, 0.114638, 0.114638, 0.114638],
     },
     AntechamberCase {
         name: "methanol",
@@ -311,6 +336,7 @@ pub const CASES: &[AntechamberCase] = &[
         sybyl_atom_types: &["C.3", "O.3", "H", "H", "H", "H"],
         bcc_charges: &[0.116700, -0.598800, 0.028700, 0.028700, 0.028700, 0.396000],
         abcg2_charges: &[0.139900, -0.661000, 0.028700, 0.028700, 0.028700, 0.435000],
+        gas_charges: &[0.031933, -0.399641, 0.052691, 0.052691, 0.052691, 0.209634],
     },
     AntechamberCase {
         name: "dimethyl_ether",
@@ -372,6 +398,10 @@ pub const CASES: &[AntechamberCase] = &[
             0.136900, -0.466000, 0.136900, 0.032033, 0.032033, 0.032033, 0.032033, 0.032033,
             0.032033,
         ],
+        gas_charges: &[
+            0.035071, -0.387942, 0.035071, 0.052967, 0.052967, 0.052967, 0.052967, 0.052967,
+            0.052967,
+        ],
     },
     AntechamberCase {
         name: "acetaldehyde",
@@ -422,6 +452,9 @@ pub const CASES: &[AntechamberCase] = &[
         ],
         abcg2_charges: &[
             -0.221100, 0.561900, -0.526100, 0.065033, 0.065033, 0.065033, -0.009800,
+        ],
+        gas_charges: &[
+            -0.008742, 0.116399, -0.303734, 0.030714, 0.030714, 0.030714, 0.103936,
         ],
     },
     AntechamberCase {
@@ -487,6 +520,10 @@ pub const CASES: &[AntechamberCase] = &[
             -0.204100, 0.563100, -0.204100, -0.531100, 0.063033, 0.063033, 0.063033, 0.063033,
             0.063033, 0.063033,
         ],
+        gas_charges: &[
+            -0.005959, 0.126260, -0.005959, -0.300362, 0.031003, 0.031003, 0.031003, 0.031003,
+            0.031003, 0.031003,
+        ],
     },
     AntechamberCase {
         name: "acetic_acid",
@@ -541,6 +578,9 @@ pub const CASES: &[AntechamberCase] = &[
         abcg2_charges: &[
             -0.149100, 0.596100, -0.511000, -0.646100, 0.077700, 0.077700, 0.077700, 0.478000,
         ],
+        gas_charges: &[
+            0.021901, 0.254986, -0.267192, -0.331991, 0.033638, 0.033638, 0.033638, 0.221383,
+        ],
     },
     AntechamberCase {
         name: "acetate",
@@ -592,6 +632,9 @@ pub const CASES: &[AntechamberCase] = &[
         abcg2_charges: &[
             -0.200100, 0.691000, -0.756000, -0.756000, 0.007033, 0.007033, 0.007033,
         ],
+        gas_charges: &[
+            -0.024965, 0.038279, -0.550477, -0.550477, 0.029214, 0.029214, 0.029214,
+        ],
     },
     AntechamberCase {
         name: "methylamine",
@@ -642,6 +685,9 @@ pub const CASES: &[AntechamberCase] = &[
         ],
         abcg2_charges: &[
             0.147100, -1.029200, 0.025700, 0.025700, 0.025700, 0.403000, 0.403000,
+        ],
+        gas_charges: &[
+            -0.019502, -0.333269, 0.038859, 0.038859, 0.038859, 0.118098, 0.118098,
         ],
     },
     AntechamberCase {
@@ -697,6 +743,9 @@ pub const CASES: &[AntechamberCase] = &[
         abcg2_charges: &[
             0.043900, -0.969000, 0.119700, 0.119700, 0.119700, 0.522000, 0.522000, 0.522000,
         ],
+        gas_charges: &[
+            -0.049188, 0.229396, 0.077536, 0.077536, 0.077536, 0.195727, 0.195727, 0.195727,
+        ],
     },
     AntechamberCase {
         name: "acetonitrile",
@@ -735,6 +784,7 @@ pub const CASES: &[AntechamberCase] = &[
         sybyl_atom_types: &["C.3", "C.1", "N.1", "H", "H", "H"],
         bcc_charges: &[-0.045000, 0.208700, -0.375800, 0.070700, 0.070700, 0.070700],
         abcg2_charges: &[-0.045000, 0.297900, -0.465000, 0.070700, 0.070700, 0.070700],
+        gas_charges: &[0.023604, 0.058711, -0.198673, 0.038786, 0.038786, 0.038786],
     },
     AntechamberCase {
         name: "nitromethane",
@@ -785,6 +835,9 @@ pub const CASES: &[AntechamberCase] = &[
         ],
         abcg2_charges: &[
             -0.073100, 0.585000, -0.399000, -0.399000, 0.095367, 0.095367, 0.095367,
+        ],
+        gas_charges: &[
+            0.081191, 0.055201, -0.144129, -0.144129, 0.050622, 0.050622, 0.050622,
         ],
     },
     AntechamberCase {
@@ -870,6 +923,10 @@ pub const CASES: &[AntechamberCase] = &[
             -0.175100, 0.590100, -0.610100, -0.515900, 0.080300, 0.064700, 0.064700, 0.064700,
             0.306500, 0.043367, 0.043367, 0.043367,
         ],
+        gas_charges: &[
+            0.012671, 0.208242, -0.278093, -0.318764, -0.000477, 0.032805, 0.032805, 0.032805,
+            0.148966, 0.043013, 0.043013, 0.043013,
+        ],
     },
     AntechamberCase {
         name: "dimethylformamide",
@@ -953,6 +1010,10 @@ pub const CASES: &[AntechamberCase] = &[
         abcg2_charges: &[
             0.079300, -0.427800, 0.079300, 0.593900, -0.604100, 0.041700, 0.041700, 0.041700,
             0.041700, 0.041700, 0.041700, 0.028200,
+        ],
+        gas_charges: &[
+            0.002073, -0.310624, 0.002073, 0.200751, -0.281321, 0.043264, 0.043264, 0.043264,
+            0.043264, 0.043264, 0.043264, 0.127465,
         ],
     },
     AntechamberCase {
@@ -1039,6 +1100,10 @@ pub const CASES: &[AntechamberCase] = &[
         abcg2_charges: &[
             -0.112000, -0.112000, -0.112000, -0.112000, -0.112000, -0.112000, 0.112000, 0.112000,
             0.112000, 0.112000, 0.112000, 0.112000,
+        ],
+        gas_charges: &[
+            -0.062269, -0.062269, -0.062269, -0.062269, -0.062269, -0.062269, 0.062269, 0.062269,
+            0.062269, 0.062269, 0.062269, 0.062269,
         ],
     },
     AntechamberCase {
@@ -1143,6 +1208,10 @@ pub const CASES: &[AntechamberCase] = &[
             -0.053800, -0.077300, -0.113000, -0.109000, -0.117000, -0.109000, -0.113000, 0.044033,
             0.044033, 0.044033, 0.112000, 0.112000, 0.112000, 0.112000, 0.112000,
         ],
+        gas_charges: &[
+            -0.039775, -0.051133, -0.059326, -0.062005, -0.062249, -0.062005, -0.059326, 0.027965,
+            0.027965, 0.027965, 0.062550, 0.062278, 0.062269, 0.062278, 0.062550,
+        ],
     },
     AntechamberCase {
         name: "phenol",
@@ -1233,6 +1302,10 @@ pub const CASES: &[AntechamberCase] = &[
         abcg2_charges: &[
             -0.538100, 0.123100, -0.167000, -0.076500, -0.148000, -0.076500, -0.167000, 0.457000,
             0.123500, 0.115000, 0.115000, 0.115000, 0.123500,
+        ],
+        gas_charges: &[
+            -0.360953, 0.071225, -0.032081, -0.059677, -0.062084, -0.059677, -0.032081, 0.218246,
+            0.065035, 0.062369, 0.062276, 0.062369, 0.065035,
         ],
     },
     AntechamberCase {
@@ -1329,6 +1402,10 @@ pub const CASES: &[AntechamberCase] = &[
             -1.067000, 0.275000, -0.173000, -0.075000, -0.155000, -0.075000, -0.173000, 0.442000,
             0.442000, 0.112000, 0.111000, 0.113000, 0.111000, 0.112000,
         ],
+        gas_charges: &[
+            -0.358295, 0.023256, -0.041358, -0.060421, -0.062133, -0.060421, -0.041358, 0.142656,
+            0.142656, 0.064236, 0.062338, 0.062271, 0.062338, 0.064236,
+        ],
     },
     AntechamberCase {
         name: "pyridine",
@@ -1410,6 +1487,10 @@ pub const CASES: &[AntechamberCase] = &[
             -0.075000, -0.163000, 0.327900, -0.665000, 0.327900, -0.163000, 0.119000, 0.125000,
             0.021100, 0.021100, 0.125000,
         ],
+        gas_charges: &[
+            -0.059212, -0.043822, 0.026722, -0.264749, 0.026722, -0.043822, 0.062385, 0.063902,
+            0.083986, 0.083986, 0.063902,
+        ],
     },
     AntechamberCase {
         name: "imidazole",
@@ -1472,6 +1553,10 @@ pub const CASES: &[AntechamberCase] = &[
         abcg2_charges: &[
             -0.229000, 0.225900, -0.667000, 0.382400, -0.321500, 0.158000, 0.042100, 0.060100,
             0.350000,
+        ],
+        gas_charges: &[
+            0.012010, 0.042172, -0.248027, 0.083769, -0.310562, 0.080641, 0.085416, 0.101411,
+            0.153170,
         ],
     },
     AntechamberCase {
@@ -1564,6 +1649,10 @@ pub const CASES: &[AntechamberCase] = &[
             0.021900, 0.009300, -0.151000, -0.138000, -0.085000, -0.055300, 0.099367, 0.099367,
             0.099367, 0.220000, 0.221000, 0.414000, 0.244000,
         ],
+        gas_charges: &[
+            0.005308, -0.303521, 0.009958, 0.007495, -0.314083, 0.053444, 0.043635, 0.043635,
+            0.043635, 0.080558, 0.080339, 0.152905, 0.096692,
+        ],
     },
     AntechamberCase {
         name: "thiophene",
@@ -1627,6 +1716,10 @@ pub const CASES: &[AntechamberCase] = &[
             -0.139000, -0.139000, -0.296000, 0.298000, -0.296000, 0.134000, 0.134000, 0.151000,
             0.151000,
         ],
+        gas_charges: &[
+            -0.055076, -0.055076, -0.024797, -0.106060, -0.024797, 0.062842, 0.062842, 0.070061,
+            0.070061,
+        ],
     },
     AntechamberCase {
         name: "methanethiol",
@@ -1661,6 +1754,7 @@ pub const CASES: &[AntechamberCase] = &[
         sybyl_atom_types: &["C.3", "S.3", "H", "H", "H", "H"],
         bcc_charges: &[-0.024000, -0.362900, 0.063700, 0.063700, 0.063700, 0.195800],
         abcg2_charges: &[0.023900, -0.410800, 0.063700, 0.063700, 0.063700, 0.195800],
+        gas_charges: &[-0.021451, -0.182804, 0.034113, 0.034113, 0.034113, 0.101915],
     },
     AntechamberCase {
         name: "dimethyl_sulfoxide",
@@ -1725,6 +1819,10 @@ pub const CASES: &[AntechamberCase] = &[
             -0.130800, 0.295400, -0.130800, -0.533000, 0.083367, 0.083367, 0.083367, 0.083367,
             0.083367, 0.083367,
         ],
+        gas_charges: &[
+            0.102312, -0.014965, 0.102312, -0.681812, 0.082025, 0.082025, 0.082025, 0.082025,
+            0.082025, 0.082025,
+        ],
     },
     AntechamberCase {
         name: "chloromethane",
@@ -1757,6 +1855,7 @@ pub const CASES: &[AntechamberCase] = &[
         sybyl_atom_types: &["C.3", "Cl", "H", "H", "H"],
         bcc_charges: &[0.014300, -0.190400, 0.058700, 0.058700, 0.058700],
         abcg2_charges: &[0.090900, -0.267000, 0.058700, 0.058700, 0.058700],
+        gas_charges: &[0.010838, -0.130441, 0.039868, 0.039868, 0.039868],
     },
     AntechamberCase {
         name: "fluorobenzene",
@@ -1843,6 +1942,10 @@ pub const CASES: &[AntechamberCase] = &[
             -0.177000, 0.159000, -0.148000, -0.087000, -0.127000, -0.087000, -0.148000, 0.130000,
             0.119000, 0.118000, 0.119000, 0.130000,
         ],
+        gas_charges: &[
+            -0.207025, 0.122702, -0.026323, -0.059362, -0.062066, -0.059362, -0.026323, 0.065364,
+            0.062378, 0.062276, 0.062378, 0.065364,
+        ],
     },
     AntechamberCase {
         name: "bromoethane",
@@ -1896,6 +1999,9 @@ pub const CASES: &[AntechamberCase] = &[
         ],
         abcg2_charges: &[
             -0.097100, 0.074600, -0.264000, 0.048367, 0.048367, 0.048367, 0.070700, 0.070700,
+        ],
+        gas_charges: &[
+            -0.055553, 0.000281, -0.093108, 0.023882, 0.023882, 0.023882, 0.038367, 0.038367,
         ],
     },
     AntechamberCase {
@@ -1962,6 +2068,10 @@ pub const CASES: &[AntechamberCase] = &[
         abcg2_charges: &[
             0.118600, 0.118600, -0.428100, 0.772200, -0.473000, -0.428100, 0.079700, 0.079700,
             0.079700, 0.079700,
+        ],
+        gas_charges: &[
+            0.082907, 0.082907, -0.290066, 0.405061, -0.230416, -0.290066, 0.059918, 0.059918,
+            0.059918, 0.059918,
         ],
     },
     AntechamberCase {
@@ -2046,6 +2156,10 @@ pub const CASES: &[AntechamberCase] = &[
         abcg2_charges: &[
             0.149900, -0.412100, 0.706200, -0.531000, -0.412100, 0.149900, 0.058367, 0.058367,
             0.058367, 0.058367, 0.058367, 0.058367,
+        ],
+        gas_charges: &[
+            0.047680, -0.295890, 0.404345, -0.230443, -0.295890, 0.047680, 0.053753, 0.053753,
+            0.053753, 0.053753, 0.053753, 0.053753,
         ],
     },
     AntechamberCase {
@@ -2151,6 +2265,10 @@ pub const CASES: &[AntechamberCase] = &[
             0.140900, -0.472000, 0.146600, 0.146600, -0.472000, 0.140900, 0.033033, 0.033033,
             0.033033, 0.042700, 0.042700, 0.042700, 0.042700, 0.033033, 0.033033, 0.033033,
         ],
+        gas_charges: &[
+            0.035567, -0.382311, 0.069594, 0.069594, -0.382311, 0.035567, 0.052984, 0.052984,
+            0.052984, 0.059099, 0.059099, 0.059099, 0.059099, 0.052984, 0.052984, 0.052984,
+        ],
     },
     AntechamberCase {
         name: "methyl_methacrylate",
@@ -2248,6 +2366,10 @@ pub const CASES: &[AntechamberCase] = &[
             -0.054900, -0.150400, -0.244000, 0.580300, -0.496000, -0.458100, 0.149900, 0.051700,
             0.051700, 0.051700, 0.182000, 0.182000, 0.051033, 0.051033, 0.051033,
         ],
+        gas_charges: &[
+            -0.034322, 0.014262, -0.090042, 0.287357, -0.261128, -0.315773, 0.045579, 0.028167,
+            0.028167, 0.028167, 0.054273, 0.054273, 0.053674, 0.053674, 0.053674,
+        ],
     },
     AntechamberCase {
         name: "ethyl_acetate",
@@ -2339,6 +2461,10 @@ pub const CASES: &[AntechamberCase] = &[
         abcg2_charges: &[
             -0.100100, 0.161600, -0.470100, 0.582100, -0.495000, -0.150100, 0.047367, 0.047367,
             0.047367, 0.051700, 0.051700, 0.075700, 0.075700, 0.075700,
+        ],
+        gas_charges: &[
+            -0.040918, 0.053465, -0.316528, 0.257600, -0.266972, 0.022109, 0.025405, 0.025405,
+            0.025405, 0.057047, 0.057047, 0.033645, 0.033645, 0.033645,
         ],
     },
     AntechamberCase {
@@ -2451,6 +2577,11 @@ pub const CASES: &[AntechamberCase] = &[
             0.161900, -0.573400, 1.350200, -0.582000, -0.573400, 0.161900, -0.573400, 0.161900,
             0.051367, 0.051367, 0.051367, 0.051367, 0.051367, 0.051367, 0.051367, 0.051367,
             0.051367,
+        ],
+        gas_charges: &[
+            0.047480, -0.290247, 0.473442, -0.227944, -0.290247, 0.047480, -0.290247, 0.047480,
+            0.053645, 0.053645, 0.053645, 0.053645, 0.053645, 0.053645, 0.053645, 0.053645,
+            0.053645,
         ],
     },
 ];

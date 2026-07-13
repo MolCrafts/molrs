@@ -194,6 +194,67 @@ fn gasteiger_columns_keep_their_semantics() {
     assert!((anion.seed_charge - -1.0).abs() < 1e-12);
 }
 
+/// Hydrogen is the row where chi+ and `a+b+c` DIFFER — and chi+ is the one that is right.
+///
+/// The heavy rows above satisfy `d == a+b+c` to the last decimal, which is what says
+/// `d` is chi+ = chi(q=1), the cation electronegativity, rather than a fourth
+/// polynomial coefficient. Hydrogen is the documented exception and it is the whole
+/// reason the two cannot be conflated:
+///
+/// ```text
+/// chi_plus(h) = 20.02          <- the `d` column, and what PEOE divides by
+/// a + b + c   = 7.17 + 6.24 - 0.56 = 12.85
+/// ```
+///
+/// H⁺ is a bare proton: it has no valence orbital left, so its polynomial chi+ is
+/// physically meaningless and a fixed 20.02 eV is substituted. A model that "helpfully"
+/// computed chi+ as `a+b+c` — the formula that works for all 36 other rows — would put
+/// hydrogen's divisor 36% low and inflate every single H transfer.
+///
+/// This is one half of ac-002; the other half is that no code path uses `d` as a `q^3`
+/// coefficient, which is checked against the SOURCE in
+/// `charge::gasteiger_source::the_chi_plus_column_is_never_a_cubic_term`.
+#[test]
+fn hydrogens_chi_plus_is_not_its_polynomial_sum() {
+    let h = GASTEIGER_PARAMS
+        .iter()
+        .find(|row| row.atom_type == "h")
+        .expect("GASPARM has an `h` row");
+
+    let polynomial_sum = h.a + h.b + h.c;
+    assert!(
+        (polynomial_sum - 12.85).abs() < 1e-12,
+        "H's a+b+c is {polynomial_sum}, not 12.85 — the GASPARM row has moved"
+    );
+    assert!(
+        (h.chi_plus - 20.02).abs() < 1e-12,
+        "H's chi+ is the `d` column"
+    );
+
+    // The load-bearing assertion: the two are NOT the same number.
+    assert!(
+        (h.chi_plus - polynomial_sum).abs() > 7.0,
+        "H's chi+ ({}) and its a+b+c ({polynomial_sum}) have converged. They are 7.17 \
+         apart upstream, and that gap is the hydrogen special case: chi+(H) is a fixed \
+         20.02 eV because H+ is a bare proton with no polynomial to evaluate. If they \
+         ever became equal, `chi_plus` could be derived instead of read — and that \
+         derivation is exactly the bug this pins.",
+        h.chi_plus
+    );
+
+    // The contrast case: for carbon, the two DO agree, which is why `a+b+c` looks
+    // like a safe shortcut right up until it meets hydrogen.
+    let c3 = GASTEIGER_PARAMS
+        .iter()
+        .find(|row| row.atom_type == "c3")
+        .expect("GASPARM has a `c3` row");
+    assert!((chi_plus("c3") - 19.04).abs() < 1e-12);
+    assert!(
+        (c3.chi_plus - (c3.a + c3.b + c3.c)).abs() < 1e-12,
+        "c3: chi+ 19.04 == a+b+c 7.98+9.18+1.88"
+    );
+}
+
 /// Row counts, pinned against the upstream tables the generator read.
 #[test]
 fn bcc_correction_tables_have_the_upstream_row_counts() {

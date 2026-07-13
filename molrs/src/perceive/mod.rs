@@ -1,6 +1,11 @@
 //! Chemical perception algorithms operating on molecular graphs:
-//! aromaticity, Gasteiger charges, hydrogen handling, ring detection,
+//! aromaticity, bond-type perception, hydrogen handling, ring detection,
 //! stereochemistry, rotatable bonds, and SMARTS matching.
+//!
+//! Gasteiger charges used to live here. They are a *charge model*, not a
+//! perception, and they now sit with the other charge models in
+//! [`ff::charge`](crate::ff::charge) — one implementation, reached through the
+//! [`ChargeModel`](crate::ff::charge::ChargeModel) trait.
 //!
 //! The layer's public face is the [`Perceive`] builder, which gives every
 //! perception one shape — graph in / graph out, non-mutating:
@@ -12,7 +17,6 @@ pub mod aromaticity;
 pub mod bond_type;
 pub mod builder;
 pub mod equivalence;
-pub mod gasteiger;
 pub mod hydrogens;
 pub mod rings;
 pub mod rotatable;

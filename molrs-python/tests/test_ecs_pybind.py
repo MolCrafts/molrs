@@ -134,7 +134,7 @@ def test_gasteiger_charges_system():
     eth = molrs.add_hydrogens(molrs.parse_smiles("CO").to_atomistic())
     charges = molrs.compute_gasteiger_charges(eth)
     assert charges  # non-empty
-    handles = {h for (h, _c, _hc) in charges}
+    handles = {h for (h, _c) in charges}
     assert handles.issubset(set(eth.entities()))
 
 

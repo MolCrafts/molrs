@@ -1,18 +1,26 @@
 //! The `ChargeModel` trait — the 2×2 generality proof.
 //!
-//! One trait must hold three models without any of them being a special case:
+//! One trait must hold four models without any of them being a special case:
 //!
 //! | model            | needs QM input? | topology correction? | `needs_equivalencing` |
 //! |------------------|-----------------|----------------------|-----------------------|
 //! | Mulliken         | yes             | no (pass-through)    | false (`-eq 0`)       |
 //! | AM1-BCC          | yes             | yes (bond increments)| true  (`-eq 1`)       |
 //! | ABCG2            | yes             | yes (bond increments)| true  (`-eq 1`)       |
-//! | Gasteiger (08)   | **no**          | yes (iterative)      | false                 |
+//! | Gasteiger        | **no**          | yes (iterative EE)   | false                 |
 //!
 //! If one trait carries all of them with no branch on the concrete type, it has not
 //! secretly assumed "QM base charges + a correction". That is the whole claim, and
-//! the test that makes it is [`every_model_lands_on_its_own_oracle_column`]: three
-//! models behind ONE `&dyn ChargeModel`, three oracle columns, one loop.
+//! the test that makes it is [`every_model_lands_on_its_own_oracle_column`]: four
+//! models behind ONE `&dyn ChargeModel`, four oracle columns, one loop.
+//!
+//! Gasteiger is the row that turns the claim from a hope into a proof, because it is
+//! the one the trait cannot have been designed around: it needs no QM charges at all
+//! (`assign(&mol, None)` — the whole `Option` exists for it), and antechamber never
+//! calls sqm to produce its column. `gasteiger.rs` next door owns its chemistry; what
+//! it owes THIS file is that it arrives here as one more row of the table, and that
+//! nothing in `src/ff/charge/` had to learn its name to let it in
+//! (`gasteiger_source::the_charge_plumbing_does_not_special_case_gasteiger`).
 //!
 //! `needs_equivalencing` is a DECLARATION THE MODEL HONOURS, not advice it leaves
 //! to the caller. molrs already committed to that reading in
@@ -25,7 +33,7 @@
 //! oracle carries both columns (`am1_charges_raw` and `am1_charges`) precisely so
 //! that it can tell them apart.
 
-use molrs::ff::charge::{BccModel, BccParameterSet, ChargeModel, MullikenModel};
+use molrs::ff::charge::{BccModel, BccParameterSet, ChargeModel, GasteigerModel, MullikenModel};
 
 use crate::typifier::antechamber_oracle::{AntechamberCase, CASES};
 use crate::typifier::oracle_mol::{build_case, report};
@@ -40,6 +48,9 @@ struct ModelCase {
     name: &'static str,
     model: Box<dyn ChargeModel>,
     needs_equivalencing: bool,
+    /// Does this model need the QM charges it is offered? Gasteiger is the one that
+    /// does not — it is a pure topological iteration, and it must ignore them.
+    needs_qm: bool,
     /// The final charges this model must produce from `am1_charges_raw`.
     oracle: fn(&AntechamberCase) -> &'static [f64],
 }
@@ -56,20 +67,35 @@ fn models() -> Vec<ModelCase> {
             name: "AM1-BCC",
             model: Box::new(BccModel::new(BccParameterSet::Bcc).expect("build the BCC model")),
             needs_equivalencing: true,
+            needs_qm: true,
             oracle: |c| c.bcc_charges,
         },
         ModelCase {
             name: "ABCG2",
             model: Box::new(BccModel::new(BccParameterSet::Abcg2).expect("build the ABCG2 model")),
             needs_equivalencing: true,
+            needs_qm: true,
             oracle: |c| c.abcg2_charges,
         },
         ModelCase {
             name: "Mulliken",
             model: Box::new(MullikenModel),
             needs_equivalencing: false,
+            needs_qm: true,
             // No equivalencing, no correction: what went in comes out.
             oracle: |c| c.am1_charges_raw,
+        },
+        ModelCase {
+            name: "Gasteiger",
+            model: Box::new(GasteigerModel),
+            // A topology-only model has no conformer artefact to average away: its
+            // equivalent atoms come out identical for free. `gasteiger::
+            // the_methyl_hydrogens_are_identical_without_any_averaging` is the proof
+            // that this `false` is right and not merely declared.
+            needs_equivalencing: false,
+            // The row the trait cannot have been designed around.
+            needs_qm: false,
+            oracle: |c| c.gas_charges,
         },
     ]
 }
@@ -97,15 +123,16 @@ fn needs_equivalencing_is_declared_per_model() {
 
 // ── the 2×2, proven ──────────────────────────────────────────────────────────
 
-/// Three models, one trait object, three oracle columns — and no special case.
+/// Four models, one trait object, four oracle columns — and no special case.
 ///
 /// Each model is handed the SAME input (the raw sqm Mulliken charges, i.e. what an
 /// AM1 backend really hands molrs) through the SAME method, and each must land on
 /// its own antechamber column:
 ///
-/// * AM1-BCC  -> `bcc_charges`    (equivalence, then BCCPARM.DAT)
-/// * ABCG2    -> `abcg2_charges`  (equivalence, then BCCPARM_ABCG2.DAT)
-/// * Mulliken -> `am1_charges_raw` (nothing at all)
+/// * AM1-BCC   -> `bcc_charges`     (equivalence, then BCCPARM.DAT)
+/// * ABCG2     -> `abcg2_charges`   (equivalence, then BCCPARM_ABCG2.DAT)
+/// * Mulliken  -> `am1_charges_raw` (nothing at all)
+/// * Gasteiger -> `gas_charges`     (the QM charges IGNORED; PEOE on the topology)
 ///
 /// This is the load-bearing test of the whole trait. It fails if `assign` ignores
 /// `needs_equivalencing` (the 20 molecules antechamber averages would come out with
@@ -115,6 +142,12 @@ fn needs_equivalencing_is_declared_per_model() {
 /// molecules, by up to 0.35 e — see
 /// `antechamber::bcc_and_abcg2_are_not_the_same_column`); and it fails if Mulliken
 /// is quietly given a correction.
+///
+/// The fourth row is what makes it a proof rather than a coincidence. Gasteiger is
+/// offered the same `Some(am1_charges_raw)` as everyone else and must throw it away —
+/// its column was produced by an antechamber run that never called sqm — so the trait
+/// is now carrying a model whose input is a strict SUBSET of what the trait offers,
+/// through the same method, with no `match` on which model it is holding.
 #[test]
 fn every_model_lands_on_its_own_oracle_column() {
     for ModelCase {
@@ -248,9 +281,10 @@ fn mulliken_does_not_average_equivalent_atoms() {
 /// guarantee is the same one and it is the important one: absent AM1, the answer is
 /// an error, never a plausible-looking charge.
 ///
-/// (Gasteiger, in 08, is the model that answers `None` with real charges — it needs
-/// no QM input at all. That it can join this trait without either of these two
-/// changing is the point of the 2×2.)
+/// Gasteiger is excluded BY ITS OWN DECLARATION (`needs_qm: false`), not by name: it
+/// is the model that answers `None` with real charges, and
+/// [`a_model_that_needs_no_qm_charges_answers_none_with_real_ones`] is the other half
+/// of this criterion. Two models, opposite answers to the same call, one trait.
 #[test]
 fn a_model_that_needs_qm_charges_refuses_to_invent_them() {
     let case = CASES
@@ -259,7 +293,17 @@ fn a_model_that_needs_qm_charges_refuses_to_invent_them() {
         .expect("methanol in the oracle");
     let (mol, _) = build_case(case);
 
-    for ModelCase { name, model, .. } in models() {
+    let mut checked = 0;
+    for ModelCase {
+        name,
+        model,
+        needs_qm,
+        ..
+    } in models()
+    {
+        if !needs_qm {
+            continue;
+        }
         let err = model
             .assign(&mol, None)
             .err()
@@ -272,5 +316,61 @@ fn a_model_that_needs_qm_charges_refuses_to_invent_them() {
             "{name}: the molecule is correctable — the missing QM input is what \
              must be reported, got: {text}"
         );
+        checked += 1;
+    }
+    assert_eq!(
+        checked, 3,
+        "three of the four models need QM charges; if that changed, this gate is \
+         checking fewer models than it thinks"
+    );
+}
+
+/// The model that needs NO QM charges answers `None` with real ones.
+///
+/// The exact call the trait's `Option` exists for. `assign(&mol, None)` is an error
+/// for every other model in the table and the whole answer for this one — same trait,
+/// same method, no `match` in between (see
+/// `gasteiger_source::the_charge_plumbing_does_not_special_case_gasteiger`).
+///
+/// Reached through `&dyn ChargeModel` on purpose: if this only worked on the concrete
+/// `GasteigerModel`, the trait would not be hosting the zero-QM model, it would just
+/// be sitting next to it.
+#[test]
+fn a_model_that_needs_no_qm_charges_answers_none_with_real_ones() {
+    let case = CASES
+        .iter()
+        .find(|c| c.name == "methanol")
+        .expect("methanol in the oracle");
+    let (mol, _) = build_case(case);
+
+    let zero_qm: Vec<ModelCase> = models().into_iter().filter(|m| !m.needs_qm).collect();
+    assert_eq!(
+        zero_qm.len(),
+        1,
+        "exactly one model (Gasteiger) takes no QM input today"
+    );
+
+    for ModelCase {
+        name,
+        model,
+        oracle,
+        ..
+    } in zero_qm
+    {
+        let model: &dyn ChargeModel = model.as_ref();
+        let got = model
+            .assign(&mol, None)
+            .unwrap_or_else(|e| panic!("{name}: assign(mol, None) failed: {e}"));
+
+        let want = oracle(case);
+        assert_eq!(got.len(), want.len(), "{name}: one charge per atom");
+        for (k, (q, w)) in got.iter().zip(want).enumerate() {
+            assert!(
+                (q - w).abs() < CHARGE_TOL,
+                "{name}/methanol atom {k}{}: {q:+.6} vs antechamber {w:+.6} — a model \
+                 that needs no QM input must produce its column from the molecule alone",
+                case.elements[k]
+            );
+        }
     }
 }

@@ -18,6 +18,8 @@ use molrs::{AtomId, Atomistic};
 
 use molrs::perceive::equivalence::{EquivalenceOptions, average_charges, find_equivalence_classes};
 
+use crate::ff::typifier::atd::{AtdError, DUMMY_TYPE};
+
 use super::error::ChargeError;
 
 /// A charge model: molecule (and optionally QM base charges) in, charges out.
@@ -146,6 +148,110 @@ pub(super) fn equivalence_average(mol: &Atomistic, qm: &[f64]) -> Result<Vec<f64
                 })
         })
         .collect()
+}
+
+/// A copy of `mol` with both `type` columns removed.
+///
+/// What a model perceives from: the caller's atom types (GAFF `c3`, OPLS `opls_135`)
+/// and bond types (LAMMPS bond-type ids) are *their* labels, in the same props the
+/// model's own perception uses. Perception reads a bond's `type` as an aromaticity
+/// hint, so a LAMMPS molecule whose bond-type id happened to be 7 would be perceived
+/// as aromatic; stripping the columns first makes the model's answer a function of
+/// the molecule alone, which is what
+/// `bcc::correct_ignores_the_atom_types_the_molecule_arrives_with` asserts to the bit.
+///
+/// Shared by every model that types a molecule for itself ([`BccModel`] against
+/// `ATOMTYPE_BCC.DEF`, [`GasteigerModel`] against `ATOMTYPE_GAS.DEF`). One copy: a
+/// second one would be a second chance to forget the bond column.
+///
+/// [`BccModel`]: super::BccModel
+/// [`GasteigerModel`]: super::GasteigerModel
+///
+/// # Errors
+///
+/// [`ChargeError::Malformed`] when a column cannot be cleared.
+pub(super) fn without_type_columns(mol: &Atomistic) -> Result<Atomistic, ChargeError> {
+    let mut work = mol.clone();
+    let malformed = |e: molrs::MolRsError| ChargeError::Malformed {
+        detail: e.to_string(),
+    };
+
+    for aid in atom_ids(mol) {
+        work.clear_atom(aid, keys::TYPE).map_err(malformed)?;
+    }
+    let bond_kind = work.bond_kind();
+    let bond_ids: Vec<_> = work.bonds().map(|(bid, _)| bid).collect();
+    for bid in bond_ids {
+        work.clear_relation_prop(bond_kind, bid, keys::TYPE)
+            .map_err(malformed)?;
+    }
+    Ok(work)
+}
+
+/// Refuse a molecule whose atoms the `.DEF` table could not name.
+///
+/// Every `ATOMTYPE_*.DEF` ends with an unconditional catch-all row that labels an
+/// unmatched atom [`DUMMY_TYPE`], so the engine returns a type for *every* atom and
+/// "no rule matched" arrives as a label rather than an error. For a charge model that
+/// label is a refusal: no parameter table has a `DU` row.
+///
+/// A bonded `DU` atom would fail anyway, at the parameter lookup. A **bondless** one
+/// would not — nothing looks its type up — so a bare sulfur (the one element whose
+/// BCC rules all require at least one bond) would come back with its charge silently
+/// left alone, which is exactly the plausible-looking answer molrs's
+/// no-fallback-values rule exists to prevent.
+///
+/// # Arguments
+///
+/// * `perceived` — the molecule the types were read off, in graph atom order.
+/// * `types` — one type per atom.
+/// * `table` — the `.DEF` file that was walked, for the message.
+///
+/// # Errors
+///
+/// [`ChargeError::MissingAtomType`], naming the first untyped atom.
+pub(super) fn reject_dummy_types(
+    perceived: &Atomistic,
+    types: &[&str],
+    table: &'static str,
+) -> Result<(), ChargeError> {
+    let Some((atom, _)) = types.iter().enumerate().find(|(_, ty)| **ty == DUMMY_TYPE) else {
+        return Ok(());
+    };
+    Err(ChargeError::MissingAtomType {
+        table,
+        atom,
+        element: element_of(perceived, atom),
+    })
+}
+
+/// The element symbol of the atom at index `atom` in graph atom order.
+///
+/// Empty when the graph cannot say — this is only ever used to build an error
+/// message, and a model that failed to report a failure because it could not read an
+/// element would be worse than one that reported it without.
+pub(super) fn element_of(mol: &Atomistic, atom: usize) -> String {
+    atom_ids(mol)
+        .get(atom)
+        .and_then(|aid| mol.get_atom(*aid).ok())
+        .and_then(|a| a.get_str(keys::ELEMENT).map(str::to_owned))
+        .unwrap_or_default()
+}
+
+/// An atom-typing failure, as a charge failure.
+pub(super) fn charge_error(err: AtdError) -> ChargeError {
+    match err {
+        AtdError::MissingAtomType {
+            table,
+            atom,
+            element,
+        } => ChargeError::MissingAtomType {
+            table,
+            atom,
+            element,
+        },
+        AtdError::Malformed { detail } => ChargeError::Malformed { detail },
+    }
 }
 
 #[cfg(test)]

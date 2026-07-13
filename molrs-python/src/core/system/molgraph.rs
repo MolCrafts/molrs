@@ -1338,17 +1338,29 @@ pub fn find_rings(mol: &Bound<'_, PyAtomistic>) -> Vec<Vec<u64>> {
         .collect()
 }
 
-/// Compute Gasteiger partial charges; returns `(atom_handle, charge, h_charge)`
-/// per heavy atom. A chemistry system — operates on an `Atomistic` leaf.
+/// Compute Gasteiger/PEOE partial charges; returns `(atom_handle, charge)` for
+/// **every** atom, hydrogens included. A chemistry system — operates on an
+/// `Atomistic` leaf.
+///
+/// Delegates to molrs's one Gasteiger, `ff::charge::GasteigerModel`
+/// (`antechamber -c gas`). Three things changed with it, all of them things the
+/// previous RDKit-port signature promised and this model does not have:
+///
+/// * **no `n_iter`** — the loop runs to convergence (antechamber's `CONVERG` 1e-5,
+///   `GASMAXITER` 500). A sweep count is not a knob; the damping is geometric, so
+///   where the loop stops IS the answer, and the old default of 6 stops 0.0131 e
+///   short on methylammonium.
+/// * **no `h_charge`** — hydrogens are atoms, with their own charge and their own
+///   entry. The model has no notion of an implicit hydrogen.
+/// * **it can fail** — an atom `ATOMTYPE_GAS.DEF` cannot type has no charge, and
+///   raises, rather than silently taking a fallback of zero.
 #[pyfunction]
-#[pyo3(signature = (mol, n_iter=6))]
-pub fn compute_gasteiger_charges(
-    mol: &Bound<'_, PyAtomistic>,
-    n_iter: usize,
-) -> Vec<(u64, f64, f64)> {
+pub fn compute_gasteiger_charges(mol: &Bound<'_, PyAtomistic>) -> PyResult<Vec<(u64, f64)>> {
     let leaf = mol.borrow();
-    molrs::chem::gasteiger::compute_gasteiger_charges(leaf.core(), n_iter)
+    let charges = molrs::compute_gasteiger_charges(leaf.core())
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+    Ok(charges
         .into_iter()
-        .map(|(id, gc)| (node_to_u64(id), gc.charge, gc.h_charge))
-        .collect()
+        .map(|(id, q)| (node_to_u64(id), q))
+        .collect())
 }

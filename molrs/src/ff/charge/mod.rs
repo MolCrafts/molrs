@@ -7,6 +7,13 @@
 //! | [`MullikenModel`] | yes | no (pass-through) | `false` |
 //! | [`BccModel`] (AM1-BCC) | yes | yes (bond increments) | `true` |
 //! | [`BccModel`] (ABCG2) | yes | yes (bond increments) | `true` |
+//! | [`GasteigerModel`] | **no** | yes (iterative PEOE) | `false` |
+//!
+//! The last row is the one that keeps the trait honest. Gasteiger is handed a
+//! molecule and nothing else — `assign(&mol, None)` — and still lands on an
+//! antechamber column, with no branch for it anywhere in this module. A trait that
+//! needed a special case to host a model with no QM input would be a trait that had
+//! quietly assumed "QM base charges plus a correction".
 //!
 //! # The seam is a push, not a pull
 //!
@@ -64,11 +71,13 @@
 
 mod bcc;
 mod error;
+mod gasteiger;
 mod model;
 mod mulliken;
 
 pub use bcc::BccModel;
 pub use error::ChargeError;
+pub use gasteiger::{GasteigerModel, compute_gasteiger_charges};
 pub use model::ChargeModel;
 pub use mulliken::MullikenModel;
 
