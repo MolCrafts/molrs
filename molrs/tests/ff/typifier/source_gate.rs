@@ -88,6 +88,63 @@ pub fn parameterized_model_sources() -> Vec<(PathBuf, String)> {
     out
 }
 
+/// The whole force-field tree — `src/ff/`, with line comments stripped.
+///
+/// Wider than [`typifier_sources`] because chem-perceive-10's criterion is wider:
+/// the estimator's tables were the LAST runtime text parse on the force-field path,
+/// and "last" is a claim about `ff/`, not about `ff/typifier/`. A gate scoped to the
+/// typifier would go green the moment the parse moved one directory up.
+pub fn ff_sources() -> Vec<(PathBuf, String)> {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ff");
+    let mut out = Vec::new();
+    collect(&dir, &mut out);
+    assert!(
+        !out.is_empty(),
+        "no .rs found under {} — the gate would pass vacuously",
+        dir.display()
+    );
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
+/// One source file of the force-field tree, by path relative to `src/ff/`, with
+/// its line comments AND its inline `#[cfg(test)]` module stripped.
+///
+/// The estimator's table module is named directly by the acceptance criterion, so
+/// the gate on it reads it directly rather than filtering a tree scan — a filter
+/// that matched nothing would pass silently, which is the failure mode this whole
+/// file exists to avoid.
+///
+/// The test module is cut because these gates are about what the module *does at
+/// runtime*, and a unit test's `.expect("os present")` is neither a runtime panic
+/// nor a table parse. Without the cut the `.expect(` gate would demand the module's
+/// own tests be rewritten to satisfy a criterion about its production path — a false
+/// positive that would train the next reader to weaken the gate.
+pub fn ff_source(relative: &str) -> (PathBuf, String) {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src/ff")
+        .join(relative);
+    let src =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    (path, strip_test_module(&strip_line_comments(&src)))
+}
+
+/// Everything before the inline `#[cfg(test)]` module.
+///
+/// Line-based, like the rest of this scanner: `#[cfg(test)]` on a source of its own
+/// line is how every module in the tree opens its tests, and a form it does not
+/// recognise leaves MORE text to match, never less — so the bias stays towards
+/// false negatives.
+fn strip_test_module(src: &str) -> String {
+    match src
+        .lines()
+        .position(|line| line.trim_start().starts_with("#[cfg(test)]"))
+    {
+        Some(at) => src.lines().take(at).collect::<Vec<_>>().join("\n"),
+        None => src.to_owned(),
+    }
+}
+
 /// The ATD engine tree — `src/ff/typifier/atd/`, with line comments stripped.
 ///
 /// Narrower than [`typifier_sources`] on purpose: the *engine* is what must stay

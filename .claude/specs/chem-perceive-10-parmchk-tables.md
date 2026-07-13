@@ -1,6 +1,6 @@
 ---
 title: "chem-perceive 10/14 — gaff_equiv / gaff_empirical → .rs + parmchk2 frcmod oracle（RED）"
-status: approved
+status: in-progress
 created: 2026-07-12
 chain: chem-perceive
 depends_on: "chem-perceive-02-param-rs; chem-perceive-09-gaff-params"

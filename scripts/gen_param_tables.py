@@ -135,9 +135,20 @@ ATOMTYPE_FILES = [
     ("ATOMTYPE_SYBYL.DEF", "atomtype_sybyl", "ATOMTYPE_SYBYL", False),
 ]
 
-#: The conjugated pairing table. Read for ONE column — `equivalent_flag` — which
-#: is the only in-repo source of the phase-2 names (`cd`, `cf`, ...).
+#: The conjugated pairing table. Read for its `equivalent_flag` column — the only
+#: in-repo source of the phase-2 names (`cd`, `cf`, ...) — AND, since
+#: chem-perceive-10, emitted whole as `gaff_equiv.rs`: it is parmchk2's atom-type
+#: substitution table (EQUA / CORR rows, per-arity penalties, weights, defaults)
+#: and the `improper_flag` column that decides which atoms carry an improper.
 PARMCHK_FILE = "PARMCHK.DAT"
+
+# (file, const) — the empirical bond/angle constant tables, one per force field.
+# `PARM PC` is the Badger exponent m; `PARM BL` the per-element-pair reference
+# length + ln(Kij); `PARM BA` the per-element angle C / Z factors.
+BLBA_FILES = [
+    ("PARM_BLBA_GAFF.DAT", "EMPIRICAL_GAFF"),
+    ("PARM_BLBA_GAFF2.DAT", "EMPIRICAL_GAFF2"),
+]
 
 # (file, module, const prefix) — AMBER `parm`-format force-field parameter files.
 # One grammar (`parse_parm`), two outputs. Unlike the `.DEF` tables these live
@@ -161,6 +172,7 @@ SOURCE_FILES: list[str] = [
             "BCCPARM_ABCG2.DAT",
             "GASPARM.DAT",
             PARMCHK_FILE,
+            *[f for f, _ in BLBA_FILES],
             *[f for f, _, _, _ in ATOMTYPE_FILES],
         )
     ],
@@ -415,6 +427,256 @@ def alternate_of(atom_type: str, eq: Equivalents | None) -> str | None:
     if abs(eq.flags.get(atom_type, 0)) != 1:
         return None
     return eq.pairs.get(atom_type)
+
+
+# ---------------------------------------------------------------------------
+# PARMCHK.DAT — the substitution table itself (gaff_equiv.rs)
+# ---------------------------------------------------------------------------
+#
+# The file's own header names the PARM columns:
+#
+#     #   atomtype    improper_flag group_id  mass  equivalent_flag  atomic_num
+#
+# and an `EQUA` / `CORR` row carries the atom type it maps to plus NINE penalty
+# columns. The file's trailing note pins their order — "GENERAL_SIMILARITY is
+# listed in the 11th colume of CORR lines" — and the 11th token of a CORR row is
+# the last of the nine, so the columns are the DEFAULT_* block's own order:
+#
+#     bl  blf  ba  baf  ba_ctr  baf_ctr  tor  tor_ctr  general_similarity
+#
+# A `-1` means "not tabulated"; the consumer substitutes the matching DEFAULT_*.
+
+#: The nine penalty columns of an EQUA / CORR row, in file order.
+CORR_COLUMNS = [
+    "bond_length",
+    "bond_force",
+    "angle",
+    "angle_force",
+    "angle_centre",
+    "angle_centre_force",
+    "torsion",
+    "torsion_centre",
+    "similarity",
+]
+
+#: `WEIGHT_*` / `DEFAULT_*` scalars, mapped to their Rust field names. Anything
+#: else in those blocks is a generator error rather than a silently dropped knob.
+PARMCHK_SCALARS = {
+    "WEIGHT_BL": "weight_bond_length",
+    "WEIGHT_BLF": "weight_bond_force",
+    "WEIGHT_BA": "weight_angle",
+    "WEIGHT_BAF": "weight_angle_force",
+    "WEIGHT_X": "weight_wildcard",
+    "WEIGHT_X3": "weight_wildcard_centre",
+    "WEIGHT_BA_CTR": "weight_angle_centre",
+    "WEIGHT_TOR_CTR": "weight_torsion_centre",
+    "WEIGHT_IMPROPER": "weight_improper",
+    "WEIGHT_GROUP": "weight_group",
+    "WEIGHT_EQUTYPE": "weight_equivalent",
+    "DEFAULT_BL": "default_bond_length",
+    "DEFAULT_BLF": "default_bond_force",
+    "DEFAULT_BA": "default_angle",
+    "DEFAULT_BAF": "default_angle_force",
+    "DEFAULT_BA_CTR": "default_angle_centre",
+    "DEFAULT_BAF_CTR": "default_angle_centre_force",
+    "DEFAULT_TOR": "default_torsion",
+    "DEFAULT_TOR_CTR": "default_torsion_centre",
+    "DEFAULT_FRACT1": "default_fraction_1",
+    "DEFAULT_FRACT2": "default_fraction_2",
+    "THRESHOLD_BA": "threshold_angle",
+}
+
+
+@dataclass
+class ParmchkType:
+    """One `PARM` block: the atom type's flags plus its EQUA / CORR rows."""
+
+    name: str
+    improper: bool
+    group: int
+    mass: str
+    equivalent_flag: int
+    atomic_number: int
+    #: `(to, [9 penalties])` — an equivalent type carries penalty columns too
+    #: (`c5` does), but parmchk2 charges nothing for substituting one.
+    equa: list[tuple[str, list[str] | None]] = field(default_factory=list)
+    corr: list[tuple[str, list[str]]] = field(default_factory=list)
+
+
+def parse_parmchk_table(path: Path) -> tuple[list[ParmchkType], dict[str, str]]:
+    """`PARMCHK.DAT` -> its PARM blocks + the WEIGHT_* / DEFAULT_* scalars."""
+    types: list[ParmchkType] = []
+    scalars: dict[str, str] = {}
+    current: ParmchkType | None = None
+
+    for lineno, raw in enumerate(path.read_text().splitlines(), 1):
+        f = raw.split()
+        if not f:
+            continue
+        head = f[0]
+        if head == "PARM":
+            if len(f) < 7:
+                raise GrammarError(f"{path.name}:{lineno}: short PARM row: {raw}")
+            current = ParmchkType(
+                name=f[1],
+                improper=bool(int(f[2])),
+                group=int(f[3]),
+                mass=rust_float(f[4]),
+                equivalent_flag=int(f[5]),
+                atomic_number=int(f[6]),
+            )
+            types.append(current)
+        elif head in ("EQUA", "EUQA"):  # the file misspells one of them
+            if current is None:
+                raise GrammarError(f"{path.name}:{lineno}: EQUA before any PARM row")
+            if len(f) >= 11:
+                current.equa.append((f[1], [rust_float(v) for v in f[2:11]]))
+            else:
+                for name in f[1:]:
+                    current.equa.append((name, None))
+        elif head == "CORR":
+            if current is None:
+                raise GrammarError(f"{path.name}:{lineno}: CORR before any PARM row")
+            # "For the CORR lines, if no penalty parameter presents, the default
+            # value will be used" (the file's own header). A bare `CORR c3` is
+            # therefore nine untabulated columns, not a malformed row.
+            if len(f) == 2:
+                current.corr.append((f[1], ["-1.0"] * 9))
+            elif len(f) >= 11:
+                current.corr.append((f[1], [rust_float(v) for v in f[2:11]]))
+            else:
+                raise GrammarError(
+                    f"{path.name}:{lineno}: a CORR row carries either no penalty column "
+                    f"or all nine (the 11th is GENERAL_SIMILARITY, per the file's own "
+                    f"note); this one has {len(f) - 2}: {raw}"
+                )
+        elif head in PARMCHK_SCALARS:
+            scalars[PARMCHK_SCALARS[head]] = rust_float(f[1])
+
+    missing = sorted(set(PARMCHK_SCALARS.values()) - set(scalars))
+    if missing:
+        raise GrammarError(f"{path.name}: no value for {missing}")
+    return types, scalars
+
+
+def emit_parmchk(path: Path, eq: Equivalents) -> str:
+    types, scalars = parse_parmchk_table(path)
+    impropers = sum(1 for t in types if t.improper)
+
+    L = [HEADER.format(
+        title=f"parmchk2's atom-type substitution table — `{path.name}`.",
+        source=f"{ANTECHAMBER_DIR}/{path.name}",
+    )]
+    w = L.append
+    w("use crate::ff::params::{ParmchkCorr, ParmchkTable, ParmchkType, ParmchkWeights};")
+    w("")
+    w("/// The penalty weights and per-arity defaults (`WEIGHT_*` / `DEFAULT_*`).")
+    w("pub const PARMCHK_WEIGHTS: ParmchkWeights = ParmchkWeights {")
+    for field_name in PARMCHK_SCALARS.values():
+        w(f"    {field_name}: {scalars[field_name]},")
+    w("};")
+    w("")
+    w(f"/// The {len(types)} `PARM` blocks of `{path.name}`, in file order.")
+    w("///")
+    w(f"/// {impropers} of them carry `improper: true` — the column that decides whether a")
+    w("/// 3-coordinate atom of that type is an improper CENTRE at all (`c3` is not; `ca`,")
+    w("/// `c`, `n` and `na` are).")
+    w(RUSTFMT_SKIP)
+    w("pub const PARMCHK_TYPES: &[ParmchkType] = &[")
+    for t in types:
+        equa = ", ".join(rust_str(name) for name, _ in t.equa)
+        corr = ", ".join(
+            f"ParmchkCorr {{ to: {rust_str(name)}, penalties: [{', '.join(cols)}] }}"
+            for name, cols in t.corr
+        )
+        alternate = alternate_of(t.name, eq)
+        w(f"    ParmchkType {{ name: {rust_str(t.name)}, improper: {str(t.improper).lower()}, "
+          f"group: {t.group}, mass: {t.mass}, "
+          f"equivalent_flag: {t.equivalent_flag}, atomic_number: {t.atomic_number}, "
+          f"alternate: {opt(rust_str(alternate)) if alternate else 'None'}, "
+          f"equivalent: &[{equa}], corresponding: &[{corr}] }},")
+    w("];")
+    w("")
+    w(f"/// `{path.name}` as one typed table.")
+    w("pub const PARMCHK: ParmchkTable = ParmchkTable {")
+    w(f"    name: {rust_str(path.name)},")
+    w("    types: PARMCHK_TYPES,")
+    w("    weights: PARMCHK_WEIGHTS,")
+    w("};")
+    w("")
+    return "\n".join(L)
+
+
+# ---------------------------------------------------------------------------
+# PARM_BLBA_GAFF*.DAT — the empirical bond / angle constants (gaff_empirical.rs)
+# ---------------------------------------------------------------------------
+#
+#   PARM  PC  <m>                                  the Badger exponent
+#   PARM  BL  <e1> <z1> <e2> <z2> <r_ref> <ln_k>   per element PAIR
+#   PARM  BA  <e>  <z>  <c> <z_factor>             per element
+
+def parse_blba(path: Path) -> tuple[str, list[tuple[int, int, str, str]], list[tuple[int, str, str]]]:
+    power: str | None = None
+    bonds: list[tuple[int, int, str, str]] = []
+    angles: list[tuple[int, str, str]] = []
+    for lineno, raw in enumerate(path.read_text().splitlines(), 1):
+        f = raw.split()
+        if not f or f[0] != "PARM":
+            continue
+        kind = f[1]
+        if kind == "PC":
+            power = rust_float(f[2])
+        elif kind == "BL":
+            if len(f) < 8:
+                raise GrammarError(f"{path.name}:{lineno}: short BL row: {raw}")
+            bonds.append((int(f[3]), int(f[5]), rust_float(f[6]), rust_float(f[7])))
+        elif kind == "BA":
+            if len(f) < 6:
+                raise GrammarError(f"{path.name}:{lineno}: short BA row: {raw}")
+            angles.append((int(f[3]), rust_float(f[4]), rust_float(f[5])))
+        else:
+            raise GrammarError(f"{path.name}:{lineno}: unknown row kind `{kind}`")
+    if power is None:
+        raise GrammarError(f"{path.name}: no `PARM PC` row — the Badger exponent is missing")
+    return power, bonds, angles
+
+
+def emit_empirical_from(src: Path) -> str:
+    L = [HEADER.format(
+        title="GAFF empirical bond / angle constants (Wang2004 Eqs. 3 and 5).",
+        source=f"{ANTECHAMBER_DIR}/PARM_BLBA_GAFF*.DAT",
+    )]
+    w = L.append
+    w("use crate::ff::params::{EmpiricalAngleRow, EmpiricalBondRow, EmpiricalTable};")
+    w("")
+    for filename, const in BLBA_FILES:
+        path = src / filename
+        power, bonds, angles = parse_blba(path)
+        lower = const.lower()
+        w(f"/// The {len(bonds)} `BL` rows of `{path.name}`: reference length + `ln(Kij)`.")
+        w(RUSTFMT_SKIP)
+        w(f"const {const}_BONDS: &[EmpiricalBondRow] = &[")
+        for z1, z2, r_ref, ln_k in bonds:
+            w(f"    EmpiricalBondRow {{ z1: {z1}, z2: {z2}, r_ref: {r_ref}, ln_k: {ln_k} }},")
+        w("];")
+        w("")
+        w(f"/// The {len(angles)} `BA` rows of `{path.name}`: the angle C / Z factors.")
+        w(RUSTFMT_SKIP)
+        w(f"const {const}_ANGLES: &[EmpiricalAngleRow] = &[")
+        for z, c, zf in angles:
+            w(f"    EmpiricalAngleRow {{ z: {z}, c: {c}, z_factor: {zf} }},")
+        w("];")
+        w("")
+        w(f"/// `{path.name}` as one typed table (Badger exponent m = {power}).")
+        w(f"pub const {const}: EmpiricalTable = EmpiricalTable {{")
+        w(f"    name: {rust_str(path.name)},")
+        w(f"    bond_power: {power},")
+        w(f"    bonds: {const}_BONDS,")
+        w(f"    angles: {const}_ANGLES,")
+        w("};")
+        w("")
+        del lower
+    return "\n".join(L)
 
 
 # ---------------------------------------------------------------------------
@@ -1335,6 +1597,8 @@ def main() -> int:
         staged["bccparm.rs"] = emit_bccparm(src / "BCCPARM.DAT", "BCC")
         staged["bccparm_abcg2.rs"] = emit_bccparm(src / "BCCPARM_ABCG2.DAT", "ABCG2")
         staged["gasparm.rs"] = emit_gasparm(src / "GASPARM.DAT")
+        staged["gaff_equiv.rs"] = emit_parmchk(src / PARMCHK_FILE, equivalents)
+        staged["gaff_empirical.rs"] = emit_empirical_from(src)
         for filename, module, const, gaff_namespace in ATOMTYPE_FILES:
             staged[f"{module}.rs"] = emit_atomtype(
                 src / filename, const, equivalents if gaff_namespace else None

@@ -24,14 +24,14 @@
 //! matching and pair/charge assignment are out of scope. Uncovered bonded terms
 //! follow the [`NoMatch`] policy; a consumer that wants to fill them can supply
 //! its own [`Estimator`] via [`typify_bonded_with`], or attach the restored
-//! [`ParameterEstimator`].
+//! [`Parmchk2Estimator`].
 
 use molrs::Atomistic;
 
 use crate::ff::forcefield::ForceField;
 use crate::ff::forcefield::readers::{ForceFieldReader, opls::OplsXmlReader};
 use crate::ff::potential::{Potentials, intramolecular_pairs};
-use crate::ff::typifier::estimate::ParameterEstimator;
+use crate::ff::typifier::estimate::Parmchk2Estimator;
 
 use super::Typifier;
 
@@ -138,7 +138,7 @@ impl OPLSAATypifier {
     /// Attach the default GAFF/parmchk2-style similarity estimator built from
     /// this typifier's force field and typing metadata.
     pub fn with_default_estimator(self) -> Self {
-        let estimator = ParameterEstimator::new(&self.ff, &self.meta);
+        let estimator = Parmchk2Estimator::new(&self.ff, &self.meta);
         self.with_estimator(estimator)
     }
 

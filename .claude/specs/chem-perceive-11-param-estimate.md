@@ -1,6 +1,6 @@
 ---
 title: "chem-perceive 11/14 — 原生缺参估计（parmchk2 算法）——彻底不碰 frcmod 文件"
-status: approved
+status: in-progress
 created: 2026-07-12
 chain: chem-perceive
 depends_on: "chem-perceive-09-gaff-params; chem-perceive-10-parmchk-tables"

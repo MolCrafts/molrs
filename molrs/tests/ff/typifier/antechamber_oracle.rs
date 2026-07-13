@@ -30,6 +30,12 @@
 //! i.e. sqm Mulliken AFTER topological-equivalence averaging (`-eq 1`, default).
 //! `am1_charges_raw` is the un-averaged sqm Mulliken, kept so the equivalencing
 //! stage can be tested on its own.
+//!
+//! The two `*_parmchk_terms` columns are a THIRD axis, and the only one that is
+//! about parameters rather than about charges or types: `parmchk2 -s gaff` /
+//! `-s gaff2` over the same typed molecule, i.e. every force-field term GAFF does
+//! not cover, the parameter parmchk2 estimated for it, and the penalty it charged
+//! (see [`ParmchkTerm`]).
 
 #![allow(dead_code)]
 // Generated geometry: a literal coordinate can approximate a math constant
@@ -94,9 +100,99 @@ pub struct AntechamberCase {
     /// 0.053/0.098/0.053. That is why the model runs `needs_equivalencing = false`
     /// and still never carries a conformer artefact.
     pub gas_charges: &'static [f64],
+    /// Every term `parmchk2 -s gaff` had to ESTIMATE (`gaff.dat`).
+    pub gaff_parmchk_terms: &'static [ParmchkTerm],
+    /// Every term `parmchk2 -s gaff2` had to ESTIMATE (`gaff2.dat`).
+    pub gaff2_parmchk_terms: &'static [ParmchkTerm],
+}
+
+/// One row of a `parmchk2` frcmod: a term the parm table does not cover, the
+/// parameter parmchk2 estimated for it, and HOW it got there.
+///
+/// This is the missing-parameter oracle. A term reaches an frcmod only when the
+/// table has no row matching the molecule's ACTUAL types — wildcard rows very
+/// much included, since `X -c3-c3-X` matches any quartet whose inner pair is
+/// `c3-c3`. So this list is strictly SMALLER than the set of terms molrs's
+/// exact-match-only [`gaff_forcefield`](molrs::ff::forcefield::gaff::gaff_forcefield)
+/// reports as missing: most of those are covered by a wildcard row parmchk2
+/// simply matched and stayed silent about. Reproducing this column therefore
+/// demands BOTH halves of the cascade — wildcard matching (to fall silent on the
+/// same terms parmchk2 does) and the analogy/penalty machinery (to produce the
+/// same values, with the same scores, for the terms that remain).
+///
+/// # Units and conventions are the upstream's
+///
+/// [`values`](Self::values) is the row as parmchk2 wrote it, in AMBER's own units
+/// and conventions — degrees, un-halved force constants, the `IDIVF` divisor, and
+/// a SIGNED `DIHE` periodicity whose minus sign means "another cosine term for
+/// this same quartet follows". Converting is the reader's job
+/// (`forcefield::gaff`); a fixture that pre-converted would be asserting its own
+/// arithmetic instead of antechamber's answer.
+///
+/// | `kind` | `types` | `values` |
+/// |---|---|---|
+/// | `MASS` | atom type | mass |
+/// | `BOND` | i, j | force constant, length |
+/// | `ANGLE` | i, j, k | force constant, angle (deg) |
+/// | `DIHE` | i, j, k, l | divisor, barrier, phase (deg), periodicity (signed) |
+/// | `IMPROPER` | i, j, **centre**, l | barrier, phase (deg), periodicity |
+/// | `NONBON` | atom type | R\*, epsilon |
+pub struct ParmchkTerm {
+    /// The frcmod section: `MASS` / `BOND` / `ANGLE` / `DIHE` / `IMPROPER` /
+    /// `NONBON`.
+    pub kind: &'static str,
+    /// The term's atom types, in parmchk2's order. For `IMPROPER` that is
+    /// AMBER's — the CENTRE is the third.
+    pub types: &'static [&'static str],
+    /// The estimated parameter, in the upstream's units (see the table above).
+    pub values: &'static [f64],
+    /// parmchk2's penalty score, when it printed one.
+    ///
+    /// `None` on the leading rows of a multi-cosine `DIHE` group (parmchk2 scores
+    /// the GROUP, and prints the score on its final row) and on every improper it
+    /// took from the default — a default is not a substitution, so there is
+    /// nothing to score.
+    pub penalty: Option<f64>,
+    /// Which tier of parmchk2's cascade produced the value — transcribed from its
+    /// own prose, NOT pre-mapped onto molrs's [`EstimateMethod`]
+    /// (`molrs::ff::typifier::estimate::EstimateMethod`), because which molrs tier
+    /// each of these IS is the thing under test:
+    ///
+    /// - `same_as` — substituted atom types and copied a specific row. The source
+    ///   row may itself be a wildcard one (`X -c2-ss-X`); what makes this tier
+    ///   distinct is that the TYPES were substituted, and that is what is scored.
+    /// - `general_term` / `general_improper` — a wildcard row of the table,
+    ///   instantiated for these types. Two spellings of one tier: parmchk2 words
+    ///   it differently for impropers it reaches through `X -X -ca-ha` than for
+    ///   the ones it reaches by substitution.
+    /// - `default` — nothing matched; the improper default (1.1 / 180 / 2).
+    /// - `empirical` / `attn` — the empirical formulas, and a term parmchk2
+    ///   refuses to stand behind. **Neither occurs in this oracle** (see the
+    ///   `CASES` note): all 37 molecules match every bond and angle exactly, so
+    ///   nothing ever reaches the Badger / Eq.5 fallback.
+    pub method: &'static str,
+    /// The term parmchk2 copied from, canonicalised to `i-j-k-l` (the frcmod pads
+    /// atom types to a fixed width: `X -c2-ss-X`). Empty when it copied nothing.
+    pub analog: &'static str,
+    /// parmchk2's own prose, verbatim — the audit trail behind the three fields
+    /// above.
+    pub comment: &'static str,
 }
 
 /// 37 molecules spanning the BCC chemistry molcrafts actually uses.
+///
+/// parmchk2 has to estimate 43 terms across them under `gaff.dat` and
+/// 58 under `gaff2.dat`, and they are **only** DIHE / IMPROPER rows:
+/// every BOND, ANGLE, MASS and NONBON term of all 37 molecules is an exact hit in
+/// both tables. Two consequences, and both are load-bearing:
+///
+/// 1. A molrs estimator that invents a bond or angle parameter for any of these
+///    molecules is wrong no matter how plausible the number — the oracle says
+///    there was nothing to estimate.
+/// 2. The empirical (Badger / Wang2004 Eq.5) fallback is NOT exercised by this
+///    oracle at all: nothing here ever reaches it. Its unit tests
+///    (`ff::typifier::estimate`) pin the formulas against published GAFF values;
+///    this fixture cannot corroborate them, and must not be read as doing so.
 pub const CASES: &[AntechamberCase] = &[
     AntechamberCase {
         name: "methane",
@@ -130,6 +226,8 @@ pub const CASES: &[AntechamberCase] = &[
         bcc_charges: &[-0.108800, 0.026700, 0.026700, 0.026700, 0.026700],
         abcg2_charges: &[-0.108800, 0.026700, 0.026700, 0.026700, 0.026700],
         gas_charges: &[-0.077576, 0.019394, 0.019394, 0.019394, 0.019394],
+        gaff_parmchk_terms: &[],
+        gaff2_parmchk_terms: &[],
     },
     AntechamberCase {
         name: "ethane",
@@ -187,6 +285,8 @@ pub const CASES: &[AntechamberCase] = &[
         gas_charges: &[
             -0.068249, -0.068249, 0.022750, 0.022750, 0.022750, 0.022750, 0.022750, 0.022750,
         ],
+        gaff_parmchk_terms: &[],
+        gaff2_parmchk_terms: &[],
     },
     AntechamberCase {
         name: "ethene",
@@ -222,6 +322,24 @@ pub const CASES: &[AntechamberCase] = &[
         bcc_charges: &[-0.218000, -0.218000, 0.109000, 0.109000, 0.109000, 0.109000],
         abcg2_charges: &[-0.318000, -0.318000, 0.159000, 0.159000, 0.159000, 0.159000],
         gas_charges: &[-0.106311, -0.106311, 0.053156, 0.053156, 0.053156, 0.053156],
+        gaff_parmchk_terms: &[ParmchkTerm {
+            kind: "IMPROPER",
+            types: &["c2", "ha", "c2", "ha"],
+            values: &[1.100000, 180.000000, 2.000000],
+            penalty: None,
+            method: "default",
+            analog: "",
+            comment: "Using the default value",
+        }],
+        gaff2_parmchk_terms: &[ParmchkTerm {
+            kind: "IMPROPER",
+            types: &["c2", "ha", "c2", "ha"],
+            values: &[1.100000, 180.000000, 2.000000],
+            penalty: None,
+            method: "default",
+            analog: "",
+            comment: "Using the default value",
+        }],
     },
     AntechamberCase {
         name: "acetylene",
@@ -249,6 +367,8 @@ pub const CASES: &[AntechamberCase] = &[
         bcc_charges: &[-0.160500, -0.160500, 0.160500, 0.160500],
         abcg2_charges: &[-0.248000, -0.248000, 0.248000, 0.248000],
         gas_charges: &[-0.123552, -0.123552, 0.123552, 0.123552],
+        gaff_parmchk_terms: &[],
+        gaff2_parmchk_terms: &[],
     },
     AntechamberCase {
         name: "water",
@@ -275,6 +395,8 @@ pub const CASES: &[AntechamberCase] = &[
         bcc_charges: &[-0.785000, 0.392000, 0.392000],
         abcg2_charges: &[-0.863000, 0.431000, 0.431000],
         gas_charges: &[-0.411518, 0.205759, 0.205759],
+        gaff_parmchk_terms: &[],
+        gaff2_parmchk_terms: &[],
     },
     AntechamberCase {
         name: "ammonia",
@@ -302,6 +424,8 @@ pub const CASES: &[AntechamberCase] = &[
         bcc_charges: &[-1.010400, 0.336800, 0.336800, 0.336800],
         abcg2_charges: &[-1.176000, 0.392000, 0.392000, 0.392000],
         gas_charges: &[-0.343915, 0.114638, 0.114638, 0.114638],
+        gaff_parmchk_terms: &[],
+        gaff2_parmchk_terms: &[],
     },
     AntechamberCase {
         name: "methanol",
@@ -337,6 +461,8 @@ pub const CASES: &[AntechamberCase] = &[
         bcc_charges: &[0.116700, -0.598800, 0.028700, 0.028700, 0.028700, 0.396000],
         abcg2_charges: &[0.139900, -0.661000, 0.028700, 0.028700, 0.028700, 0.435000],
         gas_charges: &[0.031933, -0.399641, 0.052691, 0.052691, 0.052691, 0.209634],
+        gaff_parmchk_terms: &[],
+        gaff2_parmchk_terms: &[],
     },
     AntechamberCase {
         name: "dimethyl_ether",
@@ -402,6 +528,8 @@ pub const CASES: &[AntechamberCase] = &[
             0.035071, -0.387942, 0.035071, 0.052967, 0.052967, 0.052967, 0.052967, 0.052967,
             0.052967,
         ],
+        gaff_parmchk_terms: &[],
+        gaff2_parmchk_terms: &[],
     },
     AntechamberCase {
         name: "acetaldehyde",
@@ -456,6 +584,24 @@ pub const CASES: &[AntechamberCase] = &[
         gas_charges: &[
             -0.008742, 0.116399, -0.303734, 0.030714, 0.030714, 0.030714, 0.103936,
         ],
+        gaff_parmchk_terms: &[ParmchkTerm {
+            kind: "IMPROPER",
+            types: &["c3", "h4", "c", "o"],
+            values: &[1.100000, 180.000000, 2.000000],
+            penalty: None,
+            method: "default",
+            analog: "",
+            comment: "Using the default value",
+        }],
+        gaff2_parmchk_terms: &[ParmchkTerm {
+            kind: "IMPROPER",
+            types: &["c3", "h4", "c", "o"],
+            values: &[1.100000, 180.000000, 2.000000],
+            penalty: None,
+            method: "default",
+            analog: "",
+            comment: "Using the default value",
+        }],
     },
     AntechamberCase {
         name: "acetone",
@@ -524,6 +670,24 @@ pub const CASES: &[AntechamberCase] = &[
             -0.005959, 0.126260, -0.005959, -0.300362, 0.031003, 0.031003, 0.031003, 0.031003,
             0.031003, 0.031003,
         ],
+        gaff_parmchk_terms: &[ParmchkTerm {
+            kind: "IMPROPER",
+            types: &["c3", "c3", "c", "o"],
+            values: &[1.100000, 180.000000, 2.000000],
+            penalty: None,
+            method: "default",
+            analog: "",
+            comment: "Using the default value",
+        }],
+        gaff2_parmchk_terms: &[ParmchkTerm {
+            kind: "IMPROPER",
+            types: &["c3", "c3", "c", "o"],
+            values: &[1.100000, 180.000000, 2.000000],
+            penalty: None,
+            method: "default",
+            analog: "",
+            comment: "Using the default value",
+        }],
     },
     AntechamberCase {
         name: "acetic_acid",
@@ -581,6 +745,8 @@ pub const CASES: &[AntechamberCase] = &[
         gas_charges: &[
             0.021901, 0.254986, -0.267192, -0.331991, 0.033638, 0.033638, 0.033638, 0.221383,
         ],
+        gaff_parmchk_terms: &[],
+        gaff2_parmchk_terms: &[],
     },
     AntechamberCase {
         name: "acetate",
@@ -635,6 +801,24 @@ pub const CASES: &[AntechamberCase] = &[
         gas_charges: &[
             -0.024965, 0.038279, -0.550477, -0.550477, 0.029214, 0.029214, 0.029214,
         ],
+        gaff_parmchk_terms: &[ParmchkTerm {
+            kind: "IMPROPER",
+            types: &["c3", "o", "c", "o"],
+            values: &[1.100000, 180.000000, 2.000000],
+            penalty: Some(3.0),
+            method: "general_improper",
+            analog: "X-o-c-o",
+            comment: "Using general improper torsional angle  X- o- c- o, penalty score=  3.0)",
+        }],
+        gaff2_parmchk_terms: &[ParmchkTerm {
+            kind: "IMPROPER",
+            types: &["c3", "o", "c", "o"],
+            values: &[1.100000, 180.000000, 2.000000],
+            penalty: Some(3.0),
+            method: "general_improper",
+            analog: "X-o-c-o",
+            comment: "Using general improper torsional angle  X- o- c- o, penalty score=  3.0)",
+        }],
     },
     AntechamberCase {
         name: "methylamine",
@@ -689,6 +873,16 @@ pub const CASES: &[AntechamberCase] = &[
         gas_charges: &[
             -0.019502, -0.333269, 0.038859, 0.038859, 0.038859, 0.118098, 0.118098,
         ],
+        gaff_parmchk_terms: &[],
+        gaff2_parmchk_terms: &[ParmchkTerm {
+            kind: "DIHE",
+            types: &["h1", "c3", "n8", "hn"],
+            values: &[6.000000, 1.800000, 0.000000, 3.000000],
+            penalty: Some(0.0),
+            method: "same_as",
+            analog: "X-c3-n3-X",
+            comment: "same as X -c3-n3-X , penalty score=  0.0",
+        }],
     },
     AntechamberCase {
         name: "methylammonium",
@@ -746,6 +940,8 @@ pub const CASES: &[AntechamberCase] = &[
         gas_charges: &[
             -0.049188, 0.229396, 0.077536, 0.077536, 0.077536, 0.195727, 0.195727, 0.195727,
         ],
+        gaff_parmchk_terms: &[],
+        gaff2_parmchk_terms: &[],
     },
     AntechamberCase {
         name: "acetonitrile",
@@ -785,6 +981,8 @@ pub const CASES: &[AntechamberCase] = &[
         bcc_charges: &[-0.045000, 0.208700, -0.375800, 0.070700, 0.070700, 0.070700],
         abcg2_charges: &[-0.045000, 0.297900, -0.465000, 0.070700, 0.070700, 0.070700],
         gas_charges: &[0.023604, 0.058711, -0.198673, 0.038786, 0.038786, 0.038786],
+        gaff_parmchk_terms: &[],
+        gaff2_parmchk_terms: &[],
     },
     AntechamberCase {
         name: "nitromethane",
@@ -839,6 +1037,24 @@ pub const CASES: &[AntechamberCase] = &[
         gas_charges: &[
             0.081191, 0.055201, -0.144129, -0.144129, 0.050622, 0.050622, 0.050622,
         ],
+        gaff_parmchk_terms: &[ParmchkTerm {
+            kind: "IMPROPER",
+            types: &["c3", "o", "no", "o"],
+            values: &[1.100000, 180.000000, 2.000000],
+            penalty: None,
+            method: "default",
+            analog: "",
+            comment: "Using the default value",
+        }],
+        gaff2_parmchk_terms: &[ParmchkTerm {
+            kind: "IMPROPER",
+            types: &["c3", "o", "no", "o"],
+            values: &[1.100000, 180.000000, 2.000000],
+            penalty: None,
+            method: "default",
+            analog: "",
+            comment: "Using the default value",
+        }],
     },
     AntechamberCase {
         name: "n_methylacetamide",
@@ -927,6 +1143,80 @@ pub const CASES: &[AntechamberCase] = &[
             0.012671, 0.208242, -0.278093, -0.318764, -0.000477, 0.032805, 0.032805, 0.032805,
             0.148966, 0.043013, 0.043013, 0.043013,
         ],
+        gaff_parmchk_terms: &[ParmchkTerm {
+            kind: "IMPROPER",
+            types: &["c3", "n", "c", "o"],
+            values: &[10.500000, 180.000000, 2.000000],
+            penalty: Some(6.0),
+            method: "general_improper",
+            analog: "X-X-c-o",
+            comment: "Using general improper torsional angle  X- X- c- o, penalty score=  6.0)",
+        }],
+        gaff2_parmchk_terms: &[
+            ParmchkTerm {
+                kind: "DIHE",
+                types: &["c3", "c", "ns", "hn"],
+                values: &[4.000000, 10.000000, 180.000000, 2.000000],
+                penalty: Some(0.0),
+                method: "same_as",
+                analog: "X-c-n-X",
+                comment: "same as X -c -n -X , penalty score=  0.0",
+            },
+            ParmchkTerm {
+                kind: "DIHE",
+                types: &["o", "c", "ns", "c3"],
+                values: &[4.000000, 10.000000, 180.000000, 2.000000],
+                penalty: Some(0.0),
+                method: "same_as",
+                analog: "X-c-n-X",
+                comment: "same as X -c -n -X , penalty score=  0.0",
+            },
+            ParmchkTerm {
+                kind: "DIHE",
+                types: &["o", "c", "ns", "hn"],
+                values: &[1.000000, 2.500000, 180.000000, -2.000000],
+                penalty: None,
+                method: "same_as",
+                analog: "o-c-n-hn",
+                comment: "same as o -c -n -hn",
+            },
+            ParmchkTerm {
+                kind: "DIHE",
+                types: &["o", "c", "ns", "hn"],
+                values: &[1.000000, 2.000000, 0.000000, 1.000000],
+                penalty: Some(0.0),
+                method: "same_as",
+                analog: "o-c-n-hn",
+                comment: "same as o -c -n -hn, penalty score=  0.0",
+            },
+            ParmchkTerm {
+                kind: "DIHE",
+                types: &["h1", "c3", "ns", "hn"],
+                values: &[6.000000, 0.000000, 0.000000, 2.000000],
+                penalty: Some(0.0),
+                method: "same_as",
+                analog: "X-c3-n-X",
+                comment: "same as X -c3-n -X , penalty score=  0.0",
+            },
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["c3", "ns", "c", "o"],
+                values: &[10.500000, 180.000000, 2.000000],
+                penalty: Some(6.0),
+                method: "general_improper",
+                analog: "X-X-c-o",
+                comment: "Using general improper torsional angle  X- X- c- o, penalty score=  6.0)",
+            },
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["c", "c3", "ns", "hn"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: None,
+                method: "default",
+                analog: "",
+                comment: "Using the default value",
+            },
+        ],
     },
     AntechamberCase {
         name: "dimethylformamide",
@@ -1014,6 +1304,46 @@ pub const CASES: &[AntechamberCase] = &[
         gas_charges: &[
             0.002073, -0.310624, 0.002073, 0.200751, -0.281321, 0.043264, 0.043264, 0.043264,
             0.043264, 0.043264, 0.043264, 0.127465,
+        ],
+        gaff_parmchk_terms: &[
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["c", "c3", "n", "c3"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: None,
+                method: "default",
+                analog: "",
+                comment: "Using the default value",
+            },
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["h5", "n", "c", "o"],
+                values: &[10.500000, 180.000000, 2.000000],
+                penalty: Some(6.0),
+                method: "general_improper",
+                analog: "X-X-c-o",
+                comment: "Using general improper torsional angle  X- X- c- o, penalty score=  6.0)",
+            },
+        ],
+        gaff2_parmchk_terms: &[
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["c", "c3", "n", "c3"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: None,
+                method: "default",
+                analog: "",
+                comment: "Using the default value",
+            },
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["h5", "n", "c", "o"],
+                values: &[10.500000, 180.000000, 2.000000],
+                penalty: Some(6.0),
+                method: "general_improper",
+                analog: "X-X-c-o",
+                comment: "Using general improper torsional angle  X- X- c- o, penalty score=  6.0)",
+            },
         ],
     },
     AntechamberCase {
@@ -1105,6 +1435,24 @@ pub const CASES: &[AntechamberCase] = &[
             -0.062269, -0.062269, -0.062269, -0.062269, -0.062269, -0.062269, 0.062269, 0.062269,
             0.062269, 0.062269, 0.062269, 0.062269,
         ],
+        gaff_parmchk_terms: &[ParmchkTerm {
+            kind: "IMPROPER",
+            types: &["ca", "ca", "ca", "ha"],
+            values: &[1.100000, 180.000000, 2.000000],
+            penalty: Some(6.0),
+            method: "general_improper",
+            analog: "X-X-ca-ha",
+            comment: "Using general improper torsional angle  X- X-ca-ha, penalty score=  6.0)",
+        }],
+        gaff2_parmchk_terms: &[ParmchkTerm {
+            kind: "IMPROPER",
+            types: &["ca", "ca", "ca", "ha"],
+            values: &[1.100000, 180.000000, 2.000000],
+            penalty: Some(6.0),
+            method: "general_improper",
+            analog: "X-X-ca-ha",
+            comment: "Using general improper torsional angle  X- X-ca-ha, penalty score=  6.0)",
+        }],
     },
     AntechamberCase {
         name: "toluene",
@@ -1212,6 +1560,24 @@ pub const CASES: &[AntechamberCase] = &[
             -0.039775, -0.051133, -0.059326, -0.062005, -0.062249, -0.062005, -0.059326, 0.027965,
             0.027965, 0.027965, 0.062550, 0.062278, 0.062269, 0.062278, 0.062550,
         ],
+        gaff_parmchk_terms: &[ParmchkTerm {
+            kind: "IMPROPER",
+            types: &["ca", "ca", "ca", "ha"],
+            values: &[1.100000, 180.000000, 2.000000],
+            penalty: Some(6.0),
+            method: "general_improper",
+            analog: "X-X-ca-ha",
+            comment: "Using general improper torsional angle  X- X-ca-ha, penalty score=  6.0)",
+        }],
+        gaff2_parmchk_terms: &[ParmchkTerm {
+            kind: "IMPROPER",
+            types: &["ca", "ca", "ca", "ha"],
+            values: &[1.100000, 180.000000, 2.000000],
+            penalty: Some(6.0),
+            method: "general_improper",
+            analog: "X-X-ca-ha",
+            comment: "Using general improper torsional angle  X- X-ca-ha, penalty score=  6.0)",
+        }],
     },
     AntechamberCase {
         name: "phenol",
@@ -1306,6 +1672,46 @@ pub const CASES: &[AntechamberCase] = &[
         gas_charges: &[
             -0.360953, 0.071225, -0.032081, -0.059677, -0.062084, -0.059677, -0.032081, 0.218246,
             0.065035, 0.062369, 0.062276, 0.062369, 0.065035,
+        ],
+        gaff_parmchk_terms: &[
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["ca", "ca", "ca", "oh"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: None,
+                method: "default",
+                analog: "",
+                comment: "Using the default value",
+            },
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["ca", "ca", "ca", "ha"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: Some(6.0),
+                method: "general_improper",
+                analog: "X-X-ca-ha",
+                comment: "Using general improper torsional angle  X- X-ca-ha, penalty score=  6.0)",
+            },
+        ],
+        gaff2_parmchk_terms: &[
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["ca", "ca", "ca", "oh"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: None,
+                method: "default",
+                analog: "",
+                comment: "Using the default value",
+            },
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["ca", "ca", "ca", "ha"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: Some(6.0),
+                method: "general_improper",
+                analog: "X-X-ca-ha",
+                comment: "Using general improper torsional angle  X- X-ca-ha, penalty score=  6.0)",
+            },
         ],
     },
     AntechamberCase {
@@ -1406,6 +1812,73 @@ pub const CASES: &[AntechamberCase] = &[
             -0.358295, 0.023256, -0.041358, -0.060421, -0.062133, -0.060421, -0.041358, 0.142656,
             0.142656, 0.064236, 0.062338, 0.062271, 0.062338, 0.064236,
         ],
+        gaff_parmchk_terms: &[
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["ca", "hn", "nh", "hn"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: Some(41.2),
+                method: "general_term",
+                analog: "X-X-na-hn",
+                comment: "Same as X -X -na-hn, penalty score= 41.2 (use general term))",
+            },
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["ca", "ca", "ca", "nh"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: None,
+                method: "default",
+                analog: "",
+                comment: "Using the default value",
+            },
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["ca", "ca", "ca", "ha"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: Some(6.0),
+                method: "general_improper",
+                analog: "X-X-ca-ha",
+                comment: "Using general improper torsional angle  X- X-ca-ha, penalty score=  6.0)",
+            },
+        ],
+        gaff2_parmchk_terms: &[
+            ParmchkTerm {
+                kind: "DIHE",
+                types: &["ca", "ca", "nv", "hn"],
+                values: &[4.000000, 4.200000, 180.000000, 2.000000],
+                penalty: Some(0.0),
+                method: "same_as",
+                analog: "X-ca-nh-X",
+                comment: "same as X -ca-nh-X , penalty score=  0.0",
+            },
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["ca", "hn", "nv", "hn"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: None,
+                method: "default",
+                analog: "",
+                comment: "Using the default value",
+            },
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["ca", "ca", "ca", "nv"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: None,
+                method: "default",
+                analog: "",
+                comment: "Using the default value",
+            },
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["ca", "ca", "ca", "ha"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: Some(6.0),
+                method: "general_improper",
+                analog: "X-X-ca-ha",
+                comment: "Using general improper torsional angle  X- X-ca-ha, penalty score=  6.0)",
+            },
+        ],
     },
     AntechamberCase {
         name: "pyridine",
@@ -1491,6 +1964,46 @@ pub const CASES: &[AntechamberCase] = &[
             -0.059212, -0.043822, 0.026722, -0.264749, 0.026722, -0.043822, 0.062385, 0.063902,
             0.083986, 0.083986, 0.063902,
         ],
+        gaff_parmchk_terms: &[
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["ca", "ca", "ca", "ha"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: Some(6.0),
+                method: "general_improper",
+                analog: "X-X-ca-ha",
+                comment: "Using general improper torsional angle  X- X-ca-ha, penalty score=  6.0)",
+            },
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["ca", "h4", "ca", "nb"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: Some(44.3),
+                method: "general_term",
+                analog: "X-X-ca-ha",
+                comment: "Same as X -X -ca-ha, penalty score= 44.3 (use general term))",
+            },
+        ],
+        gaff2_parmchk_terms: &[
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["ca", "ca", "ca", "ha"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: Some(6.0),
+                method: "general_improper",
+                analog: "X-X-ca-ha",
+                comment: "Using general improper torsional angle  X- X-ca-ha, penalty score=  6.0)",
+            },
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["ca", "h4", "ca", "nb"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: Some(44.3),
+                method: "general_term",
+                analog: "X-X-ca-ha",
+                comment: "Same as X -X -ca-ha, penalty score= 44.3 (use general term))",
+            },
+        ],
     },
     AntechamberCase {
         name: "imidazole",
@@ -1557,6 +2070,82 @@ pub const CASES: &[AntechamberCase] = &[
         gas_charges: &[
             0.012010, 0.042172, -0.248027, 0.083769, -0.310562, 0.080641, 0.085416, 0.101411,
             0.153170,
+        ],
+        gaff_parmchk_terms: &[
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["cd", "h4", "cc", "na"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: Some(67.2),
+                method: "general_term",
+                analog: "X-X-ca-ha",
+                comment: "Same as X -X -ca-ha, penalty score= 67.2 (use general term))",
+            },
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["cc", "h4", "cd", "nd"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: Some(67.2),
+                method: "general_term",
+                analog: "X-X-ca-ha",
+                comment: "Same as X -X -ca-ha, penalty score= 67.2 (use general term))",
+            },
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["h5", "na", "cc", "nd"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: Some(67.5),
+                method: "general_term",
+                analog: "X-X-ca-ha",
+                comment: "Same as X -X -ca-ha, penalty score= 67.5 (use general term))",
+            },
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["cc", "cc", "na", "hn"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: None,
+                method: "default",
+                analog: "",
+                comment: "Using the default value",
+            },
+        ],
+        gaff2_parmchk_terms: &[
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["cd", "h4", "cc", "na"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: Some(67.2),
+                method: "general_term",
+                analog: "X-X-ca-ha",
+                comment: "Same as X -X -ca-ha, penalty score= 67.2 (use general term))",
+            },
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["cc", "h4", "cd", "nd"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: Some(67.2),
+                method: "general_term",
+                analog: "X-X-ca-ha",
+                comment: "Same as X -X -ca-ha, penalty score= 67.2 (use general term))",
+            },
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["h5", "na", "cc", "nd"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: Some(67.5),
+                method: "general_term",
+                analog: "X-X-ca-ha",
+                comment: "Same as X -X -ca-ha, penalty score= 67.5 (use general term))",
+            },
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["cc", "cc", "na", "hn"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: None,
+                method: "default",
+                analog: "",
+                comment: "Using the default value",
+            },
         ],
     },
     AntechamberCase {
@@ -1653,6 +2242,100 @@ pub const CASES: &[AntechamberCase] = &[
             0.005308, -0.303521, 0.009958, 0.007495, -0.314083, 0.053444, 0.043635, 0.043635,
             0.043635, 0.080558, 0.080339, 0.152905, 0.096692,
         ],
+        gaff_parmchk_terms: &[
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["c3", "cc", "na", "cc"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: None,
+                method: "default",
+                analog: "",
+                comment: "Using the default value",
+            },
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["cd", "h4", "cc", "na"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: Some(67.2),
+                method: "general_term",
+                analog: "X-X-ca-ha",
+                comment: "Same as X -X -ca-ha, penalty score= 67.2 (use general term))",
+            },
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["cc", "h4", "cd", "na"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: Some(67.2),
+                method: "general_term",
+                analog: "X-X-ca-ha",
+                comment: "Same as X -X -ca-ha, penalty score= 67.2 (use general term))",
+            },
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["cc", "cd", "na", "hn"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: None,
+                method: "default",
+                analog: "",
+                comment: "Using the default value",
+            },
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["h5", "na", "cc", "na"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: Some(67.5),
+                method: "general_term",
+                analog: "X-X-ca-ha",
+                comment: "Same as X -X -ca-ha, penalty score= 67.5 (use general term))",
+            },
+        ],
+        gaff2_parmchk_terms: &[
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["c3", "cc", "na", "cc"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: None,
+                method: "default",
+                analog: "",
+                comment: "Using the default value",
+            },
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["cd", "h4", "cc", "na"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: Some(67.2),
+                method: "general_term",
+                analog: "X-X-ca-ha",
+                comment: "Same as X -X -ca-ha, penalty score= 67.2 (use general term))",
+            },
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["cc", "h4", "cd", "na"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: Some(67.2),
+                method: "general_term",
+                analog: "X-X-ca-ha",
+                comment: "Same as X -X -ca-ha, penalty score= 67.2 (use general term))",
+            },
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["cc", "cd", "na", "hn"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: None,
+                method: "default",
+                analog: "",
+                comment: "Using the default value",
+            },
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["h5", "na", "cc", "na"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: Some(67.5),
+                method: "general_term",
+                analog: "X-X-ca-ha",
+                comment: "Same as X -X -ca-ha, penalty score= 67.5 (use general term))",
+            },
+        ],
     },
     AntechamberCase {
         name: "thiophene",
@@ -1720,6 +2403,82 @@ pub const CASES: &[AntechamberCase] = &[
             -0.055076, -0.055076, -0.024797, -0.106060, -0.024797, 0.062842, 0.062842, 0.070061,
             0.070061,
         ],
+        gaff_parmchk_terms: &[
+            ParmchkTerm {
+                kind: "DIHE",
+                types: &["cc", "cd", "ss", "cd"],
+                values: &[2.000000, 2.200000, 180.000000, 2.000000],
+                penalty: Some(232.0),
+                method: "same_as",
+                analog: "X-c2-ss-X",
+                comment: "same as X -c2-ss-X , penalty score=232.0",
+            },
+            ParmchkTerm {
+                kind: "DIHE",
+                types: &["h4", "cd", "ss", "cd"],
+                values: &[2.000000, 2.200000, 180.000000, 2.000000],
+                penalty: Some(232.0),
+                method: "same_as",
+                analog: "X-c2-ss-X",
+                comment: "same as X -c2-ss-X , penalty score=232.0",
+            },
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["cc", "cd", "cc", "ha"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: Some(38.9),
+                method: "general_term",
+                analog: "X-X-ca-ha",
+                comment: "Same as X -X -ca-ha, penalty score= 38.9 (use general term))",
+            },
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["cc", "h4", "cd", "ss"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: Some(67.2),
+                method: "general_term",
+                analog: "X-X-ca-ha",
+                comment: "Same as X -X -ca-ha, penalty score= 67.2 (use general term))",
+            },
+        ],
+        gaff2_parmchk_terms: &[
+            ParmchkTerm {
+                kind: "DIHE",
+                types: &["cc", "cd", "ss", "cd"],
+                values: &[1.000000, 2.430000, 180.000000, 1.000000],
+                penalty: Some(254.0),
+                method: "same_as",
+                analog: "cd-cc-ss-c2",
+                comment: "same as cd-cc-ss-c2, penalty score=254.0",
+            },
+            ParmchkTerm {
+                kind: "DIHE",
+                types: &["h4", "cd", "ss", "cd"],
+                values: &[2.000000, 2.200000, 180.000000, 2.000000],
+                penalty: Some(232.0),
+                method: "same_as",
+                analog: "X-c2-ss-X",
+                comment: "same as X -c2-ss-X , penalty score=232.0",
+            },
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["cc", "cd", "cc", "ha"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: Some(38.9),
+                method: "general_term",
+                analog: "X-X-ca-ha",
+                comment: "Same as X -X -ca-ha, penalty score= 38.9 (use general term))",
+            },
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["cc", "h4", "cd", "ss"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: Some(67.2),
+                method: "general_term",
+                analog: "X-X-ca-ha",
+                comment: "Same as X -X -ca-ha, penalty score= 67.2 (use general term))",
+            },
+        ],
     },
     AntechamberCase {
         name: "methanethiol",
@@ -1755,6 +2514,8 @@ pub const CASES: &[AntechamberCase] = &[
         bcc_charges: &[-0.024000, -0.362900, 0.063700, 0.063700, 0.063700, 0.195800],
         abcg2_charges: &[0.023900, -0.410800, 0.063700, 0.063700, 0.063700, 0.195800],
         gas_charges: &[-0.021451, -0.182804, 0.034113, 0.034113, 0.034113, 0.101915],
+        gaff_parmchk_terms: &[],
+        gaff2_parmchk_terms: &[],
     },
     AntechamberCase {
         name: "dimethyl_sulfoxide",
@@ -1823,6 +2584,8 @@ pub const CASES: &[AntechamberCase] = &[
             0.102312, -0.014965, 0.102312, -0.681812, 0.082025, 0.082025, 0.082025, 0.082025,
             0.082025, 0.082025,
         ],
+        gaff_parmchk_terms: &[],
+        gaff2_parmchk_terms: &[],
     },
     AntechamberCase {
         name: "chloromethane",
@@ -1856,6 +2619,8 @@ pub const CASES: &[AntechamberCase] = &[
         bcc_charges: &[0.014300, -0.190400, 0.058700, 0.058700, 0.058700],
         abcg2_charges: &[0.090900, -0.267000, 0.058700, 0.058700, 0.058700],
         gas_charges: &[0.010838, -0.130441, 0.039868, 0.039868, 0.039868],
+        gaff_parmchk_terms: &[],
+        gaff2_parmchk_terms: &[],
     },
     AntechamberCase {
         name: "fluorobenzene",
@@ -1946,6 +2711,24 @@ pub const CASES: &[AntechamberCase] = &[
             -0.207025, 0.122702, -0.026323, -0.059362, -0.062066, -0.059362, -0.026323, 0.065364,
             0.062378, 0.062276, 0.062378, 0.065364,
         ],
+        gaff_parmchk_terms: &[ParmchkTerm {
+            kind: "IMPROPER",
+            types: &["ca", "ca", "ca", "ha"],
+            values: &[1.100000, 180.000000, 2.000000],
+            penalty: Some(6.0),
+            method: "general_improper",
+            analog: "X-X-ca-ha",
+            comment: "Using general improper torsional angle  X- X-ca-ha, penalty score=  6.0)",
+        }],
+        gaff2_parmchk_terms: &[ParmchkTerm {
+            kind: "IMPROPER",
+            types: &["ca", "ca", "ca", "ha"],
+            values: &[1.100000, 180.000000, 2.000000],
+            penalty: Some(6.0),
+            method: "general_improper",
+            analog: "X-X-ca-ha",
+            comment: "Using general improper torsional angle  X- X-ca-ha, penalty score=  6.0)",
+        }],
     },
     AntechamberCase {
         name: "bromoethane",
@@ -2003,6 +2786,8 @@ pub const CASES: &[AntechamberCase] = &[
         gas_charges: &[
             -0.055553, 0.000281, -0.093108, 0.023882, 0.023882, 0.023882, 0.038367, 0.038367,
         ],
+        gaff_parmchk_terms: &[],
+        gaff2_parmchk_terms: &[],
     },
     AntechamberCase {
         name: "ethylene_carbonate",
@@ -2072,6 +2857,125 @@ pub const CASES: &[AntechamberCase] = &[
         gas_charges: &[
             0.082907, 0.082907, -0.290066, 0.405061, -0.230416, -0.290066, 0.059918, 0.059918,
             0.059918, 0.059918,
+        ],
+        gaff_parmchk_terms: &[ParmchkTerm {
+            kind: "IMPROPER",
+            types: &["o", "os", "c", "os"],
+            values: &[1.100000, 180.000000, 2.000000],
+            penalty: Some(49.6),
+            method: "general_term",
+            analog: "X-o-c-o",
+            comment: "Same as X -o -c -o , penalty score= 49.6 (use general term))",
+        }],
+        gaff2_parmchk_terms: &[
+            ParmchkTerm {
+                kind: "DIHE",
+                types: &["c5", "c5", "os", "c"],
+                values: &[1.000000, 0.383000, 0.000000, -3.000000],
+                penalty: None,
+                method: "same_as",
+                analog: "c3-c3-os-c",
+                comment: "same as c3-c3-os-c",
+            },
+            ParmchkTerm {
+                kind: "DIHE",
+                types: &["c5", "c5", "os", "c"],
+                values: &[1.000000, 0.800000, 180.000000, 1.000000],
+                penalty: Some(0.0),
+                method: "same_as",
+                analog: "c3-c3-os-c",
+                comment: "same as c3-c3-os-c , penalty score=  0.0",
+            },
+            ParmchkTerm {
+                kind: "DIHE",
+                types: &["o", "c", "os", "c5"],
+                values: &[1.000000, 2.700000, 180.000000, -2.000000],
+                penalty: None,
+                method: "same_as",
+                analog: "o-c-os-c3",
+                comment: "same as o -c -os-c3",
+            },
+            ParmchkTerm {
+                kind: "DIHE",
+                types: &["o", "c", "os", "c5"],
+                values: &[1.000000, 1.400000, 180.000000, 1.000000],
+                penalty: Some(0.0),
+                method: "same_as",
+                analog: "o-c-os-c3",
+                comment: "same as o -c -os-c3, penalty score=  0.0",
+            },
+            ParmchkTerm {
+                kind: "DIHE",
+                types: &["os", "c5", "c5", "os"],
+                values: &[1.000000, 0.700000, 180.000000, -3.000000],
+                penalty: None,
+                method: "same_as",
+                analog: "os-c3-c5-os",
+                comment: "same as os-c3-c5-os",
+            },
+            ParmchkTerm {
+                kind: "DIHE",
+                types: &["os", "c5", "c5", "os"],
+                values: &[1.000000, 0.300000, 0.000000, -2.000000],
+                penalty: None,
+                method: "same_as",
+                analog: "os-c3-c5-os",
+                comment: "same as os-c3-c5-os",
+            },
+            ParmchkTerm {
+                kind: "DIHE",
+                types: &["os", "c5", "c5", "os"],
+                values: &[1.000000, 0.610000, 180.000000, 1.000000],
+                penalty: Some(0.0),
+                method: "same_as",
+                analog: "os-c3-c5-os",
+                comment: "same as os-c3-c5-os, penalty score=  0.0",
+            },
+            ParmchkTerm {
+                kind: "DIHE",
+                types: &["h1", "c5", "c5", "os"],
+                values: &[1.000000, 0.000000, 0.000000, -3.000000],
+                penalty: None,
+                method: "same_as",
+                analog: "h1-c3-c3-os",
+                comment: "same as h1-c3-c3-os",
+            },
+            ParmchkTerm {
+                kind: "DIHE",
+                types: &["h1", "c5", "c5", "os"],
+                values: &[1.000000, 0.250000, 0.000000, 1.000000],
+                penalty: Some(0.0),
+                method: "same_as",
+                analog: "h1-c3-c3-os",
+                comment: "same as h1-c3-c3-os, penalty score=  0.0",
+            },
+            ParmchkTerm {
+                kind: "DIHE",
+                types: &["h1", "c5", "c5", "h1"],
+                values: &[9.000000, 1.400000, 0.000000, 3.000000],
+                penalty: Some(0.0),
+                method: "same_as",
+                analog: "X-c3-c3-X",
+                comment: "same as X -c3-c3-X , penalty score=  0.0",
+            },
+            ParmchkTerm {
+                kind: "DIHE",
+                types: &["h1", "c5", "os", "c"],
+                values: &[3.000000, 1.150000, 0.000000, 3.000000],
+                penalty: Some(0.0),
+                method: "same_as",
+                analog: "X-c3-os-X",
+                comment: "same as X -c3-os-X , penalty score=  0.0",
+            },
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["o", "os", "c", "os"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: Some(49.6),
+                method: "general_term",
+                analog: "X-o-c-o",
+                comment: "Same as X -o -c -o , penalty score= 49.6 (use general term))",
+            },
         ],
     },
     AntechamberCase {
@@ -2161,6 +3065,24 @@ pub const CASES: &[AntechamberCase] = &[
             0.047680, -0.295890, 0.404345, -0.230443, -0.295890, 0.047680, 0.053753, 0.053753,
             0.053753, 0.053753, 0.053753, 0.053753,
         ],
+        gaff_parmchk_terms: &[ParmchkTerm {
+            kind: "IMPROPER",
+            types: &["o", "os", "c", "os"],
+            values: &[1.100000, 180.000000, 2.000000],
+            penalty: Some(49.6),
+            method: "general_term",
+            analog: "X-o-c-o",
+            comment: "Same as X -o -c -o , penalty score= 49.6 (use general term))",
+        }],
+        gaff2_parmchk_terms: &[ParmchkTerm {
+            kind: "IMPROPER",
+            types: &["o", "os", "c", "os"],
+            values: &[1.100000, 180.000000, 2.000000],
+            penalty: Some(49.6),
+            method: "general_term",
+            analog: "X-o-c-o",
+            comment: "Same as X -o -c -o , penalty score= 49.6 (use general term))",
+        }],
     },
     AntechamberCase {
         name: "dimethoxyethane",
@@ -2269,6 +3191,8 @@ pub const CASES: &[AntechamberCase] = &[
             0.035567, -0.382311, 0.069594, 0.069594, -0.382311, 0.035567, 0.052984, 0.052984,
             0.052984, 0.059099, 0.059099, 0.059099, 0.059099, 0.052984, 0.052984, 0.052984,
         ],
+        gaff_parmchk_terms: &[],
+        gaff2_parmchk_terms: &[],
     },
     AntechamberCase {
         name: "methyl_methacrylate",
@@ -2370,6 +3294,136 @@ pub const CASES: &[AntechamberCase] = &[
             -0.034322, 0.014262, -0.090042, 0.287357, -0.261128, -0.315773, 0.045579, 0.028167,
             0.028167, 0.028167, 0.054273, 0.054273, 0.053674, 0.053674, 0.053674,
         ],
+        gaff_parmchk_terms: &[
+            ParmchkTerm {
+                kind: "DIHE",
+                types: &["hc", "c3", "ce", "c2"],
+                values: &[1.000000, 0.380000, 180.000000, -3.000000],
+                penalty: None,
+                method: "same_as",
+                analog: "hc-c3-c2-c2",
+                comment: "same as hc-c3-c2-c2",
+            },
+            ParmchkTerm {
+                kind: "DIHE",
+                types: &["hc", "c3", "ce", "c2"],
+                values: &[1.000000, 0.000000, 0.000000, -2.000000],
+                penalty: None,
+                method: "same_as",
+                analog: "hc-c3-c2-c2",
+                comment: "same as hc-c3-c2-c2",
+            },
+            ParmchkTerm {
+                kind: "DIHE",
+                types: &["hc", "c3", "ce", "c2"],
+                values: &[1.000000, 1.150000, 0.000000, 1.000000],
+                penalty: Some(237.0),
+                method: "same_as",
+                analog: "hc-c3-c2-c2",
+                comment: "same as hc-c3-c2-c2, penalty score=237.0",
+            },
+            ParmchkTerm {
+                kind: "DIHE",
+                types: &["hc", "c3", "ce", "c"],
+                values: &[1.000000, 0.380000, 180.000000, -3.000000],
+                penalty: None,
+                method: "same_as",
+                analog: "hc-c3-c2-c2",
+                comment: "same as hc-c3-c2-c2",
+            },
+            ParmchkTerm {
+                kind: "DIHE",
+                types: &["hc", "c3", "ce", "c"],
+                values: &[1.000000, 0.000000, 0.000000, -2.000000],
+                penalty: None,
+                method: "same_as",
+                analog: "hc-c3-c2-c2",
+                comment: "same as hc-c3-c2-c2",
+            },
+            ParmchkTerm {
+                kind: "DIHE",
+                types: &["hc", "c3", "ce", "c"],
+                values: &[1.000000, 1.150000, 0.000000, 1.000000],
+                penalty: Some(324.0),
+                method: "same_as",
+                analog: "hc-c3-c2-c2",
+                comment: "same as hc-c3-c2-c2, penalty score=324.0",
+            },
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["c", "c2", "ce", "c3"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: None,
+                method: "default",
+                analog: "",
+                comment: "Using the default value",
+            },
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["ce", "ha", "c2", "ha"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: Some(47.1),
+                method: "general_term",
+                analog: "X-X-ca-ha",
+                comment: "Same as X -X -ca-ha, penalty score= 47.1 (use general term))",
+            },
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["ce", "o", "c", "os"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: Some(49.6),
+                method: "general_term",
+                analog: "X-o-c-o",
+                comment: "Same as X -o -c -o , penalty score= 49.6 (use general term))",
+            },
+        ],
+        gaff2_parmchk_terms: &[
+            ParmchkTerm {
+                kind: "DIHE",
+                types: &["hc", "c3", "ce", "c2"],
+                values: &[1.000000, 0.260000, 180.000000, 3.000000],
+                penalty: Some(237.0),
+                method: "same_as",
+                analog: "c2-c2-c3-hc",
+                comment: "same as c2-c2-c3-hc, penalty score=237.0",
+            },
+            ParmchkTerm {
+                kind: "DIHE",
+                types: &["hc", "c3", "ce", "c"],
+                values: &[1.000000, 0.260000, 180.000000, 3.000000],
+                penalty: Some(324.0),
+                method: "same_as",
+                analog: "c2-c2-c3-hc",
+                comment: "same as c2-c2-c3-hc, penalty score=324.0",
+            },
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["c", "c2", "ce", "c3"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: None,
+                method: "default",
+                analog: "",
+                comment: "Using the default value",
+            },
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["ce", "ha", "c2", "ha"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: Some(47.1),
+                method: "general_term",
+                analog: "X-X-ca-ha",
+                comment: "Same as X -X -ca-ha, penalty score= 47.1 (use general term))",
+            },
+            ParmchkTerm {
+                kind: "IMPROPER",
+                types: &["ce", "o", "c", "os"],
+                values: &[1.100000, 180.000000, 2.000000],
+                penalty: Some(49.6),
+                method: "general_term",
+                analog: "X-o-c-o",
+                comment: "Same as X -o -c -o , penalty score= 49.6 (use general term))",
+            },
+        ],
     },
     AntechamberCase {
         name: "ethyl_acetate",
@@ -2466,6 +3520,24 @@ pub const CASES: &[AntechamberCase] = &[
             -0.040918, 0.053465, -0.316528, 0.257600, -0.266972, 0.022109, 0.025405, 0.025405,
             0.025405, 0.057047, 0.057047, 0.033645, 0.033645, 0.033645,
         ],
+        gaff_parmchk_terms: &[ParmchkTerm {
+            kind: "IMPROPER",
+            types: &["c3", "o", "c", "os"],
+            values: &[1.100000, 180.000000, 2.000000],
+            penalty: None,
+            method: "default",
+            analog: "",
+            comment: "Using the default value",
+        }],
+        gaff2_parmchk_terms: &[ParmchkTerm {
+            kind: "IMPROPER",
+            types: &["c3", "o", "c", "os"],
+            values: &[1.100000, 180.000000, 2.000000],
+            penalty: None,
+            method: "default",
+            analog: "",
+            comment: "Using the default value",
+        }],
     },
     AntechamberCase {
         name: "trimethyl_phosphate",
@@ -2583,5 +3655,7 @@ pub const CASES: &[AntechamberCase] = &[
             0.053645, 0.053645, 0.053645, 0.053645, 0.053645, 0.053645, 0.053645, 0.053645,
             0.053645,
         ],
+        gaff_parmchk_terms: &[],
+        gaff2_parmchk_terms: &[],
     },
 ];

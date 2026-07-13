@@ -1,175 +1,177 @@
-//! Compile-time constant tables for the [`ParameterEstimator`](super::ParameterEstimator).
+//! The estimator's two constant tables — the lookups, not a second copy.
 //!
-//! Two authoritative GAFF / parmchk2 data assets are embedded at build time
-//! (mirroring [`molrs::data::MMFF94_XML`](crate::core::data::MMFF94_XML)):
+//! Both tables are [`ff::params`](crate::ff::params) data: typed Rust `const`s
+//! emitted by `scripts/gen_param_tables.py` and guarded by `MANIFEST.sha256`, the
+//! same path `gaff.dat` and the seven `ATOMTYPE_*.DEF` take. Nothing here is
+//! parsed at runtime; a malformed table is a **compile** error.
 //!
-//! - [`GAFF_EMPIRICAL_JSON`] — `molrs/data/gaff_empirical.json`: the Badger
-//!   bond-`k` per-element-pair `ln Kij` table, the GAFF angle `Z`/`C` per-element
-//!   factors, and the `143.9` / `m = 4.5` constants. Transcribed verbatim from
-//!   embedded reference `dat/antechamber/PARM_BLBA_GAFF.DAT` and Wang et al.
-//!   *J. Comput. Chem.* 2004, 25:1157–1174 (Eqs. 3, 5, 6; Tables 3, 4).
-//! - [`GAFF_EQUIV_JSON`] — `molrs/data/gaff_equiv.json`: the parmchk2 equivalent
-//!   (`EQUA`) / corresponding (`CORR`) atom-type substitution table with per-row
-//!   penalties + the global penalty weights / defaults. Transcribed verbatim from
-//!   embedded reference `dat/antechamber/PARMCHK.DAT`.
+//! - [`ParmchkTable`] ([`PARMCHK`]) — `PARMCHK.DAT`: parmchk2's atom-type
+//!   substitution table (`EQUA` / `CORR` rows with their nine penalty columns),
+//!   its `WEIGHT_*` / `DEFAULT_*` scalars, and the `improper_flag` column that
+//!   says which types may be an improper centre.
+//! - [`EmpiricalTable`] ([`EMPIRICAL_GAFF`] / [`EMPIRICAL_GAFF2`]) —
+//!   `PARM_BLBA_GAFF*.DAT`: the Badger bond `ln(Kij)` per element pair and the
+//!   angle `C` / `Z` factors per element (Wang et al. *J. Comput. Chem.* 2004,
+//!   25:1157–1174, Eqs. 3 and 5).
+//!
+//! # One table, one type
+//!
+//! This module adds **inherent methods** to those two types rather than wrapping
+//! them in views of its own. The wrapper is the thing to avoid: two structs
+//! describing one table drift, and a reader has to learn which of them is the
+//! table. `ff::params` owns each table's *shape* (its rows and columns, verbatim
+//! from upstream); this module owns the *questions the estimator asks it*, which
+//! are the estimator's business and not the table's.
 //!
 //! # Units
 //!
-//! All embedded values are in molrs internal units: bond length Å, bond force
-//! constant kcal/mol/Å², angle force constant kcal/mol/rad², angle θ₀ stored in
-//! the table in **degrees** as θ_eq but the empirical formula consumes radians
-//! (see [`empirical_angle_k`](super::ParameterEstimator::estimate_angle)).
+//! Bond length Å, bond force constant kcal/mol/Å², angle force constant
+//! kcal/mol/rad². The empirical angle formula consumes θ₀ in **radians**.
 
-use std::collections::HashMap;
+use molrs::Element;
 
-use serde::Deserialize;
+use crate::ff::params::{
+    EMPIRICAL_GAFF, EMPIRICAL_GAFF2, EmpiricalBondRow, EmpiricalTable, PARMCHK, ParmchkCorr,
+    ParmchkPenalty, ParmchkTable, ParmchkType,
+};
 
-/// GAFF empirical bond / angle constant table (embedded at compile time).
-pub const GAFF_EMPIRICAL_JSON: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/data/gaff_empirical.json"
-));
-
-/// parmchk2 equivalent / corresponding substitution table (embedded at compile
-/// time).
-pub const GAFF_EQUIV_JSON: &str =
-    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/data/gaff_equiv.json"));
-
-// ---------------------------------------------------------------------------
-// Empirical bond / angle tables (gaff_empirical.json)
-// ---------------------------------------------------------------------------
-
-/// One row of the Badger bond-`k` table: element pair + `ln(Kij)` coefficient.
-#[derive(Debug, Clone, Deserialize)]
-pub struct BondLnK {
-    pub e1: String,
-    pub e2: String,
-    /// Reference (equilibrium) bond length in Å (Wang2004 Table 3 `rref`).
-    pub rref: f64,
-    /// `ln(Kij)` coefficient (Wang2004 Table 3 `ln Kij`); `Kij = exp(ln_kij)`.
-    pub ln_kij: f64,
+/// Which force field's empirical constants to use.
+///
+/// The two files differ (`PARM_BLBA_GAFF2.DAT` has 239 rows to GAFF's 146), so
+/// the choice is a parameter rather than a default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EmpiricalSet {
+    /// `PARM_BLBA_GAFF.DAT`.
+    Gaff,
+    /// `PARM_BLBA_GAFF2.DAT`.
+    Gaff2,
 }
 
-/// One row of the GAFF angle `Z`/`C` factor table (per element).
-#[derive(Debug, Clone, Deserialize)]
-pub struct AngleZC {
-    pub e: String,
-    /// `C` factor (used when the element is the angle *centre* atom).
-    pub c: f64,
-    /// `Z` factor (used when the element is an angle *end* atom).
-    pub z: f64,
+impl EmpiricalSet {
+    /// The compiled table this set names.
+    pub fn table(self) -> EmpiricalTable {
+        match self {
+            Self::Gaff => EMPIRICAL_GAFF,
+            Self::Gaff2 => EMPIRICAL_GAFF2,
+        }
+    }
 }
 
-/// Parsed `gaff_empirical.json`.
-#[derive(Debug, Clone, Deserialize)]
-pub struct EmpiricalTable {
-    /// Power-law exponent `m` in `K_r = exp(ln_kij)/r^m` (Wang2004 Eq.3, m=4.5).
-    pub bond_power_m: f64,
-    pub bond_lnk: Vec<BondLnK>,
-    pub angle_zc: Vec<AngleZC>,
+/// The compiled `PARMCHK.DAT` — the one substitution table.
+pub const fn substitution_table() -> ParmchkTable {
+    PARMCHK
 }
 
-impl EmpiricalTable {
-    /// Parse the embedded empirical-constant table.
-    pub fn load() -> Self {
-        serde_json::from_str(GAFF_EMPIRICAL_JSON)
-            .expect("embedded gaff_empirical.json is well-formed")
+/// The questions the cascade asks the substitution table.
+impl ParmchkTable {
+    /// The block declaring `atom_type`, if the table knows it.
+    pub fn entry(&self, atom_type: &str) -> Option<&'static ParmchkType> {
+        self.get(atom_type)
     }
 
-    /// `ln(Kij)` for an (unordered) element pair, if tabulated.
-    pub fn bond_lnk(&self, e1: &str, e2: &str) -> Option<f64> {
-        self.bond_lnk
+    /// Whether an atom of `atom_type` may be the CENTRE of an improper.
+    ///
+    /// The `improper_flag` column, and the reason benzene's `ca` carries a ring
+    /// planarity term while methylamine's `n3` carries none.
+    pub fn is_improper_centre(&self, atom_type: &str) -> bool {
+        self.entry(atom_type).is_some_and(|t| t.improper)
+    }
+
+    /// The atomic number `PARMCHK.DAT` records for `atom_type`.
+    pub fn atomic_number(&self, atom_type: &str) -> Option<u8> {
+        self.entry(atom_type).map(|t| t.atomic_number)
+    }
+
+    /// The element symbol `PARMCHK.DAT` records for `atom_type`.
+    pub fn element(&self, atom_type: &str) -> Option<&'static str> {
+        let z = self.atomic_number(atom_type)?;
+        Element::by_number(z).map(Element::symbol)
+    }
+
+    /// Are `a` and `b` **equivalent** types (an `EQUA` row, either way round)?
+    ///
+    /// Substituting one for the other costs nothing: `gaff2.dat`'s `ns` is `n`
+    /// with a different name, so `X-c-n-X` covers an `ns` torsion exactly.
+    pub fn equivalent(&self, a: &str, b: &str) -> bool {
+        let one = |x: &str, y: &str| self.entry(x).is_some_and(|t| t.equivalent.contains(&y));
+        one(a, b) || one(b, a)
+    }
+
+    /// The `CORR` row taking `from` to `to`, in that direction only.
+    ///
+    /// Direction is load-bearing: `PARMCHK.DAT` lists `c` → `c2` but **not**
+    /// `c2` → `c`, and parmchk2 charges the *default* torsion penalty for the
+    /// latter rather than reading the former backwards.
+    pub fn correspondence(&self, from: &str, to: &str) -> Option<&'static ParmchkCorr> {
+        self.entry(from)?
+            .corresponding
             .iter()
-            .find(|r| (r.e1 == e1 && r.e2 == e2) || (r.e1 == e2 && r.e2 == e1))
-            .map(|r| r.ln_kij)
+            .find(|row| row.to == to)
     }
 
-    /// The angle `C` factor for an element (centre atom), if tabulated.
-    pub fn angle_c(&self, e: &str) -> Option<f64> {
-        self.angle_zc.iter().find(|r| r.e == e).map(|r| r.c)
+    /// Does `atom_type` take part in the substitution table at all?
+    ///
+    /// `c3` does not — it has no `CORR` row — and parmchk2 will not substitute it
+    /// for anything, not even at the default penalty. That is what stops
+    /// `c2-c2-ss-c3` from standing in for thiophene's `cc-cd-ss-cd`.
+    pub fn substitutable(&self, atom_type: &str) -> bool {
+        self.entry(atom_type)
+            .is_some_and(|t| !t.corresponding.is_empty())
     }
 
-    /// The angle `Z` factor for an element (end atom), if tabulated.
-    pub fn angle_z(&self, e: &str) -> Option<f64> {
-        self.angle_zc.iter().find(|r| r.e == e).map(|r| r.z)
+    /// The overall similarity of substituting `from` with `to` (the 11th `CORR`
+    /// column), in either direction. `0` for identical types.
+    pub fn similarity(&self, from: &str, to: &str) -> Option<f64> {
+        if from == to {
+            return Some(0.0);
+        }
+        let column = ParmchkPenalty::Similarity;
+        self.correspondence(from, to)
+            .and_then(|row| row.get(column))
+            .or_else(|| {
+                self.correspondence(to, from)
+                    .and_then(|row| row.get(column))
+            })
     }
 }
 
-// ---------------------------------------------------------------------------
-// Substitution / equivalence table (gaff_equiv.json)
-// ---------------------------------------------------------------------------
-
-/// One corresponding-type substitution row: target type + per-arity penalty.
-#[derive(Debug, Clone, Deserialize)]
-pub struct CorrRow {
-    /// The corresponding atom type this row maps *to*.
-    pub to: String,
-    /// Bond-length substitution penalty (`-1` ⇒ use the bond default).
-    pub bond: f64,
-    /// Angle (end-atom) substitution penalty (`-1` ⇒ use the angle default).
-    pub angle: f64,
-    /// Angle-centre substitution penalty (`-1` ⇒ use the angle-centre default).
-    pub angle_ctr: f64,
-    /// Torsion substitution penalty (`-1` ⇒ use the torsion default).
-    pub torsion: f64,
-}
-
-/// One PARM block: equivalent types (penalty 0) + corresponding types.
-#[derive(Debug, Clone, Deserialize)]
-pub struct TypeEntry {
-    /// Equivalent atom types — resonance / geometric twins, penalty 0.
-    #[serde(default)]
-    pub equa: Vec<String>,
-    /// Corresponding atom types with per-arity substitution penalties.
-    #[serde(default)]
-    pub corr: Vec<CorrRow>,
-}
-
-/// Global penalty weights (PARMCHK.DAT `WEIGHT_*`).
-#[derive(Debug, Clone, Deserialize)]
-pub struct Weights {
-    pub bond: f64,
-    pub angle: f64,
-    pub torsion: f64,
-    /// Extra penalty for substituting through an *equivalent* type.
-    pub equtype: f64,
-    /// Extra penalty for crossing an atom-type *group* boundary.
-    pub group: f64,
-    /// Inner-atom (angle centre) multiplier — CGenFF inner-atom ×10.
-    pub angle_center_mult: f64,
-    /// Inner-atom (dihedral inner two) multiplier — CGenFF inner-atom ×10.
-    pub torsion_center_mult: f64,
-}
-
-/// Per-arity default penalties (PARMCHK.DAT `DEFAULT_*`), applied when a row's
-/// penalty is `-1`.
-#[derive(Debug, Clone, Deserialize)]
-pub struct Defaults {
-    pub bond: f64,
-    pub angle: f64,
-    pub angle_ctr: f64,
-    pub torsion: f64,
-    pub torsion_ctr: f64,
-}
-
-/// Parsed `gaff_equiv.json`.
-#[derive(Debug, Clone, Deserialize)]
-pub struct EquivTable {
-    pub weights: Weights,
-    pub defaults: Defaults,
-    pub types: HashMap<String, TypeEntry>,
-}
-
-impl EquivTable {
-    /// Parse the embedded substitution table.
-    pub fn load() -> Self {
-        serde_json::from_str(GAFF_EQUIV_JSON).expect("embedded gaff_equiv.json is well-formed")
+/// The questions the empirical fallback asks its constants.
+///
+/// The table is keyed by atomic number (that is what upstream writes); these
+/// resolve an element **symbol** to one, so the estimator can stay in the
+/// force field's own vocabulary.
+impl EmpiricalTable {
+    /// `ln(Kij)` for an unordered element pair, if tabulated.
+    pub fn bond_ln_k(&self, e1: &str, e2: &str) -> Option<f64> {
+        self.bond_pair(e1, e2).map(|row| row.ln_k)
     }
 
-    /// The substitution entry for `atom_type`, if any.
-    pub fn entry(&self, atom_type: &str) -> Option<&TypeEntry> {
-        self.types.get(atom_type)
+    /// The reference bond length of an element pair, in Å, if tabulated.
+    pub fn bond_length(&self, e1: &str, e2: &str) -> Option<f64> {
+        self.bond_pair(e1, e2).map(|row| row.r_ref)
     }
+
+    /// The angle `C` factor of an element (the angle's CENTRE), if tabulated.
+    pub fn angle_c(&self, element: &str) -> Option<f64> {
+        self.angle(atomic_number(element)?).map(|row| row.c)
+    }
+
+    /// The angle `Z` factor of an element (an angle END atom), if tabulated.
+    pub fn angle_z(&self, element: &str) -> Option<f64> {
+        self.angle(atomic_number(element)?).map(|row| row.z_factor)
+    }
+
+    fn bond_pair(&self, e1: &str, e2: &str) -> Option<&'static EmpiricalBondRow> {
+        self.bond(atomic_number(e1)?, atomic_number(e2)?)
+    }
+}
+
+/// The atomic number of an element symbol, or `None` if it is not an element.
+///
+/// [`Element`] is `#[repr(u8)]` with the atomic number as its discriminant, so
+/// the cast is the number rather than an ordinal that happens to agree with it.
+fn atomic_number(symbol: &str) -> Option<u8> {
+    Element::by_symbol(symbol).map(|e| e as u8)
 }
 
 #[cfg(test)]
@@ -177,35 +179,98 @@ mod tests {
     use super::*;
 
     #[test]
-    fn empirical_table_loads_and_has_known_rows() {
-        let t = EmpiricalTable::load();
+    fn empirical_table_carries_the_upstream_rows() {
+        let t = EmpiricalSet::Gaff.table();
         assert!(
-            (t.bond_power_m - 4.5).abs() < 1e-12,
+            (t.bond_power - 4.5).abs() < 1e-12,
             "Badger exponent m = 4.5"
         );
-        // C-C row (Wang2004 Table 3 / PARM_BLBA_GAFF.DAT).
-        assert!((t.bond_lnk("C", "C").unwrap() - 7.643).abs() < 1e-9);
-        // unordered lookup.
-        assert_eq!(t.bond_lnk("H", "C"), t.bond_lnk("C", "H"));
-        assert!((t.bond_lnk("C", "H").unwrap() - 6.217).abs() < 1e-9);
-        // angle Z/C factors.
+        // C-C (PARM_BLBA_GAFF.DAT `BL C 6 C 6 1.5260 7.6430`).
+        assert!((t.bond_ln_k("C", "C").unwrap() - 7.643).abs() < 1e-9);
+        assert!((t.bond_length("C", "C").unwrap() - 1.526).abs() < 1e-9);
+        // The pair lookup is unordered.
+        assert_eq!(t.bond_ln_k("H", "C"), t.bond_ln_k("C", "H"));
+        assert!((t.bond_ln_k("C", "H").unwrap() - 6.217).abs() < 1e-9);
+        // Angle Z / C factors.
         assert!((t.angle_z("C").unwrap() - 1.183).abs() < 1e-9);
         assert!((t.angle_c("C").unwrap() - 1.339).abs() < 1e-9);
         assert!((t.angle_z("H").unwrap() - 0.784).abs() < 1e-9);
+        // An element upstream does not tabulate.
+        assert_eq!(t.angle_z("He"), None);
     }
 
     #[test]
-    fn equiv_table_loads_with_weights_defaults_and_corr() {
-        let t = EquivTable::load();
-        assert!((t.weights.angle_center_mult - 10.0).abs() < 1e-12);
-        assert!((t.weights.torsion_center_mult - 10.0).abs() < 1e-12);
-        assert!((t.defaults.bond - 20.0).abs() < 1e-12);
-        // os ↔ oh is a low-penalty correspondence (ether ↔ hydroxyl O).
-        let os = t.entry("os").expect("os present");
-        let oh_corr = os.corr.iter().find(|r| r.to == "oh").expect("os→oh");
-        assert!(
-            oh_corr.bond > 0.0 && oh_corr.bond < 5.0,
-            "os→oh low bond penalty"
+    fn the_two_empirical_sets_are_different_tables() {
+        assert_ne!(
+            EmpiricalSet::Gaff.table().bonds.len(),
+            EmpiricalSet::Gaff2.table().bonds.len(),
+            "GAFF2 tabulates more element pairs than GAFF"
         );
+    }
+
+    #[test]
+    fn substitution_table_carries_weights_defaults_and_corr() {
+        let t = substitution_table();
+        let w = t.weights;
+        assert!((w.weight_angle_centre - 10.0).abs() < 1e-12);
+        assert!((w.weight_torsion_centre - 10.0).abs() < 1e-12);
+        assert!((w.weight_improper - 10.0).abs() < 1e-12);
+        assert!((w.weight_wildcard - 10.0).abs() < 1e-12);
+        assert!((w.default_bond_length - 20.0).abs() < 1e-12);
+        assert!((w.default_torsion - 87.0).abs() < 1e-12);
+
+        // os -> oh is a low-penalty correspondence (ether <-> hydroxyl oxygen).
+        let row = t.correspondence("os", "oh").expect("os -> oh is tabulated");
+        let bond = row
+            .get(ParmchkPenalty::BondLength)
+            .expect("a bond-length penalty");
+        assert!((0.0..5.0).contains(&bond), "os -> oh low bond penalty");
+    }
+
+    #[test]
+    fn the_improper_flag_separates_planar_types_from_sp3_ones() {
+        let t = substitution_table();
+        for planar in ["ca", "c", "c2", "n", "na", "nh", "no", "cc", "cd"] {
+            assert!(t.is_improper_centre(planar), "{planar} is planar");
+        }
+        for tetrahedral in ["c3", "n3", "n4", "os", "oh", "hc", "ha"] {
+            assert!(
+                !t.is_improper_centre(tetrahedral),
+                "{tetrahedral} carries no improper"
+            );
+        }
+    }
+
+    #[test]
+    fn correspondence_is_directional_but_similarity_is_not() {
+        let t = substitution_table();
+        // PARMCHK.DAT lists c -> c2, and NOT c2 -> c.
+        assert!(t.correspondence("c", "c2").is_some());
+        assert!(t.correspondence("c2", "c").is_none());
+        // Similarity reads either way round, so both resolve.
+        assert_eq!(t.similarity("c", "c2"), t.similarity("c2", "c"));
+        assert_eq!(t.similarity("c3", "c3"), Some(0.0));
+        // c3 has no CORR row at all: it is never substituted.
+        assert!(!t.substitutable("c3"));
+        assert!(t.substitutable("c2"));
+    }
+
+    #[test]
+    fn equivalent_types_are_free_to_swap() {
+        let t = substitution_table();
+        // gaff2's `ns` is `n` under another name; `c5` is `c3`.
+        assert!(t.equivalent("ns", "n"));
+        assert!(t.equivalent("n", "ns"));
+        assert!(t.equivalent("c5", "c3"));
+        assert!(!t.equivalent("c3", "c2"));
+    }
+
+    #[test]
+    fn the_table_knows_each_types_element() {
+        let t = substitution_table();
+        assert_eq!(t.element("c3"), Some("C"));
+        assert_eq!(t.element("os"), Some("O"));
+        assert_eq!(t.element("br"), Some("Br"));
+        assert_eq!(t.element("opls_135"), None, "not a GAFF type");
     }
 }

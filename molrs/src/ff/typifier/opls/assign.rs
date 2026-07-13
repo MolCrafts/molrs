@@ -271,19 +271,7 @@ pub enum NoMatch {
     Skip,
 }
 
-/// One bonded term awaiting parameters: its arity-tagged endpoint types.
-///
-/// Handed to an [`Estimator`] when no force-field candidate matches. Kept small
-/// and owned so an interpolator needs no access to `Atomistic` internals.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BondedTerm {
-    /// A bond: the two endpoint `opls_NNN` types.
-    Bond([String; 2]),
-    /// An angle: the three endpoint `opls_NNN` types (centre in the middle).
-    Angle([String; 3]),
-    /// A dihedral: the four endpoint `opls_NNN` types.
-    Dihedral([String; 4]),
-}
+pub use crate::ff::typifier::estimate::BondedTerm;
 
 /// OPLS bonded specialization of the generic parameter interpolation seam.
 ///

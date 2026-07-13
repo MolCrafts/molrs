@@ -39,6 +39,7 @@ never through the BCC-correction-family selector.
 """
 
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -49,6 +50,7 @@ from rdkit.Chem import AllChem
 
 AMBERHOME = Path("/opt/homebrew/Caskroom/miniconda/base/envs/AmberTools25")
 ANTECHAMBER = AMBERHOME / "bin" / "antechamber"
+PARMCHK2 = AMBERHOME / "bin" / "parmchk2"
 SEED = 20260712
 
 # (antechamber `-at` flag, oracle column, the ATOMTYPE_*.DEF the flag walks).
@@ -68,6 +70,33 @@ AT_MODES = [
     ("amber", "amber_atom_types", "ATOMTYPE_AMBER.DEF"),
     ("sybyl", "sybyl_atom_types", "ATOMTYPE_SYBYL.DEF"),
 ]
+
+# (parmchk2 `-s` flag, oracle column, the parm table it searches).
+#
+# parmchk2 consumes a molecule antechamber has ALREADY typed, so each row reuses
+# the mol2 the matching `-at` run above wrote -- there is no third typing pass and
+# no chance of the frcmod being keyed on types the type columns do not carry.
+PARMCHK_SETS = [
+    ("gaff",  "gaff_parmchk_terms",  "gaff.dat"),
+    ("gaff2", "gaff2_parmchk_terms", "gaff2.dat"),
+]
+
+# The frcmod sections, and (arity, value-count) of a row in each.
+#
+# The value columns are the upstream's own, in the upstream's own units and
+# conventions -- exactly as `ff::params::ParmTable` keeps them. In particular DIHE
+# carries AMBER's IDIVF divisor and its SIGNED periodicity (negative = another
+# cosine term for the same quartet follows), and every angle is in degrees. The
+# reader that populates a molrs `ForceField` is what converts; a fixture that
+# pre-converted would be asserting its own arithmetic.
+FRCMOD_SECTIONS = {
+    "MASS":     (1, 1),  # mass
+    "BOND":     (2, 2),  # force constant, length
+    "ANGLE":    (3, 2),  # force constant, angle (deg)
+    "DIHE":     (4, 4),  # divisor, barrier, phase (deg), periodicity (signed)
+    "IMPROPER": (4, 3),  # barrier, phase (deg), periodicity
+    "NONBON":   (1, 2),  # R*, epsilon
+}
 
 # (name, SMILES, net charge) — broad BCC chemistry + molcrafts electrolyte cases
 MOLECULES = [
@@ -178,6 +207,127 @@ def parse_ac(path: Path):
     return charges, types, bonds
 
 
+def run_parmchk2(work: Path, mol2: Path, out: Path, parm_set: str) -> None:
+    """One parmchk2 run over an already-typed mol2.
+
+    `-s gaff` / `-s gaff2` selects the parm table searched; the atom types come
+    from the mol2, which is why this reuses the `-at <same set>` output rather than
+    re-typing.  Note `-pf` is NOT antechamber's purge flag here -- on parmchk2 it
+    means "parmfile format" -- so it is not passed.
+    """
+    cmd = [
+        str(PARMCHK2),
+        "-i", mol2.name, "-f", "mol2",
+        "-o", out.name,
+        "-s", parm_set,
+    ]
+    r = subprocess.run(cmd, cwd=work, capture_output=True, text=True)
+    if r.returncode != 0 or not (work / out.name).exists():
+        raise RuntimeError(f"parmchk2 failed:\n{r.stdout}\n{r.stderr}")
+
+
+def classify_comment(comment: str):
+    """parmchk2's trailing prose -> (method, analog).
+
+    parmchk2 states, per row, HOW it produced the parameter.  Five forms occur, and
+    they are three genuinely different tiers of its fallback cascade:
+
+      "same as <term>"                        -> substituted atom types, copied a
+                                                 specific row (the analogy tier);
+                                                 the source row may ITSELF be a
+                                                 wildcard one (`X -c2-ss-X`)
+      "Same as <term> ... (use general term)"  -> a wildcard row of the table,
+      "Using general improper torsional angle" -> instantiated for these types
+      "Using the default value"                -> nothing matched at all; the
+                                                 improper default (1.1/180/2)
+      "... empirical ..." / "ATTN"             -> the empirical formulas / a term
+                                                 parmchk2 refuses to stand behind
+
+    The vocabulary is transcribed, NOT pre-mapped onto molrs's `EstimateMethod`:
+    deciding which molrs tier each parmchk2 tier is, is the thing under test.  An
+    unrecognised form raises rather than being silently bucketed -- a new
+    AmberTools could otherwise widen the cascade behind the oracle's back.
+    """
+    def canon(term: str) -> str:
+        # "X -c2-ss-X " / "X- X-ca-ha" -> "X-c2-ss-X" / "X-X-ca-ha": the fields are
+        # fixed-width, so the padding is layout, not part of an atom type.
+        return "-".join(p.strip() for p in term.split("-") if p.strip())
+
+    if comment.startswith("same as"):
+        m = re.match(r"same as (.*?)(?:,\s*penalty score|$)", comment)
+        return "same_as", canon(m.group(1)) if m else ""
+    if comment.startswith("Same as"):
+        m = re.match(r"Same as (.*?)(?:,\s*penalty score|$)", comment)
+        analog = canon(m.group(1)) if m else ""
+        return ("general_term" if "use general term" in comment else "same_as"), analog
+    if comment.startswith("Using general improper torsional angle"):
+        m = re.match(
+            r"Using general improper torsional angle\s+(.*?),\s*penalty score", comment
+        )
+        return "general_improper", canon(m.group(1)) if m else ""
+    if "Using the default value" in comment:
+        return "default", ""
+    if "empirical" in comment.lower():
+        return "empirical", ""
+    if "ATTN" in comment:
+        return "attn", ""
+    raise RuntimeError(f"unrecognised parmchk2 comment: {comment!r}")
+
+
+def parse_frcmod(path: Path):
+    """Parse a parmchk2 frcmod -> the list of terms it had to estimate.
+
+    A row is `<atom types>  <values...>  <prose>`.  The atom-type label is
+    fixed-width (`ce-o -c -os`), so the split is found the way molrs's own reader
+    finds it: walk the whitespace fields, and accept the first split whose next
+    `nvalues` fields all parse as numbers AND whose prefix splits into exactly
+    `arity` atom types.
+    """
+    terms, section = [], None
+    for raw in path.read_text().splitlines():
+        line = raw.rstrip()
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped in FRCMOD_SECTIONS:
+            section = stripped
+            continue
+        if section is None:
+            continue  # the "Remark line goes here" title
+        arity, nvalues = FRCMOD_SECTIONS[section]
+        fields = line.split()
+        parsed = None
+        for split in range(1, len(fields)):
+            if len(fields) < split + nvalues:
+                break
+            try:
+                values = [float(f) for f in fields[split:split + nvalues]]
+            except ValueError:
+                continue
+            atoms = [a for a in "".join(fields[:split]).split("-") if a]
+            if len(atoms) != arity:
+                continue
+            last = fields[split + nvalues - 1]
+            tail = line[line.index(last, len("".join(fields[:split]))) + len(last):]
+            parsed = (atoms, values, tail.strip())
+            break
+        if parsed is None:
+            raise RuntimeError(f"{path.name}: unparsable {section} row: {line!r}")
+        atoms, values, comment = parsed
+        method, analog = classify_comment(comment)
+        penalty = re.search(r"penalty score=\s*([\d.]+)", comment)
+        terms.append({
+            "kind": section,
+            "types": atoms,
+            "values": values,
+            "penalty": float(penalty.group(1)) if penalty else None,
+            "method": method,
+            "analog": analog,
+            "comment": comment,
+        })
+    return terms
+
+
 def parse_mol2(path: Path):
     """Parse a mol2 -> (elements, xyz, charges, types)."""
     els, xyz, charges, types = [], [], [], []
@@ -228,6 +378,18 @@ def main() -> int:
                 out_mol2 = work / f"{name}_{at}.mol2"
                 run_antechamber(work, sdf, out_mol2, nc, at)
                 _, _, _, atom_types[col] = parse_mol2(out_mol2)
+
+            # runs 11-12: parmchk2, once per parm table. It reads the mol2 the
+            # matching `-at` run just wrote (same molecule, same types) and writes
+            # an frcmod naming every term the table does not cover -- with the
+            # parameter it estimated, the term it copied, and the penalty score it
+            # charged. That IS the missing-parameter oracle: what molrs's estimator
+            # must reproduce natively, tier for tier and value for value.
+            parmchk_terms = {}
+            for parm_set, col, _table in PARMCHK_SETS:
+                frcmod = work / f"{name}_{parm_set}.frcmod"
+                run_parmchk2(work, work / f"{name}_{parm_set}.mol2", frcmod, parm_set)
+                parmchk_terms[col] = parse_frcmod(frcmod)
 
             # run 9: the OTHER correction family. Same molecule, same AM1 base
             # charges -- only BCCPARM.DAT -> BCCPARM_ABCG2.DAT changes. It gets its
@@ -311,11 +473,16 @@ def main() -> int:
                 "bcc_charges": bcc_charges,        # final AM1-BCC charges (-c bcc)
                 "abcg2_charges": abcg2_charges,    # final ABCG2 charges  (-c abcg2)
                 "gas_charges": gas_charges,        # Gasteiger/PEOE       (-c gas)
+                # one column per parm table (see PARMCHK_SETS)
+                **parmchk_terms,
             })
             eq = "EQ" if raw and any(
                 abs(a - b) > 1e-9 for a, b in zip(am1_charges, raw)
             ) else "  "
-            print(f"  ok {eq} {name:22s} n={n:2d} q={sum(bcc_charges):+.4f}")
+            pc = "/".join(
+                str(len(parmchk_terms[col])) for _s, col, _t in PARMCHK_SETS
+            )
+            print(f"  ok {eq} {name:22s} n={n:2d} q={sum(bcc_charges):+.4f} parmchk={pc}")
         except Exception as e:  # noqa: BLE001
             failures.append((name, str(e).splitlines()[0][:80]))
             print(f"  FAIL  {name:22s} {str(e).splitlines()[0][:60]}")
@@ -362,6 +529,12 @@ def emit_rust(recs):
     w("//! i.e. sqm Mulliken AFTER topological-equivalence averaging (`-eq 1`, default).")
     w("//! `am1_charges_raw` is the un-averaged sqm Mulliken, kept so the equivalencing")
     w("//! stage can be tested on its own.")
+    w("//!")
+    w("//! The two `*_parmchk_terms` columns are a THIRD axis, and the only one that is")
+    w("//! about parameters rather than about charges or types: `parmchk2 -s gaff` /")
+    w("//! `-s gaff2` over the same typed molecule, i.e. every force-field term GAFF does")
+    w("//! not cover, the parameter parmchk2 estimated for it, and the penalty it charged")
+    w("//! (see [`ParmchkTerm`]).")
     w("")
     w("#![allow(dead_code)]")
     w("// Generated geometry: a literal coordinate can approximate a math constant")
@@ -426,6 +599,83 @@ def emit_rust(recs):
     w("    /// 0.053/0.098/0.053. That is why the model runs `needs_equivalencing = false`")
     w("    /// and still never carries a conformer artefact.")
     w("    pub gas_charges: &'static [f64],")
+    w("    /// Every term `parmchk2 -s gaff` had to ESTIMATE (`gaff.dat`).")
+    w("    pub gaff_parmchk_terms: &'static [ParmchkTerm],")
+    w("    /// Every term `parmchk2 -s gaff2` had to ESTIMATE (`gaff2.dat`).")
+    w("    pub gaff2_parmchk_terms: &'static [ParmchkTerm],")
+    w("}")
+    w("")
+    w("/// One row of a `parmchk2` frcmod: a term the parm table does not cover, the")
+    w("/// parameter parmchk2 estimated for it, and HOW it got there.")
+    w("///")
+    w("/// This is the missing-parameter oracle. A term reaches an frcmod only when the")
+    w("/// table has no row matching the molecule's ACTUAL types — wildcard rows very")
+    w("/// much included, since `X -c3-c3-X` matches any quartet whose inner pair is")
+    w("/// `c3-c3`. So this list is strictly SMALLER than the set of terms molrs's")
+    w("/// exact-match-only [`gaff_forcefield`](molrs::ff::forcefield::gaff::gaff_forcefield)")
+    w("/// reports as missing: most of those are covered by a wildcard row parmchk2")
+    w("/// simply matched and stayed silent about. Reproducing this column therefore")
+    w("/// demands BOTH halves of the cascade — wildcard matching (to fall silent on the")
+    w("/// same terms parmchk2 does) and the analogy/penalty machinery (to produce the")
+    w("/// same values, with the same scores, for the terms that remain).")
+    w("///")
+    w("/// # Units and conventions are the upstream's")
+    w("///")
+    w("/// [`values`](Self::values) is the row as parmchk2 wrote it, in AMBER's own units")
+    w("/// and conventions — degrees, un-halved force constants, the `IDIVF` divisor, and")
+    w("/// a SIGNED `DIHE` periodicity whose minus sign means \"another cosine term for")
+    w("/// this same quartet follows\". Converting is the reader's job")
+    w("/// (`forcefield::gaff`); a fixture that pre-converted would be asserting its own")
+    w("/// arithmetic instead of antechamber's answer.")
+    w("///")
+    w("/// | `kind` | `types` | `values` |")
+    w("/// |---|---|---|")
+    w("/// | `MASS` | atom type | mass |")
+    w("/// | `BOND` | i, j | force constant, length |")
+    w("/// | `ANGLE` | i, j, k | force constant, angle (deg) |")
+    w("/// | `DIHE` | i, j, k, l | divisor, barrier, phase (deg), periodicity (signed) |")
+    w("/// | `IMPROPER` | i, j, **centre**, l | barrier, phase (deg), periodicity |")
+    w("/// | `NONBON` | atom type | R\\*, epsilon |")
+    w("pub struct ParmchkTerm {")
+    w("    /// The frcmod section: `MASS` / `BOND` / `ANGLE` / `DIHE` / `IMPROPER` /")
+    w("    /// `NONBON`.")
+    w("    pub kind: &'static str,")
+    w("    /// The term's atom types, in parmchk2's order. For `IMPROPER` that is")
+    w("    /// AMBER's — the CENTRE is the third.")
+    w("    pub types: &'static [&'static str],")
+    w("    /// The estimated parameter, in the upstream's units (see the table above).")
+    w("    pub values: &'static [f64],")
+    w("    /// parmchk2's penalty score, when it printed one.")
+    w("    ///")
+    w("    /// `None` on the leading rows of a multi-cosine `DIHE` group (parmchk2 scores")
+    w("    /// the GROUP, and prints the score on its final row) and on every improper it")
+    w("    /// took from the default — a default is not a substitution, so there is")
+    w("    /// nothing to score.")
+    w("    pub penalty: Option<f64>,")
+    w("    /// Which tier of parmchk2's cascade produced the value — transcribed from its")
+    w("    /// own prose, NOT pre-mapped onto molrs's [`EstimateMethod`]")
+    w("    /// (`molrs::ff::typifier::estimate::EstimateMethod`), because which molrs tier")
+    w("    /// each of these IS is the thing under test:")
+    w("    ///")
+    w("    /// - `same_as` — substituted atom types and copied a specific row. The source")
+    w("    ///   row may itself be a wildcard one (`X -c2-ss-X`); what makes this tier")
+    w("    ///   distinct is that the TYPES were substituted, and that is what is scored.")
+    w("    /// - `general_term` / `general_improper` — a wildcard row of the table,")
+    w("    ///   instantiated for these types. Two spellings of one tier: parmchk2 words")
+    w("    ///   it differently for impropers it reaches through `X -X -ca-ha` than for")
+    w("    ///   the ones it reaches by substitution.")
+    w("    /// - `default` — nothing matched; the improper default (1.1 / 180 / 2).")
+    w("    /// - `empirical` / `attn` — the empirical formulas, and a term parmchk2")
+    w("    ///   refuses to stand behind. **Neither occurs in this oracle** (see the")
+    w("    ///   `CASES` note): all 37 molecules match every bond and angle exactly, so")
+    w("    ///   nothing ever reaches the Badger / Eq.5 fallback.")
+    w("    pub method: &'static str,")
+    w("    /// The term parmchk2 copied from, canonicalised to `i-j-k-l` (the frcmod pads")
+    w("    /// atom types to a fixed width: `X -c2-ss-X`). Empty when it copied nothing.")
+    w("    pub analog: &'static str,")
+    w("    /// parmchk2's own prose, verbatim — the audit trail behind the three fields")
+    w("    /// above.")
+    w("    pub comment: &'static str,")
     w("}")
     w("")
 
@@ -434,7 +684,26 @@ def emit_rust(recs):
         return ", ".join(f"{x:.{prec}f}" for x in xs)
 
 
+    n_gaff = sum(len(r["gaff_parmchk_terms"]) for r in recs)
+    n_gaff2 = sum(len(r["gaff2_parmchk_terms"]) for r in recs)
+    kinds = sorted({
+        t["kind"] for r in recs for c, _ in (("gaff_parmchk_terms", 0), ("gaff2_parmchk_terms", 0))
+        for t in r[c]
+    })
     w(f"/// {len(recs)} molecules spanning the BCC chemistry molcrafts actually uses.")
+    w("///")
+    w(f"/// parmchk2 has to estimate {n_gaff} terms across them under `gaff.dat` and")
+    w(f"/// {n_gaff2} under `gaff2.dat`, and they are **only** {' / '.join(kinds)} rows:")
+    w("/// every BOND, ANGLE, MASS and NONBON term of all 37 molecules is an exact hit in")
+    w("/// both tables. Two consequences, and both are load-bearing:")
+    w("///")
+    w("/// 1. A molrs estimator that invents a bond or angle parameter for any of these")
+    w("///    molecules is wrong no matter how plausible the number — the oracle says")
+    w("///    there was nothing to estimate.")
+    w("/// 2. The empirical (Badger / Wang2004 Eq.5) fallback is NOT exercised by this")
+    w("///    oracle at all: nothing here ever reaches it. Its unit tests")
+    w("///    (`ff::typifier::estimate`) pin the formulas against published GAFF values;")
+    w("///    this fixture cannot corroborate them, and must not be read as doing so.")
     w("pub const CASES: &[AntechamberCase] = &[")
     for r in recs:
         w("    AntechamberCase {")
@@ -464,6 +733,26 @@ def emit_rust(recs):
         w(f"        bcc_charges: &[{fl(r['bcc_charges'])}],")
         w(f"        abcg2_charges: &[{fl(r['abcg2_charges'])}],")
         w(f"        gas_charges: &[{fl(r['gas_charges'])}],")
+        for _set, col, _table in PARMCHK_SETS:
+            terms = r[col]
+            if not terms:
+                w(f"        {col}: &[],")
+                continue
+            w(f"        {col}: &[")
+            for t in terms:
+                types = ", ".join(f'"{x}"' for x in t["types"])
+                values = ", ".join(f"{v:.6f}" for v in t["values"])
+                pen = "None" if t["penalty"] is None else f'Some({t["penalty"]:.1f})'
+                w("            ParmchkTerm {")
+                w(f'                kind: "{t["kind"]}",')
+                w(f"                types: &[{types}],")
+                w(f"                values: &[{values}],")
+                w(f"                penalty: {pen},")
+                w(f'                method: "{t["method"]}",')
+                w(f'                analog: "{t["analog"]}",')
+                w(f'                comment: "{t["comment"]}",')
+                w("            },")
+            w("        ],")
         w("    },")
     w("];")
     w("")

@@ -43,8 +43,13 @@ mod equivalence_antechamber;
 #[path = "estimate.rs"]
 mod estimate;
 
-#[path = "estimate_parity.rs"]
-mod estimate_parity;
+/// The last runtime text parse on the FF path (chem-perceive-10 ac-002) — RED until 11.
+#[path = "estimate_tables_generated.rs"]
+mod estimate_tables_generated;
+
+/// The parmchk2 missing-parameter oracle (chem-perceive-10 ac-003) — RED until 11.
+#[path = "parmchk2_oracle.rs"]
+mod parmchk2_oracle;
 
 #[path = "mmff.rs"]
 mod mmff;

@@ -1,4 +1,4 @@
-//! Integration tests for the similarity-based [`ParameterEstimator`].
+//! Integration tests for the similarity-based [`Parmchk2Estimator`].
 //!
 //! Inputs are force fields + typing metadata BUILT IN CODE via the public API
 //! (the same pattern chain-2's seam tests use) — not fabricated file-format
@@ -14,7 +14,7 @@ use molrs::ff::typifier::opls::{
     BondedTerm, CandidateTables, Estimator, NoMatch, OPLSAATypifier, OplsTypeRow, OplsTypingMeta,
     typify_bonded, typify_bonded_with,
 };
-use molrs::ff::typifier::{ParameterEstimator, ParameterInterpolator};
+use molrs::ff::typifier::{ParameterInterpolator, Parmchk2Estimator};
 use molrs::{Atom, Atomistic};
 
 // ---------------------------------------------------------------------------
@@ -128,7 +128,7 @@ fn nearest_analog_copied_verbatim_with_provenance() {
     ff.get_style_mut("bond", "harmonic")
         .unwrap()
         .remove_type("c3-os");
-    let est = ParameterEstimator::new(&ff, &meta);
+    let est = Parmchk2Estimator::new(&ff, &meta);
 
     let p = est
         .estimate_bond(&["os".into(), "c3".into()])
@@ -156,7 +156,7 @@ fn exact_equivalence_analog_has_zero_penalty() {
     // When the queried bond is itself present (exact), the estimator copies it at
     // penalty 0 (reliable tier).
     let (ff, meta) = small_gaff();
-    let est = ParameterEstimator::new(&ff, &meta);
+    let est = Parmchk2Estimator::new(&ff, &meta);
     let p = est
         .estimate_bond(&["c3".into(), "c3".into()])
         .expect("estimate c3-c3");
@@ -197,7 +197,7 @@ fn angle_inner_atom_penalty_weighted_x10() {
     meta.insert("c3", row("c3"));
     meta.insert("os", row("os"));
     meta.insert("oh", row("oh"));
-    let est = ParameterEstimator::new(&ff, &meta);
+    let est = Parmchk2Estimator::new(&ff, &meta);
 
     // End substitution oh→os: query os-c3-c3 (one end differs from oh-c3-c3).
     let end = est
@@ -234,7 +234,7 @@ fn leave_one_out_bond_recovers_within_tolerance() {
     ff.get_style_mut("bond", "harmonic")
         .unwrap()
         .remove_type("c3-c3");
-    let est = ParameterEstimator::new(&ff, &meta);
+    let est = Parmchk2Estimator::new(&ff, &meta);
     let p = est
         .estimate_bond(&["c3".into(), "c3".into()])
         .expect("estimate c3-c3");
@@ -261,7 +261,7 @@ fn leave_one_out_angle_recovers_within_tolerance() {
     // direct match by removing it, then re-add as a different center to force the
     // empirical path. Simpler: query hc-c3-hc but remove its exact entry.
     let _ = style; // (the exact hc-c3-hc stays as the A-B-A reference)
-    let est = ParameterEstimator::new(&ff, &meta);
+    let est = Parmchk2Estimator::new(&ff, &meta);
     // Query an angle whose exact entry exists -> analogy copies it verbatim.
     let p = est
         .estimate_angle(&["hc".into(), "c3".into(), "hc".into()])
@@ -281,7 +281,7 @@ fn empirical_angle_used_when_no_analog() {
     // mean of c3-? neighbours... here we just verify the empirical angle produces
     // a finite, positive K and a sane θ₀ when the neighbour angles exist.
     let (ff, meta) = small_gaff();
-    let est = ParameterEstimator::new(&ff, &meta);
+    let est = Parmchk2Estimator::new(&ff, &meta);
     // hc-c3-c3 has no exact entry? it does (c3-c3-hc). Query oh-c3-oh: no exact,
     // empirical needs oh-c3-oh A-B-A (absent) -> declines gracefully (None) OR
     // uses available neighbours. Assert it does not panic and tags provenance if
@@ -305,7 +305,7 @@ fn dihedral_prefers_generic_wildcard_and_copies_group() {
     ff.get_style_mut("dihedral", "opls")
         .unwrap()
         .remove_type("hc-c3-c3-hc");
-    let est = ParameterEstimator::new(&ff, &meta);
+    let est = Parmchk2Estimator::new(&ff, &meta);
     let p = est
         .estimate_dihedral(&["hc".into(), "c3".into(), "c3".into(), "os".into()])
         .expect("estimate hc-c3-c3-os");
@@ -329,7 +329,7 @@ fn dihedral_never_fabricates_barrier() {
     let style = ff.get_style_mut("dihedral", "opls").unwrap();
     style.remove_type("hc-c3-c3-hc");
     style.remove_type("-c3-c3-"); // the X-c3-c3-X term (name is "-c3-c3-")
-    let est = ParameterEstimator::new(&ff, &meta);
+    let est = Parmchk2Estimator::new(&ff, &meta);
     let p = est
         .estimate_dihedral(&["os".into(), "c3".into(), "oh".into(), "ho".into()])
         .expect("estimate dihedral");
@@ -370,7 +370,7 @@ fn dihedral_multi_periodicity_group_copied_whole() {
     meta.insert("c3", row("c3"));
     meta.insert("os", row("os"));
     meta.insert("hc", row("hc"));
-    let est = ParameterEstimator::new(&ff, &meta);
+    let est = Parmchk2Estimator::new(&ff, &meta);
 
     let p = est
         .estimate_dihedral(&["hc".into(), "c3".into(), "os".into(), "hc".into()])
@@ -463,7 +463,7 @@ fn estimator_strict_true_does_not_interfere() {
 
 #[test]
 fn estimator_drops_into_assign_seam() {
-    // ac-008: the ParameterEstimator implements the chain-2 Estimator trait and
+    // ac-008: the Parmchk2Estimator implements the chain-2 Estimator trait and
     // drops into typify_bonded_with, filling an uncovered bond with provenance.
     let (mut ff, meta) = small_gaff();
     // remove os-anything so an os-c3 bond is uncovered and gets estimated.
@@ -471,7 +471,7 @@ fn estimator_drops_into_assign_seam() {
         .unwrap()
         .remove_type("c3-os");
     let tables = CandidateTables::build(&ff, &meta);
-    let est = ParameterEstimator::new(&ff, &meta);
+    let est = Parmchk2Estimator::new(&ff, &meta);
 
     let mut mol = Atomistic::new();
     let a = mol.add_atom(Atom::xyz("O", 0.0, 0.0, 0.0));
@@ -516,7 +516,7 @@ fn estimator_declines_with_no_fallback() {
     ff.def_bondstyle("harmonic"); // empty bond table
     let mut meta = OplsTypingMeta::new();
     meta.insert("he", row("HE"));
-    let est = ParameterEstimator::new(&ff, &meta);
+    let est = Parmchk2Estimator::new(&ff, &meta);
     let term = BondedTerm::Bond(["he".into(), "he".into()]);
     assert!(
         est.interpolate(&term).expect("no hard error").is_none(),

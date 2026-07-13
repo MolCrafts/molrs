@@ -85,8 +85,11 @@ fn committed_tables_match_the_manifest_hashes() {
     }
 
     assert_eq!(
-        checked, 13,
-        "manifest should cover all 13 generated files (12 tables + mod.rs)"
+        checked, 15,
+        "manifest should cover all 15 generated files (14 tables + mod.rs). \
+         chem-perceive-10 ac-001 adds two: `gaff_equiv.rs` and `gaff_empirical.rs`, \
+         the estimator's substitution and empirical-constant tables, which are still \
+         runtime-parsed JSON (see `gaff_equiv_and_empirical_are_generated_tables`)"
     );
 }
 
@@ -125,13 +128,13 @@ fn generator_byte_reproduces_the_committed_tables() {
         .map(|e| e.expect("dir entry").file_name())
         .collect();
     names.sort();
-    // 10 tables + mod.rs + MANIFEST.sha256. The manifest is compared too: it
+    // 14 tables + mod.rs + MANIFEST.sha256. The manifest is compared too: it
     // carries the upstream source hashes, so a change in AmberTools itself
     // shows up here even when the emitted tables happen to be unaffected.
     assert_eq!(
         names.len(),
-        14,
-        "expected 12 tables + mod.rs + MANIFEST.sha256"
+        16,
+        "expected 14 tables + mod.rs + MANIFEST.sha256"
     );
 
     let mut drifted = Vec::new();
@@ -457,6 +460,47 @@ fn a_type_with_equivalent_flag_zero_has_no_alternate() {
              which reproduces antechamber 37/37 today"
         );
     }
+}
+
+/// chem-perceive-10 ac-001 — the estimator's two tables are generated Rust too.
+///
+/// `gaff_equiv.json` (6159 lines) and `gaff_empirical.json` (87) are the last two
+/// parameter tables molrs keeps as text: parmchk2's equivalence / substitution rows
+/// with their penalty weights and defaults, and the Badger / Wang2004 empirical
+/// constants. Every other table in this directory was compiled years of bugs ago;
+/// these two are still `include_str!` + `serde_json::from_str` at runtime
+/// (`ff/typifier/estimate/tables.rs`), and ac-001 finishes the job.
+///
+/// The gate is deliberately about the FILES, not about a Rust symbol: it has to be
+/// able to fail before the tables exist. What it pins is that they arrive the same
+/// way every other table did — emitted into `generated/`, hashed into
+/// `MANIFEST.sha256`, and byte-reproduced by the generator (which the two guards
+/// above then enforce on every run, without needing to know these two by name).
+#[test]
+fn gaff_equiv_and_empirical_are_generated_tables() {
+    let dir = generated_dir();
+    let manifest = std::fs::read_to_string(dir.join("MANIFEST.sha256"))
+        .expect("MANIFEST.sha256 is committed alongside the generated tables");
+
+    let mut missing = Vec::new();
+    for table in ["gaff_equiv.rs", "gaff_empirical.rs"] {
+        if !dir.join(table).is_file() {
+            missing.push(format!("{table}: not emitted into `generated/`"));
+        } else if !manifest.contains(table) {
+            missing.push(format!(
+                "{table}: emitted, but MANIFEST.sha256 does not hash it"
+            ));
+        }
+    }
+
+    assert!(
+        missing.is_empty(),
+        "the estimator's tables are still runtime-parsed JSON, not compiled data:\n  {}\n\
+         Emit them from `scripts/gen_param_tables.py` (PARMCHK.DAT is already one of its \
+         hashed sources) and delete the `include_str!` in \
+         `src/ff/typifier/estimate/tables.rs`.",
+        missing.join("\n  ")
+    );
 }
 
 /// Every script in `scripts/` must at least parse.

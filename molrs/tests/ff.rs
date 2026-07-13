@@ -16,8 +16,6 @@ mod helpers;
 mod forcefield;
 #[path = "ff/forcefield_meta.rs"]
 mod forcefield_meta;
-#[path = "ff/frcmod.rs"]
-mod frcmod;
 #[path = "ff/params.rs"]
 mod params;
 #[path = "ff/readers/lammps.rs"]

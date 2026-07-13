@@ -15,4 +15,6 @@ pub mod bccparm;
 pub mod bccparm_abcg2;
 pub mod gaff;
 pub mod gaff2;
+pub mod gaff_empirical;
+pub mod gaff_equiv;
 pub mod gasparm;

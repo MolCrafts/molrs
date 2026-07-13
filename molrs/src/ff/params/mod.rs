@@ -44,6 +44,8 @@ pub use generated::atomtype_sybyl::ATOMTYPE_SYBYL;
 pub use generated::bccparm::{BCC_ALIASES, BCC_CORRECTIONS};
 pub use generated::bccparm_abcg2::{ABCG2_ALIASES, ABCG2_CORRECTIONS};
 pub use generated::gaff::GAFF;
+pub use generated::gaff_empirical::{EMPIRICAL_GAFF, EMPIRICAL_GAFF2};
+pub use generated::gaff_equiv::{PARMCHK, PARMCHK_TYPES, PARMCHK_WEIGHTS};
 pub use generated::gaff2::GAFF2;
 pub use generated::gasparm::GASTEIGER_PARAMS;
 
@@ -506,6 +508,210 @@ pub struct ParmTable {
     pub impropers: &'static [ParmImproperRow],
     /// The `NONBON` section.
     pub nonbonded: &'static [ParmNonbondedRow],
+}
+
+// ---------------------------------------------------------------------------
+// parmchk2's substitution table — PARMCHK.DAT
+// ---------------------------------------------------------------------------
+
+/// The nine penalty columns of an `EQUA` / `CORR` row, in `PARMCHK.DAT`'s order.
+///
+/// The file's own note pins it — *"GENERAL_SIMILARITY is listed in the 11th
+/// colume of CORR lines"* — and a CORR row's 11th token is the last of the nine,
+/// so the columns run in the order its `DEFAULT_*` block declares them. `-1.0`
+/// means **not tabulated**: the consumer substitutes the matching default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParmchkPenalty {
+    /// Bond length (`bl`).
+    BondLength = 0,
+    /// Bond force constant (`blf`).
+    BondForce = 1,
+    /// Angle, at an END atom (`ba`).
+    Angle = 2,
+    /// Angle force constant, at an end atom (`baf`).
+    AngleForce = 3,
+    /// Angle, at the CENTRE atom (`ba_ctr`).
+    AngleCentre = 4,
+    /// Angle force constant, at the centre atom (`baf_ctr`).
+    AngleCentreForce = 5,
+    /// Torsion, at an OUTER atom (`tor`).
+    Torsion = 6,
+    /// Torsion, at an INNER atom (`tor_ctr`).
+    TorsionCentre = 7,
+    /// The row's overall similarity score — the 11th column.
+    Similarity = 8,
+}
+
+/// One `EQUA` / `CORR` row: the atom type it maps to, and its nine penalties.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ParmchkCorr {
+    /// The atom type this row substitutes.
+    pub to: &'static str,
+    /// The nine penalty columns, indexed by [`ParmchkPenalty`]. `-1.0` = absent.
+    pub penalties: [f64; 9],
+}
+
+impl ParmchkCorr {
+    /// One penalty column, or `None` where the row leaves it untabulated (`-1`).
+    pub fn get(&self, column: ParmchkPenalty) -> Option<f64> {
+        let value = self.penalties[column as usize];
+        (value >= 0.0).then_some(value)
+    }
+}
+
+/// One `PARM` block of `PARMCHK.DAT` — an atom type and how it may be substituted.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ParmchkType {
+    /// The atom type, e.g. `c3`.
+    pub name: &'static str,
+    /// The `improper_flag` column: may an atom of this type be the **centre** of
+    /// an improper at all?
+    ///
+    /// This is what separates `ca` (yes: benzene's ring carbon is planar) from
+    /// `c3` (no: an sp3 carbon has no planarity to enforce), and it is a column
+    /// of the table rather than a hybridisation the engine re-derives.
+    pub improper: bool,
+    /// The `group_id` column: crossing a group boundary costs
+    /// [`ParmchkWeights::weight_group`].
+    pub group: i32,
+    /// Atomic mass, in amu.
+    pub mass: f64,
+    /// The `equivalent_flag` column: `±1` for a phase-1 conjugated name
+    /// (`cc`/`ce`/…), `±2` for its phase-2 partner (`cd`/`cf`/…), `0` otherwise.
+    pub equivalent_flag: i32,
+    /// Atomic number.
+    pub atomic_number: u8,
+    /// The phase-2 name antechamber renames this type to on the other colour of a
+    /// conjugated system (`cc` → `cd`), or `None`.
+    pub alternate: Option<&'static str>,
+    /// `EQUA` rows — **equivalent** types. Substituting one costs nothing.
+    pub equivalent: &'static [&'static str],
+    /// `CORR` rows — **corresponding** types, each with its penalty columns.
+    pub corresponding: &'static [ParmchkCorr],
+}
+
+/// `PARMCHK.DAT`'s `WEIGHT_*` and `DEFAULT_*` scalars.
+///
+/// Every field is a column of the file; none is a constant this crate invented.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ParmchkWeights {
+    /// `WEIGHT_BL` — bond-length penalty weight.
+    pub weight_bond_length: f64,
+    /// `WEIGHT_BLF` — bond force-constant penalty weight.
+    pub weight_bond_force: f64,
+    /// `WEIGHT_BA` — angle penalty weight.
+    pub weight_angle: f64,
+    /// `WEIGHT_BAF` — angle force-constant penalty weight.
+    pub weight_angle_force: f64,
+    /// `WEIGHT_X` — an `X` in slot 1, 2 or 4 of an improper row.
+    pub weight_wildcard: f64,
+    /// `WEIGHT_X3` — an `X` in the improper's CENTRE slot.
+    pub weight_wildcard_centre: f64,
+    /// `WEIGHT_BA_CTR` — inner-atom multiplier for an angle.
+    pub weight_angle_centre: f64,
+    /// `WEIGHT_TOR_CTR` — inner-atom multiplier for a torsion.
+    pub weight_torsion_centre: f64,
+    /// `WEIGHT_IMPROPER` — surcharge for substituting into an improper row.
+    pub weight_improper: f64,
+    /// `WEIGHT_GROUP` — surcharge for crossing an atom-type group boundary.
+    pub weight_group: f64,
+    /// `WEIGHT_EQUTYPE` — surcharge for substituting an equivalent type.
+    pub weight_equivalent: f64,
+    /// `DEFAULT_BL`.
+    pub default_bond_length: f64,
+    /// `DEFAULT_BLF`.
+    pub default_bond_force: f64,
+    /// `DEFAULT_BA`.
+    pub default_angle: f64,
+    /// `DEFAULT_BAF`.
+    pub default_angle_force: f64,
+    /// `DEFAULT_BA_CTR`.
+    pub default_angle_centre: f64,
+    /// `DEFAULT_BAF_CTR`.
+    pub default_angle_centre_force: f64,
+    /// `DEFAULT_TOR`.
+    pub default_torsion: f64,
+    /// `DEFAULT_TOR_CTR`.
+    pub default_torsion_centre: f64,
+    /// `DEFAULT_FRACT1`.
+    pub default_fraction_1: f64,
+    /// `DEFAULT_FRACT2`.
+    pub default_fraction_2: f64,
+    /// `THRESHOLD_BA`.
+    pub threshold_angle: f64,
+}
+
+/// `PARMCHK.DAT` as one typed table.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ParmchkTable {
+    /// Upstream file name.
+    pub name: &'static str,
+    /// The `PARM` blocks, in file order.
+    pub types: &'static [ParmchkType],
+    /// The `WEIGHT_*` / `DEFAULT_*` scalars.
+    pub weights: ParmchkWeights,
+}
+
+impl ParmchkTable {
+    /// The block declaring `name`, or `None` if the table does not know the type.
+    pub fn get(&self, name: &str) -> Option<&'static ParmchkType> {
+        self.types.iter().find(|t| t.name == name)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The empirical bond / angle constants — PARM_BLBA_GAFF*.DAT
+// ---------------------------------------------------------------------------
+
+/// One `BL` row: the reference length and `ln(Kij)` of an element **pair**.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EmpiricalBondRow {
+    /// Atomic number of the first element.
+    pub z1: u8,
+    /// Atomic number of the second element.
+    pub z2: u8,
+    /// Reference bond length, in Å (Wang2004 Table 3 `r_ref`).
+    pub r_ref: f64,
+    /// `ln(Kij)` (Wang2004 Table 3); the force constant is `exp(ln_k) / r^m`.
+    pub ln_k: f64,
+}
+
+/// One `BA` row: the angle `C` and `Z` factors of an element.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EmpiricalAngleRow {
+    /// Atomic number.
+    pub z: u8,
+    /// The `C` factor — used when the element is the angle's CENTRE.
+    pub c: f64,
+    /// The `Z` factor — used when the element is an angle END atom.
+    pub z_factor: f64,
+}
+
+/// One `PARM_BLBA_GAFF*.DAT` as a typed table.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EmpiricalTable {
+    /// Upstream file name.
+    pub name: &'static str,
+    /// The Badger exponent `m` (`PARM PC`; 4.5 upstream).
+    pub bond_power: f64,
+    /// The `BL` rows.
+    pub bonds: &'static [EmpiricalBondRow],
+    /// The `BA` rows.
+    pub angles: &'static [EmpiricalAngleRow],
+}
+
+impl EmpiricalTable {
+    /// The `BL` row for an unordered element pair, if tabulated.
+    pub fn bond(&self, z1: u8, z2: u8) -> Option<&'static EmpiricalBondRow> {
+        self.bonds
+            .iter()
+            .find(|r| (r.z1 == z1 && r.z2 == z2) || (r.z1 == z2 && r.z2 == z1))
+    }
+
+    /// The `BA` row for an element, if tabulated.
+    pub fn angle(&self, z: u8) -> Option<&'static EmpiricalAngleRow> {
+        self.angles.iter().find(|r| r.z == z)
+    }
 }
 
 impl ParmTable {
