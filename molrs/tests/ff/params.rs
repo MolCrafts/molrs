@@ -230,7 +230,11 @@ fn every_atomtype_def_became_a_typed_table() {
     }
 
     // The BCC table is the one the AM1-BCC typifier walks; pin its shape.
-    assert_eq!(ATOMTYPE_BCC.rules.len(), 159, "ATD rows minus the DU row");
+    assert_eq!(
+        ATOMTYPE_BCC.rules.len(),
+        160,
+        "all ATD rows INCLUDING the terminal DU catch-all (restored in spec 06)"
+    );
     assert_eq!(ATOMTYPE_BCC.wildatoms.len(), 4);
 
     // Rule order is load-bearing (first match wins), so the first rule must
@@ -253,6 +257,145 @@ fn every_atomtype_def_became_a_typed_table() {
         .find(|w| w.name == "XB")
         .expect("GFF declares XB");
     assert_eq!(gff_xb.specs.len(), 2);
+}
+
+/// The conjugated pairs `PARMCHK.DAT` declares, in its own header's words:
+///
+/// ```text
+/// #   equivalent_flag:  1 for cc/ce/cg/nc/ne/pc/pe
+/// #                     2 for cd/cf/ch/nd/nf/pd/pf
+/// #                     0 for others
+/// ```
+///
+/// Flag 1 is the name an `ATOMTYPE_GFF*.DEF` rule emits; flag 2 is the name
+/// antechamber renames it to on the other colour of a conjugated system. The
+/// pairing is upstream DATA — this is the table that declares it — which is why it
+/// belongs on `AtdRule` and not in a `match` inside the engine.
+const PARMCHK_PAIRS: [(&str, &str); 7] = [
+    ("cc", "cd"),
+    ("ce", "cf"),
+    ("cg", "ch"),
+    ("nc", "nd"),
+    ("ne", "nf"),
+    ("pc", "pd"),
+    ("pe", "pf"),
+];
+
+/// Every conjugated GAFF type carries its `PARMCHK.DAT` partner.
+///
+/// The generator dropped the terminal `DU` row once, and nothing noticed until the
+/// AMBER column of the oracle came up two atoms short. `alternate` is the same
+/// shape of fact — a column of an upstream table that the emitted `.rs` is the only
+/// in-repo copy of — so it gets the same kind of guard: pin the whole pairing set,
+/// per table, by name.
+#[test]
+fn every_conjugated_gaff_type_carries_its_parmchk_alternate() {
+    for table in [ATOMTYPE_GFF, ATOMTYPE_GFF2] {
+        for (phase_1, phase_2) in PARMCHK_PAIRS {
+            let rules: Vec<_> = table
+                .rules
+                .iter()
+                .filter(|rule| rule.atom_type == phase_1)
+                .collect();
+            assert!(
+                !rules.is_empty(),
+                "{} declares no `{phase_1}` rule, so this pin is vacuous",
+                table.name
+            );
+            for rule in rules {
+                assert_eq!(
+                    rule.alternate,
+                    Some(phase_2),
+                    "{}: the `{phase_1}` rule must carry its PARMCHK.DAT partner `{phase_2}` \
+                     (equivalent_flag 1 -> 2); without it the 2-colouring pass has no name to \
+                     rename half a conjugated system to",
+                    table.name
+                );
+            }
+        }
+    }
+}
+
+/// The alternate names are not rows of the `.DEF` at all.
+///
+/// This is *why* `AtdRule::alternate` has to exist. `ATOMTYPE_GFF.DEF` can emit
+/// `cc` and never `cd`: `cd` appears nowhere in the file. So `cd` cannot come from
+/// walking the table — it can only come from the alternate column — and any engine
+/// that reproduces `antechamber -at gaff` on pyrrole is reading it from here.
+///
+/// It is also what keeps `no_assigned_type_is_absent_from_the_table_being_walked`
+/// honest after that gate is widened to `atom_type ∪ alternate`: the union is a
+/// strictly larger set only because of these seven names, each of which is upstream
+/// data rather than an engine invention.
+#[test]
+fn the_alternate_names_are_not_atd_rows_of_the_def_themselves() {
+    for table in [ATOMTYPE_GFF, ATOMTYPE_GFF2] {
+        let declared: Vec<&str> = table.rules.iter().map(|rule| rule.atom_type).collect();
+        for (phase_1, phase_2) in PARMCHK_PAIRS {
+            assert!(
+                declared.contains(&phase_1),
+                "{}: `{phase_1}` should be an ATD row",
+                table.name
+            );
+            assert!(
+                !declared.contains(&phase_2),
+                "{} now declares an ATD row for `{phase_2}`. Upstream, it does not: the \
+                 `.DEF` only ever emits the phase-1 name and antechamber renames half of \
+                 each conjugated system afterwards. If this ever became true upstream, the \
+                 alternate column — and the pass that applies it — would need re-deriving, \
+                 not just this assertion relaxing",
+                table.name
+            );
+        }
+    }
+}
+
+/// A type with `equivalent_flag: 0` has no alternate — including the ones whose
+/// names *look* like a conjugated pair.
+///
+/// The trap is AMBER: `ATOMTYPE_AMBER.DEF` has real `CC` and `CD` rows (parm94's
+/// histidine carbons), and `PARMCHK.DAT` gives both `equivalent_flag 0`. They are
+/// not a conjugated pair, they are not even the same alphabet, and AMBER types
+/// 37/37 today. A generator that derived `alternate` from the *spelling* of a type
+/// rather than from the flag column would pair them, 2-colour the AMBER table, and
+/// break a passing column — so `CC -> None` is the assertion that keeps the
+/// alternate column tied to `PARMCHK.DAT` instead of to a naming convention.
+#[test]
+fn a_type_with_equivalent_flag_zero_has_no_alternate() {
+    // GAFF types whose PARMCHK.DAT equivalent_flag is 0.
+    for table in [ATOMTYPE_GFF, ATOMTYPE_GFF2] {
+        for atom_type in [
+            "c3", "c2", "ca", "cp", "n", "na", "nb", "os", "s", "ha", "hc", "h1",
+        ] {
+            for rule in table.rules.iter().filter(|r| r.atom_type == atom_type) {
+                assert_eq!(
+                    rule.alternate, None,
+                    "{}: `{atom_type}` has equivalent_flag 0 in PARMCHK.DAT — it is not half \
+                     of a conjugated pair and must not be renamed by the 2-colouring pass",
+                    table.name
+                );
+            }
+        }
+    }
+
+    // The uppercase AMBER table: `CC`/`CD` are parm94 types, flag 0, not a pair.
+    let amber_cc: Vec<_> = ATOMTYPE_AMBER
+        .rules
+        .iter()
+        .filter(|rule| rule.atom_type == "CC")
+        .collect();
+    assert!(
+        !amber_cc.is_empty(),
+        "ATOMTYPE_AMBER.DEF declares CC rows; this pin is vacuous without them"
+    );
+    for rule in amber_cc {
+        assert_eq!(
+            rule.alternate, None,
+            "ATOMTYPE_AMBER.DEF's `CC` is parm94's histidine carbon (equivalent_flag 0), not \
+             GAFF's conjugated `cc`. Pairing it with `CD` would 2-colour the AMBER column, \
+             which reproduces antechamber 37/37 today"
+        );
+    }
 }
 
 /// Every script in `scripts/` must at least parse.

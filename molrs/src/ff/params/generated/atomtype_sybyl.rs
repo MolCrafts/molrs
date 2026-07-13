@@ -59,13 +59,21 @@ pub const WILDATOMS: &[WildAtom] = &[
     WildAtom { name: "XD", specs: WILD_XD },
 ];
 
-/// The 65 `ATD` rules of `ATOMTYPE_SYBYL.DEF`, in file order.
+/// The 66 `ATD` rules of `ATOMTYPE_SYBYL.DEF`, in file order.
 ///
-/// Order is significant: the FIRST rule that matches wins. `DU` (dummy) rows and
-/// the residue-less catch-all carry no constraints and are not emitted.
+/// Order is significant: the FIRST rule that matches wins — which is why the
+/// table's own last row is the constraint-free fall-through (`DU`, or `ANY` in
+/// `ATOMTYPE_SYBYL.DEF`). It matches anything nothing above it matched, and
+/// antechamber does reach it: `-at amber` types nitromethane's nitro oxygens
+/// `DU`. It is a rule of the table, not a fallback the engine invents.
+///
+/// No rule here carries an `alternate`: `PARMCHK.DAT`'s `equivalent_flag`
+/// column describes the GAFF atom-type namespace, and this file is not written
+/// in it. Nothing in this table is ever renamed by the 2-colouring pass.
 pub const RULES: &[AtdRule] = &[
     AtdRule {
         atom_type: "C.3",
+        alternate: None,
         residue: "*",
         atomic_number: Some(6),
         degree: Some(4),
@@ -77,6 +85,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "C.cat",
+        alternate: None,
         residue: "*",
         atomic_number: Some(6),
         degree: Some(3),
@@ -110,6 +119,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "C.ar",
+        alternate: None,
         residue: "*",
         atomic_number: Some(6),
         degree: Some(3),
@@ -129,6 +139,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "C.2",
+        alternate: None,
         residue: "*",
         atomic_number: Some(6),
         degree: Some(3),
@@ -140,6 +151,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "C.1",
+        alternate: None,
         residue: "*",
         atomic_number: Some(6),
         degree: Some(2),
@@ -151,6 +163,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "C.1",
+        alternate: None,
         residue: "*",
         atomic_number: Some(6),
         degree: Some(1),
@@ -162,6 +175,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "H",
+        alternate: None,
         residue: "*",
         atomic_number: Some(1),
         degree: None,
@@ -173,6 +187,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "F",
+        alternate: None,
         residue: "*",
         atomic_number: Some(9),
         degree: None,
@@ -184,6 +199,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "Cl",
+        alternate: None,
         residue: "*",
         atomic_number: Some(17),
         degree: None,
@@ -195,6 +211,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "Br",
+        alternate: None,
         residue: "*",
         atomic_number: Some(35),
         degree: None,
@@ -206,6 +223,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "I",
+        alternate: None,
         residue: "*",
         atomic_number: Some(53),
         degree: None,
@@ -217,6 +235,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "P.3",
+        alternate: None,
         residue: "*",
         atomic_number: Some(15),
         degree: None,
@@ -228,6 +247,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "N.4",
+        alternate: None,
         residue: "*",
         atomic_number: Some(7),
         degree: Some(4),
@@ -239,6 +259,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "N.am",
+        alternate: None,
         residue: "*",
         atomic_number: Some(7),
         degree: Some(3),
@@ -262,6 +283,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "N.pl3",
+        alternate: None,
         residue: "*",
         atomic_number: Some(7),
         degree: Some(3),
@@ -288,6 +310,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "N.pl3",
+        alternate: None,
         residue: "*",
         atomic_number: Some(7),
         degree: Some(3),
@@ -319,6 +342,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "N.3",
+        alternate: None,
         residue: "*",
         atomic_number: Some(7),
         degree: Some(3),
@@ -330,6 +354,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "N.ar",
+        alternate: None,
         residue: "*",
         atomic_number: Some(7),
         degree: Some(2),
@@ -349,6 +374,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "N.2",
+        alternate: None,
         residue: "*",
         atomic_number: Some(7),
         degree: Some(2),
@@ -360,6 +386,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "N.1",
+        alternate: None,
         residue: "*",
         atomic_number: Some(7),
         degree: Some(1),
@@ -371,6 +398,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "O.co2",
+        alternate: None,
         residue: "*",
         atomic_number: Some(8),
         degree: Some(1),
@@ -394,6 +422,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "O.co2",
+        alternate: None,
         residue: "*",
         atomic_number: Some(8),
         degree: Some(1),
@@ -417,6 +446,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "O.2",
+        alternate: None,
         residue: "*",
         atomic_number: Some(8),
         degree: Some(1),
@@ -428,6 +458,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "O.3",
+        alternate: None,
         residue: "*",
         atomic_number: Some(8),
         degree: Some(2),
@@ -439,6 +470,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "S.2",
+        alternate: None,
         residue: "*",
         atomic_number: Some(16),
         degree: Some(1),
@@ -450,6 +482,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "S.3",
+        alternate: None,
         residue: "*",
         atomic_number: Some(16),
         degree: Some(2),
@@ -461,6 +494,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "S.o",
+        alternate: None,
         residue: "*",
         atomic_number: Some(16),
         degree: Some(3),
@@ -486,6 +520,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "S.o2",
+        alternate: None,
         residue: "*",
         atomic_number: Some(16),
         degree: Some(4),
@@ -528,6 +563,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "S.3",
+        alternate: None,
         residue: "*",
         atomic_number: Some(16),
         degree: None,
@@ -539,6 +575,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "Li",
+        alternate: None,
         residue: "*",
         atomic_number: Some(3),
         degree: None,
@@ -550,6 +587,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "Be",
+        alternate: None,
         residue: "*",
         atomic_number: Some(4),
         degree: None,
@@ -561,6 +599,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "B",
+        alternate: None,
         residue: "*",
         atomic_number: Some(5),
         degree: None,
@@ -572,6 +611,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "Na",
+        alternate: None,
         residue: "*",
         atomic_number: Some(11),
         degree: None,
@@ -583,6 +623,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "Mg",
+        alternate: None,
         residue: "*",
         atomic_number: Some(12),
         degree: None,
@@ -594,6 +635,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "Al",
+        alternate: None,
         residue: "*",
         atomic_number: Some(13),
         degree: None,
@@ -605,6 +647,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "Si",
+        alternate: None,
         residue: "*",
         atomic_number: Some(14),
         degree: None,
@@ -616,6 +659,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "K",
+        alternate: None,
         residue: "*",
         atomic_number: Some(19),
         degree: None,
@@ -627,6 +671,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "Ca",
+        alternate: None,
         residue: "*",
         atomic_number: Some(20),
         degree: None,
@@ -638,6 +683,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "Sr",
+        alternate: None,
         residue: "*",
         atomic_number: Some(38),
         degree: None,
@@ -649,6 +695,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "Ba",
+        alternate: None,
         residue: "*",
         atomic_number: Some(56),
         degree: None,
@@ -660,6 +707,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "Sc",
+        alternate: None,
         residue: "*",
         atomic_number: Some(21),
         degree: None,
@@ -671,6 +719,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "Ti",
+        alternate: None,
         residue: "*",
         atomic_number: Some(22),
         degree: None,
@@ -682,6 +731,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "V",
+        alternate: None,
         residue: "*",
         atomic_number: Some(23),
         degree: None,
@@ -693,6 +743,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "Cr",
+        alternate: None,
         residue: "*",
         atomic_number: Some(24),
         degree: None,
@@ -704,6 +755,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "Mn",
+        alternate: None,
         residue: "*",
         atomic_number: Some(25),
         degree: None,
@@ -715,6 +767,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "Fe",
+        alternate: None,
         residue: "*",
         atomic_number: Some(26),
         degree: None,
@@ -726,6 +779,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "Co",
+        alternate: None,
         residue: "*",
         atomic_number: Some(27),
         degree: None,
@@ -737,6 +791,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "Ni",
+        alternate: None,
         residue: "*",
         atomic_number: Some(28),
         degree: None,
@@ -748,6 +803,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "Cu",
+        alternate: None,
         residue: "*",
         atomic_number: Some(29),
         degree: None,
@@ -759,6 +815,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "Zn",
+        alternate: None,
         residue: "*",
         atomic_number: Some(30),
         degree: None,
@@ -770,6 +827,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "Ga",
+        alternate: None,
         residue: "*",
         atomic_number: Some(31),
         degree: None,
@@ -781,6 +839,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "Ge",
+        alternate: None,
         residue: "*",
         atomic_number: Some(32),
         degree: None,
@@ -792,6 +851,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "As",
+        alternate: None,
         residue: "*",
         atomic_number: Some(33),
         degree: None,
@@ -803,6 +863,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "Se",
+        alternate: None,
         residue: "*",
         atomic_number: Some(34),
         degree: None,
@@ -814,6 +875,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "Ru",
+        alternate: None,
         residue: "*",
         atomic_number: Some(44),
         degree: None,
@@ -825,6 +887,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "Rh",
+        alternate: None,
         residue: "*",
         atomic_number: Some(45),
         degree: None,
@@ -836,6 +899,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "Pd",
+        alternate: None,
         residue: "*",
         atomic_number: Some(46),
         degree: None,
@@ -847,6 +911,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "Ag",
+        alternate: None,
         residue: "*",
         atomic_number: Some(47),
         degree: None,
@@ -858,6 +923,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "Cd",
+        alternate: None,
         residue: "*",
         atomic_number: Some(48),
         degree: None,
@@ -869,6 +935,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "Pt",
+        alternate: None,
         residue: "*",
         atomic_number: Some(78),
         degree: None,
@@ -880,6 +947,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "Au",
+        alternate: None,
         residue: "*",
         atomic_number: Some(79),
         degree: None,
@@ -891,6 +959,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "Hg",
+        alternate: None,
         residue: "*",
         atomic_number: Some(80),
         degree: None,
@@ -902,6 +971,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "Tl",
+        alternate: None,
         residue: "*",
         atomic_number: Some(81),
         degree: None,
@@ -913,6 +983,7 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "Pb",
+        alternate: None,
         residue: "*",
         atomic_number: Some(82),
         degree: None,
@@ -924,9 +995,22 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "lp",
+        alternate: None,
         residue: "*",
         atomic_number: Some(0),
         degree: Some(1),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: None,
+        environment: None,
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "ANY",
+        alternate: None,
+        residue: "*",
+        atomic_number: None,
+        degree: None,
         hydrogen_count: None,
         ewd_count: None,
         atom_property: None,

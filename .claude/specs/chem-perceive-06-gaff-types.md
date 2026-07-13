@@ -1,6 +1,6 @@
 ---
 title: "chem-perceive 6/14 — GAFF / GAFF2 / AMBER / SYBYL 原子类型（推翻 2026-06-19 决定）"
-status: approved
+status: done
 created: 2026-07-12
 chain: chem-perceive
 depends_on: "chem-perceive-05-atd-typifier"
@@ -60,11 +60,11 @@ GPL atomtype.c"*——现在这个顾虑以更大规模重现。参数**表**（
 
 ## Tasks
 
-- [ ] Generate `.rs` tables for ATOMTYPE_GFF / GFF2 / AMBER / SYBYL (mechanically, via 02's generator)
-- [ ] Wire them through `AtdTypifier` — engine unchanged, tables only
-- [ ] Extend `scripts/gen_am1bcc_oracle.py` with `-at {gff,gff2,amber,sybyl}` oracle columns
-- [ ] Update `.claude/notes/notes.md` via `/mol:note`: the 2026-06-19 "GAFF = AmberTools-only" decision is REVERSED, with the reason (the ATD engine now exists and is validated)
-- [ ] Establish and document the clean-room / licensing posture (shared with 05)
+- [x] Generate `.rs` tables for ATOMTYPE_GFF / GFF2 / AMBER / SYBYL (mechanically, via 02's generator)
+- [x] Wire them through `AtdTypifier` — engine unchanged, tables only
+- [x] Extend `scripts/gen_am1bcc_oracle.py` with `-at {gff,gff2,amber,sybyl}` oracle columns
+- [x] Update `.claude/notes/notes.md` via `/mol:note`: the 2026-06-19 "GAFF = AmberTools-only" decision is REVERSED, with the reason (the ATD engine now exists and is validated)
+- [x] Establish and document the clean-room / licensing posture (shared with 05)
 
 ## Testing strategy
 

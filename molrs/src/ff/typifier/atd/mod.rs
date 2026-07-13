@@ -30,6 +30,7 @@
 //! count `sb` / `db` / `ab` / `DL` bonds, which need the delocalized (9) and
 //! aromatic (7/8) types that a bond *order* cannot express.
 
+mod conjugate;
 mod facts;
 mod pattern;
 mod rules;
@@ -44,7 +45,7 @@ use self::facts::MolFacts;
 use super::Typifier;
 use crate::ff::params::{
     ATOMTYPE_ABCG2, ATOMTYPE_AMBER, ATOMTYPE_BCC, ATOMTYPE_GAS, ATOMTYPE_GFF, ATOMTYPE_GFF2,
-    ATOMTYPE_SYBYL, AtdTable,
+    ATOMTYPE_SYBYL, AtdRule, AtdTable,
 };
 
 /// Which `ATOMTYPE_*.DEF` table an [`AtdTypifier`] walks.
@@ -119,10 +120,23 @@ impl Typifier for AtdTypifier {
 
         let facts = MolFacts::new(&out)?;
         let atom_ids: Vec<AtomId> = out.atoms().map(|(aid, _)| aid).collect();
-        for aid in atom_ids {
-            let atom_type = rules::assign_atom_type(&table, aid, &facts)
-                .ok_or_else(|| format!("missing {} atom type for {aid:?}", table.name))?;
-            out.set_atom(aid, keys::TYPE, atom_type)
+
+        // Pass 1 — the table: the first rule that matches each atom.
+        let assigned: Vec<&'static AtdRule> = atom_ids
+            .iter()
+            .map(|aid| {
+                rules::assign_rule(&table, *aid, &facts)
+                    .ok_or_else(|| format!("missing {} atom type for {aid:?}", table.name))
+            })
+            .collect::<Result<_, _>>()?;
+
+        // Pass 2 — the conjugated 2-colouring, which is a fact about the whole
+        // molecule and so cannot be folded into the per-atom loop above: half of
+        // each conjugated system is renamed to the matched rule's `alternate`.
+        let types = conjugate::resolve_types(&atom_ids, &assigned, &facts);
+
+        for (aid, atom_type) in atom_ids.iter().zip(types) {
+            out.set_atom(*aid, keys::TYPE, atom_type)
                 .map_err(|e| e.to_string())?;
         }
         Ok(out)

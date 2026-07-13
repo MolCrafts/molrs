@@ -17,7 +17,38 @@ status change) and conflicts with `CLAUDE.md`.
 
 ---
 
-## 2026-06-19 — GAFF: AmberTools-only, no native molrs GAFF
+## 2026-07-13 — GAFF decision REVERSED: molrs types GAFF/GAFF2 natively
+**Decision (owner-authorised):** the 2026-06-19 "GAFF = AmberTools-only" decision below is
+**REVERSED**. molrs now assigns GAFF, GAFF2, AMBER and SYBYL atom types natively, all
+**37/37** against `antechamber -at {gaff,gaff2,amber,sybyl}`.
+**Why the situation changed:** that decision rested on "a native GAFF typifier would need a
+clean-room reimplementation of antechamber's GPL `atomtype.c` ruleset + a vendored
+`gaff.dat` + an antechamber-parity corpus". All three now exist for other reasons: the ATD
+rule engine was built for AM1-BCC (spec 05), the `.DEF` tables are generated Rust (spec 02),
+and the 37-molecule antechamber oracle is the parity corpus. **Adding GAFF was a table, not
+code** — `AtdParameterSet::{Gff,Gff2,Amber,Sybyl}` were already wired. The licensing concern
+was separately waived by the owner (see the 2026-07-12 entry).
+**Three defects the GAFF columns exposed** (all invisible to BCC/ABCG2/GAS):
+1. The facts layer marked EVERY aromatic atom `AR1` and never wrote `AR2`/`AR3`/`AR4`.
+   BCC/ABCG2/GAS only ever spell the property as `[AR1.AR2]` — an OR — so they are
+   structurally blind to it. GFF discriminates `ca [AR1]` vs `cc [sb,db,AR2]`.
+2. The terminal catch-all row (`ATD DU &` / `ATD ANY &`) of all seven `.DEF` files was
+   dropped at generation. AMBER is the first column where an atom actually falls through,
+   and antechamber's answer genuinely IS `DU` (nitromethane's nitro O, DMSO's S).
+3. `cd`/`nd`/`cf`/`ch` are **not rows in ATOMTYPE_GFF.DEF at all** — antechamber renames half
+   of every conjugated system in a second pass the `.DEF` never describes. The pairing is
+   upstream data (`PARMCHK.DAT` `equivalent_flag`), so it is a table column, not an engine
+   invention. The pass: 2-colour the CONJUGATED subgraph; a single bond keeps the letter, a
+   double/triple bond flips it. NOT positional (pyridone is `cc cd cd cc`, not alternating),
+   NOT gated on aromaticity (benzoquinone has no aromatic bond), and it propagates a COLOUR,
+   not a name (vinylacetylene holds a `ce` and a `cg` in one component).
+**Trap worth remembering:** `alternate` must key on PARMCHK's `equivalent_flag` COLUMN, never
+on the type's spelling — `ATOMTYPE_AMBER.DEF` has real `CC`/`CD` rows (parm94 histidine
+carbons, flag 0), and `ATOMTYPE_GAS.DEF`'s `cg` is a guanidinium carbon, not GAFF's sp
+carbon. Both would be mis-paired by a name-keyed generator; the column is GAFF-namespaced.
+**Status:** stable — supersedes the entry below.
+
+## 2026-06-19 — GAFF: AmberTools-only, no native molrs GAFF — SUPERSEDED 2026-07-13
 **Decision:** GAFF support is **AmberTools (antechamber) delegation only** — no
 native molrs GAFF typifier, `gaff.dat` parser, or clean-room typing. The
 `gaff-typifier-redesign` spec (and the `gaff-typifier-01..05` chain it superseded)

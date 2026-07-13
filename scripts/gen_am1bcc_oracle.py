@@ -5,20 +5,18 @@ that the BCC stage can be regression-tested in ISOLATION from AM1:
 
   geometry + bonds/orders      <- the input molrs must be able to build
   am1_charges (equivalenced)   <- ANTECHAMBER_AM1BCC_PRE.AC  (BCC stage INPUT)
-  bcc_atom_types               <- `-at bcc` run                (typifier oracle)
-  abcg2_atom_types             <- `-at abcg2` run              (typifier oracle)
-  gas_atom_types               <- `-at gas` run                (typifier oracle)
+  <table>_atom_types           <- one `-at <mode>` run each    (typifier oracle)
   bcc_charges (final)          <- output mol2                  (BCC stage OUTPUT)
 
 molrs owns: the atom types and (am1_charges -> bcc_charges).
 Atomiverse owns: producing am1_charges.  antechamber stands in for it here.
 
-The three type columns are the SAME ATD/WILDATOM rule engine driven by three
-different `ATOMTYPE_*.DEF` tables, so they are what pins "one engine, N tables":
-a table-specific hack shows up as a regression in the other two columns.
-Note GAS has an atom-type table but no BCC *correction* table, which is why it
-can only be reached through the table-generic typifier, never through the
-BCC-correction-family selector.
+The seven type columns (see AT_MODES) are the SAME ATD/WILDATOM rule engine
+driven by seven different `ATOMTYPE_*.DEF` tables, so they are what pins
+"one engine, N tables": a table-specific hack shows up as a regression in the
+other six columns.  Note GAS has an atom-type table but no BCC *correction*
+table, which is why it can only be reached through the table-generic typifier,
+never through the BCC-correction-family selector.
 """
 
 import json
@@ -33,6 +31,24 @@ from rdkit.Chem import AllChem
 AMBERHOME = Path("/opt/homebrew/Caskroom/miniconda/base/envs/AmberTools25")
 ANTECHAMBER = AMBERHOME / "bin" / "antechamber"
 SEED = 20260712
+
+# (antechamber `-at` flag, oracle column, the ATOMTYPE_*.DEF the flag walks).
+#
+# The flag and the table are NOT spelled the same: `-at gaff` walks
+# ATOMTYPE_GFF.DEF and `-at gaff2` walks ATOMTYPE_GFF2.DEF (antechamber's own
+# help lists the flags as "gaff, gaff2, amber, bcc, abcg2, and sybyl"; `gas` is
+# undocumented there but real).  The column is named after the TABLE, because
+# that is the axis molrs's `AtdParameterSet` names -- calling the column `gaff`
+# would make the Rust side look like it selects a *flag*.
+AT_MODES = [
+    ("bcc",   "bcc_atom_types",   "ATOMTYPE_BCC.DEF"),
+    ("abcg2", "abcg2_atom_types", "ATOMTYPE_ABCG2.DEF"),
+    ("gas",   "gas_atom_types",   "ATOMTYPE_GAS.DEF"),
+    ("gaff",  "gff_atom_types",   "ATOMTYPE_GFF.DEF"),
+    ("gaff2", "gff2_atom_types",  "ATOMTYPE_GFF2.DEF"),
+    ("amber", "amber_atom_types", "ATOMTYPE_AMBER.DEF"),
+    ("sybyl", "sybyl_atom_types", "ATOMTYPE_SYBYL.DEF"),
+]
 
 # (name, SMILES, net charge) — broad BCC chemistry + molcrafts electrolyte cases
 MOLECULES = [
@@ -174,16 +190,15 @@ def main() -> int:
             # rows would not line up with the molrs-side input.
             assert els == in_elements, f"{name}: atom order drift {els} vs {in_elements}"
 
-            # runs 2-4: one run per atom-type table. Same molecule, same engine
-            # upstream -- only `-at` changes -- so the three columns are directly
+            # runs 2-8: one run per atom-type table. Same molecule, same engine
+            # upstream -- only `-at` changes -- so the seven columns are directly
             # comparable and a table-specific special case cannot hide.
             # `-pf n` is mandatory: `-pf y` deletes ANTECHAMBER_AM1BCC_PRE.AC.
             atom_types = {}
-            for at in ("bcc", "abcg2", "gas"):
+            for at, col, _def in AT_MODES:
                 out_mol2 = work / f"{name}_{at}.mol2"
                 run_antechamber(work, sdf, out_mol2, nc, at)
-                _, _, _, atom_types[at] = parse_mol2(out_mol2)
-            bcc_types = atom_types["bcc"]
+                _, _, _, atom_types[col] = parse_mol2(out_mol2)
 
             # raw (non-equivalenced) sqm Mulliken, to document the -eq averaging
             raw = []
@@ -200,8 +215,8 @@ def main() -> int:
 
             n = len(els)
             assert len(am1_charges) == n and len(bcc_charges) == n, name
-            for at, types in atom_types.items():
-                assert len(types) == n, f"{name}: -at {at} typed {len(types)}/{n} atoms"
+            for col, types in atom_types.items():
+                assert len(types) == n, f"{name}: {col} typed {len(types)}/{n} atoms"
 
             records.append({
                 "name": name,
@@ -216,9 +231,8 @@ def main() -> int:
                 # --- ORACLE molrs must reproduce ---
                 "am1_charges": am1_charges,        # after antechamber -eq equivalencing
                 "bcc_bond_types": bonds,           # (i, j, bcc_bond_type) 1/2/3/7/8/9
-                "bcc_atom_types": bcc_types,               # ATOMTYPE_BCC.DEF codes
-                "abcg2_atom_types": atom_types["abcg2"],   # ATOMTYPE_ABCG2.DEF codes
-                "gas_atom_types": atom_types["gas"],       # ATOMTYPE_GAS.DEF codes
+                # one column per ATOMTYPE_*.DEF table (see AT_MODES)
+                **atom_types,
                 "bcc_charges": bcc_charges,        # final AM1-BCC charges
             })
             eq = "EQ" if raw and any(
@@ -248,12 +262,15 @@ def emit_rust(recs):
     w("//!            aromatic flag, formal charge, plus the AM1 base charges that")
     w("//!            Atomiverse (here: antechamber's sqm) supplies.")
     w("//!   ORACLE — what antechamber produced and molrs must reproduce: BCC bond")
-    w("//!            types, the BCC / ABCG2 / GAS atom types, and the final AM1-BCC")
+    w("//!            types, the seven atom-type columns, and the final AM1-BCC")
     w("//!            charges.")
     w("//!")
-    w("//! The three atom-type columns come from `-at {bcc,abcg2,gas}` on the SAME")
-    w("//! molecule: one rule engine, three `ATOMTYPE_*.DEF` tables. They are what pins")
-    w("//! the engine as table-generic — a per-table special case regresses the others.")
+    w("//! The seven atom-type columns come from `-at {bcc,abcg2,gas,gaff,gaff2,amber,")
+    w("//! sybyl}` on the SAME molecule: one rule engine, seven `ATOMTYPE_*.DEF` tables.")
+    w("//! They are what pins the engine as table-generic — a per-table special case")
+    w("//! regresses the others. The `-at` flag and the table are spelled differently:")
+    w("//! `-at gaff` walks `ATOMTYPE_GFF.DEF`, `-at gaff2` walks `ATOMTYPE_GFF2.DEF`,")
+    w("//! and the columns are named after the TABLE, as `AtdParameterSet` is.")
     w("//!")
     w("//! `am1_charges` are antechamber's PRE-BCC charges (ANTECHAMBER_AM1BCC_PRE.AC),")
     w("//! i.e. sqm Mulliken AFTER topological-equivalence averaging (`-eq 1`, default).")
@@ -292,6 +309,14 @@ def emit_rust(recs):
     w("    /// GAS has no BCC correction table, so it is reachable only through the")
     w("    /// table-generic typifier.")
     w("    pub gas_atom_types: &'static [&'static str],")
+    w("    /// ATOMTYPE_GFF.DEF codes (`antechamber -at gaff`) — GAFF atom types")
+    w("    pub gff_atom_types: &'static [&'static str],")
+    w("    /// ATOMTYPE_GFF2.DEF codes (`antechamber -at gaff2`) — GAFF2 atom types")
+    w("    pub gff2_atom_types: &'static [&'static str],")
+    w("    /// ATOMTYPE_AMBER.DEF codes (`antechamber -at amber`) — AMBER atom types")
+    w("    pub amber_atom_types: &'static [&'static str],")
+    w("    /// ATOMTYPE_SYBYL.DEF codes (`antechamber -at sybyl`) — SYBYL atom types")
+    w("    pub sybyl_atom_types: &'static [&'static str],")
     w("    /// final AM1-BCC charges")
     w("    pub bcc_charges: &'static [f64],")
     w("}")
@@ -326,9 +351,9 @@ def emit_rust(recs):
         for i, j, t in r["bcc_bond_types"]:
             w(f"            ({i}, {j}, {t}),")
         w("        ],")
-        for field in ("bcc_atom_types", "abcg2_atom_types", "gas_atom_types"):
-            ats = ", ".join(f'"{t}"' for t in r[field])
-            w(f"        {field}: &[{ats}],")
+        for _at, col, _def in AT_MODES:
+            ats = ", ".join(f'"{t}"' for t in r[col])
+            w(f"        {col}: &[{ats}],")
         w(f"        bcc_charges: &[{fl(r['bcc_charges'])}],")
         w("    },")
     w("];")

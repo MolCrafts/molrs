@@ -15,6 +15,12 @@ Ten tables:
 All seven `.DEF` files share ONE ATD / WILDATOM grammar, so there is one parser
 here and seven outputs.
 
+An eleventh upstream table is READ but not emitted on its own: `PARMCHK.DAT`
+supplies the `AtdRule.alternate` column (see `parse_parmchk`). The `.DEF` files
+emit only the phase-1 name of a conjugated system (`cc`); antechamber renames one
+colour of each conjugated system to a partner (`cd`) that no `.DEF` row declares,
+and `PARMCHK.DAT` is where that pairing is written down.
+
 The environment (`f9`) and atom-property (`f8`) mini-languages are PRE-PARSED
 into a static AST — that is the whole point: molrs walks the AST, it never
 re-parses a string. Pattern atom names are resolved here too (`EW` / WILDATOM /
@@ -89,15 +95,40 @@ ENV_BOND_TYPES = {
 
 FLOAT_RE = re.compile(r"^[+-]?\d+\.\d+$")
 
+# (file, module, const, gaff_namespace)
+#
+# `gaff_namespace` — is this `.DEF` written in the atom-type namespace that
+# PARMCHK.DAT's `equivalent_flag` column describes? Only `-at gaff` / `-at gaff2`
+# are, and the column may only be applied to those two.
+#
+# It is a NAMESPACE fact, not a per-table special case, and it is the same fact
+# the WILDATOM aliases already carry: a name means what the FILE that declares it
+# says it means (`XB` is `C3 N2 N3 O2 S2 P2` in ATOMTYPE_BCC.DEF and `N P` in
+# ATOMTYPE_GFF.DEF). PARMCHK.DAT's lowercase PARM rows are GAFF types, so its
+# `cg` is GAFF's inner sp carbon of a conjugated system — but `ATOMTYPE_GAS.DEF`
+# ALSO spells a type `cg`, and there it is a guanidinium carbon (`C` bonded to
+# three `N3`), which is not half of anything: GASPARM.DAT has no `ch` row at all.
+# The two `cg`s are one PARM row upstream and cannot be told apart inside
+# PARMCHK.DAT — every other column of that row (mass, group, atomic number) is
+# identical — so the scope has to be stated here.
+#
+# This is the same trap as ATOMTYPE_AMBER.DEF's `CC`/`CD` (parm94's histidine
+# carbons, `equivalent_flag` 0), one table over: a shared SPELLING is not a
+# shared meaning. The flag column catches the AMBER pair on its own; only the
+# namespace catches the GAS one.
 ATOMTYPE_FILES = [
-    ("ATOMTYPE_BCC.DEF", "atomtype_bcc", "ATOMTYPE_BCC"),
-    ("ATOMTYPE_ABCG2.DEF", "atomtype_abcg2", "ATOMTYPE_ABCG2"),
-    ("ATOMTYPE_GAS.DEF", "atomtype_gas", "ATOMTYPE_GAS"),
-    ("ATOMTYPE_GFF.DEF", "atomtype_gff", "ATOMTYPE_GFF"),
-    ("ATOMTYPE_GFF2.DEF", "atomtype_gff2", "ATOMTYPE_GFF2"),
-    ("ATOMTYPE_AMBER.DEF", "atomtype_amber", "ATOMTYPE_AMBER"),
-    ("ATOMTYPE_SYBYL.DEF", "atomtype_sybyl", "ATOMTYPE_SYBYL"),
+    ("ATOMTYPE_BCC.DEF", "atomtype_bcc", "ATOMTYPE_BCC", False),
+    ("ATOMTYPE_ABCG2.DEF", "atomtype_abcg2", "ATOMTYPE_ABCG2", False),
+    ("ATOMTYPE_GAS.DEF", "atomtype_gas", "ATOMTYPE_GAS", False),
+    ("ATOMTYPE_GFF.DEF", "atomtype_gff", "ATOMTYPE_GFF", True),
+    ("ATOMTYPE_GFF2.DEF", "atomtype_gff2", "ATOMTYPE_GFF2", True),
+    ("ATOMTYPE_AMBER.DEF", "atomtype_amber", "ATOMTYPE_AMBER", False),
+    ("ATOMTYPE_SYBYL.DEF", "atomtype_sybyl", "ATOMTYPE_SYBYL", False),
 ]
+
+#: The conjugated pairing table. Read for ONE column — `equivalent_flag` — which
+#: is the only in-repo source of the phase-2 names (`cd`, `cf`, ...).
+PARMCHK_FILE = "PARMCHK.DAT"
 
 #: Every upstream table this generator consumes. Hashed into MANIFEST.sha256 so
 #: the provenance of the committed `.rs` is recorded, not merely asserted.
@@ -105,7 +136,8 @@ SOURCE_FILES: list[str] = [
     "BCCPARM.DAT",
     "BCCPARM_ABCG2.DAT",
     "GASPARM.DAT",
-    *[name for name, _, _ in ATOMTYPE_FILES],
+    PARMCHK_FILE,
+    *[name for name, _, _, _ in ATOMTYPE_FILES],
 ]
 
 
@@ -249,6 +281,113 @@ def emit_gasparm(path: Path) -> str:
     w("];")
     w("")
     return "\n".join(L)
+
+
+# ---------------------------------------------------------------------------
+# PARMCHK.DAT — the conjugated pairing (the `alternate` column)
+# ---------------------------------------------------------------------------
+
+#: The header's own enumeration of the pairing, e.g.
+#:     #   equivalent_flag:  1 for cc/ce/cg/nc/ne/pc/pe
+#:     #                     2 for cd/cf/ch/nd/nf/pd/pf
+#: The trailing `0 for others` line cannot match: it names no `a/b/c` list.
+EQUIVALENT_FLAG_RE = re.compile(
+    r"^#\s*(?:equivalent_flag:\s*)?([12])\s+for\s+(\w+(?:/\w+)+)\s*$"
+)
+
+
+@dataclass(frozen=True)
+class Equivalents:
+    """The conjugated pairing `PARMCHK.DAT` declares, read from BOTH of its halves."""
+
+    #: phase-1 atom type -> the phase-2 type antechamber renames it to.
+    pairs: dict[str, str]
+    #: atom type -> its `equivalent_flag` column, verbatim (sign included).
+    flags: dict[str, int]
+
+
+def parse_parmchk(path: Path) -> Equivalents:
+    """Read the conjugated pairing out of `PARMCHK.DAT`.
+
+    Two halves of the same fact, and BOTH are needed:
+
+    * the **header** enumerates the pairing by name (`1 for cc/ce/cg/nc/ne/pc/pe`
+      / `2 for cd/cf/ch/nd/nf/pd/pf`), zipped position-wise into `pairs`;
+    * the per-type **`equivalent_flag` column** of each `PARM` row says whether
+      that particular type takes part.
+
+    They are cross-checked against each other, so an upstream edit to either one
+    is a generator error rather than a silently wrong `alternate` column.
+    """
+    pairs: dict[str, str] = {}
+    flags: dict[str, int] = {}
+    phases: dict[int, list[str]] = {}
+
+    for lineno, raw in enumerate(path.read_text().splitlines(), 1):
+        header = EQUIVALENT_FLAG_RE.match(raw.rstrip())
+        if header:
+            phase, names = int(header[1]), header[2].split("/")
+            if phase in phases:
+                raise GrammarError(f"{path.name}:{lineno}: phase {phase} declared twice")
+            phases[phase] = names
+            continue
+        if not raw.startswith("PARM"):
+            continue
+        f = raw.split()
+        if len(f) < 7:
+            raise GrammarError(f"{path.name}:{lineno}: short PARM row: {raw}")
+        flags[f[1]] = int(f[5])
+
+    if sorted(phases) != [1, 2]:
+        raise GrammarError(
+            f"{path.name}: expected the header to declare both equivalent_flag phases, "
+            f"found {sorted(phases)}"
+        )
+    if len(phases[1]) != len(phases[2]):
+        raise GrammarError(
+            f"{path.name}: the two equivalent_flag phases have different lengths "
+            f"({phases[1]} vs {phases[2]}); the pairing is positional and no longer zips"
+        )
+
+    for phase, names in phases.items():
+        for name in names:
+            if name not in flags:
+                raise GrammarError(f"{path.name}: header names `{name}`, which has no PARM row")
+            # The sign of the column distinguishes ring (-) from chain (+) types;
+            # the phase is its magnitude.
+            if abs(flags[name]) != phase:
+                raise GrammarError(
+                    f"{path.name}: header puts `{name}` in phase {phase} but its "
+                    f"equivalent_flag column says {flags[name]}"
+                )
+    pairs = dict(zip(phases[1], phases[2], strict=True))
+    return Equivalents(pairs=pairs, flags=flags)
+
+
+def alternate_of(atom_type: str, eq: Equivalents | None) -> str | None:
+    """The phase-2 name `atom_type` is renamed to on the other colour, or `None`.
+
+    `eq` is `None` for a `.DEF` outside the GAFF namespace (see `ATOMTYPE_FILES`),
+    where PARMCHK.DAT's column says nothing about the types the file declares.
+    Within that namespace, three independent gates — three different things that
+    must NOT be paired:
+
+    * the **flag column**, looked up case-sensitively, is what a type must carry to
+      take part at all. `ATOMTYPE_AMBER.DEF` has real `CC` and `CD` rows — parm94's
+      histidine carbons — whose `equivalent_flag` is `0`. Keying on the *spelling*
+      of a type instead of on its column would pair them, 2-colour the AMBER table,
+      and break a column that reproduces antechamber 37/37 today.
+    * the **header's enumeration** is what supplies the partner's name. A nonzero
+      flag alone is not a pairing: upstream flags `cp` / `cq` (-1 / -2) but does not
+      list them in the header, and `antechamber -at gaff` types biphenyl `cp cp`,
+      never `cp cq` — the phase renaming does not reach them.
+    * the **namespace** decides whether the column applies to this file at all.
+    """
+    if eq is None:
+        return None
+    if abs(eq.flags.get(atom_type, 0)) != 1:
+        return None
+    return eq.pairs.get(atom_type)
 
 
 # ---------------------------------------------------------------------------
@@ -441,10 +580,14 @@ def parse_atomtype_def(path: Path) -> tuple[dict[str, list[tuple[int, int | None
         if len(f) < 3:
             raise GrammarError(f"{path.name}:{lineno}: short ATD row: {raw}")
         atom_type = f[1]
-        residue = f[2] if len(f) > 2 else "&"
-        # `DU` (dummy) and the residue-less catch-all carry no constraints.
-        if atom_type == "DU" or residue == "&":
-            continue
+        # Every table ends with a constraint-free fall-through row — `ATD DU &`
+        # (BCC / ABCG2 / GAS / GFF / GFF2 / AMBER) or `ATD ANY &` (SYBYL). It is
+        # a NAMED RULE OF THE TABLE, not an invented fallback, and antechamber
+        # reaches it: `-at amber` types nitromethane's two nitro oxygens and
+        # DMSO's sulfoxide sulfur `DU`. Dropping it made molrs error where
+        # antechamber answers, so it is emitted like any other row — with every
+        # column unconstrained, which is what `&` in the residue column means.
+        residue = text(f, 2) or "*"
         env = text(f, 8)
         env_bonds = text(f, 9)
         prop = text(f, 7)
@@ -516,7 +659,7 @@ PARAM_TYPES = [
 ]
 
 
-def emit_atomtype(path: Path, const: str) -> str:
+def emit_atomtype(path: Path, const: str, eq: Equivalents | None) -> str:
     wildatoms, rules = parse_atomtype_def(path)
 
     L: list[str] = []
@@ -545,12 +688,28 @@ def emit_atomtype(path: Path, const: str) -> str:
     w("];")
     w("")
 
+    paired = sum(1 for r in rules if alternate_of(r.atom_type, eq))
     w(f"/// The {len(rules)} `ATD` rules of `{path.name}`, in file order.")
     w("///")
-    w("/// Order is significant: the FIRST rule that matches wins. `DU` (dummy) rows and")
-    w("/// the residue-less catch-all carry no constraints and are not emitted.")
+    w("/// Order is significant: the FIRST rule that matches wins — which is why the")
+    w("/// table's own last row is the constraint-free fall-through (`DU`, or `ANY` in")
+    w("/// `ATOMTYPE_SYBYL.DEF`). It matches anything nothing above it matched, and")
+    w("/// antechamber does reach it: `-at amber` types nitromethane's nitro oxygens")
+    w("/// `DU`. It is a rule of the table, not a fallback the engine invents.")
+    w("///")
+    if paired:
+        w(f"/// {paired} of these rules carry an `alternate`: the phase-2 name")
+        w("/// `PARMCHK.DAT` pairs their atom type with. The rule emits the phase-1 name;")
+        w("/// the typifier's 2-colouring pass renames one colour of each conjugated")
+        w("/// system to the alternate, which is the only way a type no ATD row declares")
+        w("/// (`cd`) is ever assigned.")
+    else:
+        w("/// No rule here carries an `alternate`: `PARMCHK.DAT`'s `equivalent_flag`")
+        w("/// column describes the GAFF atom-type namespace, and this file is not written")
+        w("/// in it. Nothing in this table is ever renamed by the 2-colouring pass.")
     w("pub const RULES: &[AtdRule] = &[")
     for r in rules:
+        alternate = alternate_of(r.atom_type, eq)
         env = (
             "&[" + ", ".join(emit_pattern(p, wildatoms) for p in r.env) + "]"
             if r.env is not None else None
@@ -565,6 +724,7 @@ def emit_atomtype(path: Path, const: str) -> str:
             env_bonds = f"&[{bonds}]"
         w("    AtdRule {")
         w(f"        atom_type: {rust_str(r.atom_type)},")
+        w(f"        alternate: {opt(rust_str(alternate)) if alternate else 'None'},")
         w(f"        residue: {rust_str(r.residue)},")
         w(f"        atomic_number: {opt(str(r.atomic_number) if r.atomic_number is not None else None)},")
         w(f"        degree: {opt(str(r.degree) if r.degree is not None else None)},")
@@ -642,13 +802,20 @@ def main() -> int:
 
     # Emit into a tempdir first: a mid-run GrammarError must not leave a
     # half-written table behind in the repo.
+    # The conjugated pairing feeds every ATD table's `alternate` column, so it is
+    # read once, up front: a malformed PARMCHK.DAT must fail before anything is
+    # emitted, not leave six good tables and one silently unpaired.
+    equivalents = parse_parmchk(src / PARMCHK_FILE)
+
     with tempfile.TemporaryDirectory(prefix="param-tables-") as tmp:
         staged: dict[str, str] = {}
         staged["bccparm.rs"] = emit_bccparm(src / "BCCPARM.DAT", "BCC")
         staged["bccparm_abcg2.rs"] = emit_bccparm(src / "BCCPARM_ABCG2.DAT", "ABCG2")
         staged["gasparm.rs"] = emit_gasparm(src / "GASPARM.DAT")
-        for filename, module, const in ATOMTYPE_FILES:
-            staged[f"{module}.rs"] = emit_atomtype(src / filename, const)
+        for filename, module, const, gaff_namespace in ATOMTYPE_FILES:
+            staged[f"{module}.rs"] = emit_atomtype(
+                src / filename, const, equivalents if gaff_namespace else None
+            )
         modules = [name[:-3] for name in staged]
         staged["mod.rs"] = emit_mod(modules)
 

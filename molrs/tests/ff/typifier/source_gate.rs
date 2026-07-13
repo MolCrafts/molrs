@@ -37,6 +37,26 @@ pub fn typifier_sources() -> Vec<(PathBuf, String)> {
     out
 }
 
+/// The ATD engine tree — `src/ff/typifier/atd/`, with line comments stripped.
+///
+/// Narrower than [`typifier_sources`] on purpose: the *engine* is what must stay
+/// table-generic. Its callers may legitimately name a parameter set (`am1bcc.rs`
+/// maps `BccParameterSet::Bcc` to `AtdParameterSet::Bcc`), so scoping a
+/// "no per-set branch" gate at the whole typifier tree would fail on code that is
+/// doing exactly the right thing.
+pub fn atd_engine_sources() -> Vec<(PathBuf, String)> {
+    let engine = typifier_src_dir().join("atd");
+    let mut out = Vec::new();
+    collect(&engine, &mut out);
+    assert!(
+        !out.is_empty(),
+        "no .rs found under {} — the gate would pass vacuously",
+        engine.display()
+    );
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
 fn collect(dir: &Path, out: &mut Vec<(PathBuf, String)>) {
     for entry in std::fs::read_dir(dir).expect("read the typifier source tree") {
         let path = entry.expect("dir entry").path();

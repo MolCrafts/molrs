@@ -134,15 +134,17 @@ pub enum AtomProp {
     Rg10,
     /// `NR` — in no ring at all.
     Nr,
-    /// `AR1` — pure aromatic ring (benzene-like).
+    /// `AR1` — pure aromatic ring (benzene, pyridine).
     Ar1,
-    /// `AR2` — planar ring fused to a pure aromatic ring.
+    /// `AR2` — planar ring with two continuous single bonds and at least two
+    /// double bonds (imidazole, thiophene, pyrrole).
     Ar2,
-    /// `AR3` — planar ring not otherwise classified.
+    /// `AR3` — planar ring whose double bonds are formed between ring atoms and
+    /// non-ring atoms (a quinone, a pyridone).
     Ar3,
-    /// `AR4` — ring with one or more sp3 atoms.
+    /// `AR4` — a ring that is none of `AR1`, `AR2`, `AR3` or `AR5`.
     Ar4,
-    /// `AR5` — non-planar ring.
+    /// `AR5` — pure aliphatic ring, made of sp3 carbon.
     Ar5,
     /// `SB` — single bonds, strictly.
     SbStrict,
@@ -273,6 +275,22 @@ pub struct EnvBond {
 pub struct AtdRule {
     /// The atom type assigned when the rule matches.
     pub atom_type: &'static str,
+    /// The conjugated partner of [`atom_type`](Self::atom_type), when it has one.
+    ///
+    /// An `ATOMTYPE_GFF*.DEF` row only ever emits the **phase-1** name of a
+    /// conjugated system — `cc`, `ce`, `cg`, `nc`, `ne`, `pc`, `pe`. antechamber
+    /// then 2-colours each conjugated system and renames one colour to its
+    /// partner (`cd`, `cf`, `ch`, `nd`, `nf`, `pd`, `pf`), names that appear in
+    /// no `.DEF` row at all. That pairing is upstream **data**, not an engine
+    /// invention: `PARMCHK.DAT` declares it in a per-type `equivalent_flag`
+    /// column (`1` for the phase-1 names, `2` for the phase-2 names, `0` for
+    /// everything else). Hence a column of the rule rather than a `match` in the
+    /// typifier.
+    ///
+    /// `None` whenever that column says `0` — including `ATOMTYPE_AMBER.DEF`'s
+    /// `CC` / `CD`, which are parm94's histidine carbons and **not** a conjugated
+    /// pair despite the spelling.
+    pub alternate: Option<&'static str>,
     /// Residue name, or `*` for any.
     pub residue: &'static str,
     /// Required atomic number.

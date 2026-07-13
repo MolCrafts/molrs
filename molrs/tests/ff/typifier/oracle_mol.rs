@@ -17,18 +17,35 @@ use super::antechamber_oracle::AntechamberCase;
 /// Returns the graph and the atom ids in oracle atom order, so an oracle column
 /// can be zipped straight onto it.
 pub fn build_case(case: &AntechamberCase) -> (Atomistic, Vec<AtomId>) {
+    build_molecule(case.elements, case.xyz, case.formal_charges, case.bonds)
+}
+
+/// The builder itself, over the four INPUT columns every antechamber-derived
+/// fixture carries: element, coordinates, formal charge, and `(i, j, order,
+/// is_aromatic)` bonds.
+///
+/// Split out of [`build_case`] so a fixture that is not an `AntechamberCase` —
+/// the out-of-oracle probes in `atd_conjugated.rs` — reaches the typifier through
+/// the SAME builder rather than a copy of it. Two builders would be two chances to
+/// hand the typifier a molecule no molrs user has (antechamber's perceived bond
+/// types instead of the SDF's), and the copy would be the one nobody re-reads.
+pub fn build_molecule(
+    elements: &[&str],
+    xyz: &[[f64; 3]],
+    formal_charges: &[i32],
+    bonds: &[(usize, usize, f64, bool)],
+) -> (Atomistic, Vec<AtomId>) {
     let mut mol = Atomistic::new();
-    let ids: Vec<AtomId> = case
-        .elements
+    let ids: Vec<AtomId> = elements
         .iter()
-        .zip(case.xyz)
+        .zip(xyz)
         .map(|(el, [x, y, z])| mol.add_atom_xyz(el, *x, *y, *z))
         .collect();
-    for (aid, fc) in ids.iter().zip(case.formal_charges) {
+    for (aid, fc) in ids.iter().zip(formal_charges) {
         mol.set_atom(*aid, "formal_charge", *fc)
             .expect("set formal_charge");
     }
-    for (i, j, order, aromatic) in case.bonds {
+    for (i, j, order, aromatic) in bonds {
         let bid = mol.add_bond(ids[*i], ids[*j]).expect("add bond");
         mol.set_bond_prop(bid, keys::ORDER, *order)
             .expect("set bond order");

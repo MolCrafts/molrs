@@ -24,8 +24,12 @@ mod am1bcc_antechamber;
 
 #[path = "atd_antechamber.rs"]
 mod atd_antechamber;
+#[path = "atd_conjugated.rs"]
+mod atd_conjugated;
 #[path = "atd_no_runtime_parse.rs"]
 mod atd_no_runtime_parse;
+#[path = "atd_tables_only.rs"]
+mod atd_tables_only;
 
 #[path = "bcc_bond_type.rs"]
 mod bcc_bond_type;

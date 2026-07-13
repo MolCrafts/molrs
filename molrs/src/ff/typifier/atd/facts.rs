@@ -10,7 +10,7 @@
 //! `ATOMTYPE_BCC.DEF` and in `ATOMTYPE_GAS.DEF`. That is what lets one engine
 //! walk every table.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use molrs::store::keys;
 use molrs::system::molgraph::PropValue;
@@ -94,21 +94,24 @@ impl MolFacts {
         let mut props = vec![AtomPropertyFacts::default(); atom_ids.len()];
         for ring in ring_info.rings() {
             let size = ring.len();
+            let class = classify_ring(ring, &index, &atomic_number, &degree, &neighbors)?;
             for aid in ring {
                 let p = &mut props[index[aid]];
                 p.rg[0] += 1;
                 if size < p.rg.len() {
                     p.rg[size] += 1;
                 }
+                match class {
+                    RingClass::Ar1 => p.ar1 += 1,
+                    RingClass::Ar2 => p.ar2 += 1,
+                    RingClass::Ar3 => p.ar3 += 1,
+                    RingClass::Ar4 => p.ar4 += 1,
+                    RingClass::Ar5 => p.ar5 += 1,
+                }
             }
         }
-        for (i, aid) in atom_ids.iter().copied().enumerate() {
-            props[i].nr = usize::from(props[i].rg[0] == 0);
-            if is_aromatic_atom(mol, aid)? {
-                props[i].ar1 = 1;
-            } else if props[i].rg[0] > 0 {
-                props[i].ar5 = 1;
-            }
+        for p in &mut props {
+            p.nr = usize::from(p.rg[0] == 0);
         }
         for (i, nbs) in neighbors.iter().enumerate() {
             for (_, bond_type, _) in nbs {
@@ -165,15 +168,17 @@ pub(super) struct AtomPropertyFacts {
     rg: [usize; 12],
     /// `NR` — in no ring.
     nr: usize,
-    /// `AR1` — pure aromatic ring.
+    /// `AR1` — rings of this atom that are pure aromatic (benzene, pyridine).
     ar1: usize,
-    /// `AR2` — planar ring fused to a pure aromatic ring.
+    /// `AR2` — planar rings of this atom with two continuous single bonds and at
+    /// least two double bonds (imidazole, thiophene, pyrrole).
     ar2: usize,
-    /// `AR3` — planar ring, otherwise unclassified.
+    /// `AR3` — planar rings of this atom whose double bonds are formed between
+    /// ring atoms and non-ring atoms (a quinone, a pyridone).
     ar3: usize,
-    /// `AR4` — ring with sp3 atoms.
+    /// `AR4` — rings of this atom that are none of AR1, AR2, AR3 or AR5.
     ar4: usize,
-    /// `AR5` — non-planar ring.
+    /// `AR5` — pure aliphatic rings of this atom, made of sp3 carbon.
     ar5: usize,
     /// `sb` — single bonds, aromatic and delocalized ones included.
     sb: usize,
@@ -259,50 +264,161 @@ impl AtomPropertyFacts {
     }
 }
 
-/// Is `aid` aromatic — by its own flag, or by any bond it carries?
-fn is_aromatic_atom(mol: &Atomistic, aid: AtomId) -> Result<bool, String> {
-    let atom = mol.get_atom(aid).map_err(|e| e.to_string())?;
-    if prop_truthy(atom.get("is_aromatic")) {
-        return Ok(true);
+/// The class of a whole ring, as `ATOMTYPE_*.DEF`'s own header defines it.
+///
+/// The header (`AR1` … `AR5`, verbatim) is the specification:
+///
+/// * **AR1** — "Pure aromatic atom (such as benzene and pyridine)".
+/// * **AR2** — "Atom in a planar ring, usually the ring has two continuous
+///   single bonds and at least two double bonds".
+/// * **AR3** — "Atom in a planar ring, which has one or several double bonds
+///   formed between non-ring atoms and the ring atoms".
+/// * **AR4** — "Atom other than AR1, AR2, AR3 and AR5".
+/// * **AR5** — "Pure aliphatic atom in a ring, which is made of sp3 carbon".
+///
+/// The property is a fact about the **ring**, not about the atom: every atom of
+/// the ring gets the ring's class, and an atom in two rings is counted once per
+/// ring (`[2AR1]` is a rule a table may legitimately write).
+///
+/// The AR1/AR2 boundary is what separates benzene from imidazole, and it is the
+/// only place the five-membered heteroaromatics are visible: `ATOMTYPE_GFF.DEF`
+/// spells `ca` as `[AR1]` and `cc` as `[sb,db,AR2]`, so calling a pyrrole-type
+/// ring AR1 types thiophene's carbons `ca` where antechamber says `cc`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RingClass {
+    Ar1,
+    Ar2,
+    Ar3,
+    Ar4,
+    Ar5,
+}
+
+/// Which class `ring` belongs to.
+///
+/// `ring` is a closed path (consecutive atoms are bonded, and the last is bonded
+/// back to the first), which is what [`find_rings`] returns.
+fn classify_ring(
+    ring: &[AtomId],
+    index: &HashMap<AtomId, usize>,
+    atomic_number: &[u8],
+    degree: &[usize],
+    neighbors: &[Vec<(AtomId, i32, BondId)>],
+) -> Result<RingClass, String> {
+    let n = ring.len();
+    let members: HashSet<AtomId> = ring.iter().copied().collect();
+
+    // The bond joining ring[k] to ring[k + 1], wrapping at the end.
+    let mut ring_bonds = Vec::with_capacity(n);
+    for k in 0..n {
+        let a = ring[k];
+        let b = ring[(k + 1) % n];
+        let ia = *index
+            .get(&a)
+            .ok_or_else(|| format!("ring atom {a:?} is not in the molecule"))?;
+        let bond_type = neighbors[ia]
+            .iter()
+            .find(|(nb, _, _)| *nb == b)
+            .map(|(_, bond_type, _)| *bond_type)
+            .ok_or_else(|| format!("ring path is not closed: {a:?} is not bonded to {b:?}"))?;
+        ring_bonds.push(bond_type);
     }
-    for (bid, _) in mol.incident_bond_ids(aid) {
-        let bond = mol.get_bond(bid).map_err(|e| e.to_string())?;
-        if is_aromatic_bond(&bond) {
-            return Ok(true);
+
+    // AR1 — a *pure* aromatic ring: every bond aromatic, and every atom carrying
+    // one of the ring's double bonds. Benzene and pyridine alternate perfectly;
+    // imidazole's pyrrole-type N sits between two aromatic *single* bonds, which
+    // is precisely the "two continuous single bonds" AR2 names. An odd-membered
+    // ring can never alternate, so a 5-ring is never AR1 — as intended.
+    let aromatic_ring = ring_bonds.iter().all(|t| is_aromatic_bond_type(*t));
+    let mut carries_ring_double = vec![false; n];
+    for (k, bond_type) in ring_bonds.iter().enumerate() {
+        if is_double_bond_type(*bond_type) {
+            carries_ring_double[k] = true;
+            carries_ring_double[(k + 1) % n] = true;
         }
     }
-    Ok(false)
-}
-
-/// Is this bond aromatic — by flag, by order 1.5, or by antechamber type 7/8/10?
-fn is_aromatic_bond(bond: &Bond) -> bool {
-    prop_truthy(bond.props.get("is_aromatic"))
-        || bond
-            .props
-            .get(keys::ORDER)
-            .and_then(PropValue::as_f64)
-            .is_some_and(|order| (order - 1.5).abs() < 1.0e-6)
-        || bond
-            .props
-            .get(keys::TYPE)
-            .and_then(|v| match v {
-                PropValue::Int(v) => Some(*v),
-                PropValue::F64(v) if (*v - v.round()).abs() < 1.0e-6 => Some(v.round() as i32),
-                PropValue::Str(s) => s.parse::<i32>().ok(),
-                PropValue::F64(_) | PropValue::Bool(_) => None,
-            })
-            .is_some_and(|t| matches!(t, 7 | 8 | 10))
-}
-
-/// Read a truthy graph property, whatever type it was stored as.
-fn prop_truthy(prop: Option<&PropValue>) -> bool {
-    match prop {
-        Some(PropValue::Bool(v)) => *v,
-        Some(PropValue::Int(v)) => *v != 0,
-        Some(PropValue::F64(v)) => *v != 0.0,
-        Some(PropValue::Str(v)) => matches!(v.as_str(), "1" | "true" | "True" | "TRUE" | "ar"),
-        None => false,
+    if aromatic_ring && carries_ring_double.iter().all(|carries| *carries) {
+        return Ok(RingClass::Ar1);
     }
+
+    let planar = ring
+        .iter()
+        .all(|aid| is_planar_ring_atom(*aid, index, atomic_number, neighbors));
+    if planar {
+        // AR3 before AR2: the header separates them by whether the ring's double
+        // bonds point *out* of the ring (a quinone, a pyridone), and a ring that
+        // has exocyclic double bonds usually has continuous single bonds too. The
+        // seven tables mirror every AR2 rule with an identical AR3 one, so this
+        // order is not observable through them — but the header's wording is, and
+        // it is what a future table would be written against.
+        let exocyclic_double = ring.iter().any(|aid| {
+            let i = index[aid];
+            neighbors[i]
+                .iter()
+                .any(|(nb, bond_type, _)| !members.contains(nb) && is_double_bond_type(*bond_type))
+        });
+        return Ok(if exocyclic_double {
+            RingClass::Ar3
+        } else {
+            RingClass::Ar2
+        });
+    }
+
+    // AR5 — "pure aliphatic ... made of sp3 carbon": cyclohexane, cyclopropane.
+    let aliphatic = ring.iter().all(|aid| {
+        let i = index[aid];
+        atomic_number[i] == 6 && degree[i] == 4
+    });
+    Ok(if aliphatic {
+        RingClass::Ar5
+    } else {
+        RingClass::Ar4
+    })
+}
+
+/// Is this ring atom planar — i.e. does it keep the ring flat?
+///
+/// Either it is sp2 itself (it carries an aromatic or double bond, whether
+/// inside the ring or hanging off it), or it is a heteroatom donating a lone
+/// pair into a neighbouring sp2 centre — the `N` of pyrrole, the `O` of furan,
+/// the `S` of thiophene, none of which carry a double bond of their own.
+///
+/// An sp3 carbon is neither, which is what keeps ethylene carbonate's ring
+/// (`-O-CH2-CH2-O-`) out of AR2 / AR3 despite its exocyclic `C=O`.
+fn is_planar_ring_atom(
+    aid: AtomId,
+    index: &HashMap<AtomId, usize>,
+    atomic_number: &[u8],
+    neighbors: &[Vec<(AtomId, i32, BondId)>],
+) -> bool {
+    let i = index[&aid];
+    if is_sp2(i, neighbors) {
+        return true;
+    }
+    let lone_pair_donor = matches!(atomic_number[i], 7 | 8 | 15 | 16);
+    lone_pair_donor
+        && neighbors[i]
+            .iter()
+            .any(|(nb, _, _)| is_sp2(index[nb], neighbors))
+}
+
+/// Does the atom at row `i` carry any bond that pins it into a plane?
+fn is_sp2(i: usize, neighbors: &[Vec<(AtomId, i32, BondId)>]) -> bool {
+    neighbors[i].iter().any(|(_, bond_type, _)| {
+        is_double_bond_type(*bond_type) || is_aromatic_bond_type(*bond_type)
+    })
+}
+
+/// Antechamber's aromatic bond types: 7 (aromatic single), 8 (aromatic double),
+/// 10 (the unresolved aromatic precursor).
+fn is_aromatic_bond_type(bond_type: i32) -> bool {
+    matches!(bond_type, 7 | 8 | 10)
+}
+
+/// A bond that makes both endpoints sp2: a plain double (2) or an aromatic
+/// double (8). Aromatic singles (7) and delocalized bonds (9) are not doubles —
+/// that distinction is exactly what the AR1/AR2 boundary rests on.
+fn is_double_bond_type(bond_type: i32) -> bool {
+    matches!(bond_type, 2 | 8)
 }
 
 /// The antechamber bond type a bond carries: 1 single, 2 double, 3 triple,

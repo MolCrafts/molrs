@@ -7,12 +7,15 @@
 //!            aromatic flag, formal charge, plus the AM1 base charges that
 //!            Atomiverse (here: antechamber's sqm) supplies.
 //!   ORACLE — what antechamber produced and molrs must reproduce: BCC bond
-//!            types, the BCC / ABCG2 / GAS atom types, and the final AM1-BCC
+//!            types, the seven atom-type columns, and the final AM1-BCC
 //!            charges.
 //!
-//! The three atom-type columns come from `-at {bcc,abcg2,gas}` on the SAME
-//! molecule: one rule engine, three `ATOMTYPE_*.DEF` tables. They are what pins
-//! the engine as table-generic — a per-table special case regresses the others.
+//! The seven atom-type columns come from `-at {bcc,abcg2,gas,gaff,gaff2,amber,
+//! sybyl}` on the SAME molecule: one rule engine, seven `ATOMTYPE_*.DEF` tables.
+//! They are what pins the engine as table-generic — a per-table special case
+//! regresses the others. The `-at` flag and the table are spelled differently:
+//! `-at gaff` walks `ATOMTYPE_GFF.DEF`, `-at gaff2` walks `ATOMTYPE_GFF2.DEF`,
+//! and the columns are named after the TABLE, as `AtdParameterSet` is.
 //!
 //! `am1_charges` are antechamber's PRE-BCC charges (ANTECHAMBER_AM1BCC_PRE.AC),
 //! i.e. sqm Mulliken AFTER topological-equivalence averaging (`-eq 1`, default).
@@ -51,6 +54,14 @@ pub struct AntechamberCase {
     /// GAS has no BCC correction table, so it is reachable only through the
     /// table-generic typifier.
     pub gas_atom_types: &'static [&'static str],
+    /// ATOMTYPE_GFF.DEF codes (`antechamber -at gaff`) — GAFF atom types
+    pub gff_atom_types: &'static [&'static str],
+    /// ATOMTYPE_GFF2.DEF codes (`antechamber -at gaff2`) — GAFF2 atom types
+    pub gff2_atom_types: &'static [&'static str],
+    /// ATOMTYPE_AMBER.DEF codes (`antechamber -at amber`) — AMBER atom types
+    pub amber_atom_types: &'static [&'static str],
+    /// ATOMTYPE_SYBYL.DEF codes (`antechamber -at sybyl`) — SYBYL atom types
+    pub sybyl_atom_types: &'static [&'static str],
     /// final AM1-BCC charges
     pub bcc_charges: &'static [f64],
 }
@@ -82,6 +93,10 @@ pub const CASES: &[AntechamberCase] = &[
         bcc_atom_types: &["11", "91", "91", "91", "91"],
         abcg2_atom_types: &["11", "91", "91", "91", "91"],
         gas_atom_types: &["c3", "h", "h", "h", "h"],
+        gff_atom_types: &["c3", "hc", "hc", "hc", "hc"],
+        gff2_atom_types: &["c3", "hc", "hc", "hc", "hc"],
+        amber_atom_types: &["CT", "HC", "HC", "HC", "HC"],
+        sybyl_atom_types: &["C.3", "H", "H", "H", "H"],
         bcc_charges: &[-0.108800, 0.026700, 0.026700, 0.026700, 0.026700],
     },
     AntechamberCase {
@@ -127,6 +142,10 @@ pub const CASES: &[AntechamberCase] = &[
         bcc_atom_types: &["11", "11", "91", "91", "91", "91", "91", "91"],
         abcg2_atom_types: &["11", "11", "91", "91", "91", "91", "91", "91"],
         gas_atom_types: &["c3", "c3", "h", "h", "h", "h", "h", "h"],
+        gff_atom_types: &["c3", "c3", "hc", "hc", "hc", "hc", "hc", "hc"],
+        gff2_atom_types: &["c3", "c3", "hc", "hc", "hc", "hc", "hc", "hc"],
+        amber_atom_types: &["CT", "CT", "HC", "HC", "HC", "HC", "HC", "HC"],
+        sybyl_atom_types: &["C.3", "C.3", "H", "H", "H", "H", "H", "H"],
         bcc_charges: &[
             -0.094100, -0.094100, 0.031700, 0.031700, 0.031700, 0.031700, 0.031700, 0.031700,
         ],
@@ -158,6 +177,10 @@ pub const CASES: &[AntechamberCase] = &[
         bcc_atom_types: &["12", "12", "91", "91", "91", "91"],
         abcg2_atom_types: &["12", "12", "91", "91", "91", "91"],
         gas_atom_types: &["c2", "c2", "h", "h", "h", "h"],
+        gff_atom_types: &["c2", "c2", "ha", "ha", "ha", "ha"],
+        gff2_atom_types: &["c2", "c2", "ha", "ha", "ha", "ha"],
+        amber_atom_types: &["CM", "CM", "HA", "HA", "HA", "HA"],
+        sybyl_atom_types: &["C.2", "C.2", "H", "H", "H", "H"],
         bcc_charges: &[-0.218000, -0.218000, 0.109000, 0.109000, 0.109000, 0.109000],
     },
     AntechamberCase {
@@ -179,6 +202,10 @@ pub const CASES: &[AntechamberCase] = &[
         bcc_atom_types: &["15", "15", "91", "91"],
         abcg2_atom_types: &["15", "15", "91", "91"],
         gas_atom_types: &["c1", "c1", "h", "h"],
+        gff_atom_types: &["c1", "c1", "ha", "ha"],
+        gff2_atom_types: &["c1", "c1", "ha", "ha"],
+        amber_atom_types: &["CZ", "CZ", "HA", "HA"],
+        sybyl_atom_types: &["C.1", "C.1", "H", "H"],
         bcc_charges: &[-0.160500, -0.160500, 0.160500, 0.160500],
     },
     AntechamberCase {
@@ -199,6 +226,10 @@ pub const CASES: &[AntechamberCase] = &[
         bcc_atom_types: &["31", "91", "91"],
         abcg2_atom_types: &["31", "91", "91"],
         gas_atom_types: &["o3", "h", "h"],
+        gff_atom_types: &["oh", "ho", "ho"],
+        gff2_atom_types: &["oh", "ho", "ho"],
+        amber_atom_types: &["OW", "HO", "HO"],
+        sybyl_atom_types: &["O.3", "H", "H"],
         bcc_charges: &[-0.785000, 0.392000, 0.392000],
     },
     AntechamberCase {
@@ -220,6 +251,10 @@ pub const CASES: &[AntechamberCase] = &[
         bcc_atom_types: &["21", "91", "91", "91"],
         abcg2_atom_types: &["21", "91", "91", "91"],
         gas_atom_types: &["n3", "h", "h", "h"],
+        gff_atom_types: &["n3", "hn", "hn", "hn"],
+        gff2_atom_types: &["n9", "hn", "hn", "hn"],
+        amber_atom_types: &["NT", "H", "H", "H"],
+        sybyl_atom_types: &["N.3", "H", "H", "H"],
         bcc_charges: &[-1.010400, 0.336800, 0.336800, 0.336800],
     },
     AntechamberCase {
@@ -249,6 +284,10 @@ pub const CASES: &[AntechamberCase] = &[
         bcc_atom_types: &["11", "31", "91", "91", "91", "91"],
         abcg2_atom_types: &["11", "31", "91", "91", "91", "91"],
         gas_atom_types: &["c3", "o3", "h", "h", "h", "h"],
+        gff_atom_types: &["c3", "oh", "h1", "h1", "h1", "ho"],
+        gff2_atom_types: &["c3", "oh", "h1", "h1", "h1", "ho"],
+        amber_atom_types: &["CT", "OH", "H1", "H1", "H1", "HO"],
+        sybyl_atom_types: &["C.3", "O.3", "H", "H", "H", "H"],
         bcc_charges: &[0.116700, -0.598800, 0.028700, 0.028700, 0.028700, 0.396000],
     },
     AntechamberCase {
@@ -299,6 +338,10 @@ pub const CASES: &[AntechamberCase] = &[
         bcc_atom_types: &["11", "31", "11", "91", "91", "91", "91", "91", "91"],
         abcg2_atom_types: &["11", "31", "11", "91", "91", "91", "91", "91", "91"],
         gas_atom_types: &["c3", "o3", "c3", "h", "h", "h", "h", "h", "h"],
+        gff_atom_types: &["c3", "os", "c3", "h1", "h1", "h1", "h1", "h1", "h1"],
+        gff2_atom_types: &["c3", "os", "c3", "h1", "h1", "h1", "h1", "h1", "h1"],
+        amber_atom_types: &["CT", "OS", "CT", "H1", "H1", "H1", "H1", "H1", "H1"],
+        sybyl_atom_types: &["C.3", "O.3", "C.3", "H", "H", "H", "H", "H", "H"],
         bcc_charges: &[
             0.113700, -0.419600, 0.113700, 0.032033, 0.032033, 0.032033, 0.032033, 0.032033,
             0.032033,
@@ -344,6 +387,10 @@ pub const CASES: &[AntechamberCase] = &[
         bcc_atom_types: &["11", "14", "31", "91", "91", "91", "91"],
         abcg2_atom_types: &["11", "14", "31", "91", "91", "91", "91"],
         gas_atom_types: &["c3", "c2", "o2", "h", "h", "h", "h"],
+        gff_atom_types: &["c3", "c", "o", "hc", "hc", "hc", "h4"],
+        gff2_atom_types: &["c3", "c", "o", "hc", "hc", "hc", "h4"],
+        amber_atom_types: &["CT", "C", "O", "HC", "HC", "HC", "HA"],
+        sybyl_atom_types: &["C.3", "C.2", "O.2", "H", "H", "H", "H"],
         bcc_charges: &[
             -0.221100, 0.561900, -0.526100, 0.065033, 0.065033, 0.065033, -0.009800,
         ],
@@ -399,6 +446,10 @@ pub const CASES: &[AntechamberCase] = &[
         bcc_atom_types: &["11", "14", "11", "31", "91", "91", "91", "91", "91", "91"],
         abcg2_atom_types: &["11", "14", "11", "31", "91", "91", "91", "91", "91", "91"],
         gas_atom_types: &["c3", "c2", "c3", "o2", "h", "h", "h", "h", "h", "h"],
+        gff_atom_types: &["c3", "c", "c3", "o", "hc", "hc", "hc", "hc", "hc", "hc"],
+        gff2_atom_types: &["c3", "c", "c3", "o", "hc", "hc", "hc", "hc", "hc", "hc"],
+        amber_atom_types: &["CT", "C", "CT", "O", "HC", "HC", "HC", "HC", "HC", "HC"],
+        sybyl_atom_types: &["C.3", "C.2", "C.3", "O.2", "H", "H", "H", "H", "H", "H"],
         bcc_charges: &[
             -0.204100, 0.563100, -0.204100, -0.531100, 0.063033, 0.063033, 0.063033, 0.063033,
             0.063033, 0.063033,
@@ -447,6 +498,10 @@ pub const CASES: &[AntechamberCase] = &[
         bcc_atom_types: &["11", "14", "32", "31", "91", "91", "91", "91"],
         abcg2_atom_types: &["11", "14", "3X", "3X", "91", "91", "91", "91"],
         gas_atom_types: &["c3", "c2", "o2", "o3", "h", "h", "h", "h"],
+        gff_atom_types: &["c3", "c", "o", "oh", "hc", "hc", "hc", "ho"],
+        gff2_atom_types: &["c3", "c", "o", "oh", "hc", "hc", "hc", "ho"],
+        amber_atom_types: &["CT", "C", "O", "OH", "HC", "HC", "HC", "HO"],
+        sybyl_atom_types: &["C.3", "C.2", "O.2", "O.3", "H", "H", "H", "H"],
         bcc_charges: &[
             -0.149100, 0.635100, -0.550000, -0.612100, 0.077700, 0.077700, 0.077700, 0.444000,
         ],
@@ -491,6 +546,10 @@ pub const CASES: &[AntechamberCase] = &[
         bcc_atom_types: &["11", "14", "31", "31", "91", "91", "91"],
         abcg2_atom_types: &["11", "14", "3Y", "3Y", "91", "91", "91"],
         gas_atom_types: &["c3", "c2", "o-2", "o-2", "h", "h", "h"],
+        gff_atom_types: &["c3", "c", "o", "o", "hc", "hc", "hc"],
+        gff2_atom_types: &["c3", "c", "o", "o", "hc", "hc", "hc"],
+        amber_atom_types: &["CT", "C", "O2", "O2", "HC", "HC", "HC"],
+        sybyl_atom_types: &["C.3", "C.2", "O.co2", "O.co2", "H", "H", "H"],
         bcc_charges: &[
             -0.200100, 0.901600, -0.861300, -0.861300, 0.007033, 0.007033, 0.007033,
         ],
@@ -535,6 +594,10 @@ pub const CASES: &[AntechamberCase] = &[
         bcc_atom_types: &["11", "21", "91", "91", "91", "91", "91"],
         abcg2_atom_types: &["11", "21", "91", "91", "91", "91", "91"],
         gas_atom_types: &["c3", "n3", "h", "h", "h", "h", "h"],
+        gff_atom_types: &["c3", "n3", "h1", "h1", "h1", "hn", "hn"],
+        gff2_atom_types: &["c3", "n8", "h1", "h1", "h1", "hn", "hn"],
+        amber_atom_types: &["CT", "NT", "H1", "H1", "H1", "H", "H"],
+        sybyl_atom_types: &["C.3", "N.3", "H", "H", "H", "H", "H"],
         bcc_charges: &[
             0.147100, -0.918800, 0.025700, 0.025700, 0.025700, 0.347800, 0.347800,
         ],
@@ -582,6 +645,10 @@ pub const CASES: &[AntechamberCase] = &[
         bcc_atom_types: &["11", "21", "91", "91", "91", "91", "91", "91"],
         abcg2_atom_types: &["11", "2X", "91", "91", "91", "91", "91", "91"],
         gas_atom_types: &["c3", "n4", "h", "h", "h", "h", "h", "h"],
+        gff_atom_types: &["c3", "n4", "hx", "hx", "hx", "hn", "hn", "hn"],
+        gff2_atom_types: &["c3", "nz", "hx", "hx", "hx", "hn", "hn", "hn"],
+        amber_atom_types: &["CT", "N3", "HP", "HP", "HP", "H", "H", "H"],
+        sybyl_atom_types: &["C.3", "N.4", "H", "H", "H", "H", "H", "H"],
         bcc_charges: &[
             0.072100, -0.831600, 0.119700, 0.119700, 0.119700, 0.466800, 0.466800, 0.466800,
         ],
@@ -617,6 +684,10 @@ pub const CASES: &[AntechamberCase] = &[
         bcc_atom_types: &["11", "15", "25", "91", "91", "91"],
         abcg2_atom_types: &["11", "15", "25", "91", "91", "91"],
         gas_atom_types: &["c3", "c1", "n1", "h", "h", "h"],
+        gff_atom_types: &["c3", "c1", "n1", "hc", "hc", "hc"],
+        gff2_atom_types: &["c3", "c1", "n1", "hc", "hc", "hc"],
+        amber_atom_types: &["CT", "CZ", "N1", "HC", "HC", "HC"],
+        sybyl_atom_types: &["C.3", "C.1", "N.1", "H", "H", "H"],
         bcc_charges: &[-0.045000, 0.208700, -0.375800, 0.070700, 0.070700, 0.070700],
     },
     AntechamberCase {
@@ -659,6 +730,10 @@ pub const CASES: &[AntechamberCase] = &[
         bcc_atom_types: &["11", "23", "31", "31", "91", "91", "91"],
         abcg2_atom_types: &["11", "20", "31", "31", "91", "91", "91"],
         gas_atom_types: &["c3", "na", "o2", "o2", "h", "h", "h"],
+        gff_atom_types: &["c3", "no", "o", "o", "h1", "h1", "h1"],
+        gff2_atom_types: &["c3", "no", "o", "o", "h1", "h1", "h1"],
+        amber_atom_types: &["CT", "NO", "DU", "DU", "H1", "H1", "H1"],
+        sybyl_atom_types: &["C.3", "N.pl3", "O.2", "O.2", "H", "H", "H"],
         bcc_charges: &[
             -0.102400, 0.234300, -0.209000, -0.209000, 0.095367, 0.095367, 0.095367,
         ],
@@ -725,6 +800,18 @@ pub const CASES: &[AntechamberCase] = &[
         ],
         gas_atom_types: &[
             "c3", "c2", "o2", "na", "c3", "h", "h", "h", "h", "h", "h", "h",
+        ],
+        gff_atom_types: &[
+            "c3", "c", "o", "n", "c3", "hc", "hc", "hc", "hn", "h1", "h1", "h1",
+        ],
+        gff2_atom_types: &[
+            "c3", "c", "o", "ns", "c3", "hc", "hc", "hc", "hn", "h1", "h1", "h1",
+        ],
+        amber_atom_types: &[
+            "CT", "C", "O", "N", "CT", "HC", "HC", "HC", "H", "H1", "H1", "H1",
+        ],
+        sybyl_atom_types: &[
+            "C.3", "C.2", "O.2", "N.am", "C.3", "H", "H", "H", "H", "H", "H", "H",
         ],
         bcc_charges: &[
             -0.175100, 0.657100, -0.610100, -0.582900, 0.080300, 0.064700, 0.064700, 0.064700,
@@ -793,6 +880,18 @@ pub const CASES: &[AntechamberCase] = &[
         ],
         gas_atom_types: &[
             "c3", "na", "c3", "c2", "o2", "h", "h", "h", "h", "h", "h", "h",
+        ],
+        gff_atom_types: &[
+            "c3", "n", "c3", "c", "o", "h1", "h1", "h1", "h1", "h1", "h1", "h5",
+        ],
+        gff2_atom_types: &[
+            "c3", "n", "c3", "c", "o", "h1", "h1", "h1", "h1", "h1", "h1", "h5",
+        ],
+        amber_atom_types: &[
+            "CT", "N", "CT", "C", "O", "H1", "H1", "H1", "H1", "H1", "H1", "HA",
+        ],
+        sybyl_atom_types: &[
+            "C.3", "N.am", "C.3", "C.2", "O.2", "H", "H", "H", "H", "H", "H", "H",
         ],
         bcc_charges: &[
             0.079300, -0.494800, 0.079300, 0.660900, -0.604100, 0.041700, 0.041700, 0.041700,
@@ -863,6 +962,18 @@ pub const CASES: &[AntechamberCase] = &[
         ],
         gas_atom_types: &[
             "c2", "c2", "c2", "c2", "c2", "c2", "h", "h", "h", "h", "h", "h",
+        ],
+        gff_atom_types: &[
+            "ca", "ca", "ca", "ca", "ca", "ca", "ha", "ha", "ha", "ha", "ha", "ha",
+        ],
+        gff2_atom_types: &[
+            "ca", "ca", "ca", "ca", "ca", "ca", "ha", "ha", "ha", "ha", "ha", "ha",
+        ],
+        amber_atom_types: &[
+            "CA", "CA", "CA", "CA", "CA", "CA", "HA", "HA", "HA", "HA", "HA", "HA",
+        ],
+        sybyl_atom_types: &[
+            "C.ar", "C.ar", "C.ar", "C.ar", "C.ar", "C.ar", "H", "H", "H", "H", "H", "H",
         ],
         bcc_charges: &[
             -0.130000, -0.130000, -0.130000, -0.130000, -0.130000, -0.130000, 0.130000, 0.130000,
@@ -947,6 +1058,22 @@ pub const CASES: &[AntechamberCase] = &[
         gas_atom_types: &[
             "c3", "c2", "c2", "c2", "c2", "c2", "c2", "h", "h", "h", "h", "h", "h", "h", "h",
         ],
+        gff_atom_types: &[
+            "c3", "ca", "ca", "ca", "ca", "ca", "ca", "hc", "hc", "hc", "ha", "ha", "ha", "ha",
+            "ha",
+        ],
+        gff2_atom_types: &[
+            "c3", "ca", "ca", "ca", "ca", "ca", "ca", "hc", "hc", "hc", "ha", "ha", "ha", "ha",
+            "ha",
+        ],
+        amber_atom_types: &[
+            "CT", "CA", "CA", "CA", "CA", "CA", "CA", "HC", "HC", "HC", "HA", "HA", "HA", "HA",
+            "HA",
+        ],
+        sybyl_atom_types: &[
+            "C.3", "C.ar", "C.ar", "C.ar", "C.ar", "C.ar", "C.ar", "H", "H", "H", "H", "H", "H",
+            "H", "H",
+        ],
         bcc_charges: &[
             -0.053800, -0.077300, -0.131000, -0.127000, -0.135000, -0.127000, -0.131000, 0.044033,
             0.044033, 0.044033, 0.130000, 0.130000, 0.130000, 0.130000, 0.130000,
@@ -1021,6 +1148,18 @@ pub const CASES: &[AntechamberCase] = &[
         ],
         gas_atom_types: &[
             "o3", "c2", "c2", "c2", "c2", "c2", "c2", "h", "h", "h", "h", "h", "h",
+        ],
+        gff_atom_types: &[
+            "oh", "ca", "ca", "ca", "ca", "ca", "ca", "ho", "ha", "ha", "ha", "ha", "ha",
+        ],
+        gff2_atom_types: &[
+            "oh", "ca", "ca", "ca", "ca", "ca", "ca", "ho", "ha", "ha", "ha", "ha", "ha",
+        ],
+        amber_atom_types: &[
+            "OH", "CA", "CA", "CA", "CA", "CA", "CA", "HO", "HA", "HA", "HA", "HA", "HA",
+        ],
+        sybyl_atom_types: &[
+            "O.3", "C.ar", "C.ar", "C.ar", "C.ar", "C.ar", "C.ar", "H", "H", "H", "H", "H", "H",
         ],
         bcc_charges: &[
             -0.499100, 0.123100, -0.185000, -0.094500, -0.166000, -0.094500, -0.185000, 0.418000,
@@ -1100,6 +1239,19 @@ pub const CASES: &[AntechamberCase] = &[
         gas_atom_types: &[
             "na", "c2", "c2", "c2", "c2", "c2", "c2", "h", "h", "h", "h", "h", "h", "h",
         ],
+        gff_atom_types: &[
+            "nh", "ca", "ca", "ca", "ca", "ca", "ca", "hn", "hn", "ha", "ha", "ha", "ha", "ha",
+        ],
+        gff2_atom_types: &[
+            "nv", "ca", "ca", "ca", "ca", "ca", "ca", "hn", "hn", "ha", "ha", "ha", "ha", "ha",
+        ],
+        amber_atom_types: &[
+            "N2", "CA", "CA", "CA", "CA", "CA", "CA", "H", "H", "HA", "HA", "HA", "HA", "HA",
+        ],
+        sybyl_atom_types: &[
+            "N.3", "C.ar", "C.ar", "C.ar", "C.ar", "C.ar", "C.ar", "H", "H", "H", "H", "H", "H",
+            "H",
+        ],
         bcc_charges: &[
             -0.818200, 0.136600, -0.191000, -0.093000, -0.173000, -0.093000, -0.191000, 0.386800,
             0.386800, 0.130000, 0.129000, 0.131000, 0.129000, 0.130000,
@@ -1165,6 +1317,18 @@ pub const CASES: &[AntechamberCase] = &[
             "16", "16", "17", "24", "17", "16", "91", "91", "91", "91", "91",
         ],
         gas_atom_types: &["c2", "c2", "c2", "n2", "c2", "c2", "h", "h", "h", "h", "h"],
+        gff_atom_types: &[
+            "ca", "ca", "ca", "nb", "ca", "ca", "ha", "ha", "h4", "h4", "ha",
+        ],
+        gff2_atom_types: &[
+            "ca", "ca", "ca", "nb", "ca", "ca", "ha", "ha", "h4", "h4", "ha",
+        ],
+        amber_atom_types: &[
+            "CA", "CA", "CA", "NC", "CA", "CA", "HA", "HA", "H4", "H4", "HA",
+        ],
+        sybyl_atom_types: &[
+            "C.ar", "C.ar", "C.ar", "N.ar", "C.ar", "C.ar", "H", "H", "H", "H", "H",
+        ],
         bcc_charges: &[
             -0.093000, -0.246300, 0.393200, -0.665000, 0.393200, -0.246300, 0.137000, 0.143000,
             0.021100, 0.021100, 0.143000,
@@ -1220,6 +1384,10 @@ pub const CASES: &[AntechamberCase] = &[
         bcc_atom_types: &["16", "17", "24", "17", "23", "91", "91", "91", "91"],
         abcg2_atom_types: &["16", "17", "28", "17", "23", "91", "91", "91", "91"],
         gas_atom_types: &["c2", "c2", "n2", "c2", "na", "h", "h", "h", "h"],
+        gff_atom_types: &["cc", "cd", "nd", "cc", "na", "h4", "h4", "h5", "hn"],
+        gff2_atom_types: &["cc", "cd", "nd", "cc", "na", "h4", "h4", "h5", "hn"],
+        amber_atom_types: &["CW", "CV", "NB", "CR", "NA", "H4", "H4", "H5", "H"],
+        sybyl_atom_types: &["C.2", "C.2", "N.2", "C.2", "N.pl3", "H", "H", "H", "H"],
         bcc_charges: &[
             -0.261600, 0.291200, -0.667000, 0.382400, -0.321900, 0.176000, 0.042100, 0.060100,
             0.299700,
@@ -1295,6 +1463,18 @@ pub const CASES: &[AntechamberCase] = &[
         gas_atom_types: &[
             "c3", "na", "c2", "c2", "na", "c2", "h", "h", "h", "h", "h", "h", "h",
         ],
+        gff_atom_types: &[
+            "c3", "na", "cc", "cd", "na", "cc", "h1", "h1", "h1", "h4", "h4", "hn", "h5",
+        ],
+        gff2_atom_types: &[
+            "c3", "na", "cc", "cd", "na", "cc", "h1", "h1", "h1", "h4", "h4", "hn", "h5",
+        ],
+        amber_atom_types: &[
+            "CT", "N*", "CA", "CW", "NA", "CR", "H1", "H1", "H1", "H4", "H4", "H", "H5",
+        ],
+        sybyl_atom_types: &[
+            "C.3", "N.pl3", "C.2", "C.2", "N.pl3", "C.2", "H", "H", "H", "H", "H", "H", "H",
+        ],
         bcc_charges: &[
             -0.007400, -0.012100, -0.118300, -0.105300, -0.136100, -0.022600, 0.099367, 0.099367,
             0.099367, 0.238000, 0.239000, 0.363700, 0.262000,
@@ -1350,6 +1530,10 @@ pub const CASES: &[AntechamberCase] = &[
         bcc_atom_types: &["16", "16", "16", "51", "16", "91", "91", "91", "91"],
         abcg2_atom_types: &["16", "16", "16", "51", "16", "91", "91", "91", "91"],
         gas_atom_types: &["c2", "c2", "c2", "s3", "c2", "h", "h", "h", "h"],
+        gff_atom_types: &["cc", "cc", "cd", "ss", "cd", "ha", "ha", "h4", "h4"],
+        gff2_atom_types: &["cc", "cc", "cd", "ss", "cd", "ha", "ha", "h4", "h4"],
+        amber_atom_types: &["C*", "C*", "CA", "S", "CA", "HA", "HA", "H4", "H4"],
+        sybyl_atom_types: &["C.2", "C.2", "C.2", "S.3", "C.2", "H", "H", "H", "H"],
         bcc_charges: &[
             -0.157000, -0.157000, -0.169100, 0.008200, -0.169100, 0.152000, 0.152000, 0.169000,
             0.169000,
@@ -1382,6 +1566,10 @@ pub const CASES: &[AntechamberCase] = &[
         bcc_atom_types: &["11", "51", "91", "91", "91", "91"],
         abcg2_atom_types: &["11", "51", "91", "91", "91", "91"],
         gas_atom_types: &["c3", "s3", "h", "h", "h", "h"],
+        gff_atom_types: &["c3", "sh", "h1", "h1", "h1", "hs"],
+        gff2_atom_types: &["c3", "sh", "h1", "h1", "h1", "hs"],
+        amber_atom_types: &["CT", "SH", "H1", "H1", "H1", "HS"],
+        sybyl_atom_types: &["C.3", "S.3", "H", "H", "H", "H"],
         bcc_charges: &[-0.024000, -0.362900, 0.063700, 0.063700, 0.063700, 0.195800],
     },
     AntechamberCase {
@@ -1435,6 +1623,10 @@ pub const CASES: &[AntechamberCase] = &[
         bcc_atom_types: &["11", "52", "11", "31", "91", "91", "91", "91", "91", "91"],
         abcg2_atom_types: &["11", "52", "11", "31", "91", "91", "91", "91", "91", "91"],
         gas_atom_types: &["c3", "so", "c3", "os", "h", "h", "h", "h", "h", "h"],
+        gff_atom_types: &["c3", "s4", "c3", "o", "h1", "h1", "h1", "h1", "h1", "h1"],
+        gff2_atom_types: &["c3", "s4", "c3", "o", "h1", "h1", "h1", "h1", "h1", "h1"],
+        amber_atom_types: &["CT", "DU", "CT", "O", "H1", "H1", "H1", "H1", "H1", "H1"],
+        sybyl_atom_types: &["C.3", "S.o", "C.3", "O.2", "H", "H", "H", "H", "H", "H"],
         bcc_charges: &[
             -0.130800, 0.268600, -0.130800, -0.506200, 0.083367, 0.083367, 0.083367, 0.083367,
             0.083367, 0.083367,
@@ -1465,6 +1657,10 @@ pub const CASES: &[AntechamberCase] = &[
         bcc_atom_types: &["11", "72", "91", "91", "91"],
         abcg2_atom_types: &["11", "72", "91", "91", "91"],
         gas_atom_types: &["c3", "cl", "h", "h", "h"],
+        gff_atom_types: &["c3", "cl", "h1", "h1", "h1"],
+        gff2_atom_types: &["c3", "cl", "h1", "h1", "h1"],
+        amber_atom_types: &["CT", "Cl", "H1", "H1", "H1"],
+        sybyl_atom_types: &["C.3", "Cl", "H", "H", "H"],
         bcc_charges: &[0.014300, -0.190400, 0.058700, 0.058700, 0.058700],
     },
     AntechamberCase {
@@ -1532,6 +1728,18 @@ pub const CASES: &[AntechamberCase] = &[
         gas_atom_types: &[
             "f", "c2", "c2", "c2", "c2", "c2", "c2", "h", "h", "h", "h", "h",
         ],
+        gff_atom_types: &[
+            "f", "ca", "ca", "ca", "ca", "ca", "ca", "ha", "ha", "ha", "ha", "ha",
+        ],
+        gff2_atom_types: &[
+            "f", "ca", "ca", "ca", "ca", "ca", "ca", "ha", "ha", "ha", "ha", "ha",
+        ],
+        amber_atom_types: &[
+            "F", "CA", "CA", "CA", "CA", "CA", "CA", "HA", "HA", "HA", "HA", "HA",
+        ],
+        sybyl_atom_types: &[
+            "F", "C.ar", "C.ar", "C.ar", "C.ar", "C.ar", "C.ar", "H", "H", "H", "H", "H",
+        ],
         bcc_charges: &[
             -0.141900, 0.123900, -0.166000, -0.105000, -0.145000, -0.105000, -0.166000, 0.148000,
             0.137000, 0.136000, 0.137000, 0.148000,
@@ -1580,6 +1788,10 @@ pub const CASES: &[AntechamberCase] = &[
         bcc_atom_types: &["11", "11", "73", "91", "91", "91", "91", "91"],
         abcg2_atom_types: &["11", "11", "73", "91", "91", "91", "91", "91"],
         gas_atom_types: &["c3", "c3", "br", "h", "h", "h", "h", "h"],
+        gff_atom_types: &["c3", "c3", "br", "hc", "hc", "hc", "h1", "h1"],
+        gff2_atom_types: &["c3", "c3", "br", "hc", "hc", "hc", "h1", "h1"],
+        amber_atom_types: &["CT", "CT", "Br", "HC", "HC", "HC", "H1", "H1"],
+        sybyl_atom_types: &["C.3", "C.3", "Br", "H", "H", "H", "H", "H"],
         bcc_charges: &[
             -0.097100, -0.008000, -0.181400, 0.048367, 0.048367, 0.048367, 0.070700, 0.070700,
         ],
@@ -1637,6 +1849,10 @@ pub const CASES: &[AntechamberCase] = &[
         bcc_atom_types: &["11", "11", "31", "14", "33", "31", "91", "91", "91", "91"],
         abcg2_atom_types: &["11", "11", "31", "14", "33", "31", "91", "91", "91", "91"],
         gas_atom_types: &["c3", "c3", "o3", "c2", "o2", "o3", "h", "h", "h", "h"],
+        gff_atom_types: &["c3", "c3", "os", "c", "o", "os", "h1", "h1", "h1", "h1"],
+        gff2_atom_types: &["c5", "c5", "os", "c", "o", "os", "h1", "h1", "h1", "h1"],
+        amber_atom_types: &["CT", "CT", "OS", "C", "O", "OS", "H1", "H1", "H1", "H1"],
+        sybyl_atom_types: &["C.3", "C.3", "O.3", "C.2", "O.2", "O.3", "H", "H", "H", "H"],
         bcc_charges: &[
             0.095400, 0.095400, -0.404900, 0.847700, -0.548500, -0.404900, 0.079700, 0.079700,
             0.079700, 0.079700,
@@ -1704,6 +1920,18 @@ pub const CASES: &[AntechamberCase] = &[
         ],
         gas_atom_types: &[
             "c3", "o3", "c2", "o2", "o3", "c3", "h", "h", "h", "h", "h", "h",
+        ],
+        gff_atom_types: &[
+            "c3", "os", "c", "o", "os", "c3", "h1", "h1", "h1", "h1", "h1", "h1",
+        ],
+        gff2_atom_types: &[
+            "c3", "os", "c", "o", "os", "c3", "h1", "h1", "h1", "h1", "h1", "h1",
+        ],
+        amber_atom_types: &[
+            "CT", "OS", "C", "O", "OS", "CT", "H1", "H1", "H1", "H1", "H1", "H1",
+        ],
+        sybyl_atom_types: &[
+            "C.3", "O.3", "C.2", "O.2", "O.3", "C.3", "H", "H", "H", "H", "H", "H",
         ],
         bcc_charges: &[
             0.126700, -0.388900, 0.755200, -0.580000, -0.388900, 0.126700, 0.058367, 0.058367,
@@ -1789,6 +2017,22 @@ pub const CASES: &[AntechamberCase] = &[
         gas_atom_types: &[
             "c3", "o3", "c3", "c3", "o3", "c3", "h", "h", "h", "h", "h", "h", "h", "h", "h", "h",
         ],
+        gff_atom_types: &[
+            "c3", "os", "c3", "c3", "os", "c3", "h1", "h1", "h1", "h1", "h1", "h1", "h1", "h1",
+            "h1", "h1",
+        ],
+        gff2_atom_types: &[
+            "c3", "os", "c3", "c3", "os", "c3", "h1", "h1", "h1", "h1", "h1", "h1", "h1", "h1",
+            "h1", "h1",
+        ],
+        amber_atom_types: &[
+            "CT", "OS", "CT", "CT", "OS", "CT", "H1", "H1", "H1", "H1", "H1", "H1", "H1", "H1",
+            "H1", "H1",
+        ],
+        sybyl_atom_types: &[
+            "C.3", "O.3", "C.3", "C.3", "O.3", "C.3", "H", "H", "H", "H", "H", "H", "H", "H", "H",
+            "H",
+        ],
         bcc_charges: &[
             0.117700, -0.425600, 0.123400, 0.123400, -0.425600, 0.117700, 0.033033, 0.033033,
             0.033033, 0.042700, 0.042700, 0.042700, 0.042700, 0.033033, 0.033033, 0.033033,
@@ -1870,6 +2114,18 @@ pub const CASES: &[AntechamberCase] = &[
         gas_atom_types: &[
             "c3", "c2", "c2", "c2", "o2", "o3", "c3", "h", "h", "h", "h", "h", "h", "h", "h",
         ],
+        gff_atom_types: &[
+            "c3", "ce", "c2", "c", "o", "os", "c3", "hc", "hc", "hc", "ha", "ha", "h1", "h1", "h1",
+        ],
+        gff2_atom_types: &[
+            "c3", "ce", "c2", "c", "o", "os", "c3", "hc", "hc", "hc", "ha", "ha", "h1", "h1", "h1",
+        ],
+        amber_atom_types: &[
+            "CT", "CD", "CM", "C", "O", "OS", "CT", "HC", "HC", "HC", "HA", "HA", "H1", "H1", "H1",
+        ],
+        sybyl_atom_types: &[
+            "C.3", "C.2", "C.2", "C.2", "O.2", "O.3", "C.3", "H", "H", "H", "H", "H", "H", "H", "H",
+        ],
         bcc_charges: &[
             -0.054900, -0.150400, -0.144000, 0.629300, -0.545000, -0.434900, 0.126700, 0.051700,
             0.051700, 0.051700, 0.132000, 0.132000, 0.051033, 0.051033, 0.051033,
@@ -1945,6 +2201,18 @@ pub const CASES: &[AntechamberCase] = &[
         ],
         gas_atom_types: &[
             "c3", "c3", "o3", "c2", "o2", "c3", "h", "h", "h", "h", "h", "h", "h", "h",
+        ],
+        gff_atom_types: &[
+            "c3", "c3", "os", "c", "o", "c3", "hc", "hc", "hc", "h1", "h1", "hc", "hc", "hc",
+        ],
+        gff2_atom_types: &[
+            "c3", "c3", "os", "c", "o", "c3", "hc", "hc", "hc", "h1", "h1", "hc", "hc", "hc",
+        ],
+        amber_atom_types: &[
+            "CT", "CT", "OS", "C", "O", "CT", "HC", "HC", "HC", "H1", "H1", "HC", "HC", "HC",
+        ],
+        sybyl_atom_types: &[
+            "C.3", "C.3", "O.3", "C.2", "O.2", "C.3", "H", "H", "H", "H", "H", "H", "H", "H",
         ],
         bcc_charges: &[
             -0.100100, 0.138400, -0.446900, 0.631100, -0.544000, -0.150100, 0.047367, 0.047367,
@@ -2035,6 +2303,22 @@ pub const CASES: &[AntechamberCase] = &[
         gas_atom_types: &[
             "c3", "o3", "p", "o2", "o3", "c3", "o3", "c3", "h", "h", "h", "h", "h", "h", "h", "h",
             "h",
+        ],
+        gff_atom_types: &[
+            "c3", "os", "p5", "o", "os", "c3", "os", "c3", "h1", "h1", "h1", "h1", "h1", "h1",
+            "h1", "h1", "h1",
+        ],
+        gff2_atom_types: &[
+            "c3", "os", "p5", "o", "os", "c3", "os", "c3", "h1", "h1", "h1", "h1", "h1", "h1",
+            "h1", "h1", "h1",
+        ],
+        amber_atom_types: &[
+            "CT", "OS", "P", "O2", "OS", "CT", "OS", "CT", "H1", "H1", "H1", "H1", "H1", "H1",
+            "H1", "H1", "H1",
+        ],
+        sybyl_atom_types: &[
+            "C.3", "O.3", "P.3", "O.2", "O.3", "C.3", "O.3", "C.3", "H", "H", "H", "H", "H", "H",
+            "H", "H", "H",
         ],
         bcc_charges: &[
             0.138700, -0.550200, 1.579500, -0.811300, -0.550200, 0.138700, -0.550200, 0.138700,

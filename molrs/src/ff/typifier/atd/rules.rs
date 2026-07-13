@@ -10,21 +10,27 @@ use molrs::AtomId;
 use super::facts::MolFacts;
 use crate::ff::params::{AtdRule, AtdTable};
 
-/// The atom type of the first rule of `table` that matches `aid`.
+/// The first rule of `table` that matches `aid`.
 ///
 /// `None` means the table declares no rule for this atom. The caller turns that
 /// into an error rather than a fallback type: molrs assigns the type the table
 /// names, or none at all.
-pub(super) fn assign_atom_type(
+///
+/// The whole rule comes back, not just its
+/// [`atom_type`](AtdRule::atom_type), because the type a rule *names* is not
+/// always the type an atom *ends up with*: a conjugated system is 2-coloured
+/// afterwards, and one colour is renamed to the rule's
+/// [`alternate`](AtdRule::alternate). Handing back only the name would put that
+/// second name out of the caller's reach.
+pub(super) fn assign_rule(
     table: &AtdTable,
     aid: AtomId,
     facts: &MolFacts,
-) -> Option<&'static str> {
+) -> Option<&'static AtdRule> {
     table
         .rules
         .iter()
         .find(|rule| rule_matches(rule, aid, facts))
-        .map(|rule| rule.atom_type)
 }
 
 /// Test one pre-parsed `ATD` rule against an atom.
