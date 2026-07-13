@@ -4,8 +4,6 @@ One row per spec produced by `/mol:spec`. Newest on top.
 
 | Date | Slug | Status | Owner crate(s) | Summary |
 |---|---|---|---|---|
-| 2026-07-12 | chem-perceive-10-parmchk-tables | approved | molcrafts-molrs | `gaff_equiv.json`(6159)/`gaff_empirical.json`(87) → 提交的 .rs，删掉 estimate/tables.rs 里 `include_str!` + 运行期 `serde_json.expect()`（FF 路径最后一处文本解析）。同时落地 parmchk2 frcmod 的 37 分子 RED oracle，供 11 转绿。链 10/13。 |
-| 2026-07-12 | chem-perceive-11-param-estimate | approved | molcrafts-molrs | 在既有 `ParameterEstimator`/`ParameterInterpolator` 上原生实现 parmchk2 式缺参估计（精确→通配符→等价类替代→经验公式），**删掉 `Frcmod::parse_str`/`write_string`，molrs 不再依赖任何外部 frcmod 文件**。数据侧（gaff_equiv/gaff_empirical）本就在仓库里。链 11/13。 |
 | 2026-07-12 | chem-perceive-12-cxx-bridge | approved | molrs-cxxapi | cxx bridge 改成返回 `Result<Vec<f64>>`——现在它声明 `-> Vec<f64>` 且函数体 `.expect()`，于是缺 BCC 参数这类**用户化学错误直接 abort 进程**而非抛可捕获的 C++ 异常；同时去掉 normalize 参数、加 parameter-set 选择器打通 ABCG2（现全文 0 命中）。跨仓：需 Atomiverse 配套改。链 12/13。 |
 | 2026-07-12 | chem-perceive-13-python-bind | approved | molrs-python, molcrafts-molrs | 把 `Perceive`/`AtdTypifier`/`BccModel`/`MullikenModel`/`GasteigerModel` 暴露到 molrs-python，迁 `molrs::chem`→`molrs::perceive` 并删掉 01 的 compat alias。**Python 首次可达原生 AM1-BCC**（今天 molpy 只有 `antechamber -c bcc`），这是与 antechamber 对账的前提。链 13/13。 |
 | 2026-07-12 | chem-perceive-14-all-tables | approved | molcrafts-molrs | 收尾「所有参数表 .rs 化」：mmff94/mmff94s/oplsaa + gen3d 的两个 fragment 库也转成 typed Rust 表，删空 `molrs/data/` 与全部 `include_str!`。**存在理由本身是纠错**——早前「编译时间会爆炸」的排除理由已被实测推翻（15,474 行 = +1071 KB / 0.37 s；而这些数据本来就以原始文本形式躺在二进制里，共 3974 KB）。纯表示层变更，数值零改动。链 14/14。 |
