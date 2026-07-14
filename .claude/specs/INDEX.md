@@ -4,7 +4,6 @@ One row per spec produced by `/mol:spec`. Newest on top.
 
 | Date | Slug | Status | Owner crate(s) | Summary |
 |---|---|---|---|---|
-| 2026-07-12 | chem-perceive-13-python-bind | approved | molrs-python, molcrafts-molrs | 把 `Perceive`/`AtdTypifier`/`BccModel`/`MullikenModel`/`GasteigerModel` 暴露到 molrs-python，迁 `molrs::chem`→`molrs::perceive` 并删掉 01 的 compat alias。**Python 首次可达原生 AM1-BCC**（今天 molpy 只有 `antechamber -c bcc`），这是与 antechamber 对账的前提。链 13/13。 |
 | 2026-07-12 | chem-perceive-14-all-tables | approved | molcrafts-molrs | 收尾「所有参数表 .rs 化」：mmff94/mmff94s/oplsaa + gen3d 的两个 fragment 库也转成 typed Rust 表，删空 `molrs/data/` 与全部 `include_str!`。**存在理由本身是纠错**——早前「编译时间会爆炸」的排除理由已被实测推翻（15,474 行 = +1071 KB / 0.37 s；而这些数据本来就以原始文本形式躺在二进制里，共 3974 KB）。纯表示层变更，数值零改动。链 14/14。 |
 | 2026-07-11 | graph-sink-01-extract | done | molcrafts-molrs | Induced subgraph + multi-source `extract_ball` / leaf `extract_subgraph` (O(ball) regenerate path). Engine primitives for molpy region extract. Chain graph-sink 1/4. |
 | 2026-07-11 | graph-sink-02-copy-merge | done | molcrafts-molrs | Lock copy = handle-preserving Clone; `merge` returns old→new node map; no identity-merge. Chain graph-sink 2/4. |
