@@ -4,7 +4,6 @@ One row per spec produced by `/mol:spec`. Newest on top.
 
 | Date | Slug | Status | Owner crate(s) | Summary |
 |---|---|---|---|---|
-| 2026-07-14 | mmff-typifier-split | approved | molcrafts-molrs, molrs-python | One internal MMFF typifier engine, two public named front doors (`MMFF94Typifier` / `MMFF94STypifier`, no variant flag). Threads `MmffVariant` through BOTH parameter paths — the Frame annotation (`frame_builder` hardcodes `Mmff94` at three sites) and the XML-fed `ForceField` tree — so MMFF94s stops being unreachable from the typifier. Breaking rename of `MMFFTypifier` (Rust + Python), no compat alias. Gives `mmff94s.xml` its first consumer; **must land before `chem-perceive-14-all-tables`**. |
 | 2026-07-12 | chem-perceive-14-all-tables | approved | molcrafts-molrs | 收尾参数表编译期化：mmff94/mmff94s/oplsaa 转成 typed Rust 表，删除全部 `include_str!`。从未被 conformer 使用的 Open Babel `gen3d` fragment 坐标库直接删除，不生成 Rust 表。链 14/14。 |
 | 2026-07-11 | graph-sink-01-extract | done | molcrafts-molrs | Induced subgraph + multi-source `extract_ball` / leaf `extract_subgraph` (O(ball) regenerate path). Engine primitives for molpy region extract. Chain graph-sink 1/4. |
 | 2026-07-11 | graph-sink-02-copy-merge | done | molcrafts-molrs | Lock copy = handle-preserving Clone; `merge` returns old→new node map; no identity-merge. Chain graph-sink 2/4. |
