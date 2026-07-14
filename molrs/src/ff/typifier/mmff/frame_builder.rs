@@ -1,5 +1,5 @@
-//! MMFF94 atom typing — annotates an [`Atomistic`] with MMFF type labels and
-//! partial charges.
+//! MMFF atom typing — annotates an [`Atomistic`] with MMFF type labels, partial
+//! charges, and the per-instance force constants the kernels read.
 //!
 //! This is the **typifier** half of MMFF: it takes a molecular graph and returns
 //! a *labeled* graph (atoms typed + charged; bonds/angles/dihedrals/impropers
@@ -9,6 +9,14 @@
 //! types + partial charges are reused from the RDKit-validated MMFF front-end
 //! ([`MmffMolProperties`]); the bond/angle/dihedral type-label rules are
 //! MMFF-specific and live here.
+//!
+//! # The variant is a parameter, never a constant
+//!
+//! Every parameter resolved here is resolved **for the caller's [`MmffVariant`]**.
+//! This is the path that bakes `koop` (impropers) and `(v1, v2, v3)` (dihedrals)
+//! into the Frame columns that `mmff_oop` / `mmff_torsion` consume, so a hardcoded
+//! variant here silently produces MMFF94 numbers no matter which typifier the user
+//! constructed — the exact bug `MMFF94STypifier` exists to make impossible.
 
 use std::collections::HashMap;
 
@@ -23,22 +31,36 @@ use super::classify::{
 };
 use super::params::MMFFParams;
 
-/// Annotate `mol` with MMFF94 type labels + partial charges, returning the
-/// labeled [`Atomistic`]:
+/// Annotate `mol` with MMFF type labels + partial charges for `variant`,
+/// returning the labeled [`Atomistic`]:
 /// - atoms: `type` (MMFF numeric type as string) + `charge` (MMFF partial charge)
-/// - bonds: `type` (e.g. `"0_1_5"`)
-/// - angles: `type` / `stbn_type` (e.g. `"0_1_2_1"`) — enumerated
-/// - dihedrals: `type` (e.g. `"0_5_1_1_5"`) — enumerated
-/// - impropers: `type` = canonical MMFF out-of-plane key (e.g. `"0_37_37_37"`);
-///   three Wilson rows per trigonal centre, centre in the `atomj` position
+/// - bonds: `type` (e.g. `"0_1_5"`) + `kb` / `r0`
+/// - angles: `type` / `stbn_type` (e.g. `"0_1_2_1"`) — enumerated — + `ka` /
+///   `theta0` (radians) / `kba_ijk` / `kba_kji` / `r0_ij` / `r0_kj`
+/// - dihedrals: `type` (e.g. `"0_5_1_1_5"`) — enumerated — + the Fourier
+///   coefficients `v1` / `v2` / `v3` (kcal·mol⁻¹), **variant-dependent**
+/// - impropers: `type` = canonical MMFF out-of-plane key (e.g. `"0_37_37_37"`) +
+///   `koop` (md·Å·rad⁻², **variant-dependent**); three Wilson rows per trigonal
+///   centre, centre in the `atomj` position, sharing one `koop`
+///
+/// `variant` is supplied by the typifier front door
+/// ([`MMFF94Typifier`](super::MMFF94Typifier) /
+/// [`MMFF94STypifier`](super::MMFF94STypifier)) and is threaded to **every**
+/// parameter lookup below. Atom types and charges are variant-independent by
+/// construction (MMFF94 and MMFF94s share all 95 types); `koop` and `(v1, v2, v3)`
+/// are not.
 ///
 /// The caller converts the result with [`Atomistic::to_frame`], builds the
 /// neighbour list, and calls `to_potentials`.
-pub(crate) fn annotate_mmff(mol: &Atomistic, params: &MMFFParams) -> Result<Atomistic, String> {
+pub(crate) fn annotate_mmff(
+    mol: &Atomistic,
+    params: &MMFFParams,
+    variant: MmffVariant,
+) -> Result<Atomistic, String> {
     // Reuse the RDKit-validated front-end for atom types + MMFF partial charges.
     // Its per-atom index is the molecule's atom iteration order — the same order
     // as `atom_ids` below.
-    let props = MmffMolProperties::compute(mol, MmffVariant::Mmff94).map_err(|e| e.to_string())?;
+    let props = MmffMolProperties::compute(mol, variant).map_err(|e| e.to_string())?;
 
     let atom_ids: Vec<AtomId> = mol.atoms().map(|(id, _)| id).collect();
     let idx_of: HashMap<AtomId, usize> = atom_ids
@@ -171,11 +193,11 @@ pub(crate) fn annotate_mmff(mol: &Atomistic, params: &MMFFParams) -> Result<Atom
         out.set_dihedral_prop(id, "type", label)
             .map_err(|e| e.to_string())?;
         // Bake per-instance Fourier coefficients (table → empirical), resolved
-        // via the RDKit-validated energy path; kernel reads the columns.
-        let (v1, v2, v3) =
-            eparams::torsion_params(MmffVariant::Mmff94, &topo, &types_u8, ia, ib, ic, il)
-                .map(|t| (t.v1, t.v2, t.v3))
-                .unwrap_or((0.0, 0.0, 0.0));
+        // via the RDKit-validated energy path for the caller's variant; the kernel
+        // reads the columns. 42 of these rows are re-parameterised by MMFF94s.
+        let (v1, v2, v3) = eparams::torsion_params(variant, &topo, &types_u8, ia, ib, ic, il)
+            .map(|t| (t.v1, t.v2, t.v3))
+            .unwrap_or((0.0, 0.0, 0.0));
         out.set_dihedral_prop(id, "v1", v1)
             .map_err(|e| e.to_string())?;
         out.set_dihedral_prop(id, "v2", v2)
@@ -217,11 +239,13 @@ pub(crate) fn annotate_mmff(mol: &Atomistic, params: &MMFFParams) -> Result<Atom
         ) else {
             continue;
         };
-        // Per-centre out-of-plane force constant (shared by all three Wilson
-        // permutations — the OOP lookup is symmetric in the peripheral atoms),
-        // resolved via the RDKit-validated energy path; kernel reads the column.
-        let koop =
-            eparams::oop_koop(MmffVariant::Mmff94, &types_u8, a, center, b, c).unwrap_or(0.0);
+        // Per-centre out-of-plane force constant `koop` (md·Å·rad⁻²), shared by all
+        // three Wilson permutations — the OOP lookup is symmetric in the peripheral
+        // atoms — resolved via the RDKit-validated energy path for the caller's
+        // variant; the kernel reads the column and evaluates
+        // `E_oop = 0.5 · 143.9325 · koop · χ²` with χ in radians. This is the one
+        // number MMFF94s changes on a delocalised trivalent nitrogen.
+        let koop = eparams::oop_koop(variant, &types_u8, a, center, b, c).unwrap_or(0.0);
         // Three Wilson permutations (i, k, l) with the centre fixed in atomj.
         for &(i, k, l) in &[(a, b, c), (a, c, b), (b, c, a)] {
             let id = out

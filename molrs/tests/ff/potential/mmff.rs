@@ -3,7 +3,7 @@
 //! The MMFF kernel structs (`MMFFBondStretch`, `MMFFAngleBend`, ...) expose no
 //! public constructor — they are built only through `mmff_*_ctor` during
 //! `ForceField::to_potentials`. The genuine public path is therefore
-//! `MMFFTypifier::build(mol) -> Potentials`, which we drive here with molecules
+//! `MMFF94Typifier::build(mol) -> Potentials`, which we drive here with molecules
 //! built in code. Direct unit construction of each kernel is covered by inline
 //! `#[cfg(test)]` modules in src.
 //!
@@ -13,13 +13,13 @@
 //! canonical equivalence-degraded key the typifier emits, so `build()` yields a
 //! complete `Potentials` with finite energy and forces.
 
-use molrs::ff::typifier::mmff::MMFFTypifier;
+use molrs::ff::typifier::mmff::MMFF94Typifier;
 use molrs::system::molgraph::PropValue;
 use molrs::types::F;
 use molrs::{AtomId, Atomistic};
 
-fn typifier() -> MMFFTypifier {
-    MMFFTypifier::mmff94().expect("load embedded MMFF94")
+fn typifier() -> MMFF94Typifier {
+    MMFF94Typifier::new()
 }
 
 fn bond(mol: &mut Atomistic, a: AtomId, b: AtomId, order: F) {

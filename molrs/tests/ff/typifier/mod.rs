@@ -54,5 +54,10 @@ mod parmchk2_oracle;
 #[path = "mmff.rs"]
 mod mmff;
 
+/// The two MMFF front doors (`mmff-typifier-split`) — RED until `MMFF94Typifier` /
+/// `MMFF94STypifier` exist and `frame_builder` stops hardcoding the variant.
+#[path = "mmff_variant.rs"]
+mod mmff_variant;
+
 #[path = "opls.rs"]
 mod opls;

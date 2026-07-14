@@ -1,18 +1,16 @@
 //! Stage-level reporting for 3D generation.
 
-use super::options::{ConformerAlgorithm, ForceFieldKind};
+use super::options::ForceFieldKind;
 
 /// Pipeline stage identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StageKind {
-    /// Pre-processing (hydrogen handling, backend selection).
+    /// Pre-processing (hydrogen handling and molecular-feature perception).
     Preprocess,
     /// Initial coordinate construction.
     BuildInitial,
     /// First minimization pass.
     CoarseOptimize,
-    /// Rotatable-bond sampling.
-    RotorSearch,
     /// Final minimization pass.
     FinalOptimize,
     /// Stereo sanity checks.
@@ -39,8 +37,6 @@ pub struct ConformerStageReport {
 /// End-to-end generation report.
 #[derive(Debug, Clone)]
 pub struct ConformerReport {
-    /// Embedding algorithm used by stage-1.
-    pub embed_algorithm_used: ConformerAlgorithm,
     /// Resolved backend used by this run.
     pub forcefield_used: ForceFieldKind,
     /// Stage-by-stage execution data.
@@ -52,12 +48,8 @@ pub struct ConformerReport {
 }
 
 impl ConformerReport {
-    pub(crate) fn new(
-        embed_algorithm_used: ConformerAlgorithm,
-        forcefield_used: ForceFieldKind,
-    ) -> Self {
+    pub(crate) fn new(forcefield_used: ForceFieldKind) -> Self {
         Self {
-            embed_algorithm_used,
             forcefield_used,
             stages: Vec::new(),
             warnings: Vec::new(),

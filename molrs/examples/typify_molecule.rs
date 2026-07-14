@@ -65,7 +65,7 @@
 
 use molrs::Atomistic;
 use molrs::ff::potential::extract_coords;
-use molrs::ff::typifier::mmff::MMFFTypifier;
+use molrs::ff::typifier::mmff::MMFF94Typifier;
 use molrs::perceive::rings::find_rings;
 use molrs::system::molgraph::{Atom, PropValue};
 use molrs::types::F;
@@ -119,7 +119,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\n=== Part 3: Creating MMFF94 Typifier ===\n");
 
-    let typifier = MMFFTypifier::mmff94()?;
+    let typifier = MMFF94Typifier::new();
 
     if let Some(prop) = typifier.params().get_prop(1) {
         println!(
@@ -384,7 +384,7 @@ fn count(mol: &Atomistic) -> (usize, usize) {
 /// produced by reusing the RDKit-validated MMFF front-end.
 fn print_atom_types(
     name: &str,
-    typifier: &MMFFTypifier,
+    typifier: &MMFF94Typifier,
     mol: &Atomistic,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let frame = typifier.typify(mol)?.to_frame();

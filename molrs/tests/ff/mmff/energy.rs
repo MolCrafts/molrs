@@ -421,19 +421,18 @@ fn lbfgs_minimize_batch_matches_single() {
 
 // ---------------------------------------------------------------------------
 // Generic-path parity (ac-004): the same RDKit fixtures evaluated through
-// `MMFFTypifier::build` -> `ForceField::to_potentials` (typify + nonbonded_pairs
+// `MMFF94Typifier::build` -> `ForceField::to_potentials` (typify + nonbonded_pairs
 // + the generic kernels, including the now-wired out-of-plane term) must
 // reproduce the RDKit reference energy and a finite-difference-consistent
 // gradient. e_benzene / e_caffeine exercise the out-of-plane path.
 // ---------------------------------------------------------------------------
 
 fn generic_pots(name: &str) -> (molrs::ff::potential::Potentials, Vec<f64>) {
-    use molrs::ff::typifier::mmff::MMFFTypifier;
+    use molrs::ff::typifier::mmff::MMFF94Typifier;
     let dir = fixtures_dir();
     let mol = load_sdf(&dir.join(format!("{name}.sdf")));
     let coords = coords_of(&dir.join(format!("{name}.sdf")));
-    let pots = MMFFTypifier::mmff94()
-        .expect("load MMFF94")
+    let pots = MMFF94Typifier::new()
         .build(&mol)
         .unwrap_or_else(|e| panic!("{name}: generic build failed: {e}"));
     (pots, coords)

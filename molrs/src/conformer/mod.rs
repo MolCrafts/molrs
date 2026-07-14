@@ -23,7 +23,7 @@ mod report;
 /// ETKDGv3 conformer-embedding pipeline (the active [`Conformer`] backend).
 pub mod etkdg;
 
-pub use options::{ConformerAlgorithm, ConformerOptions, ConformerSpeed, ForceFieldKind};
+pub use options::{ConformerOptions, ConformerSpeed, ForceFieldKind};
 pub use report::{ConformerReport, ConformerStageReport, StageKind};
 
 use molrs::error::MolRsError;

@@ -33,8 +33,6 @@ use molrs::ff::mmff::{MmffForceField, MmffMolProperties, MmffVariant};
 use molrs::perceive::hydrogens::add_hydrogens;
 use molrs::system::atomistic::Atomistic;
 
-use crate::conformer::options::ConformerAlgorithm;
-
 /// Embedding dimension for the first stage (RDKit ETKDG uses 4D).
 const EMBED_DIM: usize = 4;
 /// Fraction below which a chiral volume is treated as inverted (RDKit
@@ -57,10 +55,7 @@ pub fn generate_3d_impl(
         ));
     }
 
-    // ETKDG is the only algorithm; report it as DistanceGeometry (the honest
-    // label) and keep the public enum unchanged.
-    let mut report =
-        ConformerReport::new(ConformerAlgorithm::DistanceGeometry, ForceFieldKind::MMFF94);
+    let mut report = ConformerReport::new(ForceFieldKind::MMFF94);
 
     let seed = opts.rng_seed.unwrap_or_else(random::<u64>);
     if opts.rng_seed.is_none() {

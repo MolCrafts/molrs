@@ -29,11 +29,11 @@ Then use the native types directly — no FFI, no copies. For example, building
 evaluable MMFF94 potentials from a molecule (the pattern molpack's relaxer follows):
 
 ```rust,no_run
-use molrs::ff::typifier::mmff::MMFFTypifier;
+use molrs::ff::typifier::mmff::MMFF94Typifier;
 use molrs::Atomistic;
 
 let mol = Atomistic::new();                              // build or load your molecule
-let potentials = MMFFTypifier::mmff94()?.build(&mol)?;   // typify → to_frame → to_potentials
+let potentials = MMFF94Typifier::new().build(&mol)?;     // typify → to_frame → to_potentials
 let coords: Vec<f64> = Vec::new();                       // flat [x,y,z, ...]
 let (energy, _forces) = potentials.calc_energy_forces(&coords);
 println!("MMFF94 energy = {energy} kcal/mol");
@@ -44,6 +44,13 @@ A force field read from a file is consumed the same way — the consumer (optimi
 integrator) builds the neighbour list and calls `ForceField::to_potentials(&frame)`.
 This exact snippet is compile-checked as the module doctest on
 `molrs::ff::typifier::mmff`.
+
+MMFF ships **two** named front doors — `MMFF94Typifier` and `MMFF94STypifier` —
+over one engine. Swap the type to swap the parameter set; there is no variant flag.
+MMFF94s (Halgren 1999, the "static" set) re-parameterises 11 out-of-plane rows and
+42 torsion rows so that delocalised trivalent nitrogen (MMFF types 10 `NC=O` /
+40 `NC=C`) minimizes planar; everything else is shared, so a molecule without such
+a nitrogen gets bit-for-bit identical potentials from both.
 
 ## Path B — Python / WASM via the `molrs-ffi` handle API
 

@@ -6,13 +6,11 @@
 //!
 //! # Pipeline stages
 //!
-//! 1. **Distance geometry** -- embed atoms in 3D using bounds-matrix
-//!    smoothing and random distance sampling.
-//! 2. **Fragment assembly** -- overlay known fragment templates.
-//! 3. **Coarse minimization** -- quick energy minimization.
-//! 4. **Rotor search** -- systematic search over rotatable bonds.
-//! 5. **Final minimization** -- full energy minimization.
-//! 6. **Stereo guards** -- verify stereochemistry is preserved.
+//! 1. **ETKDGv3 constraints** -- build and smooth the distance-bounds matrix.
+//! 2. **Distance-geometry embedding** -- sample distances and embed in 4D.
+//! 3. **ETKDG refinement** -- apply distance, chirality, and torsion knowledge.
+//! 4. **MMFF94 cleanup** -- relax the generated 3D structure.
+//! 5. **Stereo guards** -- verify stereochemistry is preserved.
 //!
 //! # References
 //!

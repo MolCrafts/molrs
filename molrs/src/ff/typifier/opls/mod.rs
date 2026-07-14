@@ -88,7 +88,7 @@ impl OPLSAATypifier {
     /// lowercase SMARTS `c` for aromatic ring carbons / hydrogens
     /// (RDKit-faithful aromatic matching), so benzene-type rings type exactly as
     /// molpy's ground truth. Mirrors
-    /// [`MMFFTypifier::mmff94`](crate::ff::typifier::mmff::MMFFTypifier::mmff94).
+    /// [`MMFF94Typifier::new`](crate::ff::typifier::mmff::MMFF94Typifier::new).
     ///
     /// # Errors
     ///
@@ -178,7 +178,7 @@ impl OPLSAATypifier {
     /// Typify a molecule and compile potentials in one step.
     ///
     /// `mol → typify (atoms + bonded) → Frame → Potentials`, mirroring
-    /// [`MMFFTypifier::build`](crate::ff::typifier::mmff::MMFFTypifier::build).
+    /// [`MMFF94Typifier::build`](crate::ff::typifier::mmff::MMFF94Typifier::build).
     /// 1-2 / 1-3 exclusion + 1-4 scaling come from the force field's
     /// `special_bonds` (set by the reader) and the consumer-built
     /// [`intramolecular_pairs`] neighbour list inserted here.

@@ -8,7 +8,7 @@ import numpy as np
 from molrs import (
     Atomistic,
     Conformer,
-    MMFFTypifier,
+    MMFF94Typifier,
     extract_coords,
 )
 
@@ -62,7 +62,7 @@ molecules = {
     "acetic_acid": build_acetic_acid(),
 }
 
-typifier = MMFFTypifier()
+typifier = MMFF94Typifier()
 
 for name, mol in molecules.items():
     print(f"=== {name} ===")

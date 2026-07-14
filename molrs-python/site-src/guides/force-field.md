@@ -56,7 +56,7 @@ mol = molrs.parse_smiles("CCO").to_atomistic()
 mol3d, _report = molrs.Conformer(speed="fast", seed=42).generate(mol)
 frame = mol3d.to_frame()
 
-typifier = molrs.MMFFTypifier()
+typifier = molrs.MMFF94Typifier()
 typed = typifier.typify(mol3d)
 typed_frame = typed.to_frame()
 print("typed blocks:", typed_frame.keys())
@@ -91,8 +91,13 @@ typing or in the stricter energy-evaluation path.
 
 Typing and evaluation answer different questions:
 
-- `MMFFTypifier.typify(mol)` returns a new typed `Atomistic`.
-- `MMFFTypifier.build(mol)` compiles a `Potentials` object.
+- `MMFF94Typifier.typify(mol)` returns a new typed `Atomistic`.
+- `MMFF94Typifier.build(mol)` compiles a `Potentials` object.
+- `MMFF94STypifier` is the same surface over the MMFF94s ("static") parameter set:
+  it flattens delocalised trivalent nitrogen (MMFF types 10 `NC=O` / 40 `NC=C`) by
+  re-parameterising 11 out-of-plane rows and 42 torsion rows. Everything else —
+  all 95 atom types, every bond / angle / stretch-bend / vdW / charge parameter —
+  is shared, so molecules without such a nitrogen get identical answers.
 - `Potentials.energy(coords)` returns only energy.
 - `Potentials.eval(coords)` returns energy and forces.
 

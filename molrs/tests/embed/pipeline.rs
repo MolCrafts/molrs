@@ -1,8 +1,8 @@
 //! End-to-end tests for the `generate_3d` embedding pipeline.
 //!
 //! Covers: seeded reproducibility and the empty-input error. The retired
-//! FragmentRules / MMFF94->UFF-fallback / algorithm-selector cases were removed
-//! (superseded by ETKDG); current coordinate-generation coverage lives in
+//! MMFF94->UFF-fallback cases were removed (superseded by ETKDG); current
+//! coordinate-generation coverage lives in
 //! `etkdg.rs`, `distgeom.rs`, and `torsions.rs`.
 
 use molrs::conformer::{Conformer, ConformerOptions};

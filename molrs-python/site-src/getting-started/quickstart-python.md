@@ -128,7 +128,7 @@ with the graph. Coordinates are then extracted from the frame as a flat `3N`
 array.
 
 ```python
-typifier = molrs.MMFFTypifier()
+typifier = molrs.MMFF94Typifier()
 typed = typifier.typify(mol3d)
 typed_frame = typed.to_frame()
 print("typed blocks:", typed_frame.keys())
@@ -183,4 +183,4 @@ This quickstart crossed the main molrs boundaries:
 - `to_frame` produced the columnar representation used by I/O and analysis.
 - `Box` supplied the boundary model for neighbor search.
 - `RDF` consumed an explicit neighbor list.
-- `MMFFTypifier` compiled potentials for energy and force evaluation.
+- `MMFF94Typifier` compiled potentials for energy and force evaluation.

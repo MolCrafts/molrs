@@ -86,7 +86,8 @@ from .molrs import (
     ConformerReport,
     ConformerStageReport,
     # Force field
-    MMFFTypifier,
+    MMFF94Typifier,
+    MMFF94STypifier,
     OPLSAATypifier,
     AtdTypifier,
     # Charge models (native AM1-BCC / ABCG2 / Mulliken / Gasteiger)
@@ -287,7 +288,8 @@ __all__ = [
     "Conformer",
     "ConformerReport",
     "ConformerStageReport",
-    "MMFFTypifier",
+    "MMFF94Typifier",
+    "MMFF94STypifier",
     "OPLSAATypifier",
     "AtdTypifier",
     "BccModel",

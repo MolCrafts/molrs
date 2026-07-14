@@ -38,12 +38,32 @@ use topo::Topo;
 
 /// MMFF parameterization variant.
 ///
-/// `Mmff94s` is the "static" variant (Halgren 1999); for atom typing and
-/// charges it differs from `Mmff94` only in the planarity treatment of a
-/// few delocalized nitrogens, which is governed by the Oop/Tor tables not
-/// yet present in [`tables`]. The typing / charge paths here are identical
-/// for both variants; the field is retained so callers can branch and so
-/// the energy layer can pick the right Oop/Tor set later.
+/// `Mmff94s` is the "static" variant (Halgren 1999). Atom typing and partial
+/// charges are **identical** for both variants — MMFF94 and MMFF94s share all 95
+/// atom types and every bond / angle / stretch-bend / vdW / charge parameter. The
+/// two differ only in the **out-of-plane and torsion** tables, and only on
+/// delocalized trivalent nitrogen (MMFF numeric types 10 `NC=O` and 40 `NC=C`):
+/// 11 Oop rows and 42 Torsion rows.
+///
+/// Both `_S` tables ARE shipped in [`tables`] — [`tables::MMFF_OOP_S`] (117 rows)
+/// and [`tables::MMFF_TOR_S`] (926 rows) — and the parameter layer
+/// (`energy::params`) dispatches on this variant to read them, falling back to the
+/// base table for keys the `_S` table does not re-parameterise.
+///
+/// The physics of the difference is the out-of-plane force constant `koop`
+/// (md·Å·rad⁻²), which the improper kernel evaluates as
+/// `E_oop = 0.5 · 143.9325 · koop · χ²` with χ the Wilson out-of-plane angle in
+/// **radians**. `koop > 0` makes the planar centre (χ = 0) an energy *minimum*;
+/// `koop < 0` makes it a *maximum*. MMFF94s raises `koop` on those nitrogens to a
+/// flat `+0.015` (type 10) / `+0.030` (type 40) — i.e. it **flattens** them, which
+/// is what "static" means: geometries minimized under MMFF94s match the planar
+/// nitrogen seen in crystal structures, where MMFF94 reproduces the dynamic,
+/// time-averaged (pyramidal) picture.
+///
+/// Pick a variant by picking a typifier —
+/// [`MMFF94Typifier`](crate::ff::typifier::mmff::MMFF94Typifier) or
+/// [`MMFF94STypifier`](crate::ff::typifier::mmff::MMFF94STypifier) — not by passing
+/// this enum: it is their private field.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MmffVariant {
     Mmff94,

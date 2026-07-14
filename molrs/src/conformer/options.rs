@@ -1,19 +1,5 @@
 //! Public options for 3D generation.
 
-/// Stage-1 embedding algorithm selector.
-///
-/// Names are algorithm-based (not toolkit-based), so backends can evolve
-/// without coupling public API names to a specific implementation source.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ConformerAlgorithm {
-    /// Rule- and fragment-based coordinate construction.
-    ///
-    /// This is the algorithm family currently implemented in this crate.
-    FragmentRules,
-    /// Distance-geometry based embedding.
-    DistanceGeometry,
-}
-
 /// Force-field backend selector.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ForceFieldKind {
@@ -28,11 +14,11 @@ pub enum ForceFieldKind {
 /// Preset quality/speed profile.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConformerSpeed {
-    /// Short minimization and fewer rotor trials.
+    /// Favor throughput.
     Fast,
     /// Balanced defaults.
     Medium,
-    /// More rotor trials and longer minimization.
+    /// Favor embedding quality.
     Better,
 }
 
@@ -41,8 +27,6 @@ pub enum ConformerSpeed {
 /// [`generate`](super::Conformer::generate) then runs against.
 #[derive(Debug, Clone)]
 pub struct ConformerOptions {
-    /// Stage-1 embedding algorithm.
-    pub algorithm: ConformerAlgorithm,
     /// Target force-field family (or auto selection).
     pub forcefield: ForceFieldKind,
     /// Throughput/quality preset.
@@ -58,7 +42,6 @@ pub struct ConformerOptions {
 impl Default for ConformerOptions {
     fn default() -> Self {
         Self {
-            algorithm: ConformerAlgorithm::FragmentRules,
             forcefield: ForceFieldKind::Auto,
             speed: ConformerSpeed::Medium,
             add_hydrogens: true,
@@ -71,11 +54,9 @@ impl Default for ConformerOptions {
 impl ConformerOptions {
     // --- ETKDG-internal knobs ------------------------------------------------
     //
-    // The public `ConformerOptions` shape is intentionally frozen (constructed by
-    // `molrs-python`); the ETKDG pipeline reinterprets the existing fields
-    // internally and supplies ETKDG defaults for the rest. `max_steps` doubles
-    // as the explicit `maxIterations` override (0 = RDKit's `10×n_atoms`
-    // heuristic).
+    // The ETKDG pipeline supplies defaults for knobs not exposed publicly.
+    // `max_steps` doubles as the explicit `maxIterations` override (0 =
+    // RDKit's `10×n_atoms` heuristic).
 
     /// ETKDG `maxIterations` override. `max_steps == 0` means "use the RDKit
     /// `10 × n_atoms` heuristic" (resolved in `etkdg::retry`).

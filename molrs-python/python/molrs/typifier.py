@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Protocol, TypeVar
 
-from .molrs import Atomistic, Graph, MMFFTypifier, OPLSAATypifier
+from .molrs import Atomistic, Graph, MMFF94STypifier, MMFF94Typifier, OPLSAATypifier
 
 TGraph = TypeVar("TGraph", bound=Graph)
 
@@ -24,7 +24,8 @@ __all__ = [
     "Typifier",
     "TGraph",
     "OPLSAATypifier",
-    "MMFFTypifier",
+    "MMFF94Typifier",
+    "MMFF94STypifier",
     "Atomistic",
     "Graph",
 ]

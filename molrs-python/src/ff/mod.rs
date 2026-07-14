@@ -1,12 +1,13 @@
-//! Python wrappers for MMFF94 force-field typification and compiled potentials.
+//! Python wrappers for MMFF force-field typification and compiled potentials.
 //!
 //! The workflow is:
 //!
-//! 1. Create an [`PyMMFFTypifier`] (loads embedded MMFF94 parameters).
-//! 2. Call [`PyMMFFTypifier::typify`] to assign atom types, producing a typed
-//!    [`PyFrame`].
-//! 3. Call [`PyMMFFTypifier::build`] to compile potentials directly from an
-//!    [`PyAtomistic`] graph.
+//! 1. Create a typifier — [`PyMMFF94Typifier`] (MMFF94) or [`PyMMFF94STypifier`]
+//!    (MMFF94s, the "static" variant). Both load their embedded parameter set at
+//!    construction; the variant is the class, never a flag.
+//! 2. Call `typify` to assign atom types + bonded parameters, producing a typed
+//!    [`PyAtomistic`] (materialize it with `to_frame()` for a [`PyFrame`]).
+//! 3. Call `build` to compile potentials directly from an [`PyAtomistic`] graph.
 //! 4. Use [`PyPotentials::eval`] to evaluate energy and forces on flat
 //!    coordinate arrays.
 //!
@@ -18,6 +19,7 @@
 //! # References
 //!
 //! - Halgren, T.A. (1996). J. Comput. Chem. 17, 490-519. (MMFF94 force field)
+//! - Halgren, T.A. (1999). J. Comput. Chem. 20, 720-729. (MMFF94s option)
 
 pub mod atd;
 pub mod charge;
@@ -32,7 +34,7 @@ use pyo3::types::{PyCapsule, PyDict, PyList};
 use molrs::ff::ForceField;
 use molrs::ff::mmff::{MmffForceField, MmffMolProperties, MmffVariant};
 use molrs::ff::potential::{Potentials, extract_coords};
-use molrs::ff::typifier::mmff::MMFFTypifier;
+use molrs::ff::typifier::mmff::{MMFF94STypifier, MMFF94Typifier};
 use molrs::ff::typifier::opls::OPLSAATypifier;
 use molrs::optimize::{LBFGS, LbfgsConfig, OptReport};
 use molrs_ffi::ForceFieldRef;
@@ -108,7 +110,7 @@ impl From<OptReport> for PyOptReport {
 ///
 /// Examples
 /// --------
-/// >>> typifier = MMFFTypifier()
+/// >>> typifier = MMFF94Typifier()
 /// >>> potentials = typifier.build(mol)
 /// >>> energy, forces = potentials.eval(coords)
 #[pyclass(name = "Potentials")]
@@ -349,118 +351,166 @@ impl PyLBFGS {
     }
 }
 
-/// MMFF94 atom-type assigner and potential builder.
+/// Bind one MMFF front door to Python.
 ///
-/// Exposed to Python as `molrs.MMFFTypifier`.
-///
-/// Loads embedded MMFF94 parameter tables at construction time. Use
-/// :meth:`typify` to assign atom types to a molecular graph, or
-/// :meth:`build` as a one-step shortcut that also compiles potentials.
-///
-/// # References
-///
-/// - Halgren, T.A. (1996). J. Comput. Chem. 17, 490-519.
-///
-/// Examples
-/// --------
-/// >>> typifier = MMFFTypifier()
-/// >>> typed = typifier.typify(mol)   # typed Atomistic
-/// >>> potentials = typifier.build(mol)  # compiled Potentials
-#[pyclass(name = "MMFFTypifier")]
-pub struct PyMMFFTypifier {
-    inner: MMFFTypifier,
+/// MMFF94 and MMFF94s are the same engine over two parameter sets, and molrs
+/// exposes them as two **named types** rather than one type with a variant flag —
+/// so the binder mirrors that shape exactly: two `#[pyclass]`es, each wrapping its
+/// own core typifier, generated from one forwarding body so they cannot drift.
+macro_rules! py_mmff_front_door {
+    (
+        $(#[$doc:meta])*
+        $py_ty:ident, $core:ty, $name:literal
+    ) => {
+        $(#[$doc])*
+        #[pyclass(name = $name)]
+        pub struct $py_ty {
+            inner: $core,
+        }
+
+        #[pymethods]
+        impl $py_ty {
+            /// Create the typifier with its embedded parameter tables.
+            ///
+            /// Never fails: the parameter set is compiled into the extension module.
+            #[new]
+            fn new() -> Self {
+                Self {
+                    inner: <$core>::new(),
+                }
+            }
+
+            /// Assign MMFF atom types (and this variant's bonded parameters) to a
+            /// molecular graph.
+            ///
+            /// Parameters
+            /// ----------
+            /// mol : Atomistic
+            ///     Molecular graph with element symbols and bonds.
+            ///
+            /// Returns
+            /// -------
+            /// Atomistic
+            ///     Typed molecular graph. Call ``typed.to_frame()`` explicitly when a
+            ///     tabular representation is needed. The improper rows carry ``koop``
+            ///     (md*A*rad^-2) and the dihedral rows ``v1``/``v2``/``v3``, both
+            ///     resolved from *this* class's parameter set.
+            ///
+            /// Raises
+            /// ------
+            /// ValueError
+            ///     If atom types cannot be determined (e.g. unsupported elements).
+            fn typify(&self, py: Python<'_>, mol: &PyAtomistic) -> PyResult<Py<PyAtomistic>> {
+                let typed = self
+                    .inner
+                    .typify(mol.core())
+                    .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+                PyAtomistic::from_core(py, typed)
+            }
+
+            /// Typify and compile potentials in one step.
+            ///
+            /// Equivalent to calling :meth:`typify` followed by force-field
+            /// compilation, but avoids the intermediate :class:`Frame`.
+            ///
+            /// Parameters
+            /// ----------
+            /// mol : Atomistic
+            ///     Molecular graph with element symbols and bonds.
+            ///
+            /// Returns
+            /// -------
+            /// Potentials
+            ///     Compiled energy/force evaluator.
+            ///
+            /// Raises
+            /// ------
+            /// ValueError
+            ///     If typification or compilation fails.
+            ///
+            /// Examples
+            /// --------
+            /// >>> potentials = typifier.build(mol)
+            /// >>> energy, forces = potentials.eval(coords)
+            fn build(&self, mol: &PyAtomistic) -> PyResult<PyPotentials> {
+                let potentials = self
+                    .inner
+                    .build(mol.core())
+                    .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+                Ok(PyPotentials {
+                    inner: PotBacking::Compiled(potentials),
+                })
+            }
+
+            /// Return the underlying force-field definition.
+            fn forcefield(&self) -> PyForceField {
+                PyForceField {
+                    inner: self.inner.ff().clone(),
+                }
+            }
+
+            fn __repr__(&self) -> String {
+                format!("{}(forcefield='{}')", $name, self.inner.ff().name)
+            }
+        }
+    };
 }
 
-#[pymethods]
-impl PyMMFFTypifier {
-    /// Create an MMFF94 typifier with embedded parameter tables.
+py_mmff_front_door! {
+    /// MMFF94 atom-type assigner and potential builder.
     ///
-    /// Returns
-    /// -------
-    /// MMFFTypifier
+    /// Exposed to Python as `molrs.MMFF94Typifier`.
     ///
-    /// Raises
-    /// ------
-    /// RuntimeError
-    ///     If parameter initialization fails (should not happen with
-    ///     embedded data).
-    #[new]
-    fn new() -> PyResult<Self> {
-        let typifier = MMFFTypifier::mmff94().map_err(|e| {
-            pyo3::exceptions::PyRuntimeError::new_err(format!("failed to initialize MMFF94: {}", e))
-        })?;
-        Ok(Self { inner: typifier })
-    }
-
-    /// Assign MMFF94 atom types to a molecular graph.
+    /// Loads the embedded MMFF94 parameter tables at construction time. Use
+    /// :meth:`typify` to assign atom types to a molecular graph, or :meth:`build`
+    /// as a one-step shortcut that also compiles potentials.
     ///
-    /// Parameters
-    /// ----------
-    /// mol : Atomistic
-    ///     Molecular graph with element symbols and bonds.
+    /// See :class:`MMFF94STypifier` for the "static" variant used in energy
+    /// minimization.
     ///
-    /// Returns
-    /// -------
-    /// Atomistic
-    ///     Typed molecular graph. Call ``typed.to_frame()`` explicitly when a
-    ///     tabular representation is needed.
+    /// # References
     ///
-    /// Raises
-    /// ------
-    /// ValueError
-    ///     If atom types cannot be determined (e.g. unsupported elements).
-    fn typify(&self, py: Python<'_>, mol: &PyAtomistic) -> PyResult<Py<PyAtomistic>> {
-        let typed = self
-            .inner
-            .typify(mol.core())
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-        PyAtomistic::from_core(py, typed)
-    }
-
-    /// Typify and compile potentials in one step.
-    ///
-    /// Equivalent to calling :meth:`typify` followed by force-field
-    /// compilation, but avoids the intermediate :class:`Frame`.
-    ///
-    /// Parameters
-    /// ----------
-    /// mol : Atomistic
-    ///     Molecular graph with element symbols and bonds.
-    ///
-    /// Returns
-    /// -------
-    /// Potentials
-    ///     Compiled energy/force evaluator.
-    ///
-    /// Raises
-    /// ------
-    /// ValueError
-    ///     If typification or compilation fails.
+    /// - Halgren, T.A. (1996). J. Comput. Chem. 17, 490-519.
     ///
     /// Examples
     /// --------
-    /// >>> potentials = typifier.build(mol)
-    /// >>> energy, forces = potentials.eval(coords)
-    fn build(&self, mol: &PyAtomistic) -> PyResult<PyPotentials> {
-        let potentials = self
-            .inner
-            .build(mol.core())
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-        Ok(PyPotentials {
-            inner: PotBacking::Compiled(potentials),
-        })
-    }
+    /// >>> typifier = MMFF94Typifier()
+    /// >>> typed = typifier.typify(mol)      # typed Atomistic
+    /// >>> potentials = typifier.build(mol)  # compiled Potentials
+    PyMMFF94Typifier, MMFF94Typifier, "MMFF94Typifier"
+}
 
-    /// Return the underlying force-field definition.
-    fn forcefield(&self) -> PyForceField {
-        PyForceField {
-            inner: self.inner.ff().clone(),
-        }
-    }
-
-    fn __repr__(&self) -> String {
-        format!("MMFFTypifier(forcefield='{}')", self.inner.ff().name)
-    }
+py_mmff_front_door! {
+    /// MMFF94s ("static") atom-type assigner and potential builder.
+    ///
+    /// Exposed to Python as `molrs.MMFF94STypifier`.
+    ///
+    /// Identical to :class:`MMFF94Typifier` except on delocalised trivalent
+    /// nitrogen (MMFF numeric types 10 ``NC=O`` and 40 ``NC=C``), where MMFF94s
+    /// re-parameterises 11 out-of-plane rows and 42 torsion rows so the nitrogen
+    /// minimizes to a **planar** geometry — the one seen in crystal structures.
+    ///
+    /// The mechanism is the out-of-plane force constant ``koop`` (md*A*rad^-2) that
+    /// :meth:`typify` bakes onto the improper rows. The kernel evaluates
+    /// ``E_oop = 0.5 * 143.9325 * koop * chi**2`` with ``chi`` the Wilson
+    /// out-of-plane angle in radians, so ``koop > 0`` makes the planar centre an
+    /// energy minimum. MMFF94s sets it to ``+0.015`` (type 10) / ``+0.030``
+    /// (type 40); MMFF94's values on those rows run from ``-0.033`` to ``+0.004``.
+    ///
+    /// All 95 atom types, and every bond / angle / stretch-bend / vdW / charge
+    /// parameter, are shared with MMFF94 — so a molecule with no such nitrogen gets
+    /// bit-for-bit the same answer from both classes.
+    ///
+    /// # References
+    ///
+    /// - Halgren, T.A. (1999). J. Comput. Chem. 20, 720-729. (MMFF94s)
+    ///
+    /// Examples
+    /// --------
+    /// >>> typifier = MMFF94STypifier()
+    /// >>> typifier.forcefield().name
+    /// 'MMFF94s'
+    PyMMFF94STypifier, MMFF94STypifier, "MMFF94STypifier"
 }
 
 fn oplsaa_source_xml(source: Option<&Bound<'_, PyAny>>) -> PyResult<Option<String>> {
@@ -632,7 +682,7 @@ pub fn extract_coords_py<'py>(
 /// >>> mol = molrs.parse_smiles("CCO").to_atomistic()
 /// >>> mol, _ = molrs.Conformer(seed=7).generate(mol)
 /// >>> pots = molrs.build_mmff_potentials(mol)
-/// >>> coords = molrs.extract_coords(molrs.MMFFTypifier().typify(mol)).reshape(-1, 3)
+/// >>> coords = molrs.extract_coords(molrs.MMFF94Typifier().typify(mol)).reshape(-1, 3)
 /// >>> opt, report = pots.minimize(coords, fmax=0.05)
 #[pyfunction]
 #[pyo3(name = "build_mmff_potentials", signature = (mol, variant = "MMFF94"))]

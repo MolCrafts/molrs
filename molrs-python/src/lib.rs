@@ -16,7 +16,8 @@
 //! | `NeighborList`       | [`PyNeighborList`]| Query result with pair indices + distances |
 //! | `Atomistic`          | [`PyAtomistic`]   | All-atom molecular graph                   |
 //! | `Perceive`           | [`PyPerceive`]    | Chemical perception (graph in / graph out) |
-//! | `MMFFTypifier`       | [`PyMMFFTypifier`]| MMFF94 atom-type assignment                |
+//! | `MMFF94Typifier`     | [`PyMMFF94Typifier`]| MMFF94 atom-type assignment              |
+//! | `MMFF94STypifier`    | [`PyMMFF94STypifier`]| MMFF94s (static) atom-type assignment   |
 //! | `OPLSAATypifier`     | [`PyOPLSAATypifier`]| OPLS-AA atom-type + bonded assignment    |
 //! | `AtdTypifier`        | [`PyAtdTypifier`] | antechamber atom types (7 `-at` tables)    |
 //! | `BccModel`           | [`PyBccModel`]    | AM1-BCC / ABCG2 bond-charge corrections    |
@@ -67,7 +68,10 @@ use conformer::{PyConformer, PyConformerReport, PyConformerStageReport};
 mod ff;
 use ff::atd::PyAtdTypifier;
 use ff::charge::{PyBccModel, PyGasteigerModel, PyMullikenModel};
-use ff::{PyForceField, PyLBFGS, PyMMFFTypifier, PyOPLSAATypifier, PyOptReport, PyPotentials};
+use ff::{
+    PyForceField, PyLBFGS, PyMMFF94STypifier, PyMMFF94Typifier, PyOPLSAATypifier, PyOptReport,
+    PyPotentials,
+};
 
 mod compute;
 use compute::{
@@ -213,7 +217,8 @@ fn molrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Force field
     m.add_class::<PyForceField>()?;
-    m.add_class::<PyMMFFTypifier>()?;
+    m.add_class::<PyMMFF94Typifier>()?;
+    m.add_class::<PyMMFF94STypifier>()?;
     m.add_class::<PyOPLSAATypifier>()?;
     m.add_class::<PyAtdTypifier>()?;
     m.add_class::<PyPotentials>()?;

@@ -5,6 +5,40 @@ All notable changes to molrs are recorded here. This project follows
 
 ## [Unreleased]
 
+### Added
+
+- **MMFF94s is reachable from the typifier / force-field path.** New
+  `MMFF94STypifier` (Rust: `molrs::ff::typifier::mmff::MMFF94STypifier`; Python:
+  `molrs.MMFF94STypifier`) types and parameterises a molecule with the MMFF94s
+  ("static", Halgren 1999) parameter set, giving `data/mmff94s.xml` its first
+  consumer. MMFF94 and MMFF94s share all 95 atom types and every bond / angle /
+  stretch-bend / vdW / charge parameter; they differ in 11 out-of-plane rows and 42
+  torsion rows, all centred on delocalised trivalent nitrogen (MMFF types 10 `NC=O`
+  / 40 `NC=C`), which MMFF94s flattens by raising `koop` to `+0.015` / `+0.030`
+  md·Å·rad⁻².
+
+### Fixed
+
+- **The MMFF typifier no longer hardcodes the MMFF94 variant.**
+  `frame_builder::annotate_mmff` now threads the variant into
+  `MmffMolProperties::compute`, `torsion_params` and `oop_koop`, so the `koop` and
+  `(v1, v2, v3)` columns baked onto the typed Frame — the ones the `mmff_oop` /
+  `mmff_torsion` kernels actually read — follow the typifier the caller chose. The
+  MMFF94s tables (`MMFF_OOP_S`, `MMFF_TOR_S`) had been shipped and used only by the
+  bespoke energy path.
+
+### Changed — BREAKING
+
+- **`MMFFTypifier` is renamed to `MMFF94Typifier`** (Rust and Python), and its
+  fallible `MMFFTypifier::mmff94() -> Result<Self, String>` constructor is replaced
+  by the infallible `MMFF94Typifier::new() -> Self` (the parameter set is embedded
+  at compile time; `from_xml_str` still returns `Result`). There is **no compat
+  alias and no deprecated shim**: MMFF is now two named front doors —
+  `MMFF94Typifier` and `MMFF94STypifier` — over one engine, and the variant is a
+  private field, never a constructor flag. Migration:
+  `MMFFTypifier::mmff94()?` → `MMFF94Typifier::new()`; `molrs.MMFFTypifier()` →
+  `molrs.MMFF94Typifier()`.
+
 ## [0.7.0] - 2026-07-08
 
 molrs and `molcrafts-molpy` continue to share one version line and release as a

@@ -99,7 +99,7 @@ resolve). The dependency spine is `core → perceive → {io, ff} → conformer`
 | `compute` | `compute` (→ `signal`) | Trajectory analysis: RDF, MSD, clustering, gyration/inertia tensors |
 | `stream` | `stream` | Frame/Block serde + MessagePack/JSON `frame_to_bytes` |
 | `ff` | `ff` | Force fields, potentials (KernelRegistry), atom typifier |
-| `conformer` | `conformer` (→ `ff`) | 3D conformer generation: distance geometry, fragment assembly, optimizer, rotor search |
+| `conformer` | `conformer` (→ `ff`) | 3D conformer generation: ETKDGv3 distance geometry, experimental-torsion refinement, MMFF94 cleanup, stereo guards |
 
 The umbrella feature `full` enables every gated sub-system module; core knobs are
 `rayon` (default), `zarr`, `filesystem`, `blas`, `voronoi`.
@@ -163,7 +163,7 @@ Graph-based molecular structure with atoms, bonds, stereochemistry, ring detecti
 |---|---|---|---|
 | `NbListAlgo` | `molrs::core::neighbors` | Neighbor search | `LinkCell` (O(N), default), `BruteForce` (O(N²), testing), `NeighborQuery` (high-level wrapper) |
 | `Potential` | `molrs::ff::potential` | Energy/force evaluation | Bond harmonic, MMFF bond/angle/torsion/oop/vdw/ele, LJ/cut, PME |
-| `Typifier` | `molrs::ff::typifier` | MolGraph → typed Frame | MMFFTypifier |
+| `Typifier` | `molrs::ff::typifier` | MolGraph → typed Frame | `MMFF94Typifier` / `MMFF94STypifier` (one engine, two named front doors — the MMFF variant is a private field, never a constructor flag), `OPLSAATypifier`, `AtdTypifier` |
 
 Pack-related traits (`Restraint`, `Region`, `Relaxer`, `Handler`, `Objective`) now live
 in the standalone `molcrafts-molpack` crate.
@@ -180,7 +180,7 @@ in the standalone `molcrafts-molpack` crate.
 
 ### Conformer Pipeline (molrs/src/conformer/)
 
-Multi-stage 3D coordinate generation: distance geometry → fragment assembly → coarse minimization → rotor search → final minimization → stereo guards. Public API: `Conformer::new(opts).generate(mol) -> Result<(Atomistic, ConformerReport)>`.
+Multi-stage 3D coordinate generation: ETKDGv3 constraints → 4D distance-geometry embedding → experimental-torsion refinement → MMFF94 cleanup → stereo guards. Public API: `Conformer::new(opts).generate(mol) -> Result<(Atomistic, ConformerReport)>`.
 
 ### Packing
 

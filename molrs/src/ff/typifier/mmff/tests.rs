@@ -3,7 +3,7 @@
 #[cfg(test)]
 #[allow(clippy::module_inception)]
 mod tests {
-    use crate::ff::typifier::mmff::MMFFTypifier;
+    use crate::ff::typifier::mmff::MMFF94Typifier;
     use molrs::system::molgraph::{Atom, PropValue};
     use molrs::{AtomId, Atomistic};
 
@@ -23,8 +23,8 @@ mod tests {
         }
     }
 
-    fn test_typifier() -> MMFFTypifier {
-        MMFFTypifier::mmff94().expect("load MMFF94")
+    fn test_typifier() -> MMFF94Typifier {
+        MMFF94Typifier::new()
     }
 
     // -----------------------------------------------------------------------

@@ -10,7 +10,7 @@
 //! Run:
 //!   cargo run -p molcrafts-molrs --example typify_litfsi --features ff
 
-use molrs::ff::typifier::mmff::MMFFTypifier;
+use molrs::ff::typifier::mmff::MMFF94Typifier;
 use molrs::system::molgraph::{Atom, PropValue};
 use molrs::{AtomId, Atomistic};
 
@@ -63,7 +63,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Step 2: Create typifier and assign types
     // =========================================================================
 
-    let typifier = MMFFTypifier::mmff94()?;
+    let typifier = MMFF94Typifier::new();
 
     let ring_info = molrs::find_rings(&mol);
     println!("Rings detected: {}", ring_info.num_rings());

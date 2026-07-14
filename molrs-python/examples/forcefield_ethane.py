@@ -1,14 +1,14 @@
 """Generate 3D coordinates for ethane, then evaluate MMFF94 energy and forces.
 
 Demonstrates the full pipeline:
-  Atomistic (no coords) → Conformer.generate → MMFFTypifier.build → Potentials.eval
+  Atomistic (no coords) → Conformer.generate → MMFF94Typifier.build → Potentials.eval
 """
 
 import numpy as np
 from molrs import (
     Atomistic,
     Conformer,
-    MMFFTypifier,
+    MMFF94Typifier,
     extract_coords,
 )
 
@@ -27,7 +27,7 @@ print(f"\nAfter embed: {mol3d}")
 print(f"  final_energy (internal UFF) = {report.final_energy:.4f}")
 
 # --- 3. Typify with MMFF94 and build potentials ---
-typifier = MMFFTypifier()
+typifier = MMFF94Typifier()
 try:
     potentials = typifier.build(mol3d)
     print(f"\n{potentials}")

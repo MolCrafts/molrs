@@ -1,5 +1,5 @@
 ---
-title: "chem-perceive 14/14 — 剩余参数表 → .rs：mmff94 / mmff94s / oplsaa / gen3d fragments"
+title: "chem-perceive 14/14 — 剩余力场参数表 → .rs"
 status: approved
 created: 2026-07-12
 chain: chem-perceive
@@ -15,31 +15,28 @@ blocks: ""
 
 ## Summary
 
-收尾："所有的参数表应该写成 .rs"——把 02/09/10 之外**剩下的全部**也转掉：
-`mmff94.xml`(427 KB)、`mmff94s.xml`(427 KB)、`oplsaa.xml`(346 KB)、
-`gen3d/rigid-fragments.txt`(1891 KB)、`gen3d/ring-fragments.txt`(740 KB)。
+收尾：把 02/09/10 之外剩余的力场参数表转为 typed Rust：
+`mmff94.xml`(427 KB)、`mmff94s.xml`(427 KB)、`oplsaa.xml`(346 KB)。
 
-这一期存在的理由本身就是一次纠错：早前把它们排除的理由是"转成 `.rs` 会让编译时间爆炸"，
-而**实测推翻了这个说法**（见 Domain basis）。既然理由不成立，就不该有豁免。
+`gen3d/rigid-fragments.txt` 和 `gen3d/ring-fragments.txt` 是 Open Babel 的坐标模板库，
+不是 RDKit ETKDG 参数，且 molrs 从未加载它们。本期直接删除，不转换为 Rust 表。
+
+这一期同时纠正数据边界：只有实际被运行时消费的参数表才转为 `.rs`；
+从未接入当前算法的坐标库直接删除。
 
 ## Domain basis
 
-### 排除理由已被实测推翻
+### 力场表转换已被实测验证
 
-早前的说法是"6 万/3 万行的 fragment 库转 `.rs` 会让编译时间爆炸"。实测：
+对实际有消费者的力场表，typed Rust 的编译成本可接受：
 
 | 项 | 实测值 |
 |---|---|
 | 15,474 行 static Rust 表（gaff+gaff2+BCCPARM） | 二进制 **+1071 KB**，编译 **0.37 s** |
-| molrs 今天已经 `include_str!` 进去的原始文本总量 | **3974 KB** |
-| 其中 `gen3d/rigid-fragments.txt` 单个 | **1891 KB** |
+| 需要替换的三个 XML 原始文本 | **1204 KB** |
 
-也就是说：**这些数据早就在二进制里了**，只不过是以"未解析的原始文本"形式躺着，
-每次用还要在运行期解析一遍。转成 typed 表之后，文本副本消失、解析消失，
-净增量远小于直觉。fragment 库是**坐标数据**，转成扁平 `f64` static slice 甚至可能比
-原始文本**更小**（省掉了数字的十进制文本表示）。
-
-⇒ 没有豁免的理由。做完它。
+这三个 XML 已经被 `include_str!` 带入二进制，转成 typed 表可以移除运行时解析。
+Open Babel fragment 文件没有任何消费者，不符合这个转换前提。
 
 ### 证据链与出处（所有子 spec 共用）
 
@@ -68,26 +65,66 @@ Gasteiger & Marsili, *Tetrahedron* 1980, **36**:3219。
 GPL atomtype.c"*——现在这个顾虑以更大规模重现。参数**表**（`.DAT`/`.DEF`）是数据，
 但**算法**是 GPL C 源码。合并前必须明确并记录 clean-room / 授权姿态，不得默默推进。
 
+## 统一到一个地方，一种形式（owner 定案）
+
+> "请你将所有的 data 统一成一个形式，放在统一的地方"
+> "如果是原位的，那就不要叫 generated 这种傻逼的名字！"
+> "ci 不要和 AMBERHOME 有任何牵连，只在实施过程中验证一次！"
+
+今天参数数据散落在**四种形式、三个地方**：
+
+| 在哪 | 形式 | 行/大小 |
+|---|---|---|
+| `molrs/src/ff/params/generated/` ×15 | 已提交的 typed Rust | 49,977 行 / 2.9 MB |
+| `molrs/src/ff/mmff/tables.rs` | 已提交的 typed Rust（**从 RDKit `Params.cpp` 移植**，BSD-3；17 张 static 表 + 17 个二分查找访问器） | **51,621 行** |
+| `molrs/data/*.xml` ×3 | 原始 XML，`include_str!` + **运行期解析** | 1,204 KB |
+| `molrs/data/gen3d/` | 死数据（零引用） | 已由 owner 删除 |
+
+⇒ 归位到**唯一**的 `molrs/src/ff/params/`：
+
+```
+molrs/src/ff/params/
+    mod.rs            ← 只放行类型（今天就是）
+    gaff.rs  gaff2.rs  bccparm.rs  bccparm_abcg2.rs  gasparm.rs
+    gaff_equiv.rs  gaff_empirical.rs
+    atomtype_{gff,gff2,bcc,abcg2,amber,sybyl,gas}.rs
+    mmff94.rs  mmff94s.rs  oplsaa.rs      ← 新增（XML → typed Rust）
+    mmff.rs                               ← 从 ff/mmff/tables.rs 搬来（连访问器）
+```
+
+**没有 `generated/` 这个目录名。** 这些表是仓库里的一等源码，不是构建产物——"generated" 是个描述它们怎么*来的*的名字，不是描述它们*是什么*的名字。"怎么来的"写在每个文件的头部文档注释里（`scripts/gen_param_tables.py` / RDKit `Params.cpp`）就够了。
+
+**CI 与 `$AMBERHOME` 零牵连。** 任何依赖 `$AMBERHOME` 的测试**从套件里删除**（不是 skip，是删）。逐字节复现**只在实施时本地验证一次**，结果记进本 spec。
+
+### 前置依赖
+
+本 spec 必须在 `mmff-typifier-split` **之后**落地。在那之前 `mmff94s.xml` 的消费者是**零**，先转它会产出一张没有读者的死表——正是 owner 已两次否决的死重量。`mmff-typifier-split` 给了它第一个真实读者（`MMFF94STypifier`），三张表才都有人读。
+
 ## Files to create or modify
 
-- 修改 `scripts/gen_param_tables.py`
-- 新增 `molrs/src/ff/params/generated/{mmff94,mmff94s,oplsaa}.rs`
-- 新增 `molrs/src/conformer/data/generated/{rigid_fragments,ring_fragments}.rs`
-- 修改 `molrs/src/core/data.rs`（清空）
-- **删除** `molrs/data/`
+- 修改 `scripts/gen_param_tables.py`（新增三个 XML 的 emitter）
+- 新增 `molrs/src/ff/params/{mmff94,mmff94s,oplsaa}.rs`
+- **搬迁** `molrs/src/ff/mmff/tables.rs` → `molrs/src/ff/params/mmff.rs`（连 17 个访问器；`git mv` + 改路径，不改一行逻辑）
+- **重命名** `molrs/src/ff/params/generated/` → 平铺进 `molrs/src/ff/params/`
+- 修改 `molrs/src/core/data.rs`（清空 `include_str!`）
+- **删除** `molrs/data/*.xml`（三份）
+- 删除依赖 `$AMBERHOME` 的漂移测试
 
 ## Tasks
 
 - [ ] Extend the generator to emit `.rs` for mmff94.xml, mmff94s.xml, oplsaa.xml
-- [ ] Extend the generator to emit `.rs` for gen3d/rigid-fragments.txt and ring-fragments.txt (coordinate libraries — emit as flat f64 static slices, not strings)
-- [ ] Delete the corresponding `include_str!` consts in `core/data.rs` and the runtime XML/text parsers on those paths
-- [ ] Delete `molrs/data/` entirely once every table is generated
+- [ ] Flatten `ff/params/generated/` into `ff/params/` — the tables are first-class source, not a build artefact; no directory named `generated`
+- [ ] Move `ff/mmff/tables.rs` (51,621 lines, RDKit port) to `ff/params/mmff.rs` with its 17 accessors; fix import paths, change no logic
+- [ ] Delete the `include_str!` consts in `core/data.rs` and the runtime XML parsers on those paths
+- [ ] Delete `molrs/data/*.xml`
+- [ ] Remove every `$AMBERHOME`-dependent test from the suite (delete, do not skip) — CI must have zero coupling to AmberTools
+- [ ] Validate byte-for-byte regeneration ONCE, locally, with $AMBERHOME; record the result in this spec
 - [ ] Re-measure binary size and clean-build time; record the totals
 
 ## Testing strategy
 
 - MMFF94 / OPLS 的现有 typifier + potential 测试**全绿且断言值不变**（纯数据表示变更）。
-- conformer / ETKDG 的 fragment 相关测试全绿。
+- conformer / ETKDG 测试全绿，删除死数据不影响数值。
 - Drift guard：生成器逐字节复现全部 `.rs`。
 - grep gate：`molrs/src` 中 `include_str!` **0 命中**；`molrs/data/` 目录不再存在。
 - **实测并记录**最终的二进制体积与 clean build 时间。

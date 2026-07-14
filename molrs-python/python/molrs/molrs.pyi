@@ -962,7 +962,29 @@ class LBFGS:
 class Typifier(Protocol[TGraph]):
     def typify(self, mol: TGraph) -> TGraph: ...
 
-class MMFFTypifier(Typifier[Atomistic]):
+class MMFF94Typifier(Typifier[Atomistic]):
+    """MMFF94 (Halgren 1996) atom types, charges and bonded parameters.
+
+    The variant is the class, never a flag. See ``MMFF94STypifier`` for the
+    "static" parameter set."""
+
+    def __init__(self) -> None: ...
+    def typify(self, mol: Atomistic) -> Atomistic: ...
+    def build(self, mol: Atomistic) -> Potentials: ...
+    def forcefield(self) -> ForceField: ...
+
+class MMFF94STypifier(Typifier[Atomistic]):
+    """MMFF94s (Halgren 1999) — the "static" set, for energy minimization.
+
+    Differs from ``MMFF94Typifier`` only on delocalised trivalent nitrogen (MMFF
+    numeric types 10 ``NC=O`` / 40 ``NC=C``): 11 out-of-plane rows and 42 torsion
+    rows are re-parameterised so the nitrogen minimizes planar. ``typify`` bakes
+    ``koop = +0.015`` (type 10) / ``+0.030`` (type 40) md*A*rad^-2 on those
+    centres, where the improper kernel reads it as
+    ``E_oop = 0.5 * 143.9325 * koop * chi**2`` (chi in radians). Every atom type
+    and every bond / angle / stretch-bend / vdW / charge parameter is shared with
+    MMFF94."""
+
     def __init__(self) -> None: ...
     def typify(self, mol: Atomistic) -> Atomistic: ...
     def build(self, mol: Atomistic) -> Potentials: ...

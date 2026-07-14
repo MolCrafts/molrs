@@ -1,12 +1,12 @@
 //! End-to-end MMFF94 typification: MolGraph (built in code) -> typed Atomistic
 //! -> Frame, atom/bond/angle/dihedral labels, and full build.
 
-use molrs::ff::typifier::mmff::MMFFTypifier;
+use molrs::ff::typifier::mmff::MMFF94Typifier;
 use molrs::system::molgraph::{Atom, PropValue};
 use molrs::{AtomId, Atomistic};
 
-fn typifier() -> MMFFTypifier {
-    MMFFTypifier::mmff94().expect("load embedded MMFF94")
+fn typifier() -> MMFF94Typifier {
+    MMFF94Typifier::new()
 }
 
 fn bond(mol: &mut Atomistic, a: AtomId, b: AtomId, order: f64) {
