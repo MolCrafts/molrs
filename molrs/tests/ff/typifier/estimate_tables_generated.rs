@@ -84,7 +84,7 @@ fn the_estimate_tables_embed_no_table_text() {
     assert!(
         hits.is_empty(),
         "`{TABLES}` still carries its tables as embedded JSON text. They belong in \
-         `ff::params::generated` as typed `&'static` Rust, emitted by \
+         `ff::params` as typed `&'static` Rust, emitted by \
          `scripts/gen_param_tables.py` and guarded by MANIFEST.sha256, exactly like \
          `gaff.dat` and the seven `ATOMTYPE_*.DEF`:\n{}",
         hits.join("\n")

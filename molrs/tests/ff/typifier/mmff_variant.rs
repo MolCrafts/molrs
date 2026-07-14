@@ -313,17 +313,48 @@ fn front_doors_name_their_own_force_field() {
     assert_eq!(MMFF94STypifier::new().ff().name, "MMFF94s");
 }
 
-/// Both front doors also parse a caller-supplied XML — with the variant pinned by
+/// Both front doors also parse a **caller-supplied** XML — with the variant pinned by
 /// the door, never by an argument.
+///
+/// The input is a caller's XML precisely because molrs ships none: chem-perceive-14
+/// ac-001 compiled the three parameter sets into `ff::params` and deleted
+/// `molrs::data::*_XML`, which this test used to feed back into `from_xml_str`. That
+/// was never a real test of the entry point anyway — it re-parsed the crate's own
+/// embedded text and could not tell the caller's bytes from the shipped ones. Here the
+/// XML is unmistakably the caller's (`name="caller-supplied"`), so a door that quietly
+/// ignored the argument and returned its embedded set would fail on the first line.
+///
+/// A `<ForceField>` structure literal, not sample data being round-tripped: the same
+/// convention `forcefield::parse_generic_xml_then_compile_and_eval` documents.
 #[test]
 fn front_doors_accept_caller_supplied_xml() {
-    let t94 = MMFF94Typifier::from_xml_str(molrs::data::MMFF94_XML).expect("MMFF94 xml");
-    let t94s = MMFF94STypifier::from_xml_str(molrs::data::MMFF94S_XML).expect("MMFF94s xml");
-    assert_eq!(t94.ff().name, "MMFF94");
-    assert_eq!(t94s.ff().name, "MMFF94s");
-    // Typing metadata is byte-identical across the two XMLs by construction —
-    // asserted here so the *shape* of the engine (one params reader, two doors)
-    // stays honest.
+    let xml = r#"
+        <ForceField name="caller-supplied">
+          <AtomProperties>
+            <Prop type="1" atno="6" crd="4" val="4" pilp="0" mltb="0" arom="0" linh="0" sbmb="0" />
+          </AtomProperties>
+          <BondStretchParams>
+            <Bond bond_type="0" type1="1" type2="1" kb="4.258" r0="1.508" />
+          </BondStretchParams>
+        </ForceField>
+    "#;
+
+    let t94 = MMFF94Typifier::from_xml_str(xml).expect("MMFF94 door parses caller XML");
+    let t94s = MMFF94STypifier::from_xml_str(xml).expect("MMFF94s door parses caller XML");
+
+    // The caller's bytes won, through both doors — neither fell back to a shipped set.
+    assert_eq!(t94.ff().name, "caller-supplied");
+    assert_eq!(t94s.ff().name, "caller-supplied");
+    assert!(
+        !t94.ff().get_styles("bond").is_empty(),
+        "caller's bond style"
+    );
+    assert!(
+        !t94s.ff().get_styles("bond").is_empty(),
+        "caller's bond style"
+    );
+
+    // One params reader behind both doors: same XML in, same typing metadata out.
     assert_eq!(t94.params().get_prop(1).expect("type 1").atno, 6);
     assert_eq!(t94s.params().get_prop(1).expect("type 1").atno, 6);
 }
@@ -876,29 +907,16 @@ fn the_name_mmfftypifier_is_gone_from_src() {
     );
 }
 
-/// ac-009 — `MMFF94S_XML` finally has a reader in `src/`.
-///
-/// It is embedded, shipped, and today consumed by exactly nobody: the unlock
-/// condition for `chem-perceive-14-all-tables` is that the const is *named from
-/// production code*, so that spec's generated table has a reader on day one.
-#[test]
-fn mmff94s_xml_has_a_consumer_in_src() {
-    let mut readers = Vec::new();
-    for (path, src) in rust_sources(&molrs_src_dir()) {
-        // The declaration itself is not a consumer.
-        if path.ends_with("core/data.rs") {
-            continue;
-        }
-        if src.contains("MMFF94S_XML") {
-            readers.push(path.display().to_string());
-        }
-    }
-    assert!(
-        !readers.is_empty(),
-        "molrs::data::MMFF94S_XML is named nowhere in molrs/src — MMFF94s is shipped \
-         but unreachable; `MMFF94STypifier::new()` is meant to be its first reader"
-    );
-}
+// ac-009 — "the MMFF94s data has a reader in `src/`" lived here as a grep for
+// `MMFF94S_XML`. That const is deleted by chem-perceive-14 ac-001 (the parameter sets
+// are compiled tables now, and molrs ships no XML), so the grep would pass by asserting
+// the absence of the very thing it was written to find.
+//
+// The criterion outlived its wording, and it is now enforced generically and
+// permanently, one layer up: `ff::tables_gate::no_parameter_table_is_unreachable`
+// requires EVERY table under `ff/params/` — mmff94s among them — to be declared and
+// named from production code outside `ff/params/`. That gate is what held this spec
+// behind `mmff-typifier-split` in the first place: it refuses a reader-less table.
 
 fn molrs_src_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src")

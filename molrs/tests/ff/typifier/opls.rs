@@ -505,9 +505,9 @@ fn ethane_bond_angle_dihedral_match_opls_reference() {
 // the molpy ground-truth generator (`gen_opls_fixtures.py`) was retired with
 // molpy's own OPLS typifier. Rather than regenerate a molpy oracle, the expected
 // atom types, charges and bonded parameters below are hardcoded and were
-// verified by hand against the OPLS-AA parameter table (Jorgensen et al. 1996;
-// the bundled `data/oplsaa.xml`). The force field is molrs's embedded canonical
-// copy (`OPLSAATypifier::oplsaa()` -> `include_str!(OPLSAA_XML)`), so these run
+// verified by hand against the OPLS-AA parameter table (Jorgensen et al. 1996).
+// The force field is the canonical copy molrs ships and compiles in
+// (`OPLSAATypifier::oplsaa()` -> `ff::params::oplsaa`), so these run
 // unconditionally, need no external test data, and can never skip.
 
 /// A bonded term's string prop (its `type` name, e.g. `CT-CT-OH`).

@@ -712,6 +712,19 @@ def build_xml(
                       da=v.da,
                       symbol=v.symbol)
 
+    # ElectrostaticParams — the buffered-Coulomb term
+    #   E = 332.0716 * qi*qj / (dielectric * (R + delta))   [kcal/mol, A, e]
+    # MMFF's electrostatic constants are not in MMFF94.PAR (they are fixed by the
+    # method, Halgren 1996 eq. 5 / RDKit `Nonbonded.cpp`), but they must reach the
+    # reader as DATA: `read_forcefield_xml_str` dispatches on this section to
+    # define the `pair/mmff_ele` style and to set the force field's 1-4 weights
+    # (coulomb *= scale14; vdW is NOT scaled by MMFF). Emitting it here is what
+    # keeps a regeneration from silently deleting the whole electrostatic term.
+    ET.SubElement(root, "ElectrostaticParams",
+                  dielectric="1.0",
+                  delta="0.05",
+                  scale14="0.75")
+
     # EmpiricalBondRules
     emp_el = ET.SubElement(root, "EmpiricalBondRules")
     for c in covrad:

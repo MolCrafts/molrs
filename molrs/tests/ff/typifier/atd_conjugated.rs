@@ -35,9 +35,16 @@
 //! off that molecule, and the expected types are read off AmberTools25:
 //!
 //! ```text
-//! $AMBERHOME/bin/antechamber -i <name>.sdf -fi sdf -o o.ac -fo ac \
-//!                            -nc 0 -at {gaff,gaff2} -pf n     # ATOM lines
+//! antechamber -i <name>.sdf -fi sdf -o o.ac -fo ac \
+//!             -nc 0 -at {gaff,gaff2} -pf n     # ATOM lines   (AmberTools25)
 //! ```
+//!
+//! The command was run **once, by hand**, and its answers are hardcoded below. The
+//! suite never invokes it and names no AmberTools environment variable: CI has zero
+//! coupling to AmberTools (chem-perceive-14 ac-003), and
+//! `ff::tables_gate::no_test_couples_ci_to_ambertools` greps for exactly that — a
+//! mention in a comment is a hit too, because a grep that has to be read with
+//! exceptions is not a gate.
 //!
 //! Note the input carries RDKit's *aromatic* bonds (order 1.5, `is_aromatic`), not
 //! a Kekulé structure — that is what a molrs user has — so molrs must perceive the

@@ -5,6 +5,7 @@ use crate::helpers::{atoms_frame, flat_coords, pairs_block, topo_block, typed_at
 use molrs::ff::ForceField;
 use molrs::ff::potential::extract_coords;
 use molrs::ff::read_forcefield_xml_str;
+use molrs::ff::typifier::mmff::MMFF94Typifier;
 use molrs::store::frame::Frame;
 use molrs::types::F;
 
@@ -122,10 +123,22 @@ fn parse_xml_rejects_wrong_root() {
     assert!(err.contains("ForceField"), "{err}");
 }
 
+/// The shipped MMFF94 set is a full, multi-style `ForceField` — however it is stored.
+///
+/// This used to read `molrs::data::MMFF94_XML` through `read_forcefield_xml_str`.
+/// chem-perceive-14 ac-001 deletes that const (the tables are compiled Rust now), and
+/// the fact worth asserting never depended on the storage: what matters is that the
+/// parameter set molrs ships arrives as many styles with real bond types, not that it
+/// arrives via a particular parser. So it goes through the front door, and survives the
+/// representation change untouched.
+///
+/// The XML *parser* keeps its own coverage above — `parse_generic_xml_then_compile_and_eval`
+/// and `parse_xml_rejects_wrong_root` — on caller-supplied XML, which is what the reader
+/// is for once molrs ships no XML of its own.
 #[test]
-fn parse_embedded_mmff94_xml_yields_many_styles() {
-    // The embedded MMFF94 parameter set is the crate's own canonical input.
-    let ff = read_forcefield_xml_str(molrs::data::MMFF94_XML).expect("parse MMFF94 xml");
+fn shipped_mmff94_parameter_set_yields_many_styles() {
+    let typifier = MMFF94Typifier::new();
+    let ff = typifier.ff();
     // MMFF tables compile into bond/angle/dihedral/improper/pair styles.
     assert!(
         !ff.styles().is_empty(),

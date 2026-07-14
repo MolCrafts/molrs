@@ -1,0 +1,11 @@
+{
+  "name": "e_acetonitrile",
+  "source": "frozen from molrs MmffForceField::energy_terms (bespoke MMFF94 path, max |delta| vs RDKit = 0.00000 on every fixture) at spec mmff-orthogonal-01; legitimacy is re-proved on every run by summing the 7 terms and comparing to mmff94_total_energy in <name>.energy.json (the RDKit oracle)",
+  "bond": 0.30727990445206865,
+  "angle": 1.2055212204719468,
+  "stbn": -0.01094058967227314,
+  "torsion": -0.0,
+  "oop": -0.0,
+  "vdw": 0.005680149595660361,
+  "ele": 0.0
+}

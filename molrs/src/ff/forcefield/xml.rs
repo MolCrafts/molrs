@@ -24,8 +24,10 @@
 use std::collections::HashMap;
 
 use super::{
-    AngleType, BondType, DihedralType, ForceField, ImproperType, PairType, Params, StyleDefs,
+    AngleType, BondType, DihedralType, ForceField, ImproperType, PairType, Params, SpecialBonds,
+    StyleDefs,
 };
+use crate::ff::potential::pair::mmff::encode_da;
 use crate::ff::typifier::mmff::{MMFFAtomProp, MMFFParams};
 use crate::ff::typifier::opls::{OplsTypeRow, OplsTypingMeta};
 
@@ -70,6 +72,7 @@ pub fn read_forcefield_xml_str(xml: &str) -> Result<ForceField, String> {
             "TorsionParams" => parse_mmff_torsions(&mut ff, &child)?,
             "OutOfPlaneParams" => parse_mmff_oop(&mut ff, &child)?,
             "VdWParams" => parse_mmff_vdw(&mut ff, &child)?,
+            "ElectrostaticParams" => parse_mmff_ele(&mut ff, &child)?,
 
             // Auxiliary MMFF sections (informational, not compiled)
             "AtomTypes"
@@ -497,6 +500,12 @@ fn parse_mmff_vdw(ff: &mut ForceField, node: &roxmltree::Node) -> Result<(), Str
         let n_eff = attr_f64(&vdw, "n_eff")?;
         let a_i = attr_f64(&vdw, "a_i")?;
         let g_i = attr_f64(&vdw, "g_i")?;
+        // MMFF's `DA` column ("D" donor / "A" acceptor / "-" neither). It selects
+        // the two hydrogen-bond corrections in the combining rule (donor R*
+        // suppression, donor-acceptor R*/eps scaling) — dropping it silently
+        // over-estimates the vdW energy of every H-bonding molecule (urea +0.59,
+        // NMA +0.12 kcal/mol). Absent attribute => "-", MMFF's own default.
+        let da = encode_da(vdw.attribute("da").unwrap_or("-"));
 
         let type_name = format!("{}", atype as u32);
         types.push(PairType {
@@ -508,10 +517,47 @@ fn parse_mmff_vdw(ff: &mut ForceField, node: &roxmltree::Node) -> Result<(), Str
                 ("n_eff", n_eff),
                 ("a_i", a_i),
                 ("g_i", g_i),
+                ("da", da),
                 ("type", atype),
             ]),
         });
     }
+    Ok(())
+}
+
+/// Parse `<ElectrostaticParams dielectric="1.0" delta="0.05" scale14="0.75"/>`
+/// into the `pair/mmff_ele` style **and** the force field's 1-4 weights.
+///
+/// MMFF's buffered-Coulomb term
+///
+/// ```text
+/// E = 332.0716 * qi*qj / (dielectric * (R + delta))
+/// ```
+///
+/// has no per-type rows at all — the charges are per-atom and the typifier bakes
+/// them onto the frame — so the style carries only these three scalars. That is
+/// exactly why the term went missing: the kernel (`mmff_ele_ctor`) has been in the
+/// registry since it was written, but no force field ever *defined* the style, so
+/// no consumer of the documented `ForceField` API could compute electrostatics
+/// (caffeine was off by 150 kcal/mol). Declaring it as a section keeps the
+/// numbers in the data file, symmetric with `<VdWParams>`, rather than conjuring a
+/// style out of literals inside the reader.
+///
+/// `scale14` also sets [`SpecialBonds`]: coulomb 1-4 is scaled by it (0.75) while
+/// **vdW 1-4 is left unscaled (1.0)** — MMFF scales only electrostatics, and its
+/// torsion parameters were fitted against unscaled 1-4 vdW. The 1-2 / 1-3 weights
+/// stay at the default 0.0 (molrs excludes those pairs by omitting them from the
+/// neighbour list).
+fn parse_mmff_ele(ff: &mut ForceField, node: &roxmltree::Node) -> Result<(), String> {
+    let dielectric = opt_attr_f64(node, "dielectric").unwrap_or(1.0);
+    let delta = opt_attr_f64(node, "delta").unwrap_or(0.05);
+    let scale14 = opt_attr_f64(node, "scale14").unwrap_or(1.0);
+
+    ff.set_special_bonds(SpecialBonds {
+        lj: [0.0, 0.0, 1.0],
+        coul: [0.0, 0.0, scale14],
+    });
+    ff.def_pairstyle("mmff_ele", &[("dielectric", dielectric), ("delta", delta)]);
     Ok(())
 }
 

@@ -36,7 +36,8 @@ use super::params::MMFFParams;
 /// - atoms: `type` (MMFF numeric type as string) + `charge` (MMFF partial charge)
 /// - bonds: `type` (e.g. `"0_1_5"`) + `kb` / `r0`
 /// - angles: `type` / `stbn_type` (e.g. `"0_1_2_1"`) — enumerated — + `ka` /
-///   `theta0` (radians) / `kba_ijk` / `kba_kji` / `r0_ij` / `r0_kj`
+///   `theta0` (radians) / `kba_ijk` / `kba_kji` / `r0_ij` / `r0_kj` / `linear`
+///   (0/1: the central atom is a linear centre, `linh != 0`)
 /// - dihedrals: `type` (e.g. `"0_5_1_1_5"`) — enumerated — + the Fourier
 ///   coefficients `v1` / `v2` / `v3` (kcal·mol⁻¹), **variant-dependent**
 /// - impropers: `type` = canonical MMFF out-of-plane key (e.g. `"0_37_37_37"`) +
@@ -140,6 +141,19 @@ pub(crate) fn annotate_mmff(
         out.set_angle_prop(id, "type", label.clone())
             .map_err(|e| e.to_string())?;
         out.set_angle_prop(id, "stbn_type", label)
+            .map_err(|e| e.to_string())?;
+        // Linear-centre flag, from the CENTRAL atom's `linh` property (nitrile,
+        // alkyne, allene, isocyanate…). It selects a different functional form for
+        // the bend — `E = 143.9325·ka·(1 + cos θ)` instead of the cubic expansion
+        // about theta0 — and suppresses the stretch-bend term at that centre; both
+        // kernels (`mmff_angle`, `mmff_stbn`) read this one column. Baked as 0/1
+        // rather than a bool because `MolGraph::to_frame` carries only f64 / i32 /
+        // string columns into the Frame; a bool would be silently dropped.
+        let linear = params
+            .get_prop(type_of(b))
+            .map(|p| p.linh != 0)
+            .unwrap_or(false);
+        out.set_angle_prop(id, "linear", PropValue::Int(i32::from(linear)))
             .map_err(|e| e.to_string())?;
         // Bake per-instance numeric params (table → equivalence → empirical),
         // resolved exactly as the RDKit-validated energy path does. `theta0`
