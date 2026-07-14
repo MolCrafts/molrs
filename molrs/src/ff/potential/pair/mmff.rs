@@ -264,7 +264,7 @@ pub fn mmff_vdw_ctor(
                 n_eff: get("n_eff")?,
                 a_i: get("a_i")?,
                 g_i: get("g_i")?,
-                da: p.get("da").unwrap_or(0.0) as u8,
+                da: p.get("da").unwrap_or(f64::from(DA_NEITHER)) as u8,
             })
         };
         let (rs, eps) = vdw_combining(&to_vdw(pi, ti)?, &to_vdw(pj, tj)?, &style);
