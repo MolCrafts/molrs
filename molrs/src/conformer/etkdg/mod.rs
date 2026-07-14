@@ -28,9 +28,9 @@ use rand::{SeedableRng, random, rngs::StdRng};
 use crate::conformer::distgeom::{self, ChiralSign, DgConstraints, EtkdgVersion};
 use crate::conformer::options::{ConformerOptions, ForceFieldKind};
 use crate::conformer::report::{ConformerReport, ConformerStageReport, StageKind};
-use molrs::chem::hydrogens::add_hydrogens;
 use molrs::error::MolRsError;
 use molrs::ff::mmff::{MmffForceField, MmffMolProperties, MmffVariant};
+use molrs::perceive::hydrogens::add_hydrogens;
 use molrs::system::atomistic::Atomistic;
 
 use crate::conformer::options::ConformerAlgorithm;
@@ -107,7 +107,7 @@ pub fn generate_3d_impl(
     // --- Build ETKDGv3 constraints ---------------------------------------
     // Experimental torsions are assigned through the full CrystalFF
     // three-table set (v2 ++ small-rings ++ macrocycles) matched by the core
-    // SMARTS engine (`molrs::chem::smarts`), reproducing RDKit
+    // SMARTS engine (`molrs::perceive::smarts`), reproducing RDKit
     // `getExperimentalTorsions`. See `distgeom::torsion_prefs`.
     let version = EtkdgVersion::Etkdgv3;
     let constraints = distgeom::build_constraints(&work, version)?;

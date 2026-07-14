@@ -53,7 +53,9 @@ fn atom_positions(frame: &CoreFrame) -> PyResult<(Vec<F>, Vec<F>, Vec<F>)> {
         frame
             .get_float("atoms", c)
             .map(|a| a.iter().copied().collect())
-            .ok_or_else(|| PyValueError::new_err(format!("frame `atoms` block has no `{c}` column")))
+            .ok_or_else(|| {
+                PyValueError::new_err(format!("frame `atoms` block has no `{c}` column"))
+            })
     };
     Ok((col("x")?, col("y")?, col("z")?))
 }

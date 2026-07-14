@@ -26,7 +26,7 @@
 //!   the input 3D coordinates (molrs has no RDKit `ChiralTag`).
 //! - **Experimental torsions**: full port. The complete ETKDGv3 CrystalFF
 //!   three-table set (v2 ++ small-rings ++ macrocycles) is matched by the core
-//!   SMARTS engine (`molrs::chem::smarts`), reproducing RDKit
+//!   SMARTS engine (`molrs::perceive::smarts`), reproducing RDKit
 //!   `getExperimentalTorsions` (first-match-wins, one torsion per rotatable
 //!   bond). See `torsion_prefs` for the precise boundary. Tetrangle smoothing
 //!   is omitted because RDKit's reference matrix does not apply it.

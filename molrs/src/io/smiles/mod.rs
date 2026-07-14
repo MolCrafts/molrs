@@ -2,7 +2,7 @@
 //!
 //! This module hosts the SMILES serialization pipeline and exposes
 //! [`parse_smarts`] for the canonical SMARTS engine in
-//! [`crate::chem::smarts`]. SMARTS matching lives there; this module owns only
+//! [`crate::perceive::smarts`]. SMARTS matching lives there; this module owns only
 //! syntax parsing shared with SMILES.
 //!
 //! * [`smiles`] — the SMILES serialization format: parse a string into an
@@ -21,7 +21,7 @@
 //! # Pipeline (SMARTS)
 //!
 //! ```text
-//! SMARTS string → parse_smarts() → SmilesIR → crate::chem::smarts::SmartsPattern
+//! SMARTS string → parse_smarts() → SmilesIR → crate::perceive::smarts::SmartsPattern
 //! ```
 //!
 //! # Example

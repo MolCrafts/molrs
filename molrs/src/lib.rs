@@ -55,14 +55,7 @@ pub use crate::core::*;
 // not a refactor). `optimize` above is the same shape: always on, no feature.
 pub mod perceive;
 
-/// Compatibility alias for the old module path `molrs::chem::…`.
-///
-/// The separate `molrs-python` workspace imports through it and is a path
-/// dependency, so the main workspace's `cargo check` cannot catch its breakage.
-/// Removed in `chem-perceive-13-python-bind` once the binder is migrated.
-pub use crate::perceive as chem;
-
-// The crate-root surface that `core::chem` used to publish via `pub use core::*`.
+// The crate-root surface that this layer used to publish via `pub use core::*`.
 // It moves here verbatim, retargeted at `perceive`, so `molrs::find_rings`,
 // `molrs::SmartsPattern`, `molrs::add_hydrogens`, … keep resolving. Deleting it
 // would silently break 13 call sites — four of them in `ff/`, two of those only

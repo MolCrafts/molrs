@@ -36,7 +36,7 @@
 //! # Example
 //!
 //! ```
-//! use molrs::chem::smarts::SmartsPattern;
+//! use molrs::perceive::smarts::SmartsPattern;
 //! use molrs::{Atom, Atomistic, PropValue};
 //!
 //! // Acetamide skeleton C-C(=O)-N (no Hs needed for this query).

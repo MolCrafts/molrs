@@ -24,8 +24,8 @@ use std::collections::HashMap;
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 
-use molrs::chem::aromaticity::perceive_aromaticity as core_perceive_aromaticity;
-use molrs::chem::smarts::{MatchOptions, Reaction, SmartsPattern};
+use molrs::perceive::aromaticity::perceive_aromaticity as core_perceive_aromaticity;
+use molrs::perceive::smarts::{MatchOptions, Reaction, SmartsPattern};
 use molrs::system::atomistic::{Atomistic, ExtractedAtomistic};
 use molrs::system::coarsegrain::{CoarseGrain, ExtractedCoarseGrain};
 use molrs::system::entity_table::Cell;
@@ -706,7 +706,10 @@ impl PyAtomistic {
         nodes: Vec<u64>,
     ) -> PyResult<(Py<PyAtomistic>, HashMap<u64, u64>)> {
         let ids: Vec<_> = nodes.into_iter().map(node_from_u64).collect();
-        let (sub, map) = self.inner.induced_subgraph(&ids).map_err(molrs_error_to_pyerr)?;
+        let (sub, map) = self
+            .inner
+            .induced_subgraph(&ids)
+            .map_err(molrs_error_to_pyerr)?;
         let py_sub = PyAtomistic::from_core(py, sub)?;
         let py_map = map
             .into_iter()
@@ -1212,7 +1215,10 @@ impl PyCoarseGrain {
         nodes: Vec<u64>,
     ) -> PyResult<(Py<PyCoarseGrain>, HashMap<u64, u64>)> {
         let ids: Vec<_> = nodes.into_iter().map(node_from_u64).collect();
-        let (sub, map) = self.inner.induced_subgraph(&ids).map_err(molrs_error_to_pyerr)?;
+        let (sub, map) = self
+            .inner
+            .induced_subgraph(&ids)
+            .map_err(molrs_error_to_pyerr)?;
         let py_sub = PyCoarseGrain::from_core(py, sub)?;
         let py_map = map
             .into_iter()
@@ -1322,7 +1328,7 @@ pub fn perceive_aromaticity(mol: &Bound<'_, PyAtomistic>) -> usize {
 /// Add explicit hydrogens, returning a **new** `Atomistic` (chemistry system).
 #[pyfunction]
 pub fn add_hydrogens(py: Python<'_>, mol: &Bound<'_, PyAtomistic>) -> PyResult<Py<PyAtomistic>> {
-    let out = molrs::chem::hydrogens::add_hydrogens(mol.borrow().core());
+    let out = molrs::perceive::hydrogens::add_hydrogens(mol.borrow().core());
     PyAtomistic::from_core(py, out)
 }
 
@@ -1331,7 +1337,7 @@ pub fn add_hydrogens(py: Python<'_>, mol: &Bound<'_, PyAtomistic>) -> PyResult<P
 #[pyfunction]
 pub fn find_rings(mol: &Bound<'_, PyAtomistic>) -> Vec<Vec<u64>> {
     let leaf = mol.borrow();
-    molrs::chem::rings::find_rings(leaf.core())
+    molrs::perceive::rings::find_rings(leaf.core())
         .rings()
         .iter()
         .map(|ring| ring.iter().map(|&a| node_to_u64(a)).collect())

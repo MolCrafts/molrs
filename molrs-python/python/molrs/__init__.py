@@ -79,6 +79,8 @@ from .molrs import (
     add_hydrogens,
     find_rings,
     compute_gasteiger_charges,
+    # Chemical perception (builder: graph in / graph out, non-mutating)
+    Perceive,
     # Conformer generation
     Conformer,
     ConformerReport,
@@ -86,6 +88,11 @@ from .molrs import (
     # Force field
     MMFFTypifier,
     OPLSAATypifier,
+    AtdTypifier,
+    # Charge models (native AM1-BCC / ABCG2 / Mulliken / Gasteiger)
+    BccModel,
+    MullikenModel,
+    GasteigerModel,
     ForceField,
     Potentials,
     OptReport,
@@ -275,12 +282,17 @@ __all__ = [
     "add_hydrogens",
     "find_rings",
     "compute_gasteiger_charges",
+    "Perceive",
     "keys",
     "Conformer",
     "ConformerReport",
     "ConformerStageReport",
     "MMFFTypifier",
     "OPLSAATypifier",
+    "AtdTypifier",
+    "BccModel",
+    "MullikenModel",
+    "GasteigerModel",
     "ForceField",
     "Style",
     "AtomStyle",

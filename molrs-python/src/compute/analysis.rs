@@ -426,10 +426,7 @@ impl PyLegendreReorientation {
     /// The `(tail, head)` atom-index pairs defining each tracked bond vector are
     /// read from the `bonds` topology block of the first frame. `frames` are
     /// time-ordered.
-    fn compute(
-        &self,
-        frames: &Bound<'_, PyAny>,
-    ) -> PyResult<PyLegendreReorientationResult> {
+    fn compute(&self, frames: &Bound<'_, PyAny>) -> PyResult<PyLegendreReorientationResult> {
         let owned = collect_frames(frames)?;
         let refs: Vec<&CoreFrame> = owned.iter().collect();
         let first = refs

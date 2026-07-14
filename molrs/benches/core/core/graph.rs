@@ -4,8 +4,8 @@
 //! guard the O(N) adjacency path against an accidental O(N^2) all-bonds scan.
 
 use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group};
-use molrs::chem::aromaticity::perceive_aromaticity;
-use molrs::chem::rings::find_rings;
+use molrs::perceive::aromaticity::perceive_aromaticity;
+use molrs::perceive::rings::find_rings;
 use molrs::system::atomistic::Atomistic;
 
 use crate::helpers;

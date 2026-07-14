@@ -15,8 +15,13 @@
 //! | `NeighborQuery`      | [`PyNeighborQuery`]| Spatial neighbor query (freud-style API)   |
 //! | `NeighborList`       | [`PyNeighborList`]| Query result with pair indices + distances |
 //! | `Atomistic`          | [`PyAtomistic`]   | All-atom molecular graph                   |
+//! | `Perceive`           | [`PyPerceive`]    | Chemical perception (graph in / graph out) |
 //! | `MMFFTypifier`       | [`PyMMFFTypifier`]| MMFF94 atom-type assignment                |
 //! | `OPLSAATypifier`     | [`PyOPLSAATypifier`]| OPLS-AA atom-type + bonded assignment    |
+//! | `AtdTypifier`        | [`PyAtdTypifier`] | antechamber atom types (7 `-at` tables)    |
+//! | `BccModel`           | [`PyBccModel`]    | AM1-BCC / ABCG2 bond-charge corrections    |
+//! | `MullikenModel`      | [`PyMullikenModel`]| QM Mulliken charges, unchanged            |
+//! | `GasteigerModel`     | [`PyGasteigerModel`]| Gasteiger / PEOE charges (no QM input)   |
 //! | `Potentials`         | [`PyPotentials`]  | Compiled energy/force evaluator            |
 //! | `RDF` / `MSD` / `Cluster` |              | Structural analysis                        |
 //!
@@ -52,10 +57,16 @@ use crate::core::system::molgraph::{
 
 mod io;
 
+// Chemical perception: one layer above `core`, mirroring `molrs::perceive`.
+mod perceive;
+use crate::perceive::PyPerceive;
+
 mod conformer;
 use conformer::{PyConformer, PyConformerReport, PyConformerStageReport};
 
 mod ff;
+use ff::atd::PyAtdTypifier;
+use ff::charge::{PyBccModel, PyGasteigerModel, PyMullikenModel};
 use ff::{PyForceField, PyLBFGS, PyMMFFTypifier, PyOPLSAATypifier, PyOptReport, PyPotentials};
 
 mod compute;
@@ -189,6 +200,9 @@ fn molrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(find_rings, m)?)?;
     m.add_function(wrap_pyfunction!(compute_gasteiger_charges, m)?)?;
 
+    // Chemical perception, as a builder: graph in / graph out, non-mutating.
+    m.add_class::<PyPerceive>()?;
+
     // Field-name convention (`molrs.keys.X`, `molrs.keys.ELEMENT`, …)
     register_keys(m)?;
 
@@ -201,7 +215,14 @@ fn molrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyForceField>()?;
     m.add_class::<PyMMFFTypifier>()?;
     m.add_class::<PyOPLSAATypifier>()?;
+    m.add_class::<PyAtdTypifier>()?;
     m.add_class::<PyPotentials>()?;
+
+    // Charge models — Python's first native AM1-BCC. One calling convention:
+    // `needs_equivalencing()` + `assign(mol, qm=None)`; `BccModel` adds `correct`.
+    m.add_class::<PyBccModel>()?;
+    m.add_class::<PyMullikenModel>()?;
+    m.add_class::<PyGasteigerModel>()?;
     m.add_class::<PyOptReport>()?;
     m.add_class::<PyLBFGS>()?;
     m.add_function(wrap_pyfunction!(ff::read_forcefield_xml_py, m)?)?;

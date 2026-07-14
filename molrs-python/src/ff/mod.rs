@@ -10,9 +10,17 @@
 //! 4. Use [`PyPotentials::eval`] to evaluate energy and forces on flat
 //!    coordinate arrays.
 //!
+//! The antechamber-derived bindings live in their own modules rather than here:
+//! [`atd`] (the ATD atom typifier, one engine over seven `ATOMTYPE_*.DEF` tables)
+//! and [`charge`] (the three charge models). This file is already large, and they
+//! are self-contained.
+//!
 //! # References
 //!
 //! - Halgren, T.A. (1996). J. Comput. Chem. 17, 490-519. (MMFF94 force field)
+
+pub mod atd;
+pub mod charge;
 
 use std::ffi::CString;
 use std::fs;

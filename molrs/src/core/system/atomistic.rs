@@ -638,7 +638,7 @@ impl Atomistic {
     }
 
     // Aromaticity perception is a free-function *system*:
-    // [`crate::chem::aromaticity::perceive_aromaticity`]. No algorithm method here.
+    // [`crate::perceive::aromaticity::perceive_aromaticity`]. No algorithm method here.
 }
 
 /// Canonical (orientation-independent) key for an angle/dihedral endpoint

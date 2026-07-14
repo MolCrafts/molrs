@@ -17,6 +17,10 @@
 mod aromaticity;
 #[path = "perceive/bond_type.rs"]
 mod bond_type;
+/// The compat alias `chem-perceive-01` left behind (chem-perceive-13 ac-004) —
+/// a source gate, because an alias is invisible to a behavioural test.
+#[path = "perceive/chem_alias.rs"]
+mod chem_alias;
 #[path = "perceive/composition.rs"]
 mod composition;
 #[path = "perceive/edge_cases.rs"]

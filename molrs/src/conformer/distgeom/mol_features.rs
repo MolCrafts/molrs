@@ -14,7 +14,7 @@
 
 use std::collections::HashMap;
 
-use molrs::chem::rings::{RingInfo, find_rings};
+use molrs::perceive::rings::{RingInfo, find_rings};
 use molrs::system::atomistic::{AtomId, Atomistic};
 use molrs::system::element::Element;
 
