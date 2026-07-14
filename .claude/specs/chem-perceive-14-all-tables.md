@@ -130,19 +130,21 @@ molrs/src/ff/mmff/
 
 ## Files to create or modify
 
-- 修改 `scripts/gen_param_tables.py`（新增三个 XML 的 emitter）
-- 新增 `molrs/src/ff/params/{mmff94,mmff94s,oplsaa}.rs`
-- **搬迁** `molrs/src/ff/mmff/tables.rs` → `molrs/src/ff/params/mmff.rs`（连 17 个访问器；`git mv` + 改路径，不改一行逻辑）
-- **重命名** `molrs/src/ff/params/generated/` → 平铺进 `molrs/src/ff/params/`
+- 修改 `scripts/gen_param_tables.py`（新增 emitter）
+- 新增 `molrs/src/ff/params/oplsaa.rs`（XML → typed Rust）
+- **合并** `molrs/src/ff/mmff/tables.rs`（51,621 行 RDKit 移植）**+** `mmff94.xml` 剩下的 199 条 → **一个** `molrs/src/ff/params/mmff.rs`
+- **重命名** `molrs/src/ff/mmff/params.rs` → `molrs/src/ff/mmff/resolve.rs`（它是算法，不是参数；**不进** `params/`）
 - 修改 `molrs/src/core/data.rs`（清空 `include_str!`）
-- **删除** `molrs/data/*.xml`（三份）
+- **删除** `molrs/data/`（三份 XML；`mmff94s.xml` 与 `mmff94.xml` 只差 2 行 name，不单独成表）
 - 删除依赖 `$AMBERHOME` 的漂移测试
+- ✅ 已完成（`6e9eb08`）：`params/generated/` 平铺进 `params/`，manifest 重算
 
 ## Tasks
 
-- [ ] Extend the generator to emit `.rs` for mmff94.xml, mmff94s.xml, oplsaa.xml
-- [ ] Flatten `ff/params/generated/` into `ff/params/` — the tables are first-class source, not a build artefact; no directory named `generated`
-- [ ] Move `ff/mmff/tables.rs` (51,621 lines, RDKit port) to `ff/params/mmff.rs` with its 17 accessors; fix import paths, change no logic
+- [ ] Emit `ff/params/oplsaa.rs` from oplsaa.xml
+- [x] Flatten `ff/params/generated/` into `ff/params/` — done in `6e9eb08`; the tables are first-class source, not build artefacts, and no identifier names them `generated`
+- [ ] Merge `ff/mmff/tables.rs` (51,621-line RDKit port, 17 statics + 17 accessors) AND mmff94.xml's remaining 199 entries into ONE `ff/params/mmff.rs`. Both MMFF front doors read it; they differ only by the ForceField name string and the `MmffVariant`. Do not emit two byte-identical tables.
+- [ ] Rename `ff/mmff/params.rs` -> `ff/mmff/resolve.rs`. Those 808 lines are an ALGORITHM, not parameters. Its own header doc still says "the resolver should travel with its tables" — that instruction is superseded; correct it in the move.
 - [ ] Delete the `include_str!` consts in `core/data.rs` and the runtime XML parsers on those paths
 - [ ] Delete `molrs/data/*.xml`
 - [ ] Remove every `$AMBERHOME`-dependent test from the suite (delete, do not skip) — CI must have zero coupling to AmberTools
