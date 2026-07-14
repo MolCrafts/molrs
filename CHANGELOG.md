@@ -7,6 +7,69 @@ All notable changes to molrs are recorded here. This project follows
 
 ### Added
 
+- **Whole-chain acceptance for `chem-perceive` (16 specs).** Two new test targets
+  verify the *chain*, which no spec on it ever had — each verified its own slice.
+
+  - `molrs/tests/architecture_gate.rs` — the five "only one of these exists"
+    promises, as machine-checked gates, none of which can exempt itself (every
+    needle is assembled with `concat!`, so the string a gate searches for does not
+    occur in the gate): one home and one form for parameters (flat `ff/params/`, no
+    `include_str!`, no runtime parse of a **built-in** table — told from a *user's*
+    XML by the signature, since a function that parses text it was never given is
+    parsing a table molrs shipped as a string); one perception layer; one
+    interpolation seam (`ParameterInterpolator` has exactly one implementor in
+    `src/`); one MMFF path (no bespoke energy layer, no second classifier, no
+    MMFF-owned kernel); and **a registered kernel constructor that ignores `tp` is
+    not a Style** — now decided on *semantics* (does the body read the binding?)
+    rather than on the *spelling* of the binding, which is what let `pme_ctor` and
+    `pair_coul_cut_ctor` through before.
+  - `molrs/tests/end_to_end.rs` — SMILES/SDF → Perceive → AtdTypifier → ChargeModel
+    → ForceField → Potentials → E + F, on **all 37** antechamber molecules and
+    **all 11** RDKit MMFF fixtures, against oracles molrs did not produce. Every
+    fixture list is directory-scanned and every partition (zero-charge,
+    delocalized-N) is a **predicate evaluated on the molecule**, never a list of
+    names.
+  - `molrs-python/tests/test_parity.py` — the bindings lose no precision: `float64`
+    end to end, charge conservation to **1e-12**, no renormalization, and every
+    bit-level invariant the Rust suite asserts.
+
+### Fixed
+
+- Nothing. This acceptance repaired nothing it found, by design: *an acceptance that
+  quietly repairs what it finds is the last place a defect can hide, because the thing
+  that would have reported it is the thing that swallowed it.* Three gates are RED on
+  landing, each naming a real defect, and each gets its own spec.
+
+### Known defects (found by this acceptance, deliberately NOT fixed here)
+
+- **GAFF/GAFF2 force fields declare no electrostatic style.**
+  `gaff_forcefield` builds `atom/full`, `pair/lj/cut` and the bonded styles — and no
+  Coulomb style at all. `to_potentials(...).calc_energy_forces(...)` therefore returns
+  an energy with **zero electrostatic contribution, silently**, for every molecule,
+  including the ionic ones (acetate, methylammonium, imidazolium). This is the caffeine
+  hole (150 kcal/mol on the MMFF path) reproduced in the other force field, and no
+  stage test could see it because no test ran the GAFF chain to an *energy*. The tell
+  was already in the tree: `SpecialBonds.coul = [0, 0, 1/1.2]` — AMBER's SCEE, a 1-4
+  Coulomb scale factor declared for a term that does not exist.
+  Gate: `end_to_end::the_force_field_the_chain_builds_declares_its_electrostatics`.
+- **Four test-tree subset assertions** over the 11 MMFF energy fixtures
+  (`mmff/energy.rs::S_NAMES`, the zero-charge pair, `typifier/mmff_variant.rs::
+  N_FIXTURES` / `IDENTICAL_FIXTURES`). Each is a hand-written list where the predicate
+  is computable, and the gap is not hypothetical: `e_caffeine` and `e_big` **do** carry
+  a delocalized nitrogen and appear in neither list, so nothing asserted that MMFF94s
+  changes their energy at all.
+  Gate: `architecture_gate::no_test_asserts_on_a_subset_of_its_fixtures`.
+- **One test goes green by skipping itself** when its input is absent
+  (`ff/readers/opls.rs::reads_real_molpy_oplsaa`, which needs a molpy checkout). In CI
+  it asserts nothing and counts as coverage.
+  Gate: `architecture_gate::no_test_returns_green_when_its_input_is_absent`.
+
+- **A single live graph-reference layer for Python.** `molrs.views` now owns
+  `NodeRef`, `RelationRef`, weak interning, live property mappings, ref
+  collections, and the concrete `Atom` / bonded-term / `Bead` types. Refs are
+  always bound to a graph handle; graph factories create the handle before the
+  Python object.
+
 - **MMFF94s is reachable from the typifier / force-field path.** New
   `MMFF94STypifier` (Rust: `molrs::ff::typifier::mmff::MMFF94STypifier`; Python:
   `molrs.MMFF94STypifier`) types and parameterises a molecule with the MMFF94s
@@ -28,6 +91,10 @@ All notable changes to molrs are recorded here. This project follows
   bespoke energy path.
 
 ### Removed — BREAKING
+
+- **Detached node/relation state is not part of the view model.** Callers create
+  nodes and relations through an owning graph factory; refs never carry a
+  pending Python dictionary that later attaches to a graph.
 
 - **The bespoke MMFF energy path is deleted. MMFF is no longer a special case.**
   `MmffForceField`, `MmffEnergyBreakdown` and the whole `ff/mmff/energy/` assembly

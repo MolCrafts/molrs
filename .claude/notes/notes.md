@@ -316,3 +316,66 @@ under that rule.
 fields. Every *perceived fact* is a const in the `perceive` layer — `is_aromatic`, `is_in_ring`,
 `n_rings`, `is_rotatable`, `stereo`, `equiv_class`, and now `bcc_bond_type`.
 **Status:** stable
+
+## 2026-07-14 — chem-perceive whole-chain acceptance: the LESSONS (not the conclusions)
+
+Sixteen specs, each green on its own slice, and the chain had a 150 kcal/mol hole in it.
+These are the transferable lessons, written as rules rather than as war stories.
+
+**1. A test that selects its input cannot be trusted to have covered it.**
+`generic_path_total_energy_matches_rdkit` asserted on `["e_ethane"]` — one of exactly TWO
+fixtures whose MMFF charges are all zero, i.e. the ONE input class that structurally cannot
+expose a missing electrostatic term. Ten fixtures sat on disk, unread, for a month. The rule
+that falls out is not "review your fixture lists"; it is: **where a list can be
+directory-scanned, it MUST be, and where a subset is meant, the subset must be a PREDICATE
+evaluated on the molecule, not a list of names.** A list you can write by hand is a list you
+can shorten by hand. `tests/architecture_gate.rs::no_test_asserts_on_a_subset_of_its_fixtures`
+now enforces it, and it caught four survivors — including a partition (`IDENTICAL_FIXTURES`,
+`N_FIXTURES`) that omits `e_caffeine` and `e_big`, both of which *do* carry a delocalized
+nitrogen. Nothing had ever asserted that MMFF94s changes caffeine's energy.
+
+**2. A wrong reason is worse than no reason — it is an alibi.**
+Next to `["e_ethane"]` sat a comment blaming "stretch-bend + torsion eq-fallback label
+resolution". It was false (stbn and torsion agreed to five decimals on every fixture), and it
+misdirected every reader for a month. **"Not yet implemented" is not a reason to exclude a
+fixture; it is a reason to fail.** A gate now refuses an excuse that sits next to the thing it
+excuses.
+
+**3. A grep finds spellings; a gate finds semantics.**
+The `ParamSource` criterion judged a ctor by the *spelling* of its binding (`_tp`, with Rust's
+leading underscore) and therefore missed `pme_ctor` and `pair_coul_cut_ctor`, which spell it
+`_type_params` and ignore it just as completely — 8 violators, not the 6 the grep found. And
+the spelling criterion is blind by construction to the deliberate version: a ctor that binds
+`type_params` and never reads it. **Proven, not asserted**: injecting exactly that shape leaves
+all four tests of the existing spelling gate GREEN, while
+`architecture_gate::param_source_is_bidirectional_on_semantics_not_spelling` names it exactly.
+Ask what the body *does*, never what the name *says*.
+
+**4. Stage tests cannot see a chain.** Each of the seven stages was green. The chain was not:
+the GAFF force field the chain builds declares **no electrostatic style at all**, so
+`to_potentials` returns an energy with no Coulomb term in it — silently, for every molecule,
+ionic ones included. No stage test could see it, because no test ran the chain to an *energy*.
+The tell had been sitting in the tree the whole time: `SpecialBonds.coul = [0, 0, 1/1.2]`, a
+1-4 Coulomb scale factor declared for a term that does not exist. **A constant nothing consumes
+is the same smell as 4,065 XML rows nothing reads.** Both mean: someone declared an intention
+and nothing checked it.
+
+**5. Forward assertions are fooled by "added it, in the wrong place". Assert ABSENCE.**
+Zero-charge molecules must get EXACTLY 0.0 electrostatic energy — not "small", because every
+term has a factor of zero in it and any tolerance would be hiding something. Molecules with no
+delocalized N must be BIT-IDENTICAL between MMFF94 and MMFF94s — otherwise a "they differ" test
+can pass on a difference that does not exist. Benzene must HAVE impropers (it had zero, and the
+oop energy of 0.0 is very nearly right for a planar ring, which is how it hid).
+
+**6. A gate that has never been red is indistinguishable from no gate.**
+Every gate in this acceptance was proven to bite: the defect it guards was injected, the gate
+went red, the injection was reverted. Two of the injections were themselves *wrong* the first
+time (a conformer test injected a dependence on `x` while the rotation was *about* x; a
+`needs_equivalencing` patch never matched its target string) — and only the bite-proof
+discovered it. **The bite-proof is not paperwork. It is the test of the test.**
+
+**7. An acceptance that fixes what it finds is where the last defect hides.**
+This one fixed nothing. Three gates land RED, each naming a real defect, each getting its own
+spec. The thing that would have reported them must not be the thing that swallows them.
+
+**Status:** stable

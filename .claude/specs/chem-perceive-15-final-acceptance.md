@@ -1,7 +1,7 @@
 ---
 title: "chem-perceive 15/15 — 整体验收：这条链到底收敛了没有"
 slug: chem-perceive-15-final-acceptance
-status: approved
+status: in-progress
 created: 2026-07-14
 chain: chem-perceive
 depends_on: "chem-perceive-14-all-tables"

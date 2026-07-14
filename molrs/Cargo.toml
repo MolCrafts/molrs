@@ -96,6 +96,20 @@ rmp-serde      = { version = "1", optional = true }                             
 getrandom = { version = "0.4", features = ["wasm_js"] }
 
 # ── Integration tests (gated on the sub-system module they exercise) ─────────
+
+# chem-perceive-15 — the whole-chain acceptance. `architecture_gate` reads SOURCE
+# (the five "only one of these exists" promises), so it needs no feature at all:
+# gating it would let a `--no-default-features` build silently stop checking them.
+# `end_to_end` runs the chain, so it needs `ff`.
+[[test]]
+name = "architecture_gate"
+path = "tests/architecture_gate.rs"
+
+[[test]]
+name = "end_to_end"
+path = "tests/end_to_end.rs"
+required-features = ["ff"]
+
 [[test]]
 name = "core"
 path = "tests/core.rs"
