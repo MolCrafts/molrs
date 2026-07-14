@@ -1,6 +1,6 @@
 ---
 title: "chem-perceive 14/14 — 剩余力场参数表 → .rs"
-status: approved
+status: in-progress
 created: 2026-07-12
 chain: chem-perceive
 depends_on: "chem-perceive-02-param-rs"
@@ -88,9 +88,37 @@ molrs/src/ff/params/
     gaff.rs  gaff2.rs  bccparm.rs  bccparm_abcg2.rs  gasparm.rs
     gaff_equiv.rs  gaff_empirical.rs
     atomtype_{gff,gff2,bcc,abcg2,amber,sybyl,gas}.rs
-    mmff94.rs  mmff94s.rs  oplsaa.rs      ← 新增（XML → typed Rust）
-    mmff.rs                               ← 从 ff/mmff/tables.rs 搬来（连访问器）
+    oplsaa.rs         ← 新增（XML → typed Rust）
+    mmff.rs           ← MMFF 的全部参数数据，合成一份：
+                        (a) ff/mmff/tables.rs 的 RDKit Params.cpp 移植（51,621 行，17 张 static + 17 个访问器）
+                        (b) mmff94.xml 剩下的 199 条（95 vdW + 95 原子属性 + style 骨架 + special_bonds）
+
+molrs/src/ff/mmff/
+    resolve.rs        ← 808 行的解析算法，从 params.rs 改名
+    atomtype.rs  charges.rs  aromaticity.rs  hybrid.rs  topo.rs
 ```
+
+### 命名（owner 定案，已重申多次）
+
+> "我跟你说了一万遍了，不要叫 generated 这个名字！"
+
+**`generated` / `generator` 不得出现在任何标识符里**——目录名、文件名、模块名、测试函数名、类型名，一个都不许。今天它有 **~130 处**（`tables_gate.rs` 26、`params.rs` 26、`params/mod.rs` 22、`tables_equivalence.rs` 18、`gen_param_tables.py` 15，外加一个叫 `estimate_tables_generated.rs` 的测试文件）。
+
+理由不是洁癖：**"generated" 描述的是它们*怎么来的*，不是*是什么*。** 用来源给东西命名，等于把一个实现细节焊死在公共表面上——就像把 `ff/mmff/params.rs` 叫 params（它其实是算法）一样，名字一旦说错，读代码的人就会一直被误导。出处属于文件头的文档注释（"emitted by `scripts/gen_param_tables.py` from AmberTools' `.DAT`/`.DEF`"），不属于名字。
+
+- **`params/` 底下的东西全是表**，所以文件名里不许再出现 `_tables` 这种后缀——等于说"表表"。
+- 加一道门禁：`grep -rniE '\bgenerated?\b|\bgenerator\b' molrs/src/ff/params molrs/tests` 在**标识符位置** 0 命中（散文里说明出处允许）。这道门禁必须自己不能豁免自己（needle 用 `concat!` 拼）。
+- **`ff/mmff/params.rs` → `ff/mmff/resolve.rs`。** 那 808 行**根本不是参数**，是算法（`bond_type`/`angle_type`/`torsion_type`、四级等价降级、经验规则）。叫它 `params.rs` 是 spec 02 里**我起错的名字**，在这里改正。它不进 `params/`——它属于 typifier 前端。
+
+### mmff94s.xml 删除（前两期的后果，不是前提）
+
+`mmff-orthogonal-02` 删掉 MMFF XML 里全部 bond/angle/stbn/torsion/oop type-def（它们是死的：没有代码读，内核读的是 frame 列）之后，`mmff94.xml` 与 `mmff94s.xml` **只差 2 行**——`<ForceField name=...>`。
+
+真正的 94 vs 94s 差异（11 行 Oop + 42 行 Torsion）**全部住在 `tables.rs`** 里（`MMFF_OOP` vs `MMFF_OOP_S`），由 `MmffVariant` 选择。
+
+⇒ **一张共享表，两个名字**。`MMFF94Typifier` / `MMFF94STypifier` 各自提供 ForceField 名字 + `MmffVariant`，这是它们唯一的差别。`molrs/data/mmff94s.xml` 删除。
+
+> 诚实注脚：本链早期曾断言"mmff94s.xml 是纯冗余、该删"，被 owner 否决——**那次断言是错的**，当时 XML 确实带着 11+42 行差异并喂给 ForceField 树。它**现在**成真了，是我们删掉死数据的**后果**，不是当时的事实。
 
 **没有 `generated/` 这个目录名。** 这些表是仓库里的一等源码，不是构建产物——"generated" 是个描述它们怎么*来的*的名字，不是描述它们*是什么*的名字。"怎么来的"写在每个文件的头部文档注释里（`scripts/gen_param_tables.py` / RDKit `Params.cpp`）就够了。
 

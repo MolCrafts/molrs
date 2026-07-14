@@ -1,13 +1,15 @@
 //! Antechamber parameter tables as typed, compile-time Rust data.
 //!
 //! molrs parses **no** parameter text at runtime. The upstream `.DAT` / `.DEF`
-//! tables are translated into the `const`s under [`generated`] by
+//! tables are transcribed into the `const`s in the sibling modules here by
 //! `scripts/gen_param_tables.py`, which reads them from `$AMBERHOME`. The
 //! committed `.rs` is the single in-repo source of truth; a malformed table is
 //! therefore a **compile** error, not a runtime one, and the tables can be
 //! grepped, diffed and stepped through like any other code.
 //!
-//! This module owns the row types; [`generated`] owns only data.
+//! This module owns the row types; the sibling modules own only data. They are
+//! ordinary source files, not build artefacts — how a table *arrived* belongs in
+//! its header doc, never in its name.
 //!
 //! # The ATD / WILDATOM grammar
 //!
@@ -32,22 +34,35 @@
 //! populates a [`ForceField`](crate::ff::forcefield::ForceField) from it (see
 //! [`crate::ff::forcefield::gaff`]).
 
-pub mod generated;
+pub mod atomtype_abcg2;
+pub mod atomtype_amber;
+pub mod atomtype_bcc;
+pub mod atomtype_gas;
+pub mod atomtype_gff;
+pub mod atomtype_gff2;
+pub mod atomtype_sybyl;
+pub mod bccparm;
+pub mod bccparm_abcg2;
+pub mod gaff;
+pub mod gaff2;
+pub mod gaff_empirical;
+pub mod gaff_equiv;
+pub mod gasparm;
 
-pub use generated::atomtype_abcg2::ATOMTYPE_ABCG2;
-pub use generated::atomtype_amber::ATOMTYPE_AMBER;
-pub use generated::atomtype_bcc::ATOMTYPE_BCC;
-pub use generated::atomtype_gas::ATOMTYPE_GAS;
-pub use generated::atomtype_gff::ATOMTYPE_GFF;
-pub use generated::atomtype_gff2::ATOMTYPE_GFF2;
-pub use generated::atomtype_sybyl::ATOMTYPE_SYBYL;
-pub use generated::bccparm::{BCC_ALIASES, BCC_CORRECTIONS};
-pub use generated::bccparm_abcg2::{ABCG2_ALIASES, ABCG2_CORRECTIONS};
-pub use generated::gaff::GAFF;
-pub use generated::gaff_empirical::{EMPIRICAL_GAFF, EMPIRICAL_GAFF2};
-pub use generated::gaff_equiv::{PARMCHK, PARMCHK_TYPES, PARMCHK_WEIGHTS};
-pub use generated::gaff2::GAFF2;
-pub use generated::gasparm::GASTEIGER_PARAMS;
+pub use atomtype_abcg2::ATOMTYPE_ABCG2;
+pub use atomtype_amber::ATOMTYPE_AMBER;
+pub use atomtype_bcc::ATOMTYPE_BCC;
+pub use atomtype_gas::ATOMTYPE_GAS;
+pub use atomtype_gff::ATOMTYPE_GFF;
+pub use atomtype_gff2::ATOMTYPE_GFF2;
+pub use atomtype_sybyl::ATOMTYPE_SYBYL;
+pub use bccparm::{BCC_ALIASES, BCC_CORRECTIONS};
+pub use bccparm_abcg2::{ABCG2_ALIASES, ABCG2_CORRECTIONS};
+pub use gaff::GAFF;
+pub use gaff_empirical::{EMPIRICAL_GAFF, EMPIRICAL_GAFF2};
+pub use gaff_equiv::{PARMCHK, PARMCHK_TYPES, PARMCHK_WEIGHTS};
+pub use gaff2::GAFF2;
+pub use gasparm::GASTEIGER_PARAMS;
 
 /// One oriented bond charge correction from a `BCCPARM*.DAT` table.
 ///
@@ -344,10 +359,9 @@ pub struct AtdTable {
 /// **Why an index and not a `&'static str`.** The two `parm` tables hold about
 /// 60,000 atom-type slots between them, and a `&str` is a 16-byte fat pointer
 /// that also needs a load-time relocation. Spelling every slot out cost **1416
-/// KB** of stripped release binary, measured; interning to one byte costs
-/// [see the module docs of `generated`] a fraction of that, and the table stays
-/// just as readable because the generator emits a named `const` per type
-/// (`T_C3`), never a bare number.
+/// KB** of stripped release binary, measured; interning to one byte costs a
+/// fraction of that, and the table stays just as readable because each type gets
+/// a named `const` (`T_C3`), never a bare number.
 ///
 /// The index is the type's row in the `MASS` section — the section that
 /// *declares* the atom types — so [`ParmTable::name_of`] is an array read, and a

@@ -25,6 +25,6 @@ pub const OPLSAA_XML: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/
 
 // The Antechamber tables (BCCPARM*.DAT, ATOMTYPE_*.DEF) are deliberately NOT
 // embedded as text. They are translated into typed Rust `const`s by
-// `scripts/gen_param_tables.py` and committed under `ff::params::generated`, so
+// `scripts/gen_param_tables.py` and committed under `ff::params`, so
 // molrs parses no parameter text at runtime and a malformed table is a compile
 // error. See `molrs/src/ff/params/mod.rs`.

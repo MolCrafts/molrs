@@ -1,19 +1,33 @@
 //! Antechamber parameter tables (`ff::params`).
 //!
-//! Three jobs:
+//! Two jobs:
 //!
-//! 1. **Manifest guard** — `MANIFEST.sha256` records the SHA-256 of every
-//!    emitted `.rs`. This test recomputes them and needs **no AmberTools**, so
-//!    unlike the drift guard below it actually runs in CI. It is what stops a
-//!    hand-edit of the ~27k committed table lines from going unnoticed.
-//! 2. **Drift guard** — with `$AMBERHOME` set, re-running the generator must
-//!    byte-reproduce every committed `.rs`. That additionally catches an
-//!    upstream AmberTools change. Without `$AMBERHOME` it skips: the committed
-//!    `.rs` is the single in-repo source of truth, AmberTools merely upstream.
-//!    CI has no AmberTools, so this one is permanently skipped there — hence (1).
-//! 3. **Column semantics** — the tables carry meaning, not just numbers. The
+//! 1. **Manifest guard** — `MANIFEST.sha256` records the SHA-256 of every emitted
+//!    `.rs`. This test recomputes them and needs **no AmberTools**, so it actually
+//!    runs in CI. It is what stops a hand-edit of the ~50k committed table lines
+//!    from going unnoticed, and after chem-perceive-14 it is the **only** standing
+//!    drift guard over them.
+//! 2. **Column semantics** — the tables carry meaning, not just numbers. The
 //!    `GASPARM` `d` column in particular is chi+, a normalisation denominator,
 //!    NOT a quartic coefficient, and it must stay a distinct named field.
+//!
+//! # The AmberTools drift guard is gone, and that is the point
+//!
+//! There used to be a third job here: with the AmberTools install-root environment
+//! variable set, re-run `scripts/gen_param_tables.py` and require it to byte-reproduce
+//! every committed `.rs`. It opened with `if env::var_os(…).is_none() { return; }` — so
+//! on every CI run, and on every contributor machine without AmberTools, it printed a
+//! skip line and passed. **It never once ran in CI.**
+//!
+//! chem-perceive-14 ac-003 deletes it outright (owner's ruling: CI must have zero
+//! entanglement with the AmberTools install root; byte-reproduction is verified once,
+//! locally, during implementation, and the result recorded in the spec body). Deleted,
+//! not skipped: a test that skips itself where it runs buys the appearance of coverage
+//! and none of the substance, and it crowded out the guard that does work — the
+//! manifest hash check above, which needs nothing installed and catches the failure
+//! that actually happens.
+//!
+//! `tables_gate::no_test_couples_ci_to_ambertools` is the grep that keeps it deleted.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -32,8 +46,10 @@ fn repo_root() -> &'static Path {
         .expect("molrs/ has a parent")
 }
 
-fn generated_dir() -> PathBuf {
-    repo_root().join("molrs/src/ff/params/generated")
+/// The one place every parameter table lives — flat, no `generated/` subdirectory
+/// (chem-perceive-14 ac-001).
+fn params_dir() -> PathBuf {
+    repo_root().join("molrs/src/ff/params")
 }
 
 fn chi_plus(atom_type: &str) -> f64 {
@@ -44,23 +60,48 @@ fn chi_plus(atom_type: &str) -> f64 {
         .chi_plus
 }
 
-/// Every committed table must still hash to what `MANIFEST.sha256` recorded.
+/// The marker every generator-emitted table carries in its header doc.
 ///
-/// This is the drift check that **runs in CI**. The byte-regeneration guard
-/// below needs `$AMBERHOME`, which CI does not have, so it is permanently
-/// skipped there — leaving ~27k lines of generated table protected by nothing
-/// but a `DO NOT HAND-EDIT` comment. Recomputing the hashes needs no AmberTools
-/// and catches exactly that: a hand-edit to a generated file.
+/// This — not a hardcoded file count — is what tells a generated table from a
+/// hand-written one, and it is what makes [`committed_tables_match_the_manifest_hashes`]
+/// two-sided without having to know any table by name.
+const GENERATED_MARKER: &str = "regenerate with `scripts/gen_param_tables.py`";
+
+/// Every committed table hashes to what `MANIFEST.sha256` recorded — and every
+/// generated table is IN the manifest.
 ///
-/// A deliberate regeneration updates the tables AND the manifest together, so
-/// this stays green; an edit to only one of them does not.
+/// After chem-perceive-14 this is the **only** standing drift guard over ~50k lines of
+/// committed force-field numbers: ac-003 deletes the byte-regeneration test that needed
+/// an AmberTools install (and which never ran in CI anyway — see the module header), and
+/// byte-reproduction is verified once, locally, by the implementer. Recomputing the
+/// hashes needs nothing installed and catches the failure that actually happens: a
+/// hand-edit to a generated file.
+///
+/// It is deliberately **two-sided**, because each side alone is trivially defeated:
+///
+/// * *forward* — every `emitted` row names a file that exists and still hashes to the
+///   recorded digest. Catches a hand-edit to a table.
+/// * *backward* — every `.rs` under `ff/params/` that declares itself generated has an
+///   `emitted` row. Catches a table added to the tree, or converted from XML by this very
+///   spec, without a manifest row — which would otherwise ship ~5,000 fresh numbers
+///   guarded by nothing at all, while the forward pass stayed happily green.
+///
+/// A deliberate regeneration updates the tables AND the manifest together, so this stays
+/// green; an edit to only one of them does not.
 #[test]
 fn committed_tables_match_the_manifest_hashes() {
-    let dir = generated_dir();
-    let manifest = std::fs::read_to_string(dir.join("MANIFEST.sha256"))
-        .expect("MANIFEST.sha256 is committed alongside the generated tables");
+    let dir = params_dir();
+    let manifest = std::fs::read_to_string(dir.join("MANIFEST.sha256")).unwrap_or_else(|e| {
+        panic!(
+            "{}/MANIFEST.sha256 is not readable ({e}).\n\
+             chem-perceive-14 ac-001 flattens `ff/params/generated/` into `ff/params/`, \
+             and the manifest moves with the tables it hashes.",
+            dir.display()
+        )
+    });
 
-    let mut checked = 0usize;
+    // Forward: every manifest row is honoured.
+    let mut listed = Vec::new();
     for line in manifest.lines() {
         let Some(rest) = line.strip_prefix("emitted ") else {
             continue;
@@ -78,79 +119,57 @@ fn committed_tables_match_the_manifest_hashes() {
         assert_eq!(
             got, want,
             "generated table `{name}` does not match MANIFEST.sha256.\n\
-             It was hand-edited, or regenerated without committing the manifest.\n\
-             Re-run: AMBERHOME=... python scripts/gen_param_tables.py"
+             It was hand-edited, or regenerated without committing the manifest."
         );
-        checked += 1;
+        listed.push(name.to_owned());
     }
 
-    assert_eq!(
-        checked, 15,
-        "manifest should cover all 15 generated files (14 tables + mod.rs). \
-         chem-perceive-10 ac-001 adds two: `gaff_equiv.rs` and `gaff_empirical.rs`, \
-         the estimator's substitution and empirical-constant tables, which are still \
-         runtime-parsed JSON (see `gaff_equiv_and_empirical_are_generated_tables`)"
-    );
-}
-
-/// The generator must byte-reproduce every committed table.
-///
-/// Skips when `$AMBERHOME` is unset, so contributors and CI without AmberTools
-/// are never blocked by it. That skip is why
-/// [`committed_tables_match_the_manifest_hashes`] exists — it is the guard CI
-/// actually runs.
-#[test]
-fn generator_byte_reproduces_the_committed_tables() {
-    if std::env::var_os("AMBERHOME").is_none() {
-        eprintln!("skipping param-table drift guard: $AMBERHOME is not set");
-        return;
-    }
-
-    let out_dir = std::env::temp_dir().join(format!("molrs-param-drift-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&out_dir);
-
-    let python = std::env::var("MOLRS_PYTHON").unwrap_or_else(|_| "python3".to_owned());
-    let output = Command::new(&python)
-        .arg(repo_root().join("scripts/gen_param_tables.py"))
-        .arg("--out-dir")
-        .arg(&out_dir)
-        .output()
-        .unwrap_or_else(|e| panic!("could not run `{python} scripts/gen_param_tables.py`: {e}"));
-    assert!(
-        output.status.success(),
-        "generator failed:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    let committed = generated_dir();
-    let mut names: Vec<_> = std::fs::read_dir(&committed)
-        .expect("read committed generated/")
-        .map(|e| e.expect("dir entry").file_name())
-        .collect();
-    names.sort();
-    // 14 tables + mod.rs + MANIFEST.sha256. The manifest is compared too: it
-    // carries the upstream source hashes, so a change in AmberTools itself
-    // shows up here even when the emitted tables happen to be unaffected.
-    assert_eq!(
-        names.len(),
-        16,
-        "expected 14 tables + mod.rs + MANIFEST.sha256"
-    );
-
-    let mut drifted = Vec::new();
-    for name in &names {
-        let want = std::fs::read(committed.join(name)).expect("read committed table");
-        let got = std::fs::read(out_dir.join(name)).unwrap_or_default();
-        if want != got {
-            drifted.push(name.to_string_lossy().into_owned());
+    // Backward: every generated table is in the manifest.
+    let mut unhashed = Vec::new();
+    for entry in std::fs::read_dir(&dir).expect("read ff/params/") {
+        let path = entry.expect("dir entry").path();
+        if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+            continue;
+        }
+        let src = std::fs::read_to_string(&path).expect("read a parameter table");
+        if !src.contains(GENERATED_MARKER) {
+            continue; // hand-written: the module root, the moved RDKit port, the resolver
+        }
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .expect("file name")
+            .to_owned();
+        if !listed.contains(&name) {
+            unhashed.push(name);
         }
     }
-    let _ = std::fs::remove_dir_all(&out_dir);
-
+    unhashed.sort();
     assert!(
-        drifted.is_empty(),
-        "generated tables drifted from the committed .rs: {drifted:?}\n\
-         re-run `AMBERHOME=... python scripts/gen_param_tables.py` and commit the result"
+        unhashed.is_empty(),
+        "these tables declare themselves generated but MANIFEST.sha256 does not hash \
+         them:\n  {}\n\
+         An unhashed table is ~thousands of force-field numbers with no drift guard at \
+         all — and the forward pass above cannot see it, because it only walks rows the \
+         manifest already has. Emit a manifest row from `scripts/gen_param_tables.py`.",
+        unhashed.join("\n  ")
+    );
+
+    // Non-vacuity: 14 AmberTools tables + `oplsaa`, the one XML set that becomes a table
+    // of its own. (MMFF is ONE shared table merged with the moved RDKit port, so whether
+    // `mmff.rs` carries a manifest row is the implementer's call — the backward pass
+    // above settles it either way. And there is no `mmff94s.rs` at all: that XML is
+    // deleted, not converted.)
+    //
+    // A floor, not an equality — whether the generator still emits its own `mod.rs` once
+    // `generated/` is flattened away is likewise the implementer's call, and the backward
+    // pass is what actually guarantees nothing escapes.
+    assert!(
+        listed.len() >= 15,
+        "MANIFEST.sha256 hashes only {} emitted files, expected at least 15 (14 \
+         AmberTools tables + oplsaa). Before chem-perceive-14 it hashes 15 and lives one \
+         directory down, in `generated/`. Listed: {listed:?}",
+        listed.len()
     );
 }
 
@@ -473,29 +492,32 @@ fn a_type_with_equivalent_flag_zero_has_no_alternate() {
 ///
 /// The gate is deliberately about the FILES, not about a Rust symbol: it has to be
 /// able to fail before the tables exist. What it pins is that they arrive the same
-/// way every other table did — emitted into `generated/`, hashed into
-/// `MANIFEST.sha256`, and byte-reproduced by the generator (which the two guards
-/// above then enforce on every run, without needing to know these two by name).
+/// way every other table did — emitted into the one parameter directory, hashed into
+/// `MANIFEST.sha256`, and byte-reproduced by the generator (which the guard above then
+/// enforces on every run, without needing to know these two by name).
 #[test]
 fn gaff_equiv_and_empirical_are_generated_tables() {
-    let dir = generated_dir();
+    let dir = params_dir();
     let manifest = std::fs::read_to_string(dir.join("MANIFEST.sha256"))
         .expect("MANIFEST.sha256 is committed alongside the generated tables");
 
     let mut missing = Vec::new();
     for table in ["gaff_equiv.rs", "gaff_empirical.rs"] {
         if !dir.join(table).is_file() {
-            missing.push(format!("{table}: not emitted into `generated/`"));
+            missing.push(format!(
+                "{table}: not present directly under `ff/params/` (chem-perceive-14 \
+                 ac-001 flattens `generated/` away — the tables are first-class source)"
+            ));
         } else if !manifest.contains(table) {
             missing.push(format!(
-                "{table}: emitted, but MANIFEST.sha256 does not hash it"
+                "{table}: present, but MANIFEST.sha256 does not hash it"
             ));
         }
     }
 
     assert!(
         missing.is_empty(),
-        "the estimator's tables are still runtime-parsed JSON, not compiled data:\n  {}\n\
+        "the estimator's tables are not where every other parameter table lives:\n  {}\n\
          Emit them from `scripts/gen_param_tables.py` (PARMCHK.DAT is already one of its \
          hashed sources) and delete the `include_str!` in \
          `src/ff/typifier/estimate/tables.rs`.",

@@ -1,0 +1,204 @@
+# Frozen dump of molrs/data/mmff94.xml, produced by the runtime XML parser
+# before chem-perceive-14 deleted it. DO NOT RE-BLESS.
+# source: molrs/data/mmff94.xml
+# source sha256: 9d9c41db11529da54a301e446cc912b11bdec43d43bc466e8fcd5eac45da72a5
+# entries: 199 lines
+forcefield name=MMFF94
+forcefield special_bonds lj=[0.0, 0.0, 1.0] coul=[0.0, 0.0, 0.75]
+style[0000] bond mmff_bond @style ::
+style[0001] angle mmff_angle @style ::
+style[0002] angle mmff_stbn @style ::
+style[0003] improper mmff_oop @style ::
+style[0004] dihedral mmff_torsion @style ::
+style[0005] pair mmff_vdw @style :: B=0.2 Beta=12.0 DAEPS=0.5 DARAD=0.8
+style[0005] pair mmff_vdw pair[00000] name=1 itom=1 jtom=1 :: a_i=3.89 alpha=1.05 da=0.0 g_i=1.282 n_eff=2.49 type=1.0
+style[0005] pair mmff_vdw pair[00001] name=2 itom=2 jtom=2 :: a_i=3.89 alpha=1.35 da=0.0 g_i=1.282 n_eff=2.49 type=2.0
+style[0005] pair mmff_vdw pair[00002] name=3 itom=3 jtom=3 :: a_i=3.89 alpha=1.1 da=0.0 g_i=1.282 n_eff=2.49 type=3.0
+style[0005] pair mmff_vdw pair[00003] name=4 itom=4 jtom=4 :: a_i=3.89 alpha=1.3 da=0.0 g_i=1.282 n_eff=2.49 type=4.0
+style[0005] pair mmff_vdw pair[00004] name=5 itom=5 jtom=5 :: a_i=4.2 alpha=0.25 da=0.0 g_i=1.209 n_eff=0.8 type=5.0
+style[0005] pair mmff_vdw pair[00005] name=6 itom=6 jtom=6 :: a_i=3.89 alpha=0.7 da=2.0 g_i=1.282 n_eff=3.15 type=6.0
+style[0005] pair mmff_vdw pair[00006] name=7 itom=7 jtom=7 :: a_i=3.89 alpha=0.65 da=2.0 g_i=1.282 n_eff=3.15 type=7.0
+style[0005] pair mmff_vdw pair[00007] name=8 itom=8 jtom=8 :: a_i=3.89 alpha=1.15 da=2.0 g_i=1.282 n_eff=2.82 type=8.0
+style[0005] pair mmff_vdw pair[00008] name=9 itom=9 jtom=9 :: a_i=3.89 alpha=0.9 da=2.0 g_i=1.282 n_eff=2.82 type=9.0
+style[0005] pair mmff_vdw pair[00009] name=10 itom=10 jtom=10 :: a_i=3.89 alpha=1.0 da=2.0 g_i=1.282 n_eff=2.82 type=10.0
+style[0005] pair mmff_vdw pair[00010] name=11 itom=11 jtom=11 :: a_i=3.89 alpha=0.35 da=2.0 g_i=1.282 n_eff=3.48 type=11.0
+style[0005] pair mmff_vdw pair[00011] name=12 itom=12 jtom=12 :: a_i=3.32 alpha=2.3 da=2.0 g_i=1.345 n_eff=5.1 type=12.0
+style[0005] pair mmff_vdw pair[00012] name=13 itom=13 jtom=13 :: a_i=3.19 alpha=3.4 da=2.0 g_i=1.359 n_eff=6.0 type=13.0
+style[0005] pair mmff_vdw pair[00013] name=14 itom=14 jtom=14 :: a_i=3.08 alpha=5.5 da=2.0 g_i=1.404 n_eff=6.95 type=14.0
+style[0005] pair mmff_vdw pair[00014] name=15 itom=15 jtom=15 :: a_i=3.32 alpha=3.0 da=2.0 g_i=1.345 n_eff=4.8 type=15.0
+style[0005] pair mmff_vdw pair[00015] name=16 itom=16 jtom=16 :: a_i=3.32 alpha=3.9 da=2.0 g_i=1.345 n_eff=4.8 type=16.0
+style[0005] pair mmff_vdw pair[00016] name=17 itom=17 jtom=17 :: a_i=3.32 alpha=2.7 da=0.0 g_i=1.345 n_eff=4.8 type=17.0
+style[0005] pair mmff_vdw pair[00017] name=18 itom=18 jtom=18 :: a_i=3.32 alpha=2.1 da=0.0 g_i=1.345 n_eff=4.8 type=18.0
+style[0005] pair mmff_vdw pair[00018] name=19 itom=19 jtom=19 :: a_i=3.32 alpha=4.5 da=0.0 g_i=1.345 n_eff=4.2 type=19.0
+style[0005] pair mmff_vdw pair[00019] name=20 itom=20 jtom=20 :: a_i=3.89 alpha=1.05 da=0.0 g_i=1.282 n_eff=2.49 type=20.0
+style[0005] pair mmff_vdw pair[00020] name=21 itom=21 jtom=21 :: a_i=4.2 alpha=0.15 da=1.0 g_i=1.209 n_eff=0.8 type=21.0
+style[0005] pair mmff_vdw pair[00021] name=22 itom=22 jtom=22 :: a_i=3.89 alpha=1.1 da=0.0 g_i=1.282 n_eff=2.49 type=22.0
+style[0005] pair mmff_vdw pair[00022] name=23 itom=23 jtom=23 :: a_i=4.2 alpha=0.15 da=1.0 g_i=1.209 n_eff=0.8 type=23.0
+style[0005] pair mmff_vdw pair[00023] name=24 itom=24 jtom=24 :: a_i=4.2 alpha=0.15 da=1.0 g_i=1.209 n_eff=0.8 type=24.0
+style[0005] pair mmff_vdw pair[00024] name=25 itom=25 jtom=25 :: a_i=3.32 alpha=1.6 da=0.0 g_i=1.345 n_eff=4.5 type=25.0
+style[0005] pair mmff_vdw pair[00025] name=26 itom=26 jtom=26 :: a_i=3.32 alpha=3.6 da=2.0 g_i=1.345 n_eff=4.5 type=26.0
+style[0005] pair mmff_vdw pair[00026] name=27 itom=27 jtom=27 :: a_i=4.2 alpha=0.15 da=1.0 g_i=1.209 n_eff=0.8 type=27.0
+style[0005] pair mmff_vdw pair[00027] name=28 itom=28 jtom=28 :: a_i=4.2 alpha=0.15 da=1.0 g_i=1.209 n_eff=0.8 type=28.0
+style[0005] pair mmff_vdw pair[00028] name=29 itom=29 jtom=29 :: a_i=4.2 alpha=0.15 da=1.0 g_i=1.209 n_eff=0.8 type=29.0
+style[0005] pair mmff_vdw pair[00029] name=30 itom=30 jtom=30 :: a_i=3.89 alpha=1.35 da=0.0 g_i=1.282 n_eff=2.49 type=30.0
+style[0005] pair mmff_vdw pair[00030] name=31 itom=31 jtom=31 :: a_i=4.2 alpha=0.15 da=1.0 g_i=1.209 n_eff=0.8 type=31.0
+style[0005] pair mmff_vdw pair[00031] name=32 itom=32 jtom=32 :: a_i=3.89 alpha=0.75 da=2.0 g_i=1.282 n_eff=3.15 type=32.0
+style[0005] pair mmff_vdw pair[00032] name=33 itom=33 jtom=33 :: a_i=4.2 alpha=0.15 da=1.0 g_i=1.209 n_eff=0.8 type=33.0
+style[0005] pair mmff_vdw pair[00033] name=34 itom=34 jtom=34 :: a_i=3.89 alpha=1.0 da=0.0 g_i=1.282 n_eff=2.82 type=34.0
+style[0005] pair mmff_vdw pair[00034] name=35 itom=35 jtom=35 :: a_i=3.89 alpha=1.5 da=2.0 g_i=1.282 n_eff=3.15 type=35.0
+style[0005] pair mmff_vdw pair[00035] name=36 itom=36 jtom=36 :: a_i=4.2 alpha=0.15 da=1.0 g_i=1.209 n_eff=0.8 type=36.0
+style[0005] pair mmff_vdw pair[00036] name=37 itom=37 jtom=37 :: a_i=3.89 alpha=1.35 da=0.0 g_i=1.282 n_eff=2.49 type=37.0
+style[0005] pair mmff_vdw pair[00037] name=38 itom=38 jtom=38 :: a_i=3.89 alpha=0.85 da=2.0 g_i=1.282 n_eff=2.82 type=38.0
+style[0005] pair mmff_vdw pair[00038] name=39 itom=39 jtom=39 :: a_i=3.89 alpha=1.1 da=0.0 g_i=1.282 n_eff=2.82 type=39.0
+style[0005] pair mmff_vdw pair[00039] name=40 itom=40 jtom=40 :: a_i=3.89 alpha=1.0 da=2.0 g_i=1.282 n_eff=2.82 type=40.0
+style[0005] pair mmff_vdw pair[00040] name=41 itom=41 jtom=41 :: a_i=3.89 alpha=1.1 da=0.0 g_i=1.282 n_eff=2.49 type=41.0
+style[0005] pair mmff_vdw pair[00041] name=42 itom=42 jtom=42 :: a_i=3.89 alpha=1.0 da=2.0 g_i=1.282 n_eff=2.82 type=42.0
+style[0005] pair mmff_vdw pair[00042] name=43 itom=43 jtom=43 :: a_i=3.89 alpha=1.0 da=2.0 g_i=1.282 n_eff=2.82 type=43.0
+style[0005] pair mmff_vdw pair[00043] name=44 itom=44 jtom=44 :: a_i=3.32 alpha=3.0 da=2.0 g_i=1.345 n_eff=4.8 type=44.0
+style[0005] pair mmff_vdw pair[00044] name=45 itom=45 jtom=45 :: a_i=3.89 alpha=1.15 da=0.0 g_i=1.282 n_eff=2.82 type=45.0
+style[0005] pair mmff_vdw pair[00045] name=46 itom=46 jtom=46 :: a_i=3.89 alpha=1.3 da=0.0 g_i=1.282 n_eff=2.82 type=46.0
+style[0005] pair mmff_vdw pair[00046] name=47 itom=47 jtom=47 :: a_i=3.89 alpha=1.0 da=2.0 g_i=1.282 n_eff=2.82 type=47.0
+style[0005] pair mmff_vdw pair[00047] name=48 itom=48 jtom=48 :: a_i=3.89 alpha=1.2 da=2.0 g_i=1.282 n_eff=2.82 type=48.0
+style[0005] pair mmff_vdw pair[00048] name=49 itom=49 jtom=49 :: a_i=3.89 alpha=1.0 da=0.0 g_i=1.282 n_eff=3.15 type=49.0
+style[0005] pair mmff_vdw pair[00049] name=50 itom=50 jtom=50 :: a_i=4.2 alpha=0.15 da=1.0 g_i=1.209 n_eff=0.8 type=50.0
+style[0005] pair mmff_vdw pair[00050] name=51 itom=51 jtom=51 :: a_i=3.89 alpha=0.4 da=0.0 g_i=1.282 n_eff=3.15 type=51.0
+style[0005] pair mmff_vdw pair[00051] name=52 itom=52 jtom=52 :: a_i=4.2 alpha=0.15 da=1.0 g_i=1.209 n_eff=0.8 type=52.0
+style[0005] pair mmff_vdw pair[00052] name=53 itom=53 jtom=53 :: a_i=3.89 alpha=1.0 da=0.0 g_i=1.282 n_eff=2.82 type=53.0
+style[0005] pair mmff_vdw pair[00053] name=54 itom=54 jtom=54 :: a_i=3.89 alpha=1.3 da=0.0 g_i=1.282 n_eff=2.82 type=54.0
+style[0005] pair mmff_vdw pair[00054] name=55 itom=55 jtom=55 :: a_i=3.89 alpha=0.8 da=0.0 g_i=1.282 n_eff=2.82 type=55.0
+style[0005] pair mmff_vdw pair[00055] name=56 itom=56 jtom=56 :: a_i=3.89 alpha=0.8 da=0.0 g_i=1.282 n_eff=2.82 type=56.0
+style[0005] pair mmff_vdw pair[00056] name=57 itom=57 jtom=57 :: a_i=3.89 alpha=1.0 da=0.0 g_i=1.282 n_eff=2.49 type=57.0
+style[0005] pair mmff_vdw pair[00057] name=58 itom=58 jtom=58 :: a_i=3.89 alpha=0.8 da=0.0 g_i=1.282 n_eff=2.82 type=58.0
+style[0005] pair mmff_vdw pair[00058] name=59 itom=59 jtom=59 :: a_i=3.89 alpha=0.65 da=2.0 g_i=1.282 n_eff=3.15 type=59.0
+style[0005] pair mmff_vdw pair[00059] name=60 itom=60 jtom=60 :: a_i=3.89 alpha=1.8 da=2.0 g_i=1.282 n_eff=2.49 type=60.0
+style[0005] pair mmff_vdw pair[00060] name=61 itom=61 jtom=61 :: a_i=3.89 alpha=0.8 da=2.0 g_i=1.282 n_eff=2.82 type=61.0
+style[0005] pair mmff_vdw pair[00061] name=62 itom=62 jtom=62 :: a_i=3.89 alpha=1.3 da=2.0 g_i=1.282 n_eff=2.82 type=62.0
+style[0005] pair mmff_vdw pair[00062] name=63 itom=63 jtom=63 :: a_i=3.89 alpha=1.35 da=0.0 g_i=1.282 n_eff=2.49 type=63.0
+style[0005] pair mmff_vdw pair[00063] name=64 itom=64 jtom=64 :: a_i=3.89 alpha=1.35 da=0.0 g_i=1.282 n_eff=2.49 type=64.0
+style[0005] pair mmff_vdw pair[00064] name=65 itom=65 jtom=65 :: a_i=3.89 alpha=1.0 da=2.0 g_i=1.282 n_eff=2.82 type=65.0
+style[0005] pair mmff_vdw pair[00065] name=66 itom=66 jtom=66 :: a_i=3.89 alpha=0.75 da=2.0 g_i=1.282 n_eff=2.82 type=66.0
+style[0005] pair mmff_vdw pair[00066] name=67 itom=67 jtom=67 :: a_i=3.89 alpha=0.95 da=2.0 g_i=1.282 n_eff=2.82 type=67.0
+style[0005] pair mmff_vdw pair[00067] name=68 itom=68 jtom=68 :: a_i=3.89 alpha=0.9 da=2.0 g_i=1.282 n_eff=2.82 type=68.0
+style[0005] pair mmff_vdw pair[00068] name=69 itom=69 jtom=69 :: a_i=3.89 alpha=0.95 da=2.0 g_i=1.282 n_eff=2.82 type=69.0
+style[0005] pair mmff_vdw pair[00069] name=70 itom=70 jtom=70 :: a_i=3.89 alpha=0.87 da=2.0 g_i=1.282 n_eff=3.15 type=70.0
+style[0005] pair mmff_vdw pair[00070] name=71 itom=71 jtom=71 :: a_i=4.2 alpha=0.15 da=1.0 g_i=1.209 n_eff=0.8 type=71.0
+style[0005] pair mmff_vdw pair[00071] name=72 itom=72 jtom=72 :: a_i=3.32 alpha=4.0 da=2.0 g_i=1.345 n_eff=4.8 type=72.0
+style[0005] pair mmff_vdw pair[00072] name=73 itom=73 jtom=73 :: a_i=3.32 alpha=3.0 da=0.0 g_i=1.345 n_eff=4.8 type=73.0
+style[0005] pair mmff_vdw pair[00073] name=74 itom=74 jtom=74 :: a_i=3.32 alpha=3.0 da=0.0 g_i=1.345 n_eff=4.8 type=74.0
+style[0005] pair mmff_vdw pair[00074] name=75 itom=75 jtom=75 :: a_i=3.32 alpha=4.0 da=2.0 g_i=1.345 n_eff=4.5 type=75.0
+style[0005] pair mmff_vdw pair[00075] name=76 itom=76 jtom=76 :: a_i=3.89 alpha=1.2 da=2.0 g_i=1.282 n_eff=2.82 type=76.0
+style[0005] pair mmff_vdw pair[00076] name=77 itom=77 jtom=77 :: a_i=3.32 alpha=1.5 da=2.0 g_i=1.345 n_eff=5.1 type=77.0
+style[0005] pair mmff_vdw pair[00077] name=78 itom=78 jtom=78 :: a_i=3.89 alpha=1.35 da=0.0 g_i=1.282 n_eff=2.49 type=78.0
+style[0005] pair mmff_vdw pair[00078] name=79 itom=79 jtom=79 :: a_i=3.89 alpha=1.0 da=2.0 g_i=1.282 n_eff=2.82 type=79.0
+style[0005] pair mmff_vdw pair[00079] name=80 itom=80 jtom=80 :: a_i=3.89 alpha=1.0 da=0.0 g_i=1.282 n_eff=2.49 type=80.0
+style[0005] pair mmff_vdw pair[00080] name=81 itom=81 jtom=81 :: a_i=3.89 alpha=0.8 da=0.0 g_i=1.282 n_eff=2.82 type=81.0
+style[0005] pair mmff_vdw pair[00081] name=82 itom=82 jtom=82 :: a_i=3.89 alpha=0.95 da=2.0 g_i=1.282 n_eff=2.82 type=82.0
+style[0005] pair mmff_vdw pair[00082] name=87 itom=87 jtom=87 :: a_i=4.0 alpha=0.45 da=0.0 g_i=1.4 n_eff=6.0 type=87.0
+style[0005] pair mmff_vdw pair[00083] name=88 itom=88 jtom=88 :: a_i=4.0 alpha=0.55 da=0.0 g_i=1.4 n_eff=6.0 type=88.0
+style[0005] pair mmff_vdw pair[00084] name=89 itom=89 jtom=89 :: a_i=3.89 alpha=1.4 da=2.0 g_i=1.282 n_eff=3.48 type=89.0
+style[0005] pair mmff_vdw pair[00085] name=90 itom=90 jtom=90 :: a_i=3.32 alpha=4.5 da=2.0 g_i=1.345 n_eff=5.1 type=90.0
+style[0005] pair mmff_vdw pair[00086] name=91 itom=91 jtom=91 :: a_i=3.19 alpha=6.0 da=2.0 g_i=1.359 n_eff=6.0 type=91.0
+style[0005] pair mmff_vdw pair[00087] name=92 itom=92 jtom=92 :: a_i=4.0 alpha=0.15 da=0.0 g_i=1.3 n_eff=2.0 type=92.0
+style[0005] pair mmff_vdw pair[00088] name=93 itom=93 jtom=93 :: a_i=4.0 alpha=0.4 da=0.0 g_i=1.3 n_eff=3.5 type=93.0
+style[0005] pair mmff_vdw pair[00089] name=94 itom=94 jtom=94 :: a_i=4.0 alpha=1.0 da=0.0 g_i=1.3 n_eff=5.0 type=94.0
+style[0005] pair mmff_vdw pair[00090] name=95 itom=95 jtom=95 :: a_i=4.0 alpha=0.43 da=0.0 g_i=1.4 n_eff=6.0 type=95.0
+style[0005] pair mmff_vdw pair[00091] name=96 itom=96 jtom=96 :: a_i=4.0 alpha=0.9 da=0.0 g_i=1.4 n_eff=5.0 type=96.0
+style[0005] pair mmff_vdw pair[00092] name=97 itom=97 jtom=97 :: a_i=4.0 alpha=0.35 da=0.0 g_i=1.4 n_eff=6.0 type=97.0
+style[0005] pair mmff_vdw pair[00093] name=98 itom=98 jtom=98 :: a_i=4.0 alpha=0.4 da=0.0 g_i=1.4 n_eff=6.0 type=98.0
+style[0005] pair mmff_vdw pair[00094] name=99 itom=99 jtom=99 :: a_i=4.0 alpha=0.35 da=0.0 g_i=1.3 n_eff=3.5 type=99.0
+style[0006] pair mmff_ele @style :: delta=0.05 dielectric=1.0
+mmff prop type_id=1 atno=6 crd=4 val=4 pilp=0 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=2 atno=6 crd=3 val=4 pilp=0 mltb=2 arom=0 linh=0 sbmb=1
+mmff prop type_id=3 atno=6 crd=3 val=4 pilp=0 mltb=2 arom=0 linh=0 sbmb=1
+mmff prop type_id=4 atno=6 crd=2 val=4 pilp=0 mltb=3 arom=0 linh=1 sbmb=1
+mmff prop type_id=5 atno=1 crd=1 val=1 pilp=0 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=6 atno=8 crd=2 val=2 pilp=1 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=7 atno=8 crd=1 val=2 pilp=0 mltb=2 arom=0 linh=0 sbmb=0
+mmff prop type_id=8 atno=7 crd=3 val=3 pilp=1 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=9 atno=7 crd=2 val=3 pilp=0 mltb=2 arom=0 linh=0 sbmb=1
+mmff prop type_id=10 atno=7 crd=3 val=3 pilp=1 mltb=1 arom=0 linh=0 sbmb=0
+mmff prop type_id=11 atno=9 crd=1 val=1 pilp=1 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=12 atno=17 crd=1 val=1 pilp=1 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=13 atno=35 crd=1 val=1 pilp=1 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=14 atno=53 crd=1 val=1 pilp=1 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=15 atno=16 crd=2 val=2 pilp=1 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=16 atno=16 crd=1 val=2 pilp=0 mltb=2 arom=0 linh=0 sbmb=0
+mmff prop type_id=17 atno=16 crd=3 val=4 pilp=0 mltb=2 arom=0 linh=0 sbmb=0
+mmff prop type_id=18 atno=16 crd=4 val=4 pilp=0 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=19 atno=14 crd=4 val=4 pilp=0 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=20 atno=6 crd=4 val=4 pilp=0 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=21 atno=1 crd=1 val=1 pilp=0 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=22 atno=6 crd=4 val=4 pilp=0 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=23 atno=1 crd=1 val=1 pilp=0 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=24 atno=1 crd=1 val=1 pilp=0 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=25 atno=15 crd=4 val=4 pilp=0 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=26 atno=15 crd=3 val=3 pilp=1 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=27 atno=1 crd=1 val=1 pilp=0 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=28 atno=1 crd=1 val=1 pilp=0 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=29 atno=1 crd=1 val=1 pilp=0 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=30 atno=6 crd=3 val=4 pilp=0 mltb=2 arom=0 linh=0 sbmb=1
+mmff prop type_id=31 atno=1 crd=1 val=1 pilp=0 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=32 atno=8 crd=1 val=12 pilp=1 mltb=1 arom=0 linh=0 sbmb=0
+mmff prop type_id=33 atno=1 crd=1 val=1 pilp=0 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=34 atno=7 crd=4 val=4 pilp=0 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=35 atno=8 crd=1 val=1 pilp=1 mltb=1 arom=0 linh=0 sbmb=0
+mmff prop type_id=36 atno=1 crd=1 val=1 pilp=0 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=37 atno=6 crd=3 val=4 pilp=0 mltb=2 arom=1 linh=0 sbmb=1
+mmff prop type_id=38 atno=7 crd=2 val=3 pilp=0 mltb=2 arom=1 linh=0 sbmb=0
+mmff prop type_id=39 atno=7 crd=3 val=3 pilp=1 mltb=1 arom=1 linh=0 sbmb=1
+mmff prop type_id=40 atno=7 crd=3 val=3 pilp=1 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=41 atno=6 crd=3 val=4 pilp=0 mltb=1 arom=0 linh=0 sbmb=0
+mmff prop type_id=42 atno=7 crd=1 val=3 pilp=0 mltb=3 arom=0 linh=0 sbmb=0
+mmff prop type_id=43 atno=7 crd=3 val=3 pilp=1 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=44 atno=16 crd=2 val=2 pilp=1 mltb=1 arom=1 linh=0 sbmb=0
+mmff prop type_id=45 atno=7 crd=3 val=4 pilp=0 mltb=2 arom=0 linh=0 sbmb=0
+mmff prop type_id=46 atno=7 crd=2 val=3 pilp=0 mltb=2 arom=0 linh=0 sbmb=0
+mmff prop type_id=47 atno=7 crd=1 val=2 pilp=0 mltb=2 arom=0 linh=0 sbmb=0
+mmff prop type_id=48 atno=7 crd=2 val=2 pilp=0 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=49 atno=8 crd=3 val=3 pilp=0 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=50 atno=1 crd=1 val=1 pilp=0 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=51 atno=8 crd=2 val=3 pilp=0 mltb=2 arom=0 linh=0 sbmb=0
+mmff prop type_id=52 atno=1 crd=1 val=1 pilp=0 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=53 atno=7 crd=2 val=4 pilp=0 mltb=2 arom=0 linh=1 sbmb=0
+mmff prop type_id=54 atno=7 crd=3 val=4 pilp=0 mltb=2 arom=0 linh=0 sbmb=1
+mmff prop type_id=55 atno=7 crd=3 val=34 pilp=0 mltb=1 arom=0 linh=0 sbmb=0
+mmff prop type_id=56 atno=7 crd=3 val=34 pilp=0 mltb=1 arom=0 linh=0 sbmb=0
+mmff prop type_id=57 atno=6 crd=3 val=4 pilp=0 mltb=2 arom=0 linh=0 sbmb=1
+mmff prop type_id=58 atno=7 crd=3 val=4 pilp=0 mltb=1 arom=1 linh=0 sbmb=1
+mmff prop type_id=59 atno=8 crd=2 val=2 pilp=1 mltb=1 arom=1 linh=0 sbmb=0
+mmff prop type_id=60 atno=6 crd=1 val=3 pilp=0 mltb=3 arom=0 linh=0 sbmb=0
+mmff prop type_id=61 atno=7 crd=2 val=4 pilp=0 mltb=3 arom=0 linh=1 sbmb=0
+mmff prop type_id=62 atno=7 crd=2 val=2 pilp=1 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=63 atno=6 crd=3 val=4 pilp=0 mltb=2 arom=1 linh=0 sbmb=1
+mmff prop type_id=64 atno=6 crd=3 val=4 pilp=0 mltb=2 arom=1 linh=0 sbmb=1
+mmff prop type_id=65 atno=7 crd=2 val=3 pilp=0 mltb=2 arom=1 linh=0 sbmb=0
+mmff prop type_id=66 atno=7 crd=2 val=3 pilp=0 mltb=2 arom=1 linh=0 sbmb=0
+mmff prop type_id=67 atno=7 crd=3 val=4 pilp=0 mltb=2 arom=0 linh=0 sbmb=1
+mmff prop type_id=68 atno=7 crd=4 val=4 pilp=0 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=69 atno=7 crd=3 val=4 pilp=0 mltb=1 arom=1 linh=0 sbmb=0
+mmff prop type_id=70 atno=8 crd=2 val=2 pilp=1 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=71 atno=1 crd=1 val=1 pilp=0 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=72 atno=16 crd=1 val=1 pilp=1 mltb=1 arom=0 linh=0 sbmb=0
+mmff prop type_id=73 atno=16 crd=3 val=3 pilp=0 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=74 atno=16 crd=2 val=4 pilp=0 mltb=2 arom=0 linh=0 sbmb=0
+mmff prop type_id=75 atno=15 crd=2 val=3 pilp=0 mltb=2 arom=0 linh=0 sbmb=1
+mmff prop type_id=76 atno=7 crd=2 val=2 pilp=1 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=77 atno=17 crd=4 val=4 pilp=0 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=78 atno=6 crd=3 val=4 pilp=0 mltb=2 arom=1 linh=0 sbmb=1
+mmff prop type_id=79 atno=7 crd=2 val=3 pilp=0 mltb=2 arom=1 linh=0 sbmb=0
+mmff prop type_id=80 atno=6 crd=3 val=4 pilp=0 mltb=2 arom=0 linh=0 sbmb=1
+mmff prop type_id=81 atno=7 crd=3 val=4 pilp=0 mltb=1 arom=1 linh=0 sbmb=1
+mmff prop type_id=82 atno=7 crd=3 val=4 pilp=0 mltb=1 arom=1 linh=0 sbmb=0
+mmff prop type_id=87 atno=26 crd=0 val=0 pilp=0 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=88 atno=26 crd=0 val=0 pilp=0 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=89 atno=9 crd=0 val=0 pilp=0 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=90 atno=17 crd=0 val=0 pilp=0 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=91 atno=35 crd=0 val=0 pilp=0 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=92 atno=3 crd=0 val=0 pilp=0 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=93 atno=11 crd=0 val=0 pilp=0 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=94 atno=19 crd=0 val=0 pilp=0 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=95 atno=30 crd=0 val=0 pilp=0 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=96 atno=20 crd=0 val=0 pilp=0 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=97 atno=29 crd=0 val=0 pilp=0 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=98 atno=29 crd=0 val=0 pilp=0 mltb=0 arom=0 linh=0 sbmb=0
+mmff prop type_id=99 atno=12 crd=0 val=0 pilp=0 mltb=0 arom=0 linh=0 sbmb=0

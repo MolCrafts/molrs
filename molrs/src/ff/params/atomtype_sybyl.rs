@@ -1,6 +1,8 @@
 //! Antechamber atom-type definition rules — `ATOMTYPE_SYBYL.DEF`.
 //!
-//! DO NOT HAND-EDIT — regenerate with `scripts/gen_param_tables.py`.
+//! DO NOT HAND-EDIT. Emitted by `scripts/gen_param_tables.py` from AmberTools' own
+//! `.DAT` / `.DEF` files; re-run it to refresh. That is where this table came
+//! FROM — it is not what the table IS: this is ordinary source, not a build artefact.
 //!
 //! Source: `$AMBERHOME/dat/antechamber/ATOMTYPE_SYBYL.DEF` (AmberTools).
 

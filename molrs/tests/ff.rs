@@ -23,6 +23,17 @@ mod readers_lammps;
 #[path = "ff/readers/opls.rs"]
 mod readers_opls;
 
+// chem-perceive-14 — "one place, one form". Two modules because they fail for two
+// different reasons, and conflating them would cost the suite: `tables_gate` is a gate
+// on the *tree* (it must be able to fail BEFORE the tables exist, so it names no Rust
+// symbol that does not compile yet), `tables_equivalence` is a contract on the
+// *numbers* (it names the public front doors and compares them, field for field,
+// against the XML parse they replace).
+#[path = "ff/tables_equivalence.rs"]
+mod tables_equivalence;
+#[path = "ff/tables_gate.rs"]
+mod tables_gate;
+
 #[path = "ff/potential/mod.rs"]
 mod potential;
 
