@@ -27,3 +27,6 @@ ndarray = "0.17"
 
 [build-dependencies]
 cxx-build = "1"
+# Compiles the C++ translation unit the integration tests call the bridge from
+# (tests/cxx/bridge_probe.cc). Test support only — `src/` builds nothing with it.
+cc = "1"

@@ -36,12 +36,22 @@ pub mod ffi {
         fn frame_set_simbox(fref: &mut FrameRef, h: &[f64]);
 
         // AM1-BCC: Atomiverse supplies AM1 base charges; molrs owns BCC typing.
+        //
+        // `parameter_set` selects the correction family by name — "bcc"
+        // (BCCPARM.DAT, antechamber `-c bcc`) or "abcg2" (BCCPARM_ABCG2.DAT,
+        // `-c abcg2`). A name molrs does not know is refused, never defaulted.
+        //
+        // Returns `Result`, and that is load-bearing: cxx marks every non-Result
+        // `extern "Rust"` fn `noexcept`, so a Rust panic could only abort the
+        // calling process. The errors this can raise are the caller's CHEMISTRY —
+        // a molecule with no BCC correction row (boron), a missing atom type, a
+        // missing bond order — not programmer bugs, so they cross as a catchable
+        // `rust::Error` and leave the engine alive to handle them.
         fn am1_bcc_assign_frame_from_base(
             fref: &mut FrameRef,
             am1_charges: &[f64],
-            total_charge: f64,
-            normalize_total_charge: bool,
-        ) -> Vec<f64>;
+            parameter_set: &str,
+        ) -> Result<Vec<f64>>;
 
         // ── I/O ──────────────────────────────────────────────────
         // Write one frame to an XYZ file (standard element+coords). append=false

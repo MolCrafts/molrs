@@ -1172,42 +1172,41 @@ fn frame_set_simbox(fref: &mut FrameRef, h: &[f64]) {
 /// atom columns are left untouched; in particular the caller's `atoms.type` column
 /// survives, because the model keeps its BCC codes to itself.
 ///
-/// `total_charge` / `normalize_total_charge` are vestigial: antechamber does not
-/// renormalize (`am1bcc.c` ends at the increment loop), so molrs does not either —
-/// spreading the AM1 rounding residual over the atoms would make molrs *diverge*
-/// from the reference and would hide a non-converged AM1 behind a plausible-looking
-/// answer. Passing `true` is therefore refused rather than silently ignored. The
-/// arguments are dropped, and a parameter-set selector added, when the bridge is
-/// reworked; until then this keeps the C++ signature stable.
+/// The correction family is chosen by name (`parameter_set`), because a name is
+/// what this bridge already carries for every other choice it offers (`block`,
+/// `col`, `path`) and because an unrecognized one then has somewhere to go: the
+/// `Err` arm. Both families molrs ships are reachable — see
+/// [`parse_bcc_parameter_set`].
+///
+/// # Errors
+///
+/// Every error here is the *caller's chemistry*, not a programmer bug: a molecule
+/// with no BCC correction row (BF4⁻ — boron has none), a missing atom type, a
+/// missing bond order, or a parameter-set name molrs does not know. They are
+/// returned rather than panicked precisely so that cxx renders them as a
+/// `rust::Error` C++ can catch. A panic here would cross an `extern "C"` shim and
+/// abort the engine that asked.
+///
+/// There is no total-charge argument. AM1-BCC does not renormalize to a target:
+/// antechamber's `am1bcc.c` ends at the increment loop, and spreading the AM1
+/// rounding residual over the atoms would make molrs *diverge* from the reference
+/// while hiding a non-converged AM1 behind a plausible-looking answer.
+///
+/// @param fref          frame handle; `atoms.charge` is written on success
+/// @param am1_charges   AM1 base charges from the engine, one per atom
+/// @param parameter_set `"bcc"` or `"abcg2"`
+/// @return the corrected charges, one per atom
 fn am1_bcc_assign_frame_from_base(
     fref: &mut FrameRef,
     am1_charges: &[f64],
-    total_charge: f64,
-    normalize_total_charge: bool,
-) -> Vec<f64> {
-    am1_bcc_assign_frame_from_base_result(fref, am1_charges, total_charge, normalize_total_charge)
-        .expect("am1_bcc_assign_frame_from_base")
-}
-
-fn am1_bcc_assign_frame_from_base_result(
-    fref: &mut FrameRef,
-    am1_charges: &[f64],
-    _total_charge: f64,
-    normalize_total_charge: bool,
+    parameter_set: &str,
 ) -> Result<Vec<f64>, String> {
-    if normalize_total_charge {
-        return Err(
-            "AM1-BCC charges are not renormalized to a target total: antechamber carries the \
-             AM1 rounding residual through, and rescaling would both diverge from it and mask \
-             a non-converged AM1"
-                .to_owned(),
-        );
-    }
+    let set = parse_bcc_parameter_set(parameter_set)?;
 
     fref.0
         .with_mut(|frame| -> Result<Vec<f64>, String> {
             let mol = molrs::Atomistic::from_frame(frame).map_err(|e| e.to_string())?;
-            let charges = BccModel::new(BccParameterSet::Bcc)
+            let charges = BccModel::new(set)
                 .map_err(|e| e.to_string())?
                 .correct(&mol, am1_charges)
                 .map_err(|e| e.to_string())?;
@@ -1219,6 +1218,28 @@ fn am1_bcc_assign_frame_from_base_result(
             Ok(charges)
         })
         .map_err(|e| e.to_string())?
+}
+
+/// Resolve a [`BccParameterSet`] from the name the C++ caller passed.
+///
+/// The names are antechamber's own `-c` values, so a C++ caller that already knows
+/// which charge method it wants knows what to spell here.
+///
+/// # Errors
+///
+/// An unknown name. It is *refused*, not defaulted to BCC: silently substituting a
+/// different correction family would hand the caller charges from a table it did
+/// not ask for, which is indistinguishable from correct output until someone
+/// compares against antechamber.
+fn parse_bcc_parameter_set(name: &str) -> Result<BccParameterSet, String> {
+    match name.trim() {
+        n if n.eq_ignore_ascii_case("bcc") => Ok(BccParameterSet::Bcc),
+        n if n.eq_ignore_ascii_case("abcg2") => Ok(BccParameterSet::Abcg2),
+        other => Err(format!(
+            "unknown AM1-BCC parameter set '{other}': molrs ships two correction families, \
+             'bcc' (BCCPARM.DAT) and 'abcg2' (BCCPARM_ABCG2.DAT)"
+        )),
+    }
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────
@@ -1347,9 +1368,9 @@ mod tests {
         let charges = am1_bcc_assign_frame_from_base(
             &mut fref,
             &[-0.266000, 0.066000, 0.066000, 0.066000, 0.066000],
-            0.0,
-            false,
-        );
+            "bcc",
+        )
+        .expect("methane is covered by the BCC table");
         let expected = [-0.1088, 0.0267, 0.0267, 0.0267, 0.0267];
         for (actual, expected) in charges.iter().zip(expected) {
             assert!(

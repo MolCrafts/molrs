@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// CXX bridge interface schema — single source of truth.
 ///
@@ -43,12 +43,22 @@ pub mod ffi {
         fn frame_set_simbox(fref: &mut FrameRef, h: &[f64]);
 
         // AM1-BCC: Atomiverse supplies AM1 base charges; molrs owns BCC typing.
+        //
+        // `parameter_set` selects the correction family by name — "bcc"
+        // (BCCPARM.DAT, antechamber `-c bcc`) or "abcg2" (BCCPARM_ABCG2.DAT,
+        // `-c abcg2`). A name molrs does not know is refused, never defaulted.
+        //
+        // Returns `Result`, and that is load-bearing: cxx marks every non-Result
+        // `extern "Rust"` fn `noexcept`, so a Rust panic could only abort the
+        // calling process. The errors this can raise are the caller's CHEMISTRY —
+        // a molecule with no BCC correction row (boron), a missing atom type, a
+        // missing bond order — not programmer bugs, so they cross as a catchable
+        // `rust::Error` and leave the engine alive to handle them.
         fn am1_bcc_assign_frame_from_base(
             fref: &mut FrameRef,
             am1_charges: &[f64],
-            total_charge: f64,
-            normalize_total_charge: bool,
-        ) -> Vec<f64>;
+            parameter_set: &str,
+        ) -> Result<Vec<f64>>;
 
         // ── I/O ──────────────────────────────────────────────────
         // Write one frame to an XYZ file (standard element+coords). append=false
@@ -216,5 +226,94 @@ fn main() {
         .std("c++17")
         .compile("molrs_cxxapi");
 
+    compile_test_probe(&out_dir);
+
     println!("cargo::rerun-if-changed=build.rs");
+}
+
+/// Compile `tests/cxx/bridge_probe.cc` — the C++ caller the integration tests
+/// need — against the header cxx just generated.
+///
+/// The tests own a criterion that is a claim about C++ (chem-perceive-12 ac-001:
+/// a chemistry error must arrive on the C++ side as a catchable `rust::Error`,
+/// and must not abort the process), so a C++ translation unit has to exist for a
+/// Rust test to observe it. This is that unit's build step; it is test support
+/// only, and nothing in `src/` calls into it.
+///
+/// **The compile is allowed to fail.** On failure the probe is simply absent, the
+/// `cxx_probe` cfg is not set, and the tests that need it fail with an
+/// explanation (`tests/am1bcc_bridge.rs`). The alternative — letting a bad probe
+/// abort the build script — would take the whole workspace down with it: no crate
+/// would compile and no other test could run, which is the wrong failure for a
+/// test fixture that has drifted from the bridge.
+fn compile_test_probe(out_dir: &Path) {
+    println!("cargo::rustc-check-cfg=cfg(cxx_probe)");
+
+    let probe = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap())
+        .join("tests")
+        .join("cxx")
+        .join("bridge_probe.cc");
+    println!("cargo::rerun-if-changed={}", probe.display());
+    if !probe.is_file() {
+        return; // e.g. a packaged crate built without its tests
+    }
+
+    // cxx nests the generated header under a path derived from the (absolute)
+    // bridge source path, so the include dir is found rather than reconstructed.
+    let include_root = out_dir.join("cxxbridge").join("include");
+    let Some(header) = find_file(&include_root, "bridge.rs.h") else {
+        println!(
+            "cargo::warning=molrs-cxxapi: generated bridge.rs.h not found; C++ test probe skipped"
+        );
+        return;
+    };
+
+    // `cargo_metadata(false)`: this archive must NOT become a `-l` for every
+    // target of the crate. The crate's headline artifact is a `staticlib`, and
+    // rustc bundles native static libs into it — the test probe would be shipped
+    // inside the very library Atomiverse links against. Instead the archive is
+    // handed to the linker of the TEST targets only, below.
+    const LIB: &str = "molrs_cxxapi_test_probe";
+    let result = cc::Build::new()
+        .cpp(true)
+        .std("c++17")
+        .cargo_metadata(false)
+        .include(header.parent().expect("the header has a parent dir"))
+        .include(&include_root)
+        .file(&probe)
+        .try_compile(LIB);
+
+    match result {
+        Ok(()) => {
+            // The C++ stdlib is already linked for every target by the cxx_build
+            // compile above, so the archive alone is enough here.
+            println!(
+                "cargo::rustc-link-arg-tests={}",
+                out_dir.join(format!("lib{LIB}.a")).display()
+            );
+            println!("cargo::rustc-cfg=cxx_probe");
+        }
+        Err(err) => {
+            println!(
+                "cargo::warning=molrs-cxxapi: the C++ test probe did not compile against the \
+                 generated bridge header ({err}). The AM1-BCC bridge tests will fail with an \
+                 explanation; rebuild with `-vv` for the compiler diagnostic."
+            );
+        }
+    }
+}
+
+/// The first file named `name` anywhere under `dir`.
+fn find_file(dir: &Path, name: &str) -> Option<PathBuf> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    let mut dirs = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            dirs.push(path);
+        } else if path.file_name().and_then(|f| f.to_str()) == Some(name) {
+            return Some(path);
+        }
+    }
+    dirs.iter().find_map(|d| find_file(d, name))
 }
