@@ -115,7 +115,7 @@ style[0005] pair mmff_vdw pair[00091] name=96 itom=96 jtom=96 :: a_i=4.0 alpha=0
 style[0005] pair mmff_vdw pair[00092] name=97 itom=97 jtom=97 :: a_i=4.0 alpha=0.35 da=0.0 g_i=1.4 n_eff=6.0 type=97.0
 style[0005] pair mmff_vdw pair[00093] name=98 itom=98 jtom=98 :: a_i=4.0 alpha=0.4 da=0.0 g_i=1.4 n_eff=6.0 type=98.0
 style[0005] pair mmff_vdw pair[00094] name=99 itom=99 jtom=99 :: a_i=4.0 alpha=0.35 da=0.0 g_i=1.3 n_eff=3.5 type=99.0
-style[0006] pair mmff_ele @style :: delta=0.05 dielectric=1.0
+style[0006] pair coul/cut @style :: coulomb=332.0716 delta=0.05 dielectric=1.0
 mmff prop type_id=1 atno=6 crd=4 val=4 pilp=0 mltb=0 arom=0 linh=0 sbmb=0
 mmff prop type_id=2 atno=6 crd=3 val=4 pilp=0 mltb=2 arom=0 linh=0 sbmb=1
 mmff prop type_id=3 atno=6 crd=3 val=4 pilp=0 mltb=2 arom=0 linh=0 sbmb=1

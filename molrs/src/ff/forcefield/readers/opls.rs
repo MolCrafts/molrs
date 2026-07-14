@@ -47,7 +47,9 @@
 use roxmltree::Node;
 
 use super::ForceFieldReader;
+use crate::ff::constants::VACUUM_DIELECTRIC;
 use crate::ff::forcefield::{ForceField, SpecialBonds};
+use molrs::units::constants::COULOMB_REAL;
 
 /// kJ/mol → kcal/mol.
 const KJ_PER_KCAL: f64 = 4.184;
@@ -142,6 +144,11 @@ struct NonbondedRow {
 /// atoms at evaluation time). Combining rules and 1-4 scaling are NOT baked here
 /// — combining is the kernel's job, and the 1-4 weights live on the
 /// ForceField's `special_bonds` (set by the caller).
+///
+/// `coul/cut` is the **buffered** Coulomb `E = k·qᵢqⱼ/(D·(r + δ))`; OPLS is the
+/// unbuffered case (δ = 0, the semantic default) in vacuum, with CODATA's `k`. Those
+/// two constants are stated here because they are the *force field's*: the kernel
+/// has no default for them (MMFF's `k` is a different number, and both are correct).
 fn build_nonbonded(ff: &mut ForceField, masses: &[(String, f64)], nonbonded: &[NonbondedRow]) {
     if !masses.is_empty() {
         let atom = ff.def_atomstyle("full");
@@ -160,7 +167,10 @@ fn build_nonbonded(ff: &mut ForceField, masses: &[(String, f64)], nonbonded: &[N
         for r in nonbonded {
             lj.def_pairtype(&r.ty, None, &[("epsilon", r.epsilon), ("sigma", r.sigma)]);
         }
-        ff.def_pairstyle("coul/cut", &[]);
+        ff.def_pairstyle(
+            "coul/cut",
+            &[("coulomb", COULOMB_REAL), ("dielectric", VACUUM_DIELECTRIC)],
+        );
     }
 }
 

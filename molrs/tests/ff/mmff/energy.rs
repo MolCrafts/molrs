@@ -245,9 +245,18 @@ fn ref_energy(name: &str) -> f64 {
 
 /// `(category, style name, breakdown key)` for every MMFF energy term.
 ///
-/// `pair/mmff_ele` is the one whose kernel has been registered since the day it
-/// was written (`potential/registry.rs`) while **no ForceField ever defined the
+/// The electrostatic term is the one whose kernel has been registered since the day
+/// it was written (`potential/registry.rs`) while **no ForceField ever defined the
 /// style** — the entire 150 kcal/mol caffeine error.
+///
+/// # `ele` is `pair/coul/cut`, not a style of MMFF's own (mmff-ele-compose)
+///
+/// It used to be `pair/mmff_ele`. MMFF's electrostatics is a **buffered Coulomb**,
+/// `E = k·qᵢqⱼ / (D·(r + δ))` — a *parameterization* of the generic Coulomb kernel
+/// (k = 332.0716, D = 1.0, δ = 0.05 Å), not a kernel of its own. The intent of every
+/// assertion below is unchanged: **the electrostatic term must be computed, and its
+/// numbers must come from the force field.** Only the name of the style that carries
+/// it has changed — from one MMFF owned to one MMFF configures.
 const MMFF_STYLES: [(&str, &str, &str); 7] = [
     ("bond", "mmff_bond", "bond"),
     ("angle", "mmff_angle", "angle"),
@@ -255,8 +264,15 @@ const MMFF_STYLES: [(&str, &str, &str); 7] = [
     ("dihedral", "mmff_torsion", "torsion"),
     ("improper", "mmff_oop", "oop"),
     ("pair", "mmff_vdw", "vdw"),
-    ("pair", "mmff_ele", "ele"),
+    ("pair", "coul/cut", "ele"),
 ];
+
+/// Halgren's Coulomb constant, kcal·Å·mol⁻¹·e⁻² (MMFF.I eq. 5; RDKit `Nonbonded.cpp`).
+///
+/// The ORACLE value, stated here because MMFF's parity with RDKit rests on it. In the
+/// tree it must live in `ff::params::mmff::MMFF_ELE_STYLE` — it is MMFF's parameter,
+/// not molrs's constant (`potential/electrostatics_compose_gate.rs` gates that).
+const MMFF_COULOMB: f64 = 332.0716;
 
 /// The 7 frozen term energies of `<name>.breakdown.json`.
 fn frozen_breakdown(name: &str) -> BTreeMap<&'static str, f64> {
@@ -418,7 +434,7 @@ compile_fixture!(generic_pots_94s, MMFF94STypifier, "MMFF94s");
 /// blaming "stretch-bend + torsion eq-fallback label resolution". That comment
 /// was false — stbn and torsion agree with the bespoke path to five decimals on
 /// every fixture (NMA: -0.31596 / -1.18237, identical on both paths). The real
-/// defect was that no ForceField ever defined `pair/mmff_ele`.
+/// defect was that no ForceField ever defined an electrostatic pair style at all.
 #[test]
 fn generic_path_total_energy_matches_rdkit() {
     let mut fails = Vec::new();
@@ -540,9 +556,10 @@ fn frozen_breakdown_sums_to_the_rdkit_total() {
 
 /// ac-005 — both MMFF force fields must DEFINE all 7 energy styles.
 ///
-/// `mmff_ele_ctor` has been in the kernel registry since it was written; what is
+/// The electrostatic kernel has been in the registry since it was written; what was
 /// missing is a style. A registered-but-unreferenced kernel is a term that does
-/// not exist.
+/// not exist. (Since mmff-ele-compose the electrostatic style is the *generic*
+/// `pair/coul/cut` — MMFF must still DEFINE it, it just no longer OWNS it.)
 #[test]
 fn mmff_forcefields_define_all_seven_energy_styles() {
     let ff94 = MMFF94Typifier::new();
@@ -576,53 +593,69 @@ fn mmff_forcefields_define_all_seven_energy_styles() {
 /// the reader's dispatch source, symmetric with `<VdWParams>`, not a
 /// `def_pairstyle` conjured inside the reader. `chem-perceive-14` deleted the XML
 /// and compiled the parameter set into [`molrs::ff::params::mmff`], so the subject
-/// is now the table's `MMFF_ELE_STYLE` block and the `pair/mmff_ele` style that
-/// `ff/typifier/mmff/embedded.rs` builds from it — same three columns, same
-/// question: **does the electrostatic data actually reach the force field?**
+/// is now the table's `MMFF_ELE_STYLE` block and the pair style that
+/// `ff/typifier/mmff/embedded.rs` builds from it — same question: **does the
+/// electrostatic data actually reach the force field?**
+///
+/// # The style is now `pair/coul/cut` (mmff-ele-compose), and it carries FOUR numbers
+///
+/// MMFF's electrostatics is a buffered Coulomb — `E = k·qᵢqⱼ / (D·(r + δ))` — which is
+/// the generic kernel at `k = 332.0716`, `D = 1.0`, `δ = 0.05`. So the **Coulomb
+/// constant joins the style**: it is the one number that was never data at all, and
+/// the one that cannot be shared. 332.0716 (Halgren) vs 332.06371 (CODATA, which
+/// `coul/cut` hardcoded) is 2.4e-5 relative — worth more than the parity tolerance on
+/// caffeine (see [`the_two_coulomb_constants_are_not_interchangeable`]). Both are
+/// correct; the force field decides.
 ///
 /// # Why this one cannot be dropped
 ///
-/// It is spec 01's sentinel for the defect that cost 150 kcal/mol on caffeine:
-/// `mmff_ele_ctor` was registered from the day it was written, the charges were on
-/// the Frame, and NO ForceField ever defined a `pair/mmff_ele` style. Kernel,
-/// data, and nobody connecting them.
+/// It is spec 01's sentinel for the defect that cost 150 kcal/mol on caffeine: the
+/// electrostatic kernel was registered from the day it was written, the charges were
+/// on the Frame, and NO ForceField ever defined the style. Kernel, data, and nobody
+/// connecting them.
 ///
-/// And the params half is the part **no other test in this file can see**:
-/// `mmff_ele_ctor` reads `sp.get("dielectric").unwrap_or(1.0)` and
-/// `sp.get("delta").unwrap_or(ELE_DELTA)`, so a style defined with EMPTY params
-/// silently falls back to constants that happen to equal the table today. Every
-/// energy assertion in this file — total and per-style — stays green while the
-/// data section quietly ceases to exist. That is the original defect one level
-/// down: a kernel computing from its own defaults instead of from the force field.
+/// And the params half is the part **no other test in this file can see**: the kernel
+/// read `sp.get("dielectric").unwrap_or(1.0)` / `sp.get("delta").unwrap_or(ELE_DELTA)`,
+/// so a style defined with EMPTY params silently fell back to constants that happen to
+/// equal the table today. Every energy assertion in this file — total and per-style —
+/// stayed green while the data section quietly ceased to exist. That is the original
+/// defect one level down: a kernel computing from its own defaults instead of from the
+/// force field. (`potential/coul_buffered.rs` now makes the empty style an `Err`; this
+/// test proves the non-empty one is actually *populated*.)
 #[test]
 fn both_mmff_front_doors_declare_the_electrostatic_style_and_its_data() {
     for (label, ff) in [
         ("MMFF94", MMFF94Typifier::new().ff().clone()),
         ("MMFF94s", MMFF94STypifier::new().ff().clone()),
     ] {
-        let style = ff.get_style("pair", "mmff_ele").unwrap_or_else(|| {
+        let style = ff.get_style("pair", "coul/cut").unwrap_or_else(|| {
             panic!(
-                "{label}: no `pair/mmff_ele` style. The kernel has been in the registry since the \
-                 day it was written and the charges have always been on the Frame — the 150 \
-                 kcal/mol caffeine error was nobody defining the style that connects them."
+                "{label}: no `pair/coul/cut` style. MMFF's electrostatics is a BUFFERED COULOMB — \
+                 a parameterization of the generic kernel (k = 332.0716, D = 1.0, δ = 0.05), not a \
+                 kernel of its own. The charges have always been on the Frame; the 150 kcal/mol \
+                 caffeine error was nobody defining the style that connects them, and this spec's \
+                 ruling is that the style it defines must be a GENERIC one."
             )
         });
 
         for (key, want) in [
+            ("coulomb", MMFF_COULOMB),
             ("dielectric", MMFF_ELE_STYLE.dielectric),
             ("delta", MMFF_ELE_STYLE.delta),
         ] {
             let got = style.params.get(key).unwrap_or_else(|| {
                 panic!(
-                    "{label}: `pair/mmff_ele` carries no `{key}` style param. `mmff_ele_ctor` \
-                     would fall back to its own hardcoded default and compute the RIGHT number \
-                     for the WRONG reason — the force field would no longer be the source of \
-                     MMFF's electrostatic constants, and no energy test would notice."
+                    "{label}: `pair/coul/cut` carries no `{key}` style param. The kernel would \
+                     fall back to its own hardcoded default and compute the RIGHT number for the \
+                     WRONG reason — the force field would no longer be the source of MMFF's \
+                     electrostatic constants, and no energy test would notice. For `coulomb` it \
+                     would not even be the right number: the generic kernel's own constant is \
+                     CODATA's 332.06371, not MMFF's 332.0716."
                 )
             });
             assert!(
                 (got - want).abs() < 1e-12,
-                "{label}: `pair/mmff_ele` {key} = {got}, want {want} (the value in \
+                "{label}: `pair/coul/cut` {key} = {got}, want {want} (the value in \
                  `ff::params::mmff::MMFF_ELE_STYLE`). The style must carry the TABLE's numbers, \
                  not a second copy of them."
             );
@@ -651,6 +684,63 @@ fn both_mmff_front_doors_declare_the_electrostatic_style_and_its_data() {
             sp.lj[2]
         );
     }
+}
+
+/// mmff-ele-compose ac-002 — the two Coulomb constants are NOT interchangeable, and
+/// that is why `coulomb` must be a **style param** rather than a shared constant.
+///
+/// This is the test that refutes the lazy version of this refactor — "the two kernels
+/// are the same physics, so merge them and pick a constant". They are the same
+/// physics; the constants are not the same number, and the difference is above the
+/// parity tolerance the whole MMFF suite is measured at:
+///
+/// ```text
+/// Halgren (MMFF):  332.0716      CODATA (coul/cut):  332.06371
+/// relative difference:                               2.4e-5
+/// caffeine E_ele = -150.48 kcal/mol  ->  |ΔE| = 0.0036 kcal/mol  >  1e-3 (ENERGY_TOL)
+/// ```
+///
+/// So picking CODATA's value for MMFF would silently drop caffeine out of RDKit
+/// parity, and picking Halgren's for `coul/cut` would misparameterise every OPLS /
+/// LAMMPS force field that uses it. **Both are correct; the force field decides** —
+/// which is only expressible if the constant travels with the style.
+///
+/// Computed from the FROZEN breakdown, so it asserts against RDKit's own number, not
+/// against molrs's. GREEN today (it is arithmetic on committed data) and it must stay
+/// green: if it ever fails, the constants have been merged.
+#[test]
+fn the_two_coulomb_constants_are_not_interchangeable() {
+    use molrs::units::constants::COULOMB_REAL;
+
+    let ele = frozen_breakdown("e_caffeine")["ele"];
+    assert!(
+        ele.abs() > 100.0,
+        "e_caffeine's frozen electrostatic term is {ele:.6} kcal/mol — this test's premise is \
+         that it is LARGE (about -150), so that a 2.4e-5 relative shift in the Coulomb constant \
+         is visible at the 1e-3 parity tolerance"
+    );
+
+    let relative = (MMFF_COULOMB - COULOMB_REAL).abs() / MMFF_COULOMB;
+    let shift = ele.abs() * relative;
+    println!(
+        "coulomb constants: MMFF {MMFF_COULOMB} vs CODATA {COULOMB_REAL} (rel {relative:.2e}); \
+         caffeine ele = {ele:.5} -> |dE| = {shift:.5} kcal/mol (tolerance {ENERGY_TOL:.0e})"
+    );
+
+    assert!(
+        relative > 0.0,
+        "MMFF's Coulomb constant ({MMFF_COULOMB}) and the generic kernel's ({COULOMB_REAL}) have \
+         become the same number. One of them has been 'unified' into the other — and whichever \
+         way round, a force field is now being evaluated with a constant its authors did not \
+         choose."
+    );
+    assert!(
+        shift > ENERGY_TOL,
+        "swapping MMFF's Coulomb constant for CODATA's would move caffeine's electrostatic term \
+         by only {shift:.2e} kcal/mol, below the {ENERGY_TOL:.0e} parity tolerance — so this \
+         file's premise (that the constant is load-bearing and must be force-field data) would be \
+         unsupported. Recheck the fixture before relaxing anything."
+    );
 }
 
 /// MMFF's 1-4 rules live in `special_bonds` (house rule), not in the kernel.
@@ -698,7 +788,7 @@ fn zero_charge_molecules_get_exactly_zero_electrostatic_energy() {
 
         let ele = g.style_energy("ele", &g.coords).unwrap_or_else(|| {
             panic!(
-                "{name}: the force field defines no `pair/mmff_ele` style — there is no \
+                "{name}: the force field defines no `pair/coul/cut` style — there is no \
                  electrostatic term to be zero"
             )
         });

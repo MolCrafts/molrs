@@ -690,8 +690,9 @@ fn the_frozen_references_have_the_row_shape_the_xml_declares() {
 /// miss entirely, silently, while every other test in this file stays green. It lands in
 /// two different places, and both are checked:
 ///
-/// * `dielectric` and `delta` on the `mmff_ele` pair style (the distance-dependent
-///   dielectric and the electrostatic buffering constant of MMFF's Coulomb term);
+/// * `dielectric` and `delta` on the electrostatic pair style (the dielectric and the
+///   electrostatic buffering constant of MMFF's Coulomb term) — and, since
+///   `mmff-ele-compose`, `coulomb` beside them (see below);
 /// * `scale14="0.75"` as `special_bonds.coul[2]` — the 1-4 Coulomb scale factor, which
 ///   is not a style parameter at all but a property of the force field.
 ///
@@ -699,6 +700,21 @@ fn the_frozen_references_have_the_row_shape_the_xml_declares() {
 /// produce an MMFF force field whose 1-4 electrostatics are scaled by 1.0 instead of
 /// 0.75. That is a real energy error on every molecule with a 1-4 pair, and the entry
 /// count would not move.
+///
+/// # The style is `pair/coul/cut`, and it carries THREE numbers (mmff-ele-compose)
+///
+/// It was `pair/mmff_ele`. MMFF's electrostatics is a **buffered Coulomb** —
+/// `E = k·qᵢqⱼ / (D·(r + δ))` — which is the generic kernel at `k = 332.0716`,
+/// `D = 1.0`, `δ = 0.05`: a *parameterization*, not a kernel of its own. The Coulomb
+/// constant therefore becomes DATA on the style, exactly like `dielectric` and `delta`
+/// — it is the one number of the three that was never data at all, and the one that
+/// cannot be shared (Halgren's 332.0716 vs CODATA's 332.06371, 2.4e-5 apart, is worth
+/// more than the 1e-3 RDKit parity tolerance on caffeine).
+///
+/// **No value moves here.** `dielectric` and `delta` are the numbers they always were;
+/// `coulomb` is the number the *kernel* always held (`ff/constants.rs::COULOMB_MMFF`),
+/// relocated to where a force field's parameter belongs. The frozen reference records
+/// the ForceField the shipped table builds, so it records that relocation.
 #[test]
 fn the_mmff_electrostatics_section_is_in_the_frozen_reference() {
     for stem in ["mmff94", "mmff94s"] {
@@ -706,18 +722,30 @@ fn the_mmff_electrostatics_section_is_in_the_frozen_reference() {
 
         let ele = lines
             .iter()
-            .find(|l| l.contains("pair mmff_ele") && l.contains("@style"))
+            .find(|l| l.contains("pair coul/cut") && l.contains("@style"))
             .unwrap_or_else(|| {
                 panic!(
-                    "{stem}.reference.txt has no `mmff_ele` pair style. \
+                    "{stem}.reference.txt has no `coul/cut` pair style. \
                      `<ElectrostaticParams>` (mmff-orthogonal-01) is the newest section \
-                     of the MMFF XML and the easiest for a generator to not know about."
+                     of the MMFF XML and the easiest for a generator to not know about — \
+                     and since `mmff-ele-compose` it lands on the GENERIC Coulomb style, \
+                     because MMFF's electrostatics is a parameterization of it and not a \
+                     kernel of MMFF's own."
                 )
             });
         assert!(
             ele.contains("dielectric=1.0") && ele.contains("delta=0.05"),
-            "{stem}: the `mmff_ele` style must carry MMFF's dielectric (1.0) and \
+            "{stem}: the electrostatic style must carry MMFF's dielectric (1.0) and \
              electrostatic buffering delta (0.05). Got: {ele}"
+        );
+        assert!(
+            ele.contains("coulomb=332.0716"),
+            "{stem}: the electrostatic style must carry MMFF's COULOMB CONSTANT \
+             (Halgren's 332.0716) as a style param. It used to live in the kernel \
+             (`ff/constants.rs::COULOMB_MMFF`), which is how MMFF could be evaluated \
+             with a constant nobody handed it — and how the generic kernel's CODATA \
+             332.06371 would silently take its place the moment the two were merged. \
+             Got: {ele}"
         );
 
         let special = lines
@@ -732,6 +760,45 @@ fn the_mmff_electrostatics_section_is_in_the_frozen_reference() {
              pair, and one that moves no entry count. Got: {special}"
         );
     }
+}
+
+/// mmff-ele-compose ac-002/ac-003 — **every** force field that uses the generic Coulomb
+/// style declares the constant it is evaluated with. OPLS included.
+///
+/// The kernel no longer has a Coulomb constant of its own to fall back on: `coulomb` and
+/// `dielectric` are force-field data and a style that omits them is an `Err`
+/// (`potential/coul_buffered.rs`). OPLS's `pair/coul/cut` was defined with **empty
+/// params** (`ff.def_pairstyle("coul/cut", &[])`), which is the same shape as the
+/// backdoor this spec closes — it just happened to agree with the kernel's private copy
+/// of CODATA's 332.06371.
+///
+/// So the OPLS force field must now say so out loud, and the frozen reference records it.
+/// **The number does not move**: 332.06371 is `molrs::units::constants::COULOMB_REAL`,
+/// the value `coul/cut` has always used — it is now *stated* rather than *assumed*.
+///
+/// RED until `ff/typifier/opls/embedded.rs` (and the OPLS/LAMMPS readers) declare it.
+#[test]
+fn the_generic_coulomb_style_declares_the_constant_it_uses() {
+    let lines = reference("oplsaa");
+    let coul = lines
+        .iter()
+        .find(|l| l.contains("pair coul/cut") && l.contains("@style"))
+        .expect("oplsaa.reference.txt has a `pair coul/cut` style");
+
+    assert!(
+        coul.contains("coulomb=332.06371"),
+        "oplsaa's `pair/coul/cut` does not declare its Coulomb constant. CODATA's 332.06371 is \
+         what the kernel has always used — but the kernel is no longer allowed to KNOW that: a \
+         style with no `coulomb` is a style whose force field never spoke, and the kernel would \
+         be supplying the physics. (MMFF's is Halgren's 332.0716 — same kernel, different force \
+         field, and the difference is above the RDKit parity tolerance.) Got: {coul}"
+    );
+    assert!(
+        coul.contains("dielectric=1.0"),
+        "oplsaa's `pair/coul/cut` does not declare its dielectric. `unwrap_or(1.0)` in the kernel \
+         is the kernel pretending the force field spoke; OPLS is parameterised in vacuum and must \
+         say D = 1.0 itself. Got: {coul}"
+    );
 }
 
 /// ONE shared MMFF table: the two front doors' ForceField trees differ by the **name**,

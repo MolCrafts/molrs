@@ -10,11 +10,13 @@
 //! still parses a caller's own OPLS / CL&P / CL&Pol file, layers and all. What is
 //! gone is molrs re-parsing *its own* parameter set at runtime.
 
+use crate::ff::constants::VACUUM_DIELECTRIC;
 use crate::ff::forcefield::{ForceField, SpecialBonds};
 use crate::ff::params::oplsaa::{
     OPLSAA_ANGLES, OPLSAA_ATOMS, OPLSAA_BONDS, OPLSAA_COULOMB_14, OPLSAA_DIHEDRALS, OPLSAA_LJ_14,
     OPLSAA_NAME,
 };
+use molrs::units::constants::COULOMB_REAL;
 
 use super::meta::{OplsTypeRow, OplsTypingMeta};
 
@@ -59,6 +61,12 @@ pub(super) fn force_field() -> ForceField {
     // Atoms carry mass + charge; the LJ pair style carries ε / σ. Charges are
     // per-atom at evaluation time, so `coul/cut` has no rows at all — and the
     // combining rule is the kernel's job, not the table's.
+    //
+    // But its CONSTANTS are not the kernel's job. `coul/cut` is the buffered Coulomb
+    // `E = k·qᵢqⱼ/(D·(r + δ))`; OPLS is the unbuffered case (δ = 0, the semantic
+    // default) in vacuum (D = 1.0) with CODATA's k. This style used to be defined
+    // with EMPTY params and merely happened to agree with the constant the kernel
+    // held privately — the right numbers for the wrong reason. OPLS now says them.
     let atoms = ff.def_atomstyle("full");
     for row in OPLSAA_ATOMS {
         atoms.def_atomtype(row.name, &[("mass", row.mass), ("charge", row.charge)]);
@@ -72,7 +80,10 @@ pub(super) fn force_field() -> ForceField {
             &[("epsilon", row.epsilon), ("sigma", row.sigma)],
         );
     }
-    ff.def_pairstyle("coul/cut", &[]);
+    ff.def_pairstyle(
+        "coul/cut",
+        &[("coulomb", COULOMB_REAL), ("dielectric", VACUUM_DIELECTRIC)],
+    );
 
     // OPLS excludes 1-2 / 1-3 (molrs omits them from the neighbour list) and
     // scales 1-4 by the source's own weights.

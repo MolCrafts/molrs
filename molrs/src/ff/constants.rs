@@ -7,14 +7,25 @@
 /// mdyne·Å → kcal/mol (RDKit `MDYNE_A_TO_KCAL_MOL`, `Params.h`).
 pub(crate) const MDYNE_A_TO_KCAL: f64 = 143.9325;
 
-/// Coulomb constant `e²/(4π·ε₀)` in kcal·Å·mol⁻¹·e⁻² (RDKit `Nonbonded.cpp`).
-/// Distinct from the CODATA-derived [`molrs::units::constants::COULOMB_REAL`]
-/// used by the generic Coulomb pair potential — RDKit rounds it differently and
-/// the MMFF parity tests pin this exact value.
-pub(crate) const COULOMB_MMFF: f64 = 332.0716;
+// MMFF's Coulomb constant (Halgren's 332.0716) and its electrostatic buffering
+// distance (0.05 Å) used to live here. They are gone — not deleted, *relocated*
+// to `ff::params::mmff::MMFF_ELE_STYLE`, beside MMFF's other parameters.
+//
+// A constant in this file claims to be a property of the universe. Those two are
+// properties of ONE force field: OPLS and LAMMPS evaluate the same Coulomb kernel
+// with CODATA's 332.06371 (`molrs::units::constants::COULOMB_REAL`), and the 2.4e-5
+// difference is above the RDKit parity tolerance on caffeine. Both are correct; the
+// force field decides — so they reach the kernel through the STYLE, which is the
+// only way a kernel is allowed to learn them.
 
-/// Electrostatic buffering distance δ in Å (RDKit `calcEleEnergy`).
-pub(crate) const ELE_BUFFER: f64 = 0.05;
+/// Relative permittivity of vacuum, `D = 1` — the medium OPLS, GAFF/AMBER and MMFF
+/// were each parameterised in.
+///
+/// This one genuinely *is* a property of the universe (it is 1 by definition), which
+/// is why it may live here while Halgren's Coulomb constant may not. A force field
+/// still has to **choose** vacuum: every force field that does states `dielectric` on
+/// its `coul/cut` style, and the kernel has no default for it.
+pub(crate) const VACUUM_DIELECTRIC: f64 = 1.0;
 
 /// degrees → radians (RDKit `DEG2RAD`).
 ///

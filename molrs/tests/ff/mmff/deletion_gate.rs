@@ -342,61 +342,63 @@ fn the_five_dead_xml_readers_are_gone() {
     );
 
     // The reverse: the two live readers must NOT have been deleted with them.
-    for live in ["parse_mmff_vdw", "parse_mmff_ele"] {
-        assert!(
-            text.contains(live),
-            "`{live}` is gone from xml.rs — vdW is a real 95-row type table and the \
-             electrostatic section is what mmff-orthogonal-01 added to close the 150 kcal/mol \
-             hole. Neither is dead data."
-        );
-    }
+    assert!(
+        text.contains("parse_mmff_vdw"),
+        "`parse_mmff_vdw` is gone from xml.rs — vdW is a real 95-row type table, not dead data."
+    );
+
+    // The electrostatic reader also survives — but NOT under the dead style's name.
+    //
+    // `mmff-ele-compose` deletes `pair/mmff_ele`: MMFF's electrostatics is a buffered
+    // Coulomb, i.e. the generic kernel parameterised (k = 332.0716, D = 1.0, δ = 0.05).
+    // `<ElectrostaticParams>` is still a real section of a user-supplied MMFF XML and
+    // must still reach the force field — as `pair/coul/cut`. So the reader is renamed
+    // (e.g. `parse_electrostatics`), not deleted: a section that parses to nothing is
+    // the 150 kcal/mol hole all over again.
+    assert!(
+        text.contains("ElectrostaticParams"),
+        "xml.rs no longer dispatches `<ElectrostaticParams>`. That section is what \
+         mmff-orthogonal-01 added to close the 150 kcal/mol caffeine hole; deleting the reader \
+         with the style would reopen it for every user-supplied MMFF XML."
+    );
+    assert!(
+        text.contains("coul/cut"),
+        "xml.rs parses `<ElectrostaticParams>` but does not define `pair/coul/cut`. MMFF's \
+         electrostatics is a parameterization of the GENERIC Coulomb kernel; the reader must \
+         hand it k / dielectric / delta, not resurrect a bespoke style."
+    );
+    assert!(
+        !text.contains(concat!("mmff", "_ele")),
+        "xml.rs still names the deleted `mmff_ele` style (probably as `parse_mmff_ele`). The \
+         reader survives; the dead style's NAME does not — rename it (`parse_electrostatics`) so \
+         that `grep -rn 'mmff_ele' molrs/src` is genuinely zero."
+    );
 }
 
-/// The generator must stop emitting the five dead sections.
+/// The XML emitter is gone, and with it the last path back to the dead data.
 ///
-/// `scripts/mmff_to_xml.py` is what produced the 4,065 rows from RDKit's
-/// `Params.cpp`. Deleting its output without deleting its emitters means the next
-/// regeneration invites the dead data straight back in — and the next
-/// regeneration is `chem-perceive-14-all-tables`, which compiles the XML into
-/// committed, test-protected Rust tables.
+/// `scripts/mmff_to_xml.py` wrote `data/mmff94.xml` / `mmff94s.xml` from RDKit's
+/// `Params.cpp`. `chem-perceive-14-all-tables` compiled those XMLs into committed
+/// Rust and deleted them, so the script now emits files **nothing reads** — and a
+/// generator whose output nobody consumes is not harmless, it is a trap: the next
+/// person runs it, gets two XMLs, and reasonably assumes they matter.
+///
+/// The earlier form of this gate said "the emitter must stop emitting the five
+/// dead sections", because at the time its output still fed a conversion. That
+/// conversion has happened. There is no next regeneration down this path, so the
+/// honest successor is not "emit less" — it is "be gone".
+///
+/// (Provenance is not lost: `ff/params/mmff.rs`'s header names RDKit's
+/// `Params.cpp`, and `MANIFEST.sha256` still records the retired XMLs' hashes.)
 #[test]
-fn the_xml_generator_no_longer_emits_the_dead_sections() {
+fn the_xml_emitter_is_gone() {
     let path = repo_root().join("scripts/mmff_to_xml.py");
-    let text = strip_line_comments(
-        &std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read mmff_to_xml.py: {e}")),
-        "#",
-    );
-
-    let dead_sections = [
-        "BondStretchParams",
-        "AngleBendParams",
-        "StretchBendParams",
-        "TorsionParams",
-        "OutOfPlaneParams",
-    ];
-    let found: Vec<&str> = dead_sections
-        .iter()
-        .copied()
-        .filter(|s| text.contains(s))
-        .collect();
     assert!(
-        found.is_empty(),
-        "`scripts/mmff_to_xml.py` still emits the dead MMFF sections: {found:?}. Regenerating \
-         the XML would restore all 4,065 rows."
+        !path.exists(),
+        "scripts/mmff_to_xml.py still exists. It writes data/mmff94.xml and \
+         data/mmff94s.xml -- files that no longer exist and that nothing reads. \
+         Its one job was to feed a conversion that has already happened."
     );
-
-    for live in ["VdWParams", "ElectrostaticParams"] {
-        assert!(
-            text.contains(live),
-            "`scripts/mmff_to_xml.py` no longer emits `{live}` — a regenerated XML would lose \
-             {}",
-            if live == "VdWParams" {
-                "the 95 real vdW type rows"
-            } else {
-                "the electrostatic section, reopening the 150 kcal/mol hole"
-            }
-        );
-    }
 }
 
 // ---------------------------------------------------------------------------

@@ -31,3 +31,17 @@ mod pair;
 mod param_source_gate;
 #[path = "pme.rs"]
 mod pme;
+
+/// mmff-ele-compose ac-002 / ac-003 — `pair/coul/cut` IS the buffered Coulomb
+/// (`E = k·qᵢqⱼ/(D·(r+δ))`, all three from the style), and a style missing
+/// `coulomb` / `dielectric` / `coulomb14scale` is an `Err`, not a silent default.
+/// RED until the kernel is generalized and its `unwrap_or` fallbacks are gone.
+#[path = "coul_buffered.rs"]
+mod coul_buffered;
+
+/// mmff-ele-compose ac-001 / ac-004 — MMFF owns no kernel (`pair/mmff_ele` is out
+/// of the registry and out of the source) and no constant (`COULOMB_MMFF` /
+/// `ELE_BUFFER` move into `MMFF_ELE_STYLE`, because they are MMFF's parameters).
+/// RED until the deletion lands.
+#[path = "electrostatics_compose_gate.rs"]
+mod electrostatics_compose_gate;

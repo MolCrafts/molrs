@@ -77,10 +77,17 @@ pub(super) fn force_field(name: &str) -> ForceField {
                     );
                 }
             }
+            // The electrostatic style is the GENERIC buffered Coulomb
+            // (`pair/coul/cut`), not a kernel of MMFF's own: MMFF's electrostatics
+            // is `E = k·qᵢqⱼ/(D·(r + δ))`, which is that kernel parameterised. So
+            // all three numbers travel on the style — including the Coulomb
+            // constant, which is Halgren's 332.0716 here and CODATA's 332.06371 for
+            // OPLS/LAMMPS. The kernel has no default for any of them.
             "pair" => {
                 ff.def_pairstyle(
                     style.name,
                     &[
+                        ("coulomb", MMFF_ELE_STYLE.coulomb),
                         ("dielectric", MMFF_ELE_STYLE.dielectric),
                         ("delta", MMFF_ELE_STYLE.delta),
                     ],

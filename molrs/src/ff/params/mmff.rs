@@ -51605,7 +51605,7 @@ pub static MMFF_STYLES: &[MmffStyle] = &[
     },
     MmffStyle {
         category: "pair",
-        name: "mmff_ele",
+        name: "coul/cut",
     },
 ];
 
@@ -51638,23 +51638,47 @@ pub static MMFF_VDW_STYLE: MmffVdWStyle = MmffVdWStyle {
 /// The style-level constants of MMFF's buffered-Coulomb term
 /// (`<ElectrostaticParams>`).
 ///
-/// `E = 332.0716 · qi·qj / (dielectric · (R + delta))`, with the 1-4 pairs scaled
-/// by `scale14`. MMFF scales **only** electrostatics at 1-4: its torsion
-/// parameters were fitted against unscaled 1-4 vdW, so the vdW 1-4 weight is 1.0
-/// and is not a parameter of this block.
+/// ```text
+/// E = coulomb · qi·qj / (dielectric · (R + delta))
+/// ```
+///
+/// with the 1-4 pairs scaled by `scale14`. MMFF scales **only** electrostatics at
+/// 1-4: its torsion parameters were fitted against unscaled 1-4 vdW, so the vdW
+/// 1-4 weight is 1.0 and is not a parameter of this block.
+///
+/// # This is a parameterization, not a kernel
+///
+/// MMFF owns no electrostatic kernel. The four numbers below configure the
+/// **generic** buffered Coulomb, [`pair/coul/cut`](crate::ff::potential::pair::PairCoulCut)
+/// — `delta = 0` degenerates it into the textbook Coulomb every other force field
+/// means. So the whole of MMFF's electrostatics is this block plus a style name.
+///
+/// # Why `coulomb` is data and not a shared constant
+///
+/// Halgren chose **332.0716**; CODATA gives
+/// [`COULOMB_REAL`](molrs::units::constants::COULOMB_REAL) = 332.06371, which is what
+/// OPLS and the LAMMPS force fields use. The two differ by 2.4e-5 relative — worth
+/// 0.0036 kcal/mol on caffeine's −150.48 kcal/mol electrostatic term, i.e. **above**
+/// the 1e-3 RDKit parity tolerance. Both are correct: the *force field* decides, which
+/// is only expressible if the constant travels with the style. A constant in
+/// `ff/constants.rs` would claim to be a property of the universe; this one is a
+/// property of one force field.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MmffEleStyle {
-    /// Dielectric constant of the buffered-Coulomb term.
+    /// Coulomb constant k in kcal·Å·mol⁻¹·e⁻² (Halgren's value; RDKit `Nonbonded.cpp`).
+    pub coulomb: f64,
+    /// Dielectric constant D of the buffered-Coulomb term.
     pub dielectric: f64,
-    /// Electrostatic buffering constant δ (Å).
+    /// Electrostatic buffering constant δ (Å) — what keeps `E` finite at `R = 0`.
     pub delta: f64,
     /// 1-4 Coulomb scale factor.
     pub scale14: f64,
 }
 
-/// MMFF's buffered-Coulomb constants (`<ElectrostaticParams dielectric=… delta=…
-/// scale14=…/>`).
+/// MMFF's buffered-Coulomb constants (`<ElectrostaticParams coulomb=… dielectric=…
+/// delta=… scale14=…/>`).
 pub static MMFF_ELE_STYLE: MmffEleStyle = MmffEleStyle {
+    coulomb: 332.0716,
     dielectric: 1.0,
     delta: 0.05,
     scale14: 0.75,

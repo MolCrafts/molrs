@@ -159,16 +159,21 @@ impl KernelRegistry {
         );
         // `coul/cut` reads per-atom `charge` off the Frame — there is no charge
         // type-row to read, and its ctor binds `_type_params`.
+        //
+        // It is the BUFFERED Coulomb, `E = k·qᵢqⱼ/(D·(r + δ))`, with k / D / δ all
+        // read from the style. `δ = 0` is the textbook Coulomb (OPLS, LAMMPS);
+        // `k = 332.0716, D = 1.0, δ = 0.05` is MMFF's electrostatics. MMFF owns no
+        // electrostatic kernel of its own — it configures this one.
         r.register_with(
             "pair",
             "coul/cut",
             pair::coul_cut::pair_coul_cut_ctor,
             ParamSource::PerInstance,
         );
-        // MMFF94 — six per-instance styles. Their kernels read the columns the
-        // typifier bakes (`kb`/`r0`, `ka`/`theta0`, `kba_*`, `v1`/`v2`/`v3`,
-        // `koop`, `charge`), never a type row: MMFF's context rules (aromaticity,
-        // ring size, equivalence degradation, empirical fallbacks) are not a
+        // MMFF94 — five per-instance BONDED styles. Their kernels read the columns
+        // the typifier bakes (`kb`/`r0`, `ka`/`theta0`, `kba_*`, `v1`/`v2`/`v3`,
+        // `koop`), never a type row: MMFF's context rules (aromaticity, ring size,
+        // equivalence degradation, empirical fallbacks) are not a
         // `(type_i, type_j, …) → params` table and cannot be made into one.
         r.register_with(
             "bond",
@@ -198,12 +203,6 @@ impl KernelRegistry {
             "improper",
             "mmff_oop",
             improper::mmff::mmff_oop_ctor,
-            ParamSource::PerInstance,
-        );
-        r.register_with(
-            "pair",
-            "mmff_ele",
-            pair::mmff::mmff_ele_ctor,
             ParamSource::PerInstance,
         );
         r.register(

@@ -3916,7 +3916,7 @@ style[0004] pair lj/cut pair[00809] name=MCH3B itom=MCH3B jtom=MCH3B :: epsilon=
 style[0004] pair lj/cut pair[00810] name=MW itom=MW jtom=MW :: epsilon=0.0 sigma=10.0
 style[0004] pair lj/cut pair[00811] name=HW_tip4pew itom=HW_tip4pew jtom=HW_tip4pew :: epsilon=0.0 sigma=10.0
 style[0004] pair lj/cut pair[00812] name=OW_tip4pew itom=OW_tip4pew jtom=OW_tip4pew :: epsilon=0.16275 sigma=3.16435
-style[0005] pair coul/cut @style ::
+style[0005] pair coul/cut @style :: coulomb=332.06371 dielectric=1.0
 opls row name=HW_tip4pew class=HW_tip4pew def=None overrides=[] priority=None layer=0
 opls row name=MCH3A class=MCH3A def=None overrides=[] priority=None layer=0
 opls row name=MCH3B class=MCH3B def=None overrides=[] priority=None layer=0

@@ -21,10 +21,15 @@
 //!   <VdWParams B="0.2" Beta="12.0" DARAD="0.8" DAEPS="0.5">
 //!     <VdW type="1" alpha="1.05" n_eff="2.49" a_i="3.89" g_i="1.282" da="-" />
 //!   </VdWParams>                                         <!-- a real 95-row table -->
-//!   <ElectrostaticParams dielectric="1.0" delta="0.05" scale14="0.75" />
+//!   <ElectrostaticParams coulomb="332.0716" dielectric="1.0" delta="0.05" scale14="0.75" />
 //!   ...
 //! </ForceField>
 //! ```
+//!
+//! `<ElectrostaticParams>` declares the **generic** buffered-Coulomb pair style
+//! `coul/cut` — `E = coulomb·qᵢqⱼ / (dielectric·(r + delta))`. MMFF owns no
+//! electrostatic kernel; the section above is a *parameterization* of that one, and
+//! `delta = 0` degenerates it into the textbook Coulomb.
 
 use std::collections::HashMap;
 
@@ -76,7 +81,7 @@ pub fn read_forcefield_xml_str(xml: &str) -> Result<ForceField, String> {
             // read one of them, and their only function was to satisfy an
             // empty-type-params guard that now asks the registry instead.
             "VdWParams" => parse_mmff_vdw(&mut ff, &child)?,
-            "ElectrostaticParams" => parse_mmff_ele(&mut ff, &child)?,
+            "ElectrostaticParams" => parse_electrostatics(&mut ff, &child)?,
 
             // Auxiliary MMFF sections (informational, not compiled)
             "AtomTypes"
@@ -393,39 +398,56 @@ fn parse_mmff_vdw(ff: &mut ForceField, node: &roxmltree::Node) -> Result<(), Str
     Ok(())
 }
 
-/// Parse `<ElectrostaticParams dielectric="1.0" delta="0.05" scale14="0.75"/>`
-/// into the `pair/mmff_ele` style **and** the force field's 1-4 weights.
-///
-/// MMFF's buffered-Coulomb term
+/// Parse `<ElectrostaticParams coulomb="332.0716" dielectric="1.0" delta="0.05"
+/// scale14="0.75"/>` into the **generic** `pair/coul/cut` style and the force
+/// field's 1-4 weights.
 ///
 /// ```text
-/// E = 332.0716 * qi*qj / (dielectric * (R + delta))
+/// E = coulomb * qi*qj / (dielectric * (R + delta))
 /// ```
 ///
-/// has no per-type rows at all — the charges are per-atom and the typifier bakes
-/// them onto the frame — so the style carries only these three scalars. That is
-/// exactly why the term went missing: the kernel (`mmff_ele_ctor`) has been in the
-/// registry since it was written, but no force field ever *defined* the style, so
-/// no consumer of the documented `ForceField` API could compute electrostatics
-/// (caffeine was off by 150 kcal/mol). Declaring it as a section keeps the
-/// numbers in the data file, symmetric with `<VdWParams>`, rather than conjuring a
-/// style out of literals inside the reader.
+/// The term has no per-type rows at all — the charges are per-atom and the typifier
+/// bakes them onto the frame — so the style carries only these scalars. That is
+/// exactly why it once went missing: the kernel had been in the registry since it
+/// was written, but no force field ever *defined* the style, so no consumer of the
+/// documented `ForceField` API could compute electrostatics (caffeine was off by
+/// 150 kcal/mol). Declaring it as a section keeps the numbers in the data file,
+/// symmetric with `<VdWParams>`, rather than conjuring a style out of literals
+/// inside the reader.
 ///
-/// `scale14` also sets [`SpecialBonds`]: coulomb 1-4 is scaled by it (0.75) while
-/// **vdW 1-4 is left unscaled (1.0)** — MMFF scales only electrostatics, and its
-/// torsion parameters were fitted against unscaled 1-4 vdW. The 1-2 / 1-3 weights
-/// stay at the default 0.0 (molrs excludes those pairs by omitting them from the
-/// neighbour list).
-fn parse_mmff_ele(ff: &mut ForceField, node: &roxmltree::Node) -> Result<(), String> {
+/// # `coulomb` is required
+///
+/// The Coulomb constant is **force-field data**: MMFF uses Halgren's 332.0716 and
+/// OPLS/LAMMPS use CODATA's 332.06371, a difference above the RDKit parity
+/// tolerance. Both are correct — the force field decides — so neither this reader
+/// nor the kernel may pick one. A section that does not state it is an error, not a
+/// silent default. (`delta` and `dielectric` keep genuine semantic defaults here:
+/// "no buffer" and "vacuum" are meaningful things for a data file to leave unsaid,
+/// and stating them is still what every shipped force field does.)
+///
+/// `scale14` also sets [`SpecialBonds`]: coulomb 1-4 is scaled by it (0.75 for MMFF)
+/// while **vdW 1-4 is left unscaled (1.0)** — MMFF scales only electrostatics, and
+/// its torsion parameters were fitted against unscaled 1-4 vdW. The 1-2 / 1-3
+/// weights stay at the default 0.0 (molrs excludes those pairs by omitting them from
+/// the neighbour list).
+fn parse_electrostatics(ff: &mut ForceField, node: &roxmltree::Node) -> Result<(), String> {
+    let coulomb = attr_f64(node, "coulomb")?;
     let dielectric = opt_attr_f64(node, "dielectric").unwrap_or(1.0);
-    let delta = opt_attr_f64(node, "delta").unwrap_or(0.05);
+    let delta = opt_attr_f64(node, "delta").unwrap_or(0.0);
     let scale14 = opt_attr_f64(node, "scale14").unwrap_or(1.0);
 
     ff.set_special_bonds(SpecialBonds {
         lj: [0.0, 0.0, 1.0],
         coul: [0.0, 0.0, scale14],
     });
-    ff.def_pairstyle("mmff_ele", &[("dielectric", dielectric), ("delta", delta)]);
+    ff.def_pairstyle(
+        "coul/cut",
+        &[
+            ("coulomb", coulomb),
+            ("dielectric", dielectric),
+            ("delta", delta),
+        ],
+    );
     Ok(())
 }
 

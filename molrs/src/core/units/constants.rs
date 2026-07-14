@@ -28,10 +28,15 @@ pub const GAS_CONSTANT: F = AVOGADRO * BOLTZMANN;
 pub const ELEMENTARY_CHARGE: F = 1.602_176_634e-19;
 
 /// Coulomb constant `k_e = 1/(4π·ε₀)` in MD "real" units
-/// (kcal·Å·mol⁻¹·e⁻²), CODATA-derived. This is the value used by the generic
-/// Coulomb pair potential and the dielectric/conductivity analyses. The MMFF
-/// force field rounds it slightly differently — that variant lives in
-/// `molrs-ff` as `COULOMB_MMFF`.
+/// (kcal·Å·mol⁻¹·e⁻²), CODATA-derived. It is what the dielectric/conductivity
+/// analyses use, and what the OPLS and LAMMPS force fields declare on their
+/// `pair/coul/cut` style.
+///
+/// It is **not** a constant of the Coulomb kernel. MMFF rounds it differently
+/// (Halgren's 332.0716, which lives in `ff::params::mmff::MMFF_ELE_STYLE`), and the
+/// 2.4e-5 difference is above the RDKit parity tolerance on caffeine. Both values
+/// are correct: the *force field* chooses one and states it on its `pair/coul/cut`
+/// style, and the kernel has no default.
 pub const COULOMB_REAL: F = 332.063_71;
 
 /// Boltzmann constant in MD "real" units, kcal·mol⁻¹·K⁻¹.

@@ -1,10 +1,17 @@
-//! MMFF94 Van der Waals (buffered 14-7) and electrostatic (buffered Coulomb) kernels.
+//! MMFF94's Van der Waals kernel — the buffered 14-7 potential.
 //!
-//! Both styles are **per-instance**: the MMFF typifier bakes each atom's partial
-//! `charge` onto the frame, and the vdW type rows carry the per-type
-//! polarizabilities. The two style-level parameter blocks come from the XML
-//! (`<VdWParams B= Beta= DARAD= DAEPS=>` / `<ElectrostaticParams dielectric=
-//! delta= scale14=>`), never from constants hardcoded here.
+//! The style is **per-type**: its 95 rows (one per MMFF atom type) carry the
+//! polarizabilities the combining rules need, and the style-level block
+//! (`<VdWParams B= Beta= DARAD= DAEPS=>`) shapes those rules.
+//!
+//! # MMFF's electrostatics is not here, and owns no kernel
+//!
+//! It is a **buffered Coulomb** — `E = k·qᵢqⱼ / (D·(r + δ))` — which is the *generic*
+//! [`PairCoulCut`](super::coul_cut::PairCoulCut) kernel at `k = 332.0716`, `D = 1.0`,
+//! `δ = 0.05 Å`: a parameterization, not a kernel of its own. The numbers live in
+//! [`MMFF_ELE_STYLE`](crate::ff::params::mmff::MMFF_ELE_STYLE) and reach the kernel
+//! through the style. vdW is the opposite case — a genuine per-type table — which is
+//! why it stays.
 //!
 //! # 1-4 scaling (house convention)
 //!
@@ -19,7 +26,6 @@
 
 use std::collections::HashMap;
 
-use crate::ff::constants::{COULOMB_MMFF as COULOMB_CONST, ELE_BUFFER as ELE_DELTA};
 use crate::ff::forcefield::Params;
 use crate::ff::potential::Potential;
 use crate::ff::potential::geometry::{mag3, sub3, validate_coords};
@@ -300,118 +306,6 @@ pub fn mmff_vdw_ctor(
     }))
 }
 
-// ---------------------------------------------------------------------------
-// MMFFElectrostatic: E = 332.0716 * qi * qj / (D * (r + delta))
-// ---------------------------------------------------------------------------
-
-/// Buffered Coulomb (MMFF.I eq. 5), one row per non-excluded pair:
-///
-/// ```text
-/// E = 332.0716 * qi*qj / (D * (R + delta)),   delta = 0.05 A,  D = 1
-/// ```
-///
-/// The buffering constant δ keeps the term finite at R = 0 (MMFF's charges sit on
-/// nuclei). 1-2 and 1-3 pairs are excluded by omission from the neighbour list
-/// (`intramolecular_pairs`); 1-4 pairs carry `scale_14` = `coulomb14scale` (0.75).
-pub struct MMFFElectrostatic {
-    atom_i: Vec<usize>,
-    atom_j: Vec<usize>,
-    qi_qj: Vec<F>,
-    dielectric: F,
-    /// Electrostatic buffering distance δ (Å).
-    delta: F,
-    scale_14: Vec<F>,
-}
-
-impl Potential for MMFFElectrostatic {
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
-        let _n = validate_coords(coords);
-        let mut energy: F = 0.0;
-        let mut forces = vec![0.0 as F; coords.len()];
-        let conv = COULOMB_CONST as F;
-        let delta = self.delta;
-
-        for idx in 0..self.atom_i.len() {
-            let (i, j) = (self.atom_i[idx], self.atom_j[idx]);
-            let d = sub3(coords, j, coords, i);
-            let r = mag3(d);
-            let r_buf = r + delta;
-            let qq = self.qi_qj[idx] * self.scale_14[idx];
-            energy += conv * qq / (self.dielectric * r_buf);
-
-            if r < 1e-12 as F {
-                continue;
-            }
-            let de_dr = -conv * qq / (self.dielectric * r_buf * r_buf);
-            let factor = -de_dr / r;
-            for dim in 0..3 {
-                forces[j * 3 + dim] += factor * d[dim];
-                forces[i * 3 + dim] -= factor * d[dim];
-            }
-        }
-        (energy, forces)
-    }
-}
-
-/// Build the buffered-Coulomb electrostatic potential.
-///
-/// Style params (`sp`, from `<ElectrostaticParams>`): `dielectric` (D),
-/// `delta` (δ, Å), plus the `coulomb14scale` weight [`Style::to_potential`]
-/// projects out of the force field's [`SpecialBonds`] (0.75 for MMFF). There are
-/// **no type rows**: MMFF's charges are per-atom, baked onto the frame by the
-/// typifier, so this style is parameterised entirely at style level — which is
-/// why it needs no `<Type>` children and why `to_potential` exempts pair styles
-/// from the "has type definitions" check.
-///
-/// [`SpecialBonds`]: crate::ff::forcefield::SpecialBonds
-/// [`Style::to_potential`]: crate::ff::forcefield::Style::to_potential
-pub fn mmff_ele_ctor(
-    sp: &Params,
-    _tp: &[(&str, &Params)],
-    frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
-    let dielectric = sp.get("dielectric").unwrap_or(1.0) as F;
-    let delta = sp.get("delta").unwrap_or(ELE_DELTA) as F;
-    let coul_14 = sp.get("coulomb14scale").unwrap_or(1.0) as F;
-    let atoms = frame.get("atoms").ok_or("mmff_ele: missing \"atoms\"")?;
-    let charges = atoms
-        .get_float("charge")
-        .ok_or("mmff_ele: missing atom \"charge\" column")?;
-    let pairs = frame.get("pairs").ok_or("mmff_ele: missing \"pairs\"")?;
-    let ic = pairs.get_uint("atomi").ok_or("missing atomi")?;
-    let jc = pairs.get_uint("atomj").ok_or("missing atomj")?;
-    let is_14 = pairs.get_bool("is_14");
-
-    let n = ic.len();
-    let (mut ai, mut aj, mut qq, mut s14) = (
-        Vec::with_capacity(n),
-        Vec::with_capacity(n),
-        Vec::with_capacity(n),
-        Vec::with_capacity(n),
-    );
-
-    for idx in 0..n {
-        let qi = charges[ic[idx] as usize] as F;
-        let qj = charges[jc[idx] as usize] as F;
-        ai.push(ic[idx] as usize);
-        aj.push(jc[idx] as usize);
-        qq.push(qi * qj);
-        s14.push(if is_14.is_some_and(|b| b[idx]) {
-            coul_14
-        } else {
-            1.0
-        });
-    }
-    Ok(Box::new(MMFFElectrostatic {
-        atom_i: ai,
-        atom_j: aj,
-        qi_qj: qq,
-        dielectric,
-        delta,
-        scale_14: s14,
-    }))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -456,22 +350,5 @@ mod tests {
             let sum = forces[dim] + forces[3 + dim];
             assert!(sum.abs() < 1e-4, "dim {}: sum = {}", dim, sum);
         }
-    }
-
-    #[test]
-    fn test_mmff_electrostatic() {
-        let pot = MMFFElectrostatic {
-            atom_i: vec![0],
-            atom_j: vec![1],
-            qi_qj: vec![0.5 * -0.5],
-            dielectric: 1.0,
-            delta: ELE_DELTA,
-            scale_14: vec![1.0],
-        };
-        let coords: Vec<F> = vec![0.0, 0.0, 0.0, 2.0, 0.0, 0.0];
-        let (e, forces) = pot.calc_energy_forces(&coords);
-        assert!(e < 0.0, "opposite charges should give negative energy");
-        let sum = forces[0] + forces[3];
-        assert!(sum.abs() < 1e-3, "force sum = {}", sum);
     }
 }

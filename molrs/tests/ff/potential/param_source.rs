@@ -34,13 +34,18 @@ use ndarray::Array1;
 ///
 /// Every one of them is a `_tp`-ignoring kernel (see `param_source_gate.rs`), so
 /// every one of them must carry zero type-def rows once `ParamSource` exists.
+///
+/// The sixth is the *generic* `pair/coul/cut` since `mmff-ele-compose`: MMFF's
+/// electrostatics is a buffered Coulomb, a parameterization of that kernel rather
+/// than a kernel of MMFF's own. It belongs in this list for exactly the reason it
+/// always did — its charges are per-atom Frame data and it reads no type rows.
 const PER_INSTANCE_STYLES: [(&str, &str); 6] = [
     ("bond", "mmff_bond"),
     ("angle", "mmff_angle"),
     ("angle", "mmff_stbn"),
     ("dihedral", "mmff_torsion"),
     ("improper", "mmff_oop"),
-    ("pair", "mmff_ele"),
+    ("pair", "coul/cut"),
 ];
 
 /// The one MMFF style that is a genuine type-row lookup, and its exact row count.
