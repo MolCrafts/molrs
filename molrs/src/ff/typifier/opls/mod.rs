@@ -177,11 +177,18 @@ impl OPLSAATypifier {
 
     /// Typify a molecule and compile potentials in one step.
     ///
-    /// `mol → typify (atoms + bonded) → Frame → Potentials`, mirroring
-    /// [`MMFF94Typifier::build`](crate::ff::typifier::mmff::MMFF94Typifier::build).
-    /// 1-2 / 1-3 exclusion + 1-4 scaling come from the force field's
-    /// `special_bonds` (set by the reader) and the consumer-built
-    /// [`intramolecular_pairs`] neighbour list inserted here.
+    /// `mol → typify (atoms + bonded) → Frame → Potentials`. 1-2 / 1-3 exclusion +
+    /// 1-4 scaling come from the force field's `special_bonds` (set by the reader)
+    /// and the consumer-built [`intramolecular_pairs`] neighbour list inserted here.
+    ///
+    /// # A note on asymmetry
+    ///
+    /// MMFF used to carry the same convenience and no longer does
+    /// (`mmff-orthogonal-02` deleted `MMFF94Typifier::build`, because it hid the
+    /// `Frame` — and with it, for a while, an entire missing electrostatic term).
+    /// Whether OPLS should follow is a **deliberately open** decision, not an
+    /// oversight: the owner's ruling named the MMFF doors only. Until it is taken,
+    /// the two typifier surfaces are asymmetric on purpose.
     ///
     /// # Errors
     ///

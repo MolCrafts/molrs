@@ -2,24 +2,38 @@
 //!
 //! The MMFF kernel structs (`MMFFBondStretch`, `MMFFAngleBend`, ...) expose no
 //! public constructor — they are built only through `mmff_*_ctor` during
-//! `ForceField::to_potentials`. The genuine public path is therefore
-//! `MMFF94Typifier::build(mol) -> Potentials`, which we drive here with molecules
-//! built in code. Direct unit construction of each kernel is covered by inline
+//! `ForceField::to_potentials`. The public path is therefore
+//! typify → `Frame` → `to_potentials`, which we drive here with molecules built in
+//! code. Direct unit construction of each kernel is covered by inline
 //! `#[cfg(test)]` modules in src.
 //!
-//! All generic-path MMFF kernels are wired: stretch-bend merges its per-angle
-//! `r0_ij` / `r0_kj` / `theta0` (via the typifier's `merge_stbn_r0`), and
-//! out-of-plane (`mmff_oop`) resolves each trigonal centre's `koop` through the
-//! canonical equivalence-degraded key the typifier emits, so `build()` yields a
-//! complete `Potentials` with finite energy and forces.
+//! All MMFF kernels are wired: stretch-bend merges its per-angle `r0_ij` /
+//! `r0_kj` / `theta0`, and out-of-plane (`mmff_oop`) reads the `koop` the typifier
+//! resolved for each trigonal centre — so the compile yields a complete
+//! `Potentials` with finite energy and forces.
+//!
+//! Six of the seven styles are `ParamSource::PerInstance`: their kernels read
+//! Frame columns and carry **zero** type rows. `pair/mmff_vdw` is the exception
+//! and keeps its real 95-row table. That boundary is asserted in
+//! `tests/ff/potential/param_source.rs`.
 
+use molrs::ff::potential::{Potentials, intramolecular_pairs};
 use molrs::ff::typifier::mmff::MMFF94Typifier;
+use molrs::store::frame::Frame;
 use molrs::system::molgraph::PropValue;
 use molrs::types::F;
 use molrs::{AtomId, Atomistic};
 
 fn typifier() -> MMFF94Typifier {
     MMFF94Typifier::new()
+}
+
+/// The standard route: typify → `Frame` (+ neighbour list) → `to_potentials`.
+fn compile(t: &MMFF94Typifier, mol: &Atomistic) -> Result<(Potentials, Frame), String> {
+    let mut frame = t.typify(mol)?.to_frame();
+    frame.insert("pairs", intramolecular_pairs(&frame));
+    let pots = t.ff().to_potentials(&frame)?;
+    Ok((pots, frame))
 }
 
 fn bond(mol: &mut Atomistic, a: AtomId, b: AtomId, order: F) {
@@ -59,14 +73,14 @@ fn ethane() -> Atomistic {
 fn ethane_typifies_to_a_complete_frame() {
     // The typification half: `typify` returns a labeled Atomistic that
     // materializes (`to_frame`) into atoms/bonds/angles/dihedrals blocks ready
-    // for compile. The neighbour list (`pairs`) is `build()`'s job, not typify's.
+    // for compile. The neighbour list (`pairs`) is the consumer's, not typify's.
     let mol = ethane();
     let frame = typifier().typify(&mol).expect("typify ethane").to_frame();
     assert_eq!(frame.get("atoms").unwrap().nrows(), Some(8));
     assert_eq!(frame.get("bonds").unwrap().nrows(), Some(7));
     assert_eq!(frame.get("angles").unwrap().nrows(), Some(12));
     assert_eq!(frame.get("dihedrals").unwrap().nrows(), Some(9));
-    // typify is pairs-free now — `build()` owns the neighbour list.
+    // typify is pairs-free — the consumer owns the neighbour list.
     assert!(!frame.contains_key("pairs"));
     // The angles block carries the stretch-bend type column the stbn kernel
     // reads — confirming the topology side is wired up.
@@ -74,13 +88,12 @@ fn ethane_typifies_to_a_complete_frame() {
 }
 
 #[test]
-fn ethane_build_succeeds_with_all_kernels() {
+fn ethane_compiles_with_all_kernels() {
     // Ethane's carbons are four-coordinate, so MMFF defines no out-of-plane
     // term; every kernel resolves (stretch-bend params merged, oop correctly
-    // skipped) and build() yields finite energy + forces.
+    // skipped) and the compile yields finite energy + forces.
     let mol = ethane();
-    let pots = typifier().build(&mol).expect("build potentials");
-    let frame = typifier().typify(&mol).expect("typify").to_frame();
+    let (pots, frame) = compile(&typifier(), &mol).expect("compile potentials");
     let coords = molrs::ff::potential::extract_coords(&frame).expect("coords");
     let (e, forces) = pots.calc_energy_forces(&coords);
     assert!(e.is_finite(), "energy not finite: {e}");

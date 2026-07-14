@@ -1,40 +1,59 @@
 //! MMFF94 parameter resolution: equivalence-level table lookups, type codes,
 //! and the empirical-rule fallbacks used when explicit parameters are absent.
 //!
+//! **This is the one correct implementation of MMFF's context rules in molrs**,
+//! and everything that needs a bond / angle / torsion type or a force constant
+//! comes through here. It used to live under `ff/mmff/energy/` next to the
+//! bespoke energy assembly, which made it look like an energy file; it never was.
+//! The energy layer is gone (`mmff-orthogonal-02` — the generic
+//! typifier → `ForceField` → kernel path reproduces RDKit on 11/11 fixtures,
+//! term by term, so a second assembly was a second set of numbers to be wrong);
+//! the resolver stayed, because it is what the *typifier* runs.
+//!
+//! What makes these rules irreducible to a `(type_i, type_j, …) → params` table
+//! — and hence the reason MMFF's kernels are
+//! [`ParamSource::PerInstance`](crate::ff::potential::ParamSource::PerInstance):
+//!
+//! * the type codes depend on **topology**, not just atom types — aromaticity
+//!   ([`bond_type`]), 3-/4-membered-ring membership ([`angle_type`]),
+//!   4-/5-ring torsions ([`torsion_type`]);
+//! * lookups **degrade** through four equivalence levels ([`eq_level`]) before
+//!   they give up;
+//! * and when they do give up, the parameters are **invented on the spot** from
+//!   covalent radii and electronegativities ([`bond_empirical`],
+//!   [`angle_empirical`], [`torsion_empirical`]).
+//!
+//! The typifier resolves all of it per interaction and bakes the numbers into
+//! Frame columns; the kernels read those columns.
+//!
 //! Ported from RDKit (BSD-3, Paolo Tosco / RDKit contributors):
 //! - `Code/ForceField/MMFF/Params.h` (the `operator()` / `getMMFF*Params`
-//!   equivalence-level lookups + vdW combining rules).
+//!   equivalence-level lookups).
 //! - `Code/GraphMol/ForceFieldHelpers/MMFF/AtomTyper.cpp`
 //!   (`getMMFFAngleType` / `getMMFFBondType` / `getMMFFStretchBendType` /
 //!   `getMMFFTorsionType`, and the `getMMFF*EmpiricalRuleParams` fallbacks).
 //!
 //! Reference: Halgren, T. A. *J. Comput. Chem.* 1996, 17, 490-641 (MMFF.I-V).
+//!
+//! # Handover
+//!
+//! `chem-perceive-14-all-tables` moves [`crate::ff::mmff::tables`] to
+//! `ff/params/mmff.rs`. **The resolver should travel with its tables**: it is the
+//! only reader of them, and splitting the two across `ff/mmff/` and `ff/params/`
+//! would put the lookup rules one module away from the rows they degrade through.
 
 use crate::ff::mmff::MmffVariant;
 use crate::ff::mmff::charges::mmff_bond_type;
 use crate::ff::mmff::tables::{
-    MmffProp, mmff_angle, mmff_bndk, mmff_bond, mmff_cov_rad_pau_ele, mmff_def, mmff_dfsb,
+    mmff_angle, mmff_bndk, mmff_bond, mmff_cov_rad_pau_ele, mmff_def, mmff_dfsb,
     mmff_herschbach_laurie, mmff_oop, mmff_oop_s, mmff_prop, mmff_stbn, mmff_tor, mmff_tor_s,
-    mmff_vdw,
 };
 use crate::ff::mmff::topo::{BondOrder, Topo};
 
-// MMFF numeric constants live in the crate-level `constants` module so the
-// `potential` adapters share one definition; re-exported here under the names
-// the energy kernels already import (`COULOMB` keeps its short local name).
-pub(super) use crate::ff::constants::{
-    COULOMB_MMFF as COULOMB, DEG2RAD, ELE_BUFFER, MDYNE_A_TO_KCAL, RAD2DEG,
-};
-
-// vdW combining-rule globals (RDKit `MMFFVdWCollection`, Params.cpp:
-// "power B Beta DARAD DAEPS" = "0.25 0.2 12. 0.8 0.5").
-const VDW_B: f64 = 0.2;
-const VDW_BETA: f64 = 12.0;
-const VDW_DARAD: f64 = 0.8;
-const VDW_DAEPS: f64 = 0.5;
-
-const DA_DONOR: u8 = b'D';
-const DA_ACCEPTOR: u8 = b'A';
+// MMFF's degree → radian conversion, from the crate-level `constants` module so
+// the `potential` kernels share one definition. (The MMFF tables store reference
+// angles in degrees; molrs is radians internally.)
+use crate::ff::constants::DEG2RAD;
 
 #[inline]
 fn is_zero(x: f64) -> bool {
@@ -70,16 +89,16 @@ pub(crate) struct TorParams {
     pub v3: f64,
 }
 
-/// Combined vdW pair parameters (already donor/acceptor-scaled).
-#[derive(Clone, Copy, Debug)]
-pub(super) struct VdwParams {
-    pub r_star: f64,
-    pub epsilon: f64,
-}
+// vdW is deliberately absent from this resolver. MMFF's van der Waals
+// parameters are a genuine 95-row per-atom-type table, so `pair/mmff_vdw` is a
+// real `ParamSource::TypeRows` style: the rows live in the parameter XML and
+// `mmff_vdw_ctor` (`ff/potential/pair/mmff.rs`) applies the combining rules to
+// them. Resolving them a second time here would be the duplication this module's
+// own history is a warning about.
 
 // --- periodic-table rows (AtomTyper.cpp) ---------------------------------
 
-pub(super) fn periodic_row(atno: u8) -> u8 {
+fn periodic_row(atno: u8) -> u8 {
     match atno {
         3..=10 => 1,
         11..=18 => 2,
@@ -107,7 +126,14 @@ fn periodic_row_hl(atno: u8) -> u8 {
 // --- bond type (single sbmb/arom pair) -----------------------------------
 
 /// RDKit `getMMFFBondType`. Delegates to the already-ported charge helper.
-pub(super) fn bond_type(topo: &Topo, types: &[u8], i: usize, j: usize) -> u8 {
+///
+/// **1 only for a bond that is `SINGLE` and joins two `sbmb`/`arom` atom types.**
+/// After MMFF aromaticity perception an aromatic ring bond is `AROMATIC`, never
+/// `SINGLE`, so a benzene ring bond is bond type **0** — the inter-ring bond of
+/// biphenyl is the shape that gets a 1. Reading the raw bond order instead (and
+/// calling ~1.5 "aromatic → 1") inverts the rule, and on a Kekulé input labels
+/// the two halves of a six-fold-symmetric ring differently.
+pub(crate) fn bond_type(topo: &Topo, types: &[u8], i: usize, j: usize) -> u8 {
     mmff_bond_type(topo, types, i, j)
 }
 
@@ -158,7 +184,13 @@ fn torsion_ring_size(topo: &Topo, i: usize, j: usize, k: usize, l: usize) -> u8 
 // --- angle / stretch-bend / torsion type codes (AtomTyper.cpp) -----------
 
 /// RDKit `getMMFFAngleType`.
-pub(super) fn angle_type(topo: &Topo, types: &[u8], i: usize, j: usize, k: usize) -> u8 {
+///
+/// Needs the **topology**, not just the two bond types: [`angle_ring_size`]
+/// promotes an angle inside a 3- or 4-membered ring, overwriting the bond-type
+/// sum with the ring size (cyclopropane's C-C-C angles are type 3). A classifier
+/// whose arguments are only `(bt_ij, bt_jk)` cannot express that at any input —
+/// ring membership is not among them.
+pub(crate) fn angle_type(topo: &Topo, types: &[u8], i: usize, j: usize, k: usize) -> u8 {
     let bts = bond_type(topo, types, i, j) + bond_type(topo, types, j, k);
     let mut at = bts;
     let size = angle_ring_size(topo, i, j, k);
@@ -205,7 +237,10 @@ fn stretch_bend_type(angle_type: u8, bt1: u8, bt2: u8) -> u8 {
 }
 
 /// RDKit `getMMFFTorsionType`. Returns `(principal, secondary)`.
-pub(super) fn torsion_type(
+///
+/// Same disease as [`angle_type`] if you try to key it off bond types alone: the
+/// 4-/5-membered-ring promotions ([`torsion_ring_size`]) need the topology.
+pub(crate) fn torsion_type(
     topo: &Topo,
     types: &[u8],
     i: usize,
@@ -271,7 +306,12 @@ fn angle_lookup(angle_type: u8, i: u8, j: u8, k: u8) -> Option<AngleParams> {
 /// (`defaultMMFFsOop` vs `defaultMMFFOop`) based on `isMMFFs`. The `_S` table
 /// shares every key with the base table, so we look up `_S` first under
 /// [`MmffVariant::Mmff94s`] and fall back to the base table for safety.
-fn oop_lookup(variant: MmffVariant, i: u8, j: u8, k: u8, l: u8) -> Option<f64> {
+///
+/// Returns the **canonical key of the row that matched** (peripherals degraded to
+/// the level that hit, then sorted ascending; the centre stays in second place)
+/// together with its `koop`. The key is what the typifier stamps on the improper
+/// as its `type` label, so the label names the row the number actually came from.
+fn oop_lookup(variant: MmffVariant, i: u8, j: u8, k: u8, l: u8) -> Option<(String, f64)> {
     for iter in 0..4 {
         let mut ikl = [eq_level(i, iter), eq_level(k, iter), eq_level(l, iter)];
         ikl.sort_unstable();
@@ -281,7 +321,7 @@ fn oop_lookup(variant: MmffVariant, i: u8, j: u8, k: u8, l: u8) -> Option<f64> {
             MmffVariant::Mmff94 => mmff_oop(ikl[0], j, ikl[1], ikl[2]),
         };
         if let Some(o) = hit {
-            return Some(o.koop);
+            return Some((format!("{}_{}_{}_{}", ikl[0], j, ikl[1], ikl[2]), o.koop));
         }
     }
     None
@@ -580,14 +620,18 @@ fn dfsb_lookup(an_i: u8, an_j: u8, an_k: u8) -> (bool, Option<(f64, f64)>) {
 // --- out-of-plane --------------------------------------------------------
 
 /// RDKit `getMMFFOopBendParams` (no empirical fallback; term excluded if absent).
-pub(crate) fn oop_koop(
+///
+/// `j` is the trigonal centre. Returns `(canonical key, koop)` — `None` when MMFF
+/// defines no out-of-plane term for the centre, which is how the typifier knows
+/// to skip it.
+pub(crate) fn oop_params(
     variant: MmffVariant,
     types: &[u8],
     i: usize,
     j: usize,
     k: usize,
     l: usize,
-) -> Option<f64> {
+) -> Option<(String, f64)> {
     oop_lookup(variant, types[i], types[j], types[k], types[l])
 }
 
@@ -761,66 +805,4 @@ fn torsion_empirical(topo: &Topo, types: &[u8], j: usize, k: usize) -> Option<To
         }
     }
     Some(tor)
-}
-
-// --- van der Waals (combining rules) -------------------------------------
-
-/// RDKit `getMMFFVdWParams` + `calcUnscaledVdWMinimum`/`WellDepth` + scaling.
-pub(super) fn vdw_params(types: &[u8], i: usize, j: usize) -> Option<VdwParams> {
-    let pi = mmff_vdw(types[i])?;
-    let pj = mmff_vdw(types[j])?;
-
-    let gamma = (pi.r_star - pj.r_star) / (pi.r_star + pj.r_star);
-    let donor = pi.da == DA_DONOR || pj.da == DA_DONOR;
-    let mut r_star = 0.5
-        * (pi.r_star + pj.r_star)
-        * (1.0
-            + if donor {
-                0.0
-            } else {
-                VDW_B * (1.0 - (-VDW_BETA * gamma * gamma).exp())
-            });
-
-    let r2 = r_star * r_star;
-    let c4 = 181.16;
-    let mut epsilon = c4 * pi.g_i * pj.g_i * pi.alpha_i * pj.alpha_i
-        / (((pi.alpha_i / pi.n_i).sqrt() + (pj.alpha_i / pj.n_i).sqrt()) * r2 * r2 * r2);
-
-    // donor/acceptor scaling (RDKit `scaleVdWParams`)
-    let da_pair =
-        (pi.da == DA_DONOR && pj.da == DA_ACCEPTOR) || (pi.da == DA_ACCEPTOR && pj.da == DA_DONOR);
-    if da_pair {
-        r_star *= VDW_DARAD;
-        epsilon *= VDW_DAEPS;
-    }
-    Some(VdwParams { r_star, epsilon })
-}
-
-/// Periodic-distance class between atoms (RDKit `buildNeighborMatrix`):
-/// number of bond hops, capped — 1 (1-2), 2 (1-3), 3 (1-4), or `u8::MAX`.
-pub(super) fn relation(topo: &Topo, a: usize, b: usize) -> u8 {
-    // BFS up to depth 3.
-    use std::collections::VecDeque;
-    let n = topo.n_atoms();
-    let mut dist = vec![u8::MAX; n];
-    dist[a] = 0;
-    let mut q = VecDeque::new();
-    q.push_back(a);
-    while let Some(u) = q.pop_front() {
-        if dist[u] >= 3 {
-            continue;
-        }
-        for &v in &topo.nbrs[u] {
-            if dist[v] == u8::MAX {
-                dist[v] = dist[u] + 1;
-                q.push_back(v);
-            }
-        }
-    }
-    dist[b]
-}
-
-/// Helper exposing the central-atom prop (linear flag) for angle bend.
-pub(super) fn central_prop(types: &[u8], j: usize) -> Option<&'static MmffProp> {
-    mmff_prop(types[j])
 }

@@ -27,6 +27,79 @@ All notable changes to molrs are recorded here. This project follows
   MMFF94s tables (`MMFF_OOP_S`, `MMFF_TOR_S`) had been shipped and used only by the
   bespoke energy path.
 
+### Removed — BREAKING
+
+- **The bespoke MMFF energy path is deleted. MMFF is no longer a special case.**
+  `MmffForceField`, `MmffEnergyBreakdown` and the whole `ff/mmff/energy/` assembly
+  layer are gone, together with every shortcut that reached them:
+
+  | Removed | Replacement |
+  |---|---|
+  | `molrs::ff::mmff::MmffForceField` / `MmffEnergyBreakdown` | the generic kernels (`ff::potential::{bond,angle,dihedral,improper,pair}::mmff`) |
+  | `MMFF94Typifier::build(&mol)` / `MMFF94STypifier::build(&mol)` | `typify` → `to_frame` → `intramolecular_pairs` → `ForceField::to_potentials` |
+  | `molrs.build_mmff_potentials(mol)` (Python) | the same route (see below) |
+  | `MMFF94Typifier::typify_bond` / `typify_angle` / `typify_dihedral` | nothing — they were **wrong**; the type codes are on the typed Frame |
+
+  ```python
+  # before
+  pots = molrs.build_mmff_potentials(mol)          # or MMFF94Typifier().build(mol)
+
+  # after
+  typifier = molrs.MMFF94Typifier()
+  frame = typifier.typify(mol).to_frame()          # labels + charges
+  frame["pairs"] = molrs.intramolecular_pairs(frame)
+  pots = typifier.forcefield().to_potentials(frame)
+  ```
+
+  Two reasons, and the second is why this is a removal rather than a deprecation.
+
+  *It was a duplicate.* The generic path reproduces RDKit on all 11 MMFF fixtures
+  (worst deviation 3.1e-9 kcal/mol) and matches a frozen per-style breakdown on
+  every one of its 7 energy terms to 1e-6 — so the bespoke layer was a second
+  implementation of the same force field, i.e. a second set of numbers to be wrong.
+
+  *It had already drifted.* Until the preceding fix, `build()` compiled potentials
+  with **no electrostatic style at all** (no `ForceField` defined `pair/mmff_ele`):
+  caffeine was ~150 kcal/mol low. The shortcut is what hid it — by folding
+  typify → compile into one call it removed the `Frame` where a missing term is
+  visible. The three `typify_*` classifiers were wrong on their own terms too: an
+  aromatic bond came back as bond type 1 (RDKit says 0), and `typify_angle(bt_ij,
+  bt_jk)` could not return 3 for a cyclopropane C-C-C angle *at any input*, because
+  ring membership was not among its arguments.
+
+  **Downstream: `molpack`** consumes `molcrafts-molrs` natively and its relaxer
+  follows the `build`-style pattern documented in `docs/interop.md`; it must move to
+  the `typify` → `to_potentials` route. This is the only known external consumer.
+
+- **The four MMFF parameter files lose 4,065 type-def rows.** `<Bond>` (493),
+  `<Angle>` (2342), `<StretchBend>` (282), `<Torsion>` (926) and `<Oop>` (117) are
+  gone from `data/mmff94{,s}.xml` and `molrs/data/mmff94{,s}.xml`, along with the
+  five readers that parsed them. **No code ever read one of them.** MMFF's bonded
+  parameters depend on aromaticity, ring size, four-level equivalence degradation
+  and empirical fallbacks — they are not a `(type_i, type_j, …) → params` table —
+  so the typifier resolves them per interaction and bakes them into Frame columns,
+  which is what the kernels have always read. The rows existed solely to satisfy a
+  guard requiring every style to carry type definitions. `<VdW>` keeps all 95 rows
+  (van der Waals genuinely *is* a per-atom-type table) and `<ElectrostaticParams>`
+  stays. A parameter file is unaffected unless it defined those sections.
+
+### Added
+
+- **`ParamSource`** (`molrs::ff::potential::ParamSource`) names where a kernel gets
+  its parameters: `TypeRows` (from the style's type-def rows) or `PerInstance` (from
+  Frame columns the typifier baked). `KernelRegistry::register_with` /
+  `register_kernel_with` carry it; the plain `register` / `register_kernel` remain as
+  the `TypeRows` short form, so no existing kernel registration changes.
+  `Style::to_potential`'s empty-type-params guard now consults it — a `TypeRows`
+  style with no rows still errors, a `PerInstance` style is allowed zero rows — which
+  replaces the old blanket `category != "pair"` escape hatch. Eight styles are
+  registered `PerInstance`: MMFF's `bond/mmff_bond`, `angle/mmff_angle`,
+  `angle/mmff_stbn`, `dihedral/mmff_torsion`, `improper/mmff_oop`, `pair/mmff_ele`,
+  plus `pair/coul/cut` and `kspace/pme` (both read per-atom charge off the Frame).
+  `pair/mmff_vdw` stays `TypeRows`. The invariant — *a registered kernel constructor
+  that ignores its type-params is not a Style* — is enforced in both directions by
+  `tests/ff/potential/param_source_gate.rs`.
+
 ### Changed — BREAKING
 
 - **`MMFFTypifier` is renamed to `MMFF94Typifier`** (Rust and Python), and its

@@ -59,5 +59,13 @@ mod mmff;
 #[path = "mmff_variant.rs"]
 mod mmff_variant;
 
+/// mmff-orthogonal-02 ac-007 (runtime half) — every bond / angle / dihedral label
+/// derives from the ONE RDKit-faithful resolver, so aromatic bonds are type 0 and
+/// a 3-ring angle is type 3. RED until `classify.rs` is deleted: its classifiers
+/// answer 1 and 0 respectively, and its angle signature cannot express the ring
+/// rule at all.
+#[path = "mmff_labels.rs"]
+mod mmff_labels;
+
 #[path = "opls.rs"]
 mod opls;

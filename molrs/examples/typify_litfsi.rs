@@ -10,6 +10,7 @@
 //! Run:
 //!   cargo run -p molcrafts-molrs --example typify_litfsi --features ff
 
+use molrs::ff::potential::intramolecular_pairs;
 use molrs::ff::typifier::mmff::MMFF94Typifier;
 use molrs::system::molgraph::{Atom, PropValue};
 use molrs::{AtomId, Atomistic};
@@ -131,11 +132,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // =========================================================================
-    // Step 4: Build potentials and evaluate
+    // Step 4: Compile potentials and evaluate
+    //
+    // The typifier's job ended at Step 3. Compiling is the ForceField's, through
+    // the same `to_potentials` every force field in molrs uses — and the
+    // neighbour list is ours to build, because we are the consumer.
     // =========================================================================
-    println!("\n--- Build & Evaluate ---\n");
+    println!("\n--- Compile & Evaluate ---\n");
 
-    match typifier.build(&mol) {
+    let mut frame = frame;
+    frame.insert("pairs", intramolecular_pairs(&frame));
+
+    match typifier.ff().to_potentials(&frame) {
         Ok(potentials) => {
             let coords = molrs::ff::potential::extract_coords(&frame)?;
             let (energy, _) = potentials.calc_energy_forces(&coords);
@@ -146,7 +154,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
         }
         Err(e) => {
-            println!("Build skipped (incomplete parameter coverage): {}", e);
+            println!("Compile skipped (incomplete parameter coverage): {}", e);
             println!("(Typification completed successfully)");
         }
     }

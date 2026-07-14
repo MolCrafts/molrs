@@ -1,4 +1,4 @@
-//! MMFF94 energy validation against RDKit — both molrs paths.
+//! MMFF94 energy validation against RDKit.
 //!
 //! Fixtures `<name>.sdf` / `<name>.energy.json` carry the 3D conformer (atom
 //! order == RDKit atom order) and the reference MMFF94 total energy
@@ -22,32 +22,40 @@
 //! and cubic angle forms differ by ~1e-4·ka — below the 1e-3 tolerance. A fixture
 //! built at that angle would pass whether or not the linear-angle branch exists.
 //!
-//! Two paths are validated here against the same fixtures:
+//! # One path, since mmff-orthogonal-02
 //!
-//! - **bespoke** (`MmffForceField`) — the reference frame. Reproduces RDKit to
-//!   1e-6 on every fixture, and mmff-orthogonal-01 does not touch it (see
-//!   `bespoke_gate.rs`).
-//! - **generic** (`MMFF94Typifier::build` → `ForceField` → kernels) — the
-//!   documented public API. Its fixture list is produced by **scanning**
-//!   `fixtures/*.energy.json`, so a subset assertion cannot be written: the only
-//!   fixture the old test asserted (`e_ethane`) was one of exactly two whose MMFF
-//!   charges are all zero, i.e. the one input class that cannot expose a missing
-//!   electrostatic term.
+//! There used to be two: a **bespoke** `MmffForceField` energy assembly (the
+//! reference frame) and the **generic** typifier → `ForceField` → kernel route.
+//! `mmff-orthogonal-01` proved the generic path reproduces RDKit on all 11
+//! fixtures (worst 3.1e-9 kcal/mol) and matches the bespoke path term-by-term to
+//! 1e-6 on every one of its 7 styles — which made the bespoke layer a provably
+//! redundant second implementation, and `mmff-orthogonal-02` deleted it. The tests
+//! that drove it went with it; the ones that asserted something the generic path
+//! can also assert (MMFF94s vs the RDKit oracle, translation/rotation invariance,
+//! L-BFGS relaxation) were **repointed**, with their fixtures, oracles and
+//! tolerances unchanged.
 //!
-//! The generic path is additionally asserted **per style** against
-//! `<name>.breakdown.json` (7 terms, frozen from the bespoke path and re-proved
-//! against the RDKit oracle on every run). A total-energy assertion is not
-//! enough: the total is the number most able to lie — it hid a 28 kcal/mol
-//! electrostatic hole behind partially-cancelling terms on NMA, and on ethane it
-//! hid an entire missing energy term.
+//! What keeps `<name>.breakdown.json` legitimate now that the path that produced
+//! it is gone: `frozen_breakdown_sums_to_the_rdkit_total` re-proves, on every run,
+//! that its 7 terms reconstruct RDKit's `mmff94_total_energy`. The numbers do not
+//! rest on molrs at all — and `oracle_gate.rs` pins their SHA-256 so they cannot be
+//! regenerated to fit the day's code.
+//!
+//! The generic fixture list is produced by **scanning** `fixtures/*.energy.json`,
+//! so a subset assertion cannot be written: the only fixture the old test asserted
+//! (`e_ethane`) was one of exactly two whose MMFF charges are all zero, i.e. the
+//! one input class that cannot expose a missing electrostatic term.
+//!
+//! The per-style breakdown, not the total, is the assertion with teeth: the total
+//! is the number most able to lie — it hid a 28 kcal/mol electrostatic hole behind
+//! partially-cancelling terms on NMA, and on ethane it hid an entire missing term.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use molrs::Atomistic;
-use molrs::ff::mmff::{MmffForceField, MmffMolProperties, MmffVariant};
-use molrs::ff::potential::{Potential, Potentials, intramolecular_pairs};
+use molrs::ff::potential::{Potentials, intramolecular_pairs};
 use molrs::ff::typifier::mmff::{MMFF94STypifier, MMFF94Typifier};
 use molrs::store::frame::Frame;
 use molrs::system::molgraph::{Atom, PropValue};
@@ -55,10 +63,7 @@ use serde_json::Value;
 
 /// Generic path vs the RDKit oracle (kcal/mol) — the spec's parity tolerance.
 const ENERGY_TOL: f64 = 1.0e-3;
-/// Bespoke path vs the RDKit oracle. It reproduces RDKit to ~1e-13; this is the
-/// machine-checkable form of "max |delta| = 0.00000".
-const BESPOKE_TOL: f64 = 1.0e-6;
-/// Generic per-style energy vs the frozen bespoke breakdown (kcal/mol).
+/// Generic per-style energy vs the frozen breakdown (kcal/mol).
 const BREAKDOWN_TOL: f64 = 1.0e-6;
 
 fn fixtures_dir() -> PathBuf {
@@ -277,333 +282,18 @@ fn frozen_breakdown(name: &str) -> BTreeMap<&'static str, f64> {
 }
 
 // ---------------------------------------------------------------------------
-// Bespoke path (the reference frame — mmff-orthogonal-01 does not touch it)
-// ---------------------------------------------------------------------------
-
-fn build_ff_variant(name: &str, variant: MmffVariant) -> (MmffForceField, Vec<f64>) {
-    let dir = fixtures_dir();
-    let mol = load_sdf(&dir.join(format!("{name}.sdf")));
-    let coords = coords_of(&dir.join(format!("{name}.sdf")));
-    let props = MmffMolProperties::compute(&mol, variant)
-        .unwrap_or_else(|e| panic!("{name}: typing failed: {e}"));
-    let ff = MmffForceField::build(&mol, &props)
-        .unwrap_or_else(|e| panic!("{name}: ff build failed: {e}"));
-    (ff, coords)
-}
-
-fn build_ff(name: &str) -> (MmffForceField, Vec<f64>) {
-    build_ff_variant(name, MmffVariant::Mmff94)
-}
-
-/// ac-011: the bespoke path still reproduces RDKit on **every** fixture.
-///
-/// Directory-scanned like the generic one, so the new acetonitrile fixture is
-/// covered by both from the moment it lands.
-#[test]
-fn total_energy_matches_rdkit() {
-    let mut fails = Vec::new();
-    let mut worst = 0.0f64;
-    for name in energy_fixtures() {
-        let (ff, coords) = build_ff(&name);
-        let got = ff.calc_energy_forces(&coords).0;
-        let want = ref_energy(&name);
-        let delta = (got - want).abs();
-        worst = worst.max(delta);
-        println!("{name:20} bespoke={got:14.6}  rdkit={want:14.6}  d={delta:.3e}");
-        if delta > BESPOKE_TOL {
-            fails.push(format!(
-                "{name}: bespoke={got:.6} rdkit={want:.6} d={delta:.3e}"
-            ));
-        }
-    }
-    println!("bespoke max |delta| = {worst:.5}");
-    assert!(
-        fails.is_empty(),
-        "bespoke energy mismatches vs RDKit:\n  {}",
-        fails.join("\n  ")
-    );
-}
-
-/// Molecules whose MMFF94s energy differs from MMFF94 (delocalized-N / amide /
-/// aromatic-amine planarization). The fixtures store both reference energies.
-const S_NAMES: [&str; 4] = ["s_aniline", "s_acetamide", "s_nmethylacetamide", "s_urea"];
-
-/// MMFF94s total energy must match RDKit `mmffVariant='MMFF94s'` to 1e-3 for
-/// molecules where the `_S` oop/torsion tables actually change the result.
-#[test]
-fn mmff94s_total_energy_matches_rdkit() {
-    let mut fails = Vec::new();
-    for name in S_NAMES {
-        let (ff, coords) = build_ff_variant(name, MmffVariant::Mmff94s);
-        let got = ff.calc_energy_forces(&coords).0;
-        let want = ref_energy_field(name, "mmff94s_total_energy");
-        let delta = (got - want).abs();
-        println!("{name:20} 94s molrs={got:14.6}  rdkit={want:14.6}  d={delta:.3e}");
-        if delta > ENERGY_TOL {
-            fails.push(format!(
-                "{name}: molrs={got:.6} rdkit={want:.6} d={delta:.3e}"
-            ));
-        }
-    }
-    assert!(
-        fails.is_empty(),
-        "MMFF94s energy mismatches vs RDKit:\n  {}",
-        fails.join("\n  ")
-    );
-}
-
-/// The same molecules under MMFF94 must still match RDKit MMFF94, and the 94 vs
-/// 94s totals must genuinely differ (otherwise the `_S` wiring is a no-op and
-/// the test above proves nothing).
-#[test]
-fn mmff94_unchanged_and_differs_from_94s() {
-    let mut fails = Vec::new();
-    for name in S_NAMES {
-        let (ff94, coords) = build_ff_variant(name, MmffVariant::Mmff94);
-        let got94 = ff94.calc_energy_forces(&coords).0;
-        let want94 = ref_energy_field(name, "mmff94_total_energy");
-        let want94s = ref_energy_field(name, "mmff94s_total_energy");
-        let d94 = (got94 - want94).abs();
-        let (ff94s, _) = build_ff_variant(name, MmffVariant::Mmff94s);
-        let got94s = ff94s.calc_energy_forces(&coords).0;
-        println!(
-            "{name:20} 94 molrs={got94:14.6} rdkit={want94:14.6} | 94s molrs={got94s:14.6} | \
-             ref_diff={:.4}",
-            (want94 - want94s).abs()
-        );
-        if d94 > ENERGY_TOL {
-            fails.push(format!(
-                "{name}: MMFF94 molrs={got94:.6} rdkit={want94:.6} d={d94:.3e}"
-            ));
-        }
-        // RDKit's own 94 vs 94s totals differ -> our two builds must too.
-        if (got94 - got94s).abs() < ENERGY_TOL {
-            fails.push(format!(
-                "{name}: molrs 94 ({got94:.6}) == 94s ({got94s:.6}); _S tables not applied"
-            ));
-        }
-    }
-    assert!(
-        fails.is_empty(),
-        "MMFF94/94s consistency failures:\n  {}",
-        fails.join("\n  ")
-    );
-}
-
-/// The bespoke per-term breakdown must reconstruct its own `eval()` total, on
-/// every fixture. (That the SAME breakdown also reconstructs the RDKit total is
-/// asserted independently in `frozen_breakdown_sums_to_the_rdkit_total` — that
-/// one is what keeps the frozen fixtures legitimate after spec 02 deletes this
-/// path.)
-#[test]
-fn breakdown_sums_to_total() {
-    for name in energy_fixtures() {
-        let (ff, coords) = build_ff(&name);
-        let b = ff.energy_terms(&coords);
-        let total = ff.calc_energy_forces(&coords).0;
-        println!(
-            "{name:20} bond={:.4} angle={:.4} sb={:.4} oop={:.4} tor={:.4} vdw={:.4} ele={:.4} | total={:.4}",
-            b.bond, b.angle, b.stretch_bend, b.oop, b.torsion, b.vdw, b.electrostatic, b.total
-        );
-        assert!(
-            (b.total - total).abs() < 1.0e-9,
-            "{name}: breakdown {} != eval {}",
-            b.total,
-            total
-        );
-    }
-}
-
-#[test]
-fn analytical_gradient_matches_finite_difference() {
-    let h = 1.0e-5;
-    for name in energy_fixtures() {
-        let (ff, coords) = build_ff(&name);
-        let (_, forces) = ff.calc_energy_forces(&coords);
-        let mut max_err = 0.0f64;
-        for idx in 0..coords.len() {
-            let mut cp = coords.clone();
-            cp[idx] += h;
-            let ep = ff.calc_energy_forces(&cp).0;
-            let mut cm = coords.clone();
-            cm[idx] -= h;
-            let em = ff.calc_energy_forces(&cm).0;
-            let fd_grad = (ep - em) / (2.0 * h);
-            // forces = -gradient
-            max_err = max_err.max((forces[idx] + fd_grad).abs());
-        }
-        println!("{name:20} bespoke grad max_err={max_err:.3e}");
-        assert!(
-            max_err < 1.0e-5,
-            "{name}: gradient FD max err {max_err:.3e} >= 1e-5"
-        );
-    }
-}
-
-#[test]
-fn benzene_translation_rotation_invariance() {
-    let (ff, coords) = build_ff("e_benzene");
-    let e0 = ff.calc_energy_forces(&coords).0;
-
-    // translation
-    let mut shifted = coords.clone();
-    for k in (0..shifted.len()).step_by(3) {
-        shifted[k] += 3.7;
-        shifted[k + 1] -= 1.2;
-        shifted[k + 2] += 0.4;
-    }
-    let e_t = ff.calc_energy_forces(&shifted).0;
-    assert!(
-        (e_t - e0).abs() < 1.0e-9,
-        "translation changed E by {}",
-        e_t - e0
-    );
-
-    // rigid rotation about z by 0.7 rad
-    let (c, s) = (0.7f64.cos(), 0.7f64.sin());
-    let mut rotated = coords.clone();
-    for k in (0..rotated.len()).step_by(3) {
-        let (x, y) = (coords[k], coords[k + 1]);
-        rotated[k] = c * x - s * y;
-        rotated[k + 1] = s * x + c * y;
-    }
-    let e_r = ff.calc_energy_forces(&rotated).0;
-    assert!(
-        (e_r - e0).abs() < 1.0e-9,
-        "rotation changed E by {}",
-        e_r - e0
-    );
-}
-
-#[test]
-fn timing_baseline_50_atoms() {
-    // ac-006: measure + print a single-eval timing for a ~50-atom molecule.
-    let (ff, coords) = build_ff("e_big");
-    let n = coords.len() / 3;
-    // warm up
-    let _ = ff.calc_energy_forces(&coords);
-    let iters = 200;
-    let t0 = Instant::now();
-    let mut acc = 0.0;
-    for _ in 0..iters {
-        acc += ff.calc_energy_forces(&coords).0;
-    }
-    let elapsed = t0.elapsed();
-    let per = elapsed.as_secs_f64() / iters as f64;
-    println!(
-        "ac-006 timing: {n} atoms, single eval = {:.1} us  (acc={acc:.3})",
-        per * 1.0e6
-    );
-    assert!(per.is_finite());
-}
-
-// ---------------------------------------------------------------------------
-// Geometry optimization over the (RDKit-validated) MmffForceField path.
-// Proves molrs::ff::{LBFGS} relax a real force field, and
-// that the homogeneous batch path reproduces the single-structure result.
-// ---------------------------------------------------------------------------
-
-#[test]
-fn lbfgs_minimize_relaxes_mmff_ethane() {
-    use molrs::optimize::{LBFGS, LbfgsConfig};
-
-    let (ff, coords0) = build_ff("e_ethane");
-    let e_start = ff.calc_energy_forces(&coords0).0;
-
-    let mut coords = coords0.clone();
-    let opts = LbfgsConfig::default();
-    let report = LBFGS::new(&ff, opts)
-        .run(&mut coords)
-        .expect("minimize ethane");
-
-    assert!(
-        report.final_energy <= e_start + 1e-9,
-        "energy must not increase: {e_start} -> {}",
-        report.final_energy
-    );
-    assert!(report.converged, "ethane should converge: {report:?}");
-    assert!(
-        report.final_fmax <= opts.fmax + 1e-12,
-        "fmax not satisfied: {}",
-        report.final_fmax
-    );
-    println!(
-        "ethane MMFF relax: E {e_start:.4} -> {:.4} (fmax {:.4}, {} steps)",
-        report.final_energy, report.final_fmax, report.n_steps
-    );
-}
-
-#[test]
-fn lbfgs_minimize_batch_matches_single() {
-    use molrs::optimize::{LBFGS, LbfgsConfig};
-
-    let (ff, coords0) = build_ff("e_ethane");
-    let n_atoms = coords0.len() / 3;
-    let opts = LbfgsConfig::default();
-
-    // Single-structure reference.
-    let mut single = coords0.clone();
-    let single_report = LBFGS::new(&ff, opts).run(&mut single).expect("single");
-
-    // Homogeneous batch: block 0 identical to the single start; blocks 1..B
-    // deterministically perturbed (same topology, same force field).
-    let b = 4;
-    let mut batch: Vec<f64> = Vec::with_capacity(b * coords0.len());
-    for s in 0..b {
-        for (i, &c) in coords0.iter().enumerate() {
-            let pert = if s == 0 {
-                0.0
-            } else {
-                0.02 * (((i + s * 7) % 5) as f64 - 2.0)
-            };
-            batch.push(c + pert);
-        }
-    }
-
-    let reports = LBFGS::new(&ff, opts)
-        .run_batch(&mut batch, n_atoms, b)
-        .expect("batch");
-    assert_eq!(reports.len(), b);
-
-    // Block 0 started from the same coords as `single` -> identical outcome.
-    assert!(
-        (reports[0].final_energy - single_report.final_energy).abs() < 1e-9,
-        "batch block 0 energy {} != single {}",
-        reports[0].final_energy,
-        single_report.final_energy
-    );
-    for (a, s) in batch[0..coords0.len()].iter().zip(&single) {
-        assert!(
-            (a - s).abs() < 1e-9,
-            "batch block 0 coords diverged from single"
-        );
-    }
-
-    // All structures relaxed to a finite, converged minimum.
-    for (i, r) in reports.iter().enumerate() {
-        assert!(r.final_energy.is_finite(), "block {i} energy not finite");
-        assert!(
-            r.final_fmax <= opts.fmax + 1e-12 || !r.converged,
-            "block {i} fmax {} unsatisfied",
-            r.final_fmax
-        );
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Generic path — typifier -> ForceField -> KernelRegistry.
+// The route — typifier -> Frame -> ForceField::to_potentials -> kernels.
 //
-// This is the DOCUMENTED public API (`MMFF94Typifier::build`). It is the path
-// the four mmff-orthogonal-01 defects live in.
+// The DOCUMENTED public API, and since mmff-orthogonal-02 the only one. It is
+// also the path the four mmff-orthogonal-01 defects lived in.
 // ---------------------------------------------------------------------------
 
 /// The typed frame + coordinates + the typifier that owns the ForceField.
 ///
-/// Built exactly the way `MMFF94Typifier::build` builds it (typify → to_frame →
-/// `intramolecular_pairs`), but kept open so each style can be compiled and
-/// evaluated in isolation. No production code is needed for that:
-/// `ForceField::styles`, `Style::to_potential` and `ForceField::special_bonds`
-/// are all public.
+/// The standard route (typify → `to_frame` → `intramolecular_pairs`), kept open so
+/// each style can be compiled and evaluated in isolation. No production code is
+/// needed for that: `ForceField::styles`, `Style::to_potential` and
+/// `ForceField::special_bonds` are all public.
 struct GenericMmff {
     typifier: MMFF94Typifier,
     frame: Frame,
@@ -695,16 +385,37 @@ impl GenericMmff {
     }
 }
 
-/// The documented public API: `MMFF94Typifier::build`.
-fn generic_pots(name: &str) -> (Potentials, Vec<f64>) {
-    let dir = fixtures_dir();
-    let mol = load_sdf(&dir.join(format!("{name}.sdf")));
-    let coords = coords_of(&dir.join(format!("{name}.sdf")));
-    let pots = MMFF94Typifier::new()
-        .build(&mol)
-        .unwrap_or_else(|e| panic!("{name}: generic build failed: {e}"));
-    (pots, coords)
+/// Compile a fixture through a front door: typify → Frame → `to_potentials`.
+///
+/// Written twice (once per door) rather than generically, because the two front
+/// doors are deliberately distinct concrete types — the variant is picked by
+/// picking a type, and a test helper that erased that would be testing a surface
+/// molrs does not offer.
+macro_rules! compile_fixture {
+    ($fn_name:ident, $door:ty, $label:literal) => {
+        /// The documented public API: typify → Frame → `ForceField::to_potentials`.
+        fn $fn_name(name: &str) -> (Potentials, Vec<f64>) {
+            let dir = fixtures_dir();
+            let mol = load_sdf(&dir.join(format!("{name}.sdf")));
+            let coords = coords_of(&dir.join(format!("{name}.sdf")));
+
+            let typifier = <$door>::new();
+            let typed = typifier
+                .typify(&mol)
+                .unwrap_or_else(|e| panic!("{name}: {} typify failed: {e}", $label));
+            let mut frame = typed.to_frame();
+            frame.insert("pairs", intramolecular_pairs(&frame));
+            let pots = typifier
+                .ff()
+                .to_potentials(&frame)
+                .unwrap_or_else(|e| panic!("{name}: {} to_potentials failed: {e}", $label));
+            (pots, coords)
+        }
+    };
 }
+
+compile_fixture!(generic_pots, MMFF94Typifier, "MMFF94");
+compile_fixture!(generic_pots_94s, MMFF94STypifier, "MMFF94s");
 
 /// ac-002 — 11/11 RDKit total-energy parity on the generic path.
 ///
@@ -1112,4 +823,239 @@ fn acetonitrile_linear_centre_contributes_no_stretch_bend() {
          so no stbn row may reference N. Every other stbn row (H-C-H, H-C-C) is untouched by this \
          displacement."
     );
+}
+
+// ---------------------------------------------------------------------------
+// MMFF94s — the second parameter set, against its own RDKit oracle.
+//
+// Repointed from the deleted bespoke path onto the generic one. Same fixtures,
+// same oracle field (`mmff94s_total_energy`), same tolerance: nothing here is a
+// new claim, it is the old claim asked of the surviving implementation.
+//
+// This is the only place MMFF94s meets an EXTERNAL oracle. `mmff_variant.rs`
+// proves the two variants differ, and that the difference lands on the right
+// atoms — but "differs from MMFF94" is not "agrees with RDKit's MMFF94s", and a
+// variant that reached the Frame with the wrong sign would satisfy the first
+// while failing the second.
+// ---------------------------------------------------------------------------
+
+/// Molecules whose MMFF94s energy differs from MMFF94 (delocalized-N / amide /
+/// aromatic-amine planarization). The fixtures store both reference energies.
+const S_NAMES: [&str; 4] = ["s_aniline", "s_acetamide", "s_nmethylacetamide", "s_urea"];
+
+/// MMFF94s total energy must match RDKit `mmffVariant='MMFF94s'` to 1e-3 for
+/// molecules where the `_S` oop/torsion tables actually change the result.
+#[test]
+fn mmff94s_total_energy_matches_rdkit() {
+    let mut fails = Vec::new();
+    for name in S_NAMES {
+        let (pots, coords) = generic_pots_94s(name);
+        let got = pots.calc_energy_forces(&coords).0;
+        let want = ref_energy_field(name, "mmff94s_total_energy");
+        let delta = (got - want).abs();
+        println!("{name:20} 94s molrs={got:14.6}  rdkit={want:14.6}  d={delta:.3e}");
+        if delta > ENERGY_TOL {
+            fails.push(format!(
+                "{name}: molrs={got:.6} rdkit={want:.6} d={delta:.3e}"
+            ));
+        }
+    }
+    assert!(
+        fails.is_empty(),
+        "MMFF94s energy mismatches vs RDKit:\n  {}",
+        fails.join("\n  ")
+    );
+}
+
+/// The same molecules under MMFF94 must still match RDKit MMFF94, and the 94 vs
+/// 94s totals must genuinely differ (otherwise the `_S` wiring is a no-op and
+/// the test above proves nothing).
+#[test]
+fn mmff94_unchanged_and_differs_from_94s() {
+    let mut fails = Vec::new();
+    for name in S_NAMES {
+        let (pots94, coords) = generic_pots(name);
+        let got94 = pots94.calc_energy_forces(&coords).0;
+        let want94 = ref_energy_field(name, "mmff94_total_energy");
+        let want94s = ref_energy_field(name, "mmff94s_total_energy");
+        let d94 = (got94 - want94).abs();
+        let (pots94s, _) = generic_pots_94s(name);
+        let got94s = pots94s.calc_energy_forces(&coords).0;
+        println!(
+            "{name:20} 94 molrs={got94:14.6} rdkit={want94:14.6} | 94s molrs={got94s:14.6} | \
+             ref_diff={:.4}",
+            (want94 - want94s).abs()
+        );
+        if d94 > ENERGY_TOL {
+            fails.push(format!(
+                "{name}: MMFF94 molrs={got94:.6} rdkit={want94:.6} d={d94:.3e}"
+            ));
+        }
+        // RDKit's own 94 vs 94s totals differ -> our two builds must too.
+        if (got94 - got94s).abs() < ENERGY_TOL {
+            fails.push(format!(
+                "{name}: molrs 94 ({got94:.6}) == 94s ({got94s:.6}); _S tables not applied"
+            ));
+        }
+    }
+    assert!(
+        fails.is_empty(),
+        "MMFF94/94s consistency failures:\n  {}",
+        fails.join("\n  ")
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Physical invariants + the optimizer, on the surviving path.
+//
+// Also repointed. A force field that is not invariant under rigid motion is not a
+// force field, and the assertion says nothing about WHICH implementation computes
+// it — so it moves to the one that survived.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn benzene_translation_rotation_invariance() {
+    let (pots, coords) = generic_pots("e_benzene");
+    let e0 = pots.calc_energy_forces(&coords).0;
+
+    // translation
+    let mut shifted = coords.clone();
+    for k in (0..shifted.len()).step_by(3) {
+        shifted[k] += 3.7;
+        shifted[k + 1] -= 1.2;
+        shifted[k + 2] += 0.4;
+    }
+    let e_t = pots.calc_energy_forces(&shifted).0;
+    assert!(
+        (e_t - e0).abs() < 1.0e-9,
+        "translation changed E by {}",
+        e_t - e0
+    );
+
+    // rigid rotation about z by 0.7 rad
+    let (c, s) = (0.7f64.cos(), 0.7f64.sin());
+    let mut rotated = coords.clone();
+    for k in (0..rotated.len()).step_by(3) {
+        let (x, y) = (coords[k], coords[k + 1]);
+        rotated[k] = c * x - s * y;
+        rotated[k + 1] = s * x + c * y;
+    }
+    let e_r = pots.calc_energy_forces(&rotated).0;
+    assert!(
+        (e_r - e0).abs() < 1.0e-9,
+        "rotation changed E by {}",
+        e_r - e0
+    );
+}
+
+#[test]
+fn timing_baseline_50_atoms() {
+    // Measure + print a single-eval timing for a ~50-atom molecule.
+    let (pots, coords) = generic_pots("e_big");
+    let n = coords.len() / 3;
+    // warm up
+    let _ = pots.calc_energy_forces(&coords);
+    let iters = 200;
+    let t0 = Instant::now();
+    let mut acc = 0.0;
+    for _ in 0..iters {
+        acc += pots.calc_energy_forces(&coords).0;
+    }
+    let elapsed = t0.elapsed();
+    let per = elapsed.as_secs_f64() / iters as f64;
+    println!(
+        "timing: {n} atoms, single eval = {:.1} us  (acc={acc:.3})",
+        per * 1.0e6
+    );
+    assert!(per.is_finite());
+}
+
+/// Geometry optimization over a real, RDKit-validated force field: `molrs::optimize`
+/// must relax one, and the homogeneous batch path must reproduce the single-structure
+/// result.
+#[test]
+fn lbfgs_minimize_relaxes_mmff_ethane() {
+    use molrs::optimize::{LBFGS, LbfgsConfig};
+
+    let (pots, coords0) = generic_pots("e_ethane");
+    let e_start = pots.calc_energy_forces(&coords0).0;
+
+    let mut coords = coords0.clone();
+    let opts = LbfgsConfig::default();
+    let report = LBFGS::new(&pots, opts)
+        .run(&mut coords)
+        .expect("minimize ethane");
+
+    assert!(
+        report.final_energy <= e_start + 1e-9,
+        "energy must not increase: {e_start} -> {}",
+        report.final_energy
+    );
+    assert!(report.converged, "ethane should converge: {report:?}");
+    assert!(
+        report.final_fmax <= opts.fmax + 1e-12,
+        "fmax not satisfied: {}",
+        report.final_fmax
+    );
+    println!(
+        "ethane MMFF relax: E {e_start:.4} -> {:.4} (fmax {:.4}, {} steps)",
+        report.final_energy, report.final_fmax, report.n_steps
+    );
+}
+
+#[test]
+fn lbfgs_minimize_batch_matches_single() {
+    use molrs::optimize::{LBFGS, LbfgsConfig};
+
+    let (pots, coords0) = generic_pots("e_ethane");
+    let n_atoms = coords0.len() / 3;
+    let opts = LbfgsConfig::default();
+
+    // Single-structure reference.
+    let mut single = coords0.clone();
+    let single_report = LBFGS::new(&pots, opts).run(&mut single).expect("single");
+
+    // Homogeneous batch: block 0 identical to the single start; blocks 1..B
+    // deterministically perturbed (same topology, same force field).
+    let b = 4;
+    let mut batch: Vec<f64> = Vec::with_capacity(b * coords0.len());
+    for s in 0..b {
+        for (i, &c) in coords0.iter().enumerate() {
+            let pert = if s == 0 {
+                0.0
+            } else {
+                0.02 * (((i + s * 7) % 5) as f64 - 2.0)
+            };
+            batch.push(c + pert);
+        }
+    }
+
+    let reports = LBFGS::new(&pots, opts)
+        .run_batch(&mut batch, n_atoms, b)
+        .expect("batch");
+    assert_eq!(reports.len(), b);
+
+    // Block 0 started from the same coords as `single` -> identical outcome.
+    assert!(
+        (reports[0].final_energy - single_report.final_energy).abs() < 1e-9,
+        "batch block 0 energy {} != single {}",
+        reports[0].final_energy,
+        single_report.final_energy
+    );
+    for (a, s) in batch[0..coords0.len()].iter().zip(&single) {
+        assert!(
+            (a - s).abs() < 1e-9,
+            "batch block 0 coords diverged from single"
+        );
+    }
+
+    // All structures relaxed to a finite, converged minimum.
+    for (i, r) in reports.iter().enumerate() {
+        assert!(r.final_energy.is_finite(), "block {i} energy not finite");
+        assert!(
+            r.final_fmax <= opts.fmax + 1e-12 || !r.converged,
+            "block {i} fmax {} unsatisfied",
+            r.final_fmax
+        );
+    }
 }

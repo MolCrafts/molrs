@@ -279,27 +279,29 @@ fn baked_pair(name: &str) -> (Baked, Baked) {
 }
 
 /// Total energy of a fixture through a front door: typify → Frame → to_potentials.
-fn total_energy_94(name: &str) -> f64 {
-    let mol = load_sdf(name);
-    let t = MMFF94Typifier::new();
-    let frame = t.typify(&mol).expect("typify").to_frame();
-    let coords = molrs::ff::potential::extract_coords(&frame).expect("coords");
-    let pots = t
-        .build(&mol)
-        .unwrap_or_else(|e| panic!("{name}: MMFF94 build: {e}"));
-    pots.calc_energy_forces(&coords).0
+///
+/// One macro, two doors: the two front doors are deliberately distinct concrete
+/// types (the variant is picked by picking a type, never by a flag), so a helper
+/// that erased the difference would be testing a surface molrs does not offer.
+macro_rules! total_energy {
+    ($fn_name:ident, $door:ty, $label:literal) => {
+        fn $fn_name(name: &str) -> f64 {
+            let mol = load_sdf(name);
+            let t = <$door>::new();
+            let mut frame = t.typify(&mol).expect("typify").to_frame();
+            frame.insert("pairs", molrs::ff::potential::intramolecular_pairs(&frame));
+            let coords = molrs::ff::potential::extract_coords(&frame).expect("coords");
+            let pots = t
+                .ff()
+                .to_potentials(&frame)
+                .unwrap_or_else(|e| panic!("{name}: {} to_potentials: {e}", $label));
+            pots.calc_energy_forces(&coords).0
+        }
+    };
 }
 
-fn total_energy_94s(name: &str) -> f64 {
-    let mol = load_sdf(name);
-    let t = MMFF94STypifier::new();
-    let frame = t.typify(&mol).expect("typify").to_frame();
-    let coords = molrs::ff::potential::extract_coords(&frame).expect("coords");
-    let pots = t
-        .build(&mol)
-        .unwrap_or_else(|e| panic!("{name}: MMFF94s build: {e}"));
-    pots.calc_energy_forces(&coords).0
-}
+total_energy!(total_energy_94, MMFF94Typifier, "MMFF94");
+total_energy!(total_energy_94s, MMFF94STypifier, "MMFF94s");
 
 // ---------------------------------------------------------------------------
 // ac-001 — the public surface is two named front doors
@@ -326,6 +328,13 @@ fn front_doors_name_their_own_force_field() {
 ///
 /// A `<ForceField>` structure literal, not sample data being round-tripped: the same
 /// convention `forcefield::parse_generic_xml_then_compile_and_eval` documents.
+///
+/// The bond style is *declared*, not tabulated. mmff-orthogonal-02 deleted the
+/// `<BondStretchParams>` reader along with the 4,065 type-def rows no kernel ever
+/// read: `bond/mmff_bond` is a `ParamSource::PerInstance` style, so it carries no
+/// rows and the typifier bakes `kb` / `r0` onto each bond. The assertion below is
+/// unchanged — the caller's bytes must still win, and a door that ignored the
+/// argument and returned its embedded set still fails on the first line.
 #[test]
 fn front_doors_accept_caller_supplied_xml() {
     let xml = r#"
@@ -333,9 +342,7 @@ fn front_doors_accept_caller_supplied_xml() {
           <AtomProperties>
             <Prop type="1" atno="6" crd="4" val="4" pilp="0" mltb="0" arom="0" linh="0" sbmb="0" />
           </AtomProperties>
-          <BondStretchParams>
-            <Bond bond_type="0" type1="1" type2="1" kb="4.258" r0="1.508" />
-          </BondStretchParams>
+          <BondStyle name="mmff_bond" />
         </ForceField>
     "#;
 
@@ -374,29 +381,20 @@ fn both_front_doors_implement_the_typifier_trait() {
     }
 }
 
-/// The MMFF bond/angle/dihedral classification helpers are forwarded by both doors.
-#[test]
-fn both_front_doors_forward_the_classification_helpers() {
-    for (bond_normal, bond_arom, angle, dihedral) in [
-        (
-            MMFF94Typifier::new().typify_bond(1, 1, 1.0),
-            MMFF94Typifier::new().typify_bond(37, 37, 1.5),
-            MMFF94Typifier::new().typify_angle(1, 1),
-            MMFF94Typifier::new().typify_dihedral(0, 1, 0),
-        ),
-        (
-            MMFF94STypifier::new().typify_bond(1, 1, 1.0),
-            MMFF94STypifier::new().typify_bond(37, 37, 1.5),
-            MMFF94STypifier::new().typify_angle(1, 1),
-            MMFF94STypifier::new().typify_dihedral(0, 1, 0),
-        ),
-    ] {
-        assert_eq!(bond_normal, 0);
-        assert_eq!(bond_arom, 1);
-        assert_eq!(angle, 2);
-        assert_eq!(dihedral, 1);
-    }
-}
+// `both_front_doors_forward_the_classification_helpers` lived here. It asserted
+// that both doors forward `typify_bond` / `typify_angle` / `typify_dihedral` and
+// agree — `bond_arom == 1`, `angle == 2`, `dihedral == 1`.
+//
+// RDKit contradicts all three, and the test could not see it: it only checked that
+// the two doors agreed WITH EACH OTHER, which is guaranteed by construction (one
+// engine, one `classify.rs`) and which locked the wrong values in. An aromatic bond
+// is bond type **0** (`getMMFFBondType` requires SINGLE; after aromaticity
+// perception a ring bond is AROMATIC), so the angle built from two of them is 0 and
+// the torsion across one is 0.
+//
+// mmff-orthogonal-02 deletes `classify.rs`, the three methods, and this test. The
+// values are now asserted against RDKit's rules on real molecules, off the typed
+// Frame: `tests/ff/typifier/mmff_labels.rs`.
 
 // ---------------------------------------------------------------------------
 // ac-003 — path 1: the `koop` baked into the Frame (what `mmff_oop_ctor` reads)
@@ -601,10 +599,27 @@ fn sorted_params(params: &Params) -> Vec<(String, f64)> {
     p
 }
 
-/// The whole MMFF94 → MMFF94s delta in the compiled tree: the name, 11 improper
-/// rows, 42 dihedral rows. Atom / bond / angle / stretch-bend / vdW rows identical.
+/// The MMFF94 → MMFF94s delta in the compiled tree is now **the name alone**, and
+/// every remaining type row is identical.
+///
+/// This test used to assert "the name, 11 differing improper rows, 42 differing
+/// dihedral rows". Those rows are gone: mmff-orthogonal-02 deleted the 4,065
+/// type-defs that no kernel read, and `improper/mmff_oop` / `dihedral/mmff_torsion`
+/// are `ParamSource::PerInstance` styles carrying zero rows (asserted in
+/// `tests/ff/potential/param_source.rs`). Only `pair/mmff_vdw`'s 95 rows survive,
+/// and MMFF94s does not touch vdW.
+///
+/// **The 11 + 42 claim did not disappear — it moved to where it was always true.**
+/// The variant difference never entered an energy through these rows; it enters
+/// through the `koop` and `(v1, v2, v3)` the typifier resolves and bakes into Frame
+/// columns, which the kernels actually read. That is what
+/// `mmff94s_bakes_positive_koop_on_every_n_centre`,
+/// `n_centre_koop_matches_the_measured_table` and
+/// `mmff94s_bakes_different_torsion_coefficients` assert — on molecules — and what
+/// `mmff94s_total_energy_matches_rdkit` (`tests/ff/mmff/energy.rs`) checks against
+/// RDKit's own MMFF94s oracle.
 #[test]
-fn forcefield_tree_differs_only_in_name_and_11_oop_42_torsion_rows() {
+fn forcefield_tree_differs_only_in_name() {
     let ff94 = MMFF94Typifier::new();
     let ff94s = MMFF94STypifier::new();
     assert_ne!(ff94.ff().name, ff94s.ff().name);
@@ -619,82 +634,27 @@ fn forcefield_tree_differs_only_in_name_and_11_oop_42_torsion_rows() {
         "the two parameter sets must define the SAME type rows — only values move"
     );
 
-    let mut differing: HashMap<String, Vec<String>> = HashMap::new();
-    for (key, params_a) in &a {
-        let params_b = &b[key];
-        if params_a != params_b {
-            differing
-                .entry(key.0.clone())
-                .or_default()
-                .push(key.2.clone());
-        }
-    }
+    // Non-vacuity: the surviving table is vdW's, and it is real.
+    assert!(
+        !a.is_empty(),
+        "no type rows at all in the MMFF tree — `pair/mmff_vdw` must still carry its \
+         95 per-atom-type rows, or this comparison proves nothing"
+    );
 
-    let improper: Vec<String> = differing.remove("improper").unwrap_or_default();
-    let dihedral: Vec<String> = differing.remove("dihedral").unwrap_or_default();
-    assert_eq!(
-        improper.len(),
-        11,
-        "expected exactly 11 differing Oop rows, got {}: {improper:?}",
-        improper.len()
-    );
-    assert_eq!(
-        dihedral.len(),
-        42,
-        "expected exactly 42 differing Torsion rows, got {}: {dihedral:?}",
-        dihedral.len()
-    );
+    let differing: HashMap<String, Vec<String>> = a
+        .iter()
+        .filter(|(key, params_a)| **params_a != b[*key])
+        .fold(HashMap::new(), |mut acc, (key, _)| {
+            acc.entry(key.0.clone()).or_default().push(key.2.clone());
+            acc
+        });
+
     assert!(
         differing.is_empty(),
-        "atom / bond / angle / stretch-bend / vdW / charge rows must be identical, \
-         but these categories differ: {differing:?}"
+        "every surviving type row must be identical between MMFF94 and MMFF94s — the \
+         only rows left are vdW's, and MMFF94s re-parameterises out-of-plane and \
+         torsion, not van der Waals. Differing: {differing:?}"
     );
-}
-
-/// Every differing Oop row is centred on a type-10 / type-40 nitrogen, and its
-/// MMFF94s `koop` is the flat +0.015 / +0.030 (this is the *table*, not a molecule).
-#[test]
-fn every_differing_oop_row_is_a_delocalised_nitrogen_centre() {
-    let ff94s = MMFF94STypifier::new();
-    let ff94 = MMFF94Typifier::new();
-    let base = type_rows(ff94.ff());
-
-    let mut checked = 0usize;
-    for style in ff94s.ff().styles() {
-        let StyleDefs::Improper(types) = &style.defs else {
-            continue;
-        };
-        for row in types {
-            let key = (
-                style.category().to_owned(),
-                style.name.clone(),
-                row.name.clone(),
-            );
-            if base[&key] == sorted_params(&row.params) {
-                continue;
-            }
-            // `jtom` is the centre of an MMFF out-of-plane row.
-            let centre: u32 = row.jtom.parse().expect("numeric centre type");
-            assert!(
-                N_CENTRE_TYPES.contains(&centre),
-                "Oop row {} differs but its centre type is {centre}, not 10/40",
-                row.name
-            );
-            let koop = row.params.get("koop").expect("koop");
-            let expected = if centre == 10 {
-                KOOP_S_TYPE_10
-            } else {
-                KOOP_S_TYPE_40
-            };
-            assert!(
-                (koop - expected).abs() < EXACT,
-                "MMFF94s Oop row {}: expected koop {expected}, got {koop}",
-                row.name
-            );
-            checked += 1;
-        }
-    }
-    assert_eq!(checked, 11, "expected 11 re-parameterised Oop rows");
 }
 
 // ---------------------------------------------------------------------------

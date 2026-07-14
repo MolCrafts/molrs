@@ -106,7 +106,6 @@ from .molrs import (
     read_lammps_forcefield_str,
     intramolecular_pairs,
     extract_coords,
-    build_mmff_potentials,
     # Field-name convention submodule
     keys,
     # Signal processing (low-level FFT helpers)
@@ -314,7 +313,6 @@ __all__ = [
     "Potentials",
     "OptReport",
     "LBFGS",
-    "build_mmff_potentials",
     "read_forcefield_xml",
     "read_forcefield_xml_str",
     "read_opls_xml",

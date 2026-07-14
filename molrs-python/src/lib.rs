@@ -238,7 +238,6 @@ fn molrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(ff::read_lammps_forcefield_str_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::intramolecular_pairs_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::extract_coords_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ff::build_mmff_potentials_py, m)?)?;
 
     // Compute analyses
     m.add_class::<PyRDF>()?;

@@ -60,10 +60,18 @@ def _load_sdf(name: str) -> "molrs.Atomistic":
 
 
 def _energy(typifier, mol) -> float:
-    """Total energy through the generic path: typify -> Frame -> compile -> evaluate."""
-    typed = typifier.typify(mol)
-    potentials = typifier.build(mol)
-    return float(potentials.calc_energy(typed.to_frame()))
+    """Total energy through the generic path: typify -> Frame -> compile -> evaluate.
+
+    The docstring was already true; the code was not. It called ``typifier.build(mol)``,
+    the one-step shortcut that hid the Frame — and with it, until mmff-orthogonal-01,
+    an entire missing electrostatic term. mmff-orthogonal-02 deleted the shortcut, so
+    the three steps it folded together are now written out. The assertions below are
+    unchanged.
+    """
+    frame = typifier.typify(mol).to_frame()
+    frame["pairs"] = molrs.intramolecular_pairs(frame)
+    potentials = typifier.forcefield().to_potentials(frame)
+    return float(potentials.calc_energy(frame))
 
 
 def _koop(typifier, mol) -> np.ndarray:

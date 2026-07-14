@@ -29,19 +29,36 @@ Then use the native types directly — no FFI, no copies. For example, building
 evaluable MMFF94 potentials from a molecule (the pattern molpack's relaxer follows):
 
 ```rust,no_run
-use molrs::ff::typifier::mmff::MMFF94Typifier;
 use molrs::Atomistic;
+use molrs::ff::potential::intramolecular_pairs;
+use molrs::ff::typifier::mmff::MMFF94Typifier;
 
 let mol = Atomistic::new();                              // build or load your molecule
-let potentials = MMFF94Typifier::new().build(&mol)?;     // typify → to_frame → to_potentials
+let typifier = MMFF94Typifier::new();
+
+let mut frame = typifier.typify(&mol)?.to_frame();       // labels + charges
+frame.insert("pairs", intramolecular_pairs(&frame));     // the consumer's neighbour list
+let potentials = typifier.ff().to_potentials(&frame)?;   // the standard compile path
+
 let coords: Vec<f64> = Vec::new();                       // flat [x,y,z, ...]
 let (energy, _forces) = potentials.calc_energy_forces(&coords);
 println!("MMFF94 energy = {energy} kcal/mol");
 # Ok::<(), String>(())
 ```
 
-A force field read from a file is consumed the same way — the consumer (optimizer /
-integrator) builds the neighbour list and calls `ForceField::to_potentials(&frame)`.
+There is no MMFF shortcut, and that is the point: a force field read from a file is
+consumed by exactly these three lines. The typifier's contract is `typify` — labels
+and charges — and compiling is `ForceField::to_potentials(&frame)`. The neighbour
+list is *yours* because you are the one who knows when it goes stale: a minimizer
+that moves atoms decides when to rebuild it, and molrs will not guess.
+
+(A `MMFF94Typifier::build(&mol)` convenience used to fold all three into one call.
+It was deleted in 0.7 — see the CHANGELOG. It had, for its whole life, compiled
+potentials with **no electrostatic style at all**, because no `ForceField` ever
+defined `pair/mmff_ele`; caffeine came out 150 kcal/mol low and nothing noticed,
+because the shortcut hid the `Frame` where the missing term would have been visible.
+This is the pattern the molpack relaxer follows.)
+
 This exact snippet is compile-checked as the module doctest on
 `molrs::ff::typifier::mmff`.
 

@@ -4,7 +4,43 @@
 Reads the C++ source containing embedded MMFF94 force field parameter tables,
 extracts all 16 string literal tables, parses their tab-separated data,
 and writes data/mmff94.xml and data/mmff94s.xml.
+
+The emitted XML carries only the parameters some kernel actually resolves from:
+the 95-row van der Waals table and the electrostatic scalars. MMFF's bonded terms
+are per-instance styles -- see `build_xml`.
 """
+
+# What this script does NOT emit, and why
+# ---------------------------------------
+# MMFF's bond / angle / stretch-bend / torsion / out-of-plane parameters are NOT a
+# `(type_i, type_j, ...) -> params` table, and molrs does not treat them as one.
+# They depend on aromaticity, ring size, four-level equivalence degradation, and --
+# on a table miss -- empirical rules that invent the numbers from covalent radii.
+# molrs resolves them PER INTERACTION in the typifier (`ff/mmff/params.rs`, the
+# RDKit-faithful port) and bakes the result into Frame columns; the kernels read
+# those columns and ignore their type-params entirely.
+#
+# So the five type-def sections this script used to write -- 493 bond rows, 2342
+# angle, 282 stretch-bend, 926 torsion, 117 out-of-plane -- were 4,065 rows that no
+# code ever read. They existed only to satisfy a guard in `Style::to_potential`
+# that demanded every style carry type definitions. That guard now asks the kernel
+# registry what a style's `ParamSource` is, so a per-instance style declares itself
+# and carries no rows:
+#
+#     <BondStyle name="mmff_bond" />
+#
+# The rows themselves are still in RDKit's `Params.cpp` and still compiled into
+# `ff/mmff/tables.rs` -- which is what the resolver degrades through. This script
+# must not put them back into the XML: the parameter file is what
+# `ForceField::to_potentials` reads, and a row there is a claim that some kernel
+# resolves from it. `tests/ff/mmff/deletion_gate.rs` fails if they return.
+#
+# Two sections remain real data, and both are load-bearing:
+#
+#   * VdWParams -- 95 rows, one per MMFF atom type. van der Waals genuinely IS a
+#     per-atom-type lookup, and `mmff_vdw_ctor` really does read it.
+#   * ElectrostaticParams -- the buffered-Coulomb scalars. Their absence was a
+#     150 kcal/mol hole on caffeine (no ForceField defined `pair/mmff_ele` at all).
 
 import re
 import sys
@@ -631,37 +667,17 @@ def build_xml(
                       pbci=_fmt(p.pbci),
                       fcadj=_fmt(p.fcadj))
 
-    # BondStretchParams
-    bond_el = ET.SubElement(root, "BondStretchParams")
-    for b in bonds:
-        ET.SubElement(bond_el, "Bond",
-                      bond_type=str(b.bond_type),
-                      type1=str(b.i_type),
-                      type2=str(b.j_type),
-                      kb=_fmt3(b.kb),
-                      r0=_fmt3(b.r0))
-
-    # AngleBendParams
-    angle_el = ET.SubElement(root, "AngleBendParams")
-    for a in angles:
-        ET.SubElement(angle_el, "Angle",
-                      angle_type=str(a.angle_type),
-                      type1=str(a.i_type),
-                      type2=str(a.j_type),
-                      type3=str(a.k_type),
-                      ka=_fmt3(a.ka),
-                      theta0=_fmt3(a.theta0))
-
-    # StretchBendParams
-    stbn_el = ET.SubElement(root, "StretchBendParams")
-    for s in stretch_bends:
-        ET.SubElement(stbn_el, "StretchBend",
-                      stbn_type=str(s.stbn_type),
-                      type1=str(s.i_type),
-                      type2=str(s.j_type),
-                      type3=str(s.k_type),
-                      kba_ijk=_fmt3(s.kba_ijk),
-                      kba_kji=_fmt3(s.kba_kji))
+    # The five per-instance styles: DECLARED, with no type rows.
+    #
+    # `bonds`, `angles`, `stretch_bends`, `oops` and `torsions` are still parsed
+    # out of Params.cpp above (they are the input to `ff/mmff/tables.rs`, which is
+    # what the resolver reads) -- they are simply not written here. A row in this
+    # file is a claim that a kernel resolves from it, and none of these kernels
+    # does: `mmff_bond_ctor` and friends bind their type-params as `_tp` and read
+    # the columns the typifier baked. See the module docstring.
+    ET.SubElement(root, "BondStyle", name="mmff_bond")
+    ET.SubElement(root, "AngleStyle", name="mmff_angle")
+    ET.SubElement(root, "AngleStyle", name="mmff_stbn")
 
     # DefaultStretchBend
     dfsb_el = ET.SubElement(root, "DefaultStretchBend")
@@ -673,28 +689,8 @@ def build_xml(
                       kba_ijk=_fmt3(d.kba_ijk),
                       kba_kji=_fmt3(d.kba_kji))
 
-    # OutOfPlaneParams
-    oop_el = ET.SubElement(root, "OutOfPlaneParams")
-    for o in oops:
-        ET.SubElement(oop_el, "Oop",
-                      type1=str(o.i_type),
-                      type2=str(o.j_type),
-                      type3=str(o.k_type),
-                      type4=str(o.l_type),
-                      koop=_fmt3(o.koop))
-
-    # TorsionParams
-    tor_el = ET.SubElement(root, "TorsionParams")
-    for t in torsions:
-        ET.SubElement(tor_el, "Torsion",
-                      tor_type=str(t.tor_type),
-                      type1=str(t.i_type),
-                      type2=str(t.j_type),
-                      type3=str(t.k_type),
-                      type4=str(t.l_type),
-                      v1=_fmt3(t.v1),
-                      v2=_fmt3(t.v2),
-                      v3=_fmt3(t.v3))
+    ET.SubElement(root, "ImproperStyle", name="mmff_oop")
+    ET.SubElement(root, "DihedralStyle", name="mmff_torsion")
 
     # VdWParams
     vdw_el = ET.SubElement(root, "VdWParams",

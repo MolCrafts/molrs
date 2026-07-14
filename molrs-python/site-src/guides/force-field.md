@@ -62,7 +62,8 @@ typed_frame = typed.to_frame()
 print("typed blocks:", typed_frame.keys())
 
 try:
-    potentials = typifier.build(mol3d)
+    typed_frame["pairs"] = molrs.intramolecular_pairs(typed_frame)
+    potentials = typifier.forcefield().to_potentials(typed_frame)
     coords = molrs.extract_coords(typed_frame)
 
     energy, forces = potentials.eval(coords)
@@ -91,8 +92,11 @@ typing or in the stricter energy-evaluation path.
 
 Typing and evaluation answer different questions:
 
-- `MMFF94Typifier.typify(mol)` returns a new typed `Atomistic`.
-- `MMFF94Typifier.build(mol)` compiles a `Potentials` object.
+- `MMFF94Typifier.typify(mol)` returns a new typed `Atomistic`. That is the
+  typifier's whole contract: labels and charges.
+- `MMFF94Typifier.forcefield().to_potentials(frame)` compiles a `Potentials`
+  object — the same call every other force field in molrs goes through. MMFF is
+  not a special case, and there is no one-step `build`.
 - `MMFF94STypifier` is the same surface over the MMFF94s ("static") parameter set:
   it flattens delocalised trivalent nitrogen (MMFF types 10 `NC=O` / 40 `NC=C`) by
   re-parameterising 11 out-of-plane rows and 42 torsion rows. Everything else —

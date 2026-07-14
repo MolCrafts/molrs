@@ -150,8 +150,6 @@ The native force-field model exposes a `Style`/`Type` hierarchy
 
 ::: molrs.Potentials
 
-::: molrs.build_mmff_potentials
-
 ::: molrs.LBFGS
 
 ::: molrs.OptReport

@@ -1,10 +1,10 @@
 //! MMFF atom/bond/angle/torsion/improper typifiers — two named front doors.
 //!
-//! Annotates an [`Atomistic`] with MMFF type labels and partial charges (the
-//! typifier's job). MMFF carries no bespoke energy path here — it is a parameter
-//! set plus a topology labeler — so the `build` convenience just materializes the
-//! labeled graph to a [`Frame`](molrs::store::frame::Frame) and routes it through
-//! the generic [`ForceField::to_potentials`](crate::ff::potential) compile path.
+//! Annotates an [`Atomistic`] with MMFF type labels and partial charges. That is
+//! the typifier's contract, and all of it: MMFF is a parameter set plus a topology
+//! labeler, and it computes energies the way every other force field in molrs does
+//! — through [`ForceField::to_potentials`](crate::ff::forcefield::ForceField).
+//! **MMFF is not a special case.**
 //!
 //! # Which door?
 //!
@@ -17,39 +17,46 @@
 //! choose a parameter set by choosing a type, never by passing a flag.
 //!
 //! The two parameter sets share all 95 atom types and every bond / angle /
-//! stretch-bend / vdW / charge row. They differ in **11 out-of-plane rows** and
-//! **42 torsion rows**, every one of them centred on MMFF numeric type 10 (`NC=O`,
-//! amide N) or 40 (`NC=C`, enamine-type N). MMFF94s ("s" = *static*) raises the
-//! out-of-plane force constant `koop` on those centres to a flat `+0.015`
-//! (type 10) / `+0.030` (type 40) md·Å·rad⁻², which — see
+//! stretch-bend / vdW / charge parameter. They differ in **11 out-of-plane rows**
+//! and **42 torsion rows**, every one of them centred on MMFF numeric type 10
+//! (`NC=O`, amide N) or 40 (`NC=C`, enamine-type N). MMFF94s ("s" = *static*)
+//! raises the out-of-plane force constant `koop` on those centres to a flat
+//! `+0.015` (type 10) / `+0.030` (type 40) md·Å·rad⁻², which — see
 //! [`MMFF94STypifier`] — makes the planar nitrogen an energy *minimum*.
 //!
-//! # Example
+//! # Example — the one route
 //!
 //! ```no_run
-//! use molrs::ff::typifier::mmff::MMFF94Typifier;
 //! use molrs::Atomistic;
+//! use molrs::ff::potential::intramolecular_pairs;
+//! use molrs::ff::typifier::mmff::MMFF94Typifier;
 //! # fn main() -> Result<(), String> {
-//! let mol = Atomistic::new();                          // build or load your molecule
-//! let potentials = MMFF94Typifier::new().build(&mol)?; // typify → to_frame → to_potentials
-//! let coords: Vec<f64> = Vec::new();                   // flat [x,y,z, ...]
+//! let mol = Atomistic::new();                             // build or load your molecule
+//! let typifier = MMFF94Typifier::new();
+//!
+//! let mut frame = typifier.typify(&mol)?.to_frame();      // labels + charges
+//! frame.insert("pairs", intramolecular_pairs(&frame));    // the consumer's neighbour list
+//! let potentials = typifier.ff().to_potentials(&frame)?;  // the standard compile path
+//!
+//! let coords: Vec<f64> = Vec::new();                      // flat [x,y,z, ...]
 //! let (energy, _forces) = potentials.calc_energy_forces(&coords);
 //! println!("MMFF94 energy = {energy} kcal/mol");
 //! # Ok(())
 //! # }
 //! ```
+//!
+//! The `pairs` block is the caller's because the neighbour list is the caller's:
+//! a minimizer that moves atoms decides when to rebuild it. See `docs/interop.md`.
 
 #![allow(clippy::type_complexity)]
 
 use crate::ff::forcefield::ForceField;
 use crate::ff::mmff::MmffVariant;
-use crate::ff::potential::Potentials;
 use molrs::Atomistic;
 
 use super::Typifier;
 use engine::MmffEngine;
 
-pub(crate) mod classify;
 mod engine;
 pub(crate) mod frame_builder;
 pub mod params;
@@ -109,33 +116,14 @@ macro_rules! mmff_front_door {
             /// per-instance numbers the kernels read — including `koop` on every
             /// improper and `(v1, v2, v3)` on every dihedral, resolved from *this*
             /// door's parameter set.
+            ///
+            /// This is the whole contract. To evaluate an energy, materialize the
+            /// result ([`Atomistic::to_frame`]), add the neighbour list
+            /// ([`intramolecular_pairs`](crate::ff::potential::intramolecular_pairs)),
+            /// and compile it with [`ff()`](Self::ff)`.to_potentials(&frame)` — see
+            /// the module example.
             pub fn typify(&self, mol: &Atomistic) -> Result<Atomistic, String> {
                 self.0.typify(mol)
-            }
-
-            /// Typify a molecule and compile potentials in one step.
-            ///
-            /// `mol → Frame → Potentials`. The intermediate `Frame` is not retained.
-            ///
-            /// Requires [`Atomistic`] because MMFF typing depends on element
-            /// symbols, bond orders, and ring membership.
-            pub fn build(&self, mol: &Atomistic) -> Result<Potentials, String> {
-                self.0.build(mol)
-            }
-
-            /// Typify an MMFF bond: 0=normal, 1=delocalized/aromatic.
-            pub fn typify_bond(&self, t1: u32, t2: u32, bond_order: f64) -> u32 {
-                self.0.typify_bond(t1, t2, bond_order)
-            }
-
-            /// Typify an MMFF angle from the two MMFF bond classes forming the angle.
-            pub fn typify_angle(&self, bt_ij: u32, bt_jk: u32) -> u32 {
-                self.0.typify_angle(bt_ij, bt_jk)
-            }
-
-            /// Typify an MMFF dihedral from the three MMFF bond classes in the dihedral.
-            pub fn typify_dihedral(&self, bt_ij: u32, bt_jk: u32, bt_kl: u32) -> u32 {
-                self.0.typify_dihedral(bt_ij, bt_jk, bt_kl)
             }
         }
 
@@ -167,8 +155,8 @@ mmff_front_door! {
     /// # let mol = molrs::Atomistic::new();
     /// let typifier = MMFF94Typifier::new();
     /// assert_eq!(typifier.ff().name, "MMFF94");
-    /// let potentials = typifier.build(&mol)?;
-    /// # let _ = potentials;
+    /// let typed = typifier.typify(&mol)?;
+    /// # let _ = typed;
     /// # Ok(())
     /// # }
     /// ```
@@ -208,8 +196,8 @@ mmff_front_door! {
     /// # let mol = molrs::Atomistic::new();
     /// let typifier = MMFF94STypifier::new();
     /// assert_eq!(typifier.ff().name, "MMFF94s");
-    /// let potentials = typifier.build(&mol)?;
-    /// # let _ = potentials;
+    /// let typed = typifier.typify(&mol)?;
+    /// # let _ = typed;
     /// # Ok(())
     /// # }
     /// ```

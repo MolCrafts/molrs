@@ -134,7 +134,9 @@ typed_frame = typed.to_frame()
 print("typed blocks:", typed_frame.keys())
 
 try:
-    potentials = typifier.build(mol3d)
+    # The neighbour list is the consumer's to build, so it is an explicit step.
+    typed_frame["pairs"] = molrs.intramolecular_pairs(typed_frame)
+    potentials = typifier.forcefield().to_potentials(typed_frame)
     coords = molrs.extract_coords(typed_frame)
 
     energy, forces = potentials.eval(coords)

@@ -23,13 +23,21 @@
 //! Feeding only path 1 leaves a tree that still calls itself `MMFF94`; feeding
 //! only path 2 leaves a Frame whose baked `koop` is still MMFF94's — the potentials
 //! would then be bit-identical to MMFF94 while claiming to be MMFF94s.
+//!
+//! # The engine compiles nothing
+//!
+//! It labels a graph and it owns a [`ForceField`]. Turning the two into
+//! [`Potentials`](crate::ff::potential::Potentials) is
+//! `ForceField::to_potentials(&frame)` — the same call every other force field in
+//! molrs goes through. There used to be a `build(mol)` convenience that did
+//! typify → `to_frame` → `intramolecular_pairs` → `to_potentials` behind one
+//! method name, which made MMFF the only typifier in the crate that could also
+//! compile; it is gone. A typifier's contract is `typify`.
 
 use crate::ff::forcefield::ForceField;
 use crate::ff::mmff::MmffVariant;
-use crate::ff::potential::{Potentials, intramolecular_pairs};
 use molrs::Atomistic;
 
-use super::classify;
 use super::frame_builder;
 use super::params::MMFFParams;
 
@@ -79,25 +87,5 @@ impl MmffEngine {
     /// Path 1: label the graph and bake this variant's per-instance parameters.
     pub(super) fn typify(&self, mol: &Atomistic) -> Result<Atomistic, String> {
         frame_builder::annotate_mmff(mol, &self.params, self.variant)
-    }
-
-    /// Path 1 + path 2: `mol → Frame → Potentials`.
-    pub(super) fn build(&self, mol: &Atomistic) -> Result<Potentials, String> {
-        let mut frame = self.typify(mol)?.to_frame();
-        let pairs = intramolecular_pairs(&frame);
-        frame.insert("pairs", pairs);
-        self.ff.to_potentials(&frame)
-    }
-
-    pub(super) fn typify_bond(&self, t1: u32, t2: u32, bond_order: f64) -> u32 {
-        classify::typify_bond(t1, t2, bond_order, &self.params)
-    }
-
-    pub(super) fn typify_angle(&self, bt_ij: u32, bt_jk: u32) -> u32 {
-        classify::typify_angle(bt_ij, bt_jk)
-    }
-
-    pub(super) fn typify_dihedral(&self, bt_ij: u32, bt_jk: u32, bt_kl: u32) -> u32 {
-        classify::typify_dihedral(bt_ij, bt_jk, bt_kl)
     }
 }

@@ -1,7 +1,9 @@
 //! End-to-end MMFF94 typification: MolGraph (built in code) -> typed Atomistic
-//! -> Frame, atom/bond/angle/dihedral labels, and full build.
+//! -> Frame, atom/bond/angle/dihedral labels, and the compile path.
 
+use molrs::ff::potential::{Potentials, intramolecular_pairs};
 use molrs::ff::typifier::mmff::MMFF94Typifier;
+use molrs::store::frame::Frame;
 use molrs::system::molgraph::{Atom, PropValue};
 use molrs::{AtomId, Atomistic};
 
@@ -13,6 +15,17 @@ fn bond(mol: &mut Atomistic, a: AtomId, b: AtomId, order: f64) {
     if let Ok(bid) = mol.add_bond(a, b) {
         let _ = mol.set_bond_prop(bid, "order", PropValue::F64(order));
     }
+}
+
+/// The standard route: typify → `Frame` (+ neighbour list) → `to_potentials`.
+///
+/// Returns both, because a caller who wants an energy needs the Frame's coords
+/// anyway — which is exactly the shape the deleted `build(mol)` shortcut hid.
+fn compile(t: &MMFF94Typifier, mol: &Atomistic) -> Result<(Potentials, Frame), String> {
+    let mut frame = t.typify(mol)?.to_frame();
+    frame.insert("pairs", intramolecular_pairs(&frame));
+    let pots = t.ff().to_potentials(&frame)?;
+    Ok((pots, frame))
 }
 
 // ---------------------------------------------------------------------------
@@ -35,29 +48,19 @@ fn embedded_mmff94_loads_atom_prop_table() {
 // ---------------------------------------------------------------------------
 // Bond / angle / torsion typification
 // ---------------------------------------------------------------------------
-
-#[test]
-fn bond_typification_normal_vs_aromatic() {
-    let t = typifier();
-    assert_eq!(t.typify_bond(1, 1, 1.0), 0, "sp3 single -> normal");
-    assert_eq!(t.typify_bond(37, 37, 1.5), 1, "aromatic -> delocalized");
-}
-
-#[test]
-fn angle_typification_counts_delocalized_bonds() {
-    let t = typifier();
-    assert_eq!(t.typify_angle(0, 0), 0);
-    assert_eq!(t.typify_angle(1, 0), 1);
-    assert_eq!(t.typify_angle(0, 1), 1);
-    assert_eq!(t.typify_angle(1, 1), 2);
-}
-
-#[test]
-fn torsion_typification_central_bond_delocalized() {
-    let t = typifier();
-    assert_eq!(t.typify_dihedral(0, 0, 0), 0);
-    assert_eq!(t.typify_dihedral(0, 1, 0), 1, "central delocalized");
-}
+//
+// The three tests here drove `typify_bond` / `typify_angle` / `typify_dihedral`,
+// the front-door forwards over `typifier/mmff/classify.rs`. That module was a
+// second implementation of MMFF's context rules — one `ff/mmff/params.rs` already
+// implements correctly — and it was wrong: it pinned `typify_bond(37, 37, 1.5)
+// == 1` (an aromatic bond is bond type **0**: `getMMFFBondType` needs SINGLE, and
+// after aromaticity perception a ring bond is AROMATIC) and its angle classifier
+// took only two bond types, so it could never return the **3** that a cyclopropane
+// C-C-C angle actually has.
+//
+// mmff-orthogonal-02 deletes the module, the three methods, and these tests. The
+// replacement asserts the type codes off a typed Frame, against RDKit's rules, on
+// real molecules: `tests/ff/typifier/mmff_labels.rs`.
 
 // ---------------------------------------------------------------------------
 // Frame builder (Typifier trait) — topology block shapes
@@ -97,20 +100,16 @@ fn typify_ethane_produces_expected_topology_blocks() {
     assert_eq!(frame.get("angles").expect("angles").nrows(), Some(12));
     // H-C-C-H = 3x3 = 9 dihedrals.
     assert_eq!(frame.get("dihedrals").expect("dihedrals").nrows(), Some(9));
-    // typify is pairs-free now — the neighbour list is built by `build()`.
+    // typify is pairs-free: the neighbour list is the consumer's to build.
     assert!(!frame.contains_key("pairs"));
 }
 
 // ---------------------------------------------------------------------------
-// Full build path (typify + compile).
-//
-// The typify half works; the compile half currently fails on stretch-bend
-// params (see suite report and tests/ff/potential/mmff.rs). We pin the typify
-// output here and the documented build failure.
+// Full compile path (typify -> Frame -> to_potentials).
 // ---------------------------------------------------------------------------
 
 #[test]
-fn methane_typifies_then_build_fails_on_stretch_bend() {
+fn methane_typifies_then_compiles_to_finite_energy() {
     let t = typifier();
     let mut mol = Atomistic::new();
     let c = mol.add_atom_xyz("C", 0.0, 0.0, 0.0);
@@ -133,9 +132,9 @@ fn methane_typifies_then_build_fails_on_stretch_bend() {
 
     // Methane's carbon is four-coordinate (no out-of-plane term) and it has no
     // dihedrals and no non-bonded pairs (every atom pair is 1-2 or 1-3 excluded),
-    // so build() resolves the bond/angle/stretch-bend kernels and yields finite
-    // energy + forces.
-    let pots = t.build(&mol).expect("build potentials");
+    // so the compile resolves the bond/angle/stretch-bend kernels and yields
+    // finite energy + forces.
+    let (pots, frame) = compile(&t, &mol).expect("compile potentials");
     let coords = molrs::ff::potential::extract_coords(&frame).expect("coords");
     let (e, forces) = pots.calc_energy_forces(&coords);
     assert!(e.is_finite(), "energy not finite: {e}");
@@ -162,17 +161,15 @@ fn benzene() -> Atomistic {
 
 /// RED before per-instance migration: benzene's stretch-bend type `1_37_37_37`
 /// has no explicit STBN row, so the shared-table kernel path errored with
-/// `mmff_stbn: unknown '1_37_37_37'`. After the typifier bakes per-instance
-/// stretch-bend params via the RDKit-validated `energy::params` resolver (which
-/// has the dfsb default-row fallback), build() must resolve every MMFF term.
+/// `mmff_stbn: unknown '1_37_37_37'`. Now the typifier bakes per-instance
+/// stretch-bend params via the RDKit-faithful `ff::mmff::params` resolver (which
+/// has the dfsb default-row fallback), so every MMFF term resolves.
 #[test]
-fn benzene_build_resolves_stretch_bend() {
+fn benzene_compile_resolves_stretch_bend() {
     let t = typifier();
     let mol = benzene();
-    let pots = t
-        .build(&mol)
-        .expect("benzene build should resolve all MMFF terms (incl. stretch-bend)");
-    let frame = t.typify(&mol).expect("typify").to_frame();
+    let (pots, frame) =
+        compile(&t, &mol).expect("benzene should resolve all MMFF terms (incl. stretch-bend)");
     let coords = molrs::ff::potential::extract_coords(&frame).expect("coords");
     let (e, forces) = pots.calc_energy_forces(&coords);
     assert!(e.is_finite(), "benzene energy not finite: {e}");

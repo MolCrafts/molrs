@@ -1,7 +1,7 @@
 ---
 title: "MMFF 去重复 — 删除 bespoke 实现与死数据，per-instance style 成为一等概念"
 slug: mmff-orthogonal-02-delete-bespoke
-status: approved
+status: in-progress
 created: 2026-07-14
 chain: mmff-orthogonal 2/2
 depends_on: "mmff-orthogonal-01-fix-generic"
@@ -129,11 +129,15 @@ pub enum ParamSource {
   ⚠️ **性能**：`MMFF94Typifier::new()` 每次都会解析内嵌 XML，必须**提到每次 `generate` 之外构造一次**，不能放进 per-conformer 循环。
 - `molrs-python` 与 `molrs` 在**同一个 git 仓库**。删除一个 Rust 公开 API 的同时必须删掉它的 binder，否则树不编译——所以 02 是**一次跨 crate 落地**。
 
-### chem-perceive-14 的冻结 fixture 必须在本 spec 重生成
+### chem-perceive-14 的冻结 fixture：不在这里碰，但必须重新抓
 
-`tests/ff/fixtures/tables/{mmff94,mmff94s}.reference.txt` 是从**当前 XML** 冻结的 conversion contract，`tables_gate.rs` 还 pin 了 XML 的 SHA-256。01 加了 `<ElectrostaticParams>`、02 删掉 4,065 行——两者都会让它们过期。
+`tests/ff/fixtures/tables/{mmff94,mmff94s}.reference.txt` 是从 XML 冻结的 conversion contract，`tables_gate.rs` 还 pin 了 XML 的 SHA-256。01 加了 `<ElectrostaticParams>`、02 删掉 4,065 行——两者都让它们过期。
 
-它们是 parked RED，但**不能就这么放着**：chem-perceive-14 会照着这份 dump 把死行编译成 Rust 表，那正是这条链要阻止的事。故本 spec **重新生成**这两个 reference 并更新 SHA pin。
+**修正（2026-07-14）**：初稿要求 02 重新生成它们。这是错的排序——那两个文件当前是 **parked**（属于 chem-perceive-14），把它们 restore 回来只会把一堆与 02 无关的红（`generated/` 目录名、表平铺、`$AMBERHOME` 门）拖进这一期。
+
+正确做法：**02 不碰它们**。02 落地后死行已经不在 XML 里了，chem-perceive-14 的 tester 到时候从**最终的 XML** 重新抓 dump——它本来就该在转换发生的那一期抓。那份 parked 的 dump 是**抓早了**的产物，必须**重新生成而非恢复**。
+
+⚠️ 交接给 chem-perceive-14 的硬约束：**不得复用 parked 的 `.reference.txt`**。它是在 4,065 行死数据还在、`<ElectrostaticParams>` 还没有的 XML 上抓的；直接用它，就等于把死行当成 conversion contract 编译成受测试保护的 Rust 表——**正是这整条链存在的理由**。
 
 ## Files to create or modify
 
@@ -156,8 +160,9 @@ pub enum ParamSource {
 - [ ] Repoint `mmff_cleanup` in `conformer/etkdg/mod.rs` onto the typifier -> ForceField route, hoisting the typifier out of the per-conformer loop
 - [ ] Delete `MmffForceField` and `ff/mmff/energy/*`; move `energy/params.rs` to `ff/mmff/params.rs`
 - [ ] Delete `typifier/mmff/classify.rs` and the four front-door methods; derive labels in `frame_builder.rs` from the `eparams` resolver
+- [ ] Split `annotate_mmff` (`typifier/mmff/frame_builder.rs`, now **221 lines**) into the six private helpers its own numbered comments already imply (`// 1. Atoms` … `// 6. Out-of-plane`) — inherited debt that **two consecutive MMFF specs have now grown**, and this spec rewrites its label source anyway, so it is the natural place. House limit is 50-80 lines/fn.
 - [ ] Delete `build_mmff_potentials` and the Python `build` door across molrs-python (src, pyi, __init__, tests, examples, README, site-src); rewrite `docs/interop.md`
-- [ ] Regenerate the two frozen table references from the trimmed XML, update the SHA pins, add the BREAKING CHANGELOG entry
+- [ ] Add the BREAKING CHANGELOG entry naming molpack; rewrite docs/interop.md onto the typify -> to_potentials route (its MMFF snippet is a compile-checked doctest)
 - [ ] Run full check + test suite (Rust gates; then rebuild the maturin wheel and run pytest — the wheel MUST be rebuilt or pytest lies)
 
 ## Testing strategy

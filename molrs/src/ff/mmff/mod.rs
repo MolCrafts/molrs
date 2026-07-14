@@ -1,15 +1,40 @@
-//! MMFF94 force field support.
+//! MMFF94 force field support — **the front end of the typifier, and nothing
+//! else**.
 //!
 //! In addition to the parameter [`tables`] (ported from RDKit
 //! `Code/ForceField/MMFF/Params.cpp`), this module ports the MMFF94 atom
 //! typing, aromaticity perception, and partial-charge model from RDKit
 //! `Code/GraphMol/ForceFieldHelpers/MMFF/AtomTyper.cpp` and
 //! `Code/GraphMol/Aromaticity.cpp` (BSD-3, Paolo Tosco / RDKit
-//! contributors).
+//! contributors), plus the parameter resolver (`params`).
 //!
 //! Pipeline (mirrors `MMFFMolProperties`'s constructor):
 //! `aromaticity::set_mmff_aromaticity` → `atomtype::assign_atom_types`
 //! → `charges::compute_partial_charges`.
+//!
+//! # There is no MMFF energy model here
+//!
+//! MMFF computes energies the way every other force field in molrs does:
+//!
+//! ```no_run
+//! use molrs::ff::potential::intramolecular_pairs;
+//! use molrs::ff::typifier::mmff::MMFF94Typifier;
+//! # fn run(mol: &molrs::Atomistic) -> Result<(), String> {
+//! let typifier = MMFF94Typifier::new();
+//! let mut frame = typifier.typify(mol)?.to_frame();       // labels + charges
+//! frame.insert("pairs", intramolecular_pairs(&frame));    // consumer's neighbour list
+//! let potentials = typifier.ff().to_potentials(&frame)?;  // the standard route
+//! # let _ = potentials; Ok(())
+//! # }
+//! ```
+//!
+//! A bespoke `MmffForceField` assembly layer used to live under `energy/`,
+//! duplicating the seven term kernels that `ff::potential::{bond, angle,
+//! dihedral, improper, pair}::mmff` already implement. Once the generic path was
+//! proved against RDKit on 11/11 fixtures term-by-term it was deleted
+//! (`mmff-orthogonal-02`): a second implementation of a force field is a second
+//! set of numbers to be wrong, and it had already drifted once. What survived is
+//! `params` — the resolver, which is what the typifier runs.
 //!
 //! ```no_run
 //! use molrs::ff::mmff::{MmffMolProperties, MmffVariant};
@@ -24,12 +49,10 @@
 pub(crate) mod aromaticity;
 pub(crate) mod atomtype;
 pub(crate) mod charges;
-pub mod energy;
 mod hybrid;
+pub(crate) mod params;
 pub mod tables;
 pub(crate) mod topo;
-
-pub use energy::{MmffEnergyBreakdown, MmffForceField};
 
 use molrs::Atomistic;
 use molrs::error::MolRsError;
@@ -46,8 +69,8 @@ use topo::Topo;
 /// 11 Oop rows and 42 Torsion rows.
 ///
 /// Both `_S` tables ARE shipped in [`tables`] — [`tables::MMFF_OOP_S`] (117 rows)
-/// and [`tables::MMFF_TOR_S`] (926 rows) — and the parameter layer
-/// (`energy::params`) dispatches on this variant to read them, falling back to the
+/// and [`tables::MMFF_TOR_S`] (926 rows) — and the parameter resolver
+/// (`params`) dispatches on this variant to read them, falling back to the
 /// base table for keys the `_S` table does not re-parameterise.
 ///
 /// The physics of the difference is the out-of-plane force constant `koop`
