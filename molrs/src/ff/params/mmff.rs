@@ -1,12 +1,36 @@
-//! MMFF94 force-field parameter tables (data + pure accessors).
+//! MMFF's parameter data — **one table, shared by both front doors**.
 //!
-//! Ported from RDKit Code/ForceField/MMFF/Params.cpp
-//! (BSD-3, Paolo Tosco / RDKit contributors).
+//! This module is **data only**: sorted static slices plus binary-search
+//! accessors mirroring RDKit's `std::equal_range` lookup. No atom typing, charge,
+//! aromaticity or energy logic lives here (the lookup *rules* — equivalence
+//! degradation, ring-context type codes, empirical fallbacks — are an algorithm
+//! and live in `ff::mmff::resolve`).
 //!
-//! This module is **data only**: sorted static slices plus
-//! binary-search accessors mirroring RDKit's `std::equal_range`
-//! lookup. No atom typing, charge, aromaticity, or energy logic
-//! lives here.
+//! # Provenance
+//!
+//! Two sources, merged here so that MMFF's numbers live in one place like every
+//! other force field's:
+//!
+//! * the 17 tables and their accessors are ported from RDKit
+//!   `Code/ForceField/MMFF/Params.cpp` (BSD-3, Paolo Tosco / RDKit
+//!   contributors) — every bond, angle, stretch-bend, torsion, out-of-plane,
+//!   charge-increment, vdW and atom-property row, and the empirical-rule
+//!   constants;
+//! * the style skeleton and the two style-level constant blocks at the foot of
+//!   this file ([`MMFF_STYLES`], [`MMFF_VDW_STYLE`], [`MMFF_ELE_STYLE`]) are
+//!   transcribed from the retired `molrs/data/mmff94.xml`
+//!   (sha256 `9d9c41db…`, recorded in `ff/params/MANIFEST.sha256`), which molrs
+//!   used to `include_str!` and re-parse on every typifier construction.
+//!
+//! # Why there is no `mmff94s` table
+//!
+//! `mmff94.xml` and `mmff94s.xml` differed by exactly two lines — the
+//! `<ForceField name=…>` attribute. The real MMFF94-vs-MMFF94s delta (11
+//! out-of-plane + 42 torsion rows on delocalised trivalent nitrogen) lives here,
+//! in [`MMFF_OOP_S`] / [`MMFF_TOR_S`], and is selected by
+//! [`MmffVariant`](crate::ff::mmff::MmffVariant). So the two typifier front doors
+//! read this one table and differ by a name string and a variant — not by a
+//! duplicated copy of the same 199 entries.
 #![allow(clippy::unreadable_literal)]
 #![allow(clippy::excessive_precision)]
 // Some empirical parameter values happen to sit near math constants
@@ -51521,6 +51545,120 @@ pub fn mmff_vdw(atom_type: u8) -> Option<&'static MmffVdW> {
 pub fn mmff_is_arom(atom_type: u8) -> bool {
     MMFF_AROM.binary_search(&atom_type).is_ok()
 }
+
+// ---------------------------------------------------------------------------
+// The force-field skeleton, transcribed from the retired `mmff94.xml`
+// ---------------------------------------------------------------------------
+//
+// Everything above is RDKit's `Params.cpp`. Everything below is what the XML
+// carried that the port does not: which styles MMFF declares (and in what
+// order), and the two blocks of style-level constants that are not per-type rows
+// — `<VdWParams>`'s combining-rule constants and `<ElectrostaticParams>`'s
+// buffered-Coulomb constants. The per-type vdW rows and the 95 atom-property
+// rows the XML also carried are NOT repeated here: they are `MMFF_VDW` and
+// `MMFF_PROP` above, value for value.
+
+/// One of the seven energy styles MMFF declares.
+///
+/// The `category` is the [`ForceField`](crate::ff::forcefield::ForceField) style
+/// category and `name` is the kernel the registry resolves it to. Five of the
+/// seven carry no per-type rows at all: their parameters are
+/// [`ParamSource::PerInstance`](crate::ff::potential::ParamSource::PerInstance),
+/// resolved per interaction by `ff::mmff::resolve` and baked onto the
+/// typed Frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MmffStyle {
+    /// `bond` / `angle` / `dihedral` / `improper` / `pair`.
+    pub category: &'static str,
+    /// Style name — the key the `KernelRegistry` is looked up with.
+    pub name: &'static str,
+}
+
+/// The seven styles MMFF declares, **in the order the XML declared them**.
+///
+/// The order is load-bearing, not cosmetic: `ForceField` lookups scan its styles
+/// and take the first match, so re-ordering these is a different force field.
+pub static MMFF_STYLES: &[MmffStyle] = &[
+    MmffStyle {
+        category: "bond",
+        name: "mmff_bond",
+    },
+    MmffStyle {
+        category: "angle",
+        name: "mmff_angle",
+    },
+    MmffStyle {
+        category: "angle",
+        name: "mmff_stbn",
+    },
+    MmffStyle {
+        category: "improper",
+        name: "mmff_oop",
+    },
+    MmffStyle {
+        category: "dihedral",
+        name: "mmff_torsion",
+    },
+    MmffStyle {
+        category: "pair",
+        name: "mmff_vdw",
+    },
+    MmffStyle {
+        category: "pair",
+        name: "mmff_ele",
+    },
+];
+
+/// The style-level constants of MMFF's buffered 14-7 vdW term (`<VdWParams>`).
+///
+/// These are the combining rule's, not any atom type's: `b` and `beta` are the
+/// exponents of the `R*` combining rule, `darad` / `daeps` the donor-acceptor
+/// R\* suppression and ε scaling. The per-type columns (`alpha`, `n_eff`, `a_i`,
+/// `g_i`, `da`) are [`MMFF_VDW`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MmffVdWStyle {
+    /// `B` — the combining-rule exponent numerator.
+    pub b: f64,
+    /// `Beta` — the combining-rule exponent.
+    pub beta: f64,
+    /// `DARAD` — donor R\* suppression factor.
+    pub darad: f64,
+    /// `DAEPS` — donor-acceptor ε scaling factor.
+    pub daeps: f64,
+}
+
+/// MMFF's vdW combining-rule constants (`<VdWParams B=… Beta=… DARAD=… DAEPS=…>`).
+pub static MMFF_VDW_STYLE: MmffVdWStyle = MmffVdWStyle {
+    b: 0.2,
+    beta: 12.0,
+    darad: 0.8,
+    daeps: 0.5,
+};
+
+/// The style-level constants of MMFF's buffered-Coulomb term
+/// (`<ElectrostaticParams>`).
+///
+/// `E = 332.0716 · qi·qj / (dielectric · (R + delta))`, with the 1-4 pairs scaled
+/// by `scale14`. MMFF scales **only** electrostatics at 1-4: its torsion
+/// parameters were fitted against unscaled 1-4 vdW, so the vdW 1-4 weight is 1.0
+/// and is not a parameter of this block.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MmffEleStyle {
+    /// Dielectric constant of the buffered-Coulomb term.
+    pub dielectric: f64,
+    /// Electrostatic buffering constant δ (Å).
+    pub delta: f64,
+    /// 1-4 Coulomb scale factor.
+    pub scale14: f64,
+}
+
+/// MMFF's buffered-Coulomb constants (`<ElectrostaticParams dielectric=… delta=…
+/// scale14=…/>`).
+pub static MMFF_ELE_STYLE: MmffEleStyle = MmffEleStyle {
+    dielectric: 1.0,
+    delta: 0.05,
+    scale14: 0.75,
+};
 
 #[cfg(test)]
 mod tests {

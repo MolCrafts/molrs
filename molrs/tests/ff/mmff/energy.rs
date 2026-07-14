@@ -55,6 +55,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use molrs::Atomistic;
+use molrs::ff::params::mmff::MMFF_ELE_STYLE;
 use molrs::ff::potential::{Potentials, intramolecular_pairs};
 use molrs::ff::typifier::mmff::{MMFF94STypifier, MMFF94Typifier};
 use molrs::store::frame::Frame;
@@ -68,13 +69,6 @@ const BREAKDOWN_TOL: f64 = 1.0e-6;
 
 fn fixtures_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ff/mmff/fixtures")
-}
-
-/// Repository root (one above this package).
-fn repo_root() -> &'static Path {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("molrs/ has a parent")
 }
 
 // ---------------------------------------------------------------------------
@@ -575,37 +569,88 @@ fn mmff_forcefields_define_all_seven_energy_styles() {
     );
 }
 
-/// ac-005 — the electrostatic parameters are DATA, declared once per XML.
+/// ac-005 — the electrostatic parameters are DATA, and both front doors carry them.
 ///
-/// The section is the reader's dispatch source (`<ElectrostaticParams
-/// dielectric="1.0" delta="0.05" scale14="0.75"/>`), symmetric with
-/// `<VdWParams>` — not a `def_pairstyle` conjured inside the reader. All four
-/// copies must carry it, or a `data/` build and a `molrs/data/` build disagree
-/// about whether MMFF has electrostatics.
+/// The section used to be XML (`<ElectrostaticParams dielectric="1.0" delta="0.05"
+/// scale14="0.75"/>`) and this gate counted it in all four copies of the file:
+/// the reader's dispatch source, symmetric with `<VdWParams>`, not a
+/// `def_pairstyle` conjured inside the reader. `chem-perceive-14` deleted the XML
+/// and compiled the parameter set into [`molrs::ff::params::mmff`], so the subject
+/// is now the table's `MMFF_ELE_STYLE` block and the `pair/mmff_ele` style that
+/// `ff/typifier/mmff/embedded.rs` builds from it — same three columns, same
+/// question: **does the electrostatic data actually reach the force field?**
+///
+/// # Why this one cannot be dropped
+///
+/// It is spec 01's sentinel for the defect that cost 150 kcal/mol on caffeine:
+/// `mmff_ele_ctor` was registered from the day it was written, the charges were on
+/// the Frame, and NO ForceField ever defined a `pair/mmff_ele` style. Kernel,
+/// data, and nobody connecting them.
+///
+/// And the params half is the part **no other test in this file can see**:
+/// `mmff_ele_ctor` reads `sp.get("dielectric").unwrap_or(1.0)` and
+/// `sp.get("delta").unwrap_or(ELE_DELTA)`, so a style defined with EMPTY params
+/// silently falls back to constants that happen to equal the table today. Every
+/// energy assertion in this file — total and per-style — stays green while the
+/// data section quietly ceases to exist. That is the original defect one level
+/// down: a kernel computing from its own defaults instead of from the force field.
 #[test]
-fn both_mmff_xmls_declare_the_electrostatic_section() {
-    let mut fails = Vec::new();
-    for rel in [
-        "molrs/data/mmff94.xml",
-        "molrs/data/mmff94s.xml",
-        "data/mmff94.xml",
-        "data/mmff94s.xml",
+fn both_mmff_front_doors_declare_the_electrostatic_style_and_its_data() {
+    for (label, ff) in [
+        ("MMFF94", MMFF94Typifier::new().ff().clone()),
+        ("MMFF94s", MMFF94STypifier::new().ff().clone()),
     ] {
-        let path = repo_root().join(rel);
-        let text = std::fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-        let n = text.matches("<ElectrostaticParams").count();
-        if n != 1 {
-            fails.push(format!(
-                "{rel}: {n} `<ElectrostaticParams` elements, want exactly 1"
-            ));
+        let style = ff.get_style("pair", "mmff_ele").unwrap_or_else(|| {
+            panic!(
+                "{label}: no `pair/mmff_ele` style. The kernel has been in the registry since the \
+                 day it was written and the charges have always been on the Frame — the 150 \
+                 kcal/mol caffeine error was nobody defining the style that connects them."
+            )
+        });
+
+        for (key, want) in [
+            ("dielectric", MMFF_ELE_STYLE.dielectric),
+            ("delta", MMFF_ELE_STYLE.delta),
+        ] {
+            let got = style.params.get(key).unwrap_or_else(|| {
+                panic!(
+                    "{label}: `pair/mmff_ele` carries no `{key}` style param. `mmff_ele_ctor` \
+                     would fall back to its own hardcoded default and compute the RIGHT number \
+                     for the WRONG reason — the force field would no longer be the source of \
+                     MMFF's electrostatic constants, and no energy test would notice."
+                )
+            });
+            assert!(
+                (got - want).abs() < 1e-12,
+                "{label}: `pair/mmff_ele` {key} = {got}, want {want} (the value in \
+                 `ff::params::mmff::MMFF_ELE_STYLE`). The style must carry the TABLE's numbers, \
+                 not a second copy of them."
+            );
         }
+
+        // `scale14` is the third column of the same data block. It does not live on
+        // the style: molrs realises 1-4 scaling through `special_bonds`, and
+        // `Style::to_potential` projects it into the pair kernel's params.
+        let sp = ff.special_bonds();
+        assert!(
+            (sp.coul[2] - MMFF_ELE_STYLE.scale14).abs() < 1e-12,
+            "{label}: special_bonds.coul[2] = {}, but the table says scale14 = {} — the 1-4 \
+             Coulomb weight is part of the electrostatic data block and must come from it",
+            sp.coul[2],
+            MMFF_ELE_STYLE.scale14
+        );
+        assert!(
+            (sp.coul[2] - 0.75).abs() < 1e-12,
+            "{label}: MMFF's 1-4 Coulomb weight is {}, want 0.75",
+            sp.coul[2]
+        );
+        assert!(
+            (sp.lj[2] - 1.0).abs() < 1e-12,
+            "{label}: MMFF's 1-4 vdW weight is {}, want 1.0 — the electrostatic block scales \
+             ONLY electrostatics; MMFF's torsions were fitted against unscaled 1-4 vdW",
+            sp.lj[2]
+        );
     }
-    assert!(
-        fails.is_empty(),
-        "MMFF XML is missing the electrostatic section:\n  {}",
-        fails.join("\n  ")
-    );
 }
 
 /// MMFF's 1-4 rules live in `special_bonds` (house rule), not in the kernel.

@@ -41,15 +41,27 @@ pub(crate) const DA_ACCEPTOR: u8 = 2;
 /// stored in a `mmff_vdw` [`PairType`](crate::ff::forcefield::PairType) row's
 /// `da` param.
 ///
-/// [`Params`] is a numeric bag, so the reader
-/// ([`parse_mmff_vdw`](crate::ff::forcefield::xml)) transcribes the letter here
-/// and [`vdw_combining`] decodes it — one encoding, owned by its consumer.
-/// Anything unrecognised is [`DA_NEITHER`], which is also MMFF's own default for
-/// the 80-odd non-hydrogen-bonding types.
+/// [`Params`] is a numeric bag, so a reader transcribes the letter here and
+/// [`vdw_combining`] decodes it — one encoding, owned by its consumer. Anything
+/// unrecognised is [`DA_NEITHER`], which is also MMFF's own default for the
+/// 80-odd non-hydrogen-bonding types.
 pub(crate) fn encode_da(raw: &str) -> f64 {
     match raw {
         "D" => DA_DONOR,
         "A" => DA_ACCEPTOR,
+        _ => DA_NEITHER,
+    }
+    .into()
+}
+
+/// [`encode_da`] for the compiled table, whose `da` column is the letter's ASCII
+/// byte ([`MmffVdW::da`](crate::ff::params::mmff::MmffVdW::da), as RDKit stores
+/// it) rather than a string. Same three codes, same default — one mapping, two
+/// spellings of the letter.
+pub(crate) fn encode_da_byte(code: u8) -> f64 {
+    match code {
+        b'D' => DA_DONOR,
+        b'A' => DA_ACCEPTOR,
         _ => DA_NEITHER,
     }
     .into()

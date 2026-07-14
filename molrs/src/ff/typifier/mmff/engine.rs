@@ -15,10 +15,10 @@
 //!    `(v1, v2, v3)` on dihedrals. These are exactly the columns the `mmff_oop` /
 //!    `mmff_torsion` kernels read, so this is where the 94/94s numerical
 //!    difference physically enters an energy.
-//! 2. **The [`ForceField`] tree** — parsed from the front door's own XML
-//!    (`MMFF94_XML` / `MMFF94S_XML`) and compiled by
+//! 2. **The [`ForceField`] tree** — assembled from the compiled table under the
+//!    front door's own name ([`embedded`](super::embedded)) and compiled by
 //!    [`ForceField::to_potentials`]. It carries the force-field name and the
-//!    Oop/Torsion type rows.
+//!    style skeleton.
 //!
 //! Feeding only path 1 leaves a tree that still calls itself `MMFF94`; feeding
 //! only path 2 leaves a Frame whose baked `koop` is still MMFF94's — the potentials
@@ -66,14 +66,18 @@ impl MmffEngine {
         })
     }
 
-    /// Parse one of the **embedded** parameter sets, which cannot fail at runtime.
+    /// Assemble one of the **shipped** parameter sets from the compiled table.
     ///
-    /// `xml` is a `&'static str` compiled into the binary and covered by this
-    /// crate's own tests, so a parse error here is a build-time defect, not a
-    /// caller error — which is why the front doors' `new()` is infallible.
-    pub(super) fn embedded(variant: MmffVariant, xml: &'static str) -> Self {
-        Self::from_xml_str(variant, xml)
-            .unwrap_or_else(|e| panic!("embedded {variant:?} parameter set is malformed: {e}"))
+    /// Infallible by construction: there is nothing to parse. `name` and
+    /// `variant` are supplied by the front door and are the only things the two
+    /// doors disagree about — both read the same
+    /// [`ff::params::mmff`](crate::ff::params::mmff) rows.
+    pub(super) fn embedded(variant: MmffVariant, name: &str) -> Self {
+        Self {
+            variant,
+            params: super::embedded::typing_params(),
+            ff: super::embedded::force_field(name),
+        }
     }
 
     pub(super) fn params(&self) -> &MMFFParams {

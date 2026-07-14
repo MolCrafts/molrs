@@ -1,12 +1,13 @@
 //! MMFF94 force field support — **the front end of the typifier, and nothing
 //! else**.
 //!
-//! In addition to the parameter [`tables`] (ported from RDKit
-//! `Code/ForceField/MMFF/Params.cpp`), this module ports the MMFF94 atom
-//! typing, aromaticity perception, and partial-charge model from RDKit
-//! `Code/GraphMol/ForceFieldHelpers/MMFF/AtomTyper.cpp` and
-//! `Code/GraphMol/Aromaticity.cpp` (BSD-3, Paolo Tosco / RDKit
-//! contributors), plus the parameter resolver (`params`).
+//! The parameter data lives one module over, with every other parameter table,
+//! in [`crate::ff::params::mmff`]. What is here is the code that reads it: the
+//! MMFF94 atom typing, aromaticity perception and partial-charge model ported
+//! from RDKit `Code/GraphMol/ForceFieldHelpers/MMFF/AtomTyper.cpp` and
+//! `Code/GraphMol/Aromaticity.cpp` (BSD-3, Paolo Tosco / RDKit contributors),
+//! plus the parameter resolver (`resolve`) — an algorithm, not a table, which
+//! is why it is named for what it does and stays out of `ff/params/`.
 //!
 //! Pipeline (mirrors `MMFFMolProperties`'s constructor):
 //! `aromaticity::set_mmff_aromaticity` → `atomtype::assign_atom_types`
@@ -34,7 +35,7 @@
 //! proved against RDKit on 11/11 fixtures term-by-term it was deleted
 //! (`mmff-orthogonal-02`): a second implementation of a force field is a second
 //! set of numbers to be wrong, and it had already drifted once. What survived is
-//! `params` — the resolver, which is what the typifier runs.
+//! `resolve` — the resolver, which is what the typifier runs.
 //!
 //! ```no_run
 //! use molrs::ff::mmff::{MmffMolProperties, MmffVariant};
@@ -50,8 +51,7 @@ pub(crate) mod aromaticity;
 pub(crate) mod atomtype;
 pub(crate) mod charges;
 mod hybrid;
-pub(crate) mod params;
-pub mod tables;
+pub(crate) mod resolve;
 pub(crate) mod topo;
 
 use molrs::Atomistic;
@@ -68,10 +68,12 @@ use topo::Topo;
 /// delocalized trivalent nitrogen (MMFF numeric types 10 `NC=O` and 40 `NC=C`):
 /// 11 Oop rows and 42 Torsion rows.
 ///
-/// Both `_S` tables ARE shipped in [`tables`] — [`tables::MMFF_OOP_S`] (117 rows)
-/// and [`tables::MMFF_TOR_S`] (926 rows) — and the parameter resolver
-/// (`params`) dispatches on this variant to read them, falling back to the
-/// base table for keys the `_S` table does not re-parameterise.
+/// Both `_S` tables ARE shipped in [`crate::ff::params::mmff`] —
+/// [`MMFF_OOP_S`](crate::ff::params::mmff::MMFF_OOP_S) (117 rows) and
+/// [`MMFF_TOR_S`](crate::ff::params::mmff::MMFF_TOR_S) (926 rows) — and the
+/// parameter resolver (`ff::mmff::resolve`) dispatches on this variant to read
+/// them, falling back to the base table for keys the `_S` table does not
+/// re-parameterise.
 ///
 /// The physics of the difference is the out-of-plane force constant `koop`
 /// (md·Å·rad⁻²), which the improper kernel evaluates as

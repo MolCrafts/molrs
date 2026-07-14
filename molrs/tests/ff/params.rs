@@ -481,7 +481,7 @@ fn a_type_with_equivalent_flag_zero_has_no_alternate() {
     }
 }
 
-/// chem-perceive-10 ac-001 — the estimator's two tables are generated Rust too.
+/// chem-perceive-10 ac-001 — the estimator's two tables are compiled Rust too.
 ///
 /// `gaff_equiv.json` (6159 lines) and `gaff_empirical.json` (87) are the last two
 /// parameter tables molrs keeps as text: parmchk2's equivalence / substitution rows
@@ -496,10 +496,10 @@ fn a_type_with_equivalent_flag_zero_has_no_alternate() {
 /// `MANIFEST.sha256`, and byte-reproduced by the generator (which the guard above then
 /// enforces on every run, without needing to know these two by name).
 #[test]
-fn gaff_equiv_and_empirical_are_generated_tables() {
+fn gaff_equiv_and_empirical_are_committed_param_tables() {
     let dir = params_dir();
     let manifest = std::fs::read_to_string(dir.join("MANIFEST.sha256"))
-        .expect("MANIFEST.sha256 is committed alongside the generated tables");
+        .expect("MANIFEST.sha256 is committed alongside the tables it hashes");
 
     let mut missing = Vec::new();
     for table in ["gaff_equiv.rs", "gaff_empirical.rs"] {

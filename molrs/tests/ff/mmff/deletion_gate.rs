@@ -7,21 +7,38 @@
 //!
 //! Three criteria, and the third one points the other way:
 //!
-//! * **ac-005** — 4,065 dead XML rows and their five readers are gone.
+//! * **ac-005** — 4,065 dead type-def rows and their five readers are gone.
 //! * **ac-006** — the bespoke energy assembly and the wrong classifiers are gone
 //!   repo-wide, including the Python door (a Rust cleanup that leaves the broken
 //!   door open in Python has cleaned nothing).
-//! * **ac-007** — **`ff/mmff/energy/params.rs` SURVIVES**, moved to
-//!   `ff/mmff/params.rs`.
+//! * **ac-007** — **`ff/mmff/energy/params.rs` SURVIVES**, out of `energy/`.
 //!
 //! ac-007 is the one that matters most, because it is the one a deletion list
-//! gets wrong. That 826-line file lives under `energy/` but it is not an energy
-//! file — it is the **parameter resolver**: the RDKit-faithful `bond_type` /
+//! gets wrong. That 800-odd-line file lived under `energy/` but it is not an
+//! energy file — it is the **resolver**: the RDKit-faithful `bond_type` /
 //! `angle_type` / `torsion_type` with four-level equivalence degradation and the
 //! empirical rules that invent parameters from covalent radii when the table
 //! misses. `frame_builder.rs` imports it as `eparams`; it is the one correct
 //! implementation of MMFF's context rules in the tree. A deletion that swallows
 //! it destroys exactly what the deletion was supposed to consolidate onto.
+//!
+//! # Where the subject moved (`chem-perceive-14-all-tables`)
+//!
+//! Two of these gates named artefacts that spec 14 has since renamed or deleted.
+//! They are **retargeted, not relaxed** — the property each was guarding is the
+//! same property, one hop away:
+//!
+//! * The resolver is now **`ff/mmff/resolve.rs`**. Those lines are an ALGORITHM,
+//!   and `params.rs` was the wrong name for them (`ff/params/` is the home of
+//!   *tables*, and the resolver holds none). ac-007 follows the file: it must
+//!   still exist, still be the ONLY implementation of the three context rules
+//!   anywhere under `src/ff/`, and still not be filed under `ff/params/`.
+//! * The four MMFF XML copies are **deleted**; the shipped parameter set is the
+//!   compiled table [`molrs::ff::params::mmff`], assembled into a `ForceField` by
+//!   `ff/typifier/mmff/embedded.rs`. The row census that used to count XML tags
+//!   now counts **type-def rows in the ForceField skeleton** — which is what those
+//!   rows always *were*. Deleting the census along with its file would have left
+//!   the property unguarded on the one path that ships.
 //!
 //! # Companion gate
 //!
@@ -49,6 +66,10 @@
 //! code into.
 
 use std::path::{Path, PathBuf};
+
+use molrs::ff::params::mmff::MMFF_VDW;
+use molrs::ff::potential::{ParamSource, lookup_param_source};
+use molrs::ff::typifier::mmff::{MMFF94STypifier, MMFF94Typifier};
 
 fn repo_root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -175,63 +196,119 @@ fn hits(sources: &[(PathBuf, String)], needle: &str) -> Vec<String> {
 
 // ---------------------------------------------------------------------------
 // ac-005 — the 4,065 dead rows and their five readers
+//
+// The rows used to be XML tags (`<Bond >`, `<Angle >`, `<StretchBend >`,
+// `<Torsion >`, `<Oop >`) in four copies of a parameter file. `chem-perceive-14`
+// deleted the XML and compiled the parameter set into `ff/params/mmff.rs`, so the
+// tag count cannot be taken any more — but the *rows* were never really tags. They
+// were **type-def rows in the ForceField skeleton**: `Style::defs`, the thing
+// `Style::to_potential` hands a kernel as `tp`. That is where the census belongs
+// now, and it is a strictly better place to take it — it sees every route by which
+// a dead row could re-enter the tree, not just the one that went through text.
 // ---------------------------------------------------------------------------
 
-/// The five dead XML row tags, with the count each must have after the deletion.
+/// The five styles whose type-def rows were the 4,065 dead XML rows.
 ///
-/// The trailing space is load-bearing: it distinguishes the `<Bond ` *rows* from
-/// the `<BondStretchParams>` section wrapper and the `<BondChargeIncrements>`
-/// section, which are different elements and are not all being deleted.
-const DEAD_XML_ROWS: [&str; 5] = ["<Bond ", "<Angle ", "<StretchBend ", "<Torsion ", "<Oop "];
-
-/// The rows that must SURVIVE, and their exact counts.
-///
-/// `<VdW >` is a genuine per-atom-type table (95 types, 95 rows) that
-/// `mmff_vdw_ctor` really does read. `<ElectrostaticParams>` is the style-level
-/// section mmff-orthogonal-01 added — the one whose absence was the 150 kcal/mol
-/// hole. Pinning both stops the deletion from over-reaching in either direction.
-const SURVIVING_XML: [(&str, usize); 2] = [("<VdW ", 95), ("<ElectrostaticParams", 1)];
-
-/// All four copies of the parameter set. A `data/` build and a `molrs/data/`
-/// build must not disagree about what MMFF contains.
-const MMFF_XMLS: [&str; 4] = [
-    "molrs/data/mmff94.xml",
-    "molrs/data/mmff94s.xml",
-    "data/mmff94.xml",
-    "data/mmff94s.xml",
+/// Each is `ParamSource::PerInstance`: its kernel reads the columns the typifier
+/// baked into the Frame (`kb`/`r0`, `ka`/`theta0`, `kba_*`, `v1`/`v2`/`v3`,
+/// `koop`) and ignores `tp` entirely. MMFF's context rules — aromaticity, ring
+/// size, equivalence degradation, empirical fallbacks — are not a
+/// `(type_i, type_j, …) → params` table and cannot be made into one, which is why
+/// the rows were dead on the day they were written.
+const DEAD_TYPE_ROW_STYLES: [(&str, &str); 5] = [
+    ("bond", "mmff_bond"),
+    ("angle", "mmff_angle"),
+    ("angle", "mmff_stbn"),
+    ("dihedral", "mmff_torsion"),
+    ("improper", "mmff_oop"),
 ];
 
-#[test]
-fn the_dead_xml_rows_are_gone_and_the_live_ones_are_not() {
-    let mut fails = Vec::new();
-    for rel in MMFF_XMLS {
-        let path = repo_root().join(rel);
-        let text = std::fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+/// vdW is the one MMFF style that genuinely IS a per-atom-type table: 95 types,
+/// 95 rows, and `mmff_vdw_ctor` opens by indexing `tp`.
+const VDW_TYPE_ROWS: usize = 95;
 
-        for tag in DEAD_XML_ROWS {
-            let n = text.matches(tag).count();
-            if n != 0 {
+/// The dead type-def rows are gone from the ForceField tree; the 95 live ones are not.
+///
+/// Both halves matter and they pull in opposite directions, which is the point:
+/// over-reach is as much a failure as under-reach. A deletion that took the vdW
+/// rows with the rest would leave `mmff_vdw_ctor` — a `TypeRows` kernel — with
+/// nothing to resolve from, and `Style::to_potential` would refuse to build it.
+#[test]
+fn the_dead_type_rows_are_gone_and_the_live_ones_are_not() {
+    let mut fails = Vec::new();
+
+    // The data half: the 95 vdW rows still exist as data at all.
+    if MMFF_VDW.len() != VDW_TYPE_ROWS {
+        fails.push(format!(
+            "`ff::params::mmff::MMFF_VDW` has {} rows, want {VDW_TYPE_ROWS} — this is REAL data \
+             (the per-type alpha / n_eff / a_i / g_i / DA table) and no part of the deletion \
+             touches it",
+            MMFF_VDW.len()
+        ));
+    }
+
+    // The tree half: what the shipped ForceField actually carries, per front door.
+    for (label, ff) in [
+        ("MMFF94", MMFF94Typifier::new().ff().clone()),
+        ("MMFF94s", MMFF94STypifier::new().ff().clone()),
+    ] {
+        for (category, name) in DEAD_TYPE_ROW_STYLES {
+            let Some(style) = ff.get_style(category, name) else {
                 fails.push(format!(
-                    "{rel}: {n} `{tag}` rows, want 0 — no code reads them. They exist only to \
-                     satisfy `Style::to_potential`'s empty-type-params guard, which \
-                     `ParamSource::PerInstance` now answers honestly"
+                    "{label}: no `{category}/{name}` style at all — the row census below would be \
+                     vacuous, and the term would not be computed by any consumer of the public API"
+                ));
+                continue;
+            };
+            let rows = style.defs.collect_type_params().len();
+            if rows != 0 {
+                fails.push(format!(
+                    "{label}: `{category}/{name}` carries {rows} type-def rows, want 0 — no code \
+                     reads them. They existed only to satisfy `Style::to_potential`'s \
+                     empty-type-params guard, which `ParamSource::PerInstance` now answers honestly"
+                ));
+            }
+            let source = lookup_param_source(category, name);
+            if source != Some(ParamSource::PerInstance) {
+                fails.push(format!(
+                    "{label}: `{category}/{name}` is registered as {source:?}, want \
+                     `PerInstance` — a `TypeRows` registration is exactly the escape hatch that \
+                     let MMFF declare itself table-driven and then be fed 4,065 rows of type-def \
+                     no kernel reads. The zero-row assertion above depends on this: with \
+                     `TypeRows`, zero rows is an ERROR, and the rows would have to come back."
                 ));
             }
         }
-        for (tag, want) in SURVIVING_XML {
-            let n = text.matches(tag).count();
-            if n != want {
-                fails.push(format!(
-                    "{rel}: {n} `{tag}` elements, want {want} — this one is REAL data and must \
-                     survive the deletion"
-                ));
+
+        match ff.get_style("pair", "mmff_vdw") {
+            None => fails.push(format!(
+                "{label}: no `pair/mmff_vdw` style — the deletion over-reached and took the one \
+                 MMFF style that IS a type table"
+            )),
+            Some(style) => {
+                let rows = style.defs.collect_type_params().len();
+                if rows != VDW_TYPE_ROWS {
+                    fails.push(format!(
+                        "{label}: `pair/mmff_vdw` carries {rows} type-def rows, want \
+                         {VDW_TYPE_ROWS} — one per MMFF atom type. `mmff_vdw_ctor` resolves its \
+                         parameters FROM these rows; they are not the dead kind"
+                    ));
+                }
+                let source = lookup_param_source("pair", "mmff_vdw");
+                if source != Some(ParamSource::TypeRows) {
+                    fails.push(format!(
+                        "{label}: `pair/mmff_vdw` is registered as {source:?}, want `TypeRows` — \
+                         if it ever became `PerInstance`, the 95 rows above could be deleted \
+                         without any test noticing"
+                    ));
+                }
             }
         }
     }
+
     assert!(
         fails.is_empty(),
-        "MMFF XML row census failed:\n  {}",
+        "MMFF type-def row census failed:\n  {}",
         fails.join("\n  ")
     );
 }
@@ -367,8 +444,8 @@ fn the_bespoke_energy_module_tree_is_gone() {
         !dir.exists(),
         "{} still exists. The energy assembly layer (bond/angle/stretchbend/torsion/oop/\
          nonbonded/geom) is the redundant second implementation.\n\
-         NOTE: `energy/params.rs` is NOT part of it — it is the parameter resolver and must be \
-         MOVED to `ff/mmff/params.rs`, not deleted (ac-007).",
+         NOTE: `energy/params.rs` is NOT part of it — it is the resolver and must be MOVED to \
+         `ff/mmff/resolve.rs`, not deleted (ac-007).",
         dir.display()
     );
 }
@@ -379,7 +456,7 @@ fn the_wrong_classifier_module_is_gone() {
     assert!(
         !path.exists(),
         "{} still exists. Its three classifiers reimplement — incorrectly — the context rules \
-         that `ff/mmff/params.rs` already implements correctly:\n\
+         that `ff/mmff/resolve.rs` already implements correctly:\n\
            * `typify_bond`: aromatic bond -> type 1. RDKit says 0: after MMFF aromaticity \
              perception an aromatic bond is AROMATIC, never SINGLE, and `getMMFFBondType` \
              requires SINGLE. Backwards.\n\
@@ -439,63 +516,153 @@ fn the_mmff_front_doors_expose_no_build_or_classify_methods() {
 // ac-007 — the REVERSE protection: the resolver survives
 // ---------------------------------------------------------------------------
 
-/// `energy/params.rs` is not an energy file. It must survive, out of `energy/`.
+/// The three context rules. Declaring one of these IS being the resolver.
 ///
-/// It is the RDKit-faithful parameter resolver: `bond_type` / `angle_type` /
-/// `torsion_type` (with the ring rules the deleted classifiers could not express),
-/// four-level equivalence degradation, and the empirical rules that invent
-/// parameters from covalent radii on a table miss. Every number the MMFF kernels
-/// read — `kb`, `r0`, `ka`, `theta0`, `kba_*`, `v1/v2/v3`, `koop` — comes from
-/// here, through `frame_builder`.
+/// The leading `fn ` and the trailing `(` are load-bearing: `mmff_bond_type(` (a
+/// real function in `ff/mmff/charges.rs`, which asks the resolver rather than
+/// reimplementing it) contains `bond_type(` and must not be mistaken for a second
+/// declaration.
+const RESOLVER_RULES: [&str; 3] = ["fn bond_type(", "fn angle_type(", "fn torsion_type("];
+
+/// A `src/`-relative path, for messages and for comparing "which file declares it".
+fn rel_to_src(path: &Path) -> String {
+    path.strip_prefix(src_dir())
+        .unwrap_or(path)
+        .display()
+        .to_string()
+}
+
+/// The resolver, wherever it is filed, is the ONE implementation of the context rules.
 ///
-/// The line-count floor is the anti-gutting clause. "Moved" must mean moved, not
-/// re-derived into a stub that happens to have the right file name.
+/// It is the RDKit-faithful resolver: `bond_type` / `angle_type` / `torsion_type`
+/// (with the ring rules the deleted classifiers could not express), four-level
+/// equivalence degradation, and the empirical rules that invent parameters from
+/// covalent radii on a table miss. Every number the MMFF kernels read — `kb`,
+/// `r0`, `ka`, `theta0`, `kba_*`, `v1/v2/v3`, `koop` — comes from here, through
+/// `frame_builder`.
+///
+/// # Its name, twice corrected
+///
+/// It was `ff/mmff/energy/params.rs` and spec 02 moved it to `ff/mmff/params.rs`.
+/// `chem-perceive-14` renamed it again, to **`ff/mmff/resolve.rs`**: those lines
+/// are an ALGORITHM, `ff/params/` is the home of *tables*, and the file holds
+/// none — calling it `params.rs` was the same misnaming in the other direction.
+/// So this gate no longer pins one path. It pins the property the path was only
+/// ever a proxy for:
+///
+/// 1. the resolver exists, at `ff/mmff/resolve.rs`, and is not a stub;
+/// 2. it declares the three context rules;
+/// 3. **nothing else under `src/ff/` declares them** — not `classify.rs`, not a
+///    fresh copy under `ff/params/`, not anywhere. That is the half a rename can
+///    silently break, and the half that made ac-007 the reverse-protection
+///    criterion in the first place;
+/// 4. and neither of the two names it used to have is back, which is what
+///    distinguishes a move from a copy.
+///
+/// The line-count floor is the anti-gutting clause. "Renamed" must mean renamed,
+/// not re-derived into a stub that happens to have the right file name.
 #[test]
 fn the_rdkit_faithful_resolver_survives_outside_energy() {
-    let moved = src_dir().join("ff/mmff/params.rs");
+    let resolver_rel = "ff/mmff/resolve.rs";
+    let resolver = src_dir().join(resolver_rel);
     assert!(
-        moved.is_file(),
-        "{} does not exist. The 826-line resolver lived under `energy/` but it is NOT an energy \
-         file — it is the one correct implementation of MMFF's context rules in this tree, and \
-         the typifier imports it. A deletion list that swallowed `energy/params.rs` along with \
-         `energy/` destroyed exactly the thing this consolidation is consolidating ONTO.",
-        moved.display()
+        resolver.is_file(),
+        "{} does not exist. The ~810-line resolver lived under `energy/` but it is NOT an energy \
+         file, and it is not a parameter table either — it is the one correct implementation of \
+         MMFF's context rules in this tree, and the typifier imports it. A deletion list that \
+         swallowed `energy/params.rs` along with `energy/` destroyed exactly the thing this \
+         consolidation is consolidating ONTO; a rename that loses it does the same damage more \
+         quietly.",
+        resolver.display()
     );
 
-    let text = std::fs::read_to_string(&moved).expect("read the moved resolver");
+    let text = std::fs::read_to_string(&resolver).expect("read the resolver");
     let lines = text.lines().count();
     assert!(
         lines >= 700,
-        "{} has only {lines} lines. The resolver is 826; a file this short is a stub, not a \
-         move. The equivalence degradation and the empirical rules ARE the file.",
-        moved.display()
+        "{} has only {lines} lines. The resolver is ~810; a file this short is a stub, not a \
+         rename. The equivalence degradation and the empirical rules ARE the file.",
+        resolver.display()
     );
 
-    let old = src_dir().join("ff/mmff/energy/params.rs");
-    assert!(
-        !old.exists(),
-        "{} still exists — the resolver was copied, not moved. Two copies of the context rules \
-         is the defect this spec is deleting, reintroduced by its own fix.",
-        old.display()
-    );
-
-    // The RDKit-faithful trio must actually be in there.
-    for needle in ["fn bond_type(", "fn angle_type(", "fn torsion_type("] {
+    // Neither name it used to have may be back: a copy is not a move.
+    for old in ["ff/mmff/energy/params.rs", "ff/mmff/params.rs"] {
+        let path = src_dir().join(old);
         assert!(
-            text.contains(needle),
-            "the moved resolver does not declare `{needle}` — these three ARE the context rules \
-             (and the reason the `classify.rs` versions were wrong)"
+            !path.exists(),
+            "{} still exists — the resolver was copied, not moved. Two copies of the context \
+             rules is the defect this spec is deleting, reintroduced by its own fix.",
+            path.display()
         );
     }
+
+    // The RDKit-faithful trio must actually be in there...
+    for needle in RESOLVER_RULES {
+        assert!(
+            text.contains(needle),
+            "the resolver does not declare `{needle}` — these three ARE the context rules (and \
+             the reason the `classify.rs` versions were wrong)"
+        );
+    }
+
+    // ...and nowhere else under `src/ff/`, including `ff/params/`.
+    let mut sources = Vec::new();
+    scan_tree(&src_dir().join("ff"), &mut sources);
+    assert!(
+        !sources.is_empty(),
+        "no sources under src/ff — vacuous gate"
+    );
+
+    let mut fails = Vec::new();
+    for needle in RESOLVER_RULES {
+        let declared_in: Vec<String> = sources
+            .iter()
+            .filter(|(_, text)| text.contains(needle))
+            .map(|(path, _)| rel_to_src(path))
+            .collect();
+        if declared_in != [resolver_rel] {
+            fails.push(format!(
+                "`{needle}` is declared in {declared_in:?}, want exactly [\"{resolver_rel}\"]"
+            ));
+        }
+    }
+    assert!(
+        fails.is_empty(),
+        "MMFF's context rules have more than one implementation under `src/ff/`:\n  {}\n\n\
+         There is exactly ONE — the RDKit-faithful resolver, validated against RDKit on 11/11 \
+         fixtures. A second one is not a second opinion; it is a second set of numbers to be \
+         wrong, and the last one (`classify.rs`) got benzene's aromatic bonds backwards and \
+         could not express a ring-membership angle type at all. `ff/params/` is not a home for \
+         it either: that directory holds TABLES, and these are rules.",
+        fails.join("\n  ")
+    );
 }
+
+/// The resolver's module path. Its FULL crate path, and that is deliberate.
+///
+/// The old needle was the bare `"mmff::params"`, and it had a hole: a file could
+/// satisfy it by importing `crate::ff::typifier::mmff::params::MMFFParams` — a
+/// real, unrelated module (the 95 nine-column typing rows) whose path also spells
+/// `mmff::params`. Grepping for the full path closes that, and the call check
+/// below closes it again from the other side: an import that is not *used* for the
+/// labels no longer passes.
+const RESOLVER_MODULE: &str = "crate::ff::mmff::resolve";
 
 /// `frame_builder` derives its labels from the resolver, and from nothing else.
 ///
 /// After `classify.rs` is gone, the bond / angle / dihedral type labels must come
 /// from the one correct implementation. The labels are only provenance — the
 /// per-instance kernels read Frame columns, not labels — but "only provenance" is
-/// not a licence to be wrong, and today they ARE wrong (see
+/// not a licence to be wrong, and they HAVE been wrong (see
 /// `tests/ff/typifier/mmff_labels.rs`, which asserts the values).
+///
+/// Three things, and the middle one is the one with teeth:
+///
+/// 1. the resolver is imported, by its full crate path;
+/// 2. the three context rules are **called through whatever name that import
+///    binds** — so the import cannot be a decoration that satisfies a grep while
+///    the labels come from somewhere else;
+/// 3. no `classify`, and no resurrected `mmff::energy`.
 #[test]
 fn frame_builder_imports_the_resolver_and_no_second_classifier() {
     let path = src_dir().join("ff/typifier/mmff/frame_builder.rs");
@@ -504,15 +671,54 @@ fn frame_builder_imports_the_resolver_and_no_second_classifier() {
         "//",
     );
 
+    let use_line = text
+        .lines()
+        .find(|line| line.contains("use ") && line.contains(RESOLVER_MODULE))
+        .unwrap_or_else(|| {
+            panic!(
+                "`frame_builder.rs` does not import `{RESOLVER_MODULE}` — the resolver is where \
+                 every bond / angle / dihedral type label must come from"
+            )
+        });
+
+    // What the import binds the resolver's items to: `use … resolve as eparams;`
+    // -> `eparams::`, `use … resolve;` -> `resolve::`, `use … resolve::{…};` -> the
+    // items are in scope bare. Whichever spelling, the three rules must be CALLED.
+    let tail = use_line
+        .split_once(RESOLVER_MODULE)
+        .map(|(_, tail)| tail)
+        .unwrap_or_default();
+    let prefix = if tail.trim_start().starts_with("::") {
+        // `use …::resolve::{bond_type, …};` — the items are in scope bare.
+        String::new()
+    } else if let Some((_, alias)) = tail.split_once(" as ") {
+        // `use …::resolve as eparams;`
+        format!("{}::", alias.trim().trim_end_matches(';').trim())
+    } else {
+        // `use …::resolve;`
+        "resolve::".to_owned()
+    };
+
+    let mut missing = Vec::new();
+    for rule in ["bond_type(", "angle_type(", "torsion_type("] {
+        let call = format!("{prefix}{rule}");
+        if !text.contains(&call) {
+            missing.push(call);
+        }
+    }
     assert!(
-        text.contains("mmff::params"),
-        "`frame_builder.rs` does not import `crate::ff::mmff::params` — the resolver is where \
-         every bond / angle / dihedral type label must now come from"
+        missing.is_empty(),
+        "`frame_builder.rs` imports the resolver (`{}`) but never calls {missing:?} through it. \
+         An import is not a derivation: the bond / angle / dihedral type codes must come from the \
+         RDKit-faithful rules, which are the only ones in the tree that can see aromaticity and \
+         ring membership.",
+        use_line.trim()
     );
+
     assert!(
         !text.contains("mmff::energy"),
         "`frame_builder.rs` still imports from `ff::mmff::energy`, which no longer exists as an \
-         energy module. The resolver moved to `ff::mmff::params`."
+         energy module. The resolver lives at `{RESOLVER_MODULE}`."
     );
     assert!(
         !text.contains("classify"),
@@ -554,7 +760,7 @@ fn no_second_classifier_survives_anywhere_in_ff() {
         fails.is_empty(),
         "a second MMFF classifier still exists under src/ff/:\n\n{}\n\n\
          There is exactly one correct implementation of MMFF's bond / angle / torsion type \
-         rules (`ff/mmff/params.rs`, validated against RDKit on 11/11 fixtures). Every label in \
+         rules (`ff/mmff/resolve.rs`, validated against RDKit on 11/11 fixtures). Every label in \
          the tree derives from it, or it is not the only one.",
         fails.join("\n\n")
     );

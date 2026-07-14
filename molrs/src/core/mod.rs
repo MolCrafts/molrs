@@ -33,8 +33,10 @@
 #![allow(missing_docs)]
 #![warn(rustdoc::missing_crate_level_docs)]
 
-// Embedded data files
-pub mod data;
+// There is no `data` module: molrs embeds no parameter text. Every force-field
+// table is typed, compiled Rust under `ff::params` — MMFF94/94s and OPLS-AA
+// included, since `chem-perceive-14` — so nothing here `include_str!`s an XML to
+// re-parse at runtime.
 
 // Domain groups
 pub mod spatial;

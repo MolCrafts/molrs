@@ -339,8 +339,12 @@ fn legacy_gen3d_fragment_libraries_are_removed() {
 /// do not read me", which is false of every file in it, and it is the name that let
 /// parameter data drift into a second-class corner of the tree in the first place.
 /// Provenance is a header comment's job, not a directory's.
+///
+/// The test's own NAME obeys the rule it enforces: it says what must be true, not
+/// which forbidden word it looks for. The word survives in the prose and in the
+/// needle below, where it is a string being searched for — never an identifier.
 #[test]
-fn there_is_no_directory_named_generated() {
+fn no_table_directory_is_named_after_its_provenance() {
     let mut found = Vec::new();
     find_dirs_named(&src_dir(), "generated", &mut found);
     assert!(

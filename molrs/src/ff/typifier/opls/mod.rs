@@ -37,6 +37,7 @@ use super::Typifier;
 
 pub mod assign;
 pub mod deps;
+mod embedded;
 pub mod layered;
 pub mod meta;
 pub mod typing;
@@ -80,22 +81,23 @@ impl OPLSAATypifier {
         Ok(Self::new(meta, ff))
     }
 
-    /// Build a typifier from the embedded canonical OPLS-AA parameter set
-    /// ([`molrs::data::OPLSAA_XML`](crate::core::data::OPLSAA_XML)).
+    /// Build a typifier over the shipped canonical OPLS-AA parameter set
+    /// ([`crate::ff::params::oplsaa`]).
     ///
-    /// The XML is compiled into the binary, so this is the standalone path: the
-    /// OPLS typifier needs no external file on disk. The embedded copy uses
-    /// lowercase SMARTS `c` for aromatic ring carbons / hydrogens
-    /// (RDKit-faithful aromatic matching), so benzene-type rings type exactly as
-    /// molpy's ground truth. Mirrors
+    /// The parameters are compiled-in typed Rust, so this is the standalone
+    /// path: the OPLS typifier needs no external file on disk and parses nothing
+    /// at runtime. The shipped set uses lowercase SMARTS `c` for aromatic ring
+    /// carbons / hydrogens (RDKit-faithful aromatic matching), so benzene-type
+    /// rings type exactly as molpy's ground truth. Mirrors
     /// [`MMFF94Typifier::new`](crate::ff::typifier::mmff::MMFF94Typifier::new).
     ///
     /// # Errors
     ///
-    /// Returns `Err` if parsing the embedded XML fails (should not happen for the
-    /// shipped data).
+    /// Infallible today — the `Result` is kept because it is the published
+    /// signature, and because a caller that switches to
+    /// [`from_xml_str`](Self::from_xml_str) gets the same shape.
     pub fn oplsaa() -> Result<Self, String> {
-        Self::from_xml_str(molrs::data::OPLSAA_XML)
+        Ok(Self::new(embedded::typing_meta(), embedded::force_field()))
     }
 
     /// Construct directly from already-parsed metadata and force field

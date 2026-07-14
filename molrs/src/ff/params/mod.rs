@@ -1,15 +1,20 @@
-//! Antechamber parameter tables as typed, compile-time Rust data.
+//! Every force-field parameter table molrs ships, as typed, compile-time Rust
+//! data — **one place, one form**.
 //!
 //! molrs parses **no** parameter text at runtime. The upstream `.DAT` / `.DEF`
 //! tables are transcribed into the `const`s in the sibling modules here by
-//! `scripts/gen_param_tables.py`, which reads them from `$AMBERHOME`. The
-//! committed `.rs` is the single in-repo source of truth; a malformed table is
-//! therefore a **compile** error, not a runtime one, and the tables can be
-//! grepped, diffed and stepped through like any other code.
+//! `scripts/gen_param_tables.py`, which reads them from `$AMBERHOME`; [`mmff`]
+//! is ported from RDKit's `Params.cpp` and merged with what MMFF's retired XML
+//! carried; [`oplsaa`] is the retired `oplsaa.xml`. The committed `.rs` is the
+//! single in-repo source of truth; a malformed table is therefore a **compile**
+//! error, not a runtime one, and the tables can be grepped, diffed and stepped
+//! through like any other code.
 //!
-//! This module owns the row types; the sibling modules own only data. They are
-//! ordinary source files, not build artefacts — how a table *arrived* belongs in
-//! its header doc, never in its name.
+//! This module owns the row types of the tables it emits, and the sibling
+//! modules own only data. (The RDKit port keeps its own row structs next to the
+//! rows they describe — it is a transcription of one upstream file and is moved
+//! verbatim, not re-shaped.) They are all ordinary source files, not build
+//! artefacts: how a table *arrived* belongs in its header doc, never in its name.
 //!
 //! # The ATD / WILDATOM grammar
 //!
@@ -48,6 +53,8 @@ pub mod gaff2;
 pub mod gaff_empirical;
 pub mod gaff_equiv;
 pub mod gasparm;
+pub mod mmff;
+pub mod oplsaa;
 
 pub use atomtype_abcg2::ATOMTYPE_ABCG2;
 pub use atomtype_amber::ATOMTYPE_AMBER;
@@ -63,6 +70,7 @@ pub use gaff_empirical::{EMPIRICAL_GAFF, EMPIRICAL_GAFF2};
 pub use gaff_equiv::{PARMCHK, PARMCHK_TYPES, PARMCHK_WEIGHTS};
 pub use gaff2::GAFF2;
 pub use gasparm::GASTEIGER_PARAMS;
+pub use oplsaa::{OPLSAA_ANGLES, OPLSAA_ATOMS, OPLSAA_BONDS, OPLSAA_DIHEDRALS};
 
 /// One oriented bond charge correction from a `BCCPARM*.DAT` table.
 ///
@@ -750,4 +758,106 @@ impl ParmTable {
             .position(|row| row.atom_type == name)
             .map(|idx| ParmType(idx as u8))
     }
+}
+
+// ---------------------------------------------------------------------------
+// OPLS-AA
+// ---------------------------------------------------------------------------
+//
+// The rows of [`oplsaa`], in **molrs units** (Å, kcal/mol, radians, e) — the
+// units the kernels read. `oplsaa.xml` was a GROMACS-flavoured OpenMM file (nm,
+// kJ/mol, Ryckaert–Bellemans torsions) and molrs converted it on every parse;
+// the conversion now happens once, in the generator, and its result is what is
+// committed. The two vocabularies of the source survive intact: bonded rows key
+// on the chemical **class** (`CT`, `HC`), atoms and pairs on the **type**
+// (`opls_NNN`).
+
+/// One OPLS-AA atom type: its potential parameters **and** its typing metadata.
+///
+/// The source file spelled these across two sections (`<AtomTypes>` for
+/// mass/class/SMARTS, `<NonbondedForce>` for charge/σ/ε) in the same order, over
+/// the same 813 names. They are one row here because they are one atom type.
+///
+/// `def` / `overrides` / `priority` / `layer` never enter an energy — they decide
+/// what gets *typed*: `def` is the SMARTS the typifier matches, `overrides` and
+/// `priority` settle which of several matching types wins, and `layer` is what
+/// lets CL&P / CL&Pol overlay OPLS at all.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OplsAtomRow {
+    /// Type name (`opls_135`) — the nonbonded / atom-style key.
+    pub name: &'static str,
+    /// Chemical class (`CT`) — the bonded-table key.
+    pub class: &'static str,
+    /// Atomic mass (amu).
+    pub mass: f64,
+    /// Partial charge (e).
+    pub charge: f64,
+    /// Lennard-Jones σ (Å).
+    pub sigma: f64,
+    /// Lennard-Jones ε (kcal/mol).
+    pub epsilon: f64,
+    /// SMARTS pattern for automatic typing; `None` for the legacy rows
+    /// (`opls_001`–`opls_134`) that are excluded from it.
+    pub def: Option<&'static str>,
+    /// Type names this one outranks when both match.
+    pub overrides: &'static [&'static str],
+    /// Explicit typing priority, if the source declared one.
+    pub priority: Option<i64>,
+    /// Overlay layer (0 = base OPLS).
+    pub layer: u32,
+}
+
+/// One `<HarmonicBondForce>` row: `½k₀(r − r₀)²`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OplsBondRow {
+    /// Class of the first atom.
+    pub i: &'static str,
+    /// Class of the second atom.
+    pub j: &'static str,
+    /// Force constant (kcal/mol/Å²).
+    pub k0: f64,
+    /// Equilibrium length (Å).
+    pub r0: f64,
+}
+
+/// One `<HarmonicAngleForce>` row: `½k₀(θ − θ₀)²`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OplsAngleRow {
+    /// Class of the first atom.
+    pub i: &'static str,
+    /// Class of the central atom.
+    pub j: &'static str,
+    /// Class of the third atom.
+    pub k: &'static str,
+    /// Force constant (kcal/mol/rad²).
+    pub k0: f64,
+    /// Equilibrium angle (**radians**).
+    pub theta0: f64,
+}
+
+/// One `<RBTorsionForce>` row, as the OPLS 4-cosine Fourier series the
+/// `dihedral:opls` kernel evaluates:
+/// `V = ½[f₁(1+cosφ) + f₂(1−cos2φ) + f₃(1+cos3φ) + f₄(1−cos4φ)]`.
+///
+/// The source stated it in Ryckaert–Bellemans form (`c0..c5`, kJ/mol); the
+/// generator applies GROMACS Eqs. 200–201 — the exact analytic inversion, which
+/// is independent of `c0` and `c5` — and the kcal/mol conversion.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OplsDihedralRow {
+    /// Class of the first atom.
+    pub i: &'static str,
+    /// Class of the second atom.
+    pub j: &'static str,
+    /// Class of the third atom.
+    pub k: &'static str,
+    /// Class of the fourth atom.
+    pub l: &'static str,
+    /// 1-fold coefficient (kcal/mol).
+    pub f1: f64,
+    /// 2-fold coefficient (kcal/mol).
+    pub f2: f64,
+    /// 3-fold coefficient (kcal/mol).
+    pub f3: f64,
+    /// 4-fold coefficient (kcal/mol).
+    pub f4: f64,
 }

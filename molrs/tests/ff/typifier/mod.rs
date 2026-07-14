@@ -44,8 +44,12 @@ mod equivalence_antechamber;
 mod estimate;
 
 /// The last runtime text parse on the FF path (chem-perceive-10 ac-002) — RED until 11.
-#[path = "estimate_tables_generated.rs"]
-mod estimate_tables_generated;
+///
+/// Named for the property it pins, like its sibling `atd_no_runtime_parse`. It used
+/// to be `estimate_tables_generated.rs`, which named how the tables ARRIVED rather
+/// than what they ARE — the exact mistake `chem-perceive-14` corrects everywhere else.
+#[path = "estimate_no_runtime_parse.rs"]
+mod estimate_no_runtime_parse;
 
 /// The parmchk2 missing-parameter oracle (chem-perceive-10 ac-003) — RED until 11.
 #[path = "parmchk2_oracle.rs"]

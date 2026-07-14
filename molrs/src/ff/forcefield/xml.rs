@@ -584,47 +584,37 @@ mod tests {
         assert!(err.contains("missing attribute 'name'"));
     }
 
-    /// The shipped parameter set: seven styles, and exactly one real table.
-    #[test]
-    fn test_full_mmff_xml() {
-        let ff = read_forcefield_xml_str(molrs::data::MMFF94_XML).unwrap();
-        assert_eq!(ff.name, "MMFF94");
+    // The two tests that read the SHIPPED MMFF parameter set through this reader
+    // — `test_full_mmff_xml` (seven styles, 95 vdW rows, no type-def rows) and
+    // `test_mmff_params_xml` (the `<AtomProperties>` table) — are gone with their
+    // subject: `chem-perceive-14` compiled that parameter set into
+    // `ff::params::mmff` and deleted the XML, so there is no longer a shipped
+    // string for them to parse. What they asserted did not go with them: the
+    // shipped set is now checked field for field, at zero tolerance, against the
+    // pre-conversion parse in `tests/ff/tables_equivalence.rs`.
+    //
+    // This reader is still the door for a CALLER's MMFF XML
+    // (`MMFF94Typifier::from_xml_str`), which is what the section tests above and
+    // below cover.
 
-        // All seven energy styles are defined — `pair/mmff_ele` included, whose
-        // absence was a 150 kcal/mol hole on caffeine.
-        for (category, name) in [
-            ("bond", "mmff_bond"),
-            ("angle", "mmff_angle"),
-            ("angle", "mmff_stbn"),
-            ("dihedral", "mmff_torsion"),
-            ("improper", "mmff_oop"),
-            ("pair", "mmff_vdw"),
-            ("pair", "mmff_ele"),
-        ] {
-            assert!(
-                ff.get_style(category, name).is_some(),
-                "MMFF94 defines no {category}/{name} style"
-            );
-        }
-
-        // The bonded styles are per-instance: zero type rows, by construction.
-        assert!(ff.get_bondtypes().is_empty());
-        assert!(ff.get_angletypes().is_empty());
-        assert!(ff.get_dihedraltypes().is_empty());
-        assert!(ff.get_impropertypes().is_empty());
-
-        // vdW is the one genuine per-atom-type table: 95 types, 95 rows.
-        assert_eq!(ff.get_pairtypes().len(), 95);
-    }
-
+    /// The MMFF atom-property section, from a caller's XML.
     #[test]
     fn test_mmff_params_xml() {
-        let params = read_mmff_params_xml_str(molrs::data::MMFF94_XML).unwrap();
-        assert!(params.get_prop(1).is_some());
+        let xml = r#"
+        <ForceField name="MMFF94">
+          <AtomProperties>
+            <Prop type="1" atno="6" crd="4" val="4" pilp="0" mltb="0" arom="0" linh="0" sbmb="0" />
+          </AtomProperties>
+        </ForceField>
+        "#;
+
+        let params = read_mmff_params_xml_str(xml).unwrap();
+        let p = params.get_prop(1).expect("type 1 is in the parsed table");
+        assert_eq!((p.atno, p.crd, p.val), (6, 4, 4));
     }
 
-    // --- OPLS typing metadata reader (edge cases; happy-path parse over the
-    //     real oplsaa.xml lives in tests/ff/typifier/opls.rs) -----------------
+    // --- OPLS typing metadata reader (edge cases; happy-path parse over a
+    //     caller's oplsaa.xml lives in tests/ff/typifier/opls.rs) -------------
 
     #[test]
     fn test_opls_typing_overrides_and_layer_defaults() {

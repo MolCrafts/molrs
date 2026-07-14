@@ -12,7 +12,7 @@
 //! # One resolver, for the numbers AND the labels
 //!
 //! Every number and every type code on this graph comes from
-//! [`crate::ff::mmff::params`] — the RDKit-faithful resolver, with the ring rules,
+//! [`crate::ff::mmff::resolve`] — the RDKit-faithful resolver, with the ring rules,
 //! the four-level equivalence degradation and the empirical fallbacks. There used
 //! to be a second classifier (`typifier/mmff/classify.rs`) that produced the
 //! *labels* while the resolver produced the *parameters*, so a single row could
@@ -40,7 +40,7 @@ use std::collections::HashMap;
 use molrs::system::molgraph::PropValue;
 use molrs::{AtomId, Atomistic};
 
-use crate::ff::mmff::params as eparams;
+use crate::ff::mmff::resolve as eparams;
 use crate::ff::mmff::topo::Topo;
 use crate::ff::mmff::{MmffMolProperties, MmffVariant};
 

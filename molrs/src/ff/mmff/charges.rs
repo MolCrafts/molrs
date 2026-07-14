@@ -9,8 +9,8 @@
 //! Reference: Halgren, T. A. "MMFF.V", J. Comput. Chem. 1996, 17, 616-641.
 //! Eq. 15 (p. 622): `q = (1 - M*v)*q0 + v*sum(qF_nbr) + sum(bci)`.
 
-use super::tables::{mmff_chg, mmff_pbci, mmff_prop};
 use super::topo::{BondOrder, Topo};
+use crate::ff::params::mmff::{mmff_chg, mmff_pbci, mmff_prop};
 
 const EPS: f64 = 1.0e-8;
 

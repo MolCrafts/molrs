@@ -35,20 +35,24 @@
 //!
 //! Reference: Halgren, T. A. *J. Comput. Chem.* 1996, 17, 490-641 (MMFF.I-V).
 //!
-//! # Handover
+//! # Why this file is not in `ff/params/`
 //!
-//! `chem-perceive-14-all-tables` moves [`crate::ff::mmff::tables`] to
-//! `ff/params/mmff.rs`. **The resolver should travel with its tables**: it is the
-//! only reader of them, and splitting the two across `ff/mmff/` and `ff/params/`
-//! would put the lookup rules one module away from the rows they degrade through.
+//! An earlier draft of this header said the resolver "should travel with its
+//! tables" into `ff/params/mmff.rs`. That instruction is **superseded**
+//! (`chem-perceive-14-all-tables`): `ff/params/` is the home of *tables*, and
+//! this file holds none — it is an algorithm (`bond_type` / `angle_type` /
+//! `torsion_type`, the four-level equivalence degradation, the empirical rules).
+//! It reads [`crate::ff::params::mmff`] from one module away and belongs where it
+//! is used, with the typifier front end. Naming it `params.rs` was the same
+//! mistake in the other direction, and it is corrected here: it *resolves*.
 
 use crate::ff::mmff::MmffVariant;
 use crate::ff::mmff::charges::mmff_bond_type;
-use crate::ff::mmff::tables::{
+use crate::ff::mmff::topo::{BondOrder, Topo};
+use crate::ff::params::mmff::{
     mmff_angle, mmff_bndk, mmff_bond, mmff_cov_rad_pau_ele, mmff_def, mmff_dfsb,
     mmff_herschbach_laurie, mmff_oop, mmff_oop_s, mmff_prop, mmff_stbn, mmff_tor, mmff_tor_s,
 };
-use crate::ff::mmff::topo::{BondOrder, Topo};
 
 // MMFF's degree → radian conversion, from the crate-level `constants` module so
 // the `potential` kernels share one definition. (The MMFF tables store reference
@@ -667,8 +671,8 @@ fn torsion_empirical(topo: &Topo, types: &[u8], j: usize, k: usize) -> Option<To
     let kt = types[k];
     let atno = [topo.atno[j], topo.atno[k]];
     let bond = topo.bond_order(j, k);
-    let aromatic = crate::ff::mmff::tables::mmff_is_arom(jt)
-        && crate::ff::mmff::tables::mmff_is_arom(kt)
+    let aromatic = crate::ff::params::mmff::mmff_is_arom(jt)
+        && crate::ff::params::mmff::mmff_is_arom(kt)
         && topo.is_aromatic[j]
         && topo.is_aromatic[k]
         && bond == Some(BondOrder::Aromatic);

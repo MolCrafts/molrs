@@ -57,6 +57,7 @@ use molrs::Atomistic;
 use super::Typifier;
 use engine::MmffEngine;
 
+mod embedded;
 mod engine;
 pub(crate) mod frame_builder;
 pub mod params;
@@ -68,7 +69,7 @@ mod tests;
 pub use params::{MMFFAtomProp, MMFFParams};
 
 /// Declare a front door: a newtype over the one [`MmffEngine`], with its variant
-/// and its embedded XML pinned by the type itself.
+/// and its force-field name pinned by the type itself.
 ///
 /// The forwarding is written once here rather than twice by hand, so the two doors
 /// cannot drift apart — but each door is still a distinct concrete type with a
@@ -76,18 +77,19 @@ pub use params::{MMFFAtomProp, MMFFParams};
 macro_rules! mmff_front_door {
     (
         $(#[$doc:meta])*
-        $name:ident, $variant:expr, $xml:expr, $set:literal
+        $name:ident, $variant:expr, $set:literal
     ) => {
         $(#[$doc])*
         pub struct $name(MmffEngine);
 
         impl $name {
-            #[doc = concat!("Create a typifier over the embedded `", $set, "` parameter set.")]
+            #[doc = concat!("Create a typifier over the shipped `", $set, "` parameter set.")]
             ///
-            /// Infallible: the parameter set is a `&'static str` compiled into the
-            /// binary, so it cannot be malformed at runtime.
+            /// Infallible: the parameters are compiled-in typed Rust
+            /// ([`ff::params::mmff`](crate::ff::params::mmff)), so there is
+            /// nothing that can fail to parse at runtime.
             pub fn new() -> Self {
-                Self(MmffEngine::embedded($variant, $xml))
+                Self(MmffEngine::embedded($variant, $set))
             }
 
             #[doc = concat!("Create a typifier from a caller-supplied `", $set, "` XML string.")]
@@ -147,7 +149,7 @@ mmff_front_door! {
     /// MMFF94 typifier (Halgren 1996) — the standard parameterization.
     ///
     /// Owns the MMFF94 typing metadata and force-field parameters, both read from
-    /// [`molrs::data::MMFF94_XML`].
+    /// the compiled table [`crate::ff::params::mmff`].
     ///
     /// ```no_run
     /// use molrs::ff::typifier::mmff::MMFF94Typifier;
@@ -160,7 +162,7 @@ mmff_front_door! {
     /// # Ok(())
     /// # }
     /// ```
-    MMFF94Typifier, MmffVariant::Mmff94, molrs::data::MMFF94_XML, "MMFF94"
+    MMFF94Typifier, MmffVariant::Mmff94, "MMFF94"
 }
 
 mmff_front_door! {
@@ -187,8 +189,12 @@ mmff_front_door! {
     /// (type 10) / `+0.030` (type 40); under MMFF94 those rows range over
     /// `−0.033 … +0.004`.
     ///
-    /// Parameters are read from [`molrs::data::MMFF94S_XML`], and the same variant
-    /// drives the per-instance `koop` / `(v1, v2, v3)` baked onto the typed graph.
+    /// Parameters come from the same compiled table as [`MMFF94Typifier`]
+    /// ([`crate::ff::params::mmff`]) — the two front doors differ by this
+    /// force field's **name** and by the variant, which selects
+    /// [`MMFF_OOP_S`](crate::ff::params::mmff::MMFF_OOP_S) /
+    /// [`MMFF_TOR_S`](crate::ff::params::mmff::MMFF_TOR_S) and drives the
+    /// per-instance `koop` / `(v1, v2, v3)` baked onto the typed graph.
     ///
     /// ```no_run
     /// use molrs::ff::typifier::mmff::MMFF94STypifier;
@@ -206,5 +212,5 @@ mmff_front_door! {
     ///
     /// - T. A. Halgren, *MMFF VI. MMFF94s option for energy minimization studies*,
     ///   J. Comput. Chem. **20**, 720–729 (1999).
-    MMFF94STypifier, MmffVariant::Mmff94s, molrs::data::MMFF94S_XML, "MMFF94s"
+    MMFF94STypifier, MmffVariant::Mmff94s, "MMFF94s"
 }

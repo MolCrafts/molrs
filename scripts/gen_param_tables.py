@@ -1,4 +1,4 @@
-"""Translate the antechamber / AMBER parameter tables into committed Rust data.
+"""Translate the antechamber / AMBER / OPLS parameter tables into committed Rust data.
 
 molrs parses NO parameter text at runtime. This script reads the upstream tables
 from `$AMBERHOME` and emits typed Rust `const`s into
@@ -32,6 +32,19 @@ re-parses a string. Pattern atom names are resolved here too (`EW` / WILDATOM /
 element symbol -> `PatternAtom`), so an unknown name is a generator error rather
 than a rule that silently never matches.
 
+One further table has an in-repo source rather than an AmberTools one:
+
+  molrs/data/oplsaa.xml   -> oplsaa.rs   (OPLS-AA, converted to molrs units)
+
+That XML is RETIRED — `chem-perceive-14` compiled it into `oplsaa.rs` and deleted
+it, because two copies of the same numbers is one copy too many and only one of
+them was ever checked. So the emitter runs only when the source is present (a
+maintainer who restores it from `git show <rev>:molrs/data/oplsaa.xml` gets a
+byte-for-byte re-emission); otherwise the committed table stands and is hashed
+into the manifest exactly as if it had just been written. The XML's SHA-256 is
+recorded here (`RETIRED_XML_SOURCES`) and in MANIFEST.sha256 — that row is now
+the only surviving record of which bytes those numbers came from.
+
 Usage:
     AMBERHOME=/path/to/amber python scripts/gen_param_tables.py
     AMBERHOME=... python scripts/gen_param_tables.py --out-dir /tmp/check
@@ -44,20 +57,54 @@ import hashlib
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
+from xml.etree import ElementTree
 
 REPO = Path(__file__).resolve().parent.parent
 OUT_DIR = REPO / "molrs/src/ff/params"
 
+# Every emitted table opens by saying where it came from — which is the ONLY place
+# provenance belongs. It is not a directory name, and it is not the table's name:
+# "how it arrived" is not "what it is", and these tables are ordinary committed
+# source, reviewed, grepped and stepped through like any other.
+#
+# The phrase "regenerate with `scripts/gen_param_tables.py`" is load-bearing:
+# `tests/ff/params.rs` greps for it to tell an emitted table from a hand-written
+# one, and hashes every table that carries it into MANIFEST.sha256. Reword it and
+# that guard goes quiet instead of red.
 HEADER = """//! {title}
 //!
-//! DO NOT HAND-EDIT — regenerate with `scripts/gen_param_tables.py`.
+//! DO NOT HAND-EDIT — regenerate with `scripts/gen_param_tables.py`, which emits
+//! this table from AmberTools' own `.DAT` / `.DEF` files. That is where the table
+//! came FROM; it is not what the table IS — this is ordinary source, not a build
+//! artefact.
 //!
 //! Source: `$AMBERHOME/{source}` (AmberTools).
+"""
+
+XML_HEADER = """//! {title}
+//!
+//! DO NOT HAND-EDIT — regenerate with `scripts/gen_param_tables.py`, which emits
+//! this table from the XML below. That is where the table came FROM; it is not
+//! what the table IS — this is ordinary source, not a build artefact.
+//!
+//! Source: `{source}` — **retired**. Its numbers are these ones, and
+//! keeping the text as well would have left two copies of them with only one
+//! checked by anything. The bytes it was emitted from hash to
+//!
+//! ```text
+//! {sha256}
+//! ```
+//!
+//! which `MANIFEST.sha256` records, and which is now the sole surviving account
+//! of where these numbers came from. `git show <rev>:{source}`
+//! restores the bytes; re-running the generator with the file in place re-emits
+//! this table byte for byte.
 """
 
 #: The two upstream directories this generator reads.
@@ -178,6 +225,33 @@ SOURCE_FILES: list[str] = [
     ],
     *[f"{PARM_DIR}/{name}" for name, _, _ in PARM_FILES],
 ]
+
+#: The in-repo XML sources, and the SHA-256 of the bytes the committed tables
+#: were derived from. Both are RETIRED (`chem-perceive-14`): the numbers now live
+#: in `ff/params/`, and the text is gone.
+#:
+#: Two entries, not three. `mmff94s.xml` differed from `mmff94.xml` by the
+#: `<ForceField name=…>` attribute and nothing else, so it is the source of no
+#: table and has no provenance to record; a `source` row for it would assert that
+#: some committed table came from those bytes, and none did.
+#:
+#: `mmff94.xml` is not emitted from here at all — its rows are RDKit's, and
+#: `ff/params/mmff.rs` is the RDKit port with the XML's style skeleton merged in
+#: by hand. Its hash is recorded because the provenance of those numbers is worth
+#: exactly as much as OPLS's.
+RETIRED_XML_SOURCES: dict[str, str] = {
+    "molrs/data/mmff94.xml": "9d9c41db11529da54a301e446cc912b11bdec43d43bc466e8fcd5eac45da72a5",
+    "molrs/data/oplsaa.xml": "d997039c15e24f63272bcee55d0f27622d5d11d00f78e572dea364b405c09af2",
+}
+
+#: The retired OPLS-AA XML, and the table it became.
+OPLSAA_XML = "molrs/data/oplsaa.xml"
+OPLSAA_RS = "oplsaa.rs"
+
+#: The marker every emitted table carries in its header. A `.rs` under
+#: `ff/params/` that carries it is hashed into MANIFEST.sha256; one that does not
+#: is hand-written source (the module root, the RDKit port) and is not.
+GENERATED_MARKER = "regenerate with `scripts/gen_param_tables.py`"
 
 
 class GrammarError(Exception):
@@ -1538,21 +1612,244 @@ def emit_parm(path: Path, prefix: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Driver
+# oplsaa.xml — the one in-repo XML source
 # ---------------------------------------------------------------------------
+#
+# An OpenMM-style, GROMACS-flavoured OPLS-AA set: nm, kJ/mol, Ryckaert-Bellemans
+# torsions. molrs is Å / kcal/mol / radians with a 4-cosine OPLS torsion, so the
+# runtime reader converted on every single parse. The conversion happens ONCE
+# here, and its result is what is committed.
+#
+# The arithmetic below is that reader's (`ff/forcefield/readers/opls.rs`),
+# expression for expression, and that is deliberate: both sides are IEEE-754
+# doubles, so writing `k / (4.184 * 100.0)` the same way on both sides means the
+# table holds the same BITS the parser produced. Re-associating it — even to
+# something mathematically identical — would move the last digit of some rows,
+# and `tests/ff/tables_equivalence.rs` compares at zero tolerance, as it should:
+# nothing is being computed here, only re-spelled.
 
-def emit_mod(modules: list[str]) -> str:
-    L = ["//! Antechamber and AMBER `parm` parameter tables, compiled to typed Rust `const`s.",
-         "//!",
-         "//! DO NOT HAND-EDIT — regenerate with `scripts/gen_param_tables.py`.",
-         "//!",
-         "//! The row types live in [`crate::ff::params`]; this module holds only data.",
-         ""]
-    for m in sorted(modules):
-        L.append(f"pub mod {m};")
-    L.append("")
+#: kJ/mol -> kcal/mol.
+KJ_PER_KCAL = 4.184
+#: nm -> Å.
+NM_TO_ANGSTROM = 10.0
+
+#: The sections `oplsaa.xml` is allowed to have. An unknown one is a generator
+#: error, not a silent drop — the runtime reader errored on it too.
+OPLS_SECTIONS = {
+    "AtomTypes",
+    "HarmonicBondForce",
+    "HarmonicAngleForce",
+    "RBTorsionForce",
+    "NonbondedForce",
+}
+
+
+def rust_f64(value: float) -> str:
+    """A COMPUTED double as a Rust literal that parses back to the same bits.
+
+    `repr` is Python's shortest round-tripping form, exactly as `{:?}` is Rust's,
+    so this is lossless. The round trip is verified on the BYTES rather than by
+    `==`, because `-0.0 == 0.0` and a lost sign of zero is precisely the kind of
+    drift this table exists to make impossible.
+    """
+    text = repr(float(value))
+    if struct.pack("<d", float(text)) != struct.pack("<d", float(value)):
+        raise GrammarError(f"{value!r} does not round-trip through `{text}`")
+    if not re.fullmatch(r"-?\d+\.\d+(e[+-]\d+)?|-?\d+e[+-]\d+", text):
+        raise GrammarError(f"`{text}` is not a Rust float literal (value {value!r})")
+    return text
+
+
+def rb_to_opls(c1: float, c2: float, c3: float, c4: float) -> tuple[float, float, float, float]:
+    """RB `c0..c5` (kJ/mol) -> OPLS 4-cosine `f1..f4` (kcal/mol).
+
+    GROMACS Eqs. 200-201: the exact analytic inversion, independent of `c0` and
+    `c5`. Mirrors `rb_to_opls` in `ff/forcefield/readers/opls.rs`.
+    """
+    f1 = -2.0 * c1 - 1.5 * c3
+    f2 = -c2 - c4
+    f3 = -0.5 * c3
+    f4 = -0.25 * c4
+    return (f1 / KJ_PER_KCAL, f2 / KJ_PER_KCAL, f3 / KJ_PER_KCAL, f4 / KJ_PER_KCAL)
+
+
+def opls_f64(node: ElementTree.Element, attr: str, default: float | None = None) -> float:
+    raw = node.get(attr)
+    if raw is None:
+        if default is None:
+            raise GrammarError(f"<{node.tag}> is missing the required attribute `{attr}`")
+        return default
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise GrammarError(f"<{node.tag}> attribute `{attr}` is not a number: {raw!r}") from exc
+
+
+def opls_str(node: ElementTree.Element, attr: str) -> str:
+    raw = node.get(attr)
+    if raw is None:
+        raise GrammarError(f"<{node.tag}> is missing the required attribute `{attr}`")
+    return raw
+
+
+def emit_oplsaa(path: Path, sha256: str) -> str:
+    root = ElementTree.parse(path).getroot()
+    if root.tag != "ForceField":
+        raise GrammarError(f"{path.name}: root element is <{root.tag}>, not <ForceField>")
+    unknown = sorted({child.tag for child in root} - OPLS_SECTIONS)
+    if unknown:
+        raise GrammarError(f"{path.name}: unknown section(s) {unknown}")
+
+    types = root.find("AtomTypes")
+    bonds = root.find("HarmonicBondForce")
+    angles = root.find("HarmonicAngleForce")
+    torsions = root.find("RBTorsionForce")
+    nonbonded = root.find("NonbondedForce")
+    for section, node in [
+        ("AtomTypes", types),
+        ("HarmonicBondForce", bonds),
+        ("HarmonicAngleForce", angles),
+        ("RBTorsionForce", torsions),
+        ("NonbondedForce", nonbonded),
+    ]:
+        if node is None:
+            raise GrammarError(f"{path.name}: no <{section}> section")
+
+    # The two atom vocabularies are one table here — which is only sound because
+    # the file lists them in the same order, over the same names. It does; a file
+    # that stopped doing so would need two tables, and this says so rather than
+    # silently re-ordering the pair rows (the dump pins their order, and so does
+    # `get_pairtype`, which takes the FIRST match).
+    named = [opls_str(t, "name") for t in types]
+    typed = [opls_str(a, "type") for a in nonbonded]
+    if named != typed:
+        raise GrammarError(
+            f"{path.name}: <AtomTypes> and <NonbondedForce> no longer list the same atom "
+            f"types in the same order; they can no longer be one row type"
+        )
+
+    atoms = []
+    for t, nb in zip(types, nonbonded, strict=True):
+        overrides = [
+            name.strip() for name in (t.get("overrides") or "").split(",") if name.strip()
+        ]
+        priority = t.get("priority")
+        atoms.append({
+            "name": opls_str(t, "name"),
+            "class": opls_str(t, "class"),
+            "mass": opls_f64(t, "mass", 0.0),
+            "charge": opls_f64(nb, "charge", 0.0),
+            "sigma": opls_f64(nb, "sigma") * NM_TO_ANGSTROM,
+            "epsilon": opls_f64(nb, "epsilon") / KJ_PER_KCAL,
+            "def": t.get("def"),
+            "overrides": overrides,
+            "priority": int(priority) if priority is not None else None,
+            "layer": int(t.get("layer") or 0),
+        })
+
+    L = [XML_HEADER.format(
+        title="OPLS-AA force-field parameters and typing metadata — `oplsaa.xml`.",
+        source=OPLSAA_XML,
+        sha256=sha256,
+    )]
+    w = L.append
+    # A linear angle IS pi, and the source wrote it `3.14159265359`. clippy reads
+    # that as a fat-fingered `PI` and wants the constant substituted — which would
+    # change the value in the last bits, i.e. edit a force field to silence a lint.
+    # The same allow is on `gaff.rs`, for the same reason: these are numbers, not
+    # approximations of a constant.
+    w("#![allow(clippy::approx_constant)]")
+    w("")
+    w("use crate::ff::params::{OplsAngleRow, OplsAtomRow, OplsBondRow, OplsDihedralRow};")
+    w("")
+    w("/// The force field's own name, as the source declared it.")
+    w(f"pub const OPLSAA_NAME: &str = {rust_str(root.get('name') or 'OPLS-AA')};")
+    w("")
+    w("/// The 1-4 Lennard-Jones scale weight (`<NonbondedForce lj14scale>`).")
+    w(f"pub const OPLSAA_LJ_14: f64 = {rust_f64(opls_f64(nonbonded, 'lj14scale', 0.5))};")
+    w("")
+    w("/// The 1-4 Coulomb scale weight (`<NonbondedForce coulomb14scale>`).")
+    w(f"pub const OPLSAA_COULOMB_14: f64 = "
+      f"{rust_f64(opls_f64(nonbonded, 'coulomb14scale', 0.5))};")
+    w("")
+
+    with_def = sum(1 for a in atoms if a["def"])
+    w(f"/// The {len(atoms)} atom types of `{path.name}`, in file order.")
+    w("///")
+    w(f"/// {with_def} carry a SMARTS `def` and take part in automatic typing; the rest are")
+    w("/// the legacy rows (`opls_001`–`opls_134`) the source excludes from it.")
+    w(RUSTFMT_SKIP)
+    w("pub const OPLSAA_ATOMS: &[OplsAtomRow] = &[")
+    for a in atoms:
+        overrides = ", ".join(rust_str(name) for name in a["overrides"])
+        w(f"    OplsAtomRow {{ name: {rust_str(a['name'])}, class: {rust_str(a['class'])}, "
+          f"mass: {rust_f64(a['mass'])}, charge: {rust_f64(a['charge'])}, "
+          f"sigma: {rust_f64(a['sigma'])}, epsilon: {rust_f64(a['epsilon'])}, "
+          f"def: {opt(rust_str(a['def'])) if a['def'] else 'None'}, "
+          f"overrides: &[{overrides}], "
+          f"priority: {opt(str(a['priority'])) if a['priority'] is not None else 'None'}, "
+          f"layer: {a['layer']} }},")
+    w("];")
+    w("")
+
+    w(f"/// The {len(bonds)} `<HarmonicBondForce>` rows of `{path.name}`, in file order.")
+    w("///")
+    w("/// `k0` is kcal/mol/Å² and `r0` is Å (the source: kJ/mol/nm² and nm). molrs and")
+    w("/// GROMACS share the `½k(r−r₀)²` form, so there is no extra ½ factor.")
+    w(RUSTFMT_SKIP)
+    w("pub const OPLSAA_BONDS: &[OplsBondRow] = &[")
+    for b in bonds:
+        if b.tag != "Bond":
+            raise GrammarError(f"{path.name}: <HarmonicBondForce> holds a <{b.tag}>")
+        k0 = opls_f64(b, "k") / (KJ_PER_KCAL * 100.0)
+        r0 = opls_f64(b, "length") * NM_TO_ANGSTROM
+        w(f"    OplsBondRow {{ i: {rust_str(opls_str(b, 'class1'))}, "
+          f"j: {rust_str(opls_str(b, 'class2'))}, "
+          f"k0: {rust_f64(k0)}, r0: {rust_f64(r0)} }},")
+    w("];")
+    w("")
+
+    w(f"/// The {len(angles)} `<HarmonicAngleForce>` rows of `{path.name}`, in file order.")
+    w("///")
+    w("/// `theta0` is in **radians** — the source's own unit; only `k` is converted.")
+    w(RUSTFMT_SKIP)
+    w("pub const OPLSAA_ANGLES: &[OplsAngleRow] = &[")
+    for a in angles:
+        if a.tag != "Angle":
+            raise GrammarError(f"{path.name}: <HarmonicAngleForce> holds a <{a.tag}>")
+        k0 = opls_f64(a, "k") / KJ_PER_KCAL
+        theta0 = opls_f64(a, "angle")
+        w(f"    OplsAngleRow {{ i: {rust_str(opls_str(a, 'class1'))}, "
+          f"j: {rust_str(opls_str(a, 'class2'))}, k: {rust_str(opls_str(a, 'class3'))}, "
+          f"k0: {rust_f64(k0)}, theta0: {rust_f64(theta0)} }},")
+    w("];")
+    w("")
+
+    w(f"/// The {len(torsions)} `<RBTorsionForce>` rows of `{path.name}`, in file order,")
+    w("/// inverted to the OPLS 4-cosine coefficients the `dihedral:opls` kernel reads.")
+    w(RUSTFMT_SKIP)
+    w("pub const OPLSAA_DIHEDRALS: &[OplsDihedralRow] = &[")
+    for d in torsions:
+        if d.tag != "Proper":
+            raise GrammarError(f"{path.name}: <RBTorsionForce> holds a <{d.tag}>")
+        f1, f2, f3, f4 = rb_to_opls(
+            opls_f64(d, "c1", 0.0),
+            opls_f64(d, "c2", 0.0),
+            opls_f64(d, "c3", 0.0),
+            opls_f64(d, "c4", 0.0),
+        )
+        w(f"    OplsDihedralRow {{ i: {rust_str(opls_str(d, 'class1'))}, "
+          f"j: {rust_str(opls_str(d, 'class2'))}, k: {rust_str(opls_str(d, 'class3'))}, "
+          f"l: {rust_str(opls_str(d, 'class4'))}, "
+          f"f1: {rust_f64(f1)}, f2: {rust_f64(f2)}, f3: {rust_f64(f3)}, f4: {rust_f64(f4)} }},")
+    w("];")
+    w("")
     return "\n".join(L)
 
+
+# ---------------------------------------------------------------------------
+# Driver
+# ---------------------------------------------------------------------------
 
 def rustfmt(paths: list[Path]) -> None:
     """Format in place, so the committed output is `cargo fmt --check`-clean and the
@@ -1605,8 +1902,22 @@ def main() -> int:
             )
         for filename, module, prefix in PARM_FILES:
             staged[f"{module}.rs"] = emit_parm(parm / filename, prefix)
-        modules = [name[:-3] for name in staged]
-        staged["mod.rs"] = emit_mod(modules)
+
+        # The OPLS-AA table's source is RETIRED (see the module docstring): it is
+        # re-emitted only for a maintainer who restores the XML, and the recorded
+        # hash is what says the restored bytes are the ones the table came from.
+        oplsaa = REPO / OPLSAA_XML
+        if oplsaa.is_file():
+            recorded = RETIRED_XML_SOURCES[OPLSAA_XML]
+            found = sha256_of(oplsaa)
+            if found != recorded:
+                raise SystemExit(
+                    f"{OPLSAA_XML} hashes to {found}, not the {recorded} the committed "
+                    f"{OPLSAA_RS} was derived from. If the change is intended, update "
+                    f"RETIRED_XML_SOURCES — but a table and its recorded provenance must "
+                    f"never disagree silently."
+                )
+            staged[OPLSAA_RS] = emit_oplsaa(oplsaa, recorded)
 
         tmp_paths = []
         for name, text in staged.items():
@@ -1619,26 +1930,40 @@ def main() -> int:
         for p in tmp_paths:
             shutil.copyfile(p, args.out_dir / p.name)
 
-        # MANIFEST.sha256 — the ONLY drift check that works without AmberTools.
-        # The byte-regeneration guard needs $AMBERHOME, which CI does not have,
-        # so it is permanently skipped there. Hashing the emitted files lets CI
-        # still catch a hand-edit to the ~48k lines of committed tables.
-        # Source hashes record provenance (path included: the tables come from
-        # two upstream directories) and are checked only when $AMBERHOME is
-        # available.
+        # MANIFEST.sha256 — the ONLY drift guard over the committed tables that
+        # needs nothing installed, and therefore the only one CI ever runs.
+        #
+        # It hashes every table that DECLARES itself emitted, read off the output
+        # directory rather than off this run's output: `oplsaa.rs` is re-emitted
+        # only when its retired source is present, and a table that was not
+        # rewritten this run is exactly as much in need of a drift guard as one
+        # that was. Files without the marker are hand-written source — the module
+        # root (`mod.rs`, the row types) and the RDKit port (`mmff.rs`) — and are
+        # not this script's to hash.
+        emitted = sorted(
+            p for p in args.out_dir.glob("*.rs")
+            if GENERATED_MARKER in p.read_text()
+        )
         lines = ["# Emitted by scripts/gen_param_tables.py — DO NOT HAND-EDIT.",
                  "# emitted <sha256>  <file>"]
-        for p in sorted(tmp_paths, key=lambda q: q.name):
-            lines.append(f"emitted {sha256_of(args.out_dir / p.name)}  {p.name}")
+        for p in emitted:
+            lines.append(f"emitted {sha256_of(p)}  {p.name}")
         lines.append("# source  <sha256>  <upstream table, relative to $AMBERHOME>")
         for name in sorted(SOURCE_FILES):
             lines.append(f"source  {sha256_of(root / name)}  {name}")
+        # The in-repo XML sources are deleted, so their `source` row is the last
+        # surviving record of which bytes 481 KB of force-field numbers came from.
+        lines.append("# source  <sha256>  <retired in-repo XML, relative to the repo root>")
+        for name in sorted(RETIRED_XML_SOURCES):
+            lines.append(f"source  {RETIRED_XML_SOURCES[name]}  {name}")
         (args.out_dir / "MANIFEST.sha256").write_text("\n".join(lines) + "\n")
 
     for name in sorted(staged):
         out = args.out_dir / name
         print(f"  wrote {out.relative_to(REPO) if out.is_relative_to(REPO) else out}"
               f"  ({len(out.read_text().splitlines())} lines)")
+    if OPLSAA_RS not in staged:
+        print(f"  kept  {OPLSAA_RS}  (source {OPLSAA_XML} is retired; table unchanged)")
     print(f"{len(staged)} files -> {args.out_dir}")
     return 0
 
