@@ -1,23 +1,12 @@
-# Mirrors every check in .github/workflows/ci-*.yml. Any divergence is a
-# bug — when you add/modify a CI step, update this file in the same commit.
+# Local gates mirror the **default** CI only (ci-rust unit + fmt/clippy).
+# Full integration/e2e is `.github/workflows/full.yml` — never pre-push.
 #
-# Two-tier gate:
-#   Common fast gate (fmt + clippy): runs at BOTH pre-commit and pre-push —
-#     the shared first-line check, fail-fast before anything heavy.
-#   Heavy gate (tests, bench, wasm/capi/python builds): pre-push only.
-#
-# Install both stages:
+# Install:
 #   pre-commit install --hook-type pre-commit --hook-type pre-push
 
 repos:
   - repo: local
     hooks:
-      # ─── Common fast gate: fmt + clippy (ci-rust.yml::fmt + ::clippy) ─────
-      # Mirrors CI's fmt (1 command) + clippy (2 commands) exactly. Runs at BOTH
-      # pre-commit (fast feedback) and pre-push (fail-fast before the heavy hooks
-      # below) — the shared first-line gate. molrs-python and molrs-wasm are
-      # separate workspaces that CI does not fmt/clippy, so this gate doesn't
-      # either (they are built by the wasm/python pre-push hooks, as in CI).
       - id: cargo-fmt
         name: cargo fmt --check
         entry: cargo fmt --check
@@ -26,117 +15,18 @@ repos:
         types: [rust]
         stages: [pre-commit, pre-push]
 
-      - id: cargo-clippy-workspace
-        name: cargo clippy --workspace --all-targets (-D warnings)
-        entry: cargo clippy --workspace --all-targets -- -D warnings
+      - id: cargo-clippy
+        name: cargo clippy (full + cxxapi, -D warnings)
+        entry: bash -c 'cargo clippy -p molcrafts-molrs --all-targets --features full -- -D warnings && cargo clippy -p molcrafts-molrs-cxxapi --all-targets -- -D warnings'
         language: system
         pass_filenames: false
         types: [rust]
         stages: [pre-commit, pre-push]
 
-      - id: cargo-clippy-facade-full
-        name: cargo clippy facade --features full (-D warnings)
-        entry: cargo clippy -p molcrafts-molrs --all-targets --features full -- -D warnings
+      - id: cargo-test-unit
+        name: cargo test --lib --features full
+        entry: cargo test -p molcrafts-molrs --lib --features full
         language: system
         pass_filenames: false
         types: [rust]
         stages: [pre-commit, pre-push]
-
-      # rustdoc is a THIRD gate, not a subset of the two above: a broken
-      # intra-doc link (or a public doc linking to a private item) passes fmt,
-      # clippy AND check, and is only caught here. One shipped that way and was
-      # found out-of-band; this hook closes that hole.
-      - id: cargo-doc
-        name: cargo doc --all-features (-D warnings)
-        entry: env RUSTDOCFLAGS=-Dwarnings cargo doc --no-deps -p molcrafts-molrs --all-features
-        language: system
-        pass_filenames: false
-        types: [rust]
-        stages: [pre-commit, pre-push]
-
-      # ─── ci-rust.yml::test (Fetch test data) ──────────────────────────────
-      # CI's test job clones MolCrafts/tests-data before running --tests. The
-      # pre-push gate must too, or the data-dependent integration tests below
-      # would pass locally (skipped/absent) while failing in CI. The script is
-      # fetch-once (reuses an existing clone), so this is a no-op once cloned.
-      # always_run: the data is needed regardless of which files a push touches.
-      - id: fetch-test-data
-        name: fetch tests-data (MolCrafts/tests-data)
-        entry: bash scripts/fetch-test-data.sh
-        language: system
-        pass_filenames: false
-        always_run: true
-        stages: [pre-push]
-
-      # ─── ci-rust.yml::test (Test (workspace) + (all sub-systems)) ─────────
-      # Byte-for-byte the two CI test invocations (no --locked: deps resolve from
-      # Cargo.toml each run, exactly as CI does). --tests --examples are REQUIRED
-      # for parity: the integration tests under molrs/tests/ (io, compute, …) run
-      # here exactly as CI runs them.
-      - id: cargo-test-workspace
-        name: cargo test --workspace --lib --tests --examples
-        entry: cargo test --workspace --lib --tests --examples
-        language: system
-        pass_filenames: false
-        types: [rust]
-        stages: [pre-push]
-
-      - id: cargo-test-facade-full
-        name: cargo test facade --lib --tests --examples --features "full filesystem"
-        entry: cargo test -p molcrafts-molrs --lib --tests --examples --features "full filesystem"
-        language: system
-        pass_filenames: false
-        types: [rust]
-        stages: [pre-push]
-
-      # ─── ci-rust.yml::test (Benches build) ────────────────────────────────
-      - id: cargo-bench-build
-        name: cargo bench --no-run --features full
-        entry: cargo bench -p molcrafts-molrs --no-run --features full
-        language: system
-        pass_filenames: false
-        types: [rust]
-        stages: [pre-push]
-
-      # ─── ci-wasm.yml ──────────────────────────────────────────────────────
-      - id: wasm-pack-build
-        name: wasm-pack build (molrs-wasm)
-        entry: bash -c 'cd molrs-wasm && wasm-pack build --release --target bundler --scope molcrafts --out-name molrs'
-        language: system
-        pass_filenames: false
-        types: [rust]
-        stages: [pre-push]
-
-      # ─── ci-capi.yml ──────────────────────────────────────────────────────
-      - id: capi-cargo-build
-        name: cargo build (molrs-capi, generates header via cbindgen)
-        entry: cargo build --manifest-path molrs-capi/Cargo.toml
-        language: system
-        pass_filenames: false
-        types: [rust]
-        stages: [pre-push]
-
-      - id: capi-cmake-test
-        name: cmake build + ctest (molrs-capi C++ integration)
-        entry: bash -c 'cd molrs-capi && cmake -S tests/cpp -B build-test && cmake --build build-test && ctest --test-dir build-test --output-on-failure'
-        language: system
-        pass_filenames: false
-        types: [rust]
-        stages: [pre-push]
-
-      # ─── ci-python.yml (Build wheel → Install → Test) ─────────────────────
-      # Mirrors the whole ci-python job as one atomic gate: build the wheel,
-      # install it, run pytest -q (needs tests-data, fetched above). CI runs the
-      # 3.12 / 3.13 matrix; locally we pin to the active python3 — the matrix is
-      # the CI runner's job. `rm -rf target/wheels` first so the install glob
-      # only ever sees the wheel we just built (stale version-bump wheels left in
-      # target/wheels make pip report "conflicting dependencies" and refuse).
-      # types_or [python, rust]: rebuild + retest when either the extension (.rs)
-      # or the Python package/tests (.py) change, matching CI's unconditional run.
-      - id: python-build-and-test
-        name: maturin build + pytest (molrs-python)
-        entry: bash -c 'cd molrs-python && rm -rf target/wheels && maturin build --release && python -m pip install --quiet --force-reinstall target/wheels/*.whl && pytest -q'
-        language: system
-        pass_filenames: false
-        types_or: [python, rust]
-        stages: [pre-push]

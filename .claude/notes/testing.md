@@ -18,10 +18,13 @@ follows the same pattern.
 ### Running Tests
 
 ```bash
-cargo test --all-features                              # all tests
-cargo test -p molcrafts-molrs-core                     # single crate (-p takes the package name)
-cargo test -p molcrafts-molrs-core test_name           # single test
-cargo test --features slow-tests                       # expensive tests
+# Default / CI gate — unit only (src/ #[cfg(test)])
+cargo test -p molcrafts-molrs --lib --features full
+
+# Integration binaries under molrs/tests/ (IO, ff stages, …) — full.yml / manual
+cargo test -p molcrafts-molrs --tests --features "full filesystem"
+
+cargo test -p molcrafts-molrs test_name --features full   # single test
 ```
 
 ### Test Data

@@ -1,0 +1,24 @@
+name: Full
+
+# Optional: integration binaries under molrs/tests/ (IO, ff stages, …).
+# Default CI is unit-only (`--lib`). This is NOT the PR path.
+on:
+  push:
+    branches: [master]
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+
+jobs:
+  integration:
+    name: integration binaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Fetch test data
+        run: bash scripts/fetch-test-data.sh
+      - name: Integration tests
+        run: >
+          cargo test -p molcrafts-molrs --tests --examples
+          --features "full filesystem"
