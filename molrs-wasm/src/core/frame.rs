@@ -309,9 +309,8 @@ impl Frame {
     /// as an `f64`. Returns `None` if the key is missing or the value is
     /// non-numeric (e.g., `config="trans"`).
     ///
-    /// `frame.meta` is a `HashMap<String, String>`; the ExtXYZ parser stores
-    /// all comment-line values as strings. This accessor reads numeric ones
-    /// via `str::parse::<f64>`.
+    /// Frame meta is typed (`MetaValue`). This accessor returns the value only
+    /// when the stored dtype is a scalar float (`f64` / `f32`).
     ///
     /// # Arguments
     ///
@@ -331,7 +330,10 @@ impl Frame {
             .store
             .borrow()
             .with_frame(self.inner.id, |frame| {
-                frame.meta.get(name).and_then(|s| s.parse::<f64>().ok())
+                frame.meta.get(name).and_then(|v| {
+                    v.as_f64()
+                        .or_else(|| v.as_f32().map(f64::from))
+                })
             })
             .ok()?
     }
@@ -381,19 +383,16 @@ impl Frame {
             .unwrap_or_default()
     }
 
-    /// Set a per-frame metadata value.
+    /// Set a per-frame metadata string value.
     ///
-    /// Stores `value` as the string backing for `name` on `frame.meta`.
-    /// Numeric values are read back via
-    /// [`getMetaScalar`](Self::get_meta_scalar) by parsing the string
-    /// form. `frame.meta` is the single source of truth for per-frame
-    /// scalars — no separate aggregation layer is needed on the JS side.
+    /// Stores `value` as a typed `MetaValue::String` on `frame.meta`.
+    /// Use [`setMetaScalar`](Self::set_meta_scalar) for numeric labels that
+    /// [`getMetaScalar`](Self::get_meta_scalar) should return.
     ///
     /// # Arguments
     ///
-    /// * `name` — Meta key (e.g., `"energy"`, `"temp"`).
-    /// * `value` — String value. For numeric labels, the caller is
-    ///   responsible for converting (e.g., `num.toString()`).
+    /// * `name` — Meta key (e.g., `"note"`, `"config"`).
+    /// * `value` — String value.
     ///
     /// # Errors
     ///
@@ -402,8 +401,8 @@ impl Frame {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// frame.setMeta("energy", "-3.14");
     /// frame.setMeta("note", "run-42");
+    /// frame.setMetaScalar("energy", -3.14);
     /// ```
     #[wasm_bindgen(js_name = setMeta)]
     pub fn set_meta(&self, name: &str, value: &str) -> Result<(), JsValue> {
@@ -411,7 +410,23 @@ impl Frame {
             .store
             .borrow_mut()
             .with_frame_mut(self.inner.id, |frame| {
-                frame.meta.insert(name.to_string(), value.to_string());
+                frame
+                    .meta
+                    .insert(name.to_string(), molrs::store::meta::MetaValue::String(value.to_string()));
+            })
+            .map_err(js_err)
+    }
+
+    /// Set a per-frame numeric metadata value (`MetaValue::F64`).
+    #[wasm_bindgen(js_name = setMetaScalar)]
+    pub fn set_meta_scalar(&self, name: &str, value: f64) -> Result<(), JsValue> {
+        self.inner
+            .store
+            .borrow_mut()
+            .with_frame_mut(self.inner.id, |frame| {
+                frame
+                    .meta
+                    .insert(name.to_string(), molrs::store::meta::MetaValue::F64(value));
             })
             .map_err(js_err)
     }
@@ -542,16 +557,16 @@ mod tests {
         assert!(frame.clear().is_err());
     }
 
-    /// Helper: build a wrapped `Frame` with two meta entries mirroring what
-    /// an ExtXYZ parser would emit for `energy=-1.23 config=trans`.
+    /// Helper: build a wrapped `Frame` with two typed meta entries.
     fn frame_with_meta() -> Frame {
+        use molrs::store::meta::MetaValue;
         let mut rs_frame = molrs::store::frame::Frame::new();
         rs_frame
             .meta
-            .insert("energy".to_string(), "-1.23".to_string());
+            .insert("energy".to_string(), MetaValue::F64(-1.23));
         rs_frame
             .meta
-            .insert("config".to_string(), "trans".to_string());
+            .insert("config".to_string(), MetaValue::String("trans".into()));
         Frame::from_rs(rs_frame).unwrap()
     }
 
