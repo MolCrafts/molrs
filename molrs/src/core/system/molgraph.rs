@@ -49,7 +49,7 @@
 //! assert!((g.get_node(o).expect("get node").get_f64("x").unwrap() - 1.0).abs() < 1e-12);
 //! ```
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::{Index, IndexMut};
 
 use slotmap::{Key, KeyData, SecondaryMap, SlotMap, new_key_type};
@@ -457,28 +457,50 @@ impl MolGraph {
     /// registered kinds (registry-driven cascade). Returns the node's property
     /// bag (materialized).
     pub fn remove_node(&mut self, id: NodeId) -> Result<Atom, MolRsError> {
-        if !self.nodes.contains(id) {
-            return Err(MolRsError::not_found("node", format!("NodeId {:?}", id)));
+        Ok(self
+            .remove_nodes(&[id])?
+            .pop()
+            .expect("one validated node produces one payload"))
+    }
+
+    /// Remove several nodes in one registry scan.
+    ///
+    /// This is the batch primitive reaction compilation needs: deleting one
+    /// leaving group at a time scans every relation table once per edit, while
+    /// deleting the compiled set scans each table exactly once.
+    pub fn remove_nodes(&mut self, ids: &[NodeId]) -> Result<Vec<Atom>, MolRsError> {
+        let doomed_nodes: HashSet<NodeId> = ids.iter().copied().collect();
+        if doomed_nodes.len() != ids.len() {
+            return Err(MolRsError::validation(
+                "remove_nodes received a duplicate node handle",
+            ));
         }
-        let payload = self.read_atom(id);
+        for &id in ids {
+            if !self.nodes.contains(id) {
+                return Err(MolRsError::not_found("node", format!("NodeId {:?}", id)));
+            }
+        }
+        let payloads = ids.iter().map(|&id| self.read_atom(id)).collect();
 
         for kid in 0..self.kinds.len() {
             let doomed: Vec<RelationId> = self.kinds[kid]
                 .endpoints
                 .iter()
-                .filter(|(_, eps)| eps.contains(&id))
+                .filter(|(_, eps)| eps.iter().any(|id| doomed_nodes.contains(id)))
                 .map(|(rid, _)| rid)
                 .collect();
             for rid in doomed {
-                self.detach_relation_from_adjacency(KindId(kid as u16), rid, Some(id));
+                self.detach_relation_from_adjacency(KindId(kid as u16), rid, None);
                 let k = &mut self.kinds[kid];
                 k.props.despawn(rid);
                 k.endpoints.remove(rid);
             }
         }
-        self.adjacency.remove(&id);
-        self.nodes.despawn(id);
-        Ok(payload)
+        for &id in ids {
+            self.adjacency.remove(&id);
+            self.nodes.despawn(id);
+        }
+        Ok(payloads)
     }
 
     /// Materialize a node's property bag (owned copy of its set components).

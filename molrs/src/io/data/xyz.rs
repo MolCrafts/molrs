@@ -4,6 +4,7 @@ use molrs::spatial::region::simbox::SimBox;
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
 use molrs::store::frame_access::FrameAccess;
+use molrs::store::meta::MetaValue;
 use molrs::types::{F, I};
 use ndarray::{Array1, Array2, ArrayD};
 use once_cell::sync::OnceCell;
@@ -570,9 +571,12 @@ pub fn read_xyz_frame_from_reader<R: BufRead>(reader: &mut R) -> std::io::Result
 
     let mut frame = Frame::new();
     frame.insert("atoms", atoms_block);
-    // Stringify metadata into frame.meta
     for (k, v) in kv_meta.into_iter() {
-        frame.meta.insert(k, ext_value_to_string(&v));
+        frame.meta.insert(
+            k,
+            ext_value_to_meta(v)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?,
+        );
     }
 
     // Build SimBox from Lattice + optional Origin
@@ -640,7 +644,7 @@ pub fn parse_xyz_frame_str(s: &str) -> std::result::Result<Frame, String> {
     let mut frame = Frame::new();
     frame.insert("atoms", atoms_block);
     for (k, v) in kv_meta.into_iter() {
-        frame.meta.insert(k, ext_value_to_string(&v));
+        frame.meta.insert(k, ext_value_to_meta(v)?);
     }
 
     // Build SimBox from Lattice + optional Origin
@@ -653,37 +657,94 @@ pub fn parse_xyz_frame_str(s: &str) -> std::result::Result<Frame, String> {
     Ok(frame)
 }
 
-fn ext_value_to_string(v: &ExtValue) -> String {
-    match v {
-        ExtValue::Primitive(Primitive::Str(s)) => s.clone(),
-        ExtValue::Primitive(Primitive::Int(i)) => i.to_string(),
-        ExtValue::Primitive(Primitive::Real(r)) => format!("{}", r),
-        ExtValue::Primitive(Primitive::Logical(b)) => b.to_string(),
-        ExtValue::Array1(vals) => vals
-            .iter()
-            .map(|p| match p {
-                Primitive::Str(s) => s.clone(),
-                Primitive::Int(i) => i.to_string(),
-                Primitive::Real(r) => format!("{}", r),
-                Primitive::Logical(b) => b.to_string(),
+fn ext_value_to_meta(value: ExtValue) -> std::result::Result<MetaValue, String> {
+    match value {
+        ExtValue::Primitive(Primitive::Str(value)) => Ok(MetaValue::String(value)),
+        ExtValue::Primitive(Primitive::Int(value)) => Ok(MetaValue::I64(value)),
+        ExtValue::Primitive(Primitive::Real(value)) => Ok(MetaValue::F64(value)),
+        ExtValue::Primitive(Primitive::Logical(value)) => Ok(MetaValue::Bool(value)),
+        ExtValue::Array2(rows) => ext_array_to_meta(rows.into_iter().flatten().collect()),
+        ExtValue::Array1(values) => ext_array_to_meta(values),
+    }
+}
+
+fn ext_array_to_meta(values: Vec<Primitive>) -> std::result::Result<MetaValue, String> {
+    if values.len() == 3 && values.iter().all(|v| matches!(v, Primitive::Logical(_))) {
+        let values: Vec<bool> = values
+            .into_iter()
+            .map(|v| match v {
+                Primitive::Logical(v) => v,
+                _ => unreachable!(),
             })
-            .collect::<Vec<_>>()
-            .join(" "),
-        ExtValue::Array2(rows) => rows
-            .iter()
-            .map(|row| {
-                row.iter()
-                    .map(|p| match p {
-                        Primitive::Str(s) => s.clone(),
-                        Primitive::Int(i) => i.to_string(),
-                        Primitive::Real(r) => format!("{}", r),
-                        Primitive::Logical(b) => b.to_string(),
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" ")
+            .collect();
+        return Ok(MetaValue::Bool3(values.try_into().unwrap()));
+    }
+    if values.len() == 3 && values.iter().all(|v| matches!(v, Primitive::Int(_))) {
+        let values: Vec<i64> = values
+            .into_iter()
+            .map(|v| match v {
+                Primitive::Int(v) => v,
+                _ => unreachable!(),
             })
-            .collect::<Vec<_>>()
-            .join("; "),
+            .collect();
+        return Ok(MetaValue::I64x3(values.try_into().unwrap()));
+    }
+    if matches!(values.len(), 3 | 6 | 9) && values.iter().all(|v| matches!(v, Primitive::Real(_))) {
+        let values: Vec<f64> = values
+            .into_iter()
+            .map(|v| match v {
+                Primitive::Real(v) => v,
+                _ => unreachable!(),
+            })
+            .collect();
+        return Ok(match values.len() {
+            3 => MetaValue::F64x3(values.try_into().unwrap()),
+            6 => MetaValue::F64x6(values.try_into().unwrap()),
+            9 => MetaValue::F64x9(values.try_into().unwrap()),
+            _ => unreachable!(),
+        });
+    }
+    Err(format!(
+        "extended XYZ metadata array has unsupported type/length {}; expected a homogeneous numeric vector of length 3, 6, or 9, or bool[3]",
+        values.len()
+    ))
+}
+
+fn meta_to_extxyz(value: &MetaValue) -> String {
+    macro_rules! joined {
+        ($values:expr) => {
+            $values
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+    }
+    let raw = match value {
+        MetaValue::Bool(v) => v.to_string(),
+        MetaValue::I32(v) => v.to_string(),
+        MetaValue::I64(v) => v.to_string(),
+        MetaValue::U32(v) => v.to_string(),
+        MetaValue::U64(v) => v.to_string(),
+        MetaValue::F32(v) => v.to_string(),
+        MetaValue::F64(v) => v.to_string(),
+        MetaValue::String(v) => v.clone(),
+        MetaValue::Bool3(v) => joined!(v),
+        MetaValue::I32x3(v) => joined!(v),
+        MetaValue::I64x3(v) => joined!(v),
+        MetaValue::U32x3(v) => joined!(v),
+        MetaValue::U64x3(v) => joined!(v),
+        MetaValue::F32x3(v) => joined!(v),
+        MetaValue::F64x3(v) => joined!(v),
+        MetaValue::F32x6(v) => joined!(v),
+        MetaValue::F64x6(v) => joined!(v),
+        MetaValue::F32x9(v) => joined!(v),
+        MetaValue::F64x9(v) => joined!(v),
+    };
+    if raw.contains(char::is_whitespace) {
+        format!("\"{raw}\"")
+    } else {
+        raw
     }
 }
 
@@ -1457,11 +1518,7 @@ pub fn write_xyz_frame<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> st
         {
             continue;
         }
-        let val_str = if v.contains(' ') {
-            format!("\"{}\"", v)
-        } else {
-            v.clone()
-        };
+        let val_str = meta_to_extxyz(v);
         comment_parts.push(format!("{}={}", k, val_str));
     }
     comment_parts.push(format!("Properties={}", atom_data.properties_str));

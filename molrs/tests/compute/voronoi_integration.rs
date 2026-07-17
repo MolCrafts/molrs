@@ -142,7 +142,7 @@ fn cube_unit_conversion_reproduces_hand_value() {
     grid.set_shape(&dims).unwrap();
     let mut frame = Frame::new();
     frame.insert("grid", grid);
-    frame.meta.insert("cube_units".into(), "bohr".into());
+    frame.meta.insert("cube_units", "bohr");
     // h column j = voxel_vec_j × dim_j = a × 2 along each axis.
     let h = ndarray::Array2::from_shape_fn((3, 3), |(i, j)| if i == j { a * 2.0 } else { 0.0 });
     frame.simbox = Some(SimBox::new(h, array![0.0 as F, 0.0, 0.0], [true, true, true]).unwrap());

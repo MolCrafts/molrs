@@ -8,7 +8,7 @@
 use super::region::Region;
 use crate::math;
 use crate::types::{F, F3, F3View, F3x3, FNx3, FNx3View, Pbc3};
-use ndarray::{Array1, Array2, ArrayView1, array};
+use ndarray::{Array1, Array2, Array3, ArrayView1, ArrayView2, array};
 
 /// Box geometry kind, detected once at construction.
 #[derive(Debug, Clone, PartialEq)]
@@ -52,6 +52,8 @@ pub enum BoxError {
     InvalidVectorLength { len: usize },
     /// A required array is not contiguous in memory.
     NonContiguous(&'static str),
+    /// Cell lengths/angles do not describe a physical triclinic cell.
+    InvalidAngles,
 }
 
 impl SimBox {
@@ -117,6 +119,71 @@ impl SimBox {
         Self::new(h, origin, pbc)
     }
 
+    /// Restricted-triclinic matrix from edge lengths and angles in degrees.
+    pub fn matrix_from_lengths_angles(lengths: [F; 3], angles: [F; 3]) -> Result<F3x3, BoxError> {
+        let [a, b, c] = lengths;
+        let [alpha, beta, gamma] = angles.map(F::to_radians);
+        if [a, b, c].iter().any(|value| *value <= 0.0)
+            || [alpha, beta, gamma]
+                .iter()
+                .any(|angle| !(*angle > 0.0 && *angle < std::f64::consts::PI))
+        {
+            return Err(BoxError::InvalidAngles);
+        }
+        let (cos_a, cos_b, cos_c) = (alpha.cos(), beta.cos(), gamma.cos());
+        let xy = b * cos_c;
+        let xz = c * cos_b;
+        let ly = (b * b - xy * xy).sqrt();
+        if !ly.is_finite() || ly <= 0.0 {
+            return Err(BoxError::InvalidAngles);
+        }
+        let yz = (b * c * cos_a - xy * xz) / ly;
+        let lz2 = c * c - xz * xz - yz * yz;
+        if !lz2.is_finite() || lz2 <= 0.0 {
+            return Err(BoxError::InvalidAngles);
+        }
+        Ok(array![[a, xy, xz], [0.0, ly, yz], [0.0, 0.0, lz2.sqrt()]])
+    }
+
+    /// Restricted-triclinic matrix from diagonal sizes and `(xy, xz, yz)` tilts.
+    pub fn matrix_from_lengths_tilts(lengths: [F; 3], tilts: [F; 3]) -> F3x3 {
+        array![
+            [lengths[0], tilts[0], tilts[1]],
+            [0.0, lengths[1], tilts[2]],
+            [0.0, 0.0, lengths[2]],
+        ]
+    }
+
+    /// Convert a general cell matrix to LAMMPS restricted-triclinic form.
+    pub fn restricted_matrix(matrix: FNx3View<'_>) -> Result<F3x3, BoxError> {
+        if matrix.dim() != (3, 3) {
+            return Err(BoxError::InvalidMatrixShape {
+                rows: matrix.nrows(),
+                cols: matrix.ncols(),
+            });
+        }
+        let a = matrix.column(0).to_owned();
+        let b = matrix.column(1).to_owned();
+        let c = matrix.column(2).to_owned();
+        let ax = math::norm3(&a);
+        if ax <= 0.0 {
+            return Err(BoxError::SingularCell);
+        }
+        let ua = &a / ax;
+        let bx = b.dot(&ua);
+        let cross_ab = math::cross3(&a, &b);
+        let cross_norm = math::norm3(&cross_ab);
+        if cross_norm <= 0.0 {
+            return Err(BoxError::SingularCell);
+        }
+        let by = math::norm3(&math::cross3(&ua, &b));
+        let uab = &cross_ab / cross_norm;
+        let cx = c.dot(&ua);
+        let cy = c.dot(&math::cross3(&uab, &ua));
+        let cz = c.dot(&uab);
+        Ok(array![[ax, bx, cx], [0.0, by, cy], [0.0, 0.0, cz]])
+    }
+
     /// Create a non-periodic (free-boundary) box enclosing all points.
     ///
     /// Computes the axis-aligned bounding box of `points` and adds `padding`
@@ -156,6 +223,39 @@ impl SimBox {
             (max[2] - min[2] + 2.0 * padding).max(padding),
         ];
         Self::ortho(lengths, origin, [false, false, false])
+    }
+
+    /// Create a tight orthorhombic box around a point cloud.
+    ///
+    /// Unlike [`free`](Self::free), padding is specified per axis and may be
+    /// zero. Periodicity is supplied by the caller instead of being forced to
+    /// free-boundary semantics.
+    pub fn from_bounds(points: FNx3View<'_>, padding: [F; 3], pbc: Pbc3) -> Result<Self, BoxError> {
+        if points.nrows() == 0 {
+            return Err(BoxError::InvalidVectorLength { len: 0 });
+        }
+        if padding.iter().any(|value| *value < 0.0) {
+            return Err(BoxError::InvalidVectorLength { len: 0 });
+        }
+        let mut min = [points[[0, 0]], points[[0, 1]], points[[0, 2]]];
+        let mut max = min;
+        for point in points.rows().into_iter().skip(1) {
+            for d in 0..3 {
+                min[d] = min[d].min(point[d]);
+                max[d] = max[d].max(point[d]);
+            }
+        }
+        let origin = array![
+            min[0] - padding[0],
+            min[1] - padding[1],
+            min[2] - padding[2]
+        ];
+        let lengths = array![
+            max[0] - min[0] + 2.0 * padding[0],
+            max[1] - min[1] + 2.0 * padding[1],
+            max[2] - min[2] + 2.0 * padding[2]
+        ];
+        Self::ortho(lengths, origin, pbc)
     }
 
     /// Create a non-periodic (free-boundary) box enclosing all points, reading
@@ -264,6 +364,20 @@ impl SimBox {
         let b = self.lattice(1);
         let c = self.lattice(2);
         array![math::norm3(&a), math::norm3(&b), math::norm3(&c)]
+    }
+
+    /// Lattice angles `[alpha, beta, gamma]` in degrees.
+    pub fn angles(&self) -> F3 {
+        let a = self.lattice(0);
+        let b = self.lattice(1);
+        let c = self.lattice(2);
+        let angle = |u: &F3, v: &F3| {
+            (u.dot(v) / (math::norm3(u) * math::norm3(v)))
+                .clamp(-1.0, 1.0)
+                .acos()
+                .to_degrees()
+        };
+        array![angle(&b, &c), angle(&a, &c), angle(&a, &b)]
     }
 
     /// Nearest plane distance (half the box size along each axis)
@@ -514,6 +628,57 @@ impl SimBox {
         out
     }
 
+    /// Row-wise minimum-image distances between equally sized point arrays.
+    pub fn distances(&self, points1: FNx3View<'_>, points2: FNx3View<'_>) -> Array1<F> {
+        assert_eq!(points1.raw_dim(), points2.raw_dim());
+        let values = points1
+            .rows()
+            .into_iter()
+            .zip(points2.rows())
+            .map(|(a, b)| {
+                let dr = self.shortest_vector_impl([a[0], a[1], a[2]], [b[0], b[1], b[2]]);
+                (dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2]).sqrt()
+            })
+            .collect();
+        Array1::from_vec(values)
+    }
+
+    /// All pairwise minimum-image displacement vectors (`points2 - points1`).
+    pub fn pairwise_delta(&self, points1: FNx3View<'_>, points2: FNx3View<'_>) -> Array3<F> {
+        let mut out = Array3::zeros((points1.nrows(), points2.nrows(), 3));
+        for (i, a) in points1.rows().into_iter().enumerate() {
+            for (j, b) in points2.rows().into_iter().enumerate() {
+                let dr = self.shortest_vector_impl([a[0], a[1], a[2]], [b[0], b[1], b[2]]);
+                for d in 0..3 {
+                    out[[i, j, d]] = dr[d];
+                }
+            }
+        }
+        out
+    }
+
+    /// All pairwise minimum-image distances.
+    pub fn pairwise_distances(&self, points1: FNx3View<'_>, points2: FNx3View<'_>) -> Array2<F> {
+        let mut out = Array2::zeros((points1.nrows(), points2.nrows()));
+        for (i, a) in points1.rows().into_iter().enumerate() {
+            for (j, b) in points2.rows().into_iter().enumerate() {
+                let dr = self.shortest_vector_impl([a[0], a[1], a[2]], [b[0], b[1], b[2]]);
+                out[[i, j]] = (dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2]).sqrt();
+            }
+        }
+        out
+    }
+
+    /// Return a box with its cell matrix right-multiplied by a transform.
+    pub fn transformed(&self, transformation: &F3x3) -> Result<Self, BoxError> {
+        Self::new_cell(
+            self.h.dot(transformation),
+            self.origin.clone(),
+            self.pbc,
+            self.cell_defined,
+        )
+    }
+
     /// Wrap Cartesian points into the unit cell according to PBC
     pub fn wrap(&self, xyz: FNx3View<'_>) -> FNx3 {
         let mut frac = self.to_frac(xyz);
@@ -528,20 +693,53 @@ impl SimBox {
         self.to_cart(frac.view())
     }
 
+    /// Integer periodic images for Cartesian points.
+    pub fn images(&self, xyz: FNx3View<'_>) -> Array2<i64> {
+        let frac = self.to_frac(xyz);
+        let mut images = Array2::zeros((frac.nrows(), 3));
+        for i in 0..frac.nrows() {
+            for d in 0..3 {
+                if self.pbc[d] {
+                    images[[i, d]] = (frac[[i, d]] + 1e-8).floor() as i64;
+                }
+            }
+        }
+        images
+    }
+
+    /// Reconstruct unwrapped coordinates from wrapped points and image flags.
+    pub fn unwrap(&self, xyz: FNx3View<'_>, images: ArrayView2<'_, i64>) -> FNx3 {
+        assert_eq!(xyz.raw_dim(), images.raw_dim());
+        assert_eq!(xyz.ncols(), 3);
+        let mut result = xyz.to_owned();
+        for i in 0..xyz.nrows() {
+            let image = array![
+                images[[i, 0]] as F,
+                images[[i, 1]] as F,
+                images[[i, 2]] as F,
+            ];
+            let shift = self.h.dot(&image);
+            for d in 0..3 {
+                result[[i, d]] += shift[d];
+            }
+        }
+        result
+    }
+
     pub fn get_corners(&self) -> FNx3 {
-        let l = self.lengths();
-        let (ox, oy, oz) = (self.origin[0], self.origin[1], self.origin[2]);
-        let (lx, ly, lz) = (l[0], l[1], l[2]);
-        array![
-            [ox, oy, oz],
-            [ox + lx, oy, oz],
-            [ox + lx, oy + ly, oz],
-            [ox, oy + ly, oz],
-            [ox, oy, oz + lz],
-            [ox + lx, oy, oz + lz],
-            [ox + lx, oy + ly, oz + lz],
-            [ox, oy + ly, oz + lz],
-        ]
+        self.to_cart(
+            array![
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [1.0, 1.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+                [1.0, 0.0, 1.0],
+                [1.0, 1.0, 1.0],
+                [0.0, 1.0, 1.0],
+            ]
+            .view(),
+        )
     }
 }
 

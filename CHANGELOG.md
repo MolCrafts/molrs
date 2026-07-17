@@ -5,97 +5,97 @@ All notable changes to molrs are recorded here. This project follows
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-17
+
+molrs and `molcrafts-molpy` continue to share one version line and release as a
+pair; downstream exact-pins move to `0.8.0`. This minor is the **chem-perceive**
+line: chemical perception, force-field ownership, and whole-chain acceptance.
+
 ### Added
 
-- **Whole-chain acceptance for `chem-perceive` (16 specs).** Two new test targets
-  verify the *chain*, which no spec on it ever had — each verified its own slice.
-
-  - `molrs/tests/architecture_gate.rs` — the five "only one of these exists"
-    promises, as machine-checked gates, none of which can exempt itself (every
-    needle is assembled with `concat!`, so the string a gate searches for does not
-    occur in the gate): one home and one form for parameters (flat `ff/params/`, no
-    `include_str!`, no runtime parse of a **built-in** table — told from a *user's*
-    XML by the signature, since a function that parses text it was never given is
-    parsing a table molrs shipped as a string); one perception layer; one
-    interpolation seam (`ParameterInterpolator` has exactly one implementor in
-    `src/`); one MMFF path (no bespoke energy layer, no second classifier, no
-    MMFF-owned kernel); and **a registered kernel constructor that ignores `tp` is
-    not a Style** — now decided on *semantics* (does the body read the binding?)
-    rather than on the *spelling* of the binding, which is what let `pme_ctor` and
-    `pair_coul_cut_ctor` through before.
-  - `molrs/tests/end_to_end.rs` — SMILES/SDF → Perceive → AtdTypifier → ChargeModel
-    → ForceField → Potentials → E + F, on **all 37** antechamber molecules and
-    **all 11** RDKit MMFF fixtures, against oracles molrs did not produce. Every
-    fixture list is directory-scanned and every partition (zero-charge,
-    delocalized-N) is a **predicate evaluated on the molecule**, never a list of
-    names.
-  - `molrs-python/tests/test_parity.py` — the bindings lose no precision: `float64`
-    end to end, charge conservation to **1e-12**, no renormalization, and every
-    bit-level invariant the Rust suite asserts.
-
-### Fixed
-
-- Nothing. This acceptance repaired nothing it found, by design: *an acceptance that
-  quietly repairs what it finds is the last place a defect can hide, because the thing
-  that would have reported it is the thing that swallowed it.* Three gates are RED on
-  landing, each naming a real defect, and each gets its own spec.
-
-### Known defects (found by this acceptance, deliberately NOT fixed here)
-
-- **GAFF/GAFF2 force fields declare no electrostatic style.**
-  `gaff_forcefield` builds `atom/full`, `pair/lj/cut` and the bonded styles — and no
-  Coulomb style at all. `to_potentials(...).calc_energy_forces(...)` therefore returns
-  an energy with **zero electrostatic contribution, silently**, for every molecule,
-  including the ionic ones (acetate, methylammonium, imidazolium). This is the caffeine
-  hole (150 kcal/mol on the MMFF path) reproduced in the other force field, and no
-  stage test could see it because no test ran the GAFF chain to an *energy*. The tell
-  was already in the tree: `SpecialBonds.coul = [0, 0, 1/1.2]` — AMBER's SCEE, a 1-4
-  Coulomb scale factor declared for a term that does not exist.
-  Gate: `end_to_end::the_force_field_the_chain_builds_declares_its_electrostatics`.
-- **Four test-tree subset assertions** over the 11 MMFF energy fixtures
-  (`mmff/energy.rs::S_NAMES`, the zero-charge pair, `typifier/mmff_variant.rs::
-  N_FIXTURES` / `IDENTICAL_FIXTURES`). Each is a hand-written list where the predicate
-  is computable, and the gap is not hypothetical: `e_caffeine` and `e_big` **do** carry
-  a delocalized nitrogen and appear in neither list, so nothing asserted that MMFF94s
-  changes their energy at all.
-  Gate: `architecture_gate::no_test_asserts_on_a_subset_of_its_fixtures`.
-- **One test goes green by skipping itself** when its input is absent
-  (`ff/readers/opls.rs::reads_real_molpy_oplsaa`, which needs a molpy checkout). In CI
-  it asserts nothing and counts as coverage.
-  Gate: `architecture_gate::no_test_returns_green_when_its_input_is_absent`.
-
-- **A single live graph-reference layer for Python.** `molrs.views` now owns
+- **Chemical perception + GAFF/ATD/AM1-BCC pipeline.** Rings, aromaticity,
+  hydrogens, stereo, BCC bond types, charge equivalencing, Gasteiger, and the
+  full ATD typifier (seven parameter tables) land as always-on `perceive` plus
+  `ff` consumers. Antechamber / GAFF / GAFF2 parameter tables are committed
+  Rust (`ff/params/`), not runtime-parsed text. `Parmchk2Estimator` is the
+  single interpolation seam for missing bonded terms.
+- **A native nominal `Typifier` base and batch reaction execution.** Native
+  OPLS-AA, MMFF94/MMFF94s, and ATD typifiers inherit the same subclassable
+  Python base used by downstream typifiers. `Reaction.apply_many` resolves all
+  leaving groups against the intact graph, removes their union in one relation
+  scan, and applies every disjoint transform with one touched set per binding;
+  rooted SMARTS matching reuses one molecular context across the batch.
+- **Native ownership for the remaining `molpy.core` kernels.** The Python
+  bindings now expose the Rust-owned `Element`, units and LJ reduced
+  units, free-boundary neighbor queries, complete Box batch geometry and
+  conversions, subclassable/composable regions, graph direction alignment and
+  replication, plus CL&Pol fragment scaling/scaleLJ with a compiled parameter
+  table. These APIs let molpy consume the owner types directly and retain only
+  Python call-shape sugar around higher-level workflows.
+- **A single live graph-reference layer for Python.** `molrs.views` owns
   `NodeRef`, `RelationRef`, weak interning, live property mappings, ref
   collections, and the concrete `Atom` / bonded-term / `Bead` types. Refs are
   always bound to a graph handle; graph factories create the handle before the
   Python object.
-
 - **MMFF94s is reachable from the typifier / force-field path.** New
-  `MMFF94STypifier` (Rust: `molrs::ff::typifier::mmff::MMFF94STypifier`; Python:
-  `molrs.MMFF94STypifier`) types and parameterises a molecule with the MMFF94s
-  ("static", Halgren 1999) parameter set, giving `data/mmff94s.xml` its first
-  consumer. MMFF94 and MMFF94s share all 95 atom types and every bond / angle /
-  stretch-bend / vdW / charge parameter; they differ in 11 out-of-plane rows and 42
-  torsion rows, all centred on delocalised trivalent nitrogen (MMFF types 10 `NC=O`
-  / 40 `NC=C`), which MMFF94s flattens by raising `koop` to `+0.015` / `+0.030`
-  md·Å·rad⁻².
+  `MMFF94STypifier` (Rust + Python) types with the MMFF94s ("static", Halgren
+  1999) set. MMFF94 and MMFF94s share atom types and most parameters; they
+  differ on out-of-plane / torsion rows centred on delocalised trivalent
+  nitrogen (types 10 / 40).
+- **`ParamSource`** (`molrs::ff::potential::ParamSource`) names where a kernel
+  gets parameters: `TypeRows` or `PerInstance`. Eight styles register
+  `PerInstance` (MMFF bonded + `pair/mmff_ele`, plus `pair/coul/cut` and
+  `kspace/pme`). The invariant *a registered kernel constructor that ignores
+  `tp` is not a Style* is enforced in both directions.
+- **Whole-chain acceptance for `chem-perceive`.** Architecture gates
+  (`architecture_gate.rs`) and end-to-end SMILES/SDF → Perceive → Typifier →
+  ChargeModel → ForceField → Potentials on all antechamber + RDKit MMFF
+  fixtures (`end_to_end.rs`), plus Python bit-level parity
+  (`molrs-python/tests/test_parity.py`). Acceptance does not silently repair
+  defects it finds — each defect became its own fix (below).
+
+### Changed — BREAKING
+
+- **`Element` has one owner and one public Rust path: `molrs::Element`.** The
+  implementation module is private; CXX generates `molrs::Element` from that
+  canonical enum, and Python exposes the same 1–118 domain. `ElementData`,
+  `Element.initialize()`, atomic number 0, `X`, unknown-element property
+  defaults, and downstream aliases are deleted. Invalid values fail instead
+  of constructing a sentinel element.
+- **Frame exchange is schema version 2 only.** A Frame is blocks + exact typed
+  `meta` + `simbox`; the 19 `MetaValue` dtypes keep their scalar/vector type
+  across Rust, C, CXX, Python, Atomiverse, and molpy. String metadata,
+  `frame.box`, alternate metadata payloads, and every pre-v2 decoder are
+  deleted. Non-v2 data is rejected and must be regenerated.
+- **`MMFFTypifier` is renamed to `MMFF94Typifier`** (Rust and Python), and its
+  fallible `MMFFTypifier::mmff94() -> Result<Self, String>` constructor is
+  replaced by the infallible `MMFF94Typifier::new() -> Self`. No compat alias.
+  Migration: `MMFFTypifier::mmff94()?` → `MMFF94Typifier::new()`;
+  `molrs.MMFFTypifier()` → `molrs.MMFF94Typifier()`.
 
 ### Fixed
 
+- **GAFF/GAFF2 now declare unbuffered Coulomb electrostatics.**
+  `gaff_forcefield` registers `pair/coul/cut` with AMBER's measured conversion
+  factor (`332.05221729` kcal·Å·mol⁻¹·e⁻²), vacuum dielectric, and `delta = 0`,
+  so ionic molecules no longer evaluate with silent zero electrostatic energy.
+  Gate: `end_to_end::the_force_field_the_chain_builds_declares_its_electrostatics`.
+- **MMFF energy / variant tests no longer use hand-written fixture subsets.**
+  Zero-charge and type-10/40 partitions are computed from every fixture on disk;
+  caffeine and `e_big` can no longer sit outside the assertion that would catch
+  a regression.
+- **External OPLS reader test is `#[ignore]` instead of skip-and-pass.** Missing
+  molpy `oplsaa.xml` no longer counts as a green assertion in CI.
 - **The MMFF typifier no longer hardcodes the MMFF94 variant.**
-  `frame_builder::annotate_mmff` now threads the variant into
-  `MmffMolProperties::compute`, `torsion_params` and `oop_koop`, so the `koop` and
-  `(v1, v2, v3)` columns baked onto the typed Frame — the ones the `mmff_oop` /
-  `mmff_torsion` kernels actually read — follow the typifier the caller chose. The
-  MMFF94s tables (`MMFF_OOP_S`, `MMFF_TOR_S`) had been shipped and used only by the
-  bespoke energy path.
+  `frame_builder::annotate_mmff` threads the variant into
+  `MmffMolProperties::compute`, `torsion_params` and `oop_koop`, so baked
+  `koop` / torsion columns follow the typifier the caller chose.
 
 ### Removed — BREAKING
 
 - **Detached node/relation state is not part of the view model.** Callers create
   nodes and relations through an owning graph factory; refs never carry a
   pending Python dictionary that later attaches to a graph.
-
 - **The bespoke MMFF energy path is deleted. MMFF is no longer a special case.**
   `MmffForceField`, `MmffEnergyBreakdown` and the whole `ff/mmff/energy/` assembly
   layer are gone, together with every shortcut that reached them:
@@ -118,66 +118,12 @@ All notable changes to molrs are recorded here. This project follows
   pots = typifier.forcefield().to_potentials(frame)
   ```
 
-  Two reasons, and the second is why this is a removal rather than a deprecation.
-
-  *It was a duplicate.* The generic path reproduces RDKit on all 11 MMFF fixtures
-  (worst deviation 3.1e-9 kcal/mol) and matches a frozen per-style breakdown on
-  every one of its 7 energy terms to 1e-6 — so the bespoke layer was a second
-  implementation of the same force field, i.e. a second set of numbers to be wrong.
-
-  *It had already drifted.* Until the preceding fix, `build()` compiled potentials
-  with **no electrostatic style at all** (no `ForceField` defined `pair/mmff_ele`):
-  caffeine was ~150 kcal/mol low. The shortcut is what hid it — by folding
-  typify → compile into one call it removed the `Frame` where a missing term is
-  visible. The three `typify_*` classifiers were wrong on their own terms too: an
-  aromatic bond came back as bond type 1 (RDKit says 0), and `typify_angle(bt_ij,
-  bt_jk)` could not return 3 for a cyclopropane C-C-C angle *at any input*, because
-  ring membership was not among its arguments.
-
-  **Downstream: `molpack`** consumes `molcrafts-molrs` natively and its relaxer
-  follows the `build`-style pattern documented in `docs/interop.md`; it must move to
-  the `typify` → `to_potentials` route. This is the only known external consumer.
-
-- **The four MMFF parameter files lose 4,065 type-def rows.** `<Bond>` (493),
-  `<Angle>` (2342), `<StretchBend>` (282), `<Torsion>` (926) and `<Oop>` (117) are
-  gone from `data/mmff94{,s}.xml` and `molrs/data/mmff94{,s}.xml`, along with the
-  five readers that parsed them. **No code ever read one of them.** MMFF's bonded
-  parameters depend on aromaticity, ring size, four-level equivalence degradation
-  and empirical fallbacks — they are not a `(type_i, type_j, …) → params` table —
-  so the typifier resolves them per interaction and bakes them into Frame columns,
-  which is what the kernels have always read. The rows existed solely to satisfy a
-  guard requiring every style to carry type definitions. `<VdW>` keeps all 95 rows
-  (van der Waals genuinely *is* a per-atom-type table) and `<ElectrostaticParams>`
-  stays. A parameter file is unaffected unless it defined those sections.
-
-### Added
-
-- **`ParamSource`** (`molrs::ff::potential::ParamSource`) names where a kernel gets
-  its parameters: `TypeRows` (from the style's type-def rows) or `PerInstance` (from
-  Frame columns the typifier baked). `KernelRegistry::register_with` /
-  `register_kernel_with` carry it; the plain `register` / `register_kernel` remain as
-  the `TypeRows` short form, so no existing kernel registration changes.
-  `Style::to_potential`'s empty-type-params guard now consults it — a `TypeRows`
-  style with no rows still errors, a `PerInstance` style is allowed zero rows — which
-  replaces the old blanket `category != "pair"` escape hatch. Eight styles are
-  registered `PerInstance`: MMFF's `bond/mmff_bond`, `angle/mmff_angle`,
-  `angle/mmff_stbn`, `dihedral/mmff_torsion`, `improper/mmff_oop`, `pair/mmff_ele`,
-  plus `pair/coul/cut` and `kspace/pme` (both read per-atom charge off the Frame).
-  `pair/mmff_vdw` stays `TypeRows`. The invariant — *a registered kernel constructor
-  that ignores its type-params is not a Style* — is enforced in both directions by
-  `tests/ff/potential/param_source_gate.rs`.
-
-### Changed — BREAKING
-
-- **`MMFFTypifier` is renamed to `MMFF94Typifier`** (Rust and Python), and its
-  fallible `MMFFTypifier::mmff94() -> Result<Self, String>` constructor is replaced
-  by the infallible `MMFF94Typifier::new() -> Self` (the parameter set is embedded
-  at compile time; `from_xml_str` still returns `Result`). There is **no compat
-  alias and no deprecated shim**: MMFF is now two named front doors —
-  `MMFF94Typifier` and `MMFF94STypifier` — over one engine, and the variant is a
-  private field, never a constructor flag. Migration:
-  `MMFFTypifier::mmff94()?` → `MMFF94Typifier::new()`; `molrs.MMFFTypifier()` →
-  `molrs.MMFF94Typifier()`.
+  **Downstream: `molpack`** must move to the `typify` → `to_potentials` route.
+- **The four MMFF parameter files lose 4,065 type-def rows.** `<Bond>`,
+  `<Angle>`, `<StretchBend>`, `<Torsion>`, and `<Oop>` type-def sections are
+  gone from the MMFF XML tables and their readers. Bonded MMFF parameters are
+  per-instance on the Frame; only `<VdW>` and `<ElectrostaticParams>` remain as
+  type-row tables.
 
 ## [0.7.0] - 2026-07-08
 

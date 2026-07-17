@@ -1,11 +1,12 @@
 import numpy as np
 import pytest
 import molrs
-from molrs.molrs import Block, Frame  # bare PyO3 cores (Block/Frame are the rich shadow)
+from molrs.molrs import Block, Frame, MetaValue  # bare PyO3 cores
 
 
 class TestFrameConstruction:
     def test_empty(self):
+        assert molrs.FRAME_SCHEMA_VERSION == 2
         f = Frame()
         assert len(f) == 0
         assert f.keys() == []
@@ -20,7 +21,7 @@ class TestFrameConstruction:
                         "x": np.array([0.0, 1.0], dtype=np.float64),
                     }
                 },
-                "metadata": {"source": "pytest"},
+                "meta": {"source": MetaValue("string", "pytest")},
             }
         )
 
@@ -28,21 +29,21 @@ class TestFrameConstruction:
         assert f["atoms"].nrows == 2
         assert list(f["atoms"].view("symbol")) == ["C", "H"]
         np.testing.assert_allclose(f["atoms"].view("x"), [0.0, 1.0])
-        assert f.meta["source"] == "pytest"
+        assert f.meta["source"].dtype == "string"
+        assert f.meta["source"].value == "pytest"
 
-    def test_from_dict_direct_block_mapping(self):
-        f = Frame.from_dict(
-            {
-                "atoms": {
-                    "id": np.array([1, 2], dtype=np.int64),
-                    "selected": np.array([True, False], dtype=np.bool_),
-                }
-            }
-        )
-
-        assert sorted(f.keys()) == ["atoms"]
-        np.testing.assert_array_equal(f["atoms"].view("id"), [1, 2])
-        np.testing.assert_array_equal(f["atoms"].view("selected"), [True, False])
+    @pytest.mark.parametrize(
+        "data",
+        [
+            {"blocks": {}},
+            {"blocks": {}, "metadata": {}},
+            {"blocks": {}, "meta": {}, "metadata": {}},
+            {"atoms": {}},
+        ],
+    )
+    def test_from_dict_rejects_noncanonical_envelopes(self, data):
+        with pytest.raises(TypeError, match="exactly 'blocks' and 'meta'"):
+            Frame.from_dict(data)
 
     def test_repr_empty(self):
         r = repr(Frame())
@@ -138,12 +139,33 @@ class TestFrameSimbox:
 
 
 class TestFrameMeta:
+    def test_exact_dtype_roundtrip(self):
+        f = Frame()
+        f.meta = {
+            "tag": MetaValue("i64", 9_007_199_254_740_993),
+            "temperature": MetaValue("f32", 300.0),
+            "stress": MetaValue("f64x6", [1, 2, 3, 4, 5, 6]),
+        }
+        assert f.meta["tag"].dtype == "i64"
+        assert f.meta["tag"].value == 9_007_199_254_740_993
+        assert f.meta["temperature"].dtype == "f32"
+        assert f.meta["stress"].dtype == "f64x6"
+        assert f.meta["stress"].value == [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+
+    def test_untyped_value_is_rejected(self):
+        f = Frame()
+        with pytest.raises(TypeError, match="must be a MetaValue"):
+            f.meta = {"legacy": "string-only"}
+
     def test_set_and_get(self):
         f = Frame()
-        f.meta = {"title": "test", "source": "pytest"}
+        f.meta = {
+            "title": MetaValue("string", "test"),
+            "source": MetaValue("string", "pytest"),
+        }
         meta = f.meta
-        assert meta["title"] == "test"
-        assert meta["source"] == "pytest"
+        assert meta["title"].value == "test"
+        assert meta["source"].value == "pytest"
 
     def test_empty_meta(self):
         f = Frame()
@@ -151,8 +173,8 @@ class TestFrameMeta:
 
     def test_overwrite_meta(self):
         f = Frame()
-        f.meta = {"a": "1"}
-        f.meta = {"b": "2"}
+        f.meta = {"a": MetaValue("i64", 1)}
+        f.meta = {"b": MetaValue("i64", 2)}
         assert "b" in f.meta
         assert "a" not in f.meta
 

@@ -41,8 +41,8 @@ use std::collections::{HashMap, HashSet};
 
 use crate::perceive::rings::find_rings;
 use crate::system::atomistic::{AtomId, Atomistic, BondId};
-use crate::system::element::Element;
 use crate::system::molgraph::PropValue;
+use molrs::Element;
 
 /// Maximum number of fused rings combined when checking the Hückel rule
 /// (RDKit `maxFused = 6`).

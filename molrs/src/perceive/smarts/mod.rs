@@ -110,6 +110,14 @@ impl SmartsPattern {
         matcher::find(&self.graph, mol, options)
     }
 
+    pub(crate) fn find_in_context(
+        &self,
+        context: &ast::MolContext<'_>,
+        root: Option<AtomId>,
+    ) -> Vec<SmartsMatch> {
+        matcher::find_in_context(&self.graph, context, root, None)
+    }
+
     /// Whether at least one match exists.
     pub fn has_match(&self, mol: &Atomistic, options: MatchOptions<'_>) -> bool {
         matcher::has_match(&self.graph, mol, options)

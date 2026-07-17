@@ -290,7 +290,7 @@ pub fn read_chgcar_from_reader<R: BufRead>(mut reader: R) -> Result<Frame, MolRs
     // -----------------------------------------------------------------------
     let mut frame = Frame::new();
     if !title.is_empty() {
-        frame.meta.insert("title".into(), title);
+        frame.meta.insert("title", title);
     }
     frame.simbox = Some(simbox);
     frame.insert("atoms", atoms);

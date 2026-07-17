@@ -50,6 +50,24 @@ def _nlist(frame, pts, cutoff=1.2):
     return nq.query_self()
 
 
+def test_neighbor_query_free_boundary():
+    points = np.array([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [2.0, 0.0, 0.0]])
+    query = molrs.NeighborQuery.free(points, 1.0)
+    result = query.query(np.array([[0.0, 0.0, 0.0]]))
+
+    assert np.array_equal(result.point_indices, np.array([0, 1], dtype=np.uint32))
+    assert np.allclose(result.distances, [0.0, 0.5])
+
+
+def test_neighbor_query_rejects_non_positive_cutoff():
+    points = np.zeros((1, 3))
+    box = molrs.Box.cube(1.0)
+    with pytest.raises(ValueError, match="positive"):
+        molrs.NeighborQuery(box, points, 0.0)
+    with pytest.raises(ValueError, match="positive"):
+        molrs.NeighborQuery.free(points, 0.0)
+
+
 class TestSteinhardt:
     def test_ql_finite_on_octahedron(self):
         frame, pts = _octahedron_frame()

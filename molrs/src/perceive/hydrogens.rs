@@ -25,8 +25,8 @@
 //! (B, C, Si, …) they diverge, which is exactly the bug this rule fixes.
 
 use crate::system::atomistic::{AtomId, Atomistic, BondId};
-use crate::system::element::Element;
 use crate::system::molgraph::Atom;
+use molrs::Element;
 
 // ---------------------------------------------------------------------------
 // Public API

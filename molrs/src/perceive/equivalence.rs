@@ -92,7 +92,7 @@ use std::collections::HashMap;
 
 use crate::store::keys;
 use crate::system::atomistic::{AtomId, Atomistic};
-use crate::system::element::Element;
+use molrs::Element;
 
 /// Atom prop written by [`crate::perceive::Perceive::find_equivalence_classes`]:
 /// the 0-based id of the atom's charge-equivalence class.

@@ -1,7 +1,7 @@
 //! The AM1-BCC *tables*: the atom-type table and the bond charge corrections.
 //!
 //! This module owns what the BCC parameter sets are — [`BccParameterSet`] names a
-//! pair (`ATOMTYPE_*.DEF` + `BCCPARM*.DAT`), [`BCCAtomTypifier`] walks the first and
+//! pair (`ATOMTYPE_*.DEF` + `BCCPARM*.DAT`), [`BCCAtomChargeTypifier`] walks the first and
 //! [`BCCCorrectionTable`] / [`BCCCorrector`] apply the second. The charge *model*
 //! that composes them — the push API `BccModel::correct(&mol, &am1)` — lives one
 //! module over in [`ff::charge`](crate::ff::charge), because a charge model is not a
@@ -81,7 +81,7 @@ impl BccParameterSet {
 
 /// Graph-based BCC atom typifier: the [`AtdTypifier`] bound to a BCC table.
 ///
-/// This is a named shorthand, not a second engine — `BCCAtomTypifier::bcc()` and
+/// This is a named shorthand, not a second engine — `BCCAtomChargeTypifier::bcc()` and
 /// `AtdTypifier::new(AtdParameterSet::Bcc)` label every atom identically because
 /// the former *is* the latter. It exists because the AM1-BCC pipeline needs the
 /// atom-type table and the correction family chosen together, and
@@ -93,17 +93,17 @@ impl BccParameterSet {
 /// can carry GAFF types and BCC charges at the same time, which is what the standard
 /// AM1-BCC workflow is.
 #[derive(Debug, Clone)]
-pub struct BCCAtomTypifier {
+pub struct BCCAtomChargeTypifier {
     model: BccParameterSet,
 }
 
-impl Default for BCCAtomTypifier {
+impl Default for BCCAtomChargeTypifier {
     fn default() -> Self {
         Self::bcc()
     }
 }
 
-impl BCCAtomTypifier {
+impl BCCAtomChargeTypifier {
     /// A typifier for the atom-type table `model` names.
     ///
     /// # Arguments
@@ -134,6 +134,10 @@ impl BCCAtomTypifier {
     pub fn abcg2() -> Self {
         Self::parameter_set(BccParameterSet::Abcg2)
     }
+}
+
+impl Typifier for BCCAtomChargeTypifier {
+    type Mol = Atomistic;
 
     /// Perceive BCC bond types, then label every atom from the set's
     /// `ATOMTYPE_*.DEF` rules.
@@ -161,7 +165,7 @@ impl BCCAtomTypifier {
     /// # Errors
     ///
     /// A message naming the atom no rule of the table matched.
-    pub fn typify(&self, mol: &Atomistic) -> Result<Atomistic, String> {
+    fn typify(&self, mol: &Self::Mol) -> Result<Self::Mol, String> {
         AtdTypifier::new(self.model.atd_set()).typify(mol)
     }
 }

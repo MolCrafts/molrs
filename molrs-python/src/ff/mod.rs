@@ -33,12 +33,13 @@
 pub mod atd;
 pub mod charge;
 
+use std::collections::HashMap;
 use std::ffi::CString;
 use std::fs;
 
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyKeyError, PyNotImplementedError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyCapsule, PyDict, PyList};
+use pyo3::types::{PyCapsule, PyDict, PyList, PyTuple};
 
 use molrs::ff::ForceField;
 use molrs::ff::potential::{Potentials, extract_coords};
@@ -54,6 +55,34 @@ use crate::helpers::{NpF, py_value_err};
 
 use ndarray::{Array2, Array3};
 use numpy::{PyArray1, PyArray2, PyArray3, PyReadonlyArrayDyn, ToPyArray};
+
+/// Nominal Python base for every graph typifier.
+///
+/// The algorithm contract already lives in the Rust
+/// `molrs::ff::typifier::Typifier` trait. This is its Python nominal
+/// counterpart: native typifiers extend it and downstream Python typifiers may
+/// subclass it.
+#[pyclass(name = "Typifier", subclass)]
+pub struct PyTypifier;
+
+#[pymethods]
+impl PyTypifier {
+    #[new]
+    #[pyo3(signature = (*_args, **_kwargs))]
+    fn new(_args: &Bound<'_, PyTuple>, _kwargs: Option<&Bound<'_, PyDict>>) -> Self {
+        // Python typifiers inherit this native nominal base and commonly expose
+        // their own ``__init__(engine, ...)``.  ``object.__new__`` accepts those
+        // subclass constructor arguments; the native base must do the same and
+        // leave interpretation to the Python ``__init__``.
+        Self
+    }
+
+    fn typify(&self, _mol: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        Err(PyNotImplementedError::new_err(
+            "Typifier.typify must be implemented by a concrete typifier",
+        ))
+    }
+}
 
 /// Outcome of a geometry optimization, exposed to Python as `molrs.OptReport`.
 #[pyclass(name = "OptReport")]
@@ -157,6 +186,137 @@ impl PotBacking {
 #[pyclass(name = "ForceField", subclass)]
 pub struct PyForceField {
     pub(crate) inner: ForceField,
+}
+
+/// CL&Pol fragment scaling data backed by the native force-field layer.
+#[pyclass(name = "FragmentScaling", frozen, get_all, skip_from_py_object)]
+#[derive(Clone)]
+pub struct PyFragmentScaling {
+    name: String,
+    q: f64,
+    mu: f64,
+    alpha: f64,
+    polarizable: bool,
+}
+
+impl From<PyFragmentScaling> for molrs::ff::FragmentScaling {
+    fn from(value: PyFragmentScaling) -> Self {
+        Self {
+            name: value.name,
+            q: value.q,
+            mu: value.mu,
+            alpha: value.alpha,
+            polarizable: value.polarizable,
+        }
+    }
+}
+
+impl From<molrs::ff::FragmentScaling> for PyFragmentScaling {
+    fn from(value: molrs::ff::FragmentScaling) -> Self {
+        Self {
+            name: value.name,
+            q: value.q,
+            mu: value.mu,
+            alpha: value.alpha,
+            polarizable: value.polarizable,
+        }
+    }
+}
+
+#[pymethods]
+impl PyFragmentScaling {
+    #[new]
+    #[pyo3(signature = (name, q, mu, alpha, polarizable=false))]
+    fn new(name: String, q: f64, mu: f64, alpha: f64, polarizable: bool) -> Self {
+        Self {
+            name,
+            q,
+            mu,
+            alpha,
+            polarizable,
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!("FragmentScaling(name='{}')", self.name)
+    }
+}
+
+/// Native SAPT epsilon-scaling factor.
+#[pyfunction(name = "compute_k_ij")]
+pub fn compute_k_ij_py(
+    fr_i: PyRef<'_, PyFragmentScaling>,
+    fr_j: PyRef<'_, PyFragmentScaling>,
+    r: f64,
+) -> PyResult<f64> {
+    molrs::ff::compute_k_ij(&fr_i.clone().into(), &fr_j.clone().into(), r)
+        .map_err(py_value_err)
+}
+
+/// Return the compiled-in CL&Pol fragment table.
+#[pyfunction(name = "fragment_scaling_data")]
+pub fn fragment_scaling_data_py(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
+    let result = PyDict::new(py);
+    for (name, scaling) in molrs::ff::scale_lj::builtin_fragment_scaling() {
+        result.set_item(name, Py::new(py, PyFragmentScaling::from(scaling))?)?;
+    }
+    Ok(result)
+}
+
+/// Clone and scale LJ parameters using native COM and force-field transforms.
+#[pyfunction(name = "scale_lj")]
+#[pyo3(signature = (ff, fragments, frag_data=None, scale_sigma=false))]
+pub fn scale_lj_py(
+    py: Python<'_>,
+    ff: &Bound<'_, PyForceField>,
+    fragments: &Bound<'_, PyDict>,
+    frag_data: Option<&Bound<'_, PyDict>>,
+    scale_sigma: bool,
+) -> PyResult<Py<PyForceField>> {
+    let mut native_fragments = Vec::with_capacity(fragments.len());
+    for (label, value) in fragments.iter() {
+        let name = label.extract::<String>()?;
+        let (atom_types, coords, masses) =
+            value.extract::<(Vec<String>, Vec<[f64; 3]>, Vec<f64>)>()?;
+        native_fragments.push(molrs::ff::FragmentAtoms {
+            name,
+            atom_types,
+            coords,
+            masses,
+        });
+    }
+
+    let mut scaling = HashMap::new();
+    if let Some(data) = frag_data {
+        for (label, value) in data.iter() {
+            let item = value.extract::<PyRef<'_, PyFragmentScaling>>()?;
+            scaling.insert(label.extract::<String>()?, item.clone().into());
+        }
+    } else {
+        scaling = molrs::ff::scale_lj::builtin_fragment_scaling();
+    }
+
+    let inner = molrs::ff::scale_lj(
+        &ff.borrow().inner,
+        &native_fragments,
+        &scaling,
+        scale_sigma,
+    )
+    .map_err(|error| match error {
+        molrs::ff::ScaleLjError::MissingFragment(name) => {
+            PyKeyError::new_err(format!("no scaling data for fragment '{name}'"))
+        }
+        other => py_value_err(other),
+    })?;
+    let public = py.import("molrs")?.getattr("ForceField")?;
+    let native = py.get_type::<PyForceField>();
+    if public.is(&native) {
+        return Py::new(py, PyForceField { inner });
+    }
+    let name = inner.name.clone();
+    let object: Py<PyForceField> = public.call1((name,))?.extract()?;
+    object.borrow_mut(py).inner = inner;
+    Ok(object)
 }
 
 /// Convert an optional Python ``dict[str, float]`` of parameters into owned
@@ -373,7 +533,7 @@ macro_rules! py_mmff_front_door {
         $py_ty:ident, $core:ty, $name:literal
     ) => {
         $(#[$doc])*
-        #[pyclass(name = $name)]
+        #[pyclass(name = $name, extends = PyTypifier)]
         pub struct $py_ty {
             inner: $core,
         }
@@ -384,10 +544,13 @@ macro_rules! py_mmff_front_door {
             ///
             /// Never fails: the parameter set is compiled into the extension module.
             #[new]
-            fn new() -> Self {
-                Self {
-                    inner: <$core>::new(),
-                }
+            fn new() -> (Self, PyTypifier) {
+                (
+                    Self {
+                        inner: <$core>::new(),
+                    },
+                    PyTypifier,
+                )
             }
 
             /// Assign MMFF atom types (and this variant's bonded parameters) to a
@@ -537,7 +700,7 @@ fn oplsaa_source_xml(source: Option<&Bound<'_, PyAny>>) -> PyResult<Option<Strin
 /// >>> typifier = OPLSAATypifier()
 /// >>> typed = typifier.typify(mol)        # typed Atomistic
 /// >>> potentials = typifier.build(mol)    # compiled Potentials
-#[pyclass(name = "OPLSAATypifier")]
+#[pyclass(name = "OPLSAATypifier", extends = PyTypifier)]
 pub struct PyOPLSAATypifier {
     inner: OPLSAATypifier,
 }
@@ -547,7 +710,10 @@ impl PyOPLSAATypifier {
     /// Create an OPLS-AA typifier from embedded data, XML text, or an XML path.
     #[new]
     #[pyo3(signature = (source = None, *, strict = true))]
-    fn new(source: Option<&Bound<'_, PyAny>>, strict: bool) -> PyResult<Self> {
+    fn new(
+        source: Option<&Bound<'_, PyAny>>,
+        strict: bool,
+    ) -> PyResult<(Self, PyTypifier)> {
         let typifier = match oplsaa_source_xml(source)? {
             Some(xml) => OPLSAATypifier::from_xml_str(&xml)
                 .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?,
@@ -558,7 +724,7 @@ impl PyOPLSAATypifier {
             })?,
         }
         .with_strict(strict);
-        Ok(Self { inner: typifier })
+        Ok((Self { inner: typifier }, PyTypifier))
     }
 
     /// Assign OPLS-AA atom and bonded-term types to a molecular graph.

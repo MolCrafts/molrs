@@ -93,6 +93,9 @@ class TestFrameSubclass:
                 instance.label = label
                 return instance
 
+            def __init__(self, *, label):
+                super().__init__()
+
         instance = Sub(label="frame-A")
         assert instance.label == "frame-A"
         assert isinstance(instance, molrs.Frame)

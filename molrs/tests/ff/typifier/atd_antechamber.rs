@@ -41,7 +41,7 @@ use molrs::ff::params::{
     ATOMTYPE_SYBYL, AtdTable,
 };
 use molrs::ff::typifier::Typifier;
-use molrs::ff::typifier::am1bcc::BCCAtomTypifier;
+use molrs::ff::typifier::am1bcc::BCCAtomChargeTypifier;
 use molrs::ff::typifier::atd::{AtdParameterSet, AtdTypifier};
 
 use super::antechamber_oracle::{AntechamberCase, CASES};
@@ -206,7 +206,7 @@ fn sybyl_atom_types_match_antechamber() {
 #[test]
 fn the_bcc_typifier_agrees_atom_for_atom_with_the_atd_engine() {
     let generic = AtdTypifier::new(AtdParameterSet::Bcc);
-    let bcc = BCCAtomTypifier::bcc();
+    let bcc = BCCAtomChargeTypifier::bcc();
     let mut failures = Vec::new();
     for case in CASES {
         let (mol, ids) = build_case(case);
@@ -214,13 +214,13 @@ fn the_bcc_typifier_agrees_atom_for_atom_with_the_atd_engine() {
         let via_bcc = bcc.typify(&mol).map(|typed| atom_types(&typed, &ids));
         if via_generic != via_bcc {
             failures.push(format!(
-                "  {:22} AtdTypifier(Bcc) {via_generic:?} != BCCAtomTypifier::bcc() {via_bcc:?}",
+                "  {:22} AtdTypifier(Bcc) {via_generic:?} != BCCAtomChargeTypifier::bcc() {via_bcc:?}",
                 case.name
             ));
         }
     }
     report(
-        "BCCAtomTypifier vs AtdTypifier(Bcc)",
+        "BCCAtomChargeTypifier vs AtdTypifier(Bcc)",
         &failures,
         CASES.len(),
     );

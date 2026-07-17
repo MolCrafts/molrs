@@ -45,16 +45,18 @@ use crate::core::spatial::linkedcell::{PyLinkedCell, PyNeighborList, PyNeighborQ
 use crate::core::spatial::region::{PyCuboid, PyHollowSphere, PyRegion, PySphere};
 use crate::core::spatial::simbox::PyBox;
 use crate::core::store::block::PyBlock;
-use crate::core::store::frame::PyFrame;
+use crate::core::store::frame::{PyFrame, PyMetaValue};
 use crate::core::store::trajectory::{PyScalarObservable, PyTrajectory, PyVectorObservable};
+use crate::core::system::element::PyElement;
 use crate::core::system::molgraph::{
     PyAtomistic, PyCoarseGrain, PyExtractedSubgraph, PyGraph, PyReaction, PySmartsMatch,
     PySmartsPattern,
 };
 use crate::core::system::molgraph::{
-    add_hydrogens, compute_gasteiger_charges, find_rings, perceive_aromaticity, rotate, scale,
-    translate,
+    add_hydrogens, align_direction, compute_gasteiger_charges, find_rings, perceive_aromaticity,
+    rotate, scale, translate,
 };
+use crate::core::units::{PyQuantity, PyUnit, PyUnitRegistry};
 
 mod io;
 
@@ -70,7 +72,7 @@ use ff::atd::PyAtdTypifier;
 use ff::charge::{PyBccModel, PyGasteigerModel, PyMullikenModel};
 use ff::{
     PyForceField, PyLBFGS, PyMMFF94STypifier, PyMMFF94Typifier, PyOPLSAATypifier, PyOptReport,
-    PyPotentials,
+    PyPotentials, PyTypifier,
 };
 
 mod compute;
@@ -136,10 +138,21 @@ fn molrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
         "BlockDtypeError",
         m.py().get_type::<error::BlockDtypeError>(),
     )?;
+    m.add("UnitsError", m.py().get_type::<error::UnitsError>())?;
 
     // Block + Frame
     m.add_class::<PyBlock>()?;
+    m.add_class::<PyMetaValue>()?;
     m.add_class::<PyFrame>()?;
+    m.add(
+        "FRAME_SCHEMA_VERSION",
+        ::molrs::store::frame::FRAME_SCHEMA_VERSION,
+    )?;
+
+    // Native units
+    m.add_class::<PyUnit>()?;
+    m.add_class::<PyQuantity>()?;
+    m.add_class::<PyUnitRegistry>()?;
 
     // I/O + SMILES
     // Readers
@@ -187,6 +200,7 @@ fn molrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyRegion>()?;
 
     // Molecular graph hierarchy (base before subclasses)
+    m.add_class::<PyElement>()?;
     m.add_class::<PyGraph>()?;
     m.add_class::<PyAtomistic>()?;
     m.add_class::<PyCoarseGrain>()?;
@@ -199,6 +213,7 @@ fn molrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(translate, m)?)?;
     m.add_function(wrap_pyfunction!(rotate, m)?)?;
     m.add_function(wrap_pyfunction!(scale, m)?)?;
+    m.add_function(wrap_pyfunction!(align_direction, m)?)?;
     m.add_function(wrap_pyfunction!(perceive_aromaticity, m)?)?;
     m.add_function(wrap_pyfunction!(add_hydrogens, m)?)?;
     m.add_function(wrap_pyfunction!(find_rings, m)?)?;
@@ -217,6 +232,8 @@ fn molrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Force field
     m.add_class::<PyForceField>()?;
+    m.add_class::<ff::PyFragmentScaling>()?;
+    m.add_class::<PyTypifier>()?;
     m.add_class::<PyMMFF94Typifier>()?;
     m.add_class::<PyMMFF94STypifier>()?;
     m.add_class::<PyOPLSAATypifier>()?;
@@ -238,6 +255,9 @@ fn molrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(ff::read_lammps_forcefield_str_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::intramolecular_pairs_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::extract_coords_py, m)?)?;
+    m.add_function(wrap_pyfunction!(ff::compute_k_ij_py, m)?)?;
+    m.add_function(wrap_pyfunction!(ff::fragment_scaling_data_py, m)?)?;
+    m.add_function(wrap_pyfunction!(ff::scale_lj_py, m)?)?;
 
     // Compute analyses
     m.add_class::<PyRDF>()?;

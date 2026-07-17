@@ -214,7 +214,7 @@ pub fn assign_bond_stereo_from_3d(mol: &Atomistic) -> HashMap<BondId, BondStereo
                         .ok()
                         .and_then(|a| {
                             a.get_str("element")
-                                .and_then(crate::system::element::Element::by_symbol)
+                                .and_then(molrs::Element::by_symbol)
                                 .map(|e| e.z())
                         })
                         .unwrap_or(0)

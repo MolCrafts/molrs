@@ -23,6 +23,7 @@ from numpy.typing import ArrayLike, NDArray
 from .molrs import Block as _RsBlock
 from .molrs import BlockDtypeError
 from .molrs import Frame as _RsFrame
+from .molrs import MetaValue
 
 type BlockLike = Mapping[str, ArrayLike]
 
@@ -386,24 +387,29 @@ class Block(_RsBlock, MutableMapping[str, np.ndarray]):
 
 
 class Frame(_RsFrame):
-    """Container of named :class:`Block` tables plus a box and metadata.
+    """Container of named :class:`Block` tables plus a simbox and metadata.
 
     Inherits the PyO3 ``molrs.Frame``: a rich ``Frame`` IS-A core frame, accepted
     by every ``molrs.*`` API with no conversion. ``__getitem__`` upgrades the
-    stored block to a rich :class:`Block`. The simulation ``box`` is the native
+    stored block to a rich :class:`Block`. The ``simbox`` is the native
     ``molrs.Box`` (inherited). Frame has no CSV methods — CSV belongs to Block.
     """
 
     def __new__(
-        cls, blocks: "dict[str, Block | BlockLike] | None" = None, **props: Any
+        cls,
+        blocks: "dict[str, Block | BlockLike] | None" = None,
+        meta: "dict[str, MetaValue] | None" = None,
     ) -> "Frame":
         return super().__new__(cls)
 
     def __init__(
-        self, blocks: "dict[str, Block | BlockLike] | None" = None, **props: Any
+        self,
+        blocks: "dict[str, Block | BlockLike] | None" = None,
+        meta: "dict[str, MetaValue] | None" = None,
     ) -> None:
         super().__init__()
-        self.metadata: dict[str, Any] = dict(props)
+        if meta is not None:
+            self.meta = meta
         if blocks is not None:
             if not isinstance(blocks, dict):
                 raise ValueError(f"blocks must be a dict, got {type(blocks)}")
@@ -447,10 +453,10 @@ class Frame(_RsFrame):
         return iter(self._blocks.values())
 
     def to_dict(self) -> dict[str, Any]:
-        """Frame as ``{"blocks": {name: block.to_dict()}, "metadata": {...}}``."""
+        """Frame as ``{"blocks": {name: block.to_dict()}, "meta": {...}}``."""
         return {
             "blocks": {name: self[name].to_dict() for name in self.keys()},
-            "metadata": dict(self.metadata),
+            "meta": dict(self.meta),
         }
 
     @classmethod
@@ -462,22 +468,16 @@ class Frame(_RsFrame):
             frame = cls()
             for name in _RsFrame.keys(data):
                 frame[name] = _RsFrame.__getitem__(data, name)
-            raw_box = _RsFrame.box.__get__(data, type(data))  # type: ignore[attr-defined]
-            if raw_box is not None:
-                frame.box = raw_box
-            src_meta = dict(data.meta) if data.meta else {}
-            frame.metadata = src_meta
-            if src_meta:
-                # Preserve the native Rust-side meta too, so callers reading
-                # ``frame.meta`` (e.g. molpy's readers before the spec-04
-                # adoption) keep seeing it after the wrap, not just
-                # ``frame.metadata``.
-                frame.meta = src_meta
+            raw_simbox = _RsFrame.simbox.__get__(data, type(data))
+            if raw_simbox is not None:
+                frame.simbox = raw_simbox
+            if data.meta:
+                frame.meta = dict(data.meta)
             return frame
+        if set(data) != {"blocks", "meta"}:
+            raise ValueError("frame dict must contain exactly 'blocks' and 'meta'")
         blocks = {name: Block.from_dict(blk) for name, blk in data["blocks"].items()}
-        frame = cls(blocks=blocks)
-        frame.metadata = data.get("metadata", {})
-        return frame
+        return cls(blocks=blocks, meta=data["meta"])
 
     @classmethod
     def _from_ffi_frameref_capsule(cls, capsule: Any) -> "Frame":
@@ -494,12 +494,13 @@ class Frame(_RsFrame):
         return cls.from_dict(base)
 
     def copy(self) -> "Frame":
-        """Deep copy (blocks copied into new storage; box + metadata copied)."""
+        """Deep copy (blocks copied into new storage; simbox + metadata copied)."""
         new = Frame()
         for name in self.keys():
             new[name] = self[name].copy()
-        new.box = self.box
-        new.metadata = self.metadata.copy()
+        new.simbox = self.simbox
+        if self.meta:
+            new.meta = dict(self.meta)
         return new
 
     def __repr__(self) -> str:

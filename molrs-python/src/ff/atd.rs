@@ -20,6 +20,7 @@ use molrs::ff::typifier::Typifier;
 use molrs::ff::typifier::atd::{AtdParameterSet, AtdTypifier};
 
 use crate::core::system::molgraph::PyAtomistic;
+use crate::ff::PyTypifier;
 
 /// The `-at` flag of every table, paired with the set that walks it.
 ///
@@ -89,7 +90,7 @@ fn parameter_set_name(set: AtdParameterSet) -> &'static str {
 /// >>> typed = molrs.AtdTypifier(parameter_set="gaff").typify(benzene)
 /// >>> typed.get(carbon, molrs.keys.TYPE)
 /// 'ca'
-#[pyclass(name = "AtdTypifier")]
+#[pyclass(name = "AtdTypifier", extends = PyTypifier)]
 #[derive(Debug)]
 pub struct PyAtdTypifier {
     inner: AtdTypifier,
@@ -100,10 +101,13 @@ impl PyAtdTypifier {
     /// Bind the engine to the table `parameter_set` names.
     #[new]
     #[pyo3(signature = (*, parameter_set))]
-    fn new(parameter_set: &str) -> PyResult<Self> {
-        Ok(Self {
-            inner: AtdTypifier::new(parameter_set_from_name(parameter_set)?),
-        })
+    fn new(parameter_set: &str) -> PyResult<(Self, PyTypifier)> {
+        Ok((
+            Self {
+                inner: AtdTypifier::new(parameter_set_from_name(parameter_set)?),
+            },
+            PyTypifier,
+        ))
     }
 
     /// The antechamber ``-at`` flag of the table this typifier walks.

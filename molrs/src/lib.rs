@@ -46,6 +46,7 @@ extern crate self as molrs;
 // root, so `molrs::Frame`, `molrs::system::…`, `molrs::error::…` resolve exactly
 // as they did when core was a separate crate.
 pub mod core;
+pub use crate::core::system::element::Element;
 pub use crate::core::*;
 
 // Chemical perception: one layer above `core`, below `ff` / `io` / `conformer`.

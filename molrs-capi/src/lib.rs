@@ -60,6 +60,7 @@ mod store;
 use std::ffi::{CStr, CString, c_char};
 
 pub use error::{MolrsDType, MolrsStatus};
+pub use frame::{MolrsMetaType, MolrsMetaValue};
 pub use handle::{MolrsBlockHandle, MolrsForceFieldHandle, MolrsFrameHandle, MolrsSimBoxHandle};
 
 use store::lock_store;
@@ -251,7 +252,7 @@ pub unsafe extern "C" fn molrs_key_name(key_id: u32) -> *const c_char {
 /// Free a string that was allocated by the C API.
 ///
 /// Several functions (e.g. [`molrs_ff_to_json`](crate::forcefield::molrs_ff_to_json),
-/// [`molrs_frame_get_meta`](crate::frame::molrs_frame_get_meta))
+/// [`molrs_frame_read_meta`](crate::frame::molrs_frame_read_meta))
 /// return heap-allocated C strings that the caller owns.  Pass those
 /// pointers to this function when they are no longer needed.
 ///

@@ -697,6 +697,15 @@ impl PyAtomistic {
             .collect()
     }
 
+    /// Build ``n`` native copies in one graph. The source is unchanged.
+    fn replicate(&self, py: Python<'_>, n: usize) -> PyResult<Py<PyAtomistic>> {
+        let mut output = Atomistic::new();
+        for _ in 0..n {
+            output.merge(self.inner.clone());
+        }
+        PyAtomistic::from_core(py, output)
+    }
+
     /// Induced subgraph on an explicit list of atom handles.
     ///
     /// Returns ``(subgraph, {parent_handle: new_handle})``. Stale handles raise.
@@ -771,15 +780,28 @@ graph_world_impl!(PyAtomistic);
 impl PyAtomistic {
     /// Wrap an existing core [`Atomistic`] as a Python `Atomistic` object.
     pub(crate) fn from_core(py: Python<'_>, inner: Atomistic) -> PyResult<Py<PyAtomistic>> {
-        Py::new(
-            py,
-            (
-                PyAtomistic { inner },
-                PyGraph {
-                    inner: MolGraph::new(),
-                },
-            ),
-        )
+        let public = py.import("molrs")?.getattr("Atomistic")?;
+        let native = py.get_type::<PyAtomistic>();
+        if public.is(&native) {
+            return Py::new(
+                py,
+                (
+                    PyAtomistic { inner },
+                    PyGraph {
+                        inner: MolGraph::new(),
+                    },
+                ),
+            );
+        }
+
+        // The package shadows the native leaf with a Python subclass that adds
+        // live handle views.  Construct that canonical public type so graph-out
+        // APIs (perception, typifiers, copy/from_frame, SMILES) do not silently
+        // drop the Python layer.  It remains a PyAtomistic and is accepted by all
+        // native consumers without conversion.
+        let object: Py<PyAtomistic> = public.call0()?.extract()?;
+        object.borrow_mut(py).inner = inner;
+        Ok(object)
     }
 
     /// Borrow the held core [`Atomistic`] (for domain consumers like the
@@ -1067,6 +1089,81 @@ impl PyReaction {
             .map_err(molrs_error_to_pyerr)
     }
 
+    /// Compile every binding against the intact graph, then apply the disjoint
+    /// transforms as one batch. Leaving groups are deleted with one relation
+    /// scan, and one touched-handle list is returned per binding.
+    #[pyo3(signature = (mol, bindings, labels=None, refresh=true))]
+    fn apply_many(
+        &self,
+        mol: &mut PyAtomistic,
+        bindings: Vec<HashMap<u32, u64>>,
+        labels: Option<HashMap<u64, String>>,
+        refresh: bool,
+    ) -> PyResult<Vec<Vec<u64>>> {
+        let resolved: Vec<HashMap<u32, NodeId>> = bindings
+            .into_iter()
+            .map(|binding| {
+                binding
+                    .into_iter()
+                    .map(|(k, v)| (k, node_from_u64(v)))
+                    .collect()
+            })
+            .collect();
+        let core_labels: HashMap<NodeId, String> = labels
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(h, l)| (node_from_u64(h), l))
+            .collect();
+        self.inner
+            .apply_many(mol.core_mut(), &resolved, &core_labels, refresh)
+            .map(|sets| {
+                sets.into_iter()
+                    .map(|touched| touched.into_iter().map(node_to_u64).collect())
+                    .collect()
+            })
+            .map_err(molrs_error_to_pyerr)
+    }
+
+    /// ``apply_many`` plus RHS-created handles in product creation order.
+    ///
+    /// The second list is intentionally not reconstructed by sorting handles:
+    /// batch deletion may reuse graph slots in an order unrelated to product
+    /// atom order.
+    #[pyo3(signature = (mol, bindings, labels=None, refresh=true))]
+    fn apply_many_detailed(
+        &self,
+        mol: &mut PyAtomistic,
+        bindings: Vec<HashMap<u32, u64>>,
+        labels: Option<HashMap<u64, String>>,
+        refresh: bool,
+    ) -> PyResult<(Vec<Vec<u64>>, Vec<Vec<u64>>)> {
+        let resolved: Vec<HashMap<u32, NodeId>> = bindings
+            .into_iter()
+            .map(|binding| {
+                binding
+                    .into_iter()
+                    .map(|(k, v)| (k, node_from_u64(v)))
+                    .collect()
+            })
+            .collect();
+        let core_labels: HashMap<NodeId, String> = labels
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(h, l)| (node_from_u64(h), l))
+            .collect();
+        self.inner
+            .apply_many_detailed(mol.core_mut(), &resolved, &core_labels, refresh)
+            .map(|(touched_sets, created_sets)| {
+                let handles = |sets: Vec<Vec<NodeId>>| {
+                    sets.into_iter()
+                        .map(|set| set.into_iter().map(node_to_u64).collect())
+                        .collect()
+                };
+                (handles(touched_sets), handles(created_sets))
+            })
+            .map_err(molrs_error_to_pyerr)
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "Reaction(reactants={}, forming_bonds={:?})",
@@ -1208,6 +1305,15 @@ impl PyCoarseGrain {
             .collect()
     }
 
+    /// Build ``n`` native copies in one coarse-grained graph.
+    fn replicate(&self, py: Python<'_>, n: usize) -> PyResult<Py<PyCoarseGrain>> {
+        let mut output = CoarseGrain::new();
+        for _ in 0..n {
+            output.merge(self.inner.clone());
+        }
+        PyCoarseGrain::from_core(py, output)
+    }
+
     /// Induced subgraph on bead handles. Returns ``(subgraph, node_map)``.
     fn induced_subgraph(
         &self,
@@ -1248,15 +1354,23 @@ graph_world_impl!(PyCoarseGrain);
 impl PyCoarseGrain {
     /// Wrap an existing core [`CoarseGrain`] as a Python `CoarseGrain` object.
     pub(crate) fn from_core(py: Python<'_>, inner: CoarseGrain) -> PyResult<Py<PyCoarseGrain>> {
-        Py::new(
-            py,
-            (
-                PyCoarseGrain { inner },
-                PyGraph {
-                    inner: MolGraph::new(),
-                },
-            ),
-        )
+        let public = py.import("molrs")?.getattr("CoarseGrain")?;
+        let native = py.get_type::<PyCoarseGrain>();
+        if public.is(&native) {
+            return Py::new(
+                py,
+                (
+                    PyCoarseGrain { inner },
+                    PyGraph {
+                        inner: MolGraph::new(),
+                    },
+                ),
+            );
+        }
+
+        let object: Py<PyCoarseGrain> = public.call0()?.extract()?;
+        object.borrow_mut(py).inner = inner;
+        Ok(object)
     }
 }
 
@@ -1316,6 +1430,22 @@ pub fn rotate(
 #[pyo3(signature = (mol, factor, about=None))]
 pub fn scale(mol: &Bound<'_, PyAny>, factor: [f64; 3], about: Option<[f64; 3]>) -> PyResult<()> {
     with_world_mut(mol, |g| molrs::spatial::geometry::scale(g, factor, about))
+}
+
+/// Rigidly align an optional direction at ``from`` and translate it to ``to``.
+#[pyfunction]
+#[pyo3(signature = (mol, from_, to, from_dir=None, to_dir=None, flip=false))]
+pub fn align_direction(
+    mol: &Bound<'_, PyAny>,
+    from_: [f64; 3],
+    to: [f64; 3],
+    from_dir: Option<[f64; 3]>,
+    to_dir: Option<[f64; 3]>,
+    flip: bool,
+) -> PyResult<()> {
+    with_world_mut(mol, |graph| {
+        molrs::spatial::geometry::align_direction(graph, from_, to, from_dir, to_dir, flip)
+    })
 }
 
 /// Perceive aromaticity in place; returns the number of aromatic atoms found.

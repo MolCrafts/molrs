@@ -106,6 +106,10 @@ name = "architecture_gate"
 path = "tests/architecture_gate.rs"
 
 [[test]]
+name = "element_architecture"
+path = "tests/element_architecture.rs"
+
+[[test]]
 name = "end_to_end"
 path = "tests/end_to_end.rs"
 required-features = ["ff"]

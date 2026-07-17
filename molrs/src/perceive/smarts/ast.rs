@@ -270,7 +270,7 @@ impl AtomPrimitive {
 
 /// Whether the element symbol corresponds to atomic number `z`.
 fn symbol_matches_z(sym: &str, z: u8) -> bool {
-    crate::system::element::Element::by_symbol(sym).map(|e| e.z()) == Some(z)
+    molrs::Element::by_symbol(sym).map(|e| e.z()) == Some(z)
 }
 
 // ---------------------------------------------------------------------------

@@ -45,6 +45,7 @@ use std::sync::OnceLock;
 use molrs::store::keys;
 use molrs::{AtomId, Atomistic};
 
+use crate::ff::constants::VACUUM_DIELECTRIC;
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds, Style};
 use crate::ff::params::{
     GAFF, GAFF2, ParmAngleRow, ParmBondRow, ParmDihedralRow, ParmImproperRow, ParmMassRow,
@@ -59,6 +60,15 @@ const AMBER_LJ_14: f64 = 0.5;
 
 /// AMBER's 1-4 Coulomb scale factor (`SCEE = 1.2`).
 const AMBER_COUL_14: f64 = 1.0 / 1.2;
+
+/// AMBER's electrostatic conversion factor (kcal·Å·mol⁻¹·e⁻²).
+///
+/// This is measured, not copied from a constants table: AmberTools25 `sander`
+/// single-points on acetate, methylammonium and imidazolium were divided by
+/// `Σ scale(i,j)·qᵢqⱼ/rᵢⱼ`, using the topology's 1-2/1-3 exclusions and SCEE=1.2.
+/// All three recover this value to the precision printed by `sander`; regenerate
+/// the evidence with `scripts/gen_gaff_energy_oracle.py`.
+const AMBER_COULOMB: f64 = 332.052_217_29;
 
 /// Which AMBER `parm` force field to populate from.
 ///
@@ -762,6 +772,17 @@ fn build_forcefield(
                 ],
             );
         }
+        // GAFF/AMBER uses the unbuffered Coulomb form.  The constant is force-field
+        // data (and differs measurably from CODATA and MMFF), while `delta = 0`
+        // explicitly selects the unbuffered branch of the shared `coul/cut` kernel.
+        ff.def_pairstyle(
+            "coul/cut",
+            &[
+                ("coulomb", AMBER_COULOMB),
+                ("dielectric", VACUUM_DIELECTRIC),
+                ("delta", 0.0),
+            ],
+        );
     }
 
     if !bond_types.is_empty() {

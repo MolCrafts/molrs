@@ -106,8 +106,8 @@ use crate::perceive::aromaticity::perceive_aromaticity;
 use crate::perceive::rings::find_rings;
 use crate::store::keys;
 use crate::system::atomistic::{AtomId, Atomistic, BondId};
-use crate::system::element::Element;
 use crate::system::molgraph::PropValue;
+use molrs::Element;
 
 /// Bond prop holding the perceived BCC bond type, as an `i32` in
 /// `{1, 2, 3, 6, 7, 8, 9}`.

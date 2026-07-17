@@ -800,10 +800,10 @@ fn parse_frame_at<R: BufRead + Seek>(r: &mut R, offset: u64) -> Result<Frame> {
         Some(res) => Some(res?),
         None => None,
     };
-    frame.meta.insert("step".into(), hdr.step.to_string());
-    frame.meta.insert("time".into(), hdr.time.to_string());
+    frame.meta.insert("step", hdr.step);
+    frame.meta.insert("time", hdr.time);
     if precision != 0.0 {
-        frame.meta.insert("precision".into(), precision.to_string());
+        frame.meta.insert("precision", precision);
     }
     Ok(frame)
 }
@@ -947,11 +947,17 @@ fn write_xtc_frame<W: Write, FA: FrameAccess>(w: &mut W, frame: &FA) -> Result<(
     }
 
     let meta = frame.meta_ref();
-    let step: i32 = meta.get("step").and_then(|s| s.parse().ok()).unwrap_or(0);
-    let time: f32 = meta.get("time").and_then(|s| s.parse().ok()).unwrap_or(0.0);
+    let step = meta
+        .get("step")
+        .and_then(|value| value.as_i32())
+        .unwrap_or(0);
+    let time = meta
+        .get("time")
+        .and_then(|value| value.as_f32())
+        .unwrap_or(0.0);
     let precision: f32 = meta
         .get("precision")
-        .and_then(|s| s.parse().ok())
+        .and_then(|value| value.as_f32())
         .filter(|&p: &f32| p > 0.0)
         .unwrap_or(DEFAULT_PRECISION);
 

@@ -17,7 +17,7 @@ fn frame_serde_json_roundtrip() {
         .insert("id", Array1::from_vec(vec![0 as U, 1]).into_dyn())
         .unwrap();
     frame.insert("atoms", atoms);
-    frame.meta.insert("title".into(), "t".into());
+    frame.meta.insert("title", "t");
 
     let json = serde_json::to_string(&frame).unwrap();
     let back: Frame = serde_json::from_str(&json).unwrap();
@@ -27,7 +27,10 @@ fn frame_serde_json_roundtrip() {
         back.get("atoms").unwrap().get_uint("id").unwrap(),
         frame.get("atoms").unwrap().get_uint("id").unwrap()
     );
-    assert_eq!(back.meta.get("title").map(String::as_str), Some("t"));
+    assert_eq!(
+        back.meta.get("title").and_then(|value| value.as_str()),
+        Some("t")
+    );
 }
 
 #[test]
@@ -36,7 +39,7 @@ fn column_data_may_precede_dtype_for_numeric_json() {
     bytes.extend_from_slice(&(1.0 as F).to_le_bytes());
     bytes.extend_from_slice(&(2.0 as F).to_le_bytes());
     let json = format!(
-        r#"{{"blocks":{{"atoms":{{"columns":{{"x":{{"data":{:?},"shape":[2],"dtype":"float"}}}}}}}},"meta":{{}}}}"#,
+        r#"{{"version":2,"blocks":{{"atoms":{{"columns":{{"x":{{"data":{:?},"shape":[2],"dtype":"float"}}}}}}}},"meta":{{}}}}"#,
         bytes
     );
 
@@ -47,7 +50,7 @@ fn column_data_may_precede_dtype_for_numeric_json() {
 
 #[test]
 fn column_data_may_precede_dtype_for_string_json() {
-    let json = r#"{"blocks":{"atoms":{"columns":{"name":{"data":["C","H"],"shape":[2],"dtype":"string"}}}},"meta":{}}"#;
+    let json = r#"{"version":2,"blocks":{"atoms":{"columns":{"name":{"data":["C","H"],"shape":[2],"dtype":"string"}}}},"meta":{}}"#;
 
     let back: Frame = serde_json::from_str(json).unwrap();
     let names = back.get("atoms").unwrap().get_string("name").unwrap();
@@ -59,7 +62,7 @@ fn column_data_may_precede_dtype_for_string_json() {
 
 #[test]
 fn empty_block_preserves_explicit_shape() {
-    let json = r#"{"blocks":{"grid":{"shape":[2,3],"columns":{}}},"meta":{}}"#;
+    let json = r#"{"version":2,"blocks":{"grid":{"shape":[2,3],"columns":{}}},"meta":{}}"#;
 
     let back: Frame = serde_json::from_str(json).unwrap();
     let grid = back.get("grid").unwrap();
@@ -70,11 +73,25 @@ fn empty_block_preserves_explicit_shape() {
 
 #[test]
 fn empty_table_block_preserves_explicit_nrows() {
-    let json = r#"{"blocks":{"atoms":{"shape":[5],"columns":{}}},"meta":{}}"#;
+    let json = r#"{"version":2,"blocks":{"atoms":{"shape":[5],"columns":{}}},"meta":{}}"#;
 
     let back: Frame = serde_json::from_str(json).unwrap();
     let atoms = back.get("atoms").unwrap();
     assert_eq!(atoms.shape(), vec![5]);
     assert_eq!(atoms.nrows(), Some(5));
     assert!(atoms.is_empty());
+}
+
+#[test]
+fn every_noncurrent_frame_version_is_rejected() {
+    for json in [
+        r#"{"blocks":{},"meta":{}}"#,
+        r#"{"version":99,"blocks":{},"meta":{}}"#,
+        r#"{"version":3,"blocks":{},"meta":{}}"#,
+    ] {
+        assert!(
+            serde_json::from_str::<Frame>(json).is_err(),
+            "accepted {json}"
+        );
+    }
 }

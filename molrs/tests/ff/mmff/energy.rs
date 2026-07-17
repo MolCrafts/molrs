@@ -772,17 +772,28 @@ fn mmff_special_bonds_scale_coulomb_14_but_not_vdw() {
 /// ac-006 (reverse assertion) — zero-charge molecules get EXACTLY zero
 /// electrostatic energy.
 ///
-/// e_ethane and e_butane are the only two fixtures with sum|q| = 0, which is why
-/// asserting only `e_ethane` could never have exposed the missing electrostatic
-/// term. Now that the term exists, they prove it was added in the RIGHT PLACE:
+/// The all-zero-charge partition is computed from every fixture, which is why a
+/// newly added zero-charge molecule cannot sit outside this assertion.  These
+/// molecules prove the term was added in the RIGHT PLACE:
 /// a term that produces spurious energy on a neutral molecule is not a fix.
 #[test]
 fn zero_charge_molecules_get_exactly_zero_electrostatic_energy() {
-    for name in ["e_ethane", "e_butane"] {
-        let g = GenericMmff::load(name);
+    let zero_charge: Vec<(String, GenericMmff)> = energy_fixtures()
+        .into_iter()
+        .filter_map(|name| {
+            let g = GenericMmff::load(&name);
+            (g.total_abs_charge() == 0.0).then_some((name, g))
+        })
+        .collect();
+    assert!(
+        !zero_charge.is_empty(),
+        "the computed all-zero-charge partition is empty; this test would assert nothing"
+    );
+
+    for (name, g) in zero_charge {
         let q = g.total_abs_charge();
-        assert!(
-            q < 1e-12,
+        assert_eq!(
+            q, 0.0,
             "{name} was chosen because its MMFF charges are all zero, but sum|q| = {q}"
         );
 
@@ -797,13 +808,13 @@ fn zero_charge_molecules_get_exactly_zero_electrostatic_energy() {
             "{name}: sum|q| = 0, so the electrostatic energy must be EXACTLY 0.0, not {ele:e}"
         );
 
-        let (pots, coords) = generic_pots(name);
+        let (pots, coords) = generic_pots(&name);
         let total = pots.calc_energy_forces(&coords).0;
-        let d = (total - ref_energy(name)).abs();
+        let d = (total - ref_energy(&name)).abs();
         assert!(
             d < ENERGY_TOL,
             "{name}: total {total:.6} vs RDKit {:.6} (d={d:.3e})",
-            ref_energy(name)
+            ref_energy(&name)
         );
     }
 }
@@ -974,19 +985,16 @@ fn acetonitrile_linear_centre_contributes_no_stretch_bend() {
 // while failing the second.
 // ---------------------------------------------------------------------------
 
-/// Molecules whose MMFF94s energy differs from MMFF94 (delocalized-N / amide /
-/// aromatic-amine planarization). The fixtures store both reference energies.
-const S_NAMES: [&str; 4] = ["s_aniline", "s_acetamide", "s_nmethylacetamide", "s_urea"];
-
 /// MMFF94s total energy must match RDKit `mmffVariant='MMFF94s'` to 1e-3 for
-/// molecules where the `_S` oop/torsion tables actually change the result.
+/// every energy fixture.  The oracle field is present on every fixture, so no
+/// hand-maintained subset can omit a molecule such as caffeine or `e_big`.
 #[test]
 fn mmff94s_total_energy_matches_rdkit() {
     let mut fails = Vec::new();
-    for name in S_NAMES {
-        let (pots, coords) = generic_pots_94s(name);
+    for name in energy_fixtures() {
+        let (pots, coords) = generic_pots_94s(&name);
         let got = pots.calc_energy_forces(&coords).0;
-        let want = ref_energy_field(name, "mmff94s_total_energy");
+        let want = ref_energy_field(&name, "mmff94s_total_energy");
         let delta = (got - want).abs();
         println!("{name:20} 94s molrs={got:14.6}  rdkit={want:14.6}  d={delta:.3e}");
         if delta > ENERGY_TOL {
@@ -1008,13 +1016,15 @@ fn mmff94s_total_energy_matches_rdkit() {
 #[test]
 fn mmff94_unchanged_and_differs_from_94s() {
     let mut fails = Vec::new();
-    for name in S_NAMES {
-        let (pots94, coords) = generic_pots(name);
+    let mut changed = 0usize;
+    let mut unchanged = 0usize;
+    for name in energy_fixtures() {
+        let (pots94, coords) = generic_pots(&name);
         let got94 = pots94.calc_energy_forces(&coords).0;
-        let want94 = ref_energy_field(name, "mmff94_total_energy");
-        let want94s = ref_energy_field(name, "mmff94s_total_energy");
+        let want94 = ref_energy_field(&name, "mmff94_total_energy");
+        let want94s = ref_energy_field(&name, "mmff94s_total_energy");
         let d94 = (got94 - want94).abs();
-        let (pots94s, _) = generic_pots_94s(name);
+        let (pots94s, _) = generic_pots_94s(&name);
         let got94s = pots94s.calc_energy_forces(&coords).0;
         println!(
             "{name:20} 94 molrs={got94:14.6} rdkit={want94:14.6} | 94s molrs={got94s:14.6} | \
@@ -1026,13 +1036,31 @@ fn mmff94_unchanged_and_differs_from_94s() {
                 "{name}: MMFF94 molrs={got94:.6} rdkit={want94:.6} d={d94:.3e}"
             ));
         }
-        // RDKit's own 94 vs 94s totals differ -> our two builds must too.
-        if (got94 - got94s).abs() < ENERGY_TOL {
-            fails.push(format!(
-                "{name}: molrs 94 ({got94:.6}) == 94s ({got94s:.6}); _S tables not applied"
-            ));
+        // The partition comes from the external oracle, never from a list of names.
+        // A fixture on which RDKit's variants differ must differ here; where RDKit
+        // says the parameterisations are identical, molrs must be bit-identical too.
+        if (want94 - want94s).abs() > ENERGY_TOL {
+            changed += 1;
+            if (got94 - got94s).abs() < ENERGY_TOL {
+                fails.push(format!(
+                    "{name}: RDKit's variants differ but molrs 94 ({got94:.6}) == 94s \
+                     ({got94s:.6}); _S tables not applied"
+                ));
+            }
+        } else {
+            unchanged += 1;
+            if got94.to_bits() != got94s.to_bits() {
+                fails.push(format!(
+                    "{name}: RDKit's variants are identical but molrs differs: \
+                     {got94:.12} vs {got94s:.12}"
+                ));
+            }
         }
     }
+    assert!(
+        changed > 0 && unchanged > 0,
+        "external-oracle partition is vacuous: {changed} changed, {unchanged} unchanged"
+    );
     assert!(
         fails.is_empty(),
         "MMFF94/94s consistency failures:\n  {}",

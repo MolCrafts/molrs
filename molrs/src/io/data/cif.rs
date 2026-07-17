@@ -32,6 +32,7 @@ use ndarray::{Array1, Array2, IxDyn, array};
 use molrs::spatial::region::simbox::SimBox;
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
+use molrs::store::meta::MetaMap;
 use molrs::types::{F, I, U};
 
 use crate::io::reader::{FrameReader, Reader};
@@ -269,8 +270,8 @@ struct FrameInProgress {
     cell_alpha: Option<F>,
     cell_beta: Option<F>,
     cell_gamma: Option<F>,
-    /// Misc string key-value pairs — copied to `frame.meta`.
-    meta: HashMap<String, String>,
+    /// Misc exact-dtype metadata copied into the frame.
+    meta: MetaMap,
     /// Per-atom column name → list of token values, in row order.
     atom_cols: HashMap<String, Vec<String>>,
 }
@@ -285,7 +286,7 @@ impl FrameInProgress {
             cell_alpha: None,
             cell_beta: None,
             cell_gamma: None,
-            meta: HashMap::new(),
+            meta: MetaMap::new(),
             atom_cols: HashMap::new(),
         }
     }
@@ -333,7 +334,7 @@ impl FrameInProgress {
         let mut atoms = Block::new();
         let mut frame = Frame::new();
         if !self.name.is_empty() {
-            frame.meta.insert("title".into(), self.name);
+            frame.meta.insert("title", self.name);
         }
         for (k, v) in self.meta {
             frame.meta.insert(k, v);
@@ -751,9 +752,9 @@ pub fn write_cif_frame<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
     let title = frame
         .meta
         .get("title")
-        .cloned()
-        .unwrap_or_else(|| "molrs".to_string());
-    writeln!(writer, "data_{}", sanitise_data_name(&title))?;
+        .and_then(|value| value.as_str())
+        .unwrap_or("molrs");
+    writeln!(writer, "data_{}", sanitise_data_name(title))?;
 
     if let Some(sb) = frame.simbox.as_ref() {
         let lengths = sb.lengths();

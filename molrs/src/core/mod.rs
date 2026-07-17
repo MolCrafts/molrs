@@ -61,6 +61,7 @@ pub use store::block::Block;
 pub use store::frame::Frame;
 pub use store::frame_access::FrameAccess;
 pub use store::frame_view::FrameView;
+pub use store::meta::{MetaMap, MetaValue};
 pub use store::trajectory::{
     ObservableData, ObservableKind, ObservableRecord, SchemaValue, Trajectory,
 };
@@ -68,7 +69,6 @@ pub use system::atomistic::{
     AngleId, AtomId, Atomistic, Bond, BondId, DihedralId, ExtractedAtomistic, ImproperId,
 };
 pub use system::coarsegrain::{CoarseGrain, ExtractedCoarseGrain};
-pub use system::element::Element;
 pub use system::extract::{ExtractedBall, InducedSubgraph};
 pub use system::graph_hash::{canonical_order, is_isomorphic, structural_hash};
 pub use system::mapping::{CGMapping, WeightScheme};

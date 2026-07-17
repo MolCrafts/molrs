@@ -7,9 +7,11 @@
 //! (spec criterion #4) runs in the `bm-molrs-molpy` harness; here we assert the
 //! reader digests the entire real file into a well-formed, non-empty ForceField.
 //!
-//! The file is located via `$MOLPY_OPLSAA_XML` or a few sibling-repo candidates;
-//! the test skips (passes) when none resolve, so it never blocks a checkout that
-//! lacks the molpy sibling.
+//! The file is located via `$MOLPY_OPLSAA_XML` or a few sibling-repo candidates.
+//! It is deliberately `#[ignore]`: the input belongs to molpy and is not vendored
+//! here, so an ordinary molrs checkout cannot run this integration test.  Marking
+//! that external dependency explicitly keeps CI honest instead of returning green
+//! without executing an assertion.
 
 use molrs::ff::{ForceFieldReader, OplsXmlReader};
 
@@ -31,11 +33,11 @@ fn locate_oplsaa() -> Option<std::path::PathBuf> {
 }
 
 #[test]
+#[ignore = "requires molpy's non-vendored oplsaa.xml; set MOLPY_OPLSAA_XML and run explicitly"]
 fn reads_real_molpy_oplsaa() {
-    let Some(path) = locate_oplsaa() else {
-        eprintln!("skipping: molpy oplsaa.xml not found (set MOLPY_OPLSAA_XML)");
-        return;
-    };
+    let path = locate_oplsaa().expect(
+        "molpy oplsaa.xml not found; set MOLPY_OPLSAA_XML before running this ignored test",
+    );
 
     let ff = OplsXmlReader::new()
         .read(path.to_str().unwrap())

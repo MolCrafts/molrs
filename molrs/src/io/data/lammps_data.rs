@@ -1457,7 +1457,10 @@ fn write_lammps_data_frame<W: Write>(
     let meta = frame.meta_ref();
 
     // Write type labels if present
-    if let Some(atom_labels_str) = meta.get("atom_type_labels") {
+    if let Some(atom_labels_str) = meta
+        .get("atom_type_labels")
+        .and_then(|value| value.as_str())
+    {
         writeln!(writer, "Atom Type Labels")?;
         writeln!(writer)?;
         for pair in atom_labels_str.split(',') {
@@ -1469,7 +1472,10 @@ fn write_lammps_data_frame<W: Write>(
         writeln!(writer)?;
     }
 
-    if let Some(bond_labels_str) = meta.get("bond_type_labels") {
+    if let Some(bond_labels_str) = meta
+        .get("bond_type_labels")
+        .and_then(|value| value.as_str())
+    {
         writeln!(writer, "Bond Type Labels")?;
         writeln!(writer)?;
         for pair in bond_labels_str.split(',') {

@@ -3,7 +3,7 @@
 //! What survived the push-API rework, and why it lives here rather than in
 //! `ff/charge/`: this file tests the two pieces the BCC *typifier* owns — the
 //! `ATOMTYPE_BCC.DEF` atom labels and the `BCCPARM.DAT` lookup table — through the
-//! objects that own them ([`BCCAtomTypifier`], [`BCCCorrectionTable`],
+//! objects that own them ([`BCCAtomChargeTypifier`], [`BCCCorrectionTable`],
 //! [`BCCCorrector`]). The charge MODEL that composes them (`BccModel`, the push
 //! API) is tested in `ff/charge/`, next to the source it now lives in.
 //!
@@ -15,7 +15,8 @@
 //! object a caller can actually build.
 
 use molrs::ff::params::BccCorrectionRow;
-use molrs::ff::typifier::am1bcc::{BCCAtomTypifier, BCCCorrectionTable, BCCCorrector};
+use molrs::ff::typifier::Typifier;
+use molrs::ff::typifier::am1bcc::{BCCAtomChargeTypifier, BCCCorrectionTable, BCCCorrector};
 use molrs::perceive::bond_type::BCC_BOND_TYPE;
 use molrs::store::keys;
 use molrs::{AtomId, Atomistic, Element};
@@ -207,7 +208,7 @@ fn missing_bcc_correction_row_is_an_error_not_zero() {
 #[test]
 fn atom_typifier_assigns_bcc_types_to_untyped_methane() {
     let (mol, c, hs) = methane();
-    let typed = BCCAtomTypifier::bcc()
+    let typed = BCCAtomChargeTypifier::bcc()
         .typify(&mol)
         .expect("typify methane atoms");
 
@@ -232,7 +233,7 @@ fn atom_typifier_covers_reference_element_rows_through_mt() {
         let element = Element::by_number(z).expect("element");
         let mut mol = Atomistic::new();
         let aid = mol.add_atom_xyz(element.symbol(), 0.0, 0.0, 0.0);
-        let typed = BCCAtomTypifier::bcc()
+        let typed = BCCAtomChargeTypifier::bcc()
             .typify(&mol)
             .unwrap_or_else(|e| panic!("z={z} {}: {e}", element.symbol()));
         assert!(typed.get_atom(aid).unwrap().get_str(keys::TYPE).is_some());

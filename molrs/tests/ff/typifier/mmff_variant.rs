@@ -59,18 +59,10 @@ use molrs::store::frame::Frame;
 use molrs::system::molgraph::{Atom, PropValue};
 
 // ---------------------------------------------------------------------------
-// Fixtures (RDKit-generated; the same files the bespoke energy path validates
-// against — `tests/ff/mmff/energy.rs`). The `s_*` set exists precisely because it
-// carries BOTH reference energies.
+// Fixtures (RDKit-generated; the same files the energy path validates against —
+// `tests/ff/mmff/energy.rs`). Every energy fixture now carries both reference
+// energies; the type-10/40 partition is computed below.
 // ---------------------------------------------------------------------------
-
-/// Fixtures whose molecules contain a delocalised trivalent nitrogen — the only
-/// place MMFF94 and MMFF94s can disagree.
-const N_FIXTURES: [&str; 4] = ["s_acetamide", "s_nmethylacetamide", "s_aniline", "s_urea"];
-
-/// The identity guard: no type-10/40 nitrogen anywhere. `e_benzene` still HAS
-/// out-of-plane centres (six aromatic carbons), so the guard is not vacuous.
-const IDENTICAL_FIXTURES: [&str; 2] = ["e_ethane", "e_benzene"];
 
 /// MMFF numeric types whose out-of-plane row is re-parameterised by MMFF94s.
 const N_CENTRE_TYPES: [u32; 2] = [10, 40];
@@ -110,6 +102,50 @@ const ENERGY_GAP: f64 = 1e-3;
 
 fn fixtures_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ff/mmff/fixtures")
+}
+
+/// Every energy fixture on disk.  Partitions below are derived from the typed
+/// molecule; no fixture name is allowed to decide which assertions it receives.
+fn energy_fixtures() -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(fixtures_dir())
+        .expect("read fixtures dir")
+        .map(|e| e.expect("dir entry").file_name())
+        .filter_map(|f| {
+            f.to_string_lossy()
+                .strip_suffix(".energy.json")
+                .map(str::to_owned)
+        })
+        .collect();
+    names.sort();
+    assert!(
+        !names.is_empty(),
+        "no MMFF energy fixtures found; a computed partition would be vacuous"
+    );
+    names
+}
+
+/// Compute the MMFF94/MMFF94s partition from numeric atom types 10/40.
+fn fixture_partition() -> (Vec<String>, Vec<String>) {
+    let (mut with_n, mut without_n) = (Vec::new(), Vec::new());
+    for name in energy_fixtures() {
+        let mol = load_sdf(&name);
+        let typed = MMFF94Typifier::new()
+            .typify(&mol)
+            .unwrap_or_else(|e| panic!("{name}: MMFF94 typify: {e}"));
+        let baked = dissect(&typed);
+        if baked.types.iter().any(|t| N_CENTRE_TYPES.contains(t)) {
+            with_n.push(name);
+        } else {
+            without_n.push(name);
+        }
+    }
+    assert!(
+        !with_n.is_empty() && !without_n.is_empty(),
+        "computed type-10/40 partition is vacuous: {} with, {} without",
+        with_n.len(),
+        without_n.len()
+    );
+    (with_n, without_n)
 }
 
 /// Minimal V2000 SDF loader preserving atom order and bond orders (same shape as
@@ -404,8 +440,8 @@ fn both_front_doors_implement_the_typifier_trait() {
 /// +0.015 (type 10, `NC=O`) / +0.030 (type 40, `NC=C`) — planar N is a minimum.
 #[test]
 fn mmff94s_bakes_positive_koop_on_every_n_centre() {
-    for name in N_FIXTURES {
-        let (_, s) = baked_pair(name);
+    for name in fixture_partition().0 {
+        let (_, s) = baked_pair(&name);
         let centres = s.n_centred_impropers();
         assert!(
             !centres.is_empty(),
@@ -438,8 +474,8 @@ fn mmff94s_bakes_positive_koop_on_every_n_centre() {
 /// positive already. The invariant is *difference*, not sign.
 #[test]
 fn mmff94_bakes_a_different_koop_on_every_n_centre() {
-    for name in N_FIXTURES {
-        let (base, s) = baked_pair(name);
+    for name in fixture_partition().0 {
+        let (base, s) = baked_pair(&name);
         for (idx, koop_s, label, centre_type) in s.n_centred_impropers() {
             let (koop_94, label_94) = base
                 .koop
@@ -506,8 +542,8 @@ fn n_centre_koop_matches_the_measured_table() {
 /// not the whole table.
 #[test]
 fn non_nitrogen_oop_centres_are_untouched_by_mmff94s() {
-    for name in N_FIXTURES {
-        let (base, s) = baked_pair(name);
+    for name in fixture_partition().0 {
+        let (base, s) = baked_pair(&name);
         let mut compared = 0usize;
         for (idx, (koop_94, label)) in &base.koop {
             if N_CENTRE_TYPES.contains(&base.types[idx[1]]) {
@@ -536,8 +572,8 @@ fn non_nitrogen_oop_centres_are_untouched_by_mmff94s() {
 /// vacuity of an atom-type-only test is recorded in the suite, not just in prose.
 #[test]
 fn atom_types_are_identical_between_variants() {
-    for name in N_FIXTURES.iter().chain(IDENTICAL_FIXTURES.iter()) {
-        let (base, s) = baked_pair(name);
+    for name in energy_fixtures() {
+        let (base, s) = baked_pair(&name);
         assert_eq!(
             base.types, s.types,
             "{name}: atom types must be identical — the MMFF94s difference is Oop/Torsion only"
@@ -664,9 +700,9 @@ fn forcefield_tree_differs_only_in_name() {
 /// Both front doors compile potentials, and the totals are different force fields.
 #[test]
 fn total_energies_differ_on_every_nitrogen_fixture() {
-    for name in N_FIXTURES {
-        let e94 = total_energy_94(name);
-        let e94s = total_energy_94s(name);
+    for name in fixture_partition().0 {
+        let e94 = total_energy_94(&name);
+        let e94s = total_energy_94s(&name);
         assert!(e94.is_finite(), "{name}: MMFF94 energy not finite: {e94}");
         assert!(
             e94s.is_finite(),
@@ -680,19 +716,43 @@ fn total_energies_differ_on_every_nitrogen_fixture() {
     }
 }
 
+/// Regression for the hole the former hand-written partition created: caffeine
+/// (and `e_big`) both carry a type-10/40 centre and must therefore enter the
+/// computed difference half.  Caffeine's energy is asserted directly because it
+/// was the omitted molecule that made the old green result misleading.
+#[test]
+fn computed_nitrogen_partition_catches_caffeine() {
+    let (with_n, _) = fixture_partition();
+    assert!(
+        with_n.iter().any(|name| name == "e_caffeine"),
+        "typed caffeine did not enter the type-10/40 partition"
+    );
+    assert!(
+        with_n.iter().any(|name| name == "e_big"),
+        "typed e_big did not enter the type-10/40 partition"
+    );
+    let e94 = total_energy_94("e_caffeine");
+    let e94s = total_energy_94s("e_caffeine");
+    assert!(
+        (e94 - e94s).abs() > ENERGY_GAP,
+        "caffeine has a delocalised nitrogen but MMFF94 ({e94}) and MMFF94s \
+         ({e94s}) do not differ"
+    );
+}
+
 /// THE IDENTITY GUARD. Without it, "the two differ" could pass on a difference
 /// that isn't real. `e_ethane` has no trivalent nitrogen at all; `e_benzene` HAS
 /// out-of-plane centres (six type-37 carbons) but no type-10/40 nitrogen — so on
 /// both molecules the two front doors must be bit-for-bit indistinguishable.
 #[test]
 fn typed_frames_are_bit_identical_without_a_delocalised_nitrogen() {
-    for name in IDENTICAL_FIXTURES {
-        let (base, s) = baked_pair(name);
+    for name in fixture_partition().1 {
+        let (base, s) = baked_pair(&name);
         assert!(
             base.types.iter().all(|t| !N_CENTRE_TYPES.contains(t)),
             "{name}: fixture contains a type-10/40 nitrogen — it cannot serve as the guard"
         );
-        assert_frames_bit_identical(&base.frame, &s.frame, name);
+        assert_frames_bit_identical(&base.frame, &s.frame, &name);
     }
 }
 
@@ -710,9 +770,9 @@ fn benzene_guard_is_not_vacuous_it_has_out_of_plane_centres() {
 /// Same molecules, same total energy, to the bit.
 #[test]
 fn total_energies_are_bit_identical_without_a_delocalised_nitrogen() {
-    for name in IDENTICAL_FIXTURES {
-        let e94 = total_energy_94(name);
-        let e94s = total_energy_94s(name);
+    for name in fixture_partition().1 {
+        let e94 = total_energy_94(&name);
+        let e94s = total_energy_94s(&name);
         assert_eq!(
             e94.to_bits(),
             e94s.to_bits(),

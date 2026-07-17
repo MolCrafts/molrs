@@ -197,11 +197,27 @@ impl CoarseGrain {
         frame
     }
 
-    /// Build from a [`Frame`], registering the CG `bonds` kind first so the
-    /// `bonds` block is read back.
+    /// Build from the CG-shaped [`Frame`] emitted by [`Self::to_frame`].
+    ///
+    /// [`MolGraph`] owns one canonical frame vocabulary (`atoms` / `bonds` /
+    /// `atomi` / `atomj`), so the CG domain labels are reversed on a clone before
+    /// delegating.  The caller's frame is never mutated.
     pub fn from_frame(frame: &Frame) -> Result<Self, MolRsError> {
+        let mut canonical = frame.clone();
+        if !canonical.rename_block("beads", "atoms") {
+            return Err(MolRsError::parse("Frame missing 'beads' block"));
+        }
+        if canonical.contains_key("cgbonds")
+            && (!canonical.rename_column("cgbonds", "ibead", "atomi")
+                || !canonical.rename_column("cgbonds", "jbead", "atomj")
+                || !canonical.rename_block("cgbonds", "bonds"))
+        {
+            return Err(MolRsError::parse(
+                "Frame 'cgbonds' block is missing 'ibead'/'jbead' endpoints",
+            ));
+        }
         let mut cg = Self::new();
-        cg.graph.read_frame(frame)?;
+        cg.graph.read_frame(&canonical)?;
         Ok(cg)
     }
 
@@ -343,6 +359,22 @@ mod tests {
         let bead = cg.get_bead(b).unwrap();
         assert_eq!(bead.get_str("bead_type"), Some("W"));
         assert_eq!(bead.get_f64("x"), Some(1.0));
+    }
+
+    #[test]
+    fn frame_round_trip_uses_cg_domain_labels() {
+        let mut cg = CoarseGrain::new();
+        let a = cg.add_bead("W", 0.0, 0.0, 0.0);
+        let b = cg.add_bead("P1", 3.0, 0.0, 0.0);
+        cg.add_bond(a, b).unwrap();
+
+        let frame = cg.to_frame();
+        assert!(frame.contains_key("beads"));
+        assert!(frame.contains_key("cgbonds"));
+        assert!(!frame.contains_key("atoms"));
+        let restored = CoarseGrain::from_frame(&frame).expect("CG frame round-trip");
+        assert_eq!(restored.n_beads(), 2);
+        assert_eq!(restored.n_bonds(), 1);
     }
 
     #[test]

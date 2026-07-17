@@ -2,5 +2,6 @@
   "name": "e_big",
   "smiles": "CCC(=O)Nc1ccc(cc1)OCC(O)CNC(C)(C)C",
   "n_atoms": 47,
-  "mmff94_total_energy": 108.69661601573475
+  "mmff94_total_energy": 108.69661601573475,
+  "mmff94s_total_energy": 109.10289769975296
 }

@@ -35,13 +35,17 @@ use std::collections::{HashMap, HashSet};
 
 use crate::error::MolRsError;
 use crate::system::atomistic::{AtomId, Atomistic, BondId};
-use crate::system::element::Element;
+use molrs::Element;
 
+use super::SmartsPattern;
+use super::ast::MolContext;
 use super::ast::{AtomPrimitive, AtomQuery, BondPrimitive, BondQuery};
 use super::parser::QueryGraph;
-use super::{MatchOptions, SmartsPattern};
 
 const ORDER_EPS: f64 = 1e-6;
+
+type ReactionAtomSets = Vec<Vec<AtomId>>;
+type DetailedReactionBatch = (ReactionAtomSets, ReactionAtomSets);
 
 // ---------------------------------------------------------------------------
 // Query-tree extraction helpers (read-only reads of the chain-01 AST)
@@ -423,23 +427,13 @@ impl Transform {
         }
     }
 
-    /// Apply the transform to `mol` in place at the occurrence pinned by
-    /// `binding` (map label → molecule atom id). Returns the deduplicated,
-    /// deterministically-ordered set of *surviving* touched atom ids (the seed
-    /// for a retype region). See [`Reaction::apply`].
-    fn apply(
+    /// Resolve every unmapped LHS atom while the reactant world is still intact.
+    fn resolve_leaving(
         &self,
-        mol: &mut Atomistic,
+        context: &MolContext<'_>,
         binding: &HashMap<u32, AtomId>,
         reactants: &[SmartsPattern],
-        labels: &HashMap<AtomId, String>,
-        refresh: bool,
-    ) -> Result<Vec<AtomId>, MolRsError> {
-        // Surviving atoms whose local environment changed: bond endpoints, added
-        // atoms, deleted atoms' surviving neighbours, and prop-set atoms.
-        let mut touched: Vec<AtomId> = Vec::new();
-
-        // 1. Resolve + delete leaving atoms (re-match each component to the binding).
+    ) -> Result<HashSet<AtomId>, MolRsError> {
         let mut leaving: HashSet<AtomId> = HashSet::new();
         for spec in &self.delete {
             // Re-anchor the reactant to the binding to resolve its leaving atoms.
@@ -454,14 +448,7 @@ impl Transform {
                 .iter()
                 .find(|&&(qi, _)| qi == 0)
                 .and_then(|&(_, l)| binding.get(&l).copied());
-            let matches = reactants[spec.component].find(
-                mol,
-                MatchOptions {
-                    labels: Some(labels),
-                    root,
-                    limit: None,
-                },
-            );
+            let matches = reactants[spec.component].find_in_context(context, root);
             let chosen = matches
                 .iter()
                 .find(|m| {
@@ -484,20 +471,17 @@ impl Transform {
                 }
             }
         }
-        // Capture the *surviving* neighbours of the leaving atoms before the
-        // delete: their environment changes, and the leaving atoms' own ids are
-        // gone afterwards (so they can never enter the touched set).
-        for &aid in &leaving {
-            for (_, other) in mol.incident_bond_ids(aid) {
-                if !leaving.contains(&other) {
-                    touched.push(other);
-                }
-            }
-        }
-        for &aid in &leaving {
-            mol.remove_atom(aid)?; // cascades incident bonds / angles / dihedrals
-        }
+        Ok(leaving)
+    }
 
+    /// Apply everything except LHS deletion, which a batch performs once.
+    fn apply_after_delete(
+        &self,
+        mol: &mut Atomistic,
+        binding: &HashMap<u32, AtomId>,
+        touched: &mut Vec<AtomId>,
+        created: &mut Vec<AtomId>,
+    ) -> Result<(), MolRsError> {
         // 2. Add unmapped product atoms (no coordinates).
         let mut added: HashMap<usize, AtomId> = HashMap::new();
         for spec in &self.add_atoms {
@@ -507,6 +491,7 @@ impl Transform {
             }
             added.insert(spec.product_idx, id);
             touched.push(id);
+            created.push(id);
         }
 
         let resolve = |n: &NodeRef| -> Result<AtomId, MolRsError> {
@@ -571,11 +556,36 @@ impl Transform {
             touched.push(id);
         }
 
-        // 7. Refresh derived topology, then re-perceive aromaticity. A batch
-        // caller applying many edits (e.g. crosslinking) passes refresh=false and
-        // does this ONCE at the end — the per-apply whole-graph refresh is O(N)
-        // and dominates otherwise. Matching only needs bonds, which are already
-        // updated in place above.
+        Ok(())
+    }
+
+    /// Apply the transform to one pinned occurrence.
+    fn apply(
+        &self,
+        mol: &mut Atomistic,
+        binding: &HashMap<u32, AtomId>,
+        reactants: &[SmartsPattern],
+        labels: &HashMap<AtomId, String>,
+        refresh: bool,
+    ) -> Result<Vec<AtomId>, MolRsError> {
+        let leaving = {
+            let context = MolContext::with_labels(mol, labels);
+            self.resolve_leaving(&context, binding, reactants)?
+        };
+        let mut touched = Vec::new();
+        for &aid in &leaving {
+            for (_, other) in mol.incident_bond_ids(aid) {
+                if !leaving.contains(&other) {
+                    touched.push(other);
+                }
+            }
+        }
+        let mut leaving_ordered: Vec<_> = leaving.into_iter().collect();
+        leaving_ordered.sort_unstable();
+        mol.as_molgraph_mut().remove_nodes(&leaving_ordered)?;
+        let mut created = Vec::new();
+        self.apply_after_delete(mol, binding, &mut touched, &mut created)?;
+
         if refresh {
             mol.generate_topology(true, true, false)?;
             crate::perceive::aromaticity::perceive_aromaticity(mol);
@@ -585,6 +595,65 @@ impl Transform {
         touched.sort_unstable();
         touched.dedup();
         Ok(touched)
+    }
+
+    /// Compile all leaving groups first, then execute the disjoint edits in one
+    /// batch. Relation tables are scanned once for the union of deleted atoms.
+    fn apply_many(
+        &self,
+        mol: &mut Atomistic,
+        bindings: &[HashMap<u32, AtomId>],
+        reactants: &[SmartsPattern],
+        labels: &HashMap<AtomId, String>,
+        refresh: bool,
+    ) -> Result<DetailedReactionBatch, MolRsError> {
+        let leaving_per_edit = {
+            let context = MolContext::with_labels(mol, labels);
+            bindings
+                .iter()
+                .map(|binding| self.resolve_leaving(&context, binding, reactants))
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        let mut all_leaving = HashSet::new();
+        for leaving in &leaving_per_edit {
+            for &atom in leaving {
+                if !all_leaving.insert(atom) {
+                    return Err(MolRsError::validation(format!(
+                        "reaction batch resolves leaving atom {atom:?} in more than one edit"
+                    )));
+                }
+            }
+        }
+
+        let mut touched_per_edit = Vec::with_capacity(bindings.len());
+        for leaving in &leaving_per_edit {
+            let mut touched = Vec::new();
+            for &atom in leaving {
+                for (_, other) in mol.incident_bond_ids(atom) {
+                    if !all_leaving.contains(&other) {
+                        touched.push(other);
+                    }
+                }
+            }
+            touched_per_edit.push(touched);
+        }
+
+        let mut leaving_ordered: Vec<_> = all_leaving.into_iter().collect();
+        leaving_ordered.sort_unstable();
+        mol.as_molgraph_mut().remove_nodes(&leaving_ordered)?;
+        let mut created_per_edit = Vec::with_capacity(bindings.len());
+        for (binding, touched) in bindings.iter().zip(&mut touched_per_edit) {
+            let mut created = Vec::new();
+            self.apply_after_delete(mol, binding, touched, &mut created)?;
+            touched.sort_unstable();
+            touched.dedup();
+            created_per_edit.push(created);
+        }
+        if refresh {
+            mol.generate_topology(true, true, false)?;
+            crate::perceive::aromaticity::perceive_aromaticity(mol);
+        }
+        Ok((touched_per_edit, created_per_edit))
     }
 }
 
@@ -712,6 +781,36 @@ impl Reaction {
     ) -> Result<Vec<AtomId>, MolRsError> {
         self.transform
             .apply(mol, binding, &self.reactants, labels, refresh)
+    }
+
+    /// Compile every occurrence against the intact reactant world, then apply
+    /// all disjoint transforms with one batched leaving-group deletion.
+    pub fn apply_many(
+        &self,
+        mol: &mut Atomistic,
+        bindings: &[HashMap<u32, AtomId>],
+        labels: &HashMap<AtomId, String>,
+        refresh: bool,
+    ) -> Result<Vec<Vec<AtomId>>, MolRsError> {
+        self.transform
+            .apply_many(mol, bindings, &self.reactants, labels, refresh)
+            .map(|(touched, _)| touched)
+    }
+
+    /// The batch result plus reaction-created atom ids in product creation
+    /// order, one list per binding. This is the stable correspondence a
+    /// compile-first caller uses to replay annotations onto RHS-added atoms;
+    /// sorting opaque graph handles cannot provide that correspondence after
+    /// deleted slots have been reused.
+    pub fn apply_many_detailed(
+        &self,
+        mol: &mut Atomistic,
+        bindings: &[HashMap<u32, AtomId>],
+        labels: &HashMap<AtomId, String>,
+        refresh: bool,
+    ) -> Result<DetailedReactionBatch, MolRsError> {
+        self.transform
+            .apply_many(mol, bindings, &self.reactants, labels, refresh)
     }
 }
 

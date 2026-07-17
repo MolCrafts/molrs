@@ -30,7 +30,8 @@
 //! in `ff/charge/`, which is where the models now live.
 
 use molrs::ff::charge::{BccModel, BccParameterSet};
-use molrs::ff::typifier::am1bcc::{BCCAtomTypifier, BCCCorrectionTable, BCCCorrector};
+use molrs::ff::typifier::Typifier;
+use molrs::ff::typifier::am1bcc::{BCCAtomChargeTypifier, BCCCorrectionTable, BCCCorrector};
 use molrs::perceive::bond_type::BCC_BOND_TYPE;
 use molrs::store::keys;
 use molrs::{AtomId, Atomistic};
@@ -115,7 +116,7 @@ fn bcc_bond_types_match_antechamber() {
     let mut failures = Vec::new();
     for case in CASES {
         let (mol, ids) = build(case);
-        let typed = match BCCAtomTypifier::bcc().typify(&mol) {
+        let typed = match BCCAtomChargeTypifier::bcc().typify(&mol) {
             Ok(t) => t,
             Err(e) => {
                 failures.push(format!("  {:22} ERROR {e}", case.name));
@@ -164,7 +165,7 @@ fn bcc_atom_types_match_antechamber() {
     let mut failures = Vec::new();
     for case in CASES {
         let (mol, ids) = build(case);
-        let typed = match BCCAtomTypifier::bcc().typify(&mol) {
+        let typed = match BCCAtomChargeTypifier::bcc().typify(&mol) {
             Ok(t) => t,
             Err(e) => {
                 failures.push(format!("  {:22} ERROR {e}", case.name));

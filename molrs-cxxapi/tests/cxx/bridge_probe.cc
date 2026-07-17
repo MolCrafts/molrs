@@ -63,9 +63,20 @@
 #include "rust/cxx.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <exception>
 #include <type_traits>
+
+static_assert(sizeof(::molrs::Element) == sizeof(std::uint8_t));
+static_assert(static_cast<std::uint8_t>(::molrs::Element::H) == 1);
+static_assert(static_cast<std::uint8_t>(::molrs::Element::O) == 8);
+static_assert(static_cast<std::uint8_t>(::molrs::Element::Cu) == 29);
+static_assert(static_cast<std::uint8_t>(::molrs::Element::Og) == 118);
+static_assert(
+    std::is_same_v<decltype(::molrs::cxx_api_version()), std::uint32_t>);
+static_assert(
+    std::is_same_v<decltype(::molrs::cxx_api_capabilities()), std::uint64_t>);
 
 namespace {
 

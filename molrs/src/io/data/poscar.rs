@@ -134,13 +134,13 @@ pub fn read_poscar_from_reader<R: BufRead>(mut reader: R) -> Result<Frame> {
 
     let mut frame = Frame::new();
     if !header.title.is_empty() {
-        frame.meta.insert("title".into(), header.title);
+        frame.meta.insert("title", header.title);
     }
     frame.meta.insert(
-        "poscar_mode".into(),
+        "poscar_mode",
         match header.mode {
-            CoordMode::Direct => "direct".into(),
-            CoordMode::Cartesian => "cartesian".into(),
+            CoordMode::Direct => "direct",
+            CoordMode::Cartesian => "cartesian",
         },
     );
 
@@ -290,8 +290,8 @@ pub fn write_poscar_to_writer<W: Write>(writer: &mut W, frame: &Frame) -> Result
     let title = frame
         .meta
         .get("title")
-        .cloned()
-        .unwrap_or_else(|| "molrs POSCAR".to_string());
+        .and_then(|value| value.as_str())
+        .unwrap_or("molrs POSCAR");
     writeln!(writer, "{}", title)?;
     writeln!(writer, "1.0")?;
 
@@ -325,7 +325,11 @@ pub fn write_poscar_to_writer<W: Write>(writer: &mut W, frame: &Frame) -> Result
     )?;
 
     // Mode: Cartesian (default) or Direct based on frame.meta.
-    let direct = frame.meta.get("poscar_mode").map(|s| s.as_str()) == Some("direct");
+    let direct = frame
+        .meta
+        .get("poscar_mode")
+        .and_then(|value| value.as_str())
+        == Some("direct");
     writeln!(writer, "{}", if direct { "Direct" } else { "Cartesian" })?;
 
     let xs = atoms

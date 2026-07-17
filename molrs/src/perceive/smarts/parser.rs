@@ -649,7 +649,7 @@ impl<'s> Parser<'s> {
         {
             let mut two = sym.clone();
             two.push(next);
-            let recognized = crate::system::element::Element::by_symbol(&two).is_some();
+            let recognized = molrs::Element::by_symbol(&two).is_some();
             let two_letter_organic = !in_bracket && matches!(two.as_str(), "Cl" | "Br");
             if (in_bracket && recognized) || two_letter_organic {
                 self.bump();
@@ -719,7 +719,7 @@ fn is_bond_char(c: char) -> bool {
 
 /// Build an atom primitive for an element symbol with a known aromatic flag.
 fn primitive_for_element(sym: &str, aromatic: bool) -> Option<AtomQuery> {
-    let z = crate::system::element::Element::by_symbol(sym)?.z();
+    let z = molrs::Element::by_symbol(sym)?.z();
     let prim = if aromatic {
         AtomPrimitive::AromaticElement(z)
     } else {

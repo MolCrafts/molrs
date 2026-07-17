@@ -126,7 +126,7 @@ pub enum Element {
 }
 
 /// Element properties data structure
-struct ElementData {
+struct ElementProperties {
     symbol: &'static str,
     name: &'static str,
     mass: f32,
@@ -135,827 +135,827 @@ struct ElementData {
 }
 
 // Element data table (indexed by atomic number - 1)
-const ELEMENT_DATA: [ElementData; 118] = [
-    ElementData {
+const ELEMENT_PROPERTIES: [ElementProperties; 118] = [
+    ElementProperties {
         symbol: "H",
         name: "Hydrogen",
         mass: 1.008,
         covalent_radius: 0.31,
         vdw_radius: 1.20,
     },
-    ElementData {
+    ElementProperties {
         symbol: "He",
         name: "Helium",
         mass: 4.003,
         covalent_radius: 0.28,
         vdw_radius: 1.40,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Li",
         name: "Lithium",
         mass: 6.941,
         covalent_radius: 1.28,
         vdw_radius: 1.82,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Be",
         name: "Beryllium",
         mass: 9.012,
         covalent_radius: 0.96,
         vdw_radius: 1.53,
     },
-    ElementData {
+    ElementProperties {
         symbol: "B",
         name: "Boron",
         mass: 10.81,
         covalent_radius: 0.84,
         vdw_radius: 1.92,
     },
-    ElementData {
+    ElementProperties {
         symbol: "C",
         name: "Carbon",
         mass: 12.01,
         covalent_radius: 0.76,
         vdw_radius: 1.70,
     },
-    ElementData {
+    ElementProperties {
         symbol: "N",
         name: "Nitrogen",
         mass: 14.01,
         covalent_radius: 0.71,
         vdw_radius: 1.55,
     },
-    ElementData {
+    ElementProperties {
         symbol: "O",
         name: "Oxygen",
         mass: 16.00,
         covalent_radius: 0.66,
         vdw_radius: 1.52,
     },
-    ElementData {
+    ElementProperties {
         symbol: "F",
         name: "Fluorine",
         mass: 19.00,
         covalent_radius: 0.57,
         vdw_radius: 1.47,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Ne",
         name: "Neon",
         mass: 20.18,
         covalent_radius: 0.58,
         vdw_radius: 1.54,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Na",
         name: "Sodium",
         mass: 22.99,
         covalent_radius: 1.66,
         vdw_radius: 2.27,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Mg",
         name: "Magnesium",
         mass: 24.31,
         covalent_radius: 1.41,
         vdw_radius: 1.73,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Al",
         name: "Aluminum",
         mass: 26.98,
         covalent_radius: 1.21,
         vdw_radius: 1.84,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Si",
         name: "Silicon",
         mass: 28.09,
         covalent_radius: 1.11,
         vdw_radius: 2.10,
     },
-    ElementData {
+    ElementProperties {
         symbol: "P",
         name: "Phosphorus",
         mass: 30.97,
         covalent_radius: 1.07,
         vdw_radius: 1.80,
     },
-    ElementData {
+    ElementProperties {
         symbol: "S",
         name: "Sulfur",
         mass: 32.07,
         covalent_radius: 1.05,
         vdw_radius: 1.80,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Cl",
         name: "Chlorine",
         mass: 35.45,
         covalent_radius: 1.02,
         vdw_radius: 1.75,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Ar",
         name: "Argon",
         mass: 39.95,
         covalent_radius: 1.06,
         vdw_radius: 1.88,
     },
-    ElementData {
+    ElementProperties {
         symbol: "K",
         name: "Potassium",
         mass: 39.10,
         covalent_radius: 2.03,
         vdw_radius: 2.75,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Ca",
         name: "Calcium",
         mass: 40.08,
         covalent_radius: 1.76,
         vdw_radius: 2.31,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Sc",
         name: "Scandium",
         mass: 44.96,
         covalent_radius: 1.70,
         vdw_radius: 2.11,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Ti",
         name: "Titanium",
         mass: 47.87,
         covalent_radius: 1.60,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "V",
         name: "Vanadium",
         mass: 50.94,
         covalent_radius: 1.53,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Cr",
         name: "Chromium",
         mass: 52.00,
         covalent_radius: 1.39,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Mn",
         name: "Manganese",
         mass: 54.94,
         covalent_radius: 1.39,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Fe",
         name: "Iron",
         mass: 55.85,
         covalent_radius: 1.32,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Co",
         name: "Cobalt",
         mass: 58.93,
         covalent_radius: 1.26,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Ni",
         name: "Nickel",
         mass: 58.69,
         covalent_radius: 1.24,
         vdw_radius: 1.63,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Cu",
         name: "Copper",
         mass: 63.55,
         covalent_radius: 1.32,
         vdw_radius: 1.40,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Zn",
         name: "Zinc",
         mass: 65.39,
         covalent_radius: 1.22,
         vdw_radius: 1.39,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Ga",
         name: "Gallium",
         mass: 69.72,
         covalent_radius: 1.22,
         vdw_radius: 1.87,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Ge",
         name: "Germanium",
         mass: 72.61,
         covalent_radius: 1.20,
         vdw_radius: 2.11,
     },
-    ElementData {
+    ElementProperties {
         symbol: "As",
         name: "Arsenic",
         mass: 74.92,
         covalent_radius: 1.19,
         vdw_radius: 1.85,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Se",
         name: "Selenium",
         mass: 78.96,
         covalent_radius: 1.20,
         vdw_radius: 1.90,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Br",
         name: "Bromine",
         mass: 79.90,
         covalent_radius: 1.20,
         vdw_radius: 1.85,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Kr",
         name: "Krypton",
         mass: 83.80,
         covalent_radius: 1.16,
         vdw_radius: 2.02,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Rb",
         name: "Rubidium",
         mass: 85.47,
         covalent_radius: 2.20,
         vdw_radius: 3.03,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Sr",
         name: "Strontium",
         mass: 87.62,
         covalent_radius: 1.95,
         vdw_radius: 2.49,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Y",
         name: "Yttrium",
         mass: 88.91,
         covalent_radius: 1.90,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Zr",
         name: "Zirconium",
         mass: 91.22,
         covalent_radius: 1.75,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Nb",
         name: "Niobium",
         mass: 92.91,
         covalent_radius: 1.64,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Mo",
         name: "Molybdenum",
         mass: 95.94,
         covalent_radius: 1.54,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Tc",
         name: "Technetium",
         mass: 98.00,
         covalent_radius: 1.47,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Ru",
         name: "Ruthenium",
         mass: 101.1,
         covalent_radius: 1.46,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Rh",
         name: "Rhodium",
         mass: 102.9,
         covalent_radius: 1.42,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Pd",
         name: "Palladium",
         mass: 106.4,
         covalent_radius: 1.39,
         vdw_radius: 1.63,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Ag",
         name: "Silver",
         mass: 107.9,
         covalent_radius: 1.45,
         vdw_radius: 1.72,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Cd",
         name: "Cadmium",
         mass: 112.4,
         covalent_radius: 1.44,
         vdw_radius: 1.58,
     },
-    ElementData {
+    ElementProperties {
         symbol: "In",
         name: "Indium",
         mass: 114.8,
         covalent_radius: 1.42,
         vdw_radius: 1.93,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Sn",
         name: "Tin",
         mass: 118.7,
         covalent_radius: 1.39,
         vdw_radius: 2.17,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Sb",
         name: "Antimony",
         mass: 121.8,
         covalent_radius: 1.39,
         vdw_radius: 2.06,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Te",
         name: "Tellurium",
         mass: 127.6,
         covalent_radius: 1.38,
         vdw_radius: 2.06,
     },
-    ElementData {
+    ElementProperties {
         symbol: "I",
         name: "Iodine",
         mass: 126.9,
         covalent_radius: 1.39,
         vdw_radius: 1.98,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Xe",
         name: "Xenon",
         mass: 131.3,
         covalent_radius: 1.40,
         vdw_radius: 2.16,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Cs",
         name: "Cesium",
         mass: 132.9,
         covalent_radius: 2.44,
         vdw_radius: 3.43,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Ba",
         name: "Barium",
         mass: 137.3,
         covalent_radius: 2.15,
         vdw_radius: 2.68,
     },
-    ElementData {
+    ElementProperties {
         symbol: "La",
         name: "Lanthanum",
         mass: 138.9,
         covalent_radius: 2.07,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Ce",
         name: "Cerium",
         mass: 140.1,
         covalent_radius: 2.04,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Pr",
         name: "Praseodymium",
         mass: 140.9,
         covalent_radius: 2.03,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Nd",
         name: "Neodymium",
         mass: 144.2,
         covalent_radius: 2.01,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Pm",
         name: "Promethium",
         mass: 145.0,
         covalent_radius: 1.99,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Sm",
         name: "Samarium",
         mass: 150.4,
         covalent_radius: 1.98,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Eu",
         name: "Europium",
         mass: 152.0,
         covalent_radius: 1.98,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Gd",
         name: "Gadolinium",
         mass: 157.3,
         covalent_radius: 1.96,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Tb",
         name: "Terbium",
         mass: 158.9,
         covalent_radius: 1.94,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Dy",
         name: "Dysprosium",
         mass: 162.5,
         covalent_radius: 1.92,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Ho",
         name: "Holmium",
         mass: 164.9,
         covalent_radius: 1.92,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Er",
         name: "Erbium",
         mass: 167.3,
         covalent_radius: 1.89,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Tm",
         name: "Thulium",
         mass: 168.9,
         covalent_radius: 1.90,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Yb",
         name: "Ytterbium",
         mass: 173.0,
         covalent_radius: 1.87,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Lu",
         name: "Lutetium",
         mass: 175.0,
         covalent_radius: 1.87,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Hf",
         name: "Hafnium",
         mass: 178.5,
         covalent_radius: 1.75,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Ta",
         name: "Tantalum",
         mass: 180.9,
         covalent_radius: 1.70,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "W",
         name: "Tungsten",
         mass: 183.8,
         covalent_radius: 1.62,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Re",
         name: "Rhenium",
         mass: 186.2,
         covalent_radius: 1.51,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Os",
         name: "Osmium",
         mass: 190.2,
         covalent_radius: 1.44,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Ir",
         name: "Iridium",
         mass: 192.2,
         covalent_radius: 1.41,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Pt",
         name: "Platinum",
         mass: 195.1,
         covalent_radius: 1.36,
         vdw_radius: 1.75,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Au",
         name: "Gold",
         mass: 197.0,
         covalent_radius: 1.36,
         vdw_radius: 1.66,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Hg",
         name: "Mercury",
         mass: 200.6,
         covalent_radius: 1.32,
         vdw_radius: 1.55,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Tl",
         name: "Thallium",
         mass: 204.4,
         covalent_radius: 1.45,
         vdw_radius: 1.96,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Pb",
         name: "Lead",
         mass: 207.2,
         covalent_radius: 1.46,
         vdw_radius: 2.02,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Bi",
         name: "Bismuth",
         mass: 209.0,
         covalent_radius: 1.48,
         vdw_radius: 2.07,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Po",
         name: "Polonium",
         mass: 209.0,
         covalent_radius: 1.40,
         vdw_radius: 1.97,
     },
-    ElementData {
+    ElementProperties {
         symbol: "At",
         name: "Astatine",
         mass: 210.0,
         covalent_radius: 1.50,
         vdw_radius: 2.02,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Rn",
         name: "Radon",
         mass: 222.0,
         covalent_radius: 1.50,
         vdw_radius: 2.20,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Fr",
         name: "Francium",
         mass: 223.0,
         covalent_radius: 2.60,
         vdw_radius: 3.48,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Ra",
         name: "Radium",
         mass: 226.0,
         covalent_radius: 2.21,
         vdw_radius: 2.83,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Ac",
         name: "Actinium",
         mass: 227.0,
         covalent_radius: 2.15,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Th",
         name: "Thorium",
         mass: 232.0,
         covalent_radius: 2.06,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Pa",
         name: "Protactinium",
         mass: 231.0,
         covalent_radius: 2.00,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "U",
         name: "Uranium",
         mass: 238.0,
         covalent_radius: 1.96,
         vdw_radius: 1.86,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Np",
         name: "Neptunium",
         mass: 237.0,
         covalent_radius: 1.90,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Pu",
         name: "Plutonium",
         mass: 244.0,
         covalent_radius: 1.87,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Am",
         name: "Americium",
         mass: 243.0,
         covalent_radius: 1.80,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Cm",
         name: "Curium",
         mass: 247.0,
         covalent_radius: 1.69,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Bk",
         name: "Berkelium",
         mass: 247.0,
         covalent_radius: 1.60,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Cf",
         name: "Californium",
         mass: 251.0,
         covalent_radius: 1.60,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Es",
         name: "Einsteinium",
         mass: 252.0,
         covalent_radius: 1.60,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Fm",
         name: "Fermium",
         mass: 257.0,
         covalent_radius: 1.60,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Md",
         name: "Mendelevium",
         mass: 258.0,
         covalent_radius: 1.60,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "No",
         name: "Nobelium",
         mass: 259.0,
         covalent_radius: 1.60,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Lr",
         name: "Lawrencium",
         mass: 262.0,
         covalent_radius: 1.60,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Rf",
         name: "Rutherfordium",
         mass: 267.0,
         covalent_radius: 1.60,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Db",
         name: "Dubnium",
         mass: 268.0,
         covalent_radius: 1.60,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Sg",
         name: "Seaborgium",
         mass: 271.0,
         covalent_radius: 1.60,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Bh",
         name: "Bohrium",
         mass: 272.0,
         covalent_radius: 1.60,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Hs",
         name: "Hassium",
         mass: 270.0,
         covalent_radius: 1.60,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Mt",
         name: "Meitnerium",
         mass: 276.0,
         covalent_radius: 1.60,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Ds",
         name: "Darmstadtium",
         mass: 281.0,
         covalent_radius: 1.60,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Rg",
         name: "Roentgenium",
         mass: 280.0,
         covalent_radius: 1.60,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Cn",
         name: "Copernicium",
         mass: 285.0,
         covalent_radius: 1.60,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Nh",
         name: "Nihonium",
         mass: 284.0,
         covalent_radius: 1.60,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Fl",
         name: "Flerovium",
         mass: 289.0,
         covalent_radius: 1.60,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Mc",
         name: "Moscovium",
         mass: 288.0,
         covalent_radius: 1.60,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Lv",
         name: "Livermorium",
         mass: 293.0,
         covalent_radius: 1.60,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Ts",
         name: "Tennessine",
         mass: 294.0,
         covalent_radius: 1.60,
         vdw_radius: 2.00,
     },
-    ElementData {
+    ElementProperties {
         symbol: "Og",
         name: "Oganesson",
         mass: 294.0,
@@ -974,31 +974,31 @@ impl Element {
     /// Chemical symbol (e.g., "H", "C", "Fe")
     #[inline]
     pub fn symbol(self) -> &'static str {
-        ELEMENT_DATA[self.z() as usize - 1].symbol
+        ELEMENT_PROPERTIES[self.z() as usize - 1].symbol
     }
 
     /// English element name
     #[inline]
     pub fn name(self) -> &'static str {
-        ELEMENT_DATA[self.z() as usize - 1].name
+        ELEMENT_PROPERTIES[self.z() as usize - 1].name
     }
 
     /// Standard atomic mass (in atomic mass units)
     #[inline]
     pub fn atomic_mass(self) -> f32 {
-        ELEMENT_DATA[self.z() as usize - 1].mass
+        ELEMENT_PROPERTIES[self.z() as usize - 1].mass
     }
 
     /// Covalent radius (in Angstroms)
     #[inline]
     pub fn covalent_radius(self) -> f32 {
-        ELEMENT_DATA[self.z() as usize - 1].covalent_radius
+        ELEMENT_PROPERTIES[self.z() as usize - 1].covalent_radius
     }
 
     /// Van der Waals radius (in Angstroms)
     #[inline]
     pub fn vdw_radius(self) -> f32 {
-        ELEMENT_DATA[self.z() as usize - 1].vdw_radius
+        ELEMENT_PROPERTIES[self.z() as usize - 1].vdw_radius
     }
 
     /// All supported elements (1-118)

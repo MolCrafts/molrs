@@ -164,7 +164,7 @@ pub fn bond_rest_length(a: &PerceivedAtom, b: &PerceivedAtom, effective_order: f
 
 /// Van der Waals radius (Å) as used by RDKit's `PeriodicTable::getRvdw`.
 ///
-/// These differ from `molrs::system::element::Element::vdw_radius` (Bondi-style)
+/// These differ from [`molrs::Element::vdw_radius`] (Bondi-style)
 /// — RDKit ships its own table in `atomic_data`, and `setLowerBoundVDW` /
 /// `set15Bounds` depend on the exact values, so we transcribe RDKit's.
 pub fn rvdw(z: u8) -> f64 {

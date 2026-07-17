@@ -4,7 +4,7 @@
 
 pub mod atomistic;
 pub mod coarsegrain;
-pub mod element;
+pub(crate) mod element;
 pub mod entity_table;
 pub mod extract;
 pub mod graph_hash;

@@ -99,17 +99,21 @@ TEST_F(MolrsTest, FrameMetadata) {
     MolrsFrameHandle frame{};
     ASSERT_MOLRS_OK(molrs_frame_new(&frame));
 
-    ASSERT_MOLRS_OK(molrs_frame_set_meta(frame, "author", "gtest"));
+    MolrsMetaValue value{};
+    value.dtype = MOLRS_META_TYPE_STRING;
+    value.string_value = const_cast<char*>("gtest");
+    ASSERT_MOLRS_OK(molrs_frame_put_meta(frame, "author", &value));
 
-    char* val = nullptr;
-    ASSERT_MOLRS_OK(molrs_frame_get_meta(frame, "author", &val));
-    ASSERT_NE(val, nullptr);
-    EXPECT_STREQ(val, "gtest");
-    molrs_free_string(val);
+    MolrsMetaValue out{};
+    ASSERT_MOLRS_OK(molrs_frame_read_meta(frame, "author", &out));
+    EXPECT_EQ(out.dtype, MOLRS_META_TYPE_STRING);
+    ASSERT_NE(out.string_value, nullptr);
+    EXPECT_STREQ(out.string_value, "gtest");
+    molrs_free_string(out.string_value);
 
     // missing key
-    char* missing = nullptr;
-    EXPECT_NE(molrs_frame_get_meta(frame, "nope", &missing), MOLRS_STATUS_OK);
+    MolrsMetaValue missing{};
+    EXPECT_NE(molrs_frame_read_meta(frame, "nope", &missing), MOLRS_STATUS_OK);
 
     ASSERT_MOLRS_OK(molrs_frame_drop(frame));
 }

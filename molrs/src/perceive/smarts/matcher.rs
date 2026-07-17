@@ -25,9 +25,9 @@ use super::{MatchOptions, SmartsMatch};
 /// Resolve bond facts between two molecule atoms, if they are bonded.
 fn bond_facts(ctx: &MolContext, a: AtomId, b: AtomId) -> Option<BondFacts> {
     let mol = ctx.mol;
-    for (bid, bond) in mol.bonds() {
-        let (x, y) = (bond.nodes[0], bond.nodes[1]);
-        if (x == a && y == b) || (x == b && y == a) {
+    for (bid, other) in mol.incident_bond_ids(a) {
+        if other == b {
+            let bond = mol.get_bond(bid).ok()?;
             let order = match bond.props.get("order") {
                 Some(PropValue::F64(v)) => *v,
                 _ => 1.0,
@@ -96,7 +96,10 @@ fn enumerate_matches(
     let order: Vec<usize> = (0..n).collect();
     let anchors = build_anchors(query, &order);
 
-    let mol_atoms: Vec<AtomId> = ctx.mol.atoms().map(|(id, _)| id).collect();
+    let mol_atoms: Vec<AtomId> = match root_fix {
+        Some(root) => vec![root],
+        None => ctx.mol.atoms().map(|(id, _)| id).collect(),
+    };
 
     let mut assign: Vec<Option<AtomId>> = vec![None; n];
     let mut used: HashMap<AtomId, bool> = HashMap::new();
@@ -252,9 +255,19 @@ pub fn find(query: &QueryGraph, mol: &Atomistic, options: MatchOptions<'_>) -> V
         Some(labels) => MolContext::with_labels(mol, labels),
         None => MolContext::new(mol),
     };
-    let Some(limit) = options.limit else {
+    find_in_context(query, &ctx, options.root, options.limit)
+}
+
+/// Match against a context already compiled for this molecular graph.
+pub(crate) fn find_in_context(
+    query: &QueryGraph,
+    ctx: &MolContext<'_>,
+    root: Option<AtomId>,
+    limit: Option<usize>,
+) -> Vec<SmartsMatch> {
+    let Some(limit) = limit else {
         let mut out = Vec::new();
-        enumerate_matches(query, &ctx, options.root, &mut |assign| {
+        enumerate_matches(query, ctx, root, &mut |assign| {
             out.push(SmartsMatch {
                 atoms: assign.to_vec(),
             });
@@ -266,7 +279,7 @@ pub fn find(query: &QueryGraph, mol: &Atomistic, options: MatchOptions<'_>) -> V
         return Vec::new();
     }
     let mut out = Vec::new();
-    enumerate_matches(query, &ctx, options.root, &mut |assign| {
+    enumerate_matches(query, ctx, root, &mut |assign| {
         out.push(SmartsMatch {
             atoms: assign.to_vec(),
         });

@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use crate::spatial::region::simbox::SimBox;
 use crate::store::block::block_view::BlockView;
 use crate::store::frame::Frame;
+use crate::store::meta::MetaMap;
 
 /// A borrowed, read-only view of a [`Frame`].
 ///
@@ -20,7 +21,7 @@ pub struct FrameView<'a> {
     /// Borrowed simulation box, if present.
     pub simbox: Option<&'a SimBox>,
     /// Borrowed metadata map.
-    pub meta: &'a HashMap<String, String>,
+    pub meta: &'a MetaMap,
 }
 
 impl<'a> FrameView<'a> {
@@ -28,7 +29,7 @@ impl<'a> FrameView<'a> {
     pub fn from_parts(
         map: HashMap<&'a str, BlockView<'a>>,
         simbox: Option<&'a SimBox>,
-        meta: &'a HashMap<String, String>,
+        meta: &'a MetaMap,
     ) -> Self {
         Self { map, simbox, meta }
     }
@@ -141,7 +142,7 @@ mod tests {
             .unwrap();
         frame.insert("bonds", bonds);
 
-        frame.meta.insert("title".into(), "Test".into());
+        frame.meta.insert("title", "Test");
         frame
     }
 
@@ -169,7 +170,7 @@ mod tests {
     fn test_meta_borrowed() {
         let frame = make_frame();
         let view = FrameView::from(&frame);
-        assert_eq!(view.meta.get("title").unwrap(), "Test");
+        assert_eq!(view.meta.get("title").unwrap().as_str(), Some("Test"));
     }
 
     #[test]
@@ -188,7 +189,7 @@ mod tests {
         assert_eq!(owned.len(), 2);
         assert!(owned.contains_key("atoms"));
         assert!(owned.contains_key("bonds"));
-        assert_eq!(owned.meta.get("title").unwrap(), "Test");
+        assert_eq!(owned.meta.get("title").unwrap().as_str(), Some("Test"));
 
         let atoms = owned.get("atoms").unwrap();
         assert_eq!(atoms.nrows(), Some(3));
