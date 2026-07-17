@@ -61,19 +61,20 @@ format tests instead of reading a real file is **forbidden**.
 ```bash
 # Build
 cargo build
-# Test (requires test data on first run)
+
+# Default gate (mirrors CI): function-level unit tests only — should be seconds
+cargo test -p molcrafts-molrs --lib --features full
+
+# Integration binaries under molrs/tests/ (not on default CI — full.yml)
 bash scripts/fetch-test-data.sh      # clones to <root>/tests-data/ (binding-neutral)
-cargo test --all-features
-cargo test -p molcrafts-molrs --features full   # all sub-system modules
-cargo test test_name                            # single test
-cargo test --features slow-tests                # expensive integration tests
-cargo test --test io --features full            # IO format tests (iterate every file in tests-data/)
+cargo test -p molcrafts-molrs --tests --examples --features "full filesystem"
+cargo test -p molcrafts-molrs --test io --features full                # IO format suite
 
 # Lint & Format
 cargo fmt --all
-cargo clippy --all-targets --all-features -- -D warnings
+cargo clippy -p molcrafts-molrs --all-targets --features full -- -D warnings
 
-# Benchmarks (criterion)
+# Benchmarks (criterion) — .github/workflows/bench.yml, not PR CI
 cargo bench -p molcrafts-molrs --bench core_benchmarks
 ```
 

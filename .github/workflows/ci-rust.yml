@@ -4,6 +4,10 @@ on:
   workflow_call:
   workflow_dispatch:
 
+# Three independent jobs — never serialise fmt → clippy → test.
+# Default suite is **unit only** (`--lib`). Integration binaries under
+# `molrs/tests/` are `full.yml`, not the PR path.
+
 jobs:
   fmt:
     name: rustfmt
@@ -17,41 +21,25 @@ jobs:
 
   clippy:
     name: clippy
-    needs: fmt
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      # One invocation: facade with every sub-system feature, plus workspace
+      # members (cxxapi). No second full-tree pass.
       - run: |
-          cargo clippy --workspace --all-targets -- -D warnings
           cargo clippy -p molcrafts-molrs --all-targets --features full -- -D warnings
+          cargo clippy -p molcrafts-molrs-cxxapi --all-targets -- -D warnings
 
   test:
-    name: test
-    needs: clippy
+    name: unit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache test data
-        uses: actions/cache@v4
-        with:
-          path: tests-data
-          key: ${{ runner.os }}-test-data-${{ hashFiles('scripts/fetch-test-data.sh') }}
-          restore-keys: |
-            ${{ runner.os }}-test-data-
-
-      - name: Fetch test data
-        run: bash scripts/fetch-test-data.sh
-
-      - name: Test (workspace)
-        run: cargo test --workspace --lib --tests --examples
-
-      - name: Test (all sub-systems)
-        run: cargo test -p molcrafts-molrs --lib --tests --examples --features "full filesystem"
-
-      - name: Benches build
-        run: cargo bench -p molcrafts-molrs --no-run --features full
+      # Function-level unit tests only. No tests-data, no integration binaries,
+      # no bench compile, no second feature matrix.
+      - name: Unit tests
+        run: cargo test -p molcrafts-molrs --lib --features full

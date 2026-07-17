@@ -1,5 +1,7 @@
 name: CI
 
+# Default gate: unit tests + lint + binder smoke builds.
+# No job waits on another. No caches. No bench. Integration binaries are full.yml.
 on:
   push:
     branches: [dev, master]
@@ -15,15 +17,12 @@ jobs:
 
   wasm:
     name: WASM
-    needs: rust
     uses: ./.github/workflows/ci-wasm.yml
 
   python:
     name: Python
-    needs: rust
     uses: ./.github/workflows/ci-python.yml
 
   capi:
     name: C API
-    needs: rust
     uses: ./.github/workflows/ci-capi.yml
