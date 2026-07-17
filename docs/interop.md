@@ -53,10 +53,10 @@ list is *yours* because you are the one who knows when it goes stale: a minimize
 that moves atoms decides when to rebuild it, and molrs will not guess.
 
 (A `MMFF94Typifier::build(&mol)` convenience used to fold all three into one call.
-It was deleted in 0.7 — see the CHANGELOG. It had, for its whole life, compiled
-potentials with **no electrostatic style at all**, because no `ForceField` ever
-defined `pair/mmff_ele`; caffeine came out 150 kcal/mol low and nothing noticed,
-because the shortcut hid the `Frame` where the missing term would have been visible.
+It was deleted — it had, for its whole life, compiled potentials with **no
+electrostatic style at all**, because no `ForceField` ever defined
+`pair/mmff_ele`; caffeine came out 150 kcal/mol low and nothing noticed, because
+the shortcut hid the `Frame` where the missing term would have been visible.
 This is the pattern the molpack relaxer follows.)
 
 This exact snippet is compile-checked as the module doctest on

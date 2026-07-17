@@ -56,8 +56,7 @@
 //! (a comment reading "MmffForceField was removed in 0.7" is not a regression)
 //! while any surviving *code* reference is a failure. Markdown is raw because a
 //! doc page that still documents the deleted API is precisely the "broken door
-//! left open" this criterion exists to close. `CHANGELOG.md` is excluded — it
-//! must name what it removed.
+//! left open" this criterion exists to close.
 //!
 //! The dead-symbol needles below are assembled with `concat!` so that this file's
 //! own source does not literally contain them. That is not a trick to be clever
@@ -121,8 +120,8 @@ fn scan_tree(root: &Path, out: &mut Vec<(PathBuf, String)>) {
     for entry in std::fs::read_dir(root).expect("read a scan root") {
         let path = entry.expect("dir entry").path();
         let name = path.file_name().unwrap_or_default().to_string_lossy();
-        // Build output and the CHANGELOG (which must name what it removed).
-        if name == "target" || name == "CHANGELOG.md" || name.starts_with('.') {
+        // Build output.
+        if name == "target" || name.starts_with('.') {
             continue;
         }
         if path.is_dir() {
@@ -434,7 +433,7 @@ fn the_bespoke_energy_symbols_are_gone_repo_wide() {
         "the bespoke MMFF energy path is still reachable. mmff-orthogonal-01 proved the generic \
          path reproduces RDKit on 11/11 fixtures term-by-term, so these are a redundant second \
          implementation — and a second implementation of a force field is a second set of \
-         numbers to be wrong.\n\n{}\n\n(CHANGELOG.md is excluded: it must name what it removed.)",
+         numbers to be wrong.\n\n{}",
         fails.join("\n\n")
     );
 }

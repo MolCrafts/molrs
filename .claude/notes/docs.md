@@ -145,7 +145,7 @@ invariant).
 
 | Surface | Notes |
 |---|---|
-| `docs/zensical.toml`, `docs/index.md`, `docs/getting-started/**`, `docs/guides/**`, `docs/reference/**`, `docs/changelog.md`, `docs/contributing.md` | Zensical site content and config |
+| `docs/zensical.toml`, `docs/index.md`, `docs/getting-started/**`, `docs/guides/**`, `docs/reference/**`, `docs/contributing.md` | Zensical site content and config (no changelog page — history is git log / tags) |
 | `.github/workflows/docs.yml` | Build + deploy to GitHub Pages |
 | `README.md`, `molrs-python/README.md`, `molrs-wasm/README.md` | Root + binding READMEs |
 | `molrs-python/python/molrs/molrs.pyi` | Hand-maintained Python type stubs |

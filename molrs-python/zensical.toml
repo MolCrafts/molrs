@@ -33,7 +33,6 @@ nav = [
     { "WASM" = "reference/wasm.md" },
   ] },
   { "Contributing" = "contributing.md" },
-  { "Changelog" = "changelog.md" },
 ]
 
 # Shared MolCrafts brand theme (bundled with zensical). Palette, color scheme
