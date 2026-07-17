@@ -31,6 +31,7 @@
 use wasm_bindgen::prelude::*;
 
 use molrs::store::block::Block as RsBlock;
+use molrs::store::meta::MetaValue;
 use molrs_ffi::{BlockRef, FrameRef};
 
 use super::block::Block;
@@ -309,8 +310,9 @@ impl Frame {
     /// as an `f64`. Returns `None` if the key is missing or the value is
     /// non-numeric (e.g., `config="trans"`).
     ///
-    /// Frame meta is typed (`MetaValue`). This accessor returns the value only
-    /// when the stored dtype is a scalar float (`f64` / `f32`).
+    /// Frame meta is typed (`MetaValue`). This accessor accepts every numeric
+    /// scalar dtype and preserves compatibility with numeric strings written
+    /// through [`setMeta`](Self::set_meta).
     ///
     /// # Arguments
     ///
@@ -330,9 +332,15 @@ impl Frame {
             .store
             .borrow()
             .with_frame(self.inner.id, |frame| {
-                frame.meta.get(name).and_then(|v| {
-                    v.as_f64()
-                        .or_else(|| v.as_f32().map(f64::from))
+                frame.meta.get(name).and_then(|value| match value {
+                    MetaValue::I32(value) => Some(f64::from(*value)),
+                    MetaValue::I64(value) => Some(*value as f64),
+                    MetaValue::U32(value) => Some(f64::from(*value)),
+                    MetaValue::U64(value) => Some(*value as f64),
+                    MetaValue::F32(value) => Some(f64::from(*value)),
+                    MetaValue::F64(value) => Some(*value),
+                    MetaValue::String(value) => value.parse::<f64>().ok(),
+                    _ => None,
                 })
             })
             .ok()?
@@ -410,9 +418,10 @@ impl Frame {
             .store
             .borrow_mut()
             .with_frame_mut(self.inner.id, |frame| {
-                frame
-                    .meta
-                    .insert(name.to_string(), molrs::store::meta::MetaValue::String(value.to_string()));
+                frame.meta.insert(
+                    name.to_string(),
+                    molrs::store::meta::MetaValue::String(value.to_string()),
+                );
             })
             .map_err(js_err)
     }

@@ -5,7 +5,7 @@ use molrs::store::block::Block;
 use molrs::store::frame::Frame;
 use molrs::store::frame_access::FrameAccess;
 use molrs::store::meta::MetaValue;
-use molrs::types::{F, I};
+use molrs::types::{F, I, U};
 use ndarray::{Array1, Array2, ArrayD};
 use once_cell::sync::OnceCell;
 use std::collections::HashMap;
@@ -106,11 +106,18 @@ fn parse_array_from_quoted(s: &str) -> ExtValue {
         s.split_whitespace().collect()
     };
     if elements.len() > 1 {
-        let vals = elements
+        let values: Vec<Primitive> = elements
             .into_iter()
             .map(|t| parse_primitive_token(t.trim()))
             .collect();
-        ExtValue::Array1(vals)
+        if values
+            .iter()
+            .all(|value| matches!(value, Primitive::Str(_)))
+        {
+            ExtValue::Primitive(Primitive::Str(s.to_string()))
+        } else {
+            ExtValue::Array1(values)
+        }
     } else {
         ExtValue::Primitive(Primitive::Str(s.to_string()))
     }
@@ -483,6 +490,85 @@ fn parse_origin_values(v: &ExtValue) -> Option<[F; 3]> {
     }
 }
 
+/// Parse the MolCrafts `Connct` XYZ comment extension.
+///
+/// The value is a flat, zero-based list of atom-index pairs, for example
+/// `Connct="[0,1,0,2]"` describes bonds 0-1 and 0-2. Bond order is implicitly
+/// one. Brackets are required by the public convention but are accepted
+/// leniently here so older hand-written inputs remain readable.
+fn parse_connct(value: &ExtValue, n_atoms: usize) -> Result<Vec<(U, U)>, String> {
+    fn append_primitive(raw: &mut String, value: &Primitive) -> Result<(), String> {
+        if !raw.is_empty() {
+            raw.push(',');
+        }
+        match value {
+            Primitive::Int(value) => raw.push_str(&value.to_string()),
+            Primitive::Str(value) => raw.push_str(value),
+            Primitive::Real(_) | Primitive::Logical(_) => {
+                return Err("Connct accepts integer atom indices only".to_string());
+            }
+        }
+        Ok(())
+    }
+
+    let mut raw = String::new();
+    match value {
+        ExtValue::Primitive(value) => append_primitive(&mut raw, value)?,
+        ExtValue::Array1(values) => {
+            for value in values {
+                append_primitive(&mut raw, value)?;
+            }
+        }
+        ExtValue::Array2(_) => return Err("Connct must be a flat list of atom indices".to_string()),
+    }
+
+    let indices = raw
+        .split(|ch: char| ch == '[' || ch == ']' || ch == ',' || ch.is_whitespace())
+        .filter(|token| !token.is_empty())
+        .map(|token| {
+            token
+                .parse::<U>()
+                .map_err(|_| format!("Connct contains invalid atom index '{token}'"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    if !indices.len().is_multiple_of(2) {
+        return Err(format!(
+            "Connct requires atom-index pairs, but received {} indices",
+            indices.len()
+        ));
+    }
+
+    let mut pairs = Vec::with_capacity(indices.len() / 2);
+    for pair in indices.chunks_exact(2) {
+        let (atomi, atomj) = (pair[0], pair[1]);
+        if atomi as usize >= n_atoms || atomj as usize >= n_atoms {
+            return Err(format!(
+                "Connct bond {atomi}-{atomj} is out of range for {n_atoms} atoms"
+            ));
+        }
+        pairs.push((atomi, atomj));
+    }
+    Ok(pairs)
+}
+
+fn connct_block(value: &ExtValue, n_atoms: usize) -> Result<Option<Block>, String> {
+    let pairs = parse_connct(value, n_atoms)?;
+    if pairs.is_empty() {
+        return Ok(None);
+    }
+
+    let (atomi, atomj): (Vec<U>, Vec<U>) = pairs.into_iter().unzip();
+    let mut block = Block::new();
+    block
+        .insert("atomi", Array1::from_vec(atomi).into_dyn())
+        .map_err(|error| error.to_string())?;
+    block
+        .insert("atomj", Array1::from_vec(atomj).into_dyn())
+        .map_err(|error| error.to_string())?;
+    Ok(Some(block))
+}
+
 /// Build a SimBox from Lattice + optional Origin ExtValues.
 ///
 /// `Origin` defaults to `[0, 0, 0]` when absent, matching the extxyz convention.
@@ -533,6 +619,7 @@ pub fn read_xyz_frame_from_reader<R: BufRead>(reader: &mut R) -> std::io::Result
     let mut kv_meta: HashMap<String, ExtValue> = HashMap::new();
     let mut lattice_value: Option<ExtValue> = None;
     let mut origin_value: Option<ExtValue> = None;
+    let mut connct_value: Option<ExtValue> = None;
     for (k, v) in ec.kv.iter() {
         if k.eq_ignore_ascii_case("Properties") {
             continue;
@@ -543,6 +630,10 @@ pub fn read_xyz_frame_from_reader<R: BufRead>(reader: &mut R) -> std::io::Result
         }
         if k.eq_ignore_ascii_case("Origin") {
             origin_value = Some(v.clone());
+            continue;
+        }
+        if k.eq_ignore_ascii_case("Connct") {
+            connct_value = Some(v.clone());
             continue;
         }
         kv_meta.insert(k.clone(), v.clone());
@@ -571,6 +662,12 @@ pub fn read_xyz_frame_from_reader<R: BufRead>(reader: &mut R) -> std::io::Result
 
     let mut frame = Frame::new();
     frame.insert("atoms", atoms_block);
+    if let Some(ref connct) = connct_value
+        && let Some(bonds) = connct_block(connct, n)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?
+    {
+        frame.insert("bonds", bonds);
+    }
     for (k, v) in kv_meta.into_iter() {
         frame.meta.insert(
             k,
@@ -621,6 +718,7 @@ pub fn parse_xyz_frame_str(s: &str) -> std::result::Result<Frame, String> {
     let mut kv_meta: HashMap<String, ExtValue> = HashMap::new();
     let mut lattice_value: Option<ExtValue> = None;
     let mut origin_value: Option<ExtValue> = None;
+    let mut connct_value: Option<ExtValue> = None;
     for (k, v) in ec.kv.iter() {
         if k.eq_ignore_ascii_case("Properties") {
             continue;
@@ -633,6 +731,10 @@ pub fn parse_xyz_frame_str(s: &str) -> std::result::Result<Frame, String> {
             origin_value = Some(v.clone());
             continue;
         }
+        if k.eq_ignore_ascii_case("Connct") {
+            connct_value = Some(v.clone());
+            continue;
+        }
         kv_meta.insert(k.clone(), v.clone());
     }
 
@@ -643,6 +745,11 @@ pub fn parse_xyz_frame_str(s: &str) -> std::result::Result<Frame, String> {
     let atoms_block = build_block_from_props(n, &atom_lines, &schema)?;
     let mut frame = Frame::new();
     frame.insert("atoms", atoms_block);
+    if let Some(ref connct) = connct_value
+        && let Some(bonds) = connct_block(connct, n)?
+    {
+        frame.insert("bonds", bonds);
+    }
     for (k, v) in kv_meta.into_iter() {
         frame.meta.insert(k, ext_value_to_meta(v)?);
     }
@@ -1221,6 +1328,87 @@ mod tests {
     }
 
     #[test]
+    fn quoted_metadata_with_spaces_stays_a_string() {
+        let data = b"1\ntitle=\"Water box\" Properties=species:S:1:pos:R:3\nH 0 0 0\n";
+        let mut cursor = std::io::Cursor::new(&data[..]);
+        let frame = read_xyz_frame_from_reader(&mut cursor)
+            .expect("read XYZ")
+            .expect("one frame");
+
+        assert_eq!(
+            frame.meta.get("title").and_then(MetaValue::as_str),
+            Some("Water box")
+        );
+    }
+
+    #[test]
+    fn connct_comment_builds_zero_based_bonds() {
+        let data = b"3\nname=water Connct=\"[0,1,0,2]\"\nO 0 0 0\nH 1 0 0\nH 0 1 0\n";
+        let mut cursor = std::io::Cursor::new(&data[..]);
+        let frame = read_xyz_frame_from_reader(&mut cursor)
+            .expect("read XYZ")
+            .expect("one frame");
+        let bonds = frame.get("bonds").expect("Connct creates bonds block");
+
+        assert_eq!(
+            bonds.get_uint("atomi").unwrap().as_slice().unwrap(),
+            &[0, 0]
+        );
+        assert_eq!(
+            bonds.get_uint("atomj").unwrap().as_slice().unwrap(),
+            &[1, 2]
+        );
+        assert!(!frame.meta.contains_key("Connct"));
+    }
+
+    #[test]
+    fn xyz_writer_preserves_connct_bonds() {
+        let frame =
+            parse_xyz_frame_str("3\nname=water Connct=\"[0,1,0,2]\"\nO 0 0 0\nH 1 0 0\nH 0 1 0\n")
+                .expect("parse XYZ");
+        let mut output = Vec::new();
+
+        write_xyz_frame(&mut output, &frame).expect("write XYZ");
+        let output = String::from_utf8(output).expect("UTF-8 XYZ");
+
+        assert!(
+            output
+                .lines()
+                .nth(1)
+                .unwrap()
+                .contains("Connct=\"[0,1,0,2]\"")
+        );
+        let round_trip = parse_xyz_frame_str(&output).expect("read written XYZ");
+        assert_eq!(
+            round_trip
+                .get("bonds")
+                .unwrap()
+                .get_uint("atomj")
+                .unwrap()
+                .as_slice()
+                .unwrap(),
+            &[1, 2]
+        );
+    }
+
+    #[test]
+    fn connct_comment_rejects_invalid_pairs() {
+        let odd = "3\nConnct=\"[0,1,0]\"\nO 0 0 0\nH 1 0 0\nH 0 1 0\n";
+        assert!(
+            parse_xyz_frame_str(odd)
+                .unwrap_err()
+                .contains("atom-index pairs")
+        );
+
+        let out_of_range = "3\nConnct=\"[0,3]\"\nO 0 0 0\nH 1 0 0\nH 0 1 0\n";
+        assert!(
+            parse_xyz_frame_str(out_of_range)
+                .unwrap_err()
+                .contains("out of range")
+        );
+    }
+
+    #[test]
     fn test_xyz_invalid_atom_count() {
         use std::io::Cursor;
 
@@ -1514,12 +1702,31 @@ pub fn write_xyz_frame<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> st
         }
     }
     for (k, v) in frame.meta_ref() {
-        if k == "Lattice" || k == "Origin" || k == "Properties" || k == "comment" || k == "elements"
+        if k == "Lattice"
+            || k == "Origin"
+            || k == "Properties"
+            || k == "comment"
+            || k == "elements"
+            || k.eq_ignore_ascii_case("Connct")
         {
             continue;
         }
         let val_str = meta_to_extxyz(v);
         comment_parts.push(format!("{}={}", k, val_str));
+    }
+    if let (Some(atomi), Some(atomj)) = (
+        frame.get_uint("bonds", "atomi"),
+        frame.get_uint("bonds", "atomj"),
+    ) && atomi.len() == atomj.len()
+        && !atomi.is_empty()
+    {
+        let indices = atomi
+            .iter()
+            .zip(atomj.iter())
+            .flat_map(|(atomi, atomj)| [atomi.to_string(), atomj.to_string()])
+            .collect::<Vec<_>>()
+            .join(",");
+        comment_parts.push(format!("Connct=\"[{indices}]\""));
     }
     comment_parts.push(format!("Properties={}", atom_data.properties_str));
     writeln!(writer, "{}", comment_parts.join(" "))?;

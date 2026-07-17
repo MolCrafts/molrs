@@ -46,12 +46,30 @@ The reader produces a frame; the writer consumes a frame. The format controls
 which columns survive. XYZ preserves element symbols and coordinates, while
 LAMMPS formats can carry more simulation topology and box information.
 
+### XYZ connectivity extension
+
+MolCrafts hand-written XYZ can preserve simple topology with a `Connct` field
+on the comment line:
+
+```text
+3
+name=water Connct="[0,1,0,2]"
+O  0.0000  0.0000  0.0000
+H  0.9572  0.0000  0.0000
+H -0.2390  0.9266  0.0000
+```
+
+`Connct` is a flat list of zero-based atom-index pairs, so this example defines
+bonds 0–1 and 0–2. Each pair becomes one row in the frame's `bonds` block using
+the canonical `atomi` and `atomj` columns. Bond order is implicitly one. The XYZ
+writer emits the same field when a frame already has canonical bond columns.
+
 ## Format Expectations
 
 | Format | Typical content | Notes |
 | --- | --- | --- |
 | PDB | atoms, residues, coordinates, optional box | Good for structural biology interop, not a complete force-field container |
-| XYZ | element symbols and coordinates | Simple coordinate snapshots, weak topology support |
+| XYZ | element symbols, coordinates, optional `Connct` pairs | Simple coordinate snapshots with a MolCrafts single-bond topology extension |
 | LAMMPS data | atoms, bonds, box, simulation topology | Used for simulation setup and engine interop |
 | LAMMPS dump | trajectory frames | Often read lazily when files are large |
 | CHGCAR / Cube | atoms plus grid fields | Useful for volumetric scalar data |
