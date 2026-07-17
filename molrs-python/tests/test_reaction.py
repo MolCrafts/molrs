@@ -240,3 +240,46 @@ def test_apply_touched_thiol_ene_two_carbons_and_sulfur():
     binding = _bind(rxn, mol)
     touched = set(rxn.apply(mol, binding))
     assert touched == {c1, c2, s3}
+
+
+def test_apply_many_compiles_all_leaving_groups_before_mutation():
+    rxn = molrs.Reaction("[N;H2:1].[C:2](=O)OC >> [N:1][C:2]=O")
+    first, _ = _amine_plus_ester()
+    second, _ = _amine_plus_ester()
+    binding_first = _bind(rxn, first)
+    binding_second = _bind(rxn, second)
+
+    world = first.copy()
+    second_to_world = world.merge(second)
+    binding_second = {
+        label: second_to_world[handle] for label, handle in binding_second.items()
+    }
+    before = world.n_atoms
+
+    touched = rxn.apply_many(
+        world, [binding_first, binding_second], refresh=False
+    )
+
+    assert world.n_atoms == before - 4
+    assert len(touched) == 2
+    assert all(set(binding.values()) <= set(seed) for binding, seed in zip(
+        (binding_first, binding_second), touched, strict=True
+    ))
+
+
+def test_apply_many_detailed_preserves_rhs_creation_order():
+    reaction = molrs.Reaction("[N:1].[C:2]>>[N:1][C:2]([O])[S]")
+    mol = molrs.Atomistic()
+    n = mol.add_atom("N")
+    c = mol.add_atom("C")
+
+    touched, created = reaction.apply_many_detailed(
+        mol, [{1: n, 2: c}], refresh=False
+    )
+
+    assert len(touched) == len(created) == 1
+    assert len(created[0]) == 2
+    assert [mol.get(handle, "element") for handle in created[0]] == [
+        "O",
+        "S",
+    ]

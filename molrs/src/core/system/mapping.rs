@@ -206,7 +206,7 @@ impl CGMapping {
             let dz = bz - tcz;
             crate::spatial::geometry::translate(&mut fragment, [dx, dy, dz]);
 
-            result.merge(fragment.into_inner());
+            let _ = result.as_molgraph_mut().merge(fragment.into_inner());
         }
 
         Ok(result)
@@ -244,7 +244,7 @@ impl CGMapping {
                     let mass = atom.get_f64("mass").unwrap_or_else(|| {
                         // Fall back to element mass from symbol.
                         atom.get_str("element")
-                            .and_then(crate::system::element::Element::by_symbol)
+                            .and_then(molrs::Element::by_symbol)
                             .map(|e| e.atomic_mass() as f64)
                             .unwrap_or(1.0)
                     });

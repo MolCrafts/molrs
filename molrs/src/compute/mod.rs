@@ -34,9 +34,20 @@
 //! (RDF) override [`finalize`](ComputeResult::finalize) to normalize; other
 //! outputs use the default no-op.
 //!
-//! # Categories (freud-style: one folder per category, one method per file)
+//! # Implementation modules (`compute/<name>/`)
 //!
-//! | Category | Methods |
+//! One folder per kernel family. **UI/catalog categories** (see
+//! `molrs-wasm` `molrsComputeCatalog`, catalog v3) follow freud's top-level
+//! modules and are not always 1:1 with folder names:
+//! - g(r) lives in [`rdf`] but is catalogued under **density**
+//!   (`freud.density.RDF`)
+//! - Voronoi kernels are catalogued under **locality**
+//!   (`freud.locality.Voronoi`)
+//! - van Hove / pair persistence live under **transport** (with VACF/diffusion)
+//! - static dielectric is under **spectroscopy**
+//! - cluster radius-of-gyration is under **cluster** (freud.cluster.ClusterProperties)
+//!
+//! | Folder | Methods |
 //! |----------|---------|
 //! | [`rdf`] | pair distribution g(r) (+ streaming [`RDFAccumulator`]) |
 //! | [`msd`] | mean squared displacement (+ streaming [`MSDAccumulator`]) |

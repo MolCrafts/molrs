@@ -24,8 +24,8 @@
 use std::path::{Path, PathBuf};
 
 use molrs::conformer::{Conformer, ConformerOptions};
-use molrs::ff::mmff::{MmffForceField, MmffMolProperties, MmffVariant};
-use molrs::ff::potential::Potential;
+use molrs::ff::potential::intramolecular_pairs;
+use molrs::ff::typifier::mmff::MMFF94Typifier;
 use molrs::system::molgraph::{Atom, PropValue};
 use molrs::{AtomId, Atomistic};
 
@@ -206,11 +206,18 @@ fn sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
 
 /// MMFF94 energy of a conformer (flat coords) for a graph, or `None` if the
 /// molecule has no MMFF typing.
+///
+/// The standard route (typify → `Frame` → `to_potentials`) — the same one
+/// `conformer::etkdg::mmff_cleanup` now runs. This used to drive the bespoke
+/// `MmffForceField` assembly, which is deleted; the numbers are the same, because
+/// the generic path reproduces it term-by-term to 1e-6 on all 11 MMFF fixtures.
 fn mmff_energy(mol: &Atomistic, coords: &[[f64; 3]]) -> Option<f64> {
-    let props = MmffMolProperties::compute(mol, MmffVariant::Mmff94).ok()?;
-    let ff = MmffForceField::build(mol, &props).ok()?;
+    let typifier = MMFF94Typifier::new();
+    let mut frame = typifier.typify(mol).ok()?.to_frame();
+    frame.insert("pairs", intramolecular_pairs(&frame));
+    let potentials = typifier.ff().to_potentials(&frame).ok()?;
     let flat: Vec<f64> = coords.iter().flat_map(|c| [c[0], c[1], c[2]]).collect();
-    Some(ff.calc_energy_forces(&flat).0)
+    Some(potentials.calc_energy_forces(&flat).0)
 }
 
 fn opts_seeded() -> ConformerOptions {

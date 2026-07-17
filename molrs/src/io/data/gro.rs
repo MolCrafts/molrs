@@ -347,9 +347,9 @@ pub fn read_gro_frame<R: BufRead>(reader: &mut R) -> Result<Option<Frame>> {
 
     let mut frame = Frame::new();
     if !title.is_empty() {
-        frame.meta.insert("title".into(), title);
+        frame.meta.insert("title", title);
     }
-    frame.meta.insert("gro_units".into(), "nm".into());
+    frame.meta.insert("gro_units", "nm");
     frame.insert("atoms", block);
 
     // SimBox: H columns = lattice vectors. cell_rows[i] = lattice vector i.
@@ -405,8 +405,8 @@ pub fn write_gro_frame<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
     let title = frame
         .meta
         .get("title")
-        .cloned()
-        .unwrap_or_else(|| "molrs GRO".to_string());
+        .and_then(|value| value.as_str())
+        .unwrap_or("molrs GRO");
     writeln!(writer, "{}", title)?;
     writeln!(writer, "{:>5}", n)?;
 

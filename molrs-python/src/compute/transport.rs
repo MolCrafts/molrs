@@ -6,9 +6,9 @@
 //! persistence). Each returns a plain ``dict`` of NumPy arrays / scalars,
 //! matching the dielectric binding style.
 
-use molrs::compute::traits::Compute;
 use molrs::compute::OnsagerCorrelation;
 use molrs::compute::dynamics::persist;
+use molrs::compute::traits::Compute;
 use molrs::store::frame::Frame as CoreFrame;
 use numpy::{IntoPyArray, PyReadonlyArray2, PyReadonlyArray3};
 use pyo3::prelude::*;

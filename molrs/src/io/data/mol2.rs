@@ -347,7 +347,7 @@ fn build_frame(name: String, atoms: Vec<Mol2Atom>, bonds: Vec<Mol2Bond>) -> Resu
 
     let mut frame = Frame::new();
     if !name.is_empty() {
-        frame.meta.insert("title".into(), name);
+        frame.meta.insert("title", name);
     }
     frame.insert("atoms", block);
 
@@ -450,8 +450,8 @@ pub fn write_mol2_frame<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
     let title = frame
         .meta
         .get("title")
-        .cloned()
-        .unwrap_or_else(|| "molrs".to_string());
+        .and_then(|value| value.as_str())
+        .unwrap_or("molrs");
 
     writeln!(writer, "@<TRIPOS>MOLECULE")?;
     writeln!(writer, "{}", title)?;

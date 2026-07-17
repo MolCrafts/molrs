@@ -9,10 +9,9 @@
 //! evaluates `d = x_i - x_j - shift`.
 //!
 //! Periodicity lives in the **builder** [`SoftSpec::build_potential`], which uses
-//! molrs's own [`NeighborQuery`](crate::core::spatial::neighbors::NeighborQuery)
-//! to resolve the non-bonded pairs (excluding 1-2 / 1-3 neighbours) for a given
-//! configuration + box. A minimizer rebuilds the potential periodically as the
-//! atoms move.
+//! molrs's own [`NeighborQuery`] to resolve the non-bonded pairs (excluding
+//! 1-2 / 1-3 neighbours) for a given configuration + box. A minimizer rebuilds
+//! the potential periodically as the atoms move.
 
 use std::collections::HashSet;
 

@@ -140,15 +140,15 @@ The native force-field model exposes a `Style`/`Type` hierarchy
 
 ::: molrs.Parameters
 
-::: molrs.MMFFTypifier
+::: molrs.MMFF94Typifier
+
+::: molrs.MMFF94STypifier
 
 ::: molrs.OPLSAATypifier
 
 ::: molrs.typifier.Typifier
 
 ::: molrs.Potentials
-
-::: molrs.build_mmff_potentials
 
 ::: molrs.LBFGS
 

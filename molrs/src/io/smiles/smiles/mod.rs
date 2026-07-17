@@ -5,7 +5,7 @@
 //! strings — parsing entry point, element-symbol validation, and the IR →
 //! [`Atomistic`](molrs::system::atomistic::Atomistic) conversion.
 //!
-//! The SMARTS query engine lives in [`crate::chem::smarts`]. Shared AST
+//! The SMARTS query engine lives in [`crate::perceive::smarts`]. Shared AST
 //! vocabulary and scanner live in [`chem`](crate::io::smiles::chem).
 
 pub mod to_atomistic;

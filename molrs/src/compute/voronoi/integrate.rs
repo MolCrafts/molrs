@@ -119,6 +119,7 @@ impl DensityGrid {
         let is_ang = frame
             .meta
             .get("cube_units")
+            .and_then(|value| value.as_str())
             .map(|u| u == "angstrom")
             .unwrap_or(false);
         // The Gaussian-cube volumetric block is atomic-unit by convention even

@@ -15,7 +15,10 @@ pub mod pair;
 pub mod registry;
 pub mod soft;
 
-pub use registry::{KernelConstructor, KernelRegistry, lookup_kernel, register_kernel};
+pub use registry::{
+    KernelConstructor, KernelRegistry, ParamSource, lookup_kernel, lookup_param_source,
+    register_kernel, register_kernel_with,
+};
 
 /// Backward-compatible re-exports for existing consumers.
 pub mod kernels {
@@ -227,9 +230,9 @@ impl crate::ff::forcefield::Style {
     /// Returns `Ok(None)` for a style that carries no pairwise kernel (an atom
     /// style — types/charges only), `Err` for an unknown `(category, name)`.
     ///
-    /// The `(category, name)` → constructor mapping lives in the
-    /// [`registry`](crate::ff::potential::registry); a new potential is added by
-    /// registering its kernel, not by editing this dispatch.
+    /// The `(category, name)` → constructor mapping lives in the [`registry`]; a
+    /// new potential is added by registering its kernel, not by editing this
+    /// dispatch.
     pub fn to_potential(
         &self,
         frame: &Frame,
@@ -259,10 +262,21 @@ impl crate::ff::forcefield::Style {
             }
         }
         let type_params = self.defs.collect_type_params();
-        // Bonded styles need type definitions; a pair style may be parameter-free
-        // (e.g. `coul/cut`, whose charges come from the frame), so don't demand
-        // them there — the kernel validates what it actually reads.
-        if type_params.is_empty() && category != "pair" {
+        // A style whose kernel resolves its parameters from type rows
+        // (`ParamSource::TypeRows`) can resolve nothing without them — so no rows
+        // is an error, not a silently-zero potential. A `PerInstance` style
+        // (MMFF's bonded terms, `coul/cut`, `pme`) reads its numbers from Frame
+        // columns the typifier baked and ignores `tp` entirely, so zero rows is
+        // its *normal* state. Asking the registry which one this is replaces the
+        // old blanket `category != "pair"` escape hatch — the hatch that let MMFF
+        // register as table-driven and then be fed 4,065 rows of XML no code reads.
+        //
+        // The registry is the authority because it is where the kernel is declared;
+        // an unregistered style falls through to `TypeRows` here and then fails on
+        // the kernel lookup below with a more specific message.
+        let param_source =
+            registry::lookup_param_source(category, &self.name).unwrap_or(ParamSource::TypeRows);
+        if type_params.is_empty() && param_source == ParamSource::TypeRows {
             return Err(format!(
                 "Style '{}' ({}) has no type definitions",
                 self.name, category

@@ -1,7 +1,7 @@
 //! PDB file format reader and writer.
 //!
 //! Implements PDB 3.3 specification for coordinate section records:
-//! https://www.wwpdb.org/documentation/file-format-content/format33/sect9.html
+//! <https://www.wwpdb.org/documentation/file-format-content/format33/sect9.html>
 
 use crate::io::reader::{FrameReader, Reader};
 use crate::io::writer::FrameWriter;
@@ -810,7 +810,7 @@ fn write_atom_conect_records<W: Write>(
 /// Write a single frame in PDB format (`CRYST1` + `ATOM`/`CONECT` + `END`).
 ///
 /// Accepts any type implementing [`FrameAccess`], including both [`Frame`] and
-/// [`FrameView`](crate::io::frame_view::FrameView).
+/// [`FrameView`](molrs::store::frame_view::FrameView).
 pub fn write_pdb_frame<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> std::io::Result<()> {
     write_cryst1(writer, frame)?;
     write_atom_conect_records(writer, frame)?;
@@ -869,7 +869,7 @@ pub fn read_pdb_frame<P: AsRef<Path>>(path: P) -> std::io::Result<Frame> {
 
 /// Read every `MODEL` of a PDB file as a trajectory — one [`Frame`] per model.
 ///
-/// Reuses the single-frame parser ([`PDBReader::read_single_frame`]): each
+/// Reuses [`PDBReader`]'s private single-frame parser: each
 /// `MODEL`/`ENDMDL` block parses to one frame (`read_single_frame` stops at
 /// `ENDMDL` and ignores the `MODEL` header). A single-model or MODEL-less PDB
 /// yields a one-frame trajectory. The inverse of [`write_pdb_traj`].

@@ -7,12 +7,11 @@
 //! The pipeline takes an [`PyAtomistic`] molecular graph and produces realistic
 //! 3D coordinates through a multi-stage ETKDGv3 process:
 //!
-//! 1. **Preprocess** -- perceive rings, assign stereochemistry.
-//! 2. **Build initial** -- distance geometry embedding.
-//! 3. **Coarse optimize** -- rough energy minimization.
-//! 4. **Rotor search** -- systematic torsion scanning.
-//! 5. **Final optimize** -- refined minimization.
-//! 6. **Stereo check** -- verify stereochemistry is preserved.
+//! 1. **Preprocess** -- add hydrogens and perceive molecular features.
+//! 2. **Build initial** -- ETKDGv3 distance-geometry embedding.
+//! 3. **Coarse optimize** -- distance, chirality, and torsion refinement.
+//! 4. **Final optimize** -- MMFF94 cleanup.
+//! 5. **Stereo check** -- verify stereochemistry is preserved.
 //!
 //! # References
 //!
@@ -31,7 +30,6 @@ fn stage_kind_name(kind: StageKind) -> &'static str {
         StageKind::Preprocess => "preprocess",
         StageKind::BuildInitial => "build_initial",
         StageKind::CoarseOptimize => "coarse_optimize",
-        StageKind::RotorSearch => "rotor_search",
         StageKind::FinalOptimize => "final_optimize",
         StageKind::StereoCheck => "stereo_check",
     }

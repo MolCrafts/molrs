@@ -1,15 +1,17 @@
 """Generate 3D coordinates for ethane, then evaluate MMFF94 energy and forces.
 
 Demonstrates the full pipeline:
-  Atomistic (no coords) → Conformer.generate → MMFFTypifier.build → Potentials.eval
+  Atomistic (no coords) → Conformer.generate → MMFF94Typifier.typify
+    → ForceField.to_potentials → Potentials.eval
 """
 
 import numpy as np
 from molrs import (
     Atomistic,
     Conformer,
-    MMFFTypifier,
+    MMFF94Typifier,
     extract_coords,
+    intramolecular_pairs,
 )
 
 # --- 1. Build ethane skeleton: C-C (no coordinates, no hydrogens) ---
@@ -26,14 +28,17 @@ mol3d, report = Conformer(speed="medium", seed=42).generate(mol)
 print(f"\nAfter embed: {mol3d}")
 print(f"  final_energy (internal UFF) = {report.final_energy:.4f}")
 
-# --- 3. Typify with MMFF94 and build potentials ---
-typifier = MMFFTypifier()
+# --- 3. Typify with MMFF94, then compile through the force field ---
+# The typifier labels the graph; the ForceField compiles it. The neighbour list
+# is the consumer's, so building it is an explicit step.
+typifier = MMFF94Typifier()
 try:
-    potentials = typifier.build(mol3d)
+    frame = typifier.typify(mol3d).to_frame()
+    frame["pairs"] = intramolecular_pairs(frame)
+    potentials = typifier.forcefield().to_potentials(frame)
     print(f"\n{potentials}")
 
     # --- 4. Extract coordinates and evaluate ---
-    frame = mol3d.to_frame()
     coords = extract_coords(frame)
     energy, forces = potentials.eval(coords)
 

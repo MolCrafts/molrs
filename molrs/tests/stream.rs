@@ -70,7 +70,7 @@ fn sample_frame() -> Frame {
     let h = arr2(&[[10.0, 0.0, 0.0], [0.0, 12.0, 0.0], [0.0, 0.0, 8.0]]);
     frame.simbox = Some(SimBox::new(h, arr1(&[0.0, 0.0, 0.0]), [true, true, false]).unwrap());
 
-    frame.meta.insert("title".into(), "sample".into());
+    frame.meta.insert("title", "sample");
     frame
 }
 
@@ -148,7 +148,10 @@ fn assert_roundtrip(fmt: MessageFormat) {
     }
 
     // Metadata.
-    assert_eq!(back.meta.get("title").map(String::as_str), Some("sample"));
+    assert_eq!(
+        back.meta.get("title").and_then(|value| value.as_str()),
+        Some("sample")
+    );
 }
 
 #[test]

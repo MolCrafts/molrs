@@ -145,7 +145,7 @@ invariant).
 
 | Surface | Notes |
 |---|---|
-| `docs/zensical.toml`, `docs/index.md`, `docs/getting-started/**`, `docs/guides/**`, `docs/reference/**`, `docs/changelog.md`, `docs/contributing.md` | Zensical site content and config |
+| `docs/zensical.toml`, `docs/index.md`, `docs/getting-started/**`, `docs/guides/**`, `docs/reference/**`, `docs/contributing.md` | Zensical site content and config (no changelog page — history is git log / tags) |
 | `.github/workflows/docs.yml` | Build + deploy to GitHub Pages |
 | `README.md`, `molrs-python/README.md`, `molrs-wasm/README.md` | Root + binding READMEs |
 | `molrs-python/python/molrs/molrs.pyi` | Hand-maintained Python type stubs |
@@ -159,7 +159,7 @@ Rust `///` comments in `molrs-*/src/**.rs` are the rustdoc axis (Part A above)
   `docs/**.md`; always inject with `::: module.Symbol`.
 - `molrs.pyi` is hand-maintained and committed; every export in
   `molrs-python/src/lib.rs`'s `#[pymodule]` must appear in the stub.
-- `pkg/molwasm.d.ts` and `site/` are CI-generated and `.gitignore`d — never
+- `pkg/molrs.d.ts` and `site/` are CI-generated and `.gitignore`d — never
   commit them.
 - Inactive crates (`molrs-ffi`, `molrs-capi`) must not surface on the site.
 - When a binding exists in both Python and WASM, the two reference pages must

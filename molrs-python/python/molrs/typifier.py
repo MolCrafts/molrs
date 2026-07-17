@@ -7,24 +7,20 @@ A typifier labels a molecular graph and returns the same concrete graph type:
 
 from __future__ import annotations
 
-from typing import Protocol, TypeVar
+from typing import TypeVar
 
-from .molrs import Atomistic, Graph, MMFFTypifier, OPLSAATypifier
+from .molrs import Graph, MMFF94STypifier, MMFF94Typifier, OPLSAATypifier, Typifier
+from .views import Atomistic
 
 TGraph = TypeVar("TGraph", bound=Graph)
-
-
-class Typifier(Protocol[TGraph]):
-    """Structural protocol for graph typifiers."""
-
-    def typify(self, mol: TGraph) -> TGraph: ...
 
 
 __all__ = [
     "Typifier",
     "TGraph",
     "OPLSAATypifier",
-    "MMFFTypifier",
+    "MMFF94Typifier",
+    "MMFF94STypifier",
     "Atomistic",
     "Graph",
 ]

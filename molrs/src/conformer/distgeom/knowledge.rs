@@ -18,7 +18,7 @@
 //! through `set13Bounds`, not a separate term), so this module only owns the
 //! flat-ring proper torsions.
 
-use super::perceive::{Hybridization, Perceived};
+use super::mol_features::{Hybridization, Perceived};
 
 /// A knowledge-based proper torsion term over four atoms.
 ///

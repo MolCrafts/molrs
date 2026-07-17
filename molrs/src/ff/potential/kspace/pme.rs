@@ -3,7 +3,8 @@
 //! Implements the full PME algorithm: self-energy, direct-space, exclusion
 //! correction, and reciprocal-space (via 3D FFT built from 1D `rustfft`).
 //!
-//! Registered in [`KernelRegistry`] as `("kspace", "pme")`.
+//! Registered in [`KernelRegistry`](crate::ff::potential::KernelRegistry) as
+//! `("kspace", "pme")`.
 //! The constructor reads charges from `frame["atoms"]["charge"]` (float),
 //! box vectors from style_params (`box_xx`, `box_yy`, `box_zz`, etc.),
 //! and exclusion pairs from `frame["exclusions"]` (i, j columns).

@@ -287,11 +287,17 @@ class TestRichFrame:
         assert "atoms" in f and "bonds" in f
         assert len(f) == 2
 
-    def test_box_round_trip(self):
+    def test_simbox_round_trip(self):
         f = Frame()
-        f.box = molrs.Box.cube(10.0)
-        assert f.box is not None
-        assert f.box.volume() == pytest.approx(1000.0, abs=1.0)
+        f.simbox = molrs.Box.cube(10.0)
+        assert f.simbox is not None
+        assert f.simbox.volume() == pytest.approx(1000.0, abs=1.0)
+
+    def test_box_compatibility_alias_is_absent(self):
+        f = Frame()
+        assert not hasattr(f, "box")
+        with pytest.raises(AttributeError):
+            _ = f.box
 
     def test_blocks_iterates_rich_blocks(self):
         f = Frame({"atoms": {"x": [1.0]}, "bonds": {"i": np.array([0], dtype=np.int64)}})
@@ -300,25 +306,44 @@ class TestRichFrame:
         assert all(isinstance(b, Block) for b in blks)
 
     def test_metadata(self):
-        f = Frame({"atoms": {"x": [1.0]}}, title="t")
-        assert f.metadata["title"] == "t"
-        f.metadata["step"] = 5
-        assert f.metadata["step"] == 5
+        f = Frame(
+            {"atoms": {"x": [1.0]}},
+            meta={"title": molrs.MetaValue("string", "t")},
+        )
+        assert f.meta["title"].value == "t"
+        f.meta = {**f.meta, "step": molrs.MetaValue("i64", 5)}
+        assert f.meta["step"].value == 5
 
     def test_to_dict_from_dict(self):
-        f = Frame({"atoms": {"x": [1.0, 2.0]}}, title="t")
+        f = Frame(
+            {"atoms": {"x": [1.0, 2.0]}},
+            meta={"title": molrs.MetaValue("string", "t")},
+        )
         d = f.to_dict()
-        assert "blocks" in d and "metadata" in d
+        assert "blocks" in d and "meta" in d
         f2 = Frame.from_dict(d)
         np.testing.assert_allclose(f2["atoms"]["x"], [1.0, 2.0])
 
+    @pytest.mark.parametrize(
+        "data",
+        [
+            {"blocks": {}},
+            {"blocks": {}, "metadata": {}},
+            {"blocks": {}, "meta": {}, "metadata": {}},
+            {"atoms": {}},
+        ],
+    )
+    def test_from_dict_rejects_noncanonical_envelopes(self, data):
+        with pytest.raises(ValueError, match="exactly 'blocks' and 'meta'"):
+            Frame.from_dict(data)
+
     def test_copy_is_independent(self):
         f = Frame({"atoms": {"x": [1.0, 2.0]}})
-        f.box = molrs.Box.cube(5.0)
+        f.simbox = molrs.Box.cube(5.0)
         f2 = f.copy()
         f2["atoms"]["x"] = np.array([9.0, 9.0])
         np.testing.assert_allclose(f["atoms"]["x"], [1.0, 2.0])
-        assert f2.box is not None
+        assert f2.simbox is not None
 
     def test_keys_contains_len_delitem(self):
         f = Frame({"atoms": {"x": [1.0]}, "bonds": {"i": np.array([0], dtype=np.int64)}})

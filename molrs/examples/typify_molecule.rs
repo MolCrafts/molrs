@@ -2,7 +2,7 @@
 //!
 //! This example demonstrates the complete MMFF94 typification pipeline in molrs:
 //!
-//!   MolGraph  →  typifier.build()  →  Potentials  →  eval
+//!   MolGraph  →  typify()  →  Frame  →  to_potentials()  →  eval
 //!
 //! "Typification" assigns every atom a force-field integer type that encodes its
 //! chemical environment (element, hybridization, ring membership, aromaticity, …).
@@ -33,16 +33,26 @@
 //! ```text
 //! MolGraph (atoms + bonds + coords)
 //!     │
-//!     └─ typifier.build(&mol)          → Potentials (pre-resolved SoA arrays)
-//!           │                                │
-//!           ├─ typify() [internal]     potentials.calc_energy_forces(coords)
-//!           │   ├─ MmffMolProperties          │
-//!           │   │   (validated types+charges)(energy, forces)
-//!           │   └─ classify_*_type() labels
+//!     ├─ typifier.typify(&mol)         → labeled Atomistic
+//!     │     ├─ MmffMolProperties             (validated atom types + charges)
+//!     │     └─ ff::mmff::params               per-instance kb/r0, ka/theta0,
+//!     │         (the RDKit-faithful           v1/v2/v3, koop + the type codes
+//!     │          resolver: aromaticity,       — one resolver for the numbers
+//!     │          ring size, equivalence       AND the labels
+//!     │          degradation, empirical
+//!     │          fallbacks)
+//!     │
+//!     ├─ .to_frame()                   → typed Frame
+//!     ├─ frame["pairs"] = intramolecular_pairs(&frame)   (the consumer's list)
+//!     │
+//!     └─ typifier.ff().to_potentials(&frame)  → Potentials (pre-resolved SoA)
 //!           │
-//!           ├─ to_frame() → typed Frame
-//!           └─ to_potentials() [generic]
+//!           potentials.calc_energy_forces(coords) → (energy, forces)
 //! ```
+//!
+//! MMFF is **not** a special case: the last step is the same `to_potentials` call
+//! every force field in molrs goes through. Its bonded kernels are `PerInstance`
+//! styles — they read the parameter columns the typifier baked, not type rows.
 //!
 //! # Common MMFF Types
 //!
@@ -64,9 +74,9 @@
 //! MMFF94 parameters are embedded in the binary — no external data files needed.
 
 use molrs::Atomistic;
-use molrs::chem::rings::find_rings;
-use molrs::ff::potential::extract_coords;
-use molrs::ff::typifier::mmff::MMFFTypifier;
+use molrs::ff::potential::{extract_coords, intramolecular_pairs};
+use molrs::ff::typifier::mmff::MMFF94Typifier;
+use molrs::perceive::rings::find_rings;
 use molrs::system::molgraph::{Atom, PropValue};
 use molrs::types::F;
 
@@ -119,7 +129,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\n=== Part 3: Creating MMFF94 Typifier ===\n");
 
-    let typifier = MMFFTypifier::mmff94()?;
+    let typifier = MMFF94Typifier::new();
 
     if let Some(prop) = typifier.params().get_prop(1) {
         println!(
@@ -152,33 +162,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // =========================================================================
     // Part 5: Bond / Angle / Torsion typification
+    //
+    // These type codes are NOT a function of the atom types alone — which is why
+    // there is no `typifier.typify_bond(t1, t2, order)` to call here. MMFF's bond
+    // type needs perceived aromaticity (an aromatic ring bond is AROMATIC, never
+    // SINGLE, so it is bond type 0 — not 1); its angle type needs ring membership
+    // (a C-C-C angle in cyclopropane is type 3); its torsion type needs 4-/5-ring
+    // detection. All three are resolved per interaction, against the topology, and
+    // stamped on the typed Frame — so the way to see them is to read the Frame.
     // =========================================================================
 
     println!("\n=== Part 5: Interaction Typification ===\n");
+    println!("Type codes are resolved against the topology (aromaticity, ring size),");
+    println!("not from atom types alone — so they are read off the typed Frame below.");
+    println!("Label grammar: `{{type_code}}_{{atom_types...}}`.\n");
 
-    println!("Bond types:");
-    println!(
-        "  C(1)–C(1) single:    bt={}",
-        typifier.typify_bond(1, 1, 1.0)
-    );
-    println!(
-        "  C(37)–C(37) arom:    bt={}",
-        typifier.typify_bond(37, 37, 1.5)
-    );
-    println!(
-        "  C(1)–H(5) single:    bt={}",
-        typifier.typify_bond(1, 5, 1.0)
-    );
-
-    println!("\nAngle types:");
-    println!("  (bt=0, bt=0) → at={}", typifier.typify_angle(0, 0));
-    println!("  (bt=1, bt=0) → at={}", typifier.typify_angle(1, 0));
-    println!("  (bt=1, bt=1) → at={}", typifier.typify_angle(1, 1));
-
-    println!("\nTorsion types:");
-    println!("  (0, 0, 0) → tt={}", typifier.typify_dihedral(0, 0, 0));
-    println!("  (0, 1, 0) → tt={}", typifier.typify_dihedral(0, 1, 0));
-    println!("  (1, 0, 1) → tt={}", typifier.typify_dihedral(1, 0, 1));
+    let benz_bonds = typifier.typify(&benzene)?.to_frame();
+    let benz_bond_types = benz_bonds
+        .get("bonds")
+        .and_then(|b| b.get_string("type"))
+        .expect("benzene bond type column");
+    println!("Benzene bond labels (aromatic ring bonds are bond type 0):");
+    for label in benz_bond_types.iter().take(4) {
+        println!("  {label}");
+    }
 
     // =========================================================================
     // Part 6: Inspect a typed Frame (optional — for debugging)
@@ -186,7 +193,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\n=== Part 6: Inspecting Typed Frame ===\n");
 
-    let frame = typifier.typify(&ethane)?.to_frame();
+    let mut frame = typifier.typify(&ethane)?.to_frame();
+    // The neighbour list is the consumer's to build; add it now so the Frame below
+    // is the complete input `to_potentials` (Part 7) is handed.
+    frame.insert("pairs", intramolecular_pairs(&frame));
 
     let atoms = frame.get("atoms").expect("atoms block");
     let bonds = frame.get("bonds").expect("bonds block");
@@ -221,12 +231,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // =========================================================================
-    // Part 7: Build potentials and evaluate (the one-step API)
+    // Part 7: Compile potentials and evaluate (the standard ForceField route)
     // =========================================================================
 
-    println!("\n=== Part 7: Build & Evaluate ===\n");
+    println!("\n=== Part 7: Compile & Evaluate ===\n");
 
-    match typifier.build(&ethane) {
+    match typifier.ff().to_potentials(&frame) {
         Ok(potentials) => {
             println!("Built {} potential kernel(s)", potentials.len());
 
@@ -384,7 +394,7 @@ fn count(mol: &Atomistic) -> (usize, usize) {
 /// produced by reusing the RDKit-validated MMFF front-end.
 fn print_atom_types(
     name: &str,
-    typifier: &MMFFTypifier,
+    typifier: &MMFF94Typifier,
     mol: &Atomistic,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let frame = typifier.typify(mol)?.to_frame();

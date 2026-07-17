@@ -2,27 +2,13 @@
 
 One row per spec produced by `/mol:spec`. Newest on top.
 
-The `analysis-parity-*` series (2026-06-26) closes feature gaps against the reference implementation
-trajectory analyzer (the upstream analyzer site). It is dependency-ordered (01 → 08) and
-listed in that order for readability. All target the merged `molcrafts-molrs` crate
-(`compute`, plus `io` and a new `voronoi` feature); none add a CLI; each carries a
-third-party-library analysis.
-
 | Date | Slug | Status | Owner crate(s) | Summary |
-|---|---|---|---|---|---|
+|---|---|---|---|---|
+| 2026-07-15 | gaff-electrostatics | approved | molcrafts-molrs | **HIGH**。`chem-perceive-15` 的整体验收抓到：**GAFF 的力场根本没有库仑 style**，整条链对全部 37 个分子（含净电荷 −1 的乙酸根、+1 的甲铵/咪唑鎓）**静默丢掉静电能**。这是咖啡因那 150 kcal/mol 的洞，在另一个力场里。它藏得住是因为**每一段都被测过，组合从来没有被跑到能量**。证据一直在树里：`coul: [0,0,1/1.2]` —— 一个为不存在的库仑项声明的 1-4 缩放因子。 |
+| 2026-07-15 | test-subset-assertions | approved | molcrafts-molrs | `chem-perceive-15` 抓到 4 处手写的 fixture 子集，而 `e_caffeine` / `e_big` **确实带离域氮却两个名单都不在**——从来没有任何东西断言过 MMFF94s 会改变咖啡因的能量。这是 `["e_ethane"]` 反模式的复发：**子集恰好排除了唯一可能失败的分子**。 |
+| 2026-07-15 | vacuous-green-tests | approved | molcrafts-molrs | `chem-perceive-15` 抓到 `readers/opls.rs:36` 在输入缺失时打印 "skipping" 然后 `return`——**在 CI 里它什么都不断言，却计入覆盖率**。一个在 CI 里跳过自己的测试，就是一个从不运行的测试。 |
+| 2026-07-14 | chem-perceive-15-final-acceptance | approved | molcrafts-molrs, molrs-python | **整体验收**：这条链跑了 16 个 spec，每个只验证自己那一块，没有任何一个验证过整体。把五条"只此一份"的架构承诺（一个参数地点/一个感知层/一个插值 seam/一条 MMFF 路径/忽略 `tp` 的构造器不是 Style）变成自己不能豁免自己的门禁；端到端对着**外部** oracle（antechamber 37 分子 + RDKit MMFF 11 分子）跑通全链路；Python 与 Rust **逐位**一致。门禁全部是**反向**的（断言某物不存在）。铁律两条：**一道从没红过的门禁 = 没有门禁**；**验收里不许修任何东西**——它找到的每个缺陷都必须停下来另立 spec。 |
 | 2026-07-06 | net-streaming | partial (networking deferred) | molcrafts-molrs | Serialization foundation SHIPPED 0.7.0 as the `serde` + `stream` features (Frame/Block/Column/SimBox serde + MessagePack/JSON `frame_to_bytes`, WASM-clean). WebSocket networking + bidirectional control (`net` feature: tokio runtime, `FrameServer`, `ControlCommand`, crossbeam bridge) DEFERRED to a later release. See net-streaming.md STATUS. |
-| 2026-07-05 | region-support-01-graph-hash | in-flight | molcrafts-molrs, molrs-python | Isomorphism-invariant structural graph hash (WL/Morgan) + canonical node order + `is_isomorphic` on `MolGraph` (AA+CG), exposed to Python. The dedup key for molpy incremental-typification (`AffectedRegion` hashes by it → identical polymer junctions retype once). Greenfield; reuses topo/neighbor kernels. See molpy notes/incremental-typification-design.md. |
-| 2026-07-05 | region-support-02-reaction-touched | in-flight | molcrafts-molrs, molrs-python | `Reaction.apply` returns the touched atom handles (bond-forming endpoints + added atoms + deleted-atom surviving neighbors + prop-set atoms) so molpy can extract the retype-safe region. Small, on reaction-smarts-02. Return type None→list[int]. |
-| 2026-07-05 | reaction-smarts-01-python-matcher | in-flight | molcrafts-molrs, molrs-python | Expose the existing atom-map-aware SMARTS engine (`molrs::SmartsPattern`, `core/chem/smarts/`, already parses `[C:1]`) to Python as `SmartsPattern` with map-keyed matches; add `PyAtomistic` graph-edit conveniences (`remove_atom`/`remove_bond`/`set_bond_order`/`copy`). Pure binding, no algorithm change. Consumed by molpy `crosslink-*`. |
-| 2026-07-05 | reaction-smarts-02-smirks-applier | in-flight | molcrafts-molrs, molrs-python | Daylight reaction-SMARTS (SMIRKS) engine: parse `LHS>>RHS`, compile the atom-map diff to a `Transform` (Daylight SMIRKS semantics: pairwise maps preserved, unmapped LHS deleted, unmapped RHS added, bond diff→form/break/order), apply to one occurrence via existing core edits + `generate_topology`. Expose `Reaction` to Python. Greenfield, on top of 01. Permissive reaction SMARTS (no strict mode). Depends on 01. |
-| 2026-06-26 | analysis-parity-01-geometric-distributions | draft | molcrafts-molrs | ADF / dihedral / distance distribution functions + reusable `Observable` extractors (foundation for CDF/SDF). |
-| 2026-06-26 | analysis-parity-02-combined-distribution-functions | draft | molcrafts-molrs | Joint 2-D/3-D histograms (CDF) correlating 2–3 observables; the reference implementation's most-used analysis. |
-| 2026-06-26 | analysis-parity-03-spatial-distribution-function | draft | molcrafts-molrs | Reference-molecule-frame 3-D density + solvent orientation via native (BLAS-free) Kabsch. |
-| 2026-06-26 | analysis-parity-04-van-hove-and-reorientation | draft | molcrafts-molrs | Van Hove G_s/G_d(r,t) + Legendre P1/P2 reorientational TCFs (bridges RDF↔MSD; NMR/IR reorientation). |
-| 2026-06-26 | analysis-parity-05-hydrogen-bond-network | draft | molcrafts-molrs | Geometric D–H···A detection + native-`Topology` network + continuous/intermittent lifetime TCFs. |
-| 2026-06-26 | analysis-parity-06-radical-voronoi | draft | molcrafts-molrs | 3-D periodic radical (Laguerre) Voronoi core + domain/void analysis; native pure-Rust (WASM-clean). |
-| 2026-06-26 | analysis-parity-07-voronoi-electron-integration | draft | molcrafts-molrs | Cube-trajectory IO + per-molecule charge/dipole/polarizability via Voronoi integration of electron density. |
-| 2026-06-26 | analysis-parity-08-aimd-vibrational-spectra | draft | molcrafts-molrs | VCD / ROA / resonance-Raman spectra from EM-moment cross-correlations (extends the IR/Raman `fit` suite). |
 
 <!--
 Status values:

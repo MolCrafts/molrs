@@ -3,7 +3,7 @@
 //! Parses a LAMMPS force-field include — `pair_style`/`pair_coeff`,
 //! `bond_style harmonic`, `angle_style harmonic`, `dihedral_style fourier`
 //! (+ optional `improper_style harmonic`) with **type-label** coefficients — into
-//! a molrs [`ForceField`](crate::ff::forcefield::ForceField) in molrs units
+//! a molrs [`ForceField`] in molrs units
 //! (Å, kcal/mol, radians, e). This is the format the molpy
 //! `LAMMPSForceFieldWriter` emits, e.g.:
 //!
@@ -41,7 +41,9 @@
 //! (`special_bonds amber`): LJ ×0.5, Coulomb ×0.8333.
 
 use super::ForceFieldReader;
+use crate::ff::constants::VACUUM_DIELECTRIC;
 use crate::ff::forcefield::{ForceField, SpecialBonds};
+use molrs::units::constants::COULOMB_REAL;
 
 /// AMBER/GAFF 1-4 Lennard-Jones scale (`special_bonds amber`).
 const AMBER_LJ14: f64 = 0.5;
@@ -165,8 +167,15 @@ fn collect_pair(
     Ok(())
 }
 
-/// Emit the collected LJ self-params as a `lj/cut` style plus a parameter-free
-/// `coul/cut` style (charges resolved from the frame), with AMBER 1-4 scales.
+/// Emit the collected LJ self-params as a `lj/cut` style plus a `coul/cut` style
+/// (charges resolved from the frame), with AMBER 1-4 scales.
+///
+/// `coul/cut` is the **buffered** Coulomb `E = k·qᵢqⱼ/(D·(r + δ))`; a LAMMPS `real`
+/// -units force field is the unbuffered case (δ = 0, the semantic default) in vacuum,
+/// with CODATA's `k`. It used to be defined with EMPTY params and merely happened to
+/// agree with the constant the kernel held privately — the right number for the wrong
+/// reason. The force field states it now: the kernel has no default, because MMFF's
+/// `k` is a different number and both are correct.
 fn build_pairs(ff: &mut ForceField, rows: &[(String, f64, f64)]) {
     if rows.is_empty() {
         return;
@@ -177,7 +186,10 @@ fn build_pairs(ff: &mut ForceField, rows: &[(String, f64, f64)]) {
     for (ty, eps, sigma) in rows {
         lj.def_pairtype(ty, None, &[("epsilon", *eps), ("sigma", *sigma)]);
     }
-    ff.def_pairstyle("coul/cut", &[]);
+    ff.def_pairstyle(
+        "coul/cut",
+        &[("coulomb", COULOMB_REAL), ("dielectric", VACUUM_DIELECTRIC)],
+    );
 }
 
 // ── bonded ──────────────────────────────────────────────────────────────────

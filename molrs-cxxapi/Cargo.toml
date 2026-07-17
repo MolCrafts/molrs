@@ -20,10 +20,13 @@ zarr = ["molrs/filesystem"]
 [dependencies]
 # The merged crate, imported under the extern name `molrs`; `io` gives the file
 # I/O module this bridge relies on.
-molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.7.0", default-features = false, features = ["io", "compute"] }
-molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.7.0" }
+molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.8.0", default-features = false, features = ["io", "compute", "ff"] }
+molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.8.0" }
 cxx = "1"
 ndarray = "0.17"
 
 [build-dependencies]
 cxx-build = "1"
+# Compiles the C++ translation unit the integration tests call the bridge from
+# (tests/cxx/bridge_probe.cc). Test support only — `src/` builds nothing with it.
+cc = "1"

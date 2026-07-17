@@ -26,8 +26,21 @@ fn opls_chain_ff() -> ForceField {
     );
     ff.def_pairstyle("lj/cut", &[("cutoff", 100.0)])
         .def_type("C", &[("epsilon", 0.05), ("sigma", 3.0)]);
-    ff.def_pairstyle("coul/cut", &[("cutoff", 100.0)])
-        .def_type("C", &[("qiqj", -0.05)]);
+    // The force field must SAY which Coulomb constant and dielectric it means.
+    // `coulomb = COULOMB_REAL, dielectric = 1.0, delta = 0` is bit-for-bit the
+    // kernel this fixture used before `mmff-ele-compose` — no number moves. What
+    // moves is who supplies them: the kernel used to hold a private copy and
+    // hand it to any style that stayed silent, which is exactly the backdoor
+    // `an_empty_coul_cut_style_does_not_compile` now forbids.
+    ff.def_pairstyle(
+        "coul/cut",
+        &[
+            ("cutoff", 100.0),
+            ("coulomb", molrs::units::constants::COULOMB_REAL),
+            ("dielectric", 1.0),
+        ],
+    )
+    .def_type("C", &[("qiqj", -0.05)]);
     ff
 }
 

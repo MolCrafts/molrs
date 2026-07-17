@@ -3,15 +3,15 @@
 //! The parser enforces syntactic correctness (balanced brackets, valid grammar).
 //! This module adds SMILES-specific semantic checks:
 //!
-//! * Ring closures must come in matched pairs (shared with SMARTS via
-//!   [`chem::validation::validate_ring_closures`](crate::io::smiles::chem::validation)).
+//! * Ring closures must come in matched pairs (shared with SMARTS via the
+//!   crate-private `chem::validation::validate_ring_closures`).
 //! * Element symbols must refer to real elements (SMILES-specific; SMARTS
 //!   permits query primitives in their place).
 
 use crate::io::smiles::chem::ast::*;
 use crate::io::smiles::chem::validation::validate_ring_closures;
 use crate::io::smiles::error::{SmilesError, SmilesErrorKind};
-use molrs::system::element::Element;
+use molrs::Element;
 
 /// Validate a parsed SMILES molecule.
 ///

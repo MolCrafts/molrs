@@ -1,11 +1,11 @@
 //! Live streaming of `Frame`s.
 //!
-//! The core model serializes **directly**: the real
-//! [`Frame`](crate::core::store::frame::Frame) — with its `Block`s, `Column`s,
-//! and `SimBox` — implements `serde::Serialize`/`Deserialize` via the `serde`
-//! feature (which `stream` enables); see [`crate::serialize`]. There is no
-//! separate wire type. This module only adds the transport encoding:
-//! MessagePack (default) or JSON.
+//! The core model serializes **directly**: the real [`Frame`] — with its
+//! `Block`s, `Column`s, and `SimBox` — implements
+//! `serde::Serialize`/`Deserialize` via the `serde` feature (which `stream`
+//! enables); the impls live in the crate-private `serialize` module. There is no
+//! separate wire type. This module only adds the transport encoding: MessagePack
+//! (default) or JSON.
 
 use crate::core::store::frame::Frame;
 

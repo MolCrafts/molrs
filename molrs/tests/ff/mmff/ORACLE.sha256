@@ -1,0 +1,58 @@
+# ORACLE.sha256 — the RDKit oracle data of the 11 MMFF energy fixtures.
+#
+# mmff-orthogonal-02 ac-008: "energies are bit-for-bit unchanged after the
+# deletion, with NO assertion value edited. Loosening a tolerance to make this
+# green is a failure, not a pass."
+#
+# A tolerance is one way to cheat. The other, quieter one is to regenerate the
+# reference. These three files per fixture ARE the assertion:
+#
+#   <name>.sdf              the geometry the oracle was evaluated on (4-decimal
+#                           mol-block coords, re-read by RDKit — so the reference
+#                           is exact ON THESE COORDS, not on the full-precision
+#                           conformer)
+#   <name>.energy.json      RDKit MMFFGetMoleculeForceField(mol).CalcEnergy()
+#   <name>.breakdown.json   the 7 frozen per-style terms; each file self-validates
+#                           against the oracle (sum of terms == mmff94_total_energy)
+#
+# Editing any byte of any of them moves the target the deletion is measured
+# against. That is not allowed to be quiet.
+#
+# Regenerating these is a legitimate act — but it is an act of a DIFFERENT spec,
+# and it requires re-deriving them from RDKit and re-proving self-consistency.
+# `test-subset-assertions` is that different spec: it extends the seven original
+# MMFF94-only energy rows with RDKit's MMFF94s total so caffeine and e_big cannot
+# sit outside the variant oracle. Geometry, MMFF94 totals and breakdowns did not move.
+2b21573e6d75f3952856f42e9d8951dd425d640ee9cd3c9fca2e368d3b484b86  e_acetonitrile.breakdown.json
+a2272b781e94db68963021a1a7dc88f3c77181ecc56e71fe0bd830e317acf7c8  e_acetonitrile.energy.json
+b3bb7083af8f3fd8ee6b1556b85350c1e2e803a00b7ca6f8cff3d960eb8dcfee  e_acetonitrile.sdf
+9a218058d7c9ef49973948d7eabe08900e619daa4c2cc304e774c705591850cd  e_benzene.breakdown.json
+b00f7d367d1ba82b4057cc9c2ba09dfe28a3861f02888c61f4fb74364e9f4e76  e_benzene.energy.json
+10b1cc18a055ba10d18e96e07bc81b56bca8f967f3d8133188282f56e1ad1612  e_benzene.sdf
+7d3db1813c83969d41ff3527dedf0162a0d6b60f50d5634dbc85a7d69db1c33c  e_big.breakdown.json
+bc51150bc0b0d43cb1550d1c8d3601575003e34bd373f1b6f21e42971eb9060a  e_big.energy.json
+03b4fc9d0760a4771a584ab214154cda7cb6b58ff36c034201e53268ed22566f  e_big.sdf
+9bd0692c85d1eead9d8434c9daeebb653df738ab1d6af7ceaad8e614ba281aab  e_butane.breakdown.json
+e8e51ce6c2f856732fa5f130a5a8d91628951c47794414d1f0e14e88444c59a5  e_butane.energy.json
+127fbdd80cd45e74a7c32456d67155db0686f32103d621a28d75b52cb3296492  e_butane.sdf
+b14ef04eee95bfb4028224b1abc1c49acfd88f9f83c958328a5dba4ab3ecbf29  e_caffeine.breakdown.json
+2146dce4cfe31cac3f6c7304db734552e48b0256e0a5ff62c40fed471dc67b73  e_caffeine.energy.json
+4200536ce2a609215b2889223e98463e20acaa8799704e19cc21fbdadfcffced  e_caffeine.sdf
+a8ac04c84596f199464c2079d209be7b2d5c67b6df0fac6de4677aa13e5e740b  e_ethane.breakdown.json
+7abd386caa00f4b9061d12e60f432910f0af45e056925adae931b58f93209281  e_ethane.energy.json
+1db5ffe6b10fdb4f12870852d3dec9472567bdee29561f594802b57dbbaa20e1  e_ethane.sdf
+76e16e21e7d81f2643f2b3b03c2788b0ed192af213fb2be9f6c5023f8387e62d  e_ethylene.breakdown.json
+f592171c0bad9641f10289d25d90771fde0b679e5cdaae3e1354f4111957b32d  e_ethylene.energy.json
+9fc8f43fee5992c3649ce6a848ed223c5ea67caf61865715c464f091ad673986  e_ethylene.sdf
+ca84d777decba669ad17e04f437dd1b2820dbb48ffa2bc280a91554e1d083425  s_acetamide.breakdown.json
+7e330712f539bc6878c1ac721962661db77fe1a905b5c5c3eda73824aa98da74  s_acetamide.energy.json
+a76f6e3a3e28a1a8cfa00cb8ee7924ab7c00ac09645b77cb12cc0769c6bd7bbc  s_acetamide.sdf
+b9007a2c93eb293115b6e676b9c5c911b1765cc0216eb5cc5382f1ee2c5f99e8  s_aniline.breakdown.json
+3d52046682c588427b25c15615661c79a4fdee34c1889dd00e2504dec9d9064d  s_aniline.energy.json
+10e0b3101afc6c648c9de409ae364f689724fb873a5f3d45a4e7724a5b96de1e  s_aniline.sdf
+f72ba570069a2ad8177752b0eca441d4e741fe1581b3b3edbc461bd86dd16452  s_nmethylacetamide.breakdown.json
+612c34eda5e9b465a65e30e38238b14ebfd38d1aa624c27d9014f4f08d935a0a  s_nmethylacetamide.energy.json
+fc377b2c9325f3a3e1e79df40ef7d97999fab9e7454c9c268bc37b9960400527  s_nmethylacetamide.sdf
+58db4b3a3c1899bfb5ac13389f433466fe26eaa34193a07fdaebd83049faf2b8  s_urea.breakdown.json
+8c742088e08bfe9700fa34251263d9231e10cd703fd5351d8f0efcaa2247f126  s_urea.energy.json
+ea5bc3ee83c709ae82d6c5da4d62345f8123452a9e3c778c866dfcae70775205  s_urea.sdf

@@ -29,21 +29,45 @@ Then use the native types directly — no FFI, no copies. For example, building
 evaluable MMFF94 potentials from a molecule (the pattern molpack's relaxer follows):
 
 ```rust,no_run
-use molrs::ff::typifier::mmff::MMFFTypifier;
 use molrs::Atomistic;
+use molrs::ff::potential::intramolecular_pairs;
+use molrs::ff::typifier::mmff::MMFF94Typifier;
 
 let mol = Atomistic::new();                              // build or load your molecule
-let potentials = MMFFTypifier::mmff94()?.build(&mol)?;   // typify → to_frame → to_potentials
+let typifier = MMFF94Typifier::new();
+
+let mut frame = typifier.typify(&mol)?.to_frame();       // labels + charges
+frame.insert("pairs", intramolecular_pairs(&frame));     // the consumer's neighbour list
+let potentials = typifier.ff().to_potentials(&frame)?;   // the standard compile path
+
 let coords: Vec<f64> = Vec::new();                       // flat [x,y,z, ...]
 let (energy, _forces) = potentials.calc_energy_forces(&coords);
 println!("MMFF94 energy = {energy} kcal/mol");
 # Ok::<(), String>(())
 ```
 
-A force field read from a file is consumed the same way — the consumer (optimizer /
-integrator) builds the neighbour list and calls `ForceField::to_potentials(&frame)`.
+There is no MMFF shortcut, and that is the point: a force field read from a file is
+consumed by exactly these three lines. The typifier's contract is `typify` — labels
+and charges — and compiling is `ForceField::to_potentials(&frame)`. The neighbour
+list is *yours* because you are the one who knows when it goes stale: a minimizer
+that moves atoms decides when to rebuild it, and molrs will not guess.
+
+(A `MMFF94Typifier::build(&mol)` convenience used to fold all three into one call.
+It was deleted — it had, for its whole life, compiled potentials with **no
+electrostatic style at all**, because no `ForceField` ever defined
+`pair/mmff_ele`; caffeine came out 150 kcal/mol low and nothing noticed, because
+the shortcut hid the `Frame` where the missing term would have been visible.
+This is the pattern the molpack relaxer follows.)
+
 This exact snippet is compile-checked as the module doctest on
 `molrs::ff::typifier::mmff`.
+
+MMFF ships **two** named front doors — `MMFF94Typifier` and `MMFF94STypifier` —
+over one engine. Swap the type to swap the parameter set; there is no variant flag.
+MMFF94s (Halgren 1999, the "static" set) re-parameterises 11 out-of-plane rows and
+42 torsion rows so that delocalised trivalent nitrogen (MMFF types 10 `NC=O` /
+40 `NC=C`) minimizes planar; everything else is shared, so a molecule without such
+a nitrogen gets bit-for-bit identical potentials from both.
 
 ## Path B — Python / WASM via the `molrs-ffi` handle API
 

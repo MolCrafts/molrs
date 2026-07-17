@@ -5,10 +5,18 @@
 //! into a [`Frame`](molrs::store::frame::Frame) for `ForceField::to_potentials`
 //! is the graph's `to_frame` job; typifiers stay on the graph boundary.
 
+pub mod am1bcc;
+pub mod atd;
+pub mod estimate;
 pub mod mmff;
 pub mod opls;
 pub(crate) mod topology;
 
+pub use am1bcc::{BCCAtomChargeTypifier, BCCCorrectionTable, BCCCorrector, BccParameterSet};
+pub use atd::{AtdParameterSet, AtdTypifier};
+pub use estimate::{
+    BondedTerm, Estimate, ParameterInterpolator, Parmchk2Estimator, TypifierParameterContext,
+};
 pub use opls::OPLSAATypifier;
 
 /// A graph typifier.

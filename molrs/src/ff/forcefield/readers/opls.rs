@@ -1,9 +1,8 @@
 //! OPLS-AA / GROMACS force-field XML reader.
 //!
 //! Parses the OpenMM-style OPLS-AA XML (as bundled with molpy, GROMACS units —
-//! nm, kJ/mol, Ryckaert–Bellemans torsions) into a molrs
-//! [`ForceField`](crate::ff::forcefield::ForceField) in molrs units (Å, kcal/mol,
-//! radians, e). The schema:
+//! nm, kJ/mol, Ryckaert–Bellemans torsions) into a molrs [`ForceField`] in molrs
+//! units (Å, kcal/mol, radians, e). The schema:
 //!
 //! ```xml
 //! <ForceField name="OPLS-AA" combining_rule="geometric">
@@ -41,14 +40,16 @@
 //! - bond `k` kJ/mol/nm² → kcal/mol/Å² (÷ 4.184 ÷ 100). molrs and GROMACS both
 //!   use the `½k(r−r₀)²` form, so no extra ½ factor (unlike a LAMMPS target).
 //! - angle `k` kJ/mol/rad² → kcal/mol/rad² (÷ 4.184); `angle` already in radians.
-//! - RB `c0..c5` → OPLS 4-cosine `f1..f4` via [`rb_to_opls`] (GROMACS Eqs.
-//!   200–201), in kcal/mol — matching the `dihedral:opls` kernel.
+//! - RB `c0..c5` → OPLS 4-cosine `f1..f4` via the private `rb_to_opls` helper
+//!   (GROMACS Eqs. 200–201), in kcal/mol — matching the `dihedral:opls` kernel.
 //! - charge `e`, mass `amu`: unchanged.
 
 use roxmltree::Node;
 
 use super::ForceFieldReader;
+use crate::ff::constants::VACUUM_DIELECTRIC;
 use crate::ff::forcefield::{ForceField, SpecialBonds};
+use molrs::units::constants::COULOMB_REAL;
 
 /// kJ/mol → kcal/mol.
 const KJ_PER_KCAL: f64 = 4.184;
@@ -143,6 +144,11 @@ struct NonbondedRow {
 /// atoms at evaluation time). Combining rules and 1-4 scaling are NOT baked here
 /// — combining is the kernel's job, and the 1-4 weights live on the
 /// ForceField's `special_bonds` (set by the caller).
+///
+/// `coul/cut` is the **buffered** Coulomb `E = k·qᵢqⱼ/(D·(r + δ))`; OPLS is the
+/// unbuffered case (δ = 0, the semantic default) in vacuum, with CODATA's `k`. Those
+/// two constants are stated here because they are the *force field's*: the kernel
+/// has no default for them (MMFF's `k` is a different number, and both are correct).
 fn build_nonbonded(ff: &mut ForceField, masses: &[(String, f64)], nonbonded: &[NonbondedRow]) {
     if !masses.is_empty() {
         let atom = ff.def_atomstyle("full");
@@ -161,7 +167,10 @@ fn build_nonbonded(ff: &mut ForceField, masses: &[(String, f64)], nonbonded: &[N
         for r in nonbonded {
             lj.def_pairtype(&r.ty, None, &[("epsilon", r.epsilon), ("sigma", r.sigma)]);
         }
-        ff.def_pairstyle("coul/cut", &[]);
+        ff.def_pairstyle(
+            "coul/cut",
+            &[("coulomb", COULOMB_REAL), ("dielectric", VACUUM_DIELECTRIC)],
+        );
     }
 }
 

@@ -1,0 +1,35 @@
+{
+  "generator": "scripts/gen_gaff_energy_oracle.py",
+  "ambertools": "25",
+  "rdkit": "2026.03.2",
+  "coulomb": 332.05221729,
+  "cases": [
+    {
+      "name": "acetate",
+      "net_charge": -1,
+      "sum_abs_charge": 2.845399,
+      "n_14_pairs": 6,
+      "sander_total_energy": 7.5253,
+      "sander_electrostatic_energy": -3.5494,
+      "recovered_coulomb": 332.0521080724464
+    },
+    {
+      "name": "methylammonium",
+      "net_charge": 1,
+      "sum_abs_charge": 2.6632,
+      "n_14_pairs": 9,
+      "sander_total_energy": 54.7820,
+      "sander_electrostatic_energy": 54.2782,
+      "recovered_coulomb": 332.05192763080356
+    },
+    {
+      "name": "imidazolium",
+      "net_charge": 1,
+      "sum_abs_charge": 1.802601,
+      "n_14_pairs": 21,
+      "sander_total_energy": 55.8233,
+      "sander_electrostatic_energy": 46.6040,
+      "recovered_coulomb": 332.05276359566784
+    }
+  ]
+}

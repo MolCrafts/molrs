@@ -17,7 +17,7 @@
 
 use molrs::system::atomistic::{AtomId, Atomistic};
 
-use super::perceive::{Hybridization, Perceived};
+use super::mol_features::{Hybridization, Perceived};
 
 /// Sign of a chiral constraint's signed tetrahedral volume.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

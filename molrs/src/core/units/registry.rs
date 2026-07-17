@@ -62,6 +62,37 @@ const PREFIXES: &[(&str, F)] = &[
     ("Y", 1e24),
 ];
 
+/// Spelled-out SI prefixes accepted alongside their symbols.
+///
+/// This keeps Python attribute-style unit lookup intuitive (``nanometer``,
+/// ``femtosecond``) without duplicating prefixed definitions in the registry.
+const LONG_PREFIXES: &[(&str, F)] = &[
+    ("quetta", 1e30),
+    ("ronna", 1e27),
+    ("yotta", 1e24),
+    ("zetta", 1e21),
+    ("exa", 1e18),
+    ("peta", 1e15),
+    ("tera", 1e12),
+    ("giga", 1e9),
+    ("mega", 1e6),
+    ("kilo", 1e3),
+    ("hecto", 1e2),
+    ("deca", 1e1),
+    ("deci", 1e-1),
+    ("centi", 1e-2),
+    ("milli", 1e-3),
+    ("micro", 1e-6),
+    ("nano", 1e-9),
+    ("pico", 1e-12),
+    ("femto", 1e-15),
+    ("atto", 1e-18),
+    ("zepto", 1e-21),
+    ("yocto", 1e-24),
+    ("ronto", 1e-27),
+    ("quecto", 1e-30),
+];
+
 /// A registry of unit definitions and the SI prefix table.
 ///
 /// The registry resolves unit names (canonical name, symbol, or alias,
@@ -210,6 +241,71 @@ impl UnitRegistry {
         Ok(Quantity::new(value, self.parse(expr)?))
     }
 
+    /// Define Lennard-Jones reduced units from physical mass, length, and energy scales.
+    ///
+    /// The derived time and temperature scales are
+    /// `tau = sqrt(mass * sigma^2 / epsilon)` and `epsilon / k_B`.
+    /// The definitions retain their physical dimensions, so normal checked
+    /// conversion works without a separate context engine.
+    pub fn define_lj_units(
+        &mut self,
+        mass: &Quantity,
+        sigma: &Quantity,
+        epsilon: &Quantity,
+    ) -> Result<(), UnitsError> {
+        let mass_kg = mass.to(&self.parse("kg")?)?.value();
+        let sigma_m = sigma.to(&self.parse("m")?)?.value();
+        let epsilon_j = epsilon.to(&self.parse("J")?)?.value();
+        if !mass_kg.is_finite()
+            || !sigma_m.is_finite()
+            || !epsilon_j.is_finite()
+            || mass_kg <= 0.0
+            || sigma_m <= 0.0
+            || epsilon_j <= 0.0
+        {
+            return Err(UnitsError::Parse {
+                expr: "Lennard-Jones scales".to_string(),
+                message: "mass, sigma, and epsilon must be finite and positive".to_string(),
+            });
+        }
+
+        let tau_s = (mass_kg * sigma_m * sigma_m / epsilon_j).sqrt();
+        let temperature_k = epsilon_j / super::constants::BOLTZMANN;
+        for definition in [
+            def(
+                "lj_sigma",
+                "lj_sigma",
+                &[],
+                sigma_m,
+                0.0,
+                Dimension::LENGTH,
+                false,
+            ),
+            def(
+                "lj_epsilon",
+                "lj_epsilon",
+                &[],
+                epsilon_j,
+                0.0,
+                Dimension::ENERGY,
+                false,
+            ),
+            def("lj_tau", "lj_tau", &[], tau_s, 0.0, Dimension::TIME, false),
+            def(
+                "lj_epsilon_over_kB",
+                "lj_epsilon_over_kB",
+                &[],
+                temperature_k,
+                0.0,
+                Dimension::TEMPERATURE,
+                false,
+            ),
+        ] {
+            self.define(definition)?;
+        }
+        Ok(())
+    }
+
     /// Iterate all registered definitions (test/introspection support).
     pub fn definitions(&self) -> impl Iterator<Item = &UnitDef> {
         self.defs.iter()
@@ -223,6 +319,20 @@ impl UnitRegistry {
             return Some((def.factor, def.offset, def.dimension));
         }
         for (prefix, scale) in PREFIXES {
+            let Some(rest) = atom.strip_prefix(prefix) else {
+                continue;
+            };
+            if rest.is_empty() {
+                continue;
+            }
+            if let Some(&idx) = self.index.get(rest) {
+                let def = &self.defs[idx];
+                if def.prefixable && def.offset == 0.0 {
+                    return Some((scale * def.factor, 0.0, def.dimension));
+                }
+            }
+        }
+        for (prefix, scale) in LONG_PREFIXES {
             let Some(rest) = atom.strip_prefix(prefix) else {
                 continue;
             };
@@ -292,10 +402,30 @@ fn md_defs() -> Vec<UnitDef> {
         // eV: SI-2019 exact; hartree: CODATA 2018.
         def("joule", "J", &[], 1.0, 0.0, e, true),
         def("calorie", "cal", &[], 4.184, 0.0, e, true),
+        def(
+            "kilocalorie_per_mole",
+            "kcal_per_mol",
+            &[],
+            4184.0 / super::constants::AVOGADRO,
+            0.0,
+            e,
+            false,
+        ),
+        def(
+            "kilojoule_per_mole",
+            "kJ_per_mol",
+            &[],
+            1000.0 / super::constants::AVOGADRO,
+            0.0,
+            e,
+            false,
+        ),
+        def("erg", "erg", &[], 1e-7, 0.0, e, false),
         def("electron_volt", "eV", &[], 1.602_176_634e-19, 0.0, e, true),
         def("hartree", "Eh", &[], 4.359_744_722_207_1e-18, 0.0, e, false),
         // Force / pressure (SI derived, exact).
         def("newton", "N", &[], 1.0, 0.0, Dimension::FORCE, true),
+        def("dyne", "dyn", &[], 1e-5, 0.0, Dimension::FORCE, false),
         def("pascal", "Pa", &[], 1.0, 0.0, Dimension::PRESSURE, true),
         def("bar", "bar", &[], 1e5, 0.0, Dimension::PRESSURE, false),
         def(
@@ -319,6 +449,15 @@ fn md_defs() -> Vec<UnitDef> {
             0.0,
             Dimension::MASS,
             true,
+        ),
+        def(
+            "gram_per_mole",
+            "g_per_mol",
+            &[],
+            1e-3 / super::constants::AVOGADRO,
+            0.0,
+            Dimension::MASS,
+            false,
         ),
         // Temperature: affine, offset 273.15 K (exact).
         def(
@@ -352,6 +491,15 @@ fn md_defs() -> Vec<UnitDef> {
         // Charge. coulomb: SI derived; elementary charge: SI-2019 exact;
         // debye: 1e-21/c C·m, c exact.
         def("coulomb", "C", &[], 1.0, 0.0, Dimension::CHARGE, true),
+        def(
+            "statcoulomb",
+            "statC",
+            &[],
+            3.335_640_951_981_52e-10,
+            0.0,
+            Dimension::CHARGE,
+            false,
+        ),
         def(
             "elementary_charge",
             "e",
@@ -427,6 +575,65 @@ mod tests {
         // global / default registry must not know the custom unit
         assert!(UnitRegistry::global().parse("smoot").is_err());
         assert!(UnitRegistry::new().parse("smoot").is_err());
+    }
+
+    #[test]
+    fn spelled_out_prefixes_resolve_without_duplicate_definitions() {
+        let r = UnitRegistry::new();
+        for (long, short) in [
+            ("nanometer", "nm"),
+            ("femtosecond", "fs"),
+            ("kilocalorie", "kcal"),
+        ] {
+            let long = r.parse(long).unwrap();
+            let short = r.parse(short).unwrap();
+            assert_eq!(long.dimension(), short.dimension());
+            assert_eq!(long.factor_to(&short).unwrap(), 1.0);
+        }
+    }
+
+    #[test]
+    fn per_particle_molar_named_units_convert_to_energy_and_mass() {
+        let r = UnitRegistry::new();
+        let kcal = r.quantity(1.0, "kilocalorie_per_mole").unwrap();
+        let kj = kcal.to(&r.parse("kilojoule_per_mole").unwrap()).unwrap();
+        assert!((kj.value() - 4.184).abs() < 1e-12);
+        assert!(kcal.to(&r.parse("eV").unwrap()).is_ok());
+        assert!(
+            r.quantity(1.0, "gram_per_mole")
+                .unwrap()
+                .to(&r.parse("Da").unwrap())
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn lennard_jones_scales_are_native_convertible_units() {
+        let source = UnitRegistry::new();
+        let mass = source.quantity(39.948, "amu").unwrap();
+        let sigma = source.quantity(3.405, "angstrom").unwrap();
+        let epsilon = source.quantity(0.2381, "kilocalorie_per_mole").unwrap();
+        let mut reduced = UnitRegistry::new();
+        reduced.define_lj_units(&mass, &sigma, &epsilon).unwrap();
+
+        let sigma_star = reduced
+            .quantity(3.405, "angstrom")
+            .unwrap()
+            .to(&reduced.parse("lj_sigma").unwrap())
+            .unwrap();
+        assert!((sigma_star.value() - 1.0).abs() < 1e-12);
+        let tau_ps = reduced
+            .quantity(1.0, "lj_tau")
+            .unwrap()
+            .to(&reduced.parse("ps").unwrap())
+            .unwrap();
+        assert!((tau_ps.value() - 2.16).abs() < 0.01);
+        let temperature = reduced
+            .quantity(1.0, "lj_epsilon_over_kB")
+            .unwrap()
+            .to(&reduced.parse("K").unwrap())
+            .unwrap();
+        assert!((temperature.value() - 119.8).abs() < 0.5);
     }
 
     #[test]

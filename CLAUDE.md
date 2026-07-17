@@ -5,7 +5,7 @@ mol_project:
   stage: experimental
   build:
     install: "cargo build && bash scripts/fetch-test-data.sh"
-    check: "cargo fmt --all --check && cargo clippy -- -D warnings && cargo check"
+    check: "cargo fmt --all --check && cargo clippy --all-targets --all-features -- -D warnings && cargo check --all-features && RUSTDOCFLAGS='-D warnings' cargo doc --no-deps -p molcrafts-molrs"
     test: "cargo test --all-features"
     test_single: "cargo test {path}"
   arch:
@@ -80,24 +80,35 @@ cargo bench -p molcrafts-molrs --bench core_benchmarks
 ## Crate Structure & Modules
 
 molrs is a **single published crate** `molcrafts-molrs` (lib name `molrs`, dir
-`molrs/`). Its sub-systems are **feature-gated modules** under `molrs/src/`:
-`core` is always compiled and re-exported at the crate root (so `molrs::Frame`,
-`molrs::system::…` resolve); the rest gate on a matching feature. `core` is the
-foundation; everything else depends on it (`compute` → `signal`, `conformer` →
-`ff`). In-crate paths use `crate::core::…` / `crate::io::…` (and `molrs::…` via
+`molrs/`). Sub-systems are modules under `molrs/src/`. **Three are always
+compiled** — `core`, `perceive`, `optimize` — and the rest gate on a matching
+feature. `core` and `perceive` are re-exported at the crate root (so
+`molrs::Frame`, `molrs::system::…`, `molrs::find_rings`, `molrs::SmartsPattern`
+resolve). The dependency spine is `core → perceive → {io, ff} → conformer`
+(`compute` → `signal`, `conformer` → `ff`). In-crate paths use `crate::core::…` /
+`crate::perceive::…` / `crate::io::…` (and `molrs::…` via
 `extern crate self as molrs;`).
 
 | Module (`molrs/src/`) | Feature | Purpose |
 |---|---|---|
-| `core` | always on | Frame/Block/Grid/MolGraph/MolRec/Topology/Element, neighbors, math, region (SimBox), stereochemistry, rings, Gasteiger charges, hydrogen perception, atom-type mapping |
-| `io` | `io` | File I/O: PDB, XYZ, LAMMPS data/dump, CHGCAR/POSCAR, Gaussian Cube, CIF, mol2, SDF, GRO, DCD, GROMACS TRR/XTC, Zarr V3 trajectories; SMILES/SMARTS parsing in `io/smiles/` (gated by the `smiles` feature) |
+| `core` | always on | Frame/Block/Grid/MolGraph/MolRec/Topology/Element, neighbors, math, region (SimBox), graph hash, atom-type mapping |
+| `perceive` | always on | **Chemical perception**, one layer above `core` and below `ff`/`io`/`conformer`: rings (SSSR), aromaticity, hydrogen perception, stereochemistry, rotatable bonds, Gasteiger charges, SMARTS/SMIRKS. Builder API `Perceive::new().find_*(&MolGraph) -> MolGraph` (graph-in/graph-out, non-mutating); the free functions it wraps are also re-exported at the crate root |
+| `optimize` | always on | Numerical optimizers |
+| `io` | `io` | File I/O: PDB, XYZ, LAMMPS data/dump, CHGCAR/POSCAR, Gaussian Cube, CIF, mol2, SDF, GRO, DCD, GROMACS TRR/XTC, Zarr V3 trajectories; SMILES parsing in `io/smiles/` (gated by `smiles`). **SMARTS lives in `perceive/smarts/`, not here** |
 | `signal` | `signal` | Signal processing: FFT-based autocorrelation, window functions, frequency grids |
 | `compute` | `compute` (→ `signal`) | Trajectory analysis: RDF, MSD, clustering, gyration/inertia tensors |
+| `stream` | `stream` | Frame/Block serde + MessagePack/JSON `frame_to_bytes` |
 | `ff` | `ff` | Force fields, potentials (KernelRegistry), atom typifier |
-| `conformer` | `conformer` (→ `ff`) | 3D conformer generation: distance geometry, fragment assembly, optimizer, rotor search |
+| `conformer` | `conformer` (→ `ff`) | 3D conformer generation: ETKDGv3 distance geometry, experimental-torsion refinement, MMFF94 cleanup, stereo guards |
 
-The umbrella feature `full` enables every sub-system module; core knobs are
-`rayon` (default), `zarr`, `filesystem`, `blas`.
+The umbrella feature `full` enables every gated sub-system module; core knobs are
+`rayon` (default), `zarr`, `filesystem`, `blas`, `voronoi`.
+
+**Why `perceive` is always-on rather than feature-gated:** `core` is always
+compiled and this code used to live *inside* it, so every consumer configuration
+already compiled it. Keeping it unconditional reproduces the existing build graph
+exactly — gating it would be a behaviour change, not a refactor. (Gating it later
+to shrink the WASM bundle is a legitimate, separately-measured follow-up.)
 
 The other workspace member is `molrs-cxxapi` (`molcrafts-molrs-cxxapi`, a
 `staticlib` CXX bridge to Atomiverse C++ via `FrameView`); it depends on the
@@ -114,7 +125,7 @@ standalone repo `MolCrafts/molpack` (crates.io: `molcrafts-molpack`, PyPI:
 All on the single `molcrafts-molrs` crate (`molrs/Cargo.toml`):
 
 - Sub-system modules: `io`, `signal`, `compute` (→ `signal`), `ff`,
-  `conformer` (→ `ff`), `smiles` (→ `io`, pulls in `petgraph`); `full` enables
+  `conformer` (→ `ff`), `smiles` (→ `io`); `full` enables
   all of them. Each gates its module **and** its unique optional deps, so a build
   with a sub-system off does not compile that sub-system's dependency.
 - Core knobs: `rayon` (default; parallel neighbor lists / potentials),
@@ -144,7 +155,7 @@ Key type aliases: `F3 = Array1<F>`, `F3x3 = Array2<F>`, `FN = Array1<F>`, `FNx3 
 
 ### MolGraph (molecular topology)
 
-Graph-based molecular structure with atoms, bonds, stereochemistry, ring detection. Built on generational arenas (`slotmap`) with kind-tagged, multi-arity relations over a `smallvec`-backed adjacency map. (`molrs/src/core/system/molgraph.rs`). The connectivity graph is `Topology` (`molrs/src/core/system/topology.rs`), a native adjacency structure (`HashMap`/`VecDeque`, no petgraph) used for connectivity queries (connected components, BFS distances, angle/dihedral enumeration). petgraph is pulled in only by the SMARTS VF2 matcher under the `smiles` feature (`molrs/src/io/smiles/`).
+Graph-based molecular structure with atoms, bonds, stereochemistry, ring detection. Built on generational arenas (`slotmap`) with kind-tagged, multi-arity relations over a `smallvec`-backed adjacency map. (`molrs/src/core/system/molgraph.rs`). The connectivity graph is `Topology` (`molrs/src/core/system/topology.rs`), a native adjacency structure (`HashMap`/`VecDeque`, no petgraph) used for connectivity queries (connected components, BFS distances, angle/dihedral enumeration). SMARTS lives in `molrs/src/core/chem/smarts/` (moving to `molrs/src/perceive/smarts/`), and its subgraph-isomorphism matcher is hand-rolled (a backtracking VF2-style port of RDKit's `SubstructMatch.cpp`) — molrs has **no petgraph dependency at all**.
 
 ## Trait-Based Extensibility
 
@@ -152,7 +163,7 @@ Graph-based molecular structure with atoms, bonds, stereochemistry, ring detecti
 |---|---|---|---|
 | `NbListAlgo` | `molrs::core::neighbors` | Neighbor search | `LinkCell` (O(N), default), `BruteForce` (O(N²), testing), `NeighborQuery` (high-level wrapper) |
 | `Potential` | `molrs::ff::potential` | Energy/force evaluation | Bond harmonic, MMFF bond/angle/torsion/oop/vdw/ele, LJ/cut, PME |
-| `Typifier` | `molrs::ff::typifier` | MolGraph → typed Frame | MMFFTypifier |
+| `Typifier` | `molrs::ff::typifier` | MolGraph → typed Frame | `MMFF94Typifier` / `MMFF94STypifier` (one engine, two named front doors — the MMFF variant is a private field, never a constructor flag), `OPLSAATypifier`, `AtdTypifier` |
 
 Pack-related traits (`Restraint`, `Region`, `Relaxer`, `Handler`, `Objective`) now live
 in the standalone `molcrafts-molpack` crate.
@@ -161,7 +172,13 @@ in the standalone `molcrafts-molpack` crate.
 
 ### Potential System (molrs/src/ff/potential/)
 
-`KernelRegistry` maps `(category, style_name)` → `KernelConstructor`. Categories: bonds, angles, dihedrals, impropers, pairs, kspace. `ForceField::to_potentials(frame)` (with `Style::to_potential`) resolves topology and constructs `Potentials` (aggregate sum) — frame-free, deferred potentials that bind topology and coordinates at evaluation time. Coordinate format: flat `[x0,y0,z0, x1,y1,z1, ...]` (3N elements). MMFF94/MMFF94s parameters are embedded at compile time in core (`molrs/data/mmff94.xml`, exposed as `molrs::data::MMFF94_XML`).
+`KernelRegistry` maps `(category, style_name)` → `KernelConstructor`. Categories: bonds, angles, dihedrals, impropers, pairs, kspace. `ForceField::to_potentials(frame)` (with `Style::to_potential`) resolves topology and constructs `Potentials` (aggregate sum) — frame-free, deferred potentials that bind topology and coordinates at evaluation time. Coordinate format: flat `[x0,y0,z0, x1,y1,z1, ...]` (3N elements).
+
+**Every parameter table is committed Rust, in one place.** `molrs/src/ff/params/` holds them all, flat — GAFF/GAFF2, the seven `ATOMTYPE_*.DEF` sets, BCCPARM, GASPARM, MMFF, OPLS-AA. Nothing parses parameter text at runtime, so a malformed table is a **compile** error, not a runtime one. `molrs/data/` and `molrs::data::*_XML` no longer exist. How a table *arrived* lives in its header doc (`scripts/gen_param_tables.py` from AmberTools' `.DAT`/`.DEF`; RDKit's `Params.cpp` for MMFF) — never in its name.
+
+**A registered kernel constructor that ignores `tp` is not a Style.** `ParamSource::{TypeRows, PerInstance}` (`ff/potential/registry.rs`) makes that a type, and a bidirectional gate makes it a test. MMFF's parameters depend on aromaticity, ring size and equivalence degradation — no type-tuple table expresses them — so the typifier resolves them per instance and bakes them onto the Frame, and its kernels read those columns. That is legitimate; *registering as if it used type rows* was not.
+
+**MMFF owns no kernel.** Its electrostatics is a buffered Coulomb — `pair/coul/cut` parameterised by `MMFF_ELE_STYLE` (`E = k·qᵢqⱼ / (D·(r+δ))`, δ = 0.05 Å; δ = 0 degenerates to the textbook form). A force field must **declare** the constants it means: a style that omits `coulomb` / `dielectric` / `coulomb14scale` is an `Err`, never a silent default. A kernel that supplies the force field's own constants is not reading the force field.
 
 ### Free-Boundary Support
 
@@ -169,7 +186,7 @@ in the standalone `molcrafts-molpack` crate.
 
 ### Conformer Pipeline (molrs/src/conformer/)
 
-Multi-stage 3D coordinate generation: distance geometry → fragment assembly → coarse minimization → rotor search → final minimization → stereo guards. Public API: `Conformer::new(opts).generate(mol) -> Result<(Atomistic, ConformerReport)>`.
+Multi-stage 3D coordinate generation: ETKDGv3 constraints → 4D distance-geometry embedding → experimental-torsion refinement → MMFF94 cleanup → stereo guards. Public API: `Conformer::new(opts).generate(mol) -> Result<(Atomistic, ConformerReport)>`.
 
 ### Packing
 

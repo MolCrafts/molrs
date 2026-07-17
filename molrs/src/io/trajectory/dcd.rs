@@ -1031,12 +1031,12 @@ fn write_dcd_frame<W: Write + Seek>(
         let title = frame
             .meta_ref()
             .get("title")
-            .map(String::as_str)
+            .and_then(|value| value.as_str())
             .unwrap_or(WRITER_TITLE_DEFAULT);
         let istart: i32 = frame
             .meta_ref()
             .get("timestep")
-            .and_then(|s| s.parse().ok())
+            .and_then(|value| value.as_i32())
             .unwrap_or(0);
         let nset_offset =
             write_header_stub(&mut state.writer, natoms_in_frame, has_box, title, istart)?;

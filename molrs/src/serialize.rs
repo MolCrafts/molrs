@@ -7,7 +7,7 @@
 //!
 //! On-wire shape (the general MolRec model, no privileged fields):
 //!
-//! - `Frame`  -> `{ blocks: { <name>: Block }, meta: { k: v }, box?: SimBox }`
+//! - `Frame`  -> `{ version: 2, blocks: { <name>: Block }, meta: { k: {dtype,value} }, box?: SimBox }`
 //! - `Block`  -> `{ shape: [usize], columns: { <name>: Column } }`
 //! - `Column` -> `{ dtype, shape: [usize], data }` — `data` is raw
 //!   little-endian bytes for numeric dtypes, or a string list for `string`.
@@ -26,7 +26,23 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::core::spatial::region::simbox::SimBox;
 use crate::core::store::block::{Block, Column, DType};
-use crate::core::store::frame::Frame;
+use crate::core::store::frame::{FRAME_SCHEMA_VERSION, Frame};
+use crate::core::store::meta::{MetaMap, MetaValue};
+
+// ===== MetaValue ===========================================================
+
+impl Serialize for MetaValue {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.to_json_value().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for MetaValue {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        MetaValue::from_json_value(&value).map_err(de::Error::custom)
+    }
+}
 
 // ===== Column ===============================================================
 
@@ -392,14 +408,12 @@ impl<'de> Deserialize<'de> for SimBox {
 impl Serialize for Frame {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         let has_box = self.simbox.is_some();
-        let mut st = s.serialize_struct("Frame", 2 + has_box as usize)?;
+        let mut st = s.serialize_struct("Frame", 3 + has_box as usize)?;
+        st.serialize_field("version", &FRAME_SCHEMA_VERSION)?;
         let blocks: BTreeMap<&str, &Block> = self.iter().collect();
         st.serialize_field("blocks", &blocks)?;
-        let meta: BTreeMap<&str, &str> = self
-            .meta
-            .iter()
-            .map(|(k, v)| (k.as_str(), v.as_str()))
-            .collect();
+        let meta: BTreeMap<&str, &MetaValue> =
+            self.meta.iter().map(|(k, v)| (k.as_str(), v)).collect();
         st.serialize_field("meta", &meta)?;
         if let Some(sb) = &self.simbox {
             st.serialize_field("box", sb)?;
@@ -410,10 +424,11 @@ impl Serialize for Frame {
 
 #[derive(Deserialize)]
 struct FrameRepr {
+    version: u32,
     #[serde(default)]
     blocks: BTreeMap<String, Block>,
     #[serde(default)]
-    meta: BTreeMap<String, String>,
+    meta: BTreeMap<String, MetaValue>,
     #[serde(default, rename = "box")]
     simbox: Option<SimBox>,
 }
@@ -421,10 +436,17 @@ struct FrameRepr {
 impl<'de> Deserialize<'de> for Frame {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Frame, D::Error> {
         let r = FrameRepr::deserialize(d)?;
+        if r.version != FRAME_SCHEMA_VERSION {
+            return Err(de::Error::custom(format!(
+                "unsupported frame schema version {}; expected {}",
+                r.version, FRAME_SCHEMA_VERSION
+            )));
+        }
         let mut frame = Frame::with_capacity(r.blocks.len());
         for (name, block) in r.blocks {
             frame.insert(name, block);
         }
+        frame.meta = MetaMap::with_capacity(r.meta.len());
         frame.meta.extend(r.meta);
         frame.simbox = r.simbox;
         Ok(frame)

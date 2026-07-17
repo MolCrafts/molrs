@@ -25,7 +25,7 @@
 use std::collections::HashMap;
 
 use super::matrix::BoundsMatrix;
-use super::perceive::{Hybridization, Perceived};
+use super::mol_features::{Hybridization, Perceived};
 use super::uff;
 
 const DIST12_DELTA: f64 = 0.01;

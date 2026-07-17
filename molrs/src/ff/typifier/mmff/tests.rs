@@ -3,7 +3,7 @@
 #[cfg(test)]
 #[allow(clippy::module_inception)]
 mod tests {
-    use crate::ff::typifier::mmff::MMFFTypifier;
+    use crate::ff::typifier::mmff::MMFF94Typifier;
     use molrs::system::molgraph::{Atom, PropValue};
     use molrs::{AtomId, Atomistic};
 
@@ -23,8 +23,8 @@ mod tests {
         }
     }
 
-    fn test_typifier() -> MMFFTypifier {
-        MMFFTypifier::mmff94().expect("load MMFF94")
+    fn test_typifier() -> MMFF94Typifier {
+        MMFF94Typifier::new()
     }
 
     // -----------------------------------------------------------------------
@@ -116,61 +116,26 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Bond type classification tests
+    // Bond / angle / torsion type classification
     // -----------------------------------------------------------------------
-
-    #[test]
-    fn test_bond_type_normal() {
-        let typifier = test_typifier();
-        // Normal single bond between sp3 atoms
-        assert_eq!(typifier.typify_bond(1, 1, 1.0), 0);
-    }
-
-    #[test]
-    fn test_bond_type_aromatic() {
-        let typifier = test_typifier();
-        // Aromatic bond
-        assert_eq!(typifier.typify_bond(37, 37, 1.5), 1);
-    }
-
-    // -----------------------------------------------------------------------
-    // Angle type classification tests
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn test_angle_type_normal() {
-        let typifier = test_typifier();
-        assert_eq!(typifier.typify_angle(0, 0), 0);
-    }
-
-    #[test]
-    fn test_angle_type_one_delocalized() {
-        let typifier = test_typifier();
-        assert_eq!(typifier.typify_angle(1, 0), 1);
-        assert_eq!(typifier.typify_angle(0, 1), 1);
-    }
-
-    #[test]
-    fn test_angle_type_both_delocalized() {
-        let typifier = test_typifier();
-        assert_eq!(typifier.typify_angle(1, 1), 2);
-    }
-
-    // -----------------------------------------------------------------------
-    // Torsion type classification tests
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn test_torsion_type_normal() {
-        let typifier = test_typifier();
-        assert_eq!(typifier.typify_dihedral(0, 0, 0), 0);
-    }
-
-    #[test]
-    fn test_torsion_type_central_delocalized() {
-        let typifier = test_typifier();
-        assert_eq!(typifier.typify_dihedral(0, 1, 0), 1);
-    }
+    //
+    // The seven unit tests that lived here drove `MMFF94Typifier::typify_bond` /
+    // `typify_angle` / `typify_dihedral` — three front-door methods over
+    // `typifier/mmff/classify.rs`, a second implementation of MMFF's context
+    // rules that `ff/mmff/params.rs` already implements correctly. All three are
+    // deleted (`mmff-orthogonal-02`), and so are the tests, because the values
+    // they pinned were WRONG:
+    //
+    //   * `typify_bond(37, 37, 1.5) == 1` — an aromatic bond is bond type **0**.
+    //     `getMMFFBondType` returns 1 only for a bond that is SINGLE and joins two
+    //     sbmb/arom types; after MMFF aromaticity perception a ring bond is
+    //     AROMATIC, never SINGLE. Backwards.
+    //   * `typify_angle(bt_ij, bt_jk)` — the signature cannot express the rule.
+    //     A C-C-C angle in cyclopropane is angle type **3**, and no function of
+    //     two bond types can say so: ring membership is not among its arguments.
+    //
+    // The replacements assert against RDKit's answers, on molecules rather than on
+    // bare integers: `tests/ff/typifier/mmff_labels.rs`.
 
     // -----------------------------------------------------------------------
     // Full frame builder tests
@@ -220,7 +185,7 @@ mod tests {
         let dihedrals = frame.get("dihedrals").expect("dihedrals block");
         assert_eq!(dihedrals.nrows(), Some(9));
 
-        // typify is now pairs-free — `build()` owns the neighbour list.
+        // typify is pairs-free: the neighbour list is the consumer's to build.
         assert!(!frame.contains_key("pairs"));
     }
 }

@@ -42,6 +42,18 @@ repos:
         types: [rust]
         stages: [pre-commit, pre-push]
 
+      # rustdoc is a THIRD gate, not a subset of the two above: a broken
+      # intra-doc link (or a public doc linking to a private item) passes fmt,
+      # clippy AND check, and is only caught here. One shipped that way and was
+      # found out-of-band; this hook closes that hole.
+      - id: cargo-doc
+        name: cargo doc --all-features (-D warnings)
+        entry: env RUSTDOCFLAGS=-Dwarnings cargo doc --no-deps -p molcrafts-molrs --all-features
+        language: system
+        pass_filenames: false
+        types: [rust]
+        stages: [pre-commit, pre-push]
+
       # ─── ci-rust.yml::test (Fetch test data) ──────────────────────────────
       # CI's test job clones MolCrafts/tests-data before running --tests. The
       # pre-push gate must too, or the data-dependent integration tests below
@@ -89,7 +101,7 @@ repos:
       # ─── ci-wasm.yml ──────────────────────────────────────────────────────
       - id: wasm-pack-build
         name: wasm-pack build (molrs-wasm)
-        entry: bash -c 'cd molrs-wasm && wasm-pack build --target web'
+        entry: bash -c 'cd molrs-wasm && wasm-pack build --release --target bundler --scope molcrafts --out-name molrs'
         language: system
         pass_filenames: false
         types: [rust]

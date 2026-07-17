@@ -24,10 +24,10 @@ use std::collections::HashMap;
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 
-use molrs::chem::aromaticity::perceive_aromaticity as core_perceive_aromaticity;
-use molrs::chem::smarts::{MatchOptions, Reaction, SmartsPattern};
-use molrs::system::atomistic::Atomistic;
-use molrs::system::coarsegrain::CoarseGrain;
+use molrs::perceive::aromaticity::perceive_aromaticity as core_perceive_aromaticity;
+use molrs::perceive::smarts::{MatchOptions, Reaction, SmartsPattern};
+use molrs::system::atomistic::{Atomistic, ExtractedAtomistic};
+use molrs::system::coarsegrain::{CoarseGrain, ExtractedCoarseGrain};
 use molrs::system::entity_table::Cell;
 use molrs::system::molgraph::{
     KindId, MolGraph, NodeId, PropValue, node_from_u64, node_to_u64, relation_from_u64,
@@ -368,6 +368,110 @@ macro_rules! graph_world_impl {
 }
 
 // ---------------------------------------------------------------------------
+// ExtractedSubgraph — result of radius-ball extraction
+// ---------------------------------------------------------------------------
+
+/// Result of :meth:`Atomistic.extract_subgraph` / :meth:`CoarseGrain.extract_subgraph`.
+///
+/// * ``graph`` — the extracted leaf (``Atomistic`` or ``CoarseGrain``)
+/// * ``boundary`` — parent handles with a neighbor outside the ball
+/// * ``parent_of`` — ``{new_handle: parent_handle}``
+/// * ``hops`` — ``{parent_handle: hops_from_nearest_center}``
+/// * ``node_map`` — ``{parent_handle: new_handle}``
+#[pyclass(name = "ExtractedSubgraph", skip_from_py_object)]
+pub struct PyExtractedSubgraph {
+    graph: Py<PyAny>,
+    boundary: Vec<u64>,
+    parent_of: HashMap<u64, u64>,
+    hops: HashMap<u64, i64>,
+    node_map: HashMap<u64, u64>,
+}
+
+#[pymethods]
+impl PyExtractedSubgraph {
+    #[getter]
+    fn graph(&self, py: Python<'_>) -> Py<PyAny> {
+        self.graph.clone_ref(py)
+    }
+
+    #[getter]
+    fn boundary(&self) -> Vec<u64> {
+        self.boundary.clone()
+    }
+
+    #[getter]
+    fn parent_of(&self) -> HashMap<u64, u64> {
+        self.parent_of.clone()
+    }
+
+    #[getter]
+    fn hops(&self) -> HashMap<u64, i64> {
+        self.hops.clone()
+    }
+
+    #[getter]
+    fn node_map(&self) -> HashMap<u64, u64> {
+        self.node_map.clone()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "ExtractedSubgraph(n_boundary={}, n_nodes_mapped={})",
+            self.boundary.len(),
+            self.node_map.len()
+        )
+    }
+}
+
+impl PyExtractedSubgraph {
+    fn from_atomistic(py: Python<'_>, ext: ExtractedAtomistic) -> PyResult<Self> {
+        let graph = PyAtomistic::from_core(py, ext.graph)?.into_any();
+        Ok(Self {
+            graph,
+            boundary: ext.boundary.into_iter().map(node_to_u64).collect(),
+            parent_of: ext
+                .parent_of
+                .into_iter()
+                .map(|(k, v)| (node_to_u64(k), node_to_u64(v)))
+                .collect(),
+            hops: ext
+                .hops
+                .into_iter()
+                .map(|(k, v)| (node_to_u64(k), v))
+                .collect(),
+            node_map: ext
+                .node_map
+                .into_iter()
+                .map(|(k, v)| (node_to_u64(k), node_to_u64(v)))
+                .collect(),
+        })
+    }
+
+    fn from_coarsegrain(py: Python<'_>, ext: ExtractedCoarseGrain) -> PyResult<Self> {
+        let graph = PyCoarseGrain::from_core(py, ext.graph)?.into_any();
+        Ok(Self {
+            graph,
+            boundary: ext.boundary.into_iter().map(node_to_u64).collect(),
+            parent_of: ext
+                .parent_of
+                .into_iter()
+                .map(|(k, v)| (node_to_u64(k), node_to_u64(v)))
+                .collect(),
+            hops: ext
+                .hops
+                .into_iter()
+                .map(|(k, v)| (node_to_u64(k), v))
+                .collect(),
+            node_map: ext
+                .node_map
+                .into_iter()
+                .map(|(k, v)| (node_to_u64(k), node_to_u64(v)))
+                .collect(),
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
 // PyGraph — the generic world
 // ---------------------------------------------------------------------------
 
@@ -496,7 +600,7 @@ impl PyAtomistic {
     /// Perceive angle and dihedral relations from the bond graph.
     ///
     /// Angles are 2-edge paths ``i-j-k`` and proper dihedrals 3-edge paths
-    /// ``i-j-k-l`` over the bonds (graph-theory via the petgraph-backed
+    /// ``i-j-k-l`` over the bonds (graph-theory via the native `Topology`-backed
     /// ``Topology``). Idempotent; ``clear_existing`` wipes existing
     /// angle/dihedral relations first. Returns ``(n_angles_added,
     /// n_dihedrals_added)``.
@@ -573,9 +677,75 @@ impl PyAtomistic {
             .map_err(molrs_error_to_pyerr)
     }
 
-    /// Return an independent deep copy of this `Atomistic` (handles preserved).
+    /// Return an independent deep copy of this `Atomistic`.
+    ///
+    /// **Handles are preserved** (same generational keys as in ``self``).
     fn copy(&self, py: Python<'_>) -> PyResult<Py<PyAtomistic>> {
         PyAtomistic::from_core(py, self.inner.clone())
+    }
+
+    /// Structural merge of ``other`` into ``self``.
+    ///
+    /// Consumes ``other``'s storage (``other`` is left empty). Every node handle
+    /// from ``other`` is remapped; returns ``{old_handle: new_handle}``.
+    fn merge(&mut self, other: &mut Self) -> HashMap<u64, u64> {
+        let taken = std::mem::take(&mut other.inner);
+        self.inner
+            .merge(taken)
+            .into_iter()
+            .map(|(k, v)| (node_to_u64(k), node_to_u64(v)))
+            .collect()
+    }
+
+    /// Build ``n`` native copies in one graph. The source is unchanged.
+    fn replicate(&self, py: Python<'_>, n: usize) -> PyResult<Py<PyAtomistic>> {
+        let mut output = Atomistic::new();
+        for _ in 0..n {
+            output.merge(self.inner.clone());
+        }
+        PyAtomistic::from_core(py, output)
+    }
+
+    /// Induced subgraph on an explicit list of atom handles.
+    ///
+    /// Returns ``(subgraph, {parent_handle: new_handle})``. Stale handles raise.
+    fn induced_subgraph(
+        &self,
+        py: Python<'_>,
+        nodes: Vec<u64>,
+    ) -> PyResult<(Py<PyAtomistic>, HashMap<u64, u64>)> {
+        let ids: Vec<_> = nodes.into_iter().map(node_from_u64).collect();
+        let (sub, map) = self
+            .inner
+            .induced_subgraph(&ids)
+            .map_err(molrs_error_to_pyerr)?;
+        let py_sub = PyAtomistic::from_core(py, sub)?;
+        let py_map = map
+            .into_iter()
+            .map(|(k, v)| (node_to_u64(k), node_to_u64(v)))
+            .collect();
+        Ok((py_sub, py_map))
+    }
+
+    /// Radius ball around ``centers`` over the bond graph.
+    ///
+    /// When ``regenerate_topology`` is true, only bonds are copied and
+    /// angles/dihedrals are perceived on the ball. When false, higher-order
+    /// terms fully inside the ball are copied from the parent.
+    #[pyo3(signature = (centers, radius, *, regenerate_topology=false))]
+    fn extract_subgraph(
+        &self,
+        py: Python<'_>,
+        centers: Vec<u64>,
+        radius: i64,
+        regenerate_topology: bool,
+    ) -> PyResult<PyExtractedSubgraph> {
+        let ids: Vec<_> = centers.into_iter().map(node_from_u64).collect();
+        let ext = self
+            .inner
+            .extract_subgraph(&ids, radius, regenerate_topology)
+            .map_err(molrs_error_to_pyerr)?;
+        PyExtractedSubgraph::from_atomistic(py, ext)
     }
 
     // ---- structural graph hash (WL) ----
@@ -610,15 +780,28 @@ graph_world_impl!(PyAtomistic);
 impl PyAtomistic {
     /// Wrap an existing core [`Atomistic`] as a Python `Atomistic` object.
     pub(crate) fn from_core(py: Python<'_>, inner: Atomistic) -> PyResult<Py<PyAtomistic>> {
-        Py::new(
-            py,
-            (
-                PyAtomistic { inner },
-                PyGraph {
-                    inner: MolGraph::new(),
-                },
-            ),
-        )
+        let public = py.import("molrs")?.getattr("Atomistic")?;
+        let native = py.get_type::<PyAtomistic>();
+        if public.is(&native) {
+            return Py::new(
+                py,
+                (
+                    PyAtomistic { inner },
+                    PyGraph {
+                        inner: MolGraph::new(),
+                    },
+                ),
+            );
+        }
+
+        // The package shadows the native leaf with a Python subclass that adds
+        // live handle views.  Construct that canonical public type so graph-out
+        // APIs (perception, typifiers, copy/from_frame, SMILES) do not silently
+        // drop the Python layer.  It remains a PyAtomistic and is accepted by all
+        // native consumers without conversion.
+        let object: Py<PyAtomistic> = public.call0()?.extract()?;
+        object.borrow_mut(py).inner = inner;
+        Ok(object)
     }
 
     /// Borrow the held core [`Atomistic`] (for domain consumers like the
@@ -906,6 +1089,81 @@ impl PyReaction {
             .map_err(molrs_error_to_pyerr)
     }
 
+    /// Compile every binding against the intact graph, then apply the disjoint
+    /// transforms as one batch. Leaving groups are deleted with one relation
+    /// scan, and one touched-handle list is returned per binding.
+    #[pyo3(signature = (mol, bindings, labels=None, refresh=true))]
+    fn apply_many(
+        &self,
+        mol: &mut PyAtomistic,
+        bindings: Vec<HashMap<u32, u64>>,
+        labels: Option<HashMap<u64, String>>,
+        refresh: bool,
+    ) -> PyResult<Vec<Vec<u64>>> {
+        let resolved: Vec<HashMap<u32, NodeId>> = bindings
+            .into_iter()
+            .map(|binding| {
+                binding
+                    .into_iter()
+                    .map(|(k, v)| (k, node_from_u64(v)))
+                    .collect()
+            })
+            .collect();
+        let core_labels: HashMap<NodeId, String> = labels
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(h, l)| (node_from_u64(h), l))
+            .collect();
+        self.inner
+            .apply_many(mol.core_mut(), &resolved, &core_labels, refresh)
+            .map(|sets| {
+                sets.into_iter()
+                    .map(|touched| touched.into_iter().map(node_to_u64).collect())
+                    .collect()
+            })
+            .map_err(molrs_error_to_pyerr)
+    }
+
+    /// ``apply_many`` plus RHS-created handles in product creation order.
+    ///
+    /// The second list is intentionally not reconstructed by sorting handles:
+    /// batch deletion may reuse graph slots in an order unrelated to product
+    /// atom order.
+    #[pyo3(signature = (mol, bindings, labels=None, refresh=true))]
+    fn apply_many_detailed(
+        &self,
+        mol: &mut PyAtomistic,
+        bindings: Vec<HashMap<u32, u64>>,
+        labels: Option<HashMap<u64, String>>,
+        refresh: bool,
+    ) -> PyResult<(Vec<Vec<u64>>, Vec<Vec<u64>>)> {
+        let resolved: Vec<HashMap<u32, NodeId>> = bindings
+            .into_iter()
+            .map(|binding| {
+                binding
+                    .into_iter()
+                    .map(|(k, v)| (k, node_from_u64(v)))
+                    .collect()
+            })
+            .collect();
+        let core_labels: HashMap<NodeId, String> = labels
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(h, l)| (node_from_u64(h), l))
+            .collect();
+        self.inner
+            .apply_many_detailed(mol.core_mut(), &resolved, &core_labels, refresh)
+            .map(|(touched_sets, created_sets)| {
+                let handles = |sets: Vec<Vec<NodeId>>| {
+                    sets.into_iter()
+                        .map(|set| set.into_iter().map(node_to_u64).collect())
+                        .collect()
+                };
+                (handles(touched_sets), handles(created_sets))
+            })
+            .map_err(molrs_error_to_pyerr)
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "Reaction(reactants={}, forming_bonds={:?})",
@@ -1030,21 +1288,89 @@ impl PyCoarseGrain {
     fn is_isomorphic(&self, other: &PyCoarseGrain) -> bool {
         self.inner.is_isomorphic(&other.inner)
     }
+
+    /// Independent deep copy. **Handles are preserved**.
+    fn copy(&self, py: Python<'_>) -> PyResult<Py<PyCoarseGrain>> {
+        PyCoarseGrain::from_core(py, self.inner.clone())
+    }
+
+    /// Structural merge of ``other`` into ``self``; ``other`` is emptied.
+    /// Returns ``{old_handle: new_handle}``.
+    fn merge(&mut self, other: &mut Self) -> HashMap<u64, u64> {
+        let taken = std::mem::take(&mut other.inner);
+        self.inner
+            .merge(taken)
+            .into_iter()
+            .map(|(k, v)| (node_to_u64(k), node_to_u64(v)))
+            .collect()
+    }
+
+    /// Build ``n`` native copies in one coarse-grained graph.
+    fn replicate(&self, py: Python<'_>, n: usize) -> PyResult<Py<PyCoarseGrain>> {
+        let mut output = CoarseGrain::new();
+        for _ in 0..n {
+            output.merge(self.inner.clone());
+        }
+        PyCoarseGrain::from_core(py, output)
+    }
+
+    /// Induced subgraph on bead handles. Returns ``(subgraph, node_map)``.
+    fn induced_subgraph(
+        &self,
+        py: Python<'_>,
+        nodes: Vec<u64>,
+    ) -> PyResult<(Py<PyCoarseGrain>, HashMap<u64, u64>)> {
+        let ids: Vec<_> = nodes.into_iter().map(node_from_u64).collect();
+        let (sub, map) = self
+            .inner
+            .induced_subgraph(&ids)
+            .map_err(molrs_error_to_pyerr)?;
+        let py_sub = PyCoarseGrain::from_core(py, sub)?;
+        let py_map = map
+            .into_iter()
+            .map(|(k, v)| (node_to_u64(k), node_to_u64(v)))
+            .collect();
+        Ok((py_sub, py_map))
+    }
+
+    /// Radius ball around bead ``centers`` over CG bonds.
+    #[pyo3(signature = (centers, radius))]
+    fn extract_subgraph(
+        &self,
+        py: Python<'_>,
+        centers: Vec<u64>,
+        radius: i64,
+    ) -> PyResult<PyExtractedSubgraph> {
+        let ids: Vec<_> = centers.into_iter().map(node_from_u64).collect();
+        let ext = self
+            .inner
+            .extract_subgraph(&ids, radius)
+            .map_err(molrs_error_to_pyerr)?;
+        PyExtractedSubgraph::from_coarsegrain(py, ext)
+    }
 }
 graph_world_impl!(PyCoarseGrain);
 
 impl PyCoarseGrain {
     /// Wrap an existing core [`CoarseGrain`] as a Python `CoarseGrain` object.
     pub(crate) fn from_core(py: Python<'_>, inner: CoarseGrain) -> PyResult<Py<PyCoarseGrain>> {
-        Py::new(
-            py,
-            (
-                PyCoarseGrain { inner },
-                PyGraph {
-                    inner: MolGraph::new(),
-                },
-            ),
-        )
+        let public = py.import("molrs")?.getattr("CoarseGrain")?;
+        let native = py.get_type::<PyCoarseGrain>();
+        if public.is(&native) {
+            return Py::new(
+                py,
+                (
+                    PyCoarseGrain { inner },
+                    PyGraph {
+                        inner: MolGraph::new(),
+                    },
+                ),
+            );
+        }
+
+        let object: Py<PyCoarseGrain> = public.call0()?.extract()?;
+        object.borrow_mut(py).inner = inner;
+        Ok(object)
     }
 }
 
@@ -1106,6 +1432,22 @@ pub fn scale(mol: &Bound<'_, PyAny>, factor: [f64; 3], about: Option<[f64; 3]>) 
     with_world_mut(mol, |g| molrs::spatial::geometry::scale(g, factor, about))
 }
 
+/// Rigidly align an optional direction at ``from`` and translate it to ``to``.
+#[pyfunction]
+#[pyo3(signature = (mol, from_, to, from_dir=None, to_dir=None, flip=false))]
+pub fn align_direction(
+    mol: &Bound<'_, PyAny>,
+    from_: [f64; 3],
+    to: [f64; 3],
+    from_dir: Option<[f64; 3]>,
+    to_dir: Option<[f64; 3]>,
+    flip: bool,
+) -> PyResult<()> {
+    with_world_mut(mol, |graph| {
+        molrs::spatial::geometry::align_direction(graph, from_, to, from_dir, to_dir, flip)
+    })
+}
+
 /// Perceive aromaticity in place; returns the number of aromatic atoms found.
 /// A chemistry system — operates on an `Atomistic` leaf.
 #[pyfunction]
@@ -1116,7 +1458,7 @@ pub fn perceive_aromaticity(mol: &Bound<'_, PyAtomistic>) -> usize {
 /// Add explicit hydrogens, returning a **new** `Atomistic` (chemistry system).
 #[pyfunction]
 pub fn add_hydrogens(py: Python<'_>, mol: &Bound<'_, PyAtomistic>) -> PyResult<Py<PyAtomistic>> {
-    let out = molrs::chem::hydrogens::add_hydrogens(mol.borrow().core());
+    let out = molrs::perceive::hydrogens::add_hydrogens(mol.borrow().core());
     PyAtomistic::from_core(py, out)
 }
 
@@ -1125,24 +1467,36 @@ pub fn add_hydrogens(py: Python<'_>, mol: &Bound<'_, PyAtomistic>) -> PyResult<P
 #[pyfunction]
 pub fn find_rings(mol: &Bound<'_, PyAtomistic>) -> Vec<Vec<u64>> {
     let leaf = mol.borrow();
-    molrs::chem::rings::find_rings(leaf.core())
+    molrs::perceive::rings::find_rings(leaf.core())
         .rings()
         .iter()
         .map(|ring| ring.iter().map(|&a| node_to_u64(a)).collect())
         .collect()
 }
 
-/// Compute Gasteiger partial charges; returns `(atom_handle, charge, h_charge)`
-/// per heavy atom. A chemistry system — operates on an `Atomistic` leaf.
+/// Compute Gasteiger/PEOE partial charges; returns `(atom_handle, charge)` for
+/// **every** atom, hydrogens included. A chemistry system — operates on an
+/// `Atomistic` leaf.
+///
+/// Delegates to molrs's one Gasteiger, `ff::charge::GasteigerModel`
+/// (`antechamber -c gas`). Three things changed with it, all of them things the
+/// previous RDKit-port signature promised and this model does not have:
+///
+/// * **no `n_iter`** — the loop runs to convergence (antechamber's `CONVERG` 1e-5,
+///   `GASMAXITER` 500). A sweep count is not a knob; the damping is geometric, so
+///   where the loop stops IS the answer, and the old default of 6 stops 0.0131 e
+///   short on methylammonium.
+/// * **no `h_charge`** — hydrogens are atoms, with their own charge and their own
+///   entry. The model has no notion of an implicit hydrogen.
+/// * **it can fail** — an atom `ATOMTYPE_GAS.DEF` cannot type has no charge, and
+///   raises, rather than silently taking a fallback of zero.
 #[pyfunction]
-#[pyo3(signature = (mol, n_iter=6))]
-pub fn compute_gasteiger_charges(
-    mol: &Bound<'_, PyAtomistic>,
-    n_iter: usize,
-) -> Vec<(u64, f64, f64)> {
+pub fn compute_gasteiger_charges(mol: &Bound<'_, PyAtomistic>) -> PyResult<Vec<(u64, f64)>> {
     let leaf = mol.borrow();
-    molrs::chem::gasteiger::compute_gasteiger_charges(leaf.core(), n_iter)
+    let charges = molrs::compute_gasteiger_charges(leaf.core())
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+    Ok(charges
         .into_iter()
-        .map(|(id, gc)| (node_to_u64(id), gc.charge, gc.h_charge))
-        .collect()
+        .map(|(id, q)| (node_to_u64(id), q))
+        .collect())
 }

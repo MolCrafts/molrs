@@ -128,13 +128,15 @@ with the graph. Coordinates are then extracted from the frame as a flat `3N`
 array.
 
 ```python
-typifier = molrs.MMFFTypifier()
+typifier = molrs.MMFF94Typifier()
 typed = typifier.typify(mol3d)
 typed_frame = typed.to_frame()
 print("typed blocks:", typed_frame.keys())
 
 try:
-    potentials = typifier.build(mol3d)
+    # The neighbour list is the consumer's to build, so it is an explicit step.
+    typed_frame["pairs"] = molrs.intramolecular_pairs(typed_frame)
+    potentials = typifier.forcefield().to_potentials(typed_frame)
     coords = molrs.extract_coords(typed_frame)
 
     energy, forces = potentials.eval(coords)
@@ -183,4 +185,4 @@ This quickstart crossed the main molrs boundaries:
 - `to_frame` produced the columnar representation used by I/O and analysis.
 - `Box` supplied the boundary model for neighbor search.
 - `RDF` consumed an explicit neighbor list.
-- `MMFFTypifier` compiled potentials for energy and force evaluation.
+- `MMFF94Typifier` compiled potentials for energy and force evaluation.

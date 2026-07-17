@@ -29,9 +29,11 @@ use crate::io::store::zarr::frame_io::{join_path, read_system};
 #[cfg(feature = "filesystem")]
 use crate::io::store::zarr::frame_io::{join_path, read_system, write_system};
 use molrs::MolRsError;
-use molrs::store::frame::Frame;
+use molrs::store::frame::{FRAME_SCHEMA_VERSION, Frame};
 use molrs::store::trajectory::Trajectory;
 use molrs::types::F;
+
+const ZARR_TRAJECTORY_VERSION: u64 = FRAME_SCHEMA_VERSION as u64;
 
 /// Internal Zarr v3 backend for a stored frame sequence.
 pub(crate) struct TrajectoryZarrBackend {
@@ -71,7 +73,7 @@ impl TrajectoryZarrBackend {
 
         let mut attrs = serde_json::Map::new();
         attrs.insert("molrs_format".into(), "frames".into());
-        attrs.insert("version".into(), 2.into());
+        attrs.insert("version".into(), ZARR_TRAJECTORY_VERSION.into());
         attrs.insert(
             "frame_count".into(),
             (trajectory.frames.len() as u64).into(),
@@ -127,6 +129,16 @@ impl TrajectoryZarrBackend {
             return Err(MolRsError::zarr(format!(
                 "expected frames zarr v3 store, found '{}'",
                 format
+            )));
+        }
+        let version = root
+            .attributes()
+            .get("version")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| MolRsError::zarr("missing frames Zarr version"))?;
+        if version != ZARR_TRAJECTORY_VERSION {
+            return Err(MolRsError::zarr(format!(
+                "unsupported frames Zarr version {version}; expected {ZARR_TRAJECTORY_VERSION}"
             )));
         }
         Ok(Self {
@@ -303,13 +315,70 @@ mod tests {
         let path = dir.path().join("record.zarr");
 
         let mut frame = Frame::new();
-        frame.meta.insert("key".into(), "value".into());
+        frame.meta.insert("key", "value");
+        frame.meta.insert("tag", 9_007_199_254_740_993_i64);
+        frame
+            .meta
+            .insert("stress", [1.0_f64, 2.0, 3.0, 4.0, 5.0, 6.0]);
 
         let traj = Trajectory::from_frames(vec![frame]);
 
         write_trajectory_file(&path, &traj).unwrap();
         let loaded = read_trajectory_file(&path).unwrap();
         assert_eq!(loaded.frames.len(), 1);
-        assert_eq!(loaded.frames[0].meta.get("key").unwrap(), "value");
+        assert_eq!(
+            loaded.frames[0].meta.get("key").unwrap().as_str(),
+            Some("value")
+        );
+        assert_eq!(
+            loaded.frames[0].meta.get("tag").unwrap().as_i64(),
+            Some(9_007_199_254_740_993)
+        );
+        assert_eq!(
+            loaded.frames[0].meta.get("stress"),
+            Some(&molrs::MetaValue::F64x6([1.0, 2.0, 3.0, 4.0, 5.0, 6.0]))
+        );
+    }
+
+    #[test]
+    fn every_noncurrent_zarr_version_is_rejected() {
+        for version in [None, Some(3_u64), Some(99_u64)] {
+            let dir = tempdir().unwrap();
+            let path = dir.path().join("record.zarr");
+            write_trajectory_file(&path, &Trajectory::from_frames(vec![Frame::new()])).unwrap();
+
+            let metadata_path = path.join("zarr.json");
+            let mut metadata: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&metadata_path).unwrap()).unwrap();
+            match version {
+                Some(version) => metadata["attributes"]["version"] = version.into(),
+                None => {
+                    metadata["attributes"]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("version");
+                }
+            }
+            std::fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+
+            assert!(
+                read_trajectory_file(&path).is_err(),
+                "accepted version {version:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn noncurrent_per_frame_schema_is_rejected() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("record.zarr");
+        write_trajectory_file(&path, &Trajectory::from_frames(vec![Frame::new()])).unwrap();
+        let metadata_path = path.join("frames/0/zarr.json");
+        let mut metadata: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&metadata_path).unwrap()).unwrap();
+        // Deliberately corrupt the per-frame schema; every value except 2 is invalid.
+        metadata["attributes"]["frame_schema_version"] = 99.into();
+        std::fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+        assert!(read_trajectory_file(&path).is_err());
     }
 }

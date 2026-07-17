@@ -330,9 +330,9 @@ fn parse_frame_at<R: BufRead + Seek>(r: &mut R, offset: u64) -> Result<Frame> {
     let mut frame = Frame::new();
     frame.insert("atoms", atoms);
     frame.simbox = simbox;
-    frame.meta.insert("step".into(), hdr.step.to_string());
-    frame.meta.insert("time".into(), hdr.t.to_string());
-    frame.meta.insert("lambda".into(), hdr.lambda.to_string());
+    frame.meta.insert("step", hdr.step);
+    frame.meta.insert("time", hdr.t);
+    frame.meta.insert("lambda", hdr.lambda);
     Ok(frame)
 }
 
@@ -478,11 +478,17 @@ fn write_trr_frame<W: Write, FA: FrameAccess>(w: &mut W, frame: &FA) -> Result<(
     let has_box = frame.simbox_ref().is_some();
 
     let meta = frame.meta_ref();
-    let step: i32 = meta.get("step").and_then(|s| s.parse().ok()).unwrap_or(0);
-    let time: f32 = meta.get("time").and_then(|s| s.parse().ok()).unwrap_or(0.0);
+    let step = meta
+        .get("step")
+        .and_then(|value| value.as_i32())
+        .unwrap_or(0);
+    let time = meta
+        .get("time")
+        .and_then(|value| value.as_f32())
+        .unwrap_or(0.0);
     let lambda: f32 = meta
         .get("lambda")
-        .and_then(|s| s.parse().ok())
+        .and_then(|value| value.as_f32())
         .unwrap_or(0.0);
 
     const RSIZE: usize = 4; // single precision

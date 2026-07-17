@@ -46,7 +46,29 @@ extern crate self as molrs;
 // root, so `molrs::Frame`, `molrs::system::…`, `molrs::error::…` resolve exactly
 // as they did when core was a separate crate.
 pub mod core;
+pub use crate::core::system::element::Element;
 pub use crate::core::*;
+
+// Chemical perception: one layer above `core`, below `ff` / `io` / `conformer`.
+// Always compiled — every consumer configuration already compiled these modules
+// when they lived inside `core`, so keeping them unconditional reproduces the
+// existing build graph exactly (feature-gating them would be a behaviour change,
+// not a refactor). `optimize` above is the same shape: always on, no feature.
+pub mod perceive;
+
+// The crate-root surface that this layer used to publish via `pub use core::*`.
+// It moves here verbatim, retargeted at `perceive`, so `molrs::find_rings`,
+// `molrs::SmartsPattern`, `molrs::add_hydrogens`, … keep resolving. Deleting it
+// would silently break 13 call sites — four of them in `ff/`, two of those only
+// visible under `clippy -D warnings` as broken intra-doc links.
+pub use crate::perceive::aromaticity::perceive_aromaticity;
+pub use crate::perceive::hydrogens::{add_hydrogens, implicit_h_count, remove_hydrogens};
+pub use crate::perceive::rings::{RingInfo, find_rings};
+pub use crate::perceive::smarts::{MatchOptions, Reaction, SmartsMatch, SmartsPattern};
+pub use crate::perceive::stereo::{
+    BondStereo, TetrahedralStereo, assign_bond_stereo_from_3d, assign_stereo_from_3d,
+    chiral_volume, find_chiral_centers,
+};
 
 #[cfg(feature = "io")]
 pub mod io;
@@ -61,6 +83,16 @@ pub mod optimize;
 
 #[cfg(feature = "ff")]
 pub mod ff;
+
+/// Gasteiger/PEOE partial charges, at the crate root — `molrs::compute_gasteiger_charges`.
+///
+/// The name predates the charge models and the binders still reach for it here, so it
+/// keeps resolving; it is a re-export of the **one** Gasteiger in the tree
+/// ([`ff::charge::GasteigerModel`], `antechamber -c gas`), not a second one. It moved
+/// out of `perceive` because a charge model belongs with the charge models, which is
+/// also why it is now gated on `ff` — the layer that owns `GASPARM.DAT`.
+#[cfg(feature = "ff")]
+pub use crate::ff::charge::compute_gasteiger_charges;
 
 #[cfg(feature = "conformer")]
 pub mod conformer;

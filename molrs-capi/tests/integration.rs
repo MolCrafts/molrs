@@ -280,19 +280,54 @@ fn test_frame_simbox_association() {
 fn test_frame_metadata() {
     let _g = TEST_LOCK.lock().unwrap();
 
+    assert_eq!(molrs_frame_schema_version(), 2);
     let mut frame = MolrsFrameHandle { idx: 0, version: 0 };
     assert_ok(unsafe { molrs_frame_new(&mut frame) });
 
     let key = CString::new("source").unwrap();
     let val = CString::new("test.pdb").unwrap();
-    assert_ok(unsafe { molrs_frame_set_meta(frame, key.as_ptr(), val.as_ptr()) });
+    let value = MolrsMetaValue {
+        dtype: MolrsMetaType::String,
+        string_value: val.as_ptr().cast_mut(),
+        ..Default::default()
+    };
+    assert_ok(unsafe { molrs_frame_put_meta(frame, key.as_ptr(), &value) });
 
-    let mut out: *mut std::ffi::c_char = std::ptr::null_mut();
-    assert_ok(unsafe { molrs_frame_get_meta(frame, key.as_ptr(), &mut out) });
-    assert!(!out.is_null());
-    let result = unsafe { std::ffi::CStr::from_ptr(out) };
+    let mut out = MolrsMetaValue::default();
+    assert_ok(unsafe { molrs_frame_read_meta(frame, key.as_ptr(), &mut out) });
+    assert_eq!(out.dtype, MolrsMetaType::String);
+    assert!(!out.string_value.is_null());
+    let result = unsafe { std::ffi::CStr::from_ptr(out.string_value) };
     assert_eq!(result.to_str().unwrap(), "test.pdb");
-    unsafe { molrs_free_string(out) };
+    unsafe { molrs_free_string(out.string_value) };
+
+    let tag_key = CString::new("tag").unwrap();
+    let tag = MolrsMetaValue {
+        dtype: MolrsMetaType::I64,
+        i64_value: 9_007_199_254_740_993,
+        ..Default::default()
+    };
+    assert_ok(unsafe { molrs_frame_put_meta(frame, tag_key.as_ptr(), &tag) });
+    let mut tag_out = MolrsMetaValue::default();
+    assert_ok(unsafe { molrs_frame_read_meta(frame, tag_key.as_ptr(), &mut tag_out) });
+    assert_eq!(tag_out.dtype, MolrsMetaType::I64);
+    assert_eq!(tag_out.i64_value, 9_007_199_254_740_993);
+
+    let stress_key = CString::new("stress").unwrap();
+    let mut stress = MolrsMetaValue {
+        dtype: MolrsMetaType::F64x6,
+        ..Default::default()
+    };
+    stress.f64x9[..6].copy_from_slice(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+    assert_ok(unsafe { molrs_frame_put_meta(frame, stress_key.as_ptr(), &stress) });
+    let mut stress_out = MolrsMetaValue::default();
+    assert_ok(unsafe { molrs_frame_read_meta(frame, stress_key.as_ptr(), &mut stress_out) });
+    assert_eq!(stress_out.dtype, MolrsMetaType::F64x6);
+    assert_eq!(&stress_out.f64x9[..6], &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+
+    let mut count = 0;
+    assert_ok(unsafe { molrs_frame_meta_count(frame, &mut count) });
+    assert_eq!(count, 3);
 
     unsafe { molrs_frame_drop(frame) };
 }

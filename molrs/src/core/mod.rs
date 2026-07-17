@@ -6,7 +6,6 @@
 //!
 //! - [`store`] — columnar data containers (`Block`, `Frame`, `Trajectory`, keys)
 //! - [`system`] — molecular representations (`Atomistic`, `MolGraph`, `Topology`, elements)
-//! - [`chem`] — chemical perception (aromaticity, charges, rings, stereo, SMARTS)
 //! - [`spatial`] — regions, neighbor lists, geometry
 //! - [`math`], [`units`] — numerical and unit-system foundations
 //!
@@ -34,11 +33,12 @@
 #![allow(missing_docs)]
 #![warn(rustdoc::missing_crate_level_docs)]
 
-// Embedded data files
-pub mod data;
+// There is no `data` module: molrs embeds no parameter text. Every force-field
+// table is typed, compiled Rust under `ff::params` — MMFF94/94s and OPLS-AA
+// included, since `chem-perceive-14` — so nothing here `include_str!`s an XML to
+// re-parse at runtime.
 
 // Domain groups
-pub mod chem;
 pub mod spatial;
 pub mod store;
 pub mod system;
@@ -49,27 +49,27 @@ pub mod math;
 pub mod types;
 pub mod units;
 
+// NOTE: chemical perception (rings, aromaticity, hydrogens, stereo, rotatable,
+// Gasteiger, SMARTS) used to live here as `core::chem`. It now sits one layer up
+// in `crate::perceive` — above `core`, below `ff`. Its crate-root re-exports moved
+// with it to `lib.rs`, so `molrs::find_rings`, `molrs::SmartsPattern`, … still
+// resolve unchanged.
+
 // Public re-exports for common types
-pub use chem::aromaticity::perceive_aromaticity;
-pub use chem::gasteiger::{GasteigerCharges, compute_gasteiger_charges};
-pub use chem::hydrogens::{add_hydrogens, implicit_h_count, remove_hydrogens};
-pub use chem::rings::{RingInfo, find_rings};
-pub use chem::smarts::{MatchOptions, Reaction, SmartsMatch, SmartsPattern};
-pub use chem::stereo::{
-    BondStereo, TetrahedralStereo, assign_bond_stereo_from_3d, assign_stereo_from_3d,
-    chiral_volume, find_chiral_centers,
-};
 pub use error::MolRsError;
 pub use store::block::Block;
 pub use store::frame::Frame;
 pub use store::frame_access::FrameAccess;
 pub use store::frame_view::FrameView;
+pub use store::meta::{MetaMap, MetaValue};
 pub use store::trajectory::{
     ObservableData, ObservableKind, ObservableRecord, SchemaValue, Trajectory,
 };
-pub use system::atomistic::{AngleId, AtomId, Atomistic, Bond, BondId, DihedralId, ImproperId};
-pub use system::coarsegrain::CoarseGrain;
-pub use system::element::Element;
+pub use system::atomistic::{
+    AngleId, AtomId, Atomistic, Bond, BondId, DihedralId, ExtractedAtomistic, ImproperId,
+};
+pub use system::coarsegrain::{CoarseGrain, ExtractedCoarseGrain};
+pub use system::extract::{ExtractedBall, InducedSubgraph};
 pub use system::graph_hash::{canonical_order, is_isomorphic, structural_hash};
 pub use system::mapping::{CGMapping, WeightScheme};
 pub use system::molgraph::{Atom, Bead, KindId, MolGraph, NodeId, PropValue, Relation};

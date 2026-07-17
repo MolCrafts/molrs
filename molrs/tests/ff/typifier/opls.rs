@@ -10,8 +10,9 @@
 use std::path::Path;
 
 use molrs::ff::forcefield::Params;
+use molrs::ff::typifier::ParameterInterpolator;
 use molrs::ff::typifier::opls::{
-    BondedTerm, CandidateTables, Estimator, NoMatch, OPLSAATypifier, OplsTypeRow, OplsTypingMeta,
+    BondedTerm, CandidateTables, NoMatch, OPLSAATypifier, OplsTypeRow, OplsTypingMeta,
     typify_atoms, typify_bonded, typify_bonded_with,
 };
 use molrs::{Atom, Atomistic};
@@ -495,6 +496,287 @@ fn ethane_bond_angle_dihedral_match_opls_reference() {
     assert!(saw_dih, "ethane has at least one HC-CT-CT-HC dihedral");
 }
 
+// ===========================================================================
+// Hardcoded whole-molecule OPLS reference (alcohol + PEO ether)
+// ===========================================================================
+//
+// These replace the fixture-gated `opls_parity.rs` harness, which silently
+// skipped whenever `tests-data/opls/` was absent — and it always was, because
+// the molpy ground-truth generator (`gen_opls_fixtures.py`) was retired with
+// molpy's own OPLS typifier. Rather than regenerate a molpy oracle, the expected
+// atom types, charges and bonded parameters below are hardcoded and were
+// verified by hand against the OPLS-AA parameter table (Jorgensen et al. 1996).
+// The force field is the canonical copy molrs ships and compiles in
+// (`OPLSAATypifier::oplsaa()` -> `ff::params::oplsaa`), so these run
+// unconditionally, need no external test data, and can never skip.
+
+/// A bonded term's string prop (its `type` name, e.g. `CT-CT-OH`).
+fn rel_str(rel: &molrs::Bond, key: &str) -> Option<String> {
+    rel.props.get(key).and_then(|v| match v {
+        molrs::system::molgraph::PropValue::Str(s) => Some(s.clone()),
+        _ => None,
+    })
+}
+
+/// First-seen numeric params (`keys`, in order) of every distinct bonded-term
+/// `type` name, collected into `type_name -> [values]`.
+fn terms_by_type(
+    rels: impl Iterator<Item = molrs::Bond>,
+    keys: &[&str],
+) -> std::collections::HashMap<String, Vec<f64>> {
+    let mut out = std::collections::HashMap::new();
+    for r in rels {
+        let Some(name) = rel_str(&r, "type") else {
+            continue;
+        };
+        out.entry(name).or_insert_with(|| {
+            keys.iter()
+                .map(|k| rel_f64(&r, k).unwrap_or(f64::NAN))
+                .collect()
+        });
+    }
+    out
+}
+
+/// Assert the distinct term-type set equals `expected` exactly (no missing, no
+/// extra) and every param lies within `atol` (one tolerance per param column).
+fn assert_terms(
+    got: &std::collections::HashMap<String, Vec<f64>>,
+    expected: &[(&str, &[f64])],
+    atol: &[f64],
+) {
+    let got_names: std::collections::BTreeSet<&str> = got.keys().map(String::as_str).collect();
+    let exp_names: std::collections::BTreeSet<&str> = expected.iter().map(|(n, _)| *n).collect();
+    assert_eq!(got_names, exp_names, "distinct bonded-term type names");
+    for (name, vals) in expected {
+        let g = got
+            .get(*name)
+            .unwrap_or_else(|| panic!("missing term {name}"));
+        for (i, (&e, &a)) in vals.iter().zip(g.iter()).enumerate() {
+            assert!(
+                (e - a).abs() <= atol[i],
+                "{name} param[{i}]: expected {e}, got {a}"
+            );
+        }
+    }
+}
+
+/// Ethanol CH3-CH2-OH with explicit hydrogens. Returns
+/// `(graph, CH3-C, CH2-C, O, [methyl-H;3], [methylene-H;2], hydroxyl-H)`.
+fn ethanol() -> (
+    Atomistic,
+    molrs::AtomId,
+    molrs::AtomId,
+    molrs::AtomId,
+    [molrs::AtomId; 3],
+    [molrs::AtomId; 2],
+    molrs::AtomId,
+) {
+    let mut g = Atomistic::new();
+    let c0 = g.add_atom(Atom::xyz("C", 0.0, 0.0, 0.0));
+    let c1 = g.add_atom(Atom::xyz("C", 1.53, 0.0, 0.0));
+    let o = g.add_atom(Atom::xyz("O", 2.05, 1.30, 0.0));
+    let m0 = g.add_atom(Atom::xyz("H", -0.4, 0.9, 0.3));
+    let m1 = g.add_atom(Atom::xyz("H", -0.4, -0.9, 0.3));
+    let m2 = g.add_atom(Atom::xyz("H", -0.4, 0.0, -0.95));
+    let e0 = g.add_atom(Atom::xyz("H", 1.9, -0.5, 0.85));
+    let e1 = g.add_atom(Atom::xyz("H", 1.9, -0.5, -0.85));
+    let ho = g.add_atom(Atom::xyz("H", 2.95, 1.15, 0.0));
+    g.add_bond(c0, c1).unwrap();
+    g.add_bond(c1, o).unwrap();
+    g.add_bond(o, ho).unwrap();
+    for h in [m0, m1, m2] {
+        g.add_bond(c0, h).unwrap();
+    }
+    for h in [e0, e1] {
+        g.add_bond(c1, h).unwrap();
+    }
+    (g, c0, c1, o, [m0, m1, m2], [e0, e1], ho)
+}
+
+#[test]
+fn ethanol_full_opls_matches_table() {
+    // Whole-molecule OPLS-AA reference for ethanol, hardcoded and hand-checked
+    // against `data/oplsaa.xml`. Atom types: CH3 opls_135, CH2-OH opls_157,
+    // O opls_154, C-H opls_140, hydroxyl-H opls_155; charges sum to 0.
+    let typifier = OPLSAATypifier::oplsaa().expect("build embedded OPLSAATypifier");
+    let (g, c0, c1, o, methyl_h, methylene_h, ho) = ethanol();
+    let typed = typifier.typify(&g).expect("typify + assign ethanol");
+
+    let atype = |id: molrs::AtomId| {
+        typed
+            .get_atom(id)
+            .unwrap()
+            .get_str("type")
+            .map(str::to_string)
+    };
+    let charge = |id: molrs::AtomId| typed.get_atom(id).unwrap().get_f64("charge");
+
+    // --- atoms: exact opls types + charges ---
+    assert_eq!(atype(c0).as_deref(), Some("opls_135"), "CH3 carbon");
+    assert_eq!(atype(c1).as_deref(), Some("opls_157"), "CH2-OH carbon");
+    assert_eq!(atype(o).as_deref(), Some("opls_154"), "hydroxyl O");
+    assert_eq!(atype(ho).as_deref(), Some("opls_155"), "hydroxyl H");
+    for h in methyl_h.iter().chain(methylene_h.iter()) {
+        assert_eq!(atype(*h).as_deref(), Some("opls_140"), "C-H hydrogen");
+    }
+    let qtol = 1e-6;
+    assert!((charge(c0).unwrap() - (-0.18)).abs() < qtol, "CH3 q");
+    assert!((charge(c1).unwrap() - 0.145).abs() < qtol, "CH2 q");
+    assert!((charge(o).unwrap() - (-0.683)).abs() < qtol, "O q");
+    assert!((charge(ho).unwrap() - 0.418).abs() < qtol, "OH-H q");
+    for h in methyl_h.iter().chain(methylene_h.iter()) {
+        assert!((charge(*h).unwrap() - 0.06).abs() < qtol, "C-H q");
+    }
+    let net: f64 = typed.atoms().filter_map(|(_, a)| a.get_f64("charge")).sum();
+    assert!(net.abs() < 1e-6, "ethanol net charge ~0: {net}");
+
+    // --- bonds (r0 Å, k0 kcal/mol/Å², molrs no-half convention) ---
+    assert_terms(
+        &terms_by_type(typed.bonds().map(|(_, b)| b), &["r0", "k0"]),
+        &[
+            ("CT-CT", &[1.529, 536.0]),
+            ("CT-OH", &[1.410, 640.0]),
+            ("CT-HC", &[1.090, 680.0]),
+            ("HO-OH", &[0.945, 1106.0]),
+        ],
+        &[1e-3, 0.5],
+    );
+
+    // --- angles (theta0 rad, k0 kcal/mol/rad²) ---
+    assert_terms(
+        &terms_by_type(typed.angles().map(|(_, a)| a), &["theta0", "k0"]),
+        &[
+            ("CT-CT-HC", &[1.93208, 75.0]),
+            ("HC-CT-HC", &[1.88146, 66.0]),
+            ("CT-CT-OH", &[1.91114, 100.0]),
+            ("HC-CT-OH", &[1.91114, 70.0]),
+            ("CT-OH-HO", &[1.89368, 110.0]),
+        ],
+        &[2e-3, 0.5],
+    );
+
+    // --- dihedrals (OPLS Fourier f1..f4, kcal/mol) ---
+    assert_terms(
+        &terms_by_type(typed.dihedrals().map(|(_, d)| d), &["f1", "f2", "f3", "f4"]),
+        &[
+            ("HC-CT-CT-OH", &[0.0, 0.0, 0.468, 0.0]),
+            ("HC-CT-CT-HC", &[0.0, 0.0, 0.300, 0.0]),
+            ("CT-CT-OH-HO", &[-0.356, -0.174, 0.492, 0.0]),
+            ("HC-CT-OH-HO", &[0.0, 0.0, 0.450, 0.0]),
+        ],
+        &[5e-3, 5e-3, 5e-3, 5e-3],
+    );
+}
+
+/// 1,2-dimethoxyethane CH3-O-CH2-CH2-O-CH3 — a glyme / PEO repeat fragment.
+/// Returns `(graph, [terminal CH3-C;2], [ether O;2], [internal CH2-C;2])`.
+fn dimethoxyethane() -> (
+    Atomistic,
+    [molrs::AtomId; 2],
+    [molrs::AtomId; 2],
+    [molrs::AtomId; 2],
+) {
+    let mut g = Atomistic::new();
+    // backbone C0-O1-C2-C3-O4-C5
+    let c0 = g.add_atom(Atom::xyz("C", 0.0, 0.0, 0.0));
+    let o1 = g.add_atom(Atom::xyz("O", 1.4, 0.0, 0.0));
+    let c2 = g.add_atom(Atom::xyz("C", 2.0, 1.2, 0.0));
+    let c3 = g.add_atom(Atom::xyz("C", 3.5, 1.2, 0.0));
+    let o4 = g.add_atom(Atom::xyz("O", 4.1, 0.0, 0.0));
+    let c5 = g.add_atom(Atom::xyz("C", 5.5, 0.0, 0.0));
+    g.add_bond(c0, o1).unwrap();
+    g.add_bond(o1, c2).unwrap();
+    g.add_bond(c2, c3).unwrap();
+    g.add_bond(c3, o4).unwrap();
+    g.add_bond(o4, c5).unwrap();
+    // 3 H on each terminal CH3, 2 H on each internal CH2 (coords irrelevant to typing)
+    let mut z = 0.0f64;
+    for &(c, n) in &[(c0, 3usize), (c5, 3), (c2, 2), (c3, 2)] {
+        for _ in 0..n {
+            z += 1.0;
+            let h = g.add_atom(Atom::xyz("H", 0.0, -1.0, z));
+            g.add_bond(c, h).unwrap();
+        }
+    }
+    (g, [c0, c5], [o1, o4], [c2, c3])
+}
+
+#[test]
+fn dimethoxyethane_peo_ether_matches_table() {
+    // Whole-molecule OPLS-AA reference for the PEO repeat fragment. Ether atom
+    // types: terminal CH3 opls_181, ether O opls_180 (OS), internal CH2 opls_182,
+    // C-H opls_185; the signature PEO backbone torsions are CT-CT-OS-CT and
+    // OS-CT-CT-OS. Hand-checked against `data/oplsaa.xml`; charges sum to 0.
+    let typifier = OPLSAATypifier::oplsaa().expect("build embedded OPLSAATypifier");
+    let (g, terminal_c, ether_o, internal_c) = dimethoxyethane();
+    let typed = typifier.typify(&g).expect("typify + assign DME");
+
+    let atype = |id: molrs::AtomId| {
+        typed
+            .get_atom(id)
+            .unwrap()
+            .get_str("type")
+            .map(str::to_string)
+    };
+    for c in terminal_c {
+        assert_eq!(
+            atype(c).as_deref(),
+            Some("opls_181"),
+            "terminal CH3 (ether)"
+        );
+    }
+    for o in ether_o {
+        assert_eq!(atype(o).as_deref(), Some("opls_180"), "ether O (OS)");
+    }
+    for c in internal_c {
+        assert_eq!(
+            atype(c).as_deref(),
+            Some("opls_182"),
+            "internal CH2 (ether)"
+        );
+    }
+    let net: f64 = typed.atoms().filter_map(|(_, a)| a.get_f64("charge")).sum();
+    assert!(net.abs() < 1e-6, "DME net charge ~0: {net}");
+
+    // --- bonds ---
+    assert_terms(
+        &terms_by_type(typed.bonds().map(|(_, b)| b), &["r0", "k0"]),
+        &[
+            ("CT-OS", &[1.410, 640.0]),
+            ("CT-CT", &[1.529, 536.0]),
+            ("CT-HC", &[1.090, 680.0]),
+        ],
+        &[1e-3, 0.5],
+    );
+
+    // --- angles ---
+    assert_terms(
+        &terms_by_type(typed.angles().map(|(_, a)| a), &["theta0", "k0"]),
+        &[
+            ("HC-CT-OS", &[1.91114, 70.0]),
+            ("HC-CT-HC", &[1.88146, 66.0]),
+            ("CT-OS-CT", &[1.91114, 120.0]),
+            ("CT-CT-OS", &[1.91114, 100.0]),
+            ("CT-CT-HC", &[1.93208, 75.0]),
+        ],
+        &[2e-3, 0.5],
+    );
+
+    // --- dihedrals: the PEO-defining backbone torsions are here ---
+    assert_terms(
+        &terms_by_type(typed.dihedrals().map(|(_, d)| d), &["f1", "f2", "f3", "f4"]),
+        &[
+            ("CT-OS-CT-HC", &[0.0, 0.0, 0.760, 0.0]),
+            ("CT-CT-OS-CT", &[0.650, -0.250, 0.670, 0.0]),
+            ("OS-CT-CT-OS", &[-0.550, 0.0, 0.0, 0.0]),
+            ("HC-CT-CT-OS", &[0.0, 0.0, 0.468, 0.0]),
+            ("HC-CT-CT-HC", &[0.0, 0.0, 0.300, 0.0]),
+        ],
+        &[5e-3, 5e-3, 5e-3, 5e-3],
+    );
+}
+
 #[test]
 fn typify_bonded_over_every_mol2_only_touches_typed_terms() {
     // ac-004 (breadth): typify_bonded must never panic over real molecules.
@@ -578,8 +860,10 @@ fn no_match_seam_estimator_fills_params() {
     // ac-005 (seam shape): an attached Estimator is consulted for unmatched
     // terms; its returned params are written, overriding the strict policy.
     struct FixedEstimator;
-    impl Estimator for FixedEstimator {
-        fn estimate(&self, term: &BondedTerm) -> Result<Option<Params>, String> {
+    impl ParameterInterpolator for FixedEstimator {
+        type Term = BondedTerm;
+
+        fn interpolate(&self, term: &BondedTerm) -> Result<Option<Params>, String> {
             match term {
                 BondedTerm::Bond(_) => Ok(Some(Params::from_pairs(&[("k0", 111.0), ("r0", 1.2)]))),
                 _ => Ok(None),

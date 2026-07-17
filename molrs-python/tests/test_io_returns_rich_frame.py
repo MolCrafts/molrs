@@ -38,9 +38,9 @@ class TestSingleFrameReturnsRich:
 class TestRichApiPresent:
     def test_rich_surface(self, pdb_dir):
         f = mio.read_pdb(str(pdb_dir / "water.pdb"))
-        # spec-01 rich surface: metadata dict, blocks iterator, to_dict,
+        # Rich surface: exact typed meta, blocks iterator, to_dict,
         # and __getitem__ returning a rich Block.
-        assert isinstance(f.metadata, dict)
+        assert isinstance(f.meta, dict)
         assert all(isinstance(b, RichBlock) for b in f.blocks)
         assert "blocks" in f.to_dict()
         assert isinstance(f["atoms"], RichBlock)

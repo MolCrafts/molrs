@@ -18,6 +18,18 @@ create_exception!(
      float / int / bool / str columns."
 );
 
+create_exception!(
+    molrs,
+    UnitsError,
+    pyo3::exceptions::PyValueError,
+    "Raised when unit parsing, definition, arithmetic, or conversion fails."
+);
+
+/// Preserve the native units error message at the Python boundary.
+pub fn units_error(error: ::molrs::units::UnitsError) -> PyErr {
+    UnitsError::new_err(error.to_string())
+}
+
 /// Build a column-named `BlockDtypeError` for a rejected array.
 ///
 /// Best-effort introspects the offending array to name the detected dtype and,

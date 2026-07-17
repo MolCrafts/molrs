@@ -135,6 +135,7 @@ fn test_read_labelmap() {
         .meta
         .get("atom_type_labels")
         .expect("atom type labels");
+    let atom_labels = atom_labels.as_str().unwrap();
     assert!(atom_labels.contains("1:f"));
     assert!(atom_labels.contains("2:c3"));
 
@@ -142,7 +143,7 @@ fn test_read_labelmap() {
         .meta
         .get("bond_type_labels")
         .expect("bond type labels");
-    assert!(bond_labels.contains("1:c3-f"));
+    assert!(bond_labels.as_str().unwrap().contains("1:c3-f"));
 }
 
 #[test]
@@ -386,6 +387,7 @@ fn test_write_with_type_labels() {
         .meta
         .get("atom_type_labels")
         .expect("atom type labels");
+    let labels = labels.as_str().unwrap();
     assert!(labels.contains("1:C"));
     assert!(labels.contains("2:O"));
 }

@@ -37,6 +37,7 @@ use molrs::spatial::region::simbox::SimBox;
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
 use molrs::store::frame_access::FrameAccess;
+use molrs::store::keys;
 use molrs::types::{F, I, Pbc3};
 use ndarray::{Array1, ArrayD, IxDyn, array};
 use once_cell::sync::OnceCell;
@@ -89,6 +90,38 @@ fn classify_column(name: &str) -> ColumnType {
         "element" => ColumnType::String,
         _ => ColumnType::Float,
     }
+}
+
+/// LAMMPS-native dump column names that differ from the canonical field set.
+///
+/// Every other dump column already carries its canonical name (`x`, `vx`,
+/// `type`, `element`, `mux`, `quatw`, …) or is a user-defined compute/fix
+/// column that has none. Keep this table aligned with molpy's
+/// `LammpsFieldFormatter._field_formatters`, which performs the same rename on
+/// the Python side.
+const LAMMPS_COLUMN_ALIASES: [(&str, &str); 2] = [("q", keys::CHARGE), ("mol", keys::MOL_ID)];
+
+/// Reader exit: rename a LAMMPS-native dump column to its canonical field name.
+///
+/// A field is renamed in exactly one place (see [`keys`]), so downstream code
+/// only ever sees `charge`, never `q`.
+fn canonical_column_name(name: &str) -> String {
+    LAMMPS_COLUMN_ALIASES
+        .iter()
+        .find(|(native, _)| *native == name)
+        .map_or_else(
+            || name.to_string(),
+            |(_, canonical)| (*canonical).to_string(),
+        )
+}
+
+/// Writer entry: the inverse of [`canonical_column_name`], so a frame that was
+/// read from a dump round-trips back to LAMMPS-native column names.
+fn native_column_name(name: &str) -> &str {
+    LAMMPS_COLUMN_ALIASES
+        .iter()
+        .find(|(_, canonical)| *canonical == name)
+        .map_or(name, |(native, _)| *native)
 }
 
 // ============================================================================
@@ -366,7 +399,10 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
         .strip_prefix(header_keyword)
         .unwrap_or("")
         .trim();
-    let col_names: Vec<String> = header_tail.split_whitespace().map(String::from).collect();
+    let col_names: Vec<String> = header_tail
+        .split_whitespace()
+        .map(canonical_column_name)
+        .collect();
 
     if col_names.is_empty() {
         return Err(err_mapper(format!(
@@ -530,9 +566,7 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
     frame.insert(block_name, data_block);
 
     // Timestep is frame-level metadata, not a box property.
-    frame
-        .meta
-        .insert("timestep".to_string(), timestep.to_string());
+    frame.meta.insert("timestep", timestep);
 
     // Build the SimBox. Boundary tokens (`pp`, `ff`, `ss`, `fs`, ...) collapse
     // to a per-axis periodic bool: periodic iff the first char is 'p'.
@@ -798,7 +832,7 @@ impl<W: Write> FrameWriter for LAMMPSDumpWriter<W> {
 /// Write a single frame in LAMMPS dump format.
 ///
 /// Accepts any type implementing [`FrameAccess`], including both [`Frame`] and
-/// [`FrameView`](crate::io::frame_view::FrameView).
+/// [`FrameView`](molrs::store::frame_view::FrameView).
 fn write_lammps_dump_frame<W: Write>(
     writer: &mut W,
     frame: &impl FrameAccess,
@@ -810,7 +844,10 @@ fn write_lammps_dump_frame<W: Write>(
     let meta = frame.meta_ref();
 
     // -- Timestep --
-    let timestep = meta.get("timestep").map_or("0", |s| s.as_str());
+    let timestep = meta
+        .get("timestep")
+        .and_then(|value| value.as_i64())
+        .unwrap_or(0);
     writeln!(writer, "ITEM: TIMESTEP")?;
     writeln!(writer, "{}", timestep)?;
 
@@ -889,8 +926,12 @@ fn write_lammps_dump_frame<W: Write>(
             remaining.sort();
             ordered.extend(remaining);
 
-            let header = format!("ITEM: ATOMS {}", ordered.join(" "));
-            let col_types: Vec<ColumnType> = ordered.iter().map(|n| classify_column(n)).collect();
+            // `ordered` holds canonical keys, used to look values up in the
+            // block. The header and the type heuristic both speak LAMMPS's
+            // native names, so translate on the way out.
+            let native: Vec<&str> = ordered.iter().map(|n| native_column_name(n)).collect();
+            let header = format!("ITEM: ATOMS {}", native.join(" "));
+            let col_types: Vec<ColumnType> = native.iter().map(|n| classify_column(n)).collect();
 
             let mut lines = Vec::with_capacity(natoms + 1);
             lines.push(header);
@@ -1160,11 +1201,11 @@ ITEM: ATOMS id type x y z
 
         // Read step 1 first (out of order)
         let f1 = reader.read_step(1).unwrap().expect("step 1");
-        assert_eq!(f1.meta.get("timestep").unwrap(), "100");
+        assert_eq!(f1.meta.get("timestep").unwrap().as_i64(), Some(100));
 
         // Then step 0
         let f0 = reader.read_step(0).unwrap().expect("step 0");
-        assert_eq!(f0.meta.get("timestep").unwrap(), "0");
+        assert_eq!(f0.meta.get("timestep").unwrap().as_i64(), Some(0));
 
         // Out of bounds
         assert!(reader.read_step(5).unwrap().is_none());
@@ -1318,8 +1359,9 @@ ITEM: ATOMS id type x y z vx vy vz q c_pe
         let frame = reader.read_frame().unwrap().expect("parse");
         let atoms = frame.get("atoms").unwrap();
 
-        // Custom columns should be float
-        let q = atoms.get_float("q").expect("q column");
+        // Custom columns should be float. LAMMPS's `q` is renamed to the
+        // canonical `charge` on the way out of the reader.
+        let q = atoms.get_float(keys::CHARGE).expect("charge column");
         assert!((q[0] - (-0.5)).abs() < 1e-6);
 
         let pe = atoms.get_float("c_pe").expect("c_pe column");
@@ -1460,7 +1502,48 @@ ITEM: ATOMS id type q
         let mut reader = LAMMPSTrajReader::new(cursor(dump));
         let frame = reader.read_frame().unwrap().expect("parse");
         let atoms = frame.get("atoms").expect("atoms");
-        assert_eq!(atoms.get_float("q").expect("q")[0], -0.5);
+        assert_eq!(atoms.get_float(keys::CHARGE).expect("charge")[0], -0.5);
+    }
+
+    #[test]
+    fn lammps_native_columns_are_canonicalized_on_read() {
+        // `q` and `mol` are LAMMPS-native spellings; a frame must expose only
+        // the canonical `charge` / `mol_id`, per `store::keys`.
+        let dump = "ITEM: TIMESTEP
+0
+ITEM: NUMBER OF ATOMS
+1
+ITEM: BOX BOUNDS pp pp pp
+0.0 10.0
+0.0 10.0
+0.0 10.0
+ITEM: ATOMS id type mol q x y z
+1 1 7 -0.5 1.0 2.0 3.0
+";
+        let mut reader = LAMMPSTrajReader::new(cursor(dump));
+        let frame = reader.read_frame().unwrap().expect("parse");
+        let atoms = frame.get("atoms").expect("atoms");
+
+        assert_eq!(atoms.get_float(keys::CHARGE).expect("charge")[0], -0.5);
+        assert_eq!(atoms.get_int(keys::MOL_ID).expect("mol_id")[0], 7);
+        assert!(
+            atoms.get("q").is_none(),
+            "raw `q` must not survive the reader"
+        );
+        assert!(
+            atoms.get("mol").is_none(),
+            "raw `mol` must not survive the reader"
+        );
+    }
+
+    #[test]
+    fn canonical_columns_round_trip_to_lammps_native_names() {
+        assert_eq!(canonical_column_name("q"), keys::CHARGE);
+        assert_eq!(canonical_column_name("mol"), keys::MOL_ID);
+        assert_eq!(canonical_column_name("vx"), keys::VX);
+        assert_eq!(native_column_name(keys::CHARGE), "q");
+        assert_eq!(native_column_name(keys::MOL_ID), "mol");
+        assert_eq!(native_column_name(keys::VX), keys::VX);
     }
 
     #[test]

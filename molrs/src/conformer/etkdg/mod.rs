@@ -23,17 +23,18 @@ mod etmin;
 mod mmff_min;
 mod retry;
 
+use std::sync::OnceLock;
+
 use rand::{SeedableRng, random, rngs::StdRng};
 
 use crate::conformer::distgeom::{self, ChiralSign, DgConstraints, EtkdgVersion};
 use crate::conformer::options::{ConformerOptions, ForceFieldKind};
 use crate::conformer::report::{ConformerReport, ConformerStageReport, StageKind};
-use molrs::chem::hydrogens::add_hydrogens;
 use molrs::error::MolRsError;
-use molrs::ff::mmff::{MmffForceField, MmffMolProperties, MmffVariant};
+use molrs::ff::potential::intramolecular_pairs;
+use molrs::ff::typifier::mmff::MMFF94Typifier;
+use molrs::perceive::hydrogens::add_hydrogens;
 use molrs::system::atomistic::Atomistic;
-
-use crate::conformer::options::ConformerAlgorithm;
 
 /// Embedding dimension for the first stage (RDKit ETKDG uses 4D).
 const EMBED_DIM: usize = 4;
@@ -57,10 +58,7 @@ pub fn generate_3d_impl(
         ));
     }
 
-    // ETKDG is the only algorithm; report it as DistanceGeometry (the honest
-    // label) and keep the public enum unchanged.
-    let mut report =
-        ConformerReport::new(ConformerAlgorithm::DistanceGeometry, ForceFieldKind::MMFF94);
+    let mut report = ConformerReport::new(ForceFieldKind::MMFF94);
 
     let seed = opts.rng_seed.unwrap_or_else(random::<u64>);
     if opts.rng_seed.is_none() {
@@ -107,7 +105,7 @@ pub fn generate_3d_impl(
     // --- Build ETKDGv3 constraints ---------------------------------------
     // Experimental torsions are assigned through the full CrystalFF
     // three-table set (v2 ++ small-rings ++ macrocycles) matched by the core
-    // SMARTS engine (`molrs::chem::smarts`), reproducing RDKit
+    // SMARTS engine (`molrs::perceive::smarts`), reproducing RDKit
     // `getExperimentalTorsions`. See `distgeom::torsion_prefs`.
     let version = EtkdgVersion::Etkdgv3;
     let constraints = distgeom::build_constraints(&work, version)?;
@@ -338,25 +336,46 @@ fn have_opposite_sign(a: f64, b: f64) -> bool {
     a.is_sign_negative() ^ b.is_sign_negative()
 }
 
+/// The MMFF94 typifier, constructed **once for the process**.
+///
+/// `MMFF94Typifier::new()` parses the embedded MMFF94 parameter set — hundreds of
+/// KB of XML — on every call. It is stateless with respect to the molecule, so
+/// constructing one per conformer would re-parse that XML on every `generate`,
+/// which is pure waste in the one place the conformer pipeline is called in a
+/// loop (`Conformer::generate` is invoked once per conformer). It is hoisted here
+/// so the parse happens at most once, on the first cleanup that runs.
+fn mmff94_typifier() -> &'static MMFF94Typifier {
+    static TYPIFIER: OnceLock<MMFF94Typifier> = OnceLock::new();
+    TYPIFIER.get_or_init(MMFF94Typifier::new)
+}
+
 /// MMFF94 second-stage cleanup minimization. Returns `(energy, steps,
 /// converged)`. Errors (as a message) if the molecule has no MMFF typing.
+///
+/// Runs the standard route — typify → `Frame` → `ForceField::to_potentials` — the
+/// same one every other force field in molrs goes through. (It used to call a
+/// bespoke `MmffForceField` energy assembly, a second implementation of the seven
+/// MMFF terms that `ff::potential::*::mmff` already provides; that layer is gone.)
 fn mmff_cleanup(mol: &Atomistic, coords3d: &mut [f64]) -> Result<(f64, usize, bool), String> {
     // Write current coords so MMFF setup that consults geometry sees them.
     let mut staged = mol.clone();
     write_coords(&mut staged, coords3d).map_err(|e| e.to_string())?;
 
-    let props =
-        MmffMolProperties::compute(&staged, MmffVariant::Mmff94).map_err(|e| e.to_string())?;
-    let ff = MmffForceField::build(&staged, &props).map_err(|e| e.to_string())?;
+    let typifier = mmff94_typifier();
+    let mut frame = typifier.typify(&staged)?.to_frame();
+    // The neighbour list is the consumer's to build — and here the consumer is the
+    // minimizer. Bonded terms and the 1-2/1-3 exclusions are topological, so this
+    // list stays valid across the relaxation.
+    frame.insert("pairs", intramolecular_pairs(&frame));
+    let potentials = typifier.ff().to_potentials(&frame)?;
 
-    use molrs::ff::potential::Potential;
     // RDKit's MMFFOptimizeMolecule runs a full BFGS minimization to a
     // gradient-norm tolerance. Mirror that with L-BFGS to an RMS-gradient
     // convergence of 1e-3 kcal/mol/Å (matching RDKit's default
     // `MMFFOptimizeMolecule` grad tol) under a generous iteration cap, so the
     // freshly-embedded geometry is relaxed all the way to the MMFF minimum.
     let (e, _grad_rms, steps, conv) =
-        mmff_min::minimize_lbfgs(coords3d, 1000, 1e-3, |p| ff.calc_energy_forces(p));
+        mmff_min::minimize_lbfgs(coords3d, 1000, 1e-3, |p| potentials.calc_energy_forces(p));
     Ok((e, steps, conv))
 }
 
