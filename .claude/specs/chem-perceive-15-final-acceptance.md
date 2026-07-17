@@ -94,7 +94,7 @@ SMILES / SDF
 - `molrs/tests/architecture_gate.rs` (new) — 五条承诺的门禁，自己不能豁免自己
 - `molrs/tests/end_to_end.rs` (new) — 全链路 oracle 对账（antechamber 37 + RDKit 11）
 - `molrs-python/tests/test_parity.py` (new) — Python 逐位复现 Rust
-- `CHANGELOG.md` — 这条链的完整 BREAKING 清单
+- git log / tags — 这条链的完整 BREAKING 面（不再维护手写 CHANGELOG）
 - `.claude/notes/notes.md` — 把这条链学到的**教训**（不是结论）写下来
 
 ## Tasks
@@ -105,7 +105,7 @@ SMILES / SDF
 - [ ] Write the Python-vs-Rust bit-parity test (not "close" — the same number)
 - [ ] Write the reverse gates (exactly-zero electrostatics on neutral molecules; bit-identical 94/94s without aromatic N; benzene HAS impropers; symmetric charges on nitrate/acetate; conformer-independent charges)
 - [ ] Write the "no subset assertion without a stated reason" gate over the test tree
-- [ ] Record the chain's BREAKING surface in CHANGELOG.md and the LESSONS (not the conclusions) in .claude/notes/notes.md
+- [ ] Record LESSONS (not the conclusions) in .claude/notes/notes.md; BREAKING surface is git history, not a hand-written CHANGELOG
 - [ ] Run every gate; any failure STOPS and gets its own spec — do not fix it inside the acceptance
 
 ## Testing strategy
