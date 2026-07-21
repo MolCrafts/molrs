@@ -455,12 +455,12 @@ impl Frame {
     ///   console.log("Volume:", box.volume());
     /// }
     /// ```
-    #[wasm_bindgen(getter, js_name = simbox)]
-    pub fn get_simbox(&self) -> Option<super::region::simbox::Box> {
+    #[wasm_bindgen(getter, js_name = box)]
+    pub fn get_box(&self) -> Option<super::region::simbox::Box> {
         self.inner
             .store
             .borrow()
-            .with_frame_simbox(self.inner.id, |sb| {
+            .with_frame_box(self.inner.id, |sb| {
                 sb.map(|s| super::region::simbox::Box { inner: s.clone() })
             })
             .ok()?
@@ -473,7 +473,7 @@ impl Frame {
     ///
     /// # Arguments
     ///
-    /// * `simbox` - The simulation box, or `undefined`/`null` to remove it
+    /// * `box` - The simulation box, or `undefined`/`null` to remove it
     ///
     /// # Errors
     ///
@@ -485,12 +485,12 @@ impl Frame {
     /// const origin = originVec;
     /// frame.simbox = Box.cube(10.0, origin, true, true, true);
     /// ```
-    #[wasm_bindgen(setter, js_name = simbox)]
-    pub fn set_simbox(&self, simbox: Option<super::region::simbox::Box>) -> Result<(), JsValue> {
+    #[wasm_bindgen(setter, js_name = box)]
+    pub fn set_box(&self, simbox: Option<super::region::simbox::Box>) -> Result<(), JsValue> {
         self.inner
             .store
             .borrow_mut()
-            .set_frame_simbox(self.inner.id, simbox.map(|b| b.inner))
+            .set_frame_box(self.inner.id, simbox.map(|b| b.inner))
             .map_err(js_err)
     }
 

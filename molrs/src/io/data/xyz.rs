@@ -929,34 +929,47 @@ impl<R: BufRead + Seek> XYZReader<R> {
         let mut current_pos: u64 = 0;
         let mut line = String::new();
 
-        loop {
-            // Record frame start position
-            frame_index.add_frame(current_pos);
-
-            // Read atom count
-            line.clear();
-            let bytes = self.reader.read_line(&mut line)?;
-            if bytes == 0 {
-                // Remove the last empty frame we just added
-                if !frame_index.is_empty()
-                    && frame_index.offsets[frame_index.len() - 1] == current_pos
-                {
-                    frame_index.offsets.pop();
+        'frames: loop {
+            // Locate the next atom-count line. Blank lines between frames
+            // (and trailing blanks at EOF) are skipped — same rule as
+            // `read_xyz_frame_from_reader` and `XyzIndexBuilder` in the
+            // AwaitingNatoms state. Recording a frame only after a valid
+            // count avoids the old "invalid atom count: " crash on `\n`.
+            let n = loop {
+                let frame_start = current_pos;
+                line.clear();
+                let bytes = self.reader.read_line(&mut line)?;
+                if bytes == 0 {
+                    break 'frames; // EOF while searching for a frame
                 }
-                break; // EOF
-            }
-            current_pos += bytes as u64;
-
-            let n = line.trim().parse::<usize>().map_err(|_| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("invalid atom count: {}", line.trim()),
-                )
-            })?;
+                current_pos += bytes as u64;
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                match trimmed.parse::<usize>() {
+                    Ok(v) => {
+                        frame_index.add_frame(frame_start);
+                        break v;
+                    }
+                    Err(_) => {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!("invalid atom count: {}", trimmed),
+                        ));
+                    }
+                }
+            };
 
             // Skip comment line
             line.clear();
             let bytes = self.reader.read_line(&mut line)?;
+            if bytes == 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "unexpected EOF after atom count (missing comment line)",
+                ));
+            }
             current_pos += bytes as u64;
 
             // Skip N atom lines
@@ -1493,6 +1506,54 @@ mod tests {
         let hi = lo + entries[0].byte_len as usize;
         let frame = parse_frame_bytes(&bytes[lo..hi]).expect("parse");
         assert_eq!(frame.get("atoms").unwrap().nrows().unwrap(), 2);
+    }
+
+    /// Legacy `XYZReader::build_index` (used by `len()` / random-access
+    /// `read_step`) must tolerate blank lines between frames and trailing
+    /// blanks — the same AwaitingNatoms rule as the streaming index.
+    /// Regression: blank lines used to surface as
+    /// `XYZ len error: invalid atom count:` through the wasm binding.
+    #[test]
+    fn xyz_legacy_index_skips_inter_frame_and_trailing_blanks() {
+        use crate::io::reader::TrajReader;
+        use std::io::{BufReader, Cursor};
+
+        let s = "\
+2
+frame 0
+H 0 0 0
+H 1 0 0
+
+2
+frame 1
+H 0 0 1
+H 1 0 1
+
+";
+        let mut reader = XYZReader::new(BufReader::new(Cursor::new(s.as_bytes())));
+        assert_eq!(reader.len().expect("len"), 2);
+
+        let f0 = reader.read_step(0).expect("step0").expect("some");
+        let f1 = reader.read_step(1).expect("step1").expect("some");
+        assert_eq!(f0.get("atoms").unwrap().nrows().unwrap(), 2);
+        assert_eq!(f1.get("atoms").unwrap().nrows().unwrap(), 2);
+        let z0 = f0.get("atoms").unwrap().get_float("z").unwrap();
+        let z1 = f1.get("atoms").unwrap().get_float("z").unwrap();
+        assert!((z0[0] - 0.0).abs() < 1e-12);
+        assert!((z1[0] - 1.0).abs() < 1e-12);
+    }
+
+    /// Leading blanks before the first frame must not confuse the legacy index.
+    #[test]
+    fn xyz_legacy_index_skips_leading_blanks() {
+        use crate::io::reader::TrajReader;
+        use std::io::{BufReader, Cursor};
+
+        let s = "\n\n  \n2\nframe 0\nH 0 0 0\nH 1 0 0\n";
+        let mut reader = XYZReader::new(BufReader::new(Cursor::new(s.as_bytes())));
+        assert_eq!(reader.len().expect("len"), 1);
+        let f0 = reader.read_step(0).expect("step0").expect("some");
+        assert_eq!(f0.get("atoms").unwrap().nrows().unwrap(), 2);
     }
 }
 

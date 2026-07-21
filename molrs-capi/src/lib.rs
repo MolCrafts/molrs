@@ -9,7 +9,7 @@
 //!
 //! * **Handle-based** -- all objects live in a global, mutex-protected
 //!   store.  C callers receive opaque `MolrsFrameHandle`,
-//!   `MolrsBlockHandle`, `MolrsSimBoxHandle`, or `MolrsForceFieldHandle`
+//!   `MolrsBlockHandle`, `MolrsBoxHandle`, or `MolrsForceFieldHandle`
 //!   values (plain `repr(C)` structs that fit in two machine words).
 //! * **Status codes** -- every function returns [`MolrsStatus`].  On
 //!   failure the last error message is stored in a thread-local buffer
@@ -61,7 +61,7 @@ use std::ffi::{CStr, CString, c_char};
 
 pub use error::{MolrsDType, MolrsStatus};
 pub use frame::{MolrsMetaType, MolrsMetaValue};
-pub use handle::{MolrsBlockHandle, MolrsForceFieldHandle, MolrsFrameHandle, MolrsSimBoxHandle};
+pub use handle::{MolrsBlockHandle, MolrsForceFieldHandle, MolrsFrameHandle, MolrsBoxHandle};
 
 use store::lock_store;
 

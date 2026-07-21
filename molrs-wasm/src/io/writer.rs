@@ -19,7 +19,7 @@
 //! | `"cube"` | text | Gaussian Cube (needs a `"grid"` block) |
 //! | `"gro"` | text | GROMACS GRO (Å → nm on write) |
 //! | `"mol2"` | text | Tripos MOL2 |
-//! | `"poscar"` | text | VASP POSCAR (needs a `simbox`) |
+//! | `"poscar"` | text | VASP POSCAR (needs a `box`) |
 //! | `"lammps-data"` / `"lammps"` | text | LAMMPS data file |
 //! | `"lammps-dump"` / `"lammpstrj"` | text | LAMMPS dump |
 //! | `"dcd"` | binary | DCD trajectory |

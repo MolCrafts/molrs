@@ -31,7 +31,7 @@ class TestReadGro:
         f0 = frames[0]
         assert "atoms" in f0
         assert f0["atoms"].nrows > 0
-        assert f0.simbox is not None
+        assert f0.box is not None
 
     def test_native_columns(self, gro_dir):
         frames = molrs.read_gro(str(gro_dir / "ubiquitin.gro"))
@@ -70,7 +70,7 @@ class TestReadGro:
 
     def test_triclinic_box(self, gro_dir):
         frames = molrs.io.read_gro(str(gro_dir / "1vln-triclinic.gro"))
-        assert frames[0].simbox is not None
+        assert frames[0].box is not None
 
 
 class TestReadXyz:

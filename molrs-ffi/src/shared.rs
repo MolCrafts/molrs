@@ -106,15 +106,15 @@ impl FrameRef {
     }
 
     /// Clone the simbox out of the frame (if any).
-    pub fn simbox_clone(&self) -> Result<Option<SimBox>, FfiError> {
+    pub fn box_clone(&self) -> Result<Option<SimBox>, FfiError> {
         self.store
             .borrow()
-            .with_frame_simbox(self.id, |sb| sb.cloned())
+            .with_frame_box(self.id, |sb| sb.cloned())
     }
 
     /// Replace / clear the simbox.
-    pub fn set_simbox(&self, simbox: Option<SimBox>) -> Result<(), FfiError> {
-        self.store.borrow_mut().set_frame_simbox(self.id, simbox)
+    pub fn set_box(&self, simbox: Option<SimBox>) -> Result<(), FfiError> {
+        self.store.borrow_mut().set_frame_box(self.id, simbox)
     }
 
     /// Deep-clone the frame's data out of the store.

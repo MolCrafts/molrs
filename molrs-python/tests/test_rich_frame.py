@@ -124,6 +124,22 @@ class TestBlockListIndexErrors:
         with pytest.raises(ValueError):
             _ = b[["a", "b"]]
 
+    def test_construction_length_mismatch_surfaces_real_error(self):
+        # A per-column length mismatch must report the real, actionable cause
+        # (differing row counts), NOT the misleading "must be array-like"
+        # blanket — the column value IS array-like. Regression: the ValueError
+        # message previously masked the length/shape error with
+        # "Value must be array-like ... got numpy.ndarray".
+        with pytest.raises(ValueError) as exc:
+            Block({"x": np.zeros(6), "y": np.zeros(4)})
+        assert "array-like" not in str(exc.value)
+
+    def test_construction_non_array_like_still_reports_array_like(self):
+        # A genuinely non-array-like scalar keeps the friendly guidance.
+        with pytest.raises(ValueError) as exc:
+            Block({"x": object()})
+        assert "array-like" in str(exc.value)
+
     def test_missing_key_raises_key_error(self):
         b = Block({"a": [1.0, 2.0]})
         with pytest.raises(KeyError):
@@ -287,17 +303,11 @@ class TestRichFrame:
         assert "atoms" in f and "bonds" in f
         assert len(f) == 2
 
-    def test_simbox_round_trip(self):
+    def test_box_round_trip(self):
         f = Frame()
-        f.simbox = molrs.Box.cube(10.0)
-        assert f.simbox is not None
-        assert f.simbox.volume() == pytest.approx(1000.0, abs=1.0)
-
-    def test_box_compatibility_alias_is_absent(self):
-        f = Frame()
-        assert not hasattr(f, "box")
-        with pytest.raises(AttributeError):
-            _ = f.box
+        f.box = molrs.Box.cube(10.0)
+        assert f.box is not None
+        assert f.box.volume() == pytest.approx(1000.0, abs=1.0)
 
     def test_blocks_iterates_rich_blocks(self):
         f = Frame({"atoms": {"x": [1.0]}, "bonds": {"i": np.array([0], dtype=np.int64)}})
@@ -339,11 +349,11 @@ class TestRichFrame:
 
     def test_copy_is_independent(self):
         f = Frame({"atoms": {"x": [1.0, 2.0]}})
-        f.simbox = molrs.Box.cube(5.0)
+        f.box = molrs.Box.cube(5.0)
         f2 = f.copy()
         f2["atoms"]["x"] = np.array([9.0, 9.0])
         np.testing.assert_allclose(f["atoms"]["x"], [1.0, 2.0])
-        assert f2.simbox is not None
+        assert f2.box is not None
 
     def test_keys_contains_len_delitem(self):
         f = Frame({"atoms": {"x": [1.0]}, "bonds": {"i": np.array([0], dtype=np.int64)}})

@@ -643,7 +643,7 @@ fn write_frame_zarr(
 /// bench writes its end-state via [`write_frame_zarr`], then later debug
 /// iterations call this to skip stage 1. The returned `FrameRef` is populated
 /// via `with_mut` on a fresh standalone store — readers (`frame_column_f64`,
-/// `frame_simbox`, etc.) see exactly the columns and simbox that were stored.
+/// `frame_box`, etc.) see exactly the columns and simbox that were stored.
 #[cfg(feature = "zarr")]
 fn read_frame_zarr_first(path: &str) -> Box<FrameRef> {
     let traj = read_trajectory_file(path).expect("read_frame_zarr_first: read");
@@ -1025,8 +1025,8 @@ fn frame_column_str(fref: &FrameRef, block: &str, col: &str) -> Vec<String> {
 ///
 /// @param fref frame handle
 /// @return 9-element row-major H; empty if no simbox is set
-fn frame_simbox(fref: &FrameRef) -> Vec<f64> {
-    match fref.0.simbox_clone() {
+fn frame_box(fref: &FrameRef) -> Vec<f64> {
+    match fref.0.box_clone() {
         Ok(Some(sb)) => sb.h_view().iter().copied().collect(),
         _ => Vec::new(),
     }
@@ -1121,14 +1121,14 @@ fn frame_set_column_str(fref: &mut FrameRef, block: &str, col: &str, data: &[Str
 ///
 /// @param fref frame handle
 /// @param h    9-element row-major 3x3 cell matrix
-fn frame_set_simbox(fref: &mut FrameRef, h: &[f64]) {
+fn frame_set_box(fref: &mut FrameRef, h: &[f64]) {
     let mat = Array2::from_shape_vec((3, 3), h[..9].to_vec())
-        .expect("frame_set_simbox: H must have 9 elements");
+        .expect("frame_set_box: H must have 9 elements");
     let simbox = SimBox::new(mat, Array1::zeros(3), [true, true, true])
-        .expect("frame_set_simbox: singular cell matrix");
+        .expect("frame_set_box: singular cell matrix");
     fref.0
-        .set_simbox(Some(simbox))
-        .expect("frame_set_simbox: set_simbox");
+        .set_box(Some(simbox))
+        .expect("frame_set_box: set_box");
 }
 
 /// Apply AM1-BCC corrections to a molrs frame using AM1 base
@@ -1302,7 +1302,7 @@ mod tests {
 
         // 9-elem row-major 3x3 H matrix.
         let h: Vec<f64> = vec![12.0, 0.0, 0.0, 0.0, 13.0, 0.0, 0.0, 0.0, 14.0];
-        frame_set_simbox(&mut fref, &h);
+        frame_set_box(&mut fref, &h);
 
         // ── Introspection ──
         let names = frame_block_names(&fref);
@@ -1321,7 +1321,7 @@ mod tests {
         assert_eq!(frame_column_i32(&fref, "atoms", "id"), ids);
         assert_eq!(frame_column_u32(&fref, "atoms", "type"), types);
         assert_eq!(frame_column_str(&fref, "atoms", "element"), elems);
-        assert_eq!(frame_simbox(&fref), h);
+        assert_eq!(frame_box(&fref), h);
 
         // ── Absent block / column → empty Vec, never a panic ──
         assert!(frame_column_f64(&fref, "atoms", "nope").is_empty());
