@@ -96,14 +96,14 @@ __MOLRS_ELEMENT_VARIANTS__    }
         fn frame_column_i32(fref: &FrameRef, block: &str, col: &str) -> Vec<i32>;
         fn frame_column_u32(fref: &FrameRef, block: &str, col: &str) -> Vec<u32>;
         fn frame_column_str(fref: &FrameRef, block: &str, col: &str) -> Vec<String>;
-        fn frame_simbox(fref: &FrameRef) -> Vec<f64>;
+        fn frame_box(fref: &FrameRef) -> Vec<f64>;
 
         // create-or-update writers
         fn frame_set_column_f64(fref: &mut FrameRef, block: &str, col: &str, data: &[f64]);
         fn frame_set_column_i32(fref: &mut FrameRef, block: &str, col: &str, data: &[i32]);
         fn frame_set_column_u32(fref: &mut FrameRef, block: &str, col: &str, data: &[u32]);
         fn frame_set_column_str(fref: &mut FrameRef, block: &str, col: &str, data: &[String]);
-        fn frame_set_simbox(fref: &mut FrameRef, h: &[f64]);
+        fn frame_set_box(fref: &mut FrameRef, h: &[f64]);
         fn frame_set_meta_entry(fref: &mut FrameRef, entry: MetaEntry) -> Result<()>;
 
         // AM1-BCC: Atomiverse supplies AM1 base charges; molrs owns BCC typing.

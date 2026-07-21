@@ -150,8 +150,8 @@ impl PyMetaValue {
 /// atoms.insert("z", np.zeros(3, dtype=np.float32))
 /// frame["atoms"] = atoms
 ///
-/// frame.simbox = Box.cube(10.0)
-/// print(frame)          # Frame(blocks=['atoms'], simbox=yes)
+/// frame.box = Box.cube(10.0)
+/// print(frame)          # Frame(blocks=['atoms'], box=yes)
 /// print(frame.keys())   # ['atoms']
 /// ```
 #[pyclass(name = "Frame", from_py_object, unsendable, subclass)]
@@ -347,7 +347,8 @@ impl PyFrame {
         self.with_frame(|f| f.keys().map(|s| s.to_string()).collect())
     }
 
-    /// The simulation box attached to this frame, or ``None``.
+    /// The simulation :class:`Box` attached to this frame, or ``None``.
+    ///
     ///
     /// Returns
     /// -------
@@ -356,18 +357,18 @@ impl PyFrame {
     ///
     /// Examples
     /// --------
-    /// >>> if frame.simbox is not None:
-    /// ...     print(frame.simbox.volume())
-    #[getter(simbox)]
+    /// >>> if frame.box is not None:
+    /// ...     print(frame.box.volume())
+    #[getter]
     fn get_box(&self) -> PyResult<Option<PyBox>> {
         Ok(self
             .inner
-            .simbox_clone()
+            .box_clone()
             .map_err(ffi_error_to_pyerr)?
             .map(|inner| PyBox { inner }))
     }
 
-    /// Set (or clear) the simulation box.
+    /// Set (or clear) the simulation :class:`Box`.
     ///
     /// Parameters
     /// ----------
@@ -376,12 +377,12 @@ impl PyFrame {
     ///
     /// Examples
     /// --------
-    /// >>> frame.simbox = Box.cube(20.0)
-    /// >>> frame.simbox = None  # remove
-    #[setter(simbox)]
-    fn set_box(&mut self, simbox: Option<&PyBox>) -> PyResult<()> {
+    /// >>> frame.box = Box.cube(20.0)
+    /// >>> frame.box = None  # remove
+    #[setter]
+    fn set_box(&mut self, box_: Option<&PyBox>) -> PyResult<()> {
         self.inner
-            .set_simbox(simbox.map(|sb| sb.inner.clone()))
+            .set_box(box_.map(|sb| sb.inner.clone()))
             .map_err(ffi_error_to_pyerr)
     }
 
@@ -460,7 +461,7 @@ impl PyFrame {
         self.with_frame(|f| {
             let keys: Vec<&str> = f.keys().collect();
             format!(
-                "Frame(blocks={:?}, simbox={})",
+                "Frame(blocks={:?}, box={})",
                 keys,
                 if f.simbox.is_some() { "yes" } else { "no" }
             )

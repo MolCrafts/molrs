@@ -25,8 +25,8 @@ use molrs::store::meta::MetaValue;
 
 use crate::error::{self, MolrsStatus, ffi_err_to_status};
 use crate::handle::{
-    MolrsBlockHandle, MolrsFrameHandle, MolrsSimBoxHandle, block_handle_to_c, frame_id_to_handle,
-    handle_to_frame_id, handle_to_simbox_key, simbox_key_to_handle,
+    MolrsBlockHandle, MolrsFrameHandle, MolrsBoxHandle, block_handle_to_c, frame_id_to_handle,
+    handle_to_frame_id, handle_to_box_key, box_key_to_handle,
 };
 use crate::store::lock_store;
 use crate::{ffi_try, null_check};
@@ -478,8 +478,8 @@ pub unsafe extern "C" fn molrs_frame_get_block(
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_frame_set_simbox(MolrsFrameHandle frame,
-///                                     MolrsSimBoxHandle simbox);
+/// MolrsStatus molrs_frame_set_box(MolrsFrameHandle frame,
+///                                     MolrsBoxHandle simbox);
 /// ```
 ///
 /// # Arguments
@@ -491,28 +491,28 @@ pub unsafe extern "C" fn molrs_frame_get_block(
 ///
 /// * `MolrsStatus::Ok` on success.
 /// * `MolrsStatus::InvalidFrameHandle` if `frame` is stale.
-/// * `MolrsStatus::InvalidSimBoxHandle` if `simbox` is stale.
+/// * `MolrsStatus::InvalidBoxHandle` if `simbox` is stale.
 ///
 /// # Safety
 ///
 /// Both `frame` and `simbox` must be live handles.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_frame_set_simbox(
+pub unsafe extern "C" fn molrs_frame_set_box(
     frame: MolrsFrameHandle,
-    simbox: MolrsSimBoxHandle,
+    box_handle: MolrsBoxHandle,
 ) -> MolrsStatus {
     ffi_try!({
         let mut store = lock_store();
         let frame_id = handle_to_frame_id(frame);
-        let sb_key = handle_to_simbox_key(simbox);
+        let sb_key = handle_to_box_key(box_handle);
         let sb = match store.simboxes.get(sb_key) {
             Some(sb) => sb.clone(),
             None => {
                 error::set_last_error("invalid simbox handle");
-                return MolrsStatus::InvalidSimBoxHandle;
+                return MolrsStatus::InvalidBoxHandle;
             }
         };
-        match store.inner.set_frame_simbox(frame_id, Some(sb)) {
+        match store.inner.set_frame_box(frame_id, Some(sb)) {
             Ok(()) => MolrsStatus::Ok,
             Err(e) => ffi_err_to_status(&e),
         }
@@ -524,7 +524,7 @@ pub unsafe extern "C" fn molrs_frame_set_simbox(
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_frame_clear_simbox(MolrsFrameHandle frame);
+/// MolrsStatus molrs_frame_clear_box(MolrsFrameHandle frame);
 /// ```
 ///
 /// # Arguments
@@ -540,11 +540,11 @@ pub unsafe extern "C" fn molrs_frame_set_simbox(
 ///
 /// `frame` must be a live frame handle.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_frame_clear_simbox(frame: MolrsFrameHandle) -> MolrsStatus {
+pub unsafe extern "C" fn molrs_frame_clear_box(frame: MolrsFrameHandle) -> MolrsStatus {
     ffi_try!({
         let mut store = lock_store();
         let frame_id = handle_to_frame_id(frame);
-        match store.inner.set_frame_simbox(frame_id, None) {
+        match store.inner.set_frame_box(frame_id, None) {
             Ok(()) => MolrsStatus::Ok,
             Err(e) => ffi_err_to_status(&e),
         }
@@ -555,13 +555,13 @@ pub unsafe extern "C" fn molrs_frame_clear_simbox(frame: MolrsFrameHandle) -> Mo
 ///
 /// A new SimBox handle is created each time this function is called.
 /// The caller is responsible for freeing it with
-/// [`molrs_simbox_drop`](crate::simbox::molrs_simbox_drop).
+/// [`molrs_box_drop`](crate::simbox::molrs_box_drop).
 ///
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_frame_get_simbox(MolrsFrameHandle frame,
-///                                     MolrsSimBoxHandle* out);
+/// MolrsStatus molrs_frame_get_box(MolrsFrameHandle frame,
+///                                     MolrsBoxHandle* out);
 /// ```
 ///
 /// # Arguments
@@ -579,17 +579,17 @@ pub unsafe extern "C" fn molrs_frame_clear_simbox(frame: MolrsFrameHandle) -> Mo
 /// # Safety
 ///
 /// * `frame` must be a live frame handle.
-/// * `out` must point to a writable `MolrsSimBoxHandle`.
+/// * `out` must point to a writable `MolrsBoxHandle`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_frame_get_simbox(
+pub unsafe extern "C" fn molrs_frame_get_box(
     frame: MolrsFrameHandle,
-    out: *mut MolrsSimBoxHandle,
+    out: *mut MolrsBoxHandle,
 ) -> MolrsStatus {
     ffi_try!({
         null_check!(out);
         let mut store = lock_store();
         let frame_id = handle_to_frame_id(frame);
-        let sb_clone = match store.inner.with_frame_simbox(frame_id, |opt| opt.cloned()) {
+        let sb_clone = match store.inner.with_frame_box(frame_id, |opt| opt.cloned()) {
             Ok(Some(sb)) => sb,
             Ok(None) => {
                 error::set_last_error("frame has no simbox");
@@ -598,7 +598,7 @@ pub unsafe extern "C" fn molrs_frame_get_simbox(
             Err(e) => return ffi_err_to_status(&e),
         };
         let key = store.simboxes.insert(sb_clone);
-        unsafe { *out = simbox_key_to_handle(key) };
+        unsafe { *out = box_key_to_handle(key) };
         MolrsStatus::Ok
     })
 }

@@ -149,7 +149,7 @@ impl Store {
     }
 
     /// Borrows a frame's simbox immutably and runs a closure on it.
-    pub fn with_frame_simbox<R>(
+    pub fn with_frame_box<R>(
         &self,
         id: FrameId,
         f: impl FnOnce(Option<&SimBox>) -> R,
@@ -179,7 +179,7 @@ impl Store {
     }
 
     /// Sets the simbox of a frame without invalidating block handles.
-    pub fn set_frame_simbox(
+    pub fn set_frame_box(
         &mut self,
         id: FrameId,
         simbox: Option<SimBox>,

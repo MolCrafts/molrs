@@ -15,7 +15,7 @@ use slotmap::{Key, new_key_type};
 
 new_key_type! {
     /// Key for SimBox entries in the CStore.
-    pub struct SimBoxKey;
+    pub struct BoxKey;
 }
 
 new_key_type! {
@@ -84,10 +84,10 @@ pub struct MolrsBlockHandle {
 
 /// Opaque handle to a SimBox (simulation cell) in the global store.
 ///
-/// Obtained from [`molrs_simbox_new`](crate::simbox::molrs_simbox_new),
-/// [`molrs_simbox_cube`](crate::simbox::molrs_simbox_cube), or
-/// [`molrs_simbox_ortho`](crate::simbox::molrs_simbox_ortho).
-/// Freed with [`molrs_simbox_drop`](crate::simbox::molrs_simbox_drop).
+/// Obtained from [`molrs_box_new`](crate::simbox::molrs_box_new),
+/// [`molrs_box_cube`](crate::simbox::molrs_box_cube), or
+/// [`molrs_box_ortho`](crate::simbox::molrs_box_ortho).
+/// Freed with [`molrs_box_drop`](crate::simbox::molrs_box_drop).
 ///
 /// # Layout (C)
 ///
@@ -95,11 +95,11 @@ pub struct MolrsBlockHandle {
 /// typedef struct {
 ///     uint32_t idx;
 ///     uint32_t version;
-/// } MolrsSimBoxHandle;
+/// } MolrsBoxHandle;
 /// ```
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct MolrsSimBoxHandle {
+pub struct MolrsBoxHandle {
     /// Slot index (opaque).
     pub idx: u32,
     /// Generation counter (opaque).
@@ -144,19 +144,19 @@ pub(crate) fn handle_to_frame_id(h: MolrsFrameHandle) -> FrameId {
     FrameId::from(slotmap::KeyData::from_ffi(ffi))
 }
 
-// --- Conversion: SimBoxKey ↔ MolrsSimBoxHandle ---
+// --- Conversion: BoxKey ↔ MolrsBoxHandle ---
 
-pub(crate) fn simbox_key_to_handle(key: SimBoxKey) -> MolrsSimBoxHandle {
+pub(crate) fn box_key_to_handle(key: BoxKey) -> MolrsBoxHandle {
     let ffi = key.data().as_ffi();
-    MolrsSimBoxHandle {
+    MolrsBoxHandle {
         idx: ffi as u32,
         version: (ffi >> 32) as u32,
     }
 }
 
-pub(crate) fn handle_to_simbox_key(h: MolrsSimBoxHandle) -> SimBoxKey {
+pub(crate) fn handle_to_box_key(h: MolrsBoxHandle) -> BoxKey {
     let ffi = (h.version as u64) << 32 | h.idx as u64;
-    SimBoxKey::from(slotmap::KeyData::from_ffi(ffi))
+    BoxKey::from(slotmap::KeyData::from_ffi(ffi))
 }
 
 // --- Conversion: FFKey ↔ MolrsForceFieldHandle ---

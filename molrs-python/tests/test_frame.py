@@ -10,7 +10,7 @@ class TestFrameConstruction:
         f = Frame()
         assert len(f) == 0
         assert f.keys() == []
-        assert f.simbox is None
+        assert f.box is None
 
     def test_from_dict_blocks_envelope(self):
         f = Frame.from_dict(
@@ -48,7 +48,7 @@ class TestFrameConstruction:
     def test_repr_empty(self):
         r = repr(Frame())
         assert "Frame" in r
-        assert "no" in r  # simbox=no
+        assert "no" in r  # box=no
 
 
 class TestFrameBlockAccess:
@@ -115,26 +115,26 @@ class TestFrameBlockAccess:
         assert f["atoms"].nrows == 2
 
 
-class TestFrameSimbox:
+class TestFrameBox:
     def test_default_none(self):
-        assert Frame().simbox is None
+        assert Frame().box is None
 
-    def test_set_simbox(self):
+    def test_set_box(self):
         f = Frame()
         box_ = molrs.Box.cube(10.0)
-        f.simbox = box_
-        assert f.simbox is not None
-        assert pytest.approx(f.simbox.volume(), abs=1) == 1000.0
+        f.box = box_
+        assert f.box is not None
+        assert pytest.approx(f.box.volume(), abs=1) == 1000.0
 
-    def test_clear_simbox(self):
+    def test_clear_box(self):
         f = Frame()
-        f.simbox = molrs.Box.cube(10.0)
-        f.simbox = None
-        assert f.simbox is None
+        f.box = molrs.Box.cube(10.0)
+        f.box = None
+        assert f.box is None
 
-    def test_repr_with_simbox(self):
+    def test_repr_with_box(self):
         f = Frame()
-        f.simbox = molrs.Box.cube(10.0)
+        f.box = molrs.Box.cube(10.0)
         assert "yes" in repr(f)
 
 

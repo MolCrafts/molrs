@@ -151,7 +151,7 @@ impl LinkedCell {
     /// distance using the cell-list algorithm.
     ///
     /// The frame must have an `"atoms"` block with `x`, `y`, `z` (F) columns.
-    /// If the frame has a `simbox`, periodic boundary conditions are used.
+    /// If the frame has a `box`, periodic boundary conditions are used.
     /// Otherwise, a free-boundary bounding box is auto-generated.
     ///
     /// # Arguments
@@ -421,12 +421,12 @@ impl RDF {
     ///
     /// # Arguments
     ///
-    /// * `frame` - Frame with a `simbox` set (used only for volume)
+    /// * `frame` - Frame with a `box` set (used only for volume)
     /// * `neighbors` - Pre-built [`NeighborList`] from [`LinkedCell`]
     ///
     /// # Errors
     ///
-    /// Throws if the frame has no `simbox` — use
+    /// Throws if the frame has no `box` — use
     /// [`computeWithVolume`](Self::compute_with_volume) for non-periodic frames.
     pub fn compute(&self, frame: &Frame, neighbors: &NeighborList) -> Result<RDFResult, JsValue> {
         frame.with_frame(|rs_frame| {

@@ -16,7 +16,7 @@ use molrs::ff::ForceField;
 use molrs::spatial::region::simbox::SimBox;
 use slotmap::SlotMap;
 
-use crate::handle::{FFKey, SimBoxKey};
+use crate::handle::{FFKey, BoxKey};
 
 /// Central store owning all C-API state.
 ///
@@ -35,8 +35,8 @@ pub(crate) struct CStore {
     /// Reverse lookup: Rust `String` to interned `key_id` (`u32`).
     pub key_to_id: HashMap<String, u32>,
 
-    /// Standalone SimBox instances, keyed by [`SimBoxKey`].
-    pub simboxes: SlotMap<SimBoxKey, SimBox>,
+    /// Standalone SimBox instances, keyed by [`BoxKey`].
+    pub simboxes: SlotMap<BoxKey, SimBox>,
 
     /// Standalone ForceField instances, keyed by [`FFKey`].
     pub forcefields: SlotMap<FFKey, ForceField>,

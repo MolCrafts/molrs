@@ -28,6 +28,20 @@ from .molrs import MetaValue
 type BlockLike = Mapping[str, ArrayLike]
 
 
+def _is_array_like(value: Any) -> bool:
+    """True when ``value`` is a real 1-D-representable array (not a scalar).
+
+    Used to decide whether a failed column assignment is a genuine
+    not-array-like error (scalar / object) or a real array whose own error
+    (length / shape / dtype mismatch) must be surfaced unmasked.
+    """
+    if isinstance(value, (str, bytes)):
+        return False
+    if isinstance(value, np.ndarray) or hasattr(value, "__array__"):
+        return True
+    return isinstance(value, (list, tuple))
+
+
 class Block(_RsBlock, MutableMapping[str, np.ndarray]):
     """Tidy columnar table mapping name -> 1D/2D numpy column.
 
@@ -54,7 +68,10 @@ class Block(_RsBlock, MutableMapping[str, np.ndarray]):
         self._source: "_RsBlock | None" = None
         if vars_ is not None:
             if not isinstance(vars_, dict):
-                raise ValueError(f"vars_ must be a dict, got {type(vars_)}")
+                raise ValueError(
+                    "Block value must be a dict of column-name -> array, "
+                    f"got {type(vars_)}"
+                )
             for k, v in vars_.items():
                 try:
                     self[k] = v
@@ -63,6 +80,12 @@ class Block(_RsBlock, MutableMapping[str, np.ndarray]):
                     # (object / None / ragged column) rather than masking it.
                     raise
                 except Exception as e:
+                    # Only claim "not array-like" when the value genuinely is
+                    # not — a length/shape mismatch on a real array carries its
+                    # own actionable message ("axis-0 length 4 but block
+                    # expects 6"), which must NOT be masked.
+                    if _is_array_like(v):
+                        raise
                     raise ValueError(
                         f"Value must be array-like for key {k!r}, got {type(v)}"
                     ) from e
@@ -387,11 +410,11 @@ class Block(_RsBlock, MutableMapping[str, np.ndarray]):
 
 
 class Frame(_RsFrame):
-    """Container of named :class:`Block` tables plus a simbox and metadata.
+    """Container of named :class:`Block` tables plus a box and metadata.
 
     Inherits the PyO3 ``molrs.Frame``: a rich ``Frame`` IS-A core frame, accepted
     by every ``molrs.*`` API with no conversion. ``__getitem__`` upgrades the
-    stored block to a rich :class:`Block`. The ``simbox`` is the native
+    stored block to a rich :class:`Block`. The ``box`` is the native
     ``molrs.Box`` (inherited). Frame has no CSV methods — CSV belongs to Block.
     """
 
@@ -468,9 +491,9 @@ class Frame(_RsFrame):
             frame = cls()
             for name in _RsFrame.keys(data):
                 frame[name] = _RsFrame.__getitem__(data, name)
-            raw_simbox = _RsFrame.simbox.__get__(data, type(data))
-            if raw_simbox is not None:
-                frame.simbox = raw_simbox
+            raw_box = _RsFrame.box.__get__(data, type(data))
+            if raw_box is not None:
+                frame.box = raw_box
             if data.meta:
                 frame.meta = dict(data.meta)
             return frame
@@ -494,11 +517,11 @@ class Frame(_RsFrame):
         return cls.from_dict(base)
 
     def copy(self) -> "Frame":
-        """Deep copy (blocks copied into new storage; simbox + metadata copied)."""
+        """Deep copy (blocks copied into new storage; box + metadata copied)."""
         new = Frame()
         for name in self.keys():
             new[name] = self[name].copy()
-        new.simbox = self.simbox
+        new.box = self.box
         if self.meta:
             new.meta = dict(self.meta)
         return new

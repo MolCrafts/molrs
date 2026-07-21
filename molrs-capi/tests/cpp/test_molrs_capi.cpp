@@ -285,91 +285,91 @@ TEST_F(MolrsTest, BlockMutablePointer) {
 TEST_F(MolrsTest, SimBoxCube) {
     F origin[3] = {0, 0, 0};
     bool pbc[3] = {true, true, true};
-    MolrsSimBoxHandle sb{};
-    ASSERT_MOLRS_OK(molrs_simbox_cube(static_cast<F>(10.0), origin, pbc, &sb));
+    MolrsBoxHandle sb{};
+    ASSERT_MOLRS_OK(molrs_box_cube(static_cast<F>(10.0), origin, pbc, &sb));
 
     F vol = 0;
-    ASSERT_MOLRS_OK(molrs_simbox_volume(sb, &vol));
+    ASSERT_MOLRS_OK(molrs_box_volume(sb, &vol));
     EXPECT_NEAR(vol, 1000.0, 1e-3);
 
     F lengths[3] = {};
-    ASSERT_MOLRS_OK(molrs_simbox_lengths(sb, lengths));
+    ASSERT_MOLRS_OK(molrs_box_lengths(sb, lengths));
     EXPECT_NEAR(lengths[0], 10.0, 1e-6);
     EXPECT_NEAR(lengths[1], 10.0, 1e-6);
     EXPECT_NEAR(lengths[2], 10.0, 1e-6);
 
     F h[9] = {};
-    ASSERT_MOLRS_OK(molrs_simbox_h(sb, h));
+    ASSERT_MOLRS_OK(molrs_box_h(sb, h));
     EXPECT_NEAR(h[0], 10.0, 1e-6);  // h[0][0]
     EXPECT_NEAR(h[4], 10.0, 1e-6);  // h[1][1]
     EXPECT_NEAR(h[8], 10.0, 1e-6);  // h[2][2]
     EXPECT_NEAR(h[1], 0.0, 1e-10);  // off-diagonal
 
     F tilts[3] = {};
-    ASSERT_MOLRS_OK(molrs_simbox_tilts(sb, tilts));
+    ASSERT_MOLRS_OK(molrs_box_tilts(sb, tilts));
     EXPECT_NEAR(tilts[0], 0.0, 1e-10);
     EXPECT_NEAR(tilts[1], 0.0, 1e-10);
     EXPECT_NEAR(tilts[2], 0.0, 1e-10);
 
     bool pbc_out[3] = {};
-    ASSERT_MOLRS_OK(molrs_simbox_pbc(sb, pbc_out));
+    ASSERT_MOLRS_OK(molrs_box_pbc(sb, pbc_out));
     EXPECT_TRUE(pbc_out[0]);
     EXPECT_TRUE(pbc_out[1]);
     EXPECT_TRUE(pbc_out[2]);
 
-    ASSERT_MOLRS_OK(molrs_simbox_drop(sb));
-    EXPECT_NE(molrs_simbox_drop(sb), MOLRS_STATUS_OK);  // double drop
+    ASSERT_MOLRS_OK(molrs_box_drop(sb));
+    EXPECT_NE(molrs_box_drop(sb), MOLRS_STATUS_OK);  // double drop
 }
 
 TEST_F(MolrsTest, SimBoxOrtho) {
     F lens[3] = {2, 3, 4};
     F origin[3] = {0, 0, 0};
     bool pbc[3] = {true, true, true};
-    MolrsSimBoxHandle sb{};
-    ASSERT_MOLRS_OK(molrs_simbox_ortho(lens, origin, pbc, &sb));
+    MolrsBoxHandle sb{};
+    ASSERT_MOLRS_OK(molrs_box_ortho(lens, origin, pbc, &sb));
 
     F vol = 0;
-    ASSERT_MOLRS_OK(molrs_simbox_volume(sb, &vol));
+    ASSERT_MOLRS_OK(molrs_box_volume(sb, &vol));
     EXPECT_NEAR(vol, 24.0, 1e-3);
 
-    ASSERT_MOLRS_OK(molrs_simbox_drop(sb));
+    ASSERT_MOLRS_OK(molrs_box_drop(sb));
 }
 
 TEST_F(MolrsTest, SimBoxWrap) {
     F origin[3] = {0, 0, 0};
     bool pbc[3] = {true, true, true};
-    MolrsSimBoxHandle sb{};
-    ASSERT_MOLRS_OK(molrs_simbox_cube(static_cast<F>(10.0), origin, pbc, &sb));
+    MolrsBoxHandle sb{};
+    ASSERT_MOLRS_OK(molrs_box_cube(static_cast<F>(10.0), origin, pbc, &sb));
 
     // (11, -1, 21) -> should wrap to (1, 9, 1)
     F xyz_in[6]  = {11, -1, 21, 0.5, 0.5, 0.5};
     F xyz_out[6] = {};
-    ASSERT_MOLRS_OK(molrs_simbox_wrap(sb, xyz_in, xyz_out, 2));
+    ASSERT_MOLRS_OK(molrs_box_wrap(sb, xyz_in, xyz_out, 2));
 
     EXPECT_NEAR(xyz_out[0], 1.0, 1e-4);
     EXPECT_NEAR(xyz_out[1], 9.0, 1e-4);
     EXPECT_NEAR(xyz_out[2], 1.0, 1e-4);
 
-    ASSERT_MOLRS_OK(molrs_simbox_drop(sb));
+    ASSERT_MOLRS_OK(molrs_box_drop(sb));
 }
 
 TEST_F(MolrsTest, SimBoxShortestVector) {
     F origin[3] = {0, 0, 0};
     bool pbc[3] = {true, true, true};
-    MolrsSimBoxHandle sb{};
-    ASSERT_MOLRS_OK(molrs_simbox_cube(static_cast<F>(10.0), origin, pbc, &sb));
+    MolrsBoxHandle sb{};
+    ASSERT_MOLRS_OK(molrs_box_cube(static_cast<F>(10.0), origin, pbc, &sb));
 
     F r1[3] = {0.5, 0, 0};
     F r2[3] = {9.5, 0, 0};
     F dr[3] = {};
-    ASSERT_MOLRS_OK(molrs_simbox_shortest_vector(sb, r1, r2, dr, 1));
+    ASSERT_MOLRS_OK(molrs_box_shortest_vector(sb, r1, r2, dr, 1));
 
     // shortest path across periodic boundary: -1.0 in x
     EXPECT_NEAR(dr[0], -1.0, 1e-4);
     EXPECT_NEAR(dr[1],  0.0, 1e-4);
     EXPECT_NEAR(dr[2],  0.0, 1e-4);
 
-    ASSERT_MOLRS_OK(molrs_simbox_drop(sb));
+    ASSERT_MOLRS_OK(molrs_box_drop(sb));
 }
 
 TEST_F(MolrsTest, SimBoxTriclinic) {
@@ -381,16 +381,16 @@ TEST_F(MolrsTest, SimBoxTriclinic) {
     };
     F origin[3] = {0, 0, 0};
     bool pbc[3] = {true, true, true};
-    MolrsSimBoxHandle sb{};
-    ASSERT_MOLRS_OK(molrs_simbox_new(h9, origin, pbc, &sb));
+    MolrsBoxHandle sb{};
+    ASSERT_MOLRS_OK(molrs_box_new(h9, origin, pbc, &sb));
 
     F tilts[3] = {};
-    ASSERT_MOLRS_OK(molrs_simbox_tilts(sb, tilts));
+    ASSERT_MOLRS_OK(molrs_box_tilts(sb, tilts));
     EXPECT_NEAR(tilts[0], 1.0, 1e-6);  // xy
     EXPECT_NEAR(tilts[1], 2.0, 1e-6);  // xz
     EXPECT_NEAR(tilts[2], 3.0, 1e-6);  // yz
 
-    ASSERT_MOLRS_OK(molrs_simbox_drop(sb));
+    ASSERT_MOLRS_OK(molrs_box_drop(sb));
 }
 
 // ===== Frame <-> SimBox =====================================================
@@ -401,25 +401,25 @@ TEST_F(MolrsTest, FrameSimBoxAssociation) {
 
     F origin[3] = {0, 0, 0};
     bool pbc[3] = {true, true, true};
-    MolrsSimBoxHandle sb{};
-    ASSERT_MOLRS_OK(molrs_simbox_cube(static_cast<F>(5.0), origin, pbc, &sb));
+    MolrsBoxHandle sb{};
+    ASSERT_MOLRS_OK(molrs_box_cube(static_cast<F>(5.0), origin, pbc, &sb));
 
-    ASSERT_MOLRS_OK(molrs_frame_set_simbox(frame, sb));
+    ASSERT_MOLRS_OK(molrs_frame_set_box(frame, sb));
 
-    MolrsSimBoxHandle sb2{};
-    ASSERT_MOLRS_OK(molrs_frame_get_simbox(frame, &sb2));
+    MolrsBoxHandle sb2{};
+    ASSERT_MOLRS_OK(molrs_frame_get_box(frame, &sb2));
 
     F vol = 0;
-    ASSERT_MOLRS_OK(molrs_simbox_volume(sb2, &vol));
+    ASSERT_MOLRS_OK(molrs_box_volume(sb2, &vol));
     EXPECT_NEAR(vol, 125.0, 1e-3);
 
     // clear and verify absence
-    ASSERT_MOLRS_OK(molrs_frame_clear_simbox(frame));
-    MolrsSimBoxHandle sb3{};
-    EXPECT_NE(molrs_frame_get_simbox(frame, &sb3), MOLRS_STATUS_OK);
+    ASSERT_MOLRS_OK(molrs_frame_clear_box(frame));
+    MolrsBoxHandle sb3{};
+    EXPECT_NE(molrs_frame_get_box(frame, &sb3), MOLRS_STATUS_OK);
 
-    molrs_simbox_drop(sb);
-    molrs_simbox_drop(sb2);
+    molrs_box_drop(sb);
+    molrs_box_drop(sb2);
     ASSERT_MOLRS_OK(molrs_frame_drop(frame));
 }
 
@@ -527,9 +527,9 @@ TEST_F(MolrsTest, FullSimulationLoop) {
     // simbox
     F origin[3] = {0, 0, 0};
     bool pbc[3] = {true, true, true};
-    MolrsSimBoxHandle sb{};
-    ASSERT_MOLRS_OK(molrs_simbox_cube(static_cast<F>(10.0), origin, pbc, &sb));
-    ASSERT_MOLRS_OK(molrs_frame_set_simbox(frame, sb));
+    MolrsBoxHandle sb{};
+    ASSERT_MOLRS_OK(molrs_box_cube(static_cast<F>(10.0), origin, pbc, &sb));
+    ASSERT_MOLRS_OK(molrs_frame_set_box(frame, sb));
 
     // block + positions
     ASSERT_MOLRS_OK(molrs_frame_set_block(frame, atoms_id, 0));
@@ -566,15 +566,15 @@ TEST_F(MolrsTest, FullSimulationLoop) {
     }
 
     // query SimBox through frame
-    MolrsSimBoxHandle frame_sb{};
-    ASSERT_MOLRS_OK(molrs_frame_get_simbox(frame, &frame_sb));
+    MolrsBoxHandle frame_sb{};
+    ASSERT_MOLRS_OK(molrs_frame_get_box(frame, &frame_sb));
     F h[9] = {};
-    ASSERT_MOLRS_OK(molrs_simbox_h(frame_sb, h));
+    ASSERT_MOLRS_OK(molrs_box_h(frame_sb, h));
     EXPECT_NEAR(h[0], 10.0, 1e-6);
 
     // cleanup
-    molrs_simbox_drop(sb);
-    molrs_simbox_drop(frame_sb);
+    molrs_box_drop(sb);
+    molrs_box_drop(frame_sb);
     ASSERT_MOLRS_OK(molrs_frame_drop(frame));
 }
 
@@ -583,15 +583,15 @@ TEST_F(MolrsTest, FullSimulationLoop) {
 TEST_F(MolrsTest, NullPointerErrors) {
     EXPECT_EQ(molrs_frame_new(nullptr), MOLRS_STATUS_NULL_POINTER);
     EXPECT_EQ(molrs_intern_key(nullptr, nullptr), MOLRS_STATUS_NULL_POINTER);
-    EXPECT_EQ(molrs_simbox_cube(1.0, nullptr, nullptr, nullptr), MOLRS_STATUS_NULL_POINTER);
+    EXPECT_EQ(molrs_box_cube(1.0, nullptr, nullptr, nullptr), MOLRS_STATUS_NULL_POINTER);
 }
 
 TEST_F(MolrsTest, InvalidHandleErrors) {
     MolrsFrameHandle bad_frame{999, 999};
     EXPECT_NE(molrs_frame_drop(bad_frame), MOLRS_STATUS_OK);
 
-    MolrsSimBoxHandle bad_sb{999, 999};
-    EXPECT_NE(molrs_simbox_drop(bad_sb), MOLRS_STATUS_OK);
+    MolrsBoxHandle bad_sb{999, 999};
+    EXPECT_NE(molrs_box_drop(bad_sb), MOLRS_STATUS_OK);
 
     MolrsForceFieldHandle bad_ff{999, 999};
     EXPECT_NE(molrs_ff_drop(bad_ff), MOLRS_STATUS_OK);
