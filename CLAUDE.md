@@ -318,3 +318,11 @@ Agent mapping by domain (plugin agents read the notes pages below):
 
 Evolving decisions live in `.claude/notes/notes.md`; specs live in
 `.claude/specs/` indexed by `.claude/specs/INDEX.md`.
+
+<!-- mol:note:topic:release-molrs-first -->
+## Release before molpy (agent iron law)
+
+**Ship molrs before molpy.** APIs molpy will pin must be on `master` **with
+tag `vX.Y.Z`** and published before molpy bumps `molcrafts-molrs==X.Y.Z`.
+Local `maturin develop` is not a release. **No pin-parity scripts** — agents
+run the manual checklist in `.claude/notes/release.md`.
