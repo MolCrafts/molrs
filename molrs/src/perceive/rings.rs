@@ -91,11 +91,65 @@ impl RingInfo {
     pub fn rings(&self) -> &[Vec<AtomId>] {
         &self.rings
     }
+
+    /// Size (atom count) of the largest **ring system** — the union of SSSR
+    /// rings that share at least one atom (fused / bridged connectivity).
+    ///
+    /// Benzene → 6; naphthalene → 10 (not 6). Acyclic molecules → 0.
+    pub fn max_ring_system_size(&self) -> usize {
+        let n = self.rings.len();
+        if n == 0 {
+            return 0;
+        }
+        // Union-find over rings: share an atom ⇒ same component.
+        let mut parent: Vec<usize> = (0..n).collect();
+        fn find(parent: &mut [usize], mut i: usize) -> usize {
+            while parent[i] != i {
+                parent[i] = parent[parent[i]];
+                i = parent[i];
+            }
+            i
+        }
+        fn unite(parent: &mut [usize], a: usize, b: usize) {
+            let ra = find(parent, a);
+            let rb = find(parent, b);
+            if ra != rb {
+                parent[rb] = ra;
+            }
+        }
+        // atom → first ring index seen
+        let mut atom_owner: HashMap<AtomId, usize> = HashMap::new();
+        for (ri, ring) in self.rings.iter().enumerate() {
+            for &atom in ring {
+                if let Some(&prev) = atom_owner.get(&atom) {
+                    unite(&mut parent, prev, ri);
+                } else {
+                    atom_owner.insert(atom, ri);
+                }
+            }
+        }
+        // component → set of atoms
+        let mut systems: HashMap<usize, std::collections::HashSet<AtomId>> = HashMap::new();
+        for (ri, ring) in self.rings.iter().enumerate() {
+            let root = find(&mut parent, ri);
+            systems
+                .entry(root)
+                .or_default()
+                .extend(ring.iter().copied());
+        }
+        systems.values().map(|s| s.len()).max().unwrap_or(0)
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
+
+/// Size of the largest fused/bridged ring system in `mol` (see
+/// [`RingInfo::max_ring_system_size`]).
+pub fn max_ring_system_size(mol: &Atomistic) -> usize {
+    find_rings(mol).max_ring_system_size()
+}
 
 /// Compute the ring information (SSSR / minimum cycle basis) for `mol`.
 ///
@@ -244,5 +298,18 @@ mod tests {
         let mut sizes = ri.ring_sizes();
         sizes.sort_unstable();
         assert_eq!(sizes, vec![6, 6]);
+        // Fused system: 10 carbons, not a single 6-ring.
+        assert_eq!(ri.max_ring_system_size(), 10);
+        assert_eq!(max_ring_system_size(&g), 10);
+    }
+
+    #[test]
+    fn test_max_ring_system_size_benzene_and_acyclic() {
+        assert_eq!(find_rings(&cycle(6)).max_ring_system_size(), 6);
+        let mut chain = Atomistic::new();
+        let ids: Vec<AtomId> = (0..3).map(|_| chain.add_atom(Atom::new())).collect();
+        chain.add_bond(ids[0], ids[1]).unwrap();
+        chain.add_bond(ids[1], ids[2]).unwrap();
+        assert_eq!(find_rings(&chain).max_ring_system_size(), 0);
     }
 }

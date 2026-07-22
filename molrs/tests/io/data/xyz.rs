@@ -45,6 +45,11 @@ fn all_xyz_bad_files() -> Vec<std::path::PathBuf> {
         })
         .collect();
     paths.sort();
+    assert!(
+        !paths.is_empty(),
+        "No bad XYZ fixtures in tests-data/xyz/bad/ — a missing negative corpus \
+         makes the fail-to-parse test vacuous"
+    );
     paths
 }
 
@@ -131,7 +136,6 @@ fn test_all_xyz_files_roundtrip() {
 #[test]
 fn test_all_bad_xyz_files_fail() {
     let bad_files = all_xyz_bad_files();
-    // If bad/ is absent or empty this test passes vacuously.
     for path in bad_files {
         let result = read_xyz_frame(path.to_str().unwrap());
         assert!(

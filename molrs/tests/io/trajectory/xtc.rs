@@ -85,11 +85,8 @@ fn test_all_xtc_files_parse() {
 /// must decode to identical coordinates.
 #[test]
 fn test_faux2023magic_matches_classic() {
-    let pc = crate::common::data_path("xtc/ubiquitin.xtc");
-    let pf = crate::common::data_path("xtc/ubiquitin_faux2023magic.xtc");
-    if !pc.exists() || !pf.exists() {
-        return;
-    }
+    let pc = crate::common::require_fixture("xtc/ubiquitin.xtc");
+    let pf = crate::common::require_fixture("xtc/ubiquitin_faux2023magic.xtc");
     let fc = read_xtc(&pc).expect("classic");
     let ff = read_xtc(&pf).expect("faux2023magic");
     assert_eq!(fc.len(), ff.len(), "frame count");
@@ -175,11 +172,8 @@ fn test_xtc_writer_roundtrip() {
 /// decoder against the independent TRR decoder on a real ~20k-atom system.
 #[test]
 fn test_ubiquitin_trr_matches_xtc() {
-    let ptrr = crate::common::data_path("trr/ubiquitin.trr");
-    let pxtc = crate::common::data_path("xtc/ubiquitin.xtc");
-    if !ptrr.exists() || !pxtc.exists() {
-        return;
-    }
+    let ptrr = crate::common::require_fixture("trr/ubiquitin.trr");
+    let pxtc = crate::common::require_fixture("xtc/ubiquitin.xtc");
     let trr = &read_trr(&ptrr).expect("read trr")[0];
     let xtc = &read_xtc(&pxtc).expect("read xtc")[0];
     let n_trr = trr.get("atoms").unwrap().nrows().unwrap();
@@ -204,11 +198,8 @@ fn test_ubiquitin_trr_matches_xtc() {
 /// to the XTC tolerance on the first frame.
 #[test]
 fn test_cell_shapes_trr_matches_xtc() {
-    let ptrr = crate::common::data_path("trr/cell_shapes.trr");
-    let pxtc = crate::common::data_path("xtc/cell_shapes.xtc");
-    if !ptrr.exists() || !pxtc.exists() {
-        return;
-    }
+    let ptrr = crate::common::require_fixture("trr/cell_shapes.trr");
+    let pxtc = crate::common::require_fixture("xtc/cell_shapes.xtc");
     let trr = &read_trr(&ptrr).expect("read trr")[0];
     let xtc = &read_xtc(&pxtc).expect("read xtc")[0];
     for axis in ["x", "y", "z"] {

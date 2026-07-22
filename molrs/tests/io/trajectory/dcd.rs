@@ -107,10 +107,7 @@ fn test_dcd_simbox_presence_matches_readme() {
         // outputs; neither writes the extra-block / unit-cell record.
     ];
     for &(name, expects_box) in expectations {
-        let path = crate::common::data_path(&format!("dcd/{}", name));
-        if !path.exists() {
-            continue;
-        }
+        let path = crate::common::require_fixture(&format!("dcd/{name}"));
         let mut reader = open_dcd(&path).expect("open");
         let frame = reader
             .read_step(0)
@@ -129,10 +126,7 @@ fn test_dcd_simbox_presence_matches_readme() {
 /// `4d-dynamic.dcd` carries a fourth `w` column on the atoms block.
 #[test]
 fn test_4d_dynamic_has_w_column() {
-    let path = crate::common::data_path("dcd/4d-dynamic.dcd");
-    if !path.exists() {
-        return;
-    }
+    let path = crate::common::require_fixture("dcd/4d-dynamic.dcd");
     let frames = read_dcd(path.to_str().unwrap()).expect("read 4d-dynamic.dcd");
     assert!(!frames.is_empty(), "expected frames");
     let atoms = frames[0].get("atoms").unwrap();
@@ -146,10 +140,7 @@ fn test_4d_dynamic_has_w_column() {
 /// frames after frame 0 (where the on-disk record is shorter).
 #[test]
 fn test_fixed_atoms_full_natoms_per_frame() {
-    let path = crate::common::data_path("dcd/fixed-atoms.dcd");
-    if !path.exists() {
-        return;
-    }
+    let path = crate::common::require_fixture("dcd/fixed-atoms.dcd");
     let frames = read_dcd(path.to_str().unwrap()).expect("read fixed-atoms.dcd");
     assert!(frames.len() >= 2, "need at least 2 frames to test fixed");
     let n0 = frames[0].get("atoms").unwrap().nrows().unwrap();
@@ -229,10 +220,7 @@ fn test_dcd_endianness_variants_agree() {
     ];
     let mut frames_per_file = Vec::new();
     for n in names {
-        let p = crate::common::data_path(&format!("dcd/{}", n));
-        if !p.exists() {
-            return;
-        }
+        let p = crate::common::require_fixture(&format!("dcd/{n}"));
         frames_per_file.push((n, read_dcd(p.to_str().unwrap()).expect("read")));
     }
 
@@ -280,10 +268,7 @@ fn test_triclinic_octane_three_variants_agree() {
     ];
     let mut lens_per_file = Vec::new();
     for n in names {
-        let p = crate::common::data_path(&format!("dcd/{}", n));
-        if !p.exists() {
-            return;
-        }
+        let p = crate::common::require_fixture(&format!("dcd/{n}"));
         let frames = read_dcd(p.to_str().unwrap()).expect("read");
         let first = frames.first().expect("at least one frame");
         let bx = first.simbox.as_ref().expect("triclinic file has box");
@@ -378,10 +363,7 @@ fn test_dcd_writer_roundtrip() {
 #[test]
 fn test_dcd_writer_rejects_4d() {
     use tempfile::NamedTempFile;
-    let path = crate::common::data_path("dcd/4d-dynamic.dcd");
-    if !path.exists() {
-        return;
-    }
+    let path = crate::common::require_fixture("dcd/4d-dynamic.dcd");
     let frames = read_dcd(path.to_str().unwrap()).expect("read");
     let temp = NamedTempFile::new().expect("temp");
     let err =
@@ -392,10 +374,7 @@ fn test_dcd_writer_rejects_4d() {
 /// Iterator API yields the same frames as `read_step`.
 #[test]
 fn test_dcd_iter_matches_read_step() {
-    let path = crate::common::data_path("dcd/water.dcd");
-    if !path.exists() {
-        return;
-    }
+    let path = crate::common::require_fixture("dcd/water.dcd");
     let mut a = open_dcd(&path).expect("open");
     let n = a.len().unwrap();
     let mut b = open_dcd(&path).expect("open");
@@ -415,10 +394,7 @@ fn test_dcd_iter_matches_read_step() {
 /// on-demand and exposes its fields.
 #[test]
 fn test_dcd_header_accessor() {
-    let path = crate::common::data_path("dcd/water.dcd");
-    if !path.exists() {
-        return;
-    }
+    let path = crate::common::require_fixture("dcd/water.dcd");
     let file = std::fs::File::open(&path).unwrap();
     let mut reader = DcdReader::new(std::io::BufReader::new(file));
     let header = reader.header().expect("parse header");

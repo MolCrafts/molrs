@@ -5,15 +5,21 @@ Project standard for molrs testing. Applied by the `mol:tester` agent,
 
 ## Test Organization
 
+Merged crate `molcrafts-molrs` (dir `molrs/`):
+
 ```
-molrs-<crate>/tests/           # Integration tests
-molrs-<crate>/src/**/tests.rs  # Unit tests (inline #[cfg(test)] modules)
-molrs-<crate>/benches/         # Criterion benchmarks
+molrs/tests/                 # Integration / data-driven / architecture gates
+  <module>/…                 # mirrors molrs/src/<module>/ (io, ff, compute, …)
+  architecture_gate.rs       # structural anti-pattern gates (no silent skip, …)
+molrs/src/**                 # Unit tests: inline #[cfg(test)] modules only
+molrs/benches/               # Criterion benchmarks
 ```
 
-Each workspace crate (`molrs-core`, `molrs-io`, `molrs-signal`,
-`molrs-compute`, `molrs-ff`, `molrs-conformer`, `molrs-cxxapi`, `molrs`)
-follows the same pattern.
+Workspace members that still ship their own trees:
+
+- `molrs-cxxapi/` — FFI handle-lifecycle tests (see `.claude/notes/ffi.md`)
+- Binder workspaces (`molrs-python`, `molrs-wasm`, …) are **separate**; do not
+  assume they share this suite.
 
 ### Running Tests
 
@@ -21,7 +27,8 @@ follows the same pattern.
 # Default / CI gate — unit only (src/ #[cfg(test)])
 cargo test -p molcrafts-molrs --lib --features full
 
-# Integration binaries under molrs/tests/ (IO, ff stages, …) — full.yml / manual
+# Integration binaries under molrs/tests/ (IO, ff stages, gates) — full.yml / manual
+bash scripts/fetch-test-data.sh
 cargo test -p molcrafts-molrs --tests --features "full filesystem"
 
 cargo test -p molcrafts-molrs test_name --features full   # single test
@@ -40,6 +47,54 @@ every real file in `tests-data/<format>/` — never against synthetic strings.
 See `CLAUDE.md` "IO Testing Rules" for the full policy. Synthetic
 `let content = "..."; read_from_str(content)` is permitted ONLY for
 malformed-input edge cases, never for happy paths.
+
+Helpers (io test target only):
+
+| Helper | Role |
+|---|---|
+| `common::tests_data_dir()` | locate `tests-data/` (or `$MOLRS_TESTS_DATA`); panics if absent |
+| `common::format_files("<fmt>")` | every file in `tests-data/<fmt>/`; panics if empty |
+| `common::require_fixture("fmt/name.ext")` | one **required** file; panics if missing |
+
+## Iron laws (tester)
+
+### 1. No vacuous green
+
+A test that asserts nothing is not coverage.
+
+| Forbidden | Allowed |
+|---|---|
+| `if !path.exists() { return; }` / `continue;` | `common::require_fixture(…)` or hard `assert!(path.is_file())` |
+| `println!("skipping…"); return;` | delete the test, vendor the input, or honest `#[ignore = "reason"]` |
+| empty loop over a missing/empty fixture dir | panic if the corpus is required; `assert!(!paths.is_empty())` |
+
+Gate: `architecture_gate::no_test_returns_green_when_its_input_is_absent`.
+
+### 2. No hand-written fixture subsets
+
+If a partition can be **computed** from the fixtures (charge sum, atom types,
+directory scan), it must not be a hand-written name list. Subsets that omit
+the only molecule that can fail are how 150 kcal/mol holes ship green.
+
+- Completeness lists (`REQUIRED_FIXTURES`) are OK only to prove nothing was
+  **deleted** — parity loops must still iterate the scan.
+- If a subset truly cannot be computed, state the reason **in the test**.
+  "Not yet implemented" is a reason to **fail**, not to exclude.
+
+Gate: `architecture_gate::no_test_asserts_on_a_subset_of_its_fixtures`.
+
+### 3. Hard-coded goldens for oracles
+
+External oracles (RDKit, antechamber, …) are frozen offline into fixtures /
+JSON. Tests must not spawn live third-party tools for pass/fail (generator
+compile checks are the exception and are local).
+
+### 4. Layout & granularity
+
+- Unit tests: pure logic / edge / error paths next to production (`#[cfg(test)]`).
+- Integration / format / multi-stage: `molrs/tests/`, path mirrors `src/`.
+- One concern per test function. Full product stories are not unit tests.
+- No wall-clock nondeterminism; fixed seeds where randomness is required.
 
 ## Molecular Simulation Test Patterns
 
@@ -145,7 +200,7 @@ Anything in `molrs-cxxapi` additionally needs FFI handle-lifecycle tests
 
 ## Coverage Target
 
-≥ 80% per crate. Mark expensive tests with `#[cfg(feature = "slow-tests")]`.
+≥ 80% per module surface. Mark expensive tests with `#[cfg(feature = "slow-tests")]`.
 
 ## Compliance Checklist
 
@@ -159,3 +214,5 @@ Anything in `molrs-cxxapi` additionally needs FFI handle-lifecycle tests
 - [ ] Edge cases: empty, single atom, collinear, zero distance
 - [ ] Slow tests gated behind `#[cfg(feature = "slow-tests")]`
 - [ ] IO tests iterate over `tests-data/<format>/*` (never synthetic)
+- [ ] No silent soft-skip of missing fixtures
+- [ ] Fixture partitions computed, not hand-named (except completeness lists)

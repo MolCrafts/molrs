@@ -63,8 +63,10 @@ pub mod perceive;
 // visible under `clippy -D warnings` as broken intra-doc links.
 pub use crate::perceive::aromaticity::perceive_aromaticity;
 pub use crate::perceive::hydrogens::{add_hydrogens, implicit_h_count, remove_hydrogens};
-pub use crate::perceive::rings::{RingInfo, find_rings};
-pub use crate::perceive::smarts::{MatchOptions, Reaction, SmartsMatch, SmartsPattern};
+pub use crate::perceive::rings::{RingInfo, find_rings, max_ring_system_size};
+pub use crate::perceive::smarts::{
+    MatchOptions, Reaction, RingPrimitive, SmartsMatch, SmartsPattern,
+};
 pub use crate::perceive::stereo::{
     BondStereo, TetrahedralStereo, assign_bond_stereo_from_3d, assign_stereo_from_3d,
     chiral_volume, find_chiral_centers,

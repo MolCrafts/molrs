@@ -17,6 +17,10 @@ status change) and conflicts with `CLAUDE.md`.
 
 ---
 
+## 2026-07-22 — closed vacuous-green-tests + test-subset-assertions
+**Decision:** both specs closed; gates already green, code already computed partitions / `#[ignore]` for molpy OPLS.
+**Cleanup (tester audit):** trajectory soft `if !exists { return }` → `common::require_fixture`; gate shape-2 expanded; `testing.md` rewritten for single-crate + iron laws.
+**Status:** promoted (→ testing.md Iron laws; architecture_gate)
 ## 2026-07-13 — GAFF decision REVERSED: molrs types GAFF/GAFF2 natively
 **Decision (owner-authorised):** the 2026-06-19 "GAFF = AmberTools-only" decision below is
 **REVERSED**. molrs now assigns GAFF, GAFF2, AMBER and SYBYL atom types natively, all

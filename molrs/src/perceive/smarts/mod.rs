@@ -69,6 +69,22 @@ use parser::QueryGraph;
 
 pub use reaction::Reaction;
 
+/// Ring-related SMARTS atom primitives found in a compiled pattern.
+///
+/// This is **syntax only**: callers (e.g. molpy `TypeScope`) decide which kinds
+/// make a pattern set unbounded. The engine never returns a boolean "is_bounded".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RingPrimitive {
+    /// Sized ring membership, e.g. `[r6]` or a finite endpoint of `r{lo-hi}`.
+    Sized(u32),
+    /// Untyped ring membership: `[R]`, `[!R]`, `[R0]`, bare `r`.
+    Membership,
+    /// Ring-count token `[Rn]` with `n >= 1` (`RingMembership(Some(n))`).
+    RingCount(u32),
+    /// Ring-bond connectivity `[xn]`.
+    RingBondCount(u32),
+}
+
 /// Matching controls for [`SmartsPattern::find`].
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MatchOptions<'a> {
@@ -143,6 +159,22 @@ impl SmartsPattern {
         self.graph.atoms.len()
     }
 
+    /// Longest shortest-path length (in bonds) on the **query atom graph**.
+    ///
+    /// Isolated single-atom queries return `0`. Recursive `$(...)` subpatterns
+    /// do not contribute edges — they are atom predicates, not topological
+    /// neighbours of the main query skeleton.
+    pub fn max_bond_depth(&self) -> usize {
+        self.graph.max_bond_depth()
+    }
+
+    /// Ring primitives used anywhere in this pattern (including recursive
+    /// subpatterns). Order is traversal order; duplicates are not collapsed
+    /// (callers may dedup). Does not judge boundedness.
+    pub fn ring_primitives(&self) -> Vec<RingPrimitive> {
+        self.graph.ring_primitives()
+    }
+
     /// Every `%LABEL` context-label referenced by this pattern (including those
     /// inside recursive `$(...)` subpatterns), in traversal order with
     /// duplicates kept.
@@ -151,5 +183,45 @@ impl SmartsPattern {
     /// previously-assigned labels (e.g. OPLS `%opls_NNN` references).
     pub fn context_labels(&self) -> Vec<String> {
         self.graph.context_labels()
+    }
+}
+
+#[cfg(test)]
+mod pattern_syntax_tests {
+    use super::{RingPrimitive, SmartsPattern};
+
+    #[test]
+    fn max_bond_depth_linear() {
+        assert_eq!(SmartsPattern::parse("C").unwrap().max_bond_depth(), 0);
+        assert_eq!(SmartsPattern::parse("CC").unwrap().max_bond_depth(), 1);
+        assert_eq!(SmartsPattern::parse("CCO").unwrap().max_bond_depth(), 2);
+    }
+
+    #[test]
+    fn max_bond_depth_branch() {
+        // C(C)C — propane skeleton: leaf–centre–leaf longest shortest path = 2
+        let p = SmartsPattern::parse("C(C)C").unwrap();
+        assert_eq!(p.max_bond_depth(), 2);
+        // Explicit centre with two single-bond neighbours as separate patterns:
+        // CC(C)C is isobutane-like depth 2 (any methyl to methyl via tertiary C).
+        assert_eq!(SmartsPattern::parse("CC(C)C").unwrap().max_bond_depth(), 2);
+    }
+
+    #[test]
+    fn ring_primitives_membership_and_sized() {
+        let empty = SmartsPattern::parse("[C]").unwrap().ring_primitives();
+        assert!(empty.is_empty());
+
+        let r = SmartsPattern::parse("[R]").unwrap().ring_primitives();
+        assert!(r.contains(&RingPrimitive::Membership));
+
+        let r2 = SmartsPattern::parse("[R2]").unwrap().ring_primitives();
+        assert!(r2.contains(&RingPrimitive::RingCount(2)));
+
+        let r6 = SmartsPattern::parse("[r6]").unwrap().ring_primitives();
+        assert!(r6.contains(&RingPrimitive::Sized(6)));
+
+        let x2 = SmartsPattern::parse("[x2]").unwrap().ring_primitives();
+        assert!(x2.contains(&RingPrimitive::RingBondCount(2)));
     }
 }

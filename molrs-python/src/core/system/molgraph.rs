@@ -25,7 +25,8 @@ use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 
 use molrs::perceive::aromaticity::perceive_aromaticity as core_perceive_aromaticity;
-use molrs::perceive::smarts::{MatchOptions, Reaction, SmartsPattern};
+use molrs::perceive::rings::max_ring_system_size as core_max_ring_system_size;
+use molrs::perceive::smarts::{MatchOptions, Reaction, RingPrimitive, SmartsPattern};
 use molrs::system::atomistic::{Atomistic, ExtractedAtomistic};
 use molrs::system::coarsegrain::{CoarseGrain, ExtractedCoarseGrain};
 use molrs::system::entity_table::Cell;
@@ -636,6 +637,13 @@ impl PyAtomistic {
         self.inner.n_atoms()
     }
 
+    /// Atom count of the largest fused/bridged ring system (naphthalene → 10).
+    ///
+    /// Acyclic molecules → ``0``. Pure structure fact for molpy region typing.
+    fn max_ring_system_size(&self) -> usize {
+        core_max_ring_system_size(&self.inner)
+    }
+
     /// Export to a tabular [`Frame`] (atoms / bonds / angles / dihedrals /
     /// impropers blocks). Leaf-owned — `self.inner.to_frame()`, zero conversion.
     fn to_frame(&self) -> PyResult<PyFrame> {
@@ -980,6 +988,33 @@ impl PySmartsPattern {
     #[getter]
     fn num_query_atoms(&self) -> usize {
         self.inner.num_query_atoms()
+    }
+
+    /// Longest shortest-path length (bonds) on the query atom graph.
+    ///
+    /// Isolated atoms → ``0``. Pure syntax fact for molpy region typing.
+    #[getter]
+    fn max_bond_depth(&self) -> usize {
+        self.inner.max_bond_depth()
+    }
+
+    /// Ring primitives used in this pattern (syntax only; no boundedness).
+    ///
+    /// Each item is ``(kind, n)`` where ``kind`` is one of
+    /// ``"sized"`` / ``"membership"`` / ``"ring_count"`` / ``"ring_bond_count"``
+    /// and ``n`` is ``None`` for membership.
+    #[getter]
+    fn ring_primitives(&self) -> Vec<(String, Option<u32>)> {
+        self.inner
+            .ring_primitives()
+            .into_iter()
+            .map(|p| match p {
+                RingPrimitive::Sized(n) => ("sized".into(), Some(n)),
+                RingPrimitive::Membership => ("membership".into(), None),
+                RingPrimitive::RingCount(n) => ("ring_count".into(), Some(n)),
+                RingPrimitive::RingBondCount(n) => ("ring_bond_count".into(), Some(n)),
+            })
+            .collect()
     }
 
     /// The ``:n`` atom-map label of query atom `query_atom` (``None`` if

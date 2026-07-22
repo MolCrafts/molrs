@@ -1533,6 +1533,13 @@ fn no_fixture_is_excluded_for_being_unimplemented() {
 /// the file it needed was not there. It reports nothing, it asserts nothing, and it
 /// counts as coverage. `tests/ff/tables_gate.rs` already says it out loud: *"CI must
 /// have ZERO coupling to AmberTools. Delete the test — do not make it skip."*
+///
+/// Two shapes are forbidden:
+/// 1. `println!(…skip…); return;` — the classic "print then flee".
+/// 2. `if !path.exists() { return; }` / `continue;` — silent soft-skip of a
+///    required fixture. Use `common::require_fixture` (or hard `assert!`) instead.
+///    Bare `return None` in a `filter_map` (filtering non-files while scanning a
+///    directory) is not this shape and is allowed.
 #[test]
 fn no_test_returns_green_when_its_input_is_absent() {
     let mut sins = Vec::new();
@@ -1544,16 +1551,48 @@ fn no_test_returns_green_when_its_input_is_absent() {
         let code = code_only(&text);
         let code_lines: Vec<&str> = code.lines().collect();
         for (n, line) in code_lines.iter().enumerate() {
-            // `eprintln!("skipping: …"); return;` — the shape, whatever the words.
-            if !line.contains(concat!("print", "ln!")) {
+            // Shape 1: `eprintln!("skipping: …"); return;`
+            if line.contains(concat!("print", "ln!")) {
+                let says_skip = lines[n].to_lowercase().contains("skip");
+                let returns = code_lines
+                    .get(n + 1..n + 3)
+                    .is_some_and(|w| w.iter().any(|l| l.trim() == "return;"));
+                if says_skip && returns {
+                    sins.push(format!("  {}:{}: {}", rel(&path), n + 1, lines[n].trim()));
+                }
                 continue;
             }
-            let says_skip = lines[n].to_lowercase().contains("skip");
-            let returns = code_lines
-                .get(n + 1..n + 3)
-                .is_some_and(|w| w.iter().any(|l| l.trim() == "return;"));
-            if says_skip && returns {
-                sins.push(format!("  {}:{}: {}", rel(&path), n + 1, lines[n].trim()));
+
+            // Shape 2: `if !…exists()/is_file() { return; | continue; }` where the
+            // early-out is the *first* statement of the if-body (no failure
+            // collection, no filter). `return None` / `return Vec::…` are filters.
+            let trimmed = line.trim();
+            if !trimmed.starts_with("if !") {
+                continue;
+            }
+            let checks_presence = trimmed.contains(".exists()") || trimmed.contains(".is_file()");
+            if !checks_presence {
+                continue;
+            }
+            // Walk to the first non-empty body line after optional `{`.
+            let body = code_lines.get(n + 1..).unwrap_or(&[]);
+            let mut first_body: Option<&str> = None;
+            for l in body.iter().take(4) {
+                let t = l.trim();
+                if t.is_empty() || t == "{" {
+                    continue;
+                }
+                first_body = Some(t);
+                break;
+            }
+            let early_out = matches!(first_body, Some("return;") | Some("continue;"));
+            if early_out {
+                sins.push(format!(
+                    "  {}:{}: {}  (silent soft-skip of a missing fixture)",
+                    rel(&path),
+                    n + 1,
+                    lines[n].trim()
+                ));
             }
         }
     }
@@ -1561,7 +1600,8 @@ fn no_test_returns_green_when_its_input_is_absent() {
         sins.is_empty(),
         "tests that go GREEN by skipping themselves when their input is absent:\n{}\n\n\
          A test that asserts nothing is not coverage — it is a green light with no lamp \
-         behind it. Make the input unconditional, or delete the test.",
+         behind it. Make the input unconditional (`require_fixture` / assert), vendor it, \
+         or delete the test. Honest `#[ignore]` is allowed; silent return is not.",
         sins.join("\n")
     );
 }

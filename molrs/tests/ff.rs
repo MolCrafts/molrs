@@ -20,8 +20,6 @@ mod forcefield_meta;
 mod params;
 #[path = "ff/readers/lammps.rs"]
 mod readers_lammps;
-#[path = "ff/readers/opls.rs"]
-mod readers_opls;
 
 // chem-perceive-14 — "one place, one form". Two modules because they fail for two
 // different reasons, and conflating them would cost the suite: `tables_gate` is a gate
@@ -49,3 +47,8 @@ mod charge;
 
 #[path = "ff/mmff/mod.rs"]
 mod mmff;
+
+/// gaff-electrostatics — composition gate: gaff_forcefield declares coul/cut
+/// and the ion chain reaches a non-zero energy checked against sander.
+#[path = "ff/gaff_energy.rs"]
+mod gaff_energy;
