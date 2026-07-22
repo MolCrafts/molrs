@@ -380,4 +380,52 @@ impl AtomQuery {
             }
         }
     }
+
+    /// Collect ring-related leaf primitives (syntax only). Recursive `$(...)`
+    /// indices are ignored here; the owning [`QueryGraph`] walks subpatterns.
+    pub fn collect_ring_primitives(&self, out: &mut Vec<super::RingPrimitive>) {
+        use super::RingPrimitive;
+        match self {
+            AtomQuery::Prim(AtomPrimitive::RingMembership(None)) => {
+                out.push(RingPrimitive::Membership);
+            }
+            AtomQuery::Prim(AtomPrimitive::RingMembership(Some(n))) => {
+                // RDKit `R0` = in no ring → still Membership-class syntax.
+                if *n == 0 {
+                    out.push(RingPrimitive::Membership);
+                } else {
+                    out.push(RingPrimitive::RingCount(*n));
+                }
+            }
+            AtomQuery::Prim(AtomPrimitive::RingSize(None)) => {
+                out.push(RingPrimitive::Membership);
+            }
+            AtomQuery::Prim(AtomPrimitive::RingSize(Some(n))) => {
+                out.push(RingPrimitive::Sized(*n));
+            }
+            AtomQuery::Prim(AtomPrimitive::RingSizeRange { lo, hi }) => {
+                // Report the finite size endpoints that appear in the range.
+                if *lo > 0 {
+                    out.push(RingPrimitive::Sized(*lo));
+                }
+                if let Some(h) = *hi {
+                    out.push(RingPrimitive::Sized(h));
+                }
+                // Open-ended range without a finite size still mentions ring-ness.
+                if *lo == 0 && hi.is_none() {
+                    out.push(RingPrimitive::Membership);
+                }
+            }
+            AtomQuery::Prim(AtomPrimitive::RingBondCount(n)) => {
+                out.push(RingPrimitive::RingBondCount(*n));
+            }
+            AtomQuery::Prim(_) | AtomQuery::Recursive(_) => {}
+            AtomQuery::Not(inner) => inner.collect_ring_primitives(out),
+            AtomQuery::And(items) | AtomQuery::Or(items) => {
+                for q in items {
+                    q.collect_ring_primitives(out);
+                }
+            }
+        }
+    }
 }

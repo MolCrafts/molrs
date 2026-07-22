@@ -53,6 +53,53 @@ impl QueryGraph {
         }
         out
     }
+
+    /// See [`super::SmartsPattern::ring_primitives`].
+    pub fn ring_primitives(&self) -> Vec<super::RingPrimitive> {
+        let mut out = Vec::new();
+        for atom in &self.atoms {
+            atom.query.collect_ring_primitives(&mut out);
+        }
+        for sub in &self.recursives {
+            out.extend(sub.ring_primitives());
+        }
+        out
+    }
+
+    /// See [`super::SmartsPattern::max_bond_depth`].
+    pub fn max_bond_depth(&self) -> usize {
+        let n = self.atoms.len();
+        if n <= 1 {
+            return 0;
+        }
+        let mut adj = vec![Vec::new(); n];
+        for b in &self.bonds {
+            if b.a < n && b.b < n {
+                adj[b.a].push(b.b);
+                adj[b.b].push(b.a);
+            }
+        }
+        let mut best = 0usize;
+        for start in 0..n {
+            let mut dist = vec![None; n];
+            let mut q = std::collections::VecDeque::new();
+            dist[start] = Some(0usize);
+            q.push_back(start);
+            while let Some(u) = q.pop_front() {
+                let du = dist[u].expect("visited");
+                for &v in &adj[u] {
+                    if dist[v].is_none() {
+                        dist[v] = Some(du + 1);
+                        q.push_back(v);
+                    }
+                }
+            }
+            for d in dist.into_iter().flatten() {
+                best = best.max(d);
+            }
+        }
+        best
+    }
 }
 
 /// Parse a SMARTS string into a [`QueryGraph`].

@@ -38,9 +38,6 @@ fn all_poscar_good_files() -> Vec<PathBuf> {
 
 fn all_poscar_bad_files() -> Vec<PathBuf> {
     let dir = crate::common::data_path("poscar/bad");
-    if !dir.exists() {
-        return Vec::new();
-    }
     let mut paths: Vec<_> = std::fs::read_dir(&dir)
         .unwrap_or_else(|e| panic!("Cannot read poscar/bad dir {:?}: {}", dir, e))
         .filter_map(|entry| {
@@ -49,6 +46,11 @@ fn all_poscar_bad_files() -> Vec<PathBuf> {
         })
         .collect();
     paths.sort();
+    assert!(
+        !paths.is_empty(),
+        "No bad POSCAR fixtures in tests-data/poscar/bad/ — a missing negative \
+         corpus makes the fail-to-parse test vacuous"
+    );
     paths
 }
 

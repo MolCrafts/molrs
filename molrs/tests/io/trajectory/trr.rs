@@ -111,11 +111,8 @@ fn test_trr_single_vs_double_precision_agree() {
         ("ubiquitin.trr", "ubiquitin_d.trr"),
         ("cell_shapes.trr", "cell_shapes_d.trr"),
     ] {
-        let ps = crate::common::data_path(&format!("trr/{single}"));
-        let pd = crate::common::data_path(&format!("trr/{double}"));
-        if !ps.exists() || !pd.exists() {
-            continue;
-        }
+        let ps = crate::common::require_fixture(&format!("trr/{single}"));
+        let pd = crate::common::require_fixture(&format!("trr/{double}"));
         let fs = read_trr(&ps).expect("read single");
         let fd = read_trr(&pd).expect("read double");
         assert_eq!(fs.len(), fd.len(), "{single} vs {double}: frame count");

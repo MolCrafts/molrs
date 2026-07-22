@@ -24,6 +24,25 @@ pub fn data_path(relative: &str) -> PathBuf {
     tests_data_dir().join(relative)
 }
 
+/// Path to a **required** fixture. Panics if the file is absent.
+///
+/// Prefer this over `if !path.exists() { return; }`: a missing real fixture
+/// must fail the suite, not report green with zero assertions. See
+/// `.claude/notes/testing.md` (vacuous-green rule).
+// Shared test-common module: not every test binary that includes it uses
+// every helper, so the per-binary dead-code lint is a false positive here.
+#[allow(dead_code)]
+pub fn require_fixture(relative: &str) -> PathBuf {
+    let path = data_path(relative);
+    assert!(
+        path.is_file(),
+        "required fixture missing: {} — run `bash scripts/fetch-test-data.sh` \
+         (or set MOLRS_TESTS_DATA)",
+        path.display()
+    );
+    path
+}
+
 /// Every file directly inside `tests-data/<format>/`, sorted. Backs the rule
 /// that format readers are tested against *all* real files, not a subset.
 // Shared test-common module: not every test binary that includes it uses
