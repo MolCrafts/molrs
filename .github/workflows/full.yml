@@ -1,10 +1,14 @@
 name: Full
 
-# Optional: integration binaries under molrs/tests/ (IO, ff stages, …).
-# Default CI is unit-only (`--lib`). This is NOT the PR path.
+# Integration binaries under molrs/tests/ (IO, ff stages, element_architecture, …).
+# Must stay in parity with the pre-push hook `cargo-test-integration` in
+# `.pre-commit-config.yaml`. Runs on PRs too so master never turns red only
+# after merge.
 on:
   push:
-    branches: [master]
+    branches: [master, dev]
+  pull_request:
+    branches: [master, dev]
   schedule:
     - cron: "0 4 * * *"
   workflow_dispatch:
