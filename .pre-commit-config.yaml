@@ -4,9 +4,7 @@
 #   CI  (ci.yml → ci-rust / ci-wasm / ci-python / ci-capi)
 #   Docs (Cloudflare Pages: pip install ".[doc]" && zensical build)
 #
-# Out of band (not local gates, not required CI):
-#   Full / integration binaries under molrs/tests/  — not a CI gate
-#   Bench, Publish, Nightly
+# Out of band (not local gates): Bench, Publish, Nightly.
 #
 # Install:
 #   pre-commit install --hook-type pre-commit --hook-type pre-push

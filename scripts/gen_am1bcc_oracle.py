@@ -757,7 +757,7 @@ def emit_rust(recs):
     w("];")
     w("")
 
-    out = Path(__file__).resolve().parent.parent / "molrs/tests/ff/typifier/antechamber_oracle.rs"
+    out = Path(__file__).resolve().parent.parent / "molrs-cxxapi/tests/antechamber_oracle.rs"
     out.write_text("\n".join(L))
     # rustfmt in place: without this the emitted file drifts from the committed one
     # the moment anyone runs `cargo fmt --all`, and the fixture stops round-tripping.

@@ -2,7 +2,7 @@ name: CI
 
 # Default gate: unit tests + lint + binder smoke builds.
 # No job waits on another. No caches. No bench.
-# No integration-binary suite — that is not a CI gate (see full.yml optional).
+# No integration-binary suite (removed). Unit tests only + binder smoke.
 on:
   push:
     branches: [dev, master]

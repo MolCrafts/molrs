@@ -11,10 +11,8 @@ homepage.workspace = true
 readme = "../README.md"
 keywords = ["molecular-modeling", "chemistry", "simulation", "molecular-dynamics"]
 categories = ["science"]
-# Tests, benches, and examples are wired explicitly below: integration tests
-# gate on the feature their sub-system module needs (so `--all-targets` without
-# features skips them instead of failing), and benches/examples have overlapping
-# file names across sub-systems. Disable auto-discovery for all three.
+# Benches/examples have overlapping file names across sub-systems; wire them
+# explicitly. No integration-test tree — use unit tests next to the code.
 autotests = false
 autobenches = false
 autoexamples = false
@@ -95,66 +93,8 @@ rmp-serde      = { version = "1", optional = true }                             
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.4", features = ["wasm_js"] }
 
-# ── Integration tests (gated on the sub-system module they exercise) ─────────
-
-# `architecture_gate` reads SOURCE (the five "only one of these exists"
-# promises), so it needs no feature: gating it would let a
-# `--no-default-features` build silently stop checking them.
-[[test]]
-name = "architecture_gate"
-path = "tests/architecture_gate.rs"
-
-[[test]]
-name = "element_architecture"
-path = "tests/element_architecture.rs"
-
-
-[[test]]
-name = "core"
-path = "tests/core.rs"
-
-[[test]]
-name = "perceive"
-path = "tests/perceive.rs"
-
-[[test]]
-name = "test_units"
-path = "tests/test_units.rs"
-
-[[test]]
-name = "io"
-path = "tests/io.rs"
-required-features = ["io"]
-
-[[test]]
-name = "signal"
-path = "tests/signal.rs"
-required-features = ["signal"]
-
-[[test]]
-name = "compute"
-path = "tests/compute.rs"
-required-features = ["compute"]
-
-[[test]]
-name = "ff"
-path = "tests/ff.rs"
-required-features = ["ff"]
-
-[[test]]
-name = "embed"
-path = "tests/embed.rs"
-required-features = ["conformer"]
-
-[[test]]
-name = "serialize"
-path = "tests/serialize.rs"
-required-features = ["serde"]
-
-[[test]]
-name = "stream"
-path = "tests/stream.rs"
-required-features = ["stream"]
+# Integration binary tests under tests/ were removed — coverage belongs
+# in `#[cfg(test)]` modules next to the code (`cargo test --lib`).
 
 # ── Benches (criterion; auto-discovery off, see [package]) ───────────────────
 [[bench]]
