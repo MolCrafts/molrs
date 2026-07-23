@@ -19,10 +19,8 @@ jobs:
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      # No cache — always fetch (scripts/fetch-test-data.sh is fetch-once locally).
-      - name: Fetch test data
-        run: bash scripts/fetch-test-data.sh
-
+      # Binding tests are self-contained (write→read fixtures). No tests-data,
+      # no third-party scientific software (RDKit / AmberTools / freud / …).
       - name: Install build tools
         run: |
           python -m pip install --upgrade pip

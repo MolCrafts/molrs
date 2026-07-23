@@ -4,12 +4,12 @@ mol_project:
   language: rust
   stage: experimental
   build:
-    install: "cargo build && bash scripts/fetch-test-data.sh"
+    install: "cargo build"
     check: "cargo fmt --check && cargo clippy -p molcrafts-molrs --all-targets --features full -- -D warnings && cargo clippy -p molcrafts-molrs-cxxapi --all-targets -- -D warnings"
-    test: "cargo test -p molcrafts-molrs --lib --features full && cargo test -p molcrafts-molrs --tests --examples --features \"full filesystem\""
+    test: "cargo test -p molcrafts-molrs --lib --features full"
     test_single: "cargo test {path}"
   ci:
-    # Local pre-push must mirror CI + Full + docs (Cloudflare Pages zensical).
+    # Local pre-push mirrors default CI + docs (not optional Full).
     # Single source: .pre-commit-config.yaml
     local: "pre-commit run --all-files --hook-stage pre-push"
   arch:
@@ -106,34 +106,29 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 molrs is a Rust workspace for molecular simulation: core data structures, file I/O, trajectory analysis, signal processing, force fields, 3D coordinate generation, and a CXX bridge to Atomiverse C++. Rust edition 2024, resolver "3".
 
-## IO Testing Rules (MANDATORY)
+## Testing Rules (MANDATORY)
 
-**NEVER write synthetic/hand-crafted test data for IO tests.**
+**No third-party scientific software in the default test gate** — not even as
+optional oracles. That means no RDKit, AmberTools/antechamber, freud, OpenMM,
+LAMMPS, Packmol, etc. at test time. Numerical goldens are either:
 
-Every file-format reader/writer MUST be tested against **all** real files in
-`tests-data/<format>/` — a binding-neutral directory at the **workspace root**
-(gitignored; cloned by `scripts/fetch-test-data.sh`), shared by every Rust crate
-and by the Python / C / WASM bindings. Rules:
+- pure unit checks with hand-written numbers, or
+- **committed** static data (e.g. `molrs-cxxapi/tests/antechamber_oracle.rs`)
+  regenerated offline by `scripts/gen_*.py` on a developer machine that *does*
+  have those tools. CI never runs the generators.
 
-1. When adding a new format reader (e.g. CHGCAR), add matching real files to
-   the `tests-data` repo (`https://github.com/MolCrafts/tests-data`) under a
-   new `<format>/` subdirectory before writing tests.
-2. Tests iterate over **every** file in that directory — not a hardcoded subset.
-   Use the small local `common` helper in the io test target
-   (`common::format_files("<format>")`) and run assertions on each.
-3. **Inline `#[cfg(test)]` tests in `src/` are pure function unit tests only** —
-   logic, edge cases, error paths. They must NOT read real files from
-   `tests-data/`. A minimal `include_str!` fixture is permitted ONLY to cover a
-   parser edge-case hard to produce from real data (e.g. malformed input →
-   expected error); keep it tiny and document its origin.
-4. Data-driven integration tests live in the merged crate's `tests/` tree,
-   mirroring the `src/` module layout (e.g. `molrs/tests/io/data/<format>.rs`), and
-   resolve files via the io test target's local `common` module
-   (`common::{tests_data_dir, data_path, format_files}`), which simply reads
-   `../tests-data` (or `$MOLRS_TESTS_DATA`). No helper crate.
+**Prefer unit tests next to the code** (`#[cfg(test)]` in `molrs/src/**`).
+There is **no** `molrs/tests/` integration-binary tree.
 
-Violation: writing `let content = "..."; read_from_str(content)` for happy-path
-format tests instead of reading a real file is **forbidden**.
+Default gate: `cargo test -p molcrafts-molrs --lib --features full`.
+
+**Bindings (Python / C / WASM)** only smoke the FFI seam (construct, call,
+round-trip types). Science / format corpus depth lives in the Rust unit tests.
+Python IO fixtures are written in-process by molrs writers — no `tests-data/`
+fetch. A tiny `include_str!` fixture in a Rust unit test is OK for a parser
+edge-case.
+
+`scripts/fetch-test-data.sh` remains for optional local exploration only.
 
 ## Build & Test Commands
 
@@ -143,11 +138,6 @@ cargo build
 
 # Default gate (mirrors CI): function-level unit tests only — should be seconds
 cargo test -p molcrafts-molrs --lib --features full
-
-# Integration binaries under molrs/tests/ (not on default CI — full.yml)
-bash scripts/fetch-test-data.sh      # clones to <root>/tests-data/ (binding-neutral)
-cargo test -p molcrafts-molrs --tests --examples --features "full filesystem"
-cargo test -p molcrafts-molrs --test io --features full                # IO format suite
 
 # Lint & Format
 cargo fmt --all

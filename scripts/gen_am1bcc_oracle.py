@@ -1,4 +1,8 @@
-"""Generate AM1-BCC regression oracle from AmberTools antechamber.
+"""OFFLINE ONLY — regenerate committed AM1-BCC oracle data from AmberTools.
+
+Not imported by tests. Not run by CI. Requires a local AmberTools (+ RDKit)
+install on the developer's machine. Tests read the committed output
+``molrs-cxxapi/tests/antechamber_oracle.rs`` only.
 
 For each molecule we capture the full (input -> intermediate -> output) chain so
 that the BCC stage can be regression-tested in ISOLATION from AM1:
@@ -757,7 +761,7 @@ def emit_rust(recs):
     w("];")
     w("")
 
-    out = Path(__file__).resolve().parent.parent / "molrs/tests/ff/typifier/antechamber_oracle.rs"
+    out = Path(__file__).resolve().parent.parent / "molrs-cxxapi/tests/antechamber_oracle.rs"
     out.write_text("\n".join(L))
     # rustfmt in place: without this the emitted file drifts from the committed one
     # the moment anyone runs `cargo fmt --all`, and the fixture stops round-tripping.

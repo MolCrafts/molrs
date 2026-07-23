@@ -1,8 +1,7 @@
-# CI / pre-commit parity — every gate that can fail on GitHub must fail here.
+# CI / pre-commit parity — gates that can fail the default CI workflow.
 #
 # Maps to remote workflows:
 #   CI  (ci.yml → ci-rust / ci-wasm / ci-python / ci-capi)
-#   Full (full.yml → cargo test --tests --examples)
 #   Docs (Cloudflare Pages: pip install ".[doc]" && zensical build)
 #
 # Out of band (not local gates): Bench, Publish, Nightly.
@@ -10,14 +9,14 @@
 # Install:
 #   pre-commit install --hook-type pre-commit --hook-type pre-push
 #
-# Fast lint on every commit; full suite on pre-push (same commands as GHA).
+# Fast lint on every commit; binder + docs on pre-push.
 
 default_install_hook_types: [pre-commit, pre-push]
 
 repos:
   - repo: local
     hooks:
-      # ── CI Rust: fmt / clippy / unit (also on every commit) ─────────────
+      # ── CI Rust: fmt / clippy / unit ───────────────────────────────────
       - id: cargo-fmt
         name: "CI Rust / rustfmt"
         entry: cargo fmt --check
@@ -40,23 +39,6 @@ repos:
         language: system
         pass_filenames: false
         stages: [pre-commit, pre-push]
-
-      # ── Full: integration binaries (was master-only; now local too) ─────
-      - id: fetch-test-data
-        name: "Full / fetch test data"
-        entry: bash scripts/fetch-test-data.sh
-        language: system
-        pass_filenames: false
-        stages: [pre-push]
-
-      - id: cargo-test-integration
-        name: "Full / integration binaries"
-        entry: >-
-          cargo test -p molcrafts-molrs --tests --examples
-          --features "full filesystem"
-        language: system
-        pass_filenames: false
-        stages: [pre-push]
 
       # ── CI Python ───────────────────────────────────────────────────────
       - id: python-package
@@ -99,8 +81,6 @@ repos:
         stages: [pre-push]
 
       # ── Docs (Cloudflare Pages equivalent) ──────────────────────────────
-      # Pages runs: pip install ".[doc]" && zensical build (from molrs-python).
-      # Must use the installed package (with _lib.abi3.so), not a bare checkout.
       - id: docs-zensical
         name: "Docs / zensical build (Pages parity)"
         entry: >-

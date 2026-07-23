@@ -1,4 +1,7 @@
-"""Regenerate the GAFF electrostatic/energy oracle with AmberTools25.
+"""OFFLINE ONLY — regenerate GAFF energy reference numbers with AmberTools25.
+
+Not imported by tests. Not run by CI. Requires local AmberTools (+ RDKit).
+
 
 The committed numbers are not produced by molrs.  For each required ion this
 script performs the external chain
