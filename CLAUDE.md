@@ -5,9 +5,13 @@ mol_project:
   stage: experimental
   build:
     install: "cargo build && bash scripts/fetch-test-data.sh"
-    check: "cargo fmt --all --check && cargo clippy --all-targets --all-features -- -D warnings && cargo check --all-features && RUSTDOCFLAGS='-D warnings' cargo doc --no-deps -p molcrafts-molrs"
-    test: "cargo test --all-features"
+    check: "cargo fmt --check && cargo clippy -p molcrafts-molrs --all-targets --features full -- -D warnings && cargo clippy -p molcrafts-molrs-cxxapi --all-targets -- -D warnings"
+    test: "cargo test -p molcrafts-molrs --lib --features full && cargo test -p molcrafts-molrs --tests --examples --features \"full filesystem\""
     test_single: "cargo test {path}"
+  ci:
+    # Local pre-push must mirror CI + Full + docs (Cloudflare Pages zensical).
+    # Single source: .pre-commit-config.yaml
+    local: "pre-commit run --all-files --hook-stage pre-push"
   arch:
     style: crate-graph
     rules_section: "## Crate Structure & Modules"

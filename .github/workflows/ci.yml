@@ -1,7 +1,8 @@
 name: CI
 
 # Default gate: unit tests + lint + binder smoke builds.
-# No job waits on another. No caches. No bench. Integration binaries are full.yml.
+# No job waits on another. No caches. No bench.
+# Integration binaries: full.yml (PR + master). Local parity: pre-push hooks.
 on:
   push:
     branches: [dev, master]

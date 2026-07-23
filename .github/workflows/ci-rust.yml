@@ -5,8 +5,8 @@ on:
   workflow_dispatch:
 
 # Three independent jobs — never serialise fmt → clippy → test.
-# Default suite is **unit only** (`--lib`). Integration binaries under
-# `molrs/tests/` are `full.yml`, not the PR path.
+# Unit suite is `--lib`. Integration binaries under `molrs/tests/` live in
+# `full.yml` (also on PRs) and the matching pre-push hook.
 
 jobs:
   fmt:
