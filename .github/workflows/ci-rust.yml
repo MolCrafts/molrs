@@ -5,8 +5,7 @@ on:
   workflow_dispatch:
 
 # Three independent jobs — never serialise fmt → clippy → test.
-# Unit suite is `--lib`. Integration binaries under `molrs/tests/` live in
-# `full.yml` (also on PRs) and the matching pre-push hook.
+# Unit suite is `--lib` only. No integration-binary suite in CI.
 
 jobs:
   fmt:

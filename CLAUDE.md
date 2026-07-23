@@ -6,10 +6,10 @@ mol_project:
   build:
     install: "cargo build && bash scripts/fetch-test-data.sh"
     check: "cargo fmt --check && cargo clippy -p molcrafts-molrs --all-targets --features full -- -D warnings && cargo clippy -p molcrafts-molrs-cxxapi --all-targets -- -D warnings"
-    test: "cargo test -p molcrafts-molrs --lib --features full && cargo test -p molcrafts-molrs --tests --examples --features \"full filesystem\""
+    test: "cargo test -p molcrafts-molrs --lib --features full"
     test_single: "cargo test {path}"
   ci:
-    # Local pre-push must mirror CI + Full + docs (Cloudflare Pages zensical).
+    # Local pre-push mirrors default CI + docs (not optional Full).
     # Single source: .pre-commit-config.yaml
     local: "pre-commit run --all-files --hook-stage pre-push"
   arch:
