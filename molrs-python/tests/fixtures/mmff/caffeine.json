@@ -1,0 +1,345 @@
+{
+  "name": "caffeine",
+  "smiles": "Cn1cnc2c1c(=O)n(C)c(=O)n2C",
+  "n_atoms": 24,
+  "mmff94": [
+    {
+      "idx": 0,
+      "element": "C",
+      "formal_charge": 0,
+      "mmff_type": 1,
+      "mmff_charge": 0.2556
+    },
+    {
+      "idx": 1,
+      "element": "N",
+      "formal_charge": 0,
+      "mmff_type": 39,
+      "mmff_charge": 0.04760000000000003
+    },
+    {
+      "idx": 2,
+      "element": "C",
+      "formal_charge": 0,
+      "mmff_type": 63,
+      "mmff_charge": 0.036500000000000005
+    },
+    {
+      "idx": 3,
+      "element": "N",
+      "formal_charge": 0,
+      "mmff_type": 66,
+      "mmff_charge": -0.5653
+    },
+    {
+      "idx": 4,
+      "element": "C",
+      "formal_charge": 0,
+      "mmff_type": 64,
+      "mmff_charge": 0.2902
+    },
+    {
+      "idx": 5,
+      "element": "C",
+      "formal_charge": 0,
+      "mmff_type": 63,
+      "mmff_charge": -0.23660000000000003
+    },
+    {
+      "idx": 6,
+      "element": "C",
+      "formal_charge": 0,
+      "mmff_type": 3,
+      "mmff_charge": 0.7149999999999999
+    },
+    {
+      "idx": 7,
+      "element": "O",
+      "formal_charge": 0,
+      "mmff_type": 7,
+      "mmff_charge": -0.57
+    },
+    {
+      "idx": 8,
+      "element": "N",
+      "formal_charge": 0,
+      "mmff_type": 10,
+      "mmff_charge": -0.4201
+    },
+    {
+      "idx": 9,
+      "element": "C",
+      "formal_charge": 0,
+      "mmff_type": 1,
+      "mmff_charge": 0.3001
+    },
+    {
+      "idx": 10,
+      "element": "C",
+      "formal_charge": 0,
+      "mmff_type": 3,
+      "mmff_charge": 0.69
+    },
+    {
+      "idx": 11,
+      "element": "O",
+      "formal_charge": 0,
+      "mmff_type": 7,
+      "mmff_charge": -0.57
+    },
+    {
+      "idx": 12,
+      "element": "N",
+      "formal_charge": 0,
+      "mmff_type": 10,
+      "mmff_charge": -0.4231
+    },
+    {
+      "idx": 13,
+      "element": "C",
+      "formal_charge": 0,
+      "mmff_type": 1,
+      "mmff_charge": 0.3001
+    },
+    {
+      "idx": 14,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.0
+    },
+    {
+      "idx": 15,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.0
+    },
+    {
+      "idx": 16,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.0
+    },
+    {
+      "idx": 17,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.15
+    },
+    {
+      "idx": 18,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.0
+    },
+    {
+      "idx": 19,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.0
+    },
+    {
+      "idx": 20,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.0
+    },
+    {
+      "idx": 21,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.0
+    },
+    {
+      "idx": 22,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.0
+    },
+    {
+      "idx": 23,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.0
+    }
+  ],
+  "mmff94s": [
+    {
+      "idx": 0,
+      "element": "C",
+      "formal_charge": 0,
+      "mmff_type": 1,
+      "mmff_charge": 0.2556
+    },
+    {
+      "idx": 1,
+      "element": "N",
+      "formal_charge": 0,
+      "mmff_type": 39,
+      "mmff_charge": 0.04760000000000003
+    },
+    {
+      "idx": 2,
+      "element": "C",
+      "formal_charge": 0,
+      "mmff_type": 63,
+      "mmff_charge": 0.036500000000000005
+    },
+    {
+      "idx": 3,
+      "element": "N",
+      "formal_charge": 0,
+      "mmff_type": 66,
+      "mmff_charge": -0.5653
+    },
+    {
+      "idx": 4,
+      "element": "C",
+      "formal_charge": 0,
+      "mmff_type": 64,
+      "mmff_charge": 0.2902
+    },
+    {
+      "idx": 5,
+      "element": "C",
+      "formal_charge": 0,
+      "mmff_type": 63,
+      "mmff_charge": -0.23660000000000003
+    },
+    {
+      "idx": 6,
+      "element": "C",
+      "formal_charge": 0,
+      "mmff_type": 3,
+      "mmff_charge": 0.7149999999999999
+    },
+    {
+      "idx": 7,
+      "element": "O",
+      "formal_charge": 0,
+      "mmff_type": 7,
+      "mmff_charge": -0.57
+    },
+    {
+      "idx": 8,
+      "element": "N",
+      "formal_charge": 0,
+      "mmff_type": 10,
+      "mmff_charge": -0.4201
+    },
+    {
+      "idx": 9,
+      "element": "C",
+      "formal_charge": 0,
+      "mmff_type": 1,
+      "mmff_charge": 0.3001
+    },
+    {
+      "idx": 10,
+      "element": "C",
+      "formal_charge": 0,
+      "mmff_type": 3,
+      "mmff_charge": 0.69
+    },
+    {
+      "idx": 11,
+      "element": "O",
+      "formal_charge": 0,
+      "mmff_type": 7,
+      "mmff_charge": -0.57
+    },
+    {
+      "idx": 12,
+      "element": "N",
+      "formal_charge": 0,
+      "mmff_type": 10,
+      "mmff_charge": -0.4231
+    },
+    {
+      "idx": 13,
+      "element": "C",
+      "formal_charge": 0,
+      "mmff_type": 1,
+      "mmff_charge": 0.3001
+    },
+    {
+      "idx": 14,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.0
+    },
+    {
+      "idx": 15,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.0
+    },
+    {
+      "idx": 16,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.0
+    },
+    {
+      "idx": 17,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.15
+    },
+    {
+      "idx": 18,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.0
+    },
+    {
+      "idx": 19,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.0
+    },
+    {
+      "idx": 20,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.0
+    },
+    {
+      "idx": 21,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.0
+    },
+    {
+      "idx": 22,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.0
+    },
+    {
+      "idx": 23,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.0
+    }
+  ]
+}

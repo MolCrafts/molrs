@@ -1,0 +1,7 @@
+{
+  "name": "s_aniline",
+  "smiles": "c1ccc(N)cc1",
+  "n_atoms": 14,
+  "mmff94_total_energy": 21.117233043069916,
+  "mmff94s_total_energy": 20.234386844852644
+}

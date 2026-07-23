@@ -1,0 +1,7 @@
+{
+  "name": "e_ethylene",
+  "smiles": "C=C",
+  "n_atoms": 6,
+  "mmff94_total_energy": 8.581990454304771,
+  "mmff94s_total_energy": 8.581990454304771
+}

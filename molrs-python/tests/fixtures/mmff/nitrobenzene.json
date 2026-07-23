@@ -1,0 +1,205 @@
+{
+  "name": "nitrobenzene",
+  "smiles": "[O-][N+](=O)c1ccccc1",
+  "n_atoms": 14,
+  "mmff94": [
+    {
+      "idx": 0,
+      "element": "O",
+      "formal_charge": -1,
+      "mmff_type": 32,
+      "mmff_charge": -0.52
+    },
+    {
+      "idx": 1,
+      "element": "N",
+      "formal_charge": 1,
+      "mmff_type": 45,
+      "mmff_charge": 0.907
+    },
+    {
+      "idx": 2,
+      "element": "O",
+      "formal_charge": 0,
+      "mmff_type": 32,
+      "mmff_charge": -0.52
+    },
+    {
+      "idx": 3,
+      "element": "C",
+      "formal_charge": 0,
+      "mmff_type": 37,
+      "mmff_charge": 0.133
+    },
+    {
+      "idx": 4,
+      "element": "C",
+      "formal_charge": 0,
+      "mmff_type": 37,
+      "mmff_charge": -0.15
+    },
+    {
+      "idx": 5,
+      "element": "C",
+      "formal_charge": 0,
+      "mmff_type": 37,
+      "mmff_charge": -0.15
+    },
+    {
+      "idx": 6,
+      "element": "C",
+      "formal_charge": 0,
+      "mmff_type": 37,
+      "mmff_charge": -0.15
+    },
+    {
+      "idx": 7,
+      "element": "C",
+      "formal_charge": 0,
+      "mmff_type": 37,
+      "mmff_charge": -0.15
+    },
+    {
+      "idx": 8,
+      "element": "C",
+      "formal_charge": 0,
+      "mmff_type": 37,
+      "mmff_charge": -0.15
+    },
+    {
+      "idx": 9,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.15
+    },
+    {
+      "idx": 10,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.15
+    },
+    {
+      "idx": 11,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.15
+    },
+    {
+      "idx": 12,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.15
+    },
+    {
+      "idx": 13,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.15
+    }
+  ],
+  "mmff94s": [
+    {
+      "idx": 0,
+      "element": "O",
+      "formal_charge": -1,
+      "mmff_type": 32,
+      "mmff_charge": -0.52
+    },
+    {
+      "idx": 1,
+      "element": "N",
+      "formal_charge": 1,
+      "mmff_type": 45,
+      "mmff_charge": 0.907
+    },
+    {
+      "idx": 2,
+      "element": "O",
+      "formal_charge": 0,
+      "mmff_type": 32,
+      "mmff_charge": -0.52
+    },
+    {
+      "idx": 3,
+      "element": "C",
+      "formal_charge": 0,
+      "mmff_type": 37,
+      "mmff_charge": 0.133
+    },
+    {
+      "idx": 4,
+      "element": "C",
+      "formal_charge": 0,
+      "mmff_type": 37,
+      "mmff_charge": -0.15
+    },
+    {
+      "idx": 5,
+      "element": "C",
+      "formal_charge": 0,
+      "mmff_type": 37,
+      "mmff_charge": -0.15
+    },
+    {
+      "idx": 6,
+      "element": "C",
+      "formal_charge": 0,
+      "mmff_type": 37,
+      "mmff_charge": -0.15
+    },
+    {
+      "idx": 7,
+      "element": "C",
+      "formal_charge": 0,
+      "mmff_type": 37,
+      "mmff_charge": -0.15
+    },
+    {
+      "idx": 8,
+      "element": "C",
+      "formal_charge": 0,
+      "mmff_type": 37,
+      "mmff_charge": -0.15
+    },
+    {
+      "idx": 9,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.15
+    },
+    {
+      "idx": 10,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.15
+    },
+    {
+      "idx": 11,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.15
+    },
+    {
+      "idx": 12,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.15
+    },
+    {
+      "idx": 13,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.15
+    }
+  ]
+}

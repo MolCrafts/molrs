@@ -1,0 +1,7 @@
+{
+  "name": "s_acetamide",
+  "smiles": "CC(=O)N",
+  "n_atoms": 9,
+  "mmff94_total_energy": -0.81981443834961,
+  "mmff94s_total_energy": -0.4058146853579565
+}

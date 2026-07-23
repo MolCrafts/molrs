@@ -26,9 +26,8 @@ itself:
 
 An ``f32`` anywhere on the path breaks (2), (3) and (5) at once. That is the gate.
 
-The oracle is the Rust suite's ONE copy (``antechamber_oracle.py`` parses
-``molrs/tests/ff/typifier/antechamber_oracle.rs``), so the two suites cannot drift
-apart, and neither can their tolerances.
+The oracle is the ONE Rust file (``antechamber_oracle.py`` parses
+``molrs-cxxapi/tests/antechamber_oracle.rs``), so the suites cannot drift.
 """
 
 from __future__ import annotations
@@ -48,10 +47,8 @@ from antechamber_oracle import CASES, Case, build
 #: conserves to ULP, so anything above this is a lost bit, not a rounded number.
 CONSERVATION_TOL: Final[float] = 1e-12
 
-#: The MMFF fixtures the Rust suite validates against RDKit. Scanned, never listed.
-MMFF_FIXTURES: Final[Path] = (
-    Path(__file__).resolve().parents[2] / "molrs" / "tests" / "ff" / "mmff" / "fixtures"
-)
+#: MMFF fixtures (ex-Rust suite; now owned by the Python binding tests).
+MMFF_FIXTURES: Final[Path] = Path(__file__).resolve().parent / "fixtures" / "mmff"
 
 
 def _bcc(case: Case) -> np.ndarray:

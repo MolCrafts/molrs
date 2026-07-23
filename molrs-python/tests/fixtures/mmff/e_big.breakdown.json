@@ -1,0 +1,11 @@
+{
+  "name": "e_big",
+  "source": "frozen from molrs MmffForceField::energy_terms (bespoke MMFF94 path, max |delta| vs RDKit = 0.00000 on every fixture) at spec mmff-orthogonal-01; legitimacy is re-proved on every run by summing the 7 terms and comparing to mmff94_total_energy in <name>.energy.json (the RDKit oracle)",
+  "bond": 13.438487611133304,
+  "angle": 33.08069509626834,
+  "stbn": -4.225409818530446,
+  "torsion": 19.35017131225639,
+  "oop": 5.0166446546772114e-05,
+  "vdw": 49.1148338280037,
+  "ele": -2.0622121798431543
+}

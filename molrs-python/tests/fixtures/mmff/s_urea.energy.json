@@ -1,0 +1,7 @@
+{
+  "name": "s_urea",
+  "smiles": "NC(=O)N",
+  "n_atoms": 8,
+  "mmff94_total_energy": -93.75608639390909,
+  "mmff94s_total_energy": -94.03962445269283
+}

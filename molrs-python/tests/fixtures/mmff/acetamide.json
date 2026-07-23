@@ -1,0 +1,135 @@
+{
+  "name": "acetamide",
+  "smiles": "CC(N)=O",
+  "n_atoms": 9,
+  "mmff94": [
+    {
+      "idx": 0,
+      "element": "C",
+      "formal_charge": 0,
+      "mmff_type": 1,
+      "mmff_charge": 0.061
+    },
+    {
+      "idx": 1,
+      "element": "C",
+      "formal_charge": 0,
+      "mmff_type": 3,
+      "mmff_charge": 0.569
+    },
+    {
+      "idx": 2,
+      "element": "N",
+      "formal_charge": 0,
+      "mmff_type": 10,
+      "mmff_charge": -0.8
+    },
+    {
+      "idx": 3,
+      "element": "O",
+      "formal_charge": 0,
+      "mmff_type": 7,
+      "mmff_charge": -0.57
+    },
+    {
+      "idx": 4,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.0
+    },
+    {
+      "idx": 5,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.0
+    },
+    {
+      "idx": 6,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.0
+    },
+    {
+      "idx": 7,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 28,
+      "mmff_charge": 0.37
+    },
+    {
+      "idx": 8,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 28,
+      "mmff_charge": 0.37
+    }
+  ],
+  "mmff94s": [
+    {
+      "idx": 0,
+      "element": "C",
+      "formal_charge": 0,
+      "mmff_type": 1,
+      "mmff_charge": 0.061
+    },
+    {
+      "idx": 1,
+      "element": "C",
+      "formal_charge": 0,
+      "mmff_type": 3,
+      "mmff_charge": 0.569
+    },
+    {
+      "idx": 2,
+      "element": "N",
+      "formal_charge": 0,
+      "mmff_type": 10,
+      "mmff_charge": -0.8
+    },
+    {
+      "idx": 3,
+      "element": "O",
+      "formal_charge": 0,
+      "mmff_type": 7,
+      "mmff_charge": -0.57
+    },
+    {
+      "idx": 4,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.0
+    },
+    {
+      "idx": 5,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.0
+    },
+    {
+      "idx": 6,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.0
+    },
+    {
+      "idx": 7,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 28,
+      "mmff_charge": 0.37
+    },
+    {
+      "idx": 8,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 28,
+      "mmff_charge": 0.37
+    }
+  ]
+}

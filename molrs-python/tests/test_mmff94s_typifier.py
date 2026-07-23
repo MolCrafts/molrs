@@ -11,7 +11,7 @@ and 40 ``NC=C``). So an atom-type assertion would pass vacuously; ``koop`` and t
 energy would not.
 
 Molecules come from the RDKit-generated fixtures the Rust side already validates against
-(``molrs/tests/ff/mmff/fixtures``) — never hand-built coordinates.
+(``tests/fixtures/mmff``) — never hand-built coordinates.
 """
 
 from pathlib import Path
@@ -25,7 +25,7 @@ import molrs
 # Fixtures — the RDKit SDF conformers, shared with the Rust suite.
 # --------------------------------------------------------------------------------------
 
-FIXTURES = Path(__file__).resolve().parents[2] / "molrs" / "tests" / "ff" / "mmff" / "fixtures"
+FIXTURES = Path(__file__).resolve().parent / "fixtures" / "mmff"
 
 #: Amide nitrogen (MMFF type 10) — MMFF94 pyramidalises it, MMFF94s flattens it.
 NMA = "s_nmethylacetamide"

@@ -1,0 +1,79 @@
+{
+  "name": "methane",
+  "smiles": "C",
+  "n_atoms": 5,
+  "mmff94": [
+    {
+      "idx": 0,
+      "element": "C",
+      "formal_charge": 0,
+      "mmff_type": 1,
+      "mmff_charge": 0.0
+    },
+    {
+      "idx": 1,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.0
+    },
+    {
+      "idx": 2,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.0
+    },
+    {
+      "idx": 3,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.0
+    },
+    {
+      "idx": 4,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.0
+    }
+  ],
+  "mmff94s": [
+    {
+      "idx": 0,
+      "element": "C",
+      "formal_charge": 0,
+      "mmff_type": 1,
+      "mmff_charge": 0.0
+    },
+    {
+      "idx": 1,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.0
+    },
+    {
+      "idx": 2,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.0
+    },
+    {
+      "idx": 3,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.0
+    },
+    {
+      "idx": 4,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.0
+    }
+  ]
+}

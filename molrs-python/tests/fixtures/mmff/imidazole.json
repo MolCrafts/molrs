@@ -1,0 +1,135 @@
+{
+  "name": "imidazole",
+  "smiles": "c1cnc[nH]1",
+  "n_atoms": 9,
+  "mmff94": [
+    {
+      "idx": 0,
+      "element": "C",
+      "formal_charge": 0,
+      "mmff_type": 63,
+      "mmff_charge": -0.3016
+    },
+    {
+      "idx": 1,
+      "element": "C",
+      "formal_charge": 0,
+      "mmff_type": 64,
+      "mmff_charge": 0.07720000000000002
+    },
+    {
+      "idx": 2,
+      "element": "N",
+      "formal_charge": 0,
+      "mmff_type": 66,
+      "mmff_charge": -0.5653
+    },
+    {
+      "idx": 3,
+      "element": "C",
+      "formal_charge": 0,
+      "mmff_type": 63,
+      "mmff_charge": 0.036500000000000005
+    },
+    {
+      "idx": 4,
+      "element": "N",
+      "formal_charge": 0,
+      "mmff_type": 39,
+      "mmff_charge": 0.03320000000000001
+    },
+    {
+      "idx": 5,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.15
+    },
+    {
+      "idx": 6,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.15
+    },
+    {
+      "idx": 7,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.15
+    },
+    {
+      "idx": 8,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 23,
+      "mmff_charge": 0.27
+    }
+  ],
+  "mmff94s": [
+    {
+      "idx": 0,
+      "element": "C",
+      "formal_charge": 0,
+      "mmff_type": 63,
+      "mmff_charge": -0.3016
+    },
+    {
+      "idx": 1,
+      "element": "C",
+      "formal_charge": 0,
+      "mmff_type": 64,
+      "mmff_charge": 0.07720000000000002
+    },
+    {
+      "idx": 2,
+      "element": "N",
+      "formal_charge": 0,
+      "mmff_type": 66,
+      "mmff_charge": -0.5653
+    },
+    {
+      "idx": 3,
+      "element": "C",
+      "formal_charge": 0,
+      "mmff_type": 63,
+      "mmff_charge": 0.036500000000000005
+    },
+    {
+      "idx": 4,
+      "element": "N",
+      "formal_charge": 0,
+      "mmff_type": 39,
+      "mmff_charge": 0.03320000000000001
+    },
+    {
+      "idx": 5,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.15
+    },
+    {
+      "idx": 6,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.15
+    },
+    {
+      "idx": 7,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.15
+    },
+    {
+      "idx": 8,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 23,
+      "mmff_charge": 0.27
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "name": "e_caffeine",
+  "source": "frozen from molrs MmffForceField::energy_terms (bespoke MMFF94 path, max |delta| vs RDKit = 0.00000 on every fixture) at spec mmff-orthogonal-01; legitimacy is re-proved on every run by summing the 7 terms and comparing to mmff94_total_energy in <name>.energy.json (the RDKit oracle)",
+  "bond": 7.3821521100717495,
+  "angle": 15.597016544654746,
+  "stbn": -2.1039151016449553,
+  "torsion": -4.367391749568671,
+  "oop": 2.8805296723514164e-07,
+  "vdw": 24.60746834925321,
+  "ele": -150.4758416792196
+}

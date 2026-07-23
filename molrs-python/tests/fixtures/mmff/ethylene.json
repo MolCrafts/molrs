@@ -1,0 +1,93 @@
+{
+  "name": "ethylene",
+  "smiles": "C=C",
+  "n_atoms": 6,
+  "mmff94": [
+    {
+      "idx": 0,
+      "element": "C",
+      "formal_charge": 0,
+      "mmff_type": 2,
+      "mmff_charge": -0.3
+    },
+    {
+      "idx": 1,
+      "element": "C",
+      "formal_charge": 0,
+      "mmff_type": 2,
+      "mmff_charge": -0.3
+    },
+    {
+      "idx": 2,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.15
+    },
+    {
+      "idx": 3,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.15
+    },
+    {
+      "idx": 4,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.15
+    },
+    {
+      "idx": 5,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.15
+    }
+  ],
+  "mmff94s": [
+    {
+      "idx": 0,
+      "element": "C",
+      "formal_charge": 0,
+      "mmff_type": 2,
+      "mmff_charge": -0.3
+    },
+    {
+      "idx": 1,
+      "element": "C",
+      "formal_charge": 0,
+      "mmff_type": 2,
+      "mmff_charge": -0.3
+    },
+    {
+      "idx": 2,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.15
+    },
+    {
+      "idx": 3,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.15
+    },
+    {
+      "idx": 4,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.15
+    },
+    {
+      "idx": 5,
+      "element": "H",
+      "formal_charge": 0,
+      "mmff_type": 5,
+      "mmff_charge": 0.15
+    }
+  ]
+}

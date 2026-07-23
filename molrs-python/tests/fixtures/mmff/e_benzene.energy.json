@@ -1,0 +1,7 @@
+{
+  "name": "e_benzene",
+  "smiles": "c1ccccc1",
+  "n_atoms": 12,
+  "mmff94_total_energy": 18.02360621008152,
+  "mmff94s_total_energy": 18.02360621008152
+}

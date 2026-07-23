@@ -1,0 +1,7 @@
+{
+  "name": "s_nmethylacetamide",
+  "smiles": "CC(=O)NC",
+  "n_atoms": 12,
+  "mmff94_total_energy": -18.149016014050158,
+  "mmff94s_total_energy": -18.893930053870648
+}
