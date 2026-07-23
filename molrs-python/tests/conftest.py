@@ -1,90 +1,19 @@
 """Shared pytest fixtures for the molrs Python bindings.
 
-Test data lives in a single, binding-neutral ``tests-data/`` directory at the
-workspace root (gitignored, fetched via ``bash scripts/fetch-test-data.sh``).
-The same copy is shared by the Rust suite (resolved through the
-``molrs_testutil`` crate) and these Python tests, so there is no duplicated
-fixture data inside ``molrs-python/``.
+Binding tests are **self-contained**: they never require third-party scientific
+software (RDKit, AmberTools, freud, …) and never require the optional
+chemfiles-derived ``tests-data/`` corpus. Format smoke tests build tiny
+frames in-process and round-trip them through molrs writers/readers.
 """
 
-import os
+from __future__ import annotations
+
 from pathlib import Path
 
 import numpy as np
 import pytest
 
 import molrs
-
-
-def _resolve_tests_data_dir() -> Path:
-    """Locate the shared ``tests-data/`` directory.
-
-    Resolution order:
-      1. ``MOLRS_TESTS_DATA`` environment variable, if set.
-      2. The first ancestor of this file that contains a ``tests-data/`` child.
-    """
-    env = os.environ.get("MOLRS_TESTS_DATA")
-    if env:
-        candidate = Path(env).expanduser()
-        if candidate.is_dir():
-            return candidate
-        raise RuntimeError(
-            f"MOLRS_TESTS_DATA points to '{candidate}', which is not a directory. "
-            "Fetch the shared data with `bash scripts/fetch-test-data.sh`."
-        )
-
-    here = Path(__file__).resolve()
-    for ancestor in here.parents:
-        candidate = ancestor / "tests-data"
-        if candidate.is_dir():
-            return candidate
-
-    raise RuntimeError(
-        "Could not locate the shared 'tests-data/' directory by walking up from "
-        f"{here}. Fetch it with `bash scripts/fetch-test-data.sh` (it is cloned "
-        "to the workspace root), or set MOLRS_TESTS_DATA."
-    )
-
-
-@pytest.fixture(scope="session")
-def tests_data_dir() -> Path:
-    """Session-scoped path to the shared, binding-neutral ``tests-data/`` dir."""
-    return _resolve_tests_data_dir()
-
-
-@pytest.fixture(scope="session")
-def pdb_dir(tests_data_dir: Path) -> Path:
-    return tests_data_dir / "pdb"
-
-
-@pytest.fixture(scope="session")
-def xyz_dir(tests_data_dir: Path) -> Path:
-    return tests_data_dir / "xyz"
-
-
-@pytest.fixture(scope="session")
-def gro_dir(tests_data_dir: Path) -> Path:
-    return tests_data_dir / "gro"
-
-
-@pytest.fixture(scope="session")
-def dcd_dir(tests_data_dir: Path) -> Path:
-    return tests_data_dir / "dcd"
-
-
-@pytest.fixture(scope="session")
-def trr_dir(tests_data_dir: Path) -> Path:
-    return tests_data_dir / "trr"
-
-
-@pytest.fixture(scope="session")
-def xtc_dir(tests_data_dir: Path) -> Path:
-    return tests_data_dir / "xtc"
-
-
-@pytest.fixture(scope="session")
-def lammps_dir(tests_data_dir: Path) -> Path:
-    return tests_data_dir / "lammps"
 
 
 @pytest.fixture
@@ -101,7 +30,7 @@ def ortho_box():
 
 @pytest.fixture
 def sample_points():
-    """5 random points inside a 10x10x10 box."""
+    """5 points inside a 10x10x10 box."""
     return np.array(
         [
             [1.0, 2.0, 3.0],
@@ -112,3 +41,94 @@ def sample_points():
         ],
         dtype=np.float64,
     )
+
+
+def _water_frame(*, for_lammps: bool = False) -> molrs.Frame:
+    """Minimal 3-atom frame with box.
+
+    Keep columns minimal so writers (esp. extended XYZ) do not emit fields the
+    matching reader cannot parse. LAMMPS data needs ``type`` (+ optional charge).
+    """
+    f = molrs.Frame()
+    b = molrs.Block()
+    b.insert("symbol", ["O", "H", "H"])
+    b.insert("x", np.array([0.0, 0.96, -0.24], dtype=np.float64))
+    b.insert("y", np.array([0.0, 0.0, 0.93], dtype=np.float64))
+    b.insert("z", np.array([0.0, 0.0, 0.0], dtype=np.float64))
+    b.insert("name", ["O", "H1", "H2"])
+    b.insert("res_name", ["SOL", "SOL", "SOL"])
+    b.insert("res_id", np.array([1, 1, 1], dtype=np.int32))
+    b.insert("id", np.array([1, 2, 3], dtype=np.int32))
+    if for_lammps:
+        b.insert("type", np.array([1, 2, 2], dtype=np.int32))
+        b.insert("charge", np.array([-0.834, 0.417, 0.417], dtype=np.float64))
+        b.insert("molecule_id", np.array([1, 1, 1], dtype=np.int32))
+    f["atoms"] = b
+    f.box = molrs.Box.cube(10.0)
+    return f
+
+
+@pytest.fixture
+def water_frame() -> molrs.Frame:
+    """Fresh water-like frame (callers may mutate)."""
+    return _water_frame()
+
+
+@pytest.fixture
+def water_xyz(tmp_path: Path) -> Path:
+    path = tmp_path / "water.xyz"
+    molrs.write_xyz(str(path), _water_frame())
+    return path
+
+
+@pytest.fixture
+def water_pdb(tmp_path: Path) -> Path:
+    path = tmp_path / "water.pdb"
+    molrs.write_pdb(str(path), _water_frame())
+    return path
+
+
+@pytest.fixture
+def water_gro(tmp_path: Path) -> Path:
+    path = tmp_path / "water.gro"
+    molrs.write_gro(str(path), _water_frame())
+    return path
+
+
+@pytest.fixture
+def water_dcd(tmp_path: Path) -> Path:
+    path = tmp_path / "water.dcd"
+    frame = _water_frame()
+    molrs.write_dcd(str(path), [frame, frame])
+    return path
+
+
+@pytest.fixture
+def water_trr(tmp_path: Path) -> Path:
+    path = tmp_path / "water.trr"
+    frame = _water_frame()
+    molrs.write_trr(str(path), [frame, frame])
+    return path
+
+
+@pytest.fixture
+def water_xtc(tmp_path: Path) -> Path:
+    path = tmp_path / "water.xtc"
+    frame = _water_frame()
+    molrs.write_xtc(str(path), [frame, frame])
+    return path
+
+
+@pytest.fixture
+def water_lammpstrj(tmp_path: Path) -> Path:
+    path = tmp_path / "water.lammpstrj"
+    frame = _water_frame(for_lammps=True)
+    molrs.write_lammps_traj(str(path), [frame, frame])
+    return path
+
+
+@pytest.fixture
+def water_lammps_data(tmp_path: Path) -> Path:
+    path = tmp_path / "water.data"
+    molrs.write_lammps(str(path), _water_frame(for_lammps=True))
+    return path

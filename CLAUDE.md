@@ -4,7 +4,7 @@ mol_project:
   language: rust
   stage: experimental
   build:
-    install: "cargo build && bash scripts/fetch-test-data.sh"
+    install: "cargo build"
     check: "cargo fmt --check && cargo clippy -p molcrafts-molrs --all-targets --features full -- -D warnings && cargo clippy -p molcrafts-molrs-cxxapi --all-targets -- -D warnings"
     test: "cargo test -p molcrafts-molrs --lib --features full"
     test_single: "cargo test {path}"
@@ -106,16 +106,29 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 molrs is a Rust workspace for molecular simulation: core data structures, file I/O, trajectory analysis, signal processing, force fields, 3D coordinate generation, and a CXX bridge to Atomiverse C++. Rust edition 2024, resolver "3".
 
-## IO Testing Rules (MANDATORY)
+## Testing Rules (MANDATORY)
+
+**No third-party scientific software in the default test gate** — not even as
+optional oracles. That means no RDKit, AmberTools/antechamber, freud, OpenMM,
+LAMMPS, Packmol, etc. at test time. Numerical goldens are either:
+
+- pure unit checks with hand-written numbers, or
+- **committed** static data (e.g. `molrs-cxxapi/tests/antechamber_oracle.rs`)
+  regenerated offline by `scripts/gen_*.py` on a developer machine that *does*
+  have those tools. CI never runs the generators.
 
 **Prefer unit tests next to the code** (`#[cfg(test)]` in `molrs/src/**`).
 There is **no** `molrs/tests/` integration-binary tree.
 
 Default gate: `cargo test -p molcrafts-molrs --lib --features full`.
 
-Optional real fixtures for binders live in workspace `tests-data/` (gitignored;
-`scripts/fetch-test-data.sh`). A tiny `include_str!` fixture in a unit test is
-OK for a parser edge-case that is hard to produce from real data.
+**Bindings (Python / C / WASM)** only smoke the FFI seam (construct, call,
+round-trip types). Science / format corpus depth lives in the Rust unit tests.
+Python IO fixtures are written in-process by molrs writers — no `tests-data/`
+fetch. A tiny `include_str!` fixture in a Rust unit test is OK for a parser
+edge-case.
+
+`scripts/fetch-test-data.sh` remains for optional local exploration only.
 
 ## Build & Test Commands
 
@@ -125,8 +138,6 @@ cargo build
 
 # Default gate (mirrors CI): function-level unit tests only — should be seconds
 cargo test -p molcrafts-molrs --lib --features full
-
-bash scripts/fetch-test-data.sh      # optional fixtures for binders that need them
 
 # Lint & Format
 cargo fmt --all

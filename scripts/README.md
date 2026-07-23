@@ -1,27 +1,26 @@
-# Test Data
+# Scripts
 
-Test data is stored in `tests-data/` at the workspace root (not in the source
-tree; gitignored). This binding-neutral location is shared by every Rust crate
-and by the Python / future C / WASM bindings, and survives `cargo clean`.
+## Offline table / oracle generators (not part of the test gate)
 
-Rust IO tests resolve it through a small local `common` helper in the io test
-target (`molrs/tests/io/common.rs`), which just reads `../tests-data`; Python
-tests resolve it through the `tests_data_dir` fixture in
-`molrs-python/tests/conftest.py`. Both honor the `MOLRS_TESTS_DATA` environment
-variable as an override.
+These scripts need a local AmberTools (and sometimes RDKit) install. They are
+**developer regeneration tools**, never imported or executed by CI or
+`cargo test` / `pytest`:
 
-## Fetch test data
+| Script | Output |
+|--------|--------|
+| `gen_param_tables.py` | Committed Rust tables under `molrs/src/ff/params/` |
+| `gen_am1bcc_oracle.py` | `molrs-cxxapi/tests/antechamber_oracle.rs` (static numbers) |
+| `gen_gaff_energy_oracle.py` | JSON printed for hand-checking energy constants |
+
+Default tests consume only the **committed** outputs. They never call RDKit,
+antechamber, sander, or any other third-party scientific package.
+
+## Optional format corpus
 
 ```bash
 bash scripts/fetch-test-data.sh
 ```
 
-## Run tests
-
-```bash
-cargo test
-```
-
-## CI
-
-Test data is cached in CI using `actions/cache@v4` with key based on the fetch script hash.
+Clones a chemfiles-derived fixture tree into `tests-data/` (gitignored). This is
+**optional** exploratory data — not required by the default CI / pre-commit
+gate. Binding smoke tests build their own fixtures with molrs writers.
