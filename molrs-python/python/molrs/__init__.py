@@ -14,7 +14,7 @@ force fields, and the SMILES front-end. Analysis classes live under the
 * :mod:`molrs.compute.ml` — PCA, K-means, descriptor rows
 """
 
-from .molrs import (
+from ._lib import (
     # Public exceptions
     BlockDtypeError,
     UnitsError,
@@ -171,6 +171,38 @@ from .molrs import (
     VcdSpectrum,
     RoaSpectrum,
     ResonanceRamanSpectrum,
+    # Freud-style analysis — preferred public path is molrs.compute.*. Bound as
+    # package attributes (not listed in ``__all__``) so PyO3 ``module = "molrs"``
+    # stays honest for griffe: ``molrs.compute.density.RDF`` resolves to ``molrs.RDF``.
+    RDF,
+    RDFResult,
+    GaussianDensity,
+    LocalDensity,
+    Steinhardt,
+    Nematic,
+    Hexatic,
+    SolidLiquid,
+    BondOrder,
+    PMFTXY,
+    StaticStructureFactorDebye,
+    Cluster,
+    ClusterResult,
+    ClusterCenters,
+    ClusterCentersResult,
+    ClusterProperties,
+    CenterOfMass,
+    CenterOfMassResult,
+    GyrationTensor,
+    InertiaTensor,
+    RadiusOfGyration,
+    MSD,
+    MSDResult,
+    MSDTimeSeries,
+    DescriptorRow,
+    Pca2,
+    PcaResult,
+    KMeans,
+    KMeansResult,
 )
 
 from . import ff  # molrs.ff.potential.soft parameter interface
@@ -180,14 +212,14 @@ from . import ff  # molrs.ff.potential.soft parameter interface
 # ``molrs.Block`` / ``molrs.Frame`` as the canonical types — every public API
 # (io readers, etc.) yields these. The shadow is safe now that molpy re-exports
 # them instead of subclassing the bare core (chain spec 04). Internal modules
-# that need the raw cores import them from ``.molrs`` directly.
+# that need the raw cores import them from ``._lib`` directly.
 from . import frame  # noqa: F401
 from .frame import Block, Frame
 
 # Chainable, object-style force-field layer (Style/Type handle views over the
 # Rust ForceField). Shadows the bare PyO3 ``ForceField`` with the subclass that
 # adds ``def_*style`` factories; ``def_type``/``types``/``to_potentials`` are
-# inherited from the core. Raw core stays importable from ``.molrs``.
+# inherited from the core. Raw core stays importable from ``._lib``.
 from . import forcefield  # noqa: F401
 from .forcefield import (  # noqa: F401
     AngleHarmonicStyle,

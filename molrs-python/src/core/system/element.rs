@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyType;
 
 /// Immutable chemical-element record backed by [`Element`].
-#[pyclass(name = "Element", frozen, eq, hash, skip_from_py_object)]
+#[pyclass(module = "molrs", name = "Element", frozen, eq, hash, skip_from_py_object)]
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct PyElement {
     inner: Element,

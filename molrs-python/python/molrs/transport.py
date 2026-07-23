@@ -1,7 +1,7 @@
 """Ion-transport trajectory-analysis kernels.
 
 All computation is in Rust. The kernels are grouped under three thin namespace
-classes (static methods over the compiled ``molrs.molrs`` PyO3 functions) so
+classes (static methods over the compiled ``molrs._lib`` PyO3 functions) so
 callers reach them as ``molrs.transport.Onsager.correlation(...)`` rather than
 through a flat list of free functions.
 
@@ -11,7 +11,7 @@ coefficients), ``jacf`` (current-ACF Green–Kubo conductivity), and ``persist``
 (pair-survival / residence-time correlations).
 """
 
-from .molrs import (
+from ._lib import (
     transport_onsager_correlation,
     transport_pair_survival_tcf,
 )

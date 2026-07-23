@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 import molrs
-from molrs.molrs import Block, Frame  # bare PyO3 cores (Block/Frame are the rich shadow)
+from molrs._lib import Block, Frame  # bare PyO3 cores (Block/Frame are the rich shadow)
 
 
 class TestBlockConstruction:

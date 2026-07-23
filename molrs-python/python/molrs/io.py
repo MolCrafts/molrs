@@ -36,7 +36,7 @@ from .fields import (
     XyzFieldFormatter,
 )
 from .frame import Frame  # canonical rich Frame (spec frame-block-sink-01)
-from .molrs import (
+from ._lib import (
     DCDTrajReader as _DCDTrajReader,
     LAMMPSTrajReader as _LAMMPSTrajReader,
     TRRTrajReader as _TRRTrajReader,

@@ -19,13 +19,13 @@ from __future__ import annotations
 
 from typing import Any, TypeVar
 
-from .molrs import ForceField as _RsForceField
-from .molrs import read_forcefield_xml as _rs_read_forcefield_xml
-from .molrs import read_forcefield_xml_str as _rs_read_forcefield_xml_str
-from .molrs import read_opls_xml as _rs_read_opls_xml
-from .molrs import read_opls_xml_str as _rs_read_opls_xml_str
-from .molrs import read_lammps_forcefield as _rs_read_lammps_forcefield
-from .molrs import read_lammps_forcefield_str as _rs_read_lammps_forcefield_str
+from ._lib import ForceField as _RsForceField
+from ._lib import read_forcefield_xml as _rs_read_forcefield_xml
+from ._lib import read_forcefield_xml_str as _rs_read_forcefield_xml_str
+from ._lib import read_opls_xml as _rs_read_opls_xml
+from ._lib import read_opls_xml_str as _rs_read_opls_xml_str
+from ._lib import read_lammps_forcefield as _rs_read_lammps_forcefield
+from ._lib import read_lammps_forcefield_str as _rs_read_lammps_forcefield_str
 
 # def_style returns a bound handle of the SAME Style subclass it was given, so
 # `ff.def_style(AtomStyle(...)).def_type(...)` keeps the subclass-specific def_type.

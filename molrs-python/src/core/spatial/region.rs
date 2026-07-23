@@ -62,7 +62,7 @@ fn bounds_impl<'py>(region: &dyn Region, py: Python<'py>) -> Bound<'py, PyArray2
 /// >>> s = Sphere(np.array([0, 0, 0]), 5.0)
 /// >>> mask = s.contains(points)
 /// >>> region = s & ~Sphere(np.array([0, 0, 0]), 2.0)  # shell
-#[pyclass(name = "Sphere", from_py_object, subclass)]
+#[pyclass(module = "molrs", name = "Sphere", from_py_object, subclass)]
 #[derive(Clone)]
 pub struct PySphere {
     inner: Arc<Sphere>,
@@ -171,7 +171,7 @@ impl PySphere {
 ///
 /// A point is inside when `origin[d] <= p[d] <= origin[d] + lengths[d]` on
 /// every axis. Supports `&` / `|` / `~` composition like the other regions.
-#[pyclass(name = "Cuboid", from_py_object, subclass)]
+#[pyclass(module = "molrs", name = "Cuboid", from_py_object, subclass)]
 #[derive(Clone)]
 pub struct PyCuboid {
     inner: Arc<Cuboid>,
@@ -285,7 +285,7 @@ impl PyCuboid {
 /// --------
 /// >>> shell = HollowSphere(np.array([0,0,0]), 3.0, 5.0)
 /// >>> mask = shell.contains(points)
-#[pyclass(name = "HollowSphere", from_py_object, subclass)]
+#[pyclass(module = "molrs", name = "HollowSphere", from_py_object, subclass)]
 #[derive(Clone)]
 pub struct PyHollowSphere {
     inner: Arc<HollowSphere>,
@@ -405,7 +405,7 @@ impl PyHollowSphere {
 /// --------
 /// >>> shell = Sphere(c, 5.0) & ~Sphere(c, 3.0)
 /// >>> shell.contains(points)
-#[pyclass(name = "Region", from_py_object, subclass)]
+#[pyclass(module = "molrs", name = "Region", from_py_object, subclass)]
 #[derive(Clone)]
 pub struct PyRegion {
     inner: DynRegion,

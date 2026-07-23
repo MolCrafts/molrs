@@ -47,7 +47,7 @@ def test_atd_typifier_is_exported() -> None:
 
 
 def test_atd_typifier_is_declared_in_the_type_stub() -> None:
-    stub = (REPO_ROOT / "molrs-python/python/molrs/molrs.pyi").read_text()
+    stub = (REPO_ROOT / "molrs-python/python/molrs/_lib.pyi").read_text()
     assert "class AtdTypifier" in stub
 
 

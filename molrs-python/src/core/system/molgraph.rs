@@ -379,7 +379,7 @@ macro_rules! graph_world_impl {
 /// * ``parent_of`` — ``{new_handle: parent_handle}``
 /// * ``hops`` — ``{parent_handle: hops_from_nearest_center}``
 /// * ``node_map`` — ``{parent_handle: new_handle}``
-#[pyclass(name = "ExtractedSubgraph", skip_from_py_object)]
+#[pyclass(module = "molrs", name = "ExtractedSubgraph", skip_from_py_object)]
 pub struct PyExtractedSubgraph {
     graph: Py<PyAny>,
     boundary: Vec<u64>,
@@ -477,7 +477,7 @@ impl PyExtractedSubgraph {
 // ---------------------------------------------------------------------------
 
 /// Domain-agnostic ECS world, exposed to Python as `molrs.Graph`.
-#[pyclass(name = "Graph", subclass)]
+#[pyclass(module = "molrs", name = "Graph", subclass)]
 pub struct PyGraph {
     inner: MolGraph,
 }
@@ -514,7 +514,7 @@ graph_world_impl!(PyGraph);
 /// Holds a core [`Atomistic`] from construction; it is never converted from a
 /// `MolGraph`. Subclasses `Graph`; the generic API operates on this leaf's own
 /// graph.
-#[pyclass(name = "Atomistic", extends = PyGraph, subclass)]
+#[pyclass(module = "molrs", name = "Atomistic", extends = PyGraph, subclass)]
 pub struct PyAtomistic {
     inner: Atomistic,
 }
@@ -834,7 +834,7 @@ impl PyAtomistic {
 /// ``atoms`` stores molecule atom handles in query-atom order. ``mapping``
 /// stores the Daylight atom-map projection (``:1`` → atom handle), and is empty
 /// when the query carries no map labels.
-#[pyclass(name = "SmartsMatch", skip_from_py_object)]
+#[pyclass(module = "molrs", name = "SmartsMatch", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PySmartsMatch {
     atoms: Vec<u64>,
@@ -889,7 +889,7 @@ impl PySmartsMatch {
 /// >>> pat = molrs.SmartsPattern("[C:1][O:2][H:3]")
 /// >>> pat.find_matches(methanol)[0].mapping
 /// {1: <C>, 2: <O>, 3: <H>}
-#[pyclass(name = "SmartsPattern")]
+#[pyclass(module = "molrs", name = "SmartsPattern")]
 pub struct PySmartsPattern {
     inner: SmartsPattern,
 }
@@ -1051,7 +1051,7 @@ impl PySmartsPattern {
 /// >>> for pat in rxn.reactant_patterns:  # ... and merge the map->atom dicts
 /// ...     binding.update(pat.find_matches(mol, mapped=True)[0])
 /// >>> rxn.apply(mol, binding)            # edits `mol` in place
-#[pyclass(name = "Reaction")]
+#[pyclass(module = "molrs", name = "Reaction")]
 pub struct PyReaction {
     inner: Reaction,
 }
@@ -1213,7 +1213,7 @@ impl PyReaction {
 // ---------------------------------------------------------------------------
 
 /// Coarse-grained molecular graph, exposed to Python as `molrs.CoarseGrain`.
-#[pyclass(name = "CoarseGrain", extends = PyGraph, subclass)]
+#[pyclass(module = "molrs", name = "CoarseGrain", extends = PyGraph, subclass)]
 pub struct PyCoarseGrain {
     inner: CoarseGrain,
 }

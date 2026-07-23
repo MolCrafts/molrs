@@ -16,8 +16,8 @@ import numpy as np
 
 from . import fields
 from .fields import FieldSpec
-from .molrs import Atomistic as _RsAtomistic
-from .molrs import CoarseGrain as _RsCoarseGrain
+from ._lib import Atomistic as _RsAtomistic
+from ._lib import CoarseGrain as _RsCoarseGrain
 
 
 class RefLike(Protocol):
