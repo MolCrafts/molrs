@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check that every PyO3 module export is declared in molrs.pyi."""
+"""Check that every PyO3 module export is declared in _lib.pyi."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "molrs-python" / "src"
 LIB_RS = SRC / "lib.rs"
-STUB = ROOT / "molrs-python" / "python" / "molrs" / "molrs.pyi"
+STUB = ROOT / "molrs-python" / "python" / "molrs" / "_lib.pyi"
 PACKAGE_DIR = ROOT / "molrs-python" / "python" / "molrs"
 
 
@@ -111,7 +111,7 @@ def main() -> int:
     extra_context = sorted(declared - expected)
 
     if missing:
-        print("molrs.pyi is missing PyO3 exports:")
+        print("_lib.pyi is missing PyO3 exports:")
         for name in missing:
             print(f"  - {name}")
         return 1
@@ -121,7 +121,7 @@ def main() -> int:
             print(f"  - {name}")
         return 1
 
-    print(f"molrs.pyi and molrs.* __all__ declare all {len(expected)} PyO3 exports from src/lib.rs.")
+    print(f"_lib.pyi and molrs.* __all__ declare all {len(expected)} PyO3 exports from src/lib.rs.")
     if extra_context:
         print(f"Additional stub-only helper symbols: {len(extra_context)}")
     return 0

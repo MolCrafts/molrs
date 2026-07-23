@@ -61,7 +61,11 @@ link = "https://github.com/MolCrafts/molrs"
 default_handler = "python"
 
 [project.plugins.mkdocstrings.handlers.python]
-paths = ["python"]
+# Do NOT set paths = ["python"]. Cloudflare Pages / CI run
+# `pip install ".[doc]"` first, so the installed wheel (with _lib.abi3.so) lives
+# in site-packages. Pointing paths at the bare checkout makes griffe import the
+# pure-Python tree without the compiled extension → ModuleNotFoundError: molrs._lib.
+# Local: `maturin develop` / `pip install -e ".[doc]"` then `zensical build`.
 
 [project.plugins.mkdocstrings.handlers.python.options]
 docstring_style = "google"
