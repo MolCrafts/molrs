@@ -1,22 +1,27 @@
 # Testing (molrs)
 
-## Layout
+## Where science lives
 
-- Unit tests: `#[cfg(test)]` modules next to code in `molrs/src/**`
-- Default gate: `cargo test -p molcrafts-molrs --lib --features full`
-- No `molrs/tests/` integration-binary tree (removed)
-- Binders: `molrs-python` pytest, `molrs-capi` cmake, `molrs-wasm` wasm-pack
-- Oracle data for C++ AM1-BCC bridge: `molrs-cxxapi/tests/antechamber_oracle.rs`
-
-## Commands
+**Numerical / chemical correctness is tested only in Rust unit tests**
+(`#[cfg(test)]` next to code under `molrs/src/**`):
 
 ```bash
 cargo test -p molcrafts-molrs --lib --features full
-# binders (also pre-push)
-cd molrs-python && maturin develop && pytest -q
 ```
 
-## Iron laws
+There is **no** `molrs/tests/` integration-binary tree.
 
-- One concern per unit test function
-- No silent skips of known failures
+## Language bindings (Python / C / WASM)
+
+Bindings only prove the **seam**:
+
+- symbols import / construct
+- types and dtypes at the boundary (e.g. float64 arrays)
+- non-mutating contracts, error mapping, column order
+
+They must **not** re-run antechamber/RDKit oracles or multi-molecule
+numerical parity. That work belongs in core unit tests.
+
+```bash
+cd molrs-python && maturin develop && pytest -q
+```
