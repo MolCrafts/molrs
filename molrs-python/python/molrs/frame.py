@@ -20,10 +20,10 @@ from typing import Any, Self, overload
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
-from .molrs import Block as _RsBlock
-from .molrs import BlockDtypeError
-from .molrs import Frame as _RsFrame
-from .molrs import MetaValue
+from ._lib import Block as _RsBlock
+from ._lib import BlockDtypeError
+from ._lib import Frame as _RsFrame
+from ._lib import MetaValue
 
 type BlockLike = Mapping[str, ArrayLike]
 

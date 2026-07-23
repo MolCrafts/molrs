@@ -1,6 +1,6 @@
 """Clustering and per-cluster shape descriptors."""
 
-from molrs.molrs import (
+from molrs._lib import (
     Cluster as Cluster,
     ClusterResult as ClusterResult,
     ClusterCenters as ClusterCenters,

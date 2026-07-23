@@ -1,6 +1,6 @@
 """Dimensionality reduction and clustering ML utilities."""
 
-from molrs.molrs import (
+from molrs._lib import (
     DescriptorRow as DescriptorRow,
     Pca2 as Pca2,
     PcaResult as PcaResult,

@@ -56,7 +56,7 @@ def test_all_three_charge_models_are_exported() -> None:
 
 
 def test_all_three_charge_models_are_declared_in_the_type_stub() -> None:
-    stub = (REPO_ROOT / "molrs-python/python/molrs/molrs.pyi").read_text()
+    stub = (REPO_ROOT / "molrs-python/python/molrs/_lib.pyi").read_text()
     for name in ("BccModel", "MullikenModel", "GasteigerModel"):
         assert f"class {name}" in stub, name
 

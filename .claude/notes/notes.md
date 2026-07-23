@@ -17,6 +17,12 @@ status change) and conflicts with `CLAUDE.md`.
 
 ---
 
+## 2026-07-23 — private extension molrs._lib; docs CI fix
+**Decision:** Rename compiled extension `molrs.molrs` → `molrs._lib` (public vs private). PyO3 classes use `module = "molrs"`. Docs: force_inspection + analysis attrs for griffe; Cloudflare Pages builds fixed.
+**Status:** active (v0.9.2)
+
+---
+
 ## 2026-07-22 — release order: molrs before molpy; master+tag; no scripts
 **Decision:** Co-release is always molrs first, then molpy. Version landings on master require a `vX.Y.Z` tag. No pin-parity automation scripts — agents manually verify. Monorepo merge discarded.
 **Status:** promoted (→ `.claude/notes/release.md` + CLAUDE.md § Release before molpy)

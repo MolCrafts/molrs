@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 import molrs
-from molrs.molrs import Block, Frame, MetaValue  # bare PyO3 cores
+from molrs._lib import Block, Frame, MetaValue  # bare PyO3 cores
 
 
 class TestFrameConstruction:

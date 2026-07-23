@@ -31,7 +31,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyCapsule, PyDict, PyList};
 
 /// Exact-dtype frame metadata value.
-#[pyclass(name = "MetaValue", frozen, from_py_object)]
+#[pyclass(module = "molrs", name = "MetaValue", frozen, from_py_object)]
 #[derive(Clone)]
 pub struct PyMetaValue {
     pub(crate) inner: MetaValue,
@@ -154,7 +154,7 @@ impl PyMetaValue {
 /// print(frame)          # Frame(blocks=['atoms'], box=yes)
 /// print(frame.keys())   # ['atoms']
 /// ```
-#[pyclass(name = "Frame", from_py_object, unsendable, subclass)]
+#[pyclass(module = "molrs", name = "Frame", from_py_object, unsendable, subclass)]
 #[derive(Clone)]
 pub struct PyFrame {
     pub(crate) inner: FrameRef,

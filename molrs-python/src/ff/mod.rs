@@ -62,7 +62,7 @@ use numpy::{PyArray1, PyArray2, PyArray3, PyReadonlyArrayDyn, ToPyArray};
 /// `molrs::ff::typifier::Typifier` trait. This is its Python nominal
 /// counterpart: native typifiers extend it and downstream Python typifiers may
 /// subclass it.
-#[pyclass(name = "Typifier", subclass)]
+#[pyclass(module = "molrs", name = "Typifier", subclass)]
 pub struct PyTypifier;
 
 #[pymethods]
@@ -85,7 +85,7 @@ impl PyTypifier {
 }
 
 /// Outcome of a geometry optimization, exposed to Python as `molrs.OptReport`.
-#[pyclass(name = "OptReport")]
+#[pyclass(module = "molrs", name = "OptReport")]
 pub struct PyOptReport {
     inner: OptReport,
 }
@@ -152,7 +152,7 @@ impl From<OptReport> for PyOptReport {
 /// >>> frame["pairs"] = molrs.intramolecular_pairs(frame)
 /// >>> potentials = typifier.forcefield().to_potentials(frame)
 /// >>> energy, forces = potentials.eval(coords)
-#[pyclass(name = "Potentials")]
+#[pyclass(module = "molrs", name = "Potentials")]
 pub struct PyPotentials {
     inner: PotBacking,
 }
@@ -183,13 +183,13 @@ impl PotBacking {
 }
 
 /// Force-field definition metadata exposed to Python as `molrs.ForceField`.
-#[pyclass(name = "ForceField", subclass)]
+#[pyclass(module = "molrs", name = "ForceField", subclass)]
 pub struct PyForceField {
     pub(crate) inner: ForceField,
 }
 
 /// CL&Pol fragment scaling data backed by the native force-field layer.
-#[pyclass(name = "FragmentScaling", frozen, get_all, skip_from_py_object)]
+#[pyclass(module = "molrs", name = "FragmentScaling", frozen, get_all, skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyFragmentScaling {
     name: String,
@@ -423,7 +423,7 @@ impl PyPotentials {
 /// >>> opt = molrs.LBFGS(pots, fmax=0.05)
 /// >>> coords, report = opt.run(coords)         # (N, 3)
 /// >>> batch, reports = opt.run(batch)          # (B, N, 3)
-#[pyclass(name = "LBFGS")]
+#[pyclass(module = "molrs", name = "LBFGS")]
 pub struct PyLBFGS {
     potentials: Py<PyPotentials>,
     cfg: LbfgsConfig,
@@ -533,7 +533,7 @@ macro_rules! py_mmff_front_door {
         $py_ty:ident, $core:ty, $name:literal
     ) => {
         $(#[$doc])*
-        #[pyclass(name = $name, extends = PyTypifier)]
+        #[pyclass(module = "molrs", name = $name, extends = PyTypifier)]
         pub struct $py_ty {
             inner: $core,
         }
@@ -700,7 +700,7 @@ fn oplsaa_source_xml(source: Option<&Bound<'_, PyAny>>) -> PyResult<Option<Strin
 /// >>> typifier = OPLSAATypifier()
 /// >>> typed = typifier.typify(mol)        # typed Atomistic
 /// >>> potentials = typifier.build(mol)    # compiled Potentials
-#[pyclass(name = "OPLSAATypifier", extends = PyTypifier)]
+#[pyclass(module = "molrs", name = "OPLSAATypifier", extends = PyTypifier)]
 pub struct PyOPLSAATypifier {
     inner: OPLSAATypifier,
 }

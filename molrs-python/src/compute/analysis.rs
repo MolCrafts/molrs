@@ -39,7 +39,7 @@ use crate::helpers::{NpF, collect_frames, py_value_err};
 // ---------------------------------------------------------------------------
 
 /// Shared result of the geometric distribution functions.
-#[pyclass(name = "DistributionResult")]
+#[pyclass(module = "molrs", name = "DistributionResult")]
 pub struct PyDistributionResult {
     inner: DistributionResult,
 }
@@ -93,7 +93,7 @@ impl PyDistributionResult {
 
 /// Angular distribution function (ADF) over atom triplets (angle at the middle
 /// atom). Ported from the reference implementation; the sin θ correction is exposed separately.
-#[pyclass(name = "AngleDistribution")]
+#[pyclass(module = "molrs", name = "AngleDistribution")]
 pub struct PyAngleDistribution {
     inner: DistributionFunction<AngleObservable>,
 }
@@ -124,7 +124,7 @@ impl PyAngleDistribution {
 }
 
 /// Dihedral distribution function (DDF) over atom quadruplets.
-#[pyclass(name = "DihedralDistribution")]
+#[pyclass(module = "molrs", name = "DihedralDistribution")]
 pub struct PyDihedralDistribution {
     inner: DistributionFunction<DihedralObservable>,
 }
@@ -155,7 +155,7 @@ impl PyDihedralDistribution {
 }
 
 /// Distance distribution function over atom pairs.
-#[pyclass(name = "DistanceDistribution")]
+#[pyclass(module = "molrs", name = "DistanceDistribution")]
 pub struct PyDistanceDistribution {
     inner: DistributionFunction<DistanceObservable>,
 }
@@ -189,7 +189,7 @@ impl PyDistanceDistribution {
 // ---------------------------------------------------------------------------
 
 /// Map an observable-kind string to its `AnyObservable` variant + arity.
-#[pyclass(name = "CombinedDistributionResult")]
+#[pyclass(module = "molrs", name = "CombinedDistributionResult")]
 pub struct PyCombinedDistributionResult {
     inner: CombinedDistributionResult,
 }
@@ -253,7 +253,7 @@ impl PyCombinedDistributionResult {
 /// Joint multi-axis distribution over several geometric observables (the reference implementation
 /// combined-DF). Each axis is `(kind, bins, min, max, sin_weight)` where `kind`
 /// is ``"distance"`` / ``"angle"`` / ``"dihedral"``.
-#[pyclass(name = "CombinedDistribution")]
+#[pyclass(module = "molrs", name = "CombinedDistribution")]
 pub struct PyCombinedDistribution {
     inner: CombinedDistribution,
     arities: Vec<usize>,
@@ -319,7 +319,7 @@ impl PyCombinedDistribution {
 // Van Hove correlation function
 // ---------------------------------------------------------------------------
 
-#[pyclass(name = "VanHoveResult")]
+#[pyclass(module = "molrs", name = "VanHoveResult")]
 pub struct PyVanHoveResult {
     inner: VanHoveResult,
 }
@@ -357,7 +357,7 @@ impl PyVanHoveResult {
 }
 
 /// Van Hove correlation function `G(r, t)` (self + distinct parts).
-#[pyclass(name = "VanHove")]
+#[pyclass(module = "molrs", name = "VanHove")]
 pub struct PyVanHove {
     inner: VanHove,
 }
@@ -386,7 +386,7 @@ impl PyVanHove {
 // Legendre reorientation correlation (C1 / C2)
 // ---------------------------------------------------------------------------
 
-#[pyclass(name = "LegendreReorientationResult")]
+#[pyclass(module = "molrs", name = "LegendreReorientationResult")]
 pub struct PyLegendreReorientationResult {
     inner: LegendreReorientationResult,
 }
@@ -408,7 +408,7 @@ impl PyLegendreReorientationResult {
 }
 
 /// First/second Legendre reorientational TCFs `C₁(t)`, `C₂(t)` of bond vectors.
-#[pyclass(name = "LegendreReorientation")]
+#[pyclass(module = "molrs", name = "LegendreReorientation")]
 pub struct PyLegendreReorientation {
     inner: LegendreReorientation,
 }
@@ -450,7 +450,7 @@ impl PyLegendreReorientation {
 // ---------------------------------------------------------------------------
 
 /// Geometric hydrogen-bond criterion (Luzar–Chandler defaults).
-#[pyclass(name = "HBondCriterion", from_py_object)]
+#[pyclass(module = "molrs", name = "HBondCriterion", from_py_object)]
 #[derive(Clone)]
 pub struct PyHBondCriterion {
     inner: HBondCriterion,
@@ -478,7 +478,7 @@ impl PyHBondCriterion {
     }
 }
 
-#[pyclass(name = "HBondsResult")]
+#[pyclass(module = "molrs", name = "HBondsResult")]
 pub struct PyHBondsResult {
     inner: HBondsResult,
 }
@@ -513,7 +513,7 @@ impl PyHBondsResult {
 
 /// Detect hydrogen bonds per frame from explicit donor `(D, H)` pairs and
 /// acceptor atoms under a geometric criterion.
-#[pyclass(name = "HBonds")]
+#[pyclass(module = "molrs", name = "HBonds")]
 pub struct PyHBonds {
     inner: HBonds,
 }
@@ -568,7 +568,7 @@ impl PyHBonds {
 // Spatial distribution function (SDF)
 // ---------------------------------------------------------------------------
 
-#[pyclass(name = "SpatialDistributionResult")]
+#[pyclass(module = "molrs", name = "SpatialDistributionResult")]
 pub struct PySpatialDistributionResult {
     inner: SpatialDistributionResult,
 }
@@ -619,7 +619,7 @@ impl PySpatialDistributionResult {
 
 /// Spatial distribution function: target-atom density on a body-fixed grid,
 /// aligned to a reference template via Kabsch superposition.
-#[pyclass(name = "SpatialDistribution")]
+#[pyclass(module = "molrs", name = "SpatialDistribution")]
 pub struct PySpatialDistribution {
     inner: SpatialDistribution,
 }
@@ -703,7 +703,7 @@ impl PySpatialDistribution {
 // ---------------------------------------------------------------------------
 
 /// Per-cell radical-Voronoi tessellation result.
-#[pyclass(name = "VoronoiCells")]
+#[pyclass(module = "molrs", name = "VoronoiCells")]
 pub struct PyVoronoiCells {
     inner: VoronoiCells,
 }
@@ -729,7 +729,7 @@ impl PyVoronoiCells {
 }
 
 /// Radical (Laguerre / power) Voronoi tessellation — native periodic builder.
-#[pyclass(name = "RadicalVoronoi")]
+#[pyclass(module = "molrs", name = "RadicalVoronoi")]
 pub struct PyRadicalVoronoi;
 
 #[pymethods]
@@ -810,7 +810,7 @@ fn voronoi_voids<'py>(
 // ---------------------------------------------------------------------------
 
 /// A volumetric electron density on a (generally non-orthogonal) voxel grid.
-#[pyclass(name = "DensityGrid")]
+#[pyclass(module = "molrs", name = "DensityGrid")]
 pub struct PyDensityGrid {
     inner: DensityGrid,
 }
@@ -858,7 +858,7 @@ impl PyDensityGrid {
 }
 
 /// Per-molecule electromagnetic moments for one frame.
-#[pyclass(name = "MolecularMoments")]
+#[pyclass(module = "molrs", name = "MolecularMoments")]
 pub struct PyMolecularMoments {
     inner: MolecularMoments,
 }
@@ -884,7 +884,7 @@ impl PyMolecularMoments {
 
 /// Integrate an electron density over radical-Voronoi cells into per-molecule
 /// charges + dipoles.
-#[pyclass(name = "VoronoiIntegration")]
+#[pyclass(module = "molrs", name = "VoronoiIntegration")]
 pub struct PyVoronoiIntegration;
 
 #[pymethods]

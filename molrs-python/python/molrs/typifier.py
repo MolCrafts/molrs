@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import TypeVar
 
-from .molrs import Graph, MMFF94STypifier, MMFF94Typifier, OPLSAATypifier, Typifier
+from ._lib import Graph, MMFF94STypifier, MMFF94Typifier, OPLSAATypifier, Typifier
 from .views import Atomistic
 
 TGraph = TypeVar("TGraph", bound=Graph)

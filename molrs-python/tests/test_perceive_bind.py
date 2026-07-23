@@ -51,7 +51,7 @@ def test_perceive_is_exported() -> None:
 
 def test_perceive_is_declared_in_the_type_stub() -> None:
     """The stub ships the class — `py.typed` promises a typed API, not a partial one."""
-    stub = (REPO_ROOT / "molrs-python/python/molrs/molrs.pyi").read_text()
+    stub = (REPO_ROOT / "molrs-python/python/molrs/_lib.pyi").read_text()
     assert "class Perceive" in stub
 
 

@@ -58,7 +58,7 @@ use crate::core::system::molgraph::PyAtomistic;
 /// 1
 /// >>> mol.has(atom, "is_in_ring")   # the input is untouched
 /// False
-#[pyclass(name = "Perceive")]
+#[pyclass(module = "molrs", name = "Perceive")]
 #[derive(Debug)]
 pub struct PyPerceive {
     inner: Perceive,

@@ -5,7 +5,7 @@ use molrs::units::{Dimension, Quantity, Unit, UnitDef, UnitRegistry};
 use pyo3::exceptions::{PyAttributeError, PyTypeError};
 use pyo3::prelude::*;
 
-#[pyclass(name = "Unit", frozen, skip_from_py_object)]
+#[pyclass(module = "molrs", name = "Unit", frozen, skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyUnit {
     inner: Unit,
@@ -63,7 +63,7 @@ impl PyUnit {
     }
 }
 
-#[pyclass(name = "Quantity", frozen, skip_from_py_object)]
+#[pyclass(module = "molrs", name = "Quantity", frozen, skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyQuantity {
     inner: Quantity,
@@ -192,7 +192,7 @@ impl PyQuantity {
     }
 }
 
-#[pyclass(name = "UnitRegistry", subclass, dict)]
+#[pyclass(module = "molrs", name = "UnitRegistry", subclass, dict)]
 pub struct PyUnitRegistry {
     inner: UnitRegistry,
 }

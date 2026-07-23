@@ -1,9 +1,16 @@
 # Python Reference
 
-This page is rendered from the installed `molrs` Python module by
-`mkdocstrings-python`. The type stub in `molrs-python/python/molrs/molrs.pyi`
-is the committed companion artifact that keeps signatures visible to static
-tools and the docs build.
+Canonical import style:
+
+```python
+import molrs as mr
+```
+
+This page is rendered from the installed `molrs` package by `mkdocstrings-python`.
+Autodoc identifiers use the package name (`molrs.Frame`); user code should
+`import molrs as mr` and write `mr.Frame`. The type stub in
+`molrs-python/python/molrs/_lib.pyi` is the committed companion artifact that
+keeps signatures visible to static tools and the docs build.
 
 ## Core Model
 

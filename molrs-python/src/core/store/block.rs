@@ -40,25 +40,25 @@ use crate::store::ffi_error_to_pyerr;
 /// The `borrow_from_array` call in each `*_array_view` helper below creates a
 /// numpy view whose lifetime is tied to this owner object. The `unsendable`
 /// marker ensures the owner (and therefore the view) never crosses threads.
-#[pyclass(unsendable)]
+#[pyclass(module = "molrs", unsendable)]
 struct FloatArrayOwner {
     array: Arc<ColumnHolder<F>>,
 }
 
 /// See [`FloatArrayOwner`].
-#[pyclass(unsendable)]
+#[pyclass(module = "molrs", unsendable)]
 struct IntArrayOwner {
     array: Arc<ColumnHolder<I>>,
 }
 
 /// See [`FloatArrayOwner`].
-#[pyclass(unsendable)]
+#[pyclass(module = "molrs", unsendable)]
 struct BoolArrayOwner {
     array: Arc<ColumnHolder<bool>>,
 }
 
 /// See [`FloatArrayOwner`].
-#[pyclass(unsendable)]
+#[pyclass(module = "molrs", unsendable)]
 struct UIntArrayOwner {
     array: Arc<ColumnHolder<U>>,
 }
@@ -82,7 +82,7 @@ struct UIntArrayOwner {
 /// assert "x" in b
 /// arr = b.view("x")        # zero-copy numpy view
 /// ```
-#[pyclass(name = "Block", from_py_object, unsendable, subclass)]
+#[pyclass(module = "molrs", name = "Block", from_py_object, unsendable, subclass)]
 #[derive(Clone)]
 pub struct PyBlock {
     pub(crate) inner: BlockRef,

@@ -72,7 +72,7 @@ fn pairs_to_i64_array<'py>(
 /// >>> nlist.n_pairs
 /// 42
 /// >>> nlist.distances   # numpy float array
-#[pyclass(name = "NeighborList")]
+#[pyclass(module = "molrs", name = "NeighborList")]
 pub struct PyNeighborList {
     pub(crate) inner: RsNeighborList,
 }
@@ -238,7 +238,7 @@ impl PyNeighborList {
 /// >>> nq = NeighborQuery(box, positions, cutoff=3.0)
 /// >>> nlist = nq.query(query_positions)   # cross-query
 /// >>> nlist = nq.query_self()             # self-query (unique pairs)
-#[pyclass(name = "NeighborQuery")]
+#[pyclass(module = "molrs", name = "NeighborQuery")]
 pub struct PyNeighborQuery {
     inner: NeighborQuery,
 }
@@ -367,7 +367,7 @@ impl PyNeighborQuery {
 /// >>> lc = LinkedCell(positions, cutoff=3.0, box=simbox)
 /// >>> pairs = lc.pairs()   # (M, 2) int64 array
 /// >>> lc.update(new_positions, box=simbox)
-#[pyclass(name = "LinkedCell")]
+#[pyclass(module = "molrs", name = "LinkedCell")]
 pub struct PyLinkedCell {
     pub(crate) inner: molrs::spatial::neighbors::LinkCell,
 }

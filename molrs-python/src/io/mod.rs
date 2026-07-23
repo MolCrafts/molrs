@@ -340,7 +340,7 @@ fn traj_getitem<R: TrajReader<Frame = CoreFrame>>(
 /// >>> frame = reader[42]
 /// >>> for frame in reader:
 /// ...     pass
-#[pyclass(name = "LAMMPSTrajReader", unsendable)]
+#[pyclass(module = "molrs", name = "LAMMPSTrajReader", unsendable)]
 pub struct PyLAMMPSTrajReader {
     inner: Option<LAMMPSTrajReader<Box<dyn ReadSeek>>>,
     cursor: usize,
@@ -527,7 +527,7 @@ pub fn read_dcd(path: &str) -> PyResult<Vec<PyFrame>> {
 /// >>> frame = reader[42]
 /// >>> for frame in reader:
 /// ...     pass
-#[pyclass(name = "DCDTrajReader", unsendable)]
+#[pyclass(module = "molrs", name = "DCDTrajReader", unsendable)]
 pub struct PyDcdTrajReader {
     inner: Option<DcdReader<Box<dyn ReadSeek>>>,
     cursor: usize,
@@ -673,7 +673,7 @@ impl PyDcdTrajReader {
 /// >>> reader.n_frames
 /// 50
 /// >>> reader[-1]["atoms"].view("x")
-#[pyclass(name = "XYZTrajReader", unsendable)]
+#[pyclass(module = "molrs", name = "XYZTrajReader", unsendable)]
 pub struct PyXYZTrajReader {
     inner: Option<XYZReader<Box<dyn ReadSeek>>>,
     cursor: usize,
@@ -1128,7 +1128,7 @@ pub fn read_xtc(path: &str) -> PyResult<Vec<PyFrame>> {
 /// ``build_index()``); subsequent ``reader[i]`` / ``read_step(i)`` is an O(1)
 /// seek plus one frame parse. Exposes the same surface as
 /// :class:`DCDTrajReader`.
-#[pyclass(name = "TRRTrajReader", unsendable)]
+#[pyclass(module = "molrs", name = "TRRTrajReader", unsendable)]
 pub struct PyTrrTrajReader {
     inner: Option<TrrReader<Box<dyn ReadSeek>>>,
     cursor: usize,
@@ -1249,7 +1249,7 @@ impl PyTrrTrajReader {
 /// Like :class:`TRRTrajReader` but for the compressed XTC format. Frame sizes
 /// vary (compression), so the byte-offset index is built by a single scan;
 /// random access is O(1) thereafter.
-#[pyclass(name = "XTCTrajReader", unsendable)]
+#[pyclass(module = "molrs", name = "XTCTrajReader", unsendable)]
 pub struct PyXtcTrajReader {
     inner: Option<XtcReader<Box<dyn ReadSeek>>>,
     cursor: usize,
@@ -1425,7 +1425,7 @@ pub fn write_xtc(path: &str, frames: Vec<PyRef<'_, PyFrame>>) -> PyResult<()> {
 /// >>> mol = ir.to_atomistic()
 /// >>> mol.n_atoms
 /// 3
-#[pyclass(name = "SmilesIR")]
+#[pyclass(module = "molrs", name = "SmilesIR")]
 pub struct PySmilesIR {
     inner: molrs::io::smiles::SmilesIR,
     input: String,

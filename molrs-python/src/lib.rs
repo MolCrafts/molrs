@@ -126,7 +126,8 @@ fn register_keys(parent: &Bound<'_, PyModule>) -> PyResult<()> {
 /// Registered classes and free functions are listed in the module-level
 /// documentation above.
 #[pymodule]
-fn molrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
+#[pyo3(name = "_lib")]
+fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // SimBox + neighbors
     m.add_class::<PyBox>()?;
     m.add_class::<PyLinkedCell>()?;
