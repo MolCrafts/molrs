@@ -145,7 +145,7 @@ fn binders_delegate_to_the_canonical_type_without_compatibility_surfaces() {
     for relative in [
         "molrs-python/src/lib.rs",
         "molrs-python/python/molrs/__init__.py",
-        "molrs-python/python/molrs/molrs.pyi",
+        "molrs-python/python/molrs/_lib.pyi",
     ] {
         let path = repo.join(relative);
         let source = fs::read_to_string(&path).expect("read Python export source");
