@@ -28,7 +28,7 @@ doc = [
     "mkdocstrings[python]",
     # Shared MolCrafts brand theme (zensical.toml sets `theme.name = "molcrafts"`),
     # matching molpy / molcfg / mollog so `pip install .[doc]` builds standalone.
-    "molcrafts-zensical-theme>=0.1.1",
+    "molcrafts-zensical-theme>=0.2.3",
 ]
 
 [tool.maturin]
