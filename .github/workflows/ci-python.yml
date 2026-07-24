@@ -22,9 +22,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v6
 
-      # Same entry as prek pre-push: tox -c molrs-python -e py
-      # (isolated env, maturin wheel, non-editable install, pytest).
-      - name: tox -c molrs-python -e py
-        run: |
-          uv tool install tox
-          tox -c molrs-python -e py
+      # Same entry as prek pre-push (tox from molrs-python[dev]).
+      - name: uv run --extra dev tox -e py
+        working-directory: molrs-python
+        run: uv run --extra dev tox -e py

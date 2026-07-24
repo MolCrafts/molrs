@@ -12,6 +12,14 @@ license = "BSD-3-Clause"
 dependencies = ["numpy>=2.0"]
 
 [project.optional-dependencies]
+# Dev tools (gate driver). Install: `pip install -e ".[dev]"` or
+# `uv sync --extra dev` from molrs-python/. prek/CI: `uv run --extra dev tox -e py`.
+dev = [
+    "tox>=4.23",
+    "maturin>=1.0,<2.0",
+    "pytest",
+    "numpy>=2.0",
+]
 # Everything `zensical build` needs for the docs site: zensical itself (pulls
 # its own deps) plus the mkdocstrings python handler used by zensical.toml's
 # `[project.plugins.mkdocstrings]`. Build the site with: pip install ".[doc]"
