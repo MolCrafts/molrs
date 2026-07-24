@@ -37,3 +37,48 @@ exclude = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+# Isolated Python binding tests — prek pre-push + CI:
+#   tox -c molrs-python -e py
+# Non-editable only: maturin wheel + pytest (no developer env).
+[tool.tox]
+requires = ["tox>=4.23"]
+env_list = ["py"]
+no_package = true
+
+[tool.tox.env.py]
+description = "throwaway env: maturin wheel + pytest (non-editable)"
+base_python = ["python3.12"]
+deps = [
+  "maturin>=1.0,<2.0",
+  "pytest",
+  "numpy>=2.0",
+]
+pass_env = [
+  "HOME",
+  "PATH",
+  "CARGO_HOME",
+  "CARGO_TARGET_DIR",
+  "RUSTUP_HOME",
+  "RUSTFLAGS",
+  "MACOSX_DEPLOYMENT_TARGET",
+  "SSH_AUTH_SOCK",
+  "TERM",
+]
+allowlist_externals = ["maturin"]
+commands_pre = [
+  ["maturin", "build", "--release", "-o", "{env_tmp_dir}/wheels"],
+  [
+    "{envpython}",
+    "-c",
+    "from pathlib import Path; import subprocess, sys; w=next(Path(r'{env_tmp_dir}/wheels').glob('molcrafts_molrs-*.whl')); subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--force-reinstall', '--no-deps', str(w)])",
+  ],
+  [
+    "{envpython}",
+    "-c",
+    "import molrs, pathlib; r=pathlib.Path(molrs.__file__).resolve(); assert 'site-packages' in str(r), r",
+  ],
+]
+commands = [
+  ["{envpython}", "-m", "pytest", "-q"],
+]

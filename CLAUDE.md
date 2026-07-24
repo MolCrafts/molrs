@@ -10,8 +10,8 @@ mol_project:
     test_single: "cargo test {path}"
   ci:
     # Local pre-push mirrors default CI + docs (not optional Full).
-    # Single source: .pre-commit-config.yaml
-    local: "pre-commit run --all-files --hook-stage pre-push"
+    # Single source: .pre-commit-config.yaml (prek)
+    local: "prek run --all-files --hook-stage pre-push"
   arch:
     style: crate-graph
     rules_section: "## Crate Structure & Modules"

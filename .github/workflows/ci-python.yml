@@ -19,21 +19,12 @@ jobs:
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      # Binding tests are self-contained (write→read fixtures). No tests-data,
-      # no third-party scientific software (RDKit / AmberTools / freud / …).
-      - name: Install build tools
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      # Same entry as prek pre-push: tox -c molrs-python -e py
+      # (isolated env, maturin wheel, non-editable install, pytest).
+      - name: tox -c molrs-python -e py
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install maturin pytest numpy
-
-      - name: Build wheel
-        working-directory: molrs-python
-        run: maturin build --release
-
-      - name: Install built wheel
-        working-directory: molrs-python
-        run: python -m pip install target/wheels/*.whl
-
-      - name: Test Python package
-        working-directory: molrs-python
-        run: pytest -q
+          uv tool install tox
+          tox -c molrs-python -e py
