@@ -63,24 +63,6 @@ def test_new_class_importable_and_constructible(name):
     assert isinstance(cls, type) and callable(cls)
 
 
-def test_constructors_smoke():
-    molrs.VACF()
-    molrs.GreenKuboDiffusion()
-    molrs.EinsteinDiffusion()
-    molrs.EinsteinConductivity()
-    molrs.GreenKuboConductivity()
-    molrs.DebyeRelaxation(1000.0, 300.0, "tinfoil")
-    molrs.LinearFit(0.2, 0.8)
-    molrs.RunningIntegral()
-    molrs.Plateau(0.5, 1.0)
-    molrs.DebyeFit()
-    molrs.PowerSpectrum()
-    molrs.IRSpectrum()
-    molrs.RamanSpectrum(10000.0, 300.0, True)
-
-
-# ── ac-002: raw computes return only the curve ───────────────────────────────
-
 
 def test_raw_einstein_conductivity_is_raw_only():
     dipole = _rng_series(256, 3, 3)

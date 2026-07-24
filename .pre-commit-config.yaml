@@ -1,22 +1,27 @@
-# CI / pre-commit parity — gates that can fail the default CI workflow.
+# Managed by prek (drop-in pre-commit): `prek install`
+# Mirrors default CI (ci.yml → rust / wasm / python / capi).
+#   commit  — rustfmt + clippy
+#   pre-push — unit tests + tox python + wasm-pack + C API ctest
 #
-# Maps to remote workflows:
-#   CI  (ci.yml → ci-rust / ci-wasm / ci-python / ci-capi)
-#   Docs (Cloudflare Pages: pip install ".[doc]" && zensical build)
-#
-# Out of band (not local gates): Bench, Publish, Nightly.
-#
-# Install:
-#   pre-commit install --hook-type pre-commit --hook-type pre-push
-#
-# Fast lint on every commit; binder + docs on pre-push.
+# No project scripts/ wrappers for gates.
 
 default_install_hook_types: [pre-commit, pre-push]
 
 repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
   - repo: local
     hooks:
-      # ── CI Rust: fmt / clippy / unit ───────────────────────────────────
+      # ── CI Rust (ci-rust.yml) ───────────────────────────────────────────
       - id: cargo-fmt
         name: "CI Rust / rustfmt"
         entry: cargo fmt --check
@@ -27,7 +32,7 @@ repos:
       - id: cargo-clippy
         name: "CI Rust / clippy"
         entry: >-
-          bash -c 'cargo clippy -p molcrafts-molrs --all-targets --features full -- -D warnings
+          sh -c 'cargo clippy -p molcrafts-molrs --all-targets --features full -- -D warnings
           && cargo clippy -p molcrafts-molrs-cxxapi --all-targets -- -D warnings'
         language: system
         pass_filenames: false
@@ -38,56 +43,43 @@ repos:
         entry: cargo test -p molcrafts-molrs --lib --features full
         language: system
         pass_filenames: false
-        stages: [pre-commit, pre-push]
-
-      # ── CI Python ───────────────────────────────────────────────────────
-      - id: python-package
-        name: "CI Python / maturin build + pytest"
-        entry: >-
-          bash -c 'set -euo pipefail
-          cd molrs-python
-          python -m pip install -q maturin pytest numpy
-          maturin build --release
-          python -m pip install -q target/wheels/*.whl --force-reinstall
-          pytest -q'
-        language: system
-        pass_filenames: false
+        always_run: true
         stages: [pre-push]
 
-      # ── CI WASM ─────────────────────────────────────────────────────────
+      # ── CI Python (ci-python.yml) via tox ────────────────────────────────
+      - id: python-tox
+        name: "CI Python / tox -c molrs-python -e py"
+        # tox from molrs-python optional-dependencies `dev`
+        entry: uv run --directory molrs-python --extra dev tox -e py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+
+      # ── CI WASM (ci-wasm.yml) ───────────────────────────────────────────
       - id: wasm-pack
         name: "CI WASM / wasm-pack build"
         entry: >-
-          bash -c 'set -euo pipefail
+          sh -c 'set -euo pipefail
           command -v wasm-pack >/dev/null || cargo install wasm-pack
           rustup target add wasm32-unknown-unknown 2>/dev/null || true
           cd molrs-wasm
           wasm-pack build --release --target bundler --scope molcrafts --out-name molrs'
         language: system
         pass_filenames: false
+        always_run: true
         stages: [pre-push]
 
-      # ── CI C API ────────────────────────────────────────────────────────
+      # ── CI C API (ci-capi.yml) ──────────────────────────────────────────
       - id: capi-tests
         name: "CI C API / cmake + ctest"
         entry: >-
-          bash -c 'set -euo pipefail
+          sh -c 'set -euo pipefail
           cargo build --manifest-path molrs-capi/Cargo.toml
           cmake -S molrs-capi/tests/cpp -B molrs-capi/build-test
           cmake --build molrs-capi/build-test
           ctest --test-dir molrs-capi/build-test --output-on-failure'
         language: system
         pass_filenames: false
-        stages: [pre-push]
-
-      # ── Docs (Cloudflare Pages equivalent) ──────────────────────────────
-      - id: docs-zensical
-        name: "Docs / zensical build (Pages parity)"
-        entry: >-
-          bash -c 'set -euo pipefail
-          cd molrs-python
-          python -m pip install -q -e ".[doc]"
-          zensical build'
-        language: system
-        pass_filenames: false
+        always_run: true
         stages: [pre-push]
