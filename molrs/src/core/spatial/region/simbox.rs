@@ -503,15 +503,31 @@ impl SimBox {
                 // General triclinic path: fold the displacement through
                 // fractional coords and wrap each periodic axis to
                 // `[-0.5, 0.5)`.
-                let dr_cart = array![b[0] - a[0], b[1] - a[1], b[2] - a[2]];
-                let mut dr_frac = self.inv.dot(&dr_cart);
-                for d in 0..3 {
-                    if self.pbc[d] {
-                        dr_frac[d] -= dr_frac[d].round();
+                //
+                // Written out on the stack rather than as `inv.dot(dr)` /
+                // `h.dot(frac)`. Those allocate an `Array1` each, and this
+                // kernel sits in the innermost pair loop of every caller — a
+                // packer evaluates it millions of times per objective
+                // evaluation, where two heap allocations per pair dominate the
+                // arithmetic outright. Summation order matches ndarray's
+                // matrix-vector product (k ascending), so the result is
+                // bit-identical to the allocating form.
+                let d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+                let mut f = [
+                    self.inv[[0, 0]] * d[0] + self.inv[[0, 1]] * d[1] + self.inv[[0, 2]] * d[2],
+                    self.inv[[1, 0]] * d[0] + self.inv[[1, 1]] * d[1] + self.inv[[1, 2]] * d[2],
+                    self.inv[[2, 0]] * d[0] + self.inv[[2, 1]] * d[1] + self.inv[[2, 2]] * d[2],
+                ];
+                for (fk, &periodic) in f.iter_mut().zip(self.pbc.iter()) {
+                    if periodic {
+                        *fk -= fk.round();
                     }
                 }
-                let v = self.h.dot(&dr_frac);
-                [v[0], v[1], v[2]]
+                [
+                    self.h[[0, 0]] * f[0] + self.h[[0, 1]] * f[1] + self.h[[0, 2]] * f[2],
+                    self.h[[1, 0]] * f[0] + self.h[[1, 1]] * f[1] + self.h[[1, 2]] * f[2],
+                    self.h[[2, 0]] * f[0] + self.h[[2, 1]] * f[1] + self.h[[2, 2]] * f[2],
+                ]
             }
         }
     }
@@ -1027,5 +1043,38 @@ mod tests {
             }
         }
         assert_eq!(a.pbc(), b.pbc());
+    }
+
+    #[test]
+    fn triclinic_mic_matches_the_allocating_matrix_form() {
+        // The stack-arithmetic kernel must agree bit-for-bit with the
+        // `inv.dot(dr)` / `h.dot(frac)` formulation it replaced; ndarray sums
+        // a matrix-vector product with k ascending, and so does the kernel.
+        let bx = SimBox::new(
+            SimBox::matrix_from_lengths_angles([10.0, 11.0, 12.0], [70.0, 80.0, 65.0]).unwrap(),
+            array![0.3, -0.2, 1.1],
+            [true, true, false],
+        )
+        .unwrap();
+
+        let pts = [
+            ([0.0 as F, 0.0, 0.0], [9.0 as F, 1.0, -3.0]),
+            ([1.5, -2.5, 3.5], [-7.25, 8.125, 0.0625]),
+            ([4.0, 4.0, 4.0], [4.0, 4.0, 4.0]),
+        ];
+        for (a, b) in pts {
+            let dr_cart = array![b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+            let mut dr_frac = bx.inv.dot(&dr_cart);
+            for d in 0..3 {
+                if bx.pbc[d] {
+                    dr_frac[d] -= dr_frac[d].round();
+                }
+            }
+            let want = bx.h.dot(&dr_frac);
+            let got = bx.shortest_vector_impl(a, b);
+            for d in 0..3 {
+                assert_eq!(got[d], want[d], "component {d} for {a:?} -> {b:?}");
+            }
+        }
     }
 }

@@ -179,11 +179,7 @@ impl Store {
     }
 
     /// Sets the simbox of a frame without invalidating block handles.
-    pub fn set_frame_box(
-        &mut self,
-        id: FrameId,
-        simbox: Option<SimBox>,
-    ) -> Result<(), FfiError> {
+    pub fn set_frame_box(&mut self, id: FrameId, simbox: Option<SimBox>) -> Result<(), FfiError> {
         let entry = self.frames.get_mut(id).ok_or(FfiError::InvalidFrameId)?;
         entry.frame.simbox = simbox;
         Ok(())

@@ -121,6 +121,20 @@ clamp a non-periodic axis is already gone. It gains a raw sibling that skips the
 fold; the wrapping version is re-expressed as `raw` followed by `f - f.floor()`
 per component, so there is one implementation and the two cannot drift.
 
+### Allocation-free triclinic minimum image
+
+`SimBox::mic_kernel`'s triclinic branch built an `Array1` per call, twice
+(`inv.dot(dr)` and `h.dot(frac)`). That is the innermost pair kernel of every
+consumer — a packer evaluates it millions of times per objective evaluation —
+so two heap allocations per pair dominated the arithmetic outright. Rewritten as
+stack 3×3 products with the same summation order (ndarray sums k ascending), so
+the result is bit-identical and pinned by a test against the allocating form.
+
+Measured on `neighbors/traversal/visit_pairs/triclinic`: 2.07 ms → 786 µs, a
+2.6× speedup. It brings triclinic traversal to ~1.7× the orthorhombic path
+rather than ~4×, which is what makes a triclinic pair loop viable for molpack at
+all.
+
 ### `LinkCell` refactor
 
 `counting_sort_impl` constructs `CellGrid::for_cutoff(bx, self.cutoff)` and
