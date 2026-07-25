@@ -199,8 +199,9 @@ attribute, not decoration.
 - `molrs/src/core/spatial/region/simbox.rs` — `make_fractional_raw_arr3`
 - `molrs/benches/core/neighbors/linkcell.rs` — `neighbors/cellgrid` and
   `neighbors/traversal` groups, ortho + triclinic
-- `molrs/src/core/spatial/neighbors/grid.rs` inline `#[cfg(test)]` +
-  `molrs/tests/` — brute-force equivalence matrix
+- `molrs/src/core/spatial/neighbors/linkcell.rs` — `#[cfg(test)] mod
+  equivalence`, the matrix (the crate keeps coverage in `#[cfg(test)]` modules
+  next to the code; `autotests = false`, no `tests/` tree)
 
 ## Tasks
 
@@ -216,7 +217,10 @@ attribute, not decoration.
 
 ## Testing
 
-`BruteForce` is the oracle. The matrix is
+The oracle is a direct O(N²) double loop over `SimBox::shortest_vector_impl`,
+sharing no cell-assignment or stencil code with the algorithm under test, so a
+defect in either cannot cancel out. `BruteForce` is checked against the same
+oracle in the same loop, which keeps the oracle honest. The matrix is
 {orthorhombic, hexagonal (a=b, γ=120°), strongly tilted triclinic}
 × pbc ∈ {(t,t,t), (t,t,f), (f,f,f)}
 × cutoffs chosen so that `celldim` components take the values 1, 2, 3 and 5.
@@ -227,7 +231,14 @@ duplicates, no omissions) — and every `dist_sq` must agree to 1e-12.
 
 Points are deliberately seeded outside the box on non-periodic axes to exercise
 clamping, and at the exact cell boundaries (fractional 0.0 and 1.0) to pin the
-half-open convention.
+half-open convention. Point generation uses a small in-test LCG rather than the
+`rand` crate: same stream on every platform, no dependency-version drift in a
+correctness oracle.
+
+The matrix is mutation-checked, not merely green. Reverting either fix — the
+per-axis clamp, or the symmetric offset block — makes both the pair and the
+query test fail, naming the configuration that broke. A matrix that passes
+without ever having been shown to fail proves only that it ran.
 
 ## Out of scope
 

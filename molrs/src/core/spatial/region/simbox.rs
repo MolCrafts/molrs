@@ -438,44 +438,6 @@ impl SimBox {
         }
     }
 
-    /// Fractional coordinates returned as `[F; 3]` (zero-alloc hot path).
-    ///
-    /// Equivalent to [`make_fractional_fast`](Self::make_fractional_fast) but
-    /// avoids the `Array1<F>` heap allocation by returning a stack array.
-    /// Use in tight inner loops (neighbor-list cell assignment, etc.).
-    #[inline(always)]
-    pub fn make_fractional_fast_arr(&self, r: F3View<'_>) -> [F; 3] {
-        match &self.kind {
-            BoxKind::Ortho { inv_len, .. } => {
-                let fx = (r[0] - self.origin[0]) * inv_len[0];
-                let fy = (r[1] - self.origin[1]) * inv_len[1];
-                let fz = (r[2] - self.origin[2]) * inv_len[2];
-                [fx - fx.floor(), fy - fy.floor(), fz - fz.floor()]
-            }
-            BoxKind::Triclinic => {
-                let f = self.make_fractional(r);
-                [f[0], f[1], f[2]]
-            }
-        }
-    }
-
-    /// Fractional coordinates from a `[F; 3]` point (zero-alloc hot path).
-    ///
-    /// Byte-for-byte mirror of
-    /// [`make_fractional_fast_arr`](Self::make_fractional_fast_arr) — same
-    /// formula, same rounding — but takes a stack `[F; 3]` instead of an
-    /// `ArrayView1`. Lets SoA hot loops (column-major neighbor-list cell
-    /// assignment) avoid constructing an ndarray view per point.
-    #[inline(always)]
-    pub fn make_fractional_fast_arr3(&self, r: [F; 3]) -> [F; 3] {
-        let f = self.make_fractional_raw_arr3(r);
-        [
-            f[0] - f[0].floor(),
-            f[1] - f[1].floor(),
-            f[2] - f[2].floor(),
-        ]
-    }
-
     /// Fractional coordinates **without** the wrap into `[0, 1)`.
     ///
     /// [`make_fractional_fast_arr3`](Self::make_fractional_fast_arr3) folds
@@ -1065,32 +1027,5 @@ mod tests {
             }
         }
         assert_eq!(a.pbc(), b.pbc());
-    }
-
-    #[test]
-    fn make_fractional_fast_arr3_matches_arr_bitwise() {
-        // Both ortho (fast path) and triclinic (general path) must match the
-        // `ArrayView1` helper to the bit.
-        let ortho = SimBox::ortho(
-            array![2.0, 3.0, 4.0],
-            array![0.5, -1.0, 2.0],
-            [true, true, true],
-        )
-        .unwrap();
-        let tri = SimBox::new(
-            array![[2.0, 1.0, 0.5], [0.0, 3.0, 0.7], [0.0, 0.0, 4.0]],
-            array![0.1, 0.2, 0.3],
-            [true, true, true],
-        )
-        .unwrap();
-        let pt = [1.3 as F, -0.7, 5.2];
-        let pv = array![pt[0], pt[1], pt[2]];
-        for bx in [&ortho, &tri] {
-            let a = bx.make_fractional_fast_arr(pv.view());
-            let b = bx.make_fractional_fast_arr3(pt);
-            for d in 0..3 {
-                assert_eq!(a[d], b[d], "frac bitwise");
-            }
-        }
     }
 }

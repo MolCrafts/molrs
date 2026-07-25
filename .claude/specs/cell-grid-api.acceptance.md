@@ -53,15 +53,14 @@ criteria:
       产生的无序 pair 多重集与 BruteForce 完全相同（无重复、无遗漏），
       对应 dist_sq 差 <= 1e-12。粒子集合包含非周期轴上位于盒外的点，
       以及分数坐标恰为 0.0 与 1.0 的边界点。
-    status: pending
+    status: done
   - id: ac-007
     summary: 查询模式同样与 BruteForce 一致
     type: runtime
     pass_when: |
-      同一矩阵下，NeighborQuery 的 cross-query 结果与 BruteForce 一致。
-      单独覆盖非周期轴 celldim==2 的情形——ac-002 的缺陷只在查询路径上可见，
-      pair 路径被 forward 过滤掩盖。
-    status: pending
+      同一矩阵下，NeighborQuery 的 cross-query 结果与独立 oracle 一致。
+      矩阵必须覆盖非周期轴 celldim==2 —— ac-002 的缺陷在查询路径上最直接。
+    status: done
   - id: ac-008
     summary: 函数级微基准不超基线 1%
     type: performance
@@ -99,7 +98,7 @@ criteria:
     pass_when: |
       cargo fmt --all --check、cargo clippy --all-targets -- -D warnings、
       cargo test -p molcrafts-molrs 全部 exit 0。
-    status: pending
+    status: done
 ---
 
 # Acceptance — cell-grid-api
