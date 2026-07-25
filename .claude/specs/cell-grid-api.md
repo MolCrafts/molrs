@@ -81,7 +81,9 @@ impl CellGrid {
 
     /// Half stencil: forward neighbours only, such that every unordered cell
     /// pair is produced exactly once across a full sweep of all cells.
-    pub fn stencil_forward(&self, icell: usize, out: &mut [usize; 13]) -> usize;
+    /// Buffer is 27 wide, not 13: on a small grid the pre-dedup candidate set
+    /// can exceed the eventual count.
+    pub fn stencil_forward(&self, icell: usize, out: &mut [usize; 27]) -> usize;
 }
 ```
 
@@ -92,20 +94,21 @@ wrapped into `[0, 1)` before binning. Non-periodic axis: the cell index is
 clamped into `[0, celldim[k] - 1]`, so a point far outside the box lands in the
 nearest edge cell and is still seen by the pair loop.
 
-**Small dimensions.** The offset set per axis is:
+**Small dimensions.** The offset block is `{-1, 0, +1}` on **every** axis
+regardless of how few cells it holds. Out-of-range offsets are dropped on
+non-periodic axes, wrapped on periodic ones, and the result is sorted and
+deduplicated, so an axis with one or two cells needs no special case.
 
-| `celldim[k]` | offsets | wrap? |
-|---|---|---|
-| 1 | `{0}` | n/a |
-| 2 | `{0, +1}` | **no** — `+1` is dropped at `c = 1` |
-| ≥ 3 | `{-1, 0, +1}` | yes on periodic axes |
-
-The `celldim == 2` rule is the load-bearing one. With wrap enabled, cell 0's
-`+1` neighbour is cell 1 *and* cell 1's `+1` neighbour wraps back to cell 0, so
-the unordered cell pair `{0, 1}` is emitted twice and every cross-cell pair is
-double-counted. Because minimum image already selects the nearest periodic
-image, visiting the pair once is both necessary and sufficient. The same
-argument makes `celldim == 1` correct with a self-cell-only stencil.
+This corrects the rule this spec was drafted with. The concern was that at
+`celldim == 2` with wrap, cell 0's `+1` neighbour is cell 1 while cell 1's `+1`
+wraps back to cell 0, double-counting the pair. That does not happen: the
+`nc > icell` filter on the forward stencil already admits the pair from one side
+only, and the dedup collapses aliased offsets. The real defect is the opposite
+one, and it is in the **full** stencil: the replaced code used a `{0, +1}`
+offset set when an axis held two cells, so on a *non-periodic* axis the upper
+cell dropped its only neighbour and reported an empty stencil. That is invisible
+on the pair path — the forward filter hides it — and shows up only on the query
+path, which is why the equivalence matrix has to run in both modes.
 
 **Distinctness.** `stencil_all` and `stencil_forward` return distinct cell
 indices; callers may assume no duplicates.

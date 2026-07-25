@@ -92,7 +92,7 @@ criteria:
       linkcell.rs 中不再存在 get_cell3 / stencil_range / wrap /
       collect_stencil_into / stencil_fwd_into / stencil_all_into；
       全仓无 cell 分配或 stencil 的第二份实现。
-    status: pending
+    status: done
   - id: ac-012
     summary: 质量闸
     type: runtime

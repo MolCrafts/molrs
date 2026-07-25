@@ -9,7 +9,7 @@
 //! Only **occupied cells** are visited during pair search, so sparse systems
 //! (few particles, many cells) pay O(N), not O(n_cells).
 
-use crate::spatial::neighbors::{NbListAlgo, NeighborList, PairVisitor, QueryMode};
+use crate::spatial::neighbors::{CellGrid, NbListAlgo, NeighborList, PairVisitor, QueryMode};
 use crate::spatial::region::simbox::SimBox;
 use crate::types::{F, FNx3View};
 use ndarray::array;
@@ -32,8 +32,8 @@ use ndarray::array;
 pub struct LinkCell {
     /// Interaction cutoff distance.
     pub cutoff: F,
-    /// Number of cells along each axis `[nx, ny, nz]`.
-    celldim: [u32; 3],
+    /// Cell partition of the box: dimensions + per-axis periodicity.
+    grid: CellGrid,
     /// `cell_start[c]` = index into `sorted_idx` where cell `c` begins.
     /// Length = n_cells + 1 (sentinel at end).
     cell_start: Vec<u32>,
@@ -66,7 +66,7 @@ impl LinkCell {
     pub fn new() -> Self {
         Self {
             cutoff: 0.0,
-            celldim: [0; 3],
+            grid: CellGrid::with_dims([1; 3], [false; 3]),
             cell_start: Vec::new(),
             sorted_idx: Vec::new(),
             sorted_pos: Vec::new(),
@@ -118,18 +118,16 @@ impl LinkCell {
     where
         C: FnMut(u32, F, [F; 3]),
     {
-        let n_cells = (self.celldim[0] * self.celldim[1] * self.celldim[2]) as usize;
-        if n_cells == 0 {
+        if self.cell_start.is_empty() {
             return;
         }
 
-        let query_cell = get_cell3(bx, query_point, self.celldim);
+        let query_cell = self.grid.cell_of(bx, query_point);
         let qp = query_point;
 
         // Check the query cell itself + all 26 neighbor cells
-        let pbc = bx.pbc();
         let mut buf = [0usize; 27];
-        let n_all = stencil_all_into(query_cell, self.celldim, pbc, &mut buf);
+        let n_all = self.grid.stencil_all(query_cell, &mut buf);
         let all_cells = &buf[..n_all];
         for nc in std::iter::once(query_cell).chain(all_cells.iter().copied()) {
             let start = self.cell_start[nc] as usize;
@@ -198,7 +196,6 @@ impl NbListAlgo for LinkCell {
             return;
         }
         let cutoff2 = self.cutoff * self.cutoff;
-        let pbc = self.bx.pbc();
         let mut fwd_buf = [0usize; 27];
 
         for &cell in &self.occupied_cells {
@@ -221,7 +218,7 @@ impl NbListAlgo for LinkCell {
             }
 
             // Forward neighbor cells (stack buffer, no alloc)
-            let n_fwd = stencil_fwd_into(cell, self.celldim, pbc, &mut fwd_buf);
+            let n_fwd = self.grid.stencil_forward(cell, &mut fwd_buf);
             let fwd = &fwd_buf[..n_fwd];
             for si in start..end {
                 let pi = pos_at(&self.sorted_pos, si);
@@ -322,22 +319,16 @@ impl LinkCell {
     ///
     /// Reads each particle position via `get_pt(i) -> [x, y, z]`, so both the
     /// interleaved (`Array2`) and column-major (SoA) entry points funnel
-    /// through identical arithmetic. Sets up `celldim`, `bx`, `cell_start`,
+    /// through identical arithmetic. Sets up `grid`, `bx`, `cell_start`,
     /// `sorted_idx`, `sorted_pos`, and `occupied_cells`. Does NOT compute pairs.
     fn counting_sort_impl<G>(&mut self, n_points: usize, get_pt: G, bx: &SimBox)
     where
         G: Fn(usize) -> [F; 3],
     {
-        let cutoff = self.cutoff;
-        let npd = bx.nearest_plane_distance();
-        let celldim = [
-            ((npd[0] / cutoff).floor() as u32).max(1),
-            ((npd[1] / cutoff).floor() as u32).max(1),
-            ((npd[2] / cutoff).floor() as u32).max(1),
-        ];
-        let n_cells = (celldim[0] * celldim[1] * celldim[2]) as usize;
+        let grid = CellGrid::for_cutoff(bx, self.cutoff);
+        let n_cells = grid.n_cells();
 
-        self.celldim = celldim;
+        self.grid = grid;
         self.bx = bx.clone();
 
         // 1) Compute cell per particle, count per cell.
@@ -347,7 +338,7 @@ impl LinkCell {
         self.cell_start.resize(n_cells + 1, 0);
         self.cell_of.resize(n_points, 0);
         for i in 0..n_points {
-            let cell = get_cell3(bx, get_pt(i), celldim);
+            let cell = grid.cell_of(bx, get_pt(i));
             self.cell_of[i] = cell as u32;
             self.cell_start[cell] += 1;
         }
@@ -393,7 +384,6 @@ impl LinkCell {
     #[cfg(not(feature = "rayon"))]
     fn compute_pairs_serial(&mut self) {
         let cutoff2 = self.cutoff * self.cutoff;
-        let pbc = self.bx.pbc();
         self.result.clear();
 
         let mut fwd_buf = [0usize; 27];
@@ -418,7 +408,7 @@ impl LinkCell {
             }
 
             // Forward neighbor cells (stack buffer — no alloc)
-            let n_fwd = stencil_fwd_into(cell, self.celldim, pbc, &mut fwd_buf);
+            let n_fwd = self.grid.stencil_forward(cell, &mut fwd_buf);
             let fwd = &fwd_buf[..n_fwd];
 
             for si in start..end {
@@ -466,13 +456,12 @@ impl LinkCell {
         }
 
         let cutoff2 = self.cutoff * self.cutoff;
-        let pbc = self.bx.pbc();
 
         let cell_start = &self.cell_start;
         let sorted_idx = &self.sorted_idx;
         let sorted_pos = &self.sorted_pos;
         let bx = &self.bx;
-        let celldim = self.celldim;
+        let grid = self.grid;
 
         let merged = self
             .occupied_cells
@@ -498,7 +487,7 @@ impl LinkCell {
 
                 // Forward neighbor cells (stack buffer — no alloc).
                 let mut fwd_buf = [0usize; 27];
-                let n_fwd = stencil_fwd_into(cell, celldim, pbc, &mut fwd_buf);
+                let n_fwd = grid.stencil_forward(cell, &mut fwd_buf);
                 let fwd = &fwd_buf[..n_fwd];
 
                 for si in start..end {
@@ -543,7 +532,6 @@ impl LinkCell {
     #[cfg(feature = "rayon")]
     fn compute_pairs_serial_inner(&mut self) {
         let cutoff2 = self.cutoff * self.cutoff;
-        let pbc = self.bx.pbc();
         self.result.clear();
         let mut fwd_buf = [0usize; 27];
 
@@ -565,7 +553,7 @@ impl LinkCell {
                 }
             }
 
-            let n_fwd = stencil_fwd_into(cell, self.celldim, pbc, &mut fwd_buf);
+            let n_fwd = self.grid.stencil_forward(cell, &mut fwd_buf);
             let fwd = &fwd_buf[..n_fwd];
 
             for si in start..end {
@@ -604,128 +592,6 @@ fn pos_at(sorted_pos: &[F], si: usize) -> [F; 3] {
     [sorted_pos[base], sorted_pos[base + 1], sorted_pos[base + 2]]
 }
 
-/// Collect unique neighbor cell indices into a caller-owned buffer, applying
-/// the given filter. Returns the number of entries written.
-///
-/// With small grids + PBC, multiple stencil offsets can wrap to the same cell,
-/// so we sort + dedup after collection. The buffer is sized 13 (half-shell) or
-/// 27 (full shell) by callers.
-#[inline]
-fn collect_stencil_into(
-    cell: usize,
-    celldim: [u32; 3],
-    pbc: [bool; 3],
-    filter: impl Fn(usize) -> bool,
-    out: &mut [usize],
-) -> usize {
-    let idx = cell as u32;
-    let nxy = celldim[0] * celldim[1];
-    let cx = (idx % nxy) % celldim[0];
-    let cy = (idx % nxy) / celldim[0];
-    let cz = idx / nxy;
-
-    let (si, ei) = stencil_range(cx, celldim[0]);
-    let (sj, ej) = stencil_range(cy, celldim[1]);
-    let (sk, ek) = stencil_range(cz, celldim[2]);
-
-    let mut len = 0usize;
-    for nk in sk..=ek {
-        if !pbc[2] && (nk < 0 || nk >= celldim[2] as i32) {
-            continue;
-        }
-        for nj in sj..=ej {
-            if !pbc[1] && (nj < 0 || nj >= celldim[1] as i32) {
-                continue;
-            }
-            for ni in si..=ei {
-                if !pbc[0] && (ni < 0 || ni >= celldim[0] as i32) {
-                    continue;
-                }
-                let wi = wrap(ni, celldim[0]);
-                let wj = wrap(nj, celldim[1]);
-                let wk = wrap(nk, celldim[2]);
-                let nc = (wk * nxy + wj * celldim[0] + wi) as usize;
-                if filter(nc) {
-                    out[len] = nc;
-                    len += 1;
-                }
-            }
-        }
-    }
-    out[..len].sort_unstable();
-    // In-place dedup (like Vec::dedup but on a slice prefix).
-    let mut w = 0usize;
-    for r in 0..len {
-        if w == 0 || out[r] != out[w - 1] {
-            out[w] = out[r];
-            w += 1;
-        }
-    }
-    w
-}
-
-/// Forward-neighbor cells (half-shell) — `nc > cell`. Writes into `out`,
-/// returns deduped count. Buffer sized at 27 because tiny grids with PBC
-/// can produce duplicates from multiple wraps before dedup.
-#[inline]
-fn stencil_fwd_into(
-    cell: usize,
-    celldim: [u32; 3],
-    pbc: [bool; 3],
-    out: &mut [usize; 27],
-) -> usize {
-    collect_stencil_into(cell, celldim, pbc, |nc| nc > cell, out)
-}
-
-/// Full-shell neighbor cells — `nc != cell`. Writes into `out`, returns
-/// deduped count.
-#[inline]
-fn stencil_all_into(
-    cell: usize,
-    celldim: [u32; 3],
-    pbc: [bool; 3],
-    out: &mut [usize; 27],
-) -> usize {
-    collect_stencil_into(cell, celldim, pbc, |nc| nc != cell, out)
-}
-
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
-
-/// Map a `[F; 3]` position to its cell index using fractional coordinates.
-#[inline(always)]
-fn get_cell3(bx: &SimBox, r: [F; 3], celldim: [u32; 3]) -> usize {
-    let frac = bx.make_fractional_fast_arr3(r);
-    let cx = (frac[0] * celldim[0] as F).floor() as u32 % celldim[0];
-    let cy = (frac[1] * celldim[1] as F).floor() as u32 % celldim[1];
-    let cz = (frac[2] * celldim[2] as F).floor() as u32 % celldim[2];
-    (cz * celldim[1] * celldim[0] + cy * celldim[0] + cx) as usize
-}
-
-/// Compute the stencil search range `[start, end]` for one axis.
-#[inline(always)]
-fn stencil_range(c: u32, dim: u32) -> (i32, i32) {
-    if dim < 2 {
-        (c as i32, c as i32)
-    } else if dim < 3 {
-        (c as i32, c as i32 + 1)
-    } else {
-        (c as i32 - 1, c as i32 + 1)
-    }
-}
-
-/// Wrap a signed cell index into `[0, dim)` with periodic boundary conditions.
-#[inline(always)]
-fn wrap(idx: i32, dim: u32) -> u32 {
-    let d = dim as i32;
-    let mut v = idx % d;
-    if v < 0 {
-        v += d;
-    }
-    v as u32
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -748,6 +614,56 @@ mod tests {
         assert_eq!(res.n_pairs(), 1);
         assert_eq!(res.query_point_indices()[0], 0);
         assert_eq!(res.point_indices()[0], 1);
+    }
+
+    /// A point past the top face of a non-periodic axis belongs in the top
+    /// cell, not the bottom one.
+    ///
+    /// Before `CellGrid` the fractional coordinate was folded into `[0, 1)`
+    /// regardless of periodicity, so `z = 10.5` in a 10 Å box binned as if it
+    /// were `z = 0.5` — the far end of the grid from its actual neighbour at
+    /// `z = 9.5`, whose cell the stencil then never reached. Optimisation
+    /// workloads leave the box routinely, so this is a missed pair, not an
+    /// exotic edge case.
+    #[test]
+    fn out_of_box_point_on_a_non_periodic_axis_keeps_its_neighbours() {
+        let bx = SimBox::cube(10.0, array![0.0, 0.0, 0.0], [false, false, false])
+            .expect("invalid box length");
+        // cutoff 2 => 5 cells per axis; 9.5 sits in the last cell, 10.5 outside.
+        let pts = array![[5.0, 5.0, 10.5], [5.0, 5.0, 9.5]];
+        let mut nl = NbList(LinkCell::new().cutoff(2.0));
+        nl.build(pts.view(), &bx);
+        assert_eq!(nl.query().n_pairs(), 1, "clamped point lost its neighbour");
+
+        // And clamping must not invent a pair across the box: these two are
+        // 11.0 apart in reality, only adjacent if the axis wrapped.
+        let pts = array![[5.0, 5.0, 10.5], [5.0, 5.0, -0.5]];
+        let mut nl = NbList(LinkCell::new().cutoff(2.0));
+        nl.build(pts.view(), &bx);
+        assert_eq!(nl.query().n_pairs(), 0, "non-periodic axis wrapped");
+    }
+
+    /// With two cells on a non-periodic axis, a query point in the upper cell
+    /// must still see the lower one.
+    ///
+    /// The replaced stencil used `{0, +1}` offsets when an axis held two cells,
+    /// so cell 1's only neighbour was out of range and its full stencil came
+    /// back empty. Invisible on the pair path — the `nc > cell` forward filter
+    /// covers the pair from the other side — and therefore only reachable
+    /// through a query.
+    #[test]
+    fn query_across_two_cells_on_a_non_periodic_axis() {
+        use crate::spatial::neighbors::NeighborQuery;
+
+        // 10 Å box, cutoff 4 => floor(10/4) = 2 cells per axis.
+        let bx = SimBox::cube(10.0, array![0.0, 0.0, 0.0], [false, false, false])
+            .expect("invalid box length");
+        let refs = array![[5.0, 5.0, 4.5]]; // cell 0 along z
+        let query = array![[5.0, 5.0, 7.5]]; // cell 1 along z, 3.0 away
+
+        let nq = NeighborQuery::new(&bx, refs.view(), 4.0);
+        let res = nq.query(query.view());
+        assert_eq!(res.n_pairs(), 1, "upper cell reported an empty stencil");
     }
 
     #[test]
