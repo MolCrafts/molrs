@@ -474,6 +474,42 @@ impl SimBox {
         &self.origin + &self.h.dot(&frac)
     }
 
+    /// A detached, `Copy` minimum-image kernel.
+    ///
+    /// [`shortest_vector_impl`](Self::shortest_vector_impl) needs a `&SimBox`,
+    /// which is awkward for a caller whose hot loop already holds the owning
+    /// structure mutably: it either clones the box — two `Array2` allocations,
+    /// per evaluation — or restructures its borrows. `Mic` lifts the convention
+    /// out as a plain value with everything it needs on the stack, so it can be
+    /// captured once and carried into the loop.
+    ///
+    /// Bit-identical to `shortest_vector_impl`: both dispatch to the same
+    /// arithmetic.
+    pub fn mic(&self) -> Mic {
+        match &self.kind {
+            BoxKind::Ortho { len, inv_len } => Mic::Ortho {
+                len: [len[0], len[1], len[2]],
+                inv_len: [inv_len[0], inv_len[1], inv_len[2]],
+                pbc: self.pbc(),
+            },
+            BoxKind::Triclinic => {
+                let mut h = [0.0; 9];
+                let mut inv = [0.0; 9];
+                for i in 0..3 {
+                    for j in 0..3 {
+                        h[3 * i + j] = self.h[[i, j]];
+                        inv[3 * i + j] = self.inv[[i, j]];
+                    }
+                }
+                Mic::Triclinic {
+                    h,
+                    inv,
+                    pbc: self.pbc(),
+                }
+            }
+        }
+    }
+
     /// Hot-loop MIC kernel: takes and returns `[F; 3]`, zero allocation.
     ///
     /// Ortho boxes use the `dr − round(dr / L) · L` fast path; triclinic
@@ -768,6 +804,84 @@ impl Region for SimBox {
     }
 }
 
+/// Minimum-image convention as a standalone `Copy` value.
+///
+/// Produced by [`SimBox::mic`]. Carries no periodicity of its own beyond the
+/// flags captured at construction, so a box that changes shape needs a fresh
+/// one — which is the point: it is meant to be captured once per evaluation and
+/// read many times.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Mic {
+    /// No axis wraps: displacements pass through untouched.
+    Free,
+    Ortho {
+        len: [F; 3],
+        inv_len: [F; 3],
+        pbc: [bool; 3],
+    },
+    Triclinic {
+        /// Row-major 3x3 lattice, columns are the lattice vectors.
+        h: [F; 9],
+        /// Row-major 3x3 inverse lattice.
+        inv: [F; 9],
+        pbc: [bool; 3],
+    },
+}
+
+impl Mic {
+    /// Minimum image of a displacement.
+    ///
+    /// Takes the displacement rather than two points: the convention depends
+    /// only on the separation, and callers in pair loops already have it.
+    #[inline(always)]
+    pub fn apply(&self, d: [F; 3]) -> [F; 3] {
+        match self {
+            Mic::Free => d,
+            Mic::Ortho { len, inv_len, pbc } => {
+                let mut dr = d;
+                for k in 0..3 {
+                    if pbc[k] {
+                        dr[k] -= (dr[k] * inv_len[k]).round() * len[k];
+                    }
+                }
+                dr
+            }
+            Mic::Triclinic { h, inv, pbc } => {
+                let mut f = [
+                    inv[0] * d[0] + inv[1] * d[1] + inv[2] * d[2],
+                    inv[3] * d[0] + inv[4] * d[1] + inv[5] * d[2],
+                    inv[6] * d[0] + inv[7] * d[1] + inv[8] * d[2],
+                ];
+                for (fk, &periodic) in f.iter_mut().zip(pbc.iter()) {
+                    if periodic {
+                        *fk -= fk.round();
+                    }
+                }
+                [
+                    h[0] * f[0] + h[1] * f[1] + h[2] * f[2],
+                    h[3] * f[0] + h[4] * f[1] + h[5] * f[2],
+                    h[6] * f[0] + h[7] * f[1] + h[8] * f[2],
+                ]
+            }
+        }
+    }
+
+    /// Collapse to [`Mic::Free`] when no axis wraps, so the hot path is a
+    /// single match arm instead of three predictable-but-present branches.
+    #[inline]
+    pub fn simplified(self) -> Self {
+        let pbc = match self {
+            Mic::Free => return self,
+            Mic::Ortho { pbc, .. } | Mic::Triclinic { pbc, .. } => pbc,
+        };
+        if pbc.iter().any(|&p| p) {
+            self
+        } else {
+            Mic::Free
+        }
+    }
+}
+
 fn detect_box_kind(h: &F3x3) -> BoxKind {
     let eps: F = 1e-12;
     let is_ortho = h[[0, 1]].abs() < eps
@@ -1043,6 +1157,50 @@ mod tests {
             }
         }
         assert_eq!(a.pbc(), b.pbc());
+    }
+
+    #[test]
+    fn mic_matches_the_borrowed_kernel_on_both_box_kinds() {
+        // `Mic` exists so a caller can avoid holding a `&SimBox`; it must not
+        // become a second, drifting definition of the convention.
+        let ortho = SimBox::ortho(
+            array![10.0, 11.0, 12.0],
+            array![0.5, -1.0, 2.0],
+            [true, false, true],
+        )
+        .unwrap();
+        let tri = SimBox::new(
+            SimBox::matrix_from_lengths_angles([10.0, 11.0, 12.0], [70.0, 80.0, 65.0]).unwrap(),
+            array![0.3, -0.2, 1.1],
+            [true, true, false],
+        )
+        .unwrap();
+
+        for bx in [&ortho, &tri] {
+            let mic = bx.mic();
+            for (a, b) in [
+                ([0.0 as F, 0.0, 0.0], [9.0 as F, 1.0, -3.0]),
+                ([1.5, -2.5, 3.5], [-7.25, 8.125, 0.0625]),
+                ([4.0, 4.0, 4.0], [4.0, 4.0, 4.0]),
+            ] {
+                let want = bx.shortest_vector_impl(a, b);
+                let got = mic.apply([b[0] - a[0], b[1] - a[1], b[2] - a[2]]);
+                for d in 0..3 {
+                    assert_eq!(got[d], want[d], "component {d} for {a:?} -> {b:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_box_with_no_periodic_axis_simplifies_to_free() {
+        let free = SimBox::cube(10.0, array![0.0, 0.0, 0.0], [false; 3]).unwrap();
+        assert_eq!(free.mic().simplified(), Mic::Free);
+        let d = [123.0 as F, -456.0, 789.0];
+        assert_eq!(Mic::Free.apply(d), d);
+
+        let periodic = SimBox::cube(10.0, array![0.0, 0.0, 0.0], [false, true, false]).unwrap();
+        assert_ne!(periodic.mic().simplified(), Mic::Free);
     }
 
     #[test]
