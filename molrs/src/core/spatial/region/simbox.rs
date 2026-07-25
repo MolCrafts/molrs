@@ -468,16 +468,40 @@ impl SimBox {
     /// assignment) avoid constructing an ndarray view per point.
     #[inline(always)]
     pub fn make_fractional_fast_arr3(&self, r: [F; 3]) -> [F; 3] {
+        let f = self.make_fractional_raw_arr3(r);
+        [
+            f[0] - f[0].floor(),
+            f[1] - f[1].floor(),
+            f[2] - f[2].floor(),
+        ]
+    }
+
+    /// Fractional coordinates **without** the wrap into `[0, 1)`.
+    ///
+    /// [`make_fractional_fast_arr3`](Self::make_fractional_fast_arr3) folds
+    /// every axis back into the primitive cell unconditionally, which is right
+    /// for a fully periodic box but destroys the information a caller needs on
+    /// a **non-periodic** axis: a point above the box must stay above it, so
+    /// that a cell-list assignment can clamp it to the edge cell instead of
+    /// wrapping it to the opposite face. Callers that dispatch on
+    /// [`pbc`](Self::pbc) per axis — see `CellGrid` — start from this raw value
+    /// and apply wrap or clamp themselves.
+    ///
+    /// `make_fractional_fast_arr3(r)` is exactly this followed by
+    /// `f - f.floor()` per component, so the two agree bit-for-bit on any point
+    /// inside the cell.
+    #[inline(always)]
+    pub fn make_fractional_raw_arr3(&self, r: [F; 3]) -> [F; 3] {
         match &self.kind {
-            BoxKind::Ortho { inv_len, .. } => {
-                let fx = (r[0] - self.origin[0]) * inv_len[0];
-                let fy = (r[1] - self.origin[1]) * inv_len[1];
-                let fz = (r[2] - self.origin[2]) * inv_len[2];
-                [fx - fx.floor(), fy - fy.floor(), fz - fz.floor()]
-            }
+            BoxKind::Ortho { inv_len, .. } => [
+                (r[0] - self.origin[0]) * inv_len[0],
+                (r[1] - self.origin[1]) * inv_len[1],
+                (r[2] - self.origin[2]) * inv_len[2],
+            ],
             BoxKind::Triclinic => {
-                let rv = ArrayView1::from_shape(3, &r).expect("make_fractional_fast_arr3 shape");
-                let f = self.make_fractional(rv);
+                let rv = ArrayView1::from_shape(3, &r).expect("make_fractional_raw_arr3 shape");
+                let dr = &rv - &self.origin.view();
+                let f = self.inv.dot(&dr);
                 [f[0], f[1], f[2]]
             }
         }
