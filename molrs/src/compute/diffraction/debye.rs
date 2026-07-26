@@ -229,7 +229,7 @@ impl ComputeResult for StaticStructureFactorDebyeResult {}
 mod tests {
     use super::*;
     use molrs::Frame;
-    use molrs::spatial::region::simbox::SimBox;
+    use molrs::spatial::simbox::SimBox;
     use molrs::store::block::Block;
     use ndarray::{Array1 as A1, array};
 

@@ -1,12 +1,13 @@
-//! Region module exports
+//! Geometric regions and spatial containment predicates.
 //!
-//! This module collects geometric region data types and traits.
+//! This module is **only** for boolean geometry (`contains` / `bounds`). The
+//! periodic simulation cell lives in [`crate::spatial::simbox`] — it is not a
+//! region type and must not be imported from here.
 
-// Expose the ndarray-based Box merged into simbox.rs
-pub mod simbox;
-pub use simbox::{BoxError, Mic, SimBox};
-// Generic region traits and shapes
 #[allow(clippy::module_inception)]
 pub mod region;
+
 pub use crate::types::FNx3;
-pub use region::{AndRegion, Cuboid, HollowSphere, NotRegion, OrRegion, Region, Sphere};
+pub use region::{
+    AndRegion, Cuboid, HollowSphere, NotRegion, OrRegion, Parallelepiped, Region, Sphere,
+};

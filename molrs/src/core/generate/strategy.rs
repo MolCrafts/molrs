@@ -13,7 +13,7 @@ use rand::rngs::StdRng;
 
 use super::occupancy::OccupancyMode;
 use super::walk::GrowthStrategy;
-use crate::spatial::region::SimBox;
+use crate::spatial::simbox::SimBox;
 use crate::types::F;
 
 /// FCC-lattice growth: nearest-neighbour spacing equals `bond_length`, the box

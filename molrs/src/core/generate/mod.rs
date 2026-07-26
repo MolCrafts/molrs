@@ -4,7 +4,7 @@
 //!
 //! The first inhabitant is a periodic, fixed-bond-length **self-avoiding random
 //! walk (SARW)** multi-chain path generator: see [`SelfAvoidingWalk`]. It emits
-//! only *paths* — `Vec<Vec<F3>>` plus the [`SimBox`](crate::spatial::region::SimBox) it
+//! only *paths* — `Vec<Vec<F3>>` plus the [`SimBox`](crate::spatial::simbox::SimBox) it
 //! used — and deliberately knows nothing about topology, chemistry (mass / atom
 //! types / potentials), or file IO. Downstream consumers (e.g. molpy's
 //! `PolymerBuilder`) attach bonds and atom types to the returned paths.

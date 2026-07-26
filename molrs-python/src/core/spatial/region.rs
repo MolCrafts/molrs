@@ -5,18 +5,21 @@
 //!
 //! | Class           | Description                        |
 //! |-----------------|------------------------------------|
-//! | `Sphere`        | Solid sphere                       |
-//! | `HollowSphere`  | Spherical shell (inner + outer R)  |
-//! | `Region`        | Composed region (from ``&``/``|``/``~``) |
+//! | `Sphere`         | Solid sphere                       |
+//! | `HollowSphere`   | Spherical shell (inner + outer R)  |
+//! | `Cuboid`         | Axis-aligned box (incl. cubes)     |
+//! | `Parallelepiped` | General (triclinic) box volume     |
+//! | `Region`         | Composed region (from ``&``/``|``/``~``) |
 //!
 //! All lengths are in the same unit as the input coordinates (typically
 //! angstroms).
 
 use crate::helpers::NpF;
 use molrs::spatial::region::region::{
-    AndRegion, Cuboid, HollowSphere, NotRegion, OrRegion, Region, Sphere,
+    AndRegion, Cuboid, HollowSphere, NotRegion, OrRegion, Parallelepiped, Region, Sphere,
 };
-use ndarray::Array1;
+use molrs::types::F3x3;
+use ndarray::{Array1, Array2};
 use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -265,6 +268,136 @@ impl PyCuboid {
     }
 }
 
+/// General parallelepiped (oblique box) region, exposed as `molrs.Parallelepiped`.
+///
+/// Defined by an origin corner and a 3×3 edge matrix ``h`` whose **columns**
+/// are the three edge vectors. A point is inside when its fractional
+/// coordinates lie in the half-open cell ``[0, 1)³``.
+///
+/// This is pure geometric containment — **not** a periodic simulation box.
+/// For PBC / MIC / wrap, use :class:`molrs.SimBox`.
+#[pyclass(module = "molrs", name = "Parallelepiped", from_py_object, subclass)]
+#[derive(Clone)]
+pub struct PyParallelepiped {
+    inner: Arc<Parallelepiped>,
+}
+
+#[pymethods]
+impl PyParallelepiped {
+    /// Create a parallelepiped from edge matrix ``h`` (3×3, columns = edges)
+    /// and ``origin`` (length-3).
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If shapes are wrong or ``h`` is singular.
+    #[new]
+    fn new(h: PyReadonlyArray2<'_, NpF>, origin: PyReadonlyArray1<'_, NpF>) -> PyResult<Self> {
+        let h_arr = h.as_array();
+        if h_arr.shape() != [3, 3] {
+            return Err(PyValueError::new_err("h must have shape (3, 3)"));
+        }
+        let o = origin.as_slice()?;
+        if o.len() != 3 {
+            return Err(PyValueError::new_err("origin must have length 3"));
+        }
+        let mut mat: F3x3 = Array2::zeros((3, 3));
+        for i in 0..3 {
+            for j in 0..3 {
+                mat[[i, j]] = h_arr[[i, j]];
+            }
+        }
+        let origin_arr = Array1::from_vec(vec![o[0], o[1], o[2]]);
+        let inner = Parallelepiped::new(mat, origin_arr).map_err(PyValueError::new_err)?;
+        Ok(PyParallelepiped {
+            inner: Arc::new(inner),
+        })
+    }
+
+    /// Axis-aligned orthorhombic (or cubic) parallelepiped from edge lengths.
+    #[staticmethod]
+    fn ortho(
+        lengths: PyReadonlyArray1<'_, NpF>,
+        origin: PyReadonlyArray1<'_, NpF>,
+    ) -> PyResult<Self> {
+        let l = lengths.as_slice()?;
+        let o = origin.as_slice()?;
+        if l.len() != 3 || o.len() != 3 {
+            return Err(PyValueError::new_err(
+                "lengths and origin must have length 3",
+            ));
+        }
+        let inner = Parallelepiped::ortho(
+            Array1::from_vec(vec![l[0], l[1], l[2]]),
+            Array1::from_vec(vec![o[0], o[1], o[2]]),
+        )
+        .map_err(PyValueError::new_err)?;
+        Ok(PyParallelepiped {
+            inner: Arc::new(inner),
+        })
+    }
+
+    /// Cubic parallelepiped of edge ``a``.
+    #[staticmethod]
+    fn cube(a: NpF, origin: PyReadonlyArray1<'_, NpF>) -> PyResult<Self> {
+        let o = origin.as_slice()?;
+        if o.len() != 3 {
+            return Err(PyValueError::new_err("origin must have length 3"));
+        }
+        let inner = Parallelepiped::cube(a, Array1::from_vec(vec![o[0], o[1], o[2]]))
+            .map_err(PyValueError::new_err)?;
+        Ok(PyParallelepiped {
+            inner: Arc::new(inner),
+        })
+    }
+
+    /// Test which points are inside (shape (N,3) → (N,) bool).
+    fn contains<'py>(
+        &self,
+        py: Python<'py>,
+        points: PyReadonlyArray2<'_, NpF>,
+    ) -> PyResult<Bound<'py, PyArray1<bool>>> {
+        contains_impl(self.inner.as_ref(), py, points)
+    }
+
+    /// Axis-aligned bounding box, shape (3, 2).
+    fn bounds<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<NpF>> {
+        bounds_impl(self.inner.as_ref(), py)
+    }
+
+    /// Signed volume ``det(H)``.
+    fn volume(&self) -> NpF {
+        self.inner.volume()
+    }
+
+    fn __and__(&self, other: &Bound<'_, pyo3::types::PyAny>) -> PyResult<PyRegion> {
+        let other_region = extract_region(other)?;
+        let self_region: DynRegion = self.inner.clone();
+        Ok(PyRegion {
+            inner: Arc::new(AndRegion::new(self_region, other_region)),
+        })
+    }
+
+    fn __or__(&self, other: &Bound<'_, pyo3::types::PyAny>) -> PyResult<PyRegion> {
+        let other_region = extract_region(other)?;
+        let self_region: DynRegion = self.inner.clone();
+        Ok(PyRegion {
+            inner: Arc::new(OrRegion::new(self_region, other_region)),
+        })
+    }
+
+    fn __invert__(&self) -> PyRegion {
+        let self_region: DynRegion = self.inner.clone();
+        PyRegion {
+            inner: Arc::new(NotRegion::new(self_region)),
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!("Parallelepiped(volume={:.4})", self.inner.volume())
+    }
+}
+
 /// Hollow sphere (spherical shell) region.
 ///
 /// Exposed to Python as `molrs.HollowSphere`.
@@ -492,10 +625,13 @@ fn extract_region(obj: &Bound<'_, pyo3::types::PyAny>) -> PyResult<DynRegion> {
     if let Ok(c) = obj.extract::<PyCuboid>() {
         return Ok(c.inner.clone() as DynRegion);
     }
+    if let Ok(p) = obj.extract::<PyParallelepiped>() {
+        return Ok(p.inner.clone() as DynRegion);
+    }
     if let Ok(r) = obj.extract::<PyRegion>() {
         return Ok(r.inner.clone());
     }
     Err(pyo3::exceptions::PyTypeError::new_err(
-        "expected a Sphere, HollowSphere, Cuboid, or Region",
+        "expected a Sphere, HollowSphere, Cuboid, Parallelepiped, or Region",
     ))
 }

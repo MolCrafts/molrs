@@ -24,7 +24,7 @@ use serde::de::{self, MapAccess, SeqAccess, Visitor};
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::core::spatial::region::simbox::SimBox;
+use crate::core::spatial::simbox::SimBox;
 use crate::core::store::block::{Block, Column, DType};
 use crate::core::store::frame::{FRAME_SCHEMA_VERSION, Frame};
 use crate::core::store::meta::{MetaMap, MetaValue};

@@ -16,7 +16,7 @@
 
 use std::collections::HashSet;
 
-use crate::spatial::region::SimBox;
+use crate::spatial::simbox::SimBox;
 use crate::types::{F, Pbc3};
 
 /// How cell occupancy decides whether a candidate position overlaps.

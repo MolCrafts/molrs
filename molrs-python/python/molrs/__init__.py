@@ -68,6 +68,7 @@ from ._lib import (
     Sphere,
     HollowSphere,
     Cuboid,
+    Parallelepiped,
     Region,
     # Molecular graph hierarchy
     Element,
@@ -339,6 +340,7 @@ __all__ = [
     "Sphere",
     "HollowSphere",
     "Cuboid",
+    "Parallelepiped",
     "Region",
     "Element",
     "Graph",

@@ -16,7 +16,7 @@
 use std::collections::HashSet;
 
 use molrs::core::spatial::neighbors::NeighborQuery;
-use molrs::core::spatial::region::simbox::SimBox;
+use molrs::core::spatial::simbox::SimBox;
 use molrs::ff::potential::Potential;
 use molrs::store::frame::Frame;
 use molrs::types::F;

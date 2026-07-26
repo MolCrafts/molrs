@@ -35,7 +35,7 @@ use std::collections::HashMap;
 use std::ops::{Index, IndexMut};
 
 use crate::error::MolRsError;
-use crate::spatial::region::simbox::SimBox;
+use crate::spatial::simbox::SimBox;
 use crate::store::block::Block;
 use crate::store::meta::MetaMap;
 

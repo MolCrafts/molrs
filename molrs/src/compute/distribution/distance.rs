@@ -3,7 +3,7 @@
 //! The pairwise distance distribution generalizes the RDF to arbitrary
 //! user-selected pairs (reference implementation distance DF, `src/tddf.cpp` /
 //! `CTimeDiff`/`CDF` distance mode). The minimum-image convention is delegated
-//! to [`SimBox::delta`](molrs::spatial::region::simbox::SimBox::delta) so a
+//! to [`SimBox::delta`](molrs::spatial::simbox::SimBox::delta) so a
 //! distance DF and [`compute::rdf`](crate::compute::rdf) return the same value
 //! for the same pair under PBC.
 

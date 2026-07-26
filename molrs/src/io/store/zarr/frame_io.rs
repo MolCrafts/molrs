@@ -19,7 +19,7 @@ use zarrs::storage::ReadableWritableListableStorage;
 use ndarray::ArrayD;
 
 use molrs::error::MolRsError;
-use molrs::spatial::region::simbox::SimBox;
+use molrs::spatial::simbox::SimBox;
 use molrs::store::block::{Block, Column};
 use molrs::store::frame::{FRAME_SCHEMA_VERSION, Frame};
 use molrs::store::meta::MetaValue;

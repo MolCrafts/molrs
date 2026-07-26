@@ -62,6 +62,7 @@ pub use error::MolRsError;
 pub use generate::{
     FccLattice, GrowthStrategy, OccupancyMode, OffLattice, SelfAvoidingWalk, WalkError, WalkOutput,
 };
+pub use spatial::simbox::{BoxError, BoxKind, Mic, SimBox};
 pub use store::block::Block;
 pub use store::frame::Frame;
 pub use store::frame_access::FrameAccess;

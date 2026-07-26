@@ -161,7 +161,7 @@ mod tests {
     use crate::compute::util::get_positions;
     use molrs::Frame;
     use molrs::spatial::neighbors::{LinkCell, NbListAlgo};
-    use molrs::spatial::region::simbox::SimBox;
+    use molrs::spatial::simbox::SimBox;
     use molrs::store::block::Block;
     use ndarray::{Array1 as A1, array};
 

@@ -37,7 +37,7 @@
 use std::collections::HashSet;
 
 use crate::spatial::neighbors::{NbListAlgo, NeighborList, QueryMode};
-use crate::spatial::region::simbox::{BoxKind, SimBox};
+use crate::spatial::simbox::{BoxKind, SimBox};
 use crate::types::{F, FNx3, FNx3View};
 
 #[derive(Debug, Clone, Copy)]

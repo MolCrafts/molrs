@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use crate::spatial::region::simbox::SimBox;
+use crate::spatial::simbox::SimBox;
 use crate::store::block::block_view::BlockView;
 use crate::store::frame::Frame;
 use crate::store::meta::MetaMap;

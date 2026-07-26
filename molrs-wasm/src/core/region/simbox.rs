@@ -25,7 +25,7 @@
 
 use crate::core::block::Block;
 use crate::core::types::{JsFloatArray, WasmArray};
-use molrs::spatial::region::simbox::SimBox;
+use molrs::spatial::simbox::SimBox;
 use molrs::types::F;
 use wasm_bindgen::prelude::*;
 

@@ -10,7 +10,7 @@
 //! (few particles, many cells) pay O(N), not O(n_cells).
 
 use crate::spatial::neighbors::{CellGrid, NbListAlgo, NeighborList, PairVisitor, QueryMode};
-use crate::spatial::region::simbox::SimBox;
+use crate::spatial::simbox::SimBox;
 use crate::types::{F, FNx3View};
 use ndarray::array;
 
@@ -598,7 +598,7 @@ fn pos_at(sorted_pos: &[F], si: usize) -> [F; 3] {
 mod tests {
     use super::*;
     use crate::spatial::neighbors::NbList;
-    use crate::spatial::region::simbox::SimBox;
+    use crate::spatial::simbox::SimBox;
     use ndarray::array;
 
     #[test]
@@ -1061,7 +1061,7 @@ mod equivalence {
     use crate::spatial::neighbors::CellGrid;
     use crate::spatial::neighbors::NeighborQuery;
     use crate::spatial::neighbors::bruteforce::BruteForce;
-    use crate::spatial::region::simbox::SimBox;
+    use crate::spatial::simbox::SimBox;
     use crate::types::F3x3;
     use ndarray::{Array2, array};
     use std::collections::{BTreeMap, BTreeSet};

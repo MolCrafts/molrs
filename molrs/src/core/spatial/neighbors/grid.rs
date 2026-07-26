@@ -24,7 +24,7 @@
 //! intermediate iterates routinely leave the box — wrapping there would hide a
 //! particle from its true neighbours while showing it to unrelated ones.
 
-use crate::spatial::region::simbox::SimBox;
+use crate::spatial::simbox::SimBox;
 use crate::types::F;
 
 /// A regular partition of a [`SimBox`] into cells, indexed in fractional space.

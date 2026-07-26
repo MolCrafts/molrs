@@ -22,7 +22,7 @@
 //! reciprocal-lattice spacing comes from `2π / L_d` along each axis.
 
 use crate::compute::result::ComputeResult;
-use molrs::spatial::region::simbox::BoxKind;
+use molrs::spatial::simbox::BoxKind;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 use ndarray::Array1;
@@ -248,7 +248,7 @@ impl ComputeResult for StaticStructureFactorDirectResult {}
 mod tests {
     use super::*;
     use molrs::Frame;
-    use molrs::spatial::region::simbox::SimBox;
+    use molrs::spatial::simbox::SimBox;
     use molrs::store::block::Block;
     use ndarray::{Array1 as A1, array};
 

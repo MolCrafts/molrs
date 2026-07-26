@@ -4,7 +4,7 @@
 //! to appropriate Python exceptions, and the [`NpF`] type alias that matches
 //! the crate's float precision setting.
 
-use molrs::spatial::region::simbox::BoxError;
+use molrs::spatial::simbox::BoxError;
 use molrs::types::F;
 use ndarray::{Array1, array};
 use numpy::PyReadonlyArray1;

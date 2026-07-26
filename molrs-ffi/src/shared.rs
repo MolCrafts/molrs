@@ -35,7 +35,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use molrs::spatial::region::simbox::SimBox;
+use molrs::spatial::simbox::SimBox;
 use molrs::store::block::{Block, DType};
 use molrs::store::frame::Frame;
 use molrs::types::{F, I, U};

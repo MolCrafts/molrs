@@ -7,7 +7,7 @@ use criterion::{BenchmarkId, Criterion, criterion_group};
 use molrs::spatial::neighbors::{
     BruteForce, CellGrid, LinkCell, NbList, NbListAlgo, NeighborQuery,
 };
-use molrs::spatial::region::simbox::SimBox;
+use molrs::spatial::simbox::SimBox;
 use molrs::types::F;
 use ndarray::{Array2, array};
 

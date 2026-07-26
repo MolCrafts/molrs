@@ -42,7 +42,7 @@ use molrs::io::trajectory::dcd::DcdReader as RsDcdReader;
 use molrs::io::trajectory::lammps_dump::LAMMPSTrajReader;
 use molrs::io::trajectory::trr::TrrReader as RsTrrReader;
 use molrs::io::trajectory::xtc::XtcReader as RsXtcReader;
-use molrs::spatial::region::simbox::SimBox;
+use molrs::spatial::simbox::SimBox;
 use molrs::store::frame::Frame as RsFrame;
 use molrs::types::F;
 use std::io::{BufReader, Cursor};

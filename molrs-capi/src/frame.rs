@@ -2,7 +2,7 @@
 //!
 //! A **Frame** is the top-level data container in molrs.  It maps string
 //! keys (e.g. `"atoms"`, `"bonds"`, `"angles"`) to [`Block`]s, carries
-//! an optional [`SimBox`](molrs::spatial::region::simbox::SimBox) for periodic
+//! an optional [`SimBox`](molrs::spatial::simbox::SimBox) for periodic
 //! boundary conditions, and stores exact-dtype scalar/fixed-vector metadata.
 //!
 //! # Typical column layout

@@ -5,7 +5,6 @@
 //! - frac = H^{-1} * (cart - origin)
 //! - Lattice vectors are the columns of H.
 
-use super::region::Region;
 use crate::math;
 use crate::types::{F, F3, F3View, F3x3, FNx3, FNx3View, Pbc3};
 use ndarray::{Array1, Array2, Array3, ArrayView1, ArrayView2, array};
@@ -779,28 +778,28 @@ impl SimBox {
             .view(),
         )
     }
-}
 
-impl Region for SimBox {
-    fn bounds(&self) -> FNx3 {
-        let lengths = self.lengths();
+    /// Axis-aligned bounding box of the cell geometry.
+    ///
+    /// Layout: rows = x/y/z, col 0 = min, col 1 = max — the AABB of the eight
+    /// corners. For triclinic cells this is larger than the true cell volume;
+    /// use [`isin`](Self::isin) for membership. Geometric region types that
+    /// describe the same volume live in `spatial::region`
+    /// (`Cuboid` / `Parallelepiped`) — not on this type.
+    pub fn bounds(&self) -> FNx3 {
+        let corners = self.get_corners();
         let mut b = Array2::zeros((3, 2));
         for d in 0..3 {
-            b[[d, 0]] = self.origin[d];
-            b[[d, 1]] = self.origin[d] + lengths[d];
+            let mut lo = corners[[0, d]];
+            let mut hi = lo;
+            for i in 1..corners.nrows() {
+                lo = lo.min(corners[[i, d]]);
+                hi = hi.max(corners[[i, d]]);
+            }
+            b[[d, 0]] = lo;
+            b[[d, 1]] = hi;
         }
         b
-    }
-
-    fn contains(&self, points: &FNx3) -> Array1<bool> {
-        self.isin(points.view())
-    }
-
-    fn contains_point(&self, point: &[F; 3]) -> bool {
-        let r = ArrayView1::from_shape(3, point).expect("contains_point shape");
-        let dr = &r - &self.origin.view();
-        let frac = self.inv.dot(&dr);
-        (0..3).all(|d| frac[d] >= 0.0 && frac[d] < 1.0)
     }
 }
 
@@ -1075,20 +1074,22 @@ mod tests {
     }
 
     #[test]
-    fn test_contains_point_non_pbc() {
+    fn test_isin_point_non_pbc() {
         let bx = SimBox::cube(2.0, array![0.0, 0.0, 0.0], [false, false, false])
             .expect("invalid box length");
-        assert!(bx.contains_point(&[0.5, 0.5, 0.5]));
-        assert!(!bx.contains_point(&[-0.1, 0.5, 0.5]));
-        assert!(!bx.contains_point(&[2.1, 0.5, 0.5]));
+        let pts = array![[0.5, 0.5, 0.5], [-0.1, 0.5, 0.5], [2.1, 0.5, 0.5]];
+        let mask = bx.isin(pts.view());
+        assert!(mask[0]);
+        assert!(!mask[1]);
+        assert!(!mask[2]);
     }
 
     #[test]
-    fn test_contains_mask() {
+    fn test_isin_mask() {
         let bx = SimBox::cube(2.0, array![0.0, 0.0, 0.0], [true, true, true])
             .expect("invalid box length");
         let pts = array![[0.1, 0.1, 0.1], [2.1, 0.0, 0.0], [-0.1, 0.0, 0.0]];
-        let mask = bx.contains(&pts);
+        let mask = bx.isin(pts.view());
         assert!(mask[0]);
         assert!(!mask[1]);
         assert!(!mask[2]);

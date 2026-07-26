@@ -44,7 +44,7 @@
 
 use crate::io::reader::{FrameReader, ReadSeek, Reader, TrajReader};
 use crate::io::writer::{FrameWriter, Writer};
-use molrs::spatial::region::simbox::SimBox;
+use molrs::spatial::simbox::SimBox;
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
 use molrs::store::frame_access::FrameAccess;

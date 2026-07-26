@@ -10,7 +10,7 @@
 
 use crate::spatial::neighbors::linkcell::LinkCell;
 use crate::spatial::neighbors::{NbListAlgo, NeighborList, QueryMode};
-use crate::spatial::region::simbox::SimBox;
+use crate::spatial::simbox::SimBox;
 use crate::types::{F, FNx3, FNx3View};
 
 /// Axis-aligned bounding box query — high-level neighbor search.
@@ -230,7 +230,7 @@ impl NeighborQuery {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::spatial::region::simbox::SimBox;
+    use crate::spatial::simbox::SimBox;
     use ndarray::array;
 
     #[test]

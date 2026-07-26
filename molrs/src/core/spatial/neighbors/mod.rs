@@ -34,7 +34,7 @@
 //! let result = lc.query();
 //! ```
 
-use crate::spatial::region::simbox::SimBox;
+use crate::spatial::simbox::SimBox;
 use crate::types::{F, FNx3View};
 use ndarray::ArrayView2;
 

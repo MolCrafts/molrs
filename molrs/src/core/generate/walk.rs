@@ -15,8 +15,8 @@ use rand::SeedableRng;
 use rand::rngs::StdRng;
 
 use super::occupancy::{OccupancyGrid, OccupancyMode};
-use crate::spatial::region::simbox::BoxError;
-use crate::spatial::region::SimBox;
+use crate::spatial::simbox::BoxError;
+use crate::spatial::simbox::SimBox;
 use crate::types::{F, F3, Pbc3};
 
 /// How many attempts a strategy gets to seed the first monomer of a chain
