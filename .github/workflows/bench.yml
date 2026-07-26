@@ -8,9 +8,8 @@ name: Bench
 # behind `compute` + `voronoi`; `full` avoids the openblas requirement of the
 # separate `blas` feature).
 #
-# Like the cross-implementation suite, the full criterion run is too heavy /
-# too noisy to gate every PR (PRs already get a `cargo bench --no-run` compile
-# check in ci-rust.yml). It tracks perf on canonical pushes + on demand.
+# Criterion is never on the default PR path (ci-rust is unit-only). This
+# workflow tracks perf on canonical pushes + on demand.
 
 on:
   push:

@@ -340,7 +340,7 @@ fn traj_getitem<R: TrajReader<Frame = CoreFrame>>(
 /// >>> frame = reader[42]
 /// >>> for frame in reader:
 /// ...     pass
-#[pyclass(name = "LAMMPSTrajReader", unsendable)]
+#[pyclass(module = "molrs", name = "LAMMPSTrajReader", unsendable)]
 pub struct PyLAMMPSTrajReader {
     inner: Option<LAMMPSTrajReader<Box<dyn ReadSeek>>>,
     cursor: usize,
@@ -467,7 +467,7 @@ impl PyLAMMPSTrajReader {
 ///
 /// DCD is the binary trajectory format used by CHARMM, NAMD, and LAMMPS.
 /// Each frame contains an ``"atoms"`` block with ``x``/``y``/``z`` columns
-/// (Å). Unit-cell information, when present, is stored in ``frame.simbox``;
+/// (Å). Unit-cell information, when present, is stored in ``frame.box``;
 /// per-frame ``timestep``/``delta`` (and the file ``title``) are recorded in
 /// ``frame.meta``.
 ///
@@ -527,7 +527,7 @@ pub fn read_dcd(path: &str) -> PyResult<Vec<PyFrame>> {
 /// >>> frame = reader[42]
 /// >>> for frame in reader:
 /// ...     pass
-#[pyclass(name = "DCDTrajReader", unsendable)]
+#[pyclass(module = "molrs", name = "DCDTrajReader", unsendable)]
 pub struct PyDcdTrajReader {
     inner: Option<DcdReader<Box<dyn ReadSeek>>>,
     cursor: usize,
@@ -673,7 +673,7 @@ impl PyDcdTrajReader {
 /// >>> reader.n_frames
 /// 50
 /// >>> reader[-1]["atoms"].view("x")
-#[pyclass(name = "XYZTrajReader", unsendable)]
+#[pyclass(module = "molrs", name = "XYZTrajReader", unsendable)]
 pub struct PyXYZTrajReader {
     inner: Option<XYZReader<Box<dyn ReadSeek>>>,
     cursor: usize,
@@ -797,7 +797,7 @@ impl PyXYZTrajReader {
 /// single-precision trajectories. Each frame contains an ``"atoms"`` block
 /// with columns ``resid``, ``resname``, ``atom_name``, ``atom_id``,
 /// ``x``/``y``/``z`` (in nm), and optional ``vx``/``vy``/``vz``. The
-/// simulation box is stored in ``frame.simbox``.
+/// simulation box is stored in ``frame.box``.
 ///
 /// Parameters
 /// ----------
@@ -831,7 +831,7 @@ pub fn read_gro(path: &str) -> PyResult<Vec<PyFrame>> {
 /// The Frame must contain an ``"atoms"`` block with at least ``x``, ``y``,
 /// ``z`` columns (in nm). Optional columns: ``resid``, ``resname``,
 /// ``atom_name``, ``atom_id``, ``vx``, ``vy``, ``vz``. The box is taken
-/// from ``frame.simbox``.
+/// from ``frame.box``.
 ///
 /// Parameters
 /// ----------
@@ -857,7 +857,7 @@ pub fn write_gro(path: &str, frame: &PyFrame) -> PyResult<()> {
 /// Returns a Frame containing:
 ///
 /// - ``"atoms"`` block with ``symbol``, ``x``, ``y``, ``z`` (Cartesian Å)
-/// - ``simbox``: triclinic periodic box
+/// - ``box``: triclinic periodic box
 /// - grid ``"chgcar"``: a :class:`Grid` with at least ``"total"`` (and
 ///   ``"diff"`` for spin-polarised ISPIN=2 calculations)
 ///
@@ -885,7 +885,7 @@ pub fn write_gro(path: &str, frame: &PyFrame) -> PyResult<()> {
 /// >>> frame = molrs.read_chgcar("CHGCAR")
 /// >>> grid = frame["chgcar"]
 /// >>> total = grid["total"]          # shape (nx, ny, nz)
-/// >>> density = total / frame.simbox.volume()
+/// >>> density = total / frame.box.volume()
 #[pyfunction]
 pub fn read_chgcar_file(path: &str) -> PyResult<PyFrame> {
     let frame = read_chgcar(path).map_err(molrs_error_to_pyerr)?;
@@ -1041,7 +1041,7 @@ pub fn write_lammps_traj(path: &str, frames: Vec<PyRef<'_, PyFrame>>) -> PyResul
 ///
 /// Produces a NAMD-compatible little-endian DCD. Every frame must have the
 /// same atom count and the same box presence as the first frame. The box, if
-/// any, is taken from each ``frame.simbox``.
+/// any, is taken from each ``frame.box``.
 ///
 /// Parameters
 /// ----------
@@ -1073,7 +1073,7 @@ pub fn write_dcd(path: &str, frames: Vec<PyRef<'_, PyFrame>>) -> PyResult<()> {
 /// TRR is the full-precision GROMACS format. Each frame's ``"atoms"`` block has
 /// ``id`` and ``x``/``y``/``z`` (nm), plus ``vx``/``vy``/``vz`` and
 /// ``fx``/``fy``/``fz`` when the frame carries velocities / forces. The box is
-/// in ``frame.simbox``; ``step``/``time``/``lambda`` in ``frame.meta``.
+/// in ``frame.box``; ``step``/``time``/``lambda`` in ``frame.meta``.
 ///
 /// For long trajectories prefer the lazy :class:`TRRTrajReader`.
 ///
@@ -1099,7 +1099,7 @@ pub fn read_trr(path: &str) -> PyResult<Vec<PyFrame>> {
 ///
 /// XTC is the compressed GROMACS format (lossy, ``1/precision`` nm resolution).
 /// Each frame's ``"atoms"`` block has ``id`` and ``x``/``y``/``z`` (nm); the box
-/// is in ``frame.simbox``; ``step``/``time``/``precision`` in ``frame.meta``.
+/// is in ``frame.box``; ``step``/``time``/``precision`` in ``frame.meta``.
 /// Both the classic (1995) and 2023 magic numbers are accepted.
 ///
 /// For long trajectories prefer the lazy :class:`XTCTrajReader`.
@@ -1128,7 +1128,7 @@ pub fn read_xtc(path: &str) -> PyResult<Vec<PyFrame>> {
 /// ``build_index()``); subsequent ``reader[i]`` / ``read_step(i)`` is an O(1)
 /// seek plus one frame parse. Exposes the same surface as
 /// :class:`DCDTrajReader`.
-#[pyclass(name = "TRRTrajReader", unsendable)]
+#[pyclass(module = "molrs", name = "TRRTrajReader", unsendable)]
 pub struct PyTrrTrajReader {
     inner: Option<TrrReader<Box<dyn ReadSeek>>>,
     cursor: usize,
@@ -1249,7 +1249,7 @@ impl PyTrrTrajReader {
 /// Like :class:`TRRTrajReader` but for the compressed XTC format. Frame sizes
 /// vary (compression), so the byte-offset index is built by a single scan;
 /// random access is O(1) thereafter.
-#[pyclass(name = "XTCTrajReader", unsendable)]
+#[pyclass(module = "molrs", name = "XTCTrajReader", unsendable)]
 pub struct PyXtcTrajReader {
     inner: Option<XtcReader<Box<dyn ReadSeek>>>,
     cursor: usize,
@@ -1369,7 +1369,7 @@ impl PyXtcTrajReader {
 ///
 /// Each frame's ``"atoms"`` block must have ``x``/``y``/``z`` (nm); optional
 /// ``vx``/``vy``/``vz`` and ``fx``/``fy``/``fz`` are written when present. The
-/// box, if any, is taken from each ``frame.simbox``.
+/// box, if any, is taken from each ``frame.box``.
 ///
 /// Parameters
 /// ----------
@@ -1390,7 +1390,7 @@ pub fn write_trr(path: &str, frames: Vec<PyRef<'_, PyFrame>>) -> PyResult<()> {
 /// Each frame's ``"atoms"`` block must have ``x``/``y``/``z`` (nm). The
 /// quantization precision is taken from ``frame.meta["precision"]`` when
 /// present, else defaults to 1000 (i.e. 0.001 nm resolution). The box, if any,
-/// is taken from each ``frame.simbox``.
+/// is taken from each ``frame.box``.
 ///
 /// Parameters
 /// ----------
@@ -1425,7 +1425,7 @@ pub fn write_xtc(path: &str, frames: Vec<PyRef<'_, PyFrame>>) -> PyResult<()> {
 /// >>> mol = ir.to_atomistic()
 /// >>> mol.n_atoms
 /// 3
-#[pyclass(name = "SmilesIR")]
+#[pyclass(module = "molrs", name = "SmilesIR")]
 pub struct PySmilesIR {
     inner: molrs::io::smiles::SmilesIR,
     input: String,

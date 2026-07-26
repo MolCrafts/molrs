@@ -27,4 +27,4 @@ jobs:
 
       - name: Build wasm
         working-directory: molrs-wasm
-        run: wasm-pack build --target web
+        run: wasm-pack build --release --target bundler --scope molcrafts --out-name molrs

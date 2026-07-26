@@ -8,8 +8,9 @@ import numpy as np
 from molrs import (
     Atomistic,
     Conformer,
-    MMFFTypifier,
+    MMFF94Typifier,
     extract_coords,
+    intramolecular_pairs,
 )
 
 
@@ -62,7 +63,7 @@ molecules = {
     "acetic_acid": build_acetic_acid(),
 }
 
-typifier = MMFFTypifier()
+typifier = MMFF94Typifier()
 
 for name, mol in molecules.items():
     print(f"=== {name} ===")
@@ -72,10 +73,11 @@ for name, mol in molecules.items():
     mol3d, report = Conformer(speed="medium", seed=123).generate(mol)
     print(f"  conformer: atoms={mol3d.n_atoms}, energy={report.final_energy:.2f}")
 
-    # Evaluate MMFF94
+    # Evaluate MMFF94: typify -> Frame -> to_potentials (the standard route)
     try:
-        pots = typifier.build(mol3d)
-        frame = mol3d.to_frame()
+        frame = typifier.typify(mol3d).to_frame()
+        frame["pairs"] = intramolecular_pairs(frame)
+        pots = typifier.forcefield().to_potentials(frame)
         coords = extract_coords(frame)
         energy, forces = pots.eval(coords)
 

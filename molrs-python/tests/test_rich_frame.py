@@ -124,6 +124,22 @@ class TestBlockListIndexErrors:
         with pytest.raises(ValueError):
             _ = b[["a", "b"]]
 
+    def test_construction_length_mismatch_surfaces_real_error(self):
+        # A per-column length mismatch must report the real, actionable cause
+        # (differing row counts), NOT the misleading "must be array-like"
+        # blanket — the column value IS array-like. Regression: the ValueError
+        # message previously masked the length/shape error with
+        # "Value must be array-like ... got numpy.ndarray".
+        with pytest.raises(ValueError) as exc:
+            Block({"x": np.zeros(6), "y": np.zeros(4)})
+        assert "array-like" not in str(exc.value)
+
+    def test_construction_non_array_like_still_reports_array_like(self):
+        # A genuinely non-array-like scalar keeps the friendly guidance.
+        with pytest.raises(ValueError) as exc:
+            Block({"x": object()})
+        assert "array-like" in str(exc.value)
+
     def test_missing_key_raises_key_error(self):
         b = Block({"a": [1.0, 2.0]})
         with pytest.raises(KeyError):
@@ -300,17 +316,36 @@ class TestRichFrame:
         assert all(isinstance(b, Block) for b in blks)
 
     def test_metadata(self):
-        f = Frame({"atoms": {"x": [1.0]}}, title="t")
-        assert f.metadata["title"] == "t"
-        f.metadata["step"] = 5
-        assert f.metadata["step"] == 5
+        f = Frame(
+            {"atoms": {"x": [1.0]}},
+            meta={"title": molrs.MetaValue("string", "t")},
+        )
+        assert f.meta["title"].value == "t"
+        f.meta = {**f.meta, "step": molrs.MetaValue("i64", 5)}
+        assert f.meta["step"].value == 5
 
     def test_to_dict_from_dict(self):
-        f = Frame({"atoms": {"x": [1.0, 2.0]}}, title="t")
+        f = Frame(
+            {"atoms": {"x": [1.0, 2.0]}},
+            meta={"title": molrs.MetaValue("string", "t")},
+        )
         d = f.to_dict()
-        assert "blocks" in d and "metadata" in d
+        assert "blocks" in d and "meta" in d
         f2 = Frame.from_dict(d)
         np.testing.assert_allclose(f2["atoms"]["x"], [1.0, 2.0])
+
+    @pytest.mark.parametrize(
+        "data",
+        [
+            {"blocks": {}},
+            {"blocks": {}, "metadata": {}},
+            {"blocks": {}, "meta": {}, "metadata": {}},
+            {"atoms": {}},
+        ],
+    )
+    def test_from_dict_rejects_noncanonical_envelopes(self, data):
+        with pytest.raises(ValueError, match="exactly 'blocks' and 'meta'"):
+            Frame.from_dict(data)
 
     def test_copy_is_independent(self):
         f = Frame({"atoms": {"x": [1.0, 2.0]}})

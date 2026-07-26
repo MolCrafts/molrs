@@ -10,9 +10,10 @@
 
 use crate::helpers::{NpF, box_error_to_pyerr, parse_origin, parse_pbc};
 use molrs::spatial::region::simbox::SimBox;
+use molrs::spatial::region::Region;
 use molrs::types::F;
 use ndarray::array;
-use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
+use numpy::{IntoPyArray, PyArray1, PyArray2, PyArray3, PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
@@ -32,7 +33,7 @@ use pyo3::prelude::*;
 /// box = Box.ortho(np.array([10, 20, 30]))    # orthorhombic
 /// print(box.volume())                        # 6000.0
 /// ```
-#[pyclass(name = "Box", from_py_object, subclass)]
+#[pyclass(module = "molrs", name = "Box", from_py_object, subclass)]
 #[derive(Clone)]
 pub struct PyBox {
     pub(crate) inner: SimBox,
@@ -169,6 +170,32 @@ impl PyBox {
         Ok(PyBox { inner })
     }
 
+    /// Create a tight orthorhombic box around a point cloud.
+    #[staticmethod]
+    #[pyo3(signature = (points, padding, pbc=None))]
+    fn from_bounds(
+        points: PyReadonlyArray2<'_, NpF>,
+        padding: PyReadonlyArray1<'_, NpF>,
+        pbc: Option<PyReadonlyArray1<'_, bool>>,
+    ) -> PyResult<Self> {
+        let points = points.as_array();
+        if points.ncols() != 3 {
+            return Err(PyValueError::new_err("points must have shape (N,3)"));
+        }
+        let padding = padding.as_slice()?;
+        if padding.len() != 3 {
+            return Err(PyValueError::new_err("padding must have length 3"));
+        }
+        let pbc = parse_pbc(pbc)?;
+        let inner = SimBox::from_bounds(
+            points,
+            [padding[0], padding[1], padding[2]],
+            pbc,
+        )
+        .map_err(box_error_to_pyerr)?;
+        Ok(Self { inner })
+    }
+
     /// Volume of the simulation box.
     ///
     /// Returns
@@ -225,6 +252,12 @@ impl PyBox {
         self.inner.h_view().to_owned().into_pyarray(py)
     }
 
+    /// Inverse cell matrix.
+    #[getter]
+    fn inverse<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<NpF>> {
+        self.inner.inv_view().to_owned().into_pyarray(py)
+    }
+
     /// Box origin in Cartesian coordinates.
     ///
     /// Returns
@@ -251,6 +284,42 @@ impl PyBox {
         self.inner.lengths().into_pyarray(py)
     }
 
+    /// Lattice angles ``[alpha, beta, gamma]`` in degrees.
+    #[getter]
+    fn angles<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<NpF>> {
+        self.inner.angles().into_pyarray(py)
+    }
+
+    #[staticmethod]
+    fn matrix_from_lengths_angles<'py>(
+        py: Python<'py>,
+        lengths: [NpF; 3],
+        angles: [NpF; 3],
+    ) -> PyResult<Bound<'py, PyArray2<NpF>>> {
+        Ok(SimBox::matrix_from_lengths_angles(lengths, angles)
+            .map_err(box_error_to_pyerr)?
+            .into_pyarray(py))
+    }
+
+    #[staticmethod]
+    fn matrix_from_lengths_tilts<'py>(
+        py: Python<'py>,
+        lengths: [NpF; 3],
+        tilts: [NpF; 3],
+    ) -> Bound<'py, PyArray2<NpF>> {
+        SimBox::matrix_from_lengths_tilts(lengths, tilts).into_pyarray(py)
+    }
+
+    #[staticmethod]
+    fn restricted_matrix<'py>(
+        py: Python<'py>,
+        matrix: PyReadonlyArray2<'_, NpF>,
+    ) -> PyResult<Bound<'py, PyArray2<NpF>>> {
+        Ok(SimBox::restricted_matrix(matrix.as_array())
+            .map_err(box_error_to_pyerr)?
+            .into_pyarray(py))
+    }
+
     /// Box matrix with lattice vectors as columns, shape ``(3, 3)``.
     /// Alias for ``h`` to mirror the molpy API.
     #[getter]
@@ -265,6 +334,61 @@ impl PyBox {
         let h = self.inner.h_view();
         let arr = ndarray::array![h[(0, 1)], h[(0, 2)], h[(1, 2)]];
         arr.into_pyarray(py)
+    }
+
+    /// Perpendicular distances between opposite cell faces.
+    #[getter]
+    fn nearest_plane_distance<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<NpF>> {
+        self.inner.nearest_plane_distance().into_pyarray(py)
+    }
+
+    /// Eight Cartesian cell corners.
+    fn corners<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<NpF>> {
+        self.inner.get_corners().into_pyarray(py)
+    }
+
+    /// Per-axis coordinate bounds as ``[[xlo, xhi], [ylo, yhi], [zlo, zhi]]``.
+    #[getter]
+    fn bounds<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<NpF>> {
+        self.inner.bounds().into_pyarray(py)
+    }
+
+    /// Minimum-image displacement from ``r1`` to ``r2``.
+    fn shortest_vector<'py>(
+        &self,
+        py: Python<'py>,
+        r1: PyReadonlyArray1<'_, NpF>,
+        r2: PyReadonlyArray1<'_, NpF>,
+    ) -> PyResult<Bound<'py, PyArray1<NpF>>> {
+        let r1 = r1.as_array();
+        let r2 = r2.as_array();
+        if r1.len() != 3 || r2.len() != 3 {
+            return Err(PyValueError::new_err("r1 and r2 must have length 3"));
+        }
+        Ok(self.inner.shortest_vector(r1, r2).into_pyarray(py))
+    }
+
+    /// Squared minimum-image distance between two points.
+    fn distance_squared(
+        &self,
+        r1: PyReadonlyArray1<'_, NpF>,
+        r2: PyReadonlyArray1<'_, NpF>,
+    ) -> PyResult<NpF> {
+        let r1 = r1.as_array();
+        let r2 = r2.as_array();
+        if r1.len() != 3 || r2.len() != 3 {
+            return Err(PyValueError::new_err("r1 and r2 must have length 3"));
+        }
+        Ok(self.inner.calc_distance2(r1, r2))
+    }
+
+    /// Minimum-image distance between two points.
+    fn distance(
+        &self,
+        r1: PyReadonlyArray1<'_, NpF>,
+        r2: PyReadonlyArray1<'_, NpF>,
+    ) -> PyResult<NpF> {
+        Ok(self.distance_squared(r1, r2)?.sqrt())
     }
 
     /// Convert Cartesian coordinates to fractional coordinates.
@@ -356,6 +480,36 @@ impl PyBox {
         Ok(wrapped.into_pyarray(py))
     }
 
+    /// Integer periodic image flags for Cartesian coordinates.
+    fn images<'py>(
+        &self,
+        py: Python<'py>,
+        xyz: PyReadonlyArray2<'_, NpF>,
+    ) -> PyResult<Bound<'py, PyArray2<i64>>> {
+        let view = xyz.as_array();
+        if view.ncols() != 3 {
+            return Err(PyValueError::new_err("expected shape (N,3)"));
+        }
+        Ok(self.inner.images(view).into_pyarray(py))
+    }
+
+    /// Reconstruct unwrapped coordinates from wrapped coordinates and images.
+    fn unwrap<'py>(
+        &self,
+        py: Python<'py>,
+        xyz: PyReadonlyArray2<'_, NpF>,
+        images: PyReadonlyArray2<'_, i64>,
+    ) -> PyResult<Bound<'py, PyArray2<NpF>>> {
+        let xyz = xyz.as_array();
+        let images = images.as_array();
+        if xyz.ncols() != 3 || xyz.raw_dim() != images.raw_dim() {
+            return Err(PyValueError::new_err(
+                "xyz and images must have identical shape (N,3)",
+            ));
+        }
+        Ok(self.inner.unwrap(xyz, images).into_pyarray(py))
+    }
+
     /// Compute displacement vectors between two point sets.
     ///
     /// Calculates ``xyzu2 - xyzu1`` with optional minimum-image convention
@@ -400,6 +554,72 @@ impl PyBox {
         }
         let d = self.inner.delta(v1, v2, minimum_image);
         Ok(d.into_pyarray(py))
+    }
+
+    /// Row-wise minimum-image distances between equally sized point arrays.
+    fn distances<'py>(
+        &self,
+        py: Python<'py>,
+        points1: PyReadonlyArray2<'_, NpF>,
+        points2: PyReadonlyArray2<'_, NpF>,
+    ) -> PyResult<Bound<'py, PyArray1<NpF>>> {
+        let points1 = points1.as_array();
+        let points2 = points2.as_array();
+        if points1.raw_dim() != points2.raw_dim() || points1.ncols() != 3 {
+            return Err(PyValueError::new_err(
+                "points1 and points2 must have identical shape (N,3)",
+            ));
+        }
+        Ok(self.inner.distances(points1, points2).into_pyarray(py))
+    }
+
+    /// All pairwise minimum-image displacement vectors (`points2 - points1`).
+    fn pairwise_delta<'py>(
+        &self,
+        py: Python<'py>,
+        points1: PyReadonlyArray2<'_, NpF>,
+        points2: PyReadonlyArray2<'_, NpF>,
+    ) -> PyResult<Bound<'py, PyArray3<NpF>>> {
+        let points1 = points1.as_array();
+        let points2 = points2.as_array();
+        if points1.ncols() != 3 || points2.ncols() != 3 {
+            return Err(PyValueError::new_err("points must have shape (N,3)"));
+        }
+        Ok(self.inner.pairwise_delta(points1, points2).into_pyarray(py))
+    }
+
+    /// All pairwise minimum-image distances.
+    fn pairwise_distances<'py>(
+        &self,
+        py: Python<'py>,
+        points1: PyReadonlyArray2<'_, NpF>,
+        points2: PyReadonlyArray2<'_, NpF>,
+    ) -> PyResult<Bound<'py, PyArray2<NpF>>> {
+        let points1 = points1.as_array();
+        let points2 = points2.as_array();
+        if points1.ncols() != 3 || points2.ncols() != 3 {
+            return Err(PyValueError::new_err("points must have shape (N,3)"));
+        }
+        Ok(self
+            .inner
+            .pairwise_distances(points1, points2)
+            .into_pyarray(py))
+    }
+
+    /// Return a box whose cell matrix is right-multiplied by `transformation`.
+    fn transformed(
+        &self,
+        transformation: PyReadonlyArray2<'_, NpF>,
+    ) -> PyResult<Self> {
+        let transformation = transformation.as_array();
+        if transformation.dim() != (3, 3) {
+            return Err(PyValueError::new_err("transformation must have shape (3,3)"));
+        }
+        let inner = self
+            .inner
+            .transformed(&transformation.to_owned())
+            .map_err(box_error_to_pyerr)?;
+        Ok(Self { inner })
     }
 
     /// Test whether each point lies inside the primary simulation cell.

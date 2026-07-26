@@ -14,19 +14,19 @@ use pyo3::types::{PyAny, PyList};
 use crate::core::store::frame::PyFrame;
 use crate::helpers::{NpF, molrs_error_to_pyerr};
 
-#[pyclass(name = "Trajectory", from_py_object, subclass)]
+#[pyclass(module = "molrs", name = "Trajectory", from_py_object, subclass)]
 #[derive(Clone)]
 pub struct PyTrajectory {
     pub(crate) inner: CoreTrajectory,
 }
 
-#[pyclass(name = "ScalarObservable", from_py_object)]
+#[pyclass(module = "molrs", name = "ScalarObservable", from_py_object)]
 #[derive(Clone)]
 pub struct PyScalarObservable {
     pub(crate) inner: ObservableRecord,
 }
 
-#[pyclass(name = "VectorObservable", from_py_object)]
+#[pyclass(module = "molrs", name = "VectorObservable", from_py_object)]
 #[derive(Clone)]
 pub struct PyVectorObservable {
     pub(crate) inner: ObservableRecord,

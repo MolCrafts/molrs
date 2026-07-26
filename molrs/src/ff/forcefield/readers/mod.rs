@@ -1,5 +1,5 @@
 //! Readers that parse *external* force-field formats into a molrs
-//! [`ForceField`](crate::ff::forcefield::ForceField).
+//! [`ForceField`].
 //!
 //! These differ from [`crate::ff::forcefield::xml`], which reads molrs's own native
 //! schema. A reader here owns the translation from a foreign format — element

@@ -505,12 +505,12 @@ macro_rules! impl_wasm_traj_stream {
 
             /// Box H-matrix as a length-9 `Float64Array` (column-major:
             /// `[col0_x, col0_y, col0_z, col1_x, col1_y, col1_z, col2_x, col2_y, col2_z]`),
-            /// or `undefined` if the frame has no simbox.
+            /// or `undefined` if the frame has no box.
             ///
             /// Returned by VALUE — the typed array is owned by JS and is
             /// stable across subsequent wasm calls.
-            #[wasm_bindgen(js_name = simboxH)]
-            pub fn simbox_h(&self) -> Option<Vec<f64>> {
+            #[wasm_bindgen(js_name = boxH)]
+            pub fn box_h(&self) -> Option<Vec<f64>> {
                 let frame = self.output.as_ref()?;
                 let sb = frame.simbox.as_ref()?;
                 let h = sb.h_view();
@@ -527,23 +527,23 @@ macro_rules! impl_wasm_traj_stream {
             }
 
             /// Box origin as a length-3 `Float64Array`, or `undefined` if
-            /// the frame has no simbox.
-            #[wasm_bindgen(js_name = simboxOrigin)]
-            pub fn simbox_origin(&self) -> Option<Vec<f64>> {
+            /// the frame has no box.
+            #[wasm_bindgen(js_name = boxOrigin)]
+            pub fn box_origin(&self) -> Option<Vec<f64>> {
                 let frame = self.output.as_ref()?;
                 let sb = frame.simbox.as_ref()?;
                 Some(sb.origin_view().iter().copied().collect())
             }
 
             /// Per-axis PBC flags as a length-3 `Uint8Array` (`1` = periodic,
-            /// `0` = open), or `undefined` if the frame has no simbox.
+            /// `0` = open), or `undefined` if the frame has no box.
             ///
             /// (wasm-bindgen does not support `[bool; 3]` returns natively,
             /// hence the `Uint8Array` wire format. The spec calls for
             /// `[boolean, boolean, boolean]`; the JS side is expected to
             /// `Boolean(arr[i])` each entry.)
-            #[wasm_bindgen(js_name = simboxPbc)]
-            pub fn simbox_pbc(&self) -> Option<Vec<u8>> {
+            #[wasm_bindgen(js_name = boxPbc)]
+            pub fn box_pbc(&self) -> Option<Vec<u8>> {
                 let frame = self.output.as_ref()?;
                 let sb = frame.simbox.as_ref()?;
                 let pbc = sb.pbc();

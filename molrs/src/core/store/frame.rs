@@ -28,7 +28,7 @@
 //! assert_eq!(atoms_ref.nrows(), Some(3));
 //!
 //! // Add metadata
-//! frame.meta.insert("title".into(), "My Molecule".into());
+//! frame.meta.insert("title", "My Molecule");
 //! ```
 
 use std::collections::HashMap;
@@ -37,6 +37,10 @@ use std::ops::{Index, IndexMut};
 use crate::error::MolRsError;
 use crate::spatial::region::simbox::SimBox;
 use crate::store::block::Block;
+use crate::store::meta::MetaMap;
+
+/// Exact schema version of serialized frames and per-frame Zarr groups.
+pub const FRAME_SCHEMA_VERSION: u32 = 2;
 
 /// A dictionary from string keys to [`Block`]s.
 ///
@@ -47,18 +51,14 @@ use crate::store::block::Block;
 #[derive(Default, Clone)]
 pub struct Frame {
     map: HashMap<String, Block>,
-    /// Arbitrary key-value metadata associated with the frame.
-    pub meta: HashMap<String, String>,
+    /// Exact-dtype metadata associated with the frame.
+    pub meta: MetaMap,
     /// Simulation box defining periodic boundary conditions.
     pub simbox: Option<SimBox>,
 }
 
 /// Type alias for the result of into_inner().
-type IntoInnerResult = (
-    HashMap<String, Block>,
-    HashMap<String, String>,
-    Option<SimBox>,
-);
+type IntoInnerResult = (HashMap<String, Block>, MetaMap, Option<SimBox>);
 
 impl std::fmt::Debug for Frame {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -94,7 +94,7 @@ impl Frame {
     pub fn new() -> Self {
         Self {
             map: HashMap::new(),
-            meta: HashMap::new(),
+            meta: MetaMap::new(),
             simbox: None,
         }
     }
@@ -112,7 +112,7 @@ impl Frame {
     pub fn with_capacity(cap: usize) -> Self {
         Self {
             map: HashMap::with_capacity(cap),
-            meta: HashMap::new(),
+            meta: MetaMap::new(),
             simbox: None,
         }
     }
@@ -135,7 +135,7 @@ impl Frame {
     pub fn from_map(map: HashMap<String, Block>) -> Self {
         Self {
             map,
-            meta: HashMap::new(),
+            meta: MetaMap::new(),
             simbox: None,
         }
     }
@@ -150,11 +150,11 @@ impl Frame {
     ///
     /// let mut frame = Frame::new();
     /// frame.insert("atoms", Block::new());
-    /// frame.meta.insert("title".into(), "Test".into());
+    /// frame.meta.insert("title", "Test");
     ///
     /// let (blocks, meta, simbox) = frame.into_inner();
     /// assert_eq!(blocks.len(), 1);
-    /// assert_eq!(meta.get("title").unwrap(), "Test");
+    /// assert_eq!(meta.get("title").unwrap().as_str(), Some("Test"));
     /// assert!(simbox.is_none());
     /// ```
     pub fn into_inner(self) -> IntoInnerResult {
@@ -246,7 +246,7 @@ impl Frame {
     ///
     /// let mut frame = Frame::new();
     /// frame.insert("atoms", Block::new());
-    /// frame.meta.insert("title".into(), "Test".into());
+    /// frame.meta.insert("title", "Test");
     ///
     /// frame.clear();
     /// assert!(frame.is_empty());
@@ -266,7 +266,7 @@ impl Frame {
     ///
     /// let mut frame = Frame::new();
     /// frame.insert("atoms", Block::new());
-    /// frame.meta.insert("title".into(), "Test".into());
+    /// frame.meta.insert("title", "Test");
     ///
     /// frame.clear_all();
     /// assert!(frame.is_empty());
@@ -635,12 +635,12 @@ mod tests {
     fn test_frame_into_inner() {
         let mut frame = Frame::new();
         frame.insert("atoms", Block::new());
-        frame.meta.insert("title".into(), "Test".into());
+        frame.meta.insert("title", "Test");
 
         let (blocks, meta, simbox) = frame.into_inner();
         assert_eq!(blocks.len(), 1);
         assert!(blocks.contains_key("atoms"));
-        assert_eq!(meta.get("title").unwrap(), "Test");
+        assert_eq!(meta.get("title").unwrap().as_str(), Some("Test"));
         assert!(simbox.is_none());
     }
 
@@ -648,19 +648,19 @@ mod tests {
     fn test_frame_clear_preserves_meta() {
         let mut frame = Frame::new();
         frame.insert("atoms", Block::new());
-        frame.meta.insert("title".into(), "Test".into());
+        frame.meta.insert("title", "Test");
 
         frame.clear();
         assert!(frame.is_empty());
         assert!(!frame.meta.is_empty());
-        assert_eq!(frame.meta.get("title").unwrap(), "Test");
+        assert_eq!(frame.meta.get("title").unwrap().as_str(), Some("Test"));
     }
 
     #[test]
     fn test_frame_clear_all() {
         let mut frame = Frame::new();
         frame.insert("atoms", Block::new());
-        frame.meta.insert("title".into(), "Test".into());
+        frame.meta.insert("title", "Test");
 
         frame.clear_all();
         assert!(frame.is_empty());
@@ -684,7 +684,7 @@ mod tests {
             )
             .unwrap();
         frame.insert("atoms", atoms);
-        frame.meta.insert("title".into(), "Test".into());
+        frame.meta.insert("title", "Test");
 
         let debug_str = format!("{:?}", frame);
         assert!(debug_str.contains("Frame"));

@@ -1,6 +1,6 @@
 """Density analyzers — :class:`RDF`, :class:`GaussianDensity`, :class:`LocalDensity`."""
 
-from molrs.molrs import (
+from molrs._lib import (
     RDF as RDF,
     RDFResult as RDFResult,
     GaussianDensity as GaussianDensity,

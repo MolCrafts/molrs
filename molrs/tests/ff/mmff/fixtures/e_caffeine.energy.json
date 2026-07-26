@@ -1,6 +1,0 @@
-{
-  "name": "e_caffeine",
-  "smiles": "Cn1cnc2c1c(=O)n(C)c(=O)n2C",
-  "n_atoms": 24,
-  "mmff94_total_energy": -109.36051123840069
-}

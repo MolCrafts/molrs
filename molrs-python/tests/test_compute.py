@@ -17,14 +17,14 @@ from molrs.compute.pmft import PMFTXY
 
 
 def _make_frame(pts, box_len=10.0):
-    """Wrap an (N, 3) ndarray into a Frame with simbox."""
+    """Wrap an (N, 3) ndarray into a Frame with box."""
     f = molrs.Frame()
     b = molrs.Block()
     b.insert("x", np.ascontiguousarray(pts[:, 0], dtype=np.float64))
     b.insert("y", np.ascontiguousarray(pts[:, 1], dtype=np.float64))
     b.insert("z", np.ascontiguousarray(pts[:, 2], dtype=np.float64))
     f["atoms"] = b
-    f.simbox = molrs.Box.cube(box_len)
+    f.box = molrs.Box.cube(box_len)
     return f
 
 
@@ -46,8 +46,26 @@ def _octahedron_frame(cx=5.0, cy=5.0, cz=5.0, box_len=20.0):
 
 
 def _nlist(frame, pts, cutoff=1.2):
-    nq = molrs.NeighborQuery(frame.simbox, pts, cutoff)
+    nq = molrs.NeighborQuery(frame.box, pts, cutoff)
     return nq.query_self()
+
+
+def test_neighbor_query_free_boundary():
+    points = np.array([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [2.0, 0.0, 0.0]])
+    query = molrs.NeighborQuery.free(points, 1.0)
+    result = query.query(np.array([[0.0, 0.0, 0.0]]))
+
+    assert np.array_equal(result.point_indices, np.array([0, 1], dtype=np.uint32))
+    assert np.allclose(result.distances, [0.0, 0.5])
+
+
+def test_neighbor_query_rejects_non_positive_cutoff():
+    points = np.zeros((1, 3))
+    box = molrs.Box.cube(1.0)
+    with pytest.raises(ValueError, match="positive"):
+        molrs.NeighborQuery(box, points, 0.0)
+    with pytest.raises(ValueError, match="positive"):
+        molrs.NeighborQuery.free(points, 0.0)
 
 
 class TestSteinhardt:

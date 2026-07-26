@@ -64,7 +64,8 @@ use molrs::types::F;
 /// Returns a [`Frame`] with:
 /// - `"atoms"` block: `symbol` (str), `x`/`y`/`z` (float, Å Cartesian)
 /// - `simbox`: triclinic periodic box derived from the POSCAR header
-/// - grid `"chgcar"`: [`Grid`] containing `"total"` and optionally `"diff"`
+/// - `"grid"` block: a [`Block`] of shape `[nx, ny, nz]` carrying the `"total"`
+///   column and, for spin-polarized files, `"diff"` (see the module docs)
 ///
 /// # Errors
 ///
@@ -289,7 +290,7 @@ pub fn read_chgcar_from_reader<R: BufRead>(mut reader: R) -> Result<Frame, MolRs
     // -----------------------------------------------------------------------
     let mut frame = Frame::new();
     if !title.is_empty() {
-        frame.meta.insert("title".into(), title);
+        frame.meta.insert("title", title);
     }
     frame.simbox = Some(simbox);
     frame.insert("atoms", atoms);

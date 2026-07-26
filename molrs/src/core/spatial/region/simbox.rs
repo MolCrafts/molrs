@@ -8,7 +8,7 @@
 use super::region::Region;
 use crate::math;
 use crate::types::{F, F3, F3View, F3x3, FNx3, FNx3View, Pbc3};
-use ndarray::{Array1, Array2, ArrayView1, array};
+use ndarray::{Array1, Array2, Array3, ArrayView1, ArrayView2, array};
 
 /// Box geometry kind, detected once at construction.
 #[derive(Debug, Clone, PartialEq)]
@@ -52,6 +52,8 @@ pub enum BoxError {
     InvalidVectorLength { len: usize },
     /// A required array is not contiguous in memory.
     NonContiguous(&'static str),
+    /// Cell lengths/angles do not describe a physical triclinic cell.
+    InvalidAngles,
 }
 
 impl SimBox {
@@ -117,6 +119,71 @@ impl SimBox {
         Self::new(h, origin, pbc)
     }
 
+    /// Restricted-triclinic matrix from edge lengths and angles in degrees.
+    pub fn matrix_from_lengths_angles(lengths: [F; 3], angles: [F; 3]) -> Result<F3x3, BoxError> {
+        let [a, b, c] = lengths;
+        let [alpha, beta, gamma] = angles.map(F::to_radians);
+        if [a, b, c].iter().any(|value| *value <= 0.0)
+            || [alpha, beta, gamma]
+                .iter()
+                .any(|angle| !(*angle > 0.0 && *angle < std::f64::consts::PI))
+        {
+            return Err(BoxError::InvalidAngles);
+        }
+        let (cos_a, cos_b, cos_c) = (alpha.cos(), beta.cos(), gamma.cos());
+        let xy = b * cos_c;
+        let xz = c * cos_b;
+        let ly = (b * b - xy * xy).sqrt();
+        if !ly.is_finite() || ly <= 0.0 {
+            return Err(BoxError::InvalidAngles);
+        }
+        let yz = (b * c * cos_a - xy * xz) / ly;
+        let lz2 = c * c - xz * xz - yz * yz;
+        if !lz2.is_finite() || lz2 <= 0.0 {
+            return Err(BoxError::InvalidAngles);
+        }
+        Ok(array![[a, xy, xz], [0.0, ly, yz], [0.0, 0.0, lz2.sqrt()]])
+    }
+
+    /// Restricted-triclinic matrix from diagonal sizes and `(xy, xz, yz)` tilts.
+    pub fn matrix_from_lengths_tilts(lengths: [F; 3], tilts: [F; 3]) -> F3x3 {
+        array![
+            [lengths[0], tilts[0], tilts[1]],
+            [0.0, lengths[1], tilts[2]],
+            [0.0, 0.0, lengths[2]],
+        ]
+    }
+
+    /// Convert a general cell matrix to LAMMPS restricted-triclinic form.
+    pub fn restricted_matrix(matrix: FNx3View<'_>) -> Result<F3x3, BoxError> {
+        if matrix.dim() != (3, 3) {
+            return Err(BoxError::InvalidMatrixShape {
+                rows: matrix.nrows(),
+                cols: matrix.ncols(),
+            });
+        }
+        let a = matrix.column(0).to_owned();
+        let b = matrix.column(1).to_owned();
+        let c = matrix.column(2).to_owned();
+        let ax = math::norm3(&a);
+        if ax <= 0.0 {
+            return Err(BoxError::SingularCell);
+        }
+        let ua = &a / ax;
+        let bx = b.dot(&ua);
+        let cross_ab = math::cross3(&a, &b);
+        let cross_norm = math::norm3(&cross_ab);
+        if cross_norm <= 0.0 {
+            return Err(BoxError::SingularCell);
+        }
+        let by = math::norm3(&math::cross3(&ua, &b));
+        let uab = &cross_ab / cross_norm;
+        let cx = c.dot(&ua);
+        let cy = c.dot(&math::cross3(&uab, &ua));
+        let cz = c.dot(&uab);
+        Ok(array![[ax, bx, cx], [0.0, by, cy], [0.0, 0.0, cz]])
+    }
+
     /// Create a non-periodic (free-boundary) box enclosing all points.
     ///
     /// Computes the axis-aligned bounding box of `points` and adds `padding`
@@ -156,6 +223,39 @@ impl SimBox {
             (max[2] - min[2] + 2.0 * padding).max(padding),
         ];
         Self::ortho(lengths, origin, [false, false, false])
+    }
+
+    /// Create a tight orthorhombic box around a point cloud.
+    ///
+    /// Unlike [`free`](Self::free), padding is specified per axis and may be
+    /// zero. Periodicity is supplied by the caller instead of being forced to
+    /// free-boundary semantics.
+    pub fn from_bounds(points: FNx3View<'_>, padding: [F; 3], pbc: Pbc3) -> Result<Self, BoxError> {
+        if points.nrows() == 0 {
+            return Err(BoxError::InvalidVectorLength { len: 0 });
+        }
+        if padding.iter().any(|value| *value < 0.0) {
+            return Err(BoxError::InvalidVectorLength { len: 0 });
+        }
+        let mut min = [points[[0, 0]], points[[0, 1]], points[[0, 2]]];
+        let mut max = min;
+        for point in points.rows().into_iter().skip(1) {
+            for d in 0..3 {
+                min[d] = min[d].min(point[d]);
+                max[d] = max[d].max(point[d]);
+            }
+        }
+        let origin = array![
+            min[0] - padding[0],
+            min[1] - padding[1],
+            min[2] - padding[2]
+        ];
+        let lengths = array![
+            max[0] - min[0] + 2.0 * padding[0],
+            max[1] - min[1] + 2.0 * padding[1],
+            max[2] - min[2] + 2.0 * padding[2]
+        ];
+        Self::ortho(lengths, origin, pbc)
     }
 
     /// Create a non-periodic (free-boundary) box enclosing all points, reading
@@ -266,6 +366,20 @@ impl SimBox {
         array![math::norm3(&a), math::norm3(&b), math::norm3(&c)]
     }
 
+    /// Lattice angles `[alpha, beta, gamma]` in degrees.
+    pub fn angles(&self) -> F3 {
+        let a = self.lattice(0);
+        let b = self.lattice(1);
+        let c = self.lattice(2);
+        let angle = |u: &F3, v: &F3| {
+            (u.dot(v) / (math::norm3(u) * math::norm3(v)))
+                .clamp(-1.0, 1.0)
+                .acos()
+                .to_degrees()
+        };
+        array![angle(&b, &c), angle(&a, &c), angle(&a, &b)]
+    }
+
     /// Nearest plane distance (half the box size along each axis)
     /// For triclinic boxes, this is the perpendicular distance to each face
     pub fn nearest_plane_distance(&self) -> F3 {
@@ -324,46 +438,32 @@ impl SimBox {
         }
     }
 
-    /// Fractional coordinates returned as `[F; 3]` (zero-alloc hot path).
+    /// Fractional coordinates **without** the wrap into `[0, 1)`.
     ///
-    /// Equivalent to [`make_fractional_fast`](Self::make_fractional_fast) but
-    /// avoids the `Array1<F>` heap allocation by returning a stack array.
-    /// Use in tight inner loops (neighbor-list cell assignment, etc.).
-    #[inline(always)]
-    pub fn make_fractional_fast_arr(&self, r: F3View<'_>) -> [F; 3] {
-        match &self.kind {
-            BoxKind::Ortho { inv_len, .. } => {
-                let fx = (r[0] - self.origin[0]) * inv_len[0];
-                let fy = (r[1] - self.origin[1]) * inv_len[1];
-                let fz = (r[2] - self.origin[2]) * inv_len[2];
-                [fx - fx.floor(), fy - fy.floor(), fz - fz.floor()]
-            }
-            BoxKind::Triclinic => {
-                let f = self.make_fractional(r);
-                [f[0], f[1], f[2]]
-            }
-        }
-    }
-
-    /// Fractional coordinates from a `[F; 3]` point (zero-alloc hot path).
+    /// [`make_fractional_fast_arr3`](Self::make_fractional_fast_arr3) folds
+    /// every axis back into the primitive cell unconditionally, which is right
+    /// for a fully periodic box but destroys the information a caller needs on
+    /// a **non-periodic** axis: a point above the box must stay above it, so
+    /// that a cell-list assignment can clamp it to the edge cell instead of
+    /// wrapping it to the opposite face. Callers that dispatch on
+    /// [`pbc`](Self::pbc) per axis — see `CellGrid` — start from this raw value
+    /// and apply wrap or clamp themselves.
     ///
-    /// Byte-for-byte mirror of
-    /// [`make_fractional_fast_arr`](Self::make_fractional_fast_arr) — same
-    /// formula, same rounding — but takes a stack `[F; 3]` instead of an
-    /// `ArrayView1`. Lets SoA hot loops (column-major neighbor-list cell
-    /// assignment) avoid constructing an ndarray view per point.
+    /// `make_fractional_fast_arr3(r)` is exactly this followed by
+    /// `f - f.floor()` per component, so the two agree bit-for-bit on any point
+    /// inside the cell.
     #[inline(always)]
-    pub fn make_fractional_fast_arr3(&self, r: [F; 3]) -> [F; 3] {
+    pub fn make_fractional_raw_arr3(&self, r: [F; 3]) -> [F; 3] {
         match &self.kind {
-            BoxKind::Ortho { inv_len, .. } => {
-                let fx = (r[0] - self.origin[0]) * inv_len[0];
-                let fy = (r[1] - self.origin[1]) * inv_len[1];
-                let fz = (r[2] - self.origin[2]) * inv_len[2];
-                [fx - fx.floor(), fy - fy.floor(), fz - fz.floor()]
-            }
+            BoxKind::Ortho { inv_len, .. } => [
+                (r[0] - self.origin[0]) * inv_len[0],
+                (r[1] - self.origin[1]) * inv_len[1],
+                (r[2] - self.origin[2]) * inv_len[2],
+            ],
             BoxKind::Triclinic => {
-                let rv = ArrayView1::from_shape(3, &r).expect("make_fractional_fast_arr3 shape");
-                let f = self.make_fractional(rv);
+                let rv = ArrayView1::from_shape(3, &r).expect("make_fractional_raw_arr3 shape");
+                let dr = &rv - &self.origin.view();
+                let f = self.inv.dot(&dr);
                 [f[0], f[1], f[2]]
             }
         }
@@ -372,6 +472,42 @@ impl SimBox {
     /// Convert fractional coordinates to Cartesian coordinates
     pub fn make_cartesian(&self, frac: F3View<'_>) -> F3 {
         &self.origin + &self.h.dot(&frac)
+    }
+
+    /// A detached, `Copy` minimum-image kernel.
+    ///
+    /// [`shortest_vector_impl`](Self::shortest_vector_impl) needs a `&SimBox`,
+    /// which is awkward for a caller whose hot loop already holds the owning
+    /// structure mutably: it either clones the box — two `Array2` allocations,
+    /// per evaluation — or restructures its borrows. `Mic` lifts the convention
+    /// out as a plain value with everything it needs on the stack, so it can be
+    /// captured once and carried into the loop.
+    ///
+    /// Bit-identical to `shortest_vector_impl`: both dispatch to the same
+    /// arithmetic.
+    pub fn mic(&self) -> Mic {
+        match &self.kind {
+            BoxKind::Ortho { len, inv_len } => Mic::Ortho {
+                len: [len[0], len[1], len[2]],
+                inv_len: [inv_len[0], inv_len[1], inv_len[2]],
+                pbc: self.pbc(),
+            },
+            BoxKind::Triclinic => {
+                let mut h = [0.0; 9];
+                let mut inv = [0.0; 9];
+                for i in 0..3 {
+                    for j in 0..3 {
+                        h[3 * i + j] = self.h[[i, j]];
+                        inv[3 * i + j] = self.inv[[i, j]];
+                    }
+                }
+                Mic::Triclinic {
+                    h,
+                    inv,
+                    pbc: self.pbc(),
+                }
+            }
+        }
     }
 
     /// Hot-loop MIC kernel: takes and returns `[F; 3]`, zero allocation.
@@ -403,15 +539,31 @@ impl SimBox {
                 // General triclinic path: fold the displacement through
                 // fractional coords and wrap each periodic axis to
                 // `[-0.5, 0.5)`.
-                let dr_cart = array![b[0] - a[0], b[1] - a[1], b[2] - a[2]];
-                let mut dr_frac = self.inv.dot(&dr_cart);
-                for d in 0..3 {
-                    if self.pbc[d] {
-                        dr_frac[d] -= dr_frac[d].round();
+                //
+                // Written out on the stack rather than as `inv.dot(dr)` /
+                // `h.dot(frac)`. Those allocate an `Array1` each, and this
+                // kernel sits in the innermost pair loop of every caller — a
+                // packer evaluates it millions of times per objective
+                // evaluation, where two heap allocations per pair dominate the
+                // arithmetic outright. Summation order matches ndarray's
+                // matrix-vector product (k ascending), so the result is
+                // bit-identical to the allocating form.
+                let d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+                let mut f = [
+                    self.inv[[0, 0]] * d[0] + self.inv[[0, 1]] * d[1] + self.inv[[0, 2]] * d[2],
+                    self.inv[[1, 0]] * d[0] + self.inv[[1, 1]] * d[1] + self.inv[[1, 2]] * d[2],
+                    self.inv[[2, 0]] * d[0] + self.inv[[2, 1]] * d[1] + self.inv[[2, 2]] * d[2],
+                ];
+                for (fk, &periodic) in f.iter_mut().zip(self.pbc.iter()) {
+                    if periodic {
+                        *fk -= fk.round();
                     }
                 }
-                let v = self.h.dot(&dr_frac);
-                [v[0], v[1], v[2]]
+                [
+                    self.h[[0, 0]] * f[0] + self.h[[0, 1]] * f[1] + self.h[[0, 2]] * f[2],
+                    self.h[[1, 0]] * f[0] + self.h[[1, 1]] * f[1] + self.h[[1, 2]] * f[2],
+                    self.h[[2, 0]] * f[0] + self.h[[2, 1]] * f[1] + self.h[[2, 2]] * f[2],
+                ]
             }
         }
     }
@@ -514,6 +666,57 @@ impl SimBox {
         out
     }
 
+    /// Row-wise minimum-image distances between equally sized point arrays.
+    pub fn distances(&self, points1: FNx3View<'_>, points2: FNx3View<'_>) -> Array1<F> {
+        assert_eq!(points1.raw_dim(), points2.raw_dim());
+        let values = points1
+            .rows()
+            .into_iter()
+            .zip(points2.rows())
+            .map(|(a, b)| {
+                let dr = self.shortest_vector_impl([a[0], a[1], a[2]], [b[0], b[1], b[2]]);
+                (dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2]).sqrt()
+            })
+            .collect();
+        Array1::from_vec(values)
+    }
+
+    /// All pairwise minimum-image displacement vectors (`points2 - points1`).
+    pub fn pairwise_delta(&self, points1: FNx3View<'_>, points2: FNx3View<'_>) -> Array3<F> {
+        let mut out = Array3::zeros((points1.nrows(), points2.nrows(), 3));
+        for (i, a) in points1.rows().into_iter().enumerate() {
+            for (j, b) in points2.rows().into_iter().enumerate() {
+                let dr = self.shortest_vector_impl([a[0], a[1], a[2]], [b[0], b[1], b[2]]);
+                for d in 0..3 {
+                    out[[i, j, d]] = dr[d];
+                }
+            }
+        }
+        out
+    }
+
+    /// All pairwise minimum-image distances.
+    pub fn pairwise_distances(&self, points1: FNx3View<'_>, points2: FNx3View<'_>) -> Array2<F> {
+        let mut out = Array2::zeros((points1.nrows(), points2.nrows()));
+        for (i, a) in points1.rows().into_iter().enumerate() {
+            for (j, b) in points2.rows().into_iter().enumerate() {
+                let dr = self.shortest_vector_impl([a[0], a[1], a[2]], [b[0], b[1], b[2]]);
+                out[[i, j]] = (dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2]).sqrt();
+            }
+        }
+        out
+    }
+
+    /// Return a box with its cell matrix right-multiplied by a transform.
+    pub fn transformed(&self, transformation: &F3x3) -> Result<Self, BoxError> {
+        Self::new_cell(
+            self.h.dot(transformation),
+            self.origin.clone(),
+            self.pbc,
+            self.cell_defined,
+        )
+    }
+
     /// Wrap Cartesian points into the unit cell according to PBC
     pub fn wrap(&self, xyz: FNx3View<'_>) -> FNx3 {
         let mut frac = self.to_frac(xyz);
@@ -528,20 +731,53 @@ impl SimBox {
         self.to_cart(frac.view())
     }
 
+    /// Integer periodic images for Cartesian points.
+    pub fn images(&self, xyz: FNx3View<'_>) -> Array2<i64> {
+        let frac = self.to_frac(xyz);
+        let mut images = Array2::zeros((frac.nrows(), 3));
+        for i in 0..frac.nrows() {
+            for d in 0..3 {
+                if self.pbc[d] {
+                    images[[i, d]] = (frac[[i, d]] + 1e-8).floor() as i64;
+                }
+            }
+        }
+        images
+    }
+
+    /// Reconstruct unwrapped coordinates from wrapped points and image flags.
+    pub fn unwrap(&self, xyz: FNx3View<'_>, images: ArrayView2<'_, i64>) -> FNx3 {
+        assert_eq!(xyz.raw_dim(), images.raw_dim());
+        assert_eq!(xyz.ncols(), 3);
+        let mut result = xyz.to_owned();
+        for i in 0..xyz.nrows() {
+            let image = array![
+                images[[i, 0]] as F,
+                images[[i, 1]] as F,
+                images[[i, 2]] as F,
+            ];
+            let shift = self.h.dot(&image);
+            for d in 0..3 {
+                result[[i, d]] += shift[d];
+            }
+        }
+        result
+    }
+
     pub fn get_corners(&self) -> FNx3 {
-        let l = self.lengths();
-        let (ox, oy, oz) = (self.origin[0], self.origin[1], self.origin[2]);
-        let (lx, ly, lz) = (l[0], l[1], l[2]);
-        array![
-            [ox, oy, oz],
-            [ox + lx, oy, oz],
-            [ox + lx, oy + ly, oz],
-            [ox, oy + ly, oz],
-            [ox, oy, oz + lz],
-            [ox + lx, oy, oz + lz],
-            [ox + lx, oy + ly, oz + lz],
-            [ox, oy + ly, oz + lz],
-        ]
+        self.to_cart(
+            array![
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [1.0, 1.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+                [1.0, 0.0, 1.0],
+                [1.0, 1.0, 1.0],
+                [0.0, 1.0, 1.0],
+            ]
+            .view(),
+        )
     }
 }
 
@@ -565,6 +801,84 @@ impl Region for SimBox {
         let dr = &r - &self.origin.view();
         let frac = self.inv.dot(&dr);
         (0..3).all(|d| frac[d] >= 0.0 && frac[d] < 1.0)
+    }
+}
+
+/// Minimum-image convention as a standalone `Copy` value.
+///
+/// Produced by [`SimBox::mic`]. Carries no periodicity of its own beyond the
+/// flags captured at construction, so a box that changes shape needs a fresh
+/// one — which is the point: it is meant to be captured once per evaluation and
+/// read many times.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Mic {
+    /// No axis wraps: displacements pass through untouched.
+    Free,
+    Ortho {
+        len: [F; 3],
+        inv_len: [F; 3],
+        pbc: [bool; 3],
+    },
+    Triclinic {
+        /// Row-major 3x3 lattice, columns are the lattice vectors.
+        h: [F; 9],
+        /// Row-major 3x3 inverse lattice.
+        inv: [F; 9],
+        pbc: [bool; 3],
+    },
+}
+
+impl Mic {
+    /// Minimum image of a displacement.
+    ///
+    /// Takes the displacement rather than two points: the convention depends
+    /// only on the separation, and callers in pair loops already have it.
+    #[inline(always)]
+    pub fn apply(&self, d: [F; 3]) -> [F; 3] {
+        match self {
+            Mic::Free => d,
+            Mic::Ortho { len, inv_len, pbc } => {
+                let mut dr = d;
+                for k in 0..3 {
+                    if pbc[k] {
+                        dr[k] -= (dr[k] * inv_len[k]).round() * len[k];
+                    }
+                }
+                dr
+            }
+            Mic::Triclinic { h, inv, pbc } => {
+                let mut f = [
+                    inv[0] * d[0] + inv[1] * d[1] + inv[2] * d[2],
+                    inv[3] * d[0] + inv[4] * d[1] + inv[5] * d[2],
+                    inv[6] * d[0] + inv[7] * d[1] + inv[8] * d[2],
+                ];
+                for (fk, &periodic) in f.iter_mut().zip(pbc.iter()) {
+                    if periodic {
+                        *fk -= fk.round();
+                    }
+                }
+                [
+                    h[0] * f[0] + h[1] * f[1] + h[2] * f[2],
+                    h[3] * f[0] + h[4] * f[1] + h[5] * f[2],
+                    h[6] * f[0] + h[7] * f[1] + h[8] * f[2],
+                ]
+            }
+        }
+    }
+
+    /// Collapse to [`Mic::Free`] when no axis wraps, so the hot path is a
+    /// single match arm instead of three predictable-but-present branches.
+    #[inline]
+    pub fn simplified(self) -> Self {
+        let pbc = match self {
+            Mic::Free => return self,
+            Mic::Ortho { pbc, .. } | Mic::Triclinic { pbc, .. } => pbc,
+        };
+        if pbc.iter().any(|&p| p) {
+            self
+        } else {
+            Mic::Free
+        }
     }
 }
 
@@ -846,28 +1160,78 @@ mod tests {
     }
 
     #[test]
-    fn make_fractional_fast_arr3_matches_arr_bitwise() {
-        // Both ortho (fast path) and triclinic (general path) must match the
-        // `ArrayView1` helper to the bit.
+    fn mic_matches_the_borrowed_kernel_on_both_box_kinds() {
+        // `Mic` exists so a caller can avoid holding a `&SimBox`; it must not
+        // become a second, drifting definition of the convention.
         let ortho = SimBox::ortho(
-            array![2.0, 3.0, 4.0],
+            array![10.0, 11.0, 12.0],
             array![0.5, -1.0, 2.0],
-            [true, true, true],
+            [true, false, true],
         )
         .unwrap();
         let tri = SimBox::new(
-            array![[2.0, 1.0, 0.5], [0.0, 3.0, 0.7], [0.0, 0.0, 4.0]],
-            array![0.1, 0.2, 0.3],
-            [true, true, true],
+            SimBox::matrix_from_lengths_angles([10.0, 11.0, 12.0], [70.0, 80.0, 65.0]).unwrap(),
+            array![0.3, -0.2, 1.1],
+            [true, true, false],
         )
         .unwrap();
-        let pt = [1.3 as F, -0.7, 5.2];
-        let pv = array![pt[0], pt[1], pt[2]];
+
         for bx in [&ortho, &tri] {
-            let a = bx.make_fractional_fast_arr(pv.view());
-            let b = bx.make_fractional_fast_arr3(pt);
+            let mic = bx.mic();
+            for (a, b) in [
+                ([0.0 as F, 0.0, 0.0], [9.0 as F, 1.0, -3.0]),
+                ([1.5, -2.5, 3.5], [-7.25, 8.125, 0.0625]),
+                ([4.0, 4.0, 4.0], [4.0, 4.0, 4.0]),
+            ] {
+                let want = bx.shortest_vector_impl(a, b);
+                let got = mic.apply([b[0] - a[0], b[1] - a[1], b[2] - a[2]]);
+                for d in 0..3 {
+                    assert_eq!(got[d], want[d], "component {d} for {a:?} -> {b:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_box_with_no_periodic_axis_simplifies_to_free() {
+        let free = SimBox::cube(10.0, array![0.0, 0.0, 0.0], [false; 3]).unwrap();
+        assert_eq!(free.mic().simplified(), Mic::Free);
+        let d = [123.0 as F, -456.0, 789.0];
+        assert_eq!(Mic::Free.apply(d), d);
+
+        let periodic = SimBox::cube(10.0, array![0.0, 0.0, 0.0], [false, true, false]).unwrap();
+        assert_ne!(periodic.mic().simplified(), Mic::Free);
+    }
+
+    #[test]
+    fn triclinic_mic_matches_the_allocating_matrix_form() {
+        // The stack-arithmetic kernel must agree bit-for-bit with the
+        // `inv.dot(dr)` / `h.dot(frac)` formulation it replaced; ndarray sums
+        // a matrix-vector product with k ascending, and so does the kernel.
+        let bx = SimBox::new(
+            SimBox::matrix_from_lengths_angles([10.0, 11.0, 12.0], [70.0, 80.0, 65.0]).unwrap(),
+            array![0.3, -0.2, 1.1],
+            [true, true, false],
+        )
+        .unwrap();
+
+        let pts = [
+            ([0.0 as F, 0.0, 0.0], [9.0 as F, 1.0, -3.0]),
+            ([1.5, -2.5, 3.5], [-7.25, 8.125, 0.0625]),
+            ([4.0, 4.0, 4.0], [4.0, 4.0, 4.0]),
+        ];
+        for (a, b) in pts {
+            let dr_cart = array![b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+            let mut dr_frac = bx.inv.dot(&dr_cart);
             for d in 0..3 {
-                assert_eq!(a[d], b[d], "frac bitwise");
+                if bx.pbc[d] {
+                    dr_frac[d] -= dr_frac[d].round();
+                }
+            }
+            let want = bx.h.dot(&dr_frac);
+            let got = bx.shortest_vector_impl(a, b);
+            for d in 0..3 {
+                assert_eq!(got[d], want[d], "component {d} for {a:?} -> {b:?}");
             }
         }
     }

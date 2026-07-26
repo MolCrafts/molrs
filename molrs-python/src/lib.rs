@@ -15,8 +15,14 @@
 //! | `NeighborQuery`      | [`PyNeighborQuery`]| Spatial neighbor query (freud-style API)   |
 //! | `NeighborList`       | [`PyNeighborList`]| Query result with pair indices + distances |
 //! | `Atomistic`          | [`PyAtomistic`]   | All-atom molecular graph                   |
-//! | `MMFFTypifier`       | [`PyMMFFTypifier`]| MMFF94 atom-type assignment                |
+//! | `Perceive`           | [`PyPerceive`]    | Chemical perception (graph in / graph out) |
+//! | `MMFF94Typifier`     | [`PyMMFF94Typifier`]| MMFF94 atom-type assignment              |
+//! | `MMFF94STypifier`    | [`PyMMFF94STypifier`]| MMFF94s (static) atom-type assignment   |
 //! | `OPLSAATypifier`     | [`PyOPLSAATypifier`]| OPLS-AA atom-type + bonded assignment    |
+//! | `AtdTypifier`        | [`PyAtdTypifier`] | antechamber atom types (7 `-at` tables)    |
+//! | `BccModel`           | [`PyBccModel`]    | AM1-BCC / ABCG2 bond-charge corrections    |
+//! | `MullikenModel`      | [`PyMullikenModel`]| QM Mulliken charges, unchanged            |
+//! | `GasteigerModel`     | [`PyGasteigerModel`]| Gasteiger / PEOE charges (no QM input)   |
 //! | `Potentials`         | [`PyPotentials`]  | Compiled energy/force evaluator            |
 //! | `RDF` / `MSD` / `Cluster` |              | Structural analysis                        |
 //!
@@ -39,23 +45,35 @@ use crate::core::spatial::linkedcell::{PyLinkedCell, PyNeighborList, PyNeighborQ
 use crate::core::spatial::region::{PyCuboid, PyHollowSphere, PyRegion, PySphere};
 use crate::core::spatial::simbox::PyBox;
 use crate::core::store::block::PyBlock;
-use crate::core::store::frame::PyFrame;
+use crate::core::store::frame::{PyFrame, PyMetaValue};
 use crate::core::store::trajectory::{PyScalarObservable, PyTrajectory, PyVectorObservable};
+use crate::core::system::element::PyElement;
 use crate::core::system::molgraph::{
-    PyAtomistic, PyCoarseGrain, PyGraph, PyReaction, PySmartsMatch, PySmartsPattern,
+    PyAtomistic, PyCoarseGrain, PyExtractedSubgraph, PyGraph, PyReaction, PySmartsMatch,
+    PySmartsPattern,
 };
 use crate::core::system::molgraph::{
-    add_hydrogens, compute_gasteiger_charges, find_rings, perceive_aromaticity, rotate, scale,
-    translate,
+    add_hydrogens, align_direction, compute_gasteiger_charges, find_rings, perceive_aromaticity,
+    rotate, scale, translate,
 };
+use crate::core::units::{PyQuantity, PyUnit, PyUnitRegistry};
 
 mod io;
+
+// Chemical perception: one layer above `core`, mirroring `molrs::perceive`.
+mod perceive;
+use crate::perceive::PyPerceive;
 
 mod conformer;
 use conformer::{PyConformer, PyConformerReport, PyConformerStageReport};
 
 mod ff;
-use ff::{PyForceField, PyLBFGS, PyMMFFTypifier, PyOPLSAATypifier, PyOptReport, PyPotentials};
+use ff::atd::PyAtdTypifier;
+use ff::charge::{PyBccModel, PyGasteigerModel, PyMullikenModel};
+use ff::{
+    PyForceField, PyLBFGS, PyMMFF94STypifier, PyMMFF94Typifier, PyOPLSAATypifier, PyOptReport,
+    PyPotentials, PyTypifier,
+};
 
 mod compute;
 use compute::{
@@ -108,7 +126,8 @@ fn register_keys(parent: &Bound<'_, PyModule>) -> PyResult<()> {
 /// Registered classes and free functions are listed in the module-level
 /// documentation above.
 #[pymodule]
-fn molrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
+#[pyo3(name = "_lib")]
+fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // SimBox + neighbors
     m.add_class::<PyBox>()?;
     m.add_class::<PyLinkedCell>()?;
@@ -120,10 +139,21 @@ fn molrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
         "BlockDtypeError",
         m.py().get_type::<error::BlockDtypeError>(),
     )?;
+    m.add("UnitsError", m.py().get_type::<error::UnitsError>())?;
 
     // Block + Frame
     m.add_class::<PyBlock>()?;
+    m.add_class::<PyMetaValue>()?;
     m.add_class::<PyFrame>()?;
+    m.add(
+        "FRAME_SCHEMA_VERSION",
+        ::molrs::store::frame::FRAME_SCHEMA_VERSION,
+    )?;
+
+    // Native units
+    m.add_class::<PyUnit>()?;
+    m.add_class::<PyQuantity>()?;
+    m.add_class::<PyUnitRegistry>()?;
 
     // I/O + SMILES
     // Readers
@@ -171,9 +201,11 @@ fn molrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyRegion>()?;
 
     // Molecular graph hierarchy (base before subclasses)
+    m.add_class::<PyElement>()?;
     m.add_class::<PyGraph>()?;
     m.add_class::<PyAtomistic>()?;
     m.add_class::<PyCoarseGrain>()?;
+    m.add_class::<PyExtractedSubgraph>()?;
     m.add_class::<PySmartsMatch>()?;
     m.add_class::<PySmartsPattern>()?;
     m.add_class::<PyReaction>()?;
@@ -182,10 +214,14 @@ fn molrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(translate, m)?)?;
     m.add_function(wrap_pyfunction!(rotate, m)?)?;
     m.add_function(wrap_pyfunction!(scale, m)?)?;
+    m.add_function(wrap_pyfunction!(align_direction, m)?)?;
     m.add_function(wrap_pyfunction!(perceive_aromaticity, m)?)?;
     m.add_function(wrap_pyfunction!(add_hydrogens, m)?)?;
     m.add_function(wrap_pyfunction!(find_rings, m)?)?;
     m.add_function(wrap_pyfunction!(compute_gasteiger_charges, m)?)?;
+
+    // Chemical perception, as a builder: graph in / graph out, non-mutating.
+    m.add_class::<PyPerceive>()?;
 
     // Field-name convention (`molrs.keys.X`, `molrs.keys.ELEMENT`, …)
     register_keys(m)?;
@@ -197,9 +233,19 @@ fn molrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Force field
     m.add_class::<PyForceField>()?;
-    m.add_class::<PyMMFFTypifier>()?;
+    m.add_class::<ff::PyFragmentScaling>()?;
+    m.add_class::<PyTypifier>()?;
+    m.add_class::<PyMMFF94Typifier>()?;
+    m.add_class::<PyMMFF94STypifier>()?;
     m.add_class::<PyOPLSAATypifier>()?;
+    m.add_class::<PyAtdTypifier>()?;
     m.add_class::<PyPotentials>()?;
+
+    // Charge models — Python's first native AM1-BCC. One calling convention:
+    // `needs_equivalencing()` + `assign(mol, qm=None)`; `BccModel` adds `correct`.
+    m.add_class::<PyBccModel>()?;
+    m.add_class::<PyMullikenModel>()?;
+    m.add_class::<PyGasteigerModel>()?;
     m.add_class::<PyOptReport>()?;
     m.add_class::<PyLBFGS>()?;
     m.add_function(wrap_pyfunction!(ff::read_forcefield_xml_py, m)?)?;
@@ -210,7 +256,9 @@ fn molrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(ff::read_lammps_forcefield_str_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::intramolecular_pairs_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::extract_coords_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ff::build_mmff_potentials_py, m)?)?;
+    m.add_function(wrap_pyfunction!(ff::compute_k_ij_py, m)?)?;
+    m.add_function(wrap_pyfunction!(ff::fragment_scaling_data_py, m)?)?;
+    m.add_function(wrap_pyfunction!(ff::scale_lj_py, m)?)?;
 
     // Compute analyses
     m.add_class::<PyRDF>()?;

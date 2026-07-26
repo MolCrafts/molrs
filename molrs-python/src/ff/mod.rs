@@ -1,32 +1,51 @@
-//! Python wrappers for MMFF94 force-field typification and compiled potentials.
+//! Python wrappers for MMFF force-field typification and compiled potentials.
 //!
 //! The workflow is:
 //!
-//! 1. Create an [`PyMMFFTypifier`] (loads embedded MMFF94 parameters).
-//! 2. Call [`PyMMFFTypifier::typify`] to assign atom types, producing a typed
-//!    [`PyFrame`].
-//! 3. Call [`PyMMFFTypifier::build`] to compile potentials directly from an
-//!    [`PyAtomistic`] graph.
+//! 1. Create a typifier — [`PyMMFF94Typifier`] (MMFF94) or [`PyMMFF94STypifier`]
+//!    (MMFF94s, the "static" variant). Both load their embedded parameter set at
+//!    construction; the variant is the class, never a flag.
+//! 2. Call `typify` to assign atom types + bonded parameters, producing a typed
+//!    [`PyAtomistic`] (materialize it with `to_frame()` for a [`PyFrame`]).
+//! 3. Build the neighbour list (`molrs.intramolecular_pairs`) and compile with
+//!    `typifier.forcefield().to_potentials(frame)` — the same route every other
+//!    force field in molrs uses.
 //! 4. Use [`PyPotentials::eval`] to evaluate energy and forces on flat
 //!    coordinate arrays.
+//!
+//! There is deliberately **no** one-step `build(mol)` and no free
+//! `build_mmff_potentials(mol)`. Both existed, sat adjacent in the same namespace
+//! with nothing to tell them apart, and one of them silently omitted the entire
+//! electrostatic term (150 kcal/mol on caffeine) because no `ForceField` ever
+//! defined `pair/mmff_ele`. A typifier's contract is `typify`; compiling
+//! potentials is `ForceField.to_potentials`.
+//!
+//! The antechamber-derived bindings live in their own modules rather than here:
+//! [`atd`] (the ATD atom typifier, one engine over seven `ATOMTYPE_*.DEF` tables)
+//! and [`charge`] (the three charge models). This file is already large, and they
+//! are self-contained.
 //!
 //! # References
 //!
 //! - Halgren, T.A. (1996). J. Comput. Chem. 17, 490-519. (MMFF94 force field)
+//! - Halgren, T.A. (1999). J. Comput. Chem. 20, 720-729. (MMFF94s option)
 
+pub mod atd;
+pub mod charge;
+
+use std::collections::HashMap;
 use std::ffi::CString;
 use std::fs;
 
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyKeyError, PyNotImplementedError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyCapsule, PyDict, PyList};
+use pyo3::types::{PyCapsule, PyDict, PyList, PyTuple};
 
 use molrs::ff::ForceField;
-use molrs::ff::mmff::{MmffForceField, MmffMolProperties, MmffVariant};
-use molrs::ff::potential::{Potentials, extract_coords};
-use molrs::ff::typifier::mmff::MMFFTypifier;
+use molrs::ff::potential::{Potentials, extract_coords, write_coords};
+use molrs::ff::typifier::mmff::{MMFF94STypifier, MMFF94Typifier};
 use molrs::ff::typifier::opls::OPLSAATypifier;
-use molrs::optimize::{LBFGS, LbfgsConfig, OptReport};
+use molrs::optimize::{LBFGS, OptReport};
 use molrs_ffi::ForceFieldRef;
 
 use crate::core::store::block::PyBlock;
@@ -37,8 +56,36 @@ use crate::helpers::{NpF, py_value_err};
 use ndarray::{Array2, Array3};
 use numpy::{PyArray1, PyArray2, PyArray3, PyReadonlyArrayDyn, ToPyArray};
 
+/// Nominal Python base for every graph typifier.
+///
+/// The algorithm contract already lives in the Rust
+/// `molrs::ff::typifier::Typifier` trait. This is its Python nominal
+/// counterpart: native typifiers extend it and downstream Python typifiers may
+/// subclass it.
+#[pyclass(module = "molrs", name = "Typifier", subclass)]
+pub struct PyTypifier;
+
+#[pymethods]
+impl PyTypifier {
+    #[new]
+    #[pyo3(signature = (*_args, **_kwargs))]
+    fn new(_args: &Bound<'_, PyTuple>, _kwargs: Option<&Bound<'_, PyDict>>) -> Self {
+        // Python typifiers inherit this native nominal base and commonly expose
+        // their own ``__init__(engine, ...)``.  ``object.__new__`` accepts those
+        // subclass constructor arguments; the native base must do the same and
+        // leave interpretation to the Python ``__init__``.
+        Self
+    }
+
+    fn typify(&self, _mol: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        Err(PyNotImplementedError::new_err(
+            "Typifier.typify must be implemented by a concrete typifier",
+        ))
+    }
+}
+
 /// Outcome of a geometry optimization, exposed to Python as `molrs.OptReport`.
-#[pyclass(name = "OptReport")]
+#[pyclass(module = "molrs", name = "OptReport")]
 pub struct PyOptReport {
     inner: OptReport,
 }
@@ -100,10 +147,12 @@ impl From<OptReport> for PyOptReport {
 ///
 /// Examples
 /// --------
-/// >>> typifier = MMFFTypifier()
-/// >>> potentials = typifier.build(mol)
+/// >>> typifier = MMFF94Typifier()
+/// >>> frame = typifier.typify(mol).to_frame()
+/// >>> frame["pairs"] = molrs.intramolecular_pairs(frame)
+/// >>> potentials = typifier.forcefield().to_potentials(frame)
 /// >>> energy, forces = potentials.eval(coords)
-#[pyclass(name = "Potentials")]
+#[pyclass(module = "molrs", name = "Potentials")]
 pub struct PyPotentials {
     inner: PotBacking,
 }
@@ -134,9 +183,140 @@ impl PotBacking {
 }
 
 /// Force-field definition metadata exposed to Python as `molrs.ForceField`.
-#[pyclass(name = "ForceField", subclass)]
+#[pyclass(module = "molrs", name = "ForceField", subclass)]
 pub struct PyForceField {
     pub(crate) inner: ForceField,
+}
+
+/// CL&Pol fragment scaling data backed by the native force-field layer.
+#[pyclass(module = "molrs", name = "FragmentScaling", frozen, get_all, skip_from_py_object)]
+#[derive(Clone)]
+pub struct PyFragmentScaling {
+    name: String,
+    q: f64,
+    mu: f64,
+    alpha: f64,
+    polarizable: bool,
+}
+
+impl From<PyFragmentScaling> for molrs::ff::FragmentScaling {
+    fn from(value: PyFragmentScaling) -> Self {
+        Self {
+            name: value.name,
+            q: value.q,
+            mu: value.mu,
+            alpha: value.alpha,
+            polarizable: value.polarizable,
+        }
+    }
+}
+
+impl From<molrs::ff::FragmentScaling> for PyFragmentScaling {
+    fn from(value: molrs::ff::FragmentScaling) -> Self {
+        Self {
+            name: value.name,
+            q: value.q,
+            mu: value.mu,
+            alpha: value.alpha,
+            polarizable: value.polarizable,
+        }
+    }
+}
+
+#[pymethods]
+impl PyFragmentScaling {
+    #[new]
+    #[pyo3(signature = (name, q, mu, alpha, polarizable=false))]
+    fn new(name: String, q: f64, mu: f64, alpha: f64, polarizable: bool) -> Self {
+        Self {
+            name,
+            q,
+            mu,
+            alpha,
+            polarizable,
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!("FragmentScaling(name='{}')", self.name)
+    }
+}
+
+/// Native SAPT epsilon-scaling factor.
+#[pyfunction(name = "compute_k_ij")]
+pub fn compute_k_ij_py(
+    fr_i: PyRef<'_, PyFragmentScaling>,
+    fr_j: PyRef<'_, PyFragmentScaling>,
+    r: f64,
+) -> PyResult<f64> {
+    molrs::ff::compute_k_ij(&fr_i.clone().into(), &fr_j.clone().into(), r)
+        .map_err(py_value_err)
+}
+
+/// Return the compiled-in CL&Pol fragment table.
+#[pyfunction(name = "fragment_scaling_data")]
+pub fn fragment_scaling_data_py(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
+    let result = PyDict::new(py);
+    for (name, scaling) in molrs::ff::scale_lj::builtin_fragment_scaling() {
+        result.set_item(name, Py::new(py, PyFragmentScaling::from(scaling))?)?;
+    }
+    Ok(result)
+}
+
+/// Clone and scale LJ parameters using native COM and force-field transforms.
+#[pyfunction(name = "scale_lj")]
+#[pyo3(signature = (ff, fragments, frag_data=None, scale_sigma=false))]
+pub fn scale_lj_py(
+    py: Python<'_>,
+    ff: &Bound<'_, PyForceField>,
+    fragments: &Bound<'_, PyDict>,
+    frag_data: Option<&Bound<'_, PyDict>>,
+    scale_sigma: bool,
+) -> PyResult<Py<PyForceField>> {
+    let mut native_fragments = Vec::with_capacity(fragments.len());
+    for (label, value) in fragments.iter() {
+        let name = label.extract::<String>()?;
+        let (atom_types, coords, masses) =
+            value.extract::<(Vec<String>, Vec<[f64; 3]>, Vec<f64>)>()?;
+        native_fragments.push(molrs::ff::FragmentAtoms {
+            name,
+            atom_types,
+            coords,
+            masses,
+        });
+    }
+
+    let mut scaling = HashMap::new();
+    if let Some(data) = frag_data {
+        for (label, value) in data.iter() {
+            let item = value.extract::<PyRef<'_, PyFragmentScaling>>()?;
+            scaling.insert(label.extract::<String>()?, item.clone().into());
+        }
+    } else {
+        scaling = molrs::ff::scale_lj::builtin_fragment_scaling();
+    }
+
+    let inner = molrs::ff::scale_lj(
+        &ff.borrow().inner,
+        &native_fragments,
+        &scaling,
+        scale_sigma,
+    )
+    .map_err(|error| match error {
+        molrs::ff::ScaleLjError::MissingFragment(name) => {
+            PyKeyError::new_err(format!("no scaling data for fragment '{name}'"))
+        }
+        other => py_value_err(other),
+    })?;
+    let public = py.import("molrs")?.getattr("ForceField")?;
+    let native = py.get_type::<PyForceField>();
+    if public.is(&native) {
+        return Py::new(py, PyForceField { inner });
+    }
+    let name = inner.name.clone();
+    let object: Py<PyForceField> = public.call1((name,))?.extract()?;
+    object.borrow_mut(py).inner = inner;
+    Ok(object)
 }
 
 /// Convert an optional Python ``dict[str, float]`` of parameters into owned
@@ -234,19 +414,22 @@ impl PyPotentials {
 
 /// L-BFGS geometry optimizer, exposed as `molrs.LBFGS`.
 ///
-/// Mirrors molpy: construct with the potentials + config, then ``run`` (single
-/// or homogeneous batch, dispatched on the input rank).
+/// Construct with potentials + knobs on ``new``, then ``run`` a :class:`Frame`
+/// (primary) or a coordinate array (single / batch by rank).
 ///
 /// Examples
 /// --------
-/// >>> pots = molrs.build_mmff_potentials(mol)
-/// >>> opt = molrs.LBFGS(pots, fmax=0.05)
+/// >>> pots = molrs.MMFF94Typifier().forcefield().to_potentials(frame)
+/// >>> opt = molrs.LBFGS(pots, fmax=0.05, max_steps=500)
+/// >>> frame, report = opt.run(frame)
 /// >>> coords, report = opt.run(coords)         # (N, 3)
-/// >>> batch, reports = opt.run(batch)          # (B, N, 3)
-#[pyclass(name = "LBFGS")]
+#[pyclass(module = "molrs", name = "LBFGS")]
 pub struct PyLBFGS {
     potentials: Py<PyPotentials>,
-    cfg: LbfgsConfig,
+    fmax: f64,
+    max_steps: usize,
+    max_step: f64,
+    memory: usize,
 }
 
 #[pymethods]
@@ -262,26 +445,61 @@ impl PyLBFGS {
     ) -> Self {
         Self {
             potentials,
-            cfg: LbfgsConfig {
-                fmax,
-                max_steps,
-                max_step,
-                memory,
-            },
+            fmax,
+            max_steps,
+            max_step,
+            memory,
         }
     }
 
-    /// Relax coordinates by L-BFGS. ``(N, 3)`` / ``(3N,)`` -> single structure
-    /// returning ``((N, 3) array, OptReport)``; ``(B, N, 3)`` -> homogeneous
-    /// batch returning ``((B, N, 3) array, list[OptReport])``. Input is not
-    /// mutated.
+    /// Relax a :class:`Frame` or coordinates by L-BFGS.
+    ///
+    /// * ``Frame`` → ``(Frame, OptReport)`` (frame coordinates updated; a new
+    ///   Python frame object is returned with the minimized coords).
+    /// * ``(N, 3)`` / ``(3N,)`` → ``((N, 3) array, OptReport)``
+    /// * ``(B, N, 3)`` → ``((B, N, 3) array, list[OptReport])``
     fn run<'py>(
         &self,
         py: Python<'py>,
-        coords: PyReadonlyArrayDyn<'_, NpF>,
+        arg: &Bound<'_, PyAny>,
     ) -> PyResult<Bound<'py, PyAny>> {
+        // Frame path (primary).
+        if let Ok(frame) = arg.extract::<PyRef<'_, PyFrame>>() {
+            let mut core = frame.clone_core_frame()?;
+            let pots = self.potentials.borrow(py);
+            // Compile against this frame if deferred, then minimize with free mask.
+            let compiled;
+            let pot: &dyn molrs::ff::potential::Potential = match &pots.inner {
+                PotBacking::Compiled(p) => p,
+                PotBacking::Deferred(ff) => {
+                    compiled = ff
+                        .to_potentials(&core)
+                        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                    &compiled
+                }
+            };
+            // Borrowed one-shot on flat coords extracted from frame, then write back.
+            let mut flat = extract_coords(&core).map_err(pyo3::exceptions::PyValueError::new_err)?;
+            let report = LBFGS::minimize(
+                pot,
+                &mut flat,
+                self.fmax,
+                self.max_steps,
+                self.max_step,
+                self.memory,
+            )
+            .map_err(pyo3::exceptions::PyValueError::new_err)?;
+            write_coords(&mut core, &flat).map_err(pyo3::exceptions::PyValueError::new_err)?;
+            let out_frame = PyFrame::from_core_frame(core)?;
+            return Ok((out_frame, PyOptReport::from(report))
+                .into_pyobject(py)?
+                .into_any());
+        }
+
         let pots = self.potentials.borrow(py);
-        let arr = coords.as_array();
+        let pot = pots.inner.compiled()?;
+        let readonly = arg.extract::<PyReadonlyArrayDyn<'_, NpF>>()?;
+        let arr = readonly.as_array();
         let shape = arr.shape();
         match shape.len() {
             1 | 2 => {
@@ -292,9 +510,15 @@ impl PyLBFGS {
                         "coords has {n_elem} elements, not a multiple of 3 (expected (N, 3) or (3N,))"
                     )));
                 }
-                let report = LBFGS::new(pots.inner.compiled()?, self.cfg)
-                    .run(&mut flat)
-                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                let report = LBFGS::minimize(
+                    pot,
+                    &mut flat,
+                    self.fmax,
+                    self.max_steps,
+                    self.max_step,
+                    self.memory,
+                )
+                .map_err(pyo3::exceptions::PyValueError::new_err)?;
                 let out: Bound<'py, PyArray2<NpF>> = Array2::from_shape_vec((n_elem / 3, 3), flat)
                     .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?
                     .to_pyarray(py);
@@ -310,16 +534,24 @@ impl PyLBFGS {
                     )));
                 }
                 let (b, n) = (shape[0], shape[1]);
-                let expected = pots.inner.compiled()?.n_atoms();
+                let expected = pot.n_atoms();
                 if expected != 0 && n != expected {
                     return Err(pyo3::exceptions::PyValueError::new_err(format!(
                         "structure atom count N={n} does not match this Potentials' atom count {expected}"
                     )));
                 }
                 let mut flat: Vec<NpF> = arr.iter().copied().collect();
-                let reports = LBFGS::new(pots.inner.compiled()?, self.cfg)
-                    .run_batch(&mut flat, n, b)
-                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                let reports = LBFGS::minimize_batch(
+                    pot,
+                    &mut flat,
+                    n,
+                    b,
+                    self.fmax,
+                    self.max_steps,
+                    self.max_step,
+                    self.memory,
+                )
+                .map_err(pyo3::exceptions::PyValueError::new_err)?;
                 let out: Bound<'py, PyArray3<NpF>> = Array3::from_shape_vec((b, n, 3), flat)
                     .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?
                     .to_pyarray(py);
@@ -328,7 +560,7 @@ impl PyLBFGS {
                 Ok((out, reports).into_pyobject(py)?.into_any())
             }
             other => Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "coords must be 1-D (3N,), 2-D (N, 3), or 3-D (B, N, 3); got {other}-D"
+                "arg must be Frame, 1-D (3N,), 2-D (N, 3), or 3-D (B, N, 3); got {other}-D array"
             ))),
         }
     }
@@ -336,123 +568,151 @@ impl PyLBFGS {
     fn __repr__(&self) -> String {
         format!(
             "LBFGS(fmax={}, max_steps={}, max_step={}, memory={})",
-            self.cfg.fmax, self.cfg.max_steps, self.cfg.max_step, self.cfg.memory
+            self.fmax, self.max_steps, self.max_step, self.memory
         )
     }
 }
 
-/// MMFF94 atom-type assigner and potential builder.
+/// Bind one MMFF front door to Python.
 ///
-/// Exposed to Python as `molrs.MMFFTypifier`.
-///
-/// Loads embedded MMFF94 parameter tables at construction time. Use
-/// :meth:`typify` to assign atom types to a molecular graph, or
-/// :meth:`build` as a one-step shortcut that also compiles potentials.
-///
-/// # References
-///
-/// - Halgren, T.A. (1996). J. Comput. Chem. 17, 490-519.
-///
-/// Examples
-/// --------
-/// >>> typifier = MMFFTypifier()
-/// >>> typed = typifier.typify(mol)   # typed Atomistic
-/// >>> potentials = typifier.build(mol)  # compiled Potentials
-#[pyclass(name = "MMFFTypifier")]
-pub struct PyMMFFTypifier {
-    inner: MMFFTypifier,
+/// MMFF94 and MMFF94s are the same engine over two parameter sets, and molrs
+/// exposes them as two **named types** rather than one type with a variant flag —
+/// so the binder mirrors that shape exactly: two `#[pyclass]`es, each wrapping its
+/// own core typifier, generated from one forwarding body so they cannot drift.
+macro_rules! py_mmff_front_door {
+    (
+        $(#[$doc:meta])*
+        $py_ty:ident, $core:ty, $name:literal
+    ) => {
+        $(#[$doc])*
+        #[pyclass(module = "molrs", name = $name, extends = PyTypifier)]
+        pub struct $py_ty {
+            inner: $core,
+        }
+
+        #[pymethods]
+        impl $py_ty {
+            /// Create the typifier with its embedded parameter tables.
+            ///
+            /// Never fails: the parameter set is compiled into the extension module.
+            #[new]
+            fn new() -> (Self, PyTypifier) {
+                (
+                    Self {
+                        inner: <$core>::new(),
+                    },
+                    PyTypifier,
+                )
+            }
+
+            /// Assign MMFF atom types (and this variant's bonded parameters) to a
+            /// molecular graph.
+            ///
+            /// Parameters
+            /// ----------
+            /// mol : Atomistic
+            ///     Molecular graph with element symbols and bonds.
+            ///
+            /// Returns
+            /// -------
+            /// Atomistic
+            ///     Typed molecular graph. Call ``typed.to_frame()`` explicitly when a
+            ///     tabular representation is needed. The improper rows carry ``koop``
+            ///     (md*A*rad^-2) and the dihedral rows ``v1``/``v2``/``v3``, both
+            ///     resolved from *this* class's parameter set.
+            ///
+            /// Raises
+            /// ------
+            /// ValueError
+            ///     If atom types cannot be determined (e.g. unsupported elements).
+            fn typify(&self, py: Python<'_>, mol: &PyAtomistic) -> PyResult<Py<PyAtomistic>> {
+                let typed = self
+                    .inner
+                    .typify(mol.core())
+                    .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+                PyAtomistic::from_core(py, typed)
+            }
+
+            /// Return the underlying force-field definition.
+            ///
+            /// This is the seam to the standard compile path — the typifier
+            /// labels the graph, the force field compiles it::
+            ///
+            ///     typed = typifier.typify(mol)
+            ///     frame = typed.to_frame()
+            ///     frame["pairs"] = molrs.intramolecular_pairs(frame)
+            ///     pots  = typifier.forcefield().to_potentials(frame)
+            fn forcefield(&self) -> PyForceField {
+                PyForceField {
+                    inner: self.inner.ff().clone(),
+                }
+            }
+
+            fn __repr__(&self) -> String {
+                format!("{}(forcefield='{}')", $name, self.inner.ff().name)
+            }
+        }
+    };
 }
 
-#[pymethods]
-impl PyMMFFTypifier {
-    /// Create an MMFF94 typifier with embedded parameter tables.
+py_mmff_front_door! {
+    /// MMFF94 atom-type assigner.
     ///
-    /// Returns
-    /// -------
-    /// MMFFTypifier
+    /// Exposed to Python as `molrs.MMFF94Typifier`.
     ///
-    /// Raises
-    /// ------
-    /// RuntimeError
-    ///     If parameter initialization fails (should not happen with
-    ///     embedded data).
-    #[new]
-    fn new() -> PyResult<Self> {
-        let typifier = MMFFTypifier::mmff94().map_err(|e| {
-            pyo3::exceptions::PyRuntimeError::new_err(format!("failed to initialize MMFF94: {}", e))
-        })?;
-        Ok(Self { inner: typifier })
-    }
-
-    /// Assign MMFF94 atom types to a molecular graph.
+    /// Loads the embedded MMFF94 parameter tables at construction time. Use
+    /// :meth:`typify` to label a molecular graph (atom types, partial charges, and
+    /// the per-instance force constants the kernels read), then compile it through
+    /// :meth:`forcefield` — the standard route, shared with every other force
+    /// field in molrs.
     ///
-    /// Parameters
-    /// ----------
-    /// mol : Atomistic
-    ///     Molecular graph with element symbols and bonds.
+    /// See :class:`MMFF94STypifier` for the "static" variant used in energy
+    /// minimization.
     ///
-    /// Returns
-    /// -------
-    /// Atomistic
-    ///     Typed molecular graph. Call ``typed.to_frame()`` explicitly when a
-    ///     tabular representation is needed.
+    /// # References
     ///
-    /// Raises
-    /// ------
-    /// ValueError
-    ///     If atom types cannot be determined (e.g. unsupported elements).
-    fn typify(&self, py: Python<'_>, mol: &PyAtomistic) -> PyResult<Py<PyAtomistic>> {
-        let typed = self
-            .inner
-            .typify(mol.core())
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-        PyAtomistic::from_core(py, typed)
-    }
-
-    /// Typify and compile potentials in one step.
-    ///
-    /// Equivalent to calling :meth:`typify` followed by force-field
-    /// compilation, but avoids the intermediate :class:`Frame`.
-    ///
-    /// Parameters
-    /// ----------
-    /// mol : Atomistic
-    ///     Molecular graph with element symbols and bonds.
-    ///
-    /// Returns
-    /// -------
-    /// Potentials
-    ///     Compiled energy/force evaluator.
-    ///
-    /// Raises
-    /// ------
-    /// ValueError
-    ///     If typification or compilation fails.
+    /// - Halgren, T.A. (1996). J. Comput. Chem. 17, 490-519.
     ///
     /// Examples
     /// --------
-    /// >>> potentials = typifier.build(mol)
-    /// >>> energy, forces = potentials.eval(coords)
-    fn build(&self, mol: &PyAtomistic) -> PyResult<PyPotentials> {
-        let potentials = self
-            .inner
-            .build(mol.core())
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-        Ok(PyPotentials {
-            inner: PotBacking::Compiled(potentials),
-        })
-    }
+    /// >>> typifier = MMFF94Typifier()
+    /// >>> frame = typifier.typify(mol).to_frame()          # labels + charges
+    /// >>> frame["pairs"] = molrs.intramolecular_pairs(frame)
+    /// >>> pots = typifier.forcefield().to_potentials(frame)
+    PyMMFF94Typifier, MMFF94Typifier, "MMFF94Typifier"
+}
 
-    /// Return the underlying force-field definition.
-    fn forcefield(&self) -> PyForceField {
-        PyForceField {
-            inner: self.inner.ff().clone(),
-        }
-    }
-
-    fn __repr__(&self) -> String {
-        format!("MMFFTypifier(forcefield='{}')", self.inner.ff().name)
-    }
+py_mmff_front_door! {
+    /// MMFF94s ("static") atom-type assigner and potential builder.
+    ///
+    /// Exposed to Python as `molrs.MMFF94STypifier`.
+    ///
+    /// Identical to :class:`MMFF94Typifier` except on delocalised trivalent
+    /// nitrogen (MMFF numeric types 10 ``NC=O`` and 40 ``NC=C``), where MMFF94s
+    /// re-parameterises 11 out-of-plane rows and 42 torsion rows so the nitrogen
+    /// minimizes to a **planar** geometry — the one seen in crystal structures.
+    ///
+    /// The mechanism is the out-of-plane force constant ``koop`` (md*A*rad^-2) that
+    /// :meth:`typify` bakes onto the improper rows. The kernel evaluates
+    /// ``E_oop = 0.5 * 143.9325 * koop * chi**2`` with ``chi`` the Wilson
+    /// out-of-plane angle in radians, so ``koop > 0`` makes the planar centre an
+    /// energy minimum. MMFF94s sets it to ``+0.015`` (type 10) / ``+0.030``
+    /// (type 40); MMFF94's values on those rows run from ``-0.033`` to ``+0.004``.
+    ///
+    /// All 95 atom types, and every bond / angle / stretch-bend / vdW / charge
+    /// parameter, are shared with MMFF94 — so a molecule with no such nitrogen gets
+    /// bit-for-bit the same answer from both classes.
+    ///
+    /// # References
+    ///
+    /// - Halgren, T.A. (1999). J. Comput. Chem. 20, 720-729. (MMFF94s)
+    ///
+    /// Examples
+    /// --------
+    /// >>> typifier = MMFF94STypifier()
+    /// >>> typifier.forcefield().name
+    /// 'MMFF94s'
+    PyMMFF94STypifier, MMFF94STypifier, "MMFF94STypifier"
 }
 
 fn oplsaa_source_xml(source: Option<&Bound<'_, PyAny>>) -> PyResult<Option<String>> {
@@ -492,7 +752,7 @@ fn oplsaa_source_xml(source: Option<&Bound<'_, PyAny>>) -> PyResult<Option<Strin
 /// >>> typifier = OPLSAATypifier()
 /// >>> typed = typifier.typify(mol)        # typed Atomistic
 /// >>> potentials = typifier.build(mol)    # compiled Potentials
-#[pyclass(name = "OPLSAATypifier")]
+#[pyclass(module = "molrs", name = "OPLSAATypifier", extends = PyTypifier)]
 pub struct PyOPLSAATypifier {
     inner: OPLSAATypifier,
 }
@@ -502,7 +762,10 @@ impl PyOPLSAATypifier {
     /// Create an OPLS-AA typifier from embedded data, XML text, or an XML path.
     #[new]
     #[pyo3(signature = (source = None, *, strict = true))]
-    fn new(source: Option<&Bound<'_, PyAny>>, strict: bool) -> PyResult<Self> {
+    fn new(
+        source: Option<&Bound<'_, PyAny>>,
+        strict: bool,
+    ) -> PyResult<(Self, PyTypifier)> {
         let typifier = match oplsaa_source_xml(source)? {
             Some(xml) => OPLSAATypifier::from_xml_str(&xml)
                 .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?,
@@ -513,7 +776,7 @@ impl PyOPLSAATypifier {
             })?,
         }
         .with_strict(strict);
-        Ok(Self { inner: typifier })
+        Ok((Self { inner: typifier }, PyTypifier))
     }
 
     /// Assign OPLS-AA atom and bonded-term types to a molecular graph.
@@ -593,62 +856,6 @@ pub fn extract_coords_py<'py>(
     let coords = extract_coords(&core_frame)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
     Ok(coords.to_pyarray(py))
-}
-
-/// Build ready-to-use MMFF94 potentials for a molecule.
-///
-/// Uses the assembled :rust:`MmffForceField` energy model (the RDKit-validated
-/// MMFF94 path used by conformer generation), wrapped as a :class:`Potentials`
-/// so it can be evaluated and minimized directly. This is the recommended way
-/// to obtain potentials for :meth:`Potentials.minimize`.
-///
-/// Parameters
-/// ----------
-/// mol : Atomistic
-///     Molecular graph with element symbols, bonds, and 3D coordinates.
-/// variant : str, optional
-///     ``"MMFF94"`` (default) or ``"MMFF94s"`` (static variant).
-///
-/// Returns
-/// -------
-/// Potentials
-///     Compiled energy/force evaluator for ``mol``.
-///
-/// Raises
-/// ------
-/// ValueError
-///     If ``variant`` is unknown, or MMFF94 typing / assembly fails.
-///
-/// Examples
-/// --------
-/// >>> mol = molrs.parse_smiles("CCO").to_atomistic()
-/// >>> mol, _ = molrs.Conformer(seed=7).generate(mol)
-/// >>> pots = molrs.build_mmff_potentials(mol)
-/// >>> coords = molrs.extract_coords(molrs.MMFFTypifier().typify(mol)).reshape(-1, 3)
-/// >>> opt, report = pots.minimize(coords, fmax=0.05)
-#[pyfunction]
-#[pyo3(name = "build_mmff_potentials", signature = (mol, variant = "MMFF94"))]
-pub fn build_mmff_potentials_py(mol: &PyAtomistic, variant: &str) -> PyResult<PyPotentials> {
-    let var = match variant.to_ascii_uppercase().as_str() {
-        "MMFF94" => MmffVariant::Mmff94,
-        "MMFF94S" => MmffVariant::Mmff94s,
-        other => {
-            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "unknown MMFF variant '{other}' (expected 'MMFF94' or 'MMFF94s')"
-            )));
-        }
-    };
-    let core = mol.core();
-    let props = MmffMolProperties::compute(core, var)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-    let ff = MmffForceField::build(core, &props)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-    let mut pots = Potentials::new();
-    pots.set_n_atoms(core.n_atoms());
-    pots.push(Box::new(ff));
-    Ok(PyPotentials {
-        inner: PotBacking::Compiled(pots),
-    })
 }
 
 /// Read a force-field definition from an XML file.

@@ -3,7 +3,7 @@
 //! Parses a LAMMPS force-field include — `pair_style`/`pair_coeff`,
 //! `bond_style harmonic`, `angle_style harmonic`, `dihedral_style fourier`
 //! (+ optional `improper_style harmonic`) with **type-label** coefficients — into
-//! a molrs [`ForceField`](crate::ff::forcefield::ForceField) in molrs units
+//! a molrs [`ForceField`] in molrs units
 //! (Å, kcal/mol, radians, e). This is the format the molpy
 //! `LAMMPSForceFieldWriter` emits, e.g.:
 //!
@@ -41,7 +41,9 @@
 //! (`special_bonds amber`): LJ ×0.5, Coulomb ×0.8333.
 
 use super::ForceFieldReader;
+use crate::ff::constants::VACUUM_DIELECTRIC;
 use crate::ff::forcefield::{ForceField, SpecialBonds};
+use molrs::units::constants::COULOMB_REAL;
 
 /// AMBER/GAFF 1-4 Lennard-Jones scale (`special_bonds amber`).
 const AMBER_LJ14: f64 = 0.5;
@@ -72,6 +74,8 @@ impl ForceFieldReader for LammpsFfReader {
         // coul/cut pair (mirroring the OPLS reader): the coul charges come from
         // the frame, so only the LJ self-terms are transcribed here.
         let mut pair_rows: Vec<(String, f64, f64)> = Vec::new();
+        // Cutoffs declared on the `pair_style` line, kept for `build_pairs`.
+        let mut cutoffs: (Option<f64>, Option<f64>) = (None, None);
 
         for (lineno, raw) in text.lines().enumerate() {
             let line = strip_comment(raw).trim();
@@ -86,7 +90,7 @@ impl ForceFieldReader for LammpsFfReader {
             match kw {
                 // Style declarations: validate the kernel is one we translate,
                 // then create the (empty) style its coeff lines append to.
-                "pair_style" => require_pair_style(&rest, &where_)?,
+                "pair_style" => cutoffs = require_pair_style(&rest, &where_)?,
                 "bond_style" => {
                     require_kernel("bond_style", &rest, "harmonic", &where_)?;
                     ff.def_bondstyle("harmonic");
@@ -116,26 +120,82 @@ impl ForceFieldReader for LammpsFfReader {
             }
         }
 
-        build_pairs(&mut ff, &pair_rows);
+        build_pairs(&mut ff, &pair_rows, cutoffs);
         Ok(ff)
     }
 }
 
 // ── pair ──────────────────────────────────────────────────────────────────────
 
-fn require_pair_style(rest: &[&str], where_: &dyn Fn() -> String) -> Result<(), String> {
+/// Validate the pair kernel and return its `(lj, coulomb)` cutoffs in Å.
+///
+/// Three spellings all map to the reader's lj/cut + coul/cut pair:
+///
+/// - the combined kernel — `pair_style lj/cut/coul/cut 10.0 [12.0]`, Coulomb
+///   cutoff defaulting to the LJ one when omitted;
+/// - `hybrid lj/cut 10.0 coul/cut 10.0`, one pair per sub-style;
+/// - `hybrid/overlay lj/cut 10.0 coul/cut 10.0`, both on every pair — what this
+///   reader's own force field means, so its writer emits it.
+///
+/// The cutoffs are part of the force field, not a rendering detail: a reader
+/// that keeps only the kernel name cannot write a runnable input back out.
+fn require_pair_style(
+    rest: &[&str],
+    where_: &dyn Fn() -> String,
+) -> Result<(Option<f64>, Option<f64>), String> {
     let name = rest
         .first()
         .ok_or_else(|| format!("{}: pair_style missing kernel name", where_()))?;
-    // Any LJ-12-6 + Coulomb variant maps to lj/cut + coul/cut for the relaxer.
-    if name.starts_with("lj/cut") {
-        Ok(())
-    } else {
-        Err(format!(
-            "{}: unsupported pair_style `{name}` (expected an `lj/cut...` variant)",
-            where_()
-        ))
+    if *name == "hybrid" || *name == "hybrid/overlay" {
+        return hybrid_cutoffs(&rest[1..], where_);
     }
+    // Any LJ-12-6 + Coulomb variant maps to lj/cut + coul/cut for the relaxer.
+    if !name.starts_with("lj/cut") {
+        return Err(format!(
+            "{}: unsupported pair_style `{name}` (expected an `lj/cut...`, \
+             `hybrid`, or `hybrid/overlay` variant)",
+            where_()
+        ));
+    }
+    let mut cutoffs = rest[1..]
+        .iter()
+        .map(|t| parse_f64(t, "pair_style cutoff", where_));
+    let lj = cutoffs.next().transpose()?;
+    let coul = cutoffs.next().transpose()?.or(lj);
+    Ok((lj, coul))
+}
+
+/// Cutoffs from a `hybrid` / `hybrid/overlay` pair line, e.g.
+/// `lj/cut 10.0 coul/cut 10.0`: read each `lj/cut` and `coul/cut` sub-style's
+/// first numeric argument. Other sub-styles are rejected, matching the combined
+/// form's `lj/cut` requirement.
+fn hybrid_cutoffs(
+    rest: &[&str],
+    where_: &dyn Fn() -> String,
+) -> Result<(Option<f64>, Option<f64>), String> {
+    let (mut lj, mut coul) = (None, None);
+    let mut i = 0;
+    while i < rest.len() {
+        let sub = rest[i];
+        // A sub-style's cutoff is optional: the next token is a cutoff only if
+        // it parses as a number, otherwise it is the next sub-style name (and
+        // this sub-style falls back to LAMMPS's global default).
+        let cut = rest.get(i + 1).and_then(|t| t.parse::<f64>().ok());
+        match sub {
+            "lj/cut" => lj = cut,
+            "coul/cut" | "coul/long" => coul = cut,
+            other => {
+                return Err(format!(
+                    "{}: unsupported hybrid pair sub-style `{other}` \
+                     (expected `lj/cut` or `coul/cut`)",
+                    where_()
+                ));
+            }
+        }
+        // Step over the sub-style name and its cutoff argument, if any.
+        i += if cut.is_some() { 2 } else { 1 };
+    }
+    Ok((lj, coul.or(lj)))
 }
 
 fn collect_pair(
@@ -143,41 +203,74 @@ fn collect_pair(
     rows: &mut Vec<(String, f64, f64)>,
     where_: &dyn Fn() -> String,
 ) -> Result<(), String> {
-    // pair_coeff <i> <j> <epsilon> <sigma>   (only self-pairs i==j are transcribed;
-    // cross terms come from the combining rule in `to_potentials`).
-    if rest.len() < 4 {
-        return Err(format!(
-            "{}: pair_coeff needs `<i> <j> eps sigma`",
-            where_()
-        ));
+    // pair_coeff <i> <j> [sub-style] <epsilon> <sigma>. Only self-pairs i==j
+    // are transcribed; cross terms come from the combining rule in
+    // `to_potentials`.
+    if rest.len() < 2 {
+        return Err(format!("{}: pair_coeff needs `<i> <j> ...`", where_()));
     }
     let (ti, tj) = (rest[0], rest[1]);
+    // A hybrid line names its sub-style before the numbers: `c3 c3 lj/cut …`.
+    // Only lj/cut carries eps/sigma; the `* * coul/cut` wildcard (charges come
+    // from the frame) has nothing to transcribe.
+    let mut args = &rest[2..];
+    if let Some(&first) = args.first()
+        && first.parse::<f64>().is_err()
+    {
+        if first != "lj/cut" {
+            return Ok(());
+        }
+        args = &args[1..];
+    }
     if ti != tj {
         // Explicit cross terms are not part of the GAFF include; skip rather than
         // invent a type, leaving combining to `to_potentials`.
         return Ok(());
     }
-    let eps = parse_f64(rest[2], "pair epsilon", where_)?;
-    let sigma = parse_f64(rest[3], "pair sigma", where_)?;
+    if args.len() < 2 {
+        return Err(format!(
+            "{}: pair_coeff needs `<i> <j> [style] eps sigma`",
+            where_()
+        ));
+    }
+    let eps = parse_f64(args[0], "pair epsilon", where_)?;
+    let sigma = parse_f64(args[1], "pair sigma", where_)?;
     if !rows.iter().any(|(t, _, _)| t == ti) {
         rows.push((ti.to_owned(), eps, sigma));
     }
     Ok(())
 }
 
-/// Emit the collected LJ self-params as a `lj/cut` style plus a parameter-free
-/// `coul/cut` style (charges resolved from the frame), with AMBER 1-4 scales.
-fn build_pairs(ff: &mut ForceField, rows: &[(String, f64, f64)]) {
+/// Emit the collected LJ self-params as a `lj/cut` style plus a `coul/cut` style
+/// (charges resolved from the frame), with AMBER 1-4 scales.
+///
+/// `coul/cut` is the **buffered** Coulomb `E = k·qᵢqⱼ/(D·(r + δ))`; a LAMMPS `real`
+/// -units force field is the unbuffered case (δ = 0, the semantic default) in vacuum,
+/// with CODATA's `k`. It used to be defined with EMPTY params and merely happened to
+/// agree with the constant the kernel held privately — the right number for the wrong
+/// reason. The force field states it now: the kernel has no default, because MMFF's
+/// `k` is a different number and both are correct.
+fn build_pairs(
+    ff: &mut ForceField,
+    rows: &[(String, f64, f64)],
+    cutoffs: (Option<f64>, Option<f64>),
+) {
     if rows.is_empty() {
         return;
     }
     // 1-4 scaling lives on the ForceField's `special_bonds` (set in `read_str`),
     // not on the pair styles — `to_potentials` projects it into the kernels.
-    let lj = ff.def_pairstyle("lj/cut", &[]);
+    let (cut_lj, cut_coul) = cutoffs;
+    let lj_params: Vec<(&str, f64)> = cut_lj.map(|c| vec![("cutoff", c)]).unwrap_or_default();
+    let lj = ff.def_pairstyle("lj/cut", &lj_params);
     for (ty, eps, sigma) in rows {
         lj.def_pairtype(ty, None, &[("epsilon", *eps), ("sigma", *sigma)]);
     }
-    ff.def_pairstyle("coul/cut", &[]);
+    let mut coul_params = vec![("coulomb", COULOMB_REAL), ("dielectric", VACUUM_DIELECTRIC)];
+    if let Some(c) = cut_coul {
+        coul_params.push(("cutoff", c));
+    }
+    ff.def_pairstyle("coul/cut", &coul_params);
 }
 
 // ── bonded ──────────────────────────────────────────────────────────────────
@@ -432,6 +525,18 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
         );
         assert!(ff.get_style("pair", "coul/cut").is_some(), "coul style");
 
+        // The cutoffs on the `pair_style` line belong to the force field: without
+        // them a written-back include is not a runnable LAMMPS input.
+        assert!(
+            (lj.params.get("cutoff").unwrap_or(0.0) - 10.0).abs() < 1e-12,
+            "lj cutoff"
+        );
+        let coul = ff.get_style("pair", "coul/cut").unwrap();
+        assert!(
+            (coul.params.get("cutoff").unwrap_or(0.0) - 10.0).abs() < 1e-12,
+            "coulomb cutoff"
+        );
+
         // AMBER/GAFF 1-4 scaling is recorded on the ForceField's special_bonds
         // (1-2/1-3 excluded), the source the pair kernels consume.
         let sb = ff.special_bonds();
@@ -463,5 +568,48 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
             .read_str("bond_style harmonic\nbond_coeff c3-c3-oh 1.0 1.5\n")
             .unwrap_err();
         assert!(err.contains("expected 2"), "err: {err}");
+    }
+
+    /// The `hybrid/overlay` pair form the molpy writer emits round-trips: both
+    /// cutoffs come back and the wildcard `* * coul/cut` line is skipped rather
+    /// than mistaken for LJ coefficients.
+    #[test]
+    fn reads_hybrid_overlay_pair_style() {
+        let text = "\
+pair_style hybrid/overlay lj/cut 10.0 coul/cut 12.0
+pair_coeff * * coul/cut
+pair_coeff c3 c3 lj/cut 0.1078 3.39771
+";
+        let ff = LammpsFfReader::new().read_str(text).unwrap();
+        let lj = ff.get_style("pair", "lj/cut").unwrap();
+        assert!((lj.params.get("cutoff").unwrap_or(0.0) - 10.0).abs() < 1e-12);
+        let pt = lj.get_pairtype("c3", None).unwrap();
+        assert!((pt.params.get("epsilon").unwrap() - 0.1078).abs() < 1e-9);
+        assert!((pt.params.get("sigma").unwrap() - 3.39771).abs() < 1e-9);
+        let coul = ff.get_style("pair", "coul/cut").unwrap();
+        assert!((coul.params.get("cutoff").unwrap_or(0.0) - 12.0).abs() < 1e-12);
+    }
+
+    /// A hybrid line whose sub-styles carry no cutoff (the older writer form
+    /// `hybrid lj/cut coul/cut`) must not read the following sub-style name as a
+    /// cutoff number -- both simply fall back with no recorded cutoff.
+    #[test]
+    fn reads_hybrid_pair_style_without_cutoffs() {
+        let text = "pair_style hybrid lj/cut coul/cut
+pair_coeff c3 c3 lj/cut 0.1078 3.39771
+";
+        let ff = LammpsFfReader::new().read_str(text).unwrap();
+        let lj = ff.get_style("pair", "lj/cut").unwrap();
+        assert!(lj.params.get("cutoff").is_none(), "no lj cutoff recorded");
+        assert!(
+            (lj.get_pairtype("c3", None)
+                .unwrap()
+                .params
+                .get("sigma")
+                .unwrap()
+                - 3.39771)
+                .abs()
+                < 1e-9
+        );
     }
 }

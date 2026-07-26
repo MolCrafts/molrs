@@ -1,3 +1,11 @@
+"""FFI smoke tests for top-level IO readers/writers.
+
+Self-contained: every fixture is written by molrs itself. No external corpus,
+no third-party scientific software.
+"""
+
+from __future__ import annotations
+
 import os
 import tempfile
 
@@ -7,13 +15,13 @@ import molrs
 
 
 class TestReadPdb:
-    def test_basic(self, pdb_dir):
-        frame = molrs.read_pdb(str(pdb_dir / "water.pdb"))
+    def test_basic(self, water_pdb):
+        frame = molrs.read_pdb(str(water_pdb))
         assert "atoms" in frame
-        assert frame["atoms"].nrows > 0
+        assert frame["atoms"].nrows == 3
 
-    def test_has_coordinates(self, pdb_dir):
-        frame = molrs.read_pdb(str(pdb_dir / "water.pdb"))
+    def test_has_coordinates(self, water_pdb):
+        frame = molrs.read_pdb(str(water_pdb))
         atoms = frame["atoms"]
         assert atoms.view("x") is not None
         assert atoms.view("y") is not None
@@ -25,34 +33,34 @@ class TestReadPdb:
 
 
 class TestReadGro:
-    def test_native_basic(self, gro_dir):
-        frames = molrs.read_gro(str(gro_dir / "ubiquitin.gro"))
+    def test_native_basic(self, water_gro):
+        frames = molrs.read_gro(str(water_gro))
         assert len(frames) == 1
         f0 = frames[0]
         assert "atoms" in f0
-        assert f0["atoms"].nrows > 0
-        assert f0.simbox is not None
+        assert f0["atoms"].nrows == 3
+        assert f0.box is not None
 
-    def test_native_columns(self, gro_dir):
-        frames = molrs.read_gro(str(gro_dir / "ubiquitin.gro"))
+    def test_native_columns(self, water_gro):
+        frames = molrs.read_gro(str(water_gro))
         atoms = frames[0]["atoms"]
         for col in ["resid", "resname", "atom_name", "atom_id", "x", "y", "z"]:
             assert col in atoms, f"missing column: {col}"
 
-    def test_facade_canonical_columns(self, gro_dir):
-        frames = molrs.io.read_gro(str(gro_dir / "ubiquitin.gro"))
+    def test_facade_canonical_columns(self, water_gro):
+        frames = molrs.io.read_gro(str(water_gro))
         atoms = frames[0]["atoms"]
         for col in ["res_id", "res_name", "name", "id", "x", "y", "z"]:
             assert col in atoms, f"missing canonical column: {col}"
 
-    def test_facade_no_format_native_columns(self, gro_dir):
-        frames = molrs.io.read_gro(str(gro_dir / "ubiquitin.gro"))
+    def test_facade_no_format_native_columns(self, water_gro):
+        frames = molrs.io.read_gro(str(water_gro))
         atoms = frames[0]["atoms"]
         for col in ["resid", "atom_name", "atom_id"]:
             assert col not in atoms, f"format-native column leaked: {col}"
 
-    def test_round_trip(self, gro_dir):
-        frames = molrs.io.read_gro(str(gro_dir / "ubiquitin.gro"))
+    def test_round_trip(self, water_gro):
+        frames = molrs.io.read_gro(str(water_gro))
         f0 = frames[0]
         with tempfile.NamedTemporaryFile(suffix=".gro", delete=False) as tmp:
             tmpname = tmp.name
@@ -68,19 +76,15 @@ class TestReadGro:
         with pytest.raises(OSError):
             molrs.read_gro("/nonexistent/path.gro")
 
-    def test_triclinic_box(self, gro_dir):
-        frames = molrs.io.read_gro(str(gro_dir / "1vln-triclinic.gro"))
-        assert frames[0].simbox is not None
-
 
 class TestReadXyz:
-    def test_basic(self, xyz_dir):
-        frame = molrs.read_xyz(str(xyz_dir / "methane.xyz"))
+    def test_basic(self, water_xyz):
+        frame = molrs.read_xyz(str(water_xyz))
         assert "atoms" in frame
-        assert frame["atoms"].nrows == 5
+        assert frame["atoms"].nrows == 3
 
-    def test_has_coordinates(self, xyz_dir):
-        frame = molrs.read_xyz(str(xyz_dir / "methane.xyz"))
+    def test_has_coordinates(self, water_xyz):
+        frame = molrs.read_xyz(str(water_xyz))
         atoms = frame["atoms"]
         assert atoms.view("x") is not None
 

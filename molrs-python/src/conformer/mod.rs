@@ -7,12 +7,11 @@
 //! The pipeline takes an [`PyAtomistic`] molecular graph and produces realistic
 //! 3D coordinates through a multi-stage ETKDGv3 process:
 //!
-//! 1. **Preprocess** -- perceive rings, assign stereochemistry.
-//! 2. **Build initial** -- distance geometry embedding.
-//! 3. **Coarse optimize** -- rough energy minimization.
-//! 4. **Rotor search** -- systematic torsion scanning.
-//! 5. **Final optimize** -- refined minimization.
-//! 6. **Stereo check** -- verify stereochemistry is preserved.
+//! 1. **Preprocess** -- add hydrogens and perceive molecular features.
+//! 2. **Build initial** -- ETKDGv3 distance-geometry embedding.
+//! 3. **Coarse optimize** -- distance, chirality, and torsion refinement.
+//! 4. **Final optimize** -- MMFF94 cleanup.
+//! 5. **Stereo check** -- verify stereochemistry is preserved.
 //!
 //! # References
 //!
@@ -31,7 +30,6 @@ fn stage_kind_name(kind: StageKind) -> &'static str {
         StageKind::Preprocess => "preprocess",
         StageKind::BuildInitial => "build_initial",
         StageKind::CoarseOptimize => "coarse_optimize",
-        StageKind::RotorSearch => "rotor_search",
         StageKind::FinalOptimize => "final_optimize",
         StageKind::StereoCheck => "stereo_check",
     }
@@ -55,7 +53,7 @@ fn stage_kind_name(kind: StageKind) -> &'static str {
 ///     Whether the stage converged.
 /// elapsed_ms : int
 ///     Wall-clock time for this stage in milliseconds.
-#[pyclass(name = "ConformerStageReport")]
+#[pyclass(module = "molrs", name = "ConformerStageReport")]
 pub struct PyConformerStageReport {
     #[pyo3(get)]
     pub stage: String,
@@ -101,7 +99,7 @@ impl PyConformerStageReport {
 /// -12.34
 /// >>> for s in report.stages:
 /// ...     print(s.stage, s.converged)
-#[pyclass(name = "ConformerReport")]
+#[pyclass(module = "molrs", name = "ConformerReport")]
 pub struct PyConformerReport {
     #[pyo3(get)]
     pub final_energy: Option<f64>,
@@ -163,7 +161,7 @@ impl PyConformerReport {
 /// --------
 /// >>> gen = Conformer(speed="fast", add_hydrogens=True, seed=42)
 /// >>> mol_3d, report = gen.generate(mol)
-#[pyclass(name = "Conformer", subclass, skip_from_py_object)]
+#[pyclass(module = "molrs", name = "Conformer", subclass, skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyConformer {
     pub(crate) inner: Conformer,

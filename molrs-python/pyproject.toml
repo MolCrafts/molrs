@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "molcrafts-molrs"
-version = "0.7.0"
+version = "0.9.3"
 description = "Python bindings for molrs molecular simulation library"
 requires-python = ">=3.12"
 readme = "README.md"
@@ -12,6 +12,14 @@ license = "BSD-3-Clause"
 dependencies = ["numpy>=2.0"]
 
 [project.optional-dependencies]
+# Dev tools (gate driver). Install: `pip install -e ".[dev]"` or
+# `uv sync --extra dev` from molrs-python/. prek/CI: `uv run --extra dev tox -e py`.
+dev = [
+    "tox>=4.23",
+    "maturin>=1.0,<2.0",
+    "pytest",
+    "numpy>=2.0",
+]
 # Everything `zensical build` needs for the docs site: zensical itself (pulls
 # its own deps) plus the mkdocstrings python handler used by zensical.toml's
 # `[project.plugins.mkdocstrings]`. Build the site with: pip install ".[doc]"
@@ -20,12 +28,12 @@ doc = [
     "mkdocstrings[python]",
     # Shared MolCrafts brand theme (zensical.toml sets `theme.name = "molcrafts"`),
     # matching molpy / molcfg / mollog so `pip install .[doc]` builds standalone.
-    "molcrafts-zensical-theme>=0.1.1",
+    "molcrafts-zensical-theme>=0.2.3",
 ]
 
 [tool.maturin]
 python-source = "python"
-module-name = "molrs.molrs"
+module-name = "molrs._lib"
 features = ["pyo3/extension-module"]
 exclude = [
   "python/molrs/*.so",
@@ -37,3 +45,48 @@ exclude = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+# Isolated Python binding tests — prek pre-push + CI:
+#   tox -c molrs-python -e py
+# Non-editable only: maturin wheel + pytest (no developer env).
+[tool.tox]
+requires = ["tox>=4.23"]
+env_list = ["py"]
+no_package = true
+
+[tool.tox.env.py]
+description = "throwaway env: maturin wheel + pytest (non-editable)"
+base_python = ["python3.12"]
+deps = [
+  "maturin>=1.0,<2.0",
+  "pytest",
+  "numpy>=2.0",
+]
+pass_env = [
+  "HOME",
+  "PATH",
+  "CARGO_HOME",
+  "CARGO_TARGET_DIR",
+  "RUSTUP_HOME",
+  "RUSTFLAGS",
+  "MACOSX_DEPLOYMENT_TARGET",
+  "SSH_AUTH_SOCK",
+  "TERM",
+]
+allowlist_externals = ["maturin"]
+commands_pre = [
+  ["maturin", "build", "--release", "-o", "{env_tmp_dir}/wheels"],
+  [
+    "{envpython}",
+    "-c",
+    "from pathlib import Path; import subprocess, sys; w=next(Path(r'{env_tmp_dir}/wheels').glob('molcrafts_molrs-*.whl')); subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--force-reinstall', '--no-deps', str(w)])",
+  ],
+  [
+    "{envpython}",
+    "-c",
+    "import molrs, pathlib; r=pathlib.Path(molrs.__file__).resolve(); assert 'site-packages' in str(r), r",
+  ],
+]
+commands = [
+  ["{envpython}", "-m", "pytest", "-q"],
+]

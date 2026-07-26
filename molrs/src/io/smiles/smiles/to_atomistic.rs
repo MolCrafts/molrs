@@ -21,8 +21,8 @@ use molrs::system::molgraph::PropValue;
 ///
 /// This resolves ring closures into bonds, sets atom properties (charge,
 /// isotope, chirality), and records bond orders. Implicit hydrogens are
-/// **not** added — call [`add_hydrogens`](crate::io::smiles::add_hydrogens) separately
-/// if needed.
+/// **not** added — call [`add_hydrogens`](crate::perceive::hydrogens::add_hydrogens)
+/// separately if needed.
 ///
 /// # Errors
 ///

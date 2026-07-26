@@ -31,7 +31,7 @@ import numpy as np
 
 # Relative import of the compiled `keys` submodule — leaf extension, so this is
 # cycle-free even when fields.py is imported during package initialization.
-from .molrs import keys
+from ._lib import keys
 
 # ===================================================================
 #                       FieldSpec

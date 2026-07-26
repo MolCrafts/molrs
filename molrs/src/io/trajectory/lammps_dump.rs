@@ -566,9 +566,7 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
     frame.insert(block_name, data_block);
 
     // Timestep is frame-level metadata, not a box property.
-    frame
-        .meta
-        .insert("timestep".to_string(), timestep.to_string());
+    frame.meta.insert("timestep", timestep);
 
     // Build the SimBox. Boundary tokens (`pp`, `ff`, `ss`, `fs`, ...) collapse
     // to a per-axis periodic bool: periodic iff the first char is 'p'.
@@ -834,7 +832,7 @@ impl<W: Write> FrameWriter for LAMMPSDumpWriter<W> {
 /// Write a single frame in LAMMPS dump format.
 ///
 /// Accepts any type implementing [`FrameAccess`], including both [`Frame`] and
-/// [`FrameView`](crate::io::frame_view::FrameView).
+/// [`FrameView`](molrs::store::frame_view::FrameView).
 fn write_lammps_dump_frame<W: Write>(
     writer: &mut W,
     frame: &impl FrameAccess,
@@ -846,7 +844,10 @@ fn write_lammps_dump_frame<W: Write>(
     let meta = frame.meta_ref();
 
     // -- Timestep --
-    let timestep = meta.get("timestep").map_or("0", |s| s.as_str());
+    let timestep = meta
+        .get("timestep")
+        .and_then(|value| value.as_i64())
+        .unwrap_or(0);
     writeln!(writer, "ITEM: TIMESTEP")?;
     writeln!(writer, "{}", timestep)?;
 
@@ -1200,11 +1201,11 @@ ITEM: ATOMS id type x y z
 
         // Read step 1 first (out of order)
         let f1 = reader.read_step(1).unwrap().expect("step 1");
-        assert_eq!(f1.meta.get("timestep").unwrap(), "100");
+        assert_eq!(f1.meta.get("timestep").unwrap().as_i64(), Some(100));
 
         // Then step 0
         let f0 = reader.read_step(0).unwrap().expect("step 0");
-        assert_eq!(f0.meta.get("timestep").unwrap(), "0");
+        assert_eq!(f0.meta.get("timestep").unwrap().as_i64(), Some(0));
 
         // Out of bounds
         assert!(reader.read_step(5).unwrap().is_none());

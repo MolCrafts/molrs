@@ -14,9 +14,10 @@ force fields, and the SMILES front-end. Analysis classes live under the
 * :mod:`molrs.compute.ml` — PCA, K-means, descriptor rows
 """
 
-from .molrs import (
+from ._lib import (
     # Public exceptions
     BlockDtypeError,
+    UnitsError,
     # SimBox + neighbors
     Box,
     LinkedCell,
@@ -24,7 +25,12 @@ from .molrs import (
     NeighborList,
     # Block + Frame
     Block,
+    MetaValue,
     Frame,
+    FRAME_SCHEMA_VERSION,
+    Unit,
+    Quantity,
+    UnitRegistry,
     Trajectory,
     ScalarObservable,
     VectorObservable,
@@ -64,9 +70,11 @@ from .molrs import (
     Cuboid,
     Region,
     # Molecular graph hierarchy
+    Element,
     Graph,
     Atomistic,
     CoarseGrain,
+    ExtractedSubgraph,
     SmartsMatch,
     SmartsPattern,
     Reaction,
@@ -74,17 +82,27 @@ from .molrs import (
     translate,
     rotate,
     scale,
+    align_direction,
     perceive_aromaticity,
     add_hydrogens,
     find_rings,
     compute_gasteiger_charges,
+    # Chemical perception (builder: graph in / graph out, non-mutating)
+    Perceive,
     # Conformer generation
     Conformer,
     ConformerReport,
     ConformerStageReport,
     # Force field
-    MMFFTypifier,
+    Typifier,
+    MMFF94Typifier,
+    MMFF94STypifier,
     OPLSAATypifier,
+    AtdTypifier,
+    # Charge models (native AM1-BCC / ABCG2 / Mulliken / Gasteiger)
+    BccModel,
+    MullikenModel,
+    GasteigerModel,
     ForceField,
     Potentials,
     OptReport,
@@ -97,7 +115,10 @@ from .molrs import (
     read_lammps_forcefield_str,
     intramolecular_pairs,
     extract_coords,
-    build_mmff_potentials,
+    FragmentScaling,
+    compute_k_ij,
+    fragment_scaling_data,
+    scale_lj,
     # Field-name convention submodule
     keys,
     # Signal processing (low-level FFT helpers)
@@ -150,6 +171,38 @@ from .molrs import (
     VcdSpectrum,
     RoaSpectrum,
     ResonanceRamanSpectrum,
+    # Freud-style analysis — preferred public path is molrs.compute.*. Bound as
+    # package attributes (not listed in ``__all__``) so PyO3 ``module = "molrs"``
+    # stays honest for griffe: ``molrs.compute.density.RDF`` resolves to ``molrs.RDF``.
+    RDF,
+    RDFResult,
+    GaussianDensity,
+    LocalDensity,
+    Steinhardt,
+    Nematic,
+    Hexatic,
+    SolidLiquid,
+    BondOrder,
+    PMFTXY,
+    StaticStructureFactorDebye,
+    Cluster,
+    ClusterResult,
+    ClusterCenters,
+    ClusterCentersResult,
+    ClusterProperties,
+    CenterOfMass,
+    CenterOfMassResult,
+    GyrationTensor,
+    InertiaTensor,
+    RadiusOfGyration,
+    MSD,
+    MSDResult,
+    MSDTimeSeries,
+    DescriptorRow,
+    Pca2,
+    PcaResult,
+    KMeans,
+    KMeansResult,
 )
 
 from . import ff  # molrs.ff.potential.soft parameter interface
@@ -159,14 +212,14 @@ from . import ff  # molrs.ff.potential.soft parameter interface
 # ``molrs.Block`` / ``molrs.Frame`` as the canonical types — every public API
 # (io readers, etc.) yields these. The shadow is safe now that molpy re-exports
 # them instead of subclassing the bare core (chain spec 04). Internal modules
-# that need the raw cores import them from ``.molrs`` directly.
+# that need the raw cores import them from ``._lib`` directly.
 from . import frame  # noqa: F401
 from .frame import Block, Frame
 
 # Chainable, object-style force-field layer (Style/Type handle views over the
 # Rust ForceField). Shadows the bare PyO3 ``ForceField`` with the subclass that
 # adds ``def_*style`` factories; ``def_type``/``types``/``to_potentials`` are
-# inherited from the core. Raw core stays importable from ``.molrs``.
+# inherited from the core. Raw core stays importable from ``._lib``.
 from . import forcefield  # noqa: F401
 from .forcefield import (  # noqa: F401
     AngleHarmonicStyle,
@@ -208,6 +261,27 @@ from . import validate
 from . import dielectric
 from . import transport
 from . import typifier
+from .views import (
+    Angle,
+    Atom,
+    Atomistic,
+    Bead,
+    Bond,
+    CGBond,
+    CoarseGrain,
+    Dihedral,
+    DrudeParticle,
+    Entities,
+    Entity,
+    GraphViews,
+    Improper,
+    Link,
+    MasslessSite,
+    NodeRef,
+    Refs,
+    RelationRef,
+    VirtualSite,
+)
 
 __all__ = [
     "io",
@@ -218,12 +292,18 @@ __all__ = [
     "transport",
     "typifier",
     "BlockDtypeError",
+    "UnitsError",
     "Box",
     "LinkedCell",
     "NeighborQuery",
     "NeighborList",
     "Block",
+    "MetaValue",
     "Frame",
+    "FRAME_SCHEMA_VERSION",
+    "Unit",
+    "Quantity",
+    "UnitRegistry",
     "Trajectory",
     "ScalarObservable",
     "VectorObservable",
@@ -260,25 +340,52 @@ __all__ = [
     "HollowSphere",
     "Cuboid",
     "Region",
+    "Element",
     "Graph",
     "Atomistic",
     "CoarseGrain",
+    "ExtractedSubgraph",
     "SmartsMatch",
     "SmartsPattern",
     "Reaction",
+    "NodeRef",
+    "RelationRef",
+    "Refs",
+    "GraphViews",
+    "Entity",
+    "Link",
+    "Entities",
+    "Atom",
+    "VirtualSite",
+    "DrudeParticle",
+    "MasslessSite",
+    "Bond",
+    "Angle",
+    "Dihedral",
+    "Improper",
+    "Bead",
+    "CGBond",
     "translate",
     "rotate",
     "scale",
+    "align_direction",
     "perceive_aromaticity",
     "add_hydrogens",
     "find_rings",
     "compute_gasteiger_charges",
+    "Perceive",
     "keys",
     "Conformer",
     "ConformerReport",
     "ConformerStageReport",
-    "MMFFTypifier",
+    "Typifier",
+    "MMFF94Typifier",
+    "MMFF94STypifier",
     "OPLSAATypifier",
+    "AtdTypifier",
+    "BccModel",
+    "MullikenModel",
+    "GasteigerModel",
     "ForceField",
     "Style",
     "AtomStyle",
@@ -298,7 +405,6 @@ __all__ = [
     "Potentials",
     "OptReport",
     "LBFGS",
-    "build_mmff_potentials",
     "read_forcefield_xml",
     "read_forcefield_xml_str",
     "read_opls_xml",
@@ -307,6 +413,10 @@ __all__ = [
     "read_lammps_forcefield_str",
     "intramolecular_pairs",
     "extract_coords",
+    "FragmentScaling",
+    "compute_k_ij",
+    "fragment_scaling_data",
+    "scale_lj",
     "signal_acf_fft",
     "signal_apply_window",
     "signal_frequency_grid",

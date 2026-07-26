@@ -1,7 +1,7 @@
 //! LAMMPS data file format reader and writer.
 //!
 //! Implements support for LAMMPS data files as specified in:
-//! https://docs.lammps.org/read_data.html
+//! <https://docs.lammps.org/read_data.html>
 //!
 //! # Supported Features
 //!
@@ -34,7 +34,8 @@
 //! // Write to new file
 //! write_lammps_data("output.data", &frame)?;
 //! # Ok(())
-//! # }```
+//! # }
+//! ```
 
 use crate::io::reader::{FrameReader, Reader};
 use crate::io::writer::FrameWriter;
@@ -1374,7 +1375,7 @@ impl<W: Write> FrameWriter for LAMMPSDataWriter<W> {
 /// Write a single frame in LAMMPS data file format.
 ///
 /// Accepts any type implementing [`FrameAccess`], including both [`Frame`] and
-/// [`FrameView`](crate::io::frame_view::FrameView).
+/// [`FrameView`](molrs::store::frame_view::FrameView).
 fn write_lammps_data_frame<W: Write>(
     writer: &mut W,
     frame: &impl FrameAccess,
@@ -1456,7 +1457,10 @@ fn write_lammps_data_frame<W: Write>(
     let meta = frame.meta_ref();
 
     // Write type labels if present
-    if let Some(atom_labels_str) = meta.get("atom_type_labels") {
+    if let Some(atom_labels_str) = meta
+        .get("atom_type_labels")
+        .and_then(|value| value.as_str())
+    {
         writeln!(writer, "Atom Type Labels")?;
         writeln!(writer)?;
         for pair in atom_labels_str.split(',') {
@@ -1468,7 +1472,10 @@ fn write_lammps_data_frame<W: Write>(
         writeln!(writer)?;
     }
 
-    if let Some(bond_labels_str) = meta.get("bond_type_labels") {
+    if let Some(bond_labels_str) = meta
+        .get("bond_type_labels")
+        .and_then(|value| value.as_str())
+    {
         writeln!(writer, "Bond Type Labels")?;
         writeln!(writer)?;
         for pair in bond_labels_str.split(',') {
@@ -1571,7 +1578,7 @@ pub fn read_lammps_data<P: AsRef<Path>>(path: P) -> std::io::Result<Frame> {
 /// Write a Frame to a LAMMPS data file.
 ///
 /// Accepts any type implementing [`FrameAccess`], including both [`Frame`] and
-/// [`FrameView`](crate::io::frame_view::FrameView).
+/// [`FrameView`](molrs::store::frame_view::FrameView).
 pub fn write_lammps_data<P: AsRef<Path>>(path: P, frame: &impl FrameAccess) -> std::io::Result<()> {
     let file = File::create(path)?;
     let mut writer = std::io::BufWriter::new(file);

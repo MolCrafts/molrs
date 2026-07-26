@@ -9,10 +9,9 @@
 //! evaluates `d = x_i - x_j - shift`.
 //!
 //! Periodicity lives in the **builder** [`SoftSpec::build_potential`], which uses
-//! molrs's own [`NeighborQuery`](crate::core::spatial::neighbors::NeighborQuery)
-//! to resolve the non-bonded pairs (excluding 1-2 / 1-3 neighbours) for a given
-//! configuration + box. A minimizer rebuilds the potential periodically as the
-//! atoms move.
+//! molrs's own [`NeighborQuery`] to resolve the non-bonded pairs (excluding
+//! 1-2 / 1-3 neighbours) for a given configuration + box. A minimizer rebuilds
+//! the potential periodically as the atoms move.
 
 use std::collections::HashSet;
 
@@ -210,6 +209,42 @@ impl SoftSpec {
     pub fn with_angle_k(mut self, k: F) -> Self {
         self.k_ang = k;
         self
+    }
+
+    pub fn sigma(&self) -> F {
+        self.sigma
+    }
+    pub fn a_rep(&self) -> F {
+        self.a_rep
+    }
+    pub fn b_attract(&self) -> F {
+        self.b_attract
+    }
+    pub fn rcut(&self) -> F {
+        self.rcut
+    }
+    pub fn k_bond(&self) -> F {
+        self.k_bond
+    }
+    pub fn k_ang(&self) -> F {
+        self.k_ang
+    }
+
+    /// Rebuild-friendly geometry optimizer: non-bonded pairs are re-resolved from
+    /// the Frame on every [`crate::optimize::Optimizer::run`].
+    pub fn into_optimizer(
+        self,
+        fmax: F,
+        max_steps: usize,
+        max_step: F,
+        memory: usize,
+    ) -> crate::optimize::SoftLbfgs {
+        crate::optimize::SoftLbfgs::new(self, fmax, max_steps, max_step, memory)
+    }
+
+    /// [`into_optimizer`](Self::into_optimizer) with default L-BFGS knobs.
+    pub fn into_optimizer_defaults(self) -> crate::optimize::SoftLbfgs {
+        crate::optimize::SoftLbfgs::with_defaults(self)
     }
 
     /// Resolve the pairs for `coords` (+ optional periodic cubic box) with molrs's

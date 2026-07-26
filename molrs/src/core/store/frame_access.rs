@@ -3,14 +3,13 @@
 //! [`FrameAccess`] provides a common read-only interface implemented by both
 //! [`Frame`] and [`FrameView`], enabling generic code that works with either.
 
-use std::collections::HashMap;
-
 use ndarray::ArrayViewD;
 
 use crate::spatial::region::simbox::SimBox;
 use crate::store::block::access::BlockAccess;
 use crate::store::frame::Frame;
 use crate::store::frame_view::FrameView;
+use crate::store::meta::MetaMap;
 use crate::types::{F, I, U};
 
 /// Unified read-only access for [`Frame`] and [`FrameView`].
@@ -33,7 +32,7 @@ pub trait FrameAccess {
     /// Returns a reference to the simulation box, if present.
     fn simbox_ref(&self) -> Option<&SimBox>;
     /// Returns a reference to the metadata map.
-    fn meta_ref(&self) -> &HashMap<String, String>;
+    fn meta_ref(&self) -> &MetaMap;
     /// Returns block keys as a `Vec`.
     fn block_keys(&self) -> Vec<&str>;
     /// Returns `true` if the frame contains the specified block key.
@@ -88,7 +87,7 @@ impl FrameAccess for Frame {
         self.simbox.as_ref()
     }
 
-    fn meta_ref(&self) -> &HashMap<String, String> {
+    fn meta_ref(&self) -> &MetaMap {
         &self.meta
     }
 
@@ -142,7 +141,7 @@ impl FrameAccess for FrameView<'_> {
         self.simbox
     }
 
-    fn meta_ref(&self) -> &HashMap<String, String> {
+    fn meta_ref(&self) -> &MetaMap {
         self.meta
     }
 
@@ -184,7 +183,7 @@ mod tests {
             .insert("id", Array1::from_vec(vec![10 as I, 20, 30]).into_dyn())
             .unwrap();
         frame.insert("atoms", atoms);
-        frame.meta.insert("title".into(), "Test".into());
+        frame.meta.insert("title", "Test");
         frame
     }
 
@@ -198,7 +197,10 @@ mod tests {
         assert_eq!(FrameAccess::block_count(&frame), 1);
         assert!(FrameAccess::contains_block(&frame, "atoms"));
         assert!(!FrameAccess::is_empty(&frame));
-        assert_eq!(FrameAccess::meta_ref(&frame).get("title").unwrap(), "Test");
+        assert_eq!(
+            FrameAccess::meta_ref(&frame).get("title").unwrap().as_str(),
+            Some("Test")
+        );
         assert!(FrameAccess::simbox_ref(&frame).is_none());
     }
 
@@ -212,7 +214,10 @@ mod tests {
         assert_eq!(FrameAccess::block_count(&view), 1);
         assert!(FrameAccess::contains_block(&view, "atoms"));
         assert!(!FrameAccess::is_empty(&view));
-        assert_eq!(FrameAccess::meta_ref(&view).get("title").unwrap(), "Test");
+        assert_eq!(
+            FrameAccess::meta_ref(&view).get("title").unwrap().as_str(),
+            Some("Test")
+        );
     }
 
     #[test]

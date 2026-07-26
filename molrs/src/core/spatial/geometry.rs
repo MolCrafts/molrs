@@ -118,3 +118,56 @@ pub fn rotate(mol: &mut MolGraph, axis: [f64; 3], angle: f64, about: Option<[f64
         .0
         .copy_from_slice(&nz);
 }
+
+/// Align one direction with another about an anchor, then translate the anchor.
+///
+/// If both directions are supplied, the graph is rigidly rotated so `from_dir`
+/// points along `to_dir` (or its negative when `flip` is true). The anchor
+/// `from` remains fixed during rotation. Finally the whole graph is translated
+/// so `from` lands on `to`.
+pub fn align_direction(
+    mol: &mut MolGraph,
+    from: [f64; 3],
+    to: [f64; 3],
+    from_dir: Option<[f64; 3]>,
+    to_dir: Option<[f64; 3]>,
+    flip: bool,
+) {
+    if let (Some(from_dir), Some(mut to_dir)) = (from_dir, to_dir) {
+        if flip {
+            to_dir = [-to_dir[0], -to_dir[1], -to_dir[2]];
+        }
+        let normalize = |v: [f64; 3]| {
+            let norm = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+            (norm > 1e-15).then(|| [v[0] / norm, v[1] / norm, v[2] / norm])
+        };
+        if let (Some(a), Some(b)) = (normalize(from_dir), normalize(to_dir)) {
+            let cross = [
+                a[1] * b[2] - a[2] * b[1],
+                a[2] * b[0] - a[0] * b[2],
+                a[0] * b[1] - a[1] * b[0],
+            ];
+            let cross_norm =
+                (cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2]).sqrt();
+            let dot = (a[0] * b[0] + a[1] * b[1] + a[2] * b[2]).clamp(-1.0, 1.0);
+            if cross_norm > 1e-15 {
+                rotate(mol, cross, cross_norm.atan2(dot), Some(from));
+            } else if dot < 0.0 {
+                let basis = if a[0].abs() <= a[1].abs() && a[0].abs() <= a[2].abs() {
+                    [1.0, 0.0, 0.0]
+                } else if a[1].abs() <= a[2].abs() {
+                    [0.0, 1.0, 0.0]
+                } else {
+                    [0.0, 0.0, 1.0]
+                };
+                let axis = [
+                    a[1] * basis[2] - a[2] * basis[1],
+                    a[2] * basis[0] - a[0] * basis[2],
+                    a[0] * basis[1] - a[1] * basis[0],
+                ];
+                rotate(mol, axis, std::f64::consts::PI, Some(from));
+            }
+        }
+    }
+    translate(mol, [to[0] - from[0], to[1] - from[1], to[2] - from[2]]);
+}

@@ -11,7 +11,7 @@ documentation = false
 
 [export]
 prefix = ""
-exclude = ["CStore", "SimBoxKey", "FFKey"]
+exclude = ["CStore", "BoxKey", "FFKey"]
 
 [export.rename]
 

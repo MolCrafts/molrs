@@ -1,17 +1,15 @@
 //! OPLS-AA SMARTS atom typifier.
 //!
 //! Mirrors [`mmff`](crate::ff::typifier::mmff): typing metadata
-//! ([`OplsTypingMeta`]) is read *separately* from the potential
-//! [`ForceField`](crate::ff::forcefield::ForceField), both from the same OPLS-AA
-//! XML. [`OPLSAATypifier`] owns both and implements [`Typifier`], assigning
-//! `opls_NNN` atom types by SMARTS matching with overrides / priority / layer
-//! conflict resolution.
+//! ([`OplsTypingMeta`]) is read *separately* from the potential [`ForceField`],
+//! both from the same OPLS-AA XML. [`OPLSAATypifier`] owns both and implements
+//! [`Typifier`], assigning `opls_NNN` atom types by SMARTS matching with
+//! overrides / priority / layer conflict resolution.
 //!
-//! After atom typing, [`OPLSAATypifier::typify`] runs
-//! [`typify_bonded`](assign::typify_bonded): every bond / angle / dihedral is
-//! matched against the force field's bonded tables by OPLS specificity + overlay
-//! layer (chain 2). [`OPLSAATypifier::build`] closes the loop to evaluable
-//! potentials (`typify → to_frame → to_potentials`).
+//! After atom typing, [`OPLSAATypifier::typify`] runs [`typify_bonded`]: every
+//! bond / angle / dihedral is matched against the force field's bonded tables by
+//! OPLS specificity + overlay layer (chain 2). [`OPLSAATypifier::build`] closes
+//! the loop to evaluable potentials (`typify → to_frame → to_potentials`).
 //!
 //! # B-line reversal
 //!
@@ -24,22 +22,22 @@
 //! Only types carrying a SMARTS `def` participate; legacy `oplsaa.xml` rows
 //! (`opls_001`–`opls_134`, no `def`) are out of scope for auto-typing. Improper
 //! matching and pair/charge assignment are out of scope. Uncovered bonded terms
-//! follow the [`NoMatch`](assign::NoMatch) policy; a consumer that wants to fill
-//! them can supply its own [`Estimator`](assign::Estimator) via
-//! [`typify_bonded_with`](assign::typify_bonded_with), or attach the restored
-//! [`ParameterEstimator`](crate::ff::typifier::estimate::ParameterEstimator).
+//! follow the [`NoMatch`] policy; a consumer that wants to fill them can supply
+//! its own [`Estimator`] via [`typify_bonded_with`], or attach the restored
+//! [`Parmchk2Estimator`].
 
 use molrs::Atomistic;
 
 use crate::ff::forcefield::ForceField;
 use crate::ff::forcefield::readers::{ForceFieldReader, opls::OplsXmlReader};
 use crate::ff::potential::{Potentials, intramolecular_pairs};
-use crate::ff::typifier::estimate::ParameterEstimator;
+use crate::ff::typifier::estimate::Parmchk2Estimator;
 
 use super::Typifier;
 
 pub mod assign;
 pub mod deps;
+mod embedded;
 pub mod layered;
 pub mod meta;
 pub mod typing;
@@ -83,22 +81,23 @@ impl OPLSAATypifier {
         Ok(Self::new(meta, ff))
     }
 
-    /// Build a typifier from the embedded canonical OPLS-AA parameter set
-    /// ([`molrs::data::OPLSAA_XML`](crate::core::data::OPLSAA_XML)).
+    /// Build a typifier over the shipped canonical OPLS-AA parameter set
+    /// ([`crate::ff::params::oplsaa`]).
     ///
-    /// The XML is compiled into the binary, so this is the standalone path: the
-    /// OPLS typifier needs no external file on disk. The embedded copy uses
-    /// lowercase SMARTS `c` for aromatic ring carbons / hydrogens
-    /// (RDKit-faithful aromatic matching), so benzene-type rings type exactly as
-    /// molpy's ground truth. Mirrors
-    /// [`MMFFTypifier::mmff94`](crate::ff::typifier::mmff::MMFFTypifier::mmff94).
+    /// The parameters are compiled-in typed Rust, so this is the standalone
+    /// path: the OPLS typifier needs no external file on disk and parses nothing
+    /// at runtime. The shipped set uses lowercase SMARTS `c` for aromatic ring
+    /// carbons / hydrogens (RDKit-faithful aromatic matching), so benzene-type
+    /// rings type exactly as molpy's ground truth. Mirrors
+    /// [`MMFF94Typifier::new`](crate::ff::typifier::mmff::MMFF94Typifier::new).
     ///
     /// # Errors
     ///
-    /// Returns `Err` if parsing the embedded XML fails (should not happen for the
-    /// shipped data).
+    /// Infallible today — the `Result` is kept because it is the published
+    /// signature, and because a caller that switches to
+    /// [`from_xml_str`](Self::from_xml_str) gets the same shape.
     pub fn oplsaa() -> Result<Self, String> {
-        Self::from_xml_str(molrs::data::OPLSAA_XML)
+        Ok(Self::new(embedded::typing_meta(), embedded::force_field()))
     }
 
     /// Construct directly from already-parsed metadata and force field
@@ -141,7 +140,7 @@ impl OPLSAATypifier {
     /// Attach the default GAFF/parmchk2-style similarity estimator built from
     /// this typifier's force field and typing metadata.
     pub fn with_default_estimator(self) -> Self {
-        let estimator = ParameterEstimator::new(&self.ff, &self.meta);
+        let estimator = Parmchk2Estimator::new(&self.ff, &self.meta);
         self.with_estimator(estimator)
     }
 
@@ -180,11 +179,18 @@ impl OPLSAATypifier {
 
     /// Typify a molecule and compile potentials in one step.
     ///
-    /// `mol → typify (atoms + bonded) → Frame → Potentials`, mirroring
-    /// [`MMFFTypifier::build`](crate::ff::typifier::mmff::MMFFTypifier::build).
-    /// 1-2 / 1-3 exclusion + 1-4 scaling come from the force field's
-    /// `special_bonds` (set by the reader) and the consumer-built
-    /// [`intramolecular_pairs`] neighbour list inserted here.
+    /// `mol → typify (atoms + bonded) → Frame → Potentials`. 1-2 / 1-3 exclusion +
+    /// 1-4 scaling come from the force field's `special_bonds` (set by the reader)
+    /// and the consumer-built [`intramolecular_pairs`] neighbour list inserted here.
+    ///
+    /// # A note on asymmetry
+    ///
+    /// MMFF used to carry the same convenience and no longer does
+    /// (`mmff-orthogonal-02` deleted `MMFF94Typifier::build`, because it hid the
+    /// `Frame` — and with it, for a while, an entire missing electrostatic term).
+    /// Whether OPLS should follow is a **deliberately open** decision, not an
+    /// oversight: the owner's ruling named the MMFF doors only. Until it is taken,
+    /// the two typifier surfaces are asymmetric on purpose.
     ///
     /// # Errors
     ///

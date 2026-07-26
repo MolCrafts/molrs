@@ -11,10 +11,8 @@ homepage.workspace = true
 readme = "../README.md"
 keywords = ["molecular-modeling", "chemistry", "simulation", "molecular-dynamics"]
 categories = ["science"]
-# Tests, benches, and examples are wired explicitly below: integration tests
-# gate on the feature their sub-system module needs (so `--all-targets` without
-# features skips them instead of failing), and benches/examples have overlapping
-# file names across sub-systems. Disable auto-discovery for all three.
+# Benches/examples have overlapping file names across sub-systems; wire them
+# explicitly. No integration-test tree — use unit tests next to the code.
 autotests = false
 autobenches = false
 autoexamples = false
@@ -30,6 +28,10 @@ name = "molrs"
 [dev-dependencies]
 criterion = "0.8"
 rand = "0.10"
+# Test-only: the ff::params manifest guard recomputes the SHA-256 of every
+# committed generated table. It is the only drift check that runs without
+# AmberTools, i.e. the only one CI actually executes.
+sha2 = "0.10"
 tempfile = "3.0"
 
 [features]
@@ -40,7 +42,7 @@ full = ["io", "compute", "smiles", "ff", "conformer", "signal", "voronoi"]
 # Sub-system modules (each gates its module + its unique optional deps).
 io        = ["dep:flate2", "dep:once_cell"]
 # `smiles` lives inside the `io` module.
-smiles    = ["io", "dep:petgraph"]
+smiles    = ["io"]
 signal    = ["dep:rustfft"]
 # `compute` depends on the `signal` module (gets rustfft via it).
 compute   = ["signal", "dep:rand"]
@@ -80,7 +82,6 @@ zarrs          = { version = "0.23", optional = true, default-features = false, 
 ndarray-linalg = { version = "0.18", optional = true, default-features = true }                     # blas
 flate2         = { version = "1.1", optional = true, features = ["rust_backend"] }                  # io (compressed formats)
 once_cell      = { version = "1.21", optional = true }                                              # io + conformer
-petgraph       = { version = "0.8", optional = true }                                               # smiles (VF2)
 rustfft        = { version = "6", optional = true }                                                 # signal + ff + compute
 roxmltree      = { version = "0.21", optional = true }                                              # ff (XML force-field readers)
 rand           = { version = "0.10", optional = true }                                              # compute + conformer
@@ -92,49 +93,8 @@ rmp-serde      = { version = "1", optional = true }                             
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.4", features = ["wasm_js"] }
 
-# ── Integration tests (gated on the sub-system module they exercise) ─────────
-[[test]]
-name = "core"
-path = "tests/core.rs"
-
-[[test]]
-name = "test_units"
-path = "tests/test_units.rs"
-
-[[test]]
-name = "io"
-path = "tests/io.rs"
-required-features = ["io"]
-
-[[test]]
-name = "signal"
-path = "tests/signal.rs"
-required-features = ["signal"]
-
-[[test]]
-name = "compute"
-path = "tests/compute.rs"
-required-features = ["compute"]
-
-[[test]]
-name = "ff"
-path = "tests/ff.rs"
-required-features = ["ff"]
-
-[[test]]
-name = "embed"
-path = "tests/embed.rs"
-required-features = ["conformer"]
-
-[[test]]
-name = "serialize"
-path = "tests/serialize.rs"
-required-features = ["serde"]
-
-[[test]]
-name = "stream"
-path = "tests/stream.rs"
-required-features = ["stream"]
+# Integration binary tests under tests/ were removed — coverage belongs
+# in `#[cfg(test)]` modules next to the code (`cargo test --lib`).
 
 # ── Benches (criterion; auto-discovery off, see [package]) ───────────────────
 [[bench]]

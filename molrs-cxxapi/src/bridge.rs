@@ -2,10 +2,11 @@ use super::*;
 
 #[cxx::bridge(namespace = "molrs")]
 pub mod ffi {
-    /// Chemical element, Z = the enum value (H=1 .. Og=118). The single
-    /// element-identity type across molrs and every downstream C++ consumer;
-    /// mirrors `molrs::core::system::Element` value-for-value (parity is
-    /// asserted by the `ffi_element_matches_core_element` test).
+    /// Chemical element exported from molrs' canonical Rust periodic table.
+    ///
+    /// The variants are injected by build.rs from
+    /// `molrs/src/core/system/element.rs`; this bridge never owns a second
+    /// hand-maintained element table.
     #[repr(u8)]
     enum Element {
         H = 1,
@@ -128,13 +129,63 @@ pub mod ffi {
         Og = 118,
     }
 
+    /// Exact frame-metadata dtype.
+    #[repr(u8)]
+    enum MetaType {
+        Bool,
+        I32,
+        I64,
+        U32,
+        U64,
+        F32,
+        F64,
+        String,
+        Bool3,
+        I32x3,
+        I64x3,
+        U32x3,
+        U64x3,
+        F32x3,
+        F64x3,
+        F32x6,
+        F64x6,
+        F32x9,
+        F64x9,
+    }
+
+    /// One exact-dtype metadata entry. Only the payload selected by `dtype` is used.
+    struct MetaEntry {
+        key: String,
+        dtype: MetaType,
+        bool_value: bool,
+        i32_value: i32,
+        i64_value: i64,
+        u32_value: u32,
+        u64_value: u64,
+        f32_value: f32,
+        f64_value: f64,
+        string_value: String,
+        bool_values: Vec<u8>,
+        i32_values: Vec<i32>,
+        i64_values: Vec<i64>,
+        u32_values: Vec<u32>,
+        u64_values: Vec<u64>,
+        f32_values: Vec<f32>,
+        f64_values: Vec<f64>,
+    }
+
     extern "Rust" {
-        /// Element symbol ("H", "Zn", ...) — panics on an invalid value.
-        fn element_symbol(e: Element) -> &'static str;
+        // ── Exact consumer contract ───────────────────────────────
+        // Version changes whenever an existing declaration, semantic dtype,
+        // or ownership rule changes incompatibly. Capabilities let consumers
+        // fail loudly when a required surface was compiled out or omitted.
+        fn cxx_api_version() -> u32;
+        fn cxx_api_capabilities() -> u64;
 
         // ── Frame bridge (molrs.Frame via molrs-ffi FrameRef) ─────
         type FrameRef;
 
+        fn frame_schema_version() -> u32;
         fn frame_new() -> Box<FrameRef>;
 
         // Cross-extension ingress: rebuild a bridge handle from the raw
@@ -148,29 +199,40 @@ pub mod ffi {
         fn frame_has_block(fref: &FrameRef, block: &str) -> bool;
         fn frame_block_columns(fref: &FrameRef, block: &str) -> Vec<String>;
         fn frame_block_nrows(fref: &FrameRef, block: &str) -> i64;
+        fn frame_meta_entries(fref: &FrameRef) -> Vec<MetaEntry>;
 
         // readers — owned copies (RefCell precludes returning borrowed slices)
         fn frame_column_f64(fref: &FrameRef, block: &str, col: &str) -> Vec<f64>;
         fn frame_column_i32(fref: &FrameRef, block: &str, col: &str) -> Vec<i32>;
         fn frame_column_u32(fref: &FrameRef, block: &str, col: &str) -> Vec<u32>;
         fn frame_column_str(fref: &FrameRef, block: &str, col: &str) -> Vec<String>;
-        fn frame_atomic_numbers(fref: &FrameRef) -> Vec<i32>;
-        fn frame_simbox(fref: &FrameRef) -> Vec<f64>;
+        fn frame_box(fref: &FrameRef) -> Vec<f64>;
 
         // create-or-update writers
         fn frame_set_column_f64(fref: &mut FrameRef, block: &str, col: &str, data: &[f64]);
         fn frame_set_column_i32(fref: &mut FrameRef, block: &str, col: &str, data: &[i32]);
         fn frame_set_column_u32(fref: &mut FrameRef, block: &str, col: &str, data: &[u32]);
         fn frame_set_column_str(fref: &mut FrameRef, block: &str, col: &str, data: &[String]);
-        fn frame_set_simbox(fref: &mut FrameRef, h: &[f64]);
+        fn frame_set_box(fref: &mut FrameRef, h: &[f64]);
+        fn frame_set_meta_entry(fref: &mut FrameRef, entry: MetaEntry) -> Result<()>;
 
         // AM1-BCC: Atomiverse supplies AM1 base charges; molrs owns BCC typing.
+        //
+        // `parameter_set` selects the correction family by name — "bcc"
+        // (BCCPARM.DAT, antechamber `-c bcc`) or "abcg2" (BCCPARM_ABCG2.DAT,
+        // `-c abcg2`). A name molrs does not know is refused, never defaulted.
+        //
+        // Returns `Result`, and that is load-bearing: cxx marks every non-Result
+        // `extern "Rust"` fn `noexcept`, so a Rust panic could only abort the
+        // calling process. The errors this can raise are the caller's CHEMISTRY —
+        // a molecule with no BCC correction row (boron), a missing atom type, a
+        // missing bond order — not programmer bugs, so they cross as a catchable
+        // `rust::Error` and leave the engine alive to handle them.
         fn am1_bcc_assign_frame_from_base(
             fref: &mut FrameRef,
             am1_charges: &[f64],
-            total_charge: f64,
-            normalize_total_charge: bool,
-        ) -> Vec<f64>;
+            parameter_set: &str,
+        ) -> Result<Vec<f64>>;
 
         // ── I/O ──────────────────────────────────────────────────
         // Write one frame to an XYZ file (standard element+coords). append=false
@@ -184,20 +246,18 @@ pub mod ffi {
             box_mat: &[f64],
             append: bool,
         );
-        // Write one frame + key=value metadata (serialized into the extxyz
-        // comment line by molrs core) — used by recorders that attach
-        // step / energy_eV. `write_frame_xyz` is the meta-less shorthand.
-        fn write_frame_xyz_meta(
+        // Typed-metadata writer. Every MetaEntry carries an explicit dtype;
+        // malformed vector lengths are returned as errors.
+        fn write_frame_xyz_typed(
             path: &str,
             type_id: &[i32],
             x: &[f64],
             y: &[f64],
             z: &[f64],
             box_mat: &[f64],
-            meta_keys: Vec<String>,
-            meta_values: Vec<String>,
+            meta: Vec<MetaEntry>,
             append: bool,
-        );
+        ) -> Result<()>;
         // Write one frame + named per-atom fields (field_data reshaped
         // [n_fields, n_atoms]) to a single-frame Zarr store.
         fn write_frame_zarr(
@@ -213,7 +273,7 @@ pub mod ffi {
         fn read_frame_zarr_first(path: &str) -> Box<FrameRef>;
         // Read the first frame of an (ext)XYZ file into a materialize-ready
         // FrameRef (atoms.{x,y,z,type} + simbox). `type` is derived from the
-        // species/element symbol column (Z). All XYZ parsing lives in molrs.
+        // required ExtXYZ species column (Z). All XYZ parsing lives in molrs.
         fn xyz_read_first_frame(path: &str) -> Box<FrameRef>;
 
         // ── Trajectory-analysis compute objects (mirror molrs::compute::*) ──

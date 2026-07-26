@@ -21,7 +21,8 @@ use ndarray::ArrayD;
 use molrs::error::MolRsError;
 use molrs::spatial::region::simbox::SimBox;
 use molrs::store::block::{Block, Column};
-use molrs::store::frame::Frame;
+use molrs::store::frame::{FRAME_SCHEMA_VERSION, Frame};
+use molrs::store::meta::MetaValue;
 use molrs::types::{F, I, U};
 
 // ---------------------------------------------------------------------------
@@ -247,7 +248,10 @@ pub(crate) fn write_system(
     frame: &Frame,
 ) -> Result<(), MolRsError> {
     // System group
+    let mut system_attrs = serde_json::Map::new();
+    system_attrs.insert("frame_schema_version".into(), FRAME_SCHEMA_VERSION.into());
     GroupBuilder::new()
+        .attributes(system_attrs)
         .build(store.clone(), prefix)?
         .store_metadata()?;
 
@@ -255,7 +259,7 @@ pub(crate) fn write_system(
     if !frame.meta.is_empty() {
         let mut meta_attrs = serde_json::Map::new();
         for (k, v) in &frame.meta {
-            meta_attrs.insert(k.clone(), serde_json::Value::String(v.clone()));
+            meta_attrs.insert(k.clone(), v.to_json_value());
         }
         GroupBuilder::new()
             .attributes(meta_attrs)
@@ -293,14 +297,23 @@ pub(crate) fn read_system(
 ) -> Result<Frame, MolRsError> {
     let mut frame = Frame::new();
 
+    let system_group = zarrs::group::Group::open(store.clone(), prefix)?;
+    let version = system_group
+        .attributes()
+        .get("frame_schema_version")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| MolRsError::zarr("missing frame_schema_version"))?;
+    if version != u64::from(FRAME_SCHEMA_VERSION) {
+        return Err(MolRsError::zarr(format!(
+            "unsupported frame schema version {version}; expected {FRAME_SCHEMA_VERSION}"
+        )));
+    }
+
     // Meta
     if let Ok(meta_group) = zarrs::group::Group::open(store.clone(), &format!("{}/meta", prefix)) {
         for (k, v) in meta_group.attributes() {
-            if let Some(s) = v.as_str() {
-                frame.meta.insert(k.clone(), s.to_string());
-            } else {
-                frame.meta.insert(k.clone(), v.to_string());
-            }
+            let value = MetaValue::from_json_value(v).map_err(MolRsError::zarr)?;
+            frame.meta.insert(k.clone(), value);
         }
     }
 

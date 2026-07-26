@@ -20,11 +20,26 @@ from typing import Any, Self, overload
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
-from .molrs import Block as _RsBlock
-from .molrs import BlockDtypeError
-from .molrs import Frame as _RsFrame
+from ._lib import Block as _RsBlock
+from ._lib import BlockDtypeError
+from ._lib import Frame as _RsFrame
+from ._lib import MetaValue
 
 type BlockLike = Mapping[str, ArrayLike]
+
+
+def _is_array_like(value: Any) -> bool:
+    """True when ``value`` is a real 1-D-representable array (not a scalar).
+
+    Used to decide whether a failed column assignment is a genuine
+    not-array-like error (scalar / object) or a real array whose own error
+    (length / shape / dtype mismatch) must be surfaced unmasked.
+    """
+    if isinstance(value, (str, bytes)):
+        return False
+    if isinstance(value, np.ndarray) or hasattr(value, "__array__"):
+        return True
+    return isinstance(value, (list, tuple))
 
 
 class Block(_RsBlock, MutableMapping[str, np.ndarray]):
@@ -53,7 +68,10 @@ class Block(_RsBlock, MutableMapping[str, np.ndarray]):
         self._source: "_RsBlock | None" = None
         if vars_ is not None:
             if not isinstance(vars_, dict):
-                raise ValueError(f"vars_ must be a dict, got {type(vars_)}")
+                raise ValueError(
+                    "Block value must be a dict of column-name -> array, "
+                    f"got {type(vars_)}"
+                )
             for k, v in vars_.items():
                 try:
                     self[k] = v
@@ -62,6 +80,12 @@ class Block(_RsBlock, MutableMapping[str, np.ndarray]):
                     # (object / None / ragged column) rather than masking it.
                     raise
                 except Exception as e:
+                    # Only claim "not array-like" when the value genuinely is
+                    # not — a length/shape mismatch on a real array carries its
+                    # own actionable message ("axis-0 length 4 but block
+                    # expects 6"), which must NOT be masked.
+                    if _is_array_like(v):
+                        raise
                     raise ValueError(
                         f"Value must be array-like for key {k!r}, got {type(v)}"
                     ) from e
@@ -390,20 +414,25 @@ class Frame(_RsFrame):
 
     Inherits the PyO3 ``molrs.Frame``: a rich ``Frame`` IS-A core frame, accepted
     by every ``molrs.*`` API with no conversion. ``__getitem__`` upgrades the
-    stored block to a rich :class:`Block`. The simulation ``box`` is the native
+    stored block to a rich :class:`Block`. The ``box`` is the native
     ``molrs.Box`` (inherited). Frame has no CSV methods — CSV belongs to Block.
     """
 
     def __new__(
-        cls, blocks: "dict[str, Block | BlockLike] | None" = None, **props: Any
+        cls,
+        blocks: "dict[str, Block | BlockLike] | None" = None,
+        meta: "dict[str, MetaValue] | None" = None,
     ) -> "Frame":
         return super().__new__(cls)
 
     def __init__(
-        self, blocks: "dict[str, Block | BlockLike] | None" = None, **props: Any
+        self,
+        blocks: "dict[str, Block | BlockLike] | None" = None,
+        meta: "dict[str, MetaValue] | None" = None,
     ) -> None:
         super().__init__()
-        self.metadata: dict[str, Any] = dict(props)
+        if meta is not None:
+            self.meta = meta
         if blocks is not None:
             if not isinstance(blocks, dict):
                 raise ValueError(f"blocks must be a dict, got {type(blocks)}")
@@ -447,10 +476,10 @@ class Frame(_RsFrame):
         return iter(self._blocks.values())
 
     def to_dict(self) -> dict[str, Any]:
-        """Frame as ``{"blocks": {name: block.to_dict()}, "metadata": {...}}``."""
+        """Frame as ``{"blocks": {name: block.to_dict()}, "meta": {...}}``."""
         return {
             "blocks": {name: self[name].to_dict() for name in self.keys()},
-            "metadata": dict(self.metadata),
+            "meta": dict(self.meta),
         }
 
     @classmethod
@@ -462,22 +491,16 @@ class Frame(_RsFrame):
             frame = cls()
             for name in _RsFrame.keys(data):
                 frame[name] = _RsFrame.__getitem__(data, name)
-            raw_box = _RsFrame.box.__get__(data, type(data))  # type: ignore[attr-defined]
+            raw_box = _RsFrame.box.__get__(data, type(data))
             if raw_box is not None:
                 frame.box = raw_box
-            src_meta = dict(data.meta) if data.meta else {}
-            frame.metadata = src_meta
-            if src_meta:
-                # Preserve the native Rust-side meta too, so callers reading
-                # ``frame.meta`` (e.g. molpy's readers before the spec-04
-                # adoption) keep seeing it after the wrap, not just
-                # ``frame.metadata``.
-                frame.meta = src_meta
+            if data.meta:
+                frame.meta = dict(data.meta)
             return frame
+        if set(data) != {"blocks", "meta"}:
+            raise ValueError("frame dict must contain exactly 'blocks' and 'meta'")
         blocks = {name: Block.from_dict(blk) for name, blk in data["blocks"].items()}
-        frame = cls(blocks=blocks)
-        frame.metadata = data.get("metadata", {})
-        return frame
+        return cls(blocks=blocks, meta=data["meta"])
 
     @classmethod
     def _from_ffi_frameref_capsule(cls, capsule: Any) -> "Frame":
@@ -499,7 +522,8 @@ class Frame(_RsFrame):
         for name in self.keys():
             new[name] = self[name].copy()
         new.box = self.box
-        new.metadata = self.metadata.copy()
+        if self.meta:
+            new.meta = dict(self.meta)
         return new
 
     def __repr__(self) -> str:

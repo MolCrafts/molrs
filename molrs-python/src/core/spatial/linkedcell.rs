@@ -72,7 +72,7 @@ fn pairs_to_i64_array<'py>(
 /// >>> nlist.n_pairs
 /// 42
 /// >>> nlist.distances   # numpy float array
-#[pyclass(name = "NeighborList")]
+#[pyclass(module = "molrs", name = "NeighborList")]
 pub struct PyNeighborList {
     pub(crate) inner: RsNeighborList,
 }
@@ -238,7 +238,7 @@ impl PyNeighborList {
 /// >>> nq = NeighborQuery(box, positions, cutoff=3.0)
 /// >>> nlist = nq.query(query_positions)   # cross-query
 /// >>> nlist = nq.query_self()             # self-query (unique pairs)
-#[pyclass(name = "NeighborQuery")]
+#[pyclass(module = "molrs", name = "NeighborQuery")]
 pub struct PyNeighborQuery {
     inner: NeighborQuery,
 }
@@ -267,7 +267,29 @@ impl PyNeighborQuery {
         if view.ncols() != 3 {
             return Err(PyValueError::new_err("points must have shape (N,3)"));
         }
+        if cutoff <= 0.0 {
+            return Err(PyValueError::new_err("cutoff must be positive"));
+        }
         let inner = NeighborQuery::new(&r#box.inner, view, cutoff);
+        Ok(Self { inner })
+    }
+
+    /// Build a free-boundary spatial index from reference points.
+    ///
+    /// The non-periodic bounding box is derived from the point cloud, so the
+    /// caller does not need to manufacture a simulation box for selections or
+    /// other isolated-coordinate queries.
+    #[staticmethod]
+    #[pyo3(signature = (points, cutoff))]
+    fn free(points: PyReadonlyArray2<'_, NpF>, cutoff: NpF) -> PyResult<Self> {
+        let view = points.as_array();
+        if view.ncols() != 3 {
+            return Err(PyValueError::new_err("points must have shape (N,3)"));
+        }
+        if cutoff <= 0.0 {
+            return Err(PyValueError::new_err("cutoff must be positive"));
+        }
+        let inner = NeighborQuery::free(view, cutoff);
         Ok(Self { inner })
     }
 
@@ -345,7 +367,7 @@ impl PyNeighborQuery {
 /// >>> lc = LinkedCell(positions, cutoff=3.0, box=simbox)
 /// >>> pairs = lc.pairs()   # (M, 2) int64 array
 /// >>> lc.update(new_positions, box=simbox)
-#[pyclass(name = "LinkedCell")]
+#[pyclass(module = "molrs", name = "LinkedCell")]
 pub struct PyLinkedCell {
     pub(crate) inner: molrs::spatial::neighbors::LinkCell,
 }

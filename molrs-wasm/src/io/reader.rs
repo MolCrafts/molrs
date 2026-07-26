@@ -13,18 +13,18 @@
 //! |----------|--------|-------------|----------|
 //! | `XYZReader` | XYZ / ExtXYZ | Yes | `"atoms"` block with `element`, `x`, `y`, `z` |
 //! | `PDBReader` | Protein Data Bank | No (step=0 only) | `"atoms"` block with `name`, `resname`, `x`, `y`, `z`, etc. |
-//! | `CIFReader` | Crystallographic Information File | Yes (per `data_` block) | `"atoms"` block + simbox from unit cell |
-//! | `LAMMPSReader` | LAMMPS data file | No (step=0 only) | `"atoms"` block + `"bonds"` block + simbox |
+//! | `CIFReader` | Crystallographic Information File | Yes (per `data_` block) | `"atoms"` block + box from unit cell |
+//! | `LAMMPSReader` | LAMMPS data file | No (step=0 only) | `"atoms"` block + `"bonds"` block + box |
 //! | `LAMMPSTrajReader` | LAMMPS dump trajectory | Yes | `"atoms"` block with columns from dump header |
 //! | `SDFReader` | MDL molfile / SDF | Yes (per record) | `"atoms"` + optional `"bonds"` block |
-//! | `CubeReader` | Gaussian Cube | No (step=0 only) | `"atoms"` + `"grid"` block + simbox (Å) |
-//! | `CHGCARReader` | VASP CHGCAR | No (step=0 only) | `"atoms"` + `"grid"` block + simbox (Å) |
-//! | `GROReader` | GROMACS GRO | Yes | `"atoms"` block + simbox (**nm→Å on read**) |
+//! | `CubeReader` | Gaussian Cube | No (step=0 only) | `"atoms"` + `"grid"` block + box (Å) |
+//! | `CHGCARReader` | VASP CHGCAR | No (step=0 only) | `"atoms"` + `"grid"` block + box (Å) |
+//! | `GROReader` | GROMACS GRO | Yes | `"atoms"` block + box (**nm→Å on read**) |
 //! | `MOL2Reader` | Tripos MOL2 | Yes (per molecule) | `"atoms"` + optional `"bonds"` block (Å) |
-//! | `POSCARReader` | VASP POSCAR / CONTCAR | No (step=0 only) | `"atoms"` block + simbox (Cartesian Å) |
-//! | `DCDReader` | DCD trajectory (binary) | Yes | `"atoms"` block + optional simbox |
-//! | `TRRReader` | GROMACS TRR (binary) | Yes | `"atoms"` block + simbox (**nm→Å on read**) |
-//! | `XTCReader` | GROMACS XTC (binary) | Yes | `"atoms"` block + simbox (**nm→Å on read**) |
+//! | `POSCARReader` | VASP POSCAR / CONTCAR | No (step=0 only) | `"atoms"` block + box (Cartesian Å) |
+//! | `DCDReader` | DCD trajectory (binary) | Yes | `"atoms"` block + optional box |
+//! | `TRRReader` | GROMACS TRR (binary) | Yes | `"atoms"` block + box (**nm→Å on read**) |
+//! | `XTCReader` | GROMACS XTC (binary) | Yes | `"atoms"` block + box (**nm→Å on read**) |
 
 use crate::core::frame::Frame;
 use molrs::io::data::chgcar::read_chgcar_from_reader;
@@ -313,7 +313,7 @@ impl PdbReader {
 /// - `"atoms"` block: `type` (i32), `x`, `y`, `z` (F, angstrom),
 ///   and optionally `charge` (F)
 /// - `"bonds"` block (if present): `i`, `j` (u32), `type` (i32)
-/// - Simulation box (`simbox`) with PBC
+/// - Simulation box (`box`) with PBC
 ///
 /// Only a single frame is supported (`step = 0`).
 ///
@@ -364,7 +364,7 @@ impl LammpsReader {
     ///
     /// # Returns
     ///
-    /// A [`Frame`] with atoms, optional bonds, and simbox, or `undefined`.
+    /// A [`Frame`] with atoms, optional bonds, and box, or `undefined`.
     ///
     /// # Errors
     ///
@@ -577,7 +577,7 @@ impl SdfReader {
 ///
 /// Each frame produces a [`Frame`] with an `"atoms"` block carrying
 /// `x`, `y`, `z` (F, angstrom). Box/cell information, when the DCD
-/// header declares it present, is attached as the frame's `simbox`.
+/// header declares it present, is attached as the frame's `box`.
 ///
 /// # Example (JavaScript)
 ///
@@ -792,7 +792,7 @@ impl CifReader {
 /// - `"grid"` block: structural shape `[nx, ny, nz]` and one f64 column
 ///   per scalar field — `density` for single-density files,
 ///   `mo_<idx>` for negative-natoms multi-orbital files.
-/// - `simbox`: voxel cell × dims in Å.
+/// - `box`: voxel cell × dims in Å.
 ///
 /// Cube is inherently single-frame (only `step = 0` is valid).
 ///
@@ -863,7 +863,7 @@ impl CubeReader {
 /// - `"atoms"` block: `element` (string), `x`/`y`/`z` (F, Cartesian Å).
 /// - `"grid"` block: structural shape `[nx, ny, nz]`, columns
 ///   `total` (always) and `diff` (when ISPIN=2).
-/// - `simbox`: triclinic POSCAR lattice in Å, fully periodic.
+/// - `box`: triclinic POSCAR lattice in Å, fully periodic.
 ///
 /// CHGCAR is single-frame; only `step = 0` is valid.
 ///
@@ -933,7 +933,7 @@ impl ChgcarReader {
 /// are converted to angstrom on read (x10), matching every other molvis
 /// reader. Each frame produces an `"atoms"` block (`resid`, `resname`,
 /// `atom_name`, `atom_id`, `x`/`y`/`z`, optional `vx`/`vy`/`vz`) and a
-/// `simbox` from the box-vector line.
+/// `box` from the box-vector line.
 #[wasm_bindgen(js_name = GROReader)]
 pub struct GroReader {
     content: Vec<u8>,
@@ -1071,7 +1071,7 @@ impl Mol2Reader {
 /// POSCAR describes a single crystalline cell. Coordinates are returned as
 /// Cartesian angstrom (`Direct` files are converted on read by molrs).
 /// Produces an `"atoms"` block (`x`/`y`/`z`, optional `symbol`,
-/// selective-dynamics flags, velocities) and a periodic `simbox`.
+/// selective-dynamics flags, velocities) and a periodic `box`.
 /// Single-frame: any `step != 0` returns `undefined`.
 #[wasm_bindgen(js_name = POSCARReader)]
 pub struct PoscarReader {
@@ -1126,7 +1126,7 @@ impl PoscarReader {
 /// file as raw bytes (`Uint8Array`). Each frame produces an `"atoms"` block
 /// (`id`, `x`/`y`/`z`, optional `vx`/`vy`/`vz` and `fx`/`fy`/`fz`);
 /// coordinates and box are converted nm -> angstrom on read. Box is attached
-/// as `simbox` when the frame carries one.
+/// as `box` when the frame carries one.
 #[wasm_bindgen(js_name = TRRReader)]
 pub struct TrrReader {
     inner: RsTrrReader<Cursor<Vec<u8>>>,
@@ -1179,7 +1179,7 @@ impl TrrReader {
 /// XTC is the compressed GROMACS trajectory (XDR, big-endian, lossy
 /// coordinate compression). Accepts the file as raw bytes (`Uint8Array`).
 /// Each frame produces an `"atoms"` block (`id`, `x`/`y`/`z`); coordinates
-/// and box are converted nm -> angstrom on read. Box is attached as `simbox`.
+/// and box are converted nm -> angstrom on read. Box is attached as `box`.
 #[wasm_bindgen(js_name = XTCReader)]
 pub struct XtcReader {
     inner: RsXtcReader<Cursor<Vec<u8>>>,

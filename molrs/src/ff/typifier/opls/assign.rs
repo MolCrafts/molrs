@@ -3,11 +3,10 @@
 //! Given a typed [`Atomistic`] (atoms carry `type` = `opls_NNN` and `class` from
 //! [`typify_atoms`](super::typify_atoms)), this module enumerates every bond /
 //! angle / dihedral and resolves the most specific matching bonded type from the
-//! potential [`ForceField`](crate::ff::forcefield::ForceField)'s `bond` /
-//! `angle` / `dihedral` style tables, writing the winning type's numeric params
-//! onto the term.
+//! potential [`ForceField`]'s `bond` / `angle` / `dihedral` style tables, writing
+//! the winning type's numeric params onto the term.
 //!
-//! # Why a bespoke matcher (not [`Style::get_bondtype`])
+//! # Why a bespoke matcher (not [`Style::get_bondtype`](crate::ff::forcefield::Style::get_bondtype))
 //!
 //! OPLS-AA keys its bonded forces on **class** names (`CT`, `HC`, …) and uses
 //! wildcard end atoms heavily (`X-CT-CT-X`). The force field's
@@ -27,17 +26,16 @@
 //! the molrs [`OplsXmlReader`](crate::ff::forcefield::readers::opls::OplsXmlReader)
 //! transcribes the `class*` attributes verbatim, so an OPLS wildcard end arrives
 //! here as the **empty string** `""`. To stay bit-for-bit compatible with
-//! molpy's matcher, [`end_score`] treats `""`, `"*"`, and `"X"` all as the
-//! score-0 wildcard.
+//! molpy's matcher, the private `end_score` helper treats `""`, `"*"`, and `"X"`
+//! all as the score-0 wildcard.
 //!
 //! # No-match seam (parameter interpolation)
 //!
 //! A term that matches no candidate is routed through the [`Estimator`] seam, an
-//! OPLS-bonded specialization of the generic
-//! [`ParameterInterpolator`](crate::ff::typifier::estimate::ParameterInterpolator)
-//! trait. If an interpolator is attached, it is asked to fill the missing
-//! params; otherwise the configured strict policy applies (`strict=true` →
-//! `Err`, `strict=false` → the term is left unparametrized).
+//! OPLS-bonded specialization of the generic [`ParameterInterpolator`] trait. If
+//! an interpolator is attached, it is asked to fill the missing params;
+//! otherwise the configured strict policy applies (`strict=true` → `Err`,
+//! `strict=false` → the term is left unparametrized).
 
 use std::collections::HashMap;
 
@@ -273,19 +271,7 @@ pub enum NoMatch {
     Skip,
 }
 
-/// One bonded term awaiting parameters: its arity-tagged endpoint types.
-///
-/// Handed to an [`Estimator`] when no force-field candidate matches. Kept small
-/// and owned so an interpolator needs no access to `Atomistic` internals.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BondedTerm {
-    /// A bond: the two endpoint `opls_NNN` types.
-    Bond([String; 2]),
-    /// An angle: the three endpoint `opls_NNN` types (centre in the middle).
-    Angle([String; 3]),
-    /// A dihedral: the four endpoint `opls_NNN` types.
-    Dihedral([String; 4]),
-}
+pub use crate::ff::typifier::estimate::BondedTerm;
 
 /// OPLS bonded specialization of the generic parameter interpolation seam.
 ///

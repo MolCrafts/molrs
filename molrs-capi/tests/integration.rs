@@ -186,24 +186,24 @@ fn test_block_ptr_mut() {
 }
 
 #[test]
-fn test_simbox_lifecycle() {
+fn test_box_lifecycle() {
     let _g = TEST_LOCK.lock().unwrap();
 
     let origin: [Float; 3] = [0.0, 0.0, 0.0];
     let pbc: [bool; 3] = [true, true, true];
-    let mut sb = MolrsSimBoxHandle { idx: 0, version: 0 };
-    assert_ok(unsafe { molrs_simbox_cube(10.0 as Float, origin.as_ptr(), pbc.as_ptr(), &mut sb) });
+    let mut sb = MolrsBoxHandle { idx: 0, version: 0 };
+    assert_ok(unsafe { molrs_box_cube(10.0 as Float, origin.as_ptr(), pbc.as_ptr(), &mut sb) });
 
     let mut vol: Float = 0.0;
-    assert_ok(unsafe { molrs_simbox_volume(sb, &mut vol) });
+    assert_ok(unsafe { molrs_box_volume(sb, &mut vol) });
     assert!((vol - 1000.0).abs() < 1e-3);
 
     let mut lengths: [Float; 3] = [0.0; 3];
-    assert_ok(unsafe { molrs_simbox_lengths(sb, lengths.as_mut_ptr()) });
+    assert_ok(unsafe { molrs_box_lengths(sb, lengths.as_mut_ptr()) });
     assert!((lengths[0] - 10.0).abs() < 1e-6);
 
     let mut h: [Float; 9] = [0.0; 9];
-    assert_ok(unsafe { molrs_simbox_h(sb, h.as_mut_ptr()) });
+    assert_ok(unsafe { molrs_box_h(sb, h.as_mut_ptr()) });
     assert!((h[0] - 10.0).abs() < 1e-6);
     assert!((h[4] - 10.0).abs() < 1e-6);
     assert!((h[8] - 10.0).abs() < 1e-6);
@@ -211,37 +211,37 @@ fn test_simbox_lifecycle() {
     // Wrap coordinates
     let xyz_in: [Float; 6] = [11.0, -1.0, 21.0, 0.5, 0.5, 0.5];
     let mut xyz_out: [Float; 6] = [0.0; 6];
-    assert_ok(unsafe { molrs_simbox_wrap(sb, xyz_in.as_ptr(), xyz_out.as_mut_ptr(), 2) });
+    assert_ok(unsafe { molrs_box_wrap(sb, xyz_in.as_ptr(), xyz_out.as_mut_ptr(), 2) });
     assert!((xyz_out[0] - 1.0).abs() < 1e-4);
     assert!((xyz_out[1] - 9.0).abs() < 1e-4);
     assert!((xyz_out[2] - 1.0).abs() < 1e-4);
 
-    assert_ok(unsafe { molrs_simbox_drop(sb) });
-    assert_ne!(unsafe { molrs_simbox_drop(sb) }, MolrsStatus::Ok);
+    assert_ok(unsafe { molrs_box_drop(sb) });
+    assert_ne!(unsafe { molrs_box_drop(sb) }, MolrsStatus::Ok);
 }
 
 #[test]
-fn test_simbox_shortest_vector() {
+fn test_box_shortest_vector() {
     let _g = TEST_LOCK.lock().unwrap();
 
     let origin: [Float; 3] = [0.0, 0.0, 0.0];
     let pbc: [bool; 3] = [true, true, true];
-    let mut sb = MolrsSimBoxHandle { idx: 0, version: 0 };
-    assert_ok(unsafe { molrs_simbox_cube(10.0 as Float, origin.as_ptr(), pbc.as_ptr(), &mut sb) });
+    let mut sb = MolrsBoxHandle { idx: 0, version: 0 };
+    assert_ok(unsafe { molrs_box_cube(10.0 as Float, origin.as_ptr(), pbc.as_ptr(), &mut sb) });
 
     let r1: [Float; 3] = [0.5, 0.0, 0.0];
     let r2: [Float; 3] = [9.5, 0.0, 0.0];
     let mut dr: [Float; 3] = [0.0; 3];
     assert_ok(unsafe {
-        molrs_simbox_shortest_vector(sb, r1.as_ptr(), r2.as_ptr(), dr.as_mut_ptr(), 1)
+        molrs_box_shortest_vector(sb, r1.as_ptr(), r2.as_ptr(), dr.as_mut_ptr(), 1)
     });
     assert!((dr[0] - (-1.0)).abs() < 1e-4);
 
-    unsafe { molrs_simbox_drop(sb) };
+    unsafe { molrs_box_drop(sb) };
 }
 
 #[test]
-fn test_frame_simbox_association() {
+fn test_frame_box_association() {
     let _g = TEST_LOCK.lock().unwrap();
 
     let mut frame = MolrsFrameHandle { idx: 0, version: 0 };
@@ -249,29 +249,29 @@ fn test_frame_simbox_association() {
 
     let origin: [Float; 3] = [0.0, 0.0, 0.0];
     let pbc: [bool; 3] = [true, true, true];
-    let mut sb = MolrsSimBoxHandle { idx: 0, version: 0 };
-    assert_ok(unsafe { molrs_simbox_cube(5.0 as Float, origin.as_ptr(), pbc.as_ptr(), &mut sb) });
+    let mut sb = MolrsBoxHandle { idx: 0, version: 0 };
+    assert_ok(unsafe { molrs_box_cube(5.0 as Float, origin.as_ptr(), pbc.as_ptr(), &mut sb) });
 
-    assert_ok(unsafe { molrs_frame_set_simbox(frame, sb) });
+    assert_ok(unsafe { molrs_frame_set_box(frame, sb) });
 
-    let mut sb2 = MolrsSimBoxHandle { idx: 0, version: 0 };
-    assert_ok(unsafe { molrs_frame_get_simbox(frame, &mut sb2) });
+    let mut sb2 = MolrsBoxHandle { idx: 0, version: 0 };
+    assert_ok(unsafe { molrs_frame_get_box(frame, &mut sb2) });
 
     let mut vol: Float = 0.0;
-    assert_ok(unsafe { molrs_simbox_volume(sb2, &mut vol) });
+    assert_ok(unsafe { molrs_box_volume(sb2, &mut vol) });
     assert!((vol - 125.0).abs() < 1e-3);
 
-    assert_ok(unsafe { molrs_frame_clear_simbox(frame) });
+    assert_ok(unsafe { molrs_frame_clear_box(frame) });
 
-    let mut sb3 = MolrsSimBoxHandle { idx: 0, version: 0 };
+    let mut sb3 = MolrsBoxHandle { idx: 0, version: 0 };
     assert_ne!(
-        unsafe { molrs_frame_get_simbox(frame, &mut sb3) },
+        unsafe { molrs_frame_get_box(frame, &mut sb3) },
         MolrsStatus::Ok
     );
 
     unsafe {
-        molrs_simbox_drop(sb);
-        molrs_simbox_drop(sb2);
+        molrs_box_drop(sb);
+        molrs_box_drop(sb2);
         molrs_frame_drop(frame);
     }
 }
@@ -280,19 +280,54 @@ fn test_frame_simbox_association() {
 fn test_frame_metadata() {
     let _g = TEST_LOCK.lock().unwrap();
 
+    assert_eq!(molrs_frame_schema_version(), 2);
     let mut frame = MolrsFrameHandle { idx: 0, version: 0 };
     assert_ok(unsafe { molrs_frame_new(&mut frame) });
 
     let key = CString::new("source").unwrap();
     let val = CString::new("test.pdb").unwrap();
-    assert_ok(unsafe { molrs_frame_set_meta(frame, key.as_ptr(), val.as_ptr()) });
+    let value = MolrsMetaValue {
+        dtype: MolrsMetaType::String,
+        string_value: val.as_ptr().cast_mut(),
+        ..Default::default()
+    };
+    assert_ok(unsafe { molrs_frame_put_meta(frame, key.as_ptr(), &value) });
 
-    let mut out: *mut std::ffi::c_char = std::ptr::null_mut();
-    assert_ok(unsafe { molrs_frame_get_meta(frame, key.as_ptr(), &mut out) });
-    assert!(!out.is_null());
-    let result = unsafe { std::ffi::CStr::from_ptr(out) };
+    let mut out = MolrsMetaValue::default();
+    assert_ok(unsafe { molrs_frame_read_meta(frame, key.as_ptr(), &mut out) });
+    assert_eq!(out.dtype, MolrsMetaType::String);
+    assert!(!out.string_value.is_null());
+    let result = unsafe { std::ffi::CStr::from_ptr(out.string_value) };
     assert_eq!(result.to_str().unwrap(), "test.pdb");
-    unsafe { molrs_free_string(out) };
+    unsafe { molrs_free_string(out.string_value) };
+
+    let tag_key = CString::new("tag").unwrap();
+    let tag = MolrsMetaValue {
+        dtype: MolrsMetaType::I64,
+        i64_value: 9_007_199_254_740_993,
+        ..Default::default()
+    };
+    assert_ok(unsafe { molrs_frame_put_meta(frame, tag_key.as_ptr(), &tag) });
+    let mut tag_out = MolrsMetaValue::default();
+    assert_ok(unsafe { molrs_frame_read_meta(frame, tag_key.as_ptr(), &mut tag_out) });
+    assert_eq!(tag_out.dtype, MolrsMetaType::I64);
+    assert_eq!(tag_out.i64_value, 9_007_199_254_740_993);
+
+    let stress_key = CString::new("stress").unwrap();
+    let mut stress = MolrsMetaValue {
+        dtype: MolrsMetaType::F64x6,
+        ..Default::default()
+    };
+    stress.f64x9[..6].copy_from_slice(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+    assert_ok(unsafe { molrs_frame_put_meta(frame, stress_key.as_ptr(), &stress) });
+    let mut stress_out = MolrsMetaValue::default();
+    assert_ok(unsafe { molrs_frame_read_meta(frame, stress_key.as_ptr(), &mut stress_out) });
+    assert_eq!(stress_out.dtype, MolrsMetaType::F64x6);
+    assert_eq!(&stress_out.f64x9[..6], &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+
+    let mut count = 0;
+    assert_ok(unsafe { molrs_frame_meta_count(frame, &mut count) });
+    assert_eq!(count, 3);
 
     unsafe { molrs_frame_drop(frame) };
 }
@@ -422,9 +457,9 @@ fn test_full_simulation_loop() {
     // SimBox
     let origin: [Float; 3] = [0.0, 0.0, 0.0];
     let pbc: [bool; 3] = [true, true, true];
-    let mut sb = MolrsSimBoxHandle { idx: 0, version: 0 };
-    assert_ok(unsafe { molrs_simbox_cube(10.0 as Float, origin.as_ptr(), pbc.as_ptr(), &mut sb) });
-    assert_ok(unsafe { molrs_frame_set_simbox(frame, sb) });
+    let mut sb = MolrsBoxHandle { idx: 0, version: 0 };
+    assert_ok(unsafe { molrs_box_cube(10.0 as Float, origin.as_ptr(), pbc.as_ptr(), &mut sb) });
+    assert_ok(unsafe { molrs_frame_set_box(frame, sb) });
 
     // Block + positions
     assert_ok(unsafe { molrs_frame_set_block(frame, atoms_id, 0) });
@@ -466,15 +501,15 @@ fn test_full_simulation_loop() {
     assert_eq!(buf, [2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 14.0, 16.0, 18.0]);
 
     // Query SimBox from frame
-    let mut frame_sb = MolrsSimBoxHandle { idx: 0, version: 0 };
-    assert_ok(unsafe { molrs_frame_get_simbox(frame, &mut frame_sb) });
+    let mut frame_sb = MolrsBoxHandle { idx: 0, version: 0 };
+    assert_ok(unsafe { molrs_frame_get_box(frame, &mut frame_sb) });
     let mut h: [Float; 9] = [0.0; 9];
-    assert_ok(unsafe { molrs_simbox_h(frame_sb, h.as_mut_ptr()) });
+    assert_ok(unsafe { molrs_box_h(frame_sb, h.as_mut_ptr()) });
     assert!((h[0] - 10.0).abs() < 1e-6);
 
     unsafe {
-        molrs_simbox_drop(sb);
-        molrs_simbox_drop(frame_sb);
+        molrs_box_drop(sb);
+        molrs_box_drop(frame_sb);
         molrs_frame_drop(frame);
     }
 }

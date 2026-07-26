@@ -17,7 +17,52 @@ status change) and conflicts with `CLAUDE.md`.
 
 ---
 
-## 2026-06-19 — GAFF: AmberTools-only, no native molrs GAFF
+## 2026-07-23 — private extension molrs._lib; docs CI fix
+**Decision:** Rename compiled extension `molrs.molrs` → `molrs._lib` (public vs private). PyO3 classes use `module = "molrs"`. Docs: force_inspection + analysis attrs for griffe; Cloudflare Pages builds fixed.
+**Status:** active (v0.9.2)
+
+---
+
+## 2026-07-22 — release order: molrs before molpy; master+tag; no scripts
+**Decision:** Co-release is always molrs first, then molpy. Version landings on master require a `vX.Y.Z` tag. No pin-parity automation scripts — agents manually verify. Monorepo merge discarded.
+**Status:** promoted (→ `.claude/notes/release.md` + CLAUDE.md § Release before molpy)
+
+## 2026-07-22 — closed vacuous-green-tests + test-subset-assertions
+**Decision:** both specs closed; gates already green, code already computed partitions / `#[ignore]` for molpy OPLS.
+**Cleanup (tester audit):** trajectory soft `if !exists { return }` → `common::require_fixture`; gate shape-2 expanded; `testing.md` rewritten for single-crate + iron laws.
+**Status:** promoted (→ testing.md Iron laws; architecture_gate)
+## 2026-07-13 — GAFF decision REVERSED: molrs types GAFF/GAFF2 natively
+**Decision (owner-authorised):** the 2026-06-19 "GAFF = AmberTools-only" decision below is
+**REVERSED**. molrs now assigns GAFF, GAFF2, AMBER and SYBYL atom types natively, all
+**37/37** against `antechamber -at {gaff,gaff2,amber,sybyl}`.
+**Why the situation changed:** that decision rested on "a native GAFF typifier would need a
+clean-room reimplementation of antechamber's GPL `atomtype.c` ruleset + a vendored
+`gaff.dat` + an antechamber-parity corpus". All three now exist for other reasons: the ATD
+rule engine was built for AM1-BCC (spec 05), the `.DEF` tables are generated Rust (spec 02),
+and the 37-molecule antechamber oracle is the parity corpus. **Adding GAFF was a table, not
+code** — `AtdParameterSet::{Gff,Gff2,Amber,Sybyl}` were already wired. The licensing concern
+was separately waived by the owner (see the 2026-07-12 entry).
+**Three defects the GAFF columns exposed** (all invisible to BCC/ABCG2/GAS):
+1. The facts layer marked EVERY aromatic atom `AR1` and never wrote `AR2`/`AR3`/`AR4`.
+   BCC/ABCG2/GAS only ever spell the property as `[AR1.AR2]` — an OR — so they are
+   structurally blind to it. GFF discriminates `ca [AR1]` vs `cc [sb,db,AR2]`.
+2. The terminal catch-all row (`ATD DU &` / `ATD ANY &`) of all seven `.DEF` files was
+   dropped at generation. AMBER is the first column where an atom actually falls through,
+   and antechamber's answer genuinely IS `DU` (nitromethane's nitro O, DMSO's S).
+3. `cd`/`nd`/`cf`/`ch` are **not rows in ATOMTYPE_GFF.DEF at all** — antechamber renames half
+   of every conjugated system in a second pass the `.DEF` never describes. The pairing is
+   upstream data (`PARMCHK.DAT` `equivalent_flag`), so it is a table column, not an engine
+   invention. The pass: 2-colour the CONJUGATED subgraph; a single bond keeps the letter, a
+   double/triple bond flips it. NOT positional (pyridone is `cc cd cd cc`, not alternating),
+   NOT gated on aromaticity (benzoquinone has no aromatic bond), and it propagates a COLOUR,
+   not a name (vinylacetylene holds a `ce` and a `cg` in one component).
+**Trap worth remembering:** `alternate` must key on PARMCHK's `equivalent_flag` COLUMN, never
+on the type's spelling — `ATOMTYPE_AMBER.DEF` has real `CC`/`CD` rows (parm94 histidine
+carbons, flag 0), and `ATOMTYPE_GAS.DEF`'s `cg` is a guanidinium carbon, not GAFF's sp
+carbon. Both would be mis-paired by a name-keyed generator; the column is GAFF-namespaced.
+**Status:** stable — supersedes the entry below.
+
+## 2026-06-19 — GAFF: AmberTools-only, no native molrs GAFF — SUPERSEDED 2026-07-13
 **Decision:** GAFF support is **AmberTools (antechamber) delegation only** — no
 native molrs GAFF typifier, `gaff.dat` parser, or clean-room typing. The
 `gaff-typifier-redesign` spec (and the `gaff-typifier-01..05` chain it superseded)
@@ -31,7 +76,122 @@ AM1-BCC charges authoritatively; reimplementing it in molrs is not worth the
 maintenance + correctness burden.
 **Status:** provisional
 
-## 2026-06-12 — petgraph: removed from molrs-core, KEPT in molrs-io (VF2)
+## 2026-07-12 — BCC bond typing: two things that are NOT what we assumed
+**1. Kekulé choice IS charge-relevant end-to-end — my earlier "spend no budget there" was WRONG.**
+It is true that the *table* is Kekulé-invariant: BCCPARM holds identical deltas for bond
+types 7, 8 and 10 (7-vs-10: 25/25 keys identical; 8-vs-10: 15/15). I concluded from that
+the Kekulé phase could not affect charges. **That conclusion is false**, because the Kekulé
+structure also determines the **ATOM** types: imidazolium has two degenerate (equal-penalty)
+Kekulé structures that place the N=C double bond on *different* nitrogens, and those two N
+then get different BCC atom types → different charges. So the tie-break is load-bearing and
+had to be calibrated (`min endpoint asc, max endpoint desc`, doubles first) to reproduce
+AmberTools on all 9 aromatic oracle molecules. Table-invariance ⇏ pipeline-invariance.
+
+**2. Aromatic bond types are NOT resolved from the `ar` precursor — they are re-perceived.**
+antechamber does not walk adjacency to turn the SYBYL `ar` token (type 10) into 7/8. It
+**re-derives the Kekulé structure from scratch** via the APS.DAT valence-state penalty
+search (verified: flipping benzene's Kekulé phase in the input SDF does not move the
+output). The sequential precursor rule in `finalize()` gives benzene the *opposite* phase
+from the oracle. molrs therefore implements penalty-minimising kekulization over the
+aromatic subsystem using antechamber's own APS numbers — not a precursor resolution.
+**Status:** stable
+
+## 2026-07-12 — BCC type 6: nitrate divergence is deliberate (owner decision)
+**Decision:** molrs fixes antechamber's input-order dependence in `bondtype.c` part3 and
+accepts two divergences. Rule shipped: *N of degree 2–3, bonded to a terminal O/S, NOT a
+conjugated centre, carrying another terminal O/S* → type 6. Exhaustive neighbour scan,
+symmetric in endpoints.
+
+| molecule | antechamber | molrs | |
+|---|---|---|---|
+| nitrite / nitromethane / nitrobenzene / TMAO | 6,6 / 9,9 / 9,9 / 9 | same | match |
+| **nitrate** | 6, 9, 9 | **9, 9, 9** | divergence — symmetry fix |
+| **pyridine-N-oxide** | 6 | **9** | divergence — branch-B artifact |
+
+**Why:** antechamber's part3 has an unbraced `break` (branch A stops at the first neighbour
+→ depends on input bond order) and an unconditional assignment (branch B skips the check
+entirely). Measured: nitrate's three N–O get 6/9/9, so two *topologically identical* O⁻ get
+different types → final charges −0.6997 / −0.4180 / −0.4180, a **0.28 e break across three
+equivalent oxygens**. Charge equivalencing cannot save it (`-eq` averages AM1 charges
+*before* BCC; the damage is in the bond types applied *after*). Both divergences were shown
+to be pure coin-flips: writing pyridine-N-oxide's bond as `O-N` gives 6, as `N-O` gives 9 —
+same molecule, same file format.
+**The conjugated gate is what preserves nitromethane** (without it an exhaustive scan types
+its N–O as 6, a +0.1317 vs −0.1500 swing); it is the source's own stated intent
+(`bondtype.c:312` — *"index6 >= 2 makes NO2 bonds are delocalized bonds"*).
+**Status:** stable — do not "restore parity" on nitrate; it is a deliberate correctness win.
+
+## 2026-07-12 — antechamber reimplementation: licensing posture (owner decision)
+**Decision (project owner, 2026-07-12):** Proceed with reimplementing antechamber's
+perception algorithms (`bondtype.c` → spec 03, `equatom.c` → spec 04, `atomtype.c` →
+specs 05/06) in molrs. Stated basis: **学习用途 (educational/research use), and the
+AmberTools developers have given permission to read their code.**
+**Context this decision was taken against (recorded so it is not lost, not re-litigated):**
+- molrs is **BSD-3-Clause** (`Cargo.toml:26`); AmberTools/antechamber is **GPL-3**.
+- The chem-perceive work is **source-derived, not clean-room**: the algorithm rules
+  (bondtype.c `finalize()` part2/4/5 ordering, equatom.c Eq.(I) path-score, the
+  `-eq` levels) were obtained by reading the antechamber C source.
+- molrs also now ships ~27k lines of Rust generated from AmberTools' `.DAT`/`.DEF`
+  parameter tables (spec 02).
+- This was raised before spec 03 began and explicitly waived by the owner.
+**Status:** stable — do NOT re-raise per-spec. If molrs's distribution posture ever
+changes (e.g. a commercial redistribution question), revisit then, not before.
+
+## 2026-07-12 — ONE SSSR in the tree: `core::system::topology::Topology::find_rings`
+**Decision:** There is exactly **one** ring-perception algorithm in molrs, and it lives in
+`core::system::topology`. `perceive::rings::find_rings(&Atomistic) -> RingInfo` is now a
+thin **handle-keyed chemistry decoration** over it: it projects the graph into core's index
+space, calls `Topology::find_rings`, and lifts `usize` back to `AtomId`/`BondId`. Do NOT
+add a second SSSR; if you need rings, go through one of these two.
+**Why:** The tree carried **two independent Horton-style SSSR implementations** — the
+index-keyed one in core (used by `perceive::rotatable` and molrs-wasm) and a separate
+handle-keyed one in `perceive::rings` (used by aromaticity, SMARTS, MMFF, AM1-BCC,
+conformer, molrs-python). Before merging them I verified empirically that they agree on ring
+**membership**, not merely ring sizes — identical canonicalised ring atom-sets and per-atom
+ring counts across benzene, cyclopropane, naphthalene (fused), **cubane** (8v/12e — 5 SSSR
+rings chosen from 6 faces, the classic ambiguous case), bicyclo[2.2.2], spiro, an acyclic
+chain, and an adamantane-like cage. That mattered: SSSR is **not unique**, so if the two had
+disagreed, delegating would have silently changed aromaticity / MMFF / SMARTS results.
+Consolidation removed **193 lines** and the full suite stayed exactly on snapshot
+(1746 passing), which independently corroborates the equivalence — every one of those
+consumers reads `find_rings` and none moved.
+**Status:** stable
+
+## 2026-07-12 — rustdoc is a THIRD build gate, not a subset of fmt/clippy/check
+**Decision:** `$META.build.check` and `.pre-commit-config.yaml` now both run
+`RUSTDOCFLAGS='-D warnings' cargo doc --no-deps -p molcrafts-molrs --all-features`.
+**Why:** A broken intra-doc link (`[`chem`]` in `core/mod.rs`, left behind when the module
+moved to `perceive`) passed `cargo fmt`, `cargo clippy -D warnings` AND `cargo check`, and
+was only caught by an out-of-band `cargo doc` run. Public-doc-links-to-private-item has the
+same property. Turning the gate on required clearing **37 pre-existing rustdoc errors** across
+20 files first (redundant explicit link targets, links to `Grid`/`Frame`/`FrameView` that had
+moved or been deleted, 7 public→private links, and a malformed doctest fence in
+`io/data/lammps_data.rs` whose ```no_run block had silently never compiled).
+**Status:** stable
+
+## 2026-07-12 — petgraph is GONE: molrs has zero petgraph dependency
+**Decision:** petgraph is removed entirely (`molrs/Cargo.toml`: dropped the
+`petgraph` optional dep and `dep:petgraph` from the `smiles` feature). molrs now
+has **no petgraph dependency at all**.
+**Why:** It had become a **dead dependency**. The 2026-06-12 note below kept it on
+the premise that "petgraph does real work: `subgraph_isomorphisms_iter` (VF2) powers
+SMARTS substructure matching". That premise is **false in the current code**: the
+SMARTS matcher (`core/chem/smarts/matcher.rs`, moving to `perceive/smarts/`) is a
+**hand-rolled** backtracking VF2-style matcher, a semantics-only port of RDKit's
+`SubstructMatch.cpp`. At some point after that note the VF2 was reimplemented and
+the dep was simply left behind. Verified before removal: `use petgraph` / `petgraph::`
+appear **zero** times in every `.rs` across molrs, molrs-python, molrs-cxxapi,
+molrs-ffi, molrs-wasm, molrs-capi, tests, benches and examples — the only hits are
+comments *asserting petgraph is not used*, plus a grep-gate test
+(`tests/compute/hbond.rs::hbond_source_has_no_petgraph`). `cargo check --features smiles`
+passes without it; `cargo tree -i petgraph` no longer resolves.
+Also corrected the two CLAUDE.md claims this invalidated (the `smiles` feature no
+longer "pulls in petgraph"; SMARTS lives in `core/chem/smarts/`, not `io/smiles/`).
+**Status:** stable
+**Supersedes:** the 2026-06-12 decision below, whose "do NOT remove it" rests on the
+now-false VF2 premise. Kept for history.
+
+## 2026-06-12 — petgraph: removed from molrs-core, KEPT in molrs-io (VF2) — SUPERSEDED 2026-07-12
 **Decision:** `molrs-core` no longer depends on petgraph (spec `core-drop-petgraph`,
 commit eedc1e6): `Topology`/`topo_distances`/`chem::rings` run on native MolGraph
 adjacency. `molrs-io` **keeps** petgraph (feature-gated behind `smiles`) — do NOT
@@ -48,7 +208,8 @@ MIT/Apache, and only pulled when `smiles` is enabled. Moving VF2 into molgraph i
 wrong layer (core uses no VF2; query semantics don't fit the domain-agnostic graph).
 Revisit ONLY under a hard constraint (WASM size budget, zero-dep policy, petgraph
 deprecation).
-**Status:** provisional
+**Status:** SUPERSEDED — the VF2 was later hand-rolled (RDKit `SubstructMatch.cpp`
+port) and the dep was left behind dead. See the 2026-07-12 entry above.
 
 ## 2026-05-28 — BLAS/LAPACK backend selection is the binary's job, not molrs's
 
@@ -116,3 +277,119 @@ Frame meta), not as privileged types in the core data model.
   code path, separate wasm index path, separate Python class).
 
 **Status:** provisional
+
+## 2026-07-13 — charge equivalencing: three corrections worth keeping
+**1. It is PATH-SCORE, not automorphism orbits — and the witness is acetate.**
+`equatom.c` scores every simple path (`Score = Σ (j+1)·0.11 + Z_j·0.08`), sorts, and
+compares EXACTLY. Orbits are a strict subset of path-score classes. The concrete
+divergence is NOT the theoretical order-blindness (a sweep of every valence-legal
+fragment ≤5 heavy atoms found no ordinary molecule that merges two non-automorphic
+atoms that way) — it is **bond-order / formal-charge blindness**, and acetate is in
+the oracle: raw sqm −0.595/−0.597 → antechamber −0.596/−0.596, MERGED. But
+`core/system/graph_hash.rs` folds bond order (line 143) and formal charge into its
+colours, so an orbit engine would SPLIT the Kekulé C=O from the C–O⁻ and ship a
+symmetry-broken carboxylate. Do not use graph_hash as the class engine.
+
+**2. "Conserves total charge bitwise" is mathematically impossible.** A class mean is a
+rounded f64, so `n·fl(Σq/n) ≠ Σq` unless n is a power of two. It also CONTRADICTS
+"class members carry identical bits". Measured: 19/37 molecules happen to be bitwise
+equal, 18/37 drift, worst 3.7e-16. antechamber carries the identical residual and does
+not renormalize. The honest contract: total conserved to ULP scale, PLUS the bit-exact
+half that does hold (singletons keep their bits; class members share bits).
+
+**3. `scorepath()` scores every simple path, not just paths to terminal atoms.** It emits
+once per DFS node (including the trivial one-atom path), and a 6-coordinate atom
+terminates no scored path (the `con[6]` quirk). The "paths to terminal atoms" reading
+gives a different path count and does not reproduce the oracle.
+
+`-eq 2` is implemented (E/Z refinement, strictly FINER than `-eq 1`; verified on methyl
+methacrylate: `-eq 2` keeps the cis/trans vinyl H apart at 0.139/0.125 where `-eq 1`
+merges to 0.132). Note `ATOM_EQU.TYPE` gates E/Z on GAFF type names molrs never assigns,
+so the gate is translated natively (C=C doubles + amide C–N).
+
+Gotcha for oracle regeneration: `-pf y` DELETES `ANTECHAMBER_AM1BCC_PRE.AC`. Use `-pf n`.
+**Status:** stable
+
+## 2026-07-13 — perception writes `bcc_bond_type`, NEVER `keys::TYPE`
+**Decision:** `Perceive::find_bond_types` writes the perceived antechamber bond type to a
+dedicated `BCC_BOND_TYPE` ("bcc_bond_type") prop. `keys::TYPE` on a BOND belongs to the
+caller — it holds the force field's bond-type NAME (a String), which is what `to_frame` puts
+in the bonds block and what every bonded kernel resolves by. Perception must neither read nor
+write it. (`AtdTypifier::typify` writing the ATOM type to `keys::TYPE` as a String IS correct
+— that is a typifier's job; `types_of()` exists for callers who want types without mutation.)
+**Why:** it was writing an **i32** into the same column the force field needs as a **String**.
+A component column is typed on first write and molrs correctly refuses to coerce — so on a
+molecule that already carried FF bond-type names, **the write silently failed** (the error was
+swallowed by a `let _ =`). `gaff_forcefield` (spec 09) had to copy the molecule into a fresh
+graph stripped of that column just to build a force field; that workaround (`frame_ready_copy`)
+is now deleted, and it had also been silently dropping angles/dihedrals and re-minting handles.
+This is the same class of bug spec 07 closed for charge models (ac-004: charges come out
+bitwise identical whatever `keys::TYPE` holds) — perception had simply never been brought
+under that rule.
+**Convention (already implicit, now explicit):** `keys.rs` holds core canonical, molpy-synced
+fields. Every *perceived fact* is a const in the `perceive` layer — `is_aromatic`, `is_in_ring`,
+`n_rings`, `is_rotatable`, `stereo`, `equiv_class`, and now `bcc_bond_type`.
+**Status:** stable
+
+## 2026-07-14 — chem-perceive whole-chain acceptance: the LESSONS (not the conclusions)
+
+Sixteen specs, each green on its own slice, and the chain had a 150 kcal/mol hole in it.
+These are the transferable lessons, written as rules rather than as war stories.
+
+**1. A test that selects its input cannot be trusted to have covered it.**
+`generic_path_total_energy_matches_rdkit` asserted on `["e_ethane"]` — one of exactly TWO
+fixtures whose MMFF charges are all zero, i.e. the ONE input class that structurally cannot
+expose a missing electrostatic term. Ten fixtures sat on disk, unread, for a month. The rule
+that falls out is not "review your fixture lists"; it is: **where a list can be
+directory-scanned, it MUST be, and where a subset is meant, the subset must be a PREDICATE
+evaluated on the molecule, not a list of names.** A list you can write by hand is a list you
+can shorten by hand. `tests/architecture_gate.rs::no_test_asserts_on_a_subset_of_its_fixtures`
+now enforces it, and it caught four survivors — including a partition (`IDENTICAL_FIXTURES`,
+`N_FIXTURES`) that omits `e_caffeine` and `e_big`, both of which *do* carry a delocalized
+nitrogen. Nothing had ever asserted that MMFF94s changes caffeine's energy.
+
+**2. A wrong reason is worse than no reason — it is an alibi.**
+Next to `["e_ethane"]` sat a comment blaming "stretch-bend + torsion eq-fallback label
+resolution". It was false (stbn and torsion agreed to five decimals on every fixture), and it
+misdirected every reader for a month. **"Not yet implemented" is not a reason to exclude a
+fixture; it is a reason to fail.** A gate now refuses an excuse that sits next to the thing it
+excuses.
+
+**3. A grep finds spellings; a gate finds semantics.**
+The `ParamSource` criterion judged a ctor by the *spelling* of its binding (`_tp`, with Rust's
+leading underscore) and therefore missed `pme_ctor` and `pair_coul_cut_ctor`, which spell it
+`_type_params` and ignore it just as completely — 8 violators, not the 6 the grep found. And
+the spelling criterion is blind by construction to the deliberate version: a ctor that binds
+`type_params` and never reads it. **Proven, not asserted**: injecting exactly that shape leaves
+all four tests of the existing spelling gate GREEN, while
+`architecture_gate::param_source_is_bidirectional_on_semantics_not_spelling` names it exactly.
+Ask what the body *does*, never what the name *says*.
+
+**4. Stage tests cannot see a chain.** Each of the seven stages was green. The chain was not:
+the GAFF force field the chain builds declares **no electrostatic style at all**, so
+`to_potentials` returns an energy with no Coulomb term in it — silently, for every molecule,
+ionic ones included. No stage test could see it, because no test ran the chain to an *energy*.
+The tell had been sitting in the tree the whole time: `SpecialBonds.coul = [0, 0, 1/1.2]`, a
+1-4 Coulomb scale factor declared for a term that does not exist. **A constant nothing consumes
+is the same smell as 4,065 XML rows nothing reads.** Both mean: someone declared an intention
+and nothing checked it.
+
+**5. Forward assertions are fooled by "added it, in the wrong place". Assert ABSENCE.**
+Zero-charge molecules must get EXACTLY 0.0 electrostatic energy — not "small", because every
+term has a factor of zero in it and any tolerance would be hiding something. Molecules with no
+delocalized N must be BIT-IDENTICAL between MMFF94 and MMFF94s — otherwise a "they differ" test
+can pass on a difference that does not exist. Benzene must HAVE impropers (it had zero, and the
+oop energy of 0.0 is very nearly right for a planar ring, which is how it hid).
+
+**6. A gate that has never been red is indistinguishable from no gate.**
+Every gate in this acceptance was proven to bite: the defect it guards was injected, the gate
+went red, the injection was reverted. Two of the injections were themselves *wrong* the first
+time (a conformer test injected a dependence on `x` while the rotation was *about* x; a
+`needs_equivalencing` patch never matched its target string) — and only the bite-proof
+discovered it. **The bite-proof is not paperwork. It is the test of the test.**
+
+**7. An acceptance that fixes what it finds is where the last defect hides.**
+This one fixed nothing. Three gates land RED, each naming a real defect, each getting its own
+spec. The thing that would have reported them must not be the thing that swallows them.
+
+**Status:** stable

@@ -3,7 +3,7 @@
 //!
 //! A [`PyFrame`] maps string keys (e.g. `"atoms"`, `"bonds"`, `"angles"`) to
 //! [`PyBlock`] column stores. It may optionally carry a [`PyBox`] (simulation
-//! box) and a string-to-string metadata dictionary.
+//! box) and an exact-dtype metadata map.
 //!
 //! # Conventional Block Layout
 //!
@@ -16,7 +16,6 @@
 //! The frame itself does **not** enforce cross-block row consistency; that is
 //! the caller's responsibility (use [`PyFrame::validate`] to check).
 
-use std::collections::HashMap;
 use std::ffi::CString;
 
 use crate::core::spatial::simbox::PyBox;
@@ -25,10 +24,111 @@ use crate::helpers::molrs_error_to_pyerr;
 use crate::store::ffi_error_to_pyerr;
 use molrs::store::block::Block as CoreBlock;
 use molrs::store::frame::Frame as CoreFrame;
+use molrs::store::meta::{MetaMap, MetaValue};
 use molrs_ffi::FrameRef;
 use pyo3::exceptions::{PyKeyError, PyTypeError};
 use pyo3::prelude::*;
-use pyo3::types::{PyCapsule, PyDict};
+use pyo3::types::{PyCapsule, PyDict, PyList};
+
+/// Exact-dtype frame metadata value.
+#[pyclass(module = "molrs", name = "MetaValue", frozen, from_py_object)]
+#[derive(Clone)]
+pub struct PyMetaValue {
+    pub(crate) inner: MetaValue,
+}
+
+#[pymethods]
+impl PyMetaValue {
+    /// Construct a metadata value from a stable dtype tag and payload.
+    #[new]
+    fn new(dtype: &str, value: &Bound<'_, PyAny>) -> PyResult<Self> {
+        fn array<T, const N: usize>(value: &Bound<'_, PyAny>, dtype: &str) -> PyResult<[T; N]>
+        where
+            for<'a, 'py> T: FromPyObject<'a, 'py>,
+        {
+            let values: Vec<T> = value.extract()?;
+            values.try_into().map_err(|values: Vec<T>| {
+                PyTypeError::new_err(format!("{dtype} requires {N} values, got {}", values.len()))
+            })
+        }
+
+        let inner = match dtype {
+            "bool" => MetaValue::Bool(value.extract()?),
+            "i32" => MetaValue::I32(value.extract()?),
+            "i64" => MetaValue::I64(value.extract()?),
+            "u32" => MetaValue::U32(value.extract()?),
+            "u64" => MetaValue::U64(value.extract()?),
+            "f32" => MetaValue::F32(value.extract()?),
+            "f64" => MetaValue::F64(value.extract()?),
+            "string" => MetaValue::String(value.extract()?),
+            "bool3" => MetaValue::Bool3(array(value, dtype)?),
+            "i32x3" => MetaValue::I32x3(array(value, dtype)?),
+            "i64x3" => MetaValue::I64x3(array(value, dtype)?),
+            "u32x3" => MetaValue::U32x3(array(value, dtype)?),
+            "u64x3" => MetaValue::U64x3(array(value, dtype)?),
+            "f32x3" => MetaValue::F32x3(array(value, dtype)?),
+            "f64x3" => MetaValue::F64x3(array(value, dtype)?),
+            "f32x6" => MetaValue::F32x6(array(value, dtype)?),
+            "f64x6" => MetaValue::F64x6(array(value, dtype)?),
+            "f32x9" => MetaValue::F32x9(array(value, dtype)?),
+            "f64x9" => MetaValue::F64x9(array(value, dtype)?),
+            _ => {
+                return Err(PyTypeError::new_err(format!(
+                    "unknown metadata dtype '{dtype}'"
+                )));
+            }
+        };
+        Ok(Self { inner })
+    }
+
+    #[getter]
+    fn dtype(&self) -> &'static str {
+        self.inner.dtype()
+    }
+
+    #[getter]
+    fn value(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        macro_rules! scalar {
+            ($value:expr) => {
+                $value.into_pyobject(py)?.into_any().unbind()
+            };
+        }
+        macro_rules! list {
+            ($value:expr) => {
+                PyList::new(py, $value)?.into_any().unbind()
+            };
+        }
+        Ok(match &self.inner {
+            MetaValue::Bool(v) => v.into_pyobject(py)?.to_owned().into_any().unbind(),
+            MetaValue::I32(v) => scalar!(*v),
+            MetaValue::I64(v) => scalar!(*v),
+            MetaValue::U32(v) => scalar!(*v),
+            MetaValue::U64(v) => scalar!(*v),
+            MetaValue::F32(v) => scalar!(*v),
+            MetaValue::F64(v) => scalar!(*v),
+            MetaValue::String(v) => scalar!(v),
+            MetaValue::Bool3(v) => list!(v),
+            MetaValue::I32x3(v) => list!(v),
+            MetaValue::I64x3(v) => list!(v),
+            MetaValue::U32x3(v) => list!(v),
+            MetaValue::U64x3(v) => list!(v),
+            MetaValue::F32x3(v) => list!(v),
+            MetaValue::F64x3(v) => list!(v),
+            MetaValue::F32x6(v) => list!(v),
+            MetaValue::F64x6(v) => list!(v),
+            MetaValue::F32x9(v) => list!(v),
+            MetaValue::F64x9(v) => list!(v),
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "MetaValue(dtype='{}', value={:?})",
+            self.inner.dtype(),
+            self.inner
+        )
+    }
+}
 
 /// Hierarchical data container exposed to Python as `molrs.Frame`.
 ///
@@ -51,10 +151,10 @@ use pyo3::types::{PyCapsule, PyDict};
 /// frame["atoms"] = atoms
 ///
 /// frame.box = Box.cube(10.0)
-/// print(frame)          # Frame(blocks=['atoms'], simbox=yes)
+/// print(frame)          # Frame(blocks=['atoms'], box=yes)
 /// print(frame.keys())   # ['atoms']
 /// ```
-#[pyclass(name = "Frame", from_py_object, unsendable, subclass)]
+#[pyclass(module = "molrs", name = "Frame", from_py_object, unsendable, subclass)]
 #[derive(Clone)]
 pub struct PyFrame {
     pub(crate) inner: FrameRef,
@@ -77,9 +177,9 @@ impl PyFrame {
 
     /// Build a frame from a dictionary of blocks.
     ///
-    /// Accepts either ``{"blocks": {name: {column: array}}, "metadata": {...}}``
-    /// or a direct ``{name: {column: array}}`` block mapping. Column values use
-    /// the same accepted types as :meth:`Block.insert`.
+    /// Accepts the exact ``{"blocks": {...}, "meta": {...}}`` frame shape.
+    /// Column values use the same accepted types as :meth:`Block.insert` and
+    /// every metadata value must be a :class:`MetaValue`.
     ///
     /// Parameters
     /// ----------
@@ -91,15 +191,16 @@ impl PyFrame {
     /// Frame
     #[staticmethod]
     fn from_dict(data: &Bound<'_, PyDict>) -> PyResult<Self> {
-        let has_blocks_envelope = data.contains("blocks")?;
-        let blocks = if has_blocks_envelope {
-            data.get_item("blocks")?
-                .expect("checked above")
-                .cast_into::<PyDict>()
-                .map_err(|_| PyTypeError::new_err("'blocks' must be a dict"))?
-        } else {
-            data.clone()
-        };
+        if data.len() != 2 || !data.contains("blocks")? || !data.contains("meta")? {
+            return Err(PyTypeError::new_err(
+                "frame dict must contain exactly 'blocks' and 'meta'",
+            ));
+        }
+        let blocks = data
+            .get_item("blocks")?
+            .expect("presence checked above")
+            .cast_into::<PyDict>()
+            .map_err(|_| PyTypeError::new_err("'blocks' must be a dict"))?;
 
         let mut frame = Self::new();
         for (block_name, columns) in blocks.iter() {
@@ -123,19 +224,12 @@ impl PyFrame {
                 .map_err(ffi_error_to_pyerr)?;
         }
 
-        if has_blocks_envelope {
-            let metadata = if let Some(metadata) = data.get_item("metadata")? {
-                Some(metadata)
-            } else {
-                data.get_item("meta")?
-            };
-            if let Some(metadata) = metadata {
-                let metadata = metadata
-                    .cast::<PyDict>()
-                    .map_err(|_| PyTypeError::new_err("'metadata' must be a dict"))?;
-                frame.set_meta(metadata)?;
-            }
-        }
+        let meta = data
+            .get_item("meta")?
+            .expect("presence checked above")
+            .cast_into::<PyDict>()
+            .map_err(|_| PyTypeError::new_err("'meta' must be a dict"))?;
+        frame.set_meta(&meta)?;
 
         Ok(frame)
     }
@@ -253,7 +347,8 @@ impl PyFrame {
         self.with_frame(|f| f.keys().map(|s| s.to_string()).collect())
     }
 
-    /// The simulation box attached to this frame, or ``None``.
+    /// The simulation :class:`Box` attached to this frame, or ``None``.
+    ///
     ///
     /// Returns
     /// -------
@@ -264,22 +359,16 @@ impl PyFrame {
     /// --------
     /// >>> if frame.box is not None:
     /// ...     print(frame.box.volume())
-    #[getter(simbox)]
+    #[getter]
     fn get_box(&self) -> PyResult<Option<PyBox>> {
         Ok(self
             .inner
-            .simbox_clone()
+            .box_clone()
             .map_err(ffi_error_to_pyerr)?
             .map(|inner| PyBox { inner }))
     }
 
-    /// Alias for ``simbox`` — matches the molpy API.
-    #[getter(r#box)]
-    fn get_box_alias(&self) -> PyResult<Option<PyBox>> {
-        self.get_box()
-    }
-
-    /// Set (or clear) the simulation box.
+    /// Set (or clear) the simulation :class:`Box`.
     ///
     /// Parameters
     /// ----------
@@ -290,31 +379,25 @@ impl PyFrame {
     /// --------
     /// >>> frame.box = Box.cube(20.0)
     /// >>> frame.box = None  # remove
-    #[setter(simbox)]
-    fn set_box(&mut self, simbox: Option<&PyBox>) -> PyResult<()> {
+    #[setter]
+    fn set_box(&mut self, box_: Option<&PyBox>) -> PyResult<()> {
         self.inner
-            .set_simbox(simbox.map(|sb| sb.inner.clone()))
+            .set_box(box_.map(|sb| sb.inner.clone()))
             .map_err(ffi_error_to_pyerr)
     }
 
-    /// Setter alias for ``simbox`` — matches the molpy API.
-    #[setter(r#box)]
-    fn set_box_alias(&mut self, simbox: Option<&PyBox>) -> PyResult<()> {
-        self.set_box(simbox)
-    }
-
-    /// Metadata dictionary (``dict[str, str]``).
+    /// Exact-dtype metadata dictionary (``dict[str, MetaValue]``).
     ///
     /// Returns
     /// -------
-    /// dict[str, str]
-    ///     String key-value metadata attached to this frame.
+    /// dict[str, MetaValue]
+    ///     Typed metadata attached to this frame.
     #[getter]
     fn meta<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let dict = PyDict::new(py);
         let meta = self.with_frame(|f| f.meta.clone())?;
         for (k, v) in meta {
-            dict.set_item(k, v)?;
+            dict.set_item(k, Py::new(py, PyMetaValue { inner: v })?)?;
         }
         Ok(dict)
     }
@@ -323,20 +406,22 @@ impl PyFrame {
     ///
     /// Parameters
     /// ----------
-    /// meta : dict[str, str]
-    ///     New metadata. All keys and values must be strings.
+    /// meta : dict[str, MetaValue]
+    ///     New metadata. Every value must carry an explicit dtype.
     ///
     /// Raises
     /// ------
     /// TypeError
-    ///     If any key or value cannot be converted to ``str``.
+    ///     If a key is not ``str`` or a value is not ``MetaValue``.
     #[setter]
     fn set_meta(&mut self, meta: &Bound<'_, PyDict>) -> PyResult<()> {
-        let mut map = HashMap::new();
+        let mut map = MetaMap::with_capacity(meta.len());
         for (k, v) in meta.iter() {
             let key: String = k.extract()?;
-            let val: String = v.extract()?;
-            map.insert(key, val);
+            let val: PyRef<'_, PyMetaValue> = v.extract().map_err(|_| {
+                PyTypeError::new_err(format!("metadata '{key}' must be a MetaValue"))
+            })?;
+            map.insert(key, val.inner.clone());
         }
         self.inner
             .with_mut(|f| {
@@ -361,7 +446,7 @@ impl PyFrame {
 
     /// Return a deep copy of this frame.
     ///
-    /// All blocks, the simulation box, and the string metadata are cloned into
+    /// All blocks, the simulation box, and typed metadata are cloned into
     /// a new, independent frame backed by its own store.
     ///
     /// Returns
@@ -376,7 +461,7 @@ impl PyFrame {
         self.with_frame(|f| {
             let keys: Vec<&str> = f.keys().collect();
             format!(
-                "Frame(blocks={:?}, simbox={})",
+                "Frame(blocks={:?}, box={})",
                 keys,
                 if f.simbox.is_some() { "yes" } else { "no" }
             )

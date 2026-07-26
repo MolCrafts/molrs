@@ -13,8 +13,8 @@
 //! [`MolGraph`]. All higher layers (`aromaticity`, `atomtype`,
 //! `charges`) read from it and never mutate the graph.
 
-use molrs::chem::rings::{RingInfo, find_rings};
-use molrs::system::element::Element;
+use molrs::Element;
+use molrs::perceive::rings::{RingInfo, find_rings};
 use molrs::system::molgraph::PropValue;
 use molrs::{AtomId, Atomistic};
 

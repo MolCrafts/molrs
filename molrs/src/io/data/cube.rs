@@ -32,7 +32,8 @@
 //! ## Unit handling
 //!
 //! Atom coordinates and the simulation box are normalised to **Å** on read
-//! (Bohr → Å conversion via [`BOHR_TO_ANG`] when the file uses Bohr units).
+//! (Bohr → Å conversion by the private `BOHR_TO_ANG` constant — the Bohr radius,
+//! 0.529 177 210 67 Å — when the file uses Bohr units).
 //! The original unit system is recorded in `frame.meta["cube_units"]` so
 //! [`write_cube_to_writer`] can round-trip the file without surprising the
 //! producing toolchain.
@@ -50,11 +51,11 @@ use std::path::Path;
 
 use ndarray::{Array1, ArrayD, IxDyn};
 
+use molrs::Element;
 use molrs::error::MolRsError;
 use molrs::spatial::region::simbox::SimBox;
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
-use molrs::system::element::Element;
 use molrs::types::{F, I};
 
 /// Bohr radius in Ångström. Cube files declare their units via the sign of
@@ -363,26 +364,21 @@ pub fn read_cube_from_reader<R: BufRead>(mut reader: R) -> Result<Frame, MolRsEr
     // -----------------------------------------------------------------------
     let mut frame = Frame::new();
     if !comment1.is_empty() {
-        frame.meta.insert("comment1".into(), comment1);
+        frame.meta.insert("comment1", comment1);
     }
     if !comment2.is_empty() {
-        frame.meta.insert("comment2".into(), comment2);
+        frame.meta.insert("comment2", comment2);
     }
-    frame.meta.insert(
-        "cube_units".into(),
-        if is_angstrom {
-            "angstrom".into()
-        } else {
-            "bohr".into()
-        },
-    );
+    frame
+        .meta
+        .insert("cube_units", if is_angstrom { "angstrom" } else { "bohr" });
     if has_mo {
         let indices_str = mo_indices
             .iter()
             .map(|i| i.to_string())
             .collect::<Vec<_>>()
             .join(",");
-        frame.meta.insert("cube_mo_indices".into(), indices_str);
+        frame.meta.insert("cube_mo_indices", indices_str);
     }
 
     frame.simbox = Some(simbox);
@@ -427,11 +423,15 @@ pub fn write_cube_to_writer<W: Write>(writer: &mut W, frame: &Frame) -> Result<(
     let (nx, ny, nz) = (grid_shape[0], grid_shape[1], grid_shape[2]);
 
     // Determine MO mode from metadata
-    let mo_indices: Option<Vec<usize>> = frame.meta.get("cube_mo_indices").map(|s| {
-        s.split(',')
-            .filter_map(|t| t.trim().parse::<usize>().ok())
-            .collect()
-    });
+    let mo_indices: Option<Vec<usize>> = frame
+        .meta
+        .get("cube_mo_indices")
+        .and_then(|value| value.as_str())
+        .map(|s| {
+            s.split(',')
+                .filter_map(|t| t.trim().parse::<usize>().ok())
+                .collect()
+        });
     let has_mo = mo_indices.is_some();
 
     // Determine unit sign convention. Stored cell/atom coordinates are in
@@ -441,6 +441,7 @@ pub fn write_cube_to_writer<W: Write>(writer: &mut W, frame: &Frame) -> Result<(
     let is_angstrom = frame
         .meta
         .get("cube_units")
+        .and_then(|value| value.as_str())
         .is_some_and(|u| u == "angstrom");
     let unit_scale: f64 = if is_angstrom { 1.0 } else { 1.0 / BOHR_TO_ANG };
 
@@ -454,8 +455,16 @@ pub fn write_cube_to_writer<W: Write>(writer: &mut W, frame: &Frame) -> Result<(
     let h = simbox.h_view();
 
     // Comment lines
-    let c1 = frame.meta.get("comment1").cloned().unwrap_or_default();
-    let c2 = frame.meta.get("comment2").cloned().unwrap_or_default();
+    let c1 = frame
+        .meta
+        .get("comment1")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    let c2 = frame
+        .meta
+        .get("comment2")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
     writeln!(writer, "{}", c1).map_err(MolRsError::Io)?;
     writeln!(writer, "{}", c2).map_err(MolRsError::Io)?;
 

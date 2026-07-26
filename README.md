@@ -47,7 +47,7 @@ One crate, `molcrafts-molrs`, whose sub-systems are feature-gated modules
 | `io` | Readers / writers for PDB, XYZ, mol2, SDF, CIF, GRO, POSCAR, CHGCAR, Cube, LAMMPS data/dump, DCD, Zarr V3 trajectories (SMILES/SMARTS parser under the `smiles` feature) |
 | `compute` | Trajectory analysis: RDF, MSD, clustering, gyration / inertia tensors, PCA, k-means, density, diffraction, PMFT, order parameters, dielectric, environment matching |
 | `ff` | Force fields and potentials — MMFF94 bond/angle/torsion/oop/vdW/electrostatics, LJ, PME — with an atom typifier |
-| `conformer` | 3D conformer generation: distance geometry, fragment assembly, optimization, rotor search, stereo guards |
+| `conformer` | 3D conformer generation: ETKDGv3 distance geometry, experimental-torsion refinement, MMFF94 cleanup, stereo guards |
 | `signal` | Signal processing — FFT-based autocorrelation, window functions, frequency grids |
 
 A separate `molcrafts-molrs-cxxapi` crate (built from source, not published)

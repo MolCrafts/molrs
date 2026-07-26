@@ -157,7 +157,7 @@ fn merge_molecules(original: &Atomistic) {
     );
 
     // Merge mol2 into mol1 (consumes mol2, IDs are remapped)
-    mol1.merge(mol2.into_inner());
+    let _map = mol1.merge(mol2);
 
     println!("\n  After merge:");
     println!(

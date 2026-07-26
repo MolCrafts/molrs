@@ -15,7 +15,10 @@ pub mod pair;
 pub mod registry;
 pub mod soft;
 
-pub use registry::{KernelConstructor, KernelRegistry, lookup_kernel, register_kernel};
+pub use registry::{
+    KernelConstructor, KernelRegistry, ParamSource, lookup_kernel, lookup_param_source,
+    register_kernel, register_kernel_with,
+};
 
 /// Backward-compatible re-exports for existing consumers.
 pub mod kernels {
@@ -114,9 +117,26 @@ fn end_pairs(frame: &Frame, block: &str, col_a: &str, col_b: &str) -> HashSet<(u
 /// (both in one pass, avoiding redundant geometry); [`calc_energy`] and
 /// [`calc_forces`] default to it.
 ///
+/// The geometry optimizer ([`crate::optimize::LBFGS`]) depends on this trait —
+/// not the other way around.
+///
 /// [`calc_energy`]: Potential::calc_energy
 /// [`calc_forces`]: Potential::calc_forces
-pub use crate::optimize::Potential;
+pub trait Potential: Send + Sync {
+    /// Compute energy and forces (= -gradient) in one pass.
+    /// Returns `(energy, forces)` where forces has length `coords.len()`.
+    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>);
+
+    /// Compute total potential energy (kcal/mol).
+    fn calc_energy(&self, coords: &[F]) -> F {
+        self.calc_energy_forces(coords).0
+    }
+
+    /// Compute forces (= -gradient), a length-3N vector.
+    fn calc_forces(&self, coords: &[F]) -> Vec<F> {
+        self.calc_energy_forces(coords).1
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Potentials collection
@@ -227,9 +247,9 @@ impl crate::ff::forcefield::Style {
     /// Returns `Ok(None)` for a style that carries no pairwise kernel (an atom
     /// style — types/charges only), `Err` for an unknown `(category, name)`.
     ///
-    /// The `(category, name)` → constructor mapping lives in the
-    /// [`registry`](crate::ff::potential::registry); a new potential is added by
-    /// registering its kernel, not by editing this dispatch.
+    /// The `(category, name)` → constructor mapping lives in the [`registry`]; a
+    /// new potential is added by registering its kernel, not by editing this
+    /// dispatch.
     pub fn to_potential(
         &self,
         frame: &Frame,
@@ -259,10 +279,21 @@ impl crate::ff::forcefield::Style {
             }
         }
         let type_params = self.defs.collect_type_params();
-        // Bonded styles need type definitions; a pair style may be parameter-free
-        // (e.g. `coul/cut`, whose charges come from the frame), so don't demand
-        // them there — the kernel validates what it actually reads.
-        if type_params.is_empty() && category != "pair" {
+        // A style whose kernel resolves its parameters from type rows
+        // (`ParamSource::TypeRows`) can resolve nothing without them — so no rows
+        // is an error, not a silently-zero potential. A `PerInstance` style
+        // (MMFF's bonded terms, `coul/cut`, `pme`) reads its numbers from Frame
+        // columns the typifier baked and ignores `tp` entirely, so zero rows is
+        // its *normal* state. Asking the registry which one this is replaces the
+        // old blanket `category != "pair"` escape hatch — the hatch that let MMFF
+        // register as table-driven and then be fed 4,065 rows of XML no code reads.
+        //
+        // The registry is the authority because it is where the kernel is declared;
+        // an unregistered style falls through to `TypeRows` here and then fails on
+        // the kernel lookup below with a more specific message.
+        let param_source =
+            registry::lookup_param_source(category, &self.name).unwrap_or(ParamSource::TypeRows);
+        if type_params.is_empty() && param_source == ParamSource::TypeRows {
             return Err(format!(
                 "Style '{}' ({}) has no type definitions",
                 self.name, category
@@ -333,6 +364,42 @@ pub fn extract_coords(frame: &Frame) -> Result<Vec<F>, String> {
         coords.push(zs[i]);
     }
     Ok(coords)
+}
+
+/// Write a flat `[x0,y0,z0, …]` coordinate vector into the Frame's `"atoms"` block.
+pub fn write_coords(frame: &mut Frame, coords: &[F]) -> Result<(), String> {
+    let n = coords.len() / 3;
+    if coords.len() != n * 3 {
+        return Err(format!(
+            "coords length {} is not a multiple of 3",
+            coords.len()
+        ));
+    }
+    let atoms = frame
+        .get_mut("atoms")
+        .ok_or_else(|| "Frame has no \"atoms\" block".to_string())?;
+    let x = atoms
+        .get_float_mut("x")
+        .ok_or_else(|| "atoms block missing float column x".to_string())?;
+    if x.len() != n {
+        return Err(format!("coords atom count {n} != frame atoms {}", x.len()));
+    }
+    for i in 0..n {
+        x[[i]] = coords[3 * i];
+    }
+    let y = atoms
+        .get_float_mut("y")
+        .ok_or_else(|| "atoms block missing float column y".to_string())?;
+    for i in 0..n {
+        y[[i]] = coords[3 * i + 1];
+    }
+    let z = atoms
+        .get_float_mut("z")
+        .ok_or_else(|| "atoms block missing float column z".to_string())?;
+    for i in 0..n {
+        z[[i]] = coords[3 * i + 2];
+    }
+    Ok(())
 }
 
 impl ForceField {

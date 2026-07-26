@@ -72,7 +72,7 @@ result = rdf.compute(frame, nlist)
 ### Force field
 
 ```python
-typifier = molrs.MMFFTypifier()
+typifier = molrs.MMFF94Typifier()
 potentials = typifier.build(atomistic)
 ```
 

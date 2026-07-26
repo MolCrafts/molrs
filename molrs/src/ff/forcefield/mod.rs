@@ -6,6 +6,7 @@
 //! into computational [`Potential`](super::potential::Potential) objects via
 //! [`ForceField::to_potentials`].
 
+pub mod gaff;
 pub mod readers;
 pub mod xml;
 
@@ -806,6 +807,11 @@ impl ForceField {
 
     pub fn styles(&self) -> &[Style] {
         &self.styles
+    }
+
+    /// Mutable styles for native force-field transformations.
+    pub fn styles_mut(&mut self) -> &mut [Style] {
+        &mut self.styles
     }
 
     pub fn get_style(&self, category: &str, name: &str) -> Option<&Style> {

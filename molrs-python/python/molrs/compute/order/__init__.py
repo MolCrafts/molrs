@@ -1,6 +1,6 @@
 """Bond-orientational and orientation order parameters."""
 
-from molrs.molrs import (
+from molrs._lib import (
     Steinhardt as Steinhardt,
     Nematic as Nematic,
     Hexatic as Hexatic,

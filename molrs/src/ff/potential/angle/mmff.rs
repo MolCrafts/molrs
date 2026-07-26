@@ -3,6 +3,16 @@
 //! `theta0` is consumed in radians; the MMFF typifier normalizes the XML's
 //! degree reference angles to radians at the reader boundary
 //! (`forcefield::xml::read_mmff_params_xml_str`).
+//!
+//! # Linear centres
+//!
+//! At a linear centre (acetylene, nitrile, allene — MMFF atom-property
+//! `linh != 0`) the cubic bend is not merely inaccurate, it is the wrong
+//! functional form: it is a Taylor expansion about `theta0`, and there is no
+//! `theta0` to expand about when the equilibrium is 180 degrees and the angle is
+//! free to bend either way. MMFF switches to a cosine form there and skips the
+//! stretch-bend coupling entirely. The typifier bakes a `linear` flag on each
+//! angle row (from the *central* atom's `linh`) and both kernels below read it.
 
 use crate::ff::forcefield::Params;
 use crate::ff::potential::Potential;
@@ -13,19 +23,46 @@ use molrs::store::frame::Frame;
 use molrs::types::F;
 
 use crate::ff::constants::MDYNE_A_TO_KCAL;
-/// Cubic bend constant (rad^-1), = -0.007 * 180/pi.
-const CB_RAD: f64 = -0.40107;
+
+/// Cubic bend constant `cb` (rad⁻¹) — **exactly -0.4**.
+///
+/// MMFF94 (Halgren 1996, eq. 3) defines the anharmonic bend in *degrees*:
+///
+/// ```text
+/// EA = 0.043844 * (ka/2) * dth_deg^2 * (1 + cb_deg * dth_deg),  cb_deg = -0.006981317 deg^-1
+/// ```
+///
+/// molrs works in radians, so the cubic coefficient converts once:
+///
+/// ```text
+/// cb_rad = cb_deg * 180/pi = -(pi/450) * 180/pi = -180/450 = -0.4   (exact, by construction)
+/// ```
+///
+/// This constant was `-0.40107`, commented `= -0.007 * 180/pi`: the degree
+/// constant was **rounded to -0.007 before** being converted. The resulting 0.27%
+/// error in the anharmonic term is worth 0.0073 kcal/mol on the e_big fixture's
+/// angle energy alone — 7x the 1e-3 parity tolerance, i.e. enough to fail parity
+/// on its own even with electrostatics and vdW correct.
+const CB_RAD: f64 = -0.4;
 
 // ---------------------------------------------------------------------------
-// MMFFAngleBend: E = (1/2)*143.9325*ka*dth^2*(1 + cb*dth)
+// MMFFAngleBend
+//   cubic:  E = (1/2)*143.9325*ka*dth^2*(1 + cb*dth)
+//   linear: E = 143.9325*ka*(1 + cos(theta))
 // ---------------------------------------------------------------------------
 
+/// MMFF angle bending, with the linear-centre branch.
+///
+/// `ka` is in md·Å·rad⁻² and `theta0` in radians (143.9325 converts md·Å →
+/// kcal·mol⁻¹). `linear[idx]` selects the cosine form for angles whose *central*
+/// atom is a linear centre.
 pub struct MMFFAngleBend {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,
     atom_k: Vec<usize>,
     ka: Vec<F>,
     theta0: Vec<F>,
+    linear: Vec<bool>,
 }
 
 impl Potential for MMFFAngleBend {
@@ -39,16 +76,33 @@ impl Potential for MMFFAngleBend {
         for idx in 0..self.atom_i.len() {
             let (i, j, k) = (self.atom_i[idx], self.atom_j[idx], self.atom_k[idx]);
             let theta = compute_angle(coords, i, j, k);
-            let dth = theta - self.theta0[idx];
-            energy += 0.5 * conv * self.ka[idx] * dth * dth * (1.0 + cb * dth);
+            let ka = self.ka[idx];
 
-            let de_dth = conv * self.ka[idx] * dth * (1.0 + 1.5 * cb * dth);
+            // dE/dtheta (kcal·mol⁻¹·rad⁻¹); `accumulate_angle_forces` projects it
+            // onto the three atoms and negates it into forces.
+            let de_dth = if self.linear[idx] {
+                // E = 143.9325 * ka * (1 + cos t)  =>  dE/dt = -143.9325 * ka * sin t.
+                // Minimised at t = 180 deg and smooth through it — unlike the cubic
+                // form, which has a cusp there.
+                energy += conv * ka * (1.0 + theta.cos());
+                -conv * ka * theta.sin()
+            } else {
+                let dth = theta - self.theta0[idx];
+                energy += 0.5 * conv * ka * dth * dth * (1.0 + cb * dth);
+                conv * ka * dth * (1.0 + 1.5 * cb * dth)
+            };
             accumulate_angle_forces(coords, i, j, k, de_dth, &mut forces);
         }
         (energy, forces)
     }
 }
 
+/// Build the MMFF angle-bend potential from the typifier's baked columns.
+///
+/// Reads `ka` (md·Å·rad⁻²), `theta0` (radians) and `linear` (0/1) off the
+/// `"angles"` block. All three are per-instance: MMFF resolves them through
+/// table → equivalence → empirical rules that this kernel deliberately does not
+/// re-implement.
 pub fn mmff_angle_ctor(
     _sp: &Params,
     _tp: &[(&str, &Params)],
@@ -69,9 +123,11 @@ pub fn mmff_angle_ctor(
     let th0c = block
         .get_float("theta0")
         .ok_or("mmff_angle: missing \"theta0\" column (typifier did not bake angle params)")?;
+    let linc = linear_column(block, "mmff_angle")?;
 
     let n = ic.len();
-    let (mut ai, mut aj, mut ak, mut ka, mut th0) = (
+    let (mut ai, mut aj, mut ak, mut ka, mut th0, mut lin) = (
+        Vec::with_capacity(n),
         Vec::with_capacity(n),
         Vec::with_capacity(n),
         Vec::with_capacity(n),
@@ -85,6 +141,7 @@ pub fn mmff_angle_ctor(
         ak.push(kc[idx] as usize);
         ka.push(kac[idx] as F);
         th0.push(th0c[idx] as F); // radians
+        lin.push(linc[idx] != 0);
     }
     Ok(Box::new(MMFFAngleBend {
         atom_i: ai,
@@ -92,7 +149,28 @@ pub fn mmff_angle_ctor(
         atom_k: ak,
         ka,
         theta0: th0,
+        linear: lin,
     }))
+}
+
+/// The `linear` flag column of an `"angles"` block (0 = ordinary centre, 1 =
+/// linear centre), baked by `typifier::mmff::frame_builder::annotate_mmff` from
+/// the *central* atom's MMFF `linh` property.
+///
+/// It is an integer column rather than a boolean one because `MolGraph::to_frame`
+/// materializes only f64 / i32 / string properties — a `PropValue::Bool` would be
+/// dropped on the way to the [`Frame`], and the flag would silently read as
+/// "nothing is linear", which is precisely the defect this column exists to fix.
+fn linear_column<'a>(
+    block: &'a molrs::store::block::Block,
+    style: &str,
+) -> Result<&'a ndarray::ArrayD<molrs::types::I>, String> {
+    block.get_int("linear").ok_or_else(|| {
+        format!(
+            "{style}: missing \"linear\" column (typifier did not bake the linear-centre flag); \
+             without it every nitrile / alkyne / allene angle silently uses the cubic bend form"
+        )
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -154,6 +232,18 @@ impl Potential for MMFFStretchBend {
     }
 }
 
+/// Build the MMFF stretch-bend potential from the typifier's baked columns.
+///
+/// # Linear centres carry no stretch-bend
+///
+/// MMFF defines no stretch-bend coupling at a linear centre (`linear = 1`): with
+/// the bend energy a cosine of theta rather than a quadratic in `dtheta`, the
+/// `(dr) * (dtheta)` cross term has no reference angle to be measured from. Those
+/// rows are **skipped** here, exactly as the reference implementation skips them.
+///
+/// Only the linear centre is skipped, not the molecule: acetonitrile's three
+/// methyl angles (H-C-H, H-C-C) contribute stretch-bend like any sp3 centre
+/// (-0.010941 kcal/mol in total). "Nitriles have zero stretch-bend" is wrong.
 pub fn mmff_stbn_ctor(
     _sp: &Params,
     _tp: &[(&str, &Params)],
@@ -182,6 +272,7 @@ pub fn mmff_stbn_ctor(
     let th0 = block.get_float("theta0").ok_or(
         "mmff_stbn: missing \"theta0\" column (typifier did not bake stretch-bend params)",
     )?;
+    let linc = linear_column(block, "mmff_stbn")?;
 
     let n = ic.len();
     let mut pot = MMFFStretchBend {
@@ -195,6 +286,10 @@ pub fn mmff_stbn_ctor(
         theta0: Vec::with_capacity(n),
     };
     for idx in 0..n {
+        // A linear centre has no stretch-bend term at all.
+        if linc[idx] != 0 {
+            continue;
+        }
         pot.atom_i.push(ic[idx] as usize);
         pot.atom_j.push(jc[idx] as usize);
         pot.atom_k.push(kc[idx] as usize);
@@ -211,6 +306,55 @@ pub fn mmff_stbn_ctor(
 mod tests {
     use super::*;
 
+    /// ac-008 — the cubic bend constant is **-0.4 rad^-1, exactly**.
+    ///
+    /// MMFF94 (Halgren 1996) defines the anharmonic bend in DEGREES:
+    ///
+    /// ```text
+    /// EA = 0.043844 * (ka/2) * dth_deg^2 * (1 + cb_deg * dth_deg),  cb_deg = -0.006981317 deg^-1
+    /// ```
+    ///
+    /// Converting the cubic coefficient to radians is one multiplication:
+    ///
+    /// ```text
+    /// cb_rad = cb_deg * 180/pi = -0.006981317 * 57.29577951... = -0.4 exactly
+    /// ```
+    ///
+    /// (`0.006981317 = pi/450`, so the product is `-180/450 = -0.4` — it is exact
+    /// by construction, not by luck.)
+    ///
+    /// The original constant was `-0.40107`, commented `// = -0.007 * 180/pi`:
+    /// the author ROUNDED `-0.006981317` to `-0.007` and only then converted. The
+    /// resulting 0.27% error in the anharmonic term costs e_big 0.0073 kcal/mol
+    /// in the angle energy alone — 7x the 1e-3 parity tolerance, i.e. e_big fails
+    /// on this defect even after electrostatics and vdW are fixed.
+    #[test]
+    fn cubic_bend_constant_is_exactly_minus_zero_point_four() {
+        assert_eq!(
+            CB_RAD, -0.4,
+            "CB_RAD is {CB_RAD}; MMFF's cb = -0.006981317 deg^-1 = -pi/450 deg^-1, and \
+             -pi/450 * 180/pi = -0.4 rad^-1 EXACTLY. -0.40107 is what you get by rounding \
+             the degree constant to -0.007 BEFORE converting."
+        );
+
+        // The derivation, executed: convert the degree constant and land on -0.4.
+        let cb_deg: f64 = -0.006981317;
+        let cb_rad = cb_deg * 180.0 / std::f64::consts::PI;
+        assert!(
+            (cb_rad - CB_RAD).abs() < 1e-7,
+            "CB_RAD ({CB_RAD}) is not cb_deg * 180/pi ({cb_rad})"
+        );
+
+        // And the rounded-first path is measurably NOT the same number, which is
+        // the whole bug: 0.27% of the cubic term.
+        let rounded_first = -0.007 * 180.0 / std::f64::consts::PI;
+        assert!(
+            (rounded_first - CB_RAD).abs() > 1e-3,
+            "rounding cb to -0.007 before converting gives {rounded_first}, which must not \
+             coincide with the exact -0.4"
+        );
+    }
+
     #[test]
     fn test_mmff_angle_at_equilibrium() {
         let theta0: F = (109.5 as F).to_radians();
@@ -220,6 +364,7 @@ mod tests {
             atom_k: vec![2],
             ka: vec![0.608],
             theta0: vec![theta0],
+            linear: vec![false],
         };
         let r = 1.5 as F;
         let half = theta0 / 2.0;
