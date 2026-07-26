@@ -42,10 +42,10 @@ use pyo3::prelude::*;
 use pyo3::types::{PyCapsule, PyDict, PyList, PyTuple};
 
 use molrs::ff::ForceField;
-use molrs::ff::potential::{Potentials, extract_coords};
+use molrs::ff::potential::{Potentials, extract_coords, write_coords};
 use molrs::ff::typifier::mmff::{MMFF94STypifier, MMFF94Typifier};
 use molrs::ff::typifier::opls::OPLSAATypifier;
-use molrs::optimize::{LBFGS, LbfgsConfig, OptReport};
+use molrs::optimize::{LBFGS, OptReport};
 use molrs_ffi::ForceFieldRef;
 
 use crate::core::store::block::PyBlock;
@@ -414,19 +414,22 @@ impl PyPotentials {
 
 /// L-BFGS geometry optimizer, exposed as `molrs.LBFGS`.
 ///
-/// Mirrors molpy: construct with the potentials + config, then ``run`` (single
-/// or homogeneous batch, dispatched on the input rank).
+/// Construct with potentials + knobs on ``new``, then ``run`` a :class:`Frame`
+/// (primary) or a coordinate array (single / batch by rank).
 ///
 /// Examples
 /// --------
 /// >>> pots = molrs.MMFF94Typifier().forcefield().to_potentials(frame)
-/// >>> opt = molrs.LBFGS(pots, fmax=0.05)
+/// >>> opt = molrs.LBFGS(pots, fmax=0.05, max_steps=500)
+/// >>> frame, report = opt.run(frame)
 /// >>> coords, report = opt.run(coords)         # (N, 3)
-/// >>> batch, reports = opt.run(batch)          # (B, N, 3)
 #[pyclass(module = "molrs", name = "LBFGS")]
 pub struct PyLBFGS {
     potentials: Py<PyPotentials>,
-    cfg: LbfgsConfig,
+    fmax: f64,
+    max_steps: usize,
+    max_step: f64,
+    memory: usize,
 }
 
 #[pymethods]
@@ -442,26 +445,61 @@ impl PyLBFGS {
     ) -> Self {
         Self {
             potentials,
-            cfg: LbfgsConfig {
-                fmax,
-                max_steps,
-                max_step,
-                memory,
-            },
+            fmax,
+            max_steps,
+            max_step,
+            memory,
         }
     }
 
-    /// Relax coordinates by L-BFGS. ``(N, 3)`` / ``(3N,)`` -> single structure
-    /// returning ``((N, 3) array, OptReport)``; ``(B, N, 3)`` -> homogeneous
-    /// batch returning ``((B, N, 3) array, list[OptReport])``. Input is not
-    /// mutated.
+    /// Relax a :class:`Frame` or coordinates by L-BFGS.
+    ///
+    /// * ``Frame`` → ``(Frame, OptReport)`` (frame coordinates updated; a new
+    ///   Python frame object is returned with the minimized coords).
+    /// * ``(N, 3)`` / ``(3N,)`` → ``((N, 3) array, OptReport)``
+    /// * ``(B, N, 3)`` → ``((B, N, 3) array, list[OptReport])``
     fn run<'py>(
         &self,
         py: Python<'py>,
-        coords: PyReadonlyArrayDyn<'_, NpF>,
+        arg: &Bound<'_, PyAny>,
     ) -> PyResult<Bound<'py, PyAny>> {
+        // Frame path (primary).
+        if let Ok(frame) = arg.extract::<PyRef<'_, PyFrame>>() {
+            let mut core = frame.clone_core_frame()?;
+            let pots = self.potentials.borrow(py);
+            // Compile against this frame if deferred, then minimize with free mask.
+            let compiled;
+            let pot: &dyn molrs::ff::potential::Potential = match &pots.inner {
+                PotBacking::Compiled(p) => p,
+                PotBacking::Deferred(ff) => {
+                    compiled = ff
+                        .to_potentials(&core)
+                        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                    &compiled
+                }
+            };
+            // Borrowed one-shot on flat coords extracted from frame, then write back.
+            let mut flat = extract_coords(&core).map_err(pyo3::exceptions::PyValueError::new_err)?;
+            let report = LBFGS::minimize(
+                pot,
+                &mut flat,
+                self.fmax,
+                self.max_steps,
+                self.max_step,
+                self.memory,
+            )
+            .map_err(pyo3::exceptions::PyValueError::new_err)?;
+            write_coords(&mut core, &flat).map_err(pyo3::exceptions::PyValueError::new_err)?;
+            let out_frame = PyFrame::from_core_frame(core)?;
+            return Ok((out_frame, PyOptReport::from(report))
+                .into_pyobject(py)?
+                .into_any());
+        }
+
         let pots = self.potentials.borrow(py);
-        let arr = coords.as_array();
+        let pot = pots.inner.compiled()?;
+        let readonly = arg.extract::<PyReadonlyArrayDyn<'_, NpF>>()?;
+        let arr = readonly.as_array();
         let shape = arr.shape();
         match shape.len() {
             1 | 2 => {
@@ -472,9 +510,15 @@ impl PyLBFGS {
                         "coords has {n_elem} elements, not a multiple of 3 (expected (N, 3) or (3N,))"
                     )));
                 }
-                let report = LBFGS::new(pots.inner.compiled()?, self.cfg)
-                    .run(&mut flat)
-                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                let report = LBFGS::minimize(
+                    pot,
+                    &mut flat,
+                    self.fmax,
+                    self.max_steps,
+                    self.max_step,
+                    self.memory,
+                )
+                .map_err(pyo3::exceptions::PyValueError::new_err)?;
                 let out: Bound<'py, PyArray2<NpF>> = Array2::from_shape_vec((n_elem / 3, 3), flat)
                     .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?
                     .to_pyarray(py);
@@ -490,16 +534,24 @@ impl PyLBFGS {
                     )));
                 }
                 let (b, n) = (shape[0], shape[1]);
-                let expected = pots.inner.compiled()?.n_atoms();
+                let expected = pot.n_atoms();
                 if expected != 0 && n != expected {
                     return Err(pyo3::exceptions::PyValueError::new_err(format!(
                         "structure atom count N={n} does not match this Potentials' atom count {expected}"
                     )));
                 }
                 let mut flat: Vec<NpF> = arr.iter().copied().collect();
-                let reports = LBFGS::new(pots.inner.compiled()?, self.cfg)
-                    .run_batch(&mut flat, n, b)
-                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                let reports = LBFGS::minimize_batch(
+                    pot,
+                    &mut flat,
+                    n,
+                    b,
+                    self.fmax,
+                    self.max_steps,
+                    self.max_step,
+                    self.memory,
+                )
+                .map_err(pyo3::exceptions::PyValueError::new_err)?;
                 let out: Bound<'py, PyArray3<NpF>> = Array3::from_shape_vec((b, n, 3), flat)
                     .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?
                     .to_pyarray(py);
@@ -508,7 +560,7 @@ impl PyLBFGS {
                 Ok((out, reports).into_pyobject(py)?.into_any())
             }
             other => Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "coords must be 1-D (3N,), 2-D (N, 3), or 3-D (B, N, 3); got {other}-D"
+                "arg must be Frame, 1-D (3N,), 2-D (N, 3), or 3-D (B, N, 3); got {other}-D array"
             ))),
         }
     }
@@ -516,7 +568,7 @@ impl PyLBFGS {
     fn __repr__(&self) -> String {
         format!(
             "LBFGS(fmax={}, max_steps={}, max_step={}, memory={})",
-            self.cfg.fmax, self.cfg.max_steps, self.cfg.max_step, self.cfg.memory
+            self.fmax, self.max_steps, self.max_step, self.memory
         )
     }
 }

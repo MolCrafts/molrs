@@ -1114,7 +1114,11 @@ class Potentials:
     def calc_forces(self, coords: ArrayF) -> ArrayF: ...
 
 class LBFGS:
-    """L-BFGS geometry optimizer (mirrors molpy's `LBFGS(potential).run(...)`)."""
+    """L-BFGS geometry optimizer over a force-field Potential.
+
+    Knobs live on ``__init__`` (no config object). Primary call is
+    ``run(frame)``; array ranks dispatch single / batch coordinate paths.
+    """
 
     def __init__(
         self,
@@ -1125,6 +1129,8 @@ class LBFGS:
         max_step: float = 0.2,
         memory: int = 8,
     ) -> None: ...
+    @overload
+    def run(self, frame: Frame) -> tuple[Frame, OptReport]: ...
     # (N, 3) or (3N,) -> single structure; (B, N, 3) -> homogeneous batch.
     @overload
     def run(self, coords: ArrayF) -> tuple[ArrayF, OptReport]: ...

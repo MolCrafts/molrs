@@ -81,10 +81,16 @@ pub mod signal;
 #[cfg(feature = "compute")]
 pub mod compute;
 
-pub mod optimize;
-
+// Force fields first: `optimize` depends on `ff::potential::Potential`.
 #[cfg(feature = "ff")]
 pub mod ff;
+
+/// Geometry optimizers over [`ff::potential::Potential`].
+///
+/// Gated on `ff` — the optimizer depends on the force-field potential trait,
+/// never the reverse.
+#[cfg(feature = "ff")]
+pub mod optimize;
 
 /// Gasteiger/PEOE partial charges, at the crate root — `molrs::compute_gasteiger_charges`.
 ///

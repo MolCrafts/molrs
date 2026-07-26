@@ -164,7 +164,7 @@ resolve). The dependency spine is `core → perceive → {io, ff} → conformer`
 |---|---|---|
 | `core` | always on | Frame/Block/Grid/MolGraph/MolRec/Topology/Element, neighbors, math, region (SimBox), graph hash, atom-type mapping |
 | `perceive` | always on | **Chemical perception**, one layer above `core` and below `ff`/`io`/`conformer`: rings (SSSR), aromaticity, hydrogen perception, stereochemistry, rotatable bonds, Gasteiger charges, SMARTS/SMIRKS. Builder API `Perceive::new().find_*(&MolGraph) -> MolGraph` (graph-in/graph-out, non-mutating); the free functions it wraps are also re-exported at the crate root |
-| `optimize` | always on | Numerical optimizers |
+| `optimize` | `ff` | Geometry optimizers (`Optimizer`, `LBFGS`); depends on `ff::potential::Potential` |
 | `io` | `io` | File I/O: PDB, XYZ, LAMMPS data/dump, CHGCAR/POSCAR, Gaussian Cube, CIF, mol2, SDF, GRO, DCD, GROMACS TRR/XTC, Zarr V3 trajectories; SMILES parsing in `io/smiles/` (gated by `smiles`). **SMARTS lives in `perceive/smarts/`, not here** |
 | `signal` | `signal` | Signal processing: FFT-based autocorrelation, window functions, frequency grids |
 | `compute` | `compute` (→ `signal`) | Trajectory analysis: RDF, MSD, clustering, gyration/inertia tensors |
