@@ -4,7 +4,7 @@
 
 // Expose the ndarray-based Box merged into simbox.rs
 pub mod simbox;
-pub use simbox::{Mic, SimBox};
+pub use simbox::{BoxError, Mic, SimBox};
 // Generic region traits and shapes
 #[allow(clippy::module_inception)]
 pub mod region;

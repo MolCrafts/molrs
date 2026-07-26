@@ -27,7 +27,6 @@ name = "molrs"
 
 [dev-dependencies]
 criterion = "0.8"
-rand = "0.10"
 # Test-only: the ff::params manifest guard recomputes the SHA-256 of every
 # committed generated table. It is the only drift check that runs without
 # AmberTools, i.e. the only one CI actually executes.
@@ -45,13 +44,13 @@ io        = ["dep:flate2", "dep:once_cell"]
 smiles    = ["io"]
 signal    = ["dep:rustfft"]
 # `compute` depends on the `signal` module (gets rustfft via it).
-compute   = ["signal", "dep:rand"]
+compute   = ["signal"]
 # Radical (Laguerre) Voronoi tessellation + domain/void analysis. Native
 # pure-Rust (WASM-clean); lives in the `compute` module.
 voronoi   = ["compute"]
 ff        = ["dep:rustfft", "dep:roxmltree"]
 # `conformer` depends on the `ff` module.
-conformer = ["ff", "dep:once_cell", "dep:rand"]
+conformer = ["ff", "dep:once_cell"]
 # serde `Serialize`/`Deserialize` for the core model (Frame/Block/Column/SimBox).
 # No new deps — serde is already always-on; the feature just enables the impls.
 serde     = []
@@ -74,6 +73,9 @@ smallvec   = "1"
 serde      = { version = "1", features = ["derive"] }
 serde_json = "1"
 libm       = "0.2"
+# Seeded RNG for structure generators (`core::generate` SARW) and for
+# compute/conformer stochastic paths. Always-on so `generate` is always compiled.
+rand       = "0.10"
 
 # Feature-gated optional deps — a build with a sub-system OFF does not compile
 # that sub-system's unique dependency.
@@ -84,12 +86,11 @@ flate2         = { version = "1.1", optional = true, features = ["rust_backend"]
 once_cell      = { version = "1.21", optional = true }                                              # io + conformer
 rustfft        = { version = "6", optional = true }                                                 # signal + ff + compute
 roxmltree      = { version = "0.21", optional = true }                                              # ff (XML force-field readers)
-rand           = { version = "0.10", optional = true }                                              # compute + conformer
 rmp-serde      = { version = "1", optional = true }                                                 # stream (MessagePack wire encoding)
 
-# wasm32 has no OS RNG: when `rand` is pulled in (compute/conformer), its
-# transitive `getrandom` needs the `wasm_js` backend to build for the browser
-# target. Target-gated so native builds are unaffected. Mirrors molrs-wasm.
+# wasm32 has no OS RNG: `rand`'s transitive `getrandom` needs the `wasm_js`
+# backend to build for the browser target. Target-gated so native builds are
+# unaffected. Mirrors molrs-wasm.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.4", features = ["wasm_js"] }
 
@@ -109,6 +110,10 @@ harness = false
 required-features = ["compute"]
 
 # ── Examples ─────────────────────────────────────────────────────────────────
+[[example]]
+name = "saw_demo"
+path = "examples/saw_demo.rs"
+
 [[example]]
 name = "molgraph_analysis"
 path = "examples/molgraph_analysis.rs"
