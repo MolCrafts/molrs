@@ -26,8 +26,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      # One invocation: facade with every sub-system feature, plus workspace
-      # members (cxxapi). No second full-tree pass.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: clippy
+          workspaces: ". -> target"
       - run: |
           cargo clippy -p molcrafts-molrs --all-targets --features full -- -D warnings
           cargo clippy -p molcrafts-molrs-cxxapi --all-targets -- -D warnings
@@ -38,7 +40,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      # Function-level unit tests only. No tests-data, no integration binaries,
-      # no bench compile, no second feature matrix.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: unit
+          workspaces: ". -> target"
       - name: Unit tests
         run: cargo test -p molcrafts-molrs --lib --features full

@@ -67,7 +67,11 @@ repos:
         name: "CI WASM / wasm-pack build"
         entry: >-
           sh -c 'set -euo pipefail
-          command -v wasm-pack >/dev/null || cargo install wasm-pack
+          command -v wasm-pack >/dev/null || {
+            echo "wasm-pack not on PATH; install a release binary (CI uses taiki-e/install-action)."
+            echo "fallback: cargo install wasm-pack"
+            cargo install wasm-pack
+          }
           rustup target add wasm32-unknown-unknown 2>/dev/null || true
           cd molrs-wasm
           wasm-pack build --release --target bundler --scope molcrafts --out-name molrs'

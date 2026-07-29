@@ -7,6 +7,12 @@ on:
   # Manual re-trigger so a single failed publish job (e.g. trusted-publishing
   # auth glitch) can be retried without cutting a new tag.
   workflow_dispatch:
+    inputs:
+      run_ci:
+        description: "Re-run full CI before publish (default: skip — tag is already on master)"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -82,16 +88,26 @@ jobs:
           fi
           echo "Tag $TAG_SHA is reachable from master ($MASTER_SHA) — proceeding."
 
+  # Tag is always cut after a green PR lands on master (guard checks ancestry).
+  # Re-running full CI here only burns ~3 min on cold caches. Optional via
+  # workflow_dispatch input `run_ci`.
   ci:
     needs: guard
-    if: github.repository == 'MolCrafts/molrs'
+    if: >-
+      github.repository == 'MolCrafts/molrs'
+      && github.event_name == 'workflow_dispatch'
+      && inputs.run_ci
     uses: ./.github/workflows/ci.yml
 
   # ── Rust crate (crates.io trusted publishing) ───────────────────────────────
 
   publish-molrs:
-    needs: ci
-    if: github.repository == 'MolCrafts/molrs'
+    needs: [guard, ci]
+    if: >-
+      always()
+      && github.repository == 'MolCrafts/molrs'
+      && needs.guard.result == 'success'
+      && (needs.ci.result == 'success' || needs.ci.result == 'skipped')
     runs-on: ubuntu-latest
     environment: release
     steps:
@@ -107,8 +123,12 @@ jobs:
   # ── WASM (npm trusted publishing) ────────────────────────────────────────────
 
   publish-wasm:
-    needs: ci
-    if: github.repository == 'MolCrafts/molrs'
+    needs: [guard, ci]
+    if: >-
+      always()
+      && github.repository == 'MolCrafts/molrs'
+      && needs.guard.result == 'success'
+      && (needs.ci.result == 'success' || needs.ci.result == 'skipped')
     runs-on: ubuntu-latest
     environment: release
     steps:
@@ -116,11 +136,19 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: publish-wasm
+          workspaces: |
+            . -> target
+            molrs-wasm -> target
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
-      - run: cargo install wasm-pack
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
       - name: Build wasm package
         working-directory: molrs-wasm
         run: wasm-pack build --release --target bundler --scope molcrafts --out-name molrs
@@ -139,15 +167,19 @@ jobs:
   # ── Python (PyPI trusted publishing via maturin) ────────────────────────────
   #
   # Two-stage layout:
-  #   build-python  — matrix over (linux, macos), each runner produces its own
-  #                   wheel into a per-runner artifact. Single Python (3.13).
+  #   build-python  — matrix over (linux, macos, windows), each runner produces
+  #                   its own wheel into a per-runner artifact.
   #   publish-python — downloads every artifact, hands the merged dist/ to
   #                   pypa/gh-action-pypi-publish via Trusted Publishing.
   #                   `skip-existing: true` makes a partial republish safe.
 
   build-python:
-    needs: ci
-    if: github.repository == 'MolCrafts/molrs'
+    needs: [guard, ci]
+    if: >-
+      always()
+      && github.repository == 'MolCrafts/molrs'
+      && needs.guard.result == 'success'
+      && (needs.ci.result == 'success' || needs.ci.result == 'skipped')
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -164,6 +196,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: publish-py-${{ matrix.os }}
+          workspaces: |
+            . -> target
+            molrs-python -> target
       - name: Build wheel
         uses: PyO3/maturin-action@v1
         with:
@@ -171,6 +209,7 @@ jobs:
           manylinux: auto
           command: build
           args: ${{ matrix.args }}
+          sccache: "true"
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.os }}
