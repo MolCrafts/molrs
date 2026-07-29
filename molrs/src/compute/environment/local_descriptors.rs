@@ -146,7 +146,7 @@ mod tests {
     use crate::compute::test_support::nlist_from_frame;
     use molrs::Frame;
     use molrs::math::spherical_harmonics::ylm_complex;
-    use molrs::spatial::region::simbox::SimBox;
+    use molrs::spatial::simbox::SimBox;
     use molrs::store::block::Block;
     use molrs::types::F;
     use ndarray::{Array1 as A1, array};

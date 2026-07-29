@@ -5,7 +5,7 @@
 //! overhead of cell construction is not worthwhile.
 
 use crate::spatial::neighbors::{NbListAlgo, NeighborList, PairVisitor, QueryMode};
-use crate::spatial::region::simbox::SimBox;
+use crate::spatial::simbox::SimBox;
 use crate::types::{F, FNx3, FNx3View};
 
 /// Brute-force O(N^2) neighbor search.

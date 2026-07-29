@@ -1,16 +1,21 @@
 //! Geometric regions and spatial predicates.
 //!
-//! This module provides a lightweight trait [`Region`] for geometric regions and a
-//! concrete [`Sphere`] implementation. It also defines array-based type aliases
-//! (points as an N×3 NdArray, bounds as a 3×2 NdArray, etc.).
+//! Pure containment geometry — **not** the periodic simulation cell. For
+//! `SimBox` (PBC / MIC / wrap), see [`crate::spatial::simbox`].
+//!
+//! Built-in shapes:
+//! - [`Sphere`], [`HollowSphere`]
+//! - [`Cuboid`] — axis-aligned box (including cubes)
+//! - [`Parallelepiped`] — general triclinic cell volume (origin + edge matrix)
+//! - Boolean composition: [`AndRegion`], [`OrRegion`], [`NotRegion`]
 //!
 //! Type layout conventions:
-//! - [`FNx3`]: N×3 row-major array, each row is a point (x, y, z).
-//! - [`FNx3`] (3×2): 3×2 array where column 0 is the min corner, column 1 is the max corner;
-//!   rows correspond to x/y/z respectively.
+//! - Points: N×3 row-major [`FNx3`], each row is `(x, y, z)`.
+//! - Bounds: 3×2 [`FNx3`], col 0 = min, col 1 = max, rows = x/y/z.
 
-use crate::types::{F, F3, FNx3};
-use ndarray::{Array1, Array2};
+use crate::math;
+use crate::types::{F, F3, F3x3, FNx3};
+use ndarray::{Array1, Array2, array};
 use std::sync::Arc;
 
 /// Axis-aligned bounding box (AABB) as a 3×2 matrix.
@@ -147,6 +152,160 @@ impl Region for Cuboid {
 
     fn contains_point(&self, point: &[F; 3]) -> bool {
         (0..3).all(|d| point[d] >= self.origin[d] && point[d] <= self.origin[d] + self.lengths[d])
+    }
+}
+
+/// A general parallelepiped (oblique box) region defined by an origin and three
+/// edge vectors (columns of `H`).
+///
+/// This is the geometric counterpart of a triclinic simulation cell volume —
+/// **without** PBC, wrap, or MIC. For the periodic cell, use
+/// [`crate::spatial::simbox::SimBox`].
+///
+/// A point `p` is inside when the fractional coordinates
+/// `f = H⁻¹ · (p − origin)` satisfy `0 ≤ f_d < 1` on every axis (half-open
+/// primary cell, matching common lattice conventions).
+///
+/// Axis-aligned boxes prefer [`Cuboid`] (cheaper, no inverse).
+#[derive(Debug, Clone)]
+pub struct Parallelepiped {
+    /// One corner of the parallelepiped.
+    origin: F3,
+    /// Edge matrix `H` (columns are the three edge vectors).
+    h: F3x3,
+    /// Cached `H⁻¹`.
+    inv: F3x3,
+}
+
+impl Parallelepiped {
+    /// Construct from edge matrix `H` (columns = edges) and `origin`.
+    ///
+    /// Returns `Err` if `H` is singular (zero volume).
+    pub fn new(h: F3x3, origin: F3) -> Result<Self, String> {
+        let inv = math::inv3(&h)
+            .ok_or_else(|| "Parallelepiped: singular edge matrix H (zero volume)".to_string())?;
+        Ok(Self { origin, h, inv })
+    }
+
+    /// Cubic region of edge length `a` with the given origin (min corner).
+    pub fn cube(a: F, origin: F3) -> Result<Self, String> {
+        if a <= 0.0 {
+            return Err(format!(
+                "Parallelepiped::cube: edge length must be > 0, got {a}"
+            ));
+        }
+        let h = array![[a, 0.0, 0.0], [0.0, a, 0.0], [0.0, 0.0, a]];
+        Self::new(h, origin)
+    }
+
+    /// Axis-aligned orthorhombic region with the given edge lengths.
+    ///
+    /// Prefer [`Cuboid`] when you only need axis-aligned containment — this
+    /// constructor exists so a single `Parallelepiped` API covers cube → ortho
+    /// → triclinic.
+    pub fn ortho(lengths: F3, origin: F3) -> Result<Self, String> {
+        if lengths.len() != 3 {
+            return Err(format!(
+                "Parallelepiped::ortho: lengths must have length 3, got {}",
+                lengths.len()
+            ));
+        }
+        if (0..3).any(|d| lengths[d] <= 0.0) {
+            return Err("Parallelepiped::ortho: all edge lengths must be > 0".into());
+        }
+        let h = array![
+            [lengths[0], 0.0, 0.0],
+            [0.0, lengths[1], 0.0],
+            [0.0, 0.0, lengths[2]]
+        ];
+        Self::new(h, origin)
+    }
+
+    /// Construct from three explicit edge vectors `a`, `b`, `c` and `origin`.
+    pub fn from_edges(a: [F; 3], b: [F; 3], c: [F; 3], origin: F3) -> Result<Self, String> {
+        let h = array![[a[0], b[0], c[0]], [a[1], b[1], c[1]], [a[2], b[2], c[2]]];
+        Self::new(h, origin)
+    }
+
+    /// Origin corner.
+    pub fn origin(&self) -> &F3 {
+        &self.origin
+    }
+
+    /// Edge matrix `H` (columns are edge vectors).
+    pub fn h(&self) -> &F3x3 {
+        &self.h
+    }
+
+    /// Signed volume `det(H)`.
+    pub fn volume(&self) -> F {
+        math::det3(&self.h)
+    }
+
+    fn frac_of(&self, point: &[F; 3]) -> [F; 3] {
+        let dr = [
+            point[0] - self.origin[0],
+            point[1] - self.origin[1],
+            point[2] - self.origin[2],
+        ];
+        // inv is row-major F3x3 via ndarray; inv.dot(dr)
+        let f = self.inv.dot(&Array1::from_vec(vec![dr[0], dr[1], dr[2]]));
+        [f[0], f[1], f[2]]
+    }
+}
+
+impl Region for Parallelepiped {
+    fn bounds(&self) -> FNx3 {
+        // AABB of the eight corners: origin + Σ ε_i · edge_i, ε ∈ {0,1}.
+        let o = [&self.origin[0], &self.origin[1], &self.origin[2]];
+        // columns of H
+        let e0 = [self.h[[0, 0]], self.h[[1, 0]], self.h[[2, 0]]];
+        let e1 = [self.h[[0, 1]], self.h[[1, 1]], self.h[[2, 1]]];
+        let e2 = [self.h[[0, 2]], self.h[[1, 2]], self.h[[2, 2]]];
+        let mut lo = [*o[0], *o[1], *o[2]];
+        let mut hi = lo;
+        for mask in 0u8..8 {
+            let p = [
+                *o[0]
+                    + if mask & 1 != 0 { e0[0] } else { 0.0 }
+                    + if mask & 2 != 0 { e1[0] } else { 0.0 }
+                    + if mask & 4 != 0 { e2[0] } else { 0.0 },
+                *o[1]
+                    + if mask & 1 != 0 { e0[1] } else { 0.0 }
+                    + if mask & 2 != 0 { e1[1] } else { 0.0 }
+                    + if mask & 4 != 0 { e2[1] } else { 0.0 },
+                *o[2]
+                    + if mask & 1 != 0 { e0[2] } else { 0.0 }
+                    + if mask & 2 != 0 { e1[2] } else { 0.0 }
+                    + if mask & 4 != 0 { e2[2] } else { 0.0 },
+            ];
+            for d in 0..3 {
+                lo[d] = lo[d].min(p[d]);
+                hi[d] = hi[d].max(p[d]);
+            }
+        }
+        let mut b = Array2::zeros((3, 2));
+        for d in 0..3 {
+            b[[d, 0]] = lo[d];
+            b[[d, 1]] = hi[d];
+        }
+        b
+    }
+
+    fn contains(&self, points: &FNx3) -> Array1<bool> {
+        assert_eq!(points.ncols(), 3, "points must have shape (N, 3)");
+        let mut mask = Array1::from_elem(points.nrows(), false);
+        for (row, m) in points.rows().into_iter().zip(mask.iter_mut()) {
+            let p = [row[0], row[1], row[2]];
+            let f = self.frac_of(&p);
+            *m = (0..3).all(|d| f[d] >= 0.0 && f[d] < 1.0);
+        }
+        mask
+    }
+
+    fn contains_point(&self, point: &[F; 3]) -> bool {
+        let f = self.frac_of(point);
+        (0..3).all(|d| f[d] >= 0.0 && f[d] < 1.0)
     }
 }
 
@@ -384,6 +543,50 @@ mod tests {
         let b = c.bounds();
         assert_eq!(b[[0, 0]], 0.0);
         assert_eq!(b[[0, 1]], 2.0);
+    }
+
+    #[test]
+    fn parallelepiped_cube_matches_cuboid_half_open() {
+        let p = Parallelepiped::cube(2.0, Array1::zeros(3)).unwrap();
+        // half-open [0, 2): corner 2.0 is outside
+        assert!(p.contains_point(&[1.0, 1.0, 1.0]));
+        assert!(p.contains_point(&[0.0, 0.0, 0.0]));
+        assert!(!p.contains_point(&[2.0, 0.0, 0.0]));
+        assert!(!p.contains_point(&[-0.01, 0.0, 0.0]));
+        let b = p.bounds();
+        assert!((b[[0, 0]] - 0.0).abs() < 1e-12);
+        assert!((b[[0, 1]] - 2.0).abs() < 1e-12);
+        assert!((p.volume() - 8.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn parallelepiped_skewed_contains_and_aabb() {
+        // Edges: a=(2,0,0), b=(1,2,0), c=(0,0,3) — a skewed prism in xy.
+        let p = Parallelepiped::from_edges(
+            [2.0, 0.0, 0.0],
+            [1.0, 2.0, 0.0],
+            [0.0, 0.0, 3.0],
+            Array1::zeros(3),
+        )
+        .unwrap();
+        // Interior fractional (0.25, 0.25, 0.25) → cart = 0.25*a + 0.25*b + 0.25*c
+        // = (0.75, 0.5, 0.75)
+        assert!(p.contains_point(&[0.75, 0.5, 0.75]));
+        // Just outside along a
+        assert!(!p.contains_point(&[2.1, 0.0, 0.0]));
+        // AABB spans x in [0, 3], y in [0, 2], z in [0, 3]
+        let b = p.bounds();
+        assert!((b[[0, 0]] - 0.0).abs() < 1e-12);
+        assert!((b[[0, 1]] - 3.0).abs() < 1e-12);
+        assert!((b[[1, 0]] - 0.0).abs() < 1e-12);
+        assert!((b[[1, 1]] - 2.0).abs() < 1e-12);
+        assert!((b[[2, 1]] - 3.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn parallelepiped_singular_is_err() {
+        let h = array![[1.0, 2.0, 3.0], [2.0, 4.0, 6.0], [0.0, 0.0, 1.0]];
+        assert!(Parallelepiped::new(h, Array1::zeros(3)).is_err());
     }
 
     #[test]

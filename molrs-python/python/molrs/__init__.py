@@ -68,6 +68,7 @@ from ._lib import (
     Sphere,
     HollowSphere,
     Cuboid,
+    Parallelepiped,
     Region,
     # Molecular graph hierarchy
     Element,
@@ -113,6 +114,8 @@ from ._lib import (
     read_opls_xml_str,
     read_lammps_forcefield,
     read_lammps_forcefield_str,
+    write_lammps_forcefield,
+    write_lammps_forcefield_str,
     intramolecular_pairs,
     extract_coords,
     FragmentScaling,
@@ -252,6 +255,8 @@ from .forcefield import (  # noqa: F401
     read_opls_xml_str,
     read_lammps_forcefield,
     read_lammps_forcefield_str,
+    write_lammps_forcefield,
+    write_lammps_forcefield_str,
 )
 
 from . import io  # molpy-compatible I/O facade (read_lammps_data, …)
@@ -339,6 +344,7 @@ __all__ = [
     "Sphere",
     "HollowSphere",
     "Cuboid",
+    "Parallelepiped",
     "Region",
     "Element",
     "Graph",
@@ -411,6 +417,8 @@ __all__ = [
     "read_opls_xml_str",
     "read_lammps_forcefield",
     "read_lammps_forcefield_str",
+    "write_lammps_forcefield",
+    "write_lammps_forcefield_str",
     "intramolecular_pairs",
     "extract_coords",
     "FragmentScaling",

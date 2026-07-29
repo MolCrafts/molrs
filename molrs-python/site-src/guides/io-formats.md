@@ -71,6 +71,7 @@ writer emits the same field when a frame already has canonical bond columns.
 | PDB | atoms, residues, coordinates, optional box | Good for structural biology interop, not a complete force-field container |
 | XYZ | element symbols, coordinates, optional `Connct` pairs | Simple coordinate snapshots with a MolCrafts single-bond topology extension |
 | LAMMPS data | atoms, bonds, box, simulation topology | Used for simulation setup and engine interop |
+| LAMMPS `*.ff` include | pair / bond / angle / dihedral / improper coeffs | AMBER/GAFF flavour; see [Force Fields](force-field.md#lammps-ff-includes) for unit conversion |
 | LAMMPS dump | trajectory frames | Often read lazily when files are large |
 | CHGCAR / Cube | atoms plus grid fields | Useful for volumetric scalar data |
 | Trajectory / Zarr | frames, trajectories | Designed for repeated analysis and richer metadata |

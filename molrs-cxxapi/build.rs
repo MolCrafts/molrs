@@ -371,7 +371,7 @@ fn main() {
     std::fs::write(&src_path, &bridge_src).unwrap();
 
     cxx_build::bridge(&src_path)
-        .std("c++17")
+        .std("c++20")
         .compile("molrs_cxxapi");
 
     compile_test_probe(&out_dir);
@@ -426,7 +426,7 @@ fn compile_test_probe(out_dir: &Path) {
     const LIB: &str = "molrs_cxxapi_test_probe";
     let result = cc::Build::new()
         .cpp(true)
-        .std("c++17")
+        .std("c++20")
         .cargo_metadata(false)
         .include(header.parent().expect("the header has a parent dir"))
         .include(&include_root)

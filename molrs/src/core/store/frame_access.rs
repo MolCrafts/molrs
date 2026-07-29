@@ -5,7 +5,7 @@
 
 use ndarray::ArrayViewD;
 
-use crate::spatial::region::simbox::SimBox;
+use crate::spatial::simbox::SimBox;
 use crate::store::block::access::BlockAccess;
 use crate::store::frame::Frame;
 use crate::store::frame_view::FrameView;

@@ -35,6 +35,8 @@ pub mod types;
 
 pub use block::Block;
 pub use frame::Frame;
+// JS-facing simulation box binding lives under `region/simbox` for historical
+// path stability of the WASM package layout; the Rust type is `molrs::SimBox`.
 pub use region::simbox::Box;
 pub use types::WasmArray;
 

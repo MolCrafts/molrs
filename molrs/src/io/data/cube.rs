@@ -53,7 +53,7 @@ use ndarray::{Array1, ArrayD, IxDyn};
 
 use molrs::Element;
 use molrs::error::MolRsError;
-use molrs::spatial::region::simbox::SimBox;
+use molrs::spatial::simbox::SimBox;
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
 use molrs::types::{F, I};

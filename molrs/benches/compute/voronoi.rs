@@ -6,7 +6,7 @@
 
 use criterion::{Criterion, criterion_group};
 use molrs::compute::voronoi::RadicalVoronoi;
-use molrs::spatial::region::simbox::SimBox;
+use molrs::spatial::simbox::SimBox;
 use molrs::types::F;
 use ndarray::array;
 

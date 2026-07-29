@@ -12,7 +12,7 @@ use std::time::Duration;
 use criterion::BenchmarkGroup;
 use criterion::measurement::Measurement;
 use molrs::spatial::neighbors::{LinkCell, NbList, NeighborList};
-use molrs::spatial::region::simbox::SimBox;
+use molrs::spatial::simbox::SimBox;
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
 use molrs::types::F;

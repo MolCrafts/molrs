@@ -45,7 +45,7 @@ use std::path::Path;
 
 use ndarray::{Array1, Array2, IxDyn, array};
 
-use molrs::spatial::region::simbox::SimBox;
+use molrs::spatial::simbox::SimBox;
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
 use molrs::types::{F, I};

@@ -181,7 +181,7 @@ impl LinkedCell {
             let bx_ref = match rs_frame.simbox.as_ref() {
                 Some(sb) => sb,
                 None => {
-                    simbox = molrs::spatial::region::simbox::SimBox::free(pos.view(), self.cutoff)
+                    simbox = molrs::spatial::simbox::SimBox::free(pos.view(), self.cutoff)
                         .map_err(|e| JsValue::from_str(&format!("free-boundary box: {e:?}")))?;
                     &simbox
                 }
@@ -468,7 +468,7 @@ impl RDF {
             )
         })?;
         let box_len = volume.cbrt();
-        let simbox = molrs::spatial::region::simbox::SimBox::cube(
+        let simbox = molrs::spatial::simbox::SimBox::cube(
             box_len,
             ndarray::array![0.0 as F, 0.0 as F, 0.0 as F],
             [false, false, false],
@@ -855,7 +855,7 @@ mod tests {
 
     /// Helper: create a Frame with N particles at given positions + cubic simbox.
     fn make_frame(positions: &[[F; 3]], box_len: F) -> Frame {
-        use molrs::spatial::region::simbox::SimBox;
+        use molrs::spatial::simbox::SimBox;
         use molrs::store::block::Block;
         use ndarray::{Array1, array};
 

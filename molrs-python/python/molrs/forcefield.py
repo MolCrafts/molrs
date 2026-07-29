@@ -26,6 +26,8 @@ from ._lib import read_opls_xml as _rs_read_opls_xml
 from ._lib import read_opls_xml_str as _rs_read_opls_xml_str
 from ._lib import read_lammps_forcefield as _rs_read_lammps_forcefield
 from ._lib import read_lammps_forcefield_str as _rs_read_lammps_forcefield_str
+from ._lib import write_lammps_forcefield as _rs_write_lammps_forcefield
+from ._lib import write_lammps_forcefield_str as _rs_write_lammps_forcefield_str
 
 # def_style returns a bound handle of the SAME Style subclass it was given, so
 # `ff.def_style(AtomStyle(...)).def_type(...)` keeps the subclass-specific def_type.
@@ -718,3 +720,58 @@ def read_lammps_forcefield(path: str) -> ForceField:
 
 def read_lammps_forcefield_str(text: str) -> ForceField:
     return ForceField._from_raw(_rs_read_lammps_forcefield_str(text))
+
+
+def write_lammps_forcefield(
+    path: str,
+    forcefield: ForceField,
+    *,
+    precision: int = 6,
+    skip_pair_style: bool = False,
+    atom_types: set[str] | None = None,
+    bond_types: set[str] | None = None,
+    angle_types: set[str] | None = None,
+    dihedral_types: set[str] | None = None,
+    improper_types: set[str] | None = None,
+) -> None:
+    """Write a force field to a LAMMPS ``*.ff`` include (AMBER/GAFF flavour).
+
+    Inverse of :func:`read_lammps_forcefield`: molrs units → LAMMPS ``real``
+    (``K = k/2``, angles in degrees). Unit conversion lives in native Rust;
+    this is a thin façade.
+    """
+    _rs_write_lammps_forcefield(
+        path,
+        forcefield,
+        precision,
+        skip_pair_style,
+        atom_types,
+        bond_types,
+        angle_types,
+        dihedral_types,
+        improper_types,
+    )
+
+
+def write_lammps_forcefield_str(
+    forcefield: ForceField,
+    *,
+    precision: int = 6,
+    skip_pair_style: bool = False,
+    atom_types: set[str] | None = None,
+    bond_types: set[str] | None = None,
+    angle_types: set[str] | None = None,
+    dihedral_types: set[str] | None = None,
+    improper_types: set[str] | None = None,
+) -> str:
+    """Serialize a force field to a LAMMPS ``*.ff`` include string."""
+    return _rs_write_lammps_forcefield_str(
+        forcefield,
+        precision,
+        skip_pair_style,
+        atom_types,
+        bond_types,
+        angle_types,
+        dihedral_types,
+        improper_types,
+    )

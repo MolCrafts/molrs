@@ -11,7 +11,7 @@
 
 use molrs::Block;
 use molrs::Frame;
-use molrs::spatial::region::simbox::{BoxKind, SimBox};
+use molrs::spatial::simbox::{BoxKind, SimBox};
 use molrs::store::block::BlockDtype;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;

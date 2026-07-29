@@ -121,6 +121,45 @@ and returns:
 If the frame is missing `atoms`, `x`, `y`, or `z`, extraction fails early. That
 is better than silently evaluating an energy against malformed coordinates.
 
+## LAMMPS `*.ff` includes
+
+AMBER/GAFF-style LAMMPS force-field includes (the `*.ff` next to a data file)
+round-trip through molrs:
+
+| Direction | Rust | Python |
+| --- | --- | --- |
+| read | `LammpsFfReader` | `molrs.read_lammps_forcefield` / `_str` |
+| write | `LammpsFfWriter` | `molrs.write_lammps_forcefield` / `_str` |
+
+molrs stores harmonic stiffness in the `½k(x−x₀)²` form and angles in
+**radians**. The writer inverts both for LAMMPS `real` units (`K = k/2`,
+degrees). Pair styles that the reader split into `lj/cut` + `coul/cut` are
+recombined into a single `lj/cut/coul/cut` line so geometric mixing still works.
+
+```python
+import molrs
+
+ff = molrs.read_lammps_forcefield("system.ff")
+# … edit styles / types …
+molrs.write_lammps_forcefield(
+    "system-out.ff",
+    ff,
+    precision=6,
+    atom_types={"c3", "h1"},  # optional whitelist
+)
+```
+
+Optional filters (`atom_types`, `bond_types`, …) drop coeffs for types that are
+not present in a frame's labelmap — the same trap LAMMPS hits when a merged
+force field still carries cap artifacts.
+
+## Geometry optimization
+
+`LBFGS` (under the `ff` feature) minimizes a molecule-bound `Potential` in
+place. Prefer `LBFGS::new` / `with_defaults` when you own the potential as an
+`Arc`, or the one-shot `LBFGS::minimize` / `minimize_batch` helpers for borrowed
+potentials and flat coordinate buffers.
+
 ## Common Mistakes
 
 Do not typify a frame that has lost graph semantics if the workflow needs
@@ -130,3 +169,8 @@ frame for coordinate extraction or writing.
 Do not mix units. MMFF94 examples in molrs assume angstrom coordinates and
 kcal/mol energies. If a source file was in nanometers, convert coordinates
 before evaluating MMFF94.
+
+Do not write a LAMMPS `*.ff` with molrs unit conventions. Always go through
+`write_lammps_forcefield` (or `LammpsFfWriter`) so harmonic `K` and angles are
+converted; pasting molrs numbers into an input script doubles stiffness and
+interprets radians as degrees.

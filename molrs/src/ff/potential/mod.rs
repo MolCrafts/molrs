@@ -117,9 +117,26 @@ fn end_pairs(frame: &Frame, block: &str, col_a: &str, col_b: &str) -> HashSet<(u
 /// (both in one pass, avoiding redundant geometry); [`calc_energy`] and
 /// [`calc_forces`] default to it.
 ///
+/// The geometry optimizer ([`crate::optimize::LBFGS`]) depends on this trait —
+/// not the other way around.
+///
 /// [`calc_energy`]: Potential::calc_energy
 /// [`calc_forces`]: Potential::calc_forces
-pub use crate::optimize::Potential;
+pub trait Potential: Send + Sync {
+    /// Compute energy and forces (= -gradient) in one pass.
+    /// Returns `(energy, forces)` where forces has length `coords.len()`.
+    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>);
+
+    /// Compute total potential energy (kcal/mol).
+    fn calc_energy(&self, coords: &[F]) -> F {
+        self.calc_energy_forces(coords).0
+    }
+
+    /// Compute forces (= -gradient), a length-3N vector.
+    fn calc_forces(&self, coords: &[F]) -> Vec<F> {
+        self.calc_energy_forces(coords).1
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Potentials collection
@@ -347,6 +364,42 @@ pub fn extract_coords(frame: &Frame) -> Result<Vec<F>, String> {
         coords.push(zs[i]);
     }
     Ok(coords)
+}
+
+/// Write a flat `[x0,y0,z0, …]` coordinate vector into the Frame's `"atoms"` block.
+pub fn write_coords(frame: &mut Frame, coords: &[F]) -> Result<(), String> {
+    let n = coords.len() / 3;
+    if coords.len() != n * 3 {
+        return Err(format!(
+            "coords length {} is not a multiple of 3",
+            coords.len()
+        ));
+    }
+    let atoms = frame
+        .get_mut("atoms")
+        .ok_or_else(|| "Frame has no \"atoms\" block".to_string())?;
+    let x = atoms
+        .get_float_mut("x")
+        .ok_or_else(|| "atoms block missing float column x".to_string())?;
+    if x.len() != n {
+        return Err(format!("coords atom count {n} != frame atoms {}", x.len()));
+    }
+    for i in 0..n {
+        x[[i]] = coords[3 * i];
+    }
+    let y = atoms
+        .get_float_mut("y")
+        .ok_or_else(|| "atoms block missing float column y".to_string())?;
+    for i in 0..n {
+        y[[i]] = coords[3 * i + 1];
+    }
+    let z = atoms
+        .get_float_mut("z")
+        .ok_or_else(|| "atoms block missing float column z".to_string())?;
+    for i in 0..n {
+        z[[i]] = coords[3 * i + 2];
+    }
+    Ok(())
 }
 
 impl ForceField {

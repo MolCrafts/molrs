@@ -34,13 +34,14 @@
 //! let result = lc.query();
 //! ```
 
-use crate::spatial::region::simbox::SimBox;
+use crate::spatial::simbox::SimBox;
 use crate::types::{F, FNx3View};
 use ndarray::ArrayView2;
 
 pub mod aabb;
 pub mod bruteforce;
 pub mod filter;
+pub mod grid;
 mod linkcell;
 pub mod periodic_buffer;
 mod query;
@@ -48,6 +49,7 @@ mod query;
 pub use aabb::AabbQuery;
 pub use bruteforce::BruteForce;
 pub use filter::{filter_rad, filter_sann};
+pub use grid::CellGrid;
 pub use linkcell::LinkCell;
 pub use periodic_buffer::{PeriodicBufferResult, periodic_buffer};
 pub use query::NeighborQuery;

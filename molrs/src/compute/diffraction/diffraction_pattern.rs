@@ -27,7 +27,7 @@
 //! - Orthorhombic boxes only (matches `freud.DiffractionPattern.compute`).
 
 use crate::compute::result::ComputeResult;
-use molrs::spatial::region::simbox::BoxKind;
+use molrs::spatial::simbox::BoxKind;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 use ndarray::Array2;
@@ -250,7 +250,7 @@ impl ComputeResult for DiffractionPatternResult {}
 mod tests {
     use super::*;
     use molrs::Frame;
-    use molrs::spatial::region::simbox::SimBox;
+    use molrs::spatial::simbox::SimBox;
     use molrs::store::block::Block;
     use ndarray::{Array1 as A1, array};
 

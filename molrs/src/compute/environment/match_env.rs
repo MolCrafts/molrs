@@ -415,7 +415,7 @@ mod tests {
     use super::*;
     use crate::compute::test_support::nlist_from_frame;
     use molrs::Frame;
-    use molrs::spatial::region::simbox::SimBox;
+    use molrs::spatial::simbox::SimBox;
     use molrs::store::block::Block;
     use ndarray::{Array1 as A1, array};
 

@@ -33,7 +33,7 @@
 pub mod atd;
 pub mod charge;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::CString;
 use std::fs;
 
@@ -42,10 +42,10 @@ use pyo3::prelude::*;
 use pyo3::types::{PyCapsule, PyDict, PyList, PyTuple};
 
 use molrs::ff::ForceField;
-use molrs::ff::potential::{Potentials, extract_coords};
+use molrs::ff::potential::{Potentials, extract_coords, write_coords};
 use molrs::ff::typifier::mmff::{MMFF94STypifier, MMFF94Typifier};
 use molrs::ff::typifier::opls::OPLSAATypifier;
-use molrs::optimize::{LBFGS, LbfgsConfig, OptReport};
+use molrs::optimize::{LBFGS, OptReport};
 use molrs_ffi::ForceFieldRef;
 
 use crate::core::store::block::PyBlock;
@@ -414,19 +414,22 @@ impl PyPotentials {
 
 /// L-BFGS geometry optimizer, exposed as `molrs.LBFGS`.
 ///
-/// Mirrors molpy: construct with the potentials + config, then ``run`` (single
-/// or homogeneous batch, dispatched on the input rank).
+/// Construct with potentials + knobs on ``new``, then ``run`` a :class:`Frame`
+/// (primary) or a coordinate array (single / batch by rank).
 ///
 /// Examples
 /// --------
 /// >>> pots = molrs.MMFF94Typifier().forcefield().to_potentials(frame)
-/// >>> opt = molrs.LBFGS(pots, fmax=0.05)
+/// >>> opt = molrs.LBFGS(pots, fmax=0.05, max_steps=500)
+/// >>> frame, report = opt.run(frame)
 /// >>> coords, report = opt.run(coords)         # (N, 3)
-/// >>> batch, reports = opt.run(batch)          # (B, N, 3)
 #[pyclass(module = "molrs", name = "LBFGS")]
 pub struct PyLBFGS {
     potentials: Py<PyPotentials>,
-    cfg: LbfgsConfig,
+    fmax: f64,
+    max_steps: usize,
+    max_step: f64,
+    memory: usize,
 }
 
 #[pymethods]
@@ -442,26 +445,61 @@ impl PyLBFGS {
     ) -> Self {
         Self {
             potentials,
-            cfg: LbfgsConfig {
-                fmax,
-                max_steps,
-                max_step,
-                memory,
-            },
+            fmax,
+            max_steps,
+            max_step,
+            memory,
         }
     }
 
-    /// Relax coordinates by L-BFGS. ``(N, 3)`` / ``(3N,)`` -> single structure
-    /// returning ``((N, 3) array, OptReport)``; ``(B, N, 3)`` -> homogeneous
-    /// batch returning ``((B, N, 3) array, list[OptReport])``. Input is not
-    /// mutated.
+    /// Relax a :class:`Frame` or coordinates by L-BFGS.
+    ///
+    /// * ``Frame`` → ``(Frame, OptReport)`` (frame coordinates updated; a new
+    ///   Python frame object is returned with the minimized coords).
+    /// * ``(N, 3)`` / ``(3N,)`` → ``((N, 3) array, OptReport)``
+    /// * ``(B, N, 3)`` → ``((B, N, 3) array, list[OptReport])``
     fn run<'py>(
         &self,
         py: Python<'py>,
-        coords: PyReadonlyArrayDyn<'_, NpF>,
+        arg: &Bound<'_, PyAny>,
     ) -> PyResult<Bound<'py, PyAny>> {
+        // Frame path (primary).
+        if let Ok(frame) = arg.extract::<PyRef<'_, PyFrame>>() {
+            let mut core = frame.clone_core_frame()?;
+            let pots = self.potentials.borrow(py);
+            // Compile against this frame if deferred, then minimize with free mask.
+            let compiled;
+            let pot: &dyn molrs::ff::potential::Potential = match &pots.inner {
+                PotBacking::Compiled(p) => p,
+                PotBacking::Deferred(ff) => {
+                    compiled = ff
+                        .to_potentials(&core)
+                        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                    &compiled
+                }
+            };
+            // Borrowed one-shot on flat coords extracted from frame, then write back.
+            let mut flat = extract_coords(&core).map_err(pyo3::exceptions::PyValueError::new_err)?;
+            let report = LBFGS::minimize(
+                pot,
+                &mut flat,
+                self.fmax,
+                self.max_steps,
+                self.max_step,
+                self.memory,
+            )
+            .map_err(pyo3::exceptions::PyValueError::new_err)?;
+            write_coords(&mut core, &flat).map_err(pyo3::exceptions::PyValueError::new_err)?;
+            let out_frame = PyFrame::from_core_frame(core)?;
+            return Ok((out_frame, PyOptReport::from(report))
+                .into_pyobject(py)?
+                .into_any());
+        }
+
         let pots = self.potentials.borrow(py);
-        let arr = coords.as_array();
+        let pot = pots.inner.compiled()?;
+        let readonly = arg.extract::<PyReadonlyArrayDyn<'_, NpF>>()?;
+        let arr = readonly.as_array();
         let shape = arr.shape();
         match shape.len() {
             1 | 2 => {
@@ -472,9 +510,15 @@ impl PyLBFGS {
                         "coords has {n_elem} elements, not a multiple of 3 (expected (N, 3) or (3N,))"
                     )));
                 }
-                let report = LBFGS::new(pots.inner.compiled()?, self.cfg)
-                    .run(&mut flat)
-                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                let report = LBFGS::minimize(
+                    pot,
+                    &mut flat,
+                    self.fmax,
+                    self.max_steps,
+                    self.max_step,
+                    self.memory,
+                )
+                .map_err(pyo3::exceptions::PyValueError::new_err)?;
                 let out: Bound<'py, PyArray2<NpF>> = Array2::from_shape_vec((n_elem / 3, 3), flat)
                     .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?
                     .to_pyarray(py);
@@ -490,16 +534,24 @@ impl PyLBFGS {
                     )));
                 }
                 let (b, n) = (shape[0], shape[1]);
-                let expected = pots.inner.compiled()?.n_atoms();
+                let expected = pot.n_atoms();
                 if expected != 0 && n != expected {
                     return Err(pyo3::exceptions::PyValueError::new_err(format!(
                         "structure atom count N={n} does not match this Potentials' atom count {expected}"
                     )));
                 }
                 let mut flat: Vec<NpF> = arr.iter().copied().collect();
-                let reports = LBFGS::new(pots.inner.compiled()?, self.cfg)
-                    .run_batch(&mut flat, n, b)
-                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                let reports = LBFGS::minimize_batch(
+                    pot,
+                    &mut flat,
+                    n,
+                    b,
+                    self.fmax,
+                    self.max_steps,
+                    self.max_step,
+                    self.memory,
+                )
+                .map_err(pyo3::exceptions::PyValueError::new_err)?;
                 let out: Bound<'py, PyArray3<NpF>> = Array3::from_shape_vec((b, n, 3), flat)
                     .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?
                     .to_pyarray(py);
@@ -508,7 +560,7 @@ impl PyLBFGS {
                 Ok((out, reports).into_pyobject(py)?.into_any())
             }
             other => Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "coords must be 1-D (3N,), 2-D (N, 3), or 3-D (B, N, 3); got {other}-D"
+                "arg must be Frame, 1-D (3N,), 2-D (N, 3), or 3-D (B, N, 3); got {other}-D array"
             ))),
         }
     }
@@ -516,7 +568,7 @@ impl PyLBFGS {
     fn __repr__(&self) -> String {
         format!(
             "LBFGS(fmax={}, max_steps={}, max_step={}, memory={})",
-            self.cfg.fmax, self.cfg.max_steps, self.cfg.max_step, self.cfg.memory
+            self.fmax, self.max_steps, self.max_step, self.memory
         )
     }
 }
@@ -1351,9 +1403,9 @@ pub fn read_opls_xml_str_py(xml: &str) -> PyResult<PyForceField> {
 ///
 /// Parses the ``pair_style``/``pair_coeff`` + ``bond_style``/``angle_style``/
 /// ``dihedral_style`` (``fourier``) [+ optional ``improper_style``] include that
-/// molpy's ``LAMMPSForceFieldWriter`` emits (AMBER/GAFF flavour), normalizing it
+/// :func:`write_lammps_forcefield` emits (AMBER/GAFF flavour), normalizing it
 /// to molrs units (Å, kcal/mol, radians, e): LAMMPS harmonic ``K`` → molrs
-/// ``k = 2K``, angle/phase values stay in degrees (the kernels convert), and the
+/// ``k = 2K``, angle/phase values deg → rad at this boundary, and the
 /// ``fourier`` dihedral maps to the molrs ``periodic`` kernel. AMBER 1-4 scaling
 /// (LJ ×0.5, Coulomb ×1/1.2) is recorded on the force field's special bonds.
 /// Distinct from :func:`read_forcefield_xml` (molrs's own schema) and
@@ -1398,6 +1450,117 @@ pub fn read_lammps_forcefield_str_py(text: &str) -> PyResult<PyForceField> {
         .read_str(text)
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
     Ok(PyForceField { inner: forcefield })
+}
+
+/// Write a :class:`ForceField` to a LAMMPS force-field include (``*.ff``).
+///
+/// Inverse of :func:`read_lammps_forcefield`: molrs units (Å, kcal/mol, radians,
+/// ``½k`` harmonic form) → LAMMPS ``real`` (``K = k/2``, angles in degrees). A
+/// split ``lj/cut`` + ``coul/cut`` pair is recombined as ``lj/cut/coul/cut`` so
+/// geometric mixing is not defeated by a hybrid wildcard. AMBER/GAFF flavour
+/// only (``bond``/``angle``/``improper`` harmonic, ``dihedral`` fourier or opls).
+///
+/// Parameters
+/// ----------
+/// path : str
+///     Destination path for the include.
+/// forcefield : ForceField
+///     Force field in molrs units.
+/// precision : int, optional
+///     Decimal places for floating coefficients (default 6).
+/// skip_pair_style : bool, optional
+///     When true, omit the ``pair_style`` line (caller sets it in the input).
+/// atom_types : set[str] | None, optional
+///     If given, only pair coeffs whose atom types are a subset of this set.
+/// bond_types, angle_types, dihedral_types, improper_types : set[str] | None
+///     Optional name whitelists for bonded coefficients.
+///
+/// Raises
+/// ------
+/// ValueError
+///     On an unsupported style or missing required parameters.
+#[pyfunction]
+#[pyo3(
+    name = "write_lammps_forcefield",
+    signature = (
+        path,
+        forcefield,
+        precision = 6,
+        skip_pair_style = false,
+        atom_types = None,
+        bond_types = None,
+        angle_types = None,
+        dihedral_types = None,
+        improper_types = None,
+    )
+)]
+#[allow(clippy::too_many_arguments)]
+pub fn write_lammps_forcefield_py(
+    path: &str,
+    forcefield: &PyForceField,
+    precision: usize,
+    skip_pair_style: bool,
+    atom_types: Option<HashSet<String>>,
+    bond_types: Option<HashSet<String>>,
+    angle_types: Option<HashSet<String>>,
+    dihedral_types: Option<HashSet<String>>,
+    improper_types: Option<HashSet<String>>,
+) -> PyResult<()> {
+    use molrs::ff::{ForceFieldWriter, LammpsFfWriter, LammpsWriteOptions};
+    let writer = LammpsFfWriter::with_options(LammpsWriteOptions {
+        precision,
+        skip_pair_style,
+        atom_types,
+        bond_types,
+        angle_types,
+        dihedral_types,
+        improper_types,
+    });
+    writer
+        .write(&forcefield.inner, path)
+        .map_err(pyo3::exceptions::PyValueError::new_err)
+}
+
+/// Serialize a :class:`ForceField` to a LAMMPS force-field include string
+/// (same format and unit conversion as :func:`write_lammps_forcefield`).
+#[pyfunction]
+#[pyo3(
+    name = "write_lammps_forcefield_str",
+    signature = (
+        forcefield,
+        precision = 6,
+        skip_pair_style = false,
+        atom_types = None,
+        bond_types = None,
+        angle_types = None,
+        dihedral_types = None,
+        improper_types = None,
+    )
+)]
+#[allow(clippy::too_many_arguments)]
+pub fn write_lammps_forcefield_str_py(
+    forcefield: &PyForceField,
+    precision: usize,
+    skip_pair_style: bool,
+    atom_types: Option<HashSet<String>>,
+    bond_types: Option<HashSet<String>>,
+    angle_types: Option<HashSet<String>>,
+    dihedral_types: Option<HashSet<String>>,
+    improper_types: Option<HashSet<String>>,
+) -> PyResult<String> {
+    use molrs::ff::{ForceFieldWriter, LammpsFfWriter, LammpsWriteOptions};
+    let writer = LammpsFfWriter::with_options(LammpsWriteOptions {
+        precision,
+        skip_pair_style,
+        atom_types,
+        bond_types,
+        angle_types,
+        dihedral_types,
+        improper_types,
+    });
+    writer
+        .write_str(&forcefield.inner)
+        .map_err(pyo3::exceptions::PyValueError::new_err)
 }
 
 /// Build the intramolecular non-bonded neighbour list for a typed frame.

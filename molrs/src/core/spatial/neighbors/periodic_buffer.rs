@@ -17,7 +17,7 @@
 //! - Per-axis PBC flags are honoured: an axis with `pbc = false` only ever
 //!   contributes its `n = 0` image (i.e. the original points themselves).
 
-use crate::spatial::region::simbox::{BoxKind, SimBox};
+use crate::spatial::simbox::{BoxKind, SimBox};
 use crate::types::{F, FNx3, FNx3View};
 
 /// Ghost-image expansion of a point set.
@@ -102,7 +102,7 @@ pub fn periodic_buffer(points: FNx3View<'_>, bx: &SimBox, buffer: [F; 3]) -> Per
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::spatial::region::simbox::SimBox;
+    use crate::spatial::simbox::SimBox;
     use ndarray::array;
 
     #[test]

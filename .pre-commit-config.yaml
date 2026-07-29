@@ -22,11 +22,16 @@ repos:
   - repo: local
     hooks:
       # ── CI Rust (ci-rust.yml) ───────────────────────────────────────────
+      # always_run: CI rustfmt/clippy are whole-tree gates. Without this, prek
+      # skips them when the staged set has no "matching" files (or only
+      # non-Rust paths), which is exactly how rustfmt/clippy failures reached
+      # GitHub Actions on direct pushes to dev.
       - id: cargo-fmt
         name: "CI Rust / rustfmt"
         entry: cargo fmt --check
         language: system
         pass_filenames: false
+        always_run: true
         stages: [pre-commit, pre-push]
 
       - id: cargo-clippy
@@ -36,6 +41,7 @@ repos:
           && cargo clippy -p molcrafts-molrs-cxxapi --all-targets -- -D warnings'
         language: system
         pass_filenames: false
+        always_run: true
         stages: [pre-commit, pre-push]
 
       - id: cargo-test-unit

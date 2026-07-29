@@ -16,7 +16,7 @@
 use std::collections::HashSet;
 
 use molrs::core::spatial::neighbors::NeighborQuery;
-use molrs::core::spatial::region::simbox::SimBox;
+use molrs::core::spatial::simbox::SimBox;
 use molrs::ff::potential::Potential;
 use molrs::store::frame::Frame;
 use molrs::types::F;
@@ -209,6 +209,42 @@ impl SoftSpec {
     pub fn with_angle_k(mut self, k: F) -> Self {
         self.k_ang = k;
         self
+    }
+
+    pub fn sigma(&self) -> F {
+        self.sigma
+    }
+    pub fn a_rep(&self) -> F {
+        self.a_rep
+    }
+    pub fn b_attract(&self) -> F {
+        self.b_attract
+    }
+    pub fn rcut(&self) -> F {
+        self.rcut
+    }
+    pub fn k_bond(&self) -> F {
+        self.k_bond
+    }
+    pub fn k_ang(&self) -> F {
+        self.k_ang
+    }
+
+    /// Rebuild-friendly geometry optimizer: non-bonded pairs are re-resolved from
+    /// the Frame on every [`crate::optimize::Optimizer::run`].
+    pub fn into_optimizer(
+        self,
+        fmax: F,
+        max_steps: usize,
+        max_step: F,
+        memory: usize,
+    ) -> crate::optimize::SoftLbfgs {
+        crate::optimize::SoftLbfgs::new(self, fmax, max_steps, max_step, memory)
+    }
+
+    /// [`into_optimizer`](Self::into_optimizer) with default L-BFGS knobs.
+    pub fn into_optimizer_defaults(self) -> crate::optimize::SoftLbfgs {
+        crate::optimize::SoftLbfgs::with_defaults(self)
     }
 
     /// Resolve the pairs for `coords` (+ optional periodic cubic box) with molrs's

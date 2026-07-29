@@ -9,8 +9,7 @@
 //! (typically angstroms).
 
 use crate::helpers::{NpF, box_error_to_pyerr, parse_origin, parse_pbc};
-use molrs::spatial::region::simbox::SimBox;
-use molrs::spatial::region::Region;
+use molrs::spatial::simbox::SimBox;
 use molrs::types::F;
 use ndarray::array;
 use numpy::{IntoPyArray, PyArray1, PyArray2, PyArray3, PyReadonlyArray1, PyReadonlyArray2};

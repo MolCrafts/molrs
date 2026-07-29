@@ -16,7 +16,7 @@
 
 use crate::compute::result::ComputeResult;
 use molrs::spatial::neighbors::NeighborList;
-use molrs::spatial::region::simbox::BoxKind;
+use molrs::spatial::simbox::BoxKind;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 use ndarray::Array3;
@@ -299,7 +299,7 @@ mod tests {
     use super::*;
     use crate::compute::test_support::nlist_from_frame;
     use molrs::Frame;
-    use molrs::spatial::region::simbox::SimBox;
+    use molrs::spatial::simbox::SimBox;
     use molrs::store::block::Block;
     use ndarray::{Array1 as A1, array};
 

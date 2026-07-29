@@ -9,8 +9,8 @@
 //! Only **occupied cells** are visited during pair search, so sparse systems
 //! (few particles, many cells) pay O(N), not O(n_cells).
 
-use crate::spatial::neighbors::{NbListAlgo, NeighborList, PairVisitor, QueryMode};
-use crate::spatial::region::simbox::SimBox;
+use crate::spatial::neighbors::{CellGrid, NbListAlgo, NeighborList, PairVisitor, QueryMode};
+use crate::spatial::simbox::SimBox;
 use crate::types::{F, FNx3View};
 use ndarray::array;
 
@@ -32,8 +32,8 @@ use ndarray::array;
 pub struct LinkCell {
     /// Interaction cutoff distance.
     pub cutoff: F,
-    /// Number of cells along each axis `[nx, ny, nz]`.
-    celldim: [u32; 3],
+    /// Cell partition of the box: dimensions + per-axis periodicity.
+    grid: CellGrid,
     /// `cell_start[c]` = index into `sorted_idx` where cell `c` begins.
     /// Length = n_cells + 1 (sentinel at end).
     cell_start: Vec<u32>,
@@ -66,7 +66,7 @@ impl LinkCell {
     pub fn new() -> Self {
         Self {
             cutoff: 0.0,
-            celldim: [0; 3],
+            grid: CellGrid::with_dims([1; 3], [false; 3]),
             cell_start: Vec::new(),
             sorted_idx: Vec::new(),
             sorted_pos: Vec::new(),
@@ -108,28 +108,24 @@ impl LinkCell {
     /// Zero-view variant of [`visit_neighbors_of`](Self::visit_neighbors_of):
     /// reads the query point as a stack `[F; 3]` instead of an `ArrayView1`.
     ///
-    /// Bit-identical to `visit_neighbors_of` for the same coordinate — the cell
-    /// assignment routes through
-    /// [`make_fractional_fast_arr3`](SimBox::make_fractional_fast_arr3), the
-    /// stack mirror of the `ArrayView1` fractional helper, and all downstream
-    /// math is unchanged. Used by
+    /// Both entry points funnel into the same
+    /// [`CellGrid::cell_of`](crate::spatial::neighbors::CellGrid::cell_of), so
+    /// they agree bit-for-bit on the same coordinate. Used by
     /// [`NeighborQuery::query_columns`](super::NeighborQuery::query_columns).
     pub(crate) fn visit_neighbors_of_pt<C>(&self, query_point: [F; 3], bx: &SimBox, mut callback: C)
     where
         C: FnMut(u32, F, [F; 3]),
     {
-        let n_cells = (self.celldim[0] * self.celldim[1] * self.celldim[2]) as usize;
-        if n_cells == 0 {
+        if self.cell_start.is_empty() {
             return;
         }
 
-        let query_cell = get_cell3(bx, query_point, self.celldim);
+        let query_cell = self.grid.cell_of(bx, query_point);
         let qp = query_point;
 
         // Check the query cell itself + all 26 neighbor cells
-        let pbc = bx.pbc();
         let mut buf = [0usize; 27];
-        let n_all = stencil_all_into(query_cell, self.celldim, pbc, &mut buf);
+        let n_all = self.grid.stencil_all(query_cell, &mut buf);
         let all_cells = &buf[..n_all];
         for nc in std::iter::once(query_cell).chain(all_cells.iter().copied()) {
             let start = self.cell_start[nc] as usize;
@@ -198,7 +194,6 @@ impl NbListAlgo for LinkCell {
             return;
         }
         let cutoff2 = self.cutoff * self.cutoff;
-        let pbc = self.bx.pbc();
         let mut fwd_buf = [0usize; 27];
 
         for &cell in &self.occupied_cells {
@@ -221,7 +216,7 @@ impl NbListAlgo for LinkCell {
             }
 
             // Forward neighbor cells (stack buffer, no alloc)
-            let n_fwd = stencil_fwd_into(cell, self.celldim, pbc, &mut fwd_buf);
+            let n_fwd = self.grid.stencil_forward(cell, &mut fwd_buf);
             let fwd = &fwd_buf[..n_fwd];
             for si in start..end {
                 let pi = pos_at(&self.sorted_pos, si);
@@ -322,22 +317,16 @@ impl LinkCell {
     ///
     /// Reads each particle position via `get_pt(i) -> [x, y, z]`, so both the
     /// interleaved (`Array2`) and column-major (SoA) entry points funnel
-    /// through identical arithmetic. Sets up `celldim`, `bx`, `cell_start`,
+    /// through identical arithmetic. Sets up `grid`, `bx`, `cell_start`,
     /// `sorted_idx`, `sorted_pos`, and `occupied_cells`. Does NOT compute pairs.
     fn counting_sort_impl<G>(&mut self, n_points: usize, get_pt: G, bx: &SimBox)
     where
         G: Fn(usize) -> [F; 3],
     {
-        let cutoff = self.cutoff;
-        let npd = bx.nearest_plane_distance();
-        let celldim = [
-            ((npd[0] / cutoff).floor() as u32).max(1),
-            ((npd[1] / cutoff).floor() as u32).max(1),
-            ((npd[2] / cutoff).floor() as u32).max(1),
-        ];
-        let n_cells = (celldim[0] * celldim[1] * celldim[2]) as usize;
+        let grid = CellGrid::for_cutoff(bx, self.cutoff);
+        let n_cells = grid.n_cells();
 
-        self.celldim = celldim;
+        self.grid = grid;
         self.bx = bx.clone();
 
         // 1) Compute cell per particle, count per cell.
@@ -347,7 +336,7 @@ impl LinkCell {
         self.cell_start.resize(n_cells + 1, 0);
         self.cell_of.resize(n_points, 0);
         for i in 0..n_points {
-            let cell = get_cell3(bx, get_pt(i), celldim);
+            let cell = grid.cell_of(bx, get_pt(i));
             self.cell_of[i] = cell as u32;
             self.cell_start[cell] += 1;
         }
@@ -393,7 +382,6 @@ impl LinkCell {
     #[cfg(not(feature = "rayon"))]
     fn compute_pairs_serial(&mut self) {
         let cutoff2 = self.cutoff * self.cutoff;
-        let pbc = self.bx.pbc();
         self.result.clear();
 
         let mut fwd_buf = [0usize; 27];
@@ -418,7 +406,7 @@ impl LinkCell {
             }
 
             // Forward neighbor cells (stack buffer — no alloc)
-            let n_fwd = stencil_fwd_into(cell, self.celldim, pbc, &mut fwd_buf);
+            let n_fwd = self.grid.stencil_forward(cell, &mut fwd_buf);
             let fwd = &fwd_buf[..n_fwd];
 
             for si in start..end {
@@ -466,13 +454,12 @@ impl LinkCell {
         }
 
         let cutoff2 = self.cutoff * self.cutoff;
-        let pbc = self.bx.pbc();
 
         let cell_start = &self.cell_start;
         let sorted_idx = &self.sorted_idx;
         let sorted_pos = &self.sorted_pos;
         let bx = &self.bx;
-        let celldim = self.celldim;
+        let grid = self.grid;
 
         let merged = self
             .occupied_cells
@@ -498,7 +485,7 @@ impl LinkCell {
 
                 // Forward neighbor cells (stack buffer — no alloc).
                 let mut fwd_buf = [0usize; 27];
-                let n_fwd = stencil_fwd_into(cell, celldim, pbc, &mut fwd_buf);
+                let n_fwd = grid.stencil_forward(cell, &mut fwd_buf);
                 let fwd = &fwd_buf[..n_fwd];
 
                 for si in start..end {
@@ -543,7 +530,6 @@ impl LinkCell {
     #[cfg(feature = "rayon")]
     fn compute_pairs_serial_inner(&mut self) {
         let cutoff2 = self.cutoff * self.cutoff;
-        let pbc = self.bx.pbc();
         self.result.clear();
         let mut fwd_buf = [0usize; 27];
 
@@ -565,7 +551,7 @@ impl LinkCell {
                 }
             }
 
-            let n_fwd = stencil_fwd_into(cell, self.celldim, pbc, &mut fwd_buf);
+            let n_fwd = self.grid.stencil_forward(cell, &mut fwd_buf);
             let fwd = &fwd_buf[..n_fwd];
 
             for si in start..end {
@@ -604,128 +590,6 @@ fn pos_at(sorted_pos: &[F], si: usize) -> [F; 3] {
     [sorted_pos[base], sorted_pos[base + 1], sorted_pos[base + 2]]
 }
 
-/// Collect unique neighbor cell indices into a caller-owned buffer, applying
-/// the given filter. Returns the number of entries written.
-///
-/// With small grids + PBC, multiple stencil offsets can wrap to the same cell,
-/// so we sort + dedup after collection. The buffer is sized 13 (half-shell) or
-/// 27 (full shell) by callers.
-#[inline]
-fn collect_stencil_into(
-    cell: usize,
-    celldim: [u32; 3],
-    pbc: [bool; 3],
-    filter: impl Fn(usize) -> bool,
-    out: &mut [usize],
-) -> usize {
-    let idx = cell as u32;
-    let nxy = celldim[0] * celldim[1];
-    let cx = (idx % nxy) % celldim[0];
-    let cy = (idx % nxy) / celldim[0];
-    let cz = idx / nxy;
-
-    let (si, ei) = stencil_range(cx, celldim[0]);
-    let (sj, ej) = stencil_range(cy, celldim[1]);
-    let (sk, ek) = stencil_range(cz, celldim[2]);
-
-    let mut len = 0usize;
-    for nk in sk..=ek {
-        if !pbc[2] && (nk < 0 || nk >= celldim[2] as i32) {
-            continue;
-        }
-        for nj in sj..=ej {
-            if !pbc[1] && (nj < 0 || nj >= celldim[1] as i32) {
-                continue;
-            }
-            for ni in si..=ei {
-                if !pbc[0] && (ni < 0 || ni >= celldim[0] as i32) {
-                    continue;
-                }
-                let wi = wrap(ni, celldim[0]);
-                let wj = wrap(nj, celldim[1]);
-                let wk = wrap(nk, celldim[2]);
-                let nc = (wk * nxy + wj * celldim[0] + wi) as usize;
-                if filter(nc) {
-                    out[len] = nc;
-                    len += 1;
-                }
-            }
-        }
-    }
-    out[..len].sort_unstable();
-    // In-place dedup (like Vec::dedup but on a slice prefix).
-    let mut w = 0usize;
-    for r in 0..len {
-        if w == 0 || out[r] != out[w - 1] {
-            out[w] = out[r];
-            w += 1;
-        }
-    }
-    w
-}
-
-/// Forward-neighbor cells (half-shell) — `nc > cell`. Writes into `out`,
-/// returns deduped count. Buffer sized at 27 because tiny grids with PBC
-/// can produce duplicates from multiple wraps before dedup.
-#[inline]
-fn stencil_fwd_into(
-    cell: usize,
-    celldim: [u32; 3],
-    pbc: [bool; 3],
-    out: &mut [usize; 27],
-) -> usize {
-    collect_stencil_into(cell, celldim, pbc, |nc| nc > cell, out)
-}
-
-/// Full-shell neighbor cells — `nc != cell`. Writes into `out`, returns
-/// deduped count.
-#[inline]
-fn stencil_all_into(
-    cell: usize,
-    celldim: [u32; 3],
-    pbc: [bool; 3],
-    out: &mut [usize; 27],
-) -> usize {
-    collect_stencil_into(cell, celldim, pbc, |nc| nc != cell, out)
-}
-
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
-
-/// Map a `[F; 3]` position to its cell index using fractional coordinates.
-#[inline(always)]
-fn get_cell3(bx: &SimBox, r: [F; 3], celldim: [u32; 3]) -> usize {
-    let frac = bx.make_fractional_fast_arr3(r);
-    let cx = (frac[0] * celldim[0] as F).floor() as u32 % celldim[0];
-    let cy = (frac[1] * celldim[1] as F).floor() as u32 % celldim[1];
-    let cz = (frac[2] * celldim[2] as F).floor() as u32 % celldim[2];
-    (cz * celldim[1] * celldim[0] + cy * celldim[0] + cx) as usize
-}
-
-/// Compute the stencil search range `[start, end]` for one axis.
-#[inline(always)]
-fn stencil_range(c: u32, dim: u32) -> (i32, i32) {
-    if dim < 2 {
-        (c as i32, c as i32)
-    } else if dim < 3 {
-        (c as i32, c as i32 + 1)
-    } else {
-        (c as i32 - 1, c as i32 + 1)
-    }
-}
-
-/// Wrap a signed cell index into `[0, dim)` with periodic boundary conditions.
-#[inline(always)]
-fn wrap(idx: i32, dim: u32) -> u32 {
-    let d = dim as i32;
-    let mut v = idx % d;
-    if v < 0 {
-        v += d;
-    }
-    v as u32
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -734,7 +598,7 @@ fn wrap(idx: i32, dim: u32) -> u32 {
 mod tests {
     use super::*;
     use crate::spatial::neighbors::NbList;
-    use crate::spatial::region::simbox::SimBox;
+    use crate::spatial::simbox::SimBox;
     use ndarray::array;
 
     #[test]
@@ -1169,5 +1033,252 @@ mod tests {
         lc_sf.build_soa(&fxs, &fys, &fzs, &bxf);
         assert!(lc_af.query().n_pairs() > 0, "fixture should produce pairs");
         assert_bitwise_equal(lc_af.query(), lc_sf.query());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Equivalence matrix
+// ---------------------------------------------------------------------------
+
+/// `LinkCell` against an independent O(N²) oracle, over the full configuration
+/// space the cell partition has to survive.
+///
+/// The oracle is a direct double loop over
+/// [`SimBox::shortest_vector_impl`] — it shares no cell-assignment or stencil
+/// code with the algorithm under test, so a defect in either cannot cancel out.
+/// [`BruteForce`] is checked against the same oracle, which keeps the oracle
+/// itself honest.
+///
+/// Both traversal modes are exercised. They fail differently: the pair path's
+/// forward filter covers an unordered cell pair from whichever side is cheaper,
+/// so a stencil that loses a neighbour in one direction still produces the
+/// right pair set, while a query rooted at the cell with the broken stencil
+/// silently returns nothing. Testing pairs alone leaves that entire class
+/// unobserved.
+#[cfg(test)]
+mod equivalence {
+    use super::*;
+    use crate::spatial::neighbors::CellGrid;
+    use crate::spatial::neighbors::NeighborQuery;
+    use crate::spatial::neighbors::bruteforce::BruteForce;
+    use crate::spatial::simbox::SimBox;
+    use crate::types::F3x3;
+    use ndarray::{Array2, array};
+    use std::collections::{BTreeMap, BTreeSet};
+
+    /// Deterministic point source — no RNG crate, no version drift, same
+    /// stream on every platform.
+    struct Lcg(u64);
+
+    impl Lcg {
+        fn unit(&mut self) -> F {
+            self.0 = self
+                .0
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            ((self.0 >> 11) as F) / ((1u64 << 53) as F)
+        }
+    }
+
+    fn cells() -> Vec<(&'static str, F3x3)> {
+        vec![
+            (
+                "ortho",
+                SimBox::matrix_from_lengths_angles([10.0, 11.0, 12.0], [90.0, 90.0, 90.0]).unwrap(),
+            ),
+            (
+                "hex",
+                SimBox::matrix_from_lengths_angles([10.0, 10.0, 12.0], [90.0, 90.0, 120.0])
+                    .unwrap(),
+            ),
+            (
+                "tilted",
+                SimBox::matrix_from_lengths_angles([10.0, 11.0, 12.0], [70.0, 80.0, 65.0]).unwrap(),
+            ),
+        ]
+    }
+
+    const PBCS: [[bool; 3]; 4] = [
+        [true, true, true],
+        [true, true, false],
+        [true, false, false],
+        [false, false, false],
+    ];
+
+    /// Points in Cartesian space: bulk sampling inside the cell, plus the two
+    /// populations that break a naive partition — coordinates outside the cell
+    /// (an optimiser's intermediate iterates leave the box routinely) and
+    /// coordinates sitting exactly on a cell boundary.
+    fn points(bx: &SimBox, seed: u64) -> Array2<F> {
+        let mut rng = Lcg(seed);
+        let mut frac: Vec<[F; 3]> = (0..40)
+            .map(|_| [rng.unit(), rng.unit(), rng.unit()])
+            .collect();
+
+        for k in 0..3 {
+            for &out in &[-1.7 as F, -0.15, 1.05, 2.4] {
+                let mut p = [rng.unit(), rng.unit(), rng.unit()];
+                p[k] = out;
+                frac.push(p);
+            }
+        }
+        for k in 0..3 {
+            for &edge in &[0.0 as F, 1.0] {
+                let mut p = [0.5 as F, 0.5, 0.5];
+                p[k] = edge;
+                frac.push(p);
+            }
+        }
+
+        let mut pts = Array2::<F>::zeros((frac.len(), 3));
+        for (i, f) in frac.iter().enumerate() {
+            let cart = bx.make_cartesian(array![f[0], f[1], f[2]].view());
+            for d in 0..3 {
+                pts[[i, d]] = cart[d];
+            }
+        }
+        pts
+    }
+
+    fn oracle_self(pts: &Array2<F>, bx: &SimBox, cutoff: F) -> BTreeMap<(u32, u32), F> {
+        let c2 = cutoff * cutoff;
+        let mut out = BTreeMap::new();
+        for i in 0..pts.nrows() {
+            let pi = [pts[[i, 0]], pts[[i, 1]], pts[[i, 2]]];
+            for j in (i + 1)..pts.nrows() {
+                let pj = [pts[[j, 0]], pts[[j, 1]], pts[[j, 2]]];
+                let dr = bx.shortest_vector_impl(pi, pj);
+                let d2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
+                if d2 <= c2 {
+                    out.insert((i as u32, j as u32), d2);
+                }
+            }
+        }
+        out
+    }
+
+    fn oracle_cross(
+        query: &Array2<F>,
+        refs: &Array2<F>,
+        bx: &SimBox,
+        cutoff: F,
+    ) -> BTreeSet<(u32, u32)> {
+        let c2 = cutoff * cutoff;
+        let mut out = BTreeSet::new();
+        for i in 0..query.nrows() {
+            let qi = [query[[i, 0]], query[[i, 1]], query[[i, 2]]];
+            for j in 0..refs.nrows() {
+                let rj = [refs[[j, 0]], refs[[j, 1]], refs[[j, 2]]];
+                let dr = bx.shortest_vector_impl(qi, rj);
+                let d2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
+                if d2 <= c2 {
+                    out.insert((i as u32, j as u32));
+                }
+            }
+        }
+        out
+    }
+
+    /// Unordered pair multiset from a [`NeighborList`]. A `BTreeMap` keyed on
+    /// the ordered pair would silently swallow a duplicate emission, so
+    /// duplicates are counted explicitly.
+    fn collect(res: &NeighborList) -> (BTreeMap<(u32, u32), F>, usize) {
+        let mut map = BTreeMap::new();
+        let n = res.n_pairs();
+        for k in 0..n {
+            let (i, j) = (res.query_point_indices()[k], res.point_indices()[k]);
+            let key = if i < j { (i, j) } else { (j, i) };
+            map.insert(key, res.dist_sq()[k]);
+        }
+        (map, n)
+    }
+
+    /// Cutoffs chosen to drive `celldim` through 1, 2, 3 and 5 cells per axis.
+    fn cutoffs(bx: &SimBox) -> Vec<F> {
+        let npd = bx.nearest_plane_distance();
+        let min = npd[0].min(npd[1]).min(npd[2]);
+        vec![min / 1.0, min / 2.0, min / 3.0, min / 5.0]
+    }
+
+    #[test]
+    fn pair_traversal_matches_the_oracle_over_the_matrix() {
+        let mut seen_dims: BTreeSet<u32> = BTreeSet::new();
+        let mut configs = 0usize;
+
+        for (name, h) in cells() {
+            for pbc in PBCS {
+                let bx = SimBox::new(h.clone(), array![0.0, 0.0, 0.0], pbc).expect("box");
+                let pts = points(&bx, 0x5EED);
+
+                for cutoff in cutoffs(&bx) {
+                    let tag = format!("{name} pbc={pbc:?} cutoff={cutoff:.3}");
+                    seen_dims.extend(CellGrid::for_cutoff(&bx, cutoff).celldim());
+                    configs += 1;
+
+                    let want = oracle_self(&pts, &bx, cutoff);
+
+                    let mut lc = LinkCell::new().cutoff(cutoff);
+                    lc.build(pts.view(), &bx);
+                    let (got, emitted) = collect(lc.query());
+
+                    assert_eq!(emitted, want.len(), "{tag}: pair count (duplicate or gap)");
+                    assert_eq!(
+                        got.keys().collect::<Vec<_>>(),
+                        want.keys().collect::<Vec<_>>(),
+                        "{tag}: pair set"
+                    );
+                    for (key, d2) in &got {
+                        assert!(
+                            (d2 - want[key]).abs() <= 1e-12,
+                            "{tag}: dist_sq for {key:?}: {d2} vs {}",
+                            want[key]
+                        );
+                    }
+
+                    // Keep the oracle honest against the reference algorithm.
+                    let mut bf = BruteForce::new(cutoff);
+                    bf.build(pts.view(), &bx);
+                    let (bf_pairs, _) = collect(bf.query());
+                    assert_eq!(
+                        bf_pairs.keys().collect::<Vec<_>>(),
+                        want.keys().collect::<Vec<_>>(),
+                        "{tag}: oracle disagrees with BruteForce"
+                    );
+                }
+            }
+        }
+
+        assert!(configs >= 48, "matrix shrank to {configs} configurations");
+        for target in [1u32, 2, 3, 5] {
+            assert!(
+                seen_dims.contains(&target),
+                "matrix never produced celldim {target}; saw {seen_dims:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn cross_query_matches_the_oracle_over_the_matrix() {
+        for (name, h) in cells() {
+            for pbc in PBCS {
+                let bx = SimBox::new(h.clone(), array![0.0, 0.0, 0.0], pbc).expect("box");
+                let refs = points(&bx, 0x5EED);
+                let query = points(&bx, 0xC0FFEE);
+
+                for cutoff in cutoffs(&bx) {
+                    let tag = format!("{name} pbc={pbc:?} cutoff={cutoff:.3}");
+                    let want = oracle_cross(&query, &refs, &bx, cutoff);
+
+                    let nq = NeighborQuery::new(&bx, refs.view(), cutoff);
+                    let res = nq.query(query.view());
+                    let got: BTreeSet<(u32, u32)> = (0..res.n_pairs())
+                        .map(|k| (res.query_point_indices()[k], res.point_indices()[k]))
+                        .collect();
+
+                    assert_eq!(got.len(), res.n_pairs(), "{tag}: duplicate query hit");
+                    assert_eq!(got, want, "{tag}: cross-query set");
+                }
+            }
+        }
     }
 }

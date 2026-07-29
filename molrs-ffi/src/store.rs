@@ -7,7 +7,7 @@
 use crate::error::FfiError;
 use crate::handle::{BlockHandle, FrameId};
 use molrs::types::{F, I, U};
-use molrs::{spatial::region::simbox::SimBox, store::block::Block, store::frame::Frame};
+use molrs::{spatial::simbox::SimBox, store::block::Block, store::frame::Frame};
 use slotmap::SlotMap;
 use std::collections::{HashMap, HashSet};
 
@@ -179,11 +179,7 @@ impl Store {
     }
 
     /// Sets the simbox of a frame without invalidating block handles.
-    pub fn set_frame_box(
-        &mut self,
-        id: FrameId,
-        simbox: Option<SimBox>,
-    ) -> Result<(), FfiError> {
+    pub fn set_frame_box(&mut self, id: FrameId, simbox: Option<SimBox>) -> Result<(), FfiError> {
         let entry = self.frames.get_mut(id).ok_or(FfiError::InvalidFrameId)?;
         entry.frame.simbox = simbox;
         Ok(())

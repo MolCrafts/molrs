@@ -39,7 +39,7 @@
 //! `x·r = (|r|² + Rᵢ² − Rⱼ²)/2`; the cell keeps the generator side
 //! (`x·r ≤ off`). Equal radii reduce to the plain Voronoi bisector at `r/2`.
 
-use molrs::spatial::region::simbox::SimBox;
+use molrs::spatial::simbox::SimBox;
 use molrs::types::F;
 use ndarray::ArrayView2;
 

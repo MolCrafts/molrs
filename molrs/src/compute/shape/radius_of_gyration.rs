@@ -168,7 +168,7 @@ mod tests {
     use crate::compute::shape::center_of_mass::CenterOfMass;
     use crate::compute::shape::inertia_tensor::InertiaTensor;
     use molrs::Frame;
-    use molrs::spatial::region::simbox::SimBox;
+    use molrs::spatial::simbox::SimBox;
     use molrs::store::block::Block;
     use ndarray::{Array1 as A1, array};
 

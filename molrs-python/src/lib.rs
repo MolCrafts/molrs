@@ -42,7 +42,9 @@ mod validate;
 // compute/, ff/, conformer/, signal/.
 mod core;
 use crate::core::spatial::linkedcell::{PyLinkedCell, PyNeighborList, PyNeighborQuery};
-use crate::core::spatial::region::{PyCuboid, PyHollowSphere, PyRegion, PySphere};
+use crate::core::spatial::region::{
+    PyCuboid, PyHollowSphere, PyParallelepiped, PyRegion, PySphere,
+};
 use crate::core::spatial::simbox::PyBox;
 use crate::core::store::block::PyBlock;
 use crate::core::store::frame::{PyFrame, PyMetaValue};
@@ -198,6 +200,7 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySphere>()?;
     m.add_class::<PyHollowSphere>()?;
     m.add_class::<PyCuboid>()?;
+    m.add_class::<PyParallelepiped>()?;
     m.add_class::<PyRegion>()?;
 
     // Molecular graph hierarchy (base before subclasses)
@@ -254,6 +257,8 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(ff::read_opls_xml_str_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::read_lammps_forcefield_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::read_lammps_forcefield_str_py, m)?)?;
+    m.add_function(wrap_pyfunction!(ff::write_lammps_forcefield_py, m)?)?;
+    m.add_function(wrap_pyfunction!(ff::write_lammps_forcefield_str_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::intramolecular_pairs_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::extract_coords_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::compute_k_ij_py, m)?)?;

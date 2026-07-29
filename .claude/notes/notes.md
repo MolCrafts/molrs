@@ -17,6 +17,11 @@ status change) and conflicts with `CLAUDE.md`.
 
 ---
 
+## 2026-07-29 — pre-commit whole-tree gates need always_run
+**Decision:** `cargo-fmt` and `cargo-clippy` in `.pre-commit-config.yaml` set `always_run: true` (same as the pre-push test hooks).
+**Why:** CI rustfmt/clippy are whole-tree gates. Without `always_run`, prek skips them when the staged set has no "matching" files — rustfmt/clippy failures on `dev` (while_let_loop, too_many_arguments, region formatting) reached GitHub Actions despite the hooks being declared for pre-commit.
+**Status:** active
+
 ## 2026-07-23 — private extension molrs._lib; docs CI fix
 **Decision:** Rename compiled extension `molrs.molrs` → `molrs._lib` (public vs private). PyO3 classes use `module = "molrs"`. Docs: force_inspection + analysis attrs for griffe; Cloudflare Pages builds fixed.
 **Status:** active (v0.9.2)

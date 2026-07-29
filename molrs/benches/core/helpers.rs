@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use criterion::BenchmarkGroup;
 use criterion::measurement::Measurement;
-use molrs::spatial::region::simbox::SimBox;
+use molrs::spatial::simbox::SimBox;
 use molrs::types::F;
 use ndarray::{Array1, Array2, array};
 use rand::rngs::StdRng;

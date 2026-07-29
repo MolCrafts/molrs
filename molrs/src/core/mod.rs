@@ -7,6 +7,7 @@
 //! - [`store`] — columnar data containers (`Block`, `Frame`, `Trajectory`, keys)
 //! - [`system`] — molecular representations (`Atomistic`, `MolGraph`, `Topology`, elements)
 //! - [`spatial`] — regions, neighbor lists, geometry
+//! - [`generate`] — structure generators (inverse of compute: parameters → coordinates)
 //! - [`math`], [`units`] — numerical and unit-system foundations
 //!
 //! ## Examples
@@ -39,6 +40,7 @@
 // re-parse at runtime.
 
 // Domain groups
+pub mod generate;
 pub mod spatial;
 pub mod store;
 pub mod system;
@@ -57,6 +59,10 @@ pub mod units;
 
 // Public re-exports for common types
 pub use error::MolRsError;
+pub use generate::{
+    FccLattice, GrowthStrategy, OccupancyMode, OffLattice, SelfAvoidingWalk, WalkError, WalkOutput,
+};
+pub use spatial::simbox::{BoxError, BoxKind, Mic, SimBox};
 pub use store::block::Block;
 pub use store::frame::Frame;
 pub use store::frame_access::FrameAccess;

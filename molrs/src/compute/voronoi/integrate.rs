@@ -33,7 +33,7 @@
 //! converts the density `e/Bohr³ → e/Å³` (divide by `a³`, `a = 0.529177… Å/Bohr`)
 //! so `∫ρ dV` is a pure electron count and `μ` is in `e·Å`.
 
-use molrs::spatial::region::simbox::SimBox;
+use molrs::spatial::simbox::SimBox;
 use molrs::store::frame::Frame;
 use molrs::types::F;
 use ndarray::{Array2, ArrayView2};

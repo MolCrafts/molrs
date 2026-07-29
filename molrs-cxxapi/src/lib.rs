@@ -13,7 +13,7 @@ use molrs::ff::charge::{BccModel, BccParameterSet};
 use molrs::io::data::xyz::write_xyz_frame;
 #[cfg(feature = "zarr")]
 use molrs::io::store::zarr::{read_trajectory_file, write_trajectory_file};
-use molrs::spatial::region::simbox::SimBox;
+use molrs::spatial::simbox::SimBox;
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
 use molrs::store::keys;
@@ -47,6 +47,18 @@ fn cxx_api_capabilities() -> u64 {
 }
 
 // ── Element lookup ───────────────────────────────────────────────────────────
+
+/// Symbol for the FFI-shared [`bridge::ffi::Element`] — panics on an invalid
+/// value (no fallback).
+///
+/// Kept for the Element-export surface; callers currently go through
+/// [`symbol_for_z`] with the atomic number.
+#[allow(dead_code)]
+fn element_symbol(e: bridge::ffi::Element) -> &'static str {
+    Element::by_number(e.repr)
+        .unwrap_or_else(|| panic!("element_symbol: invalid Element value {}", e.repr))
+        .symbol()
+}
 
 fn symbol_for_z(z: i32) -> &'static str {
     let element = u8::try_from(z)
@@ -1215,6 +1227,17 @@ fn parse_bcc_parameter_set(name: &str) -> Result<BccParameterSet, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn ffi_element_matches_core_element() {
+        for z in 1u8..=118 {
+            let core = molrs::Element::by_number(z).expect("core element");
+            assert_eq!(
+                crate::element_symbol(crate::bridge::ffi::Element { repr: z }),
+                core.symbol()
+            );
+        }
+    }
+
     use super::*;
     use std::rc::Rc;
 

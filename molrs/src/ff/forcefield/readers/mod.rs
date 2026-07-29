@@ -10,8 +10,9 @@
 //! Concrete readers: [`OplsXmlReader`](opls::OplsXmlReader) (OPLS-AA / GROMACS
 //! XML, nm/kJ-mol, Ryckaert–Bellemans torsions) and
 //! [`LammpsFfReader`](lammps::LammpsFfReader) (a LAMMPS `*.ff` include, AMBER/GAFF
-//! flavour). Further formats (AMBER prmtop) land as additional implementors of
-//! [`ForceFieldReader`].
+//! flavour — inverse of
+//! [`LammpsFfWriter`](super::writers::lammps::LammpsFfWriter)). Further formats
+//! (AMBER prmtop) land as additional implementors of [`ForceFieldReader`].
 
 pub mod lammps;
 pub mod opls;

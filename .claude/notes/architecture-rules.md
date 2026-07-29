@@ -38,7 +38,7 @@ but are NOT workspace members — treat as inactive. Molecular packing
 
 | Crate | Owns |
 |---|---|
-| `molrs-core` | `Frame`, `Block`, `MolGraph`, `MolRec`, `Topology`, `Element`, `SimBox` (region), neighbors, `math`, stereochemistry, rings, rotatable bonds, hydrogen perception, Gasteiger charges, atom-type mapping, atomistic/coarse-grain models |
+| `molrs-core` | `Frame`, `Block`, `MolGraph`, `MolRec`, `Topology`, `Element`, `SimBox` (spatial::simbox), neighbors, `math`, stereochemistry, rings, rotatable bonds, hydrogen perception, Gasteiger charges, atom-type mapping, atomistic/coarse-grain models |
 | `molrs-io` | `pdb`, `xyz`, `lammps_data`, `lammps_dump`, `chgcar`/POSCAR, `cube`, CIF, mol2, SDF, GRO, DCD, `zarr` (Zarr V3 trajectories); SMILES/SMARTS parsing in `src/smiles/` (feature-gated) |
 | `molrs-signal` | FFT-based autocorrelation, window functions, frequency grids |
 | `molrs-compute` | `rdf`, `msd`, `cluster`, `accumulator`, `reducer`, gyration/inertia tensor, radius_of_gyration, center_of_mass |
