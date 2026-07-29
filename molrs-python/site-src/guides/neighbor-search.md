@@ -3,7 +3,7 @@
 Neighbor search turns coordinates into pairs. Many molecular analyses are
 defined over distances within a cutoff: radial distribution functions count
 pairs by radius, cluster analysis connects nearby particles, and contact
-queries compare one set of points against another. molrs uses cell-list based
+queries compare one set of points against another. molrs uses a PBC-aware cell partition (`CellGrid`) under LinkCell neighbor
 search for the common case where the cutoff is small relative to the system
 size.
 

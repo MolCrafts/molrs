@@ -50,6 +50,10 @@ fn cxx_api_capabilities() -> u64 {
 
 /// Symbol for the FFI-shared [`bridge::ffi::Element`] — panics on an invalid
 /// value (no fallback).
+///
+/// Kept for the Element-export surface; callers currently go through
+/// [`symbol_for_z`] with the atomic number.
+#[allow(dead_code)]
 fn element_symbol(e: bridge::ffi::Element) -> &'static str {
     Element::by_number(e.repr)
         .unwrap_or_else(|| panic!("element_symbol: invalid Element value {}", e.repr))

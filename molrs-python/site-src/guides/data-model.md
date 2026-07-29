@@ -29,11 +29,19 @@ double precision for geometry and force-field work.
 
 ## A box adds periodicity to a frame
 
-A simulation box is attached to a frame when periodic boundary conditions
-matter. The box stores the lattice matrix, origin, and per-axis periodic flags.
-Neighbor search, wrapping, distance calculations, and RDF normalization read
-the same box metadata, so changing it changes the physical interpretation of
-the coordinates.
+A simulation box (`SimBox`, exposed as `molrs.Box` in Python) is attached to a
+frame when periodic boundary conditions matter. The box stores the lattice
+matrix, origin, and per-axis periodic flags. Neighbor search, wrapping,
+distance calculations, and RDF normalization read the same box metadata, so
+changing it changes the physical interpretation of the coordinates. Minimum
+image convention is a cheap `Mic` value derived from the box — not a separate
+global setting.
+
+**Regions are not boxes.** Spatial query volumes (`Sphere`, `Cuboid`,
+`Parallelepiped`, boolean combinations) live under `spatial::region` and answer
+"is this point inside?" questions for packing and selection. A `Parallelepiped`
+describes a general triclinic *region*; a `SimBox` describes the periodic
+lattice of a simulation cell. Do not use one where the other is required.
 
 Frames without a simulation box are still valid. Several analysis paths can
 fall back to a free-boundary box inferred from coordinates and padding. That is

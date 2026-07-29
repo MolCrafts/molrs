@@ -155,11 +155,7 @@ fn write_pair_section(
             if cuts.is_empty() {
                 sub.push(s.name.clone());
             } else {
-                sub.push(format!(
-                    "{} {}",
-                    s.name,
-                    format_nums(&cuts, opts.precision)
-                ));
+                sub.push(format!("{} {}", s.name, format_nums(&cuts, opts.precision)));
             }
         }
         lines.push(format!("pair_style hybrid {}\n", sub.join(" ")));
@@ -466,13 +462,10 @@ fn write_dihedral_fourier(
 fn fourier_terms(params: &Params, name: &str) -> Result<Vec<(f64, f64, f64)>, String> {
     let mut terms = Vec::new();
     let mut i = 1usize;
-    loop {
-        let Some(k) = params.get(&format!("k{i}")) else {
-            break;
-        };
-        let n = params.get(&format!("n{i}")).ok_or_else(|| {
-            format!("dihedral type `{name}` has k{i} but missing n{i}")
-        })?;
+    while let Some(k) = params.get(&format!("k{i}")) {
+        let n = params
+            .get(&format!("n{i}"))
+            .ok_or_else(|| format!("dihedral type `{name}` has k{i} but missing n{i}"))?;
         let d_rad = params.get(&format!("d{i}")).unwrap_or(0.0);
         terms.push((k, n, d_rad.to_degrees()));
         i += 1;

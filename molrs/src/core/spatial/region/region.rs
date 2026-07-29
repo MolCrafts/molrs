@@ -182,16 +182,17 @@ impl Parallelepiped {
     ///
     /// Returns `Err` if `H` is singular (zero volume).
     pub fn new(h: F3x3, origin: F3) -> Result<Self, String> {
-        let inv = math::inv3(&h).ok_or_else(|| {
-            "Parallelepiped: singular edge matrix H (zero volume)".to_string()
-        })?;
+        let inv = math::inv3(&h)
+            .ok_or_else(|| "Parallelepiped: singular edge matrix H (zero volume)".to_string())?;
         Ok(Self { origin, h, inv })
     }
 
     /// Cubic region of edge length `a` with the given origin (min corner).
     pub fn cube(a: F, origin: F3) -> Result<Self, String> {
         if a <= 0.0 {
-            return Err(format!("Parallelepiped::cube: edge length must be > 0, got {a}"));
+            return Err(format!(
+                "Parallelepiped::cube: edge length must be > 0, got {a}"
+            ));
         }
         let h = array![[a, 0.0, 0.0], [0.0, a, 0.0], [0.0, 0.0, a]];
         Self::new(h, origin)
@@ -222,11 +223,7 @@ impl Parallelepiped {
 
     /// Construct from three explicit edge vectors `a`, `b`, `c` and `origin`.
     pub fn from_edges(a: [F; 3], b: [F; 3], c: [F; 3], origin: F3) -> Result<Self, String> {
-        let h = array![
-            [a[0], b[0], c[0]],
-            [a[1], b[1], c[1]],
-            [a[2], b[2], c[2]]
-        ];
+        let h = array![[a[0], b[0], c[0]], [a[1], b[1], c[1]], [a[2], b[2], c[2]]];
         Self::new(h, origin)
     }
 

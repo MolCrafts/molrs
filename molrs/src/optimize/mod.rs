@@ -127,6 +127,7 @@ impl LBFGS {
     }
 
     /// One-shot homogeneous batch under a borrowed potential.
+    #[allow(clippy::too_many_arguments)]
     pub fn minimize_batch(
         potential: &dyn Potential,
         coords: &mut [F],
