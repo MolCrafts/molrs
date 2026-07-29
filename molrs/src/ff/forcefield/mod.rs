@@ -8,6 +8,7 @@
 
 pub mod gaff;
 pub mod readers;
+pub mod writers;
 pub mod xml;
 
 use std::collections::{HashMap, HashSet};

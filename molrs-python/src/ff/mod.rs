@@ -33,7 +33,7 @@
 pub mod atd;
 pub mod charge;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::CString;
 use std::fs;
 
@@ -1403,9 +1403,9 @@ pub fn read_opls_xml_str_py(xml: &str) -> PyResult<PyForceField> {
 ///
 /// Parses the ``pair_style``/``pair_coeff`` + ``bond_style``/``angle_style``/
 /// ``dihedral_style`` (``fourier``) [+ optional ``improper_style``] include that
-/// molpy's ``LAMMPSForceFieldWriter`` emits (AMBER/GAFF flavour), normalizing it
+/// :func:`write_lammps_forcefield` emits (AMBER/GAFF flavour), normalizing it
 /// to molrs units (Å, kcal/mol, radians, e): LAMMPS harmonic ``K`` → molrs
-/// ``k = 2K``, angle/phase values stay in degrees (the kernels convert), and the
+/// ``k = 2K``, angle/phase values deg → rad at this boundary, and the
 /// ``fourier`` dihedral maps to the molrs ``periodic`` kernel. AMBER 1-4 scaling
 /// (LJ ×0.5, Coulomb ×1/1.2) is recorded on the force field's special bonds.
 /// Distinct from :func:`read_forcefield_xml` (molrs's own schema) and
@@ -1450,6 +1450,117 @@ pub fn read_lammps_forcefield_str_py(text: &str) -> PyResult<PyForceField> {
         .read_str(text)
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
     Ok(PyForceField { inner: forcefield })
+}
+
+/// Write a :class:`ForceField` to a LAMMPS force-field include (``*.ff``).
+///
+/// Inverse of :func:`read_lammps_forcefield`: molrs units (Å, kcal/mol, radians,
+/// ``½k`` harmonic form) → LAMMPS ``real`` (``K = k/2``, angles in degrees). A
+/// split ``lj/cut`` + ``coul/cut`` pair is recombined as ``lj/cut/coul/cut`` so
+/// geometric mixing is not defeated by a hybrid wildcard. AMBER/GAFF flavour
+/// only (``bond``/``angle``/``improper`` harmonic, ``dihedral`` fourier or opls).
+///
+/// Parameters
+/// ----------
+/// path : str
+///     Destination path for the include.
+/// forcefield : ForceField
+///     Force field in molrs units.
+/// precision : int, optional
+///     Decimal places for floating coefficients (default 6).
+/// skip_pair_style : bool, optional
+///     When true, omit the ``pair_style`` line (caller sets it in the input).
+/// atom_types : set[str] | None, optional
+///     If given, only pair coeffs whose atom types are a subset of this set.
+/// bond_types, angle_types, dihedral_types, improper_types : set[str] | None
+///     Optional name whitelists for bonded coefficients.
+///
+/// Raises
+/// ------
+/// ValueError
+///     On an unsupported style or missing required parameters.
+#[pyfunction]
+#[pyo3(
+    name = "write_lammps_forcefield",
+    signature = (
+        path,
+        forcefield,
+        precision = 6,
+        skip_pair_style = false,
+        atom_types = None,
+        bond_types = None,
+        angle_types = None,
+        dihedral_types = None,
+        improper_types = None,
+    )
+)]
+#[allow(clippy::too_many_arguments)]
+pub fn write_lammps_forcefield_py(
+    path: &str,
+    forcefield: &PyForceField,
+    precision: usize,
+    skip_pair_style: bool,
+    atom_types: Option<HashSet<String>>,
+    bond_types: Option<HashSet<String>>,
+    angle_types: Option<HashSet<String>>,
+    dihedral_types: Option<HashSet<String>>,
+    improper_types: Option<HashSet<String>>,
+) -> PyResult<()> {
+    use molrs::ff::{ForceFieldWriter, LammpsFfWriter, LammpsWriteOptions};
+    let writer = LammpsFfWriter::with_options(LammpsWriteOptions {
+        precision,
+        skip_pair_style,
+        atom_types,
+        bond_types,
+        angle_types,
+        dihedral_types,
+        improper_types,
+    });
+    writer
+        .write(&forcefield.inner, path)
+        .map_err(pyo3::exceptions::PyValueError::new_err)
+}
+
+/// Serialize a :class:`ForceField` to a LAMMPS force-field include string
+/// (same format and unit conversion as :func:`write_lammps_forcefield`).
+#[pyfunction]
+#[pyo3(
+    name = "write_lammps_forcefield_str",
+    signature = (
+        forcefield,
+        precision = 6,
+        skip_pair_style = false,
+        atom_types = None,
+        bond_types = None,
+        angle_types = None,
+        dihedral_types = None,
+        improper_types = None,
+    )
+)]
+#[allow(clippy::too_many_arguments)]
+pub fn write_lammps_forcefield_str_py(
+    forcefield: &PyForceField,
+    precision: usize,
+    skip_pair_style: bool,
+    atom_types: Option<HashSet<String>>,
+    bond_types: Option<HashSet<String>>,
+    angle_types: Option<HashSet<String>>,
+    dihedral_types: Option<HashSet<String>>,
+    improper_types: Option<HashSet<String>>,
+) -> PyResult<String> {
+    use molrs::ff::{ForceFieldWriter, LammpsFfWriter, LammpsWriteOptions};
+    let writer = LammpsFfWriter::with_options(LammpsWriteOptions {
+        precision,
+        skip_pair_style,
+        atom_types,
+        bond_types,
+        angle_types,
+        dihedral_types,
+        improper_types,
+    });
+    writer
+        .write_str(&forcefield.inner)
+        .map_err(pyo3::exceptions::PyValueError::new_err)
 }
 
 /// Build the intramolecular non-bonded neighbour list for a typed frame.

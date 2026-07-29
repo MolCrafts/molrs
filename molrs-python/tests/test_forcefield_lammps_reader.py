@@ -64,3 +64,26 @@ def test_read_lammps_forcefield_from_path(tmp_path):
 def test_unknown_keyword_maps_to_value_error():
     with pytest.raises(ValueError):
         molrs.read_lammps_forcefield_str("mystery_style foo\n")
+
+
+def test_write_lammps_forcefield_str_round_trip():
+    """write_lammps_forcefield_str is the inverse of the reader (units + layout)."""
+    ff = molrs.read_lammps_forcefield_str(_FF)
+    text = molrs.write_lammps_forcefield_str(ff)
+    assert "pair_style lj/cut/coul/cut" in text
+    assert "hybrid" not in text
+    assert "bond_coeff c3-c3 228.890000 1.535400" in text
+    assert "angle_coeff c3-c3-oh 76.790000 109.660000" in text
+
+    ff2 = molrs.read_lammps_forcefield_str(text)
+    bt = ff2.get_style("bond", "harmonic").get_type_by_name("c3-c3")
+    assert bt.params["k"] == pytest.approx(457.78)
+    at = ff2.get_style("angle", "harmonic").get_type_by_name("c3-c3-oh")
+    assert at.params["theta0"] == pytest.approx(math.radians(109.66))
+
+
+def test_write_lammps_forcefield_to_path(tmp_path):
+    ff = molrs.read_lammps_forcefield_str(_FF)
+    out = tmp_path / "out.ff"
+    molrs.write_lammps_forcefield(str(out), ff)
+    assert "bond_coeff c3-c3" in out.read_text()

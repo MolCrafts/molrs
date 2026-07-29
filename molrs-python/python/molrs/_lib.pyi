@@ -1272,6 +1272,27 @@ def read_opls_xml(path: str) -> ForceField: ...
 def read_opls_xml_str(xml: str) -> ForceField: ...
 def read_lammps_forcefield(path: str) -> ForceField: ...
 def read_lammps_forcefield_str(text: str) -> ForceField: ...
+def write_lammps_forcefield(
+    path: str,
+    forcefield: ForceField,
+    precision: int = 6,
+    skip_pair_style: bool = False,
+    atom_types: set[str] | None = None,
+    bond_types: set[str] | None = None,
+    angle_types: set[str] | None = None,
+    dihedral_types: set[str] | None = None,
+    improper_types: set[str] | None = None,
+) -> None: ...
+def write_lammps_forcefield_str(
+    forcefield: ForceField,
+    precision: int = 6,
+    skip_pair_style: bool = False,
+    atom_types: set[str] | None = None,
+    bond_types: set[str] | None = None,
+    angle_types: set[str] | None = None,
+    dihedral_types: set[str] | None = None,
+    improper_types: set[str] | None = None,
+) -> str: ...
 def intramolecular_pairs(frame: Frame) -> Block: ...
 def extract_coords(frame: Frame) -> ArrayF: ...
 

@@ -257,6 +257,8 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(ff::read_opls_xml_str_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::read_lammps_forcefield_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::read_lammps_forcefield_str_py, m)?)?;
+    m.add_function(wrap_pyfunction!(ff::write_lammps_forcefield_py, m)?)?;
+    m.add_function(wrap_pyfunction!(ff::write_lammps_forcefield_str_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::intramolecular_pairs_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::extract_coords_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::compute_k_ij_py, m)?)?;

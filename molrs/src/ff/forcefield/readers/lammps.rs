@@ -4,8 +4,10 @@
 //! `bond_style harmonic`, `angle_style harmonic`, `dihedral_style fourier`
 //! (+ optional `improper_style harmonic`) with **type-label** coefficients — into
 //! a molrs [`ForceField`] in molrs units
-//! (Å, kcal/mol, radians, e). This is the format the molpy
-//! `LAMMPSForceFieldWriter` emits, e.g.:
+//! (Å, kcal/mol, radians, e). This is the format
+//! [`LammpsFfWriter`](crate::ff::forcefield::writers::lammps::LammpsFfWriter)
+//! emits (and what molpy's thin `LAMMPSForceFieldWriter` shell writes via that
+//! path), e.g.:
 //!
 //! ```text
 //! pair_style lj/cut/coul/long 10.0 10.0
