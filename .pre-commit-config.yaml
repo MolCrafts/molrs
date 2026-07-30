@@ -46,7 +46,11 @@ repos:
 
       - id: cargo-test-unit
         name: "CI Rust / unit (--lib)"
-        entry: cargo test -p molcrafts-molrs --lib --features full
+        # Fetch MolCrafts/tests-data first — same order as ci-rust.yml unit job.
+        # Several --lib tests resolve fixtures under ../tests-data/<format>/.
+        entry: >-
+          sh -c 'bash scripts/fetch-test-data.sh
+          && cargo test -p molcrafts-molrs --lib --features full'
         language: system
         pass_filenames: false
         always_run: true

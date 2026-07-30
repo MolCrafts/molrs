@@ -44,5 +44,9 @@ jobs:
         with:
           shared-key: unit
           workspaces: ". -> target"
+      # IO fixtures (LAMMPS data, chemfiles corpus, …) live in MolCrafts/tests-data.
+      # Must land before --lib tests that resolve ../tests-data/<format>/.
+      - name: Fetch tests-data
+        run: bash scripts/fetch-test-data.sh
       - name: Unit tests
         run: cargo test -p molcrafts-molrs --lib --features full
