@@ -3,10 +3,12 @@
 pub mod class2;
 pub mod harmonic;
 pub mod mmff;
+pub mod uff;
 
 pub use class2::{AngleClass2, angle_class2_ctor};
 pub use harmonic::{AngleHarmonic, angle_harmonic_ctor};
 pub use mmff::{MMFFAngleBend, MMFFStretchBend, mmff_angle_ctor, mmff_stbn_ctor};
+pub use uff::{UffAngle, uff_angle_ctor};
 
 use molrs::types::F;
 

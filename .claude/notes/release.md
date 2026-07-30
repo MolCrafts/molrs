@@ -12,16 +12,18 @@
 3. **No pin-parity scripts.** Do not add automation that fakes “CI will be
    fine.” Agents and operators **manually** verify tag + publish before telling
    molpy to bump. Process lives in harness notes, not `scripts/`.
-4. **Same version line.** molrs / molcrafts-molrs / molpy share one version
-   number when co-released; bump the workspace version on the molrs release
-   commit that the tag points at.
+4. **Same minor line.** molrs / molcrafts-molrs / molpy share **major.minor**
+   when co-released; patch may drift. Bump the workspace version on the molrs
+   release commit that the tag points at. Consumers pin
+   `molcrafts-molrs>=X.Y.0,<X.(Y+1)` (or equivalent) and runtime-check
+   major.minor only — never require exact patch equality.
 
 ## Manual checklist (before declaring a molrs release done)
 
 - [ ] Version bump on the release commit
 - [ ] Tag `vX.Y.Z` on that commit (canonical MolCrafts/molrs publish path)
 - [ ] Publish finished (or confirmed already on the index)
-- [ ] Only then: molpy may pin `molcrafts-molrs==X.Y.Z` and use new APIs
+- [ ] Only then: molpy may pin `molcrafts-molrs>=X.Y.0,<X.(Y+1)` and use new APIs
 
 ## Agent hard-stops
 

@@ -9,7 +9,9 @@
 //! Only **occupied cells** are visited during pair search, so sparse systems
 //! (few particles, many cells) pay O(N), not O(n_cells).
 
-use crate::spatial::neighbors::{CellGrid, NbListAlgo, NeighborList, PairVisitor, QueryMode};
+use crate::spatial::neighbors::{
+    CellGrid, NbListAlgo, NeighborList, NeighborListStorage, PairVisitor, QueryMode,
+};
 use crate::spatial::simbox::SimBox;
 use crate::types::{F, FNx3View};
 use ndarray::array;
@@ -53,6 +55,8 @@ pub struct LinkCell {
     cursor: Vec<u32>,
     /// Reusable cell-assignment buffer (avoids cloning sorted_idx).
     cell_of: Vec<u32>,
+    /// Which optional columns the materialized [`NeighborList`] keeps.
+    storage: NeighborListStorage,
 }
 
 impl Default for LinkCell {
@@ -76,6 +80,7 @@ impl LinkCell {
             result: NeighborList::empty(),
             cursor: Vec::new(),
             cell_of: Vec::new(),
+            storage: NeighborListStorage::FULL,
         }
     }
 
@@ -83,6 +88,23 @@ impl LinkCell {
     pub fn cutoff(mut self, cutoff: F) -> Self {
         self.cutoff = cutoff;
         self
+    }
+
+    /// Configure which optional pair fields are stored when materializing
+    /// a [`NeighborList`] via [`build`](NbListAlgo::build) / `update`.
+    ///
+    /// Does not affect [`build_index`](NbListAlgo::build_index) /
+    /// [`visit_pairs`](NbListAlgo::visit_pairs) streaming (those never store pairs).
+    pub fn with_storage(mut self, storage: NeighborListStorage) -> Self {
+        self.storage = storage;
+        self.result = NeighborList::empty_with_storage(storage);
+        self
+    }
+
+    /// Storage policy used by the next materializing build.
+    #[inline]
+    pub fn storage(&self) -> NeighborListStorage {
+        self.storage
     }
 
     /// Visit all reference-point neighbors of an arbitrary query point.
@@ -461,66 +483,73 @@ impl LinkCell {
         let bx = &self.bx;
         let grid = self.grid;
 
+        let storage = self.storage;
         let merged = self
             .occupied_cells
             .par_iter()
-            .fold(NeighborList::empty, |mut acc, &cell_u32| {
-                let cell = cell_u32 as usize;
-                let start = cell_start[cell] as usize;
-                let end = cell_start[cell + 1] as usize;
+            .fold(
+                || NeighborList::empty_with_storage(storage),
+                |mut acc, &cell_u32| {
+                    let cell = cell_u32 as usize;
+                    let start = cell_start[cell] as usize;
+                    let end = cell_start[cell + 1] as usize;
 
-                // Self-cell pairs.
-                for si in start..end {
-                    let pi = pos_at(sorted_pos, si);
-                    let oi = sorted_idx[si];
-                    for sj in (si + 1)..end {
-                        let pj = pos_at(sorted_pos, sj);
-                        let dr = bx.shortest_vector_impl(pi, pj);
-                        let d2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
-                        if d2 <= cutoff2 {
-                            acc.push(oi, sorted_idx[sj], d2, dr);
-                        }
-                    }
-                }
-
-                // Forward neighbor cells (stack buffer — no alloc).
-                let mut fwd_buf = [0usize; 27];
-                let n_fwd = grid.stencil_forward(cell, &mut fwd_buf);
-                let fwd = &fwd_buf[..n_fwd];
-
-                for si in start..end {
-                    let pi = pos_at(sorted_pos, si);
-                    let oi = sorted_idx[si];
-
-                    for &nc in fwd {
-                        let nc_start = cell_start[nc] as usize;
-                        let nc_end = cell_start[nc + 1] as usize;
-
-                        for sj in nc_start..nc_end {
-                            let oj = sorted_idx[sj];
+                    // Self-cell pairs.
+                    for si in start..end {
+                        let pi = pos_at(sorted_pos, si);
+                        let oi = sorted_idx[si];
+                        for sj in (si + 1)..end {
                             let pj = pos_at(sorted_pos, sj);
                             let dr = bx.shortest_vector_impl(pi, pj);
                             let d2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
                             if d2 <= cutoff2 {
-                                if oi < oj {
-                                    acc.push(oi, oj, d2, dr);
-                                } else {
-                                    acc.push(oj, oi, d2, [-dr[0], -dr[1], -dr[2]]);
+                                acc.push(oi, sorted_idx[sj], d2, dr);
+                            }
+                        }
+                    }
+
+                    // Forward neighbor cells (stack buffer — no alloc).
+                    let mut fwd_buf = [0usize; 27];
+                    let n_fwd = grid.stencil_forward(cell, &mut fwd_buf);
+                    let fwd = &fwd_buf[..n_fwd];
+
+                    for si in start..end {
+                        let pi = pos_at(sorted_pos, si);
+                        let oi = sorted_idx[si];
+
+                        for &nc in fwd {
+                            let nc_start = cell_start[nc] as usize;
+                            let nc_end = cell_start[nc + 1] as usize;
+
+                            for sj in nc_start..nc_end {
+                                let oj = sorted_idx[sj];
+                                let pj = pos_at(sorted_pos, sj);
+                                let dr = bx.shortest_vector_impl(pi, pj);
+                                let d2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
+                                if d2 <= cutoff2 {
+                                    if oi < oj {
+                                        acc.push(oi, oj, d2, dr);
+                                    } else {
+                                        acc.push(oj, oi, d2, [-dr[0], -dr[1], -dr[2]]);
+                                    }
                                 }
                             }
                         }
                     }
-                }
 
-                acc
-            })
-            .reduce(NeighborList::empty, |mut a, b| {
-                a.idx_i.extend_from_slice(&b.idx_i);
-                a.idx_j.extend_from_slice(&b.idx_j);
-                a.dist_sq.extend_from_slice(&b.dist_sq);
-                a.diff_flat.extend_from_slice(&b.diff_flat);
-                a
-            });
+                    acc
+                },
+            )
+            .reduce(
+                || NeighborList::empty_with_storage(storage),
+                |mut a, b| {
+                    a.idx_i.extend_from_slice(&b.idx_i);
+                    a.idx_j.extend_from_slice(&b.idx_j);
+                    a.dist_sq.extend_from_slice(&b.dist_sq);
+                    a.diff_flat.extend_from_slice(&b.diff_flat);
+                    a
+                },
+            );
 
         self.result = merged;
     }

@@ -205,6 +205,37 @@ impl KernelRegistry {
             improper::mmff::mmff_oop_ctor,
             ParamSource::PerInstance,
         );
+        // UFF — per-instance bonded + LJ (typifier bakes kb/r0, ka/order/c*, V/order)
+        r.register_with(
+            "bond",
+            "uff_bond",
+            bond::uff::uff_bond_ctor,
+            ParamSource::PerInstance,
+        );
+        r.register_with(
+            "angle",
+            "uff_angle",
+            angle::uff::uff_angle_ctor,
+            ParamSource::PerInstance,
+        );
+        r.register_with(
+            "dihedral",
+            "uff_torsion",
+            dihedral::uff::uff_torsion_ctor,
+            ParamSource::PerInstance,
+        );
+        r.register_with(
+            "pair",
+            "uff_lj",
+            pair::uff::uff_lj_ctor,
+            ParamSource::PerInstance,
+        );
+        r.register_with(
+            "improper",
+            "uff_inversion",
+            improper::uff::uff_inversion_ctor,
+            ParamSource::PerInstance,
+        );
         r.register(
             "improper",
             "harmonic",

@@ -134,7 +134,7 @@ typed_frame = typed.to_frame()
 print("typed blocks:", typed_frame.keys())
 
 try:
-    # The neighbour list is the consumer's to build, so it is an explicit step.
+    # Non-bonded terms need an explicit pairs block (no optimizeGeometry sugar).
     typed_frame["pairs"] = molrs.intramolecular_pairs(typed_frame)
     potentials = typifier.forcefield().to_potentials(typed_frame)
     coords = molrs.extract_coords(typed_frame)
@@ -147,11 +147,12 @@ except ValueError as exc:
     print("potential build skipped:", exc)
 ```
 
-MMFF94 typing and potential compilation are separate. Typing is useful when you
-want the typed `Atomistic` graph or its frame representation. Potential
+MMFF94 typing and potential compilation are separate steps on purpose. Typing
+gives a labeled graph; `forcefield().to_potentials(frame)` is the shared
+compile path every force field uses (including UFF on Rust/WASM). Potential
 compilation is stricter because every term must resolve to a supported
-parameter. During the preview phase, some molecules can typify successfully
-while potential compilation still reports incomplete coverage.
+parameter — some molecules can typify successfully while compilation still
+reports incomplete coverage.
 
 When potential compilation succeeds, the coordinate shape is `(3 * n_atoms,)`,
 not `(n_atoms, 3)`. Reshape only for display:

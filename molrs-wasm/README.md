@@ -46,6 +46,22 @@ console.log(writeFrame(mol3d, "xyz"));
 
 - `generate3D(frame, speed?, seed?)` — MMFF94 coordinate generation (`"fast"` | `"medium"` | `"better"`)
 
+### Force fields + geometry optimization
+
+```js
+const typifier = new UFFTypifier();                 // or MMFF94Typifier / MMFF94STypifier
+const typed    = typifier.typify(frame);
+const pots     = typifier.toPotentials(typed);      // no .ff()
+const report   = new LBFGS(pots).run(typed, 200);   // Optimizer(pots).run(frame, n_steps)
+// optional: new LBFGS(pots, neighborList).run(typed, 200)
+// no neighborList → internal bruteforce topology pair list (exclude 1-2/1-3)
+```
+
+- **UFF** — full RDKit default table (entire periodic table + oxidation states)
+- **MMFF94 / MMFF94s** — Merck force fields
+- **no GFN-FF**
+- **no** free-function `intramolecularPairs` / `insertIntramolecularPairs`
+
 ### Analysis
 
 ```js

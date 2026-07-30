@@ -14,13 +14,15 @@ mod result;
 pub use accumulator::RDFAccumulator;
 pub use result::RDFResult;
 
-use molrs::spatial::neighbors::NeighborList;
+use molrs::spatial::neighbors::{LinkCell, NbListAlgo, NeighborList, QueryMode};
+use molrs::spatial::simbox::SimBox;
 use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
+use molrs::types::{F, FNx3View};
 use ndarray::Array1;
 
 use crate::compute::error::ComputeError;
 use crate::compute::traits::Compute;
+use crate::compute::util::get_positions_ref;
 
 /// Radial distribution function g(r) calculator.
 ///
@@ -121,20 +123,163 @@ impl RDF {
         self.r_max
     }
 
-    fn accumulate_into(&self, nlist: &NeighborList, n_r: &mut Array1<F>) {
-        for &d2 in nlist.dist_sq() {
-            if d2 <= 0.0 {
-                continue;
-            }
-            if d2 < self.r_min_sq || d2 >= self.r_max_sq {
-                continue;
-            }
-            let d = d2.sqrt();
-            let bin = ((d - self.r_min) / self.bin_width) as usize;
-            if bin < self.n_bins {
-                n_r[bin] += 1.0;
-            }
+    /// Bin one squared distance into `n_r` (self/cross agnostic).
+    #[inline(always)]
+    fn accumulate_d2(&self, d2: F, n_r: &mut Array1<F>) {
+        if d2 <= 0.0 {
+            return;
         }
+        if d2 < self.r_min_sq || d2 >= self.r_max_sq {
+            return;
+        }
+        let d = d2.sqrt();
+        let bin = ((d - self.r_min) / self.bin_width) as usize;
+        if bin < self.n_bins {
+            n_r[bin] += 1.0;
+        }
+    }
+
+    fn accumulate_into(&self, nlist: &NeighborList, n_r: &mut Array1<F>) {
+        // Prefer the stored dist_sq column when present (materialized list).
+        if nlist.storage().dist_sq {
+            for &d2 in nlist.dist_sq() {
+                self.accumulate_d2(d2, n_r);
+            }
+            return;
+        }
+        // Indices-only lists cannot be binned — caller should stream instead.
+        debug_assert!(
+            nlist.n_pairs() == 0 || nlist.storage().dist_sq,
+            "RDF::accumulate_into needs dist_sq storage or a streaming path"
+        );
+    }
+
+    /// Self-query RDF via cell-list **index + visit** (no `NeighborList` heap).
+    ///
+    /// This is the production path for large \(N\): memory is \(O(N)\) for the
+    /// cell index plus \(O(n_{\mathrm{bins}})\) for the histogram, not
+    /// \(O(P)\) for materialized pairs.
+    pub fn compute_self(
+        &self,
+        points: FNx3View<'_>,
+        bx: &SimBox,
+    ) -> Result<RDFResult, ComputeError> {
+        let vol = bx.volume();
+        if !(vol.is_finite() && vol > 0.0) {
+            return Err(ComputeError::OutOfRange {
+                field: "RDF::volume",
+                value: vol.to_string(),
+            });
+        }
+        let n = points.nrows();
+        if n < 2 {
+            return Err(ComputeError::EmptyInput);
+        }
+        let mut lc = LinkCell::new().cutoff(self.r_max);
+        lc.build_index(points, bx);
+        let mut n_r = Array1::zeros(self.n_bins);
+        lc.visit_pairs(&mut |_, _, d2, _| {
+            self.accumulate_d2(d2, &mut n_r);
+        });
+        self.finalize_histogram(n_r, n, n, QueryMode::SelfQuery, vol)
+    }
+
+    /// Cross-query RDF (group A vs group B) via cell-list index + per-query
+    /// neighbor visits — still no full pair materialization.
+    ///
+    /// `ref_points` become the spatial index (B); `query_points` are A.
+    pub fn compute_cross(
+        &self,
+        ref_points: FNx3View<'_>,
+        query_points: FNx3View<'_>,
+        bx: &SimBox,
+    ) -> Result<RDFResult, ComputeError> {
+        let vol = bx.volume();
+        if !(vol.is_finite() && vol > 0.0) {
+            return Err(ComputeError::OutOfRange {
+                field: "RDF::volume",
+                value: vol.to_string(),
+            });
+        }
+        let n_ref = ref_points.nrows();
+        let n_query = query_points.nrows();
+        if n_ref < 1 || n_query < 1 {
+            return Err(ComputeError::EmptyInput);
+        }
+        let mut n_r = Array1::zeros(self.n_bins);
+        let cutoff_sq = self.r_max * self.r_max;
+        let mut lc = LinkCell::new().cutoff(self.r_max);
+        lc.build_index(ref_points, bx);
+        for qi in 0..n_query {
+            let qp = [
+                query_points[[qi, 0]],
+                query_points[[qi, 1]],
+                query_points[[qi, 2]],
+            ];
+            lc.visit_neighbors_of_pt(qp, bx, |_, d2, _| {
+                if d2 <= cutoff_sq {
+                    self.accumulate_d2(d2, &mut n_r);
+                }
+            });
+        }
+        self.finalize_histogram(n_r, n_ref, n_query, QueryMode::CrossQuery, vol)
+    }
+
+    /// Self-query RDF from a [`FrameAccess`] (reads `atoms.x/y/z` + simbox).
+    pub fn compute_frame<FA: FrameAccess + Sync>(
+        &self,
+        frame: &FA,
+    ) -> Result<RDFResult, ComputeError> {
+        let bx = frame.simbox_ref().ok_or(ComputeError::MissingSimBox)?;
+        let (xs, ys, zs) = get_positions_ref(frame)?;
+        let xs = xs.slice();
+        let ys = ys.slice();
+        let zs = zs.slice();
+        let vol = bx.volume();
+        if !(vol.is_finite() && vol > 0.0) {
+            return Err(ComputeError::OutOfRange {
+                field: "RDF::volume",
+                value: vol.to_string(),
+            });
+        }
+        let n = xs.len();
+        if n < 2 {
+            return Err(ComputeError::EmptyInput);
+        }
+        let mut lc = LinkCell::new().cutoff(self.r_max);
+        lc.build_index_soa(xs, ys, zs, bx);
+        let mut n_r = Array1::zeros(self.n_bins);
+        lc.visit_pairs(&mut |_, _, d2, _| {
+            self.accumulate_d2(d2, &mut n_r);
+        });
+        self.finalize_histogram(n_r, n, n, QueryMode::SelfQuery, vol)
+    }
+
+    fn finalize_histogram(
+        &self,
+        n_r: Array1<F>,
+        n_points: usize,
+        n_query_points: usize,
+        mode: QueryMode,
+        volume: F,
+    ) -> Result<RDFResult, ComputeError> {
+        let mut result = RDFResult {
+            bin_edges: self.bin_edges.clone(),
+            bin_centers: self.bin_centers.clone(),
+            rdf: Array1::zeros(self.n_bins),
+            n_r,
+            n_points,
+            n_query_points,
+            mode,
+            volume,
+            r_min: self.r_min,
+            n_frames: 1,
+            dimensionality: self.dimensionality,
+            finalized: false,
+        };
+        use crate::compute::result::ComputeResult;
+        result.finalize();
+        Ok(result)
     }
 }
 

@@ -133,11 +133,14 @@ wasm-pack build --release --target bundler --scope molcrafts --out-name molrs
 
 ### Documentation
 
-For documentation work, build the local site after the Python extension is
-installed:
+For documentation work, build the local site from `molrs-python` after the
+Python extension is installed (Zensical config is `molrs-python/zensical.toml`):
 
 ```bash
-zensical build -f docs/zensical.toml
+cd molrs-python
+pip install -e ".[doc]"
+maturin develop --release
+zensical build          # writes ./site
 ```
 
 ## Version Boundaries
@@ -146,3 +149,8 @@ Rust, Python, and npm packages are released separately but generated from the
 same repository. If examples behave differently across languages, first check
 the package versions. The documentation site follows the repository `master`
 branch, while crates.io, PyPI, npm, and docs.rs describe released artifacts.
+
+**Consumers (e.g. molpy)** pin the shared **major.minor** line
+(`molcrafts-molrs>=X.Y.0,<X.(Y+1)`), not an exact patch. Patch may drift;
+history lives in git tags / GitHub Releases — there is no hand-written
+`CHANGELOG.md`.

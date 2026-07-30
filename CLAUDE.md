@@ -247,7 +247,7 @@ in the standalone `molcrafts-molpack` crate.
 
 `KernelRegistry` maps `(category, style_name)` → `KernelConstructor`. Categories: bonds, angles, dihedrals, impropers, pairs, kspace. `ForceField::to_potentials(frame)` (with `Style::to_potential`) resolves topology and constructs `Potentials` (aggregate sum) — frame-free, deferred potentials that bind topology and coordinates at evaluation time. Coordinate format: flat `[x0,y0,z0, x1,y1,z1, ...]` (3N elements).
 
-**Every parameter table is committed Rust, in one place.** `molrs/src/ff/params/` holds them all, flat — GAFF/GAFF2, the seven `ATOMTYPE_*.DEF` sets, BCCPARM, GASPARM, MMFF, OPLS-AA. Nothing parses parameter text at runtime, so a malformed table is a **compile** error, not a runtime one. `molrs/data/` and `molrs::data::*_XML` no longer exist. How a table *arrived* lives in its header doc (`scripts/gen_param_tables.py` from AmberTools' `.DAT`/`.DEF`; RDKit's `Params.cpp` for MMFF) — never in its name.
+**Every parameter table is committed Rust, in one place.** `molrs/src/ff/params/` holds them all, flat — GAFF/GAFF2, the seven `ATOMTYPE_*.DEF` sets, BCCPARM, GASPARM, MMFF, OPLS-AA, UFF. Nothing parses parameter text at runtime, so a malformed table is a **compile** error, not a runtime one. `molrs/data/` and `molrs::data::*_XML` no longer exist. How a table *arrived* lives in its header doc (`scripts/gen_param_tables.py` from AmberTools' `.DAT`/`.DEF`; RDKit's `Params.cpp` for MMFF / UFF) — never in its name.
 
 **A registered kernel constructor that ignores `tp` is not a Style.** `ParamSource::{TypeRows, PerInstance}` (`ff/potential/registry.rs`) makes that a type, and a bidirectional gate makes it a test. MMFF's parameters depend on aromaticity, ring size and equivalence degradation — no type-tuple table expresses them — so the typifier resolves them per instance and bakes them onto the Frame, and its kernels read those columns. That is legitimate; *registering as if it used type rows* was not.
 
@@ -274,7 +274,7 @@ CXX bridge to Atomiverse C++. Zero-copy I/O via `FrameView` (borrowed) into exis
 
 ### Consuming molrs from other projects
 
-See `docs/interop.md` for the two as-built paths — **native Rust** (depend on `molcrafts-molrs`, use `molrs::Frame` / `molrs::ff::ForceField` directly; what molpack does) and **Python/WASM** (the `molrs-ffi` handle API: `FrameRef` / `BlockRef` / `ForceFieldRef` / `SharedStore`) — plus the shared data contract: **uint** atom indices, the `atomi/atomj/is_14` pairs-block schema, `special_bonds` weights on `ForceField`, and the consumer-built `intramolecular_pairs` neighbour list.
+See `docs/interop.md` for the two as-built paths — **native Rust** (depend on `molcrafts-molrs`, use `molrs::Frame` / `molrs::ff::ForceField` directly; what molpack does) and **Python/WASM** (the `molrs-ffi` handle API: `FrameRef` / `BlockRef` / `ForceFieldRef` / `SharedStore`) — plus the shared data contract: **uint** atom indices, the `atomi/atomj/is_14` pairs-block schema, `special_bonds` weights on `ForceField`, and the consumer- or optimizer-built pairs neighbour list (`intramolecular_pairs` / topology bruteforce). No hand-written CHANGELOG — history is git tags. Downstream (molpy) pins major.minor only.
 
 ## Critical Conventions
 
@@ -320,6 +320,7 @@ Evolving decisions live in `.claude/notes/notes.md`; specs live in
 ## Release before molpy (agent iron law)
 
 **Ship molrs before molpy.** APIs molpy will pin must be on `master` **with
-tag `vX.Y.Z`** and published before molpy bumps `molcrafts-molrs==X.Y.Z`.
-Local `maturin develop` is not a release. **No pin-parity scripts** — agents
-run the manual checklist in `.claude/notes/release.md`.
+tag `vX.Y.Z`** and published before molpy bumps the molrs **minor pin**
+(`molcrafts-molrs>=X.Y.0,<X.(Y+1)`). Patch may differ; only major.minor must
+match. Local `maturin develop` is not a release. **No pin-parity scripts** —
+agents run the manual checklist in `.claude/notes/release.md`.
