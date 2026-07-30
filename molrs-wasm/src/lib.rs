@@ -27,6 +27,8 @@
 //! | `core`     | Frame, Block, Box, WasmArray |
 //! | `io`       | File readers/writers (XYZ, PDB, LAMMPS, SMILES, Zarr) |
 //! | `conformer`| 3D conformer generation from molecular graphs |
+//! | `ff`       | ForceField / LBFGS / typify (UFF, MMFF94, MMFF94s) |
+//! | `perceive` | Chemical perception builder (`Perceive.findHydrogens`, …) |
 //! | `compute`  | Analysis: RDF, MSD, Cluster, neighbor search |
 //!
 //! # Quick start (JavaScript)
@@ -103,6 +105,12 @@ mod conformer;
 mod core;
 #[cfg(feature = "io")]
 mod io;
+/// Force-field composition (typify / ForceField / LBFGS) — requires `conformer` (→ `ff`).
+#[cfg(feature = "conformer")]
+mod ff;
+/// Chemical perception (rings, aromaticity, hydrogens, …) — WASM face of
+/// `molrs::perceive`.
+mod perceive;
 #[cfg(feature = "smiles")]
 mod smiles;
 
@@ -114,5 +122,8 @@ pub use conformer::*;
 pub use core::{Block, Box, Frame, WasmArray};
 #[cfg(feature = "io")]
 pub use io::*;
+#[cfg(feature = "conformer")]
+pub use ff::*;
+pub use perceive::Perceive;
 #[cfg(feature = "smiles")]
 pub use smiles::*;

@@ -18,11 +18,13 @@ native path: its `Cargo.toml` depends on `molcrafts-molrs` directly and operates
 
 ## Path A — native Rust (depend on `molcrafts-molrs`)
 
-Add the crate, enabling only the sub-systems you need (`core` is always on):
+Add the crate, enabling only the sub-systems you need (`core` is always on).
+Downstream packages that co-release with molrs (e.g. molpy) pin the shared
+**major.minor** line (`>=X.Y.0,<X.(Y+1)`), not an exact patch.
 
 ```toml
 [dependencies]
-molrs = { package = "molcrafts-molrs", version = "0.1", default-features = false, features = ["ff"] }
+molrs = { package = "molcrafts-molrs", version = "0.10", default-features = false, features = ["ff"] }
 ```
 
 Then use the native types directly — no FFI, no copies. For example, building
@@ -32,6 +34,7 @@ evaluable MMFF94 potentials from a molecule (the pattern molpack's relaxer follo
 use molrs::Atomistic;
 use molrs::ff::potential::intramolecular_pairs;
 use molrs::ff::typifier::mmff::MMFF94Typifier;
+// UFF: use molrs::ff::typifier::uff::UFFTypifier  (same composition)
 
 let mol = Atomistic::new();                              // build or load your molecule
 let typifier = MMFF94Typifier::new();
@@ -46,11 +49,14 @@ println!("MMFF94 energy = {energy} kcal/mol");
 # Ok::<(), String>(())
 ```
 
-There is no MMFF shortcut, and that is the point: a force field read from a file is
-consumed by exactly these three lines. The typifier's contract is `typify` — labels
-and charges — and compiling is `ForceField::to_potentials(&frame)`. The neighbour
-list is *yours* because you are the one who knows when it goes stale: a minimizer
-that moves atoms decides when to rebuild it, and molrs will not guess.
+There is no MMFF/UFF shortcut, and that is the point: a force field read from a
+file is consumed by exactly these three lines. The typifier's contract is
+`typify` — labels and charges — and compiling is `ForceField::to_potentials(&frame)`.
+The neighbour list is *yours* because you are the one who knows when it goes
+stale: a minimizer that moves atoms decides when to rebuild it, and molrs will
+not guess. (WASM `LBFGS` may install a topology pair list when no neighbor list
+is supplied — that still lives on the optimizer, not as a free-floating
+`optimizeGeometry`.)
 
 (A `MMFF94Typifier::build(&mol)` convenience used to fold all three into one call.
 It was deleted — it had, for its whole life, compiled potentials with **no
@@ -68,6 +74,9 @@ MMFF94s (Halgren 1999, the "static" set) re-parameterises 11 out-of-plane rows a
 42 torsion rows so that delocalised trivalent nitrogen (MMFF types 10 `NC=O` /
 40 `NC=C`) minimizes planar; everything else is shared, so a molecule without such
 a nitrogen gets bit-for-bit identical potentials from both.
+
+`UFFTypifier` is the third named front door (RDKit-aligned Universal Force
+Field). Same composition; no electrostatics.
 
 ## Path B — Python / WASM via the `molrs-ffi` handle API
 

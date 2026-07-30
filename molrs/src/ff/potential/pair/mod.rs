@@ -8,6 +8,7 @@ pub mod mmff;
 pub mod morse;
 pub mod tang_toennies;
 pub mod thole;
+pub mod uff;
 
 pub use buck::{PairBuck, pair_buck_ctor};
 pub use coul_cut::{PairCoulCut, pair_coul_cut_ctor};
@@ -17,3 +18,4 @@ pub use mmff::{MMFFVdW, mmff_vdw_ctor};
 pub use morse::{PairMorse, pair_morse_ctor};
 pub use tang_toennies::{PairTangToennies, pair_tang_toennies_ctor};
 pub use thole::{PairThole, pair_thole_ctor};
+pub use uff::{UffVdW, uff_lj_ctor};

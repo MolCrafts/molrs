@@ -54,6 +54,8 @@ pub use linkcell::LinkCell;
 pub use periodic_buffer::{PeriodicBufferResult, periodic_buffer};
 pub use query::NeighborQuery;
 
+// NeighborListStorage is defined below next to NeighborList.
+
 // ---------------------------------------------------------------------------
 // QueryMode — distinguishes self-query from cross-query
 // ---------------------------------------------------------------------------
@@ -208,23 +210,72 @@ impl<A: NbListAlgo> NbList<A> {
 // NeighborList (was NeighborResult)
 // ---------------------------------------------------------------------------
 
+/// Which per-pair fields a materialized [`NeighborList`] retains.
+///
+/// Indices `(i, j)` are always stored. Optional columns:
+/// - [`dist_sq`](NeighborListStorage::dist_sq) — squared distance (8 B/pair)
+/// - [`diff`](NeighborListStorage::diff) — displacement vector (24 B/pair as 3×f64)
+///
+/// Full default storage is **40 B/pair**. For analyses that only need
+/// distances (e.g. histogramming into RDF after materialization), set
+/// `diff: false` (16 B/pair). Prefer streaming (`build_index` +
+/// `for_each_pair`) when pair counts are large — materializing at all is
+/// the expensive choice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NeighborListStorage {
+    /// Store squared distances.
+    pub dist_sq: bool,
+    /// Store MIC displacement vectors `(dx, dy, dz)`.
+    pub diff: bool,
+}
+
+impl Default for NeighborListStorage {
+    fn default() -> Self {
+        Self {
+            dist_sq: true,
+            diff: true,
+        }
+    }
+}
+
+impl NeighborListStorage {
+    /// Indices only — lightest materialization (8 B/pair).
+    pub const INDICES_ONLY: Self = Self {
+        dist_sq: false,
+        diff: false,
+    };
+    /// Indices + \(d^2\) (16 B/pair) — enough for RDF if materializing.
+    pub const DIST_SQ: Self = Self {
+        dist_sq: true,
+        diff: false,
+    };
+    /// Full freud-style storage (40 B/pair).
+    pub const FULL: Self = Self {
+        dist_sq: true,
+        diff: true,
+    };
+}
+
 /// Cached neighbor query results (freud-style).
 ///
-/// Stores all pairs within the cutoff together with squared distances and
-/// displacement vectors. The [`mode`](NeighborList::mode) field records
-/// whether this was a self-query or cross-query.
+/// Stores all pairs within the cutoff together with optional squared
+/// distances and displacement vectors (see [`NeighborListStorage`]).
+/// The [`mode`](NeighborList::mode) field records whether this was a
+/// self-query or cross-query.
 ///
 /// - **Self-query**: `i < j`, both indices refer to the same point set.
 /// - **Cross-query**: `i` indexes `query_points`, `j` indexes `reference_points`.
 #[derive(Debug, Clone)]
 pub struct NeighborList {
+    /// Which optional columns are populated by [`push`](Self::push).
+    pub(crate) storage: NeighborListStorage,
     /// Query point index per pair (i).
     pub(crate) idx_i: Vec<u32>,
     /// Reference point index per pair (j).
     pub(crate) idx_j: Vec<u32>,
-    /// Squared distances, one per pair.
+    /// Squared distances, one per pair (empty when `!storage.dist_sq`).
     pub(crate) dist_sq: Vec<F>,
-    /// Flat displacement vectors `[dx0,dy0,dz0, dx1,dy1,dz1, ...]`, stride-3.
+    /// Flat displacement vectors `[dx0,dy0,dz0, …]` (empty when `!storage.diff`).
     pub(crate) diff_flat: Vec<F>,
     /// Self-query vs cross-query.
     pub(crate) mode: QueryMode,
@@ -235,9 +286,15 @@ pub struct NeighborList {
 }
 
 impl NeighborList {
-    /// Create an empty result with no pairs.
+    /// Create an empty result with no pairs (full storage).
     pub(crate) fn empty() -> Self {
+        Self::empty_with_storage(NeighborListStorage::FULL)
+    }
+
+    /// Create an empty result with the given storage policy.
+    pub(crate) fn empty_with_storage(storage: NeighborListStorage) -> Self {
         Self {
+            storage,
             idx_i: Vec::new(),
             idx_j: Vec::new(),
             dist_sq: Vec::new(),
@@ -248,9 +305,25 @@ impl NeighborList {
         }
     }
 
-    /// Create an empty result tagged with mode and point counts.
+    /// Create an empty result tagged with mode and point counts (full storage).
     pub(crate) fn with_mode(mode: QueryMode, num_points: usize, num_query_points: usize) -> Self {
+        Self::with_mode_storage(
+            mode,
+            num_points,
+            num_query_points,
+            NeighborListStorage::FULL,
+        )
+    }
+
+    /// Create an empty result with mode, counts, and storage policy.
+    pub(crate) fn with_mode_storage(
+        mode: QueryMode,
+        num_points: usize,
+        num_query_points: usize,
+        storage: NeighborListStorage,
+    ) -> Self {
         Self {
+            storage,
             idx_i: Vec::new(),
             idx_j: Vec::new(),
             dist_sq: Vec::new(),
@@ -261,7 +334,7 @@ impl NeighborList {
         }
     }
 
-    /// Clear all buffers for reuse.
+    /// Clear all buffers for reuse (keeps storage policy and metadata).
     pub(crate) fn clear(&mut self) {
         self.idx_i.clear();
         self.idx_j.clear();
@@ -269,13 +342,68 @@ impl NeighborList {
         self.diff_flat.clear();
     }
 
+    /// Storage policy for optional columns.
+    #[inline]
+    pub fn storage(&self) -> NeighborListStorage {
+        self.storage
+    }
+
     /// Push a neighbor pair into the result.
+    ///
+    /// `d2` / `dr` are only retained when the corresponding
+    /// [`NeighborListStorage`] flag is set.
     #[inline(always)]
     pub(crate) fn push(&mut self, i: u32, j: u32, d2: F, dr: [F; 3]) {
         self.idx_i.push(i);
         self.idx_j.push(j);
-        self.dist_sq.push(d2);
-        self.diff_flat.extend(dr);
+        if self.storage.dist_sq {
+            self.dist_sq.push(d2);
+        }
+        if self.storage.diff {
+            self.diff_flat.extend(dr);
+        }
+    }
+
+    /// Iterate materialized pairs without allocating.
+    ///
+    /// When `dist_sq` / `diff` were not stored, the corresponding callback
+    /// arguments are `0.0` / `[0,0,0]` (indices remain valid).
+    pub fn for_each_pair<C>(&self, mut callback: C)
+    where
+        C: FnMut(u32, u32, F, [F; 3]),
+    {
+        let n = self.n_pairs();
+        for k in 0..n {
+            let d2 = if self.storage.dist_sq {
+                self.dist_sq[k]
+            } else {
+                0.0
+            };
+            let dr = if self.storage.diff {
+                let b = k * 3;
+                [
+                    self.diff_flat[b],
+                    self.diff_flat[b + 1],
+                    self.diff_flat[b + 2],
+                ]
+            } else {
+                [0.0, 0.0, 0.0]
+            };
+            callback(self.idx_i[k], self.idx_j[k], d2, dr);
+        }
+    }
+
+    /// Re-materialize this list with a different storage policy.
+    ///
+    /// Pairs whose source fields are missing (e.g. requesting `dist_sq`
+    /// from an indices-only list) get zeros for those fields.
+    pub fn repack(&self, storage: NeighborListStorage) -> Self {
+        let mut out =
+            Self::with_mode_storage(self.mode, self.num_points, self.num_query_points, storage);
+        self.for_each_pair(|i, j, d2, dr| {
+            out.push(i, j, d2, dr);
+        });
+        out
     }
 
     // -----------------------------------------------------------------------
@@ -327,20 +455,27 @@ impl NeighborList {
     }
 
     /// Actual distances (not squared), one per pair.
+    ///
+    /// Empty when distances were not stored ([`NeighborListStorage::dist_sq`]
+    /// is false).
     pub fn distances(&self) -> Vec<F> {
         self.dist_sq.iter().map(|&d2| d2.sqrt()).collect()
     }
 
     /// Squared distances, one per pair.
+    ///
+    /// Empty when `!storage.dist_sq`.
     #[inline]
     pub fn dist_sq(&self) -> &[F] {
         &self.dist_sq
     }
 
     /// Displacement vectors as an N x 3 array view.
+    ///
+    /// Empty (0×3) when `!storage.diff`.
     #[inline]
     pub fn vectors(&self) -> FNx3View<'_> {
-        ArrayView2::from_shape((self.n_pairs(), 3), &self.diff_flat)
-            .expect("diff_flat shape mismatch")
+        let n = if self.storage.diff { self.n_pairs() } else { 0 };
+        ArrayView2::from_shape((n, 3), &self.diff_flat).expect("diff_flat shape mismatch")
     }
 }

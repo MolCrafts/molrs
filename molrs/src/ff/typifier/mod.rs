@@ -11,6 +11,7 @@ pub mod estimate;
 pub mod mmff;
 pub mod opls;
 pub(crate) mod topology;
+pub mod uff;
 
 pub use am1bcc::{BCCAtomChargeTypifier, BCCCorrectionTable, BCCCorrector, BccParameterSet};
 pub use atd::{AtdParameterSet, AtdTypifier};
@@ -18,6 +19,7 @@ pub use estimate::{
     BondedTerm, Estimate, ParameterInterpolator, Parmchk2Estimator, TypifierParameterContext,
 };
 pub use opls::OPLSAATypifier;
+pub use uff::UFFTypifier;
 
 /// A graph typifier.
 ///

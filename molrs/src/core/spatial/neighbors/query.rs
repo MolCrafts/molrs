@@ -114,6 +114,7 @@ impl NeighborQuery {
 
         // Tag with self-query metadata
         NeighborList {
+            storage: raw.storage,
             idx_i: raw.idx_i,
             idx_j: raw.idx_j,
             dist_sq: raw.dist_sq,

@@ -56,6 +56,7 @@ pub mod gaff_equiv;
 pub mod gasparm;
 pub mod mmff;
 pub mod oplsaa;
+pub mod uff;
 
 pub use atomtype_abcg2::ATOMTYPE_ABCG2;
 pub use atomtype_amber::ATOMTYPE_AMBER;

@@ -11,14 +11,41 @@ when user-facing code displays coordinates as three columns. Potential kernels
 operate on a contiguous `3N` vector so energy and force evaluation can stay
 close to the numerical representation used by optimizers.
 
+## Composition (no all-in-one façades)
+
+Every force field walks the same primitives. Callers compose; molrs does not
+hide the steps:
+
+1. **Typify** — `typifier.typify(mol)` → new labeled graph.
+2. **Frame** — `typed.to_frame()` for coordinate / pair columns.
+3. **Pairs** — non-bonded terms need a `pairs` block (`atomi` / `atomj` /
+   `is_14`). Python: `frame["pairs"] = molrs.intramolecular_pairs(frame)`.
+   WASM / Rust optimizers may install topology pairs (or a caller-supplied
+   neighbor list) before minimizing — still not a free-floating
+   “optimize geometry” sugar.
+4. **Compile** — `typifier.forcefield().to_potentials(frame)` (Python) or
+   `typifier.ff().to_potentials(&frame)` (Rust). WASM collapses the private FF
+   handle to `typifier.toPotentials(frame)` — still not a one-shot `build()`.
+5. **Evaluate / minimize** — `potentials.eval(coords)` or `LBFGS(pots).run(...)`.
+
+There is no `optimizeGeometry`, no typifier-level `build()`, and no GFN-FF in
+this tree.
+
+## Built-in typifiers
+
+| Typifier | Surface | Notes |
+| --- | --- | --- |
+| `MMFF94Typifier` | Python, Rust, WASM | Halgren 1996; energies kcal/mol, Å |
+| `MMFF94STypifier` | Python, Rust, WASM | “static” set (planar delocalised N) |
+| `OPLSAATypifier` | Python, Rust | embedded OPLS-AA XML by default |
+| `UFFTypifier` | Rust, WASM | RDKit-aligned UFF (Rappé 1992); full periodic-table param table; no electrostatics |
+
 ## The MMFF94 workflow is typify, then evaluate
 
 MMFF94 typing starts from an `Atomistic` graph. The typifier assigns atom
 types, charges, bond labels, angle labels, dihedral labels, and MMFF
-out-of-plane terms, then returns a new typed `Atomistic`. `build(mol)` is a
-separate convenience that compiles a `Potentials` object from the same typed
-topology. The compiled object can evaluate energy or energy plus forces for
-compatible coordinates.
+out-of-plane terms, then returns a new typed `Atomistic`. Compiling potentials
+is a separate step on the force field handle.
 
 Units should be treated as part of the interface. MMFF94 energies are reported
 in kcal/mol, and coordinates are interpreted in angstrom. When molrs data is
@@ -46,7 +73,38 @@ typifier = molrs.OPLSAATypifier("oplsaa.xml", strict=False)
 loaded OPLS-AA data. The bundled OPLS-AA data defines bonds, angles, and
 dihedrals; it does not define an improper table.
 
-## Worked Example: Energy and Forces
+## UFF (Universal Force Field)
+
+UFF is a first-class typifier in the Rust core (`molrs::ff::typifier::uff`) and
+on the WASM face (`UFFTypifier`). It assigns RDKit-style UFF labels, bakes
+per-instance force constants onto the graph, and compiles `uff_bond` /
+`uff_angle` / `uff_torsion` / `uff_inversion` / `uff_lj` kernels. There is no
+electrostatics path (RDKit UFF convention).
+
+```rust,ignore
+use molrs::ff::potential::intramolecular_pairs;
+use molrs::ff::typifier::uff::UFFTypifier;
+
+let t = UFFTypifier::new();
+let mut frame = t.typify(&mol)?.to_frame();
+frame.insert("pairs", intramolecular_pairs(&frame));
+let pots = t.ff().to_potentials(&frame)?;
+```
+
+WASM composes the same steps without exposing a public `.ff()`:
+
+```js
+const typifier = new UFFTypifier();
+const typed = typifier.typify(frame);
+const pots = typifier.toPotentials(typed);  // bonded-only until pairs exist
+const report = new LBFGS(pots /*, neighborList */).run(typed, 200);
+// omit neighborList → optimizer installs a topology (bruteforce) pair list
+```
+
+Python bindings for `UFFTypifier` follow the same contract when exposed;
+until then use the Rust or WASM path above.
+
+## Worked Example: Energy and Forces (Python / MMFF94)
 
 ```python
 import numpy as np
@@ -54,7 +112,6 @@ import molrs
 
 mol = molrs.parse_smiles("CCO").to_atomistic()
 mol3d, _report = molrs.Conformer(speed="fast", seed=42).generate(mol)
-frame = mol3d.to_frame()
 
 typifier = molrs.MMFF94Typifier()
 typed = typifier.typify(mol3d)
@@ -83,10 +140,9 @@ except ValueError as exc:
 The coordinate and force arrays are flat. Reshaping them to `(N, 3)` is only a
 display operation; pass the flat arrays back to potential evaluators.
 
-The `try` block is intentional for the current preview surface. MMFF94 typing
-can succeed even when potential compilation reports missing parameter coverage.
-That distinction is useful: it tells you whether the failure is in chemistry
-typing or in the stricter energy-evaluation path.
+The `try` block is intentional. MMFF94 typing can succeed even when potential
+compilation reports missing parameter coverage. That distinction tells you
+whether the failure is in chemistry typing or in the stricter energy path.
 
 ## Typing and evaluation are separate steps
 
@@ -155,10 +211,16 @@ force field still carries cap artifacts.
 
 ## Geometry optimization
 
-`LBFGS` (under the `ff` feature) minimizes a molecule-bound `Potential` in
-place. Prefer `LBFGS::new` / `with_defaults` when you own the potential as an
-`Arc`, or the one-shot `LBFGS::minimize` / `minimize_batch` helpers for borrowed
-potentials and flat coordinate buffers.
+`LBFGS` minimizes molecule-bound potentials. Python:
+
+```python
+opt = molrs.LBFGS(potentials, fmax=0.05, max_steps=500)
+min_frame, report = opt.run(typed_frame)
+```
+
+On the WASM face, `new LBFGS(pots, neighborList?)` optionally takes a neighbor
+list; without one it installs a topology (bruteforce) pair list, recompiles,
+then runs. Prefer that composition over any deleted one-shot façade.
 
 ## Common Mistakes
 
@@ -174,3 +236,6 @@ Do not write a LAMMPS `*.ff` with molrs unit conventions. Always go through
 `write_lammps_forcefield` (or `LammpsFfWriter`) so harmonic `K` and angles are
 converted; pasting molrs numbers into an input script doubles stiffness and
 interprets radians as degrees.
+
+Do not expect a hand-written `CHANGELOG.md`. Release history is git tags and
+GitHub Releases.

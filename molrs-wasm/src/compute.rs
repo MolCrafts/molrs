@@ -125,6 +125,8 @@ fn positions_from_frame(frame: &molrs::store::frame::Frame) -> Result<ndarray::A
 #[wasm_bindgen(js_name = LinkedCell)]
 pub struct LinkedCell {
     cutoff: F,
+    store_dist_sq: bool,
+    store_diff: bool,
 }
 
 #[wasm_bindgen(js_class = LinkedCell)]
@@ -134,44 +136,49 @@ impl LinkedCell {
     /// # Arguments
     ///
     /// * `cutoff` - Maximum neighbor distance in angstrom (A)
+    /// * `store_dist_sq` - Retain squared distances when materializing
+    ///   (default `true`). Set `false` to save 8 B/pair.
+    /// * `store_diff` - Retain MIC displacement vectors (default `true`).
+    ///   Set `false` to save 24 B/pair.
     ///
     /// # Example (JavaScript)
     ///
     /// ```js
     /// const lc = new LinkedCell(5.0);
+    /// // Indices + d² only (no displacement vectors):
+    /// const lean = new LinkedCell(5.0, true, false);
     /// ```
     #[wasm_bindgen(constructor)]
-    pub fn new(cutoff: F) -> Self {
-        Self { cutoff }
+    pub fn new(cutoff: F, store_dist_sq: Option<bool>, store_diff: Option<bool>) -> Self {
+        Self {
+            cutoff,
+            store_dist_sq: store_dist_sq.unwrap_or(true),
+            store_diff: store_diff.unwrap_or(true),
+        }
     }
 
-    /// Build a neighbor list from a [`Frame`] (self-query).
+    fn storage(&self) -> molrs::spatial::neighbors::NeighborListStorage {
+        molrs::spatial::neighbors::NeighborListStorage {
+            dist_sq: self.store_dist_sq,
+            diff: self.store_diff,
+        }
+    }
+
+    /// Materialize a neighbor list from a [`Frame`] (self-query).
     ///
     /// Finds all unique pairs `(i < j)` of atoms within the cutoff
-    /// distance using the cell-list algorithm.
+    /// using the cell-list algorithm. Optional columns follow the
+    /// constructor's `storeDistSq` / `storeDiff` flags.
     ///
-    /// The frame must have an `"atoms"` block with `x`, `y`, `z` (F) columns.
-    /// If the frame has a `box`, periodic boundary conditions are used.
-    /// Otherwise, a free-boundary bounding box is auto-generated.
-    ///
-    /// # Arguments
-    ///
-    /// * `frame` - Frame with atom positions
-    ///
-    /// # Returns
-    ///
-    /// A [`NeighborList`] containing all unique pairs within the cutoff.
-    ///
-    /// # Errors
-    ///
-    /// Throws if the frame is missing required data.
+    /// Prefer streaming analyses (e.g. RDF) that never call `build` —
+    /// they use a cell index + pair visitor and keep memory O(N).
     ///
     /// # Example (JavaScript)
     ///
     /// ```js
     /// const lc = new LinkedCell(3.0);
     /// const nlist = lc.build(frame);
-    /// const dists = nlist.distances(); // Float32Array or Float64Array
+    /// const dists = nlist.distances();
     /// ```
     pub fn build(&self, frame: &Frame) -> Result<NeighborList, JsValue> {
         frame.with_frame(|rs_frame| {
@@ -187,7 +194,9 @@ impl LinkedCell {
                 }
             };
 
-            let mut lc = RsLinkCell::new().cutoff(self.cutoff);
+            let mut lc = RsLinkCell::new()
+                .cutoff(self.cutoff)
+                .with_storage(self.storage());
             lc.build(pos.view(), bx_ref);
             let result = lc.query().clone();
 
@@ -198,20 +207,7 @@ impl LinkedCell {
     /// Cross-query: find all pairs where `i` indexes query points and
     /// `j` indexes the reference points.
     ///
-    /// # Arguments
-    ///
-    /// * `ref_frame` - Frame with reference atom positions
-    /// * `query_frame` - Frame with query atom positions (must have
-    ///   `"atoms"` block with `x`, `y`, `z` columns)
-    ///
-    /// # Returns
-    ///
-    /// A [`NeighborList`] containing all `(i, j, distance)` pairs
-    /// within the cutoff.
-    ///
-    /// # Errors
-    ///
-    /// Throws if either frame is missing required columns.
+    /// Storage of `distSq` / displacement follows the constructor flags.
     ///
     /// # Example (JavaScript)
     ///
@@ -232,6 +228,12 @@ impl LinkedCell {
             query_frame.with_frame(|rs_query| {
                 let query_pos = positions_from_frame(rs_query)?;
                 let result = aabb.query(query_pos.view());
+                // NeighborQuery materializes FULL storage; re-pack if leaner.
+                let result = if self.store_dist_sq && self.store_diff {
+                    result
+                } else {
+                    result.repack(self.storage())
+                };
                 Ok(NeighborList { inner: result })
             })
         })
@@ -269,7 +271,8 @@ impl LinkedCell {
 /// ```
 #[wasm_bindgen(js_name = NeighborList)]
 pub struct NeighborList {
-    inner: RsNeighborList,
+    /// Crate-visible so the force-field optimizer can read pair indices.
+    pub(crate) inner: RsNeighborList,
 }
 
 #[wasm_bindgen(js_class = NeighborList)]
@@ -417,72 +420,123 @@ impl RDF {
         Ok(Self { inner, volume })
     }
 
-    /// Compute g(r) using the simulation-box volume from `frame.simbox`.
+    /// Compute g(r) for one frame (self-query).
     ///
-    /// # Arguments
+    /// **Single semantic path** for RDF: builds a cell-list **index** at
+    /// `r_max` and streams pairs into the histogram (`build_index` +
+    /// `visit_pairs`). A full [`NeighborList`] is never allocated.
+    /// Memory is \(O(N + n_{\mathrm{bins}})\), not \(O(P)\).
     ///
-    /// * `frame` - Frame with a `box` set (used only for volume)
-    /// * `neighbors` - Pre-built [`NeighborList`] from [`LinkedCell`]
+    /// Volume comes from the constructor `volume` if set, else `frame.simbox`.
+    /// Non-periodic frames must pass `volume` to the constructor.
     ///
-    /// # Errors
-    ///
-    /// Throws if the frame has no `box` — use
-    /// [`computeWithVolume`](Self::compute_with_volume) for non-periodic frames.
-    pub fn compute(&self, frame: &Frame, neighbors: &NeighborList) -> Result<RDFResult, JsValue> {
-        frame.with_frame(|rs_frame| {
-            let nlist_vec = vec![neighbors.inner.clone()];
-            let result = self
-                .inner
-                .compute(&[rs_frame], &nlist_vec)
-                .map_err(|e| JsValue::from_str(&format!("RDF compute: {e}")))?;
-            Ok(RDFResult { inner: result })
-        })
-    }
-
-    /// Compute g(r) using an explicit normalization volume (A^3).
-    ///
-    /// Use this for non-periodic systems or to override the box volume.
-    /// Internally wraps the supplied volume as a cubic SimBox since the
-    /// underlying [`molrs::compute::RDF`] pulls its normalization volume from
-    /// `frame.simbox`.
-    ///
-    /// # Arguments
-    ///
-    /// * `neighbors` - Pre-built [`NeighborList`]
-    ///
-    /// # Errors
-    ///
-    /// Throws unless the instance was constructed with a `volume`.
+    /// For A↔B cross-RDF use [`computeCross`](Self::compute_cross) (same
+    /// streaming engine; wasm-bindgen cannot express `Option<&Frame>`).
     ///
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const rdf = new RDF(100, 5.0, null, 1000.0);
-    /// const result = rdf.computeWithVolume(nlist);
+    /// const rdf = new RDF(100, 5.0);       // r_max is required
+    /// const result = rdf.compute(frame);
     /// ```
-    #[wasm_bindgen(js_name = computeWithVolume)]
-    pub fn compute_with_volume(&self, neighbors: &NeighborList) -> Result<RDFResult, JsValue> {
-        let volume = self.volume.ok_or_else(|| {
-            JsValue::from_str(
-                "RDF computeWithVolume: construct the RDF with an explicit volume first",
-            )
-        })?;
+    pub fn compute(&self, frame: &Frame) -> Result<RDFResult, JsValue> {
+        frame.with_frame(|rs_frame| {
+            // If constructor set an explicit volume and the frame has no box,
+            // synthesize a cubic box so compute_frame can proceed.
+            if rs_frame.simbox.is_none() {
+                let v = self.volume.ok_or_else(|| {
+                    JsValue::from_str(
+                        "RDF compute: frame has no box — pass volume to the RDF constructor",
+                    )
+                })?;
+                return self.compute_with_synth_box(rs_frame, v);
+            }
+            let mut result = self
+                .inner
+                .compute_frame(rs_frame)
+                .map_err(|e| JsValue::from_str(&format!("RDF compute: {e}")))?;
+            if let Some(v) = self.volume {
+                apply_volume_override(&mut result, v);
+            }
+            Ok(RDFResult { inner: result })
+        })
+    }
+
+    /// Cross-query g(r) between two frames (same streaming engine as
+    /// [`compute`](Self::compute)).
+    ///
+    /// * `ref_frame` — reference set (B, builds the cell index)
+    /// * `query_frame` — query set (A)
+    #[wasm_bindgen(js_name = computeCross)]
+    pub fn compute_cross(
+        &self,
+        ref_frame: &Frame,
+        query_frame: &Frame,
+    ) -> Result<RDFResult, JsValue> {
+        ref_frame.with_frame(|rs_ref| {
+            let ref_pos = positions_from_frame(rs_ref)?;
+            let owned_box;
+            let bx = match rs_ref.simbox.as_ref() {
+                Some(sb) => sb,
+                None => {
+                    let v = self.volume.ok_or_else(|| {
+                        JsValue::from_str(
+                            "RDF computeCross: frame has no box — pass volume to the RDF constructor",
+                        )
+                    })?;
+                    let box_len = v.cbrt();
+                    owned_box = molrs::spatial::simbox::SimBox::cube(
+                        box_len,
+                        ndarray::array![0.0 as F, 0.0 as F, 0.0 as F],
+                        [false, false, false],
+                    )
+                    .map_err(|e| JsValue::from_str(&format!("RDF computeCross: {e:?}")))?;
+                    &owned_box
+                }
+            };
+            query_frame.with_frame(|rs_query| {
+                let query_pos = positions_from_frame(rs_query)?;
+                let mut result = self
+                    .inner
+                    .compute_cross(ref_pos.view(), query_pos.view(), bx)
+                    .map_err(|e| JsValue::from_str(&format!("RDF compute: {e}")))?;
+                if let Some(v) = self.volume {
+                    apply_volume_override(&mut result, v);
+                }
+                Ok(RDFResult { inner: result })
+            })
+        })
+    }
+
+    fn compute_with_synth_box(
+        &self,
+        rs_frame: &molrs::store::frame::Frame,
+        volume: F,
+    ) -> Result<RDFResult, JsValue> {
+        // Temporarily attach a cubic box for the streaming path, then restore.
+        // Frame is behind shared store — we can't mutate easily. Interleave
+        // positions and call compute_self with an owned box instead.
+        let pos = positions_from_frame(rs_frame)?;
         let box_len = volume.cbrt();
-        let simbox = molrs::spatial::simbox::SimBox::cube(
+        let bx = molrs::spatial::simbox::SimBox::cube(
             box_len,
             ndarray::array![0.0 as F, 0.0 as F, 0.0 as F],
             [false, false, false],
         )
-        .map_err(|e| JsValue::from_str(&format!("RDF computeWithVolume: {e:?}")))?;
-        let mut synth = molrs::store::frame::Frame::new();
-        synth.simbox = Some(simbox);
-        let nlist_vec = vec![neighbors.inner.clone()];
+        .map_err(|e| JsValue::from_str(&format!("RDF compute: {e:?}")))?;
         let result = self
             .inner
-            .compute(&[&synth], &nlist_vec)
-            .map_err(|e| JsValue::from_str(&format!("RDF computeWithVolume: {e}")))?;
+            .compute_self(pos.view(), &bx)
+            .map_err(|e| JsValue::from_str(&format!("RDF compute: {e}")))?;
         Ok(RDFResult { inner: result })
     }
+}
+
+fn apply_volume_override(result: &mut molrs::compute::rdf::RDFResult, volume: F) {
+    use molrs::compute::result::ComputeResult;
+    result.volume = volume;
+    result.finalized = false;
+    result.finalize();
 }
 
 /// Result of a radial distribution function computation.
@@ -881,7 +935,7 @@ mod tests {
         let positions = [[1.0, 1.0, 1.0], [1.5, 1.0, 1.0], [8.0, 8.0, 8.0]];
         let frame = make_frame(&positions, 20.0);
 
-        let lc = LinkedCell::new(2.0);
+        let lc = LinkedCell::new(2.0, None, None);
         let nbrs = lc.build(&frame).unwrap();
         assert!(nbrs.num_pairs() >= 1);
     }
@@ -896,11 +950,9 @@ mod tests {
             .collect();
         let frame = make_frame(&positions, 10.0);
 
-        let lc = LinkedCell::new(4.0);
-        let nbrs = lc.build(&frame).unwrap();
-
-        let rdf = RDF::new(20, 4.0, None).unwrap();
-        let result = rdf.compute(&frame, &nbrs).unwrap();
+        // Streaming path: no NeighborList materialization.
+        let rdf = RDF::new(20, 4.0, None, None).unwrap();
+        let result = rdf.compute(&frame).unwrap();
 
         assert_eq!(result.bin_centers().length(), 20);
         assert_eq!(result.rdf().length(), 20);
@@ -939,7 +991,7 @@ mod tests {
         ];
         let frame = make_frame(&positions, 20.0);
 
-        let lc = LinkedCell::new(2.0);
+        let lc = LinkedCell::new(2.0, None, None);
         let nbrs = lc.build(&frame).unwrap();
 
         let cluster = Cluster::new(1);
@@ -962,7 +1014,7 @@ mod tests {
         ];
         let frame = make_frame(&positions, 20.0);
 
-        let lc = LinkedCell::new(2.0);
+        let lc = LinkedCell::new(2.0, None, None);
         let nbrs = lc.build(&frame).unwrap();
 
         let cluster = Cluster::new(2);
