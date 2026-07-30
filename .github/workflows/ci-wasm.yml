@@ -17,13 +17,23 @@ jobs:
           components: rustfmt
           targets: wasm32-unknown-unknown
 
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: wasm
+          workspaces: |
+            . -> target
+            molrs-wasm -> target
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: "24"
 
+      # Binary install — never `cargo install wasm-pack` (cold compile ~1–2 min).
       - name: Install wasm-pack
-        run: cargo install wasm-pack
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
 
       - name: Build wasm
         working-directory: molrs-wasm

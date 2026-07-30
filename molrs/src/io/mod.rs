@@ -9,6 +9,9 @@
 //! - [`smiles`] — SMILES/SMARTS notation parsing (feature `smiles`)
 
 pub mod data;
+/// Shared LAMMPS primitives (atom_style layouts, box bounds, helpers).
+/// Used by both the data-file and dump trajectory readers.
+pub(crate) mod lammps;
 pub mod store;
 pub mod trajectory;
 

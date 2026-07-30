@@ -125,12 +125,14 @@ Default gate: `cargo test -p molcrafts-molrs --lib --features full`.
 
 **Bindings (Python / C / WASM)** only smoke the FFI seam (construct, call,
 round-trip types). Science / format corpus depth lives in the Rust unit tests.
-Python IO fixtures are written in-process by molrs writers — no `tests-data/`
-fetch. A tiny `include_str!` fixture in a Rust unit test is OK for a parser
-edge-case.
+Python IO fixtures are written in-process by molrs writers. A tiny
+`include_str!` fixture in a Rust unit test is OK for a parser edge-case.
 
-`scripts/fetch-test-data.sh` remains for optional local exploration only.
-
+Format-corpus fixtures live in `tests-data/` (gitignored clone of
+`MolCrafts/tests-data`). **CI and pre-push fetch them before unit tests**
+via `bash scripts/fetch-test-data.sh` (see `ci-rust.yml` + pre-commit
+`cargo-test-unit`). Prefer inline strings for pure parser unit tests;
+use `tests-data/` only when the corpus file is the assertion.
 ## Build & Test Commands
 
 ```bash

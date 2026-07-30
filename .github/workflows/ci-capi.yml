@@ -14,6 +14,11 @@ jobs:
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: capi
+          workspaces: ". -> target"
+
       - name: Build molrs-capi (generates header via cbindgen)
         run: cargo build --manifest-path molrs-capi/Cargo.toml
 

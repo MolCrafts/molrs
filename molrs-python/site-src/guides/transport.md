@@ -14,8 +14,8 @@ performs the windowed correlation / survival accounting. They are reached throug
 the `molrs.transport` namespace from Python.
 
 For the physical background and worked, from-principles derivations, see the
-MolPy guides [Diffusion & Ionic Transport](https://molcrafts.github.io/molpy/compute/transport/)
-and [Pair Persistence](https://molcrafts.github.io/molpy/compute/persistence/).
+MolPy guides [Diffusion & Ionic Transport](https://molpy.molcrafts.org/compute/transport/)
+and [Pair Persistence](https://molpy.molcrafts.org/compute/persistence/).
 
 ## Conventions
 

@@ -3,13 +3,19 @@
 //! Implements support for LAMMPS dump files as output by the `dump` command:
 //! <https://docs.lammps.org/dump.html>
 //!
+//! Column names in `ITEM: ATOMS …` are the source of truth (unlike data files,
+//! which encode layout via `atom_style`). Shared helpers — error mapping,
+//! column aliases (`q`→`charge`, `mol`→`mol_id`), SimBox construction — live
+//! in [`crate::io::lammps`] and are reused by the data-file reader.
+//!
 //! # Supported Features
 //!
 //! - Multi-frame trajectory reading with random access via `TrajReader`
 //! - Orthogonal and triclinic simulation boxes
-//! - Automatic column type detection (integer vs float)
+//! - Automatic column type detection (integer vs float) with promote-on-demand
 //! - Boundary condition flag parsing (`pp`, `ff`, `ss`, etc.)
 //! - Gzip-compressed files via `open_lammps_dump`
+//! - Canonical field rename for style-related dump columns (`q`, `mol`, …)
 //!
 //! # Examples
 //!
@@ -17,29 +23,26 @@
 //! use molrs::io::trajectory::lammps_dump::{read_lammps_dump, open_lammps_dump, write_lammps_dump};
 //!
 //! # fn main() -> std::io::Result<()> {
-//! // Read all frames
 //! let frames = read_lammps_dump("trajectory.lammpstrj")?;
-//!
-//! // Random access via TrajReader
 //! use molrs::io::reader::TrajReader;
 //! let mut reader = open_lammps_dump("trajectory.lammpstrj")?;
 //! let frame_5 = reader.read_step(5)?;
-//!
-//! // Write frames
 //! write_lammps_dump("output.lammpstrj", &frames)?;
 //! # Ok(())
 //! # }
 //! ```
 
+use crate::io::lammps::box_bounds::{BoxBounds, pbc_from_boundary_tokens, simbox_from_bounds};
+use crate::io::lammps::common::{
+    canonical_dump_column, err_mapper, insert_f, insert_i, insert_str, is_integer_dump_column,
+    is_string_dump_column, native_dump_column,
+};
 use crate::io::reader::{FrameIndex, FrameReader, ReadSeek, Reader, TrajReader};
 use crate::io::writer::{FrameWriter, Writer};
-use molrs::spatial::simbox::SimBox;
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
 use molrs::store::frame_access::FrameAccess;
-use molrs::store::keys;
-use molrs::types::{F, I, Pbc3};
-use ndarray::{Array1, ArrayD, IxDyn, array};
+use molrs::types::{F, I};
 use once_cell::sync::OnceCell;
 use std::fs::File;
 use std::io::{BufRead, Seek, SeekFrom, Write};
@@ -48,10 +51,6 @@ use std::path::Path;
 // ============================================================================
 // Helpers
 // ============================================================================
-
-fn err_mapper<E: std::fmt::Display>(e: E) -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
-}
 
 /// Column type classification for LAMMPS dump columns.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -72,56 +71,30 @@ enum BlockKind {
     Entries,
 }
 
-/// Classify a LAMMPS dump column by name.
+/// Classify a LAMMPS dump column by **canonical** name (post-alias).
 ///
-/// Used by the *writer* to pick a per-column print format (integer vs
-/// `%.6f` vs raw string). Reader-side classification went value-based
-/// (see [`classify_value`]) because LAMMPS dump column names are
-/// user-defined (`c_X[N]`, `f_reax[1]`, `batom1`, …) and a name-only
-/// heuristic can't keep up with the long tail.
-///
-/// Integer columns: id, type, mol, proc, procp1, ix, iy, iz.
-/// String columns: element (element symbol, e.g. "C", "H").
-/// Everything else (coordinates, velocities, forces, charges, custom computes)
-/// defaults to float.
+/// Used by the *writer* to pick a per-column print format. Reader-side
+/// typing is value-based (promote-on-demand) because dump column names are
+/// user-defined (`c_X[N]`, `f_reax[1]`, …). Integer/string sets come from
+/// the dump custom + property/atom attribute lists (see `is_*_dump_column`).
 fn classify_column(name: &str) -> ColumnType {
-    match name {
-        "id" | "type" | "mol" | "proc" | "procp1" | "ix" | "iy" | "iz" => ColumnType::Integer,
-        "element" => ColumnType::String,
-        _ => ColumnType::Float,
+    if is_integer_dump_column(name) {
+        ColumnType::Integer
+    } else if is_string_dump_column(name) {
+        ColumnType::String
+    } else {
+        ColumnType::Float
     }
 }
 
-/// LAMMPS-native dump column names that differ from the canonical field set.
-///
-/// Every other dump column already carries its canonical name (`x`, `vx`,
-/// `type`, `element`, `mux`, `quatw`, …) or is a user-defined compute/fix
-/// column that has none. Keep this table aligned with molpy's
-/// `LammpsFieldFormatter._field_formatters`, which performs the same rename on
-/// the Python side.
-const LAMMPS_COLUMN_ALIASES: [(&str, &str); 2] = [("q", keys::CHARGE), ("mol", keys::MOL_ID)];
-
-/// Reader exit: rename a LAMMPS-native dump column to its canonical field name.
-///
-/// A field is renamed in exactly one place (see [`keys`]), so downstream code
-/// only ever sees `charge`, never `q`.
+#[inline]
 fn canonical_column_name(name: &str) -> String {
-    LAMMPS_COLUMN_ALIASES
-        .iter()
-        .find(|(native, _)| *native == name)
-        .map_or_else(
-            || name.to_string(),
-            |(_, canonical)| (*canonical).to_string(),
-        )
+    canonical_dump_column(name)
 }
 
-/// Writer entry: the inverse of [`canonical_column_name`], so a frame that was
-/// read from a dump round-trips back to LAMMPS-native column names.
+#[inline]
 fn native_column_name(name: &str) -> &str {
-    LAMMPS_COLUMN_ALIASES
-        .iter()
-        .find(|(_, canonical)| *canonical == name)
-        .map_or(name, |(native, _)| *native)
+    native_dump_column(name)
 }
 
 // ============================================================================
@@ -532,23 +505,28 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
     for (i, name) in col_names.iter().enumerate() {
         match col_types[i] {
             ColumnType::Integer => {
-                let arr = Array1::from_vec(int_cols[i].take().unwrap())
-                    .into_shape_with_order(IxDyn(&[nrows]))
-                    .map_err(err_mapper)?
-                    .into_dyn();
-                data_block.insert(name.as_str(), arr).map_err(err_mapper)?;
+                insert_i(
+                    &mut data_block,
+                    name.as_str(),
+                    int_cols[i].take().unwrap(),
+                    nrows,
+                )?;
             }
             ColumnType::Float => {
-                let arr = Array1::from_vec(float_cols[i].take().unwrap())
-                    .into_shape_with_order(IxDyn(&[nrows]))
-                    .map_err(err_mapper)?
-                    .into_dyn();
-                data_block.insert(name.as_str(), arr).map_err(err_mapper)?;
+                insert_f(
+                    &mut data_block,
+                    name.as_str(),
+                    float_cols[i].take().unwrap(),
+                    nrows,
+                )?;
             }
             ColumnType::String => {
-                let arr = ArrayD::from_shape_vec(IxDyn(&[nrows]), str_cols[i].take().unwrap())
-                    .map_err(err_mapper)?;
-                data_block.insert(name.as_str(), arr).map_err(err_mapper)?;
+                insert_str(
+                    &mut data_block,
+                    name.as_str(),
+                    str_cols[i].take().unwrap(),
+                    nrows,
+                )?;
             }
         }
     }
@@ -568,29 +546,22 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
     // Timestep is frame-level metadata, not a box property.
     frame.meta.insert("timestep", timestep);
 
-    // Build the SimBox. Boundary tokens (`pp`, `ff`, `ss`, `fs`, ...) collapse
-    // to a per-axis periodic bool: periodic iff the first char is 'p'.
-    // Shrink-wrap nuance is dropped — `SimBox::pbc` is the canonical source of
-    // truth for boundary information.
-    let pbc: Pbc3 = [
-        bounds.boundary_raw[0].starts_with('p'),
-        bounds.boundary_raw[1].starts_with('p'),
-        bounds.boundary_raw[2].starts_with('p'),
-    ];
-
-    let lx = bounds.xhi - bounds.xlo;
-    let ly = bounds.yhi - bounds.ylo;
-    let lz = bounds.zhi - bounds.zlo;
-    let origin = array![bounds.xlo, bounds.ylo, bounds.zlo];
-
-    let simbox = if let (Some(xy), Some(xz), Some(yz)) = (bounds.xy, bounds.xz, bounds.yz) {
-        let h = array![[lx, xy, xz], [0.0, ly, yz], [0.0, 0.0, lz]];
-        SimBox::new(h, origin, pbc).map_err(|e| err_mapper(format!("{:?}", e)))?
-    } else {
-        SimBox::ortho(array![lx, ly, lz], origin, pbc)
-            .map_err(|e| err_mapper(format!("{:?}", e)))?
+    // Shared SimBox builder (same path as the data-file reader).
+    let shared_bounds = BoxBounds {
+        xlo: bounds.xlo,
+        xhi: bounds.xhi,
+        ylo: bounds.ylo,
+        yhi: bounds.yhi,
+        zlo: bounds.zlo,
+        zhi: bounds.zhi,
+        xy: bounds.xy,
+        xz: bounds.xz,
+        yz: bounds.yz,
     };
-    frame.simbox = Some(simbox);
+    let pbc = pbc_from_boundary_tokens(&bounds.boundary_raw);
+    if let Some(simbox) = simbox_from_bounds(&shared_bounds, pbc)? {
+        frame.simbox = Some(simbox);
+    }
 
     Ok(Some(frame))
 }
@@ -1142,6 +1113,7 @@ impl FrameIndexBuilder for LammpsDumpIndexBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use molrs::store::keys;
     use std::io::Cursor;
 
     /// Multi-frame dump (2 frames) — used only by index/random-access/iter tests.
