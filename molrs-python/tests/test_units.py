@@ -40,4 +40,3 @@ def test_custom_definition_is_registry_local():
 def test_affine_temperature_conversion():
     units = molrs.UnitRegistry()
     assert units.quantity(25.0, "degC").to("K").magnitude == pytest.approx(298.15)
-
