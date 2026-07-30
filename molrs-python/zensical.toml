@@ -2,7 +2,7 @@
 site_name = "molrs"
 site_description = "Unified documentation for the molrs molecular modeling toolkit."
 site_author = "MolCrafts"
-site_url = "https://molrs.molcrafts.org/"
+site_url = "https://docs.molcrafts.org/molrs/"
 repo_url = "https://github.com/MolCrafts/molrs"
 repo_name = "MolCrafts/molrs"
 docs_dir = "site-src"

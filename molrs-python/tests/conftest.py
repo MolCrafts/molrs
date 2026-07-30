@@ -62,7 +62,7 @@ def _water_frame(*, for_lammps: bool = False) -> molrs.Frame:
     if for_lammps:
         b.insert("type", np.array([1, 2, 2], dtype=np.int32))
         b.insert("charge", np.array([-0.834, 0.417, 0.417], dtype=np.float64))
-        b.insert("molecule_id", np.array([1, 1, 1], dtype=np.int32))
+        b.insert("mol_id", np.array([1, 1, 1], dtype=np.int32))
     f["atoms"] = b
     f.box = molrs.Box.cube(10.0)
     return f

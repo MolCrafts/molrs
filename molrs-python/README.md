@@ -7,8 +7,8 @@ Python bindings for the [molrs](https://github.com/MolCrafts/molrs) molecular mo
 This package is the first public preview of the Python API. Install with
 `pip install molcrafts-molrs` and import it as `molrs`.
 
-Full documentation lives at <https://molcrafts.github.io/molrs/>. The Python
-API reference is rendered at <https://molcrafts.github.io/molrs/reference/python/>.
+Full documentation lives at <https://docs.molcrafts.org/molrs/>. The Python
+API reference is rendered at <https://docs.molcrafts.org/molrs/reference/python/>.
 
 ## Install
 
