@@ -4,12 +4,19 @@ build-backend = "maturin"
 
 [project]
 name = "molcrafts-molrs"
-version = "0.11.1"
+version = "0.11.2"
 description = "Python bindings for molrs molecular simulation library"
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 readme = "README.md"
 license = "BSD-3-Clause"
 dependencies = ["numpy>=2.0"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Rust",
+  "Topic :: Scientific/Engineering :: Chemistry",
+]
 
 [project.optional-dependencies]
 # Dev tools (gate driver). Install: `pip install -e ".[dev]"` or
@@ -56,7 +63,7 @@ no_package = true
 
 [tool.tox.env.py]
 description = "throwaway env: maturin wheel + pytest (non-editable)"
-base_python = ["python3.12"]
+base_python = ["python3.14"]
 deps = [
   "maturin>=1.0,<2.0",
   "pytest",
