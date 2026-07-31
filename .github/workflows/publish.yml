@@ -216,8 +216,14 @@ jobs:
           path: molrs-python/dist
 
   publish-python:
+    # Must use always() so a skipped `ci` job in the upstream graph cannot
+    # poison this job into an unconditional skip (seen on v0.10.1 / v0.11.0:
+    # wheels built but never uploaded; PyPI stuck at 0.10.0).
     needs: build-python
-    if: github.repository == 'MolCrafts/molrs'
+    if: >-
+      always()
+      && github.repository == 'MolCrafts/molrs'
+      && needs.build-python.result == 'success'
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -228,7 +234,16 @@ jobs:
           path: dist
           pattern: wheels-*
           merge-multiple: true
+      - name: Flatten wheels into packages-dir
+        run: |
+          set -euo pipefail
+          mkdir -p upload
+          # Artifacts may land as dist/*.whl or dist/wheels-*/*.whl depending
+          # on download-artifact layout.
+          find dist -type f \( -name '*.whl' -o -name '*.tar.gz' \) -print -exec cp -f {} upload/ \;
+          ls -la upload
+          test "$(find upload -type f | wc -l)" -gt 0
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: dist
+          packages-dir: upload
           skip-existing: true
