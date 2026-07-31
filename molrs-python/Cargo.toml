@@ -1,6 +1,6 @@
 [package]
 name = "molrs-python"
-version = "0.11.0"
+version = "0.11.1"
 edition = "2024"
 rust-version = "1.91"
 authors = ["MolCrafts"]
@@ -26,12 +26,14 @@ serde_json = "1"
 # `ForceField._ffi_forcefield_capsule()` (the force-field analogue of the frame
 # capsule). molrs-python already pulls `molrs/ff` via `full`, so this only turns
 # on the matching molrs-ffi handle.
-molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.11.0", features = ["ff"] }
-# The merged crate with every sub-system module (`full`) plus the zarr /
-# filesystem / smiles knobs the bindings exercise.
-molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.11.0", features = ["full", "zarr", "filesystem"] }
-
-[workspace]
+molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.11.1", features = ["ff"] }
+# Base: full + in-memory zarr. Host filesystem I/O is optional (`fs` feature)
+# so the same crate can build for Pyodide without a native FS backend.
+molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.11.1", default-features = false, features = ["full", "zarr"] }
 
 [features]
-default = []
+default = ["fs"]
+# Desktop/native: path-based zarr trajectory I/O. Off for Pyodide builds.
+fs = ["molrs/filesystem"]
+
+[workspace]

@@ -62,16 +62,30 @@ cargo add molcrafts-molrs
 Opt into sub-systems via feature flags; `full` enables everything:
 
 ```toml
-molcrafts-molrs = { version = "0.1", features = ["io", "smiles", "conformer"] }
+molcrafts-molrs = { version = "0.11", features = ["io", "smiles", "conformer"] }
 ```
 
-Python: `pip install molcrafts-molrs` (import as `molrs`). Browser: `npm install @molcrafts/molrs`.
+| Environment | Install | Import / use |
+|-------------|---------|----------------|
+| **Rust** | `cargo add molcrafts-molrs` | `use molrs::…` |
+| **Python (desktop)** | `pip install molcrafts-molrs` | `import molrs` |
+| **Python (browser / Pyodide)** | `await micropip.install("molcrafts-molrs")` | `import molrs` |
+| **JS (browser)** | `npm install @molcrafts/molrs` | wasm-bindgen API (not `import molrs`) |
 
-> **Python nightly.** Bleeding-edge Python wheels are published to the separate
-> project `molcrafts-molrs-nightly` (versioned `X.Y.Z.devN`) on every push to the
-> `nightly` branch — Python only; crates.io and npm ship exclusively from `v*`
-> tags. Install with `pip install --pre molcrafts-molrs-nightly`. It imports as
-> `molrs`, so it cannot be installed alongside the stable `molcrafts-molrs`.
+PyPI ships **desktop** wheels (manylinux / macOS / Windows) and a **Pyodide
+(Emscripten)** wheel for micropip. The npm package is a separate **wasm-bindgen**
+build used by MolVis; it is not the Python extension.
+
+```python
+# In Pyodide (browser or Node)
+import micropip
+await micropip.install("molcrafts-molrs")
+import molrs
+```
+
+> **Python nightly.** Bleeding-edge wheels go to `molcrafts-molrs-nightly`
+> (`X.Y.Z.devN`) on the `nightly` branch. `pip install --pre molcrafts-molrs-nightly`
+> imports as `molrs` and cannot sit beside stable `molcrafts-molrs`.
 
 ## Build from source
 
