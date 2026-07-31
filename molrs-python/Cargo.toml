@@ -27,13 +27,14 @@ serde_json = "1"
 # capsule). molrs-python already pulls `molrs/ff` via `full`, so this only turns
 # on the matching molrs-ffi handle.
 molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.11.1", features = ["ff"] }
-# Base: full + in-memory zarr. Host filesystem I/O is optional (`fs` feature)
-# so the same crate can build for Pyodide without a native FS backend.
-molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.11.1", default-features = false, features = ["full", "zarr"] }
+# Base: full (no zarr). Host zarr + path I/O is optional (`fs` feature) so
+# Pyodide builds can omit zarrs/libz-sys (emscripten cannot link host zlib).
+molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.11.1", default-features = false, features = ["full"] }
 
 [features]
 default = ["fs"]
-# Desktop/native: path-based zarr trajectory I/O. Off for Pyodide builds.
+# Desktop/native: path-based zarr trajectory I/O (`molrs/filesystem` → zarr).
+# Off for Pyodide: `maturin … --no-default-features`.
 fs = ["molrs/filesystem"]
 
 [workspace]
