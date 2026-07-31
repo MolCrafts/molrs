@@ -154,3 +154,16 @@ branch, while crates.io, PyPI, npm, and docs.rs describe released artifacts.
 (`molcrafts-molrs>=X.Y.0,<X.(Y+1)`), not an exact patch. Patch may drift;
 history lives in git tags / GitHub Releases — there is no hand-written
 `CHANGELOG.md`.
+
+## Browser (Pyodide)
+
+PyPI publishes an Emscripten wheel. In a Pyodide session:
+
+```python
+import micropip
+await micropip.install("molcrafts-molrs")
+import molrs
+```
+
+This is the **Python** extension for the browser. For the JS API used by
+MolVis, install `@molcrafts/molrs` from npm instead.
