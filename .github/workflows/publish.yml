@@ -1,113 +1,42 @@
 name: Publish
 
+# Tag push on MolCrafts/molrs master tip → crates.io + npm + PyPI.
+# Manual re-run: workflow_dispatch (idempotent; skip-existing on registries).
 on:
   push:
     tags:
       - "v*"
-  # Manual re-trigger so a single failed publish job (e.g. trusted-publishing
-  # auth glitch) can be retried without cutting a new tag.
   workflow_dispatch:
-    inputs:
-      run_ci:
-        description: "Re-run full CI before publish (default: skip — tag is already on master)"
-        required: false
-        type: boolean
-        default: false
 
 permissions:
   contents: write
   id-token: write
 
-# Repository guard: every job below is gated on
-# `github.repository == 'MolCrafts/molrs'`. A fork that pushes a `v*`
-# tag will see this workflow trigger but every job will be skipped, so
-# nothing reaches crates.io / npm / PyPI from anywhere except the
-# canonical MolCrafts/molrs repository.
-#
-# Defense in depth:
-#   1. YAML-level repo guard (this file) — bulletproof, evaluated by
-#      GitHub Actions server-side; cannot be bypassed by a fork.
-#   2. Tag-reachable-from-master check (in `guard` job) — refuses to
-#      publish a tag whose commit isn't on master, so a tag pushed
-#      against an unmerged branch can't ship to a registry.
-#   3. crates.io / npm / PyPI **trusted publishing** (OIDC) — every
-#      registry mints a short-lived token whose JWT claims pin
-#      iss / repository / workflow / environment. No long-lived
-#      `CARGO_REGISTRY_TOKEN` / `NPM_TOKEN` / `PYPI_TOKEN` secret
-#      lives in the repo, so a leaked secret cannot republish under
-#      our names.
-#   4. GitHub Environments (`release`, `pypi`) — required reviewers
-#      and protected tag rules configured in repo settings give a
-#      manual-approval gate before any registry call runs.
-#
-# Publish topology:
-#
-#   ci ─┬─ publish-molrs   (single crate: molcrafts-molrs, all sub-systems are
-#       │                   feature-gated modules in one crate)
-#       ├─ publish-wasm
-#       └─ build-python (matrix: linux, macos, windows)  ─→  publish-python
-#          (maturin build per-runner → trusted publishing via gh-action-pypi-publish)
-#
-# Notes:
-#   - The former molrs-core / molrs-io / molrs-signal / molrs-compute / molrs-ff /
-#     molrs-conformer member crates were merged into the single `molcrafts-molrs`
-#     crate; only it is published to crates.io now.
-#   - molrs-smiles was folded into molrs-io::smiles in v0.0.13; no longer
-#     published as a standalone crate.
-#   - molrs-cxxapi is a `staticlib` consumed by the Atomiverse C++ build via
-#     CMake/corrosion (built from source), and molrs-capi is a `cdylib` linked
-#     by C/C++ apps. Neither is consumed by Rust crates, so neither is
-#     published to crates.io.
-#   - Every publish step is idempotent: it queries the registry first and
-#     skips if the current version is already published. So a partial run
-#     can be safely re-driven via workflow_dispatch.
+# Only the canonical repo publishes (fork tag pushes no-op via job ifs).
+# Trusted publishing (OIDC) for crates.io / npm / PyPI — no long-lived tokens.
 
 jobs:
   guard:
-    name: repo-guard
-    runs-on: ubuntu-latest
     if: github.repository == 'MolCrafts/molrs'
+    runs-on: ubuntu-latest
     steps:
-      - name: Confirm canonical repository
-        run: |
-          echo "Publishing tag ${GITHUB_REF#refs/tags/} from ${GITHUB_REPOSITORY}"
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - name: Verify tag is reachable from master
+      - name: Tag must be on master
         if: github.event_name == 'push'
         run: |
           set -euo pipefail
           git fetch origin master
-          TAG_SHA="${GITHUB_SHA}"
-          MASTER_SHA="$(git rev-parse origin/master)"
-          if ! git merge-base --is-ancestor "$TAG_SHA" "$MASTER_SHA"; then
-            echo "::error::Tag ${GITHUB_REF#refs/tags/} (commit $TAG_SHA) is not an ancestor of master ($MASTER_SHA). Refusing to publish."
-            echo "::error::Merge the release commit into master before pushing the tag."
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/master; then
+            echo "::error::Tag is not on master; merge release commit first."
             exit 1
           fi
-          echo "Tag $TAG_SHA is reachable from master ($MASTER_SHA) — proceeding."
 
-  # Tag is always cut after a green PR lands on master (guard checks ancestry).
-  # Re-running full CI here only burns ~3 min on cold caches. Optional via
-  # workflow_dispatch input `run_ci`.
-  ci:
-    needs: guard
-    if: >-
-      github.repository == 'MolCrafts/molrs'
-      && github.event_name == 'workflow_dispatch'
-      && inputs.run_ci
-    uses: ./.github/workflows/ci.yml
-
-  # ── Rust crate (crates.io trusted publishing) ───────────────────────────────
-
+  # ── crates.io ─────────────────────────────────────────────────────────────
   publish-molrs:
-    needs: [guard, ci]
-    if: >-
-      always()
-      && github.repository == 'MolCrafts/molrs'
-      && needs.guard.result == 'success'
-      && (needs.ci.result == 'success' || needs.ci.result == 'skipped')
+    needs: guard
+    if: github.repository == 'MolCrafts/molrs'
     runs-on: ubuntu-latest
     environment: release
     steps:
@@ -115,20 +44,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: rust-lang/crates-io-auth-action@v1
         id: auth
-      - name: Publish molcrafts-molrs (skip if already on crates.io)
+      - name: Publish molcrafts-molrs
         run: bash scripts/publish-if-new.sh molrs/Cargo.toml molcrafts-molrs
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
-  # ── WASM (npm trusted publishing) ────────────────────────────────────────────
-
+  # ── npm (@molcrafts/molrs) ────────────────────────────────────────────────
   publish-wasm:
-    needs: [guard, ci]
-    if: >-
-      always()
-      && github.repository == 'MolCrafts/molrs'
-      && needs.guard.result == 'success'
-      && (needs.ci.result == 'success' || needs.ci.result == 'skipped')
+    needs: guard
+    if: github.repository == 'MolCrafts/molrs'
     runs-on: ubuntu-latest
     environment: release
     steps:
@@ -149,37 +73,25 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: wasm-pack
-      - name: Build wasm package
+      - name: Build
         working-directory: molrs-wasm
         run: wasm-pack build --release --target bundler --scope molcrafts --out-name molrs
-      - name: Publish to npm (trusted publishing + provenance, skip if already on registry)
+      - name: Publish
         working-directory: molrs-wasm/pkg
         run: |
           set -euo pipefail
           NAME=$(node -p "require('./package.json').name")
           VERSION=$(node -p "require('./package.json').version")
           if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
-            echo "✓ $NAME@$VERSION already on npm; skipping"
+            echo "✓ $NAME@$VERSION already on npm"
           else
             npm publish --access public --provenance
           fi
 
-  # ── Python (PyPI trusted publishing via maturin) ────────────────────────────
-  #
-  # Two-stage layout:
-  #   build-python  — matrix over (linux, macos, windows), each runner produces
-  #                   its own wheel into a per-runner artifact.
-  #   publish-python — downloads every artifact, hands the merged dist/ to
-  #                   pypa/gh-action-pypi-publish via Trusted Publishing.
-  #                   `skip-existing: true` makes a partial republish safe.
-
+  # ── PyPI (build matrix → one upload) ──────────────────────────────────────
   build-python:
-    needs: [guard, ci]
-    if: >-
-      always()
-      && github.repository == 'MolCrafts/molrs'
-      && needs.guard.result == 'success'
-      && (needs.ci.result == 'success' || needs.ci.result == 'skipped')
+    needs: guard
+    if: github.repository == 'MolCrafts/molrs'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -202,8 +114,7 @@ jobs:
           workspaces: |
             . -> target
             molrs-python -> target
-      - name: Build wheel
-        uses: PyO3/maturin-action@v1
+      - uses: PyO3/maturin-action@v1
         with:
           working-directory: molrs-python
           manylinux: auto
@@ -216,14 +127,8 @@ jobs:
           path: molrs-python/dist
 
   publish-python:
-    # Must use always() so a skipped `ci` job in the upstream graph cannot
-    # poison this job into an unconditional skip (seen on v0.10.1 / v0.11.0:
-    # wheels built but never uploaded; PyPI stuck at 0.10.0).
     needs: build-python
-    if: >-
-      always()
-      && github.repository == 'MolCrafts/molrs'
-      && needs.build-python.result == 'success'
+    if: github.repository == 'MolCrafts/molrs'
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -231,19 +136,17 @@ jobs:
     steps:
       - uses: actions/download-artifact@v8
         with:
-          path: dist
+          path: wheels
           pattern: wheels-*
           merge-multiple: true
-      - name: Flatten wheels into packages-dir
+      - name: Collect wheels
         run: |
           set -euo pipefail
-          mkdir -p upload
-          # Artifacts may land as dist/*.whl or dist/wheels-*/*.whl depending
-          # on download-artifact layout.
-          find dist -type f \( -name '*.whl' -o -name '*.tar.gz' \) -print -exec cp -f {} upload/ \;
-          ls -la upload
-          test "$(find upload -type f | wc -l)" -gt 0
+          mkdir -p dist
+          find wheels -type f \( -name '*.whl' -o -name '*.tar.gz' \) -exec cp -f {} dist/ \;
+          ls -la dist
+          test "$(find dist -type f | wc -l)" -gt 0
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: upload
+          packages-dir: dist
           skip-existing: true
