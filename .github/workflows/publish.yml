@@ -140,7 +140,11 @@ jobs:
         uses: pypa/cibuildwheel@v4.1.1
         env:
           CIBW_PLATFORM: pyodide
-          CIBW_BUILD: cp312*
+          # cp312-pyodide is EOL in cibuildwheel 4.x (default is 3.13/3.14).
+          # Plugin loads Pyodide 0.27.x (CPython 3.12 / emscripten 3.1.58).
+          CIBW_ENABLE: pyodide-eol
+          CIBW_BUILD: cp312-pyodide_wasm32
+          CIBW_PYODIDE_VERSION: "0.27.7"
           CIBW_TEST_SKIP: "*"
           # No host FS on Emscripten — build without default `fs` feature.
           CIBW_ENVIRONMENT_PYODIDE: MATURIN_PEP517_ARGS=--no-default-features
