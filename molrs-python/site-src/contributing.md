@@ -19,7 +19,6 @@ Local documentation loop. The Zensical config lives at
 ```bash
 cd molrs-python
 pip install -e ".[doc]"                 # zensical + mkdocstrings[python]
-python ../scripts/check-python-stub-exports.py
 maturin develop                         # build the molrs module so the API reference can introspect it
 zensical build                          # reads ./zensical.toml, writes ./site
 zensical serve -a localhost:8000        # live preview
