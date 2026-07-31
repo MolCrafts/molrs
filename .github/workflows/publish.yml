@@ -170,11 +170,13 @@ jobs:
           CIBW_BUILD: cp312-pyodide_wasm32
           CIBW_PYODIDE_VERSION: "0.27.7"
           CIBW_TEST_SKIP: "*"
-          # No host FS on Emscripten — build without default `fs` feature.
+          # No host FS / zarr (libz-sys) on Emscripten.
           CIBW_ENVIRONMENT_PYODIDE: MATURIN_PEP517_ARGS=--no-default-features
           # Host rustc/cargo must stay visible to maturin under pyodide-build.
           CIBW_XBUILD_TOOLS: rustc cargo rustup
-          CIBW_BEFORE_BUILD_PYODIDE: rustup target add wasm32-unknown-emscripten
+          # emcc invokes wasm-opt by absolute EMSDK path (PATH shims no-op).
+          # Patch Binaryen 3.1.58 flags modern rustc needs stripped.
+          CIBW_BEFORE_BUILD_PYODIDE: bash {package}/scripts/patch-wasm-opt.sh
         with:
           package-dir: molrs-python
           output-dir: molrs-python/dist-pyodide
