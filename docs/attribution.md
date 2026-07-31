@@ -31,7 +31,7 @@ tables that hold them now.
 | File | Origin | License |
 |---|---|---|
 | `molrs/src/ff/params/oplsaa.rs` (was `molrs/data/oplsaa.xml`) | OPLS-AA atom types & typing definitions from **foyer** | `MIT` (foyer) |
-| `molrs/src/ff/params/mmff.rs` (was `molrs/src/ff/mmff/tables.rs` + `molrs/data/mmff94{,s}.xml`; workspace-root `data/` copies remain) | ported from **RDKit** `Code/ForceField/MMFF/Params.cpp` (MMFF94/94s tables); the style skeleton previously routed through `scripts/mmff_to_xml.py` | `BSD-3-Clause` (RDKit); MMFF94 parameters © Merck / T. A. Halgren, *J. Comput. Chem.* **17**, 490 (1996) |
+| `molrs/src/ff/params/mmff.rs` (was `molrs/src/ff/mmff/tables.rs` + `molrs/data/mmff94{,s}.xml`; workspace-root `data/` copies remain) | ported from **RDKit** `Code/ForceField/MMFF/Params.cpp` (MMFF94/94s tables) | `BSD-3-Clause` (RDKit); MMFF94 parameters © Merck / T. A. Halgren, *J. Comput. Chem.* **17**, 490 (1996) |
 | `tests-data/` (fetched at build via `scripts/fetch-test-data.sh`) | **chemfiles** integration-test fixtures (mirrored at MolCrafts/tests-data) | `CC0-1.0` (public domain) |
 
 ## Formula / method references (papers, no code copied)
