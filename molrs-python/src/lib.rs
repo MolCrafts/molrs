@@ -33,7 +33,7 @@
 
 use pyo3::prelude::*;
 
-mod check;
+mod spectrum_checks;
 mod error;
 mod helpers;
 mod store;
@@ -291,9 +291,9 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Raw-compute + explicit-fit classes (phase-02 compute/fit repoint):
     // VACF / EinsteinConductivity / GreenKuboConductivity / … + LinearFit /
-    // RunningIntegral / Plateau / DebyeFit / PowerSpectrum / IRSpectrum /
+    // CumulativeTrapezoid / Plateau / DebyeFit / PowerSpectrum / IRSpectrum /
     // RamanSpectrum at the top level (`molrs.VACF`, `molrs.LinearFit`, …).
-    compute::fit::register(m)?;
+    compute::fitting::register(m)?;
 
     // analysis-parity computes: geometric distributions (ADF/DDF/distance),
     // Van Hove, Legendre reorientation, hydrogen bonds, spatial distribution,
@@ -310,7 +310,7 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     compute::transport::register_transport(m)?;
 
     // Validation
-    check::register_check(m)?;
+    spectrum_checks::register_check(m)?;
 
     Ok(())
 }

@@ -15,7 +15,6 @@ break the freud port path this layout exists to preserve.
 """
 
 from . import (
-    check,
     cluster,
     density,
     dielectric,
@@ -23,7 +22,7 @@ from . import (
     distribution,
     dynamics,
     environment,
-    fit,
+    fitting,
     hbond,
     ml,
     msd,
@@ -35,7 +34,6 @@ from . import (
 )
 
 __all__ = [
-    "check",
     "cluster",
     "density",
     "dielectric",
@@ -43,7 +41,7 @@ __all__ = [
     "distribution",
     "dynamics",
     "environment",
-    "fit",
+    "fitting",
     "hbond",
     "ml",
     "msd",

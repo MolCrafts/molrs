@@ -18,6 +18,7 @@ coefficients) and ``persist`` (pair-survival / residence-time correlations).
 
 from molrs._lib import (
     VACF as VACF,
+    DebyeFit as DebyeFit,
     DebyeRelaxation as DebyeRelaxation,
     EinsteinConductivity as EinsteinConductivity,
     EinsteinDiffusion as EinsteinDiffusion,
@@ -36,7 +37,7 @@ class Onsager:
 
 # The bundled ``Jacf.green_kubo_conductivity`` (raw JACF + fitted sigma) was
 # removed in compute-fit-03-cleanup: compose :class:`GreenKuboConductivity`
-# (raw current ACF) with :class:`molrs.compute.fit.RunningIntegral` and a
+# (raw current ACF) with :class:`molrs.compute.fitting.CumulativeTrapezoid` and a
 # ``1/(3·V·k_B·T)`` MD→SI prefactor instead.
 
 
@@ -53,6 +54,7 @@ __all__ = [
     "EinsteinConductivity",
     "GreenKuboConductivity",
     "DebyeRelaxation",
+    "DebyeFit",
     "Onsager",
     "Persist",
 ]

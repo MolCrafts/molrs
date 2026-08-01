@@ -83,7 +83,7 @@ integral is trapezoidal.
     The bundled `transport.Jacf.green_kubo_conductivity` kernel was removed in
     `compute-fit-03-cleanup`. Build the conductivity from the raw-compute
     classes instead: `molrs.GreenKuboConductivity` produces the raw current ACF
-    $C(\tau)$, `molrs.RunningIntegral` forms $\int_0^\tau C\,d\tau'$, and a
+    $C(\tau)$, `molrs.CumulativeTrapezoid` forms $\int_0^\tau C\,d\tau'$, and a
     `1/(3·V·k_B·T)` MD→SI prefactor (folding in $e^2$, Å→m, ps→s — the same
     factors as the Einstein–Helfand route, with the Green–Kubo $1/3$ replacing
     the Einstein $1/6$) converts the result to S·m⁻¹. This mirrors the

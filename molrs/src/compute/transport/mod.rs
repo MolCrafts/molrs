@@ -1,6 +1,6 @@
 //! Transport properties: diffusion, ionic conductivity, and dipolar
 //! relaxation — the raw [`Compute`](crate::compute::Compute) observables the
-//! [`fit`](crate::compute::fit) layer turns into D, σ, and τ_D.
+//! [`fitting`](crate::compute::fittingting) layer turns into D, σ, and τ_D.
 //!
 //! Every method here returns **only a raw curve + scalar metadata**; the fit
 //! step (slope, integral, Debye τ) is the analyst's explicit, parameterized
@@ -8,12 +8,12 @@
 //!
 //! | Method | Raw output | Downstream fit |
 //! |--------|-----------|----------------|
-//! | [`VACF`] / [`GreenKuboDiffusion`] | velocity ACF | [`PowerSpectrum`](crate::compute::spectroscopy::PowerSpectrum) (VDOS) / [`RunningIntegral`](crate::compute::fit::RunningIntegral) (D) |
-//! | [`EinsteinDiffusion`] | self-MSD curve | [`LinearFit`](crate::compute::fit::LinearFit) (D = slope/2d) |
-//! | [`EinsteinConductivity`] | collective charge-dipole MSD | [`LinearFit`](crate::compute::fit::LinearFit) (σ) |
-//! | [`GreenKuboConductivity`] | current ACF | [`RunningIntegral`](crate::compute::fit::RunningIntegral) (σ) |
-//! | [`DebyeRelaxation`] | dipole ACF + ⟨M²⟩ + V/T/BC | [`DebyeFit`](crate::compute::fit::DebyeFit) (τ_D, amplitude) |
-//! | [`OnsagerCorrelation`] | Onsager L_ij displacement correlations | [`LinearFit`](crate::compute::fit::LinearFit) per pair |
+//! | [`VACF`] / [`GreenKuboDiffusion`] | velocity ACF | [`PowerSpectrum`](crate::compute::spectroscopy::PowerSpectrum) (VDOS) / [`CumulativeTrapezoid`](crate::compute::fitting::CumulativeTrapezoid) (D) |
+//! | [`EinsteinDiffusion`] | self-MSD curve | [`LinearFit`](crate::compute::fitting::LinearFit) (D = slope/2d) |
+//! | [`EinsteinConductivity`] | collective charge-dipole MSD | [`LinearFit`](crate::compute::fitting::LinearFit) (σ) |
+//! | [`GreenKuboConductivity`] | current ACF | [`CumulativeTrapezoid`](crate::compute::fitting::CumulativeTrapezoid) (σ) |
+//! | [`DebyeRelaxation`] | dipole ACF + ⟨M²⟩ + V/T/BC | [`DebyeFit`] (τ_D, amplitude) |
+//! | [`OnsagerCorrelation`] | Onsager L_ij displacement correlations | [`LinearFit`](crate::compute::fitting::LinearFit) per pair |
 //!
 //! [`VACFAccumulator`] is the streaming (frame-by-frame, bounded-memory)
 //! counterpart of [`VACF`] for on-the-fly MD analysis. Units follow the MD
@@ -22,7 +22,7 @@
 //!
 //! ```ignore
 //! let raw = VACF.compute(&[] as &[&Frame], (&velocities, dt, resolution))?;
-//! let d = RunningIntegral.fit((&raw.acf, dt, None))?; // D = integral/3 in MD units
+//! let d = CumulativeTrapezoid.fit((&raw.acf, dt, None))?; // D = integral/3 in MD units
 //! ```
 
 pub mod debye_relaxation;
@@ -36,7 +36,8 @@ pub mod vacf;
 pub mod vacf_accumulator;
 
 pub use debye_relaxation::{
-    DebyeRelaxation, DebyeRelaxationArgs, DebyeRelaxationResult, EwaldBoundary,
+    DebyeFit, DebyeFitResult, DebyeRelaxation, DebyeRelaxationArgs, DebyeRelaxationResult,
+    EwaldBoundary,
 };
 pub use einstein_conductivity::{
     EinsteinConductivity, EinsteinConductivityArgs, EinsteinConductivityResult,

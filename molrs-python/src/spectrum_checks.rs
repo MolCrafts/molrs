@@ -1,13 +1,13 @@
-//! Thin Python bindings for the dielectric/conductivity spectrum validation
-//! checks. All numerics live in `molrs::compute::check`; this module only
-//! marshals numpy arrays in and builds the result dict out.
+//! Thin Python bindings for the dielectric / conductivity spectrum checks.
+//! All numerics live in `molrs::compute::spectroscopy` alongside the spectra
+//! they judge; this module only marshals numpy arrays in and dicts out.
 
 use numpy::{IntoPyArray, PyReadonlyArray1};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyAnyMethods, PyDict, PyDictMethods};
 
-use molrs::compute::check::{ConductivitySumRule, KramersKronig, RouteAgreement};
+use molrs::compute::spectroscopy::{ConductivitySumRule, KramersKronig, RouteAgreement};
 use molrs::compute::traits::Check;
 
 use crate::helpers::py_value_err;

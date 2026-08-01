@@ -159,7 +159,7 @@ pub trait Verdict {
 /// # Examples
 ///
 /// ```
-/// use molrs::compute::{Check, Verdict, check::ConductivitySumRule};
+/// use molrs::compute::{Check, ConductivitySumRule, Verdict};
 /// use ndarray::Array1;
 ///
 /// let omega = Array1::from_vec(vec![0.0, 1.0, 2.0]);

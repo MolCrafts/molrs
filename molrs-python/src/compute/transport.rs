@@ -40,7 +40,7 @@ pub(crate) fn transport_onsager_correlation<'py>(
 
 // The legacy bundled `transport_green_kubo_conductivity` binding (raw JACF +
 // fitted sigma/sigma_running) was removed in compute-fit-03-cleanup. Compose
-// `molrs.GreenKuboConductivity` (raw current ACF) with `molrs.RunningIntegral`
+// `molrs.GreenKuboConductivity` (raw current ACF) with `molrs.CumulativeTrapezoid`
 // and a caller-applied `1/(3·V·k_B·T)` MD→SI prefactor.
 
 #[pyfunction]

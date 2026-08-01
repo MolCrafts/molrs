@@ -22,7 +22,7 @@ impl ComputeResult for EinsteinDiffusionResult {}
 
 /// Raw self-MSD compute. Delegates to
 /// [`MSD::windowed`](crate::compute::MSD) — MSD math is **not** re-derived here.
-/// `D = slope/(2d)` is then a [`LinearFit`](crate::compute::fit::LinearFit) +
+/// `D = slope/(2d)` is then a [`LinearFit`](crate::compute::fitting::LinearFit) +
 /// scale step.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct EinsteinDiffusion;

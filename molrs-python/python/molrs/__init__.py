@@ -12,15 +12,14 @@ force fields, and the SMILES front-end. **Analysis lives under**
 * :mod:`~molrs.compute.cluster` — Cluster, ClusterProperties, gyration / inertia / COM
 * :mod:`~molrs.compute.msd` — MSD
 * :mod:`~molrs.compute.ml` — PCA, K-means, descriptor rows
-* :mod:`~molrs.compute.transport` — VACF, Green-Kubo / Einstein diffusion and conductivity
+* :mod:`~molrs.compute.transport` — VACF, Green-Kubo / Einstein diffusion and conductivity, Debye relaxation + fit
 * :mod:`~molrs.compute.dielectric` — raw dielectric observables
-* :mod:`~molrs.compute.spectroscopy` — power / IR / Raman / VCD / ROA spectra
-* :mod:`~molrs.compute.fit` — LinearFit, RunningIntegral, Plateau, DebyeFit
+* :mod:`~molrs.compute.spectroscopy` — power / IR / Raman / VCD / ROA / dielectric spectra + their consistency checks
+* :mod:`~molrs.compute.fitting` — generic curve fits: LinearFit, CumulativeTrapezoid, Plateau
 * :mod:`~molrs.compute.distribution` — bond / angle / dihedral distributions
 * :mod:`~molrs.compute.dynamics` — VanHove
 * :mod:`~molrs.compute.hbond` — HBonds
 * :mod:`~molrs.compute.voronoi` — RadicalVoronoi and integration
-* :mod:`~molrs.compute.validate` — physical-consistency checks on spectra
 
 Analysis classes are reachable as ``molrs.<Class>`` too, because PyO3 declares
 ``module = "molrs"``, but that spelling is plumbing and is not in ``__all__``.
@@ -151,7 +150,7 @@ from ._lib import (
     GreenKuboConductivity,
     DebyeRelaxation,
     LinearFit,
-    RunningIntegral,
+    CumulativeTrapezoid,
     Plateau,
     DebyeFit,
     PowerSpectrum,

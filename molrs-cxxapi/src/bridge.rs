@@ -342,7 +342,7 @@ pub mod ffi {
         // resolution·n_dof) — never O(trajectory) — so arbitrarily long MD
         // runs stream through without growing memory. All math is molrs
         // (compute::{RDFAccumulator, MSDAccumulator},
-        // compute::fit::VACFAccumulator); `accumulate` returns false when a
+        // compute::transport::VACFAccumulator); `accumulate` returns false when a
         // frame is rejected (shape/DOF mismatch, bad box), leaving state
         // unchanged.
 

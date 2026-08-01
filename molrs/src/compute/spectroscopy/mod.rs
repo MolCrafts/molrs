@@ -51,7 +51,8 @@ pub mod vcd_cross_flux;
 pub mod vcd_spectrum;
 
 pub use dielectric_spectrum::{
-    DielectricSpectrumResult, EinsteinHelfandSpectrum, GreenKuboSpectrum,
+    ConductivitySumRule, DielectricSpectrumResult, EinsteinHelfandSpectrum, GreenKuboSpectrum,
+    KramersKronig, KramersKronigCheck, RouteAgreement, RouteAgreementCheck, SumRuleCheck,
 };
 pub use ir_flux::{IRFlux, IRFluxArgs, IRFluxResult};
 pub use ir_spectrum::IRSpectrum;
@@ -70,7 +71,7 @@ use ndarray::{Array1, Array2, ArrayD};
 use rustfft::FftPlanner;
 
 use crate::compute::error::ComputeError;
-use crate::compute::fit::forward_fft_onesided;
+use crate::compute::fitting::forward_fft_onesided;
 use molrs::signal as sig;
 
 // ── Spectral constants ────────────────────────────────────────────────────────
@@ -97,7 +98,7 @@ const MAX_EXP_ARG: f64 = 700.0;
 /// `(frequencies_cm1, intensities)` spectrum.
 ///
 /// The window routes through [`sig::apply_window`] and the FFT through the
-/// shared [`forward_fft_onesided`](crate::compute::fit::forward_fft_onesided)
+/// shared [`forward_fft_onesided`](crate::compute::fitting::forward_fft_onesided)
 /// core.
 pub(crate) fn window_and_fft(
     planner: &mut FftPlanner<f64>,
@@ -144,7 +145,7 @@ pub(crate) fn acf_to_spectrum(
 /// FFT a windowed ACF and return only the intensity spectrum (no frequency
 /// grid). Used for the second Raman component so we don't allocate a second
 /// identical frequency array. Delegates the pad+forward-FFT step to the shared
-/// [`forward_fft_onesided`](crate::compute::fit::forward_fft_onesided) core,
+/// [`forward_fft_onesided`](crate::compute::fitting::forward_fft_onesided) core,
 /// then applies the spectra-flavoured `1/n_pad` real-part scaling.
 pub(crate) fn acf_to_intensities(
     planner: &mut FftPlanner<f64>,

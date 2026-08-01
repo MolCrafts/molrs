@@ -26,7 +26,7 @@ impl ComputeResult for EinsteinConductivityResult {}
 /// Raw collective charge-dipole MSD compute. Lifts the time-origin MSD loop
 /// from the Einstein–Helfand conductivity and stops there (no OLS, no σ). The
 /// σ = slope/(6·V·k_B·T) step is a downstream
-/// [`LinearFit`](crate::compute::fit::LinearFit).
+/// [`LinearFit`](crate::compute::fitting::LinearFit).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct EinsteinConductivity;
 
@@ -215,7 +215,7 @@ mod tests {
         // OLS over the same diffusive window, and the σ = slope/(6·V·k_B·T)·prefactor
         // composition is well-defined (replaces the removed bundled
         // Einstein–Helfand conductivity).
-        use crate::compute::fit::LinearFit;
+        use crate::compute::fitting::LinearFit;
         use crate::compute::traits::Fit;
 
         let n = 256;
@@ -262,7 +262,7 @@ mod tests {
         // Nernst–Einstein value σ = n·q²·D/(k_B·T) within the ≤0.13 ensemble
         // tolerance. M_J(t) is ONE stochastic trajectory, so we ENSEMBLE-AVERAGE
         // σ over many realisations. Seed is fixed → deterministic across CI.
-        use crate::compute::fit::LinearFit;
+        use crate::compute::fitting::LinearFit;
         use crate::compute::traits::Fit;
         use molrs::units::constants::{
             ANGSTROM_M, BOLTZMANN as K_B_SI, ELEMENTARY_CHARGE as E_C, PICOSECOND_S,
