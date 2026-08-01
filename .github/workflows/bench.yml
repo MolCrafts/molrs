@@ -8,12 +8,18 @@ name: Bench
 # behind `compute` + `voronoi`; `full` avoids the openblas requirement of the
 # separate `blas` feature).
 #
-# Criterion is never on the default PR path (ci-rust is unit-only). This
-# workflow tracks perf on canonical pushes + on demand.
+# Criterion is never on the default PR path (ci-rust is unit-only).
+#
+# Release-only cadence: at ~400s this was by far the largest cost on every
+# master push — more than twice the whole CI fan-out (rust + wasm + python +
+# capi, ~150s). Criterion on shared runners also carries enough variance that
+# per-commit points tracked runner noise as much as molrs. One point per
+# release is a cleaner signal; dispatch it by hand when a change is expected
+# to move performance.
 
 on:
   push:
-    branches: [master, main]
+    tags: ['v*']
   workflow_dispatch:
 
 permissions:
