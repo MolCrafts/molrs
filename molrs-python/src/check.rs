@@ -1,5 +1,5 @@
 //! Thin Python bindings for the dielectric/conductivity spectrum validation
-//! checks. All numerics live in `molrs::compute::validate`; this module only
+//! checks. All numerics live in `molrs::compute::check`; this module only
 //! marshals numpy arrays in and builds the result dict out.
 
 use numpy::{IntoPyArray, PyReadonlyArray1};
@@ -7,17 +7,17 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyAnyMethods, PyDict, PyDictMethods};
 
-use molrs::compute::validate;
+use molrs::compute::check;
 
 #[pyfunction]
-pub(crate) fn validate_kramers_kronig_check<'py>(
+pub(crate) fn check_kramers_kronig<'py>(
     py: Python<'py>,
     frequency: PyReadonlyArray1<'py, f64>,
     eps_real: PyReadonlyArray1<'py, f64>,
     eps_imag: PyReadonlyArray1<'py, f64>,
     eps_inf: f64,
 ) -> PyResult<Py<PyAny>> {
-    let out = validate::kramers_kronig_check(
+    let out = check::kramers_kronig_check(
         &frequency.as_array().to_owned(),
         &eps_real.as_array().to_owned(),
         &eps_imag.as_array().to_owned(),
@@ -33,7 +33,7 @@ pub(crate) fn validate_kramers_kronig_check<'py>(
 }
 
 #[pyfunction]
-pub(crate) fn validate_conductivity_sum_rule_check<'py>(
+pub(crate) fn check_conductivity_sum_rule<'py>(
     py: Python<'py>,
     frequency: PyReadonlyArray1<'py, f64>,
     conductivity: PyReadonlyArray1<'py, f64>,
@@ -41,7 +41,7 @@ pub(crate) fn validate_conductivity_sum_rule_check<'py>(
     volume: f64,
     temperature: f64,
 ) -> PyResult<Py<PyAny>> {
-    let out = validate::conductivity_sum_rule_check(
+    let out = check::conductivity_sum_rule_check(
         &frequency.as_array().to_owned(),
         &conductivity.as_array().to_owned(),
         current_sq_mean,
@@ -59,7 +59,7 @@ pub(crate) fn validate_conductivity_sum_rule_check<'py>(
 }
 
 #[pyfunction]
-pub(crate) fn validate_route_agreement_check<'py>(
+pub(crate) fn check_route_agreement<'py>(
     py: Python<'py>,
     results: &Bound<'py, PyDict>,
 ) -> PyResult<Py<PyAny>> {
@@ -74,7 +74,7 @@ pub(crate) fn validate_route_agreement_check<'py>(
         entries.push((name, arr.as_array().to_owned()));
     }
 
-    let out = validate::route_agreement_check(&entries).map_err(PyValueError::new_err)?;
+    let out = check::route_agreement_check(&entries).map_err(PyValueError::new_err)?;
 
     let pairwise = PyDict::new(py);
     for (label, rms) in &out.pairwise {
@@ -86,9 +86,9 @@ pub(crate) fn validate_route_agreement_check<'py>(
     Ok(dict.into())
 }
 
-pub fn register_validate(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(validate_kramers_kronig_check, m)?)?;
-    m.add_function(wrap_pyfunction!(validate_conductivity_sum_rule_check, m)?)?;
-    m.add_function(wrap_pyfunction!(validate_route_agreement_check, m)?)?;
+pub fn register_check(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(check_kramers_kronig, m)?)?;
+    m.add_function(wrap_pyfunction!(check_conductivity_sum_rule, m)?)?;
+    m.add_function(wrap_pyfunction!(check_route_agreement, m)?)?;
     Ok(())
 }

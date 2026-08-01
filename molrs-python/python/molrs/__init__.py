@@ -1,17 +1,30 @@
 """molrs — Rust-backed molecular simulation primitives.
 
 Top-level re-exports cover core data structures, I/O, regions, conformer generation,
-force fields, and the SMILES front-end. Analysis classes live under the
-:mod:`molrs.compute` package, namespaced by domain:
+force fields, and the SMILES front-end. **Analysis lives under**
+:mod:`molrs.compute`, one subpackage per ``molrs::compute`` domain:
 
-* :mod:`molrs.compute.density` — RDF, GaussianDensity, LocalDensity
-* :mod:`molrs.compute.order` — Steinhardt, Nematic, Hexatic, SolidLiquid
-* :mod:`molrs.compute.environment` — BondOrder
-* :mod:`molrs.compute.pmft` — PMFTXY
-* :mod:`molrs.compute.diffraction` — StaticStructureFactorDebye
-* :mod:`molrs.compute.cluster` — Cluster, ClusterProperties, gyration / inertia / COM
-* :mod:`molrs.compute.msd` — MSD
-* :mod:`molrs.compute.ml` — PCA, K-means, descriptor rows
+* :mod:`~molrs.compute.density` — RDF, GaussianDensity, LocalDensity, SpatialDistribution
+* :mod:`~molrs.compute.order` — Steinhardt, Nematic, Hexatic, SolidLiquid, LegendreReorientation
+* :mod:`~molrs.compute.environment` — BondOrder
+* :mod:`~molrs.compute.pmft` — PMFTXY
+* :mod:`~molrs.compute.diffraction` — StaticStructureFactorDebye
+* :mod:`~molrs.compute.cluster` — Cluster, ClusterProperties, gyration / inertia / COM
+* :mod:`~molrs.compute.msd` — MSD
+* :mod:`~molrs.compute.ml` — PCA, K-means, descriptor rows
+* :mod:`~molrs.compute.transport` — VACF, Green-Kubo / Einstein diffusion and conductivity
+* :mod:`~molrs.compute.dielectric` — raw dielectric observables
+* :mod:`~molrs.compute.spectroscopy` — power / IR / Raman / VCD / ROA spectra
+* :mod:`~molrs.compute.fit` — LinearFit, RunningIntegral, Plateau, DebyeFit
+* :mod:`~molrs.compute.distribution` — bond / angle / dihedral distributions
+* :mod:`~molrs.compute.dynamics` — VanHove
+* :mod:`~molrs.compute.hbond` — HBonds
+* :mod:`~molrs.compute.voronoi` — RadicalVoronoi and integration
+* :mod:`~molrs.compute.validate` — physical-consistency checks on spectra
+
+Analysis classes are reachable as ``molrs.<Class>`` too, because PyO3 declares
+``module = "molrs"``, but that spelling is plumbing and is not in ``__all__``.
+``molrs.compute.<domain>`` is the documented path.
 """
 
 from ._lib import (
@@ -260,11 +273,8 @@ from .forcefield import (  # noqa: F401
 )
 
 from . import io  # molpy-compatible I/O facade (read_lammps_data, …)
-from . import compute  # analysis subpackage — molrs.compute.{density,order,…}
+from . import compute  # analysis subpackage — one module per molrs::compute domain
 from . import signal
-from . import validate
-from . import dielectric
-from . import transport
 from . import typifier
 from .views import (
     Angle,
@@ -292,9 +302,6 @@ __all__ = [
     "io",
     "compute",
     "signal",
-    "validate",
-    "dielectric",
-    "transport",
     "typifier",
     "BlockDtypeError",
     "UnitsError",
@@ -428,47 +435,7 @@ __all__ = [
     "signal_acf_fft",
     "signal_apply_window",
     "signal_frequency_grid",
-    # Raw-compute + explicit-fit classes.
-    "VACF",
-    "GreenKuboDiffusion",
-    "EinsteinDiffusion",
-    "EinsteinConductivity",
-    "GreenKuboConductivity",
-    "DebyeRelaxation",
-    "LinearFit",
-    "RunningIntegral",
-    "Plateau",
-    "DebyeFit",
-    "PowerSpectrum",
-    "IRSpectrum",
-    "RamanSpectrum",
-    "EinsteinHelfandSpectrum",
-    "GreenKuboSpectrum",
-    # analysis-parity computes.
-    "AngleDistribution",
-    "DihedralDistribution",
-    "DistanceDistribution",
-    "DistributionResult",
-    "CombinedDistribution",
-    "CombinedDistributionResult",
-    "VanHove",
-    "VanHoveResult",
-    "LegendreReorientation",
-    "LegendreReorientationResult",
-    "HBondCriterion",
-    "HBonds",
-    "HBondsResult",
-    "SpatialDistribution",
-    "SpatialDistributionResult",
-    "RadicalVoronoi",
-    "VoronoiCells",
-    "voronoi_domains",
-    "voronoi_voids",
-    "DensityGrid",
-    "MolecularMoments",
-    "VoronoiIntegration",
-    "polarizability_finite_field",
-    "VcdSpectrum",
-    "RoaSpectrum",
-    "ResonanceRamanSpectrum",
+    # Analysis classes are NOT listed here: their public path is
+    # molrs.compute.<domain>. They stay importable as molrs.<Class>
+    # because PyO3 declares module = "molrs", but that is plumbing.
 ]

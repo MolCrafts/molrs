@@ -33,10 +33,10 @@
 
 use pyo3::prelude::*;
 
+mod check;
 mod error;
 mod helpers;
 mod store;
-mod validate;
 
 // Mirrors the molrs core module layout: core/ (store · spatial · system), io/,
 // compute/, ff/, conformer/, signal/.
@@ -310,7 +310,7 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     compute::transport::register_transport(m)?;
 
     // Validation
-    validate::register_validate(m)?;
+    check::register_check(m)?;
 
     Ok(())
 }

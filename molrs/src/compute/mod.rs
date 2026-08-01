@@ -54,6 +54,7 @@
 //! | [`transport`] | VACF (+ streaming [`VACFAccumulator`]), Einstein/Green–Kubo diffusion & conductivity, Debye relaxation, Onsager |
 //! | [`spectroscopy`] | IR / Raman / VCD / ROA / resonance-Raman raw correlators + spectral transforms, dielectric spectra |
 //! | [`fit`] | generic curve fits: [`LinearFit`], [`RunningIntegral`], [`Plateau`], [`DebyeFit`] |
+//! | [`check`] | physical-consistency verdicts on a computed spectrum: Kramers–Kronig, conductivity sum rule, route agreement |
 //! | [`dynamics`] | van Hove G(r, t), pair persistence |
 //! | [`dielectric`] | static dielectric constant from dipole fluctuations |
 //! | [`cluster`] | connected-component clustering + per-cluster properties |
@@ -68,6 +69,7 @@
 //! | [`hbond`] | hydrogen-bond detection, lifetimes, network components |
 //! | [`voronoi`] | radical Voronoi cells, domains, voids (feature `voronoi`) |
 
+pub mod check;
 pub mod cluster;
 pub mod density;
 pub mod dielectric;
@@ -91,7 +93,6 @@ pub(crate) mod test_support;
 pub mod traits;
 pub mod transport;
 pub mod util;
-pub mod validate;
 #[cfg(feature = "voronoi")]
 pub mod voronoi;
 

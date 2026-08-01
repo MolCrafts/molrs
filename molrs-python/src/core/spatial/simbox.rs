@@ -186,12 +186,8 @@ impl PyBox {
             return Err(PyValueError::new_err("padding must have length 3"));
         }
         let pbc = parse_pbc(pbc)?;
-        let inner = SimBox::from_bounds(
-            points,
-            [padding[0], padding[1], padding[2]],
-            pbc,
-        )
-        .map_err(box_error_to_pyerr)?;
+        let inner = SimBox::from_bounds(points, [padding[0], padding[1], padding[2]], pbc)
+            .map_err(box_error_to_pyerr)?;
         Ok(Self { inner })
     }
 
@@ -606,13 +602,12 @@ impl PyBox {
     }
 
     /// Return a box whose cell matrix is right-multiplied by `transformation`.
-    fn transformed(
-        &self,
-        transformation: PyReadonlyArray2<'_, NpF>,
-    ) -> PyResult<Self> {
+    fn transformed(&self, transformation: PyReadonlyArray2<'_, NpF>) -> PyResult<Self> {
         let transformation = transformation.as_array();
         if transformation.dim() != (3, 3) {
-            return Err(PyValueError::new_err("transformation must have shape (3,3)"));
+            return Err(PyValueError::new_err(
+                "transformation must have shape (3,3)",
+            ));
         }
         let inner = self
             .inner

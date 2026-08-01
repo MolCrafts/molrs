@@ -23,7 +23,7 @@ collective-dipole MSD) with :class:`molrs.LinearFit` and a
 ``slope/(6·V·k_B·T)`` MD→SI prefactor instead.
 """
 
-from ._lib import (
+from molrs._lib import (
     dielectric_compute_current_density,
     dielectric_compute_dipole_moment,
     dielectric_decompose_current,

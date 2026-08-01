@@ -189,7 +189,13 @@ pub struct PyForceField {
 }
 
 /// CL&Pol fragment scaling data backed by the native force-field layer.
-#[pyclass(module = "molrs", name = "FragmentScaling", frozen, get_all, skip_from_py_object)]
+#[pyclass(
+    module = "molrs",
+    name = "FragmentScaling",
+    frozen,
+    get_all,
+    skip_from_py_object
+)]
 #[derive(Clone)]
 pub struct PyFragmentScaling {
     name: String,
@@ -249,8 +255,7 @@ pub fn compute_k_ij_py(
     fr_j: PyRef<'_, PyFragmentScaling>,
     r: f64,
 ) -> PyResult<f64> {
-    molrs::ff::compute_k_ij(&fr_i.clone().into(), &fr_j.clone().into(), r)
-        .map_err(py_value_err)
+    molrs::ff::compute_k_ij(&fr_i.clone().into(), &fr_j.clone().into(), r).map_err(py_value_err)
 }
 
 /// Return the compiled-in CL&Pol fragment table.
@@ -296,13 +301,8 @@ pub fn scale_lj_py(
         scaling = molrs::ff::scale_lj::builtin_fragment_scaling();
     }
 
-    let inner = molrs::ff::scale_lj(
-        &ff.borrow().inner,
-        &native_fragments,
-        &scaling,
-        scale_sigma,
-    )
-    .map_err(|error| match error {
+    let inner = molrs::ff::scale_lj(&ff.borrow().inner, &native_fragments, &scaling, scale_sigma)
+        .map_err(|error| match error {
         molrs::ff::ScaleLjError::MissingFragment(name) => {
             PyKeyError::new_err(format!("no scaling data for fragment '{name}'"))
         }
@@ -458,11 +458,7 @@ impl PyLBFGS {
     ///   Python frame object is returned with the minimized coords).
     /// * ``(N, 3)`` / ``(3N,)`` → ``((N, 3) array, OptReport)``
     /// * ``(B, N, 3)`` → ``((B, N, 3) array, list[OptReport])``
-    fn run<'py>(
-        &self,
-        py: Python<'py>,
-        arg: &Bound<'_, PyAny>,
-    ) -> PyResult<Bound<'py, PyAny>> {
+    fn run<'py>(&self, py: Python<'py>, arg: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyAny>> {
         // Frame path (primary).
         if let Ok(frame) = arg.extract::<PyRef<'_, PyFrame>>() {
             let mut core = frame.clone_core_frame()?;
@@ -479,7 +475,8 @@ impl PyLBFGS {
                 }
             };
             // Borrowed one-shot on flat coords extracted from frame, then write back.
-            let mut flat = extract_coords(&core).map_err(pyo3::exceptions::PyValueError::new_err)?;
+            let mut flat =
+                extract_coords(&core).map_err(pyo3::exceptions::PyValueError::new_err)?;
             let report = LBFGS::minimize(
                 pot,
                 &mut flat,
@@ -762,10 +759,7 @@ impl PyOPLSAATypifier {
     /// Create an OPLS-AA typifier from embedded data, XML text, or an XML path.
     #[new]
     #[pyo3(signature = (source = None, *, strict = true))]
-    fn new(
-        source: Option<&Bound<'_, PyAny>>,
-        strict: bool,
-    ) -> PyResult<(Self, PyTypifier)> {
+    fn new(source: Option<&Bound<'_, PyAny>>, strict: bool) -> PyResult<(Self, PyTypifier)> {
         let typifier = match oplsaa_source_xml(source)? {
             Some(xml) => OPLSAATypifier::from_xml_str(&xml)
                 .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?,

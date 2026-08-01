@@ -11,7 +11,7 @@ free functions**, not `Compute`-trait implementations: the caller assembles the
 per-frame collective quantities (summed displacements, currents, per-species
 coordinates) in the host language and passes plain arrays in. The Rust layer
 performs the windowed correlation / survival accounting. They are reached through
-the `molrs.transport` namespace from Python.
+the `molrs.compute.transport` namespace from Python.
 
 For the physical background and worked, from-principles derivations, see the
 MolPy guides [Diffusion & Ionic Transport](https://molpy.molcrafts.org/compute/transport/)
@@ -56,7 +56,7 @@ by the caller).
 `EmptyInput` (< 2 frames), `NonFinite`, `OutOfRange` (`dt ≤ 0`).
 
 ```python
-from molrs.transport import Onsager
+from molrs.compute.transport import Onsager
 res = Onsager.correlation(P_i, P_j, dt=0.01, max_correlation_time=2000)
 res["lag_times"], res["correlation"]
 ```
@@ -132,7 +132,7 @@ $d \mathrel{-}= \mathrm{round}(d/L)\,L$ per axis (matching *tame*'s
 (`r0 ≤ 0`, `r1 < r0`, `dt ≤ 0`, or unknown `method`).
 
 ```python
-from molrs.transport import Persist
+from molrs.compute.transport import Persist
 res = Persist.pair_survival_tcf(coords_i, coords_j, box_lengths,
                                 r0=3.0, r1=4.0, method="ssp",
                                 dt=0.01, max_correlation_time=3000,
