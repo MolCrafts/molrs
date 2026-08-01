@@ -45,7 +45,7 @@ _NEW_NAMES = [
     "GreenKuboConductivity",
     "DebyeRelaxation",
     "LinearFit",
-    "RunningIntegral",
+    "CumulativeTrapezoid",
     "Plateau",
     "DebyeFit",
     "PowerSpectrum",
@@ -153,14 +153,14 @@ def test_einstein_pipeline_sigma_well_defined():
 def test_green_kubo_pipeline_sigma_well_defined():
     # The bundled transport_green_kubo_conductivity binding was removed in
     # compute-fit-03; σ is now GreenKuboConductivity (raw current ACF) +
-    # RunningIntegral + the (1/(3·V·k_B·T))·∫⟨JJ⟩ MD→SI prefactor.
+    # CumulativeTrapezoid + the (1/(3·V·k_B·T))·∫⟨JJ⟩ MD→SI prefactor.
     n, dt, mct, volume, temperature = 256, 0.5, 80, 1000.0, 300.0
     current = _rng_series(n, 3, 19)
 
     raw = molrs.GreenKuboConductivity().compute(current, dt, mct)
-    integ = molrs.RunningIntegral().fit(raw["jacf"], dt)
+    integ = molrs.CumulativeTrapezoid().fit(raw["jacf"], dt)
 
-    # Manual cumulative trapezoid reproduces the RunningIntegral endpoint.
+    # Manual cumulative trapezoid reproduces the CumulativeTrapezoid endpoint.
     manual = float(np.trapezoid(raw["jacf"], dx=dt))
     assert integ["integral"][-1] == pytest.approx(manual, rel=1e-9)
 
@@ -229,10 +229,10 @@ def test_raman_spectrum_averaged_emits_polarizations():
 # ── edge cases ───────────────────────────────────────────────────────────────
 
 
-def test_running_integral_overlong_request_errors():
+def test_cumulative_trapezoid_overlong_request_errors():
     y = np.array([1.0, 2.0, 3.0])
     with pytest.raises(ValueError):
-        molrs.RunningIntegral().fit(y, 1.0, 10)
+        molrs.CumulativeTrapezoid().fit(y, 1.0, 10)
 
 
 def test_linear_fit_degenerate_window_errors():

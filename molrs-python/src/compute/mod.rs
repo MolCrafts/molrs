@@ -1034,5 +1034,5 @@ impl PyKMeans {
 pub mod analysis;
 pub mod dielectric;
 pub mod extra;
-pub mod fit;
+pub mod fitting;
 pub mod transport;

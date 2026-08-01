@@ -261,8 +261,8 @@ Electrolyte transport kernels (ports of the *tame* recipes). See the
 [Transport Kernels](../guides/transport.md) guide for signatures, units, and
 worked examples.
 
-### `molrs.transport`
+### `molrs.compute.transport`
 
-::: molrs.transport.Onsager
+::: molrs.compute.transport.Onsager
 
-::: molrs.transport.Persist
+::: molrs.compute.transport.Persist

@@ -1,9 +1,9 @@
-//! [`RunningIntegral`] — cumulative trapezoidal integral of a curve.
+//! [`CumulativeTrapezoid`] — cumulative trapezoidal integral of a curve.
 //!
 //! Consumes a curve `y` sampled on uniform step `dt` and returns the running
 //! integral `∫₀^{k·dt} y(t) dt` at every point. The trapezoid recurrence is the
 //! same one lifted into `running_trapezoid` from
-//! the Green–Kubo ionic conductivity, so a `RunningIntegral` over the same JACF
+//! the Green–Kubo ionic conductivity, so a `CumulativeTrapezoid` over the same JACF
 //! and `dt` reproduces that function's running integral bit-for-bit (before the
 //! Green–Kubo prefactor).
 
@@ -16,29 +16,29 @@ use crate::compute::traits::Fit;
 
 /// Result of a running trapezoidal integration.
 #[derive(Debug, Clone)]
-pub struct RunningIntegralResult {
+pub struct CumulativeTrapezoidResult {
     /// Cumulative integral: `integral[k] = ∫₀^{k·dt} y(t) dt`, length
     /// `y.len()`. `integral[0] = 0`. Units: `[y]·[dt]`.
     pub integral: Array1<f64>,
 }
 
-impl ComputeResult for RunningIntegralResult {}
+impl ComputeResult for CumulativeTrapezoidResult {}
 
 /// Cumulative trapezoidal integral of a uniformly-sampled curve.
 ///
 /// Stateless: the step `dt` and the optional lag count travel with the input,
 /// not the struct, since they are properties of the upstream curve / request.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct RunningIntegral;
+pub struct CumulativeTrapezoid;
 
-impl Fit for RunningIntegral {
+impl Fit for CumulativeTrapezoid {
     /// `(y, dt, n_lags)` — the curve, its uniform sample step (> 0), and an
     /// optional number of leading samples to integrate. `None` integrates the
     /// whole curve; `Some(m)` integrates the first `m` samples and **errors if
     /// `m` exceeds the curve length** (invariant (a): never silently truncate
     /// a too-short raw curve to satisfy a longer request).
     type Input<'a> = (&'a Array1<f64>, f64, Option<usize>);
-    type Output = RunningIntegralResult;
+    type Output = CumulativeTrapezoidResult;
 
     /// Integrate `y` cumulatively with the trapezoid rule.
     ///
@@ -73,7 +73,7 @@ impl Fit for RunningIntegral {
             got: "non-contiguous".into(),
         })?;
         let integral = Array1::from_vec(running_trapezoid(&ys[..take], dt));
-        Ok(RunningIntegralResult { integral })
+        Ok(CumulativeTrapezoidResult { integral })
     }
 }
 
@@ -87,7 +87,7 @@ mod tests {
         let c = 3.0;
         let dt = 0.25;
         let y = Array1::from_vec(vec![c; 8]);
-        let res = RunningIntegral.fit((&y, dt, None)).unwrap();
+        let res = CumulativeTrapezoid.fit((&y, dt, None)).unwrap();
         for k in 0..8 {
             let expected = c * k as f64 * dt;
             assert!(
@@ -103,7 +103,7 @@ mod tests {
         // y = t on [0, 4] step 1 -> ∫₀^T t dt = T²/2 by trapezoid (exact for
         // linear integrand).
         let y = Array1::from_vec(vec![0.0, 1.0, 2.0, 3.0, 4.0]);
-        let res = RunningIntegral.fit((&y, 1.0, None)).unwrap();
+        let res = CumulativeTrapezoid.fit((&y, 1.0, None)).unwrap();
         for k in 0..5 {
             let expected = (k as f64) * (k as f64) / 2.0;
             assert!((res.integral[k] - expected).abs() < 1e-12);
@@ -116,7 +116,7 @@ mod tests {
         // the Green–Kubo conductivity running integral on the same JACF + dt.
         let jacf = Array1::from_vec(vec![1.0, 0.8, 0.5, 0.2, 0.05]);
         let dt = 0.5;
-        let res = RunningIntegral.fit((&jacf, dt, None)).unwrap();
+        let res = CumulativeTrapezoid.fit((&jacf, dt, None)).unwrap();
         // Inline jacf.rs recurrence.
         let mut expected = vec![0.0; jacf.len()];
         let mut integral = 0.0;
@@ -132,7 +132,7 @@ mod tests {
     #[test]
     fn n_lags_subset_integrates_only_prefix() {
         let y = Array1::from_vec(vec![1.0; 10]);
-        let res = RunningIntegral.fit((&y, 1.0, Some(4))).unwrap();
+        let res = CumulativeTrapezoid.fit((&y, 1.0, Some(4))).unwrap();
         assert_eq!(res.integral.len(), 4);
     }
 
@@ -141,7 +141,7 @@ mod tests {
         // ac-014: requested lag range exceeds the raw curve -> OutOfRange.
         let y = Array1::from_vec(vec![1.0, 2.0, 3.0]);
         assert!(matches!(
-            RunningIntegral.fit((&y, 1.0, Some(10))),
+            CumulativeTrapezoid.fit((&y, 1.0, Some(10))),
             Err(ComputeError::OutOfRange { .. })
         ));
     }
@@ -150,7 +150,7 @@ mod tests {
     fn empty_curve_errors() {
         let y: Array1<f64> = Array1::from_vec(vec![]);
         assert!(matches!(
-            RunningIntegral.fit((&y, 1.0, None)),
+            CumulativeTrapezoid.fit((&y, 1.0, None)),
             Err(ComputeError::EmptyInput)
         ));
     }
@@ -159,7 +159,7 @@ mod tests {
     fn zero_lags_errors() {
         let y = Array1::from_vec(vec![1.0, 2.0]);
         assert!(matches!(
-            RunningIntegral.fit((&y, 1.0, Some(0))),
+            CumulativeTrapezoid.fit((&y, 1.0, Some(0))),
             Err(ComputeError::EmptyInput)
         ));
     }
@@ -168,7 +168,7 @@ mod tests {
     fn nonpositive_dt_errors() {
         let y = Array1::from_vec(vec![1.0, 2.0]);
         assert!(matches!(
-            RunningIntegral.fit((&y, 0.0, None)),
+            CumulativeTrapezoid.fit((&y, 0.0, None)),
             Err(ComputeError::OutOfRange { .. })
         ));
     }

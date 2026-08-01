@@ -12,7 +12,7 @@
 //! | Fit | Input | Output | Lifted from |
 //! |-----|-------|--------|-------------|
 //! | [`LinearFit`] | `(x, y)` curve | [`LinearFitResult`] (slope/intercept/r²) | Einstein–Helfand conductivity OLS |
-//! | [`RunningIntegral`] | curve + dt | [`RunningIntegralResult`] (cumulative trapezoid) | Green–Kubo conductivity trapezoid |
+//! | [`CumulativeTrapezoid`] | curve + dt | [`CumulativeTrapezoidResult`] (cumulative trapezoid) | Green–Kubo conductivity trapezoid |
 //! | [`Plateau`] | curve | [`PlateauResult`] (windowed mean/std) | new |
 //! | [`DebyeFit`] | normalized Φ(t) + dt | [`DebyeFitResult`] (τ, amplitude) | molpy ad-hoc DebyeFit |
 //!
@@ -31,15 +31,13 @@
 //!   `1/n_pad` and emits cm⁻¹ frequencies; the dielectric path scales by `·dt`
 //!   and emits a `(freq_rad, re, im)` triple.
 
-pub mod debye_fit;
+pub mod cumulative_trapezoid;
 pub mod linear_fit;
 pub mod plateau;
-pub mod running_integral;
 
-pub use debye_fit::{DebyeFit, DebyeFitResult};
+pub use cumulative_trapezoid::{CumulativeTrapezoid, CumulativeTrapezoidResult};
 pub use linear_fit::{LinearFit, LinearFitResult};
 pub use plateau::{Plateau, PlateauResult};
-pub use running_integral::{RunningIntegral, RunningIntegralResult};
 
 use rustfft::FftPlanner;
 use rustfft::num_complex::Complex64;

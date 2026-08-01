@@ -25,7 +25,7 @@ impl ComputeResult for GreenKuboConductivityResult {}
 /// Raw current-ACF compute. Lifts the unbiased windowed-ACF loop from
 /// the Green–Kubo conductivity and stops there (no trapezoid, no σ). The
 /// σ = (1/(3·V·k_B·T))·∫⟨JJ⟩ step is a downstream
-/// [`RunningIntegral`](crate::compute::fit::RunningIntegral) + scale.
+/// [`CumulativeTrapezoid`](crate::compute::fitting::CumulativeTrapezoid) + scale.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct GreenKuboConductivity;
 
@@ -142,11 +142,11 @@ mod tests {
     }
 
     #[test]
-    fn green_kubo_raw_plus_running_integral_matches_manual_trapezoid() {
-        // ac-015: RunningIntegral on GreenKuboConductivity.jacf reproduces a manual
+    fn green_kubo_raw_plus_cumulative_trapezoid_matches_manual_trapezoid() {
+        // ac-015: CumulativeTrapezoid on GreenKuboConductivity.jacf reproduces a manual
         // trapezoidal integral, and σ = prefactor·∫/(V·k_B·T) is well-defined
         // (replaces the removed bundled Green–Kubo conductivity).
-        use crate::compute::fit::RunningIntegral;
+        use crate::compute::fitting::CumulativeTrapezoid;
         use crate::compute::traits::Fit;
         use molrs::units::constants::{
             ANGSTROM_M, BOLTZMANN as K_B_SI, ELEMENTARY_CHARGE as E_C, PICOSECOND_S,
@@ -161,7 +161,7 @@ mod tests {
         let raw = GreenKuboConductivity
             .compute(&no_frames(), (&current, dt, mct))
             .unwrap();
-        let integ = RunningIntegral.fit((&raw.jacf, dt, None)).unwrap();
+        let integ = CumulativeTrapezoid.fit((&raw.jacf, dt, None)).unwrap();
 
         // Manual cumulative trapezoid of the JACF.
         let mut manual = 0.0;

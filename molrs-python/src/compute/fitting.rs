@@ -1,5 +1,5 @@
 //! Python bindings for the phase-01 raw-compute + explicit-fit split
-//! (`molrs::compute::fit`).
+//! (`molrs::compute::fitting`).
 //!
 //! This module exposes, as top-level `molrs` classes:
 //!
@@ -9,7 +9,7 @@
 //!   [`PyGreenKuboConductivity`], [`PyDebyeRelaxation`].
 //! * **Fits / transforms** — consume a raw curve and produce the derived
 //!   quantity (slope/integral/plateau/τ/spectrum): [`PyLinearFit`],
-//!   [`PyRunningIntegral`], [`PyPlateau`], [`PyDebyeFit`], [`PyPowerSpectrum`],
+//!   [`PyCumulativeTrapezoid`], [`PyPlateau`], [`PyDebyeFit`], [`PyPowerSpectrum`],
 //!   [`PyIRSpectrum`], [`PyRamanSpectrum`], [`PyEinsteinHelfandSpectrum`],
 //!   [`PyGreenKuboSpectrum`].
 //!
@@ -19,7 +19,8 @@
 //! analyst's explicit, parameterized choice — and a raw result can never
 //! silently fabricate a transport coefficient.
 
-use molrs::compute::fit::{DebyeFit, LinearFit, Plateau, RunningIntegral};
+use molrs::compute::fitting::{CumulativeTrapezoid, LinearFit, Plateau};
+use molrs::compute::transport::DebyeFit;
 use molrs::compute::spectroscopy::{
     EinsteinHelfandSpectrum, GreenKuboSpectrum, IRSpectrum, PowerSpectrum, RamanSpectrum,
     ResonanceRamanSpectrum, RoaSpectrum, VcdSpectrum,
@@ -49,7 +50,7 @@ const EMPTY_FRAMES: &[&CoreFrame] = &[];
 /// Raw unnormalized velocity autocorrelation function (the VDOS /
 /// Green–Kubo-diffusion input). Returns only the raw ACF curve — compose with
 /// [`PowerSpectrum`](PyPowerSpectrum) for VDOS or
-/// [`RunningIntegral`](PyRunningIntegral) for D.
+/// [`CumulativeTrapezoid`](PyCumulativeTrapezoid) for D.
 #[pyclass(module = "molrs", name = "VACF")]
 pub struct PyVACF;
 
@@ -86,7 +87,7 @@ impl PyVACF {
 
 /// Raw velocity ACF for the Green–Kubo diffusion route (same raw curve as
 /// [`VACF`](PyVACF)). `D = (1/d)·∫ VACF dt` is then a
-/// [`RunningIntegral`](PyRunningIntegral) + scale step.
+/// [`CumulativeTrapezoid`](PyCumulativeTrapezoid) + scale step.
 #[pyclass(module = "molrs", name = "GreenKuboDiffusion")]
 pub struct PyGreenKuboDiffusion;
 
@@ -195,7 +196,7 @@ impl PyEinsteinConductivity {
 /// Raw current autocorrelation function — the raw portion of the legacy
 /// `transport_green_kubo_conductivity`, with **no** fitted sigma. The
 /// σ = (1/(3·V·k_B·T))·∫⟨JJ⟩ step is a downstream
-/// [`RunningIntegral`](PyRunningIntegral) + scale.
+/// [`CumulativeTrapezoid`](PyCumulativeTrapezoid) + scale.
 #[pyclass(module = "molrs", name = "GreenKuboConductivity")]
 pub struct PyGreenKuboConductivity;
 
@@ -337,16 +338,16 @@ impl PyLinearFit {
     }
 }
 
-// ── RunningIntegral ──────────────────────────────────────────────────────────
+// ── CumulativeTrapezoid ──────────────────────────────────────────────────────────
 
 /// Cumulative trapezoidal integral of a uniformly-sampled curve. Reproduces the
 /// running integral inside the legacy `green_kubo_conductivity` bit-for-bit on
 /// the same curve + dt (before the Green–Kubo prefactor).
-#[pyclass(module = "molrs", name = "RunningIntegral")]
-pub struct PyRunningIntegral;
+#[pyclass(module = "molrs", name = "CumulativeTrapezoid")]
+pub struct PyCumulativeTrapezoid;
 
 #[pymethods]
-impl PyRunningIntegral {
+impl PyCumulativeTrapezoid {
     #[new]
     fn new() -> Self {
         Self
@@ -366,7 +367,7 @@ impl PyRunningIntegral {
         n_lags: Option<usize>,
     ) -> PyResult<Bound<'py, PyDict>> {
         let ya = y.as_array().to_owned();
-        let r = RunningIntegral
+        let r = CumulativeTrapezoid
             .fit((&ya, dt, n_lags))
             .map_err(py_value_err)?;
         let d = PyDict::new(py);
@@ -866,7 +867,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyDebyeRelaxation>()?;
     // Fits / transforms.
     m.add_class::<PyLinearFit>()?;
-    m.add_class::<PyRunningIntegral>()?;
+    m.add_class::<PyCumulativeTrapezoid>()?;
     m.add_class::<PyPlateau>()?;
     m.add_class::<PyDebyeFit>()?;
     m.add_class::<PyPowerSpectrum>()?;

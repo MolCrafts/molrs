@@ -14,7 +14,7 @@
 //! 1. [`GreenKuboConductivity`](crate::compute::GreenKuboConductivity) — the raw
 //!    current autocorrelation function `C(τ) = ⟨J(0)·J(τ)⟩` over all time origins
 //!    (no fitted σ).
-//! 2. [`RunningIntegral`](crate::compute::fit::RunningIntegral) — the cumulative
+//! 2. [`CumulativeTrapezoid`](crate::compute::fitting::CumulativeTrapezoid) — the cumulative
 //!    trapezoidal integral of that ACF, which the caller scales by the
 //!    `1/(3·V·k_B·T)` MD→SI prefactor to obtain σ(τ) and σ.
 //!
@@ -28,7 +28,7 @@
 //!
 //! The legacy bundled `JacfResult` + `green_kubo_conductivity` free function
 //! (which baked the trapezoid integral and σ/σ_running into the raw result) were
-//! removed in compute-fit-03-cleanup; the raw-ACF + `RunningIntegral`
+//! removed in compute-fit-03-cleanup; the raw-ACF + `CumulativeTrapezoid`
 //! composition above replaces them.
 //!
 //! # Units

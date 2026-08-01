@@ -9,7 +9,7 @@ use crate::compute::traits::Compute;
 /// Raw velocity ACF for the Green–Kubo diffusion route — the same raw curve as
 /// [`VACF`](super::VACF), named for the diffusion workflow.
 /// `D = (1/d)·∫ VACF dt` is then a
-/// [`RunningIntegral`](crate::compute::fit::RunningIntegral) + scale step.
+/// [`CumulativeTrapezoid`](crate::compute::fitting::CumulativeTrapezoid) + scale step.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct GreenKuboDiffusion;
 

@@ -53,7 +53,7 @@
 //! | [`msd`] | mean squared displacement (+ streaming [`MSDAccumulator`]) |
 //! | [`transport`] | VACF (+ streaming [`VACFAccumulator`]), Einstein/Green–Kubo diffusion & conductivity, Debye relaxation, Onsager |
 //! | [`spectroscopy`] | IR / Raman / VCD / ROA / resonance-Raman raw correlators + spectral transforms, dielectric spectra |
-//! | [`fit`] | generic curve fits: [`LinearFit`], [`RunningIntegral`], [`Plateau`], [`DebyeFit`] |
+//! | [`fitting`] | generic curve fits: [`LinearFit`], [`CumulativeTrapezoid`], [`Plateau`], [`DebyeFit`] |
 //! | [`dynamics`] | van Hove G(r, t), pair persistence |
 //! | [`dielectric`] | static dielectric constant from dipole fluctuations |
 //! | [`cluster`] | connected-component clustering + per-cluster properties |
@@ -76,7 +76,7 @@ pub mod distribution;
 pub mod dynamics;
 pub mod environment;
 pub mod error;
-pub mod fit;
+pub mod fitting;
 pub mod hbond;
 pub mod ml;
 pub mod msd;
@@ -91,7 +91,6 @@ pub(crate) mod test_support;
 pub mod traits;
 pub mod transport;
 pub mod util;
-pub mod validate;
 #[cfg(feature = "voronoi")]
 pub mod voronoi;
 
@@ -119,9 +118,9 @@ pub use environment::{
     LocalBondProjectionResult, LocalDescriptors, LocalDescriptorsResult, MatchEnv, MatchEnvResult,
 };
 pub use error::ComputeError;
-pub use fit::{
-    DebyeFit, DebyeFitResult, LinearFit, LinearFitResult, Plateau, PlateauResult, RunningIntegral,
-    RunningIntegralResult,
+pub use fitting::{
+    CumulativeTrapezoid, CumulativeTrapezoidResult, LinearFit, LinearFitResult, Plateau,
+    PlateauResult,
 };
 pub use hbond::{
     DistKind, HBond, HBondCriterion, HBonds, HBondsResult, LifetimeResult, NetworkResult,
@@ -146,17 +145,18 @@ pub use shape::{
     GyrationTensorResult, InertiaTensor, InertiaTensorResult, RadiusOfGyration, RgResult,
 };
 pub use spectroscopy::{
-    DielectricSpectrumResult, EinsteinHelfandSpectrum, GreenKuboSpectrum, IRFlux, IRFluxResult,
-    IRSpectrum, PowerSpectrum, RamanSpectrum, RamanSpectrumResult, RamanTensor, RamanTensorResult,
-    ResonanceRamanSpectrum, ResonanceRamanTensor, RoaCrossResult, RoaCrossTensor, RoaSpectrum,
-    SpectrumResult, VcdCrossFlux, VcdCrossResult, VcdSpectrum,
+    ConductivitySumRule, DielectricSpectrumResult, EinsteinHelfandSpectrum, GreenKuboSpectrum,
+    IRFlux, IRFluxResult, IRSpectrum, KramersKronig, KramersKronigCheck, PowerSpectrum,
+    RamanSpectrum, RamanSpectrumResult, RamanTensor, RamanTensorResult, ResonanceRamanSpectrum,
+    ResonanceRamanTensor, RoaCrossResult, RoaCrossTensor, RoaSpectrum, RouteAgreement,
+    RouteAgreementCheck, SpectrumResult, SumRuleCheck, VcdCrossFlux, VcdCrossResult, VcdSpectrum,
 };
-pub use traits::{Compute, Fit};
+pub use traits::{Check, Compute, Fit, Verdict};
 pub use transport::{
-    DebyeRelaxation, DebyeRelaxationResult, EinsteinConductivity, EinsteinConductivityResult,
-    EinsteinDiffusion, EinsteinDiffusionArgs, EwaldBoundary, GreenKuboConductivity,
-    GreenKuboConductivityResult, GreenKuboDiffusion, OnsagerCorrelation, OnsagerResult, VACF,
-    VACFAccumulator, VacfResult,
+    DebyeFit, DebyeFitResult, DebyeRelaxation, DebyeRelaxationResult, EinsteinConductivity,
+    EinsteinConductivityResult, EinsteinDiffusion, EinsteinDiffusionArgs, EwaldBoundary,
+    GreenKuboConductivity, GreenKuboConductivityResult, GreenKuboDiffusion, OnsagerCorrelation,
+    OnsagerResult, VACF, VACFAccumulator, VacfResult,
 };
 #[cfg(feature = "voronoi")]
 pub use voronoi::{

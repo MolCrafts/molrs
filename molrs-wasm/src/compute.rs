@@ -2533,7 +2533,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             "fit.running_integral",
             "fit",
             "Running integral",
-            "WasmRunningIntegral",
+            "WasmCumulativeTrapezoid",
             "series",
             "lineSeries",
             &["series"],
@@ -3767,14 +3767,14 @@ impl WasmLinearFit {
     }
 }
 
-#[wasm_bindgen(js_name = WasmRunningIntegral)]
-pub struct WasmRunningIntegral {
+#[wasm_bindgen(js_name = WasmCumulativeTrapezoid)]
+pub struct WasmCumulativeTrapezoid {
     dt: F,
     n_lags: Option<usize>,
 }
 
-#[wasm_bindgen(js_class = WasmRunningIntegral)]
-impl WasmRunningIntegral {
+#[wasm_bindgen(js_class = WasmCumulativeTrapezoid)]
+impl WasmCumulativeTrapezoid {
     #[wasm_bindgen(constructor)]
     pub fn new(dt: F, n_lags: Option<usize>) -> Self {
         Self { dt, n_lags }
@@ -3784,9 +3784,9 @@ impl WasmRunningIntegral {
         let dt = self.dt;
         let n_lags = self.n_lags;
         let y = array1(y);
-        let r = molrs::compute::RunningIntegral
+        let r = molrs::compute::CumulativeTrapezoid
             .fit((&y, dt, n_lags))
-            .map_err(|e| JsValue::from_str(&format!("RunningIntegral: {e}")))?;
+            .map_err(|e| JsValue::from_str(&format!("CumulativeTrapezoid: {e}")))?;
         Ok(JsFloatArray::from(r.integral.as_slice().unwrap()))
     }
 }

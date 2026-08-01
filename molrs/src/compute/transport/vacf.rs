@@ -4,7 +4,7 @@
 //! [`VACF`] returns **only** the raw, unnormalized velocity ACF (no windowing,
 //! no integrated D): the fit step is the analyst's explicit choice of
 //! [`PowerSpectrum`](crate::compute::spectroscopy::PowerSpectrum) (VDOS) or
-//! [`RunningIntegral`](crate::compute::fit::RunningIntegral) (D).
+//! [`CumulativeTrapezoid`](crate::compute::fitting::CumulativeTrapezoid) (D).
 
 use molrs::store::frame_access::FrameAccess;
 use ndarray::{Array1, Array2};

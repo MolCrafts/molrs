@@ -69,7 +69,7 @@ fn validate_series(p: &ndarray::Array2<f64>, name: &'static str) -> Result<usize
 /// Computes the windowed (all-time-origins) cross-correlation of two species'
 /// **collective** displacements — a pure raw observable, with the long-time
 /// linear fit `L_ij(τ) ≈ 2·d·D_ij·τ` left to the caller
-/// ([`LinearFit`](crate::compute::fit::LinearFit)). The collective-coordinate
+/// ([`LinearFit`](crate::compute::fitting::LinearFit)). The collective-coordinate
 /// reduction `P_s = Σ_a r_a` and periodic-image unwrapping are the caller's job.
 ///
 /// For each lag `τ ∈ [0, max_lag]`,

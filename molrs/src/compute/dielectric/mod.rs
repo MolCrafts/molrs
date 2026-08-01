@@ -49,7 +49,7 @@ use crate::compute::error::ComputeError;
 use molrs::units::constants::COULOMB_REAL as KAPPA;
 
 /// Boltzmann constant in kcal/(mol·K) — MD "real" units. Shared with the
-/// spectral validation checks ([`crate::compute::validate`]) so there is one value.
+/// spectral validation checks ([`crate::compute::spectroscopy`]) so there is one value.
 pub use molrs::units::constants::BOLTZMANN_REAL as K_B;
 
 const FOUR_PI_OVER_3: f64 = 4.1887902047863905; // 4π/3
@@ -385,7 +385,7 @@ pub fn decompose_current(
 
 // The Einstein–Helfand ionic conductivity is now the explicit composition of
 // the raw [`EinsteinConductivity`](crate::compute::EinsteinConductivity) collective-dipole
-// MSD compute with the [`LinearFit`](crate::compute::fit::LinearFit) slope and a
+// MSD compute with the [`LinearFit`](crate::compute::fitting::LinearFit) slope and a
 // caller-applied `slope / (6·V·k_B·T)` MD→SI prefactor. The legacy bundled
 // `ConductivityResult` + `einstein_helfand_conductivity` free function (which
 // baked the OLS slope and σ into the raw result) were removed in

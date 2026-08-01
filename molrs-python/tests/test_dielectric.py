@@ -1,4 +1,4 @@
-"""Integration tests for molrs.dielectric module."""
+"""Integration tests for molrs.compute.dielectric module."""
 
 import numpy as np
 import pytest
@@ -6,12 +6,12 @@ import pytest
 
 class TestDipoleMoment:
     def test_import(self):
-        from molrs.dielectric import Dielectric
+        from molrs.compute.dielectric import Dielectric
 
         assert callable(Dielectric.compute_dipole_moment)
 
     def test_two_charges(self):
-        from molrs.dielectric import Dielectric
+        from molrs.compute.dielectric import Dielectric
 
         charges = np.array([1.0, -1.0])
         positions = np.array([[2.0, 0.0, 0.0], [0.0, 0.0, 0.0]])
@@ -21,7 +21,7 @@ class TestDipoleMoment:
         assert np.allclose(m[1], 0.0, atol=1e-10)
 
     def test_wrong_shape_raises(self):
-        from molrs.dielectric import Dielectric
+        from molrs.compute.dielectric import Dielectric
 
         charges = np.array([1.0, 2.0])
         positions = np.zeros((3, 3))
@@ -31,12 +31,12 @@ class TestDipoleMoment:
 
 class TestCurrentDensity:
     def test_import(self):
-        from molrs.dielectric import Dielectric
+        from molrs.compute.dielectric import Dielectric
 
         assert callable(Dielectric.compute_current_density)
 
     def test_linear(self):
-        from molrs.dielectric import Dielectric
+        from molrs.compute.dielectric import Dielectric
 
         dm = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]])
         j = Dielectric.compute_current_density(dm, dt=1.0, volume=1.0)
@@ -48,7 +48,7 @@ class TestCurrentDensity:
 
 class TestStaticDielectric:
     def test_zero_fluctuation(self):
-        from molrs.dielectric import Dielectric
+        from molrs.compute.dielectric import Dielectric
 
         dm = np.zeros((10, 3))
         eps = Dielectric.static_dielectric_constant(
@@ -99,7 +99,7 @@ class TestGKSpectrum:
 
 class TestDecomposeCurrent:
     def test_conservation(self):
-        from molrs.dielectric import Dielectric
+        from molrs.compute.dielectric import Dielectric
 
         current = np.zeros((4, 5, 3))
         for p in range(4):
@@ -116,7 +116,7 @@ class TestDecomposeCurrent:
 
 class TestImmutability:
     def test_all_functions_immutable(self):
-        from molrs.dielectric import Dielectric
+        from molrs.compute.dielectric import Dielectric
 
         charges = np.array([1.0, -1.0])
         positions = np.array([[2.0, 0.0, 0.0], [0.0, 0.0, 0.0]])
