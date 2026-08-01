@@ -7,7 +7,10 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyAnyMethods, PyDict, PyDictMethods};
 
-use molrs::compute::check;
+use molrs::compute::check::{ConductivitySumRule, KramersKronig, RouteAgreement};
+use molrs::compute::traits::Check;
+
+use crate::helpers::py_value_err;
 
 #[pyfunction]
 pub(crate) fn check_kramers_kronig<'py>(
@@ -17,13 +20,13 @@ pub(crate) fn check_kramers_kronig<'py>(
     eps_imag: PyReadonlyArray1<'py, f64>,
     eps_inf: f64,
 ) -> PyResult<Py<PyAny>> {
-    let out = check::kramers_kronig_check(
-        &frequency.as_array().to_owned(),
-        &eps_real.as_array().to_owned(),
-        &eps_imag.as_array().to_owned(),
-        eps_inf,
-    )
-    .map_err(PyValueError::new_err)?;
+    let out = KramersKronig { eps_inf }
+        .check((
+            &frequency.as_array().to_owned(),
+            &eps_real.as_array().to_owned(),
+            &eps_imag.as_array().to_owned(),
+        ))
+        .map_err(py_value_err)?;
 
     let dict = PyDict::new(py);
     dict.set_item("passed", out.passed)?;
@@ -41,14 +44,16 @@ pub(crate) fn check_conductivity_sum_rule<'py>(
     volume: f64,
     temperature: f64,
 ) -> PyResult<Py<PyAny>> {
-    let out = check::conductivity_sum_rule_check(
-        &frequency.as_array().to_owned(),
-        &conductivity.as_array().to_owned(),
+    let out = ConductivitySumRule {
         current_sq_mean,
         volume,
         temperature,
-    )
-    .map_err(PyValueError::new_err)?;
+    }
+    .check((
+        &frequency.as_array().to_owned(),
+        &conductivity.as_array().to_owned(),
+    ))
+    .map_err(py_value_err)?;
 
     let dict = PyDict::new(py);
     dict.set_item("passed", out.passed)?;
@@ -68,13 +73,13 @@ pub(crate) fn check_route_agreement<'py>(
         let name: String = key.extract()?;
         let arr: PyReadonlyArray1<f64> = value.extract().map_err(|_| {
             PyValueError::new_err(format!(
-                "route_agreement_check: value for '{name}' must be a 1-D float64 array"
+                "route_agreement: value for '{name}' must be a 1-D float64 array"
             ))
         })?;
         entries.push((name, arr.as_array().to_owned()));
     }
 
-    let out = check::route_agreement_check(&entries).map_err(PyValueError::new_err)?;
+    let out = RouteAgreement.check(&entries).map_err(py_value_err)?;
 
     let pairwise = PyDict::new(py);
     for (label, rms) in &out.pairwise {

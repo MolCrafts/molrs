@@ -124,6 +124,65 @@ pub trait Fit {
     fn fit<'a>(&self, input: Self::Input<'a>) -> Result<Self::Output, ComputeError>;
 }
 
+/// The conclusion of a [`Check`], alongside the diagnostics that produced it.
+///
+/// Every check output must be able to answer "did it pass" without the caller
+/// knowing which check ran. The diagnostics (residual, integral vs expected,
+/// per-pair RMS, …) stay on the concrete type.
+pub trait Verdict {
+    /// Whether the data satisfied the criterion.
+    fn passed(&self) -> bool;
+}
+
+/// Judge an **upstream result** against physics and return a verdict.
+///
+/// The third stage after [`Compute`] (frames → raw observable) and [`Fit`]
+/// (raw observable → derived quantity). A `Check` consumes what those produce
+/// — a spectrum, a set of route results — and reports whether it is
+/// physically self-consistent.
+///
+/// # A failed check is `Ok`, never `Err`
+///
+/// This is the whole reason `Check` is not just another [`Fit`]: the two have
+/// the same *shape* but opposite error semantics.
+///
+/// - `Err(ComputeError)` — the check **could not be evaluated**: mismatched
+///   array lengths, too few frequency points, a non-positive volume.
+/// - `Ok(v)` with `v.passed() == false` — the check **ran** and the data is
+///   inconsistent. That is a successful measurement of a negative result.
+///
+/// Collapsing the two makes "the check crashed" indistinguishable from "the
+/// physics is wrong", which is precisely the answer the caller wanted. A
+/// `Fit` that hits a degenerate window returns `Err` because there is no
+/// answer; a `Check` that finds a violated sum rule has *the* answer.
+///
+/// # Examples
+///
+/// ```
+/// use molrs::compute::{Check, Verdict, check::ConductivitySumRule};
+/// use ndarray::Array1;
+///
+/// let omega = Array1::from_vec(vec![0.0, 1.0, 2.0]);
+/// let sigma = Array1::from_vec(vec![1.0, 1.0, 1.0]);
+/// let rule = ConductivitySumRule { current_sq_mean: 1.0, volume: 1.0, temperature: 300.0 };
+///
+/// // Runs fine, and reports a verdict — pass or fail is data, not an error.
+/// let v = rule.check((&omega, &sigma)).unwrap();
+/// let _: bool = v.passed();
+/// ```
+pub trait Check {
+    /// Upstream input — a computed curve or a set of named results, borrowed
+    /// for `'a`. Never frames.
+    type Input<'a>;
+
+    /// The verdict, carrying both the conclusion and its diagnostics.
+    type Output: Verdict + ComputeResult + Clone + Send + Sync + 'static;
+
+    /// Evaluate the criterion. `Err` only when the criterion **cannot be
+    /// evaluated** — never to report that it was not satisfied.
+    fn check<'a>(&self, input: Self::Input<'a>) -> Result<Self::Output, ComputeError>;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

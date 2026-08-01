@@ -97,6 +97,10 @@ pub mod util;
 pub mod voronoi;
 
 // Re-exports
+pub use check::{
+    ConductivitySumRule, KramersKronig, KramersKronigCheck, RouteAgreement, RouteAgreementCheck,
+    SumRuleCheck,
+};
 pub use cluster::{Cluster, ClusterProperties, ClusterPropertiesResult, ClusterResult};
 pub use density::{
     CorrelationFunction, CorrelationFunctionResult, GaussianDensity, GaussianDensityResult,
@@ -152,7 +156,7 @@ pub use spectroscopy::{
     ResonanceRamanSpectrum, ResonanceRamanTensor, RoaCrossResult, RoaCrossTensor, RoaSpectrum,
     SpectrumResult, VcdCrossFlux, VcdCrossResult, VcdSpectrum,
 };
-pub use traits::{Compute, Fit};
+pub use traits::{Check, Compute, Fit, Verdict};
 pub use transport::{
     DebyeRelaxation, DebyeRelaxationResult, EinsteinConductivity, EinsteinConductivityResult,
     EinsteinDiffusion, EinsteinDiffusionArgs, EwaldBoundary, GreenKuboConductivity,
