@@ -17,7 +17,7 @@
 //! - Optional 4D dynamics (W coordinate)
 //! - Fixed-atom subsets (frame 0 carries full coords; later frames only
 //!   the free atoms)
-//! - O(1) random access via `TrajReader::read_step` (frame size is
+//! - O(1) random access via `TrajectoryReader::read_step` (frame size is
 //!   constant, no scan needed)
 //! - Writer (NAMD-style: little-endian, 4-byte markers, cosine angles,
 //!   no fixed atoms, no 4D)
@@ -26,13 +26,13 @@
 //!
 //! ```no_run
 //! use molrs::io::trajectory::dcd::{read_dcd, open_dcd, write_dcd};
-//! use molrs::io::reader::TrajReader;
+//! use molrs::io::reader::TrajectoryReader;
 //!
 //! # fn main() -> std::io::Result<()> {
 //! // Read all frames
 //! let frames = read_dcd("trajectory.dcd")?;
 //!
-//! // Random access via TrajReader
+//! // Random access via TrajectoryReader
 //! let mut reader = open_dcd("trajectory.dcd")?;
 //! let frame_5 = reader.read_step(5)?;
 //!
@@ -42,13 +42,13 @@
 //! # }
 //! ```
 
-use crate::io::reader::{FrameReader, ReadSeek, Reader, TrajReader};
+use crate::io::reader::{FrameReader, ReadSeek, Reader, TrajectoryReader};
 use crate::io::writer::{FrameWriter, Writer};
 use molrs::spatial::simbox::SimBox;
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
 use molrs::store::frame_access::FrameAccess;
-use molrs::types::{F, I, Pbc3};
+use molrs::types::{F, Pbc3, U};
 use ndarray::{Array1, Array2, IxDyn, array};
 use once_cell::sync::OnceCell;
 use std::fs::File;
@@ -803,7 +803,7 @@ fn parse_frame_at<R: BufRead + Seek>(
 
     let mut atoms = Block::new();
 
-    let id_arr = Array1::from_iter(1..=natoms as I)
+    let id_arr = Array1::from_iter(1..=natoms as U)
         .into_shape_with_order(IxDyn(&[natoms]))
         .map_err(err_mapper)?;
     atoms.insert("id", id_arr).map_err(err_mapper)?;
@@ -867,7 +867,7 @@ fn parse_frame_at<R: BufRead + Seek>(
 // Reader
 // ============================================================================
 
-/// DCD trajectory reader implementing `TrajReader` for random access.
+/// DCD trajectory reader implementing `TrajectoryReader` for random access.
 ///
 /// Header parsing is lazy — performed on the first call to a method that
 /// needs it. This keeps `Reader::new` infallible.
@@ -907,7 +907,6 @@ impl<R: BufRead + Seek> DcdReader<R> {
 
 impl<R: BufRead + Seek> Reader for DcdReader<R> {
     type R = R;
-    type Frame = Frame;
 
     fn new(reader: Self::R) -> Self {
         Self::new(reader)
@@ -915,7 +914,7 @@ impl<R: BufRead + Seek> Reader for DcdReader<R> {
 }
 
 impl<R: BufRead + Seek> FrameReader for DcdReader<R> {
-    fn read_frame(&mut self) -> std::io::Result<Option<Self::Frame>> {
+    fn read(&mut self) -> std::io::Result<Option<Frame>> {
         self.ensure_header()?;
         let cursor = self.cursor;
         let header = self.header.get().expect("header set");
@@ -927,16 +926,18 @@ impl<R: BufRead + Seek> FrameReader for DcdReader<R> {
         if frame.is_some() {
             self.cursor += 1;
         }
-        Ok(frame)
+        // Validate on the way out: a frame that violates the vocabulary is a
+        // malformed file or a reader bug, not a result to return.
+        crate::io::reader::validated(frame)
     }
 }
 
-impl<R: BufRead + Seek> TrajReader for DcdReader<R> {
+impl<R: BufRead + Seek> TrajectoryReader for DcdReader<R> {
     fn build_index(&mut self) -> std::io::Result<()> {
         self.ensure_header()
     }
 
-    fn read_step(&mut self, step: usize) -> std::io::Result<Option<Self::Frame>> {
+    fn read_step(&mut self, step: usize) -> std::io::Result<Option<Frame>> {
         self.ensure_header()?;
         let header = self.header.get().expect("header set").clone();
         parse_frame_at(&mut self.reader, &header, step)
@@ -990,7 +991,6 @@ impl<W: Write + Seek> DcdWriter<W> {
 
 impl<W: Write + Seek> Writer for DcdWriter<W> {
     type W = W;
-    type FrameLike = Frame;
 
     fn new(writer: Self::W) -> Self {
         Self::new(writer)
@@ -998,7 +998,10 @@ impl<W: Write + Seek> Writer for DcdWriter<W> {
 }
 
 impl<W: Write + Seek> FrameWriter for DcdWriter<W> {
-    fn write_frame(&mut self, frame: &Frame) -> std::io::Result<()> {
+    fn write(&mut self, frame: &Frame) -> std::io::Result<()> {
+        // Refuse to emit a frame that violates the vocabulary: a bad file
+        // looks fine and is found wrong later, by whatever reads it.
+        crate::io::writer::check_before_write(frame)?;
         write_dcd_frame(self, frame)
     }
 }
@@ -1207,12 +1210,12 @@ fn write_frame_payload<W: Write>(
 
 /// Read every frame of a DCD file into memory.
 ///
-/// For large trajectories prefer [`open_dcd`] with [`TrajReader::read_step`]
+/// For large trajectories prefer [`open_dcd`] with [`TrajectoryReader::read_step`]
 /// for random access without loading all frames at once.
 pub fn read_dcd<P: AsRef<Path>>(path: P) -> std::io::Result<Vec<Frame>> {
     let reader = crate::io::reader::open_seekable(path)?;
     let mut dcd_reader = DcdReader::new(reader);
-    dcd_reader.read_all()
+    crate::io::reader::collect_frames(&mut dcd_reader)
 }
 
 /// Open a DCD file for trajectory-style random access.

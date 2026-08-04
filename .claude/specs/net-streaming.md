@@ -1,7 +1,8 @@
 ---
 title: net-streaming — WebSocket Frame streaming + bidirectional control for molrs
-status: approved
+status: done
 created: 2026-07-06
+closed: 2026-08-04
 ---
 
 # net-streaming — WebSocket Frame streaming + bidirectional control
@@ -15,8 +16,8 @@ created: 2026-07-06
 > the `WireFrame`/`Column::raw_bytes()` design sketched below. The **WebSocket
 > networking + bidirectional-control layer** (the `net` feature: tokio runtime,
 > `FrameServer`, `ControlCommand`, crossbeam bridge — acceptance ac-003…ac-009)
-> is **deferred to a later release**; the design below is retained as its
-> reference. Acceptance criteria track the deferred networking work.
+> **shipped** under feature `net` (2026-08-04). Wire encoding reuses `stream`;
+> `FrameServer` + `ControlCommand` live in `molrs::net`.
 
 ## Summary
 

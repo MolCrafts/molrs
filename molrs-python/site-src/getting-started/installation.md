@@ -41,7 +41,7 @@ for nightly testing.
     python - <<'PY'
     import molrs
 
-    ir = molrs.parse_smiles("O")
+    ir = molrs.io.SmilesIR("O")
     print("components:", ir.n_components)
     print("atoms:", ir.to_atomistic().n_atoms)
     PY
@@ -119,7 +119,7 @@ crate and installs it into the active virtualenv as `molrs`:
 ```bash
 pip install maturin
 maturin develop -m molrs-python/Cargo.toml --release
-python -c "import molrs; print(molrs.parse_smiles('O').n_components)"
+python -c "import molrs; print(molrs.io.SmilesIR('O').n_components)"
 ```
 
 ### WASM / npm

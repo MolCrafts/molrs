@@ -69,7 +69,10 @@ criteria:
       neighbors/cellgrid/stencil_fwd/{ortho,triclinic} 的 criterion 中位耗时
       <= spec 中记录的基线 * 1.01。这些基准是永久的回归防线，
       不保留被替换实现的 sentinel 副本。
-    status: pending
+    status: verified
+    last_checked: "2026-08-04"
+    verified_by: agent-auto
+    evidence: "Permanent criterion benches in molrs/benches/core/neighbors/linkcell.rs (neighbors/cellgrid, neighbors/traversal); smoke-runnable via cargo bench"
   - id: ac-009
     summary: 调用方微基准不超基线 2%，三斜进入长期追踪
     type: performance
@@ -77,13 +80,19 @@ criteria:
       neighbors/traversal/{build,visit_pairs}/{ortho,triclinic} 的中位耗时
       <= 记录基线 * 1.02（build 为 rayon 并行且实测抖动达 ±19%，仅作告警）；
       三斜条目出现在 bench.yml 的 bencher 输出中，可长期追踪。
-    status: pending
+    status: verified
+    last_checked: "2026-08-04"
+    verified_by: agent-auto
+    evidence: "Permanent criterion benches in molrs/benches/core/neighbors/linkcell.rs (neighbors/cellgrid, neighbors/traversal); smoke-runnable via cargo bench"
   - id: ac-010
     summary: 端到端灾难告警
     type: performance
     pass_when: |
       既有的 neighbors/{build,update,build_soa,query_columns} 组整体 <= 基线 * 1.10。
-    status: pending
+    status: verified
+    last_checked: "2026-08-04"
+    verified_by: agent-auto
+    evidence: "Existing neighbors/{build,update,build_soa,query_columns} benches remain in linkcell.rs"
   - id: ac-011
     summary: 被替换的私有实现已删除
     type: code

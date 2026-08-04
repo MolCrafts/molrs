@@ -62,7 +62,7 @@ use numpy::{PyArray1, PyArray2, PyArray3, PyReadonlyArrayDyn, ToPyArray};
 /// `molrs::ff::typifier::Typifier` trait. This is its Python nominal
 /// counterpart: native typifiers extend it and downstream Python typifiers may
 /// subclass it.
-#[pyclass(module = "molrs", name = "Typifier", subclass)]
+#[pyclass(module = "molrs.ff.typifier", name = "Typifier", subclass)]
 pub struct PyTypifier;
 
 #[pymethods]
@@ -85,7 +85,7 @@ impl PyTypifier {
 }
 
 /// Outcome of a geometry optimization, exposed to Python as `molrs.OptReport`.
-#[pyclass(module = "molrs", name = "OptReport")]
+#[pyclass(module = "molrs.optimize", name = "OptReport")]
 pub struct PyOptReport {
     inner: OptReport,
 }
@@ -152,7 +152,7 @@ impl From<OptReport> for PyOptReport {
 /// >>> frame["pairs"] = molrs.intramolecular_pairs(frame)
 /// >>> potentials = typifier.forcefield().to_potentials(frame)
 /// >>> energy, forces = potentials.eval(coords)
-#[pyclass(module = "molrs", name = "Potentials")]
+#[pyclass(module = "molrs.ff", name = "Potentials")]
 pub struct PyPotentials {
     inner: PotBacking,
 }
@@ -183,7 +183,7 @@ impl PotBacking {
 }
 
 /// Force-field definition metadata exposed to Python as `molrs.ForceField`.
-#[pyclass(module = "molrs", name = "ForceField", subclass)]
+#[pyclass(module = "molrs._lib", name = "ForceField", subclass)]
 pub struct PyForceField {
     pub(crate) inner: ForceField,
 }
@@ -308,7 +308,7 @@ pub fn scale_lj_py(
         }
         other => py_value_err(other),
     })?;
-    let public = py.import("molrs")?.getattr("ForceField")?;
+    let public = py.import("molrs.ff")?.getattr("ForceField")?;
     let native = py.get_type::<PyForceField>();
     if public.is(&native) {
         return Py::new(py, PyForceField { inner });
@@ -423,7 +423,7 @@ impl PyPotentials {
 /// >>> opt = molrs.LBFGS(pots, fmax=0.05, max_steps=500)
 /// >>> frame, report = opt.run(frame)
 /// >>> coords, report = opt.run(coords)         # (N, 3)
-#[pyclass(module = "molrs", name = "LBFGS")]
+#[pyclass(module = "molrs.optimize", name = "LBFGS")]
 pub struct PyLBFGS {
     potentials: Py<PyPotentials>,
     fmax: f64,
@@ -748,8 +748,8 @@ fn oplsaa_source_xml(source: Option<&Bound<'_, PyAny>>) -> PyResult<Option<Strin
 /// --------
 /// >>> typifier = OPLSAATypifier()
 /// >>> typed = typifier.typify(mol)        # typed Atomistic
-/// >>> potentials = typifier.build(mol)    # compiled Potentials
-#[pyclass(module = "molrs", name = "OPLSAATypifier", extends = PyTypifier)]
+/// >>> # compose: typify → to_frame → intramolecular_pairs → forcefield().to_potentials
+#[pyclass(module = "molrs.ff.typifier", name = "OPLSAATypifier", extends = PyTypifier)]
 pub struct PyOPLSAATypifier {
     inner: OPLSAATypifier,
 }
@@ -787,21 +787,6 @@ impl PyOPLSAATypifier {
         PyAtomistic::from_core(py, labeled)
     }
 
-    /// Typify and compile potentials in one step.
-    ///
-    /// Raises
-    /// ------
-    /// ValueError
-    ///     If typification or compilation fails.
-    fn build(&self, mol: &PyAtomistic) -> PyResult<PyPotentials> {
-        let potentials = self
-            .inner
-            .build(mol.core())
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-        Ok(PyPotentials {
-            inner: PotBacking::Compiled(potentials),
-        })
-    }
 
     /// Return the underlying force-field definition.
     fn forcefield(&self) -> PyForceField {

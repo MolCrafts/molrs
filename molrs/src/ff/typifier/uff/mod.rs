@@ -76,9 +76,17 @@ impl UFFTypifier {
         let mut adj: Vec<Vec<usize>> = vec![vec![]; n];
         let mut bond_order: HashMap<(usize, usize), f64> = HashMap::new();
         for (i, &aid) in atom_ids.iter().enumerate() {
-            for (nid, ord) in out.neighbor_bonds(aid) {
+            for (nid, bid) in out.neighbor_bonds(aid) {
                 if let Some(&j) = id_to_idx.get(&nid) {
                     adj[i].push(j);
+                    // UFF's bond-order term is the localized count; an
+                    // aromatic bond is conventionally 1.5 *here*, as a UFF
+                    // parameter, not as a molrs bond order.
+                    let ord = if out.bond_type(bid).is_aromatic() {
+                        1.5
+                    } else {
+                        out.bond_number(bid).count().max(1) as f64
+                    };
                     bond_order.insert(if i < j { (i, j) } else { (j, i) }, ord);
                 }
             }
@@ -716,6 +724,58 @@ mod tests {
         assert!(f.iter().all(|x| x.is_finite()));
         // Distorted ethanol should have non-trivial energy
         assert!(e.abs() > 0.01);
+    }
+
+    /// Every UFF force must be −∂E/∂x, checked against the kernel's own energy.
+    ///
+    /// `uff_energy_finite` above asserts only that the forces are finite, which
+    /// a wrong gradient passes trivially — and two did: the inversion term's
+    /// normal had the wrong orientation (E is even in cosY, so the energy hid
+    /// it and the force came out inverted), and the torsion projected
+    /// un-normalized plane normals with a flipped sign.
+    #[test]
+    fn uff_forces_are_the_negative_energy_gradient() {
+        let t = UFFTypifier::new();
+        // Ethanol exercises torsions; formaldehyde exercises the inversion term.
+        for (name, mol) in [("ethanol", ethanol()), ("formaldehyde", formaldehyde())] {
+            let typed = t.typify(&mol).unwrap();
+            let mut frame = typed.to_frame();
+            frame.insert("pairs", intramolecular_pairs(&frame));
+            let pots = t.ff().to_potentials(&frame).unwrap();
+            let coords = extract_coords(&frame).unwrap();
+            let (_, f) = pots.calc_energy_forces(&coords);
+
+            let h = 1e-6;
+            let mut worst = 0.0_f64;
+            for i in 0..coords.len() {
+                let mut plus = coords.clone();
+                let mut minus = coords.clone();
+                plus[i] += h;
+                minus[i] -= h;
+                let numeric = -(pots.calc_energy(&plus) - pots.calc_energy(&minus)) / (2.0 * h);
+                worst = worst.max((f[i] - numeric).abs());
+            }
+            assert!(
+                worst < 1e-4,
+                "{name}: max|F + dE/dx| = {worst:.3e}; forces are not the energy's gradient"
+            );
+        }
+    }
+
+    /// Planar H2C=O — three Wilson inversion rows on the carbon, no torsions.
+    fn formaldehyde() -> Atomistic {
+        let mut mol = Atomistic::new();
+        mol.add_atom_xyz("C", 0.0, 0.0, 0.0);
+        mol.add_atom_xyz("O", 0.0, 1.22, 0.0);
+        mol.add_atom_xyz("H", 0.94, -0.54, 0.0);
+        mol.add_atom_xyz("H", -0.94, -0.54, 0.03);
+        let ids: Vec<_> = mol.atoms().map(|(id, _)| id).collect();
+        let b = mol.add_bond(ids[0], ids[1]).unwrap();
+        mol.set_bond_type(b, crate::system::bond::BondType::Double)
+            .unwrap();
+        mol.add_bond(ids[0], ids[2]).unwrap();
+        mol.add_bond(ids[0], ids[3]).unwrap();
+        mol
     }
 
     #[test]

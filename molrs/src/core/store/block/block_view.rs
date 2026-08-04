@@ -167,6 +167,7 @@ impl std::fmt::Debug for BlockView<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::U;
     use ndarray::Array1;
 
     #[test]
@@ -176,7 +177,7 @@ mod tests {
             .insert("x", Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn())
             .unwrap();
         block
-            .insert("id", Array1::from_vec(vec![10 as I, 20, 30]).into_dyn())
+            .insert("id", Array1::from_vec(vec![10 as U, 20, 30]).into_dyn())
             .unwrap();
 
         let view = BlockView::from(&block);
@@ -194,14 +195,14 @@ mod tests {
             .insert("x", Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn())
             .unwrap();
         block
-            .insert("id", Array1::from_vec(vec![10 as I, 20, 30]).into_dyn())
+            .insert("id", Array1::from_vec(vec![10 as U, 20, 30]).into_dyn())
             .unwrap();
 
         let view = BlockView::from(&block);
 
         // Correct type
         assert!(view.get_float("x").is_some());
-        assert!(view.get_int("id").is_some());
+        assert!(view.get_uint("id").is_some());
 
         // Wrong type
         assert!(view.get_int("x").is_none());
@@ -218,7 +219,7 @@ mod tests {
             .insert("x", Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn())
             .unwrap();
         block
-            .insert("id", Array1::from_vec(vec![10 as I, 20, 30]).into_dyn())
+            .insert("id", Array1::from_vec(vec![10 as U, 20, 30]).into_dyn())
             .unwrap();
 
         let view = BlockView::from(&block);
@@ -236,7 +237,7 @@ mod tests {
         );
         assert_eq!(
             owned
-                .get_int("id")
+                .get_uint("id")
                 .unwrap()
                 .as_slice_memory_order()
                 .unwrap(),
@@ -272,7 +273,7 @@ mod tests {
             .insert("x", Array1::from_vec(vec![1.0 as F, 2.0]).into_dyn())
             .unwrap();
         block
-            .insert("id", Array1::from_vec(vec![10 as I, 20]).into_dyn())
+            .insert("id", Array1::from_vec(vec![10 as U, 20]).into_dyn())
             .unwrap();
 
         let view = BlockView::from(&block);

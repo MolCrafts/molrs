@@ -1,17 +1,13 @@
 """Full pipeline: build molecules from scratch, generate 3D, evaluate forces.
 
-Demonstrates building several molecules with no coordinates, generating 3D
-structures, and evaluating MMFF94 energies.
+0.12 surface: molrs.conformer / molrs.ff only (no top-level typifier re-exports).
 """
 
-import numpy as np
-from molrs import (
-    Atomistic,
-    Conformer,
-    MMFF94Typifier,
-    extract_coords,
-    intramolecular_pairs,
-)
+from __future__ import annotations
+
+from molrs import Atomistic
+from molrs.conformer import Conformer
+from molrs.ff import MMFF94Typifier, extract_coords, intramolecular_pairs
 
 
 def build_methane() -> Atomistic:
@@ -69,23 +65,15 @@ for name, mol in molecules.items():
     print(f"=== {name} ===")
     print(f"  input: atoms={mol.n_atoms}, bonds={mol.n_relations('bonds')}")
 
-    # Generate 3D
     mol3d, report = Conformer(speed="medium", seed=123).generate(mol)
     print(f"  conformer: atoms={mol3d.n_atoms}, energy={report.final_energy:.2f}")
 
-    # Evaluate MMFF94: typify -> Frame -> to_potentials (the standard route)
     try:
         frame = typifier.typify(mol3d).to_frame()
         frame["pairs"] = intramolecular_pairs(frame)
         pots = typifier.forcefield().to_potentials(frame)
         coords = extract_coords(frame)
-        energy, forces = pots.eval(coords)
-
-        n = len(coords) // 3
-        fsum = np.abs(forces.reshape(n, 3).sum(axis=0)).max()
-        print(f"  MMFF94: energy={energy:.2f} kcal/mol, "
-              f"|force_sum|={fsum:.2e}")
-    except Exception as e:
-        print(f"  MMFF94: skipped ({e})")
-
-    print()
+        energy, forces = pots.calc_energy_forces(coords)
+        print(f"  MMFF94 energy={energy:.4f}, forces shape={forces.shape}")
+    except Exception as exc:  # noqa: BLE001 — demo script
+        print(f"  MMFF94 skip: {exc}")

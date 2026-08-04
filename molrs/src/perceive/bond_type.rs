@@ -106,6 +106,7 @@ use crate::perceive::aromaticity::perceive_aromaticity;
 use crate::perceive::rings::find_rings;
 use crate::store::keys;
 use crate::system::atomistic::{AtomId, Atomistic, BondId};
+use crate::system::bond::{BondNumber, BondType};
 use crate::system::molgraph::PropValue;
 use molrs::Element;
 
@@ -139,9 +140,6 @@ const DELOCALIZED: i32 = 9;
 /// BCC bond type: the *unresolved* aromatic precursor (SYBYL `ar`). Accepted as an
 /// input marking, never emitted.
 const AROMATIC_UNRESOLVED: i32 = 10;
-
-/// Tolerance for reading a bond `order` that should be integral (or 1.5).
-const ORDER_EPS: f64 = 1.0e-6;
 
 /// A valence-state penalty that is never worth paying: used for the valences an
 /// element's `APS.DAT` row leaves blank (`*`).
@@ -188,6 +186,7 @@ const FORBIDDEN: u32 = 1000;
 /// use molrs::perceive::Perceive;
 /// use molrs::perceive::bond_type::BCC_BOND_TYPE;
 /// use molrs::store::keys;
+/// use molrs::system::bond::BondType;
 ///
 /// // Acetate: both C–O bonds are delocalized, so both oxygens must correct
 /// // identically.
@@ -197,7 +196,7 @@ const FORBIDDEN: u32 = 1000;
 /// let o2 = mol.add_atom_xyz("O", 1.59, -0.86, -0.19);
 /// let me = mol.add_atom_xyz("C", -0.63, -0.09, -0.09);
 /// let b1 = mol.add_bond(c, o1).unwrap();
-/// mol.set_bond_prop(b1, keys::ORDER, 2.0).unwrap();
+/// mol.set_bond_type(b1, BondType::Double).unwrap();
 /// let b2 = mol.add_bond(c, o2).unwrap();
 /// mol.add_bond(c, me).unwrap();
 ///
@@ -217,6 +216,7 @@ const FORBIDDEN: u32 = 1000;
 /// use molrs::perceive::Perceive;
 /// use molrs::perceive::bond_type::BCC_BOND_TYPE;
 /// use molrs::store::keys;
+/// use molrs::system::bond::BondType;
 /// use molrs::system::molgraph::PropValue;
 ///
 /// let mut mol = Atomistic::new();
@@ -225,7 +225,7 @@ const FORBIDDEN: u32 = 1000;
 /// let o2 = mol.add_atom_xyz("O", 1.59, -0.86, -0.19);
 /// let me = mol.add_atom_xyz("C", -0.63, -0.09, -0.09);
 /// let b1 = mol.add_bond(c, o1).unwrap();
-/// mol.set_bond_prop(b1, keys::ORDER, 2.0).unwrap();
+/// mol.set_bond_type(b1, BondType::Double).unwrap();
 /// mol.set_bond_prop(b1, keys::TYPE, "c-o").unwrap(); // the caller's FF bond type NAME
 /// let b2 = mol.add_bond(c, o2).unwrap();
 /// mol.set_bond_prop(b2, keys::TYPE, "c-o").unwrap();
@@ -260,6 +260,140 @@ pub fn find_bond_types(mol: &Atomistic) -> Atomistic {
     out
 }
 
+/// Assign a legal localized [`BondNumber`] to every aromatic bond, graph in /
+/// graph out.
+///
+/// The non-mutating face of [`assign_kekule_numbers`], which carries the full
+/// contract. It **only** kekulizes: it does not perceive aromaticity, so a
+/// molecule whose aromatic bonds are not yet marked comes back unchanged. That
+/// is the division of labour — perception decides *which* bonds are aromatic,
+/// this decides *what phase* they take, and neither calls the other.
+///
+/// # Arguments
+///
+/// * `mol` — the molecule to kekulize; left untouched.
+///
+/// # Returns
+///
+/// A clone of `mol` whose aromatic bonds carry a legal localized number, or an
+/// unchanged clone when no legal assignment exists.
+pub fn find_kekule_orders(mol: &Atomistic) -> Atomistic {
+    let mut out = mol.clone();
+    assign_kekule_numbers(&mut out);
+    out
+}
+
+/// Assign a legal localized [`BondNumber`] to every aromatic bond.
+///
+/// This is the Kekulé standardization the standard defines: **ensure every
+/// aromatic subgraph carries a legal localized integer**. It is *in place* and
+/// deliberately narrow — see [`Perceive::find_kekule_orders`] for the
+/// graph-in/graph-out face.
+///
+/// The guarantees, and where each comes from:
+///
+/// * **Local** — only bonds whose class is `Aromatic` are written. A
+///   non-aromatic bond is not read for a decision and not touched.
+/// * **Conservative** — an aromatic bond that already states a number keeps it
+///   when the whole system is already consistent; nothing is renumbered for its
+///   own sake.
+/// * **Complete** — on success every aromatic bond has `Single` or `Double`.
+/// * **Deterministic** — degenerate assignments are real (benzene has two), so
+///   the tie-break is part of the answer. It is keyed on **atom** order alone,
+///   so permuting bonds or swapping endpoints cannot move it.
+/// * **Transactional** — a system with no legal assignment leaves *no* bond
+///   changed, rather than a ring half-assigned. Returns `false` in that case.
+///
+/// Returns whether every aromatic bond came out with a legal number.
+pub fn assign_kekule_numbers(mol: &mut Atomistic) -> bool {
+    if mol.n_bonds() == 0 {
+        return true;
+    }
+    let graph = BondGraph::new(mol);
+    if !graph.aromatic.iter().any(|a| *a) {
+        return true;
+    }
+
+    // Conservative: a legal assignment already on the graph is *the* answer.
+    // Re-deriving one would rewrite the phase an input stated for itself, so a
+    // file that round-trips would come back with its bonds renumbered.
+    let stated: Vec<bool> = graph
+        .bond_ids
+        .iter()
+        .enumerate()
+        .map(|(k, bid)| graph.aromatic[k] && mol.bond_number(*bid) == BondNumber::Double)
+        .collect();
+    let all_stated = graph
+        .bond_ids
+        .iter()
+        .enumerate()
+        .filter(|(k, _)| graph.aromatic[*k])
+        .all(|(_, bid)| mol.bond_number(*bid) != BondNumber::Unknown);
+    if all_stated && valences_are_satisfiable(&graph, &stated) {
+        return true;
+    }
+
+    let doubles = kekulize(&graph);
+
+    // Transactionality: decide first, write second. An aromatic atom that ends
+    // up in no double bond and had no lone pair to give is the signal that no
+    // legal assignment exists — the search returns its least-bad answer, and
+    // only a completeness check can tell the two apart.
+    let mut assignment: Vec<(BondId, BondNumber)> = Vec::new();
+    for (k, bid) in graph.bond_ids.iter().enumerate() {
+        if !graph.aromatic[k] {
+            continue;
+        }
+        assignment.push((
+            *bid,
+            if doubles[k] {
+                BondNumber::Double
+            } else {
+                BondNumber::Single
+            },
+        ));
+    }
+    if !valences_are_satisfiable(&graph, &doubles) {
+        return false;
+    }
+
+    for (bid, number) in assignment {
+        let _ = mol.set_bond_prop(bid, keys::BOND_NUMBER, number);
+    }
+    true
+}
+
+/// Does every aromatic atom end this assignment with a satisfiable valence?
+///
+/// The kekulizer minimises a valence-state penalty rather than failing, so a
+/// ring with no legal assignment still comes back with *an* answer. This is the
+/// check that tells "the best assignment" from "a legal one": an aromatic atom
+/// whose element demands a π bond, that got none, and whose penalty says the
+/// resulting valence is forbidden.
+fn valences_are_satisfiable(graph: &BondGraph, doubles: &[bool]) -> bool {
+    // Same totals the search scored against: implicit hydrogens count toward
+    // both, or this guard passes a structure the penalty would have rejected.
+    let mut valence: Vec<i32> = graph.implicit_h.iter().map(|h| *h as i32).collect();
+    let mut degree: Vec<usize> = graph.implicit_h.iter().map(|h| *h as usize).collect();
+    for (k, (i, j)) in graph.ends.iter().copied().enumerate() {
+        let w = if graph.aromatic[k] {
+            if doubles[k] { 2 } else { 1 }
+        } else {
+            (graph.order[k].round() as i32).clamp(SINGLE, TRIPLE)
+        };
+        valence[i] += w;
+        valence[j] += w;
+        degree[i] += 1;
+        degree[j] += 1;
+    }
+    graph
+        .z
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| graph.aromatic_atom[*i])
+        .all(|(i, _)| valence_penalty(graph.scored_as_z[i], degree[i], valence[i]) < FORBIDDEN)
+}
+
 /// Does any bond already claim to be aromatic?
 ///
 /// Perception is only run when the answer is no; a graph that already carries
@@ -278,11 +412,7 @@ fn has_aromatic_marking(mol: &Atomistic) -> bool {
 /// `keys::TYPE` is the caller's, and a LAMMPS bond-type id that happened to be 7
 /// must not make a bond aromatic.
 fn aromatic_marking(props: &HashMap<String, PropValue>) -> bool {
-    prop_truthy(props.get(IS_AROMATIC))
-        || props
-            .get(keys::ORDER)
-            .and_then(PropValue::as_f64)
-            .is_some_and(|o| (o - 1.5).abs() < ORDER_EPS)
+    BondType::from_prop(props.get(keys::BOND_TYPE)).is_aromatic()
         || props
             .get(BCC_BOND_TYPE)
             .and_then(PropValue::as_f64)
@@ -290,20 +420,6 @@ fn aromatic_marking(props: &HashMap<String, PropValue>) -> bool {
                 let t = t.round() as i32;
                 matches!(t, AROMATIC_SINGLE | AROMATIC_DOUBLE | AROMATIC_UNRESOLVED)
             })
-}
-
-/// Bond / atom prop marking aromaticity.
-const IS_AROMATIC: &str = "is_aromatic";
-
-/// Is a prop set to something that means "yes"?
-fn prop_truthy(prop: Option<&PropValue>) -> bool {
-    match prop {
-        Some(PropValue::Bool(v)) => *v,
-        Some(PropValue::Int(v)) => *v != 0,
-        Some(PropValue::F64(v)) => *v != 0.0,
-        Some(PropValue::Str(v)) => matches!(v.as_str(), "1" | "true" | "True" | "TRUE" | "ar"),
-        None => false,
-    }
 }
 
 /// The molecule flattened into the dense index space the rules are written in:
@@ -324,6 +440,12 @@ struct BondGraph {
     aromatic: Vec<bool>,
     /// Per atom: atomic number (0 when the element is unknown).
     z: Vec<u8>,
+    /// Per atom: hydrogens implied by valence but not drawn in the graph.
+    implicit_h: Vec<u32>,
+    /// Per atom: the element the π-demand penalty scores it as — the real
+    /// element for a neutral atom, its isoelectronic neighbour for a charged
+    /// one. Read *only* by the aromatic assignment's penalty.
+    scored_as_z: Vec<u8>,
     /// Per atom: neighbour atom indices.
     adj: Vec<Vec<usize>>,
     /// Per atom: whether it carries an aromatic bond.
@@ -354,6 +476,42 @@ impl BondGraph {
             })
             .collect();
 
+        // The element `APS.DAT` is *scored* as, for the π-demand search only.
+        //
+        // A formal charge changes how many bonds an atom wants, and the penalty
+        // table is keyed on the element alone, so a charged atom is scored as
+        // its isoelectronic neighbour: a carbocation like boron, a carbanion
+        // like nitrogen. Without it tropylium's C+ is handed a double bond and
+        // reaches valence 4, which the table accepts.
+        //
+        // This is a **scoring proxy inside the aromatic assignment**, nothing
+        // more. It never leaves this struct, `z` above stays the real atomic
+        // number, and no general valence or element semantics change. It should
+        // become an explicit charged-aromatic-atom rule; scoring by proxy is
+        // the shortest correct step, not the final shape.
+        let implicit_h: Vec<u32> = atom_ids
+            .iter()
+            .map(|aid| crate::perceive::hydrogens::implicit_h_count(mol, *aid).unwrap_or(0))
+            .collect();
+
+        let scored_as_z: Vec<u8> = atom_ids
+            .iter()
+            .zip(&z)
+            .map(|(aid, &zi)| {
+                let charge = mol
+                    .get_atom(*aid)
+                    .ok()
+                    .and_then(|atom| atom.get("formal_charge").and_then(PropValue::as_f64))
+                    .map_or(0i32, |c| c.round() as i32);
+                let shifted = i32::from(zi) - charge;
+                if zi == 0 || shifted <= 0 {
+                    zi
+                } else {
+                    shifted.min(i32::from(u8::MAX)) as u8
+                }
+            })
+            .collect();
+
         let n = atom_ids.len();
         let mut bond_ids = Vec::new();
         let mut ends = Vec::new();
@@ -367,12 +525,13 @@ impl BondGraph {
             else {
                 continue;
             };
-            let o = bond
-                .props
-                .get(keys::ORDER)
-                .and_then(PropValue::as_f64)
-                .unwrap_or(1.0);
             let is_aromatic = aromatic_marking(&bond.props);
+            // An aromatic bond may not have a number yet — that is what this
+            // module is about to decide — so it enters the valence sum as the
+            // one bond every bond is at least.
+            let o = BondNumber::from_prop(bond.props.get(keys::BOND_NUMBER))
+                .count()
+                .max(1) as f64;
 
             adj[i].push(j);
             adj[j].push(i);
@@ -403,6 +562,8 @@ impl BondGraph {
             order,
             aromatic,
             z,
+            implicit_h,
+            scored_as_z,
             adj,
             aromatic_atom,
             rings,
@@ -410,8 +571,26 @@ impl BondGraph {
     }
 
     /// Number of bonds on an atom — antechamber's `connum`. Hydrogens count.
+    /// Drawn neighbours — antechamber's `connum`.
+    ///
+    /// Deliberately *not* including implicit hydrogens: the `ATOMTYPE_*.DEF`
+    /// rules are transcribed against this count, and an acetate written without
+    /// its formal charge relies on the unfilled valence to read as a terminal
+    /// oxygen rather than a hydroxyl.
     fn degree(&self, atom: usize) -> usize {
         self.adj[atom].len()
+    }
+
+    /// Drawn neighbours **plus** the hydrogens the graph implies but does not
+    /// draw — the count `valence_penalty` must see.
+    ///
+    /// The penalty is keyed on `(element, degree, valence)`, so a hydrogen the
+    /// graph never drew is a bond the table never sees. Without it a
+    /// pyrrole-type N and a pyridine-type N are the same atom to it — degree 2,
+    /// valence 2 — imidazole's two candidate Kekulé structures tie, and the
+    /// tie-break puts the double on the N already carrying a hydrogen.
+    fn total_degree(&self, atom: usize) -> usize {
+        self.adj[atom].len() + self.implicit_h[atom] as usize
     }
 
     /// A terminal (one-bonded) oxygen or sulfur — the chalcogen every
@@ -677,7 +856,10 @@ fn kekulize(graph: &BondGraph) -> Vec<bool> {
     // sigma[a]: the bond-order sum already committed at atom `a` — every
     // non-aromatic bond at its input order, plus one per aromatic bond (each is at
     // least single). A matched atom ends one higher.
-    let mut sigma = vec![0i32; graph.z.len()];
+    // Seeded with the implicit hydrogens: a bond the graph never drew is still
+    // a bond the atom's valence has spent, and `valence_penalty` reads the
+    // total.
+    let mut sigma: Vec<i32> = graph.implicit_h.iter().map(|h| *h as i32).collect();
     for (k, (i, j)) in graph.ends.iter().copied().enumerate() {
         let w = if graph.aromatic[k] {
             1
@@ -785,7 +967,15 @@ impl Kekule<'_> {
             return 0;
         }
         let valence = self.sigma[atom] + i32::from(self.matched[atom]);
-        valence_penalty(self.graph.z[atom], self.graph.degree(atom), valence)
+        // `total_degree`, not `degree`: `sigma` is seeded with the implicit
+        // hydrogens, so the degree handed to the same penalty must count them
+        // too. The acceptance guard already scores this way — scoring the
+        // search differently lets it pick a structure the guard then rejects.
+        valence_penalty(
+            self.graph.scored_as_z[atom],
+            self.graph.total_degree(atom),
+            valence,
+        )
     }
 }
 
@@ -824,4 +1014,121 @@ fn valence_penalty(z: u8, degree: usize, valence: i32) -> u32 {
     row.iter()
         .find(|(v, _)| *v == valence)
         .map_or(FORBIDDEN, |(_, penalty)| *penalty)
+}
+
+#[cfg(all(test, feature = "smiles"))]
+mod tests {
+    use super::*;
+    use crate::io::smiles::{parse_smiles, to_atomistic};
+
+    /// Imidazole exactly as the antechamber oracle states it (case `imidazole`,
+    /// SMILES `c1cnc[nH]1`): ring C0 C1 N2 C3 N4 with **implicit** hydrogens —
+    /// N2 carries none (pyridine-type), N4 carries one (pyrrole-type).
+    ///
+    /// The hydrogens must stay implicit: drawn explicitly, `total_degree` and
+    /// `degree` agree and the tie-break under test cannot be reached.
+    fn imidazole() -> Atomistic {
+        to_atomistic(&parse_smiles("c1cnc[nH]1").expect("parse")).expect("to_atomistic")
+    }
+
+    /// Ring bonds as `((i, j), is_double)`, endpoints low-high, sorted.
+    fn ring_doubles(mol: &Atomistic) -> Vec<((usize, usize), bool)> {
+        let index: HashMap<AtomId, usize> = mol
+            .atoms()
+            .enumerate()
+            .map(|(position, (id, _))| (id, position))
+            .collect();
+        let mut out: Vec<((usize, usize), bool)> = mol
+            .bonds()
+            .map(|(id, _)| {
+                let (a, b) = mol.bond_endpoints(id).expect("endpoints");
+                let (a, b) = (index[&a], index[&b]);
+                (
+                    (a.min(b), a.max(b)),
+                    mol.bond_number(id) == BondNumber::Double,
+                )
+            })
+            .collect();
+        out.sort();
+        out
+    }
+
+    #[test]
+    fn the_fixture_keeps_its_hydrogens_implicit() {
+        // Guards the two tests below: were `to_atomistic` to start drawing
+        // hydrogens, `total_degree` would equal `degree` and they would pass
+        // against either implementation without testing anything.
+        let mol = imidazole();
+        assert_eq!(mol.n_atoms(), 5, "hydrogens must not be drawn");
+        let implicit: Vec<u32> = mol
+            .atoms()
+            .map(|(id, _)| crate::perceive::hydrogens::implicit_h_count(&mol, id).unwrap_or(0))
+            .collect();
+        assert_eq!(
+            implicit,
+            vec![1, 1, 0, 1, 1],
+            "N2 pyridine-type, N4 pyrrole-type"
+        );
+    }
+
+    #[test]
+    fn the_search_and_the_acceptance_guard_count_degree_the_same_way() {
+        // The guard in `kekule_is_legal` seeds its degree with the implicit
+        // hydrogens ("implicit hydrogens count toward both, or this guard
+        // passes a structure the penalty would have rejected"). `settle` scores
+        // the search against the same penalty, so it must count them too —
+        // that is what `total_degree` is, and wiring it is what keeps the two
+        // sides of that comment true.
+        //
+        // Both feed `valence_penalty`, whose rows differ by degree: a
+        // pyrrole-type N reads row (7, 2) on the drawn count and (7, 3) on the
+        // total, which price valence 2 at 4 vs 32 and valence 5 at
+        // FORBIDDEN vs 2.
+        let mol = imidazole();
+        let graph = BondGraph::new(&mol);
+        let pyrrole_n = 4;
+        assert_eq!(graph.degree(pyrrole_n), 2, "drawn neighbours only");
+        assert_eq!(
+            graph.total_degree(pyrrole_n),
+            3,
+            "drawn neighbours plus the implicit hydrogen"
+        );
+        assert_ne!(
+            valence_penalty(7, graph.degree(pyrrole_n), 2),
+            valence_penalty(7, graph.total_degree(pyrrole_n), 2),
+            "the two counts must reach different penalty rows, or this is moot"
+        );
+    }
+
+    #[test]
+    fn imidazole_kekulizes_the_way_antechamber_does() {
+        let mol = find_kekule_orders(&imidazole());
+        // AmberTools25 oracle `bcc_bond_types`: (0,1) and (2,3) are type 8
+        // (aromatic double); (1,2), (3,4), (4,0) are type 7 (aromatic single).
+        assert_eq!(
+            ring_doubles(&mol),
+            vec![
+                ((0, 1), true),
+                ((0, 4), false),
+                ((1, 2), false),
+                ((2, 3), true),
+                ((3, 4), false),
+            ],
+        );
+    }
+
+    #[test]
+    fn the_pyrrole_nitrogen_takes_no_double() {
+        let mol = find_kekule_orders(&imidazole());
+        // N4 already spends a valence on an undrawn hydrogen, so a double here
+        // makes it five-valent. This is what `BondGraph::total_degree` exists
+        // for: with the drawn-neighbour `degree`, N4 and N2 both look like
+        // (degree 2, valence 2) to `valence_penalty`, the two Kekule structures
+        // tie, and the double lands on the nitrogen carrying the hydrogen.
+        for ((i, j), is_double) in ring_doubles(&mol) {
+            if i == 4 || j == 4 {
+                assert!(!is_double, "double placed on the pyrrole N: ({i}, {j})");
+            }
+        }
+    }
 }

@@ -96,9 +96,9 @@ fn prop_as_f64(v: Option<&PropValue>) -> Option<f64> {
     v.and_then(PropValue::as_f64)
 }
 
-/// The bond order that marks an aromatic bond (project convention). Also used to
-/// infer a node's aromatic flag when no explicit `is_aromatic` prop is set.
-const AROMATIC_ORDER: f64 = 1.5;
+/// The `bond_type` code of an aromatic bond. Also used to infer a node's
+/// aromatic flag when no explicit `is_aromatic` prop is set.
+const AROMATIC_BOND_TYPE: u64 = 4;
 
 // ---------------------------------------------------------------------------
 // GraphView — a dense, precomputed snapshot for the WL kernel
@@ -135,12 +135,19 @@ impl GraphView {
                 let Some(&j) = index.get(&other) else {
                     continue;
                 };
-                let order = g
+                // Both facts enter the hash: two molecules differing only in
+                // whether a bond is aromatic are different molecules, and so are
+                // two differing only in their Kekulé phase.
+                let edge = g
                     .get_relation(kind, rid)
                     .ok()
-                    .and_then(|r| prop_as_f64(r.props.get(keys::ORDER)))
-                    .unwrap_or(1.0);
-                adj[i].push((j, order.to_bits()));
+                    .map(|r| {
+                        let t = prop_as_f64(r.props.get(keys::BOND_TYPE)).unwrap_or(0.0) as u64;
+                        let n = prop_as_f64(r.props.get(keys::BOND_NUMBER)).unwrap_or(0.0) as u64;
+                        (t << 32) | n
+                    })
+                    .unwrap_or(0);
+                adj[i].push((j, edge));
             }
             // Each undirected edge is seen once from each endpoint.
             edge_count += adj[i].len();
@@ -173,7 +180,7 @@ impl GraphView {
             .unwrap_or(0.0);
 
         // Aromatic: explicit `is_aromatic` prop wins; else infer from any
-        // incident bond of order ~= 1.5 (project convention, mirrors `ast.rs`).
+        // incident bond whose class is aromatic.
         let explicit = match atom.as_ref().and_then(|a| a.get("is_aromatic")) {
             Some(PropValue::Int(v)) => Some(*v != 0),
             Some(PropValue::F64(v)) => Some(*v != 0.0),
@@ -181,9 +188,12 @@ impl GraphView {
             _ => None,
         };
         let aromatic = explicit.unwrap_or_else(|| {
+            // The edge label packs `(bond_type << 32) | bond_number`, so the
+            // class is the high half. Reinterpreting it as a float — which is
+            // what the old 1.5 convention did — can never match anything.
             incident
                 .iter()
-                .any(|&(_, bits)| (f64::from_bits(bits) - AROMATIC_ORDER).abs() < 1e-6)
+                .any(|&(_, label)| (label >> 32) == AROMATIC_BOND_TYPE)
         });
 
         let mut h = FNV_OFFSET;
@@ -563,6 +573,33 @@ mod tests {
     }
 
     #[test]
+    fn aromatic_class_alone_changes_the_hash() {
+        // The fallback path: no atom carries `is_aromatic`, so aromaticity is
+        // inferred from the incident bond's *class*. This had no test, and the
+        // inference was silently dead — it reinterpreted the packed integer
+        // edge label as a float and compared it to 1.5, which never matches.
+        let (a, _) = ethanol();
+        let mut b = a.clone();
+        let (bid, _) = b.bonds().next().unwrap();
+        b.set_bond_class(
+            bid,
+            crate::system::bond::BondType::Aromatic,
+            crate::system::bond::BondNumber::Single,
+        )
+        .unwrap();
+
+        assert!(
+            b.atoms().all(|(_, at)| at.get("is_aromatic").is_none()),
+            "the fallback only runs when no atom states its own flag"
+        );
+        assert_ne!(
+            structural_hash(a.as_molgraph()),
+            structural_hash(b.as_molgraph()),
+            "an aromatic bond class must reach the hash through the fallback"
+        );
+    }
+
+    #[test]
     fn aromatic_flag_changes_hash() {
         let (a, ids) = ethanol();
         let mut b = a.clone();
@@ -580,7 +617,8 @@ mod tests {
         let (a, _) = ethanol();
         let mut b = a.clone();
         let (bid, _) = b.bonds().next().unwrap();
-        b.set_bond_prop(bid, keys::ORDER, 2.0).unwrap();
+        b.set_bond_type(bid, crate::system::bond::BondType::Double)
+            .unwrap();
         assert_ne!(
             structural_hash(a.as_molgraph()),
             structural_hash(b.as_molgraph()),

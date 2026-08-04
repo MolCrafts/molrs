@@ -21,7 +21,7 @@ use ndarray::ArrayD;
 use molrs::error::MolRsError;
 use molrs::spatial::simbox::SimBox;
 use molrs::store::block::{Block, Column};
-use molrs::store::frame::{FRAME_SCHEMA_VERSION, Frame};
+use molrs::store::frame::Frame;
 use molrs::store::meta::MetaValue;
 use molrs::types::{F, I, U};
 
@@ -195,17 +195,15 @@ pub(crate) fn write_simbox(
         .build(store.clone(), prefix)?
         .store_metadata()?;
 
-    // h: [3,3] Float32
+    // h: [3,3] Float64 — geometry must match in-memory f64 science contract
     let h_view = simbox.h_view();
-    #[allow(clippy::unnecessary_cast)]
-    let h_data: Vec<f32> = h_view.iter().map(|&v| v as f32).collect();
-    write_f32_array(store, &format!("{}/h", prefix), &[3, 3], &h_data)?;
+    let h_data: Vec<F> = h_view.iter().copied().collect();
+    write_f64_array(store, &format!("{}/h", prefix), &[3, 3], &h_data)?;
 
-    // origin: [3] Float32
+    // origin: [3] Float64
     let origin_view = simbox.origin_view();
-    #[allow(clippy::unnecessary_cast)]
-    let origin_data: Vec<f32> = origin_view.iter().map(|&v| v as f32).collect();
-    write_f32_array(store, &format!("{}/origin", prefix), &[3], &origin_data)?;
+    let origin_data: Vec<F> = origin_view.iter().copied().collect();
+    write_f64_array(store, &format!("{}/origin", prefix), &[3], &origin_data)?;
 
     // PBC: [3] UInt8
     let pbc_view = simbox.pbc_view();
@@ -221,14 +219,24 @@ pub(crate) fn read_simbox(
 ) -> Result<SimBox, MolRsError> {
     use ndarray::{Array2, array};
 
-    let h_arr = Array::open(store.clone(), &format!("{}/h", prefix))?;
-    let h_data: Vec<f32> = h_arr.retrieve_array_subset(&ArraySubset::new_with_shape(vec![3, 3]))?;
-    let h = Array2::from_shape_vec((3, 3), h_data.into_iter().map(|v| v as F).collect())
-        .map_err(shape_err)?;
+    // Prefer f64 (0.12+); accept legacy f32 stores and promote once.
+    let h_data = read_simbox_float_path(store, &format!("{}/h", prefix))?;
+    if h_data.len() != 9 {
+        return Err(MolRsError::zarr(format!(
+            "simbox h expected 9 values, got {}",
+            h_data.len()
+        )));
+    }
+    let h = Array2::from_shape_vec((3, 3), h_data).map_err(shape_err)?;
 
-    let o_arr = Array::open(store.clone(), &format!("{}/origin", prefix))?;
-    let o_data: Vec<f32> = o_arr.retrieve_array_subset(&ArraySubset::new_with_shape(vec![3]))?;
-    let origin = array![o_data[0] as F, o_data[1] as F, o_data[2] as F];
+    let o_data = read_simbox_float_path(store, &format!("{}/origin", prefix))?;
+    if o_data.len() != 3 {
+        return Err(MolRsError::zarr(format!(
+            "simbox origin expected 3 values, got {}",
+            o_data.len()
+        )));
+    }
+    let origin = array![o_data[0], o_data[1], o_data[2]];
 
     let p_arr = Array::open(store.clone(), &format!("{}/pbc", prefix))?;
     let p_data: Vec<u8> = p_arr.retrieve_array_subset(&ArraySubset::new_with_shape(vec![3]))?;
@@ -237,21 +245,43 @@ pub(crate) fn read_simbox(
     SimBox::new(h, origin, pbc).map_err(|e| MolRsError::zarr(format!("invalid simbox: {:?}", e)))
 }
 
+/// Read a simbox float array as `Vec<F>` (Float64 preferred; legacy Float32 promoted).
+fn read_simbox_float_path(
+    store: &ReadableWritableListableStorage,
+    path: &str,
+) -> Result<Vec<F>, MolRsError> {
+    let arr = Array::open(store.clone(), path)?;
+    let subset = ArraySubset::new_with_shape(arr.shape().to_vec());
+    let dt = arr.data_type();
+    if dt.is::<Float64DataType>() {
+        let data: Vec<f64> = arr.retrieve_array_subset(&subset)?;
+        Ok(data)
+    } else if dt.is::<Float32DataType>() {
+        let data: Vec<f32> = arr.retrieve_array_subset(&subset)?;
+        Ok(data.into_iter().map(|v| v as F).collect())
+    } else {
+        Err(MolRsError::zarr(format!(
+            "simbox array expected float32/float64, got {dt:?}"
+        )))
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Frame (system) write / read — writes all blocks under `{prefix}/`
 // ---------------------------------------------------------------------------
 
 #[cfg(feature = "filesystem")]
-pub(crate) fn write_system(
+/// Write one [`Frame`] as a Zarr group of blocks.
+///
+/// The group carries **no** schema-version attribute: `meta/record_schema_version`
+/// at the record root is the sole version key of the MolRec contract, and a
+/// parallel per-frame version is forbidden by it.
+pub(crate) fn write_frame_group(
     store: &ReadableWritableListableStorage,
     prefix: &str,
     frame: &Frame,
 ) -> Result<(), MolRsError> {
-    // System group
-    let mut system_attrs = serde_json::Map::new();
-    system_attrs.insert("frame_schema_version".into(), FRAME_SCHEMA_VERSION.into());
     GroupBuilder::new()
-        .attributes(system_attrs)
         .build(store.clone(), prefix)?
         .store_metadata()?;
 
@@ -291,23 +321,12 @@ pub(crate) fn write_system(
     Ok(())
 }
 
-pub(crate) fn read_system(
+/// Read one [`Frame`] back from a Zarr group written by [`write_frame_group`].
+pub(crate) fn read_frame_group(
     store: &ReadableWritableListableStorage,
     prefix: &str,
 ) -> Result<Frame, MolRsError> {
     let mut frame = Frame::new();
-
-    let system_group = zarrs::group::Group::open(store.clone(), prefix)?;
-    let version = system_group
-        .attributes()
-        .get("frame_schema_version")
-        .and_then(serde_json::Value::as_u64)
-        .ok_or_else(|| MolRsError::zarr("missing frame_schema_version"))?;
-    if version != u64::from(FRAME_SCHEMA_VERSION) {
-        return Err(MolRsError::zarr(format!(
-            "unsupported frame schema version {version}; expected {FRAME_SCHEMA_VERSION}"
-        )));
-    }
 
     // Meta
     if let Ok(meta_group) = zarrs::group::Group::open(store.clone(), &format!("{}/meta", prefix)) {
@@ -324,8 +343,8 @@ pub(crate) fn read_system(
     }
 
     // Blocks
-    let system_node = Node::open(store, prefix)?;
-    for child in system_node.children() {
+    let frame_node = Node::open(store, prefix)?;
+    for child in frame_node.children() {
         let child_name = child.path().as_str().rsplit('/').next().unwrap_or("");
         if child_name == "meta" || child_name == "simbox" || child_name.is_empty() {
             continue;
@@ -354,6 +373,22 @@ pub(crate) fn read_system(
 // ---------------------------------------------------------------------------
 
 #[cfg(feature = "filesystem")]
+pub(crate) fn write_f64_array(
+    store: &ReadableWritableListableStorage,
+    path: &str,
+    shape: &[u64],
+    data: &[F],
+) -> Result<(), MolRsError> {
+    let arr = ArrayBuilder::new(shape.to_vec(), shape.to_vec(), data_type::float64(), 0.0f64)
+        .build(store.clone(), path)?;
+    arr.store_metadata()?;
+    arr.store_array_subset(&ArraySubset::new_with_shape(shape.to_vec()), data)?;
+    Ok(())
+}
+
+/// Legacy f32 writer (kept for non-simbox callers / future dual-write tools).
+#[cfg(feature = "filesystem")]
+#[allow(dead_code)]
 pub(crate) fn write_f32_array(
     store: &ReadableWritableListableStorage,
     path: &str,

@@ -78,7 +78,7 @@ fn orientation_pairs(frame: &CoreFrame) -> PyResult<Vec<(usize, usize)>> {
 // Steinhardt
 // ---------------------------------------------------------------------------
 
-#[pyclass(module = "molrs", name = "Steinhardt")]
+#[pyclass(module = "molrs.compute.order", name = "Steinhardt")]
 pub struct PySteinhardt {
     inner: Steinhardt,
 }
@@ -134,7 +134,7 @@ impl PySteinhardt {
 // Nematic
 // ---------------------------------------------------------------------------
 
-#[pyclass(module = "molrs", name = "Nematic")]
+#[pyclass(module = "molrs.compute.order", name = "Nematic")]
 pub struct PyNematic {
     inner: Nematic,
 }
@@ -208,7 +208,7 @@ impl PyNematic {
 // Hexatic
 // ---------------------------------------------------------------------------
 
-#[pyclass(module = "molrs", name = "Hexatic")]
+#[pyclass(module = "molrs.compute.order", name = "Hexatic")]
 pub struct PyHexatic {
     inner: Hexatic,
 }
@@ -253,7 +253,7 @@ impl PyHexatic {
 // SolidLiquid
 // ---------------------------------------------------------------------------
 
-#[pyclass(module = "molrs", name = "SolidLiquid")]
+#[pyclass(module = "molrs.compute.order", name = "SolidLiquid")]
 pub struct PySolidLiquid {
     inner: SolidLiquid,
 }
@@ -296,7 +296,7 @@ impl PySolidLiquid {
 // ClusterProperties
 // ---------------------------------------------------------------------------
 
-#[pyclass(module = "molrs", name = "ClusterProperties")]
+#[pyclass(module = "molrs.compute.cluster", name = "ClusterProperties")]
 pub struct PyClusterProperties {
     inner: ClusterProperties,
 }
@@ -384,7 +384,7 @@ impl PyClusterProperties {
 // LocalDensity
 // ---------------------------------------------------------------------------
 
-#[pyclass(module = "molrs", name = "LocalDensity")]
+#[pyclass(module = "molrs.compute.density", name = "LocalDensity")]
 pub struct PyLocalDensity {
     inner: LocalDensity,
 }
@@ -427,7 +427,7 @@ impl PyLocalDensity {
 // GaussianDensity
 // ---------------------------------------------------------------------------
 
-#[pyclass(module = "molrs", name = "GaussianDensity")]
+#[pyclass(module = "molrs.compute.density", name = "GaussianDensity")]
 pub struct PyGaussianDensity {
     inner: GaussianDensity,
 }
@@ -461,7 +461,7 @@ impl PyGaussianDensity {
 // BondOrder
 // ---------------------------------------------------------------------------
 
-#[pyclass(module = "molrs", name = "BondOrder")]
+#[pyclass(module = "molrs.compute.environment", name = "BondOrder")]
 pub struct PyBondOrder {
     inner: BondOrder,
 }
@@ -511,7 +511,10 @@ impl PyBondOrder {
 // StaticStructureFactorDebye
 // ---------------------------------------------------------------------------
 
-#[pyclass(module = "molrs", name = "StaticStructureFactorDebye")]
+#[pyclass(
+    module = "molrs.compute.diffraction",
+    name = "StaticStructureFactorDebye"
+)]
 pub struct PyStaticStructureFactorDebye {
     inner: StaticStructureFactorDebye,
 }
@@ -558,7 +561,7 @@ impl PyStaticStructureFactorDebye {
 // PMFTXY
 // ---------------------------------------------------------------------------
 
-#[pyclass(module = "molrs", name = "PMFTXY")]
+#[pyclass(module = "molrs.compute.pmft", name = "PMFTXY")]
 pub struct PyPMFTXY {
     inner: PMFTXY,
 }

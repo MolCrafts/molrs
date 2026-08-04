@@ -40,7 +40,7 @@ fn water() {
     let o_atom = mol.get_atom(o).expect("O atom");
     println!(
         "\n  O atom: symbol={:?}, x={:.4}, charge={:.4}",
-        o_atom.get_str("symbol").unwrap(),
+        o_atom.get_str("element").unwrap(),
         o_atom.get_f64("x").unwrap(),
         o_atom.get_f64("charge").unwrap(),
     );
@@ -84,7 +84,7 @@ fn water() {
     for (_id, atom) in mol.atoms() {
         println!(
             "  {} at ({:.4}, {:.4}, {:.4})",
-            atom.get_str("symbol").unwrap(),
+            atom.get_str("element").unwrap(),
             atom.get_f64("x").unwrap(),
             atom.get_f64("y").unwrap(),
             atom.get_f64("z").unwrap(),
@@ -111,14 +111,21 @@ fn water() {
     println!("\nNeighbors of O:");
     for nid in mol.neighbors(o) {
         let atom = mol.get_atom(nid).expect("neighbor atom");
-        let sym = atom.get_str("symbol").unwrap();
+        let sym = atom.get_str("element").unwrap();
         println!("  -> {}", sym);
     }
 
     println!("\nNeighbor bonds of O (with bond order):");
-    for (nid, order) in mol.neighbor_bonds(o) {
+    // `neighbor_bonds` yields the *bond id*, not its order — read the order off
+    // the bond itself.
+    for (nid, bid) in mol.neighbor_bonds(o) {
         let atom = mol.get_atom(nid).expect("neighbor atom");
-        let sym = atom.get_str("symbol").unwrap();
+        let sym = atom.get_str("element").unwrap();
+        let bond = mol.get_bond(bid).expect("bond exists");
+        let order = match bond.props.get("order") {
+            Some(PropValue::F64(f)) => *f,
+            _ => 0.0,
+        };
         println!("  -> {} (order = {:.1})", sym, order);
     }
 

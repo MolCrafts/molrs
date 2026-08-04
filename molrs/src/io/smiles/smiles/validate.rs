@@ -11,6 +11,7 @@
 use crate::io::smiles::chem::ast::*;
 use crate::io::smiles::chem::validation::validate_ring_closures;
 use crate::io::smiles::error::{SmilesError, SmilesErrorKind};
+use crate::io::smiles::smiles::canonical_element_symbol;
 use molrs::Element;
 
 /// Validate a parsed SMILES molecule.
@@ -71,12 +72,7 @@ fn validate_atom_element(atom: &AtomNode, input: &str) -> Result<(), SmilesError
 }
 
 fn validate_symbol(symbol: &str, span: Span, input: &str) -> Result<(), SmilesError> {
-    let lookup = if symbol.len() == 1 && symbol.chars().next().unwrap().is_ascii_lowercase() {
-        let upper: String = symbol.to_ascii_uppercase();
-        Element::by_symbol(&upper)
-    } else {
-        Element::by_symbol(symbol)
-    };
+    let lookup = Element::by_symbol(&canonical_element_symbol(symbol));
 
     if lookup.is_none() {
         return Err(SmilesError::new(

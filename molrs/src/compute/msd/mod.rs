@@ -1,5 +1,14 @@
 //! Mean squared displacement analysis (stateless).
 //!
+//! # Hard precondition — unwrapped coordinates
+//!
+//! Positions must be **continuous / unwrapped** across the trajectory (or
+//! unwrapped by the caller with image flags + box **before** MSD). This
+//! kernel does **not** apply the minimum-image convention: MIC inside MSD
+//! re-wraps jumps and destroys the Einstein diffusion signal. Wrapped PBC
+//! dumps silently saturate MSD ~ \(L^2\) and yield meaningless \(D\).
+//! Same contract as freud `MSD` / MDAnalysis EinsteinMSD.
+//!
 //! Given a slice of frames, produces one [`MSDResult`] per lag-time. Two
 //! modes are supported, matching the conventions in `freud.msd`:
 //!
@@ -27,7 +36,7 @@ use rustfft::num_complex::Complex as RfComplex;
 
 use crate::compute::error::ComputeError;
 use crate::compute::traits::Compute;
-use crate::compute::util::get_positions_ref;
+use crate::compute::util::get_positions_ref_any_dim;
 
 /// Mode of MSD computation.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -59,13 +68,6 @@ impl MSD {
         Self { mode }
     }
 
-    /// New MSD analyzer in windowed (all-time-origins) mode.
-    pub fn windowed() -> Self {
-        Self {
-            mode: MsdMode::Window,
-        }
-    }
-
     pub fn mode(&self) -> MsdMode {
         self.mode
     }
@@ -77,7 +79,7 @@ fn msd_vs_reference<FA: FrameAccess>(
     ref_y: &[F],
     ref_z: &[F],
 ) -> Result<MSDResult, ComputeError> {
-    let (xs_p, ys_p, zs_p) = get_positions_ref(frame)?;
+    let (xs_p, ys_p, zs_p) = get_positions_ref_any_dim(frame)?;
     let xs = xs_p.slice();
     let ys = ys_p.slice();
     let zs = zs_p.slice();
@@ -149,7 +151,7 @@ fn msd_windowed<FA: FrameAccess + Sync>(frames: &[&FA]) -> Result<MSDTimeSeries,
         return Err(ComputeError::EmptyInput);
     }
     // Gather positions: positions[k] = (x: Vec<F>, y, z) at frame k.
-    let (xs0_p, _, _) = get_positions_ref(frames[0])?;
+    let (xs0_p, _, _) = get_positions_ref_any_dim(frames[0])?;
     let n = xs0_p.slice().len();
     let mut x = vec![vec![0.0; t]; n];
     let mut y = vec![vec![0.0; t]; n];
@@ -157,7 +159,7 @@ fn msd_windowed<FA: FrameAccess + Sync>(frames: &[&FA]) -> Result<MSDTimeSeries,
     let mut r2 = vec![vec![0.0; t]; n];
 
     for (k, frame) in frames.iter().enumerate() {
-        let (xp, yp, zp) = get_positions_ref(*frame)?;
+        let (xp, yp, zp) = get_positions_ref_any_dim(*frame)?;
         let xs = xp.slice();
         let ys = yp.slice();
         let zs = zp.slice();
@@ -245,7 +247,7 @@ impl MSD {
         // Own the reference positions so downstream frames can be processed
         // in parallel. Contiguous views on the first frame become slice
         // copies into owned Vecs once.
-        let (rx_p, ry_p, rz_p) = get_positions_ref(frames[0])?;
+        let (rx_p, ry_p, rz_p) = get_positions_ref_any_dim(frames[0])?;
         let ref_x: Vec<F> = rx_p.slice().to_vec();
         let ref_y: Vec<F> = ry_p.slice().to_vec();
         let ref_z: Vec<F> = rz_p.slice().to_vec();
@@ -374,7 +376,7 @@ mod tests {
     fn windowed_reference(frames: &[&Frame]) -> Vec<F> {
         let t = frames.len();
         let n = {
-            let (xp, _, _) = get_positions_ref(frames[0]).unwrap();
+            let (xp, _, _) = get_positions_ref_any_dim(frames[0]).unwrap();
             xp.slice().len()
         };
         // Gather positions.
@@ -382,7 +384,7 @@ mod tests {
         let mut y = vec![vec![0.0; n]; t];
         let mut z = vec![vec![0.0; n]; t];
         for (k, f) in frames.iter().enumerate() {
-            let (xp, yp, zp) = get_positions_ref(*f).unwrap();
+            let (xp, yp, zp) = get_positions_ref_any_dim(*f).unwrap();
             x[k] = xp.slice().to_vec();
             y[k] = yp.slice().to_vec();
             z[k] = zp.slice().to_vec();
@@ -421,7 +423,9 @@ mod tests {
         let frames: Vec<&Frame> = frames_owned.iter().collect();
 
         let reference = windowed_reference(&frames);
-        let computed = MSD::windowed().compute(&frames, ()).unwrap();
+        let computed = MSD::with_mode(MsdMode::Window)
+            .compute(&frames, ())
+            .unwrap();
 
         assert_eq!(computed.len(), 6);
         for (lag, &ref_val) in reference.iter().enumerate() {
@@ -438,7 +442,9 @@ mod tests {
         let f0 = make_frame(&[0.0, 1.0], &[0.0; 2], &[0.0; 2]);
         let f1 = make_frame(&[1.0, 2.0], &[0.0; 2], &[0.0; 2]);
         let f2 = make_frame(&[2.0, 3.0], &[0.0; 2], &[0.0; 2]);
-        let series = MSD::windowed().compute(&[&f0, &f1, &f2], ()).unwrap();
+        let series = MSD::with_mode(MsdMode::Window)
+            .compute(&[&f0, &f1, &f2], ())
+            .unwrap();
         assert!(series.data[0].mean.abs() < 1e-10);
     }
 
@@ -452,7 +458,9 @@ mod tests {
             .map(|t| make_frame(&[t as F * v[0], t as F * v[1]], &[0.0; 2], &[0.0; 2]))
             .collect();
         let frames: Vec<&Frame> = frames_owned.iter().collect();
-        let series = MSD::windowed().compute(&frames, ()).unwrap();
+        let series = MSD::with_mode(MsdMode::Window)
+            .compute(&frames, ())
+            .unwrap();
         let mean_v2 = (v[0] * v[0] + v[1] * v[1]) / 2.0;
         for lag in 0..8 {
             let expected = (lag as F) * (lag as F) * mean_v2;
@@ -462,5 +470,32 @@ mod tests {
                 series.data[lag].mean,
             );
         }
+    }
+
+    #[test]
+    fn msd_is_dimension_agnostic() {
+        // A 1-D series: the frame carries only `x`. Missing axes read as zero,
+        // so the answer is the 1-D MSD rather than a MissingColumn error.
+        let xs: Vec<F> = vec![0.0, 1.0, 3.0];
+        let frames: Vec<Frame> = xs
+            .iter()
+            .map(|&x| {
+                let mut f = Frame::new();
+                let mut b = Block::new();
+                b.insert("x", A1::from_vec(vec![x]).into_dyn()).unwrap();
+                f.insert("atoms", b);
+                f
+            })
+            .collect();
+        let refs: Vec<&Frame> = frames.iter().collect();
+
+        let direct = MSD::new().compute(&refs, ()).unwrap();
+        let means: Vec<F> = direct.data.iter().map(|r| r.mean).collect();
+        assert_eq!(means, vec![0.0, 1.0, 9.0]);
+
+        // and the windowed estimator agrees with the nested loop in 1-D too
+        let windowed = MSD::with_mode(MsdMode::Window).compute(&refs, ()).unwrap();
+        let w: Vec<F> = windowed.data.iter().map(|r| r.mean).collect();
+        assert!((w[1] - ((1.0 + 4.0) / 2.0)).abs() < 1e-12, "{w:?}");
     }
 }

@@ -10,7 +10,9 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
+use crate::store::keys;
 use crate::system::atomistic::{AtomId, Atomistic};
+use crate::system::bond::BondType;
 use crate::system::topology::Topology;
 
 /// A rotatable bond between atoms `j` and `k`, with the set of downstream
@@ -75,14 +77,10 @@ fn scan_rotatable(graph: &Atomistic) -> (Vec<AtomId>, Topology, Vec<(usize, usiz
         .iter()
         .enumerate()
         .filter_map(|(bi, (_, bond))| {
-            // Single bond only (order defaults to 1.0 if unset). Accept order
-            // stored as either F64 or Int via PropValue::as_f64.
-            let order = bond
-                .props
-                .get("order")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(1.0);
-            if (order - 1.0).abs() > 0.01 {
+            // A *single* bond, as a class. An aromatic bond whose Kekulé phase
+            // happens to be single does not rotate, so this must not read the
+            // localized number.
+            if BondType::from_prop(bond.props.get(keys::BOND_TYPE)) != BondType::Single {
                 return None;
             }
 

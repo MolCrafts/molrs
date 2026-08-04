@@ -37,7 +37,8 @@
 //!
 //! ```
 //! use molrs::perceive::smarts::SmartsPattern;
-//! use molrs::{Atom, Atomistic, PropValue};
+//! use molrs::system::bond::BondType;
+//! use molrs::{Atom, Atomistic};
 //!
 //! // Acetamide skeleton C-C(=O)-N (no Hs needed for this query).
 //! let mut g = Atomistic::new();
@@ -47,7 +48,7 @@
 //! let n = g.add_atom(Atom::xyz("N", 1.0, 1.0, 0.0));
 //! g.add_bond(c0, c1).unwrap();
 //! let bo = g.add_bond(c1, o).unwrap();
-//! g.set_bond_prop(bo, "order", PropValue::F64(2.0)).unwrap();
+//! g.set_bond_type(bo, BondType::Double).unwrap();
 //! g.add_bond(c1, n).unwrap();
 //!
 //! let pat = SmartsPattern::parse("[$([CX3]=[OX1]):1]~[*:2]").unwrap();

@@ -40,7 +40,6 @@
 // re-parse at runtime.
 
 // Domain groups
-pub mod generate;
 pub mod spatial;
 pub mod store;
 pub mod system;
@@ -59,15 +58,15 @@ pub mod units;
 
 // Public re-exports for common types
 pub use error::MolRsError;
-pub use generate::{
-    FccLattice, GrowthStrategy, OccupancyMode, OffLattice, SelfAvoidingWalk, WalkError, WalkOutput,
-};
 pub use spatial::simbox::{BoxError, BoxKind, Mic, SimBox};
 pub use store::block::Block;
 pub use store::frame::Frame;
 pub use store::frame_access::FrameAccess;
 pub use store::frame_view::FrameView;
 pub use store::meta::{MetaMap, MetaValue};
+pub use store::record::{
+    MolRec, Observables, RECORD_FORMAT_NAME, RECORD_SCHEMA_VERSION, RESERVED_META_KEYS,
+};
 pub use store::trajectory::{
     ObservableData, ObservableKind, ObservableRecord, SchemaValue, Trajectory,
 };

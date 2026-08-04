@@ -72,8 +72,10 @@ impl WasmSmilesIR {
     ///   are added. No 3D coordinates are present -- use
     ///   [`generate3D`](crate::generate_3d_wasm) to embed coordinates.
     /// - `"bonds"` block: `i`, `j` (u32, zero-based atom indices),
-    ///   `order` (F, bond order: 1.0 = single, 1.5 = aromatic,
-    ///   2.0 = double, 3.0 = triple).
+    ///   `bond_type` (u32: 1 single, 2 double, 3 triple, 4 aromatic) and
+    ///   `bond_number` (u32: the localized Lewis/Kekulé integer, 0 when the
+    ///   notation declared aromaticity without a phase — call
+    ///   `new Perceive().findAromaticity(frame)` to fill it in).
     ///
     /// # Returns
     ///
@@ -89,7 +91,8 @@ impl WasmSmilesIR {
     /// ```js
     /// const frame = ir.toFrame();
     /// const bonds = frame.getBlock("bonds");
-    /// const order = bonds.copyColF("order");
+    /// const types = bonds.copyColU("bond_type");
+    /// const numbers = bonds.copyColU("bond_number");
     /// ```
     #[wasm_bindgen(js_name = toFrame)]
     pub fn to_frame(&self) -> Result<Frame, JsValue> {

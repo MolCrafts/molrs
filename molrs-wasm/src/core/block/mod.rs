@@ -310,17 +310,21 @@ impl Block {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// block.renameColumn("element", "symbol"); // true
+    /// block.renameColumn("element", "symbol");
     /// ```
     #[wasm_bindgen(js_name = renameColumn)]
-    pub fn rename_column(&mut self, old_key: &str, new_key: &str) -> Result<bool, JsValue> {
+    pub fn rename_column(&mut self, old_key: &str, new_key: &str) -> Result<(), JsValue> {
+        // A rename is a write into `new_key`, so the Frame schema checks the
+        // moved column against that key's spec — the error surfaces here
+        // rather than a wrong-typed column landing silently.
         self.inner
             .store
             .borrow_mut()
             .with_block_mut(&mut self.inner.handle, |b| {
                 b.rename_column(old_key, new_key)
             })
-            .map_err(js_err)
+            .map_err(js_err)?
+            .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
     // ---- Float ----

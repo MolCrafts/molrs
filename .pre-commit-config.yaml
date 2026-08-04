@@ -37,7 +37,7 @@ repos:
       - id: cargo-clippy
         name: "CI Rust / clippy"
         entry: >-
-          sh -c 'cargo clippy -p molcrafts-molrs --all-targets --features full -- -D warnings
+          sh -c 'cargo clippy -p molcrafts-molrs --all-targets --features full,filesystem -- -D warnings
           && cargo clippy -p molcrafts-molrs-cxxapi --all-targets -- -D warnings'
         language: system
         pass_filenames: false
@@ -50,7 +50,7 @@ repos:
         # Several --lib tests resolve fixtures under ../tests-data/<format>/.
         entry: >-
           sh -c 'bash scripts/fetch-test-data.sh
-          && cargo test -p molcrafts-molrs --lib --features full'
+          && cargo test -p molcrafts-molrs --lib --features full,filesystem'
         language: system
         pass_filenames: false
         always_run: true

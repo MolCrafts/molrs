@@ -25,7 +25,7 @@ class TestReturnsReaderNotList:
         path = str(water_xyz)
         reader = molrs.io.read_xyz_trajectory(path)
         assert isinstance(reader, molrs.io.TrajectoryReader)
-        eager = molrs.read_xyz_trajectory(path)
+        eager = molrs.io.raw.read_xyz_trajectory(path)
         assert isinstance(eager, list)
         assert reader.n_frames == len(eager)
 
@@ -35,9 +35,10 @@ class TestTrajectoryReaderSurface:
         reader = molrs.io.read_dcd_trajectory(str(water_dcd))
         n = reader.n_frames
         assert reader.read_frame(0) is not None
-        assert reader.read_frame(-1)["atoms"].nrows == reader.read_frame(n - 1)[
-            "atoms"
-        ].nrows
+        assert (
+            reader.read_frame(-1)["atoms"].nrows
+            == reader.read_frame(n - 1)["atoms"].nrows
+        )
 
     def test_out_of_range_raises(self, water_dcd):
         reader = molrs.io.read_dcd_trajectory(str(water_dcd))

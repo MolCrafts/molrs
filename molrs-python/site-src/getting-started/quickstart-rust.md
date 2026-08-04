@@ -8,7 +8,7 @@ minimal dependency set or enable `full` while exploring.
 
 ```toml
 [dependencies]
-molrs = { package = "molcrafts-molrs", version = "0.0.15", features = ["full"] }
+molrs = { package = "molcrafts-molrs", version = "0.12", features = ["full"] }
 ```
 
 The `full` feature enables I/O, SMILES, compute, force-field, and embedding
@@ -47,7 +47,7 @@ The facade mirrors the workspace layout:
 | `molrs::*` | always | Core `Frame`, `Block`, topology, boxes, and regions |
 | `molrs::io` | `io` | File readers and writers |
 | `molrs::smiles` | `smiles` | SMILES parser and graph conversion |
-| `molrs::embed` | `embed` | 3D coordinate generation |
+| `molrs::conformer` | `embed` | 3D coordinate generation |
 | `molrs::compute` | `compute` | RDF, MSD, clusters, descriptors |
 | `molrs::ff` | `ff` | Force-field typing and potentials |
 
@@ -57,7 +57,7 @@ module internals or lower-level extension points.
 
 ## 4. Common Compile Errors
 
-If `molrs::smiles` or `molrs::embed` cannot be found, the Cargo feature is not
+If `molrs::smiles` or `molrs::conformer` cannot be found, the Cargo feature is not
 enabled. If code compiles but embedding fails at runtime, inspect the topology:
 embedding expects chemically meaningful atoms and bonds, not just a coordinate
 table.

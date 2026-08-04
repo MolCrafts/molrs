@@ -1,10 +1,11 @@
 //! Raw velocity autocorrelation function — the VDOS / Green–Kubo-diffusion
 //! input.
 //!
-//! [`VACF`] returns **only** the raw, unnormalized velocity ACF (no windowing,
-//! no integrated D): the fit step is the analyst's explicit choice of
+//! [`VACF`] returns the **unbiased** velocity ACF (per-DOF trajectory-mean
+//! removal, then time-origin average `1/(n-τ)`, then DOF average). No windowing
+//! and no integrated D — the fit step is the analyst's choice of
 //! [`PowerSpectrum`](crate::compute::spectroscopy::PowerSpectrum) (VDOS) or
-//! [`CumulativeTrapezoid`](crate::compute::fitting::CumulativeTrapezoid) (D).
+//! [`CumulativeTrapezoid`](crate::compute::fitting::CumulativeTrapezoid) + `1/d` (D).
 
 use molrs::store::frame_access::FrameAccess;
 use ndarray::{Array1, Array2};
@@ -15,15 +16,16 @@ use crate::compute::result::ComputeResult;
 use crate::compute::traits::Compute;
 use molrs::signal as sig;
 
-/// Raw unnormalized velocity autocorrelation function.
+/// Unbiased velocity autocorrelation function result.
 #[derive(Debug, Clone)]
 pub struct VacfResult {
-    /// Lag times τ = i·dt, length `resolution + 1`. Units: `[dt]`.
+    /// Lag times τ = i·dt, length `resolution + 1`. Units: `[dt]` (analysis: fs).
     pub lag_times: Array1<f64>,
-    /// Unnormalized velocity ACF `C(τ) = (1/n_dof) Σ_d ⟨δv_d(0)·δv_d(τ)⟩`,
-    /// per-DOF mean-subtracted then DOF-averaged — identical to the `acf_sum`
-    /// the VDOS [`PowerSpectrum`](crate::compute::spectroscopy::PowerSpectrum)
-    /// transform consumes. Units: `[v]²`.
+    /// Unbiased velocity ACF
+    /// `C(τ) = (1/n_dof) Σ_d [ 1/(n-τ) Σ_t δv_d(t)·δv_d(t+τ) ]`
+    /// with per-DOF trajectory-mean removal. Same curve feeds VDOS
+    /// ([`PowerSpectrum`](crate::compute::spectroscopy::PowerSpectrum)) and
+    /// Green–Kubo D via `D = (1/d) ∫ C(τ) dτ`. Units: `[v]²`.
     pub acf: Array1<f64>,
 }
 
@@ -79,9 +81,16 @@ pub(super) fn velocity_acf(
             acf_sum[k] += acf[k];
         }
     }
+    // Unbiased time-origin average per lag, then DOF average:
+    // C(τ) = (1/n_dof) · (1/(n-τ)) · Σ_d Σ_t δv_d(t)·δv_d(t+τ)
+    // (acf_fft returns the lag-sum; divide by (n-τ) here — same discipline as JACF.)
+    if n_dof == 0 {
+        return Err(ComputeError::EmptyInput);
+    }
     let inv_n_dof = 1.0 / n_dof as f64;
     for k in 0..=max_lag {
-        acf_sum[k] *= inv_n_dof;
+        let n_origins = (n_frames - k) as f64;
+        acf_sum[k] *= inv_n_dof / n_origins;
     }
     let lag_times = Array1::from_iter((0..=max_lag).map(|i| i as f64 * dt));
     Ok(VacfResult {
@@ -130,7 +139,7 @@ mod tests {
     }
 
     #[test]
-    fn vacf_equals_vdos_acf_sum() {
+    fn vacf_equals_unbiased_dof_averaged_acf() {
         // ac-011: VACF == the per-DOF mean-subtract + FFT-ACF + DOF-average curve
         // that the PowerSpectrum (VDOS) transform consumes.
         let n = 512;
@@ -155,7 +164,7 @@ mod tests {
             }
         }
         for k in 0..=max_lag {
-            acf_sum[k] *= 1.0 / 9.0;
+            acf_sum[k] *= (1.0 / 9.0) / (n - k) as f64;
         }
 
         let raw = VACF.compute(&no_frames(), (&v, dt, res)).unwrap();

@@ -95,7 +95,7 @@ fn lines_containing(needle: &str) -> Vec<String> {
 /// ac-003 — the dead argument is gone.
 ///
 /// `normalize_total_charge` was already a lie the impl had to refuse: passing
-/// `true` returns an error, because antechamber does not renormalize (`am1bcc.c`
+/// `true` returns an error, because the AM1-BCC reference algorithm does not renormalize (`am1bcc.c`
 /// ends at the increment loop) and spreading the AM1 rounding residual over the
 /// atoms would make molrs diverge from the reference while hiding a
 /// non-converged AM1 behind a plausible answer. An argument whose only legal
@@ -142,7 +142,7 @@ fn the_fake_am1_charge_backend_is_gone() {
 ///
 /// The impl binds it as `_total_charge` and never reads it: it is dead in exactly
 /// the same way `normalize_total_charge` is, and it is dead for the same reason
-/// (molrs carries antechamber's rounding residual through rather than
+/// (molrs carries the reference rounding residual through rather than
 /// renormalizing to a target). The spec leaves its fate to the implementer, so
 /// this test does not demand its removal — it demands that if it is KEPT, it is
 /// kept as something the code actually reads. An argument that crosses an FFI

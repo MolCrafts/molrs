@@ -10,7 +10,7 @@
 //!
 //! # Supported Features
 //!
-//! - Multi-frame trajectory reading with random access via `TrajReader`
+//! - Multi-frame trajectory reading with random access via `TrajectoryReader`
 //! - Orthogonal and triclinic simulation boxes
 //! - Automatic column type detection (integer vs float) with promote-on-demand
 //! - Boundary condition flag parsing (`pp`, `ff`, `ss`, etc.)
@@ -24,7 +24,7 @@
 //!
 //! # fn main() -> std::io::Result<()> {
 //! let frames = read_lammps_dump("trajectory.lammpstrj")?;
-//! use molrs::io::reader::TrajReader;
+//! use molrs::io::reader::TrajectoryReader;
 //! let mut reader = open_lammps_dump("trajectory.lammpstrj")?;
 //! let frame_5 = reader.read_step(5)?;
 //! write_lammps_dump("output.lammpstrj", &frames)?;
@@ -34,14 +34,15 @@
 
 use crate::io::lammps::box_bounds::{BoxBounds, pbc_from_boundary_tokens, simbox_from_bounds};
 use crate::io::lammps::common::{
-    canonical_dump_column, err_mapper, insert_f, insert_i, insert_str, is_integer_dump_column,
-    is_string_dump_column, native_dump_column,
+    canonical_dump_column, err_mapper, insert_f, insert_i, insert_str, insert_u,
+    is_integer_dump_column, is_string_dump_column, native_dump_column,
 };
-use crate::io::reader::{FrameIndex, FrameReader, ReadSeek, Reader, TrajReader};
+use crate::io::reader::{FrameIndex, FrameReader, ReadSeek, Reader, TrajectoryReader};
 use crate::io::writer::{FrameWriter, Writer};
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
 use molrs::store::frame_access::FrameAccess;
+use molrs::types::U;
 use molrs::types::{F, I};
 use once_cell::sync::OnceCell;
 use std::fs::File;
@@ -56,6 +57,8 @@ use std::path::Path;
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum ColumnType {
     Integer,
+    /// Unsigned — canonical ids and relation endpoints.
+    Unsigned,
     Float,
     String,
 }
@@ -78,6 +81,18 @@ enum BlockKind {
 /// user-defined (`c_X[N]`, `f_reax[1]`, …). Integer/string sets come from
 /// the dump custom + property/atom attribute lists (see `is_*_dump_column`).
 fn classify_column(name: &str) -> ColumnType {
+    // A canonical key's dtype is declared by the vocabulary, not guessed from
+    // its name. Without this, `id` and `mol_id` are stored signed because the
+    // hardcoded name list says "integer", and every consumer reading them as
+    // unsigned silently sees nothing.
+    if let Some(spec) = molrs::store::schema::column(&canonical_dump_column(name)) {
+        return match spec.dtype {
+            molrs::store::block::DType::Float => ColumnType::Float,
+            molrs::store::block::DType::String => ColumnType::String,
+            molrs::store::block::DType::UInt => ColumnType::Unsigned,
+            _ => ColumnType::Integer,
+        };
+    }
     if is_integer_dump_column(name) {
         ColumnType::Integer
     } else if is_string_dump_column(name) {
@@ -407,12 +422,43 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
     // Promotion (Integer → Float → String) drains the old buffer and
     // converts each existing value to the wider type before continuing
     // — see the match arms below.
-    let mut col_types: Vec<ColumnType> = vec![ColumnType::Integer; ncols];
-    let mut int_cols: Vec<Option<Vec<I>>> = (0..ncols)
-        .map(|_| Some(Vec::with_capacity(nrows)))
+    // Seed from the vocabulary, not from Integer: promote-on-demand widens a
+    // column when a token does not fit, but it can never *narrow*, so a
+    // canonical Float column whose file happens to hold whole numbers would
+    // stay Integer forever. Unspec'd columns still start at Integer and promote.
+    // Canonical keys are typed by the vocabulary; everything else keeps the
+    // promote-on-demand behaviour (start Integer, widen when a token does not
+    // fit), because a `dump local` column like `batom1` has no spec and its
+    // type is genuinely a property of the data.
+    let mut col_types: Vec<ColumnType> = col_names
+        .iter()
+        .map(|n| {
+            if molrs::store::schema::column(&canonical_dump_column(n)).is_some() {
+                classify_column(n)
+            } else {
+                ColumnType::Integer
+            }
+        })
         .collect();
-    let mut float_cols: Vec<Option<Vec<F>>> = vec![None; ncols];
-    let mut str_cols: Vec<Option<Vec<std::string::String>>> = vec![None; ncols];
+    // Buffers follow the seeded type. Previously every column started Integer
+    // so only `int_cols` was pre-allocated and the promotion path allocated the
+    // others; seeding from the vocabulary means a column can *begin* as Float
+    // or String, and its buffer has to exist before the first row.
+    let mut int_cols: Vec<Option<Vec<I>>> = col_types
+        .iter()
+        .map(|t| {
+            matches!(t, ColumnType::Integer | ColumnType::Unsigned)
+                .then(|| Vec::with_capacity(nrows))
+        })
+        .collect();
+    let mut float_cols: Vec<Option<Vec<F>>> = col_types
+        .iter()
+        .map(|t| matches!(t, ColumnType::Float).then(|| Vec::with_capacity(nrows)))
+        .collect();
+    let mut str_cols: Vec<Option<Vec<std::string::String>>> = col_types
+        .iter()
+        .map(|t| matches!(t, ColumnType::String).then(|| Vec::with_capacity(nrows)))
+        .collect();
 
     // --- Single pass: walk rows in file order, push into typed columns ---
     //
@@ -447,7 +493,7 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
                 err_mapper(format!("Row {} has fewer than {} tokens", row, ncols))
             })?;
             match col_types[i] {
-                ColumnType::Integer => {
+                ColumnType::Integer | ColumnType::Unsigned => {
                     if let Ok(v) = token.parse::<I>() {
                         int_cols[i].as_mut().unwrap().push(v);
                     } else if let Ok(v) = token.parse::<F>() {
@@ -512,6 +558,24 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
                     nrows,
                 )?;
             }
+            ColumnType::Unsigned => {
+                // Parsed through the signed buffer, stored unsigned: the
+                // vocabulary declares these keys UInt and a negative value in
+                // one is a malformed file, not a representable state.
+                let raw = int_cols[i].take().unwrap();
+                if let Some(bad) = raw.iter().find(|&&v| v < 0) {
+                    return Err(err_mapper(format!(
+                        "column '{}' is unsigned in the Frame schema but the dump holds {bad}",
+                        name.as_str()
+                    )));
+                }
+                insert_u(
+                    &mut data_block,
+                    name.as_str(),
+                    raw.into_iter().map(|v| v as U).collect(),
+                    nrows,
+                )?;
+            }
             ColumnType::Float => {
                 insert_f(
                     &mut data_block,
@@ -531,15 +595,23 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
         }
     }
 
-    // ENTRIES (dump local) → "bonds": typical use case is per-bond rows.
-    // Column names are preserved as-is; downstream (`DrawBondModifier`)
-    // is gated on the canonical `atomi`/`atomj` columns so a non-bond
-    // dump local file (angles, pair distances, …) parses and lands in
-    // the pipeline without auto-attaching a bond renderer that would
-    // throw on missing columns.
+    // ENTRIES (`dump local`) lands in "entries", not "bonds".
+    //
+    // It used to be called "bonds", which claimed the canonical bonds contract
+    // — `atomi`/`atomj`, 0-indexed into `atoms` — while carrying whatever
+    // columns the file happened to name (`batom1`/`batom2`, angles, pair
+    // distances, …). Worse, as the note above records, those endpoints point
+    // at "the atom written at file row K" with a 0-/1-based offset the *user*
+    // resolves, so they are not 0-based row indices at all.
+    //
+    // A block that does not satisfy a contract must not take its name; the
+    // schema check on read is what made this visible. Column names stay
+    // as-is, and downstream stays gated on the canonical endpoints, so a
+    // consumer that wants bonds still gets nothing here — it just gets
+    // nothing under an honest name.
     let block_name = match block_kind {
         BlockKind::Atoms => "atoms",
-        BlockKind::Entries => "bonds",
+        BlockKind::Entries => "entries",
     };
     frame.insert(block_name, data_block);
 
@@ -570,7 +642,7 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
 // Reader
 // ============================================================================
 
-/// LAMMPS dump trajectory reader implementing `TrajReader` for random access.
+/// LAMMPS dump trajectory reader implementing `TrajectoryReader` for random access.
 ///
 /// Supports multi-frame dump files with lazy index building for random access.
 ///
@@ -578,7 +650,7 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
 ///
 /// ```no_run
 /// use molrs::io::trajectory::lammps_dump::open_lammps_dump;
-/// use molrs::io::reader::TrajReader;
+/// use molrs::io::reader::TrajectoryReader;
 ///
 /// # fn main() -> std::io::Result<()> {
 /// let mut reader = open_lammps_dump("traj.lammpstrj")?;
@@ -714,7 +786,6 @@ impl<R: BufRead + Seek> LAMMPSTrajReader<R> {
 
 impl<R: BufRead + Seek> Reader for LAMMPSTrajReader<R> {
     type R = R;
-    type Frame = Frame;
 
     fn new(reader: Self::R) -> Self {
         Self::new(reader)
@@ -722,17 +793,19 @@ impl<R: BufRead + Seek> Reader for LAMMPSTrajReader<R> {
 }
 
 impl<R: BufRead + Seek> FrameReader for LAMMPSTrajReader<R> {
-    fn read_frame(&mut self) -> std::io::Result<Option<Self::Frame>> {
-        parse_single_frame(&mut self.reader)
+    fn read(&mut self) -> std::io::Result<Option<Frame>> {
+        // Validate on the way out: a frame that violates the vocabulary
+        // is a malformed file or a reader bug, not a result to return.
+        crate::io::reader::validated(parse_single_frame(&mut self.reader)?)
     }
 }
 
-impl<R: BufRead + Seek> TrajReader for LAMMPSTrajReader<R> {
+impl<R: BufRead + Seek> TrajectoryReader for LAMMPSTrajReader<R> {
     fn build_index(&mut self) -> std::io::Result<()> {
         self.build_index_impl()
     }
 
-    fn read_step(&mut self, step: usize) -> std::io::Result<Option<Self::Frame>> {
+    fn read_step(&mut self, step: usize) -> std::io::Result<Option<Frame>> {
         if self.index.get().is_none() {
             self.build_index_impl()?;
         }
@@ -787,7 +860,6 @@ impl<W: Write> LAMMPSDumpWriter<W> {
 
 impl<W: Write> Writer for LAMMPSDumpWriter<W> {
     type W = W;
-    type FrameLike = Frame;
 
     fn new(writer: Self::W) -> Self {
         Self::new(writer)
@@ -795,7 +867,10 @@ impl<W: Write> Writer for LAMMPSDumpWriter<W> {
 }
 
 impl<W: Write> FrameWriter for LAMMPSDumpWriter<W> {
-    fn write_frame(&mut self, frame: &Frame) -> std::io::Result<()> {
+    fn write(&mut self, frame: &Frame) -> std::io::Result<()> {
+        // Refuse to emit a frame that violates the vocabulary: a bad file
+        // looks fine and is found wrong later, by whatever reads it.
+        crate::io::writer::check_before_write(frame)?;
         write_lammps_dump_frame(&mut self.writer, frame)
     }
 }
@@ -911,6 +986,13 @@ fn write_lammps_dump_frame<W: Write>(
                 let mut parts = Vec::with_capacity(ordered.len());
                 for (ci, &name) in ordered.iter().enumerate() {
                     let s = match col_types[ci] {
+                        ColumnType::Unsigned => {
+                            if let Some(arr) = atoms.get_uint_view(name) {
+                                format!("{}", arr[row])
+                            } else {
+                                String::new()
+                            }
+                        }
                         ColumnType::Integer => {
                             if let Some(arr) = atoms.get_int_view(name) {
                                 format!("{}", arr[row])
@@ -958,17 +1040,17 @@ fn write_lammps_dump_frame<W: Write>(
 
 /// Read all frames from a LAMMPS dump file.
 ///
-/// For large trajectories, prefer `open_lammps_dump` with `TrajReader::read_step`
+/// For large trajectories, prefer `open_lammps_dump` with `TrajectoryReader::read_step`
 /// for random access without loading all frames into memory.
 pub fn read_lammps_dump<P: AsRef<Path>>(path: P) -> std::io::Result<Vec<Frame>> {
     let reader = crate::io::reader::open_seekable(path)?;
     let mut dump_reader = LAMMPSTrajReader::new(reader);
-    dump_reader.read_all()
+    crate::io::reader::collect_frames(&mut dump_reader)
 }
 
 /// Open a LAMMPS dump file for trajectory-style random access.
 ///
-/// Returns a reader implementing `TrajReader`. The index is built lazily
+/// Returns a reader implementing `TrajectoryReader`. The index is built lazily
 /// on first call to `read_step` or `len`.
 pub fn open_lammps_dump<P: AsRef<Path>>(
     path: P,
@@ -1148,9 +1230,13 @@ ITEM: ATOMS id type x y z
 
     #[test]
     fn test_classify_column() {
-        assert_eq!(classify_column("id"), ColumnType::Integer);
-        assert_eq!(classify_column("type"), ColumnType::Integer);
-        assert_eq!(classify_column("mol"), ColumnType::Integer);
+        // `id` is UInt in the vocabulary, so classification follows the schema
+        // rather than the hardcoded integer-name list.
+        assert_eq!(classify_column("id"), ColumnType::Unsigned);
+        // A dump's `type` column canonicalizes to `type_id` (UInt).
+        assert_eq!(classify_column("type"), ColumnType::Unsigned);
+        // `mol` canonicalizes to `mol_id` (UInt).
+        assert_eq!(classify_column("mol"), ColumnType::Unsigned);
         assert_eq!(classify_column("ix"), ColumnType::Integer);
         assert_eq!(classify_column("x"), ColumnType::Float);
         assert_eq!(classify_column("vx"), ColumnType::Float);
@@ -1206,16 +1292,17 @@ ITEM: ENTRIES c_1[1] c_1[2] c_1[3]
 3 3 4
 ";
         let mut reader = LAMMPSTrajReader::new(cursor(dump));
-        let frames = reader.read_all().unwrap();
+        let frames = crate::io::reader::collect_frames(&mut reader).unwrap();
         assert_eq!(frames.len(), 1);
-        // Block name is "bonds" (not "atoms") for ENTRIES form.
+        // ENTRIES lands in "entries" — it does not satisfy the canonical
+        // `bonds` contract (0-based `atomi`/`atomj`), so it does not take that name.
         assert!(frames[0].get("atoms").is_none());
-        let bonds = frames[0].get("bonds").expect("bonds block present");
-        assert_eq!(bonds.nrows(), Some(3));
+        let entries = frames[0].get("entries").expect("entries block present");
+        assert_eq!(entries.nrows(), Some(3));
         // Column names preserved as-is from the file.
-        assert!(bonds.dtype("c_1[1]").is_some());
-        assert!(bonds.dtype("c_1[2]").is_some());
-        assert!(bonds.dtype("c_1[3]").is_some());
+        assert!(entries.dtype("c_1[1]").is_some());
+        assert!(entries.dtype("c_1[2]").is_some());
+        assert!(entries.dtype("c_1[3]").is_some());
     }
 
     #[test]
@@ -1243,9 +1330,9 @@ ITEM: ATOMS id type x y z
 2 1 5.0 0.0 0.0
 ";
         let mut reader = LAMMPSTrajReader::new(cursor(dump));
-        let frames = reader.read_all().unwrap();
+        let frames = crate::io::reader::collect_frames(&mut reader).unwrap();
         let atoms = frames[0].get("atoms").expect("atoms block");
-        let ids = atoms.get_int("id").expect("id column");
+        let ids = atoms.get_uint("id").expect("id column");
         let xs = atoms.get_float("x").expect("x column");
         // File order preserved: 3, 1, 2 (matching x: 9.0, 1.0, 5.0).
         assert_eq!(ids.as_slice().unwrap(), &[3, 1, 2]);
@@ -1272,9 +1359,9 @@ ITEM: ENTRIES batom1 batom2 btype
 2 3 1
 ";
         let mut reader = LAMMPSTrajReader::new(cursor(dump));
-        let frames = reader.read_all().unwrap();
-        let bonds = frames[0].get("bonds").expect("bonds block");
-        let batom1 = bonds.get_int("batom1").expect("batom1");
+        let frames = crate::io::reader::collect_frames(&mut reader).unwrap();
+        let entries = frames[0].get("entries").expect("entries block");
+        let batom1 = entries.get_int("batom1").expect("batom1");
         // File order: 3, 1, 2 (no sort applied).
         assert_eq!(batom1.as_slice().unwrap(), &[3, 1, 2]);
     }
@@ -1307,7 +1394,7 @@ ITEM: ATOMS id type x y z
 3 2 7.0 8.0 9.0
 ";
         let mut reader = LAMMPSTrajReader::new(cursor(dump));
-        let frames = reader.read_all().unwrap();
+        let frames = crate::io::reader::collect_frames(&mut reader).unwrap();
         assert_eq!(frames.len(), 2);
         assert_eq!(frames[0].get("atoms").unwrap().nrows(), Some(2));
         assert_eq!(frames[1].get("atoms").unwrap().nrows(), Some(3));
@@ -1328,7 +1415,7 @@ ITEM: ATOMS id type x y z vx vy vz q c_pe
 1 1 1.0 2.0 3.0 0.1 0.2 0.3 -0.5 -10.5
 ";
         let mut reader = LAMMPSTrajReader::new(cursor(dump));
-        let frame = reader.read_frame().unwrap().expect("parse");
+        let frame = reader.read().unwrap().expect("parse");
         let atoms = frame.get("atoms").unwrap();
 
         // Custom columns should be float. LAMMPS's `q` is renamed to the
@@ -1360,7 +1447,7 @@ ITEM: ATOMS id type xu yu zu
 2 1 4.0 5.0 6.0
 ";
         let mut reader = LAMMPSTrajReader::new(cursor(dump));
-        let frame = reader.read_frame().unwrap().expect("parse");
+        let frame = reader.read().unwrap().expect("parse");
         let atoms = frame.get("atoms").expect("atoms");
 
         let x = atoms.get_float("xu").expect("xu");
@@ -1392,7 +1479,7 @@ ITEM: ATOMS id type xs ys zs
 2 1 0.5 0.5 0.5
 ";
         let mut reader = LAMMPSTrajReader::new(cursor(dump));
-        let frame = reader.read_frame().unwrap().expect("parse");
+        let frame = reader.read().unwrap().expect("parse");
         let atoms = frame.get("atoms").expect("atoms");
 
         let x = atoms.get_float("xs").expect("xs");
@@ -1423,7 +1510,7 @@ ITEM: ATOMS id type xs ys zs
 1 1 0.25 0.5 0.75
 ";
         let mut reader = LAMMPSTrajReader::new(cursor(dump));
-        let frame = reader.read_frame().unwrap().expect("parse");
+        let frame = reader.read().unwrap().expect("parse");
         let atoms = frame.get("atoms").expect("atoms");
 
         let x = atoms.get_float("xs").expect("xs");
@@ -1450,7 +1537,7 @@ ITEM: ATOMS id type xs yu zu
 1 1 0.5 5.0 5.0
 ";
         let mut reader = LAMMPSTrajReader::new(cursor(dump));
-        let frame = reader.read_frame().unwrap().expect("mixed coords parse");
+        let frame = reader.read().unwrap().expect("mixed coords parse");
         let atoms = frame.get("atoms").expect("atoms");
         assert_eq!(atoms.get_float("xs").expect("xs")[0], 0.5);
         assert_eq!(atoms.get_float("yu").expect("yu")[0], 5.0);
@@ -1472,7 +1559,7 @@ ITEM: ATOMS id type q
 1 1 -0.5
 ";
         let mut reader = LAMMPSTrajReader::new(cursor(dump));
-        let frame = reader.read_frame().unwrap().expect("parse");
+        let frame = reader.read().unwrap().expect("parse");
         let atoms = frame.get("atoms").expect("atoms");
         assert_eq!(atoms.get_float(keys::CHARGE).expect("charge")[0], -0.5);
     }
@@ -1493,11 +1580,11 @@ ITEM: ATOMS id type mol q x y z
 1 1 7 -0.5 1.0 2.0 3.0
 ";
         let mut reader = LAMMPSTrajReader::new(cursor(dump));
-        let frame = reader.read_frame().unwrap().expect("parse");
+        let frame = reader.read().unwrap().expect("parse");
         let atoms = frame.get("atoms").expect("atoms");
 
         assert_eq!(atoms.get_float(keys::CHARGE).expect("charge")[0], -0.5);
-        assert_eq!(atoms.get_int(keys::MOL_ID).expect("mol_id")[0], 7);
+        assert_eq!(atoms.get_uint(keys::MOL_ID).expect("mol_id")[0], 7);
         assert!(
             atoms.get("q").is_none(),
             "raw `q` must not survive the reader"
@@ -1521,7 +1608,7 @@ ITEM: ATOMS id type mol q x y z
     #[test]
     fn test_empty_input() {
         let mut reader = LAMMPSTrajReader::new(cursor(""));
-        assert!(reader.read_frame().unwrap().is_none());
+        assert!(reader.read().unwrap().is_none());
     }
 
     #[test]
@@ -1546,7 +1633,7 @@ ITEM: ATOMS id type x y z
 1 1 1.0 2.0 3.0
 ";
         let mut reader = LAMMPSTrajReader::new(cursor(dump));
-        let frame = reader.read_frame().unwrap().expect("parse");
+        let frame = reader.read().unwrap().expect("parse");
         let pbc = frame.simbox.as_ref().expect("simbox").pbc();
         // ff pp ss → [false, true, false]
         assert_eq!(pbc, [false, true, false]);

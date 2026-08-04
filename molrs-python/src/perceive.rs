@@ -42,12 +42,12 @@ use crate::core::system::molgraph::PyAtomistic;
 /// Method                           Atom props                  Bond props
 /// ===============================  ==========================  ==========================
 /// ``find_rings``                   ``is_in_ring``, ``n_rings`` ``is_in_ring``, ``n_rings``
-/// ``find_aromaticity``             ``is_aromatic``             ``is_aromatic``, ``order``,
-///                                                              ``kekule_order``
+/// ``find_aromaticity``             ``is_aromatic``             ``bond_type``, ``bond_number``
 /// ``find_hydrogens``               — (adds H atoms)            — (adds H bonds)
 /// ``find_stereo``                  ``stereo``                  ``stereo``
 /// ``find_rotatable``               —                           ``is_rotatable``
 /// ``find_bond_types``              —                           ``bcc_bond_type``
+/// ``find_kekule_orders``           —                           ``bond_number``
 /// ``find_equivalence_classes``     ``equiv_class``             —
 /// ===============================  ==========================  ==========================
 ///
@@ -58,7 +58,10 @@ use crate::core::system::molgraph::PyAtomistic;
 /// 1
 /// >>> mol.has(atom, "is_in_ring")   # the input is untouched
 /// False
-#[pyclass(module = "molrs", name = "Perceive")]
+// `subclass`: molpy layers a thin `Perceive` over this one so its finders
+// return molpy graphs. Without it the base type is final and molpy cannot
+// import at all.
+#[pyclass(module = "molrs", name = "Perceive", subclass)]
 #[derive(Debug)]
 pub struct PyPerceive {
     inner: Perceive,
@@ -93,21 +96,33 @@ impl PyPerceive {
         PyAtomistic::from_core(py, self.inner.find_rings(mol.core()))
     }
 
-    /// Perceive aromaticity (RDKit default model) on a clone of the graph.
+    /// Bring a molecule to the standard aromatic representation.
     ///
-    /// Cloning is load-bearing: perception rewrites aromatic bond ``order`` to 1.5
-    /// and stashes the Kekulé value under ``kekule_order``, so the caller's bond
-    /// orders survive only because the write lands on the clone.
+    /// On return every aromatic atom carries ``is_aromatic``, every aromatic
+    /// bond carries ``bond_type = 4``, and every bond carries an integer
+    /// ``bond_number`` — the localized Lewis structure. Nothing carries a
+    /// fractional order: aromaticity is a bond *type*, not the number 1.5.
+    ///
+    /// Two inputs get two treatments. An input that already declares its
+    /// aromatic bonds (a lowercase SMILES) is *kekulized* — the notation
+    /// answered which bonds are aromatic, and only the phase is missing. An
+    /// input that does not is *perceived* from its integer bond numbers, rings,
+    /// valences and electron counts, and any assignment it already stated is
+    /// kept.
+    ///
+    /// Hydrogens are neither added nor required: implicit hydrogens are read
+    /// off each atom's valence, so :meth:`find_hydrogens` stays an independent
+    /// operation and running it first changes no answer here.
     ///
     /// Parameters
     /// ----------
     /// mol : Atomistic
-    ///     The molecule to perceive; left untouched.
+    ///     The molecule to standardize; left untouched.
     ///
     /// Returns
     /// -------
     /// Atomistic
-    ///     A clone of ``mol`` with ``is_aromatic`` on every atom and bond.
+    ///     A clone of ``mol`` carrying both facts about every bond.
     fn find_aromaticity(&self, py: Python<'_>, mol: &PyAtomistic) -> PyResult<Py<PyAtomistic>> {
         PyAtomistic::from_core(py, self.inner.find_aromaticity(mol.core()))
     }
@@ -184,6 +199,36 @@ impl PyPerceive {
     ///     A clone of ``mol`` with ``bcc_bond_type`` on every bond.
     fn find_bond_types(&self, py: Python<'_>, mol: &PyAtomistic) -> PyResult<Py<PyAtomistic>> {
         PyAtomistic::from_core(py, self.inner.find_bond_types(mol.core()))
+    }
+
+    /// Assign a localized (Kekulé) ``bond_number`` to every aromatic bond.
+    ///
+    /// Kekulization and nothing else: a molecule whose aromatic bonds are not
+    /// marked yet comes back unchanged, because deciding *which* bonds are
+    /// aromatic belongs to :meth:`find_aromaticity`. Reach for this directly
+    /// when the input already declares its aromatic subgraph and only the phase
+    /// is missing.
+    ///
+    /// An aromatic bond that already carries a legal number keeps it — a file
+    /// that round-trips does not come back renumbered. A system with no legal
+    /// assignment is left entirely unchanged rather than half-assigned.
+    ///
+    /// Parameters
+    /// ----------
+    /// mol : Atomistic
+    ///     The molecule to kekulize; left untouched.
+    ///
+    /// Returns
+    /// -------
+    /// Atomistic
+    ///     A clone of ``mol`` whose aromatic bonds carry a legal localized
+    ///     number.
+    fn find_kekule_orders(
+        &self,
+        py: Python<'_>,
+        mol: &PyAtomistic,
+    ) -> PyResult<Py<PyAtomistic>> {
+        PyAtomistic::from_core(py, self.inner.find_kekule_orders(mol.core()))
     }
 
     /// Perceive charge-equivalence classes and project them onto the graph.

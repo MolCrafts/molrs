@@ -252,6 +252,7 @@ impl BlockAccess for BlockView<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::U;
     use ndarray::Array1;
 
     fn make_block() -> Block {
@@ -260,7 +261,7 @@ mod tests {
             .insert("x", Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn())
             .unwrap();
         block
-            .insert("id", Array1::from_vec(vec![10 as I, 20, 30]).into_dyn())
+            .insert("id", Array1::from_vec(vec![10 as U, 20, 30]).into_dyn())
             .unwrap();
         block
     }
@@ -289,7 +290,7 @@ mod tests {
     fn test_block_access_on_block() {
         let block = make_block();
         assert!(BlockAccess::get_float_view(&block, "x").is_some());
-        assert!(BlockAccess::get_int_view(&block, "id").is_some());
+        assert!(BlockAccess::get_uint_view(&block, "id").is_some());
         assert_eq!(BlockAccess::nrows(&block), Some(3));
         assert_eq!(BlockAccess::len(&block), 2);
         assert!(!BlockAccess::is_empty(&block));
@@ -302,7 +303,7 @@ mod tests {
         let block = make_block();
         let view = BlockView::from(&block);
         assert!(BlockAccess::get_float_view(&view, "x").is_some());
-        assert!(BlockAccess::get_int_view(&view, "id").is_some());
+        assert!(BlockAccess::get_uint_view(&view, "id").is_some());
         assert_eq!(BlockAccess::nrows(&view), Some(3));
         assert_eq!(BlockAccess::len(&view), 2);
         assert!(!BlockAccess::is_empty(&view));

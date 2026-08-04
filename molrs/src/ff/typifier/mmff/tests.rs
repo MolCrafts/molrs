@@ -4,7 +4,7 @@
 #[allow(clippy::module_inception)]
 mod tests {
     use crate::ff::typifier::mmff::MMFF94Typifier;
-    use molrs::system::molgraph::{Atom, PropValue};
+    use molrs::system::molgraph::Atom;
     use molrs::{AtomId, Atomistic};
 
     fn atom(sym: &str) -> Atom {
@@ -19,7 +19,16 @@ mod tests {
 
     fn bond_order(mol: &mut Atomistic, a: AtomId, b: AtomId, order: f64) {
         if let Ok(bid) = mol.add_bond(a, b) {
-            let _ = mol.set_bond_prop(bid, "order", PropValue::F64(order));
+            // The old float encoding, split into the two facts it conflated.
+            let _ = if (order - 1.5).abs() < 1e-6 {
+                mol.set_bond_class(
+                    bid,
+                    crate::system::bond::BondType::Aromatic,
+                    crate::system::bond::BondNumber::Unknown,
+                )
+            } else {
+                mol.set_bond_type(bid, crate::system::bond::BondType::from_code(order as u32))
+            };
         }
     }
 

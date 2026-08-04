@@ -2,7 +2,7 @@
 
 Exposes the validated Rust ``SmartsPattern`` (``molrs/src/core/chem/smarts``) to
 Python with map-keyed results, plus the graph-edit conveniences
-(``remove_atom`` / ``remove_bond`` / ``set_bond_order`` / ``copy``) on
+(``remove_atom`` / ``remove_bond`` / ``set_bond_type`` / ``copy``) on
 ``Atomistic``. The matching algorithm itself is exercised in Rust; these tests
 only assert the PyO3 surface and Daylight atom-map semantics.
 """
@@ -70,16 +70,16 @@ def _methylamine() -> "molrs.Atomistic":
 
 
 def test_smarts_pattern_is_exposed():
-    """molrs.SmartsPattern exists and parses a query."""
-    assert "SmartsPattern" in dir(molrs)
-    pat = molrs.SmartsPattern("[C:1][O:2][H:3]")
+    """molrs.perceive.SmartsPattern exists and parses a query."""
+    assert "SmartsPattern" in molrs.perceive.__all__
+    pat = molrs.perceive.SmartsPattern("[C:1][O:2][H:3]")
     assert pat is not None
 
 
 def test_mapped_true_captures_map_numbers():
     """find_matches(..., mapped=True) returns map-number keyed matches."""
     mol, c, o, ho = _methanol()
-    pat = molrs.SmartsPattern("[C:1][O:2][H:3]")
+    pat = molrs.perceive.SmartsPattern("[C:1][O:2][H:3]")
     matches = pat.find_matches(mol, mapped=True)
     assert isinstance(matches, list)
     assert len(matches) == 1
@@ -97,11 +97,11 @@ def test_mapped_true_captures_map_numbers():
 def test_default_matches_are_objects():
     """find_matches() returns SmartsMatch objects by default."""
     mol, c, o, ho = _methanol()
-    pat = molrs.SmartsPattern("[C:1][O:2][H:3]")
+    pat = molrs.perceive.SmartsPattern("[C:1][O:2][H:3]")
     matches = pat.find_matches(mol)
     assert len(matches) == 1
     match = matches[0]
-    assert isinstance(match, molrs.SmartsMatch)
+    assert isinstance(match, molrs.perceive.SmartsMatch)
     assert match.atoms == [c, o, ho]
     assert match.mapping == {1: c, 2: o, 3: ho}
     assert match.as_list() == [c, o, ho]
@@ -111,7 +111,7 @@ def test_default_matches_are_objects():
 def test_mapped_true_empty_on_non_match():
     """A molecule lacking the group yields an empty match list."""
     mol, _c1, _c2 = _ethane()
-    pat = molrs.SmartsPattern("[C:1][O:2][H:3]")
+    pat = molrs.perceive.SmartsPattern("[C:1][O:2][H:3]")
     assert pat.find_matches(mol, mapped=True) == []
     assert pat.has_match(mol) is False
 
@@ -119,7 +119,7 @@ def test_mapped_true_empty_on_non_match():
 def test_primary_amine_matches_NH2():
     """[N;H2:1] matches a primary amine nitrogen (2 explicit H)."""
     mol, n = _methylamine()
-    pat = molrs.SmartsPattern("[N;H2:1]")
+    pat = molrs.perceive.SmartsPattern("[N;H2:1]")
     matches = pat.find_matches(mol, mapped=True)
     assert len(matches) == 1
     assert matches[0] == {1: n}
@@ -136,21 +136,21 @@ def test_primary_amine_matches_NH2():
 def test_map_number_adds_no_constraint():
     """find_matches('[C:1]') and find_matches('[C]') return the same atom set."""
     mol, c1, c2 = _ethane()
-    mapped = molrs.SmartsPattern("[C:1]").find_matches(mol)
-    plain = molrs.SmartsPattern("[C]").find_matches(mol)
+    mapped = molrs.perceive.SmartsPattern("[C:1]").find_matches(mol)
+    plain = molrs.perceive.SmartsPattern("[C]").find_matches(mol)
     # Each match is a single-atom SmartsMatch; compare the flat atom sets.
     assert {m.atoms[0] for m in mapped} == {m.atoms[0] for m in plain} == {c1, c2}
 
 
 def test_map_label_and_num_query_atoms():
     """map_label / num_query_atoms expose the parsed query metadata."""
-    pat = molrs.SmartsPattern("[C:1][O:2][H:3]")
+    pat = molrs.perceive.SmartsPattern("[C:1][O:2][H:3]")
     assert pat.num_query_atoms == 3
     assert pat.map_label(0) == 1
     assert pat.map_label(1) == 2
     assert pat.map_label(2) == 3
 
-    plain = molrs.SmartsPattern("[C]")
+    plain = molrs.perceive.SmartsPattern("[C]")
     assert plain.num_query_atoms == 1
     assert plain.map_label(0) is None
 
@@ -183,12 +183,15 @@ def test_remove_bond():
     assert mol.n_atoms == n_atoms_before  # atoms untouched
 
 
-def test_set_bond_order():
-    """set_bond_order updates the bond 'order' property."""
+def test_set_bond_type():
+    """set_bond_type writes both facts: the class and its implied number."""
     mol, c, o, ho = _methanol()
     (bond_handle, _other) = mol.incident_relations(c, "bonds")[0]
-    mol.set_bond_order(bond_handle, 2.0)
-    assert mol.get_relation_prop("bonds", bond_handle, "order") == pytest.approx(2.0)
+    mol.set_bond_type(bond_handle, 2)
+    # A plain class implies its own number, and both are written — a class with
+    # no number leaves the bond un-standardized.
+    assert mol.bond_type(bond_handle) == 2
+    assert mol.bond_number(bond_handle) == 2
 
 
 def test_copy_is_independent():

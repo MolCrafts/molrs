@@ -18,13 +18,11 @@ use wasm_bindgen::prelude::*;
 
 use molrs::ff::forcefield::ForceField as RsForceField;
 use molrs::ff::potential::{
-    intramolecular_pairs as topology_pairs, Potential, Potentials as RsPotentials,
+    Potential, Potentials as RsPotentials, intramolecular_pairs as topology_pairs,
 };
-use molrs::ff::typifier::mmff::{
-    MMFF94STypifier as RsMMFF94S, MMFF94Typifier as RsMMFF94,
-};
+use molrs::ff::typifier::mmff::{MMFF94STypifier as RsMMFF94S, MMFF94Typifier as RsMMFF94};
 use molrs::ff::typifier::uff::UFFTypifier as RsUFF;
-use molrs::optimize::{set_free_mask, LBFGS as RsLBFGS, Optimizer};
+use molrs::optimize::{LBFGS as RsLBFGS, Optimizer, set_free_mask};
 use molrs::store::block::Block as RsBlock;
 use molrs::store::frame::Frame as RsFrame;
 use molrs::system::atomistic::Atomistic;
@@ -240,8 +238,7 @@ impl LBFGS {
                 }
 
                 let pot: Arc<dyn Potential> = Arc::clone(&self.pots) as Arc<dyn Potential>;
-                let mut opt =
-                    RsLBFGS::new(pot, self.fmax, max_steps, self.max_step, self.memory);
+                let mut opt = RsLBFGS::new(pot, self.fmax, max_steps, self.max_step, self.memory);
                 let report = Optimizer::run(&mut opt, rs)?;
 
                 if fixed.is_some() {
@@ -355,12 +352,7 @@ fn pairs_from_indices(frame: &RsFrame, i: &[u32], j: &[u32]) -> Result<RsBlock, 
     Ok(pairs)
 }
 
-fn end_pairs(
-    frame: &RsFrame,
-    block: &str,
-    col_a: &str,
-    col_b: &str,
-) -> HashSet<(usize, usize)> {
+fn end_pairs(frame: &RsFrame, block: &str, col_a: &str, col_b: &str) -> HashSet<(usize, usize)> {
     let Some(b) = frame.get(block) else {
         return HashSet::new();
     };

@@ -50,7 +50,7 @@
 //!
 //! ```no_run
 //! use molrs::io::trajectory::trr::{read_trr, open_trr, write_trr};
-//! use molrs::io::reader::TrajReader;
+//! use molrs::io::reader::TrajectoryReader;
 //!
 //! # fn main() -> std::io::Result<()> {
 //! let frames = read_trr("traj.trr")?;          // sequential, all frames
@@ -61,14 +61,14 @@
 //! # }
 //! ```
 
-use crate::io::reader::{FrameReader, ReadSeek, Reader, TrajReader};
+use crate::io::reader::{FrameReader, ReadSeek, Reader, TrajectoryReader};
 use crate::io::trajectory::xdr;
 use crate::io::writer::{FrameWriter, Writer};
 use molrs::spatial::simbox::SimBox;
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
 use molrs::store::frame_access::FrameAccess;
-use molrs::types::{F, I};
+use molrs::types::{F, U};
 use ndarray::{Array1, Array2, IxDyn, array};
 use once_cell::sync::OnceCell;
 use std::fs::File;
@@ -241,6 +241,11 @@ fn read_reals<R: Read>(r: &mut R, count: usize, is_double: bool) -> Result<Vec<f
 /// Build a `SimBox` from 9 row-stored box reals (`box[i][j]` = component `j`
 /// of lattice vector `i`). `SimBox` stores lattice vectors as H columns, so
 /// `H[r][c] = vals[c*3 + r]`.
+/// Nanometre → ångström. GROMACS binary trajectories are nm; molrs is Å, so
+/// the reader normalises here and the writer inverts it — the same boundary
+/// rule the GRO reader follows.
+pub(crate) const NM_TO_ANGSTROM: F = 10.0;
+
 fn build_simbox(vals: &[f64]) -> Result<SimBox> {
     let h = Array2::from_shape_fn((DIM, DIM), |(r, c)| vals[c * DIM + r] as F);
     let origin = array![0.0 as F, 0.0, 0.0];
@@ -264,14 +269,15 @@ fn insert_rvec_cols(
     kx: &str,
     ky: &str,
     kz: &str,
+    scale: F,
 ) -> Result<()> {
     let mut x = Vec::with_capacity(natoms);
     let mut y = Vec::with_capacity(natoms);
     let mut z = Vec::with_capacity(natoms);
     for i in 0..natoms {
-        x.push(rvec[i * DIM] as F);
-        y.push(rvec[i * DIM + 1] as F);
-        z.push(rvec[i * DIM + 2] as F);
+        x.push(rvec[i * DIM] as F * scale);
+        y.push(rvec[i * DIM + 1] as F * scale);
+        z.push(rvec[i * DIM + 2] as F * scale);
     }
     insert_float_col(block, kx, x)?;
     insert_float_col(block, ky, y)?;
@@ -286,7 +292,7 @@ fn parse_frame_at<R: BufRead + Seek>(r: &mut R, offset: u64) -> Result<Frame> {
 
     let simbox = if hdr.box_size != 0 {
         let vals = read_reals(r, DIM * DIM, hdr.is_double)?;
-        Some(build_simbox(&vals)?)
+        Some(scale_simbox(build_simbox(&vals)?, NM_TO_ANGSTROM)?)
     } else {
         None
     };
@@ -313,18 +319,28 @@ fn parse_frame_at<R: BufRead + Seek>(r: &mut R, offset: u64) -> Result<Frame> {
     };
 
     let mut atoms = Block::new();
-    let id_arr = Array1::from_iter(1..=natoms as I)
+    let id_arr = Array1::from_iter(1..=natoms as U)
         .into_shape_with_order(IxDyn(&[natoms]))
         .map_err(invalid)?;
     atoms.insert("id", id_arr).map_err(invalid)?;
     if let Some(x) = &x {
-        insert_rvec_cols(&mut atoms, x, natoms, "x", "y", "z")?;
+        insert_rvec_cols(&mut atoms, x, natoms, "x", "y", "z", NM_TO_ANGSTROM)?;
     }
     if let Some(v) = &v {
-        insert_rvec_cols(&mut atoms, v, natoms, "vx", "vy", "vz")?;
+        // nm/ps → Å/ps.
+        insert_rvec_cols(&mut atoms, v, natoms, "vx", "vy", "vz", NM_TO_ANGSTROM)?;
     }
     if let Some(f) = &f {
-        insert_rvec_cols(&mut atoms, f, natoms, "fx", "fy", "fz")?;
+        // kJ/mol/nm → kJ/mol/Å: same energy, per Å instead of per nm.
+        insert_rvec_cols(
+            &mut atoms,
+            f,
+            natoms,
+            "fx",
+            "fy",
+            "fz",
+            1.0 / NM_TO_ANGSTROM,
+        )?;
     }
 
     let mut frame = Frame::new();
@@ -393,14 +409,13 @@ impl<R: BufRead + Seek> TrrReader<R> {
 
 impl<R: BufRead + Seek> Reader for TrrReader<R> {
     type R = R;
-    type Frame = Frame;
     fn new(reader: Self::R) -> Self {
         Self::new(reader)
     }
 }
 
 impl<R: BufRead + Seek> FrameReader for TrrReader<R> {
-    fn read_frame(&mut self) -> Result<Option<Frame>> {
+    fn read(&mut self) -> Result<Option<Frame>> {
         self.ensure_index()?;
         let cursor = self.cursor;
         let off = match self.offsets.get().and_then(|o| o.get(cursor).copied()) {
@@ -409,11 +424,11 @@ impl<R: BufRead + Seek> FrameReader for TrrReader<R> {
         };
         let frame = parse_frame_at(&mut self.reader, off)?;
         self.cursor += 1;
-        Ok(Some(frame))
+        crate::io::reader::validated(Some(frame))
     }
 }
 
-impl<R: BufRead + Seek> TrajReader for TrrReader<R> {
+impl<R: BufRead + Seek> TrajectoryReader for TrrReader<R> {
     fn build_index(&mut self) -> Result<()> {
         self.ensure_index()
     }
@@ -443,13 +458,20 @@ fn axis<FA: FrameAccess>(frame: &FA, key: &str) -> Option<Vec<f64>> {
         .map(|view| view.iter().copied().collect::<Vec<f64>>())
 }
 
-fn write_rvecs<W: Write>(w: &mut W, x: &[f64], y: &[f64], z: &[f64]) -> Result<()> {
+fn write_rvecs<W: Write>(w: &mut W, x: &[f64], y: &[f64], z: &[f64], scale: F) -> Result<()> {
     for i in 0..x.len() {
-        xdr::write_f32(w, x[i] as f32)?;
-        xdr::write_f32(w, y[i] as f32)?;
-        xdr::write_f32(w, z[i] as f32)?;
+        xdr::write_f32(w, (x[i] * scale) as f32)?;
+        xdr::write_f32(w, (y[i] * scale) as f32)?;
+        xdr::write_f32(w, (z[i] * scale) as f32)?;
     }
     Ok(())
+}
+
+/// A copy of `sb` with every length multiplied by `scale`.
+fn scale_simbox(sb: SimBox, scale: F) -> Result<SimBox> {
+    let h = sb.h_view().to_owned() * scale;
+    let origin = sb.origin_view().to_owned() * scale;
+    SimBox::new(h, origin, sb.pbc()).map_err(|e| invalid(format!("TRR box scale: {e:?}")))
 }
 
 /// Write one frame in single-precision TRR format.
@@ -522,7 +544,7 @@ fn write_trr_frame<W: Write, FA: FrameAccess>(w: &mut W, frame: &FA) -> Result<(
 
     if has_box {
         let sb = frame.simbox_ref().expect("box present");
-        let h = sb.h_view().to_owned();
+        let h = sb.h_view().to_owned() / NM_TO_ANGSTROM;
         // GROMACS row-stored: box[i][j] = component j of lattice vector i = H[j][i].
         for i in 0..DIM {
             for j in 0..DIM {
@@ -530,12 +552,13 @@ fn write_trr_frame<W: Write, FA: FrameAccess>(w: &mut W, frame: &FA) -> Result<(
             }
         }
     }
-    write_rvecs(w, &xs, &ys, &zs)?;
+    // Å → nm on the way out, mirroring the reader.
+    write_rvecs(w, &xs, &ys, &zs, 1.0 / NM_TO_ANGSTROM)?;
     if let Some((vx, vy, vz)) = &vel {
-        write_rvecs(w, vx, vy, vz)?;
+        write_rvecs(w, vx, vy, vz, 1.0 / NM_TO_ANGSTROM)?;
     }
     if let Some((fx, fy, fz)) = &force {
-        write_rvecs(w, fx, fy, fz)?;
+        write_rvecs(w, fx, fy, fz, NM_TO_ANGSTROM)?;
     }
     Ok(())
 }
@@ -554,14 +577,16 @@ impl<W: Write> TrrWriter<W> {
 
 impl<W: Write> Writer for TrrWriter<W> {
     type W = W;
-    type FrameLike = Frame;
     fn new(writer: Self::W) -> Self {
         Self::new(writer)
     }
 }
 
 impl<W: Write> FrameWriter for TrrWriter<W> {
-    fn write_frame(&mut self, frame: &Frame) -> Result<()> {
+    fn write(&mut self, frame: &Frame) -> Result<()> {
+        // Refuse to emit a frame that violates the vocabulary: a bad file
+        // looks fine and is found wrong later, by whatever reads it.
+        crate::io::writer::check_before_write(frame)?;
         write_trr_frame(&mut self.writer, frame)
     }
 }
@@ -573,7 +598,7 @@ impl<W: Write> FrameWriter for TrrWriter<W> {
 /// Read every frame of a TRR file into memory.
 pub fn read_trr<P: AsRef<Path>>(path: P) -> Result<Vec<Frame>> {
     let reader = crate::io::reader::open_seekable(path)?;
-    TrrReader::new(reader).read_all()
+    crate::io::reader::collect_frames(&mut TrrReader::new(reader))
 }
 
 /// Open a TRR file for trajectory-style random access.

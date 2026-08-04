@@ -1,4 +1,4 @@
-use crate::io::reader::{FrameIndex, FrameReader, Reader, TrajReader};
+use crate::io::reader::{FrameIndex, FrameReader, Reader, TrajectoryReader};
 use crate::io::writer::{FrameWriter, Writer};
 use molrs::spatial::simbox::SimBox;
 use molrs::store::block::Block;
@@ -416,9 +416,27 @@ fn build_block_from_props(
     for ((name, ty), buf) in cols.into_iter().zip(buffers) {
         match (ty, buf) {
             (PropType::I, ColBuf::I(v)) => {
-                // Store as i64
-                let arr = Array1::from_vec(v).into_dyn();
-                block.insert(name, arr).map_err(|e| e.to_string())?;
+                // Extended-XYZ declares `I` for any integral column, but a
+                // canonical key's dtype is fixed by the vocabulary — `id` is
+                // unsigned there, and an Int column under that name would be
+                // invisible to every consumer reading it as unsigned.
+                if molrs::store::schema::column(&name).map(|c| c.dtype)
+                    == Some(molrs::store::block::DType::UInt)
+                {
+                    let unsigned: Vec<molrs::types::U> = v
+                        .iter()
+                        .map(|&x| {
+                            u32::try_from(x).map_err(|_| {
+                                format!("column '{name}' is unsigned in the Frame schema, got {x}")
+                            })
+                        })
+                        .collect::<Result<_, String>>()?;
+                    let arr = Array1::from_vec(unsigned).into_dyn();
+                    block.insert(name, arr).map_err(|e| e.to_string())?;
+                } else {
+                    let arr = Array1::from_vec(v).into_dyn();
+                    block.insert(name, arr).map_err(|e| e.to_string())?;
+                }
             }
             (PropType::R, ColBuf::R(v)) => {
                 // Store as float
@@ -868,7 +886,7 @@ fn meta_to_extxyz(value: &MetaValue) -> String {
 ///
 /// ```no_run
 /// use molrs::io::data::xyz::XYZReader;
-/// use molrs::io::reader::TrajReader;
+/// use molrs::io::reader::TrajectoryReader;
 /// use std::io::BufReader;
 /// use std::fs::File;
 ///
@@ -1007,7 +1025,6 @@ impl<R: BufRead + Seek> XYZReader<R> {
 
 impl<R: BufRead + Seek> Reader for XYZReader<R> {
     type R = R;
-    type Frame = Frame;
 
     fn new(reader: Self::R) -> Self {
         Self {
@@ -1018,18 +1035,22 @@ impl<R: BufRead + Seek> Reader for XYZReader<R> {
 }
 
 impl<R: BufRead + Seek> FrameReader for XYZReader<R> {
-    fn read_frame(&mut self) -> std::io::Result<Option<Self::Frame>> {
-        // Always read the first frame from the current stream position.
-        read_xyz_frame_from_reader(&mut self.reader)
+    fn read(&mut self) -> std::io::Result<Option<Frame>> {
+        // Validate on the way out: a frame that violates the vocabulary
+        // is a malformed file or a reader bug, not a result to return.
+        crate::io::reader::validated(
+            // Always read the first frame from the current stream position.
+            read_xyz_frame_from_reader(&mut self.reader)?,
+        )
     }
 }
 
-impl<R: BufRead + Seek> TrajReader for XYZReader<R> {
+impl<R: BufRead + Seek> TrajectoryReader for XYZReader<R> {
     fn build_index(&mut self) -> std::io::Result<()> {
         self.build_index()
     }
 
-    fn read_step(&mut self, step: usize) -> std::io::Result<Option<Self::Frame>> {
+    fn read_step(&mut self, step: usize) -> std::io::Result<Option<Frame>> {
         // Fast path for first frame: read immediately without indexing
         if step == 0
             && self.index.get().is_none()
@@ -1421,6 +1442,100 @@ mod tests {
         );
     }
 
+    /// A frame shaped like what the GRO reader produces: no `element`, an `id`
+    /// column, and extra string/int columns that sort *before* `id`.
+    fn gro_shaped_frame() -> Frame {
+        use molrs::store::block::Block;
+        use ndarray::Array1;
+
+        let floats = |v: [f64; 3]| Array1::from_vec(v.to_vec()).into_dyn();
+        let uints = |v: [u32; 3]| Array1::from_vec(v.to_vec()).into_dyn();
+        let strings = |v: [&str; 3]| {
+            Array1::from_vec(v.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>()).into_dyn()
+        };
+
+        let mut atoms = Block::new();
+        atoms.insert("x", floats([0.0, 1.0, 0.0])).unwrap();
+        atoms.insert("y", floats([0.0, 0.0, 1.0])).unwrap();
+        atoms.insert("z", floats([0.0, 0.0, 0.0])).unwrap();
+        atoms.insert("id", uints([1, 2, 3])).unwrap();
+        atoms
+            .insert("atom_name", strings(["OW", "HW1", "HW2"]))
+            .unwrap();
+        atoms.insert("res_id", uints([1, 1, 1])).unwrap();
+        atoms
+            .insert("resname", strings(["WAT", "WAT", "WAT"]))
+            .unwrap();
+
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms);
+        frame
+    }
+
+    #[test]
+    fn xyz_writer_row_order_matches_the_properties_header() {
+        // The Properties header and the data rows are two views of one column
+        // order. `id` is written before the alphabetically-earlier `atom_name`
+        // in the header, so the rows must do the same — or every consumer reads
+        // an atom name where the header promised an integer id.
+        let mut output = Vec::new();
+        write_xyz_frame(&mut output, &gro_shaped_frame()).expect("write XYZ");
+        let output = String::from_utf8(output).expect("UTF-8 XYZ");
+
+        let comment = output.lines().nth(1).expect("comment line");
+        let props = comment
+            .split_whitespace()
+            .find_map(|tok| tok.strip_prefix("Properties="))
+            .expect("Properties in comment");
+        let declared: Vec<&str> = props.split(':').step_by(3).collect();
+        assert_eq!(
+            declared,
+            ["species", "pos", "id", "atom_name", "res_id", "resname"]
+        );
+
+        // species + 3 coordinates, then one field per remaining declared column.
+        let first_row: Vec<&str> = output
+            .lines()
+            .nth(2)
+            .expect("first atom line")
+            .split_whitespace()
+            .collect();
+        assert_eq!(first_row.len(), 8, "row: {first_row:?}");
+        assert_eq!(
+            &first_row[4..],
+            ["1", "OW", "1", "WAT"],
+            "row: {first_row:?}"
+        );
+    }
+
+    #[test]
+    fn xyz_writer_round_trips_every_declared_column() {
+        // The header/row contract, stated as the thing a reader actually needs:
+        // each column comes back carrying its own values, not its neighbour's.
+        let mut output = Vec::new();
+        write_xyz_frame(&mut output, &gro_shaped_frame()).expect("write XYZ");
+        let text = String::from_utf8(output).expect("UTF-8 XYZ");
+
+        let back = parse_xyz_frame_str(&text).expect("read written XYZ");
+        let atoms = back.get("atoms").expect("atoms block");
+        assert_eq!(
+            atoms.get_string("atom_name").unwrap().as_slice().unwrap(),
+            &["OW".to_string(), "HW1".to_string(), "HW2".to_string()]
+        );
+        assert_eq!(
+            atoms.get_string("resname").unwrap().as_slice().unwrap(),
+            &["WAT".to_string(), "WAT".to_string(), "WAT".to_string()]
+        );
+        assert_eq!(
+            atoms.get_uint("id").unwrap().as_slice().unwrap(),
+            &[1_u32, 2, 3]
+        );
+        assert_eq!(
+            atoms.get_uint("res_id").unwrap().as_slice().unwrap(),
+            &[1_u32, 1, 1]
+        );
+    }
+
     #[test]
     fn test_xyz_invalid_atom_count() {
         use std::io::Cursor;
@@ -1515,7 +1630,7 @@ mod tests {
     /// `XYZ len error: invalid atom count:` through the wasm binding.
     #[test]
     fn xyz_legacy_index_skips_inter_frame_and_trailing_blanks() {
-        use crate::io::reader::TrajReader;
+        use crate::io::reader::TrajectoryReader;
         use std::io::{BufReader, Cursor};
 
         let s = "\
@@ -1546,7 +1661,7 @@ H 1 0 1
     /// Leading blanks before the first frame must not confuse the legacy index.
     #[test]
     fn xyz_legacy_index_skips_leading_blanks() {
-        use crate::io::reader::TrajReader;
+        use crate::io::reader::TrajectoryReader;
         use std::io::{BufReader, Cursor};
 
         let s = "\n\n  \n2\nframe 0\nH 0 0 0\nH 1 0 0\n";
@@ -1566,7 +1681,6 @@ pub struct XYZFrameWriter<W: Write> {
 
 impl<W: Write> Writer for XYZFrameWriter<W> {
     type W = W;
-    type FrameLike = Frame;
 
     fn new(writer: Self::W) -> Self {
         Self { writer }
@@ -1574,7 +1688,10 @@ impl<W: Write> Writer for XYZFrameWriter<W> {
 }
 
 impl<W: Write> FrameWriter for XYZFrameWriter<W> {
-    fn write_frame(&mut self, frame: &Self::FrameLike) -> std::io::Result<()> {
+    fn write(&mut self, frame: &Frame) -> std::io::Result<()> {
+        // Refuse to emit a frame that violates the vocabulary: a bad file
+        // looks fine and is found wrong later, by whatever reads it.
+        crate::io::writer::check_before_write(frame)?;
         write_xyz_frame(&mut self.writer, frame)
     }
 }
@@ -1615,14 +1732,30 @@ pub fn write_xyz_frame<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> st
             if ra != rb { ra.cmp(&rb) } else { a.cmp(b) }
         });
 
-        // Build Properties string
-        let mut props_parts = Vec::new();
-        props_parts.push("species:S:1".to_string());
-
         let has_xyz = keys.contains(&"x") && keys.contains(&"y") && keys.contains(&"z");
+        let priority_keys = ["id", "mol"];
+        let is_pos = |k: &str| has_xyz && matches!(k, "x" | "y" | "z");
+
+        // ONE ordered column list drives both the Properties header and every
+        // data row. Building them from two independent walks is how the header
+        // came to hoist `id` / `mol` to the front while the rows kept them in
+        // alphabetical position: a GRO-shaped frame then declared
+        // `…:pos:R:3:id:I:1:atom_name:S:1` and wrote `… 0 0 0 OW 1 …`, handing
+        // every reader an atom name where an integer was promised.
+        //
+        // Columns the block cannot describe are dropped here rather than inside
+        // each loop, so there is no per-loop condition left to disagree on.
+        let mut columns: Vec<&str> = Vec::new();
         if has_xyz {
-            props_parts.push("pos:R:3".to_string());
+            columns.extend(["x", "y", "z"]);
         }
+        columns.extend(priority_keys.iter().copied().filter(|pk| keys.contains(pk)));
+        columns.extend(
+            keys.iter()
+                .copied()
+                .filter(|k| *k != "element" && !priority_keys.contains(k) && !is_pos(k)),
+        );
+        columns.retain(|k| atoms.column_dtype(k).is_some() && atoms.column_shape(k).is_some());
 
         let dtype_to_char = |dt: DType| -> &'static str {
             match dt {
@@ -1633,26 +1766,23 @@ pub fn write_xyz_frame<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> st
             }
         };
 
-        let priority_keys = ["id", "mol"];
-        for pk in &priority_keys {
-            if keys.contains(pk)
-                && let (Some(dt), Some(shape)) = (atoms.column_dtype(pk), atoms.column_shape(pk))
-            {
-                let m: usize = shape.iter().skip(1).product();
-                let m = if m == 0 { 1 } else { m };
-                props_parts.push(format!("{}:{}:{}", pk, dtype_to_char(dt), m));
-            }
+        // Build the Properties string from that list. The x/y/z triple is
+        // declared once as `pos:R:3`; every other column declares itself.
+        let mut props_parts = vec!["species:S:1".to_string()];
+        if has_xyz {
+            props_parts.push("pos:R:3".to_string());
         }
-
-        for k in &keys {
-            if *k == "x" || *k == "y" || *k == "z" || *k == "element" || priority_keys.contains(k) {
+        for k in &columns {
+            if is_pos(k) {
                 continue;
             }
-            if let (Some(dt), Some(shape)) = (atoms.column_dtype(k), atoms.column_shape(k)) {
-                let m: usize = shape.iter().skip(1).product();
-                let m = if m == 0 { 1 } else { m };
-                props_parts.push(format!("{}:{}:{}", k, dtype_to_char(dt), m));
-            }
+            let (dt, shape) = (
+                atoms.column_dtype(k).expect("retained above"),
+                atoms.column_shape(k).expect("retained above"),
+            );
+            let m: usize = shape.iter().skip(1).product();
+            let m = if m == 0 { 1 } else { m };
+            props_parts.push(format!("{}:{}:{}", k, dtype_to_char(dt), m));
         }
         let properties_str = props_parts.join(":");
 
@@ -1662,62 +1792,57 @@ pub fn write_xyz_frame<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> st
             .and_then(|arr| arr.as_slice().map(|s| s.to_vec()))
             .unwrap_or_else(|| vec!["X".to_string(); n]);
 
-        // Build per-row values
+        // Build per-row values — same list, same order, no second policy.
         let mut row_values: Vec<Vec<String>> = Vec::with_capacity(n);
         for i in 0..n {
             let mut line_parts = Vec::new();
-            for k in &keys {
-                if *k == "element" {
-                    continue;
-                }
-                if let Some(dt) = atoms.column_dtype(k) {
-                    match dt {
-                        DType::Float => {
-                            if let Some(arr) = atoms.get_float_view(k) {
-                                let row = arr.index_axis(ndarray::Axis(0), i);
-                                for val in row.iter() {
-                                    line_parts.push(format!("{}", val));
-                                }
+            for k in &columns {
+                match atoms.column_dtype(k).expect("retained above") {
+                    DType::Float => {
+                        if let Some(arr) = atoms.get_float_view(k) {
+                            let row = arr.index_axis(ndarray::Axis(0), i);
+                            for val in row.iter() {
+                                line_parts.push(format!("{}", val));
                             }
                         }
-                        DType::Int => {
-                            if let Some(arr) = atoms.get_int_view(k) {
-                                let row = arr.index_axis(ndarray::Axis(0), i);
-                                for val in row.iter() {
-                                    line_parts.push(format!("{}", val));
-                                }
+                    }
+                    DType::Int => {
+                        if let Some(arr) = atoms.get_int_view(k) {
+                            let row = arr.index_axis(ndarray::Axis(0), i);
+                            for val in row.iter() {
+                                line_parts.push(format!("{}", val));
                             }
                         }
-                        DType::Bool => {
-                            if let Some(arr) = atoms.get_bool_view(k) {
-                                let row = arr.index_axis(ndarray::Axis(0), i);
-                                for val in row.iter() {
-                                    line_parts.push(if *val { "T" } else { "F" }.to_string());
-                                }
+                    }
+                    DType::Bool => {
+                        if let Some(arr) = atoms.get_bool_view(k) {
+                            let row = arr.index_axis(ndarray::Axis(0), i);
+                            for val in row.iter() {
+                                line_parts.push(if *val { "T" } else { "F" }.to_string());
                             }
                         }
-                        DType::UInt => {
-                            if let Some(arr) = atoms.get_uint_view(k) {
-                                let row = arr.index_axis(ndarray::Axis(0), i);
-                                for val in row.iter() {
-                                    line_parts.push(format!("{}", val));
-                                }
+                    }
+                    DType::UInt => {
+                        if let Some(arr) = atoms.get_uint_view(k) {
+                            let row = arr.index_axis(ndarray::Axis(0), i);
+                            for val in row.iter() {
+                                line_parts.push(format!("{}", val));
                             }
                         }
-                        DType::U8 => {
-                            if let Some(arr) = atoms.get_u8_view(k) {
-                                let row = arr.index_axis(ndarray::Axis(0), i);
-                                for val in row.iter() {
-                                    line_parts.push(format!("{}", val));
-                                }
+                    }
+                    DType::U8 => {
+                        if let Some(arr) = atoms.get_u8_view(k) {
+                            let row = arr.index_axis(ndarray::Axis(0), i);
+                            for val in row.iter() {
+                                line_parts.push(format!("{}", val));
                             }
                         }
-                        DType::String => {
-                            if let Some(arr) = atoms.get_string_view(k) {
-                                let row = arr.index_axis(ndarray::Axis(0), i);
-                                for val in row.iter() {
-                                    line_parts.push(val.clone());
-                                }
+                    }
+                    DType::String => {
+                        if let Some(arr) = atoms.get_string_view(k) {
+                            let row = arr.index_axis(ndarray::Axis(0), i);
+                            for val in row.iter() {
+                                line_parts.push(val.clone());
                             }
                         }
                     }

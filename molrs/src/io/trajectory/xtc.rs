@@ -40,14 +40,14 @@
 //! - `frame.simbox`: from the box (row-stored vectors → column-stored H).
 //! - `frame.meta`: `step`, `time`, `precision`.
 
-use crate::io::reader::{FrameReader, ReadSeek, Reader, TrajReader};
+use crate::io::reader::{FrameReader, ReadSeek, Reader, TrajectoryReader};
 use crate::io::trajectory::xdr;
 use crate::io::writer::{FrameWriter, Writer};
 use molrs::spatial::simbox::SimBox;
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
 use molrs::store::frame_access::FrameAccess;
-use molrs::types::{F, I};
+use molrs::types::{F, U};
 use ndarray::{Array1, Array2, IxDyn, array};
 use once_cell::sync::OnceCell;
 use std::fs::File;
@@ -761,6 +761,11 @@ fn insert_float_col(block: &mut Block, key: &str, vals: Vec<F>) -> Result<()> {
     block.insert(key, arr).map_err(invalid)
 }
 
+/// Nanometre → ångström. XTC is nm; molrs is Å, normalised at this boundary
+/// like every other GROMACS reader. The compression precision stays a
+/// *file* property — it is applied to the nm values the format stores.
+pub(crate) const NM_TO_ANGSTROM: F = 10.0;
+
 fn build_simbox(boxv: &[f32; 9]) -> Option<Result<SimBox>> {
     if boxv.iter().all(|&v| v == 0.0) {
         return None;
@@ -778,7 +783,7 @@ fn parse_frame_at<R: BufRead + Seek>(r: &mut R, offset: u64) -> Result<Frame> {
     let (coords, precision) = read_coords(r, natoms, hdr.wide_nbytes)?;
 
     let mut atoms = Block::new();
-    let id_arr = Array1::from_iter(1..=natoms as I)
+    let id_arr = Array1::from_iter(1..=natoms as U)
         .into_shape_with_order(IxDyn(&[natoms]))
         .map_err(invalid)?;
     atoms.insert("id", id_arr).map_err(invalid)?;
@@ -786,9 +791,9 @@ fn parse_frame_at<R: BufRead + Seek>(r: &mut R, offset: u64) -> Result<Frame> {
     let mut y = Vec::with_capacity(natoms);
     let mut z = Vec::with_capacity(natoms);
     for a in 0..natoms {
-        x.push(coords[a * DIM] as F);
-        y.push(coords[a * DIM + 1] as F);
-        z.push(coords[a * DIM + 2] as F);
+        x.push(coords[a * DIM] as F * NM_TO_ANGSTROM);
+        y.push(coords[a * DIM + 1] as F * NM_TO_ANGSTROM);
+        z.push(coords[a * DIM + 2] as F * NM_TO_ANGSTROM);
     }
     insert_float_col(&mut atoms, "x", x)?;
     insert_float_col(&mut atoms, "y", y)?;
@@ -797,7 +802,12 @@ fn parse_frame_at<R: BufRead + Seek>(r: &mut R, offset: u64) -> Result<Frame> {
     let mut frame = Frame::new();
     frame.insert("atoms", atoms);
     frame.simbox = match build_simbox(&hdr.boxv) {
-        Some(res) => Some(res?),
+        Some(res) => {
+            let sb = res?;
+            let h = sb.h_view().to_owned() * NM_TO_ANGSTROM;
+            let origin = sb.origin_view().to_owned() * NM_TO_ANGSTROM;
+            Some(SimBox::new(h, origin, sb.pbc()).map_err(|e| invalid(format!("XTC box: {e:?}")))?)
+        }
         None => None,
     };
     frame.meta.insert("step", hdr.step);
@@ -880,14 +890,13 @@ impl<R: BufRead + Seek> XtcReader<R> {
 
 impl<R: BufRead + Seek> Reader for XtcReader<R> {
     type R = R;
-    type Frame = Frame;
     fn new(reader: Self::R) -> Self {
         Self::new(reader)
     }
 }
 
 impl<R: BufRead + Seek> FrameReader for XtcReader<R> {
-    fn read_frame(&mut self) -> Result<Option<Frame>> {
+    fn read(&mut self) -> Result<Option<Frame>> {
         self.ensure_index()?;
         let cursor = self.cursor;
         let off = match self.offsets.get().and_then(|o| o.get(cursor).copied()) {
@@ -896,11 +905,11 @@ impl<R: BufRead + Seek> FrameReader for XtcReader<R> {
         };
         let frame = parse_frame_at(&mut self.reader, off)?;
         self.cursor += 1;
-        Ok(Some(frame))
+        crate::io::reader::validated(Some(frame))
     }
 }
 
-impl<R: BufRead + Seek> TrajReader for XtcReader<R> {
+impl<R: BufRead + Seek> TrajectoryReader for XtcReader<R> {
     fn build_index(&mut self) -> Result<()> {
         self.ensure_index()
     }
@@ -966,7 +975,8 @@ fn write_xtc_frame<W: Write, FA: FrameAccess>(w: &mut W, frame: &FA) -> Result<(
     xdr::write_i32(w, step)?;
     xdr::write_f32(w, time)?;
     if let Some(sb) = frame.simbox_ref() {
-        let h = sb.h_view().to_owned();
+        // Å → nm on the way out, mirroring the reader.
+        let h = sb.h_view().to_owned() / NM_TO_ANGSTROM;
         for i in 0..DIM {
             for j in 0..DIM {
                 xdr::write_f32(w, h[(j, i)] as f32)?;
@@ -981,18 +991,18 @@ fn write_xtc_frame<W: Write, FA: FrameAccess>(w: &mut W, frame: &FA) -> Result<(
     xdr::write_i32(w, natoms as i32)?;
     if natoms <= 9 {
         for a in 0..natoms {
-            xdr::write_f32(w, xs[a] as f32)?;
-            xdr::write_f32(w, ys[a] as f32)?;
-            xdr::write_f32(w, zs[a] as f32)?;
+            xdr::write_f32(w, (xs[a] / NM_TO_ANGSTROM) as f32)?;
+            xdr::write_f32(w, (ys[a] / NM_TO_ANGSTROM) as f32)?;
+            xdr::write_f32(w, (zs[a] / NM_TO_ANGSTROM) as f32)?;
         }
         return Ok(());
     }
 
     let mut coords = Vec::with_capacity(natoms * DIM);
     for a in 0..natoms {
-        coords.push(xs[a]);
-        coords.push(ys[a]);
-        coords.push(zs[a]);
+        coords.push(xs[a] / NM_TO_ANGSTROM);
+        coords.push(ys[a] / NM_TO_ANGSTROM);
+        coords.push(zs[a] / NM_TO_ANGSTROM);
     }
     let (minint, maxint, smallidx, buf) = compress_coords(&coords, natoms, precision)?;
     xdr::write_f32(w, precision)?;
@@ -1022,14 +1032,16 @@ impl<W: Write> XtcWriter<W> {
 
 impl<W: Write> Writer for XtcWriter<W> {
     type W = W;
-    type FrameLike = Frame;
     fn new(writer: Self::W) -> Self {
         Self::new(writer)
     }
 }
 
 impl<W: Write> FrameWriter for XtcWriter<W> {
-    fn write_frame(&mut self, frame: &Frame) -> Result<()> {
+    fn write(&mut self, frame: &Frame) -> Result<()> {
+        // Refuse to emit a frame that violates the vocabulary: a bad file
+        // looks fine and is found wrong later, by whatever reads it.
+        crate::io::writer::check_before_write(frame)?;
         write_xtc_frame(&mut self.writer, frame)
     }
 }
@@ -1041,7 +1053,7 @@ impl<W: Write> FrameWriter for XtcWriter<W> {
 /// Read every frame of an XTC file into memory.
 pub fn read_xtc<P: AsRef<Path>>(path: P) -> Result<Vec<Frame>> {
     let reader = crate::io::reader::open_seekable(path)?;
-    XtcReader::new(reader).read_all()
+    crate::io::reader::collect_frames(&mut XtcReader::new(reader))
 }
 
 /// Open an XTC file for trajectory-style random access.

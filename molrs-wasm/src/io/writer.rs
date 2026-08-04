@@ -26,7 +26,6 @@
 //! | `"trr"` | binary | GROMACS TRR (Å → nm on write) |
 //! | `"xtc"` | binary | GROMACS XTC (Å → nm on write) |
 
-use super::reader::{NM_TO_ANGSTROM, scale_frame_lengths};
 use crate::core::frame::Frame;
 use molrs::io::data::cif::write_cif_frame;
 use molrs::io::data::cube::write_cube_to_writer;
@@ -88,25 +87,25 @@ pub fn write_frame_export(frame: &Frame, format: &str) -> Result<String, JsValue
             "xyz" => {
                 let mut writer = <XYZFrameWriter<_> as Writer>::new(&mut buf);
                 writer
-                    .write_frame(rs_frame)
+                    .write(rs_frame)
                     .map_err(|e| JsValue::from_str(&format!("XYZ writing error: {}", e)))?;
             }
             "pdb" => {
                 let mut writer = <PDBWriter<_> as Writer>::new(&mut buf);
                 writer
-                    .write_frame(rs_frame)
+                    .write(rs_frame)
                     .map_err(|e| JsValue::from_str(&format!("PDB writing error: {}", e)))?;
             }
             "lammps-data" | "lammps" => {
                 let mut writer = <LAMMPSDataWriter<_> as Writer>::new(&mut buf);
                 writer
-                    .write_frame(rs_frame)
+                    .write(rs_frame)
                     .map_err(|e| JsValue::from_str(&format!("LAMMPS data writing error: {}", e)))?;
             }
             "lammps-dump" | "lammpstrj" => {
                 let mut writer = <LAMMPSDumpWriter<_> as Writer>::new(&mut buf);
                 writer
-                    .write_frame(rs_frame)
+                    .write(rs_frame)
                     .map_err(|e| JsValue::from_str(&format!("LAMMPS dump writing error: {}", e)))?;
             }
             "cif" => {
@@ -118,10 +117,7 @@ pub fn write_frame_export(frame: &Frame, format: &str) -> Result<String, JsValue
                     .map_err(|e| JsValue::from_str(&format!("Cube writing error: {:?}", e)))?;
             }
             "gro" => {
-                // GRO is GROMACS-native nm; scale Å → nm on a throwaway clone.
-                let mut nm = rs_frame.clone();
-                scale_frame_lengths(&mut nm, 1.0 / NM_TO_ANGSTROM)?;
-                write_gro_frame(&mut buf, &nm)
+                write_gro_frame(&mut buf, rs_frame)
                     .map_err(|e| JsValue::from_str(&format!("GRO writing error: {}", e)))?;
             }
             "mol2" => {
@@ -151,7 +147,8 @@ pub fn write_frame_export(frame: &Frame, format: &str) -> Result<String, JsValue
 /// Mirrors [`write_frame_export`] for the formats whose output is not valid
 /// UTF-8: `"dcd"`, `"trr"`, `"xtc"` (case-insensitive). Returns a
 /// `Uint8Array` to JavaScript. The GROMACS formats (`trr`/`xtc`) are written
-/// in nm — coordinates and box are scaled Å → nm on a throwaway clone first.
+/// in nm by the molrs writers themselves — see `molrs::io` — so nothing is
+/// scaled here.
 ///
 /// # Errors
 ///
@@ -168,23 +165,19 @@ pub fn write_frame_bytes_export(frame: &Frame, format: &str) -> Result<Vec<u8>, 
                 // bytes in `buf` once the writer drops.
                 let mut writer = DcdWriter::new(Cursor::new(&mut buf));
                 writer
-                    .write_frame(rs_frame)
+                    .write(rs_frame)
                     .map_err(|e| JsValue::from_str(&format!("DCD writing error: {}", e)))?;
             }
             "trr" => {
-                let mut nm = rs_frame.clone();
-                scale_frame_lengths(&mut nm, 1.0 / NM_TO_ANGSTROM)?;
                 let mut writer = TrrWriter::new(&mut buf);
                 writer
-                    .write_frame(&nm)
+                    .write(rs_frame)
                     .map_err(|e| JsValue::from_str(&format!("TRR writing error: {}", e)))?;
             }
             "xtc" => {
-                let mut nm = rs_frame.clone();
-                scale_frame_lengths(&mut nm, 1.0 / NM_TO_ANGSTROM)?;
                 let mut writer = XtcWriter::new(&mut buf);
                 writer
-                    .write_frame(&nm)
+                    .write(rs_frame)
                     .map_err(|e| JsValue::from_str(&format!("XTC writing error: {}", e)))?;
             }
             _ => {

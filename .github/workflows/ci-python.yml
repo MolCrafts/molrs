@@ -32,9 +32,7 @@ jobs:
           enable-cache: true
           cache-dependency-glob: |
             molrs-python/pyproject.toml
-            molrs-python/uv.lock
             molrs-python/Cargo.toml
-            molrs-python/Cargo.lock
 
       # Same entry as prek pre-push (tox from molrs-python[dev]).
       - name: uv run --extra dev tox -e py

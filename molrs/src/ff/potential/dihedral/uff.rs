@@ -63,7 +63,8 @@ impl Potential for UffTorsion {
                 6 => cos_phi * sin_phi * (32.0 * sin_sq * (sin_sq - 1.0) + 6.0),
                 _ => 0.0,
             };
-            d_e_d_phi *= -(v / 2.0 * cos_term) * (order as F);
+            // E = (V/2)(1 − cosTerm·cos nφ)  ⇒  dE/dφ = +(V/2)·cosTerm·n·sin nφ.
+            d_e_d_phi *= (v / 2.0 * cos_term) * (order as F);
             let sin_term = if sin_phi.abs() < 1e-8 {
                 d_e_d_phi / cos_phi.signum().max(1e-8).abs().copysign(cos_phi).max(1e-8)
             } else {
@@ -117,13 +118,20 @@ fn accumulate_torsion_forces(
 ) {
     // r vectors as RDKit: r[0]=r1, r[1]=r2, r[2]=r3, r[3]=r4
     // t[0]=t1, t[1]=t2, d[0]=d1, d[1]=d2
+    // cosφ = (t₁·t₂)/(|t₁||t₂|) ⇒ ∂cosφ/∂t₁ = (t̂₂ − cosφ·t̂₁)/|t₁|. Both terms
+    // must be *unit* normals; feeding raw t scales them differently and the
+    // expression is only the derivative when |t₁| = |t₂| = 1.
+    let (u1, u2) = (
+        [t1[0] / d1, t1[1] / d1, t1[2] / d1],
+        [t2[0] / d2, t2[1] / d2, t2[2] / d2],
+    );
     let d_cos_dt = [
-        1.0 / d1 * (t2[0] - cos_phi * t1[0]),
-        1.0 / d1 * (t2[1] - cos_phi * t1[1]),
-        1.0 / d1 * (t2[2] - cos_phi * t1[2]),
-        1.0 / d2 * (t1[0] - cos_phi * t2[0]),
-        1.0 / d2 * (t1[1] - cos_phi * t2[1]),
-        1.0 / d2 * (t1[2] - cos_phi * t2[2]),
+        1.0 / d1 * (u2[0] - cos_phi * u1[0]),
+        1.0 / d1 * (u2[1] - cos_phi * u1[1]),
+        1.0 / d1 * (u2[2] - cos_phi * u1[2]),
+        1.0 / d2 * (u1[0] - cos_phi * u2[0]),
+        1.0 / d2 * (u1[1] - cos_phi * u2[1]),
+        1.0 / d2 * (u1[2] - cos_phi * u2[2]),
     ];
 
     // g[0] (atom a)

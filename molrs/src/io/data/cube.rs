@@ -56,7 +56,7 @@ use molrs::error::MolRsError;
 use molrs::spatial::simbox::SimBox;
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
-use molrs::types::{F, I};
+use molrs::types::{F, U};
 
 /// Bohr radius in Ångström. Cube files declare their units via the sign of
 /// the first voxel-count integer (positive = Bohr, negative = Å). molvis's
@@ -331,7 +331,9 @@ pub fn read_cube_from_reader<R: BufRead>(mut reader: R) -> Result<Frame, MolRsEr
     atoms
         .insert(
             "atomic_number",
-            Array1::from_vec(atomic_numbers.iter().map(|&v| v as I).collect::<Vec<_>>()).into_dyn(),
+            // UInt, not Int: the Frame schema declares this column unsigned, and
+            // an insert that disagrees is rejected outright.
+            Array1::from_vec(atomic_numbers.iter().map(|&v| v as U).collect::<Vec<_>>()).into_dyn(),
         )
         .map_err(MolRsError::Block)?;
     atoms
@@ -501,14 +503,14 @@ pub fn write_cube_to_writer<W: Write>(writer: &mut W, frame: &Frame) -> Result<(
     let atom_x = atoms.get_float("x");
     let atom_y = atoms.get_float("y");
     let atom_z = atoms.get_float("z");
-    let atom_z_num = atoms.get_int("atomic_number");
+    let atom_z_num = atoms.get_uint("atomic_number");
     let atom_charge = atoms.get_float("charge");
     let atom_symbol = atoms.get_string("element");
 
     for i in 0..n_atoms {
         let z_num = atom_z_num
             .map(|a| a[[i]])
-            .or_else(|| atom_symbol.and_then(|s| Element::by_symbol(&s[[i]]).map(|e| e.z() as I)))
+            .or_else(|| atom_symbol.and_then(|s| Element::by_symbol(&s[[i]]).map(|e| e.z() as U)))
             .unwrap_or(0);
         let charge = atom_charge.map(|a| a[[i]]).unwrap_or(z_num as F);
         let x = atom_x.map(|a| a[[i]]).unwrap_or(0.0) * unit_scale as F;

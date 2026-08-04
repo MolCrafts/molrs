@@ -43,7 +43,7 @@ One crate, `molcrafts-molrs`, whose sub-systems are feature-gated modules
 
 | Module (feature) | Capability |
 |------------------|------------|
-| `core` *(always on)* | Frame / Block column store, MolGraph topology, elements, rings, stereochemistry, Gasteiger charges, hydrogen perception, `SimBox` + MIC, spatial regions (`Sphere` / `Cuboid` / `Parallelepiped`), neighbor search (`CellGrid` / LinkCell / brute force), SARW paths |
+| `core` *(always on)* | Frame / Block column store, MolGraph topology, elements, `SimBox` + MIC, spatial regions, neighbor search, SARW / generate |
 | `io` | Readers / writers for PDB, XYZ, mol2, SDF, CIF, GRO, POSCAR, CHGCAR, Cube, LAMMPS data/dump, DCD, Zarr V3 trajectories (SMILES/SMARTS parser under the `smiles` feature) |
 | `compute` | Trajectory analysis: RDF, MSD, clustering, gyration / inertia tensors, PCA, k-means, density, diffraction, PMFT, order parameters, dielectric, environment matching |
 | `ff` | Force fields and potentials — MMFF94 / OPLS-AA / GAFF typing, LJ, PME; LAMMPS `*.ff` include read/write (`LammpsFfReader` / `LammpsFfWriter`); L-BFGS geometry optimization over a `Potential` |
@@ -62,7 +62,7 @@ cargo add molcrafts-molrs
 Opt into sub-systems via feature flags; `full` enables everything:
 
 ```toml
-molcrafts-molrs = { version = "0.11", features = ["io", "smiles", "conformer"] }
+molcrafts-molrs = { version = "0.12", features = ["io", "smiles", "conformer"] }
 ```
 
 | Environment | Install | Import / use |
@@ -110,7 +110,7 @@ name `molrs`:
 ```bash
 pip install maturin
 maturin develop -m molrs-python/Cargo.toml --release
-python -c "import molrs; print(molrs.parse_smiles('O').n_components)"
+python -c "import molrs; print(molrs.io.SmilesIR('O').n_components)"
 ```
 
 **WASM / npm** is built with [wasm-pack](https://rustwasm.github.io/wasm-pack/),

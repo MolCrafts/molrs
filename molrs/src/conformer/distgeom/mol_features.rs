@@ -95,10 +95,17 @@ pub fn perceive(mol: &Atomistic) -> Perceived {
     let mut order: HashMap<(usize, usize), f64> = HashMap::new();
     for (i, &aid) in atom_ids.iter().enumerate() {
         let mut nbrs: Vec<usize> = Vec::new();
-        for (nid, ord) in mol.neighbor_bonds(aid) {
+        for (nid, bid) in mol.neighbor_bonds(aid) {
             if let Some(&j) = id_to_idx.get(&nid) {
                 nbrs.push(j);
                 let key = if i < j { (i, j) } else { (j, i) };
+                // Distance geometry wants a bond-length proxy, so an aromatic
+                // bond is the partial order its geometry actually has.
+                let ord = if mol.bond_type(bid).is_aromatic() {
+                    1.5
+                } else {
+                    mol.bond_number(bid).count().max(1) as f64
+                };
                 order.insert(key, ord);
             }
         }

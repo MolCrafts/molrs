@@ -57,6 +57,10 @@ serde     = []
 # Live Frame streaming — MolRec-aligned transport encoding (MessagePack/JSON)
 # over the `serde`-serializable model. WASM-clean; intentionally NOT in `full`.
 stream    = ["serde", "dep:rmp-serde"]
+# WebSocket Frame streaming + bidirectional control. Heavy networking deps
+# (tokio multi-thread runtime, tungstenite); intentionally NOT in `full`.
+# Reuses `stream` for wire encoding; `message` is WASM-clean, `server` is not.
+net       = ["stream", "dep:tokio", "dep:tokio-tungstenite", "dep:crossbeam-channel", "dep:futures-util", "dep:bytes"]
 
 # Core knobs.
 rayon      = ["dep:rayon"]
@@ -73,8 +77,8 @@ smallvec   = "1"
 serde      = { version = "1", features = ["derive"] }
 serde_json = "1"
 libm       = "0.2"
-# Seeded RNG for structure generators (`core::generate` SARW) and for
-# compute/conformer stochastic paths. Always-on so `generate` is always compiled.
+# Seeded RNG for structure builders (`builder` SARW) and for
+# compute/conformer stochastic paths. Always-on so `builder` is always compiled.
 rand       = "0.10"
 
 # Feature-gated optional deps — a build with a sub-system OFF does not compile
@@ -88,6 +92,16 @@ rustfft        = { version = "6", optional = true }                             
 roxmltree      = { version = "0.21", optional = true }                                              # ff (XML force-field readers)
 rmp-serde      = { version = "1", optional = true }                                                 # stream (MessagePack wire encoding)
 
+# net — WebSocket streaming is native-only. Declared under not-wasm so
+# `cargo check --target wasm32-unknown-unknown --features net` still builds
+# the WASM-clean `message` module without pulling tokio/tungstenite.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio              = { version = "1", optional = true, default-features = false, features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
+tokio-tungstenite  = { version = "0.26", optional = true }
+crossbeam-channel  = { version = "0.5", optional = true }
+futures-util       = { version = "0.3", optional = true, default-features = false, features = ["sink"] }
+bytes              = { version = "1", optional = true }
+
 # wasm32 has no OS RNG: `rand`'s transitive `getrandom` needs the `wasm_js`
 # backend to build for the browser target. Target-gated so native builds are
 # unaffected. Mirrors molrs-wasm.
@@ -95,7 +109,15 @@ rmp-serde      = { version = "1", optional = true }                             
 getrandom = { version = "0.4", features = ["wasm_js"] }
 
 # Integration binary tests under tests/ were removed — coverage belongs
-# in `#[cfg(test)]` modules next to the code (`cargo test --lib`).
+# in `#[cfg(test)]` modules next to the code (`cargo test --lib`), except the
+# chem-perceive-15 architecture + reverse gates (self-non-exempting; cannot
+# live next to the production code they police).
+[[test]]
+name = "architecture_gate"
+path = "tests/architecture_gate.rs"
+required-features = ["full"]
+
+
 
 # ── Benches (criterion; auto-discovery off, see [package]) ───────────────────
 [[bench]]

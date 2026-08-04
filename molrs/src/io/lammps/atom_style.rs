@@ -427,7 +427,8 @@ pub(crate) fn field_column_key(field: DataField) -> &'static str {
     use molrs::store::keys;
     match field {
         DataField::Id => keys::ID,
-        DataField::Type => keys::TYPE,
+        // LAMMPS numbers its types; the label lives in `type`.
+        DataField::Type => keys::TYPE_ID,
         DataField::Mol => keys::MOL_ID,
         DataField::Charge => keys::CHARGE,
         DataField::X => keys::X,

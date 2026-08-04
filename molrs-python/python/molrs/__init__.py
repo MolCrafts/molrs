@@ -1,29 +1,28 @@
 """molrs — Rust-backed molecular simulation primitives.
 
-Top-level re-exports cover core data structures, I/O, regions, conformer generation,
-force fields, and the SMILES front-end. **Analysis lives under**
-:mod:`molrs.compute`, one subpackage per ``molrs::compute`` domain:
+**The top level is ``molrs::core``, and nothing else.** Storage (``Frame``,
+``Block``, ``Trajectory``), the simulation cell and neighbor search, geometric
+regions, the molecular-graph hierarchy and its views, units, and the column
+vocabulary — those are the primitives every other layer is written in terms of,
+so they answer to ``molrs.<Name>`` directly.
 
-* :mod:`~molrs.compute.density` — RDF, GaussianDensity, LocalDensity, SpatialDistribution
-* :mod:`~molrs.compute.order` — Steinhardt, Nematic, Hexatic, SolidLiquid, LegendreReorientation
-* :mod:`~molrs.compute.environment` — BondOrder
-* :mod:`~molrs.compute.pmft` — PMFTXY
-* :mod:`~molrs.compute.diffraction` — StaticStructureFactorDebye
-* :mod:`~molrs.compute.cluster` — Cluster, ClusterProperties, gyration / inertia / COM
-* :mod:`~molrs.compute.msd` — MSD
-* :mod:`~molrs.compute.ml` — PCA, K-means, descriptor rows
-* :mod:`~molrs.compute.transport` — VACF, Green-Kubo / Einstein diffusion and conductivity, Debye relaxation + fit
-* :mod:`~molrs.compute.dielectric` — raw dielectric observables
-* :mod:`~molrs.compute.spectroscopy` — power / IR / Raman / VCD / ROA / dielectric spectra + their consistency checks
-* :mod:`~molrs.compute.fitting` — generic curve fits: LinearFit, CumulativeTrapezoid, Plateau
-* :mod:`~molrs.compute.distribution` — bond / angle / dihedral distributions
-* :mod:`~molrs.compute.dynamics` — VanHove
-* :mod:`~molrs.compute.hbond` — HBonds
-* :mod:`~molrs.compute.voronoi` — RadicalVoronoi and integration
+Everything above core lives in the subpackage named after its Rust module, so
+the Python path and the Rust path are the same word:
 
-Analysis classes are reachable as ``molrs.<Class>`` too, because PyO3 declares
-``module = "molrs"``, but that spelling is plumbing and is not in ``__all__``.
-``molrs.compute.<domain>`` is the documented path.
+* :mod:`molrs.io` — file formats (PDB, XYZ, LAMMPS, GRO, DCD, TRR, XTC, CHGCAR,
+  cube, SMILES). Field-canonicalizing; ``molrs.io.raw`` is the format-native
+  binding.
+* :mod:`molrs.perceive` — chemical perception: rings, aromaticity, hydrogens,
+  stereochemistry, SMARTS matching.
+* :mod:`molrs.ff` — force fields, typifiers, charge models, potentials.
+* :mod:`molrs.optimize` — geometry optimizers.
+* :mod:`molrs.conformer` — 3D conformer generation.
+* :mod:`molrs.builder` — structure builders (graphene, nanotubes, SARW paths).
+* :mod:`molrs.compute` — analysis, one subpackage per ``molrs::compute`` domain.
+* :mod:`molrs.signal` — FFT autocorrelation, windows, frequency grids.
+
+Each of those names has exactly one spelling — ``molrs.io.SmilesIR`` and
+nothing else — so there is one thing to learn, document, and grep for.
 """
 
 from ._lib import (
@@ -46,36 +45,8 @@ from ._lib import (
     Trajectory,
     ScalarObservable,
     VectorObservable,
-    # I/O
-    read_pdb,
-    read_pdb_trajectory,
-    read_xyz,
-    read_xyz_trajectory,
-    XYZTrajReader,
-    read_lammps,
-    read_lammps_traj,
-    LAMMPSTrajReader,
-    read_dcd,
-    DCDTrajReader,
-    read_trr,
-    TRRTrajReader,
-    read_xtc,
-    XTCTrajReader,
-    read_gro,
-    read_chgcar_file,
-    read_cube_file,
-    write_cube_file,
-    write_pdb,
-    write_pdb_trajectory,
-    write_xyz,
-    write_gro,
-    write_lammps,
-    write_lammps_traj,
-    write_dcd,
-    write_trr,
-    write_xtc,
-    parse_smiles,
-    SmilesIR,
+    MolRec,
+    Observables,
     # Regions
     Sphere,
     HollowSphere,
@@ -88,139 +59,17 @@ from ._lib import (
     Atomistic,
     CoarseGrain,
     ExtractedSubgraph,
-    SmartsMatch,
-    SmartsPattern,
     Reaction,
     # Systems (module-level free functions over a graph)
     translate,
     rotate,
     scale,
     align_direction,
-    perceive_aromaticity,
-    add_hydrogens,
-    find_rings,
-    compute_gasteiger_charges,
-    # Chemical perception (builder: graph in / graph out, non-mutating)
-    Perceive,
-    # Conformer generation
-    Conformer,
-    ConformerReport,
-    ConformerStageReport,
-    # Force field
-    Typifier,
-    MMFF94Typifier,
-    MMFF94STypifier,
-    OPLSAATypifier,
-    AtdTypifier,
-    # Charge models (native AM1-BCC / ABCG2 / Mulliken / Gasteiger)
-    BccModel,
-    MullikenModel,
-    GasteigerModel,
-    ForceField,
-    Potentials,
-    OptReport,
-    LBFGS,
-    read_forcefield_xml,
-    read_forcefield_xml_str,
-    read_opls_xml,
-    read_opls_xml_str,
-    read_lammps_forcefield,
-    read_lammps_forcefield_str,
-    write_lammps_forcefield,
-    write_lammps_forcefield_str,
-    intramolecular_pairs,
-    extract_coords,
-    FragmentScaling,
-    compute_k_ij,
-    fragment_scaling_data,
-    scale_lj,
-    # Field-name convention submodule
+    # Field-name convention + the Frame vocabulary, both projected from the
+    # committed Rust tables.
     keys,
-    # Signal processing (low-level FFT helpers)
-    signal_acf_fft,
-    signal_apply_window,
-    signal_frequency_grid,
-    # Raw-compute + explicit-fit classes (compute/fit repoint). Raw computes
-    # return ONLY a raw curve (no fitted sigma/D); the fit classes consume that
-    # curve and yield the derived coefficient/spectrum.
-    VACF,
-    GreenKuboDiffusion,
-    EinsteinDiffusion,
-    EinsteinConductivity,
-    GreenKuboConductivity,
-    DebyeRelaxation,
-    LinearFit,
-    CumulativeTrapezoid,
-    Plateau,
-    DebyeFit,
-    PowerSpectrum,
-    IRSpectrum,
-    RamanSpectrum,
-    EinsteinHelfandSpectrum,
-    GreenKuboSpectrum,
-    # analysis-parity computes (geometric distributions, Van Hove, reorientation,
-    # hydrogen bonds, spatial distribution, radical Voronoi, chiral spectra).
-    AngleDistribution,
-    DihedralDistribution,
-    DistanceDistribution,
-    DistributionResult,
-    CombinedDistribution,
-    CombinedDistributionResult,
-    VanHove,
-    VanHoveResult,
-    LegendreReorientation,
-    LegendreReorientationResult,
-    HBondCriterion,
-    HBonds,
-    HBondsResult,
-    SpatialDistribution,
-    SpatialDistributionResult,
-    RadicalVoronoi,
-    VoronoiCells,
-    voronoi_domains,
-    voronoi_voids,
-    DensityGrid,
-    MolecularMoments,
-    VoronoiIntegration,
-    polarizability_finite_field,
-    VcdSpectrum,
-    RoaSpectrum,
-    ResonanceRamanSpectrum,
-    # Freud-style analysis — preferred public path is molrs.compute.*. Bound as
-    # package attributes (not listed in ``__all__``) so PyO3 ``module = "molrs"``
-    # stays honest for griffe: ``molrs.compute.density.RDF`` resolves to ``molrs.RDF``.
-    RDF,
-    RDFResult,
-    GaussianDensity,
-    LocalDensity,
-    Steinhardt,
-    Nematic,
-    Hexatic,
-    SolidLiquid,
-    BondOrder,
-    PMFTXY,
-    StaticStructureFactorDebye,
-    Cluster,
-    ClusterResult,
-    ClusterCenters,
-    ClusterCentersResult,
-    ClusterProperties,
-    CenterOfMass,
-    CenterOfMassResult,
-    GyrationTensor,
-    InertiaTensor,
-    RadiusOfGyration,
-    MSD,
-    MSDResult,
-    MSDTimeSeries,
-    DescriptorRow,
-    Pca2,
-    PcaResult,
-    KMeans,
-    KMeansResult,
+    schema,
 )
-
-from . import ff  # molrs.ff.potential.soft parameter interface
 
 # Rich Python Frame/Block layer (pandas-style API; CSV engine in Rust on the
 # core Block). These subclass the bare PyO3 cores and SHADOW the top-level
@@ -231,50 +80,14 @@ from . import ff  # molrs.ff.potential.soft parameter interface
 from . import frame  # noqa: F401
 from .frame import Block, Frame
 
-# Chainable, object-style force-field layer (Style/Type handle views over the
-# Rust ForceField). Shadows the bare PyO3 ``ForceField`` with the subclass that
-# adds ``def_*style`` factories; ``def_type``/``types``/``to_potentials`` are
-# inherited from the core. Raw core stays importable from ``._lib``.
-from . import forcefield  # noqa: F401
-from .forcefield import (  # noqa: F401
-    AngleHarmonicStyle,
-    AngleStyle,
-    AngleType,
-    AtomStyle,
-    AtomType,
-    BondHarmonicStyle,
-    BondStyle,
-    BondType,
-    DihedralOPLSStyle,
-    DihedralStyle,
-    DihedralType,
-    ForceField,
-    ImproperStyle,
-    ImproperType,
-    PairCoulLongStyle,
-    PairLJ126CoulCutStyle,
-    PairLJ126CoulLongStyle,
-    PairLJ126Style,
-    PairStyle,
-    PairType,
-    Parameters,
-    Style,
-    Type,
-    # readers re-wrapped to yield the Python ForceField (shadow the raw ones)
-    read_forcefield_xml,
-    read_forcefield_xml_str,
-    read_opls_xml,
-    read_opls_xml_str,
-    read_lammps_forcefield,
-    read_lammps_forcefield_str,
-    write_lammps_forcefield,
-    write_lammps_forcefield_str,
-)
-
-from . import io  # molpy-compatible I/O facade (read_lammps_data, …)
 from . import compute  # analysis subpackage — one module per molrs::compute domain
+from . import conformer
+from . import ff
+from . import builder
+from . import io
+from . import optimize
+from . import perceive
 from . import signal
-from . import typifier
 from .views import (
     Angle,
     Atom,
@@ -285,11 +98,8 @@ from .views import (
     CoarseGrain,
     Dihedral,
     DrudeParticle,
-    Entities,
-    Entity,
     GraphViews,
     Improper,
-    Link,
     MasslessSite,
     NodeRef,
     Refs,
@@ -298,10 +108,16 @@ from .views import (
 )
 
 __all__ = [
-    "io",
+    # Subpackages — everything above molrs::core is reached through one of these.
     "compute",
+    "conformer",
+    "ff",
+    "builder",
+    "io",
+    "optimize",
+    "perceive",
     "signal",
-    "typifier",
+    # ---- molrs::core ----
     "BlockDtypeError",
     "UnitsError",
     "Box",
@@ -318,35 +134,8 @@ __all__ = [
     "Trajectory",
     "ScalarObservable",
     "VectorObservable",
-    "read_pdb",
-    "read_pdb_trajectory",
-    "read_xyz",
-    "read_xyz_trajectory",
-    "XYZTrajReader",
-    "read_lammps",
-    "read_lammps_traj",
-    "LAMMPSTrajReader",
-    "read_dcd",
-    "DCDTrajReader",
-    "read_trr",
-    "TRRTrajReader",
-    "read_xtc",
-    "XTCTrajReader",
-    "read_gro",
-    "read_chgcar_file",
-    "read_cube_file",
-    "write_cube_file",
-    "write_pdb",
-    "write_pdb_trajectory",
-    "write_xyz",
-    "write_gro",
-    "write_lammps",
-    "write_lammps_traj",
-    "write_dcd",
-    "write_trr",
-    "write_xtc",
-    "parse_smiles",
-    "SmilesIR",
+    "MolRec",
+    "Observables",
     "Sphere",
     "HollowSphere",
     "Cuboid",
@@ -357,16 +146,11 @@ __all__ = [
     "Atomistic",
     "CoarseGrain",
     "ExtractedSubgraph",
-    "SmartsMatch",
-    "SmartsPattern",
     "Reaction",
     "NodeRef",
     "RelationRef",
     "Refs",
     "GraphViews",
-    "Entity",
-    "Link",
-    "Entities",
     "Atom",
     "VirtualSite",
     "DrudeParticle",
@@ -381,60 +165,6 @@ __all__ = [
     "rotate",
     "scale",
     "align_direction",
-    "perceive_aromaticity",
-    "add_hydrogens",
-    "find_rings",
-    "compute_gasteiger_charges",
-    "Perceive",
     "keys",
-    "Conformer",
-    "ConformerReport",
-    "ConformerStageReport",
-    "Typifier",
-    "MMFF94Typifier",
-    "MMFF94STypifier",
-    "OPLSAATypifier",
-    "AtdTypifier",
-    "BccModel",
-    "MullikenModel",
-    "GasteigerModel",
-    "ForceField",
-    "Style",
-    "AtomStyle",
-    "BondStyle",
-    "AngleStyle",
-    "DihedralStyle",
-    "ImproperStyle",
-    "PairStyle",
-    "Type",
-    "AtomType",
-    "BondType",
-    "AngleType",
-    "DihedralType",
-    "ImproperType",
-    "PairType",
-    "Parameters",
-    "Potentials",
-    "OptReport",
-    "LBFGS",
-    "read_forcefield_xml",
-    "read_forcefield_xml_str",
-    "read_opls_xml",
-    "read_opls_xml_str",
-    "read_lammps_forcefield",
-    "read_lammps_forcefield_str",
-    "write_lammps_forcefield",
-    "write_lammps_forcefield_str",
-    "intramolecular_pairs",
-    "extract_coords",
-    "FragmentScaling",
-    "compute_k_ij",
-    "fragment_scaling_data",
-    "scale_lj",
-    "signal_acf_fft",
-    "signal_apply_window",
-    "signal_frequency_grid",
-    # Analysis classes are NOT listed here: their public path is
-    # molrs.compute.<domain>. They stay importable as molrs.<Class>
-    # because PyO3 declares module = "molrs", but that is plumbing.
+    "schema",
 ]

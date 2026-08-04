@@ -7,6 +7,7 @@
 #include <gtest/gtest.h>
 #include <cmath>
 #include <cstring>
+#include <string>
 
 extern "C" {
 #include "molrs.h"
@@ -618,4 +619,56 @@ TEST_F(MolrsTest, BlockCopyBufferTooSmall) {
     EXPECT_NE(s, MOLRS_STATUS_OK);
 
     ASSERT_MOLRS_OK(molrs_frame_drop(frame));
+}
+
+// ---------------------------------------------------------------------------
+// Frame schema
+//
+// The point of these is that the C surface reports the *same* contract the
+// Rust tables declare — a header that drifts from the library is exactly the
+// duplication the schema exists to remove.
+// ---------------------------------------------------------------------------
+
+TEST(Schema, JsonIsOwnedNonEmptyAndFreeable) {
+    char* json = molrs_schema_json();
+    ASSERT_NE(json, nullptr);
+    std::string s(json);
+    molrs_free_string(json);
+    EXPECT_NE(s.find("\"vocabVersion\""), std::string::npos);
+    EXPECT_NE(s.find("\"columns\""), std::string::npos);
+    EXPECT_NE(s.find("\"blocks\""), std::string::npos);
+}
+
+TEST(Schema, CountsAreNonZeroAndVersioned) {
+    EXPECT_GT(molrs_schema_column_count(), 0u);
+    EXPECT_GT(molrs_schema_block_count(), 0u);
+    EXPECT_GE(molrs_schema_vocab_version(), 1u);
+}
+
+TEST(Schema, IdentifiersAreUnsignedAndTypeIsAString) {
+    // The two decisions the vocabulary is built on, asserted from C: every
+    // identifier is unsigned, and `type` is a label rather than an ordinal.
+    for (const char* key : {"id", "mol_id", "res_id", "type_id",
+                            "atomi", "atomj", "atomk", "atoml"}) {
+        const char* dt = molrs_schema_column_dtype(key);
+        ASSERT_NE(dt, nullptr) << key;
+        EXPECT_STREQ(dt, "uint") << key;
+    }
+    EXPECT_STREQ(molrs_schema_column_dtype("type"), "string");
+    EXPECT_STREQ(molrs_schema_column_dtype("x"), "float");
+}
+
+TEST(Schema, UnconstrainedKeyIsNullNotAnError) {
+    // A NULL dtype means "no declared dtype", not "invalid key": unspecified
+    // keys are the documented extension point.
+    EXPECT_EQ(molrs_schema_column_dtype("some_local_column"), nullptr);
+    EXPECT_EQ(molrs_schema_column_dtype(nullptr), nullptr);
+}
+
+TEST(Schema, KnownBlocksAreReportedAndTheBlockSetStaysOpen) {
+    EXPECT_TRUE(molrs_schema_has_block("atoms"));
+    EXPECT_TRUE(molrs_schema_has_block("bonds"));
+    // Not in the vocabulary — legal, just unnamed.
+    EXPECT_FALSE(molrs_schema_has_block("my_relation"));
+    EXPECT_FALSE(molrs_schema_has_block(nullptr));
 }

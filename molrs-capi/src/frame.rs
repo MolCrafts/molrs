@@ -16,7 +16,8 @@
 //! | `"atoms"`  | `"mass"`| `molrs_float_t` | Atomic mass in amu              |
 //! | `"bonds"`  | `"i"`   | `molrs_uint_t`  | First atom index (0-based)      |
 //! | `"bonds"`  | `"j"`   | `molrs_uint_t`  | Second atom index (0-based)     |
-//! | `"bonds"`  | `"order"`| `molrs_float_t`| Bond order (1.0, 1.5, 2.0, ...) |
+//! | `"bonds"`  | `"bond_type"`  | `molrs_uint_t` | 0 unknown, 1 single, 2 double, 3 triple, 4 aromatic |
+//! | `"bonds"`  | `"bond_number"`| `molrs_uint_t` | Localized Lewis/Kekulé integer (never fractional) |
 
 use std::ffi::{CStr, CString, c_char};
 
@@ -121,7 +122,7 @@ pub extern "C" fn molrs_frame_schema_version() -> u32 {
 ///
 /// The frame will contain an `"atoms"` block with `"symbol"`, `"x"`,
 /// `"y"`, `"z"` columns and a `"bonds"` block with `"i"`, `"j"`,
-/// `"order"` columns.  Initial coordinates are 2D layout coordinates
+/// `"bond_type"` / `"bond_number"` columns.  Initial coordinates are 2D layout coordinates
 /// (not optimised 3D); use `embed` for 3D embedding.
 ///
 /// # C signature

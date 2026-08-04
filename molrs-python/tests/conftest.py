@@ -57,12 +57,12 @@ def _water_frame(*, for_lammps: bool = False) -> molrs.Frame:
     b.insert("z", np.array([0.0, 0.0, 0.0], dtype=np.float64))
     b.insert("name", ["O", "H1", "H2"])
     b.insert("res_name", ["SOL", "SOL", "SOL"])
-    b.insert("res_id", np.array([1, 1, 1], dtype=np.int32))
-    b.insert("id", np.array([1, 2, 3], dtype=np.int32))
+    b.insert("res_id", np.array([1, 1, 1], dtype=np.uint32))
+    b.insert("id", np.array([1, 2, 3], dtype=np.uint32))
     if for_lammps:
-        b.insert("type", np.array([1, 2, 2], dtype=np.int32))
+        b.insert("type_id", np.array([1, 2, 2], dtype=np.uint32))
         b.insert("charge", np.array([-0.834, 0.417, 0.417], dtype=np.float64))
-        b.insert("mol_id", np.array([1, 1, 1], dtype=np.int32))
+        b.insert("mol_id", np.array([1, 1, 1], dtype=np.uint32))
     f["atoms"] = b
     f.box = molrs.Box.cube(10.0)
     return f
@@ -77,21 +77,21 @@ def water_frame() -> molrs.Frame:
 @pytest.fixture
 def water_xyz(tmp_path: Path) -> Path:
     path = tmp_path / "water.xyz"
-    molrs.write_xyz(str(path), _water_frame())
+    molrs.io.raw.write_xyz(str(path), _water_frame())
     return path
 
 
 @pytest.fixture
 def water_pdb(tmp_path: Path) -> Path:
     path = tmp_path / "water.pdb"
-    molrs.write_pdb(str(path), _water_frame())
+    molrs.io.raw.write_pdb(str(path), _water_frame())
     return path
 
 
 @pytest.fixture
 def water_gro(tmp_path: Path) -> Path:
     path = tmp_path / "water.gro"
-    molrs.write_gro(str(path), _water_frame())
+    molrs.io.raw.write_gro(str(path), _water_frame())
     return path
 
 
@@ -99,7 +99,7 @@ def water_gro(tmp_path: Path) -> Path:
 def water_dcd(tmp_path: Path) -> Path:
     path = tmp_path / "water.dcd"
     frame = _water_frame()
-    molrs.write_dcd(str(path), [frame, frame])
+    molrs.io.raw.write_dcd(str(path), [frame, frame])
     return path
 
 
@@ -107,7 +107,7 @@ def water_dcd(tmp_path: Path) -> Path:
 def water_trr(tmp_path: Path) -> Path:
     path = tmp_path / "water.trr"
     frame = _water_frame()
-    molrs.write_trr(str(path), [frame, frame])
+    molrs.io.raw.write_trr(str(path), [frame, frame])
     return path
 
 
@@ -115,7 +115,7 @@ def water_trr(tmp_path: Path) -> Path:
 def water_xtc(tmp_path: Path) -> Path:
     path = tmp_path / "water.xtc"
     frame = _water_frame()
-    molrs.write_xtc(str(path), [frame, frame])
+    molrs.io.raw.write_xtc(str(path), [frame, frame])
     return path
 
 
@@ -123,12 +123,12 @@ def water_xtc(tmp_path: Path) -> Path:
 def water_lammpstrj(tmp_path: Path) -> Path:
     path = tmp_path / "water.lammpstrj"
     frame = _water_frame(for_lammps=True)
-    molrs.write_lammps_traj(str(path), [frame, frame])
+    molrs.io.raw.write_lammps_traj(str(path), [frame, frame])
     return path
 
 
 @pytest.fixture
 def water_lammps_data(tmp_path: Path) -> Path:
     path = tmp_path / "water.data"
-    molrs.write_lammps(str(path), _water_frame(for_lammps=True))
+    molrs.io.raw.write_lammps(str(path), _water_frame(for_lammps=True))
     return path

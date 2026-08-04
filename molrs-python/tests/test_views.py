@@ -13,10 +13,10 @@ def test_public_graph_leaf_owns_the_view_api() -> None:
 
 
 def test_native_graph_out_paths_keep_the_public_view_type() -> None:
-    from_smiles = molrs.parse_smiles("CO").to_atomistic()
+    from_smiles = molrs.io.SmilesIR("CO").to_atomistic()
     from_copy = from_smiles.copy()
     from_frame = molrs.Atomistic.from_frame(from_smiles.to_frame())
-    from_perception = molrs.Perceive().find_rings(from_smiles)
+    from_perception = molrs.perceive.Perceive().find_rings(from_smiles)
 
     for graph in (from_smiles, from_copy, from_frame, from_perception):
         assert type(graph) is molrs.Atomistic
@@ -26,8 +26,8 @@ def test_native_graph_out_paths_keep_the_public_view_type() -> None:
 
 def test_public_coarse_grain_factories_and_graph_out_paths() -> None:
     graph = molrs.CoarseGrain(label="cg")
-    a = graph.def_bead(bead_type="P1", xyz=[0.0, 0.0, 0.0])
-    b = graph.def_bead(bead_type="P1", xyz=[1.0, 0.0, 0.0])
+    a = graph.def_bead(bead_type="P1", x=0.0, y=0.0, z=0.0)
+    b = graph.def_bead(bead_type="P1", x=1.0, y=0.0, z=0.0)
     bond = graph.def_cgbond(a, b, order=1.0)
 
     assert graph.beads[0] is a
@@ -40,15 +40,15 @@ def test_public_coarse_grain_factories_and_graph_out_paths() -> None:
 
 def test_factories_return_interned_live_refs() -> None:
     graph = molrs.Atomistic()
-    carbon = graph.def_atom(element="C", xyz=[0.0, 0.0, 0.0])
-    oxygen = graph.def_atom(element="O", xyz=[1.0, 0.0, 0.0])
+    carbon = graph.def_atom(element="C", x=0.0, y=0.0, z=0.0)
+    oxygen = graph.def_atom(element="O", x=1.0, y=0.0, z=0.0)
     bond = graph.def_bond(carbon, oxygen, order=2.0)
 
     assert graph.nodes[0] is carbon
     assert graph.links.all()[0] is bond
     assert bond.itom is carbon
     assert bond.jtom is oxygen
-    assert carbon["xyz"] == [0.0, 0.0, 0.0]
+    assert carbon["x", "y", "z"] == [0.0, 0.0, 0.0]
     assert bond["order"] == 2.0
 
 

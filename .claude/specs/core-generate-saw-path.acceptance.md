@@ -105,8 +105,12 @@ criteria:
       carry rustdoc per repo doc style; target_density doc explicitly states
       monomers-per-volume units and the a = (n_total/target_density).cbrt()
       box convention; cargo doc builds without warnings.
-    status: pending
-    last_checked: ""
+    status: verified
+    last_checked: "2026-08-04"
+    verified_by: agent-auto
+    evidence: |
+      walk.rs documents target_density as monomers-per-volume and
+      a = (n_total/target_density).cbrt(); cargo doc -p molcrafts-molrs succeeds.
   - id: ac-011
     summary: Full check and test suite pass
     type: runtime

@@ -31,15 +31,15 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
 
 
 def test_read_lammps_forcefield_str_yields_python_forcefield():
-    ff = molrs.read_lammps_forcefield_str(_FF)
+    ff = molrs.ff.read_lammps_forcefield_str(_FF)
     # Rich Python ForceField (shadow), not the bare PyO3 core.
-    assert type(ff).__module__ == "molrs.forcefield"
+    assert type(ff).__module__ == "molrs.ff.forcefield"
     # The FFI capsule a consumer (molpack relaxer) resolves zero-copy.
     assert hasattr(ff, "_ffi_forcefield_capsule")
 
 
 def test_lammps_units_pass_through_binding():
-    ff = molrs.read_lammps_forcefield_str(_FF)
+    ff = molrs.ff.read_lammps_forcefield_str(_FF)
     # LAMMPS harmonic K(=228.89) → molrs k = 2K = 457.78 (½k form); r0 unchanged.
     bond = ff.get_style("bond", "harmonic")
     bt = bond.get_type_by_name("c3-c3")
@@ -57,25 +57,25 @@ def test_lammps_units_pass_through_binding():
 def test_read_lammps_forcefield_from_path(tmp_path):
     p = tmp_path / "melt.ff"
     p.write_text(_FF)
-    ff = molrs.read_lammps_forcefield(str(p))
+    ff = molrs.ff.read_lammps_forcefield(str(p))
     assert len(ff.get_style("dihedral", "fourier").types) == 1
 
 
 def test_unknown_keyword_maps_to_value_error():
     with pytest.raises(ValueError):
-        molrs.read_lammps_forcefield_str("mystery_style foo\n")
+        molrs.ff.read_lammps_forcefield_str("mystery_style foo\n")
 
 
 def test_write_lammps_forcefield_str_round_trip():
     """write_lammps_forcefield_str is the inverse of the reader (units + layout)."""
-    ff = molrs.read_lammps_forcefield_str(_FF)
-    text = molrs.write_lammps_forcefield_str(ff)
+    ff = molrs.ff.read_lammps_forcefield_str(_FF)
+    text = molrs.ff.write_lammps_forcefield_str(ff)
     assert "pair_style lj/cut/coul/cut" in text
     assert "hybrid" not in text
     assert "bond_coeff c3-c3 228.890000 1.535400" in text
     assert "angle_coeff c3-c3-oh 76.790000 109.660000" in text
 
-    ff2 = molrs.read_lammps_forcefield_str(text)
+    ff2 = molrs.ff.read_lammps_forcefield_str(text)
     bt = ff2.get_style("bond", "harmonic").get_type_by_name("c3-c3")
     assert bt.params["k"] == pytest.approx(457.78)
     at = ff2.get_style("angle", "harmonic").get_type_by_name("c3-c3-oh")
@@ -83,7 +83,7 @@ def test_write_lammps_forcefield_str_round_trip():
 
 
 def test_write_lammps_forcefield_to_path(tmp_path):
-    ff = molrs.read_lammps_forcefield_str(_FF)
+    ff = molrs.ff.read_lammps_forcefield_str(_FF)
     out = tmp_path / "out.ff"
-    molrs.write_lammps_forcefield(str(out), ff)
+    molrs.ff.write_lammps_forcefield(str(out), ff)
     assert "bond_coeff c3-c3" in out.read_text()

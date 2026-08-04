@@ -28,19 +28,15 @@ keeps signatures visible to static tools and the docs build.
 
 ::: molrs.Graph
 
-::: molrs.SmilesIR
-
-::: molrs.parse_smiles
+::: molrs.io.SmilesIR
 
 ## Chemistry Perception
 
-::: molrs.perceive_aromaticity
+::: molrs.perceive.Perceive
 
-::: molrs.find_rings
+::: molrs.perceive.RingInfo
 
-::: molrs.add_hydrogens
-
-::: molrs.compute_gasteiger_charges
+::: molrs.ff.charge.GasteigerModel
 
 ## Transforms
 
@@ -52,39 +48,39 @@ keeps signatures visible to static tools and the docs build.
 
 ## I/O
 
-::: molrs.read_pdb
+::: molrs.io.read_pdb
 
-::: molrs.read_xyz
+::: molrs.io.read_xyz
 
-::: molrs.read_xyz_trajectory
+::: molrs.io.read_xyz_trajectory
 
-::: molrs.read_lammps
+::: molrs.io.raw.read_lammps
 
-::: molrs.read_lammps_traj
+::: molrs.io.raw.read_lammps_traj
 
-::: molrs.LAMMPSTrajReader
+::: molrs.io.raw.LAMMPSTrajReader
 
-::: molrs.read_dcd
+::: molrs.io.raw.read_dcd
 
-::: molrs.DCDTrajReader
+::: molrs.io.raw.DCDTrajReader
 
-::: molrs.XYZTrajReader
+::: molrs.io.raw.XYZTrajReader
 
-::: molrs.read_gro
+::: molrs.io.read_gro
 
-::: molrs.read_chgcar_file
+::: molrs.io.raw.read_chgcar_file
 
-::: molrs.read_cube_file
+::: molrs.io.raw.read_cube_file
 
-::: molrs.write_cube_file
+::: molrs.io.raw.write_cube_file
 
-::: molrs.write_pdb
+::: molrs.io.write_pdb
 
-::: molrs.write_xyz
+::: molrs.io.write_xyz
 
-::: molrs.write_lammps
+::: molrs.io.raw.write_lammps
 
-::: molrs.write_lammps_traj
+::: molrs.io.raw.write_lammps_traj
 
 ## Regions and Neighbor Search
 
@@ -104,68 +100,68 @@ keeps signatures visible to static tools and the docs build.
 
 ## 3D Conformer Generation
 
-::: molrs.Conformer
+::: molrs.conformer.Conformer
 
-::: molrs.ConformerStageReport
+::: molrs.conformer.ConformerStageReport
 
-::: molrs.ConformerReport
+::: molrs.conformer.ConformerReport
 
 ## Force Fields
 
 The native force-field model exposes a `Style`/`Type` hierarchy
 (`BondStyle`/`BondType`, `PairStyle`/`PairType`, …) and `Parameters`.
 
-::: molrs.ForceField
+::: molrs.ff.ForceField
 
-::: molrs.Style
+::: molrs.ff.Style
 
-::: molrs.AtomStyle
+::: molrs.ff.AtomStyle
 
-::: molrs.BondStyle
+::: molrs.ff.BondStyle
 
-::: molrs.AngleStyle
+::: molrs.ff.AngleStyle
 
-::: molrs.DihedralStyle
+::: molrs.ff.DihedralStyle
 
-::: molrs.ImproperStyle
+::: molrs.ff.ImproperStyle
 
-::: molrs.PairStyle
+::: molrs.ff.PairStyle
 
-::: molrs.Type
+::: molrs.ff.Type
 
-::: molrs.AtomType
+::: molrs.ff.AtomType
 
-::: molrs.BondType
+::: molrs.ff.BondType
 
-::: molrs.AngleType
+::: molrs.ff.AngleType
 
-::: molrs.DihedralType
+::: molrs.ff.DihedralType
 
-::: molrs.ImproperType
+::: molrs.ff.ImproperType
 
-::: molrs.PairType
+::: molrs.ff.PairType
 
-::: molrs.Parameters
+::: molrs.ff.Parameters
 
-::: molrs.MMFF94Typifier
+::: molrs.ff.MMFF94Typifier
 
-::: molrs.MMFF94STypifier
+::: molrs.ff.MMFF94STypifier
 
-::: molrs.OPLSAATypifier
+::: molrs.ff.OPLSAATypifier
 
-::: molrs.typifier.Typifier
+::: molrs.ff.typifier.Typifier
 
-::: molrs.Potentials
+::: molrs.ff.Potentials
 
-::: molrs.LBFGS
+::: molrs.optimize.LBFGS
 
-::: molrs.OptReport
+::: molrs.optimize.OptReport
 
-::: molrs.read_forcefield_xml
+::: molrs.ff.read_forcefield_xml
 
-::: molrs.read_opls_xml
+::: molrs.ff.read_opls_xml
 
-::: molrs.extract_coords
+::: molrs.ff.extract_coords
 
 ## Trajectory
 

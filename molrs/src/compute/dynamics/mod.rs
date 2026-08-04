@@ -3,6 +3,7 @@
 //!
 //! | Method | Input | Output |
 //! |--------|-------|--------|
+//! | [`Acf`] | a vector series | [`AcfResult`] — C(t) over all time origins |
 //! | [`VanHove`] | trajectory frames | [`VanHoveResult`] — self/distinct G(r, t) |
 //! | [`pair_survival_tcf`] | per-frame pair presence | [`PersistResult`] — survival time-correlation |
 //!
@@ -14,8 +15,10 @@
 //! let gvh = VanHove::new(n_rbins, r_max, vec![0, 10, 100])?.compute(&frames, ())?;
 //! ```
 
+pub mod acf;
 pub mod persist;
 pub mod van_hove;
 
+pub use acf::{Acf, AcfArgs, AcfResult, autocorrelation};
 pub use persist::{PersistResult, SurvivalMethod, pair_survival_tcf};
 pub use van_hove::{VanHove, VanHoveResult};

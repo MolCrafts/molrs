@@ -9,7 +9,7 @@
 //! | Block key   | Expected columns | Column types |
 //! |-------------|------------------|--------------|
 //! | `"atoms"`   | `symbol` (string), `x`, `y`, `z` (F), optionally `mass`, `charge` (F) | string, F |
-//! | `"bonds"`   | `i`, `j` (u32 -- atom indices), `order` (F -- 1.0/1.5/2.0/3.0) | u32, F |
+//! | `"bonds"`   | `atomi`, `atomj` (u32), `bond_type` (u32), `bond_number` (u32) | u32 |
 //! | `"angles"`  | `i`, `j`, `k` (u32) | u32 |
 //!
 //! # Example (JavaScript)
@@ -25,7 +25,8 @@
 //! const bonds = frame.createBlock("bonds");
 //! bonds.setColU32("i", new Uint32Array([0, 1]));
 //! bonds.setColU32("j", new Uint32Array([1, 2]));
-//! bonds.setColF("order", bondOrders);
+//! bonds.setColU("bond_type", bondTypes);   // 4 = aromatic
+//! bonds.setColU("bond_number", bondNumbers); // localized 1/2/3
 //! ```
 
 use wasm_bindgen::prelude::*;
@@ -48,9 +49,9 @@ use super::js_err;
 /// - The `"atoms"` block should contain per-atom properties: `symbol`
 ///   (string), `x`/`y`/`z` (F, coordinates in angstrom), and optionally
 ///   `mass` (F, atomic mass units) and `charge` (F, elementary charges).
-/// - The `"bonds"` block should contain bond topology: `i`/`j` (u32,
-///   zero-based atom indices) and `order` (F, bond order: 1.0 = single,
-///   1.5 = aromatic, 2.0 = double, 3.0 = triple).
+/// - The `"bonds"` block should contain bond topology: `atomi`/`atomj` (u32,
+///   zero-based atom indices), `bond_type` (u32: 1 single, 2 double, 3 triple,
+///   4 aromatic) and `bond_number` (u32: the localized Lewis/Kekulé integer).
 ///
 /// # Example (JavaScript)
 ///
@@ -294,14 +295,15 @@ impl Frame {
         block_key: &str,
         old_col: &str,
         new_col: &str,
-    ) -> Result<bool, JsValue> {
+    ) -> Result<(), JsValue> {
         self.inner
             .store
             .borrow_mut()
             .with_frame_mut(self.inner.id, |f| {
                 f.rename_column(block_key, old_col, new_col)
             })
-            .map_err(js_err)
+            .map_err(js_err)?
+            .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
     /// Read a per-frame metadata value as a numeric scalar.
@@ -510,6 +512,27 @@ impl Frame {
     /// frame.drop();
     /// // frame.clear() would now throw
     /// ```
+    /// Judge this frame against the canonical Frame schema.
+    ///
+    /// Throws a string describing every violation when the frame does not
+    /// conform. The rules live in molrs (`Validator::canonical`); JavaScript
+    /// must not re-check endpoint ranges or column dtypes by hand.
+    ///
+    /// # Errors
+    ///
+    /// Throws a `JsValue` string with the full schema report when validation
+    /// fails, or when the frame handle has been dropped.
+    ///
+    /// # Example (JavaScript)
+    ///
+    /// ```js
+    /// frame.validate();  // throws if bonds.atomi is out of range, …
+    /// ```
+    #[wasm_bindgen]
+    pub fn validate(&self) -> Result<(), JsValue> {
+        self.with_frame(|f| f.validate().map_err(|e| JsValue::from_str(&e.to_string())))
+    }
+
     #[wasm_bindgen(js_name = drop)]
     pub fn drop_frame(&self) -> Result<(), JsValue> {
         self.inner

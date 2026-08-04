@@ -48,24 +48,23 @@ fn cxx_api_capabilities() -> u64 {
 
 // ── Element lookup ───────────────────────────────────────────────────────────
 
-/// Symbol for the FFI-shared [`bridge::ffi::Element`] — panics on an invalid
-/// value (no fallback).
+/// Symbol for the FFI-shared [`bridge::ffi::Element`].
 ///
 /// Kept for the Element-export surface; callers currently go through
 /// [`symbol_for_z`] with the atomic number.
 #[allow(dead_code)]
-fn element_symbol(e: bridge::ffi::Element) -> &'static str {
+fn element_symbol(e: bridge::ffi::Element) -> Result<&'static str, String> {
     Element::by_number(e.repr)
-        .unwrap_or_else(|| panic!("element_symbol: invalid Element value {}", e.repr))
-        .symbol()
+        .map(|el| el.symbol())
+        .ok_or_else(|| format!("element_symbol: invalid Element value {}", e.repr))
 }
 
-fn symbol_for_z(z: i32) -> &'static str {
+fn symbol_for_z(z: i32) -> Result<&'static str, String> {
     let element = u8::try_from(z)
         .ok()
         .and_then(Element::by_number)
-        .unwrap_or_else(|| panic!("symbol_for_z: invalid atomic number {z}"));
-    element.symbol()
+        .ok_or_else(|| format!("symbol_for_z: invalid atomic number {z}"))?;
+    Ok(element.symbol())
 }
 
 // ── Frame builders (raw C++ arrays → transient molrs Frame) ─────────────────
@@ -77,58 +76,78 @@ fn symbol_for_z(z: i32) -> &'static str {
 /// Build a bare frame carrying only `atoms.{x,y,z}` (+ optional simbox).
 ///
 /// Used by the analysis kernels, which read positions via `FrameAccess`.
-fn xyz_frame(x: Vec<f64>, y: Vec<f64>, z: Vec<f64>, box_mat: Option<&[f64]>) -> Frame {
+fn xyz_frame(
+    x: Vec<f64>,
+    y: Vec<f64>,
+    z: Vec<f64>,
+    box_mat: Option<&[f64]>,
+) -> Result<Frame, String> {
     let mut atoms = Block::new();
-    atoms.insert("x", Array1::from_vec(x).into_dyn()).unwrap();
-    atoms.insert("y", Array1::from_vec(y).into_dyn()).unwrap();
-    atoms.insert("z", Array1::from_vec(z).into_dyn()).unwrap();
+    atoms
+        .insert("x", Array1::from_vec(x).into_dyn())
+        .map_err(|e| format!("xyz_frame insert x: {e}"))?;
+    atoms
+        .insert("y", Array1::from_vec(y).into_dyn())
+        .map_err(|e| format!("xyz_frame insert y: {e}"))?;
+    atoms
+        .insert("z", Array1::from_vec(z).into_dyn())
+        .map_err(|e| format!("xyz_frame insert z: {e}"))?;
     let mut frame = Frame::new();
     frame.insert("atoms", atoms);
     if let Some(bm) = box_mat
         && bm.len() >= 9
     {
-        let h = Array2::from_shape_vec((3, 3), bm[..9].to_vec()).unwrap();
+        let h = Array2::from_shape_vec((3, 3), bm[..9].to_vec())
+            .map_err(|e| format!("xyz_frame box reshape: {e}"))?;
         if let Ok(sb) = SimBox::new(h, Array1::zeros(3), [true, true, true]) {
             frame.simbox = Some(sb);
         }
     }
-    frame
+    Ok(frame)
 }
 
 /// Build a frame with `atoms.{element,x,y,z}` (+ simbox) for XYZ/Zarr writing.
 ///
 /// `element` is derived from the atomic number `type_id` via [`symbol_for_z`].
-fn frame_with_elements(type_id: &[i32], x: &[f64], y: &[f64], z: &[f64], box_mat: &[f64]) -> Frame {
+fn frame_with_elements(
+    type_id: &[i32],
+    x: &[f64],
+    y: &[f64],
+    z: &[f64],
+    box_mat: &[f64],
+) -> Result<Frame, String> {
     let n = type_id.len();
-    let symbols: Vec<String> = type_id
+    let symbols: Result<Vec<String>, String> = type_id
         .iter()
-        .map(|&z| symbol_for_z(z).to_string())
+        .map(|&z| symbol_for_z(z).map(|s| s.to_string()))
         .collect();
+    let symbols = symbols?;
     let mut atoms = Block::new();
     atoms
         .insert(
             "element",
             Array1::from_vec(symbols).into_dyn() as ArrayD<String>,
         )
-        .unwrap();
+        .map_err(|e| format!("frame_with_elements insert element: {e}"))?;
     atoms
         .insert("x", Array1::from_vec(x[..n].to_vec()).into_dyn())
-        .unwrap();
+        .map_err(|e| format!("frame_with_elements insert x: {e}"))?;
     atoms
         .insert("y", Array1::from_vec(y[..n].to_vec()).into_dyn())
-        .unwrap();
+        .map_err(|e| format!("frame_with_elements insert y: {e}"))?;
     atoms
         .insert("z", Array1::from_vec(z[..n].to_vec()).into_dyn())
-        .unwrap();
+        .map_err(|e| format!("frame_with_elements insert z: {e}"))?;
     let mut frame = Frame::new();
     frame.insert("atoms", atoms);
     if box_mat.len() >= 9 {
-        let h = Array2::from_shape_vec((3, 3), box_mat[..9].to_vec()).unwrap();
+        let h = Array2::from_shape_vec((3, 3), box_mat[..9].to_vec())
+            .map_err(|e| format!("frame_with_elements box reshape: {e}"))?;
         if let Ok(sb) = SimBox::new(h, Array1::zeros(3), [true, true, true]) {
             frame.simbox = Some(sb);
         }
     }
-    frame
+    Ok(frame)
 }
 
 // ── Trajectory-analysis compute objects (mirror molrs::compute::*) ────────────
@@ -167,7 +186,7 @@ impl MsdCompute {
             return Vec::new();
         }
         let na = nd / 3;
-        let frames: Vec<Frame> = (0..nf)
+        let frames: Vec<Frame> = match (0..nf)
             .map(|t| {
                 let b = t * nd;
                 xyz_frame(
@@ -177,7 +196,11 @@ impl MsdCompute {
                     None,
                 )
             })
-            .collect();
+            .collect::<Result<Vec<_>, _>>()
+        {
+            Ok(f) => f,
+            Err(_) => return Vec::new(),
+        };
         let refs: Vec<&Frame> = frames.iter().collect();
         match MSD::new().compute(&refs, ()) {
             Ok(ts) => ts.data.iter().map(|r| r.mean).collect(),
@@ -227,7 +250,7 @@ impl DiffusionCompute {
             return f64::NAN;
         }
         let na = nd / 3;
-        let frames: Vec<Frame> = (0..nf)
+        let frames: Vec<Frame> = match (0..nf)
             .map(|t| {
                 let b = t * nd;
                 xyz_frame(
@@ -237,7 +260,11 @@ impl DiffusionCompute {
                     None,
                 )
             })
-            .collect();
+            .collect::<Result<Vec<_>, _>>()
+        {
+            Ok(f) => f,
+            Err(_) => return f64::NAN,
+        };
         let refs: Vec<&Frame> = frames.iter().collect();
         let ed = match EinsteinDiffusion.compute(&refs, EinsteinDiffusionArgs { dt: self.dt }) {
             Ok(r) => r,
@@ -394,7 +421,8 @@ fn frame_and_self_nlist(
         positions[na..2 * na].to_vec(),
         positions[2 * na..3 * na].to_vec(),
         Some(box9),
-    );
+    )
+    .ok()?;
     let mut pos = Array2::<F>::zeros((na, 3));
     for a in 0..na {
         pos[[a, 0]] = positions[a];
@@ -573,9 +601,9 @@ fn write_frame_xyz(
     z: &[f64],
     box_mat: &[f64],
     append: bool,
-) {
-    let frame = frame_with_elements(type_id, x, y, z, box_mat);
-    write_xyz_path(path, &frame, append).expect("write_frame_xyz");
+) -> Result<(), String> {
+    let frame = frame_with_elements(type_id, x, y, z, box_mat)?;
+    write_xyz_path(path, &frame, append)
 }
 
 fn write_xyz_path(path: &str, frame: &Frame, append: bool) -> Result<(), String> {
@@ -604,7 +632,7 @@ fn write_frame_xyz_typed(
     meta: Vec<bridge::ffi::MetaEntry>,
     append: bool,
 ) -> Result<(), String> {
-    let mut frame = frame_with_elements(type_id, x, y, z, box_mat);
+    let mut frame = frame_with_elements(type_id, x, y, z, box_mat)?;
     for entry in meta {
         let (key, value) = meta_from_entry(entry)?;
         frame.meta.insert(key, value);
@@ -629,9 +657,9 @@ fn write_frame_zarr(
     box_mat: &[f64],
     field_names: Vec<String>,
     field_data: &[f64],
-) {
+) -> Result<(), String> {
     let n = type_id.len();
-    let mut frame = frame_with_elements(type_id, x, y, z, box_mat);
+    let mut frame = frame_with_elements(type_id, x, y, z, box_mat)?;
     if let Some(atoms) = frame.get_mut("atoms") {
         for (fi, name) in field_names.iter().enumerate() {
             let base = fi * n;
@@ -641,12 +669,12 @@ fn write_frame_zarr(
                         name.as_str(),
                         Array1::from_vec(field_data[base..base + n].to_vec()).into_dyn(),
                     )
-                    .unwrap();
+                    .map_err(|e| format!("write_frame_zarr insert {name}: {e}"))?;
             }
         }
     }
     let traj = Trajectory::from_frames(vec![frame]);
-    write_trajectory_file(path, &traj).expect("write_frame_zarr: write");
+    write_trajectory_file(path, &traj).map_err(|e| format!("write_frame_zarr: {e}"))
 }
 
 /// Read the first frame of a Zarr store into a fresh `FrameRef`.
@@ -657,52 +685,60 @@ fn write_frame_zarr(
 /// via `with_mut` on a fresh standalone store — readers (`frame_column_f64`,
 /// `frame_box`, etc.) see exactly the columns and simbox that were stored.
 #[cfg(feature = "zarr")]
-fn read_frame_zarr_first(path: &str) -> Box<FrameRef> {
-    let traj = read_trajectory_file(path).expect("read_frame_zarr_first: read");
+fn read_frame_zarr_first(path: &str) -> Result<Box<FrameRef>, String> {
+    let traj = read_trajectory_file(path).map_err(|e| format!("read_frame_zarr_first: {e}"))?;
     let frame = traj
         .frames
         .into_iter()
         .next()
-        .expect("read_frame_zarr_first: empty trajectory");
+        .ok_or_else(|| "read_frame_zarr_first: empty trajectory".to_string())?;
     let inner = molrs_ffi::FrameRef::new_standalone();
     inner
         .with_mut(|f| {
             *f = frame;
         })
-        .expect("read_frame_zarr_first: populate");
-    Box::new(FrameRef(inner))
+        .map_err(|e| format!("read_frame_zarr_first: populate: {e}"))?;
+    Ok(Box::new(FrameRef(inner)))
 }
 
 /// Atomic number for a chemical symbol — inverse of [`symbol_for_z`].
 ///
 /// Delegates to molrs' canonical periodic table. No fallback: panics on an
 /// unrecognized symbol, matching Atomiverse's explicit-error convention.
-fn z_for_symbol(sym: &str) -> i32 {
+fn z_for_symbol(sym: &str) -> Result<i32, String> {
     Element::by_symbol(sym)
         .map(|element| i32::from(element.z()))
-        .unwrap_or_else(|| panic!("z_for_symbol: unknown element symbol '{sym}'"))
+        .ok_or_else(|| format!("z_for_symbol: unknown element symbol '{sym}'"))
 }
 
 /// Read the first frame of an (ext)XYZ file into a materialize-ready `FrameRef`.
 ///
 /// All parsing (atom table, `Lattice="..."` -> simbox) is done by the molrs
 /// core ExtXYZ reader. The ExtXYZ `species` column is consumed and replaced by
-/// the exchange-schema `type` (atomic number Z) i32 column, so the result
-/// satisfies the exact schema that `cpu::materialize` requires
-/// (`atoms.{x,y,z,type}`). The external-format column does not cross that
-/// boundary.
-fn xyz_read_first_frame(path: &str) -> Box<FrameRef> {
-    let mut frame = molrs::io::data::xyz::read_xyz_frame(path).expect("xyz_read_first_frame: read");
+/// `atomic_number` (a UInt column), so the result satisfies the exact schema
+/// that `cpu::materialize` requires (`atoms.{x,y,z,atomic_number}`). The
+/// external-format column does not cross that boundary.
+///
+/// Z lives in `atomic_number`, not `type`: `type` is the force-field label a
+/// caller owns (a String), and the vocabulary binds a key's dtype wherever it
+/// appears — so writing Z there is refused outright.
+fn xyz_read_first_frame(path: &str) -> Result<Box<FrameRef>, String> {
+    let mut frame = molrs::io::data::xyz::read_xyz_frame(path)
+        .map_err(|e| format!("xyz_read_first_frame: read: {e}"))?;
     let atoms = frame
         .get_mut("atoms")
-        .expect("xyz_read_first_frame: frame has no atoms block");
-    let species = atoms
-        .get_string("species")
-        .expect("xyz_read_first_frame: atoms block has no ExtXYZ species column");
-    let zs: Vec<i32> = species.iter().map(|symbol| z_for_symbol(symbol)).collect();
+        .ok_or_else(|| "xyz_read_first_frame: frame has no atoms block".to_string())?;
+    let species = atoms.get_string("species").ok_or_else(|| {
+        "xyz_read_first_frame: atoms block has no ExtXYZ species column".to_string()
+    })?;
+    let zs: Result<Vec<u32>, String> = species
+        .iter()
+        .map(|symbol| z_for_symbol(symbol).map(|z| z as u32))
+        .collect();
+    let zs = zs?;
     atoms
-        .insert("type", Array1::from_vec(zs).into_dyn())
-        .expect("xyz_read_first_frame: insert atoms.type");
+        .insert("atomic_number", Array1::from_vec(zs).into_dyn())
+        .map_err(|e| format!("xyz_read_first_frame: insert atomic_number: {e}"))?;
     atoms.remove("species");
 
     let inner = molrs_ffi::FrameRef::new_standalone();
@@ -710,8 +746,8 @@ fn xyz_read_first_frame(path: &str) -> Box<FrameRef> {
         .with_mut(|f| {
             *f = frame;
         })
-        .expect("xyz_read_first_frame: populate");
-    Box::new(FrameRef(inner))
+        .map_err(|e| format!("xyz_read_first_frame: populate: {e}"))?;
+    Ok(Box::new(FrameRef(inner)))
 }
 
 // ── Frame bridge ─────────────────────────────────────────────────────────────
@@ -1044,14 +1080,19 @@ fn frame_box(fref: &FrameRef) -> Vec<f64> {
     }
 }
 
-/// Get-or-create a block by key, then run `f` to populate it.
-fn with_block_inserted(frame: &mut Frame, block: &str, f: impl FnOnce(&mut Block)) {
+/// Get-or-create a block by key, then run fallible `f` to populate it.
+fn with_block_inserted_res<T, E>(
+    frame: &mut Frame,
+    block: &str,
+    f: impl FnOnce(&mut Block) -> Result<T, E>,
+) -> Result<T, E> {
     if let Some(blk) = frame.get_mut(block) {
-        f(blk);
+        f(blk)
     } else {
         let mut blk = Block::new();
-        f(&mut blk);
+        let out = f(&mut blk)?;
         frame.insert(block, blk);
+        Ok(out)
     }
 }
 
@@ -1061,15 +1102,20 @@ fn with_block_inserted(frame: &mut Frame, block: &str, f: impl FnOnce(&mut Block
 /// @param block block key (created if absent)
 /// @param col   column key (overwritten if present)
 /// @param data  column values
-fn frame_set_column_f64(fref: &mut FrameRef, block: &str, col: &str, data: &[f64]) {
+fn frame_set_column_f64(
+    fref: &mut FrameRef,
+    block: &str,
+    col: &str,
+    data: &[f64],
+) -> Result<(), String> {
     fref.0
         .with_mut(|frame| {
-            with_block_inserted(frame, block, |blk| {
+            with_block_inserted_res(frame, block, |blk| {
                 blk.insert(col, Array1::from_vec(data.to_vec()).into_dyn())
-                    .expect("frame_set_column_f64: insert");
-            });
+                    .map_err(|e| format!("frame_set_column_f64 insert {col}: {e}"))
+            })
         })
-        .expect("frame_set_column_f64: with_mut");
+        .map_err(|e| format!("frame_set_column_f64: {e}"))?
 }
 
 /// Create or overwrite an `i32` column on a block.
@@ -1078,15 +1124,20 @@ fn frame_set_column_f64(fref: &mut FrameRef, block: &str, col: &str, data: &[f64
 /// @param block block key (created if absent)
 /// @param col   column key (overwritten if present)
 /// @param data  column values
-fn frame_set_column_i32(fref: &mut FrameRef, block: &str, col: &str, data: &[i32]) {
+fn frame_set_column_i32(
+    fref: &mut FrameRef,
+    block: &str,
+    col: &str,
+    data: &[i32],
+) -> Result<(), String> {
     fref.0
         .with_mut(|frame| {
-            with_block_inserted(frame, block, |blk| {
+            with_block_inserted_res(frame, block, |blk| {
                 blk.insert(col, Array1::from_vec(data.to_vec()).into_dyn())
-                    .expect("frame_set_column_i32: insert");
-            });
+                    .map_err(|e| format!("frame_set_column_i32 insert {col}: {e}"))
+            })
         })
-        .expect("frame_set_column_i32: with_mut");
+        .map_err(|e| format!("frame_set_column_i32: {e}"))?
 }
 
 /// Create or overwrite a `u32` column on a block.
@@ -1095,15 +1146,20 @@ fn frame_set_column_i32(fref: &mut FrameRef, block: &str, col: &str, data: &[i32
 /// @param block block key (created if absent)
 /// @param col   column key (overwritten if present)
 /// @param data  column values
-fn frame_set_column_u32(fref: &mut FrameRef, block: &str, col: &str, data: &[u32]) {
+fn frame_set_column_u32(
+    fref: &mut FrameRef,
+    block: &str,
+    col: &str,
+    data: &[u32],
+) -> Result<(), String> {
     fref.0
         .with_mut(|frame| {
-            with_block_inserted(frame, block, |blk| {
+            with_block_inserted_res(frame, block, |blk| {
                 blk.insert(col, Array1::from_vec(data.to_vec()).into_dyn())
-                    .expect("frame_set_column_u32: insert");
-            });
+                    .map_err(|e| format!("frame_set_column_u32 insert {col}: {e}"))
+            })
         })
-        .expect("frame_set_column_u32: with_mut");
+        .map_err(|e| format!("frame_set_column_u32: {e}"))?
 }
 
 /// Create or overwrite a string column on a block.
@@ -1112,18 +1168,23 @@ fn frame_set_column_u32(fref: &mut FrameRef, block: &str, col: &str, data: &[u32
 /// @param block block key (created if absent)
 /// @param col   column key (overwritten if present)
 /// @param data  column values
-fn frame_set_column_str(fref: &mut FrameRef, block: &str, col: &str, data: &[String]) {
+fn frame_set_column_str(
+    fref: &mut FrameRef,
+    block: &str,
+    col: &str,
+    data: &[String],
+) -> Result<(), String> {
     fref.0
         .with_mut(|frame| {
-            with_block_inserted(frame, block, |blk| {
+            with_block_inserted_res(frame, block, |blk| {
                 blk.insert(
                     col,
                     Array1::from_vec(data.to_vec()).into_dyn() as ArrayD<String>,
                 )
-                .expect("frame_set_column_str: insert");
-            });
+                .map_err(|e| format!("frame_set_column_str insert {col}: {e}"))
+            })
         })
-        .expect("frame_set_column_str: with_mut");
+        .map_err(|e| format!("frame_set_column_str: {e}"))?
 }
 
 /// Set the simulation-cell matrix from 9 row-major `f64` (3x3 H).
@@ -1133,14 +1194,17 @@ fn frame_set_column_str(fref: &mut FrameRef, block: &str, col: &str, data: &[Str
 ///
 /// @param fref frame handle
 /// @param h    9-element row-major 3x3 cell matrix
-fn frame_set_box(fref: &mut FrameRef, h: &[f64]) {
+fn frame_set_box(fref: &mut FrameRef, h: &[f64]) -> Result<(), String> {
+    if h.len() < 9 {
+        return Err("frame_set_box: H must have 9 elements".into());
+    }
     let mat = Array2::from_shape_vec((3, 3), h[..9].to_vec())
-        .expect("frame_set_box: H must have 9 elements");
+        .map_err(|e| format!("frame_set_box reshape: {e}"))?;
     let simbox = SimBox::new(mat, Array1::zeros(3), [true, true, true])
-        .expect("frame_set_box: singular cell matrix");
+        .map_err(|e| format!("frame_set_box: singular cell matrix: {e:?}"))?;
     fref.0
         .set_box(Some(simbox))
-        .expect("frame_set_box: set_box");
+        .map_err(|e| format!("frame_set_box: {e}"))
 }
 
 /// Apply AM1-BCC corrections to a molrs frame using AM1 base
@@ -1169,7 +1233,7 @@ fn frame_set_box(fref: &mut FrameRef, h: &[f64]) {
 /// abort the engine that asked.
 ///
 /// There is no total-charge argument. AM1-BCC does not renormalize to a target:
-/// antechamber's `am1bcc.c` ends at the increment loop, and spreading the AM1
+/// the reference AM1-BCC algorithm ends at the increment loop; spreading the AM1
 /// rounding residual over the atoms would make molrs *diverge* from the reference
 /// while hiding a non-converged AM1 behind a plausible-looking answer.
 ///
@@ -1192,10 +1256,10 @@ fn am1_bcc_assign_frame_from_base(
                 .correct(&mol, am1_charges)
                 .map_err(|e| e.to_string())?;
 
-            with_block_inserted(frame, "atoms", |blk| {
+            with_block_inserted_res(frame, "atoms", |blk| {
                 blk.insert(keys::CHARGE, Array1::from_vec(charges.clone()).into_dyn())
-                    .expect("am1_bcc_assign_frame_from_base: insert charge");
-            });
+                    .map_err(|e| format!("am1_bcc_assign_frame_from_base: insert charge: {e}"))
+            })?;
             Ok(charges)
         })
         .map_err(|e| e.to_string())?
@@ -1203,7 +1267,7 @@ fn am1_bcc_assign_frame_from_base(
 
 /// Resolve a [`BccParameterSet`] from the name the C++ caller passed.
 ///
-/// The names are antechamber's own `-c` values, so a C++ caller that already knows
+/// The names are the charge-model ids (`"bcc"` / `"abcg2"`), so a C++ caller that already knows
 /// which charge method it wants knows what to spell here.
 ///
 /// # Errors
@@ -1211,7 +1275,7 @@ fn am1_bcc_assign_frame_from_base(
 /// An unknown name. It is *refused*, not defaulted to BCC: silently substituting a
 /// different correction family would hand the caller charges from a table it did
 /// not ask for, which is indistinguishable from correct output until someone
-/// compares against antechamber.
+/// is checked against the offline `am1bcc_reference` golden table in tests.
 fn parse_bcc_parameter_set(name: &str) -> Result<BccParameterSet, String> {
     match name.trim() {
         n if n.eq_ignore_ascii_case("bcc") => Ok(BccParameterSet::Bcc),
@@ -1232,7 +1296,7 @@ mod tests {
         for z in 1u8..=118 {
             let core = molrs::Element::by_number(z).expect("core element");
             assert_eq!(
-                crate::element_symbol(crate::bridge::ffi::Element { repr: z }),
+                crate::element_symbol(crate::bridge::ffi::Element { repr: z }).unwrap(),
                 core.symbol()
             );
         }
@@ -1244,11 +1308,17 @@ mod tests {
     #[test]
     fn element_symbols_are_the_canonical_rust_table() {
         for element in Element::ALL {
-            assert_eq!(symbol_for_z(i32::from(element.z())), element.symbol());
-            assert_eq!(z_for_symbol(element.symbol()), i32::from(element.z()));
+            assert_eq!(
+                symbol_for_z(i32::from(element.z())).unwrap(),
+                element.symbol()
+            );
+            assert_eq!(
+                z_for_symbol(element.symbol()).unwrap(),
+                i32::from(element.z())
+            );
         }
-        assert!(std::panic::catch_unwind(|| symbol_for_z(0)).is_err());
-        assert!(std::panic::catch_unwind(|| symbol_for_z(119)).is_err());
+        assert!(symbol_for_z(0).is_err());
+        assert!(symbol_for_z(119).is_err());
     }
 
     #[test]
@@ -1269,13 +1339,17 @@ mod tests {
         )
         .unwrap();
 
-        let frame = xyz_read_first_frame(path.to_str().unwrap());
+        let frame = xyz_read_first_frame(path.to_str().unwrap()).expect("xyz_read_first_frame");
         std::fs::remove_file(path).unwrap();
         let columns = frame_block_columns(&frame, "atoms");
-        assert!(columns.iter().any(|column| column == "type"));
+        assert!(columns.iter().any(|column| column == "atomic_number"));
         assert!(!columns.iter().any(|column| column == "species"));
         assert!(!columns.iter().any(|column| column == "element"));
-        assert_eq!(frame_column_i32(&frame, "atoms", "type"), [8, 1]);
+        assert!(
+            !columns.iter().any(|column| column == "type"),
+            "Z is `atomic_number`; `type` is the caller's force-field label"
+        );
+        assert_eq!(frame_column_u32(&frame, "atoms", "atomic_number"), [8, 1]);
     }
 
     #[test]
@@ -1295,7 +1369,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = std::panic::catch_unwind(|| xyz_read_first_frame(path.to_str().unwrap()));
+        let result = xyz_read_first_frame(path.to_str().unwrap());
         std::fs::remove_file(path).unwrap();
         assert!(result.is_err());
     }
@@ -1313,19 +1387,23 @@ mod tests {
         assert_eq!(frame_schema_version(), 2);
         let mut fref = frame_new();
 
+        // One column per dtype, each on a key whose *schema* dtype matches it.
+        // The vocabulary binds a key's dtype wherever it appears, so writing an
+        // i32 into `id` (a UInt) is refused — which is the schema working, not
+        // the bridge failing.
         let xs: Vec<f64> = vec![0.0, 1.5, -2.25];
-        let ids: Vec<i32> = vec![10, 20, 30];
-        let types: Vec<u32> = vec![1, 1, 8];
+        let spins: Vec<i32> = vec![-1, 0, 1];
+        let ids: Vec<u32> = vec![10, 20, 30];
         let elems: Vec<String> = vec!["H".into(), "H".into(), "O".into()];
 
-        frame_set_column_f64(&mut fref, "atoms", "x", &xs);
-        frame_set_column_i32(&mut fref, "atoms", "id", &ids);
-        frame_set_column_u32(&mut fref, "atoms", "type", &types);
-        frame_set_column_str(&mut fref, "atoms", "element", &elems);
+        frame_set_column_f64(&mut fref, "atoms", "x", &xs).unwrap();
+        frame_set_column_i32(&mut fref, "atoms", "spin", &spins).unwrap();
+        frame_set_column_u32(&mut fref, "atoms", "id", &ids).unwrap();
+        frame_set_column_str(&mut fref, "atoms", "element", &elems).unwrap();
 
         // 9-elem row-major 3x3 H matrix.
         let h: Vec<f64> = vec![12.0, 0.0, 0.0, 0.0, 13.0, 0.0, 0.0, 0.0, 14.0];
-        frame_set_box(&mut fref, &h);
+        frame_set_box(&mut fref, &h).unwrap();
 
         // ── Introspection ──
         let names = frame_block_names(&fref);
@@ -1335,31 +1413,31 @@ mod tests {
 
         let mut cols = frame_block_columns(&fref, "atoms");
         cols.sort();
-        assert_eq!(cols, vec!["element", "id", "type", "x"]);
+        assert_eq!(cols, vec!["element", "id", "spin", "x"]);
         assert_eq!(frame_block_nrows(&fref, "atoms"), 3);
         assert_eq!(frame_block_nrows(&fref, "missing"), 0);
 
         // ── Readers ──
         assert_eq!(frame_column_f64(&fref, "atoms", "x"), xs);
-        assert_eq!(frame_column_i32(&fref, "atoms", "id"), ids);
-        assert_eq!(frame_column_u32(&fref, "atoms", "type"), types);
+        assert_eq!(frame_column_i32(&fref, "atoms", "spin"), spins);
+        assert_eq!(frame_column_u32(&fref, "atoms", "id"), ids);
         assert_eq!(frame_column_str(&fref, "atoms", "element"), elems);
         assert_eq!(frame_box(&fref), h);
 
         // ── Absent block / column → empty Vec, never a panic ──
         assert!(frame_column_f64(&fref, "atoms", "nope").is_empty());
         assert!(frame_column_f64(&fref, "missing", "x").is_empty());
-        assert!(frame_column_i32(&fref, "missing", "id").is_empty());
-        assert!(frame_column_u32(&fref, "missing", "type").is_empty());
+        assert!(frame_column_i32(&fref, "missing", "spin").is_empty());
+        assert!(frame_column_u32(&fref, "missing", "id").is_empty());
         assert!(frame_column_str(&fref, "missing", "element").is_empty());
         assert!(frame_block_columns(&fref, "missing").is_empty());
 
         // ── Update path: overwrite an existing column ──
         let xs2: Vec<f64> = vec![9.0, 8.0, 7.0];
-        frame_set_column_f64(&mut fref, "atoms", "x", &xs2);
+        frame_set_column_f64(&mut fref, "atoms", "x", &xs2).unwrap();
         assert_eq!(frame_column_f64(&fref, "atoms", "x"), xs2);
         // other columns survive the update
-        assert_eq!(frame_column_i32(&fref, "atoms", "id"), ids);
+        assert_eq!(frame_column_u32(&fref, "atoms", "id"), ids);
     }
 
     #[test]
@@ -1428,7 +1506,7 @@ mod tests {
     #[test]
     fn cloned_frameref_shares_store() {
         let mut original = frame_new();
-        frame_set_column_f64(&mut original, "atoms", "x", &[1.0, 2.0, 3.0]);
+        frame_set_column_f64(&mut original, "atoms", "x", &[1.0, 2.0, 3.0]).unwrap();
 
         // Clone + simulate the PyCapsule carry: Box::into_raw → Box::from_raw.
         let cloned: FrameRef = FrameRef(original.0.clone());
@@ -1439,15 +1517,15 @@ mod tests {
         assert!(Rc::ptr_eq(&original.0.store, &recovered.0.store));
 
         // Mutate through the recovered handle, observe through the original.
-        frame_set_column_f64(&mut recovered, "atoms", "x", &[7.0, 8.0, 9.0]);
+        frame_set_column_f64(&mut recovered, "atoms", "x", &[7.0, 8.0, 9.0]).unwrap();
         assert_eq!(
             frame_column_f64(&original, "atoms", "x"),
             vec![7.0, 8.0, 9.0]
         );
 
         // ...and vice versa.
-        frame_set_column_i32(&mut original, "atoms", "id", &[1, 2, 3]);
-        assert_eq!(frame_column_i32(&recovered, "atoms", "id"), vec![1, 2, 3]);
+        frame_set_column_u32(&mut original, "atoms", "id", &[1, 2, 3]).unwrap();
+        assert_eq!(frame_column_u32(&recovered, "atoms", "id"), vec![1, 2, 3]);
     }
 
     #[test]

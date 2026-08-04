@@ -67,6 +67,44 @@ impl Perceive {
         Frame::from_rs(out.to_frame())
     }
 
+    /// Assign a localized (Kekulé) `bond_number` to every aromatic bond.
+    ///
+    /// Wraps [`molrs::perceive::Perceive::find_kekule_orders`]. Kekulization and
+    /// nothing else — a frame whose aromatic bonds are not marked yet comes back
+    /// unchanged, because deciding *which* bonds are aromatic belongs to
+    /// [`findAromaticity`](Self::find_aromaticity).
+    ///
+    /// # Errors
+    ///
+    /// Throws if the frame cannot be read as an atomistic molecule.
+    #[wasm_bindgen(js_name = findKekuleOrders)]
+    pub fn find_kekule_orders(&self, frame: &Frame) -> Result<Frame, JsValue> {
+        let mol = frame_to_atomistic(frame)?;
+        let out = self.inner.find_kekule_orders(&mol);
+        Frame::from_rs(out.to_frame())
+    }
+
+    /// Bring a frame to the standard aromatic representation.
+    ///
+    /// On return every aromatic atom carries `is_aromatic`, every aromatic bond
+    /// carries `bond_type = 4`, and every bond carries an integer `bond_number`
+    /// — the localized Lewis structure. Nothing carries a fractional order.
+    ///
+    /// A renderer reads `bond_type` **first**: `4` is aromatic and may be drawn
+    /// either as a uniform aromatic style or, in Kekulé mode, using
+    /// `bond_number`. Reading `bond_number` alone and calling anything above 1
+    /// a double bond is what drew benzene as six double bonds.
+    ///
+    /// # Errors
+    ///
+    /// Throws if the frame cannot be read as an atomistic molecule.
+    #[wasm_bindgen(js_name = findAromaticity)]
+    pub fn find_aromaticity(&self, frame: &Frame) -> Result<Frame, JsValue> {
+        let mol = frame_to_atomistic(frame)?;
+        let out = self.inner.find_aromaticity(&mol);
+        Frame::from_rs(out.to_frame())
+    }
+
     /// Remove terminal (degree-1) explicit hydrogen atoms.
     ///
     /// Graph-in / graph-out; non-terminal H is left in place. Uses

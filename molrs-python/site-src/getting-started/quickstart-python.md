@@ -10,13 +10,13 @@ between the graph representation (`Atomistic`) and the table representation
 
 ## 1. Parse a Molecule
 
-`parse_smiles` returns an intermediate representation. Convert it to
+`molrs.io.SmilesIR` returns an intermediate representation. Convert it to
 `Atomistic` when you want a graph with atoms and bonds.
 
 ```python
 import molrs
 
-ir = molrs.parse_smiles("CCO")  # ethanol
+ir = molrs.io.SmilesIR("CCO")  # ethanol
 mol = ir.to_atomistic()
 
 print("components:", ir.n_components)
@@ -42,7 +42,7 @@ Embedding converts topology into coordinates. Use a seed in examples so that
 the result is reproducible across runs.
 
 ```python
-mol3d, report = molrs.Conformer(speed="fast", seed=42).generate(mol)
+mol3d, report = molrs.conformer.Conformer(speed="fast", seed=42).generate(mol)
 
 print("atoms after embedding:", mol3d.n_atoms)
 print("final energy:", report.final_energy)
@@ -128,18 +128,18 @@ with the graph. Coordinates are then extracted from the frame as a flat `3N`
 array.
 
 ```python
-typifier = molrs.MMFF94Typifier()
+typifier = molrs.ff.MMFF94Typifier()
 typed = typifier.typify(mol3d)
 typed_frame = typed.to_frame()
 print("typed blocks:", typed_frame.keys())
 
 try:
     # Non-bonded terms need an explicit pairs block (no optimizeGeometry sugar).
-    typed_frame["pairs"] = molrs.intramolecular_pairs(typed_frame)
+    typed_frame["pairs"] = molrs.ff.intramolecular_pairs(typed_frame)
     potentials = typifier.forcefield().to_potentials(typed_frame)
-    coords = molrs.extract_coords(typed_frame)
+    coords = molrs.ff.extract_coords(typed_frame)
 
-    energy, forces = potentials.eval(coords)
+    energy, forces = potentials.calc_energy_forces(coords)
     print("energy:", energy)
     print("coords shape:", coords.shape)
     print("forces shape:", forces.shape)
@@ -168,8 +168,8 @@ The I/O layer writes frames. This is the final boundary where the graph-based
 work has become a portable coordinate table.
 
 ```python
-molrs.write_xyz("ethanol.xyz", frame)
-roundtrip = molrs.read_xyz("ethanol.xyz")
+molrs.io.write_xyz("ethanol.xyz", frame)
+roundtrip = molrs.io.read_xyz("ethanol.xyz")
 print("roundtrip atoms:", roundtrip["atoms"].nrows)
 ```
 

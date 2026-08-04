@@ -39,6 +39,7 @@ pub mod error;
 // The serialization-format module retains its `smiles` name internally. The
 // re-exports below flatten it so callers write `molrs::io::smiles::parse_smiles`,
 // not the doubled path.
+pub mod frame_reader;
 #[allow(clippy::module_inception)]
 pub mod smiles;
 

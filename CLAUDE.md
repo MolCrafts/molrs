@@ -5,8 +5,8 @@ mol_project:
   stage: experimental
   build:
     install: "cargo build"
-    check: "cargo fmt --check && cargo clippy -p molcrafts-molrs --all-targets --features full -- -D warnings && cargo clippy -p molcrafts-molrs-cxxapi --all-targets -- -D warnings"
-    test: "cargo test -p molcrafts-molrs --lib --features full"
+    check: "cargo fmt --check && cargo clippy -p molcrafts-molrs --all-targets --features full,filesystem -- -D warnings && cargo clippy -p molcrafts-molrs-cxxapi --all-targets -- -D warnings"
+    test: "cargo test -p molcrafts-molrs --lib --features full,filesystem"
     test_single: "cargo test {path}"
   ci:
     # Local pre-push mirrors default CI + docs (not optional Full).
@@ -121,7 +121,9 @@ LAMMPS, Packmol, etc. at test time. Numerical goldens are either:
 **Prefer unit tests next to the code** (`#[cfg(test)]` in `molrs/src/**`).
 There is **no** `molrs/tests/` integration-binary tree.
 
-Default gate: `cargo test -p molcrafts-molrs --lib --features full`.
+Default gate: `cargo test -p molcrafts-molrs --lib --features full,filesystem`, plus
+`cargo test --doc -p molcrafts-molrs --features full,filesystem` — `--lib` does not run
+doctests, so a rustdoc example can rot against a renamed API without CI noticing.
 
 **Bindings (Python / C / WASM)** only smoke the FFI seam (construct, call,
 round-trip types). Science / format corpus depth lives in the Rust unit tests.
@@ -140,11 +142,15 @@ use `tests-data/` only when the corpus file is the assertion.
 cargo build
 
 # Default gate (mirrors CI): function-level unit tests only — should be seconds
-cargo test -p molcrafts-molrs --lib --features full
+cargo test -p molcrafts-molrs --lib --features full,filesystem
+
+# Doctests are NOT covered by --lib. Run them too: a rustdoc example is public
+# API that compiles, and a renamed constant breaks it invisibly otherwise.
+cargo test --doc -p molcrafts-molrs --features full,filesystem
 
 # Lint & Format
 cargo fmt --all
-cargo clippy -p molcrafts-molrs --all-targets --features full -- -D warnings
+cargo clippy -p molcrafts-molrs --all-targets --features full,filesystem -- -D warnings
 
 # Benchmarks (criterion) — .github/workflows/bench.yml, not PR CI
 cargo bench -p molcrafts-molrs --bench core_benchmarks
@@ -153,19 +159,19 @@ cargo bench -p molcrafts-molrs --bench core_benchmarks
 ## Crate Structure & Modules
 
 molrs is a **single published crate** `molcrafts-molrs` (lib name `molrs`, dir
-`molrs/`). Sub-systems are modules under `molrs/src/`. **Three are always
-compiled** — `core`, `perceive`, `optimize` — and the rest gate on a matching
-feature. `core` and `perceive` are re-exported at the crate root (so
-`molrs::Frame`, `molrs::system::…`, `molrs::find_rings`, `molrs::SmartsPattern`
-resolve). The dependency spine is `core → perceive → {io, ff} → conformer`
-(`compute` → `signal`, `conformer` → `ff`). In-crate paths use `crate::core::…` /
-`crate::perceive::…` / `crate::io::…` (and `molrs::…` via
-`extern crate self as molrs;`).
+`molrs/`). Sub-systems are modules under `molrs/src/`. **Two are always
+compiled** — `core`, `perceive` — and the rest gate on a matching feature.
+`optimize` gates with `ff` (not always-on). `core` and `perceive` are re-exported
+at the crate root (so `molrs::Frame`, `molrs::system::…`, `molrs::find_rings`,
+`molrs::SmartsPattern` resolve). The dependency spine is
+`core → perceive → {io, ff} → conformer` (`compute` → `signal`, `conformer` →
+`ff`). In-crate paths use `crate::core::…` / `crate::perceive::…` / `crate::io::…`
+(and `molrs::…` via `extern crate self as molrs;`).
 
 | Module (`molrs/src/`) | Feature | Purpose |
 |---|---|---|
 | `core` | always on | Frame/Block/Grid/MolGraph/MolRec/Topology/Element, neighbors, math, SimBox (spatial), geometric regions, graph hash, atom-type mapping, structure generators (`generate` / SARW) |
-| `perceive` | always on | **Chemical perception**, one layer above `core` and below `ff`/`io`/`conformer`: rings (SSSR), aromaticity, hydrogen perception, stereochemistry, rotatable bonds, Gasteiger charges, SMARTS/SMIRKS. Builder API `Perceive::new().find_*(&MolGraph) -> MolGraph` (graph-in/graph-out, non-mutating); the free functions it wraps are also re-exported at the crate root |
+| `perceive` | always on | **Chemical perception**, one layer above `core` and below `ff`/`io`/`conformer`: rings (SSSR), aromaticity, hydrogen perception, stereochemistry, rotatable bonds, SMARTS/SMIRKS. Builder API `Perceive::new().find_*(&MolGraph) -> MolGraph` (graph-in/graph-out, non-mutating). **Gasteiger charges live in `ff::charge`**, re-exported at crate root under `ff`. |
 | `optimize` | `ff` | Geometry optimizers (`Optimizer`, `LBFGS`); depends on `ff::potential::Potential` |
 | `io` | `io` | File I/O: PDB, XYZ, LAMMPS data/dump, CHGCAR/POSCAR, Gaussian Cube, CIF, mol2, SDF, GRO, DCD, GROMACS TRR/XTC, Zarr V3 trajectories; SMILES parsing in `io/smiles/` (gated by `smiles`). **SMARTS lives in `perceive/smarts/`, not here** |
 | `signal` | `signal` | Signal processing: FFT-based autocorrelation, window functions, frequency grids |
@@ -228,7 +234,7 @@ Key type aliases: `F3 = Array1<F>`, `F3x3 = Array2<F>`, `FN = Array1<F>`, `FNx3 
 
 ### MolGraph (molecular topology)
 
-Graph-based molecular structure with atoms, bonds, stereochemistry, ring detection. Built on generational arenas (`slotmap`) with kind-tagged, multi-arity relations over a `smallvec`-backed adjacency map. (`molrs/src/core/system/molgraph.rs`). The connectivity graph is `Topology` (`molrs/src/core/system/topology.rs`), a native adjacency structure (`HashMap`/`VecDeque`, no petgraph) used for connectivity queries (connected components, BFS distances, angle/dihedral enumeration). SMARTS lives in `molrs/src/core/chem/smarts/` (moving to `molrs/src/perceive/smarts/`), and its subgraph-isomorphism matcher is hand-rolled (a backtracking VF2-style port of RDKit's `SubstructMatch.cpp`) — molrs has **no petgraph dependency at all**.
+Graph-based molecular structure with atoms, bonds, stereochemistry, ring detection. Built on generational arenas (`slotmap`) with kind-tagged, multi-arity relations over a `smallvec`-backed adjacency map. (`molrs/src/core/system/molgraph.rs`). The connectivity graph is `Topology` (`molrs/src/core/system/topology.rs`), a native adjacency structure (`HashMap`/`VecDeque`, no petgraph) used for connectivity queries (connected components, BFS distances, angle/dihedral enumeration). **SMARTS lives in `molrs/src/perceive/smarts/`** (not under `core/chem/`), and its subgraph-isomorphism matcher is hand-rolled (a backtracking VF2-style port of RDKit's `SubstructMatch.cpp`) — molrs has **no petgraph dependency at all**.
 
 ## Trait-Based Extensibility
 

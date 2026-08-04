@@ -46,4 +46,12 @@ pub const BOLTZMANN_REAL: F = 1.987_204_258_640_83e-3;
 pub const ANGSTROM_M: F = 1e-10;
 
 /// 1 picosecond expressed in seconds (SI time-unit conversion factor).
+///
+/// Prefer [`FEMTOSECOND_S`] for analysis-time conversions: project analysis
+/// `dt` is **fs** (LAMMPS `real`), not ps.
 pub const PICOSECOND_S: F = 1e-12;
+
+/// 1 femtosecond expressed in seconds (SI time-unit conversion factor).
+///
+/// Project analysis time unit (science.md / LAMMPS `real`).
+pub const FEMTOSECOND_S: F = 1e-15;

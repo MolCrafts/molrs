@@ -4,7 +4,7 @@
 //! This is a BSD-3 port of RDKit's `setAromaticity` default-model code path,
 //! re-expressed against `MolGraph`. It perceives aromaticity from scratch
 //! (Kekulé bond orders + element + formal charge), writing back an
-//! `is_aromatic` atom property and bond order `1.5` so that
+//! `is_aromatic` atom property and a `bond_type` of `Aromatic` so that
 //! [`crate::SmartsPattern`]'s `a` / `c` / `:` primitives match RDKit after
 //! native perception (rather than relying on transplanted flags).
 //!
@@ -21,7 +21,7 @@
 //!    of the chosen rings, and apply the Hückel `4n+2` test on the min/max
 //!    electron range (`applyHuckel`).
 //! 5. Bonds appearing in exactly one of the aromatic ring set are marked
-//!    aromatic (order `1.5`); their atoms get `is_aromatic = 1`.
+//!    `bond_type = Aromatic`; their atoms get `is_aromatic = 1`.
 //!
 //! # Scope
 //!
@@ -40,7 +40,9 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::perceive::rings::find_rings;
+use crate::store::keys;
 use crate::system::atomistic::{AtomId, Atomistic, BondId};
+use crate::system::bond::{BondNumber, BondType};
 use crate::system::molgraph::PropValue;
 use molrs::Element;
 
@@ -162,20 +164,23 @@ fn more_electronegative(za: u8, zb: u8) -> bool {
 // Per-atom topological queries
 // ---------------------------------------------------------------------------
 
-/// Read a bond's **Kekulé** order for perception. Prefers the preserved
-/// `"kekule_order"` prop (snapshotted on the first perception, before `order`
-/// is overwritten with `1.5`), falling back to `"order"`. This keeps
-/// perception idempotent — re-running it sees the original integer orders, not
-/// the aromatic `1.5` written by a prior call.
+/// Read a bond's **localized** number for perception.
+///
+/// Perception reasons about a Lewis structure — π electrons, valence, exocyclic
+/// multiple bonds — so it counts localized bonds, not classes. `bond_number` is
+/// never rewritten by this pass, so re-running perception sees the same input
+/// it saw the first time. That is the whole of the idempotency argument; there
+/// is no snapshot field.
+///
+/// An aromatic bond that has no number yet counts as the one bond every bond is
+/// at least.
 fn bond_order(mol: &Atomistic, bid: BondId) -> f64 {
     let Ok(b) = mol.get_bond(bid) else {
         return 1.0;
     };
-    b.props
-        .get("kekule_order")
-        .or_else(|| b.props.get("order"))
-        .and_then(|v| v.as_f64())
-        .unwrap_or(1.0)
+    BondNumber::from_prop(b.props.get(keys::BOND_NUMBER))
+        .count()
+        .max(1) as f64
 }
 
 /// Atomic number of an atom (from its `"element"` symbol). `0` if unknown.
@@ -206,10 +211,49 @@ fn formal_charge(mol: &Atomistic, id: AtomId) -> i32 {
 /// Heavy-atom + H degree (RDKit `getDegree() + getTotalNumHs()`); here all H
 /// are explicit so this is simply the neighbour count.
 fn total_degree(mol: &Atomistic, id: AtomId) -> i32 {
+    explicit_degree(mol, id) + implicit_h_count(mol, id)
+}
+
+/// Neighbours actually drawn in the graph — RDKit `getDegree()`.
+///
+/// Distinct from [`total_degree`], which adds the hydrogens the graph implies.
+/// The two are not interchangeable: RDKit's electron count is keyed on the
+/// total, while its "does this atom carry a multiple bond" tests are keyed on
+/// the drawn degree, and swapping them makes every aromatic carbon look
+/// saturated.
+fn explicit_degree(mol: &Atomistic, id: AtomId) -> i32 {
     mol.neighbors(id).count() as i32
 }
 
-/// Iterate incident `(BondId, other_atom, kekule_order)` for an atom.
+/// Hydrogens the graph implies but does not draw (RDKit `getNumImplicitHs`).
+///
+/// A SMILES graph is heavy-atom only, so a benzene carbon arrives with two
+/// neighbours and a valence of three: the missing bond is a hydrogen, not a
+/// radical. Deriving it here is what makes perception independent of whether
+/// hydrogens were made explicit — `add_hydrogens` stays a separate, optional
+/// operation, and running it changes no answer here (an explicit H raises the
+/// valence and drives this to zero).
+fn implicit_h_count(mol: &Atomistic, id: AtomId) -> i32 {
+    let z = atomic_num(mol, id);
+    let dv = default_valence(z);
+    if dv <= 0 {
+        return 0;
+    }
+    // A formal charge changes how many bonds the atom can carry, and the
+    // capacity is the *isoelectronic* element's — RDKit's
+    // `getDefaultValence(Z - charge)`, the same rule the candidacy test below
+    // applies. A carbocation holds three like boron; a protonated nitrogen
+    // holds four like carbon. Naively subtracting the charge would give N+ a
+    // capacity of two and lose its hydrogen.
+    let charge = formal_charge(mol, id);
+    let capacity = default_valence((i32::from(z) - charge).clamp(1, 118) as u8);
+    if capacity <= 0 {
+        return 0;
+    }
+    (capacity - explicit_valence(mol, id)).max(0)
+}
+
+/// Iterate incident `(BondId, other_atom, localized bond number)` for an atom.
 ///
 /// Uses the graph adjacency index (O(degree)) rather than scanning every bond
 /// (O(n_bonds)); the latter made per-ring-atom classification O(N^2) on
@@ -257,7 +301,7 @@ fn incident_cyclic_multiple_bond(
 /// RDKit `incidentMultipleBond`: explicit valence differs from σ-degree, i.e.
 /// the atom carries at least one π bond.
 fn incident_multiple_bond(mol: &Atomistic, id: AtomId) -> bool {
-    explicit_valence(mol, id) != total_degree(mol, id)
+    explicit_valence(mol, id) != explicit_degree(mol, id)
 }
 
 // ---------------------------------------------------------------------------
@@ -377,8 +421,9 @@ fn is_atom_candidate(mol: &Atomistic, id: AtomId, edon: ElectronDonor) -> bool {
 
     // atoms not in their default valence state are shut out.
     // RDKit: getTotalValence() > getDefaultValence(Z - formalCharge).
-    // `explicit_valence` already includes bonds to explicit H (all H are
-    // explicit here), so it is the total valence — do not add H again.
+    // Total valence counts implicit hydrogens too, but they can never push an
+    // atom *over* its capacity — they are what is left of it — so the explicit
+    // sum is the only thing that can trip this.
     let dv = default_valence(z);
     if dv > 0 {
         let total_valence = explicit_valence(mol, id);
@@ -390,7 +435,7 @@ fn is_atom_candidate(mol: &Atomistic, id: AtomId, edon: ElectronDonor) -> bool {
     }
 
     // disallow more than one double/triple bond (e.g. C1=C=NC=N1)
-    let n_unsaturations = explicit_valence(mol, id) - total_degree(mol, id);
+    let n_unsaturations = explicit_valence(mol, id) - explicit_degree(mol, id);
     if n_unsaturations > 1 {
         let mut n_mult = 0;
         for (_, _, order) in incident_bonds(mol, id) {
@@ -646,10 +691,10 @@ fn is_connected_subset(subset: &[usize], ring_bond_sets: &[HashSet<BondId>]) -> 
 /// in place.
 ///
 /// Aromatic atoms receive an `is_aromatic = 1` property; aromatic bonds receive
-/// order `1.5`. Atoms / bonds that are *not* perceived aromatic are reset
-/// (`is_aromatic = 0`; aromatic-order-`1.5` bonds are left untouched only if
-/// they were already aromatic — but since this perceives from Kekulé input,
-/// any prior aromatic flags are overwritten, making the call idempotent).
+/// `bond_type = Aromatic`. Atoms that are *not* perceived aromatic are reset
+/// (`is_aromatic = 0`), and a bond that was aromatic and no longer is falls back
+/// to the class its own localized `bond_number` states. Prior flags are always
+/// overwritten, which is what makes the call idempotent.
 ///
 /// Returns the number of atoms flagged aromatic.
 ///
@@ -658,20 +703,9 @@ fn is_connected_subset(subset: &[usize], ring_bond_sets: &[HashSet<BondId>]) -> 
 /// `aromaticityHelper(mol, srings, 0, 0, /*includeFused=*/true)`.
 /// `Code/GraphMol/Aromaticity.cpp`, BSD 3-Clause, © RDKit contributors.
 pub fn perceive_aromaticity(mol: &mut Atomistic) -> usize {
-    // Snapshot Kekulé bond orders before we overwrite any with 1.5, so that
-    // repeated calls perceive from the original structure (idempotency).
-    let snapshot: Vec<(BondId, f64)> = mol
-        .bonds()
-        .filter(|(_, b)| !b.props.contains_key("kekule_order"))
-        .map(|(bid, b)| {
-            let o = b.props.get("order").and_then(|v| v.as_f64()).unwrap_or(1.0);
-            (bid, o)
-        })
-        .collect();
-    for (bid, o) in snapshot {
-        let _ = mol.set_bond_prop(bid, "kekule_order", PropValue::F64(o));
-    }
-
+    // No snapshot: `bond_number` is never overwritten by perception, so the
+    // input's own localized structure *is* the memory. This is what makes the
+    // pass idempotent, and it is why there is no second localized-order field.
     let rings_info = find_rings(mol);
     let srings: Vec<Vec<AtomId>> = rings_info.rings().to_vec();
 
@@ -730,14 +764,24 @@ pub fn perceive_aromaticity(mol: &mut Atomistic) -> usize {
         let _ = mol.set_atom(id, "is_aromatic", PropValue::Int(if arom { 1 } else { 0 }));
     }
 
+    // A bond's class is rewritten; its localized number is not. Perception
+    // decides *what kind* of bond this is — whether a Kekulé phase is legal is
+    // kekulization's question, and a caller that already stated one keeps it.
     let all_bond_ids: Vec<BondId> = mol.bonds().map(|(id, _)| id).collect();
     for bid in all_bond_ids {
         if aromatic_bonds.contains(&bid) {
-            let _ = mol.set_bond_prop(bid, "order", PropValue::F64(1.5));
-            let _ = mol.set_bond_prop(bid, "is_aromatic", PropValue::Int(1));
-        } else {
-            // ensure non-aromatic bonds don't keep a stale aromatic flag
-            let _ = mol.set_bond_prop(bid, "is_aromatic", PropValue::Int(0));
+            let _ = mol.set_bond_prop(bid, keys::BOND_TYPE, BondType::Aromatic);
+        } else if mol.bond_type(bid).is_aromatic() {
+            // A bond that was aromatic and is no longer falls back to the class
+            // its own localized number states — never to a stale aromatic flag.
+            let number = mol.bond_number(bid);
+            let demoted = match number {
+                BondNumber::Double => BondType::Double,
+                BondNumber::Triple => BondType::Triple,
+                BondNumber::Unknown => BondType::Unknown,
+                _ => BondType::Single,
+            };
+            let _ = mol.set_bond_prop(bid, keys::BOND_TYPE, demoted);
         }
     }
 
@@ -758,7 +802,7 @@ mod tests {
         for i in 0..6 {
             let bid = g.add_bond(c[i], c[(i + 1) % 6]).unwrap();
             let order = if i % 2 == 0 { 2.0 } else { 1.0 };
-            g.set_bond_prop(bid, "order", PropValue::F64(order))
+            g.set_bond_type(bid, BondType::from_code(order as u32))
                 .unwrap();
         }
         // one explicit H per carbon

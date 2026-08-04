@@ -4,14 +4,16 @@ build-backend = "maturin"
 
 [project]
 name = "molcrafts-molrs"
-version = "0.11.2"
+version = "0.12.0"
 description = "Python bindings for molrs molecular simulation library"
-requires-python = ">=3.14"
+requires-python = ">=3.12"
 readme = "README.md"
 license = "BSD-3-Clause"
 dependencies = ["numpy>=2.0"]
 classifiers = [
   "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
   "Programming Language :: Python :: 3 :: Only",
   "Programming Language :: Rust",
@@ -53,9 +55,7 @@ exclude = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
-# Isolated Python binding tests — prek pre-push + CI:
-#   tox -c molrs-python -e py
-# Non-editable only: maturin wheel + pytest (no developer env).
+
 [tool.tox]
 requires = ["tox>=4.23"]
 env_list = ["py"]

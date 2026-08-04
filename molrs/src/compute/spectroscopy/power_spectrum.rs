@@ -83,9 +83,10 @@ mod tests {
                 acf_sum[k] += acf[k];
             }
         }
+        // Match VACF: DOF average + unbiased 1/(n-τ) time-origin normalization.
         let inv_n_dof = 1.0 / n_dof as f64;
         for k in 0..=max_lag {
-            acf_sum[k] *= inv_n_dof;
+            acf_sum[k] *= inv_n_dof / (n_frames - k) as f64;
         }
         acf_sum
     }
@@ -101,9 +102,8 @@ mod tests {
 
     #[test]
     fn vacf_plus_vdos_matches_manual_acf_path() {
-        // ac-003/ac-006: the VACF raw compute returns exactly the unwindowed ACF
-        // the PowerSpectrum transform consumes, and VACF + PowerSpectrum equals
-        // the manual-ACF + PowerSpectrum path.
+        // ac-003/ac-006: VACF returns the unbiased unwindowed ACF that
+        // PowerSpectrum consumes; VACF + PowerSpectrum equals the manual path.
         let n = 1024;
         let dt = 0.5;
         let res = 200;
@@ -112,7 +112,7 @@ mod tests {
         let acf = power_acf(&v, max_lag);
 
         let raw = VACF.compute(&no_frames(), (&v, dt, res)).unwrap();
-        assert_eq!(raw.acf, acf); // VACF returns the raw unwindowed ACF.
+        assert_eq!(raw.acf, acf); // VACF returns unbiased unwindowed ACF.
 
         let from_raw = PowerSpectrum.fit((&raw.acf, dt)).unwrap();
         let from_manual = PowerSpectrum.fit((&acf, dt)).unwrap();

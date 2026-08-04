@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Any, Self, overload
 
 import numpy as np
+
+from ._lib import schema as _schema
 from numpy.typing import ArrayLike, NDArray
 
 from ._lib import Block as _RsBlock
@@ -40,6 +42,33 @@ def _is_array_like(value: Any) -> bool:
     if isinstance(value, np.ndarray) or hasattr(value, "__array__"):
         return True
     return isinstance(value, (list, tuple))
+
+
+def _adopt_schema_dtype(key: str, arr: "np.ndarray") -> "np.ndarray":
+    """Store a canonical column at the dtype the vocabulary declares.
+
+    Width is not semantics: ``np.arange(n)`` yields int64 because that is
+    numpy's default, not because the caller meant a signed 64-bit id. When the
+    values are representable in the declared dtype, adopt it.
+
+    When they are not — a negative under an unsigned key, a fractional value
+    under an integer one — that *is* semantics, and it raises. The conversion
+    is only ever applied to keys the schema declares; an unconstrained key is
+    stored exactly as given.
+    """
+    spec = _schema.column(key)
+    if spec is None:
+        return arr
+    want = np.dtype(spec.numpy_dtype)
+    if arr.dtype == want or want.kind not in "uif" or arr.dtype.kind not in "uifb":
+        return arr
+    converted = arr.astype(want, casting="unsafe")
+    if not np.array_equal(converted.astype(arr.dtype), arr):
+        raise ValueError(
+            f"column {key!r} is declared {spec.dtype!r} by the Frame schema, and "
+            f"the given {arr.dtype} values do not survive the conversion"
+        )
+    return converted
 
 
 class Block(_RsBlock, MutableMapping[str, np.ndarray]):
@@ -121,6 +150,8 @@ class Block(_RsBlock, MutableMapping[str, np.ndarray]):
     @overload
     def __getitem__(self, key: list[str]) -> np.ndarray: ...  # type: ignore[override]
     @overload
+    def __getitem__(self, key: tuple[str, ...]) -> np.ndarray: ...  # type: ignore[override]
+    @overload
     def __getitem__(self, key: np.ndarray) -> "Block": ...  # type: ignore[override]
 
     def __getitem__(self, key):  # type: ignore[override]
@@ -140,7 +171,12 @@ class Block(_RsBlock, MutableMapping[str, np.ndarray]):
             # Row slice -> Rust-native gather (no per-column NumPy slicing).
             indices = list(range(*key.indices(self.nrows)))
             return Block.from_dict(_RsBlock.select_rows(self._backing(), indices))
-        elif isinstance(key, list):
+        elif isinstance(key, (list, tuple)):
+            # ``block["x", "y", "z"]`` and ``block[["x", "y", "z"]]`` are the same
+            # request — several columns of equal shape and dtype, side by side —
+            # so both yield one (nrows, len(key)) array. Reading coordinates is
+            # the reason this exists, and a caller that has to remember which
+            # bracket form transposes the result does not have a shortcut.
             if not key:
                 raise KeyError("Empty list not allowed for indexing")
             for k in key:
@@ -160,8 +196,6 @@ class Block(_RsBlock, MutableMapping[str, np.ndarray]):
                         f"{first.dtype}, but array {key[i]} has dtype {arr.dtype}"
                     )
             return np.column_stack(arrays)
-        elif isinstance(key, tuple):
-            return np.array([self[k] for k in key])
         elif isinstance(key, np.ndarray):
             # Boolean mask or integer fancy-index -> Rust-native row gather.
             n = self.nrows
@@ -194,6 +228,7 @@ class Block(_RsBlock, MutableMapping[str, np.ndarray]):
                 "broadcast it to the column length — scalar columns are not "
                 "stored silently."
             )
+        arr = _adopt_schema_dtype(key, arr)
         if key in _RsBlock.keys(self._backing()):
             _RsBlock.remove(self._backing(), key)
         _RsBlock.insert(self._backing(), key, arr)
@@ -315,12 +350,28 @@ class Block(_RsBlock, MutableMapping[str, np.ndarray]):
         return new
 
     def rename(self, old_key: str, new_key: str) -> None:
-        """Rename a column in place. Raises KeyError if *old_key* is absent."""
-        if old_key not in _RsBlock.keys(self._backing()):
+        """Rename a column in place. Raises ``KeyError`` if *old_key* is absent.
+
+        Forwards to the Rust ``rename_column``, which is one of the four points
+        where the Frame schema is enforced. This used to be a hand-rolled
+        remove-then-insert that bypassed it entirely — so the I/O alias layer,
+        which is built on ``rename``, could land a column under a canonical key
+        at the wrong dtype. A canonical key whose vocabulary dtype differs from
+        the column's is converted here when the values allow it, and reported
+        otherwise.
+        """
+        backing = self._backing()
+        if old_key not in _RsBlock.keys(backing):
             raise KeyError(f"Column '{old_key}' not found in Block")
-        arr = self._view_array(old_key)
-        _RsBlock.remove(self._backing(), old_key)
-        _RsBlock.insert(self._backing(), new_key, arr)
+        # A format-native column carries the file's spelling *and* its width;
+        # renaming it onto a canonical key adopts the canonical dtype.
+        arr = np.asarray(self._view_array(old_key))
+        converted = _adopt_schema_dtype(new_key, arr)
+        if converted is not arr:
+            _RsBlock.remove(backing, old_key)
+            _RsBlock.insert(backing, new_key, converted)
+            return
+        _RsBlock.rename(backing, old_key, new_key)
 
     def sort(self, key: str, *, reverse: bool = False) -> "Block":
         """Return a new Block sorted by *key* (original unchanged).

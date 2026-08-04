@@ -1,18 +1,16 @@
 """Generate 3D coordinates for ethane, then evaluate MMFF94 energy and forces.
 
-Demonstrates the full pipeline:
-  Atomistic (no coords) → Conformer.generate → MMFF94Typifier.typify
-    → ForceField.to_potentials → Potentials.eval
+Pipeline (0.12):
+  Atomistic → Conformer.generate → MMFF94Typifier.typify
+    → intramolecular_pairs → ForceField.to_potentials → calc_energy_forces
 """
 
+from __future__ import annotations
+
 import numpy as np
-from molrs import (
-    Atomistic,
-    Conformer,
-    MMFF94Typifier,
-    extract_coords,
-    intramolecular_pairs,
-)
+from molrs import Atomistic
+from molrs.conformer import Conformer
+from molrs.ff import MMFF94Typifier, extract_coords, intramolecular_pairs
 
 # --- 1. Build ethane skeleton: C-C (no coordinates, no hydrogens) ---
 mol = Atomistic()
@@ -28,34 +26,13 @@ mol3d, report = Conformer(speed="medium", seed=42).generate(mol)
 print(f"\nAfter embed: {mol3d}")
 print(f"  final_energy (internal UFF) = {report.final_energy:.4f}")
 
-# --- 3. Typify with MMFF94, then compile through the force field ---
-# The typifier labels the graph; the ForceField compiles it. The neighbour list
-# is the consumer's, so building it is an explicit step.
+# --- 3. Typify and evaluate MMFF94 ---
 typifier = MMFF94Typifier()
-try:
-    frame = typifier.typify(mol3d).to_frame()
-    frame["pairs"] = intramolecular_pairs(frame)
-    potentials = typifier.forcefield().to_potentials(frame)
-    print(f"\n{potentials}")
+frame = typifier.typify(mol3d).to_frame()
+frame["pairs"] = intramolecular_pairs(frame)
+pots = typifier.forcefield().to_potentials(frame)
+coords = extract_coords(frame)
+energy, forces = pots.calc_energy_forces(coords)
 
-    # --- 4. Extract coordinates and evaluate ---
-    coords = extract_coords(frame)
-    energy, forces = potentials.eval(coords)
-
-    print(f"\nMMFF94 energy: {energy:.4f} kcal/mol")
-
-    n_atoms = len(coords) // 3
-    forces_3n = forces.reshape(n_atoms, 3)
-    print(f"\nPer-atom forces (kcal/mol/A):")
-    for i in range(n_atoms):
-        print(f"  [{i}] f = [{forces_3n[i,0]:+8.4f}, "
-              f"{forces_3n[i,1]:+8.4f}, {forces_3n[i,2]:+8.4f}]")
-
-    # Newton's 3rd law check
-    fsum = forces_3n.sum(axis=0)
-    print(f"\nForce sum: [{fsum[0]:+.2e}, {fsum[1]:+.2e}, {fsum[2]:+.2e}] "
-          f"(should be ~0)")
-
-except Exception as e:
-    print(f"\nBuild skipped (incomplete parameter coverage): {e}")
-    print("(embed completed successfully)")
+print(f"\nMMFF94 energy = {energy:.6f} kcal/mol")
+print(f"forces shape = {np.asarray(forces).shape}")
