@@ -25,6 +25,7 @@ use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 
 use molrs::perceive::aromaticity::perceive_aromaticity as core_perceive_aromaticity;
+use molrs::system::bond::{BondNumber, BondType};
 use molrs::perceive::rings::max_ring_system_size as core_max_ring_system_size;
 use molrs::perceive::smarts::{MatchOptions, Reaction, RingPrimitive, SmartsPattern};
 use molrs::system::atomistic::{Atomistic, ExtractedAtomistic};
@@ -514,7 +515,7 @@ graph_world_impl!(PyGraph);
 /// Holds a core [`Atomistic`] from construction; it is never converted from a
 /// `MolGraph`. Subclasses `Graph`; the generic API operates on this leaf's own
 /// graph.
-#[pyclass(module = "molrs", name = "Atomistic", extends = PyGraph, subclass)]
+#[pyclass(module = "molrs._lib", name = "Atomistic", extends = PyGraph, subclass)]
 pub struct PyAtomistic {
     inner: Atomistic,
 }
@@ -678,11 +679,53 @@ impl PyAtomistic {
             .map_err(molrs_error_to_pyerr)
     }
 
-    /// Set a bond's ``order`` property (a relation handle from :meth:`add_bond`).
-    fn set_bond_order(&mut self, handle: u64, order: f64) -> PyResult<()> {
+    /// Set a bond's chemical class and its localized bond number.
+    ///
+    /// The two are set together because they are only meaningful together: a
+    /// class without a number leaves the bond un-standardized, and a number
+    /// without a class leaves a consumer no way to tell aromatic from double.
+    ///
+    /// Parameters
+    /// ----------
+    /// handle : int
+    ///     A relation handle from :meth:`add_bond`.
+    /// bond_type : int
+    ///     0 unknown, 1 single, 2 double, 3 triple, 4 aromatic.
+    /// bond_number : int
+    ///     0 unknown, 1 single, 2 double, 3 triple, 4 quadruple.
+    fn set_bond_class(
+        &mut self,
+        handle: u64,
+        bond_type: u32,
+        bond_number: u32,
+    ) -> PyResult<()> {
         self.inner
-            .set_bond_prop(relation_from_u64(handle), "order", order)
+            .set_bond_class(
+                relation_from_u64(handle),
+                BondType::from_code(bond_type),
+                BondNumber::from_code(bond_number),
+            )
             .map_err(molrs_error_to_pyerr)
+    }
+
+    /// Set a plain (non-aromatic) bond, whose class implies its number.
+    ///
+    /// ``Aromatic`` (4) implies no number — the phase is a Kekulé assignment's
+    /// to decide — so it goes through :meth:`set_bond_class`.
+    fn set_bond_type(&mut self, handle: u64, bond_type: u32) -> PyResult<()> {
+        self.inner
+            .set_bond_type(relation_from_u64(handle), BondType::from_code(bond_type))
+            .map_err(molrs_error_to_pyerr)
+    }
+
+    /// The bond's chemical class code; ``0`` when it has none.
+    fn bond_type(&self, handle: u64) -> u32 {
+        self.inner.bond_type(relation_from_u64(handle)).code()
+    }
+
+    /// The bond's localized (Kekulé) bond number; ``0`` when it has none.
+    fn bond_number(&self, handle: u64) -> u32 {
+        self.inner.bond_number(relation_from_u64(handle)).code()
     }
 
     /// Return an independent deep copy of this `Atomistic`.
@@ -740,18 +783,41 @@ impl PyAtomistic {
     /// When ``regenerate_topology`` is true, only bonds are copied and
     /// angles/dihedrals are perceived on the ball. When false, higher-order
     /// terms fully inside the ball are copied from the parent.
-    #[pyo3(signature = (centers, radius, *, regenerate_topology=false))]
+    ///
+    /// ``max_ring_size`` closes the ball on ring systems: a ring of at most
+    /// that many atoms which the radius only partly reaches comes along whole,
+    /// together with everything fused or bridged to it. A cut ring is not a
+    /// smaller molecule — ring perception, and with it aromaticity and every
+    /// ring-aware atom type, reads the remainder as something else. The added
+    /// atoms lie beyond ``radius``, so they arrive as context: their ``hops``
+    /// are larger than the radius asked for.
+    ///
+    /// The bound is not a tuning knob, it is the claim's domain. Cutting a
+    /// benzene changes the chemistry; cutting a 5000-membered macrocycle
+    /// changes nothing any typifier can see, while closing on it would drag the
+    /// whole loop into a ball that asked for nine atoms. Pass the largest ring
+    /// your typifier can actually distinguish. ``None`` disables closure; the
+    /// cost then, and with a bound, follows the ball and its neighbourhood —
+    /// never the size of the parent graph.
+    #[pyo3(signature = (centers, radius, *, regenerate_topology=false, max_ring_size=None))]
     fn extract_subgraph(
         &self,
         py: Python<'_>,
         centers: Vec<u64>,
         radius: i64,
         regenerate_topology: bool,
+        max_ring_size: Option<usize>,
     ) -> PyResult<PyExtractedSubgraph> {
         let ids: Vec<_> = centers.into_iter().map(node_from_u64).collect();
+        let groups = match max_ring_size {
+            Some(max_ring_size) => {
+                molrs::perceive::rings::small_ring_closure(&self.inner, &ids, radius, max_ring_size)
+            }
+            None => Vec::new(),
+        };
         let ext = self
             .inner
-            .extract_subgraph(&ids, radius, regenerate_topology)
+            .extract_subgraph(&ids, radius, regenerate_topology, &groups)
             .map_err(molrs_error_to_pyerr)?;
         PyExtractedSubgraph::from_atomistic(py, ext)
     }
@@ -834,7 +900,7 @@ impl PyAtomistic {
 /// ``atoms`` stores molecule atom handles in query-atom order. ``mapping``
 /// stores the Daylight atom-map projection (``:1`` → atom handle), and is empty
 /// when the query carries no map labels.
-#[pyclass(module = "molrs", name = "SmartsMatch", skip_from_py_object)]
+#[pyclass(module = "molrs.perceive", name = "SmartsMatch", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PySmartsMatch {
     atoms: Vec<u64>,
@@ -889,7 +955,7 @@ impl PySmartsMatch {
 /// >>> pat = molrs.SmartsPattern("[C:1][O:2][H:3]")
 /// >>> pat.find_matches(methanol)[0].mapping
 /// {1: <C>, 2: <O>, 3: <H>}
-#[pyclass(module = "molrs", name = "SmartsPattern")]
+#[pyclass(module = "molrs.perceive", name = "SmartsPattern")]
 pub struct PySmartsPattern {
     inner: SmartsPattern,
 }
@@ -1213,7 +1279,7 @@ impl PyReaction {
 // ---------------------------------------------------------------------------
 
 /// Coarse-grained molecular graph, exposed to Python as `molrs.CoarseGrain`.
-#[pyclass(module = "molrs", name = "CoarseGrain", extends = PyGraph, subclass)]
+#[pyclass(module = "molrs._lib", name = "CoarseGrain", extends = PyGraph, subclass)]
 pub struct PyCoarseGrain {
     inner: CoarseGrain,
 }
@@ -1483,55 +1549,86 @@ pub fn align_direction(
     })
 }
 
-/// Perceive aromaticity in place; returns the number of aromatic atoms found.
-/// A chemistry system — operates on an `Atomistic` leaf.
-#[pyfunction]
-pub fn perceive_aromaticity(mol: &Bound<'_, PyAtomistic>) -> usize {
-    core_perceive_aromaticity(mol.borrow_mut().core_mut())
-}
-
-/// Add explicit hydrogens, returning a **new** `Atomistic` (chemistry system).
-#[pyfunction]
-pub fn add_hydrogens(py: Python<'_>, mol: &Bound<'_, PyAtomistic>) -> PyResult<Py<PyAtomistic>> {
-    let out = molrs::perceive::hydrogens::add_hydrogens(mol.borrow().core());
-    PyAtomistic::from_core(py, out)
-}
-
-/// Find all SSSR rings; returns each ring as a list of atom handles. A
-/// chemistry system — operates on an `Atomistic` leaf.
-#[pyfunction]
-pub fn find_rings(mol: &Bound<'_, PyAtomistic>) -> Vec<Vec<u64>> {
-    let leaf = mol.borrow();
-    molrs::perceive::rings::find_rings(leaf.core())
-        .rings()
-        .iter()
-        .map(|ring| ring.iter().map(|&a| node_to_u64(a)).collect())
-        .collect()
-}
-
-/// Compute Gasteiger/PEOE partial charges; returns `(atom_handle, charge)` for
-/// **every** atom, hydrogens included. A chemistry system — operates on an
-/// `Atomistic` leaf.
+/// The ring facts of a molecule: SSSR rings and the systems they fuse into.
 ///
-/// Delegates to molrs's one Gasteiger, `ff::charge::GasteigerModel`
-/// (`antechamber -c gas`). Three things changed with it, all of them things the
-/// previous RDKit-port signature promised and this model does not have:
+/// Perception runs once, in the constructor; every method reads the result.
 ///
-/// * **no `n_iter`** — the loop runs to convergence (antechamber's `CONVERG` 1e-5,
-///   `GASMAXITER` 500). A sweep count is not a knob; the damping is geometric, so
-///   where the loop stops IS the answer, and the old default of 6 stops 0.0131 e
-///   short on methylammonium.
-/// * **no `h_charge`** — hydrogens are atoms, with their own charge and their own
-///   entry. The model has no notion of an implicit hydrogen.
-/// * **it can fail** — an atom `ATOMTYPE_GAS.DEF` cannot type has no charge, and
-///   raises, rather than silently taking a fallback of zero.
-#[pyfunction]
-pub fn compute_gasteiger_charges(mol: &Bound<'_, PyAtomistic>) -> PyResult<Vec<(u64, f64)>> {
-    let leaf = mol.borrow();
-    let charges = molrs::compute_gasteiger_charges(leaf.core())
-        .map_err(|e| PyValueError::new_err(e.to_string()))?;
-    Ok(charges
-        .into_iter()
-        .map(|(id, q)| (node_to_u64(id), q))
-        .collect())
+/// Not to be confused with :meth:`Perceive.find_rings`, which answers a
+/// different question — it *decorates* a graph with ring flags and hands the
+/// graph back. This type *reports*, and never touches the molecule.
+///
+/// Examples
+/// --------
+/// >>> rings = molrs.RingInfo(molrs.SmilesIR("c1ccccc1").to_atomistic())
+/// >>> rings.num_rings()
+/// 1
+/// >>> rings.ring_sizes()
+/// [6]
+#[pyclass(module = "molrs.perceive", name = "RingInfo")]
+pub struct PyRingInfo {
+    inner: molrs::perceive::rings::RingInfo,
+}
+
+#[pymethods]
+impl PyRingInfo {
+    /// Perceive the rings of `mol` (SSSR / minimum cycle basis).
+    #[new]
+    fn new(mol: &Bound<'_, PyAtomistic>) -> Self {
+        Self {
+            inner: molrs::perceive::rings::find_rings(mol.borrow().core()),
+        }
+    }
+
+    /// Every ring, as a list of atom handles forming a closed path.
+    fn rings(&self) -> Vec<Vec<u64>> {
+        self.inner
+            .rings()
+            .iter()
+            .map(|ring| ring.iter().map(|&a| node_to_u64(a)).collect())
+            .collect()
+    }
+
+    /// Number of rings.
+    fn num_rings(&self) -> usize {
+        self.inner.num_rings()
+    }
+
+    /// Atom count of every ring, ascending.
+    fn ring_sizes(&self) -> Vec<usize> {
+        self.inner.ring_sizes()
+    }
+
+    /// Rings that share at least one atom, unioned: benzene → one system of 6,
+    /// naphthalene → one of 10, biphenyl → two of 6.
+    fn ring_systems(&self) -> Vec<Vec<u64>> {
+        self.inner
+            .ring_systems()
+            .iter()
+            .map(|system| system.iter().map(|&a| node_to_u64(a)).collect())
+            .collect()
+    }
+
+    /// Whether `atom` belongs to any ring.
+    fn is_atom_in_ring(&self, atom: u64) -> bool {
+        self.inner.is_atom_in_ring(node_from_u64(atom))
+    }
+
+    /// Number of rings containing `atom`.
+    fn num_atom_rings(&self, atom: u64) -> usize {
+        self.inner.num_atom_rings(node_from_u64(atom))
+    }
+
+    /// Size of the smallest ring containing `atom`, or ``None``.
+    fn smallest_ring_containing_atom(&self, atom: u64) -> Option<usize> {
+        self.inner
+            .smallest_ring_containing_atom(node_from_u64(atom))
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "RingInfo(num_rings={}, sizes={:?})",
+            self.inner.num_rings(),
+            self.inner.ring_sizes()
+        )
+    }
 }

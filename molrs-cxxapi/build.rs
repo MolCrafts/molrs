@@ -99,17 +99,37 @@ __MOLRS_ELEMENT_VARIANTS__    }
         fn frame_box(fref: &FrameRef) -> Vec<f64>;
 
         // create-or-update writers
-        fn frame_set_column_f64(fref: &mut FrameRef, block: &str, col: &str, data: &[f64]);
-        fn frame_set_column_i32(fref: &mut FrameRef, block: &str, col: &str, data: &[i32]);
-        fn frame_set_column_u32(fref: &mut FrameRef, block: &str, col: &str, data: &[u32]);
-        fn frame_set_column_str(fref: &mut FrameRef, block: &str, col: &str, data: &[String]);
-        fn frame_set_box(fref: &mut FrameRef, h: &[f64]);
+        fn frame_set_column_f64(
+            fref: &mut FrameRef,
+            block: &str,
+            col: &str,
+            data: &[f64],
+        ) -> Result<()>;
+        fn frame_set_column_i32(
+            fref: &mut FrameRef,
+            block: &str,
+            col: &str,
+            data: &[i32],
+        ) -> Result<()>;
+        fn frame_set_column_u32(
+            fref: &mut FrameRef,
+            block: &str,
+            col: &str,
+            data: &[u32],
+        ) -> Result<()>;
+        fn frame_set_column_str(
+            fref: &mut FrameRef,
+            block: &str,
+            col: &str,
+            data: &[String],
+        ) -> Result<()>;
+        fn frame_set_box(fref: &mut FrameRef, h: &[f64]) -> Result<()>;
         fn frame_set_meta_entry(fref: &mut FrameRef, entry: MetaEntry) -> Result<()>;
 
         // AM1-BCC: Atomiverse supplies AM1 base charges; molrs owns BCC typing.
         //
         // `parameter_set` selects the correction family by name — "bcc"
-        // (BCCPARM.DAT, antechamber `-c bcc`) or "abcg2" (BCCPARM_ABCG2.DAT,
+        // (BCCPARM.DAT, model id `"bcc"`) or `"abcg2"` (BCCPARM_ABCG2.DAT,
         // `-c abcg2`). A name molrs does not know is refused, never defaulted.
         //
         // Returns `Result`, and that is load-bearing: cxx marks every non-Result
@@ -135,7 +155,7 @@ __MOLRS_ELEMENT_VARIANTS__    }
             z: &[f64],
             box_mat: &[f64],
             append: bool,
-        );
+        ) -> Result<()>;
         // Typed-metadata writer. Every MetaEntry carries an explicit dtype;
         // malformed vector lengths are returned as errors.
         fn write_frame_xyz_typed(
@@ -159,12 +179,12 @@ __MOLRS_ELEMENT_VARIANTS__    }
             box_mat: &[f64],
             field_names: Vec<String>,
             field_data: &[f64],
-        );
-        fn read_frame_zarr_first(path: &str) -> Box<FrameRef>;
+        ) -> Result<()>;
+        fn read_frame_zarr_first(path: &str) -> Result<Box<FrameRef>>;
         // Read the first frame of an (ext)XYZ file into a materialize-ready
         // FrameRef (atoms.{x,y,z,type} + simbox). `type` is derived from the
         // required ExtXYZ species column (Z). All XYZ parsing lives in molrs.
-        fn xyz_read_first_frame(path: &str) -> Box<FrameRef>;
+        fn xyz_read_first_frame(path: &str) -> Result<Box<FrameRef>>;
 
         // ── Trajectory-analysis compute objects (mirror molrs::compute::*) ──
         // molrs's own calling convention, bridged as CXX opaque types:

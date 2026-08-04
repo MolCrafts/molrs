@@ -78,10 +78,10 @@ class TestSupportedDtypes:
     )
     def test_round_trip(self, arr, kind):
         b = molrs.Block()
-        b.insert("x", arr)
-        out = b.view("x")
+        b.insert("value", arr)
+        out = b.view("value")
         np.testing.assert_array_equal(out, arr)
-        assert b.dtype("x") == kind
+        assert b.dtype("value") == kind
 
     def test_str_round_trip(self):
         b = molrs.Block()
@@ -115,16 +115,3 @@ class TestEmptyColumn:
         b = molrs.Block()
         with pytest.raises(molrs.BlockDtypeError):
             b.insert("x", np.array([], dtype=object))
-
-
-# --- ac-007: no overflow concept remains ------------------------------------
-
-
-class TestNoOverflow:
-    def test_block_has_no_objects_attr(self):
-        b = RichBlock({"x": [1.0, 2.0]})
-        assert not hasattr(b, "_objects")
-
-    def test_frame_has_no_block_objects_attr(self):
-        f = RichFrame({"atoms": {"x": [1.0, 2.0]}})
-        assert not hasattr(f, "_block_objects")

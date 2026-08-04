@@ -63,15 +63,17 @@ class TestEHSpectrum:
     def test_import(self):
         import molrs
 
-        assert callable(molrs.DebyeRelaxation)
-        assert callable(molrs.EinsteinHelfandSpectrum)
+        assert callable(molrs.compute.transport.DebyeRelaxation)
+        assert callable(molrs.compute.spectroscopy.EinsteinHelfandSpectrum)
 
     def test_shape(self):
         import molrs
 
         dm = np.ones((100, 3)) * 0.1
-        raw = molrs.DebyeRelaxation(1000.0, 300.0, "tinfoil").compute(dm, 0.001, 10)
-        s = molrs.EinsteinHelfandSpectrum(
+        raw = molrs.compute.transport.DebyeRelaxation(1000.0, 300.0, "tinfoil").compute(
+            dm, 0.001, 10
+        )
+        s = molrs.compute.spectroscopy.EinsteinHelfandSpectrum(
             0.001, 1000.0, 300.0, 1.0, raw["zero_lag_variance"]
         ).fit(raw["acf"])
         assert len(s["frequencies"]) > 0
@@ -84,15 +86,17 @@ class TestGKSpectrum:
     def test_import(self):
         import molrs
 
-        assert callable(molrs.GreenKuboConductivity)
-        assert callable(molrs.GreenKuboSpectrum)
+        assert callable(molrs.compute.transport.GreenKuboConductivity)
+        assert callable(molrs.compute.spectroscopy.GreenKuboSpectrum)
 
     def test_shape(self):
         import molrs
 
         j = np.ones((100, 3)) * 0.001
-        raw = molrs.GreenKuboConductivity().compute(j, 0.001, 10)
-        s = molrs.GreenKuboSpectrum(0.001, 1000.0, 300.0, 1.0, "hann").fit(raw["jacf"])
+        raw = molrs.compute.transport.GreenKuboConductivity().compute(j, 0.001, 10)
+        s = molrs.compute.spectroscopy.GreenKuboSpectrum(
+            0.001, 1000.0, 300.0, 1.0, "hann"
+        ).fit(raw["jacf"])
         assert s["frequencies"] is not None
         assert len(s["frequencies"]) == len(s["eps_real"]) == len(s["eps_imag"])
 

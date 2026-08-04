@@ -126,7 +126,7 @@ pub trait GrowthStrategy {
 /// `strategy` field, then call [`generate`](SelfAvoidingWalk::generate):
 ///
 /// ```
-/// use molrs::generate::{OffLattice, SelfAvoidingWalk};
+/// use molrs::builder::{OffLattice, SelfAvoidingWalk};
 ///
 /// let walk = SelfAvoidingWalk {
 ///     n_chains: 2,
@@ -310,7 +310,7 @@ impl<S: GrowthStrategy> SelfAvoidingWalk<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::generate::{FccLattice, OffLattice};
+    use crate::builder::{FccLattice, OffLattice};
 
     const B: F = 1.53;
 

@@ -20,13 +20,6 @@ pub use registry::{
     register_kernel, register_kernel_with,
 };
 
-/// Backward-compatible re-exports for existing consumers.
-pub mod kernels {
-    pub use super::angle::harmonic::{AngleHarmonic, angle_harmonic_ctor};
-    pub use super::bond::harmonic::{BondHarmonic, bond_harmonic_ctor};
-    pub use super::pair::lj_cut::{PairLJCut as PairLJ126, pair_lj_cut_ctor as pair_lj126_ctor};
-}
-
 use std::borrow::Cow;
 use std::collections::HashSet;
 

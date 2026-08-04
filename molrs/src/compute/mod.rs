@@ -111,7 +111,10 @@ pub use diffraction::{
     StaticStructureFactorDirectResult,
 };
 pub use distribution::{AxisSpec, CombinedDistribution, CombinedDistributionResult};
-pub use dynamics::{PersistResult, SurvivalMethod, VanHove, VanHoveResult, pair_survival_tcf};
+pub use dynamics::{
+    Acf, AcfArgs, AcfResult, PersistResult, SurvivalMethod, VanHove, VanHoveResult,
+    autocorrelation, pair_survival_tcf,
+};
 pub use environment::{
     AngularSeparationGlobal, AngularSeparationGlobalResult, AngularSeparationNeighbor,
     AngularSeparationNeighborResult, BondOrder, BondOrderResult, LocalBondProjection,

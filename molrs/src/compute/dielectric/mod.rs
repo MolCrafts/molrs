@@ -23,18 +23,18 @@
 //!
 //! # Units
 //!
-//! All inputs and outputs use LAMMPS *real* units throughout:
+//! All inputs and outputs use LAMMPS *real* / project analysis units:
 //!
 //! | quantity        | unit                |
 //! |-----------------|---------------------|
 //! | length          | Å                   |
 //! | charge          | e                   |
 //! | energy          | kcal / mol          |
-//! | time            | ps                  |
+//! | time            | **fs**              |
 //! | temperature     | K                   |
 //! | volume          | Å³                  |
 //! | dipole moment   | e · Å               |
-//! | current density | e · Å⁻² · ps⁻¹      |
+//! | current density | e · Å⁻² · fs⁻¹      |
 //! | ε permittivity  | dimensionless       |
 
 use ndarray::{Array1, Array2, Array3};
@@ -103,11 +103,11 @@ pub fn compute_dipole_moment(
 ///
 /// # Arguments
 /// * `dipole_moments` — total dipole trajectory `(n_frames, 3)`, **e · Å**.
-/// * `dt` — timestep between consecutive frames, **ps**.
+/// * `dt` — timestep between consecutive frames, **fs**.
 /// * `volume` — system volume, **Å³** (constant; assumes NVT/NVE).
 ///
 /// # Returns
-/// `(n_frames, 3)` array in **e · Å⁻² · ps⁻¹**. **Row 0 is filled with
+/// `(n_frames, 3)` array in **e · Å⁻² · fs⁻¹**. **Row 0 is filled with
 /// `f64::NAN`** because no previous frame exists to form the finite
 /// difference. All downstream consumers must skip row 0 before forming the
 /// current ACF (the Green–Kubo ε(ω) caller slices it off; bare `np.mean`
@@ -284,22 +284,33 @@ pub fn static_dielectric_constant_components(
     let n = shape[0] as f64;
     let n_frames = shape[0];
 
+    // Two-pass centered variance (same as isotropic path): stable when
+    // |M| ≫ |δM| — one-pass ⟨M²⟩−⟨M⟩² catastrophically cancels in f64.
     let mut mean_m = Array1::<f64>::zeros(3);
-    let mut mean_sq = Array1::<f64>::zeros(3);
-
     for t in 0..n_frames {
         for d in 0..3 {
-            let m = dipole_moments[[t, d]];
-            mean_m[d] += m;
-            mean_sq[d] += m * m;
+            mean_m[d] += dipole_moments[[t, d]];
         }
     }
     for d in 0..3 {
         mean_m[d] /= n;
-        mean_sq[d] /= n;
     }
 
     let mut fluctuation = Array1::<f64>::zeros(3);
+    let mut mean_sq = Array1::<f64>::zeros(3);
+    for t in 0..n_frames {
+        for d in 0..3 {
+            let m = dipole_moments[[t, d]];
+            let dev = m - mean_m[d];
+            fluctuation[d] += dev * dev;
+            mean_sq[d] += m * m;
+        }
+    }
+    for d in 0..3 {
+        fluctuation[d] /= n;
+        mean_sq[d] /= n;
+    }
+
     let mut eps = Array1::<f64>::zeros(3);
     // Per-axis prefactor: 4π·KAPPA / (V·k_B·T).  This is 3× the
     // isotropic prefactor because the diagonal dielectric-tensor
@@ -308,7 +319,6 @@ pub fn static_dielectric_constant_components(
     let per_axis_prefactor = 3.0 * FOUR_PI_OVER_3 * KAPPA / (volume * K_B * temperature);
 
     for d in 0..3 {
-        fluctuation[d] = mean_sq[d] - mean_m[d] * mean_m[d];
         eps[d] = epsilon_inf + per_axis_prefactor * fluctuation[d];
     }
 
@@ -336,7 +346,7 @@ pub fn static_dielectric_constant_components(
 ///
 /// # Arguments
 /// * `per_particle_current` — `(n_particles, n_frames, 3)`,
-///   **e · Å⁻² · ps⁻¹**.
+///   **e · Å⁻² · fs⁻¹**.
 /// * `water_mask` — boolean array of length `n_particles`; `true`
 ///   → first bucket.
 ///
@@ -573,5 +583,31 @@ mod tests {
         assert!((result.eps[1] - eps_x).abs() < 1e-12);
         assert!((result.eps[2] - eps_x).abs() < 1e-12);
         assert!((result.eps_mean - eps_x).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_static_dielectric_components_large_mean_two_pass() {
+        // M = M0 + small noise: one-pass variance fails; two-pass keeps Var≈1.
+        let m0 = 1.0e8;
+        let n = 1000;
+        let mut dm = Array2::<f64>::zeros((n, 3));
+        for t in 0..n {
+            // unit-variance square wave on x only
+            let noise = if t % 2 == 0 { 1.0 } else { -1.0 };
+            dm[[t, 0]] = m0 + noise;
+            dm[[t, 1]] = m0;
+            dm[[t, 2]] = m0;
+        }
+        let result = static_dielectric_constant_components(&dm, 1000.0, 300.0, 1.0).unwrap();
+        // fluctuation_x should be ~1.0 (exact for ±1 about mean)
+        assert!(
+            (result.fluctuation[0] - 1.0).abs() < 1e-9,
+            "two-pass Var_x = {}",
+            result.fluctuation[0]
+        );
+        assert!(result.fluctuation[1].abs() < 1e-12);
+        assert!(result.fluctuation[2].abs() < 1e-12);
+        let scalar = static_dielectric_constant(&dm, 1000.0, 300.0, 1.0).unwrap();
+        assert!((result.eps_mean - scalar).abs() < 1e-8);
     }
 }

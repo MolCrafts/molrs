@@ -10,11 +10,13 @@
 //! bonds from the chain structure and ring closures, and sets properties
 //! (charge, isotope, chirality, hydrogen count).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::io::smiles::chem::ast::*;
 use crate::io::smiles::error::{SmilesError, SmilesErrorKind};
+use crate::io::smiles::smiles::canonical_element_symbol;
 use molrs::system::atomistic::{AtomId, Atomistic};
+use molrs::system::bond::{BondNumber, BondType};
 use molrs::system::molgraph::PropValue;
 
 /// Convert a parsed SMILES IR into an [`Atomistic`] molecular graph.
@@ -23,6 +25,25 @@ use molrs::system::molgraph::PropValue;
 /// isotope, chirality), and records bond orders. Implicit hydrogens are
 /// **not** added — call [`add_hydrogens`](crate::perceive::hydrogens::add_hydrogens)
 /// separately if needed.
+///
+/// # Aromaticity
+///
+/// Lowercase symbols are *notation*, not element symbols: the `element`
+/// component always holds the canonical symbol (`c` → `"C"`), and the
+/// declared aromaticity is carried by the project-wide markers instead —
+/// `is_aromatic = 1` on the atom, and `bond_type = Aromatic` on every bond the
+/// notation declares aromatic. Its localized `bond_number` is left `Unknown`:
+/// the notation declares delocalization, not a Kekulé phase, and kekulization
+/// is what picks one. A bond written *without* a
+/// symbol between two aromatic atoms is aromatic (the Daylight rule); an
+/// explicit `-` between two aromatic atoms (biphenyl) is not.
+///
+/// # Hydrogen counts
+///
+/// A bracket atom states its hydrogen count exactly, so every bracket atom
+/// gets an `h_count` component — `0` when the notation omits it. Organic-subset
+/// atoms get none and are left to valence-based
+/// [`add_hydrogens`](crate::perceive::hydrogens::add_hydrogens).
 ///
 /// # Errors
 ///
@@ -84,6 +105,9 @@ struct Builder<'a> {
     mol: Atomistic,
     /// Maps ring numbers to pending (unmatched) ring-closure openers.
     open_rings: HashMap<u16, PendingRing>,
+    /// Atoms the notation declared aromatic (lowercase symbol). Needed while
+    /// building because a symbol-less bond between two of them is aromatic.
+    aromatic_atoms: HashSet<AtomId>,
     /// Reference to the original IR for error messages.
     ir: &'a SmilesIR,
 }
@@ -93,6 +117,7 @@ impl<'a> Builder<'a> {
         Self {
             mol: Atomistic::new(),
             open_rings: HashMap::new(),
+            aromatic_atoms: HashSet::new(),
             ir,
         }
     }
@@ -144,9 +169,9 @@ impl<'a> Builder<'a> {
     fn add_atom_node(&mut self, node: &AtomNode) -> Result<AtomId, SmilesError> {
         match &node.spec {
             AtomSpec::Organic { symbol, aromatic } => {
-                let id = self.mol.add_atom_bare(symbol);
+                let id = self.mol.add_atom_bare(&canonical_element_symbol(symbol));
                 if *aromatic {
-                    self.set_prop(id, "aromatic", 1.0);
+                    self.mark_aromatic(id);
                 }
                 Ok(id)
             }
@@ -166,18 +191,10 @@ impl<'a> Builder<'a> {
 
                 let aromatic = matches!(symbol, BracketSymbol::Element { aromatic: true, .. });
 
-                // Capitalise aromatic single-char symbols for element lookup.
-                let canon_sym =
-                    if sym.len() == 1 && sym.chars().next().unwrap().is_ascii_lowercase() {
-                        sym.to_ascii_uppercase()
-                    } else {
-                        sym.clone()
-                    };
-
-                let id = self.mol.add_atom_bare(&canon_sym);
+                let id = self.mol.add_atom_bare(&canonical_element_symbol(&sym));
 
                 if aromatic {
-                    self.set_prop(id, "aromatic", 1.0);
+                    self.mark_aromatic(id);
                 }
                 if let Some(iso) = isotope {
                     self.set_prop(id, "isotope", *iso as f64);
@@ -189,9 +206,9 @@ impl<'a> Builder<'a> {
                     };
                     self.set_prop_str(id, "stereo", s);
                 }
-                if let Some(h) = hcount {
-                    self.set_prop(id, "h_count", *h as f64);
-                }
+                // A bracket atom states its hydrogen count exactly; an omitted
+                // count means zero, not "fill the valence".
+                self.set_prop(id, "h_count", hcount.unwrap_or(0) as f64);
                 if let Some(c) = charge {
                     self.set_prop(id, "formal_charge", *c as f64);
                 }
@@ -229,9 +246,18 @@ impl<'a> Builder<'a> {
             )
         })?;
 
-        if let Some(kind) = bond {
-            let order = bond_kind_to_order(kind);
-            let _ = self.mol.set_bond_prop(bid, "order", PropValue::F64(order));
+        // A bond with no symbol between two aromatic atoms is aromatic — that
+        // is what makes `c1ccccc1` a ring of 1.5-order bonds rather than six
+        // single bonds. An explicit symbol always wins (biphenyl's `-`).
+        let kind = bond.or_else(|| {
+            (self.aromatic_atoms.contains(&a) && self.aromatic_atoms.contains(&b))
+                .then_some(BondKind::Aromatic)
+        });
+
+        if let Some(kind) = kind {
+            let _ =
+                self.mol
+                    .set_bond_class(bid, bond_kind_to_type(kind), bond_kind_to_number(kind));
             match kind {
                 BondKind::Up => {
                     let _ = self
@@ -248,6 +274,13 @@ impl<'a> Builder<'a> {
         }
 
         Ok(())
+    }
+
+    /// Record the notation's aromatic declaration on `id`, using the same
+    /// `is_aromatic` marker that [`crate::perceive::aromaticity`] writes.
+    fn mark_aromatic(&mut self, id: AtomId) {
+        self.aromatic_atoms.insert(id);
+        let _ = self.mol.set_atom(id, "is_aromatic", PropValue::Int(1));
     }
 
     fn handle_ring_closure(
@@ -312,15 +345,34 @@ impl<'a> Builder<'a> {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Map a [`BondKind`] to a numeric bond order.
-fn bond_kind_to_order(kind: BondKind) -> f64 {
+/// Map a [`BondKind`] to the bond's chemical class.
+///
+/// `Aromatic` is its own class, not a number: the notation declares the ring
+/// delocalized and says nothing about which Kekulé structure to pick. The
+/// localized [`BondNumber`] is left `Unknown` for kekulization to decide.
+fn bond_kind_to_type(kind: BondKind) -> BondType {
     match kind {
-        BondKind::Single | BondKind::Up | BondKind::Down => 1.0,
-        BondKind::Double => 2.0,
-        BondKind::Triple => 3.0,
-        BondKind::Quadruple => 4.0,
-        BondKind::Aromatic => 1.5,
-        BondKind::Any | BondKind::Ring => 1.0,
+        BondKind::Single | BondKind::Up | BondKind::Down => BondType::Single,
+        BondKind::Double => BondType::Double,
+        BondKind::Triple => BondType::Triple,
+        // A quadruple bond has no aromatic character; it is a plain class whose
+        // number the notation states outright.
+        BondKind::Quadruple => BondType::Double,
+        BondKind::Aromatic => BondType::Aromatic,
+        BondKind::Any | BondKind::Ring => BondType::Single,
+    }
+}
+
+/// The localized number a [`BondKind`] states, when it states one.
+fn bond_kind_to_number(kind: BondKind) -> BondNumber {
+    match kind {
+        BondKind::Single | BondKind::Up | BondKind::Down => BondNumber::Single,
+        BondKind::Double => BondNumber::Double,
+        BondKind::Triple => BondNumber::Triple,
+        BondKind::Quadruple => BondNumber::Quadruple,
+        // The notation declares delocalization, not a Kekulé phase.
+        BondKind::Aromatic => BondNumber::Unknown,
+        BondKind::Any | BondKind::Ring => BondNumber::Single,
     }
 }
 
@@ -371,14 +423,16 @@ mod tests {
         assert_eq!(mol.n_atoms(), 2);
         assert_eq!(mol.n_bonds(), 1);
         let (_, bond) = mol.bonds().next().unwrap();
-        assert_eq!(bond.props.get("order"), Some(&PropValue::F64(2.0)));
+        assert_eq!(bond.props.get("bond_type"), Some(&PropValue::Int(2)));
+        assert_eq!(bond.props.get("bond_number"), Some(&PropValue::Int(2)));
     }
 
     #[test]
     fn test_triple_bond() {
         let mol = smiles_to_mol("C#N");
         let (_, bond) = mol.bonds().next().unwrap();
-        assert_eq!(bond.props.get("order"), Some(&PropValue::F64(3.0)));
+        assert_eq!(bond.props.get("bond_type"), Some(&PropValue::Int(3)));
+        assert_eq!(bond.props.get("bond_number"), Some(&PropValue::Int(3)));
     }
 
     // -- branches -----------------------------------------------------------
@@ -415,7 +469,95 @@ mod tests {
         assert_eq!(mol.n_bonds(), 6);
         // Check aromatic flag
         let (_, atom) = mol.atoms().next().unwrap();
-        assert_eq!(atom.get_f64("aromatic"), Some(1.0));
+        assert_eq!(atom.get("is_aromatic"), Some(&PropValue::Int(1)));
+    }
+
+    #[test]
+    fn test_aromatic_element_symbol_is_canonical() {
+        // The lowercase `c` of the organic aromatic subset is *notation*, not an
+        // element symbol: every element-keyed lookup downstream expects "C".
+        let mol = smiles_to_mol("c1ccccc1");
+        for (_, atom) in mol.atoms() {
+            assert_eq!(atom.get_str("element"), Some("C"));
+        }
+    }
+
+    #[test]
+    fn test_aromatic_bracket_element_symbol_is_canonical() {
+        // Pyrrole — the bracket `[nH]` must land as element "N", flagged aromatic.
+        let mol = smiles_to_mol("c1cc[nH]c1");
+        let elements: Vec<String> = mol
+            .atoms()
+            .filter_map(|(_, a)| a.get_str("element").map(str::to_owned))
+            .collect();
+        assert_eq!(elements, ["C", "C", "C", "N", "C"]);
+        for (_, atom) in mol.atoms() {
+            assert_eq!(atom.get("is_aromatic"), Some(&PropValue::Int(1)));
+        }
+    }
+
+    #[test]
+    fn test_implicit_aromatic_bond_gets_the_aromatic_class() {
+        // A bond written without a symbol between two aromatic atoms *is* an
+        // aromatic bond (Daylight rule) — order 1.5, not the single-bond default.
+        let mol = smiles_to_mol("c1ccccc1");
+        for (_, bond) in mol.bonds() {
+            // The notation declares the class; it declares no Kekulé phase, so
+            // the localized number stays unknown until standardization.
+            assert_eq!(bond.props.get("bond_type"), Some(&PropValue::Int(4)));
+            assert_eq!(bond.props.get("bond_number"), Some(&PropValue::Int(0)));
+        }
+    }
+
+    #[test]
+    fn test_aromatic_smarts_discriminates_ring_from_chain() {
+        // The markers exist so SMARTS can tell an aromatic ring from a
+        // saturated one: `c` must match benzene and `C` must not, and the
+        // reverse for cyclohexane.
+        use crate::perceive::smarts::{MatchOptions, SmartsPattern};
+
+        let n_matches = |pattern: &str, smiles: &str| {
+            SmartsPattern::parse(pattern)
+                .expect("parse SMARTS")
+                .find(&smiles_to_mol(smiles), MatchOptions::default())
+                .len()
+        };
+
+        assert_eq!(n_matches("[c]", "c1ccccc1"), 6, "benzene is aromatic");
+        assert_eq!(n_matches("[C]", "c1ccccc1"), 0, "benzene is not aliphatic");
+        assert_eq!(n_matches("[C]", "C1CCCCC1"), 6, "cyclohexane is aliphatic");
+        assert_eq!(
+            n_matches("[c]", "C1CCCCC1"),
+            0,
+            "cyclohexane is not aromatic"
+        );
+    }
+
+    #[test]
+    fn test_bond_from_aromatic_to_aliphatic_is_not_aromatic() {
+        // Toluene: the ring→methyl bond has one aliphatic end, so it stays single.
+        let mol = smiles_to_mol("Cc1ccccc1");
+        let n_aromatic = mol
+            .bonds()
+            .filter(|(_, b)| b.props.get("bond_type") == Some(&PropValue::Int(4)))
+            .count();
+        assert_eq!(n_aromatic, 6, "only the 6 ring bonds are aromatic");
+    }
+
+    #[test]
+    fn test_aliphatic_bond_does_not_get_the_aromatic_class() {
+        let mol = smiles_to_mol("CC");
+        let (_, bond) = mol.bonds().next().unwrap();
+        assert_ne!(bond.props.get("bond_type"), Some(&PropValue::Int(4)));
+    }
+
+    #[test]
+    fn test_bracket_atom_records_exact_hydrogen_count() {
+        // In a bracket atom the H count is *exact* — an omitted count means zero,
+        // it does not mean "fill the valence".
+        let mol = smiles_to_mol("[C]");
+        let (_, atom) = mol.atoms().next().unwrap();
+        assert_eq!(atom.get("h_count"), Some(&PropValue::F64(0.0)));
     }
 
     #[test]

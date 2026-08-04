@@ -8,7 +8,7 @@
 //!
 //! After atom typing, [`OPLSAATypifier::typify`] runs [`typify_bonded`]: every
 //! bond / angle / dihedral is matched against the force field's bonded tables by
-//! OPLS specificity + overlay layer (chain 2). [`OPLSAATypifier::build`] closes
+//! OPLS specificity + overlay layer (chain 2). callers compose typify → pairs → to_potentials (MMFF path); the former `build` façade was deleted in 0.12.  The following closes
 //! the loop to evaluable potentials (`typify → to_frame → to_potentials`).
 //!
 //! # B-line reversal
@@ -30,7 +30,7 @@ use molrs::Atomistic;
 
 use crate::ff::forcefield::ForceField;
 use crate::ff::forcefield::readers::{ForceFieldReader, opls::OplsXmlReader};
-use crate::ff::potential::{Potentials, intramolecular_pairs};
+
 use crate::ff::typifier::estimate::Parmchk2Estimator;
 
 use super::Typifier;
@@ -175,31 +175,6 @@ impl OPLSAATypifier {
     /// Full OPLS-AA typing (`opls_NNN` atom labels plus bonded-term labels).
     pub fn typify(&self, mol: &Atomistic) -> Result<Atomistic, String> {
         self.typify_labeled_graph(mol)
-    }
-
-    /// Typify a molecule and compile potentials in one step.
-    ///
-    /// `mol → typify (atoms + bonded) → Frame → Potentials`. 1-2 / 1-3 exclusion +
-    /// 1-4 scaling come from the force field's `special_bonds` (set by the reader)
-    /// and the consumer-built [`intramolecular_pairs`] neighbour list inserted here.
-    ///
-    /// # A note on asymmetry
-    ///
-    /// MMFF used to carry the same convenience and no longer does
-    /// (`mmff-orthogonal-02` deleted `MMFF94Typifier::build`, because it hid the
-    /// `Frame` — and with it, for a while, an entire missing electrostatic term).
-    /// Whether OPLS should follow is a **deliberately open** decision, not an
-    /// oversight: the owner's ruling named the MMFF doors only. Until it is taken,
-    /// the two typifier surfaces are asymmetric on purpose.
-    ///
-    /// # Errors
-    ///
-    /// Propagates typing / assignment / compilation errors.
-    pub fn build(&self, mol: &Atomistic) -> Result<Potentials, String> {
-        let mut frame = self.typify(mol)?.to_frame();
-        let pairs = intramolecular_pairs(&frame);
-        frame.insert("pairs", pairs);
-        self.ff.to_potentials(&frame)
     }
 }
 

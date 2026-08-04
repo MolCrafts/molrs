@@ -61,6 +61,16 @@ pub fn block_from_csv(
 /// Insert `raw` string cells under `name`, inferring int → float → str.
 fn insert_inferred(block: &mut Block, name: String, raw: Vec<String>) -> Result<(), String> {
     let nonempty = !raw.is_empty();
+
+    // A canonical key's dtype is declared, not inferred. Content-driven
+    // inference would type `x` as Int whenever a file happens to hold whole
+    // numbers, and the column would then reject the first fractional
+    // coordinate written to it — the dtype-fixed-on-first-write trap, arrived
+    // at from a CSV instead of from a bad writer.
+    if let Some(spec) = crate::store::schema::column(&name) {
+        return insert_as(block, name, raw, spec.dtype);
+    }
+
     if nonempty && raw.iter().all(|s| s.parse::<I>().is_ok()) {
         let v: Vec<I> = raw.iter().map(|s| s.parse().unwrap()).collect();
         block
@@ -126,6 +136,70 @@ fn cell_to_string(col: &Column, row: usize) -> String {
     String::new()
 }
 
+/// Parse a column at a dtype the schema declares, rather than inferring one.
+fn insert_as(
+    block: &mut Block,
+    name: String,
+    raw: Vec<String>,
+    dtype: crate::store::block::DType,
+) -> Result<(), String> {
+    use crate::store::block::DType;
+    let parse_err = |e: std::num::ParseIntError| format!("column '{name}': {e}");
+    match dtype {
+        DType::Float => {
+            let v: Vec<F> = raw
+                .iter()
+                .map(|s| s.parse::<F>().map_err(|e| format!("column '{name}': {e}")))
+                .collect::<Result<_, _>>()?;
+            block
+                .insert(name, Array1::from(v).into_dyn())
+                .map_err(|e| e.to_string())
+        }
+        DType::Int => {
+            let v: Vec<I> = raw
+                .iter()
+                .map(|s| s.parse::<I>().map_err(parse_err))
+                .collect::<Result<_, _>>()?;
+            block
+                .insert(name, Array1::from(v).into_dyn())
+                .map_err(|e| e.to_string())
+        }
+        DType::UInt => {
+            let v: Vec<crate::types::U> = raw
+                .iter()
+                .map(|s| s.parse::<crate::types::U>().map_err(parse_err))
+                .collect::<Result<_, _>>()?;
+            block
+                .insert(name, Array1::from(v).into_dyn())
+                .map_err(|e| e.to_string())
+        }
+        DType::Bool => {
+            let v: Vec<bool> = raw
+                .iter()
+                .map(|s| {
+                    s.parse::<bool>()
+                        .map_err(|e| format!("column '{name}': {e}"))
+                })
+                .collect::<Result<_, _>>()?;
+            block
+                .insert(name, Array1::from(v).into_dyn())
+                .map_err(|e| e.to_string())
+        }
+        DType::U8 => {
+            let v: Vec<u8> = raw
+                .iter()
+                .map(|s| s.parse::<u8>().map_err(parse_err))
+                .collect::<Result<_, _>>()?;
+            block
+                .insert(name, Array1::from(v).into_dyn())
+                .map_err(|e| e.to_string())
+        }
+        DType::String => block
+            .insert(name, Array1::from(raw).into_dyn())
+            .map_err(|e| e.to_string()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -135,12 +209,15 @@ mod tests {
         let text = "x,y,name\n0,1.5,a\n3,4.5,b\n";
         let block = block_from_csv(text, ',', None).expect("parse");
         assert_eq!(block.nrows(), Some(2));
-        assert!(block.get("x").unwrap().as_int().is_some());
+        // `x` parses as Float even though the file holds whole numbers: the
+        // schema declares the dtype, so inference does not get to make a
+        // coordinate column Int and reject the first fractional value later.
+        assert!(block.get("x").unwrap().as_float().is_some());
         assert!(block.get("y").unwrap().as_float().is_some());
         assert!(block.get("name").unwrap().as_string().is_some());
         let out = block_to_csv(&block, ',', true);
         let rt = block_from_csv(&out, ',', None).expect("reparse");
-        assert_eq!(rt.get("x").unwrap().as_int().unwrap()[[1]], 3);
+        assert_eq!(rt.get("x").unwrap().as_float().unwrap()[[1]], 3.0);
         assert_eq!(rt.get("name").unwrap().as_string().unwrap()[[0]], "a");
     }
 

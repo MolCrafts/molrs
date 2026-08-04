@@ -103,14 +103,16 @@ mod compute;
 #[cfg(feature = "conformer")]
 mod conformer;
 mod core;
-#[cfg(feature = "io")]
-mod io;
 /// Force-field composition (typify / ForceField / LBFGS) — requires `conformer` (→ `ff`).
 #[cfg(feature = "conformer")]
 mod ff;
+mod generate;
+#[cfg(feature = "io")]
+mod io;
 /// Chemical perception (rings, aromaticity, hydrogens, …) — WASM face of
 /// `molrs::perceive`.
 mod perceive;
+mod schema;
 #[cfg(feature = "smiles")]
 mod smiles;
 
@@ -120,10 +122,11 @@ pub use compute::*;
 #[cfg(feature = "conformer")]
 pub use conformer::*;
 pub use core::{Block, Box, Frame, WasmArray};
-#[cfg(feature = "io")]
-pub use io::*;
 #[cfg(feature = "conformer")]
 pub use ff::*;
+pub use generate::CarbonTubeBuilder;
+#[cfg(feature = "io")]
+pub use io::*;
 pub use perceive::Perceive;
 #[cfg(feature = "smiles")]
 pub use smiles::*;

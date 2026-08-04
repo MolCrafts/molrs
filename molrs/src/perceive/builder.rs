@@ -20,7 +20,7 @@
 //! | Method | Atom props | Bond props |
 //! |---|---|---|
 //! | [`Perceive::find_rings`] | `is_in_ring` (0/1), `n_rings` | `is_in_ring` (0/1), `n_rings` |
-//! | [`Perceive::find_aromaticity`] | `is_aromatic` (0/1) | `is_aromatic` (0/1), `order` (1.5 when aromatic), `kekule_order` |
+//! | [`Perceive::find_aromaticity`] | `is_aromatic` (0/1) | `bond_type` (4 when aromatic), `bond_number` |
 //! | [`Perceive::find_hydrogens`] | — (adds H atoms) | — (adds H bonds) |
 //! | [`Perceive::find_stereo`] | `stereo` (`"CW"` / `"CCW"`) | `stereo` (`"E"` / `"Z"` / `"either"`) |
 //! | [`Perceive::find_rotatable`] | — | `is_rotatable` (0/1) |
@@ -108,24 +108,47 @@ impl Perceive {
         out
     }
 
-    /// Perceive aromaticity (RDKit default model) on a clone of the graph.
+    /// Bring a molecule to the standard aromatic representation.
     ///
-    /// Wraps [`aromaticity::perceive_aromaticity`], which is `&mut`-shaped and
-    /// rewrites aromatic bond `order` to `1.5` (stashing the Kekulé value under
-    /// `kekule_order`). Cloning first is therefore load-bearing: it is what
-    /// keeps the caller's Kekulé structure intact.
+    /// On return every aromatic atom carries `is_aromatic`, every aromatic bond
+    /// carries `bond_type = Aromatic`, and every bond carries an integer
+    /// `bond_number` — the localized Lewis structure. Nothing carries a
+    /// fractional order, because aromaticity is a bond *type*.
+    ///
+    /// Hydrogens are neither added nor required: implicit hydrogens are read
+    /// off each atom's valence. [`find_hydrogens`](Self::find_hydrogens) stays a
+    /// separate operation, and running it first changes no answer here.
     ///
     /// # Arguments
     ///
-    /// * `mol` — the molecule to perceive; left untouched.
+    /// * `mol` — the molecule to standardize; left untouched.
     ///
     /// # Returns
     ///
-    /// A clone of `mol` with `is_aromatic` on every atom and bond, aromatic bond
-    /// orders set to `1.5`, and `kekule_order` preserved on the clone's bonds.
+    /// A clone of `mol` carrying both facts about every bond.
     pub fn find_aromaticity(&self, mol: &Atomistic) -> Atomistic {
         let mut out = mol.clone();
-        let _ = aromaticity::perceive_aromaticity(&mut out);
+
+        // Two inputs, two questions — and answering the wrong one is how a
+        // molecule ends up either un-perceived or renumbered.
+        //
+        // **The notation already declared the aromatic subgraph** (a lowercase
+        // SMILES): aromaticity is *given*. What is missing is a localized
+        // structure, so assign one and let the valence check validate it. There
+        // is nothing to perceive, and perceiving anyway would mean re-deriving
+        // an answer the input stated.
+        //
+        // **A Kekulé or plain structure**: aromaticity is *unknown*. Perceive it
+        // from the integer bond numbers, rings, valences and electron counts,
+        // set the flags, and only then fill in any aromatic bond the perception
+        // just created that has no number of its own. The existing numbers are
+        // a legal Lewis structure and are kept.
+        if declares_aromatic_bonds(&out) {
+            bond_type::assign_kekule_numbers(&mut out);
+        } else {
+            let _ = aromaticity::perceive_aromaticity(&mut out);
+            bond_type::assign_kekule_numbers(&mut out);
+        }
         out
     }
 
@@ -242,6 +265,22 @@ impl Perceive {
         bond_type::find_bond_types(mol)
     }
 
+    /// Assign a localized (Kekulé) `bond_number` to every aromatic bond.
+    ///
+    /// Wraps [`bond_type::find_kekule_orders`]. It kekulizes and nothing else —
+    /// a molecule whose aromatic bonds are not marked yet comes back unchanged,
+    /// because deciding *which* bonds are aromatic is
+    /// [`find_aromaticity`](Self::find_aromaticity)'s job. Reach for this
+    /// directly when the input already declares its aromatic subgraph and only
+    /// the phase is missing.
+    ///
+    /// # Returns
+    ///
+    /// A clone of `mol` whose aromatic bonds carry a legal localized number.
+    pub fn find_kekule_orders(&self, mol: &Atomistic) -> Atomistic {
+        bond_type::find_kekule_orders(mol)
+    }
+
     /// Perceive charge-equivalence classes and project them onto the graph.
     ///
     /// Wraps [`equivalence::find_equivalence_classes`] at antechamber's default
@@ -319,6 +358,14 @@ fn bond_label(s: BondStereo) -> Option<&'static str> {
 }
 
 /// Narrow a count to the `i32` that [`crate::system::molgraph::PropValue`]
+/// Does the input already declare which bonds are aromatic?
+///
+/// This is what separates "the notation told us" from "we have to work it out",
+/// and the two get different treatment — see [`Perceive::find_aromaticity`].
+fn declares_aromatic_bonds(mol: &Atomistic) -> bool {
+    mol.bonds().any(|(bid, _)| mol.bond_type(bid).is_aromatic())
+}
+
 /// stores, saturating instead of wrapping (counts never approach the bound in
 /// practice).
 fn saturating_i32(n: usize) -> i32 {

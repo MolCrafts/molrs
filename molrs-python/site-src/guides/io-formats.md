@@ -29,7 +29,7 @@ likely to encounter.
 from pathlib import Path
 import molrs
 
-frame = molrs.read_xyz("water.xyz")
+frame = molrs.io.read_xyz("water.xyz")
 atoms = frame["atoms"]
 
 print("blocks:", frame.keys())
@@ -38,7 +38,7 @@ print("columns:", atoms.keys())
 print("first atom:", atoms.view("element")[0])
 
 out = Path("water-copy.xyz")
-molrs.write_xyz(str(out), frame)
+molrs.io.write_xyz(str(out), frame)
 print("wrote:", out)
 ```
 
@@ -82,7 +82,7 @@ Large trajectory files should not always be read into memory at once.
 `LAMMPSTrajReader` builds an index and reads frames on demand:
 
 ```python
-reader = molrs.LAMMPSTrajReader("dump.lammpstrj")
+reader = molrs.io.raw.LAMMPSTrajReader("dump.lammpstrj")
 print("frames:", len(reader))
 
 first = reader[0]

@@ -38,7 +38,7 @@ def _amine_plus_ester():
     o2 = mol.add_atom("O", 5.0, -1.3, 0.0)  # ester O (leaves)
     c3 = mol.add_atom("C", 5.0, -2.6, 0.0)  # alkyl C (leaves)
     bo = mol.add_bond(c0, o1)
-    mol.set_bond_order(bo, 2.0)  # carbonyl double bond
+    mol.set_bond_type(bo, 2)  # carbonyl double bond
     mol.add_bond(c0, o2)
     mol.add_bond(o2, c3)
     return mol, {"n0": n0, "c0": c0, "o1": o1, "o2": o2, "c3": c3}
@@ -63,7 +63,7 @@ def test_parse_two_reactant_components_and_product():
     rxn = molrs.Reaction("[N;H2:1].[C:2](=O)OC >> [N:1][C:2]=O")
     pats = rxn.reactant_patterns
     assert len(pats) == 2
-    assert all(isinstance(p, molrs.SmartsPattern) for p in pats)
+    assert all(isinstance(p, molrs.perceive.SmartsPattern) for p in pats)
     # component 0 is the amine (1 query atom), component 1 the ester (4 atoms)
     assert pats[0].num_query_atoms == 1
     assert pats[1].num_query_atoms == 4
@@ -111,7 +111,7 @@ def test_apply_amide_forms_bond_and_drops_leaving_group():
     rxn = molrs.Reaction("[N;H2:1].[C:2](=O)OC >> [N:1][C:2]=O")
     mol, h = _amine_plus_ester()
     n_before = mol.n_atoms
-    assert not molrs.SmartsPattern("[N][C]=O").has_match(mol)
+    assert not molrs.perceive.SmartsPattern("[N][C]=O").has_match(mol)
 
     binding = _bind(rxn, mol)
     assert set(binding) == {1, 2}
@@ -123,7 +123,7 @@ def test_apply_amide_forms_bond_and_drops_leaving_group():
     # leaving atoms (ester O + alkyl C) removed -> exactly 2 fewer atoms
     assert mol.n_atoms == n_before - 2
     # new N-C(=O) amide linkage present; carbonyl O preserved (not re-added)
-    assert molrs.SmartsPattern("[N][C]=O").has_match(mol)
+    assert molrs.perceive.SmartsPattern("[N][C]=O").has_match(mol)
     # topology regenerated around the new bond
     assert mol.n_relations("angles") > 0
 
@@ -178,7 +178,7 @@ def test_smarts_matcher_still_works():
     c = mol.add_atom("C", 0.0, 0.0, 0.0)
     o = mol.add_atom("O", 1.4, 0.0, 0.0)
     mol.add_bond(c, o)
-    assert molrs.SmartsPattern("[C:1][O:2]").has_match(mol)
+    assert molrs.perceive.SmartsPattern("[C:1][O:2]").has_match(mol)
 
 
 # ---------------------------------------------------------------------------
@@ -234,7 +234,7 @@ def test_apply_touched_thiol_ene_two_carbons_and_sulfur():
     s3 = mol.add_atom("S", 3.0, 0.0, 0.0)
     hs = mol.add_atom("H", 3.0, 1.0, 0.0)  # explicit H so [S;H1] matches
     b = mol.add_bond(c1, c2)
-    mol.set_bond_order(b, 2.0)
+    mol.set_bond_type(b, 2)
     mol.add_bond(s3, hs)
 
     binding = _bind(rxn, mol)
@@ -256,15 +256,14 @@ def test_apply_many_compiles_all_leaving_groups_before_mutation():
     }
     before = world.n_atoms
 
-    touched = rxn.apply_many(
-        world, [binding_first, binding_second], refresh=False
-    )
+    touched = rxn.apply_many(world, [binding_first, binding_second], refresh=False)
 
     assert world.n_atoms == before - 4
     assert len(touched) == 2
-    assert all(set(binding.values()) <= set(seed) for binding, seed in zip(
-        (binding_first, binding_second), touched, strict=True
-    ))
+    assert all(
+        set(binding.values()) <= set(seed)
+        for binding, seed in zip((binding_first, binding_second), touched, strict=True)
+    )
 
 
 def test_apply_many_detailed_preserves_rhs_creation_order():
@@ -273,9 +272,7 @@ def test_apply_many_detailed_preserves_rhs_creation_order():
     n = mol.add_atom("N")
     c = mol.add_atom("C")
 
-    touched, created = reaction.apply_many_detailed(
-        mol, [{1: n, 2: c}], refresh=False
-    )
+    touched, created = reaction.apply_many_detailed(mol, [{1: n, 2: c}], refresh=False)
 
     assert len(touched) == len(created) == 1
     assert len(created[0]) == 2

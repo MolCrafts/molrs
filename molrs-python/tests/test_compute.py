@@ -5,6 +5,7 @@ NeighborList where required, call compute, and sanity-check the shape
 and a known value. Numerical correctness is covered by the Rust unit
 tests in molrs-compute — these are wiring-level checks.
 """
+
 import numpy as np
 import pytest
 import molrs
@@ -87,11 +88,16 @@ class TestNematic:
         # (atomi=head, atomj=tail). Five pairs all pointing +z -> order == 1.
         pts = np.array(
             [
-                [0.0, 0.0, 1.0], [0.0, 0.0, 0.0],
-                [1.0, 0.0, 1.0], [1.0, 0.0, 0.0],
-                [2.0, 0.0, 1.0], [2.0, 0.0, 0.0],
-                [3.0, 0.0, 1.0], [3.0, 0.0, 0.0],
-                [4.0, 0.0, 1.0], [4.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0],
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 1.0],
+                [1.0, 0.0, 0.0],
+                [2.0, 0.0, 1.0],
+                [2.0, 0.0, 0.0],
+                [3.0, 0.0, 1.0],
+                [3.0, 0.0, 0.0],
+                [4.0, 0.0, 1.0],
+                [4.0, 0.0, 0.0],
             ],
             dtype=np.float64,
         )
@@ -193,3 +199,123 @@ class TestClusterProperties:
         assert d["sizes"] == [2]
         # Centre of mass at (1, 0, 0).
         assert abs(d["centers_of_mass"][0, 0] - 1.0) < 1e-10
+
+
+class TestMSDMethodSelection:
+    """``MSD(method=...)`` picks the estimator; there is no per-mode factory.
+
+    The two are different estimators of the same quantity, so the choice is a
+    constructor argument rather than a second constructor to keep in sync.
+    """
+
+    @staticmethod
+    def _random_walk_frames(n_frames=40, n_particles=6, seed=7):
+        rng = np.random.default_rng(seed)
+        pos = np.cumsum(rng.normal(size=(n_frames, n_particles, 3)), axis=0)
+        frames = []
+        for t in range(n_frames):
+            f, b = molrs.Frame(), molrs.Block()
+            b["x"] = pos[t, :, 0].copy()
+            b["y"] = pos[t, :, 1].copy()
+            b["z"] = pos[t, :, 2].copy()
+            f["atoms"] = b
+            frames.append(f)
+        return frames, pos
+
+    def test_default_is_direct(self):
+        assert molrs.compute.msd.MSD().method == "direct"
+
+    def test_window_is_selected_by_method(self):
+        assert molrs.compute.msd.MSD(method="window").method == "window"
+
+    def test_unknown_method_raises(self):
+        with pytest.raises(ValueError, match="unknown MSD method"):
+            molrs.compute.msd.MSD(method="rolling")
+
+    def test_direct_matches_the_explicit_single_origin_definition(self):
+        frames, pos = self._random_walk_frames()
+        got = np.asarray(molrs.compute.msd.MSD().compute(frames).mean)
+        want = ((pos - pos[0]) ** 2).sum(axis=2).mean(axis=1)
+        assert np.allclose(got, want)
+
+    def test_window_matches_the_explicit_all_origins_definition(self):
+        """The O(T log T) FFT route must equal the O(T^2) nested loop."""
+        frames, pos = self._random_walk_frames()
+        n_frames = pos.shape[0]
+        want = np.empty(n_frames)
+        for lag in range(n_frames):
+            origins = [
+                ((pos[tau + lag] - pos[tau]) ** 2).sum(axis=1).mean()
+                for tau in range(n_frames - lag)
+            ]
+            want[lag] = np.mean(origins)
+        got = np.asarray(molrs.compute.msd.MSD(method="window").compute(frames).mean)
+        assert np.allclose(got, want, atol=1e-10)
+
+    def test_the_two_methods_disagree(self):
+        """Otherwise the parameter would be pinning nothing."""
+        frames, _ = self._random_walk_frames()
+        direct = np.asarray(molrs.compute.msd.MSD().compute(frames).mean)
+        window = np.asarray(molrs.compute.msd.MSD(method="window").compute(frames).mean)
+        assert not np.allclose(direct, window)
+
+
+class TestAcf:
+    """Generic all-time-origins autocorrelation.
+
+    The FFT route is checked against the definition written out longhand, and
+    against ``VACF`` to pin that the two are *different* estimators — swapping
+    one for the other is the mistake this class exists to prevent.
+    """
+
+    @staticmethod
+    def _series(n_frames=48, n_entities=5, n_components=3, seed=11):
+        rng = np.random.default_rng(seed)
+        return rng.normal(size=(n_frames, n_entities, n_components))
+
+    @staticmethod
+    def _direct(series, max_lag):
+        n_frames, n_entities, _ = series.shape
+        return np.array(
+            [
+                sum(
+                    float((series[tau] * series[tau + lag]).sum())
+                    for tau in range(n_frames - lag)
+                )
+                / (n_entities * (n_frames - lag))
+                for lag in range(max_lag + 1)
+            ]
+        )
+
+    def test_matches_the_direct_double_loop(self):
+        s = self._series()
+        got = np.asarray(molrs.compute.dynamics.Acf().compute(s, max_lag=15).acf)
+        assert np.allclose(got, self._direct(s, 15), atol=1e-10)
+
+    def test_lag_zero_is_the_mean_square(self):
+        s = self._series()
+        got = np.asarray(molrs.compute.dynamics.Acf().compute(s, max_lag=3).acf)
+        assert got[0] == pytest.approx((s**2).sum() / (s.shape[1] * s.shape[0]))
+
+    def test_max_lag_is_clamped(self):
+        s = self._series(n_frames=10)
+        res = molrs.compute.dynamics.Acf().compute(s, max_lag=999)
+        assert len(np.asarray(res.acf)) == 10
+        assert res.lags[-1] == 9
+
+    def test_a_constant_series_is_flat(self):
+        s = np.full((16, 3, 2), 2.0)
+        got = np.asarray(molrs.compute.dynamics.Acf().compute(s, max_lag=6).acf)
+        assert np.allclose(got, 8.0)  # n_components * value^2
+
+    def test_is_not_the_same_estimator_as_vacf(self):
+        """VACF mean-subtracts, averages over DOF, and is biased."""
+        s = self._series()
+        acf = np.asarray(molrs.compute.dynamics.Acf().compute(s, max_lag=10).acf)
+        flat = s.reshape(s.shape[0], -1)
+        vacf = np.asarray(molrs.compute.transport.VACF().compute(flat, 1.0, 10)["acf"])
+        assert not np.allclose(acf, vacf), "the two estimators must not coincide"
+
+    def test_too_few_frames_raises(self):
+        with pytest.raises(ValueError):
+            molrs.compute.dynamics.Acf().compute(np.zeros((1, 2, 3)), max_lag=0)

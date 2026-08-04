@@ -239,7 +239,6 @@ pub struct PoscarReader<R: BufRead> {
 
 impl<R: BufRead> Reader for PoscarReader<R> {
     type R = R;
-    type Frame = Frame;
     fn new(reader: R) -> Self {
         Self {
             reader,
@@ -249,12 +248,12 @@ impl<R: BufRead> Reader for PoscarReader<R> {
 }
 
 impl<R: BufRead> FrameReader for PoscarReader<R> {
-    fn read_frame(&mut self) -> Result<Option<Frame>> {
+    fn read(&mut self) -> Result<Option<Frame>> {
         if self.consumed {
             return Ok(None);
         }
         self.consumed = true;
-        Ok(Some(read_poscar_from_reader(&mut self.reader)?))
+        crate::io::reader::validated(Some(read_poscar_from_reader(&mut self.reader)?))
     }
 }
 
@@ -433,14 +432,16 @@ pub struct PoscarFrameWriter<W: Write> {
 
 impl<W: Write> Writer for PoscarFrameWriter<W> {
     type W = W;
-    type FrameLike = Frame;
     fn new(writer: W) -> Self {
         Self { writer }
     }
 }
 
 impl<W: Write> FrameWriter for PoscarFrameWriter<W> {
-    fn write_frame(&mut self, frame: &Frame) -> Result<()> {
+    fn write(&mut self, frame: &Frame) -> Result<()> {
+        // Refuse to emit a frame that violates the vocabulary: a bad file
+        // looks fine and is found wrong later, by whatever reads it.
+        crate::io::writer::check_before_write(frame)?;
         write_poscar_to_writer(&mut self.writer, frame)
     }
 }

@@ -116,13 +116,28 @@ def test_aromatic_flag_change_changes_hash():
     assert a.structural_hash() != b.structural_hash()
 
 
-def test_bond_order_change_changes_hash():
+def test_bond_class_change_changes_hash():
     a, ha = _ethanol()
     b, hb = _ethanol()
     assert a.structural_hash() == b.structural_hash()
-    # Change the C0-C1 bond order to 2.0 via its relation handle.
+    # Make the C0-C1 bond a double bond via its relation handle.
     (rid, _other) = b.incident_relations(hb[0], "bonds")[0]
-    b.set_relation_prop("bonds", rid, "order", 2.0)
+    b.set_bond_type(rid, 2)
+    assert a.structural_hash() != b.structural_hash()
+
+
+def test_kekule_phase_change_changes_hash():
+    """Both facts enter the hash, not just the class.
+
+    Two molecules differing only in which ring bonds carry the localized double
+    are different Lewis structures, and the hash must say so.
+    """
+    a, ha = _ethanol()
+    b, hb = _ethanol()
+    (rid, _other) = b.incident_relations(hb[0], "bonds")[0]
+    b.set_bond_class(rid, 4, 1)
+    (rid_a, _other) = a.incident_relations(ha[0], "bonds")[0]
+    a.set_bond_class(rid_a, 4, 2)
     assert a.structural_hash() != b.structural_hash()
 
 

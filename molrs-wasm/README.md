@@ -92,7 +92,8 @@ Frames without a simulation box are supported — a non-periodic bounding box is
 | `atoms` | `mass` | `F` | Atomic mass |
 | `atoms` | `charge` | `F` | Partial charge |
 | `bonds` | `i`, `j` | `u32` | Atom indices |
-| `bonds` | `order` | `F` | Bond order (1.0, 1.5, 2.0, 3.0) |
+| `bonds` | `bond_type` | `U32` | 0 unknown, 1 single, 2 double, 3 triple, 4 aromatic |
+| `bonds` | `bond_number` | `U32` | Localized Lewis/Kekulé integer (never fractional) |
 
 `F` is the molrs core float type — always `f64`.
 

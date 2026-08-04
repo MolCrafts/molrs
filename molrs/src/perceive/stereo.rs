@@ -32,7 +32,9 @@
 
 use std::collections::HashMap;
 
+use crate::store::keys;
 use crate::system::atomistic::{AtomId, Atomistic, BondId};
+use crate::system::bond::BondType;
 
 // ---------------------------------------------------------------------------
 // Public enums
@@ -168,7 +170,7 @@ pub fn assign_stereo_from_3d(mol: &Atomistic) -> HashMap<AtomId, TetrahedralSter
 /// Infer E/Z stereochemistry for every double bond from 3-D coordinates.
 ///
 /// A bond A=B is considered to have E/Z stereo if:
-/// * It is a double bond (bond `"order"` == 2.0, or no order property and
+/// * It is a double bond (`bond_type == Double`, or no class property and
 ///   degree rules suggest double).
 /// * Both A and B have at least one other neighbour (substituents exist).
 ///
@@ -182,13 +184,9 @@ pub fn assign_bond_stereo_from_3d(mol: &Atomistic) -> HashMap<BondId, BondStereo
     let mut result = HashMap::new();
 
     for (bid, bond) in mol.bonds() {
-        let order = bond
-            .props
-            .get("order")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(1.0);
-
-        if (order - 2.0).abs() > 0.5 {
+        // A genuine double bond. An aromatic ring bond has no E/Z even when its
+        // Kekulé phase is double — the ring is planar and the phase arbitrary.
+        if BondType::from_prop(bond.props.get(keys::BOND_TYPE)) != BondType::Double {
             result.insert(bid, BondStereo::None);
             continue;
         }
@@ -204,21 +202,40 @@ pub fn assign_bond_stereo_from_3d(mol: &Atomistic) -> HashMap<BondId, BondStereo
             continue;
         }
 
-        // Pick the substituent with the highest z-value (atomic number) as the
-        // representative.  This is a simplified priority rule.
+        // Pick the substituent with the highest atomic number as the
+        // representative. This is a simplified priority rule — one CIP sphere,
+        // not the full hierarchical digraph.
+        //
+        // The tie-break is load-bearing, not a detail: when both substituents
+        // are the same element the key ties, and `max_by_key` keeps the *last*
+        // maximum — so the label became a function of bond insertion order
+        // rather than of the geometry. 3-methyl-2-pentene came out E or Z
+        // depending only on which of the two C3 bonds was added first. Ranking
+        // by (Z, lowest index) makes the answer a property of the molecule
+        // again; it is still approximate where CIP would look further out, but
+        // it is at least the *same* approximation every time.
+        let z_of = |s: AtomId| -> u8 {
+            mol.get_atom(s)
+                .ok()
+                .and_then(|a| {
+                    a.get_str("element")
+                        .and_then(molrs::Element::by_symbol)
+                        .map(|e| e.z())
+                })
+                .unwrap_or(0)
+        };
+        // Ranked by (Z, then the atom's own position in the molecule). The
+        // neighbour list's order is itself insertion-dependent, so breaking the
+        // tie on a position *within that list* would not fix anything.
+        let order_of = |s: AtomId| -> usize {
+            mol.atoms()
+                .position(|(id, _)| id == s)
+                .unwrap_or(usize::MAX)
+        };
         let pick = |atom_id: AtomId, subs: &[AtomId]| -> AtomId {
             subs.iter()
                 .copied()
-                .max_by_key(|&s| {
-                    mol.get_atom(s)
-                        .ok()
-                        .and_then(|a| {
-                            a.get_str("element")
-                                .and_then(molrs::Element::by_symbol)
-                                .map(|e| e.z())
-                        })
-                        .unwrap_or(0)
-                })
+                .max_by_key(|&s| (z_of(s), std::cmp::Reverse(order_of(s))))
                 .unwrap_or(atom_id)
         };
 
@@ -304,7 +321,7 @@ fn vec_len(a: [f64; 3]) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::system::molgraph::{Atom, PropValue};
+    use crate::system::molgraph::Atom;
 
     fn atom_xyz(sym: &str, x: f64, y: f64, z: f64) -> Atom {
         Atom::xyz(sym, x, y, z)
@@ -312,7 +329,7 @@ mod tests {
 
     fn add_double_bond(mol: &mut Atomistic, a: AtomId, b: AtomId) {
         if let Ok(bid) = mol.add_bond(a, b) {
-            let _ = mol.set_bond_prop(bid, "order", PropValue::F64(2.0));
+            let _ = mol.set_bond_type(bid, BondType::Double);
         }
     }
 
@@ -452,5 +469,41 @@ mod tests {
         let stereo = assign_bond_stereo_from_3d(&g);
         let bid = g.bonds().next().unwrap().0;
         assert_eq!(stereo[&bid], BondStereo::None);
+    }
+    /// The E/Z label must be a function of the geometry, not of bond order.
+    ///
+    /// 3-methyl-2-pentene: both substituents on C3 are carbon, so the
+    /// atomic-number key ties. `max_by_key` keeps the last maximum, so swapping
+    /// the two C3 bonds used to flip the label between E and Z on identical
+    /// coordinates.
+    #[test]
+    fn the_ez_label_does_not_depend_on_bond_insertion_order() {
+        let build = |methyl_first: bool| {
+            let mut mol = Atomistic::new();
+            let c1 = mol.add_atom(Atom::xyz("C", -2.5, 0.6, 0.0));
+            let c2 = mol.add_atom(Atom::xyz("C", -1.2, 0.0, 0.0));
+            let c3 = mol.add_atom(Atom::xyz("C", 0.0, 0.6, 0.0));
+            let me = mol.add_atom(Atom::xyz("C", 0.1, 2.1, 0.0));
+            let et = mol.add_atom(Atom::xyz("C", 1.3, -0.1, 0.0));
+            mol.add_bond(c1, c2).unwrap();
+            let d = mol.add_bond(c2, c3).unwrap();
+            mol.set_bond_type(d, crate::system::bond::BondType::Double)
+                .unwrap();
+            if methyl_first {
+                mol.add_bond(c3, me).unwrap();
+                mol.add_bond(c3, et).unwrap();
+            } else {
+                mol.add_bond(c3, et).unwrap();
+                mol.add_bond(c3, me).unwrap();
+            }
+            let stereo = assign_bond_stereo_from_3d(&mol);
+            stereo.get(&d).copied()
+        };
+
+        assert_eq!(
+            build(true),
+            build(false),
+            "the same molecule with the same coordinates got two different labels"
+        );
     }
 }

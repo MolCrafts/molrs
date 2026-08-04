@@ -7,7 +7,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::error::MolRsError;
-use crate::system::molgraph::{KindId, MolGraph, NodeId};
+use crate::system::molgraph::{KindId, MolGraph, NodeId, RelationId};
 
 /// Result of [`MolGraph::induced_subgraph`].
 #[derive(Debug, Clone)]
@@ -21,6 +21,13 @@ pub struct InducedSubgraph {
 ///
 /// Boundary / hops keys are **parent** handles (before remap). `node_map` maps
 /// parent → new; `parent_of` is the inverse over new handles.
+///
+/// With `whole_groups`, `hops` is the distance from the nearest center
+/// *measured inside the extracted node set*. For every node the radius alone
+/// would have selected this is the true graph distance — a shortest path to a
+/// node `radius` hops out has every intermediate node closer still, so the
+/// whole path is selected. Only nodes pulled in by a group can carry a
+/// longer-than-true distance, and they are by construction beyond `radius`.
 #[derive(Debug, Clone)]
 pub struct ExtractedBall {
     pub graph: MolGraph,
@@ -66,12 +73,27 @@ impl MolGraph {
     /// - `copy_higher_order = false` copies only `kind` relations (O(ball×degree)
     ///   via the adjacency index). `true` also copies every other kind by
     ///   scanning its relation table (small-graph / verbatim path).
+    /// - `whole_groups` are node sets the ball may not split: a group with any
+    ///   member inside the ball is selected in full. Closure is iterated to a
+    ///   fixpoint, so overlapping groups are handled; groups nothing selects
+    ///   cost nothing. Pass `&[]` for a plain ball.
+    ///
+    /// Which groups to pass is the caller's policy — this kernel only knows
+    /// "do not select part of one". The chemistry case is ring systems: a cut
+    /// ring is not a smaller molecule, it is a different one, and ring
+    /// perception downstream reads it as such. Build them with
+    /// [`small_ring_closure`](crate::perceive::rings::small_ring_closure),
+    /// which bounds ring size and costs the ball rather than the parent;
+    /// [`RingInfo::ring_systems`](crate::perceive::rings::RingInfo::ring_systems)
+    /// answers the same question globally and without a bound, so it closes on
+    /// macrocycles too and can hand back the entire molecule.
     pub fn extract_ball(
         &self,
         centers: &[NodeId],
         radius: i64,
         kind: KindId,
         copy_higher_order: bool,
+        whole_groups: &[Vec<NodeId>],
     ) -> Result<ExtractedBall, MolRsError> {
         if radius < 0 {
             return Err(MolRsError::validation(format!(
@@ -137,7 +159,15 @@ impl MolGraph {
             }
         }
 
-        let selected: HashSet<NodeId> = hops.keys().copied().collect();
+        let mut selected: HashSet<NodeId> = hops.keys().copied().collect();
+
+        // Close the ball under `whole_groups`, then re-measure hops inside the
+        // grown set — the added nodes have no BFS distance yet, and a node the
+        // radius already reached keeps the same one (see `ExtractedBall`).
+        if self.close_under_groups(&mut selected, whole_groups) {
+            hops = self.hops_within(centers, &selected, kind);
+        }
+
         let mut boundary: Vec<NodeId> = selected
             .iter()
             .copied()
@@ -167,6 +197,67 @@ impl MolGraph {
         })
     }
 
+    /// Grow `selected` until no group in `whole_groups` is only partly in it.
+    /// Returns whether anything was added.
+    ///
+    /// One pass suffices for disjoint groups; the loop is what makes the kernel
+    /// total for overlapping ones (one group's completion can touch another).
+    fn close_under_groups(
+        &self,
+        selected: &mut HashSet<NodeId>,
+        whole_groups: &[Vec<NodeId>],
+    ) -> bool {
+        let mut grew = false;
+        loop {
+            let mut grew_this_pass = false;
+            for group in whole_groups {
+                if !group.iter().any(|n| selected.contains(n)) {
+                    continue;
+                }
+                for &n in group {
+                    // A group may name a node that is no longer live; selecting
+                    // it would poison materialisation, so skip it.
+                    if self.node_table().contains(n) && selected.insert(n) {
+                        grew_this_pass = true;
+                    }
+                }
+            }
+            grew |= grew_this_pass;
+            if !grew_this_pass {
+                return grew;
+            }
+        }
+    }
+
+    /// Multi-source BFS from `centers` restricted to `selected`, unbounded.
+    fn hops_within(
+        &self,
+        centers: &[NodeId],
+        selected: &HashSet<NodeId>,
+        kind: KindId,
+    ) -> HashMap<NodeId, i64> {
+        let mut hops: HashMap<NodeId, i64> = HashMap::with_capacity(selected.len());
+        let mut queue = VecDeque::new();
+        for &c in centers {
+            if selected.contains(&c) && hops.insert(c, 0).is_none() {
+                queue.push_back(c);
+            }
+        }
+        while let Some(cur) = queue.pop_front() {
+            let d = hops[&cur] + 1;
+            for (k, _rid, other) in self.neighbor_relations(cur) {
+                if k != kind || !selected.contains(&other) {
+                    continue;
+                }
+                if let std::collections::hash_map::Entry::Vacant(slot) = hops.entry(other) {
+                    slot.insert(d);
+                    queue.push_back(other);
+                }
+            }
+        }
+        hops
+    }
+
     /// Build a new graph with mirrored kind registry, remapped nodes in
     /// `ordered`, and relations either of every kind or only `only_kind`.
     fn materialize_induced(
@@ -189,24 +280,45 @@ impl MolGraph {
 
         let selected: HashSet<NodeId> = ordered.iter().copied().collect();
 
-        for kid in self.kind_ids() {
-            if let Some(only) = only_kind
-                && kid != only
-            {
-                continue;
+        let copy_relation = |graph: &mut MolGraph, kid: KindId, rid: RelationId| {
+            let rel = self.read_relation(kid, rid);
+            if !rel.nodes.iter().all(|n| selected.contains(n)) {
+                return;
             }
             let self_kind = graph
                 .kind_id(self.kind_name(kid))
                 .expect("kind mirrored at start of materialize_induced");
-            for rid in self.relation_ids(kid) {
-                let rel = self.read_relation(kid, rid);
-                if !rel.nodes.iter().all(|n| selected.contains(n)) {
-                    continue;
+            let mapped: smallvec::SmallVec<[NodeId; 4]> =
+                rel.nodes.iter().map(|n| node_map[n]).collect();
+            if let Ok(new_rid) = graph.add_relation(self_kind, &mapped) {
+                graph.write_relation_props(self_kind, new_rid, &rel.props);
+            }
+        };
+
+        match only_kind {
+            // Single kind: reach its relations through the adjacency index of
+            // the selected nodes — O(ball × degree). Scanning the kind's whole
+            // relation table instead would make every ball cost the *parent*,
+            // which is the complexity this path exists to avoid: a 9-atom ball
+            // on a 64 000-atom chain was walking all 64 000 bonds.
+            Some(only) => {
+                let mut copied: HashSet<RelationId> = HashSet::new();
+                for &node in ordered {
+                    for (kid, rid, _other) in self.neighbor_relations(node) {
+                        // Each relation is reachable from every endpoint.
+                        if kid == only && copied.insert(rid) {
+                            copy_relation(&mut graph, kid, rid);
+                        }
+                    }
                 }
-                let mapped: smallvec::SmallVec<[NodeId; 4]> =
-                    rel.nodes.iter().map(|n| node_map[n]).collect();
-                if let Ok(new_rid) = graph.add_relation(self_kind, &mapped) {
-                    graph.write_relation_props(self_kind, new_rid, &rel.props);
+            }
+            // Every kind, including higher-order terms the adjacency index does
+            // not key by endpoint: scan the tables (the verbatim path).
+            None => {
+                for kid in self.kind_ids() {
+                    for rid in self.relation_ids(kid) {
+                        copy_relation(&mut graph, kid, rid);
+                    }
                 }
             }
         }
@@ -275,13 +387,77 @@ mod tests {
         assert!(err.is_err());
     }
 
+    // -- whole_groups: the ball may not split a group ------------------------
+
+    #[test]
+    fn extract_ball_whole_group_pulls_in_the_rest() {
+        let (mol, ids) = linear_chain(10);
+        let group = vec![ids[5], ids[6], ids[7], ids[8]];
+        let ball = mol
+            .as_molgraph()
+            .extract_ball(&[ids[4]], 1, mol.bond_kind(), false, &[group])
+            .unwrap();
+        // radius alone: {3,4,5}. The group has 5 inside, so 6/7/8 come along.
+        let selected: HashSet<_> = ball.node_map.keys().copied().collect();
+        assert_eq!(selected.len(), 6);
+        for i in [3, 4, 5, 6, 7, 8] {
+            assert!(selected.contains(&ids[i]), "missing {i}");
+        }
+        // Distances stay honest: 3 and 5 are one hop out, 8 is four.
+        assert_eq!(ball.hops[&ids[4]], 0);
+        assert_eq!(ball.hops[&ids[5]], 1);
+        assert_eq!(ball.hops[&ids[8]], 4);
+    }
+
+    #[test]
+    fn extract_ball_untouched_group_costs_nothing() {
+        let (mol, ids) = linear_chain(10);
+        let far = vec![ids[8], ids[9]];
+        let ball = mol
+            .as_molgraph()
+            .extract_ball(&[ids[1]], 1, mol.bond_kind(), false, &[far])
+            .unwrap();
+        assert_eq!(ball.node_map.len(), 3);
+    }
+
+    #[test]
+    fn extract_ball_closes_overlapping_groups() {
+        // {2,3} ∩ {3,4,5} ≠ ∅: completing the first exposes the second, so a
+        // single pass would stop short of the fixpoint.
+        let (mol, ids) = linear_chain(10);
+        let groups = vec![vec![ids[2], ids[3]], vec![ids[3], ids[4], ids[5]]];
+        let ball = mol
+            .as_molgraph()
+            .extract_ball(&[ids[1]], 1, mol.bond_kind(), false, &groups)
+            .unwrap();
+        let selected: HashSet<_> = ball.node_map.keys().copied().collect();
+        for i in [0, 1, 2, 3, 4, 5] {
+            assert!(selected.contains(&ids[i]), "missing {i}");
+        }
+        assert_eq!(selected.len(), 6);
+    }
+
+    #[test]
+    fn extract_ball_boundary_follows_the_closed_set() {
+        let (mol, ids) = linear_chain(10);
+        let group = vec![ids[2], ids[3], ids[4]];
+        let ball = mol
+            .as_molgraph()
+            .extract_ball(&[ids[2]], 0, mol.bond_kind(), false, &[group])
+            .unwrap();
+        // Selected {2,3,4}: only 2 and 4 still have a neighbour outside.
+        let bset: HashSet<_> = ball.boundary.iter().copied().collect();
+        assert_eq!(bset.len(), 2);
+        assert!(bset.contains(&ids[2]) && bset.contains(&ids[4]));
+    }
+
     #[test]
     fn extract_ball_linear_multi_center() {
         let (mol, ids) = linear_chain(10);
         // centers={2,7}, radius=1 → {1,2,3,6,7,8}
         let ball = mol
             .as_molgraph()
-            .extract_ball(&[ids[2], ids[7]], 1, mol.bond_kind(), false)
+            .extract_ball(&[ids[2], ids[7]], 1, mol.bond_kind(), false, &[])
             .unwrap();
         assert_eq!(ball.hops.len(), 6);
         assert_eq!(ball.hops[&ids[2]], 0);
@@ -300,7 +476,7 @@ mod tests {
         let (mol, ids) = linear_chain(5);
         let ball = mol
             .as_molgraph()
-            .extract_ball(&[ids[2]], 0, mol.bond_kind(), false)
+            .extract_ball(&[ids[2]], 0, mol.bond_kind(), false, &[])
             .unwrap();
         assert_eq!(ball.graph.n_nodes(), 1);
         assert_eq!(ball.hops[&ids[2]], 0);
@@ -313,7 +489,7 @@ mod tests {
         let (mol, ids) = linear_chain(2);
         let err = mol
             .as_molgraph()
-            .extract_ball(&[ids[0]], -1, mol.bond_kind(), false);
+            .extract_ball(&[ids[0]], -1, mol.bond_kind(), false, &[]);
         assert!(err.is_err());
     }
 
@@ -324,7 +500,7 @@ mod tests {
         mol.remove_atom(a).unwrap();
         let err = mol
             .as_molgraph()
-            .extract_ball(&[a], 1, mol.bond_kind(), false);
+            .extract_ball(&[a], 1, mol.bond_kind(), false, &[]);
         assert!(err.is_err());
     }
 
@@ -334,7 +510,7 @@ mod tests {
         // parent has no angles
         assert_eq!(mol.n_angles(), 0);
         let ext = mol
-            .extract_subgraph(&[ids[2]], 2, /* regenerate_topology */ true)
+            .extract_subgraph(&[ids[2]], 2, /* regenerate_topology */ true, &[])
             .unwrap();
         // ball = atoms 0..4 all five; has 2-edge paths → angles
         assert_eq!(ext.graph.n_atoms(), 5);
@@ -351,7 +527,7 @@ mod tests {
         let parent_angles = mol.n_angles();
         assert!(parent_angles > 0);
         let ext = mol
-            .extract_subgraph(&[ids[1]], 2, /* regenerate_topology */ false)
+            .extract_subgraph(&[ids[1]], 2, /* regenerate_topology */ false, &[])
             .unwrap();
         // full chain is in the ball of radius 2 from index 1
         assert_eq!(ext.graph.n_atoms(), 4);
@@ -376,7 +552,7 @@ mod tests {
         let (mol, _) = linear_chain(3);
         let ball = mol
             .as_molgraph()
-            .extract_ball(&[], 1, mol.bond_kind(), false)
+            .extract_ball(&[], 1, mol.bond_kind(), false, &[])
             .unwrap();
         assert_eq!(ball.graph.n_nodes(), 0);
         assert!(ball.hops.is_empty());
@@ -396,5 +572,57 @@ mod tests {
         let mut g = MolGraph::new();
         let n = g.add_node_with(Atom::new());
         let _ = g.induced_subgraph(&[n]).unwrap();
+    }
+
+    #[test]
+    fn single_kind_ball_copies_every_bond_inside_it() {
+        // The adjacency-indexed path must not miss a bond that closes a cycle:
+        // such a bond is not on any BFS tree, so a copy driven by the search
+        // order rather than by adjacency would drop it and silently hand back
+        // an acyclic slice of a ring.
+        let mut mol = Atomistic::new();
+        let ids: Vec<_> = (0..6)
+            .map(|i| mol.add_atom_xyz("C", i as f64, 0.0, 0.0))
+            .collect();
+        for i in 0..6 {
+            mol.add_bond(ids[i], ids[(i + 1) % 6]).unwrap();
+        }
+
+        let bond = mol.bond_kind();
+        // Radius 3 from one atom of a 6-ring selects all six.
+        let ball = mol
+            .as_molgraph()
+            .extract_ball(&[ids[0]], 3, bond, false, &[])
+            .unwrap();
+        assert_eq!(ball.graph.n_nodes(), 6);
+        assert_eq!(
+            ball.graph.n_relations(ball.graph.kind_id("bonds").unwrap()),
+            6,
+            "the ring-closing bond was dropped"
+        );
+    }
+
+    #[test]
+    fn single_kind_and_verbatim_paths_agree_on_the_bond_set() {
+        // `copy_higher_order` switches between the adjacency-indexed copy and
+        // the full table scan. They may differ in which *higher-order* terms
+        // they carry — never in the bonds.
+        let (mut mol, ids) = linear_chain(8);
+        mol.generate_topology(true, true, false).unwrap();
+        let bond = mol.bond_kind();
+
+        let indexed = mol
+            .as_molgraph()
+            .extract_ball(&[ids[3]], 2, bond, false, &[])
+            .unwrap();
+        let verbatim = mol
+            .as_molgraph()
+            .extract_ball(&[ids[3]], 2, bond, true, &[])
+            .unwrap();
+
+        assert_eq!(indexed.graph.n_nodes(), verbatim.graph.n_nodes());
+        let count = |g: &MolGraph| g.n_relations(g.kind_id("bonds").unwrap());
+        assert_eq!(count(&indexed.graph), count(&verbatim.graph));
+        assert_eq!(count(&indexed.graph), 4, "5 atoms in a row share 4 bonds");
     }
 }

@@ -183,8 +183,22 @@ fn build_frame(atoms: &[SdfAtom], bonds: &[SdfBond]) -> std::io::Result<Frame> {
         bonds_block
             .insert("atomj", to_array_uint(j_vec, bn)?)
             .map_err(err_mapper)?;
+        // §14: an MDL bond block states integer orders (4 = aromatic in the
+        // SDF query alphabet), so it maps onto both facts. An aromatic entry
+        // carries no Kekulé phase — that is left `Unknown` for standardization.
+        let types: Vec<U> = order_vec
+            .iter()
+            .map(|&v| if v == 4 { 4 } else { v.min(3) })
+            .collect();
+        let numbers: Vec<U> = order_vec
+            .iter()
+            .map(|&v| if v == 4 { 0 } else { v.min(4) })
+            .collect();
         bonds_block
-            .insert("order", to_array_uint(order_vec, bn)?)
+            .insert("bond_type", to_array_uint(types, bn)?)
+            .map_err(err_mapper)?;
+        bonds_block
+            .insert("bond_number", to_array_uint(numbers, bn)?)
             .map_err(err_mapper)?;
         frame.insert("bonds", bonds_block);
     }
@@ -264,7 +278,6 @@ impl<R: BufRead> SDFReader<R> {
 
 impl<R: BufRead> Reader for SDFReader<R> {
     type R = R;
-    type Frame = Frame;
 
     fn new(reader: R) -> Self {
         Self { reader }
@@ -272,8 +285,10 @@ impl<R: BufRead> Reader for SDFReader<R> {
 }
 
 impl<R: BufRead> FrameReader for SDFReader<R> {
-    fn read_frame(&mut self) -> std::io::Result<Option<Self::Frame>> {
-        self.read_single_record()
+    fn read(&mut self) -> std::io::Result<Option<Frame>> {
+        // Validate on the way out: a frame that violates the vocabulary
+        // is a malformed file or a reader bug, not a result to return.
+        crate::io::reader::validated(self.read_single_record()?)
     }
 }
 
@@ -290,7 +305,7 @@ use std::io::Cursor;
 pub fn parse_frame_bytes(bytes: &[u8]) -> std::io::Result<Frame> {
     let cursor = Cursor::new(bytes);
     let mut reader = SDFReader::new(cursor);
-    reader.read_frame()?.ok_or_else(|| {
+    reader.read()?.ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             "SDF record slice contained no atoms",
@@ -409,10 +424,7 @@ mod tests {
     #[test]
     fn reads_water_record() {
         let mut reader = SDFReader::new(Cursor::new(WATER_SDF.as_bytes()));
-        let frame = reader
-            .read_frame()
-            .expect("read ok")
-            .expect("frame present");
+        let frame = reader.read().expect("read ok").expect("frame present");
 
         let x = frame.get_float("atoms", "x").expect("x column");
         assert_eq!(x.shape(), &[3]);
@@ -432,7 +444,7 @@ mod tests {
     fn rejects_v3000() {
         let bad = "name\n\n\n  0  0  0  0  0  0  0  0  0  0999 V3000\n";
         let mut reader = SDFReader::new(Cursor::new(bad.as_bytes()));
-        assert!(reader.read_frame().is_err());
+        assert!(reader.read().is_err());
     }
 
     // -----------------------------------------------------------------

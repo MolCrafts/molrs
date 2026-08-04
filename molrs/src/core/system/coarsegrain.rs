@@ -191,8 +191,18 @@ impl CoarseGrain {
     pub fn to_frame(&self) -> Frame {
         let mut frame = self.graph.to_frame();
         frame.rename_block("atoms", "beads");
-        frame.rename_column("bonds", "atomi", "ibead");
-        frame.rename_column("bonds", "atomj", "jbead");
+        // A CG system with no bonds has no `bonds` block, so the rename is
+        // legitimately a no-op there. When the block *is* present the graph
+        // just wrote both endpoints, so a failure is a broken invariant rather
+        // than a data condition — hence expect, not a swallowed Result.
+        if frame.contains_key("bonds") {
+            frame
+                .rename_column("bonds", "atomi", "ibead")
+                .expect("graph-built bonds block carries atomi");
+            frame
+                .rename_column("bonds", "atomj", "jbead")
+                .expect("graph-built bonds block carries atomj");
+        }
         frame.rename_block("bonds", "cgbonds");
         frame
     }
@@ -207,14 +217,22 @@ impl CoarseGrain {
         if !canonical.rename_block("beads", "atoms") {
             return Err(MolRsError::parse("Frame missing 'beads' block"));
         }
-        if canonical.contains_key("cgbonds")
-            && (!canonical.rename_column("cgbonds", "ibead", "atomi")
-                || !canonical.rename_column("cgbonds", "jbead", "atomj")
-                || !canonical.rename_block("cgbonds", "bonds"))
-        {
-            return Err(MolRsError::parse(
-                "Frame 'cgbonds' block is missing 'ibead'/'jbead' endpoints",
-            ));
+        if canonical.contains_key("cgbonds") {
+            // The rename is a write into `atomi`/`atomj`, so the schema checks
+            // the moved column against the endpoint spec (UInt). A CG frame
+            // carrying signed endpoints is rejected here rather than silently
+            // losing its topology downstream.
+            canonical
+                .rename_column("cgbonds", "ibead", "atomi")
+                .and_then(|()| canonical.rename_column("cgbonds", "jbead", "atomj"))
+                .map_err(|e| {
+                    MolRsError::parse(format!("Frame 'cgbonds' endpoints unusable: {e}"))
+                })?;
+            if !canonical.rename_block("cgbonds", "bonds") {
+                return Err(MolRsError::parse(
+                    "Frame 'cgbonds' block could not be renamed",
+                ));
+            }
         }
         let mut cg = Self::new();
         cg.graph.read_frame(&canonical)?;
@@ -280,7 +298,11 @@ impl CoarseGrain {
         radius: i64,
     ) -> Result<ExtractedCoarseGrain, MolRsError> {
         let ball = self.graph.extract_ball(
-            centers, radius, self.bond, /* copy_higher_order */ true,
+            centers,
+            radius,
+            self.bond,
+            /* copy_higher_order */ true,
+            /* whole_groups */ &[],
         )?;
         let mut cg = CoarseGrain::try_from_molgraph(ball.graph)?;
         for (&old, &new) in &ball.node_map {

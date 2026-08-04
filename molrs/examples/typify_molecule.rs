@@ -111,7 +111,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Benzene rings: {}", benzene_rings.num_rings());
 
     for (aid, atom) in benzene.atoms() {
-        if atom.get_str("symbol") == Some("C") {
+        if atom.get_str("element") == Some("C") {
             let in_ring = benzene_rings.is_atom_in_ring(aid);
             let size = benzene_rings.smallest_ring_containing_atom(aid);
             println!(
@@ -404,7 +404,7 @@ fn print_atom_types(
         .ok_or("atoms type column")?;
     println!("{name} atom types:");
     for ((_, atom), ty) in mol.atoms().zip(types.iter()) {
-        let sym = atom.get_str("symbol").unwrap_or("?");
+        let sym = atom.get_str("element").unwrap_or("?");
         let t: u32 = ty.parse().unwrap_or(0);
         println!("  {} → type {} ({})", sym, t, type_label(t));
     }

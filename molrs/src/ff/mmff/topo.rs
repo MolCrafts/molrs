@@ -29,15 +29,14 @@ pub enum BondOrder {
 }
 
 impl BondOrder {
-    fn from_order(o: f64) -> Self {
-        // RDKit SDF reader stores integer orders; aromatic SDFs are
-        // kekulized before writing, so we only see 1/2/3 here.
-        if o >= 2.5 {
-            BondOrder::Triple
-        } else if o >= 1.5 {
-            BondOrder::Double
-        } else {
-            BondOrder::Single
+    /// From the localized bond number. Aromaticity is *not* inferable here —
+    /// it is the bond's class, and the caller passes it separately.
+    fn from_number(n: crate::system::bond::BondNumber) -> Self {
+        use crate::system::bond::BondNumber;
+        match n {
+            BondNumber::Triple | BondNumber::Quadruple => BondOrder::Triple,
+            BondNumber::Double => BondOrder::Double,
+            BondNumber::Single | BondNumber::Unknown => BondOrder::Single,
         }
     }
 }
@@ -100,12 +99,20 @@ impl Topo {
                 Some(PropValue::Int(v)) => *v,
                 _ => 0,
             };
-            for (nbr_id, order) in mol.neighbor_bonds(id) {
+            for (nbr_id, bid) in mol.neighbor_bonds(id) {
                 let j = idx_of[&nbr_id];
-                let bo = BondOrder::from_order(order);
+                // `nbr_order` is the chemical class MMFF perceives against;
+                // `nbr_kekule` is the localized structure. They differ exactly
+                // on aromatic bonds — which is the reason for two fields.
+                let kekule = BondOrder::from_number(mol.bond_number(bid));
+                let class = if mol.bond_type(bid).is_aromatic() {
+                    BondOrder::Aromatic
+                } else {
+                    kekule
+                };
                 nbrs[i].push(j);
-                nbr_order[i].push(bo);
-                nbr_kekule[i].push(bo);
+                nbr_order[i].push(class);
+                nbr_kekule[i].push(kekule);
             }
         }
 

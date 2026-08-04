@@ -54,6 +54,7 @@ pub mod error;
 pub mod forcefield;
 pub mod frame;
 pub mod handle;
+pub mod schema;
 pub mod simbox;
 mod store;
 

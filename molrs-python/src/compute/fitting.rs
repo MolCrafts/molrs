@@ -20,12 +20,12 @@
 //! silently fabricate a transport coefficient.
 
 use molrs::compute::fitting::{CumulativeTrapezoid, LinearFit, Plateau};
-use molrs::compute::transport::DebyeFit;
 use molrs::compute::spectroscopy::{
     EinsteinHelfandSpectrum, GreenKuboSpectrum, IRSpectrum, PowerSpectrum, RamanSpectrum,
     ResonanceRamanSpectrum, RoaSpectrum, VcdSpectrum,
 };
 use molrs::compute::traits::{Compute, Fit};
+use molrs::compute::transport::DebyeFit;
 use molrs::compute::transport::{
     DebyeRelaxation, EinsteinConductivity, EinsteinDiffusion, EinsteinDiffusionArgs, EwaldBoundary,
     GreenKuboConductivity, GreenKuboDiffusion, VACF,
@@ -51,7 +51,7 @@ const EMPTY_FRAMES: &[&CoreFrame] = &[];
 /// Green–Kubo-diffusion input). Returns only the raw ACF curve — compose with
 /// [`PowerSpectrum`](PyPowerSpectrum) for VDOS or
 /// [`CumulativeTrapezoid`](PyCumulativeTrapezoid) for D.
-#[pyclass(module = "molrs", name = "VACF")]
+#[pyclass(module = "molrs.compute.transport", name = "VACF")]
 pub struct PyVACF;
 
 #[pymethods]
@@ -88,7 +88,7 @@ impl PyVACF {
 /// Raw velocity ACF for the Green–Kubo diffusion route (same raw curve as
 /// [`VACF`](PyVACF)). `D = (1/d)·∫ VACF dt` is then a
 /// [`CumulativeTrapezoid`](PyCumulativeTrapezoid) + scale step.
-#[pyclass(module = "molrs", name = "GreenKuboDiffusion")]
+#[pyclass(module = "molrs.compute.transport", name = "GreenKuboDiffusion")]
 pub struct PyGreenKuboDiffusion;
 
 #[pymethods]
@@ -122,7 +122,7 @@ impl PyGreenKuboDiffusion {
 /// Raw self-MSD for the Einstein diffusion route. Delegates to
 /// `MSD::windowed` — MSD math is NOT re-derived. `D = slope/(2d)` is then a
 /// [`LinearFit`](PyLinearFit) + scale step.
-#[pyclass(module = "molrs", name = "EinsteinDiffusion")]
+#[pyclass(module = "molrs.compute.transport", name = "EinsteinDiffusion")]
 pub struct PyEinsteinDiffusion;
 
 #[pymethods]
@@ -159,7 +159,7 @@ impl PyEinsteinDiffusion {
 /// `dielectric_einstein_helfand_conductivity`, with **no** fitted sigma/slope.
 /// `σ = slope/(6·V·k_B·T)·prefactor` is a downstream
 /// [`LinearFit`](PyLinearFit) + scale step.
-#[pyclass(module = "molrs", name = "EinsteinConductivity")]
+#[pyclass(module = "molrs.compute.transport", name = "EinsteinConductivity")]
 pub struct PyEinsteinConductivity;
 
 #[pymethods]
@@ -197,7 +197,7 @@ impl PyEinsteinConductivity {
 /// `transport_green_kubo_conductivity`, with **no** fitted sigma. The
 /// σ = (1/(3·V·k_B·T))·∫⟨JJ⟩ step is a downstream
 /// [`CumulativeTrapezoid`](PyCumulativeTrapezoid) + scale.
-#[pyclass(module = "molrs", name = "GreenKuboConductivity")]
+#[pyclass(module = "molrs.compute.transport", name = "GreenKuboConductivity")]
 pub struct PyGreenKuboConductivity;
 
 #[pymethods]
@@ -235,7 +235,7 @@ impl PyGreenKuboConductivity {
 /// unnormalized ACF, the zero-lag variance ⟨M(0)²⟩, and the V/T/Ewald-BC
 /// metadata the Debye amplitude needs (invariants b, c). The relaxation *shape*
 /// τ comes from [`DebyeFit`](PyDebyeFit) applied to the **normalized** ACF.
-#[pyclass(module = "molrs", name = "DebyeRelaxation")]
+#[pyclass(module = "molrs.compute.transport", name = "DebyeRelaxation")]
 pub struct PyDebyeRelaxation {
     inner: DebyeRelaxation,
 }
@@ -298,7 +298,7 @@ impl PyDebyeRelaxation {
 /// Ordinary-least-squares line fit over a fractional ``(start, end)`` window of
 /// an ``(x, y)`` curve. Reproduces the OLS slope of the legacy
 /// `einstein_helfand_conductivity` bit-for-bit on the same curve + window.
-#[pyclass(module = "molrs", name = "LinearFit")]
+#[pyclass(module = "molrs.compute.fitting", name = "LinearFit")]
 pub struct PyLinearFit {
     inner: LinearFit,
 }
@@ -343,7 +343,7 @@ impl PyLinearFit {
 /// Cumulative trapezoidal integral of a uniformly-sampled curve. Reproduces the
 /// running integral inside the legacy `green_kubo_conductivity` bit-for-bit on
 /// the same curve + dt (before the Green–Kubo prefactor).
-#[pyclass(module = "molrs", name = "CumulativeTrapezoid")]
+#[pyclass(module = "molrs.compute.fitting", name = "CumulativeTrapezoid")]
 pub struct PyCumulativeTrapezoid;
 
 #[pymethods]
@@ -380,7 +380,7 @@ impl PyCumulativeTrapezoid {
 
 /// Windowed-mean plateau reader over a fractional ``(a, b)`` window of a curve
 /// (e.g. reading the converged tail of a Green–Kubo running integral).
-#[pyclass(module = "molrs", name = "Plateau")]
+#[pyclass(module = "molrs.compute.fitting", name = "Plateau")]
 pub struct PyPlateau {
     inner: Plateau,
 }
@@ -420,7 +420,7 @@ impl PyPlateau {
 /// Φ(t) = A·exp(−t/τ), by log-linear least squares over the leading positive
 /// run. This is the **time-domain** ACF fit consolidated from molpy; it returns
 /// τ and the amplitude A.
-#[pyclass(module = "molrs", name = "DebyeFit")]
+#[pyclass(module = "molrs.compute.transport", name = "DebyeFit")]
 pub struct PyDebyeFit;
 
 #[pymethods]
@@ -469,7 +469,7 @@ fn spectrum_dict<'py>(
 /// Velocity power spectrum (VDOS) transform of a **raw velocity ACF**
 /// (CosineSq window + zero-padded forward FFT). Reproduces the legacy
 /// `power_spectrum` bit-for-bit on the raw ACF that function builds internally.
-#[pyclass(module = "molrs", name = "PowerSpectrum")]
+#[pyclass(module = "molrs.compute.spectroscopy", name = "PowerSpectrum")]
 pub struct PyPowerSpectrum;
 
 #[pymethods]
@@ -505,7 +505,7 @@ impl PyPowerSpectrum {
 /// Infrared absorption spectrum transform of a **raw dipole-flux ACF**
 /// (same window+FFT pipeline as [`PowerSpectrum`](PyPowerSpectrum); only the
 /// supplied ACF differs). Reproduces the legacy `ir_spectrum` bit-for-bit.
-#[pyclass(module = "molrs", name = "IRSpectrum")]
+#[pyclass(module = "molrs.compute.spectroscopy", name = "IRSpectrum")]
 pub struct PyIRSpectrum;
 
 #[pymethods]
@@ -541,7 +541,7 @@ impl PyIRSpectrum {
 /// Raman spectrum transform of **raw isotropic + anisotropic ACFs**
 /// (one CosineSq window per ACF, FFT both, then the cross-section + Bose
 /// prefactors). Reproduces the legacy `raman_spectrum` bit-for-bit.
-#[pyclass(module = "molrs", name = "RamanSpectrum")]
+#[pyclass(module = "molrs.compute.spectroscopy", name = "RamanSpectrum")]
 pub struct PyRamanSpectrum {
     inner: RamanSpectrum,
 }
@@ -619,7 +619,10 @@ fn dielectric_dict<'py>(
 /// derivative-FT + the `4π·KAPPA/(3·V·k_B·T)` prefactor. Reproduces the legacy
 /// `einstein_helfand_spectrum` bit-for-bit on the raw ACF that function built
 /// internally.
-#[pyclass(module = "molrs", name = "EinsteinHelfandSpectrum")]
+#[pyclass(
+    module = "molrs.compute.spectroscopy",
+    name = "EinsteinHelfandSpectrum"
+)]
 pub struct PyEinsteinHelfandSpectrum {
     inner: EinsteinHelfandSpectrum,
 }
@@ -669,7 +672,7 @@ impl PyEinsteinHelfandSpectrum {
 /// series): window + FFT → σ(ω) → ε(ω). Reproduces the legacy
 /// `green_kubo_spectrum` bit-for-bit on the raw ACF that function built
 /// internally.
-#[pyclass(module = "molrs", name = "GreenKuboSpectrum")]
+#[pyclass(module = "molrs.compute.spectroscopy", name = "GreenKuboSpectrum")]
 pub struct PyGreenKuboSpectrum {
     inner: GreenKuboSpectrum,
 }
@@ -738,7 +741,7 @@ fn raman_dict<'py>(
 /// Vibrational circular dichroism (VCD) transform of a **raw electric/magnetic
 /// dipole cross-flux ACF** (same window+FFT pipeline as `IRSpectrum`; the signed
 /// cross-flux ACF differs).
-#[pyclass(module = "molrs", name = "VcdSpectrum")]
+#[pyclass(module = "molrs.compute.spectroscopy", name = "VcdSpectrum")]
 pub struct PyVcdSpectrum;
 
 #[pymethods]
@@ -771,7 +774,7 @@ impl PyVcdSpectrum {
 
 /// Raman optical activity (ROA) transform of **raw iso/aniso ROA
 /// cross-correlations** (shares the Raman window+FFT+prefactor pipeline).
-#[pyclass(module = "molrs", name = "RoaSpectrum")]
+#[pyclass(module = "molrs.compute.spectroscopy", name = "RoaSpectrum")]
 pub struct PyRoaSpectrum {
     inner: RoaSpectrum,
 }
@@ -815,7 +818,7 @@ impl PyRoaSpectrum {
 /// Resonance-Raman transform of **raw resonant iso/aniso ACFs** (identical
 /// pipeline to `RamanSpectrum`; the ACFs come from a resonant polarizability
 /// series upstream).
-#[pyclass(module = "molrs", name = "ResonanceRamanSpectrum")]
+#[pyclass(module = "molrs.compute.spectroscopy", name = "ResonanceRamanSpectrum")]
 pub struct PyResonanceRamanSpectrum {
     inner: ResonanceRamanSpectrum,
 }

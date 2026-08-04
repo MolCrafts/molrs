@@ -9,15 +9,18 @@ The graph remains the sole owner of all data.
 from __future__ import annotations
 
 from collections.abc import Iterator, MutableMapping
-from typing import Any, Protocol, overload
+from typing import TYPE_CHECKING, Any, Protocol, overload
 from weakref import WeakValueDictionary
 
 import numpy as np
 
 from . import fields
-from .fields import FieldSpec
+from . import keys as _keys
 from ._lib import Atomistic as _RsAtomistic
 from ._lib import CoarseGrain as _RsCoarseGrain
+
+if TYPE_CHECKING:
+    from .frame import Frame as _Frame
 
 
 class RefLike(Protocol):
@@ -25,9 +28,9 @@ class RefLike(Protocol):
     handle: int
     world: Any
 
-    def __getitem__(self, key: str | FieldSpec) -> Any: ...
-    def __setitem__(self, key: str | FieldSpec, value: Any) -> None: ...
-    def get(self, key: str | FieldSpec, default: Any = None) -> Any: ...
+    def __getitem__(self, key: str) -> Any: ...
+    def __setitem__(self, key: str, value: Any) -> None: ...
+    def get(self, key: str, default: Any = None) -> Any: ...
 
 
 class _DictView:
@@ -35,21 +38,17 @@ class _DictView:
 
     data: MutableMapping[str, Any]
 
-    @staticmethod
-    def _key(key: Any) -> Any:
-        return key.key if isinstance(key, FieldSpec) else key
-
     def __getitem__(self, key: Any) -> Any:
-        return self.data[self._key(key)]
+        return self.data[key]
 
     def __setitem__(self, key: Any, value: Any) -> None:
-        self.data[self._key(key)] = value
+        self.data[key] = value
 
     def __delitem__(self, key: Any) -> None:
-        del self.data[self._key(key)]
+        del self.data[key]
 
     def __contains__(self, key: object) -> bool:
-        return self._key(key) in self.data
+        return key in self.data
 
     def __iter__(self) -> Iterator[str]:
         return iter(self.data)
@@ -68,7 +67,7 @@ class _DictView:
 
     def get(self, key: Any, default: Any = None) -> Any:
         try:
-            return self.data[self._key(key)]
+            return self.data[key]
         except KeyError:
             return default
 
@@ -90,11 +89,17 @@ class _DictView:
         return self is other
 
 
-_XYZ_KEYS = (fields.POS_X.key, fields.POS_Y.key, fields.POS_Z.key)
-_XYZ = fields.XYZ.key
-
-
 class _NodeData(MutableMapping[str, Any]):
+    """One node's fields, addressed by canonical key.
+
+    Several fields at once are addressed by a tuple of keys —
+    ``atom["x", "y", "z"]`` reads the coordinate triple and assigning to it
+    writes all three — mirroring ``Block["x", "y", "z"]`` on the columnar
+    side. There is deliberately no synthesized ``"xyz"`` key: a name that is
+    not a column, and that only coordinates get, is a second spelling for
+    something the canonical vocabulary already names three times.
+    """
+
     __slots__ = ("world", "handle")
 
     def __init__(self, world: Any, handle: int) -> None:
@@ -116,19 +121,22 @@ class _NodeData(MutableMapping[str, Any]):
     def _delete(self, key: str) -> None:
         self.world.delete(self.handle, key)
 
-    def __getitem__(self, key: str) -> Any:
-        if key == _XYZ:
-            return [self._get(k) for k in _XYZ_KEYS]
+    def __getitem__(self, key: str | tuple[str, ...]) -> Any:
+        if isinstance(key, tuple):
+            return [self[k] for k in key]
         if self._has(key):
             return self._get(key)
         raise KeyError(key)
 
-    def __setitem__(self, key: str, value: Any) -> None:
-        if key == _XYZ:
-            if len(value) != 3:
-                raise ValueError(f"xyz must be a 3-vector, got {value!r}")
-            for component, number in zip(_XYZ_KEYS, value):
-                self._set(component, float(number))
+    def __setitem__(self, key: str | tuple[str, ...], value: Any) -> None:
+        if isinstance(key, tuple):
+            values = list(value)
+            if len(values) != len(key):
+                raise ValueError(
+                    f"assigning to {key} needs {len(key)} values, got {len(values)}"
+                )
+            for component, number in zip(key, values):
+                self[component] = number
             return
         if value is None:
             if self._has(key):
@@ -148,8 +156,8 @@ class _NodeData(MutableMapping[str, Any]):
         return len(self._keys())
 
     def __contains__(self, key: object) -> bool:
-        if key == _XYZ:
-            return all(self._has(k) for k in _XYZ_KEYS)
+        if isinstance(key, tuple):
+            return all(self.__contains__(k) for k in key)
         return isinstance(key, str) and self._has(key)
 
     def __repr__(self) -> str:
@@ -240,25 +248,160 @@ class RelationRef[T: NodeRef](_DictView):
 
 
 class Refs[R: RefLike](list[R]):
-    """List of live refs with vector-style property lookup by field name."""
+    """List of live refs with vector-style property lookup by field name.
+
+    Two construction modes:
+
+    * **Materialised** — ordinary ``list`` of refs (``Refs(iterable)``).
+    * **Lazy** — ``Refs.from_handles(world, handles, intern, kind=...)`` stores
+      handles only; integer access interns on demand, and ``refs[field]`` reads
+      components via the world without interning every handle first.
+    """
+
+    __slots__ = ("_lazy_world", "_lazy_handles", "_lazy_intern", "_lazy_kind")
+
+    def __init__(self, iterable: Any = ()) -> None:
+        super().__init__(iterable)
+        self._lazy_world: Any = None
+        self._lazy_handles: list[int] | None = None
+        self._lazy_intern: Any = None
+        self._lazy_kind: str | None = None
+
+    @classmethod
+    def from_handles(
+        cls,
+        world: Any,
+        handles: list[int],
+        intern: Any,
+        *,
+        kind: str | None = None,
+    ) -> "Refs[R]":
+        """Build a lazy collection that interns handles on demand."""
+        out = cls()
+        out._lazy_world = world
+        out._lazy_handles = list(handles)
+        out._lazy_intern = intern
+        out._lazy_kind = kind
+        return out
+
+    def _is_lazy(self) -> bool:
+        return self._lazy_handles is not None
+
+    def __len__(self) -> int:
+        if self._lazy_handles is not None:
+            return len(self._lazy_handles)
+        return super().__len__()
+
+    def __iter__(self) -> Iterator[R]:  # type: ignore[override]
+        if self._lazy_handles is not None:
+            intern = self._lazy_intern
+            for handle in self._lazy_handles:
+                yield intern(handle)
+            return
+        yield from super().__iter__()
+
+    def __contains__(self, item: object) -> bool:
+        if self._lazy_handles is not None:
+            handle = getattr(item, "handle", None)
+            world = getattr(item, "world", None)
+            if handle is None or world is not self._lazy_world:
+                return False
+            # Relation views are kind-scoped; node views have no ``kind``.
+            if self._lazy_kind is not None:
+                if getattr(item, "kind", None) != self._lazy_kind:
+                    return False
+            return handle in self._lazy_handles
+        return super().__contains__(item)
 
     @overload
     def __getitem__(self, key: int) -> R: ...  # type: ignore[override]
 
     @overload
-    def __getitem__(self, key: slice) -> list[R]: ...  # type: ignore[override]
+    def __getitem__(self, key: slice) -> "Refs[R]": ...  # type: ignore[override]
 
     @overload
     def __getitem__(self, key: str) -> Any: ...
 
-    def __getitem__(self, key: int | slice | str) -> Any:  # type: ignore[override]
+    @overload
+    def __getitem__(self, key: tuple[str, ...]) -> Any: ...
+
+    def __getitem__(  # type: ignore[override]
+        self, key: int | slice | str | tuple[str, ...]
+    ) -> Any:
         if isinstance(key, str):
+            return self._column(key)
+        if isinstance(key, tuple):
+            # Several columns side by side, as ``Block["x", "y", "z"]`` gives.
+            return np.column_stack([np.asarray(self._column(k)) for k in key])
+        if self._lazy_handles is not None:
+            if isinstance(key, slice):
+                return type(self).from_handles(
+                    self._lazy_world,
+                    self._lazy_handles[key],
+                    self._lazy_intern,
+                    kind=self._lazy_kind,
+                )
+            return self._lazy_intern(self._lazy_handles[key])
+        return super().__getitem__(key)
+
+    def _column(self, key: str) -> Any:
+        """Vectorised field read; avoids interning when the collection is lazy."""
+        source = self._column_source()
+        if source is None:
+            # Heterogeneous worlds/kinds — per-ref ``get`` (preserves semantics).
             values = [ref.get(key) for ref in self]
             try:
                 return np.array(values)
             except (ValueError, TypeError):
                 return np.array(values, dtype=object)
-        return super().__getitem__(key)
+
+        world, handles, kind = source
+        if not handles:
+            return np.array([])
+
+        if kind is None:
+            # Dense f64 path when this collection is exactly the world's row order.
+            try:
+                if handles == world.entities():
+                    try:
+                        col = np.asarray(world.column(key))
+                        valid = np.asarray(world.validity(key))
+                        if bool(valid.all()):
+                            return col
+                        out = np.empty(len(col), dtype=object)
+                        out[:] = None
+                        out[valid] = col[valid]
+                        return out
+                    except Exception:
+                        pass  # not an f64 component (e.g. str ``element``)
+            except Exception:
+                pass
+            values = [world.get(h, key) for h in handles]
+        else:
+            values = [world.get_relation_prop(kind, h, key) for h in handles]
+
+        try:
+            return np.array(values)
+        except (ValueError, TypeError):
+            return np.array(values, dtype=object)
+
+    def _column_source(self) -> tuple[Any, list[int], str | None] | None:
+        """Return ``(world, handles, kind)`` for a uniform collection, else None."""
+        if self._lazy_handles is not None:
+            return self._lazy_world, self._lazy_handles, self._lazy_kind
+        if not self:
+            return None, [], None
+        world = self[0].world
+        # NodeRef has no ``kind``; RelationRef always does.
+        first_kind = getattr(self[0], "kind", None)
+        is_relation = hasattr(self[0], "kind")
+        if not all(r.world is world for r in self):
+            return None
+        if is_relation:
+            if not all(getattr(r, "kind", None) == first_kind for r in self):
+                return None
+            return world, [r.handle for r in self], first_kind
+        return world, [r.handle for r in self], None
 
 
 class GraphViews:
@@ -268,7 +411,11 @@ class GraphViews:
     _relation_classes: dict[str, type[RelationRef]] = {}
 
     def __init__(self, **props: Any) -> None:
-        self._props: dict[str, Any] = dict(props)
+        #: Whole-graph annotations (a name, a provenance tag). These describe
+        #: the graph; ``get``/``[]`` on the graph itself address the *component
+        #: store*, which is a different question with a different key space, so
+        #: annotations answer under their own name rather than sharing those.
+        self.props: dict[str, Any] = dict(props)
         # Registrations belong to one world.  Mutating the class dictionary would
         # make a custom relation type in one graph leak into every graph of that
         # Python class.
@@ -276,17 +423,18 @@ class GraphViews:
         self._node_refs: WeakValueDictionary[int, NodeRef] = WeakValueDictionary()
         self._relation_refs: dict[str, WeakValueDictionary[int, RelationRef]] = {}
 
-    def __getitem__(self, key: str) -> Any:
-        return self._props[key]
+    def to_frame(self) -> "_Frame":
+        """Serialize the graph to the canonical rich :class:`~molrs.Frame`.
 
-    def __setitem__(self, key: str, value: Any) -> None:
-        self._props[key] = value
+        The compiled leaf returns the bare PyO3 core, whose ``__getitem__``
+        yields core blocks. Every public molrs API yields the rich types, and a
+        core block reaching a caller surfaces far from here — as a neighbor
+        list or a writer failing on a column access the rich Block supports.
+        The upgrade is zero-copy: the rich Frame views the same Rust buffers.
+        """
+        from .frame import Frame as _RichFrame
 
-    def __contains__(self, key: str) -> bool:
-        return key in self._props
-
-    def get(self, key: str, default: Any = None) -> Any:
-        return self._props.get(key, default)
+        return _RichFrame.from_dict(super().to_frame())
 
     def _intern_node(self, handle: int, cls: type[NodeRef] | None = None) -> NodeRef:
         ref = self._node_refs.get(handle)
@@ -357,13 +505,17 @@ class GraphViews:
         return self.entities()
 
     def _node_views(self) -> Refs[NodeRef]:
-        return Refs(self._intern_node(handle) for handle in self._node_handles())
+        # Lazy: ``atoms["x"]`` / ``len(atoms)`` must not intern every handle.
+        return Refs.from_handles(self, self._node_handles(), self._intern_node)
 
     def _relation_views(self, kind: str) -> Refs[RelationRef]:
         if kind not in self.kinds():
             return Refs()
-        return Refs(
-            self._intern_relation(kind, handle) for handle in self.relation_ids(kind)
+        return Refs.from_handles(
+            self,
+            list(self.relation_ids(kind)),
+            lambda handle, _k=kind: self._intern_relation(_k, handle),
+            kind=kind,
         )
 
     def _all_relation_views(self) -> Refs[RelationRef]:
@@ -460,7 +612,7 @@ class Atom(NodeRef):
         return self.get("vsite") is not None
 
     def __repr__(self) -> str:
-        ident = self.get(fields.ELEMENT) or self.get(fields.TYPE)
+        ident = self.get(_keys.ELEMENT) or self.get(_keys.TYPE)
         return f"<Atom {self.handle}: {ident or '?'}>"
 
 
@@ -576,7 +728,7 @@ class CGBond(RelationRef[Bead]):
         return self.endpoints[1]
 
 
-class Atomistic(_RsAtomistic, GraphViews):
+class Atomistic(GraphViews, _RsAtomistic):
     """Public all-atom graph with live node and relation views.
 
     The native PyO3 leaf remains the storage owner and first base.  This class
@@ -662,7 +814,7 @@ class Atomistic(_RsAtomistic, GraphViews):
             self._remove_relation(link)
 
 
-class CoarseGrain(_RsCoarseGrain, GraphViews):
+class CoarseGrain(GraphViews, _RsCoarseGrain):
     """Public coarse-grained graph with live bead and bond views."""
 
     _node_cls = Bead
@@ -722,10 +874,6 @@ class CoarseGrain(_RsCoarseGrain, GraphViews):
             self._remove_relation(link)
 
 
-# Compatibility names are aliases, not alternate implementations.
-Entity = NodeRef
-Link = RelationRef
-Entities = Refs
 _GraphViews = GraphViews
 
 
@@ -739,12 +887,9 @@ __all__ = [
     "CoarseGrain",
     "Dihedral",
     "DrudeParticle",
-    "Entities",
-    "Entity",
-    "GraphViews",
+            "GraphViews",
     "Improper",
-    "Link",
-    "MasslessSite",
+        "MasslessSite",
     "NodeRef",
     "Refs",
     "RelationRef",

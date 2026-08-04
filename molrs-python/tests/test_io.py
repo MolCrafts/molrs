@@ -16,12 +16,12 @@ import molrs
 
 class TestReadPdb:
     def test_basic(self, water_pdb):
-        frame = molrs.read_pdb(str(water_pdb))
+        frame = molrs.io.raw.read_pdb(str(water_pdb))
         assert "atoms" in frame
         assert frame["atoms"].nrows == 3
 
     def test_has_coordinates(self, water_pdb):
-        frame = molrs.read_pdb(str(water_pdb))
+        frame = molrs.io.raw.read_pdb(str(water_pdb))
         atoms = frame["atoms"]
         assert atoms.view("x") is not None
         assert atoms.view("y") is not None
@@ -29,12 +29,12 @@ class TestReadPdb:
 
     def test_missing_file_raises_os_error(self):
         with pytest.raises(OSError):
-            molrs.read_pdb("/nonexistent/path.pdb")
+            molrs.io.raw.read_pdb("/nonexistent/path.pdb")
 
 
 class TestReadGro:
     def test_native_basic(self, water_gro):
-        frames = molrs.read_gro(str(water_gro))
+        frames = molrs.io.raw.read_gro(str(water_gro))
         assert len(frames) == 1
         f0 = frames[0]
         assert "atoms" in f0
@@ -42,9 +42,12 @@ class TestReadGro:
         assert f0.box is not None
 
     def test_native_columns(self, water_gro):
-        frames = molrs.read_gro(str(water_gro))
+        frames = molrs.io.raw.read_gro(str(water_gro))
         atoms = frames[0]["atoms"]
-        for col in ["resid", "resname", "atom_name", "atom_id", "x", "y", "z"]:
+        # The reader emits canonical names directly; `resid`/`atom_id` were
+        # format-native spellings that something downstream had to rename, and
+        # that rename is now a write into a UInt key an Int column cannot pass.
+        for col in ["res_id", "resname", "atom_name", "id", "x", "y", "z"]:
             assert col in atoms, f"missing column: {col}"
 
     def test_facade_canonical_columns(self, water_gro):
@@ -74,20 +77,20 @@ class TestReadGro:
 
     def test_missing_file_raises_os_error(self):
         with pytest.raises(OSError):
-            molrs.read_gro("/nonexistent/path.gro")
+            molrs.io.raw.read_gro("/nonexistent/path.gro")
 
 
 class TestReadXyz:
     def test_basic(self, water_xyz):
-        frame = molrs.read_xyz(str(water_xyz))
+        frame = molrs.io.raw.read_xyz(str(water_xyz))
         assert "atoms" in frame
         assert frame["atoms"].nrows == 3
 
     def test_has_coordinates(self, water_xyz):
-        frame = molrs.read_xyz(str(water_xyz))
+        frame = molrs.io.raw.read_xyz(str(water_xyz))
         atoms = frame["atoms"]
         assert atoms.view("x") is not None
 
     def test_missing_file_raises_os_error(self):
         with pytest.raises(OSError):
-            molrs.read_xyz("/nonexistent/path.xyz")
+            molrs.io.raw.read_xyz("/nonexistent/path.xyz")

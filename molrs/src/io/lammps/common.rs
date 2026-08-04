@@ -169,6 +169,10 @@ const DUMP_COLUMN_ALIASES: &[(&str, &str)] = &[
     // Core renames used across the stack (molpy / keys)
     ("q", keys::CHARGE),
     ("mol", keys::MOL_ID),
+    // A dump's `type` column holds LAMMPS' numeric type ordinal, not the
+    // force-field label — the vocabulary keeps those apart as `type_id` and
+    // `type`, so the rename happens here at the format boundary.
+    ("type", keys::TYPE_ID),
     // Legacy / alternate spellings we normalise on read
     ("molecule", keys::MOL_ID),
     ("molecule_id", keys::MOL_ID),

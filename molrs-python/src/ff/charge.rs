@@ -129,7 +129,7 @@ fn charges_out(py: Python<'_>, charges: Vec<f64>) -> Bound<'_, PyArray1<f64>> {
 /// >>> model.correct(methane, np.zeros(5))[0]     # 4 x the C-H increment
 /// 0.1572
 /// >>> model.assign(methanol, raw_sqm_charges)    # equivalences first, then corrects
-#[pyclass(module = "molrs", name = "BccModel")]
+#[pyclass(module = "molrs.ff.charge", name = "BccModel")]
 #[derive(Debug)]
 pub struct PyBccModel {
     inner: BccModel,
@@ -243,7 +243,7 @@ impl PyBccModel {
 /// Examples
 /// --------
 /// >>> molrs.MullikenModel().assign(mol, am1)
-#[pyclass(module = "molrs", name = "MullikenModel")]
+#[pyclass(module = "molrs.ff.charge", name = "MullikenModel")]
 #[derive(Debug)]
 pub struct PyMullikenModel;
 
@@ -310,7 +310,7 @@ impl PyMullikenModel {
 /// Examples
 /// --------
 /// >>> molrs.GasteigerModel().assign(mol)
-#[pyclass(module = "molrs", name = "GasteigerModel")]
+#[pyclass(module = "molrs.ff.charge", name = "GasteigerModel")]
 #[derive(Debug)]
 pub struct PyGasteigerModel;
 

@@ -11,7 +11,7 @@
 //!
 //! Memory is O(`window · n_dof`) for the ring plus O(n_frames) scalars for the
 //! direct curve — never O(trajectory · n_dof). The windowed curve equals the
-//! batch `MSD::windowed()` means for every lag `k ≤ window` (the batch path
+//! batch `MSD` `Window`-mode means for every lag `k ≤ window` (the batch path
 //! computes all lags up to `n_frames − 1`; a streaming estimator must cap the
 //! lag to bound the ring).
 
@@ -116,7 +116,7 @@ impl MSDAccumulator {
 
     /// Windowed MSD per lag, `k in [0, min(window, n_frames − 1)]`:
     /// `MSD(k) = Σ_{i,τ} |r_i(τ+k) − r_i(τ)|² / ((n_frames − k) · n_atoms)` —
-    /// the `MSD::windowed()` estimator truncated at `window`. Empty before the
+    /// the `MSD` `Window`-mode estimator truncated at `window`. Empty before the
     /// second frame.
     pub fn windowed_msd(&self) -> Vec<F> {
         if self.n_frames < 2 || self.n_dof == 0 {
@@ -149,6 +149,7 @@ fn sum_sq_disp(a: &[F], b: &[F], n_atoms: usize) -> F {
 mod tests {
     use super::super::MSD;
     use super::*;
+    use crate::compute::MsdMode;
     use crate::compute::traits::Compute;
     use molrs::Frame;
     use molrs::store::block::Block;
@@ -226,7 +227,7 @@ mod tests {
         let flat = walk(t, n, 7);
         let frames = to_molrs_frames(&flat, n);
         let refs: Vec<&Frame> = frames.iter().collect();
-        let batch = MSD::windowed().compute(&refs, ()).unwrap();
+        let batch = MSD::with_mode(MsdMode::Window).compute(&refs, ()).unwrap();
 
         let mut acc = MSDAccumulator::new(w);
         for f in &flat {

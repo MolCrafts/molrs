@@ -149,8 +149,8 @@ impl VACFAccumulator {
         let mut mu_dot_head: F = 0.0; // Σ_d μ_d · (sum of first k samples of DOF d)
 
         let mut out = Vec::with_capacity(max_lag + 1);
-        // k = 0: A_0 = B_0 = S_d.
-        out.push((self.acc[0] - 2.0 * sum_mu_s + tf * sum_mu_sq) * inv_n_dof);
+        // k = 0: A_0 = B_0 = S_d. Divide by n_origins = T for unbiased C(0).
+        out.push((self.acc[0] - 2.0 * sum_mu_s + tf * sum_mu_sq) * inv_n_dof / tf);
         for k in 1..=max_lag {
             let newest = &self.ring[self.ring.len() - k]; // sample x_{T-k}
             let oldest = &self.head[k - 1]; // sample x_{k-1}
@@ -158,7 +158,8 @@ impl VACFAccumulator {
             mu_dot_head += mu.iter().zip(oldest.iter()).map(|(m, v)| m * v).sum::<F>();
             // A_k + B_k = 2·S − tail_k − head_k  (per DOF, folded with μ_d).
             let corr = 2.0 * sum_mu_s - mu_dot_tail - mu_dot_head;
-            out.push((self.acc[k] - corr + (tf - k as F) * sum_mu_sq) * inv_n_dof);
+            let n_origins = tf - k as F;
+            out.push((self.acc[k] - corr + n_origins * sum_mu_sq) * inv_n_dof / n_origins);
         }
         Ok(out)
     }

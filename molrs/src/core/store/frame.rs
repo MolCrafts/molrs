@@ -10,7 +10,7 @@
 //! ```
 //! use molrs::store::frame::Frame;
 //! use molrs::store::block::Block;
-//! use molrs::types::{F, I};
+//! use molrs::types::{F, U};
 //! use ndarray::Array1;
 //!
 //! let mut frame = Frame::new();
@@ -19,7 +19,7 @@
 //! let mut atoms = Block::new();
 //! atoms.insert("x", Array1::from_vec(vec![1.0 as F, 2.0 as F, 3.0 as F]).into_dyn()).unwrap();
 //! atoms.insert("y", Array1::from_vec(vec![0.0 as F, 1.0 as F, 2.0 as F]).into_dyn()).unwrap();
-//! atoms.insert("id", Array1::from_vec(vec![1 as I, 2 as I, 3 as I]).into_dyn()).unwrap();
+//! atoms.insert("id", Array1::from_vec(vec![1 as U, 2 as U, 3 as U]).into_dyn()).unwrap();
 //!
 //! frame.insert("atoms", atoms);
 //!
@@ -296,15 +296,21 @@ impl Frame {
     /// atoms.insert("x", Array1::from_vec(vec![1.0 as F, 2.0 as F]).into_dyn()).unwrap();
     /// frame.insert("atoms", atoms);
     ///
-    /// assert!(frame.rename_column("atoms", "x", "position_x"));
+    /// frame.rename_column("atoms", "x", "position_x").unwrap();
     /// assert!(!frame["atoms"].contains_key("x"));
     /// assert!(frame["atoms"].contains_key("position_x"));
     /// ```
-    pub fn rename_column(&mut self, block_key: &str, old_col_key: &str, new_col_key: &str) -> bool {
-        if let Some(block) = self.map.get_mut(block_key) {
-            block.rename_column(old_col_key, new_col_key)
-        } else {
-            false
+    pub fn rename_column(
+        &mut self,
+        block_key: &str,
+        old_col_key: &str,
+        new_col_key: &str,
+    ) -> Result<(), crate::store::block::BlockError> {
+        match self.map.get_mut(block_key) {
+            Some(block) => block.rename_column(old_col_key, new_col_key),
+            None => Err(crate::store::block::BlockError::Validation {
+                message: format!("cannot rename: no block '{block_key}'"),
+            }),
         }
     }
 
@@ -391,15 +397,17 @@ impl Frame {
         self.map.values_mut()
     }
 
-    /// Validates cross-block consistency.
+    /// Judge this frame against the canonical Frame schema.
     ///
-    /// This method checks for common consistency issues:
-    /// - All blocks with "atoms" prefix should have the same nrows
-    /// - Bond indices (if present) should reference valid atoms
+    /// Delegates entirely to [`crate::store::schema::Validator::canonical`] —
+    /// this method does **not** re-implement dtype, shape, required-column, or
+    /// endpoint-range checks. Callers that need the full report (every
+    /// violation at once) should use the `Validator` directly; this is the
+    /// short form for the common "is this frame well-formed?" gate.
     ///
     /// # Returns
-    /// - `Ok(())` if validation passes
-    /// - `Err(MolRsError::Validation)` with details if validation fails
+    /// - `Ok(())` if the frame conforms
+    /// - `Err(MolRsError::Validation)` with the full report text otherwise
     ///
     /// # Examples
     ///
@@ -418,59 +426,9 @@ impl Frame {
     /// assert!(frame.validate().is_ok());
     /// ```
     pub fn validate(&self) -> Result<(), MolRsError> {
-        // Check atoms blocks have consistent nrows
-        let atoms_blocks: Vec<_> = self
-            .map
-            .iter()
-            .filter(|(k, _)| k.starts_with("atoms"))
-            .collect();
-
-        if !atoms_blocks.is_empty() {
-            let first_nrows = atoms_blocks[0].1.nrows();
-            for (key, block) in &atoms_blocks {
-                if block.nrows() != first_nrows {
-                    return Err(MolRsError::validation(format!(
-                        "Inconsistent atom block sizes: '{}' has {:?} rows but expected {:?}",
-                        key,
-                        block.nrows(),
-                        first_nrows
-                    )));
-                }
-            }
-        }
-
-        // Check bond indices if bonds block exists
-        if let Some(bonds) = self.get("bonds")
-            && let Some(atoms) = self.get("atoms")
-        {
-            let natoms = atoms.nrows().unwrap_or(0);
-
-            // Check atomi indices
-            if let Some(i_col) = bonds.get_uint("atomi") {
-                for &idx in i_col.iter() {
-                    if idx as usize >= natoms {
-                        return Err(MolRsError::validation(format!(
-                            "Bond atomi index {} out of range [0, {})",
-                            idx, natoms
-                        )));
-                    }
-                }
-            }
-
-            // Check atomj indices
-            if let Some(j_col) = bonds.get_uint("atomj") {
-                for &idx in j_col.iter() {
-                    if idx as usize >= natoms {
-                        return Err(MolRsError::validation(format!(
-                            "Bond atomj index {} out of range [0, {})",
-                            idx, natoms
-                        )));
-                    }
-                }
-            }
-        }
-
-        Ok(())
+        crate::store::schema::Validator::canonical()
+            .validate(self)
+            .map_err(|report| MolRsError::validation(report.to_string()))
     }
 
     /// Checks if the frame is consistent without returning an error.
@@ -705,7 +663,7 @@ mod tests {
         frame.insert("atoms", atoms);
 
         // Successful rename
-        assert!(frame.rename_column("atoms", "x", "position_x"));
+        frame.rename_column("atoms", "x", "position_x").unwrap();
         assert!(!frame["atoms"].contains_key("x"));
         assert!(frame["atoms"].contains_key("position_x"));
         assert_eq!(
@@ -718,10 +676,14 @@ mod tests {
         );
 
         // Try to rename in non-existent block
-        assert!(!frame.rename_column("nonexistent", "x", "new_x"));
+        assert!(frame.rename_column("nonexistent", "x", "new_x").is_err());
 
         // Try to rename non-existent column
-        assert!(!frame.rename_column("atoms", "nonexistent", "new_name"));
+        assert!(
+            frame
+                .rename_column("atoms", "nonexistent", "new_name")
+                .is_err()
+        );
     }
 
     #[test]
@@ -755,7 +717,7 @@ mod tests {
         // Try to rename to existing block name
         let mut bonds = Block::new();
         bonds
-            .insert("type", Array1::from_vec(vec![1 as I]).into_dyn())
+            .insert("count", Array1::from_vec(vec![1 as I]).into_dyn())
             .unwrap();
         frame.insert("bonds", bonds);
         assert!(!frame.rename_block("molecules", "bonds"));

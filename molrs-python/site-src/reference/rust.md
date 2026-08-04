@@ -5,12 +5,11 @@ those pages instead of copying signatures or rustdoc text.
 
 | Crate | Reference |
 | --- | --- |
-| Facade | [`molcrafts-molrs`](https://docs.rs/molcrafts-molrs) |
-| Core model | [`molcrafts-molrs-core`](https://docs.rs/molcrafts-molrs-core) |
-| I/O | [`molcrafts-molrs-io`](https://docs.rs/molcrafts-molrs-io) |
-| Compute | [`molcrafts-molrs-compute`](https://docs.rs/molcrafts-molrs-compute) |
-| Force fields | [`molcrafts-molrs-ff`](https://docs.rs/molcrafts-molrs-ff) |
-| 3D conformer generation | [`molcrafts-molrs-conformer`](https://docs.rs/molcrafts-molrs-conformer) |
+| Library (single crate) | [`molcrafts-molrs`](https://docs.rs/molcrafts-molrs) |
+| CXX bridge (source / Atomiverse) | `molcrafts-molrs-cxxapi` (not on crates.io as a separate science package) |
+
+Feature modules inside `molcrafts-molrs`: `core` (always on), `perceive`,
+`io`, `ff`, `compute`, `signal`, `conformer`, `smiles`.
 
 The Packmol-aligned packing workflow lives in the separate
 [`molpack`](https://github.com/MolCrafts/molpack) repository.

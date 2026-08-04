@@ -11,7 +11,8 @@
 //! The original `MolGraph` is never mutated; a clone is returned.
 //!
 //! # Bond-order convention
-//! Bond order is read from the bond's `"order"` property as an `f64`.
+//! Localized bond counts are read from the bond's `bond_number`, and
+//! aromaticity from its `bond_type` — the two are separate questions.
 //! If the property is absent the bond is assumed to be a single bond (1.0).
 //! Aromatic bonds should be stored as 1.5.
 //!
@@ -25,6 +26,7 @@
 //! (B, C, Si, …) they diverge, which is exactly the bug this rule fixes.
 
 use crate::system::atomistic::{AtomId, Atomistic, BondId};
+use crate::system::bond::BondType;
 use crate::system::molgraph::Atom;
 use molrs::Element;
 
@@ -104,7 +106,7 @@ pub fn add_hydrogens(mol: &Atomistic) -> Atomistic {
             }
             let h_id = new_mol.add_atom(h);
             if let Ok(bid) = new_mol.add_bond(heavy_id, h_id) {
-                let _ = new_mol.set_bond_prop(bid, "order", 1.0_f64);
+                let _ = new_mol.set_bond_type(bid, BondType::Single);
             }
         }
     }
@@ -273,6 +275,13 @@ pub fn remove_hydrogens(mol: &Atomistic) -> Atomistic {
 /// element has no defined default valences (e.g. noble gases).
 pub fn implicit_h_count(mol: &Atomistic, atom_id: AtomId) -> Option<u32> {
     let atom = mol.get_atom(atom_id).ok()?;
+
+    // A declared hydrogen count (SMILES bracket atom) is exact: `[nH]` has one
+    // hydrogen and `[C]` has none, whatever the valence model would prefer.
+    if let Some(h) = atom.get("h_count").and_then(|v| v.as_f64()) {
+        return Some(h.max(0.0).round() as u32);
+    }
+
     let sym = atom.get_str("element")?;
     let element = Element::by_symbol(sym)?;
 
@@ -314,7 +323,7 @@ pub fn implicit_h_count(mol: &Atomistic, atom_id: AtomId) -> Option<u32> {
     }
 
     // Sum of bond orders connected to this atom (the explicit valence).
-    let demand: f64 = bond_order_sum(mol, atom_id);
+    let demand: f64 = valence_demand(mol, atom_id, valences[0]);
 
     // Select the smallest allowed valence ≥ the (un-charge-adjusted) demand.
     let target = valences
@@ -331,20 +340,62 @@ pub fn implicit_h_count(mol: &Atomistic, atom_id: AtomId) -> Option<u32> {
     }
 }
 
-/// Sum of bond orders for all bonds incident to `atom_id`.
-fn bond_order_sum(mol: &Atomistic, atom_id: AtomId) -> f64 {
-    // Build a local bond-id list from bond iteration (adjacency is private).
-    bond_ids_for(mol, atom_id)
+/// Explicit valence of `atom_id` — the demand its existing bonds already place
+/// on `lowest_valence`, the smallest valence its (charge-adjusted) element has.
+///
+/// # Aromatic bonds
+///
+/// An aromatic bond is stored with order `1.5`, but that number is a *bond*
+/// property and summing it does not give an atom's valence: in every Kekulé
+/// structure an aromatic atom has one σ bond per aromatic neighbour, plus at
+/// most one π bond. Summing 1.5 per bond bills a ring atom with two aromatic
+/// neighbours for two half-π bonds it does not both have, and bills a
+/// lone-pair donor for a π bond it does not have at all — which is how
+/// thiophene's S reaches 3.0, takes the S valence of 4, and grows a spurious
+/// S–H.
+///
+/// So aromatic bonds are counted as the σ frame, and the π bond is added back
+/// exactly once — only when the σ frame leaves room for it. That single test
+/// separates the two donor classes without an element table:
+///
+/// | atom | σ | lowest valence | π? | demand | H |
+/// |---|---|---|---|---|---|
+/// | benzene C–H     | 2 | 4 | yes | 3 | 1 |
+/// | substituted C   | 3 | 4 | yes | 4 | 0 |
+/// | pyridine N      | 2 | 3 | yes | 3 | 0 |
+/// | furan O         | 2 | 2 | no  | 2 | 0 |
+/// | thiophene S     | 2 | 2 | no  | 2 | 0 |
+/// | aromatic C=O    | 4 | 4 | no  | 4 | 0 |
+///
+/// (Pyrrole-type N reaches this path only when its H was *not* declared; a
+/// declared `h_count` short-circuits in [`implicit_h_count`].)
+///
+/// A graph with integral Kekulé orders has no aromatic bonds and is summed
+/// unchanged.
+fn valence_demand(mol: &Atomistic, atom_id: AtomId, lowest_valence: u8) -> f64 {
+    // The two facts are read from their own places: how many bonds this is
+    // (the localized number) and whether it is delocalized (the class).
+    let bonds: Vec<(BondType, f64)> = bond_ids_for(mol, atom_id)
         .into_iter()
-        .filter_map(|bid| mol.get_bond(bid).ok())
-        .map(|bond| {
-            // Accept order stored as either F64 (2.0) or Int (2); absent → single.
-            bond.props
-                .get("order")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(1.0)
+        .map(|bid| {
+            let number = mol.bond_number(bid).count().max(1) as f64;
+            (mol.bond_type(bid), number)
         })
-        .sum()
+        .collect();
+
+    let n_aromatic = bonds.iter().filter(|(t, _)| t.is_aromatic()).count();
+    // An aromatic bond contributes its sigma bond here; the extra pi bond is
+    // added once below if the atom is still short of its lowest valence.
+    let sigma: f64 = bonds
+        .iter()
+        .map(|(t, n)| if t.is_aromatic() { 1.0 } else { *n })
+        .sum();
+
+    if n_aromatic > 0 && sigma < lowest_valence as f64 - 1e-6 {
+        sigma + 1.0
+    } else {
+        sigma
+    }
 }
 
 /// Collect all `BondId`s incident to `atom_id` by scanning `mol.bonds()`.
@@ -371,7 +422,7 @@ fn bond_ids_for(mol: &Atomistic, atom_id: AtomId) -> Vec<BondId> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::system::molgraph::PropValue;
+    use crate::system::bond::BondNumber;
 
     fn atom(sym: &str) -> Atom {
         let mut a = Atom::new();
@@ -381,7 +432,13 @@ mod tests {
 
     fn bond_with_order(mol: &mut Atomistic, a: AtomId, b: AtomId, order: f64) {
         if let Ok(bid) = mol.add_bond(a, b) {
-            let _ = mol.set_bond_prop(bid, "order", PropValue::F64(order));
+            // The old float encoding, expressed in the two facts it conflated:
+            // 1.5 meant "aromatic", every integer meant a localized count.
+            let _ = if (order - 1.5).abs() < 1e-6 {
+                mol.set_bond_class(bid, BondType::Aromatic, BondNumber::Unknown)
+            } else {
+                mol.set_bond_type(bid, BondType::from_code(order.round() as u32))
+            };
         }
     }
 
@@ -773,5 +830,127 @@ mod tests {
         assert!(n_ang > 0);
         let result = add_hydrogens(&g);
         assert!(result.n_angles() >= n_ang);
+    }
+
+    #[test]
+    fn test_explicit_h_count_is_authoritative() {
+        // A declared H count (SMILES bracket atom) is exact — do not top it up
+        // to the element's default valence.
+        let mut g = Atomistic::new();
+        let mut c = Atom::new();
+        c.set("element", "C");
+        c.set("h_count", 2.0_f64);
+        let id = g.add_atom(c);
+        assert_eq!(implicit_h_count(&g, id), Some(2));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Molecular-formula tests over real SMILES input.
+//
+// These are the end-to-end gate on the aromatic valence model: a hand-built
+// graph can be given whatever bond orders make the arithmetic work, so only
+// notation-driven fixtures can catch a parser that mis-declares aromaticity.
+// ---------------------------------------------------------------------------
+#[cfg(all(test, feature = "smiles"))]
+mod smiles_formula_tests {
+    use super::*;
+    use crate::io::smiles::{parse_smiles, to_atomistic};
+    use std::collections::BTreeMap;
+
+    /// Element → count of the hydrogen-completed molecule.
+    fn formula(smiles: &str) -> BTreeMap<String, usize> {
+        let ir = parse_smiles(smiles).unwrap_or_else(|e| panic!("parse {smiles:?}: {e}"));
+        let mol = to_atomistic(&ir).unwrap_or_else(|e| panic!("to_atomistic {smiles:?}: {e}"));
+        let with_h = add_hydrogens(&mol);
+        let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+        for (_, atom) in with_h.atoms() {
+            let sym = atom.get_str("element").expect("element").to_owned();
+            *counts.entry(sym).or_default() += 1;
+        }
+        counts
+    }
+
+    fn assert_formula(smiles: &str, expected: &[(&str, usize)]) {
+        let got = formula(smiles);
+        let want: BTreeMap<String, usize> = expected
+            .iter()
+            .map(|(s, n)| ((*s).to_owned(), *n))
+            .collect();
+        assert_eq!(got, want, "formula of {smiles:?}");
+    }
+
+    #[test]
+    fn test_aspirin_formula() {
+        // C9H8O4 — 21 atoms.
+        assert_formula("CC(=O)Oc1ccccc1C(=O)O", &[("C", 9), ("H", 8), ("O", 4)]);
+    }
+
+    #[test]
+    fn test_benzene_formula() {
+        assert_formula("c1ccccc1", &[("C", 6), ("H", 6)]);
+    }
+
+    #[test]
+    fn test_toluene_formula() {
+        assert_formula("Cc1ccccc1", &[("C", 7), ("H", 8)]);
+    }
+
+    #[test]
+    fn test_naphthalene_formula() {
+        // Fusion carbons carry three aromatic bonds and take no hydrogen.
+        assert_formula("c1ccc2ccccc2c1", &[("C", 10), ("H", 8)]);
+    }
+
+    #[test]
+    fn test_pyridine_formula() {
+        // One-electron donor N: three ring σ+π valences, no N–H.
+        assert_formula("c1ccncc1", &[("C", 5), ("H", 5), ("N", 1)]);
+    }
+
+    #[test]
+    fn test_pyrrole_formula() {
+        // Lone-pair donor N — the H is declared by the bracket and must survive.
+        assert_formula("c1cc[nH]c1", &[("C", 4), ("H", 5), ("N", 1)]);
+    }
+
+    #[test]
+    fn test_furan_formula() {
+        assert_formula("c1ccoc1", &[("C", 4), ("H", 4), ("O", 1)]);
+    }
+
+    #[test]
+    fn test_thiophene_formula() {
+        // S has valences [2,4,6]: the lone-pair donor must not reach for 4.
+        assert_formula("c1ccsc1", &[("C", 4), ("H", 4), ("S", 1)]);
+    }
+
+    #[test]
+    fn test_caffeine_formula() {
+        assert_formula(
+            "Cn1cnc2c1c(=O)n(c(=O)n2C)C",
+            &[("C", 8), ("H", 10), ("N", 4), ("O", 2)],
+        );
+    }
+
+    #[test]
+    fn test_ethanol_formula() {
+        assert_formula("CCO", &[("C", 2), ("H", 6), ("O", 1)]);
+    }
+
+    #[test]
+    fn test_acetate_anion_formula() {
+        assert_formula("CC(=O)[O-]", &[("C", 2), ("H", 3), ("O", 2)]);
+    }
+
+    #[test]
+    fn test_biphenyl_formula() {
+        // The explicit single bond between the two rings is not aromatic.
+        assert_formula("c1ccccc1-c1ccccc1", &[("C", 12), ("H", 10)]);
+    }
+
+    #[test]
+    fn test_indole_formula() {
+        assert_formula("c1ccc2[nH]ccc2c1", &[("C", 8), ("H", 7), ("N", 1)]);
     }
 }

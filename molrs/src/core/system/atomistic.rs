@@ -29,6 +29,7 @@ use std::ops::{Deref, DerefMut};
 use crate::error::MolRsError;
 use crate::store::frame::Frame;
 use crate::store::keys;
+use crate::system::bond::{BondNumber, BondType};
 use crate::system::molgraph::{Atom, KindId, MolGraph, NodeId, PropValue, Relation, RelationId};
 
 /// Result of [`Atomistic::extract_subgraph`].
@@ -176,8 +177,50 @@ impl Atomistic {
     /// Add a bond between two existing atoms (default order 1.0).
     pub fn add_bond(&mut self, a: AtomId, b: AtomId) -> Result<BondId, MolRsError> {
         let bid = self.graph.add_relation(self.bond, &[a, b])?;
-        self.graph.set_relation_prop(self.bond, bid, "order", 1.0)?;
+        self.set_bond_type(bid, BondType::Single)?;
         Ok(bid)
+    }
+
+    /// The bond's chemical class; [`BondType::Unknown`] if it has none.
+    pub fn bond_type(&self, id: BondId) -> BondType {
+        match self.get_bond(id) {
+            Ok(b) => BondType::from_prop(b.props.get(keys::BOND_TYPE)),
+            Err(_) => BondType::Unknown,
+        }
+    }
+
+    /// The bond's localized (Kekulé) bond number; [`BondNumber::Unknown`] if it
+    /// has none — an aromatic bond before kekulization, for instance.
+    pub fn bond_number(&self, id: BondId) -> BondNumber {
+        match self.get_bond(id) {
+            Ok(b) => BondNumber::from_prop(b.props.get(keys::BOND_NUMBER)),
+            Err(_) => BondNumber::Unknown,
+        }
+    }
+
+    /// Set both facts about a bond at once.
+    ///
+    /// They are set together because they are only meaningful together: a class
+    /// without a number leaves the bond un-standardized, and a number without a
+    /// class leaves a renderer no way to tell aromatic from double.
+    pub fn set_bond_class(
+        &mut self,
+        id: BondId,
+        bond_type: BondType,
+        bond_number: BondNumber,
+    ) -> Result<(), MolRsError> {
+        self.set_bond_prop(id, keys::BOND_TYPE, bond_type)?;
+        self.set_bond_prop(id, keys::BOND_NUMBER, bond_number)
+    }
+
+    /// Set a plain (non-aromatic) bond, whose class implies its number.
+    ///
+    /// `Aromatic` has no implied number, so it must go through
+    /// [`set_bond_class`](Self::set_bond_class) with the number a Kekulé
+    /// assignment decided.
+    pub fn set_bond_type(&mut self, id: BondId, bond_type: BondType) -> Result<(), MolRsError> {
+        let number = bond_type.implied_number().unwrap_or_default();
+        self.set_bond_class(id, bond_type, number)
     }
 
     /// Remove a bond.
@@ -210,24 +253,18 @@ impl Atomistic {
         self.graph.n_relations(self.bond)
     }
 
-    /// Iterate over `(neighbor_id, bond_order)` for a given atom (order read
-    /// from the `"order"` prop, default 1.0).
-    pub fn neighbor_bonds(&self, id: AtomId) -> impl Iterator<Item = (AtomId, f64)> + '_ {
+    /// Iterate over `(neighbor_id, bond_id)` for a given atom.
+    ///
+    /// Yields the bond handle rather than a number: a caller that wants the
+    /// localized count asks [`bond_number`](Self::bond_number), and one that
+    /// wants to know whether the bond is aromatic asks
+    /// [`bond_type`](Self::bond_type). Handing back a single float is what let
+    /// those two questions be answered by the same value.
+    pub fn neighbor_bonds(&self, id: AtomId) -> impl Iterator<Item = (AtomId, BondId)> + '_ {
         self.graph
             .neighbor_relations(id)
             .filter(move |(kind, _, _)| *kind == self.bond)
-            .map(move |(kind, rid, other)| {
-                let order = self
-                    .graph
-                    .get_relation(kind, rid)
-                    .ok()
-                    .and_then(|r| match r.props.get("order") {
-                        Some(PropValue::F64(v)) => Some(*v),
-                        _ => None,
-                    })
-                    .unwrap_or(1.0);
-                (other, order)
-            })
+            .map(move |(_, rid, other)| (other, rid))
     }
 
     /// Endpoints `(a, b)` of a bond by id, without materializing its property
@@ -585,12 +622,14 @@ impl Atomistic {
         centers: &[AtomId],
         radius: i64,
         regenerate_topology: bool,
+        whole_groups: &[Vec<AtomId>],
     ) -> Result<ExtractedAtomistic, MolRsError> {
         let ball = self.graph.extract_ball(
             centers,
             radius,
             self.bond,
             /* copy_higher_order */ !regenerate_topology,
+            whole_groups,
         )?;
         let mut atomistic = Atomistic::try_from_molgraph(ball.graph)?;
         if regenerate_topology {
@@ -882,9 +921,12 @@ mod tests {
         mol.add_bond(o, h1).unwrap();
         mol.add_bond(o, h2).unwrap();
         assert_eq!(mol.neighbors(o).count(), 2);
-        let nb: Vec<(AtomId, f64)> = mol.neighbor_bonds(o).collect();
+        let nb: Vec<(AtomId, BondId)> = mol.neighbor_bonds(o).collect();
         assert_eq!(nb.len(), 2);
-        assert!(nb.iter().all(|(_, order)| (*order - 1.0).abs() < 1e-12));
+        assert!(
+            nb.iter()
+                .all(|(_, bid)| mol.bond_number(*bid) == BondNumber::Single)
+        );
     }
 
     #[test]

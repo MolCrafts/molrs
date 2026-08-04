@@ -149,7 +149,7 @@ impl PyScalarObservable {
         domain: Option<String>,
         target: Option<String>,
     ) -> PyResult<Self> {
-        Self::new_impl(
+        Self::build(
             name,
             data,
             description,
@@ -193,7 +193,7 @@ impl PyVectorObservable {
         domain: Option<String>,
         target: Option<String>,
     ) -> PyResult<Self> {
-        Self::new_impl(
+        Self::build(
             name,
             data,
             description,
@@ -223,7 +223,7 @@ impl PyVectorObservable {
 }
 
 impl PyScalarObservable {
-    fn new_impl(
+    pub(crate) fn build(
         name: &str,
         data: &Bound<'_, PyAny>,
         description: &str,
@@ -250,7 +250,7 @@ impl PyScalarObservable {
 }
 
 impl PyVectorObservable {
-    fn new_impl(
+    pub(crate) fn build(
         name: &str,
         data: &Bound<'_, PyAny>,
         description: &str,

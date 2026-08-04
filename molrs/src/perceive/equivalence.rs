@@ -92,6 +92,7 @@ use std::collections::HashMap;
 
 use crate::store::keys;
 use crate::system::atomistic::{AtomId, Atomistic};
+use crate::system::bond::BondType;
 use molrs::Element;
 
 /// Atom prop written by [`crate::perceive::Perceive::find_equivalence_classes`]:
@@ -397,8 +398,8 @@ struct Flat {
     adj: Vec<Vec<usize>>,
     /// Per atom: coordinates, for the `-eq 2` torsions.
     xyz: Vec<[f64; 3]>,
-    /// Per bond: endpoints and bond order.
-    bonds: Vec<(usize, usize, f64)>,
+    /// Per bond: endpoints and chemical class.
+    bonds: Vec<(usize, usize, BondType)>,
 }
 
 impl Flat {
@@ -444,12 +445,9 @@ impl Flat {
             };
             adj[i].push(j);
             adj[j].push(i);
-            let order = bond
-                .props
-                .get(keys::ORDER)
-                .and_then(crate::system::molgraph::PropValue::as_f64)
-                .unwrap_or(1.0);
-            bonds.push((i, j, order));
+            // The *class*, not the number: "is this a double bond" must stay
+            // false for an aromatic bond whose Kekulé phase happens to be 2.
+            bonds.push((i, j, BondType::from_prop(bond.props.get(keys::BOND_TYPE))));
         }
 
         Self {
@@ -497,14 +495,14 @@ impl Flat {
     /// C–N bond.
     fn is_restricted(&self, j: usize, k: usize) -> bool {
         let (zj, zk) = (self.z[j], self.z[k]);
-        let order = self
+        let bond_type = self
             .bonds
             .iter()
             .find(|(a, b, _)| (*a == j && *b == k) || (*a == k && *b == j))
-            .map_or(1.0, |(_, _, o)| *o);
+            .map_or(BondType::Unknown, |(_, _, t)| *t);
 
         // C=C.
-        if zj == 6 && zk == 6 && (order - 2.0).abs() < 0.5 {
+        if zj == 6 && zk == 6 && bond_type == BondType::Double {
             return true;
         }
         // Amide C–N: the carbon carries a double bond to a chalcogen.
@@ -519,7 +517,7 @@ impl Flat {
                     } else {
                         return false;
                     };
-                    (*o - 2.0).abs() < 0.5 && (self.z[other] == 8 || self.z[other] == 16)
+                    *o == BondType::Double && (self.z[other] == 8 || self.z[other] == 16)
                 })
         };
         amide(j, k) || amide(k, j)

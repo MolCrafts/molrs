@@ -350,13 +350,6 @@ fn to_array_uint(vec: Vec<U>, len: usize) -> std::io::Result<ndarray::ArrayD<U>>
         .into_dyn())
 }
 
-fn to_array_int(vec: Vec<I>, len: usize) -> std::io::Result<ndarray::ArrayD<I>> {
-    Ok(Array1::<I>::from_vec(vec)
-        .into_shape_with_order(IxDyn(&[len]))
-        .map_err(err_mapper)?
-        .into_dyn())
-}
-
 fn to_array_string(vec: Vec<String>, len: usize) -> std::io::Result<ndarray::ArrayD<String>> {
     Ok(Array1::from_vec(vec)
         .into_shape_with_order(IxDyn(&[len]))
@@ -422,8 +415,21 @@ fn build_atoms_block(atoms: &[AtomRecord]) -> std::io::Result<(Block, String, Ha
     block
         .insert("res_name", to_array_string(res_names, n)?)
         .map_err(err_mapper)?;
+    // Emit the canonical `res_id` directly rather than a format-native
+    // `res_seq` that something downstream renames: the rename would be a write
+    // into a UInt key, so an Int column could not survive it anyway.
+    let res_ids: Vec<U> = res_seqs
+        .iter()
+        .map(|&v| {
+            u32::try_from(v).map_err(|_| {
+                err_mapper(format!(
+                    "PDB residue sequence number {v} is negative; residue ids are unsigned"
+                ))
+            })
+        })
+        .collect::<std::io::Result<_>>()?;
     block
-        .insert("res_seq", to_array_int(res_seqs, n)?)
+        .insert("res_id", to_array_uint(res_ids, n)?)
         .map_err(err_mapper)?;
     block
         .insert("chain_id", to_array_string(chain_ids, n)?)
@@ -573,7 +579,6 @@ impl<R: BufRead> PDBReader<R> {
 
 impl<R: BufRead> Reader for PDBReader<R> {
     type R = R;
-    type Frame = Frame;
 
     fn new(reader: R) -> Self {
         Self { reader }
@@ -581,8 +586,10 @@ impl<R: BufRead> Reader for PDBReader<R> {
 }
 
 impl<R: BufRead> FrameReader for PDBReader<R> {
-    fn read_frame(&mut self) -> std::io::Result<Option<Self::Frame>> {
-        self.read_single_frame()
+    fn read(&mut self) -> std::io::Result<Option<Frame>> {
+        // Validate on the way out: a frame that violates the vocabulary
+        // is a malformed file or a reader bug, not a result to return.
+        crate::io::reader::validated(self.read_single_frame()?)
     }
 }
 
@@ -596,14 +603,16 @@ pub struct PDBWriter<W: Write> {
 
 impl<W: Write> crate::io::writer::Writer for PDBWriter<W> {
     type W = W;
-    type FrameLike = Frame;
     fn new(writer: W) -> Self {
         Self { writer }
     }
 }
 
 impl<W: Write> FrameWriter for PDBWriter<W> {
-    fn write_frame(&mut self, frame: &Frame) -> std::io::Result<()> {
+    fn write(&mut self, frame: &Frame) -> std::io::Result<()> {
+        // Refuse to emit a frame that violates the vocabulary: a bad file
+        // looks fine and is found wrong later, by whatever reads it.
+        crate::io::writer::check_before_write(frame)?;
         write_pdb_frame(&mut self.writer, frame)
     }
 }
@@ -674,8 +683,8 @@ fn write_atom_conect_records<W: Write>(
     let chain_ids = owned_str("chain_id");
     let elements = owned_str("element");
 
-    let res_seqs: Vec<I> = frame
-        .get_int("atoms", "res_seq")
+    let res_seqs: Vec<U> = frame
+        .get_uint("atoms", "res_id")
         .as_ref()
         .and_then(|arr| arr.as_slice().map(|s| s.to_vec()))
         .unwrap_or_default();
@@ -859,7 +868,7 @@ pub fn read_pdb_frame<P: AsRef<Path>>(path: P) -> std::io::Result<Frame> {
     let file = File::open(path)?;
     let reader = BufReader::new(file);
     let mut pdb_reader = PDBReader::new(reader);
-    pdb_reader.read_frame()?.ok_or_else(|| {
+    pdb_reader.read()?.ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             "No frame found in PDB file",
@@ -889,7 +898,7 @@ pub fn read_pdb_traj<P: AsRef<Path>>(path: P) -> std::io::Result<Vec<Frame>> {
     let reader = BufReader::new(file);
     let mut pdb_reader = PDBReader::new(reader);
     let mut frames = Vec::new();
-    while let Some(frame) = pdb_reader.read_frame()? {
+    while let Some(frame) = pdb_reader.read()? {
         frames.push(frame);
     }
     Ok(frames)
@@ -909,7 +918,7 @@ use std::io::Cursor;
 pub fn parse_frame_bytes(bytes: &[u8]) -> std::io::Result<Frame> {
     let cursor = Cursor::new(bytes);
     let mut reader = PDBReader::new(cursor);
-    reader.read_frame()?.ok_or_else(|| {
+    reader.read()?.ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             "PDB frame slice contained no atoms",
@@ -1209,7 +1218,7 @@ END
 "#;
 
         let mut reader = PDBReader::new(std::io::Cursor::new(pdb_content));
-        let frame = reader.read_frame().expect("IO error").expect("No frame");
+        let frame = reader.read().expect("IO error").expect("No frame");
 
         let atom_block = frame.get("atoms").expect("No atoms block");
         let elements = atom_block.get_string("element").expect("No element column");
@@ -1308,7 +1317,7 @@ END
     fn read_all_models(text: &str) -> Vec<Frame> {
         let mut reader = PDBReader::new(std::io::Cursor::new(text.to_string()));
         let mut frames = Vec::new();
-        while let Some(f) = reader.read_frame().expect("read frame") {
+        while let Some(f) = reader.read().expect("read frame") {
             frames.push(f);
         }
         frames
@@ -1394,8 +1403,8 @@ END
             .unwrap();
         atoms
             .insert(
-                "res_seq",
-                Array1::from_vec(vec![5 as I])
+                "res_id",
+                Array1::from_vec(vec![5 as U])
                     .into_shape_with_order(IxDyn(&[n]))
                     .unwrap()
                     .into_dyn(),

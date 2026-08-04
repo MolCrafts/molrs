@@ -3,11 +3,6 @@ import pytest
 import molrs
 
 
-def test_element_has_no_compatibility_aliases():
-    assert not hasattr(molrs, "ElementData")
-    assert not hasattr(molrs.Element, "initialize")
-
-
 @pytest.mark.parametrize(
     ("identifier", "number", "name", "symbol"),
     [

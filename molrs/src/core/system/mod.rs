@@ -3,6 +3,7 @@
 //! data, and CG mapping.
 
 pub mod atomistic;
+pub mod bond;
 pub mod coarsegrain;
 pub(crate) mod element;
 pub mod entity_table;
@@ -12,4 +13,5 @@ pub mod mapping;
 pub mod molgraph;
 pub mod topology;
 
+pub use bond::{BondNumber, BondType};
 pub use extract::{ExtractedBall, InducedSubgraph};

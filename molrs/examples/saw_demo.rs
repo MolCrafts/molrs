@@ -9,7 +9,7 @@
 //! prints per-run statistics: chain shape, bond-length spread, minimum pairwise
 //! separation, box volume, and whether every point landed inside the box.
 
-use molrs::generate::{FccLattice, OffLattice, SelfAvoidingWalk, WalkOutput};
+use molrs::builder::{FccLattice, OffLattice, SelfAvoidingWalk, WalkOutput};
 use molrs::spatial::simbox::SimBox;
 use molrs::types::{F, F3};
 

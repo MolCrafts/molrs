@@ -121,9 +121,9 @@ mod tests {
     /// same constant the legacy free function used.
     fn einstein_helfand_prefactor() -> f64 {
         use molrs::units::constants::{
-            ANGSTROM_M, BOLTZMANN as K_B_SI, ELEMENTARY_CHARGE as E_C, PICOSECOND_S,
+            ANGSTROM_M, BOLTZMANN as K_B_SI, ELEMENTARY_CHARGE as E_C, FEMTOSECOND_S,
         };
-        (E_C * E_C * ANGSTROM_M * ANGSTROM_M / PICOSECOND_S) / (6.0 * ANGSTROM_M.powi(3) * K_B_SI)
+        (E_C * E_C * ANGSTROM_M * ANGSTROM_M / FEMTOSECOND_S) / (6.0 * ANGSTROM_M.powi(3) * K_B_SI)
     }
 
     /// Empty frame slice for the series-based raw computes.
@@ -189,10 +189,10 @@ mod tests {
         assert!((raw.msd[2] - 9.0).abs() < 1e-12);
         assert_eq!(raw.lag_times.len(), 3);
 
-        // Folded MD→SI prefactor (Einstein 1/6) ≈ 3.0988e6 S·m⁻¹ per
-        // [(e·Å)²·ps⁻¹·Å⁻³·K⁻¹]. Guards against conversion drift.
+        // Folded MD→SI prefactor (Einstein 1/6) ≈ 3.0988e9 S·m⁻¹ per
+        // [(e·Å)²·fs⁻¹·Å⁻³·K⁻¹]. Guards against conversion drift.
         let prefactor = einstein_helfand_prefactor();
-        assert!((prefactor - 3.0988e6).abs() / 3.0988e6 < 1e-3);
+        assert!((prefactor - 3.0988e9).abs() / 3.0988e9 < 1e-3);
     }
 
     #[test]
@@ -265,20 +265,20 @@ mod tests {
         use crate::compute::fitting::LinearFit;
         use crate::compute::traits::Fit;
         use molrs::units::constants::{
-            ANGSTROM_M, BOLTZMANN as K_B_SI, ELEMENTARY_CHARGE as E_C, PICOSECOND_S,
+            ANGSTROM_M, BOLTZMANN as K_B_SI, ELEMENTARY_CHARGE as E_C, FEMTOSECOND_S,
         };
 
         let n_realisations = 48usize;
         let n_ions = 50usize;
         let n_frames = 1500usize;
-        let dt = 1.0_f64; // ps
+        let dt = 1.0_f64; // fs
         let q = 1.0_f64; // e
         let volume = 1.0e5_f64; // Å³
         let temperature = 300.0_f64; // K
         let step = 0.5_f64; // Å, uniform per-axis displacement amplitude
         // Nernst–Einstein prefactor (no Einstein 1/6 here: D folds it in).
         let ne_prefactor =
-            (E_C * E_C * ANGSTROM_M * ANGSTROM_M / PICOSECOND_S) / (ANGSTROM_M.powi(3) * K_B_SI);
+            (E_C * E_C * ANGSTROM_M * ANGSTROM_M / FEMTOSECOND_S) / (ANGSTROM_M.powi(3) * K_B_SI);
         let eh_prefactor = einstein_helfand_prefactor();
 
         let mut rng = rand::rngs::StdRng::seed_from_u64(20260601);
@@ -323,7 +323,7 @@ mod tests {
             // Realised per-axis step variance → D = var/(2·dt); analytic
             // Nernst–Einstein σ = n·q²·D/(k_B·T).
             let var_axis = step_sq_sum / step_count; // Å²
-            let d_diff = var_axis / (2.0 * dt); // Å²·ps⁻¹
+            let d_diff = var_axis / (2.0 * dt); // Å²·fs⁻¹
             let number_density = n_ions as f64 / volume; // Å⁻³
             sigma_ne_sum += ne_prefactor * number_density * q * q * d_diff / temperature;
         }

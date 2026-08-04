@@ -66,7 +66,7 @@ class TestBlockSelector:
             {
                 "x": [1.0, 2.0, 3.0],
                 "y": [4.0, 5.0, 6.0],
-                "id": np.array([10, 20, 30], dtype=np.int64),
+                "id": np.array([10, 20, 30], dtype=np.uint32),
             }
         )
 
@@ -118,9 +118,7 @@ class TestBlockListIndexErrors:
             _ = b[["a", "b"]]
 
     def test_shape_mismatch_raises_value_error(self):
-        b = Block(
-            {"a": np.zeros((2, 3)), "b": np.zeros((2, 2))}
-        )
+        b = Block({"a": np.zeros((2, 3)), "b": np.zeros((2, 2))})
         with pytest.raises(ValueError):
             _ = b[["a", "b"]]
 
@@ -180,14 +178,14 @@ class TestBlockSort:
 
 class TestBlockIteration:
     def test_iterrows(self):
-        b = Block({"x": [1.0, 2.0], "id": np.array([10, 20], dtype=np.int64)})
+        b = Block({"x": [1.0, 2.0], "id": np.array([10, 20], dtype=np.uint32)})
         rows = list(b.iterrows())
         assert rows[0][0] == 0
         assert rows[0][1]["id"] == 10
         assert rows[1][1]["x"] == pytest.approx(2.0)
 
     def test_itertuples(self):
-        b = Block({"x": [1.0, 2.0], "id": np.array([10, 20], dtype=np.int64)})
+        b = Block({"x": [1.0, 2.0], "id": np.array([10, 20], dtype=np.uint32)})
         tup = list(b.itertuples())
         assert tup[0].id == 10
         assert tup[1].x == pytest.approx(2.0)
@@ -217,7 +215,7 @@ class TestBlockShapeAndSerialization:
         assert Block().nrows == 0
 
     def test_to_dict_from_dict_round_trip(self):
-        b = Block({"x": [1.0, 2.0], "id": np.array([10, 20], dtype=np.int64)})
+        b = Block({"x": [1.0, 2.0], "id": np.array([10, 20], dtype=np.uint32)})
         d = b.to_dict()
         b2 = Block.from_dict(d)
         np.testing.assert_allclose(b2["x"], [1.0, 2.0])
@@ -248,7 +246,7 @@ class TestBlockCsv:
         src = Block(
             {
                 "x": [1.0, 2.0],
-                "id": np.array([10, 20], dtype=np.int64),
+                "id": np.array([10, 20], dtype=np.uint32),
                 "name": ["p", "q"],
             }
         )
@@ -274,9 +272,9 @@ class TestBlockCsv:
             Block.from_csv(StringIO(""))
 
     def test_to_csv_no_header(self):
-        b = Block({"x": np.array([1, 2], dtype=np.int64)})
+        b = Block({"count": np.array([1, 2], dtype=np.int64)})
         text = b.to_csv(header=False)
-        assert "x" not in text.splitlines()[0]
+        assert "count" not in text.splitlines()[0]
 
     def test_to_csv_writes_file(self, tmp_path):
         b = Block({"x": [1.0, 2.0]})
@@ -310,7 +308,9 @@ class TestRichFrame:
         assert f.box.volume() == pytest.approx(1000.0, abs=1.0)
 
     def test_blocks_iterates_rich_blocks(self):
-        f = Frame({"atoms": {"x": [1.0]}, "bonds": {"i": np.array([0], dtype=np.int64)}})
+        f = Frame(
+            {"atoms": {"x": [1.0]}, "bonds": {"i": np.array([0], dtype=np.int64)}}
+        )
         blks = list(f.blocks)
         assert len(blks) == 2
         assert all(isinstance(b, Block) for b in blks)
@@ -356,7 +356,9 @@ class TestRichFrame:
         assert f2.box is not None
 
     def test_keys_contains_len_delitem(self):
-        f = Frame({"atoms": {"x": [1.0]}, "bonds": {"i": np.array([0], dtype=np.int64)}})
+        f = Frame(
+            {"atoms": {"x": [1.0]}, "bonds": {"i": np.array([0], dtype=np.int64)}}
+        )
         assert sorted(f.keys()) == ["atoms", "bonds"]
         del f["bonds"]
         assert "bonds" not in f and len(f) == 1

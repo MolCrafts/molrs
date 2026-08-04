@@ -73,7 +73,7 @@ fn ring_detection(mol: &Atomistic) {
     // Per-atom ring membership
     println!("\n  Per-atom ring info:");
     for (id, atom) in mol.atoms() {
-        let sym = atom.get_str("symbol").unwrap();
+        let sym = atom.get_str("element").unwrap();
         let in_ring = rings.is_atom_in_ring(id);
         let n_rings = rings.num_atom_rings(id);
         let smallest = rings.smallest_ring_containing_atom(id);
@@ -87,9 +87,9 @@ fn ring_detection(mol: &Atomistic) {
     println!("\n  Per-bond ring info:");
     for (bid, bond) in mol.bonds() {
         let a_atom = mol.get_atom(bond.nodes[0]).expect("atom exists");
-        let a_sym = a_atom.get_str("symbol").unwrap();
+        let a_sym = a_atom.get_str("element").unwrap();
         let b_atom = mol.get_atom(bond.nodes[1]).expect("atom exists");
-        let b_sym = b_atom.get_str("symbol").unwrap();
+        let b_sym = b_atom.get_str("element").unwrap();
         let order = bond
             .props
             .get("order")
@@ -182,7 +182,7 @@ fn summary(mol: &Atomistic) {
     // Element breakdown
     let mut elements: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     for (_id, atom) in mol.atoms() {
-        if let Some(sym) = atom.get_str("symbol") {
+        if let Some(sym) = atom.get_str("element") {
             *elements.entry(sym.to_owned()).or_default() += 1;
         }
     }

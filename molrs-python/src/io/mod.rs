@@ -21,7 +21,7 @@ use molrs::io::data::gro::{read_gro as read_gro_rs, write_gro as write_gro_rs};
 use molrs::io::data::lammps_data::{read_lammps_data, write_lammps_data};
 use molrs::io::data::pdb::{read_pdb_frame, read_pdb_traj, write_pdb_frame, write_pdb_traj};
 use molrs::io::data::xyz::{XYZReader, read_xyz_frame, read_xyz_traj, write_xyz_frame};
-use molrs::io::reader::{ReadSeek, TrajReader, open_seekable};
+use molrs::io::reader::{ReadSeek, TrajectoryReader, open_seekable};
 use molrs::io::trajectory::dcd::{
     DcdReader, open_dcd, read_dcd as read_dcd_rs, write_dcd as write_dcd_rs,
 };
@@ -182,19 +182,19 @@ pub fn read_lammps_traj(path: &str) -> PyResult<Vec<PyFrame>> {
 // Shared trajectory-reader helpers
 //
 // `LAMMPSTrajReader` and `DCDTrajReader` wrap different concrete readers that
-// both implement [`TrajReader`]. These generics give both classes one
+// both implement [`TrajectoryReader`]. These generics give both classes one
 // consistent, molpy-aligned behaviour set (negative indexing, slicing, batch
 // reads) without duplicating the logic per class.
 // ============================================================================
 
 /// Number of frames in the trajectory.
-fn traj_len<R: TrajReader<Frame = CoreFrame>>(inner: &mut R) -> PyResult<usize> {
+fn traj_len<R: TrajectoryReader>(inner: &mut R) -> PyResult<usize> {
     inner.len().map_err(io_error_to_pyerr)
 }
 
 /// Read a known in-bounds, non-negative index. Used by slice iteration where
 /// the bounds are already resolved.
-fn traj_read_idx<R: TrajReader<Frame = CoreFrame>>(inner: &mut R, idx: isize) -> PyResult<PyFrame> {
+fn traj_read_idx<R: TrajectoryReader>(inner: &mut R, idx: isize) -> PyResult<PyFrame> {
     let frame = inner
         .read_step(idx as usize)
         .map_err(io_error_to_pyerr)?
@@ -204,10 +204,7 @@ fn traj_read_idx<R: TrajReader<Frame = CoreFrame>>(inner: &mut R, idx: isize) ->
 
 /// Read a single frame, resolving Python-style negative indices and raising
 /// `IndexError` if out of range.
-fn traj_read_frame<R: TrajReader<Frame = CoreFrame>>(
-    inner: &mut R,
-    index: isize,
-) -> PyResult<PyFrame> {
+fn traj_read_frame<R: TrajectoryReader>(inner: &mut R, index: isize) -> PyResult<PyFrame> {
     let n = traj_len(inner)? as isize;
     let idx = if index < 0 { index + n } else { index };
     if idx < 0 || idx >= n {
@@ -218,10 +215,7 @@ fn traj_read_frame<R: TrajReader<Frame = CoreFrame>>(
 
 /// Read a frame by step index, returning ``None`` when out of bounds (lenient
 /// variant retained for backward compatibility).
-fn traj_read_step<R: TrajReader<Frame = CoreFrame>>(
-    inner: &mut R,
-    step: usize,
-) -> PyResult<Option<PyFrame>> {
+fn traj_read_step<R: TrajectoryReader>(inner: &mut R, step: usize) -> PyResult<Option<PyFrame>> {
     match inner.read_step(step).map_err(io_error_to_pyerr)? {
         Some(f) => Ok(Some(PyFrame::from_core_frame(f)?)),
         None => Ok(None),
@@ -229,7 +223,7 @@ fn traj_read_step<R: TrajReader<Frame = CoreFrame>>(
 }
 
 /// Read an explicit list of (possibly negative) indices.
-fn traj_read_frames<R: TrajReader<Frame = CoreFrame>>(
+fn traj_read_frames<R: TrajectoryReader>(
     inner: &mut R,
     indices: Vec<isize>,
 ) -> PyResult<Vec<PyFrame>> {
@@ -241,7 +235,7 @@ fn traj_read_frames<R: TrajReader<Frame = CoreFrame>>(
 
 /// Iterate already-resolved `[start, stop)` bounds with `step` (the semantics
 /// produced by Python's ``slice.indices``).
-fn traj_slice<R: TrajReader<Frame = CoreFrame>>(
+fn traj_slice<R: TrajectoryReader>(
     inner: &mut R,
     start: isize,
     stop: isize,
@@ -265,7 +259,7 @@ fn traj_slice<R: TrajReader<Frame = CoreFrame>>(
 
 /// `read_range(start, stop, step)` with Python-like normalization. A `None`
 /// stop means "to the end" (or "to the start" for a negative step).
-fn traj_read_range<R: TrajReader<Frame = CoreFrame>>(
+fn traj_read_range<R: TrajectoryReader>(
     inner: &mut R,
     start: isize,
     stop: Option<isize>,
@@ -291,17 +285,14 @@ fn traj_read_range<R: TrajReader<Frame = CoreFrame>>(
 }
 
 /// Read every frame.
-fn traj_read_all<R: TrajReader<Frame = CoreFrame>>(inner: &mut R) -> PyResult<Vec<PyFrame>> {
+fn traj_read_all<R: TrajectoryReader>(inner: &mut R) -> PyResult<Vec<PyFrame>> {
     let n = traj_len(inner)? as isize;
     traj_slice(inner, 0, n, 1)
 }
 
 /// `__getitem__` supporting both integer indices and slices. Returns a single
 /// `Frame` for an integer key, or a `list[Frame]` for a slice key.
-fn traj_getitem<R: TrajReader<Frame = CoreFrame>>(
-    inner: &mut R,
-    key: &Bound<'_, PyAny>,
-) -> PyResult<Py<PyAny>> {
+fn traj_getitem<R: TrajectoryReader>(inner: &mut R, key: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
     let py = key.py();
     if let Ok(slice) = key.cast::<PySlice>() {
         let n = traj_len(inner)?;
@@ -340,7 +331,7 @@ fn traj_getitem<R: TrajReader<Frame = CoreFrame>>(
 /// >>> frame = reader[42]
 /// >>> for frame in reader:
 /// ...     pass
-#[pyclass(module = "molrs", name = "LAMMPSTrajReader", unsendable)]
+#[pyclass(module = "molrs.io.raw", name = "LAMMPSTrajReader", unsendable)]
 pub struct PyLAMMPSTrajReader {
     inner: Option<LAMMPSTrajReader<Box<dyn ReadSeek>>>,
     cursor: usize,
@@ -527,7 +518,7 @@ pub fn read_dcd(path: &str) -> PyResult<Vec<PyFrame>> {
 /// >>> frame = reader[42]
 /// >>> for frame in reader:
 /// ...     pass
-#[pyclass(module = "molrs", name = "DCDTrajReader", unsendable)]
+#[pyclass(module = "molrs.io.raw", name = "DCDTrajReader", unsendable)]
 pub struct PyDcdTrajReader {
     inner: Option<DcdReader<Box<dyn ReadSeek>>>,
     cursor: usize,
@@ -673,7 +664,7 @@ impl PyDcdTrajReader {
 /// >>> reader.n_frames
 /// 50
 /// >>> reader[-1]["atoms"].view("x")
-#[pyclass(module = "molrs", name = "XYZTrajReader", unsendable)]
+#[pyclass(module = "molrs.io.raw", name = "XYZTrajReader", unsendable)]
 pub struct PyXYZTrajReader {
     inner: Option<XYZReader<Box<dyn ReadSeek>>>,
     cursor: usize,
@@ -1128,7 +1119,7 @@ pub fn read_xtc(path: &str) -> PyResult<Vec<PyFrame>> {
 /// ``build_index()``); subsequent ``reader[i]`` / ``read_step(i)`` is an O(1)
 /// seek plus one frame parse. Exposes the same surface as
 /// :class:`DCDTrajReader`.
-#[pyclass(module = "molrs", name = "TRRTrajReader", unsendable)]
+#[pyclass(module = "molrs.io.raw", name = "TRRTrajReader", unsendable)]
 pub struct PyTrrTrajReader {
     inner: Option<TrrReader<Box<dyn ReadSeek>>>,
     cursor: usize,
@@ -1249,7 +1240,7 @@ impl PyTrrTrajReader {
 /// Like :class:`TRRTrajReader` but for the compressed XTC format. Frame sizes
 /// vary (compression), so the byte-offset index is built by a single scan;
 /// random access is O(1) thereafter.
-#[pyclass(module = "molrs", name = "XTCTrajReader", unsendable)]
+#[pyclass(module = "molrs.io.raw", name = "XTCTrajReader", unsendable)]
 pub struct PyXtcTrajReader {
     inner: Option<XtcReader<Box<dyn ReadSeek>>>,
     cursor: usize,
@@ -1425,7 +1416,7 @@ pub fn write_xtc(path: &str, frames: Vec<PyRef<'_, PyFrame>>) -> PyResult<()> {
 /// >>> mol = ir.to_atomistic()
 /// >>> mol.n_atoms
 /// 3
-#[pyclass(module = "molrs", name = "SmilesIR")]
+#[pyclass(module = "molrs.io", name = "SmilesIR")]
 pub struct PySmilesIR {
     inner: molrs::io::smiles::SmilesIR,
     input: String,
@@ -1433,6 +1424,31 @@ pub struct PySmilesIR {
 
 #[pymethods]
 impl PySmilesIR {
+    /// Parse `smiles` into its intermediate representation.
+    ///
+    /// Parameters
+    /// ----------
+    /// smiles : str
+    ///     SMILES string (e.g. ``"CCO"`` for ethanol, ``"c1ccccc1"``).
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If the SMILES string is syntactically invalid.
+    ///
+    /// Examples
+    /// --------
+    /// >>> molrs.SmilesIR("CCO").to_atomistic().n_atoms
+    /// 3
+    #[new]
+    fn new(smiles: &str) -> PyResult<Self> {
+        let inner = molrs::io::smiles::parse_smiles(smiles).map_err(smiles_error_to_pyerr)?;
+        Ok(Self {
+            inner,
+            input: smiles.to_owned(),
+        })
+    }
+
     /// Number of disconnected molecular components.
     ///
     /// Fragments separated by ``'.'`` in the SMILES string are counted as
@@ -1473,6 +1489,36 @@ impl PySmilesIR {
         PyAtomistic::from_core(py, mol)
     }
 
+    /// One graph per disconnected component, in input order.
+    ///
+    /// ``to_atomistic`` returns a *single* graph holding every component;
+    /// this returns them separately. Splitting happens on the parsed
+    /// components, not by cutting the string on ``'.'`` — a separator is only
+    /// a separator once the parser says so.
+    ///
+    /// Returns
+    /// -------
+    /// list of Atomistic
+    ///
+    /// Examples
+    /// --------
+    /// >>> len(molrs.SmilesIR("CCO.O").components())
+    /// 2
+    fn components(&self, py: Python<'_>) -> PyResult<Vec<Py<PyAtomistic>>> {
+        self.inner
+            .components
+            .iter()
+            .map(|chain| {
+                let one = molrs::io::smiles::SmilesIR {
+                    components: vec![chain.clone()],
+                    span: self.inner.span,
+                };
+                let mol = molrs::io::smiles::to_atomistic(&one).map_err(smiles_error_to_pyerr)?;
+                PyAtomistic::from_core(py, mol)
+            })
+            .collect()
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "SmilesIR('{}', components={})",
@@ -1480,39 +1526,4 @@ impl PySmilesIR {
             self.inner.components.len()
         )
     }
-}
-
-/// Parse a SMILES string into an intermediate representation.
-///
-/// The returned :class:`SmilesIR` can be converted to an :class:`Atomistic`
-/// molecular graph via :meth:`SmilesIR.to_atomistic`.
-///
-/// Parameters
-/// ----------
-/// smiles : str
-///     SMILES string (e.g. ``"CCO"`` for ethanol, ``"c1ccccc1"`` for benzene).
-///
-/// Returns
-/// -------
-/// SmilesIR
-///     Parsed intermediate representation.
-///
-/// Raises
-/// ------
-/// ValueError
-///     If the SMILES string is syntactically invalid.
-///
-/// Examples
-/// --------
-/// >>> ir = molrs.parse_smiles("CCO")
-/// >>> mol = ir.to_atomistic()
-/// >>> mol.n_atoms
-/// 3
-#[pyfunction]
-pub fn parse_smiles(smiles: &str) -> PyResult<PySmilesIR> {
-    let ir = molrs::io::smiles::parse_smiles(smiles).map_err(smiles_error_to_pyerr)?;
-    Ok(PySmilesIR {
-        inner: ir,
-        input: smiles.to_owned(),
-    })
 }

@@ -31,7 +31,7 @@ jobs:
           shared-key: clippy
           workspaces: ". -> target"
       - run: |
-          cargo clippy -p molcrafts-molrs --all-targets --features full -- -D warnings
+          cargo clippy -p molcrafts-molrs --all-targets --features full,filesystem -- -D warnings
           cargo clippy -p molcrafts-molrs-cxxapi --all-targets -- -D warnings
 
   test:
@@ -49,4 +49,4 @@ jobs:
       - name: Fetch tests-data
         run: bash scripts/fetch-test-data.sh
       - name: Unit tests
-        run: cargo test -p molcrafts-molrs --lib --features full
+        run: cargo test -p molcrafts-molrs --lib --features full,filesystem

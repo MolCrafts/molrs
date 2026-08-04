@@ -19,6 +19,31 @@ pub enum BlockError {
         /// The axis-0 length provided by the inserted array
         got: usize,
     },
+    /// A canonical column key was written at a dtype the vocabulary does not
+    /// allow.
+    ///
+    /// The vocabulary binds a key wherever it appears, so this fires without
+    /// the block knowing its own name. A column's dtype is fixed by its first
+    /// write and molrs refuses to coerce, so accepting the wrong dtype here
+    /// means the *next* correct write silently fails to land.
+    SchemaDtype {
+        /// The canonical key.
+        key: String,
+        /// Dtype the vocabulary declares.
+        expected: crate::store::block::DType,
+        /// Dtype the caller supplied.
+        got: crate::store::block::DType,
+    },
+    /// A canonical column key was written at a shape the vocabulary does not
+    /// allow.
+    SchemaShape {
+        /// The canonical key.
+        key: String,
+        /// Shape the vocabulary declares.
+        expected: crate::store::schema::ColShape,
+        /// Shape the caller supplied.
+        got: Vec<usize>,
+    },
     /// General validation error
     Validation {
         /// Error message
@@ -29,6 +54,14 @@ pub enum BlockError {
 impl fmt::Display for BlockError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            BlockError::SchemaDtype { key, expected, got } => write!(
+                f,
+                "column '{key}' is declared '{expected}' by the Frame schema, got '{got}'"
+            ),
+            BlockError::SchemaShape { key, expected, got } => write!(
+                f,
+                "column '{key}' is declared {expected} by the Frame schema, got {got:?}"
+            ),
             BlockError::RankZero { key } => {
                 write!(
                     f,

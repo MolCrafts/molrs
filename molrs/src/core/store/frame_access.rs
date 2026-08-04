@@ -170,7 +170,7 @@ impl FrameAccess for FrameView<'_> {
 mod tests {
     use super::*;
     use crate::store::block::Block;
-    use crate::types::{F, I};
+    use crate::types::{F, U};
     use ndarray::Array1;
 
     fn make_frame() -> Frame {
@@ -180,7 +180,7 @@ mod tests {
             .insert("x", Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn())
             .unwrap();
         atoms
-            .insert("id", Array1::from_vec(vec![10 as I, 20, 30]).into_dyn())
+            .insert("id", Array1::from_vec(vec![10 as U, 20, 30]).into_dyn())
             .unwrap();
         frame.insert("atoms", atoms);
         frame.meta.insert("title", "Test");
@@ -191,7 +191,7 @@ mod tests {
     fn test_frame_access_on_frame() {
         let frame = make_frame();
         assert!(FrameAccess::get_float(&frame, "atoms", "x").is_some());
-        assert!(FrameAccess::get_int(&frame, "atoms", "id").is_some());
+        assert!(FrameAccess::get_uint(&frame, "atoms", "id").is_some());
         assert!(FrameAccess::get_float(&frame, "atoms", "missing").is_none());
         assert!(FrameAccess::get_float(&frame, "missing", "x").is_none());
         assert_eq!(FrameAccess::block_count(&frame), 1);
@@ -209,7 +209,7 @@ mod tests {
         let frame = make_frame();
         let view = FrameView::from(&frame);
         assert!(FrameAccess::get_float(&view, "atoms", "x").is_some());
-        assert!(FrameAccess::get_int(&view, "atoms", "id").is_some());
+        assert!(FrameAccess::get_uint(&view, "atoms", "id").is_some());
         assert!(FrameAccess::get_float(&view, "atoms", "missing").is_none());
         assert_eq!(FrameAccess::block_count(&view), 1);
         assert!(FrameAccess::contains_block(&view, "atoms"));

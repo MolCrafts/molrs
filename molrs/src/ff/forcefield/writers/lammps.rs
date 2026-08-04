@@ -446,7 +446,8 @@ fn write_dihedral_fourier(
         let mut parts = vec![format!("dihedral_coeff {}", t.name), format!("{m}")];
         for (k, n, d_deg) in terms {
             parts.push(fmt_num(k, opts.precision));
-            parts.push(fmt_num(n, opts.precision));
+            // LAMMPS EXTRA-MOLECULE dihedral_fourier requires integer n.
+            parts.push(format!("{}", n.round() as i64));
             parts.push(fmt_num(d_deg, opts.precision));
         }
         lines.push(parts.join(" ") + "\n");
@@ -643,9 +644,12 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
             text.contains("angle_coeff c3-c3-oh 76.790000 109.660000"),
             "angle K + deg:\n{text}"
         );
-        // fourier: m K n phase_deg; n must stay 3 (not phase)
+        // fourier: m K n phase_deg. `n` is the cos(n*phi) multiplicity and
+        // LAMMPS reads it with `inumeric()`, so it is written as an integer —
+        // `3.000000` would be rejected by LAMMPS at parse time. It must also
+        // stay in the `n` slot rather than sliding into the phase.
         assert!(
-            text.contains("dihedral_coeff c3-c3-oh-ho 1 0.060000 3.000000 0.000000"),
+            text.contains("dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000"),
             "dihedral fourier:\n{text}"
         );
     }

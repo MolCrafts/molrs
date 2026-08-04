@@ -53,7 +53,7 @@ fn stage_kind_name(kind: StageKind) -> &'static str {
 ///     Whether the stage converged.
 /// elapsed_ms : int
 ///     Wall-clock time for this stage in milliseconds.
-#[pyclass(module = "molrs", name = "ConformerStageReport")]
+#[pyclass(module = "molrs.conformer", name = "ConformerStageReport")]
 pub struct PyConformerStageReport {
     #[pyo3(get)]
     pub stage: String,
@@ -99,7 +99,7 @@ impl PyConformerStageReport {
 /// -12.34
 /// >>> for s in report.stages:
 /// ...     print(s.stage, s.converged)
-#[pyclass(module = "molrs", name = "ConformerReport")]
+#[pyclass(module = "molrs.conformer", name = "ConformerReport")]
 pub struct PyConformerReport {
     #[pyo3(get)]
     pub final_energy: Option<f64>,
@@ -161,7 +161,12 @@ impl PyConformerReport {
 /// --------
 /// >>> gen = Conformer(speed="fast", add_hydrogens=True, seed=42)
 /// >>> mol_3d, report = gen.generate(mol)
-#[pyclass(module = "molrs", name = "Conformer", subclass, skip_from_py_object)]
+#[pyclass(
+    module = "molrs.conformer",
+    name = "Conformer",
+    subclass,
+    skip_from_py_object
+)]
 #[derive(Clone)]
 pub struct PyConformer {
     pub(crate) inner: Conformer,

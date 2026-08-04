@@ -698,7 +698,6 @@ pub struct CifReader<R: BufRead> {
 
 impl<R: BufRead> Reader for CifReader<R> {
     type R = R;
-    type Frame = Frame;
     fn new(reader: R) -> Self {
         Self {
             src: LineSource::new(reader),
@@ -707,8 +706,10 @@ impl<R: BufRead> Reader for CifReader<R> {
 }
 
 impl<R: BufRead> FrameReader for CifReader<R> {
-    fn read_frame(&mut self) -> Result<Option<Frame>> {
-        read_one_block(&mut self.src)
+    fn read(&mut self) -> Result<Option<Frame>> {
+        // Validate on the way out: a frame that violates the vocabulary
+        // is a malformed file or a reader bug, not a result to return.
+        crate::io::reader::validated(read_one_block(&mut self.src)?)
     }
 }
 
@@ -716,14 +717,14 @@ impl<R: BufRead> FrameReader for CifReader<R> {
 pub fn read_cif_all<P: AsRef<Path>>(path: P) -> Result<Vec<Frame>> {
     let file = std::fs::File::open(path.as_ref())?;
     let mut cr = CifReader::new(BufReader::new(file));
-    cr.read_all()
+    crate::io::reader::collect_frames(&mut cr)
 }
 
 /// Read the first block from `path`.
 pub fn read_cif<P: AsRef<Path>>(path: P) -> Result<Frame> {
     let file = std::fs::File::open(path.as_ref())?;
     let mut cr = CifReader::new(BufReader::new(file));
-    cr.read_frame()?
+    cr.read()?
         .ok_or_else(|| invalid_data("CIF file has no data_ block"))
 }
 
@@ -832,14 +833,16 @@ pub struct CifFrameWriter<W: Write> {
 
 impl<W: Write> Writer for CifFrameWriter<W> {
     type W = W;
-    type FrameLike = Frame;
     fn new(writer: W) -> Self {
         Self { writer }
     }
 }
 
 impl<W: Write> FrameWriter for CifFrameWriter<W> {
-    fn write_frame(&mut self, frame: &Frame) -> Result<()> {
+    fn write(&mut self, frame: &Frame) -> Result<()> {
+        // Refuse to emit a frame that violates the vocabulary: a bad file
+        // looks fine and is found wrong later, by whatever reads it.
+        crate::io::writer::check_before_write(frame)?;
         write_cif_frame(&mut self.writer, frame)
     }
 }
@@ -874,7 +877,7 @@ C2 C 0.5 0.5 0.5
     #[test]
     fn reads_small_cif() {
         let mut reader = CifReader::new(Cursor::new(SMALL_CIF.as_bytes()));
-        let frame = reader.read_frame().unwrap().unwrap();
+        let frame = reader.read().unwrap().unwrap();
         let atoms = frame.get("atoms").unwrap();
         assert_eq!(atoms.nrows(), Some(2));
         let xs = atoms.get_float("x").unwrap();
@@ -886,12 +889,12 @@ C2 C 0.5 0.5 0.5
     fn round_trip_small_cif() {
         let frame = {
             let mut reader = CifReader::new(Cursor::new(SMALL_CIF.as_bytes()));
-            reader.read_frame().unwrap().unwrap()
+            reader.read().unwrap().unwrap()
         };
         let mut buf = Vec::new();
         write_cif_frame(&mut buf, &frame).unwrap();
         let mut reader2 = CifReader::new(Cursor::new(&buf));
-        let frame2 = reader2.read_frame().unwrap().unwrap();
+        let frame2 = reader2.read().unwrap().unwrap();
         let xs1 = frame.get("atoms").unwrap().get_float("x").unwrap();
         let xs2 = frame2.get("atoms").unwrap().get_float("x").unwrap();
         for i in 0..xs1.len() {

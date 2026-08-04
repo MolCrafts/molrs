@@ -18,7 +18,7 @@
 //!   `atom_type` (str), `subst_id` (i32) and `subst_name` (str) when present,
 //!   `charge` (F) when present.
 //! - `"bonds"` block (when present): `atomi`/`atomj` (u32, 0-based indices),
-//!   `bond_type` (str).
+//!   `sybyl_bond_type` (str), plus the canonical `bond_type` / `bond_number`.
 //! - `frame.meta["title"]` = molecule name.
 
 use std::io::{BufRead, BufWriter, Error, ErrorKind, Result, Write};
@@ -331,7 +331,7 @@ fn build_frame(name: String, atoms: Vec<Mol2Atom>, bonds: Vec<Mol2Bond>) -> Resu
             have_charge = true;
         }
     }
-    insert_int_col(&mut block, "id", id)?;
+    insert_uint_col(&mut block, "id", id.iter().map(|&v| v as U).collect())?;
     insert_str_col(&mut block, "name", a_name)?;
     insert_float_col(&mut block, "x", x)?;
     insert_float_col(&mut block, "y", y)?;
@@ -356,6 +356,7 @@ fn build_frame(name: String, atoms: Vec<Mol2Atom>, bonds: Vec<Mol2Bond>) -> Resu
         let mut atomi = Vec::with_capacity(bn);
         let mut atomj = Vec::with_capacity(bn);
         let mut btype = Vec::with_capacity(bn);
+        let mut btype_src: Vec<String> = Vec::with_capacity(bn);
         for b in &bonds {
             if b.atom_i <= 0 || b.atom_j <= 0 {
                 return Err(invalid_data(format!(
@@ -372,11 +373,39 @@ fn build_frame(name: String, atoms: Vec<Mol2Atom>, bonds: Vec<Mol2Bond>) -> Resu
             atomi.push((b.atom_i as U) - 1);
             atomj.push((b.atom_j as U) - 1);
             btype.push(b.bond_type.clone());
+            btype_src.push(b.bond_type.clone());
         }
         let mut bblock = Block::new();
         insert_uint_col(&mut bblock, "atomi", atomi)?;
         insert_uint_col(&mut bblock, "atomj", atomj)?;
-        insert_str_col(&mut bblock, "bond_type", btype)?;
+        // SYBYL's own alphabet ("1", "2", "ar", "am") is format-local and keeps a
+        // format-local name: `bond_type` is the canonical chemical class, a uint
+        // code, and two quantities never share one key.
+        insert_str_col(&mut bblock, "sybyl_bond_type", btype)?;
+
+        // …and the canonical pair it maps onto. `ar` declares delocalization
+        // and no Kekulé phase, so its number is left unknown for
+        // standardization; `am` is the amide C–N, a plain single bond.
+        let canonical_type: Vec<U> = btype_src
+            .iter()
+            .map(|t| match t.as_str() {
+                "ar" => 4,
+                "2" => 2,
+                "3" => 3,
+                _ => 1,
+            })
+            .collect();
+        let canonical_number: Vec<U> = btype_src
+            .iter()
+            .map(|t| match t.as_str() {
+                "ar" => 0,
+                "2" => 2,
+                "3" => 3,
+                _ => 1,
+            })
+            .collect();
+        insert_uint_col(&mut bblock, "bond_type", canonical_type)?;
+        insert_uint_col(&mut bblock, "bond_number", canonical_number)?;
         frame.insert("bonds", bblock);
     }
 
@@ -397,7 +426,7 @@ pub fn read_mol2_all<P: AsRef<Path>>(path: P) -> Result<Vec<Frame>> {
     let file = std::fs::File::open(path.as_ref())?;
     let reader = std::io::BufReader::new(file);
     let mut mr = Mol2Reader::new(reader);
-    mr.read_all()
+    crate::io::reader::collect_frames(&mut mr)
 }
 
 /// `FrameReader`-trait wrapper. Each call returns the next molecule or `None`
@@ -409,7 +438,6 @@ pub struct Mol2Reader<R: BufRead> {
 
 impl<R: BufRead> Reader for Mol2Reader<R> {
     type R = R;
-    type Frame = Frame;
     fn new(reader: R) -> Self {
         Self {
             reader,
@@ -419,8 +447,10 @@ impl<R: BufRead> Reader for Mol2Reader<R> {
 }
 
 impl<R: BufRead> FrameReader for Mol2Reader<R> {
-    fn read_frame(&mut self) -> Result<Option<Frame>> {
-        read_one_record(&mut self.reader, &mut self.pending)
+    fn read(&mut self) -> Result<Option<Frame>> {
+        // Validate on the way out: a frame that violates the vocabulary
+        // is a malformed file or a reader bug, not a result to return.
+        crate::io::reader::validated(read_one_record(&mut self.reader, &mut self.pending)?)
     }
 }
 
@@ -471,7 +501,7 @@ pub fn write_mol2_frame<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
     writeln!(writer)?;
 
     writeln!(writer, "@<TRIPOS>ATOM")?;
-    let id_col = atoms.get_int("id");
+    let id_col = atoms.get_uint("id");
     let name_col = atoms.get_string("name");
     let xs = atoms
         .get_float("x")
@@ -486,7 +516,7 @@ pub fn write_mol2_frame<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
     let subst_id_col = atoms.get_int("subst_id");
     let subst_name_col = atoms.get_string("subst_name");
     for i in 0..n {
-        let id = id_col.map(|c| c[[i]]).unwrap_or((i as I) + 1);
+        let id = id_col.map(|c| c[[i]]).unwrap_or((i as U) + 1);
         let name = name_col.map(|c| c[[i]].as_str()).unwrap_or("X");
         let atype = type_col.map(|c| c[[i]].as_str()).unwrap_or("X");
         let sid = subst_id_col.map(|c| c[[i]]).unwrap_or(1);
@@ -519,7 +549,7 @@ pub fn write_mol2_frame<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
         let atomj = b
             .get_uint("atomj")
             .ok_or_else(|| invalid_data("bonds.atomj missing"))?;
-        let btype_col = b.get_string("bond_type");
+        let btype_col = b.get_string("sybyl_bond_type");
         for i in 0..n_bonds {
             let bt = btype_col.map(|c| c[[i]].as_str()).unwrap_or("1");
             writeln!(
@@ -542,14 +572,16 @@ pub struct Mol2FrameWriter<W: Write> {
 
 impl<W: Write> Writer for Mol2FrameWriter<W> {
     type W = W;
-    type FrameLike = Frame;
     fn new(writer: W) -> Self {
         Self { writer }
     }
 }
 
 impl<W: Write> FrameWriter for Mol2FrameWriter<W> {
-    fn write_frame(&mut self, frame: &Frame) -> Result<()> {
+    fn write(&mut self, frame: &Frame) -> Result<()> {
+        // Refuse to emit a frame that violates the vocabulary: a bad file
+        // looks fine and is found wrong later, by whatever reads it.
+        crate::io::writer::check_before_write(frame)?;
         write_mol2_frame(&mut self.writer, frame)
     }
 }
@@ -568,7 +600,7 @@ mod tests {
     #[test]
     fn reads_minimal_mol2() {
         let mut reader = Mol2Reader::new(Cursor::new(ETHANE_MIN.as_bytes()));
-        let frame = reader.read_frame().unwrap().unwrap();
+        let frame = reader.read().unwrap().unwrap();
         let atoms = frame.get("atoms").unwrap();
         assert_eq!(atoms.nrows(), Some(2));
         let xs = atoms.get_float("x").unwrap();
@@ -585,12 +617,12 @@ mod tests {
     fn round_trip_minimal_mol2() {
         let frame = {
             let mut reader = Mol2Reader::new(Cursor::new(ETHANE_MIN.as_bytes()));
-            reader.read_frame().unwrap().unwrap()
+            reader.read().unwrap().unwrap()
         };
         let mut buf = Vec::new();
         write_mol2_frame(&mut buf, &frame).unwrap();
         let mut reader2 = Mol2Reader::new(Cursor::new(&buf));
-        let frame2 = reader2.read_frame().unwrap().unwrap();
+        let frame2 = reader2.read().unwrap().unwrap();
         let xs1 = frame.get("atoms").unwrap().get_float("x").unwrap();
         let xs2 = frame2.get("atoms").unwrap().get_float("x").unwrap();
         for i in 0..xs1.len() {

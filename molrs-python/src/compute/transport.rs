@@ -1,10 +1,8 @@
 //! Python wrappers for the ion-transport compute kernels
-//! (`molrs-compute::{onsager, jacf, persist}`).
-//!
-//! These are the molrs ports of the *tame* trajectory-analysis recipes
-//! (onsager coefficients, current-ACF Green–Kubo conductivity, pair-survival
-//! persistence). Each returns a plain ``dict`` of NumPy arrays / scalars,
-//! matching the dielectric binding style.
+//! (`Onsager`, pair-survival).  The raw transport Computes
+//! (`GreenKuboConductivity`, `EinsteinConductivity`, …) are registered from
+//! `fitting.rs` as `molrs.compute.transport.*` classes — do not re-wrap them
+//! as free functions or recipe types.
 
 use molrs::compute::OnsagerCorrelation;
 use molrs::compute::dynamics::persist;
@@ -37,11 +35,6 @@ pub(crate) fn transport_onsager_correlation<'py>(
     dict.set_item("correlation", result.correlation.into_pyarray(py))?;
     Ok(dict.into())
 }
-
-// The legacy bundled `transport_green_kubo_conductivity` binding (raw JACF +
-// fitted sigma/sigma_running) was removed in compute-fit-03-cleanup. Compose
-// `molrs.GreenKuboConductivity` (raw current ACF) with `molrs.CumulativeTrapezoid`
-// and a caller-applied `1/(3·V·k_B·T)` MD→SI prefactor.
 
 #[pyfunction]
 #[pyo3(signature = (coords_i, coords_j, box_lengths, r0, r1, method, dt, max_correlation_time, exclude_self=false))]

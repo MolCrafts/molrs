@@ -62,3 +62,129 @@ pub fn bytes_to_frame(bytes: &[u8], format: MessageFormat) -> Result<Frame, Stre
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::spatial::simbox::SimBox;
+    use crate::core::store::block::Block;
+    use crate::types::{F, I, U};
+    use ndarray::{Array1, array};
+
+    /// Build a full Frame used by the net-streaming lossless round-trip contract
+    /// (ac-002): atoms x/y/z + serial + type, bonds i/j + order, SimBox, meta.
+    fn rich_frame() -> Frame {
+        let mut atoms = Block::new();
+        atoms
+            .insert(
+                "x",
+                Array1::from_vec(vec![1.0 as F, 2.0 as F, 3.0 as F]).into_dyn(),
+            )
+            .unwrap();
+        atoms
+            .insert(
+                "y",
+                Array1::from_vec(vec![0.0 as F, 1.0 as F, 2.0 as F]).into_dyn(),
+            )
+            .unwrap();
+        atoms
+            .insert(
+                "z",
+                Array1::from_vec(vec![0.5 as F, 1.5 as F, 2.5 as F]).into_dyn(),
+            )
+            .unwrap();
+        atoms
+            .insert(
+                "serial",
+                Array1::from_vec(vec![10 as I, 20 as I, 30 as I]).into_dyn(),
+            )
+            .unwrap();
+        atoms
+            .insert("atype", Array1::from_vec(vec![6u8, 1u8, 8u8]).into_dyn())
+            .unwrap();
+
+        let mut bonds = Block::new();
+        bonds
+            .insert("i", Array1::from_vec(vec![0 as U, 1 as U]).into_dyn())
+            .unwrap();
+        bonds
+            .insert("j", Array1::from_vec(vec![1 as U, 2 as U]).into_dyn())
+            .unwrap();
+        bonds
+            .insert("order", Array1::from_vec(vec![1u8, 1u8]).into_dyn())
+            .unwrap();
+
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms);
+        frame.insert("bonds", bonds);
+        frame.simbox =
+            Some(SimBox::cube(10.0, array![0.0, 0.0, 0.0], [true, true, true]).expect("simbox"));
+        frame.meta.insert("title", "stream-roundtrip");
+        frame.meta.insert("step", 42i64);
+        frame
+    }
+
+    fn assert_frame_eq(a: &Frame, b: &Frame) {
+        assert_eq!(a.len(), b.len());
+        assert!(a.contains_key("atoms"));
+        assert!(b.contains_key("atoms"));
+        assert!(a.contains_key("bonds"));
+        assert!(b.contains_key("bonds"));
+
+        let ax = a["atoms"].get_float("x").unwrap();
+        let bx = b["atoms"].get_float("x").unwrap();
+        assert_eq!(ax.len(), bx.len());
+        for (u, v) in ax.iter().zip(bx.iter()) {
+            assert!((u - v).abs() < f64::EPSILON);
+        }
+        let ay = a["atoms"].get_float("y").unwrap();
+        let by = b["atoms"].get_float("y").unwrap();
+        for (u, v) in ay.iter().zip(by.iter()) {
+            assert!((u - v).abs() < f64::EPSILON);
+        }
+        let az = a["atoms"].get_float("z").unwrap();
+        let bz = b["atoms"].get_float("z").unwrap();
+        for (u, v) in az.iter().zip(bz.iter()) {
+            assert!((u - v).abs() < f64::EPSILON);
+        }
+
+        let aserial = a["atoms"].get_int("serial").unwrap();
+        let bserial = b["atoms"].get_int("serial").unwrap();
+        assert_eq!(aserial.as_slice().unwrap(), bserial.as_slice().unwrap());
+
+        let atype = a["atoms"].get_u8("atype").unwrap();
+        let btype = b["atoms"].get_u8("atype").unwrap();
+        assert_eq!(atype.as_slice().unwrap(), btype.as_slice().unwrap());
+
+        let bi = a["bonds"].get_uint("i").unwrap();
+        let bj = b["bonds"].get_uint("i").unwrap();
+        assert_eq!(bi.as_slice().unwrap(), bj.as_slice().unwrap());
+
+        assert!(a.simbox.is_some());
+        assert!(b.simbox.is_some());
+        assert_eq!(
+            a.meta.get("title").and_then(|m| m.as_str()),
+            b.meta.get("title").and_then(|m| m.as_str())
+        );
+        assert_eq!(
+            a.meta.get("step").and_then(|m| m.as_i64()),
+            b.meta.get("step").and_then(|m| m.as_i64())
+        );
+    }
+
+    #[test]
+    fn frame_messagepack_roundtrip() {
+        let frame = rich_frame();
+        let bytes = frame_to_bytes(&frame, MessageFormat::MessagePack).expect("encode");
+        let back = bytes_to_frame(&bytes, MessageFormat::MessagePack).expect("decode");
+        assert_frame_eq(&frame, &back);
+    }
+
+    #[test]
+    fn frame_json_roundtrip() {
+        let frame = rich_frame();
+        let bytes = frame_to_bytes(&frame, MessageFormat::Json).expect("encode");
+        let back = bytes_to_frame(&bytes, MessageFormat::Json).expect("decode");
+        assert_frame_eq(&frame, &back);
+    }
+}

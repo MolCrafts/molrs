@@ -1,25 +1,25 @@
-"""Python-shaped I/O facade for molrs.
+"""File I/O — ``molrs::io``.
 
-This module exposes the Rust readers/writers under names that mirror the
-``molpy.io`` API so molrs can serve as a drop-in replacement in tests
-and downstream code.
-
-Every reader applies a :class:`FieldFormatter <molrs.fields.FieldFormatter>`
+Every reader here applies a :class:`FieldFormatter <molrs.fields.FieldFormatter>`
 to translate format-native column names (``resid``, ``q``, ``symbol``) into
-project-wide canonical names (``res_id``, ``charge``, ``element``).  Writers
-apply the reverse translation before delegating to the native backend.
+project-wide canonical names (``res_id``, ``charge``, ``element``). Writers
+apply the reverse translation before delegating to the native backend. That
+canonicalization is the whole point of this layer, so it is where callers
+should start.
 
-For access to raw format-native output, use the top-level ``molrs.read_*``
-functions directly.
+The un-translated bindings live in :mod:`molrs.io.raw`, one-to-one with the
+Rust ``molrs::io`` surface. Use those when the format-native spelling *is* the
+thing under test.
 
-Trajectories follow molpy's reader-object convention: ``read_lammps_trajectory``,
-``read_xyz_trajectory``, and ``read_dcd_trajectory`` each return a lazy
-:class:`TrajectoryReader` (not a ``list[Frame]`` — that is the top-level
-``molrs.read_*`` behaviour). Each accepts a single path or a list of paths
-(the frames of multiple files are concatenated) and yields canonical field
-names. This is the molpy-compatible drop-in surface; note in particular that
-``molrs.io.read_xyz_trajectory`` returns a reader whereas the top-level
-``molrs.read_xyz_trajectory`` returns a ``list[Frame]``.
+Trajectories return a lazy :class:`TrajectoryReader` rather than a
+``list[Frame]``: ``read_lammps_trajectory``, ``read_xyz_trajectory``,
+``read_dcd_trajectory``, ``read_trr_trajectory``, ``read_xtc_trajectory``. Each
+accepts a single path or a list of paths (frames are concatenated) and yields
+canonical field names. The ``molrs.io.raw`` counterparts return eagerly.
+
+:class:`SmilesIR` is here because SMILES is a *format*: text in, molecule out,
+exactly like PDB or XYZ. SMARTS is not — a pattern is a query over a perceived
+graph — so it lives in :mod:`molrs.perceive`.
 """
 
 from __future__ import annotations
@@ -28,15 +28,18 @@ from collections.abc import Iterator, Sequence
 from os import PathLike
 from typing import Any, Union, overload
 
-from .fields import (
+from . import raw
+from .._lib import SmilesIR as SmilesIR
+
+from ..fields import (
     FieldFormatter,
     GroFieldFormatter,
     LammpsFieldFormatter,
     PdbFieldFormatter,
     XyzFieldFormatter,
 )
-from .frame import Frame  # canonical rich Frame (spec frame-block-sink-01)
-from ._lib import (
+from ..frame import Frame  # canonical rich Frame (spec frame-block-sink-01)
+from .._lib import (
     DCDTrajReader as _DCDTrajReader,
     LAMMPSTrajReader as _LAMMPSTrajReader,
     TRRTrajReader as _TRRTrajReader,
@@ -44,6 +47,8 @@ from ._lib import (
     XYZTrajReader as _XYZTrajReader,
     read_gro as _read_gro,
     read_lammps as _read_lammps,
+    read_chgcar_file as _read_chgcar,
+    read_cube_file as _read_cube,
     read_pdb as _read_pdb,
     read_pdb_trajectory as _read_pdb_trajectory,
     read_trr as _read_trr,
@@ -51,6 +56,7 @@ from ._lib import (
     read_xyz as _read_xyz,
     write_gro as _write_gro,
     write_lammps as _write_lammps,
+    write_cube_file as _write_cube,
     write_pdb as _write_pdb,
     write_pdb_trajectory as _write_pdb_trajectory,
     write_trr as _write_trr,
@@ -165,6 +171,50 @@ def read_gro(file: str | PathLike[str]) -> list[Any]:
     for f in frames:
         _gro_fmt.canonicalize_frame(f)
     return [_wrap(f) for f in frames]
+
+
+def read_chgcar(file: str | PathLike[str]) -> Any:
+    """Read a VASP CHGCAR into a frame carrying a ``"chgcar"`` grid block.
+
+    Args:
+        file: Path to a ``CHGCAR`` file.
+
+    Returns:
+        A molrs ``Frame`` whose ``"chgcar"`` block holds the flattened grid
+        (at least ``"total"``; spin-polarised files add ``"diff"``).
+
+    Raises:
+        OSError: If the file cannot be opened or parsed.
+    """
+    return _wrap(_read_chgcar(str(file)))
+
+
+def read_cube(file: str | PathLike[str]) -> Any:
+    """Read a Gaussian Cube file into a frame carrying a grid block.
+
+    Args:
+        file: Path to a ``.cube`` file.
+
+    Returns:
+        A molrs ``Frame`` with the volumetric data as a flattened grid block.
+
+    Raises:
+        OSError: If the file cannot be opened or parsed.
+    """
+    return _wrap(_read_cube(str(file)))
+
+
+def write_cube(file: str | PathLike[str], frame: Any) -> None:
+    """Write a frame's grid block to a Gaussian Cube file.
+
+    Args:
+        file: Destination ``.cube`` path.
+        frame: A molrs ``Frame`` carrying a grid block.
+
+    Raises:
+        OSError: If the file cannot be written.
+    """
+    _write_cube(str(file), frame)
 
 
 def read_trr(file: str | PathLike[str]) -> list[Any]:
@@ -424,7 +474,7 @@ def read_lammps_trajectory(
 def read_xyz_trajectory(file: PathInput | Sequence[PathInput]) -> TrajectoryReader:
     """Open an XYZ trajectory. molpy-compatible signature.
 
-    Unlike the top-level ``molrs.read_xyz_trajectory`` (which returns
+    Unlike ``molrs.io.raw.read_xyz_trajectory`` (which returns
     ``list[Frame]``), this returns a lazy :class:`TrajectoryReader`, matching
     molpy's ``read_xyz_trajectory``.
     """
@@ -463,11 +513,15 @@ def read_xtc_trajectory(file: PathInput | Sequence[PathInput]) -> TrajectoryRead
 
 
 __all__ = [
+    "raw",
+    "SmilesIR",
     "read_lammps_data",
     "read_pdb",
     "read_pdb_trajectory",
     "read_xyz",
     "read_gro",
+    "read_chgcar",
+    "read_cube",
     "read_trr",
     "read_xtc",
     "write_lammps_data",
@@ -475,6 +529,7 @@ __all__ = [
     "write_pdb_trajectory",
     "write_xyz",
     "write_gro",
+    "write_cube",
     "write_trr",
     "write_xtc",
     "TrajectoryReader",

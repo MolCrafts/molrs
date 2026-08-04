@@ -9,18 +9,23 @@ from __future__ import annotations
 
 from typing import TypeVar
 
-from ._lib import Graph, MMFF94STypifier, MMFF94Typifier, OPLSAATypifier, Typifier
-from .views import Atomistic
+from .._lib import (
+    AtdTypifier,
+    Graph,
+    MMFF94STypifier,
+    MMFF94Typifier,
+    OPLSAATypifier,
+    Typifier,
+)
+from ..views import Atomistic
 
 TGraph = TypeVar("TGraph", bound=Graph)
 
 
 __all__ = [
     "Typifier",
-    "TGraph",
     "OPLSAATypifier",
     "MMFF94Typifier",
     "MMFF94STypifier",
-    "Atomistic",
-    "Graph",
+    "AtdTypifier",
 ]

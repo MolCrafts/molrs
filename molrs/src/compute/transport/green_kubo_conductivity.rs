@@ -16,7 +16,7 @@ pub struct GreenKuboConductivityResult {
     /// Lag times τ = i·dt, length `max_lag + 1`. Units: `[dt]`.
     pub lag_times: Array1<f64>,
     /// Current ACF `C(τ) = ⟨J(0)·J(τ)⟩` over time origins, identical to
-    /// `JacfResult.jacf`. Units: `(e·Å·ps⁻¹)²`.
+    /// `JacfResult.jacf`. Units: `(e·Å·fs⁻¹)²`.
     pub jacf: Array1<f64>,
 }
 
@@ -149,7 +149,7 @@ mod tests {
         use crate::compute::fitting::CumulativeTrapezoid;
         use crate::compute::traits::Fit;
         use molrs::units::constants::{
-            ANGSTROM_M, BOLTZMANN as K_B_SI, ELEMENTARY_CHARGE as E_C, PICOSECOND_S,
+            ANGSTROM_M, BOLTZMANN as K_B_SI, ELEMENTARY_CHARGE as E_C, FEMTOSECOND_S,
         };
 
         let n = 256;
@@ -172,7 +172,7 @@ mod tests {
         assert!((integ.integral[last] - manual).abs() < 1e-12);
 
         // Green–Kubo 1/3 prefactor.
-        let prefactor = (E_C * E_C * ANGSTROM_M * ANGSTROM_M / PICOSECOND_S)
+        let prefactor = (E_C * E_C * ANGSTROM_M * ANGSTROM_M / FEMTOSECOND_S)
             / (3.0 * ANGSTROM_M.powi(3) * K_B_SI);
         let sigma = prefactor * integ.integral[last] / (volume * temperature);
         assert!(sigma.is_finite());

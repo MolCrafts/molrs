@@ -1,12 +1,20 @@
-//! Zarr V3-based frame-sequence (`Trajectory`) storage.
+//! Zarr V3 storage — the reference binding of the MolRec record contract for
+//! array-shaped sections (frame / trajectory / system / large observables).
+//!
+//! Append-oriented **metrics** use a separate JSONL binding
+//! (`metrics/metrics.jsonl`); see `record_io` module docs and molrec
+//! `docs/spec/metrics.md`. This crate does not implement the JSONL writer.
 
 mod error;
 mod frame_io;
-mod trajectory_store;
+mod record_io;
 
-pub use trajectory_store::{count_frames_in_store, read_frame_from_store, read_trajectory_store};
+pub use record_io::{count_frames_in_store, read_frame_from_store, read_record_store};
 #[cfg(feature = "filesystem")]
-pub use trajectory_store::{read_trajectory_file, write_trajectory_file};
+pub use record_io::{
+    read_record_file, read_trajectory_file, write_record_file, write_record_store,
+    write_trajectory_file,
+};
 
 /// Unit system tag stored in root metadata.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

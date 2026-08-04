@@ -1,4 +1,4 @@
-"""Smoke tests for the ``molrs.ForceField.subset`` PyO3 binding.
+"""Smoke tests for the ``molrs.ff.ForceField.subset`` PyO3 binding.
 
 The deep per-type projection correctness is covered by the Rust unit tests in
 ``molrs-ff/src/forcefield/mod.rs``. These tests only verify the binding is wired
@@ -34,7 +34,7 @@ _FF_XML = """<ForceField name="fixture">
 
 
 def _full_ff():
-    return molrs.read_forcefield_xml_str(_FF_XML)
+    return molrs.ff.read_forcefield_xml_str(_FF_XML)
 
 
 def _typed_frame():
@@ -51,7 +51,7 @@ def _typed_frame():
 
 def test_subset_returns_a_forcefield():
     mini = _full_ff().subset(_typed_frame())
-    assert isinstance(mini, molrs.ForceField)
+    assert isinstance(mini, molrs.ff.ForceField)
 
 
 def test_subset_is_no_larger_than_source():

@@ -33,14 +33,16 @@
 
 use pyo3::prelude::*;
 
-mod spectrum_checks;
 mod error;
 mod helpers;
+mod schema;
+mod spectrum_checks;
 mod store;
 
 // Mirrors the molrs core module layout: core/ (store · spatial · system), io/,
 // compute/, ff/, conformer/, signal/.
 mod core;
+mod builder;
 use crate::core::spatial::linkedcell::{PyLinkedCell, PyNeighborList, PyNeighborQuery};
 use crate::core::spatial::region::{
     PyCuboid, PyHollowSphere, PyParallelepiped, PyRegion, PySphere,
@@ -48,17 +50,16 @@ use crate::core::spatial::region::{
 use crate::core::spatial::simbox::PyBox;
 use crate::core::store::block::PyBlock;
 use crate::core::store::frame::{PyFrame, PyMetaValue};
+use crate::core::store::record::{PyMolRec, PyObservables};
 use crate::core::store::trajectory::{PyScalarObservable, PyTrajectory, PyVectorObservable};
 use crate::core::system::element::PyElement;
 use crate::core::system::molgraph::{
     PyAtomistic, PyCoarseGrain, PyExtractedSubgraph, PyGraph, PyReaction, PySmartsMatch,
     PySmartsPattern,
 };
-use crate::core::system::molgraph::{
-    add_hydrogens, align_direction, compute_gasteiger_charges, find_rings, perceive_aromaticity,
-    rotate, scale, translate,
-};
+use crate::core::system::molgraph::{PyRingInfo, align_direction, rotate, scale, translate};
 use crate::core::units::{PyQuantity, PyUnit, PyUnitRegistry};
+use crate::builder::{PyCarbonTubeBuilder, PyGrapheneBuilder};
 
 mod io;
 
@@ -90,38 +91,6 @@ mod signal;
 /// Register the `keys` submodule mirroring `molrs_core::store::keys` so Python code
 /// references the field-name convention by name (`molrs.keys.X`) instead of
 /// scattering string literals.
-fn register_keys(parent: &Bound<'_, PyModule>) -> PyResult<()> {
-    use ::molrs::store::keys;
-    let m = PyModule::new(parent.py(), "keys")?;
-    m.add("X", keys::X)?;
-    m.add("Y", keys::Y)?;
-    m.add("Z", keys::Z)?;
-    m.add("COORDS", keys::COORDS.to_vec())?;
-    m.add("ELEMENT", keys::ELEMENT)?;
-    m.add("BEAD_TYPE", keys::BEAD_TYPE)?;
-    m.add("CHARGE", keys::CHARGE)?;
-    m.add("ORDER", keys::ORDER)?;
-    m.add("MASS", keys::MASS)?;
-    m.add("TYPE", keys::TYPE)?;
-    m.add("ID", keys::ID)?;
-    m.add("MOL_ID", keys::MOL_ID)?;
-    m.add("SYMBOL", keys::SYMBOL)?;
-    m.add("NAME", keys::NAME)?;
-    m.add("VX", keys::VX)?;
-    m.add("VY", keys::VY)?;
-    m.add("VZ", keys::VZ)?;
-    m.add("VELOCITIES", keys::VELOCITIES.to_vec())?;
-    m.add("XYZ", keys::XYZ)?;
-    m.add("RES_ID", keys::RES_ID)?;
-    m.add("RES_NAME", keys::RES_NAME)?;
-    m.add("ATOMI", keys::ATOMI)?;
-    m.add("ATOMJ", keys::ATOMJ)?;
-    m.add("ATOMK", keys::ATOMK)?;
-    m.add("ATOML", keys::ATOML)?;
-    m.add("ENDPOINTS", keys::ENDPOINTS.to_vec())?;
-    parent.add_submodule(&m)?;
-    Ok(())
-}
 
 /// Root Python module for the molrs library.
 ///
@@ -188,13 +157,16 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(io::write_trr, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_xtc, m)?)?;
     // SMILES
-    m.add_function(wrap_pyfunction!(io::parse_smiles, m)?)?;
     m.add_class::<io::PySmilesIR>()?;
 
     // Trajectory (frame sequence) + observable records
     m.add_class::<PyTrajectory>()?;
     m.add_class::<PyScalarObservable>()?;
     m.add_class::<PyVectorObservable>()?;
+
+    // MolRec record aggregate
+    m.add_class::<PyMolRec>()?;
+    m.add_class::<PyObservables>()?;
 
     // Regions
     m.add_class::<PySphere>()?;
@@ -213,21 +185,23 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySmartsPattern>()?;
     m.add_class::<PyReaction>()?;
 
+    // Structure builders (graphene, nanotubes, …)
+    m.add_class::<PyCarbonTubeBuilder>()?;
+    m.add_class::<PyGrapheneBuilder>()?;
+
     // Systems = module-level free functions (no algorithm methods on the classes)
     m.add_function(wrap_pyfunction!(translate, m)?)?;
     m.add_function(wrap_pyfunction!(rotate, m)?)?;
     m.add_function(wrap_pyfunction!(scale, m)?)?;
     m.add_function(wrap_pyfunction!(align_direction, m)?)?;
-    m.add_function(wrap_pyfunction!(perceive_aromaticity, m)?)?;
-    m.add_function(wrap_pyfunction!(add_hydrogens, m)?)?;
-    m.add_function(wrap_pyfunction!(find_rings, m)?)?;
-    m.add_function(wrap_pyfunction!(compute_gasteiger_charges, m)?)?;
 
     // Chemical perception, as a builder: graph in / graph out, non-mutating.
     m.add_class::<PyPerceive>()?;
+    m.add_class::<PyRingInfo>()?;
 
     // Field-name convention (`molrs.keys.X`, `molrs.keys.ELEMENT`, …)
-    register_keys(m)?;
+    schema::register_keys(m)?;
+    schema::register_schema(m)?;
 
     // Conformer generation
     m.add_class::<PyConformer>()?;

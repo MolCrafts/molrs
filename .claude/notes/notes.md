@@ -398,3 +398,17 @@ This one fixed nothing. Three gates land RED, each naming a real defect, each ge
 spec. The thing that would have reported them must not be the thing that swallows them.
 
 **Status:** stable
+
+## 2026-08-04 — chem-perceive-15 gates landed (architecture_gate binary)
+
+**Decision:** Whole-chain acceptance gates live in
+`molrs/tests/architecture_gate.rs` (wired via `[[test]] name = "architecture_gate"`;
+`autotests = false`). Structural ac-001..ac-004 + reverse ac-007 are executable;
+ac-005/ac-006 are `#[ignore]` stubs pointing at cxxapi oracle / molrs-python.
+**Subset-fixture trap (restate):** a hand-picked fixture list is how ethane alone
+hid a missing MMFF electrostatics term for a month. Prefer directory scan or a
+predicate; if a subset is intentional, the reason must be in the test body and
+"not yet implemented" is a fail, not an exclude. Reverse gates assert ABSENCE
+(exactly-0 ele energy; bit-identical 94/94s; equal symmetric charges; benzene
+HAS impropers). Acceptance must not quietly fix production.
+**Status:** active

@@ -11,7 +11,7 @@ and `/mol:review`.
 4. **GENCAN inner loop** — objective + gradient evaluation (now in the
    standalone `MolCrafts/molpack` repo; kept here for historical context).
 
-Known hot-path files: `molrs-ff/src/potential/**`, `molrs-core/src/neighbors/**`
+Known hot-path files: `molrs/src/ff/potential/**`, `molrs/src/core/neighbors/**`
 (plus `objective.rs` / `packer.rs` in the molpack repo).
 
 ## Memory Layout

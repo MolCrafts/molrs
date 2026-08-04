@@ -103,7 +103,7 @@ class TestFrameSubclass:
     def test_subclass_accepted_by_molrs_api(self, tmp_path):
         """Subclass instance must extract through PyO3 FromPyObject without TypeError.
 
-        Exercised via ``molrs.write_xyz`` (signature takes ``Frame``); if the
+        Exercised via ``molrs.io.raw.write_xyz`` (signature takes ``Frame``); if the
         downcast rejects the subclass we get ``TypeError`` at the call site.
         """
 
@@ -119,7 +119,7 @@ class TestFrameSubclass:
         instance["atoms"] = atoms
 
         out = tmp_path / "sub.xyz"
-        molrs.write_xyz(str(out), instance)
+        molrs.io.raw.write_xyz(str(out), instance)
         assert out.exists()
 
 

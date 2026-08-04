@@ -4,7 +4,7 @@ use molrs::store::frame_access::FrameAccess;
 use ndarray::Array1;
 
 use crate::compute::error::ComputeError;
-use crate::compute::msd::MSD;
+use crate::compute::msd::{MSD, MsdMode};
 use crate::compute::result::ComputeResult;
 use crate::compute::traits::Compute;
 
@@ -14,14 +14,14 @@ pub struct EinsteinDiffusionResult {
     /// Lag times τ = i·dt, length `n_frames`. Units: `[dt]`.
     pub lag_times: Array1<f64>,
     /// System-average MSD per lag, identical to
-    /// [`MSD::windowed`](crate::compute::MSD)'s per-lag mean. Units: `[length]²`.
+    /// [`MSD`](crate::compute::MSD) in `Window` mode's per-lag mean. Units: `[length]²`.
     pub msd: Array1<f64>,
 }
 
 impl ComputeResult for EinsteinDiffusionResult {}
 
 /// Raw self-MSD compute. Delegates to
-/// [`MSD::windowed`](crate::compute::MSD) — MSD math is **not** re-derived here.
+/// [`MSD`](crate::compute::MSD) in `Window` mode — MSD math is **not** re-derived here.
 /// `D = slope/(2d)` is then a [`LinearFit`](crate::compute::fitting::LinearFit) +
 /// scale step.
 #[derive(Debug, Clone, Copy, Default)]
@@ -53,7 +53,7 @@ impl Compute for EinsteinDiffusion {
                 value: args.dt.to_string(),
             });
         }
-        let series = MSD::windowed().compute(frames, ())?;
+        let series = MSD::with_mode(MsdMode::Window).compute(frames, ())?;
         let msd = Array1::from_iter(series.data.iter().map(|r| r.mean));
         let lag_times = Array1::from_iter((0..series.data.len()).map(|i| i as f64 * args.dt));
         Ok(EinsteinDiffusionResult { lag_times, msd })
@@ -85,7 +85,7 @@ mod tests {
 
     #[test]
     fn einstein_diffusion_delegates_to_msd_windowed() {
-        // ac-012: EinsteinDiffusion.msd == MSD::windowed().compute means.
+        // ac-012: EinsteinDiffusion.msd == MSD::with_mode(MsdMode::Window).compute means.
         let xs = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0];
         let ys = [0.1, -0.2, 0.3, -0.1, 0.05, 0.0];
         let frames_owned: Vec<Frame> = (0..6)
@@ -93,7 +93,9 @@ mod tests {
             .collect();
         let frames: Vec<&Frame> = frames_owned.iter().collect();
 
-        let series = MSD::windowed().compute(&frames, ()).unwrap();
+        let series = MSD::with_mode(MsdMode::Window)
+            .compute(&frames, ())
+            .unwrap();
         let raw = EinsteinDiffusion
             .compute(&frames, EinsteinDiffusionArgs { dt: 2.0 })
             .unwrap();

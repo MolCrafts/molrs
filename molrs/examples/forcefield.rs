@@ -102,10 +102,10 @@ fn build_water() -> Frame {
     // Bonds block: i, j, type columns
     let mut bonds = Block::new();
     bonds
-        .insert("i", Array1::from_vec(vec![0 as U, 0 as U]).into_dyn())
+        .insert("atomi", Array1::from_vec(vec![0 as U, 0 as U]).into_dyn())
         .unwrap();
     bonds
-        .insert("j", Array1::from_vec(vec![1 as U, 2 as U]).into_dyn())
+        .insert("atomj", Array1::from_vec(vec![1 as U, 2 as U]).into_dyn())
         .unwrap();
     bonds
         .insert(
@@ -118,13 +118,13 @@ fn build_water() -> Frame {
     // Angles block: i, j (central), k, type columns
     let mut angles = Block::new();
     angles
-        .insert("i", Array1::from_vec(vec![1 as U]).into_dyn())
+        .insert("atomi", Array1::from_vec(vec![1 as U]).into_dyn())
         .unwrap();
     angles
-        .insert("j", Array1::from_vec(vec![0 as U]).into_dyn())
+        .insert("atomj", Array1::from_vec(vec![0 as U]).into_dyn())
         .unwrap();
     angles
-        .insert("k", Array1::from_vec(vec![2 as U]).into_dyn())
+        .insert("atomk", Array1::from_vec(vec![2 as U]).into_dyn())
         .unwrap();
     angles
         .insert(

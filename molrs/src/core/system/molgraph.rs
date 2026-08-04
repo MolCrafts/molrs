@@ -118,14 +118,81 @@ impl From<String> for PropValue {
 }
 
 /// Coerce a value to the canonical dtype registered for `key` (if any) so a
-/// field's column type stays stable across writers. Currently the only canonical
-/// dtype is `Float`, so an `Int` written to a float field (e.g. `x` / `charge` /
-/// bond `order` as `1`) is widened to `F64`; everything else passes through.
-fn coerce_canonical(key: &str, pv: PropValue) -> PropValue {
+/// field's column type stays stable across writers.
+///
+/// Width is not semantics: an `Int` written to a float field (e.g. `x` /
+/// `charge` / bond `order` as `1`) is widened to `F64`. A *sign* is semantics,
+/// so a negative under a `UInt` field (`id`, `mol_id`, `type_id`, …) is refused
+/// here rather than silently dropped by [`MolGraph::to_frame`], which must
+/// re-type the column to the declared dtype to satisfy the Frame schema. This
+/// mirrors the same rule on the Python `Block` boundary.
+fn coerce_canonical(key: &str, pv: PropValue) -> Result<PropValue, MolRsError> {
+    use crate::store::block::DType;
     match (keys::canonical_dtype(key), pv) {
-        (Some(crate::store::block::DType::Float), PropValue::Int(v)) => PropValue::F64(v as f64),
-        (_, pv) => pv,
+        (Some(DType::Float), PropValue::Int(v)) => Ok(PropValue::F64(v as f64)),
+        (Some(DType::UInt), PropValue::Int(v)) if v < 0 => Err(MolRsError::validation(format!(
+            "'{key}' is declared unsigned by the Frame schema; got {v}"
+        ))),
+        (_, pv) => Ok(pv),
     }
+}
+
+/// Materialize `table`'s column `key` into `block` at the dtype the Frame
+/// schema declares for that key.
+///
+/// [`EntityTable`] has no unsigned column, so a canonical unsigned field
+/// (`id`, `mol_id`, `type_id`, …) lives in the store as [`I`] and has to be
+/// re-typed on the way out: [`Block::insert`] validates the key against the
+/// schema vocabulary, so handing it the signed column is *rejected* — and the
+/// column would vanish from the frame instead of reaching the caller.
+///
+/// Returns `false` when `key` names no column of `table`.
+fn emit_column<K: Key>(
+    block: &mut Block,
+    table: &EntityTable<K>,
+    key: &str,
+) -> Result<bool, MolRsError> {
+    use crate::store::block::DType;
+    use ndarray::Array1;
+
+    let inserted = if let Ok((data, _)) = table.column_f64(key) {
+        block.insert(key, Array1::from_vec(data.to_vec()).into_dyn())
+    } else if let Ok((data, _)) = table.column_i32(key) {
+        if keys::canonical_dtype(key) == Some(DType::UInt) {
+            let unsigned: Vec<U> = data
+                .iter()
+                .map(|&v| {
+                    U::try_from(v).map_err(|_| {
+                        MolRsError::validation(format!(
+                            "'{key}' is declared unsigned by the Frame schema; got {v}"
+                        ))
+                    })
+                })
+                .collect::<Result<_, _>>()?;
+            block.insert(key, Array1::from_vec(unsigned).into_dyn())
+        } else {
+            block.insert(key, Array1::from_vec(data.to_vec()).into_dyn())
+        }
+    } else if let Ok((data, _)) = table.column_str(key) {
+        block.insert(key, Array1::from_vec(data.to_vec()).into_dyn())
+    } else if let Ok((data, _)) = table.column_bool(key) {
+        block.insert(key, Array1::from_vec(data.to_vec()).into_dyn())
+    } else {
+        return Ok(false);
+    };
+    inserted.map_err(|e| MolRsError::validation(e.to_string()))?;
+    Ok(true)
+}
+
+/// Narrow one value of a frame's unsigned column to the signed [`I`] the entity
+/// table stores, refusing the values that would wrap into a negative rather
+/// than storing an identifier the next [`MolGraph::to_frame`] cannot re-widen.
+fn narrow_uint(key: &str, v: U) -> Result<I, MolRsError> {
+    I::try_from(v).map_err(|_| {
+        MolRsError::validation(format!(
+            "'{key}' value {v} exceeds the signed range the graph stores"
+        ))
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -518,7 +585,7 @@ impl MolGraph {
         key: &str,
         val: impl Into<PropValue>,
     ) -> Result<(), MolRsError> {
-        match coerce_canonical(key, val.into()) {
+        match coerce_canonical(key, val.into())? {
             PropValue::F64(v) => self.nodes.set_f64(id, key, v),
             PropValue::Int(v) => self.nodes.set_i32(id, key, v),
             PropValue::Str(s) => self.nodes.set_str(id, key, &s),
@@ -559,12 +626,12 @@ impl MolGraph {
     /// Write an [`Atom`]'s properties into node `id`'s columns.
     fn write_atom(&mut self, id: NodeId, atom: &Atom) {
         for (key, val) in atom.iter() {
-            let r = match coerce_canonical(key, val.clone()) {
+            let r = coerce_canonical(key, val.clone()).and_then(|pv| match pv {
                 PropValue::F64(v) => self.nodes.set_f64(id, key, v),
                 PropValue::Int(v) => self.nodes.set_i32(id, key, v),
                 PropValue::Str(s) => self.nodes.set_str(id, key, &s),
                 PropValue::Bool(v) => self.nodes.set_bool(id, key, v),
-            };
+            });
             debug_assert!(r.is_ok(), "component type conflict writing '{key}'");
             let _ = r;
         }
@@ -697,7 +764,7 @@ impl MolGraph {
                 format!("RelationId {:?}", id),
             ));
         }
-        match coerce_canonical(key, val.into()) {
+        match coerce_canonical(key, val.into())? {
             PropValue::F64(v) => k.props.set_f64(id, key, v),
             PropValue::Int(v) => k.props.set_i32(id, key, v),
             PropValue::Str(s) => k.props.set_str(id, key, &s),
@@ -787,12 +854,13 @@ impl MolGraph {
     ) {
         let k = &mut self.kinds[kind.0 as usize];
         for (key, val) in props {
-            let r = match coerce_canonical(key, val.clone()) {
+            let r = coerce_canonical(key, val.clone()).and_then(|pv| match pv {
                 PropValue::F64(v) => k.props.set_f64(id, key, v),
                 PropValue::Int(v) => k.props.set_i32(id, key, v),
                 PropValue::Str(s) => k.props.set_str(id, key, &s),
                 PropValue::Bool(v) => k.props.set_bool(id, key, v),
-            };
+            });
+            debug_assert!(r.is_ok(), "component type conflict writing '{key}'");
             let _ = r;
         }
     }
@@ -900,16 +968,12 @@ impl MolGraph {
 
         let mut atoms_block = Block::new();
         for key in &all_keys {
-            if let Ok((data, _)) = self.nodes.column_f64(key) {
-                let _ =
-                    atoms_block.insert(key.as_str(), Array1::from_vec(data.to_vec()).into_dyn());
-            } else if let Ok((data, _)) = self.nodes.column_i32(key) {
-                let _ =
-                    atoms_block.insert(key.as_str(), Array1::from_vec(data.to_vec()).into_dyn());
-            } else if let Ok((data, _)) = self.nodes.column_str(key) {
-                let _ =
-                    atoms_block.insert(key.as_str(), Array1::from_vec(data.to_vec()).into_dyn());
-            }
+            // The columns are dense, row-aligned, and written through
+            // `coerce_canonical`, so a rejected insert is a broken invariant
+            // rather than a data condition — hence expect, not a swallowed
+            // Result. Swallowing it dropped the whole column silently.
+            emit_column(&mut atoms_block, &self.nodes, key)
+                .expect("node column is dense, row-aligned and canonically typed");
         }
         if n > 0 {
             frame.insert("atoms", atoms_block);
@@ -940,13 +1004,8 @@ impl MolGraph {
             let mut prop_keys: Vec<String> = k.props.columns().map(|s| s.to_owned()).collect();
             prop_keys.sort();
             for key in &prop_keys {
-                if let Ok((data, _)) = k.props.column_f64(key) {
-                    let _ = block.insert(key.as_str(), Array1::from_vec(data.to_vec()).into_dyn());
-                } else if let Ok((data, _)) = k.props.column_i32(key) {
-                    let _ = block.insert(key.as_str(), Array1::from_vec(data.to_vec()).into_dyn());
-                } else if let Ok((data, _)) = k.props.column_str(key) {
-                    let _ = block.insert(key.as_str(), Array1::from_vec(data.to_vec()).into_dyn());
-                }
+                emit_column(&mut block, &k.props, key)
+                    .expect("relation column is dense, row-aligned and canonically typed");
             }
 
             frame.insert(&self.kind_name[kidx], block);
@@ -968,16 +1027,25 @@ impl MolGraph {
         let nrows = atoms_block.nrows().unwrap_or(0);
         let col_keys: Vec<String> = atoms_block.keys().map(|k| k.to_owned()).collect();
 
+        // Unsigned and bool columns are read back too: the canonical `id` /
+        // `mol_id` / `type_id` fields are UInt in the Frame schema, so skipping
+        // them here would drop exactly the identifiers a round-trip must carry.
         let mut float_cols: Vec<(&str, &ndarray::ArrayD<F>)> = Vec::new();
         let mut i64_cols: Vec<(&str, &ndarray::ArrayD<I>)> = Vec::new();
+        let mut uint_cols: Vec<(&str, &ndarray::ArrayD<U>)> = Vec::new();
         let mut str_cols: Vec<(&str, &ndarray::ArrayD<String>)> = Vec::new();
+        let mut bool_cols: Vec<(&str, &ndarray::ArrayD<bool>)> = Vec::new();
         for key in &col_keys {
             if let Some(arr) = atoms_block.get_float(key) {
                 float_cols.push((key.as_str(), arr));
             } else if let Some(arr) = atoms_block.get_int(key) {
                 i64_cols.push((key.as_str(), arr));
+            } else if let Some(arr) = atoms_block.get_uint(key) {
+                uint_cols.push((key.as_str(), arr));
             } else if let Some(arr) = atoms_block.get_string(key) {
                 str_cols.push((key.as_str(), arr));
+            } else if let Some(arr) = atoms_block.get_bool(key) {
+                bool_cols.push((key.as_str(), arr));
             }
         }
 
@@ -991,8 +1059,14 @@ impl MolGraph {
             for &(key, arr) in &i64_cols {
                 node.set(key, PropValue::Int(arr[[row]]));
             }
+            for &(key, arr) in &uint_cols {
+                node.set(key, PropValue::Int(narrow_uint(key, arr[[row]])?));
+            }
             for &(key, arr) in &str_cols {
                 node.set(key, PropValue::Str(arr[[row]].clone()));
+            }
+            for &(key, arr) in &bool_cols {
+                node.set(key, PropValue::Bool(arr[[row]]));
             }
             node_ids.push(self.add_node_with(node));
         }
@@ -1026,11 +1100,14 @@ impl MolGraph {
             let nrel = block.nrows().unwrap_or(0);
             let endpoint_names: Vec<String> = (0..arity).map(rel_col_name).collect();
             // Collect non-endpoint relation property columns by element type so
-            // a to_frame -> read_frame round-trip restores int and string
-            // relation props (e.g. a string bond label), not just floats.
+            // a to_frame -> read_frame round-trip restores every dtype the
+            // frame can carry (a string bond label, a UInt `type_id`, an
+            // `is_14` flag), not just floats.
             let mut prop_f: Vec<(String, &ndarray::ArrayD<F>)> = Vec::new();
             let mut prop_i: Vec<(String, &ndarray::ArrayD<I>)> = Vec::new();
+            let mut prop_u: Vec<(String, &ndarray::ArrayD<U>)> = Vec::new();
             let mut prop_s: Vec<(String, &ndarray::ArrayD<String>)> = Vec::new();
+            let mut prop_b: Vec<(String, &ndarray::ArrayD<bool>)> = Vec::new();
             for k in block.keys() {
                 if endpoint_names.iter().any(|e| e == k) {
                     continue;
@@ -1039,8 +1116,12 @@ impl MolGraph {
                     prop_f.push((k.to_owned(), a));
                 } else if let Some(a) = block.get_int(k) {
                     prop_i.push((k.to_owned(), a));
+                } else if let Some(a) = block.get_uint(k) {
+                    prop_u.push((k.to_owned(), a));
                 } else if let Some(a) = block.get_string(k) {
                     prop_s.push((k.to_owned(), a));
+                } else if let Some(a) = block.get_bool(k) {
+                    prop_b.push((k.to_owned(), a));
                 }
             }
 
@@ -1066,9 +1147,16 @@ impl MolGraph {
                     for (k, arr) in &prop_i {
                         let _ = self.set_relation_prop(kid, rid, k, PropValue::Int(arr[[row]]));
                     }
+                    for (k, arr) in &prop_u {
+                        let v = narrow_uint(k, arr[[row]])?;
+                        let _ = self.set_relation_prop(kid, rid, k, PropValue::Int(v));
+                    }
                     for (k, arr) in &prop_s {
                         let _ =
                             self.set_relation_prop(kid, rid, k, PropValue::Str(arr[[row]].clone()));
+                    }
+                    for (k, arr) in &prop_b {
+                        let _ = self.set_relation_prop(kid, rid, k, PropValue::Bool(arr[[row]]));
                     }
                 }
             }
@@ -1311,7 +1399,11 @@ mod tests {
         let a = g.add_node_with(Atom::xyz("C", 0.0, 0.0, 0.0));
         let b = g.add_node_with(Atom::xyz("C", 1.5, 0.0, 0.0));
         let rid = g.add_relation(bond, &[a, b]).unwrap();
-        g.set_relation_prop(bond, rid, "order", 2.0_f64).unwrap();
+        // A genuinely float-valued relation prop. `bond_number` is not one —
+        // it is a schema uint — and a *computed* fractional bond order is
+        // exactly the kind of quantity that gets its own key.
+        g.set_relation_prop(bond, rid, "wiberg_index", 1.47_f64)
+            .unwrap();
         g.set_relation_prop(bond, rid, "ring_size", PropValue::Int(6))
             .unwrap();
         g.set_relation_prop(bond, rid, "label", PropValue::Str("aromatic".to_owned()))
@@ -1334,10 +1426,92 @@ mod tests {
             Some(&PropValue::Str("aromatic".to_owned())),
             "string relation prop lost on round-trip"
         );
-        match r.props.get("order") {
-            Some(PropValue::F64(v)) => assert!((v - 2.0).abs() < 1e-12),
+        match r.props.get("wiberg_index") {
+            Some(PropValue::F64(v)) => assert!((v - 1.47).abs() < 1e-12),
             other => panic!("float relation prop lost: {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_to_frame_keeps_schema_unsigned_node_columns() {
+        // `id` / `mol_id` are UInt in the Frame schema but live in the node
+        // table as I. Emitting them signed made `Block::insert` reject the
+        // column against the schema — and, with the error swallowed, the
+        // identifiers vanished from the frame entirely.
+        let mut g = MolGraph::new();
+        let a = g.add_node_with(Atom::xyz("C", 0.0, 0.0, 0.0));
+        let b = g.add_node_with(Atom::xyz("H", 1.1, 0.0, 0.0));
+        g.set_node(a, "id", PropValue::Int(1)).unwrap();
+        g.set_node(b, "id", PropValue::Int(2)).unwrap();
+        g.set_node(a, "mol_id", PropValue::Int(7)).unwrap();
+        g.set_node(b, "mol_id", PropValue::Int(7)).unwrap();
+
+        let atoms = &g.to_frame()["atoms"];
+        assert_eq!(
+            atoms
+                .get_uint("id")
+                .expect("'id' reaches the frame")
+                .iter()
+                .copied()
+                .collect::<Vec<U>>(),
+            vec![1, 2]
+        );
+        assert_eq!(
+            atoms
+                .get_uint("mol_id")
+                .expect("'mol_id' reaches the frame")
+                .iter()
+                .copied()
+                .collect::<Vec<U>>(),
+            vec![7, 7]
+        );
+    }
+
+    #[test]
+    fn test_to_frame_keeps_bool_node_columns() {
+        let mut g = MolGraph::new();
+        let a = g.add_node_with(Atom::xyz("C", 0.0, 0.0, 0.0));
+        let b = g.add_node_with(Atom::xyz("H", 1.1, 0.0, 0.0));
+        g.set_node(a, "frozen", true).unwrap();
+        g.set_node(b, "frozen", false).unwrap();
+
+        assert_eq!(
+            g.to_frame()["atoms"]
+                .get_bool("frozen")
+                .expect("bool column reaches the frame")
+                .iter()
+                .copied()
+                .collect::<Vec<bool>>(),
+            vec![true, false]
+        );
+    }
+
+    #[test]
+    fn test_read_frame_restores_unsigned_and_bool_node_props() {
+        let mut g = MolGraph::new();
+        let a = g.add_node_with(Atom::xyz("C", 0.0, 0.0, 0.0));
+        g.set_node(a, "id", PropValue::Int(4)).unwrap();
+        g.set_node(a, "mol_id", PropValue::Int(9)).unwrap();
+        g.set_node(a, "frozen", true).unwrap();
+
+        let mut g2 = MolGraph::new();
+        g2.read_frame(&g.to_frame()).unwrap();
+
+        let (_, atom) = g2.nodes().next().expect("node round-trips");
+        assert_eq!(atom.get("id"), Some(&PropValue::Int(4)));
+        assert_eq!(atom.get("mol_id"), Some(&PropValue::Int(9)));
+        assert_eq!(atom.get("frozen"), Some(&PropValue::Bool(true)));
+    }
+
+    #[test]
+    fn test_set_node_rejects_negative_under_unsigned_key() {
+        // A sign is semantics, not width: the Frame schema declares `id`
+        // unsigned, so this must fail where a Result exists rather than blow up
+        // later in `to_frame`, which has none.
+        let mut g = MolGraph::new();
+        let a = g.add_node();
+        assert!(g.set_node(a, "id", PropValue::Int(-1)).is_err());
+        assert!(g.set_node(a, "id", PropValue::Int(3)).is_ok());
     }
 
     // ----- Merge (registry-driven; covers all kinds) -----

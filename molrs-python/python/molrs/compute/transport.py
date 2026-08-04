@@ -1,19 +1,12 @@
-"""Ion-transport trajectory-analysis kernels.
+"""Ion-transport raw Computes — identity re-exports of the Rust surface.
 
-All computation is in Rust. Two shapes live here, matching ``compute::transport``:
+Compose yourself (same as Rust):
 
-* **Raw computes** — :class:`VACF`, :class:`GreenKuboDiffusion`,
-  :class:`EinsteinDiffusion`, :class:`EinsteinConductivity`,
-  :class:`GreenKuboConductivity`, :class:`DebyeRelaxation`. Each returns ONLY a
-  raw curve; the derived coefficient comes from an explicit
-  :mod:`molrs.compute.fit` step.
-* **Namespace classes** — :class:`Onsager` and :class:`Persist`, thin static
-  wrappers over the compiled free functions so callers reach them as
-  ``Onsager.correlation(...)`` rather than through a flat function list.
+* Green–Kubo σ: ``GreenKuboConductivity`` → ``CumulativeTrapezoid`` → scale
+* Einstein–Helfand σ: ``EinsteinConductivity`` → ``LinearFit`` → scale
+* Self-diffusion D: ``VACF`` / ``EinsteinDiffusion`` → fit
 
-The namespace classes are the molrs ports of the *tame* recipes
-(<https://github.com/Roy-Kid/tame>): ``onsager`` (Onsager transport
-coefficients) and ``persist`` (pair-survival / residence-time correlations).
+
 """
 
 from molrs._lib import (
@@ -33,12 +26,6 @@ class Onsager:
     """Onsager collective mean-displacement cross-correlation (static)."""
 
     correlation = staticmethod(transport_onsager_correlation)
-
-
-# The bundled ``Jacf.green_kubo_conductivity`` (raw JACF + fitted sigma) was
-# removed in compute-fit-03-cleanup: compose :class:`GreenKuboConductivity`
-# (raw current ACF) with :class:`molrs.compute.fitting.CumulativeTrapezoid` and a
-# ``1/(3·V·k_B·T)`` MD→SI prefactor instead.
 
 
 class Persist:

@@ -24,8 +24,8 @@ use crate::helpers::NpF;
 
 use molrs::compute::{
     COMResult, CenterOfMass, Cluster, ClusterCenters, ClusterCentersResult, ClusterResult, Compute,
-    GyrationTensor, InertiaTensor, KMeans, KMeansResult, MSD, MSDResult, MSDTimeSeries, Pca2,
-    PcaResult, RDF, RDFResult, RadiusOfGyration, RgResult,
+    GyrationTensor, InertiaTensor, KMeans, KMeansResult, MSD, MSDResult, MSDTimeSeries, MsdMode,
+    Pca2, PcaResult, RDF, RDFResult, RadiusOfGyration, RgResult,
 };
 use molrs::spatial::neighbors::NeighborList;
 use molrs::store::frame::Frame as CoreFrame;
@@ -48,7 +48,7 @@ fn was_batched(frames: &Bound<'_, PyAny>) -> bool {
 /// Radial distribution function g(r) result.
 ///
 /// `rdf` is already normalized (RDF.compute finalizes eagerly).
-#[pyclass(module = "molrs", name = "RDFResult")]
+#[pyclass(module = "molrs.compute.density", name = "RDFResult")]
 pub struct PyRDFResult {
     inner: RDFResult,
 }
@@ -109,7 +109,7 @@ impl PyRDFResult {
 ///
 /// Accepts either a single `(frame, nlist)` pair or a list of each. Results
 /// accumulate across frames and are ideal-gas normalized on return.
-#[pyclass(module = "molrs", name = "RDF")]
+#[pyclass(module = "molrs.compute.density", name = "RDF")]
 pub struct PyRDF {
     inner: RDF,
 }
@@ -166,7 +166,7 @@ impl PyRDF {
 // ---------------------------------------------------------------------------
 
 /// Per-frame MSD result (from a single time point).
-#[pyclass(module = "molrs", name = "MSDResult")]
+#[pyclass(module = "molrs.compute.msd", name = "MSDResult")]
 pub struct PyMSDResult {
     inner: MSDResult,
 }
@@ -196,7 +196,7 @@ impl PyMSDResult {
 ///
 /// `series.data[0]` is the reference frame (mean = 0); `series.data[i]`
 /// compares frame `i` against frame `0`.
-#[pyclass(module = "molrs", name = "MSDTimeSeries")]
+#[pyclass(module = "molrs.compute.msd", name = "MSDTimeSeries")]
 pub struct PyMSDTimeSeries {
     inner: MSDTimeSeries,
 }
@@ -252,11 +252,29 @@ impl PyMSDTimeSeries {
     }
 }
 
-/// Stateless MSD calculator.
+/// Mean squared displacement.
 ///
-/// ``compute(frames)`` uses ``frames[0]`` as the reference and returns a
-/// ``MSDTimeSeries`` of the same length as ``frames``.
-#[pyclass(module = "molrs", name = "MSD")]
+/// Two estimators of the same quantity, chosen by ``method``; they are not
+/// interchangeable and there is no default that suits both:
+///
+/// - ``"direct"`` (default) — ``MSD(t) = ⟨|r(t) − r(0)|²⟩``, frame 0 as the one
+///   time origin.
+/// - ``"window"`` — ``MSD(t) = ⟨|r(τ+t) − r(τ)|²⟩`` averaged over **every** time
+///   origin τ. Far better statistics at long lag, which is what a diffusion
+///   coefficient needs, and O(T log T) via the Wiener–Khinchin identity rather
+///   than the O(T²) nested loop. Conventions match ``freud.msd``.
+///
+/// ``compute(frames)`` returns an ``MSDTimeSeries`` as long as ``frames``
+/// either way.
+///
+/// Parameters
+/// ----------
+/// method : {"direct", "window"}, optional
+///
+/// Examples
+/// --------
+/// >>> molrs.MSD(method="window").compute(frames).mean
+#[pyclass(module = "molrs.compute.msd", name = "MSD")]
 pub struct PyMSD {
     inner: MSD,
 }
@@ -264,11 +282,32 @@ pub struct PyMSD {
 #[pymethods]
 impl PyMSD {
     #[new]
-    fn new() -> Self {
-        Self { inner: MSD::new() }
+    #[pyo3(signature = (method = "direct"))]
+    fn new(method: &str) -> PyResult<Self> {
+        let mode = match method {
+            "direct" => MsdMode::Direct,
+            "window" => MsdMode::Window,
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "unknown MSD method {other:?}; expected 'direct' or 'window'"
+                )));
+            }
+        };
+        Ok(Self {
+            inner: MSD::with_mode(mode),
+        })
     }
 
-    /// Compute MSD time series against frames[0].
+    /// The estimator this analyzer uses: ``"direct"`` or ``"window"``.
+    #[getter]
+    fn method(&self) -> &'static str {
+        match self.inner.mode() {
+            MsdMode::Direct => "direct",
+            MsdMode::Window => "window",
+        }
+    }
+
+    /// Compute the MSD time series.
     fn compute(&self, frames: &Bound<'_, PyAny>) -> PyResult<PyMSDTimeSeries> {
         let owned = collect_frames(frames)?;
         if owned.is_empty() {
@@ -280,7 +319,7 @@ impl PyMSD {
     }
 
     fn __repr__(&self) -> String {
-        "MSD()".to_string()
+        format!("MSD(method={:?})", self.method())
     }
 }
 
@@ -289,7 +328,11 @@ impl PyMSD {
 // ---------------------------------------------------------------------------
 
 /// Per-frame cluster assignment.
-#[pyclass(module = "molrs", name = "ClusterResult", from_py_object)]
+#[pyclass(
+    module = "molrs.compute.cluster",
+    name = "ClusterResult",
+    from_py_object
+)]
 #[derive(Clone)]
 pub struct PyClusterResult {
     pub(crate) inner: ClusterResult,
@@ -330,7 +373,7 @@ impl PyClusterResult {
 }
 
 /// Distance-based cluster analysis.
-#[pyclass(module = "molrs", name = "Cluster")]
+#[pyclass(module = "molrs.compute.cluster", name = "Cluster")]
 pub struct PyCluster {
     inner: Cluster,
 }
@@ -421,7 +464,11 @@ impl PyCluster {
 // ---------------------------------------------------------------------------
 
 /// Geometric cluster centers for a single frame.
-#[pyclass(module = "molrs", name = "ClusterCentersResult", from_py_object)]
+#[pyclass(
+    module = "molrs.compute.cluster",
+    name = "ClusterCentersResult",
+    from_py_object
+)]
 #[derive(Clone)]
 pub struct PyClusterCentersResult {
     pub(crate) inner: ClusterCentersResult,
@@ -471,7 +518,7 @@ fn extract_centers_vec(arg: &Bound<'_, PyAny>) -> PyResult<Vec<ClusterCentersRes
     Ok(list.iter().map(|r| r.inner.clone()).collect())
 }
 
-#[pyclass(module = "molrs", name = "ClusterCenters")]
+#[pyclass(module = "molrs.compute.cluster", name = "ClusterCenters")]
 pub struct PyClusterCenters {
     inner: ClusterCenters,
 }
@@ -522,7 +569,11 @@ impl PyClusterCenters {
 // ---------------------------------------------------------------------------
 
 /// Per-frame mass-weighted cluster centers and total cluster masses.
-#[pyclass(module = "molrs", name = "CenterOfMassResult", from_py_object)]
+#[pyclass(
+    module = "molrs.compute.cluster",
+    name = "CenterOfMassResult",
+    from_py_object
+)]
 #[derive(Clone)]
 pub struct PyCenterOfMassResult {
     pub(crate) inner: COMResult,
@@ -571,7 +622,7 @@ fn extract_com_vec(arg: &Bound<'_, PyAny>) -> PyResult<Vec<COMResult>> {
     Ok(list.iter().map(|r| r.inner.clone()).collect())
 }
 
-#[pyclass(module = "molrs", name = "CenterOfMass")]
+#[pyclass(module = "molrs.compute.cluster", name = "CenterOfMass")]
 pub struct PyCenterOfMass {
     masses: Option<Vec<F>>,
 }
@@ -654,7 +705,7 @@ fn tensor_list_into_pyarray<'py>(
 ///   when a list of frames is passed. For a single frame you get a `(num_clusters, 3, 3)` ndarray.
 /// - list of frames → ndarray of shape `(n_frames, num_clusters, 3, 3)` only if all frames
 ///   have identical cluster counts; otherwise a Python list of per-frame ndarrays.
-#[pyclass(module = "molrs", name = "GyrationTensor")]
+#[pyclass(module = "molrs.compute.cluster", name = "GyrationTensor")]
 pub struct PyGyrationTensor {
     inner: GyrationTensor,
 }
@@ -711,7 +762,7 @@ impl PyGyrationTensor {
 // InertiaTensor
 // ---------------------------------------------------------------------------
 
-#[pyclass(module = "molrs", name = "InertiaTensor")]
+#[pyclass(module = "molrs.compute.cluster", name = "InertiaTensor")]
 pub struct PyInertiaTensor {
     masses: Option<Vec<F>>,
 }
@@ -778,7 +829,7 @@ impl PyInertiaTensor {
 // RadiusOfGyration
 // ---------------------------------------------------------------------------
 
-#[pyclass(module = "molrs", name = "RadiusOfGyration")]
+#[pyclass(module = "molrs.compute.cluster", name = "RadiusOfGyration")]
 pub struct PyRadiusOfGyration {
     masses: Option<Vec<F>>,
 }
@@ -882,7 +933,7 @@ impl PyRadiusOfGyration {
 ///
 /// Wrap each row (a 1-D float array) with `DescriptorRow(row)`; then pass a
 /// Python list of them to ``Pca2.compute`` / ``KMeans.compute``.
-#[pyclass(module = "molrs", name = "DescriptorRow", from_py_object)]
+#[pyclass(module = "molrs.compute.ml", name = "DescriptorRow", from_py_object)]
 #[derive(Clone)]
 pub struct PyDescriptorRow {
     row: Vec<F>,
@@ -910,7 +961,7 @@ impl molrs::compute::DescriptorRow for PyDescriptorRow {
 }
 
 /// Two-component PCA result.
-#[pyclass(module = "molrs", name = "PcaResult", from_py_object)]
+#[pyclass(module = "molrs.compute.ml", name = "PcaResult", from_py_object)]
 #[derive(Clone)]
 pub struct PyPcaResult {
     pub(crate) inner: PcaResult,
@@ -945,7 +996,7 @@ impl PyPcaResult {
 }
 
 /// Two-component PCA calculator.
-#[pyclass(module = "molrs", name = "Pca2")]
+#[pyclass(module = "molrs.compute.ml", name = "Pca2")]
 pub struct PyPca2 {
     inner: Pca2<PyDescriptorRow>,
 }
@@ -978,7 +1029,7 @@ impl PyPca2 {
 // ---------------------------------------------------------------------------
 
 /// k-means cluster labels.
-#[pyclass(module = "molrs", name = "KMeansResult")]
+#[pyclass(module = "molrs.compute.ml", name = "KMeansResult")]
 pub struct PyKMeansResult {
     inner: KMeansResult,
 }
@@ -1000,7 +1051,7 @@ impl PyKMeansResult {
 }
 
 /// k-means clustering over a PCA projection (2-D).
-#[pyclass(module = "molrs", name = "KMeans")]
+#[pyclass(module = "molrs.compute.ml", name = "KMeans")]
 pub struct PyKMeans {
     inner: KMeans,
 }

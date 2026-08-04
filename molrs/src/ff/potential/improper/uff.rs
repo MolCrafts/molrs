@@ -44,7 +44,11 @@ impl Potential for UffInversion {
             if d_ji < 1e-12 || d_jk < 1e-12 || d_jl < 1e-12 {
                 continue;
             }
-            let mut n = cross3(r_ji, r_jk);
+            // The gradient block below (t1 = r̂_JL × r̂_JK, t2 = r̂_JI × r̂_JL,
+            // t3 = r̂_JK × r̂_JI) is written for the normal (−r_JI) × r_JK.
+            // E is even in cosY so the wrong orientation is invisible in the
+            // energy; the force is odd in it and comes out inverted.
+            let mut n = cross3([-r_ji[0], -r_ji[1], -r_ji[2]], r_jk);
             let ln = mag3(n);
             if ln < 1e-12 {
                 continue;

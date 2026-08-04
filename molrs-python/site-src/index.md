@@ -21,10 +21,10 @@ the hosted site reserves `/reference/wasm/` for that generated reference.
     ```python
     import molrs
 
-    ir = molrs.parse_smiles("CCO")
+    ir = molrs.io.SmilesIR("CCO")
     mol = ir.to_atomistic()
 
-    mol3d, _report = molrs.Conformer(speed="fast", seed=42).generate(mol)
+    mol3d, _report = molrs.conformer.Conformer(speed="fast", seed=42).generate(mol)
     frame = mol3d.to_frame()
 
     atoms = frame["atoms"]

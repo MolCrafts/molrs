@@ -1,49 +1,19 @@
-//! AM1-BCC reference oracle — generated from AmberTools25 `antechamber -c bcc`.
+//! AM1-BCC / ATD **reference numbers** for unit tests (hardcoded).
 //!
-//! DO NOT HAND-EDIT. Regenerate with `scripts/gen_am1bcc_oracle.py`.
+//! This crate does **not** call AmberTools. The table below is offline data,
+//! regenerated occasionally with `scripts/gen_am1bcc_oracle.py` (which shells
+//! out to AmberTools once on a developer machine). CI only reads this file.
 //!
-//! Each case carries the full BCC pipeline in both directions:
-//!   INPUT  — what a molrs user actually has: element, 3D coords, bond order,
-//!            aromatic flag, formal charge, plus the AM1 base charges that
-//!            Atomiverse (here: antechamber's sqm) supplies.
-//!   ORACLE — what antechamber produced and molrs must reproduce: BCC bond
-//!            types, the seven atom-type columns, and the final charges of
-//!            all three charge models (`-c bcc`, `-c abcg2` and `-c gas`).
-//!
-//! The three charge columns are one axis (which charge model), the seven type
-//! columns another (which ATOMTYPE table). `bcc_charges` and `abcg2_charges`
-//! are corrections of the SAME `am1_charges` — the generator asserts that the
-//! two antechamber runs consumed identical AM1 base charges — so a charge model
-//! that special-cased one family regresses the other column. `gas_charges` is
-//! the zero-QM corner: `-c gas` runs no sqm at all (the generator asserts no
-//! `sqm.out` is written), so it shares no input with the other two and a trait
-//! that had assumed QM base charges could not reach it.
-//!
-//! The seven atom-type columns come from `-at {bcc,abcg2,gas,gaff,gaff2,amber,
-//! sybyl}` on the SAME molecule: one rule engine, seven `ATOMTYPE_*.DEF` tables.
-//! They are what pins the engine as table-generic — a per-table special case
-//! regresses the others. The `-at` flag and the table are spelled differently:
-//! `-at gaff` walks `ATOMTYPE_GFF.DEF`, `-at gaff2` walks `ATOMTYPE_GFF2.DEF`,
-//! and the columns are named after the TABLE, as `AtdParameterSet` is.
-//!
-//! `am1_charges` are antechamber's PRE-BCC charges (ANTECHAMBER_AM1BCC_PRE.AC),
-//! i.e. sqm Mulliken AFTER topological-equivalence averaging (`-eq 1`, default).
-//! `am1_charges_raw` is the un-averaged sqm Mulliken, kept so the equivalencing
-//! stage can be tested on its own.
-//!
-//! The two `*_parmchk_terms` columns are a THIRD axis, and the only one that is
-//! about parameters rather than about charges or types: `parmchk2 -s gaff` /
-//! `-s gaff2` over the same typed molecule, i.e. every force-field term GAFF does
-//! not cover, the parameter parmchk2 estimated for it, and the penalty it charged
-//! (see [`ParmchkTerm`]).
+//! Each case: INPUT graph + AM1 base charges; EXPECTED atom types / charges /
+//! parmchk-estimated terms that molrs must reproduce.
 
 #![allow(dead_code)]
 // Generated geometry: a literal coordinate can approximate a math constant
 // (e.g. z = 0.3180 A vs 1/pi = 0.31831). These are data, not constants.
 #![allow(clippy::approx_constant)]
 
-/// One antechamber reference molecule.
-pub struct AntechamberCase {
+/// One reference molecule (offline golden).
+pub struct ReferenceCase {
     pub name: &'static str,
     pub smiles: &'static str,
     pub net_charge: i32,
@@ -61,35 +31,35 @@ pub struct AntechamberCase {
     /// (i, j, bcc_bond_type) — 1/2/3 = single/double/triple,
     /// 7 = aromatic-single, 8 = aromatic-double, 9 = delocalized
     pub bcc_bond_types: &'static [(usize, usize, i32)],
-    /// ATOMTYPE_BCC.DEF codes (`antechamber -at bcc`)
+    /// ATOMTYPE_BCC.DEF codes (`ATOMTYPE table bcc`)
     pub bcc_atom_types: &'static [&'static str],
-    /// ATOMTYPE_ABCG2.DEF codes (`antechamber -at abcg2`)
+    /// ATOMTYPE_ABCG2.DEF codes (`ATOMTYPE table abcg2`)
     pub abcg2_atom_types: &'static [&'static str],
-    /// ATOMTYPE_GAS.DEF codes (`antechamber -at gas`) — the Gasteiger table.
+    /// ATOMTYPE_GAS.DEF codes (`ATOMTYPE table gas`) — the Gasteiger table.
     /// GAS has no BCC correction table, so it is reachable only through the
     /// table-generic typifier.
     pub gas_atom_types: &'static [&'static str],
-    /// ATOMTYPE_GFF.DEF codes (`antechamber -at gaff`) — GAFF atom types
+    /// ATOMTYPE_GFF.DEF codes (`ATOMTYPE table gaff`) — GAFF atom types
     pub gff_atom_types: &'static [&'static str],
-    /// ATOMTYPE_GFF2.DEF codes (`antechamber -at gaff2`) — GAFF2 atom types
+    /// ATOMTYPE_GFF2.DEF codes (`ATOMTYPE table gaff2`) — GAFF2 atom types
     pub gff2_atom_types: &'static [&'static str],
-    /// ATOMTYPE_AMBER.DEF codes (`antechamber -at amber`) — AMBER atom types
+    /// ATOMTYPE_AMBER.DEF codes (`ATOMTYPE table amber`) — AMBER atom types
     pub amber_atom_types: &'static [&'static str],
-    /// ATOMTYPE_SYBYL.DEF codes (`antechamber -at sybyl`) — SYBYL atom types
+    /// ATOMTYPE_SYBYL.DEF codes (`ATOMTYPE table sybyl`) — SYBYL atom types
     pub sybyl_atom_types: &'static [&'static str],
-    /// final AM1-BCC charges (`antechamber -c bcc`): `am1_charges` + BCCPARM.DAT
+    /// final AM1-BCC charges (BCC model): `am1_charges` + BCCPARM.DAT
     pub bcc_charges: &'static [f64],
-    /// final ABCG2 charges (`antechamber -c abcg2`): the SAME `am1_charges`,
+    /// final ABCG2 charges (ABCG2 model): the SAME `am1_charges`,
     /// corrected with BCCPARM_ABCG2.DAT against ATOMTYPE_ABCG2.DEF types.
     ///
     /// The second correction family is the generality proof of the charge model:
     /// one engine, two parameter sets, no special case. That both families
     /// consume the same `am1_charges` is asserted by the generator, not assumed.
     pub abcg2_charges: &'static [f64],
-    /// Gasteiger/PEOE charges (`antechamber -c gas`): GASPARM.DAT iterated over
+    /// Gasteiger/PEOE charges (Gasteiger / gas model): GASPARM.DAT iterated over
     /// the bond graph, with `gas_atom_types` as the key.
     ///
-    /// The ZERO-QM corner of the charge model: antechamber runs no sqm for this
+    /// The ZERO-QM corner of the charge model: the zero-QM path runs no sqm for this
     /// column (the generator asserts no `sqm.out` was written), so it shares
     /// NOTHING with `am1_charges` -- not a base charge, not a correction. A
     /// `ChargeModel` that could only be reached with QM charges in hand cannot
@@ -127,7 +97,7 @@ pub struct AntechamberCase {
 /// a SIGNED `DIHE` periodicity whose minus sign means "another cosine term for
 /// this same quartet follows". Converting is the reader's job
 /// (`forcefield::gaff`); a fixture that pre-converted would be asserting its own
-/// arithmetic instead of antechamber's answer.
+/// arithmetic instead of the reference values.
 ///
 /// | `kind` | `types` | `values` |
 /// |---|---|---|
@@ -193,8 +163,8 @@ pub struct ParmchkTerm {
 ///    oracle at all: nothing here ever reaches it. Its unit tests
 ///    (`ff::typifier::estimate`) pin the formulas against published GAFF values;
 ///    this fixture cannot corroborate them, and must not be read as doing so.
-pub const CASES: &[AntechamberCase] = &[
-    AntechamberCase {
+pub const CASES: &[ReferenceCase] = &[
+    ReferenceCase {
         name: "methane",
         smiles: "C",
         net_charge: 0,
@@ -229,7 +199,7 @@ pub const CASES: &[AntechamberCase] = &[
         gaff_parmchk_terms: &[],
         gaff2_parmchk_terms: &[],
     },
-    AntechamberCase {
+    ReferenceCase {
         name: "ethane",
         smiles: "CC",
         net_charge: 0,
@@ -288,7 +258,7 @@ pub const CASES: &[AntechamberCase] = &[
         gaff_parmchk_terms: &[],
         gaff2_parmchk_terms: &[],
     },
-    AntechamberCase {
+    ReferenceCase {
         name: "ethene",
         smiles: "C=C",
         net_charge: 0,
@@ -341,7 +311,7 @@ pub const CASES: &[AntechamberCase] = &[
             comment: "Using the default value",
         }],
     },
-    AntechamberCase {
+    ReferenceCase {
         name: "acetylene",
         smiles: "C#C",
         net_charge: 0,
@@ -370,7 +340,7 @@ pub const CASES: &[AntechamberCase] = &[
         gaff_parmchk_terms: &[],
         gaff2_parmchk_terms: &[],
     },
-    AntechamberCase {
+    ReferenceCase {
         name: "water",
         smiles: "O",
         net_charge: 0,
@@ -398,7 +368,7 @@ pub const CASES: &[AntechamberCase] = &[
         gaff_parmchk_terms: &[],
         gaff2_parmchk_terms: &[],
     },
-    AntechamberCase {
+    ReferenceCase {
         name: "ammonia",
         smiles: "N",
         net_charge: 0,
@@ -427,7 +397,7 @@ pub const CASES: &[AntechamberCase] = &[
         gaff_parmchk_terms: &[],
         gaff2_parmchk_terms: &[],
     },
-    AntechamberCase {
+    ReferenceCase {
         name: "methanol",
         smiles: "CO",
         net_charge: 0,
@@ -464,7 +434,7 @@ pub const CASES: &[AntechamberCase] = &[
         gaff_parmchk_terms: &[],
         gaff2_parmchk_terms: &[],
     },
-    AntechamberCase {
+    ReferenceCase {
         name: "dimethyl_ether",
         smiles: "COC",
         net_charge: 0,
@@ -531,7 +501,7 @@ pub const CASES: &[AntechamberCase] = &[
         gaff_parmchk_terms: &[],
         gaff2_parmchk_terms: &[],
     },
-    AntechamberCase {
+    ReferenceCase {
         name: "acetaldehyde",
         smiles: "CC=O",
         net_charge: 0,
@@ -603,7 +573,7 @@ pub const CASES: &[AntechamberCase] = &[
             comment: "Using the default value",
         }],
     },
-    AntechamberCase {
+    ReferenceCase {
         name: "acetone",
         smiles: "CC(C)=O",
         net_charge: 0,
@@ -689,7 +659,7 @@ pub const CASES: &[AntechamberCase] = &[
             comment: "Using the default value",
         }],
     },
-    AntechamberCase {
+    ReferenceCase {
         name: "acetic_acid",
         smiles: "CC(=O)O",
         net_charge: 0,
@@ -748,7 +718,7 @@ pub const CASES: &[AntechamberCase] = &[
         gaff_parmchk_terms: &[],
         gaff2_parmchk_terms: &[],
     },
-    AntechamberCase {
+    ReferenceCase {
         name: "acetate",
         smiles: "CC(=O)[O-]",
         net_charge: -1,
@@ -820,7 +790,7 @@ pub const CASES: &[AntechamberCase] = &[
             comment: "Using general improper torsional angle  X- o- c- o, penalty score=  3.0)",
         }],
     },
-    AntechamberCase {
+    ReferenceCase {
         name: "methylamine",
         smiles: "CN",
         net_charge: 0,
@@ -884,7 +854,7 @@ pub const CASES: &[AntechamberCase] = &[
             comment: "same as X -c3-n3-X , penalty score=  0.0",
         }],
     },
-    AntechamberCase {
+    ReferenceCase {
         name: "methylammonium",
         smiles: "C[NH3+]",
         net_charge: 1,
@@ -943,7 +913,7 @@ pub const CASES: &[AntechamberCase] = &[
         gaff_parmchk_terms: &[],
         gaff2_parmchk_terms: &[],
     },
-    AntechamberCase {
+    ReferenceCase {
         name: "acetonitrile",
         smiles: "CC#N",
         net_charge: 0,
@@ -984,7 +954,7 @@ pub const CASES: &[AntechamberCase] = &[
         gaff_parmchk_terms: &[],
         gaff2_parmchk_terms: &[],
     },
-    AntechamberCase {
+    ReferenceCase {
         name: "nitromethane",
         smiles: "C[N+](=O)[O-]",
         net_charge: 0,
@@ -1056,7 +1026,7 @@ pub const CASES: &[AntechamberCase] = &[
             comment: "Using the default value",
         }],
     },
-    AntechamberCase {
+    ReferenceCase {
         name: "n_methylacetamide",
         smiles: "CC(=O)NC",
         net_charge: 0,
@@ -1218,7 +1188,7 @@ pub const CASES: &[AntechamberCase] = &[
             },
         ],
     },
-    AntechamberCase {
+    ReferenceCase {
         name: "dimethylformamide",
         smiles: "CN(C)C=O",
         net_charge: 0,
@@ -1346,7 +1316,7 @@ pub const CASES: &[AntechamberCase] = &[
             },
         ],
     },
-    AntechamberCase {
+    ReferenceCase {
         name: "benzene",
         smiles: "c1ccccc1",
         net_charge: 0,
@@ -1454,7 +1424,7 @@ pub const CASES: &[AntechamberCase] = &[
             comment: "Using general improper torsional angle  X- X-ca-ha, penalty score=  6.0)",
         }],
     },
-    AntechamberCase {
+    ReferenceCase {
         name: "toluene",
         smiles: "Cc1ccccc1",
         net_charge: 0,
@@ -1579,7 +1549,7 @@ pub const CASES: &[AntechamberCase] = &[
             comment: "Using general improper torsional angle  X- X-ca-ha, penalty score=  6.0)",
         }],
     },
-    AntechamberCase {
+    ReferenceCase {
         name: "phenol",
         smiles: "Oc1ccccc1",
         net_charge: 0,
@@ -1714,7 +1684,7 @@ pub const CASES: &[AntechamberCase] = &[
             },
         ],
     },
-    AntechamberCase {
+    ReferenceCase {
         name: "aniline",
         smiles: "Nc1ccccc1",
         net_charge: 0,
@@ -1880,7 +1850,7 @@ pub const CASES: &[AntechamberCase] = &[
             },
         ],
     },
-    AntechamberCase {
+    ReferenceCase {
         name: "pyridine",
         smiles: "c1ccncc1",
         net_charge: 0,
@@ -2005,7 +1975,7 @@ pub const CASES: &[AntechamberCase] = &[
             },
         ],
     },
-    AntechamberCase {
+    ReferenceCase {
         name: "imidazole",
         smiles: "c1cnc[nH]1",
         net_charge: 0,
@@ -2148,7 +2118,7 @@ pub const CASES: &[AntechamberCase] = &[
             },
         ],
     },
-    AntechamberCase {
+    ReferenceCase {
         name: "imidazolium",
         smiles: "Cn1cc[nH+]c1",
         net_charge: 1,
@@ -2337,7 +2307,7 @@ pub const CASES: &[AntechamberCase] = &[
             },
         ],
     },
-    AntechamberCase {
+    ReferenceCase {
         name: "thiophene",
         smiles: "c1ccsc1",
         net_charge: 0,
@@ -2480,7 +2450,7 @@ pub const CASES: &[AntechamberCase] = &[
             },
         ],
     },
-    AntechamberCase {
+    ReferenceCase {
         name: "methanethiol",
         smiles: "CS",
         net_charge: 0,
@@ -2517,7 +2487,7 @@ pub const CASES: &[AntechamberCase] = &[
         gaff_parmchk_terms: &[],
         gaff2_parmchk_terms: &[],
     },
-    AntechamberCase {
+    ReferenceCase {
         name: "dimethyl_sulfoxide",
         smiles: "CS(C)=O",
         net_charge: 0,
@@ -2587,7 +2557,7 @@ pub const CASES: &[AntechamberCase] = &[
         gaff_parmchk_terms: &[],
         gaff2_parmchk_terms: &[],
     },
-    AntechamberCase {
+    ReferenceCase {
         name: "chloromethane",
         smiles: "CCl",
         net_charge: 0,
@@ -2622,7 +2592,7 @@ pub const CASES: &[AntechamberCase] = &[
         gaff_parmchk_terms: &[],
         gaff2_parmchk_terms: &[],
     },
-    AntechamberCase {
+    ReferenceCase {
         name: "fluorobenzene",
         smiles: "Fc1ccccc1",
         net_charge: 0,
@@ -2730,7 +2700,7 @@ pub const CASES: &[AntechamberCase] = &[
             comment: "Using general improper torsional angle  X- X-ca-ha, penalty score=  6.0)",
         }],
     },
-    AntechamberCase {
+    ReferenceCase {
         name: "bromoethane",
         smiles: "CCBr",
         net_charge: 0,
@@ -2789,7 +2759,7 @@ pub const CASES: &[AntechamberCase] = &[
         gaff_parmchk_terms: &[],
         gaff2_parmchk_terms: &[],
     },
-    AntechamberCase {
+    ReferenceCase {
         name: "ethylene_carbonate",
         smiles: "C1COC(=O)O1",
         net_charge: 0,
@@ -2978,7 +2948,7 @@ pub const CASES: &[AntechamberCase] = &[
             },
         ],
     },
-    AntechamberCase {
+    ReferenceCase {
         name: "dimethyl_carbonate",
         smiles: "COC(=O)OC",
         net_charge: 0,
@@ -3084,7 +3054,7 @@ pub const CASES: &[AntechamberCase] = &[
             comment: "Same as X -o -c -o , penalty score= 49.6 (use general term))",
         }],
     },
-    AntechamberCase {
+    ReferenceCase {
         name: "dimethoxyethane",
         smiles: "COCCOC",
         net_charge: 0,
@@ -3194,7 +3164,7 @@ pub const CASES: &[AntechamberCase] = &[
         gaff_parmchk_terms: &[],
         gaff2_parmchk_terms: &[],
     },
-    AntechamberCase {
+    ReferenceCase {
         name: "methyl_methacrylate",
         smiles: "CC(=C)C(=O)OC",
         net_charge: 0,
@@ -3425,7 +3395,7 @@ pub const CASES: &[AntechamberCase] = &[
             },
         ],
     },
-    AntechamberCase {
+    ReferenceCase {
         name: "ethyl_acetate",
         smiles: "CCOC(=O)C",
         net_charge: 0,
@@ -3539,7 +3509,7 @@ pub const CASES: &[AntechamberCase] = &[
             comment: "Using the default value",
         }],
     },
-    AntechamberCase {
+    ReferenceCase {
         name: "trimethyl_phosphate",
         smiles: "COP(=O)(OC)OC",
         net_charge: 0,

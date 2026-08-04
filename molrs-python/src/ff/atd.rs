@@ -90,7 +90,7 @@ fn parameter_set_name(set: AtdParameterSet) -> &'static str {
 /// >>> typed = molrs.AtdTypifier(parameter_set="gaff").typify(benzene)
 /// >>> typed.get(carbon, molrs.keys.TYPE)
 /// 'ca'
-#[pyclass(module = "molrs", name = "AtdTypifier", extends = PyTypifier)]
+#[pyclass(module = "molrs.ff.typifier", name = "AtdTypifier", extends = PyTypifier)]
 #[derive(Debug)]
 pub struct PyAtdTypifier {
     inner: AtdTypifier,

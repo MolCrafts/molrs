@@ -24,7 +24,7 @@ Downstream packages that co-release with molrs (e.g. molpy) pin the shared
 
 ```toml
 [dependencies]
-molrs = { package = "molcrafts-molrs", version = "0.10", default-features = false, features = ["ff"] }
+molrs = { package = "molcrafts-molrs", version = "0.12", default-features = false, features = ["ff"] }
 ```
 
 Then use the native types directly — no FFI, no copies. For example, building

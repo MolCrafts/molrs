@@ -7,55 +7,76 @@ criteria:
     pass_when: |
       Column::raw_bytes() 在 Float(3) 上返回 Some(Vec<u8>) 长度为 3*8=24 字节；
       在 U8(5) 上为 5 字节；在 String(3) 上为 None。多维列的总字节数 = nrows * sizeof(T) * product(shape[1..])。
-    status: pending
+    status: cancelled
+    last_checked: "2026-08-04"
+    verified_by: agent-auto
+    evidence: |
+      Superseded by direct serde Serialize on Frame/Block/Column (stream feature).
+      No WireFrame/raw_bytes path.
   - id: ac-002
     summary: WireFrame 序列化往返无损保留结构
     type: runtime
     pass_when: |
       一个完整 Frame（atoms block 含 x/y/z 浮点列 + serial 整型列 + type u8 列，bonds block 含 i/j uint + order u8 列，SimBox，meta）经 frame_to_wire_bytes() 和反序列化后，block 名称、列数、nrows、dtype 标签及数值与原始值一致（浮点在 f64::EPSILON 容差内）。
-    status: pending
+    status: verified
+    last_checked: "2026-08-04"
+    verified_by: agent-auto
   - id: ac-003
     summary: ControlCommand 所有变体经 rmp-serde 往返无损
     type: code
     pass_when: |
       ControlCommand::Pause、Resume、SetFrameRate{hz:42.0}、SetSubset{atom_ids:[1,3,5]}、RequestKeyFrame 经 rmp-serde 和 JSON 序列化后反序列化得到匹配的变体，字段值不变。
-    status: pending
+    status: verified
+    last_checked: "2026-08-04"
+    verified_by: agent-auto
   - id: ac-004
     summary: FrameServer 绑定端口并接受客户端连接
     type: runtime
     pass_when: |
       FrameServer::bind("127.0.0.1:0") 返回 Ok；tokio-tungstenite 客户端连接后 client_count == 1。
-    status: pending
+    status: verified
+    last_checked: "2026-08-04"
+    verified_by: agent-auto
   - id: ac-005
     summary: FrameServer 向已连接的客户端发送帧
     type: runtime
     pass_when: |
       客户端连接后，server.send(frame) 返回 Ok；客户端收到可反序列化的消息，其内容与发送的原始 Frame 匹配。
-    status: pending
+    status: verified
+    last_checked: "2026-08-04"
+    verified_by: agent-auto
   - id: ac-006
     summary: FrameServer 从客户端接收 ControlCommand
     type: runtime
     pass_when: |
       客户端发送序列化 ControlCommand::Pause 后，server.recv_command() 在超时内返回 Some(Pause)。
-    status: pending
+    status: verified
+    last_checked: "2026-08-04"
+    verified_by: agent-auto
   - id: ac-007
     summary: 有界通道满时丢弃最旧帧，仿真不阻塞
     type: runtime
     pass_when: |
       ServerConfig{buffer_size:1} 下连续发送 3 帧，仿真线程不阻塞；客户端最终收到的帧为第 3 帧（最新）。
-    status: pending
+    status: verified
+    last_checked: "2026-08-04"
+    verified_by: agent-auto
   - id: ac-008
     summary: ser 和 message 模块在 wasm32 下编译通过
     type: code
     pass_when: |
       cargo check --target wasm32-unknown-unknown --features net 成功退出，未引用 tokio/tungstenite 符号。
-    status: pending
+    status: verified
+    last_checked: "2026-08-04"
+    verified_by: agent-auto
   - id: ac-009
     summary: 质量闸：fmt + clippy + check + test 全部通过
     type: runtime
     pass_when: |
       cargo fmt --all --check、cargo clippy --features net -- -D warnings、cargo check --features net、cargo test --features net 全部 exit 0。
-    status: pending
+    status: verified
+    last_checked: "2026-08-04"
+    verified_by: agent-auto
 ---
 
 > **Deferred (2026-07-08).** The serialization foundation (`serde` + `stream`

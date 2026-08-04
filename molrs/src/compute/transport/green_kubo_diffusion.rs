@@ -6,10 +6,12 @@ use super::vacf::{VacfArgs, VacfResult, velocity_acf};
 use crate::compute::error::ComputeError;
 use crate::compute::traits::Compute;
 
-/// Raw velocity ACF for the Green–Kubo diffusion route — the same raw curve as
-/// [`VACF`](super::VACF), named for the diffusion workflow.
-/// `D = (1/d)·∫ VACF dt` is then a
-/// [`CumulativeTrapezoid`](crate::compute::fitting::CumulativeTrapezoid) + scale step.
+/// Named workflow over the unbiased [`VACF`](super::VACF) curve for Green–Kubo
+/// self-diffusion. Same math as `VACF` — not a second estimator.
+///
+/// Fit step (caller): \(D = \frac{1}{d}\int_0^{\tau_{\max}} C(\tau)\,\mathrm{d}\tau\)
+/// via [`CumulativeTrapezoid`](crate::compute::fitting::CumulativeTrapezoid)
+/// then scale by `1/d` (`d = 3` in 3D).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct GreenKuboDiffusion;
 

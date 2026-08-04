@@ -13,6 +13,10 @@
 //! remain available (and re-exported at the crate root) for callers that want
 //! the raw side table / map.
 
+/// Executable specification for the Aromatic Bond Representation Standard.
+/// Tests only; see the module docs for how to run the red line.
+#[cfg(all(test, feature = "smiles"))]
+mod aromatic_standard;
 pub mod aromaticity;
 pub mod bond_type;
 pub mod builder;

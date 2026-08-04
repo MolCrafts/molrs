@@ -226,8 +226,18 @@ impl AtomColumns {
             .collect();
 
         let mut block = Block::new();
-        insert_i(&mut block, keys::ID, self.id, n)?;
-        insert_i(&mut block, keys::TYPE, types, n)?;
+        insert_u(
+            &mut block,
+            keys::ID,
+            self.id.iter().map(|&v| v as U).collect(),
+            n,
+        )?;
+        insert_u(
+            &mut block,
+            keys::TYPE_ID,
+            types.iter().map(|&v| v as U).collect(),
+            n,
+        )?;
         insert_f(&mut block, keys::X, self.x, n)?;
         insert_f(&mut block, keys::Y, self.y, n)?;
         insert_f(&mut block, keys::Z, self.z, n)?;
@@ -239,6 +249,19 @@ impl AtomColumns {
                 }
             };
         }
+        // Unsigned columns of the canonical vocabulary (ids, not quantities).
+        macro_rules! opt_u {
+            ($col:expr, $key:expr) => {
+                if $col.present {
+                    insert_u(
+                        &mut block,
+                        $key,
+                        $col.data.iter().map(|&v| v as U).collect(),
+                        n,
+                    )?;
+                }
+            };
+        }
         macro_rules! opt_f {
             ($col:expr, $key:expr) => {
                 if $col.present {
@@ -247,7 +270,7 @@ impl AtomColumns {
             };
         }
 
-        opt_i!(self.mol, keys::MOL_ID);
+        opt_u!(self.mol, keys::MOL_ID);
         opt_f!(self.charge, keys::CHARGE);
         opt_i!(self.bodyflag, "bodyflag");
         opt_f!(self.mass, keys::MASS);
@@ -789,7 +812,12 @@ fn insert_topology_block(
     for (key, col) in atom_keys.iter().zip(member_cols) {
         insert_u(&mut block, key, col, n)?;
     }
-    insert_i(&mut block, keys::TYPE, types, n)?;
+    insert_u(
+        &mut block,
+        keys::TYPE_ID,
+        types.iter().map(|&v| v as U).collect(),
+        n,
+    )?;
     frame.insert(block_name, block);
     Ok(())
 }
@@ -1036,14 +1064,13 @@ impl<R: BufRead + Seek> LAMMPSDataReader<R> {
 
 impl<R: BufRead + Seek> Reader for LAMMPSDataReader<R> {
     type R = R;
-    type Frame = Frame;
     fn new(reader: R) -> Self {
         Self::new(reader)
     }
 }
 
 impl<R: BufRead + Seek> FrameReader for LAMMPSDataReader<R> {
-    fn read_frame(&mut self) -> std::io::Result<Option<Self::Frame>> {
+    fn read(&mut self) -> std::io::Result<Option<Frame>> {
         if self.returned {
             return Ok(None);
         }
@@ -1052,7 +1079,9 @@ impl<R: BufRead + Seek> FrameReader for LAMMPSDataReader<R> {
             let _ = self.frame.set(frame);
         }
         self.returned = true;
-        Ok(self.frame.get().unwrap().clone())
+        // Validate on the way out: a frame that violates the vocabulary is a
+        // malformed file or a reader bug, not a result to return.
+        crate::io::reader::validated(self.frame.get().unwrap().clone())
     }
 }
 
@@ -1066,7 +1095,6 @@ pub struct LAMMPSDataWriter<W: Write> {
 
 impl<W: Write> crate::io::writer::Writer for LAMMPSDataWriter<W> {
     type W = W;
-    type FrameLike = Frame;
     fn new(writer: W) -> Self {
         Self { writer }
     }
@@ -1079,7 +1107,10 @@ impl<W: Write> LAMMPSDataWriter<W> {
 }
 
 impl<W: Write> FrameWriter for LAMMPSDataWriter<W> {
-    fn write_frame(&mut self, frame: &Frame) -> std::io::Result<()> {
+    fn write(&mut self, frame: &Frame) -> std::io::Result<()> {
+        // Refuse to emit a frame that violates the vocabulary: a bad file
+        // looks fine and is found wrong later, by whatever reads it.
+        crate::io::writer::check_before_write(frame)?;
         write_lammps_data_frame(&mut self.writer, frame)
     }
 }
@@ -1109,10 +1140,12 @@ fn frame_has_atom_field(frame: &impl FrameAccess, field: DataField) -> bool {
     let key = field_column_key(field);
     // Core fields checked separately; mol accepts legacy name.
     if field == DataField::Mol {
-        return frame.get_int("atoms", keys::MOL_ID).is_some()
+        return frame.get_uint("atoms", keys::MOL_ID).is_some()
             || frame.get_int("atoms", "molecule_id").is_some();
     }
-    frame.get_int("atoms", key).is_some() || frame.get_float("atoms", key).is_some()
+    frame.get_int("atoms", key).is_some()
+        || frame.get_uint("atoms", key).is_some()
+        || frame.get_float("atoms", key).is_some()
 }
 
 fn write_atom_field_value<W: Write>(
@@ -1131,17 +1164,25 @@ fn write_atom_field_value<W: Write>(
         | DataField::Status
         | DataField::TemplateIndex
         | DataField::TemplateAtom => {
-            let col = frame
-                .get_int("atoms", key)
-                .ok_or_else(|| err_mapper(format!("Missing integer column '{key}'")))?;
-            write!(writer, " {}", col[i])?;
+            // Ids and type ordinals are unsigned in the vocabulary.
+            if let Some(col) = frame.get_uint("atoms", key) {
+                write!(writer, " {}", col[i])?;
+            } else {
+                let col = frame
+                    .get_int("atoms", key)
+                    .ok_or_else(|| err_mapper(format!("Missing integer column '{key}'")))?;
+                write!(writer, " {}", col[i])?;
+            }
         }
         DataField::Mol => {
-            let col = frame
-                .get_int("atoms", keys::MOL_ID)
-                .or_else(|| frame.get_int("atoms", "molecule_id"))
-                .ok_or_else(|| err_mapper("Missing mol_id column"))?;
-            write!(writer, " {}", col[i])?;
+            if let Some(col) = frame.get_uint("atoms", keys::MOL_ID) {
+                write!(writer, " {}", col[i])?;
+            } else {
+                let col = frame
+                    .get_int("atoms", "molecule_id")
+                    .ok_or_else(|| err_mapper("Missing mol_id column"))?;
+                write!(writer, " {}", col[i])?;
+            }
         }
         _ => {
             let col = frame
@@ -1159,7 +1200,7 @@ fn write_topology_section<W: Write>(
     section: &str,
     block: &str,
     n_members: usize,
-    ids: &ndarray::ArrayViewD<'_, I>,
+    ids: &ndarray::ArrayViewD<'_, U>,
 ) -> std::io::Result<()> {
     let n = frame
         .visit_block(block, |b| b.nrows().unwrap_or(0))
@@ -1168,7 +1209,7 @@ fn write_topology_section<W: Write>(
         return Ok(());
     }
     let types = frame
-        .get_int(block, keys::TYPE)
+        .get_uint(block, keys::TYPE_ID)
         .ok_or_else(|| err_mapper(format!("Missing '{block}.type'")))?;
     let keys_ep = &keys::ENDPOINTS[..n_members];
     let mut cols = Vec::with_capacity(n_members);
@@ -1202,13 +1243,13 @@ fn write_lammps_data_frame<W: Write>(
     writeln!(writer)?;
 
     let atom_types = frame
-        .get_int("atoms", keys::TYPE)
+        .get_uint("atoms", keys::TYPE_ID)
         .ok_or_else(|| err_mapper("Atoms block must contain 'type' column"))?;
     let num_atoms = atom_types.shape().first().copied().unwrap_or(0);
     let num_atom_types = atom_types.iter().max().copied().unwrap_or(1) as usize;
 
     let ids = frame
-        .get_int("atoms", keys::ID)
+        .get_uint("atoms", keys::ID)
         .ok_or_else(|| err_mapper("Missing 'id' column"))?;
     // Ensure core coords exist (required for every write style).
     let _x = frame
@@ -1235,19 +1276,19 @@ fn write_lammps_data_frame<W: Write>(
         .unwrap_or(0);
 
     let num_bond_types = frame
-        .get_int("bonds", keys::TYPE)
+        .get_uint("bonds", keys::TYPE_ID)
         .map(|t| t.iter().max().copied().unwrap_or(1) as usize)
         .unwrap_or(0);
     let num_angle_types = frame
-        .get_int("angles", keys::TYPE)
+        .get_uint("angles", keys::TYPE_ID)
         .map(|t| t.iter().max().copied().unwrap_or(1) as usize)
         .unwrap_or(0);
     let num_dihedral_types = frame
-        .get_int("dihedrals", keys::TYPE)
+        .get_uint("dihedrals", keys::TYPE_ID)
         .map(|t| t.iter().max().copied().unwrap_or(1) as usize)
         .unwrap_or(0);
     let num_improper_types = frame
-        .get_int("impropers", keys::TYPE)
+        .get_uint("impropers", keys::TYPE_ID)
         .map(|t| t.iter().max().copied().unwrap_or(1) as usize)
         .unwrap_or(0);
 
@@ -1362,7 +1403,7 @@ fn write_lammps_data_frame<W: Write>(
     for i in 0..num_atoms {
         // First field is always id without leading space.
         let id_col = frame
-            .get_int("atoms", keys::ID)
+            .get_uint("atoms", keys::ID)
             .ok_or_else(|| err_mapper("Missing id"))?;
         write!(writer, "{}", id_col[i])?;
         for &field in layout.fields.iter().skip(1) {
@@ -1415,7 +1456,7 @@ pub fn read_lammps_data<P: AsRef<Path>>(path: P) -> std::io::Result<Frame> {
     let file = File::open(path)?;
     let mut reader = LAMMPSDataReader::new(BufReader::new(file));
     reader
-        .read_frame()?
+        .read()?
         .ok_or_else(|| err_mapper("No frame found in LAMMPS data file"))
 }
 
@@ -1428,7 +1469,7 @@ pub fn write_lammps_data<P: AsRef<Path>>(path: P, frame: &impl FrameAccess) -> s
 pub fn parse_frame_bytes(bytes: &[u8]) -> std::io::Result<Frame> {
     let mut reader = LAMMPSDataReader::new(Cursor::new(bytes));
     reader
-        .read_frame()?
+        .read()?
         .ok_or_else(|| err_mapper("No frame found in LAMMPS data slice"))
 }
 
@@ -1561,7 +1602,7 @@ mod atom_style_tests {
             "2 0 2 4.0 5.0 6.0 1 -1 0\n",
         );
         let frame = parse_text(text);
-        assert_eq!(frame.get_int("atoms", keys::MOL_ID).unwrap()[0], 42);
+        assert_eq!(frame.get_uint("atoms", keys::MOL_ID).unwrap()[0], 42);
         assert_eq!(xyz(&frame, 0), (1.5, 2.5, 3.5));
         assert_eq!(frame.get_int("atoms", "iz").unwrap()[0], 1);
         assert!(frame.get_float("atoms", keys::CHARGE).is_none());
@@ -1576,7 +1617,7 @@ mod atom_style_tests {
                  Atoms # {style}\n\n7 3 2 0.1 0.2 0.3\n"
             );
             let frame = parse_text(&text);
-            assert_eq!(frame.get_int("atoms", keys::MOL_ID).unwrap()[0], 3);
+            assert_eq!(frame.get_uint("atoms", keys::MOL_ID).unwrap()[0], 3);
             assert_eq!(xyz(&frame, 0), (0.1, 0.2, 0.3));
         }
     }
@@ -1640,7 +1681,7 @@ mod atom_style_tests {
             "10 0 2 0.5 0.5 0.5 0 0 0\n",
         );
         let frame = parse_text(text);
-        assert_eq!(frame.get_int("atoms", keys::MOL_ID).unwrap()[0], 45539);
+        assert_eq!(frame.get_uint("atoms", keys::MOL_ID).unwrap()[0], 45539);
         assert!((frame.get_float("atoms", keys::MASS).unwrap()[0] - 12.0).abs() < 1e-12);
         assert!((frame.get_float("atoms", keys::MASS).unwrap()[1] - 1.0).abs() < 1e-12);
     }
@@ -1652,7 +1693,7 @@ mod atom_style_tests {
         let body = read_lammps_data(root.join("data.body")).expect("body");
         assert!(body.get_int("atoms", "bodyflag").is_some());
         let full = read_lammps_data(root.join("molid.lmp")).expect("molid");
-        assert!(full.get_int("atoms", keys::MOL_ID).is_some());
+        assert!(full.get_uint("atoms", keys::MOL_ID).is_some());
         assert!(full.get_float("atoms", keys::CHARGE).is_some());
     }
 
@@ -1686,7 +1727,7 @@ mod atom_style_tests {
             "Atoms\n\n1 42 1 1.5 2.5 3.5 0 0 1\n",
         );
         let frame = parse_text(text);
-        assert_eq!(frame.get_int("atoms", keys::MOL_ID).unwrap()[0], 42);
+        assert_eq!(frame.get_uint("atoms", keys::MOL_ID).unwrap()[0], 42);
         assert_eq!(xyz(&frame, 0), (1.5, 2.5, 3.5));
     }
 

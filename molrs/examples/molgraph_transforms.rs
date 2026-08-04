@@ -50,7 +50,7 @@ fn print_coords(mol: &Atomistic, label: &str) {
     for (_id, atom) in mol.atoms() {
         println!(
             "    {} ({:>8.4}, {:>8.4}, {:>8.4})",
-            atom.get_str("symbol").unwrap(),
+            atom.get_str("element").unwrap(),
             atom.get_f64("x").unwrap(),
             atom.get_f64("y").unwrap(),
             atom.get_f64("z").unwrap(),
@@ -172,7 +172,7 @@ fn merge_molecules(original: &Atomistic) {
     for (_id, atom) in mol1.atoms() {
         println!(
             "    {} ({:>8.4}, {:>8.4}, {:>8.4})",
-            atom.get_str("symbol").unwrap(),
+            atom.get_str("element").unwrap(),
             atom.get_f64("x").unwrap(),
             atom.get_f64("y").unwrap(),
             atom.get_f64("z").unwrap(),

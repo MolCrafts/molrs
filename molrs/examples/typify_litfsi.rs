@@ -94,7 +94,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("{}", "-".repeat(50));
 
     for (i, ((_aid, atom), ty)) in mol.atoms().zip(atom_types.iter()).enumerate() {
-        let sym = atom.get_str("symbol").unwrap_or("?");
+        let sym = atom.get_str("element").unwrap_or("?");
         let t: u32 = ty.parse().unwrap_or(0);
         let desc = type_description(sym, t);
         println!("{:<6} {:<8} {:<6} {}", i, sym, t, desc);

@@ -68,17 +68,12 @@ impl<'m> MolContext<'m> {
         let mut degree = HashMap::new();
 
         for (id, atom) in mol.atoms() {
-            // Aromaticity: explicit `is_aromatic` prop wins; otherwise infer
-            // from any incident aromatic (order ~= 1.5) bond.
-            let explicit = match atom.get("is_aromatic") {
-                Some(PropValue::Int(v)) => Some(*v != 0),
-                Some(PropValue::F64(v)) => Some(*v != 0.0),
-                _ => None,
-            };
-            let arom = explicit.unwrap_or_else(|| {
-                mol.neighbor_bonds(id)
-                    .any(|(_, order)| (order - 1.5).abs() < 1e-6)
-            });
+            // §11.1: an aromatic atom expression reads `is_aromatic` and
+            // nothing else. There is no numeric fallback — inferring atom
+            // aromaticity from a bond value is how `1.5` became a second,
+            // silent source of truth.
+            let arom = matches!(atom.get("is_aromatic"), Some(PropValue::Int(v)) if *v != 0)
+                || matches!(atom.get("is_aromatic"), Some(PropValue::F64(v)) if *v != 0.0);
             aromatic_atom.insert(id, arom);
 
             // Total H count = number of neighbour atoms whose element is "H".

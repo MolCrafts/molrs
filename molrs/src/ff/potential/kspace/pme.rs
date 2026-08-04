@@ -1144,12 +1144,12 @@ mod tests {
         }
     }
 
-    // --- Integration test: PME + PairLJ126 in Potentials ---
+    // --- Integration test: PME + PairLJCut in Potentials ---
 
     #[test]
     fn test_pme_in_potentials_collection() {
         use crate::ff::potential::Potentials;
-        use crate::ff::potential::kernels::PairLJ126;
+        use crate::ff::potential::pair::lj_cut::PairLJCut;
 
         let box_l: F = 10.0;
         let params = PmeParams {
@@ -1162,7 +1162,7 @@ mod tests {
         let charges = vec![0.5, -0.5];
         let pme = PmePotential::new(params, charges, cubic_box(box_l), vec![]);
 
-        let lj = PairLJ126::new(vec![0], vec![1], vec![1.0], vec![1.0]);
+        let lj = PairLJCut::new(vec![0], vec![1], vec![1.0], vec![1.0]);
 
         let mut pots = Potentials::new();
         pots.push(Box::new(pme));

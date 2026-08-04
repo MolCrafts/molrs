@@ -154,7 +154,13 @@ impl PyMetaValue {
 /// print(frame)          # Frame(blocks=['atoms'], box=yes)
 /// print(frame.keys())   # ['atoms']
 /// ```
-#[pyclass(module = "molrs", name = "Frame", from_py_object, unsendable, subclass)]
+#[pyclass(
+    module = "molrs._lib",
+    name = "Frame",
+    from_py_object,
+    unsendable,
+    subclass
+)]
 #[derive(Clone)]
 pub struct PyFrame {
     pub(crate) inner: FrameRef,
@@ -431,15 +437,16 @@ impl PyFrame {
         Ok(())
     }
 
-    /// Validate cross-block consistency.
+    /// Judge this frame against the canonical Frame schema.
     ///
-    /// Checks that referenced indices (e.g. bond atom indices) are within
-    /// bounds and that required columns exist.
+    /// Delegates to ``molrs``'s ``Validator::canonical`` — dtype, shape,
+    /// required columns, and endpoint ranges. Callers must not re-implement
+    /// those checks in Python.
     ///
     /// Raises
     /// ------
     /// ValueError
-    ///     If validation fails.
+    ///     If the frame does not conform (message is the full report).
     fn validate(&self) -> PyResult<()> {
         self.with_frame(|f| f.validate().map_err(molrs_error_to_pyerr))?
     }

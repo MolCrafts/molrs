@@ -1,7 +1,8 @@
 ---
 title: cell-grid-api — public, PBC-aware lattice cell grid shared by LinkCell and external packers
-status: draft
+status: done
 created: 2026-07-25
+closed: 2026-08-04
 ---
 
 # cell-grid-api — public, PBC-aware lattice cell grid

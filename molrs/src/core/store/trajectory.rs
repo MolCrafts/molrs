@@ -84,6 +84,25 @@ pub enum ObservableKind {
     Vector,
 }
 
+impl ObservableKind {
+    /// Contract spelling of the kind, as written to `observables/meta/<name>/kind`.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Scalar => "scalar",
+            Self::Vector => "vector",
+        }
+    }
+
+    /// Parse the contract spelling; `None` for a kind this build does not define.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "scalar" => Some(Self::Scalar),
+            "vector" => Some(Self::Vector),
+            _ => None,
+        }
+    }
+}
+
 /// Raw observable payload.
 #[derive(Debug, Clone)]
 pub enum ObservableData {

@@ -37,52 +37,13 @@ use molrs::io::data::pdb::PDBReader;
 use molrs::io::data::poscar::read_poscar_from_reader;
 use molrs::io::data::sdf::SDFReader;
 use molrs::io::data::xyz::XYZReader;
-use molrs::io::reader::{FrameReader, Reader, TrajReader};
+use molrs::io::reader::{FrameReader, Reader, TrajectoryReader};
 use molrs::io::trajectory::dcd::DcdReader as RsDcdReader;
 use molrs::io::trajectory::lammps_dump::LAMMPSTrajReader;
 use molrs::io::trajectory::trr::TrrReader as RsTrrReader;
 use molrs::io::trajectory::xtc::XtcReader as RsXtcReader;
-use molrs::spatial::simbox::SimBox;
-use molrs::store::frame::Frame as RsFrame;
-use molrs::types::F;
 use std::io::{BufReader, Cursor};
 use wasm_bindgen::prelude::*;
-
-/// Nanometre → ångström length scale.
-pub(crate) const NM_TO_ANGSTROM: F = 10.0;
-
-/// Multiply a frame's position columns (`x`/`y`/`z`) and simulation box by
-/// `factor`.
-///
-/// GROMACS-native formats (GRO, TRR, XTC) store lengths in nm, while every
-/// molvis consumer — renderer, bond perception, RDF — works in ångström, so
-/// the WASM boundary converts on read (`NM_TO_ANGSTROM`) and back on write
-/// (its reciprocal), mirroring how the Cube reader converts Bohr → Å.
-/// Velocity / force columns are deliberately left untouched: they are never
-/// interpreted as positions downstream.
-pub(crate) fn scale_frame_lengths(frame: &mut RsFrame, factor: F) -> Result<(), JsValue> {
-    if let Some(atoms) = frame.get_mut("atoms") {
-        for key in ["x", "y", "z"] {
-            if let Some(col) = atoms.get_float_mut(key) {
-                col.mapv_inplace(|v| v * factor);
-            }
-        }
-    }
-    if let Some(sb) = frame.simbox.as_ref() {
-        let h = sb.h_view().to_owned() * factor;
-        let origin = sb.origin_view().to_owned() * factor;
-        let pbc = sb.pbc();
-        let scaled = SimBox::new(h, origin, pbc)
-            .map_err(|e| JsValue::from_str(&format!("length scale error: {:?}", e)))?;
-        frame.simbox = Some(scaled);
-    }
-    Ok(())
-}
-
-/// Convert a freshly-read GROMACS frame from nm to ångström.
-fn scale_nm_to_angstrom(frame: &mut RsFrame) -> Result<(), JsValue> {
-    scale_frame_lengths(frame, NM_TO_ANGSTROM)
-}
 
 /// XYZ / Extended XYZ file reader.
 ///
@@ -269,7 +230,7 @@ impl PdbReader {
 
         let mut reader = PDBReader::new(Cursor::new(self.content.as_slice()));
         let rs_frame = reader
-            .read_frame()
+            .read()
             .map_err(|e| JsValue::from_str(&format!("PDB read error: {}", e)))?;
 
         match rs_frame {
@@ -387,7 +348,7 @@ impl LammpsReader {
         // second call. PDBReader already uses this pattern — mirror it here.
         let mut reader = LAMMPSDataReader::new(Cursor::new(self.content.as_slice()));
         let rs_frame = reader
-            .read_frame()
+            .read()
             .map_err(|e| JsValue::from_str(&format!("LAMMPS read error: {}", e)))?;
 
         match rs_frame {
@@ -530,7 +491,7 @@ impl SdfReader {
         let mut reader = SDFReader::new(Cursor::new(self.content.as_slice()));
         for current in 0..=step {
             let rs_frame = reader
-                .read_frame()
+                .read()
                 .map_err(|e| JsValue::from_str(&format!("SDF read error: {}", e)))?;
             match rs_frame {
                 Some(frame) if current == step => return Ok(Some(Frame::from_rs(frame)?)),
@@ -550,7 +511,7 @@ impl SdfReader {
         let mut reader = SDFReader::new(Cursor::new(self.content.as_slice()));
         let mut count = 0usize;
         while reader
-            .read_frame()
+            .read()
             .map_err(|e| JsValue::from_str(&format!("SDF len error: {}", e)))?
             .is_some()
         {
@@ -742,8 +703,7 @@ impl CifReader {
     #[wasm_bindgen]
     pub fn read(&mut self, step: usize) -> Result<Option<Frame>, JsValue> {
         let mut reader = RsCifReader::new(Cursor::new(self.content.as_slice()));
-        let frames = reader
-            .read_all()
+        let frames = molrs::io::reader::collect_frames(&mut reader)
             .map_err(|e| JsValue::from_str(&format!("CIF read error: {}", e)))?;
         if step >= frames.len() {
             return Ok(None);
@@ -763,8 +723,7 @@ impl CifReader {
             return Ok(n);
         }
         let mut reader = RsCifReader::new(Cursor::new(self.content.as_slice()));
-        let n = reader
-            .read_all()
+        let n = molrs::io::reader::collect_frames(&mut reader)
             .map_err(|e| JsValue::from_str(&format!("CIF len error: {}", e)))?
             .len();
         self.cached_len = Some(n);
@@ -930,10 +889,10 @@ impl ChgcarReader {
 /// GRO is a fixed-column text format for GROMACS structures and
 /// single-precision trajectories. Multi-frame files expose each frame via
 /// `read(step)`. Coordinates and box are GROMACS-native nm in the file and
-/// are converted to angstrom on read (x10), matching every other molvis
-/// reader. Each frame produces an `"atoms"` block (`resid`, `resname`,
-/// `atom_name`, `atom_id`, `x`/`y`/`z`, optional `vx`/`vy`/`vz`) and a
-/// `box` from the box-vector line.
+/// arrive in angstrom — the molrs GRO reader normalises at its own boundary,
+/// so this binder scales nothing. Each frame produces an `"atoms"` block
+/// (`res_id`, `resname`, `atom_name`, `element`, `id`, `x`/`y`/`z`, optional
+/// `vx`/`vy`/`vz`) and a `box` from the box-vector line.
 #[wasm_bindgen(js_name = GROReader)]
 pub struct GroReader {
     content: Vec<u8>,
@@ -951,18 +910,17 @@ impl GroReader {
         }
     }
 
-    /// Read the frame at the given step index (0-based). Coordinates are
-    /// converted nm -> angstrom before the frame is returned.
+    /// Read the frame at the given step index (0-based). Coordinates arrive
+    /// in angstrom (the molrs reader converts from the file's nm).
     #[wasm_bindgen]
     pub fn read(&mut self, step: usize) -> Result<Option<Frame>, JsValue> {
         let mut reader = RsGroReader::new(Cursor::new(self.content.as_slice()));
         for current in 0..=step {
             let rs_frame = reader
-                .read_frame()
+                .read()
                 .map_err(|e| JsValue::from_str(&format!("GRO read error: {}", e)))?;
             match rs_frame {
-                Some(mut frame) if current == step => {
-                    scale_nm_to_angstrom(&mut frame)?;
+                Some(frame) if current == step => {
                     return Ok(Some(Frame::from_rs(frame)?));
                 }
                 Some(_) => continue,
@@ -981,7 +939,7 @@ impl GroReader {
         let mut reader = RsGroReader::new(Cursor::new(self.content.as_slice()));
         let mut count = 0usize;
         while reader
-            .read_frame()
+            .read()
             .map_err(|e| JsValue::from_str(&format!("GRO len error: {}", e)))?
             .is_some()
         {
@@ -1029,7 +987,7 @@ impl Mol2Reader {
         let mut reader = RsMol2Reader::new(Cursor::new(self.content.as_slice()));
         for current in 0..=step {
             let rs_frame = reader
-                .read_frame()
+                .read()
                 .map_err(|e| JsValue::from_str(&format!("MOL2 read error: {}", e)))?;
             match rs_frame {
                 Some(frame) if current == step => return Ok(Some(Frame::from_rs(frame)?)),
@@ -1049,7 +1007,7 @@ impl Mol2Reader {
         let mut reader = RsMol2Reader::new(Cursor::new(self.content.as_slice()));
         let mut count = 0usize;
         while reader
-            .read_frame()
+            .read()
             .map_err(|e| JsValue::from_str(&format!("MOL2 len error: {}", e)))?
             .is_some()
         {
@@ -1125,7 +1083,7 @@ impl PoscarReader {
 /// TRR is the full-precision GROMACS trajectory (XDR, big-endian). Accepts the
 /// file as raw bytes (`Uint8Array`). Each frame produces an `"atoms"` block
 /// (`id`, `x`/`y`/`z`, optional `vx`/`vy`/`vz` and `fx`/`fy`/`fz`);
-/// coordinates and box are converted nm -> angstrom on read. Box is attached
+/// coordinates and box arrive in angstrom (molrs converts). Box is attached
 /// as `box` when the frame carries one.
 #[wasm_bindgen(js_name = TRRReader)]
 pub struct TrrReader {
@@ -1143,7 +1101,7 @@ impl TrrReader {
     }
 
     /// Read a frame at the given step index (0-based). Coordinates are
-    /// converted nm -> angstrom before the frame is returned.
+    /// in angstrom (the molrs reader converts from the file's nm).
     #[wasm_bindgen]
     pub fn read(&mut self, step: usize) -> Result<Option<Frame>, JsValue> {
         let rs_frame = self
@@ -1151,10 +1109,7 @@ impl TrrReader {
             .read_step(step)
             .map_err(|e| JsValue::from_str(&format!("TRR read error: {}", e)))?;
         match rs_frame {
-            Some(mut frame) => {
-                scale_nm_to_angstrom(&mut frame)?;
-                Ok(Some(Frame::from_rs(frame)?))
-            }
+            Some(frame) => Ok(Some(Frame::from_rs(frame)?)),
             None => Ok(None),
         }
     }
@@ -1179,7 +1134,7 @@ impl TrrReader {
 /// XTC is the compressed GROMACS trajectory (XDR, big-endian, lossy
 /// coordinate compression). Accepts the file as raw bytes (`Uint8Array`).
 /// Each frame produces an `"atoms"` block (`id`, `x`/`y`/`z`); coordinates
-/// and box are converted nm -> angstrom on read. Box is attached as `box`.
+/// and box arrive in angstrom (molrs converts). Box is attached as `box`.
 #[wasm_bindgen(js_name = XTCReader)]
 pub struct XtcReader {
     inner: RsXtcReader<Cursor<Vec<u8>>>,
@@ -1196,7 +1151,7 @@ impl XtcReader {
     }
 
     /// Read a frame at the given step index (0-based). Coordinates are
-    /// converted nm -> angstrom before the frame is returned.
+    /// in angstrom (the molrs reader converts from the file's nm).
     #[wasm_bindgen]
     pub fn read(&mut self, step: usize) -> Result<Option<Frame>, JsValue> {
         let rs_frame = self
@@ -1204,10 +1159,7 @@ impl XtcReader {
             .read_step(step)
             .map_err(|e| JsValue::from_str(&format!("XTC read error: {}", e)))?;
         match rs_frame {
-            Some(mut frame) => {
-                scale_nm_to_angstrom(&mut frame)?;
-                Ok(Some(Frame::from_rs(frame)?))
-            }
+            Some(frame) => Ok(Some(Frame::from_rs(frame)?)),
             None => Ok(None),
         }
     }

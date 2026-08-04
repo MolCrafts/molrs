@@ -19,14 +19,14 @@ hide the steps:
 1. **Typify** — `typifier.typify(mol)` → new labeled graph.
 2. **Frame** — `typed.to_frame()` for coordinate / pair columns.
 3. **Pairs** — non-bonded terms need a `pairs` block (`atomi` / `atomj` /
-   `is_14`). Python: `frame["pairs"] = molrs.intramolecular_pairs(frame)`.
+   `is_14`). Python: `frame["pairs"] = molrs.ff.intramolecular_pairs(frame)`.
    WASM / Rust optimizers may install topology pairs (or a caller-supplied
    neighbor list) before minimizing — still not a free-floating
    “optimize geometry” sugar.
 4. **Compile** — `typifier.forcefield().to_potentials(frame)` (Python) or
    `typifier.ff().to_potentials(&frame)` (Rust). WASM collapses the private FF
    handle to `typifier.toPotentials(frame)` — still not a one-shot `build()`.
-5. **Evaluate / minimize** — `potentials.eval(coords)` or `LBFGS(pots).run(...)`.
+5. **Evaluate / minimize** — `potentials.calc_energy_forces(coords)` or `LBFGS(pots).run(...)`.
 
 There is no `optimizeGeometry`, no typifier-level `build()`, and no GFN-FF in
 this tree.
@@ -57,7 +57,7 @@ conversion inside analysis code.
 `OPLSAATypifier` also accepts and returns `Atomistic`:
 
 ```python
-typifier = molrs.OPLSAATypifier(strict=True)
+typifier = molrs.ff.OPLSAATypifier(strict=True)
 typed = typifier.typify(mol3d)
 frame = typed.to_frame()
 ```
@@ -66,7 +66,7 @@ The constructor loads the embedded OPLS-AA XML by default. Pass a path or XML
 string only when you need a different parameter source:
 
 ```python
-typifier = molrs.OPLSAATypifier("oplsaa.xml", strict=False)
+typifier = molrs.ff.OPLSAATypifier("oplsaa.xml", strict=False)
 ```
 
 `typify()` writes atom labels and every bonded topology class supported by the
@@ -110,20 +110,20 @@ until then use the Rust or WASM path above.
 import numpy as np
 import molrs
 
-mol = molrs.parse_smiles("CCO").to_atomistic()
-mol3d, _report = molrs.Conformer(speed="fast", seed=42).generate(mol)
+mol = molrs.io.SmilesIR("CCO").to_atomistic()
+mol3d, _report = molrs.conformer.Conformer(speed="fast", seed=42).generate(mol)
 
-typifier = molrs.MMFF94Typifier()
+typifier = molrs.ff.MMFF94Typifier()
 typed = typifier.typify(mol3d)
 typed_frame = typed.to_frame()
 print("typed blocks:", typed_frame.keys())
 
 try:
-    typed_frame["pairs"] = molrs.intramolecular_pairs(typed_frame)
+    typed_frame["pairs"] = molrs.ff.intramolecular_pairs(typed_frame)
     potentials = typifier.forcefield().to_potentials(typed_frame)
-    coords = molrs.extract_coords(typed_frame)
+    coords = molrs.ff.extract_coords(typed_frame)
 
-    energy, forces = potentials.eval(coords)
+    energy, forces = potentials.calc_energy_forces(coords)
 
     print("terms:", len(potentials))
     print("energy:", energy)
@@ -158,8 +158,8 @@ Typing and evaluation answer different questions:
   re-parameterising 11 out-of-plane rows and 42 torsion rows. Everything else —
   all 95 atom types, every bond / angle / stretch-bend / vdW / charge parameter —
   is shared, so molecules without such a nitrogen get identical answers.
-- `Potentials.energy(coords)` returns only energy.
-- `Potentials.eval(coords)` returns energy and forces.
+- `pots.calc_energy(coords)` returns only energy.
+- `Potentials.calc_energy_forces(coords)` returns energy and forces with shape `(N, 3)`.
 
 Keep the `Potentials` object if you plan to evaluate many coordinate sets for
 the same topology. Rebuilding potentials for every frame wastes work and can
@@ -184,8 +184,8 @@ round-trip through molrs:
 
 | Direction | Rust | Python |
 | --- | --- | --- |
-| read | `LammpsFfReader` | `molrs.read_lammps_forcefield` / `_str` |
-| write | `LammpsFfWriter` | `molrs.write_lammps_forcefield` / `_str` |
+| read | `LammpsFfReader` | `molrs.ff.read_lammps_forcefield` / `_str` |
+| write | `LammpsFfWriter` | `molrs.ff.write_lammps_forcefield` / `_str` |
 
 molrs stores harmonic stiffness in the `½k(x−x₀)²` form and angles in
 **radians**. The writer inverts both for LAMMPS `real` units (`K = k/2`,
@@ -195,9 +195,9 @@ recombined into a single `lj/cut/coul/cut` line so geometric mixing still works.
 ```python
 import molrs
 
-ff = molrs.read_lammps_forcefield("system.ff")
+ff = molrs.ff.read_lammps_forcefield("system.ff")
 # … edit styles / types …
-molrs.write_lammps_forcefield(
+molrs.ff.write_lammps_forcefield(
     "system-out.ff",
     ff,
     precision=6,
@@ -214,7 +214,7 @@ force field still carries cap artifacts.
 `LBFGS` minimizes molecule-bound potentials. Python:
 
 ```python
-opt = molrs.LBFGS(potentials, fmax=0.05, max_steps=500)
+opt = molrs.optimize.LBFGS(potentials, fmax=0.05, max_steps=500)
 min_frame, report = opt.run(typed_frame)
 ```
 

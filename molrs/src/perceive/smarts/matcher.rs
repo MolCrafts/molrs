@@ -16,7 +16,6 @@
 use std::collections::HashMap;
 
 use crate::system::atomistic::{AtomId, Atomistic};
-use crate::system::molgraph::PropValue;
 
 use super::ast::{BondFacts, MolContext, RecursiveEval};
 use super::parser::QueryGraph;
@@ -27,16 +26,11 @@ fn bond_facts(ctx: &MolContext, a: AtomId, b: AtomId) -> Option<BondFacts> {
     let mol = ctx.mol;
     for (bid, other) in mol.incident_bond_ids(a) {
         if other == b {
-            let bond = mol.get_bond(bid).ok()?;
-            let order = match bond.props.get("order") {
-                Some(PropValue::F64(v)) => *v,
-                _ => 1.0,
-            };
-            let aromatic = (order - 1.5).abs() < 1e-6
-                || matches!(bond.props.get("is_aromatic"),
-                    Some(PropValue::Int(v)) if *v != 0)
-                || matches!(bond.props.get("is_aromatic"),
-                    Some(PropValue::F64(v)) if *v != 0.0);
+            // §11.2: `:` reads the bond *class*. §11.3: an explicit `-`/`=`/`#`
+            // reads the localized integer. Two questions, two fields — never a
+            // number doing both jobs.
+            let aromatic = mol.bond_type(bid).is_aromatic();
+            let order = mol.bond_number(bid).count().max(1) as f64;
             let in_ring = ctx.rings.is_bond_in_ring(bid);
             return Some(BondFacts {
                 order,

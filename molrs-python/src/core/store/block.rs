@@ -82,7 +82,13 @@ struct UIntArrayOwner {
 /// assert "x" in b
 /// arr = b.view("x")        # zero-copy numpy view
 /// ```
-#[pyclass(module = "molrs", name = "Block", from_py_object, unsendable, subclass)]
+#[pyclass(
+    module = "molrs._lib",
+    name = "Block",
+    from_py_object,
+    unsendable,
+    subclass
+)]
 #[derive(Clone)]
 pub struct PyBlock {
     pub(crate) inner: BlockRef,
@@ -335,6 +341,52 @@ impl PyBlock {
         self.view(py, key)
     }
 
+    /// Set a column by name — ``block["x"] = array``.
+    ///
+    /// The subscript counterpart of :meth:`__getitem__`, and the same operation
+    /// as :meth:`insert`: an existing column of that name is replaced, and the
+    /// length must match the block's row count unless the block is empty.
+    ///
+    /// Parameters
+    /// ----------
+    /// key : str
+    ///     Column name.
+    /// array : numpy.ndarray | list[str]
+    ///     Column data; see :meth:`insert` for accepted dtypes.
+    ///
+    /// Raises
+    /// ------
+    /// TypeError
+    ///     If the array dtype is not supported.
+    /// ValueError
+    ///     If the row count does not match existing columns.
+    ///
+    /// Examples
+    /// --------
+    /// >>> b = Block()
+    /// >>> b["x"] = np.zeros(10, dtype=np.float64)
+    /// >>> b["x"] is not None
+    /// True
+    fn __setitem__(&mut self, key: &str, array: &Bound<'_, pyo3::types::PyAny>) -> PyResult<()> {
+        self.insert(key, array)
+    }
+
+    /// Remove a column by name — ``del block["x"]``.
+    ///
+    /// The same operation as :meth:`remove`. Defining it is not optional once
+    /// ``__setitem__`` exists: CPython routes both through one slot
+    /// (``mp_ass_subscript``), so a block with only ``__setitem__`` answers
+    /// ``hasattr(block, "__delitem__")`` with ``True`` and then raises
+    /// ``NotImplementedError`` when you use it.
+    ///
+    /// Raises
+    /// ------
+    /// KeyError
+    ///     If no column of that name exists.
+    fn __delitem__(&mut self, key: &str) -> PyResult<()> {
+        self.remove(key)
+    }
+
     /// Remove a column by name.
     ///
     /// Parameters
@@ -372,15 +424,18 @@ impl PyBlock {
     /// KeyError
     ///     If ``old_key`` does not exist.
     fn rename(&mut self, old_key: &str, new_key: &str) -> PyResult<()> {
-        let renamed = self
-            .inner
+        // A rename is a write into `new_key`, so the schema checks the moved
+        // column against that key's spec — a dtype mismatch surfaces here as a
+        // ValueError rather than silently landing a wrong-typed column.
+        self.inner
             .with_mut(|b| b.rename_column(old_key, new_key))
-            .map_err(ffi_error_to_pyerr)?;
-        if renamed {
-            Ok(())
-        } else {
-            Err(PyKeyError::new_err(old_key.to_string()))
-        }
+            .map_err(ffi_error_to_pyerr)?
+            .map_err(|e| match e {
+                molrs::store::block::BlockError::Validation { .. } => {
+                    PyKeyError::new_err(old_key.to_string())
+                }
+                other => pyo3::exceptions::PyValueError::new_err(other.to_string()),
+            })
     }
 
     /// Return a new Block with rows gathered at ``indices`` (Rust-native row

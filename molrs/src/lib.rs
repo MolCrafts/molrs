@@ -5,7 +5,7 @@
 //! `ff`, `conformer`, and `signal`.
 //!
 //! ```toml
-//! molcrafts-molrs = { version = "0.1", features = ["io", "smiles"] }
+//! molcrafts-molrs = { version = "0.12", features = ["io", "smiles"] }
 //! ```
 //!
 //! Then:
@@ -25,6 +25,8 @@
 //! - `conformer` — 3D conformer generation
 //! - `signal`    — signal processing (FFT-based ACF, windowing, frequency grids)
 //! - `full`      — everything above
+//! - `stream`    — MessagePack/JSON `Frame` wire encoding (not in `full`)
+//! - `net`       — WebSocket Frame streaming + control commands (not in `full`)
 //!
 //! Core flags: `rayon` (default), `zarr`, `filesystem`, `blas`.
 //!
@@ -48,6 +50,16 @@ extern crate self as molrs;
 pub mod core;
 pub use crate::core::system::element::Element;
 pub use crate::core::*;
+
+/// Structure builders (graphene, nanotubes, self-avoiding walks, …).
+///
+/// Always compiled — builders sit above `core` and produce frames / paths
+/// without depending on feature-gated analysis or force fields.
+pub mod builder;
+pub use crate::builder::{
+    CarbonTubeBuilder, CarbonTubeError, FccLattice, GrapheneBuilder, GrapheneError, GrowthStrategy,
+    OccupancyMode, OffLattice, SelfAvoidingWalk, WalkError, WalkOutput,
+};
 
 // Chemical perception: one layer above `core`, below `ff` / `io` / `conformer`.
 // Always compiled — every consumer configuration already compiled these modules
@@ -114,6 +126,14 @@ mod serialize;
 /// (MessagePack / JSON) over the `serde`-serializable core model. Not in `full`.
 #[cfg(feature = "stream")]
 pub mod stream;
+
+/// WebSocket `Frame` streaming and bidirectional control commands.
+///
+/// Gated by `net` (not part of `full`). Wire encoding reuses [`stream`]; control
+/// messages in [`net::message`] are WASM-clean, while [`net::FrameServer`] is
+/// native-only (tokio + WebSocket).
+#[cfg(feature = "net")]
+pub mod net;
 
 // `smiles` is a sub-module of `io`; expose it at the top level for ergonomics.
 #[cfg(feature = "smiles")]
