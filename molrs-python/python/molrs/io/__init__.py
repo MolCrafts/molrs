@@ -30,6 +30,11 @@ from typing import Any, Union, overload
 
 from . import raw
 from .._lib import SmilesIR as SmilesIR
+from .._lib import (
+    write_smiles as write_smiles,
+    write_local_smarts as write_local_smarts,
+    write_smarts as write_smarts,
+)
 
 from ..fields import (
     FieldFormatter,
@@ -532,6 +537,9 @@ __all__ = [
     "write_cube",
     "write_trr",
     "write_xtc",
+    "write_smiles",
+    "write_smarts",
+    "write_local_smarts",
     "TrajectoryReader",
     "read_lammps_trajectory",
     "read_xyz_trajectory",

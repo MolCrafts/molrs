@@ -37,7 +37,7 @@ use molrs::io::trajectory::xtc::{
 use molrs::store::frame::Frame as CoreFrame;
 use pyo3::exceptions::{PyIndexError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyList, PySlice};
+use pyo3::types::{PyList, PySlice, PyType};
 use std::fs::File;
 use std::io::BufWriter;
 
@@ -1519,6 +1519,79 @@ impl PySmilesIR {
             .collect()
     }
 
+    /// Write this IR as a SMILES string (concrete atoms only).
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If the IR contains SMARTS query atoms or SMARTS-only bond operators.
+    fn write_smiles(&self) -> PyResult<String> {
+        molrs::io::smiles::write_smiles(&self.inner).map_err(smiles_error_to_pyerr)
+    }
+
+    /// Write this IR as a SMARTS string (queries allowed).
+    fn write_smarts(&self) -> PyResult<String> {
+        molrs::io::smiles::write_smarts(&self.inner).map_err(smiles_error_to_pyerr)
+    }
+
+    /// Build a concrete IR from an :class:`~molrs.Atomistic` graph.
+    ///
+    /// All science/representation choices are **keyword-only flags** forwarded
+    /// to ``molrs::io::smiles::SmilesEmitOptions``. This is an *io* alternate
+    /// constructor — it does **not** live on ``Atomistic`` (no dependency
+    /// inversion into core).
+    ///
+    /// Parameters
+    /// ----------
+    /// mol : Atomistic
+    ///     Molecular graph to serialise.
+    /// canonical : bool, default True
+    /// root : int or None
+    ///     Optional atom handle to use as the SMILES root.
+    /// aromatic : {"as_marked", "kekule_only"}, default "as_marked"
+    /// hydrogens : {"organic_subset", "explicit_all", "as_stored"}, default "organic_subset"
+    /// include_stereo : bool, default False
+    /// multi_component : {"error_if_multiple", "join_dot", "first_only"}, default "error_if_multiple"
+    /// organic_subset : bool, default True
+    #[classmethod]
+    #[pyo3(signature = (
+        mol,
+        *,
+        canonical = true,
+        root = None,
+        aromatic = "as_marked",
+        hydrogens = "organic_subset",
+        include_stereo = false,
+        multi_component = "error_if_multiple",
+        organic_subset = true,
+    ))]
+    fn from_atomistic(
+        _cls: &Bound<'_, PyType>,
+        mol: &PyAtomistic,
+        canonical: bool,
+        root: Option<u64>,
+        aromatic: &str,
+        hydrogens: &str,
+        include_stereo: bool,
+        multi_component: &str,
+        organic_subset: bool,
+    ) -> PyResult<Self> {
+        let opts = build_smiles_emit_options(
+            canonical,
+            root,
+            aromatic,
+            hydrogens,
+            include_stereo,
+            multi_component,
+            organic_subset,
+        )?;
+        let ir = molrs::io::smiles::from_atomistic(mol.core(), &opts)
+            .map_err(smiles_error_to_pyerr)?;
+        let input = molrs::io::smiles::write_smiles(&ir)
+            .unwrap_or_else(|_| "<from_atomistic>".to_owned());
+        Ok(Self { inner: ir, input })
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "SmilesIR('{}', components={})",
@@ -1526,4 +1599,223 @@ impl PySmilesIR {
             self.inner.components.len()
         )
     }
+}
+
+fn build_smiles_emit_options(
+    canonical: bool,
+    root: Option<u64>,
+    aromatic: &str,
+    hydrogens: &str,
+    include_stereo: bool,
+    multi_component: &str,
+    organic_subset: bool,
+) -> PyResult<molrs::io::smiles::SmilesEmitOptions> {
+    use molrs::io::smiles::{AromaticEmit, HydrogenEmit, MultiComponentEmit, SmilesEmitOptions};
+    use molrs::system::molgraph::node_from_u64;
+
+    let aromatic = match aromatic {
+        "as_marked" => AromaticEmit::AsMarked,
+        "kekule_only" => AromaticEmit::KekuleOnly,
+        other => {
+            return Err(PyValueError::new_err(format!(
+                "aromatic must be 'as_marked' or 'kekule_only', got {other:?}"
+            )));
+        }
+    };
+    let hydrogens = match hydrogens {
+        "organic_subset" => HydrogenEmit::OrganicSubset,
+        "explicit_all" => HydrogenEmit::ExplicitAll,
+        "as_stored" => HydrogenEmit::AsStored,
+        other => {
+            return Err(PyValueError::new_err(format!(
+                "hydrogens must be 'organic_subset', 'explicit_all', or 'as_stored', got {other:?}"
+            )));
+        }
+    };
+    let multi_component = match multi_component {
+        "error_if_multiple" => MultiComponentEmit::ErrorIfMultiple,
+        "join_dot" => MultiComponentEmit::JoinDot,
+        "first_only" => MultiComponentEmit::FirstOnly,
+        other => {
+            return Err(PyValueError::new_err(format!(
+                "multi_component must be 'error_if_multiple', 'join_dot', or 'first_only', got {other:?}"
+            )));
+        }
+    };
+    Ok(SmilesEmitOptions {
+        canonical,
+        root: root.map(node_from_u64),
+        aromatic,
+        hydrogens,
+        include_stereo,
+        multi_component,
+        organic_subset,
+    })
+}
+
+/// Write an :class:`~molrs.Atomistic` to a SMILES string (io surface, not a core method).
+///
+/// Equivalent to ``SmilesIR.from_atomistic(mol, **flags).write_smiles()``.
+/// Keyword flags match :meth:`SmilesIR.from_atomistic`.
+///
+/// Public name is **``write_smiles``** (not ``write_atomistic_smiles``).
+#[pyfunction]
+#[pyo3(name = "write_smiles", signature = (
+    mol,
+    *,
+    canonical = true,
+    root = None,
+    aromatic = "as_marked",
+    hydrogens = "organic_subset",
+    include_stereo = false,
+    multi_component = "error_if_multiple",
+    organic_subset = true,
+))]
+pub fn write_smiles_from_atomistic(
+    mol: &PyAtomistic,
+    canonical: bool,
+    root: Option<u64>,
+    aromatic: &str,
+    hydrogens: &str,
+    include_stereo: bool,
+    multi_component: &str,
+    organic_subset: bool,
+) -> PyResult<String> {
+    let opts = build_smiles_emit_options(
+        canonical,
+        root,
+        aromatic,
+        hydrogens,
+        include_stereo,
+        multi_component,
+        organic_subset,
+    )?;
+    // Compose from_atomistic + write_smiles (preferred public path).
+    let ir = molrs::io::smiles::from_atomistic(mol.core(), &opts).map_err(smiles_error_to_pyerr)?;
+    molrs::io::smiles::write_smiles(&ir).map_err(smiles_error_to_pyerr)
+}
+
+/// Encode the local topology around ``center`` as a SMARTS string.
+///
+/// All science knobs are keyword-only flags (see molrs ``LocalSmartsOptions``).
+/// Lives on the **io** surface — not on ``Atomistic`` / ``Atom``.
+///
+/// This is the public name; :func:`write_local_smarts` is a thin alias.
+#[pyfunction]
+#[pyo3(signature = (
+    mol,
+    center,
+    *,
+    reach = 1,
+    atomic_number = true,
+    include_degree = true,
+    include_h_count = true,
+    include_charge = true,
+    include_aromatic = true,
+    include_ring_membership = false,
+    include_ring_size = false,
+    include_explicit_h_atoms = false,
+    include_bond_orders = true,
+    neighbor_style = "chain",
+    canonical_neighbor_order = true,
+))]
+pub fn write_smarts(
+    mol: &PyAtomistic,
+    center: u64,
+    reach: u32,
+    atomic_number: bool,
+    include_degree: bool,
+    include_h_count: bool,
+    include_charge: bool,
+    include_aromatic: bool,
+    include_ring_membership: bool,
+    include_ring_size: bool,
+    include_explicit_h_atoms: bool,
+    include_bond_orders: bool,
+    neighbor_style: &str,
+    canonical_neighbor_order: bool,
+) -> PyResult<String> {
+    use molrs::io::smiles::{LocalSmartsOptions, NeighborStyle};
+    use molrs::system::molgraph::node_from_u64;
+
+    let neighbor_style = match neighbor_style {
+        "chain" => NeighborStyle::Chain,
+        "recursive" => NeighborStyle::Recursive,
+        other => {
+            return Err(PyValueError::new_err(format!(
+                "neighbor_style must be 'chain' or 'recursive', got {other:?}"
+            )));
+        }
+    };
+    let opts = LocalSmartsOptions {
+        reach,
+        atomic_number,
+        include_degree,
+        include_h_count,
+        include_charge,
+        include_aromatic,
+        include_ring_membership,
+        include_ring_size,
+        include_explicit_h_atoms,
+        include_bond_orders,
+        neighbor_style,
+        canonical_neighbor_order,
+    };
+    // Rust graph→SMARTS entry (local environment). IR-only write is
+    // ``SmilesIR.write_smarts()`` / ``molrs::io::smiles::write_smarts(&ir)``.
+    molrs::io::smiles::write_local_smarts(mol.core(), node_from_u64(center), &opts)
+        .map_err(smiles_error_to_pyerr)
+}
+
+/// Alias of :func:`write_smarts` (kept for early call sites).
+#[pyfunction]
+#[pyo3(signature = (
+    mol,
+    center,
+    *,
+    reach = 1,
+    atomic_number = true,
+    include_degree = true,
+    include_h_count = true,
+    include_charge = true,
+    include_aromatic = true,
+    include_ring_membership = false,
+    include_ring_size = false,
+    include_explicit_h_atoms = false,
+    include_bond_orders = true,
+    neighbor_style = "chain",
+    canonical_neighbor_order = true,
+))]
+pub fn write_local_smarts(
+    mol: &PyAtomistic,
+    center: u64,
+    reach: u32,
+    atomic_number: bool,
+    include_degree: bool,
+    include_h_count: bool,
+    include_charge: bool,
+    include_aromatic: bool,
+    include_ring_membership: bool,
+    include_ring_size: bool,
+    include_explicit_h_atoms: bool,
+    include_bond_orders: bool,
+    neighbor_style: &str,
+    canonical_neighbor_order: bool,
+) -> PyResult<String> {
+    write_smarts(
+        mol,
+        center,
+        reach,
+        atomic_number,
+        include_degree,
+        include_h_count,
+        include_charge,
+        include_aromatic,
+        include_ring_membership,
+        include_ring_size,
+        include_explicit_h_atoms,
+        include_bond_orders,
+        neighbor_style,
+        canonical_neighbor_order,
+    )
 }
