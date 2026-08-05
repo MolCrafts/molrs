@@ -160,7 +160,6 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<io::PySmilesIR>()?;
     m.add_function(wrap_pyfunction!(io::write_smiles_from_atomistic, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_smarts, m)?)?;
-    m.add_function(wrap_pyfunction!(io::write_local_smarts, m)?)?;
 
     // Trajectory (frame sequence) + observable records
     m.add_class::<PyTrajectory>()?;

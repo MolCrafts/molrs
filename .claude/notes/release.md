@@ -26,5 +26,9 @@ Only `scripts/fetch-test-data.sh` lives in-tree. No publish helper scripts.
 
 ## v0.12.1 (2026-08-05)
 
-- SMILES/SMARTS emit: `write_smiles` / `from_atomistic` / `write_local_smarts` (io surface only)
+- SMILES/SMARTS emit: `write_smiles` / `from_atomistic` / `write_smarts` (io surface only)
 - smiles-emit-01..04 closed
+
+## v0.12.2 (2026-08-05)
+
+- Public Python names only: `write_smiles` / `write_smarts` (removed `write_local_smarts` export)

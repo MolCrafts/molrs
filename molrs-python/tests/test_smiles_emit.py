@@ -32,8 +32,7 @@ def test_write_smarts_matches():
         center = mol.canonical_order()[0]
     s = molrs.io.write_smarts(mol, center, reach=1, atomic_number=True)
     assert isinstance(s, str) and s
-    # alias still works
-    assert molrs.io.write_local_smarts(mol, center, reach=1, atomic_number=True) == s
+    assert not hasattr(molrs.io, "write_local_smarts")
     from molrs.perceive import SmartsPattern
 
     pat = SmartsPattern(s)

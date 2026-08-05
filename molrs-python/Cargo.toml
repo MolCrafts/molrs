@@ -1,6 +1,6 @@
 [package]
 name = "molrs-python"
-version = "0.12.1"
+version = "0.12.2"
 edition = "2024"
 rust-version = "1.91"
 authors = ["MolCrafts"]
@@ -26,10 +26,10 @@ serde_json = "1"
 # `ForceField._ffi_forcefield_capsule()` (the force-field analogue of the frame
 # capsule). molrs-python already pulls `molrs/ff` via `full`, so this only turns
 # on the matching molrs-ffi handle.
-molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.12.1", features = ["ff"] }
+molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.12.2", features = ["ff"] }
 # Base: full (no zarr). Host zarr + path I/O is optional (`fs` feature) so
 # Pyodide builds can omit zarrs/libz-sys (emscripten cannot link host zlib).
-molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.12.1", default-features = false, features = ["full"] }
+molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.12.2", default-features = false, features = ["full"] }
 
 [features]
 default = ["fs"]

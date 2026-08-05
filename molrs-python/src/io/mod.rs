@@ -1700,7 +1700,8 @@ pub fn write_smiles_from_atomistic(
 /// All science knobs are keyword-only flags (see molrs ``LocalSmartsOptions``).
 /// Lives on the **io** surface — not on ``Atomistic`` / ``Atom``.
 ///
-/// This is the public name; :func:`write_local_smarts` is a thin alias.
+/// Public name is **``write_smarts``** only (no ``write_local_smarts`` alias).
+/// For IR → SMARTS string use :meth:`SmilesIR.write_smarts`.
 #[pyfunction]
 #[pyo3(signature = (
     mol,
@@ -1765,57 +1766,4 @@ pub fn write_smarts(
     // ``SmilesIR.write_smarts()`` / ``molrs::io::smiles::write_smarts(&ir)``.
     molrs::io::smiles::write_local_smarts(mol.core(), node_from_u64(center), &opts)
         .map_err(smiles_error_to_pyerr)
-}
-
-/// Alias of :func:`write_smarts` (kept for early call sites).
-#[pyfunction]
-#[pyo3(signature = (
-    mol,
-    center,
-    *,
-    reach = 1,
-    atomic_number = true,
-    include_degree = true,
-    include_h_count = true,
-    include_charge = true,
-    include_aromatic = true,
-    include_ring_membership = false,
-    include_ring_size = false,
-    include_explicit_h_atoms = false,
-    include_bond_orders = true,
-    neighbor_style = "chain",
-    canonical_neighbor_order = true,
-))]
-pub fn write_local_smarts(
-    mol: &PyAtomistic,
-    center: u64,
-    reach: u32,
-    atomic_number: bool,
-    include_degree: bool,
-    include_h_count: bool,
-    include_charge: bool,
-    include_aromatic: bool,
-    include_ring_membership: bool,
-    include_ring_size: bool,
-    include_explicit_h_atoms: bool,
-    include_bond_orders: bool,
-    neighbor_style: &str,
-    canonical_neighbor_order: bool,
-) -> PyResult<String> {
-    write_smarts(
-        mol,
-        center,
-        reach,
-        atomic_number,
-        include_degree,
-        include_h_count,
-        include_charge,
-        include_aromatic,
-        include_ring_membership,
-        include_ring_size,
-        include_explicit_h_atoms,
-        include_bond_orders,
-        neighbor_style,
-        canonical_neighbor_order,
-    )
 }
