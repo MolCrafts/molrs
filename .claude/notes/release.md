@@ -6,6 +6,15 @@
 2. Only then bump **molpy** to the same **major.minor** and tag.
 3. Shared pin: consumers use `molcrafts-molrs>=X.Y.0,<X.(Y+1)`.
 
+
+
+## Tag immutability (hard)
+
+1. Tag **only** the `release: vX.Y.Z` commit (not the merge commit).
+2. **Never** delete, force-move, or retarget a tag after it has been pushed to upstream.
+3. If the tag was wrong: cut **vX.Y.(Z+1)** on a new `release:` commit. Do not rewrite history of a published tag.
+4. Publish/Bench workflows pin the SHA at trigger time; moving the tag mid-run aborts checkout.
+
 ## Publish (tag push)
 
 Workflow `.github/workflows/publish.yml`:
