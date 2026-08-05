@@ -12,6 +12,9 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         python-version: ['3.12', '3.13', '3.14']
+    env:
+      # Single target dir so rust-cache + maturin share one tree.
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -24,12 +27,13 @@ jobs:
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      # abi3-py312: release artifacts are shared across Python minors — do not
+      # shard the cache by python-version (that forced 9 cold compiles).
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: python-maturin-${{ matrix.os }}-py${{ matrix.python-version }}
+          shared-key: python-maturin-${{ matrix.os }}
           workspaces: |
             . -> target
-            molrs-python -> target
 
       - name: Install uv
         uses: astral-sh/setup-uv@v9.0.0
@@ -39,8 +43,16 @@ jobs:
             molrs-python/pyproject.toml
             molrs-python/Cargo.toml
 
-      # Same entry as prek pre-push (tox from molrs-python[dev]).
-      # tox base_python follows the runner interpreter (matrix.python-version).
-      - name: uv run --extra dev tox -e py
+      # Gate tools only — do NOT install the maturin project here.
+      # `uv run --extra dev tox` used to PEP517-build the extension once,
+      # then tox `maturin build --release` built it again (double release
+      # compile; ~2–8 min wasted on cold macOS runners).
+      # Same sequence as prek pre-push (see .pre-commit-config.yaml).
+      - name: uv sync gate tools + tox -e py
         working-directory: molrs-python
-        run: uv run --extra dev tox -e py
+        # bash on all three OS (Git Bash on windows-latest).
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv sync --no-install-project --extra dev
+          uv run --no-sync tox -e py

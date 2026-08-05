@@ -59,8 +59,12 @@ repos:
       # ── CI Python (ci-python.yml) via tox ────────────────────────────────
       - id: python-tox
         name: "CI Python / tox -c molrs-python -e py"
-        # tox from molrs-python optional-dependencies `dev`
-        entry: uv run --directory molrs-python --extra dev tox -e py
+        # Gate tools only (no maturin project install) — matches ci-python.yml.
+        # Installing the project here would PEP517-build the extension once,
+        # then tox builds it again with maturin build --release.
+        entry: >-
+          sh -c 'uv --directory molrs-python sync --no-install-project --extra dev
+          && uv --directory molrs-python run --no-sync tox -e py'
         language: system
         pass_filenames: false
         always_run: true
