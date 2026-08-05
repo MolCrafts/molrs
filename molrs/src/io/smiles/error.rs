@@ -43,6 +43,8 @@ pub enum SmilesErrorKind {
     RecursionLimit,
     /// Ring closure bond types are inconsistent between open and close.
     RingBondConflict { rnum: u16 },
+    /// Graph → IR / IR → string emit failure (message is the reason).
+    Emit(String),
 }
 
 impl SmilesError {
@@ -79,6 +81,7 @@ impl fmt::Display for SmilesError {
             SmilesErrorKind::RingBondConflict { rnum } => {
                 format!("conflicting bond types on ring closure {rnum}")
             }
+            SmilesErrorKind::Emit(s) => format!("emit error: {s}"),
         };
         write!(f, "SMILES parse error at position {pos}: {msg}")?;
 

@@ -57,4 +57,8 @@ pub use chem::ast::{
 };
 pub use error::{SmilesError, SmilesErrorKind};
 pub use parser::parse_smarts;
-pub use smiles::{parse_smiles, to_atomistic, validate_smiles};
+pub use smiles::{
+    AromaticEmit, HydrogenEmit, LocalSmartsOptions, MultiComponentEmit, NeighborStyle,
+    SmilesEmitOptions, from_atomistic, local_smarts_ir, parse_smiles, to_atomistic,
+    validate_smiles, write_atomistic_smiles, write_local_smarts, write_smarts, write_smiles,
+};
