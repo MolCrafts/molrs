@@ -12,7 +12,6 @@ mol_project:
     # Local pre-push mirrors default CI + docs (not optional Full).
     # Single source: .pre-commit-config.yaml (prek); tox via molrs-python[dev]
     local: "prek run --all-files --hook-stage pre-push"
-    # sync gate tools only (no maturin project) then tox builds the wheel once
     python: "uv --directory molrs-python sync --no-install-project --extra dev && uv --directory molrs-python run --no-sync tox -e py"
   arch:
     style: crate-graph

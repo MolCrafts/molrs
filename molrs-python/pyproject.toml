@@ -21,13 +21,9 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-# Dev / gate tools. Install tools only (recommended for CI & pre-push):
-#   uv sync --no-install-project --extra dev
-# then run the throwaway tox env (builds the wheel once via maturin):
-#   uv run --no-sync tox -e py
-# Do NOT use bare `uv run --extra dev tox -e py` — that PEP517-builds the
-# extension into .venv and tox builds it again (double release compile).
-# Editable package+tools: `uv sync --extra dev` or `pip install -e ".[dev]"`.
+# Gate tools: `uv sync --no-install-project --extra dev && uv run --no-sync tox -e py`
+# (do not `uv run --extra dev tox` — that double-builds the extension).
+# Editable: `uv sync --extra dev` or `pip install -e ".[dev]"`.
 dev = [
     "tox>=4.23",
     "maturin>=1.0,<2.0",
@@ -67,8 +63,7 @@ env_list = ["py"]
 no_package = true
 
 [tool.tox.env.py]
-description = "throwaway env: one maturin --release wheel + pytest (non-editable)"
-# Prefer the runner / active interpreter so CI matrix 3.12–3.14 all work.
+description = "maturin --release wheel + pytest (non-editable)"
 base_python = ["python3"]
 deps = [
   "maturin>=1.0,<2.0",
@@ -87,8 +82,6 @@ pass_env = [
   "TERM",
 ]
 allowlist_externals = ["maturin"]
-# Single release build path. Gate drivers must install tox/maturin via
-# `uv sync --no-install-project --extra dev` so uv does not also PEP517-build.
 commands_pre = [
   ["maturin", "build", "--release", "-o", "{env_tmp_dir}/wheels"],
   [
