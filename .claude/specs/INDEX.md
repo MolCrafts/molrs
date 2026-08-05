@@ -24,6 +24,6 @@ Live specs only.
 
 ## smiles-emit chain (molrs first; graph → SMILES/SMARTS write) — **done** 2026-08-05
 
-All four stages verified (cargo lib tests + molrs-python `test_smiles_emit`). Public Python name: `molrs.io.write_smiles(mol, **flags)` / `SmilesIR.from_atomistic` / `write_local_smarts`. Specs deleted after close.
+All four stages verified (cargo lib tests + molrs-python `test_smiles_emit`). Public Python name: `molrs.io.write_smiles(mol, **flags)` / `SmilesIR.from_atomistic` / `write_smarts`. Specs deleted after close.
 
 Downstream: molpy `smiles-emit-01-io-surface` after molrs tag ≥ emit surface.

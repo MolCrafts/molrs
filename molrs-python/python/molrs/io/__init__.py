@@ -32,7 +32,6 @@ from . import raw
 from .._lib import SmilesIR as SmilesIR
 from .._lib import (
     write_smiles as write_smiles,
-    write_local_smarts as write_local_smarts,
     write_smarts as write_smarts,
 )
 
@@ -539,7 +538,6 @@ __all__ = [
     "write_xtc",
     "write_smiles",
     "write_smarts",
-    "write_local_smarts",
     "TrajectoryReader",
     "read_lammps_trajectory",
     "read_xyz_trajectory",
