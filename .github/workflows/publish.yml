@@ -102,7 +102,8 @@ jobs:
             npm publish --access public --provenance
           fi
 
-  # Desktop wheels (linux / macos / windows)
+  # Desktop wheels (linux / macos / windows) × Python 3.12 / 3.13 / 3.14.
+  # Do not skip a minor of requires-python (>=3.12).
   build-python:
     needs: guard
     if: github.repository == 'MolCrafts/molrs'
@@ -110,35 +111,40 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-latest
-            args: --release --out dist
-          - os: macos-latest
-            args: --release --out dist --target universal2-apple-darwin
-          - os: windows-latest
-            args: --release --out dist
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ['3.12', '3.13', '3.14']
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.14"
+          python-version: ${{ matrix.python-version }}
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: publish-py-${{ matrix.os }}
+          shared-key: publish-py-${{ matrix.os }}-py${{ matrix.python-version }}
           workspaces: |
             . -> target
             molrs-python -> target
+      - name: Maturin args
+        id: maturin
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.os }}" = "macos-latest" ]; then
+            echo "args=--release --out dist --target universal2-apple-darwin" >> "$GITHUB_OUTPUT"
+          else
+            echo "args=--release --out dist" >> "$GITHUB_OUTPUT"
+          fi
       - uses: PyO3/maturin-action@v1
         with:
           working-directory: molrs-python
           manylinux: auto
           command: build
           # default features include `fs` (host filesystem zarr I/O)
-          args: ${{ matrix.args }}
+          args: ${{ steps.maturin.outputs.args }}
           sccache: "true"
       - uses: actions/upload-artifact@v7
         with:
-          name: wheels-${{ matrix.os }}
+          name: wheels-${{ matrix.os }}-py${{ matrix.python-version }}
           path: molrs-python/dist
 
   # Pyodide / Emscripten wheel for micropip (browser)

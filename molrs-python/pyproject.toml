@@ -63,7 +63,9 @@ no_package = true
 
 [tool.tox.env.py]
 description = "throwaway env: maturin wheel + pytest (non-editable)"
-base_python = ["python3.14"]
+# Prefer the runner / active interpreter so CI matrix 3.12–3.14 all work.
+# Fall back to 3.14 when the env list is resolved without an explicit base.
+base_python = ["python3"]
 deps = [
   "maturin>=1.0,<2.0",
   "pytest",
