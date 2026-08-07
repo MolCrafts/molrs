@@ -26,8 +26,18 @@ from .._lib import read_opls_xml as _rs_read_opls_xml
 from .._lib import read_opls_xml_str as _rs_read_opls_xml_str
 from .._lib import read_lammps_forcefield as _rs_read_lammps_forcefield
 from .._lib import read_lammps_forcefield_str as _rs_read_lammps_forcefield_str
+from .._lib import read_lammps_data_coeffs as _rs_read_lammps_data_coeffs
 from .._lib import write_lammps_forcefield as _rs_write_lammps_forcefield
 from .._lib import write_lammps_forcefield_str as _rs_write_lammps_forcefield_str
+from .._lib import write_lammps_data_coeffs as _rs_write_lammps_data_coeffs
+from .._lib import read_amber_prmtop_ff as _rs_read_amber_prmtop_ff
+from .._lib import read_amber_prmtop_ff_str as _rs_read_amber_prmtop_ff_str
+from .._lib import read_gromacs_top_ff as _rs_read_gromacs_top_ff
+from .._lib import read_gromacs_top_ff_str as _rs_read_gromacs_top_ff_str
+from .._lib import write_gromacs_top_ff as _rs_write_gromacs_top_ff
+from .._lib import write_gromacs_top_ff_str as _rs_write_gromacs_top_ff_str
+from .._lib import write_forcefield_xml as _rs_write_forcefield_xml
+from .._lib import write_forcefield_xml_str as _rs_write_forcefield_xml_str
 
 # def_style returns a bound handle of the SAME Style subclass it was given, so
 # `ff.def_style(AtomStyle(...)).def_type(...)` keeps the subclass-specific def_type.
@@ -524,7 +534,11 @@ class ForceField(_RsForceField):
     def _from_raw(cls, raw: _RsForceField) -> "ForceField":
         """Re-wrap a bare Rust force field as a :class:`ForceField` by replaying
         its styles and types (used by readers / ``subset`` which return the core
-        type)."""
+        type).
+
+        Numeric and string params are both preserved (``_replay_type``) so OPLS
+        ``class_`` / ``type_`` / ``element`` metadata survives the wrap.
+        """
         ff = cls(name=raw.name)
         for cat_name in raw.style_names():
             category, sname = cat_name.split(":", 1)
@@ -537,12 +551,89 @@ class ForceField(_RsForceField):
                     ff, sname, raw.style_params(category, sname)
                 )
                 continue  # kspace has no per-type defs
+            else:
+                ff._ensure_style(category, sname)
             for tname, params in raw.types(category, sname):
-                _RsForceField.def_type(ff, category, sname, tname, params)
+                endpoints = raw.type_endpoints(category, sname, tname)
+                ff._replay_type(
+                    category, sname, tname, params, endpoints=endpoints
+                )
         return ff
 
     def subset(self, frame: Any) -> "ForceField":
         return ForceField._from_raw(_RsForceField.subset(self, frame))
+
+    def map_type(self, frame: Any) -> Any:
+        """Stamp ``type_id`` on Frame blocks from existing ``type`` labels.
+
+        Frame is the source of truth: this method does **not** invent types.
+        For each of ``atoms`` / ``bonds`` / ``angles`` / ``dihedrals`` /
+        ``impropers``:
+
+        * if ``type`` is present → write ``type_id`` (1-based; pure-integer
+          labels use identity ``id = int(label)``, else dense ids in numeric-
+          aware sort order of unique labels);
+        * if only ``type_id`` is present → leave as-is;
+        * if neither is present on ``atoms`` → ``ValueError`` (incomplete
+          Frame). Connectivity blocks without either column are skipped.
+
+        Returns:
+            The same ``frame`` (mutated in place).
+        """
+        import numpy as np
+
+        def _is_int_token(value: object) -> bool:
+            s = str(value).strip()
+            if not s:
+                return False
+            if s[0] in "+-":
+                s = s[1:]
+            return s.isdigit()
+
+        def _sorted_names(names: list[str]) -> list[str]:
+            if names and all(_is_int_token(n) for n in names):
+                return sorted(names, key=lambda n: int(n))
+            return sorted(names)
+
+        def _name_to_id(names: list[str]) -> dict[str, int]:
+            unique = list(dict.fromkeys(names))
+            if unique and all(_is_int_token(n) for n in unique):
+                return {n: int(n) for n in unique}
+            ordered = _sorted_names(unique)
+            return {n: i + 1 for i, n in enumerate(ordered)}
+
+        atoms_ok = False
+        for block_name in ("atoms", "bonds", "angles", "dihedrals", "impropers"):
+            if block_name not in frame:
+                continue
+            block = frame[block_name]
+            if getattr(block, "nrows", 0) == 0:
+                continue
+            has_type = "type" in block
+            has_tid = "type_id" in block
+            if not has_type and not has_tid:
+                if block_name == "atoms":
+                    raise ValueError(
+                        "frame['atoms'] has neither 'type' nor 'type_id'; "
+                        "assign types (e.g. typify) before ForceField.map_type"
+                    )
+                continue
+            if has_type:
+                types = [str(t) for t in list(block["type"])]
+                mapping = _name_to_id(types)
+                block["type_id"] = np.asarray(
+                    [mapping[t] for t in types], dtype=np.uint32
+                )
+            if block_name == "atoms":
+                atoms_ok = True
+        if "atoms" in frame and frame["atoms"].nrows > 0 and not atoms_ok:
+            # atoms present but skipped somehow
+            if "type" not in frame["atoms"] and "type_id" not in frame["atoms"]:
+                raise ValueError(
+                    "frame['atoms'] has neither 'type' nor 'type_id'; "
+                    "assign types before ForceField.map_type"
+                )
+        return frame
 
     # ---- chainable style factories (ensure-exists, return a handle) ----
     def def_atomstyle(self, name: str) -> AtomStyle:
@@ -637,14 +728,44 @@ class ForceField(_RsForceField):
 
     # ---- merge / rename / remove (molpy signatures: by Style subclass) ----
     def _replay_type(
-        self, category: str, style: str, name: str, params: dict[str, Any]
+        self,
+        category: str,
+        style: str,
+        name: str,
+        params: dict[str, Any],
+        endpoints: list[str] | None = None,
     ) -> None:
+        """Write one type, replacing any prior definition of the same name.
+
+        Overlay merges (e.g. CL&P onto OPLS) otherwise accumulate duplicate
+        names: ``def_type`` always appends, while ``set_type_str_param`` updates
+        the *first* match — so a class-wildcard ``NA`` would swallow the
+        overlay's string metadata and leave a second, charge-only ``NA``.
+        Removing first keeps one coherent type with numeric + string params.
+
+        Pair (and other multi-endpoint) types whose labels contain ``-`` must
+        be rebuilt from *endpoints*, not by dash-splitting *name* — otherwise
+        ``tip3p-O`` becomes a spurious tip3p×O cross-pair.
+        """
         floats = {
             k: v
             for k, v in params.items()
             if isinstance(v, (int, float)) and not isinstance(v, bool)
         }
-        _RsForceField.def_type(self, category, style, name, floats)
+        _RsForceField.remove_type(self, category, style, name)
+        if category == "pair" and endpoints:
+            if len(endpoints) >= 2 and endpoints[0] == endpoints[1]:
+                _RsForceField.def_pairtype(self, style, endpoints[0], None, floats)
+            elif len(endpoints) >= 2:
+                _RsForceField.def_pairtype(
+                    self, style, endpoints[0], endpoints[1], floats
+                )
+            else:
+                _RsForceField.def_pairtype(self, style, endpoints[0], None, floats)
+        elif category == "atom":
+            _RsForceField.def_atomtype(self, style, name, floats)
+        else:
+            _RsForceField.def_type(self, category, style, name, floats)
         for k, v in params.items():
             if isinstance(v, str):
                 self.set_type_str_param(category, style, name, k, v)
@@ -657,7 +778,10 @@ class ForceField(_RsForceField):
             if category == "kspace":
                 continue
             for tname, params in other.types(category, sname):
-                self._replay_type(category, sname, tname, params)
+                endpoints = other.type_endpoints(category, sname, tname)
+                self._replay_type(
+                    category, sname, tname, params, endpoints=endpoints
+                )
         return self
 
     def rename_type(self, style_cls: Any, old: str, new: str) -> int:
@@ -707,34 +831,128 @@ def read_lammps_forcefield_str(text: str) -> ForceField:
     return ForceField._from_raw(_rs_read_lammps_forcefield_str(text))
 
 
+def read_amber_prmtop_ff(path: str) -> ForceField:
+    """Read AMBER prmtop force-field tables into a :class:`ForceField`.
+
+    Structure/connectivity is :func:`molrs.io.read_amber_prmtop`. Harmonic
+    form map (``k = 2·K``), Fourier dihedrals, and LJ A/B → σ/ε run in native
+    Rust. Result is pure molrs store units; ``units`` is set to ``\"real\"``.
+    """
+    ff = ForceField._from_raw(_rs_read_amber_prmtop_ff(path))
+    ff.units = "real"
+    return ff
+
+
+def read_amber_prmtop_ff_str(text: str) -> ForceField:
+    """Parse AMBER prmtop force-field tables from a string."""
+    ff = ForceField._from_raw(_rs_read_amber_prmtop_ff_str(text))
+    ff.units = "real"
+    return ff
+
+
+def read_gromacs_top_ff(path: str, *, include: bool = False) -> ForceField:
+    """Read a GROMACS ``.top`` / ``.itp`` into a :class:`ForceField`.
+
+    Bonded parameters (when present) are converted from GROMACS units to molrs
+    store units at this boundary. ``include`` controls ``#include`` expansion.
+    """
+    return ForceField._from_raw(_rs_read_gromacs_top_ff(path, include=include))
+
+
+def read_gromacs_top_ff_str(text: str, *, include: bool = False) -> ForceField:
+    """Parse GROMACS topology force-field tables from a string."""
+    return ForceField._from_raw(_rs_read_gromacs_top_ff_str(text, include=include))
+
+
+def write_gromacs_top_ff(
+    path: str, forcefield: ForceField, *, precision: int = 6
+) -> None:
+    """Write a ForceField to GROMACS ``.top``/``.itp`` tables (inverse unit map)."""
+    _rs_write_gromacs_top_ff(path, forcefield, precision=precision)
+
+
+def write_gromacs_top_ff_str(forcefield: ForceField, *, precision: int = 6) -> str:
+    """Serialize a ForceField to a GROMACS topology force-field string."""
+    return _rs_write_gromacs_top_ff_str(forcefield, precision=precision)
+
+
+def write_forcefield_xml(
+    path: str, forcefield: ForceField, *, precision: int = 6
+) -> None:
+    """Write a ForceField to OpenMM-style XML."""
+    _rs_write_forcefield_xml(path, forcefield, precision=precision)
+
+
+def write_forcefield_xml_str(forcefield: ForceField, *, precision: int = 6) -> str:
+    """Serialize a ForceField to OpenMM-style XML string."""
+    return _rs_write_forcefield_xml_str(forcefield, precision=precision)
+
+
+def read_lammps_data_coeffs(
+    coeffs_text: str,
+    *,
+    units: str = "real",
+    atom_labels: dict[int, str] | None = None,
+    bond_labels: dict[int, str] | None = None,
+    angle_labels: dict[int, str] | None = None,
+    dihedral_labels: dict[int, str] | None = None,
+    improper_labels: dict[int, str] | None = None,
+) -> ForceField:
+    """Parse data-file ``* Coeffs`` sections into a :class:`ForceField`.
+
+    Form map and units conversion run in native Rust. Style defaults are
+    harmonic / ``lj/cut`` when the fragment has no style lines.
+    """
+    return ForceField._from_raw(
+        _rs_read_lammps_data_coeffs(
+            coeffs_text,
+            units=units,
+            atom_labels=atom_labels,
+            bond_labels=bond_labels,
+            angle_labels=angle_labels,
+            dihedral_labels=dihedral_labels,
+            improper_labels=improper_labels,
+        )
+    )
+
+
 def write_lammps_forcefield(
     path: str,
     forcefield: ForceField,
     *,
     precision: int = 6,
     skip_pair_style: bool = False,
+    units: str = "real",
     atom_types: set[str] | None = None,
     bond_types: set[str] | None = None,
     angle_types: set[str] | None = None,
     dihedral_types: set[str] | None = None,
     improper_types: set[str] | None = None,
+    type_ids: dict[str, int] | None = None,
 ) -> None:
     """Write a force field to a LAMMPS ``*.ff`` include (AMBER/GAFF flavour).
 
-    Inverse of :func:`read_lammps_forcefield`: molrs units → LAMMPS ``real``
-    (``K = k/2``, angles in degrees). Unit conversion lives in native Rust;
-    this is a thin façade.
+    Inverse of :func:`read_lammps_forcefield`: molrs store → LAMMPS file units
+    (``K = k/2``, angles in degrees). Energy/length for ``metal``/``lj`` go
+    through the lj reduced hub in native Rust; this is a thin façade.
+
+    Args:
+        units: LAMMPS ``units`` style for the written file (``real``, ``metal``,
+            ``lj``). Default ``real``.
+        type_ids: Optional name→id map (unused for ``*.ff`` command form).
     """
     _rs_write_lammps_forcefield(
         path,
         forcefield,
-        precision,
-        skip_pair_style,
-        atom_types,
-        bond_types,
-        angle_types,
-        dihedral_types,
-        improper_types,
+        precision=precision,
+        skip_pair_style=skip_pair_style,
+        units=units,
+        atom_types=atom_types,
+        bond_types=bond_types,
+        angle_types=angle_types,
+        dihedral_types=dihedral_types,
+        improper_types=improper_types,
+        type_ids=type_ids,
     )
 
 
@@ -743,20 +961,56 @@ def write_lammps_forcefield_str(
     *,
     precision: int = 6,
     skip_pair_style: bool = False,
+    units: str = "real",
     atom_types: set[str] | None = None,
     bond_types: set[str] | None = None,
     angle_types: set[str] | None = None,
     dihedral_types: set[str] | None = None,
     improper_types: set[str] | None = None,
+    type_ids: dict[str, int] | None = None,
 ) -> str:
     """Serialize a force field to a LAMMPS ``*.ff`` include string."""
     return _rs_write_lammps_forcefield_str(
         forcefield,
-        precision,
-        skip_pair_style,
-        atom_types,
-        bond_types,
-        angle_types,
-        dihedral_types,
-        improper_types,
+        precision=precision,
+        skip_pair_style=skip_pair_style,
+        units=units,
+        atom_types=atom_types,
+        bond_types=bond_types,
+        angle_types=angle_types,
+        dihedral_types=dihedral_types,
+        improper_types=improper_types,
+        type_ids=type_ids,
+    )
+
+
+def write_lammps_data_coeffs(
+    forcefield: ForceField,
+    *,
+    precision: int = 6,
+    units: str = "real",
+    atom_types: set[str] | None = None,
+    bond_types: set[str] | None = None,
+    angle_types: set[str] | None = None,
+    dihedral_types: set[str] | None = None,
+    improper_types: set[str] | None = None,
+    type_ids: dict[str, int] | None = None,
+) -> str:
+    """Serialize a force field to LAMMPS data-file ``* Coeffs`` section text.
+
+    Same form map / units conversion as :func:`write_lammps_forcefield`, but
+    emits ``Pair Coeffs`` / ``Bond Coeffs`` / … with integer type ids. Pass
+    ``type_ids`` from the Frame (via :meth:`ForceField.map_type` + inventory)
+    when type names are non-integer labels.
+    """
+    return _rs_write_lammps_data_coeffs(
+        forcefield,
+        precision=precision,
+        units=units,
+        atom_types=atom_types,
+        bond_types=bond_types,
+        angle_types=angle_types,
+        dihedral_types=dihedral_types,
+        improper_types=improper_types,
+        type_ids=type_ids,
     )

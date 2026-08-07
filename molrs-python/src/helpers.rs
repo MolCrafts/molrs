@@ -76,6 +76,22 @@ pub fn py_value_err<E: std::fmt::Display>(e: E) -> PyErr {
     PyValueError::new_err(e.to_string())
 }
 
+/// Resolve a wire-encoding name onto [`MessageFormat`].
+///
+/// The two spellings are the only ones the Rust side can produce, so an
+/// unknown name is an error rather than a silent fall back to MessagePack —
+/// a caller who writes `"messagepack"` must find out, not stream bytes the
+/// peer will read as JSON.
+pub(crate) fn message_format(name: &str) -> PyResult<molrs::stream::MessageFormat> {
+    match name {
+        "msgpack" => Ok(molrs::stream::MessageFormat::MessagePack),
+        "json" => Ok(molrs::stream::MessageFormat::Json),
+        other => Err(PyValueError::new_err(format!(
+            "unknown wire format {other:?}; expected 'msgpack' or 'json'"
+        ))),
+    }
+}
+
 /// Collect owned core [`Frame`]s from a single `Frame` or a list of them.
 /// Used by every batch-`compute` binding to accept both shapes.
 ///

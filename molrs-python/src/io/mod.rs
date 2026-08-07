@@ -11,6 +11,9 @@
 //! | LAMMPS dump | [`read_lammps_traj`] | [`write_lammps_traj`] |
 //! | DCD | [`read_dcd`], [`PyDcdTrajReader`] | [`write_dcd`] |
 //! | GRO | [`read_gro`] | [`write_gro`] |
+//! | XSF | [`read_xsf`] | [`write_xsf`] |
+//! | AMBER inpcrd | [`read_amber_inpcrd`] | — |
+//! | AMBER prmtop (structure) | [`read_amber_prmtop`] | — |
 
 use crate::core::store::frame::PyFrame;
 use crate::core::system::molgraph::PyAtomistic;
@@ -18,9 +21,40 @@ use crate::helpers::{io_error_to_pyerr, molrs_error_to_pyerr, smiles_error_to_py
 use molrs::io::data::chgcar::read_chgcar;
 use molrs::io::data::cube::{read_cube, write_cube};
 use molrs::io::data::gro::{read_gro as read_gro_rs, write_gro as write_gro_rs};
+use molrs::io::data::inpcrd::read_amber_inpcrd as read_amber_inpcrd_rs;
+use molrs::io::data::ac::read_ac as read_ac_rs;
+use molrs::io::data::frcmod::{
+    parse_frcmod as parse_frcmod_rs, read_frcmod as read_frcmod_rs,
+    write_frcmod as write_frcmod_rs, FrcmodFile,
+};
+use molrs::io::data::prep::{
+    read_prep as read_prep_rs, write_prep as write_prep_rs, PrepAtom, PrepResidue,
+};
+use molrs::io::data::prmtop::{
+    read_amber_prmtop as read_amber_prmtop_rs,
+    read_amber_prmtop_sections as read_amber_prmtop_sections_rs,
+};
+use molrs::io::data::prmtop_tables::{
+    decode_angle_params as decode_angle_params_rs,
+    decode_bond_params as decode_bond_params_rs,
+    decode_dihedral_params as decode_dihedral_params_rs,
+    decode_nonbond_params as decode_nonbond_params_rs, parse_a4_names as parse_a4_names_rs,
+    parse_pointers as parse_pointers_rs,
+};
 use molrs::io::data::lammps_data::{read_lammps_data, write_lammps_data};
+use molrs::io::data::mol2::{read_mol2 as read_mol2_rs, write_mol2 as write_mol2_rs};
+use molrs::io::data::top::{read_top as read_top_rs, write_top as write_top_rs};
+use molrs::io::data::lammps_molecule::{
+    read_lammps_molecule as read_lammps_molecule_rs,
+    write_lammps_molecule as write_lammps_molecule_rs,
+};
 use molrs::io::data::pdb::{read_pdb_frame, read_pdb_traj, write_pdb_frame, write_pdb_traj};
+use molrs::io::data::xsf::{read_xsf as read_xsf_rs, write_xsf as write_xsf_rs};
 use molrs::io::data::xyz::{XYZReader, read_xyz_frame, read_xyz_traj, write_xyz_frame};
+use molrs::io::log::lammps::{
+    parse_lammps_log_text as parse_lammps_log_text_rs,
+    read_lammps_log_with_style as read_lammps_log_rs,
+};
 use molrs::io::reader::{ReadSeek, TrajectoryReader, open_seekable};
 use molrs::io::trajectory::dcd::{
     DcdReader, open_dcd, read_dcd as read_dcd_rs, write_dcd as write_dcd_rs,
@@ -35,9 +69,10 @@ use molrs::io::trajectory::xtc::{
     XtcReader, open_xtc, read_xtc as read_xtc_rs, write_xtc as write_xtc_rs,
 };
 use molrs::store::frame::Frame as CoreFrame;
-use pyo3::exceptions::{PyIndexError, PyValueError};
+use pyo3::exceptions::{PyFileNotFoundError, PyIndexError, PyIOError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyList, PySlice, PyType};
+use pyo3::types::{PyDict, PyList, PySlice, PyType};
+use serde_json::Value as JsonValue;
 use std::fs::File;
 use std::io::BufWriter;
 
@@ -937,6 +972,578 @@ pub fn read_cube_file(path: &str) -> PyResult<PyFrame> {
 pub fn write_cube_file(path: &str, frame: &PyFrame) -> PyResult<()> {
     let core_frame = frame.clone_core_frame()?;
     write_cube(path, &core_frame).map_err(molrs_error_to_pyerr)
+}
+
+/// Read a Tripos MOL2 file and return the first molecule as a Frame.
+///
+/// Format-native columns on atoms: ``id``, ``name``, ``x``/``y``/``z``,
+/// ``atom_type``, optional ``subst_id``/``subst_name``/``charge``. Bonds carry
+/// ``atomi``/``atomj`` (0-based), ``sybyl_bond_type``, and canonical
+/// ``bond_type``/``bond_number``.
+///
+/// Parameters
+/// ----------
+/// path : str
+///     Path to a ``.mol2`` file.
+///
+/// Returns
+/// -------
+/// Frame
+#[pyfunction]
+pub fn read_mol2(path: &str) -> PyResult<PyFrame> {
+    let frame = read_mol2_rs(path).map_err(io_error_to_pyerr)?;
+    PyFrame::from_core_frame(frame)
+}
+
+/// Read an AMBER ASCII inpcrd / restrt coordinate file.
+///
+/// Fixed-width Fortran ``6F12.7`` layout. Returns a Frame with
+/// ``id``, ``name``, ``x``/``y``/``z``, optional ``vel`` (shape ``[n, 3]``),
+/// optional box, and meta ``title`` / ``timestep``.
+///
+/// Parameters
+/// ----------
+/// path : str
+///     Path to a ``.inpcrd`` or restart file.
+///
+/// Returns
+/// -------
+/// Frame
+///
+/// Raises
+/// ------
+/// IOError
+///     If the file cannot be opened or parsed.
+#[pyfunction]
+pub fn read_amber_inpcrd(path: &str) -> PyResult<PyFrame> {
+    let frame = read_amber_inpcrd_rs(path).map_err(io_error_to_pyerr)?;
+    PyFrame::from_core_frame(frame)
+}
+
+/// Alias for [`read_amber_inpcrd`].
+#[pyfunction]
+pub fn read_inpcrd(path: &str) -> PyResult<PyFrame> {
+    read_amber_inpcrd(path)
+}
+
+/// Read an AMBER prmtop **structure** file into a Frame.
+///
+/// Structure / connectivity only: atoms (name, type, charge in electron units,
+/// mass, optional atomic_number/element, res_id), bonds/angles/dihedrals with
+/// 0-based indices and type labels, plus POINTERS meta. Force-field parameter
+/// tables are not assembled.
+///
+/// Parameters
+/// ----------
+/// path : str
+///     Path to a ``.prmtop`` / ``.parm7`` file.
+///
+/// Returns
+/// -------
+/// Frame
+///
+/// Raises
+/// ------
+/// IOError
+///     If the file cannot be opened or parsed.
+#[pyfunction]
+pub fn read_amber_prmtop(path: &str) -> PyResult<PyFrame> {
+    let frame = read_amber_prmtop_rs(path).map_err(io_error_to_pyerr)?;
+    PyFrame::from_core_frame(frame)
+}
+
+/// Alias for [`read_amber_prmtop`].
+#[pyfunction]
+pub fn read_prmtop(path: &str) -> PyResult<PyFrame> {
+    read_amber_prmtop(path)
+}
+
+/// Read raw prmtop ``%FLAG`` sections as ``{flag: [lines...]}``.
+#[pyfunction]
+pub fn read_amber_prmtop_sections(
+    path: &str,
+) -> PyResult<std::collections::HashMap<String, Vec<String>>> {
+    read_amber_prmtop_sections_rs(path).map_err(io_error_to_pyerr)
+}
+
+/// Parse POINTERS lines into the historical meta map (raw + derived counts).
+#[pyfunction]
+pub fn prmtop_parse_pointers(
+    lines: Vec<String>,
+) -> PyResult<std::collections::HashMap<String, i64>> {
+    parse_pointers_rs(&lines).map_err(PyValueError::new_err)
+}
+
+/// Parse Fortran ``20a4`` name fields from section lines.
+#[pyfunction]
+pub fn prmtop_parse_a4_names(lines: Vec<String>) -> Vec<String> {
+    parse_a4_names_rs(&lines)
+}
+
+/// Decode bond pointer tables → ``(type, i, j, K, r0)`` (atoms 1-based).
+#[pyfunction]
+pub fn prmtop_decode_bond_params(
+    pointers: Vec<i64>,
+    force_k: Vec<f64>,
+    equil: Vec<f64>,
+) -> PyResult<Vec<(i64, i64, i64, f64, f64)>> {
+    decode_bond_params_rs(&pointers, &force_k, &equil).map_err(PyValueError::new_err)
+}
+
+/// Decode angle pointer tables → ``(type, i, j, k, K, theta0_deg)`` (1-based).
+#[pyfunction]
+pub fn prmtop_decode_angle_params(
+    pointers: Vec<i64>,
+    force_k: Vec<f64>,
+    equil_rad: Vec<f64>,
+) -> PyResult<Vec<(i64, i64, i64, i64, f64, f64)>> {
+    decode_angle_params_rs(&pointers, &force_k, &equil_rad).map_err(PyValueError::new_err)
+}
+
+/// Decode dihedral pointer tables → ``(type, i, j, k, l, K, phase, n)`` (1-based).
+#[pyfunction]
+pub fn prmtop_decode_dihedral_params(
+    pointers: Vec<i64>,
+    force_k: Vec<f64>,
+    phase: Vec<f64>,
+    periodicity: Vec<f64>,
+) -> PyResult<Vec<(i64, i64, i64, i64, i64, f64, f64, i64)>> {
+    decode_dihedral_params_rs(&pointers, &force_k, &phase, &periodicity)
+        .map_err(PyValueError::new_err)
+}
+
+/// Per-atom LJ ``(atom_1based, sigma, epsilon)`` from ICO + A/B.
+#[pyfunction]
+#[pyo3(signature = (
+    n_atom,
+    n_types,
+    atom_type_index,
+    nonbonded_parm_index,
+    acoef,
+    bcoef,
+    hbond_a = vec![],
+    hbond_b = vec![],
+))]
+pub fn prmtop_decode_nonbond_params(
+    n_atom: usize,
+    n_types: usize,
+    atom_type_index: Vec<i64>,
+    nonbonded_parm_index: Vec<i64>,
+    acoef: Vec<f64>,
+    bcoef: Vec<f64>,
+    hbond_a: Vec<f64>,
+    hbond_b: Vec<f64>,
+) -> PyResult<Vec<(i64, f64, f64)>> {
+    decode_nonbond_params_rs(
+        n_atom,
+        n_types,
+        &atom_type_index,
+        &nonbonded_parm_index,
+        &acoef,
+        &bcoef,
+        &hbond_a,
+        &hbond_b,
+    )
+    .map_err(PyValueError::new_err)
+}
+
+/// Read an Antechamber ``.ac`` file into a Frame.
+#[pyfunction]
+pub fn read_ac(path: &str) -> PyResult<PyFrame> {
+    let frame = read_ac_rs(path).map_err(io_error_to_pyerr)?;
+    PyFrame::from_core_frame(frame)
+}
+
+/// Read an Amber prep file into a nested dict (serde JSON shape).
+#[pyfunction]
+pub fn read_prep<'py>(py: Python<'py>, path: &str) -> PyResult<Bound<'py, PyDict>> {
+    let res = read_prep_rs(path).map_err(io_error_to_pyerr)?;
+    prep_residue_to_pydict(py, &res)
+}
+
+/// Write an Amber prep residue from a nested dict.
+#[pyfunction]
+pub fn write_prep(path: &str, residue: &Bound<'_, PyAny>) -> PyResult<()> {
+    let res = py_to_prep_residue(residue)?;
+    write_prep_rs(path, &res).map_err(io_error_to_pyerr)
+}
+
+fn py_to_prep_residue(residue: &Bound<'_, PyAny>) -> PyResult<PrepResidue> {
+    let name: String = residue.get_item("name")?.extract()?;
+    let atoms_list = residue.get_item("atoms")?;
+    let mut atoms = Vec::new();
+    for item in atoms_list.try_iter()? {
+        let d = item?;
+        atoms.push(PrepAtom {
+            index: d.get_item("index")?.extract()?,
+            name: d.get_item("name")?.extract()?,
+            atom_type: d.get_item("atom_type")?.extract()?,
+            tree_type: d
+                .get_item("tree_type")
+                .ok()
+                .and_then(|v| v.extract().ok())
+                .unwrap_or_else(|| "M".into()),
+            na: d.get_item("na").ok().and_then(|v| v.extract().ok()).unwrap_or(0),
+            nb: d.get_item("nb").ok().and_then(|v| v.extract().ok()).unwrap_or(0),
+            nc: d.get_item("nc").ok().and_then(|v| v.extract().ok()).unwrap_or(0),
+            r: d.get_item("r").ok().and_then(|v| v.extract().ok()).unwrap_or(0.0),
+            theta: d
+                .get_item("theta")
+                .ok()
+                .and_then(|v| v.extract().ok())
+                .unwrap_or(0.0),
+            phi: d.get_item("phi").ok().and_then(|v| v.extract().ok()).unwrap_or(0.0),
+            charge: d
+                .get_item("charge")
+                .ok()
+                .and_then(|v| v.extract().ok())
+                .unwrap_or(0.0),
+            element: d
+                .get_item("element")
+                .ok()
+                .and_then(|v| v.extract().ok())
+                .unwrap_or_default(),
+        });
+    }
+    let mut impropers = Vec::new();
+    if let Ok(imps) = residue.get_item("impropers") {
+        for item in imps.try_iter()? {
+            let row: Vec<String> = item?.extract()?;
+            impropers.push(row);
+        }
+    }
+    Ok(PrepResidue {
+        name,
+        atoms,
+        head_atom: None,
+        tail_atom: None,
+        impropers,
+    })
+}
+
+fn prep_residue_to_pydict<'py>(
+    py: Python<'py>,
+    res: &PrepResidue,
+) -> PyResult<Bound<'py, PyDict>> {
+    let value = serde_json::to_value(res).map_err(|e| {
+        PyValueError::new_err(format!("failed to serialize prep residue: {e}"))
+    })?;
+    match value {
+        JsonValue::Object(map) => json_object_to_pydict(py, &map),
+        _ => Err(PyValueError::new_err(
+            "internal error: prep residue did not serialize to an object",
+        )),
+    }
+}
+
+/// Read an AMBER FRCMOD file into a section dict.
+#[pyfunction]
+pub fn read_frcmod(path: &str) -> PyResult<std::collections::HashMap<String, String>> {
+    let file = read_frcmod_rs(path).map_err(io_error_to_pyerr)?;
+    Ok(frcmod_to_map(file))
+}
+
+/// Parse FRCMOD text into a section dict.
+#[pyfunction]
+pub fn parse_frcmod(text: &str) -> PyResult<std::collections::HashMap<String, String>> {
+    Ok(frcmod_to_map(parse_frcmod_rs(text)))
+}
+
+/// Write FRCMOD sections (dict with remark/mass/bond/…) to a path.
+#[pyfunction]
+pub fn write_frcmod(
+    path: &str,
+    sections: std::collections::HashMap<String, String>,
+) -> PyResult<()> {
+    let file = map_to_frcmod(sections);
+    write_frcmod_rs(path, &file).map_err(io_error_to_pyerr)
+}
+
+fn frcmod_to_map(file: FrcmodFile) -> std::collections::HashMap<String, String> {
+    let mut m = std::collections::HashMap::new();
+    m.insert("remark".into(), file.remark);
+    m.insert("raw_text".into(), file.raw_text);
+    for key in ["mass", "bond", "angle", "dihe", "improper", "nonbon"] {
+        m.insert(
+            key.into(),
+            file.sections.get(key).cloned().unwrap_or_default(),
+        );
+    }
+    m
+}
+
+fn map_to_frcmod(sections: std::collections::HashMap<String, String>) -> FrcmodFile {
+    let mut file = FrcmodFile {
+        remark: sections.get("remark").cloned().unwrap_or_default(),
+        raw_text: sections.get("raw_text").cloned().unwrap_or_default(),
+        sections: Default::default(),
+    };
+    for key in ["mass", "bond", "angle", "dihe", "improper", "nonbon"] {
+        if let Some(v) = sections.get(key) {
+            if !v.is_empty() {
+                file.sections.insert(key.into(), v.clone());
+            }
+        }
+    }
+    file
+}
+
+
+/// Write a Frame to a Tripos MOL2 file.
+///
+/// Expects format-native atom columns (``atom_type``, optional
+/// ``subst_id``/``subst_name``). Canonical renames are applied by the
+/// :mod:`molrs.io` façade before calling this binding.
+///
+/// Parameters
+/// ----------
+/// path : str
+///     Output file path.
+/// frame : Frame
+///     Frame to write.
+#[pyfunction]
+pub fn write_mol2(path: &str, frame: &PyFrame) -> PyResult<()> {
+    let core_frame = frame.clone_core_frame()?;
+    write_mol2_rs(path, &core_frame).map_err(io_error_to_pyerr)
+}
+
+/// Read a GROMACS topology (``.top`` / ``.itp``) **structure** file.
+///
+/// Structure only (``[ atoms ]``, ``[ bonds ]``, ``[ pairs ]``,
+/// ``[ angles ]``, ``[ dihedrals ]``). Force-field parameter tables and
+/// ``#include`` expansion are not handled.
+///
+/// Connectivity atom indices are **1-based** as written in the file.
+///
+/// Parameters
+/// ----------
+/// path : str
+///     Path to a ``.top`` or ``.itp`` file.
+///
+/// Returns
+/// -------
+/// Frame
+///     Blocks for atoms and any connectivity sections present.
+#[pyfunction]
+pub fn read_top(path: &str) -> PyResult<PyFrame> {
+    let frame = read_top_rs(path).map_err(io_error_to_pyerr)?;
+    PyFrame::from_core_frame(frame)
+}
+
+/// Write a Frame as a minimal GROMACS topology structure file.
+///
+/// Emits ``[ moleculetype ]``, ``[ atoms ]``, optional connectivity
+/// sections, then ``[ system ]`` / ``[ molecules ]``. Molecule name is
+/// taken from ``frame.meta["name"]`` (fallback ``"MOL"``).
+///
+/// Parameters
+/// ----------
+/// path : str
+///     Output file path.
+/// frame : Frame
+///     Frame to write (atoms + optional bonds/pairs/angles/dihedrals).
+#[pyfunction]
+pub fn write_top(path: &str, frame: &PyFrame) -> PyResult<()> {
+    let core_frame = frame.clone_core_frame()?;
+    write_top_rs(path, &core_frame).map_err(io_error_to_pyerr)
+}
+
+/// Read a LAMMPS molecule template (native ``.mol`` or JSON).
+#[pyfunction]
+pub fn read_lammps_molecule(path: &str) -> PyResult<PyFrame> {
+    let frame = read_lammps_molecule_rs(path).map_err(io_error_to_pyerr)?;
+    PyFrame::from_core_frame(frame)
+}
+
+/// Read an XSF (XCrySDen Structure File) and return a Frame.
+///
+/// Crystal structures (`CRYSTAL` + `PRIMVEC`/`CONVVEC`) yield a periodic box;
+/// molecular structures (`MOLECULE`) yield a free box. Atoms carry
+/// ``atomic_number``, ``element``, and ``x``/``y``/``z`` (Å).
+///
+/// Parameters
+/// ----------
+/// path : str
+///     Path to a ``.xsf`` file.
+///
+/// Returns
+/// -------
+/// Frame
+///
+/// Raises
+/// ------
+/// IOError
+///     If the file cannot be opened or parsed.
+#[pyfunction]
+pub fn read_xsf(path: &str) -> PyResult<PyFrame> {
+    let frame = read_xsf_rs(path).map_err(io_error_to_pyerr)?;
+    PyFrame::from_core_frame(frame)
+}
+
+/// Write a Frame to an XSF (XCrySDen Structure File).
+///
+/// A defined periodic box produces `CRYSTAL` + `PRIMVEC`/`CONVVEC`; otherwise
+/// the structure is written as `MOLECULE`. Atoms need ``atomic_number`` and
+/// ``x``/``y``/``z``.
+///
+/// Parameters
+/// ----------
+/// path : str
+///     Output file path.
+/// frame : Frame
+///     Frame to write.
+///
+/// Raises
+/// ------
+/// IOError
+///     If the file cannot be written.
+#[pyfunction]
+pub fn write_xsf(path: &str, frame: &PyFrame) -> PyResult<()> {
+    let core_frame = frame.clone_core_frame()?;
+    write_xsf_rs(path, &core_frame).map_err(io_error_to_pyerr)
+}
+
+/// Read a LAMMPS log file into a nested plain-Python dict.
+///
+/// The shape matches molpy's ``LAMMPSLog.to_dict()`` payload so higher layers
+/// can hydrate dataclasses without re-parsing. Thermo rows are
+/// ``list[list[float]]`` (not a NumPy structured array).
+///
+/// Parameters
+/// ----------
+/// path : str
+///     Path to a LAMMPS log file (e.g. ``log.lammps``).
+/// style : str, optional
+///     Thermo style. Only ``"default"`` is currently parsed.
+///
+/// Returns
+/// -------
+/// dict
+///     Nested mapping with ``path``, ``version``, ``header``, ``runs``,
+///     ``total_wall_time``, ``warnings``, ``raw_text``, and ``style``.
+///
+/// Raises
+/// ------
+/// FileNotFoundError
+///     If ``path`` does not exist.
+/// OSError
+///     On other I/O failures.
+#[pyfunction]
+#[pyo3(signature = (path, style = "default"))]
+pub fn read_lammps_log<'py>(
+    py: Python<'py>,
+    path: &str,
+    style: &str,
+) -> PyResult<Bound<'py, PyDict>> {
+    let log = read_lammps_log_rs(path, style).map_err(lammps_log_io_error)?;
+    lammps_log_to_pydict(py, &log)
+}
+
+/// Parse a LAMMPS log from an in-memory string (no filesystem access).
+///
+/// Parameters
+/// ----------
+/// text : str
+///     Full log file contents.
+/// path : str, optional
+///     Recorded on the result as ``path`` (default ``"<string>"``).
+/// style : str, optional
+///     Thermo style. Only ``"default"`` is currently parsed.
+///
+/// Returns
+/// -------
+/// dict
+///     Same nested shape as :func:`read_lammps_log`.
+#[pyfunction]
+#[pyo3(signature = (text, path = "<string>", style = "default"))]
+pub fn parse_lammps_log_text<'py>(
+    py: Python<'py>,
+    text: &str,
+    path: &str,
+    style: &str,
+) -> PyResult<Bound<'py, PyDict>> {
+    let log = parse_lammps_log_text_rs(text, path, style);
+    lammps_log_to_pydict(py, &log)
+}
+
+fn lammps_log_io_error(e: std::io::Error) -> PyErr {
+    if e.kind() == std::io::ErrorKind::NotFound {
+        PyFileNotFoundError::new_err(e.to_string())
+    } else {
+        PyIOError::new_err(e.to_string())
+    }
+}
+
+fn lammps_log_to_pydict<'py>(
+    py: Python<'py>,
+    log: &molrs::io::log::LammpsLog,
+) -> PyResult<Bound<'py, PyDict>> {
+    let value = serde_json::to_value(log).map_err(|e| {
+        PyValueError::new_err(format!("failed to serialize LAMMPS log: {e}"))
+    })?;
+    match value {
+        JsonValue::Object(map) => json_object_to_pydict(py, &map),
+        _ => Err(PyValueError::new_err(
+            "internal error: LAMMPS log did not serialize to an object",
+        )),
+    }
+}
+
+fn json_object_to_pydict<'py>(
+    py: Python<'py>,
+    map: &serde_json::Map<String, JsonValue>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let dict = PyDict::new(py);
+    for (key, value) in map {
+        dict.set_item(key, json_value_to_py(py, value)?)?;
+    }
+    Ok(dict)
+}
+
+fn json_value_to_py(py: Python<'_>, value: &JsonValue) -> PyResult<Py<PyAny>> {
+    Ok(match value {
+        JsonValue::Null => py.None(),
+        JsonValue::Bool(b) => b.into_pyobject(py)?.to_owned().into_any().unbind(),
+        JsonValue::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                i.into_pyobject(py)?.into_any().unbind()
+            } else if let Some(u) = n.as_u64() {
+                u.into_pyobject(py)?.into_any().unbind()
+            } else {
+                n.as_f64()
+                    .unwrap_or(f64::NAN)
+                    .into_pyobject(py)?
+                    .into_any()
+                    .unbind()
+            }
+        }
+        JsonValue::String(s) => s.into_pyobject(py)?.into_any().unbind(),
+        JsonValue::Array(items) => {
+            let list = PyList::empty(py);
+            for item in items {
+                list.append(json_value_to_py(py, item)?)?;
+            }
+            list.into_any().unbind()
+        }
+        JsonValue::Object(map) => json_object_to_pydict(py, map)?.into_any().unbind(),
+    })
+}
+
+/// Write a Frame as a LAMMPS molecule template.
+///
+/// Parameters
+/// ----------
+/// path : str
+///     Output path.
+/// frame : Frame
+///     Molecule frame.
+/// format : str
+///     ``"native"`` or ``"json"`` (default ``"native"``).
+#[pyfunction]
+#[pyo3(signature = (path, frame, format = "native"))]
+pub fn write_lammps_molecule(path: &str, frame: &PyFrame, format: &str) -> PyResult<()> {
+    let core_frame = frame.clone_core_frame()?;
+    write_lammps_molecule_rs(path, &core_frame, format).map_err(io_error_to_pyerr)
 }
 
 // ============================================================================

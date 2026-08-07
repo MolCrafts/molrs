@@ -42,6 +42,11 @@ struct LAMMPSHeader {
     num_angles: usize,
     num_dihedrals: usize,
     num_impropers: usize,
+    num_atom_types: usize,
+    num_bond_types: usize,
+    num_angle_types: usize,
+    num_dihedral_types: usize,
+    num_improper_types: usize,
     bounds: BoxBounds,
 }
 
@@ -526,33 +531,61 @@ fn parse_header_with_first_section<R: BufRead>(
         if tokens[0].chars().next().is_some_and(|c| c.is_uppercase()) {
             return Ok((header, Some(line.clone())));
         }
+        // Non-integer count tokens (e.g. "invalid atoms") are skipped — same
+        // as the historical molpy header pass — so a garbage count line does
+        // not abort a file that still has Atoms + box.
         match tokens.last() {
             Some(&"atoms") if tokens.len() >= 2 => {
-                header.num_atoms = tokens[0].parse().map_err(err_mapper)?;
+                if let Ok(n) = tokens[0].parse() {
+                    header.num_atoms = n;
+                }
             }
             Some(&"bonds") if tokens.len() >= 2 => {
-                header.num_bonds = tokens[0].parse().map_err(err_mapper)?;
+                if let Ok(n) = tokens[0].parse() {
+                    header.num_bonds = n;
+                }
             }
             Some(&"angles") if tokens.len() >= 2 => {
-                header.num_angles = tokens[0].parse().map_err(err_mapper)?;
+                if let Ok(n) = tokens[0].parse() {
+                    header.num_angles = n;
+                }
             }
             Some(&"dihedrals") if tokens.len() >= 2 => {
-                header.num_dihedrals = tokens[0].parse().map_err(err_mapper)?;
+                if let Ok(n) = tokens[0].parse() {
+                    header.num_dihedrals = n;
+                }
             }
             Some(&"impropers") if tokens.len() >= 2 => {
-                header.num_impropers = tokens[0].parse().map_err(err_mapper)?;
+                if let Ok(n) = tokens[0].parse() {
+                    header.num_impropers = n;
+                }
+            }
+            Some(&"types") if tokens.len() >= 3 => {
+                if let Ok(n) = tokens[0].parse::<usize>() {
+                    match tokens[1] {
+                        "atom" => header.num_atom_types = n,
+                        "bond" => header.num_bond_types = n,
+                        "angle" => header.num_angle_types = n,
+                        "dihedral" => header.num_dihedral_types = n,
+                        "improper" => header.num_improper_types = n,
+                        _ => {}
+                    }
+                }
             }
             Some(&"xhi") if tokens.len() >= 4 && tokens[2] == "xlo" => {
                 header.bounds.xlo = tokens[0].parse().map_err(err_mapper)?;
                 header.bounds.xhi = tokens[1].parse().map_err(err_mapper)?;
+                header.bounds.has_x = true;
             }
             Some(&"yhi") if tokens.len() >= 4 && tokens[2] == "ylo" => {
                 header.bounds.ylo = tokens[0].parse().map_err(err_mapper)?;
                 header.bounds.yhi = tokens[1].parse().map_err(err_mapper)?;
+                header.bounds.has_y = true;
             }
             Some(&"zhi") if tokens.len() >= 4 && tokens[2] == "zlo" => {
                 header.bounds.zlo = tokens[0].parse().map_err(err_mapper)?;
                 header.bounds.zhi = tokens[1].parse().map_err(err_mapper)?;
+                header.bounds.has_z = true;
             }
             Some(&"yz") if tokens.len() >= 6 && tokens[3] == "xy" && tokens[4] == "xz" => {
                 header.bounds.xy = Some(tokens[0].parse().map_err(err_mapper)?);
@@ -835,6 +868,8 @@ struct ParsedData {
     angle_type_labels: HashMap<String, String>,
     dihedral_type_labels: HashMap<String, String>,
     improper_type_labels: HashMap<String, String>,
+    /// Captured `* Coeffs` section bodies for force-field I/O (no style lines).
+    coeffs_text: String,
 }
 
 fn build_frame(mut data: ParsedData) -> std::io::Result<Frame> {
@@ -920,6 +955,42 @@ fn build_frame(mut data: ParsedData) -> std::io::Result<Frame> {
         }
     }
 
+    // Header counts (may exceed body rows when types are unused).
+    let h = &data.header;
+    frame.meta.insert(
+        "lammps_counts".to_string(),
+        format!(
+            "atoms={},bonds={},angles={},dihedrals={},impropers={},\
+             atom_types={},bond_types={},angle_types={},dihedral_types={},\
+             improper_types={}",
+            h.num_atoms,
+            h.num_bonds,
+            h.num_angles,
+            h.num_dihedrals,
+            h.num_impropers,
+            h.num_atom_types,
+            h.num_bond_types,
+            h.num_angle_types,
+            h.num_dihedral_types,
+            h.num_improper_types,
+        ),
+    );
+    // Which box axes appeared in the header (zero-volume boxes still set has_*).
+    frame.meta.insert(
+        "lammps_box_axes".to_string(),
+        format!(
+            "x={},y={},z={}",
+            h.bounds.has_x as u8, h.bounds.has_y as u8, h.bounds.has_z as u8
+        ),
+    );
+
+    // Force-field coefficient sections (Pair/Bond/… Coeffs) for molpy / ff reader.
+    if !data.coeffs_text.is_empty() {
+        frame
+            .meta
+            .insert("lammps_coeffs_text".to_string(), data.coeffs_text);
+    }
+
     Ok(frame)
 }
 
@@ -988,7 +1059,55 @@ fn dispatch_section<R: BufRead>(
         data.impropers = parse_topology_section(reader, data.header.num_impropers, 4, "Impropers")?;
         return Ok(None);
     }
+    // Force-field coefficient blocks — capture for downstream FF parse.
+    if trimmed.starts_with("Pair Coeffs")
+        || trimmed.starts_with("Bond Coeffs")
+        || trimmed.starts_with("Angle Coeffs")
+        || trimmed.starts_with("Dihedral Coeffs")
+        || trimmed.starts_with("Improper Coeffs")
+    {
+        let (body, next) = capture_coeffs_section(trimmed, reader)?;
+        if !data.coeffs_text.is_empty() {
+            data.coeffs_text.push('\n');
+        }
+        data.coeffs_text.push_str(&body);
+        return Ok(next);
+    }
     Ok(None)
+}
+
+/// Capture a `* Coeffs` section including the header line; stop at next section.
+fn capture_coeffs_section<R: BufRead>(
+    header: &str,
+    reader: &mut R,
+) -> std::io::Result<(String, Option<String>)> {
+    let mut out = String::new();
+    out.push_str(header.trim());
+    out.push('\n');
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let bytes = reader.read_line(&mut line)?;
+        if bytes == 0 {
+            return Ok((out, None));
+        }
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            out.push('\n');
+            continue;
+        }
+        // Next uppercase section (not a digit-leading coeff line).
+        if trimmed.chars().next().is_some_and(|c| c.is_uppercase())
+            && trimmed
+                .split_whitespace()
+                .next()
+                .is_some_and(|t| t.parse::<i64>().is_err())
+        {
+            return Ok((out, Some(line.clone())));
+        }
+        out.push_str(trimmed);
+        out.push('\n');
+    }
 }
 
 fn is_section_header(trimmed: &str) -> bool {
@@ -1032,6 +1151,7 @@ impl<R: BufRead + Seek> LAMMPSDataReader<R> {
             angle_type_labels: HashMap::new(),
             dihedral_type_labels: HashMap::new(),
             improper_type_labels: HashMap::new(),
+            coeffs_text: String::new(),
         };
 
         let mut pending = first;
@@ -1115,24 +1235,229 @@ impl<W: Write> FrameWriter for LAMMPSDataWriter<W> {
     }
 }
 
-fn write_meta_type_labels<W: Write>(
+/// Resolved per-block type space for a write: row type ids + optional labels.
+struct ResolvedTypes {
+    /// 1-based LAMMPS type id per row (empty when inventory-only / zero rows).
+    type_ids: Vec<U>,
+    /// Ordered labels for a `* Type Labels` section (id = index + 1).
+    labels: Option<Vec<String>>,
+    /// Header type count (max type id, inventory length, or 1 for atoms).
+    n_types: usize,
+}
+
+/// Pure-integer type tokens sort by integer value (``2`` before ``10``).
+fn sorted_type_names(names: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut items: Vec<String> = names.into_iter().collect();
+    items.sort();
+    items.dedup();
+    if !items.is_empty() && items.iter().all(|s| is_int_token(s)) {
+        items.sort_by_key(|s| s.parse::<i64>().unwrap_or(0));
+    }
+    items
+}
+
+/// Labels from meta packing ``"1:C,2:H"``, ordered by numeric id.
+fn parse_meta_label_names(raw: Option<&str>) -> Vec<String> {
+    let Some(s) = raw else {
+        return Vec::new();
+    };
+    let mut pairs: Vec<(u64, String)> = Vec::new();
+    for pair in s.split(',') {
+        let mut parts = pair.splitn(2, ':');
+        if let (Some(id_s), Some(label)) = (parts.next(), parts.next())
+            && let Ok(id) = id_s.parse::<u64>()
+        {
+            let lab = label.trim();
+            if !lab.is_empty() {
+                pairs.push((id, lab.to_string()));
+            }
+        }
+    }
+    pairs.sort_by_key(|(id, _)| *id);
+    pairs.into_iter().map(|(_, lab)| lab).collect()
+}
+
+fn write_type_label_section<W: Write>(
     writer: &mut W,
     section: &str,
-    raw: Option<&str>,
+    labels: Option<&[String]>,
 ) -> std::io::Result<()> {
-    let Some(labels_str) = raw else {
+    let Some(labs) = labels else {
         return Ok(());
     };
+    if labs.is_empty() {
+        return Ok(());
+    }
     writeln!(writer, "{section}")?;
     writeln!(writer)?;
-    for pair in labels_str.split(',') {
-        let mut parts = pair.splitn(2, ':');
-        if let (Some(id), Some(label)) = (parts.next(), parts.next()) {
-            writeln!(writer, "{id} {label}")?;
-        }
+    for (i, lab) in labs.iter().enumerate() {
+        writeln!(writer, "{} {}", i + 1, lab)?;
     }
     writeln!(writer)?;
     Ok(())
+}
+
+/// Resolve type ids / labels for one block (atoms, bonds, …).
+///
+/// Priority matches molpy's former prepare path:
+/// 1. String ``type`` labels win over ``type_id`` when both are present.
+/// 2. Pure-integer type tokens map identity (``"10"`` → id 10); no labels.
+/// 3. Non-integer labels get dense 1..N ids after sorting (numeric-aware).
+/// 4. Meta inventory (``atom_type_labels`` etc.) is merged with frame labels
+///    so unused explicit types still appear in the header / Type Labels.
+/// 5. ``type_id`` alone is used when there are no labels to number.
+fn resolve_block_types(
+    frame: &impl FrameAccess,
+    block: &str,
+    meta_key: &str,
+) -> std::io::Result<Option<ResolvedTypes>> {
+    let n = frame
+        .visit_block(block, |b| b.nrows().unwrap_or(0))
+        .unwrap_or(0);
+    let meta_names =
+        parse_meta_label_names(frame.meta_ref().get(meta_key).and_then(|v| v.as_str()));
+    let had_meta = !meta_names.is_empty();
+
+    if n == 0 {
+        if meta_names.is_empty() {
+            return Ok(None);
+        }
+        let n_types = meta_names.len();
+        return Ok(Some(ResolvedTypes {
+            type_ids: Vec::new(),
+            labels: Some(meta_names),
+            n_types,
+        }));
+    }
+
+    // String type labels take precedence over type_id.
+    if let Some(col) = frame.get_string(block, keys::TYPE) {
+        let types: Vec<String> = (0..n).map(|i| col[[i]].clone()).collect();
+        for t in &types {
+            if t.trim().is_empty() {
+                return Err(err_mapper(format!(
+                    "Found empty string type in {block} block; all entries must have non-empty type values"
+                )));
+            }
+        }
+        let unique = sorted_type_names(types.iter().cloned());
+        let pure_int = !unique.is_empty() && unique.iter().all(|t| is_int_token(t));
+
+        if pure_int && !had_meta {
+            let mut type_ids = Vec::with_capacity(n);
+            let mut max_id: U = 0;
+            for t in &types {
+                let id: U = t.parse().map_err(err_mapper)?;
+                if id == 0 {
+                    return Err(err_mapper(format!(
+                        "type id 0 is invalid in {block} (LAMMPS types are 1-based)"
+                    )));
+                }
+                max_id = max_id.max(id);
+                type_ids.push(id);
+            }
+            return Ok(Some(ResolvedTypes {
+                type_ids,
+                labels: None,
+                n_types: (max_id as usize).max(1),
+            }));
+        }
+
+        let mut all: std::collections::HashSet<String> = meta_names.into_iter().collect();
+        all.extend(unique);
+        let ordered = sorted_type_names(all);
+        let map: HashMap<&str, U> = ordered
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (s.as_str(), (i + 1) as U))
+            .collect();
+        let type_ids: Vec<U> = types
+            .iter()
+            .map(|t| {
+                map.get(t.as_str())
+                    .copied()
+                    .ok_or_else(|| err_mapper(format!("internal: type {t} missing from inventory")))
+            })
+            .collect::<std::io::Result<_>>()?;
+        let n_types = ordered.len().max(if block == "atoms" { 1 } else { 0 });
+        // Emit Type Labels for non-integer labels, or when meta inventory forced
+        // a label map (explicit unused types).
+        let labels = if pure_int && !had_meta {
+            None
+        } else {
+            Some(ordered)
+        };
+        return Ok(Some(ResolvedTypes {
+            type_ids,
+            labels,
+            n_types,
+        }));
+    }
+
+    // Numeric type_id (uint or int).
+    let type_ids: Option<Vec<U>> = if let Some(col) = frame.get_uint(block, keys::TYPE_ID) {
+        Some((0..n).map(|i| col[[i]]).collect())
+    } else if let Some(col) = frame.get_int(block, keys::TYPE_ID) {
+        Some((0..n).map(|i| col[[i]] as U).collect())
+    } else if let Some(col) = frame.get_uint(block, keys::TYPE) {
+        Some((0..n).map(|i| col[[i]]).collect())
+    } else {
+        frame
+            .get_int(block, keys::TYPE)
+            .map(|col| (0..n).map(|i| col[[i]] as U).collect())
+    };
+
+    let Some(type_ids) = type_ids else {
+        return Err(err_mapper(format!(
+            "frame[{block:?}] has {n} rows but neither 'type' nor 'type_id'; \
+             call ForceField.map_type(frame) or assign types before write"
+        )));
+    };
+
+    let max_id = type_ids.iter().copied().max().unwrap_or(0) as usize;
+    let n_types = max_id
+        .max(meta_names.len())
+        .max(if block == "atoms" { 1 } else { 0 });
+    let labels = if meta_names.is_empty() {
+        None
+    } else {
+        Some(meta_names)
+    };
+    Ok(Some(ResolvedTypes {
+        type_ids,
+        labels,
+        n_types,
+    }))
+}
+
+/// Per-row atom IDs: existing ``id`` column, else 1..N (file artifact).
+fn resolve_atom_ids(frame: &impl FrameAccess, n: usize) -> Vec<U> {
+    if let Some(col) = frame.get_uint("atoms", keys::ID) {
+        return (0..n).map(|i| col[[i]]).collect();
+    }
+    if let Some(col) = frame.get_int("atoms", keys::ID) {
+        return (0..n).map(|i| col[[i]] as U).collect();
+    }
+    (1..=n as U).collect()
+}
+
+/// Per-row masses: element periodic-table value preferred over stored mass.
+///
+/// Unknown symbols (e.g. Drude shell ``"D"``) keep the stored mass, or 1.0.
+fn resolve_row_masses(frame: &impl FrameAccess, n: usize) -> Vec<F> {
+    let mut masses: Vec<F> = if let Some(col) = frame.get_float("atoms", keys::MASS) {
+        (0..n).map(|i| col[[i]]).collect()
+    } else {
+        vec![1.0; n]
+    };
+    if let Some(el) = frame.get_string("atoms", keys::ELEMENT) {
+        for i in 0..n {
+            if let Some(e) = crate::Element::by_symbol(&el[[i]]) {
+                masses[i] = F::from(e.atomic_mass());
+            }
+        }
+    }
+    masses
 }
 
 /// Does the atoms block have an int or float column for this data-file field?
@@ -1142,6 +1467,23 @@ fn frame_has_atom_field(frame: &impl FrameAccess, field: DataField) -> bool {
     if field == DataField::Mol {
         return frame.get_uint("atoms", keys::MOL_ID).is_some()
             || frame.get_int("atoms", "molecule_id").is_some();
+    }
+    // Mass may be resolved from element without a mass column.
+    if field == DataField::Mass {
+        return frame.get_float("atoms", keys::MASS).is_some()
+            || frame.get_string("atoms", keys::ELEMENT).is_some();
+    }
+    // Type is always present when write proceeds (resolved separately).
+    if field == DataField::Type {
+        return frame.get_uint("atoms", keys::TYPE_ID).is_some()
+            || frame.get_int("atoms", keys::TYPE_ID).is_some()
+            || frame.get_string("atoms", keys::TYPE).is_some()
+            || frame.get_uint("atoms", keys::TYPE).is_some()
+            || frame.get_int("atoms", keys::TYPE).is_some();
+    }
+    if field == DataField::Id {
+        // Always writable (1..N if missing).
+        return true;
     }
     frame.get_int("atoms", key).is_some()
         || frame.get_uint("atoms", key).is_some()
@@ -1153,6 +1495,7 @@ fn write_atom_field_value<W: Write>(
     frame: &impl FrameAccess,
     field: DataField,
     i: usize,
+    row_masses: &[F],
 ) -> std::io::Result<()> {
     let key = field_column_key(field);
     match field {
@@ -1164,7 +1507,7 @@ fn write_atom_field_value<W: Write>(
         | DataField::Status
         | DataField::TemplateIndex
         | DataField::TemplateAtom => {
-            // Ids and type ordinals are unsigned in the vocabulary.
+            // Type/Id are handled by the caller with resolved arrays.
             if let Some(col) = frame.get_uint("atoms", key) {
                 write!(writer, " {}", col[i])?;
             } else {
@@ -1184,6 +1527,9 @@ fn write_atom_field_value<W: Write>(
                 write!(writer, " {}", col[i])?;
             }
         }
+        DataField::Mass => {
+            write!(writer, " {}", row_masses[i])?;
+        }
         _ => {
             let col = frame
                 .get_float("atoms", key)
@@ -1200,7 +1546,8 @@ fn write_topology_section<W: Write>(
     section: &str,
     block: &str,
     n_members: usize,
-    ids: &ndarray::ArrayViewD<'_, U>,
+    atom_ids: &[U],
+    type_ids: &[U],
 ) -> std::io::Result<()> {
     let n = frame
         .visit_block(block, |b| b.nrows().unwrap_or(0))
@@ -1208,9 +1555,12 @@ fn write_topology_section<W: Write>(
     if n == 0 {
         return Ok(());
     }
-    let types = frame
-        .get_uint(block, keys::TYPE_ID)
-        .ok_or_else(|| err_mapper(format!("Missing '{block}.type'")))?;
+    if type_ids.len() != n {
+        return Err(err_mapper(format!(
+            "internal: {block} type_ids length {} != nrows {n}",
+            type_ids.len()
+        )));
+    }
     let keys_ep = &keys::ENDPOINTS[..n_members];
     let mut cols = Vec::with_capacity(n_members);
     for k in keys_ep {
@@ -1224,9 +1574,15 @@ fn write_topology_section<W: Write>(
     writeln!(writer, "{section}")?;
     writeln!(writer)?;
     for i in 0..n {
-        write!(writer, "{} {}", i + 1, types[i])?;
+        write!(writer, "{} {}", i + 1, type_ids[i])?;
         for col in &cols {
-            let atom_id = ids[col[i] as usize];
+            let idx = col[[i]] as usize;
+            let atom_id = atom_ids.get(idx).ok_or_else(|| {
+                err_mapper(format!(
+                    "{block} endpoint index {idx} out of range for {n} atoms",
+                    n = atom_ids.len()
+                ))
+            })?;
             write!(writer, " {atom_id}")?;
         }
         writeln!(writer)?;
@@ -1242,15 +1598,13 @@ fn write_lammps_data_frame<W: Write>(
     writeln!(writer, "# LAMMPS data file generated by molrs")?;
     writeln!(writer)?;
 
-    let atom_types = frame
-        .get_uint("atoms", keys::TYPE_ID)
-        .ok_or_else(|| err_mapper("Atoms block must contain 'type' column"))?;
-    let num_atoms = atom_types.shape().first().copied().unwrap_or(0);
-    let num_atom_types = atom_types.iter().max().copied().unwrap_or(1) as usize;
+    let num_atoms = frame
+        .visit_block("atoms", |b| b.nrows().unwrap_or(0))
+        .unwrap_or(0);
+    if num_atoms == 0 {
+        return Err(err_mapper("Frame has no atoms to write"));
+    }
 
-    let ids = frame
-        .get_uint("atoms", keys::ID)
-        .ok_or_else(|| err_mapper("Missing 'id' column"))?;
     // Ensure core coords exist (required for every write style).
     let _x = frame
         .get_float("atoms", keys::X)
@@ -1261,6 +1615,20 @@ fn write_lammps_data_frame<W: Write>(
     let _z = frame
         .get_float("atoms", keys::Z)
         .ok_or_else(|| err_mapper("Missing 'z' column"))?;
+
+    let atom_rt = resolve_block_types(frame, "atoms", "atom_type_labels")?.ok_or_else(|| {
+        err_mapper(
+            "frame['atoms'] has neither 'type' nor 'type_id'; \
+             call ForceField.map_type(frame) or assign types before write",
+        )
+    })?;
+    let bond_rt = resolve_block_types(frame, "bonds", "bond_type_labels")?;
+    let angle_rt = resolve_block_types(frame, "angles", "angle_type_labels")?;
+    let dihedral_rt = resolve_block_types(frame, "dihedrals", "dihedral_type_labels")?;
+    let improper_rt = resolve_block_types(frame, "impropers", "improper_type_labels")?;
+
+    let atom_ids = resolve_atom_ids(frame, num_atoms);
+    let row_masses = resolve_row_masses(frame, num_atoms);
 
     let num_bonds = frame
         .visit_block("bonds", |b| b.nrows().unwrap_or(0))
@@ -1275,22 +1643,11 @@ fn write_lammps_data_frame<W: Write>(
         .visit_block("impropers", |b| b.nrows().unwrap_or(0))
         .unwrap_or(0);
 
-    let num_bond_types = frame
-        .get_uint("bonds", keys::TYPE_ID)
-        .map(|t| t.iter().max().copied().unwrap_or(1) as usize)
-        .unwrap_or(0);
-    let num_angle_types = frame
-        .get_uint("angles", keys::TYPE_ID)
-        .map(|t| t.iter().max().copied().unwrap_or(1) as usize)
-        .unwrap_or(0);
-    let num_dihedral_types = frame
-        .get_uint("dihedrals", keys::TYPE_ID)
-        .map(|t| t.iter().max().copied().unwrap_or(1) as usize)
-        .unwrap_or(0);
-    let num_improper_types = frame
-        .get_uint("impropers", keys::TYPE_ID)
-        .map(|t| t.iter().max().copied().unwrap_or(1) as usize)
-        .unwrap_or(0);
+    let num_atom_types = atom_rt.n_types.max(1);
+    let num_bond_types = bond_rt.as_ref().map(|r| r.n_types).unwrap_or(0);
+    let num_angle_types = angle_rt.as_ref().map(|r| r.n_types).unwrap_or(0);
+    let num_dihedral_types = dihedral_rt.as_ref().map(|r| r.n_types).unwrap_or(0);
+    let num_improper_types = improper_rt.as_ref().map(|r| r.n_types).unwrap_or(0);
 
     writeln!(writer, "{num_atoms} atoms")?;
     if num_bonds > 0 {
@@ -1351,36 +1708,42 @@ fn write_lammps_data_frame<W: Write>(
     }
     writeln!(writer)?;
 
-    let meta = frame.meta_ref();
-    write_meta_type_labels(
-        writer,
-        "Atom Type Labels",
-        meta.get("atom_type_labels").and_then(|v| v.as_str()),
-    )?;
-    write_meta_type_labels(
+    write_type_label_section(writer, "Atom Type Labels", atom_rt.labels.as_deref())?;
+    write_type_label_section(
         writer,
         "Bond Type Labels",
-        meta.get("bond_type_labels").and_then(|v| v.as_str()),
+        bond_rt.as_ref().and_then(|r| r.labels.as_deref()),
+    )?;
+    write_type_label_section(
+        writer,
+        "Angle Type Labels",
+        angle_rt.as_ref().and_then(|r| r.labels.as_deref()),
+    )?;
+    write_type_label_section(
+        writer,
+        "Dihedral Type Labels",
+        dihedral_rt.as_ref().and_then(|r| r.labels.as_deref()),
+    )?;
+    write_type_label_section(
+        writer,
+        "Improper Type Labels",
+        improper_rt.as_ref().and_then(|r| r.labels.as_deref()),
     )?;
 
-    // Masses: emit per-type mass when a mass column exists and style is not
-    // body (body carries per-atom mass on the Atoms line).
-    let masses = frame.get_float("atoms", keys::MASS);
+    // Masses: always emit for non-body styles. First-seen mass per type;
+    // unused inventory slots get mass 1.0.
     let (style_name, layout) = infer_write_style(|f| frame_has_atom_field(frame, f));
     let body_style = style_name == "body";
-    if let Some(mass_col) = masses.as_ref()
-        && !body_style
-    {
+    if !body_style {
         writeln!(writer, "Masses")?;
         writeln!(writer)?;
-        // First-seen mass per type.
+        let mut type_mass = vec![1.0_f64; num_atom_types + 1];
         let mut seen = vec![false; num_atom_types + 1];
-        let mut type_mass = vec![0.0_f64; num_atom_types + 1];
-        for i in 0..num_atoms {
-            let t = atom_types[i] as usize;
+        for (i, &mass) in row_masses.iter().enumerate().take(num_atoms) {
+            let t = atom_rt.type_ids[i] as usize;
             if t > 0 && t <= num_atom_types && !seen[t] {
                 seen[t] = true;
-                type_mass[t] = mass_col[i];
+                type_mass[t] = mass;
             }
         }
         for (t, m) in type_mass
@@ -1401,24 +1764,22 @@ fn write_lammps_data_frame<W: Write>(
     writeln!(writer, "Atoms # {style_name}")?;
     writeln!(writer)?;
     for i in 0..num_atoms {
-        // First field is always id without leading space.
-        let id_col = frame
-            .get_uint("atoms", keys::ID)
-            .ok_or_else(|| err_mapper("Missing id"))?;
-        write!(writer, "{}", id_col[i])?;
+        write!(writer, "{}", atom_ids[i])?;
         for &field in layout.fields.iter().skip(1) {
-            // Id already written; remaining fields including Type/xyz.
             if field == DataField::Id {
                 continue;
             }
-            write_atom_field_value(writer, frame, field, i)?;
+            if field == DataField::Type {
+                write!(writer, " {}", atom_rt.type_ids[i])?;
+                continue;
+            }
+            write_atom_field_value(writer, frame, field, i, &row_masses)?;
         }
-        // Ensure Type was in layout (always is). Core X/Y/Z always present.
         if has_image {
             let ix = frame.get_int("atoms", "ix").unwrap();
             let iy = frame.get_int("atoms", "iy").unwrap();
             let iz = frame.get_int("atoms", "iz").unwrap();
-            write!(writer, " {} {} {}", ix[i], iy[i], iz[i])?;
+            write!(writer, " {} {} {}", ix[[i]], iy[[i]], iz[[i]])?;
         }
         writeln!(writer)?;
     }
@@ -1435,15 +1796,66 @@ fn write_lammps_data_frame<W: Write>(
         writeln!(writer, "Velocities")?;
         writeln!(writer)?;
         for i in 0..num_atoms {
-            writeln!(writer, "{} {} {} {}", ids[i], vx[i], vy[i], vz[i])?;
+            writeln!(
+                writer,
+                "{} {} {} {}",
+                atom_ids[i],
+                vx[[i]],
+                vy[[i]],
+                vz[[i]]
+            )?;
         }
         writeln!(writer)?;
     }
 
-    write_topology_section(writer, frame, "Bonds", "bonds", 2, &ids)?;
-    write_topology_section(writer, frame, "Angles", "angles", 3, &ids)?;
-    write_topology_section(writer, frame, "Dihedrals", "dihedrals", 4, &ids)?;
-    write_topology_section(writer, frame, "Impropers", "impropers", 4, &ids)?;
+    write_topology_section(
+        writer,
+        frame,
+        "Bonds",
+        "bonds",
+        2,
+        &atom_ids,
+        bond_rt
+            .as_ref()
+            .map(|r| r.type_ids.as_slice())
+            .unwrap_or(&[]),
+    )?;
+    write_topology_section(
+        writer,
+        frame,
+        "Angles",
+        "angles",
+        3,
+        &atom_ids,
+        angle_rt
+            .as_ref()
+            .map(|r| r.type_ids.as_slice())
+            .unwrap_or(&[]),
+    )?;
+    write_topology_section(
+        writer,
+        frame,
+        "Dihedrals",
+        "dihedrals",
+        4,
+        &atom_ids,
+        dihedral_rt
+            .as_ref()
+            .map(|r| r.type_ids.as_slice())
+            .unwrap_or(&[]),
+    )?;
+    write_topology_section(
+        writer,
+        frame,
+        "Impropers",
+        "impropers",
+        4,
+        &atom_ids,
+        improper_rt
+            .as_ref()
+            .map(|r| r.type_ids.as_slice())
+            .unwrap_or(&[]),
+    )?;
 
     Ok(())
 }
@@ -1819,6 +2231,68 @@ mod atom_style_tests {
         let f2 = parse_frame_bytes(out.as_bytes()).unwrap();
         assert_eq!(f2.get("bonds").unwrap().nrows().unwrap(), 2);
         assert_eq!(f2.get("angles").unwrap().nrows().unwrap(), 1);
+    }
+
+    #[test]
+    fn write_resolves_string_types_ids_and_masses_without_prepare() {
+        // Frame carries only string `type` + coords + element — no type_id,
+        // no id, no mass column. Writer must still emit a complete data file.
+        use crate::store::block::Block;
+        use crate::store::frame::Frame as CoreFrame;
+        use ndarray::ArrayD;
+
+        let mut frame = CoreFrame::new();
+        let mut atoms = Block::new();
+        let n = 3;
+        atoms
+            .insert(
+                keys::TYPE,
+                ArrayD::from_shape_vec(
+                    ndarray::IxDyn(&[n]),
+                    vec!["O".to_string(), "C".to_string(), "H".to_string()],
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        atoms
+            .insert(
+                keys::ELEMENT,
+                ArrayD::from_shape_vec(
+                    ndarray::IxDyn(&[n]),
+                    vec!["O".to_string(), "C".to_string(), "H".to_string()],
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        for (key, vals) in [
+            (keys::X, vec![0.0_f64, 1.0, 0.0]),
+            (keys::Y, vec![0.0_f64, 0.0, 1.0]),
+            (keys::Z, vec![0.0_f64, 0.0, 0.0]),
+        ] {
+            atoms
+                .insert(
+                    key,
+                    ArrayD::from_shape_vec(ndarray::IxDyn(&[n]), vals).unwrap(),
+                )
+                .unwrap();
+        }
+        frame.insert("atoms", atoms);
+
+        let mut buf = Vec::new();
+        write_lammps_data_frame(&mut buf, &frame).expect("write");
+        let out = String::from_utf8(buf).unwrap();
+        assert!(out.contains("3 atoms"), "{out}");
+        assert!(out.contains("3 atom types"), "{out}");
+        assert!(out.contains("Atom Type Labels"), "{out}");
+        // Sorted label order: C, H, O
+        assert!(out.contains("1 C"), "{out}");
+        assert!(out.contains("2 H"), "{out}");
+        assert!(out.contains("3 O"), "{out}");
+        assert!(out.contains("Masses"), "{out}");
+        // Auto-numbered atom ids 1..N
+        assert!(out.contains("\n1 "), "{out}");
+        assert!(out.contains("\n2 "), "{out}");
+        assert!(out.contains("\n3 "), "{out}");
     }
 
     #[test]

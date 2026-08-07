@@ -18,6 +18,10 @@ pub(crate) struct BoxBounds {
     pub xy: Option<f64>,
     pub xz: Option<f64>,
     pub yz: Option<f64>,
+    /// Which axes were present in the file header (`xlo xhi` / …).
+    pub has_x: bool,
+    pub has_y: bool,
+    pub has_z: bool,
 }
 
 /// Collapse LAMMPS boundary tokens (`pp`, `ff`, `ss`, `fs`, …) to a per-axis

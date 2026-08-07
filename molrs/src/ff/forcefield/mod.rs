@@ -7,6 +7,7 @@
 //! [`ForceField::to_potentials`].
 
 pub mod gaff;
+pub mod lammps_units;
 pub mod readers;
 pub mod writers;
 pub mod xml;
@@ -243,7 +244,10 @@ impl Style {
         let StyleDefs::Bond(types) = &mut self.defs else {
             panic!("def_bondtype called on non-bond style");
         };
-        let name = format!("{}-{}", itom, jtom);
+        // When atom-type labels themselves contain `-` (OpenMM `tip3p-O`), the
+        // legacy `"A-B"` name form is ambiguous under naive dash-splitting.
+        // Use `::` as the endpoint separator in that case (see try_def_type).
+        let name = join_endpoints(&[itom, jtom]);
         types.push(BondType {
             name,
             itom: itom.to_owned(),
@@ -274,7 +278,7 @@ impl Style {
         let StyleDefs::Angle(types) = &mut self.defs else {
             panic!("def_angletype called on non-angle style");
         };
-        let name = format!("{}-{}-{}", itom, jtom, ktom);
+        let name = join_endpoints(&[itom, jtom, ktom]);
         types.push(AngleType {
             name,
             itom: itom.to_owned(),
@@ -298,7 +302,7 @@ impl Style {
         let StyleDefs::Dihedral(types) = &mut self.defs else {
             panic!("def_dihedraltype called on non-dihedral style");
         };
-        let name = format!("{}-{}-{}-{}", itom, jtom, ktom, ltom);
+        let name = join_endpoints(&[itom, jtom, ktom, ltom]);
         types.push(DihedralType {
             name,
             itom: itom.to_owned(),
@@ -323,7 +327,7 @@ impl Style {
         let StyleDefs::Improper(types) = &mut self.defs else {
             panic!("def_impropertype called on non-improper style");
         };
-        let name = format!("{}-{}-{}-{}", itom, jtom, ktom, ltom);
+        let name = join_endpoints(&[itom, jtom, ktom, ltom]);
         types.push(ImproperType {
             name,
             itom: itom.to_owned(),
@@ -350,7 +354,7 @@ impl Style {
         let name = if itom == jtom_str {
             itom.to_owned()
         } else {
-            format!("{}-{}", itom, jtom_str)
+            join_endpoints(&[itom, jtom_str])
         };
         types.push(PairType {
             name,
@@ -396,7 +400,7 @@ impl Style {
     /// for the type-name grammar; [`Self::def_type`] and
     /// [`ForceField::def_type`] both go through it.
     pub fn try_def_type(&mut self, name: &str, params: &[(&str, f64)]) -> Result<(), DefTypeError> {
-        let parts: Vec<&str> = name.split('-').collect();
+        let parts = split_endpoints(name);
         let category = self.category();
         let arity = |expected: &'static str| DefTypeError::Arity {
             category,
@@ -410,25 +414,25 @@ impl Style {
             }
             "bond" => {
                 if parts.len() != 2 {
-                    return Err(arity("A-B"));
+                    return Err(arity("A-B (or A::B when labels contain '-')"));
                 }
                 self.def_bondtype(parts[0], parts[1], params);
             }
             "angle" => {
                 if parts.len() != 3 {
-                    return Err(arity("A-B-C"));
+                    return Err(arity("A-B-C (or A::B::C when labels contain '-')"));
                 }
                 self.def_angletype(parts[0], parts[1], parts[2], params);
             }
             "dihedral" => {
                 if parts.len() != 4 {
-                    return Err(arity("A-B-C-D"));
+                    return Err(arity("A-B-C-D (or A::B::C::D when labels contain '-')"));
                 }
                 self.def_dihedraltype(parts[0], parts[1], parts[2], parts[3], params);
             }
             "improper" => {
                 if parts.len() != 4 {
-                    return Err(arity("A-B-C-D"));
+                    return Err(arity("A-B-C-D (or A::B::C::D when labels contain '-')"));
                 }
                 self.def_impropertype(parts[0], parts[1], parts[2], parts[3], params);
             }
@@ -445,6 +449,29 @@ impl Style {
             other => return Err(DefTypeError::UnknownCategory(other.to_string())),
         }
         Ok(())
+    }
+}
+
+/// Join atom-type endpoint labels into a type name.
+///
+/// Prefers the historical `"A-B"` form when no label contains `-`. When any
+/// label itself has a dash (OpenMM `tip3p-O`), uses `"A::B"` so the name still
+/// round-trips through [`split_endpoints`].
+fn join_endpoints(parts: &[&str]) -> String {
+    let sep = if parts.iter().any(|p| p.contains('-')) {
+        "::"
+    } else {
+        "-"
+    };
+    parts.join(sep)
+}
+
+/// Inverse of [`join_endpoints`]: split on `::` first, else on `-`.
+fn split_endpoints(name: &str) -> Vec<&str> {
+    if name.contains("::") {
+        name.split("::").collect()
+    } else {
+        name.split('-').collect()
     }
 }
 

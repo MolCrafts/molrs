@@ -1431,24 +1431,180 @@ pub fn read_lammps_forcefield_str_py(text: &str) -> PyResult<PyForceField> {
     Ok(PyForceField { inner: forcefield })
 }
 
+/// Read AMBER prmtop force-field parameter tables into a :class:`ForceField`.
+///
+/// Structure/connectivity is :func:`molrs.io.read_amber_prmtop`; this parses
+/// harmonic bond/angle tables (``k = 2·K`` form map), Fourier dihedrals, and
+/// LJ A/B → σ/ε. Store units are molrs (Å, kcal/mol, radians, e).
+#[pyfunction]
+#[pyo3(name = "read_amber_prmtop_ff")]
+pub fn read_amber_prmtop_ff_py(path: &str) -> PyResult<PyForceField> {
+    let forcefield = molrs::ff::read_amber_prmtop_ff(path)
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    Ok(PyForceField { inner: forcefield })
+}
+
+/// Parse AMBER prmtop force-field tables from a string.
+#[pyfunction]
+#[pyo3(name = "read_amber_prmtop_ff_str")]
+pub fn read_amber_prmtop_ff_str_py(text: &str) -> PyResult<PyForceField> {
+    use molrs::ff::ForceFieldReader;
+    let forcefield = molrs::ff::AmberPrmtopFfReader::new()
+        .read_str(text)
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    Ok(PyForceField { inner: forcefield })
+}
+
+/// Read a GROMACS ``.top`` / ``.itp`` into a :class:`ForceField`.
+///
+/// Parses ``[ atoms ]`` / ``[ bonds ]`` / ``[ angles ]`` / ``[ dihedrals ]`` /
+/// ``[ pairs ]`` tables. Bonded parameters (when present) are converted from
+/// GROMACS units (nm, kJ/mol, degrees) to molrs store units. ``include``
+/// controls ``#include`` expansion (default false).
+#[pyfunction]
+#[pyo3(name = "read_gromacs_top_ff", signature = (path, include = false))]
+pub fn read_gromacs_top_ff_py(path: &str, include: bool) -> PyResult<PyForceField> {
+    use molrs::ff::ForceFieldReader;
+    let forcefield = molrs::ff::GromacsTopFfReader::new()
+        .with_include(include)
+        .read(path)
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    Ok(PyForceField { inner: forcefield })
+}
+
+/// Parse GROMACS topology force-field tables from a string.
+#[pyfunction]
+#[pyo3(name = "read_gromacs_top_ff_str", signature = (text, include = false))]
+pub fn read_gromacs_top_ff_str_py(text: &str, include: bool) -> PyResult<PyForceField> {
+    use molrs::ff::ForceFieldReader;
+    let forcefield = molrs::ff::GromacsTopFfReader::new()
+        .with_include(include)
+        .read_str(text)
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    Ok(PyForceField { inner: forcefield })
+}
+
+/// Write a ForceField to GROMACS ``.top`` / ``.itp`` force-field tables.
+#[pyfunction]
+#[pyo3(name = "write_gromacs_top_ff", signature = (path, forcefield, precision = 6))]
+pub fn write_gromacs_top_ff_py(
+    path: &str,
+    forcefield: &PyForceField,
+    precision: usize,
+) -> PyResult<()> {
+    molrs::ff::write_gromacs_top_ff(path, &forcefield.inner, precision)
+        .map_err(pyo3::exceptions::PyValueError::new_err)
+}
+
+/// Serialize a ForceField to a GROMACS topology force-field string.
+#[pyfunction]
+#[pyo3(name = "write_gromacs_top_ff_str", signature = (forcefield, precision = 6))]
+pub fn write_gromacs_top_ff_str_py(
+    forcefield: &PyForceField,
+    precision: usize,
+) -> PyResult<String> {
+    molrs::ff::write_gromacs_top_ff_str(&forcefield.inner, precision)
+        .map_err(pyo3::exceptions::PyValueError::new_err)
+}
+
+/// Write a ForceField to OpenMM-style XML.
+#[pyfunction]
+#[pyo3(name = "write_forcefield_xml", signature = (path, forcefield, precision = 6))]
+pub fn write_forcefield_xml_py(
+    path: &str,
+    forcefield: &PyForceField,
+    precision: usize,
+) -> PyResult<()> {
+    molrs::ff::write_forcefield_xml(path, &forcefield.inner, precision)
+        .map_err(pyo3::exceptions::PyValueError::new_err)
+}
+
+/// Serialize a ForceField to OpenMM-style XML string.
+#[pyfunction]
+#[pyo3(name = "write_forcefield_xml_str", signature = (forcefield, precision = 6))]
+pub fn write_forcefield_xml_str_py(
+    forcefield: &PyForceField,
+    precision: usize,
+) -> PyResult<String> {
+    molrs::ff::write_forcefield_xml_str(&forcefield.inner, precision)
+        .map_err(pyo3::exceptions::PyValueError::new_err)
+}
+
+/// Parse LAMMPS data-file ``* Coeffs`` sections into a :class:`ForceField`.
+///
+/// ``coeffs_text`` may contain ``Pair Coeffs`` / ``Bond Coeffs`` / … blocks
+/// (and an optional ``units`` line). Default styles are harmonic / ``lj/cut``
+/// when the data file has no style directives. Optional ``*_labels`` maps are
+/// 1-based type id → label string (from Type Labels sections).
+#[pyfunction]
+#[pyo3(
+    name = "read_lammps_data_coeffs",
+    signature = (
+        coeffs_text,
+        units = "real",
+        atom_labels = None,
+        bond_labels = None,
+        angle_labels = None,
+        dihedral_labels = None,
+        improper_labels = None,
+    )
+)]
+#[allow(clippy::too_many_arguments)]
+pub fn read_lammps_data_coeffs_py(
+    coeffs_text: &str,
+    units: &str,
+    atom_labels: Option<std::collections::HashMap<u32, String>>,
+    bond_labels: Option<std::collections::HashMap<u32, String>>,
+    angle_labels: Option<std::collections::HashMap<u32, String>>,
+    dihedral_labels: Option<std::collections::HashMap<u32, String>>,
+    improper_labels: Option<std::collections::HashMap<u32, String>>,
+) -> PyResult<PyForceField> {
+    use molrs::ff::forcefield::lammps_units::LammpsUnits;
+    use molrs::ff::forcefield::readers::lammps::LammpsTypeLabelMaps;
+    use molrs::ff::LammpsFfReader;
+    use std::collections::BTreeMap;
+
+    let units = LammpsUnits::parse(units).map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let to_btree = |m: Option<std::collections::HashMap<u32, String>>| -> BTreeMap<u32, String> {
+        m.unwrap_or_default().into_iter().collect()
+    };
+    let labels = LammpsTypeLabelMaps {
+        atom: to_btree(atom_labels),
+        bond: to_btree(bond_labels),
+        angle: to_btree(angle_labels),
+        dihedral: to_btree(dihedral_labels),
+        improper: to_btree(improper_labels),
+    };
+    let forcefield = LammpsFfReader::new()
+        .read_data_coeffs(coeffs_text, &labels, units)
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    Ok(PyForceField { inner: forcefield })
+}
+
 /// Write a :class:`ForceField` to a LAMMPS force-field include (``*.ff``).
 ///
-/// Inverse of :func:`read_lammps_forcefield`: molrs units (Å, kcal/mol, radians,
-/// ``½k`` harmonic form) → LAMMPS ``real`` (``K = k/2``, angles in degrees). A
-/// split ``lj/cut`` + ``coul/cut`` pair is recombined as ``lj/cut/coul/cut`` so
-/// geometric mixing is not defeated by a hybrid wildcard. AMBER/GAFF flavour
-/// only (``bond``/``angle``/``improper`` harmonic, ``dihedral`` fourier or opls).
+/// Inverse of :func:`read_lammps_forcefield`: molrs store (Å, kcal/mol, radians,
+/// ``½k`` harmonic form for physical styles) → LAMMPS file units
+/// (``K = k/2``, angles in degrees). Energy/length conversion for
+/// ``units="metal"`` / ``"lj"`` goes through the lj reduced hub — never
+/// hard-coded eV/kcal factors. A split ``lj/cut`` + ``coul/cut`` pair is
+/// recombined as ``lj/cut/coul/cut`` so geometric mixing is not defeated by a
+/// hybrid wildcard. Tier A: ``bond``/``angle``/``improper`` harmonic;
+/// ``dihedral`` fourier / opls / harmonic.
 ///
 /// Parameters
 /// ----------
 /// path : str
 ///     Destination path for the include.
 /// forcefield : ForceField
-///     Force field in molrs units.
+///     Force field in molrs store units.
 /// precision : int, optional
 ///     Decimal places for floating coefficients (default 6).
 /// skip_pair_style : bool, optional
 ///     When true, omit the ``pair_style`` line (caller sets it in the input).
+/// units : str, optional
+///     LAMMPS ``units`` style for the written file: ``"real"`` (default),
+///     ``"metal"``, or ``"lj"``.
 /// atom_types : set[str] | None, optional
 ///     If given, only pair coeffs whose atom types are a subset of this set.
 /// bond_types, angle_types, dihedral_types, improper_types : set[str] | None
@@ -1457,7 +1613,7 @@ pub fn read_lammps_forcefield_str_py(text: &str) -> PyResult<PyForceField> {
 /// Raises
 /// ------
 /// ValueError
-///     On an unsupported style or missing required parameters.
+///     On an unsupported style, units keyword, or missing required parameters.
 #[pyfunction]
 #[pyo3(
     name = "write_lammps_forcefield",
@@ -1466,11 +1622,13 @@ pub fn read_lammps_forcefield_str_py(text: &str) -> PyResult<PyForceField> {
         forcefield,
         precision = 6,
         skip_pair_style = false,
+        units = "real",
         atom_types = None,
         bond_types = None,
         angle_types = None,
         dihedral_types = None,
         improper_types = None,
+        type_ids = None,
     )
 )]
 #[allow(clippy::too_many_arguments)]
@@ -1479,21 +1637,27 @@ pub fn write_lammps_forcefield_py(
     forcefield: &PyForceField,
     precision: usize,
     skip_pair_style: bool,
+    units: &str,
     atom_types: Option<HashSet<String>>,
     bond_types: Option<HashSet<String>>,
     angle_types: Option<HashSet<String>>,
     dihedral_types: Option<HashSet<String>>,
     improper_types: Option<HashSet<String>>,
+    type_ids: Option<std::collections::HashMap<String, u32>>,
 ) -> PyResult<()> {
+    use molrs::ff::forcefield::lammps_units::LammpsUnits;
     use molrs::ff::{ForceFieldWriter, LammpsFfWriter, LammpsWriteOptions};
+    let units = LammpsUnits::parse(units).map_err(pyo3::exceptions::PyValueError::new_err)?;
     let writer = LammpsFfWriter::with_options(LammpsWriteOptions {
         precision,
         skip_pair_style,
+        units,
         atom_types,
         bond_types,
         angle_types,
         dihedral_types,
         improper_types,
+        type_ids,
     });
     writer
         .write(&forcefield.inner, path)
@@ -1509,11 +1673,13 @@ pub fn write_lammps_forcefield_py(
         forcefield,
         precision = 6,
         skip_pair_style = false,
+        units = "real",
         atom_types = None,
         bond_types = None,
         angle_types = None,
         dihedral_types = None,
         improper_types = None,
+        type_ids = None,
     )
 )]
 #[allow(clippy::too_many_arguments)]
@@ -1521,24 +1687,82 @@ pub fn write_lammps_forcefield_str_py(
     forcefield: &PyForceField,
     precision: usize,
     skip_pair_style: bool,
+    units: &str,
     atom_types: Option<HashSet<String>>,
     bond_types: Option<HashSet<String>>,
     angle_types: Option<HashSet<String>>,
     dihedral_types: Option<HashSet<String>>,
     improper_types: Option<HashSet<String>>,
+    type_ids: Option<std::collections::HashMap<String, u32>>,
 ) -> PyResult<String> {
+    use molrs::ff::forcefield::lammps_units::LammpsUnits;
     use molrs::ff::{ForceFieldWriter, LammpsFfWriter, LammpsWriteOptions};
+    let units = LammpsUnits::parse(units).map_err(pyo3::exceptions::PyValueError::new_err)?;
     let writer = LammpsFfWriter::with_options(LammpsWriteOptions {
         precision,
         skip_pair_style,
+        units,
         atom_types,
         bond_types,
         angle_types,
         dihedral_types,
         improper_types,
+        type_ids,
     });
     writer
         .write_str(&forcefield.inner)
+        .map_err(pyo3::exceptions::PyValueError::new_err)
+}
+
+/// Serialize a :class:`ForceField` to LAMMPS data-file ``* Coeffs`` sections.
+///
+/// Same form map and ``units`` conversion as :func:`write_lammps_forcefield`,
+/// but emits ``Pair Coeffs`` / ``Bond Coeffs`` / … blocks (integer type ids),
+/// not input-script ``*_coeff`` lines. Pass ``type_ids`` (Frame-derived
+/// name→id) when type names are non-integer labels.
+#[pyfunction]
+#[pyo3(
+    name = "write_lammps_data_coeffs",
+    signature = (
+        forcefield,
+        precision = 6,
+        units = "real",
+        atom_types = None,
+        bond_types = None,
+        angle_types = None,
+        dihedral_types = None,
+        improper_types = None,
+        type_ids = None,
+    )
+)]
+#[allow(clippy::too_many_arguments)]
+pub fn write_lammps_data_coeffs_py(
+    forcefield: &PyForceField,
+    precision: usize,
+    units: &str,
+    atom_types: Option<HashSet<String>>,
+    bond_types: Option<HashSet<String>>,
+    angle_types: Option<HashSet<String>>,
+    dihedral_types: Option<HashSet<String>>,
+    improper_types: Option<HashSet<String>>,
+    type_ids: Option<std::collections::HashMap<String, u32>>,
+) -> PyResult<String> {
+    use molrs::ff::forcefield::lammps_units::LammpsUnits;
+    use molrs::ff::{LammpsFfWriter, LammpsWriteOptions};
+    let units = LammpsUnits::parse(units).map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let writer = LammpsFfWriter::with_options(LammpsWriteOptions {
+        precision,
+        skip_pair_style: true,
+        units,
+        atom_types,
+        bond_types,
+        angle_types,
+        dihedral_types,
+        improper_types,
+        type_ids,
+    });
+    writer
+        .write_data_coeffs_str(&forcefield.inner)
         .map_err(pyo3::exceptions::PyValueError::new_err)
 }
 

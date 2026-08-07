@@ -554,6 +554,17 @@ class Frame(_RsFrame):
         return cls(blocks=blocks, meta=data["meta"])
 
     @classmethod
+    def from_bytes(cls, data: bytes, format: str = "msgpack") -> "Frame":
+        """Rebuild a Frame from streaming wire bytes.
+
+        The consumer half of a live stream: decode what a
+        ``molrs.net.FrameServer`` put on the socket. Shadows the base
+        ``_RsFrame`` staticmethod so the result is this rich subclass, the
+        way ``from_dict`` and ``_from_ffi_frameref_capsule`` do.
+        """
+        return cls.from_dict(_RsFrame.from_bytes(data, format))
+
+    @classmethod
     def _from_ffi_frameref_capsule(cls, capsule: Any) -> "Frame":
         """Build a rich ``Frame`` from a ``"molrs.FrameRef"`` capsule.
 

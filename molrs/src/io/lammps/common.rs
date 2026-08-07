@@ -20,8 +20,13 @@ pub(crate) fn err_mapper<E: std::fmt::Display>(e: E) -> std::io::Error {
 
 /// Split a line on whitespace. Token count is small (≤ ~20); float parsing
 /// dominates cost on large files, not the token `Vec`.
+///
+/// Inline comments (``# …``) are stripped first — LAMMPS data files from
+/// VMD/TopoTools routinely write ``# element RES`` after atom rows and
+/// ``# type-name`` after Masses; those must not pollute the column layout.
 pub(crate) fn tokenize(line: &str) -> Vec<&str> {
-    line.split_whitespace().collect()
+    let code = line.split('#').next().unwrap_or(line);
+    code.split_whitespace().collect()
 }
 
 pub(crate) fn parse_i(token: &str) -> std::io::Result<I> {

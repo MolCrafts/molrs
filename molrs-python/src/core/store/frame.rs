@@ -20,7 +20,7 @@ use std::ffi::CString;
 
 use crate::core::spatial::simbox::PyBox;
 use crate::core::store::block::PyBlock;
-use crate::helpers::molrs_error_to_pyerr;
+use crate::helpers::{message_format, molrs_error_to_pyerr, py_value_err};
 use crate::store::ffi_error_to_pyerr;
 use molrs::store::block::Block as CoreBlock;
 use molrs::store::frame::Frame as CoreFrame;
@@ -28,7 +28,7 @@ use molrs::store::meta::{MetaMap, MetaValue};
 use molrs_ffi::FrameRef;
 use pyo3::exceptions::{PyKeyError, PyTypeError};
 use pyo3::prelude::*;
-use pyo3::types::{PyCapsule, PyDict, PyList};
+use pyo3::types::{PyBytes, PyCapsule, PyDict, PyList};
 
 /// Exact-dtype frame metadata value.
 #[pyclass(module = "molrs", name = "MetaValue", frozen, from_py_object)]
@@ -464,6 +464,51 @@ impl PyFrame {
         Self::from_core_frame(self.clone_core_frame()?)
     }
 
+    /// Encode this frame as streaming wire bytes.
+    ///
+    /// The inverse of :meth:`from_bytes`. This is the encoding
+    /// :class:`FrameServer` puts on the wire, so a consumer decodes a live
+    /// stream with :meth:`from_bytes` and never re-derives the layout.
+    ///
+    /// Parameters
+    /// ----------
+    /// format : {"msgpack", "json"}
+    ///     Wire encoding. MessagePack (default) is compact binary; JSON is
+    ///     text, for debugging and non-Rust peers.
+    ///
+    /// Returns
+    /// -------
+    /// bytes
+    #[pyo3(signature = (format = "msgpack"))]
+    fn to_bytes<'py>(&self, py: Python<'py>, format: &str) -> PyResult<Bound<'py, PyBytes>> {
+        let fmt = message_format(format)?;
+        let bytes = self
+            .with_frame(|f| molrs::stream::frame_to_bytes(f, fmt))?
+            .map_err(py_value_err)?;
+        Ok(PyBytes::new(py, &bytes))
+    }
+
+    /// Rebuild a frame from streaming wire bytes.
+    ///
+    /// Parameters
+    /// ----------
+    /// data : bytes
+    ///     A payload produced by :meth:`to_bytes` or by a Rust
+    ///     ``molrs::net::FrameServer``.
+    /// format : {"msgpack", "json"}
+    ///     Wire encoding the payload was written with.
+    ///
+    /// Returns
+    /// -------
+    /// Frame
+    #[staticmethod]
+    #[pyo3(signature = (data, format = "msgpack"))]
+    fn from_bytes(data: &[u8], format: &str) -> PyResult<Self> {
+        let fmt = message_format(format)?;
+        let frame = molrs::stream::bytes_to_frame(data, fmt).map_err(py_value_err)?;
+        Self::from_core_frame(frame)
+    }
+
     fn __repr__(&self) -> PyResult<String> {
         self.with_frame(|f| {
             let keys: Vec<&str> = f.keys().collect();
@@ -577,7 +622,7 @@ impl PyFrame {
     }
 
     /// Run a read-only closure on the underlying `CoreFrame`.
-    fn with_frame<R>(&self, f: impl FnOnce(&CoreFrame) -> R) -> PyResult<R> {
+    pub(crate) fn with_frame<R>(&self, f: impl FnOnce(&CoreFrame) -> R) -> PyResult<R> {
         self.inner.with(f).map_err(ffi_error_to_pyerr)
     }
 }
