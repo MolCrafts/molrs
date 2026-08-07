@@ -27,3 +27,7 @@ Live specs only.
 All four stages verified (cargo lib tests + molrs-python `test_smiles_emit`). Public Python name: `molrs.io.write_smiles(mol, **flags)` / `SmilesIR.from_atomistic` / `write_smarts`. Specs deleted after close.
 
 Downstream: molpy `smiles-emit-01-io-surface` after molrs tag ≥ emit surface.
+
+## Live — angular distribution defaults
+
+- [distribution-angular-default-range](distribution-angular-default-range.md) — PyO3 angular distributions default to a degrees range on a radians kernel; delegate to `over_natural_range` [approved]

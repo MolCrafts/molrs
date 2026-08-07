@@ -60,6 +60,10 @@ repos:
         entry: >
           sh -c 'set -euo pipefail;
           command -v wasm-pack >/dev/null || cargo install wasm-pack;
+          command -v wasm-opt >/dev/null || {
+            echo "wasm-opt not found (needed for molrs-wasm release). Install: brew install binaryen" >&2;
+            exit 1;
+          };
           rustup target add wasm32-unknown-unknown 2>/dev/null || true;
           cd molrs-wasm;
           wasm-pack build --release --target bundler --scope molcrafts --out-name molrs'

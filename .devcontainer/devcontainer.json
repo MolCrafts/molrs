@@ -1,8 +1,0 @@
-{
-    "name": "molrs",
-    "image": "mcr.microsoft.com/devcontainers/base:alpine",
-    "features": {
-        "ghcr.io/molcrafts/features/molrs:latest": {}
-    },
-    "remoteUser": "root"
-}

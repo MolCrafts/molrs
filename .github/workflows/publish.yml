@@ -89,6 +89,13 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: wasm-pack
+      # molrs-wasm release profile runs wasm-opt -O1 (see Cargo.toml metadata).
+      - name: Install binaryen (wasm-opt)
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y binaryen
+          wasm-opt --version
       - working-directory: molrs-wasm
         run: wasm-pack build --release --target bundler --scope molcrafts --out-name molrs
       - working-directory: molrs-wasm/pkg
