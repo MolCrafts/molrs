@@ -252,6 +252,7 @@ class FrameServer:
         *,
         format: Literal["msgpack", "json"] = "msgpack",
         buffer_size: int = 4,
+        token: Optional[str] = None,
     ) -> None: ...
     @property
     def address(self) -> str: ...

@@ -235,9 +235,18 @@ mod server {
         /// buffer_size : int
         ///     How many encoded frames may be in flight before the oldest is
         ///     dropped. Must be at least 1.
+        /// token : str or None
+        ///     Shared secret clients must present in a ``hello`` handshake
+        ///     before they receive frames. ``None`` (default) accepts every
+        ///     connection — fine for loopback, wrong for a shared bind.
         #[new]
-        #[pyo3(signature = (address = "127.0.0.1:0", *, format = "msgpack", buffer_size = 4))]
-        fn new(address: &str, format: &str, buffer_size: usize) -> PyResult<Self> {
+        #[pyo3(signature = (address = "127.0.0.1:0", *, format = "msgpack", buffer_size = 4, token = None))]
+        fn new(
+            address: &str,
+            format: &str,
+            buffer_size: usize,
+            token: Option<String>,
+        ) -> PyResult<Self> {
             if buffer_size == 0 {
                 return Err(PyValueError::new_err(
                     "buffer_size must be at least 1; 0 would drop every frame",
@@ -247,6 +256,7 @@ mod server {
                 format: message_format(format)?,
                 buffer_size,
                 max_frame_rate: 0.0,
+                token,
             };
             let server = FrameServer::bind_with(address, config).map_err(io_error_to_pyerr)?;
             let bound = server.local_addr().to_string();
