@@ -20,7 +20,7 @@ use std::ffi::CString;
 
 use crate::core::spatial::simbox::PyBox;
 use crate::core::store::block::PyBlock;
-use crate::helpers::molrs_error_to_pyerr;
+use crate::helpers::{message_format, molrs_error_to_pyerr, py_value_err};
 use crate::store::ffi_error_to_pyerr;
 use molrs::store::block::Block as CoreBlock;
 use molrs::store::frame::Frame as CoreFrame;
@@ -28,7 +28,7 @@ use molrs::store::meta::{MetaMap, MetaValue};
 use molrs_ffi::FrameRef;
 use pyo3::exceptions::{PyKeyError, PyTypeError};
 use pyo3::prelude::*;
-use pyo3::types::{PyCapsule, PyDict, PyList};
+use pyo3::types::{PyBytes, PyCapsule, PyDict, PyList};
 
 /// Exact-dtype frame metadata value.
 #[pyclass(module = "molrs", name = "MetaValue", frozen, from_py_object)]
@@ -577,7 +577,7 @@ impl PyFrame {
     }
 
     /// Run a read-only closure on the underlying `CoreFrame`.
-    fn with_frame<R>(&self, f: impl FnOnce(&CoreFrame) -> R) -> PyResult<R> {
+    pub(crate) fn with_frame<R>(&self, f: impl FnOnce(&CoreFrame) -> R) -> PyResult<R> {
         self.inner.with(f).map_err(ffi_error_to_pyerr)
     }
 }

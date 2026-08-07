@@ -8,14 +8,18 @@
 //! there is no downstream unit fixup.
 //!
 //! Concrete readers: [`OplsXmlReader`](opls::OplsXmlReader) (OPLS-AA / GROMACS
-//! XML, nm/kJ-mol, Ryckaert–Bellemans torsions) and
+//! XML, nm/kJ-mol, Ryckaert–Bellemans torsions),
 //! [`LammpsFfReader`](lammps::LammpsFfReader) (a LAMMPS `*.ff` include, AMBER/GAFF
 //! flavour — inverse of
-//! [`LammpsFfWriter`](super::writers::lammps::LammpsFfWriter)). Further formats
-//! (AMBER prmtop) land as additional implementors of [`ForceFieldReader`].
+//! [`LammpsFfWriter`](super::writers::lammps::LammpsFfWriter)),
+//! [`AmberPrmtopFfReader`](prmtop::AmberPrmtopFfReader) (AMBER prmtop parameter
+//! tables), and [`GromacsTopFfReader`](gromacs::GromacsTopFfReader) (GROMACS
+//! `.top`/`.itp` section tables).
 
+pub mod gromacs;
 pub mod lammps;
 pub mod opls;
+pub mod prmtop;
 
 use crate::ff::forcefield::ForceField;
 

@@ -17,9 +17,12 @@ name = "molwasm"
 [features]
 # Default build = full (all subsystems). Each forwards to the merged crate's
 # matching module feature.
-default = ["smiles", "io", "compute", "conformer", "voronoi"]
+default = ["smiles", "io", "compute", "conformer", "voronoi", "stream"]
 smiles  = ["io", "molrs/smiles"]
 io      = ["molrs/io"]
+# Live-stream wire encoding (MessagePack / JSON). On wasm32 this pulls only
+# the codec and `ControlCommand`; `FrameServer` is native-only upstream.
+stream  = ["molrs/stream"]
 compute = ["molrs/compute"]
 conformer = ["molrs/conformer"]
 # Radical Voronoi tessellation + its domain/void consumers. Pure Rust, no FFI,
@@ -49,4 +52,7 @@ getrandom = { version = "0.4", features = ["wasm_js"] }
 wasm-bindgen-test = "0.3"
 
 [package.metadata.wasm-pack.profile.release]
-wasm-opt = false
+# Binaryen wasm-opt after wasm-bindgen. -O1: ~19% smaller than rustc-only
+# release on Apple M4 (~4s); ABI/smoke-tested locally. Requires `wasm-opt` on PATH
+# (e.g. `brew install binaryen`).
+wasm-opt = ["-O1"]

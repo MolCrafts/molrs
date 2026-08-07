@@ -626,14 +626,19 @@ impl<W: Write> PDBWriter<W> {
 
 /// Write the `CRYST1` record from the frame's simulation box, if any.
 fn write_cryst1<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> std::io::Result<()> {
-    if let Some(simbox) = frame.simbox_ref() {
+    // Always emit CRYST1: PDB readers and OpenMM decks expect a cell line even
+    // when the frame has no simbox (molpy historically wrote a unit cube).
+    let (a, b, c) = if let Some(simbox) = frame.simbox_ref() {
         let lengths = simbox.lengths();
-        writeln!(
-            writer,
-            "CRYST1{:9.3}{:9.3}{:9.3}{:7.2}{:7.2}{:7.2} {:<11}{:>4}",
-            lengths[0], lengths[1], lengths[2], 90.00, 90.00, 90.00, "P 1", 1
-        )?;
-    }
+        (lengths[0], lengths[1], lengths[2])
+    } else {
+        (1.0, 1.0, 1.0)
+    };
+    writeln!(
+        writer,
+        "CRYST1{:9.3}{:9.3}{:9.3}{:7.2}{:7.2}{:7.2} {:<11}{:>4}",
+        a, b, c, 90.00, 90.00, 90.00, "P 1", 1
+    )?;
     Ok(())
 }
 
@@ -736,12 +741,17 @@ fn write_atom_conect_records<W: Write>(
 
         let res_seq = res_seqs.get(i).copied().unwrap_or(1);
 
-        let elem_field: String = elem_raw.chars().take(2).collect();
+        let elem_field: String = elem_raw
+            .chars()
+            .take(2)
+            .collect::<String>()
+            .to_ascii_uppercase();
 
         // PDB v3.3 ATOM record. occupancy/tempFactor default to 1.00/0.00.
-        writeln!(
-            writer,
-            "ATOM  {:>5} {} {:<3} {}{:>4}    {:>8.3}{:>8.3}{:>8.3}{:>6.2}{:>6.2}          {:>2}",
+        // Element right-justified in cols 77-78, then one charge pad space;
+        // historical molpy lines are 79 printable columns + newline.
+        let mut line = format!(
+            "ATOM  {:>5} {} {:<3} {}{:>4}    {:>8.3}{:>8.3}{:>8.3}{:>6.2}{:>6.2}          {:>2}  ",
             serial,
             name_field,
             res_name,
@@ -753,7 +763,13 @@ fn write_atom_conect_records<W: Write>(
             1.0_f64,
             0.0_f64,
             elem_field,
-        )?;
+        );
+        if line.len() < 79 {
+            line = format!("{:<79}", line);
+        } else if line.len() > 79 {
+            line.truncate(79);
+        }
+        writeln!(writer, "{line}")?;
     }
 
     // Write CONECT records from bonds block
@@ -821,8 +837,17 @@ fn write_atom_conect_records<W: Write>(
 /// Accepts any type implementing [`FrameAccess`], including both [`Frame`] and
 /// [`FrameView`](molrs::store::frame_view::FrameView).
 pub fn write_pdb_frame<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> std::io::Result<()> {
+    // REMARK: meta "name", else "MOL" (molpy / OpenMM deck convention).
+    let title = frame
+        .meta_ref()
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("MOL");
+    writeln!(writer, "REMARK  {title}")?;
     write_cryst1(writer, frame)?;
     write_atom_conect_records(writer, frame)?;
+    // Blank line before END matches long-standing molpy PDB writer output.
+    writeln!(writer)?;
     writeln!(writer, "END")?;
     Ok(())
 }
@@ -1446,5 +1471,12 @@ END
         assert_eq!(atom_line[17..20].trim(), "ALA", "resName: {atom_line}");
         assert_eq!(&atom_line[21..22], "B", "chain: {atom_line}");
         assert_eq!(atom_line[22..26].trim(), "5", "resSeq: {atom_line}");
+        // columns 77-78: element (1-based); 0-based [76..78]
+        assert!(
+            atom_line.len() >= 78,
+            "line too short: {atom_line:?} len={}",
+            atom_line.len()
+        );
+        assert_eq!(atom_line[76..78].trim(), "C", "element: {atom_line:?}");
     }
 }

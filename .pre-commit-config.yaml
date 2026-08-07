@@ -1,9 +1,5 @@
-# Managed by prek (drop-in pre-commit): `prek install`
-# Mirrors default CI (ci.yml → rust / wasm / python / capi).
-#   commit  — rustfmt + clippy
-#   pre-push — unit tests + tox python + wasm-pack + C API ctest
-#
-# No project scripts/ wrappers for gates.
+# prek: pre-commit = rustfmt+clippy; pre-push = unit + python + wasm + capi
+# Mirrors ci.yml (rust / wasm / python / capi). No wrapper scripts.
 
 default_install_hook_types: [pre-commit, pre-push]
 
@@ -21,33 +17,26 @@ repos:
 
   - repo: local
     hooks:
-      # ── CI Rust (ci-rust.yml) ───────────────────────────────────────────
-      # always_run: CI rustfmt/clippy are whole-tree gates. Without this, prek
-      # skips them when the staged set has no "matching" files (or only
-      # non-Rust paths), which is exactly how rustfmt/clippy failures reached
-      # GitHub Actions on direct pushes to dev.
       - id: cargo-fmt
-        name: "CI Rust / rustfmt"
+        name: rustfmt
         entry: cargo fmt --check
         language: system
         pass_filenames: false
         always_run: true
-        stages: [pre-commit, pre-push]
+        stages: [pre-commit]
 
       - id: cargo-clippy
-        name: "CI Rust / clippy"
+        name: clippy
         entry: >-
           sh -c 'cargo clippy -p molcrafts-molrs --all-targets --features full,filesystem -- -D warnings
           && cargo clippy -p molcrafts-molrs-cxxapi --all-targets -- -D warnings'
         language: system
         pass_filenames: false
         always_run: true
-        stages: [pre-commit, pre-push]
+        stages: [pre-commit]
 
       - id: cargo-test-unit
-        name: "CI Rust / unit (--lib)"
-        # Fetch MolCrafts/tests-data first — same order as ci-rust.yml unit job.
-        # Several --lib tests resolve fixtures under ../tests-data/<format>/.
+        name: cargo test --lib
         entry: >-
           sh -c 'bash scripts/fetch-test-data.sh
           && cargo test -p molcrafts-molrs --lib --features full,filesystem'
@@ -56,25 +45,25 @@ repos:
         always_run: true
         stages: [pre-push]
 
-      # ── CI Python (ci-python.yml) via tox ────────────────────────────────
       - id: python-tox
-        name: "CI Python / tox -c molrs-python -e py"
-        # tox from molrs-python optional-dependencies `dev`
-        entry: uv run --directory molrs-python --extra dev tox -e py
+        name: tox -e py
+        entry: >-
+          sh -c 'uv --directory molrs-python sync --no-install-project --extra dev
+          && uv --directory molrs-python run --no-sync tox -e py'
         language: system
         pass_filenames: false
         always_run: true
         stages: [pre-push]
 
-      # ── CI WASM (ci-wasm.yml) ───────────────────────────────────────────
       - id: wasm-pack
-        name: "CI WASM / wasm-pack build"
+        name: wasm-pack build
         entry: >
           sh -c 'set -euo pipefail;
-          if ! command -v wasm-pack >/dev/null; then
-            echo "wasm-pack not on PATH (CI uses taiki-e/install-action binary); falling back to cargo install";
-            cargo install wasm-pack;
-          fi;
+          command -v wasm-pack >/dev/null || cargo install wasm-pack;
+          command -v wasm-opt >/dev/null || {
+            echo "wasm-opt not found (needed for molrs-wasm release). Install: brew install binaryen" >&2;
+            exit 1;
+          };
           rustup target add wasm32-unknown-unknown 2>/dev/null || true;
           cd molrs-wasm;
           wasm-pack build --release --target bundler --scope molcrafts --out-name molrs'
@@ -83,9 +72,8 @@ repos:
         always_run: true
         stages: [pre-push]
 
-      # ── CI C API (ci-capi.yml) ──────────────────────────────────────────
       - id: capi-tests
-        name: "CI C API / cmake + ctest"
+        name: C API ctest
         entry: >-
           sh -c 'set -euo pipefail
           cargo build --manifest-path molrs-capi/Cargo.toml

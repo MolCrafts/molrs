@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "molcrafts-molrs"
-version = "0.12.2"
+version = "0.12.3"
 description = "Python bindings for molrs molecular simulation library"
 requires-python = ">=3.12"
 readme = "README.md"
@@ -21,8 +21,9 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-# Dev tools (gate driver). Install: `pip install -e ".[dev]"` or
-# `uv sync --extra dev` from molrs-python/. prek/CI: `uv run --extra dev tox -e py`.
+# Gate tools: `uv sync --no-install-project --extra dev && uv run --no-sync tox -e py`
+# (do not `uv run --extra dev tox` — that double-builds the extension).
+# Editable: `uv sync --extra dev` or `pip install -e ".[dev]"`.
 dev = [
     "tox>=4.23",
     "maturin>=1.0,<2.0",
@@ -62,9 +63,7 @@ env_list = ["py"]
 no_package = true
 
 [tool.tox.env.py]
-description = "throwaway env: maturin wheel + pytest (non-editable)"
-# Prefer the runner / active interpreter so CI matrix 3.12–3.14 all work.
-# Fall back to 3.14 when the env list is resolved without an explicit base.
+description = "maturin --release wheel + pytest (non-editable)"
 base_python = ["python3"]
 deps = [
   "maturin>=1.0,<2.0",

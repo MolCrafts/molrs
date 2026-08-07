@@ -89,6 +89,15 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: wasm-pack
+      # molrs-wasm release profile runs wasm-opt -O1 (see Cargo.toml metadata).
+      # apt binaryen is too old for current rustc wasm; pin a GitHub release.
+      - name: Install binaryen (wasm-opt)
+        run: |
+          set -euo pipefail
+          VER=version_123
+          curl -fsSL "https://github.com/WebAssembly/binaryen/releases/download/${VER}/binaryen-${VER}-x86_64-linux.tar.gz" \
+            | sudo tar -xz -C /usr/local --strip-components=1
+          wasm-opt --version
       - working-directory: molrs-wasm
         run: wasm-pack build --release --target bundler --scope molcrafts --out-name molrs
       - working-directory: molrs-wasm/pkg

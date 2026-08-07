@@ -5,11 +5,13 @@
 //! The inverse of each reader lands here so unit conversion stays at one
 //! boundary pair and never leaks into kernels or call sites.
 //!
-//! Concrete writers: [`LammpsFfWriter`](lammps::LammpsFfWriter) (LAMMPS `*.ff`
-//! include, AMBER/GAFF flavour — inverse of
-//! [`LammpsFfReader`](super::readers::lammps::LammpsFfReader)).
+//! Concrete writers: [`LammpsFfWriter`](lammps::LammpsFfWriter),
+//! [`GromacsTopFfWriter`](gromacs::GromacsTopFfWriter),
+//! [`XmlForceFieldWriter`](xml::XmlForceFieldWriter).
 
+pub mod gromacs;
 pub mod lammps;
+pub mod xml;
 
 use crate::ff::forcefield::ForceField;
 

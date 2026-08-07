@@ -25,7 +25,9 @@ graph — so it lives in :mod:`molrs.perceive`.
 from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
+from io import StringIO
 from os import PathLike
+from pathlib import Path
 from typing import Any, Union, overload
 
 from . import raw
@@ -39,6 +41,7 @@ from ..fields import (
     FieldFormatter,
     GroFieldFormatter,
     LammpsFieldFormatter,
+    Mol2FieldFormatter,
     PdbFieldFormatter,
     XyzFieldFormatter,
 )
@@ -51,27 +54,57 @@ from .._lib import (
     XYZTrajReader as _XYZTrajReader,
     read_gro as _read_gro,
     read_lammps as _read_lammps,
+    read_lammps_log as _read_lammps_log,
+    parse_lammps_log_text as _parse_lammps_log_text,
     read_chgcar_file as _read_chgcar,
     read_cube_file as _read_cube,
+    read_mol2 as _read_mol2,
+    read_top as _read_top,
+    write_top as _write_top,
+    read_amber_inpcrd as _read_amber_inpcrd,
+    read_amber_prmtop as _read_amber_prmtop,
+    read_ac as _read_ac,
+    read_frcmod as _read_frcmod,
+    parse_frcmod as _parse_frcmod,
+    write_frcmod as _write_frcmod,
+    read_prep as _read_prep,
+    write_prep as _write_prep,
+    read_amber_prmtop_sections as _read_amber_prmtop_sections,
+    prmtop_parse_pointers as _prmtop_parse_pointers,
+    prmtop_parse_a4_names as _prmtop_parse_a4_names,
+    prmtop_decode_bond_params as _prmtop_decode_bond_params,
+    prmtop_decode_angle_params as _prmtop_decode_angle_params,
+    prmtop_decode_dihedral_params as _prmtop_decode_dihedral_params,
+    prmtop_decode_nonbond_params as _prmtop_decode_nonbond_params,
+    read_lammps_molecule as _read_lammps_molecule,
+    read_block_csv as _read_block_csv,
+    read_frame_bytes as _read_frame_bytes,
+    write_block_csv as _write_block_csv,
+    write_frame_bytes,
     read_pdb as _read_pdb,
     read_pdb_trajectory as _read_pdb_trajectory,
     read_trr as _read_trr,
     read_xtc as _read_xtc,
     read_xyz as _read_xyz,
+    read_xsf as _read_xsf,
     write_gro as _write_gro,
     write_lammps as _write_lammps,
     write_cube_file as _write_cube,
+    write_mol2 as _write_mol2,
+    write_lammps_molecule as _write_lammps_molecule,
     write_pdb as _write_pdb,
     write_pdb_trajectory as _write_pdb_trajectory,
     write_trr as _write_trr,
     write_xtc as _write_xtc,
     write_xyz as _write_xyz,
+    write_xsf as _write_xsf,
 )
 
 _gro_fmt = GroFieldFormatter()
 _pdb_fmt = PdbFieldFormatter()
 _lammps_fmt = LammpsFieldFormatter()
 _xyz_fmt = XyzFieldFormatter()
+_mol2_fmt = Mol2FieldFormatter()
 # DCD frames carry only coordinates / box — no format-specific column names to
 # canonicalize, so a no-op formatter is correct.
 _noop_fmt = FieldFormatter()
@@ -221,6 +254,162 @@ def write_cube(file: str | PathLike[str], frame: Any) -> None:
     _write_cube(str(file), frame)
 
 
+def read_mol2(file: str | PathLike[str], frame: Any = None) -> Any:
+    """Read a Tripos MOL2 file (first molecule).
+
+    Returns a molrs ``Frame`` with canonical field names (``type`` instead of
+    ``atom_type``, ``res_id``/``res_name`` instead of ``subst_*``).
+    """
+    if frame is not None:
+        raise NotImplementedError(
+            "molrs.io.read_mol2 does not accept an existing frame; "
+            "it always returns a new Frame."
+        )
+    result = _read_mol2(str(file))
+    _mol2_fmt.canonicalize_frame(result)
+    return _wrap(result)
+
+
+def read_amber_inpcrd(file: str | PathLike[str], frame: Any = None) -> Any:
+    """Read an AMBER ASCII inpcrd / restrt coordinate file.
+
+    Returns a molrs ``Frame`` with ``id``, ``name``, ``x``/``y``/``z``,
+    optional ``vel`` (shape ``[n, 3]``), optional box, and meta ``title`` /
+    ``timestep``. Always returns a new Frame; *frame* is accepted for API
+    parity and must be ``None``.
+
+    Args:
+        file: Path to a ``.inpcrd`` or restart file.
+        frame: Reserved for API parity. Passing an existing frame raises.
+
+    Returns:
+        A molrs ``Frame`` with coordinates (Å).
+
+    Raises:
+        NotImplementedError: If *frame* is not ``None``.
+        OSError: If the file cannot be opened or parsed.
+    """
+    if frame is not None:
+        raise NotImplementedError(
+            "molrs.io.read_amber_inpcrd does not accept an existing frame; "
+            "it always returns a new Frame."
+        )
+    return _wrap(_read_amber_inpcrd(str(file)))
+
+
+def read_inpcrd(file: str | PathLike[str], frame: Any = None) -> Any:
+    """Alias for :func:`read_amber_inpcrd`."""
+    return read_amber_inpcrd(file, frame=frame)
+
+
+def read_amber_prmtop(file: str | PathLike[str], frame: Any = None) -> Any:
+    """Read an AMBER prmtop **structure** file into a Frame.
+
+    Structure / connectivity only: atoms (``name``, ``type``, ``charge`` in
+    electron units, ``mass``, optional ``atomic_number``/``element``,
+    ``res_id``), bonds/angles/dihedrals (0-based indices, type labels), and
+    POINTERS meta. Force-field parameter tables are not assembled.
+
+    Always returns a new Frame; *frame* is accepted for API parity and must be
+    ``None``.
+
+    Args:
+        file: Path to a ``.prmtop`` / ``.parm7`` file.
+        frame: Reserved for API parity. Passing an existing frame raises.
+
+    Returns:
+        A molrs ``Frame`` with topology blocks and POINTERS meta.
+
+    Raises:
+        NotImplementedError: If *frame* is not ``None``.
+        OSError: If the file cannot be opened or parsed.
+    """
+    if frame is not None:
+        raise NotImplementedError(
+            "molrs.io.read_amber_prmtop does not accept an existing frame; "
+            "it always returns a new Frame."
+        )
+    return _wrap(_read_amber_prmtop(str(file)))
+
+
+def read_prmtop(file: str | PathLike[str], frame: Any = None) -> Any:
+    """Alias for :func:`read_amber_prmtop`."""
+    return read_amber_prmtop(file, frame=frame)
+
+
+def write_mol2(file: str | PathLike[str], frame: Any) -> None:
+    """Write a Frame to a Tripos MOL2 file.
+
+    Localises canonical columns (``type`` → ``atom_type``, residue pair) before
+    the native writer.
+    """
+    # Localise on a shallow view: rename is in-place on blocks; callers that
+    # need the canonical frame afterwards should copy first.
+    _mol2_fmt.localize_frame(frame)
+    try:
+        _write_mol2(str(file), frame)
+    finally:
+        # Restore canonical names so a write does not permanently mutate.
+        _mol2_fmt.canonicalize_frame(frame)
+
+
+def read_top(file: str | PathLike[str], frame: Any = None) -> Any:
+    """Read a GROMACS topology (``.top``) structure file.
+
+    Structure only: ``[ atoms ]``, ``[ bonds ]``, ``[ pairs ]``,
+    ``[ angles ]``, ``[ dihedrals ]``. Connectivity indices are 1-based as in
+    the file. ``#include`` is not expanded.
+
+    Returns a molrs ``Frame`` (no field renames — top-native names already match
+    the historical molpy structure contract).
+    """
+    if frame is not None:
+        raise NotImplementedError(
+            "molrs.io.read_top does not accept an existing frame; "
+            "it always returns a new Frame."
+        )
+    return _wrap(_read_top(str(file)))
+
+
+def write_top(file: str | PathLike[str], frame: Any) -> None:
+    """Write a Frame as a minimal GROMACS topology structure file.
+
+    Molecule name from ``frame.meta["name"]`` (default ``"MOL"``). Connectivity
+    atom indices written as stored (1-based contract).
+    """
+    _write_top(str(file), frame)
+
+
+def read_lammps_molecule(file: str | PathLike[str], frame: Any = None) -> Any:
+    """Read a LAMMPS molecule template (native or JSON).
+
+    Returns a molrs ``Frame`` with canonical field names (``charge`` not ``q``).
+    """
+    if frame is not None:
+        raise NotImplementedError(
+            "molrs.io.read_lammps_molecule does not accept an existing frame; "
+            "it always returns a new Frame."
+        )
+    result = _read_lammps_molecule(str(file))
+    _lammps_fmt.canonicalize_frame(result)
+    return _wrap(result)
+
+
+def write_lammps_molecule(
+    file: str | PathLike[str],
+    frame: Any,
+    format: str = "native",
+) -> None:
+    """Write a Frame as a LAMMPS molecule template.
+
+    Args:
+        file: Output path.
+        frame: Molecule frame (canonical columns).
+        format: ``"native"`` or ``"json"``.
+    """
+    _write_lammps_molecule(str(file), frame, format)
+
+
 def read_trr(file: str | PathLike[str]) -> list[Any]:
     """Read all frames from a GROMACS TRR trajectory.
 
@@ -268,35 +457,65 @@ def write_lammps_data(
     ``atom_style`` is accepted for API parity but the writer derives the
     style from the columns present in ``frame['atoms']``.
 
-    The *frame* is localised (canonical → format-native column names)
-    before writing.
+    The frame must use **canonical** column names (``type_id``, ``mol_id``,
+    ``charge``, …). The Rust writer reads those keys directly — do **not**
+    localise to LAMMPS file spellings (``type``/``mol``/``q``); that renamed
+    ``type_id`` onto the string-typed schema key ``type`` and broke writes.
     """
-    _lammps_fmt.localize_frame(frame)
+    del atom_style  # API parity only
     _write_lammps(str(file), frame)
 
 
 def write_pdb(file: str | PathLike[str], frame: Any) -> None:
-    """Write a PDB file.  Localises *frame* in-place before writing."""
-    _pdb_fmt.localize_frame(frame)
+    """Write a PDB file.
+
+    Expects **canonical** columns (``element``, ``res_name``, ``res_id``, …).
+    Localising to PDB-native names (``symbol``/``resname``) was a bug: the
+    Rust writer already uses the canonical vocabulary.
+    """
     _write_pdb(str(file), frame)
 
 
 def write_pdb_trajectory(file: str | PathLike[str], frames: Any) -> None:
     """Write a list of Frames as a multi-MODEL PDB trajectory.
 
-    Each frame becomes one ``MODEL``/``ENDMDL`` block. Localises each frame
-    in-place before writing (same convention as :func:`write_pdb`).
+    Each frame becomes one ``MODEL``/``ENDMDL`` block. Frames must use
+    canonical column names (see :func:`write_pdb`).
     """
-    frames = list(frames)
-    for frame in frames:
-        _pdb_fmt.localize_frame(frame)
-    _write_pdb_trajectory(str(file), frames)
+    _write_pdb_trajectory(str(file), list(frames))
 
 
 def write_xyz(file: str | PathLike[str], frame: Any) -> None:
-    """Write an XYZ file.  Localises *frame* in-place before writing."""
-    _xyz_fmt.localize_frame(frame)
+    """Write an XYZ file.
+
+    Expects the canonical ``element`` column. Localising to ``symbol`` broke
+    the Rust writer, which looks up ``element``.
+    """
     _write_xyz(str(file), frame)
+
+
+def read_xsf(file: str | PathLike[str], frame: Any = None) -> Any:
+    """Read an XSF (XCrySDen) structure file.
+
+    Returns a molrs ``Frame`` with ``atomic_number``, ``element``, and
+    ``x``/``y``/``z``. Crystal structures carry a periodic box; molecules a
+    free box.
+    """
+    if frame is not None:
+        raise NotImplementedError(
+            "molrs.io.read_xsf does not accept an existing frame; "
+            "it always returns a new Frame."
+        )
+    return _wrap(_read_xsf(str(file)))
+
+
+def write_xsf(file: str | PathLike[str], frame: Any) -> None:
+    """Write a Frame to an XSF (XCrySDen) structure file.
+
+    Expects ``atomic_number`` and ``x``/``y``/``z`` on the atoms block. A
+    defined non-free box is written as ``CRYSTAL``; otherwise ``MOLECULE``.
+    """
+    _write_xsf(str(file), frame)
 
 
 def write_gro(file: str | PathLike[str], frame: Any) -> None:
@@ -516,8 +735,151 @@ def read_xtc_trajectory(file: PathInput | Sequence[PathInput]) -> TrajectoryRead
     return TrajectoryReader(readers, _noop_fmt)
 
 
+def read_lammps_log(
+    file: PathInput,
+    style: str = "default",
+) -> dict[str, Any]:
+    """Read a LAMMPS log file into a nested plain dict.
+
+    Parses thermo tables, loop timing, performance, CPU/MPI timing,
+    load-balance stats, neighbor statistics, and warnings. Unrecognized
+    lines are retained under each run's ``unparsed_log``.
+
+    Args:
+        file: Path to a LAMMPS log (e.g. ``log.lammps``).
+        style: Thermo style. Only ``"default"`` is currently parsed.
+
+    Returns:
+        Nested mapping suitable for JSON / dataclass hydration. Thermo
+        rows are ``list[list[float]]``.
+
+    Raises:
+        FileNotFoundError: If ``file`` does not exist.
+    """
+    return _read_lammps_log(str(file), style)
+
+
+def parse_lammps_log_text(
+    text: str,
+    path: str = "<string>",
+    style: str = "default",
+) -> dict[str, Any]:
+    """Parse a LAMMPS log from an in-memory string (no filesystem access).
+
+    Args:
+        text: Full log contents.
+        path: Value recorded on the result as ``path``.
+        style: Thermo style. Only ``"default"`` is currently parsed.
+
+    Returns:
+        Same nested shape as :func:`read_lammps_log`.
+    """
+    return _parse_lammps_log_text(text, path, style)
+
+
+def read_ac(path: PathInput) -> Frame:
+    """Read an Antechamber ``.ac`` file into a canonical Frame."""
+    return _wrap(_read_ac(str(path)))
+
+
+def read_frcmod(path: PathInput) -> dict[str, str]:
+    """Read an AMBER FRCMOD file into a section dictionary."""
+    return _read_frcmod(str(path))
+
+
+def parse_frcmod(text: str) -> dict[str, str]:
+    """Parse FRCMOD text into a section dictionary."""
+    return _parse_frcmod(text)
+
+
+def write_frcmod(path: PathInput, sections: dict[str, str]) -> None:
+    """Write FRCMOD sections to *path*."""
+    _write_frcmod(str(path), sections)
+
+
+def read_prep(path: PathInput) -> dict:
+    """Read an Amber prep file into a nested dict."""
+    return _read_prep(str(path))
+
+
+def write_prep(path: PathInput, residue: dict) -> None:
+    """Write an Amber prep residue dict to *path*."""
+    _write_prep(str(path), residue)
+
+
+def read_amber_prmtop_sections(path: PathInput) -> dict[str, list[str]]:
+    """Read raw prmtop ``%FLAG`` sections as ``{flag: [lines...]}``."""
+    return _read_amber_prmtop_sections(str(path))
+
+
+def prmtop_parse_pointers(lines: list[str]) -> dict[str, int]:
+    """Parse POINTERS lines into the historical meta map."""
+    return _prmtop_parse_pointers(list(lines))
+
+
+def prmtop_parse_a4_names(lines: list[str]) -> list[str]:
+    """Parse Fortran ``20a4`` name fields from section lines."""
+    return _prmtop_parse_a4_names(list(lines))
+
+
+def prmtop_decode_bond_params(
+    pointers: list[int], force_k: list[float], equil: list[float]
+) -> list[tuple]:
+    """Decode bond tables → ``(type, i, j, K, r0)`` (atoms 1-based)."""
+    return _prmtop_decode_bond_params(list(pointers), list(force_k), list(equil))
+
+
+def prmtop_decode_angle_params(
+    pointers: list[int], force_k: list[float], equil_rad: list[float]
+) -> list[tuple]:
+    """Decode angle tables → ``(type, i, j, k, K, theta0_deg)`` (1-based)."""
+    return _prmtop_decode_angle_params(list(pointers), list(force_k), list(equil_rad))
+
+
+def prmtop_decode_dihedral_params(
+    pointers: list[int],
+    force_k: list[float],
+    phase: list[float],
+    periodicity: list[float],
+) -> list[tuple]:
+    """Decode dihedral tables → ``(type, i, j, k, l, K, phase, n)`` (1-based)."""
+    return _prmtop_decode_dihedral_params(
+        list(pointers), list(force_k), list(phase), list(periodicity)
+    )
+
+
+def prmtop_decode_nonbond_params(
+    n_atom: int,
+    n_types: int,
+    atom_type_index: list[int],
+    nonbonded_parm_index: list[int],
+    acoef: list[float],
+    bcoef: list[float],
+    hbond_a: list[float] | None = None,
+    hbond_b: list[float] | None = None,
+) -> list[tuple]:
+    """Per-atom LJ ``(atom_1based, sigma, epsilon)``."""
+    return _prmtop_decode_nonbond_params(
+        n_atom,
+        n_types,
+        list(atom_type_index),
+        list(nonbonded_parm_index),
+        list(acoef),
+        list(bcoef),
+        list(hbond_a or []),
+        list(hbond_b or []),
+    )
+
+
 __all__ = [
     "raw",
+    # Store-type serialization. `Block` and `Frame` carry no `from_csv` /
+    # `from_bytes` of their own — a container that parses its own wire
+    # formats duplicates this module, one entry point per format.
+    "read_block_csv",
+    "write_block_csv",
+    "read_frame_bytes",
+    "write_frame_bytes",
     "SmilesIR",
     "read_lammps_data",
     "read_pdb",
@@ -526,6 +888,29 @@ __all__ = [
     "read_gro",
     "read_chgcar",
     "read_cube",
+    "read_mol2",
+    "read_top",
+    "read_amber_inpcrd",
+    "read_inpcrd",
+    "read_amber_prmtop",
+    "read_ac",
+    "read_frcmod",
+    "parse_frcmod",
+    "write_frcmod",
+    "read_prep",
+    "write_prep",
+    "read_amber_prmtop_sections",
+    "prmtop_parse_pointers",
+    "prmtop_parse_a4_names",
+    "prmtop_decode_bond_params",
+    "prmtop_decode_angle_params",
+    "prmtop_decode_dihedral_params",
+    "prmtop_decode_nonbond_params",
+    "read_prmtop",
+    "read_lammps_molecule",
+    "read_lammps_log",
+    "parse_lammps_log_text",
+    "read_xsf",
     "read_trr",
     "read_xtc",
     "write_lammps_data",
@@ -534,6 +919,10 @@ __all__ = [
     "write_xyz",
     "write_gro",
     "write_cube",
+    "write_mol2",
+    "write_top",
+    "write_lammps_molecule",
+    "write_xsf",
     "write_trr",
     "write_xtc",
     "write_smiles",
@@ -545,3 +934,70 @@ __all__ = [
     "read_trr_trajectory",
     "read_xtc_trajectory",
 ]
+
+
+def read_block_csv(
+    source: "str | PathLike[str] | StringIO",
+    *,
+    delimiter: str = ",",
+    encoding: str = "utf-8",
+    header: "list[str] | None" = None,
+    skip_empty_fields: bool = False,
+) -> Any:
+    """Read CSV into a :class:`Block`.
+
+    Accepts the same sources every other reader in this module does — a path,
+    or in-memory text via :class:`io.StringIO`. A bare ``str`` is a path when it
+    names an existing file and CSV text otherwise.
+
+    This replaces the former ``Block.from_csv`` classmethod: parsing a wire
+    format is a reader's job, and a container that grows one constructor per
+    format duplicates this module.
+    """
+    if isinstance(source, StringIO):
+        text = source.getvalue()
+    else:
+        path = Path(source)
+        text = (
+            path.read_text(encoding=encoding)
+            if (isinstance(source, PathLike) or path.exists())
+            else str(source)
+        )
+    d = delimiter if len(delimiter) == 1 else ","
+    if skip_empty_fields:
+        text = "\n".join(
+            d.join(part for part in line.split(d) if part != "")
+            for line in text.splitlines()
+        )
+    return _read_block_csv(text, d, header)
+
+
+def write_block_csv(
+    block: Any,
+    filepath: "str | PathLike[str] | None" = None,
+    *,
+    delimiter: str = ",",
+    header: bool = True,
+    encoding: str = "utf-8",
+) -> "str | None":
+    """Write a :class:`Block` as CSV — the inverse of :func:`read_block_csv`.
+
+    Returns the text when *filepath* is ``None``, else writes it and returns
+    ``None``.
+    """
+    d = delimiter if len(delimiter) == 1 else ","
+    text = _write_block_csv(block, d, header)
+    if filepath is None:
+        return text
+    Path(filepath).write_text(text, encoding=encoding)
+    return None
+
+
+def read_frame_bytes(data: bytes, format: str = "msgpack") -> Any:
+    """Rebuild a :class:`Frame` from streaming wire bytes.
+
+    The consumer half of a live stream: decode what a
+    ``molrs.stream.FrameServer`` put on the socket. Like every other reader here
+    the result is wrapped into the rich ``Frame`` subclass.
+    """
+    return _wrap(_read_frame_bytes(data, format))

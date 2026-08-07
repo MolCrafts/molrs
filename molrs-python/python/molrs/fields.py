@@ -29,6 +29,7 @@ __all__ = [
     "PdbFieldFormatter",
     "LammpsFieldFormatter",
     "XyzFieldFormatter",
+    "Mol2FieldFormatter",
 ]
 
 
@@ -101,14 +102,15 @@ class PdbFieldFormatter(FieldFormatter):
 class LammpsFieldFormatter(FieldFormatter):
     """LAMMPS ↔ canonical names.
 
-    ``type`` is a *numeric ordinal* in LAMMPS files; the vocabulary keeps that
-    apart from the force-field label, so it maps to ``type_id``.
+    Only charge/mol renames. **Never** map ``type`` ↔ ``type_id``: the frame
+    schema declares ``type`` as *string* (force-field label) and ``type_id`` as
+    *uint* (numeric ordinal). Renaming the uint column onto ``type`` either
+    fails the schema check or hides ``type_id`` from the Rust data writer.
     """
 
     _field_formatters: ClassVar[dict[str, str]] = {
         "q": "charge",
         "mol": "mol_id",
-        "type": "type_id",
     }
 
 
@@ -118,4 +120,19 @@ class XyzFieldFormatter(FieldFormatter):
     _field_formatters: ClassVar[dict[str, str]] = {
         "symbol": "element",
         "species": "element",
+    }
+
+
+class Mol2FieldFormatter(FieldFormatter):
+    """Tripos MOL2 ↔ canonical names.
+
+    ``atom_type`` is the SYBYL type label, mapped onto the shared string
+    ``type`` column. Substructure fields are residues.
+    """
+
+    _field_formatters: ClassVar[dict[str, str]] = {
+        "atom_type": "type",
+        "subst_id": "res_id",
+        "subst_name": "res_name",
+        "sybyl_bond_type": "type",
     }

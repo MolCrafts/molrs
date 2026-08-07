@@ -18,6 +18,8 @@ use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, oneshot};
 use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::protocol::CloseFrame;
+use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 
 use crate::core::store::frame::Frame;
 use crate::stream::{MessageFormat, StreamError, frame_to_bytes};
@@ -36,6 +38,23 @@ pub struct ServerConfig {
     pub buffer_size: usize,
     /// Reserved maximum stream rate in Hz. Not enforced in v1 (no-op).
     pub max_frame_rate: f64,
+    /// Shared secret a client must present before it receives anything.
+    ///
+    /// `None` (the default) accepts every connection — right for a loopback
+    /// bind you control, wrong for anything reachable by another user. A
+    /// listening socket with no token lets whoever can reach the port read the
+    /// whole trajectory *and* inject control commands, so set this whenever the
+    /// bind address is not `127.0.0.1`.
+    ///
+    /// The handshake matches the one MolVis already speaks, so a client learns
+    /// one shape rather than two:
+    ///
+    /// ```text
+    /// client → server   {"type":"hello","token":"…"}
+    /// server → client   {"type":"ready"}            (✓)
+    ///                   close(1008, "auth")         (✗ missing / wrong token)
+    /// ```
+    pub token: Option<String>,
 }
 
 impl Default for ServerConfig {
@@ -44,6 +63,7 @@ impl Default for ServerConfig {
             format: MessageFormat::MessagePack,
             buffer_size: 4,
             max_frame_rate: 0.0,
+            token: None,
         }
     }
 }
@@ -119,6 +139,7 @@ impl FrameServer {
         let addr = addr.into();
         let buffer_size = config.buffer_size.max(1);
         let format = config.format;
+        let token = config.token.clone();
 
         let (frame_tx, frame_rx) = bounded::<Bytes>(buffer_size);
         // Second receiver competes for messages so send() can free a slot when full.
@@ -169,6 +190,7 @@ impl FrameServer {
                         cmd_tx,
                         client_count_thread,
                         format,
+                        token,
                         shutdown_rx,
                     )
                     .await;
@@ -245,6 +267,24 @@ impl FrameServer {
             .unwrap_or_default()
     }
 
+    /// Blocking counterpart to [`recv_command_timeout`](Self::recv_command_timeout).
+    ///
+    /// The producer side of this server is synchronous by design — [`send`]
+    /// never blocks and never needs a runtime — so polling for a viewer's
+    /// command must not force the caller to own one either. A zero `timeout`
+    /// polls and returns immediately.
+    ///
+    /// Returns `None` on timeout and on a closed command channel, matching
+    /// [`recv_command`](Self::recv_command).
+    ///
+    /// [`send`]: Self::send
+    pub fn recv_command_blocking(&self, timeout: Duration) -> Option<ControlCommand> {
+        if timeout.is_zero() {
+            return self.shared.cmd_rx.try_recv().ok();
+        }
+        self.shared.cmd_rx.recv_timeout(timeout).ok()
+    }
+
     /// Signal the accept loop to stop and join the background thread.
     pub fn shutdown(self) {
         self.request_shutdown();
@@ -318,6 +358,7 @@ async fn run_server(
     cmd_tx: Sender<ControlCommand>,
     client_count: Arc<AtomicUsize>,
     format: MessageFormat,
+    token: Option<String>,
     mut shutdown_rx: oneshot::Receiver<()>,
 ) {
     let (bcast_tx, _) = broadcast::channel::<Bytes>(16);
@@ -343,8 +384,9 @@ async fn run_server(
                 let bcast_rx = bcast_tx.subscribe();
                 let cmd_tx = cmd_tx.clone();
                 let client_count = Arc::clone(&client_count);
+                let token = token.clone();
                 tokio::spawn(async move {
-                    handle_client(ws, bcast_rx, cmd_tx, format).await;
+                    handle_client(ws, bcast_rx, cmd_tx, format, token).await;
                     client_count.fetch_sub(1, Ordering::Relaxed);
                 });
             }
@@ -357,13 +399,71 @@ async fn run_server(
 
 type WsStream = tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>;
 
+/// A client's opening message when the server requires a token.
+#[derive(serde::Deserialize)]
+struct Hello {
+    #[serde(rename = "type")]
+    kind: String,
+    token: Option<String>,
+}
+
+/// Gate a freshly accepted socket on the shared secret.
+///
+/// Returns `true` once the client is cleared to receive frames. A server with
+/// no token configured clears everyone without exchanging anything, so an
+/// unauthenticated client of an unauthenticated server needs no handshake code
+/// at all.
+///
+/// The comparison is not constant-time. The secret is a per-run bearer token on
+/// a socket the operator chose to expose, not a stored credential, and the
+/// dominant risk here is an unauthenticated bind — not timing recovery of a
+/// token an attacker must already be able to reach.
+async fn authenticate(
+    write: &mut futures_util::stream::SplitSink<WsStream, Message>,
+    read: &mut futures_util::stream::SplitStream<WsStream>,
+    expected: Option<&str>,
+) -> bool {
+    let Some(expected) = expected else {
+        return true;
+    };
+
+    let offered = match read.next().await {
+        Some(Ok(Message::Text(text))) => serde_json::from_str::<Hello>(text.as_ref())
+            .ok()
+            .filter(|h| h.kind == "hello")
+            .and_then(|h| h.token),
+        _ => None,
+    };
+
+    if offered.as_deref() != Some(expected) {
+        let _ = write
+            .send(Message::Close(Some(CloseFrame {
+                code: CloseCode::Policy,
+                reason: "auth".into(),
+            })))
+            .await;
+        return false;
+    }
+
+    write
+        .send(Message::Text("{\"type\":\"ready\"}".into()))
+        .await
+        .is_ok()
+}
+
 async fn handle_client(
     ws: WsStream,
     mut bcast_rx: broadcast::Receiver<Bytes>,
     cmd_tx: Sender<ControlCommand>,
     format: MessageFormat,
+    token: Option<String>,
 ) {
     let (mut write, mut read) = ws.split();
+
+    // Nothing goes out before the client is cleared — not one frame.
+    if !authenticate(&mut write, &mut read, token.as_deref()).await {
+        return;
+    }
 
     loop {
         tokio::select! {
@@ -539,6 +639,7 @@ mod tests {
                 format: MessageFormat::MessagePack,
                 buffer_size: 1,
                 max_frame_rate: 0.0,
+                token: None,
             },
         )
         .expect("bind");
@@ -563,6 +664,7 @@ mod tests {
                 format: MessageFormat::MessagePack,
                 buffer_size: 1,
                 max_frame_rate: 0.0,
+                token: None,
             },
         )
         .expect("bind");
@@ -596,5 +698,96 @@ mod tests {
 
         ws.close(None).await.ok();
         server.shutdown();
+    }
+
+    fn token_server(token: &str) -> FrameServer {
+        FrameServer::bind_with(
+            "127.0.0.1:0",
+            ServerConfig {
+                token: Some(token.to_string()),
+                ..ServerConfig::default()
+            },
+        )
+        .expect("bind")
+    }
+
+    #[tokio::test]
+    async fn a_correct_token_is_cleared_and_then_receives_frames() {
+        let server = token_server("s3cret");
+        let url = format!("ws://{}", server.local_addr());
+        let (mut ws, _) = connect_async(&url).await.expect("connect");
+
+        ws.send(Message::Text(r#"{"type":"hello","token":"s3cret"}"#.into()))
+            .await
+            .expect("hello");
+        let ready = ws.next().await.expect("ready").expect("ready ok");
+        assert_eq!(ready.into_text().unwrap().as_str(), r#"{"type":"ready"}"#);
+
+        wait_clients(&server, 1).await;
+        server.send(&sample_frame(7)).expect("send");
+
+        let msg = ws.next().await.expect("frame").expect("frame ok");
+        let frame = bytes_to_frame(&msg.into_data(), MessageFormat::MessagePack).expect("decode");
+        let x = frame["atoms"].get_float("x").unwrap();
+        assert!((x[2] - 7.0).abs() < 1e-12);
+    }
+
+    /// The gate: a client that never proves the token must not receive a single
+    /// frame, even one published after it connected.
+    #[tokio::test]
+    async fn a_wrong_token_gets_no_frames_at_all() {
+        let server = token_server("s3cret");
+        let url = format!("ws://{}", server.local_addr());
+        let (mut ws, _) = connect_async(&url).await.expect("connect");
+
+        ws.send(Message::Text(r#"{"type":"hello","token":"guess"}"#.into()))
+            .await
+            .expect("hello");
+        server.send(&sample_frame(7)).expect("send");
+
+        // Whatever arrives, none of it may be a frame.
+        while let Some(Ok(msg)) = ws.next().await {
+            match msg {
+                Message::Close(_) => return,
+                Message::Binary(_) | Message::Text(_) => {
+                    panic!("an unauthenticated client received payload: {msg:?}")
+                }
+                _ => continue,
+            }
+        }
+    }
+
+    /// Skipping the handshake entirely is the same failure as getting it wrong —
+    /// silence must not be read as consent.
+    #[tokio::test]
+    async fn saying_nothing_is_not_authentication() {
+        let server = token_server("s3cret");
+        let url = format!("ws://{}", server.local_addr());
+        let (mut ws, _) = connect_async(&url).await.expect("connect");
+
+        drop(ws.send(Message::Close(None)).await);
+        server.send(&sample_frame(7)).expect("send");
+
+        while let Some(Ok(msg)) = ws.next().await {
+            if matches!(msg, Message::Binary(_) | Message::Text(_)) {
+                panic!("a silent client received payload: {msg:?}");
+            }
+        }
+    }
+
+    /// A tokenless server exchanges nothing — an existing client keeps working
+    /// with no handshake code.
+    #[tokio::test]
+    async fn no_token_configured_means_no_handshake() {
+        let server = FrameServer::bind("127.0.0.1:0").expect("bind");
+        let url = format!("ws://{}", server.local_addr());
+        let (mut ws, _) = connect_async(&url).await.expect("connect");
+        wait_clients(&server, 1).await;
+
+        server.send(&sample_frame(3)).expect("send");
+        let msg = ws.next().await.expect("frame").expect("frame ok");
+        let frame = bytes_to_frame(&msg.into_data(), MessageFormat::MessagePack).expect("decode");
+        let x = frame["atoms"].get_float("x").unwrap();
+        assert!((x[2] - 3.0).abs() < 1e-12);
     }
 }

@@ -7,6 +7,21 @@
 //! separate wire type. This module only adds the transport encoding: MessagePack
 //! (default) or JSON.
 
+//! Beyond the encoding this module also carries the live transport that uses
+//! it: [`ControlCommand`] (WASM-clean) and [`FrameServer`] (native only). They
+//! live here rather than under `io` because they pull third-party runtime
+//! dependencies — tokio, tungstenite, rmp-serde — that `io` must not acquire.
+
+pub mod message;
+
+pub use message::ControlCommand;
+
+#[cfg(not(target_arch = "wasm32"))]
+mod server;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub use server::{FrameServer, SendError, ServerConfig};
+
 use crate::core::store::frame::Frame;
 
 /// Encoding used for a streamed `Frame`.

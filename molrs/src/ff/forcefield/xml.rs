@@ -49,6 +49,13 @@ pub fn read_forcefield_xml(path: &str) -> Result<ForceField, String> {
 }
 
 /// Parse a [`ForceField`] from an XML string.
+///
+/// Supports three layouts:
+/// - **Generic** style-based (`<BondStyle name="harmonic">…`)
+/// - **MMFF** parameter tables (`<VdWParams>`, …)
+/// - **OpenMM / OPLS-AA pack** (`<AtomTypes>`, `<HarmonicBondForce>`, …) —
+///   delegated to [`OplsXmlReader`](crate::ff::forcefield::readers::opls::OplsXmlReader)
+///   so tip3p/oplsaa/clp no longer return an empty force field.
 pub fn read_forcefield_xml_str(xml: &str) -> Result<ForceField, String> {
     let doc = roxmltree::Document::parse(xml).map_err(|e| format!("XML parse error: {}", e))?;
 
@@ -58,6 +65,23 @@ pub fn read_forcefield_xml_str(xml: &str) -> Result<ForceField, String> {
             "Root element must be <ForceField>, got <{}>",
             root.tag_name().name()
         ));
+    }
+
+    // OpenMM-style packs use section names the generic/MMFF branches ignore.
+    // Detect them first so tip3p.xml is not silently empty.
+    let is_openmm_pack = root.children().filter(|n| n.is_element()).any(|n| {
+        matches!(
+            n.tag_name().name(),
+            "HarmonicBondForce"
+                | "HarmonicAngleForce"
+                | "RBTorsionForce"
+                | "NonbondedForce"
+                | "PeriodicTorsionForce"
+        )
+    });
+    if is_openmm_pack {
+        use crate::ff::forcefield::readers::ForceFieldReader;
+        return crate::ff::forcefield::readers::opls::OplsXmlReader::new().read_str(xml);
     }
 
     let name = root.attribute("name").unwrap_or("unnamed");

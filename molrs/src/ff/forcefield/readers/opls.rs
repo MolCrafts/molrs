@@ -78,11 +78,13 @@ impl ForceFieldReader for OplsXmlReader {
             ));
         }
 
-        let mut ff = ForceField::new(root.attribute("name").unwrap_or("OPLS-AA"));
+        // molpy / foyer convention: missing ``name`` → ``"Unknown"`` (not a
+        // hard-coded pack brand). Named packs (oplsaa) still set it on the root.
+        let mut ff = ForceField::new(root.attribute("name").unwrap_or("Unknown"));
 
-        // Two-pass for atom data: AtomTypes carries mass, NonbondedForce carries
-        // charge/sigma/epsilon, both keyed by the `opls_NNN` type name.
-        let mut masses: Vec<(String, f64)> = Vec::new();
+        // Two-pass for atom data: AtomTypes carries mass + class/element/def,
+        // NonbondedForce carries charge/sigma/epsilon, both keyed by type name.
+        let mut atom_rows: Vec<AtomTypeRow> = Vec::new();
         let mut nonbonded: Vec<NonbondedRow> = Vec::new();
         let mut coulomb14 = 0.5_f64;
         let mut lj14 = 0.5_f64;
@@ -94,32 +96,61 @@ impl ForceFieldReader for OplsXmlReader {
                         require_tag(&t, "Type")?;
                         let name = require_str(&t, "name")?.to_owned();
                         let mass = opt_f64(&t, "mass")?.unwrap_or(0.0);
-                        masses.push((name, mass));
+                        atom_rows.push(AtomTypeRow {
+                            name,
+                            mass,
+                            class: t.attribute("class").map(str::to_owned),
+                            element: t.attribute("element").map(str::to_owned),
+                            def: t.attribute("def").map(str::to_owned),
+                            desc: t.attribute("desc").map(str::to_owned),
+                            overrides: t.attribute("overrides").map(str::to_owned),
+                        });
                     }
                 }
                 "HarmonicBondForce" => parse_bonds(&mut ff, &sec)?,
                 "HarmonicAngleForce" => parse_angles(&mut ff, &sec)?,
                 "RBTorsionForce" => parse_dihedrals(&mut ff, &sec)?,
+                // CL&P / foyer: Fourier coeffs c0..c3 in kJ/mol under this tag.
+                "PeriodicTorsionForce" => parse_periodic_torsions(&mut ff, &sec)?,
                 "NonbondedForce" => {
                     coulomb14 = opt_f64(&sec, "coulomb14scale")?.unwrap_or(0.5);
                     lj14 = opt_f64(&sec, "lj14scale")?.unwrap_or(0.5);
                     for a in sec.children().filter(Node::is_element) {
-                        require_tag(&a, "Atom")?;
+                        // Skip NonbondedForce children that are not Atom rows
+                        // (e.g. UseAttributeFromResidue).
+                        if a.tag_name().name() != "Atom" {
+                            continue;
+                        }
                         nonbonded.push(NonbondedRow {
                             ty: require_str(&a, "type")?.to_owned(),
-                            charge: opt_f64(&a, "charge")?.unwrap_or(0.0),
+                            // TIP3P et al. use ``UseAttributeFromResidue`` and
+                            // omit charge on NonbondedForce/Atom — do not invent
+                            // ``0.0`` (that would overwrite charges on the graph
+                            // at assign time).
+                            charge: opt_f64(&a, "charge")?,
                             sigma: require_f64(&a, "sigma")? * NM_TO_ANGSTROM,
                             epsilon: require_f64(&a, "epsilon")? / KJ_PER_KCAL,
                         });
                     }
                 }
+                // OpenMM residue templates / alternate torsion spellings are not
+                // potential tables for this reader — skip rather than fail so
+                // tip3p.xml / clp.xml (and other OpenMM-style packs) load.
+                "Residues"
+                | "ImproperTorsionForce"
+                | "PeriodicImproperForce"
+                | "CustomTorsionForce"
+                | "CustomBondForce"
+                | "CustomAngleForce"
+                | "CustomNonbondedForce" => {}
                 other => {
                     return Err(format!("unknown OPLS section <{}>", other));
                 }
             }
         }
 
-        build_nonbonded(&mut ff, &masses, &nonbonded);
+        build_nonbonded(&mut ff, &atom_rows, &nonbonded);
+        ensure_class_wildcards(&mut ff, &atom_rows);
         // OPLS excludes 1-2/1-3 and scales 1-4 by the <NonbondedForce> values
         // (commonly 0.5 / 0.5). Owned by the ForceField, consumed by the pair
         // kernels.
@@ -131,34 +162,68 @@ impl ForceFieldReader for OplsXmlReader {
     }
 }
 
+/// One `<Type>` row of `<AtomTypes>` (mass + string metadata).
+struct AtomTypeRow {
+    name: String,
+    mass: f64,
+    class: Option<String>,
+    element: Option<String>,
+    def: Option<String>,
+    desc: Option<String>,
+    overrides: Option<String>,
+}
+
 /// One `<Atom>` row of `<NonbondedForce>`, already in molrs units.
 struct NonbondedRow {
     ty: String,
-    charge: f64,
+    charge: Option<f64>,
     sigma: f64,
     epsilon: f64,
 }
 
-/// Build the atom style (`full`: mass + charge per `opls_NNN`) and the two
+/// Build the atom style (`full`: mass + charge per type) and the two
 /// nonbonded pair styles (`lj/cut`: per-atom ε/σ; `coul/cut`: charges come from
 /// atoms at evaluation time). Combining rules and 1-4 scaling are NOT baked here
 /// — combining is the kernel's job, and the 1-4 weights live on the
 /// ForceField's `special_bonds` (set by the caller).
 ///
+/// String metadata on each atom type matches molpy's reader contract:
+/// ``type_`` (type name), ``class_`` (chemical class), ``element``, ``def_``.
+/// :class:`~molpy.typifier._matching.TypeClassIndex` keys bonded matching off
+/// these.
+///
 /// `coul/cut` is the **buffered** Coulomb `E = k·qᵢqⱼ/(D·(r + δ))`; OPLS is the
-/// unbuffered case (δ = 0, the semantic default) in vacuum, with CODATA's `k`. Those
-/// two constants are stated here because they are the *force field's*: the kernel
-/// has no default for them (MMFF's `k` is a different number, and both are correct).
-fn build_nonbonded(ff: &mut ForceField, masses: &[(String, f64)], nonbonded: &[NonbondedRow]) {
-    if !masses.is_empty() {
+/// unbuffered case (δ = 0, the semantic default) in vacuum, with CODATA's `k`.
+fn build_nonbonded(ff: &mut ForceField, atom_rows: &[AtomTypeRow], nonbonded: &[NonbondedRow]) {
+    if !atom_rows.is_empty() {
         let atom = ff.def_atomstyle("full");
-        for (name, mass) in masses {
+        for row in atom_rows {
             let charge = nonbonded
                 .iter()
-                .find(|r| &r.ty == name)
-                .map(|r| r.charge)
-                .unwrap_or(0.0);
-            atom.def_atomtype(name, &[("mass", *mass), ("charge", charge)]);
+                .find(|r| r.ty == row.name)
+                .and_then(|r| r.charge);
+            let mut numeric: Vec<(&str, f64)> = vec![("mass", row.mass)];
+            if let Some(q) = charge {
+                numeric.push(("charge", q));
+            }
+            atom.def_atomtype(&row.name, &numeric);
+            // type_ / class_ / element / def_ are string params used by typifiers.
+            atom.set_type_str_param(&row.name, "type_", &row.name);
+            if let Some(ref class) = row.class {
+                atom.set_type_str_param(&row.name, "class_", class);
+            }
+            if let Some(ref element) = row.element {
+                atom.set_type_str_param(&row.name, "element", element);
+            }
+            if let Some(ref def) = row.def {
+                atom.set_type_str_param(&row.name, "def_", def);
+            }
+            if let Some(ref desc) = row.desc {
+                atom.set_type_str_param(&row.name, "desc", desc);
+            }
+            if let Some(ref overrides) = row.overrides {
+                atom.set_type_str_param(&row.name, "overrides", overrides);
+            }
         }
     }
 
@@ -174,16 +239,106 @@ fn build_nonbonded(ff: &mut ForceField, masses: &[(String, f64)], nonbonded: &[N
     }
 }
 
+/// Class-only bond/angle endpoints need a placeholder AtomType with
+/// ``type_="*"`` and ``class_=<class>`` so TypeClassIndex / class-keyed
+/// matching can resolve them (molpy XML reader parity).
+fn ensure_class_wildcards(ff: &mut ForceField, atom_rows: &[AtomTypeRow]) {
+    use std::collections::HashSet;
+
+    let real_names: HashSet<String> = atom_rows.iter().map(|r| r.name.clone()).collect();
+    let mut endpoint_classes: HashSet<String> = HashSet::new();
+
+    // Classes declared on AtomTypes that are not themselves type names.
+    for row in atom_rows {
+        if let Some(ref c) = row.class
+            && !real_names.contains(c)
+        {
+            endpoint_classes.insert(c.clone());
+        }
+    }
+    // Bond / angle endpoint labels that aren't real atom-type names
+    // (class-keyed HarmonicBondForce rows).
+    for bt in ff.get_bondtypes() {
+        for part in [&bt.itom, &bt.jtom] {
+            if !real_names.contains(part) {
+                endpoint_classes.insert(part.clone());
+            }
+        }
+    }
+    for at in ff.get_angletypes() {
+        for part in [&at.itom, &at.jtom, &at.ktom] {
+            if !real_names.contains(part) {
+                endpoint_classes.insert(part.clone());
+            }
+        }
+    }
+    for dt in ff.get_dihedraltypes() {
+        for part in [&dt.itom, &dt.jtom, &dt.ktom, &dt.ltom] {
+            if !real_names.contains(part) {
+                endpoint_classes.insert(part.clone());
+            }
+        }
+    }
+
+    if endpoint_classes.is_empty() {
+        return;
+    }
+
+    // Prefer the existing "full" atom style; create one only if needed.
+    if ff.get_style("atom", "full").is_none() && ff.get_styles("atom").is_empty() {
+        ff.def_atomstyle("full");
+    }
+    let style_name = if ff.get_style("atom", "full").is_some() {
+        "full".to_owned()
+    } else {
+        ff.get_styles("atom")
+            .first()
+            .map(|s| s.name.clone())
+            .unwrap_or_else(|| "full".to_owned())
+    };
+    if ff.get_style("atom", &style_name).is_none() {
+        ff.def_atomstyle(&style_name);
+    }
+    let atom = ff
+        .get_style_mut("atom", &style_name)
+        .expect("atom style just ensured");
+
+    for class_name in endpoint_classes {
+        if real_names.contains(&class_name) {
+            continue;
+        }
+        if atom.get_atomtype(&class_name).is_some() {
+            continue;
+        }
+        atom.def_atomtype(&class_name, &[]);
+        atom.set_type_str_param(&class_name, "type_", "*");
+        atom.set_type_str_param(&class_name, "class_", &class_name);
+    }
+}
+
+/// OpenMM packs use either `classN` (chemical class) or `typeN` (atom type name).
+/// Missing both falls back to the wildcard ``*`` so incomplete writers
+/// (e.g. moltemplate XML without endpoint labels) still round-trip.
+fn class_or_type<'a>(node: &'a Node, n: usize) -> Result<&'a str, String> {
+    let class_key = format!("class{n}");
+    let type_key = format!("type{n}");
+    Ok(node
+        .attribute(class_key.as_str())
+        .or_else(|| node.attribute(type_key.as_str()))
+        .unwrap_or("*"))
+}
+
 fn parse_bonds(ff: &mut ForceField, sec: &Node) -> Result<(), String> {
     let style = ff.def_bondstyle("harmonic");
     for b in sec.children().filter(Node::is_element) {
         require_tag(&b, "Bond")?;
-        let c1 = require_str(&b, "class1")?;
-        let c2 = require_str(&b, "class2")?;
+        let c1 = class_or_type(&b, 1)?;
+        let c2 = class_or_type(&b, 2)?;
         let r0 = require_f64(&b, "length")? * NM_TO_ANGSTROM;
         // kJ/mol/nm² → kcal/mol/Å² : ÷4.184 (energy) ÷100 (nm²→Å²). Same ½ form.
-        let k0 = require_f64(&b, "k")? / (KJ_PER_KCAL * 100.0);
-        style.def_bondtype(c1, c2, &[("k0", k0), ("r0", r0)]);
+        let k = require_f64(&b, "k")? / (KJ_PER_KCAL * 100.0);
+        // Emit both `k` (molpy / LAMMPS surface) and `k0` (kernel alias).
+        style.def_bondtype(c1, c2, &[("k", k), ("k0", k), ("r0", r0)]);
     }
     Ok(())
 }
@@ -192,12 +347,13 @@ fn parse_angles(ff: &mut ForceField, sec: &Node) -> Result<(), String> {
     let style = ff.def_anglestyle("harmonic");
     for a in sec.children().filter(Node::is_element) {
         require_tag(&a, "Angle")?;
-        let c1 = require_str(&a, "class1")?;
-        let c2 = require_str(&a, "class2")?;
-        let c3 = require_str(&a, "class3")?;
+        let c1 = class_or_type(&a, 1)?;
+        let c2 = class_or_type(&a, 2)?;
+        let c3 = class_or_type(&a, 3)?;
         let theta0 = require_f64(&a, "angle")?; // already radians
-        let k0 = require_f64(&a, "k")? / KJ_PER_KCAL; // kJ/mol/rad² → kcal/mol/rad²
-        style.def_angletype(c1, c2, c3, &[("k0", k0), ("theta0", theta0)]);
+        let k = require_f64(&a, "k")? / KJ_PER_KCAL; // kJ/mol/rad² → kcal/mol/rad²
+        // Emit both `k` (molpy surface) and `k0` (kernel alias).
+        style.def_angletype(c1, c2, c3, &[("k", k), ("k0", k), ("theta0", theta0)]);
     }
     Ok(())
 }
@@ -219,6 +375,36 @@ fn parse_dihedrals(ff: &mut ForceField, sec: &Node) -> Result<(), String> {
             opt_f64(&d, "c5")?.unwrap_or(0.0),
         ];
         let [f1, f2, f3, f4] = rb_to_opls(rb);
+        style.def_dihedraltype(
+            c1,
+            c2,
+            c3,
+            c4,
+            &[("f1", f1), ("f2", f2), ("f3", f3), ("f4", f4)],
+        );
+    }
+    Ok(())
+}
+
+/// CL&P / foyer `PeriodicTorsionForce` rows carry OPLS Fourier coeffs
+/// ``c0..c3`` in kJ/mol (not the OpenMM k/periodicity/phase form). Convert
+/// to kcal/mol ``f1..f4`` on the `opls` dihedral style.
+fn parse_periodic_torsions(ff: &mut ForceField, sec: &Node) -> Result<(), String> {
+    let style = ff.def_dihedralstyle("opls");
+    for d in sec.children().filter(Node::is_element) {
+        if d.tag_name().name() != "Proper" {
+            // Improper children under PeriodicTorsionForce are rare; skip.
+            continue;
+        }
+        let c1 = class_or_type(&d, 1)?;
+        let c2 = class_or_type(&d, 2)?;
+        let c3 = class_or_type(&d, 3)?;
+        let c4 = class_or_type(&d, 4)?;
+        // Prefer foyer/CL&P Fourier spelling (c0..c3); fall back to zero terms.
+        let f1 = opt_f64(&d, "c0")?.unwrap_or(0.0) / KJ_PER_KCAL;
+        let f2 = opt_f64(&d, "c1")?.unwrap_or(0.0) / KJ_PER_KCAL;
+        let f3 = opt_f64(&d, "c2")?.unwrap_or(0.0) / KJ_PER_KCAL;
+        let f4 = opt_f64(&d, "c3")?.unwrap_or(0.0) / KJ_PER_KCAL;
         style.def_dihedraltype(
             c1,
             c2,

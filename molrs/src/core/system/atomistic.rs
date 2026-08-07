@@ -546,6 +546,21 @@ impl Atomistic {
 
     /// Build from a [`Frame`], registering the standard kinds first so bond /
     /// angle / dihedral / improper blocks are read back.
+    ///
+    /// # Bond classes are read, never inferred
+    ///
+    /// A `bonds` block states its classes per bond in a [`keys::BOND_TYPE`]
+    /// column, and this reader reproduces exactly what is there. Where the
+    /// column is **absent** — a PDB `CONECT` list, a GROMACS `.top`, an XYZ
+    /// `Connct` extension, all of which carry connectivity and no orders —
+    /// every bond stays [`BondType::Unknown`]. That is the honest reading:
+    /// the file did not say, so neither does the graph.
+    ///
+    /// Consumers that need a class where none was stated apply their own
+    /// fallback. A conformer search may reasonably treat an unclassed bond as
+    /// rotatable; an aromaticity perceiver must not. That decision belongs to
+    /// them, not here — inferring `Single` at read time would hand every
+    /// consumer a guess indistinguishable from a fact.
     pub fn from_frame(frame: &Frame) -> Result<Self, MolRsError> {
         let mut mol = Self::new();
         mol.graph.read_frame(frame)?;
@@ -945,6 +960,81 @@ mod tests {
         assert_eq!(mol2.n_bonds(), 1);
         assert_eq!(mol2.n_angles(), 1);
         assert_eq!(mol2.n_impropers(), 1);
+    }
+
+    /// A hand-built frame carrying only `atomi` / `atomj` has no class column;
+    /// every bond must come back `Single`, matching `add_bond`'s default, or
+    /// rotatable-bond perception silently sees nothing.
+    /// Connectivity without stated orders — a PDB `CONECT` list, a GROMACS
+    /// `.top` — must read back `Unknown`, not a guessed `Single`. Consumers
+    /// that need a class apply their own fallback; the reader stays faithful
+    /// to the file.
+    #[test]
+    fn from_frame_leaves_unstated_bond_type_unknown() {
+        use crate::store::block::Block;
+        use ndarray::Array1;
+
+        let mut atoms = Block::new();
+        for k in ["x", "y", "z"] {
+            atoms
+                .insert(k, Array1::from_vec(vec![0.0_f64, 1.0, 2.0]).into_dyn())
+                .unwrap();
+        }
+        let mut bonds = Block::new();
+        bonds
+            .insert("atomi", Array1::from_vec(vec![0u32, 1]).into_dyn())
+            .unwrap();
+        bonds
+            .insert("atomj", Array1::from_vec(vec![1u32, 2]).into_dyn())
+            .unwrap();
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms);
+        frame.insert("bonds", bonds);
+
+        let mol = Atomistic::from_frame(&frame).unwrap();
+        assert_eq!(mol.n_bonds(), 2, "connectivity is read");
+        for (id, _) in mol.bonds() {
+            assert_eq!(
+                mol.bond_type(id),
+                BondType::Unknown,
+                "an unstated class must not be inferred"
+            );
+        }
+    }
+
+    /// A stated class is read back per bond, exactly as written — including an
+    /// explicit `0`, which means "the input said it does not know".
+    #[test]
+    fn from_frame_keeps_stated_bond_type_per_bond() {
+        use crate::store::block::Block;
+        use ndarray::Array1;
+
+        let mut atoms = Block::new();
+        for k in ["x", "y", "z"] {
+            atoms
+                .insert(k, Array1::from_vec(vec![0.0_f64, 1.0, 2.0, 3.0]).into_dyn())
+                .unwrap();
+        }
+        let mut bonds = Block::new();
+        bonds
+            .insert("atomi", Array1::from_vec(vec![0u32, 1, 2]).into_dyn())
+            .unwrap();
+        bonds
+            .insert("atomj", Array1::from_vec(vec![1u32, 2, 3]).into_dyn())
+            .unwrap();
+        bonds
+            .insert("bond_type", Array1::from_vec(vec![2u32, 4, 0]).into_dyn())
+            .unwrap();
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms);
+        frame.insert("bonds", bonds);
+
+        let mol = Atomistic::from_frame(&frame).unwrap();
+        let got: Vec<BondType> = mol.bonds().map(|(id, _)| mol.bond_type(id)).collect();
+        assert_eq!(
+            got,
+            vec![BondType::Double, BondType::Aromatic, BondType::Unknown]
+        );
     }
 
     #[test]

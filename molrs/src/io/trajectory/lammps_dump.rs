@@ -629,6 +629,9 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
         xy: bounds.xy,
         xz: bounds.xz,
         yz: bounds.yz,
+        has_x: true,
+        has_y: true,
+        has_z: true,
     };
     let pbc = pbc_from_boundary_tokens(&bounds.boundary_raw);
     if let Some(simbox) = simbox_from_bounds(&shared_bounds, pbc)? {

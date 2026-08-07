@@ -50,15 +50,6 @@ fn insert_float_col(block: &mut Block, key: &str, vals: Vec<F>) -> Result<()> {
     block.insert(key, arr).map_err(invalid_data)
 }
 
-fn insert_int_col(block: &mut Block, key: &str, vals: Vec<I>) -> Result<()> {
-    let n = vals.len();
-    let arr = Array1::from_vec(vals)
-        .into_shape_with_order(IxDyn(&[n]))
-        .map_err(invalid_data)?
-        .into_dyn();
-    block.insert(key, arr).map_err(invalid_data)
-}
-
 fn insert_uint_col(block: &mut Block, key: &str, vals: Vec<U>) -> Result<()> {
     let n = vals.len();
     let arr = Array1::from_vec(vals)
@@ -338,7 +329,13 @@ fn build_frame(name: String, atoms: Vec<Mol2Atom>, bonds: Vec<Mol2Bond>) -> Resu
     insert_float_col(&mut block, "z", z)?;
     insert_str_col(&mut block, "atom_type", a_type)?;
     if have_subst {
-        insert_int_col(&mut block, "subst_id", subst_id)?;
+        // Canonical ``res_id`` is uint; store subst_id as U so rename
+        // (Mol2FieldFormatter) does not fail the frame schema.
+        insert_uint_col(
+            &mut block,
+            "subst_id",
+            subst_id.iter().map(|&v| v.max(0) as U).collect(),
+        )?;
         insert_str_col(&mut block, "subst_name", subst_name)?;
     }
     if have_charge {

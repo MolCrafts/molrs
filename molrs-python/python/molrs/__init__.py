@@ -20,6 +20,7 @@ the Python path and the Rust path are the same word:
 * :mod:`molrs.builder` — structure builders (graphene, nanotubes, SARW paths).
 * :mod:`molrs.compute` — analysis, one subpackage per ``molrs::compute`` domain.
 * :mod:`molrs.signal` — FFT autocorrelation, windows, frequency grids.
+* :mod:`molrs.stream` — live Frame streaming over WebSocket.
 
 Each of those names has exactly one spelling — ``molrs.io.SmilesIR`` and
 nothing else — so there is one thing to learn, document, and grep for.
@@ -85,6 +86,7 @@ from . import conformer
 from . import ff
 from . import builder
 from . import io
+from . import stream
 from . import optimize
 from . import perceive
 from . import signal
@@ -114,6 +116,7 @@ __all__ = [
     "ff",
     "builder",
     "io",
+    "stream",
     "optimize",
     "perceive",
     "signal",

@@ -7,9 +7,9 @@ extension). Numeric / bool / string columns live in the Rust Store and are
 exposed as zero-copy numpy views; this layer adds no per-access data copies.
 
 Only numpy-representable dtypes (float / int / bool / str) are supported — there
-is no Python-side object-column overflow. ``Block`` is the tidy columnar table
-and owns ``to_csv`` / ``from_csv``; ``Frame`` is a container of named blocks and
-deliberately has no CSV methods.
+is no Python-side object-column overflow. ``Block`` is the tidy columnar table;
+``Frame`` is a container of named blocks. Neither parses a wire format —
+CSV and streaming bytes are read and written through ``molrs.io``.
 """
 
 from collections.abc import Iterator, Mapping, MutableMapping
@@ -279,68 +279,6 @@ class Block(_RsBlock, MutableMapping[str, np.ndarray]):
             block._source = data
             return block
         return cls({k: np.asarray(v) for k, v in data.items()})
-
-    @classmethod
-    def from_csv(
-        cls,
-        source: "str | Path | StringIO",
-        *,
-        delimiter: str = ",",
-        encoding: str = "utf-8",
-        header: list[str] | None = None,
-        skipinitialspace: bool = False,
-    ) -> "Block":
-        """Create a Block from CSV.
-
-        The CSV grammar + per-column dtype inference (int → float → str) is
-        implemented in the molrs Rust core; this wrapper only resolves *source*
-        (text, a file path, or a ``StringIO``) to text and adopts the parsed
-        core block as a rich :class:`Block`.
-
-        Args:
-            skipinitialspace: When True, runs of the delimiter are collapsed so
-                whitespace-aligned columns (e.g. LAMMPS data sections) parse
-                cleanly. The core also trims each field; combined, leading and
-                repeated delimiters never produce spurious empty columns.
-        """
-        if isinstance(source, StringIO):
-            text = source.getvalue()
-        elif isinstance(source, Path) or (
-            isinstance(source, str) and Path(source).exists()
-        ):
-            text = Path(source).read_text(encoding=encoding)
-        else:
-            text = str(source)  # already CSV text
-        d = delimiter if len(delimiter) == 1 else ","
-        if skipinitialspace:
-            # Collapse consecutive delimiters per line so aligned/whitespace-
-            # padded columns don't yield empty fields.
-            text = "\n".join(
-                d.join(part for part in line.split(d) if part != "")
-                for line in text.splitlines()
-            )
-        return cls.from_dict(_RsBlock.from_csv(text, d, header))
-
-    def to_csv(
-        self,
-        filepath: "str | Path | None" = None,
-        *,
-        delimiter: str = ",",
-        header: bool = True,
-        encoding: str = "utf-8",
-    ) -> "str | None":
-        """Serialize the block to CSV (inverse of :meth:`from_csv`).
-
-        CSV serialization lives in the molrs Rust core; this wrapper only writes
-        the produced text to *filepath* (returning ``None``) or returns it as a
-        string when *filepath* is ``None``.
-        """
-        d = delimiter if len(delimiter) == 1 else ","
-        text = _RsBlock.to_csv(self._backing(), d, header)
-        if filepath is None:
-            return text
-        Path(filepath).write_text(text, encoding=encoding)
-        return None
 
     def copy(self) -> "Block":
         """Deep copy (data copied into a new Rust Store)."""

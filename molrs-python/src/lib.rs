@@ -88,6 +88,14 @@ use compute::{
 
 mod signal;
 
+// Live Frame streaming (`molrs::stream`). `ControlCommand` is portable;
+// `FrameServer` binds a listener and is native-only, gated exactly as the
+// Rust `molrs::stream::server` module is.
+mod stream;
+use stream::PyControlCommand;
+#[cfg(not(target_arch = "wasm32"))]
+use stream::PyFrameServer;
+
 /// Register the `keys` submodule mirroring `molrs_core::store::keys` so Python code
 /// references the field-name convention by name (`molrs.keys.X`) instead of
 /// scattering string literals.
@@ -121,6 +129,11 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
         ::molrs::store::frame::FRAME_SCHEMA_VERSION,
     )?;
 
+    // Live Frame streaming
+    m.add_class::<PyControlCommand>()?;
+    #[cfg(not(target_arch = "wasm32"))]
+    m.add_class::<PyFrameServer>()?;
+
     // Native units
     m.add_class::<PyUnit>()?;
     m.add_class::<PyQuantity>()?;
@@ -128,7 +141,11 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // I/O + SMILES
     // Readers
-    m.add_function(wrap_pyfunction!(io::read_pdb, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_block_csv, m)?)?;
+m.add_function(wrap_pyfunction!(io::write_block_csv, m)?)?;
+m.add_function(wrap_pyfunction!(io::read_frame_bytes, m)?)?;
+m.add_function(wrap_pyfunction!(io::write_frame_bytes, m)?)?;
+m.add_function(wrap_pyfunction!(io::read_pdb, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_pdb_trajectory, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_xyz, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_xyz_trajectory, m)?)?;
@@ -146,6 +163,33 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(io::read_chgcar_file, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_cube_file, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_cube_file, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_mol2, m)?)?;
+    m.add_function(wrap_pyfunction!(io::write_mol2, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_top, m)?)?;
+    m.add_function(wrap_pyfunction!(io::write_top, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_amber_inpcrd, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_inpcrd, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_amber_prmtop, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_prmtop, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_ac, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_frcmod, m)?)?;
+    m.add_function(wrap_pyfunction!(io::parse_frcmod, m)?)?;
+    m.add_function(wrap_pyfunction!(io::write_frcmod, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_prep, m)?)?;
+    m.add_function(wrap_pyfunction!(io::write_prep, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_amber_prmtop_sections, m)?)?;
+    m.add_function(wrap_pyfunction!(io::prmtop_parse_pointers, m)?)?;
+    m.add_function(wrap_pyfunction!(io::prmtop_parse_a4_names, m)?)?;
+    m.add_function(wrap_pyfunction!(io::prmtop_decode_bond_params, m)?)?;
+    m.add_function(wrap_pyfunction!(io::prmtop_decode_angle_params, m)?)?;
+    m.add_function(wrap_pyfunction!(io::prmtop_decode_dihedral_params, m)?)?;
+    m.add_function(wrap_pyfunction!(io::prmtop_decode_nonbond_params, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_lammps_molecule, m)?)?;
+    m.add_function(wrap_pyfunction!(io::write_lammps_molecule, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_xsf, m)?)?;
+    m.add_function(wrap_pyfunction!(io::write_xsf, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_lammps_log, m)?)?;
+    m.add_function(wrap_pyfunction!(io::parse_lammps_log_text, m)?)?;
     // Writers
     m.add_function(wrap_pyfunction!(io::write_gro, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_pdb, m)?)?;
@@ -233,8 +277,18 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(ff::read_opls_xml_str_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::read_lammps_forcefield_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::read_lammps_forcefield_str_py, m)?)?;
+    m.add_function(wrap_pyfunction!(ff::read_amber_prmtop_ff_py, m)?)?;
+    m.add_function(wrap_pyfunction!(ff::read_amber_prmtop_ff_str_py, m)?)?;
+    m.add_function(wrap_pyfunction!(ff::read_gromacs_top_ff_py, m)?)?;
+    m.add_function(wrap_pyfunction!(ff::read_gromacs_top_ff_str_py, m)?)?;
+    m.add_function(wrap_pyfunction!(ff::write_gromacs_top_ff_py, m)?)?;
+    m.add_function(wrap_pyfunction!(ff::write_gromacs_top_ff_str_py, m)?)?;
+    m.add_function(wrap_pyfunction!(ff::write_forcefield_xml_py, m)?)?;
+    m.add_function(wrap_pyfunction!(ff::write_forcefield_xml_str_py, m)?)?;
+    m.add_function(wrap_pyfunction!(ff::read_lammps_data_coeffs_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::write_lammps_forcefield_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::write_lammps_forcefield_str_py, m)?)?;
+    m.add_function(wrap_pyfunction!(ff::write_lammps_data_coeffs_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::intramolecular_pairs_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::extract_coords_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::compute_k_ij_py, m)?)?;

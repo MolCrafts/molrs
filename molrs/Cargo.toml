@@ -56,11 +56,10 @@ conformer = ["ff", "dep:once_cell"]
 serde     = []
 # Live Frame streaming — MolRec-aligned transport encoding (MessagePack/JSON)
 # over the `serde`-serializable model. WASM-clean; intentionally NOT in `full`.
-stream    = ["serde", "dep:rmp-serde"]
+stream    = ["serde", "dep:rmp-serde", "dep:tokio", "dep:tokio-tungstenite", "dep:crossbeam-channel", "dep:futures-util", "dep:bytes"]
 # WebSocket Frame streaming + bidirectional control. Heavy networking deps
 # (tokio multi-thread runtime, tungstenite); intentionally NOT in `full`.
 # Reuses `stream` for wire encoding; `message` is WASM-clean, `server` is not.
-net       = ["stream", "dep:tokio", "dep:tokio-tungstenite", "dep:crossbeam-channel", "dep:futures-util", "dep:bytes"]
 
 # Core knobs.
 rayon      = ["dep:rayon"]

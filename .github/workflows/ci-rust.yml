@@ -4,9 +4,6 @@ on:
   workflow_call:
   workflow_dispatch:
 
-# Three independent jobs — never serialise fmt → clippy → test.
-# Unit suite is `--lib` only. No integration-binary suite in CI.
-
 jobs:
   fmt:
     name: rustfmt
@@ -44,9 +41,5 @@ jobs:
         with:
           shared-key: unit
           workspaces: ". -> target"
-      # IO fixtures (LAMMPS data, chemfiles corpus, …) live in MolCrafts/tests-data.
-      # Must land before --lib tests that resolve ../tests-data/<format>/.
-      - name: Fetch tests-data
-        run: bash scripts/fetch-test-data.sh
-      - name: Unit tests
-        run: cargo test -p molcrafts-molrs --lib --features full,filesystem
+      - run: bash scripts/fetch-test-data.sh
+      - run: cargo test -p molcrafts-molrs --lib --features full,filesystem
