@@ -726,10 +726,9 @@ fn match_performance(line: &str) -> Option<PerformanceMatch> {
     // either "C timesteps/s" or "C timesteps/s, D units"
     let (tps_s, atom_part) = if let Some((a, b)) = rest.split_once(" timesteps/s,") {
         (a, Some(b.trim()))
-    } else if let Some(a) = rest.strip_suffix(" timesteps/s") {
-        (a, None)
     } else {
-        return None;
+        let a = rest.strip_suffix(" timesteps/s")?;
+        (a, None)
     };
     let timesteps_per_second = tps_s.trim().parse().ok()?;
     let (atom_steps, atom_units) = match atom_part {
