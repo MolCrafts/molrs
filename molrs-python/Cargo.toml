@@ -32,10 +32,10 @@ molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = 
 #
 # `net` is unconditional, not a Cargo feature here: molrs declares tokio /
 # tungstenite under `cfg(not(target_arch = "wasm32"))` and gates
-# `molrs::net::server` the same way, so a Pyodide (wasm32-emscripten) build
+# `molrs::stream::server` the same way, so a Pyodide (wasm32-emscripten) build
 # compiles only the WASM-clean `ControlCommand` wire types and links no
 # networking stack. `net` pulls in `stream` (the MessagePack/JSON Frame codec).
-molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.12.2", default-features = false, features = ["full", "net"] }
+molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.12.2", default-features = false, features = ["full", "stream"] }
 
 [features]
 default = ["fs"]

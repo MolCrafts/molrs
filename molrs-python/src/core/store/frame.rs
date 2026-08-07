@@ -464,51 +464,6 @@ impl PyFrame {
         Self::from_core_frame(self.clone_core_frame()?)
     }
 
-    /// Encode this frame as streaming wire bytes.
-    ///
-    /// The inverse of :meth:`from_bytes`. This is the encoding
-    /// :class:`FrameServer` puts on the wire, so a consumer decodes a live
-    /// stream with :meth:`from_bytes` and never re-derives the layout.
-    ///
-    /// Parameters
-    /// ----------
-    /// format : {"msgpack", "json"}
-    ///     Wire encoding. MessagePack (default) is compact binary; JSON is
-    ///     text, for debugging and non-Rust peers.
-    ///
-    /// Returns
-    /// -------
-    /// bytes
-    #[pyo3(signature = (format = "msgpack"))]
-    fn to_bytes<'py>(&self, py: Python<'py>, format: &str) -> PyResult<Bound<'py, PyBytes>> {
-        let fmt = message_format(format)?;
-        let bytes = self
-            .with_frame(|f| molrs::stream::frame_to_bytes(f, fmt))?
-            .map_err(py_value_err)?;
-        Ok(PyBytes::new(py, &bytes))
-    }
-
-    /// Rebuild a frame from streaming wire bytes.
-    ///
-    /// Parameters
-    /// ----------
-    /// data : bytes
-    ///     A payload produced by :meth:`to_bytes` or by a Rust
-    ///     ``molrs::net::FrameServer``.
-    /// format : {"msgpack", "json"}
-    ///     Wire encoding the payload was written with.
-    ///
-    /// Returns
-    /// -------
-    /// Frame
-    #[staticmethod]
-    #[pyo3(signature = (data, format = "msgpack"))]
-    fn from_bytes(data: &[u8], format: &str) -> PyResult<Self> {
-        let fmt = message_format(format)?;
-        let frame = molrs::stream::bytes_to_frame(data, fmt).map_err(py_value_err)?;
-        Self::from_core_frame(frame)
-    }
-
     fn __repr__(&self) -> PyResult<String> {
         self.with_frame(|f| {
             let keys: Vec<&str> = f.keys().collect();

@@ -13,6 +13,7 @@ from io import StringIO
 import numpy as np
 import pytest
 
+import molrs.io as mio
 import molrs
 from molrs.frame import Block, Frame
 
@@ -250,37 +251,37 @@ class TestBlockCsv:
                 "name": ["p", "q"],
             }
         )
-        text = src.to_csv()
-        rt = Block.from_csv(StringIO(text))
+        text = mio.write_block_csv(src, )
+        rt = mio.read_block_csv(StringIO(text))
         np.testing.assert_allclose(rt["x"], [1.0, 2.0])
         np.testing.assert_array_equal(rt["id"], [10, 20])
         assert list(rt["name"]) == ["p", "q"]
 
     def test_dtype_inference(self):
-        rt = Block.from_csv(StringIO("a,b,c\n1,1.5,x\n2,2.5,y\n"))
+        rt = mio.read_block_csv(StringIO("a,b,c\n1,1.5,x\n2,2.5,y\n"))
         assert str(rt["a"].dtype).startswith("int")
         assert str(rt["b"].dtype).startswith("float")
         assert list(rt["c"]) == ["x", "y"]
 
     def test_headerless_with_names(self):
-        rt = Block.from_csv(StringIO("1,2\n3,4\n"), header=["a", "b"])
+        rt = mio.read_block_csv(StringIO("1,2\n3,4\n"), header=["a", "b"])
         np.testing.assert_array_equal(rt["a"], [1, 3])
         np.testing.assert_array_equal(rt["b"], [2, 4])
 
     def test_empty_csv_raises_value_error(self):
         with pytest.raises(ValueError):
-            Block.from_csv(StringIO(""))
+            mio.read_block_csv(StringIO(""))
 
     def test_to_csv_no_header(self):
         b = Block({"count": np.array([1, 2], dtype=np.int64)})
-        text = b.to_csv(header=False)
+        text = mio.write_block_csv(b, header=False)
         assert "count" not in text.splitlines()[0]
 
     def test_to_csv_writes_file(self, tmp_path):
         b = Block({"x": [1.0, 2.0]})
         path = tmp_path / "out.csv"
-        assert b.to_csv(path) is None
-        rt = Block.from_csv(path)
+        assert mio.write_block_csv(b, path) is None
+        rt = mio.read_block_csv(path)
         np.testing.assert_allclose(rt["x"], [1.0, 2.0])
 
 

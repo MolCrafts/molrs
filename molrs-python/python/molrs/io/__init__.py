@@ -25,7 +25,9 @@ graph — so it lives in :mod:`molrs.perceive`.
 from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
+from io import StringIO
 from os import PathLike
+from pathlib import Path
 from typing import Any, Union, overload
 
 from . import raw
@@ -75,6 +77,10 @@ from .._lib import (
     prmtop_decode_dihedral_params as _prmtop_decode_dihedral_params,
     prmtop_decode_nonbond_params as _prmtop_decode_nonbond_params,
     read_lammps_molecule as _read_lammps_molecule,
+    read_block_csv as _read_block_csv,
+    read_frame_bytes as _read_frame_bytes,
+    write_block_csv as _write_block_csv,
+    write_frame_bytes,
     read_pdb as _read_pdb,
     read_pdb_trajectory as _read_pdb_trajectory,
     read_trr as _read_trr,
@@ -867,6 +873,13 @@ def prmtop_decode_nonbond_params(
 
 __all__ = [
     "raw",
+    # Store-type serialization. `Block` and `Frame` carry no `from_csv` /
+    # `from_bytes` of their own — a container that parses its own wire
+    # formats duplicates this module, one entry point per format.
+    "read_block_csv",
+    "write_block_csv",
+    "read_frame_bytes",
+    "write_frame_bytes",
     "SmilesIR",
     "read_lammps_data",
     "read_pdb",
@@ -921,3 +934,70 @@ __all__ = [
     "read_trr_trajectory",
     "read_xtc_trajectory",
 ]
+
+
+def read_block_csv(
+    source: "str | PathLike[str] | StringIO",
+    *,
+    delimiter: str = ",",
+    encoding: str = "utf-8",
+    header: "list[str] | None" = None,
+    skip_empty_fields: bool = False,
+) -> Any:
+    """Read CSV into a :class:`Block`.
+
+    Accepts the same sources every other reader in this module does — a path,
+    or in-memory text via :class:`io.StringIO`. A bare ``str`` is a path when it
+    names an existing file and CSV text otherwise.
+
+    This replaces the former ``Block.from_csv`` classmethod: parsing a wire
+    format is a reader's job, and a container that grows one constructor per
+    format duplicates this module.
+    """
+    if isinstance(source, StringIO):
+        text = source.getvalue()
+    else:
+        path = Path(source)
+        text = (
+            path.read_text(encoding=encoding)
+            if (isinstance(source, PathLike) or path.exists())
+            else str(source)
+        )
+    d = delimiter if len(delimiter) == 1 else ","
+    if skip_empty_fields:
+        text = "\n".join(
+            d.join(part for part in line.split(d) if part != "")
+            for line in text.splitlines()
+        )
+    return _read_block_csv(text, d, header)
+
+
+def write_block_csv(
+    block: Any,
+    filepath: "str | PathLike[str] | None" = None,
+    *,
+    delimiter: str = ",",
+    header: bool = True,
+    encoding: str = "utf-8",
+) -> "str | None":
+    """Write a :class:`Block` as CSV — the inverse of :func:`read_block_csv`.
+
+    Returns the text when *filepath* is ``None``, else writes it and returns
+    ``None``.
+    """
+    d = delimiter if len(delimiter) == 1 else ","
+    text = _write_block_csv(block, d, header)
+    if filepath is None:
+        return text
+    Path(filepath).write_text(text, encoding=encoding)
+    return None
+
+
+def read_frame_bytes(data: bytes, format: str = "msgpack") -> Any:
+    """Rebuild a :class:`Frame` from streaming wire bytes.
+
+    The consumer half of a live stream: decode what a
+    ``molrs.stream.FrameServer`` put on the socket. Like every other reader here
+    the result is wrapped into the rich ``Frame`` subclass.
+    """
+    return _wrap(_read_frame_bytes(data, format))

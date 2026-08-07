@@ -8,8 +8,8 @@
 
 use ndarray::Array1;
 
-use super::Block;
-use super::column::Column;
+use crate::core::store::block::Block;
+use crate::core::store::block::Column;
 use crate::types::{F, I};
 
 /// Parse CSV `text` into a [`Block`].

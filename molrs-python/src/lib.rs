@@ -88,13 +88,13 @@ use compute::{
 
 mod signal;
 
-// Live Frame streaming (`molrs::net`). `ControlCommand` is portable;
+// Live Frame streaming (`molrs::stream`). `ControlCommand` is portable;
 // `FrameServer` binds a listener and is native-only, gated exactly as the
-// Rust `molrs::net::server` module is.
-mod net;
-use net::PyControlCommand;
+// Rust `molrs::stream::server` module is.
+mod stream;
+use stream::PyControlCommand;
 #[cfg(not(target_arch = "wasm32"))]
-use net::PyFrameServer;
+use stream::PyFrameServer;
 
 /// Register the `keys` submodule mirroring `molrs_core::store::keys` so Python code
 /// references the field-name convention by name (`molrs.keys.X`) instead of
@@ -141,7 +141,11 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // I/O + SMILES
     // Readers
-    m.add_function(wrap_pyfunction!(io::read_pdb, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_block_csv, m)?)?;
+m.add_function(wrap_pyfunction!(io::write_block_csv, m)?)?;
+m.add_function(wrap_pyfunction!(io::read_frame_bytes, m)?)?;
+m.add_function(wrap_pyfunction!(io::write_frame_bytes, m)?)?;
+m.add_function(wrap_pyfunction!(io::read_pdb, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_pdb_trajectory, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_xyz, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_xyz_trajectory, m)?)?;

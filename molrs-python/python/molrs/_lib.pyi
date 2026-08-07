@@ -207,14 +207,9 @@ class Frame:
     @meta.setter
     def meta(self, value: dict[str, MetaValue]) -> None: ...
     def validate(self) -> None: ...
-    def to_bytes(self, format: Literal["msgpack", "json"] = "msgpack") -> bytes: ...
-    @staticmethod
-    def from_bytes(
-        data: bytes, format: Literal["msgpack", "json"] = "msgpack"
-    ) -> "Frame": ...
 
 # ---------------------------------------------------------------------------
-# Live Frame streaming (molrs::net)
+# Live Frame streaming (molrs::stream)
 # ---------------------------------------------------------------------------
 
 class ControlCommand:
@@ -247,7 +242,7 @@ class ControlCommand:
 class FrameServer:
     """WebSocket server broadcasting frames to connected viewers.
 
-    Native-only: a Pyodide build compiles `molrs::net::server` out, so this
+    Native-only: a Pyodide build compiles `molrs::stream::server` out, so this
     class is absent there.
     """
 
@@ -788,6 +783,18 @@ class SmilesIR:
 # I/O — readers and writers
 # ---------------------------------------------------------------------------
 
+def read_block_csv(
+    text: str, delimiter: str = ",", header: Optional[list[str]] = None
+) -> Block: ...
+def write_block_csv(
+    block: Block, delimiter: str = ",", header: bool = True
+) -> str: ...
+def read_frame_bytes(
+    data: bytes, format: Literal["msgpack", "json"] = "msgpack"
+) -> Frame: ...
+def write_frame_bytes(
+    frame: Frame, format: Literal["msgpack", "json"] = "msgpack"
+) -> bytes: ...
 def read_pdb(path: str) -> Frame: ...
 def read_pdb_trajectory(path: str) -> list[Frame]:
     """Read every MODEL of a PDB file as a trajectory (one Frame per MODEL)."""

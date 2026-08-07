@@ -25,6 +25,9 @@
 //! | `"dcd"` | binary | DCD trajectory |
 //! | `"trr"` | binary | GROMACS TRR (Å → nm on write) |
 //! | `"xtc"` | binary | GROMACS XTC (Å → nm on write) |
+//! | `"msgpack"` / `"json"` | binary | `molrs::stream` wire encoding — what a
+//!   `FrameServer` puts on the socket. Paired with
+//!   [`readFrameBytes`](super::reader::read_frame_bytes_export). |
 
 use crate::core::frame::Frame;
 use molrs::io::data::cif::write_cif_frame;
@@ -179,6 +182,18 @@ pub fn write_frame_bytes_export(frame: &Frame, format: &str) -> Result<Vec<u8>, 
                 writer
                     .write(rs_frame)
                     .map_err(|e| JsValue::from_str(&format!("XTC writing error: {}", e)))?;
+            }
+            // The live-stream wire encoding. Not a file format, but it is a
+            // frame going out as bytes, so it belongs to the same entry point
+            // rather than to a `Frame.toBytes` method of its own.
+            "msgpack" | "json" => {
+                let fmt = if format.eq_ignore_ascii_case("json") {
+                    molrs::stream::MessageFormat::Json
+                } else {
+                    molrs::stream::MessageFormat::MessagePack
+                };
+                buf = molrs::stream::frame_to_bytes(rs_frame, fmt)
+                    .map_err(|e| JsValue::from_str(&e.to_string()))?;
             }
             _ => {
                 return Err(JsValue::from_str(&format!(

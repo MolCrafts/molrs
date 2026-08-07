@@ -122,18 +122,12 @@ pub mod conformer;
 #[cfg(feature = "serde")]
 mod serialize;
 
-/// Live `Frame` streaming: a WASM-clean, MolRec-aligned transport encoding
-/// (MessagePack / JSON) over the `serde`-serializable core model. Not in `full`.
+/// Live `Frame` streaming: the transport encoding (MessagePack / JSON) over the
+/// `serde`-serializable core model, plus the WebSocket server and control
+/// commands that ride it. Kept out of `io` — and out of `full` — because it
+/// pulls third-party runtime dependencies that `io` must not acquire.
 #[cfg(feature = "stream")]
 pub mod stream;
-
-/// WebSocket `Frame` streaming and bidirectional control commands.
-///
-/// Gated by `net` (not part of `full`). Wire encoding reuses [`stream`]; control
-/// messages in [`net::message`] are WASM-clean, while [`net::FrameServer`] is
-/// native-only (tokio + WebSocket).
-#[cfg(feature = "net")]
-pub mod net;
 
 // `smiles` is a sub-module of `io`; expose it at the top level for ergonomics.
 #[cfg(feature = "smiles")]

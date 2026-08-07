@@ -1179,6 +1179,46 @@ impl XtcReader {
     }
 }
 
+/// Rebuild a [`Frame`] from `molrs::stream` wire bytes.
+///
+/// This is what a `molrs::stream::FrameServer` puts on the socket, so a page
+/// subscribed to a live run decodes payloads with this and never re-derives
+/// the layout in JavaScript. The inverse is
+/// [`writeFrameBytes`](super::writer::write_frame_bytes_export) with the same
+/// format string.
+///
+/// `Frame` deliberately has no `fromBytes` constructor of its own: turning
+/// bytes into a container is a reader's job, and a container that parses its
+/// own wire formats grows one entry point per format.
+///
+/// # Errors
+///
+/// Throws a `JsValue` string when `format` is not `"msgpack"` / `"json"`, or
+/// when the payload does not decode into a valid frame.
+///
+/// # Example (JavaScript)
+///
+/// ```js
+/// socket.onmessage = (ev) => {
+///   const frame = readFrameBytes(new Uint8Array(ev.data), "msgpack");
+/// };
+/// ```
+#[wasm_bindgen(js_name = readFrameBytes)]
+pub fn read_frame_bytes_export(data: &[u8], format: &str) -> Result<Frame, JsValue> {
+    let fmt = match format.to_lowercase().as_str() {
+        "msgpack" => molrs::stream::MessageFormat::MessagePack,
+        "json" => molrs::stream::MessageFormat::Json,
+        other => {
+            return Err(JsValue::from_str(&format!(
+                "unsupported stream format: {other} (expected \"msgpack\" or \"json\")"
+            )));
+        }
+    };
+    let rs_frame = molrs::stream::bytes_to_frame(data, fmt)
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+    Frame::from_rs(rs_frame)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1218,5 +1258,40 @@ END"#;
         assert_eq!(x.length(), 2);
         assert_eq!(x.get_index(0), 1.0);
         assert_eq!(x.get_index(1), 4.0);
+    }
+
+    #[wasm_bindgen_test]
+    fn stream_bytes_round_trip_through_io() {
+        use crate::core::types::JsFloatArray;
+        use crate::io::writer::write_frame_bytes_export;
+
+        let frame = Frame::new();
+        let mut atoms = frame.create_block("atoms").expect("atoms block");
+        atoms
+            .set_col_f("x", &JsFloatArray::from(&[1.0, 4.0][..]), None)
+            .expect("x");
+
+        for fmt in ["msgpack", "json"] {
+            let bytes = write_frame_bytes_export(&frame, fmt).expect("encode");
+            let back = read_frame_bytes_export(&bytes, fmt).expect("decode");
+            let x = back
+                .get_block("atoms")
+                .expect("atoms")
+                .copy_col_f("x")
+                .expect("x column");
+            assert_eq!(x.length(), 2);
+            assert_eq!(x.get_index(0), 1.0);
+            assert_eq!(x.get_index(1), 4.0);
+        }
+    }
+
+    #[wasm_bindgen_test]
+    fn unknown_stream_format_is_named_not_guessed() {
+        let err = match read_frame_bytes_export(b"", "messagepack") {
+            Err(e) => e,
+            Ok(_) => panic!("an unknown format must not decode"),
+        };
+        let text = err.as_string().unwrap_or_default();
+        assert!(text.contains("messagepack"), "error must name the input: {text}");
     }
 }

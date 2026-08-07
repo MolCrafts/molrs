@@ -15,7 +15,9 @@
 //! | AMBER inpcrd | [`read_amber_inpcrd`] | — |
 //! | AMBER prmtop (structure) | [`read_amber_prmtop`] | — |
 
+use crate::core::store::block::PyBlock;
 use crate::core::store::frame::PyFrame;
+use pyo3::types::PyBytes;
 use crate::core::system::molgraph::PyAtomistic;
 use crate::helpers::{io_error_to_pyerr, molrs_error_to_pyerr, smiles_error_to_pyerr};
 use molrs::io::data::chgcar::read_chgcar;
@@ -2373,4 +2375,77 @@ pub fn write_smarts(
     // ``SmilesIR.write_smarts()`` / ``molrs::io::smiles::write_smarts(&ir)``.
     molrs::io::smiles::write_local_smarts(mol.core(), node_from_u64(center), &opts)
         .map_err(smiles_error_to_pyerr)
+}
+
+// ---------------------------------------------------------------------------
+// Store-type serialization.
+//
+// These read and write the store containers themselves rather than a molecular
+// file format, but they are still IO and they live here for the same reason
+// `read_pdb` does: turning bytes into a container is a reader's job. `Block`
+// and `Frame` deliberately carry no `from_csv` / `from_bytes` constructors —
+// a container that parses its own wire formats grows one entry point per
+// format and duplicates this module.
+// ---------------------------------------------------------------------------
+
+/// Parse CSV ``text`` into a :class:`Block`.
+///
+/// Each column's dtype is inferred int → float → str. When ``header`` is given
+/// the text is treated as headerless and those names are used; otherwise the
+/// first non-empty line provides the column names.
+#[pyfunction]
+#[pyo3(signature = (text, delimiter = ',', header = None))]
+pub fn read_block_csv(
+    text: &str,
+    delimiter: char,
+    header: Option<Vec<String>>,
+) -> PyResult<PyBlock> {
+    let block = molrs::io::store::csv::block_from_csv(text, delimiter, header.as_deref())
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    PyBlock::from_core_block(block)
+}
+
+/// Serialize a :class:`Block` to CSV text. The inverse of :func:`read_block_csv`.
+#[pyfunction]
+#[pyo3(signature = (block, delimiter = ',', header = true))]
+pub fn write_block_csv(block: &PyBlock, delimiter: char, header: bool) -> PyResult<String> {
+    PyBlock::with_block(block, |b| {
+        molrs::io::store::csv::block_to_csv(b, delimiter, header)
+    })
+}
+
+/// Rebuild a :class:`Frame` from streaming wire bytes.
+///
+/// This is the encoding ``molrs::stream::FrameServer`` puts on the wire, so a
+/// consumer decodes a live stream with this and never re-derives the layout.
+///
+/// Parameters
+/// ----------
+/// data : bytes
+///     A payload produced by :func:`write_frame_bytes` or by a Rust
+///     ``FrameServer``.
+/// format : {"msgpack", "json"}
+///     Wire encoding the payload was written with.
+#[pyfunction]
+#[pyo3(signature = (data, format = "msgpack"))]
+pub fn read_frame_bytes(data: &[u8], format: &str) -> PyResult<PyFrame> {
+    let fmt = crate::helpers::message_format(format)?;
+    let frame = molrs::stream::bytes_to_frame(data, fmt).map_err(crate::helpers::py_value_err)?;
+    PyFrame::from_core_frame(frame)
+}
+
+/// Encode a :class:`Frame` as streaming wire bytes. The inverse of
+/// :func:`read_frame_bytes`.
+#[pyfunction]
+#[pyo3(signature = (frame, format = "msgpack"))]
+pub fn write_frame_bytes<'py>(
+    py: Python<'py>,
+    frame: &PyFrame,
+    format: &str,
+) -> PyResult<Bound<'py, PyBytes>> {
+    let fmt = crate::helpers::message_format(format)?;
+    let bytes = frame
+        .with_frame(|f| molrs::stream::frame_to_bytes(f, fmt))?
+        .map_err(crate::helpers::py_value_err)?;
+    Ok(PyBytes::new(py, &bytes))
 }

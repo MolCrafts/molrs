@@ -5,6 +5,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::stream::{MessageFormat, StreamError};
+
 /// A bidirectional control message from a visualization client to the server.
 ///
 /// Wire format is externally tagged by `"type"` with snake_case variant names,
@@ -29,6 +31,35 @@ pub enum ControlCommand {
     },
     /// Ask the producer to emit a full key frame on the next send.
     RequestKeyFrame,
+}
+
+impl ControlCommand {
+    /// Encode this command in `format`.
+    ///
+    /// Shares [`MessageFormat`] with [`crate::stream`] so a client speaks one
+    /// encoding for both directions of the socket.
+    pub fn to_bytes(&self, format: MessageFormat) -> Result<Vec<u8>, StreamError> {
+        match format {
+            MessageFormat::Json => {
+                serde_json::to_vec(self).map_err(|e| StreamError::Encode(e.to_string()))
+            }
+            MessageFormat::MessagePack => {
+                rmp_serde::to_vec_named(self).map_err(|e| StreamError::Encode(e.to_string()))
+            }
+        }
+    }
+
+    /// Decode a command written in `format`.
+    pub fn from_bytes(bytes: &[u8], format: MessageFormat) -> Result<Self, StreamError> {
+        match format {
+            MessageFormat::Json => {
+                serde_json::from_slice(bytes).map_err(|e| StreamError::Decode(e.to_string()))
+            }
+            MessageFormat::MessagePack => {
+                rmp_serde::from_slice(bytes).map_err(|e| StreamError::Decode(e.to_string()))
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -81,6 +112,41 @@ mod tests {
         assert_eq!(subset["atom_ids"], serde_json::json!([2, 4]));
         let key = serde_json::to_value(ControlCommand::RequestKeyFrame).unwrap();
         assert_eq!(key["type"], "request_key_frame");
+    }
+
+    #[test]
+    fn to_bytes_round_trips_every_variant_in_both_formats() {
+        for format in [MessageFormat::Json, MessageFormat::MessagePack] {
+            for cmd in all_variants() {
+                let bytes = cmd.to_bytes(format).expect("encode");
+                let back = ControlCommand::from_bytes(&bytes, format).expect("decode");
+                assert_eq!(back, cmd, "{format:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn to_bytes_emits_the_same_wire_as_bare_serde() {
+        // The codec methods exist so callers stop hand-rolling the encoding.
+        // That only holds if they produce byte-identical output to the serde
+        // calls they replace — otherwise a mixed-vintage client silently
+        // fails to parse.
+        for cmd in all_variants() {
+            assert_eq!(
+                cmd.to_bytes(MessageFormat::Json).unwrap(),
+                serde_json::to_vec(&cmd).unwrap()
+            );
+            assert_eq!(
+                cmd.to_bytes(MessageFormat::MessagePack).unwrap(),
+                rmp_serde::to_vec_named(&cmd).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn from_bytes_rejects_a_payload_in_the_other_format() {
+        let json = ControlCommand::Pause.to_bytes(MessageFormat::Json).unwrap();
+        assert!(ControlCommand::from_bytes(&json, MessageFormat::MessagePack).is_err());
     }
 
     #[test]
