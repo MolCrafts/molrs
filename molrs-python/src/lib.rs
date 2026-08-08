@@ -89,8 +89,8 @@ use compute::{
 mod signal;
 
 // Live Frame streaming (`molrs::stream`). `ControlCommand` is portable;
-// `FrameServer` binds a listener and is native-only, gated exactly as the
-// Rust `molrs::stream::server` module is.
+// `FramePublisher` binds a listener and is native-only, gated exactly as the
+// Rust `molrs::stream::publisher` module is.
 mod stream;
 use stream::PyControlCommand;
 #[cfg(not(target_arch = "wasm32"))]

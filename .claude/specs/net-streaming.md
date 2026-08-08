@@ -1,3 +1,9 @@
+> **Renamed since this spec was written.** `molrs::net` is now `molrs::stream`
+> (folded in beside the wire encoding it rides), `FrameServer` is
+> `FramePublisher` (it can dial out as well as bind), and `ServerConfig` is
+> `PublisherConfig`. The design below still describes the shape; the names in it
+> do not resolve.
+
 ---
 title: net-streaming — WebSocket Frame streaming + bidirectional control for molrs
 status: done

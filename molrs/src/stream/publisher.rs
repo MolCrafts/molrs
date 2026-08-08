@@ -2,7 +2,7 @@
 //!
 //! The accept loop and per-client I/O run on a background `std::thread` that
 //! owns a multi-thread tokio runtime. The simulation loop stays synchronous:
-//! [`FrameServer::send`] never blocks on network writes; when the bounded
+//! [`FramePublisher::send`] never blocks on network writes; when the bounded
 //! crossbeam buffer is full the oldest payload is dropped.
 
 use std::io;
@@ -26,14 +26,14 @@ use crate::stream::{MessageFormat, StreamError, frame_to_bytes};
 
 use super::message::ControlCommand;
 
-/// Configuration for a [`FrameServer`].
+/// Configuration for a [`FramePublisher`].
 #[derive(Debug, Clone)]
-pub struct ServerConfig {
+pub struct PublisherConfig {
     /// Wire encoding for outbound frames (default: MessagePack).
     pub format: MessageFormat,
     /// Capacity of the simulation→network frame buffer (default: 4).
     ///
-    /// When full, [`FrameServer::send`] drops the oldest buffered frame so the
+    /// When full, [`FramePublisher::send`] drops the oldest buffered frame so the
     /// producer never blocks.
     pub buffer_size: usize,
     /// Reserved maximum stream rate in Hz. Not enforced in v1 (no-op).
@@ -57,7 +57,7 @@ pub struct ServerConfig {
     pub token: Option<String>,
 }
 
-impl Default for ServerConfig {
+impl Default for PublisherConfig {
     fn default() -> Self {
         Self {
             format: MessageFormat::MessagePack,
@@ -68,7 +68,7 @@ impl Default for ServerConfig {
     }
 }
 
-/// Error returned by [`FrameServer::send`].
+/// Error returned by [`FramePublisher::send`].
 #[derive(Debug)]
 pub enum SendError {
     /// Frame encoding failed.
@@ -115,27 +115,32 @@ struct Shared {
     shutdown_tx: Mutex<Option<oneshot::Sender<()>>>,
 }
 
-/// Broadcasts serialized [`Frame`]s to WebSocket clients and collects control commands.
+/// Broadcasts serialized [`Frame`]s over WebSocket and collects control commands.
 ///
-/// Clone freely: all clones share the same server state. Call
-/// [`FrameServer::shutdown`] to stop the background thread, or drop the last
+/// Named for what it does rather than for how it acquires its socket: it
+/// publishes frames whether it [`bind`](Self::bind)s and waits to be dialed or
+/// [`connect`](Self::connect)s out itself. It was `FrameServer` while `bind`
+/// was the only constructor.
+///
+/// Clone freely: all clones share the same state. Call
+/// [`FramePublisher::shutdown`] to stop the background thread, or drop the last
 /// clone to join on exit.
 #[derive(Clone)]
-pub struct FrameServer {
+pub struct FramePublisher {
     shared: Arc<Shared>,
 }
 
-impl FrameServer {
-    /// Bind a WebSocket server on `addr` with default [`ServerConfig`].
+impl FramePublisher {
+    /// Bind a WebSocket server on `addr` with default [`PublisherConfig`].
     ///
     /// Use `"127.0.0.1:0"` to pick an ephemeral port, then read
     /// [`local_addr`](Self::local_addr).
     pub fn bind(addr: impl Into<String>) -> io::Result<Self> {
-        Self::bind_with(addr, ServerConfig::default())
+        Self::bind_with(addr, PublisherConfig::default())
     }
 
     /// Dial `url` and publish to whatever is listening there, with default
-    /// [`ServerConfig`].
+    /// [`PublisherConfig`].
     ///
     /// The mirror of [`bind`](Self::bind). Same protocol, same wire format,
     /// same control channel — the only difference is which end opens the TCP
@@ -151,18 +156,18 @@ impl FrameServer {
     /// Note that a browser can only dial, so the listener at `url` has to be a
     /// native host, not a page.
     pub fn connect(url: impl Into<String>) -> io::Result<Self> {
-        Self::connect_with(url, ServerConfig::default())
+        Self::connect_with(url, PublisherConfig::default())
     }
 
     /// Dial `url` with the given configuration.
     ///
-    /// [`ServerConfig::token`] is *presented* here rather than demanded: this
+    /// [`PublisherConfig::token`] is *presented* here rather than demanded: this
     /// end is the client of the handshake when it dials. [`local_addr`] returns
     /// `None` for a dialed publisher — there is no address for anyone to
     /// connect to.
     ///
     /// [`local_addr`]: Self::local_addr
-    pub fn connect_with(url: impl Into<String>, config: ServerConfig) -> io::Result<Self> {
+    pub fn connect_with(url: impl Into<String>, config: PublisherConfig) -> io::Result<Self> {
         let url = url.into();
         let buffer_size = config.buffer_size.max(1);
         let format = config.format;
@@ -198,7 +203,7 @@ impl FrameServer {
                 ));
             })?;
 
-        Ok(FrameServer {
+        Ok(FramePublisher {
             shared: Arc::new(Shared {
                 format,
                 frame_tx: Mutex::new(Some(frame_tx)),
@@ -214,7 +219,7 @@ impl FrameServer {
     }
 
     /// Bind a WebSocket server on `addr` with the given configuration.
-    pub fn bind_with(addr: impl Into<String>, config: ServerConfig) -> io::Result<Self> {
+    pub fn bind_with(addr: impl Into<String>, config: PublisherConfig) -> io::Result<Self> {
         let addr = addr.into();
         let buffer_size = config.buffer_size.max(1);
         let format = config.format;
@@ -231,7 +236,7 @@ impl FrameServer {
         let client_count_thread = Arc::clone(&client_count);
 
         let join = std::thread::Builder::new()
-            .name("molrs-frame-server".into())
+            .name("molrs-frame-publisher".into())
             .spawn(move || {
                 let rt = match tokio::runtime::Builder::new_multi_thread()
                     .enable_all()
@@ -263,7 +268,7 @@ impl FrameServer {
                     };
                     let _ = ready_tx.send(Ok(local));
 
-                    run_server(
+                    run_bound(
                         listener,
                         frame_rx,
                         cmd_tx,
@@ -280,7 +285,7 @@ impl FrameServer {
             .recv()
             .map_err(|_| io::Error::other("frame server thread exited before bind"))??;
 
-        Ok(FrameServer {
+        Ok(FramePublisher {
             shared: Arc::new(Shared {
                 format,
                 frame_tx: Mutex::new(Some(frame_tx)),
@@ -414,7 +419,7 @@ impl FrameServer {
     }
 }
 
-impl Drop for FrameServer {
+impl Drop for FramePublisher {
     fn drop(&mut self) {
         // Only the last Arc clone should join; earlier clones leave the server running.
         if Arc::strong_count(&self.shared) > 1 {
@@ -431,7 +436,7 @@ impl Drop for FrameServer {
 
 // --- Background runtime -------------------------------------------------------
 
-async fn run_server(
+async fn run_bound(
     listener: TcpListener,
     frame_rx: Receiver<Bytes>,
     cmd_tx: Sender<ControlCommand>,
@@ -563,8 +568,10 @@ async fn run_dialed(
             result = tokio_tungstenite::connect_async(&url) => result,
         };
 
-        match dialed {
-            Ok((ws, _)) => {
+        // A failed dial is the expected case while the collector is down; the
+        // backoff below is the whole response to it.
+        if let Ok((ws, _)) = dialed {
+            {
                 let (mut write, mut read) = ws.split();
                 if present_token(&mut write, &mut read, token.as_deref()).await {
                     client_count.fetch_add(1, Ordering::Relaxed);
@@ -579,7 +586,6 @@ async fn run_dialed(
                     client_count.fetch_sub(1, Ordering::Relaxed);
                 }
             }
-            Err(_) => {}
         }
 
         // Back off so a collector that is down does not become a busy loop.
@@ -735,7 +741,7 @@ mod tests {
         frame
     }
 
-    async fn wait_clients(server: &FrameServer, n: usize) {
+    async fn wait_clients(server: &FramePublisher, n: usize) {
         for _ in 0..100 {
             if server.client_count() == n {
                 return;
@@ -750,7 +756,7 @@ mod tests {
 
     #[tokio::test]
     async fn bind_and_client_connects() {
-        let server = FrameServer::bind("127.0.0.1:0").expect("bind");
+        let server = FramePublisher::bind("127.0.0.1:0").expect("bind");
         let url = format!("ws://{}", server.local_addr().expect("bound"));
 
         let (mut ws, _) = connect_async(&url).await.expect("connect");
@@ -763,7 +769,7 @@ mod tests {
 
     #[tokio::test]
     async fn send_frame_received_by_client() {
-        let server = FrameServer::bind("127.0.0.1:0").expect("bind");
+        let server = FramePublisher::bind("127.0.0.1:0").expect("bind");
         let url = format!("ws://{}", server.local_addr().expect("bound"));
         let (mut ws, _) = connect_async(&url).await.expect("connect");
         wait_clients(&server, 1).await;
@@ -793,7 +799,7 @@ mod tests {
 
     #[tokio::test]
     async fn client_pause_command_received() {
-        let server = FrameServer::bind("127.0.0.1:0").expect("bind");
+        let server = FramePublisher::bind("127.0.0.1:0").expect("bind");
         let url = format!("ws://{}", server.local_addr().expect("bound"));
         let (mut ws, _) = connect_async(&url).await.expect("connect");
         wait_clients(&server, 1).await;
@@ -815,9 +821,9 @@ mod tests {
 
     #[tokio::test]
     async fn buffer_full_send_does_not_block() {
-        let server = FrameServer::bind_with(
+        let server = FramePublisher::bind_with(
             "127.0.0.1:0",
-            ServerConfig {
+            PublisherConfig {
                 format: MessageFormat::MessagePack,
                 buffer_size: 1,
                 max_frame_rate: 0.0,
@@ -840,9 +846,9 @@ mod tests {
 
     #[tokio::test]
     async fn buffer_full_client_eventually_gets_latest() {
-        let server = FrameServer::bind_with(
+        let server = FramePublisher::bind_with(
             "127.0.0.1:0",
-            ServerConfig {
+            PublisherConfig {
                 format: MessageFormat::MessagePack,
                 buffer_size: 1,
                 max_frame_rate: 0.0,
@@ -882,12 +888,12 @@ mod tests {
         server.shutdown();
     }
 
-    fn token_server(token: &str) -> FrameServer {
-        FrameServer::bind_with(
+    fn token_server(token: &str) -> FramePublisher {
+        FramePublisher::bind_with(
             "127.0.0.1:0",
-            ServerConfig {
+            PublisherConfig {
                 token: Some(token.to_string()),
-                ..ServerConfig::default()
+                ..PublisherConfig::default()
             },
         )
         .expect("bind")
@@ -961,7 +967,7 @@ mod tests {
     /// with no handshake code.
     #[tokio::test]
     async fn no_token_configured_means_no_handshake() {
-        let server = FrameServer::bind("127.0.0.1:0").expect("bind");
+        let server = FramePublisher::bind("127.0.0.1:0").expect("bind");
         let url = format!("ws://{}", server.local_addr().expect("bound"));
         let (mut ws, _) = connect_async(&url).await.expect("connect");
         wait_clients(&server, 1).await;
@@ -987,7 +993,7 @@ mod tests {
             tokio_tungstenite::accept_async(stream).await.expect("ws")
         });
 
-        let publisher = FrameServer::connect(format!("ws://{addr}")).expect("dial");
+        let publisher = FramePublisher::connect(format!("ws://{addr}")).expect("dial");
         let mut ws = accepted.await.expect("join");
 
         // No address to hand out — nothing can dial a publisher that dialled.
@@ -1024,7 +1030,7 @@ mod tests {
         let addr = probe.local_addr().expect("addr");
         drop(probe);
 
-        let publisher = FrameServer::connect(format!("ws://{addr}")).expect("dial");
+        let publisher = FramePublisher::connect(format!("ws://{addr}")).expect("dial");
 
         // Be genuinely late. Without this the collector can bind before the
         // publisher's thread has built its runtime and dialed even once, so
