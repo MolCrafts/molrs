@@ -111,8 +111,8 @@ jobs:
             npm publish --access public --provenance
           fi
 
-  # Desktop abi3 wheels (one interpreter is enough). macOS builds arm64 and
-  # x86_64 separately — PyPI 400'd the universal2 fat wheel ("ZIP trailing data").
+  # Desktop abi3 wheels (one interpreter is enough). macOS / Linux ARM are
+  # separate targets (universal2 fat wheels were rejected by PyPI).
   build-python:
     needs: guard
     if: github.repository == 'MolCrafts/molrs'
@@ -123,7 +123,11 @@ jobs:
         include:
           - os: ubuntu-latest
             target: ""
-            artifact: linux
+            artifact: linux-x64
+          - os: ubuntu-latest
+            # Cross-compile manylinux aarch64 (Graviton / arm64 servers).
+            target: aarch64-unknown-linux-gnu
+            artifact: linux-aarch64
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact: macos-arm64
@@ -144,23 +148,14 @@ jobs:
           workspaces: |
             . -> target
             molrs-python -> target
-      - name: Maturin args
-        id: maturin
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -n "${{ matrix.target }}" ]; then
-            echo "args=--release --out dist --target ${{ matrix.target }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "args=--release --out dist" >> "$GITHUB_OUTPUT"
-          fi
       - uses: PyO3/maturin-action@v1
         with:
           working-directory: molrs-python
+          target: ${{ matrix.target }}
           manylinux: auto
           command: build
           # default features include `fs` (host filesystem zarr I/O)
-          args: ${{ steps.maturin.outputs.args }}
+          args: --release --out dist
           sccache: "true"
       - uses: actions/upload-artifact@v7
         with:
