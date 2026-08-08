@@ -258,8 +258,14 @@ mod server {
                 max_frame_rate: 0.0,
                 token,
             };
+            let address_for_error = address.clone();
             let server = FrameServer::bind_with(address, config).map_err(io_error_to_pyerr)?;
-            let bound = server.local_addr().to_string();
+            // A bound server always has one; `local_addr` is Option only
+            // because a dialed publisher has no address to hand out.
+            let bound = server
+                .local_addr()
+                .map(|a| a.to_string())
+                .unwrap_or_else(|| address_for_error.to_string());
             Ok(Self {
                 inner: Some(server),
                 address: bound,

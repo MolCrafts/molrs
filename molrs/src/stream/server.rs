@@ -109,7 +109,7 @@ struct Shared {
     drop_rx: Mutex<Option<Receiver<Bytes>>>,
     cmd_rx: Receiver<ControlCommand>,
     client_count: Arc<AtomicUsize>,
-    local_addr: SocketAddr,
+    local_addr: Option<SocketAddr>,
     shutting_down: AtomicBool,
     join: Mutex<Option<JoinHandle<()>>>,
     shutdown_tx: Mutex<Option<oneshot::Sender<()>>>,
@@ -132,6 +132,85 @@ impl FrameServer {
     /// [`local_addr`](Self::local_addr).
     pub fn bind(addr: impl Into<String>) -> io::Result<Self> {
         Self::bind_with(addr, ServerConfig::default())
+    }
+
+    /// Dial `url` and publish to whatever is listening there, with default
+    /// [`ServerConfig`].
+    ///
+    /// The mirror of [`bind`](Self::bind). Same protocol, same wire format,
+    /// same control channel — the only difference is which end opens the TCP
+    /// connection, which has never had anything to do with which end sends
+    /// frames.
+    ///
+    /// Reach for this when the producer cannot be dialed: a compute node behind
+    /// a firewall can open an outbound connection to a collector even when
+    /// nothing can open one to it. Prefer [`bind`](Self::bind) otherwise — a
+    /// bound producer outlives its viewers, so a viewer can reattach after a
+    /// reload and several can watch at once.
+    ///
+    /// Note that a browser can only dial, so the listener at `url` has to be a
+    /// native host, not a page.
+    pub fn connect(url: impl Into<String>) -> io::Result<Self> {
+        Self::connect_with(url, ServerConfig::default())
+    }
+
+    /// Dial `url` with the given configuration.
+    ///
+    /// [`ServerConfig::token`] is *presented* here rather than demanded: this
+    /// end is the client of the handshake when it dials. [`local_addr`] returns
+    /// `None` for a dialed publisher — there is no address for anyone to
+    /// connect to.
+    ///
+    /// [`local_addr`]: Self::local_addr
+    pub fn connect_with(url: impl Into<String>, config: ServerConfig) -> io::Result<Self> {
+        let url = url.into();
+        let buffer_size = config.buffer_size.max(1);
+        let format = config.format;
+        let token = config.token.clone();
+
+        let (frame_tx, frame_rx) = bounded::<Bytes>(buffer_size);
+        let drop_rx = frame_rx.clone();
+        let (cmd_tx, cmd_rx) = bounded::<ControlCommand>(64);
+        let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+
+        let client_count = Arc::new(AtomicUsize::new(0));
+        let client_count_thread = Arc::clone(&client_count);
+
+        let join = std::thread::Builder::new()
+            .name("molrs-frame-publisher".into())
+            .spawn(move || {
+                let Ok(rt) = tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .worker_threads(2)
+                    .thread_name("molrs-stream")
+                    .build()
+                else {
+                    return;
+                };
+                rt.block_on(run_dialed(
+                    url,
+                    frame_rx,
+                    cmd_tx,
+                    client_count_thread,
+                    format,
+                    token,
+                    shutdown_rx,
+                ));
+            })?;
+
+        Ok(FrameServer {
+            shared: Arc::new(Shared {
+                format,
+                frame_tx: Mutex::new(Some(frame_tx)),
+                drop_rx: Mutex::new(Some(drop_rx)),
+                cmd_rx,
+                client_count,
+                local_addr: None,
+                shutting_down: AtomicBool::new(false),
+                join: Mutex::new(Some(join)),
+                shutdown_tx: Mutex::new(Some(shutdown_tx)),
+            }),
+        })
     }
 
     /// Bind a WebSocket server on `addr` with the given configuration.
@@ -208,7 +287,7 @@ impl FrameServer {
                 drop_rx: Mutex::new(Some(drop_rx)),
                 cmd_rx,
                 client_count,
-                local_addr,
+                local_addr: Some(local_addr),
                 shutting_down: AtomicBool::new(false),
                 join: Mutex::new(Some(join)),
                 shutdown_tx: Mutex::new(Some(shutdown_tx)),
@@ -217,7 +296,7 @@ impl FrameServer {
     }
 
     /// Local socket address the server is listening on.
-    pub fn local_addr(&self) -> SocketAddr {
+    pub fn local_addr(&self) -> Option<SocketAddr> {
         self.shared.local_addr
     }
 
@@ -397,7 +476,9 @@ async fn run_server(
     let _ = bridge.await;
 }
 
-type WsStream = tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>;
+use tokio_tungstenite::WebSocketStream;
+
+type WsStream = WebSocketStream<tokio::net::TcpStream>;
 
 /// A client's opening message when the server requires a token.
 #[derive(serde::Deserialize)]
@@ -451,9 +532,94 @@ async fn authenticate(
         .is_ok()
 }
 
+/// Dial `url`, publish until the socket dies, then dial again.
+///
+/// Redialling is not optional politeness: the collector is a separate process
+/// and the producer is the long-running one, so a collector restart must not
+/// end the run. `send` keeps dropping the oldest frame while nothing is
+/// attached, exactly as it does for a bound publisher with no viewers.
+async fn run_dialed(
+    url: String,
+    frame_rx: Receiver<Bytes>,
+    cmd_tx: Sender<ControlCommand>,
+    client_count: Arc<AtomicUsize>,
+    format: MessageFormat,
+    token: Option<String>,
+    mut shutdown_rx: oneshot::Receiver<()>,
+) {
+    let (bcast_tx, _) = broadcast::channel::<Bytes>(16);
+
+    // Same crossbeam -> broadcast bridge the bound path uses.
+    let bridge_tx = bcast_tx.clone();
+    let bridge = tokio::task::spawn_blocking(move || {
+        while let Ok(payload) = frame_rx.recv() {
+            let _ = bridge_tx.send(payload);
+        }
+    });
+
+    loop {
+        let dialed = tokio::select! {
+            _ = &mut shutdown_rx => break,
+            result = tokio_tungstenite::connect_async(&url) => result,
+        };
+
+        match dialed {
+            Ok((ws, _)) => {
+                let (mut write, mut read) = ws.split();
+                if present_token(&mut write, &mut read, token.as_deref()).await {
+                    client_count.fetch_add(1, Ordering::Relaxed);
+                    let bcast_rx = bcast_tx.subscribe();
+                    tokio::select! {
+                        _ = &mut shutdown_rx => {
+                            client_count.fetch_sub(1, Ordering::Relaxed);
+                            break;
+                        }
+                        _ = pump(write, read, bcast_rx, cmd_tx.clone(), format) => {}
+                    }
+                    client_count.fetch_sub(1, Ordering::Relaxed);
+                }
+            }
+            Err(_) => {}
+        }
+
+        // Back off so a collector that is down does not become a busy loop.
+        tokio::select! {
+            _ = &mut shutdown_rx => break,
+            _ = tokio::time::sleep(std::time::Duration::from_millis(250)) => {}
+        }
+    }
+
+    drop(bcast_tx);
+    bridge.abort();
+}
+
+/// Present the shared secret, as the dialing end.
+///
+/// The mirror of [`authenticate`]. When this publisher dials out, it is the
+/// client of the WebSocket handshake, so it offers the token instead of
+/// demanding one. The message shape is identical in both directions, which is
+/// the point of having one handshake rather than two.
+async fn present_token<S>(
+    write: &mut futures_util::stream::SplitSink<WebSocketStream<S>, Message>,
+    read: &mut futures_util::stream::SplitStream<WebSocketStream<S>>,
+    token: Option<&str>,
+) -> bool
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    let Some(token) = token else {
+        return true;
+    };
+    let hello = serde_json::json!({ "type": "hello", "token": token }).to_string();
+    if write.send(Message::Text(hello.into())).await.is_err() {
+        return false;
+    }
+    matches!(read.next().await, Some(Ok(Message::Text(t))) if t.contains("ready"))
+}
+
 async fn handle_client(
     ws: WsStream,
-    mut bcast_rx: broadcast::Receiver<Bytes>,
+    bcast_rx: broadcast::Receiver<Bytes>,
     cmd_tx: Sender<ControlCommand>,
     format: MessageFormat,
     token: Option<String>,
@@ -464,7 +630,23 @@ async fn handle_client(
     if !authenticate(&mut write, &mut read, token.as_deref()).await {
         return;
     }
+    pump(write, read, bcast_rx, cmd_tx, format).await;
+}
 
+/// Frames out, control commands in, until either side goes away.
+///
+/// Identical whichever end dialed: once the socket is open a WebSocket is
+/// symmetric, and connection direction has never had anything to do with data
+/// direction. This is why `bind` and `connect` are one protocol and not two.
+async fn pump<S>(
+    mut write: futures_util::stream::SplitSink<WebSocketStream<S>, Message>,
+    mut read: futures_util::stream::SplitStream<WebSocketStream<S>>,
+    mut bcast_rx: broadcast::Receiver<Bytes>,
+    cmd_tx: Sender<ControlCommand>,
+    format: MessageFormat,
+) where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
     loop {
         tokio::select! {
             frame = bcast_rx.recv() => {
@@ -569,7 +751,7 @@ mod tests {
     #[tokio::test]
     async fn bind_and_client_connects() {
         let server = FrameServer::bind("127.0.0.1:0").expect("bind");
-        let url = format!("ws://{}", server.local_addr());
+        let url = format!("ws://{}", server.local_addr().expect("bound"));
 
         let (mut ws, _) = connect_async(&url).await.expect("connect");
         wait_clients(&server, 1).await;
@@ -582,7 +764,7 @@ mod tests {
     #[tokio::test]
     async fn send_frame_received_by_client() {
         let server = FrameServer::bind("127.0.0.1:0").expect("bind");
-        let url = format!("ws://{}", server.local_addr());
+        let url = format!("ws://{}", server.local_addr().expect("bound"));
         let (mut ws, _) = connect_async(&url).await.expect("connect");
         wait_clients(&server, 1).await;
 
@@ -612,7 +794,7 @@ mod tests {
     #[tokio::test]
     async fn client_pause_command_received() {
         let server = FrameServer::bind("127.0.0.1:0").expect("bind");
-        let url = format!("ws://{}", server.local_addr());
+        let url = format!("ws://{}", server.local_addr().expect("bound"));
         let (mut ws, _) = connect_async(&url).await.expect("connect");
         wait_clients(&server, 1).await;
 
@@ -668,7 +850,7 @@ mod tests {
             },
         )
         .expect("bind");
-        let url = format!("ws://{}", server.local_addr());
+        let url = format!("ws://{}", server.local_addr().expect("bound"));
         let (mut ws, _) = connect_async(&url).await.expect("connect");
         wait_clients(&server, 1).await;
 
@@ -714,7 +896,7 @@ mod tests {
     #[tokio::test]
     async fn a_correct_token_is_cleared_and_then_receives_frames() {
         let server = token_server("s3cret");
-        let url = format!("ws://{}", server.local_addr());
+        let url = format!("ws://{}", server.local_addr().expect("bound"));
         let (mut ws, _) = connect_async(&url).await.expect("connect");
 
         ws.send(Message::Text(r#"{"type":"hello","token":"s3cret"}"#.into()))
@@ -737,7 +919,7 @@ mod tests {
     #[tokio::test]
     async fn a_wrong_token_gets_no_frames_at_all() {
         let server = token_server("s3cret");
-        let url = format!("ws://{}", server.local_addr());
+        let url = format!("ws://{}", server.local_addr().expect("bound"));
         let (mut ws, _) = connect_async(&url).await.expect("connect");
 
         ws.send(Message::Text(r#"{"type":"hello","token":"guess"}"#.into()))
@@ -762,7 +944,7 @@ mod tests {
     #[tokio::test]
     async fn saying_nothing_is_not_authentication() {
         let server = token_server("s3cret");
-        let url = format!("ws://{}", server.local_addr());
+        let url = format!("ws://{}", server.local_addr().expect("bound"));
         let (mut ws, _) = connect_async(&url).await.expect("connect");
 
         drop(ws.send(Message::Close(None)).await);
@@ -780,7 +962,7 @@ mod tests {
     #[tokio::test]
     async fn no_token_configured_means_no_handshake() {
         let server = FrameServer::bind("127.0.0.1:0").expect("bind");
-        let url = format!("ws://{}", server.local_addr());
+        let url = format!("ws://{}", server.local_addr().expect("bound"));
         let (mut ws, _) = connect_async(&url).await.expect("connect");
         wait_clients(&server, 1).await;
 
@@ -789,5 +971,54 @@ mod tests {
         let frame = bytes_to_frame(&msg.into_data(), MessageFormat::MessagePack).expect("decode");
         let x = frame["atoms"].get_float("x").unwrap();
         assert!((x[2] - 3.0).abs() < 1e-12);
+    }
+
+    /// The point of `connect`: one protocol, two connection directions.
+    /// A publisher that dialled out delivers frames exactly like a bound one.
+    #[tokio::test]
+    async fn a_dialed_publisher_delivers_frames() {
+        // Stand in for the collector: a plain WebSocket listener.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listen");
+        let addr = listener.local_addr().expect("addr");
+        let accepted = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            tokio_tungstenite::accept_async(stream).await.expect("ws")
+        });
+
+        let publisher = FrameServer::connect(format!("ws://{addr}")).expect("dial");
+        let mut ws = accepted.await.expect("join");
+
+        // No address to hand out — nothing can dial a publisher that dialled.
+        assert!(publisher.local_addr().is_none());
+
+        for _ in 0..100 {
+            if publisher.client_count() == 1 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        publisher.send(&sample_frame(11)).expect("send");
+
+        let msg = ws.next().await.expect("frame").expect("frame ok");
+        let frame = bytes_to_frame(&msg.into_data(), MessageFormat::MessagePack).expect("decode");
+        let x = frame["atoms"].get_float("x").unwrap();
+        assert!((x[2] - 11.0).abs() < 1e-12);
+
+        publisher.shutdown();
+    }
+
+    /// A collector that is not up yet must not end the run — the producer is
+    /// the long-lived end.
+    #[tokio::test]
+    async fn dialing_a_dead_collector_keeps_the_producer_alive() {
+        let publisher = FrameServer::connect("ws://127.0.0.1:1").expect("dial");
+
+        // No viewer, so this drops on the floor rather than failing.
+        publisher.send(&sample_frame(1)).expect("send");
+        assert_eq!(publisher.client_count(), 0);
+
+        publisher.shutdown();
     }
 }
