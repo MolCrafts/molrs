@@ -1009,15 +1009,69 @@ mod tests {
         publisher.shutdown();
     }
 
-    /// A collector that is not up yet must not end the run — the producer is
-    /// the long-lived end.
+    /// A collector that is not up *yet* must not end the run — the producer is
+    /// the long-lived end, so it keeps dialing until something answers.
+    ///
+    /// The assertion has to be that it eventually connects. Checking only that
+    /// `send` succeeds and `client_count` is 0 while nothing listens proves
+    /// nothing: that holds with the dial loop deleted entirely.
     #[tokio::test]
-    async fn dialing_a_dead_collector_keeps_the_producer_alive() {
-        let publisher = FrameServer::connect("ws://127.0.0.1:1").expect("dial");
+    async fn a_collector_that_starts_late_still_gets_the_stream() {
+        // Reserve the port, then drop the listener so the first dials fail.
+        let probe = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("probe");
+        let addr = probe.local_addr().expect("addr");
+        drop(probe);
 
-        // No viewer, so this drops on the floor rather than failing.
-        publisher.send(&sample_frame(1)).expect("send");
-        assert_eq!(publisher.client_count(), 0);
+        let publisher = FrameServer::connect(format!("ws://{addr}")).expect("dial");
+
+        // Be genuinely late. Without this the collector can bind before the
+        // publisher's thread has built its runtime and dialed even once, so
+        // the first attempt succeeds and the retry path is never exercised --
+        // the test would then pass with the retry loop deleted.
+        tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+        assert_eq!(
+            publisher.client_count(),
+            0,
+            "nothing is listening yet, so no dial should have succeeded"
+        );
+
+        // The collector arrives late. Binding the same port can race with the
+        // OS releasing it, so give it a few attempts.
+        let mut listener = None;
+        for _ in 0..50 {
+            if let Ok(l) = tokio::net::TcpListener::bind(addr).await {
+                listener = Some(l);
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        let listener = listener.expect("collector could not bind");
+
+        let (stream, _) =
+            tokio::time::timeout(std::time::Duration::from_secs(10), listener.accept())
+                .await
+                .expect("publisher never redialed")
+                .expect("accept");
+        let mut ws = tokio_tungstenite::accept_async(stream).await.expect("ws");
+
+        for _ in 0..200 {
+            if publisher.client_count() == 1 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        publisher.send(&sample_frame(5)).expect("send");
+
+        let msg = tokio::time::timeout(std::time::Duration::from_secs(10), ws.next())
+            .await
+            .expect("no frame after reconnect")
+            .expect("frame")
+            .expect("frame ok");
+        let frame = bytes_to_frame(&msg.into_data(), MessageFormat::MessagePack).expect("decode");
+        let x = frame["atoms"].get_float("x").unwrap();
+        assert!((x[2] - 5.0).abs() < 1e-12);
 
         publisher.shutdown();
     }
