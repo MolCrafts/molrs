@@ -8,7 +8,7 @@
 //! (default) or JSON.
 
 //! Beyond the encoding this module also carries the live transport that uses
-//! it: [`ControlCommand`] (WASM-clean) and [`FramePublisher`] (native only). They
+//! it: [`ControlCommand`] (WASM-clean) and [`Publisher`] (native only). They
 //! live here rather than under `io` because they pull third-party runtime
 //! dependencies — tokio, tungstenite, rmp-serde — that `io` must not acquire.
 
@@ -20,7 +20,7 @@ pub use message::ControlCommand;
 mod publisher;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use publisher::{FramePublisher, PublisherConfig, SendError};
+pub use publisher::{Publisher, PublisherConfig, SendError};
 
 use crate::core::store::frame::Frame;
 

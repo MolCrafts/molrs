@@ -997,7 +997,7 @@ def read_frame_bytes(data: bytes, format: str = "msgpack") -> Any:
     """Rebuild a :class:`Frame` from streaming wire bytes.
 
     The consumer half of a live stream: decode what a
-    ``molrs.stream.FramePublisher`` put on the socket. Like every other reader here
+    ``molrs.stream.Publisher`` put on the socket. Like every other reader here
     the result is wrapped into the rich ``Frame`` subclass.
     """
     return _wrap(_read_frame_bytes(data, format))

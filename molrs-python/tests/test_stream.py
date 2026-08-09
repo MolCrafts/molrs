@@ -112,24 +112,24 @@ class TestControlCommand:
 
 
 @pytest.mark.skipif(
-    not hasattr(molrs.stream, "FramePublisher"),
-    reason="FramePublisher is native-only (absent on Pyodide)",
+    not hasattr(molrs.stream, "Publisher"),
+    reason="Publisher is native-only (absent on Pyodide)",
 )
 class TestFrameServer:
     def test_ephemeral_bind_reports_its_port(self):
-        with molrs.stream.FramePublisher("127.0.0.1:0") as server:
+        with molrs.stream.Publisher("127.0.0.1:0") as server:
             host, _, port = server.address.rpartition(":")
             assert host == "127.0.0.1"
             assert int(port) > 0
 
     def test_starts_with_no_clients(self):
-        with molrs.stream.FramePublisher("127.0.0.1:0") as server:
+        with molrs.stream.Publisher("127.0.0.1:0") as server:
             assert server.client_count == 0
 
     def test_send_without_a_client_does_not_block(self):
         # The bounded buffer drops rather than stalls; a producer must be able
         # to stream into the void. buffer_size=1 forces the drop path.
-        with molrs.stream.FramePublisher("127.0.0.1:0", buffer_size=1) as server:
+        with molrs.stream.Publisher("127.0.0.1:0", buffer_size=1) as server:
             done = threading.Event()
 
             def produce():
@@ -143,50 +143,50 @@ class TestFrameServer:
             assert done.is_set(), "send() blocked with no reader attached"
 
     def test_recv_command_polls_without_blocking(self):
-        with molrs.stream.FramePublisher("127.0.0.1:0") as server:
+        with molrs.stream.Publisher("127.0.0.1:0") as server:
             assert server.recv_command() is None
 
     def test_recv_command_honours_a_timeout(self):
         import time
 
-        with molrs.stream.FramePublisher("127.0.0.1:0") as server:
+        with molrs.stream.Publisher("127.0.0.1:0") as server:
             start = time.monotonic()
             assert server.recv_command(timeout=0.05) is None
             assert time.monotonic() - start >= 0.04
 
     @pytest.mark.parametrize("timeout", [-1.0, float("nan")])
     def test_nonsense_timeout_raises(self, timeout):
-        with molrs.stream.FramePublisher("127.0.0.1:0") as server:
+        with molrs.stream.Publisher("127.0.0.1:0") as server:
             with pytest.raises(ValueError):
                 server.recv_command(timeout=timeout)
 
     def test_zero_buffer_size_raises(self):
         with pytest.raises(ValueError, match="buffer_size"):
-            molrs.stream.FramePublisher("127.0.0.1:0", buffer_size=0)
+            molrs.stream.Publisher("127.0.0.1:0", buffer_size=0)
 
     def test_unknown_format_raises_before_binding(self):
         with pytest.raises(ValueError, match="unknown wire format"):
-            molrs.stream.FramePublisher("127.0.0.1:0", format="protobuf")
+            molrs.stream.Publisher("127.0.0.1:0", format="protobuf")
 
     def test_bad_address_raises_ioerror(self):
         with pytest.raises(OSError):
-            molrs.stream.FramePublisher("256.256.256.256:1")
+            molrs.stream.Publisher("256.256.256.256:1")
 
     def test_use_after_close_raises(self):
-        server = molrs.stream.FramePublisher("127.0.0.1:0")
+        server = molrs.stream.Publisher("127.0.0.1:0")
         server.close()
         with pytest.raises(ValueError, match="closed"):
             server.send(_frame())
 
     def test_close_is_idempotent(self):
-        server = molrs.stream.FramePublisher("127.0.0.1:0")
+        server = molrs.stream.Publisher("127.0.0.1:0")
         server.close()
         server.close()
 
     def test_port_is_released_after_close(self):
         # A leaked listener thread would keep the port bound and turn the next
         # bind in a long-running session into a confusing EADDRINUSE.
-        server = molrs.stream.FramePublisher("127.0.0.1:0")
+        server = molrs.stream.Publisher("127.0.0.1:0")
         host, _, port = server.address.rpartition(":")
         server.close()
         with socket.socket() as probe:
