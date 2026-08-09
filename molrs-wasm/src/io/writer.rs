@@ -26,7 +26,7 @@
 //! | `"trr"` | binary | GROMACS TRR (Å → nm on write) |
 //! | `"xtc"` | binary | GROMACS XTC (Å → nm on write) |
 //! | `"msgpack"` / `"json"` | binary | `molrs::stream` wire encoding — what a
-//!   `FrameServer` puts on the socket. Paired with
+//!   `FramePublisher` puts on the socket. Paired with
 //!   [`readFrameBytes`](super::reader::read_frame_bytes_export). |
 
 use crate::core::frame::Frame;

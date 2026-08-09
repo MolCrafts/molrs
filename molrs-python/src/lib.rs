@@ -89,12 +89,12 @@ use compute::{
 mod signal;
 
 // Live Frame streaming (`molrs::stream`). `ControlCommand` is portable;
-// `FrameServer` binds a listener and is native-only, gated exactly as the
-// Rust `molrs::stream::server` module is.
+// `Publisher` binds a listener and is native-only, gated exactly as the
+// Rust `molrs::stream::publisher` module is.
 mod stream;
 use stream::PyControlCommand;
 #[cfg(not(target_arch = "wasm32"))]
-use stream::PyFrameServer;
+use stream::PyPublisher;
 
 /// Register the `keys` submodule mirroring `molrs_core::store::keys` so Python code
 /// references the field-name convention by name (`molrs.keys.X`) instead of
@@ -132,7 +132,7 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Live Frame streaming
     m.add_class::<PyControlCommand>()?;
     #[cfg(not(target_arch = "wasm32"))]
-    m.add_class::<PyFrameServer>()?;
+    m.add_class::<PyPublisher>()?;
 
     // Native units
     m.add_class::<PyUnit>()?;

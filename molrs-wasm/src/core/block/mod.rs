@@ -821,10 +821,17 @@ mod tests {
         let frame = Frame::new();
         let mut block = frame.create_block("atoms").unwrap();
 
-        let charges = Int32Array::from(&[1_i32, -2][..]);
-        block.set_col_i32("charge", &charges).unwrap();
-        let copied = block.copy_col_i32("charge").unwrap();
+        // Deliberately a name the Frame schema does not declare. The subject
+        // here is signed-integer storage, not any particular column; using
+        // "charge" made it fail once the schema started enforcing dtypes,
+        // because a partial charge is a float and the schema is right about
+        // that. There is no signed-int column in the schema to borrow.
+        let values = Int32Array::from(&[1_i32, -2][..]);
+        block.set_col_i32("signed_scratch", &values).unwrap();
+        let copied = block.copy_col_i32("signed_scratch").unwrap();
         assert_eq!(copied.length(), 2);
+        assert_eq!(copied.get_index(0), 1);
+        assert_eq!(copied.get_index(1), -2);
     }
 
     #[wasm_bindgen_test]
@@ -860,15 +867,17 @@ mod tests {
         let frame = Frame::new();
         let mut block = frame.create_block("atoms").unwrap();
 
+        // See `test_block_set_copy_i32`: an undeclared name, because the
+        // schema legitimately types `charge` as float.
         block
-            .create_col_i32("charge", vec![2_usize].into_boxed_slice())
+            .create_col_i32("signed_scratch", vec![2_usize].into_boxed_slice())
             .unwrap();
 
-        let view = block.view_col_i32("charge").unwrap();
+        let view = block.view_col_i32("signed_scratch").unwrap();
         view.set_index(0, 1);
         view.set_index(1, -1);
 
-        let copied = block.copy_col_i32("charge").unwrap();
+        let copied = block.copy_col_i32("signed_scratch").unwrap();
         assert_eq!(copied.get_index(0), 1);
         assert_eq!(copied.get_index(1), -1);
     }

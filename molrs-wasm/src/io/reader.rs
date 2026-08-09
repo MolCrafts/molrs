@@ -1181,7 +1181,7 @@ impl XtcReader {
 
 /// Rebuild a [`Frame`] from `molrs::stream` wire bytes.
 ///
-/// This is what a `molrs::stream::FrameServer` puts on the socket, so a page
+/// This is what a `molrs::stream::FramePublisher` puts on the socket, so a page
 /// subscribed to a live run decodes payloads with this and never re-derives
 /// the layout in JavaScript. The inverse is
 /// [`writeFrameBytes`](super::writer::write_frame_bytes_export) with the same

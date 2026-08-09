@@ -2416,14 +2416,14 @@ pub fn write_block_csv(block: &PyBlock, delimiter: char, header: bool) -> PyResu
 
 /// Rebuild a :class:`Frame` from streaming wire bytes.
 ///
-/// This is the encoding ``molrs::stream::FrameServer`` puts on the wire, so a
+/// This is the encoding ``molrs::stream::Publisher`` puts on the wire, so a
 /// consumer decodes a live stream with this and never re-derives the layout.
 ///
 /// Parameters
 /// ----------
 /// data : bytes
 ///     A payload produced by :func:`write_frame_bytes` or by a Rust
-///     ``FrameServer``.
+///     ``Publisher``.
 /// format : {"msgpack", "json"}
 ///     Wire encoding the payload was written with.
 #[pyfunction]

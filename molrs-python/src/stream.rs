@@ -1,7 +1,7 @@
 //! Live Frame streaming over WebSocket — Python view of `molrs::stream`.
 //!
 //! A producer (an MD loop in Python, Rust, or anything that can build a
-//! [`Frame`]) binds a [`PyFrameServer`] and calls `send()` once per step. The
+//! [`Frame`]) binds a [`PyPublisher`] and calls `send()` once per step. The
 //! call never blocks on network I/O: frames go through a bounded buffer that
 //! drops the oldest payload when a client cannot keep up, so a slow viewer
 //! slows nothing down. Viewers dial the socket and read the payloads back with
@@ -13,8 +13,8 @@
 //!
 //! # Platform
 //!
-//! [`PyControlCommand`] is portable; [`PyFrameServer`] binds a TCP listener and
-//! is therefore native-only, gated exactly like `molrs::stream::server`. A Pyodide
+//! [`PyControlCommand`] is portable; [`PyPublisher`] binds a TCP listener and
+//! is therefore native-only, gated exactly like `molrs::stream::publisher`. A Pyodide
 //! build has the command type and no server.
 //!
 //! [`Frame`]: molrs::store::frame::Frame
@@ -38,7 +38,7 @@ use crate::helpers::{message_format, py_value_err};
 /// :meth:`to_bytes` and decode with :meth:`from_bytes` rather than hand-writing
 /// ``{"type": "pause"}``.
 // `skip_from_py_object`: a command is only ever handed *out* (by
-// `FrameServer.recv_command`) or built by a named constructor. No binding takes
+// `Publisher.recv_command`) or built by a named constructor. No binding takes
 // one as a parameter, so there is nothing to extract it for.
 #[pyclass(
     module = "molrs.stream",
@@ -177,7 +177,7 @@ impl PyControlCommand {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use server::PyFrameServer;
+pub use server::PyPublisher;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod server {
@@ -186,7 +186,7 @@ mod server {
     use pyo3::exceptions::PyValueError;
     use pyo3::prelude::*;
 
-    use molrs::stream::{FrameServer, ServerConfig};
+    use molrs::stream::{Publisher, PublisherConfig};
 
     use super::PyControlCommand;
     use crate::core::store::frame::PyFrame;
@@ -205,23 +205,23 @@ mod server {
     ///
     /// Examples
     /// --------
-    /// >>> with molrs.stream.FrameServer("127.0.0.1:8765") as server:  # doctest: +SKIP
+    /// >>> with molrs.stream.Publisher("127.0.0.1:8765") as server:  # doctest: +SKIP
     /// ...     for _ in range(steps):
     /// ...         integrator.step()
     /// ...         server.send(integrator.frame)
     //
-    // Deliberately not `unsendable`: `FrameServer` is `Arc`-shared and
+    // Deliberately not `unsendable`: `Publisher` is `Arc`-shared and
     // `Send + Sync`, and a producer commonly runs its loop on a worker thread.
     // (The `Frame` handed to `send` is still thread-bound — that is `PyFrame`'s
     // constraint, and it holds because each thread builds its own.)
-    #[pyclass(module = "molrs.stream", name = "FrameServer")]
-    pub struct PyFrameServer {
-        inner: Option<FrameServer>,
+    #[pyclass(module = "molrs.stream", name = "Publisher")]
+    pub struct PyPublisher {
+        inner: Option<Publisher>,
         address: String,
     }
 
     #[pymethods]
-    impl PyFrameServer {
+    impl PyPublisher {
         /// Bind a WebSocket listener.
         ///
         /// Parameters
@@ -252,14 +252,20 @@ mod server {
                     "buffer_size must be at least 1; 0 would drop every frame",
                 ));
             }
-            let config = ServerConfig {
+            let config = PublisherConfig {
                 format: message_format(format)?,
                 buffer_size,
                 max_frame_rate: 0.0,
                 token,
             };
-            let server = FrameServer::bind_with(address, config).map_err(io_error_to_pyerr)?;
-            let bound = server.local_addr().to_string();
+            let address_for_error = address.clone();
+            let server = Publisher::bind_with(address, config).map_err(io_error_to_pyerr)?;
+            // A bound server always has one; `local_addr` is Option only
+            // because a dialed publisher has no address to hand out.
+            let bound = server
+                .local_addr()
+                .map(|a| a.to_string())
+                .unwrap_or_else(|| address_for_error.to_string());
             Ok(Self {
                 inner: Some(server),
                 address: bound,
@@ -342,21 +348,21 @@ mod server {
         fn __repr__(&self) -> String {
             match &self.inner {
                 Some(server) => format!(
-                    "FrameServer(address='{}', clients={})",
+                    "Publisher(address='{}', clients={})",
                     self.address,
                     server.client_count()
                 ),
-                None => format!("FrameServer(address='{}', closed)", self.address),
+                None => format!("Publisher(address='{}', closed)", self.address),
             }
         }
     }
 
-    impl PyFrameServer {
+    impl PyPublisher {
         /// The live server, or a clear error once `close()` has run. Every
         /// method goes through here so a closed server never looks idle.
-        fn server(&self) -> PyResult<&FrameServer> {
+        fn server(&self) -> PyResult<&Publisher> {
             self.inner.as_ref().ok_or_else(|| {
-                PyValueError::new_err("FrameServer is closed; bind a new one to stream again")
+                PyValueError::new_err("Publisher is closed; bind a new one to stream again")
             })
         }
     }

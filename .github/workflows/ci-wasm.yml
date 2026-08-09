@@ -49,3 +49,11 @@ jobs:
       - name: Build wasm
         working-directory: molrs-wasm
         run: wasm-pack build --release --target bundler --scope molcrafts --out-name molrs
+
+      # The suite runs under Node — nothing configures `run_in_browser`, so no
+      # headless browser or webdriver is needed. It was absent until two
+      # `core::block` tests had been failing unnoticed: building the wasm
+      # proves it compiles, not that it works.
+      - name: Test wasm
+        working-directory: molrs-wasm
+        run: wasm-pack test --node

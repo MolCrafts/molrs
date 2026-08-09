@@ -1,6 +1,6 @@
 """Live Frame streaming — ``molrs::stream``.
 
-A producer binds a :class:`FrameServer` and calls ``send(frame)`` once per
+A producer binds a :class:`Publisher` and calls ``send(frame)`` once per
 simulation step. The call never blocks on the network: frames go through a
 bounded buffer that drops the oldest payload when a viewer cannot keep up, so
 a slow client slows nothing down. Viewers dial the socket and decode payloads
@@ -10,8 +10,8 @@ Traffic the other way is :class:`ControlCommand` — a viewer asking the produce
 to pause, change rate, or restrict the streamed atom subset. Nothing here acts
 on a command; the producer decides what it means.
 
-:class:`FrameServer` binds a TCP listener and is therefore native-only, gated
-exactly as ``molrs::stream::server`` is. A Pyodide build has
+:class:`Publisher` binds a TCP listener and is therefore native-only, gated
+exactly as ``molrs::stream::publisher`` is. A Pyodide build has
 :class:`ControlCommand` and no server — absent, rather than a stub that would
 fail only once someone tried to connect.
 
@@ -21,7 +21,7 @@ Producer::
 
     import molrs
 
-    with molrs.stream.FrameServer("127.0.0.1:8765") as server:
+    with molrs.stream.Publisher("127.0.0.1:8765") as server:
         for _ in range(n_steps):
             integrator.step()
             server.send(integrator.frame)
@@ -35,8 +35,8 @@ from ._lib import ControlCommand as ControlCommand
 __all__ = ["ControlCommand"]
 
 try:  # native only — see the module docstring
-    from ._lib import FrameServer as FrameServer
+    from ._lib import Publisher as Publisher
 except ImportError:  # pragma: no cover — Pyodide build
     pass
 else:
-    __all__.append("FrameServer")
+    __all__.append("Publisher")
