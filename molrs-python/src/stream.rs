@@ -1,7 +1,7 @@
 //! Live Frame streaming over WebSocket — Python view of `molrs::stream`.
 //!
 //! A producer (an MD loop in Python, Rust, or anything that can build a
-//! [`Frame`]) binds a [`PyFrameServer`] and calls `send()` once per step. The
+//! [`Frame`]) binds a [`PyPublisher`] and calls `send()` once per step. The
 //! call never blocks on network I/O: frames go through a bounded buffer that
 //! drops the oldest payload when a client cannot keep up, so a slow viewer
 //! slows nothing down. Viewers dial the socket and read the payloads back with
@@ -13,7 +13,7 @@
 //!
 //! # Platform
 //!
-//! [`PyControlCommand`] is portable; [`PyFrameServer`] binds a TCP listener and
+//! [`PyControlCommand`] is portable; [`PyPublisher`] binds a TCP listener and
 //! is therefore native-only, gated exactly like `molrs::stream::publisher`. A Pyodide
 //! build has the command type and no server.
 //!
@@ -177,7 +177,7 @@ impl PyControlCommand {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use server::PyFrameServer;
+pub use server::PyPublisher;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod server {
@@ -215,13 +215,13 @@ mod server {
     // (The `Frame` handed to `send` is still thread-bound — that is `PyFrame`'s
     // constraint, and it holds because each thread builds its own.)
     #[pyclass(module = "molrs.stream", name = "Publisher")]
-    pub struct PyFrameServer {
+    pub struct PyPublisher {
         inner: Option<Publisher>,
         address: String,
     }
 
     #[pymethods]
-    impl PyFrameServer {
+    impl PyPublisher {
         /// Bind a WebSocket listener.
         ///
         /// Parameters
@@ -357,7 +357,7 @@ mod server {
         }
     }
 
-    impl PyFrameServer {
+    impl PyPublisher {
         /// The live server, or a clear error once `close()` has run. Every
         /// method goes through here so a closed server never looks idle.
         fn server(&self) -> PyResult<&Publisher> {

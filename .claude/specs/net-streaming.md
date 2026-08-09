@@ -1,9 +1,3 @@
-> **Renamed since this spec was written.** `molrs::net` is now `molrs::stream`
-> (folded in beside the wire encoding it rides), `FrameServer` is
-> `Publisher` (it can dial out as well as bind), and `ServerConfig` is
-> `PublisherConfig`. The design below still describes the shape; the names in it
-> do not resolve.
-
 ---
 title: net-streaming — WebSocket Frame streaming + bidirectional control for molrs
 status: done
@@ -21,13 +15,13 @@ closed: 2026-08-04
 > lossless-round-trip goal (acceptance ac-002) through direct serde rather than
 > the `WireFrame`/`Column::raw_bytes()` design sketched below. The **WebSocket
 > networking + bidirectional-control layer** (the `net` feature: tokio runtime,
-> `FrameServer`, `ControlCommand`, crossbeam bridge — acceptance ac-003…ac-009)
+> `Publisher`, `ControlCommand`, crossbeam bridge — acceptance ac-003…ac-009)
 > **shipped** under feature `net` (2026-08-04). Wire encoding reuses `stream`;
-> `FrameServer` + `ControlCommand` live in `molrs::net`.
+> `Publisher` + `ControlCommand` live in `molrs::stream`.
 
 ## Summary
 
-Add a `net` feature-gated module to molrs that enables real-time Frame streaming over WebSocket. Simulation code (MD loops, trajectory generators) can broadcast `Frame` snapshots to browser-based visualization clients (like molvis) while the simulation runs. Clients may send control commands (pause, resume, set framerate, request keyframe, set atom subset) back to the simulation via the same WebSocket connection. The networking layer runs on a background tokio runtime behind a bounded crossbeam channel, so the simulation loop remains synchronous and never blocks on network writes. The serialization layer (`molrs::net::ser`) is WASM-clean — it compiles under `wasm32-unknown-unknown` with no tokio dependency — so the same wire types can be reused in browser-side or FFI contexts.
+Add a `net` feature-gated module to molrs that enables real-time Frame streaming over WebSocket. Simulation code (MD loops, trajectory generators) can broadcast `Frame` snapshots to browser-based visualization clients (like molvis) while the simulation runs. Clients may send control commands (pause, resume, set framerate, request keyframe, set atom subset) back to the simulation via the same WebSocket connection. The networking layer runs on a background tokio runtime behind a bounded crossbeam channel, so the simulation loop remains synchronous and never blocks on network writes. The serialization layer (`molrs::stream::ser`) is WASM-clean — it compiles under `wasm32-unknown-unknown` with no tokio dependency — so the same wire types can be reused in browser-side or FFI contexts.
 
 ## Design
 
@@ -79,17 +73,17 @@ pub enum ControlCommand {
 }
 ```
 
-The client sends commands as JSON or MessagePack payloads with a `"type"` tag. The `recv_command()` API on `FrameServer` polls for incoming commands from any client, returning `None` after a configurable timeout.
+The client sends commands as JSON or MessagePack payloads with a `"type"` tag. The `recv_command()` API on `Publisher` polls for incoming commands from any client, returning `None` after a configurable timeout.
 
-### FrameServer API
+### Publisher API
 
 ```rust
 #[derive(Clone)]
-pub struct FrameServer { /* Arc<Inner> */ }
+pub struct Publisher { /* Arc<Inner> */ }
 
-impl FrameServer {
+impl Publisher {
     pub fn bind(addr: impl Into<String>) -> io::Result<Self>;
-    pub fn bind_with(addr: impl Into<String>, config: ServerConfig) -> io::Result<Self>;
+    pub fn bind_with(addr: impl Into<String>, config: PublisherConfig) -> io::Result<Self>;
     pub fn send(&self, frame: &Frame) -> Result<(), SendError>;
     pub async fn send_async(&self, frame: &Frame) -> Result<(), SendError>;
     pub fn client_count(&self) -> usize;
@@ -97,7 +91,7 @@ impl FrameServer {
     pub fn shutdown(self) -> impl Future<Output = ()>;
 }
 
-pub struct ServerConfig {
+pub struct PublisherConfig {
     pub format: MessageFormat,          // MessagePack | Json
     pub buffer_size: usize,             // crossbeam channel capacity; default 4
     pub max_frame_rate: f64,            // reserved, no-op in v1
@@ -108,7 +102,7 @@ pub struct ServerConfig {
 
 Simulation thread (sync) → `crossbeam::bounded(buffer_size)` → Dedicated std::thread running a tokio runtime → `tokio::sync::broadcast` → Per-client `tokio::sync::mpsc` → `tokio_tungstenite::WebSocket` writes. The bounded crossbeam channel **drops the oldest frame** when full, so the simulation never blocks on a slow network client.
 
-On `FrameServer::Drop`, the background thread is joined and the tokio runtime is shut down gracefully.
+On `Publisher::Drop`, the background thread is joined and the tokio runtime is shut down gracefully.
 
 ### Feature flag
 
@@ -143,8 +137,8 @@ net = ["dep:tokio", "dep:tokio-tungstenite", "dep:rmp-serde", "dep:crossbeam-cha
 - [ ] T5: Implement `WireFrame`/`WireBlock`/`WireColumn`/`WireSimBox` types, `MessageFormat` enum, and `frame_to_wire_bytes()` in `molrs/src/net/ser.rs`
 - [ ] T6: Write failing tests for `ControlCommand`: every variant (Pause, Resume, SetFrameRate, SetSubset, RequestKeyFrame) round-trips through rmp-serde + JSON without data loss; SetSubset preserves atom_ids order
 - [ ] T7: Implement `ControlCommand` enum + serde (tagged, `rename_all = "snake_case"`) in `molrs/src/net/message.rs`
-- [ ] T8: Write failing integration tests for `FrameServer` in `tests/net.rs`: bind to random port, client connects via tokio-tungstenite, `client_count == 1`; server `send(frame)` → client receives deserializable WireFrame; client sends ControlCommand → `server.recv_command()` returns it; bounded channel drops oldest frame when buffer is full
-- [ ] T9: Implement `FrameServer` (bind/bind_with/send/send_async/client_count/recv_command/shutdown) + sync→async bridge using crossbeam→tokio broadcast + WebSocket accept loop with per-client mpsc fan-out in `bridge.rs` + `server.rs`
+- [ ] T8: Write failing integration tests for `Publisher` in `tests/net.rs`: bind to random port, client connects via tokio-tungstenite, `client_count == 1`; server `send(frame)` → client receives deserializable WireFrame; client sends ControlCommand → `server.recv_command()` returns it; bounded channel drops oldest frame when buffer is full
+- [ ] T9: Implement `Publisher` (bind/bind_with/send/send_async/client_count/recv_command/shutdown) + sync→async bridge using crossbeam→tokio broadcast + WebSocket accept loop with per-client mpsc fan-out in `bridge.rs` + `server.rs`
 - [ ] T10: Run full quality gate: `cargo fmt --all --check`, `cargo clippy --features net -- -D warnings`, `cargo check --features net`, `cargo test --features net`
 
 ## Testing strategy
@@ -152,9 +146,9 @@ net = ["dep:tokio", "dep:tokio-tungstenite", "dep:rmp-serde", "dep:crossbeam-cha
 - **Column::raw_bytes() unit tests** — for each dtype (Float, Int, UInt, U8, Bool, String): verify length matches `nrows * sizeof(T) * product(remaining shape dims)`. Multi-dimensional column where inner dims > 1 gives flat `Vec<u8>` of total byte count. String returns None.
 - **Wire-format round-trip** — build a full Frame with at least 3 blocks ("atoms" with x/y/z float columns + serial int + type u8; "bonds" with uint i/j + u8 order; optional SimBox + meta key-value map). Serialize via `frame_to_wire_bytes()` with both MessagePack and JSON. Deserialize raw bytes into `WireFrame`. Assert block names, column count per block, nrows per column, dtype tags, and numeric values match (within f64 epsilon for floats).
 - **ControlCommand round-trip** — all 5 variants: Pause, Resume, SetFrameRate {42.0}, SetSubset {[1,3,5]}, RequestKeyFrame. Serialize→deserialize→match.
-- **FrameServer in-process integration** — bind to `127.0.0.1:0`, spawn a tokio side-task that connects as a WebSocket client, send a Frame from the server side, assert client receives a matching message. From the client side, send `ControlCommand::Pause`, assert `recv_command()` yields `Some(Pause)`.
-- **Bounded channel drop** — `ServerConfig { buffer_size: 1 }`, send 3 frames without draining the client side; verify the simulation thread never blocks and the frame buffer drops oldest (the client eventually receives only the latest).
-- **Graceful shutdown** — `FrameServer::shutdown()` completes within 5 seconds; the background thread joins; no resources leaked.
+- **Publisher in-process integration** — bind to `127.0.0.1:0`, spawn a tokio side-task that connects as a WebSocket client, send a Frame from the server side, assert client receives a matching message. From the client side, send `ControlCommand::Pause`, assert `recv_command()` yields `Some(Pause)`.
+- **Bounded channel drop** — `PublisherConfig { buffer_size: 1 }`, send 3 frames without draining the client side; verify the simulation thread never blocks and the frame buffer drops oldest (the client eventually receives only the latest).
+- **Graceful shutdown** — `Publisher::shutdown()` completes within 5 seconds; the background thread joins; no resources leaked.
 - **WASM compilation** — `cargo check --target wasm32-unknown-unknown --features net` succeeds (verifies ser.rs and message.rs are WASM-clean).
 - **Quality gate** — `cargo fmt --all --check`, `clippy -D warnings`, `check`, `test --features net` all exit 0.
 
@@ -178,4 +172,4 @@ These checks are verified ad-hoc by the developer running `/mol:web` on the `liv
 - **Schema caching** (send column metadata only on first frame, raw data only thereafter) — deferred; v1 sends self-describing messages
 - **Frame rate throttling** — `max_frame_rate` config field is declared but not enforced; no-op in v1
 - **Python / WASM client libraries** for consuming the stream — the wire types in ser.rs are reusable but no binding is provided
-- **Multiple server instances** — single FrameServer per process
+- **Multiple server instances** — single Publisher per process

@@ -125,8 +125,6 @@ struct Shared {
 /// broadcast fan-out, the token handshake, the control channel. A `Frame` is
 /// what it carries today, not what it is.
 ///
-/// (It was `FrameServer`, which claimed both.)
-///
 /// Clone freely: all clones share the same state. Call
 /// [`Publisher::shutdown`] to stop the background thread, or drop the last
 /// clone to join on exit.
