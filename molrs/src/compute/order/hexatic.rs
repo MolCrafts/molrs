@@ -64,6 +64,15 @@ impl Hexatic {
         let j_idx = nlist.point_indices();
         let vectors = nlist.vectors();
         let n_pairs = nlist.n_pairs();
+        // Empty when the list was built with `store_diff=false` — OOB → panic.
+        if n_pairs > 0 && vectors.nrows() != n_pairs {
+            return Err(ComputeError::BadShape {
+                expected: format!(
+                    "NeighborList with displacement vectors for {n_pairs} pairs (store_diff=true)"
+                ),
+                got: format!("{} vector rows", vectors.nrows()),
+            });
+        }
 
         // For the j-side of each self-query bond, the bond direction is
         // reversed: θ + π. `exp(i k (θ + π)) = (-1)^k exp(i k θ)`.
