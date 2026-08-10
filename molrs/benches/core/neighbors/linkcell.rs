@@ -1,11 +1,16 @@
-//! Neighbor-list regression benches: LinkCell / BruteForce build + update, plus
-//! the SoA hot paths — `LinkCell::build_soa` (vs interleaved `build`) and the
-//! high-level `NeighborQuery::from_columns` + `query_columns` (vs `new` +
-//! `query`). Single small regression size.
+//! Neighbor-list regression benches: cell-list / brute-force build + update,
+//! plus the SoA hot paths — `LinkCell::build_soa` (vs the interleaved engine
+//! build) and the cross-query `NeighborQuery::from_columns` + `query_columns`
+//! (vs `new` + `query`). Single small regression size.
+//!
+//! `NeighborList::build` indexes only, so every entry that used to time the
+//! materializing `build` pairs it with `neighbors(FULL)` — index plus pair
+//! enumeration, the same work the old series measured. `traversal/{build,
+//! visit_pairs}` keeps the two halves separate, as it always did.
 
 use criterion::{BenchmarkId, Criterion, criterion_group};
 use molrs::spatial::neighbors::{
-    BruteForce, CellGrid, LinkCell, NbList, NbListAlgo, NeighborQuery,
+    CellGrid, LinkCell, NeighborList, NeighborQuery, NeighborsStorage,
 };
 use molrs::spatial::simbox::SimBox;
 use molrs::types::F;
@@ -52,17 +57,17 @@ fn bench_build(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::new("linkcell", n), &n, |b, _| {
             b.iter(|| {
-                let mut nl = NbList(LinkCell::new().cutoff(CUTOFF));
+                let mut nl = NeighborList::new(CUTOFF);
                 nl.build(pts.view(), &bx);
-                std::hint::black_box(nl.query());
+                std::hint::black_box(nl.neighbors(NeighborsStorage::FULL));
             });
         });
 
         group.bench_with_input(BenchmarkId::new("bruteforce", n), &n, |b, _| {
             b.iter(|| {
-                let mut nl = NbList(BruteForce::new(CUTOFF));
+                let mut nl = NeighborList::brute_force(CUTOFF);
                 nl.build(pts.view(), &bx);
-                std::hint::black_box(nl.query());
+                std::hint::black_box(nl.neighbors(NeighborsStorage::FULL));
             });
         });
     }
@@ -80,25 +85,25 @@ fn bench_update(c: &mut Criterion) {
         let bx = helpers::make_pbc_simbox(BOX_SIZE);
 
         {
-            let mut nl = NbList(LinkCell::new().cutoff(CUTOFF));
+            let mut nl = NeighborList::new(CUTOFF);
             nl.build(pts.view(), &bx);
 
             group.bench_with_input(BenchmarkId::new("linkcell", n), &n, |b, _| {
                 b.iter(|| {
-                    nl.update(pts2.view(), &bx);
-                    std::hint::black_box(nl.query());
+                    nl.update(pts2.view());
+                    std::hint::black_box(nl.neighbors(NeighborsStorage::FULL));
                 });
             });
         }
 
         {
-            let mut nl = NbList(BruteForce::new(CUTOFF));
+            let mut nl = NeighborList::brute_force(CUTOFF);
             nl.build(pts.view(), &bx);
 
             group.bench_with_input(BenchmarkId::new("bruteforce", n), &n, |b, _| {
                 b.iter(|| {
-                    nl.update(pts2.view(), &bx);
-                    std::hint::black_box(nl.query());
+                    nl.update(pts2.view());
+                    std::hint::black_box(nl.neighbors(NeighborsStorage::FULL));
                 });
             });
         }
@@ -107,7 +112,7 @@ fn bench_update(c: &mut Criterion) {
     group.finish();
 }
 
-/// Interleaved `build` vs the SoA `build_soa` self-query hot path (the two are
+/// Interleaved build vs the SoA `build_soa` self-query hot path (the two are
 /// byte-identical; this guards the SoA path against a regression).
 fn bench_build_soa(c: &mut Criterion) {
     let mut group = c.benchmark_group("neighbors/build_soa");
@@ -120,9 +125,9 @@ fn bench_build_soa(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::new("aos_build", n), &n, |b, _| {
             b.iter(|| {
-                let mut nl = NbList(LinkCell::new().cutoff(CUTOFF));
+                let mut nl = NeighborList::new(CUTOFF);
                 nl.build(pts.view(), &bx);
-                std::hint::black_box(nl.query());
+                std::hint::black_box(nl.neighbors(NeighborsStorage::FULL));
             });
         });
 
@@ -130,7 +135,7 @@ fn bench_build_soa(c: &mut Criterion) {
             b.iter(|| {
                 let mut lc = LinkCell::new().cutoff(CUTOFF);
                 lc.build_soa(&xs, &ys, &zs, &bx);
-                std::hint::black_box(lc.query());
+                std::hint::black_box(&lc);
             });
         });
     }
@@ -235,18 +240,18 @@ fn bench_traversal(c: &mut Criterion) {
         for (label, bx) in &boxes {
             group.bench_function(BenchmarkId::new("build", label), |b| {
                 b.iter(|| {
-                    let mut nl = NbList(LinkCell::new().cutoff(CUTOFF));
+                    let mut nl = NeighborList::new(CUTOFF);
                     nl.build(pts.view(), bx);
-                    std::hint::black_box(nl.query());
+                    std::hint::black_box(nl.neighbors(NeighborsStorage::FULL));
                 });
             });
 
-            let mut nl = NbList(LinkCell::new().cutoff(CUTOFF));
+            let mut nl = NeighborList::new(CUTOFF);
             nl.build(pts.view(), bx);
             group.bench_function(BenchmarkId::new("visit_pairs", label), |b| {
                 b.iter(|| {
                     let mut acc = 0.0 as F;
-                    nl.visit_pairs(&mut |_i: u32, _j: u32, d2: F, _v: [F; 3]| acc += d2);
+                    nl.for_each_pair(|pair| acc += pair.dist_sq);
                     std::hint::black_box(acc)
                 });
             });

@@ -1,41 +1,52 @@
-//! High-level neighbor query API inspired by freud-analysis.
+//! Cross-query neighbor search: one point set against another.
 //!
 //! [`NeighborQuery`] wraps a [`LinkCell`] spatial index built once from a set of
-//! *reference points*, and then answers repeated queries against it in two
-//! modes:
+//! *reference points*, and then answers repeated queries against it:
 //!
 //! - [`query`](NeighborQuery::query) — cross-query: find all pairs `(i, j)` where
 //!   `i` indexes a separate set of *query points* and `j` indexes the reference
-//!   points. Directed and full-shell.
+//!   points. Directed and full-shell. This is the question
+//!   [`NeighborList`](crate::spatial::neighbors::NeighborList) does not answer,
+//!   and the reason this type exists.
 //! - [`query_self`](NeighborQuery::query_self) — self-query: find unique pairs
 //!   `(i, j)` with `i < j` within the reference point set. Half-shell, so each
-//!   unordered pair appears once.
+//!   unordered pair appears once. A convenience over the same reference points;
+//!   a search that is *only* a self search wants
+//!   [`NeighborList`](crate::spatial::neighbors::NeighborList) instead, which
+//!   can stream its pairs instead of materializing them.
 //!
 //! Every table returned here carries both physical columns
 //! ([`NeighborsStorage::FULL`]): distances in Å² and minimum-image
 //! displacements in Å. This wrapper does not expose a column policy — a caller
-//! who wants a leaner table drives [`LinkCell::with_storage`] directly, or
-//! drops columns afterwards with [`Neighbors::repack`].
+//! who wants a leaner table uses
+//! [`NeighborList::neighbors`](crate::spatial::neighbors::NeighborList::neighbors),
+//! or drops columns afterwards with [`Neighbors::repack`].
 
 use crate::spatial::neighbors::linkcell::LinkCell;
-use crate::spatial::neighbors::{NbListAlgo, Neighbors, NeighborsStorage, QueryMode};
+use crate::spatial::neighbors::{Backend, NeighborList, Neighbors, NeighborsStorage, QueryMode};
 use crate::spatial::simbox::SimBox;
 use crate::types::{F, FNx3, FNx3View};
 
-/// High-level neighbor search over a fixed set of reference points.
+/// Cross-query search over a fixed set of reference points.
+///
+/// This is the door for the *cross* question — "which reference points lie
+/// within the cutoff of **these other** points?" — and that is the reason the
+/// type exists. Searching one point set against itself is a different question
+/// and belongs to [`NeighborList`](crate::spatial::neighbors::NeighborList),
+/// which additionally can re-index moved coordinates, stream its pairs without
+/// materializing a table, and choose which columns a table keeps.
 ///
 /// Wraps a [`LinkCell`] cell-list spatial index built once at construction, so
 /// that many queries can be answered against the same reference points without
-/// re-indexing. Provides both self-query and cross-query methods following the
-/// freud-analysis API. Every returned [`Neighbors`] table uses
+/// re-indexing. Every returned [`Neighbors`] table uses
 /// [`NeighborsStorage::FULL`].
 ///
 /// # Example
 ///
 /// ```ignore
 /// let nq = NeighborQuery::new(&simbox, points.view(), 3.0);
-/// let nlist = nq.query(query_points.view());   // cross-query
-/// let nlist = nq.query_self();                  // self-query
+/// let cross = nq.query(query_points.view());  // the question this type is for
+/// let selfq = nq.query_self();                // convenience; prefer NeighborList
 /// ```
 #[derive(Debug, Clone)]
 pub struct NeighborQuery {
@@ -150,16 +161,19 @@ impl NeighborQuery {
     /// reference set, and carries both physical columns
     /// ([`NeighborsStorage::FULL`]).
     ///
-    /// Note that this rebuilds a [`LinkCell`] over the reference points rather
-    /// than reusing the index held for cross-queries, because the two traversals
+    /// Runs a fresh [`NeighborList`] over the reference points rather than
+    /// reusing the index held for cross-queries, because the two traversals
     /// differ: a self-query walks cell pairs once in a forward direction, while
     /// a cross-query walks the full neighborhood of each query point.
+    ///
+    /// A caller that only ever asks this question should hold a
+    /// [`NeighborList`] instead: it can re-index moved coordinates with
+    /// [`update`](NeighborList::update), stream pairs without materializing a
+    /// table, and choose which columns a table keeps.
     pub fn query_self(&self) -> Neighbors {
-        // Reuse the lower-level LinkCell build, which does half-shell iteration
-        // and already tags the result `SelfQuery { num_points }`.
-        let mut lc = LinkCell::new().cutoff(self.cutoff);
-        lc.build(self.points.view(), &self.simbox);
-        lc.query().clone()
+        let mut nl = NeighborList::new(self.cutoff);
+        nl.build(self.points.view(), &self.simbox);
+        nl.neighbors(NeighborsStorage::FULL)
     }
 
     /// Reference to the stored simulation box.
@@ -230,7 +244,8 @@ impl NeighborQuery {
     }
 
     /// SoA sibling of [`query`](Self::query): cross-query reading each query
-    /// point from column-major `qx`/`qy`/`qz` slices.
+    /// point from column-major `qx`/`qy`/`qz` slices (Å, one slice per axis,
+    /// all of the same length).
     ///
     /// Same pair order and cutoff test as `query`, so the returned
     /// [`Neighbors`] is byte-identical to `query` on the same coordinates.

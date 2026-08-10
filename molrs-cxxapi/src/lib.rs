@@ -400,7 +400,7 @@ impl RdfCompute {
 // one frame per call; molrs owns every piece of analysis math. See the bridge
 // schema (build.rs) for the C++-visible contracts.
 
-/// Build one transient molrs frame + `LinkCell` self-neighbor list from a flat
+/// Build one transient molrs frame + cell-list self-neighbor list from a flat
 /// blocked `x|y|z` position frame and a row-major 3×3 cell.
 ///
 /// Shared by the batch [`RdfCompute`] and the streaming [`RdfAccumulator`] —
@@ -411,7 +411,7 @@ fn frame_and_self_nlist(
     box9: &[f64],
     r_max: f64,
 ) -> Option<(Frame, molrs::spatial::neighbors::Neighbors)> {
-    use molrs::spatial::neighbors::{LinkCell, NbListAlgo};
+    use molrs::spatial::neighbors::{NeighborList, NeighborsStorage};
     if positions.is_empty() || !positions.len().is_multiple_of(3) || box9.len() != 9 {
         return None;
     }
@@ -431,9 +431,9 @@ fn frame_and_self_nlist(
     }
     let nlist = {
         let simbox = frame.simbox.as_ref()?;
-        let mut lc = LinkCell::new().cutoff(r_max);
-        lc.build(pos.view(), simbox);
-        lc.query().clone()
+        let mut nl = NeighborList::new(r_max);
+        nl.build(pos.view(), simbox);
+        nl.neighbors(NeighborsStorage::FULL)
     };
     Some((frame, nlist))
 }

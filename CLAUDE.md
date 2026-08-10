@@ -240,7 +240,7 @@ Graph-based molecular structure with atoms, bonds, stereochemistry, ring detecti
 
 | Trait | Crate | Purpose | Key Implementations |
 |---|---|---|---|
-| `NbListAlgo` | `molrs::core::neighbors` | Neighbor search | `LinkCell` (O(N), default), `BruteForce` (O(N²), testing), `NeighborQuery` (high-level wrapper) |
+| `NeighborList` engine (public; internal closed `Backend` trait) | `molrs::core::spatial::neighbors` | Neighbor search: `build`/`update`/`build_columns` own the spatial index, `for_each_pair` streams `NeighborPair`s, `neighbors(storage)` materializes a `Neighbors` table | `LinkCell` (O(N), `NeighborList::new`), `BruteForce` (O(N²), `NeighborList::brute_force`) — picked by constructor, not user-implemented; cross-queries go through `NeighborQuery` |
 | `Potential` | `molrs::ff::potential` | Energy/force evaluation | Bond harmonic, MMFF bond/angle/torsion/oop/vdw/ele, LJ/cut, PME |
 | `Typifier` | `molrs::ff::typifier` | MolGraph → typed Frame | `MMFF94Typifier` / `MMFF94STypifier` (one engine, two named front doors — the MMFF variant is a private field, never a constructor flag), `OPLSAATypifier`, `AtdTypifier` |
 
@@ -258,6 +258,10 @@ in the standalone `molcrafts-molpack` crate.
 **A registered kernel constructor that ignores `tp` is not a Style.** `ParamSource::{TypeRows, PerInstance}` (`ff/potential/registry.rs`) makes that a type, and a bidirectional gate makes it a test. MMFF's parameters depend on aromaticity, ring size and equivalence degradation — no type-tuple table expresses them — so the typifier resolves them per instance and bakes them onto the Frame, and its kernels read those columns. That is legitimate; *registering as if it used type rows* was not.
 
 **MMFF owns no kernel.** Its electrostatics is a buffered Coulomb — `pair/coul/cut` parameterised by `MMFF_ELE_STYLE` (`E = k·qᵢqⱼ / (D·(r+δ))`, δ = 0.05 Å; δ = 0 degenerates to the textbook form). A force field must **declare** the constants it means: a style that omits `coulomb` / `dielectric` / `coulomb14scale` is an `Err`, never a silent default. A kernel that supplies the force field's own constants is not reading the force field.
+
+### AabbQuery (k-nearest neighbors)
+
+`AabbQuery` (`molrs::core::spatial::neighbors::aabb`) answers k-NN queries (`query_knn`) over a tree on unwrapped coordinates — a capability the cell-list `NeighborList` engine does not express. Cutoff-based searches go through `NeighborList`; `AabbQuery` exists for k-NN.
 
 ### Free-Boundary Support
 

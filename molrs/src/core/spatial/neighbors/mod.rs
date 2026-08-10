@@ -2,11 +2,13 @@
 //!
 //! A **neighbor list** is the table of particle pairs that lie closer together
 //! than a fixed **cutoff** distance. Almost every pairwise quantity in
-//! molecular simulation — short-range forces, the radial distribution function,
-//! bond-order parameters, clustering — is computed by walking such a table, and
-//! building it by testing every pair costs `O(N²)` distance evaluations for `N`
-//! particles. The algorithms here bucket space so that the cost falls to
-//! `O(N)`.
+//! molecular simulation is computed by walking such a table: short-range
+//! forces; the **radial distribution function** (**RDF**), the average number
+//! of neighbors found at each separation `r`; **bond-order parameters**, which
+//! describe how the *directions* to a particle's neighbors are arranged;
+//! clustering. Building the table by testing every pair costs `O(N²)` distance
+//! evaluations for `N` particles. The algorithms here bucket space so that the
+//! cost falls to `O(N)`.
 //!
 //! ## Minimum image, sign convention, units
 //!
@@ -30,29 +32,50 @@
 //! input coordinates, which is Å (ångström) everywhere in molrs; `disp` is
 //! therefore in Å and `dist_sq` in Å².
 //!
-//! ## Algorithms
+//! ## Searching
 //!
-//! - [`LinkCell`] — O(N) **cell list**: space is cut into a grid of cells at
-//!   least one cutoff wide, so a particle can only have neighbors in its own
-//!   cell and the 26 cells touching it. Parallelized with rayon when the
-//!   `rayon` feature is enabled (default). Recommended for production use.
-//! - [`BruteForce`] — O(N²) all-pairs reference implementation, useful for
-//!   correctness testing and small systems.
-//! - [`AabbQuery`] — bounding-volume tree; additionally answers
-//!   k-nearest-neighbor queries ([`AabbQuery::query_knn`]), which a fixed
-//!   cutoff cannot express.
+//! [`NeighborList`] is the entry point: it owns the cutoff and the **backend**
+//! that indexes space, and turns coordinates into pairs. Two backends:
 //!
-//! All three implement [`NbListAlgo`] and can be used through the lower-level
-//! API or wrapped in [`NeighborQuery`] for a freud-style workflow.
+//! - [`LinkCell`] (via [`NeighborList::new`]) — O(N) **cell list**: space is
+//!   cut into a grid of cells at least one cutoff wide, so a particle can only
+//!   have neighbors in its own cell and the 26 cells touching it. The default
+//!   backend and the right choice in production. Driven from [`NeighborList`],
+//!   both the indexing and the pair traversal run on one thread today: the
+//!   rayon-parallel pair search inside [`LinkCell`] is reached only through
+//!   that type's own materializing [`build`](LinkCell::build) +
+//!   [`query`](LinkCell::query) path.
+//! - [`BruteForce`] (via [`NeighborList::brute_force`]) — O(N²) all-pairs
+//!   reference: a test oracle, and adequate for very small systems.
+//!
+//! Two neighboring questions have their own types. [`NeighborQuery`] runs a
+//! **cross-query**, searching one point set against a separate reference set.
+//! [`AabbQuery`] is a bounding-volume tree that also answers k-nearest-neighbor
+//! queries ([`AabbQuery::query_knn`]), which a fixed cutoff cannot express.
 //!
 //! ## Streaming a pair versus materializing a table
 //!
-//! A search can hand each pair to a callback as it is discovered
-//! ([`NbListAlgo::build_index`] + [`NbListAlgo::visit_pairs`], carrying the
-//! [`NeighborPair`] quantities), or write the pairs into the [`Neighbors`]
-//! table. A streamed pair always carries both physical columns. A materialized
-//! table keeps only the columns [`NeighborsStorage`] asked for, and reports a
-//! column it never stored as `None` — never as a fabricated zero. Two further
+//! Indexing the coordinates and consuming the pairs are separate steps, and the
+//! second step has two shapes. An analysis that touches each pair once and
+//! keeps only a reduction — an RDF histogram, an energy sum — **streams**:
+//! [`NeighborList::build`] followed by [`NeighborList::for_each_pair`], which
+//! hands over one [`NeighborPair`] at a time and allocates nothing. An analysis
+//! that walks the same pairs several times, or wants them as columns — a
+//! bond-order parameter needs the direction to each neighbor, not just the
+//! distance — **materializes** once with [`NeighborList::neighbors`], naming
+//! the columns it will actually read (here [`NeighborsStorage::DISP`]).
+//! Runnable versions of both are on [`NeighborList`].
+//!
+//! Exactly two calls in this module produce a [`Neighbors`] table:
+//! [`NeighborList::neighbors`], and [`Neighbors::from_pairs`] for a pair stream
+//! the caller produced or filtered itself. [`build`](NeighborList::build),
+//! [`build_columns`](NeighborList::build_columns) and
+//! [`update`](NeighborList::update) own the spatial index and nothing else —
+//! they enumerate no pairs and allocate no table behind the caller's back.
+//!
+//! A streamed pair always carries both physical columns. A materialized table
+//! keeps only the columns [`NeighborsStorage`] asked for, and reports a column
+//! it never stored as `None` — never as a fabricated zero. Two further
 //! conventions pin the table down:
 //!
 //! - A **self-query** searches one point set against itself and is *half-shell*:
@@ -63,25 +86,24 @@
 //!   mean a full-shell (bidirectional) pair list. Column policy and pair
 //!   direction are independent choices.
 //!
-//! ## High-level API (freud-style)
+//! ## API at a glance
 //!
 //! ```ignore
+//! let mut nl = NeighborList::new(3.0);       // cell-list backend, cutoff 3 Å
+//! nl.build(points.view(), &simbox);          // index only — no pair table
+//! nl.build_columns(&xs, &ys, &zs, &simbox);  // ...same, from x/y/z columns
+//! nl.update(points.view());                  // re-index, reusing that box
+//!
+//! nl.for_each_pair(|pair| { /* ... */ });    // stream half-shell self pairs
+//! let table = nl.neighbors(NeighborsStorage::FULL);  // ...or materialize them
+//!
 //! let nq = NeighborQuery::new(&simbox, points.view(), 3.0);
-//! let nlist = nq.query(query_points.view());   // cross-query
-//! let nlist = nq.query_self();                  // self-query (i < j)
+//! let cross = nq.query(query_points.view()); // cross-query, directed
 //!
-//! nlist.query_point_indices()   // &[u32]        — i of each pair
-//! nlist.point_indices()         // &[u32]        — j of each pair
-//! nlist.dist_sq()               // Option<&[F]>  — Å², None if not stored
-//! nlist.disp()                  // Option<FNx3View> — Å, None if not stored
-//! ```
-//!
-//! ## Lower-level API
-//!
-//! ```ignore
-//! let mut lc = LinkCell::new().cutoff(3.0);
-//! lc.build(points.view(), &simbox);
-//! let result = lc.query();
+//! table.query_point_indices()   // &[u32]           — i of each pair
+//! table.point_indices()         // &[u32]           — j of each pair
+//! table.dist_sq()               // Option<&[F]>     — Å², None if not stored
+//! table.disp()                  // Option<FNx3View> — Å,  None if not stored
 //! ```
 //!
 //! ## Name mapping from freud
@@ -98,12 +120,12 @@
 //! | `NeighborList.distances` (r, Å) | [`Neighbors::dist_sq()`] (r², Å²) | molrs stores the square and never hides a square root inside an accessor; take `.sqrt()` at the call site |
 //! | `NeighborList.vectors` | [`Neighbors::disp()`] | same unnormalized MIC vector `r_j - r_i` |
 //! | (both always present) | [`NeighborsStorage`] | freud always carries distances and vectors; molrs returns `None` for a column the search was told not to store |
-//! | `freud.locality.LinkCell` | [`LinkCell`] | — |
+//! | `freud.locality.LinkCell` | [`NeighborList`] (its [`LinkCell`] backend) | — |
 //! | `freud.locality.AABBQuery` | [`AabbQuery`] | — |
 //! | `freud.locality.FilterSANN` / `FilterRAD` | [`filter_sann`] / [`filter_rad`] | — |
 
 use crate::spatial::simbox::SimBox;
-use crate::types::{F, FNx3View};
+use crate::types::{F, FNx3, FNx3View};
 use ndarray::ArrayView2;
 
 pub mod aabb;
@@ -173,14 +195,14 @@ pub enum QueryMode {
 // PairVisitor -- zero-allocation callback for on-demand pair traversal
 // ---------------------------------------------------------------------------
 
-/// Callback for on-demand pair traversal (zero-allocation alternative to
-/// [`Neighbors`]).
+/// Callback a [`Backend`] hands each discovered pair to, without storing it.
 ///
-/// Implement this trait to process pairs without storing them. Used by
-/// [`NbListAlgo::visit_pairs`]. A visitor always receives the complete physics
-/// of a pair — the same two quantities a [`NeighborPair`] carries — because
-/// nothing has been dropped by a storage policy yet.
-pub trait PairVisitor {
+/// A visitor always receives the complete physics of a pair — the same two
+/// quantities a [`NeighborPair`] carries — because nothing has been dropped by
+/// a storage policy yet. Crate-internal: the public streaming API is
+/// [`NeighborList::for_each_pair`], which packs these four arguments into a
+/// [`NeighborPair`].
+pub(crate) trait PairVisitor {
     /// Called for each pair `(i, j)` within the cutoff.
     ///
     /// * `i`, `j` — original particle indices (indices into the point set the
@@ -188,8 +210,7 @@ pub trait PairVisitor {
     /// * `dist_sq` — squared minimum-image distance, Å²
     /// * `diff` — minimum-image displacement `r_j - r_i`, Å, unnormalized.
     ///   This is the same quantity the table calls `disp`
-    ///   ([`NeighborPair::disp`]); the parameter keeps the older name for
-    ///   source compatibility of existing visitors.
+    ///   ([`NeighborPair::disp`]).
     fn visit_pair(&mut self, i: u32, j: u32, dist_sq: F, diff: [F; 3]);
 }
 
@@ -202,139 +223,358 @@ impl<T: FnMut(u32, u32, F, [F; 3])> PairVisitor for T {
 }
 
 // ---------------------------------------------------------------------------
-// NbListAlgo trait
+// Backend trait — the search algorithm behind a NeighborList
 // ---------------------------------------------------------------------------
 
-/// Trait implemented by neighbor-list algorithms.
+/// A search algorithm a [`NeighborList`] can run on: index the points, then
+/// enumerate the pairs.
 ///
-/// Each algorithm maintains internal state and caches pair results after
-/// [`build`](NbListAlgo::build) or [`update`](NbListAlgo::update), so that
-/// [`query`](NbListAlgo::query) returns a cheap reference.
+/// Crate-internal. Callers choose a backend by constructor
+/// ([`NeighborList::new`] for the cell list, [`NeighborList::brute_force`] for
+/// the O(N²) reference), not by supplying their own implementation, so this
+/// trait is not part of the public surface.
 ///
-/// Every implementor searches one point set against itself, so the cached
-/// table is always a half-shell self-query: `mode()` is
-/// [`QueryMode::SelfQuery`] and every pair satisfies `i < j`. Cross-queries
-/// against a second point set go through [`NeighborQuery`] instead.
-pub trait NbListAlgo {
-    /// Build the neighbor list from scratch.
+/// Every implementor searches one point set against itself, so what it produces
+/// is always a half-shell self-query: `mode()` is [`QueryMode::SelfQuery`] and
+/// every pair satisfies `i < j`. Cross-queries against a second point set go
+/// through [`NeighborQuery`] instead.
+///
+/// The two halves are separate on purpose: `build_index` / `update_index` place
+/// the points in space and allocate no pair storage, and `visit_pairs` walks
+/// that index and hands out pairs. Deciding what to do with those pairs —
+/// reduce them on the fly, or write them into a table — belongs to
+/// [`NeighborList`], not here.
+pub(crate) trait Backend: std::fmt::Debug {
+    /// Build the spatial index only — NO pair enumeration.
     ///
     /// `points` is an `N × 3` view of Cartesian coordinates (Å) and `bx` is the
     /// simulation box supplying the periodicity used for minimum-image
     /// distances.
     ///
     /// # Panics
-    /// Panics if the cutoff is not set (it defaults to zero and must be given a
-    /// positive value first) or `points` does not have exactly 3 columns.
-    fn build(&mut self, points: FNx3View<'_>, bx: &SimBox);
+    /// Panics if the cutoff is not positive or `points` does not have exactly
+    /// 3 columns.
+    fn build_index(&mut self, points: FNx3View<'_>, bx: &SimBox);
 
-    /// Rebuild the neighbor list with new positions.
+    /// Rebuild the spatial index for new positions — NO pair enumeration.
     ///
-    /// Implementations may reuse internal buffers for efficiency. There is no
-    /// skin/Verlet shortcut here: `update` recomputes the pairs, it does not
-    /// decide for you whether a rebuild was necessary.
-    fn update(&mut self, points: FNx3View<'_>, bx: &SimBox);
+    /// Implementations may reuse internal buffers. There is no skin/Verlet
+    /// shortcut: this re-indexes, it does not decide for you whether a rebuild
+    /// was necessary.
+    fn update_index(&mut self, points: FNx3View<'_>, bx: &SimBox);
 
-    /// Return a reference to the cached pair results.
+    /// Build the spatial index from three coordinate columns (Å) — NO pair
+    /// enumeration. Column sibling of [`build_index`](Self::build_index).
     ///
-    /// Before the first [`build`](NbListAlgo::build) this is an empty table
-    /// tagged `SelfQuery { num_points: 0 }`, not an error.
-    fn query(&self) -> &Neighbors;
-
-    /// Return a reference to the simulation box used in the last build/update.
-    fn box_ref(&self) -> &SimBox;
-
-    /// Build the spatial index only — NO pair pre-computation.
+    /// The three slices are already known to have equal length: the check
+    /// belongs to [`NeighborList::build_columns`], the public boundary.
     ///
-    /// After calling this, [`visit_pairs`](NbListAlgo::visit_pairs) can
-    /// traverse pairs on-demand without allocating a [`Neighbors`] table.
-    /// The default falls back to a full [`build`](NbListAlgo::build).
-    fn build_index(&mut self, points: FNx3View<'_>, bx: &SimBox) {
-        self.build(points, bx);
-    }
-
-    /// Rebuild the spatial index only — NO pair pre-computation.
-    ///
-    /// Equivalent to [`update`](NbListAlgo::update) but skips pair enumeration.
-    /// The default falls back to a full [`update`](NbListAlgo::update).
-    fn update_index(&mut self, points: FNx3View<'_>, bx: &SimBox) {
-        self.update(points, bx);
-    }
-
-    /// Traverse pairs on-demand, calling the visitor for each pair within
-    /// the cutoff. Zero allocation — no [`Neighbors`] table is built.
-    ///
-    /// The default replays the pre-stored pairs from
-    /// [`query`](NbListAlgo::query). A visitor is handed real physics or
-    /// nothing, so that table must carry both physical columns; algorithms
-    /// that enumerate on the fly (`LinkCell`, `BruteForce`) override this and
-    /// compute the values directly.
-    ///
-    /// # Panics
-    /// Panics if the cached table omits `dist_sq` or `disp`.
-    fn visit_pairs(&self, visitor: &mut dyn PairVisitor) {
-        let result = self.query();
-        let dist_sq = result
-            .dist_sq()
-            .expect("visit_pairs replays a cached table: it must store dist_sq");
-        let disp = result
-            .disp()
-            .expect("visit_pairs replays a cached table: it must store disp");
-        for k in 0..result.n_pairs() {
-            visitor.visit_pair(
-                result.query_point_indices()[k],
-                result.point_indices()[k],
-                dist_sq[k],
-                [disp[[k, 0]], disp[[k, 1]], disp[[k, 2]]],
-            );
+    /// The default interleaves the columns into an owned `N × 3` array and
+    /// defers to `build_index`. That copy is the price of not having a column
+    /// path, and an implementor that indexes columns natively — [`LinkCell`]
+    /// does — overrides this to avoid it; for an O(N²) backend the copy is
+    /// dominated by the search itself, so correctness beats avoiding it.
+    fn build_index_columns(&mut self, xs: &[F], ys: &[F], zs: &[F], bx: &SimBox) {
+        let mut points = FNx3::zeros((xs.len(), 3));
+        for i in 0..xs.len() {
+            points[[i, 0]] = xs[i];
+            points[[i, 1]] = ys[i];
+            points[[i, 2]] = zs[i];
         }
+        self.build_index(points.view(), bx);
     }
+
+    /// Traverse pairs on demand, calling the visitor once per pair within the
+    /// cutoff. Zero allocation — no [`Neighbors`] table is built.
+    ///
+    /// The visitor is handed real physics: `dist_sq` (Å²) and the minimum-image
+    /// displacement `r_j - r_i` (Å) from the same evaluation. Without a prior
+    /// index the visitor is simply never called.
+    fn visit_pairs(&self, visitor: &mut dyn PairVisitor);
 }
 
 // ---------------------------------------------------------------------------
-// Algorithm-generic wrapper (lower-level API)
+// NeighborList — the engine: coordinates in, pairs out
 // ---------------------------------------------------------------------------
 
-/// Algorithm-generic neighbor list wrapper (lower-level API).
+/// Neighbor search over one point set: index the coordinates, then read pairs.
 ///
-/// Thin facade that delegates every call to the underlying [`NbListAlgo`]
-/// implementation. Construct via `NbList(algo)`.
-#[derive(Debug, Clone)]
-pub struct NbList<A: NbListAlgo>(pub A);
+/// This is the door to every self search in molrs. It owns the cutoff, the
+/// backend that indexes space, and the box the index was built for, and it
+/// keeps the two halves of the job apart:
+///
+/// - [`build`](Self::build), [`build_columns`](Self::build_columns) and
+///   [`update`](Self::update) own the spatial index. None of the three
+///   enumerates a pair or allocates a [`Neighbors`] table.
+/// - [`for_each_pair`](Self::for_each_pair) streams the pairs;
+///   [`neighbors`](Self::neighbors) materializes them into a table. These two
+///   are the only way pairs ever leave the engine.
+///
+/// The pairs are a **half-shell self list**: every unordered pair is produced
+/// exactly once, with `i < j`, each carrying its squared minimum-image distance
+/// (Å²) and minimum-image displacement `r_j - r_i` (Å). A directed search
+/// against a *second* point set is a different question — see
+/// [`NeighborQuery::query`].
+///
+/// # Streaming versus materializing
+///
+/// An analysis that consumes each pair once and keeps only a reduction — a
+/// radial distribution histogram, an energy sum — streams and allocates
+/// nothing:
+///
+/// ```
+/// use molrs::spatial::neighbors::NeighborList;
+/// use molrs::spatial::simbox::SimBox;
+/// use ndarray::array;
+///
+/// let bx = SimBox::cube(10.0, array![0.0, 0.0, 0.0], [true, true, true]).unwrap();
+/// // Only the first two are within 3 Å of each other; the third is 4.5 Å away
+/// // (5.5 Å the other way round the box), so it contributes no pair.
+/// let points = array![[1.0, 1.0, 1.0], [1.4, 1.0, 1.0], [5.5, 1.0, 1.0]];
+///
+/// let mut nl = NeighborList::new(3.0);
+/// nl.build(points.view(), &bx);
+///
+/// let bin_width = 0.5;
+/// let mut histogram = vec![0usize; 6];
+/// nl.for_each_pair(|pair| {
+///     histogram[(pair.dist_sq.sqrt() / bin_width) as usize] += 1;
+/// });
+/// assert_eq!(histogram[0], 1); // the 0.4 Å pair
+/// assert_eq!(histogram.iter().sum::<usize>(), 1);
+/// ```
+///
+/// An analysis that walks the same pairs repeatedly, or needs them as columns —
+/// a bond-order parameter needs the direction to each neighbor, not just the
+/// distance — materializes once, naming the columns it will actually read:
+///
+/// ```
+/// use molrs::spatial::neighbors::{NeighborList, NeighborsStorage};
+/// use molrs::spatial::simbox::SimBox;
+/// use ndarray::array;
+///
+/// let bx = SimBox::cube(10.0, array![0.0, 0.0, 0.0], [true, true, true]).unwrap();
+/// let points = array![[1.0, 1.0, 1.0], [1.4, 1.0, 1.0]];
+///
+/// let mut nl = NeighborList::new(3.0);
+/// nl.build(points.view(), &bx);
+///
+/// let table = nl.neighbors(NeighborsStorage::DISP);
+/// let disp = table.disp().expect("DISP keeps the displacement column");
+/// assert_eq!(table.n_pairs(), 1);
+/// assert!((disp[[0, 0]] - 0.4).abs() < 1e-12);
+/// assert!(table.dist_sq().is_none(), "DISP drops the distance column");
+/// ```
+///
+/// [`NeighborsStorage::FULL`] selects every *column*; it never means a
+/// bidirectional pair list, and nothing here falls back to it implicitly —
+/// [`neighbors`](Self::neighbors) takes the policy as an argument.
+#[derive(Debug)]
+pub struct NeighborList {
+    /// Interaction cutoff (Å), fixed at construction: it sets the cell width of
+    /// the backend's index.
+    cutoff: F,
+    /// The algorithm that indexes space and enumerates pairs.
+    backend: Box<dyn Backend + Send + Sync>,
+    /// Box fixed by the last [`build`](Self::build) or
+    /// [`build_columns`](Self::build_columns). `None` until then, which is what
+    /// makes an `update` before a `build` a loud error instead of a guess.
+    bx: Option<SimBox>,
+    /// Point count of the last build/update — the `num_points` a materialized
+    /// table is tagged with.
+    num_points: usize,
+}
 
-impl<A: NbListAlgo> NbList<A> {
-    /// Build the neighbor list from scratch. See [`NbListAlgo::build`].
+impl NeighborList {
+    /// A search with the O(N) cell-list backend — the production choice.
+    ///
+    /// `cutoff` is the interaction radius in Å. It is fixed here rather than
+    /// passed per query because it determines the cell width of the index.
+    ///
+    /// # Panics
+    /// Panics if `cutoff` is not positive.
+    pub fn new(cutoff: F) -> Self {
+        assert!(cutoff > 0.0, "cutoff must be positive");
+        Self::with_backend(cutoff, Box::new(LinkCell::new().cutoff(cutoff)))
+    }
+
+    /// A search with the O(N²) all-pairs backend.
+    ///
+    /// Same results as [`new`](Self::new) — that is what makes it useful as a
+    /// test oracle — at a cost that grows with the square of the particle
+    /// count. Prefer it only for very small systems, or to check the cell list.
+    ///
+    /// # Panics
+    /// Panics if `cutoff` is not positive.
+    pub fn brute_force(cutoff: F) -> Self {
+        assert!(cutoff > 0.0, "cutoff must be positive");
+        Self::with_backend(cutoff, Box::new(BruteForce::new(cutoff)))
+    }
+
+    fn with_backend(cutoff: F, backend: Box<dyn Backend + Send + Sync>) -> Self {
+        Self {
+            cutoff,
+            backend,
+            bx: None,
+            num_points: 0,
+        }
+    }
+
+    /// The cutoff distance (Å) fixed at construction.
+    #[inline]
+    pub fn cutoff(&self) -> F {
+        self.cutoff
+    }
+
+    /// Index `points` in `bx` — coordinates **and** box.
+    ///
+    /// `points` is an `N × 3` array of Cartesian coordinates in Å, one row per
+    /// particle. `bx` is the simulation box, whose periodicity decides which
+    /// periodic image of a pair counts (the minimum-image convention).
+    ///
+    /// This builds the spatial index and nothing else: no pairs are enumerated
+    /// and no [`Neighbors`] table is allocated, so the cost is the indexing
+    /// cost alone. Pairs come afterwards, from
+    /// [`for_each_pair`](Self::for_each_pair) or
+    /// [`neighbors`](Self::neighbors), and either may be called any number of
+    /// times on one build.
+    ///
+    /// `bx` is retained, so a later [`update`](Self::update) can re-index new
+    /// coordinates in the same box. **A simulation whose box changes from step
+    /// to step must call `build` every step**, not `update`. That is the case
+    /// whenever a *barostat* is running — the algorithm that holds the pressure
+    /// constant by rescaling the box, as in constant-pressure NPT dynamics
+    /// (fixed particle number `N`, pressure `P` and temperature `T`) — because
+    /// `update` reuses the box captured here and would fold minimum images
+    /// against a stale cell.
+    ///
+    /// # Panics
+    /// Panics if `points` does not have exactly 3 columns.
     pub fn build(&mut self, points: FNx3View<'_>, bx: &SimBox) {
-        self.0.build(points, bx)
+        assert_eq!(points.ncols(), 3, "points must have shape (N, 3)");
+        self.backend.build_index(points, bx);
+        self.bx = Some(bx.clone());
+        self.num_points = points.nrows();
     }
 
-    /// Rebuild with new positions. See [`NbListAlgo::update`].
-    pub fn update(&mut self, points: FNx3View<'_>, bx: &SimBox) {
-        self.0.update(points, bx)
+    /// Index three coordinate columns in `bx` — the column sibling of
+    /// [`build`](Self::build).
+    ///
+    /// `xs`, `ys` and `zs` are the Cartesian coordinates in Å, one slice per
+    /// axis, all of length `N`; point `i` is `(xs[i], ys[i], zs[i])`. This is
+    /// the shape a column store hands out (`atoms.x` / `atoms.y` / `atoms.z`),
+    /// so such a caller reaches the engine without transposing into an `N × 3`
+    /// array first.
+    ///
+    /// Semantics are `build`'s exactly: the spatial index is built and nothing
+    /// else — no pairs enumerated, no [`Neighbors`] table allocated — `bx` is
+    /// retained for a later [`update`](Self::update), and the pairs that
+    /// [`for_each_pair`](Self::for_each_pair) and [`neighbors`](Self::neighbors)
+    /// then produce are the same ones `build` would have produced from the same
+    /// coordinates. The box caveat carries over too: when the box changes from
+    /// step to step, re-index with this method (or `build`) each step rather
+    /// than with `update`, which would keep the box captured here.
+    ///
+    /// # Panics
+    /// Panics if the three columns do not have equal length.
+    pub fn build_columns(&mut self, xs: &[F], ys: &[F], zs: &[F], bx: &SimBox) {
+        assert!(
+            xs.len() == ys.len() && ys.len() == zs.len(),
+            "x/y/z columns must have equal length, got {} / {} / {}",
+            xs.len(),
+            ys.len(),
+            zs.len()
+        );
+        self.backend.build_index_columns(xs, ys, zs, bx);
+        self.bx = Some(bx.clone());
+        self.num_points = xs.len();
     }
 
-    /// Return cached pair results. See [`NbListAlgo::query`].
-    pub fn query(&self) -> &Neighbors {
-        self.0.query()
+    /// Re-index new coordinates (`N × 3`, Å) in the box captured by the last
+    /// [`build`](Self::build) or [`build_columns`](Self::build_columns).
+    ///
+    /// The natural per-step call in a fixed-volume simulation: the positions
+    /// move, the box does not. Index-only like `build` — no pairs are
+    /// enumerated and no [`Neighbors`] table is allocated. **If the box itself
+    /// changed, call `build` again instead**: `update` silently keeps the old
+    /// box, which under a barostat (constant-pressure NPT dynamics, where the
+    /// box is rescaled every step) means folding minimum images against a stale
+    /// cell.
+    ///
+    /// There is no *skin* here — no margin added to the cutoff so that one list
+    /// stays usable for several steps, which is the trick a Verlet list plays.
+    /// `update` re-indexes every time it is called rather than deciding for you
+    /// that the previous index was still good enough.
+    ///
+    /// The point count may change between calls; a materialized table is tagged
+    /// with the count from the most recent index.
+    ///
+    /// # Panics
+    /// Panics if neither [`build`](Self::build) nor
+    /// [`build_columns`](Self::build_columns) has run — the box is then unknown,
+    /// and the panic message says to call `build` first. Panics too if `points`
+    /// does not have exactly 3 columns.
+    pub fn update(&mut self, points: FNx3View<'_>) {
+        assert_eq!(points.ncols(), 3, "points must have shape (N, 3)");
+        let bx = self
+            .bx
+            .as_ref()
+            .expect("NeighborList::update reuses the box of the previous build: call build(points, bx) first");
+        self.backend.update_index(points, bx);
+        self.num_points = points.nrows();
     }
 
-    /// Return the simulation box. See [`NbListAlgo::box_ref`].
-    pub fn box_ref(&self) -> &SimBox {
-        self.0.box_ref()
+    /// Stream every pair within the cutoff, in whatever order the backend
+    /// discovers them.
+    ///
+    /// This is a search of the point set against itself, so the stream is
+    /// *half-shell*: each unordered pair arrives exactly once, with `i < j`, and
+    /// no pair has `i == j`.
+    ///
+    /// Allocates nothing: each [`NeighborPair`] is handed to `f` and dropped.
+    /// A pair always carries both physical quantities — `dist_sq` in Å² and the
+    /// displacement `disp` in Å — taken from the same minimum-image evaluation,
+    /// so `pair.dist_sq == |pair.disp|²` holds to floating-point rounding.
+    ///
+    /// Pair order is deliberately unspecified — a cell list walks cells, not
+    /// particles — so a caller that needs a fixed order sorts, or materializes
+    /// with [`neighbors`](Self::neighbors) and sorts the table. Without a prior
+    /// [`build`](Self::build) the callback is simply never invoked.
+    pub fn for_each_pair(&self, mut f: impl FnMut(NeighborPair)) {
+        self.backend.visit_pairs(&mut |i, j, dist_sq, disp| {
+            f(NeighborPair {
+                i,
+                j,
+                dist_sq,
+                disp,
+            })
+        });
     }
 
-    /// Build spatial index only (no pair pre-computation). See [`NbListAlgo::build_index`].
-    pub fn build_index(&mut self, points: FNx3View<'_>, bx: &SimBox) {
-        self.0.build_index(points, bx)
-    }
-
-    /// Rebuild spatial index only. See [`NbListAlgo::update_index`].
-    pub fn update_index(&mut self, points: FNx3View<'_>, bx: &SimBox) {
-        self.0.update_index(points, bx)
-    }
-
-    /// Traverse pairs on-demand. See [`NbListAlgo::visit_pairs`].
-    pub fn visit_pairs(&self, visitor: &mut dyn PairVisitor) {
-        self.0.visit_pairs(visitor)
+    /// Materialize the pairs into a [`Neighbors`] table keeping the columns
+    /// `storage` asks for.
+    ///
+    /// Same pairs as [`for_each_pair`](Self::for_each_pair) in the same order —
+    /// this drives that traversal — so the result equals
+    /// `Neighbors::from_pairs(collected_stream, storage, mode)` row for row.
+    /// The table is tagged `SelfQuery { num_points }` with the point count of
+    /// the last index.
+    ///
+    /// A column `storage` leaves out is not written, and its accessor reports
+    /// `None` rather than a fabricated zero; it cannot be added afterwards
+    /// (see [`Neighbors::repack`]). `storage` is an argument rather than a
+    /// default, so no call site ever materializes
+    /// [`NeighborsStorage::FULL`] by accident — the columns a table carries are
+    /// always something the caller asked for by name.
+    pub fn neighbors(&self, storage: NeighborsStorage) -> Neighbors {
+        let mut out = Neighbors::empty(
+            QueryMode::SelfQuery {
+                num_points: self.num_points,
+            },
+            storage,
+        );
+        self.for_each_pair(|pair| out.push(pair.i, pair.j, pair.dist_sq, pair.disp));
+        out
     }
 }
 
@@ -367,9 +607,8 @@ impl<A: NbListAlgo> NbList<A> {
 /// instance — should use [`DIST_SQ`](Self::DIST_SQ) at 16 B/pair; one that only
 /// needs directions, such as a bond-order parameter, should use
 /// [`DISP`](Self::DISP) at 32 B/pair. When pair counts are large, prefer not
-/// materializing at all: [`NbListAlgo::build_index`] plus
-/// [`NbListAlgo::visit_pairs`] streams every pair with both quantities and
-/// allocates nothing.
+/// materializing at all: [`NeighborList::for_each_pair`] streams every pair
+/// with both quantities and allocates nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NeighborsStorage {
     /// Store squared minimum-image distances (Å²).
@@ -492,8 +731,8 @@ pub struct NeighborPair {
 ///
 /// [`from_pairs`](Neighbors::from_pairs) is the public constructor: it consumes
 /// a stream of [`NeighborPair`] values and keeps the columns the policy asks
-/// for. Search algorithms fill their own cached table in place and expose it
-/// through [`NbListAlgo::query`].
+/// for. [`NeighborList::neighbors`] is the same construction driven straight
+/// from a search, without the intermediate stream.
 #[derive(Debug, Clone)]
 pub struct Neighbors {
     /// Which optional columns `push` writes; the rest stay empty.
@@ -1027,6 +1266,514 @@ mod from_pairs_tests {
             bad,
             NeighborsStorage::FULL,
             QueryMode::SelfQuery { num_points: 4 },
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests — spec neighborlist-02-engine: the NeighborList engine
+// ---------------------------------------------------------------------------
+
+/// The `NeighborList` engine: index-only `build`/`update`, a streaming
+/// `for_each_pair`, and `neighbors(storage)` as the materializing sugar.
+///
+/// Every fixture here is hard-coded — lattices are generated by an explicit
+/// deterministic loop, never by a random number generator — so a failure names
+/// a specific pair rather than a seed.
+#[cfg(test)]
+mod engine_tests {
+    use super::*;
+    use ndarray::{Array2, array};
+
+    /// Orthorhombic 10 × 8 × 6 Å box, fully periodic.
+    ///
+    /// Shared with `from_pairs_tests::bruteforce_self_half_shell_and_consistency`
+    /// so the engine is measured against a fixture whose goldens are already
+    /// checked in against the `BruteForce` oracle.
+    fn small_box() -> SimBox {
+        SimBox::ortho(
+            array![10.0, 8.0, 6.0],
+            array![0.0, 0.0, 0.0],
+            [true, true, true],
+        )
+        .expect("valid orthorhombic box")
+    }
+
+    /// Four atoms in [`small_box`]; at cutoff 1.5 Å exactly three pairs survive.
+    ///
+    /// | pair | `disp` = MIC(r_j − r_i) | `dist_sq` |
+    /// |------|--------------------------|-----------|
+    /// | 0-1  | (−0.9, 0.0, 0.0)         | 0.81      |
+    /// | 0-2  | ( 0.0, −0.8, 0.0)        | 0.64      |
+    /// | 1-2  | ( 0.9, −0.8, 0.0)        | 1.45      |
+    ///
+    /// Atom 3 sits at the box centre, further than 1.5 Å from every other atom.
+    fn small_points() -> Array2<F> {
+        array![
+            [0.5, 0.5, 0.5],
+            [9.6, 0.5, 0.5],
+            [0.5, 7.7, 0.5],
+            [5.0, 4.0, 3.0],
+        ]
+    }
+
+    /// The three goldens of [`small_points`], keyed by `(i, j)`.
+    ///
+    /// Derived by hand from the minimum-image convention: 0-1 wraps in x
+    /// (9.6 → −0.4 relative to 0.5, i.e. 0.9 Å apart), 0-2 wraps in y (7.7 →
+    /// −0.3, i.e. 0.8 Å apart), and 1-2 wraps in both, giving
+    /// 0.9² + 0.8² = 1.45 Å².
+    const SMALL_GOLDEN: [(u32, u32, F, [F; 3]); 3] = [
+        (0, 1, 0.81, [-0.9, 0.0, 0.0]),
+        (0, 2, 0.64, [0.0, -0.8, 0.0]),
+        (1, 2, 1.45, [0.9, -0.8, 0.0]),
+    ];
+
+    /// Collect the engine's pair stream, sorted by `(i, j)`.
+    ///
+    /// The engine is free to emit pairs in any order (a cell-list walks cells,
+    /// not particles), so every comparison in this module sorts first.
+    fn collect_sorted(nl: &NeighborList) -> Vec<NeighborPair> {
+        let mut pairs: Vec<NeighborPair> = Vec::new();
+        nl.for_each_pair(|p| pairs.push(p));
+        pairs.sort_by_key(|p| (p.i, p.j));
+        pairs
+    }
+
+    /// Rows of a materialized table, sorted by `(i, j)`.
+    fn table_rows_sorted(nb: &Neighbors) -> Vec<(u32, u32, F, [F; 3])> {
+        let d2 = nb.dist_sq().expect("FULL storage materializes dist_sq");
+        let disp = nb.disp().expect("FULL storage materializes disp");
+        let mut rows: Vec<(u32, u32, F, [F; 3])> = (0..nb.n_pairs())
+            .map(|k| {
+                (
+                    nb.query_point_indices()[k],
+                    nb.point_indices()[k],
+                    d2[k],
+                    [disp[[k, 0]], disp[[k, 1]], disp[[k, 2]]],
+                )
+            })
+            .collect();
+        rows.sort_by_key(|r| (r.0, r.1));
+        rows
+    }
+
+    /// 60 atoms on a 5 × 4 × 3 lattice (2 Å pitch) inside a 10 × 8 × 6 Å box,
+    /// each site pushed off its node by a deterministic, index-derived offset.
+    ///
+    /// No random number generator: the offsets cycle with periods 3, 5 and 7 in
+    /// x, y and z, which are coprime with each other and with the 5 × 4 × 3
+    /// lattice, so the configuration is disordered enough to exercise the cell
+    /// stencil in every direction while remaining reproducible byte-for-byte.
+    /// The largest offset is 0.3 Å, so every atom stays strictly inside the box
+    /// (extents 0.8–9.2, 0.7–7.3, 0.7–5.3 Å) and no coordinate needs wrapping.
+    fn lattice_60() -> Array2<F> {
+        let mut pts = Array2::<F>::zeros((60, 3));
+        let mut idx: usize = 0;
+        for ix in 0..5 {
+            for iy in 0..4 {
+                for iz in 0..3 {
+                    let ox = 0.20 * (((idx % 3) as F) - 1.0);
+                    let oy = 0.15 * (((idx % 5) as F) - 2.0);
+                    let oz = 0.10 * (((idx % 7) as F) - 3.0);
+                    pts[[idx, 0]] = 2.0 * (ix as F) + 1.0 + ox;
+                    pts[[idx, 1]] = 2.0 * (iy as F) + 1.0 + oy;
+                    pts[[idx, 2]] = 2.0 * (iz as F) + 1.0 + oz;
+                    idx += 1;
+                }
+            }
+        }
+        pts
+    }
+
+    /// Pair count of [`lattice_60`] in [`small_box`] at cutoff 2.3 Å.
+    ///
+    /// Hard-coded golden, obtained by an independent scalar recomputation of the
+    /// minimum-image convention (`d -= L·round(d/L)` per axis, legitimate here
+    /// because 2.3 Å < min(10, 8, 6)/2 = 3 Å). The closest pair distance to the
+    /// cutoff is 0.037 Å away from it, so no pair sits on the `d² <= r_c²`
+    /// knife-edge and the count cannot flip on a last-bit difference.
+    const LATTICE_60_PAIRS: usize = 163;
+
+    /// Cutoff for [`lattice_60`]: below half the shortest box length (so the
+    /// minimum image is unique) and above the 2 Å lattice pitch (so each atom
+    /// has neighbors along all three axes).
+    const LATTICE_60_CUTOFF: F = 2.3;
+
+    /// ac-003: the streamed pairs are the half-shell self list, and each one
+    /// carries both physical quantities consistently.
+    #[test]
+    fn engine_for_each_pair_yields_full_pairs() {
+        let bx = small_box();
+        let pts = small_points();
+
+        let mut nl = NeighborList::new(1.5);
+        nl.build(pts.view(), &bx);
+        let pairs = collect_sorted(&nl);
+
+        assert_eq!(
+            pairs.len(),
+            SMALL_GOLDEN.len(),
+            "expected exactly the three golden pairs, got {pairs:?}"
+        );
+
+        for (pair, &(gi, gj, gd2, gdisp)) in pairs.iter().zip(SMALL_GOLDEN.iter()) {
+            assert!(
+                pair.i < pair.j,
+                "self stream is half-shell: expected i < j, got {} !< {}",
+                pair.i,
+                pair.j
+            );
+            assert_eq!((pair.i, pair.j), (gi, gj), "pair identity");
+            assert!(
+                (pair.dist_sq - gd2).abs() <= 1e-12,
+                "pair ({gi},{gj}): dist_sq {} != golden {gd2}",
+                pair.dist_sq
+            );
+            for (d, &g) in gdisp.iter().enumerate() {
+                assert!(
+                    (pair.disp[d] - g).abs() <= 1e-12,
+                    "pair ({gi},{gj}): disp[{d}] {} != golden {g}",
+                    pair.disp[d]
+                );
+            }
+            // The two columns must come from the same periodic image.
+            let norm_sq = pair.disp[0] * pair.disp[0]
+                + pair.disp[1] * pair.disp[1]
+                + pair.disp[2] * pair.disp[2];
+            assert!(
+                (pair.dist_sq - norm_sq).abs() <= 1e-12,
+                "pair ({gi},{gj}): dist_sq {} != ||disp||^2 {norm_sq}",
+                pair.dist_sq
+            );
+        }
+    }
+
+    /// ac-004: `neighbors(FULL)` is the materialization of the pair stream —
+    /// the internal `push` path must not diverge from `Neighbors::from_pairs`.
+    #[test]
+    fn engine_neighbors_equals_from_pairs() {
+        let bx = small_box();
+        let pts = small_points();
+
+        let mut nl = NeighborList::new(1.5);
+        nl.build(pts.view(), &bx);
+
+        let streamed = collect_sorted(&nl);
+        let manual = Neighbors::from_pairs(
+            streamed.iter().copied(),
+            NeighborsStorage::FULL,
+            QueryMode::SelfQuery { num_points: 4 },
+        );
+        let engine = nl.neighbors(NeighborsStorage::FULL);
+
+        assert_eq!(
+            engine.mode(),
+            QueryMode::SelfQuery { num_points: 4 },
+            "engine table must be tagged as a self-query over all four points"
+        );
+        assert_eq!(engine.n_pairs(), manual.n_pairs(), "pair count");
+
+        let got = table_rows_sorted(&engine);
+        let want = table_rows_sorted(&manual);
+        for (g, w) in got.iter().zip(want.iter()) {
+            assert_eq!((g.0, g.1), (w.0, w.1), "pair indices");
+            assert!(
+                (g.2 - w.2).abs() <= 1e-12,
+                "pair ({},{}) dist_sq: engine {} vs from_pairs {}",
+                g.0,
+                g.1,
+                g.2,
+                w.2
+            );
+            for d in 0..3 {
+                assert!(
+                    (g.3[d] - w.3[d]).abs() <= 1e-12,
+                    "pair ({},{}) disp[{d}]: engine {} vs from_pairs {}",
+                    g.0,
+                    g.1,
+                    g.3[d],
+                    w.3[d]
+                );
+            }
+        }
+    }
+
+    /// ac-006: `build_columns` is the SoA sibling of `build` — same engine, same
+    /// semantics, column input.
+    ///
+    /// A column store (`atoms.x` / `atoms.y` / `atoms.z`) holds coordinates as
+    /// three independent columns, never as an N × 3 matrix. Without this entry
+    /// point such a caller has to transpose into an `Array2` — or, as RDF does
+    /// today, bypass the engine entirely and reach for a backend. So the two
+    /// paths are held to *identity*, not merely to agreement: same pairs, same
+    /// numbers, same query tagging.
+    ///
+    /// Both paths evaluate the same minimum-image arithmetic on the same
+    /// coordinates, so bitwise equality is the expectation; the 1e-15 escape
+    /// admits a last-bit reassociation only — three orders of magnitude tighter
+    /// than the 1e-12 the golden comparisons above use, and far too tight for
+    /// any difference that could move a pair across the cutoff.
+    #[test]
+    fn engine_build_columns_matches_build() {
+        let bx = small_box();
+        let pts = small_points();
+
+        // The very same four coordinates, split into three columns.
+        let xs: Vec<F> = pts.column(0).to_vec();
+        let ys: Vec<F> = pts.column(1).to_vec();
+        let zs: Vec<F> = pts.column(2).to_vec();
+
+        let mut aos = NeighborList::new(1.5);
+        aos.build(pts.view(), &bx);
+
+        let mut soa = NeighborList::new(1.5);
+        soa.build_columns(&xs, &ys, &zs, &bx);
+
+        let want = collect_sorted(&aos);
+        let got = collect_sorted(&soa);
+
+        assert_eq!(
+            want.len(),
+            SMALL_GOLDEN.len(),
+            "the AoS reference must still produce the three golden pairs, got {want:?}"
+        );
+        assert_eq!(
+            got.len(),
+            want.len(),
+            "build_columns emitted {} pairs, build emitted {}",
+            got.len(),
+            want.len()
+        );
+
+        for (g, w) in got.iter().zip(want.iter()) {
+            assert_eq!(
+                (g.i, g.j),
+                (w.i, w.j),
+                "pair identity diverges: columns ({},{}) vs points ({},{})",
+                g.i,
+                g.j,
+                w.i,
+                w.j
+            );
+            assert!(
+                g.dist_sq == w.dist_sq || (g.dist_sq - w.dist_sq).abs() <= 1e-15,
+                "pair ({},{}): dist_sq columns {} vs points {}",
+                g.i,
+                g.j,
+                g.dist_sq,
+                w.dist_sq
+            );
+            for d in 0..3 {
+                assert!(
+                    g.disp[d] == w.disp[d] || (g.disp[d] - w.disp[d]).abs() <= 1e-15,
+                    "pair ({},{}): disp[{d}] columns {} vs points {}",
+                    g.i,
+                    g.j,
+                    g.disp[d],
+                    w.disp[d]
+                );
+            }
+        }
+
+        // A column-fed build is still a self-query over every point handed in:
+        // the SoA path must not lose the point count the table is tagged with.
+        assert_eq!(
+            soa.neighbors(NeighborsStorage::FULL).mode(),
+            QueryMode::SelfQuery { num_points: 4 },
+            "a table built from columns must be tagged as a self-query over all \
+             four points"
+        );
+    }
+
+    /// ac-005: the cell-list backend and the O(N²) reference backend produce the
+    /// same unordered pair multiset with the same distances.
+    ///
+    /// The comparison keeps duplicates (a `Vec`, not a set) so that a backend
+    /// emitting a pair twice fails here instead of being silently deduplicated.
+    #[test]
+    fn engine_linkcell_vs_bruteforce_multiset() {
+        let bx = small_box();
+        let pts = lattice_60();
+
+        let mut lc = NeighborList::new(LATTICE_60_CUTOFF);
+        lc.build(pts.view(), &bx);
+        let lc_pairs = collect_sorted(&lc);
+
+        let mut bf = NeighborList::brute_force(LATTICE_60_CUTOFF);
+        bf.build(pts.view(), &bx);
+        let bf_pairs = collect_sorted(&bf);
+
+        assert_eq!(
+            bf_pairs.len(),
+            LATTICE_60_PAIRS,
+            "reference backend disagrees with the hard-coded golden pair count"
+        );
+        assert_eq!(
+            lc_pairs.len(),
+            bf_pairs.len(),
+            "cell-list emitted {} pairs, reference emitted {}",
+            lc_pairs.len(),
+            bf_pairs.len()
+        );
+
+        for (a, b) in lc_pairs.iter().zip(bf_pairs.iter()) {
+            assert_eq!(
+                (a.i, a.j),
+                (b.i, b.j),
+                "pair sets diverge: cell-list ({},{}) vs reference ({},{})",
+                a.i,
+                a.j,
+                b.i,
+                b.j
+            );
+            assert!(
+                (a.dist_sq - b.dist_sq).abs() <= 1e-12,
+                "pair ({},{}): cell-list dist_sq {} vs reference {}",
+                a.i,
+                a.j,
+                a.dist_sq,
+                b.dist_sq
+            );
+        }
+    }
+
+    /// ac-009 (second half): `update` re-indexes the new coordinates; the pair
+    /// stream follows them in both directions.
+    #[test]
+    fn engine_update_follows_new_coordinates() {
+        let bx = SimBox::ortho(
+            array![20.0, 20.0, 20.0],
+            array![0.0, 0.0, 0.0],
+            [true, true, true],
+        )
+        .expect("valid orthorhombic box");
+
+        // Two atoms 1.0 Å apart — inside the 1.5 Å cutoff.
+        let near = array![[1.0, 1.0, 1.0], [2.0, 1.0, 1.0]];
+        // Same two atoms 5.0 Å apart; the shortest periodic image is 5.0 Å
+        // (the wrapped one is 15.0 Å), so the pair is gone.
+        let far = array![[1.0, 1.0, 1.0], [6.0, 1.0, 1.0]];
+
+        let mut nl = NeighborList::new(1.5);
+        nl.build(near.view(), &bx);
+        assert_eq!(
+            collect_sorted(&nl).len(),
+            1,
+            "built configuration: one pair"
+        );
+
+        nl.update(far.view());
+        assert_eq!(
+            collect_sorted(&nl).len(),
+            0,
+            "after moving the atoms apart the pair must disappear"
+        );
+
+        nl.update(near.view());
+        let back = collect_sorted(&nl);
+        assert_eq!(back.len(), 1, "after moving them back the pair must return");
+        assert_eq!((back[0].i, back[0].j), (0, 1));
+        assert!(
+            (back[0].dist_sq - 1.0).abs() <= 1e-12,
+            "dist_sq {} != 1.0",
+            back[0].dist_sq
+        );
+    }
+
+    /// ac-009 (first half): updating an engine that was never built is a
+    /// programming error and must fail loudly, naming `build`.
+    #[test]
+    #[should_panic(expected = "build")]
+    fn engine_update_before_build_panics() {
+        let pts = small_points();
+        let mut nl = NeighborList::new(1.5);
+        nl.update(pts.view());
+    }
+
+    /// ac-002 / ac-004: the storage policy changes the columns, never the pairs.
+    #[test]
+    fn engine_neighbors_lean_storage() {
+        let bx = small_box();
+        let pts = small_points();
+
+        let mut nl = NeighborList::new(1.5);
+        nl.build(pts.view(), &bx);
+
+        let lean = nl.neighbors(NeighborsStorage::INDICES_ONLY);
+        assert!(
+            lean.dist_sq().is_none(),
+            "INDICES_ONLY must not fabricate a dist_sq column"
+        );
+        assert!(
+            lean.disp().is_none(),
+            "INDICES_ONLY must not fabricate a disp column"
+        );
+
+        let full = nl.neighbors(NeighborsStorage::FULL);
+        assert_eq!(
+            lean.n_pairs(),
+            full.n_pairs(),
+            "storage policy selects columns, not pairs"
+        );
+        assert_eq!(lean.n_pairs(), SMALL_GOLDEN.len());
+        assert_eq!(lean.query_point_indices(), full.query_point_indices());
+        assert_eq!(lean.point_indices(), full.point_indices());
+    }
+
+    /// ac-007: a cross-query is still reachable through the public surface after
+    /// the engine migration, and it stays directed — no `i < j` is imposed.
+    ///
+    /// `NeighborQuery::query` is the path the spec keeps for cross searches, so
+    /// this is an **already-green guard**: it passes today and must keep passing
+    /// once `NeighborList` takes over the self path. The fixture is built so
+    /// that one pair has `i > j`, which a half-shell contract would forbid.
+    ///
+    /// Box: 20 Å cube, fully periodic, cutoff 1.0 Å.
+    ///
+    /// | query point | nearest reference | separation | pair    |
+    /// |-------------|-------------------|------------|---------|
+    /// | q0 (9.2,9,9)| r2 (9,9,9)        | 0.2 Å      | (0, 2)  |
+    /// | q1 (5.1,5,5)| r1 (5,5,5)        | 0.1 Å      | (1, 1)  |
+    /// | q2 (1.1,1,1)| r0 (1,1,1)        | 0.1 Å      | (2, 0)  |
+    ///
+    /// Every other query-reference separation is at least 6.9 Å, so exactly
+    /// three pairs survive the cutoff.
+    #[test]
+    fn engine_cross_query_reachable() {
+        let bx = SimBox::ortho(
+            array![20.0, 20.0, 20.0],
+            array![0.0, 0.0, 0.0],
+            [true, true, true],
+        )
+        .expect("valid orthorhombic box");
+        let refs = array![[1.0, 1.0, 1.0], [5.0, 5.0, 5.0], [9.0, 9.0, 9.0]];
+        let query = array![[9.2, 9.0, 9.0], [5.1, 5.0, 5.0], [1.1, 1.0, 1.0]];
+
+        let nq = NeighborQuery::new(&bx, refs.view(), 1.0);
+        let nb = nq.query(query.view());
+
+        assert_eq!(
+            nb.mode(),
+            QueryMode::CrossQuery {
+                num_query_points: 3,
+                num_points: 3,
+            },
+            "a cross-query must stay tagged as one"
+        );
+        assert_eq!(nb.num_query_points(), 3);
+        assert_eq!(nb.num_points(), 3);
+        assert_eq!(nb.n_pairs(), 3);
+
+        let mut got: Vec<(u32, u32)> = (0..nb.n_pairs())
+            .map(|k| (nb.query_point_indices()[k], nb.point_indices()[k]))
+            .collect();
+        got.sort_unstable();
+        assert_eq!(got, vec![(0u32, 2u32), (1, 1), (2, 0)]);
+        assert!(
+            got.iter().any(|&(i, j)| i > j),
+            "fixture must contain a pair with i > j to prove no half-shell \
+             constraint is imposed on a cross-query"
         );
     }
 }

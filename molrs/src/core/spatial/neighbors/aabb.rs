@@ -52,7 +52,7 @@
 
 use std::collections::HashSet;
 
-use crate::spatial::neighbors::{NbListAlgo, NeighborPair, Neighbors, NeighborsStorage, QueryMode};
+use crate::spatial::neighbors::{NeighborPair, Neighbors, NeighborsStorage, QueryMode};
 use crate::spatial::simbox::{BoxKind, SimBox};
 use crate::types::{F, FNx3, FNx3View};
 
@@ -265,7 +265,7 @@ impl AabbTree {
 /// AABB-tree neighbor query.
 ///
 /// Self-query search built on a bounding-volume hierarchy (see the module
-/// documentation). [`build`](NbListAlgo::build) materializes a half-shell table
+/// documentation). [`build`](Self::build) materializes a half-shell table
 /// — every pair satisfies `i < j` — tagged `QueryMode::SelfQuery { num_points }`
 /// and always carrying both physical columns ([`NeighborsStorage::FULL`]):
 /// squared distances in Å² and minimum-image displacements in Å. Pairs are
@@ -287,7 +287,7 @@ pub struct AabbQuery {
 impl AabbQuery {
     /// Create a query with the given cutoff distance (Å).
     ///
-    /// The tree itself is built later, by [`build`](NbListAlgo::build). The
+    /// The tree itself is built later, by [`build`](Self::build). The
     /// cutoff is not validated here; a non-positive value is rejected by
     /// `build`, which panics.
     pub fn new(cutoff: F) -> Self {
@@ -433,7 +433,7 @@ impl AabbQuery {
 
     /// Find the `k` nearest neighbors of `query` in the most-recent build,
     /// honoring PBC via the same image-shift enumeration as
-    /// [`build`](NbListAlgo::build).
+    /// [`build`](Self::build).
     ///
     /// `query` is a point in Cartesian coordinates (Å) and need not be one of
     /// the indexed points. Returns up to `k` pairs `(j_index, mic_dist_sq)`,
@@ -501,31 +501,35 @@ impl AabbQuery {
         out.truncate(k);
         out
     }
-}
 
-impl NbListAlgo for AabbQuery {
-    fn build(&mut self, points: FNx3View<'_>, bx: &SimBox) {
+    /// Build the tree over `points` in `bx` and materialize the half-shell pair
+    /// table read back by [`query`](Self::query).
+    ///
+    /// `points` is an `N × 3` view of Cartesian coordinates (Å); `bx` supplies
+    /// the periodicity used for minimum-image distances. The coordinates are
+    /// retained, so [`query_knn`](Self::query_knn) can answer against them.
+    ///
+    /// # Panics
+    /// Panics if the cutoff is not positive.
+    pub fn build(&mut self, points: FNx3View<'_>, bx: &SimBox) {
         assert!(self.cutoff > 0.0, "cutoff must be positive");
         self.compute_pairs(points, bx);
     }
 
-    fn update(&mut self, points: FNx3View<'_>, bx: &SimBox) {
-        self.build(points, bx);
-    }
-
-    fn query(&self) -> &Neighbors {
+    /// Reference to the pair table materialized by the last
+    /// [`build`](Self::build).
+    ///
+    /// Before the first one this is an empty table tagged
+    /// `SelfQuery { num_points: 0 }`, not an error.
+    pub fn query(&self) -> &Neighbors {
         &self.result
-    }
-
-    fn box_ref(&self) -> &SimBox {
-        self.bx.as_ref().expect("box_ref called before build")
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::spatial::neighbors::{BruteForce, NbListAlgo};
+    use crate::spatial::neighbors::BruteForce;
     use ndarray::array;
 
     fn cube_bx(l: F, pbc: [bool; 3]) -> SimBox {

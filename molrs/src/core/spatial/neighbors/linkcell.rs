@@ -20,13 +20,14 @@
 //! the resulting table satisfies `i < j`.
 
 use crate::spatial::neighbors::{
-    CellGrid, NbListAlgo, Neighbors, NeighborsStorage, PairVisitor, QueryMode,
+    Backend, CellGrid, Neighbors, NeighborsStorage, PairVisitor, QueryMode,
 };
 use crate::spatial::simbox::SimBox;
 use crate::types::{F, FNx3View};
 use ndarray::array;
 
-/// Cell-list neighbor search algorithm.
+/// Cell-list neighbor search algorithm — the default
+/// [`NeighborList`](crate::spatial::neighbors::NeighborList) backend.
 ///
 /// Partitions space into a regular grid of cells whose width >= cutoff, then
 /// searches only neighboring cells for pair interactions.  Uses half-shell
@@ -42,11 +43,9 @@ use ndarray::array;
 /// With the `rayon` feature (default), the pair search is parallelized across
 /// occupied cells via `rayon::par_iter`.
 ///
-/// # Usage
-///
-/// ```ignore
-/// let lc = LinkCell::new().cutoff(3.0);
-/// ```
+/// Search from outside this crate goes through
+/// [`NeighborList::new`](crate::spatial::neighbors::NeighborList::new), which
+/// drives this type.
 #[derive(Debug, Clone)]
 pub struct LinkCell {
     /// Interaction cutoff distance (Å). Also sets the minimum cell width, so
@@ -118,14 +117,13 @@ impl LinkCell {
     }
 
     /// Configure which optional pair fields are stored when materializing
-    /// a [`Neighbors`] table via [`build`](NbListAlgo::build) / `update`.
+    /// a [`Neighbors`] table via `build` / `update`.
     ///
     /// A column left out is reported as `None` by the table's accessor, not as
     /// zeros, and cannot be added back afterwards — pick the policy before
-    /// building. Does not affect [`build_index`](NbListAlgo::build_index) /
-    /// [`visit_pairs`](NbListAlgo::visit_pairs) streaming (those never store
-    /// pairs, and always hand the visitor both quantities). Calling this
-    /// discards any table already built.
+    /// building. Does not affect index-only building and pair streaming (those
+    /// never store pairs, and always hand the visitor both quantities). Calling
+    /// this discards any table already built.
     pub fn with_storage(mut self, storage: NeighborsStorage) -> Self {
         self.storage = storage;
         self.result = Neighbors::empty(QueryMode::SelfQuery { num_points: 0 }, storage);
@@ -200,15 +198,31 @@ impl LinkCell {
             }
         }
     }
-}
 
-impl NbListAlgo for LinkCell {
-    fn build(&mut self, points: FNx3View<'_>, bx: &SimBox) {
+    /// Index `points` in `bx` **and** materialize the half-shell pair table
+    /// read back by [`query`](Self::query).
+    ///
+    /// The index-only path — build once, then stream pairs without storing them
+    /// — is [`NeighborList`](crate::spatial::neighbors::NeighborList).
+    ///
+    /// # Panics
+    /// Panics if the cutoff is not positive or `points` does not have exactly
+    /// 3 columns.
+    pub fn build(&mut self, points: FNx3View<'_>, bx: &SimBox) {
         assert!(self.cutoff > 0.0, "cutoff must be positive");
         self.update(points, bx);
     }
 
-    fn update(&mut self, points: FNx3View<'_>, bx: &SimBox) {
+    /// Re-index new positions and re-materialize the pair table, reusing the
+    /// internal buffers.
+    ///
+    /// There is no skin/Verlet shortcut: this recomputes the pairs, it does not
+    /// decide for you whether a rebuild was necessary.
+    ///
+    /// # Panics
+    /// Panics if the cutoff is not positive or `points` does not have exactly
+    /// 3 columns.
+    pub fn update(&mut self, points: FNx3View<'_>, bx: &SimBox) {
         assert!(self.cutoff > 0.0, "cutoff must be positive");
         assert!(points.ncols() == 3, "points must have shape (N, 3)");
 
@@ -225,16 +239,18 @@ impl NbListAlgo for LinkCell {
         };
     }
 
+    /// Reference to the pair table materialized by the last
+    /// [`build`](Self::build) / [`update`](Self::update) / [`build_soa`](Self::build_soa).
+    ///
+    /// Before the first one this is an empty table tagged
+    /// `SelfQuery { num_points: 0 }`, not an error.
     #[inline]
-    fn query(&self) -> &Neighbors {
+    pub fn query(&self) -> &Neighbors {
         &self.result
     }
+}
 
-    #[inline]
-    fn box_ref(&self) -> &SimBox {
-        &self.bx
-    }
-
+impl Backend for LinkCell {
     fn build_index(&mut self, points: FNx3View<'_>, bx: &SimBox) {
         assert!(self.cutoff > 0.0, "cutoff must be positive");
         self.update_index(points, bx);
@@ -246,6 +262,15 @@ impl NbListAlgo for LinkCell {
         self.counting_sort(points, bx);
     }
 
+    /// Sort the columns into cells directly — no interleaved copy.
+    ///
+    /// Overrides the interleaving default with [`build_index_soa`](Self::build_index_soa),
+    /// which shares the counting-sort core with `build_index`, so the index is
+    /// identical to the one the `N × 3` path produces.
+    fn build_index_columns(&mut self, xs: &[F], ys: &[F], zs: &[F], bx: &SimBox) {
+        self.build_index_soa(xs, ys, zs, bx);
+    }
+
     /// On-demand pair traversal — zero allocation.
     ///
     /// Same half-shell iteration as `compute_pairs_serial` but calls the
@@ -253,10 +278,9 @@ impl NbListAlgo for LinkCell {
     /// is irrelevant here: the visitor always receives `dist_sq` (Å²) and the
     /// minimum-image displacement `r_j - r_i` (Å) for each pair, with `i < j`.
     ///
-    /// Requires a prior [`build_index`](NbListAlgo::build_index) /
-    /// [`update_index`](NbListAlgo::update_index) (or [`build`](NbListAlgo::build),
-    /// which also sorts the particles). Without one there are no occupied cells
-    /// and the visitor is simply never called.
+    /// Requires a prior `build_index` / `update_index` (or `build`, which also
+    /// sorts the particles). Without one there are no occupied cells and the
+    /// visitor is simply never called.
     fn visit_pairs(&self, visitor: &mut dyn PairVisitor) {
         if self.occupied_cells.is_empty() {
             return;
@@ -320,8 +344,8 @@ impl NbListAlgo for LinkCell {
 }
 
 impl LinkCell {
-    /// SoA sibling of [`build`](NbListAlgo::build): build the self-query pair
-    /// list from column-major `x`/`y`/`z` slices.
+    /// SoA sibling of `build`: build the self-query pair list from
+    /// column-major `x`/`y`/`z` slices.
     ///
     /// "SoA" is *structure of arrays*: instead of one `N × 3` array of points,
     /// the coordinates arrive as three length-`N` slices (Å), one per axis.
@@ -353,8 +377,8 @@ impl LinkCell {
         };
     }
 
-    /// SoA sibling of [`build_index`](NbListAlgo::build_index): build the
-    /// spatial index only (no pair pre-computation) from column-major slices.
+    /// SoA sibling of `build_index`: build the spatial index only (no pair
+    /// pre-computation) from column-major slices.
     ///
     /// # Panics
     /// Panics if the cutoff is not positive or the three slices differ in length.
@@ -700,7 +724,6 @@ fn pos_at(sorted_pos: &[F], si: usize) -> [F; 3] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::spatial::neighbors::NbList;
     use crate::spatial::simbox::SimBox;
     use ndarray::array;
 
@@ -709,7 +732,7 @@ mod tests {
         let bx = SimBox::cube(4.0, array![0.0, 0.0, 0.0], [true, true, true])
             .expect("invalid box length");
         let pts = array![[0.1, 0.2, 0.3], [0.3, 0.2, 0.1], [3.9, 3.8, 3.7]];
-        let mut nl = NbList(LinkCell::new().cutoff(0.5));
+        let mut nl = LinkCell::new().cutoff(0.5);
         nl.build(pts.view(), &bx);
         let res = nl.query();
         assert_eq!(res.n_pairs(), 1);
@@ -722,7 +745,7 @@ mod tests {
         let bx = SimBox::cube(2.0, array![0.0, 0.0, 0.0], [true, true, true])
             .expect("invalid box length");
         let pts = array![[0.1, 0.1, 0.1], [1.9, 1.9, 1.9]];
-        let mut nl = NbList(LinkCell::new().cutoff(0.5));
+        let mut nl = LinkCell::new().cutoff(0.5);
         nl.build(pts.view(), &bx);
         let res = nl.query();
         assert_eq!(res.n_pairs(), 1);
@@ -733,7 +756,7 @@ mod tests {
         let bx = SimBox::cube(3.0, array![0.0, 0.0, 0.0], [true, true, true])
             .expect("invalid box length");
         let pts = array![[0.1, 0.1, 0.1], [0.2, 0.2, 0.2], [0.3, 0.3, 0.3]];
-        let mut nl = NbList(LinkCell::new().cutoff(1.0));
+        let mut nl = LinkCell::new().cutoff(1.0);
         nl.build(pts.view(), &bx);
         let res = nl.query();
         let mut seen = std::collections::HashSet::new();
@@ -750,7 +773,7 @@ mod tests {
         let bx = SimBox::cube(3.0, array![0.0, 0.0, 0.0], [true, true, true])
             .expect("invalid box length");
         let pts = array![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
-        let mut nl = NbList(LinkCell::new().cutoff(1.0));
+        let mut nl = LinkCell::new().cutoff(1.0);
         nl.build(pts.view(), &bx);
         let res = nl.query();
         assert_eq!(res.n_pairs(), 1);
@@ -761,7 +784,7 @@ mod tests {
         let bx = SimBox::cube(4.0, array![0.0, 0.0, 0.0], [true, true, true])
             .expect("invalid box length");
         let pts = array![[0.1, 0.2, 0.3], [0.4, 0.2, 0.3], [1.1, 1.2, 1.3]];
-        let mut nl = NbList(LinkCell::new().cutoff(0.5));
+        let mut nl = LinkCell::new().cutoff(0.5);
         nl.build(pts.view(), &bx);
         let res1_i = nl.query().query_point_indices().to_vec();
         let res1_j = nl.query().point_indices().to_vec();
@@ -829,11 +852,11 @@ mod tests {
             [2.9, 2.8, 2.7]
         ];
 
-        let mut lc = NbList(LinkCell::new().cutoff(0.6));
+        let mut lc = LinkCell::new().cutoff(0.6);
         lc.build(pts.view(), &bx);
         let res_lc = lc.query();
 
-        let mut bf = NbList(crate::spatial::neighbors::bruteforce::BruteForce::new(0.6));
+        let mut bf = crate::spatial::neighbors::bruteforce::BruteForce::new(0.6);
         bf.build(pts.view(), &bx);
         let res_bf = bf.query();
 
@@ -1290,18 +1313,32 @@ mod equivalence {
     /// Unordered pair multiset from a [`Neighbors`] table. A `BTreeMap` keyed on
     /// the ordered pair would silently swallow a duplicate emission, so
     /// duplicates are counted explicitly.
+    ///
+    /// The two physical columns are also checked against each other here rather
+    /// than in a test of their own. `dist_sq` and `disp` are produced by the
+    /// same minimum-image evaluation, so `dist_sq == ‖disp‖²` must hold for
+    /// every pair — and collecting inside the matrix loop is what makes that
+    /// claim executable across orthorhombic, hexagonal and tilted cells and all
+    /// four periodicity combinations, i.e. through the triclinic MIC branch as
+    /// well as the orthorhombic one. A cell partition that folded the two
+    /// columns to different periodic images would fail here.
     fn collect(res: &Neighbors) -> (BTreeMap<(u32, u32), F>, usize) {
         let mut map = BTreeMap::new();
         let n = res.n_pairs();
         let d2 = res.dist_sq().expect("search materializes dist_sq");
-        for ((&i, &j), &d) in res
-            .query_point_indices()
-            .iter()
-            .zip(res.point_indices())
-            .zip(d2)
-        {
+        let disp = res.disp().expect("search materializes disp");
+        for k in 0..n {
+            let (i, j) = (res.query_point_indices()[k], res.point_indices()[k]);
+            let norm_sq = disp[[k, 0]] * disp[[k, 0]]
+                + disp[[k, 1]] * disp[[k, 1]]
+                + disp[[k, 2]] * disp[[k, 2]];
+            assert!(
+                (d2[k] - norm_sq).abs() <= 1e-12,
+                "pair ({i},{j}): dist_sq {} != ||disp||^2 {norm_sq}",
+                d2[k]
+            );
             let key = if i < j { (i, j) } else { (j, i) };
-            map.insert(key, d);
+            map.insert(key, d2[k]);
         }
         (map, n)
     }

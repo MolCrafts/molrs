@@ -76,6 +76,10 @@ mode 判等全部改 `matches!(…, SelfQuery { .. })` 形式。
 6. **Test** steinhardt 在 INDICES_ONLY Neighbors 上返回 BadShape（非 panic）
 7. **Test** 既有 order/rdf 单元测试全绿
 8. **Docs** compute 模块 rustdoc：Args 为 `Neighbors`，order 需要 DISP/FULL
+9. **（02 路由）引擎并行物化决策**：`NeighborList::neighbors()` 现为串行 visit 驱动，`LinkCell::compute_pairs_parallel`（rayon，>64 occupied cells，文档记载 ~2× @N=1k）失去生产调用方，**且 cxxapi per-frame RDF 已从并行迁到串行（已落地回退）**。关闭本任务前必须跑既有 bench 对照（benches/core/neighbors/linkcell.rs 引擎 serial vs build_soa parallel）；差距为真 → 引擎物化接回 rayon，否则删除死代码。不得静默保留
+10. **（架构师裁决路由）重复自查询面降级**：迁移 `compute/rdf`、`compute/test_support`、`benches/core/neighbors` 到引擎（`build_columns` 已由 02 提供）后，将 `LinkCell::{build,update,query,build_soa,with_storage,storage}`、`BruteForce::{build,update,query}`、`AabbQuery::{query}` 降为 pub(crate)。`AabbQuery::{new,cutoff,build,query_knn}` 保持公开（query_knn 是引擎无法表达的能力）。此举同时消灭 build_index→query() 空表 SelfQuery{num_points:0} 与 BruteForce::visit_pairs 三态静默选择两处公开危害
+11. **（02 路由）rdf accumulator mode 判据**：`compute/rdf/accumulator.rs` 的 `std::mem::discriminant` 比较换成命名谓词（保留 01 迁移时的原语义：模式变体判等，忽略 counts）
+12. **（02 路由）RDFResult.mode 冗余**：`mode` 携带 frame-0 counts 而 `n_points`/`n_query_points` 跨帧求和 —— 归一化只读变体故行为无变；03 统一契约时去冗余
 
 ## Testing
 
