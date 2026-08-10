@@ -207,13 +207,17 @@ pub use pmft::{
     PMFTXYTResult, PMFTXYZ, PMFTXYZArgs, PMFTXYZResult,
 };
 pub use rdf::{RDF, RDFAccumulator, RDFResult, RdfMode};
-/// Crate-internal: the column guards every neighbor-consuming kernel calls
-/// before it reads `disp` (Å) or `dist_sq` (Å²). Deliberately not public API —
-/// a caller outside the crate holds the table itself and asks it directly with
-/// [`Neighbors::disp()`](molrs::spatial::neighbors::Neighbors::disp) /
-/// [`Neighbors::dist_sq()`](molrs::spatial::neighbors::Neighbors::dist_sq),
-/// which answer `Option` rather than [`ComputeError`].
-pub(crate) use require::{require_disp, require_dist_sq};
+/// Crate-internal: the input guards every neighbor-consuming kernel calls
+/// before it reads `disp` (Å) or `dist_sq` (Å²), or before it updates both
+/// endpoints of a row and so depends on the table being half-shell.
+/// Deliberately not public API — a caller outside the crate holds the table
+/// itself and asks it directly with
+/// [`Neighbors::disp()`](molrs::spatial::neighbors::Neighbors::disp),
+/// [`Neighbors::dist_sq()`](molrs::spatial::neighbors::Neighbors::dist_sq) and
+/// [`Neighbors::mode()`](molrs::spatial::neighbors::Neighbors::mode), which
+/// answer `Option` / [`QueryMode`](molrs::spatial::neighbors::QueryMode) rather
+/// than [`ComputeError`].
+pub(crate) use require::{require_disp, require_dist_sq, require_self_query};
 pub use result::{ComputeResult, DescriptorRow};
 pub use shape::{
     COMResult, CenterOfMass, ClusterCenters, ClusterCentersResult, GyrationTensor,
