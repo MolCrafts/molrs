@@ -22,6 +22,17 @@
 //! - `Y_ℓm` follows the Condon-Shortley + physics-normalization convention
 //!   (see [`molrs::math::spherical_harmonics`]).
 //!
+//! # Required neighbor columns
+//!
+//! `q_ℓm` is built from bond *directions*, so the table must carry the
+//! minimum-image displacement column `disp` (Å) — materialize it with
+//! [`NeighborsStorage::DISP`](molrs::spatial::neighbors::NeighborsStorage::DISP)
+//! or [`FULL`](molrs::spatial::neighbors::NeighborsStorage::FULL). Distances
+//! alone are not enough: a `DIST_SQ` or `INDICES_ONLY` table stores no
+//! directions, and reads back `None` rather than zeros, so every entry point
+//! here answers [`ComputeError::BadShape`] naming the missing column instead of
+//! indexing an empty view.
+//!
 //! # References
 //!
 //! - Steinhardt, Nelson & Ronchetti, *Phys. Rev. B* **28**, 784 (1983).
@@ -39,6 +50,7 @@ use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 
 use crate::compute::error::ComputeError;
+use crate::compute::require_disp;
 use crate::compute::traits::Compute;
 use crate::compute::util::get_positions_ref;
 
@@ -47,6 +59,11 @@ const FOUR_PI: F = 4.0 * std::f64::consts::PI;
 /// Steinhardt order-parameter calculator.
 ///
 /// Stateless parameter container: configured ℓ values + variant flags.
+///
+/// [`compute`](Compute::compute) takes `&Vec<Neighbors>` — one neighbor table
+/// per frame, index-aligned with `frames`, each carrying the `disp` column
+/// (Å); see the module docs for why, and
+/// [`ComputeError::BadShape`] for what happens when it is absent.
 #[derive(Debug, Clone)]
 pub struct Steinhardt {
     l: Vec<u32>,
@@ -57,6 +74,15 @@ pub struct Steinhardt {
 
 impl Steinhardt {
     /// Build a calculator for the listed ℓ values (must be non-empty).
+    ///
+    /// ℓ is the degree of the spherical harmonic the parameter is built from —
+    /// dimensionless, and conventionally 4 or 6, the degrees that distinguish
+    /// cubic and hexagonal close-packed environments most sharply.
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::OutOfRange`] when `l` is empty: there would be no
+    /// parameter to compute.
     pub fn new(l: &[u32]) -> Result<Self, ComputeError> {
         if l.is_empty() {
             return Err(ComputeError::OutOfRange {
@@ -90,6 +116,8 @@ impl Steinhardt {
         self
     }
 
+    /// The configured ℓ values, in the order they were requested — the same
+    /// order every `Vec` in [`SteinhardtResult`] is indexed by.
     pub fn l(&self) -> &[u32] {
         &self.l
     }
@@ -98,8 +126,23 @@ impl Steinhardt {
 /// Public helper used by `SolidLiquid` and `ContinuousCoordination`: compute
 /// the raw `q_ℓm(i)` table for a single ℓ on a single frame.
 ///
+/// `nlist` must carry the minimum-image displacement column `disp` (Å) — build
+/// it with
+/// [`NeighborsStorage::DISP`](molrs::spatial::neighbors::NeighborsStorage::DISP)
+/// or [`FULL`](molrs::spatial::neighbors::NeighborsStorage::FULL) — because the
+/// bond directions `r̂_ij` are the entire computation.
+///
 /// Returns a row-major buffer of length `n_particles · (2ℓ+1)` with element
-/// `[i, m+ℓ]` at index `i · (2ℓ+1) + (m + ℓ as i32) as usize`.
+/// `[i, m+ℓ]` at index `i · (2ℓ+1) + (m + ℓ as i32) as usize`. The values are
+/// dimensionless: each is an average of spherical harmonics over unit bond
+/// directions.
+///
+/// # Errors
+///
+/// [`ComputeError::BadShape`] if `nlist` has no `disp` column — a `DIST_SQ` or
+/// `INDICES_ONLY` table is refused rather than read as zeros. Positions are
+/// read through [`get_positions_ref`], so a frame without `atoms.x/y/z`
+/// columns errors there instead.
 pub fn compute_qlm<FA: FrameAccess>(
     frame: &FA,
     nlist: &Neighbors,
@@ -117,12 +160,7 @@ pub fn compute_qlm<FA: FrameAccess>(
     let n_pairs = nlist.n_pairs();
     // The bond directions are the whole computation: a table without the
     // `disp` column cannot supply them, and zeros would be silent nonsense.
-    let Some(disp) = nlist.disp() else {
-        return Err(ComputeError::BadShape {
-            expected: format!("Neighbors with the disp column for {n_pairs} pairs"),
-            got: "indices-only / lean neighbor table".to_string(),
-        });
-    };
+    let disp = require_disp(nlist)?;
 
     let parity = if l & 1 == 0 { 1.0_f64 } else { -1.0 };
     let mut ylm_buf = vec![Complex::ZERO; m_count];
@@ -631,6 +669,62 @@ mod tests {
         assert!(
             matches!(err, ComputeError::BadShape { .. }),
             "expected BadShape when disp is missing; got {err:?}"
+        );
+    }
+
+    /// ac-002 (spec neighborlist-03-compute): an **indices-only** table with
+    /// real pairs is the strictest missing-column case — neither physical
+    /// column was ever stored, so there is nothing to fall back on. Steinhardt
+    /// must answer `BadShape` rather than index an empty `disp` view (which
+    /// would be an out-of-bounds panic, or a WASM `unreachable`).
+    ///
+    /// The pairs are the octahedron's own bonds, hard-coded rather than
+    /// searched: centre 0 bonded to its six neighbours 1..=6 at unit distance
+    /// along ±x, ±y, ±z. Every pair satisfies the half-shell contract `i < j`,
+    /// so `SelfQuery { num_points: 7 }` is a legal label for them.
+    #[test]
+    fn steinhardt_indices_only_neighbors_is_bad_shape() {
+        use molrs::spatial::neighbors::{NeighborPair, NeighborsStorage, QueryMode};
+
+        let frame = octahedron(20.0);
+        let bonds: [[F; 3]; 6] = [
+            [1.0, 0.0, 0.0],
+            [-1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, -1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, -1.0],
+        ];
+        let pairs: Vec<NeighborPair> = bonds
+            .iter()
+            .enumerate()
+            .map(|(k, disp)| NeighborPair {
+                i: 0,
+                j: (k + 1) as u32,
+                dist_sq: 1.0,
+                disp: *disp,
+            })
+            .collect();
+        let nl = Neighbors::from_pairs(
+            pairs,
+            NeighborsStorage::INDICES_ONLY,
+            QueryMode::SelfQuery { num_points: 7 },
+        );
+        assert_eq!(
+            nl.n_pairs(),
+            6,
+            "the guard must be tested on a non-empty table"
+        );
+        assert!(nl.disp().is_none());
+        assert!(nl.dist_sq().is_none());
+
+        let err = Steinhardt::new(&[6])
+            .unwrap()
+            .compute(&[&frame], &vec![nl])
+            .unwrap_err();
+        assert!(
+            matches!(err, ComputeError::BadShape { .. }),
+            "indices-only Neighbors must be BadShape, not a panic; got {err:?}"
         );
     }
 

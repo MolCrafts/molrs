@@ -40,18 +40,23 @@
 //! - [`LinkCell`] (via [`NeighborList::new`]) — O(N) **cell list**: space is
 //!   cut into a grid of cells at least one cutoff wide, so a particle can only
 //!   have neighbors in its own cell and the 26 cells touching it. The default
-//!   backend and the right choice in production. Driven from [`NeighborList`],
-//!   both the indexing and the pair traversal run on one thread today: the
-//!   rayon-parallel pair search inside [`LinkCell`] is reached only through
-//!   that type's own materializing [`build`](LinkCell::build) +
-//!   [`query`](LinkCell::query) path.
+//!   backend and the right choice in production. Indexing runs on one thread;
+//!   [`NeighborList::neighbors`] then materializes the table by folding over
+//!   occupied cells with rayon (default feature, above a small-system
+//!   threshold), which is 2–4× faster at molecular-dynamics sizes and is why
+//!   the row order of a materialized table is unspecified.
+//!   [`NeighborList::for_each_pair`] stays single-threaded: it hands pairs to
+//!   an `FnMut` visitor, which cannot be shared across threads.
 //! - [`BruteForce`] (via [`NeighborList::brute_force`]) — O(N²) all-pairs
 //!   reference: a test oracle, and adequate for very small systems.
 //!
 //! Two neighboring questions have their own types. [`NeighborQuery`] runs a
 //! **cross-query**, searching one point set against a separate reference set.
-//! [`AabbQuery`] is a bounding-volume tree that also answers k-nearest-neighbor
-//! queries ([`AabbQuery::query_knn`]), which a fixed cutoff cannot express.
+//! [`AabbQuery`] is a bounding-volume tree that answers k-nearest-neighbor
+//! queries ([`AabbQuery::query_knn`]) — *which `k` points are closest*, a
+//! question that has no radius and that a fixed cutoff therefore cannot
+//! express. It is the only reason that type exists: cutoff searches belong to
+//! [`NeighborList`].
 //!
 //! ## Streaming a pair versus materializing a table
 //!
@@ -66,12 +71,14 @@
 //! the columns it will actually read (here [`NeighborsStorage::DISP`]).
 //! Runnable versions of both are on [`NeighborList`].
 //!
-//! Exactly two calls in this module produce a [`Neighbors`] table:
-//! [`NeighborList::neighbors`], and [`Neighbors::from_pairs`] for a pair stream
-//! the caller produced or filtered itself. [`build`](NeighborList::build),
-//! [`build_columns`](NeighborList::build_columns) and
-//! [`update`](NeighborList::update) own the spatial index and nothing else —
-//! they enumerate no pairs and allocate no table behind the caller's back.
+//! No self search allocates a [`Neighbors`] table behind the caller's back.
+//! [`build`](NeighborList::build), [`build_columns`](NeighborList::build_columns)
+//! and [`update`](NeighborList::update) own the spatial index and nothing else —
+//! they enumerate no pairs and store no table — and exactly two calls turn
+//! freshly searched pairs into one: [`NeighborList::neighbors`], and
+//! [`Neighbors::from_pairs`] for a pair stream the caller produced or filtered
+//! itself. A cross-query is a different door and answers with a table directly
+//! ([`NeighborQuery::query`]).
 //!
 //! A streamed pair always carries both physical columns. A materialized table
 //! keeps only the columns [`NeighborsStorage`] asked for, and reports a column
@@ -121,7 +128,7 @@
 //! | `NeighborList.vectors` | [`Neighbors::disp()`] | same unnormalized MIC vector `r_j - r_i` |
 //! | (both always present) | [`NeighborsStorage`] | freud always carries distances and vectors; molrs returns `None` for a column the search was told not to store |
 //! | `freud.locality.LinkCell` | [`NeighborList`] (its [`LinkCell`] backend) | — |
-//! | `freud.locality.AABBQuery` | [`AabbQuery`] | — |
+//! | `freud.locality.AABBQuery` | [`AabbQuery`] | freud's tree answers both cutoff and k-nearest queries; molrs keeps the cutoff search in [`NeighborList`] and leaves [`AabbQuery`] the k-nearest one |
 //! | `freud.locality.FilterSANN` / `FilterRAD` | [`filter_sann`] / [`filter_rad`] | — |
 
 use crate::spatial::simbox::SimBox;
@@ -291,6 +298,29 @@ pub(crate) trait Backend: std::fmt::Debug {
     /// displacement `r_j - r_i` (Å) from the same evaluation. Without a prior
     /// index the visitor is simply never called.
     fn visit_pairs(&self, visitor: &mut dyn PairVisitor);
+
+    /// Append every pair within the cutoff to `out`, keeping the columns `out`'s
+    /// storage policy asks for.
+    ///
+    /// The default drives [`visit_pairs`](Self::visit_pairs) and pushes each
+    /// pair as it arrives, so a backend gets materialization for free and the
+    /// two paths cannot disagree about *which* pairs exist. An implementor whose
+    /// search parallelizes overrides this to write the table faster —
+    /// [`LinkCell`] folds over occupied cells with rayon — and then owes three
+    /// things, none of which the default can enforce for it:
+    ///
+    /// 1. the same pair *set* the visitor would have produced, half-shell with
+    ///    `i < j`;
+    /// 2. `out`'s storage policy honored, so a column the caller did not ask for
+    ///    is never written;
+    /// 3. rows appended, never overwritten — `out` may already hold pairs.
+    ///
+    /// Pair *order* is not owed: a parallel fold emits in whatever order the
+    /// work split produced, which is why nothing downstream may depend on the
+    /// row order of a materialized table.
+    fn materialize_into(&self, out: &mut Neighbors) {
+        self.visit_pairs(&mut |i, j, d2, dr| out.push(i, j, d2, dr));
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -554,9 +584,16 @@ impl NeighborList {
     /// Materialize the pairs into a [`Neighbors`] table keeping the columns
     /// `storage` asks for.
     ///
-    /// Same pairs as [`for_each_pair`](Self::for_each_pair) in the same order —
-    /// this drives that traversal — so the result equals
-    /// `Neighbors::from_pairs(collected_stream, storage, mode)` row for row.
+    /// The same pair *set* [`for_each_pair`](Self::for_each_pair) streams, so
+    /// the result is `Neighbors::from_pairs(collected_stream, storage, mode)` up
+    /// to row order. Row order is **not** part of the contract: the cell-list
+    /// backend materializes by folding over occupied cells in parallel (rayon
+    /// feature, on by default), which is 2–4× faster at molecular-dynamics
+    /// sizes but hands back the pairs in whatever order the work split produced.
+    /// A caller that needs a fixed order sorts the table. Streaming stays
+    /// single-threaded — a visitor is `FnMut`, so `for_each_pair` cannot be
+    /// parallelized behind the caller's back.
+    ///
     /// The table is tagged `SelfQuery { num_points }` with the point count of
     /// the last index.
     ///
@@ -573,7 +610,7 @@ impl NeighborList {
             },
             storage,
         );
-        self.for_each_pair(|pair| out.push(pair.i, pair.j, pair.dist_sq, pair.disp));
+        self.backend.materialize_into(&mut out);
         out
     }
 }
@@ -806,14 +843,6 @@ impl Neighbors {
         }
     }
 
-    /// Clear all buffers for reuse (keeps storage policy and mode).
-    pub(crate) fn clear(&mut self) {
-        self.idx_i.clear();
-        self.idx_j.clear();
-        self.dist_sq.clear();
-        self.disp_flat.clear();
-    }
-
     /// Storage policy for optional columns — equivalently, which of
     /// [`dist_sq()`](Self::dist_sq()) and [`disp()`](Self::disp()) will return
     /// `Some` for this table.
@@ -840,6 +869,53 @@ impl Neighbors {
         if self.storage.disp {
             self.disp_flat.extend(dr);
         }
+    }
+
+    /// Move every row of `other` onto the end of this table.
+    ///
+    /// The merge step of a parallel materialization: each worker folds its share
+    /// of the search into a table of its own, and those partial tables are then
+    /// concatenated. `other` is left empty. That is the *only* reason this
+    /// exists, hence the feature gate — without `rayon` there is one worker, and
+    /// it pushes straight into the caller's table.
+    ///
+    /// # Column alignment is the invariant this method exists to hold
+    ///
+    /// The columns are separate `Vec`s, so "row `k`" is a convention, not a type
+    /// — appending `idx_i` without appending `disp_flat` would leave a table
+    /// whose distances belong to the wrong pairs, and nothing downstream could
+    /// notice. Concatenating *all* the columns in one place, from tables that by
+    /// construction share a storage policy, is what keeps them aligned: a column
+    /// the policy drops is empty in both tables, so appending it is a no-op, and
+    /// a column the policy keeps is appended in both. `disp_flat` holds three
+    /// values per pair rather than one, and is appended whole for the same
+    /// reason.
+    ///
+    /// # Panics
+    /// In debug builds, panics if the two tables disagree about their storage
+    /// policy — that is exactly the case where the concatenation would misalign
+    /// the columns — or if the merged columns do not come out to one entry per
+    /// pair.
+    #[cfg(feature = "rayon")]
+    pub(crate) fn append(&mut self, other: &mut Self) {
+        debug_assert_eq!(
+            self.storage, other.storage,
+            "merging neighbor tables with different storage policies would \
+             misalign the columns"
+        );
+        self.idx_i.append(&mut other.idx_i);
+        self.idx_j.append(&mut other.idx_j);
+        self.dist_sq.append(&mut other.dist_sq);
+        self.disp_flat.append(&mut other.disp_flat);
+        debug_assert_eq!(self.idx_i.len(), self.idx_j.len(), "index columns");
+        debug_assert!(
+            !self.storage.dist_sq || self.dist_sq.len() == self.idx_i.len(),
+            "dist_sq column lost alignment with the index columns"
+        );
+        debug_assert!(
+            !self.storage.disp || self.disp_flat.len() == 3 * self.idx_i.len(),
+            "disp column lost alignment with the index columns"
+        );
     }
 
     /// Iterate the materialized pairs without allocating.
@@ -1158,6 +1234,10 @@ mod from_pairs_tests {
     /// AC-006 + AC-007: a materialized self-query is half-shell (`i < j`) and
     /// its two physical columns agree, `d² == ‖disp‖²`, under PBC.
     ///
+    /// Driven through the O(N²) reference backend
+    /// ([`NeighborList::brute_force`]), whose all-pairs scan shares no
+    /// cell-assignment code with the production cell list.
+    ///
     /// Hard-coded orthorhombic box 10 × 8 × 6 Å, fully periodic, cutoff 1.5 Å:
     ///
     /// | pair | separation                    | d²   |
@@ -1182,17 +1262,17 @@ mod from_pairs_tests {
             [5.0, 4.0, 3.0],
         ];
 
-        let mut bf = BruteForce::new(1.5);
+        let mut bf = NeighborList::brute_force(1.5);
         bf.build(pts.view(), &bx);
-        let nb: &Neighbors = bf.query();
+        let nb: Neighbors = bf.neighbors(NeighborsStorage::FULL);
 
         assert_eq!(nb.n_pairs(), 3);
         assert!(matches!(nb.mode(), QueryMode::SelfQuery { .. }));
 
         let idx_i = nb.query_point_indices();
         let idx_j = nb.point_indices();
-        let d2 = nb.dist_sq().expect("BruteForce materializes dist_sq");
-        let disp = nb.disp().expect("BruteForce materializes disp");
+        let d2 = nb.dist_sq().expect("FULL storage materializes dist_sq");
+        let disp = nb.disp().expect("FULL storage materializes disp");
 
         for k in 0..nb.n_pairs() {
             assert!(
@@ -1399,6 +1479,69 @@ mod engine_tests {
     /// minimum image is unique) and above the 2 Å lattice pitch (so each atom
     /// has neighbors along all three axes).
     const LATTICE_60_CUTOFF: F = 2.3;
+
+    /// Sites per axis of [`lattice_512`].
+    const LATTICE_512_SIDE: usize = 8;
+
+    /// Total sites of [`lattice_512`]: 8³.
+    const LATTICE_512_N: usize = 512;
+
+    /// Lattice pitch (Å) of [`lattice_512`] — and, at
+    /// [`LATTICE_512_CUTOFF`], its only pair distance.
+    const LATTICE_512_PITCH: F = 3.5;
+
+    /// Cubic box edge (Å) of [`lattice_512`]: exactly eight pitches, so the
+    /// lattice tiles the box seamlessly and every site has the same
+    /// environment.
+    const LATTICE_512_BOX: F = 28.0;
+
+    /// Cutoff (Å) for [`lattice_512`]: above the 3.5 Å first shell, below the
+    /// 3.5·√2 = 4.9497 Å second one, with 0.5 Å and 0.95 Å of margin — no pair
+    /// sits on the `d² <= r_c²` knife-edge.
+    const LATTICE_512_CUTOFF: F = 4.0;
+
+    /// Coordination number of every site of [`lattice_512`] at
+    /// [`LATTICE_512_CUTOFF`]: ±x, ±y, ±z.
+    const LATTICE_512_COORD: usize = 6;
+
+    /// Golden pair count of [`lattice_512`]: 512 sites × 6 neighbors / 2, each
+    /// unordered pair counted once by the half-shell contract.
+    const LATTICE_512_PAIRS: usize = 1536;
+
+    /// Occupied cells of [`lattice_512`] at [`LATTICE_512_CUTOFF`]: 7³.
+    ///
+    /// `celldim = floor(28 / 4) = 7` per axis, and the eight lattice planes per
+    /// axis (0.25, 3.75, … 24.75 Å) fall into cells
+    /// `floor(pos / 4) = 0, 0, 1, 2, 3, 4, 5, 6` — seven distinct columns, all
+    /// of them occupied.
+    const LATTICE_512_OCCUPIED_CELLS: usize = 343;
+
+    /// 512 sites on a simple-cubic 8 × 8 × 8 lattice, 3.5 Å pitch, offset
+    /// 0.25 Å from the origin, inside a fully periodic 28 Å cube.
+    ///
+    /// The box edge is exactly eight pitches, so the lattice is seamlessly
+    /// periodic: **every** site has six neighbors at exactly 3.5 Å (±x, ±y, ±z,
+    /// wrapping included) and twelve at 4.9497 Å. The 0.25 Å offset keeps every
+    /// coordinate off a box face and off a cell boundary; all coordinates
+    /// (0.25, 3.5, 28, 24.75) are exact binary fractions, so the minimum-image
+    /// arithmetic is exact and `dist_sq` comes out as exactly 3.5² = 12.25.
+    ///
+    /// No random number generator: the loop below is the whole fixture.
+    fn lattice_512() -> Array2<F> {
+        let mut pts = Array2::<F>::zeros((LATTICE_512_N, 3));
+        let mut idx: usize = 0;
+        for ix in 0..LATTICE_512_SIDE {
+            for iy in 0..LATTICE_512_SIDE {
+                for iz in 0..LATTICE_512_SIDE {
+                    pts[[idx, 0]] = LATTICE_512_PITCH * (ix as F) + 0.25;
+                    pts[[idx, 1]] = LATTICE_512_PITCH * (iy as F) + 0.25;
+                    pts[[idx, 2]] = LATTICE_512_PITCH * (iz as F) + 0.25;
+                    idx += 1;
+                }
+            }
+        }
+        pts
+    }
 
     /// ac-003: the streamed pairs are the half-shell self list, and each one
     /// carries both physical quantities consistently.
@@ -1636,6 +1779,184 @@ mod engine_tests {
                 b.dist_sq
             );
         }
+    }
+
+    /// The **parallel** materialization of the cell-list backend reproduces the
+    /// O(N²) reference, pair for pair, and honors the storage policy through the
+    /// merge.
+    ///
+    /// [`NeighborList::neighbors`] folds over occupied cells with rayon above 64
+    /// of them and concatenates the workers' partial tables; below that it falls
+    /// back to the serial visitor walk. Every other fixture in this module is a
+    /// handful of cells, so without this test the parallel branch — the fold,
+    /// the `Neighbors::append` merge, and the column alignment that merge has to
+    /// preserve — is never executed at all.
+    ///
+    /// The fixture ([`lattice_512`]) is sized to cross that threshold with room
+    /// to spare, and the premise is *asserted* rather than asserted-in-prose:
+    /// the occupied-cell count is recomputed here from the public [`CellGrid`]
+    /// API, so a later change to the cutoff or the box that dropped the fixture
+    /// back onto the serial path fails here instead of silently testing nothing.
+    ///
+    /// # Goldens
+    ///
+    /// | quantity | value | derivation |
+    /// |---|---|---|
+    /// | pairs | 1536 | 512 sites × 6 neighbors / 2 |
+    /// | `dist_sq` | 12.25 Å² | (3.5 Å)², exact in binary |
+    /// | coordination | 6 | ±x, ±y, ±z at one pitch |
+    /// | occupied cells | 343 | 7³, from `floor(28 / 4) = 7` per axis |
+    ///
+    /// Without the `rayon` feature the same assertions run against the serial
+    /// fallback, which is the point: both branches owe the identical pair set.
+    #[test]
+    fn engine_parallel_materialize_matches_brute_force() {
+        use std::collections::BTreeSet;
+
+        /// Index pairs of a table, sorted — row order is not part of the
+        /// contract, least of all under a parallel fold.
+        fn sorted_index_pairs(nb: &Neighbors) -> Vec<(u32, u32)> {
+            let mut pairs: Vec<(u32, u32)> = (0..nb.n_pairs())
+                .map(|k| (nb.query_point_indices()[k], nb.point_indices()[k]))
+                .collect();
+            pairs.sort_unstable();
+            pairs
+        }
+
+        let bx = SimBox::cube(LATTICE_512_BOX, array![0.0, 0.0, 0.0], [true, true, true])
+            .expect("valid cubic box");
+        let pts = lattice_512();
+
+        // Premise: the fixture must actually reach the parallel branch.
+        let grid = CellGrid::for_cutoff(&bx, LATTICE_512_CUTOFF);
+        assert_eq!(
+            grid.celldim(),
+            [7, 7, 7],
+            "cell partition changed shape: floor(28 / 4) = 7 per axis"
+        );
+        let occupied: BTreeSet<usize> = (0..pts.nrows())
+            .map(|i| grid.cell_of(&bx, [pts[[i, 0]], pts[[i, 1]], pts[[i, 2]]]))
+            .collect();
+        assert_eq!(
+            occupied.len(),
+            LATTICE_512_OCCUPIED_CELLS,
+            "occupied-cell count changed"
+        );
+        assert!(
+            occupied.len() >= 64,
+            "fixture must stay above the 64-occupied-cell threshold at which the \
+             cell-list backend switches to the rayon fold; got {}",
+            occupied.len()
+        );
+
+        let mut nl = NeighborList::new(LATTICE_512_CUTOFF);
+        nl.build(pts.view(), &bx);
+        let full = nl.neighbors(NeighborsStorage::FULL);
+
+        let mut bf = NeighborList::brute_force(LATTICE_512_CUTOFF);
+        bf.build(pts.view(), &bx);
+        let oracle = bf.neighbors(NeighborsStorage::FULL);
+
+        assert_eq!(
+            full.mode(),
+            QueryMode::SelfQuery {
+                num_points: LATTICE_512_N
+            },
+            "a parallel materialization must still be tagged with the point count"
+        );
+        assert_eq!(
+            oracle.n_pairs(),
+            LATTICE_512_PAIRS,
+            "the O(N²) reference disagrees with the hard-coded golden pair count"
+        );
+        assert_eq!(
+            full.n_pairs(),
+            LATTICE_512_PAIRS,
+            "the parallel fold emitted {} pairs, golden is {LATTICE_512_PAIRS}",
+            full.n_pairs()
+        );
+        assert_eq!(
+            sorted_index_pairs(&full),
+            sorted_index_pairs(&oracle),
+            "parallel pair set diverges from the reference backend"
+        );
+
+        // Every pair: half-shell, both columns from the same periodic image, and
+        // the one distance this lattice can produce.
+        let d2 = full.dist_sq().expect("FULL storage materializes dist_sq");
+        let disp = full.disp().expect("FULL storage materializes disp");
+        let golden_d2 = LATTICE_512_PITCH * LATTICE_512_PITCH;
+        let mut coordination = vec![0usize; LATTICE_512_N];
+        for k in 0..full.n_pairs() {
+            let (i, j) = (full.query_point_indices()[k], full.point_indices()[k]);
+            assert!(
+                i < j,
+                "a parallel worker emitted a non-half-shell pair: {i} !< {j}"
+            );
+            coordination[i as usize] += 1;
+            coordination[j as usize] += 1;
+
+            let norm_sq = disp[[k, 0]] * disp[[k, 0]]
+                + disp[[k, 1]] * disp[[k, 1]]
+                + disp[[k, 2]] * disp[[k, 2]];
+            assert!(
+                (d2[k] - norm_sq).abs() <= 1e-12,
+                "pair ({i},{j}): dist_sq {} != ||disp||^2 {norm_sq} — the merge \
+                 misaligned the columns",
+                d2[k]
+            );
+            assert!(
+                (d2[k] - golden_d2).abs() <= 1e-10,
+                "pair ({i},{j}): dist_sq {} != golden {golden_d2}",
+                d2[k]
+            );
+        }
+        for (site, &n) in coordination.iter().enumerate() {
+            assert_eq!(
+                n, LATTICE_512_COORD,
+                "site {site} has {n} neighbors, every site of this lattice has \
+                 {LATTICE_512_COORD}"
+            );
+        }
+
+        // The storage policy survives the parallel merge: a column the caller
+        // did not ask for is absent, never a fabricated zero, and the pair set
+        // is unchanged.
+        let dist_only = nl.neighbors(NeighborsStorage::DIST_SQ);
+        assert_eq!(dist_only.n_pairs(), LATTICE_512_PAIRS);
+        assert_eq!(
+            dist_only
+                .dist_sq()
+                .expect("DIST_SQ keeps the distance column")
+                .len(),
+            LATTICE_512_PAIRS,
+            "the dist_sq column lost alignment with the index columns"
+        );
+        assert!(
+            dist_only.disp().is_none(),
+            "DIST_SQ must not fabricate a disp column in the parallel path"
+        );
+        assert_eq!(
+            sorted_index_pairs(&dist_only),
+            sorted_index_pairs(&full),
+            "storage policy selects columns, not pairs"
+        );
+
+        let indices_only = nl.neighbors(NeighborsStorage::INDICES_ONLY);
+        assert_eq!(indices_only.n_pairs(), LATTICE_512_PAIRS);
+        assert!(
+            indices_only.dist_sq().is_none(),
+            "INDICES_ONLY must not fabricate a dist_sq column in the parallel path"
+        );
+        assert!(
+            indices_only.disp().is_none(),
+            "INDICES_ONLY must not fabricate a disp column in the parallel path"
+        );
+        assert_eq!(
+            sorted_index_pairs(&indices_only),
+            sorted_index_pairs(&full),
+            "storage policy selects columns, not pairs"
+        );
     }
 
     /// ac-009 (second half): `update` re-indexes the new coordinates; the pair

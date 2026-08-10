@@ -19,12 +19,28 @@
 //! neighboring cells, so every unordered pair is discovered exactly once and
 //! the resulting table satisfies `i < j`.
 
-use crate::spatial::neighbors::{
-    Backend, CellGrid, Neighbors, NeighborsStorage, PairVisitor, QueryMode,
-};
+use crate::spatial::neighbors::{Backend, CellGrid, Neighbors, PairVisitor};
+// The column policy is named only by the parallel materialization fold, and by
+// the unit tests below — which materialize through the engine on every feature
+// configuration.
+#[cfg(any(test, feature = "rayon"))]
+use crate::spatial::neighbors::NeighborsStorage;
 use crate::spatial::simbox::SimBox;
 use crate::types::{F, FNx3View};
 use ndarray::array;
+
+/// Occupied-cell count from which materializing the pair table in parallel pays
+/// for itself.
+///
+/// Below it rayon's split/merge overhead exceeds the pair work: at N = 1000 with
+/// ρ = 0.8 and cutoff 2.5 Å there are ~10 occupied cells and the serial walk is
+/// 30–50% faster. Above it the fold wins decisively — measured on a uniform
+/// periodic system at cutoff 4 Å, serial → parallel materialization is
+/// 10.1 ms → 4.2 ms at 20k particles (2.4×) and 110 ms → 26 ms at 100k (4.2×).
+/// Empirical, and it gates only *how* the pairs are found: both sides of the
+/// branch produce the same pair set.
+#[cfg(feature = "rayon")]
+const PAR_MIN_CELLS: usize = 64;
 
 /// Cell-list neighbor search algorithm — the default
 /// [`NeighborList`](crate::spatial::neighbors::NeighborList) backend.
@@ -33,14 +49,15 @@ use ndarray::array;
 /// searches only neighboring cells for pair interactions.  Uses half-shell
 /// iteration so each pair is found exactly once.
 ///
-/// The materialized table is a self-query: `mode()` is
-/// `QueryMode::SelfQuery { num_points }` and every pair satisfies `i < j`. Which
-/// physical columns it keeps is configurable through
-/// [`with_storage`](Self::with_storage) and defaults to
-/// [`NeighborsStorage::FULL`] — squared distances in Å² and minimum-image
-/// displacements in Å.
+/// This type owns the spatial index and the pair traversal, and nothing else:
+/// it caches no pair table and carries no column policy. What it produces is a
+/// half-shell self list — every pair satisfies `i < j` — and deciding what
+/// becomes of those pairs belongs to the engine, which either streams them
+/// ([`NeighborList::for_each_pair`](crate::spatial::neighbors::NeighborList::for_each_pair))
+/// or writes them into a [`Neighbors`] table whose columns the *caller* names
+/// ([`NeighborList::neighbors`](crate::spatial::neighbors::NeighborList::neighbors)).
 ///
-/// With the `rayon` feature (default), the pair search is parallelized across
+/// With the `rayon` feature (default), materialization is parallelized across
 /// occupied cells via `rayon::par_iter`.
 ///
 /// Search from outside this crate goes through
@@ -66,14 +83,10 @@ pub struct LinkCell {
     occupied_cells: Vec<u32>,
     /// Simulation box from the last build/update.
     bx: SimBox,
-    /// Cached pair results.
-    result: Neighbors,
     /// Reusable cursor buffer for counting-sort scatter (avoids allocation).
     cursor: Vec<u32>,
     /// Reusable cell-assignment buffer (avoids cloning sorted_idx).
     cell_of: Vec<u32>,
-    /// Which optional columns the materialized [`Neighbors`] table keeps.
-    storage: NeighborsStorage,
 }
 
 impl Default for LinkCell {
@@ -85,8 +98,7 @@ impl Default for LinkCell {
 impl LinkCell {
     /// Create a new `LinkCell` with zero cutoff (must be set via [`cutoff`](Self::cutoff)).
     ///
-    /// The storage policy starts at [`NeighborsStorage::FULL`] and the cached
-    /// table starts empty, tagged `SelfQuery { num_points: 0 }`.
+    /// The index starts empty; the first `build_index` fills it.
     pub fn new() -> Self {
         Self {
             cutoff: 0.0,
@@ -97,13 +109,8 @@ impl LinkCell {
             occupied_cells: Vec::new(),
             bx: SimBox::cube(1.0, array![0.0 as F, 0.0, 0.0], [false, false, false])
                 .expect("dummy box"),
-            result: Neighbors::empty(
-                QueryMode::SelfQuery { num_points: 0 },
-                NeighborsStorage::FULL,
-            ),
             cursor: Vec::new(),
             cell_of: Vec::new(),
-            storage: NeighborsStorage::FULL,
         }
     }
 
@@ -114,26 +121,6 @@ impl LinkCell {
     pub fn cutoff(mut self, cutoff: F) -> Self {
         self.cutoff = cutoff;
         self
-    }
-
-    /// Configure which optional pair fields are stored when materializing
-    /// a [`Neighbors`] table via `build` / `update`.
-    ///
-    /// A column left out is reported as `None` by the table's accessor, not as
-    /// zeros, and cannot be added back afterwards — pick the policy before
-    /// building. Does not affect index-only building and pair streaming (those
-    /// never store pairs, and always hand the visitor both quantities). Calling
-    /// this discards any table already built.
-    pub fn with_storage(mut self, storage: NeighborsStorage) -> Self {
-        self.storage = storage;
-        self.result = Neighbors::empty(QueryMode::SelfQuery { num_points: 0 }, storage);
-        self
-    }
-
-    /// Storage policy used by the next materializing build.
-    #[inline]
-    pub fn storage(&self) -> NeighborsStorage {
-        self.storage
     }
 
     /// Visit the reference points in the cell neighborhood of an arbitrary
@@ -198,56 +185,6 @@ impl LinkCell {
             }
         }
     }
-
-    /// Index `points` in `bx` **and** materialize the half-shell pair table
-    /// read back by [`query`](Self::query).
-    ///
-    /// The index-only path — build once, then stream pairs without storing them
-    /// — is [`NeighborList`](crate::spatial::neighbors::NeighborList).
-    ///
-    /// # Panics
-    /// Panics if the cutoff is not positive or `points` does not have exactly
-    /// 3 columns.
-    pub fn build(&mut self, points: FNx3View<'_>, bx: &SimBox) {
-        assert!(self.cutoff > 0.0, "cutoff must be positive");
-        self.update(points, bx);
-    }
-
-    /// Re-index new positions and re-materialize the pair table, reusing the
-    /// internal buffers.
-    ///
-    /// There is no skin/Verlet shortcut: this recomputes the pairs, it does not
-    /// decide for you whether a rebuild was necessary.
-    ///
-    /// # Panics
-    /// Panics if the cutoff is not positive or `points` does not have exactly
-    /// 3 columns.
-    pub fn update(&mut self, points: FNx3View<'_>, bx: &SimBox) {
-        assert!(self.cutoff > 0.0, "cutoff must be positive");
-        assert!(points.ncols() == 3, "points must have shape (N, 3)");
-
-        self.counting_sort(points, bx);
-        let n_points = points.nrows();
-
-        #[cfg(feature = "rayon")]
-        self.compute_pairs_parallel();
-        #[cfg(not(feature = "rayon"))]
-        self.compute_pairs_serial();
-
-        self.result.mode = QueryMode::SelfQuery {
-            num_points: n_points,
-        };
-    }
-
-    /// Reference to the pair table materialized by the last
-    /// [`build`](Self::build) / [`update`](Self::update) / [`build_soa`](Self::build_soa).
-    ///
-    /// Before the first one this is an empty table tagged
-    /// `SelfQuery { num_points: 0 }`, not an error.
-    #[inline]
-    pub fn query(&self) -> &Neighbors {
-        &self.result
-    }
 }
 
 impl Backend for LinkCell {
@@ -273,14 +210,13 @@ impl Backend for LinkCell {
 
     /// On-demand pair traversal — zero allocation.
     ///
-    /// Same half-shell iteration as `compute_pairs_serial` but calls the
-    /// visitor instead of building a [`Neighbors`] table, so the storage policy
-    /// is irrelevant here: the visitor always receives `dist_sq` (Å²) and the
+    /// Half-shell iteration over the occupied cells, calling the visitor
+    /// instead of building a [`Neighbors`] table, so no storage policy is
+    /// involved: the visitor always receives `dist_sq` (Å²) and the
     /// minimum-image displacement `r_j - r_i` (Å) for each pair, with `i < j`.
     ///
-    /// Requires a prior `build_index` / `update_index` (or `build`, which also
-    /// sorts the particles). Without one there are no occupied cells and the
-    /// visitor is simply never called.
+    /// Requires a prior `build_index` / `update_index`. Without one there are
+    /// no occupied cells and the visitor is simply never called.
     fn visit_pairs(&self, visitor: &mut dyn PairVisitor) {
         if self.occupied_cells.is_empty() {
             return;
@@ -341,44 +277,39 @@ impl Backend for LinkCell {
             }
         }
     }
+
+    /// Materialize the pairs into `out`, in parallel when that pays.
+    ///
+    /// Above `PAR_MIN_CELLS` occupied cells the search folds over the cells with
+    /// rayon and concatenates the partial tables — 2.4× faster than the serial
+    /// walk at 20k particles and 4.2× at 100k. Below that threshold, and without
+    /// the `rayon` feature, it falls back to the trait default, which drives
+    /// [`visit_pairs`](Self::visit_pairs).
+    ///
+    /// Both paths emit the identical pair set with `i < j`; only the row order
+    /// differs, which is why [`NeighborList::neighbors`](crate::spatial::neighbors::NeighborList::neighbors)
+    /// promises a pair *set* and not an order.
+    fn materialize_into(&self, out: &mut Neighbors) {
+        #[cfg(feature = "rayon")]
+        {
+            if self.occupied_cells.len() >= PAR_MIN_CELLS {
+                let mut partial = self.par_pairs(out.storage());
+                out.append(&mut partial);
+                return;
+            }
+        }
+        self.visit_pairs(&mut |i, j, d2, dr| out.push(i, j, d2, dr));
+    }
 }
 
 impl LinkCell {
-    /// SoA sibling of `build`: build the self-query pair list from
-    /// column-major `x`/`y`/`z` slices.
+    /// SoA sibling of `build_index`: build the spatial index only (no pair
+    /// pre-computation) from column-major slices.
     ///
     /// "SoA" is *structure of arrays*: instead of one `N × 3` array of points,
     /// the coordinates arrive as three length-`N` slices (Å), one per axis.
-    ///
-    /// Shares the same counting-sort + pair-search core as `build`, so the
-    /// resulting [`Neighbors`] table is byte-identical to `build` on the same
-    /// coordinates. Lets callers holding SoA columns skip the interleave into
-    /// an owned `Array2`.
-    ///
-    /// # Panics
-    /// Panics if the cutoff is not positive or the three slices differ in length.
-    pub fn build_soa(&mut self, xs: &[F], ys: &[F], zs: &[F], bx: &SimBox) {
-        assert!(self.cutoff > 0.0, "cutoff must be positive");
-        assert!(
-            xs.len() == ys.len() && ys.len() == zs.len(),
-            "x/y/z slices must have equal length"
-        );
-
-        self.counting_sort_soa(xs, ys, zs, bx);
-        let n_points = xs.len();
-
-        #[cfg(feature = "rayon")]
-        self.compute_pairs_parallel();
-        #[cfg(not(feature = "rayon"))]
-        self.compute_pairs_serial();
-
-        self.result.mode = QueryMode::SelfQuery {
-            num_points: n_points,
-        };
-    }
-
-    /// SoA sibling of `build_index`: build the spatial index only (no pair
-    /// pre-computation) from column-major slices.
+    /// The counting-sort core is shared with `build_index`, so the index is
+    /// identical to the one the `N × 3` path produces.
     ///
     /// # Panics
     /// Panics if the cutoff is not positive or the three slices differ in length.
@@ -479,86 +410,26 @@ impl LinkCell {
         }
     }
 
-    /// Serial half-shell pair search over occupied cells only.
-    #[cfg(not(feature = "rayon"))]
-    fn compute_pairs_serial(&mut self) {
-        let cutoff2 = self.cutoff * self.cutoff;
-        self.result.clear();
-
-        let mut fwd_buf = [0usize; 27];
-
-        for &cell in &self.occupied_cells {
-            let cell = cell as usize;
-            let start = self.cell_start[cell] as usize;
-            let end = self.cell_start[cell + 1] as usize;
-
-            // Self-cell pairs
-            for si in start..end {
-                let pi = pos_at(&self.sorted_pos, si);
-                let oi = self.sorted_idx[si];
-                for sj in (si + 1)..end {
-                    let pj = pos_at(&self.sorted_pos, sj);
-                    let dr = self.bx.shortest_vector_impl(pi, pj);
-                    let d2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
-                    if d2 <= cutoff2 {
-                        self.result.push(oi, self.sorted_idx[sj], d2, dr);
-                    }
-                }
-            }
-
-            // Forward neighbor cells (stack buffer — no alloc)
-            let n_fwd = self.grid.stencil_forward(cell, &mut fwd_buf);
-            let fwd = &fwd_buf[..n_fwd];
-
-            for si in start..end {
-                let pi = pos_at(&self.sorted_pos, si);
-                let oi = self.sorted_idx[si];
-
-                for &nc in fwd {
-                    let nc_start = self.cell_start[nc] as usize;
-                    let nc_end = self.cell_start[nc + 1] as usize;
-
-                    for sj in nc_start..nc_end {
-                        let oj = self.sorted_idx[sj];
-                        let pj = pos_at(&self.sorted_pos, sj);
-                        let dr = self.bx.shortest_vector_impl(pi, pj);
-                        let d2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
-                        if d2 <= cutoff2 {
-                            // Half-shell output contract: the pair is emitted
-                            // with the smaller original index first. `dr` was
-                            // computed as MIC(r_sj - r_si) for the *sorted*
-                            // slots; when the roles swap, the sign must swap
-                            // too, so that the stored displacement is still
-                            // r_j - r_i for the emitted (i, j).
-                            if oi < oj {
-                                self.result.push(oi, oj, d2, dr);
-                            } else {
-                                self.result.push(oj, oi, d2, [-dr[0], -dr[1], -dr[2]]);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    /// Parallel half-shell pair search over occupied cells.
+    /// Half-shell pair search folded over occupied cells with rayon, into a
+    /// fresh table keeping the columns `storage` asks for.
     ///
-    /// For very small systems (few occupied cells) we fall back to the serial
-    /// path — rayon's split/merge overhead dwarfs the pair work itself below
-    /// ~64 cells. Empirically this wins ~2× at N=1k.
+    /// Each worker accumulates its cells into a private [`Neighbors`], and the
+    /// partial tables are concatenated by [`Neighbors::append`], which is where
+    /// the column-alignment contract of the merge is stated. Every worker starts
+    /// from the same `storage`, so every partial table has the same columns and
+    /// concatenating them cannot misalign anything.
+    ///
+    /// The returned table is tagged `SelfQuery { num_points: 0 }`: this function
+    /// searches, it does not know how many points the caller indexed. The caller
+    /// owns the tagging.
+    ///
+    /// Only worth calling above `PAR_MIN_CELLS` occupied cells; below that,
+    /// rayon's split/merge overhead exceeds the pair work.
     #[cfg(feature = "rayon")]
     #[allow(clippy::needless_range_loop)]
-    fn compute_pairs_parallel(&mut self) {
+    fn par_pairs(&self, storage: NeighborsStorage) -> Neighbors {
+        use crate::spatial::neighbors::QueryMode;
         use rayon::prelude::*;
-
-        // Small-system fallback: rayon dispatch overhead > pair work.
-        // Threshold chosen empirically: at N=1k with ρ=0.8 cutoff=2.5 there
-        // are ~10 cells; the serial path is 30-50% faster.
-        if self.occupied_cells.len() < 64 {
-            self.compute_pairs_serial_inner();
-            return;
-        }
 
         let cutoff2 = self.cutoff * self.cutoff;
 
@@ -568,9 +439,7 @@ impl LinkCell {
         let bx = &self.bx;
         let grid = self.grid;
 
-        let storage = self.storage;
-        let merged = self
-            .occupied_cells
+        self.occupied_cells
             .par_iter()
             .fold(
                 || Neighbors::empty(QueryMode::SelfQuery { num_points: 0 }, storage),
@@ -634,75 +503,11 @@ impl LinkCell {
             )
             .reduce(
                 || Neighbors::empty(QueryMode::SelfQuery { num_points: 0 }, storage),
-                |mut a, b| {
-                    a.idx_i.extend_from_slice(&b.idx_i);
-                    a.idx_j.extend_from_slice(&b.idx_j);
-                    a.dist_sq.extend_from_slice(&b.dist_sq);
-                    a.disp_flat.extend_from_slice(&b.disp_flat);
+                |mut a, mut b| {
+                    a.append(&mut b);
                     a
                 },
-            );
-
-        self.result = merged;
-    }
-
-    /// Serial pair search, used both by the no-rayon build and as the
-    /// small-system fallback inside the rayon build.
-    #[cfg(feature = "rayon")]
-    fn compute_pairs_serial_inner(&mut self) {
-        let cutoff2 = self.cutoff * self.cutoff;
-        self.result.clear();
-        let mut fwd_buf = [0usize; 27];
-
-        for &cell in &self.occupied_cells {
-            let cell = cell as usize;
-            let start = self.cell_start[cell] as usize;
-            let end = self.cell_start[cell + 1] as usize;
-
-            for si in start..end {
-                let pi = pos_at(&self.sorted_pos, si);
-                let oi = self.sorted_idx[si];
-                for sj in (si + 1)..end {
-                    let pj = pos_at(&self.sorted_pos, sj);
-                    let dr = self.bx.shortest_vector_impl(pi, pj);
-                    let d2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
-                    if d2 <= cutoff2 {
-                        self.result.push(oi, self.sorted_idx[sj], d2, dr);
-                    }
-                }
-            }
-
-            let n_fwd = self.grid.stencil_forward(cell, &mut fwd_buf);
-            let fwd = &fwd_buf[..n_fwd];
-
-            for si in start..end {
-                let pi = pos_at(&self.sorted_pos, si);
-                let oi = self.sorted_idx[si];
-                for &nc in fwd {
-                    let nc_start = self.cell_start[nc] as usize;
-                    let nc_end = self.cell_start[nc + 1] as usize;
-                    for sj in nc_start..nc_end {
-                        let oj = self.sorted_idx[sj];
-                        let pj = pos_at(&self.sorted_pos, sj);
-                        let dr = self.bx.shortest_vector_impl(pi, pj);
-                        let d2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
-                        if d2 <= cutoff2 {
-                            // Half-shell output contract: the pair is emitted
-                            // with the smaller original index first. `dr` was
-                            // computed as MIC(r_sj - r_si) for the *sorted*
-                            // slots; when the roles swap, the sign must swap
-                            // too, so that the stored displacement is still
-                            // r_j - r_i for the emitted (i, j).
-                            if oi < oj {
-                                self.result.push(oi, oj, d2, dr);
-                            } else {
-                                self.result.push(oj, oi, d2, [-dr[0], -dr[1], -dr[2]]);
-                            }
-                        }
-                    }
-                }
-            }
-        }
+            )
     }
 }
 
@@ -721,20 +526,61 @@ fn pos_at(sorted_pos: &[F], si: usize) -> [F; 3] {
 // Tests
 // ---------------------------------------------------------------------------
 
+/// The cell-list backend, driven through [`NeighborList`] — the only sanctioned
+/// door to a self search.
+///
+/// Every fixture is hard-coded and every comparison sorts by `(i, j)` first:
+/// [`NeighborList::neighbors`] promises a pair *set*, not a row order, because
+/// the backend folds over occupied cells in parallel above a threshold.
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::spatial::neighbors::NeighborList;
     use crate::spatial::simbox::SimBox;
     use ndarray::array;
+
+    /// Half-shell self pairs of `pts` from the cell-list backend, every column
+    /// present.
+    fn cell_pairs(cutoff: F, pts: FNx3View<'_>, bx: &SimBox) -> Neighbors {
+        let mut nl = NeighborList::new(cutoff);
+        nl.build(pts, bx);
+        nl.neighbors(NeighborsStorage::FULL)
+    }
+
+    /// The same, from the O(N²) reference backend — the oracle the cell list is
+    /// checked against.
+    fn brute_pairs(cutoff: F, pts: FNx3View<'_>, bx: &SimBox) -> Neighbors {
+        let mut nl = NeighborList::brute_force(cutoff);
+        nl.build(pts, bx);
+        nl.neighbors(NeighborsStorage::FULL)
+    }
+
+    /// Rows of a materialized table as `(i, j, dist_sq, disp)`, sorted by
+    /// `(i, j)` so that row order — which is not part of the contract — cannot
+    /// decide a comparison.
+    fn sorted_rows(nb: &Neighbors) -> Vec<(u32, u32, F, [F; 3])> {
+        let d2 = nb.dist_sq().expect("FULL storage materializes dist_sq");
+        let disp = nb.disp().expect("FULL storage materializes disp");
+        let mut rows: Vec<(u32, u32, F, [F; 3])> = (0..nb.n_pairs())
+            .map(|k| {
+                (
+                    nb.query_point_indices()[k],
+                    nb.point_indices()[k],
+                    d2[k],
+                    [disp[[k, 0]], disp[[k, 1]], disp[[k, 2]]],
+                )
+            })
+            .collect();
+        rows.sort_by_key(|r| (r.0, r.1));
+        rows
+    }
 
     #[test]
     fn linked_cell_basic_pairs() {
         let bx = SimBox::cube(4.0, array![0.0, 0.0, 0.0], [true, true, true])
             .expect("invalid box length");
         let pts = array![[0.1, 0.2, 0.3], [0.3, 0.2, 0.1], [3.9, 3.8, 3.7]];
-        let mut nl = LinkCell::new().cutoff(0.5);
-        nl.build(pts.view(), &bx);
-        let res = nl.query();
+        let res = cell_pairs(0.5, pts.view(), &bx);
         assert_eq!(res.n_pairs(), 1);
         assert_eq!(res.query_point_indices()[0], 0);
         assert_eq!(res.point_indices()[0], 1);
@@ -745,9 +591,7 @@ mod tests {
         let bx = SimBox::cube(2.0, array![0.0, 0.0, 0.0], [true, true, true])
             .expect("invalid box length");
         let pts = array![[0.1, 0.1, 0.1], [1.9, 1.9, 1.9]];
-        let mut nl = LinkCell::new().cutoff(0.5);
-        nl.build(pts.view(), &bx);
-        let res = nl.query();
+        let res = cell_pairs(0.5, pts.view(), &bx);
         assert_eq!(res.n_pairs(), 1);
     }
 
@@ -756,9 +600,7 @@ mod tests {
         let bx = SimBox::cube(3.0, array![0.0, 0.0, 0.0], [true, true, true])
             .expect("invalid box length");
         let pts = array![[0.1, 0.1, 0.1], [0.2, 0.2, 0.2], [0.3, 0.3, 0.3]];
-        let mut nl = LinkCell::new().cutoff(1.0);
-        nl.build(pts.view(), &bx);
-        let res = nl.query();
+        let res = cell_pairs(1.0, pts.view(), &bx);
         let mut seen = std::collections::HashSet::new();
         for k in 0..res.n_pairs() {
             let i = res.query_point_indices()[k];
@@ -773,29 +615,34 @@ mod tests {
         let bx = SimBox::cube(3.0, array![0.0, 0.0, 0.0], [true, true, true])
             .expect("invalid box length");
         let pts = array![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
-        let mut nl = LinkCell::new().cutoff(1.0);
-        nl.build(pts.view(), &bx);
-        let res = nl.query();
+        let res = cell_pairs(1.0, pts.view(), &bx);
         assert_eq!(res.n_pairs(), 1);
     }
 
+    /// Two independent searches over the same coordinates agree pair for pair,
+    /// bit for bit.
+    ///
+    /// This replaces a test that read one *cached* table twice and compared it
+    /// with itself — an assertion no defect could break. Materializing twice
+    /// runs the search twice, so a search that depended on uninitialized buffer
+    /// state or on iteration order of a hash container would be caught here.
     #[test]
-    fn linked_cell_deterministic_order() {
+    fn repeated_search_gives_the_same_pairs() {
         let bx = SimBox::cube(4.0, array![0.0, 0.0, 0.0], [true, true, true])
             .expect("invalid box length");
         let pts = array![[0.1, 0.2, 0.3], [0.4, 0.2, 0.3], [1.1, 1.2, 1.3]];
-        let mut nl = LinkCell::new().cutoff(0.5);
-        nl.build(pts.view(), &bx);
-        let res1_i = nl.query().query_point_indices().to_vec();
-        let res1_j = nl.query().point_indices().to_vec();
-        let res2_i = nl.query().query_point_indices().to_vec();
-        let res2_j = nl.query().point_indices().to_vec();
-        assert_eq!(res1_i, res2_i);
-        assert_eq!(res1_j, res2_j);
+
+        let first = sorted_rows(&cell_pairs(0.5, pts.view(), &bx));
+        let second = sorted_rows(&cell_pairs(0.5, pts.view(), &bx));
+
+        assert_eq!(first.len(), 1, "fixture should produce exactly one pair");
+        assert_eq!(first, second, "repeated searches must agree bitwise");
     }
 
+    /// The materialized table is the streamed pairs — the `push` path and the
+    /// visitor path must not diverge.
     #[test]
-    fn visit_pairs_matches_query() {
+    fn stream_matches_materialized_table() {
         let bx = SimBox::cube(3.0, array![0.0, 0.0, 0.0], [true, true, true])
             .expect("invalid box length");
         let pts = array![
@@ -805,33 +652,18 @@ mod tests {
             [2.9, 2.8, 2.7]
         ];
 
-        let mut lc_full = LinkCell::new().cutoff(0.6);
-        lc_full.build(pts.view(), &bx);
-        let res = lc_full.query();
-        let d2 = res.dist_sq().expect("LinkCell materializes dist_sq");
-        let disp = res.disp().expect("LinkCell materializes disp");
-        let mut full_pairs: Vec<(u32, u32, F, [F; 3])> = (0..res.n_pairs())
-            .map(|k| {
-                (
-                    res.query_point_indices()[k],
-                    res.point_indices()[k],
-                    d2[k],
-                    [disp[[k, 0]], disp[[k, 1]], disp[[k, 2]]],
-                )
-            })
-            .collect();
-        full_pairs.sort_by_key(|(i, j, _, _)| (*i, *j));
+        let mut nl = NeighborList::new(0.6);
+        nl.build(pts.view(), &bx);
 
-        let mut lc_index = LinkCell::new().cutoff(0.6);
-        lc_index.build_index(pts.view(), &bx);
-        let mut visit_pairs: Vec<(u32, u32, F, [F; 3])> = Vec::new();
-        lc_index.visit_pairs(&mut |i, j, d2, diff| {
-            visit_pairs.push((i, j, d2, diff));
-        });
-        visit_pairs.sort_by_key(|(i, j, _, _)| (*i, *j));
+        let table = sorted_rows(&nl.neighbors(NeighborsStorage::FULL));
 
-        assert_eq!(full_pairs.len(), visit_pairs.len());
-        for (a, b) in full_pairs.iter().zip(visit_pairs.iter()) {
+        let mut streamed: Vec<(u32, u32, F, [F; 3])> = Vec::new();
+        nl.for_each_pair(|p| streamed.push((p.i, p.j, p.dist_sq, p.disp)));
+        streamed.sort_by_key(|r| (r.0, r.1));
+
+        assert!(!table.is_empty(), "fixture should produce pairs");
+        assert_eq!(table.len(), streamed.len());
+        for (a, b) in table.iter().zip(streamed.iter()) {
             assert_eq!(a.0, b.0);
             assert_eq!(a.1, b.1);
             assert!((a.2 - b.2).abs() < 1e-6);
@@ -852,42 +684,8 @@ mod tests {
             [2.9, 2.8, 2.7]
         ];
 
-        let mut lc = LinkCell::new().cutoff(0.6);
-        lc.build(pts.view(), &bx);
-        let res_lc = lc.query();
-
-        let mut bf = crate::spatial::neighbors::bruteforce::BruteForce::new(0.6);
-        bf.build(pts.view(), &bx);
-        let res_bf = bf.query();
-
-        let d2_lc = res_lc.dist_sq().expect("LinkCell materializes dist_sq");
-        let d2_bf = res_bf.dist_sq().expect("BruteForce materializes dist_sq");
-        let disp_lc = res_lc.disp().expect("LinkCell materializes disp");
-        let disp_bf = res_bf.disp().expect("BruteForce materializes disp");
-
-        let mut lc_pairs: Vec<(u32, u32, F, [F; 3])> = (0..res_lc.n_pairs())
-            .map(|k| {
-                (
-                    res_lc.query_point_indices()[k],
-                    res_lc.point_indices()[k],
-                    d2_lc[k],
-                    [disp_lc[[k, 0]], disp_lc[[k, 1]], disp_lc[[k, 2]]],
-                )
-            })
-            .collect();
-        lc_pairs.sort_by_key(|(i, j, _, _)| (*i, *j));
-
-        let mut bf_pairs: Vec<(u32, u32, F, [F; 3])> = (0..res_bf.n_pairs())
-            .map(|k| {
-                (
-                    res_bf.query_point_indices()[k],
-                    res_bf.point_indices()[k],
-                    d2_bf[k],
-                    [disp_bf[[k, 0]], disp_bf[[k, 1]], disp_bf[[k, 2]]],
-                )
-            })
-            .collect();
-        bf_pairs.sort_by_key(|(i, j, _, _)| (*i, *j));
+        let lc_pairs = sorted_rows(&cell_pairs(0.6, pts.view(), &bx));
+        let bf_pairs = sorted_rows(&brute_pairs(0.6, pts.view(), &bx));
 
         assert_eq!(lc_pairs.len(), bf_pairs.len());
         for (a, b) in lc_pairs.iter().zip(bf_pairs.iter()) {
@@ -906,9 +704,7 @@ mod tests {
             SimBox::cube(10.0, array![0.0, 0.0, 0.0], [false, false, false]).expect("invalid box");
         let pts = array![[0.1, 0.1, 0.1], [9.9, 9.9, 9.9]];
 
-        let mut lc = LinkCell::new().cutoff(1.0);
-        lc.build(pts.view(), &bx);
-        let result = lc.query();
+        let result = cell_pairs(1.0, pts.view(), &bx);
 
         assert_eq!(result.n_pairs(), 0, "non-periodic box should not wrap");
     }
@@ -919,9 +715,7 @@ mod tests {
             SimBox::cube(10.0, array![0.0, 0.0, 0.0], [true, true, true]).expect("invalid box");
         let pts = array![[0.1, 0.1, 0.1], [9.9, 9.9, 9.9]];
 
-        let mut lc = LinkCell::new().cutoff(1.0);
-        lc.build(pts.view(), &bx);
-        let result = lc.query();
+        let result = cell_pairs(1.0, pts.view(), &bx);
 
         assert_eq!(result.n_pairs(), 1, "periodic box should wrap");
     }
@@ -939,18 +733,13 @@ mod tests {
         ];
         let cutoff = 1.0;
 
-        let mut lc = LinkCell::new().cutoff(cutoff);
-        lc.build(pts.view(), &bx);
-        let lc_result = lc.query();
-
-        let mut bf = crate::spatial::neighbors::bruteforce::BruteForce::new(cutoff);
-        bf.build(pts.view(), &bx);
-        let bf_result = bf.query();
+        let lc_result = cell_pairs(cutoff, pts.view(), &bx);
+        let bf_result = brute_pairs(cutoff, pts.view(), &bx);
 
         assert_eq!(
             lc_result.n_pairs(),
             bf_result.n_pairs(),
-            "LinkCell and BruteForce should agree for non-periodic"
+            "cell list and reference should agree for non-periodic"
         );
 
         let mut lc_pairs: Vec<(u32, u32)> = lc_result
@@ -974,17 +763,27 @@ mod tests {
 
     // --- sparse system: 3 particles in large box with small cutoff ---
 
+    /// A sparse system pays for its particles, not for its empty cells.
+    ///
+    /// Box 20 Å at cutoff 0.5 Å is 64 000 cells for three particles; the search
+    /// walks `occupied_cells` (three of them), which is what stopped this
+    /// configuration from timing out as it once did.
+    ///
+    /// `occupied_cells` is a backend internal that no engine accessor exposes,
+    /// so this single test stays on [`LinkCell`] — through the trait methods the
+    /// engine itself drives, `Backend::build_index` and `Backend::visit_pairs`.
     #[test]
     fn sparse_system_fast() {
-        // This previously timed out: box=20, cutoff=0.5 → 64K cells, 3 particles.
-        // With occupied_cells optimization, only 3 cells are visited.
         let bx =
             SimBox::cube(20.0, array![0.0, 0.0, 0.0], [false, false, false]).expect("invalid box");
         let pts = array![[1.0, 1.0, 1.0], [5.0, 5.0, 5.0], [9.0, 9.0, 9.0]];
         let mut lc = LinkCell::new().cutoff(0.5);
-        lc.build(pts.view(), &bx);
+        lc.build_index(pts.view(), &bx);
         assert_eq!(lc.occupied_cells.len(), 3);
-        assert_eq!(lc.query().n_pairs(), 0);
+
+        let mut n_pairs = 0usize;
+        lc.visit_pairs(&mut |_i: u32, _j: u32, _d2: F, _dr: [F; 3]| n_pairs += 1);
+        assert_eq!(n_pairs, 0);
     }
 
     // --- freud: 4 collinear, count pairs ---
@@ -998,9 +797,7 @@ mod tests {
             [4.0, 5.0, 5.0],
             [3.0, 5.0, 5.0],
         ];
-        let mut lc = LinkCell::new().cutoff(2.01);
-        lc.build(pts.view(), &bx);
-        assert_eq!(lc.query().n_pairs(), 5);
+        assert_eq!(cell_pairs(2.01, pts.view(), &bx).n_pairs(), 5);
     }
 
     // --- all pairs within cutoff ---
@@ -1014,9 +811,7 @@ mod tests {
             [5.0, 5.5, 5.0],
             [5.5, 5.5, 5.0],
         ];
-        let mut lc = LinkCell::new().cutoff(1.5);
-        lc.build(pts.view(), &bx);
-        assert_eq!(lc.query().n_pairs(), 6);
+        assert_eq!(cell_pairs(1.5, pts.view(), &bx).n_pairs(), 6);
     }
 
     // --- brute force vs linkcell with PBC ---
@@ -1033,15 +828,10 @@ mod tests {
         ];
         let cutoff = 2.0;
 
-        let mut lc = LinkCell::new().cutoff(cutoff);
-        lc.build(pts.view(), &bx);
-        let lc_result = lc.query();
-
-        let mut bf = crate::spatial::neighbors::bruteforce::BruteForce::new(cutoff);
-        bf.build(pts.view(), &bx);
-        let bf_result = bf.query();
-
-        assert_eq!(lc_result.n_pairs(), bf_result.n_pairs());
+        assert_eq!(
+            cell_pairs(cutoff, pts.view(), &bx).n_pairs(),
+            brute_pairs(cutoff, pts.view(), &bx).n_pairs()
+        );
     }
 
     // --- edge cases ---
@@ -1050,29 +840,23 @@ mod tests {
     fn no_pairs_large_separation() {
         let bx = SimBox::cube(10.0, array![0.0, 0.0, 0.0], [false, false, false]).unwrap();
         let pts = array![[1.0, 1.0, 1.0], [8.0, 8.0, 8.0],];
-        let mut lc = LinkCell::new().cutoff(1.0);
-        lc.build(pts.view(), &bx);
-        assert_eq!(lc.query().n_pairs(), 0);
+        assert_eq!(cell_pairs(1.0, pts.view(), &bx).n_pairs(), 0);
     }
 
     #[test]
     fn single_particle_no_pairs() {
         let bx = SimBox::cube(10.0, array![0.0, 0.0, 0.0], [false, false, false]).unwrap();
         let pts = array![[5.0, 5.0, 5.0],];
-        let mut lc = LinkCell::new().cutoff(3.0);
-        lc.build(pts.view(), &bx);
-        assert_eq!(lc.query().n_pairs(), 0);
+        assert_eq!(cell_pairs(3.0, pts.view(), &bx).n_pairs(), 0);
     }
 
     #[test]
     fn distances_correct() {
         let bx = SimBox::cube(10.0, array![0.0, 0.0, 0.0], [false, false, false]).unwrap();
         let pts = array![[3.0, 5.0, 5.0], [5.0, 5.0, 5.0],];
-        let mut lc = LinkCell::new().cutoff(3.0);
-        lc.build(pts.view(), &bx);
-        let nlist = lc.query();
+        let nlist = cell_pairs(3.0, pts.view(), &bx);
         assert_eq!(nlist.n_pairs(), 1);
-        let d2 = nlist.dist_sq().expect("LinkCell materializes dist_sq");
+        let d2 = nlist.dist_sq().expect("FULL storage materializes dist_sq");
         assert!((d2[0].sqrt() - 2.0).abs() < 1e-5);
     }
 
@@ -1080,15 +864,13 @@ mod tests {
     fn pbc_distance_correct() {
         let bx = SimBox::cube(10.0, array![0.0, 0.0, 0.0], [true, true, true]).unwrap();
         let pts = array![[0.5, 5.0, 5.0], [9.5, 5.0, 5.0],]; // MIC dist = 1.0
-        let mut lc = LinkCell::new().cutoff(2.0);
-        lc.build(pts.view(), &bx);
-        let nlist = lc.query();
+        let nlist = cell_pairs(2.0, pts.view(), &bx);
         assert_eq!(nlist.n_pairs(), 1);
-        let d2 = nlist.dist_sq().expect("LinkCell materializes dist_sq");
+        let d2 = nlist.dist_sq().expect("FULL storage materializes dist_sq");
         assert!((d2[0].sqrt() - 1.0).abs() < 1e-5);
     }
 
-    // --- SoA path is bit-identical to the Array2 path ---
+    // --- column path is bit-identical to the Array2 path ---
 
     /// Split an `Array2` (N×3) into three column vectors (SoA layout).
     fn columns(pts: &ndarray::Array2<F>) -> (Vec<F>, Vec<F>, Vec<F>) {
@@ -1104,30 +886,28 @@ mod tests {
         (xs, ys, zs)
     }
 
-    /// Bitwise (not approximate) equality of two neighbor lists.
+    /// Bitwise (not approximate) equality of two neighbor lists, compared as
+    /// sorted pair sets.
     fn assert_bitwise_equal(a: &Neighbors, b: &Neighbors) {
         assert_eq!(a.n_pairs(), b.n_pairs(), "n_pairs differ");
-        let d2a = a.dist_sq().expect("LinkCell materializes dist_sq");
-        let d2b = b.dist_sq().expect("LinkCell materializes dist_sq");
-        let da = a.disp().expect("LinkCell materializes disp");
-        let db = b.disp().expect("LinkCell materializes disp");
-        for k in 0..a.n_pairs() {
-            assert_eq!(
-                a.query_point_indices()[k],
-                b.query_point_indices()[k],
-                "idx_i"
-            );
-            assert_eq!(a.point_indices()[k], b.point_indices()[k], "idx_j");
+        let rows_a = sorted_rows(a);
+        let rows_b = sorted_rows(b);
+        for (ra, rb) in rows_a.iter().zip(rows_b.iter()) {
+            assert_eq!(ra.0, rb.0, "idx_i");
+            assert_eq!(ra.1, rb.1, "idx_j");
             // Bitwise f64 equality — the arithmetic is identical, so it must match.
-            assert_eq!(d2a[k], d2b[k], "dist_sq bitwise");
+            assert_eq!(ra.2, rb.2, "dist_sq bitwise");
             for d in 0..3 {
-                assert_eq!(da[[k, d]], db[[k, d]], "disp[{}] bitwise", d);
+                assert_eq!(ra.3[d], rb.3[d], "disp[{}] bitwise", d);
             }
         }
     }
 
+    /// The column entry point ([`NeighborList::build_columns`]) indexes into the
+    /// same cells as the `N × 3` one, so the two tables match *bitwise* — not
+    /// merely within a tolerance.
     #[test]
-    fn build_soa_matches_build_bitwise() {
+    fn build_columns_matches_build_bitwise() {
         // Periodic cube fixture: several pairs, including a PBC-wrap pair.
         let bx = SimBox::cube(10.0, array![0.0, 0.0, 0.0], [true, true, true]).unwrap();
         let pts = array![
@@ -1140,12 +920,12 @@ mod tests {
             [7.7, 2.4, 9.6],
         ];
         let (xs, ys, zs) = columns(&pts);
-        let mut lc_a = LinkCell::new().cutoff(2.0);
-        lc_a.build(pts.view(), &bx);
-        let mut lc_s = LinkCell::new().cutoff(2.0);
-        lc_s.build_soa(&xs, &ys, &zs, &bx);
-        assert!(lc_a.query().n_pairs() > 0, "fixture should produce pairs");
-        assert_bitwise_equal(lc_a.query(), lc_s.query());
+        let aos = cell_pairs(2.0, pts.view(), &bx);
+        let mut soa_nl = NeighborList::new(2.0);
+        soa_nl.build_columns(&xs, &ys, &zs, &bx);
+        let soa = soa_nl.neighbors(NeighborsStorage::FULL);
+        assert!(aos.n_pairs() > 0, "fixture should produce pairs");
+        assert_bitwise_equal(&aos, &soa);
 
         // Free / non-periodic fixture.
         let bxf = SimBox::cube(20.0, array![0.0, 0.0, 0.0], [false, false, false]).unwrap();
@@ -1158,12 +938,12 @@ mod tests {
             [1.0, 18.0, 3.0],
         ];
         let (fxs, fys, fzs) = columns(&ptsf);
-        let mut lc_af = LinkCell::new().cutoff(1.0);
-        lc_af.build(ptsf.view(), &bxf);
-        let mut lc_sf = LinkCell::new().cutoff(1.0);
-        lc_sf.build_soa(&fxs, &fys, &fzs, &bxf);
-        assert!(lc_af.query().n_pairs() > 0, "fixture should produce pairs");
-        assert_bitwise_equal(lc_af.query(), lc_sf.query());
+        let aos_free = cell_pairs(1.0, ptsf.view(), &bxf);
+        let mut soa_free_nl = NeighborList::new(1.0);
+        soa_free_nl.build_columns(&fxs, &fys, &fzs, &bxf);
+        let soa_free = soa_free_nl.neighbors(NeighborsStorage::FULL);
+        assert!(aos_free.n_pairs() > 0, "fixture should produce pairs");
+        assert_bitwise_equal(&aos_free, &soa_free);
     }
 }
 
@@ -1171,14 +951,20 @@ mod tests {
 // Equivalence matrix
 // ---------------------------------------------------------------------------
 
-/// `LinkCell` against an independent O(N²) oracle, over the full configuration
-/// space the cell partition has to survive.
+/// The cell-list backend against an independent O(N²) oracle, over the full
+/// configuration space the cell partition has to survive.
+///
+/// Both sides are driven through [`NeighborList`](super::NeighborList) — the
+/// engine is the only door to a self search — with
+/// [`NeighborList::new`](super::NeighborList::new) selecting the cell list and
+/// [`NeighborList::brute_force`](super::NeighborList::brute_force) the O(N²)
+/// reference.
 ///
 /// The oracle is a direct double loop over
 /// [`SimBox::shortest_vector_impl`] — it shares no cell-assignment or stencil
 /// code with the algorithm under test, so a defect in either cannot cancel out.
-/// [`BruteForce`] is checked against the same oracle, which keeps the oracle
-/// itself honest.
+/// The reference backend is checked against the same oracle, which keeps the
+/// oracle itself honest.
 ///
 /// Both traversal modes are exercised. They fail differently: the pair path's
 /// forward filter covers an unordered cell pair from whichever side is cheaper,
@@ -1190,8 +976,8 @@ mod tests {
 mod equivalence {
     use super::*;
     use crate::spatial::neighbors::CellGrid;
+    use crate::spatial::neighbors::NeighborList;
     use crate::spatial::neighbors::NeighborQuery;
-    use crate::spatial::neighbors::bruteforce::BruteForce;
     use crate::spatial::simbox::SimBox;
     use crate::types::F3x3;
     use ndarray::{Array2, array};
@@ -1367,9 +1153,9 @@ mod equivalence {
 
                     let want = oracle_self(&pts, &bx, cutoff);
 
-                    let mut lc = LinkCell::new().cutoff(cutoff);
+                    let mut lc = NeighborList::new(cutoff);
                     lc.build(pts.view(), &bx);
-                    let (got, emitted) = collect(lc.query());
+                    let (got, emitted) = collect(&lc.neighbors(NeighborsStorage::FULL));
 
                     assert_eq!(emitted, want.len(), "{tag}: pair count (duplicate or gap)");
                     assert_eq!(
@@ -1386,9 +1172,9 @@ mod equivalence {
                     }
 
                     // Keep the oracle honest against the reference algorithm.
-                    let mut bf = BruteForce::new(cutoff);
+                    let mut bf = NeighborList::brute_force(cutoff);
                     bf.build(pts.view(), &bx);
-                    let (bf_pairs, _) = collect(bf.query());
+                    let (bf_pairs, _) = collect(&bf.neighbors(NeighborsStorage::FULL));
                     assert_eq!(
                         bf_pairs.keys().collect::<Vec<_>>(),
                         want.keys().collect::<Vec<_>>(),

@@ -1,6 +1,6 @@
 ---
 title: neighborlist-03-compute — compute 层统一消费 Neighbors / pair 流
-status: approved
+status: code-complete
 created: 2026-08-10
 slug: neighborlist-03-compute
 chain: neighborlist
@@ -68,18 +68,18 @@ mode 判等全部改 `matches!(…, SelfQuery { .. })` 形式。
 
 ## Tasks
 
-1. **Add** `require_disp` / `require_dist_sq` in compute util
-2. **Migrate** order (steinhardt, hexatic, solid_liquid, continuous_coordination)
-3. **Migrate** rdf + cluster
-4. **Migrate** pmft + environment + density + hbond + van_hove
-5. **Update** `nlist_from_frame` → FULL `Neighbors` via `NeighborList` 总包
-6. **Test** steinhardt 在 INDICES_ONLY Neighbors 上返回 BadShape（非 panic）
-7. **Test** 既有 order/rdf 单元测试全绿
-8. **Docs** compute 模块 rustdoc：Args 为 `Neighbors`，order 需要 DISP/FULL
-9. **（02 路由）引擎并行物化决策**：`NeighborList::neighbors()` 现为串行 visit 驱动，`LinkCell::compute_pairs_parallel`（rayon，>64 occupied cells，文档记载 ~2× @N=1k）失去生产调用方，**且 cxxapi per-frame RDF 已从并行迁到串行（已落地回退）**。关闭本任务前必须跑既有 bench 对照（benches/core/neighbors/linkcell.rs 引擎 serial vs build_soa parallel）；差距为真 → 引擎物化接回 rayon，否则删除死代码。不得静默保留
-10. **（架构师裁决路由）重复自查询面降级**：迁移 `compute/rdf`、`compute/test_support`、`benches/core/neighbors` 到引擎（`build_columns` 已由 02 提供）后，将 `LinkCell::{build,update,query,build_soa,with_storage,storage}`、`BruteForce::{build,update,query}`、`AabbQuery::{query}` 降为 pub(crate)。`AabbQuery::{new,cutoff,build,query_knn}` 保持公开（query_knn 是引擎无法表达的能力）。此举同时消灭 build_index→query() 空表 SelfQuery{num_points:0} 与 BruteForce::visit_pairs 三态静默选择两处公开危害
-11. **（02 路由）rdf accumulator mode 判据**：`compute/rdf/accumulator.rs` 的 `std::mem::discriminant` 比较换成命名谓词（保留 01 迁移时的原语义：模式变体判等，忽略 counts）
-12. **（02 路由）RDFResult.mode 冗余**：`mode` 携带 frame-0 counts 而 `n_points`/`n_query_points` 跨帧求和 —— 归一化只读变体故行为无变；03 统一契约时去冗余
+1. **Add** `require_disp` / `require_dist_sq` in compute util ✅（compute/require.rs，13 站点消费：10 disp + 3 dist_sq）
+2. **Migrate** order (steinhardt, hexatic, solid_liquid, continuous_coordination) ✅
+3. **Migrate** rdf + cluster ✅（**铁律加成**：修掉 rdf accumulate_into 在 release 对 indices-only 表静默返回全零 g(r) 的缺陷 → Result 传播）
+4. **Migrate** pmft + environment + density + hbond + van_hove ✅（match_env expect → BadShape 传播）
+5. **Update** `nlist_from_frame` → FULL `Neighbors` via `NeighborList` 总包 ✅（build_columns 路径；rdf 两条 self 流亦迁引擎，cross 每点流留 pub(crate) 后端并注明）
+6. **Test** steinhardt 在 INDICES_ONLY Neighbors 上返回 BadShape（非 panic）✅（+ hexatic 同型锚点）
+7. **Test** 既有 order/rdf 单元测试全绿 ✅（+ RDF ×2 因子隔离锚点，变异校验过）
+8. **Docs** compute 模块 rustdoc：Args 为 `Neighbors`，order 需要 DISP/FULL（→ docs Mode A）
+9. **（02 路由）引擎并行物化决策** ✅ **决议：接回 rayon**。实测（release）：串行 vs 并行 N=20k 9.6ms/3.8ms、N=100k 55ms/23ms → `Backend::materialize_into` 钩子（串行默认），LinkCell 覆写驱动 rayon fold；细胞循环 4 副本去重到 2；合并对齐升为 `Neighbors::append` 契约 + debug assert；并行路径补 512 原子/1536-pair golden 覆盖测试（破坏校验证实先前零覆盖）；引擎物化 N=100k 26.1ms（4.2×）
+10. **（架构师裁决路由）重复自查询面** ✅ **as-built：删除而非降级**（降级即生产 build 死代码，clippy -D warnings 拒绝；experimental 无 shim）。删除：`LinkCell::{build,update,query,build_soa,with_storage,storage,refresh_result}` + 缓存表字段、`BruteForce::{build,query}` + 三态 visit_pairs 回退、`AabbQuery::query` + compute_pairs/AabbTree::query 级联、`Neighbors::clear`（净 −303 行）。`AabbQuery::{new,cutoff,build,query_knn}` 保持公开（k-NN 引擎无法表达）。~25 测试调用点先行迁引擎；顺带修掉一个不可能失败的测试（缓存表自比较）。两处公开危害（空表 SelfQuery{0}、三态静默）随删除消灭
+11. **（02 路由）rdf accumulator mode 判据** ✅（as-built：latch 改为无计数 `Option<RdfMode>`，普通 `!=` 判等 —— 类型名承载意图，避免单调用点谓词提取）
+12. **（02 路由）RDFResult.mode 冗余** ✅（as-built：`RDFResult.mode` 类型改为无计数 `pub enum RdfMode`，`From<QueryMode>` 单一转换点；撒谎的 counts 不复存在）
 
 ## Testing
 

@@ -11,9 +11,9 @@
 //! to store (two corners) and cheap to test a distance against. A *bounding
 //! volume hierarchy* (BVH) is a binary tree of such boxes: each leaf wraps a
 //! single point, each internal node owns the union of its two children's boxes.
-//! A radial query descends from the root and prunes any subtree whose box is
-//! farther than the cutoff from the query point, so most of the tree is never
-//! visited. Average query cost is `O(log N + n_hits)`.
+//! A query descends from the root and prunes any subtree whose box is farther
+//! from the query point than the worst candidate found so far, so most of the
+//! tree is never visited. Average cost is `O(log N + k)` for `k` neighbors.
 //!
 //! # PBC handling — MIC-based, no ghost atoms
 //!
@@ -24,9 +24,9 @@
 //! [`LinkCell`](crate::spatial::neighbors::LinkCell) does it: the tree is built
 //! **only on the original `N` points**, never on a ghost-expanded set. For each
 //! query point we enumerate the lattice-image shifts that could bring a tree
-//! point within `cutoff` of the query, run a (non-periodic) ball query for each
-//! shift, then pin every hit's displacement to the canonical minimum-image
-//! vector returned by [`SimBox::shortest_vector_impl`].
+//! point within reach of the query, run one (non-periodic) descent per shift,
+//! then pin every hit's displacement to the canonical minimum-image vector
+//! returned by [`SimBox::shortest_vector_impl`].
 //!
 //! The tree is built on the coordinates exactly as given, which need not lie
 //! inside the box, so the neighboring images have to be probed explicitly. With
@@ -40,8 +40,8 @@
 //! - A non-periodic axis contributes only the zero shift, so a fully
 //!   free-boundary system needs exactly one tree query per particle.
 //!
-//! Duplicate hits across shifts are collapsed, so a pair is emitted once
-//! regardless of how many images found it.
+//! Duplicate hits across shifts are collapsed to the shortest separation, so a
+//! point is reported once regardless of how many images found it.
 //!
 //! This keeps memory bounded by the original `N` points (no
 //! `O(N · n_images)` ghost copies) and aligns the PBC story with the rest
@@ -50,9 +50,6 @@
 //! standalone user-facing utility for explicit ghost-atom workflows
 //! (visualisation, exports).
 
-use std::collections::HashSet;
-
-use crate::spatial::neighbors::{NeighborPair, Neighbors, NeighborsStorage, QueryMode};
 use crate::spatial::simbox::{BoxKind, SimBox};
 use crate::types::{F, FNx3, FNx3View};
 
@@ -188,29 +185,6 @@ impl AabbTree {
         (self.nodes.len() - 1) as u32
     }
 
-    fn query(&self, p: [F; 3], radius_sq: F, mut hit: impl FnMut(u32)) {
-        if self.nodes.is_empty() {
-            return;
-        }
-        let mut stack: Vec<u32> = Vec::with_capacity(64);
-        stack.push(self.root);
-        while let Some(idx) = stack.pop() {
-            match self.nodes[idx as usize] {
-                Node::Leaf { point, aabb } => {
-                    if aabb.dist_sq_to(p) <= radius_sq {
-                        hit(point);
-                    }
-                }
-                Node::Inner { left, right, aabb } => {
-                    if aabb.dist_sq_to(p) <= radius_sq {
-                        stack.push(left);
-                        stack.push(right);
-                    }
-                }
-            }
-        }
-    }
-
     /// Visit up to `k` nearest leaves to `p`, written into `top` as
     /// `(d_sq, point_idx)` sorted ascending by `d_sq`. Uses branch-and-bound
     /// with the worst-so-far distance as the prune radius.
@@ -262,24 +236,21 @@ impl AabbTree {
     }
 }
 
-/// AABB-tree neighbor query.
+/// AABB-tree k-nearest-neighbor query.
 ///
-/// Self-query search built on a bounding-volume hierarchy (see the module
-/// documentation). [`build`](Self::build) materializes a half-shell table
-/// — every pair satisfies `i < j` — tagged `QueryMode::SelfQuery { num_points }`
-/// and always carrying both physical columns ([`NeighborsStorage::FULL`]):
-/// squared distances in Å² and minimum-image displacements in Å. Pairs are
-/// emitted in lexicographic `(i, j)` order, matching
-/// [`LinkCell`](crate::spatial::neighbors::LinkCell), so results are
-/// reproducible run to run.
+/// A bounding-volume hierarchy over one point set (see the module
+/// documentation). [`build`](Self::build) indexes the points;
+/// [`query_knn`](Self::query_knn) then answers *which `k` points lie closest to
+/// this position*, under the minimum-image convention. That question has no
+/// radius, so the cutoff-based engine cannot express it — which is the whole
+/// reason this type exists beside it.
 ///
-/// Unlike the other algorithms it also answers k-nearest-neighbor questions
-/// through [`query_knn`](Self::query_knn), which need no cutoff at all.
+/// It enumerates no pairs and materializes no table. A cutoff-radius search
+/// belongs to [`NeighborList`](crate::spatial::neighbors::NeighborList).
 #[derive(Debug, Clone)]
 pub struct AabbQuery {
     cutoff: F,
     bx: Option<SimBox>,
-    result: Neighbors,
     tree: AabbTree,
     stored_pos: FNx3,
 }
@@ -290,14 +261,16 @@ impl AabbQuery {
     /// The tree itself is built later, by [`build`](Self::build). The
     /// cutoff is not validated here; a non-positive value is rejected by
     /// `build`, which panics.
+    ///
+    /// It does not otherwise reach the answers: [`query_knn`](Self::query_knn)
+    /// asks a question with no radius and derives its own image-shift bound
+    /// from the box, so the value survives only as this argument and the
+    /// [`cutoff`](Self::cutoff) accessor now that the cutoff-radius search
+    /// lives on [`NeighborList`](crate::spatial::neighbors::NeighborList).
     pub fn new(cutoff: F) -> Self {
         Self {
             cutoff,
             bx: None,
-            result: Neighbors::empty(
-                QueryMode::SelfQuery { num_points: 0 },
-                NeighborsStorage::FULL,
-            ),
             tree: AabbTree::default(),
             stored_pos: FNx3::zeros((0, 3)),
         }
@@ -362,73 +335,6 @@ impl AabbQuery {
             }
         }
         shifts
-    }
-
-    fn compute_pairs(&mut self, points: FNx3View<'_>, bx: &SimBox) {
-        self.result.clear();
-        self.tree = AabbTree::build(points);
-        let n = points.nrows();
-        let cutoff_sq = self.cutoff * self.cutoff;
-        let shifts = Self::enumerate_shifts(bx, self.cutoff);
-
-        // Track which (i, j) pairs we've already emitted; the MIC
-        // displacement gives the canonical d² regardless of which image
-        // produced the hit, so we only need to emit each pair once.
-        let mut seen: HashSet<(u32, u32)> = HashSet::new();
-
-        for i in 0..n {
-            let r_i = [points[[i, 0]], points[[i, 1]], points[[i, 2]]];
-            for shift in &shifts {
-                let shifted = [r_i[0] + shift[0], r_i[1] + shift[1], r_i[2] + shift[2]];
-                self.tree.query(shifted, cutoff_sq, |j| {
-                    let i_u = i as u32;
-                    if i_u >= j {
-                        return; // self-query half-shell: i < j only
-                    }
-                    let key = (i_u, j);
-                    if seen.contains(&key) {
-                        return;
-                    }
-                    let r_j = [
-                        points[[j as usize, 0]],
-                        points[[j as usize, 1]],
-                        points[[j as usize, 2]],
-                    ];
-                    let dr = bx.shortest_vector_impl(r_i, r_j);
-                    let d2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
-                    if d2 <= cutoff_sq {
-                        seen.insert(key);
-                        self.result.push(i_u, j, d2, dr);
-                    }
-                });
-            }
-        }
-
-        // Sort the emitted pairs lexicographically for deterministic output
-        // (matches LinkCell semantics).
-        let n_pairs = self.result.n_pairs();
-        let mut order: Vec<usize> = (0..n_pairs).collect();
-        order.sort_unstable_by_key(|&k| {
-            (
-                self.result.query_point_indices()[k],
-                self.result.point_indices()[k],
-            )
-        });
-        let dist_sq = self.result.dist_sq().expect("AabbQuery stores dist_sq");
-        let disp = self.result.disp().expect("AabbQuery stores disp");
-        let sorted = Neighbors::from_pairs(
-            order.into_iter().map(|k| NeighborPair {
-                i: self.result.query_point_indices()[k],
-                j: self.result.point_indices()[k],
-                dist_sq: dist_sq[k],
-                disp: [disp[[k, 0]], disp[[k, 1]], disp[[k, 2]]],
-            }),
-            self.result.storage(),
-            QueryMode::SelfQuery { num_points: n },
-        );
-        self.result = sorted;
-        self.bx = Some(bx.clone());
-        self.stored_pos = points.to_owned();
     }
 
     /// Find the `k` nearest neighbors of `query` in the most-recent build,
@@ -502,99 +408,43 @@ impl AabbQuery {
         out
     }
 
-    /// Build the tree over `points` in `bx` and materialize the half-shell pair
-    /// table read back by [`query`](Self::query).
+    /// Build the bounding-volume hierarchy over `points` in `bx`.
     ///
     /// `points` is an `N × 3` view of Cartesian coordinates (Å); `bx` supplies
-    /// the periodicity used for minimum-image distances. The coordinates are
-    /// retained, so [`query_knn`](Self::query_knn) can answer against them.
+    /// the periodicity used for minimum-image distances. Both are retained, so
+    /// [`query_knn`](Self::query_knn) can answer against them.
+    ///
+    /// No pairs are enumerated and no table is allocated: this indexes, and
+    /// [`query_knn`](Self::query_knn) is the only question the index answers.
     ///
     /// # Panics
     /// Panics if the cutoff is not positive.
     pub fn build(&mut self, points: FNx3View<'_>, bx: &SimBox) {
         assert!(self.cutoff > 0.0, "cutoff must be positive");
-        self.compute_pairs(points, bx);
-    }
-
-    /// Reference to the pair table materialized by the last
-    /// [`build`](Self::build).
-    ///
-    /// Before the first one this is an empty table tagged
-    /// `SelfQuery { num_points: 0 }`, not an error.
-    pub fn query(&self) -> &Neighbors {
-        &self.result
+        self.tree = AabbTree::build(points);
+        self.bx = Some(bx.clone());
+        self.stored_pos = points.to_owned();
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::spatial::neighbors::BruteForce;
     use ndarray::array;
 
     fn cube_bx(l: F, pbc: [bool; 3]) -> SimBox {
         SimBox::cube(l, array![0.0_f64, 0.0, 0.0], pbc).unwrap()
     }
 
+    /// An empty point set builds a valid (empty) tree, and a k-nearest-neighbor
+    /// question against it answers "nothing" instead of panicking.
     #[test]
-    fn empty_input_is_empty_output() {
+    fn empty_input_yields_empty_knn() {
         let pts: FNx3 = ndarray::Array2::zeros((0, 3));
         let bx = cube_bx(10.0, [false; 3]);
         let mut aabb = AabbQuery::new(1.0);
         aabb.build(pts.view(), &bx);
-        assert_eq!(aabb.query().n_pairs(), 0);
-    }
-
-    #[test]
-    fn matches_brute_force_no_pbc() {
-        let pts = array![
-            [1.0_f64, 1.0, 1.0],
-            [1.4, 1.0, 1.0],
-            [2.0, 2.0, 2.0],
-            [5.0, 5.0, 5.0],
-            [5.4, 5.0, 5.0],
-        ];
-        let bx = cube_bx(10.0, [false; 3]);
-        let mut aabb = AabbQuery::new(1.0);
-        aabb.build(pts.view(), &bx);
-        let mut bf = BruteForce::new(1.0);
-        bf.build(pts.view(), &bx);
-        let mut a_pairs: Vec<(u32, u32)> = (0..aabb.query().n_pairs())
-            .map(|k| {
-                (
-                    aabb.query().query_point_indices()[k],
-                    aabb.query().point_indices()[k],
-                )
-            })
-            .collect();
-        let mut b_pairs: Vec<(u32, u32)> = (0..bf.query().n_pairs())
-            .map(|k| {
-                (
-                    bf.query().query_point_indices()[k],
-                    bf.query().point_indices()[k],
-                )
-            })
-            .collect();
-        a_pairs.sort_unstable();
-        b_pairs.sort_unstable();
-        assert_eq!(a_pairs, b_pairs);
-    }
-
-    #[test]
-    fn matches_brute_force_with_pbc() {
-        let pts = array![[0.5_f64, 5.0, 5.0], [9.5, 5.0, 5.0]];
-        let bx = cube_bx(10.0, [true, true, true]);
-        let mut aabb = AabbQuery::new(2.0);
-        aabb.build(pts.view(), &bx);
-        let mut bf = BruteForce::new(2.0);
-        bf.build(pts.view(), &bx);
-        assert_eq!(aabb.query().n_pairs(), bf.query().n_pairs());
-        assert_eq!(aabb.query().n_pairs(), 1);
-        // PBC distance is 1.0, not 9.0.
-        let d2_a = aabb.query().dist_sq().expect("AabbQuery stores dist_sq")[0];
-        let d2_b = bf.query().dist_sq().expect("BruteForce stores dist_sq")[0];
-        assert!((d2_a - 1.0).abs() < 1e-12);
-        assert!((d2_a - d2_b).abs() < 1e-12);
+        assert_eq!(aabb.query_knn([0.0, 0.0, 0.0], 3).len(), 0);
     }
 
     #[test]
@@ -622,46 +472,6 @@ mod tests {
         let shifts = AabbQuery::enumerate_shifts(&bx, 12.0);
         // ceil(12/10) = 2 → [-2, 2] = 5 per axis → 125 total
         assert_eq!(shifts.len(), 125);
-    }
-
-    #[test]
-    fn larger_random_system_matches_brute_force() {
-        use rand::RngExt;
-        use rand::SeedableRng;
-        use rand::rngs::StdRng;
-        let mut rng = StdRng::seed_from_u64(7);
-        let n = 200;
-        let mut pts = FNx3::zeros((n, 3));
-        for i in 0..n {
-            pts[[i, 0]] = rng.random::<F>() * 10.0;
-            pts[[i, 1]] = rng.random::<F>() * 10.0;
-            pts[[i, 2]] = rng.random::<F>() * 10.0;
-        }
-        let bx = cube_bx(10.0, [true, true, true]);
-        let mut aabb = AabbQuery::new(1.5);
-        aabb.build(pts.view(), &bx);
-        let mut bf = BruteForce::new(1.5);
-        bf.build(pts.view(), &bx);
-        assert_eq!(aabb.query().n_pairs(), bf.query().n_pairs());
-        let mut a: Vec<(u32, u32)> = (0..aabb.query().n_pairs())
-            .map(|k| {
-                (
-                    aabb.query().query_point_indices()[k],
-                    aabb.query().point_indices()[k],
-                )
-            })
-            .collect();
-        let mut b: Vec<(u32, u32)> = (0..bf.query().n_pairs())
-            .map(|k| {
-                (
-                    bf.query().query_point_indices()[k],
-                    bf.query().point_indices()[k],
-                )
-            })
-            .collect();
-        a.sort_unstable();
-        b.sort_unstable();
-        assert_eq!(a, b);
     }
 
     #[test]

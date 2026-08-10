@@ -22,6 +22,7 @@ use molrs::types::F;
 use ndarray::Array2;
 
 use crate::compute::error::ComputeError;
+use crate::compute::require_disp;
 use crate::compute::traits::Compute;
 use crate::compute::util::get_positions_ref;
 
@@ -71,12 +72,8 @@ impl BondOrder {
 
         let mut counts = Array2::<u64>::zeros((self.n_theta, self.n_phi));
         let n_pairs = nlist.n_pairs();
-        let Some(disp) = nlist.disp() else {
-            return Err(ComputeError::BadShape {
-                expected: format!("Neighbors with the disp column for {n_pairs} pairs"),
-                got: "indices-only / lean neighbor table".to_string(),
-            });
-        };
+        // Every bond's direction is binned; an indices-only table has none.
+        let disp = require_disp(nlist)?;
         let symmetric = matches!(
             nlist.mode(),
             molrs::spatial::neighbors::QueryMode::SelfQuery { .. }

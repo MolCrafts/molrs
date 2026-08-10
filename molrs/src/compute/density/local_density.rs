@@ -26,6 +26,7 @@ use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 
 use crate::compute::error::ComputeError;
+use crate::compute::require_dist_sq;
 use crate::compute::traits::Compute;
 use crate::compute::util::get_positions_ref;
 
@@ -77,12 +78,8 @@ impl LocalDensity {
 
         let i_idx = nlist.query_point_indices();
         let n_pairs = nlist.n_pairs();
-        let Some(dist_sq) = nlist.dist_sq() else {
-            return Err(ComputeError::BadShape {
-                expected: format!("Neighbors with the dist_sq column for {n_pairs} pairs"),
-                got: "indices-only / lean neighbor table".to_string(),
-            });
-        };
+        // Each neighbor's contribution is weighted by its distance.
+        let dist_sq = require_dist_sq(nlist)?;
 
         let mut num = vec![0.0_f64; n_query];
 
