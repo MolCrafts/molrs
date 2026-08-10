@@ -31,3 +31,12 @@ Downstream: molpy `smiles-emit-01-io-surface` after molrs tag ≥ emit surface.
 ## Live — angular distribution defaults
 
 - [distribution-angular-default-range](distribution-angular-default-range.md) — PyO3 angular distributions default to a degrees range on a radians kernel; delegate to `over_natural_range` [approved]
+
+## Live — neighborlist chain (core → compute → binders)
+
+| Slug | Status |
+|---|---|
+| [neighborlist-01-types](neighborlist-01-types.md) | approved — `Neighbors` + `from_pairs` + optional `dist_sq`/`disp`；QueryMode 带计数 |
+| [neighborlist-02-engine](neighborlist-02-engine.md) | approved — `NeighborList` 总包 `build`/`update`/`for_each_pair`/`neighbors`；删 `NbList`，禁 Nb 缩写 |
+| [neighborlist-03-compute](neighborlist-03-compute.md) | approved — compute 消费 `Neighbors`；order 缺 disp → BadShape |
+| [neighborlist-04-binders](neighborlist-04-binders.md) | approved — Python/WASM 对齐；默认 FULL 物化；cross 出路显式 |
