@@ -412,3 +412,24 @@ predicate; if a subset is intentional, the reason must be in the test body and
 (exactly-0 ele energy; bit-identical 94/94s; equal symmetric charges; benzene
 HAS impropers). Acceptance must not quietly fix production.
 **Status:** active
+
+<!-- mol:note:topic:binder-surface-symmetry -->
+## [2026-08-10] 绑定面对称原则(neighborlist 链后定调)
+
+门面(公开 API)质量优先于内部实现;内部走渐进重构,不追求一步到位,不阻塞发布。
+
+**Rule**: Rust / Python / WASM 三个表面的邻居 API 必须保持对称——同名
+(`NeighborList` 引擎 / `Neighbors` 表)、同形(build/update/neighbors +
+Option 列语义)、同默认(`FULL`)。新增或改动任一绑定面时,先对照另外两面。
+
+已知不对称(内部重构优先序):
+
+1. **wasm cross-query 寄居在 `LinkedCell` 兼容别名上**(Python 有真正的
+   `NeighborQuery` 类)→ 第一优先项:给 wasm 补对称的 `NeighborQuery`
+   门,顺带给 cross 门加 storage 参数(消掉唯一一处生产 `repack`)。
+2. `LinkedCell` / `BruteForce` 别名仅为 molvis 链接暂留(默认 FULL,安全);
+   molvis 迁移到引擎 API 后**删除**,不长期维护双门。
+3. 其余路由项按需慢做:core SoA `update_columns`、`neighbors/mod.rs` 拆
+   `table.rs`(纯移动)。`Compute::Args` 借用化已完成(2026-08-10)。
+
+**Status:** active
