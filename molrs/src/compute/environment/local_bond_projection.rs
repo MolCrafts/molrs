@@ -192,14 +192,10 @@ mod tests {
         frame
     }
 
-    fn build_nlist(frame: &Frame, cutoff: F) -> Neighbors {
-        nlist_from_frame(frame, cutoff)
-    }
-
     #[test]
     fn bond_along_x_projects_to_one_on_x_axis() {
         let frame = frame_with(&[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], 10.0);
-        let nl = build_nlist(&frame, 1.5);
+        let nl = nlist_from_frame(&frame, 1.5);
         let r = &LocalBondProjection::new()
             .compute(
                 &[&frame],
@@ -219,7 +215,7 @@ mod tests {
     #[test]
     fn rotation_changes_projection() {
         let frame = frame_with(&[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], 10.0);
-        let nl = build_nlist(&frame, 1.5);
+        let nl = nlist_from_frame(&frame, 1.5);
         // 90° rotation about z: q = (cos(45°), 0, 0, sin(45°))
         let q = [
             std::f64::consts::FRAC_PI_4.cos(),
@@ -246,7 +242,7 @@ mod tests {
     #[test]
     fn empty_proj_vectors_error() {
         let frame = frame_with(&[[0.0, 0.0, 0.0]], 10.0);
-        let nl = build_nlist(&frame, 1.0);
+        let nl = nlist_from_frame(&frame, 1.0);
         let err = LocalBondProjection::new()
             .compute(
                 &[&frame],

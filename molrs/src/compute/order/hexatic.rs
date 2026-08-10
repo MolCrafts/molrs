@@ -145,13 +145,13 @@ impl Hexatic {
 }
 
 impl Compute for Hexatic {
-    type Args<'a> = &'a Vec<Neighbors>;
+    type Args<'a> = &'a [Neighbors];
     type Output = Vec<HexaticResult>;
 
     fn compute<'a, FA: FrameAccess + Sync + 'a>(
         &self,
         frames: &[&'a FA],
-        nlists: &'a Vec<Neighbors>,
+        nlists: &'a [Neighbors],
     ) -> Result<Vec<HexaticResult>, ComputeError> {
         if frames.is_empty() {
             return Err(ComputeError::EmptyInput);
@@ -227,10 +227,6 @@ mod tests {
         frame
     }
 
-    fn build_nlist(frame: &Frame, cutoff: F) -> Neighbors {
-        nlist_from_frame(frame, cutoff)
-    }
-
     /// Six neighbors on a regular hexagon around a centre particle.
     fn hex_environment(box_len: F) -> Frame {
         let c = box_len * 0.5;
@@ -258,11 +254,8 @@ mod tests {
     #[test]
     fn psi_6_on_perfect_hexagon_is_unity() {
         let frame = hex_environment(20.0);
-        let nl = build_nlist(&frame, 1.2);
-        let res = Hexatic::new(6)
-            .unwrap()
-            .compute(&[&frame], &vec![nl])
-            .unwrap();
+        let nl = nlist_from_frame(&frame, 1.2);
+        let res = Hexatic::new(6).unwrap().compute(&[&frame], &[nl]).unwrap();
         // ψ_6 at the centre should have magnitude ≈ 1.
         let psi_center = res[0].psi[0];
         assert!(
@@ -275,11 +268,8 @@ mod tests {
     #[test]
     fn psi_4_on_perfect_square_is_unity() {
         let frame = square_environment(20.0);
-        let nl = build_nlist(&frame, 1.2);
-        let res = Hexatic::new(4)
-            .unwrap()
-            .compute(&[&frame], &vec![nl])
-            .unwrap();
+        let nl = nlist_from_frame(&frame, 1.2);
+        let res = Hexatic::new(4).unwrap().compute(&[&frame], &[nl]).unwrap();
         let psi_center = res[0].psi[0];
         assert!(
             (psi_center.norm() - 1.0).abs() < 1e-10,
@@ -293,11 +283,8 @@ mod tests {
         // For 4 bonds at θ = 0, π/2, π, 3π/2: Σ e^{i 6 θ} = e^0 + e^{i 3π}
         // + e^{i 6π} + e^{i 9π} = 1 − 1 + 1 − 1 = 0.
         let frame = square_environment(20.0);
-        let nl = build_nlist(&frame, 1.2);
-        let res = Hexatic::new(6)
-            .unwrap()
-            .compute(&[&frame], &vec![nl])
-            .unwrap();
+        let nl = nlist_from_frame(&frame, 1.2);
+        let res = Hexatic::new(6).unwrap().compute(&[&frame], &[nl]).unwrap();
         let psi_center = res[0].psi[0];
         assert!(
             psi_center.norm() < 1e-10,
@@ -309,11 +296,8 @@ mod tests {
     #[test]
     fn isolated_particle_psi_is_zero() {
         let frame = frame_with(&[[5.0, 5.0, 0.0]], 10.0);
-        let nl = build_nlist(&frame, 1.0);
-        let res = Hexatic::new(6)
-            .unwrap()
-            .compute(&[&frame], &vec![nl])
-            .unwrap();
+        let nl = nlist_from_frame(&frame, 1.0);
+        let res = Hexatic::new(6).unwrap().compute(&[&frame], &[nl]).unwrap();
         assert_eq!(res[0].psi[0], Complex::ZERO);
     }
 
@@ -372,7 +356,7 @@ mod tests {
 
         let err = Hexatic::new(6)
             .unwrap()
-            .compute(&[&frame], &vec![nl])
+            .compute(&[&frame], &[nl])
             .unwrap_err();
         assert!(
             matches!(err, ComputeError::BadShape { .. }),
@@ -435,7 +419,7 @@ mod tests {
 
         // Deliberately not `expect_err`: the Ok payload is a ψ_k vector per
         // frame, and dumping it buries the one thing the failure says.
-        let Err(err) = Hexatic::new(6).unwrap().compute(&[&frame], &vec![nl]) else {
+        let Err(err) = Hexatic::new(6).unwrap().compute(&[&frame], &[nl]) else {
             panic!("Hexatic::compute must refuse a cross-query table outright, but returned Ok");
         };
         assert!(
@@ -448,11 +432,8 @@ mod tests {
     fn rotation_invariant_in_magnitude() {
         // Rotate the hexagon by an arbitrary angle and check |ψ_6| unchanged.
         let frame = hex_environment(20.0);
-        let nl = build_nlist(&frame, 1.2);
-        let a = Hexatic::new(6)
-            .unwrap()
-            .compute(&[&frame], &vec![nl])
-            .unwrap();
+        let nl = nlist_from_frame(&frame, 1.2);
+        let a = Hexatic::new(6).unwrap().compute(&[&frame], &[nl]).unwrap();
         let mag = a[0].psi[0].norm();
 
         let c = 10.0_f64;
@@ -463,10 +444,10 @@ mod tests {
             positions.push([c + theta.cos(), c + theta.sin(), 0.0]);
         }
         let frame2 = frame_with(&positions, 20.0);
-        let nl2 = build_nlist(&frame2, 1.2);
+        let nl2 = nlist_from_frame(&frame2, 1.2);
         let b = Hexatic::new(6)
             .unwrap()
-            .compute(&[&frame2], &vec![nl2])
+            .compute(&[&frame2], &[nl2])
             .unwrap();
         assert!(
             (b[0].psi[0].norm() - mag).abs() < 1e-10,
@@ -482,12 +463,10 @@ mod tests {
     #[test]
     fn parallel_matches_serial() {
         let frame = hex_environment(20.0);
-        let nl = build_nlist(&frame, 1.2);
+        let nl = nlist_from_frame(&frame, 1.2);
         let hx = Hexatic::new(6).unwrap();
-        let solo = hx.compute(&[&frame], &vec![nl.clone()]).unwrap();
-        let par = hx
-            .compute(&[&frame, &frame], &vec![nl.clone(), nl])
-            .unwrap();
+        let solo = hx.compute(&[&frame], std::slice::from_ref(&nl)).unwrap();
+        let par = hx.compute(&[&frame, &frame], &[nl.clone(), nl]).unwrap();
         assert_eq!(par.len(), 2);
         assert_eq!(par[0].psi, solo[0].psi);
         assert_eq!(par[1].psi, solo[0].psi);

@@ -119,13 +119,13 @@ impl ContinuousCoordination {
 }
 
 impl Compute for ContinuousCoordination {
-    type Args<'a> = &'a Vec<Neighbors>;
+    type Args<'a> = &'a [Neighbors];
     type Output = Vec<ContinuousCoordinationResult>;
 
     fn compute<'a, FA: FrameAccess + Sync + 'a>(
         &self,
         frames: &[&'a FA],
-        nlists: &'a Vec<Neighbors>,
+        nlists: &'a [Neighbors],
     ) -> Result<Vec<ContinuousCoordinationResult>, ComputeError> {
         if frames.is_empty() {
             return Err(ComputeError::EmptyInput);
@@ -193,10 +193,6 @@ mod tests {
         frame
     }
 
-    fn build_nlist(frame: &Frame, cutoff: F) -> Neighbors {
-        nlist_from_frame(frame, cutoff)
-    }
-
     fn paired_octahedra() -> Frame {
         let mut p: Vec<[F; 3]> = Vec::new();
         for &(cx, cy, cz) in &[(5.0_f64, 5.0, 5.0), (10.0_f64, 5.0, 5.0)] {
@@ -220,10 +216,10 @@ mod tests {
         // Two octahedra with identical orientations. Each of the bonds
         // between identical environments contributes weight 1 per pair.
         let frame = paired_octahedra();
-        let nl = build_nlist(&frame, 1.2);
+        let nl = nlist_from_frame(&frame, 1.2);
         let r = &ContinuousCoordination::new(&[6], 1.0)
             .unwrap()
-            .compute(&[&frame], &vec![nl])
+            .compute(&[&frame], &[nl])
             .unwrap()[0];
         // Each cluster centre has 6 bonds to its identical neighbours
         // (within its own octahedron, but those neighbours are leaf
@@ -236,10 +232,10 @@ mod tests {
     #[test]
     fn isolated_particle_has_zero_coord() {
         let frame = frame_with(&[[5.0, 5.0, 5.0]], 20.0);
-        let nl = build_nlist(&frame, 1.0);
+        let nl = nlist_from_frame(&frame, 1.0);
         let r = &ContinuousCoordination::new(&[6], 1.0)
             .unwrap()
-            .compute(&[&frame], &vec![nl])
+            .compute(&[&frame], &[nl])
             .unwrap()[0];
         assert_eq!(r.coord[0][0], 0.0);
     }
@@ -249,10 +245,10 @@ mod tests {
         // power = 0 → ((cos+1)/2)^0 = 1 for any neighbor pair. Each particle
         // gets coord = (its neighbor count).
         let frame = frame_with(&[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], 20.0);
-        let nl = build_nlist(&frame, 1.5);
+        let nl = nlist_from_frame(&frame, 1.5);
         let r = &ContinuousCoordination::new(&[6], 0.0)
             .unwrap()
-            .compute(&[&frame], &vec![nl])
+            .compute(&[&frame], &[nl])
             .unwrap()[0];
         assert!((r.coord[0][0] - 1.0).abs() < 1e-12);
         assert!((r.coord[0][1] - 1.0).abs() < 1e-12);
@@ -268,7 +264,7 @@ mod tests {
     fn empty_frames_error() {
         let err = ContinuousCoordination::new(&[6], 1.0)
             .unwrap()
-            .compute::<Frame>(&[], &vec![])
+            .compute::<Frame>(&[], &[])
             .unwrap_err();
         assert!(matches!(err, ComputeError::EmptyInput));
     }

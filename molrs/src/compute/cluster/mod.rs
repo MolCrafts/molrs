@@ -254,13 +254,13 @@ impl Cluster {
 }
 
 impl Compute for Cluster {
-    type Args<'a> = &'a Vec<Neighbors>;
+    type Args<'a> = &'a [Neighbors];
     type Output = Vec<ClusterResult>;
 
     fn compute<'a, FA: FrameAccess + Sync + 'a>(
         &self,
         frames: &[&'a FA],
-        neighbors: &'a Vec<Neighbors>,
+        neighbors: &'a [Neighbors],
     ) -> Result<Vec<ClusterResult>, ComputeError> {
         if frames.is_empty() {
             return Err(ComputeError::EmptyInput);
@@ -333,7 +333,7 @@ mod tests {
     }
 
     fn cluster_single(frame: &Frame, nlist: Neighbors, min: usize) -> ClusterResult {
-        let out = Cluster::new(min).compute(&[frame], &vec![nlist]).unwrap();
+        let out = Cluster::new(min).compute(&[frame], &[nlist]).unwrap();
         assert_eq!(out.len(), 1);
         out.into_iter().next().unwrap()
     }
@@ -492,7 +492,7 @@ mod tests {
         let f2 = make_frame_with_positions(&[[5.0, 5.0, 5.0], [7.0, 5.0, 5.0]], 10.0);
         let n1 = build_neighbors(&f1, 1.0);
         let n2 = build_neighbors(&f2, 1.0);
-        let out = Cluster::new(1).compute(&[&f1, &f2], &vec![n1, n2]).unwrap();
+        let out = Cluster::new(1).compute(&[&f1, &f2], &[n1, n2]).unwrap();
         assert_eq!(out.len(), 2);
         assert_eq!(out[0].num_clusters, 1);
         assert_eq!(out[1].num_clusters, 2);

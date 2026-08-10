@@ -20,6 +20,7 @@ Rust unit tests. Nothing in this file needs third-party scientific software.
 from __future__ import annotations
 
 import molrs
+from conftest import make_frame
 import numpy as np
 import pytest
 from numpy.typing import NDArray
@@ -86,18 +87,6 @@ def _pair_set(neighbors: molrs.Neighbors) -> set[tuple[int, int]]:
     qi = neighbors.query_point_indices()
     pi = neighbors.point_indices()
     return {(int(a), int(b)) for a, b in zip(qi, pi)}
-
-
-def _frame(points: Points, box_len: float = 10.0) -> molrs.Frame:
-    """Wrap an (N, 3) array into a Frame with x/y/z columns and a cubic box."""
-    frame = molrs.Frame()
-    block = molrs.Block()
-    block.insert("x", np.ascontiguousarray(points[:, 0], dtype=np.float64))
-    block.insert("y", np.ascontiguousarray(points[:, 1], dtype=np.float64))
-    block.insert("z", np.ascontiguousarray(points[:, 2], dtype=np.float64))
-    frame["atoms"] = block
-    frame.box = molrs.Box.cube(box_len)
-    return frame
 
 
 # --------------------------------------------------------------------------
@@ -435,7 +424,7 @@ class TestDefaultPathFeedsSteinhardt:
         nl = molrs.NeighborList(1.2)
         nl.build(points, cubic_box)
 
-        result = Steinhardt(l=[6]).compute(_frame(points), nl.neighbors())
+        result = Steinhardt(l=[6]).compute(make_frame(points), nl.neighbors())
         ql = result[0]["ql"][0]
 
         assert ql.shape == (7,)

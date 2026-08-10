@@ -133,10 +133,6 @@ fn positions_from_frame(frame: &molrs::store::frame::Frame) -> Result<ndarray::A
 #[wasm_bindgen(js_name = NeighborList)]
 pub struct NeighborList {
     inner: RsNeighborList,
-    /// Whether `build` has run. The core panics on an `update` before a
-    /// `build` (the box is unknown); a panic must not cross this seam, so the
-    /// binder tracks the state and returns an error instead.
-    built: bool,
 }
 
 #[wasm_bindgen(js_class = NeighborList)]
@@ -155,7 +151,6 @@ impl NeighborList {
         check_cutoff(cutoff)?;
         Ok(NeighborList {
             inner: RsNeighborList::new(cutoff),
-            built: false,
         })
     }
 
@@ -179,7 +174,6 @@ impl NeighborList {
         check_cutoff(cutoff)?;
         Ok(NeighborList {
             inner: RsNeighborList::brute_force(cutoff),
-            built: false,
         })
     }
 
@@ -219,7 +213,6 @@ impl NeighborList {
             self.inner.build(pos.view(), bx_ref);
             Ok(())
         })?;
-        self.built = true;
         Ok(())
     }
 
@@ -239,7 +232,9 @@ impl NeighborList {
     /// one silently changes every minimum-image distance. Throws too if the
     /// frame carries no readable positions.
     pub fn update(&mut self, frame: &Frame) -> Result<(), JsValue> {
-        if !self.built {
+        // Core panics on update-before-build; a panic aborts wasm, so check
+        // the engine's own state and throw instead.
+        if !self.inner.is_built() {
             return Err(JsValue::from_str(
                 "NeighborList.update reuses the box of the previous build: \
                  call build(frame) first",
@@ -1180,10 +1175,10 @@ impl Cluster {
     /// ```
     pub fn compute(&self, frame: &Frame, neighbors: &Neighbors) -> Result<ClusterResult, JsValue> {
         frame.with_frame(|rs_frame| {
-            let nlist_vec = vec![neighbors.inner.clone()];
+            let nlist_vec = std::slice::from_ref(&neighbors.inner);
             let mut results = self
                 .inner
-                .compute(&[rs_frame], &nlist_vec)
+                .compute(&[rs_frame], nlist_vec)
                 .map_err(|e| JsValue::from_str(&format!("Cluster compute: {e}")))?;
             let first = results
                 .pop()
@@ -4424,11 +4419,11 @@ impl WasmCorrelationFunction {
             correlation: Vec<F>,
         }
         frame.with_frame(|rs_frame| {
-            let nlists = vec![neighbors.inner.clone()];
+            let nlists = std::slice::from_ref(&neighbors.inner);
             let va = vec![values_a.to_vec()];
             let vb = vec![values_b.to_vec()];
             let args = molrs::compute::density::correlation_function::CorrelationArgs {
-                nlists: &nlists,
+                nlists,
                 values_a: &va,
                 values_b: &vb,
             };
@@ -4474,10 +4469,10 @@ impl WasmLocalDensity {
             density: Vec<F>,
         }
         frame.with_frame(|rs_frame| {
-            let nlists = vec![neighbors.inner.clone()];
+            let nlists = std::slice::from_ref(&neighbors.inner);
             let mut out = self
                 .inner
-                .compute(&[rs_frame], &nlists)
+                .compute(&[rs_frame], nlists)
                 .map_err(|e| JsValue::from_str(&format!("LocalDensity compute: {e}")))?;
             let r = out
                 .pop()
@@ -4733,10 +4728,10 @@ impl WasmSteinhardt {
             qlm_re_im: Vec<Vec<F>>,
         }
         frame.with_frame(|rs_frame| {
-            let nlists = vec![neighbors.inner.clone()];
+            let nlists = std::slice::from_ref(&neighbors.inner);
             let mut out = self
                 .inner
-                .compute(&[rs_frame], &nlists)
+                .compute(&[rs_frame], nlists)
                 .map_err(|e| JsValue::from_str(&format!("Steinhardt compute: {e}")))?;
             let r = out
                 .pop()
@@ -4779,10 +4774,10 @@ impl WasmHexatic {
             psi_re_im: Vec<F>,
         }
         frame.with_frame(|rs_frame| {
-            let nlists = vec![neighbors.inner.clone()];
+            let nlists = std::slice::from_ref(&neighbors.inner);
             let mut out = self
                 .inner
-                .compute(&[rs_frame], &nlists)
+                .compute(&[rs_frame], nlists)
                 .map_err(|e| JsValue::from_str(&format!("Hexatic compute: {e}")))?;
             let r = out
                 .pop()
@@ -4924,10 +4919,10 @@ impl WasmSolidLiquid {
             is_solid: Vec<bool>,
         }
         frame.with_frame(|rs_frame| {
-            let nlists = vec![neighbors.inner.clone()];
+            let nlists = std::slice::from_ref(&neighbors.inner);
             let mut out = self
                 .inner
-                .compute(&[rs_frame], &nlists)
+                .compute(&[rs_frame], nlists)
                 .map_err(|e| JsValue::from_str(&format!("SolidLiquid compute: {e}")))?;
             let r = out
                 .pop()
@@ -5010,10 +5005,10 @@ impl WasmBondOrder {
             phi_edges: Vec<F>,
         }
         frame.with_frame(|rs_frame| {
-            let nlists = vec![neighbors.inner.clone()];
+            let nlists = std::slice::from_ref(&neighbors.inner);
             let mut out = self
                 .inner
-                .compute(&[rs_frame], &nlists)
+                .compute(&[rs_frame], nlists)
                 .map_err(|e| JsValue::from_str(&format!("BondOrder compute: {e}")))?;
             let r = out
                 .pop()
@@ -5056,10 +5051,10 @@ impl WasmLocalDescriptors {
             descriptors_re_im: Vec<F>,
         }
         frame.with_frame(|rs_frame| {
-            let nlists = vec![neighbors.inner.clone()];
+            let nlists = std::slice::from_ref(&neighbors.inner);
             let mut out = self
                 .inner
-                .compute(&[rs_frame], &nlists)
+                .compute(&[rs_frame], nlists)
                 .map_err(|e| JsValue::from_str(&format!("LocalDescriptors compute: {e}")))?;
             let r = out
                 .pop()
@@ -5122,14 +5117,14 @@ impl WasmAngularSeparation {
         let query = quats(query, "AngularSeparation query")?;
         let points = quats(points, "AngularSeparation points")?;
         frame.with_frame(|rs_frame| {
-            let nlists = vec![neighbors.inner.clone()];
+            let nlists = std::slice::from_ref(&neighbors.inner);
             let q = vec![query];
             let p = vec![points];
             let calc = molrs::compute::AngularSeparationNeighbor::new()
                 .with_equivalent_orientations(self.equivalent_orientations);
             let args =
                 molrs::compute::environment::angular_separation::AngularSeparationNeighborArgs {
-                    nlists: &nlists,
+                    nlists,
                     query_orientations: &q,
                     point_orientations: &p,
                 };
@@ -5175,10 +5170,10 @@ impl WasmMatchEnv {
             fingerprints: Vec<Vec<F>>,
         }
         frame.with_frame(|rs_frame| {
-            let nlists = vec![neighbors.inner.clone()];
+            let nlists = std::slice::from_ref(&neighbors.inner);
             let mut out = self
                 .inner
-                .compute(&[rs_frame], &nlists)
+                .compute(&[rs_frame], nlists)
                 .map_err(|e| JsValue::from_str(&format!("MatchEnv compute: {e}")))?;
             let r = out
                 .pop()
@@ -5665,13 +5660,13 @@ impl WasmPMFTR12 {
     pub fn compute(&self, frame: &Frame, neighbors: &Neighbors) -> Result<JsValue, JsValue> {
         frame.with_frame(|rs_frame| {
             let orientations = vec![require_angles(rs_frame, "PMFTR12")?];
-            let nlists = vec![neighbors.inner.clone()];
+            let nlists = std::slice::from_ref(&neighbors.inner);
             let mut out = self
                 .inner
                 .compute(
                     &[rs_frame],
                     molrs::compute::PMFTR12Args {
-                        nlists: &nlists,
+                        nlists,
                         orientations: &orientations,
                     },
                 )
@@ -5712,13 +5707,13 @@ impl WasmPMFTXY {
     pub fn compute(&self, frame: &Frame, neighbors: &Neighbors) -> Result<JsValue, JsValue> {
         frame.with_frame(|rs_frame| {
             let orientations = angles_from_frame(rs_frame).map(|angles| vec![angles]);
-            let nlists = vec![neighbors.inner.clone()];
+            let nlists = std::slice::from_ref(&neighbors.inner);
             let mut out = self
                 .inner
                 .compute(
                     &[rs_frame],
                     molrs::compute::PMFTXYArgs {
-                        nlists: &nlists,
+                        nlists,
                         query_orientations: orientations.as_deref(),
                     },
                 )
@@ -5759,13 +5754,13 @@ impl WasmPMFTXYT {
     pub fn compute(&self, frame: &Frame, neighbors: &Neighbors) -> Result<JsValue, JsValue> {
         frame.with_frame(|rs_frame| {
             let orientations = vec![require_angles(rs_frame, "PMFTXYT")?];
-            let nlists = vec![neighbors.inner.clone()];
+            let nlists = std::slice::from_ref(&neighbors.inner);
             let mut out = self
                 .inner
                 .compute(
                     &[rs_frame],
                     molrs::compute::PMFTXYTArgs {
-                        nlists: &nlists,
+                        nlists,
                         orientations: &orientations,
                     },
                 )
@@ -5813,13 +5808,13 @@ impl WasmPMFTXYZ {
     pub fn compute(&self, frame: &Frame, neighbors: &Neighbors) -> Result<JsValue, JsValue> {
         frame.with_frame(|rs_frame| {
             let orientations = quaternions_from_frame(rs_frame).map(|quats| vec![quats]);
-            let nlists = vec![neighbors.inner.clone()];
+            let nlists = std::slice::from_ref(&neighbors.inner);
             let mut out = self
                 .inner
                 .compute(
                     &[rs_frame],
                     molrs::compute::PMFTXYZArgs {
-                        nlists: &nlists,
+                        nlists,
                         query_orientations: orientations.as_deref(),
                     },
                 )

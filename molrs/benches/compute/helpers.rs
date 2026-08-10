@@ -134,7 +134,7 @@ pub struct Deps {
 
 /// Compute Cluster / COM / ClusterCenters once so kernel benches measure
 /// only the kernel under test.
-pub fn build_deps(frames: &[&Frame], nlists: &Vec<Neighbors>) -> Deps {
+pub fn build_deps(frames: &[&Frame], nlists: &[Neighbors]) -> Deps {
     let cluster = Cluster::new(2).compute(frames, nlists).unwrap();
     let com = CenterOfMass::new().compute(frames, &cluster).unwrap();
     let centers = ClusterCenters::new().compute(frames, &cluster).unwrap();

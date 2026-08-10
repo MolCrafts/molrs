@@ -20,11 +20,6 @@
 //! the resulting table satisfies `i < j`.
 
 use crate::spatial::neighbors::{Backend, CellGrid, Neighbors, PairVisitor};
-// The column policy is named only by the parallel materialization fold, and by
-// the unit tests below — which materialize through the engine on every feature
-// configuration.
-#[cfg(any(test, feature = "rayon"))]
-use crate::spatial::neighbors::NeighborsStorage;
 use crate::spatial::simbox::SimBox;
 use crate::types::{F, FNx3View};
 use ndarray::array;
@@ -124,10 +119,11 @@ impl LinkCell {
     }
 
     /// Visit the reference points in the cell neighborhood of an arbitrary
-    /// query point.
+    /// query point, read as a stack `[F; 3]`.
     ///
-    /// Used by [`NeighborQuery::query`](super::NeighborQuery::query) for
-    /// cross-query. Calls `callback(ref_index, dist_sq, [dx, dy, dz])` with
+    /// The cross-query kernel: used by
+    /// [`NeighborQuery`](super::NeighborQuery)'s query paths and the RDF cross
+    /// stream. Calls `callback(ref_index, dist_sq, [dx, dy, dz])` with
     /// `dist_sq` in Å² and the minimum-image displacement `r_ref - r_query` in
     /// Å.
     ///
@@ -136,28 +132,6 @@ impl LinkCell {
     /// only one or two cells), including points beyond the cutoff: a cell is at
     /// least one cutoff wide, so its corners reach farther than that. Applying
     /// the cutoff test is the caller's job.
-    pub(crate) fn visit_neighbors_of<C>(
-        &self,
-        query_point: ndarray::ArrayView1<'_, F>,
-        bx: &SimBox,
-        callback: C,
-    ) where
-        C: FnMut(u32, F, [F; 3]),
-    {
-        self.visit_neighbors_of_pt(
-            [query_point[0], query_point[1], query_point[2]],
-            bx,
-            callback,
-        );
-    }
-
-    /// Zero-view variant of [`visit_neighbors_of`](Self::visit_neighbors_of):
-    /// reads the query point as a stack `[F; 3]` instead of an `ArrayView1`.
-    ///
-    /// Both entry points funnel into the same
-    /// [`CellGrid::cell_of`](crate::spatial::neighbors::CellGrid::cell_of), so
-    /// they agree bit-for-bit on the same coordinate. Used by
-    /// [`NeighborQuery::query_columns`](super::NeighborQuery::query_columns).
     pub(crate) fn visit_neighbors_of_pt<C>(&self, query_point: [F; 3], bx: &SimBox, mut callback: C)
     where
         C: FnMut(u32, F, [F; 3]),
@@ -188,6 +162,10 @@ impl LinkCell {
 }
 
 impl Backend for LinkCell {
+    fn cutoff(&self) -> F {
+        self.cutoff
+    }
+
     fn build_index(&mut self, points: FNx3View<'_>, bx: &SimBox) {
         assert!(self.cutoff > 0.0, "cutoff must be positive");
         self.update_index(points, bx);
@@ -225,56 +203,9 @@ impl Backend for LinkCell {
         let mut fwd_buf = [0usize; 27];
 
         for &cell in &self.occupied_cells {
-            let cell = cell as usize;
-            let start = self.cell_start[cell] as usize;
-            let end = self.cell_start[cell + 1] as usize;
-
-            // Self-cell pairs
-            for si in start..end {
-                let pi = pos_at(&self.sorted_pos, si);
-                let oi = self.sorted_idx[si];
-                for sj in (si + 1)..end {
-                    let pj = pos_at(&self.sorted_pos, sj);
-                    let dr = self.bx.shortest_vector_impl(pi, pj);
-                    let d2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
-                    if d2 <= cutoff2 {
-                        visitor.visit_pair(oi, self.sorted_idx[sj], d2, dr);
-                    }
-                }
-            }
-
-            // Forward neighbor cells (stack buffer, no alloc)
-            let n_fwd = self.grid.stencil_forward(cell, &mut fwd_buf);
-            let fwd = &fwd_buf[..n_fwd];
-            for si in start..end {
-                let pi = pos_at(&self.sorted_pos, si);
-                let oi = self.sorted_idx[si];
-
-                for &nc in fwd {
-                    let nc_start = self.cell_start[nc] as usize;
-                    let nc_end = self.cell_start[nc + 1] as usize;
-
-                    for sj in nc_start..nc_end {
-                        let oj = self.sorted_idx[sj];
-                        let pj = pos_at(&self.sorted_pos, sj);
-                        let dr = self.bx.shortest_vector_impl(pi, pj);
-                        let d2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
-                        if d2 <= cutoff2 {
-                            // Half-shell output contract: the pair is emitted
-                            // with the smaller original index first. `dr` was
-                            // computed as MIC(r_sj - r_si) for the *sorted*
-                            // slots; when the roles swap, the sign must swap
-                            // too, so that the visitor still receives
-                            // r_j - r_i for the emitted (i, j).
-                            if oi < oj {
-                                visitor.visit_pair(oi, oj, d2, dr);
-                            } else {
-                                visitor.visit_pair(oj, oi, d2, [-dr[0], -dr[1], -dr[2]]);
-                            }
-                        }
-                    }
-                }
-            }
+            self.pairs_in_cell(cell as usize, cutoff2, &mut fwd_buf, &mut |i, j, d2, dr| {
+                visitor.visit_pair(i, j, d2, dr)
+            });
         }
     }
 
@@ -293,12 +224,78 @@ impl Backend for LinkCell {
         #[cfg(feature = "rayon")]
         {
             if self.occupied_cells.len() >= PAR_MIN_CELLS {
-                let mut partial = self.par_pairs(out.storage());
+                let mut partial = self.par_pairs(out.mode(), out.storage());
                 out.append(&mut partial);
                 return;
             }
         }
         self.visit_pairs(&mut |i, j, d2, dr| out.push(i, j, d2, dr));
+    }
+}
+
+impl LinkCell {
+    /// Half-shell pairs of one occupied cell, streamed into `sink`: the
+    /// self-cell double loop plus the forward-stencil walk. Single home for
+    /// the cell-walk kernel — [`Backend::visit_pairs`] instantiates it with a
+    /// visitor sink, the rayon fold in [`par_pairs`](Self::par_pairs) with a
+    /// table-push sink; the generic `sink` is monomorphized at each call site,
+    /// so neither pays dispatch the hand-inlined loops did not.
+    #[inline]
+    fn pairs_in_cell(
+        &self,
+        cell: usize,
+        cutoff2: F,
+        fwd_buf: &mut [usize; 27],
+        sink: &mut impl FnMut(u32, u32, F, [F; 3]),
+    ) {
+        let start = self.cell_start[cell] as usize;
+        let end = self.cell_start[cell + 1] as usize;
+
+        // Self-cell pairs: sorted order within a cell is ascending original
+        // index (stable counting sort), so `oi < oj` holds structurally.
+        for si in start..end {
+            let pi = pos_at(&self.sorted_pos, si);
+            let oi = self.sorted_idx[si];
+            for sj in (si + 1)..end {
+                let pj = pos_at(&self.sorted_pos, sj);
+                let dr = self.bx.shortest_vector_impl(pi, pj);
+                let d2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
+                if d2 <= cutoff2 {
+                    sink(oi, self.sorted_idx[sj], d2, dr);
+                }
+            }
+        }
+
+        // Forward neighbor cells (stack buffer — no alloc).
+        let n_fwd = self.grid.stencil_forward(cell, fwd_buf);
+        for si in start..end {
+            let pi = pos_at(&self.sorted_pos, si);
+            let oi = self.sorted_idx[si];
+
+            for &nc in &fwd_buf[..n_fwd] {
+                let nc_start = self.cell_start[nc] as usize;
+                let nc_end = self.cell_start[nc + 1] as usize;
+
+                for sj in nc_start..nc_end {
+                    let oj = self.sorted_idx[sj];
+                    let pj = pos_at(&self.sorted_pos, sj);
+                    let dr = self.bx.shortest_vector_impl(pi, pj);
+                    let d2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
+                    if d2 <= cutoff2 {
+                        // Half-shell output contract: the pair is emitted with
+                        // the smaller original index first. `dr` was computed
+                        // as MIC(r_sj - r_si) for the *sorted* slots; when the
+                        // roles swap, the sign must swap too, so the sink
+                        // always receives r_j - r_i for the emitted (i, j).
+                        if oi < oj {
+                            sink(oi, oj, d2, dr);
+                        } else {
+                            sink(oj, oi, d2, [-dr[0], -dr[1], -dr[2]]);
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -419,90 +416,38 @@ impl LinkCell {
     /// from the same `storage`, so every partial table has the same columns and
     /// concatenating them cannot misalign anything.
     ///
-    /// The returned table is tagged `SelfQuery { num_points: 0 }`: this function
-    /// searches, it does not know how many points the caller indexed. The caller
-    /// owns the tagging.
+    /// Partial tables carry the caller's `mode` from the start, so no
+    /// placeholder tag ever exists to launder.
     ///
     /// Only worth calling above `PAR_MIN_CELLS` occupied cells; below that,
     /// rayon's split/merge overhead exceeds the pair work.
     #[cfg(feature = "rayon")]
-    #[allow(clippy::needless_range_loop)]
-    fn par_pairs(&self, storage: NeighborsStorage) -> Neighbors {
-        use crate::spatial::neighbors::QueryMode;
+    fn par_pairs(
+        &self,
+        mode: crate::spatial::neighbors::QueryMode,
+        storage: crate::spatial::neighbors::NeighborsStorage,
+    ) -> Neighbors {
         use rayon::prelude::*;
 
         let cutoff2 = self.cutoff * self.cutoff;
 
-        let cell_start = &self.cell_start;
-        let sorted_idx = &self.sorted_idx;
-        let sorted_pos = &self.sorted_pos;
-        let bx = &self.bx;
-        let grid = self.grid;
-
         self.occupied_cells
             .par_iter()
             .fold(
-                || Neighbors::empty(QueryMode::SelfQuery { num_points: 0 }, storage),
+                || Neighbors::empty(mode, storage),
                 |mut acc, &cell_u32| {
-                    let cell = cell_u32 as usize;
-                    let start = cell_start[cell] as usize;
-                    let end = cell_start[cell + 1] as usize;
-
-                    // Self-cell pairs.
-                    for si in start..end {
-                        let pi = pos_at(sorted_pos, si);
-                        let oi = sorted_idx[si];
-                        for sj in (si + 1)..end {
-                            let pj = pos_at(sorted_pos, sj);
-                            let dr = bx.shortest_vector_impl(pi, pj);
-                            let d2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
-                            if d2 <= cutoff2 {
-                                acc.push(oi, sorted_idx[sj], d2, dr);
-                            }
-                        }
-                    }
-
-                    // Forward neighbor cells (stack buffer — no alloc).
                     let mut fwd_buf = [0usize; 27];
-                    let n_fwd = grid.stencil_forward(cell, &mut fwd_buf);
-                    let fwd = &fwd_buf[..n_fwd];
-
-                    for si in start..end {
-                        let pi = pos_at(sorted_pos, si);
-                        let oi = sorted_idx[si];
-
-                        for &nc in fwd {
-                            let nc_start = cell_start[nc] as usize;
-                            let nc_end = cell_start[nc + 1] as usize;
-
-                            for sj in nc_start..nc_end {
-                                let oj = sorted_idx[sj];
-                                let pj = pos_at(sorted_pos, sj);
-                                let dr = bx.shortest_vector_impl(pi, pj);
-                                let d2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
-                                if d2 <= cutoff2 {
-                                    // Half-shell output contract: the pair is
-                                    // emitted with the smaller original index
-                                    // first. `dr` was computed as
-                                    // MIC(r_sj - r_si) for the *sorted* slots;
-                                    // when the roles swap, the sign must swap
-                                    // too, so that the stored displacement is
-                                    // still r_j - r_i for the emitted (i, j).
-                                    if oi < oj {
-                                        acc.push(oi, oj, d2, dr);
-                                    } else {
-                                        acc.push(oj, oi, d2, [-dr[0], -dr[1], -dr[2]]);
-                                    }
-                                }
-                            }
-                        }
-                    }
-
+                    self.pairs_in_cell(
+                        cell_u32 as usize,
+                        cutoff2,
+                        &mut fwd_buf,
+                        &mut |i, j, d2, dr| acc.push(i, j, d2, dr),
+                    );
                     acc
                 },
             )
             .reduce(
-                || Neighbors::empty(QueryMode::SelfQuery { num_points: 0 }, storage),
+                || Neighbors::empty(mode, storage),
                 |mut a, mut b| {
                     a.append(&mut b);
                     a
@@ -535,7 +480,8 @@ fn pos_at(sorted_pos: &[F], si: usize) -> [F; 3] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::spatial::neighbors::NeighborList;
+    use crate::spatial::neighbors::test_fixtures::table_rows_sorted;
+    use crate::spatial::neighbors::{NeighborList, NeighborsStorage};
     use crate::spatial::simbox::SimBox;
     use ndarray::array;
 
@@ -553,26 +499,6 @@ mod tests {
         let mut nl = NeighborList::brute_force(cutoff);
         nl.build(pts, bx);
         nl.neighbors(NeighborsStorage::FULL)
-    }
-
-    /// Rows of a materialized table as `(i, j, dist_sq, disp)`, sorted by
-    /// `(i, j)` so that row order — which is not part of the contract — cannot
-    /// decide a comparison.
-    fn sorted_rows(nb: &Neighbors) -> Vec<(u32, u32, F, [F; 3])> {
-        let d2 = nb.dist_sq().expect("FULL storage materializes dist_sq");
-        let disp = nb.disp().expect("FULL storage materializes disp");
-        let mut rows: Vec<(u32, u32, F, [F; 3])> = (0..nb.n_pairs())
-            .map(|k| {
-                (
-                    nb.query_point_indices()[k],
-                    nb.point_indices()[k],
-                    d2[k],
-                    [disp[[k, 0]], disp[[k, 1]], disp[[k, 2]]],
-                )
-            })
-            .collect();
-        rows.sort_by_key(|r| (r.0, r.1));
-        rows
     }
 
     #[test]
@@ -632,8 +558,8 @@ mod tests {
             .expect("invalid box length");
         let pts = array![[0.1, 0.2, 0.3], [0.4, 0.2, 0.3], [1.1, 1.2, 1.3]];
 
-        let first = sorted_rows(&cell_pairs(0.5, pts.view(), &bx));
-        let second = sorted_rows(&cell_pairs(0.5, pts.view(), &bx));
+        let first = table_rows_sorted(&cell_pairs(0.5, pts.view(), &bx));
+        let second = table_rows_sorted(&cell_pairs(0.5, pts.view(), &bx));
 
         assert_eq!(first.len(), 1, "fixture should produce exactly one pair");
         assert_eq!(first, second, "repeated searches must agree bitwise");
@@ -655,7 +581,7 @@ mod tests {
         let mut nl = NeighborList::new(0.6);
         nl.build(pts.view(), &bx);
 
-        let table = sorted_rows(&nl.neighbors(NeighborsStorage::FULL));
+        let table = table_rows_sorted(&nl.neighbors(NeighborsStorage::FULL));
 
         let mut streamed: Vec<(u32, u32, F, [F; 3])> = Vec::new();
         nl.for_each_pair(|p| streamed.push((p.i, p.j, p.dist_sq, p.disp)));
@@ -684,8 +610,8 @@ mod tests {
             [2.9, 2.8, 2.7]
         ];
 
-        let lc_pairs = sorted_rows(&cell_pairs(0.6, pts.view(), &bx));
-        let bf_pairs = sorted_rows(&brute_pairs(0.6, pts.view(), &bx));
+        let lc_pairs = table_rows_sorted(&cell_pairs(0.6, pts.view(), &bx));
+        let bf_pairs = table_rows_sorted(&brute_pairs(0.6, pts.view(), &bx));
 
         assert_eq!(lc_pairs.len(), bf_pairs.len());
         for (a, b) in lc_pairs.iter().zip(bf_pairs.iter()) {
@@ -890,8 +816,8 @@ mod tests {
     /// sorted pair sets.
     fn assert_bitwise_equal(a: &Neighbors, b: &Neighbors) {
         assert_eq!(a.n_pairs(), b.n_pairs(), "n_pairs differ");
-        let rows_a = sorted_rows(a);
-        let rows_b = sorted_rows(b);
+        let rows_a = table_rows_sorted(a);
+        let rows_b = table_rows_sorted(b);
         for (ra, rb) in rows_a.iter().zip(rows_b.iter()) {
             assert_eq!(ra.0, rb.0, "idx_i");
             assert_eq!(ra.1, rb.1, "idx_j");
@@ -978,6 +904,7 @@ mod equivalence {
     use crate::spatial::neighbors::CellGrid;
     use crate::spatial::neighbors::NeighborList;
     use crate::spatial::neighbors::NeighborQuery;
+    use crate::spatial::neighbors::NeighborsStorage;
     use crate::spatial::simbox::SimBox;
     use crate::types::F3x3;
     use ndarray::{Array2, array};

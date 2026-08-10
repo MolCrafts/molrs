@@ -9,41 +9,13 @@ tests in molrs-compute — these are wiring-level checks.
 import numpy as np
 import pytest
 import molrs
+from conftest import make_frame, octahedron_frame
 from molrs.compute.cluster import Cluster, ClusterProperties
 from molrs.compute.density import GaussianDensity, LocalDensity
 from molrs.compute.diffraction import StaticStructureFactorDebye
 from molrs.compute.environment import BondOrder
 from molrs.compute.order import Hexatic, Nematic, SolidLiquid, Steinhardt
 from molrs.compute.pmft import PMFTXY
-
-
-def _make_frame(pts, box_len=10.0):
-    """Wrap an (N, 3) ndarray into a Frame with box."""
-    f = molrs.Frame()
-    b = molrs.Block()
-    b.insert("x", np.ascontiguousarray(pts[:, 0], dtype=np.float64))
-    b.insert("y", np.ascontiguousarray(pts[:, 1], dtype=np.float64))
-    b.insert("z", np.ascontiguousarray(pts[:, 2], dtype=np.float64))
-    f["atoms"] = b
-    f.box = molrs.Box.cube(box_len)
-    return f
-
-
-def _octahedron_frame(cx=5.0, cy=5.0, cz=5.0, box_len=20.0):
-    """Centre particle + ±x/y/z neighbors at unit distance."""
-    pts = np.array(
-        [
-            [cx, cy, cz],
-            [cx + 1, cy, cz],
-            [cx - 1, cy, cz],
-            [cx, cy + 1, cz],
-            [cx, cy - 1, cz],
-            [cx, cy, cz + 1],
-            [cx, cy, cz - 1],
-        ],
-        dtype=np.float64,
-    )
-    return _make_frame(pts, box_len=box_len), pts
 
 
 def _nlist(frame, pts, cutoff=1.2):
@@ -71,7 +43,7 @@ def test_neighbor_query_rejects_non_positive_cutoff():
 
 class TestSteinhardt:
     def test_ql_finite_on_octahedron(self):
-        frame, pts = _octahedron_frame()
+        frame, pts = octahedron_frame()
         nl = _nlist(frame, pts)
         s = Steinhardt(l=[6])
         out = s.compute(frame, nl)
@@ -101,7 +73,7 @@ class TestNematic:
             ],
             dtype=np.float64,
         )
-        frame = _make_frame(pts, box_len=20.0)
+        frame = make_frame(pts, box_len=20.0)
         ori = molrs.Block()
         ori.insert("atomi", np.array([0, 2, 4, 6, 8], dtype=np.uint32))
         ori.insert("atomj", np.array([1, 3, 5, 7, 9], dtype=np.uint32))
@@ -114,7 +86,7 @@ class TestNematic:
 
 class TestHexatic:
     def test_psi_shape(self):
-        frame, pts = _octahedron_frame()
+        frame, pts = octahedron_frame()
         nl = _nlist(frame, pts)
         out = Hexatic(k=6).compute(frame, nl)
         assert len(out) == 1
@@ -124,7 +96,7 @@ class TestHexatic:
 
 class TestSolidLiquid:
     def test_returns_arrays(self):
-        frame, pts = _octahedron_frame()
+        frame, pts = octahedron_frame()
         nl = _nlist(frame, pts)
         out = SolidLiquid(l=6, q_threshold=-2.0, n_threshold=1).compute(frame, nl)
         n_solid, is_solid = out[0]
@@ -135,7 +107,7 @@ class TestSolidLiquid:
 
 class TestLocalDensity:
     def test_pair_count(self):
-        frame, pts = _octahedron_frame()
+        frame, pts = octahedron_frame()
         nl = _nlist(frame, pts, cutoff=2.0)
         num, density = LocalDensity(r_max=2.0).compute(frame, nl)[0]
         # Centre particle has 6 neighbors within r=2.
@@ -145,7 +117,7 @@ class TestLocalDensity:
 
 class TestGaussianDensity:
     def test_integral(self):
-        frame, _ = _octahedron_frame(box_len=10.0)
+        frame, _ = octahedron_frame(box_len=10.0)
         grids = GaussianDensity(40, 40, 40, sigma=0.4).compute(frame)
         g = grids[0]
         assert g.shape == (40, 40, 40)
@@ -156,7 +128,7 @@ class TestGaussianDensity:
 
 class TestBondOrder:
     def test_octahedron_counts(self):
-        frame, pts = _octahedron_frame()
+        frame, pts = octahedron_frame()
         nl = _nlist(frame, pts)
         out = BondOrder(8, 8).compute(frame, nl)
         counts, bo, t_edges, p_edges = out[0]
@@ -166,7 +138,7 @@ class TestBondOrder:
 
 class TestStaticStructureFactorDebye:
     def test_zero_k_equals_n(self):
-        frame, _ = _octahedron_frame()
+        frame, _ = octahedron_frame()
         ssf = StaticStructureFactorDebye([0.0])
         out = ssf.compute(frame)
         k, sk, n = out[0]
@@ -181,7 +153,7 @@ class TestStaticStructureFactorDebye:
 class TestPMFTXY:
     def test_two_particles_two_bins(self):
         pts = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=np.float64)
-        f = _make_frame(pts, box_len=10.0)
+        f = make_frame(pts, box_len=10.0)
         nl = _nlist(f, pts, cutoff=1.5)
         out = PMFTXY(2.0, 2.0, 8, 8).compute(f, nl)
         counts, density, pmf = out[0]
@@ -191,7 +163,7 @@ class TestPMFTXY:
 class TestClusterProperties:
     def test_two_particle_uniform(self):
         pts = np.array([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]], dtype=np.float64)
-        f = _make_frame(pts, box_len=10.0)
+        f = make_frame(pts, box_len=10.0)
         nl = _nlist(f, pts, cutoff=3.0)
         cl_result = Cluster(1).compute(f, nl)
         out = ClusterProperties().compute(f, [cl_result])

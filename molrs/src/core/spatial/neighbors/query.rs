@@ -23,7 +23,7 @@
 //! or drops columns afterwards with [`Neighbors::repack`].
 
 use crate::spatial::neighbors::linkcell::LinkCell;
-use crate::spatial::neighbors::{Backend, NeighborList, Neighbors, NeighborsStorage, QueryMode};
+use crate::spatial::neighbors::{Backend, Neighbors, NeighborsStorage, QueryMode};
 use crate::spatial::simbox::SimBox;
 use crate::types::{F, FNx3, FNx3View};
 
@@ -56,8 +56,6 @@ pub struct NeighborQuery {
     points: FNx3,
     /// Copy of the simulation box.
     simbox: SimBox,
-    /// Cutoff distance.
-    cutoff: F,
 }
 
 impl NeighborQuery {
@@ -81,7 +79,6 @@ impl NeighborQuery {
             lc,
             points: points.to_owned(),
             simbox: simbox.clone(),
-            cutoff,
         }
     }
 
@@ -125,24 +122,32 @@ impl NeighborQuery {
             3,
             "query_points must have shape (N, 3)"
         );
+        self.cross(query_points.nrows(), |qi| {
+            let r = query_points.row(qi);
+            [r[0], r[1], r[2]]
+        })
+    }
 
-        let n_query = query_points.nrows();
-        let n_ref = self.points.nrows();
-        let cutoff_sq = self.cutoff * self.cutoff;
+    /// Shared cross-query kernel: one point source, one traversal.
+    ///
+    /// [`query`](Self::query) reads rows of an `N × 3` view,
+    /// [`query_columns`](Self::query_columns) reads three SoA slices; both
+    /// funnel here, so the CrossQuery tagging, the 27-cell walk, and the
+    /// cutoff test exist once.
+    fn cross(&self, n_query: usize, get_pt: impl Fn(usize) -> [F; 3]) -> Neighbors {
+        let cutoff_sq = self.lc.cutoff * self.lc.cutoff;
 
         let mut nlist = Neighbors::empty(
             QueryMode::CrossQuery {
                 num_query_points: n_query,
-                num_points: n_ref,
+                num_points: self.points.nrows(),
             },
             NeighborsStorage::FULL,
         );
 
-        // For each query point, check all 27 neighboring cells
         for qi in 0..n_query {
-            let qp = query_points.row(qi);
             self.lc
-                .visit_neighbors_of(qp, &self.simbox, |rj, dist_sq, diff| {
+                .visit_neighbors_of_pt(get_pt(qi), &self.simbox, |rj, dist_sq, diff| {
                     if dist_sq <= cutoff_sq {
                         nlist.push(qi as u32, rj, dist_sq, diff);
                     }
@@ -161,19 +166,23 @@ impl NeighborQuery {
     /// reference set, and carries both physical columns
     /// ([`NeighborsStorage::FULL`]).
     ///
-    /// Runs a fresh [`NeighborList`] over the reference points rather than
-    /// reusing the index held for cross-queries, because the two traversals
-    /// differ: a self-query walks cell pairs once in a forward direction, while
-    /// a cross-query walks the full neighborhood of each query point.
+    /// Reuses the index this object already holds — the cell index is the same
+    /// for both traversals; only the walk differs (forward half-shell here,
+    /// full per-point neighborhood for cross), so no re-sort happens.
     ///
     /// A caller that only ever asks this question should hold a
     /// [`NeighborList`] instead: it can re-index moved coordinates with
     /// [`update`](NeighborList::update), stream pairs without materializing a
     /// table, and choose which columns a table keeps.
     pub fn query_self(&self) -> Neighbors {
-        let mut nl = NeighborList::new(self.cutoff);
-        nl.build(self.points.view(), &self.simbox);
-        nl.neighbors(NeighborsStorage::FULL)
+        let mut out = Neighbors::empty(
+            QueryMode::SelfQuery {
+                num_points: self.points.nrows(),
+            },
+            NeighborsStorage::FULL,
+        );
+        self.lc.materialize_into(&mut out);
+        out
     }
 
     /// Reference to the stored simulation box.
@@ -186,9 +195,10 @@ impl NeighborQuery {
         self.points.view()
     }
 
-    /// The cutoff distance (Å) fixed at construction.
+    /// The cutoff distance (Å) fixed at construction — read from the index,
+    /// which is its single owner.
     pub fn cutoff(&self) -> F {
-        self.cutoff
+        self.lc.cutoff
     }
 
     /// SoA sibling of [`new`](Self::new): build a spatial index from
@@ -227,7 +237,6 @@ impl NeighborQuery {
             lc,
             points,
             simbox: simbox.clone(),
-            cutoff,
         }
     }
 
@@ -257,31 +266,7 @@ impl NeighborQuery {
             qx.len() == qy.len() && qy.len() == qz.len(),
             "query x/y/z slices must have equal length"
         );
-
-        let n_query = qx.len();
-        let n_ref = self.points.nrows();
-        let cutoff_sq = self.cutoff * self.cutoff;
-
-        let mut nlist = Neighbors::empty(
-            QueryMode::CrossQuery {
-                num_query_points: n_query,
-                num_points: n_ref,
-            },
-            NeighborsStorage::FULL,
-        );
-
-        // For each query point, check all 27 neighboring cells
-        for qi in 0..n_query {
-            let qp = [qx[qi], qy[qi], qz[qi]];
-            self.lc
-                .visit_neighbors_of_pt(qp, &self.simbox, |rj, dist_sq, diff| {
-                    if dist_sq <= cutoff_sq {
-                        nlist.push(qi as u32, rj, dist_sq, diff);
-                    }
-                });
-        }
-
-        nlist
+        self.cross(qx.len(), |qi| [qx[qi], qy[qi], qz[qi]])
     }
 }
 
