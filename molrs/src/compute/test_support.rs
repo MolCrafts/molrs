@@ -8,7 +8,7 @@
 //! `build_soa_matches_build_bitwise`), so every rewired test produces identical
 //! results.
 
-use molrs::spatial::neighbors::{LinkCell, NbListAlgo, Neighbors};
+use molrs::spatial::neighbors::{LinkCell, Neighbors};
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 

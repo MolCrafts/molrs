@@ -10,16 +10,17 @@
 //! a defect in the cell partition cannot cancel against a defect here; that is
 //! what makes it usable as an oracle in tests.
 
-use crate::spatial::neighbors::{NbListAlgo, Neighbors, NeighborsStorage, PairVisitor, QueryMode};
+use crate::spatial::neighbors::{Backend, Neighbors, NeighborsStorage, PairVisitor, QueryMode};
 use crate::spatial::simbox::SimBox;
 use crate::types::{F, FNx3, FNx3View};
 
-/// Brute-force O(N^2) neighbor search.
+/// Brute-force O(N^2) neighbor search — the reference
+/// [`NeighborList`](crate::spatial::neighbors::NeighborList) backend.
 ///
-/// Iterates over all unique pairs and keeps those within the cutoff.
-/// Results are cached after [`build`](NbListAlgo::build) /
-/// [`update`](NbListAlgo::update) so that [`query`](NbListAlgo::query)
-/// returns a cheap reference.
+/// Iterates over all unique pairs and keeps those within the cutoff. Search
+/// from outside this crate goes through
+/// [`NeighborList::brute_force`](crate::spatial::neighbors::NeighborList::brute_force),
+/// which drives this type.
 ///
 /// The cached table always uses [`NeighborsStorage::FULL`] — both the squared
 /// distance (Å²) and the minimum-image displacement (Å) are stored for every
@@ -46,8 +47,7 @@ impl BruteForce {
     /// Create a new `BruteForce` with the given cutoff distance (Å).
     ///
     /// The cutoff is not validated here; a non-positive value is rejected by
-    /// [`build`](NbListAlgo::build) / [`update`](NbListAlgo::update), which
-    /// panic.
+    /// the first build, which panics.
     pub fn new(cutoff: F) -> Self {
         Self {
             cutoff,
@@ -85,26 +85,32 @@ impl BruteForce {
         self.result.mode = QueryMode::SelfQuery { num_points: n };
         self.bx = Some(bx.clone());
     }
-}
 
-impl NbListAlgo for BruteForce {
-    fn build(&mut self, points: FNx3View<'_>, bx: &SimBox) {
+    /// Scan every pair and materialize the half-shell table read back by
+    /// [`query`](Self::query).
+    ///
+    /// The index-only path — store the coordinates once, then stream pairs
+    /// without a table — is
+    /// [`NeighborList`](crate::spatial::neighbors::NeighborList).
+    ///
+    /// # Panics
+    /// Panics if the cutoff is not positive.
+    pub fn build(&mut self, points: FNx3View<'_>, bx: &SimBox) {
         assert!(self.cutoff > 0.0, "cutoff must be positive");
         self.compute_pairs(points, bx);
     }
 
-    fn update(&mut self, points: FNx3View<'_>, bx: &SimBox) {
-        self.build(points, bx);
-    }
-
-    fn query(&self) -> &Neighbors {
+    /// Reference to the pair table materialized by the last
+    /// [`build`](Self::build).
+    ///
+    /// Before the first one this is an empty table tagged
+    /// `SelfQuery { num_points: 0 }`, not an error.
+    pub fn query(&self) -> &Neighbors {
         &self.result
     }
+}
 
-    fn box_ref(&self) -> &SimBox {
-        self.bx.as_ref().expect("box_ref called before build")
-    }
-
+impl Backend for BruteForce {
     /// Store positions and box without computing pairs.
     ///
     /// # Panics
@@ -117,8 +123,7 @@ impl NbListAlgo for BruteForce {
     /// Store positions and box without computing pairs.
     ///
     /// There is no spatial index to build for an all-pairs search, so this
-    /// simply keeps a copy of the coordinates for
-    /// [`visit_pairs`](NbListAlgo::visit_pairs) to rescan.
+    /// simply keeps a copy of the coordinates for `visit_pairs` to rescan.
     ///
     /// # Panics
     /// Panics if the cutoff is not positive.
@@ -136,11 +141,10 @@ impl NbListAlgo for BruteForce {
     ///
     /// Three states are possible, and the choice between them is silent:
     ///
-    /// - Coordinates were stored by [`build_index`](NbListAlgo::build_index) or
-    ///   [`update_index`](NbListAlgo::update_index) — they are rescanned here,
-    ///   allocating nothing.
+    /// - Coordinates were stored by `build_index` or `update_index` — they are
+    ///   rescanned here, allocating nothing.
     /// - No coordinates were stored but a cached table exists from a previous
-    ///   [`build`](NbListAlgo::build) — its rows are replayed instead.
+    ///   `build` — its rows are replayed instead.
     /// - Neither is available (nothing has been built at all) — the visitor is
     ///   never called and no error is raised.
     fn visit_pairs(&self, visitor: &mut dyn PairVisitor) {

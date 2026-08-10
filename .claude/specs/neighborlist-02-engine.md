@@ -1,6 +1,6 @@
 ---
 title: neighborlist-02-engine — NeighborList 总包 build/update/iter/neighbors
-status: approved
+status: done
 created: 2026-08-10
 slug: neighborlist-02-engine
 chain: neighborlist
@@ -94,17 +94,18 @@ impl NeighborList {
 
 ## Tasks
 
-1. **Add** `NeighborList` 总包类型（默认 LinkCell 后端）
-2. **Implement** `build(points, box)` / `update(points)` 为 index-only；update-before-build panic
-3. **Implement** `for_each_pair` → `NeighborPair`（self half）
-4. **Implement** `neighbors(storage) -> Neighbors`（内部 push 直写；等价 from_pairs）
-5. **Delete** `NbList<A>` 包装；**demote** `NbListAlgo` → `pub(crate) Backend`；同步 CLAUDE.md trait 表
-6. **Wire** BruteForce 后端（测试/oracle）
-7. **Migrate or deprecate** `NeighborQuery::query_self` 到总包
-8. **Preserve** cross-query 能力（`iter_cross` 或 `NeighborQuery::query` 委托）
-9. **Test** build→for_each ≡ BruteForce pair multiset；neighbors(FULL) 列完整；neighbors ≡ from_pairs(收集流)
-10. **Bench** visit_pairs 路径不劣于既有 baseline 的灾难阈（沿用 cell-grid-api 精神，可选 10%）
-11. **Docs** rustdoc 示例：流式 RDF 风格 vs `neighbors(DISP)` for order；NPT 用 build 每帧
+1. **Add** `NeighborList` 总包类型（默认 LinkCell 后端）✅
+2. **Implement** `build(points, box)` / `update(points)` 为 index-only；update-before-build panic ✅（消息含 "build"）
+3. **Implement** `for_each_pair` → `NeighborPair`（self half）✅（单一 Backend::visit_pairs 路径）
+4. **Implement** `neighbors(storage) -> Neighbors`（内部 push 直写；等价 from_pairs）✅（RED 等价测试过）
+5. **Delete** `NbList<A>` 包装；**demote** `NbListAlgo` → `pub(crate) Backend`；同步 CLAUDE.md trait 表 ✅（PairVisitor 一并 pub(crate)；AabbQuery 脱 trait 转 inherent；box_ref 删除）
+6. **Wire** BruteForce 后端（测试/oracle）✅
+7. **Migrate or deprecate** `NeighborQuery::query_self` 到总包 ✅（委托引擎）
+8. **Preserve** cross-query 能力（`NeighborQuery::query` 委托）✅（RED already-green guard，i>j cross pair 有测）
+9. **Test** build→for_each ≡ BruteForce pair multiset；neighbors(FULL) 列完整；neighbors ≡ from_pairs(收集流) ✅（7 引擎测试 + 等价矩阵 ‖disp‖² 强化，60 原子 163-pair 独立 golden）
+10. **Bench** visit_pairs 路径不劣于既有 baseline 的灾难阈 ✅（visit_pairs 机制未动仅 trait 可见性变化；benches 编译迁移完成。**已知让步**：`neighbors()` 物化暂为串行（rayon `compute_pairs_parallel` 失去生产调用方）→ 显式路由 03 任务 9，非静默）
+11. **Docs** rustdoc 示例：流式 RDF 风格 vs `neighbors(DISP)` for order；NPT 用 build 每帧 ✅（docs Mode A：13 项修复，串行让步在文档中如实陈述；rustdoc neighbors 零告警）
+12. **（架构师审查新增）** `NeighborList::build_columns(xs,ys,zs,bx)` — SoA index-only 入口（列长校验在公开边界；Backend 加默认方法 build_index_columns，LinkCell 覆写走原生 build_index_soa）✅；删除零调用者别名 `BruteForce::update`/`AabbQuery::update` ✅；CLAUDE.md trait 行改主体为公开引擎 + 路径修正 + AabbQuery 补记 ✅
 
 ## Testing
 

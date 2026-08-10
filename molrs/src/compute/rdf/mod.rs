@@ -14,7 +14,7 @@ mod result;
 pub use accumulator::RDFAccumulator;
 pub use result::RDFResult;
 
-use molrs::spatial::neighbors::{LinkCell, NbListAlgo, Neighbors, QueryMode};
+use molrs::spatial::neighbors::{Backend, LinkCell, Neighbors, QueryMode};
 use molrs::spatial::simbox::SimBox;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::{F, FNx3View};

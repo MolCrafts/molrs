@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use criterion::BenchmarkGroup;
 use criterion::measurement::Measurement;
-use molrs::spatial::neighbors::{LinkCell, NbList, Neighbors};
+use molrs::spatial::neighbors::{NeighborList, Neighbors, NeighborsStorage};
 use molrs::spatial::simbox::SimBox;
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
@@ -89,11 +89,12 @@ pub fn frame_from_positions(pts: &Array2<F>, simbox: SimBox) -> Frame {
     frame
 }
 
-/// Build a self-query [`Neighbors`] table for the given positions using LinkCell.
+/// Build a self-query [`Neighbors`] table for the given positions using the
+/// cell-list backend, with every column present.
 pub fn build_nlist(pts: &Array2<F>, simbox: &SimBox, cutoff: F) -> Neighbors {
-    let mut nl = NbList(LinkCell::new().cutoff(cutoff));
+    let mut nl = NeighborList::new(cutoff);
     nl.build(pts.view(), simbox);
-    nl.query().clone()
+    nl.neighbors(NeighborsStorage::FULL)
 }
 
 /// Build `n_frames` independent frames + neighbor lists at the requested
