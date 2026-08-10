@@ -13,7 +13,7 @@
 //! first downstream consumer (e.g. `LocalDescriptors` in Phase 6) needs it.
 
 use crate::compute::result::ComputeResult;
-use molrs::spatial::neighbors::NeighborList;
+use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 use ndarray::Array1;
@@ -79,7 +79,7 @@ impl CorrelationFunction {
 
     fn one_frame(
         &self,
-        nlist: &NeighborList,
+        nlist: &Neighbors,
         values_a: &[F],
         values_b: &[F],
     ) -> Result<CorrelationFunctionResult, ComputeError> {
@@ -87,11 +87,16 @@ impl CorrelationFunction {
         let r_max_sq = self.r_max * self.r_max;
         let i_idx = nlist.query_point_indices();
         let j_idx = nlist.point_indices();
-        let dist_sq = nlist.dist_sq();
         let n_pairs = nlist.n_pairs();
+        let Some(dist_sq) = nlist.dist_sq() else {
+            return Err(ComputeError::BadShape {
+                expected: format!("Neighbors with the dist_sq column for {n_pairs} pairs"),
+                got: "indices-only / lean neighbor table".to_string(),
+            });
+        };
         let symmetric = matches!(
             nlist.mode(),
-            molrs::spatial::neighbors::QueryMode::SelfQuery
+            molrs::spatial::neighbors::QueryMode::SelfQuery { .. }
         );
 
         let mut sum = Array1::<F>::zeros(self.n_bins);
@@ -145,7 +150,7 @@ impl CorrelationFunction {
 /// `(neighbor list, A values, B values)`. All three slices must have the
 /// same length as `frames`.
 pub struct CorrelationArgs<'a> {
-    pub nlists: &'a [NeighborList],
+    pub nlists: &'a [Neighbors],
     pub values_a: &'a [Vec<F>],
     pub values_b: &'a [Vec<F>],
 }
@@ -233,7 +238,7 @@ mod tests {
         frame
     }
 
-    fn build_nlist(frame: &Frame, cutoff: F) -> NeighborList {
+    fn build_nlist(frame: &Frame, cutoff: F) -> Neighbors {
         nlist_from_frame(frame, cutoff)
     }
 

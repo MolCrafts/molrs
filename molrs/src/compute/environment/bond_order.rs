@@ -16,7 +16,7 @@
 //! follow-up phases.
 
 use crate::compute::result::ComputeResult;
-use molrs::spatial::neighbors::NeighborList;
+use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 use ndarray::Array2;
@@ -57,11 +57,11 @@ impl BondOrder {
     fn one_frame<FA: FrameAccess>(
         &self,
         frame: &FA,
-        nlist: &NeighborList,
+        nlist: &Neighbors,
     ) -> Result<BondOrderResult, ComputeError> {
         let (xs_p, _, _) = get_positions_ref(frame)?;
         let _ = xs_p; // suppress unused — we only need the frame to be
-        // FrameAccess-valid; nlist already carries vectors.
+        // FrameAccess-valid; nlist already carries disp.
 
         let d_theta = PI / self.n_theta as F;
         let d_phi = TWO_PI / self.n_phi as F;
@@ -70,17 +70,22 @@ impl BondOrder {
         let phi_edges: Vec<F> = (0..=self.n_phi).map(|i| -PI + i as F * d_phi).collect();
 
         let mut counts = Array2::<u64>::zeros((self.n_theta, self.n_phi));
-        let vectors = nlist.vectors();
         let n_pairs = nlist.n_pairs();
+        let Some(disp) = nlist.disp() else {
+            return Err(ComputeError::BadShape {
+                expected: format!("Neighbors with the disp column for {n_pairs} pairs"),
+                got: "indices-only / lean neighbor table".to_string(),
+            });
+        };
         let symmetric = matches!(
             nlist.mode(),
-            molrs::spatial::neighbors::QueryMode::SelfQuery
+            molrs::spatial::neighbors::QueryMode::SelfQuery { .. }
         );
 
         for k in 0..n_pairs {
-            let dx = vectors[[k, 0]];
-            let dy = vectors[[k, 1]];
-            let dz = vectors[[k, 2]];
+            let dx = disp[[k, 0]];
+            let dy = disp[[k, 1]];
+            let dz = disp[[k, 2]];
             let r = (dx * dx + dy * dy + dz * dz).sqrt();
             if r == 0.0 {
                 continue;
@@ -125,13 +130,13 @@ fn push_angle(counts: &mut Array2<u64>, dx: F, dy: F, dz: F, r: F, n_theta: usiz
 }
 
 impl Compute for BondOrder {
-    type Args<'a> = &'a Vec<NeighborList>;
+    type Args<'a> = &'a Vec<Neighbors>;
     type Output = Vec<BondOrderResult>;
 
     fn compute<'a, FA: FrameAccess + Sync + 'a>(
         &self,
         frames: &[&'a FA],
-        nlists: &'a Vec<NeighborList>,
+        nlists: &'a Vec<Neighbors>,
     ) -> Result<Vec<BondOrderResult>, ComputeError> {
         if frames.is_empty() {
             return Err(ComputeError::EmptyInput);
@@ -203,7 +208,7 @@ mod tests {
         frame
     }
 
-    fn build_nlist(frame: &Frame, cutoff: F) -> NeighborList {
+    fn build_nlist(frame: &Frame, cutoff: F) -> Neighbors {
         nlist_from_frame(frame, cutoff)
     }
 
@@ -257,7 +262,7 @@ mod tests {
         let frames: Vec<&Frame> = Vec::new();
         let err = BondOrder::new(10, 10)
             .unwrap()
-            .compute(&frames, &Vec::<NeighborList>::new())
+            .compute(&frames, &Vec::<Neighbors>::new())
             .unwrap_err();
         assert!(matches!(err, ComputeError::EmptyInput));
     }

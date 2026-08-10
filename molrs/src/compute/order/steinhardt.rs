@@ -16,7 +16,7 @@
 //!
 //! # Conventions
 //!
-//! - Self-query [`NeighborList`]: each pair `(i, j)` with `i < j` carries the
+//! - Self-query [`Neighbors`]: each pair `(i, j)` with `i < j` carries the
 //!   vector `r_j − r_i`. The Steinhardt accumulator visits each pair once and
 //!   updates both particles, exploiting `Y_ℓm(−r̂) = (−1)^ℓ Y_ℓm(r̂)`.
 //! - `Y_ℓm` follows the Condon-Shortley + physics-normalization convention
@@ -34,7 +34,7 @@ use std::cmp::Ordering;
 use molrs::math::complex::Complex;
 use molrs::math::spherical_harmonics::ylm_all;
 use molrs::math::wigner3j::wigner_3j;
-use molrs::spatial::neighbors::NeighborList;
+use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 
@@ -102,7 +102,7 @@ impl Steinhardt {
 /// `[i, m+ℓ]` at index `i · (2ℓ+1) + (m + ℓ as i32) as usize`.
 pub fn compute_qlm<FA: FrameAccess>(
     frame: &FA,
-    nlist: &NeighborList,
+    nlist: &Neighbors,
     l: u32,
 ) -> Result<Vec<Complex>, ComputeError> {
     let (xs_p, _, _) = get_positions_ref(frame)?;
@@ -114,18 +114,15 @@ pub fn compute_qlm<FA: FrameAccess>(
 
     let i_idx = nlist.query_point_indices();
     let j_idx = nlist.point_indices();
-    let vectors = nlist.vectors();
     let n_pairs = nlist.n_pairs();
-    // `NeighborList::vectors()` is empty when built with `store_diff=false`.
-    // Indexing would OOB → WASM `unreachable`; fail with a clear error instead.
-    if n_pairs > 0 && vectors.nrows() != n_pairs {
+    // The bond directions are the whole computation: a table without the
+    // `disp` column cannot supply them, and zeros would be silent nonsense.
+    let Some(disp) = nlist.disp() else {
         return Err(ComputeError::BadShape {
-            expected: format!(
-                "NeighborList with displacement vectors for {n_pairs} pairs (store_diff=true)"
-            ),
-            got: format!("{} vector rows", vectors.nrows()),
+            expected: format!("Neighbors with the disp column for {n_pairs} pairs"),
+            got: "indices-only / lean neighbor table".to_string(),
         });
-    }
+    };
 
     let parity = if l & 1 == 0 { 1.0_f64 } else { -1.0 };
     let mut ylm_buf = vec![Complex::ZERO; m_count];
@@ -133,9 +130,9 @@ pub fn compute_qlm<FA: FrameAccess>(
     for k in 0..n_pairs {
         let i = i_idx[k] as usize;
         let j = j_idx[k] as usize;
-        let dx = vectors[[k, 0]];
-        let dy = vectors[[k, 1]];
-        let dz = vectors[[k, 2]];
+        let dx = disp[[k, 0]];
+        let dy = disp[[k, 1]];
+        let dz = disp[[k, 2]];
         let r = (dx * dx + dy * dy + dz * dz).sqrt();
         if r == 0.0 {
             continue;
@@ -172,7 +169,7 @@ pub fn compute_qlm<FA: FrameAccess>(
 
 /// Apply the Lechner-Dellago "near-shell" average over self + neighbors.
 /// In place: `q̄_ℓm(i) = (q_ℓm(i) + Σ_{j ∈ neigh(i)} q_ℓm(j)) / (N_i + 1)`.
-fn average_qlm(qlm: &[Complex], nlist: &NeighborList, n: usize, m_count: usize) -> Vec<Complex> {
+fn average_qlm(qlm: &[Complex], nlist: &Neighbors, n: usize, m_count: usize) -> Vec<Complex> {
     let mut acc = qlm.to_vec();
     let mut count = vec![1_u32; n]; // include self
 
@@ -265,7 +262,7 @@ impl Steinhardt {
     fn one_frame<FA: FrameAccess>(
         &self,
         frame: &FA,
-        nlist: &NeighborList,
+        nlist: &Neighbors,
     ) -> Result<SteinhardtResult, ComputeError> {
         let (xs_p, _, _) = get_positions_ref(frame)?;
         let n = xs_p.slice().len();
@@ -301,13 +298,13 @@ impl Steinhardt {
 }
 
 impl Compute for Steinhardt {
-    type Args<'a> = &'a Vec<NeighborList>;
+    type Args<'a> = &'a Vec<Neighbors>;
     type Output = Vec<SteinhardtResult>;
 
     fn compute<'a, FA: FrameAccess + Sync + 'a>(
         &self,
         frames: &[&'a FA],
-        nlists: &'a Vec<NeighborList>,
+        nlists: &'a Vec<Neighbors>,
     ) -> Result<Vec<SteinhardtResult>, ComputeError> {
         if frames.is_empty() {
             return Err(ComputeError::EmptyInput);
@@ -386,7 +383,7 @@ mod tests {
         frame
     }
 
-    fn build_nlist(frame: &Frame, cutoff: F) -> NeighborList {
+    fn build_nlist(frame: &Frame, cutoff: F) -> Neighbors {
         nlist_from_frame(frame, cutoff)
     }
 
@@ -595,7 +592,7 @@ mod tests {
         let frames: Vec<&Frame> = Vec::new();
         let err = Steinhardt::new(&[6])
             .unwrap()
-            .compute(&frames, &Vec::<NeighborList>::new())
+            .compute(&frames, &Vec::<Neighbors>::new())
             .unwrap_err();
         assert!(matches!(err, ComputeError::EmptyInput));
     }
@@ -605,30 +602,35 @@ mod tests {
         let frame = octahedron(20.0);
         let err = Steinhardt::new(&[6])
             .unwrap()
-            .compute(&[&frame], &Vec::<NeighborList>::new())
+            .compute(&[&frame], &Vec::<Neighbors>::new())
             .unwrap_err();
         assert!(matches!(err, ComputeError::DimensionMismatch { .. }));
     }
 
+    /// Dropping the `disp` column is a legal downgrade — the table still has
+    /// pairs and distances. Steinhardt is a bond-*direction* order parameter,
+    /// so it must refuse that table loudly instead of reading zeros.
     #[test]
     fn nlist_without_displacement_vectors_is_error() {
-        use molrs::spatial::neighbors::NeighborListStorage;
+        use molrs::spatial::neighbors::NeighborsStorage;
         let frame = octahedron(20.0);
         let nl_full = build_nlist(&frame, 1.2);
         assert!(nl_full.n_pairs() > 0);
-        // Indices-only list (frontend SpatialNeighborQuery default storeDiff=false).
-        let nl_lean = nl_full.repack(NeighborListStorage {
-            dist_sq: true,
-            diff: false,
-        });
-        assert_eq!(nl_lean.vectors().nrows(), 0);
+        // Lean list: distances kept, displacements dropped (a caller that only
+        // asked for d², e.g. an RDF-shaped query, reused for an order kernel).
+        let nl_lean = nl_full.repack(NeighborsStorage::DIST_SQ);
+        assert_eq!(nl_lean.n_pairs(), nl_full.n_pairs());
+        assert!(
+            nl_lean.disp().is_none(),
+            "downgrade drops the disp column; it must not fabricate zeros"
+        );
         let err = Steinhardt::new(&[6])
             .unwrap()
             .compute(&[&frame], &vec![nl_lean])
             .unwrap_err();
         assert!(
             matches!(err, ComputeError::BadShape { .. }),
-            "expected BadShape when vectors missing; got {err:?}"
+            "expected BadShape when disp is missing; got {err:?}"
         );
     }
 

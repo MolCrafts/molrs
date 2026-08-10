@@ -23,10 +23,10 @@
 //!   angular distances between every query orientation and every reference
 //!   orientation.
 //! - [`AngularSeparationNeighbor`]: sparse, one angular distance per
-//!   neighbor pair, driven by a `NeighborList`.
+//!   neighbor pair, driven by a `Neighbors`.
 
 use crate::compute::result::ComputeResult;
-use molrs::spatial::neighbors::NeighborList;
+use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 use ndarray::Array2;
@@ -170,7 +170,7 @@ impl AngularSeparationNeighbor {
 }
 
 pub struct AngularSeparationNeighborArgs<'a> {
-    pub nlists: &'a [NeighborList],
+    pub nlists: &'a [Neighbors],
     /// Per-frame query orientations (indexed by `query_point_indices`).
     pub query_orientations: &'a [Vec<Quat>],
     /// Per-frame point orientations (indexed by `point_indices`).
@@ -241,7 +241,7 @@ impl ComputeResult for AngularSeparationGlobalResult {}
 #[derive(Debug, Clone, Default)]
 pub struct AngularSeparationNeighborResult {
     /// One angle per neighbor pair, in radians; index matches the
-    /// underlying [`NeighborList`] pair index.
+    /// underlying [`Neighbors`] pair index.
     pub angles: Vec<F>,
 }
 

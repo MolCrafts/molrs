@@ -1,16 +1,26 @@
 //! Cell-list neighbor search — O(N) with sorted-particle layout and half-shell
 //! iteration.
 //!
-//! Particles are counting-sorted by cell index so that all particles in the
-//! same cell occupy a contiguous slice of `sorted_idx` / `sorted_pos`.
-//! This gives excellent cache locality during the pair search compared to a
-//! linked-list layout.
+//! A *cell list* divides the simulation box into a grid of cells at least one
+//! cutoff wide. A particle can then only have neighbors in its own cell and the
+//! 26 cells touching it, which turns the O(N²) all-pairs scan into an O(N) one.
+//!
+//! Particles are *counting-sorted* by cell index — a linear-time sort that
+//! works by tallying how many particles fall in each cell and then scattering
+//! them into the resulting offsets — so that all particles in the same cell
+//! occupy a contiguous slice of `sorted_idx` / `sorted_pos`. This gives
+//! excellent cache locality during the pair search compared to a linked-list
+//! layout.
 //!
 //! Only **occupied cells** are visited during pair search, so sparse systems
 //! (few particles, many cells) pay O(N), not O(n_cells).
+//!
+//! *Half-shell* iteration means each cell only looks at a forward half of its
+//! neighboring cells, so every unordered pair is discovered exactly once and
+//! the resulting table satisfies `i < j`.
 
 use crate::spatial::neighbors::{
-    CellGrid, NbListAlgo, NeighborList, NeighborListStorage, PairVisitor, QueryMode,
+    CellGrid, NbListAlgo, Neighbors, NeighborsStorage, PairVisitor, QueryMode,
 };
 use crate::spatial::simbox::SimBox;
 use crate::types::{F, FNx3View};
@@ -22,6 +32,13 @@ use ndarray::array;
 /// searches only neighboring cells for pair interactions.  Uses half-shell
 /// iteration so each pair is found exactly once.
 ///
+/// The materialized table is a self-query: `mode()` is
+/// `QueryMode::SelfQuery { num_points }` and every pair satisfies `i < j`. Which
+/// physical columns it keeps is configurable through
+/// [`with_storage`](Self::with_storage) and defaults to
+/// [`NeighborsStorage::FULL`] — squared distances in Å² and minimum-image
+/// displacements in Å.
+///
 /// With the `rayon` feature (default), the pair search is parallelized across
 /// occupied cells via `rayon::par_iter`.
 ///
@@ -32,7 +49,8 @@ use ndarray::array;
 /// ```
 #[derive(Debug, Clone)]
 pub struct LinkCell {
-    /// Interaction cutoff distance.
+    /// Interaction cutoff distance (Å). Also sets the minimum cell width, so
+    /// changing it invalidates any previously built index.
     pub cutoff: F,
     /// Cell partition of the box: dimensions + per-axis periodicity.
     grid: CellGrid,
@@ -50,13 +68,13 @@ pub struct LinkCell {
     /// Simulation box from the last build/update.
     bx: SimBox,
     /// Cached pair results.
-    result: NeighborList,
+    result: Neighbors,
     /// Reusable cursor buffer for counting-sort scatter (avoids allocation).
     cursor: Vec<u32>,
     /// Reusable cell-assignment buffer (avoids cloning sorted_idx).
     cell_of: Vec<u32>,
-    /// Which optional columns the materialized [`NeighborList`] keeps.
-    storage: NeighborListStorage,
+    /// Which optional columns the materialized [`Neighbors`] table keeps.
+    storage: NeighborsStorage,
 }
 
 impl Default for LinkCell {
@@ -67,6 +85,9 @@ impl Default for LinkCell {
 
 impl LinkCell {
     /// Create a new `LinkCell` with zero cutoff (must be set via [`cutoff`](Self::cutoff)).
+    ///
+    /// The storage policy starts at [`NeighborsStorage::FULL`] and the cached
+    /// table starts empty, tagged `SelfQuery { num_points: 0 }`.
     pub fn new() -> Self {
         Self {
             cutoff: 0.0,
@@ -77,41 +98,59 @@ impl LinkCell {
             occupied_cells: Vec::new(),
             bx: SimBox::cube(1.0, array![0.0 as F, 0.0, 0.0], [false, false, false])
                 .expect("dummy box"),
-            result: NeighborList::empty(),
+            result: Neighbors::empty(
+                QueryMode::SelfQuery { num_points: 0 },
+                NeighborsStorage::FULL,
+            ),
             cursor: Vec::new(),
             cell_of: Vec::new(),
-            storage: NeighborListStorage::FULL,
+            storage: NeighborsStorage::FULL,
         }
     }
 
-    /// Set the cutoff distance (builder pattern).
+    /// Set the cutoff distance in Å (builder pattern; consumes and returns
+    /// `self`).
+    ///
+    /// Must end up positive before any build, which asserts on it.
     pub fn cutoff(mut self, cutoff: F) -> Self {
         self.cutoff = cutoff;
         self
     }
 
     /// Configure which optional pair fields are stored when materializing
-    /// a [`NeighborList`] via [`build`](NbListAlgo::build) / `update`.
+    /// a [`Neighbors`] table via [`build`](NbListAlgo::build) / `update`.
     ///
-    /// Does not affect [`build_index`](NbListAlgo::build_index) /
-    /// [`visit_pairs`](NbListAlgo::visit_pairs) streaming (those never store pairs).
-    pub fn with_storage(mut self, storage: NeighborListStorage) -> Self {
+    /// A column left out is reported as `None` by the table's accessor, not as
+    /// zeros, and cannot be added back afterwards — pick the policy before
+    /// building. Does not affect [`build_index`](NbListAlgo::build_index) /
+    /// [`visit_pairs`](NbListAlgo::visit_pairs) streaming (those never store
+    /// pairs, and always hand the visitor both quantities). Calling this
+    /// discards any table already built.
+    pub fn with_storage(mut self, storage: NeighborsStorage) -> Self {
         self.storage = storage;
-        self.result = NeighborList::empty_with_storage(storage);
+        self.result = Neighbors::empty(QueryMode::SelfQuery { num_points: 0 }, storage);
         self
     }
 
     /// Storage policy used by the next materializing build.
     #[inline]
-    pub fn storage(&self) -> NeighborListStorage {
+    pub fn storage(&self) -> NeighborsStorage {
         self.storage
     }
 
-    /// Visit all reference-point neighbors of an arbitrary query point.
+    /// Visit the reference points in the cell neighborhood of an arbitrary
+    /// query point.
     ///
-    /// Used by [`NeighborQuery::query`](super::NeighborQuery::query) for cross-query.
-    /// Calls `callback(ref_index, dist_sq, [dx, dy, dz])` for each reference
-    /// point within range.
+    /// Used by [`NeighborQuery::query`](super::NeighborQuery::query) for
+    /// cross-query. Calls `callback(ref_index, dist_sq, [dx, dy, dz])` with
+    /// `dist_sq` in Å² and the minimum-image displacement `r_ref - r_query` in
+    /// Å.
+    ///
+    /// The callback fires for **every** point in the query point's own cell and
+    /// in its surrounding cells (up to 26 distinct ones, fewer when an axis has
+    /// only one or two cells), including points beyond the cutoff: a cell is at
+    /// least one cutoff wide, so its corners reach farther than that. Applying
+    /// the cutoff test is the caller's job.
     pub(crate) fn visit_neighbors_of<C>(
         &self,
         query_point: ndarray::ArrayView1<'_, F>,
@@ -181,13 +220,13 @@ impl NbListAlgo for LinkCell {
         #[cfg(not(feature = "rayon"))]
         self.compute_pairs_serial();
 
-        self.result.mode = QueryMode::SelfQuery;
-        self.result.num_points = n_points;
-        self.result.num_query_points = n_points;
+        self.result.mode = QueryMode::SelfQuery {
+            num_points: n_points,
+        };
     }
 
     #[inline]
-    fn query(&self) -> &NeighborList {
+    fn query(&self) -> &Neighbors {
         &self.result
     }
 
@@ -210,7 +249,14 @@ impl NbListAlgo for LinkCell {
     /// On-demand pair traversal — zero allocation.
     ///
     /// Same half-shell iteration as `compute_pairs_serial` but calls the
-    /// visitor instead of building a [`NeighborList`].
+    /// visitor instead of building a [`Neighbors`] table, so the storage policy
+    /// is irrelevant here: the visitor always receives `dist_sq` (Å²) and the
+    /// minimum-image displacement `r_j - r_i` (Å) for each pair, with `i < j`.
+    ///
+    /// Requires a prior [`build_index`](NbListAlgo::build_index) /
+    /// [`update_index`](NbListAlgo::update_index) (or [`build`](NbListAlgo::build),
+    /// which also sorts the particles). Without one there are no occupied cells
+    /// and the visitor is simply never called.
     fn visit_pairs(&self, visitor: &mut dyn PairVisitor) {
         if self.occupied_cells.is_empty() {
             return;
@@ -254,6 +300,12 @@ impl NbListAlgo for LinkCell {
                         let dr = self.bx.shortest_vector_impl(pi, pj);
                         let d2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
                         if d2 <= cutoff2 {
+                            // Half-shell output contract: the pair is emitted
+                            // with the smaller original index first. `dr` was
+                            // computed as MIC(r_sj - r_si) for the *sorted*
+                            // slots; when the roles swap, the sign must swap
+                            // too, so that the visitor still receives
+                            // r_j - r_i for the emitted (i, j).
                             if oi < oj {
                                 visitor.visit_pair(oi, oj, d2, dr);
                             } else {
@@ -271,8 +323,11 @@ impl LinkCell {
     /// SoA sibling of [`build`](NbListAlgo::build): build the self-query pair
     /// list from column-major `x`/`y`/`z` slices.
     ///
+    /// "SoA" is *structure of arrays*: instead of one `N × 3` array of points,
+    /// the coordinates arrive as three length-`N` slices (Å), one per axis.
+    ///
     /// Shares the same counting-sort + pair-search core as `build`, so the
-    /// resulting [`NeighborList`] is byte-identical to `build` on the same
+    /// resulting [`Neighbors`] table is byte-identical to `build` on the same
     /// coordinates. Lets callers holding SoA columns skip the interleave into
     /// an owned `Array2`.
     ///
@@ -293,9 +348,9 @@ impl LinkCell {
         #[cfg(not(feature = "rayon"))]
         self.compute_pairs_serial();
 
-        self.result.mode = QueryMode::SelfQuery;
-        self.result.num_points = n_points;
-        self.result.num_query_points = n_points;
+        self.result.mode = QueryMode::SelfQuery {
+            num_points: n_points,
+        };
     }
 
     /// SoA sibling of [`build_index`](NbListAlgo::build_index): build the
@@ -445,6 +500,12 @@ impl LinkCell {
                         let dr = self.bx.shortest_vector_impl(pi, pj);
                         let d2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
                         if d2 <= cutoff2 {
+                            // Half-shell output contract: the pair is emitted
+                            // with the smaller original index first. `dr` was
+                            // computed as MIC(r_sj - r_si) for the *sorted*
+                            // slots; when the roles swap, the sign must swap
+                            // too, so that the stored displacement is still
+                            // r_j - r_i for the emitted (i, j).
                             if oi < oj {
                                 self.result.push(oi, oj, d2, dr);
                             } else {
@@ -488,7 +549,7 @@ impl LinkCell {
             .occupied_cells
             .par_iter()
             .fold(
-                || NeighborList::empty_with_storage(storage),
+                || Neighbors::empty(QueryMode::SelfQuery { num_points: 0 }, storage),
                 |mut acc, &cell_u32| {
                     let cell = cell_u32 as usize;
                     let start = cell_start[cell] as usize;
@@ -527,6 +588,13 @@ impl LinkCell {
                                 let dr = bx.shortest_vector_impl(pi, pj);
                                 let d2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
                                 if d2 <= cutoff2 {
+                                    // Half-shell output contract: the pair is
+                                    // emitted with the smaller original index
+                                    // first. `dr` was computed as
+                                    // MIC(r_sj - r_si) for the *sorted* slots;
+                                    // when the roles swap, the sign must swap
+                                    // too, so that the stored displacement is
+                                    // still r_j - r_i for the emitted (i, j).
                                     if oi < oj {
                                         acc.push(oi, oj, d2, dr);
                                     } else {
@@ -541,12 +609,12 @@ impl LinkCell {
                 },
             )
             .reduce(
-                || NeighborList::empty_with_storage(storage),
+                || Neighbors::empty(QueryMode::SelfQuery { num_points: 0 }, storage),
                 |mut a, b| {
                     a.idx_i.extend_from_slice(&b.idx_i);
                     a.idx_j.extend_from_slice(&b.idx_j);
                     a.dist_sq.extend_from_slice(&b.dist_sq);
-                    a.diff_flat.extend_from_slice(&b.diff_flat);
+                    a.disp_flat.extend_from_slice(&b.disp_flat);
                     a
                 },
             );
@@ -595,6 +663,12 @@ impl LinkCell {
                         let dr = self.bx.shortest_vector_impl(pi, pj);
                         let d2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
                         if d2 <= cutoff2 {
+                            // Half-shell output contract: the pair is emitted
+                            // with the smaller original index first. `dr` was
+                            // computed as MIC(r_sj - r_si) for the *sorted*
+                            // slots; when the roles swap, the sign must swap
+                            // too, so that the stored displacement is still
+                            // r_j - r_i for the emitted (i, j).
                             if oi < oj {
                                 self.result.push(oi, oj, d2, dr);
                             } else {
@@ -711,14 +785,15 @@ mod tests {
         let mut lc_full = LinkCell::new().cutoff(0.6);
         lc_full.build(pts.view(), &bx);
         let res = lc_full.query();
-        let diff = res.vectors();
+        let d2 = res.dist_sq().expect("LinkCell materializes dist_sq");
+        let disp = res.disp().expect("LinkCell materializes disp");
         let mut full_pairs: Vec<(u32, u32, F, [F; 3])> = (0..res.n_pairs())
             .map(|k| {
                 (
                     res.query_point_indices()[k],
                     res.point_indices()[k],
-                    res.dist_sq()[k],
-                    [diff[[k, 0]], diff[[k, 1]], diff[[k, 2]]],
+                    d2[k],
+                    [disp[[k, 0]], disp[[k, 1]], disp[[k, 2]]],
                 )
             })
             .collect();
@@ -762,16 +837,18 @@ mod tests {
         bf.build(pts.view(), &bx);
         let res_bf = bf.query();
 
-        let diff_lc = res_lc.vectors();
-        let diff_bf = res_bf.vectors();
+        let d2_lc = res_lc.dist_sq().expect("LinkCell materializes dist_sq");
+        let d2_bf = res_bf.dist_sq().expect("BruteForce materializes dist_sq");
+        let disp_lc = res_lc.disp().expect("LinkCell materializes disp");
+        let disp_bf = res_bf.disp().expect("BruteForce materializes disp");
 
         let mut lc_pairs: Vec<(u32, u32, F, [F; 3])> = (0..res_lc.n_pairs())
             .map(|k| {
                 (
                     res_lc.query_point_indices()[k],
                     res_lc.point_indices()[k],
-                    res_lc.dist_sq()[k],
-                    [diff_lc[[k, 0]], diff_lc[[k, 1]], diff_lc[[k, 2]]],
+                    d2_lc[k],
+                    [disp_lc[[k, 0]], disp_lc[[k, 1]], disp_lc[[k, 2]]],
                 )
             })
             .collect();
@@ -782,8 +859,8 @@ mod tests {
                 (
                     res_bf.query_point_indices()[k],
                     res_bf.point_indices()[k],
-                    res_bf.dist_sq()[k],
-                    [diff_bf[[k, 0]], diff_bf[[k, 1]], diff_bf[[k, 2]]],
+                    d2_bf[k],
+                    [disp_bf[[k, 0]], disp_bf[[k, 1]], disp_bf[[k, 2]]],
                 )
             })
             .collect();
@@ -972,8 +1049,8 @@ mod tests {
         lc.build(pts.view(), &bx);
         let nlist = lc.query();
         assert_eq!(nlist.n_pairs(), 1);
-        let dists = nlist.distances();
-        assert!((dists[0] - 2.0).abs() < 1e-5);
+        let d2 = nlist.dist_sq().expect("LinkCell materializes dist_sq");
+        assert!((d2[0].sqrt() - 2.0).abs() < 1e-5);
     }
 
     #[test]
@@ -984,8 +1061,8 @@ mod tests {
         lc.build(pts.view(), &bx);
         let nlist = lc.query();
         assert_eq!(nlist.n_pairs(), 1);
-        let dists = nlist.distances();
-        assert!((dists[0] - 1.0).abs() < 1e-5);
+        let d2 = nlist.dist_sq().expect("LinkCell materializes dist_sq");
+        assert!((d2[0].sqrt() - 1.0).abs() < 1e-5);
     }
 
     // --- SoA path is bit-identical to the Array2 path ---
@@ -1005,10 +1082,12 @@ mod tests {
     }
 
     /// Bitwise (not approximate) equality of two neighbor lists.
-    fn assert_bitwise_equal(a: &NeighborList, b: &NeighborList) {
+    fn assert_bitwise_equal(a: &Neighbors, b: &Neighbors) {
         assert_eq!(a.n_pairs(), b.n_pairs(), "n_pairs differ");
-        let da = a.vectors();
-        let db = b.vectors();
+        let d2a = a.dist_sq().expect("LinkCell materializes dist_sq");
+        let d2b = b.dist_sq().expect("LinkCell materializes dist_sq");
+        let da = a.disp().expect("LinkCell materializes disp");
+        let db = b.disp().expect("LinkCell materializes disp");
         for k in 0..a.n_pairs() {
             assert_eq!(
                 a.query_point_indices()[k],
@@ -1017,9 +1096,9 @@ mod tests {
             );
             assert_eq!(a.point_indices()[k], b.point_indices()[k], "idx_j");
             // Bitwise f64 equality — the arithmetic is identical, so it must match.
-            assert_eq!(a.dist_sq()[k], b.dist_sq()[k], "dist_sq bitwise");
+            assert_eq!(d2a[k], d2b[k], "dist_sq bitwise");
             for d in 0..3 {
-                assert_eq!(da[[k, d]], db[[k, d]], "diff[{}] bitwise", d);
+                assert_eq!(da[[k, d]], db[[k, d]], "disp[{}] bitwise", d);
             }
         }
     }
@@ -1208,16 +1287,21 @@ mod equivalence {
         out
     }
 
-    /// Unordered pair multiset from a [`NeighborList`]. A `BTreeMap` keyed on
+    /// Unordered pair multiset from a [`Neighbors`] table. A `BTreeMap` keyed on
     /// the ordered pair would silently swallow a duplicate emission, so
     /// duplicates are counted explicitly.
-    fn collect(res: &NeighborList) -> (BTreeMap<(u32, u32), F>, usize) {
+    fn collect(res: &Neighbors) -> (BTreeMap<(u32, u32), F>, usize) {
         let mut map = BTreeMap::new();
         let n = res.n_pairs();
-        for k in 0..n {
-            let (i, j) = (res.query_point_indices()[k], res.point_indices()[k]);
+        let d2 = res.dist_sq().expect("search materializes dist_sq");
+        for ((&i, &j), &d) in res
+            .query_point_indices()
+            .iter()
+            .zip(res.point_indices())
+            .zip(d2)
+        {
             let key = if i < j { (i, j) } else { (j, i) };
-            map.insert(key, res.dist_sq()[k]);
+            map.insert(key, d);
         }
         (map, n)
     }

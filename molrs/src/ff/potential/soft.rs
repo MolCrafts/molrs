@@ -293,7 +293,8 @@ impl SoftSpec {
         };
         let qi = nl.query_point_indices();
         let qj = nl.point_indices();
-        let vecs = nl.vectors(); // minimum-image displacement (j - i)
+        // Minimum-image displacement (j - i); `query_self` always stores it.
+        let vecs = nl.disp().expect("NeighborQuery::query_self stores disp");
         let mut nb = Vec::with_capacity(nl.n_pairs());
         for k in 0..nl.n_pairs() {
             let i = qi[k] as usize;

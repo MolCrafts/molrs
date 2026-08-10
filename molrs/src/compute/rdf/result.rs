@@ -27,7 +27,9 @@ pub struct RDFResult {
     pub n_points: usize,
     /// Number of query points (cross-query mode), summed across frames.
     pub n_query_points: usize,
-    /// Query mode (self-query or cross-query).
+    /// Query mode (self-query or cross-query). Only the variant is read during
+    /// normalization: the point counts it carries describe one frame, whereas
+    /// `n_points` / `n_query_points` sum across all of them.
     pub mode: QueryMode,
     /// Total normalization volume in A^3, summed across frames.
     pub volume: F,
@@ -60,7 +62,7 @@ impl RDFResult {
         let mut gr = Array1::<F>::zeros(n_bins);
 
         match self.mode {
-            QueryMode::SelfQuery => {
+            QueryMode::SelfQuery { .. } => {
                 let n = self.n_points as F / nf;
                 if vol <= 0.0 || n <= 0.0 {
                     return gr;
@@ -76,7 +78,7 @@ impl RDFResult {
                     }
                 }
             }
-            QueryMode::CrossQuery => {
+            QueryMode::CrossQuery { .. } => {
                 let n_a = self.n_query_points as F / nf;
                 let n_b = self.n_points as F / nf;
                 if vol <= 0.0 {

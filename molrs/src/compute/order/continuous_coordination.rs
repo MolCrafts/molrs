@@ -25,7 +25,7 @@
 
 use crate::compute::result::ComputeResult;
 use molrs::math::complex::Complex;
-use molrs::spatial::neighbors::NeighborList;
+use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 
@@ -66,7 +66,7 @@ impl ContinuousCoordination {
     fn one_frame<FA: FrameAccess>(
         &self,
         frame: &FA,
-        nlist: &NeighborList,
+        nlist: &Neighbors,
     ) -> Result<ContinuousCoordinationResult, ComputeError> {
         let (xs_p, _, _) = get_positions_ref(frame)?;
         let n = xs_p.slice().len();
@@ -119,13 +119,13 @@ impl ContinuousCoordination {
 }
 
 impl Compute for ContinuousCoordination {
-    type Args<'a> = &'a Vec<NeighborList>;
+    type Args<'a> = &'a Vec<Neighbors>;
     type Output = Vec<ContinuousCoordinationResult>;
 
     fn compute<'a, FA: FrameAccess + Sync + 'a>(
         &self,
         frames: &[&'a FA],
-        nlists: &'a Vec<NeighborList>,
+        nlists: &'a Vec<Neighbors>,
     ) -> Result<Vec<ContinuousCoordinationResult>, ComputeError> {
         if frames.is_empty() {
             return Err(ComputeError::EmptyInput);
@@ -193,7 +193,7 @@ mod tests {
         frame
     }
 
-    fn build_nlist(frame: &Frame, cutoff: F) -> NeighborList {
+    fn build_nlist(frame: &Frame, cutoff: F) -> Neighbors {
         nlist_from_frame(frame, cutoff)
     }
 
