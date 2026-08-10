@@ -1,17 +1,17 @@
 //! Neighbor-list regression benches: cell-list / brute-force build + update,
-//! plus the SoA hot paths — `LinkCell::build_soa` (vs the interleaved engine
-//! build) and the cross-query `NeighborQuery::from_columns` + `query_columns`
-//! (vs `new` + `query`). Single small regression size.
+//! plus the column hot paths — `NeighborList::build_columns` (vs the
+//! interleaved `build`) and the cross-query `NeighborQuery::from_columns` +
+//! `query_columns` (vs `new` + `query`). Single small regression size.
 //!
 //! `NeighborList::build` indexes only, so every entry that used to time the
 //! materializing `build` pairs it with `neighbors(FULL)` — index plus pair
 //! enumeration, the same work the old series measured. `traversal/{build,
-//! visit_pairs}` keeps the two halves separate, as it always did.
+//! visit_pairs}` keeps the two halves separate, as it always did, and is now
+//! also the serial-vs-parallel contrast: `neighbors(FULL)` folds over occupied
+//! cells with rayon while `for_each_pair` stays on one thread.
 
 use criterion::{BenchmarkId, Criterion, criterion_group};
-use molrs::spatial::neighbors::{
-    CellGrid, LinkCell, NeighborList, NeighborQuery, NeighborsStorage,
-};
+use molrs::spatial::neighbors::{CellGrid, NeighborList, NeighborQuery, NeighborsStorage};
 use molrs::spatial::simbox::SimBox;
 use molrs::types::F;
 use ndarray::{Array2, array};
@@ -112,10 +112,16 @@ fn bench_update(c: &mut Criterion) {
     group.finish();
 }
 
-/// Interleaved build vs the SoA `build_soa` self-query hot path (the two are
-/// byte-identical; this guards the SoA path against a regression).
-fn bench_build_soa(c: &mut Criterion) {
-    let mut group = c.benchmark_group("neighbors/build_soa");
+/// Interleaved `build` vs the column `build_columns` self-query hot path.
+///
+/// Both go through the engine and end in the same parallel materialization, so
+/// what this series isolates is the input shape alone: `build` interleaves
+/// nothing (it is handed an `N × 3` array) while `build_columns` sorts three
+/// separate slices into cells natively. A regression that reintroduced an
+/// interleaving copy on the column path would show up here as the column entry
+/// losing ground to the array one.
+fn bench_build_columns(c: &mut Criterion) {
+    let mut group = c.benchmark_group("neighbors/build_columns");
     helpers::configure(&mut group);
 
     for &n in SIZES {
@@ -131,11 +137,11 @@ fn bench_build_soa(c: &mut Criterion) {
             });
         });
 
-        group.bench_with_input(BenchmarkId::new("soa_build_soa", n), &n, |b, _| {
+        group.bench_with_input(BenchmarkId::new("soa_build_columns", n), &n, |b, _| {
             b.iter(|| {
-                let mut lc = LinkCell::new().cutoff(CUTOFF);
-                lc.build_soa(&xs, &ys, &zs, &bx);
-                std::hint::black_box(&lc);
+                let mut nl = NeighborList::new(CUTOFF);
+                nl.build_columns(&xs, &ys, &zs, &bx);
+                std::hint::black_box(nl.neighbors(NeighborsStorage::FULL));
             });
         });
     }
@@ -265,7 +271,7 @@ criterion_group!(
     benches,
     bench_build,
     bench_update,
-    bench_build_soa,
+    bench_build_columns,
     bench_neighbor_query,
     bench_cellgrid,
     bench_traversal,

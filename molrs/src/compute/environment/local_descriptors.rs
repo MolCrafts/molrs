@@ -23,6 +23,7 @@ use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame_access::FrameAccess;
 
 use crate::compute::error::ComputeError;
+use crate::compute::require_disp;
 use crate::compute::traits::Compute;
 
 /// `LocalDescriptors` analyzer (Sph-mode).
@@ -53,12 +54,8 @@ impl LocalDescriptors {
         let n_sphs = self.n_sphs();
         let n_pairs = nlist.n_pairs();
         let mut out = vec![Complex::ZERO; n_pairs * n_sphs];
-        let Some(disp) = nlist.disp() else {
-            return Err(ComputeError::BadShape {
-                expected: format!("Neighbors with the disp column for {n_pairs} pairs"),
-                got: "indices-only / lean neighbor table".to_string(),
-            });
-        };
+        // The descriptors are spherical harmonics of the bond direction.
+        let disp = require_disp(nlist)?;
 
         let mut ylm_buf = vec![Complex::ZERO; (2 * self.l_max + 1) as usize];
 

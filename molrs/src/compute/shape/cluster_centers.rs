@@ -158,9 +158,8 @@ impl DescriptorRow for ClusterCentersResult {
 mod tests {
     use super::*;
     use crate::compute::cluster::Cluster;
-    use crate::compute::util::get_positions;
+    use crate::compute::test_support::nlist_from_frame;
     use molrs::Frame;
-    use molrs::spatial::neighbors::LinkCell;
     use molrs::spatial::simbox::SimBox;
     use molrs::store::block::Block;
     use ndarray::{Array1 as A1, array};
@@ -181,20 +180,8 @@ mod tests {
     }
 
     fn clusters_via_nlist(frame: &Frame, cutoff: F) -> ClusterResult {
-        let (xs, ys, zs): (&[F], &[F], &[F]) = get_positions(frame).unwrap();
-        let n = xs.len();
-        let mut pos = ndarray::Array2::<F>::zeros((n, 3));
-        for i in 0..n {
-            pos[[i, 0]] = xs[i];
-            pos[[i, 1]] = ys[i];
-            pos[[i, 2]] = zs[i];
-        }
-        let simbox = frame.simbox.as_ref().unwrap();
-        let mut lc = LinkCell::new().cutoff(cutoff);
-        lc.build(pos.view(), simbox);
-        let out = Cluster::new(1)
-            .compute(&[frame], &vec![lc.query().clone()])
-            .unwrap();
+        let nlist = nlist_from_frame(frame, cutoff);
+        let out = Cluster::new(1).compute(&[frame], &vec![nlist]).unwrap();
         out.into_iter().next().unwrap()
     }
 

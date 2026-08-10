@@ -19,6 +19,7 @@ use molrs::types::F;
 use ndarray::Array1;
 
 use crate::compute::error::ComputeError;
+use crate::compute::require_dist_sq;
 use crate::compute::traits::Compute;
 
 /// Correlation-function calculator. Stateless container of bin parameters.
@@ -88,12 +89,9 @@ impl CorrelationFunction {
         let i_idx = nlist.query_point_indices();
         let j_idx = nlist.point_indices();
         let n_pairs = nlist.n_pairs();
-        let Some(dist_sq) = nlist.dist_sq() else {
-            return Err(ComputeError::BadShape {
-                expected: format!("Neighbors with the dist_sq column for {n_pairs} pairs"),
-                got: "indices-only / lean neighbor table".to_string(),
-            });
-        };
+        // Every pair is binned by its separation; a table without `dist_sq`
+        // cannot say which bin.
+        let dist_sq = require_dist_sq(nlist)?;
         let symmetric = matches!(
             nlist.mode(),
             molrs::spatial::neighbors::QueryMode::SelfQuery { .. }

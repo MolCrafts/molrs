@@ -10,12 +10,32 @@
 //!   ψ_k(i) = (1/N_i) Σ_{j ∈ neigh(i)} e^{i k θ_{ij}}
 //! ```
 //!
-//! where `θ_{ij}` is the in-plane angle (atan2(dy, dx)) of the bond
-//! `r_j − r_i`. Isolated particles get `|ψ_k| = 0`.
+//! where `N_i` is the number of neighbors of `i` and `θ_{ij}` is the in-plane
+//! angle in radians (`atan2(dy, dx)`) of the bond `r_j − r_i`. `ψ_k` is a
+//! dimensionless complex number with `|ψ_k| ≤ 1`: the magnitude is 1 when the
+//! bonds sit at perfect `2π/k` spacing and 0 when their `k`-fold phases cancel
+//! (four bonds at 90° give `|ψ_6| = 0`), and the argument is the local lattice
+//! orientation. Isolated particles get `|ψ_k| = 0`.
 //!
 //! The z-component of the bond vector is ignored — callers must arrange
 //! that the configuration is genuinely planar (typically `Lz = 1`,
 //! `pbc.z = false`).
+//!
+//! A self-query table is half-shell — it holds each bond once, as `(i, j)` with
+//! `i < j` — so the accumulator visits a pair once and updates *both*
+//! particles: from `j`'s side the same bond points the other way, `θ + π`, and
+//! `e^{i k (θ + π)} = (−1)^k e^{i k θ}`.
+//!
+//! # Required neighbor columns
+//!
+//! Only the bond *direction* enters `ψ_k`, so the neighbor table must carry the
+//! minimum-image displacement column `disp` (Å) — materialize it with
+//! [`NeighborsStorage::DISP`](molrs::spatial::neighbors::NeighborsStorage::DISP)
+//! or [`FULL`](molrs::spatial::neighbors::NeighborsStorage::FULL). A `DIST_SQ`
+//! or `INDICES_ONLY` table stores no directions and reads back `None` rather
+//! than zeros, so [`Hexatic::compute`](Compute::compute) answers
+//! [`ComputeError::BadShape`] naming the missing column instead of indexing an
+//! empty view.
 
 use crate::compute::result::ComputeResult;
 use molrs::math::complex::Complex;
@@ -24,17 +44,29 @@ use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 
 use crate::compute::error::ComputeError;
+use crate::compute::require_disp;
 use crate::compute::traits::Compute;
 use crate::compute::util::get_positions_ref;
 
 /// Hexatic order parameter calculator.
+///
+/// Stateless parameter container: just the symmetry order `k`.
+/// [`compute`](Compute::compute) takes `&Vec<Neighbors>` — one neighbor table
+/// per frame, index-aligned with `frames`, each carrying the `disp` column (Å);
+/// a table without it is [`ComputeError::BadShape`], never a silent zero.
 #[derive(Debug, Clone, Copy)]
 pub struct Hexatic {
     k: u32,
 }
 
 impl Hexatic {
-    /// k-fold symmetry of `ψ_k` (6 = hexatic).
+    /// Calculator for `k`-fold symmetry (6 = hexatic, 4 = square/tetratic,
+    /// 3 = triangular). Dimensionless — `k` counts lattice directions.
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::OutOfRange`] when `k == 0`: `ψ_0` would be the mean of
+    /// `e^{i·0} = 1` over the bonds, which measures nothing.
     pub fn new(k: u32) -> Result<Self, ComputeError> {
         if k == 0 {
             return Err(ComputeError::OutOfRange {
@@ -45,6 +77,7 @@ impl Hexatic {
         Ok(Self { k })
     }
 
+    /// The configured `k`-fold symmetry order.
     pub fn k(&self) -> u32 {
         self.k
     }
@@ -65,12 +98,7 @@ impl Hexatic {
         let n_pairs = nlist.n_pairs();
         // The bond directions are the whole computation: a table without the
         // `disp` column cannot supply them, and zeros would be silent nonsense.
-        let Some(disp) = nlist.disp() else {
-            return Err(ComputeError::BadShape {
-                expected: format!("Neighbors with the disp column for {n_pairs} pairs"),
-                got: "indices-only / lean neighbor table".to_string(),
-            });
-        };
+        let disp = require_disp(nlist)?;
 
         // For the j-side of each self-query bond, the bond direction is
         // reversed: θ + π. `exp(i k (θ + π)) = (-1)^k exp(i k θ)`.
@@ -144,9 +172,11 @@ impl Compute for Hexatic {
 /// Per-frame hexatic order parameter result.
 #[derive(Debug, Clone, Default)]
 pub struct HexaticResult {
-    /// Rotational symmetry order `k`.
+    /// Rotational symmetry order `k` the parameter was computed for.
     pub k: u32,
-    /// Per-particle complex `ψ_k(i)`.
+    /// Per-particle complex `ψ_k(i)`, one entry per particle in frame order.
+    /// Dimensionless, with `|ψ_k| ≤ 1`; its argument is the local lattice
+    /// orientation (radians, modulo `2π/k`).
     pub psi: Vec<Complex>,
 }
 
@@ -285,6 +315,54 @@ mod tests {
             .compute(&frames, &Vec::<Neighbors>::new())
             .unwrap_err();
         assert!(matches!(err, ComputeError::EmptyInput));
+    }
+
+    /// ac-002 (spec neighborlist-03-compute): `ψ_k` is built entirely from bond
+    /// *directions*, so an **indices-only** table — one that never stored a
+    /// physical column at all — must be refused with `BadShape` instead of
+    /// indexing an empty `disp` view (out-of-bounds panic / WASM `unreachable`).
+    ///
+    /// The pairs are the regular hexagon's own bonds, hard-coded rather than
+    /// searched: centre 0 bonded to its six ring neighbours 1..=6 at unit
+    /// distance and angles `2πk/6`. All satisfy `i < j`, so
+    /// `SelfQuery { num_points: 7 }` is a legal label.
+    #[test]
+    fn hexatic_indices_only_neighbors_is_bad_shape() {
+        use molrs::spatial::neighbors::{NeighborPair, NeighborsStorage, QueryMode};
+
+        let frame = hex_environment(20.0);
+        let pairs: Vec<NeighborPair> = (0..6u32)
+            .map(|k| {
+                let theta = 2.0 * std::f64::consts::PI * k as F / 6.0;
+                NeighborPair {
+                    i: 0,
+                    j: k + 1,
+                    dist_sq: 1.0,
+                    disp: [theta.cos(), theta.sin(), 0.0],
+                }
+            })
+            .collect();
+        let nl = Neighbors::from_pairs(
+            pairs,
+            NeighborsStorage::INDICES_ONLY,
+            QueryMode::SelfQuery { num_points: 7 },
+        );
+        assert_eq!(
+            nl.n_pairs(),
+            6,
+            "the guard must be tested on a non-empty table"
+        );
+        assert!(nl.disp().is_none());
+        assert!(nl.dist_sq().is_none());
+
+        let err = Hexatic::new(6)
+            .unwrap()
+            .compute(&[&frame], &vec![nl])
+            .unwrap_err();
+        assert!(
+            matches!(err, ComputeError::BadShape { .. }),
+            "indices-only Neighbors must be BadShape, not a panic; got {err:?}"
+        );
     }
 
     #[test]

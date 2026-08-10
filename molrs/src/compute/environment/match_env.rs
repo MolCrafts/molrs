@@ -49,6 +49,7 @@ use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 
 use crate::compute::error::ComputeError;
+use crate::compute::require_disp;
 use crate::compute::traits::Compute;
 use crate::compute::util::get_positions_ref;
 
@@ -110,13 +111,15 @@ impl MatchEnv {
 /// order a per-particle scan would produce — so downstream fingerprints,
 /// magnitude sorting, and registration RMSD are unchanged. Pair indices
 /// outside `0..n` are ignored, matching the old per-particle scan.
-fn build_all_bond_vectors(n: usize, nlist: &Neighbors) -> Vec<Vec<[F; 3]>> {
+///
+/// A table without the `disp` column carries no bond vectors at all, so it is
+/// rejected as [`ComputeError::BadShape`] — the caller's neighbor list is an
+/// input, and a bad input is an error rather than a panic.
+fn build_all_bond_vectors(n: usize, nlist: &Neighbors) -> Result<Vec<Vec<[F; 3]>>, ComputeError> {
     let mut bonds: Vec<Vec<[F; 3]>> = vec![Vec::new(); n];
     let i_idx = nlist.query_point_indices();
     let j_idx = nlist.point_indices();
-    let disp = nlist
-        .disp()
-        .expect("bond-vector fingerprints need the disp column");
+    let disp = require_disp(nlist)?;
     let symmetric = matches!(
         nlist.mode(),
         molrs::spatial::neighbors::QueryMode::SelfQuery { .. }
@@ -136,7 +139,7 @@ fn build_all_bond_vectors(n: usize, nlist: &Neighbors) -> Vec<Vec<[F; 3]>> {
             }
         }
     }
-    bonds
+    Ok(bonds)
 }
 
 /// Magnitude-only fingerprint derived from bond vectors (for the
@@ -304,7 +307,7 @@ impl MatchEnv {
         let (xs_p, _, _) = get_positions_ref(frame)?;
         let n = xs_p.slice().len();
 
-        let bonds = build_all_bond_vectors(n, nlist);
+        let bonds = build_all_bond_vectors(n, nlist)?;
 
         // Group particles by neighbor count first — only same-length
         // bond sets can match.

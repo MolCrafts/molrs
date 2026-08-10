@@ -12,15 +12,16 @@ mod accumulator;
 mod result;
 
 pub use accumulator::RDFAccumulator;
-pub use result::RDFResult;
+pub use result::{RDFResult, RdfMode};
 
-use molrs::spatial::neighbors::{Backend, LinkCell, Neighbors, QueryMode};
+use molrs::spatial::neighbors::{Backend, LinkCell, NeighborList, Neighbors};
 use molrs::spatial::simbox::SimBox;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::{F, FNx3View};
 use ndarray::Array1;
 
 use crate::compute::error::ComputeError;
+use crate::compute::require_dist_sq;
 use crate::compute::traits::Compute;
 use crate::compute::util::get_positions_ref;
 
@@ -139,18 +140,20 @@ impl RDF {
         }
     }
 
-    fn accumulate_into(&self, nlist: &Neighbors, n_r: &mut Array1<F>) {
-        // Indices-only lists cannot be binned — caller should stream instead.
-        let Some(dist_sq) = nlist.dist_sq() else {
-            debug_assert!(
-                nlist.n_pairs() == 0,
-                "RDF::accumulate_into needs dist_sq storage or a streaming path"
-            );
-            return;
-        };
-        for &d2 in dist_sq {
+    /// Bin every pair distance of one table into the running histogram.
+    ///
+    /// A table without the `dist_sq` column carries no distances to bin, so it
+    /// is rejected as [`ComputeError::BadShape`] — the same answer every other
+    /// distance-consuming kernel gives. It used to return quietly (guarded only
+    /// by a `debug_assert`), which meant a release build handed back an
+    /// all-zero g(r) for an indices-only list instead of saying no. Callers with
+    /// no materialized distances want [`compute_self`](Self::compute_self) /
+    /// [`compute_frame`](Self::compute_frame), which stream them.
+    fn accumulate_into(&self, nlist: &Neighbors, n_r: &mut Array1<F>) -> Result<(), ComputeError> {
+        for &d2 in require_dist_sq(nlist)? {
             self.accumulate_d2(d2, n_r);
         }
+        Ok(())
     }
 
     /// Self-query RDF via cell-list **index + visit** (no `Neighbors` heap).
@@ -174,13 +177,13 @@ impl RDF {
         if n < 2 {
             return Err(ComputeError::EmptyInput);
         }
-        let mut lc = LinkCell::new().cutoff(self.r_max);
-        lc.build_index(points, bx);
+        let mut nl = NeighborList::new(self.r_max);
+        nl.build(points, bx);
         let mut n_r = Array1::zeros(self.n_bins);
-        lc.visit_pairs(&mut |_, _, d2, _| {
-            self.accumulate_d2(d2, &mut n_r);
+        nl.for_each_pair(|pair| {
+            self.accumulate_d2(pair.dist_sq, &mut n_r);
         });
-        self.finalize_histogram(n_r, n, n, QueryMode::SelfQuery { num_points: n }, vol)
+        self.finalize_histogram(n_r, n, n, RdfMode::SelfQuery, vol)
     }
 
     /// Cross-query RDF (group A vs group B) via cell-list index + per-query
@@ -207,6 +210,9 @@ impl RDF {
         }
         let mut n_r = Array1::zeros(self.n_bins);
         let cutoff_sq = self.r_max * self.r_max;
+        // Stays on the cell-list backend rather than the engine: this asks for
+        // the neighbors of one arbitrary query point at a time, and the engine
+        // has no per-point streaming — its pair stream is the whole self list.
         let mut lc = LinkCell::new().cutoff(self.r_max);
         lc.build_index(ref_points, bx);
         for qi in 0..n_query {
@@ -221,16 +227,7 @@ impl RDF {
                 }
             });
         }
-        self.finalize_histogram(
-            n_r,
-            n_ref,
-            n_query,
-            QueryMode::CrossQuery {
-                num_query_points: n_query,
-                num_points: n_ref,
-            },
-            vol,
-        )
+        self.finalize_histogram(n_r, n_ref, n_query, RdfMode::CrossQuery, vol)
     }
 
     /// Self-query RDF from a [`FrameAccess`] (reads `atoms.x/y/z` + simbox).
@@ -254,13 +251,13 @@ impl RDF {
         if n < 2 {
             return Err(ComputeError::EmptyInput);
         }
-        let mut lc = LinkCell::new().cutoff(self.r_max);
-        lc.build_index_soa(xs, ys, zs, bx);
+        let mut nl = NeighborList::new(self.r_max);
+        nl.build_columns(xs, ys, zs, bx);
         let mut n_r = Array1::zeros(self.n_bins);
-        lc.visit_pairs(&mut |_, _, d2, _| {
-            self.accumulate_d2(d2, &mut n_r);
+        nl.for_each_pair(|pair| {
+            self.accumulate_d2(pair.dist_sq, &mut n_r);
         });
-        self.finalize_histogram(n_r, n, n, QueryMode::SelfQuery { num_points: n }, vol)
+        self.finalize_histogram(n_r, n, n, RdfMode::SelfQuery, vol)
     }
 
     fn finalize_histogram(
@@ -268,7 +265,7 @@ impl RDF {
         n_r: Array1<F>,
         n_points: usize,
         n_query_points: usize,
-        mode: QueryMode,
+        mode: RdfMode,
         volume: F,
     ) -> Result<RDFResult, ComputeError> {
         let mut result = RDFResult {
@@ -555,6 +552,125 @@ mod tests {
 
         for (i, &c) in result.n_r.iter().enumerate() {
             assert_eq!(c, 0.0, "bin {i} should be empty, got {c}");
+        }
+    }
+
+    /// ac-004 (spec neighborlist-03-compute): the self-query normalization
+    /// multiplies the histogram by **2** because a self list is *half-shell* —
+    /// each unordered pair is counted once, where the ideal-gas reference
+    /// counts both orderings. A cross-query list is directed and already
+    /// carries both orderings, so it must **not** be multiplied.
+    ///
+    /// The two paths are made to describe the same physical system, so the
+    /// factor 2 is exactly what makes their `g(r)` agree.
+    ///
+    /// Fixture (hard-coded, no search, no RNG): two particles 1.5 Å apart in a
+    /// cubic box `L = 10 Å` (`V = 1000 Å³`), 4 bins over `[0, 4) Å` so
+    /// `Δr = 1 Å` and the pair lands in bin 1, whose shell spans `[1, 2) Å`.
+    ///
+    /// ```text
+    /// V_shell = (4/3)π(2³ − 1³) = 28π/3   = 29.321531433504735 Å³
+    ///
+    /// self  (half list, n_r = 1):
+    ///   ρ = N/V = 2/1000
+    ///   ideal = ρ · V_shell · N = 4·(28π/3)/1000 = 0.11728612573401893
+    ///   g = 2 · 1 / ideal = 6000/(112π)          = 17.052315331274503
+    ///
+    /// cross (directed list, n_r = 2):
+    ///   ideal = N_a · N_b · V_shell / V = 4·(28π/3)/1000 (same)
+    ///   g = 2 / ideal                             = 17.052315331274503
+    /// ```
+    ///
+    /// Drop the factor 2 from the self branch and the self value halves to
+    /// 8.526157665637252 — both asserts below fail.
+    #[test]
+    fn rdf_self_half_list_factor_two_vs_cross() {
+        use molrs::spatial::neighbors::{NeighborPair, NeighborsStorage, QueryMode};
+
+        /// g(r) in bin 1 for the two-particle fixture, factor 2 included.
+        const G_BIN1: F = 17.052315331274503;
+
+        let mut block = Block::new();
+        block
+            .insert("x", A1::from_vec(vec![0.0 as F, 1.5]).into_dyn())
+            .unwrap();
+        block
+            .insert("y", A1::from_vec(vec![0.0 as F, 0.0]).into_dyn())
+            .unwrap();
+        block
+            .insert("z", A1::from_vec(vec![0.0 as F, 0.0]).into_dyn())
+            .unwrap();
+        let mut frame = Frame::new();
+        frame.insert("atoms", block);
+        frame.simbox =
+            Some(SimBox::cube(10.0, array![0.0 as F, 0.0, 0.0], [true, true, true]).unwrap());
+
+        let d_sq: F = 1.5 * 1.5;
+        // Half-shell self list: the unordered pair {0, 1} exactly once.
+        let self_list = Neighbors::from_pairs(
+            [NeighborPair {
+                i: 0,
+                j: 1,
+                dist_sq: d_sq,
+                disp: [1.5, 0.0, 0.0],
+            }],
+            NeighborsStorage::DIST_SQ,
+            QueryMode::SelfQuery { num_points: 2 },
+        );
+        // The same two particles as a directed cross list of the set against
+        // itself with the two zero-distance self-pairs removed: both orderings
+        // of {0, 1} are present.
+        let cross_list = Neighbors::from_pairs(
+            [
+                NeighborPair {
+                    i: 0,
+                    j: 1,
+                    dist_sq: d_sq,
+                    disp: [1.5, 0.0, 0.0],
+                },
+                NeighborPair {
+                    i: 1,
+                    j: 0,
+                    dist_sq: d_sq,
+                    disp: [-1.5, 0.0, 0.0],
+                },
+            ],
+            NeighborsStorage::DIST_SQ,
+            QueryMode::CrossQuery {
+                num_query_points: 2,
+                num_points: 2,
+            },
+        );
+
+        let rdf = RDF::new(4, 4.0, 0.0).unwrap();
+        let self_result = rdf.compute(&[&frame], &vec![self_list]).unwrap();
+        let cross_result = rdf.compute(&[&frame], &vec![cross_list]).unwrap();
+
+        // Raw counts: the half list holds one pair, the directed list two.
+        assert_eq!(self_result.n_r.to_vec(), vec![0.0, 1.0, 0.0, 0.0]);
+        assert_eq!(cross_result.n_r.to_vec(), vec![0.0, 2.0, 0.0, 0.0]);
+
+        assert!(
+            (self_result.rdf[1] - G_BIN1).abs() < 1e-10,
+            "self-query g(r) in bin 1 = {} (expected {G_BIN1}); \
+             a missing half-list factor 2 halves it",
+            self_result.rdf[1]
+        );
+        assert!(
+            (cross_result.rdf[1] - G_BIN1).abs() < 1e-10,
+            "cross-query g(r) in bin 1 = {} (expected {G_BIN1}); \
+             a spurious factor 2 doubles it",
+            cross_result.rdf[1]
+        );
+        assert!(
+            (self_result.rdf[1] - cross_result.rdf[1]).abs() < 1e-10,
+            "half list × 2 must reproduce the directed list: {} vs {}",
+            self_result.rdf[1],
+            cross_result.rdf[1]
+        );
+        for bin in [0usize, 2, 3] {
+            assert_eq!(self_result.rdf[bin], 0.0, "self bin {bin} must be empty");
+            assert_eq!(cross_result.rdf[bin], 0.0, "cross bin {bin} must be empty");
         }
     }
 

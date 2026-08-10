@@ -20,6 +20,7 @@ use molrs::types::F;
 use ndarray::Array2;
 
 use crate::compute::error::ComputeError;
+use crate::compute::require_disp;
 use crate::compute::traits::Compute;
 
 /// `LocalBondProjection` analyzer.
@@ -123,12 +124,8 @@ impl Compute for LocalBondProjection {
         for (k, nl) in args.nlists.iter().enumerate() {
             let i_idx = nl.query_point_indices();
             let n_pairs = nl.n_pairs();
-            let Some(disp) = nl.disp() else {
-                return Err(ComputeError::BadShape {
-                    expected: format!("Neighbors with the disp column for {n_pairs} pairs"),
-                    got: "indices-only / lean neighbor table".to_string(),
-                });
-            };
+            // Bond directions are what gets projected — no `disp`, no answer.
+            let disp = require_disp(nl)?;
             let mut p = Array2::<F>::zeros((n_pairs, n_proj));
             for pk in 0..n_pairs {
                 let dx = disp[[pk, 0]];
