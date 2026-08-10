@@ -44,9 +44,9 @@ use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 
 use crate::compute::error::ComputeError;
-use crate::compute::require_disp;
 use crate::compute::traits::Compute;
 use crate::compute::util::get_positions_ref;
+use crate::compute::{require_disp, require_self_query};
 
 /// Hexatic order parameter calculator.
 ///
@@ -54,6 +54,12 @@ use crate::compute::util::get_positions_ref;
 /// [`compute`](Compute::compute) takes `&Vec<Neighbors>` — one neighbor table
 /// per frame, index-aligned with `frames`, each carrying the `disp` column (Å);
 /// a table without it is [`ComputeError::BadShape`], never a silent zero.
+///
+/// Each table must also be a half-shell
+/// [`SelfQuery`](molrs::spatial::neighbors::QueryMode::SelfQuery): every row is
+/// visited once and credited to *both* of its particles, which double-counts on
+/// a [`CrossQuery`](molrs::spatial::neighbors::QueryMode::CrossQuery) table, so
+/// that table is [`ComputeError::BadShape`] too.
 #[derive(Debug, Clone, Copy)]
 pub struct Hexatic {
     k: u32,
@@ -99,6 +105,15 @@ impl Hexatic {
         // The bond directions are the whole computation: a table without the
         // `disp` column cannot supply them, and zeros would be silent nonsense.
         let disp = require_disp(nlist)?;
+        // The loop below reads each row once and updates both `i` and `j`, using
+        // the parity of `e^{i k (θ + π)}` for the `j` side. That credits `j` as
+        // if it indexed the same point set as `i`, which only a self-query
+        // guarantees: on a cross table `j` indexes the *reference* set, so the
+        // bond is attributed to whichever frame particle happens to share that
+        // index — or panics outright once `j >= n`. And when the two sets are
+        // the same coordinates, every bond arrives in both orderings, so each
+        // particle's `count` is `2·N_i`. Refuse the table instead.
+        require_self_query(nlist)?;
 
         // For the j-side of each self-query bond, the bond direction is
         // reversed: θ + π. `exp(i k (θ + π)) = (-1)^k exp(i k θ)`.
@@ -362,6 +377,70 @@ mod tests {
         assert!(
             matches!(err, ComputeError::BadShape { .. }),
             "indices-only Neighbors must be BadShape, not a panic; got {err:?}"
+        );
+    }
+
+    /// ac-002 (spec neighborlist-03-compute): the accumulator visits each row
+    /// once and credits the bond to *both* endpoints, using the parity of
+    /// `e^{i k (θ + π)}` for the `j` side. That is only exact on a half-shell
+    /// self-query; a **cross-query** table carries the reversed row as well, so
+    /// every bond would be counted twice. The answer is then wrong rather than
+    /// missing, which is why the mode is refused outright instead of computed.
+    ///
+    /// The table is otherwise impeccable — `FULL` storage, so `disp` and
+    /// `dist_sq` both read back `Some` — to pin that it is the *mode* being
+    /// refused and not a missing column.
+    ///
+    /// The pairs are the regular hexagon's own bonds, hard-coded rather than
+    /// searched: centre 0 bonded to its six ring neighbours 1..=6 at unit
+    /// distance and angles `2πk/6`. Both orderings of every bond are present,
+    /// as a cross-query over two copies of the same point set reports them;
+    /// `disp` stays `r_j − r_i`, so the reversed row carries `−disp`.
+    #[test]
+    fn hexatic_cross_query_table_is_bad_shape() {
+        use molrs::spatial::neighbors::{NeighborPair, NeighborsStorage, QueryMode};
+
+        let frame = hex_environment(20.0);
+        let mut pairs: Vec<NeighborPair> = Vec::with_capacity(12);
+        for k in 0..6u32 {
+            let theta = 2.0 * std::f64::consts::PI * k as F / 6.0;
+            let disp = [theta.cos(), theta.sin(), 0.0];
+            let j = k + 1;
+            pairs.push(NeighborPair {
+                i: 0,
+                j,
+                dist_sq: 1.0,
+                disp,
+            });
+            pairs.push(NeighborPair {
+                i: j,
+                j: 0,
+                dist_sq: 1.0,
+                disp: [-disp[0], -disp[1], -disp[2]],
+            });
+        }
+        let nl = Neighbors::from_pairs(
+            pairs,
+            NeighborsStorage::FULL,
+            QueryMode::CrossQuery {
+                num_query_points: 7,
+                num_points: 7,
+            },
+        );
+        assert_eq!(nl.n_pairs(), 12, "the guard must see a non-empty table");
+        assert!(
+            nl.disp().is_some() && nl.dist_sq().is_some(),
+            "no column is missing here — the query mode must be what is refused"
+        );
+
+        // Deliberately not `expect_err`: the Ok payload is a ψ_k vector per
+        // frame, and dumping it buries the one thing the failure says.
+        let Err(err) = Hexatic::new(6).unwrap().compute(&[&frame], &vec![nl]) else {
+            panic!("Hexatic::compute must refuse a cross-query table outright, but returned Ok");
+        };
+        assert!(
+            matches!(err, ComputeError::BadShape { .. }),
+            "cross-query Neighbors must be BadShape; got {err:?}"
         );
     }
 

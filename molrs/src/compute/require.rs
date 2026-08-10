@@ -1,6 +1,8 @@
-//! Column requirements for [`Neighbors`] tables — the one place a compute
-//! kernel turns "this table never stored that column" into a
-//! [`ComputeError::BadShape`].
+//! Input requirements for [`Neighbors`] tables — the one place a compute
+//! kernel turns "this table cannot answer the question I am asking" into a
+//! [`ComputeError::BadShape`]. Two kinds of requirement live here: a *column*
+//! the table never stored, and a *query mode* whose pair ordering the kernel
+//! cannot consume.
 //!
 //! A [`Neighbors`] table is the list of particle pairs within a cutoff
 //! distance, one row per pair. Besides the two particle indices it may carry
@@ -20,11 +22,21 @@
 //! two facts — which column was missing, and how many pairs went unanswered
 //! because of it.
 //!
-//! Both helpers are free functions rather than methods on [`Neighbors`]: the
-//! owning type lives in `core`, one layer below this one, and must not learn
+//! The mode requirement is the other half. A table also records *how* it was
+//! searched, in its [`QueryMode`]: a **self-query** is half-shell, holding each
+//! unordered pair exactly once as `(i, j)` with `i < j`, while a **cross-query**
+//! is directed over two point sets and holds a row per (query point, reference
+//! point). A kernel that visits each row once and updates *both* of its
+//! endpoints — exploiting that the same bond seen from `j` is just the reversed
+//! vector — is counting on the half-shell guarantee, and quietly double-counts
+//! without it. That is a wrong number rather than a missing one, so it too is
+//! refused rather than computed.
+//!
+//! All three helpers are free functions rather than methods on [`Neighbors`]:
+//! the owning type lives in `core`, one layer below this one, and must not learn
 //! about [`ComputeError`] to answer a question `core` never asks.
 
-use molrs::spatial::neighbors::Neighbors;
+use molrs::spatial::neighbors::{Neighbors, QueryMode};
 use molrs::types::{F, FNx3View};
 
 use super::error::ComputeError;
@@ -70,6 +82,47 @@ pub(crate) fn require_dist_sq(nlist: &Neighbors) -> Result<&[F], ComputeError> {
     nlist
         .dist_sq()
         .ok_or_else(|| missing_column("dist_sq", nlist.n_pairs()))
+}
+
+/// Assert the table is a half-shell [`QueryMode::SelfQuery`], for kernels that
+/// update *both* endpoints of every row they visit.
+///
+/// Such a kernel reads a row once and credits the bond to `i` and to `j`,
+/// reversing the direction for the `j` side. That is exact on a self-query,
+/// where each unordered pair is present exactly once, and wrong on a
+/// cross-query, where the reversed row is present too: every neighbor is then
+/// counted twice, and any per-particle count derived from the same traversal
+/// (`N_i`, a solid-bond tally, a Lechner-Dellago `1 + N_i` denominator) is off
+/// by that factor. Nothing about the rows themselves reveals this, so the mode
+/// is the only thing that can be checked.
+///
+/// Kernels that *adapt* to the mode instead of refusing it — [`BondOrder`] and
+/// [`LocalDensity`] add the symmetric contribution only when the table is
+/// half-shell — match on [`Neighbors::mode`] directly and do not call this.
+///
+/// [`BondOrder`]: crate::compute::BondOrder
+/// [`LocalDensity`]: crate::compute::LocalDensity
+///
+/// # Errors
+///
+/// [`ComputeError::BadShape`] when the table is a
+/// [`QueryMode::CrossQuery`]. The `expected` text names the mode the kernel
+/// needs and the pair count it was reading, and `got` says why a cross table is
+/// not a substitute.
+pub(crate) fn require_self_query(nlist: &Neighbors) -> Result<(), ComputeError> {
+    match nlist.mode() {
+        QueryMode::SelfQuery { .. } => Ok(()),
+        QueryMode::CrossQuery { .. } => Err(ComputeError::BadShape {
+            expected: format!(
+                "SelfQuery half-shell Neighbors for {} pairs — this kernel updates both \
+                 endpoints of every row it visits, which needs each unordered pair exactly once",
+                nlist.n_pairs()
+            ),
+            got: "CrossQuery table: directed over two point sets, so the reversed row is \
+                  present too and every neighbor would be counted twice"
+                .to_string(),
+        }),
+    }
 }
 
 /// The shared error text: `expected` names the column *and* the pair count it

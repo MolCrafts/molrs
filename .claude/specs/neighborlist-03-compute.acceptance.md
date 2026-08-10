@@ -25,14 +25,20 @@ criteria:
     type: scientific
     pass_when: |
       既有 steinhardt 单测（octahedron q6、parity 两粒子、PBC）在 FULL Neighbors 下仍通过。
-    status: pending
+    status: verified
+    verified_by: scientist
+    last_checked: 2026-08-10
+    evidence: "20/20 green under FULL half-shell tables; out-of-tree probe reproduces analytic octahedral q4=sqrt(7/12), q6=1/(2sqrt2) to ~1e-15. Scientist bite-proof found the parity anchors vacuous → fixed in-chain: mixed-role assertion (flip splits by 0.33), q4/q6 goldens pinned @1e-12, and compute_qlm/Hexatic now reject CrossQuery via require_self_query (RED-first, hexatic anchor bite-proven)"
   - id: ac-004
     summary: RDF Self 仍含 half-list 因子 2
     type: scientific
     pass_when: |
       RDF SelfQuery 归一化路径仍对直方图使用 factor 2（判据为
       matches!(mode, SelfQuery{..})）；CrossQuery 不使用。既有 rdf 单测通过。
-    status: pending
+    status: verified
+    verified_by: scientist
+    last_checked: 2026-08-10
+    evidence: "13/13 rdf green; RdfMode variant match (SelfQuery: 2.0*n_r/ideal, CrossQuery: n_r/ideal, ordered-pair reference); From<QueryMode> exhaustive 2-arm no-wildcard; anchor golden 6000/(112pi) arithmetically re-verified, bites both directions (mutation-tested)"
   - id: ac-005
     summary: full,filesystem feature lib 测试通过
     type: runtime
