@@ -41,7 +41,7 @@ def make_frame(offset: float) -> molrs.Frame:
 
     frame = molrs.Frame()
     frame["atoms"] = atoms
-    frame.simbox = molrs.Box.cube(20.0)
+    frame.box = molrs.Box.cube(20.0)
     return frame
 
 frames = [make_frame(0.0), make_frame(0.1), make_frame(0.2)]
@@ -83,10 +83,11 @@ atoms.insert("z", points[:, 2])
 
 frame = molrs.Frame()
 frame["atoms"] = atoms
-frame.simbox = molrs.Box.cube(20.0)
+frame.box = molrs.Box.cube(20.0)
 
-nq = molrs.NeighborQuery(frame.simbox, points, cutoff=1.0)
-nlist = nq.query_self()
+nl = molrs.NeighborList(1.0)
+nl.build(points, frame.box)
+neigh = nl.neighbors()
 
 from molrs.compute.cluster import Cluster, ClusterCenters
 clusters = Cluster(min_cluster_size=1).compute(frame, nlist)

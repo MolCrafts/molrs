@@ -92,11 +92,11 @@ keeps signatures visible to static tools and the docs build.
 
 ::: molrs.Region
 
-::: molrs.LinkedCell
+::: molrs.NeighborList
+
+::: molrs.Neighbors
 
 ::: molrs.NeighborQuery
-
-::: molrs.NeighborList
 
 ## 3D Conformer Generation
 

@@ -1,6 +1,6 @@
 ---
 title: neighborlist-04-binders — Python/WASM NeighborList + Neighbors 表面
-status: approved
+status: code-complete
 created: 2026-08-10
 slug: neighborlist-04-binders
 chain: neighborlist
@@ -69,14 +69,15 @@ neigh = nl.neighbors(dist_sq=True, disp=True)
 
 ## Tasks
 
-1. **Expose** WASM `NeighborList` 总包 + `Neighbors`
-2. **Expose** Python 同名表面
-3. **Default** binder materialize FULL
-4. **Migrate** 文档与 py tests
-5. **Remove or alias** 旧易混导出（document breaking）
-6. **Preserve or document** cross-query 出路（见 Design）
-7. **Smoke** WASM 或 Python：build → neighbors(DISP) → Steinhardt 不 trap
-8. **Note** freud 命名对照（Query vs List）于 guide
+1. **Expose** WASM `NeighborList` 总包 + `Neighbors` ✅（+ TS `NeighborsStorageOptions` 使 `neighbors()` 可选参；缺列 → undefined 非零）
+2. **Expose** Python 同名表面 ✅（linkedcell.rs → neighborlist.rs；engine + table + NeighborQuery；update-before-build → ValueError 含 "build"，panic 不穿 FFI）
+3. **Default** binder materialize FULL ✅（两端）
+4. **Migrate** 文档与 py tests ✅（test_neighborlist.py 37 测试；guide/quickstart/reference/README；顺带修 3 处文档 `frame.simbox`→`frame.box` 假属性）
+5. **Remove or alias** 旧易混导出 ✅（python `LinkedCell`/`distances`/`pairs()` 删除；wasm `LinkedCell`/`BruteForce` 留作 molvis 兼容别名、文档标注、默认 FULL）
+6. **Preserve or document** cross-query 出路 ✅（python NeighborQuery；wasm LinkedCell.query；i>j pair 有测）
+7. **Smoke** WASM 或 Python：build → neighbors(DISP) → Steinhardt 不 trap ✅（py Steinhardt 冒烟入测；wasm-pack test 28 + 30 项 node 冒烟）
+8. **Note** freud 命名对照（Query vs List）于 guide ✅（guide "Name mapping from freud" 节 + 词汇差异说明；ac-004 四项陈述存在性核验通过）
+9. Hygiene：simplify 已跑 ✅（应用：collect_nlists→collect_neighbors + 6 处 `nl` 表绑定→`neighbors`、两处 guide `nlist`→`neigh` —— 本链要消灭的词汇残留；manual：check_points 参数化 → refactor 候选；binder 两 crate 无 fmt/clippy 门 + zensical docstring_style 失配 → /mol:note 路由）
 
 ## Testing
 

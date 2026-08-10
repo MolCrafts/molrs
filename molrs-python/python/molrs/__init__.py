@@ -32,9 +32,9 @@ from ._lib import (
     UnitsError,
     # SimBox + neighbors
     Box,
-    LinkedCell,
-    NeighborQuery,
     NeighborList,
+    Neighbors,
+    NeighborQuery,
     # Block + Frame
     Block,
     MetaValue,
@@ -124,9 +124,9 @@ __all__ = [
     "BlockDtypeError",
     "UnitsError",
     "Box",
-    "LinkedCell",
-    "NeighborQuery",
     "NeighborList",
+    "Neighbors",
+    "NeighborQuery",
     "Block",
     "MetaValue",
     "Frame",
