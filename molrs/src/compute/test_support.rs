@@ -8,13 +8,13 @@
 //! `build_soa_matches_build_bitwise`), so every rewired test produces identical
 //! results.
 
-use molrs::spatial::neighbors::{LinkCell, NbListAlgo, NeighborList};
+use molrs::spatial::neighbors::{LinkCell, NbListAlgo, Neighbors};
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 
 use super::util::get_positions_ref;
 
-/// Build a self-query [`NeighborList`] for `frame` at `cutoff` via the native
+/// Build a self-query [`Neighbors`] table for `frame` at `cutoff` via the native
 /// SoA path, using the frame's own simulation box.
 ///
 /// Reads the `atoms` block's `x`/`y`/`z` columns with [`get_positions_ref`] (a
@@ -24,7 +24,7 @@ use super::util::get_positions_ref;
 ///
 /// # Panics
 /// Panics if the frame lacks `x`/`y`/`z` columns or has no simulation box.
-pub(crate) fn nlist_from_frame<FA: FrameAccess>(frame: &FA, cutoff: F) -> NeighborList {
+pub(crate) fn nlist_from_frame<FA: FrameAccess>(frame: &FA, cutoff: F) -> Neighbors {
     let (xs, ys, zs) = get_positions_ref(frame).expect("frame must expose x/y/z columns");
     let simbox = frame
         .simbox_ref()

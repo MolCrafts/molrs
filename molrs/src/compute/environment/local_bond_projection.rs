@@ -14,7 +14,7 @@
 //! that flavour is exposed via the `with_query_orientations` builder.
 
 use crate::compute::result::ComputeResult;
-use molrs::spatial::neighbors::NeighborList;
+use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 use ndarray::Array2;
@@ -45,7 +45,7 @@ impl LocalBondProjection {
 
 /// `Args` for [`LocalBondProjection`].
 pub struct LocalBondProjectionArgs<'a> {
-    pub nlists: &'a [NeighborList],
+    pub nlists: &'a [Neighbors],
     /// Reference directions (unit vectors recommended). Shared across all
     /// frames and all query points.
     pub proj_vectors: &'a [[F; 3]],
@@ -121,14 +121,19 @@ impl Compute for LocalBondProjection {
 
         let mut out = Vec::with_capacity(frames.len());
         for (k, nl) in args.nlists.iter().enumerate() {
-            let vectors = nl.vectors();
             let i_idx = nl.query_point_indices();
             let n_pairs = nl.n_pairs();
+            let Some(disp) = nl.disp() else {
+                return Err(ComputeError::BadShape {
+                    expected: format!("Neighbors with the disp column for {n_pairs} pairs"),
+                    got: "indices-only / lean neighbor table".to_string(),
+                });
+            };
             let mut p = Array2::<F>::zeros((n_pairs, n_proj));
             for pk in 0..n_pairs {
-                let dx = vectors[[pk, 0]];
-                let dy = vectors[[pk, 1]];
-                let dz = vectors[[pk, 2]];
+                let dx = disp[[pk, 0]];
+                let dy = disp[[pk, 1]];
+                let dz = disp[[pk, 2]];
                 let r = (dx * dx + dy * dy + dz * dz).sqrt();
                 if r == 0.0 {
                     continue;
@@ -190,7 +195,7 @@ mod tests {
         frame
     }
 
-    fn build_nlist(frame: &Frame, cutoff: F) -> NeighborList {
+    fn build_nlist(frame: &Frame, cutoff: F) -> Neighbors {
         nlist_from_frame(frame, cutoff)
     }
 

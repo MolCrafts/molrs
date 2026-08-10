@@ -12,7 +12,7 @@
 //! itself implemented on top of this accumulator — one source of truth for
 //! the accumulation math.
 
-use molrs::spatial::neighbors::{NeighborList, QueryMode};
+use molrs::spatial::neighbors::{Neighbors, QueryMode};
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 use ndarray::Array1;
@@ -69,10 +69,14 @@ impl RDFAccumulator {
     pub fn accumulate<FA: FrameAccess>(
         &mut self,
         frame: &FA,
-        nlist: &NeighborList,
+        nlist: &Neighbors,
     ) -> Result<(), ComputeError> {
+        // Only the query *kind* has to match frame 0; the point counts the mode
+        // carries legitimately vary from frame to frame.
         match self.mode {
-            Some(mode) if nlist.mode() != mode => {
+            Some(mode)
+                if std::mem::discriminant(&nlist.mode()) != std::mem::discriminant(&mode) =>
+            {
                 return Err(ComputeError::BadShape {
                     expected: format!("{mode:?} (frame 0)"),
                     got: format!("{:?} (frame {})", nlist.mode(), self.n_frames),

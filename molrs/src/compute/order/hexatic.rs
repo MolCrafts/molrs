@@ -19,7 +19,7 @@
 
 use crate::compute::result::ComputeResult;
 use molrs::math::complex::Complex;
-use molrs::spatial::neighbors::NeighborList;
+use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 
@@ -52,7 +52,7 @@ impl Hexatic {
     fn one_frame<FA: FrameAccess>(
         &self,
         frame: &FA,
-        nlist: &NeighborList,
+        nlist: &Neighbors,
     ) -> Result<HexaticResult, ComputeError> {
         let (xs_p, _, _) = get_positions_ref(frame)?;
         let n = xs_p.slice().len();
@@ -62,17 +62,15 @@ impl Hexatic {
 
         let i_idx = nlist.query_point_indices();
         let j_idx = nlist.point_indices();
-        let vectors = nlist.vectors();
         let n_pairs = nlist.n_pairs();
-        // Empty when the list was built with `store_diff=false` — OOB → panic.
-        if n_pairs > 0 && vectors.nrows() != n_pairs {
+        // The bond directions are the whole computation: a table without the
+        // `disp` column cannot supply them, and zeros would be silent nonsense.
+        let Some(disp) = nlist.disp() else {
             return Err(ComputeError::BadShape {
-                expected: format!(
-                    "NeighborList with displacement vectors for {n_pairs} pairs (store_diff=true)"
-                ),
-                got: format!("{} vector rows", vectors.nrows()),
+                expected: format!("Neighbors with the disp column for {n_pairs} pairs"),
+                got: "indices-only / lean neighbor table".to_string(),
             });
-        }
+        };
 
         // For the j-side of each self-query bond, the bond direction is
         // reversed: θ + π. `exp(i k (θ + π)) = (-1)^k exp(i k θ)`.
@@ -81,8 +79,8 @@ impl Hexatic {
         for kp in 0..n_pairs {
             let i = i_idx[kp] as usize;
             let j = j_idx[kp] as usize;
-            let dx = vectors[[kp, 0]];
-            let dy = vectors[[kp, 1]];
+            let dx = disp[[kp, 0]];
+            let dy = disp[[kp, 1]];
             if dx == 0.0 && dy == 0.0 {
                 continue;
             }
@@ -104,13 +102,13 @@ impl Hexatic {
 }
 
 impl Compute for Hexatic {
-    type Args<'a> = &'a Vec<NeighborList>;
+    type Args<'a> = &'a Vec<Neighbors>;
     type Output = Vec<HexaticResult>;
 
     fn compute<'a, FA: FrameAccess + Sync + 'a>(
         &self,
         frames: &[&'a FA],
-        nlists: &'a Vec<NeighborList>,
+        nlists: &'a Vec<Neighbors>,
     ) -> Result<Vec<HexaticResult>, ComputeError> {
         if frames.is_empty() {
             return Err(ComputeError::EmptyInput);
@@ -184,7 +182,7 @@ mod tests {
         frame
     }
 
-    fn build_nlist(frame: &Frame, cutoff: F) -> NeighborList {
+    fn build_nlist(frame: &Frame, cutoff: F) -> Neighbors {
         nlist_from_frame(frame, cutoff)
     }
 
@@ -284,7 +282,7 @@ mod tests {
         let frames: Vec<&Frame> = Vec::new();
         let err = Hexatic::new(6)
             .unwrap()
-            .compute(&frames, &Vec::<NeighborList>::new())
+            .compute(&frames, &Vec::<Neighbors>::new())
             .unwrap_err();
         assert!(matches!(err, ComputeError::EmptyInput));
     }

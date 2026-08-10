@@ -14,7 +14,7 @@ mod result;
 pub use accumulator::RDFAccumulator;
 pub use result::RDFResult;
 
-use molrs::spatial::neighbors::{LinkCell, NbListAlgo, NeighborList, QueryMode};
+use molrs::spatial::neighbors::{LinkCell, NbListAlgo, Neighbors, QueryMode};
 use molrs::spatial::simbox::SimBox;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::{F, FNx3View};
@@ -139,22 +139,21 @@ impl RDF {
         }
     }
 
-    fn accumulate_into(&self, nlist: &NeighborList, n_r: &mut Array1<F>) {
-        // Prefer the stored dist_sq column when present (materialized list).
-        if nlist.storage().dist_sq {
-            for &d2 in nlist.dist_sq() {
-                self.accumulate_d2(d2, n_r);
-            }
-            return;
-        }
+    fn accumulate_into(&self, nlist: &Neighbors, n_r: &mut Array1<F>) {
         // Indices-only lists cannot be binned — caller should stream instead.
-        debug_assert!(
-            nlist.n_pairs() == 0 || nlist.storage().dist_sq,
-            "RDF::accumulate_into needs dist_sq storage or a streaming path"
-        );
+        let Some(dist_sq) = nlist.dist_sq() else {
+            debug_assert!(
+                nlist.n_pairs() == 0,
+                "RDF::accumulate_into needs dist_sq storage or a streaming path"
+            );
+            return;
+        };
+        for &d2 in dist_sq {
+            self.accumulate_d2(d2, n_r);
+        }
     }
 
-    /// Self-query RDF via cell-list **index + visit** (no `NeighborList` heap).
+    /// Self-query RDF via cell-list **index + visit** (no `Neighbors` heap).
     ///
     /// This is the production path for large \(N\): memory is \(O(N)\) for the
     /// cell index plus \(O(n_{\mathrm{bins}})\) for the histogram, not
@@ -181,7 +180,7 @@ impl RDF {
         lc.visit_pairs(&mut |_, _, d2, _| {
             self.accumulate_d2(d2, &mut n_r);
         });
-        self.finalize_histogram(n_r, n, n, QueryMode::SelfQuery, vol)
+        self.finalize_histogram(n_r, n, n, QueryMode::SelfQuery { num_points: n }, vol)
     }
 
     /// Cross-query RDF (group A vs group B) via cell-list index + per-query
@@ -222,7 +221,16 @@ impl RDF {
                 }
             });
         }
-        self.finalize_histogram(n_r, n_ref, n_query, QueryMode::CrossQuery, vol)
+        self.finalize_histogram(
+            n_r,
+            n_ref,
+            n_query,
+            QueryMode::CrossQuery {
+                num_query_points: n_query,
+                num_points: n_ref,
+            },
+            vol,
+        )
     }
 
     /// Self-query RDF from a [`FrameAccess`] (reads `atoms.x/y/z` + simbox).
@@ -252,7 +260,7 @@ impl RDF {
         lc.visit_pairs(&mut |_, _, d2, _| {
             self.accumulate_d2(d2, &mut n_r);
         });
-        self.finalize_histogram(n_r, n, n, QueryMode::SelfQuery, vol)
+        self.finalize_histogram(n_r, n, n, QueryMode::SelfQuery { num_points: n }, vol)
     }
 
     fn finalize_histogram(
@@ -284,13 +292,13 @@ impl RDF {
 }
 
 impl Compute for RDF {
-    type Args<'a> = &'a Vec<NeighborList>;
+    type Args<'a> = &'a Vec<Neighbors>;
     type Output = RDFResult;
 
     fn compute<'a, FA: FrameAccess + Sync + 'a>(
         &self,
         frames: &[&'a FA],
-        neighbors: &'a Vec<NeighborList>,
+        neighbors: &'a Vec<Neighbors>,
     ) -> Result<RDFResult, ComputeError> {
         if frames.is_empty() {
             return Err(ComputeError::EmptyInput);
@@ -352,7 +360,7 @@ mod tests {
         frame
     }
 
-    fn build_nlist(frame: &Frame, r_max: F) -> NeighborList {
+    fn build_nlist(frame: &Frame, r_max: F) -> Neighbors {
         nlist_from_frame(frame, r_max)
     }
 
@@ -404,8 +412,7 @@ mod tests {
 
         // Multi-frame batch.
         let frames_owned: Vec<Frame> = (100..110u64).map(|s| random_frame(n, box_len, s)).collect();
-        let nlists: Vec<NeighborList> =
-            frames_owned.iter().map(|f| build_nlist(f, r_max)).collect();
+        let nlists: Vec<Neighbors> = frames_owned.iter().map(|f| build_nlist(f, r_max)).collect();
         let frame_refs: Vec<&Frame> = frames_owned.iter().collect();
         let multi = rdf.compute(&frame_refs, &nlists).unwrap();
         let var_multi: F = multi
@@ -435,8 +442,7 @@ mod tests {
         let frames_owned: Vec<Frame> = (0..8u64)
             .map(|s| random_frame(n, 10.0 + 0.05 * s as F, 200 + s))
             .collect();
-        let nlists: Vec<NeighborList> =
-            frames_owned.iter().map(|f| build_nlist(f, r_max)).collect();
+        let nlists: Vec<Neighbors> = frames_owned.iter().map(|f| build_nlist(f, r_max)).collect();
 
         let rdf = RDF::new(n_bins, r_max, 0.0).unwrap();
 
@@ -471,7 +477,7 @@ mod tests {
     fn empty_frames_is_error() {
         let rdf = RDF::new(10, 4.0, 0.0).unwrap();
         let frames: Vec<&Frame> = Vec::new();
-        let nlists: Vec<NeighborList> = Vec::new();
+        let nlists: Vec<Neighbors> = Vec::new();
         let err = rdf.compute(&frames, &nlists).unwrap_err();
         assert!(matches!(err, ComputeError::EmptyInput));
     }
@@ -481,7 +487,7 @@ mod tests {
         let frame = random_frame(50, 10.0, 1);
         let rdf = RDF::new(10, 4.0, 0.0).unwrap();
         let err = rdf
-            .compute(&[&frame], &Vec::<NeighborList>::new())
+            .compute(&[&frame], &Vec::<Neighbors>::new())
             .unwrap_err();
         assert!(matches!(err, ComputeError::DimensionMismatch { .. }));
     }

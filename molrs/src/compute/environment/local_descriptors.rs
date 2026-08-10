@@ -19,7 +19,7 @@
 use crate::compute::result::ComputeResult;
 use molrs::math::complex::Complex;
 use molrs::math::spherical_harmonics::ylm_all;
-use molrs::spatial::neighbors::NeighborList;
+use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame_access::FrameAccess;
 
 use crate::compute::error::ComputeError;
@@ -48,19 +48,24 @@ impl LocalDescriptors {
     fn one_frame<FA: FrameAccess>(
         &self,
         _frame: &FA,
-        nlist: &NeighborList,
+        nlist: &Neighbors,
     ) -> Result<LocalDescriptorsResult, ComputeError> {
         let n_sphs = self.n_sphs();
         let n_pairs = nlist.n_pairs();
         let mut out = vec![Complex::ZERO; n_pairs * n_sphs];
-        let vectors = nlist.vectors();
+        let Some(disp) = nlist.disp() else {
+            return Err(ComputeError::BadShape {
+                expected: format!("Neighbors with the disp column for {n_pairs} pairs"),
+                got: "indices-only / lean neighbor table".to_string(),
+            });
+        };
 
         let mut ylm_buf = vec![Complex::ZERO; (2 * self.l_max + 1) as usize];
 
         for k in 0..n_pairs {
-            let dx = vectors[[k, 0]];
-            let dy = vectors[[k, 1]];
-            let dz = vectors[[k, 2]];
+            let dx = disp[[k, 0]];
+            let dy = disp[[k, 1]];
+            let dz = disp[[k, 2]];
             let r = (dx * dx + dy * dy + dz * dz).sqrt();
             if r == 0.0 {
                 continue;
@@ -86,13 +91,13 @@ impl LocalDescriptors {
 }
 
 impl Compute for LocalDescriptors {
-    type Args<'a> = &'a Vec<NeighborList>;
+    type Args<'a> = &'a Vec<Neighbors>;
     type Output = Vec<LocalDescriptorsResult>;
 
     fn compute<'a, FA: FrameAccess + Sync + 'a>(
         &self,
         frames: &[&'a FA],
-        nlists: &'a Vec<NeighborList>,
+        nlists: &'a Vec<Neighbors>,
     ) -> Result<Vec<LocalDescriptorsResult>, ComputeError> {
         if frames.is_empty() {
             return Err(ComputeError::EmptyInput);
@@ -166,7 +171,7 @@ mod tests {
         frame
     }
 
-    fn build_nlist(frame: &Frame, cutoff: F) -> NeighborList {
+    fn build_nlist(frame: &Frame, cutoff: F) -> Neighbors {
         nlist_from_frame(frame, cutoff)
     }
 
@@ -217,7 +222,7 @@ mod tests {
     fn empty_frames_error() {
         let frames: Vec<&Frame> = Vec::new();
         let err = LocalDescriptors::new(4)
-            .compute(&frames, &Vec::<NeighborList>::new())
+            .compute(&frames, &Vec::<Neighbors>::new())
             .unwrap_err();
         assert!(matches!(err, ComputeError::EmptyInput));
     }

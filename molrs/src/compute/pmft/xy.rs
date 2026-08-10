@@ -22,7 +22,7 @@
 //! works in the lab frame.
 
 use crate::compute::result::ComputeResult;
-use molrs::spatial::neighbors::NeighborList;
+use molrs::spatial::neighbors::Neighbors;
 use molrs::spatial::simbox::BoxKind;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
@@ -79,7 +79,7 @@ impl PMFTXY {
     fn one_frame<FA: FrameAccess>(
         &self,
         frame: &FA,
-        nlist: &NeighborList,
+        nlist: &Neighbors,
         orientations: Option<&[F]>,
     ) -> Result<PMFTXYResult, ComputeError> {
         let simbox = frame.simbox_ref().ok_or(ComputeError::MissingSimBox)?;
@@ -98,13 +98,18 @@ impl PMFTXY {
         let bin_area = dx * dy;
 
         let mut counts = Array2::<u64>::zeros((self.n_x, self.n_y));
-        let vectors = nlist.vectors();
         let i_idx = nlist.query_point_indices();
         let j_idx = nlist.point_indices();
         let n_pairs = nlist.n_pairs();
+        let Some(disp) = nlist.disp() else {
+            return Err(ComputeError::BadShape {
+                expected: format!("Neighbors with the disp column for {n_pairs} pairs"),
+                got: "indices-only / lean neighbor table".to_string(),
+            });
+        };
         let symmetric = matches!(
             nlist.mode(),
-            molrs::spatial::neighbors::QueryMode::SelfQuery
+            molrs::spatial::neighbors::QueryMode::SelfQuery { .. }
         );
 
         let push = |dxp: F, dyp: F, counts: &mut Array2<u64>| {
@@ -117,8 +122,8 @@ impl PMFTXY {
         };
 
         for k in 0..n_pairs {
-            let vx = vectors[[k, 0]];
-            let vy = vectors[[k, 1]];
+            let vx = disp[[k, 0]];
+            let vy = disp[[k, 1]];
             // i-side accumulation: rotate bond into i's local frame if
             // orientations are supplied.
             let (xl_i, yl_i) = match orientations {
@@ -203,12 +208,12 @@ impl PMFTXY {
 /// is a per-frame `Vec<F>` of 2-D angles (radians) used to rotate every
 /// bond into the query particle's local frame before binning.
 pub struct PMFTXYArgs<'a> {
-    pub nlists: &'a [NeighborList],
+    pub nlists: &'a [Neighbors],
     pub query_orientations: Option<&'a [Vec<F>]>,
 }
 
-impl<'a> From<&'a Vec<NeighborList>> for PMFTXYArgs<'a> {
-    fn from(v: &'a Vec<NeighborList>) -> Self {
+impl<'a> From<&'a Vec<Neighbors>> for PMFTXYArgs<'a> {
+    fn from(v: &'a Vec<Neighbors>) -> Self {
         Self {
             nlists: v.as_slice(),
             query_orientations: None,
@@ -313,7 +318,7 @@ mod tests {
         frame
     }
 
-    fn build_nlist(frame: &Frame, cutoff: F) -> NeighborList {
+    fn build_nlist(frame: &Frame, cutoff: F) -> Neighbors {
         nlist_from_frame(frame, cutoff)
     }
 

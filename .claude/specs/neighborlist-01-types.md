@@ -1,6 +1,6 @@
 ---
 title: neighborlist-01-types — Neighbors storage + from_pairs + optional columns
-status: approved
+status: code-complete
 created: 2026-08-10
 slug: neighborlist-01-types
 chain: neighborlist
@@ -134,16 +134,18 @@ RDF ×2 归一化信任 mode，错标会静默双倍 g(r)，debug/test 构建必
 
 ## Tasks
 
-1. **Add** `NeighborPair` + `NeighborsStorage`（`disp`）+ `QueryMode` payload（**不引入** NeighborsMeta）
-2. **Rename** result type `NeighborList` → `Neighbors`；`NeighborListStorage` → `NeighborsStorage`；`diff` → `disp`
-3. **Implement** `Neighbors::from_pairs(pairs, storage, mode)`（SelfQuery 逐 pair `debug_assert!(i<j)`）
-4. **Change** accessors：`dist_sq() -> Option`、`disp() -> Option`；删除 `vectors()`、`distances()`
-5. **Restrict** `repack` 为仅降列；升级请求 panic（明确消息）
-6. **Harden** `filter_rad`/`filter_sann` 缺列 → panic（明确消息）
-7. **Update** LinkCell/BruteForce/filter/query 内部类型到 `Neighbors`
-8. **Fix** in-crate compile（compute/ff）与 `molrs-cxxapi` 最小 rename
-9. **Test** from_pairs 各列旗标；半壳 `i<j`；缺列 Option；d²–disp 一致；repack 升级 panic
-10. **Docs** rustdoc：FULL=columns；half-shell default；`disp` 非单位向量；freud name mapping note
+1. **Add** `NeighborPair` + `NeighborsStorage`（`disp`）+ `QueryMode` payload（**不引入** NeighborsMeta）✅
+2. **Rename** result type `NeighborList` → `Neighbors`；`NeighborListStorage` → `NeighborsStorage`；`diff` → `disp` ✅
+3. **Implement** `Neighbors::from_pairs(pairs, storage, mode)`（SelfQuery 逐 pair `debug_assert!(i<j)`）✅
+4. **Change** accessors：`dist_sq() -> Option`、`disp() -> Option`；删除 `vectors()`、`distances()` ✅（for_each_pair 采用 Option 回调签名）
+5. **Restrict** `repack` 为仅降列；升级请求 panic（明确消息）✅
+6. **Harden** `filter_rad`/`filter_sann` 缺列 → panic（明确消息）✅（含 2 个 should_panic 契约测试）
+7. **Update** LinkCell/BruteForce/filter/query 内部类型到 `Neighbors` ✅（empty(mode,storage) 收编 4 个内部构造器）
+8. **Fix** in-crate compile（compute/ff）与 `molrs-cxxapi` 最小 rename ✅
+9. **Test** from_pairs 各列旗标；半壳 `i<j`；缺列 Option；d²–disp 一致；repack 升级 panic ✅（RED 已写入 mod.rs `from_pairs_tests`，30 编译错误全部限于新模块）
+10. **Docs** rustdoc：FULL=columns；half-shell default；`disp` 非单位向量；freud name mapping note ✅（documenter Mode A：16 项修复，含 aabb 27-shift 纠错、MIC 术语先定义、Å/Å² 单位、freud 对照表；cargo doc neighbors 零告警）
+11. Hygiene：simplify 已跑 ✅（10 文件局部 `vectors`→`disp` 命名对齐；11× BadShape 复制块 → 03 的 require_* 提取；binder 破损 → 04 链内；6 个先存 rustdoc 链接错误（transport/ff-writers/keys/smiles，与本面无关）→ documenter 债务记录）
+12. **铁律发现（docs 审计揪出，就地修）**：`filter_sann` 判据 `Σr_j ≥ m·max` 数学上仅全等距可满足 → 真实数据 no-op；既有测试全用等距 fixture 故未暴露。修为 van Meel JCP 136, 234107 (2012)：最小 m≥3 使 R(m)=Σr_i/(m−2) < r_{m+1}。RED 回归（0.9/1.0/1.1/3.5 fixture，m=3）→ GREEN。`filter_rad` 固定锥 vs Higham–Henchman 距离加权的保真问题 **不是明确 bug** → 路由 mol:scientist 后续（docstring 已诚实降级表述）
 
 ## Testing
 

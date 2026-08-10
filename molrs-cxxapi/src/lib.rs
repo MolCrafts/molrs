@@ -410,7 +410,7 @@ fn frame_and_self_nlist(
     positions: &[f64],
     box9: &[f64],
     r_max: f64,
-) -> Option<(Frame, molrs::spatial::neighbors::NeighborList)> {
+) -> Option<(Frame, molrs::spatial::neighbors::Neighbors)> {
     use molrs::spatial::neighbors::{LinkCell, NbListAlgo};
     if positions.is_empty() || !positions.len().is_multiple_of(3) || box9.len() != 9 {
         return None;

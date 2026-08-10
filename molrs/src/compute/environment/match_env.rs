@@ -44,7 +44,7 @@ use crate::compute::result::ComputeResult;
 use std::collections::HashMap;
 
 use molrs::math::diagonalize::eigh_largest_sym_4x4;
-use molrs::spatial::neighbors::NeighborList;
+use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 
@@ -110,18 +110,20 @@ impl MatchEnv {
 /// order a per-particle scan would produce — so downstream fingerprints,
 /// magnitude sorting, and registration RMSD are unchanged. Pair indices
 /// outside `0..n` are ignored, matching the old per-particle scan.
-fn build_all_bond_vectors(n: usize, nlist: &NeighborList) -> Vec<Vec<[F; 3]>> {
+fn build_all_bond_vectors(n: usize, nlist: &Neighbors) -> Vec<Vec<[F; 3]>> {
     let mut bonds: Vec<Vec<[F; 3]>> = vec![Vec::new(); n];
     let i_idx = nlist.query_point_indices();
     let j_idx = nlist.point_indices();
-    let vectors = nlist.vectors();
+    let disp = nlist
+        .disp()
+        .expect("bond-vector fingerprints need the disp column");
     let symmetric = matches!(
         nlist.mode(),
-        molrs::spatial::neighbors::QueryMode::SelfQuery
+        molrs::spatial::neighbors::QueryMode::SelfQuery { .. }
     );
     for k in 0..nlist.n_pairs() {
         let i = i_idx[k] as usize;
-        let v = [vectors[[k, 0]], vectors[[k, 1]], vectors[[k, 2]]];
+        let v = [disp[[k, 0]], disp[[k, 1]], disp[[k, 2]]];
         if i < n {
             bonds[i].push(v);
         }
@@ -297,7 +299,7 @@ impl MatchEnv {
     fn one_frame<FA: FrameAccess>(
         &self,
         frame: &FA,
-        nlist: &NeighborList,
+        nlist: &Neighbors,
     ) -> Result<MatchEnvResult, ComputeError> {
         let (xs_p, _, _) = get_positions_ref(frame)?;
         let n = xs_p.slice().len();
@@ -371,13 +373,13 @@ impl MatchEnv {
 }
 
 impl Compute for MatchEnv {
-    type Args<'a> = &'a Vec<NeighborList>;
+    type Args<'a> = &'a Vec<Neighbors>;
     type Output = Vec<MatchEnvResult>;
 
     fn compute<'a, FA: FrameAccess + Sync + 'a>(
         &self,
         frames: &[&'a FA],
-        nlists: &'a Vec<NeighborList>,
+        nlists: &'a Vec<Neighbors>,
     ) -> Result<Vec<MatchEnvResult>, ComputeError> {
         if frames.is_empty() {
             return Err(ComputeError::EmptyInput);
@@ -434,7 +436,7 @@ mod tests {
         frame
     }
 
-    fn build_nlist(frame: &Frame, cutoff: F) -> NeighborList {
+    fn build_nlist(frame: &Frame, cutoff: F) -> Neighbors {
         nlist_from_frame(frame, cutoff)
     }
 
@@ -583,7 +585,7 @@ mod tests {
         let frames: Vec<&Frame> = Vec::new();
         let err = MatchEnv::new(0.1)
             .unwrap()
-            .compute(&frames, &Vec::<NeighborList>::new())
+            .compute(&frames, &Vec::<Neighbors>::new())
             .unwrap_err();
         assert!(matches!(err, ComputeError::EmptyInput));
     }

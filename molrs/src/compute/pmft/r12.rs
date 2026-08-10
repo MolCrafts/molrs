@@ -26,7 +26,7 @@
 //! the planar configuration.
 
 use crate::compute::result::ComputeResult;
-use molrs::spatial::neighbors::NeighborList;
+use molrs::spatial::neighbors::Neighbors;
 use molrs::spatial::simbox::BoxKind;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
@@ -70,10 +70,10 @@ impl PMFTR12 {
     }
 }
 
-/// Per-frame args for PMFTR12: parallel `&[NeighborList]` and
+/// Per-frame args for PMFTR12: parallel `&[Neighbors]` and
 /// per-particle 2-D orientations (radians).
 pub struct PMFTR12Args<'a> {
-    pub nlists: &'a [NeighborList],
+    pub nlists: &'a [Neighbors],
     pub orientations: &'a [Vec<F>],
 }
 
@@ -87,7 +87,7 @@ impl PMFTR12 {
     fn one_frame<FA: FrameAccess>(
         &self,
         frame: &FA,
-        nlist: &NeighborList,
+        nlist: &Neighbors,
         orientations: &[F],
     ) -> Result<PMFTR12Result, ComputeError> {
         let simbox = frame.simbox_ref().ok_or(ComputeError::MissingSimBox)?;
@@ -107,18 +107,23 @@ impl PMFTR12 {
         let bin_vol = dr * dt1 * dt2;
 
         let mut counts = Array3::<u64>::zeros((self.n_r, self.n_t1, self.n_t2));
-        let vectors = nlist.vectors();
         let i_idx = nlist.query_point_indices();
         let j_idx = nlist.point_indices();
         let n_pairs = nlist.n_pairs();
+        let Some(disp) = nlist.disp() else {
+            return Err(ComputeError::BadShape {
+                expected: format!("Neighbors with the disp column for {n_pairs} pairs"),
+                got: "indices-only / lean neighbor table".to_string(),
+            });
+        };
         let symmetric = matches!(
             nlist.mode(),
-            molrs::spatial::neighbors::QueryMode::SelfQuery
+            molrs::spatial::neighbors::QueryMode::SelfQuery { .. }
         );
 
         for k in 0..n_pairs {
-            let vx = vectors[[k, 0]];
-            let vy = vectors[[k, 1]];
+            let vx = disp[[k, 0]];
+            let vy = disp[[k, 1]];
             let r = (vx * vx + vy * vy).sqrt();
             if r >= self.r_max || r == 0.0 {
                 continue;
@@ -282,7 +287,7 @@ mod tests {
         frame
     }
 
-    fn build_nlist(frame: &Frame, cutoff: F) -> NeighborList {
+    fn build_nlist(frame: &Frame, cutoff: F) -> Neighbors {
         nlist_from_frame(frame, cutoff)
     }
 

@@ -15,7 +15,7 @@ mod result;
 pub use properties::{ClusterProperties, ClusterPropertiesResult};
 pub use result::ClusterResult;
 
-use molrs::spatial::neighbors::NeighborList;
+use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::U;
 use ndarray::Array1;
@@ -43,7 +43,7 @@ impl Cluster {
     fn cluster_one<FA: FrameAccess>(
         &self,
         frame: &FA,
-        neighbors: &NeighborList,
+        neighbors: &Neighbors,
     ) -> Result<ClusterResult, ComputeError> {
         let n = frame
             .visit_block("atoms", |b| b.nrows().unwrap_or(0))
@@ -254,13 +254,13 @@ impl Cluster {
 }
 
 impl Compute for Cluster {
-    type Args<'a> = &'a Vec<NeighborList>;
+    type Args<'a> = &'a Vec<Neighbors>;
     type Output = Vec<ClusterResult>;
 
     fn compute<'a, FA: FrameAccess + Sync + 'a>(
         &self,
         frames: &[&'a FA],
-        neighbors: &'a Vec<NeighborList>,
+        neighbors: &'a Vec<Neighbors>,
     ) -> Result<Vec<ClusterResult>, ComputeError> {
         if frames.is_empty() {
             return Err(ComputeError::EmptyInput);
@@ -328,11 +328,11 @@ mod tests {
         frame
     }
 
-    fn build_neighbors(frame: &Frame, cutoff: F) -> NeighborList {
+    fn build_neighbors(frame: &Frame, cutoff: F) -> Neighbors {
         nlist_from_frame(frame, cutoff)
     }
 
-    fn cluster_single(frame: &Frame, nlist: NeighborList, min: usize) -> ClusterResult {
+    fn cluster_single(frame: &Frame, nlist: Neighbors, min: usize) -> ClusterResult {
         let out = Cluster::new(min).compute(&[frame], &vec![nlist]).unwrap();
         assert_eq!(out.len(), 1);
         out.into_iter().next().unwrap()
@@ -502,7 +502,7 @@ mod tests {
     fn empty_frames_is_error() {
         let frames: Vec<&Frame> = Vec::new();
         let err = Cluster::new(1)
-            .compute(&frames, &Vec::<NeighborList>::new())
+            .compute(&frames, &Vec::<Neighbors>::new())
             .unwrap_err();
         assert!(matches!(err, ComputeError::EmptyInput));
     }

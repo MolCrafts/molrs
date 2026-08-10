@@ -21,7 +21,7 @@
 //! identical formula appears in `LocalDensity::compute` in freud.
 
 use crate::compute::result::ComputeResult;
-use molrs::spatial::neighbors::NeighborList;
+use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 
@@ -70,24 +70,29 @@ impl LocalDensity {
     fn one_frame<FA: FrameAccess>(
         &self,
         frame: &FA,
-        nlist: &NeighborList,
+        nlist: &Neighbors,
     ) -> Result<LocalDensityResult, ComputeError> {
         let (xs_p, _, _) = get_positions_ref(frame)?;
         let n_query = xs_p.slice().len();
 
         let i_idx = nlist.query_point_indices();
-        let dist_sq = nlist.dist_sq();
         let n_pairs = nlist.n_pairs();
+        let Some(dist_sq) = nlist.dist_sq() else {
+            return Err(ComputeError::BadShape {
+                expected: format!("Neighbors with the dist_sq column for {n_pairs} pairs"),
+                got: "indices-only / lean neighbor table".to_string(),
+            });
+        };
 
         let mut num = vec![0.0_f64; n_query];
 
         // freud convention: each neighbor pair is visited once from the query
-        // side. For a self-query NeighborList we get i<j pairs only, so we
+        // side. For a self-query Neighbors we get i<j pairs only, so we
         // must add the symmetric contribution. For a cross-query nlist we
         // take i as the query point and j as the reference.
         let symmetric = matches!(
             nlist.mode(),
-            molrs::spatial::neighbors::QueryMode::SelfQuery
+            molrs::spatial::neighbors::QueryMode::SelfQuery { .. }
         );
 
         let half_diam = self.diameter * 0.5;
@@ -127,13 +132,13 @@ impl LocalDensity {
 }
 
 impl Compute for LocalDensity {
-    type Args<'a> = &'a Vec<NeighborList>;
+    type Args<'a> = &'a Vec<Neighbors>;
     type Output = Vec<LocalDensityResult>;
 
     fn compute<'a, FA: FrameAccess + Sync + 'a>(
         &self,
         frames: &[&'a FA],
-        nlists: &'a Vec<NeighborList>,
+        nlists: &'a Vec<Neighbors>,
     ) -> Result<Vec<LocalDensityResult>, ComputeError> {
         if frames.is_empty() {
             return Err(ComputeError::EmptyInput);
@@ -188,7 +193,7 @@ mod tests {
         frame
     }
 
-    fn build_nlist(frame: &Frame, cutoff: F) -> NeighborList {
+    fn build_nlist(frame: &Frame, cutoff: F) -> Neighbors {
         nlist_from_frame(frame, cutoff)
     }
 
@@ -261,7 +266,7 @@ mod tests {
         let frames: Vec<&Frame> = Vec::new();
         let err = LocalDensity::new(2.0)
             .unwrap()
-            .compute(&frames, &Vec::<NeighborList>::new())
+            .compute(&frames, &Vec::<Neighbors>::new())
             .unwrap_err();
         assert!(matches!(err, ComputeError::EmptyInput));
     }
