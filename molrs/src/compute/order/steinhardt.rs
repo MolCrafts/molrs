@@ -116,6 +116,16 @@ pub fn compute_qlm<FA: FrameAccess>(
     let j_idx = nlist.point_indices();
     let vectors = nlist.vectors();
     let n_pairs = nlist.n_pairs();
+    // `NeighborList::vectors()` is empty when built with `store_diff=false`.
+    // Indexing would OOB → WASM `unreachable`; fail with a clear error instead.
+    if n_pairs > 0 && vectors.nrows() != n_pairs {
+        return Err(ComputeError::BadShape {
+            expected: format!(
+                "NeighborList with displacement vectors for {n_pairs} pairs (store_diff=true)"
+            ),
+            got: format!("{} vector rows", vectors.nrows()),
+        });
+    }
 
     let parity = if l & 1 == 0 { 1.0_f64 } else { -1.0 };
     let mut ylm_buf = vec![Complex::ZERO; m_count];
@@ -598,6 +608,28 @@ mod tests {
             .compute(&[&frame], &Vec::<NeighborList>::new())
             .unwrap_err();
         assert!(matches!(err, ComputeError::DimensionMismatch { .. }));
+    }
+
+    #[test]
+    fn nlist_without_displacement_vectors_is_error() {
+        use molrs::spatial::neighbors::NeighborListStorage;
+        let frame = octahedron(20.0);
+        let nl_full = build_nlist(&frame, 1.2);
+        assert!(nl_full.n_pairs() > 0);
+        // Indices-only list (frontend SpatialNeighborQuery default storeDiff=false).
+        let nl_lean = nl_full.repack(NeighborListStorage {
+            dist_sq: true,
+            diff: false,
+        });
+        assert_eq!(nl_lean.vectors().nrows(), 0);
+        let err = Steinhardt::new(&[6])
+            .unwrap()
+            .compute(&[&frame], &vec![nl_lean])
+            .unwrap_err();
+        assert!(
+            matches!(err, ComputeError::BadShape { .. }),
+            "expected BadShape when vectors missing; got {err:?}"
+        );
     }
 
     // -- 9) Multi-frame --------------------------------------------------------

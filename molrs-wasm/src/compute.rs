@@ -3,7 +3,8 @@
 //! This module provides freud-style analysis classes that operate on
 //! [`Frame`] objects. The typical workflow is:
 //!
-//! 1. Build a neighbor list using [`LinkedCell`].
+//! 1. Build a neighbor list using [`LinkedCell`] (large systems) or
+//!    [`BruteForce`] (small systems).
 //! 2. Pass the [`NeighborList`] to an analysis class ([`RDF`], [`Cluster`]).
 //! 3. Read the result object.
 //!
@@ -54,8 +55,8 @@ use molrs::compute::shape::{
 };
 use molrs::compute::traits::{Compute, Fit};
 use molrs::spatial::neighbors::{
-    LinkCell as RsLinkCell, NbListAlgo, NeighborList as RsNeighborList,
-    NeighborQuery as RsNeighborQuery, QueryMode,
+    BruteForce as RsBruteForce, LinkCell as RsLinkCell, NbListAlgo,
+    NeighborList as RsNeighborList, NeighborQuery as RsNeighborQuery, QueryMode,
 };
 use molrs::store::keys;
 use molrs::types::F;
@@ -241,14 +242,101 @@ impl LinkedCell {
 }
 
 // ===========================================================================
+// BruteForce — O(N²) spatial neighbor search (small systems)
+// ===========================================================================
+
+/// O(N²) all-pairs neighbor search within a cutoff.
+///
+/// Prefer this over [`LinkedCell`] for **small** systems (typically a few
+/// hundred atoms) where cell construction overhead dominates. Same
+/// [`NeighborList`] product as LinkedCell — interchangeable for RDF,
+/// Cluster, LBFGS, etc.
+///
+/// # Example (JavaScript)
+///
+/// ```js
+/// const bf = new BruteForce(12.5);
+/// const nlist = bf.build(frame);
+/// ```
+#[wasm_bindgen(js_name = BruteForce)]
+pub struct BruteForce {
+    cutoff: F,
+    store_dist_sq: bool,
+    store_diff: bool,
+}
+
+#[wasm_bindgen(js_class = BruteForce)]
+impl BruteForce {
+    /// Create a brute-force neighbor search with the given cutoff (Å).
+    ///
+    /// * `store_dist_sq` — keep d² (default `true`)
+    /// * `store_diff` — keep MIC displacement vectors (default `true`)
+    #[wasm_bindgen(constructor)]
+    pub fn new(cutoff: F, store_dist_sq: Option<bool>, store_diff: Option<bool>) -> Self {
+        Self {
+            cutoff,
+            store_dist_sq: store_dist_sq.unwrap_or(true),
+            store_diff: store_diff.unwrap_or(true),
+        }
+    }
+
+    fn storage(&self) -> molrs::spatial::neighbors::NeighborListStorage {
+        molrs::spatial::neighbors::NeighborListStorage {
+            dist_sq: self.store_dist_sq,
+            diff: self.store_diff,
+        }
+    }
+
+    /// Materialize all unique pairs `(i < j)` within cutoff (self-query).
+    pub fn build(&self, frame: &Frame) -> Result<NeighborList, JsValue> {
+        if !(self.cutoff > 0.0) {
+            return Err(JsValue::from_str(
+                "BruteForce cutoff must be a positive length in Å",
+            ));
+        }
+        frame.with_frame(|rs_frame| {
+            let pos = positions_from_frame(rs_frame)?;
+            let n = pos.nrows();
+            // Guard: materializing O(N²) pairs above this is almost always a bug.
+            const MAX_ATOMS: usize = 8_000;
+            if n > MAX_ATOMS {
+                return Err(JsValue::from_str(&format!(
+                    "BruteForce refused N={n} (max {MAX_ATOMS}): use LinkedCell for large systems"
+                )));
+            }
+
+            let simbox;
+            let bx_ref = match rs_frame.simbox.as_ref() {
+                Some(sb) => sb,
+                None => {
+                    simbox = molrs::spatial::simbox::SimBox::free(pos.view(), self.cutoff)
+                        .map_err(|e| JsValue::from_str(&format!("free-boundary box: {e:?}")))?;
+                    &simbox
+                }
+            };
+
+            let mut bf = RsBruteForce::new(self.cutoff);
+            bf.build(pos.view(), bx_ref);
+            let result = bf.query().clone();
+            let result = if self.store_dist_sq && self.store_diff {
+                result
+            } else {
+                result.repack(self.storage())
+            };
+            Ok(NeighborList { inner: result })
+        })
+    }
+}
+
+// ===========================================================================
 // NeighborList
 // ===========================================================================
 
 /// Result of a neighbor search: all atom pairs within a distance cutoff.
 ///
 /// Contains pair indices, distances, and squared distances for every
-/// neighbor pair found. This object is produced by [`LinkedCell`]
-/// and consumed by analysis classes like [`RDF`] and [`Cluster`].
+/// neighbor pair found. This object is produced by [`LinkedCell`] or
+/// [`BruteForce`] and consumed by analysis classes like [`RDF`] and [`Cluster`].
 ///
 /// # Properties
 ///

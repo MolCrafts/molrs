@@ -4,8 +4,9 @@
 //! const typifier = new UFFTypifier();
 //! const typed    = typifier.typify(frame);
 //! const pots     = typifier.toPotentials(typed);   // no .ff()
-//! const report   = new LBFGS(pots /*, neighborList */).run(typed, 200);
-//! // no neighborList → Optimizer builds a bruteforce (topology) pair list
+//! const nlist    = new BruteForce(12.5).build(typed); // or LinkedCell for large N
+//! const report   = new LBFGS(pots, nlist).run(typed, 200);
+//! // omitting neighborList → full topology nonbonded pairs (small molecules only)
 //! ```
 //!
 //! No `typifyUff` / `insertIntramolecularPairs` / `typifier.ff()` façades.
@@ -159,12 +160,23 @@ enum PairSource {
     NeighborList { i: Vec<u32>, j: Vec<u32> },
 }
 
+/// Max atoms for the **omit-neighborList** path (full topology nonbonded pairs).
+/// Above this, callers must pass a spatial [`NeighborList`] from
+/// [`crate::compute::BruteForce`] or [`crate::compute::LinkedCell`].
+const LBFGS_TOPOLOGY_PAIRS_MAX_ATOMS: usize = 2_000;
+
 /// Limited-memory BFGS.
 ///
 /// Construct with potentials (and optional neighbor list), then
-/// `run(frame, nSteps)`. If no neighbor list is given, the optimizer builds
-/// an internal bruteforce topology pair list (all nonbonded pairs excluding
-/// 1-2 / 1-3).
+/// `run(frame, nSteps)`.
+///
+/// **Prefer an explicit spatial neighbor list** from [`BruteForce`](crate::compute::BruteForce)
+/// (small N) or [`LinkedCell`](crate::compute::LinkedCell) (large N) at the
+/// force field's non-electrostatic cutoff.
+///
+/// If no neighbor list is given, the optimizer builds an internal **topology**
+/// pair list (all nonbonded pairs excluding 1-2 / 1-3, no spatial cutoff).
+/// That path is refused when `N > 2000` to avoid O(N²) OOM / WASM aborts.
 #[wasm_bindgen(js_name = LBFGS)]
 pub struct LBFGS {
     ff: RsForceField,
@@ -178,8 +190,13 @@ pub struct LBFGS {
 
 #[wasm_bindgen(js_class = LBFGS)]
 impl LBFGS {
-    /// Bind `pots`. Optional spatial [`NeighborList`]; if omitted, a bruteforce
-    /// topology pair list is used at [`run`](Self::run) time.
+    /// Bind `pots`. Optional spatial [`NeighborList`] from
+    /// [`BruteForce`](crate::compute::BruteForce) or
+    /// [`LinkedCell`](crate::compute::LinkedCell).
+    ///
+    /// If omitted, a **topology** all-pairs nonbonded list (no spatial cutoff)
+    /// is built at `run` — only for small molecules (`N ≤ 2000`); larger
+    /// systems must pass an explicit list.
     ///
     /// Knobs: `fmax` (default 0.05), `maxStep` (0.2), `memory` (8).
     /// Step count is the second argument of [`run`](Self::run).
@@ -297,7 +314,18 @@ impl OptReport {
 
 fn install_pairs(frame: &mut RsFrame, source: &PairSource) -> Result<(), String> {
     let block = match source {
-        PairSource::BruteForceTopology => topology_pairs(frame),
+        PairSource::BruteForceTopology => {
+            let n = frame.get("atoms").and_then(|b| b.nrows()).unwrap_or(0);
+            if n > LBFGS_TOPOLOGY_PAIRS_MAX_ATOMS {
+                return Err(format!(
+                    "LBFGS: omitting neighborList builds O(N²) topology pairs \
+                     (N={n} > max {LBFGS_TOPOLOGY_PAIRS_MAX_ATOMS}). Pass a \
+                     NeighborList from BruteForce(cutoff) or LinkedCell(cutoff) \
+                     at the force-field nonbonded shell."
+                ));
+            }
+            topology_pairs(frame)
+        }
         PairSource::NeighborList { i, j } => pairs_from_indices(frame, i, j)?,
     };
     frame.insert("pairs", block);
