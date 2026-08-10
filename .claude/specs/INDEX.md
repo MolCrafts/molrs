@@ -38,5 +38,5 @@ Downstream: molpy `smiles-emit-01-io-surface` after molrs tag ≥ emit surface.
 |---|---|
 | neighborlist-01-types | **done** 2026-08-10（closed & deleted）— `Neighbors` + `from_pairs` + `disp`；沿途修复 `filter_sann` SANN 判据（van Meel 2012） |
 | neighborlist-02-engine | **done** 2026-08-10（closed & deleted）— 引擎落地，`build_columns` SoA 入口，Nb 缩写清零；串行物化与双门降级显式路由 03 任务 9/10。**分支在 04 落地前不可 merge**（binder workspaces 红，04 已认领） |
-| [neighborlist-03-compute](neighborlist-03-compute.md) | approved — compute 消费 `Neighbors`；order 缺 disp → BadShape |
+| neighborlist-03-compute | **done** 2026-08-10（closed & deleted）— require_* 帮手统一缺列拒绝；rayon 并行物化接回（N=100k 4.2×）；重复自查询门删除（−303 行）；铁律修复:RDF release 全零 g(r)、parity 空转锚点、CrossQuery guard。遗留路由:linkcell cell-walk 双循环归一 → /mol:refactor;rustdoc 门未接线 → /mol:note |
 | [neighborlist-04-binders](neighborlist-04-binders.md) | approved — Python/WASM 对齐；默认 FULL 物化；cross 出路显式 |
