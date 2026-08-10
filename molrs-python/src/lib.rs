@@ -11,9 +11,9 @@
 //! | `Block`              | [`PyBlock`]       | Heterogeneous column store (numpy arrays)  |
 //! | `Frame`              | [`PyFrame`]       | Collection of named `Block`s + `SimBox`    |
 //! | `Box`                | [`PyBox`]         | Simulation box / periodic boundaries       |
-//! | `LinkedCell`         | [`PyLinkedCell`]  | Link-cell neighbor list (legacy API)       |
-//! | `NeighborQuery`      | [`PyNeighborQuery`]| Spatial neighbor query (freud-style API)   |
-//! | `NeighborList`       | [`PyNeighborList`]| Query result with pair indices + distances |
+//! | `NeighborList`       | [`PyNeighborList`]| Neighbor-search engine (build / update)    |
+//! | `Neighbors`          | [`PyNeighbors`]   | Materialized pair table (read-only columns)|
+//! | `NeighborQuery`      | [`PyNeighborQuery`]| Cross-query against a reference point set |
 //! | `Atomistic`          | [`PyAtomistic`]   | All-atom molecular graph                   |
 //! | `Perceive`           | [`PyPerceive`]    | Chemical perception (graph in / graph out) |
 //! | `MMFF94Typifier`     | [`PyMMFF94Typifier`]| MMFF94 atom-type assignment              |
@@ -43,7 +43,7 @@ mod store;
 // compute/, ff/, conformer/, signal/.
 mod core;
 mod builder;
-use crate::core::spatial::linkedcell::{PyLinkedCell, PyNeighborList, PyNeighborQuery};
+use crate::core::spatial::neighborlist::{PyNeighborList, PyNeighborQuery, PyNeighbors};
 use crate::core::spatial::region::{
     PyCuboid, PyHollowSphere, PyParallelepiped, PyRegion, PySphere,
 };
@@ -109,9 +109,9 @@ use stream::PyPublisher;
 fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // SimBox + neighbors
     m.add_class::<PyBox>()?;
-    m.add_class::<PyLinkedCell>()?;
-    m.add_class::<PyNeighborQuery>()?;
     m.add_class::<PyNeighborList>()?;
+    m.add_class::<PyNeighbors>()?;
+    m.add_class::<PyNeighborQuery>()?;
 
     // Public exceptions
     m.add(

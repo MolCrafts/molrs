@@ -118,16 +118,33 @@ class Box:
 # ---------------------------------------------------------------------------
 
 class NeighborList:
-    """Result of a neighbor query — pairs within cutoff."""
+    """Neighbor-search engine: index coordinates, then materialize pairs.
 
+    ``build`` / ``update`` index and enumerate nothing; ``neighbors`` returns
+    the pair table. A self search is half-shell (each unordered pair once,
+    ``i < j``).
+    """
+
+    def __init__(self, cutoff: float) -> None: ...
+    @staticmethod
+    def brute_force(cutoff: float) -> NeighborList: ...
     @property
+    def cutoff(self) -> float: ...
+    def build(self, points: ArrayF, box: Box) -> None: ...
+    def update(self, points: ArrayF) -> None: ...
+    def neighbors(self, dist_sq: bool = ..., disp: bool = ...) -> Neighbors: ...
+
+class Neighbors:
+    """Materialized pair table — read-only columns, one row per pair.
+
+    ``dist_sq`` and ``disp`` are opt-in: a column the search was told not to
+    store reads back as ``None``, never as a fabricated zero array.
+    """
+
     def query_point_indices(self) -> ArrayU32: ...
-    @property
     def point_indices(self) -> ArrayU32: ...
-    @property
-    def distances(self) -> ArrayF: ...
-    @property
-    def dist_sq(self) -> ArrayF: ...
+    def dist_sq(self) -> ArrayF | None: ...
+    def disp(self) -> ArrayF | None: ...
     @property
     def n_pairs(self) -> int: ...
     @property
@@ -136,23 +153,15 @@ class NeighborList:
     def num_query_points(self) -> int: ...
     @property
     def is_self_query(self) -> bool: ...
-    def pairs(self) -> ArrayI64: ...
 
 class NeighborQuery:
-    """Spatial neighbor query (freud-style)."""
+    """Cross-query against a fixed reference point set (directed)."""
 
     def __init__(self, box: Box, points: ArrayF, cutoff: float) -> None: ...
     @staticmethod
     def free(points: ArrayF, cutoff: float) -> NeighborQuery: ...
-    def query(self, query_points: ArrayF) -> NeighborList: ...
-    def query_self(self) -> NeighborList: ...
-
-class LinkedCell:
-    """Linked-cell neighbor list (legacy API; prefer NeighborQuery)."""
-
-    def __init__(self, points: ArrayF, cutoff: float, box: Box) -> None: ...
-    def pairs(self) -> ArrayI64: ...
-    def update(self, points: ArrayF, box: Box) -> None: ...
+    def query(self, query_points: ArrayF) -> Neighbors: ...
+    def query_self(self) -> Neighbors: ...
 
 # ---------------------------------------------------------------------------
 # Block / Frame
@@ -1617,7 +1626,7 @@ class RDF:
     def compute(
         self,
         frames: Frame | Sequence[Frame],
-        nlists: NeighborList | Sequence[NeighborList],
+        nlists: Neighbors | Sequence[Neighbors],
     ) -> RDFResult: ...
 
 class MSDResult:
@@ -1657,7 +1666,7 @@ class Cluster:
     def compute(
         self,
         frames: Frame | Sequence[Frame],
-        nlists: NeighborList | Sequence[NeighborList] | None = ...,
+        nlists: Neighbors | Sequence[Neighbors] | None = ...,
         keys: Sequence[int] | None = ...,
     ) -> ClusterResult | list[ClusterResult]: ...
 
@@ -1773,7 +1782,7 @@ class Steinhardt:
     def compute(
         self,
         frames: Frame | Sequence[Frame],
-        nlists: NeighborList | Sequence[NeighborList],
+        nlists: Neighbors | Sequence[Neighbors],
     ) -> list[dict]: ...
 
 class Nematic:
@@ -1792,7 +1801,7 @@ class Hexatic:
     def compute(
         self,
         frames: Frame | Sequence[Frame],
-        nlists: NeighborList | Sequence[NeighborList],
+        nlists: Neighbors | Sequence[Neighbors],
     ) -> list[ArrayF]: ...
 
 class SolidLiquid:
@@ -1804,7 +1813,7 @@ class SolidLiquid:
     def compute(
         self,
         frames: Frame | Sequence[Frame],
-        nlists: NeighborList | Sequence[NeighborList],
+        nlists: Neighbors | Sequence[Neighbors],
     ) -> list[tuple[npt.NDArray[np.uint32], list[bool]]]: ...
 
 class ClusterProperties:
@@ -1825,7 +1834,7 @@ class LocalDensity:
     def compute(
         self,
         frames: Frame | Sequence[Frame],
-        nlists: NeighborList | Sequence[NeighborList],
+        nlists: Neighbors | Sequence[Neighbors],
     ) -> list[tuple[ArrayF, ArrayF]]: ...
 
 class GaussianDensity:
@@ -1841,7 +1850,7 @@ class BondOrder:
     def compute(
         self,
         frames: Frame | Sequence[Frame],
-        nlists: NeighborList | Sequence[NeighborList],
+        nlists: Neighbors | Sequence[Neighbors],
     ) -> list[tuple[npt.NDArray[np.uint64], ArrayF, ArrayF, ArrayF]]: ...
 
 class StaticStructureFactorDebye:
@@ -1863,7 +1872,7 @@ class PMFTXY:
     def compute(
         self,
         frames: Frame | Sequence[Frame],
-        nlists: NeighborList | Sequence[NeighborList],
+        nlists: Neighbors | Sequence[Neighbors],
     ) -> list[tuple[npt.NDArray[np.uint64], ArrayF, ArrayF]]: ...
 
 # ---------------------------------------------------------------------------

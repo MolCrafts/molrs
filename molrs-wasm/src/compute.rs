@@ -3,20 +3,21 @@
 //! This module provides freud-style analysis classes that operate on
 //! [`Frame`] objects. The typical workflow is:
 //!
-//! 1. Build a neighbor list using [`LinkedCell`] (large systems) or
-//!    [`BruteForce`] (small systems).
-//! 2. Pass the [`NeighborList`] to an analysis class ([`RDF`], [`Cluster`]).
+//! 1. Index the coordinates with [`NeighborList`] (`build`), then materialize
+//!    the pairs into a [`Neighbors`] table (`neighbors`).
+//! 2. Pass that table to an analysis class ([`RDF`], [`Cluster`]).
 //! 3. Read the result object.
 //!
-//! [`MSD`] does not require a neighbor list -- it only needs a reference
+//! [`MSD`] does not require a neighbor table -- it only needs a reference
 //! frame and a current frame.
 //!
 //! # Example (JavaScript)
 //!
 //! ```js
-//! // Build neighbor list
-//! const lc = new LinkedCell(5.0);
-//! const nlist = lc.build(frame);
+//! // Build the pair table
+//! const nl = new NeighborList(5.0);
+//! nl.build(frame);
+//! const nlist = nl.neighbors();
 //!
 //! // Compute RDF
 //! const rdf = new RDF(100, 5.0);
@@ -55,8 +56,8 @@ use molrs::compute::shape::{
 };
 use molrs::compute::traits::{Compute, Fit};
 use molrs::spatial::neighbors::{
-    BruteForce as RsBruteForce, LinkCell as RsLinkCell, NbListAlgo,
-    NeighborList as RsNeighborList, NeighborQuery as RsNeighborQuery, QueryMode,
+    NeighborList as RsNeighborList, NeighborQuery as RsNeighborQuery, Neighbors as RsNeighbors,
+    NeighborsStorage as RsNeighborsStorage, QueryMode,
 };
 use molrs::store::keys;
 use molrs::types::F;
@@ -103,294 +104,335 @@ fn positions_from_frame(frame: &molrs::store::frame::Frame) -> Result<ndarray::A
 }
 
 // ===========================================================================
-// LinkedCell — cell-list based neighbor search
+// NeighborList — the engine: coordinates in, pairs out
 // ===========================================================================
 
-/// Cell-list (linked-cell) based neighbor search.
+/// Neighbor search over one point set: index the coordinates, then read pairs.
 ///
-/// Creates a spatial index from a [`Frame`]'s atom positions and
-/// simulation box, then finds all neighbor pairs within the cutoff
-/// distance.
+/// This is the door to every self search. It owns the cutoff and the backend
+/// that indexes space, and keeps the two halves of the job apart: `build` and
+/// `update` place the atoms in space and enumerate **nothing**, while
+/// `neighbors()` materializes the pairs into a [`Neighbors`] table.
 ///
-/// All distances are in angstrom (A).
+/// The pairs are a **half-shell** self list: every unordered pair appears
+/// exactly once, with `i < j`, and never as `i == j`. A directed search against
+/// a *second* point set is a different question — see [`LinkedCell::query`].
+///
+/// All distances are in angstrom (Å).
 ///
 /// # Example (JavaScript)
 ///
 /// ```js
-/// const lc = new LinkedCell(3.0);       // cutoff = 3.0 A
-/// const nlist = lc.build(frame);         // self-query (unique pairs i < j)
-/// const cross = lc.query(ref, other);    // cross-query
+/// const nl = new NeighborList(3.0);      // O(N) cell list, cutoff 3 Å
+/// nl.build(frame);                       // index only — no pair table
+/// const neigh = nl.neighbors();          // both columns (the default)
+/// const lean  = nl.neighbors({ disp: false });   // indices + d² only
 ///
-/// console.log(nlist.numPairs);
+/// nl.update(movedFrame);                 // re-index in the box from `build`
 /// ```
-#[wasm_bindgen(js_name = LinkedCell)]
-pub struct LinkedCell {
-    cutoff: F,
-    store_dist_sq: bool,
-    store_diff: bool,
+#[wasm_bindgen(js_name = NeighborList)]
+pub struct NeighborList {
+    inner: RsNeighborList,
+    /// Whether `build` has run. The core panics on an `update` before a
+    /// `build` (the box is unknown); a panic must not cross this seam, so the
+    /// binder tracks the state and returns an error instead.
+    built: bool,
 }
 
-#[wasm_bindgen(js_class = LinkedCell)]
-impl LinkedCell {
-    /// Create a linked-cell neighbor search with the given distance cutoff.
+#[wasm_bindgen(js_class = NeighborList)]
+impl NeighborList {
+    /// Create a search with the O(N) cell-list backend — the production choice.
     ///
-    /// # Arguments
+    /// `cutoff` is the interaction radius in angstrom (Å). It is fixed here
+    /// rather than passed per query because it sets the cell width of the
+    /// index.
     ///
-    /// * `cutoff` - Maximum neighbor distance in angstrom (A)
-    /// * `store_dist_sq` - Retain squared distances when materializing
-    ///   (default `true`). Set `false` to save 8 B/pair.
-    /// * `store_diff` - Retain MIC displacement vectors (default `true`).
-    ///   Set `false` to save 24 B/pair.
+    /// # Errors
     ///
-    /// # Example (JavaScript)
-    ///
-    /// ```js
-    /// const lc = new LinkedCell(5.0);
-    /// // Indices + d² only (no displacement vectors):
-    /// const lean = new LinkedCell(5.0, true, false);
-    /// ```
+    /// Throws if `cutoff` is not a positive length.
     #[wasm_bindgen(constructor)]
-    pub fn new(cutoff: F, store_dist_sq: Option<bool>, store_diff: Option<bool>) -> Self {
-        Self {
-            cutoff,
-            store_dist_sq: store_dist_sq.unwrap_or(true),
-            store_diff: store_diff.unwrap_or(true),
-        }
+    pub fn new(cutoff: F) -> Result<NeighborList, JsValue> {
+        check_cutoff(cutoff)?;
+        Ok(NeighborList {
+            inner: RsNeighborList::new(cutoff),
+            built: false,
+        })
     }
 
-    fn storage(&self) -> molrs::spatial::neighbors::NeighborListStorage {
-        molrs::spatial::neighbors::NeighborListStorage {
-            dist_sq: self.store_dist_sq,
-            diff: self.store_diff,
-        }
-    }
-
-    /// Materialize a neighbor list from a [`Frame`] (self-query).
+    /// Create a search with the O(N²) all-pairs backend.
     ///
-    /// Finds all unique pairs `(i < j)` of atoms within the cutoff
-    /// using the cell-list algorithm. Optional columns follow the
-    /// constructor's `storeDistSq` / `storeDiff` flags.
+    /// Finds exactly the same pairs as the cell list — that is what makes it
+    /// useful as a reference — at a cost that grows with the square of the
+    /// particle count. Prefer it only for very small systems.
     ///
-    /// Prefer streaming analyses (e.g. RDF) that never call `build` —
-    /// they use a cell index + pair visitor and keep memory O(N).
+    /// # Errors
+    ///
+    /// Throws if `cutoff` is not a positive length.
     ///
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const lc = new LinkedCell(3.0);
-    /// const nlist = lc.build(frame);
-    /// const dists = nlist.distances();
+    /// const nl = NeighborList.bruteForce(12.5);
     /// ```
-    pub fn build(&self, frame: &Frame) -> Result<NeighborList, JsValue> {
+    #[wasm_bindgen(js_name = bruteForce)]
+    pub fn brute_force(cutoff: F) -> Result<NeighborList, JsValue> {
+        check_cutoff(cutoff)?;
+        Ok(NeighborList {
+            inner: RsNeighborList::brute_force(cutoff),
+            built: false,
+        })
+    }
+
+    /// The cutoff distance (Å) fixed at construction.
+    #[wasm_bindgen(getter)]
+    pub fn cutoff(&self) -> F {
+        self.inner.cutoff()
+    }
+
+    /// Index a [`Frame`]'s atom positions — coordinates **and** box.
+    ///
+    /// Builds the spatial index and nothing else: no pairs are enumerated and
+    /// no table is allocated. A frame without a `simbox` is treated as a free
+    /// (non-periodic) system and gets a bounding box padded by the cutoff, so
+    /// no pair can wrap around an edge.
+    ///
+    /// The box is retained, so a later [`update`](Self::update) can re-index
+    /// new coordinates in the same box.
+    ///
+    /// # Errors
+    ///
+    /// Throws if the frame has no `atoms` block with `x` / `y` / `z` columns,
+    /// or if a free-boundary box cannot be derived from the coordinates.
+    pub fn build(&mut self, frame: &Frame) -> Result<(), JsValue> {
+        let cutoff = self.inner.cutoff();
         frame.with_frame(|rs_frame| {
             let pos = positions_from_frame(rs_frame)?;
-
             let simbox;
             let bx_ref = match rs_frame.simbox.as_ref() {
                 Some(sb) => sb,
                 None => {
-                    simbox = molrs::spatial::simbox::SimBox::free(pos.view(), self.cutoff)
+                    simbox = molrs::spatial::simbox::SimBox::free(pos.view(), cutoff)
                         .map_err(|e| JsValue::from_str(&format!("free-boundary box: {e:?}")))?;
                     &simbox
                 }
             };
-
-            let mut lc = RsLinkCell::new()
-                .cutoff(self.cutoff)
-                .with_storage(self.storage());
-            lc.build(pos.view(), bx_ref);
-            let result = lc.query().clone();
-
-            Ok(NeighborList { inner: result })
-        })
+            self.inner.build(pos.view(), bx_ref);
+            Ok(())
+        })?;
+        self.built = true;
+        Ok(())
     }
 
-    /// Cross-query: find all pairs where `i` indexes query points and
-    /// `j` indexes the reference points.
+    /// Re-index new coordinates in the box captured by the last
+    /// [`build`](Self::build).
     ///
-    /// Storage of `distSq` / displacement follows the constructor flags.
+    /// The natural per-step call at fixed volume: the positions move, the box
+    /// does not. Index-only, like `build`. There is no skin — this re-indexes
+    /// every time rather than deciding for you that the previous index was
+    /// still good enough. **If the box itself changed** (a barostat), call
+    /// `build` again: `update` keeps the old box and would fold minimum images
+    /// against a stale cell.
     ///
-    /// # Example (JavaScript)
+    /// # Errors
     ///
-    /// ```js
-    /// const lc = new LinkedCell(3.0);
-    /// const crossPairs = lc.query(refFrame, otherFrame);
-    /// console.log(crossPairs.numPairs);
-    /// ```
-    pub fn query(&self, ref_frame: &Frame, query_frame: &Frame) -> Result<NeighborList, JsValue> {
-        ref_frame.with_frame(|rs_ref| {
-            let ref_pos = positions_from_frame(rs_ref)?;
-
-            let aabb = match rs_ref.simbox.as_ref() {
-                Some(sb) => RsNeighborQuery::new(sb, ref_pos.view(), self.cutoff),
-                None => RsNeighborQuery::free(ref_pos.view(), self.cutoff),
-            };
-
-            query_frame.with_frame(|rs_query| {
-                let query_pos = positions_from_frame(rs_query)?;
-                let result = aabb.query(query_pos.view());
-                // NeighborQuery materializes FULL storage; re-pack if leaner.
-                let result = if self.store_dist_sq && self.store_diff {
-                    result
-                } else {
-                    result.repack(self.storage())
-                };
-                Ok(NeighborList { inner: result })
-            })
-        })
-    }
-}
-
-// ===========================================================================
-// BruteForce — O(N²) spatial neighbor search (small systems)
-// ===========================================================================
-
-/// O(N²) all-pairs neighbor search within a cutoff.
-///
-/// Prefer this over [`LinkedCell`] for **small** systems (typically a few
-/// hundred atoms) where cell construction overhead dominates. Same
-/// [`NeighborList`] product as LinkedCell — interchangeable for RDF,
-/// Cluster, LBFGS, etc.
-///
-/// # Example (JavaScript)
-///
-/// ```js
-/// const bf = new BruteForce(12.5);
-/// const nlist = bf.build(frame);
-/// ```
-#[wasm_bindgen(js_name = BruteForce)]
-pub struct BruteForce {
-    cutoff: F,
-    store_dist_sq: bool,
-    store_diff: bool,
-}
-
-#[wasm_bindgen(js_class = BruteForce)]
-impl BruteForce {
-    /// Create a brute-force neighbor search with the given cutoff (Å).
-    ///
-    /// * `store_dist_sq` — keep d² (default `true`)
-    /// * `store_diff` — keep MIC displacement vectors (default `true`)
-    #[wasm_bindgen(constructor)]
-    pub fn new(cutoff: F, store_dist_sq: Option<bool>, store_diff: Option<bool>) -> Self {
-        Self {
-            cutoff,
-            store_dist_sq: store_dist_sq.unwrap_or(true),
-            store_diff: store_diff.unwrap_or(true),
-        }
-    }
-
-    fn storage(&self) -> molrs::spatial::neighbors::NeighborListStorage {
-        molrs::spatial::neighbors::NeighborListStorage {
-            dist_sq: self.store_dist_sq,
-            diff: self.store_diff,
-        }
-    }
-
-    /// Materialize all unique pairs `(i < j)` within cutoff (self-query).
-    pub fn build(&self, frame: &Frame) -> Result<NeighborList, JsValue> {
-        if !(self.cutoff > 0.0) {
+    /// Throws if no `build` has run yet — the box is then unknown, and guessing
+    /// one silently changes every minimum-image distance. Throws too if the
+    /// frame carries no readable positions.
+    pub fn update(&mut self, frame: &Frame) -> Result<(), JsValue> {
+        if !self.built {
             return Err(JsValue::from_str(
-                "BruteForce cutoff must be a positive length in Å",
+                "NeighborList.update reuses the box of the previous build: \
+                 call build(frame) first",
             ));
         }
         frame.with_frame(|rs_frame| {
             let pos = positions_from_frame(rs_frame)?;
-            let n = pos.nrows();
-            // Guard: materializing O(N²) pairs above this is almost always a bug.
-            const MAX_ATOMS: usize = 8_000;
-            if n > MAX_ATOMS {
-                return Err(JsValue::from_str(&format!(
-                    "BruteForce refused N={n} (max {MAX_ATOMS}): use LinkedCell for large systems"
-                )));
-            }
-
-            let simbox;
-            let bx_ref = match rs_frame.simbox.as_ref() {
-                Some(sb) => sb,
-                None => {
-                    simbox = molrs::spatial::simbox::SimBox::free(pos.view(), self.cutoff)
-                        .map_err(|e| JsValue::from_str(&format!("free-boundary box: {e:?}")))?;
-                    &simbox
-                }
-            };
-
-            let mut bf = RsBruteForce::new(self.cutoff);
-            bf.build(pos.view(), bx_ref);
-            let result = bf.query().clone();
-            let result = if self.store_dist_sq && self.store_diff {
-                result
-            } else {
-                result.repack(self.storage())
-            };
-            Ok(NeighborList { inner: result })
+            self.inner.update(pos.view());
+            Ok(())
         })
+    }
+
+    /// Materialize the pairs into a [`Neighbors`] table.
+    ///
+    /// `storage` is an optional `{ distSq?: boolean, disp?: boolean }`. Both
+    /// columns are kept by default, so no analysis is surprised by a missing
+    /// one; pass `false` for a column this call site will not read. A dropped
+    /// column cannot be added afterwards — materialize again instead.
+    ///
+    /// Keeping both columns names the *columns*, not the pair direction: a self
+    /// search stays half-shell (`i < j`) either way.
+    ///
+    /// Row order is unspecified — the cell-list backend materializes in
+    /// parallel and the work split decides the order.
+    ///
+    /// # Errors
+    ///
+    /// Throws if `storage` is neither nullish nor an object, or if one of its
+    /// two fields is present but not a boolean.
+    ///
+    /// # Example (JavaScript)
+    ///
+    /// ```js
+    /// const neigh = nl.neighbors();                  // distSq + disp
+    /// const lean  = nl.neighbors({ disp: false });   // indices + d²
+    /// ```
+    pub fn neighbors(
+        &self,
+        storage: Option<NeighborsStorageOptions>,
+    ) -> Result<Neighbors, JsValue> {
+        let policy = match storage.as_deref() {
+            // Omitted, `undefined` or `null`: keep every column — the safe
+            // default, and the one an order parameter needs.
+            None => RsNeighborsStorage::FULL,
+            Some(options) if options.is_undefined() || options.is_null() => {
+                RsNeighborsStorage::FULL
+            }
+            Some(options) if !options.is_object() => {
+                return Err(JsValue::from_str(
+                    "neighbors(storage) expects an object like { distSq: true, disp: true }",
+                ));
+            }
+            Some(options) => RsNeighborsStorage {
+                dist_sq: storage_flag(options, "distSq")?,
+                disp: storage_flag(options, "disp")?,
+            },
+        };
+        Ok(self.materialize(policy))
     }
 }
 
+impl NeighborList {
+    /// Materialize under an already-resolved column policy — the shared body
+    /// behind [`neighbors`](Self::neighbors) and the compatibility aliases.
+    fn materialize(&self, storage: RsNeighborsStorage) -> Neighbors {
+        Neighbors {
+            inner: self.inner.neighbors(storage),
+        }
+    }
+}
+
+/// Reject a non-positive cutoff before the core asserts on it: a panic must not
+/// cross this seam.
+fn check_cutoff(cutoff: F) -> Result<(), JsValue> {
+    if cutoff.is_nan() || cutoff <= 0.0 {
+        return Err(JsValue::from_str("cutoff must be a positive length in Å"));
+    }
+    Ok(())
+}
+
+#[wasm_bindgen(typescript_custom_section)]
+const NEIGHBORS_STORAGE_OPTIONS: &'static str = r#"
+/**
+ * Which optional columns `NeighborList.neighbors` keeps. Both default to
+ * `true`: a column omitted here cannot be read back, and cannot be added
+ * afterwards without materializing again.
+ */
+export interface NeighborsStorageOptions {
+    /** Keep squared minimum-image distances (Å²), 8 B/pair. */
+    distSq?: boolean;
+    /** Keep minimum-image displacement vectors (Å), 24 B/pair. */
+    disp?: boolean;
+}
+"#;
+
+#[wasm_bindgen]
+extern "C" {
+    /// The `{ distSq?, disp? }` object accepted by
+    /// [`NeighborList::neighbors`] — typed on the JS side rather than `any`,
+    /// so a misspelt flag is a compile error for a TypeScript caller.
+    #[wasm_bindgen(typescript_type = "NeighborsStorageOptions")]
+    pub type NeighborsStorageOptions;
+}
+
+/// One boolean field of the storage options object; absent means `true`.
+///
+/// A field that is present but not a boolean is an error rather than a
+/// coercion: `{ disp: 0 }` silently dropping the displacement column is exactly
+/// the failure this surface exists to prevent.
+fn storage_flag(storage: &JsValue, key: &str) -> Result<bool, JsValue> {
+    let value = js_sys::Reflect::get(storage, &JsValue::from_str(key))?;
+    if value.is_undefined() || value.is_null() {
+        return Ok(true);
+    }
+    value
+        .as_bool()
+        .ok_or_else(|| JsValue::from_str(&format!("neighbors(storage): '{key}' must be a boolean")))
+}
+
 // ===========================================================================
-// NeighborList
+// Neighbors — the materialized pair table
 // ===========================================================================
 
-/// Result of a neighbor search: all atom pairs within a distance cutoff.
+/// Materialized neighbor pair table: every atom pair within the cutoff.
 ///
-/// Contains pair indices, distances, and squared distances for every
-/// neighbor pair found. This object is produced by [`LinkedCell`] or
-/// [`BruteForce`] and consumed by analysis classes like [`RDF`] and [`Cluster`].
+/// A column store — two index columns that are always present, plus whichever
+/// physical columns the search was told to keep. Row `k` of every column
+/// describes the same pair. Produced by [`NeighborList::neighbors`] and
+/// consumed by the analysis classes ([`RDF`], [`Cluster`], `Steinhardt`, …).
+///
+/// A **self** search is half-shell: each unordered pair appears exactly once,
+/// with `i < j`. A cross search ([`LinkedCell::query`]) is directed and has no
+/// such rule.
 ///
 /// # Properties
 ///
 /// | Property | Type | Description |
 /// |----------|------|-------------|
-/// | `numPairs` | `number` | Total number of neighbor pairs |
+/// | `numPairs` | `number` | Number of pairs — the row count every column shares |
 /// | `numPoints` | `number` | Number of reference points |
-/// | `numQueryPoints` | `number` | Number of query points |
-/// | `isSelfQuery` | `boolean` | Whether this is a self-query result |
+/// | `numQueryPoints` | `number` | Number of query points (= `numPoints` for a self search) |
+/// | `isSelfQuery` | `boolean` | Whether both index columns address the same point set |
+///
+/// # Optional columns
+///
+/// `distSq()` and `disp()` return `undefined` when the search did not store
+/// that column. That is deliberately different from an empty or zero-filled
+/// array: a zero displacement is a physically meaningful value (two coincident
+/// particles), so fabricating one would turn a missing column into a wrong
+/// answer.
 ///
 /// # Example (JavaScript)
 ///
 /// ```js
-/// const nlist = lc.build(frame);
-/// console.log(nlist.numPairs);
+/// const neigh = nl.neighbors();
+/// console.log(neigh.numPairs);
 ///
-/// const i = nlist.queryPointIndices(); // Uint32Array
-/// const j = nlist.pointIndices();      // Uint32Array
-/// const d = nlist.distances();         // Float32Array or Float64Array (in A)
+/// const i  = neigh.queryPointIndices(); // Uint32Array
+/// const j  = neigh.pointIndices();      // Uint32Array
+/// const d2 = neigh.distSq();            // Float64Array (Å²) or undefined
+/// const dr = neigh.disp();              // Float64Array (Å), 3 per pair
 /// ```
-#[wasm_bindgen(js_name = NeighborList)]
-pub struct NeighborList {
+#[wasm_bindgen(js_name = Neighbors)]
+pub struct Neighbors {
     /// Crate-visible so the force-field optimizer can read pair indices.
-    pub(crate) inner: RsNeighborList,
+    pub(crate) inner: RsNeighbors,
 }
 
-#[wasm_bindgen(js_class = NeighborList)]
-impl NeighborList {
-    /// Total number of neighbor pairs found.
+#[wasm_bindgen(js_class = Neighbors)]
+impl Neighbors {
+    /// Number of neighbor pairs — the row count every column shares.
     #[wasm_bindgen(getter, js_name = numPairs)]
     pub fn num_pairs(&self) -> usize {
         self.inner.n_pairs()
     }
 
-    /// Number of reference (target) points in the search.
+    /// Number of reference (target) points the search indexed.
     #[wasm_bindgen(getter, js_name = numPoints)]
     pub fn num_points(&self) -> usize {
         self.inner.num_points()
     }
 
-    /// Number of query points in the search.
-    ///
-    /// For self-queries, this equals `numPoints`.
+    /// Number of query points; equal to `numPoints` for a self search.
     #[wasm_bindgen(getter, js_name = numQueryPoints)]
     pub fn num_query_points(&self) -> usize {
         self.inner.num_query_points()
     }
 
-    /// Whether this result came from a self-query (`build()`).
-    ///
-    /// In self-queries, only unique pairs `(i < j)` are reported.
+    /// Whether both index columns address the same point set (half-shell,
+    /// `i < j`).
     #[wasm_bindgen(getter, js_name = isSelfQuery)]
     pub fn is_self_query(&self) -> bool {
-        self.inner.mode() == QueryMode::SelfQuery
+        matches!(self.inner.mode(), QueryMode::SelfQuery { .. })
     }
 
     /// Zero-copy `Uint32Array` view of query point indices (`i`) over
@@ -410,20 +452,236 @@ impl NeighborList {
         unsafe { Uint32Array::view(self.inner.point_indices()) }
     }
 
-    /// Pairwise distances in angstrom (A). Computed lazily from `distSq`.
+    /// Squared minimum-image distances in Å², one per pair, or `undefined`
+    /// when this table never stored the column.
     ///
-    /// Returns an owned copy because distances are derived on the fly
-    /// (`sqrt` per pair) rather than stored.
-    pub fn distances(&self) -> Vec<F> {
-        self.inner.distances()
+    /// Zero-copy view; same invalidation caveat as
+    /// [`queryPointIndices`](Self::query_point_indices). The square root is
+    /// left to the caller — most consumers compare against a squared cutoff,
+    /// and an accessor hiding a per-pair `sqrt` would make that cost invisible.
+    #[wasm_bindgen(js_name = distSq)]
+    pub fn dist_sq(&self) -> Option<JsFloatArray> {
+        // SAFETY: view borrows wasm memory; short-lived use only.
+        self.inner
+            .dist_sq()
+            .map(|column| unsafe { JsFloatArray::view(column) })
     }
 
-    /// Zero-copy `Float64Array` view of squared pairwise distances in A^2.
-    /// Same invalidation caveat as [`queryPointIndices`](Self::query_point_indices).
-    #[wasm_bindgen(js_name = distSq)]
-    pub fn dist_sq(&self) -> JsFloatArray {
+    /// Minimum-image displacements `r_j - r_i` in Å, flattened as
+    /// `[dx0, dy0, dz0, dx1, …]` — three values per pair, `3 * numPairs` long.
+    /// `undefined` when this table never stored the column.
+    ///
+    /// The vector is **not** normalized: its length is the pair distance, and
+    /// it points from `i` to `j`, so swapping the indices flips its sign. Both
+    /// physical columns come from the same minimum-image evaluation, so
+    /// `distSq[k]` is exactly the squared length of row `k`.
+    ///
+    /// Zero-copy view; same invalidation caveat as
+    /// [`queryPointIndices`](Self::query_point_indices).
+    ///
+    /// # Errors
+    ///
+    /// Throws if the stored column is not contiguous, which would make a flat
+    /// view silently misaligned rather than merely slow.
+    pub fn disp(&self) -> Result<Option<JsFloatArray>, JsValue> {
+        let Some(view) = self.inner.disp() else {
+            return Ok(None);
+        };
+        let flat = view.as_slice().ok_or_else(|| {
+            JsValue::from_str("disp column is not contiguous; cannot expose a flat view")
+        })?;
         // SAFETY: view borrows wasm memory; short-lived use only.
-        unsafe { JsFloatArray::view(self.inner.dist_sq()) }
+        Ok(Some(unsafe { JsFloatArray::view(flat) }))
+    }
+}
+
+// ===========================================================================
+// LinkedCell / BruteForce — compatibility aliases over the engine
+// ===========================================================================
+
+/// **Compatibility alias.** Cell-list neighbor search in one call.
+///
+/// The primary door is [`NeighborList`], which separates indexing (`build` /
+/// `update`) from materialization (`neighbors`). This class stays for the
+/// molvis linkage, which constructs a search and a table in a single step, and
+/// it is a thin wrapper over the same engine — the pairs are identical.
+///
+/// It also carries [`query`](Self::query), the **cross** search (query points
+/// against a separate reference set), which the engine does not answer; that
+/// is the second reason it is still here.
+///
+/// All distances are in angstrom (Å).
+///
+/// # Example (JavaScript)
+///
+/// ```js
+/// const lc = new LinkedCell(3.0);        // cutoff = 3.0 Å
+/// const neigh = lc.build(frame);         // self search (half-shell, i < j)
+/// const cross = lc.query(ref, other);    // cross search (directed)
+///
+/// // Preferred spelling:
+/// const nl = new NeighborList(3.0);
+/// nl.build(frame);
+/// const same = nl.neighbors();
+/// ```
+#[wasm_bindgen(js_name = LinkedCell)]
+pub struct LinkedCell {
+    cutoff: F,
+    storage: RsNeighborsStorage,
+}
+
+#[wasm_bindgen(js_class = LinkedCell)]
+impl LinkedCell {
+    /// Create a cell-list search with the given distance cutoff.
+    ///
+    /// # Arguments
+    ///
+    /// * `cutoff` - Maximum neighbor distance in angstrom (Å)
+    /// * `store_dist_sq` - Retain squared distances when materializing
+    ///   (default `true`). Set `false` to save 8 B/pair.
+    /// * `store_diff` - Retain MIC displacement vectors (default `true`).
+    ///   Set `false` to save 24 B/pair.
+    ///
+    /// # Errors
+    ///
+    /// Throws if `cutoff` is not a positive length.
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        cutoff: F,
+        store_dist_sq: Option<bool>,
+        store_diff: Option<bool>,
+    ) -> Result<LinkedCell, JsValue> {
+        check_cutoff(cutoff)?;
+        Ok(LinkedCell {
+            cutoff,
+            storage: RsNeighborsStorage {
+                dist_sq: store_dist_sq.unwrap_or(true),
+                disp: store_diff.unwrap_or(true),
+            },
+        })
+    }
+
+    /// Index `frame` and materialize its half-shell pairs in one call.
+    ///
+    /// Equivalent to `new NeighborList(cutoff)` + `build(frame)` +
+    /// `neighbors(...)` with the constructor's column flags.
+    pub fn build(&self, frame: &Frame) -> Result<Neighbors, JsValue> {
+        let mut engine = NeighborList::new(self.cutoff)?;
+        engine.build(frame)?;
+        Ok(engine.materialize(self.storage))
+    }
+
+    /// Cross search: all pairs where `i` indexes the query frame's atoms and
+    /// `j` indexes the reference frame's atoms.
+    ///
+    /// Directed and full-shell — every query point reports all of its
+    /// reference neighbors, with no `i < j` rule — so the result is tagged
+    /// `isSelfQuery === false`.
+    ///
+    /// # Example (JavaScript)
+    ///
+    /// ```js
+    /// const cross = new LinkedCell(3.0).query(refFrame, otherFrame);
+    /// console.log(cross.numPairs);
+    /// ```
+    pub fn query(&self, ref_frame: &Frame, query_frame: &Frame) -> Result<Neighbors, JsValue> {
+        ref_frame.with_frame(|rs_ref| {
+            let ref_pos = positions_from_frame(rs_ref)?;
+
+            let index = match rs_ref.simbox.as_ref() {
+                Some(sb) => RsNeighborQuery::new(sb, ref_pos.view(), self.cutoff),
+                None => RsNeighborQuery::free(ref_pos.view(), self.cutoff),
+            };
+
+            query_frame.with_frame(|rs_query| {
+                let query_pos = positions_from_frame(rs_query)?;
+                let table = index.query(query_pos.view());
+                // A cross query always materializes every column; drop the
+                // ones this search was told not to keep.
+                let table = if self.storage == RsNeighborsStorage::FULL {
+                    table
+                } else {
+                    table.repack(self.storage)
+                };
+                Ok(Neighbors { inner: table })
+            })
+        })
+    }
+}
+
+/// **Compatibility alias.** O(N²) all-pairs neighbor search in one call.
+///
+/// The primary door is [`NeighborList::bruteForce`](NeighborList::brute_force).
+/// This class stays for the molvis linkage; it is a thin wrapper over the same
+/// engine and produces the same [`Neighbors`] table as [`LinkedCell`], so the
+/// two are interchangeable for RDF, Cluster, LBFGS and the order parameters.
+///
+/// Prefer it over the cell list only for **small** systems (a few hundred
+/// atoms) where building cells costs more than the search itself.
+///
+/// # Example (JavaScript)
+///
+/// ```js
+/// const neigh = new BruteForce(12.5).build(frame);
+/// ```
+#[wasm_bindgen(js_name = BruteForce)]
+pub struct BruteForce {
+    cutoff: F,
+    storage: RsNeighborsStorage,
+}
+
+#[wasm_bindgen(js_class = BruteForce)]
+impl BruteForce {
+    /// Create a brute-force search with the given cutoff (Å).
+    ///
+    /// * `store_dist_sq` — keep d² (default `true`)
+    /// * `store_diff` — keep MIC displacement vectors (default `true`)
+    ///
+    /// # Errors
+    ///
+    /// Throws if `cutoff` is not a positive length.
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        cutoff: F,
+        store_dist_sq: Option<bool>,
+        store_diff: Option<bool>,
+    ) -> Result<BruteForce, JsValue> {
+        check_cutoff(cutoff)?;
+        Ok(BruteForce {
+            cutoff,
+            storage: RsNeighborsStorage {
+                dist_sq: store_dist_sq.unwrap_or(true),
+                disp: store_diff.unwrap_or(true),
+            },
+        })
+    }
+
+    /// Index `frame` and materialize its half-shell pairs in one call.
+    ///
+    /// # Errors
+    ///
+    /// Throws above `MAX_ATOMS` atoms: materializing O(N²) pairs in a browser
+    /// tab at that size is almost always a mistake, and the cell list answers
+    /// the same question.
+    pub fn build(&self, frame: &Frame) -> Result<Neighbors, JsValue> {
+        // Guard: materializing O(N²) pairs above this is almost always a bug.
+        const MAX_ATOMS: usize = 8_000;
+        let n = frame.with_frame(|rs_frame| {
+            let atoms = rs_frame
+                .get("atoms")
+                .ok_or_else(|| JsValue::from_str("Frame has no 'atoms' block"))?;
+            // `nrows` is None for a block with no columns — that is zero atoms.
+            Ok(atoms.nrows().unwrap_or(0))
+        })?;
+        if n > MAX_ATOMS {
+            return Err(JsValue::from_str(&format!(
+                "BruteForce refused N={n} (max {MAX_ATOMS}): use NeighborList for large systems"
+            )));
+        }
+
+        let mut engine = NeighborList::brute_force(self.cutoff)?;
+        engine.build(frame)?;
+        Ok(engine.materialize(self.storage))
     }
 }
 
@@ -512,7 +770,7 @@ impl RDF {
     ///
     /// **Single semantic path** for RDF: builds a cell-list **index** at
     /// `r_max` and streams pairs into the histogram (`build_index` +
-    /// `visit_pairs`). A full [`NeighborList`] is never allocated.
+    /// `visit_pairs`). A full [`Neighbors`] is never allocated.
     /// Memory is \(O(N + n_{\mathrm{bins}})\), not \(O(P)\).
     ///
     /// Volume comes from the constructor `volume` if set, else `frame.simbox`.
@@ -905,7 +1163,7 @@ impl Cluster {
     /// # Arguments
     ///
     /// * `frame` - Frame with atom positions
-    /// * `neighbors` - Pre-built [`NeighborList`] defining connectivity
+    /// * `neighbors` - Pre-built [`Neighbors`] defining connectivity
     ///
     /// # Returns
     ///
@@ -920,11 +1178,7 @@ impl Cluster {
     /// ```js
     /// const result = cluster.compute(frame, nlist);
     /// ```
-    pub fn compute(
-        &self,
-        frame: &Frame,
-        neighbors: &NeighborList,
-    ) -> Result<ClusterResult, JsValue> {
+    pub fn compute(&self, frame: &Frame, neighbors: &Neighbors) -> Result<ClusterResult, JsValue> {
         frame.with_frame(|rs_frame| {
             let nlist_vec = vec![neighbors.inner.clone()];
             let mut results = self
@@ -1023,7 +1277,7 @@ mod tests {
         let positions = [[1.0, 1.0, 1.0], [1.5, 1.0, 1.0], [8.0, 8.0, 8.0]];
         let frame = make_frame(&positions, 20.0);
 
-        let lc = LinkedCell::new(2.0, None, None);
+        let lc = LinkedCell::new(2.0, None, None).unwrap();
         let nbrs = lc.build(&frame).unwrap();
         assert!(nbrs.num_pairs() >= 1);
     }
@@ -1079,7 +1333,7 @@ mod tests {
         ];
         let frame = make_frame(&positions, 20.0);
 
-        let lc = LinkedCell::new(2.0, None, None);
+        let lc = LinkedCell::new(2.0, None, None).unwrap();
         let nbrs = lc.build(&frame).unwrap();
 
         let cluster = Cluster::new(1);
@@ -1102,7 +1356,7 @@ mod tests {
         ];
         let frame = make_frame(&positions, 20.0);
 
-        let lc = LinkedCell::new(2.0, None, None);
+        let lc = LinkedCell::new(2.0, None, None).unwrap();
         let nbrs = lc.build(&frame).unwrap();
 
         let cluster = Cluster::new(2);
@@ -4157,7 +4411,7 @@ impl WasmCorrelationFunction {
     pub fn compute(
         &self,
         frame: &Frame,
-        neighbors: &NeighborList,
+        neighbors: &Neighbors,
         values_a: &[F],
         values_b: &[F],
     ) -> Result<JsValue, JsValue> {
@@ -4212,7 +4466,7 @@ impl WasmLocalDensity {
         Ok(Self { inner })
     }
 
-    pub fn compute(&self, frame: &Frame, neighbors: &NeighborList) -> Result<JsValue, JsValue> {
+    pub fn compute(&self, frame: &Frame, neighbors: &Neighbors) -> Result<JsValue, JsValue> {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct Out {
@@ -4469,7 +4723,7 @@ impl WasmSteinhardt {
         Ok(Self { inner })
     }
 
-    pub fn compute(&self, frame: &Frame, neighbors: &NeighborList) -> Result<JsValue, JsValue> {
+    pub fn compute(&self, frame: &Frame, neighbors: &Neighbors) -> Result<JsValue, JsValue> {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct Out {
@@ -4517,7 +4771,7 @@ impl WasmHexatic {
         })
     }
 
-    pub fn compute(&self, frame: &Frame, neighbors: &NeighborList) -> Result<JsValue, JsValue> {
+    pub fn compute(&self, frame: &Frame, neighbors: &Neighbors) -> Result<JsValue, JsValue> {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct Out {
@@ -4661,7 +4915,7 @@ impl WasmSolidLiquid {
         Self { inner }
     }
 
-    pub fn compute(&self, frame: &Frame, neighbors: &NeighborList) -> Result<JsValue, JsValue> {
+    pub fn compute(&self, frame: &Frame, neighbors: &Neighbors) -> Result<JsValue, JsValue> {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct Out {
@@ -4745,7 +4999,7 @@ impl WasmBondOrder {
         })
     }
 
-    pub fn compute(&self, frame: &Frame, neighbors: &NeighborList) -> Result<JsValue, JsValue> {
+    pub fn compute(&self, frame: &Frame, neighbors: &Neighbors) -> Result<JsValue, JsValue> {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct Out {
@@ -4793,7 +5047,7 @@ impl WasmLocalDescriptors {
         }
     }
 
-    pub fn compute(&self, frame: &Frame, neighbors: &NeighborList) -> Result<JsValue, JsValue> {
+    pub fn compute(&self, frame: &Frame, neighbors: &Neighbors) -> Result<JsValue, JsValue> {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct Out {
@@ -4861,7 +5115,7 @@ impl WasmAngularSeparation {
     pub fn compute_neighbor(
         &self,
         frame: &Frame,
-        neighbors: &NeighborList,
+        neighbors: &Neighbors,
         query: &[F],
         points: &[F],
     ) -> Result<JsFloatArray, JsValue> {
@@ -4912,7 +5166,7 @@ impl WasmMatchEnv {
         Ok(Self { inner })
     }
 
-    pub fn compute(&self, frame: &Frame, neighbors: &NeighborList) -> Result<JsValue, JsValue> {
+    pub fn compute(&self, frame: &Frame, neighbors: &Neighbors) -> Result<JsValue, JsValue> {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct Out {
@@ -5408,7 +5662,7 @@ impl WasmPMFTR12 {
     }
 
     /// Requires per-atom orientation angles on the frame.
-    pub fn compute(&self, frame: &Frame, neighbors: &NeighborList) -> Result<JsValue, JsValue> {
+    pub fn compute(&self, frame: &Frame, neighbors: &Neighbors) -> Result<JsValue, JsValue> {
         frame.with_frame(|rs_frame| {
             let orientations = vec![require_angles(rs_frame, "PMFTR12")?];
             let nlists = vec![neighbors.inner.clone()];
@@ -5455,7 +5709,7 @@ impl WasmPMFTXY {
 
     /// Orientations are optional: without them every query particle is treated
     /// as unrotated, which is the isotropic reference the freud docs describe.
-    pub fn compute(&self, frame: &Frame, neighbors: &NeighborList) -> Result<JsValue, JsValue> {
+    pub fn compute(&self, frame: &Frame, neighbors: &Neighbors) -> Result<JsValue, JsValue> {
         frame.with_frame(|rs_frame| {
             let orientations = angles_from_frame(rs_frame).map(|angles| vec![angles]);
             let nlists = vec![neighbors.inner.clone()];
@@ -5502,7 +5756,7 @@ impl WasmPMFTXYT {
     }
 
     /// Requires per-atom orientation angles on the frame.
-    pub fn compute(&self, frame: &Frame, neighbors: &NeighborList) -> Result<JsValue, JsValue> {
+    pub fn compute(&self, frame: &Frame, neighbors: &Neighbors) -> Result<JsValue, JsValue> {
         frame.with_frame(|rs_frame| {
             let orientations = vec![require_angles(rs_frame, "PMFTXYT")?];
             let nlists = vec![neighbors.inner.clone()];
@@ -5556,7 +5810,7 @@ impl WasmPMFTXYZ {
 
     /// Uses the frame's per-atom quaternions when present; otherwise every
     /// query particle is treated as unrotated.
-    pub fn compute(&self, frame: &Frame, neighbors: &NeighborList) -> Result<JsValue, JsValue> {
+    pub fn compute(&self, frame: &Frame, neighbors: &Neighbors) -> Result<JsValue, JsValue> {
         frame.with_frame(|rs_frame| {
             let orientations = quaternions_from_frame(rs_frame).map(|quats| vec![quats]);
             let nlists = vec![neighbors.inner.clone()];

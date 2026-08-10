@@ -8,9 +8,9 @@
 //!
 //! | Python class      | Args                                        | Output                       |
 //! |-------------------|---------------------------------------------|------------------------------|
-//! | `RDF`             | list[NeighborList]                          | `RDFResult` (accumulated)    |
+//! | `RDF`             | list[Neighbors]                             | `RDFResult` (accumulated)    |
 //! | `MSD`             | —                                           | `MSDTimeSeries`              |
-//! | `Cluster`         | list[NeighborList]                          | list[`ClusterResult`]        |
+//! | `Cluster`         | list[Neighbors]                             | list[`ClusterResult`]        |
 //! | `ClusterCenters`  | list[`ClusterResult`]                       | list[`ClusterCentersResult`] |
 //! | `CenterOfMass`    | list[`ClusterResult`]                       | list[`CenterOfMassResult`]   |
 //! | `GyrationTensor`  | list[`ClusterResult`], list[`ClusterCenters…`] | list[3×3 ndarray]         |
@@ -27,7 +27,7 @@ use molrs::compute::{
     GyrationTensor, InertiaTensor, KMeans, KMeansResult, MSD, MSDResult, MSDTimeSeries, MsdMode,
     Pca2, PcaResult, RDF, RDFResult, RadiusOfGyration, RgResult,
 };
-use molrs::spatial::neighbors::NeighborList;
+use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame::Frame as CoreFrame;
 use molrs::types::F;
 
@@ -35,7 +35,7 @@ use numpy::{IntoPyArray, PyArray1, PyArray2, PyArrayDyn, PyReadonlyArray1};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
-pub(crate) use crate::helpers::{collect_frames, collect_nlists, py_value_err};
+pub(crate) use crate::helpers::{collect_frames, collect_neighbors, py_value_err};
 
 fn was_batched(frames: &Bound<'_, PyAny>) -> bool {
     frames.extract::<PyRef<'_, PyFrame>>().is_err()
@@ -128,7 +128,7 @@ impl PyRDF {
     /// Parameters
     /// ----------
     /// frames : Frame | list[Frame]
-    /// nlists : NeighborList | list[NeighborList]
+    /// nlists : Neighbors | list[Neighbors]
     ///     One neighbor list per frame.
     ///
     /// Returns
@@ -141,7 +141,7 @@ impl PyRDF {
     ) -> PyResult<PyRDFResult> {
         let owned = collect_frames(frames)?;
         let refs: Vec<&CoreFrame> = owned.iter().collect();
-        let nlists_vec: Vec<NeighborList> = collect_nlists(nlists)?;
+        let nlists_vec: Vec<Neighbors> = collect_neighbors(nlists)?;
         if nlists_vec.len() != refs.len() {
             return Err(PyValueError::new_err(format!(
                 "len(nlists)={} must equal len(frames)={}",
@@ -390,7 +390,7 @@ impl PyCluster {
     /// Compute one cluster result per input frame.
     ///
     /// Two modes (mirroring freud's `Cluster.compute`):
-    /// * spatial — pass `nlists` (a `NeighborList` per frame); particles within
+    /// * spatial — pass `nlists` (a `Neighbors` table per frame); particles within
     ///   the cutoff and transitively connected form a cluster.
     /// * by key — pass `keys` (one non-negative integer per atom, e.g. a
     ///   molecule id); all atoms sharing a key form one cluster, independent of
@@ -431,7 +431,7 @@ impl PyCluster {
                     "compute requires either nlists (spatial) or keys (group-by-key)",
                 )
             })?;
-            let nlists_vec = collect_nlists(nlists)?;
+            let nlists_vec = collect_neighbors(nlists)?;
             if nlists_vec.len() != refs.len() {
                 return Err(PyValueError::new_err(format!(
                     "len(nlists)={} must equal len(frames)={}",

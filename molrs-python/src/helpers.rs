@@ -107,16 +107,22 @@ pub(crate) fn collect_frames(
     list.iter().map(|f| f.clone_core_frame()).collect()
 }
 
-/// Collect owned [`NeighborList`]s from a single wrapper or a list of them.
+/// Collect owned [`Neighbors`] tables from a single wrapper or a list of them.
 ///
-/// [`NeighborList`]: molrs::spatial::neighbors::NeighborList
-pub(crate) fn collect_nlists(
+/// The analyses take one materialized table per frame, so this is where the
+/// binder accepts either shape. The engine that produced a table
+/// (`NeighborList`) is deliberately not accepted: it would have to guess a
+/// column policy, and a guess that drops `disp` is exactly the silent failure
+/// this chain removed.
+///
+/// [`Neighbors`]: molrs::spatial::neighbors::Neighbors
+pub(crate) fn collect_neighbors(
     arg: &Bound<'_, PyAny>,
-) -> PyResult<Vec<molrs::spatial::neighbors::NeighborList>> {
-    use crate::core::spatial::linkedcell::PyNeighborList;
-    if let Ok(single) = arg.extract::<PyRef<'_, PyNeighborList>>() {
+) -> PyResult<Vec<molrs::spatial::neighbors::Neighbors>> {
+    use crate::core::spatial::neighborlist::PyNeighbors;
+    if let Ok(single) = arg.extract::<PyRef<'_, PyNeighbors>>() {
         return Ok(vec![single.inner.clone()]);
     }
-    let list: Vec<PyRef<'_, PyNeighborList>> = arg.extract()?;
+    let list: Vec<PyRef<'_, PyNeighbors>> = arg.extract()?;
     Ok(list.iter().map(|n| n.inner.clone()).collect())
 }

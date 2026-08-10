@@ -67,13 +67,13 @@ atoms.insert("mass", np.array([15.999, 1.008, 1.008], dtype=np.float64))
 
 frame = molrs.Frame()
 frame["atoms"] = atoms
-frame.simbox = molrs.Box.cube(30.0)
+frame.box = molrs.Box.cube(30.0)
 frame.meta = {"name": "water", "source": "docs"}
 
 frame.validate()
 print(frame.keys())
 print(frame["atoms"].nrows)
-print(frame.simbox.lengths())
+print(frame.box.lengths())
 ```
 
 Expected output shape:

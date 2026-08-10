@@ -56,8 +56,8 @@ def test_neighbor_query_free_boundary():
     query = molrs.NeighborQuery.free(points, 1.0)
     result = query.query(np.array([[0.0, 0.0, 0.0]]))
 
-    assert np.array_equal(result.point_indices, np.array([0, 1], dtype=np.uint32))
-    assert np.allclose(result.distances, [0.0, 0.5])
+    assert np.array_equal(result.point_indices(), np.array([0, 1], dtype=np.uint32))
+    assert np.allclose(np.sqrt(result.dist_sq()), [0.0, 0.5])
 
 
 def test_neighbor_query_rejects_non_positive_cutoff():

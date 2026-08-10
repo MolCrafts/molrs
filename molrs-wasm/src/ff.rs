@@ -4,9 +4,10 @@
 //! const typifier = new UFFTypifier();
 //! const typed    = typifier.typify(frame);
 //! const pots     = typifier.toPotentials(typed);   // no .ff()
-//! const nlist    = new BruteForce(12.5).build(typed); // or LinkedCell for large N
-//! const report   = new LBFGS(pots, nlist).run(typed, 200);
-//! // omitting neighborList → full topology nonbonded pairs (small molecules only)
+//! const nl       = new NeighborList(12.5);         // or NeighborList.bruteForce
+//! nl.build(typed);
+//! const report   = new LBFGS(pots, nl.neighbors()).run(typed, 200);
+//! // omitting the neighbor table → full topology nonbonded pairs (small molecules only)
 //! ```
 //!
 //! No `typifyUff` / `insertIntramolecularPairs` / `typifier.ff()` façades.
@@ -30,7 +31,7 @@ use molrs::system::atomistic::Atomistic;
 use molrs::types::U;
 use ndarray::Array1;
 
-use crate::compute::NeighborList;
+use crate::compute::Neighbors;
 use crate::core::frame::Frame;
 
 // ── Typifiers ───────────────────────────────────────────────────────────────
@@ -72,8 +73,9 @@ macro_rules! wasm_typifier {
             /// Compile molecule-bound potentials from a **typed** frame.
             ///
             /// Non-bonded terms need a `pairs` block; [`LBFGS::run`] installs
-            /// that list (from a caller-supplied [`NeighborList`] or an internal
-            /// bruteforce topology list) and recompiles before minimizing.
+            /// that list (from a caller-supplied [`Neighbors`] table or an
+            /// internal bruteforce topology list) and recompiles before
+            /// minimizing.
             /// Calling this alone with no `pairs` yields bonded-only kernels.
             ///
             /// Native: `typifier.ff().to_potentials(&frame)?` — the FF handle
@@ -154,27 +156,27 @@ impl Potentials {
 /// Pair source for non-bonded terms.
 enum PairSource {
     /// O(N²) topology list: all i<j except 1-2 / 1-3, 1-4 flagged
-    /// ([`topology_pairs`]). Default when no [`NeighborList`] is given.
+    /// ([`topology_pairs`]). Default when no [`Neighbors`] table is given.
     BruteForceTopology,
-    /// Spatial neighbour list indices (1-2 / 1-3 still excluded at install).
-    NeighborList { i: Vec<u32>, j: Vec<u32> },
+    /// Spatial neighbour pair indices (1-2 / 1-3 still excluded at install).
+    Neighbors { i: Vec<u32>, j: Vec<u32> },
 }
 
-/// Max atoms for the **omit-neighborList** path (full topology nonbonded pairs).
-/// Above this, callers must pass a spatial [`NeighborList`] from
-/// [`crate::compute::BruteForce`] or [`crate::compute::LinkedCell`].
+/// Max atoms for the **omit-neighbors** path (full topology nonbonded pairs).
+/// Above this, callers must pass a spatial [`Neighbors`] table from
+/// [`crate::compute::NeighborList`].
 const LBFGS_TOPOLOGY_PAIRS_MAX_ATOMS: usize = 2_000;
 
 /// Limited-memory BFGS.
 ///
-/// Construct with potentials (and optional neighbor list), then
+/// Construct with potentials (and an optional neighbor table), then
 /// `run(frame, nSteps)`.
 ///
-/// **Prefer an explicit spatial neighbor list** from [`BruteForce`](crate::compute::BruteForce)
-/// (small N) or [`LinkedCell`](crate::compute::LinkedCell) (large N) at the
-/// force field's non-electrostatic cutoff.
+/// **Prefer an explicit spatial pair table** — build one with
+/// [`NeighborList`](crate::compute::NeighborList) at the force field's
+/// non-electrostatic cutoff.
 ///
-/// If no neighbor list is given, the optimizer builds an internal **topology**
+/// If no table is given, the optimizer builds an internal **topology**
 /// pair list (all nonbonded pairs excluding 1-2 / 1-3, no spatial cutoff).
 /// That path is refused when `N > 2000` to avoid O(N²) OOM / WASM aborts.
 #[wasm_bindgen(js_name = LBFGS)]
@@ -190,9 +192,8 @@ pub struct LBFGS {
 
 #[wasm_bindgen(js_class = LBFGS)]
 impl LBFGS {
-    /// Bind `pots`. Optional spatial [`NeighborList`] from
-    /// [`BruteForce`](crate::compute::BruteForce) or
-    /// [`LinkedCell`](crate::compute::LinkedCell).
+    /// Bind `pots`. Optional spatial [`Neighbors`] table from
+    /// [`NeighborList::neighbors`](crate::compute::NeighborList::neighbors).
     ///
     /// If omitted, a **topology** all-pairs nonbonded list (no spatial cutoff)
     /// is built at `run` — only for small molecules (`N ≤ 2000`); larger
@@ -203,16 +204,16 @@ impl LBFGS {
     #[wasm_bindgen(constructor)]
     pub fn new(
         pots: &Potentials,
-        neighbor_list: Option<NeighborList>,
+        neighbors: Option<Neighbors>,
         fmax: Option<f64>,
         max_step: Option<f64>,
         memory: Option<usize>,
     ) -> LBFGS {
-        let pairs = match neighbor_list {
-            Some(nl) => {
-                let i = nl.inner.query_point_indices().to_vec();
-                let j = nl.inner.point_indices().to_vec();
-                PairSource::NeighborList { i, j }
+        let pairs = match neighbors {
+            Some(table) => {
+                let i = table.inner.query_point_indices().to_vec();
+                let j = table.inner.point_indices().to_vec();
+                PairSource::Neighbors { i, j }
             }
             None => PairSource::BruteForceTopology,
         };
@@ -277,9 +278,6 @@ impl LBFGS {
     }
 }
 
-// NeighborList.inner is private — expose a crate-visible accessor in compute.rs
-// via a method we add below, or duplicate indices through public JS API.
-
 // ── OptReport ───────────────────────────────────────────────────────────────
 
 #[wasm_bindgen(js_name = OptReport)]
@@ -320,13 +318,13 @@ fn install_pairs(frame: &mut RsFrame, source: &PairSource) -> Result<(), String>
                 return Err(format!(
                     "LBFGS: omitting neighborList builds O(N²) topology pairs \
                      (N={n} > max {LBFGS_TOPOLOGY_PAIRS_MAX_ATOMS}). Pass a \
-                     NeighborList from BruteForce(cutoff) or LinkedCell(cutoff) \
-                     at the force-field nonbonded shell."
+                     Neighbors table from NeighborList(cutoff) at the \
+                     force-field nonbonded shell."
                 ));
             }
             topology_pairs(frame)
         }
-        PairSource::NeighborList { i, j } => pairs_from_indices(frame, i, j)?,
+        PairSource::Neighbors { i, j } => pairs_from_indices(frame, i, j)?,
     };
     frame.insert("pairs", block);
     Ok(())
