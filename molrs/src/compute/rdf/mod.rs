@@ -289,13 +289,13 @@ impl RDF {
 }
 
 impl Compute for RDF {
-    type Args<'a> = &'a Vec<Neighbors>;
+    type Args<'a> = &'a [Neighbors];
     type Output = RDFResult;
 
     fn compute<'a, FA: FrameAccess + Sync + 'a>(
         &self,
         frames: &[&'a FA],
-        neighbors: &'a Vec<Neighbors>,
+        neighbors: &'a [Neighbors],
     ) -> Result<RDFResult, ComputeError> {
         if frames.is_empty() {
             return Err(ComputeError::EmptyInput);
@@ -357,10 +357,6 @@ mod tests {
         frame
     }
 
-    fn build_nlist(frame: &Frame, r_max: F) -> Neighbors {
-        nlist_from_frame(frame, r_max)
-    }
-
     #[test]
     fn ideal_gas_rdf_approaches_one() {
         let n = 500;
@@ -369,10 +365,10 @@ mod tests {
         let n_bins = 40;
 
         let frame = random_frame(n, box_len, 42);
-        let nlist = build_nlist(&frame, r_max);
+        let nlist = nlist_from_frame(&frame, r_max);
 
         let rdf = RDF::new(n_bins, r_max, 0.0).unwrap();
-        let result = rdf.compute(&[&frame], &vec![nlist]).unwrap();
+        let result = rdf.compute(&[&frame], &[nlist]).unwrap();
 
         for i in 5..n_bins {
             assert!(
@@ -397,8 +393,8 @@ mod tests {
 
         // Single-frame baseline.
         let frame0 = random_frame(n, box_len, 100);
-        let nlist0 = build_nlist(&frame0, r_max);
-        let single = rdf.compute(&[&frame0], &vec![nlist0]).unwrap();
+        let nlist0 = nlist_from_frame(&frame0, r_max);
+        let single = rdf.compute(&[&frame0], &[nlist0]).unwrap();
         let var_single: F = single
             .rdf
             .iter()
@@ -409,7 +405,10 @@ mod tests {
 
         // Multi-frame batch.
         let frames_owned: Vec<Frame> = (100..110u64).map(|s| random_frame(n, box_len, s)).collect();
-        let nlists: Vec<Neighbors> = frames_owned.iter().map(|f| build_nlist(f, r_max)).collect();
+        let nlists: Vec<Neighbors> = frames_owned
+            .iter()
+            .map(|f| nlist_from_frame(f, r_max))
+            .collect();
         let frame_refs: Vec<&Frame> = frames_owned.iter().collect();
         let multi = rdf.compute(&frame_refs, &nlists).unwrap();
         let var_multi: F = multi
@@ -439,7 +438,10 @@ mod tests {
         let frames_owned: Vec<Frame> = (0..8u64)
             .map(|s| random_frame(n, 10.0 + 0.05 * s as F, 200 + s))
             .collect();
-        let nlists: Vec<Neighbors> = frames_owned.iter().map(|f| build_nlist(f, r_max)).collect();
+        let nlists: Vec<Neighbors> = frames_owned
+            .iter()
+            .map(|f| nlist_from_frame(f, r_max))
+            .collect();
 
         let rdf = RDF::new(n_bins, r_max, 0.0).unwrap();
 
@@ -499,7 +501,7 @@ mod tests {
             NeighborQuery::free_columns(xs, ys, zs, 4.0).query_self()
         };
         let rdf = RDF::new(10, 4.0, 0.0).unwrap();
-        let err = rdf.compute(&[&frame], &vec![nlist]).unwrap_err();
+        let err = rdf.compute(&[&frame], &[nlist]).unwrap_err();
         assert!(matches!(err, ComputeError::MissingSimBox));
     }
 
@@ -507,13 +509,13 @@ mod tests {
     fn r_min_shifts_bins_and_filters_pairs() {
         let box_len: F = 10.0;
         let frame = random_frame(200, box_len, 99);
-        let nlist = build_nlist(&frame, 4.0);
+        let nlist = nlist_from_frame(&frame, 4.0);
 
         let r_min: F = 1.5;
         let r_max: F = 4.0;
         let n_bins = 25;
         let rdf = RDF::new(n_bins, r_max, r_min).unwrap();
-        let result = rdf.compute(&[&frame], &vec![nlist]).unwrap();
+        let result = rdf.compute(&[&frame], &[nlist]).unwrap();
 
         assert!((result.bin_edges[0] - r_min).abs() < 1e-12);
         assert!((result.bin_edges[n_bins] - r_max).abs() < 1e-12);
@@ -548,7 +550,7 @@ mod tests {
         let nlist = nlist_from_frame(&frame, 2.0);
 
         let rdf = RDF::new(10, 2.0, 0.0).unwrap();
-        let result = rdf.compute(&[&frame], &vec![nlist]).unwrap();
+        let result = rdf.compute(&[&frame], &[nlist]).unwrap();
 
         for (i, &c) in result.n_r.iter().enumerate() {
             assert_eq!(c, 0.0, "bin {i} should be empty, got {c}");
@@ -643,8 +645,8 @@ mod tests {
         );
 
         let rdf = RDF::new(4, 4.0, 0.0).unwrap();
-        let self_result = rdf.compute(&[&frame], &vec![self_list]).unwrap();
-        let cross_result = rdf.compute(&[&frame], &vec![cross_list]).unwrap();
+        let self_result = rdf.compute(&[&frame], &[self_list]).unwrap();
+        let cross_result = rdf.compute(&[&frame], &[cross_list]).unwrap();
 
         // Raw counts: the half list holds one pair, the directed list two.
         assert_eq!(self_result.n_r.to_vec(), vec![0.0, 1.0, 0.0, 0.0]);
@@ -679,9 +681,9 @@ mod tests {
         use crate::compute::result::ComputeResult;
 
         let frame = random_frame(200, 10.0, 42);
-        let nlist = build_nlist(&frame, 4.0);
+        let nlist = nlist_from_frame(&frame, 4.0);
         let rdf = RDF::new(20, 4.0, 0.0).unwrap();
-        let mut result = rdf.compute(&[&frame], &vec![nlist]).unwrap();
+        let mut result = rdf.compute(&[&frame], &[nlist]).unwrap();
         let first = result.rdf.clone();
         result.finalize();
         result.finalize();
@@ -737,7 +739,7 @@ mod tests {
         let nlist = nlist_from_frame(&frame, r_max);
 
         let rdf = RDF::new(n_bins, r_max, 0.0).unwrap().with_dimensionality(2);
-        let result = rdf.compute(&[&frame], &vec![nlist]).unwrap();
+        let result = rdf.compute(&[&frame], &[nlist]).unwrap();
 
         // Plateau check: bins outside the first-shell artifact should average
         // to ~1.0. Use a generous tolerance since this is a finite ideal gas.

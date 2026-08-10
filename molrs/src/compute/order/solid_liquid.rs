@@ -136,13 +136,13 @@ impl SolidLiquid {
 }
 
 impl Compute for SolidLiquid {
-    type Args<'a> = &'a Vec<Neighbors>;
+    type Args<'a> = &'a [Neighbors];
     type Output = Vec<SolidLiquidResult>;
 
     fn compute<'a, FA: FrameAccess + Sync + 'a>(
         &self,
         frames: &[&'a FA],
-        nlists: &'a Vec<Neighbors>,
+        nlists: &'a [Neighbors],
     ) -> Result<Vec<SolidLiquidResult>, ComputeError> {
         if frames.is_empty() {
             return Err(ComputeError::EmptyInput);
@@ -212,10 +212,6 @@ mod tests {
         frame
     }
 
-    fn build_nlist(frame: &Frame, cutoff: F) -> Neighbors {
-        nlist_from_frame(frame, cutoff)
-    }
-
     /// Two octahedra sharing the same orientation: every neighbor pair across
     /// the symmetry-mate has qℓm dot ≈ 1 (identical environments).
     fn paired_octahedra(box_len: F) -> Frame {
@@ -256,11 +252,11 @@ mod tests {
             20.0,
             [false; 3],
         );
-        let nl = build_nlist(&frame, 1.2);
+        let nl = nlist_from_frame(&frame, 1.2);
         let r = &SolidLiquid::new(6)
             .with_q_threshold(-2.0) // count every bond as "solid"
             .with_n_threshold(1)
-            .compute(&[&frame], &vec![nl])
+            .compute(&[&frame], &[nl])
             .unwrap()[0];
         // Centre particle has 6 bonds, each counted once.
         assert_eq!(r.n_solid_bonds[0], 6);
@@ -364,7 +360,7 @@ mod tests {
         // n_threshold 1 then makes the two centres — and nothing else — solid.
         let r = &SolidLiquid::new(6)
             .with_n_threshold(1)
-            .compute(&[&frame], &vec![nl])
+            .compute(&[&frame], &[nl])
             .unwrap()[0];
         let expected_bonds: Vec<u32> = (0..14).map(|i| u32::from(i == 0 || i == 7)).collect();
         assert_eq!(
@@ -382,10 +378,10 @@ mod tests {
     #[test]
     fn deterministic_across_calls() {
         let frame = paired_octahedra(20.0);
-        let nl = build_nlist(&frame, 1.2);
+        let nl = nlist_from_frame(&frame, 1.2);
         let sl = SolidLiquid::new(6);
-        let a = sl.compute(&[&frame], &vec![nl.clone()]).unwrap();
-        let b = sl.compute(&[&frame], &vec![nl]).unwrap();
+        let a = sl.compute(&[&frame], std::slice::from_ref(&nl)).unwrap();
+        let b = sl.compute(&[&frame], &[nl]).unwrap();
         assert_eq!(a[0].n_solid_bonds, b[0].n_solid_bonds);
         assert_eq!(a[0].is_solid, b[0].is_solid);
     }
@@ -402,10 +398,10 @@ mod tests {
     #[test]
     fn high_threshold_makes_nothing_solid() {
         let frame = paired_octahedra(20.0);
-        let nl = build_nlist(&frame, 1.2);
+        let nl = nlist_from_frame(&frame, 1.2);
         let r = &SolidLiquid::new(6)
             .with_q_threshold(2.0) // impossible — cosine ≤ 1
-            .compute(&[&frame], &vec![nl])
+            .compute(&[&frame], &[nl])
             .unwrap()[0];
         assert!(r.is_solid.iter().all(|&s| !s));
     }

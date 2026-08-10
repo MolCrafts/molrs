@@ -288,16 +288,12 @@ mod tests {
         frame
     }
 
-    fn build_nlist(frame: &Frame, cutoff: F) -> Neighbors {
-        nlist_from_frame(frame, cutoff)
-    }
-
     #[test]
     fn zero_orientations_match_lab_frame() {
         // Two particles along +x, both orientations = 0 → local-frame bond
         // is (+1, 0); t = 0. The reverse contributes (−1, 0, 0).
         let frame = frame_with(&[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], 10.0);
-        let nl = build_nlist(&frame, 1.5);
+        let nl = nlist_from_frame(&frame, 1.5);
         let r = &PMFTXYT::new(2.0, 2.0, 8, 8, 8)
             .unwrap()
             .compute(
@@ -318,7 +314,7 @@ mod tests {
         // at lab (1, 0, 0). In particle 0's frame, the bond runs along its
         // -y axis (i.e. local (x, y) = (0, -1)).
         let frame = frame_with(&[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], 10.0);
-        let nl = build_nlist(&frame, 1.5);
+        let nl = nlist_from_frame(&frame, 1.5);
         let r = &PMFTXYT::new(2.0, 2.0, 8, 8, 4)
             .unwrap()
             .compute(

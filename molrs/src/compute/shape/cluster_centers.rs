@@ -181,7 +181,7 @@ mod tests {
 
     fn clusters_via_nlist(frame: &Frame, cutoff: F) -> ClusterResult {
         let nlist = nlist_from_frame(frame, cutoff);
-        let out = Cluster::new(1).compute(&[frame], &vec![nlist]).unwrap();
+        let out = Cluster::new(1).compute(&[frame], &[nlist]).unwrap();
         out.into_iter().next().unwrap()
     }
 

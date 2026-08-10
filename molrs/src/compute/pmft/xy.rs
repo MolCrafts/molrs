@@ -209,10 +209,10 @@ pub struct PMFTXYArgs<'a> {
     pub query_orientations: Option<&'a [Vec<F>]>,
 }
 
-impl<'a> From<&'a Vec<Neighbors>> for PMFTXYArgs<'a> {
-    fn from(v: &'a Vec<Neighbors>) -> Self {
+impl<'a> From<&'a [Neighbors]> for PMFTXYArgs<'a> {
+    fn from(v: &'a [Neighbors]) -> Self {
         Self {
-            nlists: v.as_slice(),
+            nlists: v,
             query_orientations: None,
         }
     }

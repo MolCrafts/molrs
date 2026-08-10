@@ -127,13 +127,13 @@ fn push_angle(counts: &mut Array2<u64>, dx: F, dy: F, dz: F, r: F, n_theta: usiz
 }
 
 impl Compute for BondOrder {
-    type Args<'a> = &'a Vec<Neighbors>;
+    type Args<'a> = &'a [Neighbors];
     type Output = Vec<BondOrderResult>;
 
     fn compute<'a, FA: FrameAccess + Sync + 'a>(
         &self,
         frames: &[&'a FA],
-        nlists: &'a Vec<Neighbors>,
+        nlists: &'a [Neighbors],
     ) -> Result<Vec<BondOrderResult>, ComputeError> {
         if frames.is_empty() {
             return Err(ComputeError::EmptyInput);
@@ -205,20 +205,16 @@ mod tests {
         frame
     }
 
-    fn build_nlist(frame: &Frame, cutoff: F) -> Neighbors {
-        nlist_from_frame(frame, cutoff)
-    }
-
     #[test]
     fn single_bond_lands_in_correct_bin() {
         // Centre particle + neighbor at +z: θ = 0, φ undefined (arbitrary
         // φ bin). The bond and its symmetric reverse (centre as j) gives
         // bonds at θ = 0 and θ = π → bins 0 and n_θ-1.
         let frame = frame_with(&[[5.0, 5.0, 5.0], [5.0, 5.0, 6.0]], 20.0);
-        let nl = build_nlist(&frame, 1.5);
+        let nl = nlist_from_frame(&frame, 1.5);
         let r = &BondOrder::new(10, 10)
             .unwrap()
-            .compute(&[&frame], &vec![nl])
+            .compute(&[&frame], &[nl])
             .unwrap()[0];
         let total: u64 = r.raw_counts.iter().copied().sum();
         assert_eq!(total, 2);
@@ -244,10 +240,10 @@ mod tests {
             ],
             20.0,
         );
-        let nl = build_nlist(&frame, 1.2);
+        let nl = nlist_from_frame(&frame, 1.2);
         let r = &BondOrder::new(8, 8)
             .unwrap()
-            .compute(&[&frame], &vec![nl])
+            .compute(&[&frame], &[nl])
             .unwrap()[0];
         let total: u64 = r.raw_counts.iter().copied().sum();
         // 6 unique bonds × 2 (self-query symmetric counterparts) = 12.

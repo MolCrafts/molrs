@@ -359,13 +359,13 @@ impl Steinhardt {
 }
 
 impl Compute for Steinhardt {
-    type Args<'a> = &'a Vec<Neighbors>;
+    type Args<'a> = &'a [Neighbors];
     type Output = Vec<SteinhardtResult>;
 
     fn compute<'a, FA: FrameAccess + Sync + 'a>(
         &self,
         frames: &[&'a FA],
-        nlists: &'a Vec<Neighbors>,
+        nlists: &'a [Neighbors],
     ) -> Result<Vec<SteinhardtResult>, ComputeError> {
         if frames.is_empty() {
             return Err(ComputeError::EmptyInput);
@@ -444,19 +444,15 @@ mod tests {
         frame
     }
 
-    fn build_nlist(frame: &Frame, cutoff: F) -> Neighbors {
-        nlist_from_frame(frame, cutoff)
-    }
-
     // -- 1) Trivial single-pair --------------------------------------------------
 
     #[test]
     fn ql_isolated_particle_is_zero() {
         // Single particle: no neighbors → q_ℓ = 0
         let frame = frame_with(&[[5.0, 5.0, 5.0]], 10.0, [false; 3]);
-        let nl = build_nlist(&frame, 1.0);
+        let nl = nlist_from_frame(&frame, 1.0);
         let s = Steinhardt::new(&[4, 6]).unwrap();
-        let r = s.compute(&[&frame], &vec![nl]).unwrap();
+        let r = s.compute(&[&frame], &[nl]).unwrap();
         assert_eq!(r[0].ql[0][0], 0.0);
         assert_eq!(r[0].ql[1][0], 0.0);
     }
@@ -489,9 +485,9 @@ mod tests {
         // Central particle has 6 neighbors. Compute q_6 at center. Then
         // rotate the same octahedron by π/4 around z and confirm q_6 unchanged.
         let frame = octahedron(20.0);
-        let nl = build_nlist(&frame, 1.2);
+        let nl = nlist_from_frame(&frame, 1.2);
         let s = Steinhardt::new(&[6]).unwrap();
-        let r = &s.compute(&[&frame], &vec![nl]).unwrap()[0];
+        let r = &s.compute(&[&frame], &[nl]).unwrap()[0];
         let q6_center = r.ql[0][0];
         assert!(
             q6_center > 0.0,
@@ -536,8 +532,8 @@ mod tests {
             ]);
         }
         let frame2 = frame_with(&positions, 20.0, [false; 3]);
-        let nl2 = build_nlist(&frame2, 1.2);
-        let r2 = &s.compute(&[&frame2], &vec![nl2]).unwrap()[0];
+        let nl2 = nlist_from_frame(&frame2, 1.2);
+        let r2 = &s.compute(&[&frame2], &[nl2]).unwrap()[0];
         let q6_rotated = r2.ql[0][0];
         assert!(
             (q6_rotated - q6_center).abs() < 1e-10,
@@ -550,12 +546,14 @@ mod tests {
     #[test]
     fn multiple_l_values_independent() {
         let frame = octahedron(20.0);
-        let nl = build_nlist(&frame, 1.2);
+        let nl = nlist_from_frame(&frame, 1.2);
         let s_solo = Steinhardt::new(&[6]).unwrap();
         let s_pair = Steinhardt::new(&[4, 6]).unwrap();
 
-        let r_solo = &s_solo.compute(&[&frame], &vec![nl.clone()]).unwrap()[0];
-        let r_pair = &s_pair.compute(&[&frame], &vec![nl]).unwrap()[0];
+        let r_solo = &s_solo
+            .compute(&[&frame], std::slice::from_ref(&nl))
+            .unwrap()[0];
+        let r_pair = &s_pair.compute(&[&frame], &[nl]).unwrap()[0];
 
         assert!((r_solo.ql[0][0] - r_pair.ql[1][0]).abs() < 1e-12);
         // q_4 and q_6 in general differ for an octahedron.
@@ -588,9 +586,9 @@ mod tests {
     #[test]
     fn wl_present_when_requested() {
         let frame = octahedron(20.0);
-        let nl = build_nlist(&frame, 1.2);
+        let nl = nlist_from_frame(&frame, 1.2);
         let s = Steinhardt::new(&[6]).unwrap().with_wl(true);
-        let r = &s.compute(&[&frame], &vec![nl]).unwrap()[0];
+        let r = &s.compute(&[&frame], &[nl]).unwrap()[0];
         assert!(r.wl.is_some());
         let wl = r.wl.as_ref().unwrap();
         assert_eq!(wl.len(), 1);
@@ -606,12 +604,12 @@ mod tests {
     #[test]
     fn wl_normalize_scales_into_unit_range() {
         let frame = octahedron(20.0);
-        let nl = build_nlist(&frame, 1.2);
+        let nl = nlist_from_frame(&frame, 1.2);
         let s = Steinhardt::new(&[6])
             .unwrap()
             .with_wl(true)
             .with_wl_normalize(true);
-        let r = &s.compute(&[&frame], &vec![nl]).unwrap()[0];
+        let r = &s.compute(&[&frame], &[nl]).unwrap()[0];
         let wl = r.wl.as_ref().unwrap();
         // Normalised ŵ_ℓ ∈ [-1, 1] for any ℓ ≥ 1 (Cauchy-Schwarz on triple sum).
         assert!(
@@ -624,9 +622,9 @@ mod tests {
     #[test]
     fn wl_absent_by_default() {
         let frame = octahedron(20.0);
-        let nl = build_nlist(&frame, 1.2);
+        let nl = nlist_from_frame(&frame, 1.2);
         let s = Steinhardt::new(&[6]).unwrap();
-        let r = &s.compute(&[&frame], &vec![nl]).unwrap()[0];
+        let r = &s.compute(&[&frame], &[nl]).unwrap()[0];
         assert!(r.wl.is_none());
     }
 
@@ -635,11 +633,13 @@ mod tests {
     #[test]
     fn average_variant_changes_ql() {
         let frame = octahedron(20.0);
-        let nl = build_nlist(&frame, 1.2);
+        let nl = nlist_from_frame(&frame, 1.2);
         let s_plain = Steinhardt::new(&[6]).unwrap();
         let s_avg = Steinhardt::new(&[6]).unwrap().with_average(true);
-        let r_plain = &s_plain.compute(&[&frame], &vec![nl.clone()]).unwrap()[0];
-        let r_avg = &s_avg.compute(&[&frame], &vec![nl]).unwrap()[0];
+        let r_plain = &s_plain
+            .compute(&[&frame], std::slice::from_ref(&nl))
+            .unwrap()[0];
+        let r_avg = &s_avg.compute(&[&frame], &[nl]).unwrap()[0];
         // Outer-shell particles see different neighborhoods in averaged mode.
         let neighbor_idx = 1;
         assert!(
@@ -653,10 +653,10 @@ mod tests {
     #[test]
     fn deterministic_across_calls() {
         let frame = octahedron(20.0);
-        let nl = build_nlist(&frame, 1.2);
+        let nl = nlist_from_frame(&frame, 1.2);
         let s = Steinhardt::new(&[4, 6]).unwrap().with_wl(true);
-        let r1 = s.compute(&[&frame], &vec![nl.clone()]).unwrap();
-        let r2 = s.compute(&[&frame], &vec![nl]).unwrap();
+        let r1 = s.compute(&[&frame], std::slice::from_ref(&nl)).unwrap();
+        let r2 = s.compute(&[&frame], &[nl]).unwrap();
         for (a, b) in r1[0].ql.iter().zip(r2[0].ql.iter()) {
             for (x, y) in a.iter().zip(b.iter()) {
                 assert!((x - y).abs() < 1e-15);
@@ -669,12 +669,12 @@ mod tests {
     #[test]
     fn compute_qlm_normalization_matches_internal() {
         let frame = octahedron(20.0);
-        let nl = build_nlist(&frame, 1.2);
+        let nl = nlist_from_frame(&frame, 1.2);
         let qlm_raw = compute_qlm(&frame, &nl, 6).unwrap();
 
         // Plain (non-averaged) Steinhardt should yield the same qlm.
         let s = Steinhardt::new(&[6]).unwrap();
-        let r = &s.compute(&[&frame], &vec![nl]).unwrap()[0];
+        let r = &s.compute(&[&frame], &[nl]).unwrap()[0];
         for (a, b) in qlm_raw.iter().zip(r.qlm[0].iter()) {
             assert!((a.re - b.re).abs() < 1e-14 && (a.im - b.im).abs() < 1e-14);
         }
@@ -714,7 +714,7 @@ mod tests {
     fn nlist_without_displacement_vectors_is_error() {
         use molrs::spatial::neighbors::NeighborsStorage;
         let frame = octahedron(20.0);
-        let nl_full = build_nlist(&frame, 1.2);
+        let nl_full = nlist_from_frame(&frame, 1.2);
         assert!(nl_full.n_pairs() > 0);
         // Lean list: distances kept, displacements dropped (a caller that only
         // asked for d², e.g. an RDF-shaped query, reused for an order kernel).
@@ -726,7 +726,7 @@ mod tests {
         );
         let err = Steinhardt::new(&[6])
             .unwrap()
-            .compute(&[&frame], &vec![nl_lean])
+            .compute(&[&frame], &[nl_lean])
             .unwrap_err();
         assert!(
             matches!(err, ComputeError::BadShape { .. }),
@@ -782,7 +782,7 @@ mod tests {
 
         let err = Steinhardt::new(&[6])
             .unwrap()
-            .compute(&[&frame], &vec![nl])
+            .compute(&[&frame], &[nl])
             .unwrap_err();
         assert!(
             matches!(err, ComputeError::BadShape { .. }),
@@ -796,10 +796,10 @@ mod tests {
     fn multi_frame_returns_one_result_per_frame() {
         let frame1 = octahedron(20.0);
         let frame2 = octahedron(20.0);
-        let nl1 = build_nlist(&frame1, 1.2);
-        let nl2 = build_nlist(&frame2, 1.2);
+        let nl1 = nlist_from_frame(&frame1, 1.2);
+        let nl2 = nlist_from_frame(&frame2, 1.2);
         let s = Steinhardt::new(&[6]).unwrap();
-        let r = s.compute(&[&frame1, &frame2], &vec![nl1, nl2]).unwrap();
+        let r = s.compute(&[&frame1, &frame2], &[nl1, nl2]).unwrap();
         assert_eq!(r.len(), 2);
         // Same frame, same nlist → same q_6 at center
         assert!((r[0].ql[0][0] - r[1].ql[0][0]).abs() < 1e-12);
@@ -810,9 +810,9 @@ mod tests {
     #[test]
     fn qlm_shape_is_n_times_2lp1() {
         let frame = octahedron(20.0);
-        let nl = build_nlist(&frame, 1.2);
+        let nl = nlist_from_frame(&frame, 1.2);
         let s = Steinhardt::new(&[6]).unwrap();
-        let r = &s.compute(&[&frame], &vec![nl]).unwrap()[0];
+        let r = &s.compute(&[&frame], &[nl]).unwrap()[0];
         assert_eq!(r.qlm[0].len(), 7 * (2 * 6 + 1));
     }
 
@@ -825,9 +825,9 @@ mod tests {
     #[test]
     fn parity_two_particle_pair() {
         let frame = frame_with(&[[5.0, 5.0, 5.0], [6.0, 5.0, 5.0]], 10.0, [false; 3]);
-        let nl = build_nlist(&frame, 1.5);
+        let nl = nlist_from_frame(&frame, 1.5);
         let s = Steinhardt::new(&[6]).unwrap();
-        let r = &s.compute(&[&frame], &vec![nl]).unwrap()[0];
+        let r = &s.compute(&[&frame], &[nl]).unwrap()[0];
         assert!(
             (r.ql[0][0] - r.ql[0][1]).abs() < 1e-12,
             "even-ℓ q_ℓ must be parity-symmetric across an antiparallel pair"
@@ -840,9 +840,9 @@ mod tests {
     fn parity_odd_l_two_particle_pair() {
         // For ℓ=3 (odd), q_ℓm at particle 1 = -q_ℓm at particle 0 → same magnitude.
         let frame = frame_with(&[[5.0, 5.0, 5.0], [6.0, 5.0, 5.0]], 10.0, [false; 3]);
-        let nl = build_nlist(&frame, 1.5);
+        let nl = nlist_from_frame(&frame, 1.5);
         let s = Steinhardt::new(&[3]).unwrap();
-        let r = &s.compute(&[&frame], &vec![nl]).unwrap()[0];
+        let r = &s.compute(&[&frame], &[nl]).unwrap()[0];
         assert!((r.ql[0][0] - r.ql[0][1]).abs() < 1e-12);
     }
 
@@ -851,9 +851,9 @@ mod tests {
     #[test]
     fn result_l_field_preserves_input_order() {
         let frame = octahedron(20.0);
-        let nl = build_nlist(&frame, 1.2);
+        let nl = nlist_from_frame(&frame, 1.2);
         let s = Steinhardt::new(&[6, 4, 8]).unwrap();
-        let r = &s.compute(&[&frame], &vec![nl]).unwrap()[0];
+        let r = &s.compute(&[&frame], &[nl]).unwrap()[0];
         assert_eq!(r.l, vec![6, 4, 8]);
     }
 
@@ -881,14 +881,14 @@ mod tests {
     #[test]
     fn pbc_consistent_with_open_box() {
         let frame = wrapped_octahedron();
-        let nl = build_nlist(&frame, 1.5);
+        let nl = nlist_from_frame(&frame, 1.5);
 
         let frame_open = octahedron(20.0);
-        let nl_open = build_nlist(&frame_open, 1.2);
+        let nl_open = nlist_from_frame(&frame_open, 1.2);
 
         let s = Steinhardt::new(&[6]).unwrap();
-        let r_pbc = &s.compute(&[&frame], &vec![nl]).unwrap()[0];
-        let r_open = &s.compute(&[&frame_open], &vec![nl_open]).unwrap()[0];
+        let r_pbc = &s.compute(&[&frame], &[nl]).unwrap()[0];
+        let r_open = &s.compute(&[&frame_open], &[nl_open]).unwrap()[0];
         assert!(
             (r_pbc.ql[0][0] - r_open.ql[0][0]).abs() < 1e-10,
             "q_6 should match between PBC-wrapped and open-box octahedra: got {} vs {}",
@@ -938,9 +938,9 @@ mod tests {
     #[test]
     fn parity_visible_at_mixed_role_particle() {
         let frame = wrapped_octahedron();
-        let nl = build_nlist(&frame, 1.5);
+        let nl = nlist_from_frame(&frame, 1.5);
         let s = Steinhardt::new(&[6]).unwrap();
-        let r = &s.compute(&[&frame], &vec![nl]).unwrap()[0];
+        let r = &s.compute(&[&frame], &[nl]).unwrap()[0];
 
         let q6_p1 = r.ql[0][1];
         let q6_p3 = r.ql[0][3];
@@ -1038,7 +1038,7 @@ mod tests {
             "cross-query Neighbors must be BadShape; got {err:?}"
         );
 
-        let Err(err) = Steinhardt::new(&[6]).unwrap().compute(&[&frame], &vec![nl]) else {
+        let Err(err) = Steinhardt::new(&[6]).unwrap().compute(&[&frame], &[nl]) else {
             panic!("Steinhardt::compute must inherit the compute_qlm cross-query guard");
         };
         assert!(

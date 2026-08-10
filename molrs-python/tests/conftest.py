@@ -132,3 +132,36 @@ def water_lammps_data(tmp_path: Path) -> Path:
     path = tmp_path / "water.data"
     molrs.io.raw.write_lammps(str(path), _water_frame(for_lammps=True))
     return path
+
+
+def make_frame(pts, box_len=10.0):
+    """Wrap an (N, 3) float64 array into a Frame with x/y/z columns and a cubic box.
+
+    Shared by test_compute.py and test_neighborlist.py — one Frame-construction
+    contract, one home. Plain function (not a fixture) so helpers can call it.
+    """
+    frame = molrs.Frame()
+    block = molrs.Block()
+    block.insert("x", np.ascontiguousarray(pts[:, 0], dtype=np.float64))
+    block.insert("y", np.ascontiguousarray(pts[:, 1], dtype=np.float64))
+    block.insert("z", np.ascontiguousarray(pts[:, 2], dtype=np.float64))
+    frame["atoms"] = block
+    frame.box = molrs.Box.cube(box_len)
+    return frame
+
+
+def octahedron_frame(cx=5.0, cy=5.0, cz=5.0, box_len=20.0):
+    """Centre particle + ±x/y/z neighbors at unit distance; returns (frame, pts)."""
+    pts = np.array(
+        [
+            [cx, cy, cz],
+            [cx + 1, cy, cz],
+            [cx - 1, cy, cz],
+            [cx, cy + 1, cz],
+            [cx, cy - 1, cz],
+            [cx, cy, cz + 1],
+            [cx, cy, cz - 1],
+        ],
+        dtype=np.float64,
+    )
+    return make_frame(pts, box_len=box_len), pts

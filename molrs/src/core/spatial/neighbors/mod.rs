@@ -263,6 +263,12 @@ pub(crate) trait Backend: std::fmt::Debug {
     /// 3 columns.
     fn build_index(&mut self, points: FNx3View<'_>, bx: &SimBox);
 
+    /// The interaction cutoff (Å) this backend indexes at.
+    ///
+    /// Single authority for the value — the engine reads it back rather than
+    /// carrying a second copy that could drift.
+    fn cutoff(&self) -> F;
+
     /// Rebuild the spatial index for new positions — NO pair enumeration.
     ///
     /// Implementations may reuse internal buffers. There is no skin/Verlet
@@ -401,10 +407,8 @@ pub(crate) trait Backend: std::fmt::Debug {
 /// [`neighbors`](Self::neighbors) takes the policy as an argument.
 #[derive(Debug)]
 pub struct NeighborList {
-    /// Interaction cutoff (Å), fixed at construction: it sets the cell width of
-    /// the backend's index.
-    cutoff: F,
-    /// The algorithm that indexes space and enumerates pairs.
+    /// The algorithm that indexes space and enumerates pairs. Also the single
+    /// owner of the cutoff — read back via [`cutoff`](Self::cutoff).
     backend: Box<dyn Backend + Send + Sync>,
     /// Box fixed by the last [`build`](Self::build) or
     /// [`build_columns`](Self::build_columns). `None` until then, which is what
@@ -425,7 +429,7 @@ impl NeighborList {
     /// Panics if `cutoff` is not positive.
     pub fn new(cutoff: F) -> Self {
         assert!(cutoff > 0.0, "cutoff must be positive");
-        Self::with_backend(cutoff, Box::new(LinkCell::new().cutoff(cutoff)))
+        Self::with_backend(Box::new(LinkCell::new().cutoff(cutoff)))
     }
 
     /// A search with the O(N²) all-pairs backend.
@@ -438,12 +442,11 @@ impl NeighborList {
     /// Panics if `cutoff` is not positive.
     pub fn brute_force(cutoff: F) -> Self {
         assert!(cutoff > 0.0, "cutoff must be positive");
-        Self::with_backend(cutoff, Box::new(BruteForce::new(cutoff)))
+        Self::with_backend(Box::new(BruteForce::new(cutoff)))
     }
 
-    fn with_backend(cutoff: F, backend: Box<dyn Backend + Send + Sync>) -> Self {
+    fn with_backend(backend: Box<dyn Backend + Send + Sync>) -> Self {
         Self {
-            cutoff,
             backend,
             bx: None,
             num_points: 0,
@@ -453,7 +456,17 @@ impl NeighborList {
     /// The cutoff distance (Å) fixed at construction.
     #[inline]
     pub fn cutoff(&self) -> F {
-        self.cutoff
+        self.backend.cutoff()
+    }
+
+    /// Whether a [`build`](Self::build) or [`build_columns`](Self::build_columns)
+    /// has happened — the precondition [`update`](Self::update) panics on.
+    ///
+    /// Binders that must not let a panic cross an FFI seam check this and raise
+    /// their own error instead of shadowing the state with a flag of their own.
+    #[inline]
+    pub fn is_built(&self) -> bool {
+        self.bx.is_some()
     }
 
     /// Index `points` in `bx` — coordinates **and** box.
@@ -903,10 +916,20 @@ impl Neighbors {
             "merging neighbor tables with different storage policies would \
              misalign the columns"
         );
-        self.idx_i.append(&mut other.idx_i);
-        self.idx_j.append(&mut other.idx_j);
-        self.dist_sq.append(&mut other.dist_sq);
-        self.disp_flat.append(&mut other.disp_flat);
+        if self.idx_i.is_empty() {
+            // Receiving into an empty table — the final merge into the caller's
+            // fresh `out` — is a buffer handover, not a copy: up to 40 B/pair
+            // saved on multi-million-pair materializations.
+            std::mem::swap(&mut self.idx_i, &mut other.idx_i);
+            std::mem::swap(&mut self.idx_j, &mut other.idx_j);
+            std::mem::swap(&mut self.dist_sq, &mut other.dist_sq);
+            std::mem::swap(&mut self.disp_flat, &mut other.disp_flat);
+        } else {
+            self.idx_i.append(&mut other.idx_i);
+            self.idx_j.append(&mut other.idx_j);
+            self.dist_sq.append(&mut other.dist_sq);
+            self.disp_flat.append(&mut other.disp_flat);
+        }
         debug_assert_eq!(self.idx_i.len(), self.idx_j.len(), "index columns");
         debug_assert!(
             !self.storage.dist_sq || self.dist_sq.len() == self.idx_i.len(),
@@ -1109,9 +1132,78 @@ impl Neighbors {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
+mod test_fixtures {
+    //! Fixtures and projections shared by the neighbor test modules —
+    //! `from_pairs_tests`, `engine_tests`, and `linkcell::tests` — so one
+    //! hand-derived MIC golden set has one home.
+    use super::{Neighbors, SimBox};
+    use crate::types::F;
+    use ndarray::{Array2, array};
+
+    /// Orthorhombic 10 × 8 × 6 Å box, fully periodic.
+    pub(crate) fn small_box() -> SimBox {
+        SimBox::ortho(
+            array![10.0, 8.0, 6.0],
+            array![0.0, 0.0, 0.0],
+            [true, true, true],
+        )
+        .expect("valid orthorhombic box")
+    }
+
+    /// Four atoms in [`small_box`]; at cutoff 1.5 Å exactly three pairs survive.
+    ///
+    /// | pair | `disp` = MIC(r_j − r_i) | `dist_sq` |
+    /// |------|--------------------------|-----------|
+    /// | 0-1  | (−0.9, 0.0, 0.0)         | 0.81      |
+    /// | 0-2  | ( 0.0, −0.8, 0.0)        | 0.64      |
+    /// | 1-2  | ( 0.9, −0.8, 0.0)        | 1.45      |
+    ///
+    /// Atom 3 sits at the box centre, further than 1.5 Å from every other atom.
+    pub(crate) fn small_points() -> Array2<F> {
+        array![
+            [0.5, 0.5, 0.5],
+            [9.6, 0.5, 0.5],
+            [0.5, 7.7, 0.5],
+            [5.0, 4.0, 3.0],
+        ]
+    }
+
+    /// The three goldens of [`small_points`], keyed by `(i, j)`.
+    ///
+    /// Derived by hand from the minimum-image convention: 0-1 wraps in x
+    /// (9.6 → −0.4 relative to 0.5, i.e. 0.9 Å apart), 0-2 wraps in y (7.7 →
+    /// −0.3, i.e. 0.8 Å apart), and 1-2 wraps in both, giving
+    /// 0.9² + 0.8² = 1.45 Å².
+    pub(crate) const SMALL_GOLDEN: [(u32, u32, F, [F; 3]); 3] = [
+        (0, 1, 0.81, [-0.9, 0.0, 0.0]),
+        (0, 2, 0.64, [0.0, -0.8, 0.0]),
+        (1, 2, 1.45, [0.9, -0.8, 0.0]),
+    ];
+
+    /// Rows of a FULL materialized table as `(i, j, dist_sq, disp)`, sorted by
+    /// `(i, j)` so that row order — which is not part of the contract — cannot
+    /// decide a comparison.
+    pub(crate) fn table_rows_sorted(nb: &Neighbors) -> Vec<(u32, u32, F, [F; 3])> {
+        let d2 = nb.dist_sq().expect("FULL storage materializes dist_sq");
+        let disp = nb.disp().expect("FULL storage materializes disp");
+        let mut rows: Vec<(u32, u32, F, [F; 3])> = (0..nb.n_pairs())
+            .map(|k| {
+                (
+                    nb.query_point_indices()[k],
+                    nb.point_indices()[k],
+                    d2[k],
+                    [disp[[k, 0]], disp[[k, 1]], disp[[k, 2]]],
+                )
+            })
+            .collect();
+        rows.sort_by_key(|r| (r.0, r.1));
+        rows
+    }
+}
+
+#[cfg(test)]
 mod from_pairs_tests {
     use super::*;
-    use ndarray::array;
 
     /// Two hard-coded pairs shared by the column-flag tests.
     ///
@@ -1249,18 +1341,8 @@ mod from_pairs_tests {
     /// Atom 3 sits at the box centre, beyond 1.5 Å of every other atom.
     #[test]
     fn bruteforce_self_half_shell_and_consistency() {
-        let bx = SimBox::ortho(
-            array![10.0, 8.0, 6.0],
-            array![0.0, 0.0, 0.0],
-            [true, true, true],
-        )
-        .expect("valid orthorhombic box");
-        let pts = array![
-            [0.5, 0.5, 0.5],
-            [9.6, 0.5, 0.5],
-            [0.5, 7.7, 0.5],
-            [5.0, 4.0, 3.0],
-        ];
+        let bx = super::test_fixtures::small_box();
+        let pts = super::test_fixtures::small_points();
 
         let mut bf = NeighborList::brute_force(1.5);
         bf.build(pts.view(), &bx);
@@ -1362,52 +1444,9 @@ mod from_pairs_tests {
 /// a specific pair rather than a seed.
 #[cfg(test)]
 mod engine_tests {
+    use super::test_fixtures::{SMALL_GOLDEN, small_box, small_points, table_rows_sorted};
     use super::*;
     use ndarray::{Array2, array};
-
-    /// Orthorhombic 10 × 8 × 6 Å box, fully periodic.
-    ///
-    /// Shared with `from_pairs_tests::bruteforce_self_half_shell_and_consistency`
-    /// so the engine is measured against a fixture whose goldens are already
-    /// checked in against the `BruteForce` oracle.
-    fn small_box() -> SimBox {
-        SimBox::ortho(
-            array![10.0, 8.0, 6.0],
-            array![0.0, 0.0, 0.0],
-            [true, true, true],
-        )
-        .expect("valid orthorhombic box")
-    }
-
-    /// Four atoms in [`small_box`]; at cutoff 1.5 Å exactly three pairs survive.
-    ///
-    /// | pair | `disp` = MIC(r_j − r_i) | `dist_sq` |
-    /// |------|--------------------------|-----------|
-    /// | 0-1  | (−0.9, 0.0, 0.0)         | 0.81      |
-    /// | 0-2  | ( 0.0, −0.8, 0.0)        | 0.64      |
-    /// | 1-2  | ( 0.9, −0.8, 0.0)        | 1.45      |
-    ///
-    /// Atom 3 sits at the box centre, further than 1.5 Å from every other atom.
-    fn small_points() -> Array2<F> {
-        array![
-            [0.5, 0.5, 0.5],
-            [9.6, 0.5, 0.5],
-            [0.5, 7.7, 0.5],
-            [5.0, 4.0, 3.0],
-        ]
-    }
-
-    /// The three goldens of [`small_points`], keyed by `(i, j)`.
-    ///
-    /// Derived by hand from the minimum-image convention: 0-1 wraps in x
-    /// (9.6 → −0.4 relative to 0.5, i.e. 0.9 Å apart), 0-2 wraps in y (7.7 →
-    /// −0.3, i.e. 0.8 Å apart), and 1-2 wraps in both, giving
-    /// 0.9² + 0.8² = 1.45 Å².
-    const SMALL_GOLDEN: [(u32, u32, F, [F; 3]); 3] = [
-        (0, 1, 0.81, [-0.9, 0.0, 0.0]),
-        (0, 2, 0.64, [0.0, -0.8, 0.0]),
-        (1, 2, 1.45, [0.9, -0.8, 0.0]),
-    ];
 
     /// Collect the engine's pair stream, sorted by `(i, j)`.
     ///
@@ -1418,24 +1457,6 @@ mod engine_tests {
         nl.for_each_pair(|p| pairs.push(p));
         pairs.sort_by_key(|p| (p.i, p.j));
         pairs
-    }
-
-    /// Rows of a materialized table, sorted by `(i, j)`.
-    fn table_rows_sorted(nb: &Neighbors) -> Vec<(u32, u32, F, [F; 3])> {
-        let d2 = nb.dist_sq().expect("FULL storage materializes dist_sq");
-        let disp = nb.disp().expect("FULL storage materializes disp");
-        let mut rows: Vec<(u32, u32, F, [F; 3])> = (0..nb.n_pairs())
-            .map(|k| {
-                (
-                    nb.query_point_indices()[k],
-                    nb.point_indices()[k],
-                    d2[k],
-                    [disp[[k, 0]], disp[[k, 1]], disp[[k, 2]]],
-                )
-            })
-            .collect();
-        rows.sort_by_key(|r| (r.0, r.1));
-        rows
     }
 
     /// 60 atoms on a 5 × 4 × 3 lattice (2 Å pitch) inside a 10 × 8 × 6 Å box,

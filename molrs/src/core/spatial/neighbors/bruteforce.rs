@@ -57,6 +57,10 @@ impl Backend for BruteForce {
     ///
     /// # Panics
     /// Panics if the cutoff is not positive.
+    fn cutoff(&self) -> F {
+        self.cutoff
+    }
+
     fn build_index(&mut self, points: FNx3View<'_>, bx: &SimBox) {
         assert!(self.cutoff > 0.0, "cutoff must be positive");
         self.update_index(points, bx);

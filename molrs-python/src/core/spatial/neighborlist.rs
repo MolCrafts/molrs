@@ -41,9 +41,12 @@ use pyo3::prelude::*;
 
 /// Reject a coordinate array that is not `(N, 3)` before it reaches the core,
 /// whose own check is an `assert!` — and a panic must not cross this seam.
-fn check_points(points: &PyReadonlyArray2<'_, NpF>) -> PyResult<()> {
+/// `label` names the offending argument in the error.
+fn check_points(points: &PyReadonlyArray2<'_, NpF>, label: &str) -> PyResult<()> {
     if points.as_array().ncols() != 3 {
-        return Err(PyValueError::new_err("points must have shape (N, 3)"));
+        return Err(PyValueError::new_err(format!(
+            "{label} must have shape (N, 3)"
+        )));
     }
     Ok(())
 }
@@ -257,10 +260,6 @@ impl PyNeighbors {
 #[pyclass(module = "molrs", name = "NeighborList")]
 pub struct PyNeighborList {
     inner: RsNeighborList,
-    /// Whether `build` has run. The core panics on an `update` before a
-    /// `build` (the box is unknown); a panic must not cross this seam, so the
-    /// binder tracks the state and raises `ValueError` instead.
-    built: bool,
 }
 
 #[pymethods]
@@ -271,7 +270,6 @@ impl PyNeighborList {
         check_cutoff(cutoff)?;
         Ok(Self {
             inner: RsNeighborList::new(cutoff),
-            built: false,
         })
     }
 
@@ -293,7 +291,6 @@ impl PyNeighborList {
         check_cutoff(cutoff)?;
         Ok(Self {
             inner: RsNeighborList::brute_force(cutoff),
-            built: false,
         })
     }
 
@@ -323,9 +320,8 @@ impl PyNeighborList {
     /// ValueError
     ///     If ``points`` does not have shape ``(N, 3)``.
     fn build(&mut self, points: PyReadonlyArray2<'_, NpF>, r#box: &PyBox) -> PyResult<()> {
-        check_points(&points)?;
+        check_points(&points, "points")?;
         self.inner.build(points.as_array(), &r#box.inner);
-        self.built = true;
         Ok(())
     }
 
@@ -348,8 +344,11 @@ impl PyNeighborList {
     ///     run yet — the box is then unknown, and guessing one would fold
     ///     minimum images against a box the caller never named.
     fn update(&mut self, points: PyReadonlyArray2<'_, NpF>) -> PyResult<()> {
-        check_points(&points)?;
-        if !self.built {
+        check_points(&points, "points")?;
+        // The core panics on an update before a build (the box is unknown);
+        // a panic must not cross this seam, so check the engine's own state
+        // and raise instead.
+        if !self.inner.is_built() {
             return Err(PyValueError::new_err(
                 "NeighborList.update reuses the box of the previous build: \
                  call build(points, box) first",
@@ -390,7 +389,7 @@ impl PyNeighborList {
         format!(
             "NeighborList(cutoff={}, built={})",
             self.inner.cutoff(),
-            self.built,
+            self.inner.is_built(),
         )
     }
 }
@@ -441,7 +440,7 @@ impl PyNeighborQuery {
     #[new]
     #[pyo3(signature = (r#box, points, cutoff))]
     fn new(r#box: &PyBox, points: PyReadonlyArray2<'_, NpF>, cutoff: NpF) -> PyResult<Self> {
-        check_points(&points)?;
+        check_points(&points, "points")?;
         check_cutoff(cutoff)?;
         Ok(Self {
             inner: RsNeighborQuery::new(&r#box.inner, points.as_array(), cutoff),
@@ -462,7 +461,7 @@ impl PyNeighborQuery {
     #[staticmethod]
     #[pyo3(signature = (points, cutoff))]
     fn free(points: PyReadonlyArray2<'_, NpF>, cutoff: NpF) -> PyResult<Self> {
-        check_points(&points)?;
+        check_points(&points, "points")?;
         check_cutoff(cutoff)?;
         Ok(Self {
             inner: RsNeighborQuery::free(points.as_array(), cutoff),
@@ -486,9 +485,7 @@ impl PyNeighborQuery {
     /// ValueError
     ///     If ``query_points`` does not have shape ``(M, 3)``.
     fn query(&self, query_points: PyReadonlyArray2<'_, NpF>) -> PyResult<PyNeighbors> {
-        if query_points.as_array().ncols() != 3 {
-            return Err(PyValueError::new_err("query_points must have shape (M, 3)"));
-        }
+        check_points(&query_points, "query_points")?;
         Ok(PyNeighbors {
             inner: self.inner.query(query_points.as_array()),
         })

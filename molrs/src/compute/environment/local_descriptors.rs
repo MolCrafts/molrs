@@ -88,13 +88,13 @@ impl LocalDescriptors {
 }
 
 impl Compute for LocalDescriptors {
-    type Args<'a> = &'a Vec<Neighbors>;
+    type Args<'a> = &'a [Neighbors];
     type Output = Vec<LocalDescriptorsResult>;
 
     fn compute<'a, FA: FrameAccess + Sync + 'a>(
         &self,
         frames: &[&'a FA],
-        nlists: &'a Vec<Neighbors>,
+        nlists: &'a [Neighbors],
     ) -> Result<Vec<LocalDescriptorsResult>, ComputeError> {
         if frames.is_empty() {
             return Err(ComputeError::EmptyInput);
@@ -168,19 +168,13 @@ mod tests {
         frame
     }
 
-    fn build_nlist(frame: &Frame, cutoff: F) -> Neighbors {
-        nlist_from_frame(frame, cutoff)
-    }
-
     #[test]
     fn descriptor_at_l0_is_constant() {
         // For a single bond pointing in +x, the Y_0^0 component is
         // 1/(2√π) regardless of bond direction.
         let frame = frame_with(&[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], 10.0);
-        let nl = build_nlist(&frame, 1.5);
-        let r = &LocalDescriptors::new(2)
-            .compute(&[&frame], &vec![nl])
-            .unwrap()[0];
+        let nl = nlist_from_frame(&frame, 1.5);
+        let r = &LocalDescriptors::new(2).compute(&[&frame], &[nl]).unwrap()[0];
         assert_eq!(r.n_sphs, 9); // (2+1)² = 9
         // Pair 0, ℓ=0, m=0 is at offset 0.
         let y00 = 1.0 / (2.0 * std::f64::consts::PI.sqrt());
@@ -196,10 +190,8 @@ mod tests {
         let dy = 0.5;
         let dz = 0.7;
         let frame = frame_with(&[[0.0, 0.0, 0.0], [dx, dy, dz]], 10.0);
-        let nl = build_nlist(&frame, 2.0);
-        let r = &LocalDescriptors::new(3)
-            .compute(&[&frame], &vec![nl])
-            .unwrap()[0];
+        let nl = nlist_from_frame(&frame, 2.0);
+        let r = &LocalDescriptors::new(3).compute(&[&frame], &[nl]).unwrap()[0];
         let r2 = (dx * dx + dy * dy + dz * dz).sqrt();
         let theta = (dz / r2).acos();
         let phi = dy.atan2(dx);

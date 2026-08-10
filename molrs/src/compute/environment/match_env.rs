@@ -376,13 +376,13 @@ impl MatchEnv {
 }
 
 impl Compute for MatchEnv {
-    type Args<'a> = &'a Vec<Neighbors>;
+    type Args<'a> = &'a [Neighbors];
     type Output = Vec<MatchEnvResult>;
 
     fn compute<'a, FA: FrameAccess + Sync + 'a>(
         &self,
         frames: &[&'a FA],
-        nlists: &'a Vec<Neighbors>,
+        nlists: &'a [Neighbors],
     ) -> Result<Vec<MatchEnvResult>, ComputeError> {
         if frames.is_empty() {
             return Err(ComputeError::EmptyInput);
@@ -439,10 +439,6 @@ mod tests {
         frame
     }
 
-    fn build_nlist(frame: &Frame, cutoff: F) -> Neighbors {
-        nlist_from_frame(frame, cutoff)
-    }
-
     /// Two identical octahedra at different centres should be classed
     /// together; their satellite atoms (each with a single bond) form a
     /// second class.
@@ -467,10 +463,10 @@ mod tests {
     #[test]
     fn two_octahedra_centres_share_a_class() {
         let frame = paired_octahedra();
-        let nl = build_nlist(&frame, 1.2);
+        let nl = nlist_from_frame(&frame, 1.2);
         let r = &MatchEnv::new(1e-9)
             .unwrap()
-            .compute(&[&frame], &vec![nl])
+            .compute(&[&frame], &[nl])
             .unwrap()[0];
         // Centres are particles 0 and 7. Their fingerprints are both
         // [1,1,1,1,1,1] → same class.
@@ -492,10 +488,10 @@ mod tests {
             &[[0.0_f64, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
             10.0,
         );
-        let nl = build_nlist(&frame, 1.5);
+        let nl = nlist_from_frame(&frame, 1.5);
         let r = &MatchEnv::new(1e-9)
             .unwrap()
-            .compute(&[&frame], &vec![nl])
+            .compute(&[&frame], &[nl])
             .unwrap()[0];
         // 0 and 2 each have one bond of length 1 → same class.
         assert_eq!(r.cluster_idx[0], r.cluster_idx[2]);
@@ -521,16 +517,16 @@ mod tests {
             }
         }
         let frame = frame_with(&p, 20.0);
-        let nl = build_nlist(&frame, 1.5);
+        let nl = nlist_from_frame(&frame, 1.5);
         let merged = &MatchEnv::new(0.05)
             .unwrap()
-            .compute(&[&frame], &vec![nl.clone()])
+            .compute(&[&frame], std::slice::from_ref(&nl))
             .unwrap()[0];
         assert_eq!(merged.cluster_idx[0], merged.cluster_idx[5]);
 
         let split = &MatchEnv::new(0.001)
             .unwrap()
-            .compute(&[&frame], &vec![nl])
+            .compute(&[&frame], &[nl])
             .unwrap()[0];
         assert_ne!(split.cluster_idx[0], split.cluster_idx[5]);
     }
@@ -552,10 +548,10 @@ mod tests {
             &[[0.0_f64, 0.0, 0.0], [1.0, 0.0, 0.0], [2.5, 0.0, 0.0]],
             10.0,
         );
-        let nl = build_nlist(&frame, 1.6);
+        let nl = nlist_from_frame(&frame, 1.6);
         let r = &MatchEnv::new(1e-9)
             .unwrap()
-            .compute(&[&frame], &vec![nl])
+            .compute(&[&frame], &[nl])
             .unwrap()[0];
 
         let approx = |a: &[F], b: &[F]| {
@@ -626,11 +622,11 @@ mod tests {
             }
         }
         let frame = frame_with(&p, 30.0);
-        let nl = build_nlist(&frame, 1.2);
+        let nl = nlist_from_frame(&frame, 1.2);
         let r = &MatchEnv::new(1e-6)
             .unwrap()
             .with_registration(true)
-            .compute(&[&frame], &vec![nl])
+            .compute(&[&frame], &[nl])
             .unwrap()[0];
         // The two centres (indices 0 and 7) must share a class under
         // registration mode.

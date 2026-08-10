@@ -129,13 +129,13 @@ impl LocalDensity {
 }
 
 impl Compute for LocalDensity {
-    type Args<'a> = &'a Vec<Neighbors>;
+    type Args<'a> = &'a [Neighbors];
     type Output = Vec<LocalDensityResult>;
 
     fn compute<'a, FA: FrameAccess + Sync + 'a>(
         &self,
         frames: &[&'a FA],
-        nlists: &'a Vec<Neighbors>,
+        nlists: &'a [Neighbors],
     ) -> Result<Vec<LocalDensityResult>, ComputeError> {
         if frames.is_empty() {
             return Err(ComputeError::EmptyInput);
@@ -190,17 +190,13 @@ mod tests {
         frame
     }
 
-    fn build_nlist(frame: &Frame, cutoff: F) -> Neighbors {
-        nlist_from_frame(frame, cutoff)
-    }
-
     #[test]
     fn isolated_particle_has_zero_density() {
         let frame = frame_with(&[[5.0, 5.0, 5.0]], 20.0, [false; 3]);
-        let nl = build_nlist(&frame, 2.0);
+        let nl = nlist_from_frame(&frame, 2.0);
         let r = &LocalDensity::new(2.0)
             .unwrap()
-            .compute(&[&frame], &vec![nl])
+            .compute(&[&frame], &[nl])
             .unwrap()[0];
         assert_eq!(r.num_neighbors[0], 0.0);
         assert_eq!(r.density[0], 0.0);
@@ -209,10 +205,10 @@ mod tests {
     #[test]
     fn pair_counts_symmetric_in_self_query() {
         let frame = frame_with(&[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], 20.0, [false; 3]);
-        let nl = build_nlist(&frame, 2.0);
+        let nl = nlist_from_frame(&frame, 2.0);
         let r = &LocalDensity::new(2.0)
             .unwrap()
-            .compute(&[&frame], &vec![nl])
+            .compute(&[&frame], &[nl])
             .unwrap()[0];
         // Each of the two particles has exactly 1 neighbor within 2.0.
         assert!((r.num_neighbors[0] - 1.0).abs() < 1e-12);
@@ -228,11 +224,11 @@ mod tests {
         let diameter = 1.0;
         let r = r_max + diameter / 2.0 - 1e-9;
         let frame = frame_with(&[[0.0, 0.0, 0.0], [r, 0.0, 0.0]], 20.0, [false; 3]);
-        let nl = build_nlist(&frame, r + 1.0);
+        let nl = nlist_from_frame(&frame, r + 1.0);
         let res = &LocalDensity::new(r_max)
             .unwrap()
             .with_diameter(diameter)
-            .compute(&[&frame], &vec![nl])
+            .compute(&[&frame], &[nl])
             .unwrap()[0];
         assert!(
             res.num_neighbors[0] < 1e-8,
@@ -243,11 +239,11 @@ mod tests {
         // At r = r_max − diameter/2 → weight = 1 (fully inside).
         let r_in = r_max - diameter / 2.0;
         let frame2 = frame_with(&[[0.0, 0.0, 0.0], [r_in, 0.0, 0.0]], 20.0, [false; 3]);
-        let nl2 = build_nlist(&frame2, r + 1.0);
+        let nl2 = nlist_from_frame(&frame2, r + 1.0);
         let res2 = &LocalDensity::new(r_max)
             .unwrap()
             .with_diameter(diameter)
-            .compute(&[&frame2], &vec![nl2])
+            .compute(&[&frame2], &[nl2])
             .unwrap()[0];
         assert!((res2.num_neighbors[0] - 1.0).abs() < 1e-9);
     }

@@ -236,10 +236,6 @@ mod tests {
         frame
     }
 
-    fn build_nlist(frame: &Frame, cutoff: F) -> Neighbors {
-        nlist_from_frame(frame, cutoff)
-    }
-
     #[test]
     fn constant_values_yield_constant_correlation() {
         // A = B = 1.0 for all particles → ⟨A·B⟩(r) = 1 in every populated bin.
@@ -250,7 +246,7 @@ mod tests {
             [4.0, 1.0, 1.0],
         ];
         let frame = frame_with(&positions, 20.0);
-        let nl = build_nlist(&frame, 5.0);
+        let nl = nlist_from_frame(&frame, 5.0);
         let vals = vec![1.0_f64; positions.len()];
         let cf = CorrelationFunction::new(10, 5.0, 0.0).unwrap();
         let r = &cf
@@ -286,7 +282,7 @@ mod tests {
             [3.0, 0.0, 0.0],
         ];
         let frame = frame_with(&positions, 20.0);
-        let nl = build_nlist(&frame, 1.2);
+        let nl = nlist_from_frame(&frame, 1.2);
         let vals = vec![1.0_f64, -1.0, 1.0, -1.0];
         let cf = CorrelationFunction::new(5, 1.5, 0.0).unwrap();
         let r = &cf
@@ -307,7 +303,7 @@ mod tests {
     #[test]
     fn empty_bin_returns_zero() {
         let frame = frame_with(&[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], 20.0);
-        let nl = build_nlist(&frame, 1.5);
+        let nl = nlist_from_frame(&frame, 1.5);
         let vals = vec![1.0_f64, 1.0];
         let cf = CorrelationFunction::new(10, 5.0, 0.0).unwrap();
         let r = &cf
@@ -345,7 +341,7 @@ mod tests {
             [4.0, 1.0, 1.0],
         ];
         let frame = frame_with(&positions, 20.0);
-        let nl = build_nlist(&frame, 5.0);
+        let nl = nlist_from_frame(&frame, 5.0);
         let vals = vec![1.0_f64; positions.len()];
         let cf = CorrelationFunction::new(10, 5.0, 0.0).unwrap();
         let solo = cf
