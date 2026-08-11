@@ -332,6 +332,7 @@ m.add_function(wrap_pyfunction!(io::read_pdb, m)?)?;
 
     // Signal processing
     m.add_function(wrap_pyfunction!(signal::signal_acf_fft, m)?)?;
+    m.add_function(wrap_pyfunction!(signal::signal_xcorr_fft, m)?)?;
     m.add_function(wrap_pyfunction!(signal::signal_apply_window, m)?)?;
     m.add_function(wrap_pyfunction!(signal::signal_frequency_grid, m)?)?;
 

@@ -166,6 +166,8 @@ fn parse_window_type(s: &str) -> Result<sig::WindowType, ComputeError> {
         // Preferred for one-sided ACFs (1 at t=0, 0 at t=max_lag).
         // Hann/Blackman zero out C(0), the static-ε signal.
         "cosine_sq" => Ok(sig::WindowType::CosineSq),
+        // Match external DRS scripts / slides that use window="none".
+        "none" | "None" | "identity" => Ok(sig::WindowType::None),
         other => Err(ComputeError::OutOfRange {
             field: "window_type",
             value: other.into(),

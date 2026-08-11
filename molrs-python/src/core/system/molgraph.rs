@@ -137,30 +137,52 @@ macro_rules! graph_world_impl {
             // ---- components ----
 
             /// Read entity `h`'s component `key` (``None`` if absent).
-            fn get(&self, py: Python<'_>, h: u64, key: &str) -> PyResult<Py<PyAny>> {
-                match self.mol().node_table().value(node_from_u64(h), key) {
+            ///
+            /// `key` is a :class:`molrs.keys.Key` or ``str``.
+            fn get(
+                &self,
+                py: Python<'_>,
+                h: u64,
+                key: &Bound<'_, PyAny>,
+            ) -> PyResult<Py<PyAny>> {
+                let key = crate::schema::extract_column_key(key)?;
+                match self.mol().node_table().value(node_from_u64(h), &key) {
                     Some(cell) => cell_to_py(py, cell),
                     None => Ok(py.None()),
                 }
             }
 
             /// Set entity `h`'s component `key` (``value`` is int|float|str).
-            fn set(&mut self, h: u64, key: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
+            ///
+            /// `key` is a :class:`molrs.keys.Key` or ``str``.
+            fn set(
+                &mut self,
+                h: u64,
+                key: &Bound<'_, PyAny>,
+                value: &Bound<'_, PyAny>,
+            ) -> PyResult<()> {
+                let key = crate::schema::extract_column_key(key)?;
                 let pv = py_to_prop(value)?;
                 self.mol_mut()
-                    .set_node(node_from_u64(h), key, pv)
+                    .set_node(node_from_u64(h), &key, pv)
                     .map_err(molrs_error_to_pyerr)
             }
 
             /// Whether entity `h` has component `key`.
-            fn has(&self, h: u64, key: &str) -> bool {
-                self.mol().node_table().has(node_from_u64(h), key)
+            ///
+            /// `key` is a :class:`molrs.keys.Key` or ``str``.
+            fn has(&self, h: u64, key: &Bound<'_, PyAny>) -> PyResult<bool> {
+                let key = crate::schema::extract_column_key(key)?;
+                Ok(self.mol().node_table().has(node_from_u64(h), &key))
             }
 
             /// Clear entity `h`'s component `key` (no-op if absent).
-            fn delete(&mut self, h: u64, key: &str) -> PyResult<()> {
+            ///
+            /// `key` is a :class:`molrs.keys.Key` or ``str``.
+            fn delete(&mut self, h: u64, key: &Bound<'_, PyAny>) -> PyResult<()> {
+                let key = crate::schema::extract_column_key(key)?;
                 self.mol_mut()
-                    .clear_node(node_from_u64(h), key)
+                    .clear_node(node_from_u64(h), &key)
                     .map_err(molrs_error_to_pyerr)
             }
 
@@ -322,14 +344,15 @@ macro_rules! graph_world_impl {
             /// invalidate an outstanding view — re-fetch after such ops.
             fn column<'py>(
                 slf: Bound<'py, $ty>,
-                key: &str,
+                key: &Bound<'_, PyAny>,
             ) -> PyResult<Bound<'py, numpy::PyArray1<f64>>> {
+                let key = crate::schema::extract_column_key(key)?;
                 let (ptr, len) = {
                     let this = slf.borrow();
                     let (data, _valid) = this
                         .mol()
                         .node_table()
-                        .column_f64(key)
+                        .column_f64(&key)
                         .map_err(molrs_error_to_pyerr)?;
                     (data.as_ptr(), data.len())
                 };
@@ -343,13 +366,16 @@ macro_rules! graph_world_impl {
             /// Validity mask (numpy `bool` array, copied) of component column `key`,
             /// aligned to row order. `True` where the entity at that row has the
             /// component set.
+            ///
+            /// `key` is a :class:`molrs.keys.Key` or ``str``.
             fn validity<'py>(
                 &self,
                 py: Python<'py>,
-                key: &str,
+                key: &Bound<'_, PyAny>,
             ) -> PyResult<Bound<'py, numpy::PyArray1<bool>>> {
+                let key = crate::schema::extract_column_key(key)?;
                 let valid =
-                    self.mol().node_table().col_validity(key).ok_or_else(|| {
+                    self.mol().node_table().col_validity(&key).ok_or_else(|| {
                         PyValueError::new_err(format!("column '{key}' is absent"))
                     })?;
                 Ok(numpy::PyArray1::from_slice(py, valid.as_slice()))

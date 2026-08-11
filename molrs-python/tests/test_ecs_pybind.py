@@ -241,10 +241,13 @@ def test_adopt_on_leaf_moves_its_own_store():
 
 
 def test_keys_convention_exposed():
+    assert isinstance(molrs.keys.X, molrs.keys.Key)
+    assert molrs.keys.X.key == "x"
+    assert molrs.keys.ELEMENT.key == "element"
+    assert molrs.keys.CHARGE.key == "charge"
+    # Key equals its string form for convenient comparisons.
     assert molrs.keys.X == "x"
-    assert molrs.keys.ELEMENT == "element"
-    assert molrs.keys.CHARGE == "charge"
-    assert list(molrs.keys.COORDS) == ["x", "y", "z"]
+    assert [k.key for k in molrs.keys.COORDS] == ["x", "y", "z"]
 
 
 # --------------------------------------------------------------------------- #

@@ -78,6 +78,16 @@ pub fn acf_fft_with_planner(
 /// Both inputs must share the length `n` of `a` (the caller precondition — like
 /// [`acf_fft`] this does not itself validate `b.len()`). Errors when `a` is empty
 /// or `max_lag ≥ n`.
+/// Convenience wrapper around [`xcorr_fft_with_planner`] that owns its planner.
+pub fn xcorr_fft(
+    a: &Array1<f64>,
+    b: &Array1<f64>,
+    max_lag: usize,
+) -> Result<Array1<f64>, SignalError> {
+    let mut planner = FftPlanner::new();
+    xcorr_fft_with_planner(&mut planner, a, b, max_lag)
+}
+
 pub fn xcorr_fft_with_planner(
     planner: &mut FftPlanner<f64>,
     a: &Array1<f64>,

@@ -4,5 +4,8 @@ All computation is in Rust; these are thin Python re-exports.
 """
 
 from ._lib import signal_acf_fft as acf_fft
+from ._lib import signal_xcorr_fft as xcorr_fft
 from ._lib import signal_apply_window as apply_window
 from ._lib import signal_frequency_grid as frequency_grid
+
+__all__ = ["acf_fft", "xcorr_fft", "apply_window", "frequency_grid"]
