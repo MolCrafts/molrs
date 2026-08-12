@@ -18,6 +18,9 @@ pub mod acf;
 pub mod grid;
 pub mod window;
 
-pub use acf::{acf_fft, acf_fft_with_planner, xcorr_fft, xcorr_fft_with_planner};
+pub use acf::{
+    acf_fft, acf_fft_accumulate, acf_fft_with_planner, xcorr_fft, xcorr_fft_accumulate,
+    xcorr_fft_with_planner,
+};
 pub use grid::frequency_grid;
 pub use window::{WindowType, apply_window};

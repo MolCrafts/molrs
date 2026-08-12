@@ -9,12 +9,11 @@
 
 use molrs::store::frame_access::FrameAccess;
 use ndarray::{Array1, Array2};
-use rustfft::FftPlanner;
 
+use super::correlation::{lag_times, unbiased_cartesian_acf_scaled};
 use crate::compute::error::ComputeError;
 use crate::compute::result::ComputeResult;
 use crate::compute::traits::Compute;
-use molrs::signal as sig;
 
 /// Unbiased velocity autocorrelation function result.
 #[derive(Debug, Clone)]
@@ -44,6 +43,9 @@ pub type VacfArgs<'a> = (&'a Array2<f64>, f64, usize);
 
 /// Per-DOF mean-subtract → FFT-ACF → DOF-average core, shared by [`VACF`] and
 /// [`GreenKuboDiffusion`](super::GreenKuboDiffusion).
+///
+/// Implemented as the shared Cartesian ACF (sum over DOFs) scaled by
+/// `1/n_dof` — one primitive path for all multi-component unbiased ACFs.
 pub(super) fn velocity_acf(
     velocities: &Array2<f64>,
     dt: f64,
@@ -51,7 +53,7 @@ pub(super) fn velocity_acf(
 ) -> Result<VacfResult, ComputeError> {
     let n_frames = velocities.shape()[0];
     let n_dof = velocities.shape()[1];
-    if n_frames < 2 {
+    if n_frames < 2 || n_dof == 0 {
         return Err(ComputeError::EmptyInput);
     }
     if dt <= 0.0 {
@@ -62,40 +64,12 @@ pub(super) fn velocity_acf(
     }
     let max_lag = resolution.min(n_frames - 1);
 
-    let inv_n_frames = 1.0 / n_frames as f64;
-    let mut planner = FftPlanner::new();
-    let mut acf_sum = Array1::<f64>::zeros(max_lag + 1);
-    for d in 0..n_dof {
-        let mut col: Array1<f64> = (0..n_frames).map(|t| velocities[[t, d]]).collect();
-        let mean: f64 = col.iter().sum::<f64>() * inv_n_frames;
-        for v in col.iter_mut() {
-            *v -= mean;
-        }
-        let acf = sig::acf_fft_with_planner(&mut planner, &col, max_lag).map_err(|e| {
-            ComputeError::OutOfRange {
-                field: "acf_fft",
-                value: e.to_string(),
-            }
-        })?;
-        for k in 0..=max_lag {
-            acf_sum[k] += acf[k];
-        }
-    }
-    // Unbiased time-origin average per lag, then DOF average:
-    // C(τ) = (1/n_dof) · (1/(n-τ)) · Σ_d Σ_t δv_d(t)·δv_d(t+τ)
-    // (acf_fft returns the lag-sum; divide by (n-τ) here — same discipline as JACF.)
-    if n_dof == 0 {
-        return Err(ComputeError::EmptyInput);
-    }
-    let inv_n_dof = 1.0 / n_dof as f64;
-    for k in 0..=max_lag {
-        let n_origins = (n_frames - k) as f64;
-        acf_sum[k] *= inv_n_dof / n_origins;
-    }
-    let lag_times = Array1::from_iter((0..=max_lag).map(|i| i as f64 * dt));
+    // Σ_d ⟨δv_d(0) δv_d(τ)⟩ with fused DOF average: scale = 1/n_dof.
+    let acf = unbiased_cartesian_acf_scaled(velocities, max_lag, true, 1.0 / n_dof as f64)?;
+
     Ok(VacfResult {
-        lag_times,
-        acf: acf_sum,
+        lag_times: lag_times(max_lag, dt),
+        acf,
     })
 }
 
@@ -119,10 +93,11 @@ impl Compute for VACF {
 mod tests {
     use super::*;
     use molrs::Frame;
+    use molrs::signal as sig;
     use ndarray::{Array1 as A1, Array2};
     use rand::{RngExt, SeedableRng};
+    use rustfft::FftPlanner;
 
-    /// Empty frame slice for the series-based raw computes.
     fn no_frames() -> Vec<&'static Frame> {
         Vec::new()
     }
@@ -147,7 +122,6 @@ mod tests {
         let res = 100;
         let v = rng_series(n, 9, 7);
 
-        // Rebuild the same raw ACF the PowerSpectrum compute path produces.
         let max_lag = res.min(n - 1);
         let inv_n_frames = 1.0 / n as f64;
         let mut planner = FftPlanner::new();
@@ -177,11 +151,26 @@ mod tests {
 
     #[test]
     fn raw_max_lag_exceeds_length_clamps_not_panics() {
-        // ac-014 companion: clamping max_correlation_time is fine; over-long
-        // *consumption* by a downstream Fit is the OutOfRange case tested in the
-        // fit modules. Here we confirm raw computes clamp rather than panic.
         let v = rng_series(8, 3, 1);
         let raw = VACF.compute(&no_frames(), (&v, 1.0, 1000)).unwrap();
         assert_eq!(raw.acf.len(), 8); // clamped to n_frames - 1 + 1.
+    }
+
+    #[test]
+    fn vacf_is_cartesian_acf_over_ndof() {
+        let n = 64;
+        let n_dof = 6;
+        let dt = 0.5;
+        let res = 20;
+        let v = rng_series(n, n_dof, 99);
+        let raw = velocity_acf(&v, dt, res).unwrap();
+        let cart = crate::compute::transport::unbiased_cartesian_acf(&v, res, true).unwrap();
+        for k in 0..raw.acf.len() {
+            // Fused vs sequential DOF scale may differ by 1 ULP; allow tiny tol.
+            assert!(
+                (raw.acf[k] - cart[k] / n_dof as f64).abs() < 1e-12,
+                "k={k}"
+            );
+        }
     }
 }

@@ -83,7 +83,10 @@ pub fn compute_dipole_moment(
             what: "positions (expected (n_atoms, 3))",
         });
     }
-    let mut m = Array1::zeros(3);
+    // Accumulate into locals (register-friendly) then pack.
+    let mut mx = 0.0_f64;
+    let mut my = 0.0_f64;
+    let mut mz = 0.0_f64;
     for i in 0..n {
         let q = charges[i];
         if !q.is_finite() {
@@ -92,11 +95,12 @@ pub fn compute_dipole_moment(
                 index: i,
             });
         }
-        m[0] += q * positions[[i, 0]];
-        m[1] += q * positions[[i, 1]];
-        m[2] += q * positions[[i, 2]];
+        // Row-major positions: x,y,z of atom i are adjacent.
+        mx += q * positions[[i, 0]];
+        my += q * positions[[i, 1]];
+        mz += q * positions[[i, 2]];
     }
-    Ok(m)
+    Ok(Array1::from(vec![mx, my, mz]))
 }
 
 /// System current density **J**(t) = (**M**(t) − **M**(t − Δt)) / (V · Δt).
@@ -147,10 +151,11 @@ pub fn compute_current_density(
         return Ok(j);
     }
     let scale = 1.0 / (volume * dt);
+    // Time-outer: consecutive (t, *) rows are adjacent in C-order layout.
     for t in 1..n_frames {
-        for d in 0..3 {
-            j[[t, d]] = (dipole_moments[[t, d]] - dipole_moments[[t - 1, d]]) * scale;
-        }
+        j[[t, 0]] = (dipole_moments[[t, 0]] - dipole_moments[[t - 1, 0]]) * scale;
+        j[[t, 1]] = (dipole_moments[[t, 1]] - dipole_moments[[t - 1, 1]]) * scale;
+        j[[t, 2]] = (dipole_moments[[t, 2]] - dipole_moments[[t - 1, 2]]) * scale;
     }
     Ok(j)
 }

@@ -37,6 +37,7 @@
 //! | ε permittivity  | dimensionless       |
 
 use ndarray::Array1;
+use rustfft::num_complex::Complex64;
 use rustfft::FftPlanner;
 
 use crate::compute::error::ComputeError;
@@ -44,6 +45,13 @@ use crate::compute::fitting::forward_fft_onesided;
 use crate::compute::result::ComputeResult;
 use crate::compute::traits::{Check, Fit, Verdict};
 use molrs::signal as sig;
+
+/// Zero-padding multiplier for the dielectric one-sided FT.
+///
+/// Matches the DRS / trungle `analyze_*.py` convention (`PAD_FACTOR = 4`):
+/// `n_fft = next_pow2(max(n, pad_factor · n))`. Larger pad improves frequency
+/// resolution without changing the continuous piecewise-linear integral.
+const DIELECTRIC_PAD_FACTOR: usize = 4;
 
 // ── Physical constants (MD real units: kcal, mol, Angstrom, e, K) ─────────────
 
@@ -81,42 +89,87 @@ impl ComputeResult for DielectricSpectrumResult {}
 /// No physical prefactor (β, V, k_B T, ε₀, …) is applied.
 type RawSpectrum = (Array1<f64>, Array1<f64>, Array1<f64>);
 
-/// Convert a (windowed / differentiated) ACF to the continuous one-sided FT
-/// via DFT.
+/// Continuous one-sided FT of the **piecewise-linear interpolant** of a
+/// discrete ACF (or differentiated ACF).
 ///
-/// Returns `X.re` and `X.im` where `X(ω_k) = ∫₀^T C(t) e^{−iωt} dt` under the
-/// `e^{−iωt}` Fourier convention. Scaling uses the rectangle-rule `dt` factor,
-/// not the FFT's internal `1/n_pad`. The pad+forward-FFT core is the shared
-/// [`forward_fft_onesided`](crate::compute::fitting::forward_fft_onesided); the dielectric path
-/// keeps its own rad·(time)⁻¹ frequency grid and `·dt` 3-tuple scaling.
-fn acf_to_spectrum(
-    planner: &mut FftPlanner<f64>,
-    acf: &Array1<f64>,
-    dt: f64,
-    n_pad: usize,
-) -> RawSpectrum {
-    let acf_vec;
-    let acf_slice = match acf.as_slice() {
-        Some(s) => s,
-        None => {
-            acf_vec = acf.to_vec();
-            &acf_vec
-        }
-    };
-    let bins = forward_fft_onesided(planner, acf_slice, n_pad);
+/// For samples `y[k]` at times `k·dt`, this evaluates
+///
+/// ```text
+///     X(ω) = ∫₀^T y_lin(t) e^{−iωt} dt
+/// ```
+///
+/// analytically (closed form via the first-difference rFFT), matching the
+/// DRS / trungle `one_sided_linear_transform` used for JACF → χ(ω).
+///
+/// Rectangle-rule `rfft(y)·dt` systematically inflates the low-frequency
+/// loss spectrum ε″ when the ACF is truncated with `window="none"` (factors
+/// of 3–15 vs literature at 0.01–1 THz on neat water). The piecewise-linear
+/// integral removes that bias; unit prefactors (β, V, 4π·κ) are unchanged.
+///
+/// `pad_factor` controls zero-padding of the difference array before the
+/// rFFT (`n_fft = next_pow2(max(n, pad_factor·n))`).
+fn piecewise_linear_onesided_ft(y: &Array1<f64>, dt: f64, pad_factor: usize) -> RawSpectrum {
+    let n = y.len();
+    debug_assert!(n >= 2 && dt > 0.0);
+    let n_fft = (n.max(pad_factor.saturating_mul(n).max(1))).next_power_of_two();
 
-    let frequencies = sig::frequency_grid(n_pad, dt);
+    // First differences of the discrete samples (length n-1).
+    let mut dy = Vec::with_capacity(n.saturating_sub(1));
+    for k in 0..n.saturating_sub(1) {
+        dy.push(y[k + 1] - y[k]);
+    }
+
+    let mut planner = FftPlanner::new();
+    let dy_bins = forward_fft_onesided(&mut planner, &dy, n_fft);
+
+    let frequencies = sig::frequency_grid(n_fft, dt);
     let n_freq = frequencies.len();
     let mut spec_re = Array1::zeros(n_freq);
     let mut spec_im = Array1::zeros(n_freq);
 
-    for j in 0..n_freq {
-        let z = bins[j];
-        spec_re[j] = z.re * dt;
-        spec_im[j] = z.im * dt;
+    // DC: trapezoidal integral of the piecewise-linear interpolant.
+    let mut trap = 0.0;
+    for k in 0..n.saturating_sub(1) {
+        trap += 0.5 * (y[k] + y[k + 1]) * dt;
+    }
+    spec_re[0] = trap;
+    spec_im[0] = 0.0;
+
+    let y0 = y[0];
+    let y_last = y[n - 1];
+    let t_end = (n - 1) as f64 * dt;
+
+    for j in 1..n_freq {
+        let omega = frequencies[j];
+        let theta = omega * dt;
+        // e^{−iωT}
+        let exp_iwt = Complex64::new((-omega * t_end).cos(), (-omega * t_end).sin());
+        // (y₀ − y_last e^{−iωT}) / (iω)
+        let term1 = (Complex64::new(y0, 0.0) - Complex64::new(y_last, 0.0) * exp_iwt)
+            / Complex64::new(0.0, omega);
+        // (1 − e^{−iθ}) / (ω² dt) · rfft(dy)[j]
+        let exp_ith = Complex64::new((-theta).cos(), (-theta).sin());
+        let pre = (Complex64::new(1.0, 0.0) - exp_ith) / (omega * omega * dt);
+        let out = term1 - pre * dy_bins[j];
+        spec_re[j] = out.re;
+        spec_im[j] = out.im;
     }
 
     (frequencies, spec_re, spec_im)
+}
+
+/// Dielectric-path ACF → one-sided continuous FT (piecewise-linear).
+///
+/// The `planner` / `n_pad` arguments are retained for call-site compatibility
+/// with older rectangle-rule code; padding is controlled by
+/// [`DIELECTRIC_PAD_FACTOR`] inside the piecewise-linear kernel.
+fn acf_to_spectrum(
+    _planner: &mut FftPlanner<f64>,
+    acf: &Array1<f64>,
+    dt: f64,
+    _n_pad: usize,
+) -> RawSpectrum {
+    piecewise_linear_onesided_ft(acf, dt, DIELECTRIC_PAD_FACTOR)
 }
 
 /// One-sided cosine² taper → central-difference derivative → one-sided FT of a
@@ -175,12 +228,13 @@ fn parse_window_type(s: &str) -> Result<sig::WindowType, ComputeError> {
     }
 }
 
-/// Window a raw current ACF, zero-pad, and forward-FFT into a one-sided FT.
+/// Window a raw current ACF and take its continuous one-sided FT
+/// (piecewise-linear interpolant).
 ///
-/// Returns `(frequencies, spec_re, spec_im)` where `spec_re + i·spec_im` is the
-/// continuous FT `X(ω)` of the windowed ACF on the rfft frequency grid. The
-/// input `acf` must be the unbiased current ACF `C(k) = ⟨J(0)·J(k·dt)⟩` summed
-/// over the 3 Cartesian components — exactly the
+/// Returns `(frequencies, spec_re, spec_im)` where `spec_re + i·spec_im` is
+/// `X(ω) = ∫₀^T C_win(t) e^{−iωt} dt`. The input `acf` must be the unbiased
+/// current ACF `C(k) = ⟨J(0)·J(k·dt)⟩` summed over the 3 Cartesian components
+/// — exactly the
 /// [`GreenKuboConductivityResult.jacf`](crate::compute::transport::GreenKuboConductivityResult::jacf).
 fn windowed_acf_spectrum(
     acf: &Array1<f64>,
@@ -201,9 +255,9 @@ fn windowed_acf_spectrum(
     })?;
     let windowed_1d: Array1<f64> = windowed.iter().copied().collect();
 
-    let n_pad = (2 * (max_lag + 1)).next_power_of_two();
+    // Piecewise-linear FT; pad factor fixed in the kernel (planner unused).
     let mut planner = FftPlanner::new();
-    Ok(acf_to_spectrum(&mut planner, &windowed_1d, dt, n_pad))
+    Ok(acf_to_spectrum(&mut planner, &windowed_1d, dt, 0))
 }
 
 // ── Einstein–Helfand ε(ω) transform ──────────────────────────────────────────
@@ -392,6 +446,173 @@ impl Fit for GreenKuboSpectrum {
             }
         }
 
+        Ok(DielectricSpectrumResult {
+            frequencies,
+            eps_real,
+            eps_imag,
+        })
+    }
+}
+
+// ── Dipole–rate / polarization cross-correlation route ────────────────────────
+
+/// Permittivity from the **dipole-rate × dipole** cross-correlation
+/// `C_{ṀM}(t) = Σ_α ⟨δṀ_α(0) δM_α(t)⟩` (e·Å/ps · e·Å).
+///
+/// Linear-response identity (conducting BC, real units):
+///
+/// ```text
+///     χ(ω) = A · Ĉ_{ṀM}(ω),     A = 4π·KAPPA / (3·V·k_B·T)
+///     ε*(ω) − ε_∞ = χ(ω)
+/// ```
+///
+/// with one-sided continuous FT of the (optionally windowed) correlator
+/// (piecewise-linear interpolant, same kernel as [`GreenKuboSpectrum`]).
+/// Positive-loss convention: `ε* = ε′ − i·ε″` ⇒
+/// `ε′ = ε_∞ + Re χ`, `ε″ = −Im χ`.
+///
+/// This is the MD realization of the ⟨Ṗ(0)·P(t)⟩ susceptibility route
+/// (notes / DRS_MD_v2; Caillol–Levesque–Weis cross form). Numerically
+/// distinct from [`GreenKuboSpectrum`] (which uses ⟨J·J⟩) even though
+/// `J = Ṁ/V` at fixed V: the correlator and prefactor arrangement differ.
+///
+/// # Input
+/// Unbiased 1-D lag series of length `max_lag+1`, Cartesian sum already
+/// performed. `Ṁ` is typically a finite-difference of the unwrapped dipole
+/// (not the velocity current used for JACF).
+#[derive(Debug, Clone)]
+pub struct DipoleRateCrossSpectrum {
+    /// Frame spacing, **ps**, > 0.
+    pub dt: f64,
+    /// System volume V, **Å³**, > 0.
+    pub volume: f64,
+    /// Temperature T, **K**, > 0.
+    pub temperature: f64,
+    /// High-frequency permittivity ε_∞.
+    pub epsilon_inf: f64,
+    /// Window on the one-sided cross correlator: `"none"`, `"cosine_sq"`, …
+    pub window_type: String,
+}
+
+impl Fit for DipoleRateCrossSpectrum {
+    type Input<'a> = &'a Array1<f64>;
+    type Output = DielectricSpectrumResult;
+
+    fn fit<'a>(&self, cross: Self::Input<'a>) -> Result<Self::Output, ComputeError> {
+        if cross.len() < 2 {
+            return Err(ComputeError::EmptyInput);
+        }
+        validate_thermo(self.dt, self.volume, self.temperature)?;
+
+        let (frequencies, re, im) = windowed_acf_spectrum(cross, self.dt, &self.window_type)?;
+        let prefactor = FOUR_PI_OVER_3 * KAPPA / (self.volume * K_B * self.temperature);
+        let n_freq = frequencies.len();
+        let mut eps_real = Array1::zeros(n_freq);
+        let mut eps_imag = Array1::zeros(n_freq);
+        for j in 0..n_freq {
+            // χ = A · (re + i·im); ε′=ε∞+Reχ, ε″=−Imχ
+            eps_real[j] = self.epsilon_inf + prefactor * re[j];
+            eps_imag[j] = -prefactor * im[j];
+        }
+        Ok(DielectricSpectrumResult {
+            frequencies,
+            eps_real,
+            eps_imag,
+        })
+    }
+}
+
+// ── Dipole autocorrelation (PACF) route ───────────────────────────────────────
+
+/// Permittivity from the **fluctuation dipole autocorrelation**
+/// `C(t) = Σ_α ⟨δM_α(0) δM_α(t)⟩` via the Fourier identity
+///
+/// ```text
+///     χ(ω) = A · [ C(0) − iω Ĉ(ω) ],     A = 4π·KAPPA / (3·V·k_B·T)
+///     ε*(ω) − ε_∞ = χ(ω)
+/// ```
+///
+/// (integration-by-parts form of the PACF susceptibility; DRS notes / Trung
+/// `polarization_acf` path). Distinct from [`EinsteinHelfandSpectrum`], which
+/// uses a cos² taper of `C′(t)` instead of the `C(0)−iωĈ` algebra.
+///
+/// # Conductive plateau
+///
+/// For ionic conductors the PACF often plateaus (`C(∞)/C(0) → O(1)`): the
+/// total cell dipole does not relax. The bare formula then yields a huge
+/// false static χ. When [`Self::subtract_plateau`] is `Some(true)`, or
+/// `None` and `|C(∞)/C(0)| > 0.1`, the fit applies the **same** formula to
+/// `C′(t) = C(t) − C(∞)` with `C′(0) = C(0) − C(∞)` (relaxational PACF).
+/// Water (`C∞/C0 ∼ 0`) is unchanged under auto mode.
+#[derive(Debug, Clone)]
+pub struct DipoleAutocorrelationSpectrum {
+    /// Frame spacing, **ps**, > 0.
+    pub dt: f64,
+    /// System volume V, **Å³**, > 0.
+    pub volume: f64,
+    /// Temperature T, **K**, > 0.
+    pub temperature: f64,
+    /// High-frequency permittivity ε_∞.
+    pub epsilon_inf: f64,
+    /// Window on the PACF before the FT (`"none"` for DRS slides).
+    pub window_type: String,
+    /// Plateau handling: `None` = auto if `|C∞/C0| > 0.1`; `Some(true/false)` force.
+    pub subtract_plateau: Option<bool>,
+}
+
+impl Fit for DipoleAutocorrelationSpectrum {
+    type Input<'a> = &'a Array1<f64>;
+    type Output = DielectricSpectrumResult;
+
+    fn fit<'a>(&self, acf: Self::Input<'a>) -> Result<Self::Output, ComputeError> {
+        if acf.len() < 2 {
+            return Err(ComputeError::EmptyInput);
+        }
+        validate_thermo(self.dt, self.volume, self.temperature)?;
+
+        let c0_raw = acf[0];
+        let c_inf = acf[acf.len() - 1];
+        let ratio = if c0_raw.abs() > 0.0 {
+            c_inf / c0_raw
+        } else {
+            0.0
+        };
+        let do_sub = match self.subtract_plateau {
+            Some(v) => v,
+            None => ratio.abs() > 0.1,
+        };
+
+        let (c0, series): (f64, Array1<f64>) = if do_sub {
+            let mut s = acf.to_owned();
+            for v in s.iter_mut() {
+                *v -= c_inf;
+            }
+            (c0_raw - c_inf, s)
+        } else {
+            (c0_raw, acf.to_owned())
+        };
+
+        let (frequencies, re, im) =
+            windowed_acf_spectrum(&series, self.dt, &self.window_type)?;
+        let prefactor = FOUR_PI_OVER_3 * KAPPA / (self.volume * K_B * self.temperature);
+        let n_freq = frequencies.len();
+        let mut eps_real = Array1::zeros(n_freq);
+        let mut eps_imag = Array1::zeros(n_freq);
+        for j in 0..n_freq {
+            let omega = frequencies[j];
+            // χ = A · (c0 − iω Ĉ), Ĉ = re + i·im
+            // Re χ = A · (c0 + ω·im),  Im χ = A · (−ω·re)
+            // ε′ = ε∞ + Reχ,  ε″ = −Imχ = A·ω·re
+            if omega == 0.0 {
+                eps_real[j] = self.epsilon_inf + prefactor * c0;
+                eps_imag[j] = 0.0;
+            } else {
+                let chi_re = prefactor * (c0 + omega * im[j]);
+                let chi_im = prefactor * (-omega * re[j]);
+                eps_real[j] = self.epsilon_inf + chi_re;
+                eps_imag[j] = -chi_im;
+            }
+        }
         Ok(DielectricSpectrumResult {
             frequencies,
             eps_real,
@@ -888,10 +1109,25 @@ mod tests {
         (frequencies, eps_real, eps_imag)
     }
 
+    /// FFT / fused-scale paths may differ by a few ULP from the hand-rolled
+    /// legacy reference; keep a tight absolute tolerance.
+    fn assert_close_1d(got: &Array1<f64>, expected: &Array1<f64>, tol: f64, what: &str) {
+        assert_eq!(got.len(), expected.len(), "{what} length");
+        for k in 0..got.len() {
+            let d = (got[k] - expected[k]).abs();
+            assert!(
+                d <= tol,
+                "{what}[{k}]: |{got} − {exp}| = {d} > {tol}",
+                got = got[k],
+                exp = expected[k],
+            );
+        }
+    }
+
     #[test]
     fn eh_fit_reproduces_legacy_bit_for_bit() {
         // ac-001: DebyeRelaxation raw ACF + EinsteinHelfandSpectrum reproduces
-        // the legacy einstein_helfand_spectrum output bit-for-bit.
+        // the legacy einstein_helfand_spectrum output (tight ULP tolerance).
         let n = 256;
         let dt = 0.001;
         let (vol, temp, eps_inf) = (1000.0, 300.0, 1.5);
@@ -918,8 +1154,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(fit.frequencies, freq_l);
-        assert_eq!(fit.eps_real, re_l);
-        assert_eq!(fit.eps_imag, im_l);
+        // Shared FFT primitives may reassociate by a few ULP vs the inlined
+        // legacy reference; 1e-12 absolute is still machine-precision tight.
+        assert_close_1d(&fit.eps_real, &re_l, 1e-12, "eps_real");
+        assert_close_1d(&fit.eps_imag, &im_l, 1e-12, "eps_imag");
     }
 
     #[test]

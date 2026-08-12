@@ -57,7 +57,7 @@ use molrs::io::log::lammps::{
     parse_lammps_log_text as parse_lammps_log_text_rs,
     read_lammps_log_with_style as read_lammps_log_rs,
 };
-use molrs::io::reader::{ReadSeek, TrajectoryReader, open_seekable};
+use molrs::io::reader::{FrameReader, ReadSeek, TrajectoryReader, open_seekable};
 use molrs::io::trajectory::dcd::{
     DcdReader, open_dcd, read_dcd as read_dcd_rs, write_dcd as write_dcd_rs,
 };
@@ -1803,19 +1803,26 @@ impl PyTrrTrajReader {
         traj_getitem(self.reader()?, key)
     }
 
-    fn __iter__(slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+    fn __iter__(slf: PyRefMut<'_, Self>) -> PyResult<PyRefMut<'_, Self>> {
         let mut slf = slf;
         slf.cursor = 0;
-        slf
+        // True sequential pass: rewind without forcing a full index scan.
+        if let Some(r) = slf.inner.as_mut() {
+            r.rewind().map_err(io_error_to_pyerr)?;
+        }
+        Ok(slf)
     }
 
     fn __next__(&mut self) -> PyResult<Option<PyFrame>> {
-        let cursor = self.cursor;
-        let frame = traj_read_step(self.reader()?, cursor)?;
-        if frame.is_some() {
-            self.cursor += 1;
+        // FrameReader::read streams without building the offset index.
+        // (traj_read_step would force ensure_index → double I/O.)
+        match self.reader()?.read().map_err(io_error_to_pyerr)? {
+            Some(f) => {
+                self.cursor += 1;
+                Ok(Some(PyFrame::from_core_frame(f)?))
+            }
+            None => Ok(None),
         }
-        Ok(frame)
     }
 
     fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -1835,10 +1842,8 @@ impl PyTrrTrajReader {
 
     fn __repr__(&mut self) -> String {
         match self.inner.as_mut() {
-            Some(r) => match r.len() {
-                Ok(n) => format!("TRRTrajReader(n_frames={})", n),
-                Err(_) => "TRRTrajReader(<unread>)".to_string(),
-            },
+            // Avoid forcing a full-file index scan just for repr.
+            Some(_) => "TRRTrajReader(<lazy>)".to_string(),
             None => "TRRTrajReader(<closed>)".to_string(),
         }
     }
@@ -1924,19 +1929,23 @@ impl PyXtcTrajReader {
         traj_getitem(self.reader()?, key)
     }
 
-    fn __iter__(slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+    fn __iter__(slf: PyRefMut<'_, Self>) -> PyResult<PyRefMut<'_, Self>> {
         let mut slf = slf;
         slf.cursor = 0;
-        slf
+        if let Some(r) = slf.inner.as_mut() {
+            r.rewind().map_err(io_error_to_pyerr)?;
+        }
+        Ok(slf)
     }
 
     fn __next__(&mut self) -> PyResult<Option<PyFrame>> {
-        let cursor = self.cursor;
-        let frame = traj_read_step(self.reader()?, cursor)?;
-        if frame.is_some() {
-            self.cursor += 1;
+        match self.reader()?.read().map_err(io_error_to_pyerr)? {
+            Some(f) => {
+                self.cursor += 1;
+                Ok(Some(PyFrame::from_core_frame(f)?))
+            }
+            None => Ok(None),
         }
-        Ok(frame)
     }
 
     fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -1956,10 +1965,7 @@ impl PyXtcTrajReader {
 
     fn __repr__(&mut self) -> String {
         match self.inner.as_mut() {
-            Some(r) => match r.len() {
-                Ok(n) => format!("XTCTrajReader(n_frames={})", n),
-                Err(_) => "XTCTrajReader(<unread>)".to_string(),
-            },
+            Some(_) => "XTCTrajReader(<lazy>)".to_string(),
             None => "XTCTrajReader(<closed>)".to_string(),
         }
     }

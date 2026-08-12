@@ -653,15 +653,41 @@ class TrajectoryReader:
         return self.read_frame(key)
 
     def __iter__(self) -> Iterator[Frame]:
-        self._cursor = 0
-        return self
+        """Sequential pass over all files (true stream when the native reader supports it).
 
-    def __next__(self) -> Frame:
-        if self._cursor >= self.n_frames:
-            raise StopIteration
-        frame = self.read_frame(self._cursor)
-        self._cursor += 1
-        return frame
+        **Does not** force a full-file index scan first. For TRR/XTC that means
+        one contiguous read of coordinate blocks — not "scan offsets then
+        re-seek every frame". Call ``n_frames`` / ``build_index()`` yourself if
+        you need a known length (progress %, preallocation); that pays a cheap
+        header-only scan on a separate logical pass.
+
+        Prefers each native reader's sequential ``__iter__`` / ``__next__``.
+        Falls back to indexed ``read_frame(i)`` only when iteration is unavailable.
+        """
+        for reader in self._readers:
+            # Native sequential cursor (TRR/XTC/…) — no forced index.
+            if hasattr(reader, "__next__") and hasattr(reader, "__iter__"):
+                try:
+                    it = iter(reader)
+                    while True:
+                        try:
+                            frame = next(it)
+                        except StopIteration:
+                            break
+                        # PyO3 unsendable readers may yield None instead of raising.
+                        if frame is None:
+                            break
+                        self._formatter.canonicalize_frame(frame)
+                        yield _wrap(frame)
+                    continue
+                except TypeError:
+                    pass
+            # Fallback: indexed access (builds index once via n_frames).
+            n = int(getattr(reader, "n_frames", 0) or len(reader))
+            for i in range(n):
+                frame = reader.read_frame(i)
+                self._formatter.canonicalize_frame(frame)
+                yield _wrap(frame)
 
     def __enter__(self) -> "TrajectoryReader":
         return self

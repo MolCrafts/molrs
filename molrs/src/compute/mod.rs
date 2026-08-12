@@ -224,18 +224,20 @@ pub use shape::{
     GyrationTensorResult, InertiaTensor, InertiaTensorResult, RadiusOfGyration, RgResult,
 };
 pub use spectroscopy::{
-    ConductivitySumRule, DielectricSpectrumResult, EinsteinHelfandSpectrum, GreenKuboSpectrum,
-    IRFlux, IRFluxResult, IRSpectrum, KramersKronig, KramersKronigCheck, PowerSpectrum,
-    RamanSpectrum, RamanSpectrumResult, RamanTensor, RamanTensorResult, ResonanceRamanSpectrum,
+    ConductivitySumRule, DielectricSpectrumResult, DipoleAutocorrelationSpectrum,
+    DipoleRateCrossSpectrum, EinsteinHelfandSpectrum, GreenKuboSpectrum, IRFlux, IRFluxResult,
+    IRSpectrum, KramersKronig, KramersKronigCheck, PowerSpectrum, RamanSpectrum,
+    RamanSpectrumResult, RamanTensor, RamanTensorResult, ResonanceRamanSpectrum,
     ResonanceRamanTensor, RoaCrossResult, RoaCrossTensor, RoaSpectrum, RouteAgreement,
     RouteAgreementCheck, SpectrumResult, SumRuleCheck, VcdCrossFlux, VcdCrossResult, VcdSpectrum,
 };
 pub use traits::{Check, Compute, Fit, Verdict};
 pub use transport::{
-    DebyeFit, DebyeFitResult, DebyeRelaxation, DebyeRelaxationResult, EinsteinConductivity,
-    EinsteinConductivityResult, EinsteinDiffusion, EinsteinDiffusionArgs, EwaldBoundary,
-    GreenKuboConductivity, GreenKuboConductivityResult, GreenKuboDiffusion, OnsagerCorrelation,
-    OnsagerResult, VACF, VACFAccumulator, VacfResult,
+    DebyeFit, DebyeFitResult, DebyeRelaxation, DebyeRelaxationResult, DipoleRateCross,
+    DipoleRateCrossResult, EinsteinConductivity, EinsteinConductivityResult, EinsteinDiffusion,
+    EinsteinDiffusionArgs, EwaldBoundary, GreenKuboConductivity, GreenKuboConductivityResult,
+    GreenKuboDiffusion, OnsagerCorrelation, OnsagerResult, VACF, VACFAccumulator, VacfResult,
+    lag_times, unbiased_cartesian_acf, unbiased_cartesian_xcorr,
 };
 #[cfg(feature = "voronoi")]
 pub use voronoi::{

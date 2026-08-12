@@ -776,9 +776,13 @@ fn build_simbox(boxv: &[f32; 9]) -> Option<Result<SimBox>> {
     Some(SimBox::new(h, origin, [true; 3]).map_err(|e| invalid(format!("XTC box: {e:?}"))))
 }
 
-fn parse_frame_at<R: BufRead + Seek>(r: &mut R, offset: u64) -> Result<Frame> {
-    r.seek(SeekFrom::Start(offset))?;
-    let hdr = read_header(r)?;
+/// Parse one XTC frame at the current position (no seek). `Ok(None)` on EOF.
+fn parse_frame_here<R: Read>(r: &mut R) -> Result<Option<Frame>> {
+    let hdr = match read_header(r) {
+        Ok(h) => h,
+        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+        Err(e) => return Err(e),
+    };
     let natoms = hdr.natoms;
     let (coords, precision) = read_coords(r, natoms, hdr.wide_nbytes)?;
 
@@ -815,7 +819,17 @@ fn parse_frame_at<R: BufRead + Seek>(r: &mut R, offset: u64) -> Result<Frame> {
     if precision != 0.0 {
         frame.meta.insert("precision", precision);
     }
-    Ok(frame)
+    Ok(Some(frame))
+}
+
+fn parse_frame_at<R: BufRead + Seek>(r: &mut R, offset: u64) -> Result<Frame> {
+    r.seek(SeekFrom::Start(offset))?;
+    parse_frame_here(r)?.ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "XTC EOF at expected frame offset",
+        )
+    })
 }
 
 /// Scan the file, recording each frame's start byte offset.
@@ -859,7 +873,7 @@ fn scan_offsets<R: BufRead + Seek>(r: &mut R) -> Result<Vec<u64>> {
 // Reader
 // ---------------------------------------------------------------------------
 
-/// XTC trajectory reader with O(1) random access (offsets indexed lazily).
+/// XTC trajectory reader: true sequential stream *or* O(1) indexed random access.
 pub struct XtcReader<R: BufRead + Seek> {
     reader: R,
     offsets: OnceCell<Vec<u64>>,
@@ -886,6 +900,13 @@ impl<R: BufRead + Seek> XtcReader<R> {
             .map_err(|_| std::io::Error::other("failed to set XTC index"))?;
         Ok(())
     }
+
+    /// Rewind for a fresh sequential pass. Does not clear an existing index.
+    pub fn rewind(&mut self) -> Result<()> {
+        self.cursor = 0;
+        self.reader.seek(SeekFrom::Start(0))?;
+        Ok(())
+    }
 }
 
 impl<R: BufRead + Seek> Reader for XtcReader<R> {
@@ -897,15 +918,22 @@ impl<R: BufRead + Seek> Reader for XtcReader<R> {
 
 impl<R: BufRead + Seek> FrameReader for XtcReader<R> {
     fn read(&mut self) -> Result<Option<Frame>> {
-        self.ensure_index()?;
-        let cursor = self.cursor;
-        let off = match self.offsets.get().and_then(|o| o.get(cursor).copied()) {
-            Some(o) => o,
-            None => return Ok(None),
-        };
-        let frame = parse_frame_at(&mut self.reader, off)?;
-        self.cursor += 1;
-        crate::io::reader::validated(Some(frame))
+        if let Some(offs) = self.offsets.get() {
+            let off = match offs.get(self.cursor).copied() {
+                Some(o) => o,
+                None => return Ok(None),
+            };
+            let frame = parse_frame_at(&mut self.reader, off)?;
+            self.cursor += 1;
+            return crate::io::reader::validated(Some(frame));
+        }
+        match parse_frame_here(&mut self.reader)? {
+            Some(frame) => {
+                self.cursor += 1;
+                crate::io::reader::validated(Some(frame))
+            }
+            None => Ok(None),
+        }
     }
 }
 
@@ -920,6 +948,7 @@ impl<R: BufRead + Seek> TrajectoryReader for XtcReader<R> {
             Some(o) => o,
             None => return Ok(None),
         };
+        self.cursor = step + 1;
         parse_frame_at(&mut self.reader, off).map(Some)
     }
 

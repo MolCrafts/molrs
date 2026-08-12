@@ -32,38 +32,73 @@ pub fn acf_fft_with_planner(
     data: &Array1<f64>,
     max_lag: usize,
 ) -> Result<Array1<f64>, SignalError> {
+    let mut out = Array1::<f64>::zeros(max_lag + 1);
+    let mut scratch = Vec::new();
+    let owned;
+    let slice = match data.as_slice() {
+        Some(s) => s,
+        None => {
+            owned = data.to_vec();
+            owned.as_slice()
+        }
+    };
+    acf_fft_accumulate(
+        planner,
+        slice,
+        max_lag,
+        out.as_slice_mut().expect("zeros array is contiguous"),
+        &mut scratch,
+    )?;
+    Ok(out)
+}
+
+/// Accumulate one series' un-normalized linear ACF into `out[0..=max_lag]`.
+///
+/// **Primitive for multi-component correlators**: call once per Cartesian
+/// component, reusing `scratch` across calls so the complex FFT workspace is
+/// allocated once. In-place Wiener–Khinchin (no temporary power-spectrum
+/// buffer). `out` length must be at least `max_lag + 1`.
+pub fn acf_fft_accumulate(
+    planner: &mut FftPlanner<f64>,
+    data: &[f64],
+    max_lag: usize,
+    out: &mut [f64],
+    scratch: &mut Vec<Complex64>,
+) -> Result<(), SignalError> {
     let n = data.len();
-    if n == 0 {
-        return Err(SignalError::EmptyInput);
-    }
-    if max_lag >= n {
-        return Err(SignalError::MaxLagTooLarge { max_lag, len: n });
+    validate_series(n, max_lag)?;
+    if out.len() < max_lag + 1 {
+        return Err(SignalError::MaxLagTooLarge {
+            max_lag,
+            len: out.len().saturating_sub(1).max(1),
+        });
     }
 
     let n_pad = (2 * n).next_power_of_two();
-
     let fwd = planner.plan_fft_forward(n_pad);
     let inv = planner.plan_fft_inverse(n_pad);
 
-    let mut complex_data: Vec<Complex64> = data.iter().map(|&x| Complex64::new(x, 0.0)).collect();
-    complex_data.resize(n_pad, Complex64::zero());
-    fwd.process(&mut complex_data);
+    // Fill / zero pad complex workspace (reuse capacity).
+    scratch.resize(n_pad, Complex64::zero());
+    for i in 0..n {
+        scratch[i] = Complex64::new(data[i], 0.0);
+    }
+    for z in scratch[n..].iter_mut() {
+        *z = Complex64::zero();
+    }
 
-    let power: Vec<Complex64> = complex_data
-        .iter()
-        .map(|c| Complex64::new(c.norm_sqr(), 0.0))
-        .collect();
-    let mut acf_raw = power;
-    inv.process(&mut acf_raw);
+    fwd.process(scratch);
+    // In-place power spectrum: |X|² as a real complex (Im = 0).
+    for z in scratch.iter_mut() {
+        *z = Complex64::new(z.norm_sqr(), 0.0);
+    }
+    inv.process(scratch);
 
     let scale = 1.0 / n_pad as f64;
-    let result: Array1<f64> = acf_raw[..=max_lag]
-        .iter()
-        .map(|c| c.re * scale)
-        .collect::<Vec<_>>()
-        .into();
-
-    Ok(result)
+    for k in 0..=max_lag {
+        out[k] += scratch[k].re * scale;
+    }
+    Ok(())
 }
 
 /// Linear cross-correlation via the Wiener–Khinchin cross spectrum (FFT-based).
@@ -94,41 +129,102 @@ pub fn xcorr_fft_with_planner(
     b: &Array1<f64>,
     max_lag: usize,
 ) -> Result<Array1<f64>, SignalError> {
+    let mut out = Array1::<f64>::zeros(max_lag + 1);
+    let mut sa = Vec::new();
+    let mut sb = Vec::new();
+    let owned_a;
+    let owned_b;
+    let aa = match a.as_slice() {
+        Some(s) => s,
+        None => {
+            owned_a = a.to_vec();
+            owned_a.as_slice()
+        }
+    };
+    let bb = match b.as_slice() {
+        Some(s) => s,
+        None => {
+            owned_b = b.to_vec();
+            owned_b.as_slice()
+        }
+    };
+    xcorr_fft_accumulate(
+        planner,
+        aa,
+        bb,
+        max_lag,
+        out.as_slice_mut().expect("zeros array is contiguous"),
+        &mut sa,
+        &mut sb,
+    )?;
+    Ok(out)
+}
+
+/// Accumulate one un-normalized linear cross-correlation into `out[0..=max_lag]`.
+///
+/// Reuses `scratch_a` / `scratch_b` across multi-component calls. Cross product
+/// is formed in-place into `scratch_a` (no third product buffer).
+pub fn xcorr_fft_accumulate(
+    planner: &mut FftPlanner<f64>,
+    a: &[f64],
+    b: &[f64],
+    max_lag: usize,
+    out: &mut [f64],
+    scratch_a: &mut Vec<Complex64>,
+    scratch_b: &mut Vec<Complex64>,
+) -> Result<(), SignalError> {
     let n = a.len();
+    validate_series(n, max_lag)?;
+    if out.len() < max_lag + 1 {
+        return Err(SignalError::MaxLagTooLarge {
+            max_lag,
+            len: out.len().saturating_sub(1).max(1),
+        });
+    }
+
+    let n_pad = (2 * n).next_power_of_two();
+    let fwd = planner.plan_fft_forward(n_pad);
+    let inv = planner.plan_fft_inverse(n_pad);
+
+    fill_padded(scratch_a, a, n_pad);
+    fill_padded(scratch_b, b, n_pad);
+    fwd.process(scratch_a);
+    fwd.process(scratch_b);
+
+    // In-place cross spectrum into scratch_a: conj(A)·B.
+    for (xa, yb) in scratch_a.iter_mut().zip(scratch_b.iter()) {
+        *xa = xa.conj() * yb;
+    }
+    inv.process(scratch_a);
+
+    let scale = 1.0 / n_pad as f64;
+    for k in 0..=max_lag {
+        out[k] += scratch_a[k].re * scale;
+    }
+    Ok(())
+}
+
+#[inline]
+fn validate_series(n: usize, max_lag: usize) -> Result<(), SignalError> {
     if n == 0 {
         return Err(SignalError::EmptyInput);
     }
     if max_lag >= n {
         return Err(SignalError::MaxLagTooLarge { max_lag, len: n });
     }
+    Ok(())
+}
 
-    let n_pad = (2 * n).next_power_of_two();
-
-    let fwd = planner.plan_fft_forward(n_pad);
-    let inv = planner.plan_fft_inverse(n_pad);
-
-    let mut ca: Vec<Complex64> = a.iter().map(|&x| Complex64::new(x, 0.0)).collect();
-    let mut cb: Vec<Complex64> = b.iter().map(|&x| Complex64::new(x, 0.0)).collect();
-    ca.resize(n_pad, Complex64::zero());
-    cb.resize(n_pad, Complex64::zero());
-    fwd.process(&mut ca);
-    fwd.process(&mut cb);
-
-    let mut prod: Vec<Complex64> = ca
-        .iter()
-        .zip(cb.iter())
-        .map(|(x, y)| x.conj() * y)
-        .collect();
-    inv.process(&mut prod);
-
-    let scale = 1.0 / n_pad as f64;
-    let result: Array1<f64> = prod[..=max_lag]
-        .iter()
-        .map(|c| c.re * scale)
-        .collect::<Vec<_>>()
-        .into();
-
-    Ok(result)
+#[inline]
+fn fill_padded(buf: &mut Vec<Complex64>, data: &[f64], n_pad: usize) {
+    buf.resize(n_pad, Complex64::zero());
+    let n = data.len();
+    for i in 0..n {
+        buf[i] = Complex64::new(data[i], 0.0);
+    }
+    for z in buf[n..].iter_mut() {
+        *z = Complex64::zero();
+    }
 }
 
 /// Failure modes for `molrs-signal` primitives.
@@ -293,5 +389,36 @@ mod tests {
             xcorr_fft_with_planner(&mut planner, &empty, &empty, 0).unwrap_err(),
             SignalError::EmptyInput
         );
+    }
+
+    #[test]
+    fn accumulate_sums_two_components() {
+        let a = arr1(&[1.0, 2.0, 3.0, 4.0]);
+        let b = arr1(&[0.5, -1.0, 1.5, 0.0]);
+        let max_lag = 2;
+        let mut planner = FftPlanner::new();
+        let mut out = vec![0.0; max_lag + 1];
+        let mut scratch = Vec::new();
+        acf_fft_accumulate(
+            &mut planner,
+            a.as_slice().unwrap(),
+            max_lag,
+            &mut out,
+            &mut scratch,
+        )
+        .unwrap();
+        acf_fft_accumulate(
+            &mut planner,
+            b.as_slice().unwrap(),
+            max_lag,
+            &mut out,
+            &mut scratch,
+        )
+        .unwrap();
+        let sa = acf_fft_with_planner(&mut planner, &a, max_lag).unwrap();
+        let sb = acf_fft_with_planner(&mut planner, &b, max_lag).unwrap();
+        for k in 0..=max_lag {
+            assert!((out[k] - (sa[k] + sb[k])).abs() < 1e-14, "k={k}");
+        }
     }
 }

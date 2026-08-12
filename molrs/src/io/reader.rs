@@ -229,6 +229,13 @@ pub trait TrajectoryReader: Reader {
 /// # Ok(())
 /// # }
 /// ```
+/// Sequential trajectory IO buffer size (bytes).
+///
+/// Default `BufReader` is 8 KiB — far too small for multi‑GB TRR/XTC sequential
+/// scans (one header+payload per frame). 8 MiB amortizes syscalls / NFS RTT
+/// without pinning excessive RAM per open handle.
+const TRAJECTORY_BUF_CAPACITY: usize = 8 * 1024 * 1024;
+
 pub fn open_seekable<P: AsRef<Path>>(path: P) -> Result<Box<dyn ReadSeek>> {
     let path = path.as_ref();
     let file = File::open(path)?;
@@ -243,11 +250,11 @@ pub fn open_seekable<P: AsRef<Path>>(path: P) -> Result<Box<dyn ReadSeek>> {
         use std::io::Read;
         let decoder = GzDecoder::new(file);
         let mut content = Vec::new();
-        let mut buf_decoder = BufReader::new(decoder);
+        let mut buf_decoder = BufReader::with_capacity(TRAJECTORY_BUF_CAPACITY, decoder);
         buf_decoder.read_to_end(&mut content)?;
         Ok(Box::new(std::io::Cursor::new(content)))
     } else {
-        Ok(Box::new(BufReader::new(file)))
+        Ok(Box::new(BufReader::with_capacity(TRAJECTORY_BUF_CAPACITY, file)))
     }
 }
 
@@ -265,9 +272,9 @@ pub fn open_streaming<P: AsRef<Path>>(path: P) -> Result<Box<dyn BufRead>> {
         .unwrap_or(false)
     {
         let decoder = GzDecoder::new(file);
-        Ok(Box::new(BufReader::new(decoder)))
+        Ok(Box::new(BufReader::with_capacity(TRAJECTORY_BUF_CAPACITY, decoder)))
     } else {
-        Ok(Box::new(BufReader::new(file)))
+        Ok(Box::new(BufReader::with_capacity(TRAJECTORY_BUF_CAPACITY, file)))
     }
 }
 
