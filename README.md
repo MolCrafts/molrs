@@ -62,7 +62,7 @@ cargo add molcrafts-molrs
 Opt into sub-systems via feature flags; `full` enables everything:
 
 ```toml
-molcrafts-molrs = { version = "0.12", features = ["io", "smiles", "conformer"] }
+molcrafts-molrs = { version = "0.13", features = ["io", "smiles", "conformer"] }
 ```
 
 | Environment | Install | Import / use |

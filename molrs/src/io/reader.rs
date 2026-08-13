@@ -254,7 +254,10 @@ pub fn open_seekable<P: AsRef<Path>>(path: P) -> Result<Box<dyn ReadSeek>> {
         buf_decoder.read_to_end(&mut content)?;
         Ok(Box::new(std::io::Cursor::new(content)))
     } else {
-        Ok(Box::new(BufReader::with_capacity(TRAJECTORY_BUF_CAPACITY, file)))
+        Ok(Box::new(BufReader::with_capacity(
+            TRAJECTORY_BUF_CAPACITY,
+            file,
+        )))
     }
 }
 
@@ -272,9 +275,15 @@ pub fn open_streaming<P: AsRef<Path>>(path: P) -> Result<Box<dyn BufRead>> {
         .unwrap_or(false)
     {
         let decoder = GzDecoder::new(file);
-        Ok(Box::new(BufReader::with_capacity(TRAJECTORY_BUF_CAPACITY, decoder)))
+        Ok(Box::new(BufReader::with_capacity(
+            TRAJECTORY_BUF_CAPACITY,
+            decoder,
+        )))
     } else {
-        Ok(Box::new(BufReader::with_capacity(TRAJECTORY_BUF_CAPACITY, file)))
+        Ok(Box::new(BufReader::with_capacity(
+            TRAJECTORY_BUF_CAPACITY,
+            file,
+        )))
     }
 }
 

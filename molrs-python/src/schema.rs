@@ -192,10 +192,13 @@ fn block_specs() -> Vec<PyBlockSpec> {
 }
 
 /// Spec for a column key, or `None` if the key is unconstrained.
+///
+/// *key* may be a ``str`` or a :class:`molrs.keys.Key`.
 #[pyfunction]
 #[pyo3(name = "column")]
-fn py_column(key: &str) -> Option<PyColumnSpec> {
-    column_specs().into_iter().find(|c| c.key == key)
+fn py_column(key: &Bound<'_, PyAny>) -> PyResult<Option<PyColumnSpec>> {
+    let key = extract_column_key(key)?;
+    Ok(column_specs().into_iter().find(|c| c.key == key))
 }
 
 /// Spec for a block name, or `None` if the block is not in the vocabulary.

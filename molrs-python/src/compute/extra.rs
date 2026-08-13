@@ -105,7 +105,10 @@ impl PySteinhardt {
         let owned = collect_frames(frames)?;
         let refs: Vec<&CoreFrame> = owned.iter().collect();
         let neighbors = collect_neighbors(nlists)?;
-        let results = self.inner.compute(&refs, &neighbors).map_err(py_value_err)?;
+        let results = self
+            .inner
+            .compute(&refs, &neighbors)
+            .map_err(py_value_err)?;
         results
             .into_iter()
             .map(|r| {
@@ -233,7 +236,10 @@ impl PyHexatic {
         let owned = collect_frames(frames)?;
         let refs: Vec<&CoreFrame> = owned.iter().collect();
         let neighbors = collect_neighbors(nlists)?;
-        let results = self.inner.compute(&refs, &neighbors).map_err(py_value_err)?;
+        let results = self
+            .inner
+            .compute(&refs, &neighbors)
+            .map_err(py_value_err)?;
         Ok(results
             .into_iter()
             .map(|r| {
@@ -279,7 +285,10 @@ impl PySolidLiquid {
         let owned = collect_frames(frames)?;
         let refs: Vec<&CoreFrame> = owned.iter().collect();
         let neighbors = collect_neighbors(nlists)?;
-        let results = self.inner.compute(&refs, &neighbors).map_err(py_value_err)?;
+        let results = self
+            .inner
+            .compute(&refs, &neighbors)
+            .map_err(py_value_err)?;
         Ok(results
             .into_iter()
             .map(|r| {
@@ -410,7 +419,10 @@ impl PyLocalDensity {
         let owned = collect_frames(frames)?;
         let refs: Vec<&CoreFrame> = owned.iter().collect();
         let neighbors = collect_neighbors(nlists)?;
-        let results = self.inner.compute(&refs, &neighbors).map_err(py_value_err)?;
+        let results = self
+            .inner
+            .compute(&refs, &neighbors)
+            .map_err(py_value_err)?;
         Ok(results
             .into_iter()
             .map(|r| {
@@ -492,7 +504,10 @@ impl PyBondOrder {
         let owned = collect_frames(frames)?;
         let refs: Vec<&CoreFrame> = owned.iter().collect();
         let neighbors = collect_neighbors(nlists)?;
-        let results = self.inner.compute(&refs, &neighbors).map_err(py_value_err)?;
+        let results = self
+            .inner
+            .compute(&refs, &neighbors)
+            .map_err(py_value_err)?;
         Ok(results
             .into_iter()
             .map(|r| {

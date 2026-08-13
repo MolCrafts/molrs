@@ -248,6 +248,11 @@ def test_keys_convention_exposed():
     # Key equals its string form for convenient comparisons.
     assert molrs.keys.X == "x"
     assert [k.key for k in molrs.keys.COORDS] == ["x", "y", "z"]
+    by_str = molrs.schema.column("atomic_number")
+    by_key = molrs.schema.column(molrs.keys.ATOMIC_NUMBER)
+    assert by_str is not None and by_key is not None
+    assert by_key.key == by_str.key
+    assert by_key.dtype == by_str.dtype
 
 
 # --------------------------------------------------------------------------- #

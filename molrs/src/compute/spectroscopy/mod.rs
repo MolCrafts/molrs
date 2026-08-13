@@ -228,12 +228,7 @@ pub(crate) fn central_diff_series(series: &Array2<f64>, dt: f64) -> Array2<f64> 
 
 /// Central-difference of one column into a pre-sized buffer of length `n−2`.
 #[allow(dead_code)] // crate API for ad-hoc single-column flux work
-pub(crate) fn fill_central_diff_col(
-    series: &Array2<f64>,
-    col: usize,
-    dt: f64,
-    out: &mut [f64],
-) {
+pub(crate) fn fill_central_diff_col(series: &Array2<f64>, col: usize, dt: f64, out: &mut [f64]) {
     let n = series.shape()[0];
     debug_assert_eq!(out.len(), n.saturating_sub(2));
     let inv_2dt = 0.5 / dt;
@@ -344,6 +339,7 @@ pub(crate) fn cross_correlate(
 }
 
 /// Cross-correlate two equal-length slices and add `weight * C` into `out`.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn xcorr_accumulate_into(
     planner: &mut FftPlanner<f64>,
     a: &[f64],

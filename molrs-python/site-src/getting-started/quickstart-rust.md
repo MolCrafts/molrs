@@ -8,7 +8,7 @@ minimal dependency set or enable `full` while exploring.
 
 ```toml
 [dependencies]
-molrs = { package = "molcrafts-molrs", version = "0.12", features = ["full"] }
+molrs = { package = "molcrafts-molrs", version = "0.13", features = ["full"] }
 ```
 
 The `full` feature enables I/O, SMILES, compute, force-field, and embedding

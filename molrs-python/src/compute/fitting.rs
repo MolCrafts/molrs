@@ -23,8 +23,8 @@
 use molrs::compute::fitting::{CumulativeTrapezoid, LinearFit, Plateau};
 use molrs::compute::spectroscopy::{
     DipoleAutocorrelationSpectrum, DipoleRateCrossSpectrum, EinsteinHelfandSpectrum,
-    GreenKuboSpectrum, IRSpectrum, PowerSpectrum, RamanSpectrum,
-    ResonanceRamanSpectrum, RoaSpectrum, VcdSpectrum,
+    GreenKuboSpectrum, IRSpectrum, PowerSpectrum, RamanSpectrum, ResonanceRamanSpectrum,
+    RoaSpectrum, VcdSpectrum,
 };
 use molrs::compute::traits::{Compute, Fit};
 use molrs::compute::transport::DebyeFit;

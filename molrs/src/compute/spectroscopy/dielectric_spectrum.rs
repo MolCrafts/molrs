@@ -37,8 +37,8 @@
 //! | ε permittivity  | dimensionless       |
 
 use ndarray::Array1;
-use rustfft::num_complex::Complex64;
 use rustfft::FftPlanner;
+use rustfft::num_complex::Complex64;
 
 use crate::compute::error::ComputeError;
 use crate::compute::fitting::forward_fft_onesided;
@@ -592,8 +592,7 @@ impl Fit for DipoleAutocorrelationSpectrum {
             (c0_raw, acf.to_owned())
         };
 
-        let (frequencies, re, im) =
-            windowed_acf_spectrum(&series, self.dt, &self.window_type)?;
+        let (frequencies, re, im) = windowed_acf_spectrum(&series, self.dt, &self.window_type)?;
         let prefactor = FOUR_PI_OVER_3 * KAPPA / (self.volume * K_B * self.temperature);
         let n_freq = frequencies.len();
         let mut eps_real = Array1::zeros(n_freq);

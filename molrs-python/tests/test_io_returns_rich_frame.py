@@ -5,6 +5,8 @@ Self-contained fixtures (molrs write → molrs read). No external corpus.
 
 from __future__ import annotations
 
+from collections.abc import MutableMapping
+
 import numpy as np
 
 import molrs
@@ -32,7 +34,7 @@ class TestSingleFrameReturnsRich:
 class TestRichApiPresent:
     def test_rich_surface(self, water_pdb):
         f = mio.read_pdb(str(water_pdb))
-        assert isinstance(f.meta, dict)
+        assert isinstance(f.meta, MutableMapping)
         assert all(isinstance(b, RichBlock) for b in f.blocks)
         assert "blocks" in f.to_dict()
         assert isinstance(f["atoms"], RichBlock)

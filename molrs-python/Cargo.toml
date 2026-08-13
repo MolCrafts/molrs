@@ -1,6 +1,6 @@
 [package]
 name = "molrs-python"
-version = "0.13.0"
+version = "0.13.1"
 edition = "2024"
 rust-version = "1.91"
 authors = ["MolCrafts"]
@@ -26,7 +26,7 @@ serde_json = "1"
 # `ForceField._ffi_forcefield_capsule()` (the force-field analogue of the frame
 # capsule). molrs-python already pulls `molrs/ff` via `full`, so this only turns
 # on the matching molrs-ffi handle.
-molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.13.0", features = ["ff"] }
+molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.13.1", features = ["ff"] }
 # Base: full (no zarr). Host zarr + path I/O is optional (`fs` feature) so
 # Pyodide builds can omit zarrs/libz-sys (emscripten cannot link host zlib).
 #
@@ -35,7 +35,7 @@ molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = 
 # `molrs::stream::server` the same way, so a Pyodide (wasm32-emscripten) build
 # compiles only the WASM-clean `ControlCommand` wire types and links no
 # networking stack. `net` pulls in `stream` (the MessagePack/JSON Frame codec).
-molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.13.0", default-features = false, features = ["full", "stream"] }
+molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.13.1", default-features = false, features = ["full", "stream"] }
 
 [features]
 default = ["fs"]

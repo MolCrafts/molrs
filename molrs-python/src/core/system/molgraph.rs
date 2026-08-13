@@ -25,10 +25,10 @@ use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 
 use molrs::perceive::aromaticity::perceive_aromaticity as core_perceive_aromaticity;
-use molrs::system::bond::{BondNumber, BondType};
 use molrs::perceive::rings::max_ring_system_size as core_max_ring_system_size;
 use molrs::perceive::smarts::{MatchOptions, Reaction, RingPrimitive, SmartsPattern};
 use molrs::system::atomistic::{Atomistic, ExtractedAtomistic};
+use molrs::system::bond::{BondNumber, BondType};
 use molrs::system::coarsegrain::{CoarseGrain, ExtractedCoarseGrain};
 use molrs::system::entity_table::Cell;
 use molrs::system::molgraph::{
@@ -139,12 +139,7 @@ macro_rules! graph_world_impl {
             /// Read entity `h`'s component `key` (``None`` if absent).
             ///
             /// `key` is a :class:`molrs.keys.Key` or ``str``.
-            fn get(
-                &self,
-                py: Python<'_>,
-                h: u64,
-                key: &Bound<'_, PyAny>,
-            ) -> PyResult<Py<PyAny>> {
+            fn get(&self, py: Python<'_>, h: u64, key: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
                 let key = crate::schema::extract_column_key(key)?;
                 match self.mol().node_table().value(node_from_u64(h), &key) {
                     Some(cell) => cell_to_py(py, cell),
@@ -719,12 +714,7 @@ impl PyAtomistic {
     ///     0 unknown, 1 single, 2 double, 3 triple, 4 aromatic.
     /// bond_number : int
     ///     0 unknown, 1 single, 2 double, 3 triple, 4 quadruple.
-    fn set_bond_class(
-        &mut self,
-        handle: u64,
-        bond_type: u32,
-        bond_number: u32,
-    ) -> PyResult<()> {
+    fn set_bond_class(&mut self, handle: u64, bond_type: u32, bond_number: u32) -> PyResult<()> {
         self.inner
             .set_bond_class(
                 relation_from_u64(handle),

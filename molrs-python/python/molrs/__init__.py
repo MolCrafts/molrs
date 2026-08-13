@@ -26,6 +26,8 @@ Each of those names has exactly one spelling — ``molrs.io.SmilesIR`` and
 nothing else — so there is one thing to learn, document, and grep for.
 """
 
+from collections.abc import MutableMapping
+
 from ._lib import (
     # Public exceptions
     BlockDtypeError,
@@ -38,6 +40,7 @@ from ._lib import (
     # Block + Frame
     Block,
     MetaValue,
+    FrameMeta,
     Frame,
     FRAME_SCHEMA_VERSION,
     Unit,
@@ -80,6 +83,8 @@ from ._lib import (
 # that need the raw cores import them from ``._lib`` directly.
 from . import frame  # noqa: F401
 from .frame import Block, Frame
+
+MutableMapping.register(FrameMeta)
 
 from . import compute  # analysis subpackage — one module per molrs::compute domain
 from . import conformer
@@ -129,6 +134,7 @@ __all__ = [
     "NeighborQuery",
     "Block",
     "MetaValue",
+    "FrameMeta",
     "Frame",
     "FRAME_SCHEMA_VERSION",
     "Unit",

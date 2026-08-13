@@ -121,14 +121,14 @@ pub fn unbiased_cartesian_acf_scaled(
     let mut scratch: Vec<Complex64> = Vec::new();
     let out = acf.as_slice_mut().expect("acf is contiguous");
 
-    for d in 0..n_comp {
-        fill_column(series, d, means[d], &mut col);
-        sig::acf_fft_accumulate(&mut planner, &col, max_lag, out, &mut scratch).map_err(
-            |e| ComputeError::OutOfRange {
+    for (d, mean) in means.iter().copied().enumerate() {
+        fill_column(series, d, mean, &mut col);
+        sig::acf_fft_accumulate(&mut planner, &col, max_lag, out, &mut scratch).map_err(|e| {
+            ComputeError::OutOfRange {
                 field: "acf_fft",
                 value: e.to_string(),
-            },
-        )?;
+            }
+        })?;
     }
     apply_unbiased_norm(&mut acf, n_frames, scale);
     Ok(acf)
@@ -174,11 +174,12 @@ pub fn unbiased_cartesian_xcorr(
     for d in 0..n_comp {
         fill_column(a, d, mean_a[d], &mut ca);
         fill_column(b, d, mean_b[d], &mut cb);
-        sig::xcorr_fft_accumulate(&mut planner, &ca, &cb, max_lag, out, &mut sa, &mut sb)
-            .map_err(|e| ComputeError::OutOfRange {
+        sig::xcorr_fft_accumulate(&mut planner, &ca, &cb, max_lag, out, &mut sa, &mut sb).map_err(
+            |e| ComputeError::OutOfRange {
                 field: "xcorr_fft",
                 value: e.to_string(),
-            })?;
+            },
+        )?;
     }
     apply_unbiased_norm(&mut corr, n_frames, 1.0);
     Ok(corr)
@@ -220,8 +221,7 @@ pub fn gradient_axis0_order2(series: &Array2<f64>, dt: f64) -> Result<Array2<f64
 
     // t = 0: forward order-2
     for d in 0..n_comp {
-        out[[0, d]] =
-            (-1.5 * series[[0, d]] + 2.0 * series[[1, d]] - 0.5 * series[[2, d]]) * inv_h;
+        out[[0, d]] = (-1.5 * series[[0, d]] + 2.0 * series[[1, d]] - 0.5 * series[[2, d]]) * inv_h;
     }
     // interior
     for t in 1..n - 1 {

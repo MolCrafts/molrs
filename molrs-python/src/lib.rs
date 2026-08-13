@@ -41,15 +41,16 @@ mod store;
 
 // Mirrors the molrs core module layout: core/ (store · spatial · system), io/,
 // compute/, ff/, conformer/, signal/.
-mod core;
 mod builder;
+mod core;
+use crate::builder::{PyCarbonTubeBuilder, PyGrapheneBuilder};
 use crate::core::spatial::neighborlist::{PyNeighborList, PyNeighborQuery, PyNeighbors};
 use crate::core::spatial::region::{
     PyCuboid, PyHollowSphere, PyParallelepiped, PyRegion, PySphere,
 };
 use crate::core::spatial::simbox::PyBox;
 use crate::core::store::block::PyBlock;
-use crate::core::store::frame::{PyFrame, PyMetaValue};
+use crate::core::store::frame::{PyFrame, PyFrameMeta, PyMetaValue};
 use crate::core::store::record::{PyMolRec, PyObservables};
 use crate::core::store::trajectory::{PyScalarObservable, PyTrajectory, PyVectorObservable};
 use crate::core::system::element::PyElement;
@@ -59,7 +60,6 @@ use crate::core::system::molgraph::{
 };
 use crate::core::system::molgraph::{PyRingInfo, align_direction, rotate, scale, translate};
 use crate::core::units::{PyQuantity, PyUnit, PyUnitRegistry};
-use crate::builder::{PyCarbonTubeBuilder, PyGrapheneBuilder};
 
 mod io;
 
@@ -123,6 +123,7 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Block + Frame
     m.add_class::<PyBlock>()?;
     m.add_class::<PyMetaValue>()?;
+    m.add_class::<PyFrameMeta>()?;
     m.add_class::<PyFrame>()?;
     m.add(
         "FRAME_SCHEMA_VERSION",
@@ -142,10 +143,10 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // I/O + SMILES
     // Readers
     m.add_function(wrap_pyfunction!(io::read_block_csv, m)?)?;
-m.add_function(wrap_pyfunction!(io::write_block_csv, m)?)?;
-m.add_function(wrap_pyfunction!(io::read_frame_bytes, m)?)?;
-m.add_function(wrap_pyfunction!(io::write_frame_bytes, m)?)?;
-m.add_function(wrap_pyfunction!(io::read_pdb, m)?)?;
+    m.add_function(wrap_pyfunction!(io::write_block_csv, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_frame_bytes, m)?)?;
+    m.add_function(wrap_pyfunction!(io::write_frame_bytes, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_pdb, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_pdb_trajectory, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_xyz, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_xyz_trajectory, m)?)?;

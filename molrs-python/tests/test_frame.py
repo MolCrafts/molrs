@@ -29,8 +29,7 @@ class TestFrameConstruction:
         assert f["atoms"].nrows == 2
         assert list(f["atoms"].view("symbol")) == ["C", "H"]
         np.testing.assert_allclose(f["atoms"].view("x"), [0.0, 1.0])
-        assert f.meta["source"].dtype == "string"
-        assert f.meta["source"].value == "pytest"
+        assert f.meta["source"] == "pytest"
 
     @pytest.mark.parametrize(
         "data",
@@ -146,37 +145,59 @@ class TestFrameMeta:
             "temperature": MetaValue("f32", 300.0),
             "stress": MetaValue("f64x6", [1, 2, 3, 4, 5, 6]),
         }
-        assert f.meta["tag"].dtype == "i64"
-        assert f.meta["tag"].value == 9_007_199_254_740_993
-        assert f.meta["temperature"].dtype == "f32"
-        assert f.meta["stress"].dtype == "f64x6"
-        assert f.meta["stress"].value == [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+        assert f.meta["tag"] == 9_007_199_254_740_993
+        assert f.meta["temperature"] == pytest.approx(300.0)
+        assert f.meta["stress"] == [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
 
-    def test_untyped_value_is_rejected(self):
+    def test_plain_python_values_roundtrip(self):
         f = Frame()
-        with pytest.raises(TypeError, match="must be a MetaValue"):
-            f.meta = {"legacy": "string-only"}
+        f.meta = {"legacy": "string-only", "n": 3, "ok": True, "e": -1.5}
+        assert f.meta["legacy"] == "string-only"
+        assert f.meta["n"] == 3
+        assert f.meta["ok"] is True
+        assert f.meta["e"] == pytest.approx(-1.5)
+
+    def test_write_through_setitem(self):
+        f = Frame()
+        f.meta["title"] = "water"
+        assert f.meta["title"] == "water"
+        f.meta["title"] = "ice"
+        assert f.meta["title"] == "ice"
+        del f.meta["title"]
+        assert "title" not in f.meta
 
     def test_set_and_get(self):
         f = Frame()
-        f.meta = {
-            "title": MetaValue("string", "test"),
-            "source": MetaValue("string", "pytest"),
-        }
+        f.meta = {"title": "test", "source": "pytest"}
         meta = f.meta
-        assert meta["title"].value == "test"
-        assert meta["source"].value == "pytest"
+        assert meta["title"] == "test"
+        assert meta["source"] == "pytest"
+        assert meta == {"title": "test", "source": "pytest"}
 
     def test_empty_meta(self):
         f = Frame()
         assert len(f.meta) == 0
+        assert dict(f.meta) == {}
 
     def test_overwrite_meta(self):
         f = Frame()
-        f.meta = {"a": MetaValue("i64", 1)}
-        f.meta = {"b": MetaValue("i64", 2)}
+        f.meta = {"a": 1}
+        f.meta = {"b": 2}
         assert "b" in f.meta
         assert "a" not in f.meta
+
+    def test_update_and_get(self):
+        f = Frame()
+        f.meta.update({"a": 1})
+        f.meta.update(b="x")
+        assert f.meta.get("a") == 1
+        assert f.meta.get("missing") is None
+        assert f.meta.get("missing", 9) == 9
+
+    def test_unsupported_value_is_rejected(self):
+        f = Frame()
+        with pytest.raises(TypeError, match="metadata values"):
+            f.meta["bad"] = None
 
 
 class TestFrameValidation:

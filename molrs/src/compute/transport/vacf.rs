@@ -167,10 +167,7 @@ mod tests {
         let cart = crate::compute::transport::unbiased_cartesian_acf(&v, res, true).unwrap();
         for k in 0..raw.acf.len() {
             // Fused vs sequential DOF scale may differ by 1 ULP; allow tiny tol.
-            assert!(
-                (raw.acf[k] - cart[k] / n_dof as f64).abs() < 1e-12,
-                "k={k}"
-            );
+            assert!((raw.acf[k] - cart[k] / n_dof as f64).abs() < 1e-12, "k={k}");
         }
     }
 }
