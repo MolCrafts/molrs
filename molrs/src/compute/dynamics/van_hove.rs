@@ -218,7 +218,9 @@ impl Compute for VanHove {
                         let nlist = nq.query_columns(bxs, bys, bzs);
                         let ref_i = nlist.point_indices(); // index into a (= r_i(τ))
                         let oth_j = nlist.query_point_indices(); // index into b (= r_j(τ+lag))
-                        let d2 = nlist.dist_sq();
+                        let d2 = nlist
+                            .dist_sq()
+                            .expect("NeighborQuery::query_columns stores dist_sq");
                         for k in 0..nlist.n_pairs() {
                             if ref_i[k] == oth_j[k] {
                                 continue;

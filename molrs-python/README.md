@@ -15,7 +15,7 @@ pip install molcrafts-molrs
 
 Requires Python 3.12+.
 
-## Quick start (0.12 surface)
+## Quick start (0.13 surface)
 
 ```python
 import numpy as np

@@ -284,10 +284,16 @@ fn insert_rvec_cols(
     insert_float_col(block, kz, z)
 }
 
-/// Read the frame whose header starts at byte `offset`.
-fn parse_frame_at<R: BufRead + Seek>(r: &mut R, offset: u64) -> Result<Frame> {
-    r.seek(SeekFrom::Start(offset))?;
-    let hdr = read_header(r)?;
+/// Parse one TRR frame starting at the **current** file position (no seek).
+///
+/// On EOF before a complete header, returns `Ok(None)`. Mid-frame I/O errors
+/// still propagate so a truncated body is not silent.
+fn parse_frame_here<R: Read>(r: &mut R) -> Result<Option<Frame>> {
+    let hdr = match read_header(r) {
+        Ok(h) => h,
+        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+        Err(e) => return Err(e),
+    };
     let natoms = hdr.natoms;
 
     let simbox = if hdr.box_size != 0 {
@@ -349,7 +355,18 @@ fn parse_frame_at<R: BufRead + Seek>(r: &mut R, offset: u64) -> Result<Frame> {
     frame.meta.insert("step", hdr.step);
     frame.meta.insert("time", hdr.t);
     frame.meta.insert("lambda", hdr.lambda);
-    Ok(frame)
+    Ok(Some(frame))
+}
+
+/// Read the frame whose header starts at byte `offset`.
+fn parse_frame_at<R: BufRead + Seek>(r: &mut R, offset: u64) -> Result<Frame> {
+    r.seek(SeekFrom::Start(offset))?;
+    parse_frame_here(r)?.ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "TRR EOF at expected frame offset",
+        )
+    })
 }
 
 /// Scan the whole file, recording the byte offset of each frame header.
@@ -378,7 +395,12 @@ fn scan_offsets<R: BufRead + Seek>(r: &mut R) -> Result<Vec<u64>> {
 // ---------------------------------------------------------------------------
 
 /// TRR trajectory reader with O(1) random access (offsets indexed lazily on
-/// first use).
+/// first use) **and** true sequential streaming without an index.
+///
+/// - [`FrameReader::read`] streams forward from the current file position and
+///   does **not** build the offset index (one pass over the file).
+/// - [`TrajectoryReader::read_step`] / [`len`] build the index on demand for
+///   random access and known length.
 pub struct TrrReader<R: BufRead + Seek> {
     reader: R,
     offsets: OnceCell<Vec<u64>>,
@@ -403,6 +425,15 @@ impl<R: BufRead + Seek> TrrReader<R> {
         self.offsets
             .set(offs)
             .map_err(|_| std::io::Error::other("failed to set TRR index"))?;
+        // After a full scan the file cursor sits at EOF; sequential/indexed
+        // reads always seek explicitly via offsets, so this is fine.
+        Ok(())
+    }
+
+    /// Rewind for a fresh sequential pass. Does not clear an existing index.
+    pub fn rewind(&mut self) -> Result<()> {
+        self.cursor = 0;
+        self.reader.seek(SeekFrom::Start(0))?;
         Ok(())
     }
 }
@@ -416,15 +447,25 @@ impl<R: BufRead + Seek> Reader for TrrReader<R> {
 
 impl<R: BufRead + Seek> FrameReader for TrrReader<R> {
     fn read(&mut self) -> Result<Option<Frame>> {
-        self.ensure_index()?;
-        let cursor = self.cursor;
-        let off = match self.offsets.get().and_then(|o| o.get(cursor).copied()) {
-            Some(o) => o,
-            None => return Ok(None),
-        };
-        let frame = parse_frame_at(&mut self.reader, off)?;
-        self.cursor += 1;
-        crate::io::reader::validated(Some(frame))
+        // Prefer indexed path only when the index already exists (random-access
+        // session). Otherwise stream: parse next frame at current position —
+        // no full-file scan, no second pass.
+        if let Some(offs) = self.offsets.get() {
+            let off = match offs.get(self.cursor).copied() {
+                Some(o) => o,
+                None => return Ok(None),
+            };
+            let frame = parse_frame_at(&mut self.reader, off)?;
+            self.cursor += 1;
+            return crate::io::reader::validated(Some(frame));
+        }
+        match parse_frame_here(&mut self.reader)? {
+            Some(frame) => {
+                self.cursor += 1;
+                crate::io::reader::validated(Some(frame))
+            }
+            None => Ok(None),
+        }
     }
 }
 
@@ -439,6 +480,8 @@ impl<R: BufRead + Seek> TrajectoryReader for TrrReader<R> {
             Some(o) => o,
             None => return Ok(None),
         };
+        // Keep sequential cursor coherent if someone mixes random + stream.
+        self.cursor = step + 1;
         parse_frame_at(&mut self.reader, off).map(Some)
     }
 

@@ -12,22 +12,19 @@
 //! ├── observables/   meta/<name> (semantics) + <name> (data)
 //! ├── method/        JSON attributes
 //! ├── status/        JSON attributes
-//! └── metrics/       JSON attributes (closed snapshot / summary only)
+//! └── metrics/       dense series arrays + catalog attrs; optional JSONL WAL
 //! ```
 //!
-//! ## Metrics are not a Zarr append stream
+//! ## Metrics: dense Zarr SoT, JSONL WAL for live append
 //!
-//! Live training / monitor curves use the **JSONL** reference binding under
-//! `metrics/metrics.jsonl` (molrec `docs/spec/metrics.md`). Do **not** use
-//! this module's Zarr group attributes as the live append path — Zarr is a
-//! poor fit for per-step scalar append. Higher layers (molnex provisional
-//! writer, later molpy) own the JSONL stream.
+//! Closed training / monitor curves densify to **Zarr series arrays** under
+//! `metrics/` (molrec `docs/spec/metrics.md`). Live append uses
+//! `metrics/metrics.jsonl` — do **not** use per-step Zarr chunk append.
+//! Higher layers (molexp / molnex) own the WAL → densify path.
 //!
 //! When `write_record_*` materialises a `metrics` map into a Zarr group, that
-//! is a **closed summary** for pure-Zarr aggregates, not a substitute for
-//! `metrics.jsonl`. A hybrid filesystem record root may keep JSONL beside
-//! Zarr array sections; readers that need the full curve must open the
-//! JSONL file when it exists.
+//! is a **closed catalog / summary**. Readers that need the full curve MUST
+//! open dense series arrays when present, else fall back to the JSONL WAL.
 //!
 //! Sections the reader does not interpret are preserved verbatim into
 //! [`MolRec::extra_sections`] rather than dropped.

@@ -266,7 +266,7 @@ class TestBlockMultiColumnIndexing:
         np.testing.assert_allclose(stacked, [[0.0, 2.0, 4.0], [1.0, 3.0, 5.0]])
 
     def test_the_canonical_coordinate_keys_work_as_a_tuple(self):
-        assert self._xyz()[tuple(molrs.keys.COORDS)].shape == (2, 3)
+        assert self._xyz()[tuple(k.key for k in molrs.keys.COORDS)].shape == (2, 3)
 
     def test_a_missing_column_names_itself(self):
         with pytest.raises(KeyError, match="absent"):

@@ -787,7 +787,6 @@ impl PyOPLSAATypifier {
         PyAtomistic::from_core(py, labeled)
     }
 
-
     /// Return the underlying force-field definition.
     fn forcefield(&self) -> PyForceField {
         PyForceField {
@@ -1439,8 +1438,8 @@ pub fn read_lammps_forcefield_str_py(text: &str) -> PyResult<PyForceField> {
 #[pyfunction]
 #[pyo3(name = "read_amber_prmtop_ff")]
 pub fn read_amber_prmtop_ff_py(path: &str) -> PyResult<PyForceField> {
-    let forcefield = molrs::ff::read_amber_prmtop_ff(path)
-        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let forcefield =
+        molrs::ff::read_amber_prmtop_ff(path).map_err(pyo3::exceptions::PyValueError::new_err)?;
     Ok(PyForceField { inner: forcefield })
 }
 
@@ -1559,9 +1558,9 @@ pub fn read_lammps_data_coeffs_py(
     dihedral_labels: Option<std::collections::HashMap<u32, String>>,
     improper_labels: Option<std::collections::HashMap<u32, String>>,
 ) -> PyResult<PyForceField> {
+    use molrs::ff::LammpsFfReader;
     use molrs::ff::forcefield::lammps_units::LammpsUnits;
     use molrs::ff::forcefield::readers::lammps::LammpsTypeLabelMaps;
-    use molrs::ff::LammpsFfReader;
     use std::collections::BTreeMap;
 
     let units = LammpsUnits::parse(units).map_err(pyo3::exceptions::PyValueError::new_err)?;

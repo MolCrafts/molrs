@@ -6,12 +6,13 @@
 //! * **Raw computes** — return ONLY a raw curve (+ scalar metadata), never a
 //!   fitted coefficient: [`PyVACF`], [`PyEinsteinDiffusion`],
 //!   [`PyGreenKuboDiffusion`], [`PyEinsteinConductivity`],
-//!   [`PyGreenKuboConductivity`], [`PyDebyeRelaxation`].
+//!   [`PyGreenKuboConductivity`], [`PyDebyeRelaxation`], [`PyDipoleRateCross`].
 //! * **Fits / transforms** — consume a raw curve and produce the derived
 //!   quantity (slope/integral/plateau/τ/spectrum): [`PyLinearFit`],
 //!   [`PyCumulativeTrapezoid`], [`PyPlateau`], [`PyDebyeFit`], [`PyPowerSpectrum`],
 //!   [`PyIRSpectrum`], [`PyRamanSpectrum`], [`PyEinsteinHelfandSpectrum`],
-//!   [`PyGreenKuboSpectrum`].
+//!   [`PyGreenKuboSpectrum`], [`PyDipoleRateCrossSpectrum`],
+//!   [`PyDipoleAutocorrelationSpectrum`].
 //!
 //! Each `compute(...)` / `fit(...)` returns a plain `dict` of NumPy arrays /
 //! scalars, matching the dielectric / transport binding style. The raw computes
@@ -21,14 +22,15 @@
 
 use molrs::compute::fitting::{CumulativeTrapezoid, LinearFit, Plateau};
 use molrs::compute::spectroscopy::{
-    EinsteinHelfandSpectrum, GreenKuboSpectrum, IRSpectrum, PowerSpectrum, RamanSpectrum,
-    ResonanceRamanSpectrum, RoaSpectrum, VcdSpectrum,
+    DipoleAutocorrelationSpectrum, DipoleRateCrossSpectrum, EinsteinHelfandSpectrum,
+    GreenKuboSpectrum, IRSpectrum, PowerSpectrum, RamanSpectrum, ResonanceRamanSpectrum,
+    RoaSpectrum, VcdSpectrum,
 };
 use molrs::compute::traits::{Compute, Fit};
 use molrs::compute::transport::DebyeFit;
 use molrs::compute::transport::{
-    DebyeRelaxation, EinsteinConductivity, EinsteinDiffusion, EinsteinDiffusionArgs, EwaldBoundary,
-    GreenKuboConductivity, GreenKuboDiffusion, VACF,
+    DebyeRelaxation, DipoleRateCross, EinsteinConductivity, EinsteinDiffusion,
+    EinsteinDiffusionArgs, EwaldBoundary, GreenKuboConductivity, GreenKuboDiffusion, VACF,
 };
 use molrs::store::frame::Frame as CoreFrame;
 use ndarray::Array1;
@@ -229,12 +231,50 @@ impl PyGreenKuboConductivity {
     }
 }
 
+// ── DipoleRateCross (raw C_ṀM correlator) ─────────────────────────────────────
+
+/// Raw dipole-rate × dipole cross-correlation `C(t) = Σ_α ⟨δṀ_α(0) δM_α(t)⟩`.
+///
+/// Finite-difference `Ṁ` (NumPy `gradient` / edge_order=2), mean-subtracted
+/// Cartesian xcorr. Compose with [`DipoleRateCrossSpectrum`] for ε(ω).
+#[pyclass(module = "molrs.compute.transport", name = "DipoleRateCross")]
+pub struct PyDipoleRateCross;
+
+#[pymethods]
+impl PyDipoleRateCross {
+    #[new]
+    fn new() -> Self {
+        Self
+    }
+
+    /// Compute the raw cross correlator from ``dipole_moments`` ``(n_frames, 3)``.
+    ///
+    /// Returns ``{"lag_times", "cross"}``.
+    fn compute<'py>(
+        &self,
+        py: Python<'py>,
+        dipole_moments: PyReadonlyArray2<'py, f64>,
+        dt: f64,
+        max_correlation_time: usize,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let dm = dipole_moments.as_array().to_owned();
+        let r = DipoleRateCross
+            .compute(EMPTY_FRAMES, (&dm, dt, max_correlation_time))
+            .map_err(py_value_err)?;
+        let d = PyDict::new(py);
+        d.set_item("lag_times", r.lag_times.into_pyarray(py))?;
+        d.set_item("cross", r.cross.into_pyarray(py))?;
+        Ok(d)
+    }
+}
+
 // ── DebyeRelaxation (raw dipole ACF + V/T/BC metadata) ────────────────────────
 
 /// Raw dipole-ACF compute for the Debye relaxation route. Carries the
 /// unnormalized ACF, the zero-lag variance ⟨M(0)²⟩, and the V/T/Ewald-BC
 /// metadata the Debye amplitude needs (invariants b, c). The relaxation *shape*
 /// τ comes from [`DebyeFit`](PyDebyeFit) applied to the **normalized** ACF.
+/// The same ``acf`` feeds [`DipoleAutocorrelationSpectrum`].
 #[pyclass(module = "molrs.compute.transport", name = "DebyeRelaxation")]
 pub struct PyDebyeRelaxation {
     inner: DebyeRelaxation,
@@ -710,6 +750,105 @@ impl PyGreenKuboSpectrum {
     }
 }
 
+// ── DipoleRateCrossSpectrum (⟨Ṁ(0)·M(t)⟩ → ε(ω)) ─────────────────────────────
+
+/// ε(ω) from the dipole-rate × dipole cross-correlation
+/// `C(t) = Σ_α ⟨δṀ_α(0) δM_α(t)⟩` (piecewise-linear FT + conducting-BC prefactor).
+#[pyclass(
+    module = "molrs.compute.spectroscopy",
+    name = "DipoleRateCrossSpectrum"
+)]
+pub struct PyDipoleRateCrossSpectrum {
+    inner: DipoleRateCrossSpectrum,
+}
+
+#[pymethods]
+impl PyDipoleRateCrossSpectrum {
+    /// ``DipoleRateCrossSpectrum(dt, volume, temperature, epsilon_inf,
+    /// window_type="none")``.
+    #[new]
+    #[pyo3(signature = (dt, volume, temperature, epsilon_inf, window_type="none"))]
+    fn new(dt: f64, volume: f64, temperature: f64, epsilon_inf: f64, window_type: &str) -> Self {
+        Self {
+            inner: DipoleRateCrossSpectrum {
+                dt,
+                volume,
+                temperature,
+                epsilon_inf,
+                window_type: window_type.to_string(),
+            },
+        }
+    }
+
+    /// Transform the raw cross correlator into ε(ω).
+    ///
+    /// Returns ``{"frequencies", "eps_real", "eps_imag"}``.
+    fn fit<'py>(
+        &self,
+        py: Python<'py>,
+        cross: PyReadonlyArray1<'py, f64>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let a = cross.as_array().to_owned();
+        let r = self.inner.fit(&a).map_err(py_value_err)?;
+        dielectric_dict(py, r.frequencies, r.eps_real, r.eps_imag)
+    }
+}
+
+// ── DipoleAutocorrelationSpectrum (PACF → ε(ω) via C(0)−iωĈ) ─────────────────
+
+/// ε(ω) from the fluctuation dipole ACF via `χ = A [C(0) − iω Ĉ(ω)]`.
+///
+/// Optional conductive-plateau handling: when ``subtract_plateau`` is
+/// ``None`` (default), subtract ``C(∞)`` automatically if
+/// ``|C(∞)/C(0)| > 0.1``.
+#[pyclass(
+    module = "molrs.compute.spectroscopy",
+    name = "DipoleAutocorrelationSpectrum"
+)]
+pub struct PyDipoleAutocorrelationSpectrum {
+    inner: DipoleAutocorrelationSpectrum,
+}
+
+#[pymethods]
+impl PyDipoleAutocorrelationSpectrum {
+    /// ``DipoleAutocorrelationSpectrum(dt, volume, temperature, epsilon_inf,
+    /// window_type="none", subtract_plateau=None)``.
+    #[new]
+    #[pyo3(signature = (dt, volume, temperature, epsilon_inf, window_type="none", subtract_plateau=None))]
+    fn new(
+        dt: f64,
+        volume: f64,
+        temperature: f64,
+        epsilon_inf: f64,
+        window_type: &str,
+        subtract_plateau: Option<bool>,
+    ) -> Self {
+        Self {
+            inner: DipoleAutocorrelationSpectrum {
+                dt,
+                volume,
+                temperature,
+                epsilon_inf,
+                window_type: window_type.to_string(),
+                subtract_plateau,
+            },
+        }
+    }
+
+    /// Transform the raw dipole PACF into ε(ω).
+    ///
+    /// Returns ``{"frequencies", "eps_real", "eps_imag"}``.
+    fn fit<'py>(
+        &self,
+        py: Python<'py>,
+        acf: PyReadonlyArray1<'py, f64>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let a = acf.as_array().to_owned();
+        let r = self.inner.fit(&a).map_err(py_value_err)?;
+        dielectric_dict(py, r.frequencies, r.eps_real, r.eps_imag)
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Registration
 // ═══════════════════════════════════════════════════════════════════════════
@@ -868,6 +1007,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyEinsteinConductivity>()?;
     m.add_class::<PyGreenKuboConductivity>()?;
     m.add_class::<PyDebyeRelaxation>()?;
+    m.add_class::<PyDipoleRateCross>()?;
     // Fits / transforms.
     m.add_class::<PyLinearFit>()?;
     m.add_class::<PyCumulativeTrapezoid>()?;
@@ -878,6 +1018,8 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyRamanSpectrum>()?;
     m.add_class::<PyEinsteinHelfandSpectrum>()?;
     m.add_class::<PyGreenKuboSpectrum>()?;
+    m.add_class::<PyDipoleRateCrossSpectrum>()?;
+    m.add_class::<PyDipoleAutocorrelationSpectrum>()?;
     // Chiral / resonance spectra (analysis parity).
     m.add_class::<PyVcdSpectrum>()?;
     m.add_class::<PyRoaSpectrum>()?;

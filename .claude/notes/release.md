@@ -29,6 +29,14 @@ Only `scripts/fetch-test-data.sh` lives in-tree. No publish helper scripts.
 - SMILES/SMARTS emit: `write_smiles` / `from_atomistic` / `write_smarts` (io surface only)
 - smiles-emit-01..04 closed
 
+## v0.13.1 (2026-08-13)
+
+Patch on the 0.13 line. Land on master, tag `v0.13.1`, wait for Publish, then molpy 0.13.1.
+
+- `Frame.meta` is a write-through `FrameMeta` mapping: assign `frame.meta["timestep"] = 0` (plain Python scalars). `MetaValue` remains for explicit typed writes.
+- Python `Block` / `Frame` columns accept `molrs.keys.Key` as well as `str`.
+- NeighborList / Neighbors binders (Python + WASM) and DRS correlators already on this line since 0.13.0.
+
 ## v0.12.2 (2026-08-05)
 
 - Public Python names only: `write_smiles` / `write_smarts` (removed `write_local_smarts` export)

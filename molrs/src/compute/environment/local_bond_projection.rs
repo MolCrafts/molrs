@@ -14,12 +14,13 @@
 //! that flavour is exposed via the `with_query_orientations` builder.
 
 use crate::compute::result::ComputeResult;
-use molrs::spatial::neighbors::NeighborList;
+use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 use ndarray::Array2;
 
 use crate::compute::error::ComputeError;
+use crate::compute::require_disp;
 use crate::compute::traits::Compute;
 
 /// `LocalBondProjection` analyzer.
@@ -45,7 +46,7 @@ impl LocalBondProjection {
 
 /// `Args` for [`LocalBondProjection`].
 pub struct LocalBondProjectionArgs<'a> {
-    pub nlists: &'a [NeighborList],
+    pub nlists: &'a [Neighbors],
     /// Reference directions (unit vectors recommended). Shared across all
     /// frames and all query points.
     pub proj_vectors: &'a [[F; 3]],
@@ -121,14 +122,15 @@ impl Compute for LocalBondProjection {
 
         let mut out = Vec::with_capacity(frames.len());
         for (k, nl) in args.nlists.iter().enumerate() {
-            let vectors = nl.vectors();
             let i_idx = nl.query_point_indices();
             let n_pairs = nl.n_pairs();
+            // Bond directions are what gets projected — no `disp`, no answer.
+            let disp = require_disp(nl)?;
             let mut p = Array2::<F>::zeros((n_pairs, n_proj));
             for pk in 0..n_pairs {
-                let dx = vectors[[pk, 0]];
-                let dy = vectors[[pk, 1]];
-                let dz = vectors[[pk, 2]];
+                let dx = disp[[pk, 0]];
+                let dy = disp[[pk, 1]];
+                let dz = disp[[pk, 2]];
                 let r = (dx * dx + dy * dy + dz * dz).sqrt();
                 if r == 0.0 {
                     continue;
@@ -190,14 +192,10 @@ mod tests {
         frame
     }
 
-    fn build_nlist(frame: &Frame, cutoff: F) -> NeighborList {
-        nlist_from_frame(frame, cutoff)
-    }
-
     #[test]
     fn bond_along_x_projects_to_one_on_x_axis() {
         let frame = frame_with(&[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], 10.0);
-        let nl = build_nlist(&frame, 1.5);
+        let nl = nlist_from_frame(&frame, 1.5);
         let r = &LocalBondProjection::new()
             .compute(
                 &[&frame],
@@ -217,7 +215,7 @@ mod tests {
     #[test]
     fn rotation_changes_projection() {
         let frame = frame_with(&[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], 10.0);
-        let nl = build_nlist(&frame, 1.5);
+        let nl = nlist_from_frame(&frame, 1.5);
         // 90° rotation about z: q = (cos(45°), 0, 0, sin(45°))
         let q = [
             std::f64::consts::FRAC_PI_4.cos(),
@@ -244,7 +242,7 @@ mod tests {
     #[test]
     fn empty_proj_vectors_error() {
         let frame = frame_with(&[[0.0, 0.0, 0.0]], 10.0);
-        let nl = build_nlist(&frame, 1.0);
+        let nl = nlist_from_frame(&frame, 1.0);
         let err = LocalBondProjection::new()
             .compute(
                 &[&frame],

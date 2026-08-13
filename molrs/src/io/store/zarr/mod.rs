@@ -1,9 +1,9 @@
 //! Zarr V3 storage — the reference binding of the MolRec record contract for
 //! array-shaped sections (frame / trajectory / system / large observables).
 //!
-//! Append-oriented **metrics** use a separate JSONL binding
-//! (`metrics/metrics.jsonl`); see `record_io` module docs and molrec
-//! `docs/spec/metrics.md`. This crate does not implement the JSONL writer.
+//! Closed **metrics** densify to Zarr series arrays; live append uses a JSONL
+//! WAL (`metrics/metrics.jsonl`). See `record_io` module docs and molrec
+//! `docs/spec/metrics.md`. This crate does not implement the WAL / densify path.
 
 mod error;
 mod frame_io;

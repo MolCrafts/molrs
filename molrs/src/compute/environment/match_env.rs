@@ -44,11 +44,12 @@ use crate::compute::result::ComputeResult;
 use std::collections::HashMap;
 
 use molrs::math::diagonalize::eigh_largest_sym_4x4;
-use molrs::spatial::neighbors::NeighborList;
+use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 
 use crate::compute::error::ComputeError;
+use crate::compute::require_disp;
 use crate::compute::traits::Compute;
 use crate::compute::util::get_positions_ref;
 
@@ -110,18 +111,22 @@ impl MatchEnv {
 /// order a per-particle scan would produce — so downstream fingerprints,
 /// magnitude sorting, and registration RMSD are unchanged. Pair indices
 /// outside `0..n` are ignored, matching the old per-particle scan.
-fn build_all_bond_vectors(n: usize, nlist: &NeighborList) -> Vec<Vec<[F; 3]>> {
+///
+/// A table without the `disp` column carries no bond vectors at all, so it is
+/// rejected as [`ComputeError::BadShape`] — the caller's neighbor list is an
+/// input, and a bad input is an error rather than a panic.
+fn build_all_bond_vectors(n: usize, nlist: &Neighbors) -> Result<Vec<Vec<[F; 3]>>, ComputeError> {
     let mut bonds: Vec<Vec<[F; 3]>> = vec![Vec::new(); n];
     let i_idx = nlist.query_point_indices();
     let j_idx = nlist.point_indices();
-    let vectors = nlist.vectors();
+    let disp = require_disp(nlist)?;
     let symmetric = matches!(
         nlist.mode(),
-        molrs::spatial::neighbors::QueryMode::SelfQuery
+        molrs::spatial::neighbors::QueryMode::SelfQuery { .. }
     );
     for k in 0..nlist.n_pairs() {
         let i = i_idx[k] as usize;
-        let v = [vectors[[k, 0]], vectors[[k, 1]], vectors[[k, 2]]];
+        let v = [disp[[k, 0]], disp[[k, 1]], disp[[k, 2]]];
         if i < n {
             bonds[i].push(v);
         }
@@ -134,7 +139,7 @@ fn build_all_bond_vectors(n: usize, nlist: &NeighborList) -> Vec<Vec<[F; 3]>> {
             }
         }
     }
-    bonds
+    Ok(bonds)
 }
 
 /// Magnitude-only fingerprint derived from bond vectors (for the
@@ -297,12 +302,12 @@ impl MatchEnv {
     fn one_frame<FA: FrameAccess>(
         &self,
         frame: &FA,
-        nlist: &NeighborList,
+        nlist: &Neighbors,
     ) -> Result<MatchEnvResult, ComputeError> {
         let (xs_p, _, _) = get_positions_ref(frame)?;
         let n = xs_p.slice().len();
 
-        let bonds = build_all_bond_vectors(n, nlist);
+        let bonds = build_all_bond_vectors(n, nlist)?;
 
         // Group particles by neighbor count first — only same-length
         // bond sets can match.
@@ -371,13 +376,13 @@ impl MatchEnv {
 }
 
 impl Compute for MatchEnv {
-    type Args<'a> = &'a Vec<NeighborList>;
+    type Args<'a> = &'a [Neighbors];
     type Output = Vec<MatchEnvResult>;
 
     fn compute<'a, FA: FrameAccess + Sync + 'a>(
         &self,
         frames: &[&'a FA],
-        nlists: &'a Vec<NeighborList>,
+        nlists: &'a [Neighbors],
     ) -> Result<Vec<MatchEnvResult>, ComputeError> {
         if frames.is_empty() {
             return Err(ComputeError::EmptyInput);
@@ -434,10 +439,6 @@ mod tests {
         frame
     }
 
-    fn build_nlist(frame: &Frame, cutoff: F) -> NeighborList {
-        nlist_from_frame(frame, cutoff)
-    }
-
     /// Two identical octahedra at different centres should be classed
     /// together; their satellite atoms (each with a single bond) form a
     /// second class.
@@ -462,10 +463,10 @@ mod tests {
     #[test]
     fn two_octahedra_centres_share_a_class() {
         let frame = paired_octahedra();
-        let nl = build_nlist(&frame, 1.2);
+        let nl = nlist_from_frame(&frame, 1.2);
         let r = &MatchEnv::new(1e-9)
             .unwrap()
-            .compute(&[&frame], &vec![nl])
+            .compute(&[&frame], &[nl])
             .unwrap()[0];
         // Centres are particles 0 and 7. Their fingerprints are both
         // [1,1,1,1,1,1] → same class.
@@ -487,10 +488,10 @@ mod tests {
             &[[0.0_f64, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
             10.0,
         );
-        let nl = build_nlist(&frame, 1.5);
+        let nl = nlist_from_frame(&frame, 1.5);
         let r = &MatchEnv::new(1e-9)
             .unwrap()
-            .compute(&[&frame], &vec![nl])
+            .compute(&[&frame], &[nl])
             .unwrap()[0];
         // 0 and 2 each have one bond of length 1 → same class.
         assert_eq!(r.cluster_idx[0], r.cluster_idx[2]);
@@ -516,16 +517,16 @@ mod tests {
             }
         }
         let frame = frame_with(&p, 20.0);
-        let nl = build_nlist(&frame, 1.5);
+        let nl = nlist_from_frame(&frame, 1.5);
         let merged = &MatchEnv::new(0.05)
             .unwrap()
-            .compute(&[&frame], &vec![nl.clone()])
+            .compute(&[&frame], std::slice::from_ref(&nl))
             .unwrap()[0];
         assert_eq!(merged.cluster_idx[0], merged.cluster_idx[5]);
 
         let split = &MatchEnv::new(0.001)
             .unwrap()
-            .compute(&[&frame], &vec![nl])
+            .compute(&[&frame], &[nl])
             .unwrap()[0];
         assert_ne!(split.cluster_idx[0], split.cluster_idx[5]);
     }
@@ -547,10 +548,10 @@ mod tests {
             &[[0.0_f64, 0.0, 0.0], [1.0, 0.0, 0.0], [2.5, 0.0, 0.0]],
             10.0,
         );
-        let nl = build_nlist(&frame, 1.6);
+        let nl = nlist_from_frame(&frame, 1.6);
         let r = &MatchEnv::new(1e-9)
             .unwrap()
-            .compute(&[&frame], &vec![nl])
+            .compute(&[&frame], &[nl])
             .unwrap()[0];
 
         let approx = |a: &[F], b: &[F]| {
@@ -583,7 +584,7 @@ mod tests {
         let frames: Vec<&Frame> = Vec::new();
         let err = MatchEnv::new(0.1)
             .unwrap()
-            .compute(&frames, &Vec::<NeighborList>::new())
+            .compute(&frames, &Vec::<Neighbors>::new())
             .unwrap_err();
         assert!(matches!(err, ComputeError::EmptyInput));
     }
@@ -621,11 +622,11 @@ mod tests {
             }
         }
         let frame = frame_with(&p, 30.0);
-        let nl = build_nlist(&frame, 1.2);
+        let nl = nlist_from_frame(&frame, 1.2);
         let r = &MatchEnv::new(1e-6)
             .unwrap()
             .with_registration(true)
-            .compute(&[&frame], &vec![nl])
+            .compute(&[&frame], &[nl])
             .unwrap()[0];
         // The two centres (indices 0 and 7) must share a class under
         // registration mode.

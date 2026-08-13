@@ -4,9 +4,10 @@
 use molrs::store::frame_access::FrameAccess;
 use ndarray::{Array1, Array2};
 use rustfft::FftPlanner;
+use rustfft::num_complex::Complex64;
 
 use super::raman_tensor::{DIAG_ANISO_WEIGHT, OFFDIAG_ANISO_WEIGHT};
-use super::{central_diff_col, cross_correlate};
+use super::{central_diff_series, lag_times, xcorr_accumulate_into};
 use crate::compute::error::ComputeError;
 use crate::compute::result::ComputeResult;
 use crate::compute::traits::Compute;
@@ -81,43 +82,75 @@ impl Compute for RoaCrossTensor {
         }
         let flux_len = n_frames - 2;
         let max_lag = resolution.min(flux_len.saturating_sub(1));
-        let mut planner = FftPlanner::new();
 
-        // Central-difference derivatives of all six Voigt components.
-        let a: Vec<Array1<f64>> = (0..6).map(|c| central_diff_col(el_pol, c, dt)).collect();
-        let g: Vec<Array1<f64>> = (0..6).map(|c| central_diff_col(g_tensor, c, dt)).collect();
+        // One central-diff pass each — no 12 separate column allocations.
+        let a = central_diff_series(el_pol, dt);
+        let g = central_diff_series(g_tensor, dt);
+
+        let mut planner = FftPlanner::new();
+        let mut sa: Vec<Complex64> = Vec::new();
+        let mut sb: Vec<Complex64> = Vec::new();
 
         // Isotropic: trace × trace.
-        let a_iso: Array1<f64> = (0..flux_len)
-            .map(|t| (a[0][t] + a[1][t] + a[2][t]) / 3.0)
-            .collect();
-        let g_iso: Array1<f64> = (0..flux_len)
-            .map(|t| (g[0][t] + g[1][t] + g[2][t]) / 3.0)
-            .collect();
-        let acf_iso = cross_correlate(&mut planner, &a_iso, &g_iso, max_lag);
+        let mut a_iso = vec![0.0_f64; flux_len];
+        let mut g_iso = vec![0.0_f64; flux_len];
+        for t in 0..flux_len {
+            a_iso[t] = (a[[t, 0]] + a[[t, 1]] + a[[t, 2]]) / 3.0;
+            g_iso[t] = (g[[t, 0]] + g[[t, 1]] + g[[t, 2]]) / 3.0;
+        }
+        let mut acf_iso = Array1::<f64>::zeros(max_lag + 1);
+        xcorr_accumulate_into(
+            &mut planner,
+            &a_iso,
+            &g_iso,
+            max_lag,
+            acf_iso.as_slice_mut().unwrap(),
+            1.0,
+            &mut sa,
+            &mut sb,
+        );
 
-        // Anisotropic: 3 diagonal differences (weight ½) + 3 off-diagonals
-        // (weight 3) — the RamanTensor deviatoric decomposition, cross-correlated.
+        // Anisotropic: 3 diagonal diffs (½) + 3 off-diagonals (3).
         let mut acf_aniso = Array1::<f64>::zeros(max_lag + 1);
+        let aniso_out = acf_aniso.as_slice_mut().unwrap();
+        let mut av = vec![0.0_f64; flux_len];
+        let mut gv = vec![0.0_f64; flux_len];
         let diag_pairs = [(0usize, 1usize), (1, 2), (2, 0)];
         for (i, j) in diag_pairs {
-            let av: Array1<f64> = (0..flux_len).map(|t| a[i][t] - a[j][t]).collect();
-            let gv: Array1<f64> = (0..flux_len).map(|t| g[i][t] - g[j][t]).collect();
-            let c = cross_correlate(&mut planner, &av, &gv, max_lag);
-            for k in 0..=max_lag {
-                acf_aniso[k] += DIAG_ANISO_WEIGHT * c[k];
+            for t in 0..flux_len {
+                av[t] = a[[t, i]] - a[[t, j]];
+                gv[t] = g[[t, i]] - g[[t, j]];
             }
+            xcorr_accumulate_into(
+                &mut planner,
+                &av,
+                &gv,
+                max_lag,
+                aniso_out,
+                DIAG_ANISO_WEIGHT,
+                &mut sa,
+                &mut sb,
+            );
         }
         for off in 3..6 {
-            let c = cross_correlate(&mut planner, &a[off], &g[off], max_lag);
-            for k in 0..=max_lag {
-                acf_aniso[k] += OFFDIAG_ANISO_WEIGHT * c[k];
+            for t in 0..flux_len {
+                av[t] = a[[t, off]];
+                gv[t] = g[[t, off]];
             }
+            xcorr_accumulate_into(
+                &mut planner,
+                &av,
+                &gv,
+                max_lag,
+                aniso_out,
+                OFFDIAG_ANISO_WEIGHT,
+                &mut sa,
+                &mut sb,
+            );
         }
 
-        let lag_times = Array1::from_iter((0..=max_lag).map(|i| i as f64 * dt));
         Ok(RoaCrossResult {
-            lag_times,
+            lag_times: lag_times(max_lag, dt),
             acf_iso,
             acf_aniso,
         })

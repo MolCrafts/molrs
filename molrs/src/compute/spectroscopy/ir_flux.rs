@@ -1,23 +1,22 @@
 //! IR dipole-flux ACF raw compute — the IR-spectrum raw input.
 
 use molrs::store::frame_access::FrameAccess;
-use ndarray::{Array1, Array2};
-use rustfft::FftPlanner;
+use ndarray::Array2;
 
+use super::{central_diff_series, lag_times, sum_column_acf};
 use crate::compute::error::ComputeError;
 use crate::compute::result::ComputeResult;
 use crate::compute::traits::Compute;
-use molrs::signal as sig;
 
 /// Raw dipole-flux autocorrelation function — the IR-spectrum raw input.
 #[derive(Debug, Clone)]
 pub struct IRFluxResult {
     /// Lag times τ = i·dt, length `max_lag + 1`. Units: `[dt]`.
-    pub lag_times: Array1<f64>,
+    pub lag_times: ndarray::Array1<f64>,
     /// Unnormalized dipole-flux ACF `C(τ) = Σ_d ⟨Ṁ_d(0)·Ṁ_d(τ)⟩`, summed over
     /// the 3 Cartesian components — the ACF the
     /// [`IRSpectrum`](super::IRSpectrum) transform consumes. Units: `[Ṁ]²`.
-    pub acf: Array1<f64>,
+    pub acf: ndarray::Array1<f64>,
 }
 
 impl ComputeResult for IRFluxResult {}
@@ -68,28 +67,12 @@ impl Compute for IRFlux {
 
         let flux_len = n_frames - 2;
         let max_lag = resolution.min(flux_len.saturating_sub(1));
-        let inv_2dt = 0.5 / dt;
-
-        let mut planner = FftPlanner::new();
-        let mut acf_sum = Array1::<f64>::zeros(max_lag + 1);
-        for d in 0..3 {
-            let flux: Array1<f64> = (1..n_frames - 1)
-                .map(|t| (dipole_moments[[t + 1, d]] - dipole_moments[[t - 1, d]]) * inv_2dt)
-                .collect();
-            let acf = sig::acf_fft_with_planner(&mut planner, &flux, max_lag).map_err(|e| {
-                ComputeError::OutOfRange {
-                    field: "acf_fft",
-                    value: e.to_string(),
-                }
-            })?;
-            for k in 0..=max_lag {
-                acf_sum[k] += acf[k];
-            }
-        }
-        let lag_times = Array1::from_iter((0..=max_lag).map(|i| i as f64 * dt));
+        // Shared primitives: central-diff flux → unnormalized Σ_α ACF.
+        let flux = central_diff_series(dipole_moments, dt);
+        let acf = sum_column_acf(&flux, max_lag);
         Ok(IRFluxResult {
-            lag_times,
-            acf: acf_sum,
+            lag_times: lag_times(max_lag, dt),
+            acf,
         })
     }
 }

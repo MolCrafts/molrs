@@ -2,10 +2,9 @@
 //! VCD-spectrum raw input.
 
 use molrs::store::frame_access::FrameAccess;
-use ndarray::{Array1, Array2};
-use rustfft::FftPlanner;
+use ndarray::Array2;
 
-use super::{central_diff_col, cross_correlate};
+use super::{central_diff_series, lag_times, sum_column_xcorr};
 use crate::compute::error::ComputeError;
 use crate::compute::result::ComputeResult;
 use crate::compute::traits::Compute;
@@ -14,11 +13,11 @@ use crate::compute::traits::Compute;
 #[derive(Debug, Clone)]
 pub struct VcdCrossResult {
     /// Lag times τ = i·dt, length `max_lag + 1`.
-    pub lag_times: Array1<f64>,
+    pub lag_times: ndarray::Array1<f64>,
     /// VCD cross-correlation `C(τ) = Σ_d ⟨μ̇_d(0)·ṁ_d(τ)⟩` summed over the 3
     /// Cartesian components — the (signed) ACF the
     /// [`VcdSpectrum`](super::VcdSpectrum) transform consumes.
-    pub acf: Array1<f64>,
+    pub acf: ndarray::Array1<f64>,
 }
 
 impl ComputeResult for VcdCrossResult {}
@@ -77,17 +76,12 @@ impl Compute for VcdCrossFlux {
         }
         let flux_len = n_frames - 2;
         let max_lag = resolution.min(flux_len.saturating_sub(1));
-        let mut planner = FftPlanner::new();
-        let mut acf = Array1::<f64>::zeros(max_lag + 1);
-        for d in 0..3 {
-            let mu_dot = central_diff_col(electric, d, dt);
-            let m_dot = central_diff_col(magnetic, d, dt);
-            let c = cross_correlate(&mut planner, &mu_dot, &m_dot, max_lag);
-            for k in 0..=max_lag {
-                acf[k] += c[k];
-            }
-        }
-        let lag_times = Array1::from_iter((0..=max_lag).map(|i| i as f64 * dt));
-        Ok(VcdCrossResult { lag_times, acf })
+        let mu_dot = central_diff_series(electric, dt);
+        let m_dot = central_diff_series(magnetic, dt);
+        let acf = sum_column_xcorr(&mu_dot, &m_dot, max_lag);
+        Ok(VcdCrossResult {
+            lag_times: lag_times(max_lag, dt),
+            acf,
+        })
     }
 }

@@ -65,18 +65,32 @@ const report   = new LBFGS(pots).run(typed, 200);   // Optimizer(pots).run(frame
 ### Analysis
 
 ```js
-import { LinkedCell, RDF } from "@molcrafts/molrs";
+import { NeighborList, RDF } from "@molcrafts/molrs";
 
-const lc = new LinkedCell(5.0);           // cutoff = 5.0 A
-const nlist = lc.build(frame);            // self-query (unique pairs i < j)
-const cross = lc.query(refFrame, other);  // cross-query
+const nl = new NeighborList(5.0);         // cutoff = 5.0 A, O(N) cell list
+nl.build(frame);                          // index only — no pair table
+const nlist = nl.neighbors();             // materialize: distSq + disp
 
 const rdf = new RDF(100, 5.0);
 const result = rdf.compute(frame, nlist);
 console.log(result.binCenters(), result.rdf());
 ```
 
-- **`LinkedCell`** — cell-list neighbor search (`build()` for self-query, `query()` for cross-query)
+A self search is **half-shell**: each unordered pair appears once, with
+`i < j`. `neighbors()` keeps both physical columns by default — that names the
+*columns*, not the pair direction. Pass `{ distSq: false }` or `{ disp: false }`
+to drop one; a column that was not stored reads back as `undefined`, never as a
+fabricated zero array. `disp` is the unnormalized minimum-image displacement
+`r_j - r_i` (Å), flattened three values per pair.
+
+- **`NeighborList`** — neighbor-search engine (`build` / `update` index,
+  `neighbors` materializes); `NeighborList.bruteForce(cutoff)` selects the
+  O(N²) reference backend
+- **`Neighbors`** — the materialized pair table (`numPairs`, `queryPointIndices()`,
+  `pointIndices()`, `distSq()`, `disp()`)
+- **`LinkedCell` / `BruteForce`** — compatibility aliases that build and
+  materialize in one call; `LinkedCell.query(refFrame, other)` is the
+  cross-search door
 - **`RDF`** — radial distribution function (periodic and free-boundary)
 - **`MSD`** — mean squared displacement
 - **`Cluster`** — distance-based cluster analysis

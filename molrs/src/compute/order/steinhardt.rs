@@ -16,11 +16,22 @@
 //!
 //! # Conventions
 //!
-//! - Self-query [`NeighborList`]: each pair `(i, j)` with `i < j` carries the
+//! - Self-query [`Neighbors`]: each pair `(i, j)` with `i < j` carries the
 //!   vector `r_j − r_i`. The Steinhardt accumulator visits each pair once and
 //!   updates both particles, exploiting `Y_ℓm(−r̂) = (−1)^ℓ Y_ℓm(r̂)`.
 //! - `Y_ℓm` follows the Condon-Shortley + physics-normalization convention
 //!   (see [`molrs::math::spherical_harmonics`]).
+//!
+//! # Required neighbor columns
+//!
+//! `q_ℓm` is built from bond *directions*, so the table must carry the
+//! minimum-image displacement column `disp` (Å) — materialize it with
+//! [`NeighborsStorage::DISP`](molrs::spatial::neighbors::NeighborsStorage::DISP)
+//! or [`FULL`](molrs::spatial::neighbors::NeighborsStorage::FULL). Distances
+//! alone are not enough: a `DIST_SQ` or `INDICES_ONLY` table stores no
+//! directions, and reads back `None` rather than zeros, so every entry point
+//! here answers [`ComputeError::BadShape`] naming the missing column instead of
+//! indexing an empty view.
 //!
 //! # References
 //!
@@ -34,19 +45,25 @@ use std::cmp::Ordering;
 use molrs::math::complex::Complex;
 use molrs::math::spherical_harmonics::ylm_all;
 use molrs::math::wigner3j::wigner_3j;
-use molrs::spatial::neighbors::NeighborList;
+use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 
 use crate::compute::error::ComputeError;
 use crate::compute::traits::Compute;
 use crate::compute::util::get_positions_ref;
+use crate::compute::{require_disp, require_self_query};
 
 const FOUR_PI: F = 4.0 * std::f64::consts::PI;
 
 /// Steinhardt order-parameter calculator.
 ///
 /// Stateless parameter container: configured ℓ values + variant flags.
+///
+/// [`compute`](Compute::compute) takes `&Vec<Neighbors>` — one neighbor table
+/// per frame, index-aligned with `frames`, each carrying the `disp` column
+/// (Å); see the module docs for why, and
+/// [`ComputeError::BadShape`] for what happens when it is absent.
 #[derive(Debug, Clone)]
 pub struct Steinhardt {
     l: Vec<u32>,
@@ -57,6 +74,15 @@ pub struct Steinhardt {
 
 impl Steinhardt {
     /// Build a calculator for the listed ℓ values (must be non-empty).
+    ///
+    /// ℓ is the degree of the spherical harmonic the parameter is built from —
+    /// dimensionless, and conventionally 4 or 6, the degrees that distinguish
+    /// cubic and hexagonal close-packed environments most sharply.
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::OutOfRange`] when `l` is empty: there would be no
+    /// parameter to compute.
     pub fn new(l: &[u32]) -> Result<Self, ComputeError> {
         if l.is_empty() {
             return Err(ComputeError::OutOfRange {
@@ -90,6 +116,8 @@ impl Steinhardt {
         self
     }
 
+    /// The configured ℓ values, in the order they were requested — the same
+    /// order every `Vec` in [`SteinhardtResult`] is indexed by.
     pub fn l(&self) -> &[u32] {
         &self.l
     }
@@ -98,11 +126,32 @@ impl Steinhardt {
 /// Public helper used by `SolidLiquid` and `ContinuousCoordination`: compute
 /// the raw `q_ℓm(i)` table for a single ℓ on a single frame.
 ///
+/// `nlist` must carry the minimum-image displacement column `disp` (Å) — build
+/// it with
+/// [`NeighborsStorage::DISP`](molrs::spatial::neighbors::NeighborsStorage::DISP)
+/// or [`FULL`](molrs::spatial::neighbors::NeighborsStorage::FULL) — because the
+/// bond directions `r̂_ij` are the entire computation.
+///
 /// Returns a row-major buffer of length `n_particles · (2ℓ+1)` with element
-/// `[i, m+ℓ]` at index `i · (2ℓ+1) + (m + ℓ as i32) as usize`.
+/// `[i, m+ℓ]` at index `i · (2ℓ+1) + (m + ℓ as i32) as usize`. The values are
+/// dimensionless: each is an average of spherical harmonics over unit bond
+/// directions.
+///
+/// `nlist` must also be a half-shell
+/// [`SelfQuery`](molrs::spatial::neighbors::QueryMode::SelfQuery): each row is
+/// visited once and credited to *both* of its particles, which double-counts on
+/// a cross-query table.
+///
+/// # Errors
+///
+/// [`ComputeError::BadShape`] if `nlist` has no `disp` column — a `DIST_SQ` or
+/// `INDICES_ONLY` table is refused rather than read as zeros — or if `nlist` is
+/// a [`CrossQuery`](molrs::spatial::neighbors::QueryMode::CrossQuery) table.
+/// Positions are read through [`get_positions_ref`], so a frame without
+/// `atoms.x/y/z` columns errors there instead.
 pub fn compute_qlm<FA: FrameAccess>(
     frame: &FA,
-    nlist: &NeighborList,
+    nlist: &Neighbors,
     l: u32,
 ) -> Result<Vec<Complex>, ComputeError> {
     let (xs_p, _, _) = get_positions_ref(frame)?;
@@ -114,8 +163,20 @@ pub fn compute_qlm<FA: FrameAccess>(
 
     let i_idx = nlist.query_point_indices();
     let j_idx = nlist.point_indices();
-    let vectors = nlist.vectors();
     let n_pairs = nlist.n_pairs();
+    // The bond directions are the whole computation: a table without the
+    // `disp` column cannot supply them, and zeros would be silent nonsense.
+    let disp = require_disp(nlist)?;
+    // The loop below reads each row once and updates both `i` and `j`, using
+    // the parity of `Y_ℓm(−r̂)` for the `j` side. That credits `j` as if it
+    // indexed the same point set as `i`, which only a self-query guarantees; a
+    // cross table's `j` indexes the *reference* set instead, and need not be a
+    // particle of `frame` at all. Even when the two sets are the same
+    // coordinates, every bond then arrives in both orderings: `q_ℓm` survives
+    // only because numerator and `neighbor_count` double together, while the
+    // averaged variant's `1 + N_i` denominator becomes `1 + 2·N_i` — a silently
+    // wrong `q̄_ℓ` rather than an absent one. Refuse the table instead.
+    require_self_query(nlist)?;
 
     let parity = if l & 1 == 0 { 1.0_f64 } else { -1.0 };
     let mut ylm_buf = vec![Complex::ZERO; m_count];
@@ -123,9 +184,9 @@ pub fn compute_qlm<FA: FrameAccess>(
     for k in 0..n_pairs {
         let i = i_idx[k] as usize;
         let j = j_idx[k] as usize;
-        let dx = vectors[[k, 0]];
-        let dy = vectors[[k, 1]];
-        let dz = vectors[[k, 2]];
+        let dx = disp[[k, 0]];
+        let dy = disp[[k, 1]];
+        let dz = disp[[k, 2]];
         let r = (dx * dx + dy * dy + dz * dz).sqrt();
         if r == 0.0 {
             continue;
@@ -162,7 +223,14 @@ pub fn compute_qlm<FA: FrameAccess>(
 
 /// Apply the Lechner-Dellago "near-shell" average over self + neighbors.
 /// In place: `q̄_ℓm(i) = (q_ℓm(i) + Σ_{j ∈ neigh(i)} q_ℓm(j)) / (N_i + 1)`.
-fn average_qlm(qlm: &[Complex], nlist: &NeighborList, n: usize, m_count: usize) -> Vec<Complex> {
+///
+/// Carries the same half-shell requirement as [`compute_qlm`] — it too visits
+/// each row once and updates both endpoints, and on a cross table the
+/// denominator would be `1 + 2·N_i`. It is not guarded again here because its
+/// only caller is [`Steinhardt::one_frame`], which reaches it solely through
+/// `compute_qlm(frame, nlist, l)?` on this same `nlist`; a new caller must
+/// either come through that guard or call [`require_self_query`] itself.
+fn average_qlm(qlm: &[Complex], nlist: &Neighbors, n: usize, m_count: usize) -> Vec<Complex> {
     let mut acc = qlm.to_vec();
     let mut count = vec![1_u32; n]; // include self
 
@@ -255,7 +323,7 @@ impl Steinhardt {
     fn one_frame<FA: FrameAccess>(
         &self,
         frame: &FA,
-        nlist: &NeighborList,
+        nlist: &Neighbors,
     ) -> Result<SteinhardtResult, ComputeError> {
         let (xs_p, _, _) = get_positions_ref(frame)?;
         let n = xs_p.slice().len();
@@ -291,13 +359,13 @@ impl Steinhardt {
 }
 
 impl Compute for Steinhardt {
-    type Args<'a> = &'a Vec<NeighborList>;
+    type Args<'a> = &'a [Neighbors];
     type Output = Vec<SteinhardtResult>;
 
     fn compute<'a, FA: FrameAccess + Sync + 'a>(
         &self,
         frames: &[&'a FA],
-        nlists: &'a Vec<NeighborList>,
+        nlists: &'a [Neighbors],
     ) -> Result<Vec<SteinhardtResult>, ComputeError> {
         if frames.is_empty() {
             return Err(ComputeError::EmptyInput);
@@ -376,19 +444,15 @@ mod tests {
         frame
     }
 
-    fn build_nlist(frame: &Frame, cutoff: F) -> NeighborList {
-        nlist_from_frame(frame, cutoff)
-    }
-
     // -- 1) Trivial single-pair --------------------------------------------------
 
     #[test]
     fn ql_isolated_particle_is_zero() {
         // Single particle: no neighbors → q_ℓ = 0
         let frame = frame_with(&[[5.0, 5.0, 5.0]], 10.0, [false; 3]);
-        let nl = build_nlist(&frame, 1.0);
+        let nl = nlist_from_frame(&frame, 1.0);
         let s = Steinhardt::new(&[4, 6]).unwrap();
-        let r = s.compute(&[&frame], &vec![nl]).unwrap();
+        let r = s.compute(&[&frame], &[nl]).unwrap();
         assert_eq!(r[0].ql[0][0], 0.0);
         assert_eq!(r[0].ql[1][0], 0.0);
     }
@@ -421,13 +485,31 @@ mod tests {
         // Central particle has 6 neighbors. Compute q_6 at center. Then
         // rotate the same octahedron by π/4 around z and confirm q_6 unchanged.
         let frame = octahedron(20.0);
-        let nl = build_nlist(&frame, 1.2);
+        let nl = nlist_from_frame(&frame, 1.2);
         let s = Steinhardt::new(&[6]).unwrap();
-        let r = &s.compute(&[&frame], &vec![nl]).unwrap()[0];
+        let r = &s.compute(&[&frame], &[nl]).unwrap()[0];
         let q6_center = r.ql[0][0];
         assert!(
             q6_center > 0.0,
             "q_6(center) should be > 0; got {q6_center}"
+        );
+        // Domain golden, analytic — no third-party oracle involved.
+        //
+        // The addition theorem (DLMF 14.30.9,
+        // Σ_m Y_ℓm(â) Y*_ℓm(b̂) = ((2ℓ+1)/4π) P_ℓ(â·b̂)) collapses
+        // q_ℓ = √((4π/(2ℓ+1)) Σ_m |q_ℓm|²) into
+        // q_ℓ = √( (1/N²) Σ_{a,b} P_ℓ(â·b̂) ) over the N = 6 bond directions.
+        // The 36 direction pairs of {±x̂, ±ŷ, ±ẑ} split into
+        //   6 parallel      P_6(+1) = 1
+        //   6 antiparallel  P_6(−1) = 1        (ℓ even)
+        //  24 orthogonal    P_6( 0) = −5/16
+        // so Σ = 6 + 6 − 24·(5/16) = 9/2 and q_6 = √(4.5/36) = 1/(2√2).
+        // Measured 2026-08-10: 0.3535533905932732 (4 ulp below the analytic
+        // value; the 1e-12 window is float slack, not a fudge factor).
+        const Q6_OCTAHEDRON: F = 0.3535533905932738; // 1/(2√2)
+        assert!(
+            (q6_center - Q6_OCTAHEDRON).abs() < 1e-12,
+            "q_6(octahedron) must equal the analytic 1/(2√2) = {Q6_OCTAHEDRON}; got {q6_center}"
         );
 
         // Rotated octahedron: same positions but apply yaw φ=π/4 around z.
@@ -450,8 +532,8 @@ mod tests {
             ]);
         }
         let frame2 = frame_with(&positions, 20.0, [false; 3]);
-        let nl2 = build_nlist(&frame2, 1.2);
-        let r2 = &s.compute(&[&frame2], &vec![nl2]).unwrap()[0];
+        let nl2 = nlist_from_frame(&frame2, 1.2);
+        let r2 = &s.compute(&[&frame2], &[nl2]).unwrap()[0];
         let q6_rotated = r2.ql[0][0];
         assert!(
             (q6_rotated - q6_center).abs() < 1e-10,
@@ -464,16 +546,39 @@ mod tests {
     #[test]
     fn multiple_l_values_independent() {
         let frame = octahedron(20.0);
-        let nl = build_nlist(&frame, 1.2);
+        let nl = nlist_from_frame(&frame, 1.2);
         let s_solo = Steinhardt::new(&[6]).unwrap();
         let s_pair = Steinhardt::new(&[4, 6]).unwrap();
 
-        let r_solo = &s_solo.compute(&[&frame], &vec![nl.clone()]).unwrap()[0];
-        let r_pair = &s_pair.compute(&[&frame], &vec![nl]).unwrap()[0];
+        let r_solo = &s_solo
+            .compute(&[&frame], std::slice::from_ref(&nl))
+            .unwrap()[0];
+        let r_pair = &s_pair.compute(&[&frame], &[nl]).unwrap()[0];
 
         assert!((r_solo.ql[0][0] - r_pair.ql[1][0]).abs() < 1e-12);
         // q_4 and q_6 in general differ for an octahedron.
         assert!((r_pair.ql[0][0] - r_pair.ql[1][0]).abs() > 1e-3);
+
+        // Domain golden for the second ℓ, so "they differ" is anchored on *two*
+        // known numbers rather than one free value. Same analytic route as
+        // `q6_octahedral_environment_finite_and_invariant_to_rotation`
+        // (DLMF 14.30.9 over the 36 direction pairs), with P_4 instead of P_6:
+        //   6·P_4(+1) + 6·P_4(−1) + 24·P_4(0) = 6 + 6 + 24·(3/8) = 21
+        // so q_4 = √(21/36) = √(7/12) = 0.763762615825973…
+        // NB: √(7/3)/4 ≈ 0.66145 is *not* this number — do not "correct" the
+        // constant to it. Measured 2026-08-10: 0.7637626158259730.
+        const Q4_OCTAHEDRON: F = 0.7637626158259734; // √(7/12)
+        const Q6_OCTAHEDRON: F = 0.3535533905932738; // 1/(2√2)
+        let q4_center = r_pair.ql[0][0];
+        assert!(
+            (q4_center - Q4_OCTAHEDRON).abs() < 1e-12,
+            "q_4(octahedron) must equal the analytic √(7/12) = {Q4_OCTAHEDRON}; got {q4_center}"
+        );
+        let q6_center = r_pair.ql[1][0];
+        assert!(
+            (q6_center - Q6_OCTAHEDRON).abs() < 1e-12,
+            "q_6(octahedron) must equal the analytic 1/(2√2) = {Q6_OCTAHEDRON}; got {q6_center}"
+        );
     }
 
     // -- 4) w_ℓ third-order invariant ------------------------------------------
@@ -481,9 +586,9 @@ mod tests {
     #[test]
     fn wl_present_when_requested() {
         let frame = octahedron(20.0);
-        let nl = build_nlist(&frame, 1.2);
+        let nl = nlist_from_frame(&frame, 1.2);
         let s = Steinhardt::new(&[6]).unwrap().with_wl(true);
-        let r = &s.compute(&[&frame], &vec![nl]).unwrap()[0];
+        let r = &s.compute(&[&frame], &[nl]).unwrap()[0];
         assert!(r.wl.is_some());
         let wl = r.wl.as_ref().unwrap();
         assert_eq!(wl.len(), 1);
@@ -499,12 +604,12 @@ mod tests {
     #[test]
     fn wl_normalize_scales_into_unit_range() {
         let frame = octahedron(20.0);
-        let nl = build_nlist(&frame, 1.2);
+        let nl = nlist_from_frame(&frame, 1.2);
         let s = Steinhardt::new(&[6])
             .unwrap()
             .with_wl(true)
             .with_wl_normalize(true);
-        let r = &s.compute(&[&frame], &vec![nl]).unwrap()[0];
+        let r = &s.compute(&[&frame], &[nl]).unwrap()[0];
         let wl = r.wl.as_ref().unwrap();
         // Normalised ŵ_ℓ ∈ [-1, 1] for any ℓ ≥ 1 (Cauchy-Schwarz on triple sum).
         assert!(
@@ -517,9 +622,9 @@ mod tests {
     #[test]
     fn wl_absent_by_default() {
         let frame = octahedron(20.0);
-        let nl = build_nlist(&frame, 1.2);
+        let nl = nlist_from_frame(&frame, 1.2);
         let s = Steinhardt::new(&[6]).unwrap();
-        let r = &s.compute(&[&frame], &vec![nl]).unwrap()[0];
+        let r = &s.compute(&[&frame], &[nl]).unwrap()[0];
         assert!(r.wl.is_none());
     }
 
@@ -528,11 +633,13 @@ mod tests {
     #[test]
     fn average_variant_changes_ql() {
         let frame = octahedron(20.0);
-        let nl = build_nlist(&frame, 1.2);
+        let nl = nlist_from_frame(&frame, 1.2);
         let s_plain = Steinhardt::new(&[6]).unwrap();
         let s_avg = Steinhardt::new(&[6]).unwrap().with_average(true);
-        let r_plain = &s_plain.compute(&[&frame], &vec![nl.clone()]).unwrap()[0];
-        let r_avg = &s_avg.compute(&[&frame], &vec![nl]).unwrap()[0];
+        let r_plain = &s_plain
+            .compute(&[&frame], std::slice::from_ref(&nl))
+            .unwrap()[0];
+        let r_avg = &s_avg.compute(&[&frame], &[nl]).unwrap()[0];
         // Outer-shell particles see different neighborhoods in averaged mode.
         let neighbor_idx = 1;
         assert!(
@@ -546,10 +653,10 @@ mod tests {
     #[test]
     fn deterministic_across_calls() {
         let frame = octahedron(20.0);
-        let nl = build_nlist(&frame, 1.2);
+        let nl = nlist_from_frame(&frame, 1.2);
         let s = Steinhardt::new(&[4, 6]).unwrap().with_wl(true);
-        let r1 = s.compute(&[&frame], &vec![nl.clone()]).unwrap();
-        let r2 = s.compute(&[&frame], &vec![nl]).unwrap();
+        let r1 = s.compute(&[&frame], std::slice::from_ref(&nl)).unwrap();
+        let r2 = s.compute(&[&frame], &[nl]).unwrap();
         for (a, b) in r1[0].ql.iter().zip(r2[0].ql.iter()) {
             for (x, y) in a.iter().zip(b.iter()) {
                 assert!((x - y).abs() < 1e-15);
@@ -562,12 +669,12 @@ mod tests {
     #[test]
     fn compute_qlm_normalization_matches_internal() {
         let frame = octahedron(20.0);
-        let nl = build_nlist(&frame, 1.2);
+        let nl = nlist_from_frame(&frame, 1.2);
         let qlm_raw = compute_qlm(&frame, &nl, 6).unwrap();
 
         // Plain (non-averaged) Steinhardt should yield the same qlm.
         let s = Steinhardt::new(&[6]).unwrap();
-        let r = &s.compute(&[&frame], &vec![nl]).unwrap()[0];
+        let r = &s.compute(&[&frame], &[nl]).unwrap()[0];
         for (a, b) in qlm_raw.iter().zip(r.qlm[0].iter()) {
             assert!((a.re - b.re).abs() < 1e-14 && (a.im - b.im).abs() < 1e-14);
         }
@@ -585,7 +692,7 @@ mod tests {
         let frames: Vec<&Frame> = Vec::new();
         let err = Steinhardt::new(&[6])
             .unwrap()
-            .compute(&frames, &Vec::<NeighborList>::new())
+            .compute(&frames, &Vec::<Neighbors>::new())
             .unwrap_err();
         assert!(matches!(err, ComputeError::EmptyInput));
     }
@@ -595,9 +702,92 @@ mod tests {
         let frame = octahedron(20.0);
         let err = Steinhardt::new(&[6])
             .unwrap()
-            .compute(&[&frame], &Vec::<NeighborList>::new())
+            .compute(&[&frame], &Vec::<Neighbors>::new())
             .unwrap_err();
         assert!(matches!(err, ComputeError::DimensionMismatch { .. }));
+    }
+
+    /// Dropping the `disp` column is a legal downgrade — the table still has
+    /// pairs and distances. Steinhardt is a bond-*direction* order parameter,
+    /// so it must refuse that table loudly instead of reading zeros.
+    #[test]
+    fn nlist_without_displacement_vectors_is_error() {
+        use molrs::spatial::neighbors::NeighborsStorage;
+        let frame = octahedron(20.0);
+        let nl_full = nlist_from_frame(&frame, 1.2);
+        assert!(nl_full.n_pairs() > 0);
+        // Lean list: distances kept, displacements dropped (a caller that only
+        // asked for d², e.g. an RDF-shaped query, reused for an order kernel).
+        let nl_lean = nl_full.repack(NeighborsStorage::DIST_SQ);
+        assert_eq!(nl_lean.n_pairs(), nl_full.n_pairs());
+        assert!(
+            nl_lean.disp().is_none(),
+            "downgrade drops the disp column; it must not fabricate zeros"
+        );
+        let err = Steinhardt::new(&[6])
+            .unwrap()
+            .compute(&[&frame], &[nl_lean])
+            .unwrap_err();
+        assert!(
+            matches!(err, ComputeError::BadShape { .. }),
+            "expected BadShape when disp is missing; got {err:?}"
+        );
+    }
+
+    /// ac-002 (spec neighborlist-03-compute): an **indices-only** table with
+    /// real pairs is the strictest missing-column case — neither physical
+    /// column was ever stored, so there is nothing to fall back on. Steinhardt
+    /// must answer `BadShape` rather than index an empty `disp` view (which
+    /// would be an out-of-bounds panic, or a WASM `unreachable`).
+    ///
+    /// The pairs are the octahedron's own bonds, hard-coded rather than
+    /// searched: centre 0 bonded to its six neighbours 1..=6 at unit distance
+    /// along ±x, ±y, ±z. Every pair satisfies the half-shell contract `i < j`,
+    /// so `SelfQuery { num_points: 7 }` is a legal label for them.
+    #[test]
+    fn steinhardt_indices_only_neighbors_is_bad_shape() {
+        use molrs::spatial::neighbors::{NeighborPair, NeighborsStorage, QueryMode};
+
+        let frame = octahedron(20.0);
+        let bonds: [[F; 3]; 6] = [
+            [1.0, 0.0, 0.0],
+            [-1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, -1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, -1.0],
+        ];
+        let pairs: Vec<NeighborPair> = bonds
+            .iter()
+            .enumerate()
+            .map(|(k, disp)| NeighborPair {
+                i: 0,
+                j: (k + 1) as u32,
+                dist_sq: 1.0,
+                disp: *disp,
+            })
+            .collect();
+        let nl = Neighbors::from_pairs(
+            pairs,
+            NeighborsStorage::INDICES_ONLY,
+            QueryMode::SelfQuery { num_points: 7 },
+        );
+        assert_eq!(
+            nl.n_pairs(),
+            6,
+            "the guard must be tested on a non-empty table"
+        );
+        assert!(nl.disp().is_none());
+        assert!(nl.dist_sq().is_none());
+
+        let err = Steinhardt::new(&[6])
+            .unwrap()
+            .compute(&[&frame], &[nl])
+            .unwrap_err();
+        assert!(
+            matches!(err, ComputeError::BadShape { .. }),
+            "indices-only Neighbors must be BadShape, not a panic; got {err:?}"
+        );
     }
 
     // -- 9) Multi-frame --------------------------------------------------------
@@ -606,10 +796,10 @@ mod tests {
     fn multi_frame_returns_one_result_per_frame() {
         let frame1 = octahedron(20.0);
         let frame2 = octahedron(20.0);
-        let nl1 = build_nlist(&frame1, 1.2);
-        let nl2 = build_nlist(&frame2, 1.2);
+        let nl1 = nlist_from_frame(&frame1, 1.2);
+        let nl2 = nlist_from_frame(&frame2, 1.2);
         let s = Steinhardt::new(&[6]).unwrap();
-        let r = s.compute(&[&frame1, &frame2], &vec![nl1, nl2]).unwrap();
+        let r = s.compute(&[&frame1, &frame2], &[nl1, nl2]).unwrap();
         assert_eq!(r.len(), 2);
         // Same frame, same nlist → same q_6 at center
         assert!((r[0].ql[0][0] - r[1].ql[0][0]).abs() < 1e-12);
@@ -620,9 +810,9 @@ mod tests {
     #[test]
     fn qlm_shape_is_n_times_2lp1() {
         let frame = octahedron(20.0);
-        let nl = build_nlist(&frame, 1.2);
+        let nl = nlist_from_frame(&frame, 1.2);
         let s = Steinhardt::new(&[6]).unwrap();
-        let r = &s.compute(&[&frame], &vec![nl]).unwrap()[0];
+        let r = &s.compute(&[&frame], &[nl]).unwrap()[0];
         assert_eq!(r.qlm[0].len(), 7 * (2 * 6 + 1));
     }
 
@@ -635,9 +825,9 @@ mod tests {
     #[test]
     fn parity_two_particle_pair() {
         let frame = frame_with(&[[5.0, 5.0, 5.0], [6.0, 5.0, 5.0]], 10.0, [false; 3]);
-        let nl = build_nlist(&frame, 1.5);
+        let nl = nlist_from_frame(&frame, 1.5);
         let s = Steinhardt::new(&[6]).unwrap();
-        let r = &s.compute(&[&frame], &vec![nl]).unwrap()[0];
+        let r = &s.compute(&[&frame], &[nl]).unwrap()[0];
         assert!(
             (r.ql[0][0] - r.ql[0][1]).abs() < 1e-12,
             "even-ℓ q_ℓ must be parity-symmetric across an antiparallel pair"
@@ -650,9 +840,9 @@ mod tests {
     fn parity_odd_l_two_particle_pair() {
         // For ℓ=3 (odd), q_ℓm at particle 1 = -q_ℓm at particle 0 → same magnitude.
         let frame = frame_with(&[[5.0, 5.0, 5.0], [6.0, 5.0, 5.0]], 10.0, [false; 3]);
-        let nl = build_nlist(&frame, 1.5);
+        let nl = nlist_from_frame(&frame, 1.5);
         let s = Steinhardt::new(&[3]).unwrap();
-        let r = &s.compute(&[&frame], &vec![nl]).unwrap()[0];
+        let r = &s.compute(&[&frame], &[nl]).unwrap()[0];
         assert!((r.ql[0][0] - r.ql[0][1]).abs() < 1e-12);
     }
 
@@ -661,41 +851,199 @@ mod tests {
     #[test]
     fn result_l_field_preserves_input_order() {
         let frame = octahedron(20.0);
-        let nl = build_nlist(&frame, 1.2);
+        let nl = nlist_from_frame(&frame, 1.2);
         let s = Steinhardt::new(&[6, 4, 8]).unwrap();
-        let r = &s.compute(&[&frame], &vec![nl]).unwrap()[0];
+        let r = &s.compute(&[&frame], &[nl]).unwrap()[0];
         assert_eq!(r.l, vec![6, 4, 8]);
     }
 
     // -- 14) PBC: same lattice in wrapped vs unwrapped boxes gives same q_ℓ ---
 
-    #[test]
-    fn pbc_consistent_with_open_box() {
-        // Six-coordinate environment centred on the *origin* of a periodic box,
-        // so neighbors at (±1, 0, 0) etc. straddle the boundary.
+    /// Six-coordinate environment centred on the *origin* of a periodic box, so
+    /// the neighbors at (±1, 0, 0) etc. straddle the boundary and are only
+    /// found through the minimum image.
+    ///
+    /// Shared by `pbc_consistent_with_open_box`, which reads the centre, and
+    /// `parity_visible_at_mixed_role_particle`, which reads the shell.
+    fn wrapped_octahedron() -> Frame {
         let positions = [
             [0.0, 0.0, 0.0],
             [1.0, 0.0, 0.0],
             [9.0, 0.0, 0.0], // wrapped equivalent of (-1, 0, 0)
             [0.0, 1.0, 0.0],
-            [0.0, 9.0, 0.0],
+            [0.0, 9.0, 0.0], // wrapped equivalent of (0, -1, 0)
             [0.0, 0.0, 1.0],
-            [0.0, 0.0, 9.0],
+            [0.0, 0.0, 9.0], // wrapped equivalent of (0, 0, -1)
         ];
-        let frame = frame_with(&positions, 10.0, [true, true, true]);
-        let nl = build_nlist(&frame, 1.5);
+        frame_with(&positions, 10.0, [true, true, true])
+    }
+
+    #[test]
+    fn pbc_consistent_with_open_box() {
+        let frame = wrapped_octahedron();
+        let nl = nlist_from_frame(&frame, 1.5);
 
         let frame_open = octahedron(20.0);
-        let nl_open = build_nlist(&frame_open, 1.2);
+        let nl_open = nlist_from_frame(&frame_open, 1.2);
 
         let s = Steinhardt::new(&[6]).unwrap();
-        let r_pbc = &s.compute(&[&frame], &vec![nl]).unwrap()[0];
-        let r_open = &s.compute(&[&frame_open], &vec![nl_open]).unwrap()[0];
+        let r_pbc = &s.compute(&[&frame], &[nl]).unwrap()[0];
+        let r_open = &s.compute(&[&frame_open], &[nl_open]).unwrap()[0];
         assert!(
             (r_pbc.ql[0][0] - r_open.ql[0][0]).abs() < 1e-10,
             "q_6 should match between PBC-wrapped and open-box octahedra: got {} vs {}",
             r_pbc.ql[0][0],
             r_open.ql[0][0]
+        );
+    }
+
+    // -- 15) Parity is only observable at a mixed-role particle ----------------
+
+    /// Domain: pin `q_6` where the half-shell parity factor `(-1)^ℓ` can
+    /// actually be seen.
+    ///
+    /// Every other assertion in this module reads a particle that is *only* the
+    /// `i` side of its pairs (the octahedron centre) or *only* the `j` side (a
+    /// shell atom at cutoff 1.2, whose single bond is to the centre). On such a
+    /// particle the parity multiplies every accumulated `Y_ℓm` by the same
+    /// factor, and `|(-1)^ℓ| = 1` cancels out of `Σ_m |q_ℓm|²` — so `q_ℓ` is
+    /// blind to the sign and those anchors cannot fail on a parity bug.
+    ///
+    /// The wrapped fixture at cutoff 1.5 fixes that: the second-shell diagonals
+    /// (√2 ≈ 1.414 Å < 1.5 Å) put each shell atom on *both* sides of the
+    /// half-shell table, with a different split per atom —
+    ///
+    /// * particle 1 — `j` in (0,1); `i` in (1,3), (1,4), (1,5), (1,6) → 1 / 4
+    /// * particle 3 — `j` in (0,3), (1,3), (2,3); `i` in (3,5), (3,6) → 3 / 2
+    ///
+    /// — so a wrong parity sign weights the two roles differently *and*
+    /// differently for the two particles. Their bond sets are exact rotations of
+    /// one another (−90° about ẑ maps particle 3's five directions onto
+    /// particle 1's), so the rotationally invariant `q_6` must agree.
+    ///
+    /// Bite-proof (2026-08-10, this fixture, ℓ = 6, correct parity `(-1)^ℓ` =
+    /// +1 vs. a sign-flipped parity):
+    ///
+    /// | parity  | q_6(1)          | q_6(3)          |
+    /// |---------|-----------------|-----------------|
+    /// | correct | 0.4538033715168 | 0.4538033715168 |
+    /// | flipped | 0.5485777064373 | 0.2157834562704 |
+    ///
+    /// Both assertions below therefore bite, in both directions: the equality
+    /// splits by ~0.33 and the pinned value moves by ~0.09, against tolerances
+    /// of 1e-12 and 1e-9. The counterfactual row was reproduced offline with an
+    /// independent implementation of the same accumulation (scipy
+    /// `sph_harm_y`), which also reproduces the correct-parity value — that
+    /// cross-check is not part of the gate and nothing here imports it.
+    #[test]
+    fn parity_visible_at_mixed_role_particle() {
+        let frame = wrapped_octahedron();
+        let nl = nlist_from_frame(&frame, 1.5);
+        let s = Steinhardt::new(&[6]).unwrap();
+        let r = &s.compute(&[&frame], &[nl]).unwrap()[0];
+
+        let q6_p1 = r.ql[0][1];
+        let q6_p3 = r.ql[0][3];
+        assert!(
+            (q6_p1 - q6_p3).abs() < 1e-12,
+            "particles 1 and 3 have rotationally equivalent bond sets but opposite \
+             half-shell role splits, so q_6 must agree: got {q6_p1} vs {q6_p3}"
+        );
+        // Golden of the correct-parity accumulation (see the table above).
+        const Q6_MIXED_ROLE: F = 0.453803371517;
+        assert!(
+            (q6_p1 - Q6_MIXED_ROLE).abs() < 1e-9,
+            "q_6 at a mixed-role shell particle must be {Q6_MIXED_ROLE}; got {q6_p1}"
+        );
+    }
+
+    // -- 16) Query mode: a cross-query table is not a Steinhardt input --------
+
+    /// Edge: a **cross-query** [`Neighbors`] table must be refused with
+    /// [`ComputeError::BadShape`], not consumed.
+    ///
+    /// `compute_qlm` visits each row once and updates *both* endpoints, using
+    /// `Y_ℓm(−r̂) = (−1)^ℓ Y_ℓm(r̂)` for the `j` side. That double update is only
+    /// correct for a half-shell [`QueryMode::SelfQuery`], where each unordered
+    /// pair appears exactly once. On a full-shell or cross table every pair is
+    /// present in both orderings, so:
+    ///
+    /// * `neighbor_count` is doubled — `q_ℓm` survives by luck only because the
+    ///   numerator doubles with it;
+    /// * the averaged (Lechner-Dellago) variant does **not** survive:
+    ///   `average_qlm` counts `1 + 2·N_i` neighbours instead of `1 + N_i`, so
+    ///   `q̄_ℓ` is silently wrong rather than absent;
+    /// * a genuine cross-query also indexes two *different* point sets, so `j`
+    ///   need not even be a particle of `frame`.
+    ///
+    /// The table below is well-formed in every other respect (FULL storage,
+    /// finite displacements, in-range indices), so the mode is the only thing
+    /// left to refuse. The guard belongs in `compute_qlm`, which `SolidLiquid`
+    /// and `ContinuousCoordination` call directly — checking it only inside
+    /// `Steinhardt::one_frame` would leave those two entry points open.
+    #[test]
+    fn steinhardt_cross_query_table_is_bad_shape() {
+        use molrs::spatial::neighbors::{NeighborPair, NeighborsStorage, QueryMode};
+
+        let frame = octahedron(20.0);
+        // Same six bonds as `steinhardt_indices_only_neighbors_is_bad_shape`:
+        // centre 0 to its neighbours 1..=6 at unit distance along ±x, ±y, ±z.
+        let bonds: [[F; 3]; 6] = [
+            [1.0, 0.0, 0.0],
+            [-1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, -1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, -1.0],
+        ];
+        // Full shell: both orderings of every bond, as a cross-query reports
+        // them. `disp` stays r_j − r_i, so the reversed row carries −disp.
+        let mut pairs: Vec<NeighborPair> = Vec::with_capacity(2 * bonds.len());
+        for (k, disp) in bonds.iter().enumerate() {
+            let j = (k + 1) as u32;
+            pairs.push(NeighborPair {
+                i: 0,
+                j,
+                dist_sq: 1.0,
+                disp: *disp,
+            });
+            pairs.push(NeighborPair {
+                i: j,
+                j: 0,
+                dist_sq: 1.0,
+                disp: [-disp[0], -disp[1], -disp[2]],
+            });
+        }
+        let nl = Neighbors::from_pairs(
+            pairs,
+            NeighborsStorage::FULL,
+            QueryMode::CrossQuery {
+                num_query_points: 7,
+                num_points: 7,
+            },
+        );
+        assert_eq!(nl.n_pairs(), 12, "the guard must see a non-empty table");
+        assert!(
+            nl.disp().is_some() && nl.dist_sq().is_some(),
+            "no column is missing here — the query mode must be what is refused"
+        );
+
+        // Deliberately not `expect_err`: the Ok payload is the whole q_ℓm
+        // buffer, and dumping it buries the one thing the failure says.
+        let Err(err) = compute_qlm(&frame, &nl, 6) else {
+            panic!("compute_qlm must refuse a cross-query table outright, but returned Ok");
+        };
+        assert!(
+            matches!(err, ComputeError::BadShape { .. }),
+            "cross-query Neighbors must be BadShape; got {err:?}"
+        );
+
+        let Err(err) = Steinhardt::new(&[6]).unwrap().compute(&[&frame], &[nl]) else {
+            panic!("Steinhardt::compute must inherit the compute_qlm cross-query guard");
+        };
+        assert!(
+            matches!(err, ComputeError::BadShape { .. }),
+            "cross-query Neighbors must be BadShape; got {err:?}"
         );
     }
 }

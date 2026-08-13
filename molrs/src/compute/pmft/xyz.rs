@@ -15,13 +15,14 @@
 //! works in the lab frame.
 
 use crate::compute::result::ComputeResult;
-use molrs::spatial::neighbors::NeighborList;
+use molrs::spatial::neighbors::Neighbors;
 use molrs::spatial::simbox::BoxKind;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 use ndarray::Array3;
 
 use crate::compute::error::ComputeError;
+use crate::compute::require_disp;
 use crate::compute::traits::Compute;
 
 /// `PMFTXYZ` analyzer.
@@ -76,7 +77,7 @@ impl PMFTXYZ {
     fn one_frame<FA: FrameAccess>(
         &self,
         frame: &FA,
-        nlist: &NeighborList,
+        nlist: &Neighbors,
         orientations: Option<&[[F; 4]]>,
     ) -> Result<PMFTXYZResult, ComputeError> {
         let simbox = frame.simbox_ref().ok_or(ComputeError::MissingSimBox)?;
@@ -96,13 +97,14 @@ impl PMFTXYZ {
         let bin_vol = dx * dy * dz;
 
         let mut counts = Array3::<u64>::zeros((self.n_x, self.n_y, self.n_z));
-        let vectors = nlist.vectors();
         let i_idx = nlist.query_point_indices();
         let j_idx = nlist.point_indices();
         let n_pairs = nlist.n_pairs();
+        // The pair coordinate is built from the bond vector itself.
+        let disp = require_disp(nlist)?;
         let symmetric = matches!(
             nlist.mode(),
-            molrs::spatial::neighbors::QueryMode::SelfQuery
+            molrs::spatial::neighbors::QueryMode::SelfQuery { .. }
         );
 
         let push = |vx: F, vy: F, vz: F, counts: &mut Array3<u64>| {
@@ -116,9 +118,9 @@ impl PMFTXYZ {
         };
 
         for k in 0..n_pairs {
-            let vx = vectors[[k, 0]];
-            let vy = vectors[[k, 1]];
-            let vz = vectors[[k, 2]];
+            let vx = disp[[k, 0]];
+            let vy = disp[[k, 1]];
+            let vz = disp[[k, 2]];
             let (xl_i, yl_i, zl_i) = match orientations {
                 None => (vx, vy, vz),
                 Some(o) => {
@@ -222,7 +224,7 @@ fn rotate_by_quat_conj(q: [F; 4], v: [F; 3]) -> [F; 3] {
 /// is a per-frame `Vec<[F;4]>` of unit quaternions `(w, x, y, z)` used to
 /// rotate every bond into the query particle's local frame before binning.
 pub struct PMFTXYZArgs<'a> {
-    pub nlists: &'a [NeighborList],
+    pub nlists: &'a [Neighbors],
     pub query_orientations: Option<&'a [Vec<[F; 4]>]>,
 }
 
@@ -318,7 +320,7 @@ mod tests {
         frame
     }
 
-    fn build_nlist(frame: &Frame, cutoff: F) -> NeighborList {
+    fn build_nlist(frame: &Frame, cutoff: F) -> Neighbors {
         nlist_from_frame(frame, cutoff)
     }
 

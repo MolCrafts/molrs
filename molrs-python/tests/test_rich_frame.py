@@ -32,6 +32,21 @@ class TestBlockMappingProtocol:
         assert sorted(iter(b)) == ["x", "y"]
         assert "x" in b and "z" not in b
 
+    def test_schema_key_is_a_column_name(self):
+        """molrs.keys.Key indexes a Block the same way a str does.
+
+        molpy writes ``block[ATOMIC_NUMBER] = …``; the Key must not bounce
+        off ``schema.column`` or ``__contains__``.
+        """
+        b = Block()
+        z = molrs.keys.ATOMIC_NUMBER
+        b[z] = np.array([1, 8], dtype=np.int64)
+        assert z in b
+        assert "atomic_number" in b
+        np.testing.assert_array_equal(b[z], [1, 8])
+        del b[z]
+        assert z not in b
+
     def test_get(self):
         b = self._blk()
         np.testing.assert_allclose(b.get("x"), [1.0, 2.0, 3.0])
@@ -321,9 +336,9 @@ class TestRichFrame:
             {"atoms": {"x": [1.0]}},
             meta={"title": molrs.MetaValue("string", "t")},
         )
-        assert f.meta["title"].value == "t"
-        f.meta = {**f.meta, "step": molrs.MetaValue("i64", 5)}
-        assert f.meta["step"].value == 5
+        assert f.meta["title"] == "t"
+        f.meta = {**f.meta, "step": 5}
+        assert f.meta["step"] == 5
 
     def test_to_dict_from_dict(self):
         f = Frame(

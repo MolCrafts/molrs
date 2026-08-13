@@ -13,19 +13,19 @@
 //!
 //! | Python class                  | Args                                | Output                                  |
 //! |-------------------------------|-------------------------------------|------------------------------------------|
-//! | `Steinhardt`                  | list[NeighborList]                  | dict {ql, wl?, qlm}                      |
+//! | `Steinhardt`                  | list[Neighbors]                     | dict {ql, wl?, qlm}                      |
 //! | `Nematic`                     | frames (dir from `orientations` block) | (order, eigenvalues, director, q_tensor) |
-//! | `Hexatic`                     | list[NeighborList]                  | complex ψ_k per particle                 |
-//! | `SolidLiquid`                 | list[NeighborList]                  | (n_solid_bonds, is_solid)                |
+//! | `Hexatic`                     | list[Neighbors]                     | complex ψ_k per particle                 |
+//! | `SolidLiquid`                 | list[Neighbors]                     | (n_solid_bonds, is_solid)                |
 //! | `ClusterProperties`           | list[ClusterResult]                 | dict of cluster scalars / tensors        |
-//! | `LocalDensity`                | list[NeighborList]                  | (num_neighbors, density)                 |
+//! | `LocalDensity`                | list[Neighbors]                     | (num_neighbors, density)                 |
 //! | `GaussianDensity`             | —                                   | 3-D density grid                         |
-//! | `BondOrder`                   | list[NeighborList]                  | (raw_counts, bond_order, edges)          |
+//! | `BondOrder`                   | list[Neighbors]                     | (raw_counts, bond_order, edges)          |
 //! | `StaticStructureFactorDebye`  | —                                   | (k_values, S(k))                         |
-//! | `PMFTXY`                      | list[NeighborList] (angle from `orientations`?) | (raw_counts, density, pmf)     |
+//! | `PMFTXY`                      | list[Neighbors]    (angle from `orientations`?) | (raw_counts, density, pmf)     |
 
 use crate::compute::{PyClusterResult, py_value_err};
-use crate::helpers::{NpF, collect_frames, collect_nlists};
+use crate::helpers::{NpF, collect_frames, collect_neighbors};
 
 use molrs::compute::distribution::AtomGroups;
 use molrs::compute::{
@@ -104,8 +104,11 @@ impl PySteinhardt {
     ) -> PyResult<Vec<Bound<'py, PyDict>>> {
         let owned = collect_frames(frames)?;
         let refs: Vec<&CoreFrame> = owned.iter().collect();
-        let nl = collect_nlists(nlists)?;
-        let results = self.inner.compute(&refs, &nl).map_err(py_value_err)?;
+        let neighbors = collect_neighbors(nlists)?;
+        let results = self
+            .inner
+            .compute(&refs, &neighbors)
+            .map_err(py_value_err)?;
         results
             .into_iter()
             .map(|r| {
@@ -232,8 +235,11 @@ impl PyHexatic {
     ) -> PyResult<Vec<Bound<'py, PyArray2<NpF>>>> {
         let owned = collect_frames(frames)?;
         let refs: Vec<&CoreFrame> = owned.iter().collect();
-        let nl = collect_nlists(nlists)?;
-        let results = self.inner.compute(&refs, &nl).map_err(py_value_err)?;
+        let neighbors = collect_neighbors(nlists)?;
+        let results = self
+            .inner
+            .compute(&refs, &neighbors)
+            .map_err(py_value_err)?;
         Ok(results
             .into_iter()
             .map(|r| {
@@ -278,8 +284,11 @@ impl PySolidLiquid {
     ) -> PyResult<Vec<(Bound<'py, PyArray1<u32>>, Vec<bool>)>> {
         let owned = collect_frames(frames)?;
         let refs: Vec<&CoreFrame> = owned.iter().collect();
-        let nl = collect_nlists(nlists)?;
-        let results = self.inner.compute(&refs, &nl).map_err(py_value_err)?;
+        let neighbors = collect_neighbors(nlists)?;
+        let results = self
+            .inner
+            .compute(&refs, &neighbors)
+            .map_err(py_value_err)?;
         Ok(results
             .into_iter()
             .map(|r| {
@@ -409,8 +418,11 @@ impl PyLocalDensity {
     ) -> PyResult<Vec<(Bound<'py, PyArray1<NpF>>, Bound<'py, PyArray1<NpF>>)>> {
         let owned = collect_frames(frames)?;
         let refs: Vec<&CoreFrame> = owned.iter().collect();
-        let nl = collect_nlists(nlists)?;
-        let results = self.inner.compute(&refs, &nl).map_err(py_value_err)?;
+        let neighbors = collect_neighbors(nlists)?;
+        let results = self
+            .inner
+            .compute(&refs, &neighbors)
+            .map_err(py_value_err)?;
         Ok(results
             .into_iter()
             .map(|r| {
@@ -491,8 +503,11 @@ impl PyBondOrder {
     > {
         let owned = collect_frames(frames)?;
         let refs: Vec<&CoreFrame> = owned.iter().collect();
-        let nl = collect_nlists(nlists)?;
-        let results = self.inner.compute(&refs, &nl).map_err(py_value_err)?;
+        let neighbors = collect_neighbors(nlists)?;
+        let results = self
+            .inner
+            .compute(&refs, &neighbors)
+            .map_err(py_value_err)?;
         Ok(results
             .into_iter()
             .map(|r| {
@@ -595,7 +610,7 @@ impl PyPMFTXY {
     > {
         let owned = collect_frames(frames)?;
         let refs: Vec<&CoreFrame> = owned.iter().collect();
-        let nl = collect_nlists(nlists)?;
+        let neighbors = collect_neighbors(nlists)?;
         let first = refs
             .first()
             .copied()
@@ -624,7 +639,7 @@ impl PyPMFTXY {
             None
         };
         let args = PMFTXYArgs {
-            nlists: &nl,
+            nlists: &neighbors,
             query_orientations: orient_angles.as_deref(),
         };
         let results = self.inner.compute(&refs, args).map_err(py_value_err)?;

@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use criterion::BenchmarkGroup;
 use criterion::measurement::Measurement;
-use molrs::spatial::neighbors::{LinkCell, NbList, NeighborList};
+use molrs::spatial::neighbors::{NeighborList, Neighbors, NeighborsStorage};
 use molrs::spatial::simbox::SimBox;
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
@@ -89,16 +89,17 @@ pub fn frame_from_positions(pts: &Array2<F>, simbox: SimBox) -> Frame {
     frame
 }
 
-/// Build a self-query [`NeighborList`] for the given positions using LinkCell.
-pub fn build_nlist(pts: &Array2<F>, simbox: &SimBox, cutoff: F) -> NeighborList {
-    let mut nl = NbList(LinkCell::new().cutoff(cutoff));
+/// Build a self-query [`Neighbors`] table for the given positions using the
+/// cell-list backend, with every column present.
+pub fn build_nlist(pts: &Array2<F>, simbox: &SimBox, cutoff: F) -> Neighbors {
+    let mut nl = NeighborList::new(cutoff);
     nl.build(pts.view(), simbox);
-    nl.query().clone()
+    nl.neighbors(NeighborsStorage::FULL)
 }
 
 /// Build `n_frames` independent frames + neighbor lists at the requested
 /// particle count and constant [`DENSITY`].
-pub fn build_pool(n: usize, n_frames: usize, base_seed: u64) -> (Vec<Frame>, Vec<NeighborList>) {
+pub fn build_pool(n: usize, n_frames: usize, base_seed: u64) -> (Vec<Frame>, Vec<Neighbors>) {
     let box_len = box_for_density(n);
     let simbox = SimBox::cube(
         box_len,
@@ -120,7 +121,7 @@ pub fn build_pool(n: usize, n_frames: usize, base_seed: u64) -> (Vec<Frame>, Vec
 
 /// The standard single-input regression pool: [`REG_N`] atoms over
 /// [`REG_FRAMES`] frames.
-pub fn reg_pool() -> (Vec<Frame>, Vec<NeighborList>) {
+pub fn reg_pool() -> (Vec<Frame>, Vec<Neighbors>) {
     build_pool(REG_N, REG_FRAMES, 42)
 }
 
@@ -133,7 +134,7 @@ pub struct Deps {
 
 /// Compute Cluster / COM / ClusterCenters once so kernel benches measure
 /// only the kernel under test.
-pub fn build_deps(frames: &[&Frame], nlists: &Vec<NeighborList>) -> Deps {
+pub fn build_deps(frames: &[&Frame], nlists: &[Neighbors]) -> Deps {
     let cluster = Cluster::new(2).compute(frames, nlists).unwrap();
     let com = CenterOfMass::new().compute(frames, &cluster).unwrap();
     let centers = ClusterCenters::new().compute(frames, &cluster).unwrap();

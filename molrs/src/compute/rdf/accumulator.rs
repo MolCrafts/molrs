@@ -12,12 +12,12 @@
 //! itself implemented on top of this accumulator — one source of truth for
 //! the accumulation math.
 
-use molrs::spatial::neighbors::{NeighborList, QueryMode};
+use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 use ndarray::Array1;
 
-use super::{RDF, RDFResult};
+use super::{RDF, RDFResult, RdfMode};
 use crate::compute::error::ComputeError;
 
 /// Streaming g(r) accumulator (bounded memory).
@@ -33,7 +33,10 @@ pub struct RDFAccumulator {
     n_query_points: usize,
     volume: F,
     n_frames: usize,
-    mode: Option<QueryMode>,
+    /// Pairing latched from frame 0, count-free: the per-frame point counts go
+    /// into `n_points` / `n_query_points`, and only the pairing has to stay
+    /// constant across the stream.
+    mode: Option<RdfMode>,
 }
 
 impl RDFAccumulator {
@@ -63,19 +66,24 @@ impl RDFAccumulator {
 
     /// Fold one frame's pair distances into the running histogram.
     ///
-    /// Errors mirror the batch path: a neighbor-list mode that differs from
-    /// frame 0, a missing `SimBox`, or a non-finite/non-positive volume all
-    /// reject the frame (the accumulator state is left unchanged).
+    /// Errors mirror the batch path: a neighbor-list pairing that differs from
+    /// frame 0, a table with no `dist_sq` column, a missing `SimBox`, or a
+    /// non-finite/non-positive volume all reject the frame (the accumulator
+    /// state is left unchanged).
     pub fn accumulate<FA: FrameAccess>(
         &mut self,
         frame: &FA,
-        nlist: &NeighborList,
+        nlist: &Neighbors,
     ) -> Result<(), ComputeError> {
+        // Only the pairing has to match frame 0; the point counts the neighbor
+        // list carries legitimately vary from frame to frame, which is why the
+        // comparison is on the count-free `RdfMode` and not on `QueryMode`.
+        let mode = RdfMode::from(nlist.mode());
         match self.mode {
-            Some(mode) if nlist.mode() != mode => {
+            Some(latched) if latched != mode => {
                 return Err(ComputeError::BadShape {
-                    expected: format!("{mode:?} (frame 0)"),
-                    got: format!("{:?} (frame {})", nlist.mode(), self.n_frames),
+                    expected: format!("{latched:?} (frame 0)"),
+                    got: format!("{mode:?} (frame {})", self.n_frames),
                 });
             }
             _ => {}
@@ -88,10 +96,13 @@ impl RDFAccumulator {
                 value: vol.to_string(),
             });
         }
+        // Binning first: it is the last thing that can reject the frame, and
+        // nothing above it has touched the accumulator yet, so a rejected frame
+        // really does leave the state alone.
+        self.rdf.accumulate_into(nlist, &mut self.n_r)?;
         if self.mode.is_none() {
-            self.mode = Some(nlist.mode());
+            self.mode = Some(mode);
         }
-        self.rdf.accumulate_into(nlist, &mut self.n_r);
         self.n_points += nlist.num_points();
         self.n_query_points += nlist.num_query_points();
         self.volume += vol;

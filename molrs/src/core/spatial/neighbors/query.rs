@@ -1,29 +1,52 @@
-//! High-level neighbor query API inspired by freud-analysis.
+//! Cross-query neighbor search: one point set against another.
 //!
-//! [`NeighborQuery`] wraps a [`LinkCell`] spatial index built from reference points
-//! and provides two query modes:
+//! [`NeighborQuery`] wraps a [`LinkCell`] spatial index built once from a set of
+//! *reference points*, and then answers repeated queries against it:
 //!
 //! - [`query`](NeighborQuery::query) — cross-query: find all pairs `(i, j)` where
-//!   `i` indexes `query_points` and `j` indexes the reference `points`.
+//!   `i` indexes a separate set of *query points* and `j` indexes the reference
+//!   points. Directed and full-shell. This is the question
+//!   [`NeighborList`](crate::spatial::neighbors::NeighborList) does not answer,
+//!   and the reason this type exists.
 //! - [`query_self`](NeighborQuery::query_self) — self-query: find unique pairs
-//!   `(i, j)` with `i < j` within the same point set.
+//!   `(i, j)` with `i < j` within the reference point set. Half-shell, so each
+//!   unordered pair appears once. A convenience over the same reference points;
+//!   a search that is *only* a self search wants
+//!   [`NeighborList`](crate::spatial::neighbors::NeighborList) instead, which
+//!   can stream its pairs instead of materializing them.
+//!
+//! Every table returned here carries both physical columns
+//! ([`NeighborsStorage::FULL`]): distances in Å² and minimum-image
+//! displacements in Å. This wrapper does not expose a column policy — a caller
+//! who wants a leaner table uses
+//! [`NeighborList::neighbors`](crate::spatial::neighbors::NeighborList::neighbors),
+//! or drops columns afterwards with [`Neighbors::repack`].
 
 use crate::spatial::neighbors::linkcell::LinkCell;
-use crate::spatial::neighbors::{NbListAlgo, NeighborList, QueryMode};
+use crate::spatial::neighbors::{Backend, Neighbors, NeighborsStorage, QueryMode};
 use crate::spatial::simbox::SimBox;
 use crate::types::{F, FNx3, FNx3View};
 
-/// Axis-aligned bounding box query — high-level neighbor search.
+/// Cross-query search over a fixed set of reference points.
 ///
-/// Wraps a [`LinkCell`] spatial index built from reference points. Provides
-/// both self-query and cross-query methods following the freud-analysis API.
+/// This is the door for the *cross* question — "which reference points lie
+/// within the cutoff of **these other** points?" — and that is the reason the
+/// type exists. Searching one point set against itself is a different question
+/// and belongs to [`NeighborList`](crate::spatial::neighbors::NeighborList),
+/// which additionally can re-index moved coordinates, stream its pairs without
+/// materializing a table, and choose which columns a table keeps.
+///
+/// Wraps a [`LinkCell`] cell-list spatial index built once at construction, so
+/// that many queries can be answered against the same reference points without
+/// re-indexing. Every returned [`Neighbors`] table uses
+/// [`NeighborsStorage::FULL`].
 ///
 /// # Example
 ///
 /// ```ignore
 /// let nq = NeighborQuery::new(&simbox, points.view(), 3.0);
-/// let nlist = nq.query(query_points.view());   // cross-query
-/// let nlist = nq.query_self();                  // self-query
+/// let cross = nq.query(query_points.view());  // the question this type is for
+/// let selfq = nq.query_self();                // convenience; prefer NeighborList
 /// ```
 #[derive(Debug, Clone)]
 pub struct NeighborQuery {
@@ -33,12 +56,15 @@ pub struct NeighborQuery {
     points: FNx3,
     /// Copy of the simulation box.
     simbox: SimBox,
-    /// Cutoff distance.
-    cutoff: F,
 }
 
 impl NeighborQuery {
     /// Build a spatial index from reference points.
+    ///
+    /// `points` is an `N × 3` view of Cartesian coordinates (Å), `simbox`
+    /// supplies the periodicity used for minimum-image distances, and `cutoff`
+    /// (Å) is the interaction radius every later query uses — it is fixed here,
+    /// not per query, because it sets the cell size of the index.
     ///
     /// # Panics
     /// Panics if `cutoff <= 0` or `points` does not have 3 columns.
@@ -53,14 +79,21 @@ impl NeighborQuery {
             lc,
             points: points.to_owned(),
             simbox: simbox.clone(),
-            cutoff,
         }
     }
 
     /// Build from free-boundary points (no periodic box).
     ///
-    /// Auto-generates a non-periodic bounding box from the point cloud,
-    /// using `cutoff` as padding to ensure all particles are well inside.
+    /// "Free boundary" means the system is an isolated cluster rather than a
+    /// periodically repeated cell, so no pair may wrap around an edge. The
+    /// constructor derives a non-periodic bounding box from the point cloud,
+    /// padded by `cutoff` (Å) so that every particle sits comfortably inside it
+    /// and no minimum-image folding can occur.
+    ///
+    /// # Panics
+    /// Panics if `cutoff <= 0` or `points` does not have 3 columns. An empty
+    /// point set is not an error: it yields an empty index whose queries return
+    /// no pairs.
     pub fn free(points: FNx3View<'_>, cutoff: F) -> Self {
         let bx =
             SimBox::free(points, cutoff).expect("degenerate point cloud for free-boundary box");
@@ -70,27 +103,51 @@ impl NeighborQuery {
     /// Cross-query: find all pairs `(i, j)` where `i` indexes `query_points`
     /// and `j` indexes the reference `points`.
     ///
-    /// Returns full-shell results (not half-shell): for each query point, all
-    /// reference neighbors are returned, even if `i == j` would duplicate in
-    /// the same-point-set case.
-    pub fn query(&self, query_points: FNx3View<'_>) -> NeighborList {
+    /// Results are full-shell, not half-shell: every query point reports all of
+    /// its reference neighbors, with no `i < j` constraint. If `query_points`
+    /// holds the same coordinates as the reference set, each point therefore
+    /// finds itself at distance zero and each pair appears in both orderings —
+    /// use [`query_self`](Self::query_self) when you want each unordered pair
+    /// once instead.
+    ///
+    /// The returned table is tagged [`QueryMode::CrossQuery`] with both point
+    /// counts, and carries both physical columns
+    /// ([`NeighborsStorage::FULL`]): `dist_sq` in Å², `disp` in Å.
+    ///
+    /// # Panics
+    /// Panics if `query_points` does not have 3 columns.
+    pub fn query(&self, query_points: FNx3View<'_>) -> Neighbors {
         assert_eq!(
             query_points.ncols(),
             3,
             "query_points must have shape (N, 3)"
         );
+        self.cross(query_points.nrows(), |qi| {
+            let r = query_points.row(qi);
+            [r[0], r[1], r[2]]
+        })
+    }
 
-        let n_query = query_points.nrows();
-        let n_ref = self.points.nrows();
-        let cutoff_sq = self.cutoff * self.cutoff;
+    /// Shared cross-query kernel: one point source, one traversal.
+    ///
+    /// [`query`](Self::query) reads rows of an `N × 3` view,
+    /// [`query_columns`](Self::query_columns) reads three SoA slices; both
+    /// funnel here, so the CrossQuery tagging, the 27-cell walk, and the
+    /// cutoff test exist once.
+    fn cross(&self, n_query: usize, get_pt: impl Fn(usize) -> [F; 3]) -> Neighbors {
+        let cutoff_sq = self.lc.cutoff * self.lc.cutoff;
 
-        let mut nlist = NeighborList::with_mode(QueryMode::CrossQuery, n_ref, n_query);
+        let mut nlist = Neighbors::empty(
+            QueryMode::CrossQuery {
+                num_query_points: n_query,
+                num_points: self.points.nrows(),
+            },
+            NeighborsStorage::FULL,
+        );
 
-        // For each query point, check all 27 neighboring cells
         for qi in 0..n_query {
-            let qp = query_points.row(qi);
             self.lc
-                .visit_neighbors_of(qp, &self.simbox, |rj, dist_sq, diff| {
+                .visit_neighbors_of_pt(get_pt(qi), &self.simbox, |rj, dist_sq, diff| {
                     if dist_sq <= cutoff_sq {
                         nlist.push(qi as u32, rj, dist_sq, diff);
                     }
@@ -103,26 +160,29 @@ impl NeighborQuery {
     /// Self-query: find unique pairs `(i, j)` with `i < j` within the
     /// reference point set.
     ///
-    /// Equivalent to building a standard half-shell neighbor list.
-    pub fn query_self(&self) -> NeighborList {
-        let n = self.points.nrows();
-
-        // Reuse the lower-level LinkCell build which does half-shell iteration
-        let mut lc = LinkCell::new().cutoff(self.cutoff);
-        lc.build(self.points.view(), &self.simbox);
-        let raw = lc.query().clone();
-
-        // Tag with self-query metadata
-        NeighborList {
-            storage: raw.storage,
-            idx_i: raw.idx_i,
-            idx_j: raw.idx_j,
-            dist_sq: raw.dist_sq,
-            diff_flat: raw.diff_flat,
-            mode: QueryMode::SelfQuery,
-            num_points: n,
-            num_query_points: n,
-        }
+    /// This is the standard half-shell neighbor list: each unordered pair is
+    /// reported exactly once and no point pairs with itself. The returned table
+    /// is tagged `QueryMode::SelfQuery { num_points }` with the size of the
+    /// reference set, and carries both physical columns
+    /// ([`NeighborsStorage::FULL`]).
+    ///
+    /// Reuses the index this object already holds — the cell index is the same
+    /// for both traversals; only the walk differs (forward half-shell here,
+    /// full per-point neighborhood for cross), so no re-sort happens.
+    ///
+    /// A caller that only ever asks this question should hold a
+    /// [`NeighborList`] instead: it can re-index moved coordinates with
+    /// [`update`](NeighborList::update), stream pairs without materializing a
+    /// table, and choose which columns a table keeps.
+    pub fn query_self(&self) -> Neighbors {
+        let mut out = Neighbors::empty(
+            QueryMode::SelfQuery {
+                num_points: self.points.nrows(),
+            },
+            NeighborsStorage::FULL,
+        );
+        self.lc.materialize_into(&mut out);
+        out
     }
 
     /// Reference to the stored simulation box.
@@ -130,18 +190,22 @@ impl NeighborQuery {
         &self.simbox
     }
 
-    /// Reference to the stored reference points.
+    /// Reference to the stored reference points (`N × 3`, Å).
     pub fn points(&self) -> FNx3View<'_> {
         self.points.view()
     }
 
-    /// The cutoff distance.
+    /// The cutoff distance (Å) fixed at construction — read from the index,
+    /// which is its single owner.
     pub fn cutoff(&self) -> F {
-        self.cutoff
+        self.lc.cutoff
     }
 
     /// SoA sibling of [`new`](Self::new): build a spatial index from
     /// column-major `x`/`y`/`z` reference-point slices.
+    ///
+    /// "SoA" is *structure of arrays*: instead of one `N × 3` array of points,
+    /// the coordinates arrive as three length-`N` slices (Å), one per axis.
     ///
     /// Byte-for-byte equivalent to `new` on the same coordinates — the index is
     /// built via [`LinkCell::build_index_soa`] and an owned interleaved copy of
@@ -173,7 +237,6 @@ impl NeighborQuery {
             lc,
             points,
             simbox: simbox.clone(),
-            cutoff,
         }
     }
 
@@ -190,37 +253,20 @@ impl NeighborQuery {
     }
 
     /// SoA sibling of [`query`](Self::query): cross-query reading each query
-    /// point from column-major `qx`/`qy`/`qz` slices.
+    /// point from column-major `qx`/`qy`/`qz` slices (Å, one slice per axis,
+    /// all of the same length).
     ///
     /// Same pair order and cutoff test as `query`, so the returned
-    /// [`NeighborList`] is byte-identical to `query` on the same coordinates.
+    /// [`Neighbors`] is byte-identical to `query` on the same coordinates.
     ///
     /// # Panics
     /// Panics if the three query slices differ in length.
-    pub fn query_columns(&self, qx: &[F], qy: &[F], qz: &[F]) -> NeighborList {
+    pub fn query_columns(&self, qx: &[F], qy: &[F], qz: &[F]) -> Neighbors {
         assert!(
             qx.len() == qy.len() && qy.len() == qz.len(),
             "query x/y/z slices must have equal length"
         );
-
-        let n_query = qx.len();
-        let n_ref = self.points.nrows();
-        let cutoff_sq = self.cutoff * self.cutoff;
-
-        let mut nlist = NeighborList::with_mode(QueryMode::CrossQuery, n_ref, n_query);
-
-        // For each query point, check all 27 neighboring cells
-        for qi in 0..n_query {
-            let qp = [qx[qi], qy[qi], qz[qi]];
-            self.lc
-                .visit_neighbors_of_pt(qp, &self.simbox, |rj, dist_sq, diff| {
-                    if dist_sq <= cutoff_sq {
-                        nlist.push(qi as u32, rj, dist_sq, diff);
-                    }
-                });
-        }
-
-        nlist
+        self.cross(qx.len(), |qi| [qx[qi], qy[qi], qz[qi]])
     }
 }
 
@@ -242,7 +288,7 @@ mod tests {
         let nq = NeighborQuery::new(&bx, pts.view(), 0.5);
         let nlist = nq.query_self();
 
-        assert_eq!(nlist.mode(), QueryMode::SelfQuery);
+        assert_eq!(nlist.mode(), QueryMode::SelfQuery { num_points: 3 });
         assert_eq!(nlist.n_pairs(), 1);
         assert_eq!(nlist.query_point_indices()[0], 0);
         assert_eq!(nlist.point_indices()[0], 1);
@@ -259,15 +305,24 @@ mod tests {
         let nq = NeighborQuery::new(&bx, ref_pts.view(), 0.6);
         let nlist = nq.query(query_pts.view());
 
-        assert_eq!(nlist.mode(), QueryMode::CrossQuery);
+        assert_eq!(
+            nlist.mode(),
+            QueryMode::CrossQuery {
+                num_query_points: 1,
+                num_points: 3,
+            }
+        );
         assert_eq!(nlist.num_query_points(), 1);
         assert_eq!(nlist.num_points(), 3);
         // query point at 0.5 is within 0.6 of ref points 0 (at 0.0) and 1 (at 1.0)
         assert_eq!(nlist.n_pairs(), 2);
     }
 
+    /// The table stores \(d^2\); a caller that wants a distance takes the square
+    /// root itself (there is no `distances()` accessor to hide the cost or to
+    /// return an empty slice when the column is absent).
     #[test]
-    fn distances_returns_sqrt() {
+    fn dist_sq_square_roots_to_distance() {
         let bx = SimBox::cube(4.0, array![0.0, 0.0, 0.0], [true, true, true]).expect("invalid box");
         let pts = array![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
 
@@ -275,23 +330,27 @@ mod tests {
         let nlist = nq.query_self();
 
         assert_eq!(nlist.n_pairs(), 1);
-        let dists = nlist.distances();
-        assert!((dists[0] - 1.0).abs() < 1e-6);
+        let d2 = nlist.dist_sq().expect("self-query materializes dist_sq");
+        assert!((d2[0] - 1.0).abs() < 1e-6);
+        assert!((d2[0].sqrt() - 1.0).abs() < 1e-6);
     }
 
+    /// `disp()` hands back the stored MIC displacement \(r_j - r_i\)
+    /// (unnormalized), or `None` when the column was never stored.
     #[test]
-    fn vectors_alias_works() {
+    fn disp_returns_stored_displacements() {
         let bx = SimBox::cube(4.0, array![0.0, 0.0, 0.0], [true, true, true]).expect("invalid box");
         let pts = array![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
 
         let nq = NeighborQuery::new(&bx, pts.view(), 1.5);
         let nlist = nq.query_self();
 
-        let vecs = nlist.vectors();
-        assert_eq!(vecs.nrows(), 1);
-        assert!((vecs[[0, 0]] - 1.0).abs() < 1e-6);
-        assert!(vecs[[0, 1]].abs() < 1e-6);
-        assert!(vecs[[0, 2]].abs() < 1e-6);
+        let disp = nlist.disp().expect("self-query materializes disp");
+        assert_eq!(disp.nrows(), 1);
+        assert_eq!(disp.ncols(), 3);
+        assert!((disp[[0, 0]] - 1.0).abs() < 1e-6);
+        assert!(disp[[0, 1]].abs() < 1e-6);
+        assert!(disp[[0, 2]].abs() < 1e-6);
     }
 
     #[test]
@@ -333,8 +392,8 @@ mod tests {
 
         // Only pts[0] and pts[1] are within cutoff=1.0
         assert_eq!(nlist.n_pairs(), 1);
-        let dists = nlist.distances();
-        assert!((dists[0] - 0.5).abs() < 1e-5);
+        let d2 = nlist.dist_sq().expect("self-query materializes dist_sq");
+        assert!((d2[0].sqrt() - 0.5).abs() < 1e-5);
     }
 
     #[test]
@@ -375,10 +434,12 @@ mod tests {
     }
 
     /// Bitwise (not approximate) equality of two neighbor lists.
-    fn assert_bitwise_equal(a: &NeighborList, b: &NeighborList) {
+    fn assert_bitwise_equal(a: &Neighbors, b: &Neighbors) {
         assert_eq!(a.n_pairs(), b.n_pairs(), "n_pairs differ");
-        let da = a.vectors();
-        let db = b.vectors();
+        let d2a = a.dist_sq().expect("query materializes dist_sq");
+        let d2b = b.dist_sq().expect("query materializes dist_sq");
+        let da = a.disp().expect("query materializes disp");
+        let db = b.disp().expect("query materializes disp");
         for k in 0..a.n_pairs() {
             assert_eq!(
                 a.query_point_indices()[k],
@@ -386,9 +447,9 @@ mod tests {
                 "idx_i"
             );
             assert_eq!(a.point_indices()[k], b.point_indices()[k], "idx_j");
-            assert_eq!(a.dist_sq()[k], b.dist_sq()[k], "dist_sq bitwise");
+            assert_eq!(d2a[k], d2b[k], "dist_sq bitwise");
             for d in 0..3 {
-                assert_eq!(da[[k, d]], db[[k, d]], "diff[{}] bitwise", d);
+                assert_eq!(da[[k, d]], db[[k, d]], "disp[{}] bitwise", d);
             }
         }
     }

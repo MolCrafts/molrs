@@ -4,18 +4,17 @@
 use molrs::store::frame_access::FrameAccess;
 use ndarray::{Array1, Array2};
 use rustfft::FftPlanner;
+use rustfft::num_complex::Complex64;
 
+use super::{acf_accumulate_into, central_diff_series, lag_times};
 use crate::compute::error::ComputeError;
 use crate::compute::result::ComputeResult;
 use crate::compute::traits::Compute;
-use molrs::signal as sig;
 
 /// Weight for diagonal anisotropy components in the Raman ACF.
 pub(super) const DIAG_ANISO_WEIGHT: f64 = 0.5;
 /// Weight for off-diagonal anisotropy components in the Raman ACF.
 pub(super) const OFFDIAG_ANISO_WEIGHT: f64 = 3.0;
-/// Number of anisotropy components (3 diagonal diffs + 3 off-diagonals).
-const N_ANISO_COMPS: usize = 6;
 
 /// Raw isotropic + (weighted) anisotropic polarizability-derivative ACFs — the
 /// Raman-spectrum raw input.
@@ -81,68 +80,65 @@ impl Compute for RamanTensor {
 
         let flux_len = n_frames - 2;
         let max_lag = resolution.min(flux_len.saturating_sub(1));
-        let inv_2dt = 0.5 / dt;
 
-        let mut iso = Vec::with_capacity(flux_len);
-        let mut aniso_comps: [Vec<f64>; N_ANISO_COMPS] = [
-            Vec::with_capacity(flux_len), // α_xx − α_yy
-            Vec::with_capacity(flux_len), // α_yy − α_zz
-            Vec::with_capacity(flux_len), // α_zz − α_xx
-            Vec::with_capacity(flux_len), // α_xy
-            Vec::with_capacity(flux_len), // α_xz
-            Vec::with_capacity(flux_len), // α_yz
-        ];
+        // One central-diff pass over the Voigt tensor → (flux_len, 6).
+        let dalpha = central_diff_series(polarizabilities, dt);
 
-        for t in 1..n_frames - 1 {
-            let a_prev = polarizabilities.row(t - 1);
-            let a_next = polarizabilities.row(t + 1);
-
-            let xx_dot = (a_next[0] - a_prev[0]) * inv_2dt;
-            let yy_dot = (a_next[1] - a_prev[1]) * inv_2dt;
-            let zz_dot = (a_next[2] - a_prev[2]) * inv_2dt;
-
-            iso.push((xx_dot + yy_dot + zz_dot) / 3.0);
-            aniso_comps[0].push(xx_dot - yy_dot);
-            aniso_comps[1].push(yy_dot - zz_dot);
-            aniso_comps[2].push(zz_dot - xx_dot);
-            aniso_comps[3].push((a_next[3] - a_prev[3]) * inv_2dt); // xy
-            aniso_comps[4].push((a_next[4] - a_prev[4]) * inv_2dt); // xz
-            aniso_comps[5].push((a_next[5] - a_prev[5]) * inv_2dt); // yz
+        // Isotropic: (α̇_xx + α̇_yy + α̇_zz) / 3.
+        let mut iso = vec![0.0_f64; flux_len];
+        for t in 0..flux_len {
+            iso[t] = (dalpha[[t, 0]] + dalpha[[t, 1]] + dalpha[[t, 2]]) / 3.0;
         }
 
         let mut planner = FftPlanner::new();
+        let mut scratch: Vec<Complex64> = Vec::new();
+        let mut acf_iso = Array1::<f64>::zeros(max_lag + 1);
+        acf_accumulate_into(
+            &mut planner,
+            &iso,
+            max_lag,
+            acf_iso.as_slice_mut().unwrap(),
+            1.0,
+            &mut scratch,
+        );
 
-        let iso_series = Array1::from_vec(iso);
-        let acf_iso =
-            sig::acf_fft_with_planner(&mut planner, &iso_series, max_lag).map_err(|e| {
-                ComputeError::OutOfRange {
-                    field: "acf_fft",
-                    value: e.to_string(),
-                }
-            })?;
-
+        // Anisotropic: 3 diagonal diffs (weight ½) + 3 off-diagonals (weight 3).
         let mut acf_aniso = Array1::<f64>::zeros(max_lag + 1);
-        for (c, comp) in aniso_comps.iter_mut().enumerate() {
-            let weight = if c < 3 {
-                DIAG_ANISO_WEIGHT
-            } else {
-                OFFDIAG_ANISO_WEIGHT
-            };
-            let col = Array1::from_vec(std::mem::take(comp));
-            let acf = sig::acf_fft_with_planner(&mut planner, &col, max_lag).map_err(|e| {
-                ComputeError::OutOfRange {
-                    field: "acf_fft",
-                    value: e.to_string(),
-                }
-            })?;
-            for k in 0..=max_lag {
-                acf_aniso[k] += weight * acf[k];
+        let aniso_out = acf_aniso.as_slice_mut().unwrap();
+        let mut col = vec![0.0_f64; flux_len];
+
+        // Diagonal differences: xx−yy, yy−zz, zz−xx.
+        let diag_pairs = [(0usize, 1usize), (1, 2), (2, 0)];
+        for (i, j) in diag_pairs {
+            for t in 0..flux_len {
+                col[t] = dalpha[[t, i]] - dalpha[[t, j]];
             }
+            acf_accumulate_into(
+                &mut planner,
+                &col,
+                max_lag,
+                aniso_out,
+                DIAG_ANISO_WEIGHT,
+                &mut scratch,
+            );
+        }
+        // Off-diagonals: xy, xz, yz (Voigt indices 3,4,5).
+        for off in 3..6 {
+            for t in 0..flux_len {
+                col[t] = dalpha[[t, off]];
+            }
+            acf_accumulate_into(
+                &mut planner,
+                &col,
+                max_lag,
+                aniso_out,
+                OFFDIAG_ANISO_WEIGHT,
+                &mut scratch,
+            );
         }
 
-        let lag_times = Array1::from_iter((0..=max_lag).map(|i| i as f64 * dt));
         Ok(RamanTensorResult {
-            lag_times,
+            lag_times: lag_times(max_lag, dt),
             acf_iso,
             acf_aniso,
         })

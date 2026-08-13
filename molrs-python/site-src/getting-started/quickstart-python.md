@@ -80,13 +80,13 @@ periodic simulation cell.
 ```python
 import numpy as np
 
-frame.simbox = molrs.Box.cube(
+frame.box = molrs.Box.cube(
     20.0,
     pbc=np.array([True, True, True], dtype=np.bool_),
 )
 
-print("box lengths:", frame.simbox.lengths())
-print("box volume:", frame.simbox.volume())
+print("box lengths:", frame.box.lengths())
+print("box volume:", frame.box.volume())
 ```
 
 The box is in the same length unit as your coordinates. molrs does not silently
@@ -103,11 +103,12 @@ points = np.column_stack(
     [atoms.view("x"), atoms.view("y"), atoms.view("z")]
 ).astype(np.float64, copy=False)
 
-nq = molrs.NeighborQuery(frame.simbox, points, cutoff=6.0)
-nlist = nq.query_self()
+nl = molrs.NeighborList(6.0)
+nl.build(points, frame.box)
+neigh = nl.neighbors()
 
 print("pairs:", nlist.n_pairs)
-print("first pairs:", nlist.pairs()[:5])
+print("first pairs:", nlist.query_point_indices()[:5], nlist.point_indices()[:5])
 
 from molrs.compute.density import RDF
 rdf = RDF(64, 6.0)

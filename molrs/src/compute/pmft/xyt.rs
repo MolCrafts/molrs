@@ -23,13 +23,14 @@
 //! scalar 2-D angles in radians.
 
 use crate::compute::result::ComputeResult;
-use molrs::spatial::neighbors::NeighborList;
+use molrs::spatial::neighbors::Neighbors;
 use molrs::spatial::simbox::BoxKind;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 use ndarray::Array3;
 
 use crate::compute::error::ComputeError;
+use crate::compute::require_disp;
 use crate::compute::traits::Compute;
 
 const TWO_PI: F = 2.0 * std::f64::consts::PI;
@@ -76,7 +77,7 @@ impl PMFTXYT {
 }
 
 pub struct PMFTXYTArgs<'a> {
-    pub nlists: &'a [NeighborList],
+    pub nlists: &'a [Neighbors],
     pub orientations: &'a [Vec<F>],
 }
 
@@ -90,7 +91,7 @@ impl PMFTXYT {
     fn one_frame<FA: FrameAccess>(
         &self,
         frame: &FA,
-        nlist: &NeighborList,
+        nlist: &Neighbors,
         orientations: &[F],
     ) -> Result<PMFTXYTResult, ComputeError> {
         let simbox = frame.simbox_ref().ok_or(ComputeError::MissingSimBox)?;
@@ -110,13 +111,14 @@ impl PMFTXYT {
         let bin_vol = dx * dy * dt;
 
         let mut counts = Array3::<u64>::zeros((self.n_x, self.n_y, self.n_t));
-        let vectors = nlist.vectors();
         let i_idx = nlist.query_point_indices();
         let j_idx = nlist.point_indices();
         let n_pairs = nlist.n_pairs();
+        // The pair coordinate is built from the bond vector itself.
+        let disp = require_disp(nlist)?;
         let symmetric = matches!(
             nlist.mode(),
-            molrs::spatial::neighbors::QueryMode::SelfQuery
+            molrs::spatial::neighbors::QueryMode::SelfQuery { .. }
         );
 
         let push = |xl: F, yl: F, t: F, counts: &mut Array3<u64>| {
@@ -130,8 +132,8 @@ impl PMFTXYT {
         };
 
         for k in 0..n_pairs {
-            let vx = vectors[[k, 0]];
-            let vy = vectors[[k, 1]];
+            let vx = disp[[k, 0]];
+            let vy = disp[[k, 1]];
             let i = i_idx[k] as usize;
             let j = j_idx[k] as usize;
             if i >= orientations.len() || j >= orientations.len() {
@@ -286,16 +288,12 @@ mod tests {
         frame
     }
 
-    fn build_nlist(frame: &Frame, cutoff: F) -> NeighborList {
-        nlist_from_frame(frame, cutoff)
-    }
-
     #[test]
     fn zero_orientations_match_lab_frame() {
         // Two particles along +x, both orientations = 0 → local-frame bond
         // is (+1, 0); t = 0. The reverse contributes (−1, 0, 0).
         let frame = frame_with(&[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], 10.0);
-        let nl = build_nlist(&frame, 1.5);
+        let nl = nlist_from_frame(&frame, 1.5);
         let r = &PMFTXYT::new(2.0, 2.0, 8, 8, 8)
             .unwrap()
             .compute(
@@ -316,7 +314,7 @@ mod tests {
         // at lab (1, 0, 0). In particle 0's frame, the bond runs along its
         // -y axis (i.e. local (x, y) = (0, -1)).
         let frame = frame_with(&[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], 10.0);
-        let nl = build_nlist(&frame, 1.5);
+        let nl = nlist_from_frame(&frame, 1.5);
         let r = &PMFTXYT::new(2.0, 2.0, 8, 8, 4)
             .unwrap()
             .compute(

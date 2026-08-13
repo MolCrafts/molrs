@@ -1,13 +1,25 @@
-//! Post-processing filters that prune a [`NeighborList`] using
+//! Post-processing filters that prune a [`Neighbors`] table using
 //! geometric criteria.
+//!
+//! A cutoff-based neighbor list answers "which particles are within `r_c`?",
+//! which is a question about a number the user picked, not about the structure.
+//! The filters here answer "which particles are *actually* nearest neighbors?"
+//! — they take an over-generous cutoff list and discard the pairs that a
+//! parameter-free geometric criterion says are not part of the first
+//! coordination shell (the set of particles directly touching a given one).
 //!
 //! Two filters are exposed, mirroring `freud.locality`:
 //!
-//! - [`filter_sann`]: van Meel et al.'s Solid-Angle Nearest-Neighbour
+//! - [`filter_sann`]: a port of van Meel et al.'s Solid-Angle Nearest-Neighbour
 //!   construction
 //!   ([source](https://github.com/glotzerlab/freud/blob/main/freud/locality/FilterSANN.cc)).
-//!   For each query point we keep the smallest set of nearest neighbors
-//!   whose sphere-cap solid angles sum to `4π`.
+//!   Each neighbor is imagined to claim a cap of the unit sphere centred on the
+//!   query point, whose *solid angle* (area on the unit sphere, measured in
+//!   steradians, of which the whole sphere has `4π`) shrinks as the neighbor
+//!   gets farther away. The kept set is the smallest number of nearest
+//!   neighbors whose caps tile the full `4π`, which fixes both the shell
+//!   radius and the coordination number without a user-supplied cutoff — see
+//!   [`filter_sann`] for the criterion and its citation.
 //! - [`filter_rad`]: Higham–Henchman Relative-Angular-Distance filter
 //!   ([source](https://github.com/glotzerlab/freud/blob/main/freud/locality/FilterRAD.cc)).
 //!   For each query point we walk neighbors in distance order and drop a
@@ -18,32 +30,82 @@
 //!   shell artifacts that share a half-space with a closer first-shell
 //!   bond.
 //!
-//! Both filters preserve the query-point ordering of pairs but may
-//! shrink the list. The output [`NeighborList`] inherits the `mode`,
-//! `num_points`, and `num_query_points` of the input.
+//! Both filters preserve the query-point ordering of pairs but may shrink the
+//! list. The output [`Neighbors`] inherits the `mode` and the storage policy of
+//! the input.
+//!
+//! # Both filters require a fully populated input
+//!
+//! Each filter reads `dist_sq` for its criterion and `disp` to copy surviving
+//! pairs into the output, so a table built without either column is rejected
+//! with a panic naming the missing column. That is deliberate: a lean table
+//! reports an absent column as `None`, and the only alternatives to panicking
+//! would be to invent zeros — a zero displacement is a physically meaningful
+//! value, so it would be indistinguishable from data — or to return an empty
+//! list, which reads downstream as "this particle has no neighbors". Rerun the
+//! search with [`NeighborsStorage::FULL`](crate::spatial::neighbors::NeighborsStorage::FULL)
+//! instead.
 
 use std::collections::HashMap;
 
-use crate::spatial::neighbors::NeighborList;
+use crate::spatial::neighbors::Neighbors;
 use crate::types::F;
 
 /// SANN filter: keep the smallest set of nearest neighbors whose solid
 /// angles sum to `4π`.
 ///
-/// Algorithm (van Meel et al., *J. Chem. Phys.* **136**, 234107 (2012)):
-/// for each query point `i`, sort neighbors by distance `r_ij`, then find
-/// the smallest integer `m ≥ 3` such that
+/// SANN stands for *Solid-Angle Nearest Neighbours*. The idea is that the `m`
+/// closest neighbors of a particle should between them account for the whole
+/// `4π` steradians of directions around it; adding more neighbors would
+/// over-cover the sphere, so `m` is chosen as the smallest count that just
+/// covers it. No cutoff or coordination number is supplied by the user.
+///
+/// # The published criterion
+///
+/// van Meel et al., *J. Chem. Phys.* **136**, 234107 (2012). Sort the neighbors
+/// of a query point by distance, `r_1 ≤ r_2 ≤ … ≤ r_n` (Å). Neighbor `j` claims
+/// a spherical cap of solid angle `2π(1 − r_j/R)` for a trial shell radius `R`,
+/// and requiring the first `m` caps to tile the whole sphere,
+/// `Σ_{j≤m} 2π(1 − r_j/R) = 4π`, gives the shell radius implied by that count:
 ///
 /// ```text
-///   Σ_{j=1..m} r_ij ≥ R_m · m
-///   R_m = max(r_ij for j ≤ m)
+///   R(m) = ( Σ_{j=1..m} r_j ) / (m - 2)
 /// ```
 ///
-/// (equivalently `R_m = r_im` once sorted). The first `m` neighbors are
-/// kept. If no such `m` exists (typically because the query point has
-/// fewer than 3 neighbors), the entire neighbor set for that query point
-/// is kept.
-pub fn filter_sann(nlist: &NeighborList) -> NeighborList {
+/// The chosen count is the smallest `m ≥ 3` for which that shell closes before
+/// the next neighbor,
+///
+/// ```text
+///   R(m) < r_{m+1}
+/// ```
+///
+/// and the first `m` neighbors are kept. Reading the inequality the other way
+/// round: while `R(m) ≥ r_{m+1}` the neighbor at `r_{m+1}` still lies inside the
+/// shell that the first `m` imply, so it belongs to the set and `m` must grow.
+///
+/// # When the shell does not close
+///
+/// The test for count `m` needs `r_{m+1}`, so with `n` candidates only
+/// `m ≤ n - 1` can be evaluated. If no such `m` closes the shell, the criterion
+/// is *unconverged* on this candidate set — the answer would need neighbors the
+/// input does not contain — and the query point's entire neighbor list is kept.
+/// A query point with fewer than 3 neighbors is the same case and is likewise
+/// kept whole. Supply a more generous search cutoff if unconverged points
+/// matter.
+///
+/// Distances are Å; the implementation sorts on the stored `dist_sq` (Å²), which
+/// is order-equivalent because the square root is monotonic, then takes square
+/// roots to evaluate `R(m)` and to compare it against `r_{m+1}`.
+///
+/// The output inherits the input's `mode` and storage policy, and query points
+/// are visited in ascending index order so the result is deterministic.
+///
+/// # Panics
+/// Panics if `nlist` lacks the `dist_sq` or `disp` column. `dist_sq` carries the
+/// criterion itself; `disp` is needed to copy surviving pairs into the output
+/// table. Neither can be reconstructed from indices, and substituting zeros
+/// would fabricate physically meaningful values — see the module documentation.
+pub fn filter_sann(nlist: &Neighbors) -> Neighbors {
     // Group pair indices by query point.
     let mut by_query: HashMap<u32, Vec<usize>> = HashMap::new();
     for k in 0..nlist.n_pairs() {
@@ -53,10 +115,13 @@ pub fn filter_sann(nlist: &NeighborList) -> NeighborList {
             .push(k);
     }
 
-    let mut out =
-        NeighborList::with_mode(nlist.mode(), nlist.num_points(), nlist.num_query_points());
-    let dist_sq = nlist.dist_sq();
-    let vectors = nlist.vectors();
+    let mut out = Neighbors::empty(nlist.mode(), nlist.storage());
+    let dist_sq = nlist
+        .dist_sq()
+        .expect("filter_sann needs the dist_sq column; rerun the search with it stored");
+    let vectors = nlist
+        .disp()
+        .expect("filter_sann needs the disp column; rerun the search with it stored");
     let j_idx = nlist.point_indices();
 
     // For deterministic output, walk query indices in ascending order.
@@ -78,22 +143,29 @@ pub fn filter_sann(nlist: &NeighborList) -> NeighborList {
     out
 }
 
-/// Find the smallest `m ≥ 3` satisfying the SANN inequality. If no `m`
-/// exists, returns the full length so the caller keeps everything.
+/// Find the smallest `m ≥ 3` with `R(m) = (Σ_{i=1..m} r_i) / (m - 2) < r_{m+1}`
+/// over distance-sorted neighbors — the SANN criterion of van Meel et al.
+/// (see [`filter_sann`]). If no such `m` exists the shell never closes within
+/// the candidate set, and the full length is returned so the caller keeps
+/// everything.
+///
+/// `pair_ks_sorted` indexes `dist_sq` in ascending distance. Because the test
+/// for `m` reads `r_{m+1}`, the loop can only reach `m = n - 1`; `m = n` would
+/// need a candidate beyond the list, so it falls through to the keep-all result.
 fn sann_cutoff(pair_ks_sorted: &[usize], dist_sq: &[F]) -> usize {
     let n = pair_ks_sorted.len();
     if n < 3 {
         return n;
     }
-    let mut sum_r: F = 0.0;
-    for k in 0..n {
-        sum_r += dist_sq[pair_ks_sorted[k]].sqrt();
-        if k + 1 >= 3 {
-            let r_m = dist_sq[pair_ks_sorted[k]].sqrt();
-            // sum_r ≥ r_m · (k+1)  →  cap = k+1
-            if sum_r >= r_m * (k + 1) as F {
-                return k + 1;
-            }
+    // 1-based r_i is the 0-based entry i - 1.
+    let r = |i: usize| dist_sq[pair_ks_sorted[i - 1]].sqrt();
+    // Running Σ_{i=1..m}, seeded with the two terms that precede the first
+    // testable count m = 3.
+    let mut sum_r: F = r(1) + r(2);
+    for m in 3..n {
+        sum_r += r(m);
+        if sum_r / ((m - 2) as F) < r(m + 1) {
+            return m;
         }
     }
     n
@@ -103,9 +175,39 @@ fn sann_cutoff(pair_ks_sorted: &[usize], dist_sq: &[F]) -> usize {
 /// accepted neighbor `k` such that the bond `r_ij` lies inside the cone
 /// of half-angle `acceptance` around `r_ik`.
 ///
-/// `acceptance` is in **radians**. The default (`std::f64::consts::FRAC_PI_3`,
-/// `60°`) reproduces the Higham–Henchman tuned criterion.
-pub fn filter_rad(nlist: &NeighborList, acceptance: F) -> NeighborList {
+/// RAD stands for *Relative Angular Distance*. The picture is one of blocking:
+/// a nearby neighbor occludes the directions behind it, so a farther particle
+/// sitting in roughly the same direction is judged to be in the second shell
+/// rather than in contact. Neighbors are considered in order of increasing
+/// distance, and each accepted one starts occluding for those that follow.
+///
+/// Concretely, for the unit vectors `r̂_ik` (already accepted, closer) and
+/// `r̂_ij` (candidate), the candidate is dropped when
+/// `r̂_ik · r̂_ij > cos(acceptance)`, which is exactly the statement that the
+/// angle between them is smaller than `acceptance`.
+///
+/// `acceptance` is in **radians**; `std::f64::consts::FRAC_PI_3` (`60°`) is the
+/// value this port carries as its default. A smaller angle occludes less and so
+/// keeps more neighbors. Note that the criterion here is a *fixed* cone: unlike
+/// the original relative-angular-distance formulation it does not additionally
+/// weight the test by how much closer the occluding neighbor is, so agreement
+/// with the freud implementation linked in the module documentation should be
+/// re-established by test before the two are treated as interchangeable.
+///
+/// A candidate at exactly zero distance has no direction, so it is skipped
+/// entirely — it neither survives the filter nor occludes anything. This
+/// matters for a cross-query whose query and reference sets are the same
+/// points, where every point is its own neighbor at distance zero.
+///
+/// The output inherits the input's `mode` and storage policy, and query points
+/// are visited in ascending index order so the result is deterministic.
+///
+/// # Panics
+/// Panics if `nlist` lacks the `dist_sq` or `disp` column. Both are load-bearing
+/// here: `disp` supplies the directions the criterion compares and `dist_sq` the
+/// order they are considered in. See the module documentation for why a missing
+/// column is a panic rather than an empty result.
+pub fn filter_rad(nlist: &Neighbors, acceptance: F) -> Neighbors {
     let cos_thresh = acceptance.cos();
     let mut by_query: HashMap<u32, Vec<usize>> = HashMap::new();
     for k in 0..nlist.n_pairs() {
@@ -115,10 +217,13 @@ pub fn filter_rad(nlist: &NeighborList, acceptance: F) -> NeighborList {
             .push(k);
     }
 
-    let mut out =
-        NeighborList::with_mode(nlist.mode(), nlist.num_points(), nlist.num_query_points());
-    let dist_sq = nlist.dist_sq();
-    let vectors = nlist.vectors();
+    let mut out = Neighbors::empty(nlist.mode(), nlist.storage());
+    let dist_sq = nlist
+        .dist_sq()
+        .expect("filter_rad needs the dist_sq column; rerun the search with it stored");
+    let vectors = nlist
+        .disp()
+        .expect("filter_rad needs the disp column; rerun the search with it stored");
     let j_idx = nlist.point_indices();
 
     let mut qs: Vec<u32> = by_query.keys().copied().collect();
@@ -163,24 +268,83 @@ pub fn filter_rad(nlist: &NeighborList, acceptance: F) -> NeighborList {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::spatial::neighbors::QueryMode;
+    use crate::spatial::neighbors::{NeighborPair, NeighborsStorage, QueryMode};
 
-    fn make_nlist(pairs: &[(u32, u32, F, [F; 3])], n_points: usize) -> NeighborList {
-        let mut nl = NeighborList::with_mode(QueryMode::CrossQuery, n_points, n_points);
-        for &(i, j, d2, dr) in pairs {
-            nl.push(i, j, d2, dr);
-        }
-        nl
+    /// Cross-query table over `n_points × n_points`, both physical columns
+    /// stored (a filter needs them).
+    fn make_nlist(pairs: &[(u32, u32, F, [F; 3])], n_points: usize) -> Neighbors {
+        Neighbors::from_pairs(
+            pairs.iter().map(|&(i, j, dist_sq, disp)| NeighborPair {
+                i,
+                j,
+                dist_sq,
+                disp,
+            }),
+            NeighborsStorage::FULL,
+            QueryMode::CrossQuery {
+                num_query_points: n_points,
+                num_points: n_points,
+            },
+        )
     }
 
     // ---- SANN -------------------------------------------------------------
 
+    /// Regression: the SANN criterion must cap a query point whose neighbors
+    /// sit at *distinct* distances.
+    ///
+    /// van Meel, Filion, Valeriani & Frenkel, *J. Chem. Phys.* **136**, 234107
+    /// (2012): with distances sorted ascending, the neighbor count is the
+    /// smallest `m ≥ 3` such that `R(m) = (Σ_{i≤m} r_i) / (m − 2) < r_{m+1}`.
+    ///
+    /// Fixture — central query atom at the origin, four candidates that a
+    /// 5.0 Å cutoff all admits (largest separation 3.5 Å), so the filter sees
+    /// the full four-pair list:
+    ///
+    /// | j | position (Å)   | r (Å) | `dist_sq` (Å²) |
+    /// |---|----------------|-------|----------------|
+    /// | 1 | ( 0.9, 0,   0) | 0.9   | 0.81           |
+    /// | 2 | ( 0,   1.0, 0) | 1.0   | 1.00           |
+    /// | 3 | ( 0,   0,  1.1)| 1.1   | 1.21           |
+    /// | 4 | (−3.5, 0,   0) | 3.5   | 12.25          |
+    ///
+    /// Hand derivation:
+    ///   m = 3 → R(3) = (0.9 + 1.0 + 1.1) / (3 − 2) = 3.0 < r_4 = 3.5 ✓
+    /// so the shell closes at m = 3 and the 3.5 Å candidate is dropped.
     #[test]
-    fn sann_keeps_minimum_three_when_present() {
-        // 4 neighbors at distances 1, 1, 1, 2. The SANN sum:
-        //   k=0: r=1, sum=1, 1 ≥ 1·1 = 1 → m = 1, but require m ≥ 3
-        //   k=1: r=1, sum=2, 2 ≥ 1·2 → m = 2, still need ≥ 3
-        //   k=2: r=1, sum=3, 3 ≥ 1·3 → m = 3 (first ≥ 3 success)
+    fn sann_distinct_distances_matches_published_criterion() {
+        let pairs = [
+            (0u32, 1u32, 0.81_f64, [0.9_f64, 0.0, 0.0]),
+            (0, 2, 1.0, [0.0, 1.0, 0.0]),
+            (0, 3, 1.21, [0.0, 0.0, 1.1]),
+            (0, 4, 12.25, [-3.5, 0.0, 0.0]),
+        ];
+        let nl = make_nlist(&pairs, 5);
+        let f = filter_sann(&nl);
+
+        assert_eq!(f.n_pairs(), 3, "shell closes at m = 3 (R(3) = 3.0 < 3.5)");
+        let kept: Vec<u32> = (0..f.n_pairs()).map(|k| f.point_indices()[k]).collect();
+        assert_eq!(kept, vec![1, 2, 3], "the three closest survive, in order");
+        assert!(
+            !kept.contains(&4),
+            "the 3.5 Å candidate is outside the closed shell and must be dropped"
+        );
+    }
+
+    /// Four neighbors at distances 1, 1, 1, 2 — the published criterion never
+    /// converges here, so the whole list survives.
+    ///
+    /// Hand derivation (van Meel et al., see above):
+    ///   m = 3 → R(3) = (1 + 1 + 1) / (3 − 2) = 3.0 < r_4 = 2.0 ✗
+    ///   m = 4 → would need r_5, which does not exist (n = 4)
+    /// No `m < n` closes the shell → unconverged → keep all 4.
+    ///
+    /// This fixture previously asserted 3, which was the *bug's* answer: the
+    /// in-tree inequality `Σ_{j≤m} r_j ≥ m·r_m` fires at m = 3 purely because
+    /// the first three distances are exactly equal. The golden is now the
+    /// published value.
+    #[test]
+    fn sann_keeps_all_when_shell_never_closes() {
         let pairs = [
             (0u32, 1u32, 1.0_f64, [1.0_f64, 0.0, 0.0]),
             (0, 2, 1.0, [0.0, 1.0, 0.0]),
@@ -189,7 +353,7 @@ mod tests {
         ];
         let nl = make_nlist(&pairs, 5);
         let f = filter_sann(&nl);
-        assert_eq!(f.n_pairs(), 3);
+        assert_eq!(f.n_pairs(), 4, "R(3) = 3.0 ≥ r_4 = 2.0 → no shell closes");
     }
 
     #[test]
@@ -203,30 +367,39 @@ mod tests {
         assert_eq!(f.n_pairs(), 2);
     }
 
+    /// Two query points, each carrying the 0.9 / 1.0 / 1.1 / 3.5 Å fixture:
+    /// the filter closes each shell independently at m = 3.
+    ///
+    /// Hand derivation, per query point (van Meel et al.):
+    ///   m = 3 → R(3) = (0.9 + 1.0 + 1.1) / (3 − 2) = 3.0 < r_4 = 3.5 ✓
+    ///
+    /// The distances are deliberately *distinct*. The earlier fixture used
+    /// 1, 1, 1, 2 per query, whose published answer is "keep all 4" — with
+    /// that fixture a `filter_sann` that returned its input untouched would
+    /// still satisfy the assertion, so the test could not tell the filter
+    /// apart from a no-op.
     #[test]
     fn sann_preserves_query_split() {
-        // Two query points, each with 4 NN: the filter independently caps
-        // each at 3.
         let pairs = [
-            (0u32, 1u32, 1.0_f64, [1.0_f64, 0.0, 0.0]),
+            (0u32, 1u32, 0.81_f64, [0.9_f64, 0.0, 0.0]),
             (0, 2, 1.0, [0.0, 1.0, 0.0]),
-            (0, 3, 1.0, [0.0, 0.0, 1.0]),
-            (0, 4, 4.0, [2.0, 0.0, 0.0]),
-            (1, 0, 1.0, [-1.0, 0.0, 0.0]),
+            (0, 3, 1.21, [0.0, 0.0, 1.1]),
+            (0, 4, 12.25, [-3.5, 0.0, 0.0]),
+            (1, 0, 0.81, [-0.9, 0.0, 0.0]),
             (1, 5, 1.0, [0.0, 1.0, 0.0]),
-            (1, 6, 1.0, [0.0, 0.0, 1.0]),
-            (1, 7, 4.0, [2.0, 0.0, 0.0]),
+            (1, 6, 1.21, [0.0, 0.0, 1.1]),
+            (1, 7, 12.25, [3.5, 0.0, 0.0]),
         ];
         let nl = make_nlist(&pairs, 8);
         let f = filter_sann(&nl);
-        let q0_count = (0..f.n_pairs())
-            .filter(|&k| f.query_point_indices()[k] == 0)
-            .count();
-        let q1_count = (0..f.n_pairs())
-            .filter(|&k| f.query_point_indices()[k] == 1)
-            .count();
-        assert_eq!(q0_count, 3);
-        assert_eq!(q1_count, 3);
+        let kept_by = |q: u32| -> Vec<u32> {
+            (0..f.n_pairs())
+                .filter(|&k| f.query_point_indices()[k] == q)
+                .map(|k| f.point_indices()[k])
+                .collect()
+        };
+        assert_eq!(kept_by(0), vec![1, 2, 3], "query 0 caps at m = 3");
+        assert_eq!(kept_by(1), vec![0, 5, 6], "query 1 caps at m = 3");
     }
 
     // ---- RAD --------------------------------------------------------------
@@ -280,10 +453,38 @@ mod tests {
 
     #[test]
     fn empty_input_returns_empty() {
-        let nl = NeighborList::with_mode(QueryMode::SelfQuery, 0, 0);
+        let nl = Neighbors::from_pairs(
+            std::iter::empty(),
+            NeighborsStorage::FULL,
+            QueryMode::SelfQuery { num_points: 0 },
+        );
         let f = filter_sann(&nl);
         assert_eq!(f.n_pairs(), 0);
         let g = filter_rad(&nl, std::f64::consts::FRAC_PI_3);
         assert_eq!(g.n_pairs(), 0);
+    }
+
+    // ---- lean input is rejected, not silently filtered to nothing ----------
+
+    #[test]
+    #[should_panic(expected = "filter_sann needs the dist_sq column")]
+    fn sann_on_indices_only_panics() {
+        let pairs = [
+            (0u32, 1u32, 1.0_f64, [1.0_f64, 0.0, 0.0]),
+            (0, 2, 1.0, [0.0, 1.0, 0.0]),
+        ];
+        let lean = make_nlist(&pairs, 3).repack(NeighborsStorage::INDICES_ONLY);
+        let _ = filter_sann(&lean);
+    }
+
+    #[test]
+    #[should_panic(expected = "filter_rad needs the disp column")]
+    fn rad_without_disp_panics() {
+        let pairs = [
+            (0u32, 1u32, 1.0_f64, [1.0_f64, 0.0, 0.0]),
+            (0, 2, 1.0, [0.0, 1.0, 0.0]),
+        ];
+        let lean = make_nlist(&pairs, 3).repack(NeighborsStorage::DIST_SQ);
+        let _ = filter_rad(&lean, std::f64::consts::FRAC_PI_3);
     }
 }

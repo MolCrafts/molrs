@@ -15,7 +15,7 @@
 //! | VCD | [`VcdCrossFlux`] (μ̇ × ṁ cross-correlation) | [`VcdSpectrum`] |
 //! | ROA | [`RoaCrossTensor`] (α̇ × Ġ′ cross-correlations) | [`RoaSpectrum`] |
 //! | Resonance Raman | [`ResonanceRamanTensor`] (resonant iso/aniso ACFs) | [`ResonanceRamanSpectrum`] |
-//! | Dielectric ε(ω) | [`DebyeRelaxation`](crate::compute::transport::DebyeRelaxation) / [`GreenKuboConductivity`](crate::compute::transport::GreenKuboConductivity) | [`EinsteinHelfandSpectrum`] / [`GreenKuboSpectrum`] |
+//! | Dielectric ε(ω) | [`DebyeRelaxation`](crate::compute::transport::DebyeRelaxation) / [`GreenKuboConductivity`](crate::compute::transport::GreenKuboConductivity) / [`DipoleRateCross`](crate::compute::transport::DipoleRateCross) | [`EinsteinHelfandSpectrum`] / [`GreenKuboSpectrum`] / [`DipoleAutocorrelationSpectrum`] / [`DipoleRateCrossSpectrum`] |
 //!
 //! # Units
 //!
@@ -29,12 +29,11 @@
 //!
 //! The window + one-sided-FFT machinery (`window_and_fft`,
 //! `acf_to_spectrum`, `acf_to_intensities`), the physical helpers
-//! (`cosine_sq_window`, `bose_factor`), and the cross-correlation
-//! primitives (`cross_correlate`, `central_diff_col`) live here so every
-//! spectral method shares one implementation. Window coefficients always route
-//! through [`molrs::signal`] (never reimplemented); the pad + forward-FFT core
-//! is the crate-shared
-//! `forward_fft_onesided`.
+//! (`cosine_sq_window`, `bose_factor`), and the flux/correlator
+//! primitives (`central_diff_series`, `sum_column_acf`, `sum_column_xcorr`,
+//! …) live here so every spectral method shares one implementation. Window
+//! coefficients always route through [`molrs::signal`] (never reimplemented);
+//! the pad + forward-FFT core is the crate-shared `forward_fft_onesided`.
 
 pub mod dielectric_spectrum;
 pub mod ir_flux;
@@ -51,8 +50,9 @@ pub mod vcd_cross_flux;
 pub mod vcd_spectrum;
 
 pub use dielectric_spectrum::{
-    ConductivitySumRule, DielectricSpectrumResult, EinsteinHelfandSpectrum, GreenKuboSpectrum,
-    KramersKronig, KramersKronigCheck, RouteAgreement, RouteAgreementCheck, SumRuleCheck,
+    ConductivitySumRule, DielectricSpectrumResult, DipoleAutocorrelationSpectrum,
+    DipoleRateCrossSpectrum, EinsteinHelfandSpectrum, GreenKuboSpectrum, KramersKronig,
+    KramersKronigCheck, RouteAgreement, RouteAgreementCheck, SumRuleCheck,
 };
 pub use ir_flux::{IRFlux, IRFluxArgs, IRFluxResult};
 pub use ir_spectrum::IRSpectrum;
@@ -69,9 +69,11 @@ pub use vcd_spectrum::VcdSpectrum;
 
 use ndarray::{Array1, Array2, ArrayD};
 use rustfft::FftPlanner;
+use rustfft::num_complex::Complex64;
 
 use crate::compute::error::ComputeError;
 use crate::compute::fitting::forward_fft_onesided;
+use crate::compute::transport::lag_times as transport_lag_times;
 use molrs::signal as sig;
 
 // ── Spectral constants ────────────────────────────────────────────────────────
@@ -196,38 +198,167 @@ pub(crate) fn bose_factor(nu: f64, temperature_k: f64) -> f64 {
     }
 }
 
-// ── Cross-correlation primitives (VCD / ROA) ─────────────────────────────────
+// ── Flux + correlator primitives (IR / Raman / VCD / ROA) ────────────────────
 
-/// Linear cross-correlation `C_ab[t] = Σ_τ a[τ]·b[τ+t]` for `t = 0..=max_lag`,
-/// via the Wiener–Khinchin cross spectrum (`IFFT(conj(A)·B)`), using the same
-/// zero-pad-to-`(2n).next_power_of_two()` and `1/n_pad` scaling as
-/// [`acf_fft`](molrs::signal::acf_fft) — so `cross_correlate(a, a, …)` exactly
-/// reproduces the autocorrelation. Both inputs must share the same length.
+/// Lag grid shared with transport computes (`τ = i·dt`).
+#[inline]
+pub(crate) fn lag_times(max_lag: usize, dt: f64) -> Array1<f64> {
+    transport_lag_times(max_lag, dt)
+}
+
+/// Central-difference time derivative of every column of an `(n_frames, n_cols)`
+/// series, dropping first and last frame → shape `(n_frames − 2, n_cols)`.
 ///
-/// Ported from the cross-correlation step in `CROAEngine::ComputeACFPair`
-/// (`src/roa.cpp`), which feeds each moment-component pair through
-/// `m_pCrossCorr->CrossCorrelate(&in1, &in2, &out)`.
+/// `ẋ[t] = (x[t+1] − x[t−1]) / (2·dt)` — the IR / Raman / VCD / ROA flux
+/// convention. Row-major walk (time outer) for cache locality.
+pub(crate) fn central_diff_series(series: &Array2<f64>, dt: f64) -> Array2<f64> {
+    let n = series.shape()[0];
+    let n_cols = series.shape()[1];
+    debug_assert!(n >= 3 && dt > 0.0);
+    let inv_2dt = 0.5 / dt;
+    let mut out = Array2::<f64>::zeros((n - 2, n_cols));
+    for t in 1..n - 1 {
+        let o = t - 1;
+        for c in 0..n_cols {
+            out[[o, c]] = (series[[t + 1, c]] - series[[t - 1, c]]) * inv_2dt;
+        }
+    }
+    out
+}
+
+/// Central-difference of one column into a pre-sized buffer of length `n−2`.
+#[allow(dead_code)] // crate API for ad-hoc single-column flux work
+pub(crate) fn fill_central_diff_col(series: &Array2<f64>, col: usize, dt: f64, out: &mut [f64]) {
+    let n = series.shape()[0];
+    debug_assert_eq!(out.len(), n.saturating_sub(2));
+    let inv_2dt = 0.5 / dt;
+    for (o, t) in (1..n - 1).enumerate() {
+        out[o] = (series[[t + 1, col]] - series[[t - 1, col]]) * inv_2dt;
+    }
+}
+
+/// One-column convenience wrapper (allocates). Prefer
+/// [`fill_central_diff_col`] / [`central_diff_series`] in hot paths.
+#[allow(dead_code)] // crate API; multi-column paths use `central_diff_series`
+pub(crate) fn central_diff_col(series: &Array2<f64>, col: usize, dt: f64) -> Array1<f64> {
+    let n = series.shape()[0];
+    let mut out = vec![0.0; n.saturating_sub(2)];
+    fill_central_diff_col(series, col, dt, &mut out);
+    Array1::from_vec(out)
+}
+
+/// Unnormalized sum of per-column linear ACFs:
+/// `C[k] = Σ_d Σ_τ series[τ,d]·series[τ+k,d]` (no `1/(n−k)`).
+///
+/// Reuses one column buffer + one complex FFT scratch across components.
+/// Used by IR (dipole-flux) and Raman (iso / weighted aniso).
+pub(crate) fn sum_column_acf(series: &Array2<f64>, max_lag: usize) -> Array1<f64> {
+    let n = series.shape()[0];
+    let n_cols = series.shape()[1];
+    debug_assert!(n >= 2 && max_lag < n);
+    let mut planner = FftPlanner::new();
+    let mut out = Array1::<f64>::zeros(max_lag + 1);
+    let mut col = vec![0.0_f64; n];
+    let mut scratch: Vec<Complex64> = Vec::new();
+    let out_s = out.as_slice_mut().expect("zeros contiguous");
+    for d in 0..n_cols {
+        for (t, slot) in col.iter_mut().enumerate() {
+            *slot = series[[t, d]];
+        }
+        sig::acf_fft_accumulate(&mut planner, &col, max_lag, out_s, &mut scratch)
+            .expect("sum_column_acf: max_lag < n by construction");
+    }
+    out
+}
+
+/// Unnormalized ACF of a 1-D series (optionally weighted into `out`).
+pub(crate) fn acf_accumulate_into(
+    planner: &mut FftPlanner<f64>,
+    series: &[f64],
+    max_lag: usize,
+    out: &mut [f64],
+    weight: f64,
+    scratch: &mut Vec<Complex64>,
+) {
+    if weight == 1.0 {
+        sig::acf_fft_accumulate(planner, series, max_lag, out, scratch)
+            .expect("acf_accumulate_into: max_lag < n by construction");
+        return;
+    }
+    // Weighted: accumulate into a temp slice then scale-add (avoids modifying
+    // the unweighted kernel). For weight≠1 use a small stack for short lags.
+    let mut tmp = vec![0.0_f64; max_lag + 1];
+    sig::acf_fft_accumulate(planner, series, max_lag, &mut tmp, scratch)
+        .expect("acf_accumulate_into: max_lag < n by construction");
+    for k in 0..=max_lag {
+        out[k] += weight * tmp[k];
+    }
+}
+
+/// Unnormalized sum of per-column linear xcorrs:
+/// `C[k] = Σ_d Σ_τ a[τ,d]·b[τ+k,d]`.
+///
+/// Both series must share shape. Used by VCD (`μ̇ × ṁ`).
+pub(crate) fn sum_column_xcorr(a: &Array2<f64>, b: &Array2<f64>, max_lag: usize) -> Array1<f64> {
+    debug_assert_eq!(a.shape(), b.shape());
+    let n = a.shape()[0];
+    let n_cols = a.shape()[1];
+    debug_assert!(n >= 2 && max_lag < n);
+    let mut planner = FftPlanner::new();
+    let mut out = Array1::<f64>::zeros(max_lag + 1);
+    let mut ca = vec![0.0_f64; n];
+    let mut cb = vec![0.0_f64; n];
+    let mut sa: Vec<Complex64> = Vec::new();
+    let mut sb: Vec<Complex64> = Vec::new();
+    let out_s = out.as_slice_mut().expect("zeros contiguous");
+    for d in 0..n_cols {
+        for t in 0..n {
+            ca[t] = a[[t, d]];
+            cb[t] = b[[t, d]];
+        }
+        sig::xcorr_fft_accumulate(&mut planner, &ca, &cb, max_lag, out_s, &mut sa, &mut sb)
+            .expect("sum_column_xcorr: max_lag < n by construction");
+    }
+    out
+}
+
+/// Linear cross-correlation `C_ab[t] = Σ_τ a[τ]·b[τ+t]` for `t = 0..=max_lag`.
+///
+/// Thin wrapper over [`sig::xcorr_fft_with_planner`] for call sites that need a
+/// fresh `Array1`. Multi-component hot paths prefer [`sum_column_xcorr`] or
+/// [`xcorr_accumulate_into`].
+#[allow(dead_code)] // crate API; ROA/VCD use accumulate paths now
 pub(crate) fn cross_correlate(
     planner: &mut FftPlanner<f64>,
     a: &Array1<f64>,
     b: &Array1<f64>,
     max_lag: usize,
 ) -> Array1<f64> {
-    // Delegate to the shared signal primitive — one implementation of the
-    // zero-pad / cross-spectrum / scale recipe, guaranteeing `cross_correlate(a,
-    // a, …)` matches `acf_fft`. Callers pass equal-length series with
-    // `max_lag < n` (from `resolution.min(flux_len - 1)`), so this never errors.
     sig::xcorr_fft_with_planner(planner, a, b, max_lag)
         .expect("cross_correlate: equal-length inputs with max_lag < n by construction")
 }
 
-/// Central-difference time derivative `ẋ[t] = (x[t+1] − x[t−1]) / (2·dt)` of one
-/// column `col` of an `(n_frames, n_cols)` series, dropping the first and last
-/// frame (length `n_frames − 2`) — the same flux convention as [`IRFlux`].
-pub(crate) fn central_diff_col(series: &Array2<f64>, col: usize, dt: f64) -> Array1<f64> {
-    let n = series.shape()[0];
-    let inv_2dt = 0.5 / dt;
-    (1..n - 1)
-        .map(|t| (series[[t + 1, col]] - series[[t - 1, col]]) * inv_2dt)
-        .collect()
+/// Cross-correlate two equal-length slices and add `weight * C` into `out`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn xcorr_accumulate_into(
+    planner: &mut FftPlanner<f64>,
+    a: &[f64],
+    b: &[f64],
+    max_lag: usize,
+    out: &mut [f64],
+    weight: f64,
+    sa: &mut Vec<Complex64>,
+    sb: &mut Vec<Complex64>,
+) {
+    if weight == 1.0 {
+        sig::xcorr_fft_accumulate(planner, a, b, max_lag, out, sa, sb)
+            .expect("xcorr_accumulate_into: max_lag < n by construction");
+        return;
+    }
+    let mut tmp = vec![0.0_f64; max_lag + 1];
+    sig::xcorr_fft_accumulate(planner, a, b, max_lag, &mut tmp, sa, sb)
+        .expect("xcorr_accumulate_into: max_lag < n by construction");
+    for k in 0..=max_lag {
+        out[k] += weight * tmp[k];
+    }
 }
