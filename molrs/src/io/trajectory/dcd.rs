@@ -43,6 +43,7 @@
 //! ```
 
 use crate::io::reader::{FrameReader, ReadSeek, Reader, TrajectoryReader};
+use crate::io::streaming::{FrameIndexBuilder, FrameIndexEntry};
 use crate::io::writer::{FrameWriter, Writer};
 use molrs::spatial::simbox::SimBox;
 use molrs::store::block::Block;
@@ -52,7 +53,7 @@ use molrs::types::{F, Pbc3, U};
 use ndarray::{Array1, Array2, IxDyn, array};
 use once_cell::sync::OnceCell;
 use std::fs::File;
-use std::io::{BufRead, Read, Seek, SeekFrom, Write};
+use std::io::{BufRead, Cursor, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 // ============================================================================
@@ -177,34 +178,42 @@ fn write_marker<W: Write>(
     }
 }
 
+/// Refuse a Fortran payload bigger than this before allocating. A corrupt
+/// marker on a huge file used to request a multi-gigabyte `Vec`.
+const MAX_DCD_RECORD_BYTES: u64 = 256 * 1024 * 1024;
+
 /// Read one Fortran record's payload, asserting the trailing marker matches.
 fn read_record<R: Read>(
     reader: &mut R,
     byte_order: ByteOrder,
     marker_size: MarkerSize,
 ) -> std::io::Result<Vec<u8>> {
-    let leading = read_marker(reader, byte_order, marker_size)?;
-    let mut payload = vec![0u8; leading as usize];
-    reader.read_exact(&mut payload)?;
-    let trailing = read_marker(reader, byte_order, marker_size)?;
-    if leading != trailing {
-        return Err(err_mapper(format!(
-            "Fortran record marker mismatch: leading={}, trailing={}",
-            leading, trailing
-        )));
-    }
-    Ok(payload)
+    let mut buf = Vec::new();
+    read_record_into_max(
+        reader,
+        byte_order,
+        marker_size,
+        &mut buf,
+        MAX_DCD_RECORD_BYTES,
+    )?;
+    Ok(buf)
 }
 
-/// Read one Fortran record into a caller-supplied buffer (resizes as needed).
-fn read_record_into<R: Read>(
+fn read_record_into_max<R: Read>(
     reader: &mut R,
     byte_order: ByteOrder,
     marker_size: MarkerSize,
     buf: &mut Vec<u8>,
+    max_payload: u64,
 ) -> std::io::Result<()> {
     let leading = read_marker(reader, byte_order, marker_size)?;
-    buf.resize(leading as usize, 0);
+    if leading > max_payload {
+        return Err(err_mapper(format!(
+            "Fortran record payload {leading} bytes exceeds cap {max_payload}"
+        )));
+    }
+    let n = usize::try_from(leading).map_err(err_mapper)?;
+    buf.resize(n, 0);
     reader.read_exact(buf)?;
     let trailing = read_marker(reader, byte_order, marker_size)?;
     if leading != trailing {
@@ -281,6 +290,67 @@ impl DcdHeader {
     }
 }
 
+/// Header fields that do not need the file size / first-frame probe.
+#[derive(Debug, Clone)]
+struct HeaderPartial {
+    byte_order: ByteOrder,
+    marker_size: MarkerSize,
+    charmm_ver: i32,
+    #[allow(dead_code)]
+    nset_hint: u32,
+    istart: i32,
+    nsavc: i32,
+    natoms: u32,
+    namnf: u32,
+    delta: f64,
+    title: String,
+    free_atoms: Option<Vec<i32>>,
+    data_offset: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct FrameLayout {
+    has_box: bool,
+    has_4d: bool,
+    frame_size_first: u64,
+    frame_size_rest: u64,
+    nset: u32,
+}
+
+impl HeaderPartial {
+    fn into_header(self, layout: FrameLayout) -> DcdHeader {
+        DcdHeader {
+            byte_order: self.byte_order,
+            marker_size: self.marker_size,
+            charmm_ver: self.charmm_ver,
+            nset: layout.nset,
+            istart: self.istart,
+            nsavc: self.nsavc,
+            natoms: self.natoms,
+            namnf: self.namnf,
+            has_box: layout.has_box,
+            has_4d: layout.has_4d,
+            delta: self.delta,
+            title: self.title,
+            free_atoms: self.free_atoms,
+            fixed_seed: None,
+            data_offset: self.data_offset,
+            frame_size_first: layout.frame_size_first,
+            frame_size_rest: layout.frame_size_rest,
+        }
+    }
+
+    fn empty_layout() -> FrameLayout {
+        FrameLayout {
+            has_box: false,
+            has_4d: false,
+            frame_size_first: 0,
+            frame_size_rest: 0,
+            nset: 0,
+        }
+    }
+}
+
 /// Detect byte order and Fortran marker width.
 ///
 /// The first record always wraps the 84-byte CORD header. The marker layout
@@ -322,10 +392,9 @@ fn detect_endianness_and_marker<R: Read>(
     )))
 }
 
-/// Parse the full DCD header from the current reader position. Advances the
-/// reader past the header (and, when NAMNF > 0, past frame 0 — frame 0's
-/// coordinates are cached in the returned header).
-fn parse_header<R: BufRead + Seek>(reader: &mut R) -> std::io::Result<DcdHeader> {
+/// Parse the CORD / title / NATOMS / optional free-atom records. Leaves the
+/// reader at `data_offset`. Does **not** probe file size or per-frame layout.
+fn parse_header_records<R: Read + Seek>(reader: &mut R) -> std::io::Result<HeaderPartial> {
     reader.seek(SeekFrom::Start(0))?;
     let (byte_order, marker_size) = detect_endianness_and_marker(reader)?;
 
@@ -353,7 +422,7 @@ fn parse_header<R: BufRead + Seek>(reader: &mut R) -> std::io::Result<DcdHeader>
         read_i32(&buf, byte_order)
     };
 
-    let nset = read_i32_at(4) as u32;
+    let nset_hint = read_i32_at(4) as u32;
     let istart = read_i32_at(8);
     let nsavc = read_i32_at(12);
     let namnf = read_i32_at(36) as u32;
@@ -445,59 +514,53 @@ fn parse_header<R: BufRead + Seek>(reader: &mut R) -> std::io::Result<DcdHeader>
         None
     };
 
-    // -- Now positioned at the start of per-frame data. --
     let data_offset = reader.stream_position()?;
-    let m = marker_size.bytes();
+    Ok(HeaderPartial {
+        byte_order,
+        marker_size,
+        charmm_ver,
+        nset_hint,
+        istart,
+        nsavc,
+        natoms,
+        namnf,
+        delta,
+        title,
+        free_atoms,
+        data_offset,
+    })
+}
 
-    // The header flag positions (CHARMM icntrl[10..11] vs X-PLOR
-    // icntrl[11..12]) disagree across writers. Trying to honor the bits in
-    // the file leads to wrong answers on real-world fixtures. Instead, we
-    // probe the first per-frame record by peeking at its leading marker:
-    // a box record is exactly 48 bytes; a coord record is `natoms * 4`.
-    // From there file size disambiguates 3 vs 4 coord records (4D dynamics).
-    let end = reader.seek(SeekFrom::End(0))?;
-    let trailing = end.saturating_sub(data_offset);
+fn try_parse_header_records(bytes: &[u8]) -> std::io::Result<Option<HeaderPartial>> {
+    let mut cursor = Cursor::new(bytes);
+    match parse_header_records(&mut cursor) {
+        Ok(partial) => Ok(Some(partial)),
+        Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => Ok(None),
+        Err(err) => Err(err),
+    }
+}
 
+/// Pick `(has_box, has_4d)` from the first per-frame marker and the length
+/// of the data section. Same candidate walk the seek-based reader uses.
+fn resolve_frame_layout(
+    partial: &HeaderPartial,
+    first_marker: u64,
+    trailing: u64,
+) -> std::io::Result<FrameLayout> {
     if trailing == 0 {
-        return Ok(DcdHeader {
-            byte_order,
-            marker_size,
-            charmm_ver,
-            nset: 0,
-            istart,
-            nsavc,
-            natoms,
-            namnf,
-            has_box: false,
-            has_4d: false,
-            delta,
-            title,
-            free_atoms,
-            fixed_seed: None,
-            data_offset,
-            frame_size_first: 0,
-            frame_size_rest: 0,
-        });
+        return Ok(HeaderPartial::empty_layout());
     }
 
-    reader.seek(SeekFrom::Start(data_offset))?;
-    let first_marker = read_marker(reader, byte_order, marker_size)?;
-    reader.seek(SeekFrom::Start(data_offset))?;
-
-    let coord_marker_full = (natoms as u64) * 4;
+    let m = partial.marker_size.bytes();
+    let natoms = partial.natoms;
+    let namnf = partial.namnf;
+    let coord_marker_full = u64::from(natoms) * 4;
     let coord_rec_full = 2 * m + coord_marker_full;
-    let coord_rec_eff = 2 * m + ((natoms - namnf) as u64) * 4;
+    let coord_rec_eff = 2 * m + u64::from(natoms - namnf) * 4;
 
-    // The first marker constrains has_box, but only loosely: a 48-byte
-    // record can be either the box block or an X-coord record when natoms is
-    // exactly 12. We enumerate all four (has_box, has_4d) combos that match
-    // the first marker, and pick the unique one whose frame layout divides
-    // the file's data section evenly.
     let mut candidates: Vec<(bool, bool, u64, u64)> = Vec::new();
     for &has_box_candidate in &[true, false] {
         let box_part = if has_box_candidate { 2 * m + 48 } else { 0 };
-
-        // First marker must match what this candidate predicts.
         let predicted_first = if has_box_candidate {
             48
         } else {
@@ -506,7 +569,6 @@ fn parse_header<R: BufRead + Seek>(reader: &mut R) -> std::io::Result<DcdHeader>
         if first_marker != predicted_first {
             continue;
         }
-
         for &has_4d_candidate in &[false, true] {
             let n_recs = if has_4d_candidate { 4 } else { 3 };
             let f_first = box_part + coord_rec_full * n_recs;
@@ -531,31 +593,35 @@ fn parse_header<R: BufRead + Seek>(reader: &mut R) -> std::io::Result<DcdHeader>
     // box. In practice ambiguity is rare (it requires natoms == 12).
     candidates.sort_by_key(|&(hb, h4, _, _)| (h4 as u8, hb as u8));
     let (has_box, has_4d, frame_size_first, frame_size_rest) = candidates[0];
-
     let actual_nset = 1 + (trailing - frame_size_first) / frame_size_rest;
-
-    let mut header = DcdHeader {
-        byte_order,
-        marker_size,
-        charmm_ver,
-        nset: u32::try_from(actual_nset).unwrap_or(u32::MAX),
-        istart,
-        nsavc,
-        natoms,
-        namnf,
+    Ok(FrameLayout {
         has_box,
         has_4d,
-        delta,
-        title,
-        free_atoms,
-        fixed_seed: None,
-        data_offset,
         frame_size_first,
         frame_size_rest,
-    };
-    let _ = nset; // header NSET hint is no longer authoritative; trust file size
+        nset: u32::try_from(actual_nset).unwrap_or(u32::MAX),
+    })
+}
+
+/// Parse the full DCD header from the current reader position. Advances the
+/// reader past the header (and, when NAMNF > 0, past frame 0 — frame 0's
+/// coordinates are cached in the returned header).
+fn parse_header<R: BufRead + Seek>(reader: &mut R) -> std::io::Result<DcdHeader> {
+    let partial = parse_header_records(reader)?;
+    let data_offset = partial.data_offset;
+    let end = reader.seek(SeekFrom::End(0))?;
+    let trailing = end.saturating_sub(data_offset);
+
+    if trailing == 0 {
+        return Ok(partial.into_header(HeaderPartial::empty_layout()));
+    }
 
     reader.seek(SeekFrom::Start(data_offset))?;
+    let first_marker = read_marker(reader, partial.byte_order, partial.marker_size)?;
+    reader.seek(SeekFrom::Start(data_offset))?;
+
+    let layout = resolve_frame_layout(&partial, first_marker, trailing)?;
+    let mut header = partial.into_header(layout);
 
     // Cache frame-0 coordinates if we need them to reconstruct fixed atoms.
     if header.namnf > 0 && header.nset > 0 {
@@ -580,7 +646,7 @@ fn parse_header<R: BufRead + Seek>(reader: &mut R) -> std::io::Result<DcdHeader>
 /// `natoms`: fixed atoms are filled from `header.fixed_seed`.
 type Coords = (Vec<f32>, Vec<f32>, Vec<f32>, Option<Vec<f32>>);
 
-fn read_coord_payload<R: BufRead + Seek>(
+fn read_coord_payload<R: Read>(
     reader: &mut R,
     header: &DcdHeader,
     n: usize,
@@ -594,9 +660,16 @@ fn read_coord_payload<R: BufRead + Seek>(
     }
 
     let mut buf = Vec::with_capacity(natoms_eff * 4);
+    let axis_bytes = (natoms_eff as u64).saturating_mul(4);
 
     let read_axis = |reader: &mut R, buf: &mut Vec<u8>| -> std::io::Result<Vec<f32>> {
-        read_record_into(reader, header.byte_order, header.marker_size, buf)?;
+        read_record_into_max(
+            reader,
+            header.byte_order,
+            header.marker_size,
+            buf,
+            axis_bytes,
+        )?;
         if buf.len() != natoms_eff * 4 {
             return Err(err_mapper(format!(
                 "coord record has {} bytes, expected {}",
@@ -766,43 +839,32 @@ fn h_to_abc(h: &Array2<F>) -> (f64, f64, f64, f64, f64, f64) {
     (a, b, c, alpha, beta, gamma)
 }
 
-/// Read frame `n` at its computed offset. Reader must be Seek.
-fn parse_frame_at<R: BufRead + Seek>(
+/// Decode one frame whose first byte is at the current reader position.
+fn parse_one_frame<R: Read>(
     reader: &mut R,
     header: &DcdHeader,
     n: usize,
-) -> std::io::Result<Option<Frame>> {
-    if n >= header.nset as usize {
-        return Ok(None);
-    }
-    reader.seek(SeekFrom::Start(header.frame_offset(n)))?;
-
-    // Optional box record at the head of the frame.
+) -> std::io::Result<Frame> {
     let simbox = if header.has_box {
-        let payload = read_record(reader, header.byte_order, header.marker_size)?;
+        let mut payload = Vec::new();
+        read_record_into_max(
+            reader,
+            header.byte_order,
+            header.marker_size,
+            &mut payload,
+            48,
+        )?;
         Some(parse_box_payload(&payload, header.byte_order)?)
     } else {
         None
     };
 
-    // Coordinate records — reuse `read_coord_payload` minus its leading box
-    // skip by re-seeking past the box we just consumed.
-    let coords_pos = reader.stream_position()?;
-    // read_coord_payload always tries to read the box record first; rewind
-    // and ask it to skip nothing by toggling the flag locally.
-    let (xs, ys, zs, w) = {
-        // Build a temporary header view with has_box=false so the helper
-        // doesn't try to re-read a box record we already consumed.
-        let mut hdr = header.clone();
-        hdr.has_box = false;
-        reader.seek(SeekFrom::Start(coords_pos))?;
-        read_coord_payload(reader, &hdr, n)?
-    };
+    let mut coords_header = header.clone();
+    coords_header.has_box = false;
+    let (xs, ys, zs, w) = read_coord_payload(reader, &coords_header, n)?;
 
     let natoms = header.natoms as usize;
-
     let mut atoms = Block::new();
-
     let id_arr = Array1::from_iter(1..=natoms as U)
         .into_shape_with_order(IxDyn(&[natoms]))
         .map_err(err_mapper)?;
@@ -860,7 +922,20 @@ fn parse_frame_at<R: BufRead + Seek>(
         frame.meta.insert("title".to_string(), header.title.clone());
     }
 
-    Ok(Some(frame))
+    Ok(frame)
+}
+
+/// Read frame `n` at its computed offset. Reader must be Seek.
+fn parse_frame_at<R: BufRead + Seek>(
+    reader: &mut R,
+    header: &DcdHeader,
+    n: usize,
+) -> std::io::Result<Option<Frame>> {
+    if n >= header.nset as usize {
+        return Ok(None);
+    }
+    reader.seek(SeekFrom::Start(header.frame_offset(n)))?;
+    Ok(Some(parse_one_frame(reader, header, n)?))
 }
 
 // ============================================================================
@@ -1205,6 +1280,698 @@ fn write_frame_payload<W: Write>(
 }
 
 // ============================================================================
+// Streaming
+// ============================================================================
+
+/// Magic prefix the WASM stream prepends when a decoder context is attached
+/// (`setDecoderContext`). Not a file format — never appears on disk.
+const DCD_CTX_MAGIC: &[u8; 13] = b"MOLRS\x00DCDCTX\x00";
+
+/// Parse exactly one DCD frame from a tightly-bounded byte slice.
+///
+/// Accepts:
+/// - a frame body produced by [`DcdIndexBuilder`] (self-describing when
+///   `NAMNF == 0`);
+/// - that body prefixed with a decoder-context blob (needed for fixed-atom
+///   later frames);
+/// - a complete mini-file starting at the CORD header (frame 0 including
+///   the header).
+pub fn parse_frame_bytes(bytes: &[u8]) -> std::io::Result<Frame> {
+    if let Some((header, rest)) = split_decoder_context(bytes)? {
+        return parse_one_frame(
+            &mut Cursor::new(rest),
+            &header,
+            frame_index_from_len(&header, rest),
+        );
+    }
+    if looks_like_dcd_header(bytes) {
+        return parse_header_and_first_frame(bytes);
+    }
+    parse_standalone_frame(bytes)
+}
+
+/// Decode `bytes` with an already-parsed header (fixed-atom later frames).
+pub fn parse_frame_with_header(header: &DcdHeader, bytes: &[u8]) -> std::io::Result<Frame> {
+    let n = frame_index_from_len(header, bytes);
+    parse_one_frame(&mut Cursor::new(bytes), header, n)
+}
+
+/// Decode one frame body using a previously captured decoder context.
+///
+/// The WASM stream calls this so a DCD parse does **not** allocate a
+/// second copy of the frame just to prepend the context magic.
+pub fn parse_frame_with_decoder_context(context: &[u8], frame: &[u8]) -> std::io::Result<Frame> {
+    let header = decode_decoder_context(context)?;
+    parse_frame_with_header(&header, frame)
+}
+
+fn frame_index_from_len(header: &DcdHeader, bytes: &[u8]) -> usize {
+    if header.namnf > 0
+        && header.frame_size_rest > 0
+        && bytes.len() as u64 == header.frame_size_rest
+    {
+        1
+    } else {
+        0
+    }
+}
+
+fn looks_like_dcd_header(bytes: &[u8]) -> bool {
+    if bytes.len() < 12 {
+        return false;
+    }
+    detect_endianness_and_marker(&mut Cursor::new(bytes)).is_ok()
+}
+
+fn parse_header_and_first_frame(bytes: &[u8]) -> std::io::Result<Frame> {
+    let mut cursor = Cursor::new(bytes);
+    let header = parse_header(&mut cursor)?;
+    if header.nset == 0 {
+        return Err(err_mapper("DCD header-only slice has no frames"));
+    }
+    cursor.seek(SeekFrom::Start(header.data_offset))?;
+    parse_one_frame(&mut cursor, &header, 0)
+}
+
+fn parse_standalone_frame(bytes: &[u8]) -> std::io::Result<Frame> {
+    let (order, marker, records) = detect_frame_records(bytes)?;
+    if records.is_empty() {
+        return Err(err_mapper("DCD frame slice has no Fortran records"));
+    }
+
+    let (box_payload, coord_recs) = split_box_and_coords(&records);
+    if !(3..=4).contains(&coord_recs.len()) {
+        return Err(err_mapper(format!(
+            "DCD frame has {} coordinate records, expected 3 or 4",
+            coord_recs.len()
+        )));
+    }
+    let coord_len = coord_recs[0].len();
+    if coord_len == 0 || !coord_len.is_multiple_of(4) {
+        return Err(err_mapper(
+            "DCD coordinate record length is not a multiple of 4",
+        ));
+    }
+    if coord_recs.iter().any(|r| r.len() != coord_len) {
+        return Err(err_mapper("DCD coordinate records have unequal lengths"));
+    }
+
+    let natoms = (coord_len / 4) as u32;
+    let header = DcdHeader {
+        byte_order: order,
+        marker_size: marker,
+        charmm_ver: 24,
+        nset: 1,
+        istart: 0,
+        nsavc: 1,
+        natoms,
+        namnf: 0,
+        has_box: box_payload.is_some(),
+        has_4d: coord_recs.len() == 4,
+        delta: 1.0,
+        title: String::new(),
+        free_atoms: None,
+        fixed_seed: None,
+        data_offset: 0,
+        frame_size_first: bytes.len() as u64,
+        frame_size_rest: bytes.len() as u64,
+    };
+    parse_one_frame(&mut Cursor::new(bytes), &header, 0)
+}
+
+fn split_box_and_coords(records: &[Vec<u8>]) -> (Option<&[u8]>, &[Vec<u8>]) {
+    if records.len() >= 4 && records[0].len() == 48 {
+        let rest_equal = records[1..].iter().all(|r| r.len() == records[1].len());
+        if rest_equal && (records.len() == 4 || records.len() == 5) {
+            return (Some(records[0].as_slice()), &records[1..]);
+        }
+    }
+    (None, records)
+}
+
+fn detect_frame_records(bytes: &[u8]) -> std::io::Result<(ByteOrder, MarkerSize, Vec<Vec<u8>>)> {
+    let mut best: Option<(ByteOrder, MarkerSize, Vec<Vec<u8>>)> = None;
+    for &order in &[ByteOrder::Le, ByteOrder::Be] {
+        for &marker in &[MarkerSize::Four, MarkerSize::Eight] {
+            if let Some(recs) = try_read_all_records(bytes, order, marker) {
+                let prefer_le4 = matches!((order, marker), (ByteOrder::Le, MarkerSize::Four));
+                if best.is_none() || prefer_le4 {
+                    best = Some((order, marker, recs));
+                }
+            }
+        }
+    }
+    best.ok_or_else(|| err_mapper("not a standalone DCD frame: no consistent Fortran records"))
+}
+
+fn try_read_all_records(
+    bytes: &[u8],
+    order: ByteOrder,
+    marker: MarkerSize,
+) -> Option<Vec<Vec<u8>>> {
+    let mut pos = 0usize;
+    let mut recs = Vec::new();
+    while pos < bytes.len() {
+        match try_read_record_at(bytes, pos, order, marker) {
+            Some((payload, next)) => {
+                recs.push(payload);
+                pos = next;
+            }
+            None => return None,
+        }
+    }
+    if recs.is_empty() { None } else { Some(recs) }
+}
+
+/// Read one Fortran record without allocating more than the remaining slice.
+fn try_read_record_at(
+    bytes: &[u8],
+    pos: usize,
+    order: ByteOrder,
+    marker: MarkerSize,
+) -> Option<(Vec<u8>, usize)> {
+    let m = marker.bytes() as usize;
+    if pos.checked_add(2 * m)? > bytes.len() {
+        return None;
+    }
+    let leading = match marker {
+        MarkerSize::Four => {
+            let raw: [u8; 4] = bytes[pos..pos + 4].try_into().ok()?;
+            read_u32(&raw, order) as u64
+        }
+        MarkerSize::Eight => {
+            let raw: [u8; 8] = bytes[pos..pos + 8].try_into().ok()?;
+            match order {
+                ByteOrder::Le => u64::from_le_bytes(raw),
+                ByteOrder::Be => u64::from_be_bytes(raw),
+            }
+        }
+    };
+    let payload_len = usize::try_from(leading).ok()?;
+    let payload_start = pos + m;
+    let payload_end = payload_start.checked_add(payload_len)?;
+    let trailing_end = payload_end.checked_add(m)?;
+    if trailing_end > bytes.len() {
+        return None;
+    }
+    let trailing = match marker {
+        MarkerSize::Four => {
+            let raw: [u8; 4] = bytes[payload_end..payload_end + 4].try_into().ok()?;
+            read_u32(&raw, order) as u64
+        }
+        MarkerSize::Eight => {
+            let raw: [u8; 8] = bytes[payload_end..payload_end + 8].try_into().ok()?;
+            match order {
+                ByteOrder::Le => u64::from_le_bytes(raw),
+                ByteOrder::Be => u64::from_be_bytes(raw),
+            }
+        }
+    };
+    if leading != trailing {
+        return None;
+    }
+    Some((bytes[payload_start..payload_end].to_vec(), trailing_end))
+}
+
+fn split_decoder_context(bytes: &[u8]) -> std::io::Result<Option<(DcdHeader, &[u8])>> {
+    if bytes.len() < DCD_CTX_MAGIC.len() + 4 || !bytes.starts_with(DCD_CTX_MAGIC) {
+        return Ok(None);
+    }
+    let len_off = DCD_CTX_MAGIC.len();
+    let ctx_len = u32::from_le_bytes(bytes[len_off..len_off + 4].try_into().unwrap()) as usize;
+    if ctx_len > MAX_DCD_RECORD_BYTES as usize {
+        return Err(err_mapper("DCD decoder context larger than the record cap"));
+    }
+    let ctx_start = len_off + 4;
+    let ctx_end = ctx_start
+        .checked_add(ctx_len)
+        .ok_or_else(|| err_mapper("DCD decoder context length overflow"))?;
+    if ctx_end > bytes.len() {
+        return Err(err_mapper("DCD decoder context truncated"));
+    }
+    let header = decode_decoder_context(&bytes[ctx_start..ctx_end])?;
+    Ok(Some((header, &bytes[ctx_end..])))
+}
+
+fn encode_decoder_context(header: &DcdHeader) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.push(1u8);
+    out.push(match header.byte_order {
+        ByteOrder::Le => 0,
+        ByteOrder::Be => 1,
+    });
+    out.push(match header.marker_size {
+        MarkerSize::Four => 4,
+        MarkerSize::Eight => 8,
+    });
+    out.extend_from_slice(&header.charmm_ver.to_le_bytes());
+    out.extend_from_slice(&header.nset.to_le_bytes());
+    out.extend_from_slice(&header.istart.to_le_bytes());
+    out.extend_from_slice(&header.nsavc.to_le_bytes());
+    out.extend_from_slice(&header.natoms.to_le_bytes());
+    out.extend_from_slice(&header.namnf.to_le_bytes());
+    out.push(u8::from(header.has_box));
+    out.push(u8::from(header.has_4d));
+    out.extend_from_slice(&header.delta.to_le_bytes());
+    let title = header.title.as_bytes();
+    out.extend_from_slice(&(title.len() as u32).to_le_bytes());
+    out.extend_from_slice(title);
+    match &header.free_atoms {
+        Some(indices) => {
+            out.extend_from_slice(&(indices.len() as u32).to_le_bytes());
+            for idx in indices {
+                out.extend_from_slice(&idx.to_le_bytes());
+            }
+        }
+        None => out.extend_from_slice(&0u32.to_le_bytes()),
+    }
+    match &header.fixed_seed {
+        Some((xs, ys, zs)) => {
+            out.push(1);
+            let n = header.natoms as usize;
+            for axis in [xs, ys, zs] {
+                for i in 0..n {
+                    let v = axis.get(i).copied().unwrap_or(0.0);
+                    out.extend_from_slice(&v.to_le_bytes());
+                }
+            }
+        }
+        None => out.push(0),
+    }
+    out.extend_from_slice(&header.data_offset.to_le_bytes());
+    out.extend_from_slice(&header.frame_size_first.to_le_bytes());
+    out.extend_from_slice(&header.frame_size_rest.to_le_bytes());
+    out
+}
+
+fn decode_decoder_context(bytes: &[u8]) -> std::io::Result<DcdHeader> {
+    let mut cur = Cursor::new(bytes);
+    let mut ver = [0u8; 1];
+    cur.read_exact(&mut ver)?;
+    if ver[0] != 1 {
+        return Err(err_mapper(format!(
+            "unsupported DCD decoder context version {}",
+            ver[0]
+        )));
+    }
+    let mut flags = [0u8; 2];
+    cur.read_exact(&mut flags)?;
+    let byte_order = match flags[0] {
+        0 => ByteOrder::Le,
+        1 => ByteOrder::Be,
+        _ => return Err(err_mapper("bad DCD context byte order")),
+    };
+    let marker_size = match flags[1] {
+        4 => MarkerSize::Four,
+        8 => MarkerSize::Eight,
+        _ => return Err(err_mapper("bad DCD context marker size")),
+    };
+    let mut i32b = [0u8; 4];
+    let mut u32b = [0u8; 4];
+    cur.read_exact(&mut i32b)?;
+    let charmm_ver = i32::from_le_bytes(i32b);
+    cur.read_exact(&mut u32b)?;
+    let nset = u32::from_le_bytes(u32b);
+    cur.read_exact(&mut i32b)?;
+    let istart = i32::from_le_bytes(i32b);
+    cur.read_exact(&mut i32b)?;
+    let nsavc = i32::from_le_bytes(i32b);
+    cur.read_exact(&mut u32b)?;
+    let natoms = u32::from_le_bytes(u32b);
+    cur.read_exact(&mut u32b)?;
+    let namnf = u32::from_le_bytes(u32b);
+    if namnf > natoms {
+        return Err(err_mapper(format!(
+            "DCD decoder context namnf {namnf} > natoms {natoms}"
+        )));
+    }
+    let mut hb = [0u8; 2];
+    cur.read_exact(&mut hb)?;
+    let mut dlt = [0u8; 8];
+    cur.read_exact(&mut dlt)?;
+    cur.read_exact(&mut u32b)?;
+    let title_len = u32::from_le_bytes(u32b) as usize;
+    let remaining = bytes.len().saturating_sub(cur.position() as usize);
+    if title_len > remaining || title_len > 1_048_576 {
+        return Err(err_mapper(format!(
+            "DCD decoder context title length {title_len} is not credible"
+        )));
+    }
+    let mut title = vec![0u8; title_len];
+    cur.read_exact(&mut title)?;
+    cur.read_exact(&mut u32b)?;
+    let nfree = u32::from_le_bytes(u32b) as usize;
+    if nfree > natoms as usize {
+        return Err(err_mapper(format!(
+            "DCD decoder context nfree {nfree} > natoms {natoms}"
+        )));
+    }
+    let remaining = bytes.len().saturating_sub(cur.position() as usize);
+    if nfree.saturating_mul(4) > remaining {
+        return Err(err_mapper("DCD decoder context free-atom list truncated"));
+    }
+    let free_atoms = if nfree == 0 {
+        None
+    } else {
+        let mut v = Vec::with_capacity(nfree);
+        for _ in 0..nfree {
+            cur.read_exact(&mut i32b)?;
+            v.push(i32::from_le_bytes(i32b));
+        }
+        Some(v)
+    };
+    let mut has_seed = [0u8; 1];
+    cur.read_exact(&mut has_seed)?;
+    let fixed_seed = if has_seed[0] == 1 {
+        let n = natoms as usize;
+        let need = n.saturating_mul(12);
+        let remaining = bytes.len().saturating_sub(cur.position() as usize);
+        if need > remaining {
+            return Err(err_mapper("DCD decoder context fixed-atom seed truncated"));
+        }
+        let mut read_axis = || -> std::io::Result<Vec<f32>> {
+            let mut axis = vec![0.0f32; n];
+            for slot in &mut axis {
+                let mut b = [0u8; 4];
+                cur.read_exact(&mut b)?;
+                *slot = f32::from_le_bytes(b);
+            }
+            Ok(axis)
+        };
+        Some((read_axis()?, read_axis()?, read_axis()?))
+    } else {
+        None
+    };
+    let mut u64b = [0u8; 8];
+    cur.read_exact(&mut u64b)?;
+    let data_offset = u64::from_le_bytes(u64b);
+    cur.read_exact(&mut u64b)?;
+    let frame_size_first = u64::from_le_bytes(u64b);
+    cur.read_exact(&mut u64b)?;
+    let frame_size_rest = u64::from_le_bytes(u64b);
+
+    Ok(DcdHeader {
+        byte_order,
+        marker_size,
+        charmm_ver,
+        nset,
+        istart,
+        nsavc,
+        natoms,
+        namnf,
+        has_box: hb[0] != 0,
+        has_4d: hb[1] != 0,
+        delta: f64::from_le_bytes(dlt),
+        title: String::from_utf8_lossy(&title).into_owned(),
+        free_atoms,
+        fixed_seed,
+        data_offset,
+        frame_size_first,
+        frame_size_rest,
+    })
+}
+
+/// Streaming frame indexer for DCD files.
+///
+/// After the header is known, frame sizes are constant: further `feed`
+/// calls only advance the byte counter and emit arithmetic entries. The
+/// whole file is never buffered.
+pub struct DcdIndexBuilder {
+    buf: Vec<u8>,
+    buf_start: u64,
+    bytes_seen: u64,
+    finished: bool,
+    total_hint: Option<u64>,
+    partial: Option<HeaderPartial>,
+    header: Option<DcdHeader>,
+    next_frame: usize,
+    pending: Vec<FrameIndexEntry>,
+    error: Option<std::io::Error>,
+}
+
+impl Default for DcdIndexBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl DcdIndexBuilder {
+    /// Create an empty indexer.
+    pub fn new() -> Self {
+        Self {
+            buf: Vec::new(),
+            buf_start: 0,
+            bytes_seen: 0,
+            finished: false,
+            total_hint: None,
+            partial: None,
+            header: None,
+            next_frame: 0,
+            pending: Vec::new(),
+            error: None,
+        }
+    }
+
+    /// Header after layout is resolved. `None` until the first marker (and
+    /// file size, when needed) have been seen.
+    pub fn header(&self) -> Option<&DcdHeader> {
+        self.header.as_ref()
+    }
+
+    fn fail(&mut self, err: std::io::Error) {
+        if self.error.is_none() {
+            self.error = Some(err);
+        }
+    }
+
+    fn append(&mut self, chunk: &[u8], global_offset: u64) {
+        if chunk.is_empty() {
+            self.bytes_seen = self.bytes_seen.max(global_offset);
+            return;
+        }
+        if self.header.is_some() && self.seed_ready() {
+            // Layout is arithmetic from here — keep bytes_seen monotonic
+            // even if a host re-feeds an overlapping window.
+            self.bytes_seen = self
+                .bytes_seen
+                .max(global_offset.saturating_add(chunk.len() as u64));
+            return;
+        }
+        if self.buf.is_empty() {
+            self.buf_start = global_offset;
+            self.buf.extend_from_slice(chunk);
+        } else {
+            let expected = self.buf_start + self.buf.len() as u64;
+            if global_offset == expected {
+                self.buf.extend_from_slice(chunk);
+            } else if global_offset < expected {
+                let skip = (expected - global_offset) as usize;
+                if skip < chunk.len() {
+                    self.buf.extend_from_slice(&chunk[skip..]);
+                }
+            } else {
+                self.buf.clear();
+                self.buf_start = global_offset;
+                self.buf.extend_from_slice(chunk);
+            }
+        }
+        self.bytes_seen = global_offset.saturating_add(chunk.len() as u64);
+    }
+
+    fn seed_ready(&self) -> bool {
+        match &self.header {
+            None => false,
+            Some(h) => h.namnf == 0 || h.fixed_seed.is_some(),
+        }
+    }
+
+    fn try_progress(&mut self) {
+        if self.error.is_some() {
+            return;
+        }
+        if self.header.is_none() {
+            if self.partial.is_none() {
+                match try_parse_header_records(&self.buf) {
+                    Ok(Some(partial)) => {
+                        let drop = partial.data_offset.saturating_sub(self.buf_start) as usize;
+                        if drop > 0 && drop <= self.buf.len() {
+                            self.buf.drain(..drop);
+                            self.buf_start += drop as u64;
+                        }
+                        self.partial = Some(partial);
+                    }
+                    Ok(None) => return,
+                    Err(err) => {
+                        self.fail(err);
+                        return;
+                    }
+                }
+            }
+            if let Some(partial) = self.partial.clone() {
+                match self.resolve_layout(&partial) {
+                    Ok(Some(layout)) => {
+                        self.header = Some(partial.into_header(layout));
+                        self.partial = None;
+                    }
+                    Ok(None) => return,
+                    Err(err) => {
+                        self.fail(err);
+                        return;
+                    }
+                }
+            }
+        }
+        self.capture_fixed_seed();
+        self.emit_complete_frames();
+        if self.seed_ready() {
+            self.buf.clear();
+        }
+    }
+
+    fn resolve_layout(&self, partial: &HeaderPartial) -> std::io::Result<Option<FrameLayout>> {
+        let m = partial.marker_size.bytes() as usize;
+        if self.buf.len() < m {
+            return Ok(None);
+        }
+        let mut cursor = Cursor::new(&self.buf);
+        let first_marker = read_marker(&mut cursor, partial.byte_order, partial.marker_size)?;
+
+        let known_total = self.total_hint.or(if self.finished {
+            Some(self.bytes_seen)
+        } else {
+            None
+        });
+        if let Some(total) = known_total {
+            let trailing = total.saturating_sub(partial.data_offset);
+            return resolve_frame_layout(partial, first_marker, trailing).map(Some);
+        }
+
+        // Incremental: a boxed file (first marker 48, natoms ≠ 12) can
+        // resolve has_4d by peeking the record after three coordinate axes.
+        let coord_marker_full = u64::from(partial.natoms) * 4;
+        if first_marker == 48 && partial.natoms != 12 {
+            let rec = 2 * partial.marker_size.bytes() + coord_marker_full;
+            let box_rec = 2 * partial.marker_size.bytes() + 48;
+            let three = box_rec + 3 * rec;
+            if self.bytes_seen < partial.data_offset + three + partial.marker_size.bytes() {
+                return Ok(None);
+            }
+            let peek_at = three as usize;
+            if self.buf.len() < peek_at + m {
+                return Ok(None);
+            }
+            let mut peek = Cursor::new(&self.buf[peek_at..]);
+            let next = read_marker(&mut peek, partial.byte_order, partial.marker_size)?;
+            let has_4d = next == coord_marker_full;
+            let n_recs = if has_4d { 4 } else { 3 };
+            let f_first = box_rec + rec * n_recs;
+            let rec_eff =
+                2 * partial.marker_size.bytes() + u64::from(partial.natoms - partial.namnf) * 4;
+            let f_rest = box_rec + rec_eff * n_recs;
+            return Ok(Some(FrameLayout {
+                has_box: true,
+                has_4d,
+                frame_size_first: f_first,
+                frame_size_rest: f_rest,
+                nset: 0,
+            }));
+        }
+        Ok(None)
+    }
+
+    fn capture_fixed_seed(&mut self) {
+        let Some(header) = self.header.as_mut() else {
+            return;
+        };
+        if header.namnf == 0 || header.fixed_seed.is_some() {
+            return;
+        }
+        let need = header.frame_size_first as usize;
+        if need == 0 || self.buf.len() < need {
+            return;
+        }
+        let mut cursor = Cursor::new(&self.buf[..need]);
+        if let Ok((xs, ys, zs, _)) = read_coord_payload(&mut cursor, header, 0) {
+            header.fixed_seed = Some((xs, ys, zs));
+        }
+    }
+
+    fn emit_complete_frames(&mut self) {
+        let Some(header) = self.header.as_ref() else {
+            return;
+        };
+        if header.frame_size_first == 0 {
+            return;
+        }
+        loop {
+            let start = header.frame_offset(self.next_frame);
+            let size = if self.next_frame == 0 {
+                header.frame_size_first
+            } else {
+                header.frame_size_rest
+            };
+            if size == 0 || size > u64::from(u32::MAX) {
+                break;
+            }
+            let end = start.saturating_add(size);
+            if self.bytes_seen < end {
+                break;
+            }
+            self.pending.push(FrameIndexEntry {
+                byte_offset: start,
+                byte_len: size as u32,
+            });
+            self.next_frame += 1;
+        }
+    }
+}
+
+impl FrameIndexBuilder for DcdIndexBuilder {
+    fn feed(&mut self, chunk: &[u8], global_offset: u64) {
+        if self.finished {
+            panic!("DcdIndexBuilder::feed called after finish");
+        }
+        self.append(chunk, global_offset);
+        self.try_progress();
+    }
+
+    fn drain(&mut self) -> Vec<FrameIndexEntry> {
+        std::mem::take(&mut self.pending)
+    }
+
+    fn finish(mut self: Box<Self>) -> std::io::Result<Vec<FrameIndexEntry>> {
+        self.finished = true;
+        self.try_progress();
+        if let Some(err) = self.error.take() {
+            return Err(err);
+        }
+        if self.header.is_none() && !self.buf.is_empty() {
+            return Err(err_mapper("truncated DCD header"));
+        }
+        Ok(std::mem::take(&mut self.pending))
+    }
+
+    fn bytes_seen(&self) -> u64 {
+        self.bytes_seen
+    }
+
+    fn hint_total_bytes(&mut self, total: u64) {
+        self.total_hint = Some(total);
+        self.try_progress();
+    }
+
+    fn decoder_context(&self) -> Option<Vec<u8>> {
+        // Fixed-atom later frames need the frame-0 seed. Handing the
+        // header out before that seed is captured would decode as if
+        // every atom were free.
+        if !self.seed_ready() {
+            return None;
+        }
+        self.header.as_ref().map(encode_decoder_context)
+    }
+}
+
+// ============================================================================
 // Convenience functions
 // ============================================================================
 
@@ -1347,5 +2114,159 @@ mod tests {
         assert!((al - 70.0).abs() < 1e-7);
         assert!((be - 80.0).abs() < 1e-7);
         assert!((ga - 95.0).abs() < 1e-7);
+    }
+
+    fn two_atom_frame(x0: f64, with_box: bool) -> Frame {
+        let mut atoms = Block::new();
+        atoms
+            .insert("id", Array1::from(vec![1u32, 2]).into_dyn())
+            .unwrap();
+        atoms
+            .insert("x", Array1::from(vec![x0, x0 + 1.0]).into_dyn())
+            .unwrap();
+        atoms
+            .insert("y", Array1::from(vec![0.0, 0.0]).into_dyn())
+            .unwrap();
+        atoms
+            .insert("z", Array1::from(vec![0.0, 0.0]).into_dyn())
+            .unwrap();
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms);
+        if with_box {
+            let h = array![[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]];
+            let origin = array![0.0, 0.0, 0.0];
+            frame.simbox = Some(SimBox::new(h, origin, [true; 3]).unwrap());
+        }
+        frame
+    }
+
+    fn write_dcd_mem(frames: &[Frame]) -> Vec<u8> {
+        let mut cursor = Cursor::new(Vec::new());
+        {
+            let mut writer = DcdWriter::new(&mut cursor);
+            for frame in frames {
+                FrameWriter::write(&mut writer, frame).expect("write dcd frame");
+            }
+        }
+        cursor.into_inner()
+    }
+
+    fn dcd_index_chunked(bytes: &[u8], chunk: usize) -> Vec<FrameIndexEntry> {
+        let mut builder = Box::new(DcdIndexBuilder::new());
+        builder.hint_total_bytes(bytes.len() as u64);
+        let mut offset = 0u64;
+        let mut out = Vec::new();
+        for piece in bytes.chunks(chunk.max(1)) {
+            builder.feed(piece, offset);
+            offset += piece.len() as u64;
+            out.extend(builder.drain());
+        }
+        out.extend(builder.finish().expect("finish dcd index"));
+        out
+    }
+
+    #[test]
+    fn dcd_streaming_boxed_single_shot_matches_chunks() {
+        let frames = [two_atom_frame(0.0, true), two_atom_frame(0.5, true)];
+        let bytes = write_dcd_mem(&frames);
+        let one_shot = dcd_index_chunked(&bytes, bytes.len());
+        assert_eq!(one_shot.len(), 2, "expected 2 DCD frames");
+        for cs in [1usize, 7, 17, 64, 256] {
+            assert_eq!(
+                dcd_index_chunked(&bytes, cs),
+                one_shot,
+                "chunk size {cs} produced a different index"
+            );
+        }
+        for (i, entry) in one_shot.iter().enumerate() {
+            let lo = entry.byte_offset as usize;
+            let hi = lo + entry.byte_len as usize;
+            let parsed = parse_frame_bytes(&bytes[lo..hi]).expect("parse dcd frame");
+            let x = parsed.get("atoms").unwrap().get_float("x").unwrap();
+            assert!(
+                (x[0] - frames[i].get("atoms").unwrap().get_float("x").unwrap()[0]).abs() < 1e-5
+            );
+        }
+    }
+
+    #[test]
+    fn dcd_streaming_nopbc_indexes_at_finish() {
+        let frames = [two_atom_frame(1.0, false), two_atom_frame(2.0, false)];
+        let bytes = write_dcd_mem(&frames);
+        let entries = dcd_index_chunked(&bytes, 13);
+        assert_eq!(entries.len(), 2);
+        let f0 = parse_frame_bytes(
+            &bytes[entries[0].byte_offset as usize
+                ..entries[0].byte_offset as usize + entries[0].byte_len as usize],
+        )
+        .expect("parse nopbc frame 0");
+        assert!(f0.simbox.is_none());
+        assert_eq!(f0.get("atoms").unwrap().nrows().unwrap(), 2);
+    }
+
+    #[test]
+    fn dcd_streaming_boxed_emits_first_frame_before_eof() {
+        let frames = [two_atom_frame(0.0, true), two_atom_frame(1.0, true)];
+        let bytes = write_dcd_mem(&frames);
+        let mut builder = DcdIndexBuilder::new();
+        // No total hint: boxed layout resolves after the first frame + next marker.
+        builder.feed(&bytes, 0);
+        let early = builder.drain();
+        assert!(
+            !early.is_empty(),
+            "boxed DCD should emit frame 0 before finish"
+        );
+        assert!(early[0].byte_offset > 0, "frame 0 starts after the header");
+        let rest = Box::new(builder).finish().expect("finish");
+        assert_eq!(early.len() + rest.len(), 2);
+    }
+
+    #[test]
+    fn dcd_decoder_context_round_trips_header() {
+        let bytes = write_dcd_mem(&[two_atom_frame(0.0, true)]);
+        let mut builder = Box::new(DcdIndexBuilder::new());
+        builder.hint_total_bytes(bytes.len() as u64);
+        builder.feed(&bytes, 0);
+        let ctx = builder.decoder_context().expect("decoder context");
+        let entries = builder.finish().expect("finish");
+        assert_eq!(entries.len(), 1);
+        let mut wrapped = Vec::from(DCD_CTX_MAGIC.as_slice());
+        wrapped.extend_from_slice(&(ctx.len() as u32).to_le_bytes());
+        wrapped.extend_from_slice(&ctx);
+        let lo = entries[0].byte_offset as usize;
+        let hi = lo + entries[0].byte_len as usize;
+        wrapped.extend_from_slice(&bytes[lo..hi]);
+        let parsed = parse_frame_bytes(&wrapped).expect("parse with context");
+        assert_eq!(parsed.get("atoms").unwrap().nrows().unwrap(), 2);
+
+        let no_copy = parse_frame_with_decoder_context(&ctx, &bytes[lo..hi])
+            .expect("parse with context, no wrap");
+        assert_eq!(no_copy.get("atoms").unwrap().nrows().unwrap(), 2);
+    }
+
+    #[test]
+    fn dcd_decoder_context_rejects_huge_title() {
+        let mut bad = vec![1u8, 0, 4]; // ver, le, marker 4
+        bad.extend_from_slice(&24i32.to_le_bytes()); // charmm
+        bad.extend_from_slice(&1u32.to_le_bytes()); // nset
+        bad.extend_from_slice(&0i32.to_le_bytes()); // istart
+        bad.extend_from_slice(&1i32.to_le_bytes()); // nsavc
+        bad.extend_from_slice(&2u32.to_le_bytes()); // natoms
+        bad.extend_from_slice(&0u32.to_le_bytes()); // namnf
+        bad.extend_from_slice(&[0u8, 0]); // has_box, has_4d
+        bad.extend_from_slice(&1.0f64.to_le_bytes());
+        bad.extend_from_slice(&2_000_000u32.to_le_bytes()); // title_len
+        assert!(decode_decoder_context(&bad).is_err());
+    }
+
+    #[test]
+    fn dcd_read_record_rejects_huge_marker() {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&(MAX_DCD_RECORD_BYTES as u32 + 1).to_le_bytes());
+        buf.extend_from_slice(&[0u8; 8]);
+        let mut cur = Cursor::new(buf);
+        let err = read_record(&mut cur, ByteOrder::Le, MarkerSize::Four).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("exceeds cap"));
     }
 }

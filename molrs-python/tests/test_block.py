@@ -169,6 +169,32 @@ class TestBlockOperations:
         with pytest.raises(KeyError):
             b.dtype("missing")
 
+    def test_has_f64_not_f32(self):
+        b = molrs.Block()
+        b.insert("x", np.array([1.0], dtype=np.float64))
+        b.insert("id", np.array([1], dtype=np.uint32))
+        assert b.has_f64("x")
+        assert not b.has_f32("x")
+        assert not b.has_f64("id")
+        assert not b.has_f64("missing")
+        np.testing.assert_array_equal(b.get_f64("x"), np.array([1.0]))
+        with pytest.raises(TypeError, match="must be f64"):
+            b.get_f64("id")
+        with pytest.raises(KeyError, match="f64"):
+            b.get_f64("missing")
+        np.testing.assert_array_equal(
+            b.get_f32("missing", np.array([9.0], dtype=np.float32)),
+            np.array([9.0], dtype=np.float32),
+        )
+
+    def test_frame_has_f64(self):
+        f = molrs.Frame()
+        f["atoms"] = molrs.Block()
+        f["atoms"]["x"] = np.array([1.0, 2.0], dtype=np.float64)
+        assert f.has_f64("atoms", "x")
+        assert not f.has_f32("atoms", "x")
+        np.testing.assert_array_equal(f.get_f64("atoms", "x"), [1.0, 2.0])
+
     def test_repr(self):
         b = Block()
         b.insert("x", np.array([1.0, 2.0], dtype=np.float64))

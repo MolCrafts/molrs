@@ -370,6 +370,7 @@ impl FrameIndexBuilder for SdfIndexBuilder {
     }
 
     fn finish(mut self: Box<Self>) -> std::io::Result<Vec<FrameIndexEntry>> {
+        self.lines.check_line_budget()?;
         let next_record_start = &mut self.next_record_start;
         let pending_entries = &mut self.pending_entries;
         self.lines.finish(|line, line_offset, line_len| {

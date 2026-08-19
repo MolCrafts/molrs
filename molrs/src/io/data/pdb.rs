@@ -1030,6 +1030,7 @@ impl FrameIndexBuilder for PdbIndexBuilder {
     }
 
     fn finish(mut self: Box<Self>) -> std::io::Result<Vec<FrameIndexEntry>> {
+        self.lines.check_line_budget()?;
         let mode = &mut self.mode;
         let pending_frame_start = &mut self.pending_frame_start;
         let pending_entries = &mut self.pending_entries;

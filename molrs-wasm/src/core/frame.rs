@@ -29,11 +29,14 @@
 //! bonds.setColU("bond_number", bondNumbers); // localized 1/2/3
 //! ```
 
+use js_sys::{Array as JsArray, Float32Array, Int32Array, Uint32Array};
 use wasm_bindgen::prelude::*;
 
 use molrs::store::block::Block as RsBlock;
 use molrs::store::meta::MetaValue;
 use molrs_ffi::{BlockRef, FrameRef};
+
+use super::types::JsFloatArray;
 
 use super::block::Block;
 use super::js_err;
@@ -156,6 +159,91 @@ impl Frame {
         Some(Block {
             inner: BlockRef::new(self.inner.store.clone(), handle),
         })
+    }
+
+    /// True when `block[key]` exists and is `f32`.
+    #[wasm_bindgen(js_name = hasF32)]
+    pub fn has_f32(&self, block: &str, key: &str) -> bool {
+        self.get_block(block).is_some_and(|b| b.has_f32(key))
+    }
+
+    /// True when `block[key]` exists and is `f64`.
+    #[wasm_bindgen(js_name = hasF64)]
+    pub fn has_f64(&self, block: &str, key: &str) -> bool {
+        self.get_block(block).is_some_and(|b| b.has_f64(key))
+    }
+
+    /// True when `block[key]` exists and is `i32`.
+    #[wasm_bindgen(js_name = hasI32)]
+    pub fn has_i32(&self, block: &str, key: &str) -> bool {
+        self.get_block(block).is_some_and(|b| b.has_i32(key))
+    }
+
+    /// True when `block[key]` exists and is `u32`.
+    #[wasm_bindgen(js_name = hasU32)]
+    pub fn has_u32(&self, block: &str, key: &str) -> bool {
+        self.get_block(block).is_some_and(|b| b.has_u32(key))
+    }
+
+    /// True when `block[key]` exists and is a string column.
+    #[wasm_bindgen(js_name = hasStr)]
+    pub fn has_str(&self, block: &str, key: &str) -> bool {
+        self.get_block(block).is_some_and(|b| b.has_str(key))
+    }
+
+    /// Owned `f32` column from `block`. Missing with no `default` throws.
+    #[wasm_bindgen(js_name = getF32)]
+    pub fn get_f32(
+        &self,
+        block: &str,
+        key: &str,
+        default: Option<Float32Array>,
+    ) -> Result<Float32Array, JsValue> {
+        frame_block(self, block)?.get_f32(key, default)
+    }
+
+    /// Owned `f64` column from `block`. Missing with no `default` throws.
+    #[wasm_bindgen(js_name = getF64)]
+    pub fn get_f64(
+        &self,
+        block: &str,
+        key: &str,
+        default: Option<JsFloatArray>,
+    ) -> Result<JsFloatArray, JsValue> {
+        frame_block(self, block)?.get_f64(key, default)
+    }
+
+    /// Owned i32 column from `block`. Missing with no `default` throws.
+    #[wasm_bindgen(js_name = getI32)]
+    pub fn get_i32(
+        &self,
+        block: &str,
+        key: &str,
+        default: Option<Int32Array>,
+    ) -> Result<Int32Array, JsValue> {
+        frame_block(self, block)?.get_i32(key, default)
+    }
+
+    /// Owned u32 column from `block`. Missing with no `default` throws.
+    #[wasm_bindgen(js_name = getU32)]
+    pub fn get_u32(
+        &self,
+        block: &str,
+        key: &str,
+        default: Option<Uint32Array>,
+    ) -> Result<Uint32Array, JsValue> {
+        frame_block(self, block)?.get_u32(key, default)
+    }
+
+    /// Owned string column from `block`. Missing with no `default` throws.
+    #[wasm_bindgen(js_name = getStr)]
+    pub fn get_str(
+        &self,
+        block: &str,
+        key: &str,
+        default: Option<JsArray>,
+    ) -> Result<JsArray, JsValue> {
+        frame_block(self, block)?.get_str(key, default)
     }
 
     /// Insert a block by deep-copying its data into this frame's store.
@@ -541,6 +629,12 @@ impl Frame {
             .frame_drop(self.inner.id)
             .map_err(js_err)
     }
+}
+
+fn frame_block(frame: &Frame, block: &str) -> Result<Block, JsValue> {
+    frame
+        .get_block(block)
+        .ok_or_else(|| JsValue::from_str(&format!("block '{block}' not found")))
 }
 
 impl Default for Frame {

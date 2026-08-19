@@ -141,6 +141,47 @@ class Block(_RsBlock, MutableMapping[str, np.ndarray]):
     def dtype(self, key: str) -> str:  # type: ignore[override]
         return _RsBlock.dtype(self._backing(), key)
 
+    def has_f32(self, key: object) -> bool:
+        return _RsBlock.has_f32(self._backing(), _column_name(key))
+
+    def has_f64(self, key: object) -> bool:
+        return _RsBlock.has_f64(self._backing(), _column_name(key))
+
+    def has_int(self, key: object) -> bool:
+        return _RsBlock.has_int(self._backing(), _column_name(key))
+
+    def has_uint(self, key: object) -> bool:
+        return _RsBlock.has_uint(self._backing(), _column_name(key))
+
+    def has_string(self, key: object) -> bool:
+        return _RsBlock.has_string(self._backing(), _column_name(key))
+
+    def get_f32(self, key: object, default: Any = None) -> Any:
+        name = _column_name(key)
+        backing = self._backing()
+        if _RsBlock.has_f32(backing, name):
+            return _RsBlock.view(backing, name)
+        if name in self:
+            raise TypeError(
+                f"column {name!r} must be f32, got {backing.dtype(name)!r}"
+            )
+        if default is not None:
+            return default
+        raise KeyError(f"column '{name}' (f32) is required")
+
+    def get_f64(self, key: object, default: Any = None) -> Any:
+        name = _column_name(key)
+        backing = self._backing()
+        if _RsBlock.has_f64(backing, name):
+            return _RsBlock.view(backing, name)
+        if name in self:
+            raise TypeError(
+                f"column {name!r} must be f64, got {backing.dtype(name)!r}"
+            )
+        if default is not None:
+            return default
+        raise KeyError(f"column '{name}' (f64) is required")
+
     # --- core mapping API ---------------------------------------------------
 
     @overload
@@ -448,6 +489,26 @@ class Frame(_RsFrame):
 
     def __contains__(self, key: str) -> bool:  # type: ignore[override]
         return _RsFrame.__contains__(self, key)
+
+    def has_f32(self, block: str, key: object) -> bool:
+        return block in self and self[block].has_f32(key)
+
+    def has_f64(self, block: str, key: object) -> bool:
+        return block in self and self[block].has_f64(key)
+
+    def get_f32(self, block: str, key: object, default: Any = None) -> Any:
+        if block not in self:
+            if default is not None:
+                return default
+            raise KeyError(f"block '{block}' not found")
+        return self[block].get_f32(key, default)
+
+    def get_f64(self, block: str, key: object, default: Any = None) -> Any:
+        if block not in self:
+            if default is not None:
+                return default
+            raise KeyError(f"block '{block}' not found")
+        return self[block].get_f64(key, default)
 
     def __len__(self) -> int:  # type: ignore[override]
         return _RsFrame.__len__(self)
