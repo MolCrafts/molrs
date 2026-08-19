@@ -30,6 +30,13 @@ from ._lib import MetaValue
 type BlockLike = Mapping[str, ArrayLike]
 
 
+def _column_name(key: object) -> str:
+    """Canonical column name from a ``str`` or any Key-like object."""
+    if isinstance(key, str):
+        return key
+    return str(key)
+
+
 def _is_array_like(value: Any) -> bool:
     """True when ``value`` is a real 1-D-representable array (not a scalar).
 
