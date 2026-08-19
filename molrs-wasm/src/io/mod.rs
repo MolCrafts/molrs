@@ -5,8 +5,8 @@
 //!
 //! | Module | JS class / function | Formats |
 //! |--------|-------------------|---------|
-//! | [`reader`] | `XYZReader`, `PDBReader`, `CIFReader`, `LAMMPSReader`, `LAMMPSTrajReader`, `SDFReader`, `CubeReader`, `CHGCARReader`, `GROReader`, `MOL2Reader`, `POSCARReader`, `DCDReader`, `TRRReader`, `XTCReader` | Read XYZ/ExtXYZ, PDB, CIF, LAMMPS data/dump, SDF, Cube, CHGCAR, GRO, MOL2, POSCAR, DCD, TRR, XTC (GRO/TRR/XTC convert nm→Å on read) |
-//! | [`streaming`] | `WasmLammpsDumpStream`, `WasmXyzStream`, `WasmPdbStream`, `WasmLammpsDataStream`, `WasmSdfStream` | Streaming readers driven by a chunk-fed `FrameIndexBuilder` |
+//! | [`reader`] | `XYZReader`, `PDBReader`, `CIFReader`, `LAMMPSReader`, `LAMMPSTrajReader`, `SDFReader`, `CubeReader`, `CHGCARReader`, `GROReader`, `MOL2Reader`, `POSCARReader`, `XSFReader`, `AmberInpcrdReader`, `AcReader`, `DCDReader`, `TRRReader`, `XTCReader` | Read XYZ/ExtXYZ, PDB, CIF, LAMMPS data/dump, SDF, Cube, CHGCAR, GRO, MOL2, POSCAR, XSF, AMBER inpcrd, AC, DCD, TRR, XTC |
+//! | [`streaming`] | `WasmLammpsDumpStream`, `WasmXyzStream`, `WasmPdbStream`, `WasmLammpsDataStream`, `WasmSdfStream`, `WasmDcdStream`, `WasmXtcStream`, `WasmTrrStream` | Streaming readers driven by a chunk-fed `FrameIndexBuilder` |
 //! | [`writer`] | `writeFrame(frame, format)` | Write XYZ, PDB, LAMMPS dump |
 //! | [`zarr`] | `RecordReader` | Read frame-sequence Zarr V3 archives |
 //!

@@ -20,6 +20,7 @@
 //! | `"gro"` | text | GROMACS GRO (Å → nm on write) |
 //! | `"mol2"` | text | Tripos MOL2 |
 //! | `"poscar"` | text | VASP POSCAR (needs a `box`) |
+//! | `"xsf"` | text | XCrySDen XSF |
 //! | `"lammps-data"` / `"lammps"` | text | LAMMPS data file |
 //! | `"lammps-dump"` / `"lammpstrj"` | text | LAMMPS dump |
 //! | `"dcd"` | binary | DCD trajectory |
@@ -37,6 +38,7 @@ use molrs::io::data::lammps_data::LAMMPSDataWriter;
 use molrs::io::data::mol2::write_mol2_frame;
 use molrs::io::data::pdb::PDBWriter;
 use molrs::io::data::poscar::write_poscar_to_writer;
+use molrs::io::data::xsf::write_xsf_frame;
 use molrs::io::data::xyz::XYZFrameWriter;
 use molrs::io::trajectory::dcd::DcdWriter;
 use molrs::io::trajectory::lammps_dump::LAMMPSDumpWriter;
@@ -130,6 +132,10 @@ pub fn write_frame_export(frame: &Frame, format: &str) -> Result<String, JsValue
             "poscar" => {
                 write_poscar_to_writer(&mut buf, rs_frame)
                     .map_err(|e| JsValue::from_str(&format!("POSCAR writing error: {}", e)))?;
+            }
+            "xsf" => {
+                write_xsf_frame(&mut buf, rs_frame)
+                    .map_err(|e| JsValue::from_str(&format!("XSF writing error: {}", e)))?;
             }
             _ => {
                 return Err(JsValue::from_str(&format!(

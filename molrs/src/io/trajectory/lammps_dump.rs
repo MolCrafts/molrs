@@ -1155,6 +1155,7 @@ impl FrameIndexBuilder for LammpsDumpIndexBuilder {
     }
 
     fn finish(mut self: Box<Self>) -> std::io::Result<Vec<FrameIndexEntry>> {
+        self.lines.check_line_budget()?;
         let pending_frame_start = &mut self.pending_frame_start;
         let pending_entries = &mut self.pending_entries;
         self.lines.finish(|line, line_offset, _len| {

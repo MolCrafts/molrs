@@ -485,6 +485,31 @@ impl PyBlock {
         })?
     }
 
+    /// True when ``key`` exists and is ``f32``.
+    fn has_f32(&self, key: &str) -> PyResult<bool> {
+        self.with_block(|b| b.has_f32(key))
+    }
+
+    /// True when ``key`` exists and is ``f64``.
+    fn has_f64(&self, key: &str) -> PyResult<bool> {
+        self.with_block(|b| b.has_f64(key))
+    }
+
+    /// True when ``key`` exists and is a signed-int column.
+    fn has_int(&self, key: &str) -> PyResult<bool> {
+        self.with_block(|b| b.has_int(key))
+    }
+
+    /// True when ``key`` exists and is an unsigned-int column.
+    fn has_uint(&self, key: &str) -> PyResult<bool> {
+        self.with_block(|b| b.has_uint(key))
+    }
+
+    /// True when ``key`` exists and is a string column.
+    fn has_string(&self, key: &str) -> PyResult<bool> {
+        self.with_block(|b| b.has_string(key))
+    }
+
     fn __repr__(&self) -> PyResult<String> {
         self.with_block(|b| {
             let keys: Vec<&str> = b.keys().collect();

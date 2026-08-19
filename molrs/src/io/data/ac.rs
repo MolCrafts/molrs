@@ -91,6 +91,9 @@ pub fn parse_ac(text: &str) -> Result<Frame> {
             .map_err(invalid_data)?
             .into_dyn();
         atoms.insert("xyz", arr).map_err(invalid_data)?;
+        insert_float(&mut atoms, "x", xyz.iter().map(|r| r[0]).collect())?;
+        insert_float(&mut atoms, "y", xyz.iter().map(|r| r[1]).collect())?;
+        insert_float(&mut atoms, "z", xyz.iter().map(|r| r[2]).collect())?;
         if elements.iter().any(|e| !e.is_empty()) {
             insert_str(&mut atoms, "element", elements)?;
         }

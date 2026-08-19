@@ -437,6 +437,36 @@ impl Block {
         self.get(key).and_then(|c| c.as_string())
     }
 
+    /// `key` exists and this build stores floats as `f32`.
+    #[inline]
+    pub fn has_f32(&self, key: &str) -> bool {
+        self.get_float(key).is_some() && std::mem::size_of::<crate::types::F>() == 4
+    }
+
+    /// `key` exists and this build stores floats as `f64`.
+    #[inline]
+    pub fn has_f64(&self, key: &str) -> bool {
+        self.get_float(key).is_some() && std::mem::size_of::<crate::types::F>() == 8
+    }
+
+    /// `key` exists and is a signed-int column.
+    #[inline]
+    pub fn has_int(&self, key: &str) -> bool {
+        self.get_int(key).is_some()
+    }
+
+    /// `key` exists and is an unsigned-int column.
+    #[inline]
+    pub fn has_uint(&self, key: &str) -> bool {
+        self.get_uint(key).is_some()
+    }
+
+    /// `key` exists and is a string column.
+    #[inline]
+    pub fn has_string(&self, key: &str) -> bool {
+        self.get_string(key).is_some()
+    }
+
     /// Gets a mutable reference to a String array for `key` if present and of correct type.
     pub fn get_string_mut(&mut self, key: &str) -> Option<&mut ArrayD<String>> {
         self.get_mut(key).and_then(|c| c.as_string_mut())
@@ -1111,6 +1141,36 @@ mod tests {
 
         // Try to rename to existing column name
         assert!(block.rename_column("position_x", "y").is_err());
+    }
+
+    #[test]
+    fn test_has_typed_columns() {
+        let mut block = Block::new();
+        block
+            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0 as F]).into_dyn())
+            .unwrap();
+        block
+            .insert("id", Array1::from_vec(vec![1 as U, 2]).into_dyn())
+            .unwrap();
+        block
+            .insert("res_seq", Array1::from_vec(vec![1 as I, 2]).into_dyn())
+            .unwrap();
+        block
+            .insert(
+                "name",
+                Array1::from_vec(vec!["CA".to_string(), "N".to_string()]).into_dyn(),
+            )
+            .unwrap();
+
+        assert!(block.has_f64("x"));
+        assert!(!block.has_f32("x"));
+        assert!(block.has_uint("id"));
+        assert!(block.has_int("res_seq"));
+        assert!(block.has_string("name"));
+        assert!(!block.has_uint("res_seq"));
+        assert!(!block.has_int("id"));
+        assert!(!block.has_f64("missing"));
+        assert!(!block.has_string("x"));
     }
 
     #[test]

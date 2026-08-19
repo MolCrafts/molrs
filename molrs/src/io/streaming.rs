@@ -6,10 +6,10 @@
 //! state machine that emits a [`FrameIndexEntry`] per parsed frame.
 //!
 //! Per-format implementations live in their own modules
-//! (`lammps_dump`, `xyz`, `pdb`, `lammps_data`, `sdf`); each format also
-//! exposes a `parse_frame_bytes(&[u8]) -> std::io::Result<Frame>` free
-//! function that decodes exactly the byte slice produced by the matching
-//! indexer.
+//! (`lammps_dump`, `xyz`, `pdb`, `lammps_data`, `sdf`, `dcd`, `xtc`,
+//! `trr`); each format also exposes a
+//! `parse_frame_bytes(&[u8]) -> std::io::Result<Frame>` free function
+//! that decodes exactly the byte slice produced by the matching indexer.
 //!
 //! See `docs/specs/streaming-trajectory.md` (in the molvis repo) for the
 //! full design.
@@ -81,11 +81,31 @@ pub trait FrameIndexBuilder: Send {
     /// How many bytes have been consumed so far. Used by the worker to
     /// drive `index-progress` reports.
     fn bytes_seen(&self) -> u64;
+
+    /// Optional known source length. Binary formats whose per-frame
+    /// layout is ambiguous without the file size (DCD `has_4d` without a
+    /// box) use this to resolve the layout before EOF.
+    ///
+    /// Default: ignore. Text indexers never need it.
+    fn hint_total_bytes(&mut self, _total: u64) {}
+
+    /// Opaque decoder state the matching `parse_frame_bytes` needs in
+    /// addition to one frame's byte range (DCD header + optional fixed-atom
+    /// seed). `None` for self-describing frames (dump, XYZ, XTC, TRR).
+    fn decoder_context(&self) -> Option<Vec<u8>> {
+        None
+    }
 }
 
 // ============================================================================
 // Shared chunk-boundary helpers
 // ============================================================================
+
+/// Hard cap on one text line (including the unfinished carry). A
+/// several-hundred-gigabyte file with no newline must not grow this
+/// buffer until the process is killed — that is the original freeze
+/// mode. Real dump / XYZ / PDB / SDF lines are tens of bytes.
+pub(crate) const MAX_LINE_BYTES: usize = 16 * 1024 * 1024;
 
 /// Scratch state for "line-oriented" indexers. Every text format on the
 /// streaming path is line-driven, so we factor the chunk-boundary logic
@@ -118,6 +138,9 @@ pub(crate) struct LineAccumulator {
     bytes_seen: u64,
     /// Whether `finish` has been called.
     finished: bool,
+    /// A line (or carry) exceeded [`MAX_LINE_BYTES`]. Further `feed`
+    /// calls are ignored; [`LineAccumulator::check_line_budget`] errors.
+    overflowed: bool,
 }
 
 impl LineAccumulator {
@@ -130,6 +153,53 @@ impl LineAccumulator {
         self.bytes_seen
     }
 
+    /// `true` after a line longer than [`MAX_LINE_BYTES`] was refused.
+    #[cfg(test)]
+    pub fn overflowed(&self) -> bool {
+        self.overflowed
+    }
+
+    /// Error if a line exceeded the streaming budget.
+    pub fn check_line_budget(&self) -> std::io::Result<()> {
+        if self.overflowed {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "text trajectory line exceeds {MAX_LINE_BYTES} bytes — refuse to buffer it"
+                ),
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
+    fn refuse_long_line(&mut self) {
+        self.overflowed = true;
+        self.carry.clear();
+    }
+
+    fn emit_line<F: FnMut(&str, u64, u32)>(
+        &mut self,
+        raw: &[u8],
+        line_offset: u64,
+        total_len: u32,
+        f: &mut F,
+    ) {
+        if total_len as usize > MAX_LINE_BYTES {
+            self.refuse_long_line();
+            return;
+        }
+        // Lossy: one bad byte must not drop the whole line (the previous
+        // `from_utf8(...).unwrap_or("")` did, which hid atom rows).
+        match std::str::from_utf8(raw) {
+            Ok(s) => f(s, line_offset, total_len),
+            Err(_) => {
+                let owned = String::from_utf8_lossy(raw);
+                f(&owned, line_offset, total_len);
+            }
+        }
+    }
+
     /// Push the next chunk. Each complete line is delivered via `f` as
     /// `f(line_text_without_trailing_newline, line_offset, line_byte_len)`.
     /// `line_byte_len` includes the trailing `\n` or `\r\n`.
@@ -139,6 +209,9 @@ impl LineAccumulator {
     {
         if self.finished {
             panic!("LineAccumulator::feed called after finish");
+        }
+        if self.overflowed {
+            return;
         }
         self.bytes_seen = global_offset.saturating_add(chunk.len() as u64);
 
@@ -173,15 +246,19 @@ impl LineAccumulator {
                 let line_offset = self.carry_offset;
                 let total_len = combined.len() as u32;
                 let trimmed = trim_trailing_newline(&combined);
-                let s = std::str::from_utf8(trimmed).unwrap_or("");
-                f(s, line_offset, total_len);
+                self.emit_line(trimmed, line_offset, total_len, &mut f);
+                if self.overflowed {
+                    return;
+                }
             } else {
                 let slice = &chunk[start_in_chunk..line_end_excl_in_chunk];
                 let line_offset = global_offset + start_in_chunk as u64;
                 let total_len = line_byte_len_in_chunk as u32;
                 let trimmed = trim_trailing_newline(slice);
-                let s = std::str::from_utf8(trimmed).unwrap_or("");
-                f(s, line_offset, total_len);
+                self.emit_line(trimmed, line_offset, total_len, &mut f);
+                if self.overflowed {
+                    return;
+                }
             }
             start_in_chunk = line_end_excl_in_chunk;
         }
@@ -189,6 +266,11 @@ impl LineAccumulator {
         // Anything between `start_in_chunk` and end-of-chunk is a partial
         // trailing line — carry it into the next feed.
         if start_in_chunk < chunk.len() {
+            let add = chunk.len() - start_in_chunk;
+            if self.carry.len().saturating_add(add) > MAX_LINE_BYTES {
+                self.refuse_long_line();
+                return;
+            }
             if self.carry.is_empty() {
                 // Brand-new partial line; remember its start offset.
                 self.carry_offset = global_offset + start_in_chunk as u64;
@@ -200,6 +282,10 @@ impl LineAccumulator {
         } else if !self.carry.is_empty() && start_in_chunk == 0 {
             // The chunk had zero newlines, so the entire chunk is part of
             // an existing carry-over line. Append.
+            if self.carry.len().saturating_add(chunk.len()) > MAX_LINE_BYTES {
+                self.refuse_long_line();
+                return;
+            }
             self.carry.extend_from_slice(chunk);
         }
     }
@@ -217,14 +303,133 @@ impl LineAccumulator {
         if !self.carry.is_empty() {
             let line_offset = self.carry_offset;
             let total_len = self.carry.len() as u32;
-            let s = std::str::from_utf8(&self.carry).unwrap_or("");
+            let carry = std::mem::take(&mut self.carry);
             // The trailing partial line has no terminator, so the `trim`
             // call would be a no-op. Pass the raw slice so callers' state
             // machines see exactly what they would have seen if the file
             // had ended without a newline (the most common edge case).
-            f(s, line_offset, total_len);
-            self.carry.clear();
+            self.emit_line(&carry, line_offset, total_len, &mut f);
         }
+    }
+}
+
+/// Scratch window for binary (not line-oriented) frame scanners.
+///
+/// Callers append sequential chunks, then ask `take_complete` to peel off
+/// any prefix that a format-specific `span` function reports as one full
+/// frame. The window never retains bytes of frames that have already been
+/// emitted.
+#[derive(Default)]
+pub(crate) struct BinaryFrameScanner {
+    buf: Vec<u8>,
+    buf_start: u64,
+    bytes_seen: u64,
+    finished: bool,
+    pending: Vec<FrameIndexEntry>,
+}
+
+impl BinaryFrameScanner {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn bytes_seen(&self) -> u64 {
+        self.bytes_seen
+    }
+
+    /// Append `chunk` at `global_offset` (must be sequential with prior
+    /// feeds) and emit every complete frame `span` can measure.
+    ///
+    /// `span` returns `Ok(None)` when the buffer is a valid prefix of a
+    /// frame but not yet complete, `Ok(Some(len))` when `buf[..len]` is
+    /// one frame, and `Err` on a corrupt header.
+    pub fn feed<F>(&mut self, chunk: &[u8], global_offset: u64, mut span: F) -> std::io::Result<()>
+    where
+        F: FnMut(&[u8]) -> std::io::Result<Option<u32>>,
+    {
+        if self.finished {
+            panic!("BinaryFrameScanner::feed called after finish");
+        }
+        self.append(chunk, global_offset);
+        self.drain_complete(&mut span)
+    }
+
+    /// Flush remaining complete frames. A trailing incomplete prefix is
+    /// dropped (same policy as the text indexers).
+    pub fn finish<F>(mut self, mut span: F) -> std::io::Result<Vec<FrameIndexEntry>>
+    where
+        F: FnMut(&[u8]) -> std::io::Result<Option<u32>>,
+    {
+        self.finished = true;
+        self.drain_complete(&mut span)?;
+        Ok(std::mem::take(&mut self.pending))
+    }
+
+    pub fn drain(&mut self) -> Vec<FrameIndexEntry> {
+        std::mem::take(&mut self.pending)
+    }
+
+    fn append(&mut self, chunk: &[u8], global_offset: u64) {
+        if chunk.is_empty() {
+            self.bytes_seen = self.bytes_seen.max(global_offset);
+            return;
+        }
+        let expected = self.buf_start + self.buf.len() as u64;
+        if self.buf.is_empty() {
+            self.buf_start = global_offset;
+            self.buf.extend_from_slice(chunk);
+        } else if global_offset == expected {
+            self.buf.extend_from_slice(chunk);
+        } else if global_offset < expected {
+            let skip = (expected - global_offset) as usize;
+            if skip < chunk.len() {
+                self.buf.extend_from_slice(&chunk[skip..]);
+            }
+        } else {
+            // Gap: keep scanning from the new offset (corrupt / non-sequential
+            // feed). Drop the orphan prefix so we do not emit a straddling
+            // phantom frame.
+            self.buf.clear();
+            self.buf_start = global_offset;
+            self.buf.extend_from_slice(chunk);
+        }
+        self.bytes_seen = global_offset.saturating_add(chunk.len() as u64);
+    }
+
+    fn drain_complete<F>(&mut self, span: &mut F) -> std::io::Result<()>
+    where
+        F: FnMut(&[u8]) -> std::io::Result<Option<u32>>,
+    {
+        loop {
+            if self.buf.is_empty() {
+                break;
+            }
+            match span(&self.buf)? {
+                None => break,
+                Some(0) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "binary frame span reported zero length",
+                    ));
+                }
+                Some(len) => {
+                    let n = len as usize;
+                    if n > self.buf.len() {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "binary frame span exceeds buffered bytes",
+                        ));
+                    }
+                    self.pending.push(FrameIndexEntry {
+                        byte_offset: self.buf_start,
+                        byte_len: len,
+                    });
+                    self.buf.drain(..n);
+                    self.buf_start += u64::from(len);
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -299,5 +504,89 @@ mod tests {
         acc.finish(|line, off, len| got.push((line.to_string(), off, len)));
 
         assert_eq!(got, vec![("abc".into(), 0, 5), ("def".into(), 5, 4)]);
+    }
+
+    #[test]
+    fn line_accumulator_keeps_lossy_utf8() {
+        let s: &[u8] = b"ab\xFFcd\n";
+        let mut acc = LineAccumulator::new();
+        let mut got = Vec::new();
+        acc.feed(s, 0, |line, _, _| got.push(line.to_string()));
+        acc.finish(|line, _, _| got.push(line.to_string()));
+        assert_eq!(got.len(), 1);
+        assert!(got[0].starts_with("ab"));
+        assert!(got[0].ends_with("cd"));
+        assert_ne!(got[0], "", "invalid UTF-8 must not drop the line");
+    }
+
+    #[test]
+    fn line_accumulator_refuses_unbounded_carry() {
+        let chunk = vec![b'x'; MAX_LINE_BYTES + 1];
+        let mut acc = LineAccumulator::new();
+        acc.feed(&chunk, 0, |_line, _, _| panic!("must not emit"));
+        assert!(acc.overflowed());
+        acc.check_line_budget().unwrap_err();
+    }
+
+    fn span_fixed(n: u32) -> impl Fn(&[u8]) -> std::io::Result<Option<u32>> {
+        move |buf| {
+            if buf.len() < n as usize {
+                Ok(None)
+            } else {
+                Ok(Some(n))
+            }
+        }
+    }
+
+    #[test]
+    fn binary_scanner_chunks_match_single_shot() {
+        let bytes: Vec<u8> = (0u8..40).collect();
+        let mut one = BinaryFrameScanner::new();
+        one.feed(&bytes, 0, span_fixed(10)).unwrap();
+        let want = one.finish(span_fixed(10)).unwrap();
+        assert_eq!(want.len(), 4);
+
+        let mut acc = BinaryFrameScanner::new();
+        let mut got = Vec::new();
+        for (i, piece) in bytes.chunks(7).enumerate() {
+            let off = (i * 7) as u64;
+            acc.feed(piece, off, span_fixed(10)).unwrap();
+            got.extend(acc.drain());
+        }
+        got.extend(acc.finish(span_fixed(10)).unwrap());
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn binary_scanner_overlap_does_not_duplicate() {
+        let bytes: Vec<u8> = (0u8..20).collect();
+        let mut acc = BinaryFrameScanner::new();
+        acc.feed(&bytes[..12], 0, span_fixed(10)).unwrap();
+        let first = acc.drain();
+        assert_eq!(first.len(), 1);
+        acc.feed(&bytes[5..], 5, span_fixed(10)).unwrap();
+        let rest = acc.finish(span_fixed(10)).unwrap();
+        assert_eq!(first[0].byte_offset, 0);
+        assert_eq!(rest.len(), 1);
+        assert_eq!(rest[0].byte_offset, 10);
+    }
+
+    #[test]
+    fn binary_scanner_gap_drops_orphan_prefix() {
+        let mut acc = BinaryFrameScanner::new();
+        acc.feed(&[1, 2, 3, 4, 5], 0, span_fixed(10)).unwrap();
+        assert!(acc.drain().is_empty());
+        acc.feed(&(10u8..30).collect::<Vec<_>>(), 100, span_fixed(10))
+            .unwrap();
+        let got = acc.finish(span_fixed(10)).unwrap();
+        assert_eq!(got[0].byte_offset, 100);
+        assert_eq!(got.len(), 2);
+    }
+
+    #[test]
+    fn binary_scanner_rejects_zero_span() {
+        let mut acc = BinaryFrameScanner::new();
+        let err = acc.feed(&[1, 2, 3], 0, |_buf| Ok(Some(0))).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     }
 }
