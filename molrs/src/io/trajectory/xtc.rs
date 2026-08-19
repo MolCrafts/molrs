@@ -41,6 +41,7 @@
 //! - `frame.meta`: `step`, `time`, `precision`.
 
 use crate::io::reader::{FrameReader, ReadSeek, Reader, TrajectoryReader};
+use crate::io::streaming::{BinaryFrameScanner, FrameIndexBuilder, FrameIndexEntry};
 use crate::io::trajectory::xdr;
 use crate::io::writer::{FrameWriter, Writer};
 use molrs::spatial::simbox::SimBox;
@@ -51,7 +52,7 @@ use molrs::types::{F, U};
 use ndarray::{Array1, Array2, IxDyn, array};
 use once_cell::sync::OnceCell;
 use std::fs::File;
-use std::io::{BufRead, BufWriter, Read, Result, Seek, SeekFrom, Write};
+use std::io::{BufRead, BufWriter, Cursor, Read, Result, Seek, SeekFrom, Write};
 use std::path::Path;
 
 /// Classic XTC magic number.
@@ -1101,8 +1102,144 @@ pub fn write_xtc<P: AsRef<Path>, FA: FrameAccess>(path: P, frames: &[FA]) -> Res
 }
 
 // ---------------------------------------------------------------------------
-// Tests (pure functions only — no tests-data reads, per CLAUDE.md IO rules)
+// Streaming
 // ---------------------------------------------------------------------------
+
+/// Byte length of one complete XTC frame starting at `bytes[0]`.
+///
+/// `Ok(None)` means the prefix is valid so far but truncated.
+fn try_xtc_frame_len(bytes: &[u8]) -> Result<Option<u32>> {
+    if bytes.is_empty() {
+        return Ok(None);
+    }
+    if bytes.len() < 4 {
+        return Ok(None);
+    }
+    let magic = i32::from_be_bytes(bytes[0..4].try_into().unwrap());
+    if magic != XTC_MAGIC && magic != XTC_MAGIC_2023 {
+        return Err(invalid(format!(
+            "bad XTC magic {magic} (expected {XTC_MAGIC} or {XTC_MAGIC_2023})"
+        )));
+    }
+    if bytes.len() < 52 {
+        return Ok(None);
+    }
+    let natoms = i32::from_be_bytes(bytes[4..8].try_into().unwrap());
+    if natoms <= 0 {
+        return Err(invalid(format!("invalid XTC natoms {natoms}")));
+    }
+    let natoms = natoms as usize;
+    let wide = magic == XTC_MAGIC_2023;
+    let mut off = 52usize;
+    if bytes.len() < off + 4 {
+        return Ok(None);
+    }
+    let size = i32::from_be_bytes(bytes[off..off + 4].try_into().unwrap());
+    off += 4;
+    if size as usize != natoms {
+        return Err(invalid(format!(
+            "XTC coord size {size} disagrees with header natoms {natoms}"
+        )));
+    }
+    if natoms <= 9 {
+        let need = natoms * DIM * 4;
+        if bytes.len() < off + need {
+            return Ok(None);
+        }
+        return u32::try_from(off + need)
+            .map(Some)
+            .map_err(|_| invalid("XTC frame larger than 4 GiB"));
+    }
+    // precision(4) + minint(12) + maxint(12) + smallidx(4)
+    if bytes.len() < off + 32 {
+        return Ok(None);
+    }
+    off += 32;
+    let (nbytes, nbytes_width) = if wide {
+        if bytes.len() < off + 8 {
+            return Ok(None);
+        }
+        let n = i64::from_be_bytes(bytes[off..off + 8].try_into().unwrap());
+        (n, 8usize)
+    } else {
+        if bytes.len() < off + 4 {
+            return Ok(None);
+        }
+        let n = i32::from_be_bytes(bytes[off..off + 4].try_into().unwrap()) as i64;
+        (n, 4usize)
+    };
+    if nbytes < 0 {
+        return Err(invalid(format!("negative XTC nbytes {nbytes}")));
+    }
+    off += nbytes_width;
+    let padded = xdr::pad4(nbytes as usize);
+    if bytes.len() < off + padded {
+        return Ok(None);
+    }
+    u32::try_from(off + padded)
+        .map(Some)
+        .map_err(|_| invalid("XTC frame larger than 4 GiB"))
+}
+
+/// Parse exactly one XTC frame from a tightly-bounded byte slice.
+pub fn parse_frame_bytes(bytes: &[u8]) -> Result<Frame> {
+    let mut cursor = Cursor::new(bytes);
+    parse_frame_here(&mut cursor)?.ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "XTC frame slice is empty or truncated",
+        )
+    })
+}
+
+/// Streaming frame indexer for XTC files. Frames are self-describing;
+/// the scanner measures each header + compressed block without decoding.
+pub struct XtcIndexBuilder {
+    scan: BinaryFrameScanner,
+    error: Option<std::io::Error>,
+}
+
+impl Default for XtcIndexBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl XtcIndexBuilder {
+    /// Create an empty indexer.
+    pub fn new() -> Self {
+        Self {
+            scan: BinaryFrameScanner::new(),
+            error: None,
+        }
+    }
+}
+
+impl FrameIndexBuilder for XtcIndexBuilder {
+    fn feed(&mut self, chunk: &[u8], global_offset: u64) {
+        if self.error.is_some() {
+            return;
+        }
+        if let Err(err) = self.scan.feed(chunk, global_offset, try_xtc_frame_len) {
+            self.error = Some(err);
+        }
+    }
+
+    fn drain(&mut self) -> Vec<FrameIndexEntry> {
+        self.scan.drain()
+    }
+
+    fn finish(self: Box<Self>) -> Result<Vec<FrameIndexEntry>> {
+        if let Some(err) = self.error {
+            return Err(err);
+        }
+        self.scan.finish(try_xtc_frame_len)
+    }
+
+    fn bytes_seen(&self) -> u64 {
+        self.scan.bytes_seen()
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -1172,5 +1309,76 @@ mod tests {
     fn build_simbox_zero_is_none() {
         assert!(build_simbox(&[0.0; 9]).is_none());
         assert!(build_simbox(&[1.0, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 3.0]).is_some());
+    }
+
+    fn xtc_frame(natoms: usize, x0: f64) -> Frame {
+        let mut atoms = Block::new();
+        let ids: Vec<U> = (1..=natoms as U).collect();
+        let mut xs = vec![0.0; natoms];
+        let ys = vec![0.0; natoms];
+        let zs = vec![0.0; natoms];
+        xs[0] = x0;
+        atoms.insert("id", Array1::from(ids).into_dyn()).unwrap();
+        atoms.insert("x", Array1::from(xs).into_dyn()).unwrap();
+        atoms.insert("y", Array1::from(ys).into_dyn()).unwrap();
+        atoms.insert("z", Array1::from(zs).into_dyn()).unwrap();
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms);
+        let h = array![[20.0, 0.0, 0.0], [0.0, 20.0, 0.0], [0.0, 0.0, 20.0]];
+        frame.simbox = Some(SimBox::new(h, array![0.0, 0.0, 0.0], [true; 3]).unwrap());
+        frame
+    }
+
+    fn write_xtc_mem(frames: &[Frame]) -> Vec<u8> {
+        let mut buf = Vec::new();
+        {
+            let mut writer = XtcWriter::new(&mut buf);
+            for frame in frames {
+                FrameWriter::write(&mut writer, frame).expect("write xtc");
+            }
+        }
+        buf
+    }
+
+    fn xtc_index_chunked(bytes: &[u8], chunk: usize) -> Vec<FrameIndexEntry> {
+        let mut builder = Box::new(XtcIndexBuilder::new());
+        let mut offset = 0u64;
+        let mut out = Vec::new();
+        for piece in bytes.chunks(chunk.max(1)) {
+            builder.feed(piece, offset);
+            offset += piece.len() as u64;
+            out.extend(builder.drain());
+        }
+        out.extend(builder.finish().expect("finish xtc index"));
+        out
+    }
+
+    #[test]
+    fn xtc_streaming_small_and_compressed_round_trip() {
+        for natoms in [2usize, 12] {
+            let frames = [xtc_frame(natoms, 1.5), xtc_frame(natoms, 2.5)];
+            let bytes = write_xtc_mem(&frames);
+            let one_shot = xtc_index_chunked(&bytes, bytes.len());
+            assert_eq!(one_shot.len(), 2, "natoms={natoms}");
+            for cs in [1usize, 9, 17, 64] {
+                assert_eq!(
+                    xtc_index_chunked(&bytes, cs),
+                    one_shot,
+                    "natoms={natoms} chunk={cs}"
+                );
+            }
+            for (i, entry) in one_shot.iter().enumerate() {
+                let lo = entry.byte_offset as usize;
+                let hi = lo + entry.byte_len as usize;
+                let parsed = parse_frame_bytes(&bytes[lo..hi]).expect("parse xtc");
+                assert_eq!(parsed.get("atoms").unwrap().nrows().unwrap(), natoms);
+                let x = parsed.get("atoms").unwrap().get_float("x").unwrap();
+                assert!(
+                    (x[0] - frames[i].get("atoms").unwrap().get_float("x").unwrap()[0]).abs()
+                        < 0.02,
+                    "xtc coord drift"
+                );
+            }
+        }
     }
 }

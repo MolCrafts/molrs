@@ -9,6 +9,8 @@
 //!
 //! | Method | JS signature | Semantics | Throws on missing key? |
 //! |--------|-------------|-----------|------------------------|
+//! | `hasF32` / `hasF64` / `hasI32` / `hasU32` / `hasStr` | `(key: string) -> boolean` | Typed presence (exists *and* that dtype) | No |
+//! | `getF32` / `getF64` / `getI32` / `getU32` / `getStr` | `(key: string, default?)` | Owned copy; `default` only when the key is absent | Yes, unless `default` given |
 //! | `setColF` | `(key: string, data: Float32Array|Float64Array, shape?: number[])` | Write float column | No |
 //! | `setColI32` | `(key: string, data: Int32Array)` | Write i32 column | No |
 //! | `setColU32` | `(key: string, data: Uint32Array)` | Write u32 column | No |
@@ -23,7 +25,7 @@
 //! (e.g., due to any allocation). Use `copyCol*` if you need to keep
 //! the data across allocations.
 
-use js_sys::{Array as JsArray, Int32Array, Uint32Array};
+use js_sys::{Array as JsArray, Float32Array, Int32Array, Uint32Array};
 use ndarray::Array1;
 use wasm_bindgen::prelude::*;
 
@@ -290,6 +292,97 @@ impl Block {
             })
             .ok()
             .flatten()
+    }
+
+    /// True when `key` exists and is `f32`.
+    #[wasm_bindgen(js_name = hasF32)]
+    pub fn has_f32(&self, key: &str) -> bool {
+        self.with(|b| b.has_f32(key)).unwrap_or(false)
+    }
+
+    /// True when `key` exists and is `f64`.
+    #[wasm_bindgen(js_name = hasF64)]
+    pub fn has_f64(&self, key: &str) -> bool {
+        self.with(|b| b.has_f64(key)).unwrap_or(false)
+    }
+
+    /// True when `key` exists and is `i32`.
+    #[wasm_bindgen(js_name = hasI32)]
+    pub fn has_i32(&self, key: &str) -> bool {
+        self.with(|b| b.has_int(key)).unwrap_or(false)
+    }
+
+    /// True when `key` exists and is `u32`.
+    #[wasm_bindgen(js_name = hasU32)]
+    pub fn has_u32(&self, key: &str) -> bool {
+        self.with(|b| b.has_uint(key)).unwrap_or(false)
+    }
+
+    /// True when `key` exists and is a string column.
+    #[wasm_bindgen(js_name = hasStr)]
+    pub fn has_str(&self, key: &str) -> bool {
+        self.with(|b| b.has_string(key)).unwrap_or(false)
+    }
+
+    /// Owned `f32` column. Missing with no `default` throws; wrong dtype throws.
+    ///
+    /// This build stores floats as `f64`, so a present float column is never
+    /// `f32` — `hasF32` is false and this returns `default` or throws.
+    #[wasm_bindgen(js_name = getF32)]
+    pub fn get_f32(
+        &self,
+        key: &str,
+        default: Option<Float32Array>,
+    ) -> Result<Float32Array, JsValue> {
+        typed_or_default(key, "f32", self.dtype(key), default)
+    }
+
+    /// Owned `f64` column. Missing with no `default` throws; wrong dtype throws.
+    #[wasm_bindgen(js_name = getF64)]
+    pub fn get_f64(
+        &self,
+        key: &str,
+        default: Option<JsFloatArray>,
+    ) -> Result<JsFloatArray, JsValue> {
+        if self.has_f64(key) {
+            return self.copy_col_f(key);
+        }
+        typed_or_default(key, "f64", self.dtype(key), default)
+    }
+
+    /// Owned i32 column. Missing with no `default` throws; wrong dtype throws.
+    #[wasm_bindgen(js_name = getI32)]
+    pub fn get_i32(
+        &self,
+        key: &str,
+        default: Option<Int32Array>,
+    ) -> Result<Int32Array, JsValue> {
+        if self.has_i32(key) {
+            return self.copy_col_i32(key);
+        }
+        typed_or_default(key, "i32", self.dtype(key), default)
+    }
+
+    /// Owned u32 column. Missing with no `default` throws; wrong dtype throws.
+    #[wasm_bindgen(js_name = getU32)]
+    pub fn get_u32(
+        &self,
+        key: &str,
+        default: Option<Uint32Array>,
+    ) -> Result<Uint32Array, JsValue> {
+        if self.has_u32(key) {
+            return self.copy_col_u32(key);
+        }
+        typed_or_default(key, "u32", self.dtype(key), default)
+    }
+
+    /// Owned string column. Missing with no `default` throws; wrong dtype throws.
+    #[wasm_bindgen(js_name = getStr)]
+    pub fn get_str(&self, key: &str, default: Option<JsArray>) -> Result<JsArray, JsValue> {
+        if self.has_str(key) {
+            return self.copy_col_str(key);
+        }
+        typed_or_default(key, "string", self.dtype(key), default)
     }
 
     /// Rename a column from `old_key` to `new_key`.
@@ -722,7 +815,21 @@ impl Default for Block {
 // ---------------------------------------------------------------------------
 
 fn col_err(key: &str, dtype: &str) -> JsValue {
-    JsValue::from_str(&format!("column '{key}' not found or not {dtype}"))
+    JsValue::from_str(&format!("column '{key}' ({dtype}) is required"))
+}
+
+fn typed_or_default<T>(
+    key: &str,
+    expected: &str,
+    got: Option<String>,
+    default: Option<T>,
+) -> Result<T, JsValue> {
+    if let Some(dt) = got {
+        return Err(JsValue::from_str(&format!(
+            "column '{key}' must be {expected}, got '{dt}'"
+        )));
+    }
+    default.ok_or_else(|| col_err(key, expected))
 }
 
 fn col_not_found_or(key: &str, dtype: &str, ffi_err: molrs_ffi::FfiError) -> JsValue {
@@ -839,6 +946,42 @@ mod tests {
         let frame = Frame::new();
         let block = frame.create_block("atoms").unwrap();
         assert!(block.copy_col_f("nonexistent").is_err());
+    }
+
+    #[wasm_bindgen_test]
+    fn test_has_and_get_typed() {
+        let frame = Frame::new();
+        let mut block = frame.create_block("atoms").unwrap();
+        block
+            .set_col_u32("id", &Uint32Array::from(&[1_u32, 2_u32][..]))
+            .unwrap();
+        block
+            .set_col_i32("signed_scratch", &Int32Array::from(&[3_i32, 4][..]))
+            .unwrap();
+        block
+            .set_col_f("x", &JsFloatArray::from(&[0.0, 1.0][..]), None)
+            .unwrap();
+
+        assert!(block.has_u32("id"));
+        assert!(block.has_i32("signed_scratch"));
+        assert!(block.has_f64("x"));
+        assert!(!block.has_f32("x"));
+        assert!(!block.has_u32("signed_scratch"));
+        assert!(!block.has_i32("id"));
+        assert!(!block.has_str("x"));
+        assert!(!block.has_f64("missing"));
+
+        let ids = block.get_u32("id", None).unwrap();
+        assert_eq!(ids.length(), 2);
+        assert!(block.get_u32("missing", None).is_err());
+        let fallback = Uint32Array::from(&[9_u32][..]);
+        let got = block.get_u32("missing", Some(fallback)).unwrap();
+        assert_eq!(got.get_index(0), 9);
+        assert!(block.get_u32("signed_scratch", None).is_err());
+
+        assert!(frame.has_u32("atoms", "id"));
+        assert!(!frame.has_i32("atoms", "id"));
+        assert_eq!(frame.get_u32("atoms", "id", None).unwrap().length(), 2);
     }
 
     #[wasm_bindgen_test]

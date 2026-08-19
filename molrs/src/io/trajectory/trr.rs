@@ -62,6 +62,7 @@
 //! ```
 
 use crate::io::reader::{FrameReader, ReadSeek, Reader, TrajectoryReader};
+use crate::io::streaming::{BinaryFrameScanner, FrameIndexBuilder, FrameIndexEntry};
 use crate::io::trajectory::xdr;
 use crate::io::writer::{FrameWriter, Writer};
 use molrs::spatial::simbox::SimBox;
@@ -72,7 +73,7 @@ use molrs::types::{F, U};
 use ndarray::{Array1, Array2, IxDyn, array};
 use once_cell::sync::OnceCell;
 use std::fs::File;
-use std::io::{BufRead, BufWriter, Read, Result, Seek, SeekFrom, Write};
+use std::io::{BufRead, BufWriter, Cursor, Read, Result, Seek, SeekFrom, Write};
 use std::path::Path;
 
 const TRR_MAGIC: i32 = 1993;
@@ -660,8 +661,99 @@ pub fn write_trr<P: AsRef<Path>, FA: FrameAccess>(path: P, frames: &[FA]) -> Res
 }
 
 // ---------------------------------------------------------------------------
-// Tests (pure functions only — no tests-data reads, per CLAUDE.md IO rules)
+// Streaming
 // ---------------------------------------------------------------------------
+
+/// Byte length of one complete TRR frame starting at `bytes[0]`.
+///
+/// `Ok(None)` means the prefix is valid so far but truncated.
+fn try_trr_frame_len(bytes: &[u8]) -> Result<Option<u32>> {
+    if bytes.is_empty() {
+        return Ok(None);
+    }
+    if bytes.len() < 4 {
+        return Ok(None);
+    }
+    let magic = i32::from_be_bytes(bytes[0..4].try_into().unwrap());
+    if magic != TRR_MAGIC {
+        return Err(invalid(format!(
+            "bad TRR magic {magic} (expected {TRR_MAGIC})"
+        )));
+    }
+    let mut cursor = Cursor::new(bytes);
+    let header = match read_header(&mut cursor) {
+        Ok(h) => h,
+        Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+        Err(err) => return Err(err),
+    };
+    let total = cursor.position().saturating_add(header.data_len());
+    if (bytes.len() as u64) < total {
+        return Ok(None);
+    }
+    u32::try_from(total)
+        .map(Some)
+        .map_err(|_| invalid("TRR frame larger than 4 GiB"))
+}
+
+/// Parse exactly one TRR frame from a tightly-bounded byte slice.
+pub fn parse_frame_bytes(bytes: &[u8]) -> Result<Frame> {
+    let mut cursor = Cursor::new(bytes);
+    parse_frame_here(&mut cursor)?.ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "TRR frame slice is empty or truncated",
+        )
+    })
+}
+
+/// Streaming frame indexer for TRR files. Each frame header carries the
+/// sizes of the following data blocks.
+pub struct TrrIndexBuilder {
+    scan: BinaryFrameScanner,
+    error: Option<std::io::Error>,
+}
+
+impl Default for TrrIndexBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TrrIndexBuilder {
+    /// Create an empty indexer.
+    pub fn new() -> Self {
+        Self {
+            scan: BinaryFrameScanner::new(),
+            error: None,
+        }
+    }
+}
+
+impl FrameIndexBuilder for TrrIndexBuilder {
+    fn feed(&mut self, chunk: &[u8], global_offset: u64) {
+        if self.error.is_some() {
+            return;
+        }
+        if let Err(err) = self.scan.feed(chunk, global_offset, try_trr_frame_len) {
+            self.error = Some(err);
+        }
+    }
+
+    fn drain(&mut self) -> Vec<FrameIndexEntry> {
+        self.scan.drain()
+    }
+
+    fn finish(self: Box<Self>) -> Result<Vec<FrameIndexEntry>> {
+        if let Some(err) = self.error {
+            return Err(err);
+        }
+        self.scan.finish(try_trr_frame_len)
+    }
+
+    fn bytes_seen(&self) -> u64 {
+        self.scan.bytes_seen()
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -707,6 +799,75 @@ mod tests {
                     vals[c * 3 + r]
                 );
             }
+        }
+    }
+
+    fn trr_frame(x0: f64) -> Frame {
+        let mut atoms = Block::new();
+        atoms
+            .insert("id", Array1::from(vec![1u32, 2]).into_dyn())
+            .unwrap();
+        atoms
+            .insert("x", Array1::from(vec![x0, x0 + 1.0]).into_dyn())
+            .unwrap();
+        atoms
+            .insert("y", Array1::from(vec![0.0, 0.0]).into_dyn())
+            .unwrap();
+        atoms
+            .insert("z", Array1::from(vec![0.0, 0.0]).into_dyn())
+            .unwrap();
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms);
+        let h = array![[15.0, 0.0, 0.0], [0.0, 15.0, 0.0], [0.0, 0.0, 15.0]];
+        frame.simbox = Some(SimBox::new(h, array![0.0, 0.0, 0.0], [true; 3]).unwrap());
+        frame
+    }
+
+    fn write_trr_mem(frames: &[Frame]) -> Vec<u8> {
+        let mut buf = Vec::new();
+        {
+            let mut writer = TrrWriter::new(&mut buf);
+            for frame in frames {
+                FrameWriter::write(&mut writer, frame).expect("write trr");
+            }
+        }
+        buf
+    }
+
+    fn trr_index_chunked(bytes: &[u8], chunk: usize) -> Vec<FrameIndexEntry> {
+        let mut builder = Box::new(TrrIndexBuilder::new());
+        let mut offset = 0u64;
+        let mut out = Vec::new();
+        for piece in bytes.chunks(chunk.max(1)) {
+            builder.feed(piece, offset);
+            offset += piece.len() as u64;
+            out.extend(builder.drain());
+        }
+        out.extend(builder.finish().expect("finish trr index"));
+        out
+    }
+
+    #[test]
+    fn trr_streaming_single_shot_matches_chunks() {
+        let frames = [trr_frame(0.25), trr_frame(1.25)];
+        let bytes = write_trr_mem(&frames);
+        let one_shot = trr_index_chunked(&bytes, bytes.len());
+        assert_eq!(one_shot.len(), 2);
+        for cs in [1usize, 8, 21, 64] {
+            assert_eq!(
+                trr_index_chunked(&bytes, cs),
+                one_shot,
+                "chunk size {cs} produced a different index"
+            );
+        }
+        for (i, entry) in one_shot.iter().enumerate() {
+            let lo = entry.byte_offset as usize;
+            let hi = lo + entry.byte_len as usize;
+            let parsed = parse_frame_bytes(&bytes[lo..hi]).expect("parse trr");
+            let x = parsed.get("atoms").unwrap().get_float("x").unwrap();
+            assert!(
+                (x[0] - frames[i].get("atoms").unwrap().get_float("x").unwrap()[0]).abs() < 1e-5
+            );
         }
     }
 }

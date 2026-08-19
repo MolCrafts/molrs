@@ -22,20 +22,26 @@
 //! | `GROReader` | GROMACS GRO | Yes | `"atoms"` block + box (**nm→Å on read**) |
 //! | `MOL2Reader` | Tripos MOL2 | Yes (per molecule) | `"atoms"` + optional `"bonds"` block (Å) |
 //! | `POSCARReader` | VASP POSCAR / CONTCAR | No (step=0 only) | `"atoms"` block + box (Cartesian Å) |
+//! | `XSFReader` | XCrySDen XSF | No (step=0 only) | `"atoms"` block + box (Å) |
+//! | `AmberInpcrdReader` | AMBER inpcrd / restrt | No (step=0 only) | `"atoms"` block + optional box |
+//! | `AcReader` | Antechamber AC | No (step=0 only) | `"atoms"` + optional `"bonds"` |
 //! | `DCDReader` | DCD trajectory (binary) | Yes | `"atoms"` block + optional box |
 //! | `TRRReader` | GROMACS TRR (binary) | Yes | `"atoms"` block + box (**nm→Å on read**) |
 //! | `XTCReader` | GROMACS XTC (binary) | Yes | `"atoms"` block + box (**nm→Å on read**) |
 
 use crate::core::frame::Frame;
+use molrs::io::data::ac::parse_ac;
 use molrs::io::data::chgcar::read_chgcar_from_reader;
 use molrs::io::data::cif::CifReader as RsCifReader;
 use molrs::io::data::cube::read_cube_from_reader;
 use molrs::io::data::gro::GroReader as RsGroReader;
+use molrs::io::data::inpcrd::read_amber_inpcrd_from_reader;
 use molrs::io::data::lammps_data::LAMMPSDataReader;
 use molrs::io::data::mol2::Mol2Reader as RsMol2Reader;
 use molrs::io::data::pdb::PDBReader;
 use molrs::io::data::poscar::read_poscar_from_reader;
 use molrs::io::data::sdf::SDFReader;
+use molrs::io::data::xsf::read_xsf_from_reader;
 use molrs::io::data::xyz::XYZReader;
 use molrs::io::reader::{FrameReader, Reader, TrajectoryReader};
 use molrs::io::trajectory::dcd::DcdReader as RsDcdReader;
@@ -1072,6 +1078,137 @@ impl PoscarReader {
     }
 
     /// Check whether the file contains no valid frame.
+    #[wasm_bindgen(js_name = isEmpty)]
+    pub fn is_empty(&mut self) -> Result<bool, JsValue> {
+        Ok(self.len()? == 0)
+    }
+}
+
+/// XCrySDen XSF structure reader.
+#[wasm_bindgen(js_name = XSFReader)]
+pub struct XsfReader {
+    content: Vec<u8>,
+    cached_len: Option<usize>,
+}
+
+#[wasm_bindgen(js_class = XSFReader)]
+impl XsfReader {
+    #[wasm_bindgen(constructor)]
+    pub fn new(content: &str) -> XsfReader {
+        XsfReader {
+            content: content.as_bytes().to_vec(),
+            cached_len: None,
+        }
+    }
+
+    #[wasm_bindgen]
+    pub fn read(&mut self, step: usize) -> Result<Option<Frame>, JsValue> {
+        if step > 0 {
+            return Ok(None);
+        }
+        let rs_frame = read_xsf_from_reader(BufReader::new(Cursor::new(self.content.as_slice())))
+            .map_err(|e| JsValue::from_str(&format!("XSF read error: {}", e)))?;
+        Ok(Some(Frame::from_rs(rs_frame)?))
+    }
+
+    #[wasm_bindgen]
+    pub fn len(&mut self) -> Result<usize, JsValue> {
+        if let Some(n) = self.cached_len {
+            return Ok(n);
+        }
+        let n = if self.read(0)?.is_some() { 1 } else { 0 };
+        self.cached_len = Some(n);
+        Ok(n)
+    }
+
+    #[wasm_bindgen(js_name = isEmpty)]
+    pub fn is_empty(&mut self) -> Result<bool, JsValue> {
+        Ok(self.len()? == 0)
+    }
+}
+
+/// AMBER ASCII inpcrd / restrt coordinate reader.
+#[wasm_bindgen(js_name = AmberInpcrdReader)]
+pub struct AmberInpcrdReader {
+    content: Vec<u8>,
+    cached_len: Option<usize>,
+}
+
+#[wasm_bindgen(js_class = AmberInpcrdReader)]
+impl AmberInpcrdReader {
+    #[wasm_bindgen(constructor)]
+    pub fn new(content: &str) -> AmberInpcrdReader {
+        AmberInpcrdReader {
+            content: content.as_bytes().to_vec(),
+            cached_len: None,
+        }
+    }
+
+    #[wasm_bindgen]
+    pub fn read(&mut self, step: usize) -> Result<Option<Frame>, JsValue> {
+        if step > 0 {
+            return Ok(None);
+        }
+        let rs_frame = read_amber_inpcrd_from_reader(BufReader::new(Cursor::new(
+            self.content.as_slice(),
+        )))
+        .map_err(|e| JsValue::from_str(&format!("AMBER inpcrd read error: {}", e)))?;
+        Ok(Some(Frame::from_rs(rs_frame)?))
+    }
+
+    #[wasm_bindgen]
+    pub fn len(&mut self) -> Result<usize, JsValue> {
+        if let Some(n) = self.cached_len {
+            return Ok(n);
+        }
+        let n = if self.read(0)?.is_some() { 1 } else { 0 };
+        self.cached_len = Some(n);
+        Ok(n)
+    }
+
+    #[wasm_bindgen(js_name = isEmpty)]
+    pub fn is_empty(&mut self) -> Result<bool, JsValue> {
+        Ok(self.len()? == 0)
+    }
+}
+
+/// Antechamber `.ac` structure reader.
+#[wasm_bindgen(js_name = AcReader)]
+pub struct AcReader {
+    content: String,
+    cached_len: Option<usize>,
+}
+
+#[wasm_bindgen(js_class = AcReader)]
+impl AcReader {
+    #[wasm_bindgen(constructor)]
+    pub fn new(content: &str) -> AcReader {
+        AcReader {
+            content: content.to_string(),
+            cached_len: None,
+        }
+    }
+
+    #[wasm_bindgen]
+    pub fn read(&mut self, step: usize) -> Result<Option<Frame>, JsValue> {
+        if step > 0 {
+            return Ok(None);
+        }
+        let rs_frame = parse_ac(&self.content)
+            .map_err(|e| JsValue::from_str(&format!("AC read error: {}", e)))?;
+        Ok(Some(Frame::from_rs(rs_frame)?))
+    }
+
+    #[wasm_bindgen]
+    pub fn len(&mut self) -> Result<usize, JsValue> {
+        if let Some(n) = self.cached_len {
+            return Ok(n);
+        }
+        let n = if self.read(0)?.is_some() { 1 } else { 0 };
+        self.cached_len = Some(n);
+        Ok(n)
+    }
+
     #[wasm_bindgen(js_name = isEmpty)]
     pub fn is_empty(&mut self) -> Result<bool, JsValue> {
         Ok(self.len()? == 0)

@@ -1281,6 +1281,7 @@ impl FrameIndexBuilder for XyzIndexBuilder {
     }
 
     fn finish(mut self: Box<Self>) -> std::io::Result<Vec<FrameIndexEntry>> {
+        self.lines.check_line_budget()?;
         let mut staged: Vec<(String, u64, u32)> = Vec::new();
         self.lines.finish(|line, line_offset, line_len| {
             staged.push((line.to_string(), line_offset, line_len));
