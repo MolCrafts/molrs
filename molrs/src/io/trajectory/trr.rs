@@ -655,12 +655,7 @@ fn try_trr_frame_len(bytes: &[u8]) -> Result<Option<u32>> {
 /// Parse exactly one TRR frame from a tightly-bounded byte slice.
 pub fn parse_frame_bytes(bytes: &[u8]) -> Result<Frame> {
     let mut cursor = Cursor::new(bytes);
-    parse_frame_here(&mut cursor)?.ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::UnexpectedEof,
-            "TRR frame slice is empty or truncated",
-        )
-    })
+    parse_frame_at(&mut cursor, 0)
 }
 
 /// Streaming frame indexer for TRR files. Each frame header carries the
