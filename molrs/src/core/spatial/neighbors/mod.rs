@@ -142,6 +142,7 @@ pub mod grid;
 mod linkcell;
 pub mod periodic_buffer;
 mod query;
+mod verlet_skin;
 
 pub use aabb::AabbQuery;
 pub use bruteforce::BruteForce;
@@ -150,6 +151,7 @@ pub use grid::CellGrid;
 pub use linkcell::LinkCell;
 pub use periodic_buffer::{PeriodicBufferResult, periodic_buffer};
 pub use query::NeighborQuery;
+pub use verlet_skin::{NeighborPolicy, SkinError, SkinPair, VerletSkin};
 
 // NeighborsStorage and NeighborPair are defined below next to Neighbors.
 
@@ -467,6 +469,12 @@ impl NeighborList {
     #[inline]
     pub fn is_built(&self) -> bool {
         self.bx.is_some()
+    }
+
+    /// Box captured by the last [`build`](Self::build), if any.
+    #[inline]
+    pub fn simbox(&self) -> Option<&SimBox> {
+        self.bx.as_ref()
     }
 
     /// Index `points` in `bx` — coordinates **and** box.

@@ -44,6 +44,8 @@ impl Dimension {
     pub const PRESSURE: Dimension = Dimension([-1, 1, -2, 0, 0, 0, 0]);
     /// Electric charge: T I (current × time).
     pub const CHARGE: Dimension = Dimension([0, 0, 1, 1, 0, 0, 0]);
+    /// Frequency: T⁻¹.
+    pub const FREQUENCY: Dimension = Dimension([0, 0, -1, 0, 0, 0, 0]);
 
     /// Construct from a raw exponent array.
     pub const fn from_exponents(exps: [i32; 7]) -> Dimension {

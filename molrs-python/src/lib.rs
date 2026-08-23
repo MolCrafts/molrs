@@ -43,7 +43,7 @@ mod store;
 // compute/, ff/, conformer/, signal/.
 mod core;
 mod builder;
-use crate::core::spatial::neighborlist::{PyNeighborList, PyNeighborQuery, PyNeighbors};
+use crate::core::spatial::neighborlist::{PyNeighborList, PyNeighborQuery, PyNeighbors, PyVerletSkin};
 use crate::core::spatial::region::{
     PyCuboid, PyHollowSphere, PyParallelepiped, PyRegion, PySphere,
 };
@@ -86,6 +86,7 @@ use compute::{
     PyRadiusOfGyration,
 };
 
+mod md;
 mod signal;
 
 // Live Frame streaming (`molrs::stream`). `ControlCommand` is portable;
@@ -112,6 +113,7 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyNeighborList>()?;
     m.add_class::<PyNeighbors>()?;
     m.add_class::<PyNeighborQuery>()?;
+    m.add_class::<PyVerletSkin>()?;
 
     // Public exceptions
     m.add(
@@ -271,6 +273,10 @@ m.add_function(wrap_pyfunction!(io::read_pdb, m)?)?;
     m.add_class::<PyGasteigerModel>()?;
     m.add_class::<PyOptReport>()?;
     m.add_class::<PyLBFGS>()?;
+
+    let md = PyModule::new(m.py(), "md")?;
+    md::register(&md)?;
+    m.add_submodule(&md)?;
     m.add_function(wrap_pyfunction!(ff::read_forcefield_xml_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::read_forcefield_xml_str_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::read_opls_xml_py, m)?)?;
