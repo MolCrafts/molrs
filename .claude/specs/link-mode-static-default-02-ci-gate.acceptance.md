@@ -86,6 +86,17 @@ criteria:
       form is guarded by both the CI Link Form dynamic job and the pre-push
       hook.
     status: pending
+    note: |
+      CONTENT IS PRESENT AND CHECKED — this stays `pending` only because it is a
+      `docs` criterion, which /mol:impl does not write back (that is /mol:close's
+      job), and close cannot run while ac-001..003 are blocked on an
+      unauthorised push. Verified 2026-08-23:
+      molpack/.github/workflows/ci.yml:13 carries the "Landing-order
+      precondition: MOLRS_GIT_REF must NEVER point at a molrs ref predating
+      link-mode-static-default-01-invert" comment above the env block, and
+      docs/interop.md:314 carries the CI-Link-Form + pre-push double-guard
+      sentence. Do NOT infer from `pending` that the text is missing — an
+      evaluator did exactly that on 2026-08-23 and was wrong.
 ---
 
 # Acceptance criteria
