@@ -1,7 +1,7 @@
 name: CI WASM
 
-# No RUSTFLAGS override here: wasm32 is cfg-exempt from the prefer-dynamic
-# default in .cargo/config.toml, so this workflow already builds statically.
+# Nothing to configure: a zero-argument build already IS the static release
+# form, on wasm32 as everywhere else (see docs/interop.md).
 on:
   workflow_call:
   workflow_dispatch:

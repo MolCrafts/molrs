@@ -165,55 +165,177 @@ store, so treat the library as single-threaded per process).
   embedded molrs release for diagnostics.
 
 In-house Rust consumers (molpack, the binders) do **not** go through this C
-ABI — they take Path A or Path B directly. They do, locally, share one
-dynamically linked molrs image; that is the next section.
+ABI — they take Path A or Path B directly. How those consumers are *linked*
+— static by default, dynamic only on request — is the next section.
 
 ---
 
-## Local link form — one shared `libmolrs_ffi`
+## Local link form — static by default, dynamic on request
 
-**Locally, every native consumer dynamically links the same
-`libmolrs_ffi`.** Path B's crate is not only the handle API, it is also the
-physical shared object: molrs itself stays an rlib and is linked *into*
-`libmolrs_ffi`, so any build graph that reaches molrs-ffi resolves molrs out
-of that one dylib instead of embedding its own copy. In one venv, the molrs
-and molpack Python extensions therefore hold one molrs image, not two.
+**A zero-argument build is static, everywhere.** Nothing committed selects a
+link form: local, CI and publish hand cargo the same set of link flags — namely
+none — so the same command produces the same artifact shape on a laptop and in
+the release workflow. Every consumer embeds its own molrs image, and every
+wheel / crate is self-contained.
 
-| Context | Where the flags come from | Link form |
+The **dynamic** form still exists, as a pure command-line opt-in. Under it,
+Path B's crate is not only the handle API but also the physical shared object:
+molrs stays an rlib and is linked *into* `libmolrs_ffi`, so every build graph
+that reaches molrs-ffi resolves molrs out of that one dylib instead of
+embedding its own copy — in one venv the molrs and molpack extensions then
+hold one molrs image, not two.
+
+| | static (default) | dynamic (opt-in) |
 |---|---|---|
-| local `cargo` / `maturin`, non-wasm | committed `.cargo/config.toml` (both repos): `[target.'cfg(not(target_arch = "wasm32"))'] rustflags = ["-C","prefer-dynamic"]` | **dynamic** — one `libmolrs_ffi` + `@rpath` libstd |
-| CI and publish (both repos) | workflow `env: RUSTFLAGS: -C prefer-dynamic=no` **and** `CARGO_PROFILE_RELEASE_LTO: thin` | **static**, LTO'd — self-contained artifacts |
-| wasm32 (`molrs-wasm`, Pyodide) | cfg does not match → no flags | static, unchanged |
+| How you get it | nothing — zero arguments | two flags on the command line, by two different transports — see below (`cargo` and `maturin` do not take them the same way) |
+| LTO | `lto = "thin"`, from the manifests | must be turned off |
+| Distribution | every wheel / crate self-contained; each downstream publishes independently | lockstep — molrs and *every* downstream rebuild and republish together |
+| Compat contract | **major.minor** — patch-compatible, as the ABI section above states | **exact build** — ANY change, a patch included, breaks the pair |
 
-The override is spelled `-C prefer-dynamic=no` rather than an empty string
-because env `RUSTFLAGS` *replaces* the config's `rustflags` wholesale. The
-committed `[profile.release]` carries no `lto`, because rustc rejects it for a
-cdylib whose graph contains a Rust dylib (`only 'staticlib', 'bin', and
-'cdylib' outputs are supported with LTO`); the CI/publish env restores `thin`
-on the static path, so released artifacts are LTO'd exactly as before.
+### Asking for the dynamic form
 
-**Preconditions.** One dylib is real only if every native root resolves the
-*same* molrs unit: identical feature set including the literal `default` label
-(hence the `molrs-default` forward feature on `molrs-ffi` / `molrs-python`),
-lockfiles rebuilt in one registry sweep (`scripts/sync-dylib-locks.sh`),
-`[profile.release]` aligned verbatim across the seven native roots, and
-third-party feature widening anchored by `molrs-ffi`'s default-on `unify`
-pins. `scripts/verify-shared-dylib.sh` (pre-push) is the gate.
+Two things must reach rustc, and they travel by **two different transports**:
 
-**Exemptions**, all deliberate and all static: wasm32 / Pyodide by cfg;
-`molrs-cxxapi`'s `staticlib`, which is Atomiverse's delivery form until that
-consumer flips to a cdylib; and released wheels / crates, which stay
-self-contained until the distribution train ships a shared `.so`.
+| What must reach rustc | Kind | bare `cargo` | `maturin build` |
+|---|---|---|---|
+| `-C prefer-dynamic` | rustflags | `--config "target.…rustflags=[…]"` | inline `RUSTFLAGS` on that one invocation — `--config` does **not** reach it |
+| `lto = false` | profile key | `--config 'profile.release.lto=false'` | the same `--config`, unchanged |
 
-**Do not mix a bare `cargo build --release` of `molrs-ffi` with a maturin
-wheel build.** maturin injects its own `CARGO_ENCODED_RUSTFLAGS` (merging the
-repo's `prefer-dynamic` with `-C link-arg=-undefined -C link-arg=dynamic_lookup`),
-and rustflags are a fingerprint input — so the two regimes are two units
-fighting over the same *hashless* `target/release/deps/libmolrs_ffi.dylib`.
-Last writer wins. The failure is loud, not silent: the loser's consumer stops
-with `error[E0463]: can't find crate for molrs_ffi`, and cargo does not
-self-heal (it considers its own unit fresh). Recovery is
-`touch molrs-ffi/src/lib.rs`, then rebuild under whichever regime you want.
+Bare cargo — both by `--config`:
+
+```
+cargo build --release \
+  --config "target.'cfg(not(target_arch = \"wasm32\"))'.rustflags=['-C','prefer-dynamic']" \
+  --config 'profile.release.lto=false'
+```
+
+maturin — rustflags by `RUSTFLAGS`, profile key by `--config`:
+
+```
+RUSTFLAGS='-C prefer-dynamic' maturin build --release \
+  --config 'profile.release.lto=false'
+```
+
+Set `RUSTFLAGS` *inline* on the maturin command, never exported: unlike the
+`--config` form it carries no `cfg(not(target_arch = "wasm32"))` guard, so its
+whole safety is that it lives and dies with one native wheel build.
+
+Neither of the two is optional. `prefer-dynamic` is what makes consumers
+resolve molrs out of the one dylib rather than embedding an rlib copy. Clearing
+`lto` is forced by it: the seven native manifests carry `lto = "thin"` in
+`[profile.release]`, and rustc refuses LTO the moment a Rust dylib enters a
+cdylib's graph — `only 'staticlib', 'bin', and 'cdylib' outputs are supported
+with LTO`. A cargo `--config` profile key is the only thing that overrides a
+*manifest* profile in place.
+
+**Why the transports differ — measured, do not "simplify" it back into one
+line.** maturin unconditionally sets `CARGO_ENCODED_RUSTFLAGS` for the build it
+launches, and env-level rustflags *replace* config-level rustflags wholesale —
+including rustflags supplied by `--config`. With maturin 1.13.3:
+
+- `scripts/verify-shared-dylib.sh` carrying both `--config` flags on both
+  `maturin build --release` calls exits 1 with `FAIL — no libmolrs_ffi
+  dynamic-link entry`: **both** extensions came out static.
+- `maturin build --release -v` with those flags shows the `molrs_python` rustc
+  invocation carrying **no** `-C prefer-dynamic`, while being offered both
+  `--extern molrs_ffi=…libmolrs_ffi.dylib` and `…libmolrs_ffi.rlib`. Without
+  `prefer-dynamic` rustc takes the rlib — that is the static outcome. maturin's
+  own `-C link-arg=-undefined -C link-arg=dynamic_lookup` *are* on that line:
+  the injection that did the replacing.
+- Counter-probe: `RUSTFLAGS='-C prefer-dynamic' maturin build --release
+  --config 'profile.release.lto=false' -v` puts `-C prefer-dynamic` on the
+  `molrs_python` invocation. maturin **appends** its link-args to an inherited
+  `RUSTFLAGS` instead of replacing it.
+- `maturin build --help` offers `--config <KEY=VALUE>` and no rustflags /
+  extra-args entry point, so there is no third transport to look for.
+
+This is the same precedence rule the régime warning below describes, and it did
+not bite while the flag lived in a committed `.cargo/config.toml`: maturin
+*reads* that file and merges it into the rustflags it computes, whereas a
+`--config` override on the command line never enters that computation.
+
+`--config <KEY=VALUE|PATH>` is a stable, official cargo flag and maturin 1.13.3
+exposes it directly (no `--` passthrough); it simply cannot carry rustflags.
+The **static default** needs no environment variable at all — it takes zero
+arguments — and no project-invented variable exists anywhere in either repo.
+The dynamic opt-in borrows cargo's own `RUSTFLAGS`, for maturin builds only,
+confined to `scripts/verify-shared-dylib.sh`: never exported, never in a
+workflow, never written back into a `.cargo/config.toml`. There is still no
+cargo alias, no wrapper script and no second target dir — all artifacts stay in
+the one shared `target/`. Do not re-commit any of this: a committed switch is
+the drift this arrangement removes.
+
+`scripts/verify-shared-dylib.sh` is the canonical runner and carries the split
+itself (`DYN_RUSTFLAGS` for the rustflags transport, `DYN_CONFIG` for the
+profile key). The pre-push gate builds both wheels under the opt-in and proves
+the shared dylib is still real, so a developer normally invokes the gate rather
+than typing any of the above.
+
+### Why the dynamic contract is "exact build", not "minor line"
+
+Measured with cargo 1.96: an empty crate, source unchanged, version bumped
+`0.1.0` → `0.1.1`. The exported symbol hash moved from
+`…17h7f515c415611beecE` to `…17h7f9d024041394482E`. The version string is an
+input to the symbol hash, so a *patch* release renames every exported symbol.
+"Dynamic is compatible along the minor line" is therefore false: a dynamically
+linked pair is only valid for the exact builds it was produced from, which is
+why the dynamic column above demands a coordinated rebuild-and-republish of
+every downstream.
+
+A runtime handshake cannot rescue a mismatched dynamic pair either. dyld fails
+at *load*, so no self-check of ours ever runs — the `_ffi_abi_token()` /
+capsule-name handshake described above can only fire in the static form, where
+both extensions import successfully in the first place. If the dynamic form is
+ever used for publishing, the only correct refusal point is **pip install
+time**: molrs would carry a build-id local version (e.g. `0.14.1+abi.<hash>`)
+that every downstream pins with `==`, making a mismatched pair *unresolvable*
+instead of unloadable.
+
+> **TODO — NOT WIRED.** No build-id local version is emitted today and nothing
+> pins one; this is deliberately out of scope. Until it is built, the dynamic
+> form is a local / gate-only form and must not be published.
+
+### Preconditions for the opt-in
+
+One dylib is real only if every native root resolves the *same* molrs unit:
+
+- identical feature set including the literal `default` label — hence the
+  `molrs-default` forward feature on `molrs-ffi` / `molrs-python`;
+- `[profile.release]` byte-identical across the seven native roots enumerated
+  by `scripts/sync-dylib-locks.sh`'s `ROOTS` array; the profile is part of
+  cargo's unit fingerprint, so one stray key mints a second molrs unit behind
+  the single hashless dylib name;
+- no lockfile skew across those roots — repaired by
+  `scripts/sync-dylib-locks.sh`, which deletes all seven `Cargo.lock`s and
+  regenerates them in one registry sweep;
+- third-party feature widening anchored by `molrs-ffi`'s default-on `unify`
+  pins.
+
+**Exemptions**, all deliberate and all static: wasm32 (`molrs-wasm`) is
+cfg-exempt — the opt-in's `cfg(not(target_arch = "wasm32"))` key does not match
+it, and wasm has no dynamic linking anyway; Pyodide builds
+`--no-default-features` and is not part of the dylib graph; `molrs-cxxapi` is a
+`staticlib` (Atomiverse's delivery form), so it takes the rlib path by
+construction. Released wheels and crates are static because static is the
+default now, not because anything overrides it.
+
+**Under the opt-in, do not mix a bare `cargo build --release` of `molrs-ffi`
+with a maturin wheel build.** maturin still injects its own
+`CARGO_ENCODED_RUSTFLAGS` — on macOS it appends
+`-C link-arg=-undefined -C link-arg=dynamic_lookup` to whatever rustflags it
+inherits from the environment and from `.cargo/config.toml`, which is exactly
+why the opt-in above hands it `RUSTFLAGS` rather than a `--config` rustflags
+key — and rustflags are a fingerprint input, so the two regimes are two
+units fighting over the same *hashless*
+`target/release/deps/libmolrs_ffi.dylib`. Last writer wins. The failure is
+loud, not silent: the loser's consumer stops with `error[E0463]: can't find
+crate for molrs_ffi`, and cargo does not self-heal (it considers its own unit
+fresh). Recovery is `touch molrs-ffi/src/lib.rs`, then rebuild under whichever
+regime you want. What changed with the static default is the *scope*, not the
+mechanism: a zero-argument build resolves molrs-ffi through a hash-suffixed
+rlib, and rlibs from different rustflags regimes coexist in the shared target
+untouched. Only the dynamic form routes through the one hashless dylib, so this
+now bites the developer who opted in rather than everyone by default.
 
 ## Data contract (both paths)
 

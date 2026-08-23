@@ -7,11 +7,3 @@
 # CARGO_TARGET_DIR (env) still overrides when set.
 [build]
 target-dir = "target"
-
-# Local default = DYNAMIC: every non-wasm build prefers the shared
-# libmolrs_ffi dylib (one molrs image per process). wasm32 is exempt via
-# the cfg. CI/publish override back to today's static form with
-#   RUSTFLAGS='-C prefer-dynamic=no'  +  CARGO_PROFILE_RELEASE_LTO=thin
-# (env RUSTFLAGS replaces these flags entirely).
-[target.'cfg(not(target_arch = "wasm32"))']
-rustflags = ["-C", "prefer-dynamic"]

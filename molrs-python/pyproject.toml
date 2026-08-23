@@ -76,11 +76,12 @@ pass_env = [
   "CARGO_HOME",
   "CARGO_TARGET_DIR",
   "RUSTUP_HOME",
+  # Standard cargo variable, none of ours: passed through so a developer's own
+  # flags (e.g. `-C target-cpu=native` for a bench build) survive tox's clean
+  # env. Nothing in this repo sets it, and LTO no longer rides on the
+  # environment at all — `lto` lives in `[profile.release]` in the manifests,
+  # where tox cannot strip it.
   "RUSTFLAGS",
-  # CI's static path restores LTO through this; tox would otherwise strip it
-  # and the wheels would silently lose LTO (the release profile has no `lto`
-  # key — see the shared-dylib probe C2).
-  "CARGO_PROFILE_RELEASE_LTO",
   # sccache (CI compile cache) — harmless when unset locally.
   "RUSTC_WRAPPER",
   "SCCACHE_GHA_ENABLED",

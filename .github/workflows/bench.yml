@@ -26,13 +26,8 @@ permissions:
   contents: write      # push results to the gh-pages dashboard
   deployments: write   # github-action-benchmark uses deployment status
 
-# CI/publish pin today's static, LTO'd form; the local default is dynamic via
-# .cargo/config.toml (env RUSTFLAGS replaces those rustflags entirely). Bench
-# MUST stay static: a shared dylib has no cross-crate inlining, so a dynamic
-# run would break comparability with the whole recorded history.
-env:
-  RUSTFLAGS: "-C prefer-dynamic=no"
-  CARGO_PROFILE_RELEASE_LTO: "thin"
+# Bench MUST stay static: a shared dylib has no cross-crate inlining, so a
+# dynamic run would break comparability with the whole recorded history.
 
 jobs:
   bench:

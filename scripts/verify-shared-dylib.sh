@@ -38,6 +38,50 @@ set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
+# ── 0. The dynamic opt-in, carried by this gate ──────────────────────────────
+# Nothing committed selects the dynamic form any more: a zero-argument build is
+# static everywhere (local, CI and publish pass byte-identical argument lists —
+# namely none). The shared dylib is a pure command-line opt-in, so this script,
+# being the only thing that proves that form still works, must carry it itself.
+# Do not re-commit it into a .cargo/config.toml, an exported env var or a cargo
+# alias: a committed switch is exactly the drift this arrangement removes.
+#
+# The opt-in is TWO things, and they travel by TWO DIFFERENT mechanisms because
+# maturin is in the middle. Neither half is sufficient alone:
+#
+#   1. DYN_RUSTFLAGS — `-C prefer-dynamic` is what makes a consumer resolve
+#      molrs out of the one libmolrs_ffi dylib instead of embedding its own
+#      rlib copy. rustc is offered BOTH --extern forms (…/libmolrs_ffi.dylib
+#      and …/libmolrs_ffi.rlib) and without this flag it takes the rlib.
+#      It must reach cargo as RUSTFLAGS, NOT as --config: maturin
+#      unconditionally sets CARGO_ENCODED_RUSTFLAGS (it adds its own
+#      `-C link-arg=-undefined -C link-arg=dynamic_lookup`), and env-level
+#      rustflags REPLACE config-level rustflags wholesale — so a rustflags
+#      array supplied through --config never reaches rustc under maturin.
+#      Measured on the molrs_python invocation of `maturin build --release -v`:
+#      via --config, `-C prefer-dynamic` is ABSENT; via RUSTFLAGS it is
+#      PRESENT, because maturin appends its link-args to an inherited
+#      RUSTFLAGS rather than discarding it. (It used to work from
+#      .cargo/config.toml only because maturin READS that file and merges it
+#      into its own computation; a --config CLI override never enters it.)
+#      Set inline on the two maturin calls below and nowhere else — never
+#      exported, so it cannot leak into any other build in this shell.
+#
+#   2. DYN_CONFIG — `lto=false` is mandatory the moment that dylib enters a
+#      cdylib's graph: rustc refuses outright with "only 'staticlib', 'bin',
+#      and 'cdylib' outputs are supported with LTO". The seven native manifests
+#      now carry lto = "thin" in [profile.release], and a cargo --config
+#      profile key is the only thing that overrides a manifest profile in
+#      place. This half DOES survive maturin: it is a profile key, not
+#      rustflags, so the CARGO_ENCODED_RUSTFLAGS clobber above cannot touch it.
+#      maturin 1.13.3 exposes cargo's own --config <KEY=VALUE> directly
+#      (verified against `maturin build --help`), so it needs no `--`
+#      passthrough.
+#
+# Human-readable contract: docs/interop.md, § "Local link form".
+DYN_RUSTFLAGS='-C prefer-dynamic'
+DYN_CONFIG=(--config 'profile.release.lto=false')
+
 # ── 1. Locate the sibling molpack checkout ───────────────────────────────────
 MOLPACK_ROOT="${MOLPACK_ROOT:-$PROJECT_ROOT/../molpack}"
 
@@ -158,33 +202,46 @@ VENV_PY="$WORK/venv/bin/python"
 
 # ── 4. Build both wheels, release profile, same interpreter ──────────────────
 # Release specifically: the dylib/profile fingerprint alignment this gate
-# checks is declared per-[profile.release] across five workspace roots, so a
-# debug build would not exercise the invariant under test.
+# checks is declared per-[profile.release] across the seven native workspace
+# roots enumerated by scripts/sync-dylib-locks.sh (ROOTS), so a debug build
+# would not exercise the invariant under test. Those manifests carry
+# lto = "thin", which is why the release build here must also carry
+# profile.release.lto=false — see DYN_RUSTFLAGS / DYN_CONFIG at the top of
+# this file for both halves of the opt-in and why they travel differently.
 mkdir -p "$WORK/wheels"
 
-echo "verify-shared-dylib: building molrs wheel (release) ..."
-(cd "$PROJECT_ROOT/molrs-python" && maturin build --release -i "$VENV_PY" -o "$WORK/wheels")
+echo "verify-shared-dylib: building molrs wheel (release, dynamic opt-in) ..."
+(cd "$PROJECT_ROOT/molrs-python" && RUSTFLAGS="$DYN_RUSTFLAGS" maturin build --release "${DYN_CONFIG[@]}" -i "$VENV_PY" -o "$WORK/wheels")
 
 FFI_DYLIB="$(resolve_shared_ffi_dylib || true)"
 if [ -z "$FFI_DYLIB" ]; then
     echo "verify-shared-dylib: FAIL — the molrs wheel build produced no shared" >&2
     echo "libmolrs_ffi in the shared target." >&2
     echo >&2
-    echo "  looked for: $FFI_DYLIB_BASE$FFI_LIB_SUFFIX" >&2
+    echo "  expected: $FFI_DYLIB_BASE$FFI_LIB_SUFFIX" >&2
+    echo "  observed: no such file (the wheel build emitted no shared dylib)" >&2
     echo >&2
     echo "Remediation, in this order:" >&2
     echo "  1. bash scripts/sync-dylib-locks.sh   # rebuild every native root's" >&2
     echo "     Cargo.lock in one registry sweep, then rebuild" >&2
-    echo "  2. check molrs-ffi's crate-type = [\"dylib\", \"rlib\"] and the" >&2
-    echo "     -C prefer-dynamic rustflags in both .cargo/config.toml" >&2
+    echo "  2. confirm the maturin call above still carries BOTH halves of the" >&2
+    echo "     opt-in: RUSTFLAGS=\"\$DYN_RUSTFLAGS\" AND \${DYN_CONFIG[@]} (top of" >&2
+    echo "     this script). Since the static default landed, NOTHING committed" >&2
+    echo "     turns the dynamic form on — lose either half and this branch is" >&2
+    echo "     the guaranteed outcome" >&2
+    echo "  3. check molrs-ffi's crate-type = [\"dylib\", \"rlib\"]" >&2
+    echo "  4. check your shell for an exported CARGO_ENCODED_RUSTFLAGS: cargo" >&2
+    echo "     prefers it over RUSTFLAGS, so it displaces the value this script" >&2
+    echo "     sets inline for these two builds. Unset it and rerun" >&2
+    echo "  Contract: docs/interop.md, § \"Local link form\"" >&2
     exit 1
 fi
 FFI_SHA_AFTER_MOLRS="$(sha256_of "$FFI_DYLIB")"
 echo "verify-shared-dylib: sha256 after molrs wheel   = $FFI_SHA_AFTER_MOLRS"
 echo "                     ($FFI_DYLIB)"
 
-echo "verify-shared-dylib: building molpack wheel (release) ..."
-(cd "$MOLPACK_ROOT/python" && maturin build --release -i "$VENV_PY" -o "$WORK/wheels")
+echo "verify-shared-dylib: building molpack wheel (release, dynamic opt-in) ..."
+(cd "$MOLPACK_ROOT/python" && RUSTFLAGS="$DYN_RUSTFLAGS" maturin build --release "${DYN_CONFIG[@]}" -i "$VENV_PY" -o "$WORK/wheels")
 
 # ── 4b. Unit identity: the shared dylib must not have moved a single byte ────
 # This is THE identity assertion of this gate. The dylib's install_name carries
@@ -230,11 +287,16 @@ if [ "$FFI_SHA_AFTER_MOLRS" != "$FFI_SHA_AFTER_MOLPACK" ]; then
     echo "     native root's untracked Cargo.lock in ONE registry sweep (version" >&2
     echo "     drift between those locks is the dominant cause), then rerun this" >&2
     echo "     gate" >&2
-    echo "  2. still red? census the shared target:" >&2
-    echo "       ls $PROJECT_ROOT/target/debug/deps/libmolrs-*.rlib | wc -l" >&2
-    echo "     anything but 1 means another fork axis is live — word-diff the" >&2
-    echo "     rustc invocations of the diverged crate and widen molrs-ffi's" >&2
-    echo "     'unify' pins (see .claude/specs/ffi-shared-dylib.md, 单元同一性)" >&2
+    echo "  2. still red? census the shared target (this gate builds release):" >&2
+    echo "       ls $PROJECT_ROOT/target/release/deps/libmolrs-*.rlib | wc -l" >&2
+    echo "     anything but 1 means another fork axis is live. Unit identity" >&2
+    echo "     has five measured axes and every one must match across the" >&2
+    echo "     seven native roots: lockfile drift, the literal 'default'" >&2
+    echo "     feature label, sibling-induced third-party feature widening," >&2
+    echo "     workspace-member flavour, and the RUSTFLAGS régime (a bare" >&2
+    echo "     cargo build and a maturin build are two different régimes)." >&2
+    echo "     Word-diff the rustc invocations of the diverged crate and" >&2
+    echo "     widen molrs-ffi's 'unify' pins" >&2
     exit 1
 fi
 
@@ -301,22 +363,33 @@ MOLPACK_FFI="$(extract_ffi_path "$MOLPACK_LINKS")"
 if [ -z "$MOLRS_FFI" ] || [ -z "$MOLPACK_FFI" ]; then
     echo "verify-shared-dylib: FAIL — no libmolrs_ffi dynamic-link entry." >&2
     echo >&2
-    echo "  molrs._lib      libmolrs_ffi entry: ${MOLRS_FFI:-<none>}" >&2
-    echo "  molpack.molpack libmolrs_ffi entry: ${MOLPACK_FFI:-<none>}" >&2
+    echo "  observed  molrs._lib      libmolrs_ffi entry: ${MOLRS_FFI:-<none>}" >&2
+    echo "  observed  molpack.molpack libmolrs_ffi entry: ${MOLPACK_FFI:-<none>}" >&2
+    echo "  expected  one libmolrs_ffi entry in EACH extension" >&2
     echo >&2
     echo "An extension with no libmolrs_ffi entry has molrs STATICALLY linked" >&2
     echo "into it: the two wheels then carry two independent molrs images and" >&2
-    echo "share nothing." >&2
+    echo "share nothing. Static is the zero-argument default of both repos, so" >&2
+    echo "this is the outcome whenever the opt-in fails to reach rustc." >&2
     echo >&2
     echo "Remediation, in this order:" >&2
     echo "  1. bash scripts/sync-dylib-locks.sh   # rebuild every native root's" >&2
     echo "     Cargo.lock in ONE registry sweep, then rebuild. Do this first:" >&2
     echo "     until every root resolves one molrs unit, nothing below can be" >&2
     echo "     diagnosed reliably" >&2
-    echo "  2. molrs-ffi's crate-type = [\"dylib\", \"rlib\"]" >&2
-    echo "  3. the -C prefer-dynamic rustflags in BOTH .cargo/config.toml" >&2
-    echo "     (an exported RUSTFLAGS replaces them wholesale)" >&2
-    echo "  4. every consumer graph resolving the SAME molrs feature union" >&2
+    echo "  2. the dynamic opt-in itself — BOTH halves, on BOTH maturin build" >&2
+    echo "     --release calls: RUSTFLAGS=\"\$DYN_RUSTFLAGS\" (prefer-dynamic has" >&2
+    echo "     to travel as env rustflags; maturin's own" >&2
+    echo "     CARGO_ENCODED_RUSTFLAGS discards a --config rustflags array)" >&2
+    echo "     plus \${DYN_CONFIG[@]} (the profile key, which does survive)." >&2
+    echo "     Nothing else selects the dynamic form — no .cargo/config, no" >&2
+    echo "     workflow env, no alias does it any more" >&2
+    echo "  3. an exported CARGO_ENCODED_RUSTFLAGS in your shell: cargo prefers" >&2
+    echo "     it over RUSTFLAGS, so it displaces the value this script sets" >&2
+    echo "     inline. Unset it and rerun" >&2
+    echo "  4. molrs-ffi's crate-type = [\"dylib\", \"rlib\"]" >&2
+    echo "  5. every consumer graph resolving the SAME molrs feature union" >&2
+    echo "  Contract: docs/interop.md, § \"Local link form\"" >&2
     echo >&2
     echo "--- ${LINKER_CMD[*]} $MOLRS_EXT ---" >&2
     printf '%s\n' "$MOLRS_LINKS" >&2
@@ -349,16 +422,22 @@ for recorded in "$MOLRS_FFI_REAL" "$MOLPACK_FFI_REAL"; do
         echo "verify-shared-dylib: FAIL — an extension records a libmolrs_ffi that" >&2
         echo "is not the shared object this gate hashed." >&2
         echo >&2
-        echo "  recorded        -> $recorded" >&2
-        echo "  exists          -> $([ -f "$recorded" ] && echo yes || echo no)" >&2
-        echo "  its sha256      -> $([ -f "$recorded" ] && sha256_of "$recorded" || echo '<none>')" >&2
-        echo "  shared dylib    -> $FFI_DYLIB_AFTER" >&2
-        echo "  its sha256      -> $FFI_SHA_AFTER_MOLPACK" >&2
+        echo "  observed  recorded     -> $recorded" >&2
+        echo "  observed  exists       -> $([ -f "$recorded" ] && echo yes || echo no)" >&2
+        echo "  observed  its sha256   -> $([ -f "$recorded" ] && sha256_of "$recorded" || echo '<none>')" >&2
+        echo "  expected  shared dylib -> $FFI_DYLIB_AFTER" >&2
+        echo "  expected  its sha256   -> $FFI_SHA_AFTER_MOLPACK" >&2
         echo >&2
         echo "Remediation, in this order:" >&2
         echo "  1. bash scripts/sync-dylib-locks.sh   # then rebuild and rerun" >&2
         echo "  2. confirm both repos' .cargo/config.toml still route builds into" >&2
-        echo "     $PROJECT_ROOT/target, and that no CARGO_TARGET_DIR is set" >&2
+        echo "     $PROJECT_ROOT/target ([build] target-dir is the only key those" >&2
+        echo "     files still carry), and that no CARGO_TARGET_DIR is set" >&2
+        echo "  3. confirm both maturin calls in this script took the SAME" >&2
+        echo "     RUSTFLAGS=\"\$DYN_RUSTFLAGS\" and the SAME \${DYN_CONFIG[@]}:" >&2
+        echo "     two different flag sets are two rustflags régimes fighting" >&2
+        echo "     over one hashless dylib path" >&2
+        echo "  Contract: docs/interop.md, § \"Local link form\"" >&2
         echo >&2
         echo "--- ${LINKER_CMD[*]} $MOLRS_EXT ---" >&2
         printf '%s\n' "$MOLRS_LINKS" >&2

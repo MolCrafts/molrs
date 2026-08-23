@@ -4,12 +4,12 @@ members = ["molrs"]
 # molrs-cxxapi — is a standalone workspace root with its own `[workspace]`.
 #
 # molrs-cxxapi used to be a member, which was a unit-identity defect, not just a
-# compile-cost one (axis 4 in .claude/specs/ffi-shared-dylib.md): a workspace
-# MEMBER builds under a different unit flavour than a path dependency, so
-# building it minted its own molrs and — since it depends on molrs-ffi — wrote
-# that flavour into the hashless deps/libmolrs_ffi.dylib, overwriting whatever
-# the other roots had put there. With cxxapi out, no command in this workspace
-# has molrs-ffi in its graph at all, so this root can never touch that dylib.
+# compile-cost one (axis 4): a workspace MEMBER builds under a different unit
+# flavour than a path dependency, so building it minted its own molrs and —
+# since it depends on molrs-ffi — wrote that flavour into the hashless
+# deps/libmolrs_ffi.dylib, overwriting whatever the other roots had put there.
+# With cxxapi out, no command in this workspace has molrs-ffi in its graph at
+# all, so this root can never touch that dylib.
 # Lint it via `--manifest-path molrs-cxxapi/Cargo.toml`, never `-p`.
 exclude = ["molrs-ffi"]
 resolver = "3"
@@ -36,15 +36,18 @@ homepage = "https://github.com/MolCrafts/molrs"
 # left the workspace in the ffi-shared-dylib eviction — every binder now
 # declares its molcrafts-molrs dependency directly.)
 
-# No LTO here — it is incompatible with the shared dylib graph: once a Rust
-# dylib (libmolrs_ffi) is in a cdylib's dependency graph, rustc refuses with
-# "only 'staticlib', 'bin', and 'cdylib' outputs are supported with LTO"
-# (probe C2 in .claude/specs/ffi-shared-dylib.md). CI/publish restore it on
-# their static path via env CARGO_PROFILE_RELEASE_LTO=thin. These four keys are
-# byte-identical across all five workspace roots — profile is part of the
+# These four keys are byte-identical across the seven native roots enumerated by
+# scripts/sync-dylib-locks.sh's ROOTS array — profile is part of cargo's unit
 # fingerprint, and a mismatch would put two libmolrs_ffi builds behind the one
-# hashless install_name that @rpath resolves at runtime.
+# hashless install_name that @rpath resolves at runtime. Edit them in all seven
+# or in none.
+#
+# LTO is on because the default link form is static — local, CI and publish now
+# build with the same (empty) set of flags. Only the opt-in dynamic form has to
+# turn it back off, since a Rust dylib in a cdylib's graph makes rustc reject
+# LTO; docs/interop.md is the one place that documents how to ask for it.
 [profile.release]
 codegen-units = 1
+lto = "thin"
 opt-level = 3
 strip = "symbols"

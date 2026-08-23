@@ -54,10 +54,11 @@ MOLPACK_ROOT="$(cd "$MOLPACK_ROOT" && pwd)"
 # The seven native roots of the dynamic graph.
 #
 # molrs-wasm is DELIBERATELY excluded: it is the existing browser exemption
-# (`default-features = false` for bundle size) and it builds for wasm32, which
-# the .cargo/config.toml cfg exempts from `-C prefer-dynamic` altogether. Its
-# molrs unit is SUPPOSED to diverge, so dragging it into the sweep would add a
-# unit that can never converge and invite someone to "fix" the divergence by
+# (`default-features = false` for bundle size), it carries no
+# `[profile.release]` of its own, and it builds for wasm32, which has no dynamic
+# linking and so can never take the opt-in dynamic link form (docs/interop.md).
+# Its molrs unit is SUPPOSED to diverge, so dragging it into the sweep would add
+# a unit that can never converge and invite someone to "fix" the divergence by
 # widening the browser bundle.
 ROOTS=(
     "$PROJECT_ROOT"                 # molrs root workspace (molrs itself)
