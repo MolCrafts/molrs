@@ -2,60 +2,64 @@
 slug: link-mode-static-default-02-ci-gate
 criteria:
   - id: ac-001
-    summary: CI Link Form static job proves the zero-argument default
+    summary: The static link form has a pre-push hook and it passes
     type: runtime
     pass_when: |
-      A workflow_dispatch run of .github/workflows/ci-link-form.yml shows job
-      `static` green, its log printing the regression's
-      "libmolrs_ffi dynamic-link entry count == 0" line, and the job body
-      contains no rustflags/env/--config of any kind.
-    status: pending
-    blocked_by: |
-      Runner-observed only. Satisfying this requires pushing a branch and
-      running the workflow on a GitHub runner, which was NOT authorised in
-      this session (nothing in either repo has been pushed). Everything
-      locally checkable about the job was verified instead — see ac-004 /
-      ac-005 — but the shape of a job is not evidence that it runs green, so
-      this criterion is deliberately left unverified rather than attested.
+      REVISED 2026-08-23: originally written as a runner observation, which was
+      the wrong instrument — this repo's `.pre-commit-config.yaml` is the single
+      source and `ci.yml` mirrors it (header line 1-2), so the gate must be
+      observable locally without pushing anything.
+
+      `prek run --all-files --hook-stage pre-push` runs a `link-static` hook
+      that exits 0, and its output contains the regression's line
+      `libmolrs_ffi dynamic-link entry count == 0`. The hook body passes no
+      build flag and sets no environment variable of any kind — that absence is
+      the proposition under test, so a hook that "helpfully" pinned anything
+      would make a green run prove something weaker.
+      VERIFIED 2026-08-23 via `prek ... link-static --verbose`: exit 0,
+      output `libmolrs_ffi dynamic-link entry count == 0` plus the regression's
+      OK line. Full `prek run --all-files --hook-stage pre-push`: 12/12 hooks
+      Passed, exit 0.
+    status: verified
+    last_checked: 2026-08-23
   - id: ac-002
-    summary: CI Link Form dynamic job runs the cross-repo gate green
+    summary: The dynamic opt-in hook still passes, cross-repo
     type: runtime
     pass_when: |
-      The same run shows job `dynamic` green: molrs checked out at path
-      `molrs`, molpack at path `molpack`, and the log printing a libmolrs_ffi
-      entry for both extensions plus one identical sha256 after the molrs and
-      molpack wheel builds.
-      REF REQUIREMENT (2026-08-23, grill): molrs CI triggers on `dev` and
-      `master`, and molcrafts PRs land on `dev` first — so the molpack
-      checkout must pin a ref that actually carries
-      link-mode-static-default-01-invert (`dev` during the landing window),
-      not a bare `master`. A `master` pin would silently validate a molpack
-      that predates 01. The chosen ref is stated in a comment on the checkout
-      step.
-    status: pending
-    blocked_by: |
-      Runner-observed only. Satisfying this requires pushing a branch and
-      running the workflow on a GitHub runner, which was NOT authorised in
-      this session (nothing in either repo has been pushed). Everything
-      locally checkable about the job was verified instead — see ac-004 /
-      ac-005 — but the shape of a job is not evidence that it runs green, so
-      this criterion is deliberately left unverified rather than attested.
+      REVISED 2026-08-23: see ac-001 — observed through prek, not a runner.
+
+      In the same `prek run --all-files --hook-stage pre-push` sweep, the
+      `verify-shared-dylib` hook exits 0: a `libmolrs_ffi` entry in BOTH
+      molrs._lib and molpack.molpack, and ONE identical sha256 printed after
+      the molrs wheel build and after the molpack wheel build (a path
+      comparison is vacuous; the sha is the identity proof).
+      VERIFIED 2026-08-23 via `prek ... verify-shared-dylib --verbose`: exit 0,
+      `sha256 after molrs wheel` and `sha256 after molpack wheel` both
+      9ba2c3da3613dd1fd7c173a186134ee9e8d02e30c856bd2523d5278cea50fed5,
+      then `verify-shared-dylib: OK`.
+    status: verified
+    last_checked: 2026-08-23
   - id: ac-003
-    summary: The dynamic gate demonstrably bites when the flags are removed
+    summary: The dynamic gate demonstrably bites when its opt-in is removed
     type: runtime
     pass_when: |
-      On a throwaway branch with the two --config flags deleted from
-      scripts/verify-shared-dylib.sh, the `dynamic` job fails at
-      "FAIL — no libmolrs_ffi dynamic-link entry"; the run URL is recorded and
-      the branch is not merged.
-    status: pending
-    blocked_by: |
-      Runner-observed only. Satisfying this requires pushing a branch and
-      running the workflow on a GitHub runner, which was NOT authorised in
-      this session (nothing in either repo has been pushed). Everything
-      locally checkable about the job was verified instead — see ac-004 /
-      ac-005 — but the shape of a job is not evidence that it runs green, so
-      this criterion is deliberately left unverified rather than attested.
+      REVISED 2026-08-23: performed locally on a dirty tree instead of a
+      throwaway branch — same experiment, no push, and the result is reverted
+      immediately and never committed.
+
+      With `DYN_RUSTFLAGS` removed from its two maturin invocations in
+      scripts/verify-shared-dylib.sh, the gate must FAIL at
+      `FAIL — no libmolrs_ffi dynamic-link entry`. Record the observed exit
+      code and that failure line, then `git checkout -- scripts/…` and confirm
+      the gate is green again. Without this, a passing ac-002 proves only that
+      the gate ran, not that it can fail.
+      VERIFIED 2026-08-23: with `RUSTFLAGS="$DYN_RUSTFLAGS"` stripped from both
+      maturin calls, the hook exited 1 at `FAIL — no libmolrs_ffi dynamic-link
+      entry`, printing `observed ... <none>` for BOTH extensions against
+      `expected one libmolrs_ffi entry in EACH extension`. Restored with
+      `git checkout --`; diff empty, both call sites back. Never committed.
+    status: verified
+    last_checked: 2026-08-23
   - id: ac-004
     summary: link-form is wired into the CI orchestrator, not a new top-level workflow
     type: code

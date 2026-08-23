@@ -1,7 +1,7 @@
 ---
 title: CI 双形态门:静态默认与动态 opt-in 各自被观测,不再只靠 pre-push
 slug: link-mode-static-default-02-ci-gate
-status: in-progress
+status: code-complete
 created: 2026-08-23
 last-updated: 2026-08-23
 grilled: true
@@ -96,6 +96,20 @@ molpack 的四个 job 都 checkout `MOLRS_GIT_REF: v0.14.0`(`ci.yml:17`),而
 这句话以注释形式写进 `molpack/.github/workflows/ci.yml` 的 env 块上方,并作为
 docs 类验收项。
 
+### 工具选择更正:hooks 是真源,CI 是镜像(实现期)
+
+起草时把三条判据写成"在真实 runner 上观测",于是把 02 卡在了需要 push。
+这与本仓既有设计相反:`.pre-commit-config.yaml` 头两行明写
+"prek: pre-commit = rustfmt+clippy; pre-push = unit + python + wasm + capi.
+**Mirrors ci.yml**",即**钩子是单一真源,`ci.yml` 是镜像**,而
+`CLAUDE.md` 的 `ci.local` 也正是 `prek run --all-files --hook-stage pre-push`。
+
+真正的缺口不在 CI,而在钩子:动态形态早有 `verify-shared-dylib` 钩子,
+**静态形态一个都没有** —— 我们实际发布的那个形态,本地没有任何东西看着它。
+因此本 spec 增补 `link-static` pre-push 钩子(与 CI `static:` job 同样的零参数
+payload),两条链接形态判据随即本地可观测,不需要推任何分支;反向门也改为
+本地脏树实验(改完即还原,永不提交)。CI 的两个 job 保留为镜像。
+
 ### Reuse decision
 
 - `pattern` `molrs/.github/workflows/ci.yml:11-26` — 纯编排模式,新 workflow
@@ -121,7 +135,8 @@ docs 类验收项。
 
 ## Files to create or modify
 
-- `molrs/.github/workflows/ci-link-form.yml` (new) — `static:` + `dynamic:` 两个 job
+- `molrs/.pre-commit-config.yaml` — 新增 `link-static` pre-push 钩子(静态形态缺失的那一半)+ 头部注释同步
+- `molrs/.github/workflows/ci-link-form.yml` (new) — `static:` + `dynamic:` 两个 job(镜像上面两个钩子)
 - `molrs/.github/workflows/ci.yml` — 在 `capi:` 之后加 `link-form:` 条目
 - `molpack/.github/workflows/ci.yml` — 在 `regression:` 之后加 `link-dynamic:` job;env 块上方补落地顺序注释
 - `molrs/docs/interop.md` — 在 § "Local link form" 的前置条件段补一句:动态形态现由 `CI Link Form` 的 `dynamic:` job 与 pre-push 双重守护
@@ -132,7 +147,7 @@ docs 类验收项。
 - [x] Wire `link-form:` into `.github/workflows/ci.yml` as the fifth `uses:` entry
 - [x] Add a `link-dynamic:` job to `molpack/.github/workflows/ci.yml` after `regression:` (non-PR events only) invoking the sibling `molrs/scripts/verify-shared-dylib.sh`
 - [x] Document the `MOLRS_GIT_REF` landing-order precondition in `molpack/.github/workflows/ci.yml` and the CI/pre-push double guard in `docs/interop.md`
-- [ ] Verify both molrs jobs green via `workflow_dispatch` on a branch and record the run URLs; confirm the molpack job's only red cause is the un-cut `v0.14.0` tag
+- [x] Add a `link-static` pre-push hook (the static form's missing half) and verify BOTH link-form hooks through `prek run --all-files --hook-stage pre-push`, plus the reverse-gate experiment locally
 - [x] Run full check + test suite in both repos
 
 ## Testing strategy

@@ -1,5 +1,6 @@
-# prek: pre-commit = rustfmt+clippy; pre-push = unit + python + wasm + capi
-# Mirrors ci.yml (rust / wasm / python / capi). No wrapper scripts.
+# prek: pre-commit = rustfmt+clippy; pre-push = unit + python + wasm
+# + link form (static default + shared dylib) + capi
+# Mirrors ci.yml (rust / wasm / python / capi / link-form). No wrapper scripts.
 
 default_install_hook_types: [pre-commit, pre-push]
 
@@ -72,6 +73,34 @@ repos:
         always_run: true
         stages: [pre-push]
 
+      # Link-form pair, first half — and the half that had no local gate. This
+      # one asserts the PUBLISHED default: a wheel built with nothing typed and
+      # nothing exported links molrs statically (zero libmolrs_ffi entries).
+      # verify-shared-dylib below asserts the opt-in dynamic form still works
+      # (one shared libmolrs_ffi). The two assert OPPOSITE things and must never
+      # be swapped, nor either edited into the other — see
+      # regressions/link-mode-static-default.py and docs/interop.md. Mirrors the
+      # ci.yml `link-form` / `static:` job: no flags and no env of any kind,
+      # because the absence is the proposition under test. target/wheels is
+      # dropped first — the wheel filename is version-stable, so an earlier
+      # build's wheel would otherwise be the one inspected. The throwaway venv
+      # lives under target/ (already gitignored) and is recreated every run.
+      - id: link-static
+        name: static link form
+        entry: >-
+          sh -c 'set -euo pipefail;
+          rm -rf target/wheels target/link-static-venv;
+          (cd molrs-python; maturin build --release);
+          uv venv target/link-static-venv;
+          uv pip install --python target/link-static-venv/bin/python
+          target/wheels/molcrafts_molrs-*.whl;
+          target/link-static-venv/bin/python
+          regressions/link-mode-static-default.py'
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+
       # Cross-repo unit-identity gate: needs the molpack sibling (override with
       # MOLPACK_ROOT); refuses and explains when it is absent, by design.
       - id: verify-shared-dylib
@@ -82,13 +111,20 @@ repos:
         always_run: true
         stages: [pre-push]
 
+      # The `;` after every line are load-bearing, not style: `>-` folds this
+      # block onto ONE line, so without them the whole thing became a single
+      # `set -euo pipefail cargo build … ctest …` command — `set` with a pile of
+      # positional arguments, which compiles nothing, runs no ctest, and exits 0
+      # unconditionally. This gate could not fail from the day it was written
+      # until 2026-08-23. Reproduce the old shape with:
+      #   sh -c 'set -euo pipefail echo NOPE false'; echo $?   # -> 0, no NOPE
       - id: capi-tests
         name: C API ctest
         entry: >-
-          sh -c 'set -euo pipefail
-          cargo build --manifest-path molrs-capi/Cargo.toml
-          cmake -S molrs-capi/tests/cpp -B molrs-capi/build-test
-          cmake --build molrs-capi/build-test
+          sh -c 'set -euo pipefail;
+          cargo build --manifest-path molrs-capi/Cargo.toml;
+          cmake -S molrs-capi/tests/cpp -B molrs-capi/build-test;
+          cmake --build molrs-capi/build-test;
           ctest --test-dir molrs-capi/build-test --output-on-failure'
         language: system
         pass_filenames: false
