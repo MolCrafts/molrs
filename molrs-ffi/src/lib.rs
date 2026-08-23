@@ -21,6 +21,7 @@
 //! }
 //! ```
 
+pub mod abi;
 mod error;
 #[cfg(feature = "ff")]
 mod forcefield;

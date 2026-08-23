@@ -16,9 +16,7 @@
 
 use std::sync::Arc;
 
-use molrs::store::block::{
-    Block as CoreBlock, BlockDtype, Column, ColumnHolder,
-};
+use molrs::store::block::{Block as CoreBlock, BlockDtype, Column, ColumnHolder};
 use molrs::types::{F, I, U};
 use molrs_ffi::BlockRef;
 use ndarray::{Array1, ArrayD, IxDyn};

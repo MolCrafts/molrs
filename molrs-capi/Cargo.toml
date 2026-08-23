@@ -1,6 +1,6 @@
 [package]
 name = "molcrafts-molrs-capi"
-version = "0.13.0"
+version = "0.14.0"
 edition = "2024"
 authors = ["MolCrafts"]
 license = "BSD-3-Clause"
@@ -14,13 +14,21 @@ crate-type = ["cdylib", "staticlib", "lib"]
 
 [workspace]
 
+# Standalone workspace root: does NOT inherit the repo root's [profile.release].
+# Keep in sync with ../Cargo.toml so released C libs get the same optimization.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+opt-level = 3
+strip = "symbols"
+
 [features]
 default = []
 
 [dependencies]
 # The merged crate with the ff + io + smiles modules this C API exposes.
-molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.13.0", default-features = false, features = ["ff", "io", "smiles"] }
-molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.13.0" }
+molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.14.0", default-features = false, features = ["ff", "io", "smiles"] }
+molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.14.0" }
 slotmap = "1.0"
 ndarray = "0.17"
 serde_json = "1"

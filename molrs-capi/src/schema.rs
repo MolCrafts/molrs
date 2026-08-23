@@ -191,7 +191,11 @@ mod tests {
     fn block_membership_matches_the_table() {
         for spec in schema::SCHEMA_BLOCKS {
             let n = CString::new(spec.name).unwrap();
-            assert!(unsafe { molrs_schema_has_block(n.as_ptr()) }, "{}", spec.name);
+            assert!(
+                unsafe { molrs_schema_has_block(n.as_ptr()) },
+                "{}",
+                spec.name
+            );
         }
         let n = CString::new("not_a_block").unwrap();
         assert!(!unsafe { molrs_schema_has_block(n.as_ptr()) });

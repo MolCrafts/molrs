@@ -1,0 +1,21 @@
+abi 0.14
+FrameId size=8 align=4
+BlockHandle size=40 align=8
+BlockHandle.frame_id offset=24
+BlockHandle.key offset=0
+BlockHandle.version offset=32
+FrameRef size=16 align=8
+FrameRef.id offset=0
+FrameRef.store offset=8
+BlockRef size=48 align=8
+BlockRef.handle offset=0
+BlockRef.store offset=40
+SharedStore size=8 align=8
+Store size=32 align=8
+molrs::Frame size=376 align=8
+molrs::Frame.meta offset=48
+molrs::Frame.simbox offset=96
+molrs::Block size=88 align=8
+molrs::SimBox size=280 align=8
+crate::ForceFieldRef size=8 align=8
+molrs::ff::ForceField size=96 align=8

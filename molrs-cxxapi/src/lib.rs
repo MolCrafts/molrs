@@ -795,7 +795,9 @@ fn frame_new() -> Box<FrameRef> {
 ///
 /// This is the cross-extension ingress point. molrs-python's
 /// `Frame._ffi_frameref_capsule()` produces a `PyCapsule` named
-/// `"molrs.FrameRef"`. PyO3 heap-boxes the capsule payload, and that payload
+/// `molrs_ffi::abi::frameref_capsule_name()` — `"molrs.FrameRef/<major.minor>"`,
+/// carrying the ABI line (builds before 0.14 used the unversioned
+/// `"molrs.FrameRef"`). PyO3 heap-boxes the capsule payload, and that payload
 /// is a `#[repr(transparent)]` `FrameRefPtr` — itself a `*mut FrameRef`
 /// (a clone of the Python frame's handle). The capsule's `void*` is
 /// therefore `*mut *mut molrs_ffi::FrameRef`.
@@ -810,8 +812,12 @@ fn frame_new() -> Box<FrameRef> {
 /// # Safety
 ///
 /// `addr` must be the pointer returned by `PyCapsule_GetPointer` on a
-/// `"molrs.FrameRef"` capsule from `molrs.Frame._ffi_frameref_capsule()`,
-/// valid for the duration of this call. The molrs FFI store is
+/// capsule from `molrs.Frame._ffi_frameref_capsule()`, named with this
+/// build's `molrs_ffi::abi::frameref_capsule_name()` (the caller must pass
+/// that exact name to `PyCapsule_GetPointer` — query it via
+/// `molrs._ffi_abi_token()`), valid for the duration of this call. The name
+/// carries the molrs minor line, so a cross-minor producer fails the name
+/// check instead of being dereferenced here. The molrs FFI store is
 /// single-threaded and GIL-guarded; the caller must hold the GIL (or
 /// otherwise guarantee exclusive access) while calling.
 ///

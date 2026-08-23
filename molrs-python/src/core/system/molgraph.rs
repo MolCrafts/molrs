@@ -25,10 +25,10 @@ use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 
 use molrs::perceive::aromaticity::perceive_aromaticity as core_perceive_aromaticity;
-use molrs::system::bond::{BondNumber, BondType};
 use molrs::perceive::rings::max_ring_system_size as core_max_ring_system_size;
 use molrs::perceive::smarts::{MatchOptions, Reaction, RingPrimitive, SmartsPattern};
 use molrs::system::atomistic::{Atomistic, ExtractedAtomistic};
+use molrs::system::bond::{BondNumber, BondType};
 use molrs::system::coarsegrain::{CoarseGrain, ExtractedCoarseGrain};
 use molrs::system::entity_table::Cell;
 use molrs::system::molgraph::{
@@ -693,12 +693,7 @@ impl PyAtomistic {
     ///     0 unknown, 1 single, 2 double, 3 triple, 4 aromatic.
     /// bond_number : int
     ///     0 unknown, 1 single, 2 double, 3 triple, 4 quadruple.
-    fn set_bond_class(
-        &mut self,
-        handle: u64,
-        bond_type: u32,
-        bond_number: u32,
-    ) -> PyResult<()> {
+    fn set_bond_class(&mut self, handle: u64, bond_type: u32, bond_number: u32) -> PyResult<()> {
         self.inner
             .set_bond_class(
                 relation_from_u64(handle),

@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "molcrafts-molrs"
-version = "0.13.0"
+version = "0.14.0"
 description = "Python bindings for molrs molecular simulation library"
 requires-python = ">=3.12"
 readme = "README.md"
@@ -77,6 +77,12 @@ pass_env = [
   "CARGO_TARGET_DIR",
   "RUSTUP_HOME",
   "RUSTFLAGS",
+  # sccache (CI compile cache) — harmless when unset locally.
+  "RUSTC_WRAPPER",
+  "SCCACHE_GHA_ENABLED",
+  "SCCACHE_PATH",
+  "ACTIONS_RESULTS_URL",
+  "ACTIONS_RUNTIME_TOKEN",
   "MACOSX_DEPLOYMENT_TARGET",
   "SSH_AUTH_SOCK",
   "TERM",

@@ -71,6 +71,7 @@ molcrafts-molrs = { version = "0.12", features = ["io", "smiles", "conformer"] }
 | **Python (desktop)** | `pip install molcrafts-molrs` | `import molrs` |
 | **Python (browser / Pyodide)** | `await micropip.install("molcrafts-molrs")` | `import molrs` |
 | **JS (browser)** | `npm install @molcrafts/molrs` | wasm-bindgen API (not `import molrs`) |
+| **C / C++** | `molrs-capi-*.tar.gz` from [GitHub Releases](https://github.com/MolCrafts/molrs/releases) | link `libmolrs_capi` + `#include "molrs.h"` — see `docs/interop.md`, Path C |
 
 PyPI ships **desktop** wheels (manylinux / macOS / Windows) and a **Pyodide
 (Emscripten)** wheel for micropip. The npm package is a separate **wasm-bindgen**

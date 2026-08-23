@@ -62,7 +62,7 @@ use std::ffi::{CStr, CString, c_char};
 
 pub use error::{MolrsDType, MolrsStatus};
 pub use frame::{MolrsMetaType, MolrsMetaValue};
-pub use handle::{MolrsBlockHandle, MolrsForceFieldHandle, MolrsFrameHandle, MolrsBoxHandle};
+pub use handle::{MolrsBlockHandle, MolrsBoxHandle, MolrsForceFieldHandle, MolrsFrameHandle};
 
 use store::lock_store;
 
@@ -120,6 +120,56 @@ pub(crate) use null_check;
 pub unsafe extern "C" fn molrs_init() {
     // Force lazy initialization of the global store.
     drop(lock_store());
+}
+
+/// C API version of this library — the handshake constant.
+///
+/// Incremented on any breaking change to a function signature, a handle's
+/// semantics, or a `repr(C)` type in this header (mirrors molrs-cxxapi's
+/// `CXX_API_VERSION`). A dlopen consumer compares
+/// [`molrs_c_api_version`]`()` against the `MOLRS_C_API_VERSION` its header
+/// was compiled with before calling anything else.
+pub const MOLRS_C_API_VERSION: u32 = 1;
+
+/// Report the C API version compiled into this library.
+///
+/// # C signature
+///
+/// ```c
+/// uint32_t molrs_c_api_version(void);
+/// ```
+///
+/// # Safety
+///
+/// No pointer arguments; returns a constant.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn molrs_c_api_version() -> u32 {
+    MOLRS_C_API_VERSION
+}
+
+/// Report the `molcrafts-molrs` core version compiled into this library.
+///
+/// Returns a pointer to a static null-terminated UTF-8 string, e.g.
+/// `"0.14.0"`. Informational — the compatibility gate is
+/// [`molrs_c_api_version`]; this identifies the exact molrs release for
+/// diagnostics.
+///
+/// # C signature
+///
+/// ```c
+/// const char* molrs_version(void);
+/// ```
+///
+/// # Safety
+///
+/// The caller must not write through the returned pointer. The pointer is
+/// valid for the lifetime of the process.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn molrs_version() -> *const c_char {
+    static VERSION: std::sync::OnceLock<CString> = std::sync::OnceLock::new();
+    VERSION
+        .get_or_init(|| CString::new(molrs::VERSION).expect("version has no NUL"))
+        .as_ptr()
 }
 
 /// Destroy all objects and reset the global store.

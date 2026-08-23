@@ -16,8 +16,6 @@
 //! The frame itself does **not** enforce cross-block row consistency; that is
 //! the caller's responsibility (use [`PyFrame::validate`] to check).
 
-use std::ffi::CString;
-
 use crate::core::spatial::simbox::PyBox;
 use crate::core::store::block::PyBlock;
 use crate::helpers::{message_format, molrs_error_to_pyerr, py_value_err};
@@ -492,13 +490,17 @@ impl PyFrame {
     /// dereference yields the ``*mut FrameRef`` clone. Atomiverse's
     /// ``frame_clone_from_addr`` does exactly that double-resolve.
     ///
-    /// The capsule name is the C string ``"molrs.FrameRef"``.
+    /// The capsule name is ``molrs_ffi::abi::frameref_capsule_name()`` —
+    /// ``"molrs.FrameRef/<major.minor>"``. The name carries the ABI line so a
+    /// consumer built on a different molrs minor fails the name check cleanly
+    /// instead of dereferencing a possibly drifted layout.
     ///
     /// Returns
     /// -------
     /// capsule
-    ///     A ``PyCapsule`` named ``"molrs.FrameRef"`` whose pointer is
-    ///     ``*mut *mut`` :class:`molrs_ffi.FrameRef` (a cloned handle).
+    ///     A ``PyCapsule`` named ``"molrs.FrameRef/<major.minor>"`` whose
+    ///     pointer is ``*mut *mut`` :class:`molrs_ffi.FrameRef` (a cloned
+    ///     handle).
     fn _ffi_frameref_capsule<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyCapsule>> {
         // Box a clone of the handle and hand the raw pointer to the capsule.
         // `FrameRef` holds an `Rc` and is therefore not `Send`; a bare
@@ -507,7 +509,7 @@ impl PyFrame {
         // ever touched under the GIL (molrs FFI is single-threaded — see the
         // threading note in `molrs_ffi::shared`).
         let raw = FrameRefPtr(Box::into_raw(Box::new(self.inner.clone())));
-        let name = CString::new("molrs.FrameRef").expect("static capsule name");
+        let name = molrs_ffi::abi::frameref_capsule_name().to_owned();
         PyCapsule::new_with_destructor(py, raw, Some(name), |ptr: FrameRefPtr, _ctx| {
             // SAFETY: `ptr.0` is the pointer produced by `Box::into_raw`
             // above and is reclaimed exactly once when the capsule dies.
@@ -525,8 +527,20 @@ impl PyFrame {
     #[staticmethod]
     fn _from_ffi_frameref_capsule(capsule: &Bound<'_, PyCapsule>) -> PyResult<Self> {
         // `pointer_checked` validates the capsule name and rejects a null
-        // payload in one step, returning the `*mut *mut FrameRef`.
-        let ptr = capsule.pointer_checked(Some(c"molrs.FrameRef"))?;
+        // payload in one step, returning the `*mut *mut FrameRef`. The name
+        // carries the ABI line, so a producer on another molrs minor line
+        // (including pre-0.14 unversioned `molrs.FrameRef` capsules) fails
+        // here cleanly instead of being dereferenced.
+        let expected = molrs_ffi::abi::frameref_capsule_name();
+        let ptr = capsule.pointer_checked(Some(expected)).map_err(|err| {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "{err} — this build of molcrafts-molrs speaks FFI ABI line \
+                 {line} (capsule name {expected:?}); the producing extension \
+                 embeds a different molrs minor line. Align both packages on \
+                 one minor line.",
+                line = molrs_ffi::abi::abi_line(),
+            ))
+        })?;
         let pp = ptr.as_ptr() as *const *const FrameRef;
         // SAFETY: a `"molrs.FrameRef"` capsule's `void*` is `*mut *mut FrameRef`
         // (the exporter boxes a `*mut FrameRef`). Deref once to reach the cloned

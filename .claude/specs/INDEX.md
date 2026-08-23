@@ -32,6 +32,10 @@ Downstream: molpy `smiles-emit-01-io-surface` after molrs tag ≥ emit surface.
 
 - [distribution-angular-default-range](distribution-angular-default-range.md) — PyO3 angular distributions default to a degrees range on a radians kernel; delegate to `over_natural_range` [approved]
 
+## Live — shared dylib host
+
+- [ffi-shared-dylib](ffi-shared-dylib.md) — molrs-ffi becomes the shared dylib host; one feature-union default across every native build graph (native wheel gains rayon) [approved]
+
 ## neighborlist chain — **done** 2026-08-10（4/4 closed & deleted，branch feat/neighborlist）
 
 核心成果：`Neighbors` 表（`from_pairs`/`disp`/Option 列）→ `NeighborList` 引擎（`build`/`update`/`build_columns`/`for_each_pair`/`neighbors`，rayon 并行物化 N=100k 4.2×）→ compute 全量消费（require_* 统一缺列拒绝）→ Python/WASM 同名表面（默认 FULL；molvis 兼容别名保留）。公开面 Nb 缩写清零；重复自查询门删除（−303 行）。

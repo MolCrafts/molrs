@@ -34,7 +34,6 @@ pub mod atd;
 pub mod charge;
 
 use std::collections::{HashMap, HashSet};
-use std::ffi::CString;
 use std::fs;
 
 use pyo3::exceptions::{PyKeyError, PyNotImplementedError, PyValueError};
@@ -787,7 +786,6 @@ impl PyOPLSAATypifier {
         PyAtomistic::from_core(py, labeled)
     }
 
-
     /// Return the underlying force-field definition.
     fn forcefield(&self) -> PyForceField {
         PyForceField {
@@ -897,13 +895,15 @@ impl PyForceField {
     /// downstream Rust consumer (e.g. the molpack relaxer) can resolve it and
     /// compile potentials with **no marshalling**. The capsule's ``void*`` is
     /// ``*mut *mut`` :class:`molrs_ffi.ForceFieldRef`, matching the frame
-    /// convention; its name is the C string ``"molrs.ForceFieldRef"``. The
-    /// capsule's destructor reclaims the boxed handle, dropping its ``Rc``.
+    /// convention; its name is ``molrs_ffi::abi::forcefield_capsule_name()``
+    /// — ``"molrs.ForceFieldRef/<major.minor>"``, carrying the ABI line so a
+    /// cross-minor consumer fails the name check cleanly. The capsule's
+    /// destructor reclaims the boxed handle, dropping its ``Rc``.
     ///
     /// Returns
     /// -------
     /// capsule
-    ///     A ``PyCapsule`` named ``"molrs.ForceFieldRef"``.
+    ///     A ``PyCapsule`` named ``"molrs.ForceFieldRef/<major.minor>"``.
     fn _ffi_forcefield_capsule<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyCapsule>> {
         // Box a shared handle (Rc clone of this force field) and hand the raw
         // pointer to the capsule. See `ForceFieldRefPtr` for the Send / layout
@@ -911,7 +911,7 @@ impl PyForceField {
         let raw = ForceFieldRefPtr(Box::into_raw(Box::new(ForceFieldRef::new(
             self.inner.clone(),
         ))));
-        let name = CString::new("molrs.ForceFieldRef").expect("static capsule name");
+        let name = molrs_ffi::abi::forcefield_capsule_name().to_owned();
         PyCapsule::new_with_destructor(py, raw, Some(name), |ptr: ForceFieldRefPtr, _ctx| {
             // SAFETY: `ptr.0` came from `Box::into_raw` above and is reclaimed
             // exactly once when the capsule dies.
@@ -1439,8 +1439,8 @@ pub fn read_lammps_forcefield_str_py(text: &str) -> PyResult<PyForceField> {
 #[pyfunction]
 #[pyo3(name = "read_amber_prmtop_ff")]
 pub fn read_amber_prmtop_ff_py(path: &str) -> PyResult<PyForceField> {
-    let forcefield = molrs::ff::read_amber_prmtop_ff(path)
-        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let forcefield =
+        molrs::ff::read_amber_prmtop_ff(path).map_err(pyo3::exceptions::PyValueError::new_err)?;
     Ok(PyForceField { inner: forcefield })
 }
 
@@ -1559,9 +1559,9 @@ pub fn read_lammps_data_coeffs_py(
     dihedral_labels: Option<std::collections::HashMap<u32, String>>,
     improper_labels: Option<std::collections::HashMap<u32, String>>,
 ) -> PyResult<PyForceField> {
+    use molrs::ff::LammpsFfReader;
     use molrs::ff::forcefield::lammps_units::LammpsUnits;
     use molrs::ff::forcefield::readers::lammps::LammpsTypeLabelMaps;
-    use molrs::ff::LammpsFfReader;
     use std::collections::BTreeMap;
 
     let units = LammpsUnits::parse(units).map_err(pyo3::exceptions::PyValueError::new_err)?;

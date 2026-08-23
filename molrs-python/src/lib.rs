@@ -41,8 +41,9 @@ mod store;
 
 // Mirrors the molrs core module layout: core/ (store · spatial · system), io/,
 // compute/, ff/, conformer/, signal/.
-mod core;
 mod builder;
+mod core;
+use crate::builder::{PyCarbonTubeBuilder, PyGrapheneBuilder};
 use crate::core::spatial::neighborlist::{PyNeighborList, PyNeighborQuery, PyNeighbors};
 use crate::core::spatial::region::{
     PyCuboid, PyHollowSphere, PyParallelepiped, PyRegion, PySphere,
@@ -59,7 +60,6 @@ use crate::core::system::molgraph::{
 };
 use crate::core::system::molgraph::{PyRingInfo, align_direction, rotate, scale, translate};
 use crate::core::units::{PyQuantity, PyUnit, PyUnitRegistry};
-use crate::builder::{PyCarbonTubeBuilder, PyGrapheneBuilder};
 
 mod io;
 
@@ -100,6 +100,32 @@ use stream::PyPublisher;
 /// references the field-name convention by name (`molrs.keys.X`) instead of
 /// scattering string literals.
 
+/// The FFI ABI handshake token of this build.
+///
+/// Returns ``(abi_line, version, frameref_capsule_name, forcefield_capsule_name)``
+/// — e.g. ``("0.14", "0.14.0", "molrs.FrameRef/0.14", "molrs.ForceFieldRef/0.14")``.
+///
+/// A downstream extension that exchanges ``molrs_ffi`` handle capsules with
+/// this wheel (e.g. molpack) calls this once at import and compares
+/// ``abi_line`` against the line of the molrs it statically embeds; a mismatch
+/// is raised as a clear ``ImportError`` instead of surfacing later as a
+/// capsule-name ``ValueError`` (or, before capsule names were versioned,
+/// undefined behavior). Patch versions may differ — layout is frozen within a
+/// minor line (see `molrs-ffi`'s layout snapshot gate).
+#[pyfunction]
+fn _ffi_abi_token() -> (&'static str, &'static str, String, String) {
+    (
+        molrs_ffi::abi::abi_line(),
+        ::molrs::VERSION,
+        molrs_ffi::abi::frameref_capsule_name()
+            .to_string_lossy()
+            .into_owned(),
+        molrs_ffi::abi::forcefield_capsule_name()
+            .to_string_lossy()
+            .into_owned(),
+    )
+}
+
 /// Root Python module for the molrs library.
 ///
 /// Registered classes and free functions are listed in the module-level
@@ -107,6 +133,7 @@ use stream::PyPublisher;
 #[pymodule]
 #[pyo3(name = "_lib")]
 fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(_ffi_abi_token, m)?)?;
     // SimBox + neighbors
     m.add_class::<PyBox>()?;
     m.add_class::<PyNeighborList>()?;
@@ -142,10 +169,10 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // I/O + SMILES
     // Readers
     m.add_function(wrap_pyfunction!(io::read_block_csv, m)?)?;
-m.add_function(wrap_pyfunction!(io::write_block_csv, m)?)?;
-m.add_function(wrap_pyfunction!(io::read_frame_bytes, m)?)?;
-m.add_function(wrap_pyfunction!(io::write_frame_bytes, m)?)?;
-m.add_function(wrap_pyfunction!(io::read_pdb, m)?)?;
+    m.add_function(wrap_pyfunction!(io::write_block_csv, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_frame_bytes, m)?)?;
+    m.add_function(wrap_pyfunction!(io::write_frame_bytes, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_pdb, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_pdb_trajectory, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_xyz, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_xyz_trajectory, m)?)?;

@@ -1,0 +1,9 @@
+# One shared build cache for every workspace root in this repo (root workspace,
+# molrs-ffi, molrs-python, molrs-wasm, molrs-capi). `build.target-dir` is
+# resolved relative to this config file, so any cargo invocation with cwd under
+# this repo lands in <repo>/target regardless of which sub-workspace it builds.
+# Fingerprints include (rustc, features, profile), so invocations from
+# different roots cannot cross-contaminate — identical units compile once.
+# CARGO_TARGET_DIR (env) still overrides when set.
+[build]
+target-dir = "target"

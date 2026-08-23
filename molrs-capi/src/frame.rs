@@ -26,8 +26,8 @@ use molrs::store::meta::MetaValue;
 
 use crate::error::{self, MolrsStatus, ffi_err_to_status};
 use crate::handle::{
-    MolrsBlockHandle, MolrsFrameHandle, MolrsBoxHandle, block_handle_to_c, frame_id_to_handle,
-    handle_to_frame_id, handle_to_box_key, box_key_to_handle,
+    MolrsBlockHandle, MolrsBoxHandle, MolrsFrameHandle, block_handle_to_c, box_key_to_handle,
+    frame_id_to_handle, handle_to_box_key, handle_to_frame_id,
 };
 use crate::store::lock_store;
 use crate::{ffi_try, null_check};

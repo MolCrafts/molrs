@@ -79,9 +79,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: publish-wasm
-          workspaces: |
-            . -> target
-            molrs-wasm -> target
+          # Single entry: the committed .cargo/config.toml routes molrs-wasm's
+          # build into <repo>/target too.
+          workspaces: ". -> target"
       - uses: actions/setup-node@v7
         with:
           node-version: "24"
@@ -145,9 +145,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: publish-py-${{ matrix.artifact }}
-          workspaces: |
-            . -> target
-            molrs-python -> target
+          workspaces: ". -> target"
       - uses: PyO3/maturin-action@v1
         with:
           working-directory: molrs-python
@@ -178,9 +176,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: publish-py-pyodide
-          workspaces: |
-            . -> target
-            molrs-python -> target
+          workspaces: ". -> target"
       - name: Build Pyodide wheel
         uses: pypa/cibuildwheel@v4.1.1
         env:
@@ -226,3 +222,91 @@ jobs:
         with:
           packages-dir: dist
           skip-existing: true
+
+  # C ABI deliverable — the sanctioned dynamic-linking artifact for external
+  # C / C++ / HPC consumers: libmolrs_capi (cdylib + staticlib) plus the
+  # cbindgen header, attached to the GitHub Release on v* tags. In-house Rust
+  # consumers stay statically linked (see docs/interop.md, "Path C").
+  build-capi:
+    needs: guard
+    if: github.repository == 'MolCrafts/molrs'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: "", artifact: linux-x64 }
+          - { os: ubuntu-24.04-arm, target: "", artifact: linux-aarch64 }
+          - { os: macos-latest, target: aarch64-apple-darwin, artifact: macos-arm64 }
+          - { os: macos-latest, target: x86_64-apple-darwin, artifact: macos-x64 }
+          - { os: windows-latest, target: "", artifact: windows-x64 }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: publish-capi-${{ matrix.artifact }}
+          workspaces: ". -> target"
+      - name: Build libmolrs_capi (release)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${{ matrix.target }}" ]; then
+            cargo build --release --manifest-path molrs-capi/Cargo.toml --target "${{ matrix.target }}"
+          else
+            cargo build --release --manifest-path molrs-capi/Cargo.toml
+          fi
+      - name: Package (lib + header + LICENSE + sha256)
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(cargo metadata --no-deps --format-version 1 --manifest-path molrs-capi/Cargo.toml \
+            | jq -r '.packages[0].version')
+          OUT="molrs-capi-${VERSION}-${{ matrix.artifact }}"
+          if [ -n "${{ matrix.target }}" ]; then
+            LIBDIR="target/${{ matrix.target }}/release"
+          else
+            LIBDIR="target/release"
+          fi
+          mkdir -p "stage/$OUT"
+          cp molrs-capi/include/molrs.h LICENSE "stage/$OUT/"
+          found=0
+          for f in libmolrs_capi.dylib libmolrs_capi.so libmolrs_capi.a \
+                   molrs_capi.dll molrs_capi.dll.lib molrs_capi.lib; do
+            if [ -f "$LIBDIR/$f" ]; then cp "$LIBDIR/$f" "stage/$OUT/"; found=1; fi
+          done
+          test "$found" -eq 1
+          tar -C stage -czf "$OUT.tar.gz" "$OUT"
+          sha256sum "$OUT.tar.gz" > "$OUT.tar.gz.sha256"
+          ls -la "$OUT.tar.gz" "$OUT.tar.gz.sha256"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: capi-${{ matrix.artifact }}
+          path: |
+            molrs-capi-*.tar.gz
+            molrs-capi-*.tar.gz.sha256
+
+  release-capi:
+    needs: build-capi
+    # Tag pushes only — a workflow_dispatch run exercises the build+package
+    # legs above without touching any release.
+    if: github.repository == 'MolCrafts/molrs' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          path: capi
+          pattern: capi-*
+          merge-multiple: true
+      - name: Attach to the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ls -la capi
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
+          gh release upload "$GITHUB_REF_NAME" capi/* --clobber

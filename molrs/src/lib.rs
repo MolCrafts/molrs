@@ -44,6 +44,15 @@
 // `molrs-*` member crates and rely on this alias for their cross-module paths.
 extern crate self as molrs;
 
+/// The version of the `molcrafts-molrs` crate compiled into this binary.
+///
+/// This is the crate every binder statically links, so its major.minor is the
+/// ABI line of any FFI handle the binary mints — `molrs_ffi::abi` derives the
+/// versioned capsule names and the handshake token from it. Downstream pins
+/// major.minor only; layout of the FFI-crossing types is frozen within a minor
+/// line (enforced by `molrs-ffi/tests/layout_snapshot.rs`).
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 // Core is always compiled and its public surface is re-exported at the crate
 // root, so `molrs::Frame`, `molrs::system::…`, `molrs::error::…` resolve exactly
 // as they did when core was a separate crate.

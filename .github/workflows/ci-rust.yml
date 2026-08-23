@@ -18,11 +18,15 @@ jobs:
   clippy:
     name: clippy
     runs-on: ubuntu-latest
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: clippy
@@ -34,12 +38,20 @@ jobs:
   test:
     name: unit
     runs-on: ubuntu-latest
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+      - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: unit
           workspaces: ". -> target"
       - run: bash scripts/fetch-test-data.sh
       - run: cargo test -p molcrafts-molrs --lib --features full,filesystem
+      # molrs-ffi is a standalone workspace root, so the line above never
+      # covers it. Its suite carries the ABI layout-snapshot gate (minor-line
+      # layout freeze) — it must run on every push.
+      - run: cargo test --manifest-path molrs-ffi/Cargo.toml --features ff

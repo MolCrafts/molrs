@@ -32,6 +32,9 @@ TGraph = TypeVar("TGraph", bound="Graph")
 
 FRAME_SCHEMA_VERSION: int
 
+def _ffi_abi_token() -> tuple[str, str, str, str]:
+    """FFI ABI handshake: (abi_line, version, frameref_name, forcefield_name)."""
+
 # ---------------------------------------------------------------------------
 # Exceptions
 # ---------------------------------------------------------------------------

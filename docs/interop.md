@@ -101,7 +101,73 @@ if let Ok(atoms) = frame.block("atoms") {
 `SharedStore` / `new_shared`, `FrameId`, `BlockHandle`, and one error type `FfiError`.
 This snippet is compile-checked as the `molrs-ffi` crate-level doctest.
 
+### ABI contract (cross-extension handle exchange)
+
+Two separately compiled extensions (e.g. the `molcrafts-molrs` wheel and the
+`molcrafts-molpack` wheel) may exchange raw `molrs_ffi` handles through
+PyCapsules. That is a pointer bridge, so both sides must embed a
+**layout-identical** molrs core. The rule — decided project-wide — is:
+
+> **Minor-line = ABI version.** Every downstream shares one molrs minor line.
+> Within a minor line the layout of every FFI-crossing type is frozen; a
+> layout change requires a minor bump. When molrs moves to a new minor,
+> downstream is obliged to re-align.
+
+`molrs_ffi::abi` is the single source of the contract; **never hard-code the
+capsule names**:
+
+- `abi::abi_line()` — `major.minor` of the embedded molrs (e.g. `"0.14"`).
+- `abi::frameref_capsule_name()` / `abi::forcefield_capsule_name()` —
+  `molrs.FrameRef/<line>` / `molrs.ForceFieldRef/<line>`. Versioned since
+  0.14 (older lines used the unversioned `molrs.FrameRef`), so a cross-minor
+  exchange fails the capsule *name check* — a clean `ValueError` — instead of
+  dereferencing a possibly drifted layout.
+- `molrs._ffi_abi_token()` (Python) — returns
+  `(abi_line, version, frameref_name, forcefield_name)`. A consumer extension
+  calls it once at import and raises a clear `ImportError` on a line mismatch
+  (molpack's `interop::check_abi` is the reference implementation).
+
+Enforcement on the supply side: `molrs-ffi/src/abi.rs` carries a **layout
+snapshot test** (size / align / field offsets of every FFI-crossing type,
+committed as `src/layout.snapshot`). Changing any of those layouts within a
+minor fails CI; a toolchain update that alone changes the report is treated
+the same way (the bridge crosses compiled layouts, not source).
+
+Version combinations:
+
+| producer (molrs wheel) | consumer (e.g. molpack) | outcome |
+|---|---|---|
+| same minor, any patch | same minor, any patch | **supported** — layout frozen by the snapshot gate |
+| ≥0.14 line X | line Y ≠ X | `ImportError` at consumer import (token mismatch) |
+| ≥0.14 | pre-handshake (≤0.13) consumer | capsule name mismatch → clean `ValueError` at first resolve |
+| ≤0.13 | ≥0.14 consumer | `ImportError` at import (wheel lacks `_ffi_abi_token`) |
+
+Release ordering is unchanged: molrs ships a new minor first; molpy / molpack
+re-align and ship after ("Release before molpy" iron law).
+
 ---
+
+## Path C — C ABI (`libmolrs_capi`)
+
+The **only sanctioned dynamic-linking deliverable**. External C / C++ / HPC
+consumers link `libmolrs_capi` (cdylib or staticlib) against the
+cbindgen-generated `molrs.h` — a flat, handle-based C API over frames,
+blocks, sim boxes, and force fields (feature surface: always-on core +
+perceive, plus `ff`, `io`, `smiles`; storage is a global mutex-protected
+store, so treat the library as single-threaded per process).
+
+- **Download**: `molrs-capi-<version>-<platform>.tar.gz` (lib + `molrs.h` +
+  LICENSE + sha256) attached to each GitHub Release on `v*` tags.
+- **Handshake**: before any other call, compare `molrs_c_api_version()`
+  against the `MOLRS_C_API_VERSION` your header was compiled with; the
+  constant increments on any breaking signature / handle-semantics change
+  (mirrors molrs-cxxapi's `CXX_API_VERSION`). `molrs_version()` reports the
+  embedded molrs release for diagnostics.
+
+In-house Rust consumers (molpack, the binders) do **not** link this — Rust
+has no stable ABI, so they stay statically linked on Path A/B; the shared
+build cache (one `<repo>/target` across all workspace roots) is what removes
+the duplicate compilation cost, not dynamic linking.
 
 ## Data contract (both paths)
 

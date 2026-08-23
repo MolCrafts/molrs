@@ -15,7 +15,9 @@ set(MOLRS_CAPI_ROOT "${MOLRS_ROOT}")
 
 # Cargo build profile
 set(CARGO_PROFILE "debug" CACHE STRING "Cargo profile: debug or release")
-set(MOLRS_TARGET_DIR "${MOLRS_ROOT}/target/${CARGO_PROFILE}")
+# All workspace roots in this repo share one <repo>/target via the committed
+# .cargo/config.toml, so the staticlib lands one level above the crate dir.
+set(MOLRS_TARGET_DIR "${MOLRS_ROOT}/../target/${CARGO_PROFILE}")
 
 # --------------------------------------------------------------------------
 # GoogleTest via FetchContent

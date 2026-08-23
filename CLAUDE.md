@@ -135,6 +135,18 @@ Format-corpus fixtures live in `tests-data/` (gitignored clone of
 via `bash scripts/fetch-test-data.sh` (see `ci-rust.yml` + pre-commit
 `cargo-test-unit`). Prefer inline strings for pure parser unit tests;
 use `tests-data/` only when the corpus file is the assertion.
+## Build cache
+
+All workspace roots in this repo (root, `molrs-ffi`, `molrs-python`,
+`molrs-wasm`, `molrs-capi`) share **one** `<repo>/target` via the committed
+`.cargo/config.toml` (`build.target-dir` is config-relative), so molrs and its
+dependency tree compile once per (rustc, features, profile) instead of once
+per root. The sibling molpack repo points its target dir here too. Do not
+re-introduce per-root `target/` dirs or per-workflow `CARGO_TARGET_DIR`.
+CI additionally runs sccache (GHA cache backend). Optional local sccache:
+`brew install sccache`, then in `~/.cargo/config.toml` (user-level, never
+committed): `[build] rustc-wrapper = "sccache"`.
+
 ## Build & Test Commands
 
 ```bash

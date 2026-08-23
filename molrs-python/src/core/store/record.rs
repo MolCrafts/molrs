@@ -341,9 +341,9 @@ fn json_to_py(py: Python<'_>, value: &JsonValue) -> PyResult<Py<PyAny>> {
 fn dict_to_json_map(dict: &Bound<'_, PyDict>) -> PyResult<JsonMap<String, JsonValue>> {
     let mut map = JsonMap::new();
     for (key, value) in dict.iter() {
-        let key: String = key.extract().map_err(|_| {
-            PyTypeError::new_err("record metadata keys must be strings")
-        })?;
+        let key: String = key
+            .extract()
+            .map_err(|_| PyTypeError::new_err("record metadata keys must be strings"))?;
         map.insert(key, py_to_json(&value)?);
     }
     Ok(map)

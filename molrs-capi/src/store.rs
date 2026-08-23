@@ -16,7 +16,7 @@ use molrs::ff::ForceField;
 use molrs::spatial::simbox::SimBox;
 use slotmap::SlotMap;
 
-use crate::handle::{FFKey, BoxKey};
+use crate::handle::{BoxKey, FFKey};
 
 /// Central store owning all C-API state.
 ///

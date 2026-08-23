@@ -40,6 +40,9 @@ from ._lib import (
     MetaValue,
     Frame,
     FRAME_SCHEMA_VERSION,
+    # FFI ABI handshake (consumed by downstream handle-bridge extensions,
+    # e.g. molpack, at their import time)
+    _ffi_abi_token,
     Unit,
     Quantity,
     UnitRegistry,

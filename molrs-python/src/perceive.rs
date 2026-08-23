@@ -223,11 +223,7 @@ impl PyPerceive {
     /// Atomistic
     ///     A clone of ``mol`` whose aromatic bonds carry a legal localized
     ///     number.
-    fn find_kekule_orders(
-        &self,
-        py: Python<'_>,
-        mol: &PyAtomistic,
-    ) -> PyResult<Py<PyAtomistic>> {
+    fn find_kekule_orders(&self, py: Python<'_>, mol: &PyAtomistic) -> PyResult<Py<PyAtomistic>> {
         PyAtomistic::from_core(py, self.inner.find_kekule_orders(mol.core()))
     }
 

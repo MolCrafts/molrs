@@ -629,6 +629,26 @@ TEST_F(MolrsTest, BlockCopyBufferTooSmall) {
 // duplication the schema exists to remove.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// ABI handshake
+//
+// A dlopen consumer compares the library's runtime version constant against
+// the MOLRS_C_API_VERSION its header was compiled with — a header/library
+// pair that drifts must be detectable before any other call.
+// ---------------------------------------------------------------------------
+
+TEST(Abi, RuntimeVersionMatchesHeaderConstant) {
+    EXPECT_EQ(molrs_c_api_version(), static_cast<uint32_t>(MOLRS_C_API_VERSION));
+}
+
+TEST(Abi, MolrsVersionIsANonEmptyDottedString) {
+    const char* v = molrs_version();
+    ASSERT_NE(v, nullptr);
+    std::string s(v);
+    EXPECT_FALSE(s.empty());
+    EXPECT_NE(s.find('.'), std::string::npos);
+}
+
 TEST(Schema, JsonIsOwnedNonEmptyAndFreeable) {
     char* json = molrs_schema_json();
     ASSERT_NE(json, nullptr);
