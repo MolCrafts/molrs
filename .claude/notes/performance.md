@@ -111,25 +111,46 @@ energy += mask * lj(dist);
 
 ## Benchmarking
 
+Two bench targets exist, both criterion (`harness = false`):
+`core_benchmarks` (45 benchmarks) and `compute_benchmarks` (53, gated on the
+`compute` feature). There is **no** `potential` target — the commands below are
+the ones that actually run, each verified 2026-08-23.
+
 ```bash
-cargo bench -p molcrafts-molrs-core
-cargo bench -p molcrafts-molrs-core -- potential
-cargo flamegraph --bench potential -p molcrafts-molrs-core
-RUSTFLAGS="-C target-cpu=native" cargo bench -p molcrafts-molrs-core
+# See what exists before filtering — ids are criterion group paths
+cargo bench -p molcrafts-molrs --bench core_benchmarks -- --list
+cargo bench -p molcrafts-molrs --bench compute_benchmarks --features compute -- --list
+
+# Whole target (this is the canonical one, same as CLAUDE.md and bench.yml)
+cargo bench -p molcrafts-molrs --bench core_benchmarks
+
+# Filter by group id. Real ids include frame/get, graph/find_rings,
+# neighbors/build, core/simbox/shortest_vector, ndarray_vs_vec/matmul.
+cargo bench -p molcrafts-molrs --bench core_benchmarks -- 'neighbors/build'
+
+# Profile one target (needs `cargo install flamegraph`)
+cargo flamegraph --bench core_benchmarks -p molcrafts-molrs
+
+# Local comparisons only — never for numbers you intend to record, since
+# target-cpu=native is not what CI or a release build uses
+RUSTFLAGS="-C target-cpu=native" cargo bench -p molcrafts-molrs --bench core_benchmarks
 ```
 
-What to benchmark:
+What to benchmark — a wish list, **not** an inventory. Only the second line is
+covered today (`neighbors/*` in `core_benchmarks`); the other two have no
+benchmark in either target, so do not go looking for one:
 
-- Potential kernel eval vs atom count (scaling)
-- Neighbor list build vs atom count
-- Full MD step (all-inclusive)
+- Potential kernel eval vs atom count (scaling) — *not covered*
+- Neighbor list build vs atom count — covered
+- Full MD step (all-inclusive) — *not covered*
 - GENCAN objective + gradient eval (molpack repo)
 
 ## Benchmarking during refactors
 
-When extracting pure functions from a monolith (common in `molrs-ff` kernel
-extractions and `molrs-core` neighbor rewrites; historically also the
-objective/packer splits now living in molpack), **do not rely on end-to-end
+When extracting pure functions from a monolith (common in `molrs/src/ff/`
+kernel extractions and `molrs/src/core/` neighbor rewrites — modules, not
+crates, since the single-crate merge; historically also the objective/packer
+splits now living in molpack), **do not rely on end-to-end
 benchmarks to guard the extraction**. Macro-level noise (allocator, cache, OS
 scheduler) routinely produces ±3% drift independent of the change, which masks
 real per-function regressions and makes tight gates statistically meaningless.
