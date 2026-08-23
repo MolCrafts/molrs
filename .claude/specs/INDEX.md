@@ -34,7 +34,11 @@ Downstream: molpy `smiles-emit-01-io-surface` after molrs tag ≥ emit surface.
 
 ## Live — link-mode-static-default chain (molrs first, molpack same landing)
 
-- [link-mode-static-default-01-invert](link-mode-static-default-01-invert.md) — 静态成为零参数默认(两仓 config.toml 去 rustflags、七根 profile 补 lto、10 处 workflow env 删除、门脚本自带 flag、17 处悬空引用清理) [approved]
+01-invert **done** 2026-08-23(molrs 4bc3e23 + molpack 60cac76,spec 已删)——静态成为零参数默认,
+动态 opt-in 分两条传递路(rustflags:裸 cargo 走 `--config`,maturin 只能内联 `RUSTFLAGS`,因为
+maturin 的 `CARGO_ENCODED_RUSTFLAGS` 整体替换 config 层;profile 键两边都走 `--config`)。
+17 处悬空引用清零。契约见 `docs/interop.md`。
+
 - [link-mode-static-default-02-ci-gate](link-mode-static-default-02-ci-gate.md) — CI 双形态门 `ci-link-form.yml`(static + dynamic 两 job)+ molpack `link-dynamic` job + MOLRS_GIT_REF 落地顺序前置条件 [approved]
 
 ## ffi-shared-dylib — **done** 2026-08-23(spec deleted after close)
