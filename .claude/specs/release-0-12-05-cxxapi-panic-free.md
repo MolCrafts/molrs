@@ -46,7 +46,7 @@ N/A (FFI safety). Rule: ffi.md — no panics in extern seams.
 - [x] Convert fallible helpers used by bridge; remove residual expect on AM1-BCC insert
 - [x] Grep-gate: no unwrap/expect/panic outside `#[cfg(test)]` on bridge bodies (spot-check remaining analysis helpers)
 - [x] Add regression `regressions/release-0-12-05-cxxapi-panic-free.md` listing converted exports
-- [x] Run full check + test suite (`cargo test -p molcrafts-molrs-cxxapi`)
+- [x] Run full check + test suite (`cargo test --manifest-path molrs-cxxapi/Cargo.toml`)
 
 ## Testing strategy
 

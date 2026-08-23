@@ -29,7 +29,7 @@ repos:
         name: clippy
         entry: >-
           sh -c 'cargo clippy -p molcrafts-molrs --all-targets --features full,filesystem -- -D warnings
-          && cargo clippy -p molcrafts-molrs-cxxapi --all-targets -- -D warnings'
+          && cargo clippy --manifest-path molrs-cxxapi/Cargo.toml --all-targets -- -D warnings'
         language: system
         pass_filenames: false
         always_run: true
@@ -67,6 +67,16 @@ repos:
           rustup target add wasm32-unknown-unknown 2>/dev/null || true;
           cd molrs-wasm;
           wasm-pack build --release --target bundler --scope molcrafts --out-name molrs'
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+
+      # Cross-repo unit-identity gate: needs the molpack sibling (override with
+      # MOLPACK_ROOT); refuses and explains when it is absent, by design.
+      - id: verify-shared-dylib
+        name: shared libmolrs_ffi
+        entry: bash scripts/verify-shared-dylib.sh
         language: system
         pass_filenames: false
         always_run: true

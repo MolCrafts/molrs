@@ -164,10 +164,56 @@ store, so treat the library as single-threaded per process).
   (mirrors molrs-cxxapi's `CXX_API_VERSION`). `molrs_version()` reports the
   embedded molrs release for diagnostics.
 
-In-house Rust consumers (molpack, the binders) do **not** link this — Rust
-has no stable ABI, so they stay statically linked on Path A/B; the shared
-build cache (one `<repo>/target` across all workspace roots) is what removes
-the duplicate compilation cost, not dynamic linking.
+In-house Rust consumers (molpack, the binders) do **not** go through this C
+ABI — they take Path A or Path B directly. They do, locally, share one
+dynamically linked molrs image; that is the next section.
+
+---
+
+## Local link form — one shared `libmolrs_ffi`
+
+**Locally, every native consumer dynamically links the same
+`libmolrs_ffi`.** Path B's crate is not only the handle API, it is also the
+physical shared object: molrs itself stays an rlib and is linked *into*
+`libmolrs_ffi`, so any build graph that reaches molrs-ffi resolves molrs out
+of that one dylib instead of embedding its own copy. In one venv, the molrs
+and molpack Python extensions therefore hold one molrs image, not two.
+
+| Context | Where the flags come from | Link form |
+|---|---|---|
+| local `cargo` / `maturin`, non-wasm | committed `.cargo/config.toml` (both repos): `[target.'cfg(not(target_arch = "wasm32"))'] rustflags = ["-C","prefer-dynamic"]` | **dynamic** — one `libmolrs_ffi` + `@rpath` libstd |
+| CI and publish (both repos) | workflow `env: RUSTFLAGS: -C prefer-dynamic=no` **and** `CARGO_PROFILE_RELEASE_LTO: thin` | **static**, LTO'd — self-contained artifacts |
+| wasm32 (`molrs-wasm`, Pyodide) | cfg does not match → no flags | static, unchanged |
+
+The override is spelled `-C prefer-dynamic=no` rather than an empty string
+because env `RUSTFLAGS` *replaces* the config's `rustflags` wholesale. The
+committed `[profile.release]` carries no `lto`, because rustc rejects it for a
+cdylib whose graph contains a Rust dylib (`only 'staticlib', 'bin', and
+'cdylib' outputs are supported with LTO`); the CI/publish env restores `thin`
+on the static path, so released artifacts are LTO'd exactly as before.
+
+**Preconditions.** One dylib is real only if every native root resolves the
+*same* molrs unit: identical feature set including the literal `default` label
+(hence the `molrs-default` forward feature on `molrs-ffi` / `molrs-python`),
+lockfiles rebuilt in one registry sweep (`scripts/sync-dylib-locks.sh`),
+`[profile.release]` aligned verbatim across the seven native roots, and
+third-party feature widening anchored by `molrs-ffi`'s default-on `unify`
+pins. `scripts/verify-shared-dylib.sh` (pre-push) is the gate.
+
+**Exemptions**, all deliberate and all static: wasm32 / Pyodide by cfg;
+`molrs-cxxapi`'s `staticlib`, which is Atomiverse's delivery form until that
+consumer flips to a cdylib; and released wheels / crates, which stay
+self-contained until the distribution train ships a shared `.so`.
+
+**Do not mix a bare `cargo build --release` of `molrs-ffi` with a maturin
+wheel build.** maturin injects its own `CARGO_ENCODED_RUSTFLAGS` (merging the
+repo's `prefer-dynamic` with `-C link-arg=-undefined -C link-arg=dynamic_lookup`),
+and rustflags are a fingerprint input — so the two regimes are two units
+fighting over the same *hashless* `target/release/deps/libmolrs_ffi.dylib`.
+Last writer wins. The failure is loud, not silent: the loser's consumer stops
+with `error[E0463]: can't find crate for molrs_ffi`, and cargo does not
+self-heal (it considers its own unit fresh). Recovery is
+`touch molrs-ffi/src/lib.rs`, then rebuild under whichever regime you want.
 
 ## Data contract (both paths)
 

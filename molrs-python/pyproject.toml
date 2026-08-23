@@ -77,6 +77,10 @@ pass_env = [
   "CARGO_TARGET_DIR",
   "RUSTUP_HOME",
   "RUSTFLAGS",
+  # CI's static path restores LTO through this; tox would otherwise strip it
+  # and the wheels would silently lose LTO (the release profile has no `lto`
+  # key — see the shared-dylib probe C2).
+  "CARGO_PROFILE_RELEASE_LTO",
   # sccache (CI compile cache) — harmless when unset locally.
   "RUSTC_WRAPPER",
   "SCCACHE_GHA_ENABLED",

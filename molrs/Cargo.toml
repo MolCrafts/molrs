@@ -34,7 +34,14 @@ sha2 = "0.10"
 tempfile = "3.0"
 
 [features]
-default = ["rayon"]
+# The ONE feature union every native consumer graph resolves — molrs-ffi,
+# molrs-capi, molrs-cxxapi, molrs-python and molpack all land here. That is the
+# shared-dylib precondition, not an optimization: Rust has no stable ABI, so two
+# graphs disagreeing on a single feature get two differently-fingerprinted molrs
+# images and each binder silently embeds its own. Only `blas` (needs a system
+# BLAS) and `slow-tests` stay out. wasm / Pyodide opt down with
+# `default-features = false`.
+default = ["full", "stream", "filesystem", "rayon"]
 # Full bundle (every sub-system).
 full = ["io", "compute", "smiles", "ff", "conformer", "signal", "voronoi"]
 

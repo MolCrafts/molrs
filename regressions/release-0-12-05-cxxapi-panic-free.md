@@ -9,4 +9,4 @@ Converted to `Result` (no panic on fallible paths):
 Production body before `#[cfg(test)]` must not contain unwrap/expect/panic
 except allowlisted dead helpers (none remaining).
 
-Verified: `cargo test -p molcrafts-molrs-cxxapi`
+Verified: `cargo test --manifest-path molrs-cxxapi/Cargo.toml`

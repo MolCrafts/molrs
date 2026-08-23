@@ -10,6 +10,12 @@ permissions:
   contents: write
   id-token: write
 
+# CI/publish pin today's static, LTO'd form; the local default is dynamic via
+# .cargo/config.toml (env RUSTFLAGS replaces those rustflags entirely).
+env:
+  RUSTFLAGS: "-C prefer-dynamic=no"
+  CARGO_PROFILE_RELEASE_LTO: "thin"
+
 jobs:
   guard:
     if: github.repository == 'MolCrafts/molrs'

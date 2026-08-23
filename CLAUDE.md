@@ -5,7 +5,7 @@ mol_project:
   stage: experimental
   build:
     install: "cargo build"
-    check: "cargo fmt --check && cargo clippy -p molcrafts-molrs --all-targets --features full,filesystem -- -D warnings && cargo clippy -p molcrafts-molrs-cxxapi --all-targets -- -D warnings"
+    check: "cargo fmt --check && cargo clippy -p molcrafts-molrs --all-targets --features full,filesystem -- -D warnings && cargo clippy --manifest-path molrs-cxxapi/Cargo.toml --all-targets -- -D warnings"
     test: "cargo test -p molcrafts-molrs --lib --features full,filesystem"
     test_single: "cargo test {path}"
   ci:
@@ -147,6 +147,22 @@ CI additionally runs sccache (GHA cache backend). Optional local sccache:
 `brew install sccache`, then in `~/.cargo/config.toml` (user-level, never
 committed): `[build] rustc-wrapper = "sccache"`.
 
+**Link form is a switch, and local ≠ released.** Local builds default to
+**dynamic**: the same `.cargo/config.toml` sets `-C prefer-dynamic` for every
+non-wasm target, so all native consumers share one `libmolrs_ffi` dylib (one
+molrs image per process). CI and publish pin the static form via env
+(`RUSTFLAGS: -C prefer-dynamic=no` plus `CARGO_PROFILE_RELEASE_LTO: thin`, since
+the committed profiles drop `lto` — rustc rejects it once a Rust dylib is in a
+cdylib's graph); wasm32 is exempt by cfg. That one image is only real while
+every native root resolves the *same* molrs unit — maintained by
+`scripts/sync-dylib-locks.sh` and gated pre-push by
+`scripts/verify-shared-dylib.sh`. Caveat: a bare `cargo build --release` of
+`molrs-ffi` and a maturin wheel build use different RUSTFLAGS regimes and
+overwrite each other's hashless `libmolrs_ffi` — the loser fails loudly with
+`error[E0463]: can't find crate for molrs_ffi`, recovered by
+`touch molrs-ffi/src/lib.rs` and rebuilding in the regime you want. Full
+contract: `docs/interop.md`.
+
 ## Build & Test Commands
 
 ```bash
@@ -201,11 +217,14 @@ already compiled it. Keeping it unconditional reproduces the existing build grap
 exactly — gating it would be a behaviour change, not a refactor. (Gating it later
 to shrink the WASM bundle is a legitimate, separately-measured follow-up.)
 
-The other workspace member is `molrs-cxxapi` (`molcrafts-molrs-cxxapi`, a
-`staticlib` CXX bridge to Atomiverse C++ via `FrameView`); it depends on the
-merged crate with `features = ["io"]`. The binder crates `molrs-ffi`,
-`molrs-wasm`, `molrs-python`, and `molrs-capi` are **separate workspaces** (not
-members) and each depend on `molcrafts-molrs` with the features they need.
+`molrs` is the root workspace's **only** member. Every binder crate —
+`molrs-ffi`, `molrs-wasm`, `molrs-python`, `molrs-capi` and `molrs-cxxapi`
+(`molcrafts-molrs-cxxapi`, a `staticlib` CXX bridge to Atomiverse C++ via
+`FrameView`) — is a **separate workspace** with its own `[workspace]`, and each
+depends on `molcrafts-molrs` with the features it needs. Address a binder by
+`--manifest-path <dir>/Cargo.toml`, never `-p`: membership changes the unit
+flavour molrs is built under, and cxxapi's former membership silently
+overwrote the shared `libmolrs_ffi` dylib (see `.claude/specs/ffi-shared-dylib.md`).
 
 Molecular packing (Packmol port) used to live here as `molrs-pack`; it now lives in the
 standalone repo `MolCrafts/molpack` (crates.io: `molcrafts-molpack`, PyPI:

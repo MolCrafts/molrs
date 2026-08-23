@@ -10,19 +10,134 @@ homepage = "https://github.com/MolCrafts/molrs"
 
 [lib]
 name = "molrs_ffi"
+# The shared dylib host. Under `-C prefer-dynamic` the native cdylib/bin
+# consumers (molrs-python, molpack's wheel, molrs-capi's cdylib) link this ONE
+# object, so a process holds a single molrs image instead of one static copy per
+# extension. `rlib` is not a fallback but a requirement: self-contained outputs
+# (molrs-cxxapi's and molrs-capi's staticlibs) take the rlib path, as does the
+# whole static CI/publish form — and wasm32, where the `dylib` type is dropped
+# with a known "dropping unsupported crate type" warning because wasm has no
+# dynamic linking.
+crate-type = ["dylib", "rlib"]
 
 [workspace]
 
+# Standalone workspace root: does NOT inherit the repo root's [profile.release].
+# MEASURED: without this block, `cargo build --manifest-path molrs-ffi/Cargo.toml
+# --release` fell back to cargo's default release profile (codegen-units = 16, no
+# strip) and wrote a DIFFERENT libmolrs_ffi.dylib over the one the wheels link.
+# The name is hashless, so nothing warns; a consumer built under different
+# rustflags then fails hard with `error[E0463]: can't find crate for molrs_ffi`,
+# and one built under matching rustflags loads whichever bytes landed last. The
+# dylib host is the one root that may not skip this alignment.
+#
+# No LTO here — it is incompatible with the shared dylib graph: once a Rust
+# dylib (libmolrs_ffi) is in a cdylib's dependency graph, rustc refuses with
+# "only 'staticlib', 'bin', and 'cdylib' outputs are supported with LTO"
+# (probe C2 in .claude/specs/ffi-shared-dylib.md). CI/publish restore it on
+# their static path via env CARGO_PROFILE_RELEASE_LTO=thin.
+[profile.release]
+codegen-units = 1
+opt-level = 3
+strip = "symbols"
+
 [features]
+# molrs is full-by-default now (its `default` IS the native feature union), so
+# `ForceFieldRef` has no reason to be opt-in — every native consumer already
+# compiles `molrs::ff`. The four forwards below re-state that same union, so a
+# standalone `cargo build --manifest-path molrs-ffi/Cargo.toml` produces a dylib
+# with the identical fingerprint every consumer graph resolves; the dylib's
+# install_name is hashless, so a divergent build would silently OVERWRITE the
+# shared object.
+#
+# They are forwards rather than plain default features on the molrs dep because
+# a dependent cannot switch off a TRANSITIVE default: molrs-wasm's
+# `molrs-ffi = { default-features = false }` has to keep dropping `filesystem`
+# (zarrs_filesystem does not compile for wasm32) and `rayon` (no threads there).
+# Same shape as molrs-python's Pyodide exemption.
+default = ["ff", "full", "stream", "filesystem", "rayon", "molrs-default", "unify"]
+# Unit-identity axis 2: the literal `default` LABEL. A consumer that omits
+# `default-features = false` resolves molrs with the feature `default` itself in
+# its set; this crate (which needs defaults off for the wasm exemption above)
+# would otherwise resolve a set that differs by exactly that label — a different
+# unit, so a different molrs image behind the one hashless dylib name.
+molrs-default = ["molrs/default"]
+# Unit-identity axis 3: the UNIFICATION ANCHOR.
+#
+# Cargo unifies features per invocation graph, so molrs's own feature set being
+# identical everywhere is not enough: a SIBLING dependency of a consumer widens
+# shared third-party crates and re-fingerprints molrs through them. Measured on
+# the five native roots: molrs-capi widens serde/serde_json (its own
+# `serde_json = "1"`) and syn 2 (`fold`, via cbindgen); molrs-cxxapi widens
+# foldhash (via cxx) and proc-macro2 (`span-locations`, via cxx-build).
+# molpack/python needed no pin once axes 1 and 2 were fixed — pins are added
+# from measurement, never from expectation.
+#
+# molrs-ffi is, by construction, in EVERY dynamic graph — so pinning the
+# widest observed feature set of those shared crates HERE pushes all graphs to
+# one superset. That is cargo-hakari's workspace-hack pattern without the extra
+# crate (Reuse decision in .claude/specs/ffi-shared-dylib.md).
+#
+# Rules for this list: optional deps only, reachable only through `unify`, never
+# pyo3/numpy themselves (they would drag Python linkage into the C consumers) —
+# pin the AFFECTED shared crates instead. wasm keeps these out for free via its
+# `molrs-ffi = { default-features = false }`.
+#
+# Two of the pins are BUILD-dependencies on purpose: cargo's v2 resolver keeps a
+# separate feature space for host code (build scripts + proc macros), and the
+# widening that broke unit identity happened there — cbindgen and cxx-build are
+# build scripts. A normal-dependency pin would widen the wrong space and mint an
+# extra unit instead of merging one.
+unify = ["dep:serde_json", "dep:foldhash", "dep:syn", "dep:proc-macro2"]
 # Stable handle for `molrs::ff::ForceField` (the `ForceFieldRef` analogue of
-# `FrameRef`). Gated because `molrs::ff` is; only force-field consumers
-# (e.g. molpack) enable it — wasm / cxxapi / capi do not.
+# `FrameRef`). Gates code in THIS crate, so it stays separate from `full` even
+# though `molrs/full` already implies `molrs/ff`.
 ff = ["molrs/ff"]
+full       = ["molrs/full"]
+stream     = ["molrs/stream"]
+filesystem = ["molrs/filesystem"]
+rayon      = ["molrs/rayon"]
 
 [dependencies]
-# The merged crate with only its always-on core (default-features = false).
+# Defaults off, then re-enabled through the forwards above — see [features].
 molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.14.0", default-features = false }
 slotmap = "1.0"
+
+# Unification pins — see the `unify` feature above. No code in this crate uses
+# them; they exist so every dynamic graph resolves these shared crates at one
+# feature superset. Versions stay loose and spelled as the consumers spell them.
+# Each line names the root that induced it; the sets are MEASURED (widest set
+# observed across the five native roots), not guessed.
+#
+# molrs-capi's own `serde_json = "1"` — pulls serde/serde_core/serde_json up to
+# their `default` sets and widens the indexmap/preserve_order closure with them.
+serde_json = { version = "1", optional = true, default-features = true }
+# molrs-cxxapi's `cxx`, which needs `foldhash/std`. foldhash sits under
+# hashbrown → lru → zarrs → molrs, so the bare-vs-std split re-fingerprinted the
+# whole zarrs subtree and molrs with it.
+foldhash = { version = "0.2", optional = true, features = ["std"] }
+
+# Host-space unification pins (see `unify`). There is no build script here and
+# none is wanted: these entries exist to widen the SHARED host feature space, and
+# cargo resolves build-dependencies whether or not a build script consumes them.
+[build-dependencies]
+# molrs-capi's cbindgen adds `fold` to syn 2. syn 2 is what auto_impl,
+# derive_more_impl and zerocopy_derive expand with, so one extra feature there
+# re-fingerprints derive_more → zarrs → molrs (and zerocopy → ppv-lite86 → rand
+# → tungstenite on the side). syn 3 (async-trait, bytemuck_derive) is untouched
+# by cbindgen and needs no pin.
+syn = { version = "2", optional = true, features = [
+    "full",
+    "extra-traits",
+    "visit",
+    "visit-mut",
+    "fold",
+] }
+# molrs-cxxapi's cxx-build adds `span-locations` to proc-macro2 — which every
+# proc macro in the graph is compiled against, so it moved serde_derive,
+# thiserror_impl, futures_macro and tokio_macros in one go, i.e. serde, tokio and
+# most of molrs's closure.
+proc-macro2 = { version = "1", optional = true, features = ["span-locations"] }
 
 [dev-dependencies]
 ndarray = "0.17"

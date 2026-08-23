@@ -90,7 +90,7 @@ fn the_two_parameter_sets_disagree_on_water() {
 /// the spec allows (`total_charge` kept or dropped), so a failure here means the
 /// bridge grew a shape none of them cover — most likely a parameter-set selector
 /// that is not the `&str` these tests pin. Reconcile `bridge_probe.cc` with
-/// `build.rs`'s `CXX_BRIDGE_SCHEMA`; `cargo build -p molcrafts-molrs-cxxapi -vv`
+/// `build.rs`'s `CXX_BRIDGE_SCHEMA`; `cargo build --manifest-path molrs-cxxapi/Cargo.toml -vv`
 /// prints the compiler's diagnostic, and build.rs emits it as a `cargo::warning`.
 #[cfg(not(cxx_probe))]
 #[test]

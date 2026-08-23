@@ -26,7 +26,14 @@ serde_json = "1"
 # `ForceField._ffi_forcefield_capsule()` (the force-field analogue of the frame
 # capsule). molrs-python already pulls `molrs/ff` via `full`, so this only turns
 # on the matching molrs-ffi handle.
-molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.14.0", features = ["ff"] }
+#
+# `default-features = false` is the SAME Pyodide exemption as the molrs dep
+# below, for the same reason: molrs-ffi's defaults forward the native union
+# (`full + stream + filesystem + rayon`) plus the `unify` pins, and none of that
+# may reach wasm32-emscripten — a transitive default cannot be switched off from
+# here, so it has to be off on the dep line. Natively the union comes back
+# through the `ffi-native` forward in [features] default.
+molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.14.0", default-features = false, features = ["ff"] }
 # Base: full (no zarr). Host zarr + path I/O is optional (`fs` feature) so
 # Pyodide builds can omit zarrs/libz-sys (emscripten cannot link host zlib).
 #
@@ -35,20 +42,56 @@ molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = 
 # `molrs::stream::server` the same way, so a Pyodide (wasm32-emscripten) build
 # compiles only the WASM-clean `ControlCommand` wire types and links no
 # networking stack. `net` pulls in `stream` (the MessagePack/JSON Frame codec).
+#
+# `default-features = false` here is a DELIBERATE Pyodide exemption from the
+# native feature union, not an oversight: emscripten cannot link host zlib or a
+# thread pool, so the minimal `full + stream` base must remain reachable via
+# `maturin … --no-default-features`. The union arrives instead through the
+# default-on forward features below, so a native wheel resolves molrs at
+# EXACTLY `full + stream + filesystem + rayon` — the union, byte for byte.
 molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.14.0", default-features = false, features = ["full", "stream"] }
 
 [features]
-default = ["fs"]
+default = ["fs", "rayon", "molrs-default", "ffi-native"]
 # Desktop/native: path-based zarr trajectory I/O (`molrs/filesystem` → zarr).
 # Off for Pyodide: `maturin … --no-default-features`.
 fs = ["molrs/filesystem"]
+# Unit-identity axis 2: the literal `default` LABEL. A consumer that does not
+# write `default-features = false` resolves molrs with the feature `default`
+# itself in the set — and a feature set that differs by that one label is a
+# different unit, hence a different molrs image behind the one hashless
+# libmolrs_ffi.dylib. The Pyodide exemption above keeps defaults off on the dep
+# line, so the label has to come back through a forward, exactly as molrs-ffi
+# does it. Pyodide's `maturin … --no-default-features` drops it with `fs` and
+# `rayon`, which is precisely the intent — that build is not in the dylib graph.
+molrs-default = ["molrs/default"]
+# Desktop/native parallelism. BEHAVIOUR CHANGE: because the molrs dep above
+# turns defaults off, shipped wheels never enabled `molrs/rayon` and silently
+# ran the sequential `cfg(not(feature = "rayon"))` fallbacks. This forward
+# feature repays that perf debt. Pyodide's `--no-default-features` drops it
+# together with `fs`.
+rayon = ["molrs/rayon"]
+# Re-enables molrs-ffi's default set for native builds: its union forwards
+# (`full + stream + filesystem + rayon`), its `unify` anchor pins, and the
+# literal `default` LABEL itself — the label is unit-hash-relevant one level up,
+# exactly as `molrs-default` above makes it relevant for the molrs dep. Without
+# this, molrs-ffi would resolve here at a narrower set than in the other native
+# roots and mint a second unit behind the one hashless libmolrs_ffi. Pyodide's
+# `maturin … --no-default-features` drops it with `fs` and `rayon`, which is the
+# whole point of the dep-line exemption.
+ffi-native = ["molrs-ffi/default"]
 
 [workspace]
 
 # Standalone workspace root: does NOT inherit the repo root's [profile.release].
 # Keep in sync with ../Cargo.toml so released wheels get the same optimization.
+#
+# No LTO here — it is incompatible with the shared dylib graph: once a Rust
+# dylib (libmolrs_ffi) is in a cdylib's dependency graph, rustc refuses with
+# "only 'staticlib', 'bin', and 'cdylib' outputs are supported with LTO"
+# (probe C2 in .claude/specs/ffi-shared-dylib.md). CI/publish restore it on
+# their static path via env CARGO_PROFILE_RELEASE_LTO=thin.
 [profile.release]
-lto = "thin"
 codegen-units = 1
 opt-level = 3
 strip = "symbols"

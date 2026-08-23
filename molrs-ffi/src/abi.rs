@@ -95,6 +95,16 @@ mod layout_snapshot {
 
     use crate::{BlockHandle, BlockRef, FrameId, FrameRef, SharedStore, Store};
 
+    // The committed snapshot lists the `ForceFieldRef` rows, which only exist
+    // with `ff` on. `ff` is now a default feature, so the ordinary gate runs
+    // unconditionally; a `--no-default-features` test build would otherwise
+    // fail as a misleading "layout drifted" diff instead of saying what is
+    // actually wrong.
+    #[cfg(not(feature = "ff"))]
+    compile_error!(
+        "molrs-ffi's layout snapshot is defined with `ff` on (now default); build tests with default features"
+    );
+
     fn report() -> String {
         let mut out = format!("abi {}\n", super::abi_line());
         macro_rules! row {
@@ -141,7 +151,8 @@ mod layout_snapshot {
         row!(molrs::SimBox);
 
         // Force-field handle (only size/align — `ForceFieldRef.ff` is
-        // module-private, and `Rc<T>` is pointer-sized regardless).
+        // module-private, and `Rc<T>` is pointer-sized regardless). Still
+        // `ff`-gated: `ForceFieldRef` is code, and wasm builds it away.
         #[cfg(feature = "ff")]
         {
             row!(crate::ForceFieldRef);
@@ -152,7 +163,6 @@ mod layout_snapshot {
     }
 
     #[test]
-    #[cfg(feature = "ff")] // the committed snapshot is taken with --features ff
     fn layout_matches_committed_snapshot() {
         let expected = include_str!("layout.snapshot");
         let actual = report();

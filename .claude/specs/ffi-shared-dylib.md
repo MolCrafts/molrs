@@ -1,7 +1,8 @@
 ---
 title: molrs-ffi 升级为共享动态库宿主(单一并集 feature 收敛)
-status: in-progress
+status: code-complete
 created: 2026-08-22
+revised: 2026-08-23
 ---
 
 # molrs-ffi 升级为共享动态库宿主(单一并集 feature 收敛)
@@ -19,6 +20,8 @@ created: 2026-08-22
 5. **cargo 优先级**:环境变量 `RUSTFLAGS` 整体覆盖 `target.<cfg>.rustflags`。本 spec 一律用**显式** `RUSTFLAGS='-C prefer-dynamic=no'` 而非空串覆盖,避免依赖"空字符串算不算已设置"的实现细节。
 6. **rayon 债(实测计数)**:`rg 'cfg\(not\(feature = "rayon"\)\)' molrs/src` = **10 处 / 10 文件**(`optimize/mod.rs`、`compute/{msd,van_hove,debye,density/spatial,hbond/detect,hbond/lifetime,order/reorientation_legendre,voronoi/radical,voronoi/integrate}`);`rg 'feature = "rayon"' molrs/src` = **77 处 / 37 文件**(含 `core/spatial/neighbors/{mod,linkcell}.rs`、`core/math/mod.rs`)。现行 wheel 全部走的是 `not(rayon)` 分支。
 7. **动态链接的代价**:跨 dylib 边界没有跨 crate 内联/LTO。因此两仓的 bench workflow 必须保持静态形态,否则性能历史不可比;本地动态构建的**运行时性能不代表发布形态**。
+
+8. **cargo 的单元指纹是递归的,而 dylib 产物无 hash**。`-C metadata` 由 cargo 对**每个 unit** 计算,输入递归混入其**依赖单元**的指纹(feature 集、依赖图形状、profile、workspace flavor),而非只看该 crate 自身的 feature。同时共享 target 下 dylib 的落盘名是 `deps/libmolrs_ffi.dylib`——**无 hash**。两者相乘的后果是:任何一条分叉的构建图都会把自己的 molrs 单元写进**同一个文件名**,覆写并毒化先前的构建。实测报错文本为 `error: multiple different versions of crate molrs`(cxxapi→capi 10 errors;molpack/python→cxxapi 48 errors)。因此"并集 feature + profile 对齐"是**必要而不充分**条件——见 Design 的"单元同一性"节。
 
 ## Design
 
@@ -49,15 +52,96 @@ created: 2026-08-22
 - **(b) staticlib 构建** → 分支 **B1**(通过,因为 molrs-ffi 同时产出 rlib,staticlib 可取 rlib 一路静态):不动。分支 **B2**(rustc 拒绝):`molrs-cxxapi` / `molrs-capi` 的本地构建命令与其 pre-push hook 前缀 `RUSTFLAGS='-C prefer-dynamic=no'`;若仍不可行,则 `molrs-capi` 去掉 `staticlib` crate-type(发布侧本来就静态构建,不受影响),`molrs-cxxapi` 的 staticlib 不可去——它是 Atomiverse 的交付形态,那就以命令前缀方式豁免并在 `docs/interop.md` 与 wasm 并列文档化。
 - **(c) release + `lto = "thin"` + prefer-dynamic** → 分支 **C1**(通过):profile 保持 lto。分支 **C2**(rustc 拒绝):本地动态形态的 `[profile.release]` 去掉 `lto`(CI/发布走 RUSTFLAGS 静态路径,lto 依然生效),并在四个 root 的 profile 注释里写明原因。
 
-### probe 结论(任务 1 完成后回填)
+### probe 结论(2026-08-23,沙盒复刻:pyo3 0.29 双 cdylib 扩展 + staticlib + 共享 target;命令见下)
 
-- (a): 待填
-- (b): 待填
-- (c): 待填
+- **(a) = A1**。共享 target 下 dylib 的 install_name 是**无 hash 的绝对路径**(`<shared-target>/release/deps/libhost.dylib`),两个扩展引用同一路径;外部启动的 python(无 cargo 环境)`import ext, ext2` 均成功且第二个扩展构建 0.10s(完全复用)。build.rs 只需注入 **libstd 的 rpath**(`rustc --print target-libdir`);dylib 本身无需 rpath。命令:`RUSTFLAGS="-C prefer-dynamic -C link-args=-Wl,-rpath,$(rustc --print target-libdir)" cargo build --release` + 外部 `python -c "import ext, ext2"`。注:裸 cargo 下 pyo3 extension-module 还需 `-Wl,-undefined,dynamic_lookup`,真实链路由 maturin 注入,非本 spec 关注点。**推论**:install_name 无 hash 意味着 feature/profile 失配的第二次构建会**覆写同一文件**——并集收敛与 profile 对齐从"优化"升级为"正确性前提"(与 Design 的 profile 对齐节一致)。
+- **(b) = B1**。staticlib 在 config 默认 `prefer-dynamic` 下构建通过(rustc 对自包含输出自动取 rlib 路径)。cxxapi/capi 的 `.a` 无需任何豁免前缀。
+- **(c) = C2**。`lto = "thin"` + 图中含 Rust dylib 的 cdylib 输出被 rustc 拒绝:`only 'staticlib', 'bin', and 'cdylib' outputs are supported with LTO`。**回退落法**:五个 root 的 `[profile.release]` 删除 `lto = "thin"`(注释写明本错误);CI/publish 的静态路径以 env **`CARGO_PROFILE_RELEASE_LTO: thin`** 恢复(与 `RUSTFLAGS: -C prefer-dynamic=no` 并列)——已实测:该组合产出完全自包含的静态产物(otool 无 libhost/libstd 引用)。发布产物的 LTO 不变;仅本地动态形态无 LTO(dev 模式,可接受)。ac-011/ac-012 的判定条件相应含 `CARGO_PROFILE_RELEASE_LTO`。
 
 ### profile 必须逐字对齐(否则共享 dylib 会互相顶掉)
 
-五个 workspace root(molrs 根、`molrs-python`、`molrs-capi`、molpack 根、`molpack/python`)各自声明 `[profile.release]`;profile 参与指纹,不一致会让 `target/release/deps/libmolrs_ffi-<hash>.dylib` 出现两份,而被 uplift 到 `target/release/libmolrs_ffi.dylib` 的那份取决于谁最后构建——`@rpath` 在运行时解析的正是这个无 hash 名字,于是"同一份 dylib"的不变量会随机破裂。因此把 `lto` / `codegen-units` / `opt-level` / `strip` 四项在五处对齐(以 `molrs-python` 现有值为准:`thin` / `1` / `3` / `symbols`,C2 分支下去掉 `lto`),`molpack/python/Cargo.toml` 需**新增** `[profile.release]`。
+~~五个~~ **七个** workspace root(molrs 根、`molrs-ffi`、`molrs-python`、`molrs-capi`、`molrs-cxxapi`(轴 4 后独立)、molpack 根、`molpack/python`)各自声明 `[profile.release]`;profile 参与指纹,不一致会让 `target/release/deps/libmolrs_ffi-<hash>.dylib` 出现两份,而被 uplift 到 `target/release/libmolrs_ffi.dylib` 的那份取决于谁最后构建——`@rpath` 在运行时解析的正是这个无 hash 名字,于是"同一份 dylib"的不变量会随机破裂。因此把 `lto` / `codegen-units` / `opt-level` / `strip` 四项在七处对齐(以 `molrs-python` 现有值为准:`thin` / `1` / `3` / `symbols`,C2 分支下去掉 `lto`),`molpack/python/Cargo.toml` 需**新增** `[profile.release]`。
+
+**原"五个"是错的,实测代价见收敛循环的 release 侧一节**:`molrs-ffi`(dylib 宿主本身)与 `molrs-cxxapi` 都是独立 workspace root 却没有 profile 块,裸 release 构建于是退回 cargo 默认(`codegen-units = 16`、不 strip),写出的 `libmolrs_ffi.dylib` 与 wheel 的完全不同。
+
+### 单元同一性(unit identity)——第二条硬前置,原 Design 的假设已被推翻
+
+原 Design 假设 **feature 并集 + profile 逐字对齐**足以让六个 workspace root 产出同一份 `libmolrs_ffi.dylib`。**该假设为假**,已由受控实验推翻(见 Domain basis 8)。干净树普查的结果是:**6 个 root → 6 个互不相同的 molrs 单元**。四条分叉轴被逐一隔离,每条配一个修法:
+
+**轴 1 — lockfile 版本漂移(主因,54/54 个公共 crate 全部分叉)。** 六个 workspace root 各自持有一份**未跟踪**的 `Cargo.lock`,分别在不同时刻解析(实测:ffi root 的 `log 0.4.34` vs python root 的 `log 0.4.33`)。删掉六份 lock 后一次性重建,ffi 与 python 立刻收敛到**同一个** molrs 单元。
+**修法 = 同步,而非跟踪**:新增 `scripts/sync-dylib-locks.sh`,删除并在**同一个 registry 时刻**一次性重建七份 lock(molrs 根、`molrs-ffi`、`molrs-python`、`molrs-capi`、`molrs-cxxapi`(轴 4 后独立)、molpack 根、`molpack/python`;molpack 侧沿用 `verify-shared-dylib.sh` 的 `MOLPACK_ROOT` 解析)。**lock 继续不跟踪**——这个不变量是**本机局部**的(动态圈只存在于本地;CI 是静态、逐仓的),把 lock 提交进仓会用一个发布层面的谎言去修一个本地问题。`verify-shared-dylib.sh` 在身份判定失败时**按名字**指向该脚本。`molrs-wasm` 的 lock **刻意不进 sweep**:它是既有的浏览器豁免,其构建目标是 wasm32(cfg 豁免动态化),把它拉进同步只会引入一个按设计就应当分叉的单元。
+
+**轴 2 — `default` 这个字面 feature 标签。** 未写 `default-features = false` 的消费者解析出的 molrs feature 集**带 `default` 这个标签本身**;而 `molrs-ffi` / `molrs-python`(为 wasm/Pyodide 保留 `default-features = false`)解析出的集合不带——集合不同 → 单元不同。
+**修法 = 标签收敛**:`molrs-ffi` 已作为探针落地 `molrs-default = ["molrs/default"]` 并列入 `default`;实测其后 molrs 自身的 `--cfg feature` 列表在 ffi 与 capi 两条图上**逐字相同**。`molrs-python` 补同一形状:其 molrs 依赖保留 `default-features = false, features = ["full","stream"]`(Pyodide 豁免不变),另加 default-on 的 `molrs-default = ["molrs/default"]` 前向——Pyodide 的 `maturin --no-default-features` 会连同 `fs`/`rayon` 一起把它丢掉。
+
+**轴 3 — 兄弟依赖诱发的第三方 feature 加宽。** feature 统一是**逐 invocation-graph** 的,所以即使 molrs 的 feature 完全一致,单元仍可能不同:`molrs-capi` 直挂的 `serde_json = "1"` 会加宽 serde / serde_json / syn / once_cell / zarrs-cluster / tungstenite / rand-cluster / zerocopy / memchr / half / getrandom / ppv_lite86 / derive_more / auto_impl(实测 28 个 crate);molpack 侧的图(numpy→ndarray、molpack 根的 rand/log)加宽的是另一批。
+**修法 = 把 molrs-ffi 当作统一锚点**:`molrs-ffi` 增加一个 default-on 的 `unify` feature,挂**可选、钉版本**的第三方依赖(`unify = ["dep:serde_json", …]`),镜像任一兄弟能诱发的**最宽** feature 集(具体清单由收敛循环实测得出,起点 `serde_json`,按需扩)。理由:`molrs-ffi` 定义上在**每一条**动态图里,它的 pin 因此把所有图的第三方统一推到同一个 superset——即 cargo-hakari 的 workspace-hack 模式,但**不新增 crate**。wasm 侧靠既有的 `default-features = false` 天然排除这些 pin。
+
+**轴 4 — workspace-member 风味(flavor)。** `molrs-cxxapi` 是 molrs 根 workspace 的成员,构建它会铸出一个 **member 风味**的 molrs 单元(workspace 成员在 dev 下按增量编译,path 依赖不是);而它又依赖 `molrs-ffi`,于是它会用这个风味**覆写**共享 dylib。
+**修法 = 把 molrs-cxxapi 逐出根 workspace**:根 `members = ["molrs"]`;`molrs-cxxapi` 自带 `[workspace]` 与逐字对齐的 `[profile.release]`(与"binder crate 一律独立 workspace"的既有教义一致)。此后根 workspace 的任何命令图里**不再含 molrs-ffi**,也就永远不会写那个 dylib。连带:CI 与 pre-commit 里的 cxxapi clippy 行必须从 `-p molcrafts-molrs-cxxapi` 改为 `--manifest-path molrs-cxxapi/Cargo.toml`——三处同一拼写:`.pre-commit-config.yaml`、`.github/workflows/ci-rust.yml`、`CLAUDE.md` 的 `build.check`。
+
+#### 收敛循环(机械步骤,不是判断题)
+
+四条轴落地后按此迭代,直到普查为 1:
+
+1. 清掉共享 `target/debug`;
+2. 依次构建五个原生 root:`molrs-ffi`、`molrs-python`、`molrs-capi`、`molrs-cxxapi`(独立 workspace)、`molpack/python`;
+3. 普查 `ls <shared-target>/debug/deps/libmolrs-*.rlib | wc -l`;
+4. 若 > 1:对分叉的 crate **word-diff 其 rustc 调用**(诊断阶段用的就是这个方法),把缺的 feature/依赖 pin 补进 `molrs-ffi` 的 `unify`,回到 1。
+
+普查 == 1 之后再断言**真正的不变量**:release 构建 molrs wheel → `sha256` 该 dylib → 构建 molpack wheel → `sha256` **不变**。(molpack **根**的 test 图不在这五条里,它由 `abi_line` 测试单独覆盖;其 lock 已在 sweep 内。)
+
+#### unify pin 清单(收敛循环实测,2026-08-23)
+
+四条轴落地后普查 = **3**(`molrs-ffi` / `molrs-python` / `molpack/python` 已合流为一个单元;`molrs-capi` 一个;`molrs-cxxapi` 一个),再补下面四条 pin 后普查 = **1**。每条都标注**是哪个 root 诱发的**:
+
+| pin(`molrs-ffi/Cargo.toml`) | 空间 | 诱发者 | 不 pin 时的连锁 |
+|---|---|---|---|
+| `serde_json = { version = "1", optional = true, default-features = true }` | normal | `molrs-capi` 自带的 `serde_json = "1"` | serde / serde_core / serde_json 的 `default` 标签与 indexmap 闭包 |
+| `foldhash = { version = "0.2", optional = true, features = ["std"] }` | normal | `molrs-cxxapi` 的 `cxx`(要 `foldhash/std`) | foldhash → hashbrown → lru → zarrs → molrs |
+| `syn = { version = "2", optional = true, features = ["full","extra-traits","visit","visit-mut","fold"] }` | **build** | `molrs-capi` 的 `cbindgen`(要 syn 2 的 `fold`) | syn2 → auto_impl / derive_more_impl / zerocopy_derive → derive_more + zerocopy → ppv-lite86 → rand → tungstenite,以及 zarrs 全子树 |
+| `proc-macro2 = { version = "1", optional = true, features = ["span-locations"] }` | **build** | `molrs-cxxapi` 的 `cxx-build` | proc-macro2 → quote/syn → **所有**过程宏(serde_derive / thiserror_impl / futures_macro / tokio_macros)→ serde / tokio / molrs 闭包大半 |
+
+两条必须落在 `[build-dependencies]`:cargo v2 resolver 给 host 代码(build script + 过程宏)单独一个 feature 空间,而加宽正是发生在那里(cbindgen、cxx-build 都是 build script)。写成普通依赖会加宽**另一个**空间,多铸一个单元而不是合并一个。`molrs-ffi` **不需要** build.rs——cargo 无论是否有 build script 都会解析 build-dependencies,实测 pin 后 `cargo tree -i syn@2` 在 ffi 图上即出现 `fold`。
+
+**不需要的 pin(实测,不要凭猜补上)**:`ndarray` / `half`(molpack/python 的 numpy 0.29 并未加宽它们)、`rand`(molpack 根不在这五条图里)。轴 1 的 lock 同步 + 轴 2 的标签收敛之后,`molpack/python` 无需任何 pin 就与 `molrs-ffi` 同单元。
+
+#### release 侧实测:第五个指纹输入是 rustflags,且 dylib 宿主自己也有"风味"
+
+普查 == 1 后按不变量做 release 断言,实测出三件必须写进 spec 的事:
+
+1. **不变量成立**:molrs wheel 构建后 `sha256(target/release/deps/libmolrs_ffi.dylib)` = `9ba2c3da…`,再构建 molpack wheel 后**仍是** `9ba2c3da…`(两次独立复现)。
+2. **裸 `cargo build --release` 与 maturin 是两套 rustflags 制度,不可混用**。maturin 注入 `CARGO_ENCODED_RUSTFLAGS="-C prefer-dynamic -C link-arg=-undefined -C link-arg=dynamic_lookup"`(它把仓内 config 的 `prefer-dynamic` 合并了进去)。rustflags 是指纹输入,所以两制度必然是两个单元,而它们抢的是同一个**无 hash** 的 `deps/libmolrs_ffi.dylib`:后写者赢,先写者的消费者**硬失败** `error[E0463]: can't find crate for molrs_ffi`(不是静默降级——这点反而是好消息),且 **cargo 不会自愈**(它认为自己那个单元是 fresh 的),恢复手段是 `touch molrs-ffi/src/lib.rs` 后用需要的制度重建。**推论**:release 侧的 sha 断言只能夹在**两次 maturin 构建之间**(`verify-shared-dylib.sh` 正是这么做的),中间不得插入裸 `cargo build --release`;收敛循环的普查用 debug + 单一制度,也正确。
+3. **轴 4 的"风味"对 dylib 宿主自身同样成立**:即使 rustflags 与 profile 完全对齐,把 `molrs-ffi` 当**工作区根**构建出的 dylib(`503d0508…`)与把它当**路径依赖**构建出的(`9ba2c3da…`)字节不同——`-C metadata` 相同(消费者能接受任一份,不报 E0463),但内容不同,于是 sha 断言会红。要么只用 maturin 侧的两次构建做断言,要么在断言前不碰裸构建。
+4. **`molrs-ffi` 原本没有 `[profile.release]`**(本 spec 的 profile 对齐只点了五个 root,漏掉了 dylib 宿主自己),裸 release 构建因此退回 cargo 默认 profile(`codegen-units = 16`、不 strip),写出的 dylib 与 wheel 的完全不同。已补齐——**七个 root 都要有**这四个键(molrs 根、molrs-ffi、molrs-python、molrs-capi、molrs-cxxapi、molpack 根、molpack/python;molrs-wasm 因 wasm32 豁免不计)。
+
+**比 `-v` 日志更便宜的诊断法**(等价于 word-diff rustc 调用,但不用重新编译):对每个 root 跑
+`cargo build --manifest-path <root>/Cargo.toml --message-format json`,收集 `compiler-artifact` 的产物名并按 `<crate>-<16位hash>` 解析,得到"该 root 用了哪些单元"的表;两表求差即得**分叉的 crate 清单**(一次实测:capi 差 28 个 crate、cxxapi 差 49 个)。再用 `target/debug/.fingerprint/<crate>-<hash>/lib-*.json` 的 `features` 字段读出两个单元的 feature 差,和 `cargo tree -i <crate> --format "{p}|{f}"` 找出诱发者。
+
+#### 门的加固:原第 8 步的路径比较是空转
+
+`verify-shared-dylib.sh` 第 8 步"两个扩展的 `libmolrs_ffi` 路径相等"作为**同一性证明是空的**——install_name 无 hash,两者**永远**指向同一个绝对路径,即使文件已被第二次构建覆写。真正有牙齿的是第 9 步(同解释器 import + capsule 往返)。因此:在两次 wheel 构建**之间**插入 sha256 稳定性断言(覆写即红),路径比较降级为一行廉价 sanity print 保留。这是本仓 `feedback_tests_that_cannot_fail` 的同一条禁令——"结构上无法暴露缺陷的断言"必须被替换,而不是被信任。
+
+#### molpack 根 dev-dep 的"去惰性化"
+
+实测:molpack 根那条 path-only 的 `[dev-dependencies] molrs-ffi` 是**惰性的**——`molpack/{src,tests,benches,examples}` 里没有任何源码引用 `molrs_ffi`,rustc 因此从不加载这个 `--extern`,test/bench 二进制里**没有** `libmolrs_ffi` 条目。原 spec"`cargo test`/`cargo bench`/`--examples` 全部入圈"的论断**为假**。
+**修法**:新增 `molpack/tests/abi_line.rs`——一条真实的单断言测试:`assert_eq!(molrs_ffi::abi::abi_line(), molrs::VERSION.rsplit_once('.').map(|(mm, _)| mm).unwrap())`。它一石二鸟:把 `molrs_ffi` 变成被真实引用的 extern(molpack 的测试二进制**真的**入圈),同时把"两侧 ABI 线配对"从口头约定变成可执行断言。这不是配置自证——它比较的是两个**独立编译单元**各自烘进去的版本串。
+
+#### Reuse decision(supersede 增补)
+
+- `scripts/fetch-test-data.sh` / `verify-shared-dylib.sh` — **pattern**:`sync-dylib-locks.sh` 沿用其形制。
+- `scripts/verify-shared-dylib.sh` — **generalize**:sha256 断言加进这个已有的门,不新建第二个校验脚本。
+- `molrs_ffi::abi::abi_line` 与 `molrs::VERSION` — **reuse**:`abi_line.rs` 直接调用,不重算、不硬编码 `"0.14"`。
+- cargo-hakari / 新建 workspace-hack crate — **new(否决)**:`molrs-ffi` 已是"每条图都在"的 crate,pin 挂它身上等价 hack crate 且不新增跨仓发布依赖。
+
+#### 被本节推翻或作废的旧论断
+
+- "对齐 profile 即可保证唯一 dylib"——不成立,profile 只是第五个指纹输入。
+- "molpack 的 test/bench/examples 全部入圈"——为假,见去惰性化。
+- "`.cargo/config.toml` 当前 UNTRACKED"——已作废(def162c 已跟踪),不再需要 git add 或措辞修正。
+- `molrs-cxxapi` 的成员身份从"编译成本项"升级为**正确性缺陷**(轴 4)。
+- 保留不变:molpack CLI 二进制不入圈(molcrafts-molrs-ffi 未上 crates.io),Out of scope 的发布火车条目原样有效。
+
 
 ### molpack 根依赖:一个 librarian 未覆盖的硬约束(iron law 上报)
 
@@ -69,7 +153,8 @@ created: 2026-08-22
 
 - **`stream` 首次进入默认门**:今天 `cargo clippy -p molcrafts-molrs --all-targets --features full,filesystem` 与 `cargo test --lib --features full,filesystem` 都**没有**覆盖 `molrs/src/stream/**`(`stream` 不在 `full` 里)。并集后它进入 clippy(`-D warnings`)与单测门,实测该目录有 **20 个 `#[test]`/`#[tokio::test]`**。首跑若冒出 clippy 警告,按 iron law **就地修**,不得放宽门。
 - **原生 wheel 转并行**:见 Domain basis 6。归约次序改变意味着浮点末位可能变化,`molrs-python` 572 条 pytest 与 molpack 132 条须逐条绿;任何"因并行而失败"的断言是真缺陷,不得放宽容差(先查该断言是否本就依赖顺序)。
-- **编译面变宽**:所有原生消费者现在都编译 `stream`(tokio / tungstenite)与 `filesystem`(zarrs)。`molrs-cxxapi` 是根 workspace 成员,`cargo clippy -p molcrafts-molrs-cxxapi --all-targets` 的**编译**时间随之上升(它只 lint cxxapi 自身代码,不 lint 依赖,故新增 lint 面主要来自 molrs 自身的 `stream`)。这是编译成本,不是 break。
+- **编译面变宽**:所有原生消费者现在都编译 `stream`(tokio / tungstenite)与 `filesystem`(zarrs)。`molrs-cxxapi` 的 clippy(轴 4 之后是 `cargo clippy --manifest-path molrs-cxxapi/Cargo.toml --all-targets`,不再是 `-p`)**编译**时间随之上升(它只 lint cxxapi 自身代码,不 lint 依赖,故新增 lint 面主要来自 molrs 自身的 `stream`)。这是编译成本,不是 break。
+- **`-p molcrafts-molrs-cxxapi` 在根 workspace 里从此不可用**(轴 4 的连带)。仓内仍有两处历史文档写着这条命令:`.claude/specs/release-0-12-05-cxxapi-panic-free.md:49` 与 `regressions/release-0-12-05-cxxapi-panic-free.md:12`(均为已关闭 spec 的记录,其"验证命令"现会直接失败)。本 spec 不改 `regressions/`,已上报给调用方走文档修正。
 - **`.cargo/config.toml` 当前 UNTRACKED**:`CLAUDE.md` "Build cache" 一节写着"the committed `.cargo/config.toml`",而该文件今天并未被 git 跟踪——即任何新 clone 都**没有**共享 target 缓存,文档陈述为假。本 spec 顺手 `git add` 并修正该节措辞(iron law:发现即修)。
 - **molpack CI 把 sibling 钉在 `MOLRS_GIT_REF: v0.14.0`**,所以 molpack CI 侧的收敛要等 molrs 发布该线后才生效;本地(dev sibling)立即生效。CI 的 `MOLRS_GIT_REF` bump 属发布火车,已在 Out of scope。
 - **molrs 的 pre-push 将依赖 sibling molpack**(共享 dylib 是跨仓不变量,单仓无法观测)。脚本采取 refuse-and-explain:缺 sibling 时**非零退出**并打印 `MOLPACK_ROOT=` 覆盖用法与 clone 命令,**不做静默 skip**(静默 skip 正是本仓 `feedback_tests_that_cannot_fail` 明令禁止的空转绿)。
@@ -103,7 +188,10 @@ created: 2026-08-22
 - `molrs-python/Cargo.toml` — 新增 `rayon = ["molrs/rayon"]` 并入 `default`;第 38 行 molrs dep **不动**(Pyodide 豁免);profile 对齐
 - `molrs-wasm/Cargo.toml` — 仅补注释:`default-features = false` 是**刻意的浏览器豁免**,不随并集收敛
 - `Cargo.toml`(根)— `[profile.release]` 对齐
-- `.cargo/config.toml` — 追加 rustflags;**`git add`(当前 untracked)**
+- `.cargo/config.toml` — 追加 rustflags(已落地;def162c 已跟踪,原 git-add 条目作废)
+- `scripts/sync-dylib-locks.sh` (new) — 七份 Cargo.lock 的一次性同步重建器(轴 1)
+- `Cargo.toml`(根)— `members = ["molrs"]`(cxxapi 逐出,轴 4)
+- `molrs-cxxapi/Cargo.toml` — 新增 `[workspace]` + 逐字对齐 `[profile.release]`
 - `molrs-capi/build.rs` — 扩展:注入 runtime rpath;删失效的 f64/i64/u64 注释
 - `molrs-python/build.rs` (new) — rpath 注入
 - `molrs-capi/tests/cpp/CMakeLists.txt` — SHARED IMPORTED + `BUILD_RPATH`;删链接列表与 `MOLRS_F64`
@@ -117,10 +205,13 @@ created: 2026-08-22
 - `.github/workflows/nightly.yml` — 加 `RUSTFLAGS` 静态 env
 - `.github/workflows/publish.yml` — 加 `RUSTFLAGS` 静态 env(含 maturin-action / cibuildwheel 容器透传确认)
 - `docs/interop.md` — 改写 167-170 行(Path C 的"in-house consumers do not link this / static only"论断被本 spec 直接反转)
-- `CLAUDE.md` — "Build cache" 节同步(共享 target + 本地动态 / CI 静态 + 已 committed 的 config)
+- `CLAUDE.md` — "Build cache" 节补本地动态 / CI 静态开关一行;`build.check` 的 cxxapi clippy 改 `--manifest-path`
 - **不改**:`.github/workflows/ci-wasm.yml`(wasm32 被 cfg 排除,无需 env)
 
 ### molpack 仓(`/Users/roykid/work/molcrafts/molpack`)
+
+- `tests/abi_line.rs` (new) — 单断言 ABI 线配对测试,使 path-only dev-dep 真正被链接
+- `Cargo.toml` — 更正 MEASURED LIMIT 注释(test 二进制经 abi_line 已入圈,仅 cli 二进制未入)
 
 - `Cargo.toml` — molrs dep 删 `default-features = false`;新增 path-only `[dev-dependencies] molrs-ffi`;`[profile.release]` 对齐
 - `python/Cargo.toml` — molrs dep 删 `default-features = false`;新增 `[profile.release]`
@@ -134,16 +225,23 @@ created: 2026-08-22
 
 ## Tasks
 
-- [ ] Probe cdylib load / staticlib build / release-LTO under `-C prefer-dynamic` and record branches A1|A2, B1|B2, C1|C2 in this spec's Design
-- [ ] Write failing `scripts/verify-shared-dylib.sh` (RED today: the two extensions share no `libmolrs_ffi`; refuse-and-explain on missing `MOLPACK_ROOT`, print both resolved dylib paths on failure)
-- [ ] Convert `molrs-ffi` into the dylib host in `molrs-ffi/Cargo.toml` + `molrs-ffi/src/abi.rs` (`crate-type`, `default = ["ff"]`, unconditional layout test + `compile_error!` guard) and drop the now-redundant `--features ff` from `.github/workflows/ci-rust.yml`
-- [ ] Widen `molcrafts-molrs` default to `full,stream,filesystem,rayon` and converge every consumer graph (`molrs-capi`, `molrs-cxxapi`, `molrs-python` rayon forward feature, `molpack/Cargo.toml` + path-only molrs-ffi dev-dep, `molpack/python/Cargo.toml`; document the molrs-wasm exemption)
-- [ ] Land the static/dynamic switch: append prefer-dynamic rustflags to both `.cargo/config.toml` (and `git add` molrs's), align `[profile.release]` across the five roots, and set `RUSTFLAGS: -C prefer-dynamic=no` in every cargo-running workflow of both repos
-- [ ] Emit the runtime rpath from build scripts: extend `molrs-capi/build.rs`, add `molrs-python/build.rs`, `molpack/build.rs`, `molpack/python/build.rs` (panic with the fix command on failure, per the `molrs-cxxapi/build.rs` two-tier policy)
-- [ ] Convert `molrs-capi/tests/cpp/CMakeLists.txt` to a SHARED import with `BUILD_RPATH`, and delete the dead `MOLRS_F64` switch, the `-lc/-lm` interface list, and the stale f64/i64/u64 comment in `molrs-capi/build.rs`
-- [ ] Wire `verify-shared-dylib` into `.pre-commit-config.yaml` as a pre-push local hook and rewrite `docs/interop.md:167-170` plus the `CLAUDE.md` "Build cache" section
-- [ ] Add regression example `regressions/ffi-shared-dylib.py` (public API only; hard-coded goldens, no third-party runtime)
-- [ ] Run full check + test suite in both repos and confirm `molrs-ffi/src/layout.snapshot` is byte-identical
+- [x] Probe cdylib load / staticlib build / release-LTO under `-C prefer-dynamic` and record branches A1|A2, B1|B2, C1|C2 in this spec's Design
+- [x] Write failing `scripts/verify-shared-dylib.sh` (RED today: the two extensions share no `libmolrs_ffi`; refuse-and-explain on missing `MOLPACK_ROOT`, print both resolved dylib paths on failure)
+- [x] Convert `molrs-ffi` into the dylib host in `molrs-ffi/Cargo.toml` + `molrs-ffi/src/abi.rs` (`crate-type`, `default = ["ff"]`, unconditional layout test + `compile_error!` guard) and drop the now-redundant `--features ff` from `.github/workflows/ci-rust.yml`
+- [x] Widen `molcrafts-molrs` default to `full,stream,filesystem,rayon` and converge every consumer graph (`molrs-capi`, `molrs-cxxapi`, `molrs-python` rayon forward feature, `molpack/Cargo.toml` + path-only molrs-ffi dev-dep, `molpack/python/Cargo.toml`; document the molrs-wasm exemption)
+- [x] Land the static/dynamic switch: append prefer-dynamic rustflags to both `.cargo/config.toml`, align `[profile.release]` across the five roots, and set `RUSTFLAGS: -C prefer-dynamic=no` in every cargo-running workflow of both repos
+- [x] Emit the runtime rpath from build scripts: extend `molrs-capi/build.rs`, add `molrs-python/build.rs`, `molpack/build.rs`, `molpack/python/build.rs` (panic with the fix command on failure, per the `molrs-cxxapi/build.rs` two-tier policy)
+- [x] Write `scripts/sync-dylib-locks.sh` deleting and regenerating the untracked Cargo.locks of every native root in one registry sweep (molrs root, molrs-ffi, molrs-python, molrs-capi, molrs-cxxapi, molpack root, molpack/python; molpack resolved via `MOLPACK_ROOT` as in `scripts/verify-shared-dylib.sh`; molrs-wasm deliberately excluded with a comment)
+- [x] Strengthen `scripts/verify-shared-dylib.sh`: sha256 the release `libmolrs_ffi` before and after the molpack wheel build and fail on any change, demote the step-8 path compare to a sanity print, and name `scripts/sync-dylib-locks.sh` in every identity-failure message
+- [x] Converge the feature labels: add the default-on `molrs-default = ["molrs/default"]` forward to `molrs-python/Cargo.toml` (matching the probe already applied to `molrs-ffi/Cargo.toml`) and add the default-on `unify` anchor feature with optional pinned third-party deps (start at `serde_json`) to `molrs-ffi/Cargo.toml`
+- [x] Evict `molrs-cxxapi` from the root workspace: root `members = ["molrs"]`, own `[workspace]` + aligned `[profile.release]` in `molrs-cxxapi/Cargo.toml`, and retarget its clippy line to `--manifest-path molrs-cxxapi/Cargo.toml` in `.pre-commit-config.yaml`, `.github/workflows/ci-rust.yml` and `CLAUDE.md`'s `build.check`
+- [x] Run the unit-identity convergence loop until the `libmolrs-*.rlib` census in the shared target is exactly 1 (clean `target/debug`, build the five native roots sequentially, word-diff diverged rustc invocations, extend `molrs-ffi`'s `unify` pins, repeat) and record the final pin list in the Design
+- [x] Write `molpack/tests/abi_line.rs` asserting `molrs_ffi::abi::abi_line()` equals the major.minor of `molrs::VERSION`, and correct the stale "MEASURED LIMIT" comment in `molpack/Cargo.toml`
+- [x] Convert `molrs-capi/tests/cpp/CMakeLists.txt` to a SHARED import with `BUILD_RPATH`, and delete the dead `MOLRS_F64` switch, the `-lc/-lm` interface list, and the stale f64/i64/u64 comment in `molrs-capi/build.rs`
+- [x] Wire `verify-shared-dylib` into `.pre-commit-config.yaml` as a pre-push local hook, rewrite `docs/interop.md:167-170`, and add the local-dynamic / CI-static switch line to `CLAUDE.md`'s "Build cache" section
+- [x] Add regression example `regressions/ffi-shared-dylib.py` (public API only; hard-coded goldens, no third-party runtime)
+- [x] Run full check + test suite in both repos and confirm `molrs-ffi/src/layout.snapshot` is byte-identical
+- [x] Hygiene: simplify pass ran clean (no debug residue/TODO in new files; shellcheck clean; four-fold build.rs duplication is the spec's deliberate Reuse decision; docs Mode A skipped — no new public symbols in diff)
 
 ## Testing strategy
 
@@ -152,6 +250,9 @@ created: 2026-08-22
 - **Happy path(链接层)**:`bash scripts/verify-shared-dylib.sh` — 在一个临时 venv 里以 **release** profile 构建并安装 molrs 与 molpack 两个 wheel,用 `importlib.util.find_spec("molrs._lib").origin` / `find_spec("molpack.molpack").origin` 定位两个扩展,`otool -L`(macOS)/ `ldd`(Linux)取出各自的 `libmolrs_ffi` 条目并 `realpath`,断言**两者相等且非空**;失败时打印两条解析出的路径与原始 `otool` 输出。最后一步调用回归例子。
 - **Happy path(运行期)**:`regressions/ffi-shared-dylib.py` — 同一解释器内 `import molrs` + `import molpack`(后者在扩展初始化时经 `interop::check_abi` 调 `molrs._ffi_abi_token()` 完成握手),然后走真正的零拷贝 capsule:`molrs.Block()` 插入 `element` / `x` / `y` / `z` 三原子 → `frame["atoms"] = block` → `molpack.Target(frame, 1)`,断言 `natoms == 3`、`elements == ["C","C","O"]`、`count == 1`,并断言 `molrs._ffi_abi_token()` 的 line 段 == `"0.14"`、capsule 名 == `"molrs.FrameRef/0.14"`(**硬编码 golden**,与 `molrs-python/tests/test_ffi_abi.py` 同形)。全程只用两个包的公开 API,零第三方运行期依赖。
 - **Edge cases**:(1) `MOLPACK_ROOT` 未设且 `../molpack` 不存在 → 脚本非零退出并打印覆盖用法(refuse-and-explain,非静默 skip);(2) `MOLPACK_ROOT` 指向非 molpack 目录 → 同样非零退出;(3) 静态形态等价性:`RUSTFLAGS='-C prefer-dynamic=no'` 下重跑构建,断言两个扩展的 `otool -L` **不含** `libmolrs_ffi`;(4) wasm/Pyodide 不受影响:`cargo check --manifest-path molrs-wasm/Cargo.toml --target wasm32-unknown-unknown` 仅出既知警告,`wasm-pack build --release --target bundler` 绿。
+- **单元同一性(链接前)**:`bash scripts/sync-dylib-locks.sh && rm -rf <shared-target>/debug` 后依次构建五个原生 root,`ls <shared-target>/debug/deps/libmolrs-*.rlib | wc -l` == **1**。> 1 即红,红的诊断动作是 word-diff 分叉 crate 的 rustc 调用(见 Design 收敛循环),不是放宽普查。
+- **单元同一性(链接后)**:`scripts/verify-shared-dylib.sh` 内,molrs wheel 构建后与 molpack wheel 构建后的 release `libmolrs_ffi` sha256 **逐字节相同**。这条取代原第 8 步路径比较作为同一性证据——后者因 install_name 无 hash 而恒真。
+- **dev-dep 入圈**:molpack `cargo test --features io --lib --tests` 后,`otool -L`/`ldd` 编译出的 `abi_line-*` 测试二进制含 `libmolrs_ffi` 条目;该测试本身断言两侧 ABI 线相等(运行期取值,不硬编码)。
 - **回归基线(全部必须绿,0 failed)**:`cargo test -p molcrafts-molrs --lib --features full,filesystem` ≥ **1566** passed(并集后新增 `molrs/src/stream/**` 的 ~20 条;差额必须能逐条归因到 stream/rayon,不得是"多出来一些");`cargo test --doc -p molcrafts-molrs --features full,filesystem` ≥ **66**;`cargo test --manifest-path molrs-ffi/Cargo.toml` == **18**(不再传 `--features ff`);molrs-python pytest **572**;molpack rust **230** + python **132**;`molrs-ffi/src/layout.snapshot` `git diff --exit-code` 为空。
 - **发布前置动作(不属本 spec 的验收,但必须执行一次并记录)**:对 `publish.yml` 跑一次 `workflow_dispatch`,确认 manylinux 容器 / cibuildwheel 内确实读到 `RUSTFLAGS='-C prefer-dynamic=no'`(产物 `readelf -d` 无 `libmolrs_ffi`)。若透传失败,必须在打 tag 前改为 action 级 env 传入——否则会发出引用本机 dylib 的坏 wheel。
 - **单测门**:`$META.build.test_single`,例如 `cargo test --manifest-path molrs-ffi/Cargo.toml layout_matches_committed_snapshot`。

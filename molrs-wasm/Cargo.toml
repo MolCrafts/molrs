@@ -38,6 +38,13 @@ web-sys = { version = "0.3", features = ["console"] }
 
 # The merged crate (core always on via `zarr`; sub-system modules pulled in by
 # the wasm features above) + the FFI handle layer.
+#
+# Both `default-features = false` below are a DELIBERATE browser-bundle
+# exemption from the native feature union: this crate ships bytes over the wire,
+# so it must NOT converge onto `full + stream + filesystem + rayon` (rayon has no
+# threads here, `filesystem` pulls host zlib, and every unused sub-system is
+# bundle weight). wasm32 also has no dynamic linking, so it is outside the
+# shared-dylib invariant the union exists to serve.
 molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.14.0", default-features = false, features = ["zarr"] }
 molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.14.0", default-features = false }
 

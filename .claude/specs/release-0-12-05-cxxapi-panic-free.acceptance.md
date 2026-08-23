@@ -23,7 +23,7 @@ criteria:
   - id: ac-004
     summary: cxxapi tests green
     type: runtime
-    pass_when: "cargo test -p molcrafts-molrs-cxxapi passes"
+    pass_when: "cargo test --manifest-path molrs-cxxapi/Cargo.toml passes"
     status: verified
     last_checked: 2026-08-04
 out_of_scope:
