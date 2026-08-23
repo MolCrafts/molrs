@@ -1,0 +1,114 @@
+name: CI Link Form
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+# Two link forms, two jobs, opposite assertions. `static:` proves the
+# zero-argument default really is static — the form every wheel and crate is
+# published in. `dynamic:` proves the command-line opt-in still works, which is
+# only observable across the molrs/molpack pair. Neither may be edited into the
+# other: see docs/interop.md, § "Local link form".
+
+jobs:
+  # The proposition is an ABSENCE — nothing committed and nothing typed selects
+  # a link form, therefore the wheel comes out static. So this job carries no
+  # build flags and no `env:` block at all, not one variable: any hedge added
+  # here would make a green run prove something weaker than
+  # regressions/link-mode-static-default.py asserts.
+  static:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      # No sccache step: wiring it needs RUSTC_WRAPPER, and this job's whole
+      # proposition is that it sets no env at all. Installing the binary and
+      # leaving it unwired would be dead weight, not parity. rust-cache below
+      # already covers this job.
+
+      # Own cache scope. The two jobs here compile the same crates under two
+      # different link forms, so they must not share one entry.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: link-static
+          workspaces: ". -> target"
+
+      - uses: astral-sh/setup-uv@v9.0.0
+
+      - name: Install maturin
+        run: uv tool install maturin
+
+      - name: Build the molrs wheel — zero arguments
+        working-directory: molrs-python
+        run: |
+          set -euo pipefail
+          # rust-cache restores target/, so drop any wheel it carried in: the
+          # regression below must read the wheel THIS run built. (target/ is
+          # <repo>/target via the committed .cargo/config.toml, hence ../.)
+          rm -rf ../target/wheels
+          maturin build --release
+
+      - name: Install the wheel and run the static-link regression
+        run: |
+          set -euo pipefail
+          uv venv .venv-link-static
+          uv pip install --python .venv-link-static/bin/python target/wheels/molcrafts_molrs-*.whl
+          .venv-link-static/bin/python regressions/link-mode-static-default.py
+
+  # The opt-in form. It is cross-repo by construction: one shared libmolrs_ffi
+  # only exists once the molrs and molpack extensions coexist in one
+  # interpreter. scripts/verify-shared-dylib.sh is the entire gate and — with
+  # docs/interop.md — the only place the opt-in is written down, so this job is
+  # a caller and restates none of it.
+  dynamic:
+    runs-on: ubuntu-latest
+    steps:
+      # Sibling layout is a hard requirement, not a convention: molpack's
+      # committed .cargo/config.toml points its target dir at ../molrs/target,
+      # resolved relative to that file. Checked out flat, the two repos would
+      # build into two separate target dirs and this gate would either find no
+      # shared dylib at all or read one nothing else wrote to.
+      - name: Checkout molrs
+        uses: actions/checkout@v7
+        with:
+          path: molrs
+
+      # `dev`, deliberately, not a bare `master`: molrs CI triggers on dev and
+      # master while MolCrafts PRs land on dev first, so a master pin would
+      # silently validate a molpack that predates the static-default inversion.
+      - name: Checkout molpack (sibling)
+        uses: actions/checkout@v7
+        with:
+          repository: MolCrafts/molpack
+          ref: dev
+          path: molpack
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      # No sccache here: RUSTC_WRAPPER is one of cargo's fingerprint inputs and
+      # this job's subject is unit identity across two build graphs, so the two
+      # wheel builds are left with exactly the inputs the script sets.
+      #
+      # No CARGO_TARGET_DIR either — both repos' committed .cargo/config.toml
+      # already route every root into molrs/target, which is where the one
+      # shared dylib this gate hashes lives.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: link-dynamic
+          workspaces: "molrs -> target"
+
+      - uses: astral-sh/setup-uv@v9.0.0
+
+      - name: Install maturin
+        run: uv tool install maturin
+
+      # MOLPACK_ROOT needs no value: the script defaults to <molrs>/../molpack,
+      # which the sibling checkout above satisfies.
+      - name: Shared libmolrs_ffi gate (molrs + molpack in one venv)
+        working-directory: molrs
+        run: bash scripts/verify-shared-dylib.sh

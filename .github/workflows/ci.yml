@@ -24,3 +24,7 @@ jobs:
   capi:
     name: C API
     uses: ./.github/workflows/ci-capi.yml
+
+  link-form:
+    name: Link form
+    uses: ./.github/workflows/ci-link-form.yml

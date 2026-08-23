@@ -1,7 +1,7 @@
 ---
 title: CI 双形态门:静态默认与动态 opt-in 各自被观测,不再只靠 pre-push
 slug: link-mode-static-default-02-ci-gate
-status: approved
+status: in-progress
 created: 2026-08-23
 last-updated: 2026-08-23
 grilled: true
@@ -128,12 +128,12 @@ docs 类验收项。
 
 ## Tasks
 
-- [ ] Add `.github/workflows/ci-link-form.yml` with a `static:` job (zero-flag molrs wheel + `regressions/link-mode-static-default.py`) and a `dynamic:` job (sibling molrs/molpack checkout → `scripts/verify-shared-dylib.sh`, no flags in the job)
-- [ ] Wire `link-form:` into `.github/workflows/ci.yml` as the fifth `uses:` entry
-- [ ] Add a `link-dynamic:` job to `molpack/.github/workflows/ci.yml` after `regression:` (non-PR events only) invoking the sibling `molrs/scripts/verify-shared-dylib.sh`
-- [ ] Document the `MOLRS_GIT_REF` landing-order precondition in `molpack/.github/workflows/ci.yml` and the CI/pre-push double guard in `docs/interop.md`
+- [x] Add `.github/workflows/ci-link-form.yml` with a `static:` job (zero-flag molrs wheel + `regressions/link-mode-static-default.py`) and a `dynamic:` job (sibling molrs/molpack checkout → `scripts/verify-shared-dylib.sh`, no flags in the job)
+- [x] Wire `link-form:` into `.github/workflows/ci.yml` as the fifth `uses:` entry
+- [x] Add a `link-dynamic:` job to `molpack/.github/workflows/ci.yml` after `regression:` (non-PR events only) invoking the sibling `molrs/scripts/verify-shared-dylib.sh`
+- [x] Document the `MOLRS_GIT_REF` landing-order precondition in `molpack/.github/workflows/ci.yml` and the CI/pre-push double guard in `docs/interop.md`
 - [ ] Verify both molrs jobs green via `workflow_dispatch` on a branch and record the run URLs; confirm the molpack job's only red cause is the un-cut `v0.14.0` tag
-- [ ] Run full check + test suite in both repos
+- [x] Run full check + test suite in both repos
 
 ## Testing strategy
 

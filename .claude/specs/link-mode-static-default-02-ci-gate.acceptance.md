@@ -10,6 +10,13 @@ criteria:
       "libmolrs_ffi dynamic-link entry count == 0" line, and the job body
       contains no rustflags/env/--config of any kind.
     status: pending
+    blocked_by: |
+      Runner-observed only. Satisfying this requires pushing a branch and
+      running the workflow on a GitHub runner, which was NOT authorised in
+      this session (nothing in either repo has been pushed). Everything
+      locally checkable about the job was verified instead — see ac-004 /
+      ac-005 — but the shape of a job is not evidence that it runs green, so
+      this criterion is deliberately left unverified rather than attested.
   - id: ac-002
     summary: CI Link Form dynamic job runs the cross-repo gate green
     type: runtime
@@ -26,6 +33,13 @@ criteria:
       that predates 01. The chosen ref is stated in a comment on the checkout
       step.
     status: pending
+    blocked_by: |
+      Runner-observed only. Satisfying this requires pushing a branch and
+      running the workflow on a GitHub runner, which was NOT authorised in
+      this session (nothing in either repo has been pushed). Everything
+      locally checkable about the job was verified instead — see ac-004 /
+      ac-005 — but the shape of a job is not evidence that it runs green, so
+      this criterion is deliberately left unverified rather than attested.
   - id: ac-003
     summary: The dynamic gate demonstrably bites when the flags are removed
     type: runtime
@@ -35,6 +49,13 @@ criteria:
       "FAIL — no libmolrs_ffi dynamic-link entry"; the run URL is recorded and
       the branch is not merged.
     status: pending
+    blocked_by: |
+      Runner-observed only. Satisfying this requires pushing a branch and
+      running the workflow on a GitHub runner, which was NOT authorised in
+      this session (nothing in either repo has been pushed). Everything
+      locally checkable about the job was verified instead — see ac-004 /
+      ac-005 — but the shape of a job is not evidence that it runs green, so
+      this criterion is deliberately left unverified rather than attested.
   - id: ac-004
     summary: link-form is wired into the CI orchestrator, not a new top-level workflow
     type: code
@@ -42,7 +63,8 @@ criteria:
       .github/workflows/ci.yml contains a fifth entry `link-form:` with a
       single `uses: ./.github/workflows/ci-link-form.yml` line and no `steps:`;
       ci-link-form.yml declares only `on: {workflow_call, workflow_dispatch}`.
-    status: pending
+    status: verified
+    last_checked: 2026-08-23
   - id: ac-005
     summary: molpack gains a non-PR link-dynamic job reusing the sibling script
     type: code
@@ -52,7 +74,8 @@ criteria:
       into `molrs`/`molpack`, `workspaces: "molpack -> ../molrs/target"`,
       no CARGO_TARGET_DIR, and a step invoking
       molrs/scripts/verify-shared-dylib.sh; molpack adds no scripts/ directory.
-    status: pending
+    status: verified
+    last_checked: 2026-08-23
   - id: ac-006
     summary: MOLRS_GIT_REF landing-order precondition is recorded
     type: docs

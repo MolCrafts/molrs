@@ -311,6 +311,10 @@ One dylib is real only if every native root resolves the *same* molrs unit:
 - third-party feature widening anchored by `molrs-ffi`'s default-on `unify`
   pins.
 
+The dynamic form is guarded from both sides now — the `CI Link Form` workflow's
+`dynamic:` job and the `verify-shared-dylib` pre-push hook run the same gate — so
+a break in any of the above surfaces without anyone having to opt in by hand.
+
 **Exemptions**, all deliberate and all static: wasm32 (`molrs-wasm`) is
 cfg-exempt — the opt-in's `cfg(not(target_arch = "wasm32"))` key does not match
 it, and wasm has no dynamic linking anyway; Pyodide builds
