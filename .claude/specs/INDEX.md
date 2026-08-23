@@ -32,9 +32,9 @@ Downstream: molpy `smiles-emit-01-io-surface` after molrs tag ≥ emit surface.
 
 - [distribution-angular-default-range](distribution-angular-default-range.md) — PyO3 angular distributions default to a degrees range on a radians kernel; delegate to `over_natural_range` [approved]
 
-## Live — shared dylib host
+## ffi-shared-dylib — **done** 2026-08-23(spec deleted after close)
 
-- [ffi-shared-dylib](ffi-shared-dylib.md) — molrs-ffi becomes the shared dylib host; one feature-union default across every native build graph (native wheel gains rayon) [approved]
+molrs-ffi 成为共享 dylib 宿主:本地全原生消费者动态链接同一 libmolrs_ffi(sha256 跨 wheel 构建稳定),CI/发布 env 钉回静态。单元同一性四轴(锁漂移/default 标签/兄弟加宽/成员风味)+ 第五轴(RUSTFLAGS régime)全部实测定案;unify 锚 pin:serde_json、foldhash、build-空间 syn+proc-macro2。门:verify-shared-dylib.sh(pre-push)+ abi_line 配对测试。遗留路由:molpy 0.14 对齐后 molpack tox 腿复跑(ac-009 偏差);CLI 二进制入圈等 molcrafts-molrs-ffi 上 crates.io;Atomiverse cdylib 翻转、wheel 内共享 .so 分发随发布火车。
 
 ## neighborlist chain — **done** 2026-08-10（4/4 closed & deleted，branch feat/neighborlist）
 
