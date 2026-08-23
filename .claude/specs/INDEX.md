@@ -32,14 +32,19 @@ Downstream: molpy `smiles-emit-01-io-surface` after molrs tag ≥ emit surface.
 
 - [distribution-angular-default-range](distribution-angular-default-range.md) — PyO3 angular distributions default to a degrees range on a radians kernel; delegate to `over_natural_range` [approved]
 
-## Live — link-mode-static-default chain (molrs first, molpack same landing)
+## link-mode-static-default chain — **done** 2026-08-23(两条 spec 均已删)
 
 01-invert **done** 2026-08-23(molrs 4bc3e23 + molpack 60cac76,spec 已删)——静态成为零参数默认,
 动态 opt-in 分两条传递路(rustflags:裸 cargo 走 `--config`,maturin 只能内联 `RUSTFLAGS`,因为
 maturin 的 `CARGO_ENCODED_RUSTFLAGS` 整体替换 config 层;profile 键两边都走 `--config`)。
 17 处悬空引用清零。契约见 `docs/interop.md`。
 
-- [link-mode-static-default-02-ci-gate](link-mode-static-default-02-ci-gate.md) — CI 双形态门 `ci-link-form.yml`(static + dynamic 两 job)+ molpack `link-dynamic` job + MOLRS_GIT_REF 落地顺序前置条件 [approved]
+02-ci-gate **done**(molrs e682b35 + b0e1e18,molpack 7c1cfb3)——链接形态的两半都进了 pre-push:
+新增 `link-static` 钩子(零参数 wheel → 静态回归例),与既有 `verify-shared-dylib` 断言相反形态,
+`ci-link-form.yml` 的 static/dynamic 两 job 是它们的镜像(本仓约定:钩子是真源)。
+沿途修掉 `capi-tests` 钩子:`>-` 折行无分隔符,折成一条 `set …`,**恒退 0**,从写下起就不可能失败。
+验证全部本地完成(prek 12/12,反向门 exit 1 后还原),未推送任何分支。
+
 
 ## ffi-shared-dylib — **done** 2026-08-23(spec deleted after close)
 
