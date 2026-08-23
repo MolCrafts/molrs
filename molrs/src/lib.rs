@@ -113,6 +113,14 @@ pub mod ff;
 #[cfg(feature = "ff")]
 pub mod optimize;
 
+/// In-process MD: velocity-Verlet / Langevin and shifted LJ.
+/// Gated independently of `ff` — required pieces go in the constructor
+/// (`VelocityVerlet::new(dt, potential, neighbors, mass)`); pair search is
+/// core [`spatial::neighbors::VerletSkin`]. Frame/`ForceField` wiring lives
+/// in molpy / molrs-python.
+#[cfg(feature = "md")]
+pub mod md;
+
 /// Gasteiger/PEOE partial charges, at the crate root — `molrs::compute_gasteiger_charges`.
 ///
 /// The name predates the charge models and the binders still reach for it here, so it

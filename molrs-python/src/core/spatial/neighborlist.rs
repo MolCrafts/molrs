@@ -31,8 +31,8 @@
 use crate::core::spatial::simbox::PyBox;
 use crate::helpers::NpF;
 use molrs::spatial::neighbors::{
-    NeighborList as RsNeighborList, NeighborQuery as RsNeighborQuery, Neighbors as RsNeighbors,
-    NeighborsStorage, QueryMode,
+    NeighborList as RsNeighborList, NeighborPolicy, NeighborQuery as RsNeighborQuery,
+    Neighbors as RsNeighbors, NeighborsStorage, QueryMode, SkinError, VerletSkin as RsVerletSkin,
 };
 use ndarray::ArrayView1;
 use numpy::{PyArray1, PyArray2, PyReadonlyArray2};
@@ -259,7 +259,7 @@ impl PyNeighbors {
 /// >>> nl.update(moved_points)               # re-index in the same box
 #[pyclass(module = "molrs", name = "NeighborList")]
 pub struct PyNeighborList {
-    inner: RsNeighborList,
+    pub(crate) inner: RsNeighborList,
 }
 
 #[pymethods]
@@ -508,5 +508,129 @@ impl PyNeighborQuery {
             self.inner.points().nrows(),
             self.inner.cutoff(),
         )
+    }
+}
+
+fn skin_err(err: SkinError) -> PyErr {
+    PyValueError::new_err(err.to_string())
+}
+
+/// A :class:`NeighborList` with Verlet skin — ``VerletSkin(NeighborList, …)``.
+///
+/// Constructed from a search engine whose cutoff is ``cutoff + skin``. The
+/// engine is **moved** into this object. Passing the skin into
+/// ``VelocityVerlet(..., neighbors=skin)`` moves it again into the integrator.
+#[pyclass(module = "molrs", name = "VerletSkin")]
+pub struct PyVerletSkin {
+    pub(crate) inner: Option<RsVerletSkin>,
+}
+
+impl PyVerletSkin {
+    pub(crate) fn take(&mut self) -> PyResult<RsVerletSkin> {
+        self.inner
+            .take()
+            .ok_or_else(|| PyValueError::new_err("VerletSkin has already been moved"))
+    }
+
+    fn get(&self) -> PyResult<&RsVerletSkin> {
+        self.inner
+            .as_ref()
+            .ok_or_else(|| PyValueError::new_err("VerletSkin has already been moved"))
+    }
+
+    fn get_mut(&mut self) -> PyResult<&mut RsVerletSkin> {
+        self.inner
+            .as_mut()
+            .ok_or_else(|| PyValueError::new_err("VerletSkin has already been moved"))
+    }
+}
+
+#[pymethods]
+impl PyVerletSkin {
+    /// Wrap ``neighbors`` (cutoff must equal ``cutoff + skin``) with Verlet policy.
+    #[new]
+    #[pyo3(signature = (neighbors, cutoff, positions, r#box, *, skin=0.0, every=1, delay=0, check=true))]
+    fn new(
+        neighbors: &mut PyNeighborList,
+        cutoff: NpF,
+        positions: PyReadonlyArray2<'_, NpF>,
+        r#box: &PyBox,
+        skin: NpF,
+        every: usize,
+        delay: usize,
+        check: bool,
+    ) -> PyResult<Self> {
+        check_points(&positions, "positions")?;
+        if cutoff <= 0.0 {
+            return Err(PyValueError::new_err("cutoff must be > 0 Å"));
+        }
+        let search_cutoff = neighbors.inner.cutoff();
+        let search = std::mem::replace(&mut neighbors.inner, RsNeighborList::new(search_cutoff));
+        let policy = NeighborPolicy {
+            skin,
+            every,
+            delay,
+            check,
+        };
+        let inner = RsVerletSkin::new(
+            search,
+            cutoff,
+            policy,
+            positions.as_array(),
+            r#box.inner.clone(),
+        )
+        .map_err(skin_err)?;
+        Ok(Self {
+            inner: Some(inner),
+        })
+    }
+
+    #[getter]
+    fn cutoff(&self) -> PyResult<NpF> {
+        Ok(self.get()?.cutoff)
+    }
+
+    #[getter]
+    fn skin(&self) -> PyResult<NpF> {
+        Ok(self.get()?.skin)
+    }
+
+    #[getter]
+    fn num_edges(&self) -> PyResult<usize> {
+        Ok(self.get()?.num_edges)
+    }
+
+    #[getter]
+    fn rebuild_count(&self) -> PyResult<usize> {
+        Ok(self.get()?.rebuild_count)
+    }
+
+    #[getter]
+    fn ago(&self) -> PyResult<usize> {
+        Ok(self.get()?.ago)
+    }
+
+    fn update(&mut self, positions: PyReadonlyArray2<'_, NpF>) -> PyResult<bool> {
+        check_points(&positions, "positions")?;
+        self.get_mut()?
+            .update(positions.as_array())
+            .map_err(skin_err)
+    }
+
+    fn rebuild(&mut self, positions: PyReadonlyArray2<'_, NpF>) -> PyResult<()> {
+        check_points(&positions, "positions")?;
+        self.get_mut()?
+            .rebuild(positions.as_array())
+            .map_err(skin_err)
+    }
+
+    fn __repr__(&self) -> String {
+        match &self.inner {
+            Some(s) => format!(
+                "VerletSkin(cutoff={}, skin={}, edges={}, rebuilds={})",
+                s.cutoff, s.skin, s.num_edges, s.rebuild_count
+            ),
+            None => "VerletSkin(<moved>)".into(),
+        }
     }
 }
