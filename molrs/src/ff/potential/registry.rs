@@ -16,7 +16,7 @@
 //! size, four-level equivalence degradation, and — on a table miss — empirical
 //! rules invented from covalent radii; the typifier resolves them **per instance**
 //! and bakes them into Frame columns, and the kernels read those columns and
-//! ignore `tp` entirely. The same is true of `pair/coul/cut` and `kspace/pme`,
+//! ignore `tp` entirely. The same is true of `pair/coul/cut` and `pair/coul/long/pme`,
 //! whose charges are per-atom Frame data by construction.
 //!
 //! That is correct — but until [`ParamSource`] existed there was no way to *say*
@@ -250,10 +250,9 @@ impl KernelRegistry {
         // vdW is the one MMFF style that genuinely IS a per-atom-type table:
         // 95 types, 95 rows, and `mmff_vdw_ctor` opens by indexing `tp`.
         r.register("pair", "mmff_vdw", pair::mmff::mmff_vdw_ctor);
-        // k-space: PME reads per-atom `charge` off the Frame, like `coul/cut`.
         r.register_with(
-            "kspace",
-            "pme",
+            "pair",
+            "coul/long/pme",
             kspace::pme::pme_ctor,
             ParamSource::PerInstance,
         );
@@ -312,7 +311,8 @@ mod tests {
         assert!(r.get("bond", "harmonic").is_some());
         assert!(r.get("pair", "lj/cut").is_some());
         assert!(r.get("pair", "buck").is_some());
-        assert!(r.get("kspace", "pme").is_some());
+        assert!(r.get("pair", "coul/long/pme").is_some());
+        assert!(r.get("kspace", "pme").is_none());
         assert!(r.get("bond", "does-not-exist").is_none());
     }
 

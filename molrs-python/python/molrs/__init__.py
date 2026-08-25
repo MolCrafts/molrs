@@ -17,6 +17,9 @@ the Python path and the Rust path are the same word:
 * :mod:`molrs.ff` — force fields, typifiers, charge models, potentials.
 * :mod:`molrs.optimize` — geometry optimizers.
 * :mod:`molrs.conformer` — 3D conformer generation.
+* :mod:`molrs.md` — in-process molecular dynamics (experimental): ``LJCut`` +
+  velocity-Verlet/Langevin integrators, the ``Potential`` base class, the
+  ``MD`` driver. Loaded lazily; importing it emits a ``FutureWarning``.
 * :mod:`molrs.builder` — structure builders (graphene, nanotubes, SARW paths).
 * :mod:`molrs.compute` — analysis, one subpackage per ``molrs::compute`` domain.
 * :mod:`molrs.signal` — FFT autocorrelation, windows, frequency grids.
@@ -47,10 +50,11 @@ from ._lib import (
     Unit,
     Quantity,
     UnitRegistry,
+    UnitPreset,
     Trajectory,
     ScalarObservable,
     VectorObservable,
-    MolRec,
+    Record,
     Observables,
     # Regions
     Sphere,
@@ -90,11 +94,30 @@ from . import conformer
 from . import ff
 from . import builder
 from . import io
-from . import md
 from . import stream
 from . import optimize
 from . import perceive
 from . import signal
+
+def __getattr__(name: str):
+    """PEP 562 lazy loader for the experimental :mod:`molrs.md` subpackage.
+
+    ``molrs.md`` is experimental in 0.14 and emits a ``FutureWarning`` on
+    import; loading it lazily keeps plain ``import molrs`` silent and keeps
+    ``import molrs`` working against a compiled ``_lib`` that predates the
+    ``md`` submodule.
+    """
+    if name == "md":
+        import importlib
+
+        return importlib.import_module(".md", __name__)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | {"md"})
+
+
 from .views import (
     Angle,
     Atom,
@@ -141,10 +164,11 @@ __all__ = [
     "Unit",
     "Quantity",
     "UnitRegistry",
+    "UnitPreset",
     "Trajectory",
     "ScalarObservable",
     "VectorObservable",
-    "MolRec",
+    "Record",
     "Observables",
     "Sphere",
     "HollowSphere",

@@ -57,7 +57,7 @@ conversion inside analysis code.
 `OPLSAATypifier` also accepts and returns `Atomistic`:
 
 ```python
-typifier = molrs.ff.OPLSAATypifier(strict=True)
+typifier = molpy.ff.OPLSAATypifier(strict=True)
 typed = typifier.typify(mol3d)
 frame = typed.to_frame()
 ```
@@ -66,7 +66,7 @@ The constructor loads the embedded OPLS-AA XML by default. Pass a path or XML
 string only when you need a different parameter source:
 
 ```python
-typifier = molrs.ff.OPLSAATypifier("oplsaa.xml", strict=False)
+typifier = molpy.ff.OPLSAATypifier("oplsaa.xml", strict=False)
 ```
 
 `typify()` writes atom labels and every bonded topology class supported by the
@@ -108,20 +108,20 @@ until then use the Rust or WASM path above.
 
 ```python
 import numpy as np
-import molrs
+import molpy
 
-mol = molrs.io.SmilesIR("CCO").to_atomistic()
-mol3d, _report = molrs.conformer.Conformer(speed="fast", seed=42).generate(mol)
+mol = molpy.io.SmilesIR("CCO").to_atomistic()
+mol3d, _report = molpy.conformer.Conformer(speed="fast", seed=42).generate(mol)
 
-typifier = molrs.ff.MMFF94Typifier()
+typifier = molpy.ff.MMFF94Typifier()
 typed = typifier.typify(mol3d)
 typed_frame = typed.to_frame()
 print("typed blocks:", typed_frame.keys())
 
 try:
-    typed_frame["pairs"] = molrs.ff.intramolecular_pairs(typed_frame)
+    typed_frame["pairs"] = molpy.ff.intramolecular_pairs(typed_frame)
     potentials = typifier.forcefield().to_potentials(typed_frame)
-    coords = molrs.ff.extract_coords(typed_frame)
+    coords = molpy.ff.extract_coords(typed_frame)
 
     energy, forces = potentials.calc_energy_forces(coords)
 
@@ -193,11 +193,11 @@ degrees). Pair styles that the reader split into `lj/cut` + `coul/cut` are
 recombined into a single `lj/cut/coul/cut` line so geometric mixing still works.
 
 ```python
-import molrs
+import molpy
 
-ff = molrs.ff.read_lammps_forcefield("system.ff")
+ff = molpy.ff.read_lammps_forcefield("system.ff")
 # … edit styles / types …
-molrs.ff.write_lammps_forcefield(
+molpy.ff.write_lammps_forcefield(
     "system-out.ff",
     ff,
     precision=6,
@@ -214,7 +214,7 @@ force field still carries cap artifacts.
 `LBFGS` minimizes molecule-bound potentials. Python:
 
 ```python
-opt = molrs.optimize.LBFGS(potentials, fmax=0.05, max_steps=500)
+opt = molpy.optimize.LBFGS(potentials, fmax=0.05, max_steps=500)
 min_frame, report = opt.run(typed_frame)
 ```
 

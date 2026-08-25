@@ -105,7 +105,9 @@ use std::io::BufWriter;
 /// >>> symbols = atoms.view("symbol")
 #[pyfunction]
 pub fn read_pdb(path: &str) -> PyResult<PyFrame> {
-    let frame = read_pdb_frame(path).map_err(io_error_to_pyerr)?;
+    let frame = read_pdb_frame(path).map_err(|e| {
+        pyo3::exceptions::PyIOError::new_err(format!("{path}: {e}"))
+    })?;
     PyFrame::from_core_frame(frame)
 }
 

@@ -50,6 +50,9 @@ pub mod math;
 pub mod types;
 pub mod units;
 
+#[cfg(all(test, feature = "rayon"))]
+pub(crate) mod test_rayon;
+
 // NOTE: chemical perception (rings, aromaticity, hydrogens, stereo, rotatable,
 // Gasteiger, SMARTS) used to live here as `core::chem`. It now sits one layer up
 // in `crate::perceive` — above `core`, below `ff`. Its crate-root re-exports moved
@@ -65,7 +68,7 @@ pub use store::frame_access::FrameAccess;
 pub use store::frame_view::FrameView;
 pub use store::meta::{MetaMap, MetaValue};
 pub use store::record::{
-    MolRec, Observables, RECORD_FORMAT_NAME, RECORD_SCHEMA_VERSION, RESERVED_META_KEYS,
+    MolRec as Record, Observables, RECORD_FORMAT_NAME, RECORD_SCHEMA_VERSION, RESERVED_META_KEYS,
 };
 pub use store::trajectory::{
     ObservableData, ObservableKind, ObservableRecord, SchemaValue, Trajectory,
@@ -79,4 +82,6 @@ pub use system::graph_hash::{canonical_order, is_isomorphic, structural_hash};
 pub use system::mapping::{CGMapping, WeightScheme};
 pub use system::molgraph::{Atom, Bead, KindId, MolGraph, NodeId, PropValue, Relation};
 pub use system::topology::{Topology, TopologyRingInfo};
-pub use units::{Dimension, Quantity, Unit, UnitDef, UnitRegistry, UnitsError};
+pub use units::{
+    Dimension, Quantity, Unit, UnitDef, UnitPreset, UnitPresetRegistry, UnitRegistry, UnitsError,
+};

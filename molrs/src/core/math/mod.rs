@@ -120,6 +120,8 @@ pub fn matmul(a: ArrayView2<F>, b: &Array2<F>) -> Array2<F> {
 
     #[cfg(all(not(feature = "blas"), feature = "rayon"))]
     {
+        #[cfg(test)]
+        super::test_rayon::ensure();
         use rayon::prelude::*;
         let mut c = Array2::<F>::zeros((_m, _n));
         let c_slice = c.as_slice_mut().expect("c must be contiguous");
@@ -261,6 +263,8 @@ mod tests {
 
     #[test]
     fn test_inv3_known() {
+        #[cfg(feature = "rayon")]
+        super::super::test_rayon::ensure();
         // Use the matrix with det=1 from above; verify A * inv(A) ~ I
         let a: F3x3 = array![[1.0, 2.0, 3.0], [0.0, 1.0, 4.0], [5.0, 6.0, 0.0]];
         let a_inv = inv3(&a).expect("Matrix should be invertible");
@@ -326,6 +330,8 @@ mod tests {
 
     #[test]
     fn test_matmul_identity() {
+        #[cfg(feature = "rayon")]
+        super::super::test_rayon::ensure();
         let eye: Array2<F> = array![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
         let a: Array2<F> = array![[2.0, 3.0, 4.0], [5.0, 6.0, 7.0], [8.0, 9.0, 10.0]];
 
@@ -346,6 +352,8 @@ mod tests {
 
     #[test]
     fn test_matmul_known() {
+        #[cfg(feature = "rayon")]
+        super::super::test_rayon::ensure();
         // (2x3) * (3x2) -> (2x2)
         // | 1 2 3 |   | 7  8  |   | 1*7+2*9+3*11   1*8+2*10+3*12  |   | 58   64  |
         // | 4 5 6 | * | 9  10 | = | 4*7+5*9+6*11   4*8+5*10+6*12  | = | 139  154 |

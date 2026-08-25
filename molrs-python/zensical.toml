@@ -15,10 +15,12 @@ nav = [
     { "Installation" = "getting-started/installation.md" },
     { "Rust Quickstart" = "getting-started/quickstart-rust.md" },
     { "Python Quickstart" = "getting-started/quickstart-python.md" },
+    { "Migrating to 0.14" = "getting-started/migration-0-14.md" },
     { "WASM Quickstart" = "getting-started/quickstart-wasm.md" },
   ] },
   { "Guides" = [
     { "Data Model" = "guides/data-model.md" },
+    { "In-process MD" = "guides/md.md" },
     { "SMILES and Topology" = "guides/smiles-and-topology.md" },
     { "Neighbor Search" = "guides/neighbor-search.md" },
     { "3D Embedding" = "guides/embed-3d.md" },

@@ -26,6 +26,7 @@ use std::collections::HashSet;
 use ndarray::Array1;
 
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
+use molrs::spatial::neighbors::Neighbors;
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
 use molrs::types::{F, U};
@@ -129,6 +130,24 @@ pub trait Potential: Send + Sync {
     fn calc_forces(&self, coords: &[F]) -> Vec<F> {
         self.calc_energy_forces(coords).1
     }
+
+    /// Evaluate with a per-step pair table the loop computed once and shares
+    /// with every pair potential. Default ignores `pairs` and calls
+    /// [`calc_energy_forces`](Potential::calc_energy_forces).
+    fn calc_energy_forces_with_pairs(&self, coords: &[F], pairs: &Neighbors) -> (F, Vec<F>) {
+        let _ = pairs;
+        self.calc_energy_forces(coords)
+    }
+}
+
+impl Potential for Box<dyn Potential> {
+    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
+        (**self).calc_energy_forces(coords)
+    }
+
+    fn calc_energy_forces_with_pairs(&self, coords: &[F], pairs: &Neighbors) -> (F, Vec<F>) {
+        (**self).calc_energy_forces_with_pairs(coords, pairs)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -136,6 +155,9 @@ pub trait Potential: Send + Sync {
 // ---------------------------------------------------------------------------
 
 /// Aggregates multiple potentials; energy/forces are summed.
+///
+/// Every member evaluates in one shared unit system. Unit conversion is the
+/// caller's job (`UnitPreset`), never this type's.
 pub struct Potentials {
     inner: Vec<Box<dyn Potential>>,
     /// Number of atoms the kernels were compiled against (`coords.len() / 3`).
@@ -184,6 +206,22 @@ impl Potentials {
         self.inner.is_empty()
     }
 
+    /// Same as [`calc_energy_forces`](Self::calc_energy_forces) but forwards
+    /// one shared pair table to every member.
+    pub fn calc_energy_forces_with_pairs(&self, coords: &[F], pairs: &Neighbors) -> (F, Vec<F>) {
+        let n = coords.len();
+        let mut total_e: F = 0.0;
+        let mut total_f = vec![0.0; n];
+        for p in &self.inner {
+            let (e, f) = p.calc_energy_forces_with_pairs(coords, pairs);
+            total_e += e;
+            for (t, fi) in total_f.iter_mut().zip(f.iter()) {
+                *t += fi;
+            }
+        }
+        (total_e, total_f)
+    }
+
     /// Compute total energy and forces in one pass over all potentials.
     pub fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
         let n = coords.len();
@@ -218,12 +256,16 @@ impl Default for Potentials {
     }
 }
 
-/// Make the aggregate usable wherever a single [`Potential`] is expected (e.g.
-/// the geometry optimizer in [`crate::optimize`]), forwarding to the summed
-/// evaluation over all kernels.
+/// Make the aggregate usable wherever a single [`Potential`] is expected (the
+/// geometry optimizer in [`crate::optimize`], an MD integrator, another
+/// [`Potentials`]), forwarding to the summed evaluation over all kernels.
 impl Potential for Potentials {
     fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
         Potentials::calc_energy_forces(self, coords)
+    }
+
+    fn calc_energy_forces_with_pairs(&self, coords: &[F], pairs: &Neighbors) -> (F, Vec<F>) {
+        Potentials::calc_energy_forces_with_pairs(self, coords, pairs)
     }
 }
 
@@ -526,6 +568,49 @@ mod tests {
         for f in &forces {
             assert!((*f - 3.0).abs() < 1e-5);
         }
+    }
+
+    struct PairCounting;
+
+    impl Potential for PairCounting {
+        fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
+            (0.0, vec![0.0; coords.len()])
+        }
+
+        fn calc_energy_forces_with_pairs(&self, coords: &[F], pairs: &Neighbors) -> (F, Vec<F>) {
+            (
+                pairs.query_point_indices().len() as F,
+                vec![0.0; coords.len()],
+            )
+        }
+    }
+
+    #[test]
+    fn one_pair_table_is_shared_with_every_member() {
+        let pairs = Neighbors::from_pairs(
+            [
+                molrs::spatial::neighbors::NeighborPair {
+                    i: 0,
+                    j: 1,
+                    dist_sq: 1.0,
+                    disp: [1.0, 0.0, 0.0],
+                },
+                molrs::spatial::neighbors::NeighborPair {
+                    i: 0,
+                    j: 2,
+                    dist_sq: 4.0,
+                    disp: [2.0, 0.0, 0.0],
+                },
+            ],
+            molrs::spatial::neighbors::NeighborsStorage::FULL,
+            molrs::spatial::neighbors::QueryMode::SelfQuery { num_points: 3 },
+        );
+        let mut pots = Potentials::new();
+        pots.push(Box::new(PairCounting));
+        pots.push(Box::new(DummyPotential { value: 1.0 }));
+        let coords: Vec<F> = vec![0.0; 9];
+        let (e, _) = pots.calc_energy_forces_with_pairs(&coords, &pairs);
+        assert!((e - 3.0).abs() < 1e-12);
     }
 
     #[test]

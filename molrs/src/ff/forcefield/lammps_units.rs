@@ -15,41 +15,23 @@
 //! A **canonical reference** `(m=1 g/mol, σ=1 Å, ε=1 kcal/mol)` makes
 //! real↔metal bridge through lj without material-specific scales, while still
 //! never hard-coding eV↔kcal factors in the FF reader.
+//!
+//! This module is the LAMMPS reader/writer adapter: it maps a LAMMPS `units`
+//! token onto a core [`UnitPreset`] name and converts through
+//! [`UnitRegistry`]. It does not define a unit-system type.
 
 use molrs::types::F;
 use molrs::units::{Quantity, UnitRegistry, UnitsError};
 
-/// LAMMPS `units` styles supported in phase 1.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum LammpsUnits {
-    /// Reduced LJ units (LAMMPS default for bare scripts).
-    Lj,
-    /// Å, kcal/mol, g/mol, fs, e — molecular force fields.
-    #[default]
-    Real,
-    /// Å, eV, g/mol, ps, e — metal / generic MD.
-    Metal,
-}
-
-impl LammpsUnits {
-    /// Parse a LAMMPS `units` keyword value (case-insensitive).
-    pub fn parse(s: &str) -> Result<Self, String> {
-        match s.to_ascii_lowercase().as_str() {
-            "lj" => Ok(Self::Lj),
-            "real" => Ok(Self::Real),
-            "metal" => Ok(Self::Metal),
-            other => Err(format!(
-                "unsupported LAMMPS units `{other}` (phase 1: lj, real, metal)"
-            )),
-        }
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Lj => "lj",
-            Self::Real => "real",
-            Self::Metal => "metal",
-        }
+/// Map a LAMMPS `units` keyword onto a core preset name (`"lj"` / `"real"` / `"metal"`).
+pub fn parse_style(s: &str) -> Result<&'static str, String> {
+    match s.to_ascii_lowercase().as_str() {
+        "lj" => Ok("lj"),
+        "real" => Ok("real"),
+        "metal" => Ok("metal"),
+        other => Err(format!(
+            "unsupported LAMMPS units `{other}` (phase 1: lj, real, metal)"
+        )),
     }
 }
 
@@ -77,15 +59,14 @@ impl LammpsLjReference {
     }
 }
 
-/// Unit system used by the LAMMPS FF reader/writer.
+/// LAMMPS force-field I/O adapter: `UnitRegistry` plus the lj hub.
 ///
-/// Holds a registry with lj units defined from [`LammpsLjReference`], and
-/// converts quantities **only** via `Quantity::to` (source → lj → target).
-pub struct LammpsUnitSystem {
+/// Not a unit-system type — conversion data lives in core.
+pub struct LammpsFfUnits {
     reg: UnitRegistry,
 }
 
-impl LammpsUnitSystem {
+impl LammpsFfUnits {
     /// Build a system with the given lj reference scales.
     pub fn with_reference(reference: &LammpsLjReference) -> Result<Self, UnitsError> {
         let mut reg = UnitRegistry::new();
@@ -105,23 +86,25 @@ impl LammpsUnitSystem {
 
     // ── unit expression names for each style ─────────────────────────────
 
-    fn energy_unit(style: LammpsUnits) -> &'static str {
+    fn energy_unit(style: &str) -> &'static str {
         match style {
-            LammpsUnits::Lj => "lj_epsilon",
-            LammpsUnits::Real => "kilocalorie_per_mole",
-            LammpsUnits::Metal => "eV",
+            "lj" => "lj_epsilon",
+            "real" => "kilocalorie_per_mole",
+            "metal" => "eV",
+            other => panic!("unknown LAMMPS style {other}"),
         }
     }
 
-    fn length_unit(style: LammpsUnits) -> &'static str {
+    fn length_unit(style: &str) -> &'static str {
         match style {
-            LammpsUnits::Lj => "lj_sigma",
-            LammpsUnits::Real | LammpsUnits::Metal => "angstrom",
+            "lj" => "lj_sigma",
+            "real" | "metal" => "angstrom",
+            other => panic!("unknown LAMMPS style {other}"),
         }
     }
 
     /// Energy / length² (bond stiffness dimension before the ½-form map).
-    fn energy_per_length2_unit(style: LammpsUnits) -> String {
+    fn energy_per_length2_unit(style: &str) -> String {
         format!(
             "{}/{}**2",
             Self::energy_unit(style),
@@ -130,7 +113,7 @@ impl LammpsUnitSystem {
     }
 
     /// Energy / rad² — LAMMPS angle K is energy per radian² in real/metal.
-    fn energy_per_rad2_unit(style: LammpsUnits) -> String {
+    fn energy_per_rad2_unit(style: &str) -> String {
         // radians are dimensionless in the SI sense; LAMMPS still quotes K in
         // energy/rad². We treat rad as a pure number: unit = energy only for
         // conversion of the *energy* factor; form map applies 2K and deg→rad
@@ -143,18 +126,15 @@ impl LammpsUnitSystem {
     fn convert_through_lj(
         &self,
         value: F,
-        from: LammpsUnits,
-        to: LammpsUnits,
-        unit_for: impl Fn(LammpsUnits) -> String,
+        from: &str,
+        to: &str,
+        unit_for: impl Fn(&str) -> String,
     ) -> Result<F, String> {
         if from == to {
             return Ok(value);
         }
         let from_u = self.reg.parse(&unit_for(from)).map_err(|e| e.to_string())?;
-        let lj_u = self
-            .reg
-            .parse(&unit_for(LammpsUnits::Lj))
-            .map_err(|e| e.to_string())?;
+        let lj_u = self.reg.parse(&unit_for("lj")).map_err(|e| e.to_string())?;
         let to_u = self.reg.parse(&unit_for(to)).map_err(|e| e.to_string())?;
 
         let q = Quantity::new(value, from_u);
@@ -164,86 +144,81 @@ impl LammpsUnitSystem {
     }
 
     /// Energy (ε, dihedral K, …): `from → lj → to`.
-    pub fn energy(&self, value: F, from: LammpsUnits, to: LammpsUnits) -> Result<F, String> {
+    pub fn energy(&self, value: F, from: &str, to: &str) -> Result<F, String> {
         self.convert_through_lj(value, from, to, |s| Self::energy_unit(s).to_string())
     }
 
     /// Length (σ, r0): `from → lj → to`.
-    pub fn length(&self, value: F, from: LammpsUnits, to: LammpsUnits) -> Result<F, String> {
+    pub fn length(&self, value: F, from: &str, to: &str) -> Result<F, String> {
         self.convert_through_lj(value, from, to, |s| Self::length_unit(s).to_string())
     }
 
     /// Bond stiffness *K* (LAMMPS form, energy/length²) before the ½ map.
-    pub fn bond_k_lammps(&self, value: F, from: LammpsUnits, to: LammpsUnits) -> Result<F, String> {
+    pub fn bond_k_lammps(&self, value: F, from: &str, to: &str) -> Result<F, String> {
         self.convert_through_lj(value, from, to, Self::energy_per_length2_unit)
     }
 
     /// Angle stiffness *K* (LAMMPS form, energy/rad²) — energy factor only.
-    pub fn angle_k_lammps(
-        &self,
-        value: F,
-        from: LammpsUnits,
-        to: LammpsUnits,
-    ) -> Result<F, String> {
+    pub fn angle_k_lammps(&self, value: F, from: &str, to: &str) -> Result<F, String> {
         self.convert_through_lj(value, from, to, Self::energy_per_rad2_unit)
     }
 
     /// Convert file-side params into **store** units (default store = real for
     /// physical styles; lj stays lj).
-    pub fn to_store_energy(&self, value: F, file: LammpsUnits) -> Result<F, String> {
+    pub fn to_store_energy(&self, value: F, file: &str) -> Result<F, String> {
         match file {
-            LammpsUnits::Lj => Ok(value),
-            other => self.energy(value, other, LammpsUnits::Real),
+            "lj" => Ok(value),
+            other => self.energy(value, other, "real"),
         }
     }
 
-    pub fn to_store_length(&self, value: F, file: LammpsUnits) -> Result<F, String> {
+    pub fn to_store_length(&self, value: F, file: &str) -> Result<F, String> {
         match file {
-            LammpsUnits::Lj => Ok(value),
-            other => self.length(value, other, LammpsUnits::Real),
+            "lj" => Ok(value),
+            other => self.length(value, other, "real"),
         }
     }
 
-    pub fn to_store_bond_k_lammps(&self, value: F, file: LammpsUnits) -> Result<F, String> {
+    pub fn to_store_bond_k_lammps(&self, value: F, file: &str) -> Result<F, String> {
         match file {
-            LammpsUnits::Lj => Ok(value),
-            other => self.bond_k_lammps(value, other, LammpsUnits::Real),
+            "lj" => Ok(value),
+            other => self.bond_k_lammps(value, other, "real"),
         }
     }
 
-    pub fn to_store_angle_k_lammps(&self, value: F, file: LammpsUnits) -> Result<F, String> {
+    pub fn to_store_angle_k_lammps(&self, value: F, file: &str) -> Result<F, String> {
         match file {
-            LammpsUnits::Lj => Ok(value),
-            other => self.angle_k_lammps(value, other, LammpsUnits::Real),
+            "lj" => Ok(value),
+            other => self.angle_k_lammps(value, other, "real"),
         }
     }
 
     /// Store (real or lj) → file units for writing.
-    pub fn from_store_energy(&self, value: F, file: LammpsUnits) -> Result<F, String> {
+    pub fn from_store_energy(&self, value: F, file: &str) -> Result<F, String> {
         match file {
-            LammpsUnits::Lj => Ok(value),
-            other => self.energy(value, LammpsUnits::Real, other),
+            "lj" => Ok(value),
+            other => self.energy(value, "real", other),
         }
     }
 
-    pub fn from_store_length(&self, value: F, file: LammpsUnits) -> Result<F, String> {
+    pub fn from_store_length(&self, value: F, file: &str) -> Result<F, String> {
         match file {
-            LammpsUnits::Lj => Ok(value),
-            other => self.length(value, LammpsUnits::Real, other),
+            "lj" => Ok(value),
+            other => self.length(value, "real", other),
         }
     }
 
-    pub fn from_store_bond_k_lammps(&self, value: F, file: LammpsUnits) -> Result<F, String> {
+    pub fn from_store_bond_k_lammps(&self, value: F, file: &str) -> Result<F, String> {
         match file {
-            LammpsUnits::Lj => Ok(value),
-            other => self.bond_k_lammps(value, LammpsUnits::Real, other),
+            "lj" => Ok(value),
+            other => self.bond_k_lammps(value, "real", other),
         }
     }
 
-    pub fn from_store_angle_k_lammps(&self, value: F, file: LammpsUnits) -> Result<F, String> {
+    pub fn from_store_angle_k_lammps(&self, value: F, file: &str) -> Result<F, String> {
         match file {
-            LammpsUnits::Lj => Ok(value),
-            other => self.angle_k_lammps(value, LammpsUnits::Real, other),
+            "lj" => Ok(value),
+            other => self.angle_k_lammps(value, "real", other),
         }
     }
 }
@@ -268,11 +243,9 @@ mod tests {
 
     #[test]
     fn real_to_metal_energy_via_lj_matches_si() {
-        let sys = LammpsUnitSystem::canonical().unwrap();
+        let sys = LammpsFfUnits::canonical().unwrap();
         // 1 kcal/mol → metal eV through lj hub.
-        let ev = sys
-            .energy(1.0, LammpsUnits::Real, LammpsUnits::Metal)
-            .unwrap();
+        let ev = sys.energy(1.0, "real", "metal").unwrap();
         // Direct SI path for comparison (not used in production FF code).
         let reg = UnitRegistry::new();
         let direct = reg
@@ -286,10 +259,8 @@ mod tests {
 
     #[test]
     fn metal_to_real_energy_via_lj() {
-        let sys = LammpsUnitSystem::canonical().unwrap();
-        let kcal = sys
-            .energy(1.0, LammpsUnits::Metal, LammpsUnits::Real)
-            .unwrap();
+        let sys = LammpsFfUnits::canonical().unwrap();
+        let kcal = sys.energy(1.0, "metal", "real").unwrap();
         let reg = UnitRegistry::new();
         let direct = reg
             .quantity(1.0, "eV")
@@ -307,17 +278,15 @@ mod tests {
 
     #[test]
     fn length_real_metal_identical() {
-        let sys = LammpsUnitSystem::canonical().unwrap();
-        let a = sys
-            .length(3.5, LammpsUnits::Real, LammpsUnits::Metal)
-            .unwrap();
+        let sys = LammpsFfUnits::canonical().unwrap();
+        let a = sys.length(3.5, "real", "metal").unwrap();
         assert!((a - 3.5).abs() < 1e-15);
     }
 
     #[test]
     fn lj_energy_pass_through_to_store() {
-        let sys = LammpsUnitSystem::canonical().unwrap();
-        assert_eq!(sys.to_store_energy(0.5, LammpsUnits::Lj).unwrap(), 0.5);
+        let sys = LammpsFfUnits::canonical().unwrap();
+        assert_eq!(sys.to_store_energy(0.5, "lj").unwrap(), 0.5);
     }
 
     #[test]
@@ -329,23 +298,19 @@ mod tests {
 
     #[test]
     fn parse_units_keywords() {
-        assert_eq!(LammpsUnits::parse("REAL").unwrap(), LammpsUnits::Real);
-        assert_eq!(LammpsUnits::parse("metal").unwrap(), LammpsUnits::Metal);
-        assert_eq!(LammpsUnits::parse("lj").unwrap(), LammpsUnits::Lj);
-        assert!(LammpsUnits::parse("si").is_err());
+        assert_eq!(parse_style("REAL").unwrap(), "real");
+        assert_eq!(parse_style("metal").unwrap(), "metal");
+        assert_eq!(parse_style("lj").unwrap(), "lj");
+        assert!(parse_style("si").is_err());
     }
 
     #[test]
     fn bond_k_metal_to_real_scales_with_energy() {
-        let sys = LammpsUnitSystem::canonical().unwrap();
+        let sys = LammpsFfUnits::canonical().unwrap();
         // Same numerical K in metal (eV/Å²) vs real (kcal/mol/Å²) must scale
         // exactly as energy (length is Å in both).
-        let k_real = sys
-            .bond_k_lammps(1.0, LammpsUnits::Metal, LammpsUnits::Real)
-            .unwrap();
-        let e_real = sys
-            .energy(1.0, LammpsUnits::Metal, LammpsUnits::Real)
-            .unwrap();
+        let k_real = sys.bond_k_lammps(1.0, "metal", "real").unwrap();
+        let e_real = sys.energy(1.0, "metal", "real").unwrap();
         assert!((k_real - e_real).abs() < 1e-12);
     }
 }

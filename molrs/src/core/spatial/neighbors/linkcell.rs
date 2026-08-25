@@ -427,6 +427,8 @@ impl LinkCell {
         mode: crate::spatial::neighbors::QueryMode,
         storage: crate::spatial::neighbors::NeighborsStorage,
     ) -> Neighbors {
+        #[cfg(test)]
+        crate::core::test_rayon::ensure();
         use rayon::prelude::*;
 
         let cutoff2 = self.cutoff * self.cutoff;

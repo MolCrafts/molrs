@@ -1,13 +1,13 @@
 //! Typed array containers for the MD engine.
 //!
 //! [`ForceOutput`], [`MDState`] and [`MDObservables`] are the only data
-//! contract crossing component boundaries (force provider → integrator →
+//! contract crossing component boundaries (potential → integrator →
 //! runner → hook). Frame topology stays at the composer; the hot step sees
 //! these three structs.
 
 use molrs::types::{F, FNx3};
 
-/// Energy + forces from a [`super::integrators::PotentialLike`].
+/// Energy + forces from one integrator force evaluation.
 ///
 /// `energy` is a scalar in amu·Å²/fs². `forces` is `(N, 3)` `= -∂E/∂pos`
 /// in the same unit per Å.

@@ -4,7 +4,7 @@
 //! correction, and reciprocal-space (via 3D FFT built from 1D `rustfft`).
 //!
 //! Registered in [`KernelRegistry`](crate::ff::potential::KernelRegistry) as
-//! `("kspace", "pme")`.
+//! `("pair", "coul/long/pme")`.
 //! The constructor reads charges from `frame["atoms"]["charge"]` (float),
 //! box vectors from style_params (`box_xx`, `box_yy`, `box_zz`, etc.),
 //! and exclusion pairs from `frame["exclusions"]` (i, j columns).
@@ -1149,7 +1149,7 @@ mod tests {
     #[test]
     fn test_pme_in_potentials_collection() {
         use crate::ff::potential::Potentials;
-        use crate::ff::potential::pair::lj_cut::PairLJCut;
+        use crate::ff::potential::pair::lj_cut::LJCut;
 
         let box_l: F = 10.0;
         let params = PmeParams {
@@ -1162,7 +1162,7 @@ mod tests {
         let charges = vec![0.5, -0.5];
         let pme = PmePotential::new(params, charges, cubic_box(box_l), vec![]);
 
-        let lj = PairLJCut::new(vec![0], vec![1], vec![1.0], vec![1.0]);
+        let lj = LJCut::compiled(vec![0], vec![1], vec![1.0], vec![1.0]);
 
         let mut pots = Potentials::new();
         pots.push(Box::new(pme));

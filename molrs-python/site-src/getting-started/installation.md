@@ -162,7 +162,7 @@ PyPI publishes an Emscripten wheel. In a Pyodide session:
 ```python
 import micropip
 await micropip.install("molcrafts-molrs")
-import molrs
+import molpy
 ```
 
 This is the **Python** extension for the browser. For the JS API used by

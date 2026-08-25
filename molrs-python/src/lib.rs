@@ -61,7 +61,7 @@ use crate::core::system::molgraph::{
     PySmartsPattern,
 };
 use crate::core::system::molgraph::{PyRingInfo, align_direction, rotate, scale, translate};
-use crate::core::units::{PyQuantity, PyUnit, PyUnitRegistry};
+use crate::core::units::{PyQuantity, PyUnit, PyUnitPreset, PyUnitRegistry};
 
 mod io;
 
@@ -169,6 +169,7 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyUnit>()?;
     m.add_class::<PyQuantity>()?;
     m.add_class::<PyUnitRegistry>()?;
+    m.add_class::<PyUnitPreset>()?;
 
     // I/O + SMILES
     // Readers
@@ -241,7 +242,7 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyScalarObservable>()?;
     m.add_class::<PyVectorObservable>()?;
 
-    // MolRec record aggregate
+    // Record aggregate
     m.add_class::<PyMolRec>()?;
     m.add_class::<PyObservables>()?;
 

@@ -389,7 +389,7 @@ const PER_INSTANCE_STYLES: &[(&str, &str)] = &[
     ("dihedral", "uff_torsion"),
     ("pair", "uff_lj"),
     ("improper", "uff_inversion"),
-    ("kspace", "pme"),
+    ("pair", "coul/long/pme"),
 ];
 
 /// Built-in styles that MUST remain TypeRows (kernel indexes `tp`).
@@ -453,7 +453,7 @@ fn ac004_param_source_is_bidirectional_on_semantics_not_spelling() {
     // Map well-known ctor function → (category, style name).
     let ctor_to_style: &[(&str, &str, &str)] = &[
         ("pair_coul_cut_ctor", "pair", "coul/cut"),
-        ("pme_ctor", "kspace", "pme"),
+        ("pme_ctor", "pair", "coul/long/pme"),
         ("mmff_bond_ctor", "bond", "mmff_bond"),
         ("mmff_angle_ctor", "angle", "mmff_angle"),
         ("mmff_stbn_ctor", "angle", "mmff_stbn"),

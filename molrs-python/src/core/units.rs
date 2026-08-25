@@ -1,8 +1,10 @@
 //! Python bindings for molrs' native unit engine.
 
 use crate::error::units_error;
-use molrs::units::{Dimension, Quantity, Unit, UnitDef, UnitRegistry};
-use pyo3::exceptions::{PyAttributeError, PyTypeError};
+use molrs::units::{
+    Dimension, Quantity, Unit, UnitDef, UnitPreset, UnitRegistry, lookup_preset,
+};
+use pyo3::exceptions::{PyAttributeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 
 #[pyclass(module = "molrs", name = "Unit", frozen, skip_from_py_object)]
@@ -283,5 +285,78 @@ impl PyUnitRegistry {
 
     fn __repr__(&self) -> &'static str {
         "<molrs.UnitRegistry>"
+    }
+}
+
+/// Named unit-system view (`"real"`, `"metal"`, …). Constants live in core;
+/// this is the Python spelling of `molrs::units::UnitPreset`.
+#[pyclass(module = "molrs", name = "UnitPreset", frozen)]
+#[derive(Clone)]
+pub struct PyUnitPreset {
+    inner: UnitPreset,
+}
+
+#[pymethods]
+impl PyUnitPreset {
+    #[new]
+    fn new(name: &str) -> PyResult<Self> {
+        lookup_preset(name)
+            .map(|inner| Self { inner })
+            .ok_or_else(|| PyValueError::new_err(format!("unknown unit preset {name:?}")))
+    }
+
+    #[staticmethod]
+    fn real() -> Self {
+        Self {
+            inner: UnitPreset::real(),
+        }
+    }
+
+    #[getter]
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    fn boltzmann(&self) -> f64 {
+        self.inner.boltzmann()
+    }
+
+    fn coulomb(&self) -> f64 {
+        self.inner.coulomb()
+    }
+
+    fn mass(&self) -> &str {
+        self.inner.mass()
+    }
+    fn length(&self) -> &str {
+        self.inner.length()
+    }
+    fn time(&self) -> &str {
+        self.inner.time()
+    }
+    fn energy(&self) -> &str {
+        self.inner.energy()
+    }
+    fn temperature(&self) -> &str {
+        self.inner.temperature()
+    }
+    fn charge(&self) -> &str {
+        self.inner.charge()
+    }
+    fn pressure(&self) -> &str {
+        self.inner.pressure()
+    }
+    fn velocity(&self) -> &str {
+        self.inner.velocity()
+    }
+    fn force(&self) -> &str {
+        self.inner.force()
+    }
+    fn density(&self) -> &str {
+        self.inner.density()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("UnitPreset({:?})", self.inner.name())
     }
 }

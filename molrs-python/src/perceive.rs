@@ -33,7 +33,7 @@ use crate::core::system::molgraph::PyAtomistic;
 
 /// Chemical perception, as a builder — `molrs.Perceive`.
 ///
-/// Exposed to Python as `molrs.Perceive`. Every ``find_*`` method is graph-in /
+/// Exposed to Python as `molrs.perceive.Perceive`. Every ``find_*`` method is graph-in /
 /// graph-out and **non-mutating**.
 ///
 /// Props written (atom / bond components on the returned clone):

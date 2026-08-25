@@ -59,9 +59,9 @@ ff        = ["dep:rustfft", "dep:roxmltree"]
 # `conformer` depends on the `ff` module.
 conformer = ["ff", "dep:once_cell"]
 # In-process MD (integrators, shifted LJ). Science only; pair search is
-# core NeighborList. Python composer / hooks live in molrs-python. No extra
-# crates — ndarray + rand are already always-on.
-md        = []
+# core NeighborList. Python composer / hooks live in molrs-python. Consumes
+# the one `ff::potential::Potential`/`Potentials` seam, so it enables `ff`.
+md        = ["ff"]
 # serde `Serialize`/`Deserialize` for the core model (Frame/Block/Column/SimBox).
 # No new deps — serde is already always-on; the feature just enables the impls.
 serde     = []

@@ -139,7 +139,7 @@ impl From<OptReport> for PyOptReport {
 
 /// Compiled force-field potentials for energy and force evaluation.
 ///
-/// Exposed to Python as `molrs.Potentials`.
+/// Exposed to Python as `molrs.ff.Potentials`.
 ///
 /// Operates on flat coordinate arrays in the layout
 /// ``[x0, y0, z0, x1, y1, z1, ...]`` (length 3N).
@@ -154,21 +154,34 @@ impl From<OptReport> for PyOptReport {
 #[pyclass(module = "molrs.ff", name = "Potentials")]
 pub struct PyPotentials {
     inner: PotBacking,
+    /// Error slots of every Python-callable member (see `crate::md::ErrSlot`);
+    /// checked after each evaluation so a callable's exception re-raises.
+    err_slots: Vec<crate::md::ErrSlot>,
 }
 
 /// A [`PyPotentials`] is either already compiled against a molecule's topology
-/// (the MMFF / pre-bound path) or *deferred*: it holds the force field and binds
-/// the topology lazily from the `Frame` passed to ``calc_energy``/``calc_forces``.
-/// Deferred is what ``ForceField.to_potentials()`` (no frame) returns, matching
-/// the molpy evaluation model where the frame enters at evaluation time.
+/// (the MMFF / pre-bound path), *deferred* (it holds the force field and binds
+/// the topology lazily from the `Frame` passed to
+/// ``calc_energy``/``calc_forces`` — what ``ForceField.to_potentials()`` with
+/// no frame returns, matching the molpy evaluation model), or *moved*: the
+/// Rust `Potentials` has been moved into an MD integrator or another
+/// collection.
 enum PotBacking {
     Compiled(Potentials),
     Deferred(ForceField),
+    Moved,
+}
+
+fn potentials_moved_err() -> PyErr {
+    PyValueError::new_err(
+        "this Potentials has been moved into an integrator or another \
+         Potentials; rebuild with to_potentials(frame)",
+    )
 }
 
 impl PotBacking {
     /// The compiled potentials, or an error if this set is still deferred and
-    /// no `Frame` has been supplied to bind its topology.
+    /// no `Frame` has been supplied to bind its topology (or already moved).
     fn compiled(&self) -> PyResult<&Potentials> {
         match self {
             PotBacking::Compiled(p) => Ok(p),
@@ -177,6 +190,20 @@ impl PotBacking {
                  call calc_energy(frame)/calc_forces(frame) with a Frame, \
                  or build it from a typifier",
             )),
+            PotBacking::Moved => Err(potentials_moved_err()),
+        }
+    }
+
+    /// Mutable access with the same gating as [`compiled`](Self::compiled).
+    fn compiled_mut(&mut self) -> PyResult<&mut Potentials> {
+        match self {
+            PotBacking::Compiled(p) => Ok(p),
+            PotBacking::Deferred(_) => Err(PyValueError::new_err(
+                "this Potentials is not bound to a molecule; \
+                 call calc_energy(frame)/calc_forces(frame) with a Frame, \
+                 or build it from a typifier",
+            )),
+            PotBacking::Moved => Err(potentials_moved_err()),
         }
     }
 }
@@ -339,34 +366,78 @@ impl PyPotentials {
     /// Evaluate energy + forces against either a [`PyFrame`] (binds topology and
     /// reads coordinates from the frame's ``atoms`` block — the molpy model) or a
     /// flat coordinate array (requires already-compiled potentials).
+    ///
+    /// A Python-callable member's exception is re-raised afterwards (see
+    /// `crate::md::ErrSlot`).
     fn eval_any(&self, arg: &Bound<'_, PyAny>) -> PyResult<(f64, Vec<NpF>)> {
-        if let Ok(frame) = arg.extract::<PyRef<'_, PyFrame>>() {
+        let ef = if let Ok(frame) = arg.extract::<PyRef<'_, PyFrame>>() {
             let core = frame.clone_core_frame()?;
             let coords = extract_coords(&core).map_err(PyValueError::new_err)?;
-            let ef = match &self.inner {
+            match &self.inner {
                 PotBacking::Compiled(p) => p.calc_energy_forces(&coords),
                 PotBacking::Deferred(ff) => ff
                     .to_potentials(&core)
                     .map_err(PyValueError::new_err)?
                     .calc_energy_forces(&coords),
-            };
-            return Ok(ef);
+                PotBacking::Moved => return Err(potentials_moved_err()),
+            }
+        } else {
+            let arr = arg.extract::<numpy::PyReadonlyArray1<'_, NpF>>()?;
+            let slice = arr.as_slice()?;
+            self.inner.compiled()?.calc_energy_forces(slice)
+        };
+        crate::md::take_err(&self.err_slots)?;
+        Ok(ef)
+    }
+
+    /// Move the compiled Rust `Potentials` (and the error slots of its
+    /// Python-callable members) out, leaving this object in the moved state —
+    /// the MD integrators and `Potentials.push` consume through here.
+    pub(crate) fn take_compiled(&mut self) -> PyResult<(Potentials, Vec<crate::md::ErrSlot>)> {
+        match std::mem::replace(&mut self.inner, PotBacking::Moved) {
+            PotBacking::Compiled(p) => Ok((p, std::mem::take(&mut self.err_slots))),
+            deferred @ PotBacking::Deferred(_) => {
+                self.inner = deferred;
+                Err(PyValueError::new_err(
+                    "this Potentials is not bound to a molecule; \
+                     compile with to_potentials(frame) before moving it into \
+                     an integrator",
+                ))
+            }
+            PotBacking::Moved => Err(potentials_moved_err()),
         }
-        let arr = arg.extract::<numpy::PyReadonlyArray1<'_, NpF>>()?;
-        let slice = arr.as_slice()?;
-        Ok(self.inner.compiled()?.calc_energy_forces(slice))
     }
 }
 
 #[pymethods]
 impl PyPotentials {
+    /// An empty collection; compose members with :meth:`push`.
+    #[new]
+    fn new() -> Self {
+        Self {
+            inner: PotBacking::Compiled(Potentials::new()),
+            err_slots: Vec::new(),
+        }
+    }
+
     /// Number of compiled potential kernels, or ``0`` while still deferred
-    /// (not yet bound to a molecule).
+    /// (not yet bound to a molecule) or moved into an integrator.
     fn __len__(&self) -> usize {
         match &self.inner {
             PotBacking::Compiled(p) => p.len(),
-            PotBacking::Deferred(_) => 0,
+            PotBacking::Deferred(_) | PotBacking::Moved => 0,
         }
+    }
+
+    /// Move one more member into the collection: an ``LJCut`` nonbond term, a
+    /// callable ``Potential``, or another ``Potentials``.
+    fn push(&mut self, potential: &Bound<'_, PyAny>) -> PyResult<()> {
+        // Gate first so a failed push does not consume the pushed potential.
+        self.inner.compiled_mut()?;
+        let (member, mut slots) = crate::md::take_potential(potential)?;
+        self.inner.compiled_mut()?.push(member);
+        self.err_slots.append(&mut slots);
+        Ok(())
     }
 
     /// Returns ``(energy, forces)``, forces shape ``(N, 3)``.
@@ -407,6 +478,7 @@ impl PyPotentials {
         match &self.inner {
             PotBacking::Compiled(p) => format!("Potentials(n_kernels={})", p.len()),
             PotBacking::Deferred(_) => "Potentials(deferred)".to_string(),
+            PotBacking::Moved => "Potentials(<moved into integrator>)".to_string(),
         }
     }
 }
@@ -472,6 +544,7 @@ impl PyLBFGS {
                         .map_err(pyo3::exceptions::PyValueError::new_err)?;
                     &compiled
                 }
+                PotBacking::Moved => return Err(potentials_moved_err()),
             };
             // Borrowed one-shot on flat coords extracted from frame, then write back.
             let mut flat =
@@ -654,7 +727,7 @@ macro_rules! py_mmff_front_door {
 py_mmff_front_door! {
     /// MMFF94 atom-type assigner.
     ///
-    /// Exposed to Python as `molrs.MMFF94Typifier`.
+    /// Exposed to Python as `molrs.ff.MMFF94Typifier`.
     ///
     /// Loads the embedded MMFF94 parameter tables at construction time. Use
     /// :meth:`typify` to label a molecular graph (atom types, partial charges, and
@@ -681,7 +754,7 @@ py_mmff_front_door! {
 py_mmff_front_door! {
     /// MMFF94s ("static") atom-type assigner and potential builder.
     ///
-    /// Exposed to Python as `molrs.MMFF94STypifier`.
+    /// Exposed to Python as `molrs.ff.MMFF94STypifier`.
     ///
     /// Identical to :class:`MMFF94Typifier` except on delocalised trivalent
     /// nitrogen (MMFF numeric types 10 ``NC=O`` and 40 ``NC=C``), where MMFF94s
@@ -729,7 +802,7 @@ fn oplsaa_source_xml(source: Option<&Bound<'_, PyAny>>) -> PyResult<Option<Strin
 
 /// OPLS-AA atom-type assigner and potential builder.
 ///
-/// Exposed to Python as `molrs.OPLSAATypifier`. It loads the embedded canonical
+/// Exposed to Python as `molrs.ff.OPLSAATypifier`. It loads the embedded canonical
 /// OPLS-AA parameter set by default, or reads one XML source at construction.
 /// :meth:`typify` returns a typed :class:`Atomistic`; use :meth:`build` for the
 /// one-step potential compilation path.
@@ -952,14 +1025,6 @@ impl PyForceField {
     fn def_pairstyle(&mut self, name: &str, params: Option<&Bound<'_, PyDict>>) -> PyResult<()> {
         let owned = params_from_dict(params)?;
         self.inner.def_pairstyle(name, &as_pairs(&owned));
-        Ok(())
-    }
-
-    /// Ensure a k-space style ``name`` exists, with optional style-level params.
-    #[pyo3(signature = (name, params = None))]
-    fn def_kspacestyle(&mut self, name: &str, params: Option<&Bound<'_, PyDict>>) -> PyResult<()> {
-        let owned = params_from_dict(params)?;
-        self.inner.def_kspacestyle(name, &as_pairs(&owned));
         Ok(())
     }
 
@@ -1263,6 +1328,7 @@ impl PyForceField {
         match frame {
             None => Ok(PyPotentials {
                 inner: PotBacking::Deferred(self.inner.clone()),
+                err_slots: Vec::new(),
             }),
             Some(frame) => {
                 let core = frame.clone_core_frame()?;
@@ -1272,6 +1338,7 @@ impl PyForceField {
                     .map_err(pyo3::exceptions::PyValueError::new_err)?;
                 Ok(PyPotentials {
                     inner: PotBacking::Compiled(potentials),
+                    err_slots: Vec::new(),
                 })
             }
         }
@@ -1560,11 +1627,11 @@ pub fn read_lammps_data_coeffs_py(
     improper_labels: Option<std::collections::HashMap<u32, String>>,
 ) -> PyResult<PyForceField> {
     use molrs::ff::LammpsFfReader;
-    use molrs::ff::forcefield::lammps_units::LammpsUnits;
+    use molrs::ff::forcefield::lammps_units::parse_style;
     use molrs::ff::forcefield::readers::lammps::LammpsTypeLabelMaps;
     use std::collections::BTreeMap;
 
-    let units = LammpsUnits::parse(units).map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let units = parse_style(units).map_err(pyo3::exceptions::PyValueError::new_err)?;
     let to_btree = |m: Option<std::collections::HashMap<u32, String>>| -> BTreeMap<u32, String> {
         m.unwrap_or_default().into_iter().collect()
     };
@@ -1645,9 +1712,9 @@ pub fn write_lammps_forcefield_py(
     improper_types: Option<HashSet<String>>,
     type_ids: Option<std::collections::HashMap<String, u32>>,
 ) -> PyResult<()> {
-    use molrs::ff::forcefield::lammps_units::LammpsUnits;
+    use molrs::ff::forcefield::lammps_units::parse_style;
     use molrs::ff::{ForceFieldWriter, LammpsFfWriter, LammpsWriteOptions};
-    let units = LammpsUnits::parse(units).map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let units = parse_style(units).map_err(pyo3::exceptions::PyValueError::new_err)?;
     let writer = LammpsFfWriter::with_options(LammpsWriteOptions {
         precision,
         skip_pair_style,
@@ -1695,9 +1762,9 @@ pub fn write_lammps_forcefield_str_py(
     improper_types: Option<HashSet<String>>,
     type_ids: Option<std::collections::HashMap<String, u32>>,
 ) -> PyResult<String> {
-    use molrs::ff::forcefield::lammps_units::LammpsUnits;
+    use molrs::ff::forcefield::lammps_units::parse_style;
     use molrs::ff::{ForceFieldWriter, LammpsFfWriter, LammpsWriteOptions};
-    let units = LammpsUnits::parse(units).map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let units = parse_style(units).map_err(pyo3::exceptions::PyValueError::new_err)?;
     let writer = LammpsFfWriter::with_options(LammpsWriteOptions {
         precision,
         skip_pair_style,
@@ -1747,9 +1814,9 @@ pub fn write_lammps_data_coeffs_py(
     improper_types: Option<HashSet<String>>,
     type_ids: Option<std::collections::HashMap<String, u32>>,
 ) -> PyResult<String> {
-    use molrs::ff::forcefield::lammps_units::LammpsUnits;
+    use molrs::ff::forcefield::lammps_units::parse_style;
     use molrs::ff::{LammpsFfWriter, LammpsWriteOptions};
-    let units = LammpsUnits::parse(units).map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let units = parse_style(units).map_err(pyo3::exceptions::PyValueError::new_err)?;
     let writer = LammpsFfWriter::with_options(LammpsWriteOptions {
         precision,
         skip_pair_style: true,

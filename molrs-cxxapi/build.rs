@@ -170,7 +170,7 @@ __MOLRS_ELEMENT_VARIANTS__    }
         ) -> Result<()>;
         // Write one frame + named per-atom fields (field_data reshaped
         // [n_fields, n_atoms]) to a single-frame Zarr store.
-        fn write_frame_zarr(
+        fn write_frame(
             path: &str,
             type_id: &[i32],
             x: &[f64],
@@ -180,7 +180,7 @@ __MOLRS_ELEMENT_VARIANTS__    }
             field_names: Vec<String>,
             field_data: &[f64],
         ) -> Result<()>;
-        fn read_frame_zarr_first(path: &str) -> Result<Box<FrameRef>>;
+        fn read_first_frame(path: &str) -> Result<Box<FrameRef>>;
         // Read the first frame of an (ext)XYZ file into a materialize-ready
         // FrameRef (atoms.{x,y,z,type} + simbox). `type` is derived from the
         // required ExtXYZ species column (Z). All XYZ parsing lives in molrs.

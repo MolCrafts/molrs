@@ -26,10 +26,10 @@ when the code is correct.
 ## Worked Example: Benzene from SMILES
 
 ```python
-import molrs
+import molpy
 
-mol = molrs.io.SmilesIR("c1ccccc1").to_atomistic()
-mol3d, report = molrs.conformer.Conformer(speed="medium", seed=123).generate(mol)
+mol = molpy.io.SmilesIR("c1ccccc1").to_atomistic()
+mol3d, report = molpy.conformer.Conformer(speed="medium", seed=123).generate(mol)
 
 print("atoms:", mol3d.n_atoms)
 print("final energy:", report.final_energy)
@@ -65,7 +65,7 @@ This is also the point where writers take over. If you only need an XYZ file,
 write the frame:
 
 ```python
-molrs.io.write_xyz("benzene.xyz", frame)
+molpy.io.write_xyz("benzene.xyz", frame)
 ```
 
 ## Choosing Speed

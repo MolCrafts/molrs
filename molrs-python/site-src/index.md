@@ -19,12 +19,12 @@ the hosted site reserves `/reference/wasm/` for that generated reference.
     it to a frame, and inspect coordinate columns.
 
     ```python
-    import molrs
+    import molpy
 
-    ir = molrs.io.SmilesIR("CCO")
+    ir = molpy.io.SmilesIR("CCO")
     mol = ir.to_atomistic()
 
-    mol3d, _report = molrs.conformer.Conformer(speed="fast", seed=42).generate(mol)
+    mol3d, _report = molpy.conformer.Conformer(speed="fast", seed=42).generate(mol)
     frame = mol3d.to_frame()
 
     atoms = frame["atoms"]
@@ -76,6 +76,10 @@ the hosted site reserves `/reference/wasm/` for that generated reference.
 
 ## One data model powers every subsystem
 
+- [Migrating to 0.14](getting-started/migration-0-14.md): 0.13 → 0.14
+  spellings (`UnitPreset`, `MD(dtype=)`, `Record`, `meta`).
+- [In-process MD](guides/md.md): `UnitPreset` → `VerletSkin` → `LJCut` →
+  `VelocityVerlet`.
 - [Data model](guides/data-model.md): `Atomistic` is the graph view,
   `Frame` is the columnar data view, and `Block` is the typed column store.
 - [SMILES and topology](guides/smiles-and-topology.md): parse chemical strings

@@ -27,9 +27,9 @@ it needs for force-field refinement.
 ## Worked Example: Parse and Inspect Ethanol
 
 ```python
-import molrs
+import molpy
 
-ir = molrs.io.SmilesIR("CCO")
+ir = molpy.io.SmilesIR("CCO")
 mol = ir.to_atomistic()
 
 print("components:", ir.n_components)
@@ -49,7 +49,7 @@ Those three atoms are the heavy atoms from the SMILES string. Hydrogens can be
 made explicit by the embedding pipeline:
 
 ```python
-mol3d, _report = molrs.conformer.Conformer(speed="fast", add_hydrogens=True, seed=7).generate(mol)
+mol3d, _report = molpy.conformer.Conformer(speed="fast", add_hydrogens=True, seed=7).generate(mol)
 print("explicit atoms:", mol3d.n_atoms)
 ```
 
@@ -63,9 +63,9 @@ Sometimes a workflow starts from known connectivity rather than text. Build an
 `Atomistic` directly when you already know the atoms and bonds.
 
 ```python
-import molrs
+import molpy
 
-mol = molrs.Atomistic()
+mol = molpy.Atomistic()
 c = mol.add_atom("C")
 o = mol.add_atom("O")
 mol.add_bond(c, o)
@@ -85,7 +85,7 @@ SMARTS matching is a graph query API. It returns match bindings, not a copied
 subgraph and not a frame:
 
 ```python
-pattern = molrs.perceive.SmartsPattern("[C:1][O:2]")
+pattern = molpy.perceive.SmartsPattern("[C:1][O:2]")
 matches = pattern.find_matches(mol)
 
 first = matches[0]
@@ -107,8 +107,8 @@ search, grid data, or interop with NumPy and TypeScript arrays.
 Crossing between the two should be visible in code:
 
 ```python
-mol = molrs.io.SmilesIR("c1ccccc1").to_atomistic()
-mol3d, _report = molrs.conformer.Conformer().generate(mol)
+mol = molpy.io.SmilesIR("c1ccccc1").to_atomistic()
+mol3d, _report = molpy.conformer.Conformer().generate(mol)
 frame = mol3d.to_frame()
 ```
 

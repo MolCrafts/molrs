@@ -1,5 +1,5 @@
-// PyO3 bindings for the MolRec record aggregate.
-// Hosts `molrs.MolRec` and the `molrs.Observables` view.
+// PyO3 bindings for the record aggregate.
+// Hosts `molrs.Record` and the `molrs.Observables` view.
 
 use molrs::store::record::{MolRec as CoreMolRec, Observables as CoreObservables};
 use molrs::store::trajectory::{ObservableKind, ObservableRecord};
@@ -12,7 +12,7 @@ use crate::core::store::frame::PyFrame;
 use crate::core::store::trajectory::{PyScalarObservable, PyTrajectory, PyVectorObservable};
 use crate::helpers::molrs_error_to_pyerr;
 
-#[pyclass(module = "molrs", name = "MolRec", subclass)]
+#[pyclass(module = "molrs", name = "Record", subclass)]
 pub struct PyMolRec {
     pub(crate) inner: CoreMolRec,
 }
@@ -154,21 +154,21 @@ impl PyMolRec {
         Ok(())
     }
 
-    /// Read a MolRec record from a Zarr root.
+    /// Read a record from a store root.
     ///
     /// Requires the ``fs`` feature (default on desktop; omitted for Pyodide).
     #[staticmethod]
     #[cfg(feature = "fs")]
-    fn read_zarr(path: &str) -> PyResult<Self> {
+    fn read(path: &str) -> PyResult<Self> {
         let inner = molrs::io::store::zarr::read_record_file(path).map_err(molrs_error_to_pyerr)?;
         Ok(Self { inner })
     }
 
-    /// Write this record to a Zarr root.
+    /// Write this record to a store root.
     ///
     /// Requires the ``fs`` feature (default on desktop; omitted for Pyodide).
     #[cfg(feature = "fs")]
-    fn write_zarr(&self, path: &str) -> PyResult<()> {
+    fn write(&self, path: &str) -> PyResult<()> {
         molrs::io::store::zarr::write_record_file(path, &self.inner).map_err(molrs_error_to_pyerr)
     }
 }

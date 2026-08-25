@@ -42,9 +42,7 @@
 
 use super::ForceFieldReader;
 use crate::ff::constants::VACUUM_DIELECTRIC;
-use crate::ff::forcefield::lammps_units::{
-    LammpsUnitSystem, LammpsUnits, lammps_k_to_molrs_half_k,
-};
+use crate::ff::forcefield::lammps_units::{LammpsFfUnits, lammps_k_to_molrs_half_k, parse_style};
 use crate::ff::forcefield::{ForceField, SpecialBonds};
 use molrs::units::constants::COULOMB_REAL;
 use std::collections::BTreeMap;
@@ -70,13 +68,13 @@ pub struct LammpsFfReader {
     /// Used when the file has no `units` line. Molecular includes default to
     /// **real** (LAMMPS bare-script default is `lj` — pass `default_units: Lj`
     /// or write an explicit `units` line when that matters).
-    pub default_units: LammpsUnits,
+    pub default_units: &'static str,
 }
 
 impl Default for LammpsFfReader {
     fn default() -> Self {
         Self {
-            default_units: LammpsUnits::Real,
+            default_units: "real",
         }
     }
 }
@@ -86,7 +84,7 @@ impl LammpsFfReader {
         Self::default()
     }
 
-    pub fn with_default_units(default_units: LammpsUnits) -> Self {
+    pub fn with_default_units(default_units: &'static str) -> Self {
         Self { default_units }
     }
 
@@ -99,12 +97,12 @@ impl LammpsFfReader {
         &self,
         coeffs_text: &str,
         labels: &LammpsTypeLabelMaps,
-        units: LammpsUnits,
+        units: &str,
     ) -> Result<ForceField, String> {
         // Synthesize style lines so the shared dispatcher can run, then parse
         // section-form coeff lines rewritten as command-form.
         let mut synthetic = String::new();
-        synthetic.push_str(&format!("units {}\n", units.as_str()));
+        synthetic.push_str(&format!("units {units}\n"));
         // Default styles for data-file coeffs (no style line in the data file).
         synthetic.push_str("pair_style lj/cut 10.0\n");
         synthetic.push_str("bond_style harmonic\n");
@@ -121,7 +119,7 @@ impl LammpsFfReader {
         labels: &LammpsTypeLabelMaps,
     ) -> Result<ForceField, String> {
         let unit_sys =
-            LammpsUnitSystem::canonical().map_err(|e| format!("lammps unit system: {e}"))?;
+            LammpsFfUnits::canonical().map_err(|e| format!("lammps unit system: {e}"))?;
         let mut file_units = self.default_units;
         let mut ff = ForceField::new("LAMMPS");
         ff.set_special_bonds(SpecialBonds {
@@ -147,8 +145,7 @@ impl LammpsFfReader {
                     let name = rest
                         .first()
                         .ok_or_else(|| format!("{}: units missing style name", where_()))?;
-                    file_units =
-                        LammpsUnits::parse(name).map_err(|e| format!("{}: {e}", where_()))?;
+                    file_units = parse_style(name).map_err(|e| format!("{}: {e}", where_()))?;
                 }
                 "pair_style" => cutoffs = require_pair_style(&rest, &where_)?,
                 "bond_style" => {
@@ -417,8 +414,8 @@ fn collect_pair(
     rest: &[&str],
     rows: &mut Vec<(String, f64, f64)>,
     where_: &dyn Fn() -> String,
-    unit_sys: &LammpsUnitSystem,
-    file_units: LammpsUnits,
+    unit_sys: &LammpsFfUnits,
+    file_units: &str,
     labels: &LammpsTypeLabelMaps,
 ) -> Result<(), String> {
     // pair_coeff <i> <j> [sub-style] <epsilon> <sigma>. Only self-pairs i==j
@@ -503,8 +500,8 @@ fn add_bond(
     ff: &mut ForceField,
     rest: &[&str],
     where_: &dyn Fn() -> String,
-    unit_sys: &LammpsUnitSystem,
-    file_units: LammpsUnits,
+    unit_sys: &LammpsFfUnits,
+    file_units: &str,
     labels: &LammpsTypeLabelMaps,
 ) -> Result<(), String> {
     // bond_coeff <type> K r0  — type is label `a-b` or numeric id
@@ -526,8 +523,8 @@ fn add_angle(
     ff: &mut ForceField,
     rest: &[&str],
     where_: &dyn Fn() -> String,
-    unit_sys: &LammpsUnitSystem,
-    file_units: LammpsUnits,
+    unit_sys: &LammpsFfUnits,
+    file_units: &str,
     labels: &LammpsTypeLabelMaps,
 ) -> Result<(), String> {
     let [a, b, c] = split_types::<3>(rest.first(), "angle", where_, Some(&labels.angle))?;
@@ -552,8 +549,8 @@ fn add_dihedral(
     ff: &mut ForceField,
     rest: &[&str],
     where_: &dyn Fn() -> String,
-    unit_sys: &LammpsUnitSystem,
-    file_units: LammpsUnits,
+    unit_sys: &LammpsFfUnits,
+    file_units: &str,
     labels: &LammpsTypeLabelMaps,
     style_name: &str,
 ) -> Result<(), String> {
@@ -637,8 +634,8 @@ fn add_improper(
     ff: &mut ForceField,
     rest: &[&str],
     where_: &dyn Fn() -> String,
-    unit_sys: &LammpsUnitSystem,
-    file_units: LammpsUnits,
+    unit_sys: &LammpsFfUnits,
+    file_units: &str,
     labels: &LammpsTypeLabelMaps,
 ) -> Result<(), String> {
     let [a, b, c, d] = split_types::<4>(rest.first(), "improper", where_, Some(&labels.improper))?;
@@ -965,25 +962,13 @@ bond_coeff c3-c3 1.0 1.5
         let pt = lj.get_pairtype("c3", None).unwrap();
         let eps = pt.params.get("epsilon").unwrap();
         // 1 eV → kcal/mol through units component
-        let sys = crate::ff::forcefield::lammps_units::LammpsUnitSystem::canonical().unwrap();
-        let expect = sys
-            .energy(
-                1.0,
-                crate::ff::forcefield::lammps_units::LammpsUnits::Metal,
-                crate::ff::forcefield::lammps_units::LammpsUnits::Real,
-            )
-            .unwrap();
+        let sys = crate::ff::forcefield::lammps_units::LammpsFfUnits::canonical().unwrap();
+        let expect = sys.energy(1.0, "metal", "real").unwrap();
         assert!((eps - expect).abs() < 1e-9, "eps {eps} vs {expect}");
         // bond K=1 eV/Å² → store k = 2 * K_real
         let bond = ff.get_style("bond", "harmonic").unwrap();
         let bt = bond.get_bondtype("c3", "c3").unwrap();
-        let k_lammps_real = sys
-            .bond_k_lammps(
-                1.0,
-                crate::ff::forcefield::lammps_units::LammpsUnits::Metal,
-                crate::ff::forcefield::lammps_units::LammpsUnits::Real,
-            )
-            .unwrap();
+        let k_lammps_real = sys.bond_k_lammps(1.0, "metal", "real").unwrap();
         let expect_k = crate::ff::forcefield::lammps_units::lammps_k_to_molrs_half_k(k_lammps_real);
         assert!((bt.params.get("k").unwrap() - expect_k).abs() < 1e-9);
         assert!((bt.params.get("r0").unwrap() - 1.5).abs() < 1e-12);
@@ -1026,7 +1011,7 @@ Pair Coeffs
 1 0.1521 3.1507
 ";
         let ff = LammpsFfReader::new()
-            .read_data_coeffs(coeffs, &labels, LammpsUnits::Real)
+            .read_data_coeffs(coeffs, &labels, "real")
             .unwrap();
         let bond = ff.get_style("bond", "harmonic").unwrap();
         let bt = bond.get_bondtype("OW", "HW").unwrap();

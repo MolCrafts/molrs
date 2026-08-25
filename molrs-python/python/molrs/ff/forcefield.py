@@ -546,11 +546,6 @@ class ForceField(_RsForceField):
                 _RsForceField.def_pairstyle(
                     ff, sname, raw.style_params(category, sname)
                 )
-            elif category == "kspace":
-                _RsForceField.def_kspacestyle(
-                    ff, sname, raw.style_params(category, sname)
-                )
-                continue  # kspace has no per-type defs
             else:
                 ff._ensure_style(category, sname)
             for tname, params in raw.types(category, sname):
@@ -712,8 +707,6 @@ class ForceField(_RsForceField):
     def _ensure_style(self, category: str, name: str) -> None:
         if category == "pair":
             _RsForceField.def_pairstyle(self, name, {})
-        elif category == "kspace":
-            _RsForceField.def_kspacestyle(self, name, {})
         else:
             getattr(_RsForceField, f"def_{category}style")(self, name)
 
@@ -775,8 +768,6 @@ class ForceField(_RsForceField):
         for cat_name in other.style_names():
             category, sname = cat_name.split(":", 1)
             self._ensure_style(category, sname)
-            if category == "kspace":
-                continue
             for tname, params in other.types(category, sname):
                 endpoints = other.type_endpoints(category, sname, tname)
                 self._replay_type(

@@ -23,9 +23,9 @@ indexes space, and it keeps indexing separate from enumeration: `build` and
 
 ```python
 import numpy as np
-import molrs
+import molpy
 
-box = molrs.Box.cube(10.0)
+box = molpy.Box.cube(10.0)
 points = np.array(
     [
         [0.1, 0.0, 0.0],
@@ -36,7 +36,7 @@ points = np.array(
     dtype=np.float64,
 )
 
-nl = molrs.NeighborList(1.0)      # O(N) cell list — the production backend
+nl = molpy.NeighborList(1.0)      # O(N) cell list — the production backend
 nl.build(points, box)             # index only; no pair table yet
 neigh = nl.neighbors()            # materialize
 
@@ -105,7 +105,7 @@ questions, and it is what `NeighborQuery` is for. It is directed: every query
 point reports all of its reference neighbors, with no `i < j` rule.
 
 ```python
-nq = molrs.NeighborQuery(box, points, cutoff=1.0)
+nq = molpy.NeighborQuery(box, points, cutoff=1.0)
 
 query_points = np.array(
     [
@@ -133,8 +133,8 @@ Analyses consume the materialized table. That keeps the cutoff, the
 periodicity, and the self-vs-cross decision outside the analysis object.
 
 ```python
-frame = molrs.Frame()
-atoms = molrs.Block()
+frame = molpy.Frame()
+atoms = molpy.Block()
 atoms.insert("x", points[:, 0])
 atoms.insert("y", points[:, 1])
 atoms.insert("z", points[:, 2])
@@ -142,7 +142,7 @@ atoms.insert("element", ["C", "C", "C", "C"])
 frame["atoms"] = atoms
 frame.box = box
 
-from molrs.compute.density import RDF
+from molpy.compute.density import RDF
 rdf = RDF(n_bins=20, r_max=1.0)
 result = rdf.compute(frame, neigh)
 print(result.bin_centers[:3])
