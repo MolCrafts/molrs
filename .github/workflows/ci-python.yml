@@ -34,6 +34,8 @@ jobs:
             molrs-python/Cargo.toml
       # Tools only (no project install) → tox builds the wheel once.
       # Same gate as prek pre-push.
+      # examples/*.py are glob-run by tests/test_examples_smoke.py inside tox
+      # (this .venv does not install molrs).
       - name: tox -e py
         working-directory: molrs-python
         shell: bash
@@ -41,21 +43,3 @@ jobs:
           set -euo pipefail
           uv sync --no-install-project --extra dev
           uv run --no-sync tox -e py
-      - name: examples smoke
-        working-directory: molrs-python
-        shell: bash
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          files=(examples/*.py)
-          if [ ${#files[@]} -eq 0 ]; then
-            echo "no examples/*.py" >&2
-            exit 1
-          fi
-          uv run --no-sync python -c '
-          import glob, subprocess, sys
-          files = sorted(glob.glob("examples/*.py"))
-          assert files, "examples/*.py is empty"
-          for path in files:
-              subprocess.check_call([sys.executable, path])
-          '
