@@ -50,6 +50,9 @@ pub mod math;
 pub mod types;
 pub mod units;
 
+#[cfg(all(test, feature = "rayon"))]
+pub(crate) mod test_rayon;
+
 // NOTE: chemical perception (rings, aromaticity, hydrogens, stereo, rotatable,
 // Gasteiger, SMARTS) used to live here as `core::chem`. It now sits one layer up
 // in `crate::perceive` — above `core`, below `ff`. Its crate-root re-exports moved

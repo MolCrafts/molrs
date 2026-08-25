@@ -1851,6 +1851,14 @@ mod engine_tests {
     /// fallback, which is the point: both branches owe the identical pair set.
     #[test]
     fn engine_parallel_materialize_matches_brute_force() {
+        #[cfg(feature = "rayon")]
+        crate::core::test_rayon::ensure();
+        #[cfg(feature = "rayon")]
+        assert!(
+            rayon::current_num_threads() >= 2,
+            "parallel materialization must run on a multithreaded pool \
+             (set MOLRS_TEST_THREADS>=2)"
+        );
         use std::collections::BTreeSet;
 
         /// Index pairs of a table, sorted — row order is not part of the
