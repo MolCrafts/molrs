@@ -648,7 +648,7 @@ fn write_frame_xyz_typed(
 /// Replaces the old per-record Zarr writer (Atomiverse's polyethylene checkpoint).
 #[cfg(feature = "zarr")]
 #[allow(clippy::too_many_arguments)]
-fn write_frame_zarr(
+fn write_frame(
     path: &str,
     type_id: &[i32],
     x: &[f64],
@@ -669,35 +669,35 @@ fn write_frame_zarr(
                         name.as_str(),
                         Array1::from_vec(field_data[base..base + n].to_vec()).into_dyn(),
                     )
-                    .map_err(|e| format!("write_frame_zarr insert {name}: {e}"))?;
+                    .map_err(|e| format!("write_frame insert {name}: {e}"))?;
             }
         }
     }
     let traj = Trajectory::from_frames(vec![frame]);
-    write_trajectory_file(path, &traj).map_err(|e| format!("write_frame_zarr: {e}"))
+    write_trajectory_file(path, &traj).map_err(|e| format!("write_frame: {e}"))
 }
 
-/// Read the first frame of a Zarr store into a fresh `FrameRef`.
+/// Read the first frame of a store into a fresh `FrameRef`.
 ///
 /// Used by Atomiverse checkpoint reload (`cpu::ZarrReader`): stage 1 of a long
-/// bench writes its end-state via [`write_frame_zarr`], then later debug
+/// bench writes its end-state via [`write_frame`], then later debug
 /// iterations call this to skip stage 1. The returned `FrameRef` is populated
 /// via `with_mut` on a fresh standalone store — readers (`frame_column_f64`,
 /// `frame_box`, etc.) see exactly the columns and simbox that were stored.
 #[cfg(feature = "zarr")]
-fn read_frame_zarr_first(path: &str) -> Result<Box<FrameRef>, String> {
-    let traj = read_trajectory_file(path).map_err(|e| format!("read_frame_zarr_first: {e}"))?;
+fn read_first_frame(path: &str) -> Result<Box<FrameRef>, String> {
+    let traj = read_trajectory_file(path).map_err(|e| format!("read_first_frame: {e}"))?;
     let frame = traj
         .frames
         .into_iter()
         .next()
-        .ok_or_else(|| "read_frame_zarr_first: empty trajectory".to_string())?;
+        .ok_or_else(|| "read_first_frame: empty trajectory".to_string())?;
     let inner = molrs_ffi::FrameRef::new_standalone();
     inner
         .with_mut(|f| {
             *f = frame;
         })
-        .map_err(|e| format!("read_frame_zarr_first: populate: {e}"))?;
+        .map_err(|e| format!("read_first_frame: populate: {e}"))?;
     Ok(Box::new(FrameRef(inner)))
 }
 

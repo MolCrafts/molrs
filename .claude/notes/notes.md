@@ -17,6 +17,33 @@ status change) and conflicts with `CLAUDE.md`.
 
 ---
 
+## 2026-08-25 — public record API is Record, not MolRec
+**Decision:** Public names are `molrs.Record` / `molrs::Record`, `Record.read` /
+`Record.write`, `Trajectory.read` / `Trajectory.write`, cxxapi `write_frame` /
+`read_first_frame`. No deprecated aliases. Internal `store::record::MolRec`,
+`RECORD_FORMAT_NAME = "molrec"`, and the `io::store::zarr` adapter keep their
+technical names.
+**Why:** Public API names the object; the backend is not yet a caller-chosen
+format (release-0-14-13). Cross-crate: Atomiverse checkpoint I/O must switch
+to `write_frame` / `read_first_frame`.
+**Status:** active
+
+## 2026-08-25 — one Potential concept; md LJCut vs ff lj/cut merge deferred
+**Decision:** The md force seam is the single `ff::potential::Potential` +
+`Potentials` concept (owner ruling: no `ForceProvider`, no `PairForce`, no
+`ForceStack`, no `PotentialsForce`). The nonbond case is served by the trait's
+default-no-op `set_pairs(&[SkinPair], &SimBox)`: the loop (integrator) owns the
+`VerletSkin`, runs its policy, and feeds fresh pairs after each rebuild —
+neighbour machinery never lives in a potential. Unit conversion has exactly one
+home: `Potentials::set_energy_scale` (factor from `md::units::
+preset_energy_to_md`/`energy_to_md`); members always share one unit system.
+**Closed 2026-08-25 by release-0-14-14:** one `LJCut` in `ff::potential::pair`
+(Loop vs Compiled pair source), `VerletSkin::pairs_at` is the only MIC site,
+`set_pairs` is gone, and `kspace` is not a ForceField category — PME registers
+as pair style `coul/long/pme`. The `ff/potential/kspace` module stays as the
+FFT compilation-unit boundary.
+**Status:** closed (→ release-0-14-14)
+
 ## 2026-07-29 — pre-commit whole-tree gates need always_run
 **Decision:** `cargo-fmt` and `cargo-clippy` in `.pre-commit-config.yaml` set `always_run: true` (same as the pre-push test hooks).
 **Why:** CI rustfmt/clippy are whole-tree gates. Without `always_run`, prek skips them when the staged set has no "matching" files — rustfmt/clippy failures on `dev` (while_let_loop, too_many_arguments, region formatting) reached GitHub Actions despite the hooks being declared for pre-commit.
@@ -424,12 +451,102 @@ Option 列语义)、同默认(`FULL`)。新增或改动任一绑定面时,先对
 
 已知不对称(内部重构优先序):
 
-1. **wasm cross-query 寄居在 `LinkedCell` 兼容别名上**(Python 有真正的
-   `NeighborQuery` 类)→ 第一优先项:给 wasm 补对称的 `NeighborQuery`
-   门,顺带给 cross 门加 storage 参数(消掉唯一一处生产 `repack`)。
+1. **wasm `NeighborQuery` 对称门改期到 0.15**（2026-08-25）。删除不在选项内：
+   in-tree consumers are `compute/hbond/detect.rs` (`from_columns` /
+   `free_columns`, `QueryMode::CrossQuery`), `compute/rdf/mod.rs`,
+   `compute/dynamics/van_hove.rs`, `ff/potential/soft.rs`. wasm 尚无消费者
+   （facade-first），0.14 不补对称门、也不删引擎类型。
 2. `LinkedCell` / `BruteForce` 别名仅为 molvis 链接暂留(默认 FULL,安全);
    molvis 迁移到引擎 API 后**删除**,不长期维护双门。
 3. 其余路由项按需慢做:core SoA `update_columns`、`neighbors/mod.rs` 拆
    `table.rs`(纯移动)。`Compute::Args` 借用化已完成(2026-08-10)。
 
 **Status:** active
+
+<!-- mol:note:topic:md-experimental-ship-0.14 -->
+## [2026-08-24] md 以 experimental 身份进 0.14.0（最终架构：one Potential + loop-owned neighbors + merged MD）— REWRITTEN 2026-08-25
+
+**Decision:** `molrs.md` 随 0.14.0 发布，标记 experimental：import 时发
+`FutureWarning`（"molrs.md is experimental in 0.14: APIs may change or be
+removed in a future minor release."），顶层 `molrs/__init__.py` 为 PEP 562
+惰性加载（`__getattr__`/`__dir__`）——`import molrs` 保持无警告。
+
+**用户命名空间裁决（maintainer, 2026-08-25）：** 用户可见的拼写一律
+`molpy.*`，`molrs` 不出现在用户侧；molpy re-export molrs 接口
+（`molpy.md.Potential`、`molpy.md.MD`……与 molrs.md **同一对象**）。md 切片
+已在本轮完成 verbatim re-export + 完整性测试；全表面镜像是 0.14 的
+tracked work item。用户可见 docstring 示例一律拼 `molpy.md`；engine 内部、
+molrs 仓测试与 `regressions/` 保留 `import molrs`。
+
+**ONE Potential concept（owner ruling）：** 唯一概念是
+`ff::potential::Potential`（产出 energy+forces；类别
+nonbond/bond/angle/dihedral/improper）。成员：`LJCut`（LAMMPS
+`pair_style lj/cut`，md 的 nonbond kernel）、`Potentials`
+（composite，自身也是 Potential，合并成员结果）、Python 侧抽象基类
+`molrs.md.Potential`（**subclassable ABC**，maintainer 裁决：不再是
+`Potential(f)` callable 包装——用户 `class MyPotential(molpy.md.Potential):`
+override `calc_energy_forces(self, pos (N,3)) -> (energy, forces)`；基类方法
+raise NotImplementedError；Rust 适配器 `SubclassPotential` 持实例引用、GIL
+下调 override，异常经 ErrSlot 以原始 Python 异常上抛；实例是共享引用而非
+move——`Potentials`/`VerletSkin` 仍是 move 语义，复用 raise ValueError）。
+这是 NN/Torch 力的接缝。
+
+**单位裁决（maintainer, 2026-08-25——MD 完全 unit-agnostic）：**
+MD/积分器/`Potentials` 内零单位知识；用户在传入前自行换算一切，工具在
+`md::units`：`energy_to_md(value, unit)`、`preset_energy_to_md(style)`
+（LAMMPS-units 风格 preset："real"、"metal"……）、`kb_md()`。
+`Potentials.set_energy_scale` 改为 **numeric-only**（PyO3 侧已删
+`"real"` 字符串解析）——它是"用户算好的因子作用于合并后 energy+forces"的
+机制，任何代码不得隐式调用。`MD.set_forcefield(ff, energy_scale=None)`：
+None = 什么都不套；docstring 示范用户自己传
+`energy_scale=preset_energy_to_md("real")`。仍带单位假设的 helper 已逐个
+文档化：`MaxwellBoltzmann`（K+amu→Å/fs，内部 `kb_md`）、`Langevin` 的
+`kbt`（能量，MD 单位下 = `kb_md()*T`）、`MD.run(temperature=…)` 的速度
+初始化与 `thermo` 行的 `temp` 列（用 `kb_md()`）。
+
+**Loop-owned neighbors：** 邻表是循环（积分器）的事。
+`VelocityVerlet(dt, potential=…, neighbors=VerletSkin, mass=…)` /
+`Langevin(…)`：积分器跑 skin 的 every/delay/check 重建策略，重建后经
+`Potential::set_pairs(&[SkinPair], &SimBox)`（trait 默认 no-op；
+`Potentials` 递归转发给全部成员）把新 pair 喂给 nonbond 成员。Python 不做
+任何 pair bookkeeping。`NeighborList`→`VerletSkin`→积分器均为 move 语义；
+积分器暴露只读 `num_edges`/`rebuild_count`/`ago`（无邻表时 None）。传
+`LJCut` 必须带 `neighbors=`。
+
+**Merged MD（一个 driver，一个装配步）：** 旧 `MD`+`MDRunner` 合并为
+`md/driver.py` 的一个 `MD` 类；`FrameVelocityVerlet`、numpy 双胞胎
+`MDState`/`ForceOutput`/`MDObservables`、`_as_state`、hook 层
+（`MDHook`/`CheckpointHook`/`VelocityInitHook`）全部删除。保留的旧能力以
+最简形式折入 `run()`：`temperature=`/`seed=`（LAMMPS `velocity create`，
+经 `MaxwellBoltzmann`）与 `thermo=N` 间隔采样（LAMMPS thermo 词汇：
+step/pe/ke/etotal/temp，存 `driver.thermo`）。表面：
+`MD(prec="double")`（**prec 是精度 campaign 的预留接口**：
+`PRECISIONS`/`resolve_prec`，只收 "double"，mixed/single raise 并声明将落
+在 Rust 积分器）；`set_forcefield(ff, energy_scale=None)`（每次 run 用
+`ff.to_potentials(frame)` 重新编译——存配置不存 moved 对象，第二次 run
+天然可用）；`set_neighbors(prebuilt VerletSkin | cutoff/skin/every/delay/
+check kwargs)`（prebuilt 是 single-shot，被消费后再 run 报指名
+set_neighbors 的 ValueError；kwargs 每 run 现建）；`set_potential(pots)`
+（advanced：调用者自己 set_energy_scale、自己管邻居正确性；`Potentials`
+被 move 进积分器 = 一次 attach 一次 run）。pair 路径：`pair:lj/cut` 读
+(epsilon, sigma, cutoff) 按 ff 原样构造 `LJCut` **push 进同一编译
+collection**（无单位换算——用户的 energy_scale 统一作用）；单一
+atom-type 参数集 only，多集或非 lj/cut style raise NotImplementedError；
+cutoff 推导链 set_neighbors kwarg > style param > per-type max > prebuilt
+skin cutoff，推不出 raise 指名 set_neighbors 的 ValueError；无 kspace
+逻辑；pair+非空 bonds block 仍明拒（special_bonds 排除未实现，防
+1-2/1-3/1-4 重复计入）。
+
+**守恒测试归位（maintainer 裁决：tests/ 不放长物理跑）：** NVE 守恒
+authority 是 Rust 单元测试（`molrs/src/md/integrators.rs`）；driver 级长跑
+在 `regressions/release-0-14-01-md-driver-nve.py`（64 原子 Ar-like lj/cut
+ForceField，dt=1fs×1200 步，断言相对漂移 <5e-5 且 `rebuild_count > 0`）。
+`tests/test_md.py` 只留数步级 seam/驱动单测。
+
+**Deferred to 0.15:** wasm/capi 绑定面对称性决策——md 0.14 仅 Python
+（facade-first，尚无 wasm 消费者；参照 binder-surface-symmetry）；driver
+pair 路径的 per-type mixing 与 special_bonds 排除；molpy 全表面镜像
+（本轮只做了 md 切片）。`LJCut` vs `ff::pair::lj/cut` kernel 合并债见
+2026-08-25 独立条目（保留）。
+
+**Status:** provisional

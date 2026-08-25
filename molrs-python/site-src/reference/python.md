@@ -3,7 +3,7 @@
 Canonical import style:
 
 ```python
-import molrs as mr
+import molpy as mr
 ```
 
 This page is rendered from the installed `molrs` package by `mkdocstrings-python`.

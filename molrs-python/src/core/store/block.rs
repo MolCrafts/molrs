@@ -16,9 +16,7 @@
 
 use std::sync::Arc;
 
-use molrs::store::block::{
-    Block as CoreBlock, BlockDtype, Column, ColumnHolder,
-};
+use molrs::store::block::{Block as CoreBlock, BlockDtype, Column, ColumnHolder};
 use molrs::types::{F, I, U};
 use molrs_ffi::BlockRef;
 use ndarray::{Array1, ArrayD, IxDyn};
@@ -230,7 +228,7 @@ impl PyBlock {
     ///
     /// Examples
     /// --------
-    /// >>> arr = block.view("x")  # numpy float32 view
+    /// >>> arr = block.view("x")  # numpy float64 view (`F = f64`)
     /// >>> syms = block.view("symbol")  # list of str
     fn view<'py>(&self, py: Python<'py>, key: &str) -> PyResult<Py<pyo3::types::PyAny>> {
         // Zero-copy path: cloning an Arc<ArrayD<T>> inside the closure is an
@@ -239,9 +237,13 @@ impl PyBlock {
         // returns.
         self.inner
             .with(|b| -> PyResult<Py<pyo3::types::PyAny>> {
-                let col = b
-                    .get(key)
-                    .ok_or_else(|| PyKeyError::new_err(key.to_string()))?;
+                let col = b.get(key).ok_or_else(|| {
+                    let names: Vec<&str> = b.keys().collect();
+                    PyKeyError::new_err(format!(
+                        "no column {key:?}; available: {}",
+                        names.join(", ")
+                    ))
+                })?;
                 match col {
                     Column::Float(a) => float_array_view(py, Arc::clone(a)),
                     Column::Int(a) => int_array_view(py, Arc::clone(a)),

@@ -864,6 +864,17 @@ impl Neighbors {
         }
     }
 
+    pub(crate) fn clear(&mut self) {
+        self.idx_i.clear();
+        self.idx_j.clear();
+        self.dist_sq.clear();
+        self.disp_flat.clear();
+    }
+
+    pub(crate) fn set_mode(&mut self, mode: QueryMode) {
+        self.mode = mode;
+    }
+
     /// Storage policy for optional columns — equivalently, which of
     /// [`dist_sq()`](Self::dist_sq()) and [`disp()`](Self::disp()) will return
     /// `Some` for this table.

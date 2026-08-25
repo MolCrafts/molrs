@@ -108,7 +108,7 @@ impl CandidateSet {
                         t.params.clone(),
                     )
                 })),
-                StyleDefs::Atom(_) | StyleDefs::Pair(_) | StyleDefs::KSpace => {}
+                StyleDefs::Atom(_) | StyleDefs::Pair(_) => {}
             }
         }
         out

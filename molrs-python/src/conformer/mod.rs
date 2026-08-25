@@ -37,7 +37,7 @@ fn stage_kind_name(kind: StageKind) -> &'static str {
 
 /// Report for a single stage of conformer generation.
 ///
-/// Exposed to Python as `molrs.ConformerStageReport`.
+/// Exposed to Python as `molrs.conformer.ConformerStageReport`.
 ///
 /// Attributes
 /// ----------
@@ -81,7 +81,7 @@ impl PyConformerStageReport {
 
 /// Aggregate report for a conformer generation run.
 ///
-/// Exposed to Python as `molrs.ConformerReport`.
+/// Exposed to Python as `molrs.conformer.ConformerReport`.
 ///
 /// Attributes
 /// ----------
@@ -142,7 +142,7 @@ impl PyConformerReport {
 
 /// 3D conformer generator for molecular graphs.
 ///
-/// Exposed to Python as `molrs.Conformer`. Construct it with the desired
+/// Exposed to Python as `molrs.conformer.Conformer`. Construct it with the desired
 /// generation parameters, then call :meth:`generate` to produce coordinates.
 /// The class is subclassable so downstream wrappers (e.g. ``molpy.conformer``)
 /// can inherit it and refine the marshalling.

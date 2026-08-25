@@ -61,12 +61,21 @@ def test_unified_def_type_matches_typed_methods():
 
 @pytest.mark.parametrize(
     "category,name",
-    [("bond", "A-B-C"), ("angle", "A-B"), ("dihedral", "A-B-C"), ("kspace", "X")],
+    [("bond", "A-B-C"), ("angle", "A-B"), ("dihedral", "A-B-C")],
 )
 def test_def_type_arity_raises_not_panics(category, name):
     ff = molrs.ff.ForceField("guard")
     with pytest.raises(ValueError):
         ff.def_type(category, "s", name, {"k": 1.0})
+
+
+def test_kspace_is_not_a_category():
+    from molrs._lib import ForceField as RsForceField
+
+    assert not hasattr(RsForceField, "def_kspacestyle")
+    ff = molrs.ff.ForceField("guard")
+    with pytest.raises(ValueError, match="unknown"):
+        ff.def_type("kspace", "pme", "X", {"k": 1.0})
 
 
 def test_types_on_missing_style_raises():

@@ -250,6 +250,10 @@ impl PyNeighbors {
 /// ValueError
 ///     If ``cutoff`` is not positive.
 ///
+/// Passing the engine into :class:`VerletSkin` **moves** it: the list is
+/// consumed, and every later method call on it raises ``ValueError`` — build a
+/// new ``NeighborList`` instead.
+///
 /// Examples
 /// --------
 /// >>> nl = molrs.NeighborList(3.0)          # O(N) cell-list backend
@@ -259,7 +263,25 @@ impl PyNeighbors {
 /// >>> nl.update(moved_points)               # re-index in the same box
 #[pyclass(module = "molrs", name = "NeighborList")]
 pub struct PyNeighborList {
-    pub(crate) inner: RsNeighborList,
+    pub(crate) inner: Option<RsNeighborList>,
+}
+
+fn engine_moved_err() -> PyErr {
+    PyValueError::new_err("NeighborList has been moved into a VerletSkin; build a new NeighborList")
+}
+
+impl PyNeighborList {
+    pub(crate) fn take(&mut self) -> PyResult<RsNeighborList> {
+        self.inner.take().ok_or_else(engine_moved_err)
+    }
+
+    fn get(&self) -> PyResult<&RsNeighborList> {
+        self.inner.as_ref().ok_or_else(engine_moved_err)
+    }
+
+    fn get_mut(&mut self) -> PyResult<&mut RsNeighborList> {
+        self.inner.as_mut().ok_or_else(engine_moved_err)
+    }
 }
 
 #[pymethods]
@@ -269,7 +291,7 @@ impl PyNeighborList {
     fn new(cutoff: NpF) -> PyResult<Self> {
         check_cutoff(cutoff)?;
         Ok(Self {
-            inner: RsNeighborList::new(cutoff),
+            inner: Some(RsNeighborList::new(cutoff)),
         })
     }
 
@@ -290,14 +312,14 @@ impl PyNeighborList {
     fn brute_force(cutoff: NpF) -> PyResult<Self> {
         check_cutoff(cutoff)?;
         Ok(Self {
-            inner: RsNeighborList::brute_force(cutoff),
+            inner: Some(RsNeighborList::brute_force(cutoff)),
         })
     }
 
     /// The cutoff distance (Å) fixed at construction.
     #[getter]
-    fn cutoff(&self) -> NpF {
-        self.inner.cutoff()
+    fn cutoff(&self) -> PyResult<NpF> {
+        Ok(self.get()?.cutoff())
     }
 
     /// Index ``points`` in ``box`` — coordinates **and** box.
@@ -321,7 +343,7 @@ impl PyNeighborList {
     ///     If ``points`` does not have shape ``(N, 3)``.
     fn build(&mut self, points: PyReadonlyArray2<'_, NpF>, r#box: &PyBox) -> PyResult<()> {
         check_points(&points, "points")?;
-        self.inner.build(points.as_array(), &r#box.inner);
+        self.get_mut()?.build(points.as_array(), &r#box.inner);
         Ok(())
     }
 
@@ -345,16 +367,17 @@ impl PyNeighborList {
     ///     minimum images against a box the caller never named.
     fn update(&mut self, points: PyReadonlyArray2<'_, NpF>) -> PyResult<()> {
         check_points(&points, "points")?;
+        let engine = self.get_mut()?;
         // The core panics on an update before a build (the box is unknown);
         // a panic must not cross this seam, so check the engine's own state
         // and raise instead.
-        if !self.inner.is_built() {
+        if !engine.is_built() {
             return Err(PyValueError::new_err(
                 "NeighborList.update reuses the box of the previous build: \
                  call build(points, box) first",
             ));
         }
-        self.inner.update(points.as_array());
+        engine.update(points.as_array());
         Ok(())
     }
 
@@ -379,18 +402,21 @@ impl PyNeighborList {
     /// -------
     /// Neighbors
     #[pyo3(signature = (dist_sq=true, disp=true))]
-    fn neighbors(&self, dist_sq: bool, disp: bool) -> PyNeighbors {
-        PyNeighbors {
-            inner: self.inner.neighbors(NeighborsStorage { dist_sq, disp }),
-        }
+    fn neighbors(&self, dist_sq: bool, disp: bool) -> PyResult<PyNeighbors> {
+        Ok(PyNeighbors {
+            inner: self.get()?.neighbors(NeighborsStorage { dist_sq, disp }),
+        })
     }
 
     fn __repr__(&self) -> String {
-        format!(
-            "NeighborList(cutoff={}, built={})",
-            self.inner.cutoff(),
-            self.inner.is_built(),
-        )
+        match &self.inner {
+            Some(engine) => format!(
+                "NeighborList(cutoff={}, built={})",
+                engine.cutoff(),
+                engine.is_built(),
+            ),
+            None => "NeighborList(<moved into VerletSkin>)".into(),
+        }
     }
 }
 
@@ -538,7 +564,7 @@ impl PyVerletSkin {
             .ok_or_else(|| PyValueError::new_err("VerletSkin has already been moved"))
     }
 
-    fn get_mut(&mut self) -> PyResult<&mut RsVerletSkin> {
+    pub(crate) fn get_mut(&mut self) -> PyResult<&mut RsVerletSkin> {
         self.inner
             .as_mut()
             .ok_or_else(|| PyValueError::new_err("VerletSkin has already been moved"))
@@ -564,8 +590,8 @@ impl PyVerletSkin {
         if cutoff <= 0.0 {
             return Err(PyValueError::new_err("cutoff must be > 0 Å"));
         }
-        let search_cutoff = neighbors.inner.cutoff();
-        let search = std::mem::replace(&mut neighbors.inner, RsNeighborList::new(search_cutoff));
+        // Move the engine out; the emptied NeighborList raises on any later use.
+        let search = neighbors.take()?;
         let policy = NeighborPolicy {
             skin,
             every,
@@ -580,34 +606,32 @@ impl PyVerletSkin {
             r#box.inner.clone(),
         )
         .map_err(skin_err)?;
-        Ok(Self {
-            inner: Some(inner),
-        })
+        Ok(Self { inner: Some(inner) })
     }
 
     #[getter]
     fn cutoff(&self) -> PyResult<NpF> {
-        Ok(self.get()?.cutoff)
+        Ok(self.get()?.cutoff())
     }
 
     #[getter]
     fn skin(&self) -> PyResult<NpF> {
-        Ok(self.get()?.skin)
+        Ok(self.get()?.skin())
     }
 
     #[getter]
     fn num_edges(&self) -> PyResult<usize> {
-        Ok(self.get()?.num_edges)
+        Ok(self.get()?.num_edges())
     }
 
     #[getter]
     fn rebuild_count(&self) -> PyResult<usize> {
-        Ok(self.get()?.rebuild_count)
+        Ok(self.get()?.rebuild_count())
     }
 
     #[getter]
     fn ago(&self) -> PyResult<usize> {
-        Ok(self.get()?.ago)
+        Ok(self.get()?.ago())
     }
 
     fn update(&mut self, positions: PyReadonlyArray2<'_, NpF>) -> PyResult<bool> {
@@ -628,7 +652,10 @@ impl PyVerletSkin {
         match &self.inner {
             Some(s) => format!(
                 "VerletSkin(cutoff={}, skin={}, edges={}, rebuilds={})",
-                s.cutoff, s.skin, s.num_edges, s.rebuild_count
+                s.cutoff(),
+                s.skin(),
+                s.num_edges(),
+                s.rebuild_count()
             ),
             None => "VerletSkin(<moved>)".into(),
         }

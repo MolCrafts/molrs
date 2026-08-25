@@ -14,6 +14,12 @@ import pytest
 import molrs
 
 
+class TestErrorMessages:
+    def test_pyo3_type_error_names_the_argument(self):
+        with pytest.raises(TypeError, match="center"):
+            molrs.Sphere("not-an-array", 1.0)
+
+
 class TestReadPdb:
     def test_basic(self, water_pdb):
         frame = molrs.io.raw.read_pdb(str(water_pdb))
@@ -30,6 +36,10 @@ class TestReadPdb:
     def test_missing_file_raises_os_error(self):
         with pytest.raises(OSError):
             molrs.io.raw.read_pdb("/nonexistent/path.pdb")
+
+    def test_missing_file_names_the_path(self):
+        with pytest.raises(OSError, match="missing.pdb"):
+            molrs.io.read_pdb("missing.pdb")
 
 
 class TestReadGro:

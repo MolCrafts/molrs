@@ -129,13 +129,7 @@ pub struct PyGrapheneBuilder {
 impl PyGrapheneBuilder {
     #[new]
     #[pyo3(signature = (nx, ny, *, bond_length=1.42, vacuum=10.0, periodic_xy=true))]
-    fn new(
-        nx: u32,
-        ny: u32,
-        bond_length: f64,
-        vacuum: f64,
-        periodic_xy: bool,
-    ) -> PyResult<Self> {
+    fn new(nx: u32, ny: u32, bond_length: f64, vacuum: f64, periodic_xy: bool) -> PyResult<Self> {
         let inner = GrapheneBuilder::new(nx, ny)
             .map_err(|e| PyValueError::new_err(e.to_string()))?
             .with_bond_length(bond_length)

@@ -41,9 +41,12 @@ mod store;
 
 // Mirrors the molrs core module layout: core/ (store · spatial · system), io/,
 // compute/, ff/, conformer/, signal/.
-mod core;
 mod builder;
-use crate::core::spatial::neighborlist::{PyNeighborList, PyNeighborQuery, PyNeighbors, PyVerletSkin};
+mod core;
+use crate::builder::{PyCarbonTubeBuilder, PyGrapheneBuilder};
+use crate::core::spatial::neighborlist::{
+    PyNeighborList, PyNeighborQuery, PyNeighbors, PyVerletSkin,
+};
 use crate::core::spatial::region::{
     PyCuboid, PyHollowSphere, PyParallelepiped, PyRegion, PySphere,
 };
@@ -58,8 +61,7 @@ use crate::core::system::molgraph::{
     PySmartsPattern,
 };
 use crate::core::system::molgraph::{PyRingInfo, align_direction, rotate, scale, translate};
-use crate::core::units::{PyQuantity, PyUnit, PyUnitRegistry};
-use crate::builder::{PyCarbonTubeBuilder, PyGrapheneBuilder};
+use crate::core::units::{PyQuantity, PyUnit, PyUnitPreset, PyUnitRegistry};
 
 mod io;
 
@@ -140,14 +142,15 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyUnit>()?;
     m.add_class::<PyQuantity>()?;
     m.add_class::<PyUnitRegistry>()?;
+    m.add_class::<PyUnitPreset>()?;
 
     // I/O + SMILES
     // Readers
     m.add_function(wrap_pyfunction!(io::read_block_csv, m)?)?;
-m.add_function(wrap_pyfunction!(io::write_block_csv, m)?)?;
-m.add_function(wrap_pyfunction!(io::read_frame_bytes, m)?)?;
-m.add_function(wrap_pyfunction!(io::write_frame_bytes, m)?)?;
-m.add_function(wrap_pyfunction!(io::read_pdb, m)?)?;
+    m.add_function(wrap_pyfunction!(io::write_block_csv, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_frame_bytes, m)?)?;
+    m.add_function(wrap_pyfunction!(io::write_frame_bytes, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_pdb, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_pdb_trajectory, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_xyz, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_xyz_trajectory, m)?)?;
@@ -212,7 +215,7 @@ m.add_function(wrap_pyfunction!(io::read_pdb, m)?)?;
     m.add_class::<PyScalarObservable>()?;
     m.add_class::<PyVectorObservable>()?;
 
-    // MolRec record aggregate
+    // Record aggregate
     m.add_class::<PyMolRec>()?;
     m.add_class::<PyObservables>()?;
 

@@ -12,6 +12,10 @@ freud-parity names callers expect: ``RDF`` under :mod:`~molrs.compute.density`,
 and the gyration / inertia / radius-of-gyration tensors under
 :mod:`~molrs.compute.cluster`. Mirroring them as their own subpackages would
 break the freud port path this layout exists to preserve.
+
+``protocol`` is a third exception: it is a pure-Python
+:func:`typing.runtime_checkable` :class:`~typing.Protocol` (the one
+``Compute`` contract) and has no matching Rust module.
 """
 
 from . import (
@@ -32,8 +36,10 @@ from . import (
     transport,
     voronoi,
 )
+from .protocol import Compute
 
 __all__ = [
+    "Compute",
     "cluster",
     "density",
     "dielectric",

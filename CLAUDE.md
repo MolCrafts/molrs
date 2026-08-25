@@ -170,7 +170,7 @@ at the crate root (so `molrs::Frame`, `molrs::system::…`, `molrs::find_rings`,
 
 | Module (`molrs/src/`) | Feature | Purpose |
 |---|---|---|
-| `core` | always on | Frame/Block/Grid/MolGraph/MolRec/Topology/Element, neighbors, math, SimBox (spatial), geometric regions, graph hash, atom-type mapping, structure generators (`generate` / SARW) |
+| `core` | always on | Frame/Block/Grid/MolGraph/Record/Topology/Element, neighbors, math, SimBox (spatial), geometric regions, graph hash, atom-type mapping, structure generators (`generate` / SARW) |
 | `perceive` | always on | **Chemical perception**, one layer above `core` and below `ff`/`io`/`conformer`: rings (SSSR), aromaticity, hydrogen perception, stereochemistry, rotatable bonds, SMARTS/SMIRKS. Builder API `Perceive::new().find_*(&MolGraph) -> MolGraph` (graph-in/graph-out, non-mutating). **Gasteiger charges live in `ff::charge`**, re-exported at crate root under `ff`. |
 | `optimize` | `ff` | Geometry optimizers (`Optimizer`, `LBFGS`); depends on `ff::potential::Potential` |
 | `io` | `io` | File I/O: PDB, XYZ, LAMMPS data/dump, CHGCAR/POSCAR, Gaussian Cube, CIF, mol2, SDF, GRO, DCD, GROMACS TRR/XTC, Zarr V3 trajectories; SMILES parsing in `io/smiles/` (gated by `smiles`). **SMARTS lives in `perceive/smarts/`, not here** |
@@ -226,11 +226,11 @@ Key type aliases: `F3 = Array1<F>`, `F3x3 = Array2<F>`, `FN = Array1<F>`, `FNx3 
 
 ### Block (heterogeneous column store)
 
-`Block` maps string keys to typed ndarray columns (f32, f64, i64, bool). Enforces consistent `nrows` across all columns. Type-safe access via `get_float()`, `get_int()`, `get_bool()`, `get_uint()`, `get_u8()`, `get_string()`. (`molrs/src/core/store/block/`).
+`Block` maps string keys to typed ndarray columns (f64, i64, bool, …). Enforces consistent `nrows` across all columns. Type-safe access via `get_float()`, `get_int()`, `get_bool()`, `get_uint()`, `get_u8()`, `get_string()`. (`molrs/src/core/store/block/`). `F = f64` is invariant.
 
 ### Frame (hierarchical data container)
 
-`Frame` maps string keys (e.g. "atoms", "bonds", "angles") to `Block`s. Contains optional `SimBox` for periodic boundaries and a metadata hashmap. No forced cross-block row consistency — caller responsibility.
+`Frame` maps string keys (e.g. "atoms", "bonds", "angles") to `Block`s. Contains optional `SimBox` for periodic boundaries and a `meta` hashmap. No forced cross-block row consistency — caller responsibility.
 
 ### MolGraph (molecular topology)
 
@@ -251,7 +251,7 @@ in the standalone `molcrafts-molpack` crate.
 
 ### Potential System (molrs/src/ff/potential/)
 
-`KernelRegistry` maps `(category, style_name)` → `KernelConstructor`. Categories: bonds, angles, dihedrals, impropers, pairs, kspace. `ForceField::to_potentials(frame)` (with `Style::to_potential`) resolves topology and constructs `Potentials` (aggregate sum) — frame-free, deferred potentials that bind topology and coordinates at evaluation time. Coordinate format: flat `[x0,y0,z0, x1,y1,z1, ...]` (3N elements).
+`KernelRegistry` maps `(category, style_name)` → `KernelConstructor`. Categories: bonds, angles, dihedrals, impropers, pairs. PME is the pair style `coul/long/pme` (`ff/potential/kspace` is the FFT compilation unit, not a category). `ForceField::to_potentials(frame)` (with `Style::to_potential`) resolves topology and constructs `Potentials` (aggregate sum) — frame-free, deferred potentials that bind topology and coordinates at evaluation time. Coordinate format: flat `[x0,y0,z0, x1,y1,z1, ...]` (3N elements).
 
 **Every parameter table is committed Rust, in one place.** `molrs/src/ff/params/` holds them all, flat — GAFF/GAFF2, the seven `ATOMTYPE_*.DEF` sets, BCCPARM, GASPARM, MMFF, OPLS-AA, UFF. Nothing parses parameter text at runtime, so a malformed table is a **compile** error, not a runtime one. `molrs/data/` and `molrs::data::*_XML` no longer exist. How a table *arrived* lives in its header doc (AmberTools `.DAT`/`.DEF`, RDKit `Params.cpp` for MMFF / UFF) — never in its name.
 

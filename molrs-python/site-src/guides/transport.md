@@ -22,7 +22,7 @@ and [Pair Persistence](https://molpy.molcrafts.org/compute/persistence/).
 - Displacement over lag $\tau$: $\Delta\mathbf{P}(\tau)=\mathbf{P}(t+\tau)-\mathbf{P}(t)$.
 - $\langle\cdots\rangle_t$ — average over all time origins $t$; for lag $\tau$
   there are $N_\text{frames}-\tau$ valid origins.
-- Units (LAMMPS *real*): length Å, time ps, charge $e$, volume Å³, temperature K.
+- Units (LAMMPS *real*): length Å, time fs, charge $e$, volume Å³, temperature K.
 - All kernels take `max_correlation_time` in **frames** (clamped to
   $N_\text{frames}-1$) and return arrays of length `max_correlation_time + 1`.
 
@@ -56,7 +56,7 @@ by the caller).
 `EmptyInput` (< 2 frames), `NonFinite`, `OutOfRange` (`dt ≤ 0`).
 
 ```python
-from molrs.compute.transport import Onsager
+from molpy.compute.transport import Onsager
 res = Onsager.correlation(P_i, P_j, dt=0.01, max_correlation_time=2000)
 res["lag_times"], res["correlation"]
 ```
@@ -84,7 +84,7 @@ integral is trapezoidal.
     `compute-fit-03-cleanup`. Build the conductivity from the raw-compute
     classes instead: `molrs.compute.transport.GreenKuboConductivity` produces the raw current ACF
     $C(\tau)$, `molrs.compute.fitting.CumulativeTrapezoid` forms $\int_0^\tau C\,d\tau'$, and a
-    `1/(3·V·k_B·T)` MD→SI prefactor (folding in $e^2$, Å→m, ps→s — the same
+    `1/(3·V·k_B·T)` MD→SI prefactor (folding in $e^2$, Å→m, fs→s — the same
     factors as the Einstein–Helfand route, with the Green–Kubo $1/3$ replacing
     the Einstein $1/6$) converts the result to S·m⁻¹. This mirrors the
     Einstein–Helfand route documented with the
@@ -120,7 +120,7 @@ $d \mathrel{-}= \mathrm{round}(d/L)\,L$ per axis (matching *tame*'s
 | `box_lengths` | `Array2<f64>` `(n_frames, 3)` | per-frame orthorhombic edge lengths (≤ 0 disables an axis) |
 | `r0`, `r1` | `f64` | inner/outer cutoff, Å (`r0 > 0`, `r1 ≥ r0`) |
 | `method` | `&str` / `SurvivalMethod` | survival criterion |
-| `dt` | `f64` | frame spacing, ps (> 0) |
+| `dt` | `f64` | frame spacing, fs (> 0) |
 | `max_correlation_time` | `usize` | longest lag in frames |
 | `exclude_self` | `bool` | drop the `i == j` self-pair when both species are identical |
 
@@ -132,7 +132,7 @@ $d \mathrel{-}= \mathrm{round}(d/L)\,L$ per axis (matching *tame*'s
 (`r0 ≤ 0`, `r1 < r0`, `dt ≤ 0`, or unknown `method`).
 
 ```python
-from molrs.compute.transport import Persist
+from molpy.compute.transport import Persist
 res = Persist.pair_survival_tcf(coords_i, coords_j, box_lengths,
                                 r0=3.0, r1=4.0, method="ssp",
                                 dt=0.01, max_correlation_time=3000,

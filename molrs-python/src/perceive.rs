@@ -33,7 +33,7 @@ use crate::core::system::molgraph::PyAtomistic;
 
 /// Chemical perception, as a builder — `molrs.Perceive`.
 ///
-/// Exposed to Python as `molrs.Perceive`. Every ``find_*`` method is graph-in /
+/// Exposed to Python as `molrs.perceive.Perceive`. Every ``find_*`` method is graph-in /
 /// graph-out and **non-mutating**.
 ///
 /// Props written (atom / bond components on the returned clone):
@@ -223,11 +223,7 @@ impl PyPerceive {
     /// Atomistic
     ///     A clone of ``mol`` whose aromatic bonds carry a legal localized
     ///     number.
-    fn find_kekule_orders(
-        &self,
-        py: Python<'_>,
-        mol: &PyAtomistic,
-    ) -> PyResult<Py<PyAtomistic>> {
+    fn find_kekule_orders(&self, py: Python<'_>, mol: &PyAtomistic) -> PyResult<Py<PyAtomistic>> {
         PyAtomistic::from_core(py, self.inner.find_kekule_orders(mol.core()))
     }
 

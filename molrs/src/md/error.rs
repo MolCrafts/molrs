@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use molrs::units::UnitsError;
+use molrs::spatial::neighbors::SkinError;
 
 /// Failures on the MD surface: construction, binding, and policy guards.
 #[derive(Debug)]
@@ -13,30 +13,23 @@ pub enum MdError {
     Unbound(String),
     /// Neighbour-list completeness / unwrapped-position guard failed.
     Neighbor(String),
-    /// Unit conversion through [`molrs::units`] failed.
-    Units(UnitsError),
 }
 
 impl fmt::Display for MdError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Invalid(msg) | Self::Unbound(msg) | Self::Neighbor(msg) => f.write_str(msg),
-            Self::Units(err) => write!(f, "MD unit conversion: {err}"),
         }
     }
 }
 
-impl std::error::Error for MdError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Units(err) => Some(err),
-            _ => None,
-        }
-    }
-}
+impl std::error::Error for MdError {}
 
-impl From<UnitsError> for MdError {
-    fn from(err: UnitsError) -> Self {
-        Self::Units(err)
+impl From<SkinError> for MdError {
+    fn from(err: SkinError) -> Self {
+        match err {
+            SkinError::Invalid(msg) => Self::Invalid(msg),
+            SkinError::Guard(msg) => Self::Neighbor(msg),
+        }
     }
 }

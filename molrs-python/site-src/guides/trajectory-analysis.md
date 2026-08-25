@@ -30,23 +30,23 @@ the x-axis. MSD uses frame 0 as the reference.
 
 ```python
 import numpy as np
-import molrs
+import molpy
 
-def make_frame(offset: float) -> molrs.Frame:
-    atoms = molrs.Block()
+def make_frame(offset: float) -> molpy.Frame:
+    atoms = molpy.Block()
     atoms.insert("element", ["Ar", "Ar"])
     atoms.insert("x", np.array([0.0 + offset, 1.0 + offset], dtype=np.float64))
     atoms.insert("y", np.array([0.0, 0.0], dtype=np.float64))
     atoms.insert("z", np.array([0.0, 0.0], dtype=np.float64))
 
-    frame = molrs.Frame()
+    frame = molpy.Frame()
     frame["atoms"] = atoms
-    frame.box = molrs.Box.cube(20.0)
+    frame.box = molpy.Box.cube(20.0)
     return frame
 
 frames = [make_frame(0.0), make_frame(0.1), make_frame(0.2)]
 
-from molrs.compute.msd import MSD
+from molpy.compute.msd import MSD
 msd = MSD()
 series = msd.compute(frames)
 
@@ -75,22 +75,22 @@ points = np.array(
     dtype=np.float64,
 )
 
-atoms = molrs.Block()
+atoms = molpy.Block()
 atoms.insert("element", ["C", "C", "C", "C"])
 atoms.insert("x", points[:, 0])
 atoms.insert("y", points[:, 1])
 atoms.insert("z", points[:, 2])
 
-frame = molrs.Frame()
+frame = molpy.Frame()
 frame["atoms"] = atoms
-frame.box = molrs.Box.cube(20.0)
+frame.box = molpy.Box.cube(20.0)
 
-nl = molrs.NeighborList(1.0)
+nl = molpy.NeighborList(1.0)
 nl.build(points, frame.box)
 neigh = nl.neighbors()
 
-from molrs.compute.cluster import Cluster, ClusterCenters
-clusters = Cluster(min_cluster_size=1).compute(frame, nlist)
+from molpy.compute.cluster import Cluster, ClusterCenters
+clusters = Cluster(min_cluster_size=1).compute(frame, neigh)
 centers = ClusterCenters().compute(frame, clusters)
 
 print("clusters:", clusters.num_clusters)

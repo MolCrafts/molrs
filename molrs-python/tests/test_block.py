@@ -107,6 +107,12 @@ class TestBlockGet:
         with pytest.raises(KeyError):
             b.view("nonexistent")
 
+    def test_missing_column_lists_candidates(self):
+        b = Block()
+        b.insert("x", np.array([1.0, 2.0], dtype=np.float64))
+        with pytest.raises(KeyError, match="x"):
+            b.view("xx")
+
     def test_roundtrip_2d(self):
         b = Block()
         data = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float64)

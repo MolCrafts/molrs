@@ -7,46 +7,61 @@ use rand::{RngExt, SeedableRng};
 use molrs::types::{F, FNx3};
 
 use super::error::MdError;
-use super::units::kb_md;
 
-/// Maxwell-Boltzmann velocity distribution at a target temperature.
+/// Maxwell-Boltzmann velocity distribution.
 ///
-/// Attach it from the runner / a hook; this type only draws:
+/// `kbt` is k_B·T in the same energy units as the masses. MD has no unit
+/// knowledge — pass `UnitPreset::real().boltzmann() * T` for LAMMPS real.
 ///
 /// ```ignore
-/// let mb = MaxwellBoltzmann::new(300.0, 0)?;
+/// let mb = MaxwellBoltzmann::new(molrs::units::constants::BOLTZMANN_REAL * 300.0, 0)?;
 /// let vel = mb.velocities(pos.view(), mass.view())?;
 /// ```
 pub struct MaxwellBoltzmann {
-    /// Target temperature in kelvin.
-    pub temperature: F,
-    /// RNG seed.
-    pub seed: u64,
-    /// Subtract the centre-of-mass velocity after the draw.
-    pub remove_com: bool,
+    kbt: F,
+    seed: u64,
+    remove_com: bool,
 }
 
 impl MaxwellBoltzmann {
-    /// Draw at `temperature` kelvin. `remove_com` defaults to `true`.
-    pub fn new(temperature: F, seed: u64) -> Result<Self, MdError> {
-        Self::with_com(temperature, seed, true)
-    }
-
-    /// Draw at `temperature` kelvin, optionally leaving the COM velocity.
-    pub fn with_com(temperature: F, seed: u64, remove_com: bool) -> Result<Self, MdError> {
-        if !temperature.is_finite() || temperature <= 0.0 {
+    /// Draw with scale `sqrt(kbt / m)`; the COM velocity is removed after
+    /// the draw ([`keep_com`](Self::keep_com) opts out).
+    pub fn new(kbt: F, seed: u64) -> Result<Self, MdError> {
+        if !kbt.is_finite() || kbt <= 0.0 {
             return Err(MdError::Invalid(
-                "MaxwellBoltzmann temperature must be strictly positive".into(),
+                "MaxwellBoltzmann kbt must be strictly positive".into(),
             ));
         }
         Ok(Self {
-            temperature,
+            kbt,
             seed,
-            remove_com,
+            remove_com: true,
         })
     }
 
-    /// Draw `(N, 3)` velocities in Å/fs at [`Self::temperature`].
+    /// Leave the centre-of-mass velocity in the draw (the default removes it).
+    #[must_use]
+    pub fn keep_com(mut self) -> Self {
+        self.remove_com = false;
+        self
+    }
+
+    /// k_B·T in the caller's energy units.
+    pub fn kbt(&self) -> F {
+        self.kbt
+    }
+
+    /// RNG seed.
+    pub fn seed(&self) -> u64 {
+        self.seed
+    }
+
+    /// Whether the centre-of-mass velocity is subtracted after the draw.
+    pub fn remove_com(&self) -> bool {
+        self.remove_com
+    }
+
+    /// Draw `(N, 3)` velocities at [`Self::kbt`].
     pub fn velocities(
         &self,
         pos: ArrayView2<'_, F>,
@@ -68,11 +83,10 @@ impl MaxwellBoltzmann {
         if mass.iter().any(|&m| !m.is_finite() || m <= 0.0) {
             return Err(MdError::Invalid("mass must be strictly positive".into()));
         }
-        let kb = kb_md()?;
         let mut rng = StdRng::seed_from_u64(self.seed);
         let mut vel = Array2::<F>::zeros((n, 3));
         Zip::from(vel.rows_mut()).and(mass).for_each(|mut row, &m| {
-            let scale = (kb * self.temperature / m).sqrt();
+            let scale = (self.kbt / m).sqrt();
             for x in row.iter_mut() {
                 *x = standard_normal(&mut rng) * scale;
             }
@@ -160,8 +174,26 @@ mod tests {
     }
 
     #[test]
-    fn rejects_nonpositive_temperature() {
+    fn keep_com_leaves_the_drawn_com() {
+        let pos = Array2::zeros((6, 3));
+        let mass = Array1::from_elem(6, 2.0);
+        let mb = MaxwellBoltzmann::new(200.0, 1).unwrap().keep_com();
+        assert!(!mb.remove_com());
+        let vel = mb.velocities(pos.view(), mass.view()).unwrap();
+        let com = com_velocity(vel.view(), mass.view());
+        assert!(com.iter().any(|c| c.abs() > 1e-8));
+    }
+
+    #[test]
+    fn rejects_nonpositive_kbt() {
         assert!(MaxwellBoltzmann::new(0.0, 0).is_err());
+    }
+
+    #[test]
+    fn kbt_from_boltzmann_real_is_the_caller_scale() {
+        use molrs::units::constants::BOLTZMANN_REAL;
+        let mb = MaxwellBoltzmann::new(BOLTZMANN_REAL * 300.0, 0).unwrap();
+        assert_eq!(mb.kbt(), BOLTZMANN_REAL * 300.0);
     }
 
     #[test]

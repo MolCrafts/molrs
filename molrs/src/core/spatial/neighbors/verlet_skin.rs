@@ -33,7 +33,7 @@ use ndarray::{Array2, ArrayView2};
 use crate::spatial::simbox::SimBox;
 use crate::types::{F, FNx3};
 
-use super::NeighborList;
+use super::{NeighborList, Neighbors, NeighborsStorage, QueryMode};
 
 /// Failures from Verlet-skin construction or the unwrapped-position guard.
 #[derive(Debug)]
@@ -98,32 +98,24 @@ pub struct SkinPair {
 /// Two entry points: [`rebuild`](Self::rebuild) forces a build,
 /// [`update`](Self::update) applies the `every` / `delay` / `check` policy.
 pub struct VerletSkin {
-    /// Interaction cutoff `r_cut` in Å.
-    pub cutoff: F,
-    /// Verlet skin in Å.
-    pub skin: F,
-    /// `every` gate (steps).
-    pub every: usize,
-    /// `delay` gate (steps).
-    pub delay: usize,
-    /// Displacement check switch.
-    pub check: bool,
+    cutoff: F,
+    skin: F,
+    every: usize,
+    delay: usize,
+    check: bool,
     r_build: F,
     simbox: SimBox,
     search: NeighborList,
     edges: Vec<SkinPair>,
-    /// Live edge count (`== edges.len()`).
-    pub num_edges: usize,
-    /// Rebuilds since construction; the initial build is not one of them.
-    pub rebuild_count: usize,
-    /// Steps since the last build (LAMMPS `ago`).
-    pub ago: usize,
-    /// Rebuilds that fired at the first permitted opportunity.
-    pub ndanger: usize,
+    num_edges: usize,
+    rebuild_count: usize,
+    ago: usize,
+    ndanger: usize,
     half_skin_sq: F,
     wrap_guard_sq: F,
     danger_ago: usize,
     x_hold: FNx3,
+    pairs_buf: Neighbors,
 }
 
 impl VerletSkin {
@@ -217,10 +209,61 @@ impl VerletSkin {
             wrap_guard_sq: half_width * half_width,
             danger_ago: policy.every.max(policy.delay),
             x_hold: Array2::zeros((n_atoms, 3)),
+            pairs_buf: Neighbors::empty(
+                QueryMode::SelfQuery {
+                    num_points: n_atoms,
+                },
+                NeighborsStorage::FULL,
+            ),
         };
         skin.write_edges();
         skin.hold(positions);
         Ok(skin)
+    }
+
+    /// Interaction cutoff `r_cut` in Å (fixed at construction).
+    pub fn cutoff(&self) -> F {
+        self.cutoff
+    }
+
+    /// Verlet skin in Å (from [`NeighborPolicy`], fixed at construction).
+    pub fn skin(&self) -> F {
+        self.skin
+    }
+
+    /// `every` gate in steps (fixed at construction).
+    pub fn every(&self) -> usize {
+        self.every
+    }
+
+    /// `delay` gate in steps (fixed at construction).
+    pub fn delay(&self) -> usize {
+        self.delay
+    }
+
+    /// Displacement check switch (fixed at construction).
+    pub fn check(&self) -> bool {
+        self.check
+    }
+
+    /// Live edge count (`== edges().len()`).
+    pub fn num_edges(&self) -> usize {
+        self.num_edges
+    }
+
+    /// Rebuilds since construction; the initial build is not one of them.
+    pub fn rebuild_count(&self) -> usize {
+        self.rebuild_count
+    }
+
+    /// Steps since the last build (LAMMPS `ago`).
+    pub fn ago(&self) -> usize {
+        self.ago
+    }
+
+    /// Rebuilds that fired at the first permitted opportunity.
+    pub fn ndanger(&self) -> usize {
+        self.ndanger
     }
 
     /// Build radius `cutoff + skin` in Å (derived, never settable).
@@ -239,7 +282,7 @@ impl VerletSkin {
     }
 
     /// Core pair search, built at [`Self::r_build`]. Interaction cutoff is
-    /// the caller's (`Potential` still masks the skin shell).
+    /// the caller's (the pair potential still masks the skin shell).
     pub fn search(&self) -> &NeighborList {
         &self.search
     }
@@ -374,6 +417,44 @@ impl VerletSkin {
             f(edge.i, edge.j, r2, disp);
         }
     }
+
+    /// Run the update policy, then materialize `(i, j, disp, dist_sq)` for the
+    /// current geometry into a reusable FULL buffer. This is the only place
+    /// in the MD loop that computes a minimum image.
+    pub fn pairs_at(&mut self, positions: ArrayView2<'_, F>) -> Result<&Neighbors, SkinError> {
+        self.update(positions)?;
+        self.pairs_buf.set_mode(QueryMode::SelfQuery {
+            num_points: positions.nrows(),
+        });
+        self.pairs_buf.clear();
+        let mic = self.simbox.mic();
+        if let Some(pos) = positions.as_slice() {
+            for edge in &self.edges {
+                let i = edge.i as usize;
+                let j = edge.j as usize;
+                let bi = 3 * i;
+                let bj = 3 * j;
+                let disp = mic.apply([
+                    pos[bj] - pos[bi],
+                    pos[bj + 1] - pos[bi + 1],
+                    pos[bj + 2] - pos[bi + 2],
+                ]);
+                let r2 = disp[0] * disp[0] + disp[1] * disp[1] + disp[2] * disp[2];
+                self.pairs_buf.push(edge.i, edge.j, r2, disp);
+            }
+        } else {
+            for edge in &self.edges {
+                let i = edge.i as usize;
+                let j = edge.j as usize;
+                let pi = [positions[[i, 0]], positions[[i, 1]], positions[[i, 2]]];
+                let pj = [positions[[j, 0]], positions[[j, 1]], positions[[j, 2]]];
+                let disp = mic.apply([pj[0] - pi[0], pj[1] - pi[1], pj[2] - pi[2]]);
+                let r2 = disp[0] * disp[0] + disp[1] * disp[1] + disp[2] * disp[2];
+                self.pairs_buf.push(edge.i, edge.j, r2, disp);
+            }
+        }
+        Ok(&self.pairs_buf)
+    }
 }
 
 #[cfg(test)]
@@ -452,15 +533,15 @@ mod tests {
     #[test]
     fn pair_inside_cutoff_is_half_shell() {
         let nl = skin_link(2.5, NeighborPolicy::default(), two_atoms(1.0).view(), 20.0);
-        assert_eq!(nl.num_edges, 1);
-        assert_eq!(nl.edges[0].i, 0);
-        assert_eq!(nl.edges[0].j, 1);
+        assert_eq!(nl.num_edges(), 1);
+        assert_eq!(nl.edges()[0].i, 0);
+        assert_eq!(nl.edges()[0].j, 1);
     }
 
     #[test]
     fn pair_outside_cutoff_is_absent() {
         let nl = skin_link(1.0, NeighborPolicy::default(), two_atoms(1.5).view(), 20.0);
-        assert_eq!(nl.num_edges, 0);
+        assert_eq!(nl.num_edges(), 0);
     }
 
     #[test]
@@ -478,7 +559,7 @@ mod tests {
         let pos1 = array![[0.0, 0.0, 0.0], [1.5, 0.0, 0.0]];
         let rebuilt = nl.update(pos1.view()).unwrap();
         assert!(!rebuilt);
-        assert_eq!(nl.rebuild_count, 0);
+        assert_eq!(nl.rebuild_count(), 0);
     }
 
     #[test]
@@ -496,7 +577,7 @@ mod tests {
         let pos1 = array![[0.0, 0.0, 0.0], [1.6, 0.0, 0.0]];
         let rebuilt = nl.update(pos1.view()).unwrap();
         assert!(rebuilt);
-        assert_eq!(nl.rebuild_count, 1);
+        assert_eq!(nl.rebuild_count(), 1);
     }
 
     #[test]
@@ -588,6 +669,6 @@ mod tests {
     }
 
     fn edge_set(nl: &VerletSkin) -> std::collections::BTreeSet<(u32, u32)> {
-        nl.edges.iter().map(|e| (e.i, e.j)).collect()
+        nl.edges().iter().map(|e| (e.i, e.j)).collect()
     }
 }

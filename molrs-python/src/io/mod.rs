@@ -17,40 +17,38 @@
 
 use crate::core::store::block::PyBlock;
 use crate::core::store::frame::PyFrame;
-use pyo3::types::PyBytes;
 use crate::core::system::molgraph::PyAtomistic;
 use crate::helpers::{io_error_to_pyerr, molrs_error_to_pyerr, smiles_error_to_pyerr};
+use molrs::io::data::ac::read_ac as read_ac_rs;
 use molrs::io::data::chgcar::read_chgcar;
 use molrs::io::data::cube::{read_cube, write_cube};
+use molrs::io::data::frcmod::{
+    FrcmodFile, parse_frcmod as parse_frcmod_rs, read_frcmod as read_frcmod_rs,
+    write_frcmod as write_frcmod_rs,
+};
 use molrs::io::data::gro::{read_gro as read_gro_rs, write_gro as write_gro_rs};
 use molrs::io::data::inpcrd::read_amber_inpcrd as read_amber_inpcrd_rs;
-use molrs::io::data::ac::read_ac as read_ac_rs;
-use molrs::io::data::frcmod::{
-    parse_frcmod as parse_frcmod_rs, read_frcmod as read_frcmod_rs,
-    write_frcmod as write_frcmod_rs, FrcmodFile,
+use molrs::io::data::lammps_data::{read_lammps_data, write_lammps_data};
+use molrs::io::data::lammps_molecule::{
+    read_lammps_molecule as read_lammps_molecule_rs,
+    write_lammps_molecule as write_lammps_molecule_rs,
 };
+use molrs::io::data::mol2::{read_mol2 as read_mol2_rs, write_mol2 as write_mol2_rs};
+use molrs::io::data::pdb::{read_pdb_frame, read_pdb_traj, write_pdb_frame, write_pdb_traj};
 use molrs::io::data::prep::{
-    read_prep as read_prep_rs, write_prep as write_prep_rs, PrepAtom, PrepResidue,
+    PrepAtom, PrepResidue, read_prep as read_prep_rs, write_prep as write_prep_rs,
 };
 use molrs::io::data::prmtop::{
     read_amber_prmtop as read_amber_prmtop_rs,
     read_amber_prmtop_sections as read_amber_prmtop_sections_rs,
 };
 use molrs::io::data::prmtop_tables::{
-    decode_angle_params as decode_angle_params_rs,
-    decode_bond_params as decode_bond_params_rs,
+    decode_angle_params as decode_angle_params_rs, decode_bond_params as decode_bond_params_rs,
     decode_dihedral_params as decode_dihedral_params_rs,
     decode_nonbond_params as decode_nonbond_params_rs, parse_a4_names as parse_a4_names_rs,
     parse_pointers as parse_pointers_rs,
 };
-use molrs::io::data::lammps_data::{read_lammps_data, write_lammps_data};
-use molrs::io::data::mol2::{read_mol2 as read_mol2_rs, write_mol2 as write_mol2_rs};
 use molrs::io::data::top::{read_top as read_top_rs, write_top as write_top_rs};
-use molrs::io::data::lammps_molecule::{
-    read_lammps_molecule as read_lammps_molecule_rs,
-    write_lammps_molecule as write_lammps_molecule_rs,
-};
-use molrs::io::data::pdb::{read_pdb_frame, read_pdb_traj, write_pdb_frame, write_pdb_traj};
 use molrs::io::data::xsf::{read_xsf as read_xsf_rs, write_xsf as write_xsf_rs};
 use molrs::io::data::xyz::{XYZReader, read_xyz_frame, read_xyz_traj, write_xyz_frame};
 use molrs::io::log::lammps::{
@@ -71,8 +69,9 @@ use molrs::io::trajectory::xtc::{
     XtcReader, open_xtc, read_xtc as read_xtc_rs, write_xtc as write_xtc_rs,
 };
 use molrs::store::frame::Frame as CoreFrame;
-use pyo3::exceptions::{PyFileNotFoundError, PyIndexError, PyIOError, PyValueError};
+use pyo3::exceptions::{PyFileNotFoundError, PyIOError, PyIndexError, PyValueError};
 use pyo3::prelude::*;
+use pyo3::types::PyBytes;
 use pyo3::types::{PyDict, PyList, PySlice, PyType};
 use serde_json::Value as JsonValue;
 use std::fs::File;
@@ -106,7 +105,9 @@ use std::io::BufWriter;
 /// >>> symbols = atoms.view("symbol")
 #[pyfunction]
 pub fn read_pdb(path: &str) -> PyResult<PyFrame> {
-    let frame = read_pdb_frame(path).map_err(io_error_to_pyerr)?;
+    let frame = read_pdb_frame(path).map_err(|e| {
+        pyo3::exceptions::PyIOError::new_err(format!("{path}: {e}"))
+    })?;
     PyFrame::from_core_frame(frame)
 }
 
@@ -1185,16 +1186,35 @@ fn py_to_prep_residue(residue: &Bound<'_, PyAny>) -> PyResult<PrepResidue> {
                 .ok()
                 .and_then(|v| v.extract().ok())
                 .unwrap_or_else(|| "M".into()),
-            na: d.get_item("na").ok().and_then(|v| v.extract().ok()).unwrap_or(0),
-            nb: d.get_item("nb").ok().and_then(|v| v.extract().ok()).unwrap_or(0),
-            nc: d.get_item("nc").ok().and_then(|v| v.extract().ok()).unwrap_or(0),
-            r: d.get_item("r").ok().and_then(|v| v.extract().ok()).unwrap_or(0.0),
+            na: d
+                .get_item("na")
+                .ok()
+                .and_then(|v| v.extract().ok())
+                .unwrap_or(0),
+            nb: d
+                .get_item("nb")
+                .ok()
+                .and_then(|v| v.extract().ok())
+                .unwrap_or(0),
+            nc: d
+                .get_item("nc")
+                .ok()
+                .and_then(|v| v.extract().ok())
+                .unwrap_or(0),
+            r: d.get_item("r")
+                .ok()
+                .and_then(|v| v.extract().ok())
+                .unwrap_or(0.0),
             theta: d
                 .get_item("theta")
                 .ok()
                 .and_then(|v| v.extract().ok())
                 .unwrap_or(0.0),
-            phi: d.get_item("phi").ok().and_then(|v| v.extract().ok()).unwrap_or(0.0),
+            phi: d
+                .get_item("phi")
+                .ok()
+                .and_then(|v| v.extract().ok())
+                .unwrap_or(0.0),
             charge: d
                 .get_item("charge")
                 .ok()
@@ -1223,13 +1243,9 @@ fn py_to_prep_residue(residue: &Bound<'_, PyAny>) -> PyResult<PrepResidue> {
     })
 }
 
-fn prep_residue_to_pydict<'py>(
-    py: Python<'py>,
-    res: &PrepResidue,
-) -> PyResult<Bound<'py, PyDict>> {
-    let value = serde_json::to_value(res).map_err(|e| {
-        PyValueError::new_err(format!("failed to serialize prep residue: {e}"))
-    })?;
+fn prep_residue_to_pydict<'py>(py: Python<'py>, res: &PrepResidue) -> PyResult<Bound<'py, PyDict>> {
+    let value = serde_json::to_value(res)
+        .map_err(|e| PyValueError::new_err(format!("failed to serialize prep residue: {e}")))?;
     match value {
         JsonValue::Object(map) => json_object_to_pydict(py, &map),
         _ => Err(PyValueError::new_err(
@@ -1289,7 +1305,6 @@ fn map_to_frcmod(sections: std::collections::HashMap<String, String>) -> FrcmodF
     }
     file
 }
-
 
 /// Write a Frame to a Tripos MOL2 file.
 ///
@@ -1480,9 +1495,8 @@ fn lammps_log_to_pydict<'py>(
     py: Python<'py>,
     log: &molrs::io::log::LammpsLog,
 ) -> PyResult<Bound<'py, PyDict>> {
-    let value = serde_json::to_value(log).map_err(|e| {
-        PyValueError::new_err(format!("failed to serialize LAMMPS log: {e}"))
-    })?;
+    let value = serde_json::to_value(log)
+        .map_err(|e| PyValueError::new_err(format!("failed to serialize LAMMPS log: {e}")))?;
     match value {
         JsonValue::Object(map) => json_object_to_pydict(py, &map),
         _ => Err(PyValueError::new_err(
@@ -2194,10 +2208,10 @@ impl PySmilesIR {
             multi_component,
             organic_subset,
         )?;
-        let ir = molrs::io::smiles::from_atomistic(mol.core(), &opts)
-            .map_err(smiles_error_to_pyerr)?;
-        let input = molrs::io::smiles::write_smiles(&ir)
-            .unwrap_or_else(|_| "<from_atomistic>".to_owned());
+        let ir =
+            molrs::io::smiles::from_atomistic(mol.core(), &opts).map_err(smiles_error_to_pyerr)?;
+        let input =
+            molrs::io::smiles::write_smiles(&ir).unwrap_or_else(|_| "<from_atomistic>".to_owned());
         Ok(Self { inner: ir, input })
     }
 

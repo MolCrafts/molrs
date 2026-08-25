@@ -4,7 +4,8 @@ Demonstrates: Atomistic construction → Conformer.generate → inspect report.
 Input is just atoms + bonds, no coordinates.
 """
 
-from molrs import Atomistic, Conformer
+from molrs import Atomistic
+from molrs.conformer import Conformer
 
 # Build water: O-H-H (no coordinates)
 mol = Atomistic()

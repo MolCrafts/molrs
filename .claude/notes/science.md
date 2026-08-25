@@ -21,7 +21,7 @@ Project standard for molrs scientific correctness. Applied by the
 | Length | Å | |
 | Energy | kcal/mol | |
 | Force | kcal/(mol·Å) | |
-| Time | fs | |
+| Time | fs | analysis `dt` / lag use fs; there is no parallel ps unit |
 | Mass | g/mol (amu) | |
 | Charge | e | elementary |
 | Temperature | K | |

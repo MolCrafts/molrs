@@ -108,22 +108,22 @@ impl PyTrajectory {
         })
     }
 
-    /// Read a frame-sequence Zarr archive into a `Trajectory`.
+    /// Read a frame-sequence archive into a `Trajectory`.
     ///
     /// Requires the ``fs`` feature (default on desktop; omitted for Pyodide).
     #[staticmethod]
     #[cfg(feature = "fs")]
-    fn read_zarr(path: &str) -> PyResult<Self> {
+    fn read(path: &str) -> PyResult<Self> {
         let inner =
             molrs::io::store::zarr::read_trajectory_file(path).map_err(molrs_error_to_pyerr)?;
         Ok(Self { inner })
     }
 
-    /// Write this trajectory to a frame-sequence Zarr archive.
+    /// Write this trajectory to a frame-sequence archive.
     ///
     /// Requires the ``fs`` feature (default on desktop; omitted for Pyodide).
     #[cfg(feature = "fs")]
-    fn write_zarr(&self, path: &str) -> PyResult<()> {
+    fn write(&self, path: &str) -> PyResult<()> {
         molrs::io::store::zarr::write_trajectory_file(path, &self.inner)
             .map_err(molrs_error_to_pyerr)
     }

@@ -141,8 +141,6 @@ pub enum StyleDefs {
     Dihedral(Vec<DihedralType>),
     Improper(Vec<ImproperType>),
     Pair(Vec<PairType>),
-    /// K-space styles (e.g. PME) have no per-type defs; all params at style level.
-    KSpace,
 }
 
 impl StyleDefs {
@@ -155,7 +153,6 @@ impl StyleDefs {
             Self::Dihedral(_) => "dihedral",
             Self::Improper(_) => "improper",
             Self::Pair(_) => "pair",
-            Self::KSpace => "kspace",
         }
     }
 
@@ -186,8 +183,6 @@ impl StyleDefs {
                 .iter()
                 .map(|t| (t.name.clone(), t.params.clone()))
                 .collect(),
-            // KSpace has no per-type defs; return a dummy entry so the compile loop works.
-            Self::KSpace => vec![("*".into(), Params::new())],
         }
     }
 }
@@ -445,7 +440,6 @@ impl Style {
                 }
                 _ => return Err(arity("A\" or \"A-B")),
             },
-            "kspace" => return Err(DefTypeError::Unsupported(category)),
             other => return Err(DefTypeError::UnknownCategory(other.to_string())),
         }
         Ok(())
@@ -486,7 +480,7 @@ pub enum DefTypeError {
         name: String,
         got: usize,
     },
-    /// The category accepts no per-type definitions (e.g. `kspace`).
+    /// The category accepts no per-type definitions.
     Unsupported(&'static str),
     /// Unknown style category string.
     UnknownCategory(String),
@@ -521,7 +515,7 @@ impl std::error::Error for DefTypeError {}
 /// through these). Each operates on the type identified by its dash-form name.
 impl Style {
     /// Endpoint atom-type names of the type named `name` (e.g. `["CT","CT"]`),
-    /// or `None` if no such type. Atom/kspace styles return an empty vec.
+    /// or `None` if no such type. Atom styles return an empty vec.
     pub fn type_endpoints(&self, name: &str) -> Option<Vec<String>> {
         match &self.defs {
             StyleDefs::Atom(v) => v.iter().find(|t| t.name == name).map(|_| Vec::new()),
@@ -553,7 +547,6 @@ impl Style {
                 .iter()
                 .find(|t| t.name == name)
                 .map(|t| vec![t.itom.clone(), t.jtom.clone()]),
-            StyleDefs::KSpace => None,
         }
     }
 
@@ -575,7 +568,6 @@ impl Style {
             StyleDefs::Dihedral(v) => set_on!(v),
             StyleDefs::Improper(v) => set_on!(v),
             StyleDefs::Pair(v) => set_on!(v),
-            StyleDefs::KSpace => {}
         }
         false
     }
@@ -598,7 +590,6 @@ impl Style {
             StyleDefs::Dihedral(v) => set_on!(v),
             StyleDefs::Improper(v) => set_on!(v),
             StyleDefs::Pair(v) => set_on!(v),
-            StyleDefs::KSpace => {}
         }
         false
     }
@@ -622,7 +613,6 @@ impl Style {
             StyleDefs::Dihedral(v) => rename_in!(v),
             StyleDefs::Improper(v) => rename_in!(v),
             StyleDefs::Pair(v) => rename_in!(v),
-            StyleDefs::KSpace => 0,
         }
     }
 
@@ -642,7 +632,6 @@ impl Style {
             StyleDefs::Dihedral(v) => remove_in!(v),
             StyleDefs::Improper(v) => remove_in!(v),
             StyleDefs::Pair(v) => remove_in!(v),
-            StyleDefs::KSpace => 0,
         }
     }
 }
@@ -779,10 +768,6 @@ impl ForceField {
         )
     }
 
-    pub fn def_kspacestyle(&mut self, name: &str, params: &[(&str, f64)]) -> &mut Style {
-        self.def_style(StyleDefs::KSpace, name, Params::from_pairs(params))
-    }
-
     /// Define a type in one call: ensure the `category` style named `style`
     /// exists, then add the type whose dash-form `name` is validated against
     /// the category's arity. Owns the type-name grammar so bindings forward the
@@ -803,7 +788,6 @@ impl ForceField {
             "dihedral" => self.def_dihedralstyle(style),
             "improper" => self.def_improperstyle(style),
             "pair" => self.def_pairstyle(style, &[]),
-            "kspace" => return Err(DefTypeError::Unsupported("kspace")),
             other => return Err(DefTypeError::UnknownCategory(other.to_string())),
         };
         target.try_def_type(name, params)
@@ -1019,7 +1003,6 @@ impl ForceField {
                         .cloned()
                         .collect(),
                 ),
-                StyleDefs::KSpace => StyleDefs::KSpace,
             };
 
             let keep = match &defs {
@@ -1029,7 +1012,6 @@ impl ForceField {
                 StyleDefs::Dihedral(t) => !t.is_empty(),
                 StyleDefs::Improper(t) => !t.is_empty(),
                 StyleDefs::Pair(t) => !t.is_empty(),
-                StyleDefs::KSpace => true,
             };
             if keep {
                 out.styles
@@ -1419,5 +1401,16 @@ mod tests {
             .map(|t| t.name.as_str())
             .collect();
         assert_eq!(pairs, HashSet::from(["CT", "OH", "CT-OH"]));
+    }
+
+    #[test]
+    fn kspace_is_not_a_style_category() {
+        let mut ff = ForceField::new("test");
+        assert!(matches!(
+            ff.def_type("kspace", "pme", "X", &[]),
+            Err(DefTypeError::UnknownCategory(_))
+        ));
+        assert!(crate::ff::potential::lookup_kernel("pair", "coul/long/pme").is_some());
+        assert!(crate::ff::potential::lookup_kernel("kspace", "pme").is_none());
     }
 }

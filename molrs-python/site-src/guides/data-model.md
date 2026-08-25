@@ -56,18 +56,18 @@ analysis routines expect.
 
 ```python
 import numpy as np
-import molrs
+import molpy
 
-atoms = molrs.Block()
+atoms = molpy.Block()
 atoms.insert("element", ["O", "H", "H"])
 atoms.insert("x", np.array([0.0000, 0.9572, -0.2399], dtype=np.float64))
 atoms.insert("y", np.array([0.0000, 0.0000,  0.9266], dtype=np.float64))
 atoms.insert("z", np.array([0.0000, 0.0000,  0.0000], dtype=np.float64))
 atoms.insert("mass", np.array([15.999, 1.008, 1.008], dtype=np.float64))
 
-frame = molrs.Frame()
+frame = molpy.Frame()
 frame["atoms"] = atoms
-frame.box = molrs.Box.cube(30.0)
+frame.box = molpy.Box.cube(30.0)
 frame.meta = {"name": "water", "source": "docs"}
 
 frame.validate()
@@ -101,7 +101,7 @@ Topology in a frame is just another block. Bond indices are zero-based because
 they refer to row positions in the `atoms` block.
 
 ```python
-bonds = molrs.Block()
+bonds = molpy.Block()
 bonds.insert("i", np.array([0, 0], dtype=np.uint32))
 bonds.insert("j", np.array([1, 2], dtype=np.uint32))
 bonds.insert("order", np.array([1.0, 1.0], dtype=np.float64))

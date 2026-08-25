@@ -3,7 +3,7 @@
 //! [`SoftPotential`] is a pure, distance-based energy: given coordinates and a
 //! **pre-resolved pair list**, it returns energy + forces. It does NOT build a
 //! neighbour list and does NOT know about periodicity — exactly like
-//! [`PairLJCut`](crate::ff::potential::pair::PairLJCut), every pair `(i, j)` is
+//! [`LJCut`](crate::ff::potential::pair::LJCut), every pair `(i, j)` is
 //! resolved once (by a neighbour list) and stored, together with the per-pair
 //! minimum-image **shift** the neighbour list reported. The kernel only ever
 //! evaluates `d = x_i - x_j - shift`.
