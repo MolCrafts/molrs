@@ -34,8 +34,6 @@ jobs:
             molrs-python/Cargo.toml
       # Tools only (no project install) → tox builds the wheel once.
       # Same gate as prek pre-push.
-      # examples/*.py are glob-run by tests/test_examples_smoke.py inside tox
-      # (this .venv does not install molrs).
       - name: tox -e py
         working-directory: molrs-python
         shell: bash
