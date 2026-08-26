@@ -59,12 +59,14 @@ jobs:
           uv pip install --python .venv-link-static/bin/python target/wheels/molcrafts_molrs-*.whl
           .venv-link-static/bin/python regressions/link-mode-static-default.py
 
-  # The opt-in form. It is cross-repo by construction: one shared libmolrs_ffi
-  # only exists once the molrs and molpack extensions coexist in one
-  # interpreter. scripts/verify-shared-dylib.sh is the entire gate and — with
-  # docs/interop.md — the only place the opt-in is written down, so this job is
-  # a caller and restates none of it.
+  # Opt-in form: cross-repo (molrs + molpack in one interpreter). Not on the
+  # default push/PR fan-out — a breaking molrs change cannot land if this job
+  # compiles MolCrafts/molpack@dev against the PR, and every-commit 2× maturin
+  # of the unpublished form is not the published default. Dispatch this
+  # workflow (or run scripts/verify-shared-dylib.sh) when touching the dylib
+  # seam. scripts/verify-shared-dylib.sh remains the local pre-push gate.
   dynamic:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       # Sibling layout is a hard requirement, not a convention: molpack's
