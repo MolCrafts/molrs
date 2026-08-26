@@ -4,9 +4,10 @@ on:
   workflow_call:
   workflow_dispatch:
 
-# Toolchain comes from rust-toolchain.toml (currently 1.96.0). Do not use
+# Pin matches rust-toolchain.toml (1.96.0). Do not use
 # dtolnay/rust-toolchain@stable — that floats past the pin and fails clippy
-# on lints the local prek hook never saw.
+# on lints the local prek hook never saw. The action requires an explicit
+# toolchain input; @master without one exits 1.
 
 jobs:
   lint:
@@ -14,7 +15,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@1.96.0
+        with:
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: lint
@@ -29,7 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@1.96.0
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: unit
