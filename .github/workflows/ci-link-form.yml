@@ -37,7 +37,7 @@ jobs:
           shared-key: link-static
           workspaces: ". -> target"
 
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.0.1
 
       - name: Install maturin
         run: uv tool install maturin
@@ -104,7 +104,7 @@ jobs:
           shared-key: link-dynamic
           workspaces: "molrs -> target"
 
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.0.1
 
       - name: Install maturin
         run: uv tool install maturin
