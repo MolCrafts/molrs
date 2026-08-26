@@ -121,6 +121,32 @@ class TestBoxDisplacement:
         with pytest.raises(ValueError):
             cubic_box.delta(p1, p2)
 
+    def test_delta_1d_points_with_mic(self, cubic_box):
+        p1 = np.array([0.1, 0.0, 0.0], dtype=np.float64)
+        p2 = np.array([9.9, 0.0, 0.0], dtype=np.float64)
+        d = cubic_box.delta(p1, p2, minimum_image=True)
+        assert d.shape == (3,)
+        assert abs(d[0]) < 1.0
+
+    def test_delta_1d_points_no_mic(self, cubic_box):
+        p1 = np.array([0.1, 0.0, 0.0], dtype=np.float64)
+        p2 = np.array([9.9, 0.0, 0.0], dtype=np.float64)
+        d = cubic_box.delta(p1, p2, minimum_image=False)
+        assert d.shape == (3,)
+        assert pytest.approx(d[0], abs=1e-3) == 9.8
+
+    def test_delta_rejects_mixed_1d_and_nx3(self, cubic_box):
+        p1 = np.array([0.1, 0.0, 0.0], dtype=np.float64)
+        p2 = np.array([[9.9, 0.0, 0.0]], dtype=np.float64)
+        with pytest.raises(ValueError):
+            cubic_box.delta(p1, p2)
+
+    def test_delta_rejects_bad_1d_length(self, cubic_box):
+        p1 = np.array([0.1, 0.0], dtype=np.float64)
+        p2 = np.array([9.9, 0.0], dtype=np.float64)
+        with pytest.raises(ValueError, match=r"\(N,\s*3\)|\(3,\)"):
+            cubic_box.delta(p1, p2)
+
 
 class TestBoxContainment:
     def test_isin_inside(self, cubic_box, sample_points):

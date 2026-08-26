@@ -8,13 +8,32 @@
 //! All length quantities are in the same units as the stored coordinates
 //! (typically angstroms).
 
-use crate::helpers::{NpF, box_error_to_pyerr, parse_origin, parse_pbc};
+use crate::helpers::{box_error_to_pyerr, parse_origin, parse_pbc, NpF};
 use molrs::spatial::simbox::SimBox;
 use molrs::types::F;
-use ndarray::array;
+use ndarray::{array, Array2, Axis};
 use numpy::{IntoPyArray, PyArray1, PyArray2, PyArray3, PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+
+/// Coerce a Python array to N×3 points. The bool is true when the input was shape `(3,)`.
+fn delta_points_nx3(arg: &Bound<'_, PyAny>) -> PyResult<(Array2<F>, bool)> {
+    if let Ok(arr2) = arg.extract::<PyReadonlyArray2<'_, NpF>>() {
+        let view = arr2.as_array();
+        if view.ncols() != 3 {
+            return Err(PyValueError::new_err("expected shape (N, 3) or (3,)"));
+        }
+        return Ok((view.to_owned(), false));
+    }
+    if let Ok(arr1) = arg.extract::<PyReadonlyArray1<'_, NpF>>() {
+        let view = arr1.as_array();
+        if view.len() != 3 {
+            return Err(PyValueError::new_err("expected shape (N, 3) or (3,)"));
+        }
+        return Ok((view.to_owned().insert_axis(Axis(0)), true));
+    }
+    Err(PyValueError::new_err("expected shape (N, 3) or (3,)"))
+}
 
 /// Simulation box with periodic boundary conditions, exposed to Python as
 /// `molrs.Box`.
@@ -512,43 +531,50 @@ impl PyBox {
     ///
     /// Parameters
     /// ----------
-    /// xyzu1 : numpy.ndarray, shape (N, 3), dtype float
+    /// xyzu1 : numpy.ndarray, shape (N, 3) or (3,), dtype float
     ///     First set of Cartesian coordinates.
-    /// xyzu2 : numpy.ndarray, shape (N, 3), dtype float
-    ///     Second set of Cartesian coordinates (same shape as ``xyzu1``).
+    /// xyzu2 : numpy.ndarray, shape (N, 3) or (3,), dtype float
+    ///     Second set of Cartesian coordinates. Must have the same rank as
+    ///     ``xyzu1`` (both 1-D or both 2-D).
     /// minimum_image : bool, optional
     ///     If ``True``, apply the minimum-image convention to displacements.
     ///     Default is ``False``.
     ///
     /// Returns
     /// -------
-    /// numpy.ndarray, shape (N, 3), dtype float
-    ///     Displacement vectors ``xyzu2 - xyzu1``.
+    /// numpy.ndarray, shape (N, 3) or (3,), dtype float
+    ///     Displacement vectors ``xyzu2 - xyzu1``. Rank matches the inputs.
     ///
     /// Raises
     /// ------
     /// ValueError
-    ///     If shapes do not match or columns != 3.
+    ///     If ranks differ, 1-D length is not 3, columns != 3, or N differs.
     #[pyo3(signature = (xyzu1, xyzu2, minimum_image=false))]
     fn delta<'py>(
         &self,
         py: Python<'py>,
-        xyzu1: PyReadonlyArray2<'_, NpF>,
-        xyzu2: PyReadonlyArray2<'_, NpF>,
+        xyzu1: &Bound<'py, PyAny>,
+        xyzu2: &Bound<'py, PyAny>,
         minimum_image: bool,
-    ) -> PyResult<Bound<'py, PyArray2<NpF>>> {
-        let v1 = xyzu1.as_array();
-        let v2 = xyzu2.as_array();
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let (v1, squeezed1) = delta_points_nx3(xyzu1)?;
+        let (v2, squeezed2) = delta_points_nx3(xyzu2)?;
+        if squeezed1 != squeezed2 {
+            return Err(PyValueError::new_err(
+                "xyzu1 and xyzu2 must both be shape (N, 3) or both be shape (3,)",
+            ));
+        }
         if v1.raw_dim() != v2.raw_dim() {
             return Err(PyValueError::new_err(
                 "xyzu1 and xyzu2 must have the same shape",
             ));
         }
-        if v1.ncols() != 3 {
-            return Err(PyValueError::new_err("expected shape (N,3)"));
+        let d = self.inner.delta(v1.view(), v2.view(), minimum_image);
+        if squeezed1 {
+            Ok(d.remove_axis(Axis(0)).into_pyarray(py).into_any())
+        } else {
+            Ok(d.into_pyarray(py).into_any())
         }
-        let d = self.inner.delta(v1, v2, minimum_image);
-        Ok(d.into_pyarray(py))
     }
 
     /// Row-wise minimum-image distances between equally sized point arrays.
