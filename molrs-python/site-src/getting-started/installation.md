@@ -92,8 +92,8 @@ for nightly testing.
 ### Prerequisites
 
 Source builds need the Rust toolchain, installed via
-[`rustup`](https://rustup.rs/). The repository pins the toolchain channel, the
-`rustfmt` / `clippy` components, and the `wasm32-unknown-unknown` target in
+[`rustup`](https://rustup.rs/). The repository uses the `stable` channel (always
+the latest rustc / rustfmt / clippy) plus the `wasm32-unknown-unknown` target in
 `rust-toolchain.toml`, so `rustup` provisions them automatically on the first
 build inside the checkout — no manual `rustup component add` needed.
 

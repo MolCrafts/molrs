@@ -89,13 +89,20 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: wasm-pack
-      # molrs-wasm release profile runs wasm-opt -O1 (see Cargo.toml metadata).
-      # apt binaryen is too old for current rustc wasm; pin a GitHub release.
+      # apt binaryen is too old for current rustc wasm (misc opcode 17).
+      # Latest GitHub release — same policy as rust-toolchain.toml `stable`.
       - name: Install binaryen (wasm-opt)
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          VER=version_123
-          curl -fsSL "https://github.com/WebAssembly/binaryen/releases/download/${VER}/binaryen-${VER}-x86_64-linux.tar.gz" \
+          VER=$(gh api repos/WebAssembly/binaryen/releases/latest --jq .tag_name)
+          case "$(uname -m)" in
+            x86_64) BIN=x86_64-linux ;;
+            aarch64|arm64) BIN=aarch64-linux ;;
+            *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
+          esac
+          curl -fsSL "https://github.com/WebAssembly/binaryen/releases/download/${VER}/binaryen-${VER}-${BIN}.tar.gz" \
             | sudo tar -xz -C /usr/local --strip-components=1
           wasm-opt --version
       - working-directory: molrs-wasm

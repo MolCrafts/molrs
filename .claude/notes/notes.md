@@ -17,6 +17,16 @@ status change) and conflicts with `CLAUDE.md`.
 
 ---
 
+## 2026-08-26 — development tools track latest; other-platform UB out of scope
+**Decision:** rustc/clippy/rustfmt = `rust-toolchain.toml` `channel = "stable"`
+and CI `dtolnay/rust-toolchain@stable`. wasm-opt = latest binaryen GitHub
+release. uv action = latest major. pre-commit-hooks = latest tag. Never pin a
+compiler/linter minor to hide CI drift. Other-platform UB (Windows/macOS-only)
+is out of scope until 0.14 lands on `dev`.
+**Why:** pinning rustc 1.96 made local prek green while GHA clippy on 1.98 was
+red; the next rustc bump would just repeat it.
+**Status:** active
+
 ## 2026-08-26 — identity scalar is Idx = u64; storage widths are preserved
 **Decision:** `molrs::types::Idx = u64` replaces `U = u32`. Identity columns
 (`id`, `mol_id`, `type_id`, `res_id`, `atomi`/`atomj`/`atomk`/`atoml`) and

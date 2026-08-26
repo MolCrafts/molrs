@@ -90,9 +90,9 @@ import molrs
 
 ## Build from source
 
-Building from source needs the Rust toolchain. The pinned channel, the
-`rustfmt` / `clippy` components, and the `wasm32-unknown-unknown` target are all
-declared in `rust-toolchain.toml`, so [`rustup`](https://rustup.rs/) selects
+Building from source needs the Rust toolchain. The channel is `stable` (always
+the latest rustc / rustfmt / clippy), plus the `wasm32-unknown-unknown` target,
+all declared in `rust-toolchain.toml`, so [`rustup`](https://rustup.rs/) selects
 them automatically on the first build.
 
 ```bash
