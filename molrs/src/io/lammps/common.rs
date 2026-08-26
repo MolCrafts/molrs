@@ -6,7 +6,7 @@
 
 use molrs::store::block::Block;
 use molrs::store::keys;
-use molrs::types::{F, I, U};
+use molrs::types::{F, I, Idx};
 use ndarray::{Array1, ArrayD, IxDyn};
 use std::collections::HashMap;
 
@@ -55,7 +55,7 @@ pub(crate) fn arr1_i(v: Vec<I>, n: usize) -> std::io::Result<ArrayD<I>> {
         .map(|a| a.into_dyn())
 }
 
-pub(crate) fn arr1_u(v: Vec<U>, n: usize) -> std::io::Result<ArrayD<U>> {
+pub(crate) fn arr1_u(v: Vec<Idx>, n: usize) -> std::io::Result<ArrayD<Idx>> {
     Array1::from_vec(v)
         .into_shape_with_order(IxDyn(&[n]))
         .map_err(err_mapper)
@@ -70,7 +70,7 @@ pub(crate) fn insert_i(block: &mut Block, key: &str, v: Vec<I>, n: usize) -> std
     block.insert(key, arr1_i(v, n)?).map_err(err_mapper)
 }
 
-pub(crate) fn insert_u(block: &mut Block, key: &str, v: Vec<U>, n: usize) -> std::io::Result<()> {
+pub(crate) fn insert_u(block: &mut Block, key: &str, v: Vec<Idx>, n: usize) -> std::io::Result<()> {
     block.insert(key, arr1_u(v, n)?).map_err(err_mapper)
 }
 

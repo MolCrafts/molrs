@@ -38,7 +38,7 @@ use std::rc::Rc;
 use molrs::spatial::simbox::SimBox;
 use molrs::store::block::{Block, DType};
 use molrs::store::frame::Frame;
-use molrs::types::{F, I, U};
+use molrs::types::{F, I, Idx};
 
 use crate::error::FfiError;
 use crate::handle::{BlockHandle, FrameId};
@@ -184,15 +184,7 @@ impl BlockRef {
     /// columns this is `[nrows]`; multi-dim columns (if any) carry their
     /// full shape.
     pub fn shape(&self, key: &str) -> Result<Option<Vec<usize>>, FfiError> {
-        self.with(|b| match b.dtype(key) {
-            None => None,
-            Some(DType::Float) => b.get_float(key).map(|a| a.shape().to_vec()),
-            Some(DType::Int) => b.get_int(key).map(|a| a.shape().to_vec()),
-            Some(DType::UInt) => b.get_uint(key).map(|a| a.shape().to_vec()),
-            Some(DType::U8) => b.get_u8(key).map(|a| a.shape().to_vec()),
-            Some(DType::Bool) => b.get_bool(key).map(|a| a.shape().to_vec()),
-            Some(DType::String) => b.get_string(key).map(|a| a.shape().to_vec()),
-        })
+        self.with(|b| b.get(key).map(|c| c.shape().to_vec()))
     }
 
     /// Deep-clone the block data out of the store.
@@ -266,7 +258,7 @@ impl BlockRef {
     pub fn borrow_u<R>(
         &self,
         key: &str,
-        f: impl FnOnce(&[U], &[usize]) -> R,
+        f: impl FnOnce(&[Idx], &[usize]) -> R,
     ) -> Result<Option<R>, FfiError> {
         self.with(|b| -> Result<Option<R>, FfiError> {
             match b.dtype(key) {
@@ -324,7 +316,7 @@ impl BlockRef {
     }
 
     /// Owned copy of a `U` column.
-    pub fn copy_u(&self, key: &str) -> Result<Option<(Vec<U>, Vec<usize>)>, FfiError> {
+    pub fn copy_u(&self, key: &str) -> Result<Option<(Vec<Idx>, Vec<usize>)>, FfiError> {
         self.borrow_u(key, |slice, shape| (slice.to_vec(), shape.to_vec()))
     }
 }

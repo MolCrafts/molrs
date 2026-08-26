@@ -9,8 +9,8 @@
 //! | Block key   | Expected columns | Column types |
 //! |-------------|------------------|--------------|
 //! | `"atoms"`   | `symbol` (string), `x`, `y`, `z` (F), optionally `mass`, `charge` (F) | string, F |
-//! | `"bonds"`   | `atomi`, `atomj` (u32), `bond_type` (u32), `bond_number` (u32) | u32 |
-//! | `"angles"`  | `i`, `j`, `k` (u32) | u32 |
+//! | `"bonds"`   | `atomi`, `atomj` (u64), `bond_type` (u64), `bond_number` (u64) | u64 |
+//! | `"angles"`  | `atomi`, `atomj`, `atomk` (u64) | u64 |
 //!
 //! # Example (JavaScript)
 //!
@@ -23,13 +23,13 @@
 //! atoms.setColF("z", zCoords);
 //!
 //! const bonds = frame.createBlock("bonds");
-//! bonds.setColU32("i", new Uint32Array([0, 1]));
-//! bonds.setColU32("j", new Uint32Array([1, 2]));
-//! bonds.setColU("bond_type", bondTypes);   // 4 = aromatic
-//! bonds.setColU("bond_number", bondNumbers); // localized 1/2/3
+//! bonds.setColU32("atomi", new BigUint64Array([0n, 1n]));
+//! bonds.setColU32("atomj", new BigUint64Array([1n, 2n]));
+//! bonds.setColU32("bond_type", bondTypes);   // 4 = aromatic
+//! bonds.setColU32("bond_number", bondNumbers); // localized 1/2/3
 //! ```
 
-use js_sys::{Array as JsArray, Float32Array, Int32Array, Uint32Array};
+use js_sys::{BigUint64Array, Array as JsArray, Float32Array, Int32Array};
 use wasm_bindgen::prelude::*;
 
 use molrs::store::block::Block as RsBlock;
@@ -179,7 +179,7 @@ impl Frame {
         self.get_block(block).is_some_and(|b| b.has_i32(key))
     }
 
-    /// True when `block[key]` exists and is `u32`.
+    /// True when `block[key]` exists and is the domain uint (`u64`).
     #[wasm_bindgen(js_name = hasU32)]
     pub fn has_u32(&self, block: &str, key: &str) -> bool {
         self.get_block(block).is_some_and(|b| b.has_u32(key))
@@ -224,14 +224,14 @@ impl Frame {
         frame_block(self, block)?.get_i32(key, default)
     }
 
-    /// Owned u32 column from `block`. Missing with no `default` throws.
+    /// Owned domain-uint (`u64`) column from `block`. Missing with no `default` throws.
     #[wasm_bindgen(js_name = getU32)]
     pub fn get_u32(
         &self,
         block: &str,
         key: &str,
-        default: Option<Uint32Array>,
-    ) -> Result<Uint32Array, JsValue> {
+        default: Option<BigUint64Array>,
+    ) -> Result<BigUint64Array, JsValue> {
         frame_block(self, block)?.get_u32(key, default)
     }
 

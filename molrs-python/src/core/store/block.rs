@@ -16,8 +16,10 @@
 
 use std::sync::Arc;
 
+use half::f16;
 use molrs::store::block::{Block as CoreBlock, BlockDtype, Column, ColumnHolder};
-use molrs::types::{F, I, U};
+use molrs::types::{F, I, Idx};
+use num_complex::Complex;
 use molrs_ffi::BlockRef;
 use ndarray::{Array1, ArrayD, IxDyn};
 use numpy::{PyArrayDyn, PyArrayMethods, PyReadonlyArrayDyn, PyUntypedArrayMethods};
@@ -38,29 +40,6 @@ use crate::store::ffi_error_to_pyerr;
 /// The `borrow_from_array` call in each `*_array_view` helper below creates a
 /// numpy view whose lifetime is tied to this owner object. The `unsendable`
 /// marker ensures the owner (and therefore the view) never crosses threads.
-#[pyclass(module = "molrs", unsendable)]
-struct FloatArrayOwner {
-    array: Arc<ColumnHolder<F>>,
-}
-
-/// See [`FloatArrayOwner`].
-#[pyclass(module = "molrs", unsendable)]
-struct IntArrayOwner {
-    array: Arc<ColumnHolder<I>>,
-}
-
-/// See [`FloatArrayOwner`].
-#[pyclass(module = "molrs", unsendable)]
-struct BoolArrayOwner {
-    array: Arc<ColumnHolder<bool>>,
-}
-
-/// See [`FloatArrayOwner`].
-#[pyclass(module = "molrs", unsendable)]
-struct UIntArrayOwner {
-    array: Arc<ColumnHolder<U>>,
-}
-
 /// Heterogeneous column store exposed to Python as `molrs.Block`.
 ///
 /// Each column is a named, typed array. All columns share the same number of
@@ -157,48 +136,32 @@ impl PyBlock {
         // Matched-dtype, C-contiguous numpy arrays get forged into a
         // foreign-backed Column (zero memcpy). When the layout forbids
         // forging, the same numpy array is copied into a Rust-owned column.
-        // Narrowing-cast dtypes (f32→f64, i64→i32, u64→u32) always copy —
-        // there is no zero-copy path across a dtype change.
-        if let Ok(pyarr) = array.cast::<PyArrayDyn<F>>() {
-            if let Some(col) = try_forge_foreign_column(pyarr, Column::from_float_holder) {
-                return self.insert_column(key, col);
-            }
-            return self.insert_array::<F>(key, pyarr.readonly().as_array().to_owned());
+        // Widths are preserved: f32 stays f32, i64 stays i64.
+        macro_rules! try_exact {
+            ($t:ty, $holder:expr) => {
+                if let Ok(pyarr) = array.cast::<PyArrayDyn<$t>>() {
+                    if let Some(col) = try_forge_foreign_column(pyarr, $holder) {
+                        return self.insert_column(key, col);
+                    }
+                    return self.insert_array::<$t>(key, pyarr.readonly().as_array().to_owned());
+                }
+            };
         }
-        if let Ok(pyarr) = array.cast::<PyArrayDyn<I>>() {
-            if let Some(col) = try_forge_foreign_column(pyarr, Column::from_int_holder) {
-                return self.insert_column(key, col);
-            }
-            return self.insert_array::<I>(key, pyarr.readonly().as_array().to_owned());
-        }
-        if let Ok(pyarr) = array.cast::<PyArrayDyn<U>>() {
-            if let Some(col) = try_forge_foreign_column(pyarr, Column::from_uint_holder) {
-                return self.insert_column(key, col);
-            }
-            return self.insert_array::<U>(key, pyarr.readonly().as_array().to_owned());
-        }
-        if let Ok(pyarr) = array.cast::<PyArrayDyn<bool>>() {
-            if let Some(col) = try_forge_foreign_column(pyarr, Column::from_bool_holder) {
-                return self.insert_column(key, col);
-            }
-            return self.insert_array::<bool>(key, pyarr.readonly().as_array().to_owned());
-        }
-        if let Ok(pyarr) = array.cast::<PyArrayDyn<u8>>() {
-            if let Some(col) = try_forge_foreign_column(pyarr, Column::from_u8_holder) {
-                return self.insert_column(key, col);
-            }
-            return self.insert_array::<u8>(key, pyarr.readonly().as_array().to_owned());
-        }
+        try_exact!(F, Column::from_float_holder);
+        try_exact!(f32, Column::from_f32_holder);
+        try_exact!(f16, Column::from_f16_holder);
+        try_exact!(I, Column::from_int_holder);
+        try_exact!(i64, Column::from_i64_holder);
+        try_exact!(i16, Column::from_i16_holder);
+        try_exact!(i8, Column::from_i8_holder);
+        try_exact!(Idx, Column::from_uint_holder);
+        try_exact!(u32, Column::from_u32_holder);
+        try_exact!(u16, Column::from_u16_holder);
+        try_exact!(u8, Column::from_u8_holder);
+        try_exact!(bool, Column::from_bool_holder);
+        try_exact!(Complex<f64>, Column::from_c128_holder);
+        try_exact!(Complex<f32>, Column::from_c64_holder);
 
-        if let Ok(arr) = array.extract::<PyReadonlyArrayDyn<'_, f32>>() {
-            return self.insert_array::<F>(key, arr.as_array().mapv(|x| x as F));
-        }
-        if let Ok(arr) = array.extract::<PyReadonlyArrayDyn<'_, i64>>() {
-            return self.insert_array::<I>(key, arr.as_array().mapv(|x| x as I));
-        }
-        if let Ok(arr) = array.extract::<PyReadonlyArrayDyn<'_, u64>>() {
-            return self.insert_array::<U>(key, arr.as_array().mapv(|x| x as U));
-        }
         if let Ok(strings) = array.extract::<Vec<String>>() {
             return self.insert_array::<String>(key, Array1::from(strings).into_dyn());
         }
@@ -245,14 +208,20 @@ impl PyBlock {
                     ))
                 })?;
                 match col {
-                    Column::Float(a) => float_array_view(py, Arc::clone(a)),
-                    Column::Int(a) => int_array_view(py, Arc::clone(a)),
-                    Column::Bool(a) => bool_array_view(py, Arc::clone(a)),
-                    Column::UInt(a) => uint_array_view(py, Arc::clone(a)),
-                    Column::U8(a) => {
-                        let arr = numpy::PyArray1::from_iter(py, a.iter().copied());
-                        Ok(arr.into_any().unbind())
-                    }
+                    Column::Float(a) => typed_array_view(py, Arc::clone(a)),
+                    Column::Float16(a) => typed_array_view(py, Arc::clone(a)),
+                    Column::Float32(a) => typed_array_view(py, Arc::clone(a)),
+                    Column::Int(a) => typed_array_view(py, Arc::clone(a)),
+                    Column::Int8(a) => typed_array_view(py, Arc::clone(a)),
+                    Column::Int16(a) => typed_array_view(py, Arc::clone(a)),
+                    Column::Int64(a) => typed_array_view(py, Arc::clone(a)),
+                    Column::Bool(a) => typed_array_view(py, Arc::clone(a)),
+                    Column::UInt(a) => typed_array_view(py, Arc::clone(a)),
+                    Column::U8(a) => typed_array_view(py, Arc::clone(a)),
+                    Column::UInt16(a) => typed_array_view(py, Arc::clone(a)),
+                    Column::UInt32(a) => typed_array_view(py, Arc::clone(a)),
+                    Column::Complex64(a) => typed_array_view(py, Arc::clone(a)),
+                    Column::Complex128(a) => typed_array_view(py, Arc::clone(a)),
                     Column::String(a) => {
                         // Return an ndarray (not a list) so string columns match
                         // numeric columns and molpy's convention — callers can
@@ -276,6 +245,35 @@ impl PyBlock {
     #[getter]
     fn nrows(&self) -> PyResult<Option<usize>> {
         self.with_block(|b| b.nrows())
+    }
+
+    /// Axis-0 length of an empty block, or reshape every column.
+    fn resize(&mut self, nrows: usize) -> PyResult<()> {
+        self.inner
+            .with_mut(|b| b.resize(nrows))
+            .map_err(ffi_error_to_pyerr)?
+            .map_err(|e| PyValueError::new_err(e.to_string()))
+    }
+
+    /// Declare this block as N-dimensional. Product of ``shape`` must equal
+    /// the row count when the block has columns.
+    fn set_shape(&mut self, shape: Vec<usize>) -> PyResult<()> {
+        self.inner
+            .with_mut(|b| b.set_shape(&shape))
+            .map_err(ffi_error_to_pyerr)?
+            .map_err(|e| PyValueError::new_err(e.to_string()))
+    }
+
+    /// Reported shape: ``[nrows]`` for a table, the declared N-D shape for a grid.
+    #[getter]
+    fn shape(&self) -> PyResult<Vec<usize>> {
+        self.with_block(|b| b.shape())
+    }
+
+    /// Explicit N-D structural shape, or ``None`` for a plain row table.
+    #[getter]
+    fn structural_shape(&self) -> PyResult<Option<Vec<usize>>> {
+        self.with_block(|b| b.structural_shape().map(|s| s.to_vec()))
     }
 
     /// Number of columns in this block.
@@ -659,78 +657,28 @@ where
 // Zero-copy numpy views backed by Arc-shared Rust storage
 // ---------------------------------------------------------------------------
 
-/// Create a zero-copy numpy view of a float column.
-///
-/// The numpy array shares memory with the Rust-side `ColumnHolder<F>` buffer
-/// (which may be Rust-owned OR foreign-borrowed from another numpy array);
-/// no data is copied.
-///
-/// # Safety
-///
-/// `borrow_from_array` creates a numpy view whose lifetime is pinned to the
-/// `FloatArrayOwner` Python object via numpy's `.base` mechanism. The owner
-/// holds an `Arc` clone of the column holder, keeping its buffer alive as
-/// long as the Python array exists.
-fn float_array_view(
-    py: Python<'_>,
-    array: Arc<ColumnHolder<F>>,
-) -> PyResult<Py<pyo3::types::PyAny>> {
-    let owner = Py::new(py, FloatArrayOwner { array })?;
-    let owner = owner.into_bound(py);
-    let view = unsafe {
-        // `owner.borrow().array.array()` returns &ArrayD<F> through the holder.
-        PyArrayDyn::<F>::borrow_from_array(owner.borrow().array.array(), owner.clone().into_any())
-    };
-    Ok(view.into_any().unbind())
+/// Keep a typed column buffer alive for a numpy view of any storage width.
+#[pyclass(module = "molrs", unsendable)]
+struct ArrayOwner {
+    _keep: Box<dyn std::any::Any + Send + Sync>,
 }
 
-/// Create a zero-copy numpy view of an integer column.
-///
-/// # Safety
-///
-/// See [`float_array_view`].
-fn int_array_view(py: Python<'_>, array: Arc<ColumnHolder<I>>) -> PyResult<Py<pyo3::types::PyAny>> {
-    let owner = Py::new(py, IntArrayOwner { array })?;
-    let owner = owner.into_bound(py);
-    let view = unsafe {
-        PyArrayDyn::<I>::borrow_from_array(owner.borrow().array.array(), owner.clone().into_any())
-    };
-    Ok(view.into_any().unbind())
-}
-
-/// Create a zero-copy numpy view of a boolean column.
-///
-/// # Safety
-///
-/// See [`float_array_view`].
-fn bool_array_view(
+/// Zero-copy numpy view of a typed column. The owner holds an `Arc` clone of
+/// the holder so the buffer outlives the Python array.
+fn typed_array_view<T>(
     py: Python<'_>,
-    array: Arc<ColumnHolder<bool>>,
-) -> PyResult<Py<pyo3::types::PyAny>> {
-    let owner = Py::new(py, BoolArrayOwner { array })?;
+    array: Arc<ColumnHolder<T>>,
+) -> PyResult<Py<pyo3::types::PyAny>>
+where
+    T: numpy::Element + 'static,
+{
+    let owner = Py::new(
+        py,
+        ArrayOwner {
+            _keep: Box::new(Arc::clone(&array)),
+        },
+    )?;
     let owner = owner.into_bound(py);
-    let view = unsafe {
-        PyArrayDyn::<bool>::borrow_from_array(
-            owner.borrow().array.array(),
-            owner.clone().into_any(),
-        )
-    };
-    Ok(view.into_any().unbind())
-}
-
-/// Create a zero-copy numpy view of an unsigned integer column.
-///
-/// # Safety
-///
-/// See [`float_array_view`].
-fn uint_array_view(
-    py: Python<'_>,
-    array: Arc<ColumnHolder<U>>,
-) -> PyResult<Py<pyo3::types::PyAny>> {
-    let owner = Py::new(py, UIntArrayOwner { array })?;
-    let owner = owner.into_bound(py);
-    let view = unsafe {
-        PyArrayDyn::<U>::borrow_from_array(owner.borrow().array.array(), owner.clone().into_any())
-    };
+    let view = unsafe { PyArrayDyn::<T>::borrow_from_array(array.array(), owner.into_any()) };
     Ok(view.into_any().unbind())
 }

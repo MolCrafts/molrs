@@ -4,33 +4,22 @@ on:
   workflow_call:
   workflow_dispatch:
 
-jobs:
-  fmt:
-    name: rustfmt
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-      - run: cargo fmt --check
+# Toolchain comes from rust-toolchain.toml (currently 1.96.0). Do not use
+# dtolnay/rust-toolchain@stable — that floats past the pin and fails clippy
+# on lints the local prek hook never saw.
 
-  clippy:
-    name: clippy
+jobs:
+  lint:
+    name: fmt + clippy
     runs-on: ubuntu-latest
-    env:
-      SCCACHE_GHA_ENABLED: "true"
-      RUSTC_WRAPPER: sccache
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      - uses: mozilla-actions/sccache-action@v0.0.9
+      - uses: dtolnay/rust-toolchain@master
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: clippy
+          shared-key: lint
           workspaces: ". -> target"
+      - run: cargo fmt --check
       - run: |
           cargo clippy -p molcrafts-molrs --all-targets --features full,filesystem -- -D warnings
           cargo clippy --manifest-path molrs-cxxapi/Cargo.toml --all-targets -- -D warnings
@@ -38,21 +27,19 @@ jobs:
   test:
     name: unit
     runs-on: ubuntu-latest
-    env:
-      SCCACHE_GHA_ENABLED: "true"
-      RUSTC_WRAPPER: sccache
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: mozilla-actions/sccache-action@v0.0.9
+      - uses: dtolnay/rust-toolchain@master
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: unit
           workspaces: ". -> target"
       - run: bash scripts/fetch-test-data.sh
       - run: cargo test -p molcrafts-molrs --lib --features full,filesystem
-      # molrs-ffi is a standalone workspace root, so the line above never
-      # covers it. Its suite carries the ABI layout-snapshot gate (minor-line
-      # layout freeze) — it must run on every push. No `--features ff`: `ff` is
-      # a default feature now, so passing it explicitly is redundant.
+      # --lib does not run rustdoc examples; a renamed public item otherwise
+      # goes unnoticed until a human opens docs.rs.
+      - run: cargo test --doc -p molcrafts-molrs --features full,filesystem
+      # molrs-ffi is a standalone workspace root, so the lines above never
+      # cover it. Its suite carries the ABI layout-snapshot gate (minor-line
+      # layout freeze) — it must run on every push.
       - run: cargo test --manifest-path molrs-ffi/Cargo.toml

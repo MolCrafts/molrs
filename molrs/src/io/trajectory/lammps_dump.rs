@@ -42,7 +42,7 @@ use crate::io::writer::{FrameWriter, Writer};
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
 use molrs::store::frame_access::FrameAccess;
-use molrs::types::U;
+use molrs::types::Idx;
 use molrs::types::{F, I};
 use once_cell::sync::OnceCell;
 use std::fs::File;
@@ -572,7 +572,7 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
                 insert_u(
                     &mut data_block,
                     name.as_str(),
-                    raw.into_iter().map(|v| v as U).collect(),
+                    raw.into_iter().map(|v| v as Idx).collect(),
                     nrows,
                 )?;
             }

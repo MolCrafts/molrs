@@ -9,7 +9,7 @@ use molrs::spatial::simbox::SimBox;
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
 use molrs::store::frame_access::FrameAccess;
-use molrs::types::{F, I, U};
+use molrs::types::{F, I, Idx};
 use ndarray::{Array1, IxDyn, array};
 use std::collections::HashMap;
 use std::fs::File;
@@ -343,8 +343,8 @@ fn to_array_float(vec: Vec<F>, len: usize) -> std::io::Result<ndarray::ArrayD<F>
         .into_dyn())
 }
 
-fn to_array_uint(vec: Vec<U>, len: usize) -> std::io::Result<ndarray::ArrayD<U>> {
-    Ok(Array1::<U>::from_vec(vec)
+fn to_array_uint(vec: Vec<Idx>, len: usize) -> std::io::Result<ndarray::ArrayD<Idx>> {
+    Ok(Array1::<Idx>::from_vec(vec)
         .into_shape_with_order(IxDyn(&[len]))
         .map_err(err_mapper)?
         .into_dyn())
@@ -357,24 +357,24 @@ fn to_array_string(vec: Vec<String>, len: usize) -> std::io::Result<ndarray::Arr
         .into_dyn())
 }
 
-fn build_atoms_block(atoms: &[AtomRecord]) -> std::io::Result<(Block, String, HashMap<i32, U>)> {
+fn build_atoms_block(atoms: &[AtomRecord]) -> std::io::Result<(Block, String, HashMap<i32, Idx>)> {
     let n = atoms.len();
     let mut x_vec = Vec::with_capacity(n);
     let mut y_vec = Vec::with_capacity(n);
     let mut z_vec = Vec::with_capacity(n);
-    let mut ids_vec: Vec<U> = Vec::with_capacity(n);
+    let mut ids_vec: Vec<Idx> = Vec::with_capacity(n);
     let mut elements = Vec::with_capacity(n);
     let mut names: Vec<String> = Vec::with_capacity(n);
     let mut res_names: Vec<String> = Vec::with_capacity(n);
     let mut res_seqs: Vec<I> = Vec::with_capacity(n);
     let mut chain_ids: Vec<String> = Vec::with_capacity(n);
-    let mut serial_map: HashMap<i32, U> = HashMap::with_capacity(n);
+    let mut serial_map: HashMap<i32, Idx> = HashMap::with_capacity(n);
 
     for (i, atom) in atoms.iter().enumerate() {
         x_vec.push(atom.x as F);
         y_vec.push(atom.y as F);
         z_vec.push(atom.z as F);
-        ids_vec.push(atom.serial as U);
+        ids_vec.push(atom.serial as Idx);
         elements.push(if atom.element.trim().is_empty() {
             "X".to_string()
         } else {
@@ -388,7 +388,7 @@ fn build_atoms_block(atoms: &[AtomRecord]) -> std::io::Result<(Block, String, Ha
         // mmCIF files (multi-char chain IDs) can drop in later without
         // breaking downstream consumers.
         chain_ids.push(atom.chain_id.to_string());
-        serial_map.insert(atom.serial, i as U);
+        serial_map.insert(atom.serial, i as Idx);
     }
 
     let unique_elements = collect_unique_elements(&elements);
@@ -418,10 +418,10 @@ fn build_atoms_block(atoms: &[AtomRecord]) -> std::io::Result<(Block, String, Ha
     // Emit the canonical `res_id` directly rather than a format-native
     // `res_seq` that something downstream renames: the rename would be a write
     // into a UInt key, so an Int column could not survive it anyway.
-    let res_ids: Vec<U> = res_seqs
+    let res_ids: Vec<Idx> = res_seqs
         .iter()
         .map(|&v| {
-            u32::try_from(v).map_err(|_| {
+            Idx::try_from(v).map_err(|_| {
                 err_mapper(format!(
                     "PDB residue sequence number {v} is negative; residue ids are unsigned"
                 ))
@@ -450,14 +450,14 @@ fn collect_unique_elements(elements: &[String]) -> String {
 
 fn build_bonds_block(
     conects: &[ConectRecord],
-    serial_map: &HashMap<i32, U>,
+    serial_map: &HashMap<i32, Idx>,
 ) -> std::io::Result<Option<Block>> {
     if conects.is_empty() {
         return Ok(None);
     }
 
-    let mut i_indices: Vec<U> = Vec::new();
-    let mut j_indices: Vec<U> = Vec::new();
+    let mut i_indices: Vec<Idx> = Vec::new();
+    let mut j_indices: Vec<Idx> = Vec::new();
 
     for conect in conects {
         if let Some(&idx1) = serial_map.get(&conect.serial) {
@@ -688,13 +688,13 @@ fn write_atom_conect_records<W: Write>(
     let chain_ids = owned_str("chain_id");
     let elements = owned_str("element");
 
-    let res_seqs: Vec<U> = frame
+    let res_seqs: Vec<Idx> = frame
         .get_uint("atoms", "res_id")
         .as_ref()
         .and_then(|arr| arr.as_slice().map(|s| s.to_vec()))
         .unwrap_or_default();
 
-    let ids: Vec<U> = frame
+    let ids: Vec<Idx> = frame
         .get_uint("atoms", "id")
         .as_ref()
         .and_then(|arr| arr.as_slice().map(|s| s.to_vec()))
@@ -1203,7 +1203,7 @@ mod tests {
             .into_shape_with_order(IxDyn(&[n]))
             .unwrap()
             .into_dyn();
-        let ids = Array1::from_vec(vec![10 as U, 20 as U, 30 as U])
+        let ids = Array1::from_vec(vec![10 as Idx, 20 as Idx, 30 as Idx])
             .into_shape_with_order(IxDyn(&[n]))
             .unwrap()
             .into_dyn();
@@ -1216,11 +1216,11 @@ mod tests {
         frame.insert("atoms", atoms);
 
         let mut bonds = Block::new();
-        let atom_i = Array1::from_vec(vec![0 as U, 1 as U])
+        let atom_i = Array1::from_vec(vec![0 as Idx, 1 as Idx])
             .into_shape_with_order(IxDyn(&[2]))
             .unwrap()
             .into_dyn();
-        let atom_j = Array1::from_vec(vec![2 as U, 2 as U])
+        let atom_j = Array1::from_vec(vec![2 as Idx, 2 as Idx])
             .into_shape_with_order(IxDyn(&[2]))
             .unwrap()
             .into_dyn();
@@ -1430,7 +1430,7 @@ END
         atoms
             .insert(
                 "res_id",
-                Array1::from_vec(vec![5 as U])
+                Array1::from_vec(vec![5 as Idx])
                     .into_shape_with_order(IxDyn(&[n]))
                     .unwrap()
                     .into_dyn(),

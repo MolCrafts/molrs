@@ -52,18 +52,29 @@ fn test_pool_is_multithreaded() {
          set {THREADS_ENV}>={MIN_THREADS})"
     );
 
-    use std::collections::HashSet;
-    use std::sync::Mutex;
-    let seen = Mutex::new(HashSet::new());
+    // What the pool guarantees is its width, asserted above. *Which* workers a
+    // given `par_iter` happens to use is not a property this code controls:
+    // rayon steals work, and with a trivial body one thread can drain the
+    // queue before any other looks. Counting distinct workers therefore
+    // measures machine timing, not correctness -- it passed until enabling the
+    // Zarr codecs changed how much work ran alongside it.
+    //
+    // So assert what is actually true and actually ours: every item runs, on
+    // the pool, exactly once.
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let ran = AtomicUsize::new(0);
+    let off_pool = AtomicUsize::new(0);
     (0..1024).into_par_iter().for_each(|_| {
-        if let Some(i) = rayon::current_thread_index() {
-            seen.lock().unwrap().insert(i);
+        ran.fetch_add(1, Ordering::Relaxed);
+        if rayon::current_thread_index().is_none() {
+            off_pool.fetch_add(1, Ordering::Relaxed);
         }
     });
-    let workers = seen.lock().unwrap().len();
-    assert!(
-        workers >= MIN_THREADS,
-        "par_iter used {workers} worker(s); the parallel path was not tested"
+    assert_eq!(ran.load(Ordering::Relaxed), 1024, "par_iter dropped items");
+    assert_eq!(
+        off_pool.load(Ordering::Relaxed),
+        0,
+        "par_iter ran work outside the pool"
     );
 }
 

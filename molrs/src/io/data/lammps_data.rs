@@ -24,7 +24,7 @@ use molrs::store::block::Block;
 use molrs::store::frame::Frame;
 use molrs::store::frame_access::FrameAccess;
 use molrs::store::keys;
-use molrs::types::{F, I, Pbc3, U};
+use molrs::types::{F, I, Idx, Pbc3};
 use once_cell::sync::OnceCell;
 use std::collections::HashMap;
 use std::fs::File;
@@ -234,13 +234,13 @@ impl AtomColumns {
         insert_u(
             &mut block,
             keys::ID,
-            self.id.iter().map(|&v| v as U).collect(),
+            self.id.iter().map(|&v| v as Idx).collect(),
             n,
         )?;
         insert_u(
             &mut block,
             keys::TYPE_ID,
-            types.iter().map(|&v| v as U).collect(),
+            types.iter().map(|&v| v as Idx).collect(),
             n,
         )?;
         insert_f(&mut block, keys::X, self.x, n)?;
@@ -261,7 +261,7 @@ impl AtomColumns {
                     insert_u(
                         &mut block,
                         $key,
-                        $col.data.iter().map(|&v| v as U).collect(),
+                        $col.data.iter().map(|&v| v as Idx).collect(),
                         n,
                     )?;
                 }
@@ -820,7 +820,7 @@ fn insert_topology_block(
     kind: &str,
     terms: &[TopologyTerm],
     atom_keys: &[&str],
-    atom_id_map: &HashMap<I, U>,
+    atom_id_map: &HashMap<I, Idx>,
     label_to_id: &HashMap<String, I>,
 ) -> std::io::Result<()> {
     if terms.is_empty() {
@@ -828,7 +828,7 @@ fn insert_topology_block(
     }
     let n = terms.len();
     let n_members = atom_keys.len();
-    let mut member_cols: Vec<Vec<U>> = (0..n_members).map(|_| Vec::with_capacity(n)).collect();
+    let mut member_cols: Vec<Vec<Idx>> = (0..n_members).map(|_| Vec::with_capacity(n)).collect();
     let mut types = Vec::with_capacity(n);
 
     for term in terms {
@@ -848,7 +848,7 @@ fn insert_topology_block(
     insert_u(
         &mut block,
         keys::TYPE_ID,
-        types.iter().map(|&v| v as U).collect(),
+        types.iter().map(|&v| v as Idx).collect(),
         n,
     )?;
     frame.insert(block_name, block);
@@ -888,12 +888,12 @@ fn build_frame(mut data: ParsedData) -> std::io::Result<Frame> {
     }
 
     // atom id → row index for topology remapping
-    let atom_id_map: HashMap<I, U> = data
+    let atom_id_map: HashMap<I, Idx> = data
         .atoms
         .id
         .iter()
         .enumerate()
-        .map(|(i, &id)| (id, i as U))
+        .map(|(i, &id)| (id, i as Idx))
         .collect();
 
     if data.atoms.len() > 0 {
@@ -1238,7 +1238,7 @@ impl<W: Write> FrameWriter for LAMMPSDataWriter<W> {
 /// Resolved per-block type space for a write: row type ids + optional labels.
 struct ResolvedTypes {
     /// 1-based LAMMPS type id per row (empty when inventory-only / zero rows).
-    type_ids: Vec<U>,
+    type_ids: Vec<Idx>,
     /// Ordered labels for a `* Type Labels` section (id = index + 1).
     labels: Option<Vec<String>>,
     /// Header type count (max type id, inventory length, or 1 for atoms).
@@ -1345,9 +1345,9 @@ fn resolve_block_types(
 
         if pure_int && !had_meta {
             let mut type_ids = Vec::with_capacity(n);
-            let mut max_id: U = 0;
+            let mut max_id: Idx = 0;
             for t in &types {
-                let id: U = t.parse().map_err(err_mapper)?;
+                let id: Idx = t.parse().map_err(err_mapper)?;
                 if id == 0 {
                     return Err(err_mapper(format!(
                         "type id 0 is invalid in {block} (LAMMPS types are 1-based)"
@@ -1366,12 +1366,12 @@ fn resolve_block_types(
         let mut all: std::collections::HashSet<String> = meta_names.into_iter().collect();
         all.extend(unique);
         let ordered = sorted_type_names(all);
-        let map: HashMap<&str, U> = ordered
+        let map: HashMap<&str, Idx> = ordered
             .iter()
             .enumerate()
-            .map(|(i, s)| (s.as_str(), (i + 1) as U))
+            .map(|(i, s)| (s.as_str(), (i + 1) as Idx))
             .collect();
-        let type_ids: Vec<U> = types
+        let type_ids: Vec<Idx> = types
             .iter()
             .map(|t| {
                 map.get(t.as_str())
@@ -1395,16 +1395,16 @@ fn resolve_block_types(
     }
 
     // Numeric type_id (uint or int).
-    let type_ids: Option<Vec<U>> = if let Some(col) = frame.get_uint(block, keys::TYPE_ID) {
+    let type_ids: Option<Vec<Idx>> = if let Some(col) = frame.get_uint(block, keys::TYPE_ID) {
         Some((0..n).map(|i| col[[i]]).collect())
     } else if let Some(col) = frame.get_int(block, keys::TYPE_ID) {
-        Some((0..n).map(|i| col[[i]] as U).collect())
+        Some((0..n).map(|i| col[[i]] as Idx).collect())
     } else if let Some(col) = frame.get_uint(block, keys::TYPE) {
         Some((0..n).map(|i| col[[i]]).collect())
     } else {
         frame
             .get_int(block, keys::TYPE)
-            .map(|col| (0..n).map(|i| col[[i]] as U).collect())
+            .map(|col| (0..n).map(|i| col[[i]] as Idx).collect())
     };
 
     let Some(type_ids) = type_ids else {
@@ -1431,14 +1431,14 @@ fn resolve_block_types(
 }
 
 /// Per-row atom IDs: existing ``id`` column, else 1..N (file artifact).
-fn resolve_atom_ids(frame: &impl FrameAccess, n: usize) -> Vec<U> {
+fn resolve_atom_ids(frame: &impl FrameAccess, n: usize) -> Vec<Idx> {
     if let Some(col) = frame.get_uint("atoms", keys::ID) {
         return (0..n).map(|i| col[[i]]).collect();
     }
     if let Some(col) = frame.get_int("atoms", keys::ID) {
-        return (0..n).map(|i| col[[i]] as U).collect();
+        return (0..n).map(|i| col[[i]] as Idx).collect();
     }
-    (1..=n as U).collect()
+    (1..=n as Idx).collect()
 }
 
 /// Per-row masses: element periodic-table value preferred over stored mass.
@@ -1546,8 +1546,8 @@ fn write_topology_section<W: Write>(
     section: &str,
     block: &str,
     n_members: usize,
-    atom_ids: &[U],
-    type_ids: &[U],
+    atom_ids: &[Idx],
+    type_ids: &[Idx],
 ) -> std::io::Result<()> {
     let n = frame
         .visit_block(block, |b| b.nrows().unwrap_or(0))

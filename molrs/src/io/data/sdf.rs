@@ -13,7 +13,7 @@
 use crate::io::reader::{FrameReader, Reader};
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
-use molrs::types::{F, U};
+use molrs::types::{F, Idx};
 use ndarray::{Array1, IxDyn};
 use std::io::BufRead;
 
@@ -28,8 +28,8 @@ fn to_array_float(vec: Vec<F>, len: usize) -> std::io::Result<ndarray::ArrayD<F>
         .into_dyn())
 }
 
-fn to_array_uint(vec: Vec<U>, len: usize) -> std::io::Result<ndarray::ArrayD<U>> {
-    Ok(Array1::<U>::from_vec(vec)
+fn to_array_uint(vec: Vec<Idx>, len: usize) -> std::io::Result<ndarray::ArrayD<Idx>> {
+    Ok(Array1::<Idx>::from_vec(vec)
         .into_shape_with_order(IxDyn(&[len]))
         .map_err(err_mapper)?
         .into_dyn())
@@ -100,18 +100,27 @@ fn parse_atom_line(line: &str) -> std::io::Result<SdfAtom> {
 
 #[derive(Debug, Clone, Copy)]
 struct SdfBond {
-    i: U, // 1-based in source
-    j: U,
-    order: U,
+    i: Idx, // 1-based in source
+    j: Idx,
+    order: Idx,
 }
 
 fn parse_bond_line(line: &str) -> std::io::Result<SdfBond> {
     if line.len() < 9 {
         return Err(err_mapper("bond line too short"));
     }
-    let i = substr(line, 0, 3).trim().parse::<U>().map_err(err_mapper)?;
-    let j = substr(line, 3, 6).trim().parse::<U>().map_err(err_mapper)?;
-    let order = substr(line, 6, 9).trim().parse::<U>().map_err(err_mapper)?;
+    let i = substr(line, 0, 3)
+        .trim()
+        .parse::<Idx>()
+        .map_err(err_mapper)?;
+    let j = substr(line, 3, 6)
+        .trim()
+        .parse::<Idx>()
+        .map_err(err_mapper)?;
+    let order = substr(line, 6, 9)
+        .trim()
+        .parse::<Idx>()
+        .map_err(err_mapper)?;
     Ok(SdfBond { i, j, order })
 }
 
@@ -120,14 +129,14 @@ fn build_frame(atoms: &[SdfAtom], bonds: &[SdfBond]) -> std::io::Result<Frame> {
     let mut x_vec = Vec::with_capacity(n);
     let mut y_vec = Vec::with_capacity(n);
     let mut z_vec = Vec::with_capacity(n);
-    let mut id_vec: Vec<U> = Vec::with_capacity(n);
+    let mut id_vec: Vec<Idx> = Vec::with_capacity(n);
     let mut elements = Vec::with_capacity(n);
 
     for (i, a) in atoms.iter().enumerate() {
         x_vec.push(a.x);
         y_vec.push(a.y);
         z_vec.push(a.z);
-        id_vec.push((i as U) + 1);
+        id_vec.push((i as Idx) + 1);
         elements.push(if a.element.is_empty() {
             "X".to_string()
         } else {
@@ -161,9 +170,9 @@ fn build_frame(atoms: &[SdfAtom], bonds: &[SdfBond]) -> std::io::Result<Frame> {
 
     if !bonds.is_empty() {
         let bn = bonds.len();
-        let mut i_vec: Vec<U> = Vec::with_capacity(bn);
-        let mut j_vec: Vec<U> = Vec::with_capacity(bn);
-        let mut order_vec: Vec<U> = Vec::with_capacity(bn);
+        let mut i_vec: Vec<Idx> = Vec::with_capacity(bn);
+        let mut j_vec: Vec<Idx> = Vec::with_capacity(bn);
+        let mut order_vec: Vec<Idx> = Vec::with_capacity(bn);
         for b in bonds {
             if b.i == 0 || b.j == 0 || (b.i as usize) > n || (b.j as usize) > n {
                 return Err(err_mapper(format!(
@@ -186,11 +195,11 @@ fn build_frame(atoms: &[SdfAtom], bonds: &[SdfBond]) -> std::io::Result<Frame> {
         // §14: an MDL bond block states integer orders (4 = aromatic in the
         // SDF query alphabet), so it maps onto both facts. An aromatic entry
         // carries no Kekulé phase — that is left `Unknown` for standardization.
-        let types: Vec<U> = order_vec
+        let types: Vec<Idx> = order_vec
             .iter()
             .map(|&v| if v == 4 { 4 } else { v.min(3) })
             .collect();
-        let numbers: Vec<U> = order_vec
+        let numbers: Vec<Idx> = order_vec
             .iter()
             .map(|&v| if v == 4 { 0 } else { v.min(4) })
             .collect();

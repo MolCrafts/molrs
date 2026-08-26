@@ -74,8 +74,19 @@ stream    = ["serde", "dep:rmp-serde", "dep:tokio", "dep:tokio-tungstenite", "de
 
 # Core knobs.
 rayon      = ["dep:rayon"]
-zarr       = ["dep:zarrs"]
-filesystem = ["zarr", "zarrs/filesystem"]
+# Codecs are contract surface, not a nicety. Every other Zarr implementation
+# compresses by default -- zarr-python writes zstd -- so a build without them
+# cannot read the ecosystem it belongs to, whatever the layout says. Two
+# tiers, because the C-backed ones cannot cross-compile to wasm32:
+#
+#   zarr         base + the pure-Rust codecs. Everywhere, wasm included.
+#   zarr-codecs  adds zstd and blosc, which bind C. Native only.
+#
+# `sharding` is in the base tier deliberately: molrec bounds a store's file
+# count with it, and a reader that cannot open a shard cannot open the store.
+zarr       = ["dep:zarrs", "zarrs/gzip", "zarrs/crc32c", "zarrs/sharding", "zarrs/transpose"]
+zarr-codecs = ["zarr", "zarrs/zstd", "zarrs/blosc"]
+filesystem = ["zarr", "zarr-codecs", "zarrs/filesystem"]
 blas       = ["dep:ndarray-linalg"]
 slow-tests = []
 
@@ -87,6 +98,11 @@ smallvec   = "1"
 serde      = { version = "1", features = ["derive"] }
 serde_json = "1"
 libm       = "0.2"
+# Storage-width scalars for columns. Distinct from [`F`]/[`I`]/[`Idx`]: those
+# are domain aliases (compute scalar, small integer, identifier). A column
+# that arrived as f32 or i64 has to leave as the same width.
+half        = { version = "2", default-features = false, features = ["num-traits", "std"] }
+num-complex = "0.4"
 # Seeded RNG for structure builders (`builder` SARW) and for
 # compute/conformer stochastic paths. Always-on so `builder` is always compiled.
 rand       = "0.10"

@@ -152,10 +152,11 @@ class TestFrameMeta:
         assert f.meta["stress"].dtype == "f64x6"
         assert f.meta["stress"].value == [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
 
-    def test_untyped_value_is_rejected(self):
+    def test_json_document_values_are_accepted(self):
         f = Frame()
-        with pytest.raises(TypeError, match="must be a MetaValue"):
-            f.meta = {"legacy": "string-only"}
+        f.meta = {"legacy": "string-only", "nested": {"tool": "molrec", "run": 3}}
+        assert f.meta["legacy"].value == "string-only"
+        assert f.meta["nested"].value == {"tool": "molrec", "run": 3}
 
     def test_set_and_get(self):
         f = Frame()

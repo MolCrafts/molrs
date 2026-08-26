@@ -510,7 +510,7 @@ impl PyLegendreReorientation {
         let tuples: Vec<(u32, u32)> = (0..groups.len())
             .map(|i| {
                 let t = groups.tuple(i);
-                (t[0], t[1])
+                (t[0] as u32, t[1] as u32)
             })
             .collect();
         let inner = self.inner.compute(&refs, &tuples).map_err(py_value_err)?;

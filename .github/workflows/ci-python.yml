@@ -10,23 +10,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # abi3-py312: one native artifact per OS. 3.13/3.14 do not rebuild the
+        # extension and were a 3× maturin tax with no extra coverage.
         os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ["3.12", "3.13", "3.14"]
-    # No CARGO_TARGET_DIR: the committed .cargo/config.toml already routes every
-    # sub-workspace build into <repo>/target.
-    env:
-      SCCACHE_GHA_ENABLED: "true"
-      RUSTC_WRAPPER: sccache
+        python-version: ["3.12"]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: mozilla-actions/sccache-action@v0.0.9
+      - uses: dtolnay/rust-toolchain@master
       - uses: Swatinem/rust-cache@v2
         with:
-          # abi3 — share one cache per OS across Python minors
           shared-key: python-maturin-${{ matrix.os }}
           workspaces: |
             . -> target

@@ -17,6 +17,19 @@ status change) and conflicts with `CLAUDE.md`.
 
 ---
 
+## 2026-08-26 — identity scalar is Idx = u64; storage widths are preserved
+**Decision:** `molrs::types::Idx = u64` replaces `U = u32`. Identity columns
+(`id`, `mol_id`, `type_id`, `res_id`, `atomi`/`atomj`/`atomk`/`atoml`) and
+schema `UInt` (`bond_type`, `bond_number`) store as `Column::UInt`. Every other
+numpy/IO width (`f16`/`f32`/`i8`/`i16`/`i64`/`u8`/`u16`/`u32`/`c64`/`c128`)
+keeps the width it arrived with — no narrowing-cast insert. WASM domain-uint
+accessors take/return `BigUint64Array`; JS method names stay `*U32` for this
+cut. `U` is also uranium: rename through the compiler, never a text replace.
+**Why:** an identifier that wraps is not an identifier; a column that arrived
+as `f32` must leave as `f32`. 0.14 is the last chance to change the identity
+width before the minor line freezes.
+**Status:** active (0.14)
+
 ## 2026-08-25 — public record API is Record, not MolRec
 **Decision:** Public names are `molrs.Record` / `molrs::Record`, `Record.read` /
 `Record.write`, `Trajectory.read` / `Trajectory.write`, cxxapi `write_frame` /

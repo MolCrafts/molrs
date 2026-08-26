@@ -28,8 +28,33 @@ use std::sync::Arc;
 
 use ndarray::ArrayD;
 
+use num_complex::Complex;
+
 use super::dtype::DType;
-use crate::types::{F, I, U};
+use crate::types::{F, I, Idx};
+
+/// Walk every column variant, binding the inner holder.
+macro_rules! map_column {
+    ($col:expr, $holder:ident => $body:expr) => {
+        match $col {
+            Column::Float16($holder) => $body,
+            Column::Float32($holder) => $body,
+            Column::Float($holder) => $body,
+            Column::Int8($holder) => $body,
+            Column::Int16($holder) => $body,
+            Column::Int($holder) => $body,
+            Column::Int64($holder) => $body,
+            Column::U8($holder) => $body,
+            Column::UInt16($holder) => $body,
+            Column::UInt32($holder) => $body,
+            Column::UInt($holder) => $body,
+            Column::Bool($holder) => $body,
+            Column::String($holder) => $body,
+            Column::Complex64($holder) => $body,
+            Column::Complex128($holder) => $body,
+        }
+    };
+}
 
 /// Wrapper around `ArrayD<T>` that optionally defers buffer ownership to a
 /// foreign allocator.
@@ -155,18 +180,36 @@ impl<T: std::fmt::Debug> std::fmt::Debug for ColumnHolder<T> {
 /// returned `&mut ArrayD<T>` always refers to Rust-owned memory.
 #[derive(Clone)]
 pub enum Column {
-    /// Floating point column using the compile-time scalar type [`F`].
+    /// IEEE binary16.
+    Float16(Arc<ColumnHolder<half::f16>>),
+    /// IEEE binary32.
+    Float32(Arc<ColumnHolder<f32>>),
+    /// Floating point column using the compute scalar [`F`] (`f64`).
     Float(Arc<ColumnHolder<F>>),
-    /// Signed integer column using the compile-time scalar type [`I`].
+    /// Signed 8-bit integer column.
+    Int8(Arc<ColumnHolder<i8>>),
+    /// Signed 16-bit integer column.
+    Int16(Arc<ColumnHolder<i16>>),
+    /// Signed integer column using the domain scalar [`I`] (`i32`).
     Int(Arc<ColumnHolder<I>>),
+    /// Signed 64-bit integer column.
+    Int64(Arc<ColumnHolder<i64>>),
     /// Boolean column
     Bool(Arc<ColumnHolder<bool>>),
-    /// Unsigned integer column using the compile-time scalar type [`U`].
-    UInt(Arc<ColumnHolder<U>>),
+    /// Unsigned integer column using the identifier scalar [`Idx`] (`u64`).
+    UInt(Arc<ColumnHolder<Idx>>),
     /// 8-bit unsigned integer column
     U8(Arc<ColumnHolder<u8>>),
+    /// 16-bit unsigned integer column.
+    UInt16(Arc<ColumnHolder<u16>>),
+    /// 32-bit unsigned integer column.
+    UInt32(Arc<ColumnHolder<u32>>),
     /// String column
     String(Arc<ColumnHolder<String>>),
+    /// Complex pair of `f32` (numpy `complex64`).
+    Complex64(Arc<ColumnHolder<Complex<f32>>>),
+    /// Complex pair of `f64` (numpy `complex128`).
+    Complex128(Arc<ColumnHolder<Complex<f64>>>),
 }
 
 /// Force an `Arc<ColumnHolder<T>>` to be (1) Rust-owned and (2) uniquely
@@ -192,9 +235,34 @@ impl Column {
         Column::Float(Arc::new(ColumnHolder::from_owned(arr)))
     }
 
+    /// Wrap an owned `f16` ndarray in a Rust-owned `Column`.
+    pub fn from_f16(arr: ArrayD<half::f16>) -> Self {
+        Column::Float16(Arc::new(ColumnHolder::from_owned(arr)))
+    }
+
+    /// Wrap an owned `f32` ndarray in a Rust-owned `Column`.
+    pub fn from_f32(arr: ArrayD<f32>) -> Self {
+        Column::Float32(Arc::new(ColumnHolder::from_owned(arr)))
+    }
+
     /// Wrap an owned int ndarray in a Rust-owned `Column`.
     pub fn from_int(arr: ArrayD<I>) -> Self {
         Column::Int(Arc::new(ColumnHolder::from_owned(arr)))
+    }
+
+    /// Wrap an owned `i8` ndarray in a Rust-owned `Column`.
+    pub fn from_i8(arr: ArrayD<i8>) -> Self {
+        Column::Int8(Arc::new(ColumnHolder::from_owned(arr)))
+    }
+
+    /// Wrap an owned `i16` ndarray in a Rust-owned `Column`.
+    pub fn from_i16(arr: ArrayD<i16>) -> Self {
+        Column::Int16(Arc::new(ColumnHolder::from_owned(arr)))
+    }
+
+    /// Wrap an owned `i64` ndarray in a Rust-owned `Column`.
+    pub fn from_i64(arr: ArrayD<i64>) -> Self {
+        Column::Int64(Arc::new(ColumnHolder::from_owned(arr)))
     }
 
     /// Wrap an owned bool ndarray in a Rust-owned `Column`.
@@ -203,7 +271,7 @@ impl Column {
     }
 
     /// Wrap an owned uint ndarray in a Rust-owned `Column`.
-    pub fn from_uint(arr: ArrayD<U>) -> Self {
+    pub fn from_uint(arr: ArrayD<Idx>) -> Self {
         Column::UInt(Arc::new(ColumnHolder::from_owned(arr)))
     }
 
@@ -212,9 +280,29 @@ impl Column {
         Column::U8(Arc::new(ColumnHolder::from_owned(arr)))
     }
 
+    /// Wrap an owned `u16` ndarray in a Rust-owned `Column`.
+    pub fn from_u16(arr: ArrayD<u16>) -> Self {
+        Column::UInt16(Arc::new(ColumnHolder::from_owned(arr)))
+    }
+
+    /// Wrap an owned `u32` ndarray in a Rust-owned `Column`.
+    pub fn from_u32(arr: ArrayD<u32>) -> Self {
+        Column::UInt32(Arc::new(ColumnHolder::from_owned(arr)))
+    }
+
     /// Wrap an owned string ndarray in a Rust-owned `Column`.
     pub fn from_string(arr: ArrayD<String>) -> Self {
         Column::String(Arc::new(ColumnHolder::from_owned(arr)))
+    }
+
+    /// Wrap an owned `complex64` ndarray in a Rust-owned `Column`.
+    pub fn from_c64(arr: ArrayD<Complex<f32>>) -> Self {
+        Column::Complex64(Arc::new(ColumnHolder::from_owned(arr)))
+    }
+
+    /// Wrap an owned `complex128` ndarray in a Rust-owned `Column`.
+    pub fn from_c128(arr: ArrayD<Complex<f64>>) -> Self {
+        Column::Complex128(Arc::new(ColumnHolder::from_owned(arr)))
     }
 
     /// Wrap a foreign-backed `ColumnHolder<F>` directly. Zero-copy path for
@@ -225,8 +313,33 @@ impl Column {
     }
 
     /// See [`Column::from_float_holder`].
+    pub fn from_f16_holder(holder: ColumnHolder<half::f16>) -> Self {
+        Column::Float16(Arc::new(holder))
+    }
+
+    /// See [`Column::from_float_holder`].
+    pub fn from_f32_holder(holder: ColumnHolder<f32>) -> Self {
+        Column::Float32(Arc::new(holder))
+    }
+
+    /// See [`Column::from_float_holder`].
     pub fn from_int_holder(holder: ColumnHolder<I>) -> Self {
         Column::Int(Arc::new(holder))
+    }
+
+    /// See [`Column::from_float_holder`].
+    pub fn from_i8_holder(holder: ColumnHolder<i8>) -> Self {
+        Column::Int8(Arc::new(holder))
+    }
+
+    /// See [`Column::from_float_holder`].
+    pub fn from_i16_holder(holder: ColumnHolder<i16>) -> Self {
+        Column::Int16(Arc::new(holder))
+    }
+
+    /// See [`Column::from_float_holder`].
+    pub fn from_i64_holder(holder: ColumnHolder<i64>) -> Self {
+        Column::Int64(Arc::new(holder))
     }
 
     /// See [`Column::from_float_holder`].
@@ -235,7 +348,7 @@ impl Column {
     }
 
     /// See [`Column::from_float_holder`].
-    pub fn from_uint_holder(holder: ColumnHolder<U>) -> Self {
+    pub fn from_uint_holder(holder: ColumnHolder<Idx>) -> Self {
         Column::UInt(Arc::new(holder))
     }
 
@@ -245,8 +358,28 @@ impl Column {
     }
 
     /// See [`Column::from_float_holder`].
+    pub fn from_u16_holder(holder: ColumnHolder<u16>) -> Self {
+        Column::UInt16(Arc::new(holder))
+    }
+
+    /// See [`Column::from_float_holder`].
+    pub fn from_u32_holder(holder: ColumnHolder<u32>) -> Self {
+        Column::UInt32(Arc::new(holder))
+    }
+
+    /// See [`Column::from_float_holder`].
     pub fn from_string_holder(holder: ColumnHolder<String>) -> Self {
         Column::String(Arc::new(holder))
+    }
+
+    /// See [`Column::from_float_holder`].
+    pub fn from_c64_holder(holder: ColumnHolder<Complex<f32>>) -> Self {
+        Column::Complex64(Arc::new(holder))
+    }
+
+    /// See [`Column::from_float_holder`].
+    pub fn from_c128_holder(holder: ColumnHolder<Complex<f64>>) -> Self {
+        Column::Complex128(Arc::new(holder))
     }
 
     /// Returns the number of rows (axis-0 length) of this column.
@@ -254,38 +387,33 @@ impl Column {
     /// Returns `None` if the array has rank 0 (which should never happen
     /// in a valid Block, as rank-0 arrays are rejected during insertion).
     pub fn nrows(&self) -> Option<usize> {
-        match self {
-            Column::Float(a) => a.shape().first().copied(),
-            Column::Int(a) => a.shape().first().copied(),
-            Column::Bool(a) => a.shape().first().copied(),
-            Column::UInt(a) => a.shape().first().copied(),
-            Column::U8(a) => a.shape().first().copied(),
-            Column::String(a) => a.shape().first().copied(),
-        }
+        map_column!(self, a => a.shape().first().copied())
     }
 
     /// Returns the data type of this column.
     pub fn dtype(&self) -> DType {
         match self {
+            Column::Float16(_) => DType::Float16,
+            Column::Float32(_) => DType::Float32,
             Column::Float(_) => DType::Float,
+            Column::Int8(_) => DType::Int8,
+            Column::Int16(_) => DType::Int16,
             Column::Int(_) => DType::Int,
+            Column::Int64(_) => DType::Int64,
             Column::Bool(_) => DType::Bool,
             Column::UInt(_) => DType::UInt,
             Column::U8(_) => DType::U8,
+            Column::UInt16(_) => DType::UInt16,
+            Column::UInt32(_) => DType::UInt32,
             Column::String(_) => DType::String,
+            Column::Complex64(_) => DType::Complex64,
+            Column::Complex128(_) => DType::Complex128,
         }
     }
 
     /// Returns the shape of the underlying array.
     pub fn shape(&self) -> &[usize] {
-        match self {
-            Column::Float(a) => a.shape(),
-            Column::Int(a) => a.shape(),
-            Column::Bool(a) => a.shape(),
-            Column::UInt(a) => a.shape(),
-            Column::U8(a) => a.shape(),
-            Column::String(a) => a.shape(),
-        }
+        map_column!(self, a => a.shape())
     }
 
     /// Owned little-endian byte buffer of this column's numeric backing store,
@@ -298,32 +426,29 @@ impl Column {
     /// `product(shape) * size_of::<element>()`. `Bool` is emitted as one byte
     /// per element (`0`/`1`).
     pub fn raw_bytes(&self) -> Option<Vec<u8>> {
+        fn le_numeric<T: Clone, const N: usize>(
+            h: &ColumnHolder<T>,
+            to_bytes: impl Fn(&T) -> [u8; N],
+        ) -> Vec<u8> {
+            let a = h.array().as_standard_layout();
+            let mut out = Vec::with_capacity(a.len() * N);
+            for v in a.iter() {
+                out.extend_from_slice(&to_bytes(v));
+            }
+            out
+        }
         match self {
-            Column::Float(h) => {
-                let a = h.array().as_standard_layout();
-                let mut out = Vec::with_capacity(a.len() * 8);
-                for &v in a.iter() {
-                    out.extend_from_slice(&v.to_le_bytes());
-                }
-                Some(out)
-            }
-            Column::Int(h) => {
-                let a = h.array().as_standard_layout();
-                let mut out = Vec::with_capacity(a.len() * 4);
-                for &v in a.iter() {
-                    out.extend_from_slice(&v.to_le_bytes());
-                }
-                Some(out)
-            }
-            Column::UInt(h) => {
-                let a = h.array().as_standard_layout();
-                let mut out = Vec::with_capacity(a.len() * 4);
-                for &v in a.iter() {
-                    out.extend_from_slice(&v.to_le_bytes());
-                }
-                Some(out)
-            }
+            Column::Float16(h) => Some(le_numeric(h, |v| v.to_le_bytes())),
+            Column::Float32(h) => Some(le_numeric(h, |v| v.to_le_bytes())),
+            Column::Float(h) => Some(le_numeric(h, |v| v.to_le_bytes())),
+            Column::Int8(h) => Some(le_numeric(h, |v| v.to_le_bytes())),
+            Column::Int16(h) => Some(le_numeric(h, |v| v.to_le_bytes())),
+            Column::Int(h) => Some(le_numeric(h, |v| v.to_le_bytes())),
+            Column::Int64(h) => Some(le_numeric(h, |v| v.to_le_bytes())),
+            Column::UInt(h) => Some(le_numeric(h, |v| v.to_le_bytes())),
             Column::U8(h) => Some(h.array().as_standard_layout().iter().copied().collect()),
+            Column::UInt16(h) => Some(le_numeric(h, |v| v.to_le_bytes())),
+            Column::UInt32(h) => Some(le_numeric(h, |v| v.to_le_bytes())),
             Column::Bool(h) => Some(
                 h.array()
                     .as_standard_layout()
@@ -332,6 +457,18 @@ impl Column {
                     .collect(),
             ),
             Column::String(_) => None,
+            Column::Complex64(h) => Some(le_numeric(h, |v| {
+                let mut bytes = [0u8; 8];
+                bytes[..4].copy_from_slice(&v.re.to_le_bytes());
+                bytes[4..].copy_from_slice(&v.im.to_le_bytes());
+                bytes
+            })),
+            Column::Complex128(h) => Some(le_numeric(h, |v| {
+                let mut bytes = [0u8; 16];
+                bytes[..8].copy_from_slice(&v.re.to_le_bytes());
+                bytes[8..].copy_from_slice(&v.im.to_le_bytes());
+                bytes
+            })),
         }
     }
 
@@ -341,24 +478,47 @@ impl Column {
     pub fn select_rows(&self, indices: &[usize]) -> Column {
         use ndarray::Axis;
         match self {
+            Column::Float16(h) => Column::from_f16(h.array().select(Axis(0), indices)),
+            Column::Float32(h) => Column::from_f32(h.array().select(Axis(0), indices)),
             Column::Float(h) => Column::from_float(h.array().select(Axis(0), indices)),
+            Column::Int8(h) => Column::from_i8(h.array().select(Axis(0), indices)),
+            Column::Int16(h) => Column::from_i16(h.array().select(Axis(0), indices)),
             Column::Int(h) => Column::from_int(h.array().select(Axis(0), indices)),
+            Column::Int64(h) => Column::from_i64(h.array().select(Axis(0), indices)),
             Column::Bool(h) => Column::from_bool(h.array().select(Axis(0), indices)),
             Column::UInt(h) => Column::from_uint(h.array().select(Axis(0), indices)),
             Column::U8(h) => Column::from_u8(h.array().select(Axis(0), indices)),
+            Column::UInt16(h) => Column::from_u16(h.array().select(Axis(0), indices)),
+            Column::UInt32(h) => Column::from_u32(h.array().select(Axis(0), indices)),
             Column::String(h) => Column::from_string(h.array().select(Axis(0), indices)),
+            Column::Complex64(h) => Column::from_c64(h.array().select(Axis(0), indices)),
+            Column::Complex128(h) => Column::from_c128(h.array().select(Axis(0), indices)),
         }
     }
 
     /// Is this column backed by a foreign (non-Rust) buffer?
     pub fn is_foreign(&self) -> bool {
+        map_column!(self, a => a.is_foreign())
+    }
+
+    /// Format one row as EXTXYZ property tokens.
+    pub fn xyz_tokens(&self, row: usize) -> Vec<String> {
+        use ndarray::Axis;
         match self {
-            Column::Float(a) => a.is_foreign(),
-            Column::Int(a) => a.is_foreign(),
-            Column::Bool(a) => a.is_foreign(),
-            Column::UInt(a) => a.is_foreign(),
-            Column::U8(a) => a.is_foreign(),
-            Column::String(a) => a.is_foreign(),
+            Column::Bool(h) => h
+                .array()
+                .index_axis(Axis(0), row)
+                .iter()
+                .map(|v| if *v { "T" } else { "F" }.to_string())
+                .collect(),
+            Column::String(h) => h.array().index_axis(Axis(0), row).iter().cloned().collect(),
+            _ => map_column!(self, h => {
+                h.array()
+                    .index_axis(Axis(0), row)
+                    .iter()
+                    .map(|v| v.to_string())
+                    .collect()
+            }),
         }
     }
 
@@ -418,7 +578,7 @@ impl Column {
     }
 
     /// Returns a reference to the unsigned integer data, or `None` if not `UInt`.
-    pub fn as_uint(&self) -> Option<&ArrayD<U>> {
+    pub fn as_uint(&self) -> Option<&ArrayD<Idx>> {
         match self {
             Column::UInt(a) => Some(a.array()),
             _ => None,
@@ -428,7 +588,7 @@ impl Column {
     /// Returns a mutable reference to the unsigned integer data, or `None` if not `UInt`.
     ///
     /// Copy-on-write: clones if shared or foreign-backed.
-    pub fn as_uint_mut(&mut self) -> Option<&mut ArrayD<U>> {
+    pub fn as_uint_mut(&mut self) -> Option<&mut ArrayD<Idx>> {
         match self {
             Column::UInt(a) => Some(realize_owned_mut(a)),
             _ => None,
@@ -471,6 +631,150 @@ impl Column {
         }
     }
 
+    /// Returns a reference to the `f16` data, or `None` if not `Float16`.
+    pub fn as_f16(&self) -> Option<&ArrayD<half::f16>> {
+        match self {
+            Column::Float16(a) => Some(a.array()),
+            _ => None,
+        }
+    }
+
+    /// Returns a mutable reference to the `f16` data, or `None` if not `Float16`.
+    pub fn as_f16_mut(&mut self) -> Option<&mut ArrayD<half::f16>> {
+        match self {
+            Column::Float16(a) => Some(realize_owned_mut(a)),
+            _ => None,
+        }
+    }
+
+    /// Returns a reference to the `f32` data, or `None` if not `Float32`.
+    pub fn as_f32(&self) -> Option<&ArrayD<f32>> {
+        match self {
+            Column::Float32(a) => Some(a.array()),
+            _ => None,
+        }
+    }
+
+    /// Returns a mutable reference to the `f32` data, or `None` if not `Float32`.
+    pub fn as_f32_mut(&mut self) -> Option<&mut ArrayD<f32>> {
+        match self {
+            Column::Float32(a) => Some(realize_owned_mut(a)),
+            _ => None,
+        }
+    }
+
+    /// Returns a reference to the `i8` data, or `None` if not `Int8`.
+    pub fn as_i8(&self) -> Option<&ArrayD<i8>> {
+        match self {
+            Column::Int8(a) => Some(a.array()),
+            _ => None,
+        }
+    }
+
+    /// Returns a mutable reference to the `i8` data, or `None` if not `Int8`.
+    pub fn as_i8_mut(&mut self) -> Option<&mut ArrayD<i8>> {
+        match self {
+            Column::Int8(a) => Some(realize_owned_mut(a)),
+            _ => None,
+        }
+    }
+
+    /// Returns a reference to the `i16` data, or `None` if not `Int16`.
+    pub fn as_i16(&self) -> Option<&ArrayD<i16>> {
+        match self {
+            Column::Int16(a) => Some(a.array()),
+            _ => None,
+        }
+    }
+
+    /// Returns a mutable reference to the `i16` data, or `None` if not `Int16`.
+    pub fn as_i16_mut(&mut self) -> Option<&mut ArrayD<i16>> {
+        match self {
+            Column::Int16(a) => Some(realize_owned_mut(a)),
+            _ => None,
+        }
+    }
+
+    /// Returns a reference to the `i64` data, or `None` if not `Int64`.
+    pub fn as_i64(&self) -> Option<&ArrayD<i64>> {
+        match self {
+            Column::Int64(a) => Some(a.array()),
+            _ => None,
+        }
+    }
+
+    /// Returns a mutable reference to the `i64` data, or `None` if not `Int64`.
+    pub fn as_i64_mut(&mut self) -> Option<&mut ArrayD<i64>> {
+        match self {
+            Column::Int64(a) => Some(realize_owned_mut(a)),
+            _ => None,
+        }
+    }
+
+    /// Returns a reference to the `u16` data, or `None` if not `UInt16`.
+    pub fn as_u16(&self) -> Option<&ArrayD<u16>> {
+        match self {
+            Column::UInt16(a) => Some(a.array()),
+            _ => None,
+        }
+    }
+
+    /// Returns a mutable reference to the `u16` data, or `None` if not `UInt16`.
+    pub fn as_u16_mut(&mut self) -> Option<&mut ArrayD<u16>> {
+        match self {
+            Column::UInt16(a) => Some(realize_owned_mut(a)),
+            _ => None,
+        }
+    }
+
+    /// Returns a reference to the `u32` data, or `None` if not `UInt32`.
+    pub fn as_u32(&self) -> Option<&ArrayD<u32>> {
+        match self {
+            Column::UInt32(a) => Some(a.array()),
+            _ => None,
+        }
+    }
+
+    /// Returns a mutable reference to the `u32` data, or `None` if not `UInt32`.
+    pub fn as_u32_mut(&mut self) -> Option<&mut ArrayD<u32>> {
+        match self {
+            Column::UInt32(a) => Some(realize_owned_mut(a)),
+            _ => None,
+        }
+    }
+
+    /// Returns a reference to the `complex64` data, or `None` if not `Complex64`.
+    pub fn as_c64(&self) -> Option<&ArrayD<Complex<f32>>> {
+        match self {
+            Column::Complex64(a) => Some(a.array()),
+            _ => None,
+        }
+    }
+
+    /// Returns a mutable reference to the `complex64` data, or `None` if not `Complex64`.
+    pub fn as_c64_mut(&mut self) -> Option<&mut ArrayD<Complex<f32>>> {
+        match self {
+            Column::Complex64(a) => Some(realize_owned_mut(a)),
+            _ => None,
+        }
+    }
+
+    /// Returns a reference to the `complex128` data, or `None` if not `Complex128`.
+    pub fn as_c128(&self) -> Option<&ArrayD<Complex<f64>>> {
+        match self {
+            Column::Complex128(a) => Some(a.array()),
+            _ => None,
+        }
+    }
+
+    /// Returns a mutable reference to the `complex128` data, or `None` if not `Complex128`.
+    pub fn as_c128_mut(&mut self) -> Option<&mut ArrayD<Complex<f64>>> {
+        match self {
+            Column::Complex128(a) => Some(realize_owned_mut(a)),
+            _ => None,
+        }
+    }
+
     /// Returns a clone of the inner float holder Arc, or `None` if not `Float`.
     /// O(1) refcount bump; shares storage.
     pub fn float_arc(&self) -> Option<Arc<ColumnHolder<F>>> {
@@ -497,7 +801,7 @@ impl Column {
     }
 
     /// See [`float_arc`](Self::float_arc).
-    pub fn uint_arc(&self) -> Option<Arc<ColumnHolder<U>>> {
+    pub fn uint_arc(&self) -> Option<Arc<ColumnHolder<Idx>>> {
         match self {
             Column::UInt(a) => Some(Arc::clone(a)),
             _ => None,
@@ -526,107 +830,58 @@ impl Column {
     /// shared or foreign-backed, this replaces the holder with a fresh
     /// Rust-owned copy.
     pub fn resize(&mut self, new_nrows: usize) {
-        use ndarray::{Axis, IxDyn, concatenate};
-
         let current = self.shape()[0];
         if new_nrows == current {
             return;
         }
-
         match self {
-            Column::Float(a) => {
-                let view = a.view();
-                let new_arr = if new_nrows < current {
-                    view.slice_axis(Axis(0), (..new_nrows).into()).to_owned()
-                } else {
-                    let mut pad_shape = a.shape().to_vec();
-                    pad_shape[0] = new_nrows - current;
-                    let pad = ArrayD::<F>::zeros(IxDyn(&pad_shape));
-                    concatenate(Axis(0), &[view, pad.view()]).unwrap()
-                };
-                *a = Arc::new(ColumnHolder::from_owned(new_arr));
-            }
-            Column::Int(a) => {
-                let view = a.view();
-                let new_arr = if new_nrows < current {
-                    view.slice_axis(Axis(0), (..new_nrows).into()).to_owned()
-                } else {
-                    let mut pad_shape = a.shape().to_vec();
-                    pad_shape[0] = new_nrows - current;
-                    let pad = ArrayD::<I>::zeros(IxDyn(&pad_shape));
-                    concatenate(Axis(0), &[view, pad.view()]).unwrap()
-                };
-                *a = Arc::new(ColumnHolder::from_owned(new_arr));
-            }
-            Column::UInt(a) => {
-                let view = a.view();
-                let new_arr = if new_nrows < current {
-                    view.slice_axis(Axis(0), (..new_nrows).into()).to_owned()
-                } else {
-                    let mut pad_shape = a.shape().to_vec();
-                    pad_shape[0] = new_nrows - current;
-                    let pad = ArrayD::<U>::zeros(IxDyn(&pad_shape));
-                    concatenate(Axis(0), &[view, pad.view()]).unwrap()
-                };
-                *a = Arc::new(ColumnHolder::from_owned(new_arr));
-            }
-            Column::U8(a) => {
-                let view = a.view();
-                let new_arr = if new_nrows < current {
-                    view.slice_axis(Axis(0), (..new_nrows).into()).to_owned()
-                } else {
-                    let mut pad_shape = a.shape().to_vec();
-                    pad_shape[0] = new_nrows - current;
-                    let pad = ArrayD::<u8>::zeros(IxDyn(&pad_shape));
-                    concatenate(Axis(0), &[view, pad.view()]).unwrap()
-                };
-                *a = Arc::new(ColumnHolder::from_owned(new_arr));
-            }
-            Column::Bool(a) => {
-                let view = a.view();
-                let new_arr = if new_nrows < current {
-                    view.slice_axis(Axis(0), (..new_nrows).into()).to_owned()
-                } else {
-                    let mut pad_shape = a.shape().to_vec();
-                    pad_shape[0] = new_nrows - current;
-                    let pad = ArrayD::<bool>::default(IxDyn(&pad_shape));
-                    concatenate(Axis(0), &[view, pad.view()]).unwrap()
-                };
-                *a = Arc::new(ColumnHolder::from_owned(new_arr));
-            }
-            Column::String(a) => {
-                let view = a.view();
-                let new_arr = if new_nrows < current {
-                    view.slice_axis(Axis(0), (..new_nrows).into()).to_owned()
-                } else {
-                    let mut pad_shape = a.shape().to_vec();
-                    pad_shape[0] = new_nrows - current;
-                    let pad = ArrayD::<String>::default(IxDyn(&pad_shape));
-                    concatenate(Axis(0), &[view, pad.view()]).unwrap()
-                };
-                *a = Arc::new(ColumnHolder::from_owned(new_arr));
-            }
+            Column::Float16(a) => resize_holder(a, current, new_nrows),
+            Column::Float32(a) => resize_holder(a, current, new_nrows),
+            Column::Float(a) => resize_holder(a, current, new_nrows),
+            Column::Int8(a) => resize_holder(a, current, new_nrows),
+            Column::Int16(a) => resize_holder(a, current, new_nrows),
+            Column::Int(a) => resize_holder(a, current, new_nrows),
+            Column::Int64(a) => resize_holder(a, current, new_nrows),
+            Column::UInt(a) => resize_holder(a, current, new_nrows),
+            Column::U8(a) => resize_holder(a, current, new_nrows),
+            Column::UInt16(a) => resize_holder(a, current, new_nrows),
+            Column::UInt32(a) => resize_holder(a, current, new_nrows),
+            Column::Bool(a) => resize_holder(a, current, new_nrows),
+            Column::String(a) => resize_holder(a, current, new_nrows),
+            Column::Complex64(a) => resize_holder(a, current, new_nrows),
+            Column::Complex128(a) => resize_holder(a, current, new_nrows),
         }
     }
 }
 
+fn resize_holder<T: Clone + Default>(
+    a: &mut Arc<ColumnHolder<T>>,
+    current: usize,
+    new_nrows: usize,
+) {
+    use ndarray::{Axis, IxDyn, concatenate};
+    let view = a.view();
+    let new_arr = if new_nrows < current {
+        view.slice_axis(Axis(0), (..new_nrows).into()).to_owned()
+    } else {
+        let mut pad_shape = a.shape().to_vec();
+        pad_shape[0] = new_nrows - current;
+        let pad = ArrayD::<T>::default(IxDyn(&pad_shape));
+        concatenate(Axis(0), &[view, pad.view()]).unwrap()
+    };
+    *a = Arc::new(ColumnHolder::from_owned(new_arr));
+}
+
 impl std::fmt::Debug for Column {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Column::Float(a) => write!(f, "Column::Float(shape={:?})", a.shape()),
-            Column::Int(a) => write!(f, "Column::Int(shape={:?})", a.shape()),
-            Column::Bool(a) => write!(f, "Column::Bool(shape={:?})", a.shape()),
-            Column::UInt(a) => write!(f, "Column::UInt(shape={:?})", a.shape()),
-            Column::U8(a) => write!(f, "Column::U8(shape={:?})", a.shape()),
-            Column::String(a) => write!(f, "Column::String(shape={:?})", a.shape()),
-        }
+        write!(f, "Column::{:?}(shape={:?})", self.dtype(), self.shape())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{F, I, U};
+    use crate::types::{F, I, Idx};
     use ndarray::{Array1, ArrayD};
 
     // ---- helpers ----
@@ -644,7 +899,7 @@ mod tests {
     }
 
     fn uint_col(n: usize) -> Column {
-        Column::from_uint(Array1::from_vec(vec![0 as U; n]).into_dyn())
+        Column::from_uint(Array1::from_vec(vec![0 as Idx; n]).into_dyn())
     }
 
     fn u8_col(n: usize) -> Column {
@@ -869,7 +1124,9 @@ mod tests {
     fn test_raw_bytes_lengths() {
         assert_eq!(float_col(3).raw_bytes().map(|b| b.len()), Some(24));
         assert_eq!(int_col(4).raw_bytes().map(|b| b.len()), Some(16));
-        assert_eq!(uint_col(2).raw_bytes().map(|b| b.len()), Some(8));
+        // Identity columns are 8 bytes wide: an identifier that wraps is not
+        // an identifier, so `Idx` is 64-bit.
+        assert_eq!(uint_col(2).raw_bytes().map(|b| b.len()), Some(16));
         assert_eq!(u8_col(5).raw_bytes().map(|b| b.len()), Some(5));
         assert_eq!(bool_col(7).raw_bytes().map(|b| b.len()), Some(7));
         assert!(string_col(3).raw_bytes().is_none());

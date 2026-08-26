@@ -240,7 +240,7 @@ impl Validator {
                         row,
                     },
                     kind: ViolationKind::IndexOutOfRange {
-                        value: v as u64,
+                        value: v,
                         target: target.to_string(),
                         target_nrows: target_rows,
                     },

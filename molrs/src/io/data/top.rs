@@ -25,7 +25,7 @@ use ndarray::{Array1, IxDyn};
 use molrs::Element;
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
-use molrs::types::{F, I, U};
+use molrs::types::{F, I, Idx};
 
 use crate::io::reader::{FrameReader, Reader};
 use crate::io::writer::{FrameWriter, Writer};
@@ -56,7 +56,7 @@ fn insert_int_col(block: &mut Block, key: &str, vals: Vec<I>) -> Result<()> {
     block.insert(key, arr).map_err(invalid_data)
 }
 
-fn insert_uint_col(block: &mut Block, key: &str, vals: Vec<U>) -> Result<()> {
+fn insert_uint_col(block: &mut Block, key: &str, vals: Vec<Idx>) -> Result<()> {
     let n = vals.len();
     let arr = Array1::from_vec(vals)
         .into_shape_with_order(IxDyn(&[n]))
@@ -94,11 +94,11 @@ fn parse_section_header(line: &str) -> Option<String> {
 /// Guess atomic number from atom name, falling back to atom type letters.
 ///
 /// Unknown symbols yield `0` (matches the historical molpy TopReader contract).
-fn guess_atomic_number(name: &str, atom_type: &str) -> U {
+fn guess_atomic_number(name: &str, atom_type: &str) -> Idx {
     let letters: String = name.chars().filter(|c| c.is_ascii_alphabetic()).collect();
     if !letters.is_empty() {
         if let Some(e) = Element::by_symbol(&letters) {
-            return e.z() as U;
+            return e.z() as Idx;
         }
         if letters.len() > 1 {
             let mut chars = letters.chars();
@@ -109,7 +109,7 @@ fn guess_atomic_number(name: &str, atom_type: &str) -> U {
                 .chain(chars.flat_map(|c| c.to_lowercase()))
                 .collect();
             if let Some(e) = Element::by_symbol(&title) {
-                return e.z() as U;
+                return e.z() as Idx;
             }
         }
     }
@@ -120,7 +120,7 @@ fn guess_atomic_number(name: &str, atom_type: &str) -> U {
     if !type_letters.is_empty()
         && let Some(e) = Element::by_symbol(&type_letters)
     {
-        return e.z() as U;
+        return e.z() as Idx;
     }
     0
 }
@@ -131,7 +131,7 @@ fn guess_atomic_number(name: &str, atom_type: &str) -> U {
 
 #[derive(Debug, Clone)]
 struct TopAtom {
-    id: U,
+    id: Idx,
     atype: String,
     resnr: I,
     residu: String,
@@ -143,25 +143,25 @@ struct TopAtom {
 
 #[derive(Debug, Clone)]
 struct Conn2 {
-    atomi: U,
-    atomj: U,
+    atomi: Idx,
+    atomj: Idx,
     funct: String,
 }
 
 #[derive(Debug, Clone)]
 struct Conn3 {
-    atomi: U,
-    atomj: U,
-    atomk: U,
+    atomi: Idx,
+    atomj: Idx,
+    atomk: Idx,
     funct: String,
 }
 
 #[derive(Debug, Clone)]
 struct Conn4 {
-    atomi: U,
-    atomj: U,
-    atomk: U,
-    atoml: U,
+    atomi: Idx,
+    atomj: Idx,
+    atomk: Idx,
+    atoml: Idx,
     funct: String,
 }
 
@@ -496,7 +496,7 @@ pub fn write_top_frame<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
         let mass_col = atoms.get_float("mass");
 
         for i in 0..n {
-            let aid = id_col.map(|c| c[[i]]).unwrap_or((i as U) + 1);
+            let aid = id_col.map(|c| c[[i]]).unwrap_or((i as Idx) + 1);
             let atype = type_col.map(|c| c[[i]].as_str()).unwrap_or("X");
             let resnr = resnr_i
                 .map(|c| c[[i]])

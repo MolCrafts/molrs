@@ -71,7 +71,7 @@ class TestSupportedDtypes:
         "arr,kind",
         [
             (np.array([1.0, 2.0, 3.0], dtype=np.float64), "float"),
-            (np.array([10, 20, 30], dtype=np.int64), "int"),
+            (np.array([10, 20, 30], dtype=np.int64), "i64"),
             (np.array([True, False, True]), "bool"),
             (np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float64), "float"),
         ],

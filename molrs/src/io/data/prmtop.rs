@@ -42,7 +42,7 @@ use ndarray::{Array1, IxDyn};
 use molrs::Element;
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
-use molrs::types::{F, U};
+use molrs::types::{F, Idx};
 
 /// AMBER stores charges × √(332.0636 kcal·Å/mol/e²) ≈ 18.2223.
 pub const CHARGE_CONVERSION_FACTOR: F = 18.2223;
@@ -64,7 +64,7 @@ fn insert_float_col(block: &mut Block, key: &str, vals: Vec<F>) -> Result<()> {
     block.insert(key, arr).map_err(invalid_data)
 }
 
-fn insert_uint_col(block: &mut Block, key: &str, vals: Vec<U>) -> Result<()> {
+fn insert_uint_col(block: &mut Block, key: &str, vals: Vec<Idx>) -> Result<()> {
     let n = vals.len();
     let arr = Array1::from_vec(vals)
         .into_shape_with_order(IxDyn(&[n]))
@@ -219,28 +219,28 @@ fn read_pointers(lines: &[String]) -> Result<HashMap<String, i64>> {
 
 #[derive(Debug, Clone)]
 struct BondRow {
-    type_id: U,
-    atomi: U,
-    atomj: U,
+    type_id: Idx,
+    atomi: Idx,
+    atomj: Idx,
     type_name: String,
 }
 
 #[derive(Debug, Clone)]
 struct AngleRow {
-    type_id: U,
-    atomi: U,
-    atomj: U,
-    atomk: U,
+    type_id: Idx,
+    atomi: Idx,
+    atomj: Idx,
+    atomk: Idx,
     type_name: String,
 }
 
 #[derive(Debug, Clone)]
 struct DihedralRow {
-    type_id: U,
-    atomi: U,
-    atomj: U,
-    atomk: U,
-    atoml: U,
+    type_id: Idx,
+    atomi: Idx,
+    atomj: Idx,
+    atomk: Idx,
+    atoml: Idx,
     type_name: String,
     /// True when the raw 4th pointer was negative (Amber improper flag).
     is_improper: bool,
@@ -262,9 +262,9 @@ fn decode_bonds(pointers: &[i64], atom_types: &[String]) -> Result<Vec<BondRow>>
                 "Found negative bonded atom pointers ({a}, {b})"
             )));
         }
-        let type_id = chunk[2] as U;
-        let mut i = (a / 3) as U; // 0-based
-        let mut j = (b / 3) as U;
+        let type_id = chunk[2] as Idx;
+        let mut i = (a / 3) as Idx; // 0-based
+        let mut j = (b / 3) as Idx;
         if i > j {
             std::mem::swap(&mut i, &mut j);
         }
@@ -304,10 +304,10 @@ fn decode_angles(pointers: &[i64], atom_types: &[String]) -> Result<Vec<AngleRow
                 "Found negative angle atom pointers ({a}, {b}, {c})"
             )));
         }
-        let type_id = chunk[3] as U;
-        let mut i = (a / 3) as U;
-        let j = (b / 3) as U;
-        let mut k = (c / 3) as U;
+        let type_id = chunk[3] as Idx;
+        let mut i = (a / 3) as Idx;
+        let j = (b / 3) as Idx;
+        let mut k = (c / 3) as Idx;
         if i > k {
             std::mem::swap(&mut i, &mut k);
         }
@@ -349,12 +349,12 @@ fn decode_dihedrals(pointers: &[i64], atom_types: &[String]) -> Result<Vec<Dihed
                 chunk[2], chunk[3]
             )));
         }
-        let type_id = chunk[4] as U;
+        let type_id = chunk[4] as Idx;
         let is_improper = chunk[3] < 0;
-        let mut i = (a / 3) as U;
-        let mut j = (b / 3) as U;
-        let mut k = (chunk[2].unsigned_abs() / 3) as U;
-        let mut l = (chunk[3].unsigned_abs() / 3) as U;
+        let mut i = (a / 3) as Idx;
+        let mut j = (b / 3) as Idx;
+        let mut k = (chunk[2].unsigned_abs() / 3) as Idx;
+        let mut l = (chunk[3].unsigned_abs() / 3) as Idx;
         // Canonicalise so type name is direction-independent (j ≤ k).
         if j > k {
             std::mem::swap(&mut i, &mut l);
@@ -386,7 +386,7 @@ fn decode_dihedrals(pointers: &[i64], atom_types: &[String]) -> Result<Vec<Dihed
     Ok(out)
 }
 
-fn residue_ids(pointer_lines: Option<&Vec<String>>, n_atoms: usize) -> Result<Vec<U>> {
+fn residue_ids(pointer_lines: Option<&Vec<String>>, n_atoms: usize) -> Result<Vec<Idx>> {
     let Some(lines) = pointer_lines else {
         return Ok(vec![0; n_atoms]);
     };
@@ -406,7 +406,7 @@ fn residue_ids(pointer_lines: Option<&Vec<String>>, n_atoms: usize) -> Result<Ve
             )));
         }
         for _ in start..end {
-            res_id.push(r as U);
+            res_id.push(r as Idx);
         }
     }
     if res_id.len() != n_atoms {
@@ -435,7 +435,7 @@ fn build_bond_block(rows: &[BondRow]) -> Result<Block> {
         atomi.push(r.atomi);
         atomj.push(r.atomj);
         type_name.push(r.type_name.clone());
-        id.push((idx as U) + 1);
+        id.push((idx as Idx) + 1);
     }
     insert_uint_col(&mut block, "type_id", type_id)?;
     insert_uint_col(&mut block, "atomi", atomi)?;
@@ -460,7 +460,7 @@ fn build_angle_block(rows: &[AngleRow]) -> Result<Block> {
         atomj.push(r.atomj);
         atomk.push(r.atomk);
         type_name.push(r.type_name.clone());
-        id.push((idx as U) + 1);
+        id.push((idx as Idx) + 1);
     }
     insert_uint_col(&mut block, "type_id", type_id)?;
     insert_uint_col(&mut block, "atomi", atomi)?;
@@ -488,7 +488,7 @@ fn build_dihedral_block(rows: &[DihedralRow]) -> Result<Block> {
         atomk.push(r.atomk);
         atoml.push(r.atoml);
         type_name.push(r.type_name.clone());
-        id.push((idx as U) + 1);
+        id.push((idx as Idx) + 1);
     }
     insert_uint_col(&mut block, "type_id", type_id)?;
     insert_uint_col(&mut block, "atomi", atomi)?;
@@ -586,7 +586,7 @@ fn build_frame(sections: HashMap<String, Vec<String>>) -> Result<Frame> {
         .map(|l| parse_tokens(l))
         .transpose()?;
     // AMBER writes -1 for unknown element; omit the column rather than fake 0.
-    let atomic_numbers: Option<Vec<U>> = match atomic_numbers_raw {
+    let atomic_numbers: Option<Vec<Idx>> = match atomic_numbers_raw {
         Some(nums) if !nums.is_empty() && nums.iter().all(|&z| z >= 0) => {
             if nums.len() != n_atoms {
                 return Err(invalid_data(format!(
@@ -594,7 +594,7 @@ fn build_frame(sections: HashMap<String, Vec<String>>) -> Result<Frame> {
                     nums.len()
                 )));
             }
-            Some(nums.into_iter().map(|z| z as U).collect())
+            Some(nums.into_iter().map(|z| z as Idx).collect())
         }
         _ => None,
     };
@@ -616,7 +616,7 @@ fn build_frame(sections: HashMap<String, Vec<String>>) -> Result<Frame> {
 
     // ---- atoms block ----
     let mut atoms = Block::new();
-    let ids: Vec<U> = (1..=n_atoms as U).collect();
+    let ids: Vec<Idx> = (1..=n_atoms as Idx).collect();
     insert_uint_col(&mut atoms, "id", ids)?;
     insert_str_col(&mut atoms, "name", names)?;
     insert_str_col(&mut atoms, "type", atom_types)?;

@@ -731,9 +731,9 @@ fn xyz_read_first_frame(path: &str) -> Result<Box<FrameRef>, String> {
     let species = atoms.get_string("species").ok_or_else(|| {
         "xyz_read_first_frame: atoms block has no ExtXYZ species column".to_string()
     })?;
-    let zs: Result<Vec<u32>, String> = species
+    let zs: Result<Vec<u64>, String> = species
         .iter()
-        .map(|symbol| z_for_symbol(symbol).map(|z| z as u32))
+        .map(|symbol| z_for_symbol(symbol).map(|z| z as u64))
         .collect();
     let zs = zs?;
     atoms
@@ -925,6 +925,7 @@ fn frame_meta_entries(fref: &FrameRef) -> Vec<bridge::ffi::MetaEntry> {
                         MetaValue::F64x6(_) => MetaType::F64x6,
                         MetaValue::F32x9(_) => MetaType::F32x9,
                         MetaValue::F64x9(_) => MetaType::F64x9,
+                        MetaValue::Json(_) => MetaType::String,
                     };
                     let mut entry = empty_meta_entry(key.clone(), dtype);
                     match value {
@@ -949,6 +950,7 @@ fn frame_meta_entries(fref: &FrameRef) -> Vec<bridge::ffi::MetaEntry> {
                         MetaValue::F64x6(v) => entry.f64_values = v.to_vec(),
                         MetaValue::F32x9(v) => entry.f32_values = v.to_vec(),
                         MetaValue::F64x9(v) => entry.f64_values = v.to_vec(),
+                        MetaValue::Json(v) => entry.string_value = v.to_string(),
                     }
                     entry
                 })
@@ -1043,13 +1045,13 @@ fn frame_column_i32(fref: &FrameRef, block: &str, col: &str) -> Vec<i32> {
     }
 }
 
-/// Copy a `u32` column out of a block.
+/// Copy a domain-uint (`u64` / `Idx`) column out of a block.
 ///
 /// @param fref  frame handle
 /// @param block block key
 /// @param col   column key
 /// @return owned column data; empty if the block or column is absent
-fn frame_column_u32(fref: &FrameRef, block: &str, col: &str) -> Vec<u32> {
+fn frame_column_u32(fref: &FrameRef, block: &str, col: &str) -> Vec<u64> {
     match fref.0.block(block) {
         Ok(blk) => match blk.copy_u(col) {
             Ok(Some((data, _shape))) => data,
@@ -1146,7 +1148,7 @@ fn frame_set_column_i32(
         .map_err(|e| format!("frame_set_column_i32: {e}"))?
 }
 
-/// Create or overwrite a `u32` column on a block.
+/// Create or overwrite a domain-uint (`u64` / `Idx`) column on a block.
 ///
 /// @param fref  frame handle
 /// @param block block key (created if absent)
@@ -1156,7 +1158,7 @@ fn frame_set_column_u32(
     fref: &mut FrameRef,
     block: &str,
     col: &str,
-    data: &[u32],
+    data: &[u64],
 ) -> Result<(), String> {
     fref.0
         .with_mut(|frame| {
@@ -1355,7 +1357,7 @@ mod tests {
             !columns.iter().any(|column| column == "type"),
             "Z is `atomic_number`; `type` is the caller's force-field label"
         );
-        assert_eq!(frame_column_u32(&frame, "atoms", "atomic_number"), [8, 1]);
+        assert_eq!(frame_column_u32(&frame, "atoms", "atomic_number"), [8u64, 1]);
     }
 
     #[test]
@@ -1399,7 +1401,7 @@ mod tests {
         // the bridge failing.
         let xs: Vec<f64> = vec![0.0, 1.5, -2.25];
         let spins: Vec<i32> = vec![-1, 0, 1];
-        let ids: Vec<u32> = vec![10, 20, 30];
+        let ids: Vec<u64> = vec![10, 20, 30];
         let elems: Vec<String> = vec!["H".into(), "H".into(), "O".into()];
 
         frame_set_column_f64(&mut fref, "atoms", "x", &xs).unwrap();

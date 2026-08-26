@@ -13,7 +13,7 @@
 //! | `getF32` / `getF64` / `getI32` / `getU32` / `getStr` | `(key: string, default?)` | Owned copy; `default` only when the key is absent | Yes, unless `default` given |
 //! | `setColF` | `(key: string, data: Float32Array|Float64Array, shape?: number[])` | Write float column | No |
 //! | `setColI32` | `(key: string, data: Int32Array)` | Write i32 column | No |
-//! | `setColU32` | `(key: string, data: Uint32Array)` | Write u32 column | No |
+//! | `setColU32` | `(key: string, data: BigUint64Array)` | Write domain-uint (`u64`) column | No |
 //! | `setColStr` | `(key: string, data: string[])` | Write string column | No |
 //! | `viewCol{T}` | `(key: string) -> TypedArray` | Zero-copy view (invalidated on WASM memory growth) | Yes |
 //! | `copyCol{T}` | `(key: string) -> TypedArray` | Owned JS copy (safe to keep) | Yes |
@@ -25,7 +25,7 @@
 //! (e.g., due to any allocation). Use `copyCol*` if you need to keep
 //! the data across allocations.
 
-use js_sys::{Array as JsArray, Float32Array, Int32Array, Uint32Array};
+use js_sys::{BigUint64Array, Array as JsArray, Float32Array, Int32Array, Uint32Array};
 use ndarray::Array1;
 use wasm_bindgen::prelude::*;
 
@@ -43,7 +43,7 @@ use super::types::{FLOAT_DTYPE_NAME, JsFloatArray};
 /// Column-oriented data store with typed arrays.
 ///
 /// Each column is identified by a string key and has a fixed data type
-/// (`F`, `i32`, `u32`, `string`). All columns in a block must have
+/// (`F`, `i32`, `u64`, `string`). All columns in a block must have
 /// the same number of rows.
 ///
 /// # Supported column types
@@ -52,7 +52,7 @@ use super::types::{FLOAT_DTYPE_NAME, JsFloatArray};
 /// |---------|-----------|-------------|--------|---------------|---------------|
 /// | `Float32Array` / `Float64Array` | `F` | `"f32"` / `"f64"` | `setColF` | `copyColF` | `viewColF` |
 /// | `Int32Array` | `i32` | `"i32"` | `setColI32` | `copyColI32` | `viewColI32` |
-/// | `Uint32Array` | `u32` | `"u32"` | `setColU32` | `copyColU32` | `viewColU32` |
+/// | `BigUint64Array` | `u64` (`Idx`) | `"u64"` | `setColU32` | `copyColU32` | `viewColU32` |
 /// | `string[]` | `String` | `"string"` | `setColStr` | `copyColStr` | -- |
 ///
 /// # Example (JavaScript)
@@ -254,9 +254,9 @@ impl Block {
     /// Return the data type string for a column.
     ///
     /// Possible return values: `"f32"` or `"f64"` for float columns,
-    /// plus `"i32"`, `"u32"`, `"bool"`,
-    /// `"string"`, `"u8"`. Returns `undefined` if the column does
-    /// not exist.
+    /// plus `"i32"`, `"u64"` (domain uint / identifiers), `"u32"` (storage
+    /// width), `"bool"`, `"string"`, `"u8"`. Returns `undefined` if the
+    /// column does not exist.
     ///
     /// # Arguments
     ///
@@ -281,11 +281,21 @@ impl Block {
                 b.dtype(key).map(|dt| {
                     match dt {
                         DType::Float => FLOAT_DTYPE_NAME,
+                        DType::Float16 => "f16",
+                        DType::Float32 => "f32",
                         DType::Int => "i32",
-                        DType::UInt => "u32",
+                        DType::Int8 => "i8",
+                        DType::Int16 => "i16",
+                        DType::Int64 => "i64",
+                        DType::UInt => "u64",
                         DType::U8 => "u8",
+                        DType::UInt16 => "u16",
+                        DType::UInt32 => "u32",
                         DType::Bool => "bool",
                         DType::String => "string",
+                        DType::Complex64 => "c64",
+                        DType::Complex128 => "c128",
+                        _ => dt.name(),
                     }
                     .to_string()
                 })
@@ -312,7 +322,7 @@ impl Block {
         self.with(|b| b.has_int(key)).unwrap_or(false)
     }
 
-    /// True when `key` exists and is `u32`.
+    /// True when `key` exists and is the domain uint (`u64` / `Idx`).
     #[wasm_bindgen(js_name = hasU32)]
     pub fn has_u32(&self, key: &str) -> bool {
         self.with(|b| b.has_uint(key)).unwrap_or(false)
@@ -363,17 +373,18 @@ impl Block {
         typed_or_default(key, "i32", self.dtype(key), default)
     }
 
-    /// Owned u32 column. Missing with no `default` throws; wrong dtype throws.
+    /// Owned domain-uint (`u64`) column. Missing with no `default` throws;
+    /// wrong dtype throws. The JS name stays `getU32` for the 0.14 cut.
     #[wasm_bindgen(js_name = getU32)]
     pub fn get_u32(
         &self,
         key: &str,
-        default: Option<Uint32Array>,
-    ) -> Result<Uint32Array, JsValue> {
+        default: Option<BigUint64Array>,
+    ) -> Result<BigUint64Array, JsValue> {
         if self.has_u32(key) {
             return self.copy_col_u32(key);
         }
-        typed_or_default(key, "u32", self.dtype(key), default)
+        typed_or_default(key, "u64", self.dtype(key), default)
     }
 
     /// Owned string column. Missing with no `default` throws; wrong dtype throws.
@@ -643,14 +654,17 @@ impl Block {
         self.insert_col(key, arr)
     }
 
-    // ---- U32 ----
+    // ---- domain uint (`u64` / `Idx`); JS names stay `*U32` for the 0.14 cut ----
 
-    /// Set an unsigned integer column from a `Uint32Array`.
+    /// Set a domain-uint column from a `BigUint64Array`.
+    ///
+    /// Identifiers and relation endpoints (`id`, `atomi`, `atomj`, …) are
+    /// `u64`. The JS name stays `setColU32`.
     ///
     /// # Arguments
     ///
-    /// * `key` - Column name (e.g., `"i"`, `"j"` for bond indices)
-    /// * `data` - `Uint32Array` with the column values
+    /// * `key` - Column name (e.g., `"atomi"`, `"atomj"` for bond indices)
+    /// * `data` - `BigUint64Array` with the column values
     ///
     /// # Errors
     ///
@@ -659,17 +673,17 @@ impl Block {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// // Bond topology: atom indices
-    /// bonds.setColU32("i", new Uint32Array([0, 1]));
-    /// bonds.setColU32("j", new Uint32Array([1, 2]));
+    /// // Bond topology: atom row indices
+    /// bonds.setColU32("atomi", new BigUint64Array([0n, 1n]));
+    /// bonds.setColU32("atomj", new BigUint64Array([1n, 2n]));
     /// ```
     #[wasm_bindgen(js_name = setColU32)]
-    pub fn set_col_u32(&mut self, key: &str, data: &Uint32Array) -> Result<(), JsValue> {
-        let vec: Vec<u32> = data.to_vec();
+    pub fn set_col_u32(&mut self, key: &str, data: &BigUint64Array) -> Result<(), JsValue> {
+        let vec: Vec<u64> = data.to_vec();
         self.insert_col(key, Array1::from(vec).into_dyn())
     }
 
-    /// Zero-copy `Uint32Array` view into WASM linear memory.
+    /// Zero-copy `BigUint64Array` view into WASM linear memory.
     ///
     /// **Warning**: invalidated if WASM linear memory grows.
     /// Use [`copyColU32`](Block::copy_col_u32) for a safe copy.
@@ -680,25 +694,25 @@ impl Block {
     ///
     /// # Errors
     ///
-    /// Throws if the column does not exist or is not of type `u32`.
+    /// Throws if the column does not exist or is not the domain uint (`u64`).
     ///
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const view = block.viewColU32("i");
+    /// const view = block.viewColU32("atomi");
     /// ```
     #[wasm_bindgen(js_name = viewColU32)]
-    pub fn view_col_u32(&self, key: &str) -> Result<Uint32Array, JsValue> {
+    pub fn view_col_u32(&self, key: &str) -> Result<BigUint64Array, JsValue> {
         self.inner
             .store
             .borrow()
             .borrow_col_U(&self.inner.handle, key, |s, _| unsafe {
-                Uint32Array::view(s)
+                BigUint64Array::view(s)
             })
-            .map_err(|e| col_not_found_or(key, "u32", e))
+            .map_err(|e| col_not_found_or(key, "u64", e))
     }
 
-    /// Owned `Uint32Array` copy of a column.
+    /// Owned `BigUint64Array` copy of a domain-uint column.
     ///
     /// # Arguments
     ///
@@ -706,21 +720,21 @@ impl Block {
     ///
     /// # Errors
     ///
-    /// Throws if the column does not exist or is not of type `u32`.
+    /// Throws if the column does not exist or is not the domain uint (`u64`).
     ///
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const bondI = block.copyColU32("i");
-    /// const bondJ = block.copyColU32("j");
+    /// const bondI = block.copyColU32("atomi");
+    /// const bondJ = block.copyColU32("atomj");
     /// ```
     #[wasm_bindgen(js_name = copyColU32)]
-    pub fn copy_col_u32(&self, key: &str) -> Result<Uint32Array, JsValue> {
+    pub fn copy_col_u32(&self, key: &str) -> Result<BigUint64Array, JsValue> {
         self.with(|b| {
             b.get_uint(key)
                 .and_then(|arr| arr.as_slice_memory_order())
-                .map(Uint32Array::from)
-                .ok_or_else(|| col_err(key, "u32"))
+                .map(BigUint64Array::from)
+                .ok_or_else(|| col_err(key, "u64"))
         })?
     }
 
@@ -735,7 +749,7 @@ impl Block {
     #[wasm_bindgen(js_name = createColU32)]
     pub fn create_col_u32(&mut self, key: &str, shape: Box<[usize]>) -> Result<(), JsValue> {
         let dims: Vec<usize> = shape.into_vec();
-        let arr = ndarray::ArrayD::<u32>::zeros(ndarray::IxDyn(&dims));
+        let arr = ndarray::ArrayD::<u64>::zeros(ndarray::IxDyn(&dims));
         self.insert_col(key, arr)
     }
 
@@ -917,7 +931,7 @@ mod tests {
         let frame = Frame::new();
         let mut block = frame.create_block("atoms").unwrap();
 
-        let ids = Uint32Array::from(&[7_u32, 8_u32][..]);
+        let ids = BigUint64Array::from(&[7_u64, 8_u64][..]);
         block.set_col_u32("id", &ids).unwrap();
         let copied = block.copy_col_u32("id").unwrap();
         assert_eq!(copied.length(), 2);
@@ -953,7 +967,7 @@ mod tests {
         let frame = Frame::new();
         let mut block = frame.create_block("atoms").unwrap();
         block
-            .set_col_u32("id", &Uint32Array::from(&[1_u32, 2_u32][..]))
+            .set_col_u32("id", &BigUint64Array::from(&[1_u64, 2_u64][..]))
             .unwrap();
         block
             .set_col_i32("signed_scratch", &Int32Array::from(&[3_i32, 4][..]))
@@ -974,7 +988,7 @@ mod tests {
         let ids = block.get_u32("id", None).unwrap();
         assert_eq!(ids.length(), 2);
         assert!(block.get_u32("missing", None).is_err());
-        let fallback = Uint32Array::from(&[9_u32][..]);
+        let fallback = BigUint64Array::from(&[9_u64][..]);
         let got = block.get_u32("missing", Some(fallback)).unwrap();
         assert_eq!(got.get_index(0), 9);
         assert!(block.get_u32("signed_scratch", None).is_err());

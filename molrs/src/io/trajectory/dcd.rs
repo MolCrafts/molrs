@@ -49,7 +49,7 @@ use molrs::spatial::simbox::SimBox;
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
 use molrs::store::frame_access::FrameAccess;
-use molrs::types::{F, Pbc3, U};
+use molrs::types::{F, Idx, Pbc3};
 use ndarray::{Array1, Array2, IxDyn, array};
 use once_cell::sync::OnceCell;
 use std::fs::File;
@@ -874,7 +874,7 @@ fn parse_one_frame<R: Read>(
 
     let natoms = header.natoms as usize;
     let mut atoms = Block::new();
-    let id_arr = Array1::from_iter(1..=natoms as U)
+    let id_arr = Array1::from_iter(1..=natoms as Idx)
         .into_shape_with_order(IxDyn(&[natoms]))
         .map_err(err_mapper)?;
     atoms.insert("id", id_arr).map_err(err_mapper)?;
@@ -2128,7 +2128,7 @@ mod tests {
     fn two_atom_frame(x0: f64, with_box: bool) -> Frame {
         let mut atoms = Block::new();
         atoms
-            .insert("id", Array1::from(vec![1u32, 2]).into_dyn())
+            .insert("id", Array1::from(vec![1u64, 2]).into_dyn())
             .unwrap();
         atoms
             .insert("x", Array1::from(vec![x0, x0 + 1.0]).into_dyn())

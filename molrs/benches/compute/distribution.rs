@@ -16,17 +16,17 @@ use crate::helpers;
 const N_TUPLES: usize = 500;
 
 fn pairs() -> AtomGroups {
-    let t: Vec<(u32, u32)> = (0..N_TUPLES as u32).map(|i| (i, i + 1)).collect();
+    let t: Vec<(u64, u64)> = (0..N_TUPLES as u64).map(|i| (i, i + 1)).collect();
     AtomGroups::pairs(&t)
 }
 
 fn triples() -> AtomGroups {
-    let t: Vec<(u32, u32, u32)> = (0..N_TUPLES as u32).map(|i| (i, i + 1, i + 2)).collect();
+    let t: Vec<(u64, u64, u64)> = (0..N_TUPLES as u64).map(|i| (i, i + 1, i + 2)).collect();
     AtomGroups::triples(&t)
 }
 
 fn quads() -> AtomGroups {
-    let t: Vec<(u32, u32, u32, u32)> = (0..N_TUPLES as u32)
+    let t: Vec<(u64, u64, u64, u64)> = (0..N_TUPLES as u64)
         .map(|i| (i, i + 1, i + 2, i + 3))
         .collect();
     AtomGroups::quads(&t)

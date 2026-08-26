@@ -4,7 +4,7 @@
 
 use molrs::store::block::Column;
 use molrs::store::trajectory::{ObservableData, ObservableRecord, Trajectory as CoreTrajectory};
-use molrs::types::{F, I, U};
+use molrs::types::{F, I, Idx};
 use ndarray::{ArrayD, IxDyn};
 use numpy::{IntoPyArray, PyArrayDyn, PyReadonlyArray1, PyReadonlyArrayDyn};
 use pyo3::exceptions::{PyIndexError, PyTypeError};
@@ -314,12 +314,12 @@ fn py_any_to_column(value: &Bound<'_, PyAny>) -> PyResult<Column> {
     }
     if let Ok(arr) = value.extract::<PyReadonlyArrayDyn<'_, u32>>() {
         return Ok(Column::from_uint(
-            arr.as_array().mapv(|v| v as U).into_dyn(),
+            arr.as_array().mapv(|v| v as Idx).into_dyn(),
         ));
     }
     if let Ok(arr) = value.extract::<PyReadonlyArrayDyn<'_, u64>>() {
         return Ok(Column::from_uint(
-            arr.as_array().mapv(|v| v as U).into_dyn(),
+            arr.as_array().mapv(|v| v as Idx).into_dyn(),
         ));
     }
     if let Ok(arr) = value.extract::<PyReadonlyArrayDyn<'_, bool>>() {
@@ -337,7 +337,7 @@ fn py_any_to_column(value: &Bound<'_, PyAny>) -> PyResult<Column> {
         return Ok(Column::from_int(ArrayD::from_elem(IxDyn(&[]), v as I)));
     }
     if let Ok(v) = value.extract::<u64>() {
-        return Ok(Column::from_uint(ArrayD::from_elem(IxDyn(&[]), v as U)));
+        return Ok(Column::from_uint(ArrayD::from_elem(IxDyn(&[]), v as Idx)));
     }
     if let Ok(v) = value.extract::<bool>() {
         return Ok(Column::from_bool(ArrayD::from_elem(IxDyn(&[]), v)));
@@ -365,14 +365,19 @@ fn column_to_pyobject(py: Python<'_>, column: &Column) -> PyResult<Py<PyAny>> {
             .into_pyarray(py)
             .into_any()
             .unbind()),
-        // For non-Float columns the caller expects an owned numpy array, so we
-        // deep-clone the inner ArrayD out of the holder. `.array().clone()`
-        // takes &ArrayD<T> and calls ArrayD::clone (deep-copy), detaching from
-        // any foreign-backed holder as a side effect.
+        Column::Float16(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
+        Column::Float32(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
         Column::Int(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
+        Column::Int8(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
+        Column::Int16(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
+        Column::Int64(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
         Column::UInt(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
         Column::Bool(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
         Column::U8(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
+        Column::UInt16(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
+        Column::UInt32(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
+        Column::Complex64(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
+        Column::Complex128(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
         Column::String(array) => {
             if array.ndim() == 0 {
                 let value = array.iter().next().cloned().unwrap_or_default();

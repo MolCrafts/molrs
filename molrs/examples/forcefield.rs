@@ -10,7 +10,7 @@ use molrs::ff::forcefield::ForceField;
 use molrs::ff::potential::extract_coords;
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
-use molrs::types::{F, U};
+use molrs::types::{F, Idx};
 use ndarray::Array1;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -102,10 +102,16 @@ fn build_water() -> Frame {
     // Bonds block: i, j, type columns
     let mut bonds = Block::new();
     bonds
-        .insert("atomi", Array1::from_vec(vec![0 as U, 0 as U]).into_dyn())
+        .insert(
+            "atomi",
+            Array1::from_vec(vec![0 as Idx, 0 as Idx]).into_dyn(),
+        )
         .unwrap();
     bonds
-        .insert("atomj", Array1::from_vec(vec![1 as U, 2 as U]).into_dyn())
+        .insert(
+            "atomj",
+            Array1::from_vec(vec![1 as Idx, 2 as Idx]).into_dyn(),
+        )
         .unwrap();
     bonds
         .insert(
@@ -118,13 +124,13 @@ fn build_water() -> Frame {
     // Angles block: i, j (central), k, type columns
     let mut angles = Block::new();
     angles
-        .insert("atomi", Array1::from_vec(vec![1 as U]).into_dyn())
+        .insert("atomi", Array1::from_vec(vec![1 as Idx]).into_dyn())
         .unwrap();
     angles
-        .insert("atomj", Array1::from_vec(vec![0 as U]).into_dyn())
+        .insert("atomj", Array1::from_vec(vec![0 as Idx]).into_dyn())
         .unwrap();
     angles
-        .insert("atomk", Array1::from_vec(vec![2 as U]).into_dyn())
+        .insert("atomk", Array1::from_vec(vec![2 as Idx]).into_dyn())
         .unwrap();
     angles
         .insert(

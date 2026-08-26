@@ -6,7 +6,7 @@
 
 use crate::error::FfiError;
 use crate::handle::{BlockHandle, FrameId};
-use molrs::types::{F, I, U};
+use molrs::types::{F, I, Idx};
 use molrs::{spatial::simbox::SimBox, store::block::Block, store::frame::Frame};
 use slotmap::SlotMap;
 use std::collections::{HashMap, HashSet};
@@ -341,7 +341,7 @@ impl Store {
         &self,
         handle: &BlockHandle,
         col: &str,
-    ) -> Result<(Vec<U>, Vec<usize>), FfiError> {
+    ) -> Result<(Vec<Idx>, Vec<usize>), FfiError> {
         let (_, block) = self.validated_block(handle)?;
         let arr = block.get_uint(col).ok_or_else(|| FfiError::KeyNotFound {
             key: col.to_string(),
@@ -374,7 +374,7 @@ impl Store {
         &self,
         handle: &BlockHandle,
         col: &str,
-        f: impl FnOnce(&[U], &[usize]) -> R,
+        f: impl FnOnce(&[Idx], &[usize]) -> R,
     ) -> Result<R, FfiError> {
         let (_, block) = self.validated_block(handle)?;
         let arr = block.get_uint(col).ok_or_else(|| FfiError::KeyNotFound {

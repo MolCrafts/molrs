@@ -12,7 +12,7 @@ use super::Block;
 use super::column::Column;
 use super::column_view::ColumnView;
 use super::dtype::DType;
-use crate::types::{F, I, U};
+use crate::types::{F, I, Idx};
 
 /// A borrowed, read-only view of a [`Block`].
 ///
@@ -90,7 +90,7 @@ impl<'a> BlockView<'a> {
     }
 
     /// Gets a uint array view for `key` if present and of correct type.
-    pub fn get_uint(&self, key: &str) -> Option<ArrayViewD<'a, U>> {
+    pub fn get_uint(&self, key: &str) -> Option<ArrayViewD<'a, Idx>> {
         self.get(key).and_then(|c| c.as_uint())
     }
 
@@ -167,7 +167,7 @@ impl std::fmt::Debug for BlockView<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::U;
+    use crate::types::Idx;
     use ndarray::Array1;
 
     #[test]
@@ -177,7 +177,7 @@ mod tests {
             .insert("x", Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn())
             .unwrap();
         block
-            .insert("id", Array1::from_vec(vec![10 as U, 20, 30]).into_dyn())
+            .insert("id", Array1::from_vec(vec![10 as Idx, 20, 30]).into_dyn())
             .unwrap();
 
         let view = BlockView::from(&block);
@@ -195,7 +195,7 @@ mod tests {
             .insert("x", Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn())
             .unwrap();
         block
-            .insert("id", Array1::from_vec(vec![10 as U, 20, 30]).into_dyn())
+            .insert("id", Array1::from_vec(vec![10 as Idx, 20, 30]).into_dyn())
             .unwrap();
 
         let view = BlockView::from(&block);
@@ -219,7 +219,7 @@ mod tests {
             .insert("x", Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn())
             .unwrap();
         block
-            .insert("id", Array1::from_vec(vec![10 as U, 20, 30]).into_dyn())
+            .insert("id", Array1::from_vec(vec![10 as Idx, 20, 30]).into_dyn())
             .unwrap();
 
         let view = BlockView::from(&block);
@@ -273,7 +273,7 @@ mod tests {
             .insert("x", Array1::from_vec(vec![1.0 as F, 2.0]).into_dyn())
             .unwrap();
         block
-            .insert("id", Array1::from_vec(vec![10 as U, 20]).into_dyn())
+            .insert("id", Array1::from_vec(vec![10 as Idx, 20]).into_dyn())
             .unwrap();
 
         let view = BlockView::from(&block);

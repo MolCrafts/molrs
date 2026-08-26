@@ -5,7 +5,7 @@ use molrs::store::block::Block;
 use molrs::store::frame::Frame;
 use molrs::store::frame_access::FrameAccess;
 use molrs::store::meta::MetaValue;
-use molrs::types::{F, I, U};
+use molrs::types::{F, I, Idx};
 use ndarray::{Array1, Array2, ArrayD};
 use once_cell::sync::OnceCell;
 use std::collections::HashMap;
@@ -423,10 +423,10 @@ fn build_block_from_props(
                 if molrs::store::schema::column(&name).map(|c| c.dtype)
                     == Some(molrs::store::block::DType::UInt)
                 {
-                    let unsigned: Vec<molrs::types::U> = v
+                    let unsigned: Vec<molrs::types::Idx> = v
                         .iter()
                         .map(|&x| {
-                            u32::try_from(x).map_err(|_| {
+                            Idx::try_from(x).map_err(|_| {
                                 format!("column '{name}' is unsigned in the Frame schema, got {x}")
                             })
                         })
@@ -514,7 +514,7 @@ fn parse_origin_values(v: &ExtValue) -> Option<[F; 3]> {
 /// `Connct="[0,1,0,2]"` describes bonds 0-1 and 0-2. Bond order is implicitly
 /// one. Brackets are required by the public convention but are accepted
 /// leniently here so older hand-written inputs remain readable.
-fn parse_connct(value: &ExtValue, n_atoms: usize) -> Result<Vec<(U, U)>, String> {
+fn parse_connct(value: &ExtValue, n_atoms: usize) -> Result<Vec<(Idx, Idx)>, String> {
     fn append_primitive(raw: &mut String, value: &Primitive) -> Result<(), String> {
         if !raw.is_empty() {
             raw.push(',');
@@ -545,7 +545,7 @@ fn parse_connct(value: &ExtValue, n_atoms: usize) -> Result<Vec<(U, U)>, String>
         .filter(|token| !token.is_empty())
         .map(|token| {
             token
-                .parse::<U>()
+                .parse::<Idx>()
                 .map_err(|_| format!("Connct contains invalid atom index '{token}'"))
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -576,7 +576,7 @@ fn connct_block(value: &ExtValue, n_atoms: usize) -> Result<Option<Block>, Strin
         return Ok(None);
     }
 
-    let (atomi, atomj): (Vec<U>, Vec<U>) = pairs.into_iter().unzip();
+    let (atomi, atomj): (Vec<Idx>, Vec<Idx>) = pairs.into_iter().unzip();
     let mut block = Block::new();
     block
         .insert("atomi", Array1::from_vec(atomi).into_dyn())
@@ -865,6 +865,7 @@ fn meta_to_extxyz(value: &MetaValue) -> String {
         MetaValue::F64x6(v) => joined!(v),
         MetaValue::F32x9(v) => joined!(v),
         MetaValue::F64x9(v) => joined!(v),
+        MetaValue::Json(v) => v.to_string(),
     };
     if raw.contains(char::is_whitespace) {
         format!("\"{raw}\"")
@@ -1450,7 +1451,7 @@ mod tests {
         use ndarray::Array1;
 
         let floats = |v: [f64; 3]| Array1::from_vec(v.to_vec()).into_dyn();
-        let uints = |v: [u32; 3]| Array1::from_vec(v.to_vec()).into_dyn();
+        let uints = |v: [u64; 3]| Array1::from_vec(v.to_vec()).into_dyn();
         let strings = |v: [&str; 3]| {
             Array1::from_vec(v.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>()).into_dyn()
         };
@@ -1529,11 +1530,11 @@ mod tests {
         );
         assert_eq!(
             atoms.get_uint("id").unwrap().as_slice().unwrap(),
-            &[1_u32, 2, 3]
+            &[1_u64, 2, 3]
         );
         assert_eq!(
             atoms.get_uint("res_id").unwrap().as_slice().unwrap(),
-            &[1_u32, 1, 1]
+            &[1_u64, 1, 1]
         );
     }
 
@@ -1760,8 +1761,19 @@ pub fn write_xyz_frame<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> st
 
         let dtype_to_char = |dt: DType| -> &'static str {
             match dt {
-                DType::Float => "R",
-                DType::Int | DType::UInt | DType::U8 => "I",
+                DType::Float
+                | DType::Float16
+                | DType::Float32
+                | DType::Complex64
+                | DType::Complex128 => "R",
+                DType::Int
+                | DType::Int8
+                | DType::Int16
+                | DType::Int64
+                | DType::UInt
+                | DType::U8
+                | DType::UInt16
+                | DType::UInt32 => "I",
                 DType::Bool => "L",
                 DType::String => "S",
             }
@@ -1798,55 +1810,8 @@ pub fn write_xyz_frame<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> st
         for i in 0..n {
             let mut line_parts = Vec::new();
             for k in &columns {
-                match atoms.column_dtype(k).expect("retained above") {
-                    DType::Float => {
-                        if let Some(arr) = atoms.get_float_view(k) {
-                            let row = arr.index_axis(ndarray::Axis(0), i);
-                            for val in row.iter() {
-                                line_parts.push(format!("{}", val));
-                            }
-                        }
-                    }
-                    DType::Int => {
-                        if let Some(arr) = atoms.get_int_view(k) {
-                            let row = arr.index_axis(ndarray::Axis(0), i);
-                            for val in row.iter() {
-                                line_parts.push(format!("{}", val));
-                            }
-                        }
-                    }
-                    DType::Bool => {
-                        if let Some(arr) = atoms.get_bool_view(k) {
-                            let row = arr.index_axis(ndarray::Axis(0), i);
-                            for val in row.iter() {
-                                line_parts.push(if *val { "T" } else { "F" }.to_string());
-                            }
-                        }
-                    }
-                    DType::UInt => {
-                        if let Some(arr) = atoms.get_uint_view(k) {
-                            let row = arr.index_axis(ndarray::Axis(0), i);
-                            for val in row.iter() {
-                                line_parts.push(format!("{}", val));
-                            }
-                        }
-                    }
-                    DType::U8 => {
-                        if let Some(arr) = atoms.get_u8_view(k) {
-                            let row = arr.index_axis(ndarray::Axis(0), i);
-                            for val in row.iter() {
-                                line_parts.push(format!("{}", val));
-                            }
-                        }
-                    }
-                    DType::String => {
-                        if let Some(arr) = atoms.get_string_view(k) {
-                            let row = arr.index_axis(ndarray::Axis(0), i);
-                            for val in row.iter() {
-                                line_parts.push(val.clone());
-                            }
-                        }
-                    }
+                if let Some(tokens) = atoms.xyz_row_tokens(k, i) {
+                    line_parts.extend(tokens);
                 }
             }
             row_values.push(line_parts);

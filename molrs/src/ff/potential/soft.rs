@@ -391,14 +391,14 @@ fn read_pairs(frame: &Frame, block: &str, col_a: &str, col_b: &str) -> Vec<(usiz
 mod tests {
     use super::*;
     use molrs::store::block::Block;
-    use molrs::types::U;
+    use molrs::types::Idx;
     use ndarray::Array1;
 
     /// A frame carrying the bonds/angles topology blocks of a linear n-atom chain
     /// (1-2 = (i, i+1); 1-3 angle ends = (i, i+2)). No Atomistic involved.
     fn chain_frame(n: usize) -> Frame {
         let mut frame = Frame::new();
-        let (bi, bj): (Vec<U>, Vec<U>) = (0..n - 1).map(|i| (i as U, (i + 1) as U)).unzip();
+        let (bi, bj): (Vec<Idx>, Vec<Idx>) = (0..n - 1).map(|i| (i as Idx, (i + 1) as Idx)).unzip();
         let mut bonds = Block::new();
         bonds
             .insert("atomi", Array1::from_vec(bi).into_dyn())
@@ -407,7 +407,7 @@ mod tests {
             .insert("atomj", Array1::from_vec(bj).into_dyn())
             .unwrap();
         frame.insert("bonds", bonds);
-        let (ai, ak): (Vec<U>, Vec<U>) = (0..n - 2).map(|i| (i as U, (i + 2) as U)).unzip();
+        let (ai, ak): (Vec<Idx>, Vec<Idx>) = (0..n - 2).map(|i| (i as Idx, (i + 2) as Idx)).unzip();
         let mut angles = Block::new();
         angles
             .insert("atomi", Array1::from_vec(ai).into_dyn())

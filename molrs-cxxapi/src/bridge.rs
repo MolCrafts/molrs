@@ -204,7 +204,7 @@ pub mod ffi {
         // readers — owned copies (RefCell precludes returning borrowed slices)
         fn frame_column_f64(fref: &FrameRef, block: &str, col: &str) -> Vec<f64>;
         fn frame_column_i32(fref: &FrameRef, block: &str, col: &str) -> Vec<i32>;
-        fn frame_column_u32(fref: &FrameRef, block: &str, col: &str) -> Vec<u32>;
+        fn frame_column_u32(fref: &FrameRef, block: &str, col: &str) -> Vec<u64>;
         fn frame_column_str(fref: &FrameRef, block: &str, col: &str) -> Vec<String>;
         fn frame_box(fref: &FrameRef) -> Vec<f64>;
 
@@ -225,7 +225,7 @@ pub mod ffi {
             fref: &mut FrameRef,
             block: &str,
             col: &str,
-            data: &[u32],
+            data: &[u64],
         ) -> Result<()>;
         fn frame_set_column_str(
             fref: &mut FrameRef,

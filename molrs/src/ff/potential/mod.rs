@@ -29,7 +29,7 @@ use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
 use molrs::spatial::neighbors::Neighbors;
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
-use molrs::types::{F, U};
+use molrs::types::{F, Idx};
 
 /// Build the intramolecular non-bonded `pairs` block (`atomi`, `atomj`, `is_14`)
 /// from a frame's bond/angle/dihedral topology: every `i < j` pair, excluding
@@ -47,8 +47,8 @@ pub fn intramolecular_pairs(frame: &Frame) -> Block {
     let excluded_13 = end_pairs(frame, "angles", "atomi", "atomk");
     let set_14 = end_pairs(frame, "dihedrals", "atomi", "atoml");
 
-    let mut pi: Vec<U> = Vec::new();
-    let mut pj: Vec<U> = Vec::new();
+    let mut pi: Vec<Idx> = Vec::new();
+    let mut pj: Vec<Idx> = Vec::new();
     let mut p14: Vec<bool> = Vec::new();
     for a in 0..n_atoms {
         for b in (a + 1)..n_atoms {
@@ -56,8 +56,8 @@ pub fn intramolecular_pairs(frame: &Frame) -> Block {
             if excluded_12.contains(&key) || excluded_13.contains(&key) {
                 continue;
             }
-            pi.push(a as U);
-            pj.push(b as U);
+            pi.push(a as Idx);
+            pj.push(b as Idx);
             p14.push(set_14.contains(&key));
         }
     }
@@ -486,7 +486,7 @@ impl ForceField {
 mod tests {
     use super::*;
     use molrs::store::block::Block;
-    use molrs::types::U;
+    use molrs::types::Idx;
     use ndarray::Array1;
 
     struct DummyPotential {
@@ -519,10 +519,10 @@ mod tests {
         let mut frame = make_atoms_only_frame();
         let mut bonds = Block::new();
         bonds
-            .insert("atomi", Array1::from_vec(vec![0 as U]).into_dyn())
+            .insert("atomi", Array1::from_vec(vec![0 as Idx]).into_dyn())
             .unwrap();
         bonds
-            .insert("atomj", Array1::from_vec(vec![1 as U]).into_dyn())
+            .insert("atomj", Array1::from_vec(vec![1 as Idx]).into_dyn())
             .unwrap();
         bonds
             .insert("type", Array1::from_vec(vec!["A-A".to_string()]).into_dyn())
@@ -766,28 +766,28 @@ mod tests {
 
         let mut bonds = Block::new();
         bonds
-            .insert("atomi", Array1::from_vec(vec![0 as U, 1, 2]).into_dyn())
+            .insert("atomi", Array1::from_vec(vec![0 as Idx, 1, 2]).into_dyn())
             .unwrap();
         bonds
-            .insert("atomj", Array1::from_vec(vec![1 as U, 2, 3]).into_dyn())
+            .insert("atomj", Array1::from_vec(vec![1 as Idx, 2, 3]).into_dyn())
             .unwrap();
         frame.insert("bonds", bonds);
 
         let mut angles = Block::new();
         angles
-            .insert("atomi", Array1::from_vec(vec![0 as U, 1]).into_dyn())
+            .insert("atomi", Array1::from_vec(vec![0 as Idx, 1]).into_dyn())
             .unwrap();
         angles
-            .insert("atomk", Array1::from_vec(vec![2 as U, 3]).into_dyn())
+            .insert("atomk", Array1::from_vec(vec![2 as Idx, 3]).into_dyn())
             .unwrap();
         frame.insert("angles", angles);
 
         let mut dihedrals = Block::new();
         dihedrals
-            .insert("atomi", Array1::from_vec(vec![0 as U]).into_dyn())
+            .insert("atomi", Array1::from_vec(vec![0 as Idx]).into_dyn())
             .unwrap();
         dihedrals
-            .insert("atoml", Array1::from_vec(vec![3 as U]).into_dyn())
+            .insert("atoml", Array1::from_vec(vec![3 as Idx]).into_dyn())
             .unwrap();
         frame.insert("dihedrals", dihedrals);
 

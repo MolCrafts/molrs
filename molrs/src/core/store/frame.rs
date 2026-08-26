@@ -10,7 +10,7 @@
 //! ```
 //! use molrs::store::frame::Frame;
 //! use molrs::store::block::Block;
-//! use molrs::types::{F, U};
+//! use molrs::types::{F, Idx};
 //! use ndarray::Array1;
 //!
 //! let mut frame = Frame::new();
@@ -19,7 +19,7 @@
 //! let mut atoms = Block::new();
 //! atoms.insert("x", Array1::from_vec(vec![1.0 as F, 2.0 as F, 3.0 as F]).into_dyn()).unwrap();
 //! atoms.insert("y", Array1::from_vec(vec![0.0 as F, 1.0 as F, 2.0 as F]).into_dyn()).unwrap();
-//! atoms.insert("id", Array1::from_vec(vec![1 as U, 2 as U, 3 as U]).into_dyn()).unwrap();
+//! atoms.insert("id", Array1::from_vec(vec![1 as Idx, 2 as Idx, 3 as Idx]).into_dyn()).unwrap();
 //!
 //! frame.insert("atoms", atoms);
 //!

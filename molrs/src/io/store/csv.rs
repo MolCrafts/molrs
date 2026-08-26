@@ -165,9 +165,9 @@ fn insert_as(
                 .map_err(|e| e.to_string())
         }
         DType::UInt => {
-            let v: Vec<crate::types::U> = raw
+            let v: Vec<crate::types::Idx> = raw
                 .iter()
-                .map(|s| s.parse::<crate::types::U>().map_err(parse_err))
+                .map(|s| s.parse::<crate::types::Idx>().map_err(parse_err))
                 .collect::<Result<_, _>>()?;
             block
                 .insert(name, Array1::from(v).into_dyn())
@@ -197,6 +197,9 @@ fn insert_as(
         DType::String => block
             .insert(name, Array1::from(raw).into_dyn())
             .map_err(|e| e.to_string()),
+        other => Err(format!(
+            "CSV cannot encode {other} columns; only float/int/uint/u8/bool/string"
+        )),
     }
 }
 

@@ -1,4 +1,7 @@
 [toolchain]
-channel = "stable"
+# Pin, do not float on `stable`: GitHub `dtolnay/rust-toolchain@stable` was
+# pulling 1.98 while developers sat on 1.96, so new clippy lints failed CI
+# that local `prek` never saw. Bump this file deliberately with a clippy pass.
+channel = "1.96.0"
 components = ["rustfmt", "clippy"]
 targets = ["wasm32-unknown-unknown"]

@@ -22,7 +22,7 @@
 //! | `I`       | `int32_t`           | `int64_t`                 |
 //! | `U`       | `uint32_t`          | `uint64_t`                |
 
-use molrs::types::{F, I, U};
+use molrs::types::{F, I, Idx};
 use ndarray::ArrayD;
 
 use crate::error::{self, MolrsDType, MolrsStatus, ffi_err_to_status};
@@ -380,7 +380,7 @@ macro_rules! impl_col_ptr {
 
 impl_col_ptr!(molrs_block_get_F, F, get_float, "float");
 impl_col_ptr!(molrs_block_get_I, I, get_int, "int");
-impl_col_ptr!(molrs_block_get_U, U, get_uint, "uint");
+impl_col_ptr!(molrs_block_get_U, Idx, get_uint, "uint");
 
 // ---------------------------------------------------------------------------
 // Zero-copy WRITE
@@ -480,7 +480,7 @@ macro_rules! impl_col_ptr_mut {
 
 impl_col_ptr_mut!(molrs_block_get_F_mut, F, get_float_mut, "float");
 impl_col_ptr_mut!(molrs_block_get_I_mut, I, get_int_mut, "int");
-impl_col_ptr_mut!(molrs_block_get_U_mut, U, get_uint_mut, "uint");
+impl_col_ptr_mut!(molrs_block_get_U_mut, Idx, get_uint_mut, "uint");
 
 /// Finalize changes after writing through a mutable column pointer.
 ///
@@ -604,7 +604,7 @@ macro_rules! impl_col_copy {
 
 impl_col_copy!(molrs_block_copy_F, F, get_float, "float");
 impl_col_copy!(molrs_block_copy_I, I, get_int, "int");
-impl_col_copy!(molrs_block_copy_U, U, get_uint, "uint");
+impl_col_copy!(molrs_block_copy_U, Idx, get_uint, "uint");
 
 // ---------------------------------------------------------------------------
 // Insert columns
@@ -719,7 +719,7 @@ macro_rules! impl_block_insert {
 
 impl_block_insert!(molrs_block_set_F, F, "float");
 impl_block_insert!(molrs_block_set_I, I, "int");
-impl_block_insert!(molrs_block_set_U, U, "uint");
+impl_block_insert!(molrs_block_set_U, Idx, "uint");
 
 // ---------------------------------------------------------------------------
 // Runtime width queries
@@ -766,5 +766,5 @@ pub extern "C" fn molrs_sizeof_I() -> usize {
 /// ```
 #[unsafe(no_mangle)]
 pub extern "C" fn molrs_sizeof_U() -> usize {
-    std::mem::size_of::<U>()
+    std::mem::size_of::<Idx>()
 }

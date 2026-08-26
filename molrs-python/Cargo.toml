@@ -19,7 +19,9 @@ pyo3 = { version = "0.28", features = [
     "abi3-py312",
     "multiple-pymethods",
 ] }
-numpy = "0.28"
+numpy = { version = "0.28", features = ["half"] }
+half = { version = "2", default-features = false, features = ["num-traits", "std"] }
+num-complex = "0.4"
 ndarray = "0.17"
 serde_json = "1"
 # `ff` exposes `molrs_ffi::ForceFieldRef`, the stable handle behind

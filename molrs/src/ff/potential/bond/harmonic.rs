@@ -130,7 +130,7 @@ mod tests {
     use crate::ff::forcefield::ForceField;
     use crate::ff::potential::extract_coords;
     use molrs::store::block::Block;
-    use molrs::types::U;
+    use molrs::types::Idx;
     use ndarray::Array1;
 
     fn make_atoms(coords: &[[F; 3]]) -> Block {
@@ -178,10 +178,10 @@ mod tests {
 
         let mut bonds = Block::new();
         bonds
-            .insert("atomi", Array1::from_vec(vec![0 as U]).into_dyn())
+            .insert("atomi", Array1::from_vec(vec![0 as Idx]).into_dyn())
             .unwrap();
         bonds
-            .insert("atomj", Array1::from_vec(vec![1 as U]).into_dyn())
+            .insert("atomj", Array1::from_vec(vec![1 as Idx]).into_dyn())
             .unwrap();
         bonds
             .insert(

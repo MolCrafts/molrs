@@ -1718,11 +1718,11 @@ impl WasmTopology {
                 use molrs::store::block::BlockDtype;
                 let col_i = bonds
                     .get("i")
-                    .and_then(|c| <u32 as BlockDtype>::from_column(c))
+                    .and_then(|c| <u64 as BlockDtype>::from_column(c))
                     .and_then(|a| a.as_slice());
                 let col_j = bonds
                     .get("j")
-                    .and_then(|c| <u32 as BlockDtype>::from_column(c))
+                    .and_then(|c| <u64 as BlockDtype>::from_column(c))
                     .and_then(|a| a.as_slice());
 
                 if let (Some(is), Some(js)) = (col_i, col_j) {
@@ -5336,7 +5336,7 @@ impl WasmDistanceDistribution {
     }
 
     pub fn compute(&self, frame: &Frame, pairs: &[u32]) -> Result<JsValue, JsValue> {
-        let groups = molrs::compute::distribution::AtomGroups::new(2, pairs.to_vec())
+        let groups = molrs::compute::distribution::AtomGroups::new(2, pairs.iter().map(|&v| v as u64).collect())
             .map_err(|e| JsValue::from_str(&format!("DistanceDistribution groups: {e}")))?;
         let calc = molrs::compute::distribution::DistributionFunction::new(
             molrs::compute::distribution::DistanceObservable,
@@ -5362,7 +5362,7 @@ impl WasmAngleDistribution {
     }
 
     pub fn compute(&self, frame: &Frame, triples: &[u32]) -> Result<JsValue, JsValue> {
-        let groups = molrs::compute::distribution::AtomGroups::new(3, triples.to_vec())
+        let groups = molrs::compute::distribution::AtomGroups::new(3, triples.iter().map(|&v| v as u64).collect())
             .map_err(|e| JsValue::from_str(&format!("AngleDistribution groups: {e}")))?;
         let calc = molrs::compute::distribution::DistributionFunction::over_natural_range(
             molrs::compute::distribution::AngleObservable,
@@ -5386,7 +5386,7 @@ impl WasmDihedralDistribution {
     }
 
     pub fn compute(&self, frame: &Frame, quads: &[u32]) -> Result<JsValue, JsValue> {
-        let groups = molrs::compute::distribution::AtomGroups::new(4, quads.to_vec())
+        let groups = molrs::compute::distribution::AtomGroups::new(4, quads.iter().map(|&v| v as u64).collect())
             .map_err(|e| JsValue::from_str(&format!("DihedralDistribution groups: {e}")))?;
         let calc = molrs::compute::distribution::DistributionFunction::over_natural_range(
             molrs::compute::distribution::DihedralObservable,
@@ -5897,7 +5897,7 @@ impl WasmCombinedDistribution {
                 JsValue::from_str(&format!("CombinedDistribution observable {i}: {e}"))
             })?;
             observables.push(obs);
-            atom_groups.push(AtomGroups::new(arity, raw[i].clone()).map_err(|e| {
+            atom_groups.push(AtomGroups::new(arity, raw[i].iter().map(|&v| v as u64).collect()).map_err(|e| {
                 JsValue::from_str(&format!("CombinedDistribution groups {i}: {e}"))
             })?);
         }

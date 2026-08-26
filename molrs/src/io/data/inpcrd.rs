@@ -26,7 +26,7 @@ use ndarray::{Array1, Array2, IxDyn, array};
 use molrs::spatial::simbox::SimBox;
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
-use molrs::types::{F, U};
+use molrs::types::{F, Idx};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -45,7 +45,7 @@ fn insert_float_col(block: &mut Block, key: &str, vals: Vec<F>) -> Result<()> {
     block.insert(key, arr).map_err(invalid_data)
 }
 
-fn insert_uint_col(block: &mut Block, key: &str, vals: Vec<U>) -> Result<()> {
+fn insert_uint_col(block: &mut Block, key: &str, vals: Vec<Idx>) -> Result<()> {
     let n = vals.len();
     let arr = Array1::from_vec(vals)
         .into_shape_with_order(IxDyn(&[n]))
@@ -228,7 +228,7 @@ pub fn read_amber_inpcrd_from_reader<R: BufRead>(mut reader: R) -> Result<Frame>
     let mut ys = Vec::with_capacity(n_atoms);
     let mut zs = Vec::with_capacity(n_atoms);
     for i in 0..n_atoms {
-        ids.push((i as U) + 1);
+        ids.push((i as Idx) + 1);
         names.push(format!("ATM{}", i + 1));
         xs.push(coords_flat[i * 3]);
         ys.push(coords_flat[i * 3 + 1]);

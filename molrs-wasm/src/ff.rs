@@ -28,7 +28,7 @@ use molrs::optimize::{LBFGS as RsLBFGS, Optimizer, set_free_mask};
 use molrs::store::block::Block as RsBlock;
 use molrs::store::frame::Frame as RsFrame;
 use molrs::system::atomistic::Atomistic;
-use molrs::types::U;
+use molrs::types::Idx;
 use ndarray::Array1;
 
 use crate::compute::Neighbors;
@@ -344,8 +344,8 @@ fn pairs_from_indices(frame: &RsFrame, i: &[u32], j: &[u32]) -> Result<RsBlock, 
     let excluded_13 = end_pairs(frame, "angles", "atomi", "atomk");
     let set_14 = end_pairs(frame, "dihedrals", "atomi", "atoml");
 
-    let mut pi: Vec<U> = Vec::new();
-    let mut pj: Vec<U> = Vec::new();
+    let mut pi: Vec<Idx> = Vec::new();
+    let mut pj: Vec<Idx> = Vec::new();
     let mut p14: Vec<bool> = Vec::new();
     let mut seen = HashSet::new();
 
@@ -358,8 +358,8 @@ fn pairs_from_indices(frame: &RsFrame, i: &[u32], j: &[u32]) -> Result<RsBlock, 
         if excluded_12.contains(&key) || excluded_13.contains(&key) {
             continue;
         }
-        pi.push(lo as U);
-        pj.push(hi as U);
+        pi.push(lo as Idx);
+        pj.push(hi as Idx);
         p14.push(set_14.contains(&key));
     }
 

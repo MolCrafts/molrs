@@ -26,7 +26,8 @@ use molrs::store::meta::{MetaMap, MetaValue};
 use molrs_ffi::FrameRef;
 use pyo3::exceptions::{PyKeyError, PyTypeError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyCapsule, PyDict, PyList};
+use pyo3::types::{PyBool, PyBytes, PyCapsule, PyDict, PyFloat, PyInt, PyList, PyString};
+use serde_json::Value as JsonValue;
 
 /// Exact-dtype frame metadata value.
 #[pyclass(module = "molrs", name = "MetaValue", frozen, from_py_object)]
@@ -70,6 +71,7 @@ impl PyMetaValue {
             "f64x6" => MetaValue::F64x6(array(value, dtype)?),
             "f32x9" => MetaValue::F32x9(array(value, dtype)?),
             "f64x9" => MetaValue::F64x9(array(value, dtype)?),
+            "json" => MetaValue::Json(py_to_json(value)?),
             _ => {
                 return Err(PyTypeError::new_err(format!(
                     "unknown metadata dtype '{dtype}'"
@@ -116,6 +118,7 @@ impl PyMetaValue {
             MetaValue::F64x6(v) => list!(v),
             MetaValue::F32x9(v) => list!(v),
             MetaValue::F64x9(v) => list!(v),
+            MetaValue::Json(v) => json_to_py(py, v)?,
         })
     }
 
@@ -392,10 +395,8 @@ impl PyFrame {
 
     /// Exact-dtype metadata dictionary (``dict[str, MetaValue]``).
     ///
-    /// Returns
-    /// -------
-    /// dict[str, MetaValue]
-    ///     Typed metadata attached to this frame.
+    /// Nested JSON documents (MolRec free-form meta) round-trip as
+    /// ``MetaValue(dtype='json', ...)``.
     #[getter]
     fn meta<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let dict = PyDict::new(py);
@@ -408,24 +409,18 @@ impl PyFrame {
 
     /// Replace the metadata dictionary.
     ///
-    /// Parameters
-    /// ----------
-    /// meta : dict[str, MetaValue]
-    ///     New metadata. Every value must carry an explicit dtype.
-    ///
-    /// Raises
-    /// ------
-    /// TypeError
-    ///     If a key is not ``str`` or a value is not ``MetaValue``.
+    /// Values may be :class:`MetaValue` or any JSON-serializable object
+    /// (``str``, ``int``, ``float``, ``bool``, ``list``, ``dict``).
     #[setter]
     fn set_meta(&mut self, meta: &Bound<'_, PyDict>) -> PyResult<()> {
         let mut map = MetaMap::with_capacity(meta.len());
         for (k, v) in meta.iter() {
             let key: String = k.extract()?;
-            let val: PyRef<'_, PyMetaValue> = v.extract().map_err(|_| {
-                PyTypeError::new_err(format!("metadata '{key}' must be a MetaValue"))
-            })?;
-            map.insert(key, val.inner.clone());
+            if let Ok(val) = v.extract::<PyRef<'_, PyMetaValue>>() {
+                map.insert(key, val.inner.clone());
+            } else {
+                map.insert(key, MetaValue::from_attr_value(&py_to_json(&v)?));
+            }
         }
         self.inner
             .with_mut(|f| {
@@ -594,4 +589,77 @@ impl PyFrame {
     pub(crate) fn with_frame<R>(&self, f: impl FnOnce(&CoreFrame) -> R) -> PyResult<R> {
         self.inner.with(f).map_err(ffi_error_to_pyerr)
     }
+}
+
+fn json_to_py(py: Python<'_>, value: &JsonValue) -> PyResult<Py<PyAny>> {
+    Ok(match value {
+        JsonValue::Null => py.None(),
+        JsonValue::Bool(b) => b.into_pyobject(py)?.to_owned().into_any().unbind(),
+        JsonValue::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                i.into_pyobject(py)?.into_any().unbind()
+            } else if let Some(u) = n.as_u64() {
+                u.into_pyobject(py)?.into_any().unbind()
+            } else {
+                n.as_f64()
+                    .unwrap_or(f64::NAN)
+                    .into_pyobject(py)?
+                    .into_any()
+                    .unbind()
+            }
+        }
+        JsonValue::String(s) => s.into_pyobject(py)?.into_any().unbind(),
+        JsonValue::Array(items) => {
+            let list = PyList::empty(py);
+            for item in items {
+                list.append(json_to_py(py, item)?)?;
+            }
+            list.into_any().unbind()
+        }
+        JsonValue::Object(map) => {
+            let dict = PyDict::new(py);
+            for (key, item) in map {
+                dict.set_item(key, json_to_py(py, item)?)?;
+            }
+            dict.into_any().unbind()
+        }
+    })
+}
+
+fn py_to_json(value: &Bound<'_, PyAny>) -> PyResult<JsonValue> {
+    if value.is_none() {
+        return Ok(JsonValue::Null);
+    }
+    if let Ok(b) = value.cast::<PyBool>() {
+        return Ok(JsonValue::Bool(b.is_true()));
+    }
+    if let Ok(i) = value.cast::<PyInt>() {
+        return Ok(JsonValue::from(i.extract::<i64>()?));
+    }
+    if let Ok(f) = value.cast::<PyFloat>() {
+        return Ok(serde_json::Number::from_f64(f.extract::<f64>()?)
+            .map(JsonValue::Number)
+            .unwrap_or(JsonValue::Null));
+    }
+    if let Ok(s) = value.cast::<PyString>() {
+        return Ok(JsonValue::String(s.extract::<String>()?));
+    }
+    if let Ok(dict) = value.cast::<PyDict>() {
+        let mut map = serde_json::Map::new();
+        for (k, v) in dict.iter() {
+            let key: String = k.extract()?;
+            map.insert(key, py_to_json(&v)?);
+        }
+        return Ok(JsonValue::Object(map));
+    }
+    if let Ok(list) = value.cast::<PyList>() {
+        let mut items = Vec::with_capacity(list.len());
+        for item in list.iter() {
+            items.push(py_to_json(&item)?);
+        }
+        return Ok(JsonValue::Array(items));
+    }
+    Err(PyTypeError::new_err(format!(
+        "metadata value is not JSON-serializable: {value}"
+    )))
 }

@@ -97,12 +97,14 @@ pub enum MolrsDType {
 impl From<DType> for MolrsDType {
     fn from(dt: DType) -> Self {
         match dt {
-            DType::Float => Self::Float,
-            DType::Int => Self::Int,
+            DType::Float | DType::Float16 | DType::Float32 | DType::Complex64 | DType::Complex128 => {
+                Self::Float
+            }
+            DType::Int | DType::Int8 | DType::Int16 | DType::Int64 => Self::Int,
             DType::Bool => Self::Bool,
-            DType::UInt => Self::UInt,
-            DType::U8 => unreachable!("U8 columns are not exposed via the C API"),
+            DType::UInt | DType::U8 | DType::UInt16 | DType::UInt32 => Self::UInt,
             DType::String => Self::String,
+            _ => Self::String,
         }
     }
 }

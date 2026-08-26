@@ -28,7 +28,7 @@ use ndarray::{Array1, IxDyn};
 
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
-use molrs::types::{F, I, U};
+use molrs::types::{F, I, Idx};
 
 use crate::io::reader::{FrameReader, Reader};
 use crate::io::writer::{FrameWriter, Writer};
@@ -50,7 +50,7 @@ fn insert_float_col(block: &mut Block, key: &str, vals: Vec<F>) -> Result<()> {
     block.insert(key, arr).map_err(invalid_data)
 }
 
-fn insert_uint_col(block: &mut Block, key: &str, vals: Vec<U>) -> Result<()> {
+fn insert_uint_col(block: &mut Block, key: &str, vals: Vec<Idx>) -> Result<()> {
     let n = vals.len();
     let arr = Array1::from_vec(vals)
         .into_shape_with_order(IxDyn(&[n]))
@@ -322,7 +322,7 @@ fn build_frame(name: String, atoms: Vec<Mol2Atom>, bonds: Vec<Mol2Bond>) -> Resu
             have_charge = true;
         }
     }
-    insert_uint_col(&mut block, "id", id.iter().map(|&v| v as U).collect())?;
+    insert_uint_col(&mut block, "id", id.iter().map(|&v| v as Idx).collect())?;
     insert_str_col(&mut block, "name", a_name)?;
     insert_float_col(&mut block, "x", x)?;
     insert_float_col(&mut block, "y", y)?;
@@ -334,7 +334,7 @@ fn build_frame(name: String, atoms: Vec<Mol2Atom>, bonds: Vec<Mol2Bond>) -> Resu
         insert_uint_col(
             &mut block,
             "subst_id",
-            subst_id.iter().map(|&v| v.max(0) as U).collect(),
+            subst_id.iter().map(|&v| v.max(0) as Idx).collect(),
         )?;
         insert_str_col(&mut block, "subst_name", subst_name)?;
     }
@@ -367,8 +367,8 @@ fn build_frame(name: String, atoms: Vec<Mol2Atom>, bonds: Vec<Mol2Bond>) -> Resu
                     b.atom_i, b.atom_j, n
                 )));
             }
-            atomi.push((b.atom_i as U) - 1);
-            atomj.push((b.atom_j as U) - 1);
+            atomi.push((b.atom_i as Idx) - 1);
+            atomj.push((b.atom_j as Idx) - 1);
             btype.push(b.bond_type.clone());
             btype_src.push(b.bond_type.clone());
         }
@@ -383,7 +383,7 @@ fn build_frame(name: String, atoms: Vec<Mol2Atom>, bonds: Vec<Mol2Bond>) -> Resu
         // …and the canonical pair it maps onto. `ar` declares delocalization
         // and no Kekulé phase, so its number is left unknown for
         // standardization; `am` is the amide C–N, a plain single bond.
-        let canonical_type: Vec<U> = btype_src
+        let canonical_type: Vec<Idx> = btype_src
             .iter()
             .map(|t| match t.as_str() {
                 "ar" => 4,
@@ -392,7 +392,7 @@ fn build_frame(name: String, atoms: Vec<Mol2Atom>, bonds: Vec<Mol2Bond>) -> Resu
                 _ => 1,
             })
             .collect();
-        let canonical_number: Vec<U> = btype_src
+        let canonical_number: Vec<Idx> = btype_src
             .iter()
             .map(|t| match t.as_str() {
                 "ar" => 0,
@@ -513,7 +513,7 @@ pub fn write_mol2_frame<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
     let subst_id_col = atoms.get_int("subst_id");
     let subst_name_col = atoms.get_string("subst_name");
     for i in 0..n {
-        let id = id_col.map(|c| c[[i]]).unwrap_or((i as U) + 1);
+        let id = id_col.map(|c| c[[i]]).unwrap_or((i as Idx) + 1);
         let name = name_col.map(|c| c[[i]].as_str()).unwrap_or("X");
         let atype = type_col.map(|c| c[[i]].as_str()).unwrap_or("X");
         let sid = subst_id_col.map(|c| c[[i]]).unwrap_or(1);

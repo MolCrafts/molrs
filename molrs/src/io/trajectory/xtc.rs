@@ -48,7 +48,7 @@ use molrs::spatial::simbox::SimBox;
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
 use molrs::store::frame_access::FrameAccess;
-use molrs::types::{F, U};
+use molrs::types::{F, Idx};
 use ndarray::{Array1, Array2, IxDyn, array};
 use once_cell::sync::OnceCell;
 use std::fs::File;
@@ -784,7 +784,7 @@ fn parse_frame_at<R: BufRead + Seek>(r: &mut R, offset: u64) -> Result<Frame> {
     let (coords, precision) = read_coords(r, natoms, hdr.wide_nbytes)?;
 
     let mut atoms = Block::new();
-    let id_arr = Array1::from_iter(1..=natoms as U)
+    let id_arr = Array1::from_iter(1..=natoms as Idx)
         .into_shape_with_order(IxDyn(&[natoms]))
         .map_err(invalid)?;
     atoms.insert("id", id_arr).map_err(invalid)?;
@@ -1279,7 +1279,7 @@ mod tests {
 
     fn xtc_frame(natoms: usize, x0: f64) -> Frame {
         let mut atoms = Block::new();
-        let ids: Vec<U> = (1..=natoms as U).collect();
+        let ids: Vec<Idx> = (1..=natoms as Idx).collect();
         let mut xs = vec![0.0; natoms];
         let ys = vec![0.0; natoms];
         let zs = vec![0.0; natoms];

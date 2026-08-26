@@ -982,10 +982,10 @@ mod tests {
         }
         let mut bonds = Block::new();
         bonds
-            .insert("atomi", Array1::from_vec(vec![0u32, 1]).into_dyn())
+            .insert("atomi", Array1::from_vec(vec![0u64, 1]).into_dyn())
             .unwrap();
         bonds
-            .insert("atomj", Array1::from_vec(vec![1u32, 2]).into_dyn())
+            .insert("atomj", Array1::from_vec(vec![1u64, 2]).into_dyn())
             .unwrap();
         let mut frame = Frame::new();
         frame.insert("atoms", atoms);
@@ -1017,13 +1017,13 @@ mod tests {
         }
         let mut bonds = Block::new();
         bonds
-            .insert("atomi", Array1::from_vec(vec![0u32, 1, 2]).into_dyn())
+            .insert("atomi", Array1::from_vec(vec![0u64, 1, 2]).into_dyn())
             .unwrap();
         bonds
-            .insert("atomj", Array1::from_vec(vec![1u32, 2, 3]).into_dyn())
+            .insert("atomj", Array1::from_vec(vec![1u64, 2, 3]).into_dyn())
             .unwrap();
         bonds
-            .insert("bond_type", Array1::from_vec(vec![2u32, 4, 0]).into_dyn())
+            .insert("bond_type", Array1::from_vec(vec![2u64, 4, 0]).into_dyn())
             .unwrap();
         let mut frame = Frame::new();
         frame.insert("atoms", atoms);

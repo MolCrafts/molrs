@@ -79,12 +79,21 @@ impl Serialize for Column {
 
 fn dtype_from_tag(tag: &str) -> Option<DType> {
     Some(match tag {
-        "float" => DType::Float,
-        "int" => DType::Int,
+        "float" | "f64" => DType::Float,
+        "f16" => DType::Float16,
+        "f32" => DType::Float32,
+        "int" | "i32" => DType::Int,
+        "i8" => DType::Int8,
+        "i16" => DType::Int16,
+        "i64" => DType::Int64,
         "bool" => DType::Bool,
-        "uint" => DType::UInt,
+        "uint" | "u64" => DType::UInt,
         "u8" => DType::U8,
+        "u16" => DType::UInt16,
+        "u32" => DType::UInt32,
         "string" => DType::String,
+        "c64" => DType::Complex64,
+        "c128" => DType::Complex128,
         _ => return None,
     })
 }
@@ -263,14 +272,47 @@ fn build_column(dtype: DType, shape: &[usize], data: ColData) -> Result<Column, 
                 ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
             ))
         }
+        (DType::Float16, ColData::Bytes(b)) => {
+            let v = le::<2, _>(&b, n, half::f16::from_le_bytes)?;
+            Ok(Column::from_f16(
+                ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
+            ))
+        }
+        (DType::Float32, ColData::Bytes(b)) => {
+            let v = le::<4, _>(&b, n, f32::from_le_bytes)?;
+            Ok(Column::from_f32(
+                ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
+            ))
+        }
         (DType::Int, ColData::Bytes(b)) => {
             let v = le::<4, _>(&b, n, i32::from_le_bytes)?;
             Ok(Column::from_int(
                 ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
             ))
         }
+        (DType::Int8, ColData::Bytes(b)) => {
+            if b.len() != n {
+                return Err(shape_err("i8"));
+            }
+            let v: Vec<i8> = b.iter().map(|&x| x as i8).collect();
+            Ok(Column::from_i8(
+                ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
+            ))
+        }
+        (DType::Int16, ColData::Bytes(b)) => {
+            let v = le::<2, _>(&b, n, i16::from_le_bytes)?;
+            Ok(Column::from_i16(
+                ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
+            ))
+        }
+        (DType::Int64, ColData::Bytes(b)) => {
+            let v = le::<8, _>(&b, n, i64::from_le_bytes)?;
+            Ok(Column::from_i64(
+                ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
+            ))
+        }
         (DType::UInt, ColData::Bytes(b)) => {
-            let v = le::<4, _>(&b, n, u32::from_le_bytes)?;
+            let v = le::<8, _>(&b, n, u64::from_le_bytes)?;
             Ok(Column::from_uint(
                 ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
             ))
@@ -281,6 +323,18 @@ fn build_column(dtype: DType, shape: &[usize], data: ColData) -> Result<Column, 
             }
             Ok(Column::from_u8(
                 ArrayD::from_shape_vec(ix, b).map_err(|e| e.to_string())?,
+            ))
+        }
+        (DType::UInt16, ColData::Bytes(b)) => {
+            let v = le::<2, _>(&b, n, u16::from_le_bytes)?;
+            Ok(Column::from_u16(
+                ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
+            ))
+        }
+        (DType::UInt32, ColData::Bytes(b)) => {
+            let v = le::<4, _>(&b, n, u32::from_le_bytes)?;
+            Ok(Column::from_u32(
+                ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
             ))
         }
         (DType::Bool, ColData::Bytes(b)) => {
@@ -298,6 +352,28 @@ fn build_column(dtype: DType, shape: &[usize], data: ColData) -> Result<Column, 
             }
             Ok(Column::from_string(
                 ArrayD::from_shape_vec(ix, s).map_err(|e| e.to_string())?,
+            ))
+        }
+        (DType::Complex64, ColData::Bytes(b)) => {
+            let v = le::<8, _>(&b, n, |bytes| {
+                num_complex::Complex::<f32>::new(
+                    f32::from_le_bytes(bytes[..4].try_into().unwrap()),
+                    f32::from_le_bytes(bytes[4..].try_into().unwrap()),
+                )
+            })?;
+            Ok(Column::from_c64(
+                ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
+            ))
+        }
+        (DType::Complex128, ColData::Bytes(b)) => {
+            let v = le::<16, _>(&b, n, |bytes| {
+                num_complex::Complex::<f64>::new(
+                    f64::from_le_bytes(bytes[..8].try_into().unwrap()),
+                    f64::from_le_bytes(bytes[8..].try_into().unwrap()),
+                )
+            })?;
+            Ok(Column::from_c128(
+                ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
             ))
         }
         _ => Err("dtype does not match its data payload".to_string()),

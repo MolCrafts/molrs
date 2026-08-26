@@ -9,7 +9,7 @@ use ndarray::{Array1, IxDyn};
 use molrs::Element;
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
-use molrs::types::{F, U};
+use molrs::types::{F, Idx};
 
 fn invalid_data<E: std::fmt::Display>(e: E) -> Error {
     Error::new(ErrorKind::InvalidData, e.to_string())
@@ -31,8 +31,8 @@ pub fn parse_ac(text: &str) -> Result<Frame> {
     let mut charges: Vec<F> = Vec::new();
     let mut xyz: Vec<[F; 3]> = Vec::new();
     let mut elements: Vec<String> = Vec::new();
-    let mut bond_i: Vec<U> = Vec::new();
-    let mut bond_j: Vec<U> = Vec::new();
+    let mut bond_i: Vec<Idx> = Vec::new();
+    let mut bond_j: Vec<Idx> = Vec::new();
     let mut bond_type: Vec<String> = Vec::new();
 
     for line in text.lines() {
@@ -68,8 +68,8 @@ pub fn parse_ac(text: &str) -> Result<Frame> {
             if i == 0 || j == 0 {
                 return Err(invalid_data("BOND atom index 0"));
             }
-            bond_i.push((i - 1) as U);
-            bond_j.push((j - 1) as U);
+            bond_i.push((i - 1) as Idx);
+            bond_j.push((j - 1) as Idx);
             let ti = types.get(i - 1).cloned().unwrap_or_default();
             let tj = types.get(j - 1).cloned().unwrap_or_default();
             bond_type.push(format!("{ti}-{tj}"));
@@ -80,7 +80,7 @@ pub fn parse_ac(text: &str) -> Result<Frame> {
     let mut frame = Frame::new();
     if n > 0 {
         let mut atoms = Block::new();
-        insert_uint(&mut atoms, "id", (1..=n as U).collect())?;
+        insert_uint(&mut atoms, "id", (1..=n as Idx).collect())?;
         insert_str(&mut atoms, "name", names)?;
         insert_str(&mut atoms, "type", types)?;
         insert_float(&mut atoms, "charge", charges)?;
@@ -106,7 +106,7 @@ pub fn parse_ac(text: &str) -> Result<Frame> {
         insert_uint(&mut bonds, "atomi", bond_i)?;
         insert_uint(&mut bonds, "atomj", bond_j)?;
         insert_str(&mut bonds, "type", bond_type)?;
-        insert_uint(&mut bonds, "id", (1..=nb as U).collect())?;
+        insert_uint(&mut bonds, "id", (1..=nb as Idx).collect())?;
         frame.insert("bonds", bonds);
     }
 
@@ -157,7 +157,7 @@ fn insert_float(block: &mut Block, key: &str, vals: Vec<F>) -> Result<()> {
     block.insert(key, arr).map_err(invalid_data)
 }
 
-fn insert_uint(block: &mut Block, key: &str, vals: Vec<U>) -> Result<()> {
+fn insert_uint(block: &mut Block, key: &str, vals: Vec<Idx>) -> Result<()> {
     let n = vals.len();
     let arr = Array1::from_vec(vals)
         .into_shape_with_order(IxDyn(&[n]))

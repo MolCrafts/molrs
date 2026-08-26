@@ -17,7 +17,7 @@ pub use result::ClusterResult;
 
 use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame_access::FrameAccess;
-use molrs::types::U;
+use molrs::types::Idx;
 use ndarray::Array1;
 use std::collections::HashMap;
 
@@ -154,7 +154,7 @@ impl Cluster {
     fn keyed_one<FA: FrameAccess>(
         &self,
         frame: &FA,
-        keys: &[U],
+        keys: &[Idx],
     ) -> Result<ClusterResult, ComputeError> {
         let n = frame
             .visit_block("atoms", |b| b.nrows().unwrap_or(0))
@@ -178,8 +178,8 @@ impl Cluster {
         }
 
         // Group by key, assigning cluster ids in order of first appearance.
-        let mut key_to_id: HashMap<U, usize> = HashMap::new();
-        let mut order_keys: Vec<U> = Vec::new();
+        let mut key_to_id: HashMap<Idx, usize> = HashMap::new();
+        let mut order_keys: Vec<Idx> = Vec::new();
         let mut sizes: Vec<usize> = Vec::new();
         let mut raw_idx = vec![0usize; n];
         for (i, &k) in keys.iter().enumerate() {
@@ -240,7 +240,7 @@ impl Cluster {
     pub fn compute_keyed<'a, FA: FrameAccess + Sync + 'a>(
         &self,
         frames: &[&'a FA],
-        keys: &[U],
+        keys: &[Idx],
     ) -> Result<Vec<ClusterResult>, ComputeError> {
         if frames.is_empty() {
             return Err(ComputeError::EmptyInput);
@@ -527,7 +527,7 @@ mod tests {
         assert_eq!(spatial.num_clusters, 1);
 
         // Keyed clustering by mol-id splits into two clusters of three.
-        let keys = [0u32, 0, 0, 1, 1, 1];
+        let keys = [0u64, 0, 0, 1, 1, 1];
         let out = Cluster::new(1).compute_keyed(&[&frame], &keys).unwrap();
         assert_eq!(out.len(), 1);
         let r = &out[0];
@@ -538,20 +538,20 @@ mod tests {
         assert_eq!(r.cluster_idx[3], r.cluster_idx[5]);
         assert_ne!(r.cluster_idx[0], r.cluster_idx[3]);
         // freud-style cluster_keys: one key per cluster.
-        assert_eq!(r.cluster_keys, vec![vec![0u32], vec![1u32]]);
+        assert_eq!(r.cluster_keys, vec![vec![0u64], vec![1u64]]);
     }
 
     #[test]
     fn keyed_respects_first_appearance_order() {
         let positions = [[0.0, 0.0, 0.0]; 4];
         let frame = make_frame_with_positions(&positions, 20.0);
-        let keys = [7u32, 3, 7, 3];
+        let keys = [7u64, 3, 7, 3];
         let out = Cluster::new(1).compute_keyed(&[&frame], &keys).unwrap();
         let r = &out[0];
         assert_eq!(r.num_clusters, 2);
         // key 7 seen first -> cluster 0, key 3 -> cluster 1
         assert_eq!(r.cluster_idx.to_vec(), vec![0, 1, 0, 1]);
-        assert_eq!(r.cluster_keys, vec![vec![7u32], vec![3u32]]);
+        assert_eq!(r.cluster_keys, vec![vec![7u64], vec![3u64]]);
     }
 
     #[test]
@@ -559,20 +559,20 @@ mod tests {
         let positions = [[0.0, 0.0, 0.0]; 4];
         let frame = make_frame_with_positions(&positions, 20.0);
         // key 0 has 3 members, key 1 has 1 member.
-        let keys = [0u32, 0, 0, 1];
+        let keys = [0u64, 0, 0, 1];
         let out = Cluster::new(2).compute_keyed(&[&frame], &keys).unwrap();
         let r = &out[0];
         assert_eq!(r.num_clusters, 1);
         assert_eq!(r.cluster_sizes, vec![3]);
         assert_eq!(r.cluster_idx[3], -1);
-        assert_eq!(r.cluster_keys, vec![vec![0u32]]);
+        assert_eq!(r.cluster_keys, vec![vec![0u64]]);
     }
 
     #[test]
     fn keyed_length_mismatch_is_error() {
         let frame = make_frame_with_positions(&[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], 20.0);
         let err = Cluster::new(1)
-            .compute_keyed(&[&frame], &[0u32])
+            .compute_keyed(&[&frame], &[0u64])
             .unwrap_err();
         assert!(matches!(err, ComputeError::DimensionMismatch { .. }));
     }

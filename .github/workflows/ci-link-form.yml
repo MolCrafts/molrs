@@ -23,7 +23,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
 
       # No sccache step: wiring it needs RUSTC_WRAPPER, and this job's whole
       # proposition is that it sets no env at all. Installing the binary and
@@ -88,7 +88,7 @@ jobs:
           path: molpack
 
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
 
       # No sccache here: RUSTC_WRAPPER is one of cargo's fingerprint inputs and
       # this job's subject is unit identity across two build graphs, so the two
