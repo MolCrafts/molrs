@@ -4,10 +4,8 @@ on:
   workflow_call:
   workflow_dispatch:
 
-# Pin matches rust-toolchain.toml (1.96.0). Do not use
-# dtolnay/rust-toolchain@stable — that floats past the pin and fails clippy
-# on lints the local prek hook never saw. The action requires an explicit
-# toolchain input; @master without one exits 1.
+# Toolchain is rust-toolchain.toml `stable` (always latest). Local `rustup
+# update` and CI `dtolnay/rust-toolchain@stable` must stay on the same channel.
 
 jobs:
   lint:
@@ -15,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.96.0
+      - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
@@ -32,7 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.96.0
+      - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: unit

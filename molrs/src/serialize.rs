@@ -393,10 +393,7 @@ fn le<const N: usize, T>(
             n * N
         ));
     }
-    Ok(bytes
-        .chunks_exact(N)
-        .map(|c| read(c.try_into().unwrap()))
-        .collect())
+    Ok(bytes.as_chunks::<N>().0.iter().map(|c| read(*c)).collect())
 }
 
 // ===== Block ================================================================

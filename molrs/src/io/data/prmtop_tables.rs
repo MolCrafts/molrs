@@ -82,7 +82,7 @@ pub fn decode_bond_params(
         ));
     }
     let mut out = Vec::with_capacity(pointers.len() / 3);
-    for chunk in pointers.chunks_exact(3) {
+    for chunk in pointers.as_chunks::<3>().0 {
         let a = chunk[0];
         let b = chunk[1];
         if a < 0 || b < 0 {
@@ -123,7 +123,7 @@ pub fn decode_angle_params(
         ));
     }
     let mut out = Vec::with_capacity(pointers.len() / 4);
-    for chunk in pointers.chunks_exact(4) {
+    for chunk in pointers.as_chunks::<4>().0 {
         let a = chunk[0];
         let b = chunk[1];
         let c = chunk[2];
@@ -169,7 +169,7 @@ pub fn decode_dihedral_params(
         ));
     }
     let mut out = Vec::with_capacity(pointers.len() / 5);
-    for chunk in pointers.chunks_exact(5) {
+    for chunk in pointers.as_chunks::<5>().0 {
         let a = chunk[0];
         let b = chunk[1];
         if a < 0 || b < 0 {

@@ -252,16 +252,18 @@ fn decompress_coords(
         sizeint[d] = (maxint[d] - minint[d]) as u32 + 1;
     }
 
-    let mut bitsizeint = [0i32; 3];
-    let bitsize: i32;
-    if (sizeint[0] | sizeint[1] | sizeint[2]) > 0x00ff_ffff {
-        bitsizeint[0] = sizeofint(sizeint[0]);
-        bitsizeint[1] = sizeofint(sizeint[1]);
-        bitsizeint[2] = sizeofint(sizeint[2]);
-        bitsize = 0;
+    let (bitsize, bitsizeint) = if (sizeint[0] | sizeint[1] | sizeint[2]) > 0x00ff_ffff {
+        (
+            0,
+            [
+                sizeofint(sizeint[0]),
+                sizeofint(sizeint[1]),
+                sizeofint(sizeint[2]),
+            ],
+        )
     } else {
-        bitsize = sizeofints(DIM, &sizeint);
-    }
+        (sizeofints(DIM, &sizeint), [0i32; 3])
+    };
 
     let mut smallidx = smallidx_init;
     let init_smaller_idx = FIRSTIDX.max(smallidx - 1);
@@ -529,16 +531,18 @@ fn compress_coords(coords: &[f64], natoms: usize, precision: f32) -> Result<Comp
     for d in 0..DIM {
         sizeint[d] = (maxint[d] as i64 - minint[d] as i64) as u32 + 1;
     }
-    let mut bitsizeint = [0i32; 3];
-    let bitsize: i32;
-    if (sizeint[0] | sizeint[1] | sizeint[2]) > 0x00ff_ffff {
-        bitsizeint[0] = sizeofint(sizeint[0]);
-        bitsizeint[1] = sizeofint(sizeint[1]);
-        bitsizeint[2] = sizeofint(sizeint[2]);
-        bitsize = 0;
+    let (bitsize, bitsizeint) = if (sizeint[0] | sizeint[1] | sizeint[2]) > 0x00ff_ffff {
+        (
+            0,
+            [
+                sizeofint(sizeint[0]),
+                sizeofint(sizeint[1]),
+                sizeofint(sizeint[2]),
+            ],
+        )
     } else {
-        bitsize = sizeofints(DIM, &sizeint);
-    }
+        (sizeofints(DIM, &sizeint), [0i32; 3])
+    };
 
     let mut smallidx = FIRSTIDX;
     while smallidx < LASTIDX && (MAGICINTS[(smallidx + 1) as usize] as i64) < mindiff {

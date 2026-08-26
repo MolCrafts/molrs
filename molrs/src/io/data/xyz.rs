@@ -558,7 +558,7 @@ fn parse_connct(value: &ExtValue, n_atoms: usize) -> Result<Vec<(Idx, Idx)>, Str
     }
 
     let mut pairs = Vec::with_capacity(indices.len() / 2);
-    for pair in indices.chunks_exact(2) {
+    for pair in indices.as_chunks::<2>().0 {
         let (atomi, atomj) = (pair[0], pair[1]);
         if atomi as usize >= n_atoms || atomj as usize >= n_atoms {
             return Err(format!(

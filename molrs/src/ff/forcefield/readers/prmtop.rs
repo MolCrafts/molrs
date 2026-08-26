@@ -232,7 +232,7 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
     {
         let style = ff.def_bondstyle("harmonic");
         let mut seen: HashSet<String> = HashSet::new();
-        for chunk in bond_ptrs.chunks_exact(3) {
+        for chunk in bond_ptrs.as_chunks::<3>().0 {
             let a = chunk[0];
             let b = chunk[1];
             if a < 0 || b < 0 {
@@ -268,7 +268,7 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
     {
         let style = ff.def_anglestyle("harmonic");
         let mut seen: HashSet<String> = HashSet::new();
-        for chunk in angle_ptrs.chunks_exact(4) {
+        for chunk in angle_ptrs.as_chunks::<4>().0 {
             let a = chunk[0];
             let b = chunk[1];
             let c = chunk[2];
@@ -316,7 +316,7 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
     let mut proper: BTreeMap<String, DihedralEntry> = BTreeMap::new();
     let mut improper: BTreeMap<String, DihedralEntry> = BTreeMap::new();
 
-    for chunk in dih_ptrs.chunks_exact(5) {
+    for chunk in dih_ptrs.as_chunks::<5>().0 {
         let a = chunk[0];
         let b = chunk[1];
         if a < 0 || b < 0 {

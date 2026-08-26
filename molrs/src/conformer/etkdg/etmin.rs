@@ -200,17 +200,19 @@ impl FirstStageField {
         ];
         let vol = v1[0] * v2xv3[0] + v1[1] * v2xv3[1] + v1[2] * v2xv3[2];
 
-        let pre;
-        let energy;
-        if vol < c.vol_lower {
-            energy = c.weight * (vol - c.vol_lower) * (vol - c.vol_lower);
-            pre = c.weight * (vol - c.vol_lower);
+        let (energy, pre) = if vol < c.vol_lower {
+            (
+                c.weight * (vol - c.vol_lower) * (vol - c.vol_lower),
+                c.weight * (vol - c.vol_lower),
+            )
         } else if vol > c.vol_upper {
-            energy = c.weight * (vol - c.vol_upper) * (vol - c.vol_upper);
-            pre = c.weight * (vol - c.vol_upper);
+            (
+                c.weight * (vol - c.vol_upper) * (vol - c.vol_upper),
+                c.weight * (vol - c.vol_upper),
+            )
         } else {
             return (0.0, ());
-        }
+        };
 
         // Gradient (RDKit ChiralViolationContribs::getGrad, 12 components).
         grad[dim * i1] += pre * (v2[1] * v3[2] - v3[1] * v2[2]);
