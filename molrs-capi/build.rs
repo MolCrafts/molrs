@@ -9,7 +9,7 @@ extern "C" {
 
 /* --- Block column accessors (macro-generated) --- */
 /* Function names use the type alias names: F, I, U.                       */
-/* Widths are fixed: F=double (f64), I=int32_t (i32), U=uint32_t (u32).    */
+/* Widths are fixed: F=double (f64), I=int32_t (i32), U=uint64_t (Idx).    */
 
 /* Zero-copy read */
 enum MolrsStatus molrs_block_get_F(struct MolrsBlockHandle block, uint32_t col_key_id,
@@ -17,7 +17,7 @@ enum MolrsStatus molrs_block_get_F(struct MolrsBlockHandle block, uint32_t col_k
 enum MolrsStatus molrs_block_get_I(struct MolrsBlockHandle block, uint32_t col_key_id,
                                     const int32_t **out_ptr, uintptr_t *out_len);
 enum MolrsStatus molrs_block_get_U(struct MolrsBlockHandle block, uint32_t col_key_id,
-                                    const uint32_t **out_ptr, uintptr_t *out_len);
+                                    const uint64_t **out_ptr, uintptr_t *out_len);
 
 /* Zero-copy write */
 enum MolrsStatus molrs_block_get_F_mut(struct MolrsBlockHandle *block, uint32_t col_key_id,
@@ -25,7 +25,7 @@ enum MolrsStatus molrs_block_get_F_mut(struct MolrsBlockHandle *block, uint32_t 
 enum MolrsStatus molrs_block_get_I_mut(struct MolrsBlockHandle *block, uint32_t col_key_id,
                                         int32_t **out_ptr, uintptr_t *out_len);
 enum MolrsStatus molrs_block_get_U_mut(struct MolrsBlockHandle *block, uint32_t col_key_id,
-                                        uint32_t **out_ptr, uintptr_t *out_len);
+                                        uint64_t **out_ptr, uintptr_t *out_len);
 
 /* Copy path */
 enum MolrsStatus molrs_block_copy_F(struct MolrsBlockHandle block, uint32_t col_key_id,
@@ -33,7 +33,7 @@ enum MolrsStatus molrs_block_copy_F(struct MolrsBlockHandle block, uint32_t col_
 enum MolrsStatus molrs_block_copy_I(struct MolrsBlockHandle block, uint32_t col_key_id,
                                      int32_t *out_buf, uintptr_t buf_len);
 enum MolrsStatus molrs_block_copy_U(struct MolrsBlockHandle block, uint32_t col_key_id,
-                                     uint32_t *out_buf, uintptr_t buf_len);
+                                     uint64_t *out_buf, uintptr_t buf_len);
 
 /* Insert (set) columns */
 enum MolrsStatus molrs_block_set_F(struct MolrsBlockHandle *block, uint32_t col_key_id,
@@ -41,7 +41,7 @@ enum MolrsStatus molrs_block_set_F(struct MolrsBlockHandle *block, uint32_t col_
 enum MolrsStatus molrs_block_set_I(struct MolrsBlockHandle *block, uint32_t col_key_id,
                                     const int32_t *data, const uintptr_t *shape, uintptr_t ndim);
 enum MolrsStatus molrs_block_set_U(struct MolrsBlockHandle *block, uint32_t col_key_id,
-                                    const uint32_t *data, const uintptr_t *shape, uintptr_t ndim);
+                                    const uint64_t *data, const uintptr_t *shape, uintptr_t ndim);
 
 #ifdef __cplusplus
 }  // extern "C"

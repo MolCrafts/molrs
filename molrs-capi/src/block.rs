@@ -20,7 +20,7 @@
 //! |-----------|---------------------|---------------------------|
 //! | `F`       | `float`             | `double`                  |
 //! | `I`       | `int32_t`           | `int64_t`                 |
-//! | `U`       | `uint32_t`          | `uint64_t`                |
+//! | `Idx`     | `uint64_t`          | —                         |
 
 use molrs::types::{F, I, Idx};
 use ndarray::ArrayD;
@@ -757,7 +757,7 @@ pub extern "C" fn molrs_sizeof_I() -> usize {
 
 /// Return the byte size of the primary unsigned integer type (`molrs_uint_t`).
 ///
-/// Returns `4` by default (`u32`) or `8` with the `u64` feature.
+/// Returns `8` (`Idx` = `u64`).
 ///
 /// # C signature
 ///

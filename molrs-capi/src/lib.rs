@@ -23,7 +23,7 @@
 //! |------------------|----------|---------------------------------------|
 //! | `molrs_float_t`  | `float`  | `double`                              |
 //! | `molrs_int_t`    | `int32_t`| `int64_t`                             |
-//! | `molrs_uint_t`   | `uint32_t`| `uint64_t`                           |
+//! | `molrs_uint_t`   | `uint64_t` (Idx) | —                             |
 //!
 //! # Typical C usage
 //!

@@ -203,8 +203,8 @@ TEST_F(MolrsTest, BlockInsertMultipleTypes) {
     int32_t i_data[3] = {100, 200, 300};
     ASSERT_MOLRS_OK(molrs_block_set_I(&block, i_id, i_data, shape1, 1));
 
-    // U column (uint32_t by default)
-    uint32_t u_data[3] = {1, 2, 3};
+    // U column (uint64_t / Idx)
+    uint64_t u_data[3] = {1, 2, 3};
     ASSERT_MOLRS_OK(molrs_block_set_U(&block, u_id, u_data, shape1, 1));
 
     // verify ncols = 3
