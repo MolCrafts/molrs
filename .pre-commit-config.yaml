@@ -3,6 +3,7 @@
 # Mirrors ci.yml (rust / wasm / python / capi / link-form). No wrapper scripts.
 
 default_install_hook_types: [pre-commit, pre-push]
+default_stages: [pre-commit, pre-push]
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
