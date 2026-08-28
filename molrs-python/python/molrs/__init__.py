@@ -17,9 +17,10 @@ the Python path and the Rust path are the same word:
 * :mod:`molrs.ff` — force fields, typifiers, charge models, potentials.
 * :mod:`molrs.optimize` — geometry optimizers.
 * :mod:`molrs.conformer` — 3D conformer generation.
-* :mod:`molrs.md` — in-process molecular dynamics (experimental): ``LJCut`` +
+* :mod:`molrs.md` — in-process molecular dynamics: ``LJCut`` +
   velocity-Verlet/Langevin integrators, the ``Potential`` base class, the
-  ``MD`` driver. Loaded lazily; importing it emits a ``FutureWarning``.
+  ``MD`` driver. Loaded lazily so a compiled ``_lib`` without ``md`` still
+  imports.
 * :mod:`molrs.builder` — structure builders (graphene, nanotubes, SARW paths).
 * :mod:`molrs.compute` — analysis, one subpackage per ``molrs::compute`` domain.
 * :mod:`molrs.signal` — FFT autocorrelation, windows, frequency grids.
@@ -100,12 +101,10 @@ from . import perceive
 from . import signal
 
 def __getattr__(name: str):
-    """PEP 562 lazy loader for the experimental :mod:`molrs.md` subpackage.
+    """PEP 562 lazy loader for :mod:`molrs.md`.
 
-    ``molrs.md`` is experimental in 0.14 and emits a ``FutureWarning`` on
-    import; loading it lazily keeps plain ``import molrs`` silent and keeps
-    ``import molrs`` working against a compiled ``_lib`` that predates the
-    ``md`` submodule.
+    Loading it lazily keeps plain ``import molrs`` working against a compiled
+    ``_lib`` that predates the ``md`` submodule.
     """
     if name == "md":
         import importlib

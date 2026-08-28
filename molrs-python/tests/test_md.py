@@ -65,14 +65,14 @@ class TestWarnings:
             importlib.reload(molrs)
         assert not [w for w in caught if issubclass(w.category, FutureWarning)]
 
-    def test_import_molrs_md_emits_one_futurewarning(self) -> None:
+    def test_import_molrs_md_is_silent(self) -> None:
         import importlib
 
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always", FutureWarning)
             importlib.reload(molrs.md)
         fw = [w for w in caught if issubclass(w.category, FutureWarning)]
-        assert len(fw) == 1
+        assert not fw
 
 
 class TestDispatch:
