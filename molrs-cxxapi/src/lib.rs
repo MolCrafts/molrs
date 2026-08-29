@@ -12,7 +12,7 @@ use molrs::Element;
 use molrs::ff::charge::{BccModel, BccParameterSet};
 use molrs::io::data::xyz::write_xyz_frame;
 #[cfg(feature = "zarr")]
-use molrs::io::store::zarr::{read_trajectory_file, write_trajectory_file};
+use molrs::io::zarr::{read_trajectory_file, write_trajectory_file};
 use molrs::spatial::simbox::SimBox;
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;

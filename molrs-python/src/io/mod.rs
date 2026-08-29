@@ -2414,7 +2414,7 @@ pub fn read_block_csv(
     delimiter: char,
     header: Option<Vec<String>>,
 ) -> PyResult<PyBlock> {
-    let block = molrs::io::store::csv::block_from_csv(text, delimiter, header.as_deref())
+    let block = molrs::io::csv::block_from_csv(text, delimiter, header.as_deref())
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
     PyBlock::from_core_block(block)
 }
@@ -2424,7 +2424,7 @@ pub fn read_block_csv(
 #[pyo3(signature = (block, delimiter = ',', header = true))]
 pub fn write_block_csv(block: &PyBlock, delimiter: char, header: bool) -> PyResult<String> {
     PyBlock::with_block(block, |b| {
-        molrs::io::store::csv::block_to_csv(b, delimiter, header)
+        molrs::io::csv::block_to_csv(b, delimiter, header)
     })
 }
 

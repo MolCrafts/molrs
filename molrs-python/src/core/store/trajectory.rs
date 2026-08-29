@@ -115,7 +115,7 @@ impl PyTrajectory {
     #[cfg(feature = "fs")]
     fn read(path: &str) -> PyResult<Self> {
         let inner =
-            molrs::io::store::zarr::read_trajectory_file(path).map_err(molrs_error_to_pyerr)?;
+            molrs::io::zarr::read_trajectory_file(path).map_err(molrs_error_to_pyerr)?;
         Ok(Self { inner })
     }
 
@@ -124,7 +124,7 @@ impl PyTrajectory {
     /// Requires the ``fs`` feature (default on desktop; omitted for Pyodide).
     #[cfg(feature = "fs")]
     fn write(&self, path: &str) -> PyResult<()> {
-        molrs::io::store::zarr::write_trajectory_file(path, &self.inner)
+        molrs::io::zarr::write_trajectory_file(path, &self.inner)
             .map_err(molrs_error_to_pyerr)
     }
 

@@ -177,12 +177,14 @@ impl MetaValue {
         }
     }
 
-    /// Decode a document attribute. Accepts the typed `{dtype, value}`
-    /// envelope and raw JSON alike.
+    /// Decode a document attribute: raw JSON only.
+    ///
+    /// The typed `{dtype, value}` envelope is [`Self::from_json_value`]'s
+    /// alone. A document attribute that happens to be shaped like the
+    /// envelope is still ordinary user JSON, so every JSON object arriving
+    /// here becomes [`Self::Json`] verbatim rather than being speculatively
+    /// unwrapped into a scalar.
     pub fn from_attr_value(value: &serde_json::Value) -> Self {
-        if let Ok(typed) = Self::from_json_value(value) {
-            return typed;
-        }
         match value {
             serde_json::Value::Bool(v) => Self::Bool(*v),
             serde_json::Value::Number(n) if n.is_i64() => Self::I64(n.as_i64().unwrap()),
@@ -398,6 +400,36 @@ mod tests {
     #[test]
     fn untyped_json_is_rejected() {
         assert!(MetaValue::from_json_value(&serde_json::json!("legacy")).is_err());
+    }
+
+    #[test]
+    fn envelope_shaped_user_json_survives_verbatim() {
+        // A document key whose value happens to look like the MessagePack
+        // envelope is still ordinary user JSON on a Zarr attribute.
+        let raw = serde_json::json!({"dtype": "f64", "value": 1.5});
+        assert_eq!(
+            MetaValue::from_attr_value(&raw),
+            MetaValue::Json(serde_json::json!({"dtype": "f64", "value": 1.5}))
+        );
+    }
+
+    #[test]
+    fn unknown_dtype_object_survives_verbatim() {
+        let raw = serde_json::json!({"dtype": "not-a-dtype", "value": 1});
+        assert_eq!(
+            MetaValue::from_attr_value(&raw),
+            MetaValue::Json(serde_json::json!({"dtype": "not-a-dtype", "value": 1}))
+        );
+    }
+
+    #[test]
+    fn serde_path_still_decodes_the_typed_envelope() {
+        // The path split: `from_json_value` owns the envelope, so
+        // `from_attr_value` does not have to speculate about one.
+        assert_eq!(
+            MetaValue::from_json_value(&serde_json::json!({"dtype": "f64", "value": 1.5})).unwrap(),
+            MetaValue::F64(1.5)
+        );
     }
 
     #[test]

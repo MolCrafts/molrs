@@ -17,6 +17,66 @@ status change) and conflicts with `CLAUDE.md`.
 
 ---
 
+## 2026-08-29 — release-0-14-15: MolRec trajectory layout break + four rulings + two measured facts
+
+**1. On-disk trajectory layout changed incompatibly.** Old `trajectory/frames/<i>/`
+per-frame groups → **ragged CSR** (`offset`) + per-section `step_index` + sharded
+columns. Consumer chain: `molrs-cxxapi/src/lib.rs` (`write_frame` / `read_first_frame`)
+→ Atomiverse `cpu::ZarrReader` checkpoint reload. **Instruction: any store written by
+0.13 must be re-written with 0.13** — the new reader will not migrate it. wasm JS-surface
+change too: `RecordReader` now **throws at construction** on a trajectory-less store,
+where before it constructed with `countFrames() == 1` and `readFrame(0) == null`.
+Zero in-tree JS consumers, so nothing here needed porting.
+
+**2. Decision-10 (no `record_schema_version` bump) — the ruling stands, but its TRUE
+cost is not what the ruling assumed.** Verified against `git show v0.13.2`: a
+molrs ≤ 0.13.2 reader meeting the new layout fails with
+`trajectory.step length mismatch: expected 0, got N`
+(`v0.13.2:molrs/src/core/store/trajectory.rs:61`) — i.e. **loud, but naming the wrong
+cause**; it is silently empty only when `nstep == 0`. Because
+`record_schema_version` deliberately stays **1**, `read_meta`'s precise
+`unsupported record_schema_version` path (`v0.13.2:.../record_io.rs:292`) is
+**not** taken — the one message that would have told the truth is the one we
+opted out of. The ruling predated these corrected facts; **revisiting it is the
+maintainer's call**, not an implementer's.
+
+**3. Decision-11: one spec, not a split.** `release-0-14-15` is a large spec and
+**the large-spec split is waived by maintainer order**. Do not re-propose the split.
+
+**4. `io::zarr::{UnitSystem, Provenance}` deleted outright.** Zero call sites
+workspace-wide (verified). This closes **release-0-14-02's silently-unexecuted
+follow-up**. The compatibility concern was **moot**: the enum never reached the
+store, so no on-disk value depends on it. `ff::typifier::estimate::Provenance`
+(`molrs/src/ff/typifier/estimate/provenance.rs`) is a **different, live** type —
+untouched, and not to be confused with the deleted one.
+
+**5. Deliberate side effect: `TrajectoryReader` is now dyn-compatible.** Dropping
+its `Reader` supertrait (`molrs/src/io/reader.rs:187`) makes
+`&mut dyn TrajectoryReader` **legal**. That is a public capability now: re-erasing
+it later (re-adding a non-dyn-compatible supertrait) would **break callers**.
+
+**6. Measured `zarrs_filesystem` 0.3.12 fact.** `FilesystemStore::set_partial_many`
+is a **whole-value read-modify-write** — a 16 B tail write on a 256 MiB value costs a
+full-file read + rewrite (**~247 ms measured**) — while
+`supports_set_partial()` still reports `true`. `PositionalWriteStore`
+(`molrs/src/io/zarr/store.rs:42`) exists precisely to route around this.
+**Do not simplify it away**; it is not an abstraction, it is the fix.
+
+**7. Naming-gate exemption.** The old `"/io/store/zarr/"` entry in
+`molrs-python/tests/test_record.py` matched **zero** scanned files — the scanned
+trees exclude `molrs/src`, so that entry had never done anything. Its replacement
+`"/io/zarr/"` therefore also (and **deliberately**) exempts
+`molrs-wasm/src/io/zarr/`: the wasm zarr binding is adapter layer, which is correct
+under spec 13's own adapter carve-out.
+
+**8. Eager-door limitation (consequence of decision 8).** A `Trajectory` whose frames
+carry **heterogeneous per-step meta keys errs at write** — `declare_meta` fills are a
+**streaming-API-only** facility, and the eager door has no place to put them. Also:
+`Trajectory.step == None` round-trips as `Some([0..n])`, because `step` is the commit
+marker and is therefore **always** written.
+
+**Status:** active (0.14) — item 2 flagged for maintainer review.
+
 ## 2026-08-26 — development tools track latest; other-platform UB out of scope
 **Decision:** rustc/clippy/rustfmt = `rust-toolchain.toml` `channel = "stable"`
 and CI `dtolnay/rust-toolchain@stable`. wasm-opt = latest binaryen GitHub
@@ -44,7 +104,7 @@ width before the minor line freezes.
 **Decision:** Public names are `molrs.Record` / `molrs::Record`, `Record.read` /
 `Record.write`, `Trajectory.read` / `Trajectory.write`, cxxapi `write_frame` /
 `read_first_frame`. No deprecated aliases. Internal `store::record::MolRec`,
-`RECORD_FORMAT_NAME = "molrec"`, and the `io::store::zarr` adapter keep their
+`RECORD_FORMAT_NAME = "molrec"`, and the `io::zarr` adapter keep their
 technical names.
 **Why:** Public API names the object; the backend is not yet a caller-chosen
 format (release-0-14-13). Cross-crate: Atomiverse checkpoint I/O must switch

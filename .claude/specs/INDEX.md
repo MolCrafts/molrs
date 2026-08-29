@@ -6,7 +6,7 @@ Live specs only.
 
 08 / 12 (tag, publish, master merge) are **not** executed — stay on `dev`, no tag.
 
-执行顺序按 `depends_on`，不按编号：01 → 02 → 03 → **14** → 04 → 05 → **13** → 06 → 07 → 08 → 09 → 10 → 11 → 12。
+执行顺序按 `depends_on`，不按编号：01 → 02 → 03 → **14** → 04 → 05 → **13** → **15**(molrs/molrec 部分；其 molpy 任务押后至 09/10 之后) → 06 → 07 → 08 → 09 → 10 → 11 → 12。
 
 - [release-0-14-01-baseline](release-0-14-01-baseline.md) — merge origin/master, unify 6+2 version strings to 0.14.0, backfill release.md [approved]
 - [release-0-14-02-units-purge](release-0-14-02-units-purge.md) — unit presets promoted to core::units (UnitPreset, LAMMPS-free naming), three vocabularies unified, zero unit conversion inside MD, MaxwellBoltzmann::new(kbt, seed) [approved]
@@ -22,6 +22,7 @@ Live specs only.
 - [release-0-14-12-joint-smoke](release-0-14-12-joint-smoke.md) — full-import + molnex chain smoke on the released wheel, then tag molpy 0.14.0 [approved]
 - [release-0-14-13-frame-store-naming](release-0-14-13-frame-store-naming.md) — public APIs named by object, not backend: molrs.MolRec → molrs.Record, read_zarr/write_zarr → read/write, cxxapi write_frame / read_first_frame (Atomiverse consumer on record); record.rs untouched [approved]
 - [release-0-14-14-pair-kernel-merge](release-0-14-14-pair-kernel-merge.md) — one LJ pair kernel (pure API unification, bit-identical), per-step pair dataset passed through instead of the set_pairs snapshot (no MIC in potentials, one dataset shared), kspace name off the ForceField surface with PME as pair/coul/long/pme and the module kept as the FFT compilation unit [approved]
+- [release-0-14-15-molrec-zarr-trajectory](release-0-14-15-molrec-zarr-trajectory.md) — one frame form that round-trips all 15 dtypes bit-exactly (absent boundary = periodic, no speculative envelope, erase-before-write), one ragged CSR + per-section step_index trajectory appended a frame at a time at bounded file count (256 MiB shard target) with a .zarr.zip at-rest form, store/ level dropped to io/zarr/, molrec rule 2 widened and its conformance suite finally collected [approved]
 
 ## release-0-12 chain (molrs first) — done
 

@@ -32,7 +32,7 @@ stream / serialize (optional)
 |---|---|
 | `core` | Frame, Block, MolGraph, Atomistic, Box, schema, generate, units, `UnitPreset` |
 | `perceive` | rings, aromaticity, SMARTS, stereo, hydrogens, bond types |
-| `io` | readers/writers, SMILES, trajectory, Record store adapter (`io::store::zarr`) |
+| `io` | readers/writers, SMILES, trajectory, Record store adapter (`io::zarr`) |
 | `ff` | ForceField, potentials, typifiers (MMFF, OPLS, UFF, ATD), charge; pair styles include `coul/long/pme` |
 | `md` | VelocityVerlet / Langevin, `LJCut` re-export, MaxwellBoltzmann(`kbt`) |
 | `compute` | transport, MSD, RDF, dielectric, spectra, shape, … |

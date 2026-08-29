@@ -1,6 +1,9 @@
 //! WASM bindings for frame-sequence Zarr v3 archives.
 
 use crate::core::frame::Frame;
+use molrs::io::reader::TrajectoryReader;
+use molrs::io::zarr::FrameSequence;
+use std::cell::{RefCell, RefMut};
 use std::sync::Arc;
 use wasm_bindgen::prelude::*;
 use zarrs::storage::ReadableWritableListableStorage;
@@ -8,10 +11,32 @@ use zarrs::storage::WritableStorageTraits;
 use zarrs::storage::store::MemoryStore;
 
 /// Reader for frame-sequence Zarr v3 archives.
+///
+/// The sequence is opened **once**, in the constructor. `FrameSequence` is the
+/// lazy store cursor, so `readFrame` decodes exactly the frame it was asked
+/// for instead of the whole record, and `countFrames` answers off the index
+/// the open already cached.
+///
+/// Reading advances that cursor, so it lives behind a `RefCell` and every JS
+/// method keeps its `&self` signature. A re-entrant call from JS is a borrow
+/// failure, and a borrow failure is an exception — a wasm export on a fallible
+/// path never panics.
 #[wasm_bindgen(js_name = RecordReader)]
 pub struct RecordReader {
-    store: ReadableWritableListableStorage,
+    sequence: RefCell<FrameSequence>,
     n_atoms: usize,
+}
+
+impl RecordReader {
+    /// The cursor, or the re-entrancy error.
+    ///
+    /// `try_borrow_mut`, never `borrow_mut`: the panicking form would abort the
+    /// wasm instance on a caller mistake that an exception describes.
+    fn sequence(&self) -> Result<RefMut<'_, FrameSequence>, JsValue> {
+        self.sequence
+            .try_borrow_mut()
+            .map_err(|_| JsError::new("RecordReader is busy: re-entrant call").into())
+    }
 }
 
 #[wasm_bindgen(js_class = RecordReader)]
@@ -36,17 +61,30 @@ impl RecordReader {
                 .map_err(|e| JsValue::from_str(&e.to_string()))?;
         }
 
-        let store = store as ReadableWritableListableStorage;
-        let n_atoms = molrs::io::store::zarr::read_frame_from_store(store.clone(), 0)
+        // The reader is a read door, so it gets the store's read-only view.
+        let store = (store as ReadableWritableListableStorage).readable_listable();
+        // Index-only: the schema plus each section's step_index and offset.
+        let mut sequence =
+            FrameSequence::open(store).map_err(|e| JsValue::from_str(&e.to_string()))?;
+        // Cached, because it cannot change: the archive is a fixed snapshot,
+        // so answering `countAtoms` per call would decode a frame to learn
+        // something already known.
+        let n_atoms = sequence
+            .frame(0)
             .map_err(|e| JsValue::from_str(&e.to_string()))?
             .and_then(|frame| frame.get("atoms").and_then(|block| block.nrows()))
             .unwrap_or(0);
-        Ok(RecordReader { store, n_atoms })
+        Ok(RecordReader {
+            sequence: RefCell::new(sequence),
+            n_atoms,
+        })
     }
 
     #[wasm_bindgen(js_name = readFrame)]
     pub fn read_frame(&self, t: usize) -> Result<Option<Frame>, JsValue> {
-        let rs_frame = molrs::io::store::zarr::read_frame_from_store(self.store.clone(), t)
+        let rs_frame = self
+            .sequence()?
+            .frame(t as u64)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
         match rs_frame {
             Some(frame) => Ok(Some(Frame::from_rs(frame)?)),
@@ -56,10 +94,9 @@ impl RecordReader {
 
     #[wasm_bindgen(js_name = countFrames)]
     pub fn count_frames(&self) -> Result<usize, JsValue> {
-        Ok(
-            molrs::io::store::zarr::count_frames_in_store(self.store.clone())
-                .map_err(|e| JsValue::from_str(&e.to_string()))? as usize,
-        )
+        self.sequence()?
+            .len()
+            .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
     #[wasm_bindgen(js_name = countAtoms)]

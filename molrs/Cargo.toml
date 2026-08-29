@@ -86,7 +86,7 @@ rayon      = ["dep:rayon"]
 # count with it, and a reader that cannot open a shard cannot open the store.
 zarr       = ["dep:zarrs", "zarrs/gzip", "zarrs/crc32c", "zarrs/sharding", "zarrs/transpose"]
 zarr-codecs = ["zarr", "zarrs/zstd", "zarrs/blosc"]
-filesystem = ["zarr", "zarr-codecs", "zarrs/filesystem"]
+filesystem = ["zarr", "zarr-codecs", "zarrs/filesystem", "dep:zip", "dep:zarrs_zip"]
 blas       = ["dep:ndarray-linalg"]
 slow-tests = []
 
@@ -117,6 +117,14 @@ once_cell      = { version = "1.21", optional = true }                          
 rustfft        = { version = "6", optional = true }                                                 # signal + ff + compute
 roxmltree      = { version = "0.21", optional = true }                                              # ff (XML force-field readers)
 rmp-serde      = { version = "1", optional = true }                                                 # stream (MessagePack wire encoding)
+# `io/zarr/pack.rs` and nothing else: `zip` writes the `.zarr.zip` a closed
+# directory store packs into, `zarrs_zip` reads it back. Both hang on
+# `filesystem`, so a build without that feature compiles neither — which is
+# what keeps them out of the wasm graph. `zip` is built with default-features
+# off: only method 0 (Stored) is ever written, so none of its compression
+# backends (bzip2/lzma/zstd/aes) are compiled.
+zip            = { version = "6", optional = true, default-features = false }                       # filesystem (pack.rs)
+zarrs_zip      = { version = "0.5", optional = true }                                               # filesystem (pack.rs)
 
 # net — WebSocket streaming is native-only. Declared under not-wasm so
 # `cargo check --target wasm32-unknown-unknown --features net` still builds

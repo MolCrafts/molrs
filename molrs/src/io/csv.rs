@@ -1,5 +1,10 @@
 //! Hand-written CSV (de)serialization for [`Block`] — no external crate.
 //!
+//! See the module list in [`crate::io`] for why these live beside the format
+//! readers rather than under them. This one lived in `core/store/block` until
+//! it moved here: a format parser has no business inside the container it
+//! parses into.
+//!
 //! `block_from_csv` parses CSV text into a `Block`, inferring each column's
 //! dtype as int → float → str (the first that parses every cell wins).
 //! `block_to_csv` serializes a `Block` back to CSV text. Fields are split /

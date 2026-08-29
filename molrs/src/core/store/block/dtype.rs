@@ -68,6 +68,36 @@ impl DType {
             DType::Complex128 => "c128",
         }
     }
+
+    /// Bytes one element of this dtype occupies in storage, or `None` for
+    /// [`DType::String`].
+    ///
+    /// The widths are the ones [`Column::raw_bytes`] already emits — `Bool` is
+    /// one byte per element, `Complex64` a pair of `f32`, `Complex128` a pair
+    /// of `f64` — and the `None` mirrors the `None` that method returns for a
+    /// string column: variable-length elements have no fixed byte width, so
+    /// anything sizing storage by bytes has to branch on their absence.
+    ///
+    /// [`Column::raw_bytes`]: super::column::Column::raw_bytes
+    pub fn itemsize(&self) -> Option<usize> {
+        match self {
+            DType::Float16 => Some(2),
+            DType::Float32 => Some(4),
+            DType::Float => Some(8),
+            DType::Int8 => Some(1),
+            DType::Int16 => Some(2),
+            DType::Int => Some(4),
+            DType::Int64 => Some(8),
+            DType::Bool => Some(1),
+            DType::UInt => Some(8),
+            DType::U8 => Some(1),
+            DType::UInt16 => Some(2),
+            DType::UInt32 => Some(4),
+            DType::String => None,
+            DType::Complex64 => Some(8),
+            DType::Complex128 => Some(16),
+        }
+    }
 }
 
 impl std::fmt::Display for DType {
@@ -134,3 +164,90 @@ impl_block_dtype!(
     as_c128,
     as_c128_mut
 );
+
+#[cfg(test)]
+mod tests {
+    use super::DType;
+
+    /// Every fixed-width variant paired with the bytes one element occupies.
+    ///
+    /// These are the storage widths [`Column::raw_bytes`] already emits
+    /// (`block/column.rs:428`): `Bool` is one byte per element, `Complex64` is
+    /// a pair of `f32` and `Complex128` a pair of `f64`. The three domain
+    /// aliases carry their concrete scalars from `core/types.rs` — `F = f64`
+    /// (8), `I = i32` (4), `Idx = u64` (8) — not the width their name suggests.
+    ///
+    /// [`Column::raw_bytes`]: super::column::Column::raw_bytes
+    const FIXED_WIDTH: [(DType, usize); 14] = [
+        (DType::Float16, 2),
+        (DType::Float32, 4),
+        (DType::Float, 8),
+        (DType::Int8, 1),
+        (DType::Int16, 2),
+        (DType::Int, 4),
+        (DType::Int64, 8),
+        (DType::Bool, 1),
+        (DType::UInt, 8),
+        (DType::U8, 1),
+        (DType::UInt16, 2),
+        (DType::UInt32, 4),
+        (DType::Complex64, 8),
+        (DType::Complex128, 16),
+    ];
+
+    #[test]
+    fn fixed_width_variants_report_their_byte_width() {
+        for (dtype, width) in FIXED_WIDTH {
+            assert_eq!(dtype.itemsize(), Some(width), "itemsize of {dtype}");
+        }
+    }
+
+    #[test]
+    fn string_has_no_itemsize() {
+        // Variable-length elements have no fixed byte representation. This is
+        // the same absence `Column::raw_bytes` reports for a string column, and
+        // it is what a byte-target chunk planner has to branch on.
+        assert_eq!(DType::String.itemsize(), None);
+    }
+
+    #[test]
+    fn the_width_table_covers_every_variant() {
+        // `DType` is `#[non_exhaustive]`, but inside the defining crate this
+        // match is exhaustive: a new variant stops this module compiling until
+        // someone decides whether it has a fixed width.
+        fn is_fixed_width(dtype: DType) -> bool {
+            match dtype {
+                DType::String => false,
+                DType::Float16
+                | DType::Float32
+                | DType::Float
+                | DType::Int8
+                | DType::Int16
+                | DType::Int
+                | DType::Int64
+                | DType::Bool
+                | DType::UInt
+                | DType::U8
+                | DType::UInt16
+                | DType::UInt32
+                | DType::Complex64
+                | DType::Complex128 => true,
+            }
+        }
+
+        let mut named: Vec<&str> = FIXED_WIDTH.iter().map(|(d, _)| d.name()).collect();
+        named.sort_unstable();
+        named.dedup();
+        assert_eq!(
+            named.len(),
+            FIXED_WIDTH.len(),
+            "FIXED_WIDTH lists a variant twice"
+        );
+        for (dtype, _) in FIXED_WIDTH {
+            assert!(is_fixed_width(dtype), "{dtype} is not a fixed-width dtype");
+        }
+        // 14 fixed-width rows plus `String` is the whole enum, so a variant
+        // missing from the table cannot hide behind the loop above.
+        assert!(!is_fixed_width(DType::String));
+    }
+}

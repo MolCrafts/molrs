@@ -27,7 +27,7 @@ _PUBLIC_TREES = (
 )
 _EXEMPT_SUFFIXES = (
     "/core/store/record.rs",
-    "/io/store/zarr/",
+    "/io/zarr/",
 )
 _EXEMPT_URL = "https://github.com/MolCrafts/molrec"
 
@@ -161,7 +161,7 @@ class TestStubMatchesRuntime:
 class TestPublicSurfaceNaming:
     """Public identifiers name the object, not the storage technology.
 
-    Exempt: the engine type in core/store/record.rs, the io::store::zarr
+    Exempt: the engine type in core/store/record.rs, the io::zarr
     adapter path, and the molrec contract URL.
     """
 

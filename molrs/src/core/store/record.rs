@@ -1,8 +1,9 @@
 //! MolRec record aggregate — L2 of the MolRec contract.
 //!
 //! A [`MolRec`] is one openable root carrying `meta` plus at least one of
-//! `frame`, `system`, or `status`. It is backend-neutral: the reference Zarr V3
-//! binding lives in `crate::io::store::zarr`, and nothing here depends on it.
+//! `frame`, `system`, `trajectory`, or `status`. It is backend-neutral: the
+//! reference Zarr V3 binding lives in `crate::io::zarr`, and nothing here
+//! depends on it.
 //!
 //! Contract: <https://github.com/MolCrafts/molrec> (`docs/spec/record.md`).
 //! `meta.record_schema_version` is the **sole** version key of a record; there is
@@ -138,12 +139,32 @@ impl MolRec {
 
     /// Check the contract's minimum record shape.
     ///
-    /// A record must carry at least one of `frame`, `system`, or `status`; a
-    /// Run-shaped record (`meta` + `status`) needs no frame.
+    /// A record must carry at least one of `frame`, `system`, `trajectory`, or
+    /// `status`; a Run-shaped record (`meta` + `status`) needs no frame, and a
+    /// trajectory is a state section in its own right — a sequence of frames
+    /// stands alone, without a snapshot beside it.
+    ///
+    /// Shape only. This does not check that the sections agree with the Frame
+    /// schema — that is `crate::store::schema::Validator`'s job, and the read
+    /// and write doors run it separately.
+    ///
+    /// # Errors
+    ///
+    /// A [`MolRsError::Validation`] when all four of those sections are absent
+    /// (`status` counts as absent when it is empty). The check is transitive,
+    /// so it also returns whatever [`Trajectory::validate`] reports — a `step`
+    /// or `time` axis whose length does not match the frame count, in a message
+    /// naming that axis — and whatever each stored [`ObservableRecord`] reports
+    /// about itself, which in this build is nothing: every kind-and-data
+    /// pairing the type can hold is valid. The first failure wins.
     pub fn validate(&self) -> Result<(), MolRsError> {
-        if self.frame.is_none() && self.system.is_none() && self.status.is_empty() {
+        if self.frame.is_none()
+            && self.system.is_none()
+            && self.trajectory.is_none()
+            && self.status.is_empty()
+        {
             return Err(MolRsError::validation(
-                "record must carry at least one of 'frame', 'system', or 'status'",
+                "record must carry at least one of 'frame', 'system', 'trajectory', or 'status'",
             ));
         }
         if let Some(traj) = &self.trajectory {
@@ -183,6 +204,29 @@ mod tests {
         let mut rec = MolRec::new();
         rec.system = Some(Frame::new());
         rec.validate().unwrap();
+    }
+
+    /// A trajectory is a state section like any other: a record that carries
+    /// `meta` plus a sequence of frames — and no snapshot, no system, no
+    /// status — is a complete record, not a defective one.
+    ///
+    /// Contract: `../molrec/docs/spec/record.md` rule 2 lists `trajectory`
+    /// alongside `frame`, `system` and `status`. While the validator did not
+    /// say so, `write_trajectory_file` had to duplicate frame 0 into `frame` to
+    /// get a trajectory past this gate; it no longer does, and this test is
+    /// what keeps that workaround from being needed again.
+    #[test]
+    fn a_trajectory_only_record_validates() {
+        let mut rec = MolRec::new();
+        rec.meta.insert("creator".into(), "unit-test".into());
+        rec.add_frame(Frame::new());
+        rec.add_frame(Frame::new());
+
+        assert!(rec.frame.is_none(), "no snapshot section");
+        assert!(rec.system.is_none(), "no system section");
+        assert!(rec.status.is_empty(), "no status section");
+        rec.validate()
+            .expect("a record whose only state section is a trajectory is valid");
     }
 
     #[test]
