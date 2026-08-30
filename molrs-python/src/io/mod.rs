@@ -15,6 +15,9 @@
 //! | AMBER inpcrd | [`read_amber_inpcrd`] | — |
 //! | AMBER prmtop (structure) | [`read_amber_prmtop`] | — |
 
+#[cfg(feature = "fs")]
+pub mod mrec;
+
 use crate::core::store::block::PyBlock;
 use crate::core::store::frame::PyFrame;
 use crate::core::system::molgraph::PyAtomistic;
@@ -28,7 +31,10 @@ use molrs::io::data::frcmod::{
 };
 use molrs::io::data::gro::{read_gro as read_gro_rs, write_gro as write_gro_rs};
 use molrs::io::data::inpcrd::read_amber_inpcrd as read_amber_inpcrd_rs;
-use molrs::io::data::lammps_data::{read_lammps_data, write_lammps_data};
+use molrs::io::data::lammps_data::{
+    lammps_type_ids_from_frame as lammps_type_ids_from_frame_rs, read_lammps_data,
+    write_lammps_data,
+};
 use molrs::io::data::lammps_molecule::{
     read_lammps_molecule as read_lammps_molecule_rs,
     write_lammps_molecule as write_lammps_molecule_rs,
@@ -105,9 +111,8 @@ use std::io::BufWriter;
 /// >>> symbols = atoms.view("symbol")
 #[pyfunction]
 pub fn read_pdb(path: &str) -> PyResult<PyFrame> {
-    let frame = read_pdb_frame(path).map_err(|e| {
-        pyo3::exceptions::PyIOError::new_err(format!("{path}: {e}"))
-    })?;
+    let frame = read_pdb_frame(path)
+        .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{path}: {e}")))?;
     PyFrame::from_core_frame(frame)
 }
 
@@ -1632,6 +1637,17 @@ pub fn write_xyz(path: &str, frame: &PyFrame) -> PyResult<()> {
 pub fn write_lammps(path: &str, frame: &PyFrame) -> PyResult<()> {
     let core_frame = frame.clone_core_frame()?;
     write_lammps_data(path, &core_frame).map_err(io_error_to_pyerr)
+}
+
+/// ForceField type-name → LAMMPS type id, matching the data-file writer.
+///
+/// Bond / angle / dihedral names are undirected (``h1-c3-c3`` == ``c3-c3-h1``).
+#[pyfunction]
+pub fn lammps_type_ids_from_frame(
+    frame: &PyFrame,
+) -> PyResult<std::collections::HashMap<String, u32>> {
+    let core_frame = frame.clone_core_frame()?;
+    lammps_type_ids_from_frame_rs(&core_frame).map_err(io_error_to_pyerr)
 }
 
 /// Write Frames to a LAMMPS dump trajectory file.

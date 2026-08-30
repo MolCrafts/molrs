@@ -228,6 +228,7 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(io::write_pdb_trajectory, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_xyz, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_lammps, m)?)?;
+    m.add_function(wrap_pyfunction!(io::lammps_type_ids_from_frame, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_lammps_traj, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_dcd, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_trr, m)?)?;
@@ -236,6 +237,17 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<io::PySmilesIR>()?;
     m.add_function(wrap_pyfunction!(io::write_smiles_from_atomistic, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_smarts, m)?)?;
+
+    // Scientific-record (*.mrec) path doors. Native-only (filesystem store).
+    // Class is MrecTrajectoryReader on _lib so it does not collide with the
+    // dump concatenator; python/molrs/io/mrec.py aliases it TrajectoryReader.
+    #[cfg(feature = "fs")]
+    {
+        m.add_function(wrap_pyfunction!(io::mrec::read_record, m)?)?;
+        m.add_function(wrap_pyfunction!(io::mrec::write_record, m)?)?;
+        m.add_function(wrap_pyfunction!(io::mrec::write_trajectory, m)?)?;
+        m.add_class::<io::mrec::PyMrecTrajectoryReader>()?;
+    }
 
     // Trajectory (frame sequence) + observable records
     m.add_class::<PyTrajectory>()?;

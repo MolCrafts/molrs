@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any, Union, overload
 
 from . import raw
+from . import mrec
 from .._lib import SmilesIR as SmilesIR
 from .._lib import (
     write_smiles as write_smiles,
@@ -89,6 +90,7 @@ from .._lib import (
     read_xsf as _read_xsf,
     write_gro as _write_gro,
     write_lammps as _write_lammps,
+    lammps_type_ids_from_frame as lammps_type_ids_from_frame,
     write_cube_file as _write_cube,
     write_mol2 as _write_mol2,
     write_lammps_molecule as _write_lammps_molecule,
@@ -914,6 +916,7 @@ __all__ = [
     "read_trr",
     "read_xtc",
     "write_lammps_data",
+    "lammps_type_ids_from_frame",
     "write_pdb",
     "write_pdb_trajectory",
     "write_xyz",

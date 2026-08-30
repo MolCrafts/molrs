@@ -108,24 +108,6 @@ impl PyTrajectory {
         })
     }
 
-    /// Read a frame-sequence archive into a `Trajectory`.
-    ///
-    /// Requires the ``fs`` feature (default on desktop; omitted for Pyodide).
-    #[staticmethod]
-    #[cfg(feature = "fs")]
-    fn read(path: &str) -> PyResult<Self> {
-        let inner = molrs::io::mrec::read_trajectory_file(path).map_err(molrs_error_to_pyerr)?;
-        Ok(Self { inner })
-    }
-
-    /// Write this trajectory to a frame-sequence archive.
-    ///
-    /// Requires the ``fs`` feature (default on desktop; omitted for Pyodide).
-    #[cfg(feature = "fs")]
-    fn write(&self, path: &str) -> PyResult<()> {
-        molrs::io::mrec::write_trajectory_file(path, &self.inner).map_err(molrs_error_to_pyerr)
-    }
-
     /// Number of frames in the trajectory.
     fn count_frames(&self) -> usize {
         self.inner.frames.len()

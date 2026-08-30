@@ -1,8 +1,8 @@
 """FFI smoke tests for the Record aggregate.
 
 Depth (layout conformance, version rejection, preserve-the-unknown) lives in the
-Rust unit tests; this file only proves the Python seam constructs, round-trips,
-and exposes exactly the surface `_lib.pyi` declares.
+Rust unit tests; this file only proves the Python seam constructs, round-trips
+through ``molrs.io.mrec``, and exposes exactly the surface `_lib.pyi` declares.
 """
 
 from __future__ import annotations
@@ -41,17 +41,17 @@ class TestRecordRoundtrip:
     def test_frame_only_record_round_trips(self, record_path: Path) -> None:
         record = molrs.Record()
         record.set_frame(molrs.Frame())
-        record.write(str(record_path))
+        molrs.io.mrec.write_record(str(record_path), record)
 
-        loaded = molrs.Record.read(str(record_path))
+        loaded = molrs.io.mrec.read_record(str(record_path))
         assert loaded.count_frames() == 1
 
     def test_meta_stamps_the_contract_keys(self, record_path: Path) -> None:
         record = molrs.Record()
         record.set_frame(molrs.Frame())
-        record.write(str(record_path))
+        molrs.io.mrec.write_record(str(record_path), record)
 
-        meta = molrs.Record.read(str(record_path)).meta
+        meta = molrs.io.mrec.read_record(str(record_path)).meta
         assert meta["record_schema_version"] == 1
         assert meta["format_name"] == "mrec"
 
@@ -60,9 +60,9 @@ class TestRecordRoundtrip:
         record.set_frame(molrs.Frame())
         record.meta = {"version": [0, 2], "creator": {"name": "pytest"}}
         record.method = {"type": "static_structure", "description": "smoke"}
-        record.write(str(record_path))
+        molrs.io.mrec.write_record(str(record_path), record)
 
-        loaded = molrs.Record.read(str(record_path))
+        loaded = molrs.io.mrec.read_record(str(record_path))
         assert loaded.meta["creator"]["name"] == "pytest"
         assert loaded.meta["version"] == [0, 2]
         assert loaded.method["type"] == "static_structure"
@@ -72,15 +72,16 @@ class TestRecordRoundtrip:
         record.set_frame(molrs.Frame())
         record.add_frame(molrs.Frame())
         record.add_frame(molrs.Frame())
-        record.write(str(record_path))
+        molrs.io.mrec.write_record(str(record_path), record)
 
-        loaded = molrs.Record.read(str(record_path))
+        loaded = molrs.io.mrec.read_record(str(record_path))
         assert loaded.count_frames() == 2
         assert len(loaded.trajectory) == 2
 
     def test_record_without_a_state_section_is_refused(self, record_path: Path) -> None:
+        write_record = molrs.io.mrec.write_record
         with pytest.raises(Exception):
-            molrs.Record().write(str(record_path))
+            write_record(str(record_path), molrs.Record())
 
 
 class TestObservablesView:
@@ -99,8 +100,8 @@ class TestObservablesView:
         # The getter returns a live view, not a detached copy.
         assert "total_energy" in record.observables
 
-        record.write(str(record_path))
-        loaded = molrs.Record.read(str(record_path))
+        molrs.io.mrec.write_record(str(record_path), record)
+        loaded = molrs.io.mrec.read_record(str(record_path))
         assert loaded.observables.get("total_energy").kind == "scalar"
 
     def test_add_vector_returns_and_stores(self, record_path: Path) -> None:
@@ -109,9 +110,9 @@ class TestObservablesView:
         dipole = record.observables.add_vector(
             "dipole", np.array([[0.1, 0.2, 0.3]]), unit="D"
         )
-        record.write(str(record_path))
+        molrs.io.mrec.write_record(str(record_path), record)
 
-        loaded = molrs.Record.read(str(record_path))
+        loaded = molrs.io.mrec.read_record(str(record_path))
         assert loaded.observables.get("dipole").kind == dipole.kind == "vector"
 
 
@@ -194,3 +195,16 @@ class TestPublicSurfaceNaming:
                     if public_ident.search(line):
                         hits.append(f"{path.relative_to(_REPO)}:{i}:{line.strip()}")
         assert not hits, "public surface still spells MolRec/zarr:\n" + "\n".join(hits)
+
+
+class TestDumpConcatenatorUnchanged:
+    """``molrs.io.TrajectoryReader`` stays the LAMMPS/XYZ/DCD concatenator."""
+
+    def test_io_trajectory_reader_constructs_from_native_readers(self) -> None:
+        from molrs.io import TrajectoryReader
+
+        params = inspect.signature(TrajectoryReader.__init__).parameters
+        assert "readers" in params
+        assert "path" not in params
+        assert hasattr(TrajectoryReader, "read_frame")
+        assert hasattr(TrajectoryReader, "n_frames")

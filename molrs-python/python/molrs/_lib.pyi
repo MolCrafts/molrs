@@ -1497,6 +1497,7 @@ def write_lammps_forcefield(
     forcefield: ForceField,
     precision: int = 6,
     skip_pair_style: bool = False,
+    skip_units: bool = False,
     units: str = "real",
     atom_types: set[str] | None = None,
     bond_types: set[str] | None = None,
@@ -1509,6 +1510,7 @@ def write_lammps_forcefield_str(
     forcefield: ForceField,
     precision: int = 6,
     skip_pair_style: bool = False,
+    skip_units: bool = False,
     units: str = "real",
     atom_types: set[str] | None = None,
     bond_types: set[str] | None = None,
@@ -1556,9 +1558,6 @@ class Trajectory:
     def step(self) -> Optional[ArrayI64]: ...
     @property
     def time(self) -> Optional[ArrayF]: ...
-    @staticmethod
-    def read(path: str) -> Trajectory: ...
-    def write(self, path: str) -> None: ...
 
 _ObservableScalarData = npt.NDArray | float | int | bool | str | list[str]
 
@@ -1638,7 +1637,12 @@ class Observables:
 _JsonDict = dict[str, Any]
 
 class Record:
-    """One record: `meta` plus at least one of `frame`, `system`, `status`.
+    """One record: `meta` plus at least one of `frame`, `system`, `trajectory`,
+    or `status`.
+
+    A `trajectory` is a state section in its own right: a record whose only
+    state is an ordered sequence of frames is complete, with no snapshot beside
+    it.
 
     There is no record-root `parameters` section — scientific parameters belong
     under `system/parameters`, and method identity under `method`.
@@ -1650,9 +1654,6 @@ class Record:
     def add_frame(self, frame: Frame) -> None: ...
     def set_trajectory(self, trajectory: Trajectory) -> None: ...
     def set_forcefield(self, forcefield: ForceField) -> None: ...
-    @staticmethod
-    def read(path: str) -> Record: ...
-    def write(self, path: str) -> None: ...
     def count_frames(self) -> int: ...
     @property
     def frame(self) -> Optional[Frame]: ...
@@ -1678,6 +1679,19 @@ class Record:
     def metrics(self) -> _JsonDict: ...
     @metrics.setter
     def metrics(self, value: _JsonDict) -> None: ...
+
+def read_record(path: str) -> Record: ...
+def write_record(path: str, record: Record) -> None: ...
+def write_trajectory(path: str, trajectory: Trajectory) -> None: ...
+
+class MrecTrajectoryReader:
+    """Lazy one-frame cursor over a ``*.mrec`` trajectory.
+
+    Exported from ``molrs.io.mrec`` as ``TrajectoryReader``.
+    """
+
+    def __init__(self, path: str) -> None: ...
+    def read_frame(self, index: int) -> Frame: ...
 
 # ---------------------------------------------------------------------------
 # Analysis (compute)

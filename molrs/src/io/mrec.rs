@@ -23,9 +23,11 @@
 //! - A run too large to hold in memory: pin a [`SequenceSchema`], append with
 //!   [`FrameSequenceWriter`], read one frame at a time with [`FrameSequence`].
 //!   [`FrameSequence::open`] takes any already-open store (including an
-//!   in-memory one); it is not a filesystem-path function.
-//! - Pack a closed directory: [`pack`] / [`open_packed`]. Those two, and the
-//!   `*_file` functions, need the `filesystem` feature.
+//!   in-memory one). [`open_trajectory_sequence`] is the filesystem-path
+//!   opener for that cursor.
+//! - Pack a closed directory: [`pack`] / [`open_packed`]. Those two, the
+//!   `*_file` functions, and [`open_trajectory_sequence`] need the
+//!   `filesystem` feature.
 //!
 //! Every writer writes [`crate::RECORD_FORMAT_NAME`] (`"mrec"`) and
 //! [`crate::RECORD_SCHEMA_VERSION`] (`1`) into `meta`. A reader rejects any
@@ -61,7 +63,8 @@ pub use super::zarr::{FrameSequence, FrameSequenceWriter, SequenceSchema};
 #[cfg(feature = "filesystem")]
 #[doc(inline)]
 pub use super::zarr::{
-    read_record_file, read_trajectory_file, write_record_file, write_trajectory_file,
+    open_trajectory_sequence, read_record_file, read_trajectory_file, write_record_file,
+    write_trajectory_file,
 };
 
 #[cfg(feature = "filesystem")]

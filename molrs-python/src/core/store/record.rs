@@ -153,24 +153,6 @@ impl PyMolRec {
         self.inner.metrics = dict_to_json_map(value)?;
         Ok(())
     }
-
-    /// Read a record from a store root.
-    ///
-    /// Requires the ``fs`` feature (default on desktop; omitted for Pyodide).
-    #[staticmethod]
-    #[cfg(feature = "fs")]
-    fn read(path: &str) -> PyResult<Self> {
-        let inner = molrs::io::mrec::read_record_file(path).map_err(molrs_error_to_pyerr)?;
-        Ok(Self { inner })
-    }
-
-    /// Write this record to a store root.
-    ///
-    /// Requires the ``fs`` feature (default on desktop; omitted for Pyodide).
-    #[cfg(feature = "fs")]
-    fn write(&self, path: &str) -> PyResult<()> {
-        molrs::io::mrec::write_record_file(path, &self.inner).map_err(molrs_error_to_pyerr)
-    }
 }
 
 #[pymethods]

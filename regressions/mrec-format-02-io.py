@@ -1,10 +1,10 @@
 r"""Write a Record to a ``*.mrec`` directory and read the contract brand back.
 
-The 02-era Python door is still ``molrs.Record.write`` / ``molrs.Record.read``
-(spec mrec-format-03-python moves those to ``molrs.io.mrec``). This script
+Scientific-record I/O belongs on ``molrs.io.mrec`` (spec mrec-format-03-python
+moved ``Record.write`` / ``Record.read`` off the memory carrier). This script
 writes a one-frame record whose directory name ends in ``.mrec``, reads
 ``format_name`` and ``record_schema_version`` as literals, and asserts that
-``Record.write`` did not also emit a sibling ``*.zarr.zip``.
+``write_record`` did not also emit a sibling ``*.zarr.zip``.
 
 Python has no public ``pack`` door in this cut. The archive suffix
 ``*.mrec.zip`` is owned by Rust ``molrs::io::mrec::pack`` (unit-tested in
@@ -35,9 +35,9 @@ with tempfile.TemporaryDirectory() as tmp:
 
     record = molrs.Record()
     record.set_frame(molrs.Frame())
-    record.write(store)
+    molrs.io.mrec.write_record(store, record)
 
-    loaded = molrs.Record.read(store)
+    loaded = molrs.io.mrec.read_record(store)
     meta = loaded.meta
     assert meta["format_name"] == "mrec", meta.get("format_name")
     assert meta["record_schema_version"] == 1, meta.get("record_schema_version")

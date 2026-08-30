@@ -32,8 +32,8 @@
 //!
 //! A store nobody is appending to any more can be collapsed into one file with
 //! `pack`, and read back through `open_packed`. Every path-taking door — the
-//! two `pack` doors and the two `*_file` pairs — needs the `filesystem`
-//! feature; the store-taking doors do not.
+//! two `pack` doors, the two `*_file` pairs, and `open_trajectory_sequence` —
+//! needs the `filesystem` feature; the store-taking doors do not.
 //!
 //! Closed **metrics** densify to Zarr series arrays; live append uses a
 //! write-ahead log (WAL) in JSON Lines form — one JSON document per line, so a
@@ -100,7 +100,8 @@ mod store;
 pub use pack::{open_packed, pack};
 #[cfg(feature = "filesystem")]
 pub use record_io::{
-    read_record_file, read_trajectory_file, write_record_file, write_trajectory_file,
+    open_trajectory_sequence, read_record_file, read_trajectory_file, write_record_file,
+    write_trajectory_file,
 };
 pub use sequence::{FrameSequence, FrameSequenceWriter, SequenceSchema};
 

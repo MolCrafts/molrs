@@ -535,6 +535,49 @@ pub fn read_trajectory_file(path: impl AsRef<Path>) -> Result<Trajectory, MolRsE
     Ok(read_record_file(path)?.trajectory.unwrap_or_default())
 }
 
+/// Open a lazy [`FrameSequence`] cursor on a filesystem path.
+///
+/// Same path rules as [`read_record_file`]: conventional suffix `.mrec`,
+/// retired `.zarr` / `.zarr.zip` refused. The cursor is index-only at open;
+/// each [`FrameSequence::frame`] call decodes one committed frame.
+///
+/// This is the filesystem door for a caller that does not already hold a
+/// store — Python in particular, so the binder does not take a `zarrs`
+/// dependency of its own. [`FrameSequence::open`] remains the store-taking
+/// door (in-memory stores, packed zip adapters).
+///
+/// # Errors
+///
+/// The same path errors as [`read_record_file`], plus
+/// [`FrameSequence::open`]'s store errors (legacy `trajectory/frames/`
+/// layout, schema mismatch, missing index).
+///
+/// # Examples
+///
+/// ```
+/// # fn main() -> Result<(), molrs::MolRsError> {
+/// use molrs::Trajectory;
+/// use molrs::io::mrec::{open_trajectory_sequence, write_trajectory_file};
+///
+/// let dir = tempfile::tempdir().unwrap();
+/// let path = dir.path().join("run.mrec");
+///
+/// let traj = Trajectory::from_frames(vec![molrs::Frame::new()]);
+/// write_trajectory_file(&path, &traj)?;
+///
+/// let mut seq = open_trajectory_sequence(&path)?;
+/// assert!(seq.frame(0)?.is_some());
+/// # Ok(())
+/// # }
+/// ```
+#[cfg(feature = "filesystem")]
+pub fn open_trajectory_sequence(path: impl AsRef<Path>) -> Result<FrameSequence, MolRsError> {
+    let path = path.as_ref();
+    reject_retired_zarr_path(path)?;
+    let store = Arc::new(FilesystemStore::new(path).map_err(zerr)?);
+    FrameSequence::open(store)
+}
+
 pub(in crate::io::zarr) fn zerr(e: impl std::fmt::Display) -> MolRsError {
     MolRsError::zarr(e.to_string())
 }
