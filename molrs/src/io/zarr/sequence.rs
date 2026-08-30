@@ -2477,7 +2477,7 @@ struct BoxIndex {
 /// type.
 pub struct FrameSequence {
     /// The read-only view of the store. A read door keeps no write capability,
-    /// which is also what lets a packed `.zarr.zip` — readable and listable and
+    /// which is also what lets a packed `.mrec.zip` — readable and listable and
     /// nothing more — be opened through the same door as a directory store.
     store: ReadableListableStorage,
     schema: SequenceSchema,
@@ -2497,9 +2497,10 @@ impl FrameSequence {
     ///
     /// Any readable, listable store opens: a directory store, an in-memory one,
     /// or the read-only `zarrs_zip` adapter that `open_packed` (the
-    /// `filesystem`-gated door in `pack`) hands back for a packed `.zarr.zip`.
-    /// Whatever arrives is kept as a [`ReadableListableStorage`] — a reader
-    /// that could still write would be a write door wearing the wrong name.
+    /// `filesystem`-gated function in [`crate::io::mrec`]) hands back for a
+    /// packed `.mrec.zip`. Whatever arrives is kept as a
+    /// [`ReadableListableStorage`] — a reader that could still write would be a
+    /// write door wearing the wrong name.
     ///
     /// A conforming store needs no writer pin — the schema is derived from the
     /// store itself when the attribute is absent. That is the one fact this

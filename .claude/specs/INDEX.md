@@ -35,6 +35,11 @@ Live specs only.
 | [release-0-12-05-cxxapi-panic-free](release-0-12-05-cxxapi-panic-free.md) | done |
 | [release-0-12-06-docs-surface](release-0-12-06-docs-surface.md) | done |
 
+## mrec-format (chain) — 科学互换品牌 mrec；与 molrec-01 / molpy-05 / molvis-06 / molexp-07 对齐
+
+- [mrec-format-03-python](mrec-format-03-python.md) — `molrs.io.mrec`；剥掉 `Record`/`Trajectory` 的读写 [approved]
+- [mrec-format-04-wasm](mrec-format-04-wasm.md) — JS `TrajectoryReader`，从 `io::mrec` 引入 [approved]
+
 ## Other live specs (not 0.12 ship gate)
 
 | slug | Status |

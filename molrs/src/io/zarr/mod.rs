@@ -12,12 +12,13 @@
 //! shapes other MolCrafts tools read.
 //!
 //! See the module list in [`crate::io`] for why these live beside the format
-//! readers rather than under them.
+//! readers rather than under them. Public path doors re-export this adapter
+//! through [`crate::io::mrec`].
 //!
 //! # The doors
 //!
 //! Whole records go through `write_record_file` / `read_record_file` (a
-//! directory store on disk) or [`write_record_store`] / [`read_record_store`]
+//! directory store on disk) or `write_record_store` / `read_record_store`
 //! (any store the caller already holds); `write_trajectory_file` /
 //! `read_trajectory_file` are the same thing for a store whose only section is
 //! a trajectory.
@@ -101,7 +102,6 @@ pub use pack::{open_packed, pack};
 pub use record_io::{
     read_record_file, read_trajectory_file, write_record_file, write_trajectory_file,
 };
-pub use record_io::{read_record_store, write_record_store};
 pub use sequence::{FrameSequence, FrameSequenceWriter, SequenceSchema};
 
 /// Mechanics pins for `zarrs` 0.23.13 — the append fast path the
@@ -549,17 +549,17 @@ mod zarrs_pins {
         const VALUES: [f64; 4] = [1.0, 2.5, -3.75, 1.0e-300];
 
         let dir = tempdir().unwrap();
-        let store_dir = dir.path().join("rec.zarr");
+        let store_dir = dir.path().join("rec.mrec");
         write_record_file(&store_dir, &record_with_x(&VALUES).unwrap()).unwrap();
         // The directory store is the reference the zip must reproduce.
         assert!(read_record_file(&store_dir).unwrap().frame.is_some());
 
-        let zip_path = dir.path().join("rec.zarr.zip");
+        let zip_path = dir.path().join("rec.mrec.zip");
         zip_stored(&store_dir, &zip_path);
 
         let outer = Arc::new(FilesystemStore::new(dir.path()).unwrap());
         let zip_store = Arc::new(
-            zarrs_zip::ZipStorageAdapter::new(outer, StoreKey::new("rec.zarr.zip").unwrap())
+            zarrs_zip::ZipStorageAdapter::new(outer, StoreKey::new("rec.mrec.zip").unwrap())
                 .unwrap(),
         );
         let array = Array::open(zip_store, "/frame/atoms/x").unwrap();

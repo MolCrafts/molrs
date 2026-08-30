@@ -1,13 +1,13 @@
-//! Pack a closed directory store into a single stored-entry .zarr.zip.
+//! Pack a closed directory store into a single stored-entry .mrec.zip.
 //!
 //! `pack` takes the path of a **closed** store — a directory nobody is
 //! appending to any more — and leaves one file where the directory was. The
 //! name is derived, never chosen: the sibling is the store path with
-//! `.zarr.zip` appended, except that a path already ending in `.zarr` only
-//! gains `.zip`, so `traj.zarr` packs to `traj.zarr.zip` and never to
-//! `traj.zarr.zarr.zip`. Every entry is written STORED (method 0): the chunks
-//! arrive already gzipped, so packing is concatenation plus a central
-//! directory.
+//! `.mrec.zip` appended, except that a path already ending in `.mrec` only
+//! gains `.zip`, so `traj.mrec` packs to `traj.mrec.zip` and never to
+//! `traj.mrec.mrec.zip`. Paths ending in `.zarr` or `.zarr.zip` are refused.
+//! Every entry is written STORED (method 0): the chunks arrive already
+//! gzipped, so packing is concatenation plus a central directory.
 //!
 //! The parameter is a path and nothing else. There is no door that accepts a
 //! live `FrameSequenceWriter` — packing a store still being appended to would
@@ -30,33 +30,36 @@ use zarrs::storage::{ReadableListableStorage, StoreKey};
 
 use molrs::MolRsError;
 
-use super::record_io::zerr;
+use super::record_io::{reject_retired_zarr_path, zerr};
 
 /// The suffix a packed store carries.
 const ZIP_SUFFIX: &str = ".zip";
 /// The suffix a directory store is expected to carry already.
-const ZARR_SUFFIX: &str = "zarr";
+const MREC_SUFFIX: &str = "mrec";
 
 /// Pack the closed directory store at `store_path` into a sibling
-/// `.zarr.zip` and remove the directory, returning the path of the archive.
+/// `.mrec.zip` and remove the directory, returning the path of the archive.
 ///
-/// The archive's name is derived from the directory's: `traj.zarr` becomes
-/// `traj.zarr.zip`, and a directory without the `.zarr` suffix gains the whole
-/// `.zarr.zip`. Entries are walked in sorted order and written STORED
-/// (method 0) — the chunks arrived gzipped, so a second compression pass would
-/// buy nothing and cost a full re-encode.
+/// The archive's name is derived from the directory's: `traj.mrec` becomes
+/// `traj.mrec.zip`, and a directory without the `.mrec` suffix gains the whole
+/// `.mrec.zip`. Paths ending in `.zarr` or `.zarr.zip` are refused. Entries
+/// are walked in sorted order and written STORED (method 0) — the chunks
+/// arrived gzipped, so a second compression pass would buy nothing and cost a
+/// full re-encode.
 ///
-/// The parameter is a path, never a live [`FrameSequenceWriter`]: packing a
+/// The parameter is a path, never a live
+/// [`FrameSequenceWriter`](crate::io::mrec::FrameSequenceWriter): packing a
 /// store still being appended to is the live single-file write this backend
 /// rejects. `writer.close()` followed by `pack(path)` is the caller's
 /// composition.
 ///
 /// # Errors
 ///
-/// Returns a [`MolRsError::Zarr`] naming `store_path` when no directory is
-/// there — which is also what a second `pack` of the same store meets, since
-/// the first one removed the directory. Nothing is created in that case, so a
-/// refused pack leaves no half-written archive behind.
+/// Returns a [`MolRsError::Zarr`] when `store_path`'s file name ends in
+/// `.zarr` or `.zarr.zip`. Returns a [`MolRsError::Zarr`] naming `store_path`
+/// when no directory is there — which is also what a second `pack` of the same
+/// store meets, since the first one removed the directory. Nothing is created
+/// in that case, so a refused pack leaves no half-written archive behind.
 ///
 /// Every other failure is also a [`MolRsError::Zarr`], and it names the path it
 /// happened on, since neither `std::fs` nor the zip writer puts the path in its
@@ -64,16 +67,39 @@ const ZARR_SUFFIX: &str = "zarr";
 /// anything is created. After that the archive is open, and a failure while
 /// walking the directory, reading an entry, encoding an entry's name as a store
 /// key (its path must be valid UTF-8) or writing into the archive **leaves a
-/// partial `.zarr.zip` beside the still-intact directory store**: the directory
+/// partial `.mrec.zip` beside the still-intact directory store**: the directory
 /// is removed only once the archive is closed, so the run's data always exists
 /// in at least one of the two places, but the caller deletes the partial
 /// archive before retrying. The removal itself can fail last of all, and then
 /// both the finished archive and the directory survive, the directory being the
 /// redundant copy.
 ///
-/// [`FrameSequenceWriter`]: super::FrameSequenceWriter
+/// # Examples
+///
+/// ```
+/// # fn main() -> Result<(), molrs::MolRsError> {
+/// use molrs::Trajectory;
+/// use molrs::io::mrec::{FrameSequence, open_packed, pack, write_trajectory_file};
+///
+/// let dir = tempfile::tempdir().unwrap();
+/// let store = dir.path().join("traj.mrec");
+/// write_trajectory_file(
+///     &store,
+///     &Trajectory::from_frames(vec![molrs::Frame::new()]),
+/// )?;
+///
+/// let zip = pack(&store)?;
+/// assert!(zip.ends_with("traj.mrec.zip"));
+/// assert!(!store.exists(), "pack removes the directory it consumed");
+///
+/// let mut seq = FrameSequence::open(open_packed(&zip)?)?;
+/// assert_eq!(seq.to_trajectory()?.len(), 1);
+/// # Ok(())
+/// # }
+/// ```
 pub fn pack(store_path: impl AsRef<Path>) -> Result<PathBuf, MolRsError> {
     let store_path = store_path.as_ref();
+    reject_retired_zarr_path(store_path)?;
     if !store_path.is_dir() {
         return Err(at(store_path, "pack", "no directory store is there"));
     }
@@ -116,22 +142,23 @@ pub fn pack(store_path: impl AsRef<Path>) -> Result<PathBuf, MolRsError> {
     Ok(zip_path)
 }
 
-/// Open a packed `.zarr.zip` read-only, through `zarrs_zip`'s
+/// Open a packed `.mrec.zip` read-only, through `zarrs_zip`'s
 /// `ZipStorageAdapter`.
 ///
-/// The returned store is readable and listable and nothing more, which is
-/// exactly what a read door such as [`FrameSequence::open`] asks for. Stored
-/// entries are read through the adapter's byte-range fast path, so a frame
-/// costs the bytes of that frame rather than the bytes of the archive.
+/// Paths whose file name ends in `.zarr` or `.zarr.zip` are refused. The
+/// returned store is readable and listable and nothing more, which is exactly
+/// what a read function such as [`crate::io::mrec::FrameSequence::open`] asks
+/// for. Stored entries are read through the adapter's byte-range fast path, so
+/// a frame costs the bytes of that frame rather than the bytes of the archive.
 ///
 /// # Errors
 ///
-/// Returns a [`MolRsError::Zarr`] if `path` has no file name, if its directory
-/// cannot be opened, or if the file is not a readable zip archive.
-///
-/// [`FrameSequence::open`]: super::FrameSequence::open
+/// Returns a [`MolRsError::Zarr`] if `path` uses a retired `.zarr` suffix, if
+/// `path` has no file name, if its directory cannot be opened, or if the file
+/// is not a readable zip archive.
 pub fn open_packed(path: impl AsRef<Path>) -> Result<ReadableListableStorage, MolRsError> {
     let path = path.as_ref();
+    reject_retired_zarr_path(path)?;
     let name = path
         .file_name()
         .and_then(OsStr::to_str)
@@ -153,17 +180,17 @@ fn at(path: &Path, verb: &str, cause: impl std::fmt::Display) -> MolRsError {
     MolRsError::zarr(format!("cannot {verb} {}: {cause}", path.display()))
 }
 
-/// The archive name derived from a directory store's: `.zarr` gains only
-/// `.zip`, anything else gains the whole `.zarr.zip`.
+/// The archive name derived from a directory store's: `.mrec` gains only
+/// `.zip`, anything else gains the whole `.mrec.zip`.
 fn packed_path(store_path: &Path) -> Result<PathBuf, MolRsError> {
     let name = store_path
         .file_name()
         .ok_or_else(|| at(store_path, "pack", "it names no directory"))?;
     let mut packed = name.to_os_string();
-    if Path::new(name).extension() == Some(OsStr::new(ZARR_SUFFIX)) {
+    if Path::new(name).extension() == Some(OsStr::new(MREC_SUFFIX)) {
         packed.push(ZIP_SUFFIX);
     } else {
-        packed.push(format!(".{ZARR_SUFFIX}{ZIP_SUFFIX}"));
+        packed.push(format!(".{MREC_SUFFIX}{ZIP_SUFFIX}"));
     }
     Ok(store_path.with_file_name(packed))
 }
@@ -260,19 +287,19 @@ mod tests {
         path
     }
 
-    /// The pinned name: `<dir>.zarr` packs to `<dir>.zarr.zip`, one file, and
+    /// The pinned name: `<dir>.mrec` packs to `<dir>.mrec.zip`, one file, and
     /// the directory store is gone.
     #[test]
     fn pack_produces_one_zip_and_removes_the_directory() {
         let dir = tempdir().unwrap();
-        let store_path = write_store(dir.path(), "traj.zarr");
+        let store_path = write_store(dir.path(), "traj.mrec");
 
         let zip_path = pack(&store_path).expect("packing a closed store succeeds");
 
         assert_eq!(
             zip_path,
-            dir.path().join("traj.zarr.zip"),
-            "a path already ending in .zarr gains only .zip"
+            dir.path().join("traj.mrec.zip"),
+            "a path already ending in .mrec gains only .zip"
         );
         assert!(zip_path.is_file(), "the packed store is a single file");
         assert!(
@@ -290,15 +317,15 @@ mod tests {
         );
     }
 
-    /// A directory with no `.zarr` suffix gains the whole suffix.
+    /// A directory with no `.mrec` suffix gains the whole suffix.
     #[test]
-    fn packing_a_directory_without_the_zarr_suffix_appends_the_whole_suffix() {
+    fn packing_a_directory_without_the_mrec_suffix_appends_the_whole_suffix() {
         let dir = tempdir().unwrap();
         let store_path = write_store(dir.path(), "traj");
 
         let zip_path = pack(&store_path).expect("packing a closed store succeeds");
 
-        assert_eq!(zip_path, dir.path().join("traj.zarr.zip"));
+        assert_eq!(zip_path, dir.path().join("traj.mrec.zip"));
     }
 
     /// Every entry is STORED (method 0) — the chunks are already gzipped, so
@@ -306,7 +333,7 @@ mod tests {
     #[test]
     fn every_zip_entry_is_stored_method_zero() {
         let dir = tempdir().unwrap();
-        let store_path = write_store(dir.path(), "traj.zarr");
+        let store_path = write_store(dir.path(), "traj.mrec");
         let zip_path = pack(&store_path).expect("packing a closed store succeeds");
 
         let mut archive =
@@ -329,7 +356,7 @@ mod tests {
     #[test]
     fn frames_read_back_from_the_zip_bit_exact() {
         let dir = tempdir().unwrap();
-        let store_path = write_store(dir.path(), "traj.zarr");
+        let store_path = write_store(dir.path(), "traj.mrec");
         // The reference is taken from the directory form, before it is gone.
         let before = read_trajectory_file(&store_path).expect("the directory store reads");
 
@@ -358,7 +385,7 @@ mod tests {
     #[test]
     fn packing_a_missing_directory_errs_naming_it() {
         let dir = tempdir().unwrap();
-        let missing = dir.path().join("absent.zarr");
+        let missing = dir.path().join("absent.mrec");
 
         let error = pack(&missing).expect_err("a missing store cannot be packed");
 
@@ -368,7 +395,7 @@ mod tests {
             "the error must name the path it could not pack: {message}"
         );
         assert!(
-            !dir.path().join("absent.zarr.zip").exists(),
+            !dir.path().join("absent.mrec.zip").exists(),
             "a failed pack leaves no half-written zip behind"
         );
     }
@@ -379,7 +406,7 @@ mod tests {
     #[test]
     fn packing_twice_errs_naming_the_removed_directory() {
         let dir = tempdir().unwrap();
-        let store_path = write_store(dir.path(), "traj.zarr");
+        let store_path = write_store(dir.path(), "traj.mrec");
         let zip_path = pack(&store_path).expect("the first pack succeeds");
 
         let error = pack(&store_path).expect_err("the directory is gone after the first pack");

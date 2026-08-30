@@ -1,14 +1,14 @@
 //! WASM bindings for frame-sequence Zarr v3 archives.
 
 use crate::core::frame::Frame;
+use molrs::io::mrec::FrameSequence;
 use molrs::io::reader::TrajectoryReader;
-use molrs::io::zarr::FrameSequence;
 use std::cell::{RefCell, RefMut};
 use std::sync::Arc;
 use wasm_bindgen::prelude::*;
+use zarrs::storage::store::MemoryStore;
 use zarrs::storage::ReadableWritableListableStorage;
 use zarrs::storage::WritableStorageTraits;
-use zarrs::storage::store::MemoryStore;
 
 /// Reader for frame-sequence Zarr v3 archives.
 ///

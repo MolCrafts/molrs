@@ -5,7 +5,7 @@
 //!
 //! ```text
 //! <root>/
-//! ├── meta/          record_schema_version = 1, format_name = "molrec", + producer keys
+//! ├── meta/          record_schema_version = 1, format_name = "mrec", + producer keys
 //! ├── system/        frame-shaped group (topology / types)
 //! ├── frame/         frame-shaped group (snapshot)
 //! ├── trajectory/    the frame sequence — see [`crate::io::zarr::sequence`]
@@ -72,17 +72,51 @@ use molrs::store::trajectory::{ObservableData, ObservableKind, ObservableRecord}
 // Write
 // ---------------------------------------------------------------------------
 
-/// Write a record to a filesystem path.
+/// Write a [`crate::Record`] to a filesystem path as a `*.mrec` directory.
 ///
-/// The store is a `PositionalWriteStore` (private to [`crate::io::zarr`]), not
-/// a bare `FilesystemStore`: on
-/// the stock store every partial write is a whole-value read-modify-write, so
-/// a shard-sized value pays O(file) per append (see [`crate::io::zarr`]).
-/// [`write_trajectory_file`] reaches the same door through here.
+/// The conventional suffix is `.mrec` (for example `water.mrec/`). Paths whose
+/// file name ends in `.zarr` or `.zarr.zip` are refused; those were the
+/// previous scientific suffixes and are not migrated. Other names are
+/// accepted. A second write to the same path replaces the previous record
+/// entirely — leftover sections from a wider record do not survive.
+///
+/// The writer writes the reserved `meta` keys over any producer copy:
+/// [`crate::RECORD_FORMAT_NAME`] (`"mrec"`) and
+/// [`crate::RECORD_SCHEMA_VERSION`] (`1`). A trajectory section is encoded by
+/// [`crate::io::mrec::FrameSequenceWriter`]. [`write_trajectory_file`] is the
+/// same write, with the record shaped to carry only a trajectory.
+///
+/// # Errors
+///
+/// A [`MolRsError::Zarr`] when `path` uses a retired `.zarr` suffix, when
+/// `path` cannot be created as a directory store, or when a section fails to
+/// encode. A [`MolRsError::Validation`] when [`crate::Record::validate`]
+/// rejects the record (no state section, or a `step`/`time` length that does
+/// not match the frame count).
+///
+/// # Examples
+///
+/// ```
+/// # fn main() -> Result<(), molrs::MolRsError> {
+/// use molrs::io::mrec::{read_record_file, write_record_file};
+///
+/// let dir = tempfile::tempdir().unwrap();
+/// let path = dir.path().join("water.mrec");
+///
+/// let mut record = molrs::Record::new();
+/// record.frame = Some(molrs::Frame::new());
+/// write_record_file(&path, &record)?;
+///
+/// let loaded = read_record_file(&path)?;
+/// assert_eq!(loaded.meta["format_name"].as_str(), Some("mrec"));
+/// # Ok(())
+/// # }
+/// ```
 #[cfg(feature = "filesystem")]
 pub fn write_record_file(path: impl AsRef<Path>, record: &MolRec) -> Result<(), MolRsError> {
-    let store: ReadableWritableListableStorage =
-        Arc::new(PositionalWriteStore::new(path.as_ref())?);
+    let path = path.as_ref();
+    reject_retired_zarr_path(path)?;
+    let store: ReadableWritableListableStorage = Arc::new(PositionalWriteStore::new(path)?);
     write_record_store(store, record)
 }
 
@@ -229,11 +263,29 @@ fn write_observables(
 // Read
 // ---------------------------------------------------------------------------
 
-/// Read a record from a filesystem path.
+/// Read a [`crate::Record`] from a `*.mrec` directory.
+///
+/// Paths whose file name ends in `.zarr` or `.zarr.zip` are refused. The
+/// `meta` section must carry [`crate::RECORD_FORMAT_NAME`] (`"mrec"`) and
+/// [`crate::RECORD_SCHEMA_VERSION`] (`1`); a missing key, the retired
+/// `"molrec"` brand, or any other value is an error. Sections this build does
+/// not interpret are kept in [`crate::Record::extra_sections`] rather than dropped.
+///
+/// A store still carrying the pre-0.14 `trajectory/frames/` tree is refused
+/// by name; it is not migrated and is not read back as empty.
+///
+/// # Errors
+///
+/// A [`MolRsError::Zarr`] when `path` uses a retired `.zarr` suffix, when
+/// `path` is not a readable record store, when `meta` is missing or does not
+/// match the expected brand and schema version, or when a section fails to
+/// decode — including a legacy `trajectory/frames/` layout.
 #[cfg(feature = "filesystem")]
 pub fn read_record_file(path: impl AsRef<Path>) -> Result<MolRec, MolRsError> {
+    let path = path.as_ref();
+    reject_retired_zarr_path(path)?;
     let store: ReadableWritableListableStorage =
-        Arc::new(FilesystemStore::new(path.as_ref()).map_err(zerr)?);
+        Arc::new(FilesystemStore::new(path).map_err(zerr)?);
     read_record_store(store)
 }
 
@@ -427,10 +479,37 @@ fn read_observables(
 // Trajectory-only doors (narrow entry points onto the same record layout)
 // ---------------------------------------------------------------------------
 
-/// Write a trajectory as a record whose only state section is `trajectory`.
+/// Write a [`crate::Trajectory`] as a record whose only state section is
+/// `trajectory`.
 ///
-/// The encoding is [`FrameSequenceWriter`]'s, reached through
-/// [`write_record_store`]; this door only shapes the record around it.
+/// Same path rules as [`write_record_file`]: conventional suffix `.mrec`,
+/// retired `.zarr` / `.zarr.zip` refused, a second write replaces the first.
+/// The frames are encoded by [`crate::io::mrec::FrameSequenceWriter`]; no
+/// duplicate `frame/` snapshot is written beside them.
+///
+/// # Errors
+///
+/// The same errors as [`write_record_file`], including validation of `step`
+/// and `time` lengths against the frame count.
+///
+/// # Examples
+///
+/// ```
+/// # fn main() -> Result<(), molrs::MolRsError> {
+/// use molrs::Trajectory;
+/// use molrs::io::mrec::{read_trajectory_file, write_trajectory_file};
+///
+/// let dir = tempfile::tempdir().unwrap();
+/// let path = dir.path().join("run.mrec");
+///
+/// let traj = Trajectory::from_frames(vec![molrs::Frame::new()]);
+/// write_trajectory_file(&path, &traj)?;
+///
+/// let loaded = read_trajectory_file(&path)?;
+/// assert_eq!(loaded.len(), 1);
+/// # Ok(())
+/// # }
+/// ```
 #[cfg(feature = "filesystem")]
 pub fn write_trajectory_file(
     path: impl AsRef<Path>,
@@ -441,11 +520,16 @@ pub fn write_trajectory_file(
     write_record_file(path, &record)
 }
 
-/// Read the `trajectory` section of a record.
+/// Read the `trajectory` section of a record at `path`.
 ///
-/// The decoding is [`FrameSequence`]'s, reached through [`read_record_store`];
-/// a store still carrying the pre-0.14 `trajectory/frames/` tree therefore
-/// fails here too, naming the legacy layout.
+/// Same path rules as [`read_record_file`]. A store with no `trajectory`
+/// section returns an empty [`crate::Trajectory`], not an error. A store still
+/// carrying the pre-0.14 `trajectory/frames/` tree is refused by name — the
+/// same failure [`crate::io::mrec::FrameSequence::open`] reports.
+///
+/// # Errors
+///
+/// The same errors as [`read_record_file`].
 #[cfg(feature = "filesystem")]
 pub fn read_trajectory_file(path: impl AsRef<Path>) -> Result<Trajectory, MolRsError> {
     Ok(read_record_file(path)?.trajectory.unwrap_or_default())
@@ -453,6 +537,19 @@ pub fn read_trajectory_file(path: impl AsRef<Path>) -> Result<Trajectory, MolRsE
 
 pub(in crate::io::zarr) fn zerr(e: impl std::fmt::Display) -> MolRsError {
     MolRsError::zarr(e.to_string())
+}
+
+/// Refuse the retired scientific path brand `.zarr` / `.zarr.zip`.
+#[cfg(feature = "filesystem")]
+pub(in crate::io::zarr) fn reject_retired_zarr_path(path: &Path) -> Result<(), MolRsError> {
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    if name.ends_with(".zarr") || name.ends_with(".zarr.zip") {
+        return Err(MolRsError::zarr(format!(
+            "{} uses the retired .zarr path; scientific record path is *.mrec",
+            path.display()
+        )));
+    }
+    Ok(())
 }
 
 #[cfg(all(test, feature = "filesystem"))]
@@ -505,7 +602,7 @@ mod tests {
 
     fn write_then_read(record: &MolRec) -> MolRec {
         let dir = tempdir().unwrap();
-        let path = dir.path().join("record.zarr");
+        let path = dir.path().join("record.mrec");
         write_record_file(&path, record).unwrap();
         read_record_file(&path).unwrap()
     }
@@ -528,7 +625,7 @@ mod tests {
     #[test]
     fn no_section_carries_a_frame_schema_version() {
         let dir = tempdir().unwrap();
-        let path = dir.path().join("record.zarr");
+        let path = dir.path().join("record.mrec");
         let mut rec = MolRec::new();
         rec.frame = Some(frame_with_atoms(3));
         rec.add_frame(frame_with_atoms(3));
@@ -644,7 +741,7 @@ mod tests {
     #[test]
     fn record_without_meta_is_rejected() {
         let dir = tempdir().unwrap();
-        let path = dir.path().join("record.zarr");
+        let path = dir.path().join("record.mrec");
         let mut rec = MolRec::new();
         rec.frame = Some(Frame::new());
         write_record_file(&path, &rec).unwrap();
@@ -656,7 +753,7 @@ mod tests {
     fn every_noncurrent_record_schema_version_is_rejected() {
         for version in [None, Some(0_u64), Some(2), Some(99)] {
             let dir = tempdir().unwrap();
-            let path = dir.path().join("record.zarr");
+            let path = dir.path().join("record.mrec");
             let mut rec = MolRec::new();
             rec.frame = Some(Frame::new());
             write_record_file(&path, &rec).unwrap();
@@ -684,7 +781,7 @@ mod tests {
     #[test]
     fn foreign_format_name_is_rejected() {
         let dir = tempdir().unwrap();
-        let path = dir.path().join("record.zarr");
+        let path = dir.path().join("record.mrec");
         let mut rec = MolRec::new();
         rec.frame = Some(Frame::new());
         write_record_file(&path, &rec).unwrap();
@@ -700,14 +797,14 @@ mod tests {
     #[test]
     fn a_record_with_no_state_section_is_refused_at_write() {
         let dir = tempdir().unwrap();
-        let path = dir.path().join("record.zarr");
+        let path = dir.path().join("record.mrec");
         assert!(write_record_file(&path, &MolRec::new()).is_err());
     }
 
     #[test]
     fn trajectory_door_round_trips_through_the_record_layout() {
         let dir = tempdir().unwrap();
-        let path = dir.path().join("record.zarr");
+        let path = dir.path().join("record.mrec");
         let mut frame = frame_with_atoms(3);
         frame.meta.insert("key", "value");
         let traj = Trajectory::from_frames(vec![frame]);
@@ -769,7 +866,7 @@ mod tests {
     #[test]
     fn rewrite_leaves_no_stale_node() {
         let dir = tempdir().unwrap();
-        let path = dir.path().join("record.zarr");
+        let path = dir.path().join("record.mrec");
 
         // A wide record first: a second block, a second column, and a
         // trajectory/frames/ subtree.
@@ -817,7 +914,7 @@ mod tests {
     #[test]
     fn a_written_trajectory_store_holds_no_duplicate_frame_zero() {
         let dir = tempdir().unwrap();
-        let path = dir.path().join("record.zarr");
+        let path = dir.path().join("record.mrec");
 
         let traj = Trajectory {
             frames: vec![
@@ -851,7 +948,7 @@ mod tests {
         use ndarray::{Array2, array};
 
         let dir = tempdir().unwrap();
-        let path = dir.path().join("simbox_f64.zarr");
+        let path = dir.path().join("simbox_f64.mrec");
         let h_val = 123.456789012345;
         let h = Array2::from_shape_vec(
             (3, 3),
@@ -887,7 +984,7 @@ mod tests {
     #[test]
     fn rewriting_a_trajectory_record_over_the_same_path_succeeds() {
         let dir = tempdir().unwrap();
-        let path = dir.path().join("record.zarr");
+        let path = dir.path().join("record.mrec");
 
         let first = Trajectory {
             frames: vec![
@@ -933,7 +1030,7 @@ mod tests {
     #[test]
     fn read_trajectory_file_refuses_a_legacy_store() {
         let dir = tempdir().unwrap();
-        let path = dir.path().join("record.zarr");
+        let path = dir.path().join("record.mrec");
         write_trajectory_file(
             &path,
             &Trajectory::from_frames(vec![frame_with_x(&[1.0, 2.0])]),

@@ -1,9 +1,9 @@
 //! MolRec record aggregate — L2 of the MolRec contract.
 //!
 //! A [`MolRec`] is one openable root carrying `meta` plus at least one of
-//! `frame`, `system`, `trajectory`, or `status`. It is backend-neutral: the
-//! reference Zarr V3 binding lives in `crate::io::zarr`, and nothing here
-//! depends on it.
+//! `frame`, `system`, `trajectory`, or `status`. It is backend-neutral: this
+//! module is the in-memory aggregate, not a file format. Reading and writing
+//! a record as a `*.mrec` directory is `molrs::io::mrec` (feature `zarr`).
 //!
 //! Contract: <https://github.com/MolCrafts/molrec> (`docs/spec/record.md`).
 //! `meta.record_schema_version` is the **sole** version key of a record; there is
@@ -20,8 +20,16 @@ use crate::store::trajectory::{ObservableRecord, Trajectory};
 /// Sole schema version of a MolRec record (root layout + L1 encoding).
 pub const RECORD_SCHEMA_VERSION: u64 = 1;
 
-/// Binding identifier written to `meta/format_name` by the Zarr writer.
-pub const RECORD_FORMAT_NAME: &str = "molrec";
+/// Format name written to `meta.format_name` on every record this crate
+/// produces, and required of every record it will read.
+///
+/// The value is `"mrec"`. It is a **brand** — the format's identifying name —
+/// not a version: [`RECORD_SCHEMA_VERSION`] stays `1` when the brand changes.
+/// The public writer (`molrs::io::mrec::write_record_file`) stamps this key;
+/// the public reader (`molrs::io::mrec::read_record_file`) returns an error for
+/// any other string, including the retired `"molrec"` brand, and for a missing
+/// key.
+pub const RECORD_FORMAT_NAME: &str = "mrec";
 
 /// Reserved `meta` keys owned by the contract rather than by the producer.
 pub const RESERVED_META_KEYS: [&str; 2] = ["record_schema_version", "format_name"];

@@ -34,7 +34,7 @@ _EXEMPT_URL = "https://github.com/MolCrafts/molrec"
 
 @pytest.fixture
 def record_path(tmp_path: Path) -> Path:
-    return tmp_path / "record.zarr"
+    return tmp_path / "record.mrec"
 
 
 class TestRecordRoundtrip:
@@ -53,7 +53,7 @@ class TestRecordRoundtrip:
 
         meta = molrs.Record.read(str(record_path)).meta
         assert meta["record_schema_version"] == 1
-        assert meta["format_name"] == "molrec"
+        assert meta["format_name"] == "mrec"
 
     def test_nested_meta_and_method_round_trip(self, record_path: Path) -> None:
         record = molrs.Record()

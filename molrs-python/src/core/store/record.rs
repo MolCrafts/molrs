@@ -160,7 +160,7 @@ impl PyMolRec {
     #[staticmethod]
     #[cfg(feature = "fs")]
     fn read(path: &str) -> PyResult<Self> {
-        let inner = molrs::io::zarr::read_record_file(path).map_err(molrs_error_to_pyerr)?;
+        let inner = molrs::io::mrec::read_record_file(path).map_err(molrs_error_to_pyerr)?;
         Ok(Self { inner })
     }
 
@@ -169,7 +169,7 @@ impl PyMolRec {
     /// Requires the ``fs`` feature (default on desktop; omitted for Pyodide).
     #[cfg(feature = "fs")]
     fn write(&self, path: &str) -> PyResult<()> {
-        molrs::io::zarr::write_record_file(path, &self.inner).map_err(molrs_error_to_pyerr)
+        molrs::io::mrec::write_record_file(path, &self.inner).map_err(molrs_error_to_pyerr)
     }
 }
 
