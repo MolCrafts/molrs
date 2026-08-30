@@ -21,7 +21,7 @@ use zarrs::storage::WritableStorageTraits;
 /// method keeps its `&self` signature. A re-entrant call from JS is a borrow
 /// failure, and a borrow failure is an exception — a wasm export on a fallible
 /// path never panics.
-#[wasm_bindgen(js_name = RecordReader)]
+#[wasm_bindgen(js_name = TrajectoryReader)]
 pub struct RecordReader {
     sequence: RefCell<FrameSequence>,
     n_atoms: usize,
@@ -35,11 +35,11 @@ impl RecordReader {
     fn sequence(&self) -> Result<RefMut<'_, FrameSequence>, JsValue> {
         self.sequence
             .try_borrow_mut()
-            .map_err(|_| JsError::new("RecordReader is busy: re-entrant call").into())
+            .map_err(|_| JsError::new("TrajectoryReader is busy: re-entrant call").into())
     }
 }
 
-#[wasm_bindgen(js_class = RecordReader)]
+#[wasm_bindgen(js_class = TrajectoryReader)]
 impl RecordReader {
     #[wasm_bindgen(constructor)]
     pub fn new(files: js_sys::Map) -> Result<RecordReader, JsValue> {
@@ -107,3 +107,6 @@ impl RecordReader {
     #[wasm_bindgen(js_name = free)]
     pub fn free(&self) {}
 }
+
+#[cfg(test)]
+mod export_pin;
