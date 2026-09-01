@@ -24,7 +24,6 @@ use zarrs::storage::WritableStorageTraits;
 #[wasm_bindgen(js_name = TrajectoryReader)]
 pub struct RecordReader {
     sequence: RefCell<FrameSequence>,
-    n_atoms: usize,
 }
 
 impl RecordReader {
@@ -63,20 +62,12 @@ impl RecordReader {
 
         // The reader is a read door, so it gets the store's read-only view.
         let store = (store as ReadableWritableListableStorage).readable_listable();
-        // Index-only: the schema plus each section's step_index and offset.
-        let mut sequence =
-            FrameSequence::open(store).map_err(|e| JsValue::from_str(&e.to_string()))?;
-        // Cached, because it cannot change: the archive is a fixed snapshot,
-        // so answering `countAtoms` per call would decode a frame to learn
-        // something already known.
-        let n_atoms = sequence
-            .frame(0)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?
-            .and_then(|frame| frame.get("atoms").and_then(|block| block.nrows()))
-            .unwrap_or(0);
+        // Index-only: the schema plus each section's step_index and offset. No
+        // frame is decoded here — `countAtomsAtFirstFrame` decodes lazily, so a
+        // ragged store's large frame 0 is not paid for just to open the reader.
+        let sequence = FrameSequence::open(store).map_err(|e| JsValue::from_str(&e.to_string()))?;
         Ok(RecordReader {
             sequence: RefCell::new(sequence),
-            n_atoms,
         })
     }
 
@@ -99,13 +90,48 @@ impl RecordReader {
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
-    #[wasm_bindgen(js_name = countAtoms)]
-    pub fn count_atoms(&self) -> usize {
-        self.n_atoms
+    /// Atom count of frame 0, decoded on demand.
+    ///
+    /// Named for what it is: a ragged store grows its atom count per frame, so
+    /// this is the *first* frame's count, not the maximum or the current one. A
+    /// consumer sizing a buffer for the whole run must not trust it.
+    #[wasm_bindgen(js_name = countAtomsAtFirstFrame)]
+    pub fn count_atoms_at_first_frame(&self) -> Result<usize, JsValue> {
+        Ok(self
+            .sequence()?
+            .frame(0)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?
+            .and_then(|frame| frame.get("atoms").and_then(|block| block.nrows()))
+            .unwrap_or(0))
     }
 
-    #[wasm_bindgen(js_name = free)]
-    pub fn free(&self) {}
+    /// Step numbers of the committed frames — frame labels for a replay UI.
+    #[wasm_bindgen(js_name = steps)]
+    pub fn steps(&self) -> Result<Vec<i64>, JsValue> {
+        Ok(self.sequence()?.steps().to_vec())
+    }
+
+    /// Physical times (fs) of the committed frames, when the run wrote any.
+    #[wasm_bindgen(js_name = times)]
+    pub fn times(&self) -> Result<Option<Vec<f64>>, JsValue> {
+        Ok(self.sequence()?.times().map(<[f64]>::to_vec))
+    }
+
+    /// Whether the store carries a block section of this name.
+    ///
+    /// Lets the stage decide once — e.g. `hasBlock("bonds")` — whether a
+    /// per-frame section exists, instead of attaching a recompute modifier that
+    /// forces a full rebuild on every frame.
+    #[wasm_bindgen(js_name = hasBlock)]
+    pub fn has_block(&self, name: &str) -> Result<bool, JsValue> {
+        Ok(self.sequence()?.has_block(name))
+    }
+
+    /// Names of every block section present in the store.
+    #[wasm_bindgen(js_name = blockNames)]
+    pub fn block_names(&self) -> Result<Vec<String>, JsValue> {
+        Ok(self.sequence()?.block_names().map(str::to_string).collect())
+    }
 }
 
 #[cfg(test)]

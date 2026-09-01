@@ -53,7 +53,6 @@ use crate::core::spatial::region::{
 use crate::core::spatial::simbox::PyBox;
 use crate::core::store::block::PyBlock;
 use crate::core::store::frame::{PyFrame, PyMetaValue};
-use crate::core::store::record::{PyMolRec, PyObservables};
 use crate::core::store::trajectory::{PyScalarObservable, PyTrajectory, PyVectorObservable};
 use crate::core::system::element::PyElement;
 use crate::core::system::molgraph::{
@@ -243,20 +242,34 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // dump concatenator; python/molrs/io/mrec.py aliases it TrajectoryReader.
     #[cfg(feature = "fs")]
     {
-        m.add_function(wrap_pyfunction!(io::mrec::read_record, m)?)?;
-        m.add_function(wrap_pyfunction!(io::mrec::write_record, m)?)?;
+        m.add_function(wrap_pyfunction!(io::mrec::read_frame, m)?)?;
+        m.add_function(wrap_pyfunction!(io::mrec::write_frame, m)?)?;
+        m.add_function(wrap_pyfunction!(io::mrec::read_system, m)?)?;
+        m.add_function(wrap_pyfunction!(io::mrec::write_system, m)?)?;
+        m.add_function(wrap_pyfunction!(io::mrec::read_trajectory, m)?)?;
         m.add_function(wrap_pyfunction!(io::mrec::write_trajectory, m)?)?;
+        m.add_function(wrap_pyfunction!(io::mrec::read_meta, m)?)?;
+        m.add_function(wrap_pyfunction!(io::mrec::section_names, m)?)?;
+        m.add_function(wrap_pyfunction!(io::mrec::mrec_validate_path, m)?)?;
+        m.add_function(wrap_pyfunction!(io::mrec::mrec_validate_meta, m)?)?;
+        m.add_function(wrap_pyfunction!(io::mrec::mrec_validate_frame, m)?)?;
         m.add_class::<io::mrec::PyMrecTrajectoryReader>()?;
+        m.add_class::<io::mrec::PyMrecSequenceSchema>()?;
+        m.add_class::<io::mrec::PyMrecTrajectoryWriter>()?;
+        m.setattr(
+            "MREC_MOLREC_VERSION",
+            molrs::io::mrec::schema::MOLREC_VERSION,
+        )?;
+        m.setattr(
+            "MREC_RESERVED_META_KEYS",
+            molrs::io::mrec::schema::RESERVED_META_KEYS,
+        )?;
     }
 
     // Trajectory (frame sequence) + observable records
     m.add_class::<PyTrajectory>()?;
     m.add_class::<PyScalarObservable>()?;
     m.add_class::<PyVectorObservable>()?;
-
-    // Record aggregate
-    m.add_class::<PyMolRec>()?;
-    m.add_class::<PyObservables>()?;
 
     // Regions
     m.add_class::<PySphere>()?;

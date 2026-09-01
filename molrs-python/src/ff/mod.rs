@@ -1669,6 +1669,9 @@ pub fn read_lammps_data_coeffs_py(
 ///     Decimal places for floating coefficients (default 6).
 /// skip_pair_style : bool, optional
 ///     When true, omit the ``pair_style`` line (caller sets it in the input).
+/// skip_units : bool, optional
+///     When true, omit the ``units`` line so the include can follow ``units``
+///     already set in the input script.
 /// units : str, optional
 ///     LAMMPS ``units`` style for the written file: ``"real"`` (default),
 ///     ``"metal"``, or ``"lj"``.
@@ -1689,6 +1692,7 @@ pub fn read_lammps_data_coeffs_py(
         forcefield,
         precision = 6,
         skip_pair_style = false,
+        skip_units = false,
         units = "real",
         atom_types = None,
         bond_types = None,
@@ -1704,6 +1708,7 @@ pub fn write_lammps_forcefield_py(
     forcefield: &PyForceField,
     precision: usize,
     skip_pair_style: bool,
+    skip_units: bool,
     units: &str,
     atom_types: Option<HashSet<String>>,
     bond_types: Option<HashSet<String>>,
@@ -1718,6 +1723,7 @@ pub fn write_lammps_forcefield_py(
     let writer = LammpsFfWriter::with_options(LammpsWriteOptions {
         precision,
         skip_pair_style,
+        skip_units,
         units,
         atom_types,
         bond_types,
@@ -1740,6 +1746,7 @@ pub fn write_lammps_forcefield_py(
         forcefield,
         precision = 6,
         skip_pair_style = false,
+        skip_units = false,
         units = "real",
         atom_types = None,
         bond_types = None,
@@ -1754,6 +1761,7 @@ pub fn write_lammps_forcefield_str_py(
     forcefield: &PyForceField,
     precision: usize,
     skip_pair_style: bool,
+    skip_units: bool,
     units: &str,
     atom_types: Option<HashSet<String>>,
     bond_types: Option<HashSet<String>>,
@@ -1768,6 +1776,7 @@ pub fn write_lammps_forcefield_str_py(
     let writer = LammpsFfWriter::with_options(LammpsWriteOptions {
         precision,
         skip_pair_style,
+        skip_units,
         units,
         atom_types,
         bond_types,
@@ -1820,6 +1829,7 @@ pub fn write_lammps_data_coeffs_py(
     let writer = LammpsFfWriter::with_options(LammpsWriteOptions {
         precision,
         skip_pair_style: true,
+        skip_units: false,
         units,
         atom_types,
         bond_types,

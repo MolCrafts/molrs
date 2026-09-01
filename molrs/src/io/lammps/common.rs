@@ -18,6 +18,35 @@ pub(crate) fn err_mapper<E: std::fmt::Display>(e: E) -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
 }
 
+/// Bonds / angles / dihedrals are undirected: ``h1-c3-c3`` == ``c3-c3-h1``.
+pub(crate) fn canonical_bonded_label(name: &str) -> String {
+    let parts: Vec<&str> = name.split('-').filter(|p| !p.is_empty()).collect();
+    if parts.len() < 2 {
+        return name.to_string();
+    }
+    let rev = parts.iter().copied().rev().collect::<Vec<_>>().join("-");
+    if rev.as_str() < name {
+        rev
+    } else {
+        name.to_string()
+    }
+}
+
+pub(crate) fn reverse_hyphen_label(name: &str) -> String {
+    name.split('-')
+        .filter(|p| !p.is_empty())
+        .rev()
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+pub(crate) fn maybe_canonical_bonded(block: &str, name: &str) -> String {
+    match block {
+        "bonds" | "angles" | "dihedrals" => canonical_bonded_label(name),
+        _ => name.to_string(),
+    }
+}
+
 /// Split a line on whitespace. Token count is small (≤ ~20); float parsing
 /// dominates cost on large files, not the token `Vec`.
 ///

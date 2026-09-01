@@ -1,8 +1,7 @@
-"""FFI smoke tests for the Record aggregate.
+"""FFI smoke tests for the mrec primitive doors and public-surface naming.
 
-Depth (layout conformance, version rejection, preserve-the-unknown) lives in the
-Rust unit tests; this file only proves the Python seam constructs, round-trips
-through ``molrs.io.mrec``, and exposes exactly the surface `_lib.pyi` declares.
+The Record aggregate is not a Python type. Depth (layout conformance, version
+rejection) lives in the Rust unit tests.
 """
 
 from __future__ import annotations
@@ -11,7 +10,6 @@ import ast
 import inspect
 from pathlib import Path
 
-import numpy as np
 import pytest
 
 import molrs
@@ -32,131 +30,25 @@ _EXEMPT_SUFFIXES = (
 _EXEMPT_URL = "https://github.com/MolCrafts/molrec"
 
 
-@pytest.fixture
-def record_path(tmp_path: Path) -> Path:
-    return tmp_path / "record.mrec"
+class TestRecordIsGone:
+    def test_record_is_not_on_the_package(self) -> None:
+        assert not hasattr(molrs, "Record")
+        assert not hasattr(molrs, "MolRec")
+        assert not hasattr(molrs, "Observables")
 
-
-class TestRecordRoundtrip:
-    def test_frame_only_record_round_trips(self, record_path: Path) -> None:
-        record = molrs.Record()
-        record.set_frame(molrs.Frame())
-        molrs.io.mrec.write_record(str(record_path), record)
-
-        loaded = molrs.io.mrec.read_record(str(record_path))
-        assert loaded.count_frames() == 1
-
-    def test_meta_stamps_the_contract_keys(self, record_path: Path) -> None:
-        record = molrs.Record()
-        record.set_frame(molrs.Frame())
-        molrs.io.mrec.write_record(str(record_path), record)
-
-        meta = molrs.io.mrec.read_record(str(record_path)).meta
-        assert meta["record_schema_version"] == 1
-        assert meta["format_name"] == "mrec"
-
-    def test_nested_meta_and_method_round_trip(self, record_path: Path) -> None:
-        record = molrs.Record()
-        record.set_frame(molrs.Frame())
-        record.meta = {"version": [0, 2], "creator": {"name": "pytest"}}
-        record.method = {"type": "static_structure", "description": "smoke"}
-        molrs.io.mrec.write_record(str(record_path), record)
-
-        loaded = molrs.io.mrec.read_record(str(record_path))
-        assert loaded.meta["creator"]["name"] == "pytest"
-        assert loaded.meta["version"] == [0, 2]
-        assert loaded.method["type"] == "static_structure"
-
-    def test_trajectory_section_round_trips(self, record_path: Path) -> None:
-        record = molrs.Record()
-        record.set_frame(molrs.Frame())
-        record.add_frame(molrs.Frame())
-        record.add_frame(molrs.Frame())
-        molrs.io.mrec.write_record(str(record_path), record)
-
-        loaded = molrs.io.mrec.read_record(str(record_path))
-        assert loaded.count_frames() == 2
-        assert len(loaded.trajectory) == 2
-
-    def test_record_without_a_state_section_is_refused(self, record_path: Path) -> None:
-        write_record = molrs.io.mrec.write_record
-        with pytest.raises(Exception):
-            write_record(str(record_path), molrs.Record())
-
-
-class TestObservablesView:
-    def test_add_mutates_the_owning_record(self, record_path: Path) -> None:
-        record = molrs.Record()
-        record.set_frame(molrs.Frame())
-        record.observables.add(
-            molrs.ScalarObservable(
-                "total_energy",
-                np.array([1.0, 1.5, 2.0]),
-                unit="eV",
-                axes=["timestep"],
-                time_dependent=True,
-            )
-        )
-        # The getter returns a live view, not a detached copy.
-        assert "total_energy" in record.observables
-
-        molrs.io.mrec.write_record(str(record_path), record)
-        loaded = molrs.io.mrec.read_record(str(record_path))
-        assert loaded.observables.get("total_energy").kind == "scalar"
-
-    def test_add_vector_returns_and_stores(self, record_path: Path) -> None:
-        record = molrs.Record()
-        record.set_frame(molrs.Frame())
-        dipole = record.observables.add_vector(
-            "dipole", np.array([[0.1, 0.2, 0.3]]), unit="D"
-        )
-        molrs.io.mrec.write_record(str(record_path), record)
-
-        loaded = molrs.io.mrec.read_record(str(record_path))
-        assert loaded.observables.get("dipole").kind == dipole.kind == "vector"
-
-
-class TestStubMatchesRuntime:
-    """`_lib.pyi` once declared a class no Rust pyclass implemented."""
-
-    @staticmethod
-    def _stub_path() -> Path:
-        return Path(inspect.getfile(molrs)).parent / "_lib.pyi"
-
-    def test_stub_is_syntactically_valid(self) -> None:
-        ast.parse(self._stub_path().read_text())
-
-    @classmethod
-    def _stub_members(cls, class_name: str) -> set[str]:
-        tree = ast.parse(cls._stub_path().read_text())
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ClassDef) and node.name == class_name:
-                return {
-                    child.name
-                    for child in node.body
-                    if isinstance(child, ast.FunctionDef)
-                    and not child.name.startswith("_")
-                }
-        raise AssertionError(f"_lib.pyi declares no class {class_name}")
-
-    @pytest.mark.parametrize("class_name", ["Record", "Observables"])
-    def test_every_declared_member_exists_at_runtime(self, class_name: str) -> None:
-        runtime = getattr(molrs, class_name)
-        missing = sorted(
-            name for name in self._stub_members(class_name) if not hasattr(runtime, name)
-        )
-        assert not missing, f"{class_name} stub declares absent members: {missing}"
-
-    def test_the_contract_forbids_a_record_root_parameters_section(self) -> None:
-        assert "parameters" not in self._stub_members("Record")
-        assert not hasattr(molrs.Record, "parameters")
+    def test_stub_does_not_declare_record(self) -> None:
+        stub = (Path(inspect.getfile(molrs)).parent / "_lib.pyi").read_text()
+        tree = ast.parse(stub)
+        names = {node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)}
+        assert "Record" not in names
+        assert "Observables" not in names
+        assert "MolRec" not in names
 
     def test_old_public_names_are_gone(self) -> None:
-        assert not hasattr(molrs, "MolRec")
-        assert not hasattr(molrs.Record, "read_zarr")
-        assert not hasattr(molrs.Record, "write_zarr")
         assert not hasattr(molrs.Trajectory, "read_zarr")
         assert not hasattr(molrs.Trajectory, "write_zarr")
+        assert not hasattr(molrs.Trajectory, "read")
+        assert not hasattr(molrs.Trajectory, "write")
 
 
 class TestPublicSurfaceNaming:

@@ -442,7 +442,7 @@ pub(crate) const BOX_GROUP: &str = "box";
 #[cfg(feature = "zarr")]
 /// Write one [`Frame`] as a Zarr group of blocks.
 ///
-/// The group carries **no** schema-version attribute: `meta/record_schema_version`
+/// The group carries **no** schema-version attribute: `meta/molrec_version`
 /// at the record root is the sole version key of the MolRec contract, and a
 /// parallel per-frame version is forbidden by it.
 pub(crate) fn write_frame_group(

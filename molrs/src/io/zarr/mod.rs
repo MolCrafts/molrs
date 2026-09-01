@@ -92,6 +92,7 @@ mod frame_io;
 #[cfg(feature = "filesystem")]
 mod pack;
 mod record_io;
+pub mod schema;
 mod sequence;
 #[cfg(feature = "filesystem")]
 mod store;
@@ -100,7 +101,8 @@ mod store;
 pub use pack::{open_packed, pack};
 #[cfg(feature = "filesystem")]
 pub use record_io::{
-    open_trajectory_sequence, read_record_file, read_trajectory_file, write_record_file,
+    open_trajectory_sequence, read_frame_file, read_meta_file, read_record_file, read_system_file,
+    read_trajectory_file, section_names, write_frame_file, write_record_file, write_system_file,
     write_trajectory_file,
 };
 pub use sequence::{FrameSequence, FrameSequenceWriter, SequenceSchema};

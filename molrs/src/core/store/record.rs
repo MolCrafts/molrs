@@ -5,9 +5,10 @@
 //! module is the in-memory aggregate, not a file format. Reading and writing
 //! a record as a `*.mrec` directory is `molrs::io::mrec` (feature `zarr`).
 //!
-//! Contract: <https://github.com/MolCrafts/molrec> (`docs/spec/record.md`).
-//! `meta.record_schema_version` is the **sole** version key of a record; there is
-//! no parallel per-frame schema version.
+//! Contract: <https://github.com/MolCrafts/molrec> (`docs/spec/overview.md`).
+//! `meta.molrec_version` is the **sole** version key of a record; there is
+//! no parallel per-frame schema version and no `format_name` key — the
+//! scientific path brand is the `*.mrec/` suffix.
 
 use std::collections::BTreeMap;
 
@@ -17,22 +18,16 @@ use crate::MolRsError;
 use crate::store::frame::Frame;
 use crate::store::trajectory::{ObservableRecord, Trajectory};
 
-/// Sole schema version of a MolRec record (root layout + L1 encoding).
-pub const RECORD_SCHEMA_VERSION: u64 = 1;
-
-/// Format name written to `meta.format_name` on every record this crate
-/// produces, and required of every record it will read.
-///
-/// The value is `"mrec"`. It is a **brand** — the format's identifying name —
-/// not a version: [`RECORD_SCHEMA_VERSION`] stays `1` when the brand changes.
-/// The public writer (`molrs::io::mrec::write_record_file`) stamps this key;
-/// the public reader (`molrs::io::mrec::read_record_file`) returns an error for
-/// any other string, including the retired `"molrec"` brand, and for a missing
-/// key.
-pub const RECORD_FORMAT_NAME: &str = "mrec";
+/// Sole version key of a MolRec record (root layout + L1 encoding), stored as
+/// `meta.molrec_version`. The public writer
+/// (`molrs::io::mrec::write_record_file`) stamps this key; the public reader
+/// (`molrs::io::mrec::read_record_file`) returns an error for a missing key or
+/// an unsupported value. Identity of a store is this key plus the `*.mrec/`
+/// path suffix; there is no separate brand key.
+pub const MOLREC_VERSION: u64 = 1;
 
 /// Reserved `meta` keys owned by the contract rather than by the producer.
-pub const RESERVED_META_KEYS: [&str; 2] = ["record_schema_version", "format_name"];
+pub const RESERVED_META_KEYS: [&str; 1] = ["molrec_version"];
 
 /// Named observables of a record, keyed by observable name.
 ///
@@ -107,8 +102,14 @@ pub struct MolRec {
     pub method: JsonMap<String, JsonValue>,
     /// Lifecycle / progress (run surface).
     pub status: JsonMap<String, JsonValue>,
-    /// Append-only run measurements (run surface).
+    /// Append-only run measurements (run surface): the catalog / summary
+    /// document, stored as `metrics/` group attributes.
     pub metrics: JsonMap<String, JsonValue>,
+    /// Closed (densified) metric curves, keyed by series name. Each series is
+    /// one float64 array at `metrics/series/<name>`; the live JSONL WAL
+    /// (`metrics/metrics.jsonl`) is owned by run hosts and is not modeled
+    /// here — the doors merely tolerate it in a store.
+    pub metrics_series: BTreeMap<String, Vec<f64>>,
     /// System definition — topology and types, without instantaneous state.
     pub system: Option<Frame>,
     /// Instantaneous snapshot.
@@ -218,7 +219,7 @@ mod tests {
     /// `meta` plus a sequence of frames — and no snapshot, no system, no
     /// status — is a complete record, not a defective one.
     ///
-    /// Contract: `../molrec/docs/spec/record.md` rule 2 lists `trajectory`
+    /// Contract: `../molrec/docs/spec/overview.md` lists `trajectory`
     /// alongside `frame`, `system` and `status`. While the validator did not
     /// say so, `write_trajectory_file` had to duplicate frame 0 into `frame` to
     /// get a trajectory past this gate; it no longer does, and this test is

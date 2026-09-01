@@ -15,7 +15,7 @@ use crate::io::lammps::atom_style::{
 use crate::io::lammps::box_bounds::{BoxBounds, simbox_from_bounds};
 use crate::io::lammps::common::{
     OptCol, TypeRef, err_mapper, insert_f, insert_i, insert_u, invert_type_labels, labels_to_meta,
-    parse_f, parse_i, tokenize,
+    maybe_canonical_bonded, parse_f, parse_i, reverse_hyphen_label, tokenize,
 };
 use crate::io::reader::{FrameReader, Reader};
 use crate::io::streaming::{FrameIndexBuilder, FrameIndexEntry};
@@ -1332,7 +1332,9 @@ fn resolve_block_types(
 
     // String type labels take precedence over type_id.
     if let Some(col) = frame.get_string(block, keys::TYPE) {
-        let types: Vec<String> = (0..n).map(|i| col[[i]].clone()).collect();
+        let types: Vec<String> = (0..n)
+            .map(|i| maybe_canonical_bonded(block, &col[[i]]))
+            .collect();
         for t in &types {
             if t.trim().is_empty() {
                 return Err(err_mapper(format!(
@@ -1363,7 +1365,10 @@ fn resolve_block_types(
             }));
         }
 
-        let mut all: std::collections::HashSet<String> = meta_names.into_iter().collect();
+        let mut all: std::collections::HashSet<String> = meta_names
+            .into_iter()
+            .map(|t| maybe_canonical_bonded(block, &t))
+            .collect();
         all.extend(unique);
         let ordered = sorted_type_names(all);
         let map: HashMap<&str, Idx> = ordered
@@ -1428,6 +1433,44 @@ fn resolve_block_types(
         labels,
         n_types,
     }))
+}
+
+/// ForceField type-name → 1-based LAMMPS id, matching the data-file writer.
+///
+/// Bond / angle / dihedral labels are undirected: both ``c3-c3-h1`` and
+/// ``h1-c3-c3`` map to the same id.
+pub fn lammps_type_ids_from_frame(
+    frame: &impl FrameAccess,
+) -> std::io::Result<HashMap<String, u32>> {
+    let mut out = HashMap::new();
+    for (block, meta) in [
+        ("atoms", "atom_type_labels"),
+        ("bonds", "bond_type_labels"),
+        ("angles", "angle_type_labels"),
+        ("dihedrals", "dihedral_type_labels"),
+        ("impropers", "improper_type_labels"),
+    ] {
+        let Some(rt) = resolve_block_types(frame, block, meta)? else {
+            continue;
+        };
+        if let Some(labels) = rt.labels {
+            for (i, lab) in labels.iter().enumerate() {
+                let id = (i + 1) as u32;
+                out.insert(lab.clone(), id);
+                if matches!(block, "bonds" | "angles" | "dihedrals") {
+                    let rev = reverse_hyphen_label(lab);
+                    if rev != *lab {
+                        out.insert(rev, id);
+                    }
+                }
+            }
+        } else {
+            for &id in &rt.type_ids {
+                out.insert(id.to_string(), id as u32);
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// Per-row atom IDs: existing ``id`` column, else 1..N (file artifact).
@@ -2231,6 +2274,73 @@ mod atom_style_tests {
         let f2 = parse_frame_bytes(out.as_bytes()).unwrap();
         assert_eq!(f2.get("bonds").unwrap().nrows().unwrap(), 2);
         assert_eq!(f2.get("angles").unwrap().nrows().unwrap(), 1);
+    }
+
+    #[test]
+    fn write_collapses_reverse_angle_type_labels() {
+        use crate::store::block::Block;
+        use crate::store::frame::Frame as CoreFrame;
+        use ndarray::ArrayD;
+
+        let mut frame = CoreFrame::new();
+        let mut atoms = Block::new();
+        atoms
+            .insert(
+                keys::TYPE,
+                ArrayD::from_shape_vec(
+                    ndarray::IxDyn(&[3]),
+                    vec!["c3".to_string(), "c3".to_string(), "h1".to_string()],
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        for (key, vals) in [
+            (keys::X, vec![0.0_f64, 1.0, 2.0]),
+            (keys::Y, vec![0.0_f64, 0.0, 0.0]),
+            (keys::Z, vec![0.0_f64, 0.0, 0.0]),
+        ] {
+            atoms
+                .insert(
+                    key,
+                    ArrayD::from_shape_vec(ndarray::IxDyn(&[3]), vals).unwrap(),
+                )
+                .unwrap();
+        }
+        frame.insert("atoms", atoms);
+
+        let mut angles = Block::new();
+        angles
+            .insert(
+                keys::TYPE,
+                ArrayD::from_shape_vec(
+                    ndarray::IxDyn(&[2]),
+                    vec!["c3-c3-h1".to_string(), "h1-c3-c3".to_string()],
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        for (key, vals) in [
+            (keys::ATOMI, vec![0_u32, 2]),
+            (keys::ATOMJ, vec![1_u32, 1]),
+            (keys::ATOMK, vec![2_u32, 0]),
+        ] {
+            angles
+                .insert(
+                    key,
+                    ArrayD::from_shape_vec(ndarray::IxDyn(&[2]), vals).unwrap(),
+                )
+                .unwrap();
+        }
+        frame.insert("angles", angles);
+
+        let mut buf = Vec::new();
+        write_lammps_data_frame(&mut buf, &frame).expect("write");
+        let out = String::from_utf8(buf).unwrap();
+        assert!(out.contains("1 angle types"), "{out}");
+        assert!(out.contains("c3-c3-h1"), "{out}");
+        assert!(!out.contains("h1-c3-c3"), "{out}");
+        let ids = lammps_type_ids_from_frame(&frame).expect("ids");
+        assert_eq!(ids.get("c3-c3-h1"), ids.get("h1-c3-c3"));
     }
 
     #[test]

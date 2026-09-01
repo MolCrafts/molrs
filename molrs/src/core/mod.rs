@@ -67,9 +67,7 @@ pub use store::frame::Frame;
 pub use store::frame_access::FrameAccess;
 pub use store::frame_view::FrameView;
 pub use store::meta::{MetaMap, MetaValue};
-pub use store::record::{
-    MolRec as Record, Observables, RECORD_FORMAT_NAME, RECORD_SCHEMA_VERSION, RESERVED_META_KEYS,
-};
+pub use store::record::{MOLREC_VERSION, MolRec as Record, Observables, RESERVED_META_KEYS};
 pub use store::trajectory::{
     ObservableData, ObservableKind, ObservableRecord, SchemaValue, Trajectory,
 };

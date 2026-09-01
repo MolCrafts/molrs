@@ -1,5 +1,8 @@
-// PyO3 bindings for the record aggregate.
-// Hosts `molrs.Record` and the `molrs.Observables` view.
+// PyO3 bindings for the in-memory record aggregate.
+// Kept as crate-internal working-set types; not registered on the Python
+// module. Public I/O is `molrs.io.mrec.write_frame` / `write_system` /
+// `write_trajectory`.
+#![allow(dead_code)]
 
 use molrs::store::record::{MolRec as CoreMolRec, Observables as CoreObservables};
 use molrs::store::trajectory::{ObservableKind, ObservableRecord};

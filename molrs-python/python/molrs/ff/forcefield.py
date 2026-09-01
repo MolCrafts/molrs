@@ -690,10 +690,24 @@ class ForceField(_RsForceField):
         return [s for s in self._styles() if isinstance(s, category_or_cls)]
 
     def get_types(self, category_or_cls: Any) -> list[Type]:
-        """Types of a category (str) or by :class:`Type` subclass, across styles."""
+        """Types in a category.
+
+        Pass a category string (``"angle"``), a :class:`Type` subclass
+        (``AngleType``), or a :class:`Style` subclass (``AngleStyle``). A
+        style class selects that category's types — not an empty list.
+        """
         if isinstance(category_or_cls, str):
             cats = {category_or_cls}
             type_cls: type[Type] = Type
+        elif isinstance(category_or_cls, type) and issubclass(category_or_cls, Style):
+            cats = {
+                c
+                for c, sc in _STYLE_CLASSES.items()
+                if issubclass(category_or_cls, sc) or issubclass(sc, category_or_cls)
+            }
+            type_cls = (
+                _TYPE_CLASSES[next(iter(cats))] if len(cats) == 1 else Type
+            )
         else:
             type_cls = category_or_cls
             cats = {c for c, tc in _TYPE_CLASSES.items() if issubclass(tc, type_cls)}
@@ -913,6 +927,7 @@ def write_lammps_forcefield(
     *,
     precision: int = 6,
     skip_pair_style: bool = False,
+    skip_units: bool = False,
     units: str = "real",
     atom_types: set[str] | None = None,
     bond_types: set[str] | None = None,
@@ -937,6 +952,7 @@ def write_lammps_forcefield(
         forcefield,
         precision=precision,
         skip_pair_style=skip_pair_style,
+        skip_units=skip_units,
         units=units,
         atom_types=atom_types,
         bond_types=bond_types,
@@ -952,6 +968,7 @@ def write_lammps_forcefield_str(
     *,
     precision: int = 6,
     skip_pair_style: bool = False,
+    skip_units: bool = False,
     units: str = "real",
     atom_types: set[str] | None = None,
     bond_types: set[str] | None = None,
@@ -965,6 +982,7 @@ def write_lammps_forcefield_str(
         forcefield,
         precision=precision,
         skip_pair_style=skip_pair_style,
+        skip_units=skip_units,
         units=units,
         atom_types=atom_types,
         bond_types=bond_types,

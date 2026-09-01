@@ -1149,10 +1149,9 @@ impl AmberInpcrdReader {
         if step > 0 {
             return Ok(None);
         }
-        let rs_frame = read_amber_inpcrd_from_reader(BufReader::new(Cursor::new(
-            self.content.as_slice(),
-        )))
-        .map_err(|e| JsValue::from_str(&format!("AMBER inpcrd read error: {}", e)))?;
+        let rs_frame =
+            read_amber_inpcrd_from_reader(BufReader::new(Cursor::new(self.content.as_slice())))
+                .map_err(|e| JsValue::from_str(&format!("AMBER inpcrd read error: {}", e)))?;
         Ok(Some(Frame::from_rs(rs_frame)?))
     }
 
@@ -1351,8 +1350,8 @@ pub fn read_frame_bytes_export(data: &[u8], format: &str) -> Result<Frame, JsVal
             )));
         }
     };
-    let rs_frame = molrs::stream::bytes_to_frame(data, fmt)
-        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let rs_frame =
+        molrs::stream::bytes_to_frame(data, fmt).map_err(|e| JsValue::from_str(&e.to_string()))?;
     Frame::from_rs(rs_frame)
 }
 
@@ -1429,6 +1428,9 @@ END"#;
             Ok(_) => panic!("an unknown format must not decode"),
         };
         let text = err.as_string().unwrap_or_default();
-        assert!(text.contains("messagepack"), "error must name the input: {text}");
+        assert!(
+            text.contains("messagepack"),
+            "error must name the input: {text}"
+        );
     }
 }

@@ -120,7 +120,7 @@ def _wrap(frame: Any) -> Frame:
     Zero-copy: the rich Frame views the same Rust-backed Block buffers (no
     column data is copied). Already-rich frames pass through unchanged.
     """
-    return Frame.from_dict(frame)
+    return Frame(frame)
 
 
 def read_lammps_data(

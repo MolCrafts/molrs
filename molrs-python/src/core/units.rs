@@ -1,9 +1,7 @@
 //! Python bindings for molrs' native unit engine.
 
 use crate::error::units_error;
-use molrs::units::{
-    Dimension, Quantity, Unit, UnitDef, UnitPreset, UnitRegistry, lookup_preset,
-};
+use molrs::units::{Dimension, Quantity, Unit, UnitDef, UnitPreset, UnitRegistry, lookup_preset};
 use pyo3::exceptions::{PyAttributeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 

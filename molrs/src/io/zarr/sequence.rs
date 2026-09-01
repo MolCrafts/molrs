@@ -229,22 +229,24 @@ fn deterministic_shard_layout() -> CodecSpecificOptions {
 
 /// The tag a column's storage width is written as in the schema attributes.
 ///
-/// The vocabulary is [`DType::name`]'s — there is exactly one dtype table in
-/// this crate and this is not a second one, it is that table's own output. The
-/// match carries no wildcard, so it is exhaustive over `DType` inside this
-/// crate: a width added to the enum stops the build here until
-/// [`dtype_from_tag`] can read it back.
+/// The three domain aliases (`Float`/`Int`/`UInt`) are tagged with molrec's
+/// concrete-width names (`f64`/`i32`/`u64`) so a written schema validates
+/// against molrec's published dtype enum and matches the meta-side tags
+/// ([`meta_layout`]); every other width is [`DType::name`] verbatim. The match
+/// carries no wildcard, so it stays exhaustive over `DType` inside this crate:
+/// a width added to the enum stops the build here until [`dtype_from_tag`] can
+/// read it back.
 fn dtype_tag(dtype: DType) -> &'static str {
     match dtype {
+        DType::Float => "f64",
+        DType::Int => "i32",
+        DType::UInt => "u64",
         DType::Float16
         | DType::Float32
-        | DType::Float
         | DType::Int8
         | DType::Int16
-        | DType::Int
         | DType::Int64
         | DType::Bool
-        | DType::UInt
         | DType::U8
         | DType::UInt16
         | DType::UInt32
@@ -276,6 +278,15 @@ const SCHEMA_WIDTHS: [DType; 15] = [
 
 /// [`dtype_tag`] read backwards.
 fn dtype_from_tag(tag: &str) -> Result<DType, MolRsError> {
+    // Stores written by molrs < 0.14 tagged the domain aliases `float`/`int`/
+    // `uint`; those stay readable forever. New stores use the molrec-conformant
+    // `f64`/`i32`/`u64` spelling that `dtype_tag` now emits.
+    match tag {
+        "float" => return Ok(DType::Float),
+        "int" => return Ok(DType::Int),
+        "uint" => return Ok(DType::UInt),
+        _ => {}
+    }
     SCHEMA_WIDTHS
         .into_iter()
         .find(|dtype| dtype_tag(*dtype) == tag)
@@ -410,6 +421,16 @@ fn same_simbox(left: &SimBox, right: &SimBox) -> bool {
             .iter()
             .map(|value| value.to_bits())
             .eq(right.origin_view().iter().map(|value| value.to_bits()))
+}
+
+/// Origin is optional on disk: all zeros is the default and is not written.
+fn origin_is_default(cell: &SimBox) -> bool {
+    cell.origin_view().iter().all(|value| *value == 0.0)
+}
+
+/// Boundary is optional on disk: all-periodic is the default and is not written.
+fn boundary_is_default(cell: &SimBox) -> bool {
+    cell.pbc() == [true, true, true]
 }
 
 // ---------------------------------------------------------------------------
@@ -565,6 +586,12 @@ impl SequenceSchema {
             }
 
             for (key, value) in frame.meta.iter() {
+                // `step` / `time` are the sequence's own arrays, not per-step
+                // meta. A producer that stashed the commit marker on the frame
+                // must not mint a duplicate `trajectory/meta/step`.
+                if key == STEP_ARRAY || key == TIME_ARRAY {
+                    continue;
+                }
                 let tag = value.dtype();
                 match meta.get(key) {
                     None => {
@@ -891,6 +918,7 @@ impl GrowthArray {
         trailing: &[u64],
         extents: (u64, u64),
         attributes: serde_json::Map<String, serde_json::Value>,
+        sharded: bool,
     ) -> Result<Self, MolRsError> {
         let (rows_per_chunk, chunks_per_shard) = extents;
         let (data_type, fill) = zarr_dtype(dtype);
@@ -899,20 +927,37 @@ impl GrowthArray {
         shape.extend_from_slice(trailing);
         // A chunk extent must be non-zero on every axis, including a trailing
         // axis that happens to be empty.
-        let mut subchunk: Vec<u64> = shape.iter().map(|&axis| axis.max(1)).collect();
-        subchunk[0] = rows_per_chunk;
-        let mut shard = subchunk.clone();
-        shard[0] = rows_per_chunk.saturating_mul(chunks_per_shard);
+        let mut inner: Vec<u64> = shape.iter().map(|&axis| axis.max(1)).collect();
+        inner[0] = rows_per_chunk;
+        // Data columns (CSR coordinates) shard so file count stays O(arrays).
+        // Index / optional arrays (step, offset, box origin…) stay unsharded:
+        // they rarely fill even one inner chunk, and the shard wrapper is
+        // several kilobytes around a few hundred bytes of payload.
+        let chunk_extent = if sharded {
+            let mut shard = inner.clone();
+            shard[0] = rows_per_chunk.saturating_mul(chunks_per_shard);
+            shard
+        } else {
+            inner.clone()
+        };
 
-        let mut builder = ArrayBuilder::new(shape, shard.clone(), data_type, fill);
-        // Lossless and unconditional, as everywhere else in this backend: a
-        // precision study admits no lossy codec, and gzip is the one every
-        // reader of this store — wasm32 included — can decode.
-        builder.bytes_to_bytes_codecs(vec![Arc::new(
-            GzipCodec::new(GZIP_LEVEL)
-                .map_err(|e| MolRsError::zarr(format!("gzip level {GZIP_LEVEL}: {e}")))?,
-        )]);
-        builder.subchunk_shape(subchunk);
+        let mut builder = ArrayBuilder::new(shape, chunk_extent.clone(), data_type, fill);
+        if sharded {
+            // Sharded data columns keep lossless gzip — the one compressor
+            // every reader of this store (wasm32 included) can decode. A
+            // precision study admits no lossy codec here.
+            builder.bytes_to_bytes_codecs(vec![Arc::new(
+                GzipCodec::new(GZIP_LEVEL)
+                    .map_err(|e| MolRsError::zarr(format!("gzip level {GZIP_LEVEL}: {e}")))?,
+            )]);
+            builder.subchunk_shape(inner);
+        }
+        // Unsharded index/optional arrays (step, offset, step_index, box) carry
+        // a few hundred bytes and are appended on every flush. gzip has
+        // `partial_encode: false`, so a compressor there forces a whole-chunk
+        // read-decode-modify-encode-write of a fill-padded chunk per append —
+        // ~5 ms of pure codec for no ratio on already-tiny data. Left as the
+        // raw `bytes` codec, each append is a real positional write instead.
         builder.attributes(attributes);
         let array = builder
             .build(store.clone(), path)?
@@ -920,7 +965,7 @@ impl GrowthArray {
         array.store_metadata()?;
         Ok(Self {
             array,
-            shard_rows: shard[0].max(1),
+            shard_rows: chunk_extent[0].max(1),
             rows: 0,
         })
     }
@@ -1236,10 +1281,26 @@ where
     let prefix = join_path(TRAJECTORY_GROUP, BOX_GROUP);
     let cell: Vec<F> = Array::open(store.clone(), &join_path(&prefix, VECTORS_ARRAY))?
         .retrieve_array_subset(&rows_subset(index, 1, &[3, 3])?)?;
-    let origin: Vec<F> = Array::open(store.clone(), &join_path(&prefix, ORIGIN_ARRAY))?
-        .retrieve_array_subset(&rows_subset(index, 1, &[3])?)?;
-    let boundary: Vec<bool> = Array::open(store.clone(), &join_path(&prefix, BOUNDARY_ARRAY))?
-        .retrieve_array_subset(&rows_subset(index, 1, &[3])?)?;
+    let origin_path = join_path(&prefix, ORIGIN_ARRAY);
+    let origin: Vec<F> = if array_exists(store, &origin_path)? {
+        Array::open(store.clone(), &origin_path)?.retrieve_array_subset(&rows_subset(
+            index,
+            1,
+            &[3],
+        )?)?
+    } else {
+        vec![0.0, 0.0, 0.0]
+    };
+    let boundary_path = join_path(&prefix, BOUNDARY_ARRAY);
+    let boundary: Vec<bool> = if array_exists(store, &boundary_path)? {
+        Array::open(store.clone(), &boundary_path)?.retrieve_array_subset(&rows_subset(
+            index,
+            1,
+            &[3],
+        )?)?
+    } else {
+        vec![true, true, true]
+    };
     if cell.len() != 9 || origin.len() != 3 || boundary.len() != 3 {
         return Err(MolRsError::zarr(format!(
             "box update {index} is malformed: {} cell values, {} origin values, {} boundary flags",
@@ -1273,11 +1334,131 @@ struct BlockArrays {
 }
 
 /// The arrays of the `box/` section.
+///
+/// `vectors` is the only required array. Origin (default zeros), boundary
+/// (default all-periodic) and `step_index` (implied `[0]` for a single
+/// update at ordinal 0) are created only when they carry information.
 struct BoxArrays {
-    step_index: GrowthArray,
+    step_index: Option<GrowthArray>,
     vectors: GrowthArray,
-    origin: GrowthArray,
-    boundary: GrowthArray,
+    origin: Option<GrowthArray>,
+    boundary: Option<GrowthArray>,
+}
+
+impl BoxArrays {
+    fn create_optional(
+        store: &ReadableWritableListableStorage,
+        name: &str,
+        dtype: DType,
+        trailing: &[u64],
+        rows_per_chunk: Option<u64>,
+        chunks_per_shard: Option<u64>,
+    ) -> Result<GrowthArray, MolRsError> {
+        let prefix = join_path(TRAJECTORY_GROUP, BOX_GROUP);
+        GrowthArray::create(
+            store,
+            &join_path(&prefix, name),
+            dtype,
+            trailing,
+            derive_extents(rows_per_chunk, chunks_per_shard, row_bytes(dtype, trailing)),
+            serde_json::Map::new(),
+            false,
+        )
+    }
+
+    fn ensure_origin(
+        &mut self,
+        store: &ReadableWritableListableStorage,
+        rows_per_chunk: Option<u64>,
+        chunks_per_shard: Option<u64>,
+        previous: u64,
+        options: &CodecOptions,
+    ) -> Result<&mut GrowthArray, MolRsError> {
+        if self.origin.is_none() {
+            let mut origin = Self::create_optional(
+                store,
+                ORIGIN_ARRAY,
+                DType::Float,
+                &[3],
+                rows_per_chunk,
+                chunks_per_shard,
+            )?;
+            if previous > 0 {
+                let fill = vec![0.0 as F; (previous * 3) as usize];
+                let subset = origin.extend(previous)?;
+                origin
+                    .array
+                    .store_array_subset_opt(&subset, fill, options)?;
+                origin.seal(0)?;
+            }
+            self.origin = Some(origin);
+        }
+        Ok(self.origin.as_mut().expect("origin was just created"))
+    }
+
+    fn ensure_boundary(
+        &mut self,
+        store: &ReadableWritableListableStorage,
+        rows_per_chunk: Option<u64>,
+        chunks_per_shard: Option<u64>,
+        previous: u64,
+        options: &CodecOptions,
+    ) -> Result<&mut GrowthArray, MolRsError> {
+        if self.boundary.is_none() {
+            let mut boundary = Self::create_optional(
+                store,
+                BOUNDARY_ARRAY,
+                DType::Bool,
+                &[3],
+                rows_per_chunk,
+                chunks_per_shard,
+            )?;
+            if previous > 0 {
+                let fill = vec![true; (previous * 3) as usize];
+                let subset = boundary.extend(previous)?;
+                boundary
+                    .array
+                    .store_array_subset_opt(&subset, fill, options)?;
+                boundary.seal(0)?;
+            }
+            self.boundary = Some(boundary);
+        }
+        Ok(self.boundary.as_mut().expect("boundary was just created"))
+    }
+
+    fn ensure_step_index(
+        &mut self,
+        store: &ReadableWritableListableStorage,
+        rows_per_chunk: Option<u64>,
+        chunks_per_shard: Option<u64>,
+        previous: u64,
+        options: &CodecOptions,
+    ) -> Result<&mut GrowthArray, MolRsError> {
+        if self.step_index.is_none() {
+            let mut step_index = Self::create_optional(
+                store,
+                STEP_INDEX_ARRAY,
+                DType::UInt,
+                &[],
+                rows_per_chunk,
+                chunks_per_shard,
+            )?;
+            if previous > 0 {
+                // The omitted form is one update at ordinal 0.
+                let fill = vec![0u64; previous as usize];
+                let subset = step_index.extend(previous)?;
+                step_index
+                    .array
+                    .store_array_subset_opt(&subset, fill, options)?;
+                step_index.seal(0)?;
+            }
+            self.step_index = Some(step_index);
+        }
+        Ok(self
+            .step_index
+            .as_mut()
+            .expect("step_index was just created"))
+    }
 }
 
 /// Every array of one sequence, created at the first append and never
@@ -1309,6 +1490,7 @@ impl SequenceArrays {
             &[],
             dense(DType::Int64, &[]),
             serde_json::Map::new(),
+            false,
         )?;
         let time = if with_time {
             Some(GrowthArray::create(
@@ -1318,6 +1500,7 @@ impl SequenceArrays {
                 &[],
                 dense(DType::Float, &[]),
                 serde_json::Map::new(),
+                false,
             )?)
         } else {
             None
@@ -1352,6 +1535,7 @@ impl SequenceArrays {
                     &trailing,
                     dense(dtype, &trailing),
                     attributes,
+                    false,
                 )?,
             );
         }
@@ -1403,6 +1587,7 @@ impl SequenceArrays {
                         &schema.trailing,
                         extents,
                         serde_json::Map::new(),
+                        true,
                     )?,
                 );
             }
@@ -1417,6 +1602,7 @@ impl SequenceArrays {
                         &[],
                         dense(DType::UInt, &[]),
                         serde_json::Map::new(),
+                        false,
                     )?,
                     step_index: GrowthArray::create(
                         store,
@@ -1425,6 +1611,7 @@ impl SequenceArrays {
                         &[],
                         dense(DType::UInt, &[]),
                         serde_json::Map::new(),
+                        false,
                     )?,
                     total_rows: 0,
                     updates: 0,
@@ -1497,12 +1684,20 @@ impl SequenceArrays {
         }
 
         let box_prefix = join_path(TRAJECTORY_GROUP, BOX_GROUP);
-        let cell = if array_exists(store, &join_path(&box_prefix, STEP_INDEX_ARRAY))? {
+        let cell = if array_exists(store, &join_path(&box_prefix, VECTORS_ARRAY))? {
+            let optional = |name: &str| -> Result<Option<GrowthArray>, MolRsError> {
+                let path = join_path(&box_prefix, name);
+                if array_exists(store, &path)? {
+                    Ok(Some(GrowthArray::open(store, &path)?))
+                } else {
+                    Ok(None)
+                }
+            };
             Some(BoxArrays {
-                step_index: GrowthArray::open(store, &join_path(&box_prefix, STEP_INDEX_ARRAY))?,
+                step_index: optional(STEP_INDEX_ARRAY)?,
                 vectors: GrowthArray::open(store, &join_path(&box_prefix, VECTORS_ARRAY))?,
-                origin: GrowthArray::open(store, &join_path(&box_prefix, ORIGIN_ARRAY))?,
-                boundary: GrowthArray::open(store, &join_path(&box_prefix, BOUNDARY_ARRAY))?,
+                origin: optional(ORIGIN_ARRAY)?,
+                boundary: optional(BOUNDARY_ARRAY)?,
             })
         } else {
             None
@@ -1545,14 +1740,7 @@ impl SequenceArrays {
                 derive_extents(rows_per_chunk, chunks_per_shard, row_bytes(dtype, trailing))
             };
             self.cell = Some(BoxArrays {
-                step_index: GrowthArray::create(
-                    store,
-                    &join_path(&prefix, STEP_INDEX_ARRAY),
-                    DType::UInt,
-                    &[],
-                    dense(DType::UInt, &[]),
-                    serde_json::Map::new(),
-                )?,
+                step_index: None,
                 vectors: GrowthArray::create(
                     store,
                     &join_path(&prefix, VECTORS_ARRAY),
@@ -1560,23 +1748,10 @@ impl SequenceArrays {
                     &[3, 3],
                     dense(DType::Float, &[3, 3]),
                     serde_json::Map::new(),
+                    false,
                 )?,
-                origin: GrowthArray::create(
-                    store,
-                    &join_path(&prefix, ORIGIN_ARRAY),
-                    DType::Float,
-                    &[3],
-                    dense(DType::Float, &[3]),
-                    serde_json::Map::new(),
-                )?,
-                boundary: GrowthArray::create(
-                    store,
-                    &join_path(&prefix, BOUNDARY_ARRAY),
-                    DType::Bool,
-                    &[3],
-                    dense(DType::Bool, &[3]),
-                    serde_json::Map::new(),
-                )?,
+                origin: None,
+                boundary: None,
             });
         }
         Ok(self
@@ -1596,10 +1771,10 @@ impl SequenceArrays {
             all.push(&mut block.step_index);
         }
         if let Some(cell) = self.cell.as_mut() {
-            all.push(&mut cell.step_index);
+            all.extend(cell.step_index.as_mut());
             all.push(&mut cell.vectors);
-            all.push(&mut cell.origin);
-            all.push(&mut cell.boundary);
+            all.extend(cell.origin.as_mut());
+            all.extend(cell.boundary.as_mut());
         }
         all
     }
@@ -1746,6 +1921,46 @@ impl FrameSequenceWriter {
         })
     }
 
+    /// Mint a new sequence at `path` — the path-taking door over the fast
+    /// positional-write store.
+    ///
+    /// Builds the [`PositionalWriteStore`] that keeps an append a tail write
+    /// rather than a whole-shard rewrite, so a streaming producer reaches the
+    /// fast path in one call instead of reconstructing the store's write
+    /// policy. The store-taking [`create`](Self::create) stays for callers with
+    /// a store of their own (in-memory, packed).
+    ///
+    /// [`PositionalWriteStore`]: crate::io::zarr::store::PositionalWriteStore
+    ///
+    /// # Errors
+    ///
+    /// The store-root errors of [`PositionalWriteStore::new`], then every error
+    /// [`create`](Self::create) can raise.
+    #[cfg(feature = "filesystem")]
+    pub fn create_at(
+        path: impl AsRef<std::path::Path>,
+        schema: SequenceSchema,
+    ) -> Result<Self, MolRsError> {
+        let store: ReadableWritableListableStorage =
+            Arc::new(crate::io::zarr::store::PositionalWriteStore::new(path)?);
+        Self::create(store, schema)
+    }
+
+    /// Reattach to the sequence at `path` and continue appending — the
+    /// path-taking counterpart of [`open`](Self::open), over the same
+    /// positional-write store [`create_at`](Self::create_at) uses.
+    ///
+    /// # Errors
+    ///
+    /// The store-root errors of `PositionalWriteStore::new`, then every error
+    /// [`open`](Self::open) can raise.
+    #[cfg(feature = "filesystem")]
+    pub fn open_at(path: impl AsRef<std::path::Path>) -> Result<Self, MolRsError> {
+        let store: ReadableWritableListableStorage =
+            Arc::new(crate::io::zarr::store::PositionalWriteStore::new(path)?);
+        Self::open(store)
+    }
+
     /// Reattach to an existing sequence and continue appending to it.
     ///
     /// The schema comes off the group attributes and every array is checked
@@ -1824,9 +2039,9 @@ impl FrameSequenceWriter {
             );
         }
         let landed_cell = match arrays.cell.as_ref() {
-            Some(cell) if cell.step_index.rows > 0 => Some(read_box_row(
+            Some(cell) if cell.vectors.rows > 0 => Some(read_box_row(
                 &store,
-                cell.step_index.rows - 1,
+                cell.vectors.rows - 1,
                 cell_defined_of(&store)?,
             )?),
             _ => None,
@@ -2096,6 +2311,9 @@ impl FrameSequenceWriter {
     /// Resolve every declared meta key to the value this step stores.
     fn resolve_meta(&self, frame: &Frame) -> Result<BTreeMap<String, MetaValue>, MolRsError> {
         for key in frame.meta.keys() {
+            if key == STEP_ARRAY || key == TIME_ARRAY {
+                continue;
+            }
             if !self.schema.meta.contains_key(key) {
                 return Err(MolRsError::zarr(format!(
                     "meta key {key:?} is not declared by this sequence: a schema is pinned at \
@@ -2305,12 +2523,19 @@ impl FrameSequenceWriter {
             let mut vectors = Vec::with_capacity(cells.len() * 9);
             let mut origins = Vec::with_capacity(cells.len() * 3);
             let mut boundaries = Vec::with_capacity(cells.len() * 3);
+            let mut need_origin = section.origin.is_some();
+            let mut need_boundary = section.boundary.is_some();
             for (_, cell) in &cells {
                 vectors.extend(cell.h_view().iter().copied());
                 origins.extend(cell.origin_view().iter().copied());
                 boundaries.extend(cell.pbc_view().iter().copied());
+                need_origin |= !origin_is_default(cell);
+                need_boundary |= !boundary_is_default(cell);
             }
             let count = cells.len() as u64;
+            let previous = section.vectors.rows;
+            let ordinals: Vec<u64> = cells.iter().map(|(ordinal, _)| *ordinal).collect();
+            let trivial_index = previous == 0 && matches!(ordinals.as_slice(), [0]);
 
             let before = section.vectors.rows;
             let subset = section.vectors.extend(count)?;
@@ -2320,30 +2545,51 @@ impl FrameSequenceWriter {
                 .store_array_subset_opt(&subset, vectors, &options)?;
             section.vectors.seal(before)?;
 
-            let before = section.origin.rows;
-            let subset = section.origin.extend(count)?;
-            section
-                .origin
-                .array
-                .store_array_subset_opt(&subset, origins, &options)?;
-            section.origin.seal(before)?;
-
-            let before = section.boundary.rows;
-            let subset = section.boundary.extend(count)?;
-            section
-                .boundary
-                .array
-                .store_array_subset_opt(&subset, boundaries, &options)?;
-            section.boundary.seal(before)?;
-
-            let ordinals: Vec<u64> = cells.iter().map(|(ordinal, _)| *ordinal).collect();
-            let before = section.step_index.rows;
-            let subset = section.step_index.extend(count)?;
-            section
-                .step_index
-                .array
-                .store_array_subset_opt(&subset, ordinals, &options)?;
-            section.step_index.seal(before)?;
+            if need_origin {
+                let origin = section.ensure_origin(
+                    store,
+                    *rows_per_chunk,
+                    *chunks_per_shard,
+                    previous,
+                    &options,
+                )?;
+                let before = origin.rows;
+                let subset = origin.extend(count)?;
+                origin
+                    .array
+                    .store_array_subset_opt(&subset, origins, &options)?;
+                origin.seal(before)?;
+            }
+            if need_boundary {
+                let boundary = section.ensure_boundary(
+                    store,
+                    *rows_per_chunk,
+                    *chunks_per_shard,
+                    previous,
+                    &options,
+                )?;
+                let before = boundary.rows;
+                let subset = boundary.extend(count)?;
+                boundary
+                    .array
+                    .store_array_subset_opt(&subset, boundaries, &options)?;
+                boundary.seal(before)?;
+            }
+            if section.step_index.is_some() || !trivial_index {
+                let step_index = section.ensure_step_index(
+                    store,
+                    *rows_per_chunk,
+                    *chunks_per_shard,
+                    previous,
+                    &options,
+                )?;
+                let before = step_index.rows;
+                let subset = step_index.extend(count)?;
+                step_index
+                    .array
+                    .store_array_subset_opt(&subset, ordinals, &options)?;
+                step_index.seal(before)?;
+            }
         }
 
         // 3. Per-step metadata.
@@ -2568,12 +2814,26 @@ impl FrameSequence {
         }
 
         let box_prefix = join_path(TRAJECTORY_GROUP, BOX_GROUP);
-        let cell = if array_exists(&store, &join_path(&box_prefix, STEP_INDEX_ARRAY))? {
+        let vectors_path = join_path(&box_prefix, VECTORS_ARRAY);
+        let cell = if array_exists(&store, &vectors_path)? {
+            let step_path = join_path(&box_prefix, STEP_INDEX_ARRAY);
+            let step_index = if array_exists(&store, &step_path)? {
+                read_whole::<u64, _>(&store, &step_path)?
+            } else {
+                let shape = Array::open(store.clone(), &vectors_path)?.shape().to_vec();
+                let n = *shape.first().ok_or_else(|| {
+                    MolRsError::zarr("box vectors array has an empty shape".to_string())
+                })?;
+                if n == 1 {
+                    vec![0]
+                } else {
+                    return Err(MolRsError::zarr(format!(
+                        "box has {n} updates but no step_index array"
+                    )));
+                }
+            };
             Some(BoxIndex {
-                step_index: read_whole::<u64, _>(
-                    &store,
-                    &join_path(&box_prefix, STEP_INDEX_ARRAY),
-                )?,
+                step_index,
                 cell_defined: cell_defined_of(&store)?,
             })
         } else {
@@ -2633,7 +2893,15 @@ impl FrameSequence {
                     block_index.offset.len()
                 )));
             };
-            if end == start {
+            // A hostile or corrupt store can carry a non-monotonic `offset`
+            // array; `end - start` would then wrap to a near-`u64::MAX` row
+            // count and drive an unbounded allocation. Reject it instead.
+            let count = end.checked_sub(start).ok_or_else(|| {
+                MolRsError::zarr(format!(
+                    "block {name:?} update {update} has non-monotonic offsets ({start} > {end})"
+                ))
+            })?;
+            if count == 0 {
                 // A zero-row update is how the layout says "gone from here on".
                 continue;
             }
@@ -2643,7 +2911,7 @@ impl FrameSequence {
             let path = join_path(TRAJECTORY_GROUP, name);
             frame.insert(
                 name.clone(),
-                read_block_rows(&self.store, &path, schema, start, end - start)?,
+                read_block_rows(&self.store, &path, schema, start, count)?,
             );
         }
 
@@ -2696,6 +2964,35 @@ impl FrameSequence {
             step: Some(self.steps.clone()),
             time: self.times.clone(),
         })
+    }
+
+    /// The committed frames' step numbers, as [`open`](Self::open) read them.
+    ///
+    /// Already in memory — no frame decode. Its length is [`len`](Self::len).
+    pub fn steps(&self) -> &[i64] {
+        &self.steps
+    }
+
+    /// The committed frames' times, when the run wrote a `time` array.
+    pub fn times(&self) -> Option<&[F]> {
+        self.times.as_deref()
+    }
+
+    /// The sequence schema pinned or derived at [`open`](Self::open).
+    pub fn schema(&self) -> &SequenceSchema {
+        &self.schema
+    }
+
+    /// Whether a block section is present in the store (carries an on-disk
+    /// `step_index`), so a reader can decide once — e.g. `has_block("bonds")`
+    /// — instead of probing every frame for it.
+    pub fn has_block(&self, name: &str) -> bool {
+        self.blocks.contains_key(name)
+    }
+
+    /// The names of every block section present in the store.
+    pub fn block_names(&self) -> impl Iterator<Item = &str> {
+        self.blocks.keys().map(String::as_str)
     }
 }
 
@@ -2872,8 +3169,8 @@ mod tests {
         ]
     }
 
-    /// The cell every box fixture carries — one cell for the whole run, which
-    /// is what makes `box/step_index` a single entry.
+    /// The cell every box fixture carries — default origin and all-periodic
+    /// boundary, so those optional arrays are omitted.
     fn fixed_cell() -> SimBox {
         SimBox::new(
             array![[10.0, 0.0, 0.0], [0.0, 11.0, 0.0], [0.0, 0.0, 12.0]],
@@ -3125,11 +3422,10 @@ mod tests {
         );
     }
 
-    /// A fixed cell over a 20-step run writes exactly one `box/step_index`
-    /// entry: the cost of a section follows its *changes*, not the run length
-    /// (decision 7, ac-014).
+    /// A fixed cell over a 20-step run writes the cell once, and omits the
+    /// optional box arrays that would only restate defaults (decision 7).
     #[test]
-    fn a_fixed_cell_writes_one_box_step_index_entry() {
+    fn a_fixed_cell_omits_default_origin_boundary_and_trivial_step_index() {
         const STEPS: usize = 20;
 
         let dir = TempDir::new().unwrap();
@@ -3143,10 +3439,75 @@ mod tests {
             .collect();
         write_all(&store, &frames);
 
+        assert!(
+            Array::open(store.clone(), &format!("{TRAJ}/box/step_index")).is_err(),
+            "a single update at ordinal 0 does not write step_index"
+        );
+        assert!(
+            Array::open(store.clone(), &format!("{TRAJ}/box/origin")).is_err(),
+            "a zero origin is the default and is not written"
+        );
+        assert!(
+            Array::open(store.clone(), &format!("{TRAJ}/box/boundary")).is_err(),
+            "all-periodic boundary is the default and is not written"
+        );
+        let mut seq = open_sequence(&store);
+        let cell = frame_at(&mut seq, 19)
+            .simbox
+            .expect("later frames still carry the cell");
         assert_eq!(
-            u64_array(&store, &format!("{TRAJ}/box/step_index")),
-            vec![0],
-            "20 steps under one cell are one box entry, written at step 0"
+            cell.origin_view().iter().copied().collect::<Vec<_>>(),
+            vec![0.0, 0.0, 0.0]
+        );
+        assert_eq!(cell.pbc(), [true, true, true]);
+    }
+
+    /// A non-default origin is written; the default-omission only applies
+    /// when every update is zeros.
+    #[test]
+    fn a_nonzero_origin_is_written() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut frame = atoms_frame(&[1.0]);
+        frame.simbox = Some(
+            SimBox::new(
+                array![[10.0, 0.0, 0.0], [0.0, 11.0, 0.0], [0.0, 0.0, 12.0]],
+                array![1.0, 2.0, 3.0],
+                [true, true, true],
+            )
+            .unwrap(),
+        );
+        write_all(&store, &[frame]);
+
+        let origin: Vec<f64> = {
+            let arr = Array::open(store.clone(), &format!("{TRAJ}/box/origin")).unwrap();
+            let subset = ArraySubset::new_with_shape(arr.shape().to_vec());
+            arr.retrieve_array_subset(&subset).unwrap()
+        };
+        assert_eq!(origin, vec![1.0, 2.0, 3.0]);
+        assert!(
+            Array::open(store.clone(), &format!("{TRAJ}/box/boundary")).is_err(),
+            "still-default boundary is omitted"
+        );
+    }
+
+    /// A `step` key on frame.meta does not mint `trajectory/meta/step`.
+    #[test]
+    fn frame_meta_step_is_not_a_per_step_meta_array() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut frame = atoms_frame(&[1.0]);
+        frame.meta.insert("step", MetaValue::I64(0));
+        write_all(&store, &[frame]);
+
+        assert!(
+            Array::open(store.clone(), &format!("{TRAJ}/meta/step")).is_err(),
+            "the commit marker is trajectory/step, not meta/step"
+        );
+        let mut seq = open_sequence(&store);
+        assert!(
+            frame_at(&mut seq, 0).meta.get("step").is_none(),
+            "layout-owned keys are not echoed back as frame meta"
         );
     }
 
@@ -3309,9 +3670,9 @@ mod tests {
     /// The same column arriving with two dtypes is a mint-time `Err` naming
     /// the column and both values (ac-020).
     ///
-    /// Both values are spelled with [`DType`]'s own `Display` — decision 8's
-    /// "no second dtype vocabulary" applies to error text as much as to
-    /// storage tags.
+    /// Both values are spelled with the schema dtype tag — the same vocabulary
+    /// the store is written in, which for the domain aliases is molrec's
+    /// concrete-width spelling (`f64`/`u64`), not [`DType`]'s alias name.
     #[test]
     fn from_frames_errs_naming_the_column_and_both_dtypes() {
         let mut as_float = Frame::new();
@@ -3325,12 +3686,12 @@ mod tests {
             .to_string();
         assert!(message.contains(PROBE), "must name the column: {message}");
         assert!(
-            message.contains(&DType::Float.to_string()),
-            "must carry the first dtype: {message}"
+            message.contains("f64"),
+            "must carry the first dtype (schema tag): {message}"
         );
         assert!(
-            message.contains(&DType::UInt.to_string()),
-            "must carry the second dtype: {message}"
+            message.contains("u64"),
+            "must carry the second dtype (schema tag): {message}"
         );
     }
 
@@ -3556,6 +3917,24 @@ mod tests {
     /// is what makes exactness free (decision 8). Written for two steps so the
     /// array is a real per-step array and not a scalar attribute.
     #[test]
+    fn column_dtype_tags_are_molrec_names_and_legacy_tags_still_read() {
+        use super::{dtype_from_tag, dtype_tag};
+        // The three domain aliases are written under molrec's concrete-width
+        // spelling so a schema validates against molrec's dtype enum.
+        assert_eq!(dtype_tag(DType::Float), "f64");
+        assert_eq!(dtype_tag(DType::Int), "i32");
+        assert_eq!(dtype_tag(DType::UInt), "u64");
+        assert_eq!(dtype_from_tag("f64").unwrap(), DType::Float);
+        assert_eq!(dtype_from_tag("i32").unwrap(), DType::Int);
+        assert_eq!(dtype_from_tag("u64").unwrap(), DType::UInt);
+        // Stores written by molrs < 0.14 tagged them `float`/`int`/`uint`;
+        // those must stay readable forever (e.g. the driving `growth.mrec`).
+        assert_eq!(dtype_from_tag("float").unwrap(), DType::Float);
+        assert_eq!(dtype_from_tag("int").unwrap(), DType::Int);
+        assert_eq!(dtype_from_tag("uint").unwrap(), DType::UInt);
+    }
+
+    #[test]
     fn every_meta_variant_round_trips_bit_exact_with_its_dtype_tag() {
         const KEY: &str = "probe";
 
@@ -3720,8 +4099,8 @@ mod tests {
             "must carry both values: {message}"
         );
         assert!(
-            message.contains(&DType::Float.to_string()),
-            "must carry the declared dtype: {message}"
+            message.contains("f64"),
+            "must carry the declared dtype (schema tag): {message}"
         );
         assert!(
             message.contains(&DType::Int64.to_string()),
@@ -4380,17 +4759,19 @@ mod tests {
         const FRAMES: u64 = 8;
 
         /// `O(arrays)` of the bound: each array costs its own `zarr.json` and
-        /// rounds its last shard up, and each group costs a `zarr.json`.
-        const ARRAY_FLOOR: u64 = 2 * ARRAYS + GROUPS;
+        /// rounds its last shard up, each group costs a `zarr.json`, and
+        /// unsharded index arrays may add a chunk file per inner chunk.
+        const ARRAY_FLOOR: u64 = 2 * ARRAYS + GROUPS + 4;
         /// Rows across the four arrays at `FRAMES`: 8 * 8 of `x`, 8 of `step`,
         /// 8 of `step_index`, 8 + 1 of `offset`.
         const SINGLE_ROWS: u64 = 64 + 8 + 8 + 9;
         /// The same at `2 * FRAMES`.
         const DOUBLE_ROWS: u64 = 128 + 16 + 16 + 17;
-        /// 2 group `zarr.json` + 4 array `zarr.json` + 2 + 1 + 1 + 1 shards.
-        const SINGLE_FILES: usize = 11;
-        /// The same, with `x` on four shards instead of two.
-        const DOUBLE_FILES: usize = 13;
+        /// 2 group `zarr.json` + 4 array `zarr.json` + 2 `x` shards + 2 offset
+        /// chunks (unsharded) + 1 step_index + 1 step.
+        const SINGLE_FILES: usize = 12;
+        /// `x` on four shards; unsharded index arrays pick up extra chunks.
+        const DOUBLE_FILES: usize = 17;
 
         // Every frame carries distinct values, so every step earns its own
         // `step_index` entry: a repeated block would be stored once and the

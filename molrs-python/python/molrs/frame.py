@@ -453,21 +453,35 @@ class Frame(_RsFrame):
     by every ``molrs.*`` API with no conversion. ``__getitem__`` upgrades the
     stored block to a rich :class:`Block`. The ``box`` is the native
     ``molrs.Box`` (inherited). Frame has no CSV methods — CSV belongs to Block.
+
+    Construct with ``Frame(blocks, meta=...)``. Passing an existing core or
+    rich Frame copies its blocks, box, and meta into the new instance.
     """
 
     def __new__(
         cls,
-        blocks: "dict[str, Block | BlockLike] | None" = None,
+        blocks: "dict[str, Block | BlockLike] | _RsFrame | None" = None,
         meta: "dict[str, MetaValue] | None" = None,
     ) -> "Frame":
         return super().__new__(cls)
 
     def __init__(
         self,
-        blocks: "dict[str, Block | BlockLike] | None" = None,
+        blocks: "dict[str, Block | BlockLike] | _RsFrame | None" = None,
         meta: "dict[str, MetaValue] | None" = None,
     ) -> None:
         super().__init__()
+        if isinstance(blocks, _RsFrame):
+            if meta is not None:
+                raise TypeError("meta cannot be passed when wrapping a Frame")
+            for name in _RsFrame.keys(blocks):
+                self[name] = _RsFrame.__getitem__(blocks, name)
+            raw_box = _RsFrame.box.__get__(blocks, type(blocks))
+            if raw_box is not None:
+                self.box = raw_box
+            if blocks.meta:
+                self.meta = dict(blocks.meta)
+            return
         if meta is not None:
             self.meta = meta
         if blocks is not None:
@@ -540,38 +554,18 @@ class Frame(_RsFrame):
         }
 
     @classmethod
-    def from_dict(cls, data: "dict[str, Any] | _RsFrame") -> "Frame":
-        """Build a Frame from a dict, or upgrade a bare ``molrs.Frame``."""
-        if isinstance(data, cls):
-            return data
-        if isinstance(data, _RsFrame):
-            frame = cls()
-            for name in _RsFrame.keys(data):
-                frame[name] = _RsFrame.__getitem__(data, name)
-            raw_box = _RsFrame.box.__get__(data, type(data))
-            if raw_box is not None:
-                frame.box = raw_box
-            if data.meta:
-                frame.meta = dict(data.meta)
-            return frame
-        if set(data) != {"blocks", "meta"}:
-            raise ValueError("frame dict must contain exactly 'blocks' and 'meta'")
-        blocks = {name: Block.from_dict(blk) for name, blk in data["blocks"].items()}
-        return cls(blocks=blocks, meta=data["meta"])
-
-    @classmethod
     def _from_ffi_frameref_capsule(cls, capsule: Any) -> "Frame":
         """Build a rich ``Frame`` from a ``"molrs.FrameRef"`` capsule.
 
         The **return path** for a downstream Rust consumer (e.g. molpack hands a
         packed frame back as an FFI capsule): the Rust base resolves the capsule
-        to a bare ``_RsFrame`` sharing the producer's store, then ``from_dict``
-        upgrades it to this rich subclass so callers get an ``isinstance``-correct
+        to a bare ``_RsFrame`` sharing the producer's store, then the rich
+        constructor upgrades it so callers get an ``isinstance``-correct
         ``molrs.Frame``. Shadows the base ``_RsFrame`` staticmethod of the same
-        name, the way ``from_dict`` adds the rich-layer wrapping.
+        name.
         """
         base = _RsFrame._from_ffi_frameref_capsule(capsule)
-        return cls.from_dict(base)
+        return cls(base)
 
     def copy(self) -> "Frame":
         """Deep copy (blocks copied into new storage; box + metadata copied)."""

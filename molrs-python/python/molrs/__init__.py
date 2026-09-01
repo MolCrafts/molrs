@@ -55,8 +55,6 @@ from ._lib import (
     Trajectory,
     ScalarObservable,
     VectorObservable,
-    Record,
-    Observables,
     # Regions
     Sphere,
     HollowSphere,
@@ -167,8 +165,6 @@ __all__ = [
     "Trajectory",
     "ScalarObservable",
     "VectorObservable",
-    "Record",
-    "Observables",
     "Sphere",
     "HollowSphere",
     "Cuboid",

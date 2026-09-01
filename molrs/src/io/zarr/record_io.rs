@@ -5,7 +5,7 @@
 //!
 //! ```text
 //! <root>/
-//! ├── meta/          record_schema_version = 1, format_name = "mrec", + producer keys
+//! ├── meta/          molrec_version = 1, + producer keys
 //! ├── system/        frame-shaped group (topology / types)
 //! ├── frame/         frame-shaped group (snapshot)
 //! ├── trajectory/    the frame sequence — see [`crate::io::zarr::sequence`]
@@ -57,13 +57,16 @@ use zarrs::storage::WritableStorageTraits;
 use crate::io::zarr::frame_io::{join_path, read_column, read_frame_group};
 #[cfg(feature = "zarr")]
 use crate::io::zarr::frame_io::{node_prefix, write_column, write_frame_group};
+use crate::io::zarr::schema::{self, MOLREC_VERSION};
 use crate::io::zarr::sequence::FrameSequence;
 #[cfg(feature = "zarr")]
 use crate::io::zarr::sequence::{FrameSequenceWriter, SequenceSchema};
 #[cfg(feature = "filesystem")]
 use crate::io::zarr::store::PositionalWriteStore;
 use molrs::MolRsError;
-use molrs::store::record::{MolRec, RECORD_FORMAT_NAME, RECORD_SCHEMA_VERSION};
+use molrs::store::block::Column;
+use molrs::store::frame::Frame;
+use molrs::store::record::MolRec;
 #[cfg(feature = "filesystem")]
 use molrs::store::trajectory::Trajectory;
 use molrs::store::trajectory::{ObservableData, ObservableKind, ObservableRecord};
@@ -80,9 +83,8 @@ use molrs::store::trajectory::{ObservableData, ObservableKind, ObservableRecord}
 /// accepted. A second write to the same path replaces the previous record
 /// entirely — leftover sections from a wider record do not survive.
 ///
-/// The writer writes the reserved `meta` keys over any producer copy:
-/// [`crate::RECORD_FORMAT_NAME`] (`"mrec"`) and
-/// [`crate::RECORD_SCHEMA_VERSION`] (`1`). A trajectory section is encoded by
+/// The writer writes the reserved `meta` key over any producer copy:
+/// [`crate::MOLREC_VERSION`] (`molrec_version = 1`). A trajectory section is encoded by
 /// [`crate::io::mrec::FrameSequenceWriter`]. [`write_trajectory_file`] is the
 /// same write, with the record shaped to carry only a trajectory.
 ///
@@ -108,14 +110,14 @@ use molrs::store::trajectory::{ObservableData, ObservableKind, ObservableRecord}
 /// write_record_file(&path, &record)?;
 ///
 /// let loaded = read_record_file(&path)?;
-/// assert_eq!(loaded.meta["format_name"].as_str(), Some("mrec"));
+/// assert_eq!(loaded.meta["molrec_version"].as_u64(), Some(1));
 /// # Ok(())
 /// # }
 /// ```
 #[cfg(feature = "filesystem")]
 pub fn write_record_file(path: impl AsRef<Path>, record: &MolRec) -> Result<(), MolRsError> {
     let path = path.as_ref();
-    reject_retired_zarr_path(path)?;
+    schema::validate_path(path)?;
     let store: ReadableWritableListableStorage = Arc::new(PositionalWriteStore::new(path)?);
     write_record_store(store, record)
 }
@@ -175,14 +177,13 @@ pub fn write_record_store(
     if !record.observables.is_empty() {
         write_observables(&store, &join_path(prefix, "observables"), record)?;
     }
-    for (name, section) in [
-        ("method", &record.method),
-        ("status", &record.status),
-        ("metrics", &record.metrics),
-    ] {
+    for (name, section) in [("method", &record.method), ("status", &record.status)] {
         if !section.is_empty() {
             write_json_group(&store, &join_path(prefix, name), section)?;
         }
+    }
+    if !record.metrics.is_empty() || !record.metrics_series.is_empty() {
+        write_metrics(&store, &join_path(prefix, "metrics"), record)?;
     }
     for (name, frame) in &record.extra_sections {
         write_frame_group(&store, &join_path(prefix, name), frame)?;
@@ -191,7 +192,7 @@ pub fn write_record_store(
     Ok(())
 }
 
-/// Write `meta`, stamping the contract-owned keys over any producer copy.
+/// Write `meta`, stamping the contract-owned key over any producer copy.
 #[cfg(feature = "zarr")]
 fn write_meta(
     store: &ReadableWritableListableStorage,
@@ -199,8 +200,7 @@ fn write_meta(
     meta: &JsonMap<String, JsonValue>,
 ) -> Result<(), MolRsError> {
     let mut attrs = meta.clone();
-    attrs.insert("record_schema_version".into(), RECORD_SCHEMA_VERSION.into());
-    attrs.insert("format_name".into(), RECORD_FORMAT_NAME.into());
+    attrs.insert("molrec_version".into(), MOLREC_VERSION.into());
     write_json_group(store, path, &attrs)
 }
 
@@ -214,6 +214,133 @@ fn write_json_group(
         .attributes(attrs.clone())
         .build(store.clone(), path)?
         .store_metadata()?;
+    Ok(())
+}
+
+/// Percent-encode a metrics series name into a legal array name
+/// (`train/loss` → `train%2Floss`): every byte outside `[A-Za-z0-9._-]`
+/// becomes `%XX` with uppercase hex. Mirrors molrec's `safe_name` — the two
+/// implementations must mangle identically or produce stores neither can
+/// read back.
+fn safe_series_name(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    for byte in name.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'.' | b'_' | b'-' => out.push(byte as char),
+            _ => {
+                use std::fmt::Write as _;
+                let _ = write!(out, "%{byte:02X}");
+            }
+        }
+    }
+    out
+}
+
+/// The inverse of [`safe_series_name`].
+fn original_series_name(encoded: &str) -> Result<String, MolRsError> {
+    let bytes = encoded.as_bytes();
+    let mut raw = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let hex = encoded.get(index + 1..index + 3).ok_or_else(|| {
+                MolRsError::zarr(format!(
+                    "metrics series name '{encoded}': truncated %-escape"
+                ))
+            })?;
+            raw.push(u8::from_str_radix(hex, 16).map_err(|_| {
+                MolRsError::zarr(format!(
+                    "metrics series name '{encoded}': bad %-escape '%{hex}'"
+                ))
+            })?);
+            index += 3;
+        } else {
+            raw.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(raw)
+        .map_err(|_| MolRsError::zarr(format!("metrics series name '{encoded}' is not UTF-8")))
+}
+
+/// Write the `metrics/` section: the catalog document as group attributes,
+/// and each closed series as one float64 array at
+/// `metrics/series/<safe_name>`.
+///
+/// The live JSONL WAL (`metrics/metrics.jsonl`) is host-owned and never
+/// written here.
+#[cfg(feature = "zarr")]
+fn write_metrics(
+    store: &ReadableWritableListableStorage,
+    prefix: &str,
+    record: &MolRec,
+) -> Result<(), MolRsError> {
+    write_json_group(store, prefix, &record.metrics)?;
+    if record.metrics_series.is_empty() {
+        return Ok(());
+    }
+    let series_path = join_path(prefix, "series");
+    GroupBuilder::new()
+        .build(store.clone(), &series_path)?
+        .store_metadata()?;
+    for (name, values) in &record.metrics_series {
+        let column = Column::from_float(
+            ndarray::ArrayD::from_shape_vec(vec![values.len()], values.clone())
+                .map_err(|e| MolRsError::zarr(format!("metrics series '{name}': {e}")))?,
+        );
+        write_column(
+            store,
+            &join_path(&series_path, &safe_series_name(name)),
+            &column,
+        )?;
+    }
+    Ok(())
+}
+
+/// Read `metrics/series/<name>` float64 arrays back into
+/// [`MolRec::metrics_series`]. A `metrics/` group without a `series/` child
+/// is a document-only section; a non-float64 series is an error rather than
+/// a silent narrowing.
+fn read_metrics_series(
+    store: &ReadableWritableListableStorage,
+    metrics_path: &str,
+    record: &mut MolRec,
+) -> Result<(), MolRsError> {
+    let node = Node::open(store, metrics_path)?;
+    let has_series = node.children().iter().any(|child| {
+        matches!(child.metadata(), NodeMetadata::Group(_))
+            && child.path().as_str().ends_with("/series")
+    });
+    if !has_series {
+        return Ok(());
+    }
+    let series_path = join_path(metrics_path, "series");
+    let series_node = Node::open(store, &series_path)?;
+    for child in series_node.children() {
+        if !matches!(child.metadata(), NodeMetadata::Array(_)) {
+            continue;
+        }
+        let path = child.path().as_str();
+        let name = path.rsplit('/').next().unwrap_or("");
+        if name.is_empty() {
+            continue;
+        }
+        let column = read_column(
+            store,
+            path,
+            &ArraySubset::new_with_shape(Array::open(store.clone(), path)?.shape().to_vec()),
+        )?;
+        let values = column.as_float().ok_or_else(|| {
+            MolRsError::zarr(format!(
+                "metrics series '{name}' must be a float64 array, got {}",
+                column.dtype().name()
+            ))
+        })?;
+        record.metrics_series.insert(
+            original_series_name(name)?,
+            values.iter().copied().collect(),
+        );
+    }
     Ok(())
 }
 
@@ -266,9 +393,8 @@ fn write_observables(
 /// Read a [`crate::Record`] from a `*.mrec` directory.
 ///
 /// Paths whose file name ends in `.zarr` or `.zarr.zip` are refused. The
-/// `meta` section must carry [`crate::RECORD_FORMAT_NAME`] (`"mrec"`) and
-/// [`crate::RECORD_SCHEMA_VERSION`] (`1`); a missing key, the retired
-/// `"molrec"` brand, or any other value is an error. Sections this build does
+/// `meta` section must carry `molrec_version` in `1..=`[`crate::MOLREC_VERSION`];
+/// a missing key or an unsupported value is an error. Sections this build does
 /// not interpret are kept in [`crate::Record::extra_sections`] rather than dropped.
 ///
 /// A store still carrying the pre-0.14 `trajectory/frames/` tree is refused
@@ -278,12 +404,12 @@ fn write_observables(
 ///
 /// A [`MolRsError::Zarr`] when `path` uses a retired `.zarr` suffix, when
 /// `path` is not a readable record store, when `meta` is missing or does not
-/// match the expected brand and schema version, or when a section fails to
+/// carry a supported `molrec_version`, or when a section fails to
 /// decode — including a legacy `trajectory/frames/` layout.
 #[cfg(feature = "filesystem")]
 pub fn read_record_file(path: impl AsRef<Path>) -> Result<MolRec, MolRsError> {
     let path = path.as_ref();
-    reject_retired_zarr_path(path)?;
+    schema::validate_path(path)?;
     let store: ReadableWritableListableStorage =
         Arc::new(FilesystemStore::new(path).map_err(zerr)?);
     read_record_store(store)
@@ -323,7 +449,10 @@ pub fn read_record_store(store: ReadableWritableListableStorage) -> Result<MolRe
             "observables" => read_observables(&store, &path, &mut record)?,
             "method" => record.method = read_json_group(&store, &path)?,
             "status" => record.status = read_json_group(&store, &path)?,
-            "metrics" => record.metrics = read_json_group(&store, &path)?,
+            "metrics" => {
+                record.metrics = read_json_group(&store, &path)?;
+                read_metrics_series(&store, &path, &mut record)?;
+            }
             _ => {
                 // Preserve the unknown: keep foreign sections rather than
                 // silently dropping a newer producer's data on round-trip.
@@ -346,24 +475,7 @@ fn read_meta(
         .map_err(|_| MolRsError::zarr("not a MolRec record: missing required 'meta' section"))?;
     let attrs = group.attributes().clone();
 
-    let version = attrs
-        .get("record_schema_version")
-        .and_then(JsonValue::as_u64)
-        .ok_or_else(|| MolRsError::zarr("meta is missing 'record_schema_version'"))?;
-    if version != RECORD_SCHEMA_VERSION {
-        return Err(MolRsError::zarr(format!(
-            "unsupported record_schema_version {version}; expected {RECORD_SCHEMA_VERSION}"
-        )));
-    }
-    match attrs.get("format_name").and_then(JsonValue::as_str) {
-        Some(RECORD_FORMAT_NAME) => {}
-        Some(other) => {
-            return Err(MolRsError::zarr(format!(
-                "unsupported format_name '{other}'; expected '{RECORD_FORMAT_NAME}'"
-            )));
-        }
-        None => return Err(MolRsError::zarr("meta is missing 'format_name'")),
-    }
+    schema::validate_meta(&attrs)?;
     Ok(attrs)
 }
 
@@ -520,6 +632,127 @@ pub fn write_trajectory_file(
     write_record_file(path, &record)
 }
 
+/// Write a [`Frame`] as a record whose only state section is `frame`.
+///
+/// Same path rules as [`write_record_file`]. This is the Structure shape
+/// (`meta` + `frame/`). Pass `system` to also persist a `system/` section
+/// beside the snapshot; the two remain separate groups.
+///
+/// # Errors
+///
+/// The same errors as [`write_record_file`].
+#[cfg(feature = "filesystem")]
+pub fn write_frame_file(
+    path: impl AsRef<Path>,
+    frame: &Frame,
+    system: Option<&Frame>,
+    meta: Option<&JsonMap<String, JsonValue>>,
+) -> Result<(), MolRsError> {
+    let mut record = MolRec::new();
+    record.frame = Some(frame.clone());
+    record.system = system.cloned();
+    if let Some(meta) = meta {
+        record.meta = meta.clone();
+    }
+    write_record_file(path, &record)
+}
+
+/// Write a [`Frame`] as a record whose only state section is `system`.
+///
+/// Same path rules as [`write_record_file`]. This is the System-def shape
+/// (`meta` + `system/`).
+///
+/// # Errors
+///
+/// The same errors as [`write_record_file`].
+#[cfg(feature = "filesystem")]
+pub fn write_system_file(
+    path: impl AsRef<Path>,
+    system: &Frame,
+    meta: Option<&JsonMap<String, JsonValue>>,
+) -> Result<(), MolRsError> {
+    let mut record = MolRec::new();
+    record.system = Some(system.clone());
+    if let Some(meta) = meta {
+        record.meta = meta.clone();
+    }
+    write_record_file(path, &record)
+}
+
+/// Read the `frame` section of a record at `path`.
+///
+/// # Errors
+///
+/// The same errors as [`read_record_file`], plus a missing `frame` section.
+#[cfg(feature = "filesystem")]
+pub fn read_frame_file(path: impl AsRef<Path>) -> Result<Frame, MolRsError> {
+    read_record_file(path)?
+        .frame
+        .ok_or_else(|| MolRsError::zarr("record has no 'frame' section"))
+}
+
+/// Read the `system` section of a record at `path`.
+///
+/// # Errors
+///
+/// The same errors as [`read_record_file`], plus a missing `system` section.
+#[cfg(feature = "filesystem")]
+pub fn read_system_file(path: impl AsRef<Path>) -> Result<Frame, MolRsError> {
+    read_record_file(path)?
+        .system
+        .ok_or_else(|| MolRsError::zarr("record has no 'system' section"))
+}
+
+/// Read the mandatory `meta` document of a record at `path`.
+///
+/// # Errors
+///
+/// The same path and brand errors as [`read_record_file`].
+#[cfg(feature = "filesystem")]
+pub fn read_meta_file(path: impl AsRef<Path>) -> Result<JsonMap<String, JsonValue>, MolRsError> {
+    let path = path.as_ref();
+    schema::validate_path(path)?;
+    let store: ReadableWritableListableStorage =
+        Arc::new(FilesystemStore::new(path).map_err(zerr)?);
+    read_meta(&store, &join_path("/", "meta"))
+}
+
+/// Child group names at the record root (`meta`, `frame`, `system`, …).
+///
+/// This is the inspect door: callers ask which sections are present instead
+/// of probing `read_frame` / `read_system` and catching a missing-section
+/// error.
+///
+/// # Errors
+///
+/// The same path errors as [`read_record_file`].
+#[cfg(feature = "filesystem")]
+pub fn section_names(path: impl AsRef<Path>) -> Result<Vec<String>, MolRsError> {
+    let path = path.as_ref();
+    schema::validate_path(path)?;
+    let store: ReadableWritableListableStorage =
+        Arc::new(FilesystemStore::new(path).map_err(zerr)?);
+    let root = Node::open(&store, "/")?;
+    let mut names = Vec::new();
+    for child in root.children() {
+        if !matches!(child.metadata(), NodeMetadata::Group(_)) {
+            continue;
+        }
+        let name = child
+            .path()
+            .as_str()
+            .rsplit('/')
+            .next()
+            .unwrap_or("")
+            .to_string();
+        if !name.is_empty() {
+            names.push(name);
+        }
+    }
+    names.sort();
+    Ok(names)
+}
+
 /// Read the `trajectory` section of a record at `path`.
 ///
 /// Same path rules as [`read_record_file`]. A store with no `trajectory`
@@ -573,7 +806,7 @@ pub fn read_trajectory_file(path: impl AsRef<Path>) -> Result<Trajectory, MolRsE
 #[cfg(feature = "filesystem")]
 pub fn open_trajectory_sequence(path: impl AsRef<Path>) -> Result<FrameSequence, MolRsError> {
     let path = path.as_ref();
-    reject_retired_zarr_path(path)?;
+    schema::validate_path(path)?;
     let store = Arc::new(FilesystemStore::new(path).map_err(zerr)?);
     FrameSequence::open(store)
 }
@@ -585,14 +818,7 @@ pub(in crate::io::zarr) fn zerr(e: impl std::fmt::Display) -> MolRsError {
 /// Refuse the retired scientific path brand `.zarr` / `.zarr.zip`.
 #[cfg(feature = "filesystem")]
 pub(in crate::io::zarr) fn reject_retired_zarr_path(path: &Path) -> Result<(), MolRsError> {
-    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    if name.ends_with(".zarr") || name.ends_with(".zarr.zip") {
-        return Err(MolRsError::zarr(format!(
-            "{} uses the retired .zarr path; scientific record path is *.mrec",
-            path.display()
-        )));
-    }
-    Ok(())
+    schema::validate_path(path)
 }
 
 #[cfg(all(test, feature = "filesystem"))]
@@ -651,18 +877,15 @@ mod tests {
     }
 
     #[test]
-    fn meta_carries_the_contract_keys() {
+    fn meta_carries_the_contract_key() {
         let mut rec = MolRec::new();
         rec.frame = Some(Frame::new());
         let loaded = write_then_read(&rec);
         assert_eq!(
-            loaded.meta.get("record_schema_version").unwrap().as_u64(),
-            Some(RECORD_SCHEMA_VERSION)
+            loaded.meta.get("molrec_version").unwrap().as_u64(),
+            Some(MOLREC_VERSION)
         );
-        assert_eq!(
-            loaded.meta.get("format_name").unwrap().as_str(),
-            Some(RECORD_FORMAT_NAME)
-        );
+        assert!(!loaded.meta.contains_key("format_name"));
     }
 
     #[test]
@@ -793,7 +1016,7 @@ mod tests {
     }
 
     #[test]
-    fn every_noncurrent_record_schema_version_is_rejected() {
+    fn every_noncurrent_molrec_version_is_rejected() {
         for version in [None, Some(0_u64), Some(2), Some(99)] {
             let dir = tempdir().unwrap();
             let path = dir.path().join("record.mrec");
@@ -805,36 +1028,20 @@ mod tests {
             let mut metadata: JsonValue =
                 serde_json::from_slice(&std::fs::read(&metadata_path).unwrap()).unwrap();
             match version {
-                Some(v) => metadata["attributes"]["record_schema_version"] = v.into(),
+                Some(v) => metadata["attributes"]["molrec_version"] = v.into(),
                 None => {
                     metadata["attributes"]
                         .as_object_mut()
                         .unwrap()
-                        .remove("record_schema_version");
+                        .remove("molrec_version");
                 }
             }
             std::fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
             assert!(
                 read_record_file(&path).is_err(),
-                "accepted record_schema_version {version:?}"
+                "accepted molrec_version {version:?}"
             );
         }
-    }
-
-    #[test]
-    fn foreign_format_name_is_rejected() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("record.mrec");
-        let mut rec = MolRec::new();
-        rec.frame = Some(Frame::new());
-        write_record_file(&path, &rec).unwrap();
-
-        let metadata_path = path.join("meta/zarr.json");
-        let mut metadata: JsonValue =
-            serde_json::from_slice(&std::fs::read(&metadata_path).unwrap()).unwrap();
-        metadata["attributes"]["format_name"] = "molpy-zarr".into();
-        std::fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
-        assert!(read_record_file(&path).is_err());
     }
 
     #[test]
@@ -863,29 +1070,162 @@ mod tests {
         // The narrow door writes a conforming record, not a private layout.
         let record = read_record_file(&path).unwrap();
         assert_eq!(
-            record.meta.get("format_name").unwrap().as_str(),
-            Some(RECORD_FORMAT_NAME)
+            record.meta.get("molrec_version").unwrap().as_u64(),
+            Some(MOLREC_VERSION)
         );
+    }
+
+    #[test]
+    fn frame_door_writes_the_frame_section() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("snapshot.mrec");
+        let frame = frame_with_atoms(3);
+        write_frame_file(&path, &frame, None, None).unwrap();
+
+        let loaded = read_frame_file(&path).unwrap();
+        assert_eq!(loaded.get("atoms").unwrap().nrows(), Some(3));
+        assert!(read_system_file(&path).is_err());
+        let record = read_record_file(&path).unwrap();
+        assert_eq!(
+            record.meta.get("molrec_version").unwrap().as_u64(),
+            Some(MOLREC_VERSION)
+        );
+        assert!(record.trajectory.is_none());
+    }
+
+    #[test]
+    fn system_door_writes_the_system_section() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("system.mrec");
+        write_system_file(&path, &frame_with_atoms(2), None).unwrap();
+
+        let loaded = read_system_file(&path).unwrap();
+        assert_eq!(loaded.get("atoms").unwrap().nrows(), Some(2));
+        assert!(read_frame_file(&path).is_err());
+    }
+
+    #[test]
+    fn frame_door_can_carry_a_system_section_beside_the_snapshot() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("both.mrec");
+        let frame = frame_with_atoms(3);
+        let system = frame_with_atoms(3);
+        write_frame_file(&path, &frame, Some(&system), None).unwrap();
+
+        assert_eq!(
+            section_names(&path).unwrap(),
+            vec!["frame", "meta", "system"]
+        );
+        assert_eq!(
+            read_meta_file(&path)
+                .unwrap()
+                .get("molrec_version")
+                .and_then(|v| v.as_u64()),
+            Some(MOLREC_VERSION)
+        );
+
+        assert_eq!(
+            read_frame_file(&path)
+                .unwrap()
+                .get("atoms")
+                .unwrap()
+                .nrows(),
+            Some(3)
+        );
+        assert_eq!(
+            read_system_file(&path)
+                .unwrap()
+                .get("atoms")
+                .unwrap()
+                .nrows(),
+            Some(3)
+        );
+    }
+
+    #[test]
+    fn metrics_series_round_trip_as_float64_arrays() {
+        let mut rec = MolRec::new();
+        rec.frame = Some(Frame::new());
+        rec.metrics.insert("catalog".into(), "summary".into());
+        rec.metrics_series
+            .insert("train/loss".into(), vec![1.0, 0.5, 0.25]);
+        rec.metrics_series.insert("lr".into(), vec![1e-3, 1e-4]);
+
+        let loaded = write_then_read(&rec);
+        assert_eq!(loaded.metrics["catalog"], "summary");
+        assert_eq!(loaded.metrics_series.len(), 2);
+        assert_eq!(loaded.metrics_series["train/loss"], vec![1.0, 0.5, 0.25]);
+        assert_eq!(loaded.metrics_series["lr"], vec![1e-3, 1e-4]);
+
+        // A second write of what was read must not shed the series — this is
+        // the preserve-the-unknown guarantee for densified curves.
+        let again = write_then_read(&loaded);
+        assert_eq!(again.metrics_series, rec.metrics_series);
+    }
+
+    /// A live host WAL (`metrics/metrics.jsonl`) is a stray text file inside
+    /// the store; reading the record must tolerate it rather than error.
+    #[test]
+    fn a_stray_metrics_wal_file_is_tolerated_on_read() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("record.mrec");
+        let mut rec = MolRec::new();
+        rec.frame = Some(Frame::new());
+        rec.metrics.insert("live".into(), true.into());
+        write_record_file(&path, &rec).unwrap();
+
+        std::fs::write(
+            path.join("metrics/metrics.jsonl"),
+            "{\"t\":\"scalar\",\"k\":\"loss\",\"v\":0.5}\n",
+        )
+        .unwrap();
+
+        let loaded = read_record_file(&path).unwrap();
+        assert_eq!(loaded.metrics["live"], true);
+        assert!(loaded.metrics_series.is_empty());
+    }
+
+    #[test]
+    fn a_non_float64_metrics_series_is_rejected_loud() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("record.mrec");
+        let mut rec = MolRec::new();
+        rec.frame = Some(Frame::new());
+        rec.metrics.insert("catalog".into(), "summary".into());
+        write_record_file(&path, &rec).unwrap();
+
+        // Plant a u64 array where a float64 series belongs.
+        let store: ReadableWritableListableStorage =
+            std::sync::Arc::new(super::PositionalWriteStore::new(&path).unwrap());
+        GroupBuilder::new()
+            .build(store.clone(), "/metrics/series")
+            .unwrap()
+            .store_metadata()
+            .unwrap();
+        write_column(
+            &store,
+            "/metrics/series/steps",
+            &Column::from_uint(ndarray::ArrayD::from_shape_vec(vec![2], vec![1u64, 2]).unwrap()),
+        )
+        .unwrap();
+
+        let err = read_record_file(&path).unwrap_err().to_string();
+        assert!(err.contains("steps"), "{err}");
+        assert!(err.contains("float64"), "{err}");
     }
 
     #[test]
     fn reserved_meta_keys_are_owned_by_the_writer() {
         let mut rec = MolRec::new();
         rec.frame = Some(Frame::new());
-        // A producer trying to claim the contract keys must not win.
-        rec.meta
-            .insert("record_schema_version".into(), 99u64.into());
-        rec.meta.insert("format_name".into(), "not-molrec".into());
+        // A producer trying to claim the contract key must not win.
+        rec.meta.insert("molrec_version".into(), 99u64.into());
 
         let loaded = write_then_read(&rec);
         for key in RESERVED_META_KEYS {
             assert!(loaded.meta.contains_key(key));
         }
-        assert_eq!(
-            loaded.meta["record_schema_version"].as_u64(),
-            Some(RECORD_SCHEMA_VERSION)
-        );
-        assert_eq!(loaded.meta["format_name"], RECORD_FORMAT_NAME);
+        assert_eq!(loaded.meta["molrec_version"].as_u64(), Some(MOLREC_VERSION));
     }
 
     /// Every node in the store, as a path relative to the record root (the

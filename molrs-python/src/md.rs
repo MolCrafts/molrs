@@ -370,9 +370,7 @@ pub(crate) fn take_potential(
         let (inner, slots) = pots.borrow_mut().take_compiled()?;
         return Ok((Box::new(inner), slots));
     }
-    if obj.hasattr("calc_energy_forces")?
-        && obj.getattr("calc_energy_forces")?.is_callable()
-    {
+    if obj.hasattr("calc_energy_forces")? && obj.getattr("calc_energy_forces")?.is_callable() {
         let error: ErrSlot = Arc::default();
         return Ok((
             Box::new(SubclassPotential {

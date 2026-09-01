@@ -17,6 +17,23 @@ status change) and conflicts with `CLAUDE.md`.
 
 ---
 
+## 2026-09-01 — record identity is `meta["molrec_version"]` alone
+**Decision:** Maintainer ruling — the record contract follows molrec's docs:
+`meta["molrec_version"]` (integer, currently 1) is the **sole** version key.
+`format_name` and `record_schema_version` are erased outright (no read-side
+compat): `RECORD_FORMAT_NAME` deleted, `RECORD_SCHEMA_VERSION` renamed
+`MOLREC_VERSION`, `RESERVED_META_KEYS = ["molrec_version"]`,
+`validate_meta` requires `molrec_version` in `1..=N`. Python surface:
+`molrs.io.mrec.schema.MOLREC_VERSION` (no `FORMAT_NAME` / `SCHEMA_VERSION`).
+Identity of a store is that key plus the `*.mrec/` path suffix. Stores written
+by earlier 0.14 builds (format_name era) must be re-written; they are refused
+for the missing `molrec_version`. Supersedes the format_name half of the
+2026-08-25 naming entry below.
+**Why:** molrec docs, schema (`meta.schema.json`), and conformance
+`MetaModel` all require `molrec_version` and never had `format_name`; the
+spec and the reference implementation could not open each other's stores.
+**Status:** active
+
 ## 2026-08-29 — release-0-14-15: MolRec trajectory layout break + four rulings + two measured facts
 
 **1. On-disk trajectory layout changed incompatibly.** Old `trajectory/frames/<i>/`
@@ -103,9 +120,10 @@ width before the minor line freezes.
 ## 2026-08-25 — public record API is Record, not MolRec
 **Decision:** Public names are `molrs.Record` / `molrs::Record`, `Record.read` /
 `Record.write`, `Trajectory.read` / `Trajectory.write`, cxxapi `write_frame` /
-`read_first_frame`. No deprecated aliases. Internal `store::record::MolRec`,
-`RECORD_FORMAT_NAME = "molrec"`, and the `io::zarr` adapter keep their
-technical names.
+`read_first_frame`. No deprecated aliases. Internal `store::record::MolRec`
+and the `io::zarr` adapter keep their technical names. (The
+`RECORD_FORMAT_NAME` const this entry once covered was later renamed to
+`"mrec"` and then erased entirely — see 2026-09-01 above.)
 **Why:** Public API names the object; the backend is not yet a caller-chosen
 format (release-0-14-13). Cross-crate: Atomiverse checkpoint I/O must switch
 to `write_frame` / `read_first_frame`.

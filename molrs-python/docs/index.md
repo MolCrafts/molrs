@@ -78,22 +78,13 @@ the hosted site reserves `/reference/wasm/` for that generated reference.
 
 - [Migrating to 0.14](getting-started/migration-0-14.md): 0.13 → 0.14
   spellings (`UnitPreset`, `MD(dtype=)`, `Record`, `meta`).
-- [In-process MD](guides/md.md): `UnitPreset` → `VerletSkin` → `LJCut` →
-  `VelocityVerlet`.
-- [Data model](guides/data-model.md): `Atomistic` is the graph view,
-  `Frame` is the columnar data view, and `Block` is the typed column store.
-- [SMILES and topology](guides/smiles-and-topology.md): parse chemical strings
-  into topology before deciding whether to embed coordinates or write tables.
-- [Neighbor search](guides/neighbor-search.md): build pair lists once and reuse
-  them for RDF, cluster analysis, and contact queries.
-- [3D embedding](guides/embed-3d.md): use distance geometry plus MMFF94
-  refinement to create coordinates from connectivity.
-- [Force fields](guides/force-field.md): typify an `Atomistic`, compile
-  potentials, then evaluate energy and forces on flat `3N` coordinate arrays.
-- [I/O](guides/io-formats.md): read and write PDB, XYZ, LAMMPS, CHGCAR, Cube,
-  and frame-sequence Zarr data through frames.
-- [Trajectory analysis](guides/trajectory-analysis.md): run RDF, MSD, cluster,
-  tensor, PCA, and k-means workflows on one frame or a sequence of frames.
+
+These docs cover the molrs **binding surface** only — the per-language
+quickstarts and the API reference. Task-oriented Python guides (the data model,
+in-process MD, SMILES and topology, neighbor search, 3D embedding, force fields,
+I/O, and trajectory analysis) live in the
+[molpy documentation](https://docs.molcrafts.org/molpy/), the Python library
+built on molrs.
 
 ## Find your starting point
 

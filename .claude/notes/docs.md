@@ -145,7 +145,7 @@ invariant).
 
 | Surface | Notes |
 |---|---|
-| `molrs-python/zensical.toml`, `molrs-python/site-src/**` (getting-started, guides, reference, contributing) | Zensical site content and config (no changelog page — history is git log / tags) |
+| `molrs-python/zensical.toml`, `molrs-python/docs/**` (getting-started, reference, contributing) | Zensical site content and config. Binding docs are **FFI reference + quickstarts only**; task-oriented Python usage guides live in molpy, not here. No changelog page — history is git log / tags. Docs are not gated by unit tests (unit tests cover code only) |
 | `docs/interop.md`, `docs/attribution.md` | Consumer interop + attributions (not the Zensical tree) |
 | `.github/workflows/docs.yml` | Build + deploy to GitHub Pages |
 | `README.md`, `molrs-python/README.md`, `molrs-wasm/README.md` | Root + binding READMEs |

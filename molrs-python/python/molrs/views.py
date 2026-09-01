@@ -434,7 +434,7 @@ class GraphViews:
         """
         from .frame import Frame as _RichFrame
 
-        return _RichFrame.from_dict(super().to_frame())
+        return _RichFrame(super().to_frame())
 
     def _intern_node(self, handle: int, cls: type[NodeRef] | None = None) -> NodeRef:
         ref = self._node_refs.get(handle)

@@ -66,6 +66,38 @@ def test_unknown_keyword_maps_to_value_error():
         molrs.ff.read_lammps_forcefield_str("mystery_style foo\n")
 
 
+def test_write_lammps_data_coeffs_collapses_reverse_dihedral_names():
+    """Reverse bonded names share one type id → one coeff row, not two."""
+    src = """\
+pair_style lj/cut 10.0
+pair_coeff c3 c3 0.107800 3.397710
+
+dihedral_style fourier
+dihedral_coeff h1-c3-c3-os 2 0.250000 1 0.000000 0.000000 3 0.000000
+dihedral_coeff os-c3-c3-h1 2 0.250000 1 0.000000 0.000000 3 0.000000
+"""
+    ff = molrs.ff.read_lammps_forcefield_str(src)
+    text = molrs.ff.write_lammps_data_coeffs(
+        ff,
+        type_ids={"c3": 1, "h1-c3-c3-os": 4, "os-c3-c3-h1": 4},
+    )
+    body = text.split("Dihedral Coeffs", 1)[1]
+    ids = [
+        int(line.split()[0])
+        for line in body.splitlines()
+        if line.strip() and line.split()[0].isdigit()
+    ]
+    assert ids == [4], text
+
+
+def test_write_lammps_forcefield_skip_units():
+    ff = molrs.ff.read_lammps_forcefield_str(_FF)
+    text = molrs.ff.write_lammps_forcefield_str(ff, skip_pair_style=True, skip_units=True)
+    assert "units " not in text
+    assert "bond_style harmonic" in text
+    assert "bond_coeff c3-c3" in text
+
+
 def test_write_lammps_forcefield_str_round_trip():
     """write_lammps_forcefield_str is the inverse of the reader (units + layout)."""
     ff = molrs.ff.read_lammps_forcefield_str(_FF)

@@ -121,7 +121,7 @@ pub static SCHEMA_COLUMNS: &[ColumnSpec] = &[
         UInt,
         Scalar,
         "",
-        "Third endpoint of a relation (angle vertex / dihedral), 0-indexed."
+        "Third endpoint of a relation (angle terminus / dihedral), 0-indexed; the angle vertex is `atomj`."
     ),
     col!(
         "atoml",

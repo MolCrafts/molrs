@@ -39,17 +39,20 @@ driver.run(frame, n, dt=dt, kb=kb, thermo=100)
 
 ## Record / Frame store
 
-Public names describe the object, not the storage backend.
+There is no `molpy.Record`. Write the object you have through `molpy.io.mrec`.
+Schema checks live in `molrs::io::mrec::schema` and are bound at
+`molpy.io.mrec.schema`.
 
 ```python
-rec = molpy.Record()
-rec.write(path)
-loaded = molpy.Record.read(path)
-frame.meta["note"] = "x"
+from molpy.io import mrec
+
+mrec.write_frame(path, frame)
+loaded = mrec.read_frame(path)
+mrec.schema.validate_path(path)
 ```
 
-On-disk `format_name` stays `"molrec"`. That is a file-format value, not an
-API name. `Trajectory.read` / `Trajectory.write` follow the same rule.
+On-disk identity is `meta["molrec_version"]` (currently `1`) plus the
+`*.mrec/` path suffix — the sole version key; there is no brand key.
 
 ## Neighbors
 

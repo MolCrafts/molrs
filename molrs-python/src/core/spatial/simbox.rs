@@ -8,10 +8,10 @@
 //! All length quantities are in the same units as the stored coordinates
 //! (typically angstroms).
 
-use crate::helpers::{box_error_to_pyerr, parse_origin, parse_pbc, NpF};
+use crate::helpers::{NpF, box_error_to_pyerr, parse_origin, parse_pbc};
 use molrs::spatial::simbox::SimBox;
 use molrs::types::F;
-use ndarray::{array, Array2, Axis};
+use ndarray::{Array2, Axis, array};
 use numpy::{IntoPyArray, PyArray1, PyArray2, PyArray3, PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;

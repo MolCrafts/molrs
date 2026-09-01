@@ -19,9 +19,9 @@ use std::sync::Arc;
 use half::f16;
 use molrs::store::block::{Block as CoreBlock, BlockDtype, Column, ColumnHolder};
 use molrs::types::{F, I, Idx};
-use num_complex::Complex;
 use molrs_ffi::BlockRef;
 use ndarray::{Array1, ArrayD, IxDyn};
+use num_complex::Complex;
 use numpy::{PyArrayDyn, PyArrayMethods, PyReadonlyArrayDyn, PyUntypedArrayMethods};
 use pyo3::exceptions::{PyKeyError, PyValueError};
 use pyo3::prelude::*;
@@ -542,15 +542,6 @@ impl PyBlock {
     /// Clone the underlying `CoreBlock` out of the store (deep copy).
     pub(crate) fn clone_core_block(&self) -> PyResult<CoreBlock> {
         self.inner.clone_block().map_err(ffi_error_to_pyerr)
-    }
-
-    /// Insert a Python-facing column from another module in this crate.
-    pub(crate) fn insert_py_column(
-        &mut self,
-        key: &str,
-        array: &Bound<'_, pyo3::types::PyAny>,
-    ) -> PyResult<()> {
-        self.insert(key, array)
     }
 
     /// Run a read-only closure on the underlying `CoreBlock`.

@@ -5,9 +5,9 @@
 //! - [`trajectory`] — multi-frame formats (DCD, LAMMPS dump)
 //! - [`mrec`] / [`csv`] — serialization of the store types themselves, as
 //!   opposed to [`data`] and [`trajectory`], which read molecular file
-//!   formats. [`mrec`] writes and reads a [`crate::Record`] as a `*.mrec`
-//!   directory or packed `*.mrec.zip` (Zarr V3 on disk; Cargo feature `zarr`,
-//!   adapter crate-private)
+//!   formats. [`mrec`] writes and reads a [`crate::Frame`] or
+//!   [`crate::Trajectory`] as a `*.mrec` directory or packed `*.mrec.zip`
+//!   (Zarr V3 on disk; Cargo feature `zarr`, adapter crate-private)
 //! - [`reader`] / [`writer`] / [`streaming`] — shared traits and the
 //!   chunk-based frame-indexing infrastructure
 //! - [`smiles`] — SMILES/SMARTS notation parsing (feature `smiles`)

@@ -72,7 +72,7 @@ class TestZeroCopyWrap:
         bare = molrs.io.raw.read_pdb(str(water_pdb))
         mio._pdb_fmt.canonicalize_frame(bare)
         before = np.asarray(bare["atoms"].view("x"))
-        rich = RichFrame.from_dict(bare)
+        rich = RichFrame(bare)
         after = np.asarray(rich["atoms"].view("x"))
         assert np.shares_memory(before, after)
 
@@ -83,9 +83,9 @@ class TestZeroCopyWrap:
 
 
 class TestUpgradeIdentity:
-    def test_from_dict_on_rich_returns_equivalent_rich(self, water_pdb):
+    def test_wrap_on_rich_returns_equivalent_rich(self, water_pdb):
         rich = mio.read_pdb(str(water_pdb))
-        again = RichFrame.from_dict(rich)
+        again = RichFrame(rich)
         assert isinstance(again, RichFrame)
         assert set(again.keys()) == set(rich.keys())
         np.testing.assert_array_equal(

@@ -253,9 +253,9 @@ domain. The layout mirrors freud and the underlying Rust crate
 
 ## Transport
 
-Electrolyte transport kernels (ports of the *tame* recipes). See the
-[Transport Kernels](../guides/transport.md) guide for signatures, units, and
-worked examples.
+Electrolyte transport kernels (ports of the *tame* recipes). Worked examples,
+units, and signatures are in the
+[molpy documentation](https://docs.molcrafts.org/molpy/).
 
 ### `molrs.compute.transport`
 

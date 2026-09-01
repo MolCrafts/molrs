@@ -12,18 +12,13 @@ class TestFrameConstruction:
         assert f.keys() == []
         assert f.box is None
 
-    def test_from_dict_blocks_envelope(self):
-        f = Frame.from_dict(
-            {
-                "blocks": {
-                    "atoms": {
-                        "symbol": ["C", "H"],
-                        "x": np.array([0.0, 1.0], dtype=np.float64),
-                    }
-                },
-                "meta": {"source": MetaValue("string", "pytest")},
-            }
-        )
+    def test_setitem_populates_blocks_and_meta(self):
+        f = Frame()
+        atoms = Block()
+        atoms.insert("symbol", ["C", "H"])
+        atoms.insert("x", np.array([0.0, 1.0], dtype=np.float64))
+        f["atoms"] = atoms
+        f.meta = {"source": MetaValue("string", "pytest")}
 
         assert sorted(f.keys()) == ["atoms"]
         assert f["atoms"].nrows == 2
@@ -31,19 +26,6 @@ class TestFrameConstruction:
         np.testing.assert_allclose(f["atoms"].view("x"), [0.0, 1.0])
         assert f.meta["source"].dtype == "string"
         assert f.meta["source"].value == "pytest"
-
-    @pytest.mark.parametrize(
-        "data",
-        [
-            {"blocks": {}},
-            {"blocks": {}, "metadata": {}},
-            {"blocks": {}, "meta": {}, "metadata": {}},
-            {"atoms": {}},
-        ],
-    )
-    def test_from_dict_rejects_noncanonical_envelopes(self, data):
-        with pytest.raises(TypeError, match="exactly 'blocks' and 'meta'"):
-            Frame.from_dict(data)
 
     def test_repr_empty(self):
         r = repr(Frame())
