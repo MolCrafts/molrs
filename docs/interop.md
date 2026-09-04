@@ -355,6 +355,10 @@ Whichever path you take, molrs data follows these conventions:
 - **`special_bonds` weights live on the `ForceField`**, not in the neighbour list.
   The force field carries the 1-2 / 1-3 / 1-4 LJ and Coulomb scale factors
   (e.g. amber `0/0/0.5` LJ, `0/0/0.8333` Coulomb); a reader fills them.
+- **`BondDistanceWeights` is the core geometric table** (Cassandra 1-N tail,
+  always-on, one vector). It is not `ForceField::special_bonds`. A length-3
+  vector here is a zero-or-full tail, not a LAMMPS triple: charmm `0 0 0`
+  is `[0, 0, 0, 1]`. There is no `From`/`Into` between the two types.
 - **The neighbour list is the consumer's job.** `ForceField` holds parameters +
   `special_bonds` only; the optimizer / integrator builds the intramolecular pair
   list (`molrs::ff::potential::intramolecular_pairs(&frame) → atomi/atomj/is_14`)

@@ -659,6 +659,11 @@ impl Style {
 /// Per-nonbonded-kind 1-2 / 1-3 / 1-4 interaction scale weights — LAMMPS
 /// `special_bonds` semantics, owned by the [`ForceField`].
 ///
+/// The always-on geometric table is [`crate::BondDistanceWeights`]: one
+/// arbitrary-length vector with an explicit 1-N tail. A LAMMPS triple is not
+/// a transcription (`charmm 0 0 0` is `[0, 0, 0, 1]` there). There is no
+/// `From` / `Into` between the two types.
+///
 /// A weight of `0.0` fully excludes that neighbour class; `1.0` leaves it at
 /// full strength. molrs realises 1-2 / 1-3 *exclusion* by **omitting** those
 /// pairs from the neighbour list (`intramolecular_pairs`), so the pair kernels
