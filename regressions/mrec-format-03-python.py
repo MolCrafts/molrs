@@ -1,9 +1,10 @@
-r"""Write a system through ``molrs.io.mrec`` and read the version key back.
+r"""Write a system through ``molrs.io.mrec`` and read its meta back.
 
 Scientific-record I/O belongs on ``molrs.io.mrec``. This script writes a
 one-system store to a directory whose name ends in ``.mrec``, reads it back
-with ``read_system``, and asserts ``molrec_version`` as the literal ``1``.
-It never constructs a Record.
+with ``read_system``, and pins the dev-phase versioning rule: writers stamp no
+``molrec_version`` while the contract is in development
+(`.claude/notes/notes.md`, 2026-09-02). It never constructs a Record.
 
 Provenance of the goldens: hand-written literals, no external oracle and no
 third-party scientific package at run time (``molrs`` + ``numpy`` only, numpy
@@ -52,11 +53,13 @@ with tempfile.TemporaryDirectory() as tmp:
 
     meta = molrs.io.mrec.read_meta(store)
     molrs.io.mrec.schema.validate_meta(meta)
-    assert meta["molrec_version"] == molrs.io.mrec.schema.MOLREC_VERSION
+    # Dev-phase versioning: nothing is stamped. This is a pin on the writer,
+    # not a shrug — it fails the moment a writer starts stamping again.
+    assert "molrec_version" not in meta, meta
     assert "format_name" not in meta, meta
     assert store.is_dir(), store
 
 print(
     "mrec-format-03-python ok: write_system/read_system record.mrec "
-    "molrec_version=1"
+    "with unstamped meta"
 )

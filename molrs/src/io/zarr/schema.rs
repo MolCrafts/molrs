@@ -33,16 +33,21 @@ pub fn validate_path(path: &std::path::Path) -> Result<(), MolRsError> {
     Ok(())
 }
 
-/// Validate the mandatory `meta` version key against the mrec contract.
+/// Validate the `meta` version key against the mrec contract.
 ///
-/// `molrec_version` must be present and in `1..=`[`MOLREC_VERSION`]. It is
-/// the sole version key of a record; identity is this key plus the `*.mrec/`
-/// path suffix.
+/// While the contract is in development `molrec_version` is **optional**: an
+/// absent key means no version validation at all. When present it must be an
+/// integer in `1..=`[`MOLREC_VERSION`]. Identity of a record is the `*.mrec/`
+/// path suffix plus a Zarr root, not this key.
 pub fn validate_meta(attrs: &JsonMap<String, JsonValue>) -> Result<(), MolRsError> {
-    let version = attrs
-        .get("molrec_version")
-        .and_then(JsonValue::as_u64)
-        .ok_or_else(|| MolRsError::zarr("meta is missing 'molrec_version'"))?;
+    let Some(value) = attrs.get("molrec_version") else {
+        return Ok(());
+    };
+    let version = value.as_u64().ok_or_else(|| {
+        MolRsError::zarr(format!(
+            "molrec_version must be a positive integer when present, found {value}"
+        ))
+    })?;
     // Accept any version this reader is new enough to understand (`1..=N`) and
     // reject only a *newer* one; a hard `!= N` gate would turn every future
     // version bump into a mutual hard fork with already-written stores.
@@ -85,19 +90,19 @@ mod tests {
         validate_meta(&meta(1)).unwrap();
     }
 
+    /// Development contract: an absent version key means no version check.
     #[test]
-    fn missing_molrec_version_is_refused() {
+    fn missing_molrec_version_is_accepted() {
         let mut attrs = meta(1);
         attrs.remove("molrec_version");
-        let err = validate_meta(&attrs).unwrap_err().to_string();
-        assert!(err.contains("molrec_version"), "{err}");
+        validate_meta(&attrs).unwrap();
     }
 
-    /// A store from the retired `format_name`/`record_schema_version` era
-    /// carries neither key the contract now names, and is refused for the
-    /// missing `molrec_version`, not for the keys it does carry.
+    /// The retired `format_name`/`record_schema_version` keys are neither
+    /// checked nor refused; only `molrec_version` is looked at, and it is
+    /// absent here.
     #[test]
-    fn retired_brand_keys_do_not_identify_a_record() {
+    fn retired_brand_keys_are_ignored() {
         let attrs = json!({
             "format_name": "mrec",
             "record_schema_version": 1,
@@ -105,7 +110,22 @@ mod tests {
         .as_object()
         .cloned()
         .unwrap();
+        validate_meta(&attrs).unwrap();
+    }
+
+    #[test]
+    fn a_non_integer_molrec_version_is_refused() {
+        let attrs = json!({ "molrec_version": "1" })
+            .as_object()
+            .cloned()
+            .unwrap();
         let err = validate_meta(&attrs).unwrap_err().to_string();
+        assert!(err.contains("molrec_version"), "{err}");
+    }
+
+    #[test]
+    fn molrec_version_zero_is_refused() {
+        let err = validate_meta(&meta(0)).unwrap_err().to_string();
         assert!(err.contains("molrec_version"), "{err}");
     }
 

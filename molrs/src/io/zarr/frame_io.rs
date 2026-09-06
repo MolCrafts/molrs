@@ -4,6 +4,8 @@
 //! molrs in-memory types and
 //! Zarr V3 arrays/groups, always relative to a caller-supplied path prefix.
 
+#[cfg(feature = "zarr")]
+use zarrs::array::codec::bytes_to_bytes::crc32c::Crc32cCodec;
 use zarrs::array::data_type::{
     BoolDataType, Complex64DataType, Complex128DataType, Float16DataType, Float32DataType,
     Float64DataType, Int8DataType, Int16DataType, Int32DataType, Int64DataType, StringDataType,
@@ -11,7 +13,7 @@ use zarrs::array::data_type::{
 };
 use zarrs::array::{Array, ArraySubset};
 #[cfg(feature = "zarr")]
-use zarrs::array::{ArrayBuilder, codec::GzipCodec, data_type};
+use zarrs::array::{ArrayBuilder, BytesToBytesCodecTraits, codec::GzipCodec, data_type};
 #[cfg(feature = "zarr")]
 use zarrs::group::GroupBuilder;
 use zarrs::node::{Node, NodeMetadata};
@@ -36,13 +38,15 @@ use molrs::types::F;
 #[cfg(feature = "zarr")]
 use super::chunking::{ChunkPlan, plan};
 
-/// `gzip` compression level for every array this backend writes.
+/// `gzip` level for the fixed-size arrays that compress: integer, boolean and
+/// string columns. Level 1 — these compress by structure, not by effort.
 ///
-/// The level is not a knob: it is zarrs' own canonical level (its examples and
-/// its sharding tests all use 5), and the store contract fixes lossless `gzip`
-/// rather than a tunable codec.
+/// Floating-point columns are stored raw: 52 random mantissa bits gzip to
+/// about 95 % of their size at a real CPU cost, and a precision study admits
+/// no lossy codec that would do better. Every array carries `crc32c` so a torn
+/// chunk is a checksum error rather than garbage rows.
 #[cfg(feature = "zarr")]
-pub(in crate::io::zarr) const GZIP_LEVEL: u32 = 5;
+pub(in crate::io::zarr) const GZIP_LEVEL: u32 = 1;
 
 // ---------------------------------------------------------------------------
 // Column write
@@ -149,15 +153,24 @@ where
         Some(shards) => (shards, Some(chunk)),
         None => (chunk, None),
     };
+    let is_float = dt.is::<Float16DataType>()
+        || dt.is::<Float32DataType>()
+        || dt.is::<Float64DataType>()
+        || dt.is::<Complex64DataType>()
+        || dt.is::<Complex128DataType>();
     let mut builder = ArrayBuilder::new(shape.clone(), extent, dt, fill);
-    // Compression is lossless and unconditional: a precision study forbids any
-    // lossy encoding, and gzip is the one codec every reader of this store
-    // (including wasm32, which cannot link zstd/blosc) can decode. Under
-    // sharding these codecs encode the subchunks, inside the shard.
-    builder.bytes_to_bytes_codecs(vec![Arc::new(
-        GzipCodec::new(GZIP_LEVEL)
-            .map_err(|e| MolRsError::zarr(format!("gzip level {GZIP_LEVEL}: {e}")))?,
-    )]);
+    // Lossless throughout: integers, booleans and strings gzip (they compress
+    // by structure); floating-point payloads stay raw (they do not); every
+    // chunk ends in `crc32c`. Under sharding these codecs encode the
+    // subchunks, inside the shard.
+    let mut codecs: Vec<Arc<dyn BytesToBytesCodecTraits>> = Vec::with_capacity(2);
+    if !is_float {
+        codecs.push(Arc::new(GzipCodec::new(GZIP_LEVEL).map_err(|e| {
+            MolRsError::zarr(format!("gzip level {GZIP_LEVEL}: {e}"))
+        })?));
+    }
+    codecs.push(Arc::new(Crc32cCodec::new()));
+    builder.bytes_to_bytes_codecs(codecs);
     if let Some(subchunk) = subchunk {
         builder.subchunk_shape(subchunk);
     }
@@ -195,6 +208,19 @@ where
     S: ?Sized + ReadableStorageTraits + 'static,
 {
     let arr = Array::open(store.clone(), path)?;
+    read_column_array(&arr, subset)
+}
+
+/// [`read_column`] over an already-open array — the form a reader that keeps
+/// its array handles across frames uses, so a frame read is one chunk fetch
+/// rather than a metadata round trip plus a chunk fetch.
+pub(crate) fn read_column_array<S>(
+    arr: &Array<S>,
+    subset: &ArraySubset,
+) -> Result<Column, MolRsError>
+where
+    S: ?Sized + ReadableStorageTraits + 'static,
+{
     let shape: Vec<usize> = subset.shape().iter().map(|&s| s as usize).collect();
 
     let dt = arr.data_type();
@@ -298,23 +324,9 @@ pub(crate) fn write_simbox(
     prefix: &str,
     simbox: &SimBox,
 ) -> Result<(), MolRsError> {
-    // Per-axis periodicity is three booleans. JSON represents those exactly and
-    // an attribute costs no files, where an array would cost two per cell.
     let mut attrs = serde_json::Map::new();
-    attrs.insert(
-        "boundary".to_string(),
-        serde_json::Value::Array(
-            simbox
-                .pbc_view()
-                .iter()
-                .map(|&b| serde_json::Value::Bool(b))
-                .collect(),
-        ),
-    );
-    // `cell_defined` is written only when it is *false*. Every store written
-    // before this attribute existed carries a defined cell, so absent has to
-    // keep meaning `true` -- emitting it unconditionally would buy nothing and
-    // cost a diff against every existing store.
+    // `cell_defined` is written only when it is *false*: absent means a
+    // defined cell.
     if !simbox.is_cell_defined() {
         attrs.insert("cell_defined".to_string(), serde_json::Value::Bool(false));
     }
@@ -329,10 +341,25 @@ pub(crate) fn write_simbox(
     let h_data: Vec<F> = h_view.iter().copied().collect();
     write_f64_array(store, &format!("{}/vectors", prefix), &[3, 3], &h_data)?;
 
-    // origin: [3] Float64
+    // origin: [3] Float64, written only when it carries information (the
+    // normative default is the coordinate origin).
     let origin_view = simbox.origin_view();
-    let origin_data: Vec<F> = origin_view.iter().copied().collect();
-    write_f64_array(store, &format!("{}/origin", prefix), &[3], &origin_data)?;
+    if origin_view.iter().any(|&v| v != 0.0) {
+        let origin_data: Vec<F> = origin_view.iter().copied().collect();
+        write_f64_array(store, &format!("{}/origin", prefix), &[3], &origin_data)?;
+    }
+
+    // boundary: [3] bool, the same array form the trajectory path writes;
+    // omitted for the all-periodic default.
+    let pbc = simbox.pbc();
+    if pbc != [true, true, true] {
+        let flags = ndarray::ArrayD::from_shape_vec(vec![3], pbc.to_vec()).map_err(shape_err)?;
+        write_column(
+            store,
+            &format!("{}/boundary", prefix),
+            &Column::from_bool(flags),
+        )?;
+    }
 
     Ok(())
 }
@@ -370,21 +397,37 @@ pub(crate) fn read_simbox(
 
     let group = zarrs::group::Group::open(store.clone(), prefix)?;
 
-    // Boundary flags ride as a group attribute. An absent (or short) attribute
-    // is fully periodic, which is what molrec's `BoxModel` means by leaving it
-    // out -- reading it as vacuum would make one store two different physical
-    // systems depending on which implementation opened it.
-    let pbc = match group
-        .attributes()
-        .get("boundary")
-        .and_then(|v| v.as_array())
-    {
-        Some(flags) if flags.len() == 3 => [
-            flags[0].as_bool().unwrap_or(true),
-            flags[1].as_bool().unwrap_or(true),
-            flags[2].as_bool().unwrap_or(true),
-        ],
-        _ => [true, true, true],
+    // Boundary flags are a `bool[3]` array. An absent array is fully
+    // periodic, the normative default -- reading it as vacuum would make one
+    // store two different physical systems depending on which implementation
+    // opened it. A store from before the array form carried the flags as a
+    // group attribute; that is still honoured.
+    let boundary_path = format!("{}/boundary", prefix);
+    let pbc = match Array::open(store.clone(), &boundary_path) {
+        Ok(arr) => {
+            let flags: Vec<bool> =
+                arr.retrieve_array_subset(&ArraySubset::new_with_shape(arr.shape().to_vec()))?;
+            if flags.len() != 3 {
+                return Err(MolRsError::zarr(format!(
+                    "box boundary expected 3 flags, got {}",
+                    flags.len()
+                )));
+            }
+            [flags[0], flags[1], flags[2]]
+        }
+        Err(zarrs::array::ArrayCreateError::MissingMetadata) => match group
+            .attributes()
+            .get("boundary")
+            .and_then(|v| v.as_array())
+        {
+            Some(flags) if flags.len() == 3 => [
+                flags[0].as_bool().unwrap_or(true),
+                flags[1].as_bool().unwrap_or(true),
+                flags[2].as_bool().unwrap_or(true),
+            ],
+            _ => [true, true, true],
+        },
+        Err(e) => return Err(e.into()),
     };
 
     // `cell_defined` is optional and only ever written when false, so absent

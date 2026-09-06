@@ -291,6 +291,35 @@ pub mod ffi {
             field_data: &[f64],
         ) -> Result<()>;
         fn read_first_frame(path: &str) -> Result<Box<FrameRef>>;
+
+        // ── Streaming trajectory writer (`*.mrec`, append-first) ──
+        // The engine's output path: one writer per run, one frame per
+        // append; complete inner chunks land on their own, `flush` commits
+        // (durably when `durable`), `close` ends the run. `flush_every == 0`
+        // leaves the landing cadence to the writer. `schema_from` pins the
+        // blocks/columns every later frame must stay inside.
+        type TrajectoryWriterRef;
+        fn trajectory_writer_create(
+            path: &str,
+            schema_from: &FrameRef,
+            flush_every: u64,
+            durable: bool,
+        ) -> Result<Box<TrajectoryWriterRef>>;
+        fn trajectory_writer_open(
+            path: &str,
+            flush_every: u64,
+            durable: bool,
+        ) -> Result<Box<TrajectoryWriterRef>>;
+        fn trajectory_writer_append(
+            writer: &mut TrajectoryWriterRef,
+            fref: &FrameRef,
+            step: i64,
+            time: f64,
+            has_time: bool,
+        ) -> Result<()>;
+        fn trajectory_writer_flush(writer: &mut TrajectoryWriterRef) -> Result<()>;
+        fn trajectory_writer_committed(writer: &TrajectoryWriterRef) -> u64;
+        fn trajectory_writer_close(writer: Box<TrajectoryWriterRef>) -> Result<()>;
         // Read the first frame of an (ext)XYZ file into a materialize-ready
         // FrameRef (atoms.{x,y,z,type} + simbox). `type` is derived from the
         // required ExtXYZ species column (Z). All XYZ parsing lives in molrs.

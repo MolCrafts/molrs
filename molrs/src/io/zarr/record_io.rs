@@ -57,7 +57,7 @@ use zarrs::storage::WritableStorageTraits;
 use crate::io::zarr::frame_io::{join_path, read_column, read_frame_group};
 #[cfg(feature = "zarr")]
 use crate::io::zarr::frame_io::{node_prefix, write_column, write_frame_group};
-use crate::io::zarr::schema::{self, MOLREC_VERSION};
+use crate::io::zarr::schema;
 use crate::io::zarr::sequence::FrameSequence;
 #[cfg(feature = "zarr")]
 use crate::io::zarr::sequence::{FrameSequenceWriter, SequenceSchema};
@@ -65,6 +65,7 @@ use crate::io::zarr::sequence::{FrameSequenceWriter, SequenceSchema};
 use crate::io::zarr::store::PositionalWriteStore;
 use molrs::MolRsError;
 use molrs::store::block::Column;
+#[cfg(feature = "filesystem")]
 use molrs::store::frame::Frame;
 use molrs::store::record::MolRec;
 #[cfg(feature = "filesystem")]
@@ -110,7 +111,7 @@ use molrs::store::trajectory::{ObservableData, ObservableKind, ObservableRecord}
 /// write_record_file(&path, &record)?;
 ///
 /// let loaded = read_record_file(&path)?;
-/// assert_eq!(loaded.meta["molrec_version"].as_u64(), Some(1));
+/// assert!(loaded.frame.is_some());
 /// # Ok(())
 /// # }
 /// ```
@@ -192,16 +193,20 @@ pub fn write_record_store(
     Ok(())
 }
 
-/// Write `meta`, stamping the contract-owned key over any producer copy.
+/// Write `meta` as the producer handed it.
+///
+/// No version key is stamped: during development `molrec_version` is optional
+/// and its absence means no version validation. A producer that wants one
+/// puts it in `meta` itself; [`schema::validate_meta`] checks it on the way
+/// back in.
 #[cfg(feature = "zarr")]
 fn write_meta(
     store: &ReadableWritableListableStorage,
     path: &str,
     meta: &JsonMap<String, JsonValue>,
 ) -> Result<(), MolRsError> {
-    let mut attrs = meta.clone();
-    attrs.insert("molrec_version".into(), MOLREC_VERSION.into());
-    write_json_group(store, path, &attrs)
+    schema::validate_meta(meta)?;
+    write_json_group(store, path, meta)
 }
 
 #[cfg(feature = "zarr")]
@@ -443,7 +448,7 @@ pub fn read_record_store(store: ReadableWritableListableStorage) -> Result<MolRe
                 // errors out of it rather than reading back as empty.
                 // Demoted on the way in: the decoder is a read door, so it is
                 // handed the store's read-only view rather than this one.
-                let mut sequence = FrameSequence::open(store.clone().readable_listable())?;
+                let sequence = FrameSequence::open(store.clone().readable_listable())?;
                 record.trajectory = Some(sequence.to_trajectory()?);
             }
             "observables" => read_observables(&store, &path, &mut record)?,
@@ -466,15 +471,20 @@ pub fn read_record_store(store: ReadableWritableListableStorage) -> Result<MolRe
     Ok(record)
 }
 
-/// Read and validate the mandatory `meta` section.
+/// Read and validate the `meta` section.
+///
+/// Every writer creates the group, but a reader tolerates its absence — an
+/// empty document — so a store a foreign tool assembled without one still
+/// opens. A present `molrec_version` is validated.
 fn read_meta(
     store: &ReadableWritableListableStorage,
     path: &str,
 ) -> Result<JsonMap<String, JsonValue>, MolRsError> {
-    let group = zarrs::group::Group::open(store.clone(), path)
-        .map_err(|_| MolRsError::zarr("not a MolRec record: missing required 'meta' section"))?;
-    let attrs = group.attributes().clone();
-
+    let attrs = match zarrs::group::Group::open(store.clone(), path) {
+        Ok(group) => group.attributes().clone(),
+        Err(zarrs::group::GroupCreateError::MissingMetadata) => JsonMap::new(),
+        Err(e) => return Err(e.into()),
+    };
     schema::validate_meta(&attrs)?;
     Ok(attrs)
 }
@@ -876,16 +886,31 @@ mod tests {
         read_record_file(&path).unwrap()
     }
 
+    /// Development contract: the writer stamps no version key. `meta` comes
+    /// back exactly as the producer handed it — empty here.
+    /// A reader tolerates a missing `meta/` group as an empty document; every
+    /// molrs writer creates the group, but a foreign store may not.
     #[test]
-    fn meta_carries_the_contract_key() {
+    fn a_record_without_a_meta_group_reads_as_an_empty_document() {
         let mut rec = MolRec::new();
         rec.frame = Some(Frame::new());
         let loaded = write_then_read(&rec);
+        assert!(loaded.meta.is_empty(), "{:?}", loaded.meta);
+    }
+
+    /// A producer that does write `molrec_version` keeps it, and a supported
+    /// value round-trips untouched.
+    #[test]
+    fn a_producer_molrec_version_round_trips() {
+        let mut rec = MolRec::new();
+        rec.frame = Some(Frame::new());
+        rec.meta
+            .insert("molrec_version".into(), schema::MOLREC_VERSION.into());
+        let loaded = write_then_read(&rec);
         assert_eq!(
-            loaded.meta.get("molrec_version").unwrap().as_u64(),
-            Some(MOLREC_VERSION)
+            loaded.meta["molrec_version"].as_u64(),
+            Some(schema::MOLREC_VERSION)
         );
-        assert!(!loaded.meta.contains_key("format_name"));
     }
 
     #[test]
@@ -1012,11 +1037,14 @@ mod tests {
         rec.frame = Some(Frame::new());
         write_record_file(&path, &rec).unwrap();
         std::fs::remove_dir_all(path.join("meta")).unwrap();
-        assert!(read_record_file(&path).is_err());
+        let loaded = read_record_file(&path).unwrap();
+        assert!(loaded.meta.is_empty());
     }
 
+    /// An absent `molrec_version` is not validated (development contract); a
+    /// present one outside `1..=MOLREC_VERSION` is refused.
     #[test]
-    fn every_noncurrent_molrec_version_is_rejected() {
+    fn a_present_molrec_version_outside_the_supported_range_is_rejected() {
         for version in [None, Some(0_u64), Some(2), Some(99)] {
             let dir = tempdir().unwrap();
             let path = dir.path().join("record.mrec");
@@ -1027,20 +1055,17 @@ mod tests {
             let metadata_path = path.join("meta/zarr.json");
             let mut metadata: JsonValue =
                 serde_json::from_slice(&std::fs::read(&metadata_path).unwrap()).unwrap();
-            match version {
-                Some(v) => metadata["attributes"]["molrec_version"] = v.into(),
-                None => {
-                    metadata["attributes"]
-                        .as_object_mut()
-                        .unwrap()
-                        .remove("molrec_version");
-                }
+            // The writer stamps no version, so `None` is the store as written;
+            // the other three overwrite the (absent) key.
+            if let Some(v) = version {
+                metadata["attributes"]["molrec_version"] = v.into();
             }
             std::fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
-            assert!(
-                read_record_file(&path).is_err(),
-                "accepted molrec_version {version:?}"
-            );
+            let result = read_record_file(&path);
+            match version {
+                None => assert!(result.is_ok(), "refused a store without molrec_version"),
+                Some(_) => assert!(result.is_err(), "accepted molrec_version {version:?}"),
+            }
         }
     }
 
@@ -1067,12 +1092,11 @@ mod tests {
             Some("value")
         );
 
-        // The narrow door writes a conforming record, not a private layout.
+        // The narrow door writes a conforming record, not a private layout:
+        // a root, a `meta/` group, and the trajectory section.
+        assert!(section_names(&path).unwrap().contains(&"meta".to_string()));
         let record = read_record_file(&path).unwrap();
-        assert_eq!(
-            record.meta.get("molrec_version").unwrap().as_u64(),
-            Some(MOLREC_VERSION)
-        );
+        assert!(record.trajectory.is_some());
     }
 
     #[test]
@@ -1085,11 +1109,8 @@ mod tests {
         let loaded = read_frame_file(&path).unwrap();
         assert_eq!(loaded.get("atoms").unwrap().nrows(), Some(3));
         assert!(read_system_file(&path).is_err());
+        assert!(section_names(&path).unwrap().contains(&"meta".to_string()));
         let record = read_record_file(&path).unwrap();
-        assert_eq!(
-            record.meta.get("molrec_version").unwrap().as_u64(),
-            Some(MOLREC_VERSION)
-        );
         assert!(record.trajectory.is_none());
     }
 
@@ -1116,13 +1137,8 @@ mod tests {
             section_names(&path).unwrap(),
             vec!["frame", "meta", "system"]
         );
-        assert_eq!(
-            read_meta_file(&path)
-                .unwrap()
-                .get("molrec_version")
-                .and_then(|v| v.as_u64()),
-            Some(MOLREC_VERSION)
-        );
+        // The identity document is present and, with nothing handed in, empty.
+        assert!(read_meta_file(&path).unwrap().is_empty());
 
         assert_eq!(
             read_frame_file(&path)
@@ -1214,18 +1230,19 @@ mod tests {
         assert!(err.contains("float64"), "{err}");
     }
 
+    /// The contract key is validated on the way out as well as in: a producer
+    /// cannot write a version this build does not support.
     #[test]
-    fn reserved_meta_keys_are_owned_by_the_writer() {
+    fn a_producer_molrec_version_out_of_range_is_refused_at_write() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("record.mrec");
         let mut rec = MolRec::new();
         rec.frame = Some(Frame::new());
-        // A producer trying to claim the contract key must not win.
         rec.meta.insert("molrec_version".into(), 99u64.into());
-
-        let loaded = write_then_read(&rec);
+        let err = write_record_file(&path, &rec).unwrap_err().to_string();
         for key in RESERVED_META_KEYS {
-            assert!(loaded.meta.contains_key(key));
+            assert!(err.contains(key), "{err}");
         }
-        assert_eq!(loaded.meta["molrec_version"].as_u64(), Some(MOLREC_VERSION));
     }
 
     /// Every node in the store, as a path relative to the record root (the

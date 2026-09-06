@@ -12,7 +12,9 @@ use molrs::Element;
 use molrs::ff::charge::{BccModel, BccParameterSet};
 use molrs::io::data::xyz::write_xyz_frame;
 #[cfg(feature = "zarr")]
-use molrs::io::mrec::{read_trajectory_file, write_trajectory_file};
+use molrs::io::mrec::{
+    FrameSequenceWriter, SequenceSchema, open_trajectory_sequence, write_trajectory_file,
+};
 use molrs::spatial::simbox::SimBox;
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
@@ -34,7 +36,10 @@ const CXX_CAP_FRAME_BLOCK_V2: u64 = 1 << 0;
 const CXX_CAP_ELEMENT: u64 = 1 << 1;
 /// CXX capability bit: AM1 base-charge to BCC assignment is available.
 const CXX_CAP_AM1_BCC: u64 = 1 << 2;
-const MOLRS_CXX_API_CAPABILITIES: u64 = CXX_CAP_FRAME_BLOCK_V2 | CXX_CAP_ELEMENT | CXX_CAP_AM1_BCC;
+/// CXX capability bit: the streaming `*.mrec` trajectory writer is available.
+const CXX_CAP_TRAJECTORY_WRITER: u64 = 1 << 3;
+const MOLRS_CXX_API_CAPABILITIES: u64 =
+    CXX_CAP_FRAME_BLOCK_V2 | CXX_CAP_ELEMENT | CXX_CAP_AM1_BCC | CXX_CAP_TRAJECTORY_WRITER;
 
 /// Exact ABI/semantic contract version consumed by Atomiverse.
 fn cxx_api_version() -> u32 {
@@ -681,16 +686,18 @@ fn write_frame(
 ///
 /// Used by Atomiverse checkpoint reload (`cpu::ZarrReader`): stage 1 of a long
 /// bench writes its end-state via [`write_frame`], then later debug
-/// iterations call this to skip stage 1. The returned `FrameRef` is populated
-/// via `with_mut` on a fresh standalone store — readers (`frame_column_f64`,
-/// `frame_box`, etc.) see exactly the columns and simbox that were stored.
+/// iterations call this to skip stage 1. Only frame 0 is decoded — the store
+/// is opened as a lazy cursor, never materialized. The returned `FrameRef` is
+/// populated via `with_mut` on a fresh standalone store — readers
+/// (`frame_column_f64`, `frame_box`, etc.) see exactly the columns and simbox
+/// that were stored.
 #[cfg(feature = "zarr")]
 fn read_first_frame(path: &str) -> Result<Box<FrameRef>, String> {
-    let traj = read_trajectory_file(path).map_err(|e| format!("read_first_frame: {e}"))?;
-    let frame = traj
-        .frames
-        .into_iter()
-        .next()
+    let sequence =
+        open_trajectory_sequence(path).map_err(|e| format!("read_first_frame: {e}"))?;
+    let frame = sequence
+        .frame(0)
+        .map_err(|e| format!("read_first_frame: {e}"))?
         .ok_or_else(|| "read_first_frame: empty trajectory".to_string())?;
     let inner = molrs_ffi::FrameRef::new_standalone();
     inner
@@ -699,6 +706,115 @@ fn read_first_frame(path: &str) -> Result<Box<FrameRef>, String> {
         })
         .map_err(|e| format!("read_first_frame: populate: {e}"))?;
     Ok(Box::new(FrameRef(inner)))
+}
+
+/// The engine's streaming trajectory writer: a `FrameSequenceWriter` behind
+/// an opaque CXX handle. `None` once closed, so a use after close is an error
+/// rather than a panic across the seam.
+pub struct TrajectoryWriterRef(Option<FrameSequenceWriter>);
+
+#[cfg(feature = "zarr")]
+fn configure_writer(
+    writer: FrameSequenceWriter,
+    flush_every: u64,
+    durable: bool,
+) -> Result<FrameSequenceWriter, String> {
+    let writer = writer.with_durable(durable);
+    if flush_every == 0 {
+        return Ok(writer);
+    }
+    writer
+        .with_flush_every(flush_every)
+        .map_err(|e| format!("trajectory_writer: {e}"))
+}
+
+/// Mint a `*.mrec` trajectory at `path`, pinned to the blocks and columns of
+/// `schema_from`.
+#[cfg(feature = "zarr")]
+fn trajectory_writer_create(
+    path: &str,
+    schema_from: &FrameRef,
+    flush_every: u64,
+    durable: bool,
+) -> Result<Box<TrajectoryWriterRef>, String> {
+    let schema = schema_from
+        .0
+        .with(SequenceSchema::from_frame)
+        .map_err(|e| format!("trajectory_writer_create: {e}"))?
+        .map_err(|e| format!("trajectory_writer_create: {e}"))?;
+    let writer = FrameSequenceWriter::create_at(path, schema)
+        .map_err(|e| format!("trajectory_writer_create: {e}"))?;
+    Ok(Box::new(TrajectoryWriterRef(Some(configure_writer(
+        writer,
+        flush_every,
+        durable,
+    )?))))
+}
+
+/// Reattach to the trajectory at `path` and continue after its last committed
+/// frame; whatever a crash left past the commit marker is rolled back first.
+#[cfg(feature = "zarr")]
+fn trajectory_writer_open(
+    path: &str,
+    flush_every: u64,
+    durable: bool,
+) -> Result<Box<TrajectoryWriterRef>, String> {
+    let writer =
+        FrameSequenceWriter::open_at(path).map_err(|e| format!("trajectory_writer_open: {e}"))?;
+    Ok(Box::new(TrajectoryWriterRef(Some(configure_writer(
+        writer,
+        flush_every,
+        durable,
+    )?))))
+}
+
+/// Buffer one frame at `step` (with `time` in fs when `has_time`).
+#[cfg(feature = "zarr")]
+fn trajectory_writer_append(
+    writer: &mut TrajectoryWriterRef,
+    fref: &FrameRef,
+    step: i64,
+    time: f64,
+    has_time: bool,
+) -> Result<(), String> {
+    let inner = writer
+        .0
+        .as_mut()
+        .ok_or_else(|| "trajectory_writer_append: writer is closed".to_string())?;
+    let time = has_time.then_some(time);
+    fref.0
+        .with(|frame| inner.append_at(frame, step, time))
+        .map_err(|e| format!("trajectory_writer_append: {e}"))?
+        .map_err(|e| format!("trajectory_writer_append: {e}"))
+}
+
+/// Commit every buffered frame (durably, unless the writer was opened with
+/// `durable == false`).
+#[cfg(feature = "zarr")]
+fn trajectory_writer_flush(writer: &mut TrajectoryWriterRef) -> Result<(), String> {
+    writer
+        .0
+        .as_mut()
+        .ok_or_else(|| "trajectory_writer_flush: writer is closed".to_string())?
+        .flush()
+        .map_err(|e| format!("trajectory_writer_flush: {e}"))
+}
+
+/// Frames committed so far (0 for a closed writer).
+#[cfg(feature = "zarr")]
+fn trajectory_writer_committed(writer: &TrajectoryWriterRef) -> u64 {
+    writer.0.as_ref().map_or(0, FrameSequenceWriter::committed)
+}
+
+/// Commit whatever is buffered and release the writer.
+#[cfg(feature = "zarr")]
+fn trajectory_writer_close(writer: Box<TrajectoryWriterRef>) -> Result<(), String> {
+    match writer.0 {
+        Some(inner) => inner
+            .close()
+            .map_err(|e| format!("trajectory_writer_close: {e}")),
+        None => Ok(()),
+    }
 }
 
 /// Atomic number for a chemical symbol — inverse of [`symbol_for_z`].
@@ -1299,6 +1415,45 @@ fn parse_bcc_parameter_set(name: &str) -> Result<BccParameterSet, String> {
 
 #[cfg(test)]
 mod tests {
+
+    /// The streaming writer round-trips through the bridge: create from a
+    /// frame, append, close, and `read_first_frame` reads frame 0 back
+    /// through the lazy cursor.
+    #[cfg(feature = "zarr")]
+    #[test]
+    fn trajectory_writer_round_trips_through_the_bridge() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("run.mrec");
+        let path = path.to_str().unwrap();
+        let first = frame_with_elements(&[6, 1], &[0.0, 1.0], &[0.0, 0.5], &[0.0, 0.25], &[
+            10.0, 0.0, 0.0, 0.0, 10.0, 0.0, 0.0, 0.0, 10.0,
+        ])
+        .unwrap();
+        let fref = FrameRef(molrs_ffi::FrameRef::new_standalone());
+        fref.0.with_mut(|f| *f = first.clone()).unwrap();
+
+        let mut writer = trajectory_writer_create(path, &fref, 0, false).unwrap();
+        trajectory_writer_append(&mut writer, &fref, 10, 0.5, true).unwrap();
+        let second = frame_with_elements(&[6, 1], &[2.0, 3.0], &[0.0, 0.5], &[0.0, 0.25], &[
+            10.0, 0.0, 0.0, 0.0, 10.0, 0.0, 0.0, 0.0, 10.0,
+        ])
+        .unwrap();
+        fref.0.with_mut(|f| *f = second).unwrap();
+        trajectory_writer_append(&mut writer, &fref, 20, 1.5, true).unwrap();
+        assert_eq!(trajectory_writer_committed(&writer), 0, "still buffered");
+        trajectory_writer_flush(&mut writer).unwrap();
+        assert_eq!(trajectory_writer_committed(&writer), 2);
+        trajectory_writer_close(writer).unwrap();
+
+        let back = read_first_frame(path).unwrap();
+        assert_eq!(frame_column_f64(&back, "atoms", "x"), vec![0.0, 1.0]);
+
+        let mut reopened = trajectory_writer_open(path, 1, false).unwrap();
+        assert_eq!(trajectory_writer_committed(&reopened), 2);
+        let err = trajectory_writer_append(&mut reopened, &fref, 5, 2.0, true).unwrap_err();
+        assert!(err.contains("increase"), "{err}");
+        trajectory_writer_close(reopened).unwrap();
+    }
     #[test]
     fn ffi_element_matches_core_element() {
         for z in 1u8..=118 {
@@ -1390,7 +1545,7 @@ mod tests {
         assert_eq!(cxx_api_version(), 1);
         assert_eq!(
             cxx_api_capabilities(),
-            CXX_CAP_FRAME_BLOCK_V2 | CXX_CAP_ELEMENT | CXX_CAP_AM1_BCC
+            CXX_CAP_FRAME_BLOCK_V2 | CXX_CAP_ELEMENT | CXX_CAP_AM1_BCC | CXX_CAP_TRAJECTORY_WRITER
         );
         assert_eq!(frame_schema_version(), 2);
         let mut fref = frame_new();

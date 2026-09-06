@@ -110,6 +110,37 @@ Frames without a simulation box are supported — a non-periodic bounding box is
 
 `F` is the molrs core float type — always `f64`.
 
+## Trajectory stores (`*.mrec`)
+
+`TrajectoryReader` opens a MolRec trajectory (Zarr V3) and decodes one frame
+per call; consecutive frames of the same chunk are slices, not decodes.
+
+```js
+import { TrajectoryReader } from "@molcrafts/molrs";
+
+// (a) every file in memory
+const reader = new TrajectoryReader(files);            // Map<path, Uint8Array>
+// (b) a packed store
+const zipped = TrajectoryReader.fromZip(bytes);        // Uint8Array of *.mrec.zip
+// (c) served on demand — only touched chunks cross into wasm
+const lazy = TrajectoryReader.fromStore({
+  get: (key) => ...,                                   // Uint8Array | null
+  getRange: (key, offset, length) => ...,              // length -1 = to end
+  size: (key) => ...,                                  // number | null
+  list: (prefix) => [...],                             // keys under prefix
+});
+
+reader.countFrames();
+const frame = reader.readFrame(t);                     // Frame | undefined
+const xyz = reader.readColumns(t, ["atoms/x", "atoms/y", "atoms/z"]);
+reader.blockUpdateAt("bonds", t);                      // same value ⇒ same rows
+reader.boxAt(t);
+```
+
+The host callbacks of `fromStore` are synchronous: in a Worker that is
+`FileReaderSync` over `File` handles or a synchronous range request; on the
+main thread hand the reader a `Map` instead.
+
 ## Build from source
 
 ```bash

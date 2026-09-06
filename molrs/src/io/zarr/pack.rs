@@ -361,7 +361,7 @@ mod tests {
         let before = read_trajectory_file(&store_path).expect("the directory store reads");
 
         let zip_path = pack(&store_path).expect("packing a closed store succeeds");
-        let mut sequence = FrameSequence::open(open_packed(&zip_path).expect("the zip opens"))
+        let sequence = FrameSequence::open(open_packed(&zip_path).expect("the zip opens"))
             .expect("the packed sequence opens");
         let after = sequence.to_trajectory().expect("the packed sequence reads");
 

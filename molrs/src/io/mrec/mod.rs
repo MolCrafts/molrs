@@ -40,10 +40,11 @@
 //!   `*_file` functions, and [`open_trajectory_sequence`] need the
 //!   `filesystem` feature.
 //!
-//! Every writer writes [`schema::MOLREC_VERSION`] (`molrec_version = 1`) into
-//! `meta` — the sole version key of a record. A reader rejects a missing key
-//! and any version newer than it understands. Identity of a store is that key
-//! plus the `*.mrec/` path suffix; there is no separate brand key.
+//! Every writer creates the record root and its `meta/` group. While the
+//! contract is in development no version key is written: `molrec_version` is
+//! optional, an absent key means no version validation, and a present one
+//! must be a positive integer no newer than [`schema::MOLREC_VERSION`].
+//! Identity of a store is the `*.mrec/` path suffix plus a Zarr root.
 //!
 //! # Examples
 //!
@@ -60,15 +61,17 @@
 //! write_frame_file(&path, &molrs::Frame::new(), None, None)?;
 //!
 //! let loaded = read_frame_file(&path)?;
-//! let meta = molrs::io::mrec::read_record_file(&path)?.meta;
-//! assert_eq!(meta["molrec_version"].as_u64(), Some(1));
+//! let sections = molrs::io::mrec::section_names(&path)?;
+//! assert!(sections.iter().any(|s| s == "frame"));
 //! let _ = loaded;
 //! # Ok(())
 //! # }
 //! ```
 
 #[doc(inline)]
-pub use super::zarr::{FrameSequence, FrameSequenceWriter, SequenceSchema};
+pub use super::zarr::{
+    Compression, FrameSequence, FrameSequenceWriter, SequenceSchema, column_dtype,
+};
 
 /// Runtime validation of the mrec record schema (path suffix, `meta` brand).
 #[doc(inline)]
@@ -85,3 +88,8 @@ pub use super::zarr::{
 #[cfg(feature = "filesystem")]
 #[doc(inline)]
 pub use super::zarr::{open_packed, pack};
+
+/// The store-taking record doors: a whole record into / out of any open
+/// store, filesystem or not.
+#[doc(inline)]
+pub use super::zarr::{read_record_store, write_record_store};

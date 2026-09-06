@@ -13,8 +13,9 @@
 //!   frame per call. [`FrameSequence::to_trajectory`] is the named lazy → eager
 //!   conversion, not a second representation.
 //! - [`FrameSequenceWriter`] — the sequence's **streaming producer**. One frame
-//!   per [`append`](FrameSequenceWriter::append),
-//!   [`flush`](FrameSequenceWriter::flush) commits.
+//!   per [`append`](FrameSequenceWriter::append); complete inner chunks land
+//!   on their own, [`flush`](FrameSequenceWriter::flush) commits whatever is
+//!   still buffered.
 //!
 //! The `trajectory/` group on disk is the sequence's serialized form; none of
 //! the three names is a second name for it.
@@ -30,20 +31,34 @@
 //! # The layout
 //!
 //! ```text
-//! trajectory/                    group; attributes carry the pinned schema
-//!   step     i64  [nstep]        the commit marker, extended last
-//!   time     f64  [nstep]        only when the run supplies times
-//!   meta/<key>    typed [nstep] (or [nstep][3|6|9]); attr molrs_meta_dtype
-//!   box/
-//!     step_index u64  [n_updates]
+//! /                              root group
+//! meta/                          the record's identity document (attributes)
+//! trajectory/                    group; attrs: sequence_schema (the pin),
+//!                                nstep (the commit marker, written last),
+//!                                step_progression / time_progression
+//!                                ({start, stride} while the series is regular)
+//!   step     i64  [nstep]        only once the numbering is not a progression
+//!   time     f64  [nstep]        only when supplied and not a progression
+//!   meta/<key>    typed [nstep] (or [nstep][3|6|9]); attr meta_dtype
+//!   box/                         attrs: cell_defined; vectors / origin /
+//!                                boundary while the cell is fixed from ordinal 0
+//!     step_index u64  [n_updates]     the arrays, once the cell changes
 //!     vectors    f64  [n_updates][3][3]
 //!     origin     f64  [n_updates][3]
 //!     boundary   bool [n_updates][3]
-//!   <block>/                     attr structural_shape when one is declared
-//!     step_index u64  [n_updates]
+//!   <block>/                     attrs structural_shape, uniform_rows, dense_updates
+//!     step_index u64  [n_updates]     absent while the block is regular
 //!     offset     u64  [n_updates+1]   CSR row pointer, offset[0] = 0
 //!     <column>        [total_rows][...trailing]
 //! ```
+//!
+//! The layout is built so the common run — a fixed number of atoms moving
+//! every frame, a topology written once, a fixed cell, frames dumped every
+//! `k` steps — costs one array per column and nothing else. A **regular**
+//! block (a fixed, non-zero row count at ordinals `0, 1, 2, …`) writes no
+//! index: its group hints plus any column's length resolve every frame. The
+//! first irregular update materializes `offset` and `step_index`, backfilled
+//! with the regular history, and withdraws the hints for good.
 //!
 //! `offset` is a **CSR** (compressed sparse row) row pointer, the standard way
 //! to store a ragged sequence of row groups in one flat array: entry `j` holds
@@ -51,65 +66,83 @@
 //! row range `offset[j]..offset[j+1]`, and the array is therefore one entry
 //! longer than `step_index`.
 //!
+//! # Three states of a block at a frame
+//!
 //! Resolving block `B` at frame `i`: binary-search `B/step_index` for the
 //! largest entry `<= i`, giving update `j`; the frame's rows are
-//! `offset[j]..offset[j+1]`. **No entry `<= i` means the block does not exist
-//! at that step** — absence, not an empty block. Row *counts* are never
-//! stored; they are `diff(offset)`.
+//! `offset[j]..offset[j+1]`. The three cases are the layout's whole
+//! presence vocabulary:
 //!
-//! Two consequences of that encoding are worth stating rather than
-//! discovering:
+//! - **No entry `<= i`** — the block does not exist at frame `i` (absence).
+//! - **An update of zero rows** — the block is present and empty from that
+//!   frame until its next update. It reads back as an empty [`Block`] with the
+//!   declared columns.
+//! - **A frame that omits a declared block** earns *no* update: the block
+//!   carries forward from its latest update. That is what makes a constant
+//!   topology cost one `step_index` entry whether the producer re-presents it
+//!   every frame (bit-identical content earns no update either) or presents
+//!   it once.
 //!
-//! - A block that was present and then goes away is landed as a **zero-row
-//!   update** at the step it disappears, and any update of zero rows reads
-//!   back as absent. A block that is genuinely present with zero rows is
-//!   therefore indistinguishable from an absent one.
-//! - The `box/` section has no `offset`, so it has no absence marker: once a
-//!   run writes a cell, every later step resolves to the most recent one. A
-//!   frame that drops its cell mid-run keeps the previous cell on read.
+//! Once a block has appeared it never becomes absent again; there is no
+//! tombstone. The `box/` section has no `offset` and follows the same
+//! carry-forward rule: once a run writes a cell, every later frame resolves to
+//! the most recent one.
 //!
-//! # Chunks, shards, and branch A
+//! # Chunks, shards, and the commit
 //!
-//! Three words from the Zarr storage model carry the rest of this module, so
-//! they are defined here once rather than assumed.
+//! Every array of the sequence is a Zarr V3 `sharding_indexed` array whose
+//! shard **index sits at the start** of the shard file. An **inner chunk** is
+//! the unit the codec compresses; a **shard** is one file holding a fixed
+//! number of consecutive inner chunks plus that index. With the index at the
+//! start, appending a complete inner chunk is a write at the tail of the file
+//! plus an in-place rewrite of the fixed-size index — nothing is re-encoded and
+//! no dead bytes are left behind.
 //!
-//! An **inner chunk** is the smallest unit the codec compresses and rewrites: a
-//! fixed number of rows, frozen when the array is created and not negotiable
-//! afterwards. A **shard** is one file on disk holding a fixed number of
-//! consecutive inner chunks plus a small index of their offsets within the
-//! file; choosing how many chunks a shard spans is the file-count lever, and it
-//! is what keeps a long run to a handful of files rather than one per frame.
+//! Block columns are **frame-aligned**: their inner chunk holds a whole number
+//! of frames of the representative row count (see [`SequenceSchema`]), so a
+//! frame decodes from exactly its own chunk and a commit at a chunk boundary
+//! rewrites nothing. The writer lands complete chunks on its own cadence
+//! ([`FrameSequenceWriter::with_flush_every`] overrides it); an explicit
+//! [`flush`](FrameSequenceWriter::flush) may land a partially filled trailing
+//! chunk, whose superseded copy then stays in the shard as dead bytes — bounded
+//! by one chunk per column per flush, and never cleaned up, because the
+//! whole-shard rewrite that would clean it is the one write that can destroy
+//! committed data on a crash.
 //!
-//! **Branch A** is the append strategy this module implements. The name comes
-//! from the spike verdict recorded in [`crate::io::zarr`]'s module doc: a
-//! partially filled *trailing* inner chunk can be rewritten in place as a
-//! tail-only write, so a commit may land any number of rows and never has to
-//! wait for a chunk boundary. Its price is that the superseded copy of a
-//! rewritten chunk stays in the shard file as dead bytes until that shard is
-//! re-encoded — which [`FrameSequenceWriter::flush`] does for a shard the run
-//! has just completed, and [`FrameSequenceWriter::close`] does for the final,
-//! still-partial one.
+//! **Commit protocol.** For every array: data is written, then the array's
+//! `zarr.json` (its new shape) is replaced atomically. Last comes the
+//! trajectory group's metadata — the `nstep` marker and the progression
+//! attributes — in one atomic replace. A reader takes `nstep` from that
+//! attribute; anything a crash left longer is invisible, and a reopened
+//! writer rolls it back before appending. An explicit `flush` / `close` is durable (the touched
+//! files are synced before `step` moves) unless
+//! [`with_durable(false)`](FrameSequenceWriter::with_durable) says otherwise;
+//! the automatic chunk-boundary landings are not synced.
 //!
 //! [`Trajectory`]: molrs::store::trajectory::Trajectory
 //! [`TrajectoryReader`]: crate::io::reader::TrajectoryReader
 
-use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::collections::{BTreeMap, VecDeque};
+use std::num::NonZeroU64;
+use std::sync::{Arc, Mutex, Once};
 
-use ndarray::{Array1, Array2};
+use ndarray::{Array1, Array2, ArrayD, Axis, Slice};
 use serde::{Deserialize, Serialize};
 use zarrs::array::codec::GzipCodec;
-use zarrs::array::codec::array_to_bytes::sharding::{ShardingCodecOptions, SubchunkWriteOrder};
-use zarrs::array::{
-    Array, ArrayBuilder, ArrayBytes, ArraySubset, CodecOptions, CodecSpecificOptions,
+use zarrs::array::codec::array_to_bytes::sharding::{
+    ShardingCodecBuilder, ShardingCodecOptions, ShardingIndexLocation, SubchunkWriteOrder,
 };
-use zarrs::config::global_config;
+use zarrs::array::codec::bytes_to_bytes::crc32c::Crc32cCodec;
+use zarrs::array::{
+    Array, ArrayBuilder, ArraySubset, BytesToBytesCodecTraits, CodecOptions, CodecSpecificOptions,
+};
+use zarrs::config::{global_config, global_config_mut};
 use zarrs::group::{Group, GroupBuilder};
 use zarrs::node::{Node, NodeMetadata, NodePath, get_child_nodes};
 use zarrs::storage::{
-    ListableStorageTraits, ReadableListableStorage, ReadableStorageTraits,
-    ReadableWritableListableStorage, ReadableWritableListableStorageTraits, StorageHandle,
-    StorePrefix, WritableStorageTraits,
+    ListableStorageTraits, ReadableListableStorage, ReadableListableStorageTraits,
+    ReadableStorageTraits, ReadableWritableListableStorage, ReadableWritableListableStorageTraits,
+    StorageHandle, StorePrefix, WritableStorageTraits,
 };
 
 use molrs::MolRsError;
@@ -122,10 +155,8 @@ use molrs::types::F;
 
 use crate::io::reader::TrajectoryReader;
 
-use super::chunking::TARGET_CHUNK_BYTES;
 use super::frame_io::{
-    BOX_GROUP, GZIP_LEVEL, insert_column_into_block, join_path, node_prefix, read_column,
-    zarr_dtype,
+    BOX_GROUP, insert_column_into_block, join_path, node_prefix, read_column_array, zarr_dtype,
 };
 use super::record_io::zerr;
 
@@ -133,97 +164,227 @@ use super::record_io::zerr;
 // Layout vocabulary
 // ---------------------------------------------------------------------------
 
+/// The record root.
+const ROOT_GROUP: &str = "/";
+/// The identity document's group.
+const META_ROOT_GROUP: &str = "/meta";
 /// The sequence root. Absolute, because every array path is built from it.
 const TRAJECTORY_GROUP: &str = "/trajectory";
-/// The commit marker.
+/// The commit marker: `i64[nstep]`, extended last.
 const STEP_ARRAY: &str = "step";
-/// Physical time, present only when the run supplies it.
+/// Physical time per frame, `f64[nstep]`, only when the run supplies times.
 const TIME_ARRAY: &str = "time";
-/// Parent group of the per-step typed metadata arrays.
+/// The per-step metadata group under `trajectory/`.
 const META_GROUP: &str = "meta";
-/// CSR row pointer of a block section.
+/// A block section's CSR row pointer.
 const OFFSET_ARRAY: &str = "offset";
-/// Frame ordinals at which a section was updated.
+/// A section's sparse update index: the frame ordinals it changed at.
 const STEP_INDEX_ARRAY: &str = "step_index";
-/// Cell matrices of the `box/` section.
+/// The cell matrices of the `box/` section.
 const VECTORS_ARRAY: &str = "vectors";
-/// Cell origins of the `box/` section.
+/// The cell origins of the `box/` section (omitted when all zero).
 const ORIGIN_ARRAY: &str = "origin";
-/// Per-axis periodicity of the `box/` section.
+/// The per-axis periodic flags of the `box/` section (omitted when all true).
 const BOUNDARY_ARRAY: &str = "boundary";
-/// The per-frame group tree molrs <= 0.13 wrote under `trajectory/`.
+/// The child molrs <= 0.13 wrote one group per frame under.
 const LEGACY_FRAMES_GROUP: &str = "frames";
-/// Group attribute of `trajectory/` holding the pinned schema.
-const SCHEMA_ATTRIBUTE: &str = "molrs_sequence_schema";
-/// Array attribute naming a per-step meta array's [`MetaValue::dtype`] tag.
-const META_DTYPE_ATTRIBUTE: &str = "molrs_meta_dtype";
-/// Optional `box/` group attribute; absent means a defined cell, matching
-/// `read_simbox`'s rule for the frame section.
+/// The `trajectory/` group attribute the pinned schema lives in.
+const SCHEMA_ATTRIBUTE: &str = "sequence_schema";
+/// The attribute every per-step meta array carries: its exact dtype tag.
+const META_DTYPE_ATTRIBUTE: &str = "meta_dtype";
+/// The `box/` group attribute recording an undefined cell (absent = defined).
 const CELL_DEFINED_ATTRIBUTE: &str = "cell_defined";
-/// Optional block-section group attribute mirroring the block's structural
-/// shape, in the same spelling `write_frame_group` uses for the frame section.
+/// Trajectory-group attribute: the commit marker — frames fully on disk.
+const NSTEP_ATTRIBUTE: &str = "nstep";
+/// Trajectory-group attribute: `step` as `{start, stride}` while it is regular.
+const STEP_PROGRESSION_ATTRIBUTE: &str = "step_progression";
+/// Trajectory-group attribute: `time` as `{start, stride}` while it is regular.
+const TIME_PROGRESSION_ATTRIBUTE: &str = "time_progression";
+/// A block section's mirrored structural shape.
 const STRUCTURAL_SHAPE_ATTRIBUTE: &str = "structural_shape";
+/// Block-section hint: every update so far holds this many rows.
+const UNIFORM_ROWS_ATTRIBUTE: &str = "uniform_rows";
+/// Block-section hint: `step_index[j] == j` for every update so far.
+const DENSE_UPDATES_ATTRIBUTE: &str = "dense_updates";
 
-/// `trajectory/`'s own children: no block may take one of these names.
+/// Children of `trajectory/` a block may not be named after.
 const RESERVED_BLOCK_NAMES: [&str; 4] = [STEP_ARRAY, TIME_ARRAY, META_GROUP, BOX_GROUP];
-/// A block section's own children: no column may take one of these names.
+/// Children of a block section a column may not be named after.
 const RESERVED_COLUMN_NAMES: [&str; 2] = [OFFSET_ARRAY, STEP_INDEX_ARRAY];
 
-/// Bytes one shard file aims for, and therefore the file-count lever: a store
-/// costs `total_bytes / SHARD_TARGET_BYTES + O(arrays)` files rather than one
-/// per frame.
+// ---------------------------------------------------------------------------
+// Extent policy
+// ---------------------------------------------------------------------------
+
+/// The fewest bytes one inner chunk of a block column aims for.
 ///
-/// Read where `k` is derived, in [`derive_extents`]. It is only a *target*:
-/// `k` falls out of it and the chunk size, and
-/// [`FrameSequenceWriter::with_chunks_per_shard`] overrides it outright.
+/// A chunk is the unit the codec compresses and the shard index points at;
+/// below this the per-chunk overhead (a 16 B index entry, a codec header) is
+/// no longer negligible against the payload. A frame larger than this is its
+/// own chunk.
+const MIN_CHUNK_BYTES: u64 = 16 * 1024;
+
+/// Bytes one shard file aims for, and therefore the file-count lever.
 const SHARD_TARGET_BYTES: u64 = 256 * 1024 * 1024;
+
+/// The most inner chunks one shard holds, whatever the byte target says.
+///
+/// The shard index is 16 B per inner chunk and is rewritten in place on every
+/// landing, so this caps that rewrite at 64 KiB.
+const MAX_CHUNKS_PER_SHARD: u64 = 4096;
+
+/// Rows per inner chunk of the dense per-frame / per-update arrays (`step`,
+/// `time`, `meta/*`, `offset`, `step_index`, `box/*`): 8 KiB of `u64`.
+const DENSE_ROWS_PER_CHUNK: u64 = 1024;
+
+/// Inner chunks per shard of the dense arrays: a 4 KiB shard index, so the
+/// in-place index rewrite every landing pays on each of them stays small
+/// (a flush-per-frame producer rewrites every dense array's index per frame).
+/// 256 × 1024 rows is still 262 144 frames per shard file.
+const DENSE_CHUNKS_PER_SHARD: u64 = 256;
+
+/// Bytes of frame payload the writer buffers before landing on its own.
+const FLUSH_TARGET_BYTES: u64 = 4 * 1024 * 1024;
+
+/// The most frames the writer buffers before landing on its own.
+const MAX_FLUSH_EVERY: u64 = 4096;
 
 /// Bytes assumed for one element of a variable-width ([`DType::String`])
 /// column when sizing a growth array.
 ///
-/// [`DType::itemsize`] reports `None` there and molrec's `plan` declines to
-/// size such an array at all — but a growth array's extents are frozen at
-/// creation, so "decline" is not an option and a number has to be chosen. It
-/// moves a chunk boundary and nothing else: a string chunk that misses the
-/// byte target costs throughput, never correctness.
+/// [`DType::itemsize`] reports `None` there, but a growth array's extents are
+/// frozen at creation, so a number has to be chosen. It moves a chunk boundary
+/// and nothing else.
 const ASSUMED_STRING_ITEMSIZE: u64 = 16;
 
-/// The options every write of this module carries.
+/// `gzip` level for the columns and arrays that compress (integers, booleans,
+/// strings, every index array). Level 1: these compress by structure, not by
+/// effort, and the write path pays the codec on every landing.
+const GZIP_LEVEL: u32 = 1;
+
+/// Inner chunks a column reader keeps decoded per column.
+///
+/// Playback reads the same chunk `frames_per_chunk` times in a row; a small
+/// LRU turns those repeats into slices. Two entries cover forward play and a
+/// one-step scrub back without holding more than two chunks of a huge column.
+const CHUNK_CACHE_ENTRIES: usize = 2;
+
+/// How the floating-point columns of a sequence are compressed.
+///
+/// Integer, boolean and string columns, and every index array, always carry
+/// `gzip` level 1: they compress by structure. Floating-point coordinates do
+/// not — 52 random mantissa bits gzip to about 95 % of their size at a real
+/// CPU cost — so their compression is a producer's choice, `None` by default.
+/// Every choice is lossless; a precision study admits nothing else.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Compression {
+    /// Raw little-endian bytes. The default for floating-point columns.
+    #[default]
+    None,
+    /// `gzip` at this level (1–9). Every reader of these stores decodes it.
+    Gzip(u32),
+    /// `zstd` at this level. Native builds only (`zarr-codecs`); wasm32
+    /// readers do not decode it, so a store meant for the browser stays on
+    /// `None` or `Gzip`.
+    #[cfg(feature = "zarr-codecs")]
+    Zstd(i32),
+}
+
+/// The frozen extents of one growth array.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Extents {
+    rows_per_chunk: u64,
+    chunks_per_shard: u64,
+}
+
+impl Extents {
+    /// Rows one inner chunk of a block column holds.
+    ///
+    /// Frame-aligned: the smallest whole number of frames of `frame_rows` rows
+    /// whose narrowest column reaches [`MIN_CHUNK_BYTES`]. A block whose
+    /// representative frame carries no rows (or is unknown) falls back to the
+    /// byte floor alone.
+    fn block_rows_per_chunk(frame_rows: u64, min_row_bytes: u64) -> u64 {
+        let floor = (MIN_CHUNK_BYTES / min_row_bytes.max(1)).max(1);
+        if frame_rows == 0 {
+            return floor;
+        }
+        frame_rows.max(floor).div_ceil(frame_rows) * frame_rows
+    }
+
+    /// Inner chunks one shard of an array with `chunk_bytes`-byte chunks holds.
+    fn chunks_per_shard_for(chunk_bytes: u64) -> u64 {
+        (SHARD_TARGET_BYTES / chunk_bytes.max(1)).clamp(1, MAX_CHUNKS_PER_SHARD)
+    }
+
+    /// Extents of one block column: `rows_per_chunk` shared by the block,
+    /// `chunks_per_shard` from this column's own width.
+    fn for_column(rows_per_chunk: u64, row_bytes: u64, chunks_per_shard: Option<u64>) -> Self {
+        Self {
+            rows_per_chunk,
+            chunks_per_shard: chunks_per_shard
+                .unwrap_or_else(|| Self::chunks_per_shard_for(rows_per_chunk * row_bytes)),
+        }
+    }
+}
+
+/// The options every data write of this module carries.
 ///
 /// Built explicitly and threaded into the `_opt` methods on purpose: the
 /// non-`_opt` methods construct their own defaults, where
-/// `experimental_partial_encoding` is `false` and every flush silently becomes
-/// an O(shard) rewrite. `global_config_mut()` is never touched — it is a
-/// process-wide `RwLock` belonging to the library, not to this writer.
+/// `experimental_partial_encoding` is `false` and every landing silently
+/// becomes an O(shard) rewrite.
 fn partial_encoding_options() -> CodecOptions {
     global_config()
         .codec_options()
         .with_experimental_partial_encoding(true)
 }
 
-/// The options a shard re-encode carries.
-///
-/// Partial encoding is deliberately **off**: a seal is a whole-value write of
-/// one shard, and the dead bytes partial encoding leaves behind are exactly
-/// what it exists to undo.
-fn compaction_options() -> CodecOptions {
-    global_config().codec_options()
-}
-
-/// Codec options that pin a shard's subchunk layout to C (row-major) order.
-///
-/// A sealed shard's bytes must not depend on thread scheduling, and by default
-/// they do: zarrs 0.23.13 lays newly written subchunks out in the iteration
-/// order of a `HashMap` (`sharding_partial_encoder.rs:363`) and, in the
-/// whole-shard encoder, in completion order
-/// (`SubchunkWriteOrder::Unordered`, the default). Measured, not feared — the
-/// same 24-frame run sealed its two inner chunks in either order from run to
-/// run. `SubchunkWriteOrder::C` makes the layout the shard index's own order,
-/// which is what lets "a closed store's bytes do not remember how often it was
-/// flushed" be a claim about bytes and not only about values.
+/// Codec options that pin a shard's subchunk layout to C (row-major) order, so
+/// a store's bytes do not depend on thread scheduling.
 fn deterministic_shard_layout() -> CodecSpecificOptions {
     CodecSpecificOptions::default().with_option(
         ShardingCodecOptions::default().with_subchunk_write_order(SubchunkWriteOrder::C),
+    )
+}
+
+/// Switch off zarrs' `_zarrs` provenance attribute on every array this process
+/// creates. Done once: the attribute is bundle noise on a contract layout, and
+/// the flag is process-wide by the library's design.
+fn quiet_zarrs_metadata() {
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        global_config_mut().set_include_zarrs_metadata(false);
+    });
+}
+
+/// The bytes-to-bytes codecs of one inner chunk: the optional compressor, then
+/// `crc32c` so a torn chunk is a checksum error rather than garbage rows.
+fn inner_codecs(
+    compression: Compression,
+) -> Result<Vec<Arc<dyn BytesToBytesCodecTraits>>, MolRsError> {
+    let mut codecs: Vec<Arc<dyn BytesToBytesCodecTraits>> = Vec::with_capacity(2);
+    match compression {
+        Compression::None => {}
+        Compression::Gzip(level) => codecs
+            .push(Arc::new(GzipCodec::new(level).map_err(|e| {
+                MolRsError::zarr(format!("gzip level {level}: {e}"))
+            })?)),
+        #[cfg(feature = "zarr-codecs")]
+        Compression::Zstd(level) => codecs.push(Arc::new(
+            zarrs::array::codec::bytes_to_bytes::zstd::ZstdCodec::new(level, false),
+        )),
+    }
+    codecs.push(Arc::new(Crc32cCodec::new()));
+    Ok(codecs)
+}
+
+/// Whether a column width is floating point — the widths whose compression is
+/// the producer's [`Compression`] choice rather than always-`gzip`.
+fn is_float_width(dtype: DType) -> bool {
+    matches!(
+        dtype,
+        DType::Float16 | DType::Float32 | DType::Float | DType::Complex64 | DType::Complex128
     )
 }
 
@@ -256,8 +417,7 @@ fn dtype_tag(dtype: DType) -> &'static str {
     }
 }
 
-/// Every storage width a schema column can declare — the search space
-/// [`dtype_tag`] is read backwards over.
+/// Every width a column may take, in the order molrec's dtype enum lists them.
 const SCHEMA_WIDTHS: [DType; 15] = [
     DType::Float16,
     DType::Float32,
@@ -266,21 +426,32 @@ const SCHEMA_WIDTHS: [DType; 15] = [
     DType::Int16,
     DType::Int,
     DType::Int64,
-    DType::Bool,
-    DType::UInt,
     DType::U8,
     DType::UInt16,
     DType::UInt32,
+    DType::UInt,
+    DType::Bool,
     DType::String,
     DType::Complex64,
     DType::Complex128,
 ];
 
-/// [`dtype_tag`] read backwards.
+/// The column width a schema dtype tag names — the public spelling of the
+/// closed dtype set (`f16` … `c128`) for callers that declare a schema from
+/// text rather than from a frame.
+///
+/// # Errors
+///
+/// A [`MolRsError::Zarr`] naming an unknown tag.
+pub fn column_dtype(tag: &str) -> Result<DType, MolRsError> {
+    dtype_from_tag(tag)
+}
+
+/// The column width a schema tag names.
+///
+/// Reads the fifteen concrete-width tags [`dtype_tag`] writes, plus the three
+/// legacy aliases (`float`, `int`, `uint`) an early store may carry.
 fn dtype_from_tag(tag: &str) -> Result<DType, MolRsError> {
-    // Stores written by molrs < 0.14 tagged the domain aliases `float`/`int`/
-    // `uint`; those stay readable forever. New stores use the molrec-conformant
-    // `f64`/`i32`/`u64` spelling that `dtype_tag` now emits.
     match tag {
         "float" => return Ok(DType::Float),
         "int" => return Ok(DType::Int),
@@ -288,55 +459,53 @@ fn dtype_from_tag(tag: &str) -> Result<DType, MolRsError> {
         _ => {}
     }
     SCHEMA_WIDTHS
-        .into_iter()
-        .find(|dtype| dtype_tag(*dtype) == tag)
-        .ok_or_else(|| MolRsError::zarr(format!("unknown column dtype {tag:?} in sequence schema")))
+        .iter()
+        .copied()
+        .find(|&dtype| dtype_tag(dtype) == tag)
+        .ok_or_else(|| MolRsError::zarr(format!("unknown column dtype tag {tag:?}")))
 }
 
-/// The [`DType`] a stored array carries, in this crate's dtype vocabulary.
-///
-/// A search over [`zarr_dtype`] rather than a second table: `open` has to
-/// report what it *found* on disk in the same words the schema declares it in.
+/// The column width a stored Zarr data type maps to, if any.
 fn dtype_of_stored(stored: &zarrs::array::DataType) -> Option<DType> {
     SCHEMA_WIDTHS
-        .into_iter()
-        .find(|dtype| zarr_dtype(*dtype).0 == *stored)
+        .iter()
+        .copied()
+        .find(|&dtype| zarr_dtype(dtype).0 == *stored)
 }
 
-/// The stored width and trailing shape of a per-step meta array, from the
-/// [`MetaValue::dtype`] tag it declares.
+/// The column width and trailing shape a per-step meta tag is stored as.
 ///
-/// Both vocabularies are the existing ones: `MetaValue`'s 20 stable tags name
-/// the variant, and [`DType`] names the width it is stored at.
+/// `None` for a tag no per-step array can store.
 fn meta_layout(tag: &str) -> Option<(DType, Vec<u64>)> {
-    let (dtype, width) = match tag {
-        "bool" => (DType::Bool, 1),
-        "i32" => (DType::Int, 1),
-        "i64" => (DType::Int64, 1),
-        "u32" => (DType::UInt32, 1),
-        "u64" => (DType::UInt, 1),
-        "f32" => (DType::Float32, 1),
-        "f64" => (DType::Float, 1),
-        // A JSON document is stored as its text: the tag says how to read it
-        // back, so the width is the only thing the array has to carry.
-        "string" | "json" => (DType::String, 1),
-        "bool3" => (DType::Bool, 3),
-        "i32x3" => (DType::Int, 3),
-        "i64x3" => (DType::Int64, 3),
-        "u32x3" => (DType::UInt32, 3),
-        "u64x3" => (DType::UInt, 3),
-        "f32x3" => (DType::Float32, 3),
-        "f64x3" => (DType::Float, 3),
-        "f32x6" => (DType::Float32, 6),
-        "f64x6" => (DType::Float, 6),
-        "f32x9" => (DType::Float32, 9),
-        "f64x9" => (DType::Float, 9),
-        _ => return None,
-    };
-    Some((dtype, if width == 1 { Vec::new() } else { vec![width] }))
+    let scalar = |dtype| Some((dtype, Vec::new()));
+    let vector = |dtype, n: u64| Some((dtype, vec![n]));
+    match tag {
+        "bool" => scalar(DType::Bool),
+        "i32" => scalar(DType::Int),
+        "i64" => scalar(DType::Int64),
+        "u32" => scalar(DType::UInt32),
+        "u64" => scalar(DType::UInt),
+        "f32" => scalar(DType::Float32),
+        "f64" => scalar(DType::Float),
+        // A JSON document per step rides in a string array; the tag says how
+        // to read it back.
+        "string" | "json" => scalar(DType::String),
+        "bool3" => vector(DType::Bool, 3),
+        "i32x3" => vector(DType::Int, 3),
+        "i64x3" => vector(DType::Int64, 3),
+        "u32x3" => vector(DType::UInt32, 3),
+        "u64x3" => vector(DType::UInt, 3),
+        "f32x3" => vector(DType::Float32, 3),
+        "f64x3" => vector(DType::Float, 3),
+        "f32x6" => vector(DType::Float32, 6),
+        "f64x6" => vector(DType::Float, 6),
+        "f32x9" => vector(DType::Float32, 9),
+        "f64x9" => vector(DType::Float, 9),
+        _ => None,
+    }
 }
 
-/// Bytes one row of an array of `dtype` with `trailing` axes occupies.
+/// Bytes one row of a column occupies, trailing axes included.
 fn row_bytes(dtype: DType, trailing: &[u64]) -> u64 {
     let width = dtype
         .itemsize()
@@ -345,25 +514,6 @@ fn row_bytes(dtype: DType, trailing: &[u64]) -> u64 {
         .iter()
         .fold(width, |acc, &axis| acc.saturating_mul(axis.max(1)))
         .max(1)
-}
-
-/// `(rows per inner chunk, inner chunks per shard)` for a growth array whose
-/// row is `row` bytes wide.
-///
-/// Derived, not configured: `R` is how many rows fit in the 512 KiB chunk
-/// target and `k` how many such chunks fit in the 256 MiB shard target, each
-/// floored at one. The two knobs override the two halves independently, which
-/// is the only way a unit test reaches a chunk or shard boundary in a handful
-/// of frames.
-fn derive_extents(
-    rows_per_chunk: Option<u64>,
-    chunks_per_shard: Option<u64>,
-    row: u64,
-) -> (u64, u64) {
-    let rows = rows_per_chunk.unwrap_or_else(|| (TARGET_CHUNK_BYTES / row).max(1));
-    let chunk = rows.saturating_mul(row).max(1);
-    let chunks = chunks_per_shard.unwrap_or_else(|| (SHARD_TARGET_BYTES / chunk).max(1));
-    (rows.max(1), chunks.max(1))
 }
 
 /// The subset covering `rows` rows from `start` of an array whose trailing
@@ -380,17 +530,47 @@ fn rows_subset(start: u64, rows: u64, trailing: &[u64]) -> Result<ArraySubset, M
 
 /// Bitwise column equality — the predicate behind a section's `step_index`.
 ///
-/// Bitwise rather than numeric, via [`Column::raw_bytes`]: a NaN coordinate
-/// has to count as *unchanged*, or a section that never moves would earn an
-/// entry at every step.
+/// Bitwise rather than numeric: a NaN coordinate has to count as *unchanged*,
+/// or a section that never moves would earn an entry at every step. Compared
+/// element by element on the typed arrays, so a comparison allocates nothing.
 fn same_column(left: &Column, right: &Column) -> bool {
     if left.dtype() != right.dtype() || left.shape() != right.shape() {
         return false;
     }
-    match (left.raw_bytes(), right.raw_bytes()) {
-        (Some(left), Some(right)) => left == right,
-        // The one variable-width column has no byte image; compare elements.
-        (None, None) => left.as_string() == right.as_string(),
+    macro_rules! bits {
+        ($a:expr, $b:expr) => {
+            $a.iter()
+                .zip($b.iter())
+                .all(|(x, y)| x.to_bits() == y.to_bits())
+        };
+    }
+    macro_rules! exact {
+        ($a:expr, $b:expr) => {
+            $a.iter().zip($b.iter()).all(|(x, y)| x == y)
+        };
+    }
+    match (left, right) {
+        (Column::Float16(a), Column::Float16(b)) => bits!(a, b),
+        (Column::Float32(a), Column::Float32(b)) => bits!(a, b),
+        (Column::Float(a), Column::Float(b)) => bits!(a, b),
+        (Column::Complex64(a), Column::Complex64(b)) => a
+            .iter()
+            .zip(b.iter())
+            .all(|(x, y)| x.re.to_bits() == y.re.to_bits() && x.im.to_bits() == y.im.to_bits()),
+        (Column::Complex128(a), Column::Complex128(b)) => a
+            .iter()
+            .zip(b.iter())
+            .all(|(x, y)| x.re.to_bits() == y.re.to_bits() && x.im.to_bits() == y.im.to_bits()),
+        (Column::Int8(a), Column::Int8(b)) => exact!(a, b),
+        (Column::Int16(a), Column::Int16(b)) => exact!(a, b),
+        (Column::Int(a), Column::Int(b)) => exact!(a, b),
+        (Column::Int64(a), Column::Int64(b)) => exact!(a, b),
+        (Column::U8(a), Column::U8(b)) => exact!(a, b),
+        (Column::UInt16(a), Column::UInt16(b)) => exact!(a, b),
+        (Column::UInt32(a), Column::UInt32(b)) => exact!(a, b),
+        (Column::UInt(a), Column::UInt(b)) => exact!(a, b),
+        (Column::Bool(a), Column::Bool(b)) => exact!(a, b),
+        (Column::String(a), Column::String(b)) => exact!(a, b),
         _ => false,
     }
 }
@@ -433,6 +613,73 @@ fn boundary_is_default(cell: &SimBox) -> bool {
     cell.pbc() == [true, true, true]
 }
 
+/// Rows `start..end` of `column`, as a new column.
+///
+/// The whole column comes back as a cheap Arc clone; any other range is one
+/// copy of exactly those rows.
+fn column_rows(column: &Column, start: usize, end: usize) -> Column {
+    let rows = column.nrows().unwrap_or(0);
+    if start == 0 && end == rows {
+        return column.clone();
+    }
+    macro_rules! slice {
+        ($holder:expr, $ctor:ident) => {
+            Column::$ctor(
+                $holder
+                    .slice_axis(Axis(0), Slice::from(start..end))
+                    .to_owned(),
+            )
+        };
+    }
+    match column {
+        Column::Float16(h) => slice!(h, from_f16),
+        Column::Float32(h) => slice!(h, from_f32),
+        Column::Float(h) => slice!(h, from_float),
+        Column::Int8(h) => slice!(h, from_i8),
+        Column::Int16(h) => slice!(h, from_i16),
+        Column::Int(h) => slice!(h, from_int),
+        Column::Int64(h) => slice!(h, from_i64),
+        Column::U8(h) => slice!(h, from_u8),
+        Column::UInt16(h) => slice!(h, from_u16),
+        Column::UInt32(h) => slice!(h, from_u32),
+        Column::UInt(h) => slice!(h, from_uint),
+        Column::Bool(h) => slice!(h, from_bool),
+        Column::String(h) => slice!(h, from_string),
+        Column::Complex64(h) => slice!(h, from_c64),
+        Column::Complex128(h) => slice!(h, from_c128),
+    }
+}
+
+/// A zero-row column of `dtype` with `trailing` axes — the columns of a block
+/// that is present and empty.
+fn empty_column(dtype: DType, trailing: &[u64]) -> Result<Column, MolRsError> {
+    let mut shape = Vec::with_capacity(trailing.len() + 1);
+    shape.push(0usize);
+    shape.extend(trailing.iter().map(|&n| n as usize));
+    macro_rules! empty {
+        ($ctor:ident, $ty:ty) => {
+            Column::$ctor(ArrayD::<$ty>::from_shape_vec(shape, Vec::new()).map_err(zerr)?)
+        };
+    }
+    Ok(match dtype {
+        DType::Float16 => empty!(from_f16, half::f16),
+        DType::Float32 => empty!(from_f32, f32),
+        DType::Float => empty!(from_float, f64),
+        DType::Int8 => empty!(from_i8, i8),
+        DType::Int16 => empty!(from_i16, i16),
+        DType::Int => empty!(from_int, i32),
+        DType::Int64 => empty!(from_i64, i64),
+        DType::U8 => empty!(from_u8, u8),
+        DType::UInt16 => empty!(from_u16, u16),
+        DType::UInt32 => empty!(from_u32, u32),
+        DType::UInt => empty!(from_uint, u64),
+        DType::Bool => empty!(from_bool, bool),
+        DType::String => empty!(from_string, String),
+        DType::Complex64 => empty!(from_c64, num_complex::Complex<f32>),
+        DType::Complex128 => empty!(from_c128, num_complex::Complex<f64>),
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Schema
 // ---------------------------------------------------------------------------
@@ -460,38 +707,80 @@ struct BlockSchema {
 struct MetaSchema {
     /// The [`MetaValue::dtype`] tag every step must carry.
     dtype: String,
-    /// Value written for a step that omits the key, as
-    /// [`MetaValue::to_json_value`]'s envelope. `None` makes the omission an
-    /// error — there is no implicit fill.
+    /// Value written for a step that omits the key, as the plain JSON value
+    /// ([`MetaValue::to_attr_value`]) — `dtype` beside it says how to read it
+    /// back. `None` makes the omission an error — there is no implicit fill.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     fill: Option<serde_json::Value>,
 }
 
 /// The blocks, columns, dtypes and trailing shapes a sequence is pinned to.
 ///
-/// **Derived only.** The two mints read the frames' own columns; there is no
-/// hand-written dtype entry point, because a dtype written by hand is a dtype
-/// that can disagree with the data. A later frame may present a *subset* of
-/// the union — that is how the layout expresses sparsity — but never anything
-/// outside it: a run that decides halfway through to record forces needs a new
-/// store.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// Two ways to mint one: **derive** it from representative frames
+/// ([`from_frame`](Self::from_frame) / [`from_frames`](Self::from_frames)),
+/// or **declare** it column by column ([`new`](Self::new) then
+/// [`declare_block`](Self::declare_block) / [`declare_column`](Self::declare_column)
+/// / [`declare_meta`](Self::declare_meta)). A producer that knows its columns
+/// declares them; one that has a frame in hand derives.
+///
+/// A later frame may present a *subset* of the declaration — that is how the
+/// layout expresses sparsity — but never anything outside it: a run that
+/// decides halfway through to record forces needs a new store.
+///
+/// The declaration also carries a **representative row count** per block
+/// (the frame's row count, or the `rows` given to `declare_block`). It is not
+/// part of the pin written to the store: it sizes the frame-aligned inner
+/// chunk of the block's columns, nothing else, and a ragged run whose row
+/// count wanders away from it still reads back exactly.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SequenceSchema {
     blocks: BTreeMap<String, BlockSchema>,
     #[serde(default)]
     meta: BTreeMap<String, MetaSchema>,
+    /// Representative rows per block, for chunk sizing. Never pinned.
+    #[serde(skip)]
+    rows_hint: BTreeMap<String, u64>,
+}
+
+impl PartialEq for SequenceSchema {
+    /// The pin — blocks and meta — is the identity; the row hints are sizing
+    /// advice and two schemas that differ only there are the same schema.
+    fn eq(&self, other: &Self) -> bool {
+        self.blocks == other.blocks && self.meta == other.meta
+    }
+}
+
+fn check_block_name(name: &str) -> Result<(), MolRsError> {
+    if RESERVED_BLOCK_NAMES.contains(&name) {
+        return Err(MolRsError::zarr(format!(
+            "{name:?} is a reserved child of the trajectory group; a block cannot take it"
+        )));
+    }
+    Ok(())
+}
+
+fn check_column_name(column: &str) -> Result<(), MolRsError> {
+    if RESERVED_COLUMN_NAMES.contains(&column) {
+        return Err(MolRsError::zarr(format!(
+            "{column:?} is a reserved child of a block section; a column cannot take it"
+        )));
+    }
+    Ok(())
 }
 
 impl SequenceSchema {
+    /// An empty declaration, to be filled with `declare_*`.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     /// Mint from one frame's own columns.
     ///
     /// # Errors
     ///
     /// The single-frame case of [`from_frames`](Self::from_frames), and it
     /// yields the same [`MolRsError::Zarr`] for the same reasons: a block or
-    /// column that takes one of the layout's reserved names. A one-frame union
-    /// cannot conflict with itself, so the conflict errors listed there cannot
-    /// arise here.
+    /// column that takes one of the layout's reserved names.
     pub fn from_frame(frame: &Frame) -> Result<Self, MolRsError> {
         Self::from_frames(std::slice::from_ref(frame))
     }
@@ -502,35 +791,27 @@ impl SequenceSchema {
     /// unioned across the frames, and each frame later presents whichever
     /// subset it has. A column appearing twice with a conflicting dtype or
     /// trailing shape is an error *here*, at mint, rather than at the append
-    /// that would have discovered it.
+    /// that would have discovered it. The largest row count a block shows
+    /// across the frames becomes its representative row count.
     ///
     /// # Errors
     ///
     /// Every case is a [`MolRsError::Zarr`] naming the offending block, column
     /// or metadata key:
     ///
-    /// - a block named `step`, `time`, `meta` or `box` — those four are
-    ///   `trajectory/`'s own children, so no block may take one;
-    /// - a column named `offset` or `step_index` — a block section's own two
-    ///   index arrays, for the same reason;
-    /// - the same block declaring two different structural shapes across the
-    ///   frames;
-    /// - the same column declaring two different dtypes, or two different
-    ///   trailing shapes, across the frames;
-    /// - the same `meta` key carrying two different `MetaValue` dtypes across
-    ///   the frames.
+    /// - a block named `step`, `time`, `meta` or `box`;
+    /// - a column named `offset` or `step_index`;
+    /// - the same block declaring two different structural shapes;
+    /// - the same column declaring two different dtypes or trailing shapes;
+    /// - the same `meta` key carrying two different `MetaValue` dtypes.
     pub fn from_frames(frames: &[Frame]) -> Result<Self, MolRsError> {
-        let mut blocks: BTreeMap<String, BlockSchema> = BTreeMap::new();
+        let mut schema = Self::new();
         let mut shapes: BTreeMap<String, Option<Vec<usize>>> = BTreeMap::new();
-        let mut meta: BTreeMap<String, MetaSchema> = BTreeMap::new();
 
         for frame in frames {
             for (name, block) in frame.iter() {
-                if RESERVED_BLOCK_NAMES.contains(&name) {
-                    return Err(MolRsError::zarr(format!(
-                        "{name:?} is a reserved child of the trajectory group; a block cannot take it"
-                    )));
-                }
+                let rows = block.nrows().unwrap_or(0) as u64;
+                schema.declare_block(name, Some(rows))?;
                 let shape = block.structural_shape().map(<[usize]>::to_vec);
                 match shapes.get(name) {
                     None => {
@@ -544,44 +825,10 @@ impl SequenceSchema {
                         )));
                     }
                 }
-
-                let entry = blocks
-                    .entry(name.to_string())
-                    .or_insert_with(|| BlockSchema {
-                        columns: BTreeMap::new(),
-                        structural_shape: None,
-                    });
                 for (column, values) in block.iter() {
-                    if RESERVED_COLUMN_NAMES.contains(&column) {
-                        return Err(MolRsError::zarr(format!(
-                            "{column:?} is a reserved child of a block section; a column cannot \
-                             take it"
-                        )));
-                    }
-                    let declared = ColumnSchema {
-                        dtype: dtype_tag(values.dtype()).to_string(),
-                        trailing: values.shape().iter().skip(1).map(|&n| n as u64).collect(),
-                    };
-                    match entry.columns.get(column) {
-                        None => {
-                            entry.columns.insert(column.to_string(), declared);
-                        }
-                        Some(existing) if existing.dtype != declared.dtype => {
-                            return Err(MolRsError::zarr(format!(
-                                "sequence schema conflict: column {column:?} of block {name:?} is \
-                                 {} in one frame and {} in another",
-                                existing.dtype, declared.dtype
-                            )));
-                        }
-                        Some(existing) if existing.trailing != declared.trailing => {
-                            return Err(MolRsError::zarr(format!(
-                                "sequence schema conflict: column {column:?} of block {name:?} has \
-                                 trailing shape {:?} in one frame and {:?} in another",
-                                existing.trailing, declared.trailing
-                            )));
-                        }
-                        Some(_) => {}
-                    }
+                    let trailing: Vec<u64> =
+                        values.shape().iter().skip(1).map(|&n| n as u64).collect();
+                    schema.declare_column(name, column, values.dtype(), &trailing)?;
                 }
             }
 
@@ -592,99 +839,238 @@ impl SequenceSchema {
                 if key == STEP_ARRAY || key == TIME_ARRAY {
                     continue;
                 }
-                let tag = value.dtype();
-                match meta.get(key) {
-                    None => {
-                        meta.insert(
-                            key.clone(),
-                            MetaSchema {
-                                dtype: tag.to_string(),
-                                fill: None,
-                            },
-                        );
-                    }
-                    Some(existing) if existing.dtype == tag => {}
-                    Some(existing) => {
-                        return Err(MolRsError::zarr(format!(
-                            "sequence schema conflict: meta key {key:?} is {} in one frame and \
-                             {tag} in another",
-                            existing.dtype
-                        )));
-                    }
-                }
+                schema.declare_meta(key, value.dtype())?;
             }
         }
 
         for (name, shape) in shapes {
-            if let Some(entry) = blocks.get_mut(&name) {
-                entry.structural_shape = shape;
+            if let Some(shape) = shape {
+                schema.declare_structural_shape(&name, &shape)?;
             }
         }
-        Ok(Self { blocks, meta })
+        Ok(schema)
     }
 
-    /// Declare `key`'s value for the steps that omit it.
+    /// Declare a block, with the row count a typical frame of it carries.
     ///
-    /// The declared dtype is the fill's own — the only dtype source this type
-    /// admits. Without a fill an omitted key is an error at append: there is
-    /// deliberately no implicit NaN (not-a-number, the IEEE-754 floating-point
-    /// value used elsewhere to stand for "missing"), because a NaN nobody asked
-    /// for is a measurement nobody made.
+    /// Declaring an already-declared block only raises its representative
+    /// row count. `rows` sizes the block's frame-aligned inner chunk; `None`
+    /// (or `0`) leaves the byte floor to decide.
+    ///
+    /// # Errors
+    ///
+    /// A [`MolRsError::Zarr`] when `name` is `step`, `time`, `meta` or `box`.
+    pub fn declare_block(&mut self, name: &str, rows: Option<u64>) -> Result<(), MolRsError> {
+        check_block_name(name)?;
+        self.blocks
+            .entry(name.to_string())
+            .or_insert_with(|| BlockSchema {
+                columns: BTreeMap::new(),
+                structural_shape: None,
+            });
+        if let Some(rows) = rows {
+            let hint = self.rows_hint.entry(name.to_string()).or_insert(0);
+            *hint = (*hint).max(rows);
+        }
+        Ok(())
+    }
+
+    /// Declare a column of `block` — its width and trailing shape.
+    ///
+    /// Declares the block too when it is new. Declaring the same column twice
+    /// with the same width and shape is a no-op.
+    ///
+    /// # Errors
+    ///
+    /// A [`MolRsError::Zarr`] when `column` is `offset` or `step_index`, when
+    /// `block` takes a reserved name, or when the column is already declared
+    /// with another width or trailing shape — a declaration is a pin, and one
+    /// column cannot mean two widths in one sequence.
+    pub fn declare_column(
+        &mut self,
+        block: &str,
+        column: &str,
+        dtype: DType,
+        trailing: &[u64],
+    ) -> Result<(), MolRsError> {
+        check_column_name(column)?;
+        self.declare_block(block, None)?;
+        let declared = ColumnSchema {
+            dtype: dtype_tag(dtype).to_string(),
+            trailing: trailing.to_vec(),
+        };
+        let entry = self
+            .blocks
+            .get_mut(block)
+            .expect("declare_block just inserted it");
+        match entry.columns.get(column) {
+            None => {
+                entry.columns.insert(column.to_string(), declared);
+            }
+            Some(existing) if existing.dtype != declared.dtype => {
+                return Err(MolRsError::zarr(format!(
+                    "sequence schema conflict: column {column:?} of block {block:?} is {} in one \
+                     declaration and {} in another",
+                    existing.dtype, declared.dtype
+                )));
+            }
+            Some(existing) if existing.trailing != declared.trailing => {
+                return Err(MolRsError::zarr(format!(
+                    "sequence schema conflict: column {column:?} of block {block:?} has trailing \
+                     shape {:?} in one declaration and {:?} in another",
+                    existing.trailing, declared.trailing
+                )));
+            }
+            Some(_) => {}
+        }
+        Ok(())
+    }
+
+    /// Declare the structural shape of `block` (a volumetric `[nx][ny][nz]`).
+    ///
+    /// A block with a structural shape carries exactly `product(shape)` rows
+    /// in every update; the writer refuses any other row count.
+    ///
+    /// # Errors
+    ///
+    /// A [`MolRsError::Zarr`] when `block` is not declared, or is already
+    /// declared with a different shape.
+    pub fn declare_structural_shape(
+        &mut self,
+        block: &str,
+        shape: &[usize],
+    ) -> Result<(), MolRsError> {
+        let entry = self.blocks.get_mut(block).ok_or_else(|| {
+            MolRsError::zarr(format!(
+                "block {block:?} is not declared; declare it before its structural shape"
+            ))
+        })?;
+        match &entry.structural_shape {
+            Some(existing) if existing.as_slice() != shape => Err(MolRsError::zarr(format!(
+                "sequence schema conflict: block {block:?} declares structural shape {existing:?} \
+                 and {shape:?}"
+            ))),
+            _ => {
+                entry.structural_shape = Some(shape.to_vec());
+                let rows = shape.iter().product::<usize>() as u64;
+                self.rows_hint.insert(block.to_string(), rows);
+                Ok(())
+            }
+        }
+    }
+
+    /// Declare a per-step metadata key by its dtype tag.
+    ///
+    /// The tag is one of the scalar forms `bool`, `i32`, `i64`, `u32`, `u64`,
+    /// `f32`, `f64`, `string`, `json`, the three-component forms `bool3`,
+    /// `i32x3`, `i64x3`, `u32x3`, `u64x3`, `f32x3`, `f64x3`, or the six- and
+    /// nine-component float forms `f32x6`, `f64x6`, `f32x9`, `f64x9`. A
+    /// frame that omits a key declared this way is an error at append; declare
+    /// a fill with [`declare_meta_with_fill`](Self::declare_meta_with_fill)
+    /// to make omission legal.
+    ///
+    /// # Errors
+    ///
+    /// A [`MolRsError::Zarr`] naming `key` when the tag is unknown, or when the
+    /// key is already declared with a different dtype.
+    pub fn declare_meta(&mut self, key: &str, dtype: &str) -> Result<(), MolRsError> {
+        if meta_layout(dtype).is_none() {
+            return Err(MolRsError::zarr(format!(
+                "meta key {key:?} cannot be stored per step: unknown dtype {dtype}"
+            )));
+        }
+        match self.meta.get(key) {
+            Some(existing) if existing.dtype != dtype => Err(MolRsError::zarr(format!(
+                "sequence schema conflict: meta key {key:?} is {} in one declaration and {dtype} \
+                 in another",
+                existing.dtype
+            ))),
+            Some(_) => Ok(()),
+            None => {
+                self.meta.insert(
+                    key.to_string(),
+                    MetaSchema {
+                        dtype: dtype.to_string(),
+                        fill: None,
+                    },
+                );
+                Ok(())
+            }
+        }
+    }
+
+    /// Declare `key` with the value written for the steps that omit it.
+    ///
+    /// The declared dtype is the fill's own. There is deliberately no implicit
+    /// NaN: a NaN nobody asked for is a measurement nobody made. The fill is
+    /// recorded in the pinned schema, so a reopened writer keeps honouring it.
     ///
     /// # Errors
     ///
     /// A [`MolRsError::Zarr`] naming `key` when `fill`'s dtype is one no
-    /// per-step array can store. Every `MetaValue` variant this build defines
-    /// can, so that arm is unreachable today and stands as a guard against a
-    /// variant added later without a per-step layout. The twenty tags it
-    /// accepts are the scalar forms `bool`, `i32`, `i64`, `u32`, `u64`, `f32`,
-    /// `f64`, `string` and `json`, the three-component forms `bool3`, `i32x3`,
-    /// `i64x3`, `u32x3`, `u64x3`, `f32x3` and `f64x3`, and the six- and
-    /// nine-component float forms `f32x6`, `f64x6`, `f32x9` and `f64x9`.
-    ///
-    /// Also a [`MolRsError::Zarr`] when `key` is already declared with a
-    /// different dtype: a declaration is a pin, and one key cannot mean two
-    /// widths in one sequence.
-    pub fn declare_meta(&mut self, key: &str, fill: MetaValue) -> Result<(), MolRsError> {
+    /// per-step array can store, or when `key` is already declared with a
+    /// different dtype.
+    pub fn declare_meta_with_fill(&mut self, key: &str, fill: MetaValue) -> Result<(), MolRsError> {
         let tag = fill.dtype();
-        if meta_layout(tag).is_none() {
-            return Err(MolRsError::zarr(format!(
-                "meta key {key:?} cannot be stored per step: unknown dtype {tag}"
-            )));
-        }
-        if let Some(existing) = self.meta.get(key)
-            && existing.dtype != tag
-        {
-            return Err(MolRsError::zarr(format!(
-                "meta key {key:?} is already declared {} and the fill value is {tag}",
-                existing.dtype
-            )));
-        }
-        self.meta.insert(
-            key.to_string(),
-            MetaSchema {
-                dtype: tag.to_string(),
-                fill: Some(fill.to_json_value()),
-            },
-        );
+        self.declare_meta(key, tag)?;
+        self.meta
+            .get_mut(key)
+            .expect("declare_meta just inserted it")
+            .fill = Some(fill.to_attr_value());
         Ok(())
+    }
+
+    /// The declared block names.
+    pub fn block_names(&self) -> impl Iterator<Item = &str> {
+        self.blocks.keys().map(String::as_str)
+    }
+
+    /// The declared column names of `block`, or `None` when it is not declared.
+    pub fn column_names(&self, block: &str) -> Option<impl Iterator<Item = &str>> {
+        self.blocks
+            .get(block)
+            .map(|declared| declared.columns.keys().map(String::as_str))
+    }
+
+    /// The declared per-step metadata keys with their dtype tags.
+    pub fn meta_keys(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.meta
+            .iter()
+            .map(|(key, declared)| (key.as_str(), declared.dtype.as_str()))
+    }
+
+    /// The representative row count of `block`, `0` when none was given.
+    fn frame_rows(&self, block: &str) -> u64 {
+        self.rows_hint.get(block).copied().unwrap_or(0)
+    }
+
+    /// Bytes one frame of the representative row counts occupies across every
+    /// declared column — the payload estimate the automatic landing cadence
+    /// is derived from.
+    fn frame_bytes(&self) -> u64 {
+        self.blocks
+            .iter()
+            .map(|(name, block)| {
+                let per_row: u64 = block
+                    .columns
+                    .values()
+                    .map(|column| {
+                        dtype_from_tag(&column.dtype)
+                            .map_or(8, |dtype| row_bytes(dtype, &column.trailing))
+                    })
+                    .sum();
+                per_row.saturating_mul(self.frame_rows(name))
+            })
+            .sum()
     }
 }
 
 /// Read the schema back out of the `trajectory/` group attributes, if one is
 /// pinned there.
 ///
-/// The attributes are authoritative when present: they exist from `create`,
-/// before a single array does, which is exactly what lets `open` notice that
-/// the arrays no longer agree with them.
-///
 /// A missing pin is `Ok(None)`, not an error, because it is the one fact the
 /// two doors answer differently: [`schema_of`] refuses it, and
 /// [`FrameSequence::open`] derives from the store instead.
-///
-/// Generic over the store, and asking only for reads, so the writer's
-/// read-write store and [`FrameSequence`]'s read-only one reach the same
-/// decoder rather than two copies of it.
 fn pinned_schema<S>(store: &Arc<S>) -> Result<Option<SequenceSchema>, MolRsError>
 where
     S: ?Sized + ReadableStorageTraits + 'static,
@@ -698,12 +1084,9 @@ where
         .map_err(zerr)
 }
 
-/// [`pinned_schema`], requiring the pin.
-///
-/// The strict half of the seam, and the writer's: appending needs the
-/// *declared* schema — the union a later frame is checked against, and the
-/// fills for the meta keys a step omits — and neither is recoverable from data
-/// that was never written.
+/// [`pinned_schema`], requiring the pin — the writer's half of the seam:
+/// appending needs the *declared* union and the meta fills, neither of which
+/// is recoverable from data that was never written.
 fn schema_of<S>(store: &Arc<S>) -> Result<SequenceSchema, MolRsError>
 where
     S: ?Sized + ReadableStorageTraits + 'static,
@@ -717,11 +1100,7 @@ where
 }
 
 /// The direct child nodes of the group at `path` — one level deep, metadata
-/// only.
-///
-/// A path holding no children at all yields an empty vector rather than an
-/// error, which is how a sequence that declared no per-step metadata (and so
-/// has no `meta/` group) reads as "no keys".
+/// only. A path holding no children yields an empty vector.
 fn children<S>(store: &Arc<S>, path: &str) -> Result<Vec<Node>, MolRsError>
 where
     S: ?Sized + ReadableStorageTraits + ListableStorageTraits + 'static,
@@ -732,29 +1111,19 @@ where
 
 /// The schema of a store that pins none: derived from the layout itself.
 ///
-/// Everything the read path needs is already on disk. A block is a child
-/// *group* of `trajectory/` that is not one of [`RESERVED_BLOCK_NAMES`]; its
-/// columns are that group's arrays that are not one of
-/// [`RESERVED_COLUMN_NAMES`]; each column's width and trailing shape are its
-/// own array metadata, read through [`dtype_of_stored`] — the mapping the
-/// pinned path already validates against, not a second table. Per-step
-/// metadata keys are `trajectory/meta/`'s arrays, each carrying its own
-/// [`META_DTYPE_ATTRIBUTE`] tag.
-///
-/// Every derived [`MetaSchema::fill`] is `None`, and that is the honest
-/// reading rather than a gap: a fill is what a *writer* chose to land for a
-/// step that omitted the key, and no store records that choice. `None` already
-/// means "an omitted key is an error", which is exactly what a reader that was
-/// never told can say.
+/// A block is a child *group* of `trajectory/` that is not one of
+/// [`RESERVED_BLOCK_NAMES`]; its columns are that group's arrays that are not
+/// one of [`RESERVED_COLUMN_NAMES`]; each column's width and trailing shape
+/// are its own array metadata. Per-step metadata keys are
+/// `trajectory/meta/`'s arrays, each carrying its own
+/// [`META_DTYPE_ATTRIBUTE`] tag. Every derived fill is `None`: a fill is what
+/// a *writer* chose, and a reader that was never told cannot say more.
 fn schema_from_store<S>(store: &Arc<S>) -> Result<SequenceSchema, MolRsError>
 where
     S: ?Sized + ReadableStorageTraits + ListableStorageTraits + 'static,
 {
-    let mut blocks = BTreeMap::new();
+    let mut schema = SequenceSchema::new();
     for section in children(store, TRAJECTORY_GROUP)? {
-        // A block section is a group. `step` and `time` are arrays and the two
-        // reserved groups are named, so anything else at this level is not a
-        // block section and minting one from it would only fail deeper in.
         if !matches!(section.metadata(), NodeMetadata::Group(_)) {
             continue;
         }
@@ -763,8 +1132,8 @@ where
             continue;
         }
         let path = join_path(TRAJECTORY_GROUP, &name);
+        schema.declare_block(&name, None)?;
 
-        let mut columns = BTreeMap::new();
         for child in children(store, &path)? {
             if !matches!(child.metadata(), NodeMetadata::Array(_)) {
                 continue;
@@ -781,18 +1150,11 @@ where
                     array.data_type()
                 ))
             })?;
-            columns.insert(
-                column,
-                ColumnSchema {
-                    dtype: dtype_tag(dtype).to_string(),
-                    trailing: array.shape().iter().skip(1).copied().collect(),
-                },
-            );
+            let trailing: Vec<u64> = array.shape().iter().skip(1).copied().collect();
+            schema.declare_column(&name, &column, dtype, &trailing)?;
         }
 
-        // The section mirrors its structural shape for exactly this reader;
-        // `read_block_rows` applies it only when it matches the row count, so
-        // a shape that does not is inert rather than fatal.
+        // The section mirrors its structural shape for exactly this reader.
         let structural_shape = Group::open(store.clone(), &path)?
             .attributes()
             .get(STRUCTURAL_SHAPE_ATTRIBUTE)
@@ -803,18 +1165,12 @@ where
                     .collect::<Vec<usize>>()
             })
             .filter(|shape| !shape.is_empty());
-
-        blocks.insert(
-            name,
-            BlockSchema {
-                columns,
-                structural_shape,
-            },
-        );
+        if let Some(shape) = structural_shape {
+            schema.declare_structural_shape(&name, &shape)?;
+        }
     }
 
     let meta_path = join_path(TRAJECTORY_GROUP, META_GROUP);
-    let mut meta = BTreeMap::new();
     for child in children(store, &meta_path)? {
         if !matches!(child.metadata(), NodeMetadata::Array(_)) {
             continue;
@@ -832,23 +1188,14 @@ where
                      cannot be read back"
                 ))
             })?;
-        meta.insert(
-            key,
-            MetaSchema {
-                dtype: tag.to_string(),
-                fill: None,
-            },
-        );
+        schema.declare_meta(&key, tag)?;
     }
 
-    Ok(SequenceSchema { blocks, meta })
+    Ok(schema)
 }
 
 /// Refuse a store written by molrs <= 0.13, whose `trajectory/frames/<i>/`
 /// groups this layout replaced.
-///
-/// Loud rather than empty: the one quadrant of the compatibility matrix that
-/// could be bought for free.
 fn ensure_not_legacy<S>(store: &Arc<S>) -> Result<(), MolRsError>
 where
     S: ?Sized + ListableStorageTraits,
@@ -878,6 +1225,18 @@ where
     }
 }
 
+/// Whether a group exists at `path`.
+fn group_exists<S>(store: &Arc<S>, path: &str) -> Result<bool, MolRsError>
+where
+    S: ?Sized + ReadableStorageTraits + 'static,
+{
+    match Group::open(store.clone(), path) {
+        Ok(_) => Ok(true),
+        Err(zarrs::group::GroupCreateError::MissingMetadata) => Ok(false),
+        Err(e) => Err(e.into()),
+    }
+}
+
 /// Every element of the array at `path`.
 fn read_whole<T, S>(store: &Arc<S>, path: &str) -> Result<Vec<T>, MolRsError>
 where
@@ -889,6 +1248,44 @@ where
     array.retrieve_array_subset(&subset).map_err(zerr)
 }
 
+/// Rows one inner chunk of `array` holds: the sharding subchunk's leading
+/// extent, or the chunk grid's when the array is not sharded.
+fn inner_rows_of<S: ?Sized>(array: &Array<S>) -> u64 {
+    let metadata = serde_json::to_value(array.metadata()).unwrap_or_default();
+    let sharded = metadata["codecs"]
+        .as_array()
+        .and_then(|codecs| {
+            codecs
+                .iter()
+                .find(|codec| codec["name"] == "sharding_indexed")
+        })
+        .and_then(|codec| codec["configuration"]["chunk_shape"][0].as_u64());
+    sharded
+        .or_else(|| metadata["chunk_grid"]["configuration"]["chunk_shape"][0].as_u64())
+        .unwrap_or(1)
+        .max(1)
+}
+
+/// Ensure the record root and its `meta/` group exist, writing `meta` when
+/// one is handed in.
+fn ensure_root_and_meta(
+    store: &ReadableWritableListableStorage,
+    meta: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> Result<(), MolRsError> {
+    if !group_exists(store, ROOT_GROUP)? {
+        GroupBuilder::new()
+            .build(store.clone(), ROOT_GROUP)?
+            .store_metadata()?;
+    }
+    if meta.is_some() || !group_exists(store, META_ROOT_GROUP)? {
+        GroupBuilder::new()
+            .attributes(meta.cloned().unwrap_or_default())
+            .build(store.clone(), META_ROOT_GROUP)?
+            .store_metadata()?;
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Growth arrays
 // ---------------------------------------------------------------------------
@@ -897,30 +1294,33 @@ where
 ///
 /// `zarrs::Array::set_shape` grows the leading axis and rebuilds the chunk grid
 /// from *frozen* chunk metadata, so the inner-chunk and shard extents are
-/// decided once, at creation, and are not negotiable afterwards. Everything
-/// this type offers follows from that: [`extend`](Self::extend) opens a row
-/// range, [`compact`](Self::compact) re-encodes one shard as a clean full
-/// write.
+/// decided once, at creation. A landing is three steps in a fixed order —
+/// [`reserve`](Self::reserve) the rows, write them, then
+/// [`commit_shape`](Self::commit_shape) — so the array's metadata never
+/// advertises rows that are not on disk yet.
 struct GrowthArray {
     array: Array<dyn ReadableWritableListableStorageTraits>,
-    /// Rows one shard file spans — the seal unit.
-    shard_rows: u64,
-    /// Rows landed so far.
+    /// Rows landed so far (the leading extent the metadata will publish).
     rows: u64,
 }
 
 impl GrowthArray {
     /// Create the array at `path`, zero rows long, extents frozen.
+    ///
+    /// Every growth array is a `sharding_indexed` array with its index at the
+    /// **start** of the shard, so appending a chunk is a tail write plus an
+    /// in-place index rewrite. The inner chunk carries the compressor
+    /// `compression` names, then `crc32c`.
     fn create(
         store: &ReadableWritableListableStorage,
         path: &str,
         dtype: DType,
         trailing: &[u64],
-        extents: (u64, u64),
+        extents: Extents,
         attributes: serde_json::Map<String, serde_json::Value>,
-        sharded: bool,
+        compression: Compression,
     ) -> Result<Self, MolRsError> {
-        let (rows_per_chunk, chunks_per_shard) = extents;
+        quiet_zarrs_metadata();
         let (data_type, fill) = zarr_dtype(dtype);
         let mut shape = Vec::with_capacity(trailing.len() + 1);
         shape.push(0u64);
@@ -928,71 +1328,35 @@ impl GrowthArray {
         // A chunk extent must be non-zero on every axis, including a trailing
         // axis that happens to be empty.
         let mut inner: Vec<u64> = shape.iter().map(|&axis| axis.max(1)).collect();
-        inner[0] = rows_per_chunk;
-        // Data columns (CSR coordinates) shard so file count stays O(arrays).
-        // Index / optional arrays (step, offset, box origin…) stay unsharded:
-        // they rarely fill even one inner chunk, and the shard wrapper is
-        // several kilobytes around a few hundred bytes of payload.
-        let chunk_extent = if sharded {
-            let mut shard = inner.clone();
-            shard[0] = rows_per_chunk.saturating_mul(chunks_per_shard);
-            shard
-        } else {
-            inner.clone()
-        };
+        inner[0] = extents.rows_per_chunk.max(1);
+        let mut shard = inner.clone();
+        shard[0] = inner[0].saturating_mul(extents.chunks_per_shard.max(1));
 
-        let mut builder = ArrayBuilder::new(shape, chunk_extent.clone(), data_type, fill);
-        if sharded {
-            // Sharded data columns keep lossless gzip — the one compressor
-            // every reader of this store (wasm32 included) can decode. A
-            // precision study admits no lossy codec here.
-            builder.bytes_to_bytes_codecs(vec![Arc::new(
-                GzipCodec::new(GZIP_LEVEL)
-                    .map_err(|e| MolRsError::zarr(format!("gzip level {GZIP_LEVEL}: {e}")))?,
-            )]);
-            builder.subchunk_shape(inner);
-        }
-        // Unsharded index/optional arrays (step, offset, step_index, box) carry
-        // a few hundred bytes and are appended on every flush. gzip has
-        // `partial_encode: false`, so a compressor there forces a whole-chunk
-        // read-decode-modify-encode-write of a fill-padded chunk per append —
-        // ~5 ms of pure codec for no ratio on already-tiny data. Left as the
-        // raw `bytes` codec, each append is a real positional write instead.
+        let subchunk: Vec<NonZeroU64> = inner
+            .iter()
+            .map(|&axis| NonZeroU64::new(axis).expect("chunk extents are floored at one"))
+            .collect();
+        let mut sharding = ShardingCodecBuilder::new(subchunk, &data_type);
+        sharding
+            .bytes_to_bytes_codecs(inner_codecs(compression)?)
+            .index_location(ShardingIndexLocation::Start);
+
+        let mut builder = ArrayBuilder::new(shape, shard, data_type, fill);
+        builder.array_to_bytes_codec(sharding.build_arc());
         builder.attributes(attributes);
         let array = builder
             .build(store.clone(), path)?
             .with_codec_specific_options(&deterministic_shard_layout());
         array.store_metadata()?;
-        Ok(Self {
-            array,
-            shard_rows: chunk_extent[0].max(1),
-            rows: 0,
-        })
+        Ok(Self { array, rows: 0 })
     }
 
     /// Reopen an existing array, adopting the extents it was created with.
-    ///
-    /// Adopting rather than re-deriving is not a shortcut: a re-planned grid
-    /// cannot be laid over live data, so what is on disk *is* the plan.
     fn open(store: &ReadableWritableListableStorage, path: &str) -> Result<Self, MolRsError> {
         let array = Array::open(store.clone(), path)?
             .with_codec_specific_options(&deterministic_shard_layout());
-        let metadata = serde_json::to_value(array.metadata()).map_err(zerr)?;
-        let shard_rows = metadata["chunk_grid"]["configuration"]["chunk_shape"]
-            .as_array()
-            .and_then(|shape| shape.first())
-            .and_then(serde_json::Value::as_u64)
-            .ok_or_else(|| {
-                MolRsError::zarr(format!(
-                    "array {path:?} has no regular chunk grid to append to"
-                ))
-            })?;
         let rows = array.shape().first().copied().unwrap_or(0);
-        Ok(Self {
-            array,
-            shard_rows: shard_rows.max(1),
-            rows,
-        })
+        Ok(Self { array, rows })
     }
 
     /// The array's axes after the leading row axis.
@@ -1000,55 +1364,41 @@ impl GrowthArray {
         self.array.shape().iter().skip(1).copied().collect()
     }
 
-    /// Grow the leading axis by `count` rows and return the subset they land
-    /// in. The caller writes the data.
-    fn extend(&mut self, count: u64) -> Result<ArraySubset, MolRsError> {
+    /// Rows one inner chunk holds.
+    fn rows_per_chunk(&self) -> u64 {
+        inner_rows_of(&self.array)
+    }
+
+    /// Grow the leading axis by `count` rows **in memory** and return the
+    /// subset they land in. The caller writes the data, then
+    /// [`commit_shape`](Self::commit_shape) publishes the new extent.
+    fn reserve(&mut self, count: u64) -> Result<ArraySubset, MolRsError> {
         let start = self.rows;
         self.rows += count;
         let mut shape = self.array.shape().to_vec();
         shape[0] = self.rows;
         self.array.set_shape(shape)?;
-        self.array.store_metadata()?;
         rows_subset(start, count, &self.trailing())
     }
 
-    /// Re-encode shard `shard` as one clean full write.
-    ///
-    /// Branch A's price is paid here. Every rewrite of a partially filled
-    /// trailing chunk leaves the superseded copy behind as dead bytes in the
-    /// shard file; reading the shard's live rows, erasing it and writing them
-    /// back once drops all of them at the cost of one sequential write.
-    fn compact(&mut self, shard: u64) -> Result<(), MolRsError> {
-        if shard.saturating_mul(self.shard_rows) >= self.rows {
-            return Ok(());
-        }
-        let options = compaction_options();
-        let mut indices = vec![0u64; self.array.shape().len()];
-        indices[0] = shard;
-        // Decode the shard whole and store it whole: one `set` of the shard
-        // key, which truncates, so no superseded copy can survive it.
-        let live: ArrayBytes<'static> = self.array.retrieve_chunk_opt(&indices, &options)?;
-        self.array.store_chunk_opt(&indices, live, &options)?;
+    /// Publish the reserved extent: one atomic `zarr.json` replacement.
+    fn commit_shape(&self) -> Result<(), MolRsError> {
+        self.array.store_metadata()?;
         Ok(())
     }
 
-    /// Seal every shard this write completed.
-    fn seal(&mut self, before: u64) -> Result<(), MolRsError> {
-        let first = before / self.shard_rows;
-        let completed = self.rows / self.shard_rows;
-        for shard in first..completed {
-            self.compact(shard)?;
-        }
-        Ok(())
-    }
-
-    /// Seal the final, still-partial shard — `close`'s half of the bargain.
-    fn compact_tail(&mut self) -> Result<(), MolRsError> {
-        if self.rows == 0 || self.rows.is_multiple_of(self.shard_rows) {
-            // Nothing to seal, or the boundary crossing already sealed it.
+    /// Roll the leading axis back to `rows` — what a reopen does to whatever a
+    /// crash left longer than the commit marker.
+    fn truncate_to(&mut self, rows: u64) -> Result<(), MolRsError> {
+        if rows >= self.rows {
             return Ok(());
         }
-        self.compact(self.rows / self.shard_rows)
+        let mut shape = self.array.shape().to_vec();
+        shape[0] = rows;
+        self.array.set_shape(shape)?;
+        self.array.store_metadata()?;
+        self.rows = rows;
+        Ok(())
     }
 
     /// Land `columns` — one per update carrying this block — as one
@@ -1174,18 +1524,30 @@ impl GrowthArray {
     }
 }
 
+/// Reserve, write, publish — the landing order every plain-valued array uses.
+macro_rules! land_values {
+    ($array:expr, $count:expr, $values:expr, $options:expr) => {{
+        let subset = $array.reserve($count)?;
+        $array
+            .array
+            .store_array_subset_opt(&subset, $values, $options)?;
+        $array.commit_shape()?;
+    }};
+}
+
 /// One value of a per-step meta array, at step `index`.
-fn read_meta_value(
-    store: &ReadableListableStorage,
-    path: &str,
+fn read_meta_value<S>(
+    array: &Array<S>,
     key: &str,
     tag: &str,
     index: u64,
-) -> Result<MetaValue, MolRsError> {
+) -> Result<MetaValue, MolRsError>
+where
+    S: ?Sized + ReadableStorageTraits + 'static,
+{
     let (_, trailing) = meta_layout(tag).ok_or_else(|| {
         MolRsError::zarr(format!("meta key {key:?} declares unknown dtype {tag:?}"))
     })?;
-    let array = Array::open(store.clone(), path)?;
     let subset = rows_subset(index, 1, &trailing)?;
     let short = |count: usize| {
         MolRsError::zarr(format!(
@@ -1242,95 +1604,273 @@ fn read_meta_value(
     })
 }
 
-/// Read update `j` of a block section back as a [`Block`].
-fn read_block_rows<S>(
-    store: &Arc<S>,
-    path: &str,
-    schema: &BlockSchema,
-    start: u64,
-    rows: u64,
-) -> Result<Block, MolRsError>
-where
-    S: ?Sized + ReadableStorageTraits + 'static,
-{
+/// A declared block with no rows: every declared column, zero rows long.
+fn empty_block(schema: &BlockSchema) -> Result<Block, MolRsError> {
     let mut block = Block::new();
     for (column, declared) in &schema.columns {
-        let subset = rows_subset(start, rows, &declared.trailing)?;
-        let values = read_column(store, &join_path(path, column), &subset)?;
-        insert_column_into_block(&mut block, column, values)?;
+        let dtype = dtype_from_tag(&declared.dtype)?;
+        insert_column_into_block(&mut block, column, empty_column(dtype, &declared.trailing)?)?;
     }
-    if schema.columns.is_empty() {
-        // A declared block with no columns is still a block with a row count.
-        block.resize(rows as usize)?;
-    }
+    Ok(block)
+}
+
+/// Apply a declared structural shape to a block whose row count matches it.
+fn apply_structural_shape(
+    block: &mut Block,
+    schema: &BlockSchema,
+    path: &str,
+) -> Result<(), MolRsError> {
     if let Some(shape) = &schema.structural_shape
-        && shape.iter().product::<usize>() == rows as usize
+        && block.nrows() == Some(shape.iter().product::<usize>())
     {
         block
             .set_shape(shape)
             .map_err(|e| MolRsError::zarr(format!("block {path:?} shape {shape:?}: {e}")))?;
     }
-    Ok(block)
+    Ok(())
 }
 
-/// Read cell update `j` of the `box/` section.
-fn read_box_row<S>(store: &Arc<S>, index: u64, cell_defined: bool) -> Result<SimBox, MolRsError>
+// ---------------------------------------------------------------------------
+// Block hints
+// ---------------------------------------------------------------------------
+
+/// Whether every update of a block so far carried the same row count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Uniform {
+    /// No update yet.
+    Unknown,
+    /// Every update so far carried this many rows.
+    Rows(u64),
+    /// Two updates disagreed; the hint is gone for good.
+    Broken,
+}
+
+/// The two block-section hints the writer maintains as group attributes.
+///
+/// `uniform_rows` says every update carried the same row count; `dense_updates`
+/// says `step_index[j] == j` for every update. A reader holding both resolves
+/// any frame arithmetically without decoding the index arrays. They are
+/// **monotone**: once a hint breaks it is removed and never returns, so a
+/// reader that sees one may trust it for every committed frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct BlockHints {
+    uniform: Uniform,
+    dense: bool,
+    /// What the group attributes currently say, so a rewrite happens only on
+    /// a change.
+    stored: (Option<u64>, bool),
+}
+
+impl BlockHints {
+    fn fresh() -> Self {
+        Self {
+            uniform: Uniform::Unknown,
+            dense: true,
+            stored: (None, false),
+        }
+    }
+
+    /// Rebuild from a section's index arrays — what a reopen does.
+    fn from_index(step_index: &[u64], offset: &[u64]) -> Self {
+        let mut hints = Self::fresh();
+        for (update, &ordinal) in step_index.iter().enumerate() {
+            let rows = offset
+                .get(update + 1)
+                .zip(offset.get(update))
+                .map_or(0, |(end, start)| end.saturating_sub(*start));
+            hints.observe(update as u64, ordinal, rows);
+        }
+        hints
+    }
+
+    /// Fold one more update in.
+    fn observe(&mut self, update: u64, ordinal: u64, rows: u64) {
+        self.dense &= ordinal == update;
+        self.uniform = match self.uniform {
+            Uniform::Unknown => Uniform::Rows(rows),
+            Uniform::Rows(n) if n == rows => Uniform::Rows(n),
+            _ => Uniform::Broken,
+        };
+    }
+
+    /// Whether every update so far is regular: a fixed, non-zero row count
+    /// at ordinals `0, 1, 2, …` — the state under which the CSR index is
+    /// not written.
+    fn is_regular(&self) -> bool {
+        matches!(self.uniform, Uniform::Rows(n) if n > 0) && self.dense
+    }
+
+    /// The attributes these hints spell: `(uniform_rows, dense_updates)`.
+    fn attributes(&self) -> (Option<u64>, bool) {
+        match self.uniform {
+            Uniform::Rows(n) if n > 0 => (Some(n), self.dense),
+            Uniform::Rows(_) | Uniform::Unknown | Uniform::Broken => (None, false),
+        }
+    }
+}
+
+/// The group attributes of a block section: its mirrored structural shape
+/// plus whichever hints currently hold.
+fn block_attributes(
+    structural_shape: Option<&[usize]>,
+    hints: (Option<u64>, bool),
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut attributes = serde_json::Map::new();
+    if let Some(shape) = structural_shape {
+        attributes.insert(
+            STRUCTURAL_SHAPE_ATTRIBUTE.to_string(),
+            serde_json::Value::Array(
+                shape
+                    .iter()
+                    .map(|axis| serde_json::Value::from(*axis as u64))
+                    .collect(),
+            ),
+        );
+    }
+    if let Some(rows) = hints.0 {
+        attributes.insert(UNIFORM_ROWS_ATTRIBUTE.to_string(), rows.into());
+    }
+    if hints.1 {
+        attributes.insert(DENSE_UPDATES_ATTRIBUTE.to_string(), true.into());
+    }
+    attributes
+}
+
+/// Read a block section's hints back off its group attributes.
+fn stored_hints<S>(store: &Arc<S>, path: &str) -> Result<(Option<u64>, bool), MolRsError>
 where
     S: ?Sized + ReadableStorageTraits + 'static,
 {
-    let prefix = join_path(TRAJECTORY_GROUP, BOX_GROUP);
-    let cell: Vec<F> = Array::open(store.clone(), &join_path(&prefix, VECTORS_ARRAY))?
-        .retrieve_array_subset(&rows_subset(index, 1, &[3, 3])?)?;
-    let origin_path = join_path(&prefix, ORIGIN_ARRAY);
-    let origin: Vec<F> = if array_exists(store, &origin_path)? {
-        Array::open(store.clone(), &origin_path)?.retrieve_array_subset(&rows_subset(
-            index,
-            1,
-            &[3],
-        )?)?
-    } else {
-        vec![0.0, 0.0, 0.0]
-    };
-    let boundary_path = join_path(&prefix, BOUNDARY_ARRAY);
-    let boundary: Vec<bool> = if array_exists(store, &boundary_path)? {
-        Array::open(store.clone(), &boundary_path)?.retrieve_array_subset(&rows_subset(
-            index,
-            1,
-            &[3],
-        )?)?
-    } else {
-        vec![true, true, true]
-    };
-    if cell.len() != 9 || origin.len() != 3 || boundary.len() != 3 {
-        return Err(MolRsError::zarr(format!(
-            "box update {index} is malformed: {} cell values, {} origin values, {} boundary flags",
-            cell.len(),
-            origin.len(),
-            boundary.len()
-        )));
-    }
-    SimBox::new_cell(
-        Array2::from_shape_vec((3, 3), cell).map_err(zerr)?,
-        Array1::from(origin),
-        [boundary[0], boundary[1], boundary[2]],
-        cell_defined,
-    )
-    .map_err(|e| MolRsError::zarr(format!("box update {index} is not a valid cell: {e:?}")))
+    let group = Group::open(store.clone(), path)?;
+    let attributes = group.attributes();
+    Ok((
+        attributes
+            .get(UNIFORM_ROWS_ATTRIBUTE)
+            .and_then(serde_json::Value::as_u64),
+        attributes
+            .get(DENSE_UPDATES_ATTRIBUTE)
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false),
+    ))
+}
+
+/// Rewrite a block section's group attributes.
+fn store_block_attributes(
+    store: &ReadableWritableListableStorage,
+    path: &str,
+    structural_shape: Option<&[usize]>,
+    hints: (Option<u64>, bool),
+) -> Result<(), MolRsError> {
+    let mut group = Group::open(store.clone(), path)?;
+    *group.attributes_mut() = block_attributes(structural_shape, hints);
+    group.store_metadata()?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
-// Writer
+// Section arrays
 // ---------------------------------------------------------------------------
 
+/// The two test knobs that override the derived extents of every array.
+#[derive(Debug, Clone, Copy, Default)]
+struct Knobs {
+    rows_per_chunk: Option<u64>,
+    chunks_per_shard: Option<u64>,
+}
+
+impl Knobs {
+    /// Extents of a dense array under these knobs.
+    fn dense(self) -> Extents {
+        Extents {
+            rows_per_chunk: self.rows_per_chunk.unwrap_or(DENSE_ROWS_PER_CHUNK),
+            chunks_per_shard: self.chunks_per_shard.unwrap_or(DENSE_CHUNKS_PER_SHARD),
+        }
+    }
+}
+
+/// The compression every dense array carries.
+const DENSE_COMPRESSION: Compression = Compression::Gzip(GZIP_LEVEL);
+
 /// The arrays of one block section.
+///
+/// The CSR index — `offset` and `step_index` — is **not** written while the
+/// block is regular (every update carries the same non-zero row count at
+/// ordinals `0, 1, 2, …`): the block group's `uniform_rows` /
+/// `dense_updates` hints let a reader resolve any frame arithmetically, and
+/// the two arrays would only restate what the column shapes already say. The
+/// first update that breaks either rule materializes both arrays, backfilling
+/// the regular history, and withdraws the hints for good.
 struct BlockArrays {
     columns: BTreeMap<String, GrowthArray>,
-    offset: GrowthArray,
-    step_index: GrowthArray,
+    /// The CSR index, once the block stopped being regular.
+    index: Option<IndexArrays>,
     /// Rows landed across every update.
     total_rows: u64,
     /// Updates landed.
     updates: u64,
+    /// Rows one inner chunk of this block's columns holds.
+    rows_per_chunk: u64,
+    hints: BlockHints,
+}
+
+/// A block section's CSR index arrays.
+struct IndexArrays {
+    offset: GrowthArray,
+    step_index: GrowthArray,
+}
+
+impl IndexArrays {
+    /// Create both arrays and backfill the `history` regular updates of
+    /// `rows` rows each — the history the hints described until now.
+    fn materialize(
+        store: &ReadableWritableListableStorage,
+        path: &str,
+        knobs: Knobs,
+        history: u64,
+        rows: u64,
+        options: &CodecOptions,
+    ) -> Result<Self, MolRsError> {
+        let mut offset = GrowthArray::create(
+            store,
+            &join_path(path, OFFSET_ARRAY),
+            DType::UInt,
+            &[],
+            knobs.dense(),
+            serde_json::Map::new(),
+            DENSE_COMPRESSION,
+        )?;
+        let mut step_index = GrowthArray::create(
+            store,
+            &join_path(path, STEP_INDEX_ARRAY),
+            DType::UInt,
+            &[],
+            knobs.dense(),
+            serde_json::Map::new(),
+            DENSE_COMPRESSION,
+        )?;
+        // The CSR row pointer opens at zero; every regular update added
+        // `rows` rows at the ordinal equal to its own index.
+        let offsets: Vec<u64> = (0..=history).map(|update| update * rows).collect();
+        let count = offsets.len() as u64;
+        land_values!(offset, count, offsets, options);
+        if history > 0 {
+            let ordinals: Vec<u64> = (0..history).collect();
+            land_values!(step_index, history, ordinals, options);
+        }
+        Ok(Self { offset, step_index })
+    }
+}
+
+/// Where the cell of a sequence lives.
+///
+/// A cell that arrives at ordinal 0 and never changes is recorded as the
+/// `box/` group's own attributes — no array, no extra file. The first change
+/// migrates it into the `box/` arrays.
+enum CellStore {
+    /// One cell, at ordinal 0, in the group attributes.
+    Attributes(Box<SimBox>),
+    /// The per-update arrays.
+    Arrays(Box<BoxArrays>),
 }
 
 /// The arrays of the `box/` section.
@@ -1346,13 +1886,21 @@ struct BoxArrays {
 }
 
 impl BoxArrays {
+    fn create(store: &ReadableWritableListableStorage, knobs: Knobs) -> Result<Self, MolRsError> {
+        Ok(Self {
+            step_index: None,
+            vectors: Self::create_optional(store, VECTORS_ARRAY, DType::Float, &[3, 3], knobs)?,
+            origin: None,
+            boundary: None,
+        })
+    }
+
     fn create_optional(
         store: &ReadableWritableListableStorage,
         name: &str,
         dtype: DType,
         trailing: &[u64],
-        rows_per_chunk: Option<u64>,
-        chunks_per_shard: Option<u64>,
+        knobs: Knobs,
     ) -> Result<GrowthArray, MolRsError> {
         let prefix = join_path(TRAJECTORY_GROUP, BOX_GROUP);
         GrowthArray::create(
@@ -1360,36 +1908,24 @@ impl BoxArrays {
             &join_path(&prefix, name),
             dtype,
             trailing,
-            derive_extents(rows_per_chunk, chunks_per_shard, row_bytes(dtype, trailing)),
+            knobs.dense(),
             serde_json::Map::new(),
-            false,
+            DENSE_COMPRESSION,
         )
     }
 
     fn ensure_origin(
         &mut self,
         store: &ReadableWritableListableStorage,
-        rows_per_chunk: Option<u64>,
-        chunks_per_shard: Option<u64>,
+        knobs: Knobs,
         previous: u64,
         options: &CodecOptions,
     ) -> Result<&mut GrowthArray, MolRsError> {
         if self.origin.is_none() {
-            let mut origin = Self::create_optional(
-                store,
-                ORIGIN_ARRAY,
-                DType::Float,
-                &[3],
-                rows_per_chunk,
-                chunks_per_shard,
-            )?;
+            let mut origin = Self::create_optional(store, ORIGIN_ARRAY, DType::Float, &[3], knobs)?;
             if previous > 0 {
                 let fill = vec![0.0 as F; (previous * 3) as usize];
-                let subset = origin.extend(previous)?;
-                origin
-                    .array
-                    .store_array_subset_opt(&subset, fill, options)?;
-                origin.seal(0)?;
+                land_values!(origin, previous, fill, options);
             }
             self.origin = Some(origin);
         }
@@ -1399,27 +1935,16 @@ impl BoxArrays {
     fn ensure_boundary(
         &mut self,
         store: &ReadableWritableListableStorage,
-        rows_per_chunk: Option<u64>,
-        chunks_per_shard: Option<u64>,
+        knobs: Knobs,
         previous: u64,
         options: &CodecOptions,
     ) -> Result<&mut GrowthArray, MolRsError> {
         if self.boundary.is_none() {
-            let mut boundary = Self::create_optional(
-                store,
-                BOUNDARY_ARRAY,
-                DType::Bool,
-                &[3],
-                rows_per_chunk,
-                chunks_per_shard,
-            )?;
+            let mut boundary =
+                Self::create_optional(store, BOUNDARY_ARRAY, DType::Bool, &[3], knobs)?;
             if previous > 0 {
                 let fill = vec![true; (previous * 3) as usize];
-                let subset = boundary.extend(previous)?;
-                boundary
-                    .array
-                    .store_array_subset_opt(&subset, fill, options)?;
-                boundary.seal(0)?;
+                land_values!(boundary, previous, fill, options);
             }
             self.boundary = Some(boundary);
         }
@@ -1429,28 +1954,17 @@ impl BoxArrays {
     fn ensure_step_index(
         &mut self,
         store: &ReadableWritableListableStorage,
-        rows_per_chunk: Option<u64>,
-        chunks_per_shard: Option<u64>,
+        knobs: Knobs,
         previous: u64,
         options: &CodecOptions,
     ) -> Result<&mut GrowthArray, MolRsError> {
         if self.step_index.is_none() {
-            let mut step_index = Self::create_optional(
-                store,
-                STEP_INDEX_ARRAY,
-                DType::UInt,
-                &[],
-                rows_per_chunk,
-                chunks_per_shard,
-            )?;
+            let mut step_index =
+                Self::create_optional(store, STEP_INDEX_ARRAY, DType::UInt, &[], knobs)?;
             if previous > 0 {
                 // The omitted form is one update at ordinal 0.
                 let fill = vec![0u64; previous as usize];
-                let subset = step_index.extend(previous)?;
-                step_index
-                    .array
-                    .store_array_subset_opt(&subset, fill, options)?;
-                step_index.seal(0)?;
+                land_values!(step_index, previous, fill, options);
             }
             self.step_index = Some(step_index);
         }
@@ -1459,16 +1973,466 @@ impl BoxArrays {
             .as_mut()
             .expect("step_index was just created"))
     }
+
+    /// Land `cells` — `(ordinal, cell)` pairs — as updates.
+    fn land(
+        &mut self,
+        store: &ReadableWritableListableStorage,
+        knobs: Knobs,
+        cells: &[(u64, &SimBox)],
+        options: &CodecOptions,
+    ) -> Result<(), MolRsError> {
+        let mut vectors = Vec::with_capacity(cells.len() * 9);
+        let mut origins = Vec::with_capacity(cells.len() * 3);
+        let mut boundaries = Vec::with_capacity(cells.len() * 3);
+        let mut need_origin = self.origin.is_some();
+        let mut need_boundary = self.boundary.is_some();
+        for (_, cell) in cells {
+            vectors.extend(cell.h_view().iter().copied());
+            origins.extend(cell.origin_view().iter().copied());
+            boundaries.extend(cell.pbc_view().iter().copied());
+            need_origin |= !origin_is_default(cell);
+            need_boundary |= !boundary_is_default(cell);
+        }
+        let count = cells.len() as u64;
+        let previous = self.vectors.rows;
+        let ordinals: Vec<u64> = cells.iter().map(|(ordinal, _)| *ordinal).collect();
+        let trivial_index = previous == 0 && matches!(ordinals.as_slice(), [0]);
+
+        land_values!(self.vectors, count, vectors, options);
+        if need_origin {
+            let origin = self.ensure_origin(store, knobs, previous, options)?;
+            land_values!(origin, count, origins, options);
+        }
+        if need_boundary {
+            let boundary = self.ensure_boundary(store, knobs, previous, options)?;
+            land_values!(boundary, count, boundaries, options);
+        }
+        if self.step_index.is_some() || !trivial_index {
+            let step_index = self.ensure_step_index(store, knobs, previous, options)?;
+            land_values!(step_index, count, ordinals, options);
+        }
+        Ok(())
+    }
+
+    /// Roll every array back to `updates` committed cell updates.
+    fn truncate_to(&mut self, updates: u64) -> Result<(), MolRsError> {
+        self.vectors.truncate_to(updates)?;
+        for array in [&mut self.step_index, &mut self.origin, &mut self.boundary]
+            .into_iter()
+            .flatten()
+        {
+            array.truncate_to(updates)?;
+        }
+        Ok(())
+    }
+}
+
+/// The `box/` group attributes: `cell_defined` when false, plus the fixed
+/// cell itself (`vectors`, and `origin` / `boundary` off their defaults) when
+/// the cell lives in the attributes.
+fn box_attributes(
+    cell_defined: bool,
+    fixed: Option<&SimBox>,
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut attributes = serde_json::Map::new();
+    if !cell_defined {
+        attributes.insert(CELL_DEFINED_ATTRIBUTE.to_string(), false.into());
+    }
+    if let Some(cell) = fixed {
+        let h = cell.h_view();
+        let rows: Vec<serde_json::Value> = (0..3)
+            .map(|i| serde_json::json!([h[[i, 0]], h[[i, 1]], h[[i, 2]]]))
+            .collect();
+        attributes.insert(VECTORS_ARRAY.to_string(), serde_json::Value::Array(rows));
+        if !origin_is_default(cell) {
+            let o = cell.origin_view();
+            attributes.insert(
+                ORIGIN_ARRAY.to_string(),
+                serde_json::json!([o[0], o[1], o[2]]),
+            );
+        }
+        if !boundary_is_default(cell) {
+            attributes.insert(BOUNDARY_ARRAY.to_string(), serde_json::json!(cell.pbc()));
+        }
+    }
+    attributes
+}
+
+/// The fixed cell recorded in the `box/` group attributes, if any.
+fn cell_from_attributes(
+    attributes: &serde_json::Map<String, serde_json::Value>,
+) -> Result<Option<SimBox>, MolRsError> {
+    let Some(vectors) = attributes.get(VECTORS_ARRAY) else {
+        return Ok(None);
+    };
+    let flat: Vec<F> = match vectors.as_array() {
+        Some(rows) if rows.len() == 3 && rows.iter().all(serde_json::Value::is_array) => rows
+            .iter()
+            .flat_map(|row| row.as_array().into_iter().flatten())
+            .filter_map(serde_json::Value::as_f64)
+            .collect(),
+        Some(values) => values
+            .iter()
+            .filter_map(serde_json::Value::as_f64)
+            .collect(),
+        None => Vec::new(),
+    };
+    if flat.len() != 9 {
+        return Err(MolRsError::zarr(format!(
+            "box attribute {VECTORS_ARRAY:?} must hold a 3x3 cell, found {vectors}"
+        )));
+    }
+    let origin: Vec<F> = match attributes.get(ORIGIN_ARRAY).and_then(|v| v.as_array()) {
+        Some(values) => values
+            .iter()
+            .filter_map(serde_json::Value::as_f64)
+            .collect(),
+        None => vec![0.0, 0.0, 0.0],
+    };
+    let boundary: Vec<bool> = match attributes.get(BOUNDARY_ARRAY).and_then(|v| v.as_array()) {
+        Some(values) => values
+            .iter()
+            .filter_map(serde_json::Value::as_bool)
+            .collect(),
+        None => vec![true, true, true],
+    };
+    if origin.len() != 3 || boundary.len() != 3 {
+        return Err(MolRsError::zarr(
+            "box attributes origin / boundary must hold three values each".to_string(),
+        ));
+    }
+    let cell_defined = attributes
+        .get(CELL_DEFINED_ATTRIBUTE)
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(true);
+    SimBox::new_cell(
+        Array2::from_shape_vec((3, 3), flat).map_err(zerr)?,
+        Array1::from(origin),
+        [boundary[0], boundary[1], boundary[2]],
+        cell_defined,
+    )
+    .map(Some)
+    .map_err(|e| MolRsError::zarr(format!("box attributes are not a valid cell: {e:?}")))
+}
+
+/// Write the `box/` group with these attributes (creating it if needed).
+fn store_box_attributes(
+    store: &ReadableWritableListableStorage,
+    attributes: serde_json::Map<String, serde_json::Value>,
+) -> Result<(), MolRsError> {
+    let prefix = join_path(TRAJECTORY_GROUP, BOX_GROUP);
+    GroupBuilder::new()
+        .attributes(attributes)
+        .build(store.clone(), &prefix)?
+        .store_metadata()?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Dense per-frame series: progression or array
+// ---------------------------------------------------------------------------
+
+/// A value type a dense per-frame series (`step`, `time`) holds.
+trait Series: Copy + PartialEq + zarrs::array::Element + zarrs::array::ElementOwned {
+    const DTYPE: DType;
+    /// `start + i * stride`, or `None` when it does not fit the type.
+    fn nth(start: Self, stride: Self, i: u64) -> Option<Self>;
+    /// The stride from `a` to `b`, or `None` when it does not fit the type.
+    fn stride_between(a: Self, b: Self) -> Option<Self>;
+    fn to_json(self) -> Option<serde_json::Value>;
+    fn from_json(value: &serde_json::Value) -> Option<Self>;
+}
+
+impl Series for i64 {
+    const DTYPE: DType = DType::Int64;
+    fn nth(start: Self, stride: Self, i: u64) -> Option<Self> {
+        let i = i64::try_from(i).ok()?;
+        start.checked_add(stride.checked_mul(i)?)
+    }
+    fn stride_between(a: Self, b: Self) -> Option<Self> {
+        b.checked_sub(a)
+    }
+    fn to_json(self) -> Option<serde_json::Value> {
+        Some(self.into())
+    }
+    fn from_json(value: &serde_json::Value) -> Option<Self> {
+        value.as_i64()
+    }
+}
+
+impl Series for f64 {
+    const DTYPE: DType = DType::Float;
+    fn nth(start: Self, stride: Self, i: u64) -> Option<Self> {
+        Some(start + (i as f64) * stride)
+    }
+    fn stride_between(a: Self, b: Self) -> Option<Self> {
+        Some(b - a)
+    }
+    fn to_json(self) -> Option<serde_json::Value> {
+        // JSON has no NaN / infinity; such a series goes to an array.
+        self.is_finite().then(|| self.into())
+    }
+    fn from_json(value: &serde_json::Value) -> Option<Self> {
+        value.as_f64()
+    }
+}
+
+/// An arithmetic progression `start + i * stride` recorded as a trajectory
+/// group attribute — how `step` and `time` are kept while they are regular.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Progression<T> {
+    start: T,
+    /// Unknown until the second value.
+    stride: Option<T>,
+}
+
+impl<T: Series> Progression<T> {
+    /// Parse the attribute form `{"start": …, "stride": …}`.
+    fn from_attribute(value: &serde_json::Value) -> Option<Self> {
+        let start = T::from_json(value.get("start")?)?;
+        let stride = value.get("stride").and_then(T::from_json);
+        Some(Self { start, stride })
+    }
+
+    fn to_attribute(self) -> Option<serde_json::Value> {
+        let mut object = serde_json::Map::new();
+        object.insert("start".to_string(), self.start.to_json()?);
+        if let Some(stride) = self.stride {
+            object.insert("stride".to_string(), stride.to_json()?);
+        }
+        Some(serde_json::Value::Object(object))
+    }
+
+    /// The `i`-th value, or `None` past what the progression can say.
+    fn nth(&self, i: u64) -> Option<T> {
+        if i == 0 {
+            return Some(self.start);
+        }
+        T::nth(self.start, self.stride?, i)
+    }
+
+    /// The first `count` values.
+    fn values(&self, count: u64) -> Result<Vec<T>, MolRsError> {
+        (0..count)
+            .map(|i| {
+                self.nth(i).ok_or_else(|| {
+                    MolRsError::zarr(format!(
+                        "progression attribute cannot produce value {i}: stride unknown or overflow"
+                    ))
+                })
+            })
+            .collect()
+    }
+}
+
+/// Where a dense per-frame series lives: in the trajectory group's attribute
+/// while it is regular, in its own array once it is not.
+enum Track<T: Series> {
+    Regular {
+        progression: Option<Progression<T>>,
+        /// Values landed so far.
+        count: u64,
+    },
+    Array(Box<GrowthArray>),
+}
+
+impl<T: Series> Track<T> {
+    fn fresh() -> Self {
+        Self::Regular {
+            progression: None,
+            count: 0,
+        }
+    }
+
+    /// Whether appending `values` keeps the series regular, and the
+    /// progression it becomes.
+    fn extended(&self, values: &[T]) -> Option<Progression<T>> {
+        let Self::Regular { progression, count } = self else {
+            return None;
+        };
+        let mut progression = *progression;
+        for (index, &value) in (*count..).zip(values.iter()) {
+            progression = match progression {
+                None => Some(Progression {
+                    start: value,
+                    stride: None,
+                }),
+                Some(Progression {
+                    start,
+                    stride: None,
+                }) => Some(Progression {
+                    start,
+                    stride: Some(T::stride_between(start, value)?),
+                }),
+                Some(p) => {
+                    if p.nth(index)? != value {
+                        return None;
+                    }
+                    Some(p)
+                }
+            };
+            // The attribute must be able to spell it.
+            progression?.to_attribute()?;
+        }
+        progression
+    }
+
+    /// The last value landed.
+    fn last(
+        &self,
+        store: &ReadableWritableListableStorage,
+        path: &str,
+    ) -> Result<Option<T>, MolRsError> {
+        match self {
+            Self::Regular { progression, count } => Ok(match (progression, *count) {
+                (Some(p), n) if n > 0 => p.nth(n - 1),
+                _ => None,
+            }),
+            Self::Array(array) => {
+                if array.rows == 0 {
+                    return Ok(None);
+                }
+                let values: Vec<T> = read_whole(store, path)?;
+                Ok(values.get(array.rows as usize - 1).copied())
+            }
+        }
+    }
+
+    /// Land `values`: extend the progression, or materialize the array (backfilling the regular history) and append.
+    fn land(
+        &mut self,
+        store: &ReadableWritableListableStorage,
+        path: &str,
+        knobs: Knobs,
+        values: Vec<T>,
+        options: &CodecOptions,
+    ) -> Result<(), MolRsError> {
+        if let Some(progression) = self.extended(&values) {
+            let Self::Regular { count, .. } = self else {
+                unreachable!("extended() is Some only for a regular track")
+            };
+            let count = *count + values.len() as u64;
+            *self = Self::Regular {
+                progression: Some(progression),
+                count,
+            };
+            return Ok(());
+        }
+        if let Self::Regular { progression, count } = self {
+            let mut array = GrowthArray::create(
+                store,
+                path,
+                T::DTYPE,
+                &[],
+                knobs.dense(),
+                serde_json::Map::new(),
+                DENSE_COMPRESSION,
+            )?;
+            if *count > 0 {
+                let history = progression
+                    .as_ref()
+                    .ok_or_else(|| MolRsError::zarr("regular track without a progression"))?
+                    .values(*count)?;
+                let n = history.len() as u64;
+                land_values!(array, n, history, options);
+            }
+            *self = Self::Array(Box::new(array));
+        }
+        let Self::Array(array) = self else {
+            unreachable!("materialized above")
+        };
+        let n = values.len() as u64;
+        land_values!(array, n, values, options);
+        Ok(())
+    }
+
+    /// The attribute this track wants on the trajectory group, if any.
+    fn attribute(&self) -> Option<serde_json::Value> {
+        match self {
+            Self::Regular {
+                progression: Some(p),
+                count,
+            } if *count > 0 => p.to_attribute(),
+            _ => None,
+        }
+    }
+}
+
+/// Read a dense series back: the progression attribute when present, else
+/// the array cut to `nstep`, else `None`.
+fn read_track<T: Series, S>(
+    store: &Arc<S>,
+    attributes: &serde_json::Map<String, serde_json::Value>,
+    attribute: &str,
+    path: &str,
+    nstep: u64,
+) -> Result<Option<Vec<T>>, MolRsError>
+where
+    S: ?Sized + ReadableStorageTraits + 'static,
+{
+    if let Some(value) = attributes.get(attribute) {
+        let progression = Progression::<T>::from_attribute(value).ok_or_else(|| {
+            MolRsError::zarr(format!(
+                "trajectory attribute {attribute:?} is not a progression"
+            ))
+        })?;
+        return Ok(Some(progression.values(nstep)?));
+    }
+    if array_exists(store, path)? {
+        let mut values: Vec<T> = read_whole(store, path)?;
+        values.truncate(nstep as usize);
+        return Ok(Some(values));
+    }
+    Ok(None)
+}
+
+/// The commit marker and the regular series, read off the trajectory group.
+struct TrajectoryAttributes {
+    nstep: Option<u64>,
+    all: serde_json::Map<String, serde_json::Value>,
+}
+
+fn trajectory_attributes<S>(store: &Arc<S>) -> Result<TrajectoryAttributes, MolRsError>
+where
+    S: ?Sized + ReadableStorageTraits + 'static,
+{
+    let group = Group::open(store.clone(), TRAJECTORY_GROUP)?;
+    let all = group.attributes().clone();
+    let nstep = all.get(NSTEP_ATTRIBUTE).and_then(serde_json::Value::as_u64);
+    Ok(TrajectoryAttributes { nstep, all })
+}
+
+/// The committed frame count: the `nstep` attribute, or — for a store from a
+/// writer that kept no marker attribute — the length of the `step` array.
+fn committed_frames<S>(store: &Arc<S>, attributes: &TrajectoryAttributes) -> Result<u64, MolRsError>
+where
+    S: ?Sized + ReadableStorageTraits + 'static,
+{
+    if let Some(nstep) = attributes.nstep {
+        return Ok(nstep);
+    }
+    let path = join_path(TRAJECTORY_GROUP, STEP_ARRAY);
+    if array_exists(store, &path)? {
+        return Ok(Array::open(store.clone(), &path)?
+            .shape()
+            .first()
+            .copied()
+            .unwrap_or(0));
+    }
+    Ok(0)
 }
 
 /// Every array of one sequence, created at the first append and never
 /// re-planned afterwards.
 struct SequenceArrays {
-    step: GrowthArray,
-    time: Option<GrowthArray>,
+    step: Track<i64>,
+    time: Option<Track<f64>>,
     meta: BTreeMap<String, GrowthArray>,
     blocks: BTreeMap<String, BlockArrays>,
-    cell: Option<BoxArrays>,
+    cell: Option<CellStore>,
+    /// Frames committed — the `nstep` attribute.
+    nstep: u64,
 }
 
 impl SequenceArrays {
@@ -1476,34 +2440,24 @@ impl SequenceArrays {
     fn create(
         store: &ReadableWritableListableStorage,
         schema: &SequenceSchema,
-        rows_per_chunk: Option<u64>,
-        chunks_per_shard: Option<u64>,
+        knobs: Knobs,
+        compression: Compression,
         with_time: bool,
     ) -> Result<Self, MolRsError> {
-        let dense = |dtype: DType, trailing: &[u64]| {
-            derive_extents(rows_per_chunk, chunks_per_shard, row_bytes(dtype, trailing))
-        };
-        let step = GrowthArray::create(
-            store,
-            &join_path(TRAJECTORY_GROUP, STEP_ARRAY),
-            DType::Int64,
-            &[],
-            dense(DType::Int64, &[]),
-            serde_json::Map::new(),
-            false,
-        )?;
-        let time = if with_time {
-            Some(GrowthArray::create(
+        let dense = |store: &ReadableWritableListableStorage,
+                     path: &str,
+                     dtype: DType,
+                     trailing: &[u64],
+                     attributes: serde_json::Map<String, serde_json::Value>| {
+            GrowthArray::create(
                 store,
-                &join_path(TRAJECTORY_GROUP, TIME_ARRAY),
-                DType::Float,
-                &[],
-                dense(DType::Float, &[]),
-                serde_json::Map::new(),
-                false,
-            )?)
-        } else {
-            None
+                path,
+                dtype,
+                trailing,
+                knobs.dense(),
+                attributes,
+                DENSE_COMPRESSION,
+            )
         };
 
         let mut meta = BTreeMap::new();
@@ -1528,14 +2482,12 @@ impl SequenceArrays {
             );
             meta.insert(
                 key.clone(),
-                GrowthArray::create(
+                dense(
                     store,
                     &join_path(&join_path(TRAJECTORY_GROUP, META_GROUP), key),
                     dtype,
                     &trailing,
-                    dense(dtype, &trailing),
                     attributes,
-                    false,
                 )?,
             );
         }
@@ -1543,51 +2495,48 @@ impl SequenceArrays {
         let mut blocks = BTreeMap::new();
         for (name, declared) in &schema.blocks {
             let path = join_path(TRAJECTORY_GROUP, name);
-            let mut attributes = serde_json::Map::new();
-            if let Some(shape) = &declared.structural_shape {
-                // Mirrored onto the section for foreign readers of the
-                // contract; molrs itself reads the schema attribute.
-                attributes.insert(
-                    STRUCTURAL_SHAPE_ATTRIBUTE.to_string(),
-                    serde_json::Value::Array(
-                        shape
-                            .iter()
-                            .map(|axis| serde_json::Value::from(*axis as u64))
-                            .collect(),
-                    ),
-                );
-            }
+            let hints = BlockHints::fresh();
             GroupBuilder::new()
-                .attributes(attributes)
+                .attributes(block_attributes(
+                    declared.structural_shape.as_deref(),
+                    hints.attributes(),
+                ))
                 .build(store.clone(), &path)?
                 .store_metadata()?;
 
-            // Every column of a block shares one rows-per-chunk, set by the
-            // widest of them, so a frame's rows stay aligned across the
-            // section.
-            let widest = declared
+            // Every column of a block shares one rows-per-chunk — a whole
+            // number of representative frames, sized so the narrowest column
+            // still reaches the byte floor — so a frame's rows stay aligned
+            // across the section.
+            let widths = declared
                 .columns
                 .values()
                 .map(|column| {
                     dtype_from_tag(&column.dtype).map(|dtype| row_bytes(dtype, &column.trailing))
                 })
-                .collect::<Result<Vec<u64>, MolRsError>>()?
-                .into_iter()
-                .max()
-                .unwrap_or(8);
-            let extents = derive_extents(rows_per_chunk, chunks_per_shard, widest);
+                .collect::<Result<Vec<u64>, MolRsError>>()?;
+            let narrowest = widths.iter().copied().min().unwrap_or(8);
+            let rows_per_chunk = knobs.rows_per_chunk.unwrap_or_else(|| {
+                Extents::block_rows_per_chunk(schema.frame_rows(name), narrowest)
+            });
             let mut columns = BTreeMap::new();
-            for (column, schema) in &declared.columns {
+            for ((column, column_schema), width) in declared.columns.iter().zip(widths) {
+                let dtype = dtype_from_tag(&column_schema.dtype)?;
+                let compression = if is_float_width(dtype) {
+                    compression
+                } else {
+                    Compression::Gzip(GZIP_LEVEL)
+                };
                 columns.insert(
                     column.clone(),
                     GrowthArray::create(
                         store,
                         &join_path(&path, column),
-                        dtype_from_tag(&schema.dtype)?,
-                        &schema.trailing,
-                        extents,
+                        dtype,
+                        &column_schema.trailing,
+                        Extents::for_column(rows_per_chunk, width, knobs.chunks_per_shard),
                         serde_json::Map::new(),
-                        true,
+                        compression,
                     )?,
                 );
             }
@@ -1595,90 +2544,150 @@ impl SequenceArrays {
                 name.clone(),
                 BlockArrays {
                     columns,
-                    offset: GrowthArray::create(
-                        store,
-                        &join_path(&path, OFFSET_ARRAY),
-                        DType::UInt,
-                        &[],
-                        dense(DType::UInt, &[]),
-                        serde_json::Map::new(),
-                        false,
-                    )?,
-                    step_index: GrowthArray::create(
-                        store,
-                        &join_path(&path, STEP_INDEX_ARRAY),
-                        DType::UInt,
-                        &[],
-                        dense(DType::UInt, &[]),
-                        serde_json::Map::new(),
-                        false,
-                    )?,
+                    index: None,
                     total_rows: 0,
                     updates: 0,
+                    rows_per_chunk,
+                    hints,
                 },
             );
         }
 
         Ok(Self {
-            step,
-            time,
+            step: Track::fresh(),
+            time: with_time.then(Track::fresh),
             meta,
             blocks,
             cell: None,
+            nstep: 0,
         })
     }
 
-    /// Reopen every array the schema declares, validating each against it.
+    /// Reopen every array the schema declares, validate each against it, and
+    /// **roll back** anything a crash left longer than the commit marker.
+    ///
+    /// The `nstep` attribute is the truth: every per-frame series is cut to
+    /// it, every section's index to the updates at ordinals below it, and
+    /// every column to the rows those updates own.
     fn open(
         store: &ReadableWritableListableStorage,
         schema: &SequenceSchema,
     ) -> Result<Self, MolRsError> {
-        let step = GrowthArray::open(store, &join_path(TRAJECTORY_GROUP, STEP_ARRAY))?;
+        let attributes = trajectory_attributes(store)?;
+        let nstep = committed_frames(store, &attributes)?;
+
+        let step_path = join_path(TRAJECTORY_GROUP, STEP_ARRAY);
+        let step = if let Some(value) = attributes.all.get(STEP_PROGRESSION_ATTRIBUTE) {
+            Track::Regular {
+                progression: Progression::<i64>::from_attribute(value),
+                count: nstep,
+            }
+        } else if array_exists(store, &step_path)? {
+            let mut array = GrowthArray::open(store, &step_path)?;
+            array.truncate_to(nstep)?;
+            Track::Array(Box::new(array))
+        } else {
+            Track::fresh()
+        };
         let time_path = join_path(TRAJECTORY_GROUP, TIME_ARRAY);
-        let time = if array_exists(store, &time_path)? {
-            Some(GrowthArray::open(store, &time_path)?)
+        let time = if let Some(value) = attributes.all.get(TIME_PROGRESSION_ATTRIBUTE) {
+            Some(Track::Regular {
+                progression: Progression::<f64>::from_attribute(value),
+                count: nstep,
+            })
+        } else if array_exists(store, &time_path)? {
+            let mut array = GrowthArray::open(store, &time_path)?;
+            array.truncate_to(nstep)?;
+            Some(Track::Array(Box::new(array)))
         } else {
             None
         };
 
         let mut meta = BTreeMap::new();
         for key in schema.meta.keys() {
-            meta.insert(
-                key.clone(),
-                GrowthArray::open(
-                    store,
-                    &join_path(&join_path(TRAJECTORY_GROUP, META_GROUP), key),
-                )?,
-            );
+            let mut array = GrowthArray::open(
+                store,
+                &join_path(&join_path(TRAJECTORY_GROUP, META_GROUP), key),
+            )?;
+            array.truncate_to(nstep)?;
+            meta.insert(key.clone(), array);
         }
 
         let mut blocks = BTreeMap::new();
         for (name, declared) in &schema.blocks {
             let path = join_path(TRAJECTORY_GROUP, name);
             let mut columns = BTreeMap::new();
+            let mut rows_per_chunk = None;
             for (column, column_schema) in &declared.columns {
                 let column_path = join_path(&path, column);
                 let opened = GrowthArray::open(store, &column_path)?;
                 validate_column(&opened, &column_path, column_schema)?;
+                rows_per_chunk.get_or_insert_with(|| opened.rows_per_chunk());
                 columns.insert(column.clone(), opened);
             }
-            let offset = GrowthArray::open(store, &join_path(&path, OFFSET_ARRAY))?;
-            let step_index = GrowthArray::open(store, &join_path(&path, STEP_INDEX_ARRAY))?;
-            let total_rows = if step_index.rows == 0 {
-                0
+            let stored = stored_hints(store, &path)?;
+
+            let (index, updates, total_rows, mut hints) =
+                if array_exists(store, &join_path(&path, STEP_INDEX_ARRAY))? {
+                    let mut step_index =
+                        GrowthArray::open(store, &join_path(&path, STEP_INDEX_ARRAY))?;
+                    let mut offset = GrowthArray::open(store, &join_path(&path, OFFSET_ARRAY))?;
+                    let ordinals =
+                        read_whole::<u64, _>(store, &join_path(&path, STEP_INDEX_ARRAY))?;
+                    let updates = ordinals
+                        .iter()
+                        .take_while(|&&ordinal| ordinal < nstep)
+                        .count();
+                    step_index.truncate_to(updates as u64)?;
+                    offset.truncate_to(if updates == 0 { 0 } else { updates as u64 + 1 })?;
+                    let mut offsets = read_whole::<u64, _>(store, &join_path(&path, OFFSET_ARRAY))?;
+                    offsets.truncate(if updates == 0 { 0 } else { updates + 1 });
+                    let total_rows = offsets.last().copied().unwrap_or(0);
+                    (
+                        Some(IndexArrays { offset, step_index }),
+                        updates as u64,
+                        total_rows,
+                        BlockHints::from_index(&ordinals[..updates], &offsets),
+                    )
+                } else {
+                    match stored {
+                        (Some(rows), true) if rows > 0 && !columns.is_empty() => {
+                            let landed = columns.values().map(|c| c.rows).min().unwrap_or(0);
+                            let updates = (landed / rows).min(nstep);
+                            let mut hints = BlockHints::fresh();
+                            for update in 0..updates {
+                                hints.observe(update, update, rows);
+                            }
+                            (None, updates, updates * rows, hints)
+                        }
+                        // No committed update: whatever the columns hold is
+                        // a torn landing.
+                        _ => (None, 0, 0, BlockHints::fresh()),
+                    }
+                };
+            for column in columns.values_mut() {
+                column.truncate_to(total_rows)?;
+            }
+            hints.stored = stored;
+            let wanted = if index.is_some() {
+                (None, false)
             } else {
-                *read_whole::<u64, _>(store, &join_path(&path, OFFSET_ARRAY))?
-                    .last()
-                    .unwrap_or(&0)
+                hints.attributes()
             };
+            if wanted != hints.stored {
+                store_block_attributes(store, &path, declared.structural_shape.as_deref(), wanted)?;
+                hints.stored = wanted;
+            }
+
             blocks.insert(
                 name.clone(),
                 BlockArrays {
                     columns,
-                    updates: step_index.rows,
-                    offset,
-                    step_index,
+                    index,
                     total_rows,
+                    updates,
+                    rows_per_chunk: rows_per_chunk.unwrap_or(1),
+                    hints,
                 },
             );
         }
@@ -1693,12 +2702,28 @@ impl SequenceArrays {
                     Ok(None)
                 }
             };
-            Some(BoxArrays {
+            let mut arrays = BoxArrays {
                 step_index: optional(STEP_INDEX_ARRAY)?,
                 vectors: GrowthArray::open(store, &join_path(&box_prefix, VECTORS_ARRAY))?,
                 origin: optional(ORIGIN_ARRAY)?,
                 boundary: optional(BOUNDARY_ARRAY)?,
-            })
+            };
+            let committed = match &arrays.step_index {
+                Some(_) => read_whole::<u64, _>(store, &join_path(&box_prefix, STEP_INDEX_ARRAY))?
+                    .iter()
+                    .take_while(|&&ordinal| ordinal < nstep)
+                    .count() as u64,
+                // The omitted index is one update at ordinal 0.
+                None => u64::from(arrays.vectors.rows > 0 && nstep > 0),
+            };
+            arrays.truncate_to(committed)?;
+            Some(CellStore::Arrays(Box::new(arrays)))
+        } else if group_exists(store, &box_prefix)? {
+            let group = Group::open(store.clone(), &box_prefix)?;
+            match cell_from_attributes(group.attributes())? {
+                Some(cell) if nstep > 0 => Some(CellStore::Attributes(Box::new(cell))),
+                _ => None,
+            }
         } else {
             None
         };
@@ -1709,74 +2734,30 @@ impl SequenceArrays {
             meta,
             blocks,
             cell,
+            nstep,
         })
     }
 
-    /// Create the `box/` section on the first cell-carrying flush.
-    fn ensure_cell(
-        &mut self,
+    /// The trajectory group attributes a commit publishes: the pin, the
+    /// marker, and the regular series.
+    fn store_marker(
+        &self,
         store: &ReadableWritableListableStorage,
-        rows_per_chunk: Option<u64>,
-        chunks_per_shard: Option<u64>,
-        first: &SimBox,
-    ) -> Result<&mut BoxArrays, MolRsError> {
-        if self.cell.is_none() {
-            let prefix = join_path(TRAJECTORY_GROUP, BOX_GROUP);
-            let mut attributes = serde_json::Map::new();
-            // Written only when false, exactly as `write_simbox` writes it for
-            // the frame section: every store predating the attribute carries a
-            // defined cell, so absent has to keep meaning `true`.
-            if !first.is_cell_defined() {
-                attributes.insert(
-                    CELL_DEFINED_ATTRIBUTE.to_string(),
-                    serde_json::Value::Bool(false),
-                );
-            }
-            GroupBuilder::new()
-                .attributes(attributes)
-                .build(store.clone(), &prefix)?
-                .store_metadata()?;
-            let dense = |dtype: DType, trailing: &[u64]| {
-                derive_extents(rows_per_chunk, chunks_per_shard, row_bytes(dtype, trailing))
-            };
-            self.cell = Some(BoxArrays {
-                step_index: None,
-                vectors: GrowthArray::create(
-                    store,
-                    &join_path(&prefix, VECTORS_ARRAY),
-                    DType::Float,
-                    &[3, 3],
-                    dense(DType::Float, &[3, 3]),
-                    serde_json::Map::new(),
-                    false,
-                )?,
-                origin: None,
-                boundary: None,
-            });
-        }
-        Ok(self
-            .cell
-            .as_mut()
-            .expect("the box section was just created"))
-    }
-
-    /// Every growth array, for the sweep `close` makes over all of them.
-    fn all_mut(&mut self) -> Vec<&mut GrowthArray> {
-        let mut all: Vec<&mut GrowthArray> = vec![&mut self.step];
-        all.extend(self.time.as_mut());
-        all.extend(self.meta.values_mut());
-        for block in self.blocks.values_mut() {
-            all.extend(block.columns.values_mut());
-            all.push(&mut block.offset);
-            all.push(&mut block.step_index);
-        }
-        if let Some(cell) = self.cell.as_mut() {
-            all.extend(cell.step_index.as_mut());
-            all.push(&mut cell.vectors);
-            all.extend(cell.origin.as_mut());
-            all.extend(cell.boundary.as_mut());
-        }
-        all
+        nstep: u64,
+    ) -> Result<(), MolRsError> {
+        let mut group = Group::open(store.clone(), TRAJECTORY_GROUP)?;
+        let attributes = group.attributes_mut();
+        attributes.insert(NSTEP_ATTRIBUTE.to_string(), nstep.into());
+        match self.step.attribute() {
+            Some(value) => attributes.insert(STEP_PROGRESSION_ATTRIBUTE.to_string(), value),
+            None => attributes.remove(STEP_PROGRESSION_ATTRIBUTE),
+        };
+        match self.time.as_ref().and_then(Track::attribute) {
+            Some(value) => attributes.insert(TIME_PROGRESSION_ATTRIBUTE.to_string(), value),
+            None => attributes.remove(TIME_PROGRESSION_ATTRIBUTE),
+        };
+        group.store_metadata()?;
+        Ok(())
     }
 }
 
@@ -1806,13 +2787,18 @@ fn validate_column(
     Ok(())
 }
 
-/// One appended frame, buffered until `flush` lands it.
+// ---------------------------------------------------------------------------
+// Writer
+// ---------------------------------------------------------------------------
+
+/// One appended frame, buffered until a landing writes it.
 struct PendingFrame {
     step: i64,
     time: Option<F>,
-    /// Sections this frame changed: `Some` is new content, `None` is the
-    /// zero-row update that marks the section gone.
-    blocks: BTreeMap<String, Option<Block>>,
+    /// Sections this frame changed. A block omitted by the frame is not here:
+    /// it carries forward. A present block with zero rows is here, as the
+    /// zero-row update that means present-and-empty.
+    blocks: BTreeMap<String, Block>,
     /// The cell, when it changed.
     cell: Option<SimBox>,
     /// Every declared meta key, resolved to a value or its declared fill.
@@ -1820,8 +2806,8 @@ struct PendingFrame {
 }
 
 /// The streaming producer of a frame sequence: one frame per
-/// [`append`](Self::append), [`flush`](Self::flush) commits, `close(self)`
-/// seals.
+/// [`append`](Self::append); complete inner chunks land on their own,
+/// [`flush`](Self::flush) commits the rest, `close(self)` ends the run.
 ///
 /// One of the three access forms of a single object — the eager in-memory
 /// carrier is `Trajectory`, the lazy store cursor is [`FrameSequence`], and
@@ -1829,9 +2815,15 @@ struct PendingFrame {
 ///
 /// **No `Drop`.** Closing is [`close`](Self::close), which consumes the writer
 /// and can therefore return the IO error a `Drop` would have had to swallow —
-/// and a scientific writer that swallows an IO error is silent data loss. The
-/// lifecycle is the explicit one `FrameIndexBuilder` already uses in this
-/// crate: create / append / flush / close.
+/// and a scientific writer that swallows an IO error is silent data loss.
+///
+/// **What lands when.** Every append is checked and buffered. When the buffer
+/// reaches the landing cadence — derived from the frame size so that block
+/// columns land whole inner chunks and roughly [`FLUSH_TARGET_BYTES`] at a
+/// time, or set by [`with_flush_every`](Self::with_flush_every) — the buffered
+/// frames are committed. [`flush`](Self::flush) commits at any time and is
+/// **durable** by default (the touched files are synced before the commit
+/// marker moves); the automatic landings are not synced.
 ///
 /// **Error vocabulary.** Every door on this type yields [`MolRsError`], and the
 /// storage-backed ones arrive as the [`MolRsError::Zarr`] variant carrying a
@@ -1839,16 +2831,26 @@ struct PendingFrame {
 /// disagreed.
 pub struct FrameSequenceWriter {
     store: ReadableWritableListableStorage,
+    /// The concrete positional-write store behind `store`, when this writer
+    /// was opened by path — the only store that can be asked to sync.
+    #[cfg(feature = "filesystem")]
+    positional: Option<Arc<crate::io::zarr::store::PositionalWriteStore>>,
     schema: SequenceSchema,
-    rows_per_chunk: Option<u64>,
-    chunks_per_shard: Option<u64>,
+    knobs: Knobs,
+    compression: Compression,
+    /// Landing cadence in frames; `None` derives it at the first append.
+    flush_every: Option<u64>,
+    /// Whether an explicit `flush` / `close` syncs the touched files.
+    durable: bool,
     /// `None` until the first append freezes the extents and creates them.
     arrays: Option<SequenceArrays>,
+    /// The landing cadence in force, fixed at the first append.
+    auto_flush_every: u64,
     /// Highest step number landed or buffered.
     last_step: Option<i64>,
     /// Whether this run carries times. Fixed by the first append.
     uses_time: Option<bool>,
-    /// Frames committed by a flush.
+    /// Frames committed.
     committed: u64,
     pending: Vec<PendingFrame>,
     /// Last content landed or buffered per section, for the change detection
@@ -1857,43 +2859,113 @@ pub struct FrameSequenceWriter {
     landed_cell: Option<SimBox>,
 }
 
+/// What a writer knows about the sequence it is attached to: nothing for a
+/// fresh mint, the recovered state for a reopen.
+struct Attached {
+    arrays: Option<SequenceArrays>,
+    last_step: Option<i64>,
+    uses_time: Option<bool>,
+    committed: u64,
+    landed_blocks: BTreeMap<String, Block>,
+    landed_cell: Option<SimBox>,
+}
+
+impl Attached {
+    /// A sequence with no arrays yet: created, never appended.
+    fn fresh() -> Self {
+        Self {
+            arrays: None,
+            last_step: None,
+            uses_time: None,
+            committed: 0,
+            landed_blocks: BTreeMap::new(),
+            landed_cell: None,
+        }
+    }
+}
+
 impl FrameSequenceWriter {
+    fn assemble(
+        store: ReadableWritableListableStorage,
+        #[cfg(feature = "filesystem")] positional: Option<
+            Arc<crate::io::zarr::store::PositionalWriteStore>,
+        >,
+        schema: SequenceSchema,
+        attached: Attached,
+    ) -> Self {
+        let mut writer = Self {
+            store,
+            #[cfg(feature = "filesystem")]
+            positional,
+            schema,
+            knobs: Knobs::default(),
+            compression: Compression::None,
+            flush_every: None,
+            durable: true,
+            arrays: attached.arrays,
+            auto_flush_every: 1,
+            last_step: attached.last_step,
+            uses_time: attached.uses_time,
+            committed: attached.committed,
+            pending: Vec::new(),
+            landed_blocks: attached.landed_blocks,
+            landed_cell: attached.landed_cell,
+        };
+        if writer.arrays.is_some() {
+            writer.auto_flush_every = writer.derive_flush_every();
+        }
+        writer
+    }
+
     /// Mint a new sequence at `trajectory/` and pin `schema` to it.
     ///
-    /// Writes the group and its schema attributes and nothing else: the arrays
-    /// are created by the first [`append`](Self::append), which is what leaves
-    /// the extent knobs a window to act in. A store that already holds a
-    /// sequence is an `Err` naming it — never a silent overwrite, because that
-    /// path is somebody's run.
+    /// Writes the record root and its `meta/` group when the store has none,
+    /// then the `trajectory/` group with its schema attribute — and nothing
+    /// else: the arrays are created by the first [`append`](Self::append). A
+    /// store that already holds a sequence is an `Err` naming it, never a
+    /// silent overwrite.
     ///
     /// **`trajectory/` is cleared first.** Zarr stores are written key by key,
     /// so a mint that only wrote its own keys would inherit every leftover
-    /// child of whatever stood at that node; this door therefore erases the
-    /// whole `trajectory/` prefix before writing. The check above guards the
-    /// case that matters — a *molrs sequence*, recognised by its
-    /// `trajectory/step` array, is refused rather than erased — but anything
-    /// else under that node is destroyed, including the
-    /// `trajectory/frames/<i>/` tree written by molrs <= 0.13, which carries no
-    /// `trajectory/step` array to be recognised by. Reopen with
-    /// [`open`](Self::open) instead when the store may already hold data:
-    /// that door refuses the legacy layout by name.
+    /// child of whatever stood at that node. Reopen with [`open`](Self::open)
+    /// instead when the store may already hold data.
     ///
     /// # Errors
     ///
     /// A [`MolRsError::Zarr`] naming `trajectory/step` when that array already
     /// exists, so nothing is erased and nothing is written. Otherwise any
-    /// storage error raised while erasing the prefix or writing the group
-    /// metadata.
+    /// storage error raised while writing the groups.
     pub fn create(
         store: ReadableWritableListableStorage,
         schema: SequenceSchema,
     ) -> Result<Self, MolRsError> {
-        let step_path = join_path(TRAJECTORY_GROUP, STEP_ARRAY);
-        if array_exists(&store, &step_path)? {
-            return Err(MolRsError::zarr(format!(
-                "a frame sequence already exists at {step_path:?}; refusing to overwrite it"
-            )));
+        Self::create_with(
+            store,
+            #[cfg(feature = "filesystem")]
+            None,
+            schema,
+        )
+    }
+
+    fn create_with(
+        store: ReadableWritableListableStorage,
+        #[cfg(feature = "filesystem")] positional: Option<
+            Arc<crate::io::zarr::store::PositionalWriteStore>,
+        >,
+        schema: SequenceSchema,
+    ) -> Result<Self, MolRsError> {
+        if group_exists(&store, TRAJECTORY_GROUP)? {
+            let attributes = trajectory_attributes(&store)?;
+            if attributes.nstep.is_some()
+                || array_exists(&store, &join_path(TRAJECTORY_GROUP, STEP_ARRAY))?
+            {
+                return Err(MolRsError::zarr(format!(
+                    "a frame sequence already exists at {TRAJECTORY_GROUP:?}; refusing to \
+                     overwrite it"
+                )));
+            }
         }
+        ensure_root_and_meta(&store, None)?;
         // This writer's target node is `trajectory/`, so whatever it held
         // before is not part of the sequence being minted.
         store.erase_prefix(&node_prefix(TRAJECTORY_GROUP)?)?;
@@ -1906,112 +2978,95 @@ impl FrameSequenceWriter {
             .attributes(attributes)
             .build(store.clone(), TRAJECTORY_GROUP)?
             .store_metadata()?;
-        Ok(Self {
+        Ok(Self::assemble(
             store,
+            #[cfg(feature = "filesystem")]
+            positional,
             schema,
-            rows_per_chunk: None,
-            chunks_per_shard: None,
-            arrays: None,
-            last_step: None,
-            uses_time: None,
-            committed: 0,
-            pending: Vec::new(),
-            landed_blocks: BTreeMap::new(),
-            landed_cell: None,
-        })
+            Attached::fresh(),
+        ))
     }
 
     /// Mint a new sequence at `path` — the path-taking door over the fast
-    /// positional-write store.
-    ///
-    /// Builds the [`PositionalWriteStore`] that keeps an append a tail write
-    /// rather than a whole-shard rewrite, so a streaming producer reaches the
-    /// fast path in one call instead of reconstructing the store's write
-    /// policy. The store-taking [`create`](Self::create) stays for callers with
-    /// a store of their own (in-memory, packed).
-    ///
-    /// [`PositionalWriteStore`]: crate::io::zarr::store::PositionalWriteStore
+    /// positional-write store, which is also the store that makes
+    /// [`flush`](Self::flush) durable.
     ///
     /// # Errors
     ///
-    /// The store-root errors of [`PositionalWriteStore::new`], then every error
+    /// The store-root errors of the positional store, then every error
     /// [`create`](Self::create) can raise.
     #[cfg(feature = "filesystem")]
     pub fn create_at(
         path: impl AsRef<std::path::Path>,
         schema: SequenceSchema,
     ) -> Result<Self, MolRsError> {
-        let store: ReadableWritableListableStorage =
-            Arc::new(crate::io::zarr::store::PositionalWriteStore::new(path)?);
-        Self::create(store, schema)
+        let positional = Arc::new(crate::io::zarr::store::PositionalWriteStore::new(path)?);
+        let store: ReadableWritableListableStorage = positional.clone();
+        Self::create_with(store, Some(positional), schema)
     }
 
     /// Reattach to the sequence at `path` and continue appending — the
-    /// path-taking counterpart of [`open`](Self::open), over the same
-    /// positional-write store [`create_at`](Self::create_at) uses.
+    /// path-taking counterpart of [`open`](Self::open).
     ///
     /// # Errors
     ///
-    /// The store-root errors of `PositionalWriteStore::new`, then every error
+    /// The store-root errors of the positional store, then every error
     /// [`open`](Self::open) can raise.
     #[cfg(feature = "filesystem")]
     pub fn open_at(path: impl AsRef<std::path::Path>) -> Result<Self, MolRsError> {
-        let store: ReadableWritableListableStorage =
-            Arc::new(crate::io::zarr::store::PositionalWriteStore::new(path)?);
-        Self::open(store)
+        let positional = Arc::new(crate::io::zarr::store::PositionalWriteStore::new(path)?);
+        let store: ReadableWritableListableStorage = positional.clone();
+        Self::open_with(store, Some(positional))
     }
 
     /// Reattach to an existing sequence and continue appending to it.
     ///
     /// The schema comes off the group attributes and every array is checked
-    /// against it; the extents come off the arrays themselves, because a chunk
-    /// grid cannot be re-planned under live data.
-    ///
-    /// Reopening for append requires the writer's own schema pin — the read
-    /// door's derivation from the store is not a substitute for it.
+    /// against it; the extents come off the arrays themselves. Whatever a
+    /// crash left longer than the commit marker is rolled back first, so the
+    /// next append continues from the last committed frame.
     ///
     /// # Errors
     ///
     /// A [`MolRsError::Zarr`] when the store holds the `trajectory/frames/<i>/`
-    /// layout written by molrs <= 0.13, which this layout replaced and does not
-    /// migrate; the message says to re-write such a store with 0.13. Also when
-    /// `trajectory/` carries no `molrs_sequence_schema` attribute — a store
-    /// that a foreign writer produced can be *read* without the pin (see
-    /// [`FrameSequence::open`]) but not appended to, because appending needs
-    /// the declared union a later frame is checked against and the fills for
-    /// metadata keys a step omits, neither of which is recoverable from data
-    /// that was never written. Finally, when a reopened column array disagrees
-    /// with the pinned schema on dtype or trailing shape, the error names the
-    /// array path and both sides.
+    /// layout written by molrs <= 0.13; when `trajectory/` carries no
+    /// `sequence_schema` attribute (a foreign store can be *read* without the
+    /// pin but not appended to); or when a reopened column array disagrees
+    /// with the pinned schema on dtype or trailing shape.
     pub fn open(store: ReadableWritableListableStorage) -> Result<Self, MolRsError> {
+        Self::open_with(
+            store,
+            #[cfg(feature = "filesystem")]
+            None,
+        )
+    }
+
+    fn open_with(
+        store: ReadableWritableListableStorage,
+        #[cfg(feature = "filesystem")] positional: Option<
+            Arc<crate::io::zarr::store::PositionalWriteStore>,
+        >,
+    ) -> Result<Self, MolRsError> {
         ensure_not_legacy(&store)?;
         let schema = schema_of(&store)?;
-        if !array_exists(&store, &join_path(TRAJECTORY_GROUP, STEP_ARRAY))? {
+        if trajectory_attributes(&store)?.nstep.is_none()
+            && !array_exists(&store, &join_path(TRAJECTORY_GROUP, STEP_ARRAY))?
+        {
             // Created but never appended: nothing is frozen yet.
-            return Ok(Self {
+            return Ok(Self::assemble(
                 store,
+                #[cfg(feature = "filesystem")]
+                positional,
                 schema,
-                rows_per_chunk: None,
-                chunks_per_shard: None,
-                arrays: None,
-                last_step: None,
-                uses_time: None,
-                committed: 0,
-                pending: Vec::new(),
-                landed_blocks: BTreeMap::new(),
-                landed_cell: None,
-            });
+                Attached::fresh(),
+            ));
         }
 
         let arrays = SequenceArrays::open(&store, &schema)?;
-        let committed = arrays.step.rows;
-        let last_step = if committed == 0 {
-            None
-        } else {
-            read_whole::<i64, _>(&store, &join_path(TRAJECTORY_GROUP, STEP_ARRAY))?
-                .last()
-                .copied()
-        };
+        let committed = arrays.nstep;
+        let last_step = arrays
+            .step
+            .last(&store, &join_path(TRAJECTORY_GROUP, STEP_ARRAY))?;
         let uses_time = Some(arrays.time.is_some());
 
         // Recover the change-detection state, so a section that does not move
@@ -2022,87 +3077,159 @@ impl FrameSequenceWriter {
                 continue;
             }
             let path = join_path(TRAJECTORY_GROUP, name);
-            let offsets = read_whole::<u64, _>(&store, &join_path(&path, OFFSET_ARRAY))?;
-            let (Some(&end), Some(&start)) =
-                (offsets.last(), offsets.get(offsets.len().saturating_sub(2)))
-            else {
-                continue;
+            let end = block.total_rows;
+            let start = match &block.index {
+                Some(_) => {
+                    let offsets = read_whole::<u64, _>(&store, &join_path(&path, OFFSET_ARRAY))?;
+                    offsets
+                        .get(block.updates as usize - 1)
+                        .copied()
+                        .unwrap_or(end)
+                }
+                None => match block.hints.uniform {
+                    Uniform::Rows(rows) => end.saturating_sub(rows),
+                    _ => end,
+                },
             };
-            if end == start {
-                // The last update marks the section absent.
-                continue;
-            }
-            let schema = &schema.blocks[name];
-            landed_blocks.insert(
-                name.clone(),
-                read_block_rows(&store, &path, schema, start, end - start)?,
-            );
+            let declared = &schema.blocks[name];
+            let landed = if end > start {
+                let mut landed = Block::new();
+                for (column, column_schema) in &declared.columns {
+                    let subset = rows_subset(start, end - start, &column_schema.trailing)?;
+                    let array = &block.columns[column].array;
+                    insert_column_into_block(
+                        &mut landed,
+                        column,
+                        read_column_array(array, &subset)?,
+                    )?;
+                }
+                apply_structural_shape(&mut landed, declared, &path)?;
+                landed
+            } else {
+                empty_block(declared)?
+            };
+            landed_blocks.insert(name.clone(), landed);
         }
         let landed_cell = match arrays.cell.as_ref() {
-            Some(cell) if cell.vectors.rows > 0 => Some(read_box_row(
-                &store,
-                cell.vectors.rows - 1,
-                cell_defined_of(&store)?,
-            )?),
+            Some(CellStore::Attributes(cell)) => Some((**cell).clone()),
+            Some(CellStore::Arrays(section)) if section.vectors.rows > 0 => {
+                let reader: ReadableListableStorage = Arc::new(StorageHandle::new(store.clone()));
+                let mut boxes = BoxReader::open(&reader)?;
+                Some(boxes.cell_at(section.vectors.rows - 1, cell_defined_of(&store)?)?)
+            }
             _ => None,
         };
 
-        Ok(Self {
+        Ok(Self::assemble(
             store,
+            #[cfg(feature = "filesystem")]
+            positional,
             schema,
-            rows_per_chunk: None,
-            chunks_per_shard: None,
-            arrays: Some(arrays),
-            last_step,
-            uses_time,
-            committed,
-            pending: Vec::new(),
-            landed_blocks,
-            landed_cell,
-        })
+            Attached {
+                arrays: Some(arrays),
+                last_step,
+                uses_time,
+                committed,
+                landed_blocks,
+                landed_cell,
+            },
+        ))
     }
 
-    /// Rows one inner chunk of every growth array holds.
+    /// Rows one inner chunk of every growth array holds — a test knob.
     ///
-    /// Legal only before the first append, which freezes the extents. Its
-    /// consumer is the lifecycle test: a chunk boundary in a handful of frames
-    /// instead of 512 KiB of them. Left unset, the value is derived from that
-    /// 512 KiB target and the row width.
-    ///
-    /// # Errors
-    ///
-    /// A [`MolRsError::Zarr`] when `rows` is 0 — a chunk extent must be at
-    /// least one row on every axis — or when the first
-    /// [`append`](Self::append) has already run, since `zarrs` cannot re-plan a
-    /// chunk grid under live data.
-    pub fn with_rows_per_chunk(mut self, rows: u64) -> Result<Self, MolRsError> {
+    /// Legal only before the first append, which freezes the extents. Left
+    /// unset, block columns are frame-aligned and dense arrays take
+    /// [`DENSE_ROWS_PER_CHUNK`].
+    #[cfg(test)]
+    pub(crate) fn with_rows_per_chunk(mut self, rows: u64) -> Result<Self, MolRsError> {
         self.refuse_after_first_append("with_rows_per_chunk")?;
         if rows == 0 {
             return Err(MolRsError::zarr("rows_per_chunk must be at least 1"));
         }
-        self.rows_per_chunk = Some(rows);
+        self.knobs.rows_per_chunk = Some(rows);
         Ok(self)
     }
 
-    /// Inner chunks one shard file holds.
+    /// Inner chunks one shard file holds — a test knob.
     ///
-    /// Legal only before the first append. Its consumer is the file-count
-    /// bound: a small `chunks` makes even a small store span several shard
-    /// files, so that bound is measured rather than assumed. Left unset, the
-    /// value is derived from a 256 MiB shard target and the chunk size.
-    ///
-    /// # Errors
-    ///
-    /// A [`MolRsError::Zarr`] when `chunks` is 0 — a shard spans at least one
-    /// inner chunk — or when the first [`append`](Self::append) has already
-    /// run, since `zarrs` cannot re-plan a chunk grid under live data.
-    pub fn with_chunks_per_shard(mut self, chunks: u64) -> Result<Self, MolRsError> {
+    /// Legal only before the first append.
+    #[cfg(test)]
+    pub(crate) fn with_chunks_per_shard(mut self, chunks: u64) -> Result<Self, MolRsError> {
         self.refuse_after_first_append("with_chunks_per_shard")?;
         if chunks == 0 {
             return Err(MolRsError::zarr("chunks_per_shard must be at least 1"));
         }
-        self.chunks_per_shard = Some(chunks);
+        self.knobs.chunks_per_shard = Some(chunks);
         Ok(self)
+    }
+
+    /// How the floating-point columns are compressed. Legal only before the
+    /// first append, which freezes every array's codecs.
+    ///
+    /// # Errors
+    ///
+    /// A [`MolRsError::Zarr`] when the first append has already run.
+    pub fn with_compression(mut self, compression: Compression) -> Result<Self, MolRsError> {
+        self.refuse_after_first_append("with_compression")?;
+        self.compression = compression;
+        Ok(self)
+    }
+
+    /// Land every `frames` appended frames, instead of the derived cadence.
+    ///
+    /// A cadence that is a whole multiple of the frames one inner chunk holds
+    /// lands whole chunks; any other cadence re-encodes a partial trailing
+    /// chunk per landing (bounded, but real). `1` lands every frame.
+    ///
+    /// # Errors
+    ///
+    /// A [`MolRsError::Zarr`] when `frames` is 0.
+    pub fn with_flush_every(mut self, frames: u64) -> Result<Self, MolRsError> {
+        if frames == 0 {
+            return Err(MolRsError::zarr("flush_every must be at least 1"));
+        }
+        self.flush_every = Some(frames);
+        if self.arrays.is_some() {
+            self.auto_flush_every = frames;
+        }
+        Ok(self)
+    }
+
+    /// Whether an explicit [`flush`](Self::flush) / [`close`](Self::close)
+    /// syncs the touched files before moving the commit marker. `true` by
+    /// default; `false` trades power-loss safety for throughput on a store
+    /// where every flush is a checkpoint anyway.
+    pub fn with_durable(mut self, durable: bool) -> Self {
+        self.durable = durable;
+        self
+    }
+
+    /// Write `meta` as the record's identity document (`meta/` attributes).
+    ///
+    /// Replaces whatever the group held. A record needs no particular key
+    /// here during development; `molrec_version`, when present, must be a
+    /// positive integer.
+    ///
+    /// # Errors
+    ///
+    /// Any storage error raised while writing the group.
+    pub fn with_meta(
+        self,
+        meta: &serde_json::Map<String, serde_json::Value>,
+    ) -> Result<Self, MolRsError> {
+        ensure_root_and_meta(&self.store, Some(meta))?;
+        Ok(self)
+    }
+
+    /// The landing cadence in force: frames per automatic commit.
+    pub fn flush_every(&self) -> u64 {
+        self.auto_flush_every
+    }
+
+    /// Frames committed so far.
+    pub fn committed(&self) -> u64 {
+        self.committed
     }
 
     fn refuse_after_first_append(&self, knob: &str) -> Result<(), MolRsError> {
@@ -2116,44 +3243,69 @@ impl FrameSequenceWriter {
         Ok(())
     }
 
+    /// The landing cadence: enough frames for [`FLUSH_TARGET_BYTES`] of
+    /// payload, rounded up to a whole number of the coarsest block's
+    /// frames-per-chunk so every block column lands whole chunks.
+    fn derive_flush_every(&self) -> u64 {
+        if let Some(frames) = self.flush_every {
+            return frames;
+        }
+        let frame_bytes = self.schema.frame_bytes().max(1);
+        let base = (FLUSH_TARGET_BYTES / frame_bytes).clamp(1, MAX_FLUSH_EVERY);
+        let coarsest = self
+            .arrays
+            .as_ref()
+            .map(|arrays| {
+                arrays
+                    .blocks
+                    .iter()
+                    .filter_map(|(name, block)| {
+                        let rows = self.schema.frame_rows(name);
+                        (rows > 0).then(|| (block.rows_per_chunk / rows).max(1))
+                    })
+                    .max()
+                    .unwrap_or(1)
+            })
+            .unwrap_or(1);
+        base.div_ceil(coarsest) * coarsest
+    }
+
     /// Buffer `frame` at the next step number, with no time.
     ///
     /// Step numbers start at 0 and rise by one — or, after
     /// [`open`](Self::open) has reattached to an existing sequence, continue
-    /// from the last step already landed. A run that carries real MD (molecular
-    /// dynamics) step numbers or times uses [`append_at`](Self::append_at)
-    /// instead.
+    /// from the last step already landed. A run that carries real MD step
+    /// numbers or times uses [`append_at`](Self::append_at) instead.
     ///
     /// # Errors
     ///
-    /// [`append_at`](Self::append_at)'s, with one of them unreachable: this
-    /// door picks the step number itself, so it cannot go backwards. It passes
-    /// no time, so on a sequence started *with* times it errs on the
-    /// all-or-nothing rule.
+    /// [`append_at`](Self::append_at)'s.
     pub fn append(&mut self, frame: &Frame) -> Result<(), MolRsError> {
         self.append_at(frame, self.last_step.map_or(0, |step| step + 1), None)
+    }
+
+    /// Buffer `frame` at the next step number, carrying a physical time.
+    ///
+    /// # Errors
+    ///
+    /// [`append_at`](Self::append_at)'s.
+    pub fn append_timed(&mut self, frame: &Frame, time: F) -> Result<(), MolRsError> {
+        self.append_at(frame, self.last_step.map_or(0, |step| step + 1), Some(time))
     }
 
     /// Buffer `frame` at an explicit step number and optional time.
     ///
     /// `step` is the run's own dimensionless step counter. It must be strictly
-    /// greater than the previous one — a sequence is ordered, and a step that
-    /// goes backwards would make the `step_index` binary search meaningless.
+    /// greater than the previous one. `time` is the frame's physical time in
+    /// **femtoseconds (fs)**, stored verbatim, and all-or-nothing across a
+    /// run: the first append decides whether the `time` array exists.
     ///
-    /// `time` is the frame's physical time in **femtoseconds (fs)**, molrs's
-    /// time unit throughout. It is stored verbatim; this door converts nothing,
-    /// so a caller working in another unit converts before calling. `time` is
-    /// also all-or-nothing across a run: the first append decides whether the
-    /// `time` array exists at all, and mixing afterwards is an `Err` naming it.
-    ///
-    /// No frame *data* reaches the store here: the frame is checked and
-    /// buffered, and the next [`flush`](Self::flush) lands it. What gets
-    /// buffered is only what *changed* — a block or a cell whose bytes are
-    /// identical to the previous step's earns no new update, which is why a run
-    /// with fixed topology costs one `step_index` entry rather than one per
-    /// step. The very first append is the exception in one respect: it creates
-    /// every array the schema declares, and that is the moment the chunk and
-    /// shard extents freeze.
+    /// What gets buffered is only what *changed*. A block whose bytes are
+    /// identical to its previous update earns no new update; a block the frame
+    /// **omits** earns none either and carries forward; a block presented with
+    /// zero rows earns a zero-row update (present and empty). The very first
+    /// append creates every array the schema declares, freezing the extents.
+    /// When the buffer reaches the landing cadence it is committed here.
     ///
     /// # Errors
     ///
@@ -2163,18 +3315,15 @@ impl FrameSequenceWriter {
     /// - `time` is supplied on a run started without times, or omitted on a run
     ///   started with them;
     /// - the frame carries a block, a column, or a `meta` key the pinned schema
-    ///   does not declare — a schema is pinned at create and cannot grow
-    ///   mid-run;
+    ///   does not declare;
     /// - a column or `meta` key is declared with one dtype and this frame
     ///   carries another, or a column's trailing shape disagrees;
-    /// - a block is present at this step but omits one of its declared columns:
-    ///   sparsity is per block, not per column, so a block appears whole or not
-    ///   at all;
-    /// - the frame omits a declared `meta` key for which no fill was declared
-    ///   through [`SequenceSchema::declare_meta`].
+    /// - a block is present but omits one of its declared columns: sparsity is
+    ///   per block, not per column;
+    /// - a block with a declared structural shape carries another row count;
+    /// - the frame omits a declared `meta` key for which no fill was declared.
     ///
-    /// Because the first append creates the arrays, it can additionally surface
-    /// a storage error that later appends cannot.
+    /// Also any storage error raised by an automatic landing.
     pub fn append_at(
         &mut self,
         frame: &Frame,
@@ -2211,24 +3360,17 @@ impl FrameSequenceWriter {
 
         let mut blocks = BTreeMap::new();
         for name in self.schema.blocks.keys() {
-            match frame.get(name) {
-                Some(block) => {
-                    let changed = self
-                        .landed_blocks
-                        .get(name)
-                        .is_none_or(|landed| !same_block(landed, block));
-                    if changed {
-                        blocks.insert(name.clone(), Some(block.clone()));
-                        self.landed_blocks.insert(name.clone(), block.clone());
-                    }
-                }
-                None => {
-                    if self.landed_blocks.remove(name).is_some() {
-                        // The section was present and is not any more; a
-                        // zero-row update is how the layout says so.
-                        blocks.insert(name.clone(), None);
-                    }
-                }
+            // An omitted block carries forward: no update, no state change.
+            let Some(block) = frame.get(name) else {
+                continue;
+            };
+            let changed = self
+                .landed_blocks
+                .get(name)
+                .is_none_or(|landed| !same_block(landed, block));
+            if changed {
+                blocks.insert(name.clone(), block.clone());
+                self.landed_blocks.insert(name.clone(), block.clone());
             }
         }
 
@@ -2245,7 +3387,7 @@ impl FrameSequenceWriter {
                     None
                 }
             }
-            // The box section has no absence marker; see the module doc.
+            // The cell carries forward like any other section.
             None => None,
         };
 
@@ -2257,13 +3399,13 @@ impl FrameSequenceWriter {
             cell,
             meta,
         });
+        if self.pending.len() as u64 >= self.auto_flush_every {
+            self.commit(false)?;
+        }
         Ok(())
     }
 
     /// Check `frame` against the pinned schema.
-    ///
-    /// Schema only: `Validator::canonical` stays the read/write doors' job, as
-    /// it is today, and append does not smuggle in a second semantic gate.
     fn validate(&self, frame: &Frame) -> Result<(), MolRsError> {
         for (name, block) in frame.iter() {
             let Some(declared) = self.schema.blocks.get(name) else {
@@ -2304,6 +3446,16 @@ impl FrameSequenceWriter {
                     )));
                 }
             }
+            if let Some(shape) = &declared.structural_shape {
+                let expected = shape.iter().product::<usize>();
+                if block.nrows() != Some(expected) {
+                    return Err(MolRsError::zarr(format!(
+                        "block {name:?} declares structural shape {shape:?} ({expected} rows) but \
+                         this frame carries {} rows: a shaped block keeps its row count",
+                        block.nrows().unwrap_or(0)
+                    )));
+                }
+            }
         }
         Ok(())
     }
@@ -2324,16 +3476,22 @@ impl FrameSequenceWriter {
         let mut resolved = BTreeMap::new();
         for (key, declared) in &self.schema.meta {
             let value = match frame.meta.get(key) {
-                Some(value) => {
-                    if value.dtype() != declared.dtype {
-                        return Err(MolRsError::zarr(format!(
-                            "meta key {key:?} is declared {} but this frame carries {}",
-                            declared.dtype,
-                            value.dtype()
-                        )));
-                    }
-                    value.clone()
-                }
+                Some(value) if value.dtype() == declared.dtype => value.clone(),
+                // A value that arrived at another width — a Python float for a
+                // declared `f32`, a JSON list for a declared `f64x3` — is
+                // re-read at the declared width, exactly; a value that cannot
+                // be is the error.
+                Some(value) => MetaValue::from_json_value(&serde_json::json!({
+                    "dtype": declared.dtype,
+                    "value": value.to_attr_value(),
+                }))
+                .map_err(|e| {
+                    MolRsError::zarr(format!(
+                        "meta key {key:?} is declared {} but this frame carries {}: {e}",
+                        declared.dtype,
+                        value.dtype()
+                    ))
+                })?,
                 None => {
                     let fill = declared.fill.as_ref().ok_or_else(|| {
                         MolRsError::zarr(format!(
@@ -2341,7 +3499,13 @@ impl FrameSequenceWriter {
                              declared for it; there is no implicit fill"
                         ))
                     })?;
-                    MetaValue::from_json_value(fill).map_err(MolRsError::zarr)?
+                    // The pin stores the plain value; the declared tag says
+                    // how to read it back.
+                    MetaValue::from_json_value(&serde_json::json!({
+                        "dtype": declared.dtype,
+                        "value": fill,
+                    }))
+                    .map_err(|e| MolRsError::zarr(format!("meta key {key:?} fill: {e}")))?
                 }
             };
             resolved.insert(key.clone(), value);
@@ -2349,65 +3513,49 @@ impl FrameSequenceWriter {
         Ok(resolved)
     }
 
-    /// Create every array on the first append, freezing the extents.
+    /// Create every array on the first append, freezing the extents and the
+    /// landing cadence.
     fn ensure_arrays(&mut self) -> Result<(), MolRsError> {
         if self.arrays.is_none() {
             self.arrays = Some(SequenceArrays::create(
                 &self.store,
                 &self.schema,
-                self.rows_per_chunk,
-                self.chunks_per_shard,
+                self.knobs,
+                self.compression,
                 self.uses_time == Some(true),
             )?);
+            self.auto_flush_every = self.derive_flush_every();
         }
         Ok(())
     }
 
-    /// Commit every buffered frame.
+    /// Commit every buffered frame, durably.
     ///
-    /// **What `len()` counts.** Every frame appended before this call, ragged
-    /// trailing chunk included — commit granularity is any step, not a chunk
-    /// boundary (branch A, defined in this module's own docs). `step` is
-    /// extended **last**, and it is the commit marker: a reader sees `nstep`
-    /// frames only once this call has written it.
+    /// Every frame appended before this call lands, whether or not it fills a
+    /// chunk. `step` is extended **last** and is the commit marker: a reader
+    /// sees `nstep` frames only once this call has written it. Unless
+    /// [`with_durable(false)`](Self::with_durable) was set, the touched files
+    /// are synced before the marker moves and again after it, so a returned
+    /// `Ok` means the frames survive a power loss.
     ///
-    /// **What a crash loses.** Exactly the frames appended after the last
-    /// `flush`, no more and no less. A crash between two of this call's writes
-    /// leaves the data arrays long and `step` short, which reads back as the
-    /// previous commit; the residual window is a crash *inside* one of the small
-    /// `step` / `zarr.json` writes, and inside the shard re-encode described
-    /// next.
-    ///
-    /// **What the active shard carries.** Branch A pays for arbitrary commit
-    /// granularity in dead bytes: each rewrite of a partially filled trailing
-    /// inner chunk leaves its superseded copy in the shard file, so a
-    /// frequently flushed store's *active* shard grows beyond its live size.
-    /// Nothing is hidden and nothing accumulates: a flush that carries the run
-    /// across a shard boundary re-encodes the completed shard once as a clean
-    /// full write — one extra sequential write of that shard, paid once per
-    /// shard — and [`close`](Self::close) does the same for the final partial
-    /// shard. A closed store therefore carries no dead bytes, whatever the
-    /// flush cadence was.
-    ///
-    /// A flush with nothing buffered is `Ok(())` and writes nothing, so calling
-    /// it on a cadence costs nothing on the steps that added no frame.
+    /// A flush that lands a partially filled trailing inner chunk re-encodes
+    /// that chunk and leaves its superseded copy in the shard as dead bytes —
+    /// at most one chunk per column per flush. A flush with nothing buffered
+    /// is `Ok(())` and writes nothing.
     ///
     /// # Errors
     ///
-    /// A [`MolRsError::Zarr`] wrapping whatever the store or the codec raised
-    /// while growing an array, encoding a chunk or re-encoding a completed
-    /// shard. A handful of consistency checks also fire here rather than at
-    /// append, because they compare the buffer against the pinned schema at the
-    /// moment of writing: a buffered block that no longer carries a declared
-    /// column, a buffered column whose width is not the declared one, and a
-    /// `meta` key that was resolved at append but is missing, carries the wrong
-    /// variant, or declares a dtype no per-step array can store. Each names the
-    /// block, column or key.
-    ///
-    /// A flush that fails partway leaves the arrays it already extended longer
-    /// than `step`; since `step` is the commit marker, such a store reads back
-    /// as the *previous* commit rather than as a partial one.
+    /// A [`MolRsError::Zarr`] wrapping whatever the store or the codec raised.
+    /// A flush that fails partway leaves arrays longer than `step`; such a
+    /// store reads back as the previous commit, and a reopened writer rolls
+    /// the excess back.
     pub fn flush(&mut self) -> Result<(), MolRsError> {
+        self.commit(self.durable)
+    }
+
+    /// Land every buffered frame; `durable` syncs the touched files around
+    /// the commit marker.
+    fn commit(&mut self, durable: bool) -> Result<(), MolRsError> {
         if self.pending.is_empty() {
             return Ok(());
         }
@@ -2415,8 +3563,7 @@ impl FrameSequenceWriter {
         let Self {
             store,
             schema,
-            rows_per_chunk,
-            chunks_per_shard,
+            knobs,
             arrays,
             committed,
             pending,
@@ -2427,26 +3574,27 @@ impl FrameSequenceWriter {
         };
         let base = *committed;
 
-        // 1. Block sections: columns first, then this section's own index.
+        // 1. Block sections: columns first, then — for a block that is no
+        //    longer regular — its own index, then its hints.
         for (name, declared) in &schema.blocks {
             let Some(section) = arrays.blocks.get_mut(name) else {
                 continue;
             };
-            let updates: Vec<(u64, Option<&Block>)> = pending
+            let updates: Vec<(u64, &Block)> = pending
                 .iter()
                 .enumerate()
                 .filter_map(|(index, frame)| {
                     frame
                         .blocks
                         .get(name)
-                        .map(|update| (base + index as u64, update.as_ref()))
+                        .map(|update| (base + index as u64, update))
                 })
                 .collect();
             if updates.is_empty() {
                 continue;
             }
 
-            let landed: Vec<&Block> = updates.iter().filter_map(|(_, block)| *block).collect();
+            let landed: Vec<&Block> = updates.iter().map(|(_, block)| *block).collect();
             let added: u64 = landed
                 .iter()
                 .map(|block| block.nrows().unwrap_or(0) as u64)
@@ -2456,8 +3604,6 @@ impl FrameSequenceWriter {
                     let Some(array) = section.columns.get_mut(column) else {
                         continue;
                     };
-                    let before = array.rows;
-                    let subset = array.extend(added)?;
                     let values: Vec<&Column> = landed
                         .iter()
                         .map(|block| {
@@ -2469,48 +3615,81 @@ impl FrameSequenceWriter {
                             })
                         })
                         .collect::<Result<_, MolRsError>>()?;
+                    let subset = array.reserve(added)?;
                     array.store_columns(
                         &subset,
                         dtype_from_tag(&pinned.dtype)?,
                         &values,
                         &options,
                     )?;
-                    array.seal(before)?;
+                    array.commit_shape()?;
                 }
             }
 
-            let mut offsets = Vec::with_capacity(updates.len() + 1);
-            if section.updates == 0 {
-                // The CSR row pointer opens at zero.
-                offsets.push(0u64);
+            let mut hints = section.hints;
+            for (k, (ordinal, block)) in updates.iter().enumerate() {
+                hints.observe(
+                    section.updates + k as u64,
+                    *ordinal,
+                    block.nrows().unwrap_or(0) as u64,
+                );
             }
+            let regular = hints.is_regular() && !declared.columns.is_empty();
+
             let mut running = section.total_rows;
+            let mut offsets = Vec::with_capacity(updates.len());
             for (_, update) in &updates {
-                running += update.map_or(0, |block| block.nrows().unwrap_or(0) as u64);
+                running += update.nrows().unwrap_or(0) as u64;
                 offsets.push(running);
             }
-            let before = section.offset.rows;
-            let subset = section.offset.extend(offsets.len() as u64)?;
-            section
-                .offset
-                .array
-                .store_array_subset_opt(&subset, offsets, &options)?;
-            section.offset.seal(before)?;
-
             let ordinals: Vec<u64> = updates.iter().map(|(ordinal, _)| *ordinal).collect();
-            let before = section.step_index.rows;
-            let subset = section.step_index.extend(ordinals.len() as u64)?;
-            section
-                .step_index
-                .array
-                .store_array_subset_opt(&subset, ordinals, &options)?;
-            section.step_index.seal(before)?;
 
+            if !regular {
+                if section.index.is_none() {
+                    let history_rows = match section.hints.uniform {
+                        Uniform::Rows(rows) => rows,
+                        _ => 0,
+                    };
+                    section.index = Some(IndexArrays::materialize(
+                        store,
+                        &join_path(TRAJECTORY_GROUP, name),
+                        *knobs,
+                        section.updates,
+                        history_rows,
+                        &options,
+                    )?);
+                }
+                let index = section.index.as_mut().expect("materialized above");
+                let count = offsets.len() as u64;
+                land_values!(index.offset, count, offsets, &options);
+                let count = ordinals.len() as u64;
+                land_values!(index.step_index, count, ordinals, &options);
+            }
+
+            section.hints = hints;
             section.updates += updates.len() as u64;
             section.total_rows = running;
+
+            // Once the index arrays exist they are authoritative: the hints
+            // are withdrawn for good.
+            let wanted = if section.index.is_some() {
+                (None, false)
+            } else {
+                section.hints.attributes()
+            };
+            if wanted != section.hints.stored {
+                store_block_attributes(
+                    store,
+                    &join_path(TRAJECTORY_GROUP, name),
+                    declared.structural_shape.as_deref(),
+                    wanted,
+                )?;
+                section.hints.stored = wanted;
+            }
         }
 
-        // 2. The cell.
+        // 2. The cell: attributes while it is one fixed cell from ordinal 0,
+        //    arrays from the first change on.
         let cells: Vec<(u64, &SimBox)> = pending
             .iter()
             .enumerate()
@@ -2518,77 +3697,36 @@ impl FrameSequenceWriter {
                 frame.cell.as_ref().map(|cell| (base + index as u64, cell))
             })
             .collect();
-        if let Some((_, first)) = cells.first() {
-            let section = arrays.ensure_cell(store, *rows_per_chunk, *chunks_per_shard, first)?;
-            let mut vectors = Vec::with_capacity(cells.len() * 9);
-            let mut origins = Vec::with_capacity(cells.len() * 3);
-            let mut boundaries = Vec::with_capacity(cells.len() * 3);
-            let mut need_origin = section.origin.is_some();
-            let mut need_boundary = section.boundary.is_some();
-            for (_, cell) in &cells {
-                vectors.extend(cell.h_view().iter().copied());
-                origins.extend(cell.origin_view().iter().copied());
-                boundaries.extend(cell.pbc_view().iter().copied());
-                need_origin |= !origin_is_default(cell);
-                need_boundary |= !boundary_is_default(cell);
-            }
-            let count = cells.len() as u64;
-            let previous = section.vectors.rows;
-            let ordinals: Vec<u64> = cells.iter().map(|(ordinal, _)| *ordinal).collect();
-            let trivial_index = previous == 0 && matches!(ordinals.as_slice(), [0]);
-
-            let before = section.vectors.rows;
-            let subset = section.vectors.extend(count)?;
-            section
-                .vectors
-                .array
-                .store_array_subset_opt(&subset, vectors, &options)?;
-            section.vectors.seal(before)?;
-
-            if need_origin {
-                let origin = section.ensure_origin(
-                    store,
-                    *rows_per_chunk,
-                    *chunks_per_shard,
-                    previous,
-                    &options,
-                )?;
-                let before = origin.rows;
-                let subset = origin.extend(count)?;
-                origin
-                    .array
-                    .store_array_subset_opt(&subset, origins, &options)?;
-                origin.seal(before)?;
-            }
-            if need_boundary {
-                let boundary = section.ensure_boundary(
-                    store,
-                    *rows_per_chunk,
-                    *chunks_per_shard,
-                    previous,
-                    &options,
-                )?;
-                let before = boundary.rows;
-                let subset = boundary.extend(count)?;
-                boundary
-                    .array
-                    .store_array_subset_opt(&subset, boundaries, &options)?;
-                boundary.seal(before)?;
-            }
-            if section.step_index.is_some() || !trivial_index {
-                let step_index = section.ensure_step_index(
-                    store,
-                    *rows_per_chunk,
-                    *chunks_per_shard,
-                    previous,
-                    &options,
-                )?;
-                let before = step_index.rows;
-                let subset = step_index.extend(count)?;
-                step_index
-                    .array
-                    .store_array_subset_opt(&subset, ordinals, &options)?;
-                step_index.seal(before)?;
+        if let Some((first_ordinal, first)) = cells.first().copied() {
+            match arrays.cell.take() {
+                None if cells.len() == 1 && first_ordinal == 0 => {
+                    store_box_attributes(
+                        store,
+                        box_attributes(first.is_cell_defined(), Some(first)),
+                    )?;
+                    arrays.cell = Some(CellStore::Attributes(Box::new(first.clone())));
+                }
+                None => {
+                    store_box_attributes(store, box_attributes(first.is_cell_defined(), None))?;
+                    let mut section = BoxArrays::create(store, *knobs)?;
+                    section.land(store, *knobs, &cells, &options)?;
+                    arrays.cell = Some(CellStore::Arrays(Box::new(section)));
+                }
+                Some(CellStore::Attributes(fixed)) => {
+                    let mut section = BoxArrays::create(store, *knobs)?;
+                    let mut all: Vec<(u64, &SimBox)> = Vec::with_capacity(cells.len() + 1);
+                    all.push((0, fixed.as_ref()));
+                    all.extend(cells.iter().copied());
+                    section.land(store, *knobs, &all, &options)?;
+                    // The arrays now carry the cell; the attributes keep only
+                    // `cell_defined`.
+                    store_box_attributes(store, box_attributes(fixed.is_cell_defined(), None))?;
+                    arrays.cell = Some(CellStore::Arrays(Box::new(section)));
+                }
+                Some(CellStore::Arrays(mut section)) => {
+                    section.land(store, *knobs, &cells, &options)?;
+                    arrays.cell = Some(CellStore::Arrays(section));
+                }
             }
         }
 
@@ -2607,67 +3745,73 @@ impl FrameSequenceWriter {
                     })
                 })
                 .collect::<Result<_, MolRsError>>()?;
-            let before = array.rows;
-            let subset = array.extend(values.len() as u64)?;
+            let subset = array.reserve(values.len() as u64)?;
             array.store_meta(&subset, key, &declared.dtype, &values, &options)?;
-            array.seal(before)?;
+            array.commit_shape()?;
         }
 
-        // 4. Time.
-        if let Some(array) = arrays.time.as_mut() {
+        // 4. Time and step: a progression attribute while they are regular,
+        //    an array once they are not.
+        if let Some(track) = arrays.time.as_mut() {
             let times: Vec<F> = pending
                 .iter()
                 .map(|frame| frame.time.unwrap_or(0.0))
                 .collect();
-            let before = array.rows;
-            let subset = array.extend(times.len() as u64)?;
-            array
-                .array
-                .store_array_subset_opt(&subset, times, &options)?;
-            array.seal(before)?;
+            track.land(
+                store,
+                &join_path(TRAJECTORY_GROUP, TIME_ARRAY),
+                *knobs,
+                times,
+                &options,
+            )?;
         }
-
-        // 5. The commit marker, last: everything above is invisible until it
-        //    lands, which is what makes a crash between two writes harmless.
         let steps: Vec<i64> = pending.iter().map(|frame| frame.step).collect();
-        let before = arrays.step.rows;
-        let subset = arrays.step.extend(steps.len() as u64)?;
-        arrays
-            .step
-            .array
-            .store_array_subset_opt(&subset, steps, &options)?;
-        arrays.step.seal(before)?;
+        arrays.step.land(
+            store,
+            &join_path(TRAJECTORY_GROUP, STEP_ARRAY),
+            *knobs,
+            steps,
+            &options,
+        )?;
+
+        // 5. Everything above is on disk (and, when durable, synced) before
+        //    the commit marker moves.
+        #[cfg(feature = "filesystem")]
+        if durable && let Some(positional) = &self.positional {
+            positional.sync_dirty()?;
+        }
+        #[cfg(not(feature = "filesystem"))]
+        let _ = durable;
+
+        // 6. The commit marker, last: the trajectory group's `nstep`
+        //    attribute, one atomic metadata replace.
+        let nstep = base + pending.len() as u64;
+        arrays.store_marker(store, nstep)?;
+        arrays.nstep = nstep;
+
+        #[cfg(feature = "filesystem")]
+        if durable && let Some(positional) = &self.positional {
+            positional.sync_dirty()?;
+        }
 
         *committed += pending.len() as u64;
         pending.clear();
         Ok(())
     }
 
-    /// Flush, seal the final partial shard of every array, and consume the
-    /// writer.
+    /// Commit whatever is still buffered and consume the writer.
     ///
     /// Consuming rather than dropping is the point: this is the only place an
-    /// IO error at the end of a run can still be returned to the caller.
-    ///
-    /// A writer that was created but never appended to closes cleanly: there
-    /// are no arrays yet, so there is nothing to seal.
+    /// IO error at the end of a run can still be returned to the caller. No
+    /// shard is rewritten on close — the store's bytes are exactly what the
+    /// landings wrote.
     ///
     /// # Errors
     ///
-    /// [`flush`](Self::flush)'s, since this flushes first, plus a
-    /// [`MolRsError::Zarr`] wrapping whatever the store raised while
-    /// re-encoding a final partial shard. The writer is consumed either way, so
-    /// a failed close cannot be retried; whatever had already been committed
-    /// stays readable, and a failure in the sealing pass costs only the dead
-    /// bytes that pass would have removed.
+    /// [`flush`](Self::flush)'s. The writer is consumed either way; whatever
+    /// had already been committed stays readable.
     pub fn close(mut self) -> Result<(), MolRsError> {
-        self.flush()?;
-        if let Some(arrays) = self.arrays.as_mut() {
-            for array in arrays.all_mut() {
-                array.compact_tail()?;
-            }
-        }
-        Ok(())
+        self.commit(self.durable)
     }
 }
 
@@ -2692,17 +3836,215 @@ where
 // ---------------------------------------------------------------------------
 
 /// The index of one block section, as [`FrameSequence::open`] cached it.
-struct BlockIndex {
-    /// Frame ordinals at which the section was updated, ascending.
-    step_index: Vec<u64>,
-    /// CSR row pointer, one longer than `step_index`.
-    offset: Vec<u64>,
+enum BlockIndex {
+    /// The general case: the section's own `step_index` and CSR `offset`.
+    Sparse {
+        /// Frame ordinals at which the section was updated, ascending.
+        step_index: Vec<u64>,
+        /// CSR row pointer, one longer than `step_index`.
+        offset: Vec<u64>,
+    },
+    /// The hinted case (`dense_updates` + `uniform_rows`): update `j` sits at
+    /// ordinal `j` and owns rows `j*rows..(j+1)*rows`, so nothing was read.
+    Regular {
+        /// Updates committed.
+        updates: u64,
+        /// Rows every update carries.
+        rows: u64,
+    },
+}
+
+impl BlockIndex {
+    /// `(update, first row, rows)` of the section at frame `index`, or `None`
+    /// when the section has not appeared yet.
+    fn resolve(&self, index: u64) -> Result<Option<(u64, u64, u64)>, MolRsError> {
+        match self {
+            Self::Sparse { step_index, offset } => {
+                let Some(update) = latest_update(step_index, index) else {
+                    return Ok(None);
+                };
+                let (Some(&start), Some(&end)) = (offset.get(update), offset.get(update + 1))
+                else {
+                    return Err(MolRsError::zarr(format!(
+                        "block section has {} offsets for update {update}",
+                        offset.len()
+                    )));
+                };
+                // A hostile or corrupt store can carry a non-monotonic
+                // `offset` array; `end - start` would then wrap to a
+                // near-`u64::MAX` row count and drive an unbounded allocation.
+                let count = end.checked_sub(start).ok_or_else(|| {
+                    MolRsError::zarr(format!(
+                        "block section update {update} has non-monotonic offsets ({start} > {end})"
+                    ))
+                })?;
+                Ok(Some((update as u64, start, count)))
+            }
+            Self::Regular { updates, rows } => {
+                if *updates == 0 {
+                    return Ok(None);
+                }
+                let update = index.min(updates - 1);
+                Ok(Some((update, update * rows, *rows)))
+            }
+        }
+    }
 }
 
 /// The index of the `box/` section.
 struct BoxIndex {
     step_index: Vec<u64>,
     cell_defined: bool,
+}
+
+/// The `box/` section's cells: the fixed cell from the group attributes, or
+/// the per-update arrays, with a per-update cache.
+struct BoxReader {
+    fixed: Option<SimBox>,
+    vectors: Option<Array<dyn ReadableListableStorageTraits>>,
+    origin: Option<Array<dyn ReadableListableStorageTraits>>,
+    boundary: Option<Array<dyn ReadableListableStorageTraits>>,
+    cells: BTreeMap<u64, SimBox>,
+}
+
+impl BoxReader {
+    fn open(store: &ReadableListableStorage) -> Result<Self, MolRsError> {
+        let prefix = join_path(TRAJECTORY_GROUP, BOX_GROUP);
+        let optional =
+            |name: &str| -> Result<Option<Array<dyn ReadableListableStorageTraits>>, MolRsError> {
+                let path = join_path(&prefix, name);
+                if array_exists(store, &path)? {
+                    Ok(Some(Array::open(store.clone(), &path)?))
+                } else {
+                    Ok(None)
+                }
+            };
+        let vectors = optional(VECTORS_ARRAY)?;
+        let fixed = if vectors.is_none() {
+            cell_from_attributes(Group::open(store.clone(), &prefix)?.attributes())?
+        } else {
+            None
+        };
+        Ok(Self {
+            fixed,
+            vectors,
+            origin: optional(ORIGIN_ARRAY)?,
+            boundary: optional(BOUNDARY_ARRAY)?,
+            cells: BTreeMap::new(),
+        })
+    }
+
+    /// Cell update `index`, decoded once.
+    fn cell_at(&mut self, index: u64, cell_defined: bool) -> Result<SimBox, MolRsError> {
+        if let Some(fixed) = &self.fixed {
+            return Ok(fixed.clone());
+        }
+        if let Some(cell) = self.cells.get(&index) {
+            return Ok(cell.clone());
+        }
+        let vectors = self
+            .vectors
+            .as_ref()
+            .ok_or_else(|| MolRsError::zarr("box section has neither a fixed cell nor arrays"))?;
+        let cell: Vec<F> = vectors.retrieve_array_subset(&rows_subset(index, 1, &[3, 3])?)?;
+        let origin: Vec<F> = match &self.origin {
+            Some(array) => array.retrieve_array_subset(&rows_subset(index, 1, &[3])?)?,
+            None => vec![0.0, 0.0, 0.0],
+        };
+        let boundary: Vec<bool> = match &self.boundary {
+            Some(array) => array.retrieve_array_subset(&rows_subset(index, 1, &[3])?)?,
+            None => vec![true, true, true],
+        };
+        if cell.len() != 9 || origin.len() != 3 || boundary.len() != 3 {
+            return Err(MolRsError::zarr(format!(
+                "box update {index} is malformed: {} cell values, {} origin values, {} boundary \
+                 flags",
+                cell.len(),
+                origin.len(),
+                boundary.len()
+            )));
+        }
+        let simbox = SimBox::new_cell(
+            Array2::from_shape_vec((3, 3), cell).map_err(zerr)?,
+            Array1::from(origin),
+            [boundary[0], boundary[1], boundary[2]],
+            cell_defined,
+        )
+        .map_err(|e| MolRsError::zarr(format!("box update {index} is not a valid cell: {e:?}")))?;
+        if self.cells.len() >= 64 {
+            self.cells.clear();
+        }
+        self.cells.insert(index, simbox.clone());
+        Ok(simbox)
+    }
+}
+
+/// One open column array plus its most recently decoded inner chunks.
+struct ColumnReader {
+    array: Array<dyn ReadableListableStorageTraits>,
+    /// Rows one inner chunk holds.
+    chunk_rows: u64,
+    /// Decoded whole chunks, most recently used first.
+    chunks: VecDeque<(u64, Column)>,
+}
+
+impl ColumnReader {
+    fn open(store: &ReadableListableStorage, path: &str) -> Result<Self, MolRsError> {
+        let array = Array::open(store.clone(), path)?;
+        let chunk_rows = inner_rows_of(&array);
+        Ok(Self {
+            array,
+            chunk_rows,
+            chunks: VecDeque::with_capacity(CHUNK_CACHE_ENTRIES + 1),
+        })
+    }
+
+    /// Rows `start..start+rows`, decoding at most the chunks they touch.
+    ///
+    /// A range inside one chunk comes out of the chunk cache (decoding the
+    /// chunk whole on a miss, so the next frame in it is a slice); a range
+    /// straddling two chunks — a ragged run — is read directly.
+    fn rows(&mut self, start: u64, rows: u64, trailing: &[u64]) -> Result<Column, MolRsError> {
+        let first = start / self.chunk_rows;
+        let last = (start + rows - 1) / self.chunk_rows;
+        if first != last {
+            return read_column_array(&self.array, &rows_subset(start, rows, trailing)?);
+        }
+        let within = (start - first * self.chunk_rows) as usize;
+        let chunk = self.chunk(first, trailing)?;
+        Ok(column_rows(chunk, within, within + rows as usize))
+    }
+
+    /// Inner chunk `index`, decoded whole and kept.
+    fn chunk(&mut self, index: u64, trailing: &[u64]) -> Result<&Column, MolRsError> {
+        if let Some(position) = self.chunks.iter().position(|(i, _)| *i == index) {
+            if position != 0 {
+                let hit = self.chunks.remove(position).expect("position is in range");
+                self.chunks.push_front(hit);
+            }
+        } else {
+            let total = self.array.shape().first().copied().unwrap_or(0);
+            let chunk_start = index * self.chunk_rows;
+            let chunk_len = self.chunk_rows.min(total.saturating_sub(chunk_start));
+            let column =
+                read_column_array(&self.array, &rows_subset(chunk_start, chunk_len, trailing)?)?;
+            self.chunks.push_front((index, column));
+            self.chunks.truncate(CHUNK_CACHE_ENTRIES);
+        }
+        Ok(&self
+            .chunks
+            .front()
+            .expect("just inserted or moved to front")
+            .1)
+    }
+}
+
+/// The lazily opened arrays and caches behind a [`FrameSequence`].
+#[derive(Default)]
+struct ReadState {
+    columns: BTreeMap<String, ColumnReader>,
+    metas: BTreeMap<String, Array<dyn ReadableListableStorageTraits>>,
+    boxes: Option<BoxReader>,
 }
 
 /// The lazy store cursor over a frame sequence: index-only open, one frame per
@@ -2714,6 +4056,11 @@ struct BoxIndex {
 /// materializing anything it was not asked for. [`to_trajectory`](Self::to_trajectory)
 /// is the named lazy → eager conversion.
 ///
+/// Every read door takes `&self`: the cursor holds no cursor state, only
+/// caches (open array handles, the last decoded inner chunk per column, the
+/// decoded cells) behind a lock, so a sequence can be shared and read from
+/// several places.
+///
 /// **Error vocabulary.** Every inherent door on this type yields
 /// [`MolRsError`], as the [`MolRsError::Zarr`] variant naming the section or
 /// array path at fault. The three [`TrajectoryReader`] methods keep
@@ -2723,8 +4070,7 @@ struct BoxIndex {
 /// type.
 pub struct FrameSequence {
     /// The read-only view of the store. A read door keeps no write capability,
-    /// which is also what lets a packed `.mrec.zip` — readable and listable and
-    /// nothing more — be opened through the same door as a directory store.
+    /// which is also what lets a packed `.mrec.zip` be opened through it.
     store: ReadableListableStorage,
     schema: SequenceSchema,
     /// Step numbers of the committed frames; its length is `nstep`.
@@ -2732,43 +4078,33 @@ pub struct FrameSequence {
     times: Option<Vec<F>>,
     blocks: BTreeMap<String, BlockIndex>,
     cell: Option<BoxIndex>,
+    state: Mutex<ReadState>,
 }
 
 impl FrameSequence {
     /// Open a sequence for reading, taking only its indices.
     ///
     /// Index-only: the schema attributes plus each section's `step_index` and
-    /// `offset`. No frame data is touched until [`frame`](Self::frame) asks
-    /// for a frame.
+    /// `offset` — or, for a section whose hints say every update is regular,
+    /// nothing but its array metadata. No frame data is touched until a read
+    /// asks for it. The commit marker bounds everything: index entries at or
+    /// past `len(step)` (a crash's leftovers) are ignored.
     ///
     /// Any readable, listable store opens: a directory store, an in-memory one,
-    /// or the read-only `zarrs_zip` adapter that `open_packed` (the
-    /// `filesystem`-gated function in [`crate::io::mrec`]) hands back for a
-    /// packed `.mrec.zip`. Whatever arrives is kept as a
-    /// [`ReadableListableStorage`] — a reader that could still write would be a
-    /// write door wearing the wrong name.
-    ///
-    /// A conforming store needs no writer pin — the schema is derived from the
-    /// store itself when the attribute is absent. That is the one fact this
-    /// door and [`FrameSequenceWriter::open`] answer differently, and
-    /// deliberately: reading needs only what is on disk, appending needs the
-    /// declared union and the metadata fills, which are not.
-    ///
-    /// A store created and closed without a single append opens as a legal,
-    /// empty sequence rather than as an error.
+    /// or the read-only zip adapter `open_packed` hands back. A conforming
+    /// store needs no writer pin — the schema is derived from the store itself
+    /// when the attribute is absent. A store created and closed without a
+    /// single append opens as a legal, empty sequence.
     ///
     /// # Errors
     ///
     /// Every case is a [`MolRsError::Zarr`] naming the path it failed on:
     ///
     /// - the store holds the `trajectory/frames/<i>/` layout written by molrs
-    ///   <= 0.13, which this layout replaced and does not migrate;
+    ///   <= 0.13;
     /// - a schema pin is present but is not a schema this build can
     ///   deserialize;
-    /// - no pin is present and the derivation from the store fails, either
-    ///   because a column array is stored as a Zarr dtype molrs has no column
-    ///   width for, or because a `trajectory/meta/<key>` array carries no
-    ///   `molrs_meta_dtype` attribute to say how to read its values back.
+    /// - no pin is present and the derivation from the store fails.
     ///
     /// Also any storage error raised while reading the index arrays.
     pub fn open<S>(store: Arc<S>) -> Result<Self, MolRsError>
@@ -2777,65 +4113,124 @@ impl FrameSequence {
     {
         // `StorageHandle` is how an unsized store becomes an owned, sized one:
         // `Arc<dyn ReadableWritableListableStorageTraits>` does not coerce to
-        // `Arc<dyn ReadableListableStorageTraits>` — the latter is not a
-        // supertrait of the former — so the read-only view is taken here.
+        // `Arc<dyn ReadableListableStorageTraits>`, so the read-only view is
+        // taken here.
         let store: ReadableListableStorage = Arc::new(StorageHandle::new(store));
         ensure_not_legacy(&store)?;
         let schema = match pinned_schema(&store)? {
             Some(pinned) => pinned,
             None => schema_from_store(&store)?,
         };
-        let steps = if array_exists(&store, &join_path(TRAJECTORY_GROUP, STEP_ARRAY))? {
-            read_whole::<i64, _>(&store, &join_path(TRAJECTORY_GROUP, STEP_ARRAY))?
-        } else {
-            // Created and closed without an append: a legal, empty sequence.
-            Vec::new()
-        };
-        let time_path = join_path(TRAJECTORY_GROUP, TIME_ARRAY);
-        let times = if array_exists(&store, &time_path)? {
-            Some(read_whole::<F, _>(&store, &time_path)?)
-        } else {
-            None
-        };
+        let attributes = trajectory_attributes(&store)?;
+        let nstep = committed_frames(&store, &attributes)?;
+        // Created and closed without an append: a legal, empty sequence.
+        let steps = read_track::<i64, _>(
+            &store,
+            &attributes.all,
+            STEP_PROGRESSION_ATTRIBUTE,
+            &join_path(TRAJECTORY_GROUP, STEP_ARRAY),
+            nstep,
+        )?
+        .unwrap_or_default();
+        if steps.len() as u64 != nstep {
+            return Err(MolRsError::zarr(format!(
+                "trajectory claims {nstep} committed frames but carries {} step numbers",
+                steps.len()
+            )));
+        }
+        let times = read_track::<F, _>(
+            &store,
+            &attributes.all,
+            TIME_PROGRESSION_ATTRIBUTE,
+            &join_path(TRAJECTORY_GROUP, TIME_ARRAY),
+            nstep,
+        )?;
 
         let mut blocks = BTreeMap::new();
-        for name in schema.blocks.keys() {
+        for (name, declared) in &schema.blocks {
             let path = join_path(TRAJECTORY_GROUP, name);
-            if !array_exists(&store, &join_path(&path, STEP_INDEX_ARRAY))? {
+            if !group_exists(&store, &path)? {
+                // Declared, never appended: the section does not exist yet.
                 continue;
             }
-            blocks.insert(
-                name.clone(),
-                BlockIndex {
-                    step_index: read_whole::<u64, _>(&store, &join_path(&path, STEP_INDEX_ARRAY))?,
-                    offset: read_whole::<u64, _>(&store, &join_path(&path, OFFSET_ARRAY))?,
-                },
-            );
+            let index_path = join_path(&path, STEP_INDEX_ARRAY);
+            let index = if array_exists(&store, &index_path)? {
+                let mut step_index = read_whole::<u64, _>(&store, &index_path)?;
+                let updates = step_index
+                    .iter()
+                    .take_while(|&&ordinal| ordinal < nstep)
+                    .count();
+                step_index.truncate(updates);
+                let mut offset = read_whole::<u64, _>(&store, &join_path(&path, OFFSET_ARRAY))?;
+                offset.truncate(if updates == 0 { 0 } else { updates + 1 });
+                BlockIndex::Sparse { step_index, offset }
+            } else {
+                match stored_hints(&store, &path)? {
+                    (Some(rows), true) if rows > 0 => {
+                        // Regular: the columns' own length says how many
+                        // updates landed; the marker bounds them.
+                        let Some(column) = declared.columns.keys().next() else {
+                            continue;
+                        };
+                        let landed = Array::open(store.clone(), &join_path(&path, column))?
+                            .shape()
+                            .first()
+                            .copied()
+                            .unwrap_or(0);
+                        BlockIndex::Regular {
+                            updates: (landed / rows).min(nstep),
+                            rows,
+                        }
+                    }
+                    _ => continue,
+                }
+            };
+            let empty = match &index {
+                BlockIndex::Regular { updates, .. } => *updates == 0,
+                BlockIndex::Sparse { step_index, .. } => step_index.is_empty(),
+            };
+            if !empty {
+                blocks.insert(name.clone(), index);
+            }
         }
 
         let box_prefix = join_path(TRAJECTORY_GROUP, BOX_GROUP);
         let vectors_path = join_path(&box_prefix, VECTORS_ARRAY);
         let cell = if array_exists(&store, &vectors_path)? {
             let step_path = join_path(&box_prefix, STEP_INDEX_ARRAY);
-            let step_index = if array_exists(&store, &step_path)? {
+            let mut step_index = if array_exists(&store, &step_path)? {
                 read_whole::<u64, _>(&store, &step_path)?
             } else {
-                let shape = Array::open(store.clone(), &vectors_path)?.shape().to_vec();
-                let n = *shape.first().ok_or_else(|| {
-                    MolRsError::zarr("box vectors array has an empty shape".to_string())
-                })?;
-                if n == 1 {
-                    vec![0]
-                } else {
-                    return Err(MolRsError::zarr(format!(
-                        "box has {n} updates but no step_index array"
-                    )));
-                }
+                let n = Array::open(store.clone(), &vectors_path)?
+                    .shape()
+                    .first()
+                    .copied()
+                    .unwrap_or(0);
+                // The omitted index is one update at ordinal 0.
+                if n == 0 { Vec::new() } else { vec![0] }
             };
-            Some(BoxIndex {
-                step_index,
-                cell_defined: cell_defined_of(&store)?,
-            })
+            let committed = step_index
+                .iter()
+                .take_while(|&&ordinal| ordinal < nstep)
+                .count();
+            step_index.truncate(committed);
+            if step_index.is_empty() {
+                None
+            } else {
+                Some(BoxIndex {
+                    step_index,
+                    cell_defined: cell_defined_of(&store)?,
+                })
+            }
+        } else if group_exists(&store, &box_prefix)? {
+            let group = Group::open(store.clone(), &box_prefix)?;
+            match cell_from_attributes(group.attributes())? {
+                Some(cell) if nstep > 0 => Some(BoxIndex {
+                    step_index: vec![0],
+                    cell_defined: cell.is_cell_defined(),
+                }),
+                _ => None,
+            }
         } else {
             None
         };
@@ -2847,111 +4242,206 @@ impl FrameSequence {
             times,
             blocks,
             cell,
+            state: Mutex::new(ReadState::default()),
         })
     }
 
     /// Read frame `index`, or `None` when it is past the commit marker.
     ///
-    /// Asking for a frame that was appended but never flushed is `Ok(None)`,
-    /// not an error: an uncommitted frame is simply not in the sequence. So is
-    /// any `index` at or past the committed count, which is what lets a caller
-    /// iterate until `None` without asking the length first.
-    ///
     /// The frame is assembled from whichever sections resolve at `index`: a
-    /// block whose `step_index` has no entry at or before `index`, or whose
-    /// most recent update holds zero rows, is left out of the frame entirely.
-    /// The cell has no absence marker, so once a run has written one, every
-    /// later frame carries the most recent one.
+    /// block whose `step_index` has no entry at or before `index` is left out
+    /// (absent); a block whose latest update holds zero rows comes back as an
+    /// empty block with its declared columns (present and empty); every other
+    /// block carries its latest update's rows. The cell and the per-step
+    /// metadata come along the same way.
     ///
     /// # Errors
     ///
     /// A [`MolRsError::Zarr`] naming the section when the store is internally
-    /// inconsistent: a block whose `offset` array is too short for the update
-    /// its `step_index` points at, a block present on disk but absent from the
-    /// schema, a `box/` update that does not hold nine cell values, three
-    /// origin values and three boundary flags, or a `meta` array whose row at
-    /// `index` does not hold the value count its declared dtype requires. Also
-    /// any storage or codec error raised while reading the rows themselves.
-    pub fn frame(&mut self, index: u64) -> Result<Option<Frame>, MolRsError> {
+    /// inconsistent — a non-monotonic `offset`, a block on disk but absent
+    /// from the schema, a malformed `box/` update, a `meta` row of the wrong
+    /// width — and any storage or codec error raised while reading rows.
+    pub fn frame(&self, index: u64) -> Result<Option<Frame>, MolRsError> {
+        self.assemble(index, None)
+    }
+
+    /// Read frame `index` carrying only the named `(block, column)` pairs.
+    ///
+    /// A viewer that needs coordinates decodes `x`, `y`, `z` and nothing
+    /// else. A block none of whose columns is named is left out; a named
+    /// block still resolves to absent / empty / rows exactly as in
+    /// [`frame`](Self::frame). The cell and per-step metadata are always
+    /// carried — they are cheap.
+    ///
+    /// # Errors
+    ///
+    /// [`frame`](Self::frame)'s, plus a [`MolRsError::Zarr`] naming a pair
+    /// the schema does not declare.
+    pub fn frame_columns(
+        &self,
+        index: u64,
+        columns: &[(&str, &str)],
+    ) -> Result<Option<Frame>, MolRsError> {
+        let mut wanted: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+        for (block, column) in columns {
+            let declared = self.schema.blocks.get(*block).ok_or_else(|| {
+                MolRsError::zarr(format!("block {block:?} is not declared by this sequence"))
+            })?;
+            if !declared.columns.contains_key(*column) {
+                return Err(MolRsError::zarr(format!(
+                    "column {column:?} of block {block:?} is not declared by this sequence"
+                )));
+            }
+            wanted.entry(block).or_default().push(column);
+        }
+        self.assemble(index, Some(&wanted))
+    }
+
+    fn assemble(
+        &self,
+        index: u64,
+        wanted: Option<&BTreeMap<&str, Vec<&str>>>,
+    ) -> Result<Option<Frame>, MolRsError> {
         if index as usize >= self.steps.len() {
             return Ok(None);
         }
+        let mut state = self.state.lock().map_err(|_| {
+            MolRsError::zarr("frame sequence read cache is poisoned by an earlier panic")
+        })?;
         let mut frame = Frame::new();
 
         for (name, block_index) in &self.blocks {
-            let Some(update) = latest_update(&block_index.step_index, index) else {
+            let selection = match wanted {
+                Some(wanted) => match wanted.get(name.as_str()) {
+                    Some(columns) => Some(columns.as_slice()),
+                    None => continue,
+                },
+                None => None,
+            };
+            let Some((_, start, rows)) = block_index.resolve(index)? else {
                 // No entry at or before this step: the section does not exist
                 // here.
                 continue;
             };
-            let (Some(&start), Some(&end)) = (
-                block_index.offset.get(update),
-                block_index.offset.get(update + 1),
-            ) else {
-                return Err(MolRsError::zarr(format!(
-                    "block {name:?} has {} offsets for update {update}",
-                    block_index.offset.len()
-                )));
-            };
-            // A hostile or corrupt store can carry a non-monotonic `offset`
-            // array; `end - start` would then wrap to a near-`u64::MAX` row
-            // count and drive an unbounded allocation. Reject it instead.
-            let count = end.checked_sub(start).ok_or_else(|| {
-                MolRsError::zarr(format!(
-                    "block {name:?} update {update} has non-monotonic offsets ({start} > {end})"
-                ))
-            })?;
-            if count == 0 {
-                // A zero-row update is how the layout says "gone from here on".
-                continue;
-            }
             let schema = self.schema.blocks.get(name).ok_or_else(|| {
                 MolRsError::zarr(format!("block {name:?} is on disk but not in the schema"))
             })?;
             let path = join_path(TRAJECTORY_GROUP, name);
-            frame.insert(
-                name.clone(),
-                read_block_rows(&self.store, &path, schema, start, count)?,
-            );
+            let mut block = Block::new();
+            for (column, declared) in &schema.columns {
+                if let Some(selection) = selection
+                    && !selection.contains(&column.as_str())
+                {
+                    continue;
+                }
+                let dtype = dtype_from_tag(&declared.dtype)?;
+                let values = if rows == 0 {
+                    empty_column(dtype, &declared.trailing)?
+                } else {
+                    let column_path = join_path(&path, column);
+                    if !state.columns.contains_key(&column_path) {
+                        state.columns.insert(
+                            column_path.clone(),
+                            ColumnReader::open(&self.store, &column_path)?,
+                        );
+                    }
+                    state
+                        .columns
+                        .get_mut(&column_path)
+                        .expect("just inserted")
+                        .rows(start, rows, &declared.trailing)?
+                };
+                insert_column_into_block(&mut block, column, values)?;
+            }
+            if block.is_empty() {
+                // A declared block with no (selected) columns is still a block
+                // with a row count.
+                block.resize(rows as usize)?;
+            }
+            apply_structural_shape(&mut block, schema, &path)?;
+            frame.insert(name.clone(), block);
         }
 
         if let Some(cell) = &self.cell
             && let Some(update) = latest_update(&cell.step_index, index)
         {
-            frame.simbox = Some(read_box_row(&self.store, update as u64, cell.cell_defined)?);
+            if state.boxes.is_none() {
+                state.boxes = Some(BoxReader::open(&self.store)?);
+            }
+            let boxes = state.boxes.as_mut().expect("just opened");
+            frame.simbox = Some(boxes.cell_at(update as u64, cell.cell_defined)?);
         }
 
         for (key, declared) in &self.schema.meta {
             let path = join_path(&join_path(TRAJECTORY_GROUP, META_GROUP), key);
+            if !state.metas.contains_key(key) {
+                state
+                    .metas
+                    .insert(key.clone(), Array::open(self.store.clone(), &path)?);
+            }
+            let array = &state.metas[key];
             frame.meta.insert(
                 key.clone(),
-                read_meta_value(&self.store, &path, key, &declared.dtype, index)?,
+                read_meta_value(array, key, &declared.dtype, index)?,
             );
         }
 
         Ok(Some(frame))
     }
 
+    /// The update of block `name` that frame `index` resolves to, or `None`
+    /// when the block is absent there (or not in the store).
+    ///
+    /// Two consecutive frames resolving to the same update carry the same
+    /// rows — a consumer can skip re-uploading a block whose update did not
+    /// change without comparing a single value.
+    pub fn block_update_at(&self, name: &str, index: u64) -> Result<Option<u64>, MolRsError> {
+        if index as usize >= self.steps.len() {
+            return Ok(None);
+        }
+        let Some(block_index) = self.blocks.get(name) else {
+            return Ok(None);
+        };
+        Ok(block_index.resolve(index)?.map(|(update, _, _)| update))
+    }
+
+    /// The cell at frame `index`, or `None` when no cell has been written at
+    /// or before it (or `index` is past the commit marker).
+    ///
+    /// # Errors
+    ///
+    /// A [`MolRsError::Zarr`] when the `box/` update is malformed.
+    pub fn box_at(&self, index: u64) -> Result<Option<SimBox>, MolRsError> {
+        if index as usize >= self.steps.len() {
+            return Ok(None);
+        }
+        let Some(cell) = &self.cell else {
+            return Ok(None);
+        };
+        let Some(update) = latest_update(&cell.step_index, index) else {
+            return Ok(None);
+        };
+        let mut state = self.state.lock().map_err(|_| {
+            MolRsError::zarr("frame sequence read cache is poisoned by an earlier panic")
+        })?;
+        if state.boxes.is_none() {
+            state.boxes = Some(BoxReader::open(&self.store)?);
+        }
+        let boxes = state.boxes.as_mut().expect("just opened");
+        Ok(Some(boxes.cell_at(update as u64, cell.cell_defined)?))
+    }
+
     /// Materialize the whole sequence: the named lazy → eager conversion.
     ///
     /// Reads every committed frame through [`frame`](Self::frame) and hands
-    /// back a `Trajectory` — the eager in-memory carrier — carrying those
-    /// frames, the sequence's step numbers, and its times when the run wrote
-    /// any. `step` always comes back as `Some`: it is the commit marker and is
-    /// therefore always on disk, so a `Trajectory` written with `step: None`
-    /// returns with the numbering the writer assigned (`0, 1, 2, …`).
-    ///
-    /// Every frame is materialized at once. A run too large for memory is what
-    /// [`frame`](Self::frame) is for.
+    /// back a `Trajectory` carrying those frames, the sequence's step numbers,
+    /// and its times when the run wrote any. A run too large for memory is
+    /// what [`frame`](Self::frame) is for.
     ///
     /// # Errors
     ///
     /// [`frame`](Self::frame)'s, on the first frame that raises one.
-    // `to_trajectory` reads `&mut self` because the cursor owns mutable read
-    // state; the name is the maintainer's vocabulary for lazy -> eager and is
-    // not up for renaming by a lint.
-    #[allow(clippy::wrong_self_convention)]
-    pub fn to_trajectory(&mut self) -> Result<Trajectory, MolRsError> {
+    pub fn to_trajectory(&self) -> Result<Trajectory, MolRsError> {
         let mut frames = Vec::with_capacity(self.steps.len());
         for index in 0..self.steps.len() as u64 {
             let Some(frame) = self.frame(index)? else {
@@ -2967,8 +4457,6 @@ impl FrameSequence {
     }
 
     /// The committed frames' step numbers, as [`open`](Self::open) read them.
-    ///
-    /// Already in memory — no frame decode. Its length is [`len`](Self::len).
     pub fn steps(&self) -> &[i64] {
         &self.steps
     }
@@ -2983,9 +4471,9 @@ impl FrameSequence {
         &self.schema
     }
 
-    /// Whether a block section is present in the store (carries an on-disk
-    /// `step_index`), so a reader can decide once — e.g. `has_block("bonds")`
-    /// — instead of probing every frame for it.
+    /// Whether a block section is present in the store with at least one
+    /// committed update, so a reader can decide once — e.g.
+    /// `has_block("bonds")` — instead of probing every frame for it.
     pub fn has_block(&self, name: &str) -> bool {
         self.blocks.contains_key(name)
     }
@@ -3019,20 +4507,12 @@ impl TrajectoryReader for FrameSequence {
 
     /// [`FrameSequence::frame`] behind the backend-neutral trait: the same
     /// frame, and the same `Ok(None)` past the commit marker.
-    ///
-    /// The [`MolRsError`] is flattened into an `io::Error` here — lossy, and
-    /// deliberately so, because the trait is the shape every backend shares and
-    /// must not be captured by one backend's error type. A caller who needs the
-    /// structured error calls [`FrameSequence::frame`] directly.
     fn read_step(&mut self, step: usize) -> std::io::Result<Option<Frame>> {
         self.frame(step as u64).map_err(std::io::Error::other)
     }
 
     /// Committed frames — the length of `trajectory/step` as
     /// [`FrameSequence::open`] read it.
-    ///
-    /// Infallible in practice: the count was taken at open, so this returns
-    /// `Ok` unconditionally and is `io::Result` only to match the trait.
     fn len(&mut self) -> std::io::Result<usize> {
         Ok(self.steps.len())
     }
@@ -3100,8 +4580,8 @@ mod tests {
     /// that a foreign writer reads and writes, so a rename of the Rust constant
     /// must break these tests rather than travel silently into them — the same
     /// reading `every_meta_variant_round_trips_bit_exact_with_its_dtype_tag`
-    /// takes on `molrs_meta_dtype`.
-    const SCHEMA_ATTRIBUTE: &str = "molrs_sequence_schema";
+    /// takes on `meta_dtype`.
+    const SCHEMA_ATTRIBUTE: &str = "sequence_schema";
     /// The block every stock fixture frame carries.
     const ATOMS: &str = "atoms";
     /// The one `f64` column in that block.
@@ -3358,19 +4838,25 @@ mod tests {
         );
     }
 
-    /// `step` is the commit marker: one entry per appended frame, in append
-    /// order (ac-014).
+    /// `nstep` counts every appended frame, and a regular numbering lives in
+    /// the `step_progression` attribute rather than in an array.
     #[test]
     fn step_counts_every_appended_frame() {
         let dir = TempDir::new().unwrap();
         let store = store_in(&dir);
         write_all(&store, &ragged_frames());
-
+        let group = Group::open(store.clone(), TRAJ).unwrap();
+        assert_eq!(group.attributes()["nstep"], 3);
         assert_eq!(
-            i64_array(&store, &format!("{TRAJ}/step")),
-            vec![0, 1, 2],
-            "three appends commit three steps"
+            group.attributes()["step_progression"],
+            serde_json::json!({"start": 0, "stride": 1})
         );
+        assert!(
+            Array::open(store.clone(), &format!("{TRAJ}/step")).is_err(),
+            "a regular step series needs no array"
+        );
+        let seq = open_sequence(&store);
+        assert_eq!(seq.steps(), &[0, 1, 2]);
     }
 
     /// Each frame of the ragged run reads back its own rows, bit exact
@@ -3462,33 +4948,68 @@ mod tests {
         assert_eq!(cell.pbc(), [true, true, true]);
     }
 
-    /// A non-default origin is written; the default-omission only applies
-    /// when every update is zeros.
+    /// A non-default origin is recorded — as a `box/` attribute while the
+    /// cell is fixed, as an array once the cell changes; the still-default
+    /// boundary is omitted either way.
     #[test]
     fn a_nonzero_origin_is_written() {
-        let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
-        let mut frame = atoms_frame(&[1.0]);
-        frame.simbox = Some(
+        let cell = |lengths: f64| {
             SimBox::new(
-                array![[10.0, 0.0, 0.0], [0.0, 11.0, 0.0], [0.0, 0.0, 12.0]],
+                array![[lengths, 0.0, 0.0], [0.0, 11.0, 0.0], [0.0, 0.0, 12.0]],
                 array![1.0, 2.0, 3.0],
                 [true, true, true],
             )
-            .unwrap(),
-        );
+            .unwrap()
+        };
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut frame = atoms_frame(&[1.0]);
+        frame.simbox = Some(cell(10.0));
         write_all(&store, &[frame]);
+        let group = Group::open(store.clone(), &format!("{TRAJ}/box")).unwrap();
+        assert_eq!(
+            group.attributes()["origin"],
+            serde_json::json!([1.0, 2.0, 3.0])
+        );
+        assert!(
+            group.attributes().get("boundary").is_none(),
+            "still-default boundary is omitted"
+        );
+        assert!(
+            Array::open(store.clone(), &format!("{TRAJ}/box/vectors")).is_err(),
+            "a fixed cell is attributes, not arrays"
+        );
+        let seq = open_sequence(&store);
+        let back = seq.box_at(0).unwrap().unwrap();
+        assert_eq!(back.origin_view().to_vec(), vec![1.0, 2.0, 3.0]);
 
+        // The first change migrates the cell into arrays.
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut first = atoms_frame(&[1.0]);
+        first.simbox = Some(cell(10.0));
+        let mut second = atoms_frame(&[2.0]);
+        second.simbox = Some(cell(10.5));
+        write_all(&store, &[first, second]);
         let origin: Vec<f64> = {
             let arr = Array::open(store.clone(), &format!("{TRAJ}/box/origin")).unwrap();
             let subset = ArraySubset::new_with_shape(arr.shape().to_vec());
             arr.retrieve_array_subset(&subset).unwrap()
         };
-        assert_eq!(origin, vec![1.0, 2.0, 3.0]);
-        assert!(
-            Array::open(store.clone(), &format!("{TRAJ}/box/boundary")).is_err(),
-            "still-default boundary is omitted"
+        assert_eq!(origin, vec![1.0, 2.0, 3.0, 1.0, 2.0, 3.0]);
+        assert_eq!(
+            u64_array(&store, &format!("{TRAJ}/box/step_index")),
+            vec![0, 1]
         );
+        assert!(Array::open(store.clone(), &format!("{TRAJ}/box/boundary")).is_err());
+        let group = Group::open(store.clone(), &format!("{TRAJ}/box")).unwrap();
+        assert!(
+            group.attributes().get("vectors").is_none(),
+            "the attribute form is withdrawn"
+        );
+        let seq = open_sequence(&store);
+        assert_eq!(seq.box_at(1).unwrap().unwrap().h_view()[[0, 0]], 10.5);
+        assert_eq!(seq.box_at(0).unwrap().unwrap().h_view()[[0, 0]], 10.0);
     }
 
     /// A `step` key on frame.meta does not mint `trajectory/meta/step`.
@@ -3511,12 +5032,12 @@ mod tests {
         );
     }
 
-    /// A block whose content never changes writes exactly one `step_index`
-    /// entry over a 20-step run (decision 7, ac-014).
+    /// A block that never changes costs one update — and, being regular
+    /// (one update at ordinal 0), no index arrays at all: the group hints
+    /// carry it and every frame resolves to update 0.
     #[test]
-    fn a_constant_block_writes_one_step_index_entry() {
-        const STEPS: usize = 20;
-
+    fn a_constant_block_costs_one_update_and_no_index_arrays() {
+        const STEPS: usize = 5;
         let dir = TempDir::new().unwrap();
         let store = store_in(&dir);
         let frames: Vec<Frame> = (0..STEPS)
@@ -3528,30 +5049,61 @@ mod tests {
             .collect();
         write_all(&store, &frames);
 
-        assert_eq!(
-            u64_array(&store, &format!("{TRAJ}/{BONDS}/step_index")),
-            vec![0],
-            "a constant topology is one entry, however long the run"
-        );
+        let group = Group::open(store.clone(), &format!("{TRAJ}/{BONDS}")).unwrap();
+        assert_eq!(group.attributes()["uniform_rows"], 2);
+        assert_eq!(group.attributes()["dense_updates"], true);
+        for name in ["step_index", "offset"] {
+            assert!(
+                Array::open(store.clone(), &format!("{TRAJ}/{BONDS}/{name}")).is_err(),
+                "a regular block writes no {name} array"
+            );
+        }
+        let rows = Array::open(store.clone(), &format!("{TRAJ}/{BONDS}/{I}"))
+            .unwrap()
+            .shape()[0];
+        assert_eq!(rows, 2, "one update's rows, not one per frame");
+        let seq = open_sequence(&store);
+        for index in 0..STEPS as u64 {
+            assert_eq!(seq.block_update_at(BONDS, index).unwrap(), Some(0));
+            assert_eq!(
+                seq.frame(index)
+                    .unwrap()
+                    .unwrap()
+                    .get(BONDS)
+                    .unwrap()
+                    .nrows(),
+                Some(2)
+            );
+        }
     }
 
-    /// A block that changes at every step carries one `step_index` entry per
-    /// step, `0..n` (decision 7, ac-014) — the other end of the same rule.
+    /// A block that changes every step is regular too — update `i` at ordinal
+    /// `i` with a fixed row count — so it costs no index arrays either; a
+    /// ragged run is what materializes `step_index` and `offset`.
     #[test]
-    fn a_block_changing_every_step_indexes_every_step() {
-        const STEPS: usize = 20;
+    fn a_block_changing_every_step_is_regular_and_a_ragged_one_is_indexed() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let frames: Vec<Frame> = (0..5)
+            .map(|i| atoms_frame(&[i as f64, i as f64 + 0.5]))
+            .collect();
+        write_all(&store, &frames);
+        assert!(Array::open(store.clone(), &format!("{TRAJ}/{ATOMS}/step_index")).is_err());
+        let seq = open_sequence(&store);
+        for index in 0..5u64 {
+            assert_eq!(seq.block_update_at(ATOMS, index).unwrap(), Some(index));
+        }
 
         let dir = TempDir::new().unwrap();
         let store = store_in(&dir);
-        let frames: Vec<Frame> = (0..STEPS)
-            .map(|step| atoms_frame(&[step as f64, step as f64 + 0.5]))
-            .collect();
-        write_all(&store, &frames);
-
+        write_all(&store, &ragged_frames());
         assert_eq!(
             u64_array(&store, &format!("{TRAJ}/{ATOMS}/step_index")),
-            (0..STEPS as u64).collect::<Vec<u64>>(),
-            "moving coordinates are indexed at every step"
+            vec![0, 1, 2]
+        );
+        assert_eq!(
+            u64_array(&store, &format!("{TRAJ}/{ATOMS}/offset")),
+            vec![0, 3, 8, 12]
         );
     }
 
@@ -3581,21 +5133,21 @@ mod tests {
         );
     }
 
-    /// The worked example of Design §一 lever 1, on disk: a 3000-atom `f64`
-    /// xyz block derives `R = 21 845` rows per inner chunk and `k = 512`
-    /// chunks per shard (ac-023).
+    /// The worked example, on disk: a 3000-atom `f64` xyz block derives a
+    /// **frame-aligned** inner chunk of exactly one frame and a shard of
+    /// 3728 such chunks.
     ///
-    /// Hard-coded from the formulas, not from a measurement:
-    /// row = 3 * 8 = 24 B; `R = max(1, floor(512 KiB / 24)) = 21 845`;
-    /// chunk = 21 845 * 24 = 524 280 B; `k = max(1, floor(256 MiB / 524 280))
-    /// = 512`; shard = 21 845 * 512 = 11 184 640 rows (about 3728 frames, so
-    /// 10^4 frames are 3 shard files).
+    /// Hard-coded from the formulas, not from a measurement: row = 3 * 8 =
+    /// 24 B; the byte floor is `16 KiB / 24 = 682` rows, which 3000 exceeds,
+    /// so `R = 3000` (one frame); chunk = 72 000 B;
+    /// `k = clamp(floor(256 MiB / 72 000), 1, 4096) = 3728`; shard =
+    /// 3000 * 3728 = 11 184 000 rows.
     #[test]
-    fn the_worked_example_derives_r_21845_and_k_512() {
+    fn the_worked_example_derives_one_frame_per_chunk_and_k_3728() {
         const ATOM_COUNT: usize = 3000;
-        const ROWS_PER_CHUNK: u64 = 21_845;
-        const CHUNKS_PER_SHARD: u64 = 512;
-        const ROWS_PER_SHARD: u64 = 11_184_640;
+        const ROWS_PER_CHUNK: u64 = 3000;
+        const CHUNKS_PER_SHARD: u64 = 3728;
+        const ROWS_PER_SHARD: u64 = 11_184_000;
 
         let dir = TempDir::new().unwrap();
         let store = store_in(&dir);
@@ -3614,18 +5166,62 @@ mod tests {
         assert_eq!(
             inner,
             vec![ROWS_PER_CHUNK, 3],
-            "R = floor(512 KiB / 24 B row) = 21 845 rows, trailing axis whole"
+            "R = one 3000-row frame (the 16 KiB floor is 682 rows), trailing axis whole"
         );
         assert_eq!(
             shard,
             vec![ROWS_PER_SHARD, 3],
-            "the shard spans R * k = 11 184 640 rows"
+            "the shard spans R * k = 11 184 000 rows"
         );
         assert_eq!(
             shard[0] / inner[0],
             CHUNKS_PER_SHARD,
-            "k = floor(256 MiB / 524 280 B chunk) = 512"
+            "k = clamp(floor(256 MiB / 72 000 B chunk), 1, 4096) = 3728"
         );
+    }
+
+    /// A small frame is rounded up to the byte floor in whole frames: 100
+    /// `f64` rows (800 B) need 21 frames to pass 16 KiB, so `R = 2100`.
+    #[test]
+    fn a_small_frame_is_chunked_in_whole_frames_up_to_the_byte_floor() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let values: Vec<f64> = (0..100).map(|i| i as f64).collect();
+        write_all(&store, &[atoms_frame(&values)]);
+        let (_, inner) = extents(&store, &format!("{TRAJ}/{ATOMS}/{X}"));
+        assert_eq!(inner, vec![2100], "ceil(2048 / 100) * 100 = 2100 rows");
+    }
+
+    /// The dense per-frame arrays — written once a series stops being
+    /// regular — share one small extent whatever the frames look like: 1024
+    /// rows per inner chunk, 256 chunks per shard.
+    #[test]
+    fn dense_arrays_take_the_dense_extents() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let frames = ragged_frames();
+        let mut writer = FrameSequenceWriter::create(
+            store.clone(),
+            SequenceSchema::from_frames(&frames).unwrap(),
+        )
+        .unwrap();
+        // Steps 0, 1, 5: not a progression, so `step` becomes an array.
+        for (frame, step) in frames.iter().zip([0i64, 1, 5]) {
+            writer.append_at(frame, step, None).unwrap();
+        }
+        writer.close().unwrap();
+        for path in [
+            format!("{TRAJ}/step"),
+            format!("{TRAJ}/{ATOMS}/offset"),
+            format!("{TRAJ}/{ATOMS}/step_index"),
+        ] {
+            let (shard, inner) = extents(&store, &path);
+            assert_eq!(inner, vec![1024], "{path}");
+            assert_eq!(shard, vec![1024 * 256], "{path}");
+        }
+        assert_eq!(i64_array(&store, &format!("{TRAJ}/step")), vec![0, 1, 5]);
+        let seq = open_sequence(&store);
+        assert_eq!(seq.steps(), &[0, 1, 5]);
     }
 
     // =======================================================================
@@ -3633,13 +5229,14 @@ mod tests {
     // =======================================================================
 
     /// A union mint over heterogeneous frames writes a store in which every
-    /// frame reads back **only** the blocks it presented (ac-020).
+    /// block **carries forward** from its latest update: a frame reads back
+    /// what it presented plus whatever earlier frames left standing.
     ///
-    /// This is how the new layout expresses what the old per-frame group
-    /// layout got for free: `from_frames` unions the blocks, and per-section
-    /// `step_index` keeps each frame's own set.
+    /// `from_frames` unions the blocks, per-section `step_index` records when
+    /// each one changed, and omission means "unchanged" — the reading that
+    /// makes a topology written once cost one entry.
     #[test]
-    fn a_union_mint_lets_each_frame_read_back_only_its_own_blocks() {
+    fn a_union_mint_carries_each_block_forward_from_its_latest_update() {
         let dir = TempDir::new().unwrap();
         let store = store_in(&dir);
 
@@ -3653,7 +5250,11 @@ mod tests {
 
         let mut seq = open_sequence(&store);
         let step0 = frame_at(&mut seq, 0);
-        assert_eq!(step0.len(), 1, "step 0 presented only atoms");
+        assert_eq!(
+            step0.len(),
+            1,
+            "step 0 presented only atoms; nothing to carry"
+        );
         assert_eq!(atoms_x(&step0), vec![1.0, 2.0]);
 
         let step1 = frame_at(&mut seq, 1);
@@ -3662,9 +5263,74 @@ mod tests {
         assert!(step1.get("charges").is_none());
 
         let step2 = frame_at(&mut seq, 2);
-        assert_eq!(step2.len(), 2, "step 2 presented atoms and charges");
+        assert_eq!(
+            step2.len(),
+            3,
+            "step 2 presented atoms and charges and carries bonds forward"
+        );
         assert!(step2.get("charges").is_some());
-        assert!(step2.get(BONDS).is_none());
+        assert_eq!(
+            step2.get(BONDS).expect("bonds carried forward").nrows(),
+            Some(2)
+        );
+        assert_eq!(
+            u64_array(&store, &format!("{TRAJ}/{BONDS}/step_index")),
+            vec![1],
+            "a block omitted after it appeared earns no update"
+        );
+    }
+
+    /// The three presence states, on one store: omitted = carried forward,
+    /// zero rows = present and empty, no entry yet = absent.
+    #[test]
+    fn omitted_zero_row_and_unseen_blocks_read_back_as_carried_empty_and_absent() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+
+        let mut with_bonds = atoms_frame(&[1.0]);
+        with_bonds.insert(BONDS, block_with(I, uint_column(&[0, 1])));
+        let omits_bonds = atoms_frame(&[2.0]);
+        let mut empties_bonds = atoms_frame(&[3.0]);
+        empties_bonds.insert(BONDS, block_with(I, uint_column(&[])));
+        let omits_again = atoms_frame(&[4.0]);
+        // Frame 0 has no bonds yet: absent there.
+        let frames = vec![
+            atoms_frame(&[0.5]),
+            with_bonds,
+            omits_bonds,
+            empties_bonds,
+            omits_again,
+        ];
+        write_all(&store, &frames);
+
+        let mut seq = open_sequence(&store);
+        assert!(
+            frame_at(&mut seq, 0).get(BONDS).is_none(),
+            "no update at or before frame 0: absent"
+        );
+        assert_eq!(frame_at(&mut seq, 1).get(BONDS).unwrap().nrows(), Some(2));
+        assert_eq!(
+            frame_at(&mut seq, 2).get(BONDS).unwrap().nrows(),
+            Some(2),
+            "an omitted block carries forward"
+        );
+        let empty = frame_at(&mut seq, 3);
+        let bonds = empty.get(BONDS).expect("a zero-row update is present");
+        assert_eq!(bonds.nrows(), Some(0), "and empty");
+        assert!(bonds.get(I).is_some(), "with its declared columns");
+        assert_eq!(
+            frame_at(&mut seq, 4).get(BONDS).unwrap().nrows(),
+            Some(0),
+            "an omission after the empty update carries the empty block forward"
+        );
+        assert_eq!(
+            u64_array(&store, &format!("{TRAJ}/{BONDS}/step_index")),
+            vec![1, 3]
+        );
+        assert_eq!(
+            u64_array(&store, &format!("{TRAJ}/{BONDS}/offset")),
+            vec![0, 2, 2]
+        );
     }
 
     /// The same column arriving with two dtypes is a mint-time `Err` naming
@@ -3911,7 +5577,7 @@ mod tests {
 
     /// Every `MetaValue` variant round-trips bit exact through
     /// `trajectory/meta/<key>`, and the array carries its `dtype()` tag in
-    /// `molrs_meta_dtype` (ac-019).
+    /// `meta_dtype` (ac-019).
     ///
     /// The dtype travels with the array rather than with a convention, which
     /// is what makes exactness free (decision 8). Written for two steps so the
@@ -3954,7 +5620,7 @@ mod tests {
             let array = Array::open(store.clone(), &format!("{TRAJ}/meta/{KEY}"))
                 .expect("a declared meta key is a per-step array");
             assert_eq!(
-                array.attributes().get("molrs_meta_dtype"),
+                array.attributes().get("meta_dtype"),
                 Some(&serde_json::json!(value.dtype())),
                 "the array must carry the {} tag",
                 value.dtype()
@@ -4006,7 +5672,9 @@ mod tests {
         let mut declaring = atoms_frame(&[1.0]);
         declaring.meta.insert(KEY, MetaValue::F64(300.0));
         let mut schema = SequenceSchema::from_frame(&declaring).unwrap();
-        schema.declare_meta(KEY, MetaValue::F64(FILL)).unwrap();
+        schema
+            .declare_meta_with_fill(KEY, MetaValue::F64(FILL))
+            .unwrap();
 
         let mut writer = FrameSequenceWriter::create(store.clone(), schema).unwrap();
         writer.append(&declaring).unwrap();
@@ -4122,7 +5790,7 @@ mod tests {
     /// attribute. It carries a ragged block column **and** a per-step meta key,
     /// because the derivation has two halves — blocks/columns from the group
     /// tree and array metadata, meta keys from `meta/`'s children and their
-    /// `molrs_meta_dtype` tags — and one half working is not the claim.
+    /// `meta_dtype` tags — and one half working is not the claim.
     #[test]
     fn a_conforming_store_without_the_schema_attribute_still_reads() {
         const TEMPERATURE: &str = "temperature";
@@ -4189,7 +5857,7 @@ mod tests {
     }
 
     /// `flush()` is the commit point, and the crash-loss boundary is exactly
-    /// "everything appended after it" — branch A (ac-015).
+    /// "everything appended after it" (ac-015).
     ///
     /// `std::mem::forget` is the crash: the writer never runs another line, so
     /// what the reopened store shows is what a killed process would have left.
@@ -4219,7 +5887,7 @@ mod tests {
         assert_eq!(
             committed_len(&mut seq),
             3,
-            "branch A commits every buffered row, ragged tail included"
+            "a flush commits every buffered row, ragged tail included"
         );
         for (index, frame) in frames[..3].iter().enumerate() {
             assert_eq!(
@@ -4357,14 +6025,14 @@ mod tests {
     // E. Ordering — step is extended last, and that is observable
     // =======================================================================
 
-    /// Rolling `step` back to its pre-flush length hides the uncommitted
-    /// frames and errors at nothing (ac-017).
+    /// Rolling the `nstep` marker back to its pre-flush value hides the
+    /// uncommitted frames and errors at nothing (ac-017).
     ///
-    /// This is the crash window made deterministic: `step` is extended last,
-    /// so a crash anywhere before that leaves the data arrays long and `step`
-    /// short — exactly the state this test builds through the store API.
+    /// This is the crash window made deterministic: the marker is written
+    /// last, so a crash anywhere before that leaves the data arrays long and
+    /// the marker short — exactly the state this test builds.
     #[test]
-    fn a_step_array_rolled_back_hides_the_uncommitted_frames() {
+    fn a_marker_rolled_back_hides_the_uncommitted_frames() {
         let dir = TempDir::new().unwrap();
         let store = store_in(&dir);
         let frames: Vec<Frame> = (0..5)
@@ -4372,9 +6040,9 @@ mod tests {
             .collect();
         write_all(&store, &frames);
 
-        let mut step = Array::open(store.clone(), &format!("{TRAJ}/step")).unwrap();
-        step.set_shape(vec![3]).unwrap();
-        step.store_metadata().unwrap();
+        let mut group = Group::open(store.clone(), TRAJ).unwrap();
+        group.attributes_mut().insert("nstep".to_string(), 3.into());
+        group.store_metadata().unwrap();
 
         let mut seq = open_sequence(&store);
         assert_eq!(
@@ -4510,14 +6178,14 @@ mod tests {
     }
 
     /// The write order is a property, not a comment: within one `flush()`
-    /// every key under `trajectory/step/` is written **after** every other key
-    /// (ac-017).
+    /// the trajectory group's metadata — the `nstep` marker — is written
+    /// **after** every other key (ac-017).
     ///
     /// That ordering is what makes a crash between two writes invisible — the
     /// commit marker is the last thing to move — and it is unobservable from
     /// the outside, so the observation is a recording store.
     #[test]
-    fn step_is_written_after_every_other_key() {
+    fn the_marker_is_written_after_every_other_key() {
         let dir = TempDir::new().unwrap();
         let recorder = Arc::new(RecordingStore::new(dir.path()));
         let store: ReadableWritableListableStorage = recorder.clone();
@@ -4530,47 +6198,41 @@ mod tests {
         writer.flush().unwrap();
 
         let log = recorder.written_keys();
-        let first_step = log
+        let marker = log
             .iter()
-            .position(|key| key.starts_with("trajectory/step/"))
-            .unwrap_or_else(|| panic!("a flush must extend step; wrote {log:?}"));
-        assert!(
-            log[..first_step]
-                .iter()
-                .any(|key| key.starts_with(&format!("trajectory/{ATOMS}/"))),
-            "the data arrays must be written before step: {log:?}"
+            .rposition(|key| key == "trajectory/zarr.json")
+            .unwrap_or_else(|| panic!("a flush must write the marker; wrote {log:?}"));
+        assert_eq!(
+            marker,
+            log.len() - 1,
+            "nothing may be written after the commit marker: {log:?}"
         );
         assert!(
-            log[first_step..]
+            log[..marker]
                 .iter()
-                .all(|key| key.starts_with("trajectory/step/")),
-            "nothing may be written after the commit marker: {log:?}"
+                .any(|key| key.starts_with(&format!("trajectory/{ATOMS}/"))),
+            "the data arrays must be written before the marker: {log:?}"
         );
     }
 
     // =======================================================================
-    // F. Seal on complete — a closed store carries no dead bytes
+    // F. Flush cadence — values never depend on it; dead bytes stay bounded
     // =======================================================================
 
-    /// After `close(self)` the shard files are the same bytes whatever the
-    /// flush cadence was, and before the seal the frequently flushed store is
-    /// measurably bigger (ac-034).
-    ///
-    /// Branch A pays for arbitrary commit granularity with dead bytes: every
-    /// rewrite of the trailing inner chunk leaves the superseded copy in the
-    /// shard file. The seal is what closes that gap, and the mid-run
-    /// assertion is what proves the comparison is not vacuous — without it,
-    /// two stores that never accumulated dead bytes in the first place would
-    /// pass.
+    /// Whatever the flush cadence, the frames read back identical, and the
+    /// dead bytes an eager flusher leaves behind are bounded by one
+    /// re-encoded trailing chunk per flush — nothing is compacted at close,
+    /// because a whole-shard rewrite is the one write that can destroy
+    /// committed data on a crash.
     #[test]
-    fn flush_cadence_does_not_change_the_closed_shard_bytes() {
+    fn flush_cadence_changes_dead_bytes_but_never_what_reads_back() {
         const ROWS_PER_CHUNK: u64 = 64;
         const CHUNKS_PER_SHARD: u64 = 8;
         const FRAMES: usize = 24;
+        /// One 64-row `f64` chunk, its `crc32c`, and the shard index slack.
+        const CHUNK_BYTES_UPPER_BOUND: u64 = 64 * 8 + 4 + 16;
 
-        // 24 frames of 5 rows = 120 rows: two inner chunks inside one shard,
-        // so the seal under test is close()'s compaction of the final partial
-        // shard, with no boundary crossing in the way.
+        // 24 frames of 5 rows = 120 rows: two inner chunks inside one shard.
         let frames: Vec<Frame> = (0..FRAMES)
             .map(|step| {
                 let base = step as f64 * 10.0;
@@ -4581,7 +6243,7 @@ mod tests {
 
         let eager_dir = TempDir::new().unwrap();
         let eager_store = store_in(&eager_dir);
-        let mut eager = FrameSequenceWriter::create(eager_store, schema)
+        let mut eager = FrameSequenceWriter::create(eager_store.clone(), schema)
             .unwrap()
             .with_rows_per_chunk(ROWS_PER_CHUNK)
             .unwrap()
@@ -4591,37 +6253,50 @@ mod tests {
             eager.append(frame).unwrap();
             eager.flush().unwrap();
         }
+        eager.close().unwrap();
         let column_dir = PathBuf::from("trajectory").join(ATOMS).join(X);
-        let active = chunk_bytes(&eager_dir.path().join(&column_dir));
+        let eager_bytes = chunk_bytes(&eager_dir.path().join(&column_dir));
 
         let lazy_dir = TempDir::new().unwrap();
         let lazy_store = store_in(&lazy_dir);
-        let mut lazy =
-            FrameSequenceWriter::create(lazy_store, SequenceSchema::from_frames(&frames).unwrap())
-                .unwrap()
-                .with_rows_per_chunk(ROWS_PER_CHUNK)
-                .unwrap()
-                .with_chunks_per_shard(CHUNKS_PER_SHARD)
-                .unwrap();
+        let mut lazy = FrameSequenceWriter::create(
+            lazy_store.clone(),
+            SequenceSchema::from_frames(&frames).unwrap(),
+        )
+        .unwrap()
+        .with_rows_per_chunk(ROWS_PER_CHUNK)
+        .unwrap()
+        .with_chunks_per_shard(CHUNKS_PER_SHARD)
+        .unwrap()
+        .with_flush_every(FRAMES as u64)
+        .unwrap();
         for frame in &frames {
             lazy.append(frame).unwrap();
         }
-        lazy.flush().unwrap();
         lazy.close().unwrap();
-        let sealed = chunk_bytes(&lazy_dir.path().join(&column_dir));
+        let lazy_bytes = chunk_bytes(&lazy_dir.path().join(&column_dir));
 
         assert!(
-            active > sealed,
-            "before the seal the active shard must carry the superseded copies \
-             it is about to drop: {active} B vs {sealed} B"
+            eager_bytes > lazy_bytes,
+            "flushing every frame re-encodes the trailing chunk and leaves dead bytes: \
+             {eager_bytes} B vs {lazy_bytes} B"
+        );
+        assert!(
+            eager_bytes <= lazy_bytes + FRAMES as u64 * CHUNK_BYTES_UPPER_BOUND,
+            "dead bytes are bounded by one chunk per flush: {eager_bytes} B vs {lazy_bytes} B"
         );
 
-        eager.close().unwrap();
-        assert_eq!(
-            chunk_files(&eager_dir.path().join(&column_dir)),
-            chunk_files(&lazy_dir.path().join(&column_dir)),
-            "a closed store's shard files must not remember how often it flushed"
-        );
+        let mut eager_seq = open_sequence(&eager_store);
+        let mut lazy_seq = open_sequence(&lazy_store);
+        assert_eq!(committed_len(&mut eager_seq), FRAMES);
+        assert_eq!(committed_len(&mut lazy_seq), FRAMES);
+        for index in 0..FRAMES as u64 {
+            assert_eq!(
+                atoms_x(&frame_at(&mut eager_seq, index)),
+                atoms_x(&frame_at(&mut lazy_seq, index)),
+                "frame {index} must not remember the flush cadence"
+            );
+        }
     }
 
     // =======================================================================
@@ -4726,13 +6401,13 @@ mod tests {
     /// `step_index`), so one shard file holds `S = 256` B.
     ///
     /// Per growth array the file count is `ceil(rows / 32)` shard files plus
-    /// one `zarr.json`; the two groups (`trajectory/` and `trajectory/atoms/`)
-    /// add one `zarr.json` each. Eight 8-row frames are 64 rows of `x` — two
-    /// full shards — while `step` and `step_index` are 8 rows and `offset` is
-    /// 9 (the opening zero of the CSR pointer), one shard each: 11 files.
-    /// Sixteen frames take `x` to 128 rows, four shards, and leave the other
-    /// three arrays inside their first shard: 13 files. Doubling the frames
-    /// adds two files.
+    /// one `zarr.json`; the four groups (root, `meta/`, `trajectory/` and
+    /// `trajectory/atoms/`) add one `zarr.json` each. A regular run has
+    /// exactly one growth array: `x`. `step` is the `step_progression`
+    /// attribute and the block's CSR index is implied by its hints, so
+    /// neither costs a file. Eight 8-row frames are 64 rows of `x` — two
+    /// full shards — 7 files; sixteen frames take `x` to 128 rows, four
+    /// shards, 9 files. Doubling the frames adds two files.
     ///
     /// The counted set is **every** file under the store root, `zarr.json`
     /// included — the claim is about what lands on a filesystem, so excluding
@@ -4750,28 +6425,25 @@ mod tests {
         const ROW_BYTES: u64 = 8;
         /// `S`: bytes one shard file holds, `R * k * row`.
         const SHARD_BYTES: u64 = ROWS_PER_CHUNK * CHUNKS_PER_SHARD * ROW_BYTES;
-        /// The growth arrays: `step`, and the block's `x`, `offset` and
-        /// `step_index`. No `time`, no `meta`, no `box` — the fixture frames
-        /// carry none.
-        const ARRAYS: u64 = 4;
-        /// `trajectory/` and `trajectory/atoms/`.
-        const GROUPS: u64 = 2;
+        /// The growth arrays: the block's `x` alone — `step` is a progression
+        /// attribute and a regular block writes no index arrays. No `time`, no
+        /// `meta`, no `box` — the fixture frames carry none.
+        const ARRAYS: u64 = 1;
+        /// The root, `meta/`, `trajectory/` and `trajectory/atoms/`.
+        const GROUPS: u64 = 4;
         const FRAMES: u64 = 8;
 
         /// `O(arrays)` of the bound: each array costs its own `zarr.json` and
-        /// rounds its last shard up, each group costs a `zarr.json`, and
-        /// unsharded index arrays may add a chunk file per inner chunk.
-        const ARRAY_FLOOR: u64 = 2 * ARRAYS + GROUPS + 4;
-        /// Rows across the four arrays at `FRAMES`: 8 * 8 of `x`, 8 of `step`,
-        /// 8 of `step_index`, 8 + 1 of `offset`.
-        const SINGLE_ROWS: u64 = 64 + 8 + 8 + 9;
+        /// rounds its last shard up, and each group costs a `zarr.json`.
+        const ARRAY_FLOOR: u64 = 2 * ARRAYS + GROUPS;
+        /// Rows of `x` at `FRAMES`: 8 * 8.
+        const SINGLE_ROWS: u64 = 64;
         /// The same at `2 * FRAMES`.
-        const DOUBLE_ROWS: u64 = 128 + 16 + 16 + 17;
-        /// 2 group `zarr.json` + 4 array `zarr.json` + 2 `x` shards + 2 offset
-        /// chunks (unsharded) + 1 step_index + 1 step.
-        const SINGLE_FILES: usize = 12;
-        /// `x` on four shards; unsharded index arrays pick up extra chunks.
-        const DOUBLE_FILES: usize = 17;
+        const DOUBLE_ROWS: u64 = 128;
+        /// 4 group `zarr.json` + 1 array `zarr.json` + 2 `x` shards.
+        const SINGLE_FILES: usize = 7;
+        /// `x` on four shards.
+        const DOUBLE_FILES: usize = 9;
 
         // Every frame carries distinct values, so every step earns its own
         // `step_index` entry: a repeated block would be stored once and the
@@ -4873,7 +6545,7 @@ mod tests {
         let frames = ragged_frames();
         write_all(&store, &frames);
 
-        let mut seq = open_sequence(&store);
+        let seq = open_sequence(&store);
         let eager = seq.to_trajectory().unwrap();
 
         assert_eq!(eager.frames.len(), frames.len());
@@ -4926,6 +6598,392 @@ mod tests {
         assert!(
             message.contains("0.13); re-write with 0.13"),
             "must say which writer produced it and how to migrate: {message}"
+        );
+    }
+
+    // =======================================================================
+    // H. The 2026-09 contract — root/meta, cadence, hints, rollback, reads
+    // =======================================================================
+
+    /// The streaming writer mints a record, not a bare `trajectory/`: the
+    /// root group and an (empty) `meta/` group exist before the first append,
+    /// and no version key is stamped.
+    #[test]
+    fn create_writes_the_root_and_meta_groups_without_a_version_key() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let schema = SequenceSchema::from_frame(&atoms_frame(&[1.0])).unwrap();
+        let writer = FrameSequenceWriter::create(store.clone(), schema).unwrap();
+        assert!(dir.path().join("zarr.json").is_file(), "root group");
+        let meta = Group::open(store.clone(), "/meta").expect("meta group exists");
+        assert!(meta.attributes().is_empty(), "{:?}", meta.attributes());
+        drop(writer);
+    }
+
+    /// `with_meta` writes the identity document the producer hands in.
+    #[test]
+    fn with_meta_writes_the_identity_document() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let schema = SequenceSchema::from_frame(&atoms_frame(&[1.0])).unwrap();
+        let mut doc = serde_json::Map::new();
+        doc.insert("creator".into(), serde_json::json!({"name": "test"}));
+        let writer = FrameSequenceWriter::create(store.clone(), schema)
+            .unwrap()
+            .with_meta(&doc)
+            .unwrap();
+        drop(writer);
+        let meta = Group::open(store.clone(), "/meta").unwrap();
+        assert_eq!(meta.attributes()["creator"]["name"], "test");
+    }
+
+    /// The landing cadence follows the frame size: a 1000-row `f64` frame
+    /// (8 KB) lands every 512 frames (4 MiB), rounded to whole chunks of
+    /// three frames; `with_flush_every` overrides it.
+    #[test]
+    fn the_landing_cadence_is_derived_from_the_frame_size() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let values: Vec<f64> = (0..1000).map(|i| i as f64).collect();
+        let frame = atoms_frame(&values);
+        let schema = SequenceSchema::from_frame(&frame).unwrap();
+        let mut writer = FrameSequenceWriter::create(store.clone(), schema.clone()).unwrap();
+        writer.append(&frame).unwrap();
+        // 4 MiB / 8000 B = 524, rounded up to a multiple of 3 frames per
+        // 2100-row... no: 1000-row frames reach the 16 KiB floor at 3 frames
+        // (3000 rows), and ceil(524 / 3) * 3 = 525.
+        assert_eq!(writer.flush_every(), 525);
+        assert_eq!(writer.committed(), 0, "one frame is below the cadence");
+
+        let dir2 = TempDir::new().unwrap();
+        let store2 = store_in(&dir2);
+        let mut writer = FrameSequenceWriter::create(store2.clone(), schema)
+            .unwrap()
+            .with_flush_every(2)
+            .unwrap();
+        for _ in 0..5 {
+            writer.append(&frame).unwrap();
+        }
+        assert_eq!(
+            writer.committed(),
+            4,
+            "two landings of two frames, one buffered"
+        );
+        writer.close().unwrap();
+        let mut seq = open_sequence(&store2);
+        assert_eq!(committed_len(&mut seq), 5);
+    }
+
+    /// A block whose updates all carry the same row count at ordinals
+    /// 0, 1, 2, … advertises `uniform_rows` and `dense_updates` and writes no
+    /// index arrays; a reader resolves it arithmetically. The moment a frame
+    /// breaks either rule the arrays are materialized and the hints withdrawn.
+    #[test]
+    fn regular_blocks_carry_hints_and_read_back_through_them() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let frames: Vec<Frame> = (0..5)
+            .map(|i| atoms_frame(&[i as f64, i as f64 + 0.5]))
+            .collect();
+        write_all(&store, &frames);
+        let group = Group::open(store.clone(), &format!("{TRAJ}/{ATOMS}")).unwrap();
+        assert_eq!(group.attributes()["uniform_rows"], 2);
+        assert_eq!(group.attributes()["dense_updates"], true);
+
+        // There are no index arrays to decode: a reader that trusts the hints
+        // resolves arithmetically off the column length alone.
+        for name in ["step_index", "offset"] {
+            assert!(
+                Array::open(store.clone(), &format!("{TRAJ}/{ATOMS}/{name}")).is_err(),
+                "a regular block writes no {name} array"
+            );
+        }
+        let mut seq = open_sequence(&store);
+        assert_eq!(atoms_x(&frame_at(&mut seq, 3)), vec![3.0, 3.5]);
+        assert_eq!(seq.block_update_at(ATOMS, 4).unwrap(), Some(4));
+
+        // A ragged run withdraws `uniform_rows`; a skipped ordinal withdraws
+        // `dense_updates`.
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut frames = ragged_frames();
+        frames.push(frames[2].clone()); // identical: no update at ordinal 3
+        frames.push(atoms_frame(&[99.0]));
+        write_all(&store, &frames);
+        let group = Group::open(store.clone(), &format!("{TRAJ}/{ATOMS}")).unwrap();
+        assert!(group.attributes().get("uniform_rows").is_none());
+        assert!(group.attributes().get("dense_updates").is_none());
+        let mut seq = open_sequence(&store);
+        assert_eq!(
+            atoms_x(&frame_at(&mut seq, 3)),
+            vec![20.0, 21.0, 22.0, 23.0]
+        );
+        assert_eq!(atoms_x(&frame_at(&mut seq, 4)), vec![99.0]);
+        assert_eq!(seq.block_update_at(ATOMS, 3).unwrap(), Some(2));
+    }
+
+    /// A crash that left every array longer than `step` is rolled back on
+    /// reopen, and appending continues from the committed frame with the CSR
+    /// pointer intact.
+    #[test]
+    fn a_reopened_writer_rolls_back_to_the_commit_marker() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let frames = ragged_frames();
+        let mut writer = FrameSequenceWriter::create(
+            store.clone(),
+            SequenceSchema::from_frames(&frames).unwrap(),
+        )
+        .unwrap()
+        .with_flush_every(1)
+        .unwrap();
+        for frame in &frames {
+            writer.append(frame).unwrap();
+        }
+        writer.close().unwrap();
+
+        // Simulate a torn commit: `step` stays at 3 frames while the block's
+        // arrays claim a fourth update of 7 rows.
+        for (path, extra) in [
+            (format!("{TRAJ}/{ATOMS}/{X}"), 7u64),
+            (format!("{TRAJ}/{ATOMS}/offset"), 1),
+            (format!("{TRAJ}/{ATOMS}/step_index"), 1),
+        ] {
+            let mut array = Array::open(store.clone(), &path).unwrap();
+            let mut shape = array.shape().to_vec();
+            shape[0] += extra;
+            array.set_shape(shape).unwrap();
+            array.store_metadata().unwrap();
+        }
+        {
+            let array = Array::open(store.clone(), &format!("{TRAJ}/{ATOMS}/step_index")).unwrap();
+            array
+                .store_array_subset(
+                    &ArraySubset::new_with_start_shape(vec![3], vec![1]).unwrap(),
+                    vec![3u64],
+                )
+                .unwrap();
+        }
+
+        let mut seq = open_sequence(&store);
+        assert_eq!(committed_len(&mut seq), 3, "the reader is bounded by step");
+        assert_eq!(
+            atoms_x(&frame_at(&mut seq, 2)),
+            vec![20.0, 21.0, 22.0, 23.0]
+        );
+
+        let mut writer = FrameSequenceWriter::open(store.clone()).unwrap();
+        writer.append(&atoms_frame(&[30.0, 31.0])).unwrap();
+        writer.close().unwrap();
+
+        assert_eq!(
+            u64_array(&store, &format!("{TRAJ}/{ATOMS}/offset")),
+            vec![0, 3, 8, 12, 14],
+            "the rolled-back CSR pointer continues from the committed total"
+        );
+        assert_eq!(
+            u64_array(&store, &format!("{TRAJ}/{ATOMS}/step_index")),
+            vec![0, 1, 2, 3]
+        );
+        let mut seq = open_sequence(&store);
+        assert_eq!(atoms_x(&frame_at(&mut seq, 3)), vec![30.0, 31.0]);
+        assert_eq!(
+            atoms_x(&frame_at(&mut seq, 2)),
+            vec![20.0, 21.0, 22.0, 23.0]
+        );
+    }
+
+    /// `frame_columns` decodes only the named columns; the block still
+    /// resolves through the same three states.
+    #[test]
+    fn frame_columns_reads_only_the_named_columns() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut frame = atoms_frame(&[1.0, 2.0]);
+        frame
+            .get_mut(ATOMS)
+            .unwrap()
+            .insert_column("y", float_column(&[10.0, 20.0]))
+            .unwrap();
+        frame.insert(BONDS, block_with(I, uint_column(&[0, 1])));
+        write_all(&store, &[frame]);
+
+        let seq = open_sequence(&store);
+        let picked = seq
+            .frame_columns(0, &[(ATOMS, "y")])
+            .unwrap()
+            .expect("frame 0 exists");
+        let atoms = picked.get(ATOMS).expect("the named block is present");
+        assert!(atoms.get("y").is_some());
+        assert!(atoms.get(X).is_none(), "an unnamed column is not decoded");
+        assert!(picked.get(BONDS).is_none(), "an unnamed block is left out");
+        assert_eq!(atoms.nrows(), Some(2));
+
+        let err = seq
+            .frame_columns(0, &[(ATOMS, "nope")])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("nope"), "{err}");
+    }
+
+    /// `box_at` resolves the cell through the box index and caches it.
+    #[test]
+    fn box_at_resolves_the_latest_cell() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut with_cell = atoms_frame(&[1.0]);
+        with_cell.simbox = Some(fixed_cell());
+        write_all(
+            &store,
+            &[atoms_frame(&[0.0]), with_cell, atoms_frame(&[2.0])],
+        );
+        let seq = open_sequence(&store);
+        assert!(seq.box_at(0).unwrap().is_none(), "no cell yet");
+        let cell = seq.box_at(2).unwrap().expect("the cell carries forward");
+        assert_eq!(cell.h_view()[[1, 1]], 11.0);
+        assert!(seq.box_at(3).unwrap().is_none(), "past the commit marker");
+    }
+
+    /// A shaped block keeps its row count: any other count is refused at
+    /// append, naming the block and both counts.
+    #[test]
+    fn a_shaped_block_with_another_row_count_is_refused_at_append() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut grid = Block::new();
+        grid.insert_column("rho", float_column(&[1.0, 2.0, 3.0, 4.0]))
+            .unwrap();
+        grid.set_shape(&[2, 2]).unwrap();
+        let mut frame = Frame::new();
+        frame.insert("grid", grid);
+        let schema = SequenceSchema::from_frame(&frame).unwrap();
+        let mut writer = FrameSequenceWriter::create(store, schema).unwrap();
+        writer.append(&frame).unwrap();
+        let mut wrong = Frame::new();
+        wrong.insert("grid", block_with("rho", float_column(&[1.0, 2.0])));
+        let err = writer.append(&wrong).unwrap_err().to_string();
+        assert!(err.contains("grid") && err.contains("4 rows"), "{err}");
+    }
+
+    /// A meta value that arrives at another width is re-read at the declared
+    /// width — a JSON list becomes the declared `f64x3`, an `f64` the declared
+    /// `f32` — and one that cannot be is refused naming both.
+    #[test]
+    fn a_meta_value_at_another_width_is_read_at_the_declared_one() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut schema = SequenceSchema::from_frame(&atoms_frame(&[1.0])).unwrap();
+        schema.declare_meta("com", "f64x3").unwrap();
+        schema.declare_meta("scale", "f32").unwrap();
+        let mut writer = FrameSequenceWriter::create(store.clone(), schema).unwrap();
+        let mut frame = atoms_frame(&[1.0]);
+        frame
+            .meta
+            .insert("com", MetaValue::Json(serde_json::json!([1.0, 2.0, 3.0])));
+        frame.meta.insert("scale", MetaValue::F64(0.5));
+        writer.append(&frame).unwrap();
+        let mut wrong = atoms_frame(&[2.0]);
+        wrong
+            .meta
+            .insert("com", MetaValue::Json(serde_json::json!([1.0, 2.0])));
+        wrong.meta.insert("scale", MetaValue::F64(0.25));
+        let err = writer.append(&wrong).unwrap_err().to_string();
+        assert!(err.contains("com") && err.contains("f64x3"), "{err}");
+        writer.close().unwrap();
+        let mut seq = open_sequence(&store);
+        let back = frame_at(&mut seq, 0);
+        assert_eq!(
+            back.meta.get("com"),
+            Some(&MetaValue::F64x3([1.0, 2.0, 3.0]))
+        );
+        assert_eq!(back.meta.get("scale"), Some(&MetaValue::F32(0.5)));
+    }
+
+    /// A schema declared column by column is the same pin a derived one is.
+    #[test]
+    fn a_declared_schema_equals_the_derived_one() {
+        let mut frame = atoms_frame(&[1.0, 2.0]);
+        frame.insert(BONDS, block_with(I, uint_column(&[0])));
+        frame.meta.insert("energy", MetaValue::F64(1.5));
+        let derived = SequenceSchema::from_frame(&frame).unwrap();
+
+        let mut declared = SequenceSchema::new();
+        declared
+            .declare_column(ATOMS, X, DType::Float, &[])
+            .unwrap();
+        declared.declare_column(BONDS, I, DType::UInt, &[]).unwrap();
+        declared.declare_meta("energy", "f64").unwrap();
+        assert_eq!(declared, derived);
+
+        let err = declared
+            .declare_column(ATOMS, X, DType::Float32, &[])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("f64") && err.contains("f32"), "{err}");
+        let err = declared
+            .declare_column("step", "a", DType::Float, &[])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("reserved"), "{err}");
+        let err = declared
+            .declare_meta("bad", "f128")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("f128"), "{err}");
+    }
+
+    /// Every inner chunk ends in `crc32c`, floats stay raw and everything
+    /// else carries `gzip` level 1.
+    #[test]
+    fn inner_codecs_follow_the_width_policy() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut frame = atoms_frame(&[1.0]);
+        frame.insert(BONDS, block_with(I, uint_column(&[0])));
+        let mut second = atoms_frame(&[2.0]);
+        second.insert(BONDS, block_with(I, uint_column(&[0])));
+        let mut third = atoms_frame(&[3.0]);
+        third.insert(BONDS, block_with(I, uint_column(&[0])));
+        let mut writer = FrameSequenceWriter::create(
+            store.clone(),
+            SequenceSchema::from_frames(&[frame.clone(), second.clone()]).unwrap(),
+        )
+        .unwrap();
+        // Steps 0, 1, 5: not a progression (two values always are one), so
+        // `step` is an array to inspect.
+        writer.append_at(&frame, 0, None).unwrap();
+        writer.append_at(&second, 1, None).unwrap();
+        writer.append_at(&third, 5, None).unwrap();
+        writer.close().unwrap();
+        let inner_codecs = |path: &str| -> Vec<String> {
+            let arr = Array::open(store.clone(), path).unwrap();
+            let metadata = serde_json::to_value(arr.metadata()).unwrap();
+            let sharding = metadata["codecs"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|codec| codec["name"] == "sharding_indexed")
+                .unwrap()
+                .clone();
+            assert_eq!(sharding["configuration"]["index_location"], "start");
+            sharding["configuration"]["codecs"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|codec| codec["name"].as_str().unwrap().to_string())
+                .collect()
+        };
+        assert_eq!(
+            inner_codecs(&format!("{TRAJ}/{ATOMS}/{X}")),
+            vec!["bytes", "crc32c"]
+        );
+        assert_eq!(
+            inner_codecs(&format!("{TRAJ}/{BONDS}/{I}")),
+            vec!["bytes", "gzip", "crc32c"]
+        );
+        assert_eq!(
+            inner_codecs(&format!("{TRAJ}/step")),
+            vec!["bytes", "gzip", "crc32c"]
         );
     }
 }

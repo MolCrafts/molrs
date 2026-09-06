@@ -46,10 +46,14 @@
 //! Measured by the `zarrs_pins` test module below, which is the executable
 //! record of these three facts.
 //!
-//! **Q5 — commit semantics: branch A.** Partial encoding *can* rewrite a
-//! partially filled trailing inner chunk as a tail-only write, so `flush()`
-//! may commit every buffered row, ragged tail included, and commit granularity
-//! is any step rather than chunk-aligned. Evidence: extending the trailing
+//! **Q5 — commit semantics.** Partial encoding *can* rewrite a partially
+//! filled trailing inner chunk as a tail-only write, so `flush()` may commit
+//! every buffered row, ragged tail included, and commit granularity is any
+//! step rather than chunk-aligned. (Since 2026-09-02 the writer lands whole
+//! frame-aligned chunks on its own cadence and rewrites a partial tail only
+//! on an explicit `flush`; the shard index sits at the *start* of the shard
+//! so a whole-chunk append leaves no dead bytes, and no shard is ever
+//! re-encoded whole — see `sequence.rs`'s module doc.) Evidence: extending the trailing
 //! inner chunk of shard 1 from 500 to 800 rows left the completed shard 0 file
 //! **byte identical**, cost a **single** store write of 18 180 B against a
 //! 146 399 B shard (the codec read back only the 11 486 B straddling chunk),
@@ -105,7 +109,10 @@ pub use record_io::{
     read_trajectory_file, section_names, write_frame_file, write_record_file, write_system_file,
     write_trajectory_file,
 };
-pub use sequence::{FrameSequence, FrameSequenceWriter, SequenceSchema};
+// The store-taking record doors need no filesystem: an in-memory or host
+// store (wasm) writes and reads a whole record through them.
+pub use record_io::{read_record_store, write_record_store};
+pub use sequence::{Compression, FrameSequence, FrameSequenceWriter, SequenceSchema, column_dtype};
 
 /// Mechanics pins for `zarrs` 0.23.13 — the append fast path the
 /// `trajectory/` frame sequence is built on.

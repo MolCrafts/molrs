@@ -10,10 +10,9 @@ from __future__ import annotations
 import inspect
 from pathlib import Path
 
+import molrs
 import numpy as np
 import pytest
-
-import molrs
 
 # Å; dyadic so a bit-exact f64 round-trip is the golden, not a tolerance.
 _N_ATOMS = 3
@@ -35,9 +34,15 @@ def _coords_frame() -> molrs.Frame:
 def _assert_coords(frame: molrs.Frame) -> None:
     atoms = frame["atoms"]
     assert atoms.nrows == _N_ATOMS
-    np.testing.assert_array_equal(np.asarray(atoms["x"]), np.array(_ATOM_X, dtype=np.float64))
-    np.testing.assert_array_equal(np.asarray(atoms["y"]), np.array(_ATOM_Y, dtype=np.float64))
-    np.testing.assert_array_equal(np.asarray(atoms["z"]), np.array(_ATOM_Z, dtype=np.float64))
+    np.testing.assert_array_equal(
+        np.asarray(atoms["x"]), np.array(_ATOM_X, dtype=np.float64)
+    )
+    np.testing.assert_array_equal(
+        np.asarray(atoms["y"]), np.array(_ATOM_Y, dtype=np.float64)
+    )
+    np.testing.assert_array_equal(
+        np.asarray(atoms["z"]), np.array(_ATOM_Z, dtype=np.float64)
+    )
 
 
 class TestTrajectoryReader:
@@ -59,8 +64,9 @@ class TestFrameDoors:
         assert molrs.io.mrec.sections(path) == frozenset({"meta", "frame"})
         meta = molrs.io.mrec.read_meta(path)
         molrs.io.mrec.schema.validate_meta(meta)
-        assert meta["molrec_version"] == molrs.io.mrec.schema.MOLREC_VERSION
-        assert "format_name" not in meta
+        # Development contract: no version key is stamped; the document is
+        # exactly what the producer handed in (nothing here).
+        assert meta == {}
 
     def test_write_frame_with_system(self, tmp_path: Path) -> None:
         path = tmp_path / "both.mrec"
@@ -112,11 +118,20 @@ class TestSchema:
         assert molrs.io.mrec.schema.MOLREC_VERSION == molrs._lib.MREC_MOLREC_VERSION
         assert molrs.io.mrec.schema.RESERVED_META_KEYS == ["molrec_version"]
 
-    def test_retired_brand_keys_do_not_identify_a_record(self) -> None:
+    def test_a_missing_molrec_version_is_not_validated(self) -> None:
+        # Development contract: absent means no version check; the retired
+        # brand keys are neither required nor refused.
+        molrs.io.mrec.schema.validate_meta(
+            {"record_schema_version": 1, "format_name": "mrec"}
+        )
+        molrs.io.mrec.schema.validate_meta({})
+
+    def test_a_present_molrec_version_out_of_range_is_refused(self) -> None:
         with pytest.raises(Exception, match="molrec_version"):
-            molrs.io.mrec.schema.validate_meta(
-                {"record_schema_version": 1, "format_name": "mrec"}
-            )
+            molrs.io.mrec.schema.validate_meta({"molrec_version": 0})
+        with pytest.raises(Exception, match="molrec_version"):
+            molrs.io.mrec.schema.validate_meta({"molrec_version": "1"})
+        molrs.io.mrec.schema.validate_meta({"molrec_version": 1})
 
     def test_retired_path_is_refused(self) -> None:
         with pytest.raises(Exception, match="\\.mrec"):

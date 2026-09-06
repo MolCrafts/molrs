@@ -2,8 +2,10 @@ r"""Write a frame to a ``*.mrec`` directory and read the version key back.
 
 Scientific-record I/O belongs on ``molrs.io.mrec``. This script writes a
 one-frame store whose directory name ends in ``.mrec``, reads it back with
-``read_frame``, and asserts ``molrec_version`` as the literal ``1`` from
-``molrs.io.mrec.schema``. It never constructs a Record.
+``read_frame``, and pins the dev-phase versioning rule: writers stamp no
+``molrec_version`` while the contract is in development, and ``validate_meta``
+accepts its absence (`.claude/notes/notes.md`, 2026-09-02). It never
+constructs a Record.
 
 Provenance of the goldens: hand-written literals, no external oracle and no
 third-party scientific package at run time (``molrs`` only). Runner:
@@ -34,7 +36,9 @@ with tempfile.TemporaryDirectory() as tmp:
 
     meta = molrs.io.mrec.read_meta(store)
     molrs.io.mrec.schema.validate_meta(meta)
-    assert meta["molrec_version"] == molrs.io.mrec.schema.MOLREC_VERSION
+    # Dev-phase versioning: nothing is stamped. This is a pin on the writer,
+    # not a shrug — it fails the moment a writer starts stamping again.
+    assert "molrec_version" not in meta, meta
     assert "format_name" not in meta, meta
 
     zarr_zips = [p.name for p in Path(tmp).iterdir() if p.name.endswith(".zarr.zip")]
@@ -42,6 +46,6 @@ with tempfile.TemporaryDirectory() as tmp:
     assert store.is_dir(), store
 
 print(
-    "mrec-format-02-io ok: wrote record.mrec molrec_version=1 "
+    "mrec-format-02-io ok: wrote record.mrec with unstamped meta, "
     "no sibling .zarr.zip"
 )

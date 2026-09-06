@@ -11,9 +11,11 @@
 //!
 //! Unix only, because that is where positional writes live.
 
-use std::fs::OpenOptions;
+use std::collections::BTreeSet;
+use std::fs::{File, OpenOptions};
 use std::os::unix::fs::FileExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use molrs::MolRsError;
@@ -49,10 +51,23 @@ use zarrs::storage::{
 ///
 /// Unix only: the positional write is
 /// [`std::os::unix::fs::FileExt::write_all_at`].
+///
+/// Two more disk-level guarantees live here, because the sequence writer's
+/// commit protocol needs them and no store trait spells them:
+///
+/// - **Metadata is replaced atomically.** A `set` of any `zarr.json` key is
+///   written to a sibling temporary file and renamed over the old one, so a
+///   crash mid-write leaves the previous metadata rather than a truncated
+///   file that makes the whole array unopenable.
+/// - **Durability on request.** Every path this store writes is remembered
+///   until [`sync_dirty`](Self::sync_dirty) fsyncs it (and its directory).
+///   The writer calls that around the commit marker when a flush is durable.
 #[derive(Debug)]
 pub(in crate::io::zarr) struct PositionalWriteStore {
     inner: FilesystemStore,
     bytes_written: AtomicU64,
+    /// Paths written since the last `sync_dirty`.
+    dirty: Mutex<BTreeSet<PathBuf>>,
 }
 
 impl PositionalWriteStore {
@@ -75,7 +90,57 @@ impl PositionalWriteStore {
             inner: FilesystemStore::new(path.as_ref())
                 .map_err(|e| MolRsError::zarr(e.to_string()))?,
             bytes_written: AtomicU64::new(0),
+            dirty: Mutex::new(BTreeSet::new()),
         })
+    }
+
+    /// Remember `path` as touched since the last sync.
+    fn mark_dirty(&self, path: PathBuf) {
+        if let Ok(mut dirty) = self.dirty.lock() {
+            dirty.insert(path);
+        }
+    }
+
+    /// `fsync` every file written since the last call, then every directory
+    /// that holds one of them, so both the bytes and the directory entries
+    /// (the renamed metadata files) survive a power loss.
+    ///
+    /// # Errors
+    ///
+    /// A [`MolRsError::Zarr`] carrying the OS error when a file or directory
+    /// cannot be opened or synced. A path that has since been erased is
+    /// skipped.
+    pub(in crate::io::zarr) fn sync_dirty(&self) -> Result<(), MolRsError> {
+        let paths: Vec<PathBuf> = match self.dirty.lock() {
+            Ok(mut dirty) => std::mem::take(&mut *dirty).into_iter().collect(),
+            Err(_) => return Err(MolRsError::zarr("store dirty set is poisoned")),
+        };
+        let mut directories = BTreeSet::new();
+        for path in &paths {
+            match File::open(path) {
+                Ok(file) => file
+                    .sync_data()
+                    .map_err(|e| MolRsError::zarr(format!("fsync {}: {e}", path.display())))?,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(e) => {
+                    return Err(MolRsError::zarr(format!(
+                        "open for fsync {}: {e}",
+                        path.display()
+                    )));
+                }
+            }
+            if let Some(parent) = path.parent() {
+                directories.insert(parent.to_path_buf());
+            }
+        }
+        for directory in directories {
+            if let Ok(dir) = File::open(&directory) {
+                dir.sync_all().map_err(|e| {
+                    MolRsError::zarr(format!("fsync directory {}: {e}", directory.display()))
+                })?;
+            }
+        }
+        Ok(())
     }
 
     /// Bytes this store has handed to the disk since it was opened.
@@ -150,11 +215,29 @@ impl ListableStorageTraits for PositionalWriteStore {
 }
 
 impl WritableStorageTraits for PositionalWriteStore {
-    /// A whole-value write, delegated verbatim — the wrapped store truncates to
-    /// the new length, and that behaviour is the contract.
+    /// A whole-value write.
+    ///
+    /// A `zarr.json` key — array or group metadata — is written to a sibling
+    /// temporary file and renamed into place, so the metadata a reader finds
+    /// is always either the old document or the new one, never a truncated
+    /// mix. Every other key is delegated verbatim: the wrapped store truncates
+    /// to the new length, and that behaviour is the contract.
     fn set(&self, key: &StoreKey, value: Bytes) -> Result<(), StorageError> {
         let len = value.len() as u64;
-        self.inner.set(key, value)?;
+        let path = self.inner.key_to_fspath(key);
+        if key.as_str().ends_with("zarr.json") {
+            if let Some(parent) = path.parent()
+                && !parent.exists()
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+            let temporary = path.with_extension(format!("json.{}.tmp", std::process::id()));
+            std::fs::write(&temporary, &value)?;
+            std::fs::rename(&temporary, &path)?;
+        } else {
+            self.inner.set(key, value)?;
+        }
+        self.mark_dirty(path);
         self.bytes_written.fetch_add(len, Ordering::Relaxed);
         Ok(())
     }
@@ -193,6 +276,7 @@ impl WritableStorageTraits for PositionalWriteStore {
             file.write_all_at(&value, offset)?;
             written += value.len() as u64;
         }
+        self.mark_dirty(path);
         self.bytes_written.fetch_add(written, Ordering::Relaxed);
         Ok(())
     }
