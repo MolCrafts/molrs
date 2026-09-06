@@ -80,7 +80,11 @@ keeps signatures visible to static tools and the docs build.
 
 ::: molrs.io.raw.write_lammps
 
-::: molrs.io.raw.write_lammps_traj
+::: molrs.io.write_lammps_traj
+
+::: molrs.io.write_lammps_dump_local
+
+::: molrs.io.write_dcd
 
 ## Regions and Neighbor Search
 

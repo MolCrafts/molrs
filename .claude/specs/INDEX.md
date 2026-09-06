@@ -2,6 +2,15 @@
 
 Live specs only.
 
+## amber-prmtop-complete chain — AMBER prmtop read to the FileFormats standard; 1-4 scaling carried prmtop → ForceField → Python → LAMMPS/GROMACS/XML (2026-09-04)
+
+执行顺序 01 → 02 → 03 → 04（`depends_on`）。起因：PEO 熔体 LAMMPS 输入手写了 `special_bonds lj/coul 0 0 0.5`，因为管线没有把 prmtop 的 SCEE/SCNB 带到写出器。
+
+- [amber-prmtop-complete-01-structure](amber-prmtop-complete-01-structure.md) — structure reader reads every FileFormats section (res_name, mol_id, exclusions block, exclude_14 Bool, GB metadata, box) or refuses by name; read_prmtop alias deleted [code-complete]
+- [amber-prmtop-complete-02-forcefield](amber-prmtop-complete-02-forcefield.md) — registered lj/cut + coul/cut with AMBER constants in one hand-maintained home (ff::params::amber), SCEE/SCNB uniformity gate, full-ICO LJ with NBFIX refusal, pair_coeff byte-identity pinned [code-complete]
+- [amber-prmtop-complete-03-lammps](amber-prmtop-complete-03-lammps.md) — LAMMPS writer emits special_bonds, reader parses it and refuses an undeclared .ff; GROMACS [ defaults ] write/read; XML coulomb14scale/lj14scale from ForceField, no 0.5 defaults [code-complete]
+- [amber-prmtop-complete-04-python](amber-prmtop-complete-04-python.md) — PyForceField special_bonds_lj/coul getters + set_special_bonds, _from_raw forwarding, .pyi stubs, read_prmtop/read_inpcrd binder aliases deleted, end-to-end regression [code-complete]
+
 ## release-0-14 chain (joint molrs + molpy release; molrs first) — code on `dev` 2026-08-25
 
 08 / 12 (tag, publish, master merge) are **not** executed — stay on `dev`, no tag.
@@ -37,6 +46,12 @@ Live specs only.
 
 ## mrec-format (chain) — 科学互换品牌 mrec；与 molrec-01 / molpy-05 / molvis-06 / molexp-07 对齐
 
+
+## special-bonds chain (01 in molrs; 02–06 in molpack)
+
+几何构造算法的分子内豁免表：Cassandra 尾项的 `BondDistanceWeights` + `Topology::from_frame` / `exclusions`。执行顺序 01 →（molpack）02-ladder → 03-sink → 04-residual → 05-target → 06-mirror。
+
+- [special-bonds-01-molrs](special-bonds-01-molrs.md) — Topology 从 Frame 读图（邻接永不排序）；BondDistanceWeights 按键距索引、1-N 尾项；exclusions 当且仅当 weight(d)==0，零尾项走通连通分量 [approved]
 
 ## Other live specs (not 0.12 ship gate)
 

@@ -17,6 +17,95 @@ status change) and conflicts with `CLAUDE.md`.
 
 ---
 
+## 2026-09-04 — amber-prmtop-complete-02 debts found at spec time
+
+**Decision:** record, do not fix in this phase.
+**Why:** iron-law naming of rot that is out of this spec's layer or below the extract-on-second-use bar.
+**Status:** provisional
+
+1. σ/ε closed form (`r_min = (2A/B)^{1/6}`, `ε = B²/(4A)`, `σ = 2^{-1/6} r_min`) is duplicated in `ff/forcefield/readers/prmtop.rs` and `io/data/prmtop_tables.rs::decode_nonbond_params`. `ff` ↛ `io`; two call sites is below the extract bar. Revisit at the third use.
+2. `forcefield/gaff.rs` cited `scripts/gen_gaff_energy_oracle.py` for the `AMBER_COULOMB` sander measurement; that generator is not in the tree. The value stands (`18.2223²`); the rustdoc no longer points at the missing script.
+3. `molrs/tests/architecture_gate.rs` exists while `CLAUDE.md` § Testing Rules and `.claude/notes/testing.md` say there is no `molrs/tests/` tree. Documentation drift, not resolved here.
+
+
+## 2026-09-02 — mrec output chain redone: three-state semantics, frame-aligned sharding, commit protocol, dev-phase versioning
+
+**Rulings (maintainer, 2026-09-02; molrec `docs/spec/ragged.md` is the contract text):**
+
+1. **Block presence has three states.** A frame that *omits* a declared block
+   earns no update — the block carries forward (`sequence.rs` `append_at`).
+   A block presented with *zero rows* is a zero-row update: present and
+   empty, read back as an empty `Block` with its declared columns. No entry
+   at or before ordinal `i` is absence. Once present a block never becomes
+   absent again; there are no tombstones. The box carries forward the same
+   way. (Previously omission was landed as a zero-row update meaning "gone",
+   and zero rows read back as absent — both wrong against the spec.)
+2. **`molrec_version` is optional while the contract is in development.**
+   Writers stamp nothing; `schema::validate_meta` skips an absent key and
+   checks a present one for `1..=MOLREC_VERSION`. Readers tolerate a missing
+   `meta/` group (empty document). Every writer still creates the root group
+   and `meta/` — `FrameSequenceWriter::create` included, which used to write
+   a bare `trajectory/` that molrs's own record doors refused.
+3. **Layout.** Every trajectory array is `sharding_indexed` with
+   `index_location: start`; block columns are frame-aligned (the smallest
+   whole number of representative frames whose narrowest column reaches
+   16 KiB); dense arrays (`step`, `time`, `meta/*`, `offset`, `step_index`,
+   `box/*`) take 1024-row chunks, 256 per shard (a 4 KiB index, because a
+   landing rewrites every touched array's index in place); block columns
+   `chunks_per_shard = clamp(256 MiB / chunk, 1, 4096)`. Inner codecs: `bytes` (+ `gzip` level 1
+   for everything that is not floating point) + `crc32c`; floats are raw
+   unless `with_compression`. No `_zarrs` attribute. Attribute names are
+   `sequence_schema` and `meta_dtype` (vendor prefix dropped); block groups
+   carry monotone hints `uniform_rows` / `dense_updates` that let a reader
+   resolve without decoding the index arrays.
+4. **Commit protocol.** Per array: reserve rows in memory → write data →
+   atomic `zarr.json` replace (`PositionalWriteStore::set` writes a temp file
+   and renames every `zarr.json`). `step` last. Explicit `flush`/`close`
+   fsync the touched files around the marker (`with_durable(false)` opts
+   out); automatic landings do not. No seal / compaction anywhere: the
+   whole-shard rewrite was the one write that could destroy committed data
+   on a crash. Dead bytes come only from an explicit flush mid-chunk and are
+   bounded by one chunk per column per flush.
+5. **Landing cadence.** The writer lands whole chunks on its own every
+   `ceil(4 MiB / frame_bytes)` frames rounded to the coarsest block's
+   frames-per-chunk (`with_flush_every` overrides). Measured before: 1000
+   atoms flushed per frame cost 35× write amplification and ~50 ms per
+   flush; 100 atoms 268×.
+6. **Reopen rolls back to `len(step)`.** `SequenceArrays::open` truncates
+   every array to the committed frame count (block indices to entries below
+   `nstep`, columns to the committed row total), so a torn flush can no
+   longer shift every later frame's CSR range.
+7. **Reader.** `FrameSequence` takes `&self` everywhere; caches array
+   handles, the last two decoded inner chunks per column, and decoded cells.
+   `frame_columns` decodes a projection; `block_update_at` exposes the CSR
+   resolution so a viewer can skip re-uploading an unchanged block;
+   `box_at`. wasm: `TrajectoryReader.fromStore(host)` (sync key/range
+   callbacks — nothing but touched chunks crosses into wasm),
+   `fromZip(bytes)`, `readColumns`, `blockUpdateAt`, `boxAt`.
+9. **Fewest files (2026-09-03).** The commit marker is the trajectory
+   group's `nstep` attribute (one atomic JSON replace per landing, written
+   last); `step` and `time` are `step_progression` / `time_progression`
+   attributes while arithmetic and become arrays only when they break; a
+   regular block (fixed non-zero rows at ordinals 0,1,2,…) writes **no**
+   `offset` / `step_index` — the hints plus the column length resolve it —
+   and materializes both, backfilled, on the first irregular update; a fixed
+   cell from ordinal 0 is `box/` attributes, migrated into arrays on the
+   first change. A regular MD store is therefore root + `meta/` +
+   `trajectory/` + one group and 2 files per column: 11 files for
+   xyz + fixed box (was 21 before 09-02, 27 with bonds → 16).
+8. **Schema.** `SequenceSchema::new` + `declare_block/column/structural_shape/
+   meta/meta_with_fill`; `from_frames` records the representative row count
+   that sizes the chunks. `declare_meta(key, fill)` was renamed
+   `declare_meta_with_fill`.
+
+**Why:** the 2026-09-02 review (report artifact in the session memory) measured the
+old writer at 35–268× write amplification, ~5 ms per frame read floor, 2.6 MB
+of zero padding per trajectory, stores without a root that molrs itself
+refused, and a three-way semantic fork on empty blocks. **How to apply:**
+the chunk/shard/codec numbers above are the contract molvis and molrec now
+assume — change them in `sequence.rs` and `chunking.md` together; keep
+`step` last; never reintroduce a whole-shard rewrite on the commit path.
+
 ## 2026-09-01 — record identity is `meta["molrec_version"]` alone
 **Decision:** Maintainer ruling — the record contract follows molrec's docs:
 `meta["molrec_version"]` (integer, currently 1) is the **sole** version key.

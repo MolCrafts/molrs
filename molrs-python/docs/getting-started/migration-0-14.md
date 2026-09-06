@@ -51,8 +51,57 @@ loaded = mrec.read_frame(path)
 mrec.schema.validate_path(path)
 ```
 
-On-disk identity is `meta["molrec_version"]` (currently `1`) plus the
-`*.mrec/` path suffix — the sole version key; there is no brand key.
+On-disk identity is the `*.mrec/` path suffix plus a Zarr root. While the
+record contract is in development `meta["molrec_version"]` is optional: an
+absent key means no version validation, a present one must be an integer in
+`1..=MOLREC_VERSION`. Writers stamp nothing; there is no brand key.
+
+### Streaming trajectories
+
+A run too large to hold in memory is written frame by frame. Declare the
+schema (or derive it from a representative frame), append, and let the
+writer land whole chunks on its own cadence; `flush()` / `close()` commit
+whatever is buffered, durably by default.
+
+```python
+from molpy.io import mrec
+
+schema = (
+    mrec.SequenceSchema()
+    .declare_block("atoms", rows=n_atoms)
+    .declare_column("atoms", "x", "f64")
+    .declare_column("atoms", "y", "f64")
+    .declare_column("atoms", "z", "f64")
+    .declare_column("bonds", "atomi", "u64")
+    .declare_column("bonds", "atomj", "u64")
+    .declare_meta("temp", "f64")
+)
+with mrec.TrajectoryWriter(path, schema, meta={"creator": {"name": "molpy"}}) as w:
+    w.append(first_frame, step=0, time=0.0)          # atoms + bonds
+    for step, frame in run:                           # atoms only: bonds carry forward
+        w.append(frame, step=step, time=step * dt)
+
+reader = mrec.TrajectoryReader(path)                  # or the packed path from mrec.pack(path)
+xyz = reader.read_columns(i, [("atoms", "x"), ("atoms", "y"), ("atoms", "z")])
+same_bonds = reader.block_update_at("bonds", i) == reader.block_update_at("bonds", i - 1)
+```
+
+Three states per block and frame: a frame that **omits** a declared block
+carries it forward; a block presented with **zero rows** is present and empty;
+a block with no update yet is absent. `flush_every=` overrides the landing
+cadence, `compression=` chooses how floating-point columns are compressed
+(`None` by default, `"gzip[:level]"`, `"zstd[:level]"`), `durable=False`
+skips the fsync. `TrajectoryWriter.open(path)` reattaches after a crash and
+rolls back anything past the last committed frame. Float columns are stored
+raw, integer/bool/string columns and every index array gzip level 1, every
+chunk ends in `crc32c`.
+
+The layout is built so the common run costs one array per column and
+nothing else: a regular block (fixed row count, updated every frame or
+never) writes no index arrays, a fixed cell is a few `box/` attributes, and
+`step` / `time` are `{start, stride}` attributes while they are arithmetic.
+An NVT run with `x`, `y`, `z` and a fixed box is 11 files on disk however
+long it is (until a column outgrows one 256 MiB shard).
 
 ## Neighbors
 
