@@ -288,7 +288,7 @@ impl PyUnitRegistry {
 
 /// Named unit-system view (`"real"`, `"metal"`, …). Constants live in core;
 /// this is the Python spelling of `molrs::units::UnitPreset`.
-#[pyclass(module = "molrs", name = "UnitPreset", frozen)]
+#[pyclass(module = "molrs", name = "UnitPreset", frozen, from_py_object)]
 #[derive(Clone)]
 pub struct PyUnitPreset {
     inner: UnitPreset,

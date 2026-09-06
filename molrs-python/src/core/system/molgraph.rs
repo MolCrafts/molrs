@@ -24,7 +24,6 @@ use std::collections::HashMap;
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 
-use molrs::perceive::aromaticity::perceive_aromaticity as core_perceive_aromaticity;
 use molrs::perceive::rings::max_ring_system_size as core_max_ring_system_size;
 use molrs::perceive::smarts::{MatchOptions, Reaction, RingPrimitive, SmartsPattern};
 use molrs::system::atomistic::{Atomistic, ExtractedAtomistic};

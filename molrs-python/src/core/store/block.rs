@@ -22,7 +22,7 @@ use molrs::types::{F, I, Idx};
 use molrs_ffi::BlockRef;
 use ndarray::{Array1, ArrayD, IxDyn};
 use num_complex::Complex;
-use numpy::{PyArrayDyn, PyArrayMethods, PyReadonlyArrayDyn, PyUntypedArrayMethods};
+use numpy::{PyArrayDyn, PyArrayMethods, PyUntypedArrayMethods};
 use pyo3::exceptions::{PyKeyError, PyValueError};
 use pyo3::prelude::*;
 

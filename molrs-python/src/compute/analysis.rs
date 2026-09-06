@@ -14,7 +14,7 @@ use molrs::compute::distribution::{
     DistributionResult,
 };
 use molrs::compute::{
-    Acf, AcfResult, DensityGrid, DistKind, DomainAnalysis, GridSpec, HBondCriterion, HBonds,
+    AcfResult, DensityGrid, DistKind, DomainAnalysis, GridSpec, HBondCriterion, HBonds,
     HBondsResult, LegendreReorientation, LegendreReorientationResult, MolecularMoments,
     RadicalVoronoi, SpatialDistribution, SpatialDistributionResult, VanHove, VanHoveResult,
     VoidAnalysis, VoronoiCells, VoronoiIntegration, polarizability_finite_field,
@@ -432,15 +432,13 @@ impl PyAcfResult {
 /// --------
 /// >>> molrs.Acf().compute(velocities, max_lag=50).acf
 #[pyclass(module = "molrs.compute.dynamics", name = "Acf")]
-pub struct PyAcf {
-    inner: Acf,
-}
+pub struct PyAcf;
 
 #[pymethods]
 impl PyAcf {
     #[new]
     fn new() -> Self {
-        Self { inner: Acf }
+        Self
     }
 
     /// Compute ``C(t)`` for a ``(n_frames, n_entities, n_components)`` series.

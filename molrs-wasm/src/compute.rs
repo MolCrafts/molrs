@@ -2564,6 +2564,8 @@ struct ComputeCatalog {
     analyses: Vec<ComputeCatalogEntry>,
 }
 
+// One catalog row per call; the positional form mirrors the table it fills.
+#[allow(clippy::too_many_arguments)]
 fn entry(
     id: &'static str,
     category: &'static str,
@@ -4588,6 +4590,9 @@ pub struct WasmSpatialDistribution {
 
 #[wasm_bindgen(js_class = WasmSpatialDistribution)]
 impl WasmSpatialDistribution {
+    // The JS constructor is positional by wasm-bindgen's design; molvis calls
+    // it with these ten arguments, so the shape is the public contract.
+    #[allow(clippy::too_many_arguments)]
     #[wasm_bindgen(constructor)]
     pub fn new(
         reference: &[u32],
@@ -4792,6 +4797,12 @@ impl WasmHexatic {
 
 #[wasm_bindgen(js_name = WasmNematic)]
 pub struct WasmNematic;
+
+impl Default for WasmNematic {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[wasm_bindgen(js_class = WasmNematic)]
 impl WasmNematic {
@@ -5547,6 +5558,12 @@ impl WasmHBondLifetime {
 
 #[wasm_bindgen(js_name = WasmHBondNetwork)]
 pub struct WasmHBondNetwork;
+
+impl Default for WasmHBondNetwork {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[wasm_bindgen(js_class = WasmHBondNetwork)]
 impl WasmHBondNetwork {

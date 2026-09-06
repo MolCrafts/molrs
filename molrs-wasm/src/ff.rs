@@ -259,10 +259,10 @@ impl LBFGS {
                 let mut opt = RsLBFGS::new(pot, self.fmax, max_steps, self.max_step, self.memory);
                 let report = Optimizer::run(&mut opt, rs)?;
 
-                if fixed.is_some() {
-                    if let Some(atoms) = rs.get_mut("atoms") {
-                        let _ = atoms.remove("free");
-                    }
+                if fixed.is_some()
+                    && let Some(atoms) = rs.get_mut("atoms")
+                {
+                    let _ = atoms.remove("free");
                 }
                 Ok(report)
             })

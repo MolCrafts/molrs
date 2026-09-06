@@ -18,14 +18,14 @@
 
 use crate::core::spatial::simbox::PyBox;
 use crate::core::store::block::PyBlock;
-use crate::helpers::{message_format, molrs_error_to_pyerr, py_value_err};
+use crate::helpers::molrs_error_to_pyerr;
 use crate::store::ffi_error_to_pyerr;
 use molrs::store::frame::Frame as CoreFrame;
 use molrs::store::meta::{MetaMap, MetaValue};
 use molrs_ffi::FrameRef;
 use pyo3::exceptions::{PyKeyError, PyTypeError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyBytes, PyCapsule, PyDict, PyFloat, PyInt, PyList, PyString};
+use pyo3::types::{PyBool, PyCapsule, PyDict, PyFloat, PyInt, PyList, PyString};
 use serde_json::Value as JsonValue;
 
 /// Exact-dtype frame metadata value.
