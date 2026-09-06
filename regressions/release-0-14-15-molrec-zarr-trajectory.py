@@ -1,9 +1,11 @@
-r"""Ragged 3-frame Zarr trajectory: bit-exact round trip, bounded file count,
+r"""Ragged 3-frame trajectory record: bit-exact round trip, bounded file count,
 named refusal of the pre-0.14 layout (0.14.15, ac-032).
 
 One `molrs.Trajectory` carries frames of 3 / 5 / 4 atoms with an f64 + i64 +
-bool + u32 column set and one per-step meta scalar. It is written to a store,
-read back through the public door, and every coordinate, column, step, time and
+bool + u32 column set and one per-step meta scalar. It is written to a `*.mrec`
+store through `molrs.io.mrec.write_trajectory` — the door record I/O moved to in
+mrec-format-03-python; `Trajectory.write` / `.read` are gone — read back through
+`read_trajectory`, and every coordinate, column, step, time and
 meta value is compared against the literals below **bit-for-bit** — no
 tolerance: floats are compared as their IEEE-754 bit patterns, so -0.0, a NaN,
 `DBL_MAX` and the smallest subnormal are all load-bearing, and the integer
@@ -100,13 +102,18 @@ META_TEMPERATURE = (300.1, 0.30000000000000004, -273.15)
 #   groups (metadata only):  /, /meta, /trajectory, /trajectory/meta,
 #                            /trajectory/atoms                       -> 5
 #   arrays (metadata + <= 1 chunk file, since 12 rows fit one chunk):
-#     trajectory/step, trajectory/time, trajectory/meta/temperature,
+#     trajectory/meta/temperature,
 #     trajectory/atoms/{x,y,z,tag,frozen,kind},
-#     trajectory/atoms/offset, trajectory/atoms/step_index           -> 11
+#     trajectory/atoms/offset, trajectory/atoms/step_index            -> 9
+#     trajectory/step, trajectory/time — at most: an arithmetic
+#       step/time series is stored as a start/stride progression in the
+#       group attributes and materialises no array at all               -> 2
 #   5 + 2 * 11 = 27
 # The bound is a function of the *schema*, not of the frame count: appending
 # more frames grows the chunks, not the node set. (The pre-0.14 layout spent
-# about this many files on every single frame.)
+# about this many files on every single frame.) It is an upper bound in the
+# other direction too: a chunk that is entirely the fill value is not written,
+# so an all-zero column costs its metadata only.
 FILE_BOUND = 27
 
 
@@ -149,11 +156,11 @@ with tempfile.TemporaryDirectory() as tmp:
         time=_f64(TIMES),
     )
     assert len(trajectory) == 3, f"built {len(trajectory)} frames, expected 3"
-    store = os.path.join(tmp, "traj.zarr")
-    trajectory.write(store)
+    store = os.path.join(tmp, "traj.mrec")
+    molrs.io.mrec.write_trajectory(store, trajectory)
 
     # --- 2. read back, bit for bit ----------------------------------------
-    loaded = molrs.Trajectory.read(store)
+    loaded = molrs.io.mrec.read_trajectory(store)
     assert len(loaded) == 3, f"read back {len(loaded)} frames, expected 3"
     assert loaded.count_frames() == 3, f"count_frames() = {loaded.count_frames()}"
     assert_array_equal(np.asarray(loaded.step), np.array(STEPS, dtype=np.int64))
@@ -210,12 +217,12 @@ with tempfile.TemporaryDirectory() as tmp:
     )
 
     # --- 4. the pre-0.14 layout is refused by name ------------------------
-    legacy = os.path.join(tmp, "legacy.zarr")
-    trajectory.write(legacy)
+    legacy = os.path.join(tmp, "legacy.mrec")
+    molrs.io.mrec.write_trajectory(legacy, trajectory)
     _write_group(os.path.join(legacy, "trajectory", "frames"))
     _write_group(os.path.join(legacy, "trajectory", "frames", "0"))
     try:
-        molrs.Trajectory.read(legacy)
+        molrs.io.mrec.read_trajectory(legacy)
     except Exception as exc:  # noqa: BLE001 -- the message is the assertion
         message = str(exc)
     else:

@@ -51,8 +51,12 @@ atoms.insert("y", np.array([0.0, 0.0]))
 atoms.insert("z", np.array([0.0, 0.0]))
 frame["atoms"] = atoms
 pairs = molrs.Block()
-pairs.insert("i", np.array([0], dtype=np.int64))
-pairs.insert("j", np.array([1], dtype=np.int64))
+# Canonical endpoint names and dtype — the pairs block's schema is
+# `atomi`/`atomj` as **uint** (`core::store::schema`, and the interop contract
+# in docs/interop.md). A kernel reads those, not whatever the caller felt like
+# calling them, and the Frame schema refuses a signed column outright.
+pairs.insert("atomi", np.array([0], dtype=np.uint64))
+pairs.insert("atomj", np.array([1], dtype=np.uint64))
 frame["pairs"] = pairs
 coords = np.array([0.0, 0.0, 0.0, R, 0.0, 0.0], dtype=np.float64)
 e_ff, _f_ff = ff.to_potentials(frame).calc_energy_forces(coords)

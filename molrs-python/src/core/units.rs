@@ -315,10 +315,16 @@ impl PyUnitPreset {
         self.inner.name()
     }
 
+    /// Boltzmann constant **in this preset's energy / temperature units**
+    /// (`"real"` gives kcal/mol/K), not in the amu / angstrom / fs system
+    /// `molrs.md` integrates in. Convert it the same way you convert an
+    /// energy, or the temperature the engine sees is off by the ratio.
     fn boltzmann(&self) -> f64 {
         self.inner.boltzmann()
     }
 
+    /// Coulomb constant in this preset's own units — same caveat as
+    /// [`boltzmann`](Self::boltzmann).
     fn coulomb(&self) -> f64 {
         self.inner.coulomb()
     }

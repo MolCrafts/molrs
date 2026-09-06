@@ -4,8 +4,14 @@ Driver-level twin of the Rust integrator gold in
 ``molrs/src/md/integrators.rs``: 64 Ar-like atoms, 1200 steps, relative
 total-energy drift < 5e-5, and ``rebuild_count > 0``.
 
-The engine is unit-agnostic: this script converts kcal/mol → MD energy
-via ``UnitRegistry`` and takes ``k_B`` from ``UnitPreset("real")``.
+The engine is unit-agnostic — it never converts anything — so **every**
+number handed to it must already be in the one system it integrates in
+(amu, Å, fs). This script converts both: ε from kcal/mol and ``k_B`` from
+the ``UnitPreset("real")`` value, which is kcal/mol/K. Converting one and
+not the other is the whole trap: a real-units ``k_B`` is 2390x the MD-unit
+one, so the Maxwell-Boltzmann draw comes out ~49x too fast and the drift
+lands near 6e-2 instead of ~1e-5.
+
 Engine-side spelling ``molrs.md`` is used here; users spell ``molpy.md``.
 """
 from __future__ import annotations
@@ -36,7 +42,11 @@ epsilon = (
     .to("amu * angstrom ** 2 / femtosecond ** 2")
     .value
 )
-kb = molrs.UnitPreset("real").boltzmann()
+kb = (
+    reg.quantity(molrs.UnitPreset("real").boltzmann(), "kilocalorie_per_mole / kelvin")
+    .to("amu * angstrom ** 2 / femtosecond ** 2 / kelvin")
+    .value
+)
 spacing = 2.0 ** (1.0 / 6.0) * SIGMA
 n = N_SIDE ** 3
 
