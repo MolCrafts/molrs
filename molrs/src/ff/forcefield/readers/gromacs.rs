@@ -18,7 +18,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use super::ForceFieldReader;
-use crate::ff::forcefield::ForceField;
+use crate::ff::forcefield::{ForceField, SpecialBonds};
 
 const KJ_PER_KCAL: f64 = 4.184;
 const NM_TO_ANGSTROM: f64 = 10.0;
@@ -251,7 +251,7 @@ fn angle_params_to_internal(style: &str, values: &[f64]) -> Result<Vec<(String, 
 // Build
 // ---------------------------------------------------------------------------
 
-fn parse_defaults_section(lines: &[String]) -> Result<crate::ff::forcefield::SpecialBonds, String> {
+fn parse_defaults_section(lines: &[String]) -> Result<SpecialBonds, String> {
     for line in lines {
         let t = line.trim();
         if t.is_empty() || t.starts_with(';') {
@@ -282,7 +282,7 @@ fn parse_defaults_section(lines: &[String]) -> Result<crate::ff::forcefield::Spe
         let fudge_qq: f64 = cols[4]
             .parse()
             .map_err(|_| format!("[ defaults ] fudgeQQ is not a number: {}", cols[4]))?;
-        return Ok(crate::ff::forcefield::SpecialBonds {
+        return Ok(SpecialBonds {
             lj: [0.0, 0.0, fudge_lj],
             coul: [0.0, 0.0, fudge_qq],
         });

@@ -49,6 +49,7 @@ use super::ForceFieldReader;
 use crate::ff::constants::VACUUM_DIELECTRIC;
 use crate::ff::forcefield::lammps_units::{LammpsFfUnits, lammps_k_to_molrs_half_k, parse_style};
 use crate::ff::forcefield::{ForceField, SpecialBonds};
+use crate::ff::params::amber::{AMBER_SCEE, AMBER_SCNB};
 use molrs::units::constants::COULOMB_REAL;
 use std::collections::BTreeMap;
 
@@ -103,9 +104,14 @@ impl LammpsFfReader {
         // section-form coeff lines rewritten as command-form.
         let mut synthetic = String::new();
         synthetic.push_str(&format!("units {units}\n"));
-        // Data files carry no special_bonds; keep the 0.5 / 5/6 this path
-        // has always assumed, as an explicit declaration.
-        synthetic.push_str("special_bonds lj 0.0 0.0 0.5 coul 0.0 0.0 0.8333333333333334\n");
+        // Data files carry no special_bonds; keep the AMBER weights this path
+        // has always assumed, as an explicit declaration. Built from the same
+        // constants as the `amber` preset so the two cannot drift apart.
+        synthetic.push_str(&format!(
+            "special_bonds lj 0.0 0.0 {} coul 0.0 0.0 {}\n",
+            1.0 / AMBER_SCNB,
+            1.0 / AMBER_SCEE
+        ));
         // Default styles for data-file coeffs (no style line in the data file).
         synthetic.push_str("pair_style lj/cut 10.0\n");
         synthetic.push_str("bond_style harmonic\n");
@@ -820,9 +826,11 @@ fn parse_special_bonds(rest: &[&str], where_: &dyn Fn() -> String) -> Result<Spe
         return Err(format!("{}: special_bonds missing weights", where_()));
     }
     match toks[0] {
+        // The preset is AMBER's own pair of divisors, spelled as the weights
+        // LAMMPS wants: 1/SCNB and 1/SCEE.
         "amber" if toks.len() == 1 => Ok(SpecialBonds {
-            lj: [0.0, 0.0, 0.5],
-            coul: [0.0, 0.0, 5.0 / 6.0],
+            lj: [0.0, 0.0, 1.0 / AMBER_SCNB],
+            coul: [0.0, 0.0, 1.0 / AMBER_SCEE],
         }),
         "charmm" if toks.len() == 1 => Ok(SpecialBonds {
             lj: [0.0, 0.0, 0.0],
