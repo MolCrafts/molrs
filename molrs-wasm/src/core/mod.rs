@@ -10,6 +10,8 @@
 //!   conditions (PBC).
 //! - [`WasmArray`] -- owned float array with shape metadata for passing
 //!   multi-dimensional numeric data across the WASM boundary.
+//! - [`Mesh`] -- triangle surface (vertices + faces), what `readSTL`
+//!   produces. Carries no atoms and no box.
 //!
 //! # Internal details
 //!
@@ -30,11 +32,13 @@ use molrs_ffi::FfiError;
 
 pub mod block;
 pub mod frame;
+pub mod mesh;
 pub mod region;
 pub mod types;
 
 pub use block::Block;
 pub use frame::Frame;
+pub use mesh::Mesh;
 // JS-facing simulation box binding lives under `region/simbox` for historical
 // path stability of the WASM package layout; the Rust type is `molrs::SimBox`.
 pub use region::simbox::Box;

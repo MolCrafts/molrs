@@ -9,16 +9,19 @@
 //! | [`streaming`] | `WasmLammpsDumpStream`, `WasmXyzStream`, `WasmPdbStream`, `WasmLammpsDataStream`, `WasmSdfStream`, `WasmDcdStream`, `WasmXtcStream`, `WasmTrrStream` | Streaming readers driven by a chunk-fed `FrameIndexBuilder` |
 //! | [`writer`] | `writeFrame(frame, format)` | Write XYZ, PDB, LAMMPS dump |
 //! | [`zarr`] | `TrajectoryReader` | Read frame-sequence Zarr V3 archives |
+//! | [`mesh`] | `readSTL(bytes)` | STL surface meshes (ASCII or binary) — produces a `Mesh`, not a `Frame` |
 //!
 //! All readers consume string content (not file handles) since
 //! WASM does not have filesystem access. Use the File API in the
 //! browser to read files, then pass the text content to the reader.
 
+pub mod mesh;
 pub mod reader;
 pub mod streaming;
 pub mod writer;
 pub mod zarr;
 
+pub use mesh::*;
 pub use reader::*;
 pub use streaming::*;
 pub use writer::*;

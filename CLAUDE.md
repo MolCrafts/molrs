@@ -210,10 +210,10 @@ at the crate root (so `molrs::Frame`, `molrs::system::…`, `molrs::find_rings`,
 
 | Module (`molrs/src/`) | Feature | Purpose |
 |---|---|---|
-| `core` | always on | Frame/Block/Grid/MolGraph/Record/Topology/Element, neighbors, math, SimBox (spatial), geometric regions, graph hash, atom-type mapping, structure generators (`generate` / SARW) |
+| `core` | always on | Frame/Block/Grid/MolGraph/Record/Topology/Element, neighbors, math, SimBox (spatial), geometric regions, triangle meshes (`spatial::TriMesh`), graph hash, atom-type mapping, structure generators (`generate` / SARW) |
 | `perceive` | always on | **Chemical perception**, one layer above `core` and below `ff`/`io`/`conformer`: rings (SSSR), aromaticity, hydrogen perception, stereochemistry, rotatable bonds, SMARTS/SMIRKS. Builder API `Perceive::new().find_*(&MolGraph) -> MolGraph` (graph-in/graph-out, non-mutating). **Gasteiger charges live in `ff::charge`**, re-exported at crate root under `ff`. |
 | `optimize` | `ff` | Geometry optimizers (`Optimizer`, `LBFGS`); depends on `ff::potential::Potential` |
-| `io` | `io` | File I/O: PDB, XYZ, LAMMPS data/dump, CHGCAR/POSCAR, Gaussian Cube, CIF, mol2, SDF, GRO, DCD, GROMACS TRR/XTC, Zarr V3 trajectories; SMILES parsing in `io/smiles/` (gated by `smiles`). **SMARTS lives in `perceive/smarts/`, not here** |
+| `io` | `io` | File I/O: PDB, XYZ, LAMMPS data/dump, CHGCAR/POSCAR, Gaussian Cube, CIF, mol2, SDF, GRO, DCD, GROMACS TRR/XTC, Zarr V3 trajectories; STL surface meshes in `io/mesh/` (reads a `TriMesh`, not a `Frame`); SMILES parsing in `io/smiles/` (gated by `smiles`). **SMARTS lives in `perceive/smarts/`, not here** |
 | `signal` | `signal` | Signal processing: FFT-based autocorrelation, window functions, frequency grids |
 | `compute` | `compute` (→ `signal`) | Trajectory analysis: RDF, MSD, clustering, gyration/inertia tensors |
 | `stream` | `stream` | Frame/Block serde + MessagePack/JSON `frame_to_bytes` |

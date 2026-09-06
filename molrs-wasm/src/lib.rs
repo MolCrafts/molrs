@@ -24,7 +24,7 @@
 //!
 //! | JS module  | Purpose |
 //! |------------|---------|
-//! | `core`     | Frame, Block, Box, WasmArray |
+//! | `core`     | Frame, Block, Box, Mesh, WasmArray |
 //! | `io`       | File readers/writers (XYZ, PDB, LAMMPS, SMILES, Zarr) |
 //! | `conformer`| 3D conformer generation from molecular graphs |
 //! | `ff`       | ForceField / LBFGS / typify (UFF, MMFF94, MMFF94s) |
@@ -121,7 +121,7 @@ mod smiles;
 pub use compute::*;
 #[cfg(feature = "conformer")]
 pub use conformer::*;
-pub use core::{Block, Box, Frame, WasmArray};
+pub use core::{Block, Box, Frame, Mesh, WasmArray};
 #[cfg(feature = "conformer")]
 pub use ff::*;
 pub use generate::CarbonTubeBuilder;
