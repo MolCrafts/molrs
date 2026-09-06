@@ -10,7 +10,13 @@ use pyo3::types::PyModule;
 use molrs::store::schema;
 
 /// One canonical column of the Frame vocabulary.
-#[pyclass(module = "molrs.schema", name = "ColumnSpec", frozen, get_all)]
+#[pyclass(
+    module = "molrs.schema",
+    name = "ColumnSpec",
+    frozen,
+    get_all,
+    from_py_object
+)]
 #[derive(Clone)]
 pub struct PyColumnSpec {
     /// Canonical key as it appears in a Block.
@@ -48,7 +54,13 @@ impl PyColumnSpec {
 }
 
 /// One canonical block of the Frame vocabulary.
-#[pyclass(module = "molrs.schema", name = "BlockSpec", frozen, get_all)]
+#[pyclass(
+    module = "molrs.schema",
+    name = "BlockSpec",
+    frozen,
+    get_all,
+    from_py_object
+)]
 #[derive(Clone)]
 pub struct PyBlockSpec {
     /// Canonical block name.

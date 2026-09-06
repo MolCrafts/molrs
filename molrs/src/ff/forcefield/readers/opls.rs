@@ -113,8 +113,8 @@ impl ForceFieldReader for OplsXmlReader {
                 // CL&P / foyer: Fourier coeffs c0..c3 in kJ/mol under this tag.
                 "PeriodicTorsionForce" => parse_periodic_torsions(&mut ff, &sec)?,
                 "NonbondedForce" => {
-                    coulomb14 = opt_f64(&sec, "coulomb14scale")?.unwrap_or(0.5);
-                    lj14 = opt_f64(&sec, "lj14scale")?.unwrap_or(0.5);
+                    coulomb14 = require_f64(&sec, "coulomb14scale")?;
+                    lj14 = require_f64(&sec, "lj14scale")?;
                     for a in sec.children().filter(Node::is_element) {
                         // Skip NonbondedForce children that are not Atom rows
                         // (e.g. UseAttributeFromResidue).

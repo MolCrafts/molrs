@@ -5,7 +5,10 @@
 //! tables are transcribed into the `const`s in the sibling modules here by
 //! `scripts/gen_param_tables.py`, which reads them from `$AMBERHOME`; [`mmff`]
 //! is ported from RDKit's `Params.cpp` and merged with what MMFF's retired XML
-//! carried; [`oplsaa`] is the retired `oplsaa.xml`. The committed `.rs` is the
+//! carried; [`oplsaa`] is the retired `oplsaa.xml`. [`amber`] is a
+//! hand-maintained sibling (like [`mmff`] / [`clpol`] / [`uff`]): AMBER
+//! file-format constants that are neither `gaff.dat` rows nor properties of
+//! the universe. The committed `.rs` is the
 //! single in-repo source of truth; a malformed table is therefore a **compile**
 //! error, not a runtime one, and the tables can be grepped, diffed and stepped
 //! through like any other code.
@@ -39,6 +42,7 @@
 //! populates a [`ForceField`](crate::ff::forcefield::ForceField) from it (see
 //! [`crate::ff::forcefield::gaff`]).
 
+pub mod amber;
 pub mod atomtype_abcg2;
 pub mod atomtype_amber;
 pub mod atomtype_bcc;

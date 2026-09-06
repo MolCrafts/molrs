@@ -903,55 +903,7 @@ fn write_lammps_dump_frame<W: Write>(
     // -- Number of atoms --
     writeln!(writer, "ITEM: NUMBER OF ATOMS")?;
     writeln!(writer, "{}", natoms)?;
-
-    // -- Box bounds --
-    // The simbox is the canonical source of truth for box geometry + PBC.
-    let simbox = frame
-        .simbox_ref()
-        .ok_or_else(|| err_mapper("Frame must have a simbox"))?;
-
-    let h = simbox.h_view();
-    let o = simbox.origin_view();
-    let pbc_flags = simbox.pbc();
-
-    let lx = h[[0, 0]];
-    let ly = h[[1, 1]];
-    let lz = h[[2, 2]];
-    let xy = h[[0, 1]];
-    let xz = h[[0, 2]];
-    let yz = h[[1, 2]];
-    let xlo = o[0];
-    let ylo = o[1];
-    let zlo = o[2];
-    let xhi = xlo + lx;
-    let yhi = ylo + ly;
-    let zhi = zlo + lz;
-
-    // Map per-axis pbc bool → LAMMPS boundary token.
-    let pbc_str = format!(
-        "{} {} {}",
-        if pbc_flags[0] { "pp" } else { "ff" },
-        if pbc_flags[1] { "pp" } else { "ff" },
-        if pbc_flags[2] { "pp" } else { "ff" },
-    );
-
-    let is_triclinic = xy != 0.0 || xz != 0.0 || yz != 0.0;
-    if is_triclinic {
-        let xlo_bound = xlo + f64::min(0.0, f64::min(xy, f64::min(xz, xy + xz)));
-        let xhi_bound = xhi + f64::max(0.0, f64::max(xy, f64::max(xz, xy + xz)));
-        let ylo_bound = ylo + f64::min(0.0, yz);
-        let yhi_bound = yhi + f64::max(0.0, yz);
-
-        writeln!(writer, "ITEM: BOX BOUNDS xy xz yz {}", pbc_str)?;
-        writeln!(writer, "{} {} {}", xlo_bound, xhi_bound, xy)?;
-        writeln!(writer, "{} {} {}", ylo_bound, yhi_bound, xz)?;
-        writeln!(writer, "{} {} {}", zlo, zhi, yz)?;
-    } else {
-        writeln!(writer, "ITEM: BOX BOUNDS {}", pbc_str)?;
-        writeln!(writer, "{} {}", xlo, xhi)?;
-        writeln!(writer, "{} {}", ylo, yhi)?;
-        writeln!(writer, "{} {}", zlo, zhi)?;
-    }
+    write_dump_box_bounds(writer, frame)?;
 
     // -- Atoms --
     // Determine column ordering and write per-row data via visit_block
@@ -1037,6 +989,205 @@ fn write_lammps_dump_frame<W: Write>(
     Ok(())
 }
 
+/// Write a single frame as LAMMPS `dump local` (OVITO Load Trajectory bonds).
+///
+/// `ITEM: NUMBER OF ENTRIES` + `ITEM: ENTRIES batom1 batom2 [btype]`.
+/// Rows come from the `entries` block if present, otherwise from canonical
+/// `bonds` (`atomi`/`atomj` 0-based, emitted as 1-based atom ids).
+///
+/// See <https://www.ovito.org/manual/reference/file_formats/input/lammps_dump_local.html>
+fn write_lammps_dump_local_frame<W: Write>(
+    writer: &mut W,
+    frame: &impl FrameAccess,
+) -> std::io::Result<()> {
+    crate::io::writer::check_before_write(frame)?;
+
+    let timestep = frame
+        .meta_ref()
+        .get("timestep")
+        .and_then(|value| value.as_i64())
+        .unwrap_or(0);
+    writeln!(writer, "ITEM: TIMESTEP")?;
+    writeln!(writer, "{}", timestep)?;
+
+    let from_entries = frame.contains_block("entries");
+    let nentries = if from_entries {
+        frame
+            .visit_block("entries", |b| b.nrows().unwrap_or(0))
+            .unwrap_or(0)
+    } else {
+        frame
+            .visit_block("bonds", |b| b.nrows().unwrap_or(0))
+            .unwrap_or(0)
+    };
+    if !from_entries && nentries == 0 && !frame.contains_block("bonds") {
+        return Err(err_mapper("dump local needs a 'bonds' or 'entries' block"));
+    }
+
+    writeln!(writer, "ITEM: NUMBER OF ENTRIES")?;
+    writeln!(writer, "{}", nentries)?;
+    write_dump_box_bounds(writer, frame)?;
+
+    if from_entries {
+        let lines: Vec<String> = frame
+            .visit_block("entries", |entries| {
+                dump_block_lines(entries, nentries, "ITEM: ENTRIES")
+            })
+            .unwrap_or_default();
+        for line in &lines {
+            writeln!(writer, "{}", line)?;
+        }
+        return Ok(());
+    }
+
+    let atomi = frame
+        .get_uint("bonds", "atomi")
+        .ok_or_else(|| err_mapper("bonds block missing atomi"))?;
+    let atomj = frame
+        .get_uint("bonds", "atomj")
+        .ok_or_else(|| err_mapper("bonds block missing atomj"))?;
+    let atomi = atomi
+        .as_slice()
+        .ok_or_else(|| err_mapper("bonds.atomi is not contiguous"))?;
+    let atomj = atomj
+        .as_slice()
+        .ok_or_else(|| err_mapper("bonds.atomj is not contiguous"))?;
+    let btype = frame
+        .get_uint("bonds", "type_id")
+        .and_then(|a| a.as_slice().map(|s| s.to_vec()));
+    let atom_ids = frame
+        .get_uint("atoms", "id")
+        .and_then(|a| a.as_slice().map(|s| s.to_vec()));
+
+    let id_of = |idx: Idx| -> Idx {
+        let i = idx as usize;
+        if let Some(ref ids) = atom_ids {
+            ids.get(i).copied().unwrap_or(idx)
+        } else {
+            idx + 1
+        }
+    };
+
+    if btype.is_some() {
+        writeln!(writer, "ITEM: ENTRIES batom1 batom2 btype")?;
+    } else {
+        writeln!(writer, "ITEM: ENTRIES batom1 batom2")?;
+    }
+    for row in 0..nentries {
+        let a = id_of(atomi[row]);
+        let b = id_of(atomj[row]);
+        if let Some(ref t) = btype {
+            writeln!(writer, "{} {} {}", a, b, t[row])?;
+        } else {
+            writeln!(writer, "{} {}", a, b)?;
+        }
+    }
+    Ok(())
+}
+
+fn dump_block_lines(
+    block: &dyn crate::store::block::access::BlockAccess,
+    nrows: usize,
+    header_prefix: &str,
+) -> Vec<String> {
+    let col_names = block.column_keys();
+    let mut ordered: Vec<&str> = col_names.to_vec();
+    ordered.sort();
+    let native: Vec<&str> = ordered.iter().map(|n| native_column_name(n)).collect();
+    let header = format!("{} {}", header_prefix, native.join(" "));
+    let col_types: Vec<ColumnType> = native.iter().map(|n| classify_column(n)).collect();
+    let mut lines = Vec::with_capacity(nrows + 1);
+    lines.push(header);
+    for row in 0..nrows {
+        let mut parts = Vec::with_capacity(ordered.len());
+        for (ci, &name) in ordered.iter().enumerate() {
+            let s = match col_types[ci] {
+                ColumnType::Unsigned => block
+                    .get_uint_view(name)
+                    .map(|arr| format!("{}", arr[row]))
+                    .unwrap_or_default(),
+                ColumnType::Integer => {
+                    if let Some(arr) = block.get_int_view(name) {
+                        format!("{}", arr[row])
+                    } else if let Some(arr) = block.get_float_view(name) {
+                        format!("{}", arr[row] as I)
+                    } else {
+                        "0".to_string()
+                    }
+                }
+                ColumnType::Float => {
+                    if let Some(arr) = block.get_float_view(name) {
+                        format!("{:.6}", arr[row])
+                    } else if let Some(arr) = block.get_int_view(name) {
+                        format!("{:.6}", arr[row] as F)
+                    } else {
+                        "0.000000".to_string()
+                    }
+                }
+                ColumnType::String => block
+                    .get_string_view(name)
+                    .map(|arr| arr[row].clone())
+                    .unwrap_or_else(|| "X".to_string()),
+            };
+            parts.push(s);
+        }
+        lines.push(parts.join(" "));
+    }
+    lines
+}
+
+fn write_dump_box_bounds<W: Write>(
+    writer: &mut W,
+    frame: &impl FrameAccess,
+) -> std::io::Result<()> {
+    let simbox = frame
+        .simbox_ref()
+        .ok_or_else(|| err_mapper("Frame must have a simbox"))?;
+
+    let h = simbox.h_view();
+    let o = simbox.origin_view();
+    let pbc_flags = simbox.pbc();
+
+    let lx = h[[0, 0]];
+    let ly = h[[1, 1]];
+    let lz = h[[2, 2]];
+    let xy = h[[0, 1]];
+    let xz = h[[0, 2]];
+    let yz = h[[1, 2]];
+    let xlo = o[0];
+    let ylo = o[1];
+    let zlo = o[2];
+    let xhi = xlo + lx;
+    let yhi = ylo + ly;
+    let zhi = zlo + lz;
+
+    let pbc_str = format!(
+        "{} {} {}",
+        if pbc_flags[0] { "pp" } else { "ff" },
+        if pbc_flags[1] { "pp" } else { "ff" },
+        if pbc_flags[2] { "pp" } else { "ff" },
+    );
+
+    let is_triclinic = xy != 0.0 || xz != 0.0 || yz != 0.0;
+    if is_triclinic {
+        let xlo_bound = xlo + f64::min(0.0, f64::min(xy, f64::min(xz, xy + xz)));
+        let xhi_bound = xhi + f64::max(0.0, f64::max(xy, f64::max(xz, xy + xz)));
+        let ylo_bound = ylo + f64::min(0.0, yz);
+        let yhi_bound = yhi + f64::max(0.0, yz);
+
+        writeln!(writer, "ITEM: BOX BOUNDS xy xz yz {}", pbc_str)?;
+        writeln!(writer, "{} {} {}", xlo_bound, xhi_bound, xy)?;
+        writeln!(writer, "{} {} {}", ylo_bound, yhi_bound, xz)?;
+        writeln!(writer, "{} {} {}", zlo, zhi, yz)?;
+    } else {
+        writeln!(writer, "ITEM: BOX BOUNDS {}", pbc_str)?;
+        writeln!(writer, "{} {}", xlo, xhi)?;
+        writeln!(writer, "{} {}", ylo, yhi)?;
+        writeln!(writer, "{} {}", zlo, zhi)?;
+    }
+    Ok(())
+}
+
 // ============================================================================
 // Convenience Functions
 // ============================================================================
@@ -1074,6 +1225,22 @@ pub fn write_lammps_dump<P: AsRef<Path>, FA: FrameAccess>(
     let mut writer = std::io::BufWriter::new(file);
     for frame in frames {
         write_lammps_dump_frame(&mut writer, frame)?;
+    }
+    Ok(())
+}
+
+/// Write frames as LAMMPS `dump local` (OVITO Load Trajectory bond overlay).
+///
+/// Column names `batom1` / `batom2` / `btype` match OVITO's automatic mapping.
+/// See <https://www.ovito.org/manual/reference/pipelines/modifiers/load_trajectory.html>
+pub fn write_lammps_dump_local<P: AsRef<Path>, FA: FrameAccess>(
+    path: P,
+    frames: &[FA],
+) -> std::io::Result<()> {
+    let file = File::create(path)?;
+    let mut writer = std::io::BufWriter::new(file);
+    for frame in frames {
+        write_lammps_dump_local_frame(&mut writer, frame)?;
     }
     Ok(())
 }
@@ -1807,5 +1974,60 @@ ITEM: ATOMS id type x y z
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].byte_offset, 0);
         assert_eq!(entries[1].byte_offset as usize, second);
+    }
+
+    #[test]
+    fn write_dump_local_from_bonds_roundtrip() {
+        use molrs::spatial::simbox::SimBox;
+        use ndarray::{Array1, array};
+
+        let mut atoms = Block::new();
+        atoms
+            .insert(
+                "id",
+                Array1::from_vec(vec![1 as Idx, 2 as Idx, 3 as Idx]).into_dyn(),
+            )
+            .unwrap();
+        atoms
+            .insert("x", Array1::from_vec(vec![0.0 as F, 1.0, 2.0]).into_dyn())
+            .unwrap();
+        atoms
+            .insert("y", Array1::from_vec(vec![0.0 as F; 3]).into_dyn())
+            .unwrap();
+        atoms
+            .insert("z", Array1::from_vec(vec![0.0 as F; 3]).into_dyn())
+            .unwrap();
+        let mut bonds = Block::new();
+        bonds
+            .insert(
+                "atomi",
+                Array1::from_vec(vec![0 as Idx, 1 as Idx]).into_dyn(),
+            )
+            .unwrap();
+        bonds
+            .insert(
+                "atomj",
+                Array1::from_vec(vec![1 as Idx, 2 as Idx]).into_dyn(),
+            )
+            .unwrap();
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms);
+        frame.insert("bonds", bonds);
+        frame.simbox =
+            Some(SimBox::cube(10.0, array![0.0 as F, 0.0, 0.0], [true, true, true]).unwrap());
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bonds.dump");
+        write_lammps_dump_local(&path, &[frame]).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("ITEM: NUMBER OF ENTRIES"));
+        assert!(text.contains("ITEM: ENTRIES batom1 batom2"));
+        assert!(text.contains("1 2"));
+        assert!(text.contains("2 3"));
+        let loaded = read_lammps_dump(&path).unwrap();
+        let entries = loaded[0].get("entries").expect("entries");
+        assert_eq!(entries.nrows(), Some(2));
+        assert!(entries.dtype("batom1").is_some());
+        assert!(entries.dtype("batom2").is_some());
     }
 }

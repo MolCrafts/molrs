@@ -165,6 +165,14 @@ pub static SCHEMA_COLUMNS: &[ColumnSpec] = &[
         "IUPAC element symbol (e.g. \"C\")."
     ),
     col!(
+        "exclude_14",
+        "EXCLUDE_14",
+        DType::Bool,
+        Scalar,
+        "",
+        "Whether this torsion's 1-4 non-bonded term is suppressed (AMBER negative 3rd pointer)"
+    ),
+    col!(
         "id",
         "ID",
         UInt,
@@ -377,7 +385,7 @@ pub static SCHEMA_BLOCKS: &[BlockSpec] = &[
             columns: &["atomi", "atomj", "atomk", "atoml"],
         }),
         required: &["atomi", "atomj", "atomk", "atoml"],
-        optional: &["type", "type_id"],
+        optional: &["type", "type_id", "exclude_14"],
         open: true,
         doc: "Four-body proper torsion terms.",
     },
@@ -401,7 +409,7 @@ pub static SCHEMA_BLOCKS: &[BlockSpec] = &[
             columns: &["atomi", "atomj", "atomk", "atoml"],
         }),
         required: &["atomi", "atomj", "atomk", "atoml"],
-        optional: &["type", "type_id"],
+        optional: &["type", "type_id", "exclude_14"],
         open: true,
         doc: "Four-body improper terms enforcing planarity or chirality.",
     },
@@ -509,6 +517,8 @@ pub mod consts {
     pub const RES_NAME: &str = "res_name";
     /// Whether a non-bonded pair is 1-4.
     pub const IS_14: &str = "is_14";
+    /// Whether this torsion's 1-4 non-bonded term is suppressed.
+    pub const EXCLUDE_14: &str = "exclude_14";
     /// First relation endpoint, 0-indexed.
     pub const ATOMI: &str = "atomi";
     /// Second relation endpoint, 0-indexed.
@@ -640,12 +650,32 @@ mod tests {
             consts::RES_ID,
             consts::RES_NAME,
             consts::IS_14,
+            consts::EXCLUDE_14,
             consts::ATOMI,
             consts::ATOMJ,
             consts::ATOMK,
             consts::ATOML,
         ] {
             assert!(column(key).is_some(), "const points at unknown key {key:?}");
+        }
+    }
+
+    #[test]
+    fn exclude_14_registered_bool_scalar() {
+        // amber-prmtop-complete-01-structure ac-001: the AMBER negative-3rd-
+        // pointer flag is the sibling of `is_14`, so it carries the same
+        // dtype convention — registered, not left to a reader's discipline.
+        let spec = column("exclude_14").expect("exclude_14 must be in SCHEMA_COLUMNS");
+        assert_eq!(spec.const_name, "EXCLUDE_14");
+        assert_eq!(spec.dtype, DType::Bool);
+        assert_eq!(spec.shape, ColShape::Scalar);
+        assert_eq!(spec.unit, "");
+        for name in ["dihedrals", "impropers"] {
+            let b = block(name).expect("block must be in the vocabulary");
+            assert!(
+                b.optional.contains(&"exclude_14"),
+                "block '{name}' does not list exclude_14 as optional"
+            );
         }
     }
 

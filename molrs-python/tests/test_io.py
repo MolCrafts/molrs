@@ -14,6 +14,17 @@ import pytest
 import molrs
 
 
+class TestAmberAliasDeleted:
+    def test_read_prmtop_and_read_inpcrd_are_gone(self):
+        assert not hasattr(molrs.io, "read_prmtop")
+        assert not hasattr(molrs.io, "read_inpcrd")
+        assert "read_prmtop" not in molrs.io.__all__
+        assert not hasattr(molrs.io.raw, "read_prmtop")
+        assert not hasattr(molrs._lib, "read_prmtop")
+        assert callable(molrs.io.read_amber_prmtop)
+        assert callable(molrs.io.read_amber_inpcrd)
+
+
 class TestErrorMessages:
     def test_pyo3_type_error_names_the_argument(self):
         with pytest.raises(TypeError, match="center"):

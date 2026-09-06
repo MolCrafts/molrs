@@ -251,8 +251,54 @@ fn angle_params_to_internal(style: &str, values: &[f64]) -> Result<Vec<(String, 
 // Build
 // ---------------------------------------------------------------------------
 
+fn parse_defaults_section(lines: &[String]) -> Result<crate::ff::forcefield::SpecialBonds, String> {
+    for line in lines {
+        let t = line.trim();
+        if t.is_empty() || t.starts_with(';') {
+            continue;
+        }
+        let cols: Vec<&str> = t.split_whitespace().collect();
+        if cols.len() < 5 {
+            return Err("[ defaults ] is missing fudgeLJ or fudgeQQ".into());
+        }
+        let nbfunc: i32 = cols[0]
+            .parse()
+            .map_err(|_| format!("[ defaults ] nbfunc is not an integer: {}", cols[0]))?;
+        if nbfunc != 1 {
+            return Err(format!("[ defaults ] nbfunc {nbfunc} is not supported"));
+        }
+        if cols[1] != "2" {
+            return Err(format!(
+                "[ defaults ] comb-rule {} is not supported",
+                cols[1]
+            ));
+        }
+        if cols[2] != "yes" {
+            return Err("[ defaults ] gen-pairs must be yes".into());
+        }
+        let fudge_lj: f64 = cols[3]
+            .parse()
+            .map_err(|_| format!("[ defaults ] fudgeLJ is not a number: {}", cols[3]))?;
+        let fudge_qq: f64 = cols[4]
+            .parse()
+            .map_err(|_| format!("[ defaults ] fudgeQQ is not a number: {}", cols[4]))?;
+        return Ok(crate::ff::forcefield::SpecialBonds {
+            lj: [0.0, 0.0, fudge_lj],
+            coul: [0.0, 0.0, fudge_qq],
+        });
+    }
+    Err("[ defaults ] section is empty".into())
+}
+
 fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceField, String> {
     let mut ff = ForceField::new("GROMACS");
+    match sections.get("defaults") {
+        Some(lines) => ff.set_special_bonds(parse_defaults_section(lines)?),
+        None if sections.contains_key("pairs") => {
+            return Err("[ defaults ] is required when [ pairs ] is present".into());
+        }
+        None => {}
+    }
 
     // Atom rows → atom types (one per row, strings for non-float metadata).
     let atom_lines = sections.get("atoms").cloned().unwrap_or_default();

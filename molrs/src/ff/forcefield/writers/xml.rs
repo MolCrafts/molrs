@@ -282,8 +282,8 @@ impl ForceFieldWriter for XmlForceFieldWriter {
             if types.is_empty() {
                 continue;
             }
-            let coul14 = style.params.get("coulomb14scale").unwrap_or(0.5);
-            let lj14 = style.params.get("lj14scale").unwrap_or(0.5);
+            let coul14 = ff.special_bonds().coul_14();
+            let lj14 = ff.special_bonds().lj_14();
             out.push_str(&format!(
                 "  <NonbondedForce coulomb14scale=\"{}\" lj14scale=\"{}\">\n",
                 self.fmt_f(coul14),

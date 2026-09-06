@@ -8,7 +8,7 @@
 //! | PDB | [`read_pdb`] | [`write_pdb`] |
 //! | XYZ | [`read_xyz`], [`read_xyz_traj`] | [`write_xyz`] |
 //! | LAMMPS data | [`read_lammps`] | [`write_lammps`] |
-//! | LAMMPS dump | [`read_lammps_traj`] | [`write_lammps_traj`] |
+//! | LAMMPS dump | [`read_lammps_traj`] | [`write_lammps_traj`], [`write_lammps_dump_local`] |
 //! | DCD | [`read_dcd`], [`PyDcdTrajReader`] | [`write_dcd`] |
 //! | GRO | [`read_gro`] | [`write_gro`] |
 //! | XSF | [`read_xsf`] | [`write_xsf`] |
@@ -67,6 +67,7 @@ use molrs::io::trajectory::dcd::{
 };
 use molrs::io::trajectory::lammps_dump::{
     LAMMPSTrajReader, open_lammps_dump, read_lammps_dump, write_lammps_dump,
+    write_lammps_dump_local as write_lammps_dump_local_rs,
 };
 use molrs::io::trajectory::trr::{
     TrrReader, open_trr, read_trr as read_trr_rs, write_trr as write_trr_rs,
@@ -74,7 +75,6 @@ use molrs::io::trajectory::trr::{
 use molrs::io::trajectory::xtc::{
     XtcReader, open_xtc, read_xtc as read_xtc_rs, write_xtc as write_xtc_rs,
 };
-use molrs::store::frame::Frame as CoreFrame;
 use pyo3::exceptions::{PyFileNotFoundError, PyIOError, PyIndexError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
@@ -1028,12 +1028,6 @@ pub fn read_amber_inpcrd(path: &str) -> PyResult<PyFrame> {
     PyFrame::from_core_frame(frame)
 }
 
-/// Alias for [`read_amber_inpcrd`].
-#[pyfunction]
-pub fn read_inpcrd(path: &str) -> PyResult<PyFrame> {
-    read_amber_inpcrd(path)
-}
-
 /// Read an AMBER prmtop **structure** file into a Frame.
 ///
 /// Structure / connectivity only: atoms (name, type, charge in electron units,
@@ -1058,12 +1052,6 @@ pub fn read_inpcrd(path: &str) -> PyResult<PyFrame> {
 pub fn read_amber_prmtop(path: &str) -> PyResult<PyFrame> {
     let frame = read_amber_prmtop_rs(path).map_err(io_error_to_pyerr)?;
     PyFrame::from_core_frame(frame)
-}
-
-/// Alias for [`read_amber_prmtop`].
-#[pyfunction]
-pub fn read_prmtop(path: &str) -> PyResult<PyFrame> {
-    read_amber_prmtop(path)
 }
 
 /// Read raw prmtop ``%FLAG`` sections as ``{flag: [lines...]}``.
@@ -1665,6 +1653,19 @@ pub fn write_lammps_traj(path: &str, frames: Vec<PyRef<'_, PyFrame>>) -> PyResul
         .map(|f| f.clone_core_frame())
         .collect::<PyResult<_>>()?;
     write_lammps_dump(path, &core_frames).map_err(io_error_to_pyerr)
+}
+
+/// Write Frames as LAMMPS ``dump local`` (OVITO Load Trajectory bonds).
+///
+/// Emits ``ITEM: NUMBER OF ENTRIES`` + ``ITEM: ENTRIES batom1 batom2 [btype]``.
+/// Rows come from ``entries`` if present, otherwise from canonical ``bonds``.
+#[pyfunction]
+pub fn write_lammps_dump_local(path: &str, frames: Vec<PyRef<'_, PyFrame>>) -> PyResult<()> {
+    let core_frames: Vec<_> = frames
+        .iter()
+        .map(|f| f.clone_core_frame())
+        .collect::<PyResult<_>>()?;
+    write_lammps_dump_local_rs(path, &core_frames).map_err(io_error_to_pyerr)
 }
 
 /// Write Frames to a DCD trajectory file.

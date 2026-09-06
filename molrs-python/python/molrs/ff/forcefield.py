@@ -540,6 +540,10 @@ class ForceField(_RsForceField):
         ``class_`` / ``type_`` / ``element`` metadata survives the wrap.
         """
         ff = cls(name=raw.name)
+        ff.set_special_bonds(
+            list(raw.special_bonds_lj),
+            list(raw.special_bonds_coul),
+        )
         for cat_name in raw.style_names():
             category, sname = cat_name.split(":", 1)
             if category == "pair":

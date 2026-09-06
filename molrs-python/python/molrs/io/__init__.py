@@ -90,12 +90,15 @@ from .._lib import (
     read_xsf as _read_xsf,
     write_gro as _write_gro,
     write_lammps as _write_lammps,
+    write_lammps_traj as _write_lammps_traj,
+    write_lammps_dump_local as _write_lammps_dump_local,
     lammps_type_ids_from_frame as lammps_type_ids_from_frame,
     write_cube_file as _write_cube,
     write_mol2 as _write_mol2,
     write_lammps_molecule as _write_lammps_molecule,
     write_pdb as _write_pdb,
     write_pdb_trajectory as _write_pdb_trajectory,
+    write_dcd as _write_dcd,
     write_trr as _write_trr,
     write_xtc as _write_xtc,
     write_xyz as _write_xyz,
@@ -299,11 +302,6 @@ def read_amber_inpcrd(file: str | PathLike[str], frame: Any = None) -> Any:
     return _wrap(_read_amber_inpcrd(str(file)))
 
 
-def read_inpcrd(file: str | PathLike[str], frame: Any = None) -> Any:
-    """Alias for :func:`read_amber_inpcrd`."""
-    return read_amber_inpcrd(file, frame=frame)
-
-
 def read_amber_prmtop(file: str | PathLike[str], frame: Any = None) -> Any:
     """Read an AMBER prmtop **structure** file into a Frame.
 
@@ -332,11 +330,6 @@ def read_amber_prmtop(file: str | PathLike[str], frame: Any = None) -> Any:
             "it always returns a new Frame."
         )
     return _wrap(_read_amber_prmtop(str(file)))
-
-
-def read_prmtop(file: str | PathLike[str], frame: Any = None) -> Any:
-    """Alias for :func:`read_amber_prmtop`."""
-    return read_amber_prmtop(file, frame=frame)
 
 
 def write_mol2(file: str | PathLike[str], frame: Any) -> None:
@@ -468,6 +461,21 @@ def write_lammps_data(
     _write_lammps(str(file), frame)
 
 
+def write_lammps_traj(file: str | PathLike[str], frames: Sequence[Any]) -> None:
+    """Write Frames to a LAMMPS dump custom / atom trajectory (``.lammpstrj``)."""
+    _write_lammps_traj(str(file), list(frames))
+
+
+def write_lammps_dump_local(file: str | PathLike[str], frames: Sequence[Any]) -> None:
+    """Write Frames as LAMMPS ``dump local`` (OVITO Load Trajectory bonds).
+
+    Emits ``ITEM: NUMBER OF ENTRIES`` with columns ``batom1`` ``batom2``
+    (and ``btype`` when present) so OVITO auto-maps Particle Identifiers.
+    See https://www.ovito.org/manual/reference/pipelines/modifiers/load_trajectory.html
+    """
+    _write_lammps_dump_local(str(file), list(frames))
+
+
 def write_pdb(file: str | PathLike[str], frame: Any) -> None:
     """Write a PDB file.
 
@@ -537,6 +545,14 @@ def write_trr(file: str | PathLike[str], frames: Any) -> None:
     ``fx``/``fy``/``fz`` are written when present.
     """
     _write_trr(str(file), list(frames))
+
+
+def write_dcd(file: str | PathLike[str], frames: Any) -> None:
+    """Write a list of Frames to a NAMD-compatible DCD trajectory.
+
+    Same door as :func:`molrs.io.raw.write_dcd`.
+    """
+    _write_dcd(str(file), list(frames))
 
 
 def write_xtc(file: str | PathLike[str], frames: Any) -> None:
@@ -893,7 +909,6 @@ __all__ = [
     "read_mol2",
     "read_top",
     "read_amber_inpcrd",
-    "read_inpcrd",
     "read_amber_prmtop",
     "read_ac",
     "read_frcmod",
@@ -908,7 +923,6 @@ __all__ = [
     "prmtop_decode_angle_params",
     "prmtop_decode_dihedral_params",
     "prmtop_decode_nonbond_params",
-    "read_prmtop",
     "read_lammps_molecule",
     "read_lammps_log",
     "parse_lammps_log_text",
@@ -916,6 +930,8 @@ __all__ = [
     "read_trr",
     "read_xtc",
     "write_lammps_data",
+    "write_lammps_traj",
+    "write_lammps_dump_local",
     "lammps_type_ids_from_frame",
     "write_pdb",
     "write_pdb_trajectory",
@@ -927,6 +943,7 @@ __all__ = [
     "write_lammps_molecule",
     "write_xsf",
     "write_trr",
+    "write_dcd",
     "write_xtc",
     "write_smiles",
     "write_smarts",

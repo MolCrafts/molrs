@@ -7,7 +7,7 @@
 //! `("pair", "coul/long/pme")`.
 //! The constructor reads charges from `frame["atoms"]["charge"]` (float),
 //! box vectors from style_params (`box_xx`, `box_yy`, `box_zz`, etc.),
-//! and exclusion pairs from `frame["exclusions"]` (i, j columns).
+//! and exclusion pairs from `frame["exclusions"]` (`atomi`, `atomj` columns).
 
 use std::sync::{Arc, Mutex};
 
@@ -854,7 +854,7 @@ fn compute_bspline_moduli(grid_size: usize, order: usize) -> Vec<F> {
 ///
 /// **`frame`** blocks:
 /// - `"atoms"` with `"charge"` column (f64/f32) — per-atom charges.
-/// - `"exclusions"` with `"i"`, `"j"` columns (u32) — exclusion pairs.
+/// - `"exclusions"` with `"atomi"`, `"atomj"` columns (u32) — exclusion pairs.
 pub fn pme_ctor(
     style_params: &Params,
     _type_params: &[(&str, &Params)],

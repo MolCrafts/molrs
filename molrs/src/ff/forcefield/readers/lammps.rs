@@ -37,8 +37,13 @@
 //! [`Frame`](molrs::store::frame::Frame) at evaluation time (as for OPLS), and
 //! masses are irrelevant to geometry relaxation.
 //!
-//! 1-4 scaling follows the AMBER/GAFF convention this format targets
-//! (`special_bonds amber`): LJ ×0.5, Coulomb ×0.8333.
+//! 1-4 weights are **declared** on a `special_bonds` line and stored on
+//! [`ForceField::special_bonds`](crate::ff::forcefield::ForceField::special_bonds)
+//! (dimensionless `[1-2, 1-3, 1-4]`). An include that omits the line is an
+//! error — LAMMPS's own default (`0 0 0`) is not AMBER's weights, so this
+//! reader will not invent either. Data-file `read_data_coeffs` synthesizes
+//! an explicit AMBER-like line so those reads keep the 0.5 / 5/6 they have
+//! always produced.
 
 use super::ForceFieldReader;
 use crate::ff::constants::VACUUM_DIELECTRIC;
@@ -46,11 +51,6 @@ use crate::ff::forcefield::lammps_units::{LammpsFfUnits, lammps_k_to_molrs_half_
 use crate::ff::forcefield::{ForceField, SpecialBonds};
 use molrs::units::constants::COULOMB_REAL;
 use std::collections::BTreeMap;
-
-/// AMBER/GAFF 1-4 Lennard-Jones scale (`special_bonds amber`).
-const AMBER_LJ14: f64 = 0.5;
-/// AMBER/GAFF 1-4 Coulomb scale (`special_bonds amber`, = 1/1.2).
-const AMBER_COUL14: f64 = 1.0 / 1.2;
 
 /// Optional id→label maps (from a data-file Type Labels section).
 #[derive(Debug, Clone, Default)]
@@ -103,6 +103,9 @@ impl LammpsFfReader {
         // section-form coeff lines rewritten as command-form.
         let mut synthetic = String::new();
         synthetic.push_str(&format!("units {units}\n"));
+        // Data files carry no special_bonds; keep the 0.5 / 5/6 this path
+        // has always assumed, as an explicit declaration.
+        synthetic.push_str("special_bonds lj 0.0 0.0 0.5 coul 0.0 0.0 0.8333333333333334\n");
         // Default styles for data-file coeffs (no style line in the data file).
         synthetic.push_str("pair_style lj/cut 10.0\n");
         synthetic.push_str("bond_style harmonic\n");
@@ -122,13 +125,10 @@ impl LammpsFfReader {
             LammpsFfUnits::canonical().map_err(|e| format!("lammps unit system: {e}"))?;
         let mut file_units = self.default_units;
         let mut ff = ForceField::new("LAMMPS");
-        ff.set_special_bonds(SpecialBonds {
-            lj: [0.0, 0.0, AMBER_LJ14],
-            coul: [0.0, 0.0, AMBER_COUL14],
-        });
         let mut pair_rows: Vec<(String, f64, f64)> = Vec::new();
         let mut cutoffs: (Option<f64>, Option<f64>) = (None, None);
         let mut dihedral_style_name: Option<String> = None;
+        let mut saw_special_bonds = false;
 
         for (lineno, raw) in text.lines().enumerate() {
             let line = strip_comment(raw).trim();
@@ -202,9 +202,18 @@ impl LammpsFfReader {
                 "improper_coeff" => {
                     add_improper(&mut ff, &rest, &where_, &unit_sys, file_units, labels)?
                 }
-                "pair_modify" | "special_bonds" | "atom_style" | "kspace_style" => {}
+                "special_bonds" => {
+                    ff.set_special_bonds(parse_special_bonds(&rest, &where_)?);
+                    saw_special_bonds = true;
+                }
+                "pair_modify" | "atom_style" | "kspace_style" => {}
                 other => return Err(format!("{}: unknown LAMMPS keyword `{other}`", where_())),
             }
+        }
+        if !saw_special_bonds {
+            return Err(
+                "special_bonds declaration is missing; 1-4 weights cannot be invented".into(),
+            );
         }
 
         // Cutoffs are lengths in the file unit system.
@@ -783,6 +792,91 @@ fn parse_f64(raw: &str, what: &str, where_: &dyn Fn() -> String) -> Result<f64, 
         .map_err(|_| format!("{}: {what} is not a number: {raw:?}", where_()))
 }
 
+fn parse_triple(
+    toks: &[&str],
+    start: usize,
+    what: &str,
+    where_: &dyn Fn() -> String,
+) -> Result<[f64; 3], String> {
+    Ok([
+        parse_f64(get(toks, start, what, where_)?, what, where_)?,
+        parse_f64(get(toks, start + 1, what, where_)?, what, where_)?,
+        parse_f64(get(toks, start + 2, what, where_)?, what, where_)?,
+    ])
+}
+
+fn parse_special_bonds(rest: &[&str], where_: &dyn Fn() -> String) -> Result<SpecialBonds, String> {
+    let mut toks: Vec<&str> = rest.to_vec();
+    while toks.len() >= 2 {
+        let kind = toks[toks.len() - 2];
+        let val = toks[toks.len() - 1];
+        if (kind == "angle" || kind == "dihedral") && (val == "yes" || val == "no") {
+            toks.truncate(toks.len() - 2);
+            continue;
+        }
+        break;
+    }
+    if toks.is_empty() {
+        return Err(format!("{}: special_bonds missing weights", where_()));
+    }
+    match toks[0] {
+        "amber" if toks.len() == 1 => Ok(SpecialBonds {
+            lj: [0.0, 0.0, 0.5],
+            coul: [0.0, 0.0, 5.0 / 6.0],
+        }),
+        "charmm" if toks.len() == 1 => Ok(SpecialBonds {
+            lj: [0.0, 0.0, 0.0],
+            coul: [0.0, 0.0, 0.0],
+        }),
+        "dreiding" if toks.len() == 1 => Ok(SpecialBonds {
+            lj: [0.0, 0.0, 1.0],
+            coul: [0.0, 0.0, 1.0],
+        }),
+        "fene" if toks.len() == 1 => Ok(SpecialBonds {
+            lj: [0.0, 1.0, 1.0],
+            coul: [0.0, 1.0, 1.0],
+        }),
+        "lj" | "coul" => {
+            let mut lj = [0.0, 0.0, 0.0];
+            let mut coul = [0.0, 0.0, 0.0];
+            let mut i = 0;
+            while i < toks.len() {
+                match toks[i] {
+                    "lj" => {
+                        lj = parse_triple(&toks, i + 1, "lj weight", where_)?;
+                        i += 4;
+                    }
+                    "coul" => {
+                        coul = parse_triple(&toks, i + 1, "coul weight", where_)?;
+                        i += 4;
+                    }
+                    other => {
+                        return Err(format!(
+                            "{}: unknown special_bonds token `{other}`",
+                            where_()
+                        ));
+                    }
+                }
+            }
+            Ok(SpecialBonds { lj, coul })
+        }
+        first if first.parse::<f64>().is_ok() => {
+            if toks.len() != 3 {
+                return Err(format!(
+                    "{}: special_bonds bare weights need three numbers",
+                    where_()
+                ));
+            }
+            let w = parse_triple(&toks, 0, "weight", where_)?;
+            Ok(SpecialBonds { lj: w, coul: w })
+        }
+        other => Err(format!(
+            "{}: unknown special_bonds token `{other}`",
+            where_()
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -792,6 +886,7 @@ mod tests {
     /// GAFF2 PEO `.ff` (figure5).
     const MINI: &str = r#"
 # LAMMPS force field generated by molrs
+special_bonds amber
 pair_style lj/cut/coul/long 10.0 10.0
 pair_coeff c3 c3 0.107800 3.397710
 pair_coeff oh oh 0.093000 3.242871
@@ -882,6 +977,20 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
     }
 
     #[test]
+    fn special_bonds_presets_and_absent_line() {
+        let amber = LammpsFfReader::new()
+            .read_str("special_bonds amber\npair_style lj/cut 10.0\npair_coeff c3 c3 0.1 3.4\n")
+            .unwrap();
+        assert!((amber.special_bonds().coul_14() - 5.0 / 6.0).abs() < 1e-12);
+        assert_eq!(amber.special_bonds().lj_14(), 0.5);
+
+        let err = LammpsFfReader::new()
+            .read_str("pair_style lj/cut 10.0\npair_coeff c3 c3 0.1 3.4\n")
+            .unwrap_err();
+        assert!(err.contains("special_bonds"), "{err}");
+    }
+
+    #[test]
     fn unknown_keyword_errors() {
         let err = LammpsFfReader::new()
             .read_str("mystery_style foo\n")
@@ -910,6 +1019,7 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
     #[test]
     fn reads_hybrid_overlay_pair_style() {
         let text = "\
+special_bonds amber
 pair_style hybrid/overlay lj/cut 10.0 coul/cut 12.0
 pair_coeff * * coul/cut
 pair_coeff c3 c3 lj/cut 0.1078 3.39771
@@ -929,7 +1039,8 @@ pair_coeff c3 c3 lj/cut 0.1078 3.39771
     /// back with no recorded cutoff.
     #[test]
     fn reads_hybrid_pair_style_without_cutoffs() {
-        let text = "pair_style hybrid lj/cut coul/cut
+        let text = "special_bonds amber
+pair_style hybrid lj/cut coul/cut
 pair_coeff c3 c3 lj/cut 0.1078 3.39771
 ";
         let ff = LammpsFfReader::new().read_str(text).unwrap();
@@ -952,6 +1063,7 @@ pair_coeff c3 c3 lj/cut 0.1078 3.39771
         // 1 eV in metal → ~23.06 kcal/mol in store (real).
         let text = "\
 units metal
+special_bonds amber
 pair_style lj/cut 10.0
 pair_coeff c3 c3 1.0 3.4
 bond_style harmonic
@@ -982,6 +1094,7 @@ bond_coeff c3-c3 1.0 1.5
         labels.atom.insert(2, "HC".into());
         let text = "\
 units real
+special_bonds amber
 bond_style harmonic
 bond_coeff 1 100.0 1.09
 pair_style lj/cut 10.0
@@ -1025,6 +1138,7 @@ Pair Coeffs
     #[test]
     fn dihedral_opls_four_coeffs() {
         let text = "\
+special_bonds amber
 dihedral_style opls
 dihedral_coeff CT-CT-CT-CT 1.0 2.0 3.0 4.0
 ";
@@ -1041,6 +1155,7 @@ dihedral_coeff CT-CT-CT-CT 1.0 2.0 3.0 4.0
         // scramble pair self-types named "10".
         let text = "\
 units real
+special_bonds amber
 pair_style lj/cut 10.0
 pair_coeff 1 1 0.11 3.5
 pair_coeff 2 2 0.08 3.6

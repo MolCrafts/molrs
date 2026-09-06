@@ -209,6 +209,11 @@ pub type NonbondParamRow = (i64, f64, f64);
 
 /// Per-atom LJ σ/ε from diagonal ICO + A/B coefficients.
 ///
+/// Debt: the A/B → σ/ε closed form (`r_min = (2A/B)^{1/6}`, `ε = B²/(4A)`,
+/// `σ = 2^{-1/6} r_min`) is duplicated in
+/// `ff/forcefield/readers/prmtop.rs`. `ff` must not import `io`. Revisit at
+/// the third use.
+///
 /// `hbond_a` / `hbond_b` must be flattened coefficient lists (any non-zero → error).
 #[allow(clippy::too_many_arguments)]
 pub fn decode_nonbond_params(

@@ -52,8 +52,8 @@ use crate::core::store::frame::PyFrame;
 use crate::core::system::molgraph::PyAtomistic;
 use crate::helpers::{NpF, py_value_err};
 
-use ndarray::{Array2, Array3};
-use numpy::{PyArray1, PyArray2, PyArray3, PyReadonlyArrayDyn, ToPyArray};
+use ndarray::{Array1, Array2, Array3};
+use numpy::{IntoPyArray, PyArray1, PyArray2, PyArray3, PyReadonlyArrayDyn, ToPyArray};
 
 /// Nominal Python base for every graph typifier.
 ///
@@ -952,6 +952,37 @@ impl PyForceField {
         self.inner.name.clone()
     }
 
+    /// Lennard-Jones 1-2 / 1-3 / 1-4 scale weights (copy of length 3).
+    ///
+    /// Entries ``[0]`` and ``[1]`` are stored and round-tripped for format
+    /// fidelity but are never applied by molrs kernels (1-2/1-3 exclusion is
+    /// by omitting pairs from the neighbour list). Index ``[2]`` is the 1-4
+    /// weight kernels consume.
+    #[getter]
+    fn special_bonds_lj<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<NpF>> {
+        Array1::from(self.inner.special_bonds().lj.to_vec()).into_pyarray(py)
+    }
+
+    /// Coulomb 1-2 / 1-3 / 1-4 scale weights (copy of length 3).
+    ///
+    /// Entries ``[0]`` and ``[1]`` are stored and round-tripped for format
+    /// fidelity but are never applied by molrs kernels. Index ``[2]`` is the
+    /// 1-4 weight kernels consume.
+    #[getter]
+    fn special_bonds_coul<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<NpF>> {
+        Array1::from(self.inner.special_bonds().coul.to_vec()).into_pyarray(py)
+    }
+
+    /// Replace both LJ and Coulomb special-bond triples.
+    ///
+    /// Whole-struct write: to change only Coulomb, read ``special_bonds_lj``
+    /// and pass it back. Length-3 sequences required; a wrong length raises
+    /// ``ValueError``. Entries ``[0]``/``[1]`` are stored but not applied.
+    fn set_special_bonds(&mut self, lj: [f64; 3], coul: [f64; 3]) {
+        self.inner
+            .set_special_bonds(molrs::ff::forcefield::SpecialBonds { lj, coul });
+    }
+
     fn style_names(&self) -> Vec<String> {
         self.inner
             .styles()
@@ -1668,7 +1699,9 @@ pub fn read_lammps_data_coeffs_py(
 /// precision : int, optional
 ///     Decimal places for floating coefficients (default 6).
 /// skip_pair_style : bool, optional
-///     When true, omit the ``pair_style`` line (caller sets it in the input).
+///     When true, omit ``pair_style`` **and** ``special_bonds`` (caller sets
+///     both in the input). A coeff-only include that still writes Amber
+///     ``special_bonds`` (coul 1-4 = 1/1.2) silently applies those weights.
 /// skip_units : bool, optional
 ///     When true, omit the ``units`` line so the include can follow ``units``
 ///     already set in the input script.

@@ -199,9 +199,7 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(io::read_top, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_top, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_amber_inpcrd, m)?)?;
-    m.add_function(wrap_pyfunction!(io::read_inpcrd, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_amber_prmtop, m)?)?;
-    m.add_function(wrap_pyfunction!(io::read_prmtop, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_ac, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_frcmod, m)?)?;
     m.add_function(wrap_pyfunction!(io::parse_frcmod, m)?)?;
@@ -229,6 +227,7 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(io::write_lammps, m)?)?;
     m.add_function(wrap_pyfunction!(io::lammps_type_ids_from_frame, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_lammps_traj, m)?)?;
+    m.add_function(wrap_pyfunction!(io::write_lammps_dump_local, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_dcd, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_trr, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_xtc, m)?)?;
@@ -250,6 +249,7 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m.add_function(wrap_pyfunction!(io::mrec::write_trajectory, m)?)?;
         m.add_function(wrap_pyfunction!(io::mrec::read_meta, m)?)?;
         m.add_function(wrap_pyfunction!(io::mrec::section_names, m)?)?;
+        m.add_function(wrap_pyfunction!(io::mrec::pack, m)?)?;
         m.add_function(wrap_pyfunction!(io::mrec::mrec_validate_path, m)?)?;
         m.add_function(wrap_pyfunction!(io::mrec::mrec_validate_meta, m)?)?;
         m.add_function(wrap_pyfunction!(io::mrec::mrec_validate_frame, m)?)?;

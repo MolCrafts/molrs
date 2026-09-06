@@ -47,6 +47,7 @@ use molrs::{AtomId, Atomistic};
 
 use crate::ff::constants::VACUUM_DIELECTRIC;
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds, Style};
+use crate::ff::params::amber::{AMBER_COULOMB, AMBER_SCEE, AMBER_SCNB};
 use crate::ff::params::{
     GAFF, GAFF2, ParmAngleRow, ParmBondRow, ParmDihedralRow, ParmImproperRow, ParmMassRow,
     ParmNonbondedRow, ParmTable, ParmType,
@@ -54,21 +55,6 @@ use crate::ff::params::{
 use crate::ff::typifier::estimate::{
     BondedTerm, EmpiricalSet, Estimate, Parmchk2Estimator, Provenance, TypifierParameterContext,
 };
-
-/// AMBER's 1-4 Lennard-Jones scale factor (`SCNB = 2.0`).
-const AMBER_LJ_14: f64 = 0.5;
-
-/// AMBER's 1-4 Coulomb scale factor (`SCEE = 1.2`).
-const AMBER_COUL_14: f64 = 1.0 / 1.2;
-
-/// AMBER's electrostatic conversion factor (kcal·Å·mol⁻¹·e⁻²).
-///
-/// This is measured, not copied from a constants table: AmberTools25 `sander`
-/// single-points on acetate, methylammonium and imidazolium were divided by
-/// `Σ scale(i,j)·qᵢqⱼ/rᵢⱼ`, using the topology's 1-2/1-3 exclusions and SCEE=1.2.
-/// All three recover this value to the precision printed by `sander`; regenerate
-/// the evidence with `scripts/gen_gaff_energy_oracle.py`.
-const AMBER_COULOMB: f64 = 332.052_217_29;
 
 /// Which AMBER `parm` force field to populate from.
 ///
@@ -752,8 +738,8 @@ fn build_forcefield(
     // AMBER excludes 1-2 / 1-3 outright and scales 1-4 by SCNB = 2 (LJ) and
     // SCEE = 1.2 (Coulomb).
     ff.set_special_bonds(SpecialBonds {
-        lj: [0.0, 0.0, AMBER_LJ_14],
-        coul: [0.0, 0.0, AMBER_COUL_14],
+        lj: [0.0, 0.0, 1.0 / AMBER_SCNB],
+        coul: [0.0, 0.0, 1.0 / AMBER_SCEE],
     });
 
     if !atom_types.is_empty() {
