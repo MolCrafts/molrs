@@ -33,8 +33,8 @@
 //!
 //! | upstream | molrs |
 //! |---|---|
-//! | `E = K(r−r₀)²` | `E = ½k₀(r−r₀)²`, so `k0 = 2·K` |
-//! | `E = K(θ−θ₀)²` | `E = ½k₀(θ−θ₀)²`, so `k0 = 2·K` |
+//! | `E = K(r−r₀)²` | `E = ½k(r−r₀)²`, so `k = 2·K` |
+//! | `E = K(θ−θ₀)²` | `E = ½k(θ−θ₀)²`, so `k = 2·K` |
 //! | θ₀ and phases in degrees | radians |
 //! | one `PK` shared by `IDIVF` torsions | one `k` per torsion: `k = PK/IDIVF` |
 //! | R\*, half the LJ minimum separation | σ = 2·R\*/2^(1/6) |
@@ -198,20 +198,26 @@ fn slot_name(table: &ParmTable, slot: &Option<ParmType>) -> &'static str {
     slot.map_or("X", |ty| table.name_of(ty))
 }
 
-/// One `BOND` row as candidate params. AMBER's un-halved `K` (see [`gaff_estimator`]).
+/// One `BOND` row as candidate params, in molrs's convention.
+///
+/// AMBER writes `E = K(r−r₀)²` and molrs's kernel writes `E = ½k(r−r₀)²`, so
+/// `k = 2·K`, and the doubling happens **here**, at the table boundary. It used
+/// to happen where the [`ForceField`] was assembled instead, which left the
+/// candidate rows and every estimate drawn from them in AMBER's convention
+/// under the same name the kernels read (spec ff-params-01).
 fn bond_params(row: &ParmBondRow) -> [(&'static str, f64); 2] {
-    [("k0", row.force_constant), ("r0", row.length)]
+    [("k", 2.0 * row.force_constant), ("r0", row.length)]
 }
 
-/// One `ANGLE` row as candidate params: `K` un-halved, θ₀ in **radians**.
+/// One `ANGLE` row as candidate params: `k = 2·K`, θ₀ in **radians**.
 fn angle_params(row: &ParmAngleRow) -> [(&'static str, f64); 2] {
     [
-        ("k0", row.force_constant),
+        ("k", 2.0 * row.force_constant),
         ("theta0", row.angle_deg.to_radians()),
     ]
 }
 
-/// The cosine terms of one torsion, in the `k{m}` / `n{m}` / `d{m}` encoding
+/// The cosine terms of one torsion, in the `k{m}` / `periodicity{m}` / `phase{m}` encoding
 /// [`DihedralPeriodic`](crate::ff::potential::dihedral::periodic::DihedralPeriodic)
 /// scans upward from `m = 1`. `k = PK / IDIVF`; phases in radians.
 fn dihedral_params(rows: &[&ParmDihedralRow]) -> Vec<(String, f64)> {
@@ -219,8 +225,8 @@ fn dihedral_params(rows: &[&ParmDihedralRow]) -> Vec<(String, f64)> {
     for (m, row) in rows.iter().enumerate() {
         let m = m + 1;
         out.push((format!("k{m}"), row.barrier / f64::from(row.divisor)));
-        out.push((format!("n{m}"), f64::from(row.periodicity)));
-        out.push((format!("d{m}"), row.phase_deg.to_radians()));
+        out.push((format!("periodicity{m}"), f64::from(row.periodicity)));
+        out.push((format!("phase{m}"), row.phase_deg.to_radians()));
     }
     out
 }
@@ -229,8 +235,8 @@ fn dihedral_params(rows: &[&ParmDihedralRow]) -> Vec<(String, f64)> {
 fn improper_params(row: &ParmImproperRow) -> [(&'static str, f64); 3] {
     [
         ("k", row.barrier),
-        ("n", f64::from(row.periodicity)),
-        ("d", row.phase_deg.to_radians()),
+        ("periodicity", f64::from(row.periodicity)),
+        ("phase", row.phase_deg.to_radians()),
     ]
 }
 
@@ -774,15 +780,14 @@ fn build_forcefield(
     if !bond_types.is_empty() {
         let style = ff.def_bondstyle("harmonic");
         for (name, term) in bond_types {
-            // AMBER's K carries no ½; molrs's BondHarmonic does. Hence the 2 — and
-            // it lands on a row and an estimate alike, because both arrive in the
-            // table's own convention (see `gaff_estimator`).
+            // No conversion here: rows and estimates alike already arrive in
+            // molrs's `E = ½k(r−r₀)²` convention (`bond_params`, `empirical_bond`).
             let [i, j] = ends(name);
             style.def_bondtype(
                 i,
                 j,
                 &[
-                    ("k0", 2.0 * param(&term.params, "k0")),
+                    ("k", param(&term.params, "k")),
                     ("r0", param(&term.params, "r0")),
                 ],
             );
@@ -799,7 +804,7 @@ fn build_forcefield(
                 j,
                 k,
                 &[
-                    ("k0", 2.0 * param(&term.params, "k0")),
+                    ("k", param(&term.params, "k")),
                     // θ₀ is already radians: the candidate table is where the
                     // table's degrees were converted.
                     ("theta0", param(&term.params, "theta0")),
@@ -812,7 +817,7 @@ fn build_forcefield(
     if !dihedral_types.is_empty() {
         let style = ff.def_dihedralstyle("periodic");
         for (name, term) in dihedral_types {
-            // The cosine terms of one torsion (`k{m}`/`n{m}`/`d{m}`, radians) need
+            // The cosine terms of one torsion (`k{m}`/`periodicity{m}`/`phase{m}`) need
             // no conversion: a periodic barrier carries no ½ in either convention.
             let params: Vec<(&str, f64)> = term.params.iter().collect();
             let [i, j, k, l] = ends(name);
@@ -832,8 +837,8 @@ fn build_forcefield(
                 l,
                 &[
                     ("k", param(&term.params, "k")),
-                    ("n", param(&term.params, "n")),
-                    ("d", param(&term.params, "d")),
+                    ("periodicity", param(&term.params, "periodicity")),
+                    ("phase", param(&term.params, "phase")),
                 ],
             );
             write_estimate(style, name, term);
@@ -1051,5 +1056,51 @@ impl TableIndex {
             }
             Some((*row, order))
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// AMBER writes `E = K(r−r₀)²`; molrs's kernel writes `E = ½k(r−r₀)²`. The
+    /// doubling belongs at this boundary, so a candidate row and an estimate
+    /// drawn from it reach every consumer in one convention.
+    #[test]
+    fn bond_params_double_ambers_force_constant() {
+        let row = &GaffParameterSet::Gaff.table().bonds[0];
+        let params = bond_params(row);
+        assert_eq!(params[0].0, "k", "the canonical key is `k`, not `k0`");
+        assert!((params[0].1 - 2.0 * row.force_constant).abs() < 1e-12);
+        assert!((params[1].1 - row.length).abs() < 1e-12);
+    }
+
+    #[test]
+    fn angle_params_double_the_constant_and_convert_to_radians() {
+        let row = &GaffParameterSet::Gaff.table().angles[0];
+        let params = angle_params(row);
+        assert_eq!(params[0].0, "k");
+        assert!((params[0].1 - 2.0 * row.force_constant).abs() < 1e-12);
+        assert!((params[1].1 - row.angle_deg.to_radians()).abs() < 1e-12);
+    }
+
+    /// The estimator draws from the same candidate tables, so a formula-derived
+    /// constant must be in the same convention as a looked-up row. Half strength
+    /// here is invisible in an energy — it just makes a bond too soft.
+    #[test]
+    fn an_empirical_estimate_shares_the_tables_convention() {
+        let estimator = gaff_estimator(GaffParameterSet::Gaff);
+        let table = GaffParameterSet::Gaff.table();
+        let row = &table.bonds[0];
+        let names = [
+            table.name_of(row.i).to_owned(),
+            table.name_of(row.j).to_owned(),
+        ];
+        let looked_up = estimator.estimate_bond(&names).expect("a row exists");
+        let k = looked_up.get("k").expect("canonical `k`");
+        assert!(
+            (k - 2.0 * row.force_constant).abs() < 1e-9,
+            "a table hit arrives doubled, like every estimate"
+        );
     }
 }

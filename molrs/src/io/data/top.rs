@@ -14,7 +14,7 @@
 //! - `"atoms"`: `id` (uint, 1-based), `type` (str), `resnr` (int), `residu` (str),
 //!   `name` (str), `cgnr` (int), `charge` (float), `mass` (float),
 //!   `atomic_number` (uint, guessed from `name` / `type`).
-//! - connectivity blocks: `atomi`/`atomj`[/`atomk`/`atoml`] (uint, 1-based),
+//! - connectivity blocks: `atomi`/`atomj` (plus `atomk`/`atoml` where needed) (uint, 1-based),
 //!   `type` (str — the GROMACS `funct` field).
 
 use std::io::{BufRead, BufWriter, Error, ErrorKind, Result, Write};

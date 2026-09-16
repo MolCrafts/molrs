@@ -56,10 +56,15 @@ from ._lib import (
     ScalarObservable,
     VectorObservable,
     # Regions
+    TriMesh,
     Sphere,
-    HollowSphere,
     Cuboid,
     Parallelepiped,
+    HalfSpace,
+    Cylinder,
+    Ellipsoid,
+    Polyhedron,
+    SphereUnion,
     Region,
     # Molecular graph hierarchy
     Element,
@@ -73,10 +78,6 @@ from ._lib import (
     rotate,
     scale,
     align_direction,
-    # Field-name convention + the Frame vocabulary, both projected from the
-    # committed Rust tables.
-    keys,
-    schema,
 )
 
 # Rich Python Frame/Block layer (pandas-style API; CSV engine in Rust on the
@@ -85,6 +86,7 @@ from ._lib import (
 # (io readers, etc.) yields these. The shadow is safe now that molpy re-exports
 # them instead of subclassing the bare core (chain spec 04). Internal modules
 # that need the raw cores import them from ``._lib`` directly.
+from . import keys, schema
 from . import frame  # noqa: F401
 from .frame import Block, Frame
 
@@ -97,6 +99,7 @@ from . import stream
 from . import optimize
 from . import perceive
 from . import signal
+
 
 def __getattr__(name: str):
     """PEP 562 lazy loader for :mod:`molrs.md`.
@@ -165,10 +168,15 @@ __all__ = [
     "Trajectory",
     "ScalarObservable",
     "VectorObservable",
+    "TriMesh",
     "Sphere",
-    "HollowSphere",
     "Cuboid",
     "Parallelepiped",
+    "HalfSpace",
+    "Cylinder",
+    "Ellipsoid",
+    "Polyhedron",
+    "SphereUnion",
     "Region",
     "Element",
     "Graph",

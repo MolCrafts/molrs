@@ -50,6 +50,7 @@ use crate::ff::constants::VACUUM_DIELECTRIC;
 use crate::ff::forcefield::lammps_units::{LammpsFfUnits, lammps_k_to_molrs_half_k, parse_style};
 use crate::ff::forcefield::{ForceField, SpecialBonds};
 use crate::ff::params::amber::{AMBER_SCEE, AMBER_SCNB};
+use crate::ff::potential::pair::Mixing;
 use molrs::units::constants::COULOMB_REAL;
 use std::collections::BTreeMap;
 
@@ -133,6 +134,7 @@ impl LammpsFfReader {
         let mut ff = ForceField::new("LAMMPS");
         let mut pair_rows: Vec<(String, f64, f64)> = Vec::new();
         let mut cutoffs: (Option<f64>, Option<f64>) = (None, None);
+        let mut pair_mix: Option<String> = None;
         let mut dihedral_style_name: Option<String> = None;
         let mut saw_special_bonds = false;
 
@@ -212,7 +214,16 @@ impl LammpsFfReader {
                     ff.set_special_bonds(parse_special_bonds(&rest, &where_)?);
                     saw_special_bonds = true;
                 }
-                "pair_modify" | "atom_style" | "kspace_style" => {}
+                "pair_modify" => {
+                    if let Some(i) = rest.iter().position(|t| *t == "mix") {
+                        let rule = rest.get(i + 1).ok_or_else(|| {
+                            format!("{}: pair_modify mix missing a rule", where_())
+                        })?;
+                        Mixing::parse(rule).map_err(|e| format!("{}: {e}", where_()))?;
+                        pair_mix = Some((*rule).to_owned());
+                    }
+                }
+                "atom_style" | "kspace_style" => {}
                 other => return Err(format!("{}: unknown LAMMPS keyword `{other}`", where_())),
             }
         }
@@ -233,7 +244,7 @@ impl LammpsFfReader {
                 .map(|c| unit_sys.to_store_length(c, file_units))
                 .transpose()?,
         );
-        build_pairs(&mut ff, &pair_rows, cutoffs);
+        build_pairs(&mut ff, &pair_rows, cutoffs, pair_mix.as_deref());
         let _ = file_units; // store units stamped on Python side; name stays LAMMPS
         Ok(ff)
     }
@@ -490,6 +501,7 @@ fn build_pairs(
     ff: &mut ForceField,
     rows: &[(String, f64, f64)],
     cutoffs: (Option<f64>, Option<f64>),
+    mix: Option<&str>,
 ) {
     if rows.is_empty() {
         return;
@@ -499,6 +511,10 @@ fn build_pairs(
     let (cut_lj, cut_coul) = cutoffs;
     let lj_params: Vec<(&str, f64)> = cut_lj.map(|c| vec![("cutoff", c)]).unwrap_or_default();
     let lj = ff.def_pairstyle("lj/cut", &lj_params);
+    // LAMMPS mixes `lj/cut` **geometrically** unless `pair_modify mix` says
+    // otherwise; record it explicitly rather than inherit the kernel's
+    // Lorentz-Berthelot default, which would shift every \u03c3 silently.
+    lj.params.set_str("mixing", mix.unwrap_or("geometric"));
     for (ty, eps, sigma) in rows {
         lj.def_pairtype(ty, None, &[("epsilon", *eps), ("sigma", *sigma)]);
     }
@@ -587,13 +603,16 @@ fn add_dihedral(
                 &b,
                 &c,
                 &d,
-                &[("f1", ks[0]), ("f2", ks[1]), ("f3", ks[2]), ("f4", ks[3])],
+                &[("k1", ks[0]), ("k2", ks[1]), ("k3", ks[2]), ("k4", ks[3])],
             );
         }
         "harmonic" => {
-            // dihedral_coeff a-b-c-d K d n
+            // dihedral_coeff a-b-c-d K d n, with E = K[1 + d·cos(nφ)].
+            // LAMMPS `d` here is a SIGN (±1), not a phase angle — canonical
+            // name `sign`, stored verbatim (it was previously run through
+            // `to_radians()`, which turned ±1 into ±0.01745).
             let k_raw = parse_f64(get(rest, 1, "dihedral K", where_)?, "dihedral K", where_)?;
-            let phase = parse_f64(get(rest, 2, "dihedral d", where_)?, "dihedral d", where_)?;
+            let sign = parse_f64(get(rest, 2, "dihedral d", where_)?, "dihedral d", where_)?;
             let n = parse_f64(get(rest, 3, "dihedral n", where_)?, "dihedral n", where_)?;
             let k = unit_sys.to_store_energy(k_raw, file_units)?;
             style_mut(
@@ -608,7 +627,7 @@ fn add_dihedral(
                 &b,
                 &c,
                 &d,
-                &[("k", k), ("d", phase.to_radians()), ("n", n)],
+                &[("k", k), ("sign", sign), ("periodicity", n)],
             );
         }
         _ => {
@@ -634,8 +653,8 @@ fn add_dihedral(
                 )?;
                 let k = unit_sys.to_store_energy(k_raw, file_units)?;
                 owned.push((format!("k{}", term + 1), k));
-                owned.push((format!("n{}", term + 1), n));
-                owned.push((format!("d{}", term + 1), phase.to_radians()));
+                owned.push((format!("periodicity{}", term + 1), n));
+                owned.push((format!("phase{}", term + 1), phase.to_radians()));
             }
             let params: Vec<(&str, f64)> = owned.iter().map(|(k, v)| (k.as_str(), *v)).collect();
             style_mut(ff, "dihedral", "fourier", "dihedral_style fourier", where_)?
@@ -947,8 +966,14 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
         let dih = ff.get_style("dihedral", "fourier").unwrap();
         let dt = &dihedral_types(dih)[0];
         assert!((dt.params.get("k1").unwrap() - 0.06).abs() < 1e-12, "k1");
-        assert!((dt.params.get("n1").unwrap() - 3.0).abs() < 1e-12, "n1");
-        assert!((dt.params.get("d1").unwrap() - 0.0).abs() < 1e-12, "d1");
+        assert!(
+            (dt.params.get("periodicity1").unwrap() - 3.0).abs() < 1e-12,
+            "periodicity1"
+        );
+        assert!(
+            (dt.params.get("phase1").unwrap() - 0.0).abs() < 1e-12,
+            "phase1"
+        );
 
         // pair: ε/σ pass through; the duplicate c3 row is ignored.
         let lj = ff.get_style("pair", "lj/cut").unwrap();
@@ -1153,8 +1178,8 @@ dihedral_coeff CT-CT-CT-CT 1.0 2.0 3.0 4.0
         let ff = LammpsFfReader::new().read_str(text).unwrap();
         let d = ff.get_style("dihedral", "opls").unwrap();
         let dt = &dihedral_types(d)[0];
-        assert!((dt.params.get("f1").unwrap() - 1.0).abs() < 1e-12);
-        assert!((dt.params.get("f4").unwrap() - 4.0).abs() < 1e-12);
+        assert!((dt.params.get("k1").unwrap() - 1.0).abs() < 1e-12);
+        assert!((dt.params.get("k4").unwrap() - 4.0).abs() < 1e-12);
     }
 
     #[test]

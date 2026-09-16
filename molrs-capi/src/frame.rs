@@ -713,7 +713,8 @@ fn meta_to_c(value: &MetaValue) -> Result<MolrsMetaValue, MolrsStatus> {
         }
         MetaValue::Json(v) => {
             let mut out = base!(String);
-            let owned = CString::new(v.to_string()).unwrap_or_else(|_| CString::new("null").unwrap());
+            let owned =
+                CString::new(v.to_string()).unwrap_or_else(|_| CString::new("null").unwrap());
             out.string_value = owned.into_raw();
             out
         }

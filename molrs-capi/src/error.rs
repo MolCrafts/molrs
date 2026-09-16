@@ -97,9 +97,11 @@ pub enum MolrsDType {
 impl From<DType> for MolrsDType {
     fn from(dt: DType) -> Self {
         match dt {
-            DType::Float | DType::Float16 | DType::Float32 | DType::Complex64 | DType::Complex128 => {
-                Self::Float
-            }
+            DType::Float
+            | DType::Float16
+            | DType::Float32
+            | DType::Complex64
+            | DType::Complex128 => Self::Float,
             DType::Int | DType::Int8 | DType::Int16 | DType::Int64 => Self::Int,
             DType::Bool => Self::Bool,
             DType::UInt | DType::U8 | DType::UInt16 | DType::UInt32 => Self::UInt,

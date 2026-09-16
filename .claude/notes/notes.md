@@ -17,6 +17,91 @@ status change) and conflicts with `CLAUDE.md`.
 
 ---
 
+## 2026-09-14 — regions are solids with a signed distance; one type per shape
+
+**Decision:** `spatial::region::Region` requires `bounds` + `distance`
+(negative inside, positive outside, zero on the boundary) and derives
+`contains_point` / `contains` / `distance_grad` from it. Every shape describes
+its inside; outside, shells and voids are `NotRegion` / `AndRegion` /
+`OrRegion`. `HollowSphere` is gone (`Sphere & ~Sphere`). New shapes:
+`HalfSpace`, `Cylinder`, `Ellipsoid`, `Polyhedron` (a watertight `TriMesh`,
+whatever produced it), `SphereUnion` (centres + radii, minimum image on the
+box's periodic axes; with `r = r_vdW + r_probe` its complement is the
+solvent-accessible void). molpack's own `Region` trait, `StlRegion` and BVH
+move here; molpack keeps only its penalty policy.
+**Why:** three parallel region models (molrs boolean, molpack SDF + mesh,
+molvis TS ball field) for one concept; the PEO-in-void case needs a region
+built from atoms in memory, no mesh file, and a lattice mask that asks the
+region about ~10⁶ sites — a BVH per query, not a scan.
+**Status:** provisional
+
+## 2026-09-14 — two BVHs after the region port
+
+**Decision:** `spatial::bvh::Bvh` (boxed items, caller-supplied metric that
+may be signed; serves `Polyhedron` and `SphereUnion`) lands beside the private
+point tree in `neighbors/aabb.rs` (`AabbQuery`, k-NN with baked MIC shifts).
+Rebasing `AabbTree` on `Bvh` is a follow-up, not part of the region chain.
+**Why:** retro-fitting triangle leaves and three query kinds onto the k-NN
+tree is a rewrite of both, and the region chain is measured by its consumer.
+**Status:** provisional
+
+## 2026-09-14 — wasm does not expose `Region` yet
+
+**Decision:** regions (and `RegionRef`) are Python-only in this line; the wasm
+binder keeps `Mesh` + `readSTL` and gains nothing. Recorded under the
+binder-surface-symmetry principle as a known asymmetry to close when molvis
+moves its ball-field / marching-cubes kernels onto molrs.
+**Status:** provisional
+
+## 2026-09-07 — `cargo test` needs a target dir on local disk
+
+**Decision:** run Rust test/bench builds with
+`CARGO_TARGET_DIR=/tmp/<something>`; leave `cargo check` on the repo's own
+`target/`.
+**Why:** the repo lives on Lustre (`/nobackup`, and `/home` too). A cold
+`cargo test --lib` there hangs indefinitely before spawning a single `rustc`
+— no compiler process, no measurable growth in `target/`, cargo just holding
+its artifact lock. It is not a deadlock and not a slow link: cargo is
+stat-ing a ~38 GB test-profile artifact tree over the network filesystem.
+Two runs were killed at 20+ and 23+ minutes with zero output. The same
+source, same machine, with `CARGO_TARGET_DIR` on local `/tmp` (780 G volume)
+started compiling immediately and finished the whole cold dependency tree —
+criterion pulls in `plotters` / `ciborium` / `ndarray`, which is why the test
+profile is far heavier than `check` — then ran 31 tests in 0.04 s.
+`cargo check` stays fine on the network path: its artifact set is small
+enough for the fingerprint scan.
+**Status:** provisional
+
+## 2026-09-07 — `dump local` accepts every `dump_modify label`
+
+**Decision:** the LAMMPS `dump local` reader accepts `ENTRIES` (the default)
+plus `BONDS` / `ANGLES` / `DIHEDRALS` / `IMPROPERS` / `NEIGHBORS`, and records
+which one in `frame.meta` as `dump_local_label`. Rows still land in `entries`
+whatever the label says.
+**Why:** the reader's own doc comment cited OVITO's LAMMPS-dump-local manual
+while implementing one of the six labels it lists — and `dump_modify …
+label BONDS` is precisely what that manual tells users to set, so the
+recommended setup was a hard parse error. The label is also the *only*
+meaning-bearing part of such a file: column names are whatever the dump
+command was given, and the default is `c_bond[1] c_bond[2]`, which says
+nothing. Consumers must read the label rather than re-guess from the header.
+The rows keep the `entries` name because the label says what they mean, not
+that they satisfy a contract-bearing block's schema — the argument recorded
+at the `block_name` binding still holds.
+**Status:** provisional
+
+## 2026-09-07 — `Frame.getMeta` completes the wasm meta pair
+
+**Decision:** `molrs-wasm` `Frame` exposes `getMeta(name) -> string | undefined`
+alongside the existing `setMeta` / `getMetaScalar` / `setMetaScalar`. It
+returns `undefined` for non-string values rather than stringifying them.
+**Why:** `setMeta` had no reader, so a word-valued label written through it
+was unreachable from JS — `getMetaScalar` returns `undefined` for anything
+that does not parse as a number. Found while wiring `dump_local_label`
+through to molvis. Not stringifying numeric meta keeps `"1"` and `1`
+distinguishable at the boundary.
+**Status:** provisional
+
 ## 2026-09-04 — amber-prmtop-complete-02 debts found at spec time
 
 **Decision:** record, do not fix in this phase.

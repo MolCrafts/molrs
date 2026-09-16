@@ -219,7 +219,7 @@ mod tests {
 
     #[test]
     fn a_covered_term_carries_no_provenance() {
-        let covered = Estimate::covered(Params::from_pairs(&[("k0", 1.0)]), "X-c3-c3-X");
+        let covered = Estimate::covered(Params::from_pairs(&[("k", 1.0)]), "X-c3-c3-X");
         assert!(
             covered.provenance().is_none(),
             "a wildcard row is a parameter, not an estimate"
@@ -232,7 +232,7 @@ mod tests {
 
     #[test]
     fn provenance_writes_the_four_keys() {
-        let mut params = Params::from_pairs(&[("k0", 300.9)]);
+        let mut params = Params::from_pairs(&[("k", 300.9)]);
         Provenance::analogy(2.5, "c3-oh").write_onto(&mut params);
         assert_eq!(params.get("estimated"), Some(1.0));
         assert_eq!(params.get("estimate_penalty"), Some(2.5));

@@ -111,7 +111,9 @@ pub use record_io::{
 };
 // The store-taking record doors need no filesystem: an in-memory or host
 // store (wasm) writes and reads a whole record through them.
-pub use record_io::{read_record_store, write_record_store};
+pub use record_io::{
+    read_frame_section_store, read_record_store, section_names_store, write_record_store,
+};
 pub use sequence::{Compression, FrameSequence, FrameSequenceWriter, SequenceSchema, column_dtype};
 
 /// Mechanics pins for `zarrs` 0.23.13 — the append fast path the

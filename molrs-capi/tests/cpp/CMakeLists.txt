@@ -13,9 +13,21 @@ set(MOLRS_CAPI_ROOT "${MOLRS_ROOT}")
 
 # Cargo build profile
 set(CARGO_PROFILE "debug" CACHE STRING "Cargo profile: debug or release")
+if(CARGO_PROFILE STREQUAL "release")
+    set(MOLRS_CARGO_PROFILE_ARGS --release)
+elseif(NOT CARGO_PROFILE STREQUAL "debug")
+    message(FATAL_ERROR "CARGO_PROFILE must be debug or release")
+endif()
 # All workspace roots in this repo share one <repo>/target via the committed
-# .cargo/config.toml, so the cdylib lands one level above the crate dir.
-set(MOLRS_TARGET_DIR "${MOLRS_ROOT}/../target/${CARGO_PROFILE}")
+# .cargo/config.toml. Respect a local Cargo override for isolated verification.
+if(DEFINED ENV{CARGO_TARGET_DIR} AND NOT "$ENV{CARGO_TARGET_DIR}" STREQUAL "")
+    set(MOLRS_CARGO_TARGET_DEFAULT "$ENV{CARGO_TARGET_DIR}")
+else()
+    set(MOLRS_CARGO_TARGET_DEFAULT "${MOLRS_ROOT}/../target")
+endif()
+set(CARGO_TARGET_DIR "${MOLRS_CARGO_TARGET_DEFAULT}" CACHE PATH "Cargo target directory")
+get_filename_component(CARGO_TARGET_DIR "${CARGO_TARGET_DIR}" ABSOLUTE BASE_DIR "${MOLRS_ROOT}")
+set(MOLRS_TARGET_DIR "${CARGO_TARGET_DIR}/${CARGO_PROFILE}")
 
 # --------------------------------------------------------------------------
 # GoogleTest via FetchContent
@@ -41,13 +53,16 @@ FetchContent_MakeAvailable(googletest)
 set(MOLRS_SHARED_LIB
     "${MOLRS_TARGET_DIR}/${CMAKE_SHARED_LIBRARY_PREFIX}molrs_capi${CMAKE_SHARED_LIBRARY_SUFFIX}")
 
-add_custom_command(
-    OUTPUT ${MOLRS_SHARED_LIB}
-    COMMAND cargo build --manifest-path ${MOLRS_CAPI_ROOT}/Cargo.toml
-    WORKING_DIRECTORY ${MOLRS_ROOT}
+# Let Cargo check source fingerprints on every build; an existing library
+# alone does not mean the Rust sources or generated C header are up to date.
+add_custom_target(molrs_capi_build
+    COMMAND cargo build --manifest-path "${MOLRS_CAPI_ROOT}/Cargo.toml"
+            --target-dir "${CARGO_TARGET_DIR}" ${MOLRS_CARGO_PROFILE_ARGS}
+    BYPRODUCTS "${MOLRS_SHARED_LIB}"
+    WORKING_DIRECTORY "${MOLRS_ROOT}"
     COMMENT "Building molrs-capi (Rust shared library)"
+    VERBATIM
 )
-add_custom_target(molrs_capi_build DEPENDS ${MOLRS_SHARED_LIB})
 
 # --------------------------------------------------------------------------
 # Imported library target

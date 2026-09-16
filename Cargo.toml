@@ -15,15 +15,8 @@ exclude = ["molrs-ffi"]
 resolver = "3"
 
 [workspace.package]
-# BREAKING (0.6.0): freud-style `compute` reorganization into per-category
-# folders (transport / spectroscopy / shape / ml / dynamics / dielectric) —
-# crate-root re-exports of every relocated type are preserved, only
-# fully-qualified `compute::<old_submodule>::` paths change. Removed the native
-# GAFF/AMBER parameter estimator (`ParameterEstimator`, the `estimate` module,
-# and its `gaff_*.json` data) — parameter estimation for uncovered bonded terms
-# is delegated to embedded reference; the FF-agnostic `Estimator`/`assign_bonded_with`
-# seam is kept. molrs / molcrafts-molrs / PyPI / molpy share one version line;
-# downstream exact-pins update to 0.12.0. Release notes live in git log / tags.
+# Keep standalone binding manifests and Python metadata on this version.
+# Downstream consumers pin the major.minor ABI line; release history is in tags.
 version = "0.14.0"
 edition = "2024"
 rust-version = "1.91"

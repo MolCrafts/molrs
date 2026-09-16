@@ -41,19 +41,19 @@ use wasm_bindgen::prelude::*;
 // Per-format builders + parsers. We re-import each format's
 // `parse_frame_bytes` under a local alias so the macro can dispatch.
 use molrs::io::data::lammps_data::{
-    parse_frame_bytes as parse_lammps_data_frame_bytes, LammpsDataIndexBuilder,
+    LammpsDataIndexBuilder, parse_frame_bytes as parse_lammps_data_frame_bytes,
 };
-use molrs::io::data::pdb::{parse_frame_bytes as parse_pdb_frame_bytes, PdbIndexBuilder};
-use molrs::io::data::sdf::{parse_frame_bytes as parse_sdf_frame_bytes, SdfIndexBuilder};
-use molrs::io::data::xyz::{parse_frame_bytes as parse_xyz_frame_bytes, XyzIndexBuilder};
+use molrs::io::data::pdb::{PdbIndexBuilder, parse_frame_bytes as parse_pdb_frame_bytes};
+use molrs::io::data::sdf::{SdfIndexBuilder, parse_frame_bytes as parse_sdf_frame_bytes};
+use molrs::io::data::xyz::{XyzIndexBuilder, parse_frame_bytes as parse_xyz_frame_bytes};
 use molrs::io::trajectory::dcd::{
-    parse_frame_bytes as parse_dcd_frame_bytes, parse_frame_with_decoder_context, DcdIndexBuilder,
+    DcdIndexBuilder, parse_frame_bytes as parse_dcd_frame_bytes, parse_frame_with_decoder_context,
 };
 use molrs::io::trajectory::lammps_dump::{
-    parse_frame_bytes as parse_lammps_dump_frame_bytes, LammpsDumpIndexBuilder,
+    LammpsDumpIndexBuilder, parse_frame_bytes as parse_lammps_dump_frame_bytes,
 };
-use molrs::io::trajectory::trr::{parse_frame_bytes as parse_trr_frame_bytes, TrrIndexBuilder};
-use molrs::io::trajectory::xtc::{parse_frame_bytes as parse_xtc_frame_bytes, XtcIndexBuilder};
+use molrs::io::trajectory::trr::{TrrIndexBuilder, parse_frame_bytes as parse_trr_frame_bytes};
+use molrs::io::trajectory::xtc::{XtcIndexBuilder, parse_frame_bytes as parse_xtc_frame_bytes};
 
 fn parse_dump_stream(
     bytes: &[u8],

@@ -29,7 +29,7 @@
 //! bonds.setColU32("bond_number", bondNumbers); // localized 1/2/3
 //! ```
 
-use js_sys::{BigUint64Array, Array as JsArray, Float32Array, Int32Array};
+use js_sys::{Array as JsArray, BigUint64Array, Float32Array, Int32Array};
 use wasm_bindgen::prelude::*;
 
 use molrs::store::block::Block as RsBlock;
@@ -416,6 +416,44 @@ impl Frame {
     ///   console.log("Energy:", energy);
     /// }
     /// ```
+    /// Read a per-frame metadata value that is a string.
+    ///
+    /// The counterpart of [`setMeta`](Self::set_meta), and the accessor for
+    /// labels that are words rather than numbers — a LAMMPS `dump local`
+    /// section label (`dump_local_label`), say. Deliberately does not
+    /// stringify numeric meta: those have their own accessor
+    /// ([`getMetaScalar`](Self::get_meta_scalar)), and a getter that rendered
+    /// every dtype would make `"1"` and `1` indistinguishable to the caller.
+    ///
+    /// Returns `undefined` when the key is missing, holds a non-string value,
+    /// or the frame has been dropped.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` — Meta key to look up (e.g., `"dump_local_label"`, `"note"`).
+    ///
+    /// # Example (JavaScript)
+    ///
+    /// ```js
+    /// if (frame.getMeta("dump_local_label") === "BONDS") {
+    ///   // the local rows are bond topology
+    /// }
+    /// ```
+    #[wasm_bindgen(js_name = getMeta)]
+    pub fn get_meta(&self, name: &str) -> Option<String> {
+        self.inner
+            .store
+            .borrow()
+            .with_frame(self.inner.id, |frame| {
+                frame
+                    .meta
+                    .get(name)
+                    .and_then(MetaValue::as_str)
+                    .map(str::to_owned)
+            })
+            .ok()?
+    }
+
     #[wasm_bindgen(js_name = getMetaScalar)]
     pub fn get_meta_scalar(&self, name: &str) -> Option<f64> {
         self.inner

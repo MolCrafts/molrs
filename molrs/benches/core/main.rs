@@ -10,6 +10,7 @@ criterion_main!(
     core::graph::benches,
     core::topology::benches,
     core::simbox::benches,
+    core::region::benches,
     neighbors::linkcell::benches,
     ndarray_vs_vec::primitives::benches,
 );

@@ -402,7 +402,7 @@ pub struct ParmMassRow {
 ///
 /// That is **AMBER's** convention and it carries no ½ — unlike molrs's
 /// [`BondHarmonic`](crate::ff::potential::bond::harmonic::BondHarmonic), whose
-/// `k0` is `2 · force_constant`. The factor is applied where the units are
+/// `k` is `2 · force_constant`. The factor is applied where the units are
 /// normalised (the [`gaff`](crate::ff::forcefield::gaff) reader), never here:
 /// this row is what the file says.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -821,8 +821,9 @@ pub struct OplsBondRow {
     pub i: &'static str,
     /// Class of the second atom.
     pub j: &'static str,
-    /// Force constant (kcal/mol/Å²).
-    pub k0: f64,
+    /// Force constant (kcal/mol/Å²) in molrs's `E = ½k(r−r0)²` convention;
+    /// emitted under the canonical param key `k` (spec ff-params-01).
+    pub force_constant: f64,
     /// Equilibrium length (Å).
     pub r0: f64,
 }
@@ -836,8 +837,10 @@ pub struct OplsAngleRow {
     pub j: &'static str,
     /// Class of the third atom.
     pub k: &'static str,
-    /// Force constant (kcal/mol/rad²).
-    pub k0: f64,
+    /// Force constant (kcal/mol/rad²) in molrs's `E = ½k(θ−θ0)²` convention;
+    /// emitted under the canonical param key `k`. Not named `k` here because
+    /// this struct's `k` is already the third atom's class.
+    pub force_constant: f64,
     /// Equilibrium angle (**radians**).
     pub theta0: f64,
 }

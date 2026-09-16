@@ -2819,7 +2819,7 @@ struct PendingFrame {
 ///
 /// **What lands when.** Every append is checked and buffered. When the buffer
 /// reaches the landing cadence — derived from the frame size so that block
-/// columns land whole inner chunks and roughly [`FLUSH_TARGET_BYTES`] at a
+/// columns land whole inner chunks and roughly 4 MiB at a
 /// time, or set by [`with_flush_every`](Self::with_flush_every) — the buffered
 /// frames are committed. [`flush`](Self::flush) commits at any time and is
 /// **durable** by default (the touched files are synced before the commit
@@ -3243,7 +3243,7 @@ impl FrameSequenceWriter {
         Ok(())
     }
 
-    /// The landing cadence: enough frames for [`FLUSH_TARGET_BYTES`] of
+    /// The landing cadence: enough frames for 4 MiB of
     /// payload, rounded up to a whole number of the coarsest block's
     /// frames-per-chunk so every block column lands whole chunks.
     fn derive_flush_every(&self) -> u64 {

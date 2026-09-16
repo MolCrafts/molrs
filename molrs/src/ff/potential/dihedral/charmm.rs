@@ -1,9 +1,9 @@
 //! CHARMM proper dihedral:
 //!
-//! E(φ) = K·[1 + cos(n·φ − d)]
+//! E(φ) = k·[1 + cos(n·φ − γ)]
 //!
-//! `K` is the force constant (kcal/mol), `n` the integer multiplicity, and `d`
-//! the phase in radians (readers normalize at their boundary; the LAMMPS
+//! `k` is the force constant (kcal/mol), `periodicity` the integer multiplicity,
+//! and `phase` the phase γ in radians (readers normalize at their boundary; the LAMMPS
 //! `dihedral_style charmm` degree value is converted at read). The 1-4
 //! pair weight `w` is a non-bonded scaling factor handled by the pair term, not
 //! the torsion energy, so it is read but does not enter this kernel.
@@ -94,8 +94,11 @@ pub fn dihedral_charmm_ctor(
         ak.push(kc[idx] as usize);
         al.push(lc[idx] as usize);
         kk.push(p.get("k").ok_or("dihedral_charmm: missing k")? as F);
-        nn.push(p.get("n").ok_or("dihedral_charmm: missing n")? as F);
-        dd.push(p.get("d").unwrap_or(0.0) as F); // radians (normalized at read)
+        nn.push(
+            p.get("periodicity")
+                .ok_or("dihedral_charmm: missing periodicity")? as F,
+        );
+        dd.push(p.get("phase").unwrap_or(0.0) as F); // radians (normalized at read)
     }
     Ok(Box::new(DihedralCharmm {
         atom_i: ai,

@@ -1,9 +1,9 @@
 //! Periodic improper (AMBER / GAFF dihedral-style impropers):
 //!
-//! E(φ) = K · [1 + cos(n·φ − φ₀)]
+//! E(φ) = k · [1 + cos(n·φ − γ)]
 //!
-//! `K` is the force constant, `n` the multiplicity, and `φ₀` the phase in
-//! radians (readers normalize at their boundary). The improper angle φ is the
+//! `k` is the force constant, `periodicity` the multiplicity, and `phase` the
+//! phase γ in radians (readers normalize at their boundary). The improper angle φ is the
 //! dihedral defined by I-J-K-L, so the
 //! geometry reuses the shared dihedral routines. (Functionally one CHARMM-form
 //! term, evaluated over the `"impropers"` block.)
@@ -93,8 +93,11 @@ pub fn improper_periodic_ctor(
         ak.push(kc[idx] as usize);
         al.push(lc[idx] as usize);
         kk.push(p.get("k").ok_or("improper_periodic: missing k")? as F);
-        nn.push(p.get("n").ok_or("improper_periodic: missing n")? as F);
-        dd.push(p.get("d").unwrap_or(0.0) as F); // radians (normalized at read)
+        nn.push(
+            p.get("periodicity")
+                .ok_or("improper_periodic: missing periodicity")? as F,
+        );
+        dd.push(p.get("phase").unwrap_or(0.0) as F); // radians (normalized at read)
     }
     Ok(Box::new(ImproperPeriodic {
         atom_i: ai,

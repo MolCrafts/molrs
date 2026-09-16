@@ -115,3 +115,30 @@ class TestReadXyz:
     def test_missing_file_raises_os_error(self):
         with pytest.raises(OSError):
             molrs.io.raw.read_xyz("/nonexistent/path.xyz")
+
+
+def test_read_stl_gives_a_watertight_mesh(tmp_path) -> None:
+    import numpy as np
+
+    # A closed tetrahedron in ASCII STL, written in-process.
+    verts = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+    faces = [[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]]
+    lines = ["solid tet"]
+    for f in faces:
+        lines.append("  facet normal 0 0 0")
+        lines.append("    outer loop")
+        for i in f:
+            lines.append("      vertex {} {} {}".format(*verts[i]))
+        lines.append("    endloop")
+        lines.append("  endfacet")
+    lines.append("endsolid tet")
+    path = tmp_path / "tet.stl"
+    path.write_text("\n".join(lines) + "\n")
+
+    mesh = molrs.io.read_stl(str(path))
+    assert isinstance(mesh, molrs.TriMesh)
+    assert mesh.n_faces == 4 and mesh.n_vertices == 4
+    assert mesh.is_watertight()
+    tet = molrs.Polyhedron(mesh.scaled(2.0))
+    assert tet.contains(np.array([[0.2, 0.2, 0.2]]))[0]
+    assert not tet.contains(np.array([[3.0, 3.0, 3.0]]))[0]

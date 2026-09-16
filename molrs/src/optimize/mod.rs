@@ -1,10 +1,11 @@
-//! Geometry optimization over a force-field [`Potential`].
+//! Geometry optimization over a force-field [`crate::ff::potential::Potential`].
 //!
 //! This module **depends on** [`crate::ff::potential::Potential`]. The potential
 //! trait lives in `ff`; optimizers consume it. There is no potential trait here.
 //!
-//! Primary entry: [`Optimizer::run`] on a [`Frame`]. [`LBFGS`] is the default
-//! limited-memory BFGS implementation. Soft packing rebuilds go through
+//! Primary entry: [`crate::optimize::Optimizer::run`] on a [`Frame`].
+//! [`crate::optimize::LBFGS`] is the default limited-memory BFGS implementation.
+//! Soft packing rebuilds go through
 //! [`SoftSpec::into_optimizer`](crate::ff::potential::soft::SoftSpec::into_optimizer).
 
 pub mod lbfgs;
@@ -257,9 +258,6 @@ impl LBFGS {
 
     /// Minimize free DOFs only, evaluating the potential on the full system.
     fn run_masked(&self, full: &mut [F], free: &[bool]) -> Result<OptReport, String> {
-        if full.len() != free.len() * 3 && free.len() * 3 != full.len() {
-            // free is per-atom; full is 3N
-        }
         let n = free.len();
         if full.len() != n * 3 {
             return Err(format!(

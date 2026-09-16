@@ -64,3 +64,16 @@ any mutate.
 
 - WASM enables `ff` transitively via `conformer`; Python/C enable `ff` directly.
 - cxxapi exposes `frame_schema_version` envelope, not full vocab JSON (OK for C++ role).
+
+### Rule 5 — Handles whose code runs in the producer's image
+
+`RegionRef` (an `Arc<dyn Region + Send + Sync>`) is the first handle a consumer
+*calls* rather than *reads*: `Region` methods dispatch through a vtable compiled
+into the producing extension (molrs-python). The cross-image contract is the
+`[F; 3]` surface only — `distance`, `distance_grad`, `contains_point`,
+`bounds` — none of which panics on finite input; the batched `contains(&FNx3)`
+has a panic path and is not part of it. Both wheels must be built by the same
+rustc (the layout-snapshot gate already requires this) and share one system
+allocator (the `bounds()` array crosses images, the same reliance `FrameRef`
+already has). Under the dynamic link opt-in there is one image and none of this
+applies.

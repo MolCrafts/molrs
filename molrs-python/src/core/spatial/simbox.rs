@@ -113,6 +113,22 @@ impl PyBox {
         self.inner.is_cell_defined()
     }
 
+    fn __reduce__<'py>(
+        slf: &Bound<'py, Self>,
+    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, pyo3::types::PyTuple>)> {
+        let py = slf.py();
+        let this = slf.borrow();
+        crate::helpers::reduce_via_type(
+            slf.as_any(),
+            (
+                this.h(py),
+                this.origin(py),
+                this.pbc(py),
+                this.cell_defined(),
+            ),
+        )
+    }
+
     /// Create a cubic simulation box.
     ///
     /// Parameters

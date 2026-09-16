@@ -15,10 +15,9 @@ pip install molcrafts-molrs
 
 Requires Python 3.12+.
 
-## Quick start (0.12 surface)
+## Quick start
 
 ```python
-import numpy as np
 import molrs
 
 # SMILES → atomistic graph (class API under molrs.io)
@@ -27,15 +26,16 @@ mol = molrs.io.SmilesIR("CCO").to_atomistic()
 # 3D coordinates
 from molrs.conformer import Conformer
 
-mol = Conformer().generate(mol)
+mol, report = Conformer().generate(mol)
 
-# Force field: typify → pairs → potentials (no typifier.build())
+# Force field: typify → pairs → potentials
 from molrs.ff import MMFF94Typifier, extract_coords, intramolecular_pairs
 
-typed = MMFF94Typifier().typify(mol)
+typifier = MMFF94Typifier()
+typed = typifier.typify(mol)
 frame = typed.to_frame()
 frame["pairs"] = intramolecular_pairs(frame)
-pots = MMFF94Typifier().forcefield().to_potentials(frame)
+pots = typifier.forcefield().to_potentials(frame)
 coords = extract_coords(frame)
 energy, forces = pots.calc_energy_forces(coords)
 assert forces.shape == (frame["atoms"].nrows, 3)

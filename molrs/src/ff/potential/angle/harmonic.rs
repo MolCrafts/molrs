@@ -1,4 +1,4 @@
-//! Harmonic angle potential: E = 0.5 * k0 * (theta - theta0)^2
+//! Harmonic angle potential: E = 0.5 * k * (theta - theta0)^2
 
 use std::collections::HashMap;
 
@@ -14,7 +14,7 @@ pub struct AngleHarmonic {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,
     atom_k: Vec<usize>,
-    k0: Vec<F>,
+    k: Vec<F>,
     theta0: Vec<F>,
 }
 
@@ -23,19 +23,19 @@ impl AngleHarmonic {
         atom_i: Vec<usize>,
         atom_j: Vec<usize>,
         atom_k: Vec<usize>,
-        k0: Vec<F>,
+        k: Vec<F>,
         theta0: Vec<F>,
     ) -> Self {
         let n = atom_i.len();
         assert_eq!(atom_j.len(), n);
         assert_eq!(atom_k.len(), n);
-        assert_eq!(k0.len(), n);
+        assert_eq!(k.len(), n);
         assert_eq!(theta0.len(), n);
         Self {
             atom_i,
             atom_j,
             atom_k,
-            k0,
+            k,
             theta0,
         }
     }
@@ -51,14 +51,14 @@ impl Potential for AngleHarmonic {
             let i = self.atom_i[idx];
             let j = self.atom_j[idx];
             let k = self.atom_k[idx];
-            let k_spring = self.k0[idx];
+            let k_spring = self.k[idx];
             let theta0 = self.theta0[idx];
 
             let theta = compute_angle(coords, i, j, k);
             let dtheta = theta - theta0;
             energy += 0.5 * k_spring * dtheta * dtheta;
 
-            // dE/dtheta = k0 (theta - theta0)
+            // dE/dtheta = k (theta - theta0)
             super::accumulate_angle_forces(coords, i, j, k, k_spring * dtheta, &mut forces);
         }
 
@@ -93,7 +93,7 @@ pub fn angle_harmonic_ctor(
     let mut atom_i = Vec::with_capacity(i_col.len());
     let mut atom_j = Vec::with_capacity(i_col.len());
     let mut atom_k = Vec::with_capacity(i_col.len());
-    let mut k0_vec = Vec::with_capacity(i_col.len());
+    let mut k_vec = Vec::with_capacity(i_col.len());
     let mut theta0_vec = Vec::with_capacity(i_col.len());
 
     for idx in 0..i_col.len() {
@@ -101,12 +101,10 @@ pub fn angle_harmonic_ctor(
         let params = type_map
             .get(label.as_str())
             .ok_or_else(|| format!("AngleHarmonic: unknown angle type '{}'", label))?;
-        // Accept `k` (LAMMPS / hand-built) or its `k0` alias (the OPLS XML
-        // reader emits `k0`/`theta0`). Either spelling is the force const.
-        let k0 = params
+        // `k` is the one spelling (spec ff-params-01); the `k0` alias is gone.
+        let k = params
             .get("k")
-            .or_else(|| params.get("k0"))
-            .ok_or_else(|| format!("AngleHarmonic type '{}': missing 'k' (or 'k0')", label))?
+            .ok_or_else(|| format!("AngleHarmonic type '{}': missing 'k'", label))?
             as F;
         // theta0 is consumed in radians; readers normalize at their boundary.
         let theta0_rad = params
@@ -117,12 +115,12 @@ pub fn angle_harmonic_ctor(
         atom_i.push(i_col[idx] as usize);
         atom_j.push(j_col[idx] as usize);
         atom_k.push(k_col[idx] as usize);
-        k0_vec.push(k0);
+        k_vec.push(k);
         theta0_vec.push(theta0_rad);
     }
 
     Ok(Box::new(AngleHarmonic::new(
-        atom_i, atom_j, atom_k, k0_vec, theta0_vec,
+        atom_i, atom_j, atom_k, k_vec, theta0_vec,
     )))
 }
 

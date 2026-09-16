@@ -93,10 +93,20 @@ class Block(_RsBlock, MutableMapping[str, np.ndarray]):
     # No __slots__ — PyO3 base classes forbid subclass slot layouts; the single
     # Python-only attribute (_source) lives on __dict__.
 
-    def __new__(cls, vars_: BlockLike | None = None) -> "Block":
+    def __new__(
+        cls,
+        vars_: BlockLike | None = None,
+        nrows: int | None = None,
+        shape: list[int] | None = None,
+    ) -> "Block":
         return super().__new__(cls)
 
-    def __init__(self, vars_: BlockLike | None = None) -> None:
+    def __init__(
+        self,
+        vars_: BlockLike | None = None,
+        nrows: int | None = None,
+        shape: list[int] | None = None,
+    ) -> None:
         super().__init__()
         # When set, numeric ops route through this external molrs.Block (a live
         # alias into a parent Frame's store) so frame[key][col] = arr writes
@@ -125,6 +135,13 @@ class Block(_RsBlock, MutableMapping[str, np.ndarray]):
                     raise ValueError(
                         f"Value must be array-like for key {k!r}, got {type(v)}"
                     ) from e
+        elif nrows:
+            _RsBlock.resize(self, nrows)
+        if shape is not None:
+            _RsBlock.set_shape(self, shape)
+
+    def __reduce__(self):
+        return type(self), _block_ctor_args(self)
 
     # --- write-through routing ---------------------------------------------
 
@@ -169,9 +186,7 @@ class Block(_RsBlock, MutableMapping[str, np.ndarray]):
         if _RsBlock.has_f32(backing, name):
             return _RsBlock.view(backing, name)
         if name in self:
-            raise TypeError(
-                f"column {name!r} must be f32, got {backing.dtype(name)!r}"
-            )
+            raise TypeError(f"column {name!r} must be f32, got {backing.dtype(name)!r}")
         if default is not None:
             return default
         raise KeyError(f"column '{name}' (f32) is required")
@@ -182,9 +197,7 @@ class Block(_RsBlock, MutableMapping[str, np.ndarray]):
         if _RsBlock.has_f64(backing, name):
             return _RsBlock.view(backing, name)
         if name in self:
-            raise TypeError(
-                f"column {name!r} must be f64, got {backing.dtype(name)!r}"
-            )
+            raise TypeError(f"column {name!r} must be f64, got {backing.dtype(name)!r}")
         if default is not None:
             return default
         raise KeyError(f"column '{name}' (f64) is required")
@@ -462,6 +475,7 @@ class Frame(_RsFrame):
         cls,
         blocks: "dict[str, Block | BlockLike] | _RsFrame | None" = None,
         meta: "dict[str, MetaValue] | None" = None,
+        box: Any = None,
     ) -> "Frame":
         return super().__new__(cls)
 
@@ -469,6 +483,7 @@ class Frame(_RsFrame):
         self,
         blocks: "dict[str, Block | BlockLike] | _RsFrame | None" = None,
         meta: "dict[str, MetaValue] | None" = None,
+        box: Any = None,
     ) -> None:
         super().__init__()
         if isinstance(blocks, _RsFrame):
@@ -490,7 +505,12 @@ class Frame(_RsFrame):
             for key, value in blocks.items():
                 if not isinstance(key, str):
                     raise ValueError(f"Block keys must be strings, got {type(key)}")
-                self[key] = value if isinstance(value, Block) else Block(value)
+                self[key] = value
+        if box is not None:
+            self.box = box
+
+    def __reduce__(self):
+        return type(self), _frame_ctor_args(self)
 
     def __getitem__(self, key: str) -> Block:  # type: ignore[override]
         """Return the named block as a rich :class:`Block` (live view)."""
@@ -584,3 +604,65 @@ class Frame(_RsFrame):
             for k in blk.keys():
                 txt.append(f"  [{name}] {k}: shape={blk[k].shape}")
         return "\n".join(txt) + "\n)"
+
+
+def _block_ctor_args(block: Any) -> tuple[Any, ...]:
+    backing = block._backing() if isinstance(block, Block) else block
+    columns = {key: _RsBlock.view(backing, key) for key in _RsBlock.keys(backing)}
+    return (
+        columns or None,
+        None if columns else backing.nrows,
+        backing.structural_shape,
+    )
+
+
+def _frame_ctor_args(frame: Any) -> tuple[Any, ...]:
+    return (
+        {key: _RsFrame.__getitem__(frame, key) for key in frame.keys()},
+        dict(frame.meta),
+        frame.box,
+    )
+
+
+def _rs_block_init(
+    block: Any,
+    columns: dict[str, Any] | None = None,
+    nrows: int | None = None,
+    shape: list[int] | None = None,
+) -> None:
+    if columns:
+        for key, value in columns.items():
+            _RsBlock.insert(block, key, value)
+    elif nrows:
+        _RsBlock.resize(block, nrows)
+    if shape is not None:
+        _RsBlock.set_shape(block, shape)
+
+
+def _rs_frame_init(
+    frame: Any,
+    blocks: dict[str, Any] | None = None,
+    meta: dict[str, Any] | None = None,
+    box: Any = None,
+) -> None:
+    if blocks:
+        for key, block in blocks.items():
+            _RsFrame.__setitem__(frame, key, block)
+    if meta:
+        frame.meta = meta
+    if box is not None:
+        frame.box = box
+
+
+def _reduce_rs_block(block: Any) -> tuple[Any, tuple[Any, ...]]:
+    return type(block), _block_ctor_args(block)
+
+
+def _reduce_rs_frame(frame: Any) -> tuple[Any, tuple[Any, ...]]:
+    return type(frame), _frame_ctor_args(frame)
+
+
+_RsBlock.__init__ = _rs_block_init  # type: ignore[method-assign, assignment]
+_RsBlock.__reduce__ = _reduce_rs_block  # type: ignore[method-assign, assignment]
+_RsFrame.__init__ = _rs_frame_init  # type: ignore[method-assign, assignment]
+_RsFrame.__reduce__ = _reduce_rs_frame  # type: ignore[method-assign, assignment]

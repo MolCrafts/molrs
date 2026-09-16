@@ -16,7 +16,7 @@
 //! What comes back is triangles, nothing more: no watertight gate, no
 //! degeneracy gate, no unit conversion. A packing region needs a closed surface
 //! and refuses without one; a viewer paints whatever it is handed. Both ask the
-//! [`TriMesh`](crate::spatial::TriMesh) rather than being second-guessed here.
+//! [`TriMesh`] rather than being second-guessed here.
 
 use std::io::{Error, ErrorKind, Result};
 use std::path::Path;
@@ -132,10 +132,7 @@ fn parse_ascii(bytes: &[u8]) -> Result<Vec<[[F; 3]; 3]>> {
             corners.len()
         )));
     }
-    Ok(corners
-        .chunks_exact(3)
-        .map(|c| [c[0], c[1], c[2]])
-        .collect())
+    Ok(corners.as_chunks::<3>().0.to_vec())
 }
 
 fn invalid(message: impl Into<String>) -> Error {

@@ -88,7 +88,8 @@ impl PyBlock {
     /// >>> len(b)
     /// 0
     #[new]
-    fn new() -> PyResult<Self> {
+    #[pyo3(signature = (*_args, **_kwargs))]
+    fn new(_args: &Bound<'_, PyAny>, _kwargs: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
         Self::from_core_block(CoreBlock::new())
     }
 

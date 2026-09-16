@@ -1,4 +1,4 @@
-# prek: pre-commit = rustfmt+clippy; pre-push = unit + python + wasm
+# prek: pre-commit = rustfmt + clippy + rustdoc; pre-push = unit + python + wasm
 # + link form (static default + shared dylib) + capi
 # Mirrors ci.yml (rust / wasm / python / capi / link-form). No wrapper scripts.
 
@@ -21,7 +21,12 @@ repos:
     hooks:
       - id: cargo-fmt
         name: rustfmt
-        entry: cargo fmt --check
+        entry: >-
+          bash -c 'set -euo pipefail;
+          cargo fmt --all --check;
+          for crate in molrs-ffi molrs-python molrs-wasm molrs-capi molrs-cxxapi; do
+          cargo fmt --manifest-path "$crate/Cargo.toml" --check;
+          done'
         language: system
         pass_filenames: false
         always_run: true
@@ -31,17 +36,25 @@ repos:
         name: clippy
         entry: >-
           sh -c 'cargo clippy -p molcrafts-molrs --all-targets --features full,filesystem -- -D warnings
-          && cargo clippy --manifest-path molrs-cxxapi/Cargo.toml --all-targets -- -D warnings'
+          && cargo clippy --manifest-path molrs-cxxapi/Cargo.toml --all-targets -- -D warnings
+          && cargo clippy --manifest-path molrs-python/Cargo.toml --all-targets -- -D warnings
+          && cargo clippy --manifest-path molrs-capi/Cargo.toml --all-targets -- -D warnings
+          && cargo clippy --manifest-path molrs-wasm/Cargo.toml --target wasm32-unknown-unknown --all-targets -- -D warnings
+          && RUSTDOCFLAGS="-D warnings" cargo doc -p molcrafts-molrs --no-deps --features full,filesystem'
         language: system
         pass_filenames: false
         always_run: true
         stages: [pre-commit]
 
       - id: cargo-test-unit
-        name: cargo test --lib
+        name: Rust tests (core + FFI + CXX)
         entry: >-
           sh -c 'bash scripts/fetch-test-data.sh
-          && cargo test -p molcrafts-molrs --lib --features full,filesystem'
+          && cargo test -p molcrafts-molrs --lib --features full,filesystem
+          && cargo test --doc -p molcrafts-molrs --features full,filesystem
+          && cargo test -p molcrafts-molrs --features full --test architecture_gate
+          && cargo test --manifest-path molrs-ffi/Cargo.toml
+          && cargo test --manifest-path molrs-cxxapi/Cargo.toml'
         language: system
         pass_filenames: false
         always_run: true
@@ -60,7 +73,7 @@ repos:
       - id: wasm-pack
         name: wasm-pack build
         entry: >
-          sh -c 'set -euo pipefail;
+          bash -c 'set -euo pipefail;
           command -v wasm-pack >/dev/null || cargo install wasm-pack;
           command -v wasm-opt >/dev/null || {
             echo "wasm-opt not found (needed for molrs-wasm release). Install: brew install binaryen" >&2;
@@ -89,7 +102,7 @@ repos:
       - id: link-static
         name: static link form
         entry: >-
-          sh -c 'set -euo pipefail;
+          bash -c 'set -euo pipefail;
           rm -rf target/wheels target/link-static-venv;
           (cd molrs-python; maturin build --release);
           uv venv target/link-static-venv;
@@ -122,7 +135,7 @@ repos:
       - id: capi-tests
         name: C API ctest
         entry: >-
-          sh -c 'set -euo pipefail;
+          bash -c 'set -euo pipefail;
           cargo build --manifest-path molrs-capi/Cargo.toml;
           cmake -S molrs-capi/tests/cpp -B molrs-capi/build-test;
           cmake --build molrs-capi/build-test;

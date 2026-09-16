@@ -8,6 +8,7 @@
 //! | [`reader`] | `XYZReader`, `PDBReader`, `CIFReader`, `LAMMPSReader`, `LAMMPSTrajReader`, `SDFReader`, `CubeReader`, `CHGCARReader`, `GROReader`, `MOL2Reader`, `POSCARReader`, `XSFReader`, `AmberInpcrdReader`, `AcReader`, `DCDReader`, `TRRReader`, `XTCReader` | Read XYZ/ExtXYZ, PDB, CIF, LAMMPS data/dump, SDF, Cube, CHGCAR, GRO, MOL2, POSCAR, XSF, AMBER inpcrd, AC, DCD, TRR, XTC |
 //! | [`streaming`] | `WasmLammpsDumpStream`, `WasmXyzStream`, `WasmPdbStream`, `WasmLammpsDataStream`, `WasmSdfStream`, `WasmDcdStream`, `WasmXtcStream`, `WasmTrrStream` | Streaming readers driven by a chunk-fed `FrameIndexBuilder` |
 //! | [`writer`] | `writeFrame(frame, format)` | Write XYZ, PDB, LAMMPS dump |
+//! | [`log`] | `readLammpsLogThermo`, `isLammpsLog` | LAMMPS log thermo tables |
 //! | [`zarr`] | `TrajectoryReader` | Read frame-sequence Zarr V3 archives |
 //! | [`mesh`] | `readSTL(bytes)` | STL surface meshes (ASCII or binary) — produces a `Mesh`, not a `Frame` |
 //!
@@ -15,12 +16,14 @@
 //! WASM does not have filesystem access. Use the File API in the
 //! browser to read files, then pass the text content to the reader.
 
+pub mod log;
 pub mod mesh;
 pub mod reader;
 pub mod streaming;
 pub mod writer;
 pub mod zarr;
 
+pub use log::*;
 pub use mesh::*;
 pub use reader::*;
 pub use streaming::*;

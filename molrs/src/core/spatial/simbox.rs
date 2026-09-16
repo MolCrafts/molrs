@@ -439,7 +439,7 @@ impl SimBox {
 
     /// Fractional coordinates **without** the wrap into `[0, 1)`.
     ///
-    /// [`make_fractional_fast_arr3`](Self::make_fractional_fast_arr3) folds
+    /// [`make_fractional_fast`](Self::make_fractional_fast) folds
     /// every axis back into the primitive cell unconditionally, which is right
     /// for a fully periodic box but destroys the information a caller needs on
     /// a **non-periodic** axis: a point above the box must stay above it, so
@@ -716,6 +716,32 @@ impl SimBox {
         )
     }
 
+    /// Wrap one Cartesian point into the unit cell on the periodic axes.
+    ///
+    /// The single-point, allocation-free form of [`wrap`](Self::wrap): whole
+    /// lattice vectors are subtracted on the periodic axes, so a point already
+    /// in the cell comes back bit for bit and the two forms agree to rounding
+    /// everywhere. A non-periodic axis is left untouched.
+    #[inline]
+    pub fn wrap_point(&self, r: [F; 3]) -> [F; 3] {
+        let f = self.make_fractional_raw_arr3(r);
+        let mut out = r;
+        for (d, fd) in f.iter().enumerate() {
+            if !self.pbc[d] {
+                continue;
+            }
+            let n = fd.floor();
+            if n != 0.0 {
+                // Subtract whole lattice vectors: a point already in the cell
+                // is returned untouched, bit for bit.
+                for (k, o) in out.iter_mut().enumerate() {
+                    *o -= n * self.h[[k, d]];
+                }
+            }
+        }
+        out
+    }
+
     /// Wrap Cartesian points into the unit cell according to PBC
     pub fn wrap(&self, xyz: FNx3View<'_>) -> FNx3 {
         let mut frac = self.to_frac(xyz);
@@ -946,6 +972,24 @@ mod tests {
         let frac = bx.to_frac(pts.view());
         let cart = bx.to_cart(frac.view());
         assert!((&pts - &cart).iter().all(|v| v.abs() < 1e-5));
+    }
+
+    #[test]
+    fn wrap_point_matches_wrap_on_every_axis_kind() {
+        let bx = SimBox::from_bounds(
+            array![[0.0, 0.0, 0.0], [4.0, 5.0, 6.0]].view(),
+            [0.0; 3],
+            [true, false, true],
+        )
+        .unwrap();
+        for r in [[4.5, 5.5, -0.5], [-1.0, 2.0, 13.0], [1.0, 1.0, 1.0]] {
+            let one = bx.wrap_point(r);
+            let many = bx.wrap(array![[r[0], r[1], r[2]]].view());
+            for d in 0..3 {
+                assert!((one[d] - many[[0, d]]).abs() < 1e-12, "{r:?} axis {d}");
+            }
+        }
+        assert_eq!(bx.wrap_point([4.5, 5.5, -0.5])[1], 5.5);
     }
 
     #[test]

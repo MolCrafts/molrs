@@ -1,7 +1,7 @@
 //! Log-file parsers (non-trajectory, non-structure diagnostics).
 //!
 //! Currently:
-//! - [`lammps`] — LAMMPS standard run output (`log.lammps`)
+//! - [`crate::io::log::lammps`] — LAMMPS standard run output (`log.lammps`)
 
 pub mod lammps;
 

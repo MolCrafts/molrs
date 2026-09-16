@@ -43,7 +43,7 @@ impl EwaldBoundary {
 /// Unlike the spectral/diffusion raw results, this carries an **unnormalized**
 /// ACF and the zero-lag variance ⟨M(0)²⟩ explicitly (invariant (b)): the
 /// normalized Φ(t) gives only the relaxation *shape*/τ via
-/// [`DebyeFit`](crate::compute::fitting::DebyeFit); the amplitude `ε₀ − ε∞` comes
+/// [`DebyeFit`]; the amplitude `ε₀ − ε∞` comes
 /// from ⟨M²⟩ together with V, T, and the Ewald boundary condition
 /// (invariant (c)).
 ///

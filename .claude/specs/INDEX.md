@@ -2,6 +2,19 @@
 
 Live specs only.
 
+## region-sdf chain — regions are solids with a signed distance; mesh- and atoms-described regions; `RegionRef` across the wheel boundary (2026-09-14)
+
+Landed on `dev` directly (operator-approved plan, no per-task spec files); folded into the unreleased 0.14 line. Consumer: molpack's `region-restraint` chain.
+
+- region-sdf-01-trait — `Region { bounds, distance, distance_grad, contains_point, contains }`, closed boundaries, analytic distance for `Sphere` / `Cuboid` / `Parallelepiped` + `And`/`Or`/`Not`; `HollowSphere` deleted (`Sphere & ~Sphere`) [code-complete]
+- region-sdf-02-shapes — `HalfSpace`, `Cylinder`, `Ellipsoid` (Rust + Python) [code-complete]
+- region-sdf-03-bvh — `spatial::vec3`, `spatial::bvh::Bvh` (boxed items, signed metric, `nearest_below`), `mesh.rs` on `vec3` [code-complete]
+- region-sdf-04-polyhedron — `Polyhedron::new(TriMesh)` even-odd + Eberly closest point, goldens ported from molpack [code-complete]
+- region-sdf-05-sphere-union — `SphereUnion::{new, free}`, `SimBox::wrap_point`, brute-force oracle over MIC, criterion `region/*` [code-complete]
+- region-sdf-06-regionref — `molrs_ffi::RegionRef`, `abi::regionref_capsule_name()`, snapshot row, `_ffi_abi_token` 5-tuple, `_ffi_regionref_capsule()` on every region class, `docs/interop.md`, `ffi.md` rule 5 [code-complete]
+- region-sdf-07-python-mesh — `molrs.TriMesh`, `molrs.io.read_stl`, `molrs.Polyhedron` [code-complete]
+- region-sdf-08-python-union-recipe — `molrs.SphereUnion`, `distance` on every class, composed-`Region` pickling as an object tree, `regressions/region-sdf-peo-void.py` [code-complete]
+
 ## amber-prmtop-complete chain — AMBER prmtop read to the FileFormats standard; 1-4 scaling carried prmtop → ForceField → Python → LAMMPS/GROMACS/XML (2026-09-04)
 
 执行顺序 01 → 02 → 03 → 04（`depends_on`）。起因：PEO 熔体 LAMMPS 输入手写了 `special_bonds lj/coul 0 0 0.5`，因为管线没有把 prmtop 的 SCEE/SCNB 带到写出器。

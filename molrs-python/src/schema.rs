@@ -35,8 +35,44 @@ pub struct PyColumnSpec {
 
 #[pymethods]
 impl PyColumnSpec {
+    #[new]
+    fn new(
+        key: String,
+        const_name: String,
+        dtype: String,
+        shape: String,
+        unit: String,
+        doc: String,
+    ) -> Self {
+        Self {
+            key,
+            const_name,
+            dtype,
+            shape,
+            unit,
+            doc,
+        }
+    }
+
     fn __repr__(&self) -> String {
         format!("ColumnSpec(key='{}', dtype='{}')", self.key, self.dtype)
+    }
+
+    fn __reduce__<'py>(
+        slf: &Bound<'py, Self>,
+    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, pyo3::types::PyTuple>)> {
+        let this = slf.borrow();
+        crate::helpers::reduce_via_type(
+            slf.as_any(),
+            (
+                this.key.clone(),
+                this.const_name.clone(),
+                this.dtype.clone(),
+                this.shape.clone(),
+                this.unit.clone(),
+                this.doc.clone(),
+            ),
+        )
     }
 
     /// The numpy dtype string this column maps to.
@@ -83,8 +119,51 @@ pub struct PyBlockSpec {
 
 #[pymethods]
 impl PyBlockSpec {
+    #[new]
+    #[allow(clippy::too_many_arguments, reason = "Public Python keyword arguments")]
+    fn new(
+        name: String,
+        row_kind: String,
+        endpoint_target: Option<String>,
+        endpoint_columns: Vec<String>,
+        required: Vec<String>,
+        optional: Vec<String>,
+        open: bool,
+        doc: String,
+    ) -> Self {
+        Self {
+            name,
+            row_kind,
+            endpoint_target,
+            endpoint_columns,
+            required,
+            optional,
+            open,
+            doc,
+        }
+    }
+
     fn __repr__(&self) -> String {
         format!("BlockSpec(name='{}', rows='{}')", self.name, self.row_kind)
+    }
+
+    fn __reduce__<'py>(
+        slf: &Bound<'py, Self>,
+    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, pyo3::types::PyTuple>)> {
+        let this = slf.borrow();
+        crate::helpers::reduce_via_type(
+            slf.as_any(),
+            (
+                this.name.clone(),
+                this.row_kind.clone(),
+                this.endpoint_target.clone(),
+                this.endpoint_columns.clone(),
+                this.required.clone(),
+                this.optional.clone(),
+                this.open,
+                this.doc.clone(),
+            ),
+        )
     }
 }
 

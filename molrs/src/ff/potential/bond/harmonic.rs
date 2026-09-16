@@ -1,4 +1,4 @@
-//! Harmonic bond potential: E = 0.5 * k0 * (r - r0)^2
+//! Harmonic bond potential: E = 0.5 * k * (r - r0)^2
 
 use std::collections::HashMap;
 
@@ -12,19 +12,19 @@ use molrs::types::F;
 pub struct BondHarmonic {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,
-    k0: Vec<F>,
+    k: Vec<F>,
     r0: Vec<F>,
 }
 
 impl BondHarmonic {
-    pub fn new(atom_i: Vec<usize>, atom_j: Vec<usize>, k0: Vec<F>, r0: Vec<F>) -> Self {
+    pub fn new(atom_i: Vec<usize>, atom_j: Vec<usize>, k: Vec<F>, r0: Vec<F>) -> Self {
         assert_eq!(atom_i.len(), atom_j.len());
-        assert_eq!(atom_i.len(), k0.len());
+        assert_eq!(atom_i.len(), k.len());
         assert_eq!(atom_i.len(), r0.len());
         Self {
             atom_i,
             atom_j,
-            k0,
+            k,
             r0,
         }
     }
@@ -41,7 +41,7 @@ impl Potential for BondHarmonic {
             let j = self.atom_j[idx];
             debug_assert!(i < n_atoms && j < n_atoms);
 
-            let k0 = self.k0[idx];
+            let k = self.k[idx];
             let r0 = self.r0[idx];
 
             let dx = coords[j * 3] - coords[i * 3];
@@ -49,13 +49,13 @@ impl Potential for BondHarmonic {
             let dz = coords[j * 3 + 2] - coords[i * 3 + 2];
             let r = (dx * dx + dy * dy + dz * dz).sqrt();
             let dr = r - r0;
-            energy += 0.5 * k0 * dr * dr;
+            energy += 0.5 * k * dr * dr;
 
             if r < 1e-12 {
                 continue;
             }
 
-            let factor = -k0 * dr / r;
+            let factor = -k * dr / r;
             let fx = factor * dx;
             let fy = factor * dy;
             let fz = factor * dz;
@@ -95,7 +95,7 @@ pub fn bond_harmonic_ctor(
 
     let mut atom_i = Vec::with_capacity(i_col.len());
     let mut atom_j = Vec::with_capacity(i_col.len());
-    let mut k0_vec = Vec::with_capacity(i_col.len());
+    let mut k_vec = Vec::with_capacity(i_col.len());
     let mut r0_vec = Vec::with_capacity(i_col.len());
 
     for idx in 0..i_col.len() {
@@ -103,12 +103,12 @@ pub fn bond_harmonic_ctor(
         let params = type_map
             .get(label.as_str())
             .ok_or_else(|| format!("BondHarmonic: unknown bond type '{}'", label))?;
-        // Accept `k` (LAMMPS / hand-built) or its `k0` alias (the OPLS XML
-        // reader emits `k0`/`r0`). Either spelling is the harmonic force const.
-        let k0 = params
+        // `k` is the one spelling (spec ff-params-01). The `k0` alias is gone:
+        // it was the same key in two conventions, half of the tree meaning
+        // `E = ½k(r−r₀)²` and half meaning AMBER's un-halved `K`.
+        let k = params
             .get("k")
-            .or_else(|| params.get("k0"))
-            .ok_or_else(|| format!("BondHarmonic type '{}': missing 'k' (or 'k0')", label))?
+            .ok_or_else(|| format!("BondHarmonic type '{}': missing 'k'", label))?
             as F;
         let r0 = params
             .get("r0")
@@ -117,11 +117,11 @@ pub fn bond_harmonic_ctor(
 
         atom_i.push(i_col[idx] as usize);
         atom_j.push(j_col[idx] as usize);
-        k0_vec.push(k0);
+        k_vec.push(k);
         r0_vec.push(r0);
     }
 
-    Ok(Box::new(BondHarmonic::new(atom_i, atom_j, k0_vec, r0_vec)))
+    Ok(Box::new(BondHarmonic::new(atom_i, atom_j, k_vec, r0_vec)))
 }
 
 #[cfg(test)]

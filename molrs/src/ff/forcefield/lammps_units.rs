@@ -17,7 +17,7 @@
 //! never hard-coding eV↔kcal factors in the FF reader.
 //!
 //! This module is the LAMMPS reader/writer adapter: it maps a LAMMPS `units`
-//! token onto a core [`UnitPreset`] name and converts through
+//! token onto a core [`crate::units::UnitPreset`] name and converts through
 //! [`UnitRegistry`]. It does not define a unit-system type.
 
 use molrs::types::F;

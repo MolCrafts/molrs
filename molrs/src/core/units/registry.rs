@@ -126,6 +126,23 @@ pub struct UnitRegistry {
 static GLOBAL_REGISTRY: OnceLock<UnitRegistry> = OnceLock::new();
 
 impl UnitRegistry {
+    /// Rebuild a registry from an exact definition snapshot.
+    ///
+    /// Unlike [`empty`](Self::empty), this starts with no implicit SI base
+    /// definitions. Callers should therefore pass the complete snapshot from
+    /// [`definitions`](Self::definitions). This pair is intended for durable
+    /// language-binding serialization.
+    pub fn from_definitions(defs: Vec<UnitDef>) -> Result<UnitRegistry, UnitsError> {
+        let mut registry = UnitRegistry {
+            defs: Vec::new(),
+            index: HashMap::new(),
+        };
+        for definition in defs {
+            registry.define(definition)?;
+        }
+        Ok(registry)
+    }
+
     /// Preloaded with SI + molecular-simulation units.
     ///
     /// Covers the SI base set plus the MD working set: `angstrom`, `bohr`,

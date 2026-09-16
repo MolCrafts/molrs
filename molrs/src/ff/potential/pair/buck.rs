@@ -1,7 +1,9 @@
 //! Buckingham pair potential: E = A * exp(-r/rho) - C / r^6
 //!
 //! The exp-6 form used for repulsion/dispersion (e.g. CL&Pol non-bonded cores).
-//! Parameters per pair type: `A` (energy), `rho` (length), `C` (energy*length^6).
+//! Parameters per pair type: `a` (energy), `rho` (length), `c` (energy*length^6).
+//! Lowercase is the canonical spelling (spec ff-params-01) and matches molpy;
+//! GROMACS spells the middle one `B = 1/rho`, normalized at that reader.
 
 use std::collections::HashMap;
 
@@ -116,15 +118,15 @@ pub fn pair_buck_ctor(
             .get(label.as_str())
             .ok_or_else(|| format!("PairBuck: unknown pair type '{}'", label))?;
         let a = params
-            .get("A")
-            .ok_or_else(|| format!("PairBuck type '{}': missing 'A'", label))? as F;
+            .get("a")
+            .ok_or_else(|| format!("PairBuck type '{}': missing 'a'", label))? as F;
         let rho = params
             .get("rho")
             .ok_or_else(|| format!("PairBuck type '{}': missing 'rho'", label))?
             as F;
         let c = params
-            .get("C")
-            .ok_or_else(|| format!("PairBuck type '{}': missing 'C'", label))? as F;
+            .get("c")
+            .ok_or_else(|| format!("PairBuck type '{}': missing 'c'", label))? as F;
 
         atom_i.push(i_col[idx] as usize);
         atom_j.push(j_col[idx] as usize);

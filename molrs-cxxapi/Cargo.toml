@@ -1,5 +1,6 @@
 [package]
 name = "molcrafts-molrs-cxxapi"
+publish = false
 # Literal, not `.workspace = true`: this crate left the root workspace (see
 # [workspace] below), so there is no workspace.package to inherit from. Keep
 # these in step with ../Cargo.toml's [workspace.package] by hand — same rule the

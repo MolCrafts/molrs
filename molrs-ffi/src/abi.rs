@@ -52,6 +52,16 @@ pub fn forcefield_capsule_name() -> &'static CStr {
     NAME.get_or_init(|| versioned_name("molrs.ForceFieldRef"))
 }
 
+/// PyCapsule name for [`crate::RegionRef`] handles: `molrs.RegionRef/<abi_line>`.
+///
+/// A region crosses the boundary as shared geometry the consumer evaluates
+/// in place (see [`crate::RegionRef`]); the versioned name keeps a
+/// cross-minor exchange failing at the name check like the other handles.
+pub fn regionref_capsule_name() -> &'static CStr {
+    static NAME: OnceLock<CString> = OnceLock::new();
+    NAME.get_or_init(|| versioned_name("molrs.RegionRef"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -67,9 +77,13 @@ mod tests {
     fn capsule_names_carry_the_abi_line_and_differ() {
         let frame = frameref_capsule_name().to_str().expect("utf8");
         let ff = forcefield_capsule_name().to_str().expect("utf8");
+        let region = regionref_capsule_name().to_str().expect("utf8");
         assert_eq!(frame, format!("molrs.FrameRef/{}", abi_line()));
         assert_eq!(ff, format!("molrs.ForceFieldRef/{}", abi_line()));
+        assert_eq!(region, format!("molrs.RegionRef/{}", abi_line()));
         assert_ne!(frame, ff);
+        assert_ne!(frame, region);
+        assert_ne!(ff, region);
     }
 }
 
@@ -158,6 +172,10 @@ mod layout_snapshot {
             row!(crate::ForceFieldRef);
             row!(molrs::ff::ForceField);
         }
+
+        // Region handle: a fat `Arc<dyn Region>` (size/align only — the field
+        // is module-private). Always on, like `core`.
+        row!(crate::RegionRef);
 
         out
     }

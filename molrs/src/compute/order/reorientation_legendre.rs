@@ -37,7 +37,7 @@
 //! # Fitting τ_c
 //!
 //! The raw `C_2(t)` curve is `Fit`-ready: feed it to
-//! [`DebyeFit`](crate::compute::fitting::DebyeFit) (which fits a normalized
+//! [`DebyeFit`](crate::compute::transport::DebyeFit) (which fits a normalized
 //! `Φ(t) → τ` decay) to extract the rotational correlation time — no new fitting
 //! code is needed.
 

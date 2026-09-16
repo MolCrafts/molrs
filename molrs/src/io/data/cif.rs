@@ -3,7 +3,7 @@
 //! This implementation covers the CIF subset most molecular work needs:
 //!
 //! - `data_<id>` blocks. Multi-block files yield one [`Frame`] per
-//!   [`CifReader::read_frame`] call.
+//!   [`CifReader::read`] call.
 //! - Key-value pairs `_key  value`, including parenthesized esd (`5.917(3)`).
 //! - `loop_` tables. Only `_atom_site_*` (small-molecule CIF) and
 //!   `_atom_site.*` (mmCIF) loops are extracted into an atoms block — all

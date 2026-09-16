@@ -21,7 +21,7 @@
 //! Store is **real** (Å, kcal/mol, rad; `½k` harmonic form) for force fields
 //! read from physical styles, or **lj** pass-through when the file was already
 //! reduced. Writing always goes through
-//! [`LammpsFfUnits`](crate::ff::forcefield::lammps_units::LammpsFfUnits)
+//! [`LammpsFfUnits`]
 //! (`store → lj hub → target`) — never ad-hoc eV/kcal factors.
 //!
 //! Form map (independent of unit style):
@@ -69,7 +69,7 @@ pub struct LammpsWriteOptions {
     /// `atom_style` / `pair_style` in the input (LAMMPS rejects `units` after
     /// the box exists, and a second `units` is redundant).
     pub skip_units: bool,
-    /// LAMMPS `units` style for the written include (default [`"real"`]).
+    /// LAMMPS `units` style for the written include (default `"real"`).
     pub units: &'static str,
     /// Restrict pair coeffs to pairs whose atom types are a subset of this set.
     pub atom_types: Option<HashSet<String>>,
@@ -444,15 +444,15 @@ fn write_data_dihedral_coeffs(
                         .params
                         .get("k")
                         .ok_or_else(|| format!("dihedral type `{}` missing `k`", t.name))?;
-                    let d_rad = t.params.get("d").unwrap_or(0.0);
-                    let n = t.params.get("n").unwrap_or(1.0);
+                    let sign = t.params.get("sign").unwrap_or(1.0);
+                    let n = t.params.get("periodicity").unwrap_or(1.0);
                     let k = units.energy(k_store)?;
                     rows.push((
                         id,
                         format!(
                             "{} {} {}",
                             fmt_num(k, opts.precision),
-                            fmt_num(d_rad.to_degrees(), opts.precision),
+                            fmt_num(sign, opts.precision),
                             n.round() as i64
                         ),
                     ));
@@ -468,30 +468,10 @@ fn write_data_dihedral_coeffs(
                     else {
                         continue;
                     };
-                    let f1 = units.energy(
-                        t.params
-                            .get("f1")
-                            .or_else(|| t.params.get("c1"))
-                            .unwrap_or(0.0),
-                    )?;
-                    let f2 = units.energy(
-                        t.params
-                            .get("f2")
-                            .or_else(|| t.params.get("c2"))
-                            .unwrap_or(0.0),
-                    )?;
-                    let f3 = units.energy(
-                        t.params
-                            .get("f3")
-                            .or_else(|| t.params.get("c3"))
-                            .unwrap_or(0.0),
-                    )?;
-                    let f4 = units.energy(
-                        t.params
-                            .get("f4")
-                            .or_else(|| t.params.get("c4"))
-                            .unwrap_or(0.0),
-                    )?;
+                    let f1 = units.energy(t.params.get("k1").unwrap_or(0.0))?;
+                    let f2 = units.energy(t.params.get("k2").unwrap_or(0.0))?;
+                    let f3 = units.energy(t.params.get("k3").unwrap_or(0.0))?;
+                    let f4 = units.energy(t.params.get("k4").unwrap_or(0.0))?;
                     rows.push((
                         id,
                         format!(
@@ -605,6 +585,7 @@ fn write_pair_section(
                 s.name,
                 format_nums(&params, opts.precision)
             ));
+            lines.extend(pair_modify_line(s));
             lines.push("\n".to_owned());
         }
         write_pair_coeffs(lines, s, /*hybrid_substyle=*/ None, opts, units)?;
@@ -623,6 +604,9 @@ fn write_pair_section(
             }
         }
         lines.push(format!("pair_style hybrid {}\n", sub.join(" ")));
+        // A hybrid needs `pair_modify pair <substyle> mix <rule>` per sub-style;
+        // no in-tree force field carries a non-default `mixing` on a hybrid, so
+        // emitting it is deferred rather than guessed.
         lines.push("\n".to_owned());
     }
     let mut seen = HashSet::new();
@@ -631,6 +615,16 @@ fn write_pair_section(
     }
     lines.push("\n".to_owned());
     Ok(())
+}
+
+/// `pair_modify mix <rule>` for a style that declares one. LAMMPS' own default
+/// for `lj/cut` is `geometric`, so a force field mixing any other way must say
+/// so on its way out or the run silently uses the wrong cross terms.
+fn pair_modify_line(style: &Style) -> Option<String> {
+    style
+        .params
+        .get_str("mixing")
+        .map(|rule| format!("pair_modify mix {rule}\n"))
 }
 
 fn is_split_lj_coulomb(styles: &[&Style]) -> bool {
@@ -666,6 +660,7 @@ fn write_combined_lj_coulomb(
             fmt_num(lj_cut, opts.precision),
             fmt_num(coul_cut, opts.precision)
         ));
+        lines.extend(pair_modify_line(lj));
         lines.push("\n".to_owned());
     }
     // Only LJ carries per-type ε/σ; Coulomb charges live on the atoms.
@@ -930,7 +925,8 @@ fn write_dihedral_fourier(
     Ok(())
 }
 
-/// Collect fourier terms `(K_file, n, phase_deg)` from molrs keys `k{i}/n{i}/d{i}`.
+/// Collect fourier terms `(K_file, n, phase_deg)` from the canonical keys
+/// `k{i}` / `periodicity{i}` / `phase{i}`.
 fn fourier_terms(
     params: &Params,
     name: &str,
@@ -940,15 +936,16 @@ fn fourier_terms(
     let mut i = 1usize;
     while let Some(k_store) = params.get(&format!("k{i}")) {
         let n = params
-            .get(&format!("n{i}"))
-            .ok_or_else(|| format!("dihedral type `{name}` has k{i} but missing n{i}"))?;
-        let d_rad = params.get(&format!("d{i}")).unwrap_or(0.0);
+            .get(&format!("periodicity{i}"))
+            .ok_or_else(|| format!("dihedral type `{name}` has k{i} but missing periodicity{i}"))?;
+        let d_rad = params.get(&format!("phase{i}")).unwrap_or(0.0);
         terms.push((units.energy(k_store)?, n, d_rad.to_degrees()));
         i += 1;
     }
     if terms.is_empty() {
         return Err(format!(
-            "dihedral type `{name}` has no fourier terms (expected k1/n1/d1…)"
+            "dihedral type `{name}` has no fourier terms \
+             (expected k1/periodicity1/phase1…)"
         ));
     }
     Ok(terms)
@@ -971,30 +968,10 @@ fn write_dihedral_opls(
             continue;
         };
         // molrs OPLS kernel keys are f1–f4 (energy); accept legacy c1–c4 aliases.
-        let f1 = units.energy(
-            t.params
-                .get("f1")
-                .or_else(|| t.params.get("c1"))
-                .unwrap_or(0.0),
-        )?;
-        let f2 = units.energy(
-            t.params
-                .get("f2")
-                .or_else(|| t.params.get("c2"))
-                .unwrap_or(0.0),
-        )?;
-        let f3 = units.energy(
-            t.params
-                .get("f3")
-                .or_else(|| t.params.get("c3"))
-                .unwrap_or(0.0),
-        )?;
-        let f4 = units.energy(
-            t.params
-                .get("f4")
-                .or_else(|| t.params.get("c4"))
-                .unwrap_or(0.0),
-        )?;
+        let f1 = units.energy(t.params.get("k1").unwrap_or(0.0))?;
+        let f2 = units.energy(t.params.get("k2").unwrap_or(0.0))?;
+        let f3 = units.energy(t.params.get("k3").unwrap_or(0.0))?;
+        let f4 = units.energy(t.params.get("k4").unwrap_or(0.0))?;
         lines.push(format!(
             "dihedral_coeff {} {} {} {} {}\n",
             label,
@@ -1017,7 +994,7 @@ fn write_dihedral_harmonic(
     opts: &LammpsWriteOptions,
     units: &WriteUnits,
 ) -> Result<(), String> {
-    // dihedral_style harmonic: K d n  (d phase degrees, n multiplicity)
+    // dihedral_style harmonic: K d n  (d = ±1 sign, n multiplicity)
     lines.push("dihedral_style harmonic\n".to_owned());
     let StyleDefs::Dihedral(types) = &style.defs else {
         return Ok(());
@@ -1032,14 +1009,14 @@ fn write_dihedral_harmonic(
             .params
             .get("k")
             .ok_or_else(|| format!("dihedral type `{}` missing param `k`", t.name))?;
-        let d_rad = t.params.get("d").unwrap_or(0.0);
-        let n = t.params.get("n").unwrap_or(1.0);
+        let sign = t.params.get("sign").unwrap_or(1.0);
+        let n = t.params.get("periodicity").unwrap_or(1.0);
         let k = units.energy(k_store)?;
         lines.push(format!(
             "dihedral_coeff {} {} {} {}\n",
             label,
             fmt_num(k, opts.precision),
-            fmt_num(d_rad.to_degrees(), opts.precision),
+            fmt_num(sign, opts.precision),
             // multiplicity is an integer in LAMMPS
             n.round() as i64
         ));
@@ -1251,8 +1228,8 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
         };
         let dt = &dtypes[0];
         assert!((dt.params.get("k1").unwrap() - 0.06).abs() < 1e-12);
-        assert!((dt.params.get("n1").unwrap() - 3.0).abs() < 1e-12);
-        assert!((dt.params.get("d1").unwrap() - 0.0).abs() < 1e-12);
+        assert!((dt.params.get("periodicity1").unwrap() - 3.0).abs() < 1e-12);
+        assert!((dt.params.get("phase1").unwrap() - 0.0).abs() < 1e-12);
 
         let lj = ff2.get_style("pair", "lj/cut").unwrap();
         let pt = lj.get_pairtype("c3", None).unwrap();

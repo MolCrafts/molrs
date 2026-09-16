@@ -104,6 +104,16 @@ fn strip_comments(src: &str) -> String {
 // ===========================================================================
 
 #[test]
+fn fft_gating_reason_is_documented() {
+    let src = fs::read_to_string(src_dir().join("ff/potential/kspace/mod.rs"))
+        .expect("read kspace module");
+    assert!(
+        src.contains("FFT dependency"),
+        "kspace module must document why it remains as an FFT gating boundary"
+    );
+}
+
+#[test]
 fn ac001_params_dir_is_flat_and_is_the_only_home() {
     let params = params_dir();
     assert!(

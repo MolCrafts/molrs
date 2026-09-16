@@ -53,6 +53,9 @@ jobs:
             | sudo tar -xz -C /usr/local --strip-components=1
           wasm-opt --version
 
+      - name: Lint WASM bindings
+        run: cargo clippy --manifest-path molrs-wasm/Cargo.toml --target wasm32-unknown-unknown --all-targets -- -D warnings
+
       - name: Build wasm
         working-directory: molrs-wasm
         run: wasm-pack build --release --target bundler --scope molcrafts --out-name molrs

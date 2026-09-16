@@ -65,7 +65,8 @@ use crate::io::zarr::sequence::{FrameSequenceWriter, SequenceSchema};
 use crate::io::zarr::store::PositionalWriteStore;
 use molrs::MolRsError;
 use molrs::store::block::Column;
-#[cfg(feature = "filesystem")]
+// Not `filesystem`-gated: the store-taking section door below names it in
+// every configuration, wasm included.
 use molrs::store::frame::Frame;
 use molrs::store::record::MolRec;
 #[cfg(feature = "filesystem")]
@@ -418,6 +419,69 @@ pub fn read_record_file(path: impl AsRef<Path>) -> Result<MolRec, MolRsError> {
     let store: ReadableWritableListableStorage =
         Arc::new(FilesystemStore::new(path).map_err(zerr)?);
     read_record_store(store)
+}
+
+/// Read **one** `Frame`-shaped section of a record from an open store.
+///
+/// Sections are independent: a record may carry a `frame`, a `system`, a
+/// `trajectory`, or several at once, and a caller that wants one of them has
+/// no business paying for the rest. [`read_record_store`] decodes everything
+/// it finds — including a `trajectory` of any size — so it is the wrong door
+/// for "give me the topology out of this run".
+///
+/// `section` is a top-level group name (`"frame"`, `"system"`, or a producer's
+/// own). `Ok(None)` when the record has no such section; the store is listed,
+/// not decoded, to find that out.
+///
+/// # Errors
+///
+/// The same store errors as [`read_record_store`].
+pub fn read_frame_section_store(
+    store: ReadableWritableListableStorage,
+    section: &str,
+) -> Result<Option<Frame>, MolRsError> {
+    let root = Node::open(&store, "/")?;
+    for child in root.children() {
+        if !matches!(child.metadata(), NodeMetadata::Group(_)) {
+            continue;
+        }
+        let path = child.path().as_str().to_string();
+        if path.rsplit('/').next().unwrap_or("") == section {
+            return Ok(Some(read_frame_group(&store, &path)?));
+        }
+    }
+    Ok(None)
+}
+
+/// The record's top-level section names, without decoding any of them.
+///
+/// The store-taking twin of [`section_names`], which needs a filesystem path.
+///
+/// # Errors
+///
+/// The same store errors as [`read_record_store`].
+pub fn section_names_store(
+    store: ReadableWritableListableStorage,
+) -> Result<Vec<String>, MolRsError> {
+    let root = Node::open(&store, "/")?;
+    let mut names = Vec::new();
+    for child in root.children() {
+        if !matches!(child.metadata(), NodeMetadata::Group(_)) {
+            continue;
+        }
+        let name = child
+            .path()
+            .as_str()
+            .rsplit('/')
+            .next()
+            .unwrap_or("")
+            .to_string();
+        if !name.is_empty() {
+            names.push(name);
+        }
+    }
+    names.sort();
+    Ok(names)
 }
 
 /// Read a record from an open store, rooted at `/`.

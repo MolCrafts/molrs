@@ -112,6 +112,17 @@ impl PyTrajectory {
     fn count_frames(&self) -> usize {
         self.inner.frames.len()
     }
+
+    fn __reduce__<'py>(
+        slf: &Bound<'py, Self>,
+    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, pyo3::types::PyTuple>)> {
+        let py = slf.py();
+        let this = slf.borrow();
+        crate::helpers::reduce_via_type(
+            slf.as_any(),
+            (this.frames()?, this.step(py), this.time(py)),
+        )
+    }
 }
 
 #[pymethods]
@@ -156,6 +167,61 @@ impl PyScalarObservable {
     fn kind(&self) -> &'static str {
         "scalar"
     }
+
+    #[getter]
+    fn description(&self) -> String {
+        self.inner.description.clone()
+    }
+
+    #[getter]
+    fn unit(&self) -> Option<String> {
+        self.inner.unit.clone()
+    }
+
+    #[getter]
+    fn axes(&self) -> Vec<String> {
+        self.inner.axes.clone()
+    }
+
+    #[getter]
+    fn time_dependent(&self) -> bool {
+        self.inner.time_dependent
+    }
+
+    #[getter]
+    fn sampling(&self) -> Option<String> {
+        self.inner.sampling.clone()
+    }
+
+    #[getter]
+    fn domain(&self) -> Option<String> {
+        self.inner.domain.clone()
+    }
+
+    #[getter]
+    fn target(&self) -> Option<String> {
+        self.inner.target.clone()
+    }
+
+    fn __reduce__<'py>(
+        slf: &Bound<'py, Self>,
+    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, pyo3::types::PyTuple>)> {
+        let this = slf.borrow();
+        crate::helpers::reduce_via_type(
+            slf.as_any(),
+            (
+                this.name(),
+                this.data(slf.py())?,
+                this.description(),
+                this.unit(),
+                this.axes(),
+                this.time_dependent(),
+                this.sampling(),
+                this.domain(),
+                this.target(),
+            ),
+        )
+    }
 }
 
 #[pymethods]
@@ -199,6 +265,61 @@ impl PyVectorObservable {
     #[getter]
     fn kind(&self) -> &'static str {
         "vector"
+    }
+
+    #[getter]
+    fn description(&self) -> String {
+        self.inner.description.clone()
+    }
+
+    #[getter]
+    fn unit(&self) -> Option<String> {
+        self.inner.unit.clone()
+    }
+
+    #[getter]
+    fn axes(&self) -> Vec<String> {
+        self.inner.axes.clone()
+    }
+
+    #[getter]
+    fn time_dependent(&self) -> bool {
+        self.inner.time_dependent
+    }
+
+    #[getter]
+    fn sampling(&self) -> Option<String> {
+        self.inner.sampling.clone()
+    }
+
+    #[getter]
+    fn domain(&self) -> Option<String> {
+        self.inner.domain.clone()
+    }
+
+    #[getter]
+    fn target(&self) -> Option<String> {
+        self.inner.target.clone()
+    }
+
+    fn __reduce__<'py>(
+        slf: &Bound<'py, Self>,
+    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, pyo3::types::PyTuple>)> {
+        let this = slf.borrow();
+        crate::helpers::reduce_via_type(
+            slf.as_any(),
+            (
+                this.name(),
+                this.data(slf.py())?,
+                this.description(),
+                this.unit(),
+                this.axes(),
+                this.time_dependent(),
+                this.sampling(),
+                this.domain(),
+                this.target(),
+            ),
+        )
     }
 }
 

@@ -263,16 +263,21 @@ fn find_run_ranges(lines: &[&str]) -> Vec<(usize, usize)> {
             }
         })
         .collect();
-    let wall_idx = total_wall_time_index(lines);
+    // A log written with `log ... append` holds one `Total wall time:` per
+    // LAMMPS invocation, not one per file. Clamping every run to the *first*
+    // of them put the end before the start for any run belonging to a later
+    // invocation, and `lines[start..end]` then panicked. Each run ends at the
+    // first wall-time line that follows it.
+    let wall_idxs = total_wall_time_indices(lines);
     let mut ranges = Vec::with_capacity(starts.len());
     for (i, &start) in starts.iter().enumerate() {
         let next_start = starts.get(i + 1).copied().unwrap_or(lines.len());
-        let end = if wall_idx >= 0 {
-            next_start.min(wall_idx as usize)
-        } else {
-            next_start
+        let wall_index = wall_idxs.partition_point(|&wall| wall <= start);
+        let end = match wall_idxs.get(wall_index) {
+            Some(&wall) => next_start.min(wall),
+            None => next_start,
         };
-        ranges.push((start, end));
+        ranges.push((start, end.max(start)));
     }
     ranges
 }
@@ -671,6 +676,17 @@ fn total_wall_time_index(lines: &[&str]) -> i64 {
     first_index(lines, |line| line.trim().starts_with("Total wall time:"))
 }
 
+/// Every `Total wall time:` line, ascending — one per LAMMPS invocation, so an
+/// appended restart log has more than one.
+fn total_wall_time_indices(lines: &[&str]) -> Vec<usize> {
+    lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| line.trim().starts_with("Total wall time:"))
+        .map(|(idx, _)| idx)
+        .collect()
+}
+
 // ---------------------------------------------------------------------------
 // Line matchers (no regex dependency)
 // ---------------------------------------------------------------------------
@@ -981,5 +997,49 @@ Loop time of 0.1 on 1 procs
         assert_eq!(thermo.rows[0][0], 0.0);
         assert!(thermo.n_rows() >= 2);
         assert_eq!(log.total_wall_time.as_deref(), Some("0:01:01"));
+    }
+
+    /// A log written with `log ... append` carries one `Total wall time:` per
+    /// LAMMPS invocation. Clamping every run to the first of them put the end
+    /// index before the start for runs belonging to a later invocation, and
+    /// `lines[start..end]` panicked with
+    /// `slice index starts at N but ends at M`.
+    #[test]
+    fn appended_restart_log_keeps_runs_of_every_invocation() {
+        let text = "\
+LAMMPS (30 Mar 2026)
+Per MPI rank memory allocation (min/avg/max) = 1 | 1 | 1 Mbytes
+   Step          Temp
+         0   400
+      1000   398
+Loop time of 1.0 on 1 procs for 1000 steps with 10 atoms
+Total wall time: 0:00:01
+Per MPI rank memory allocation (min/avg/max) = 1 | 1 | 1 Mbytes
+   Step          Temp
+      1000   398
+      2000   396
+Loop time of 1.0 on 1 procs for 1000 steps with 10 atoms
+Total wall time: 0:00:02
+";
+        let log = parse_lammps_log_text(text, "append.log", "default");
+        assert_eq!(log.runs.len(), 2, "both invocations' runs survive");
+        for run in &log.runs {
+            let thermo = run.thermo.as_ref().expect("thermo");
+            assert_eq!(thermo.n_rows(), 2);
+        }
+        // The second run's rows come from the second invocation, not the first.
+        assert_eq!(log.runs[1].thermo.as_ref().unwrap().rows[0][0], 1000.0);
+    }
+
+    #[test]
+    fn run_ranges_never_invert_when_wall_time_precedes_a_run() {
+        let lines = vec![
+            "Per MPI rank memory allocation (min/avg/max) = 1 | 1 | 1 Mbytes",
+            "Total wall time: 0:00:01",
+            "Per MPI rank memory allocation (min/avg/max) = 1 | 1 | 1 Mbytes",
+        ];
+        for (start, end) in find_run_ranges(&lines) {
+            assert!(start <= end, "range {start}..{end} inverted");
+        }
     }
 }

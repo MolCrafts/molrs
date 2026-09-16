@@ -18,11 +18,15 @@ Workflow `.github/workflows/publish.yml`:
 | `build-python-pyodide` | Emscripten/Pyodide wheel → artifact |
 | `publish-python` | PyPI (all wheels, trusted publishing) |
 
-Re-run: Actions → Publish → `workflow_dispatch` (idempotent skips).
+Re-run the failed tag workflow, or dispatch Publish against the same tag
+(idempotent skips). Branch dispatches run CI and build artifacts without
+publishing. Tags must match the root package version and be on master.
+Registry publications wait for CI. The public checklist is [docs/releasing.md](../../docs/releasing.md).
 
 ## scripts/
 
-Only `scripts/fetch-test-data.sh` lives in-tree. No publish helper scripts.
+Fixture fetching and the optional shared-library verification scripts live
+here. No publish helper scripts; publishing stays in the workflow.
 
 ## v0.12.1 (2026-08-05)
 
@@ -60,4 +64,6 @@ Only `scripts/fetch-test-data.sh` lives in-tree. No publish helper scripts.
 - Identity scalar `Idx = u64` (retired `U = u32`); column storage widths preserved (no f32→f64 / i64→i32 / u64→u32 narrowing)
 - WASM domain-uint columns are `BigUint64Array`; JS names stay `setColU32` / `copyColU32` / `viewColU32` / `hasU32`
 - wasm `NeighborQuery` symmetry deferred to 0.15 (binder-surface-symmetry note)
+- `Region` trait gains `distance` / `distance_grad` (negative inside); one type per shape, outside is `NotRegion` — `HollowSphere` removed (`Sphere & ~Sphere`; molpy's `__init__` re-export dropped in lockstep, 2026-09-14); boundaries closed (`Parallelepiped` was half-open); new `HalfSpace`, `Cylinder`, `Ellipsoid`, `Polyhedron` (watertight `TriMesh`), `SphereUnion` (atoms as a region, periodic minimum image); Python `TriMesh`, `io.read_stl`, `distance` on every region class, composed-`Region` pickling as an object tree (was a JSON recipe)
+- `molrs_ffi::RegionRef` + capsule `molrs.RegionRef/<abi_line>` (`_ffi_regionref_capsule()` on every region class); `_ffi_abi_token()` is a 5-tuple (consumers read indices 0–1)
 - prmtop-derived force fields declare `lj/cut` + `coul/cut` with explicit `coulomb`/`dielectric`/`cutoff` (`AMBER_COULOMB = 18.2223²`). A LAMMPS include written **with** its header changes from `pair_style lj/cut/coul/long 10 10` to `pair_style lj/cut/coul/cut 9 10`; `pair_coeff` lines are unchanged. NBFIX / 12-6-4 / multi-term-improper / non-uniform-SCEE prmtops are refused.

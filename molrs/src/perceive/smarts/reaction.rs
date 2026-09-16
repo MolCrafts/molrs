@@ -676,6 +676,7 @@ fn bond_between(mol: &Atomistic, a: AtomId, b: AtomId) -> Option<BondId> {
 /// reaction applies to a match).
 #[derive(Debug, Clone)]
 pub struct Reaction {
+    source: String,
     reactants: Vec<SmartsPattern>,
     reactant_src: Vec<String>,
     product: SmartsPattern,
@@ -725,11 +726,17 @@ impl Reaction {
         let transform = Transform::compile(&reactants, &product)?;
 
         Ok(Reaction {
+            source: reaction_smarts.to_string(),
             reactants,
             reactant_src,
             product,
             transform,
         })
+    }
+
+    /// Original reaction SMARTS used to compile this transform.
+    pub fn source(&self) -> &str {
+        &self.source
     }
 
     /// The reactant components (LHS), one [`SmartsPattern`] per top-level `.`

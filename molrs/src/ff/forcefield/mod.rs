@@ -66,6 +66,10 @@ impl Params {
         self.strings.insert(key.to_owned(), value.to_owned());
     }
 
+    pub fn get_str(&self, key: &str) -> Option<&str> {
+        self.strings.get(key).map(String::as_str)
+    }
+
     pub fn iter_strings(&self) -> impl Iterator<Item = (&str, &str)> + '_ {
         self.strings.iter().map(|(k, v)| (k.as_str(), v.as_str()))
     }
@@ -649,7 +653,7 @@ impl Style {
 ///
 /// let mut ff = ForceField::new("example");
 /// ff.def_bondstyle("harmonic")
-///     .def_type("A-B", &[("k0", 300.0), ("r0", 1.5)]);
+///     .def_type("A-B", &[("k", 300.0), ("r0", 1.5)]);
 /// ff.def_pairstyle("lj/cut", &[("cutoff", 10.0)])
 ///     .def_type("A", &[("epsilon", 0.5), ("sigma", 1.0)]);
 ///
@@ -1038,8 +1042,8 @@ mod tests {
 
     #[test]
     fn test_params() {
-        let p = Params::from_pairs(&[("k0", 300.0), ("r0", 1.5)]);
-        assert_eq!(p.get("k0"), Some(300.0));
+        let p = Params::from_pairs(&[("k", 300.0), ("r0", 1.5)]);
+        assert_eq!(p.get("k"), Some(300.0));
         assert_eq!(p.get("r0"), Some(1.5));
         assert_eq!(p.get("missing"), None);
     }
@@ -1066,8 +1070,8 @@ mod tests {
     fn test_def_bondstyle_and_types() {
         let mut ff = ForceField::new("test");
         let style = ff.def_bondstyle("harmonic");
-        style.def_bondtype("CT", "CT", &[("k0", 268.0), ("r0", 1.529)]);
-        style.def_bondtype("CT", "HC", &[("k0", 340.0), ("r0", 1.09)]);
+        style.def_bondtype("CT", "CT", &[("k", 268.0), ("r0", 1.529)]);
+        style.def_bondtype("CT", "HC", &[("k", 340.0), ("r0", 1.09)]);
 
         let style = ff.get_style("bond", "harmonic").unwrap();
         let StyleDefs::Bond(types) = &style.defs else {
@@ -1076,7 +1080,7 @@ mod tests {
         assert_eq!(types.len(), 2);
 
         let bt = style.get_bondtype("CT", "CT").unwrap();
-        assert_eq!(bt.params.get("k0"), Some(268.0));
+        assert_eq!(bt.params.get("k"), Some(268.0));
 
         // Order-independent lookup
         let bt2 = style.get_bondtype("HC", "CT").unwrap();
@@ -1087,7 +1091,7 @@ mod tests {
     fn test_def_anglestyle_and_types() {
         let mut ff = ForceField::new("test");
         let style = ff.def_anglestyle("harmonic");
-        style.def_angletype("HC", "CT", "HC", &[("k0", 33.0), ("theta0", 107.8)]);
+        style.def_angletype("HC", "CT", "HC", &[("k", 33.0), ("theta0", 107.8)]);
 
         let types = ff.get_angletypes();
         assert_eq!(types.len(), 1);
@@ -1122,11 +1126,11 @@ mod tests {
     fn test_duplicate_style_returns_existing() {
         let mut ff = ForceField::new("test");
         ff.def_bondstyle("harmonic")
-            .def_bondtype("A", "B", &[("k0", 1.0), ("r0", 1.0)]);
+            .def_bondtype("A", "B", &[("k", 1.0), ("r0", 1.0)]);
 
         // Second call returns the same style, not a new one
         ff.def_bondstyle("harmonic")
-            .def_bondtype("C", "D", &[("k0", 2.0), ("r0", 2.0)]);
+            .def_bondtype("C", "D", &[("k", 2.0), ("r0", 2.0)]);
 
         let styles = ff.get_styles("bond");
         assert_eq!(styles.len(), 1);
@@ -1155,12 +1159,12 @@ mod tests {
     fn test_def_type_bond() {
         let mut ff = ForceField::new("test");
         let style = ff.def_bondstyle("harmonic");
-        style.def_type("CT-OH", &[("k0", 300.0), ("r0", 1.4)]);
+        style.def_type("CT-OH", &[("k", 300.0), ("r0", 1.4)]);
 
         let bt = style.get_bondtype("CT", "OH").unwrap();
         assert_eq!(bt.itom, "CT");
         assert_eq!(bt.jtom, "OH");
-        assert_eq!(bt.params.get("k0"), Some(300.0));
+        assert_eq!(bt.params.get("k"), Some(300.0));
         assert_eq!(bt.params.get("r0"), Some(1.4));
     }
 
@@ -1168,7 +1172,7 @@ mod tests {
     fn test_def_type_angle() {
         let mut ff = ForceField::new("test");
         let style = ff.def_anglestyle("harmonic");
-        style.def_type("HC-CT-HC", &[("k0", 33.0), ("theta0", 107.8)]);
+        style.def_type("HC-CT-HC", &[("k", 33.0), ("theta0", 107.8)]);
 
         let StyleDefs::Angle(types) = &style.defs else {
             panic!("expected Angle defs");
@@ -1222,8 +1226,8 @@ mod tests {
         let mut ff = ForceField::new("test");
         let style = ff.def_bondstyle("harmonic");
         style
-            .def_type("A-B", &[("k0", 1.0), ("r0", 1.0)])
-            .def_type("C-D", &[("k0", 2.0), ("r0", 2.0)]);
+            .def_type("A-B", &[("k", 1.0), ("r0", 1.0)])
+            .def_type("C-D", &[("k", 2.0), ("r0", 2.0)]);
 
         let StyleDefs::Bond(types) = &style.defs else {
             panic!("expected Bond defs");
@@ -1236,7 +1240,7 @@ mod tests {
     fn test_def_type_bond_invalid_format() {
         let mut ff = ForceField::new("test");
         let style = ff.def_bondstyle("harmonic");
-        style.def_type("CT", &[("k0", 300.0), ("r0", 1.4)]);
+        style.def_type("CT", &[("k", 300.0), ("r0", 1.4)]);
     }
 
     #[test]
@@ -1248,7 +1252,7 @@ mod tests {
         style.def_atomtype("OH", &[("mass", 16.0)]);
 
         let style = ff.def_bondstyle("harmonic");
-        style.def_bondtype("CT", "OH", &[("k0", 300.0), ("r0", 1.4)]);
+        style.def_bondtype("CT", "OH", &[("k", 300.0), ("r0", 1.4)]);
 
         assert_eq!(ff.get_atomtypes().len(), 2);
         assert_eq!(ff.get_bondtypes().len(), 1);
@@ -1268,11 +1272,11 @@ mod tests {
         a.def_atomtype("HC", &[("mass", 1.008)]);
         a.def_atomtype("OH", &[("mass", 15.999)]);
         let b = ff.def_bondstyle("harmonic");
-        b.def_bondtype("CT", "HC", &[("k0", 340.0), ("r0", 1.09)]);
-        b.def_bondtype("CT", "OH", &[("k0", 320.0), ("r0", 1.41)]);
+        b.def_bondtype("CT", "HC", &[("k", 340.0), ("r0", 1.09)]);
+        b.def_bondtype("CT", "OH", &[("k", 320.0), ("r0", 1.41)]);
         let ang = ff.def_anglestyle("harmonic");
-        ang.def_angletype("HC", "CT", "HC", &[("k0", 33.0), ("theta0", 107.8)]);
-        ang.def_angletype("HC", "CT", "OH", &[("k0", 35.0), ("theta0", 109.5)]);
+        ang.def_angletype("HC", "CT", "HC", &[("k", 33.0), ("theta0", 107.8)]);
+        ang.def_angletype("HC", "CT", "OH", &[("k", 35.0), ("theta0", 109.5)]);
         let dih = ff.def_dihedralstyle("opls");
         dih.def_dihedraltype("HC", "CT", "CT", "HC", &[("k1", 0.0)]);
         let imp = ff.def_improperstyle("cvff");

@@ -3,7 +3,7 @@
 //! Specs: <https://docs.lammps.org/read_data.html>,
 //! <https://docs.lammps.org/atom_style.html>
 //!
-//! Atom-style layouts and shared helpers live in [`crate::io::lammps`].
+//! Atom-style layouts and shared helpers live in the internal `io::lammps` module.
 //! Atoms are streamed straight into typed column buffers (no intermediate
 //! per-atom struct), which cuts peak memory on large systems.
 

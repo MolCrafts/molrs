@@ -9,7 +9,7 @@
 //!
 //! so the damped pair energy is `f_n(r) * q_i q_j / r`. The derivative collapses
 //! to a single term: `f'_n(r) = c b exp(-b r) (b r)^n / n!`. CL&Pol canonical
-//! settings: `n = 4`, `b = 4.5` (1/A), `c = 1.0` — taken from the pair style's
+//! settings: `order = 4`, `b = 4.5` (1/A), `c = 1.0` — taken from the pair style's
 //! params; the per-atom-type `charge` comes from the atoms block.
 //!
 //! Reference: Tang & Toennies, J. Chem. Phys. 80 (1984) 3726,
@@ -112,7 +112,8 @@ impl Potential for PairTangToennies {
 
 /// Construct a [`PairTangToennies`] from style params, per-atom-type charge, and topology.
 ///
-/// Style params: `b` (default 4.5), `n` (default 4), `c` (default 1.0). The
+/// Style params: `b` (default 4.5), `order` (the damping order n, default 4),
+/// `c` (default 1.0). The
 /// thole-like per-atom-type `charge` is read from the atoms block.
 pub fn pair_tang_toennies_ctor(
     style_params: &Params,
@@ -121,7 +122,7 @@ pub fn pair_tang_toennies_ctor(
 ) -> Result<Box<dyn Potential>, String> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
     let b = style_params.get("b").unwrap_or(4.5) as F;
-    let n = style_params.get("n").unwrap_or(4.0).round() as usize;
+    let n = style_params.get("order").unwrap_or(4.0).round() as usize;
     let c = style_params.get("c").unwrap_or(1.0) as F;
 
     let atoms = frame

@@ -34,6 +34,7 @@ from . import raw
 from . import mrec
 from .._lib import SmilesIR as SmilesIR
 from .._lib import (
+    read_stl as read_stl,
     write_smiles as write_smiles,
     write_smarts as write_smarts,
 )
@@ -461,9 +462,22 @@ def write_lammps_data(
     _write_lammps(str(file), frame)
 
 
-def write_lammps_traj(file: str | PathLike[str], frames: Sequence[Any]) -> None:
-    """Write Frames to a LAMMPS dump custom / atom trajectory (``.lammpstrj``)."""
-    _write_lammps_traj(str(file), list(frames))
+def write_lammps_traj(
+    file: str | PathLike[str],
+    frames: Sequence[Any],
+    columns: Sequence[str] | None = None,
+) -> None:
+    """Write Frames to a LAMMPS dump custom / atom trajectory (``.lammpstrj``).
+
+    ``columns`` is the ``dump custom`` column line, e.g. ``["id", "element",
+    "mol", "x", "y", "z"]``: written in that order, and a name the frame's
+    ``atoms`` block cannot supply raises. Names may be LAMMPS-native
+    (``mol``, ``q``, ``type``) or canonical (``mol_id``, ``charge``,
+    ``type_id``). The default writes every column the block holds.
+    """
+    _write_lammps_traj(
+        str(file), list(frames), None if columns is None else list(columns)
+    )
 
 
 def write_lammps_dump_local(file: str | PathLike[str], frames: Sequence[Any]) -> None:

@@ -6,7 +6,7 @@
 //! Column names in `ITEM: ATOMS …` are the source of truth (unlike data files,
 //! which encode layout via `atom_style`). Shared helpers — error mapping,
 //! column aliases (`q`→`charge`, `mol`→`mol_id`), SimBox construction — live
-//! in [`crate::io::lammps`] and are reused by the data-file reader.
+//! in the internal `io::lammps` module and are reused by the data-file reader.
 //!
 //! # Supported Features
 //!
@@ -27,7 +27,7 @@
 //! use molrs::io::reader::TrajectoryReader;
 //! let mut reader = open_lammps_dump("trajectory.lammpstrj")?;
 //! let frame_5 = reader.read_step(5)?;
-//! write_lammps_dump("output.lammpstrj", &frames)?;
+//! write_lammps_dump("output.lammpstrj", &frames, None)?;
 //! # Ok(())
 //! # }
 //! ```
@@ -66,12 +66,43 @@ enum ColumnType {
 /// Whether a frame's data section came from the per-atom (`dump
 /// atom/custom`) or per-entry (`dump local`) flavor of the LAMMPS dump
 /// format. Picked by which header keyword starts the count line:
-/// `ITEM: NUMBER OF ATOMS` vs. `ITEM: NUMBER OF ENTRIES`. Determines
-/// the destination block name on the resulting [`Frame`].
+/// `ITEM: NUMBER OF ATOMS` vs. one of [`LOCAL_LABELS`]. Determines the
+/// destination block name on the resulting [`Frame`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum BlockKind {
     Atoms,
     Entries,
+}
+
+/// Section labels a `dump local` frame may carry, in the `ITEM: NUMBER OF
+/// <LABEL>` / `ITEM: <LABEL> col…` pair.
+///
+/// `ENTRIES` is what LAMMPS writes by default; the rest come from
+/// [`dump_modify label <LABEL>`], which OVITO's LAMMPS-dump-local reader
+/// documents as the thing to set — its manual tells users to write
+/// `dump_modify bond_dump label BONDS`, so files in the wild carry `BONDS`
+/// at least as often as the default. Accepting only `ENTRIES` rejected
+/// exactly the setup that manual recommends.
+///
+/// The label says what the rows *mean*; it does not change how they parse,
+/// and it does not earn the rows a contract-bearing block name — see the
+/// note at the `block_name` binding below. All of them land in `entries`.
+///
+/// [`dump_modify label <LABEL>`]: https://docs.lammps.org/dump_modify.html
+/// Reference: <https://www.ovito.org/manual/reference/file_formats/input/lammps_dump_local.html>
+const LOCAL_LABELS: &[&str] = &[
+    "ENTRIES",
+    "BONDS",
+    "ANGLES",
+    "DIHEDRALS",
+    "IMPROPERS",
+    "NEIGHBORS",
+];
+
+/// The `dump local` label in a `ITEM: NUMBER OF <LABEL>` line, if any.
+fn local_label_of(count_header: &str) -> Option<&'static str> {
+    let tail = count_header.strip_prefix("ITEM: NUMBER OF ")?.trim();
+    LOCAL_LABELS.iter().copied().find(|label| tail == *label)
 }
 
 /// Classify a LAMMPS dump column by **canonical** name (post-alias).
@@ -322,29 +353,30 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
         }
     };
 
-    // -- ITEM: NUMBER OF ATOMS  /  ITEM: NUMBER OF ENTRIES --
+    // -- ITEM: NUMBER OF ATOMS  /  ITEM: NUMBER OF <LOCAL_LABELS> --
     //
     // Two flavors of LAMMPS dump output share this parser:
     //   * `dump atom/custom` writes per-atom rows under
     //     `ITEM: NUMBER OF ATOMS` + `ITEM: ATOMS …`.
-    //   * `dump local` (OVITO-compatible) writes per-bond / per-angle /
-    //     per-pair-distance rows under `ITEM: NUMBER OF ENTRIES` +
-    //     `ITEM: ENTRIES …`. See:
-    //     https://www.ovito.org/manual/reference/file_formats/input/lammps_dump_local.html
+    //   * `dump local` writes per-bond / per-angle / per-pair-distance rows
+    //     under `ITEM: NUMBER OF <LABEL>` + `ITEM: <LABEL> …`, where LABEL
+    //     is `ENTRIES` by default and anything in [`LOCAL_LABELS`] once
+    //     `dump_modify label` has been used.
     //
     // The per-row schema is identical (whitespace-separated tokens, one
     // line per row), so we accept either header keyword and stash a
-    // `BlockKind` discriminator to pick the destination block name when
-    // we build the Frame.
+    // `BlockKind` discriminator plus the label to pick the destination
+    // block name and the data-header keyword when we build the Frame.
     line.clear();
     reader.read_line(&mut line)?;
-    let block_kind = if line.trim().starts_with("ITEM: NUMBER OF ATOMS") {
-        BlockKind::Atoms
-    } else if line.trim().starts_with("ITEM: NUMBER OF ENTRIES") {
-        BlockKind::Entries
+    let (block_kind, local_label) = if line.trim().starts_with("ITEM: NUMBER OF ATOMS") {
+        (BlockKind::Atoms, "ATOMS")
+    } else if let Some(label) = local_label_of(line.trim()) {
+        (BlockKind::Entries, label)
     } else {
         return Err(err_mapper(format!(
-            "Expected 'ITEM: NUMBER OF ATOMS' or 'ITEM: NUMBER OF ENTRIES', got: {}",
+            "Expected 'ITEM: NUMBER OF ATOMS' or 'ITEM: NUMBER OF <{}>', got: {}",
+            LOCAL_LABELS.join("|"),
             line.trim()
         )));
     };
@@ -366,14 +398,14 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
     let (is_triclinic, boundary_raw) = DumpBoxBounds::parse_header(line.trim())?;
     let bounds = DumpBoxBounds::parse_lines(reader, is_triclinic, boundary_raw)?;
 
-    // -- ITEM: ATOMS  /  ITEM: ENTRIES --
+    // -- ITEM: ATOMS  /  ITEM: <label> --
+    //
+    // The data header repeats the label from the count line, so a frame
+    // that counted BONDS must name BONDS here too.
     line.clear();
     reader.read_line(&mut line)?;
-    let header_keyword = match block_kind {
-        BlockKind::Atoms => "ITEM: ATOMS",
-        BlockKind::Entries => "ITEM: ENTRIES",
-    };
-    if !line.trim().starts_with(header_keyword) {
+    let header_keyword = format!("ITEM: {}", local_label);
+    if !line.trim().starts_with(header_keyword.as_str()) {
         return Err(err_mapper(format!(
             "Expected '{}', got: {}",
             header_keyword,
@@ -384,7 +416,7 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
     // Extract column names from "ITEM: <keyword> col1 col2 ..."
     let header_tail = line
         .trim()
-        .strip_prefix(header_keyword)
+        .strip_prefix(header_keyword.as_str())
         .unwrap_or("")
         .trim();
     let col_names: Vec<String> = header_tail
@@ -618,6 +650,17 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
     // Timestep is frame-level metadata, not a box property.
     frame.meta.insert("timestep", timestep);
 
+    // What LAMMPS itself says the local rows mean. Column names are
+    // user-defined — `dump local c_bond[1] c_bond[2]` is the default spelling
+    // and carries no meaning at all — so the label is the only reliable
+    // signal, and a consumer must read it here rather than re-guess from the
+    // header. Kept as metadata rather than a block name for the reason given
+    // at `block_name` above: the rows still do not satisfy any
+    // contract-bearing block's schema.
+    if block_kind == BlockKind::Entries {
+        frame.meta.insert("dump_local_label", local_label);
+    }
+
     // Shared SimBox builder (same path as the data-file reader).
     let shared_bounds = BoxBounds {
         xlo: bounds.xlo,
@@ -846,7 +889,7 @@ impl<R: BufRead + Seek> TrajectoryReader for LAMMPSTrajReader<R> {
 ///
 /// # fn main() -> std::io::Result<()> {
 /// let frames: Vec<Frame> = vec![];
-/// write_lammps_dump("output.lammpstrj", &frames)?;
+/// write_lammps_dump("output.lammpstrj", &frames, None)?;
 /// # Ok(())
 /// # }
 /// ```
@@ -874,7 +917,7 @@ impl<W: Write> FrameWriter for LAMMPSDumpWriter<W> {
         // Refuse to emit a frame that violates the vocabulary: a bad file
         // looks fine and is found wrong later, by whatever reads it.
         crate::io::writer::check_before_write(frame)?;
-        write_lammps_dump_frame(&mut self.writer, frame)
+        write_lammps_dump_frame(&mut self.writer, frame, None)
     }
 }
 
@@ -882,9 +925,13 @@ impl<W: Write> FrameWriter for LAMMPSDumpWriter<W> {
 ///
 /// Accepts any type implementing [`FrameAccess`], including both [`Frame`] and
 /// [`FrameView`](molrs::store::frame_view::FrameView).
+///
+/// `columns` is the caller's `dump custom` line: `Some` writes exactly those
+/// columns in that order, `None` writes every column the block holds.
 fn write_lammps_dump_frame<W: Write>(
     writer: &mut W,
     frame: &impl FrameAccess,
+    columns: Option<&[&str]>,
 ) -> std::io::Result<()> {
     let natoms = frame
         .visit_block("atoms", |b| b.nrows().unwrap_or(0))
@@ -908,24 +955,30 @@ fn write_lammps_dump_frame<W: Write>(
     // -- Atoms --
     // Determine column ordering and write per-row data via visit_block
     let atom_lines: Vec<String> = frame
-        .visit_block("atoms", |atoms| {
+        .visit_block("atoms", |atoms| -> std::io::Result<Vec<String>> {
             let col_names = atoms.column_keys();
-            let mut ordered: Vec<&str> = Vec::with_capacity(col_names.len());
+            let ordered: Vec<String> = match columns {
+                Some(chosen) => select_dump_columns(chosen, &col_names)?,
+                None => {
+                    let mut ordered: Vec<&str> = Vec::with_capacity(col_names.len());
 
-            if col_names.contains(&"id") {
-                ordered.push("id");
-            }
-            if col_names.contains(&"type") {
-                ordered.push("type");
-            }
+                    if col_names.contains(&"id") {
+                        ordered.push("id");
+                    }
+                    if col_names.contains(&"type") {
+                        ordered.push("type");
+                    }
 
-            let mut remaining: Vec<&str> = col_names
-                .iter()
-                .filter(|&&n| n != "id" && n != "type")
-                .copied()
-                .collect();
-            remaining.sort();
-            ordered.extend(remaining);
+                    let mut remaining: Vec<&str> = col_names
+                        .iter()
+                        .filter(|&&n| n != "id" && n != "type")
+                        .copied()
+                        .collect();
+                    remaining.sort();
+                    ordered.extend(remaining);
+                    ordered.into_iter().map(str::to_string).collect()
+                }
+            };
 
             // `ordered` holds canonical keys, used to look values up in the
             // block. The header and the type heuristic both speak LAMMPS's
@@ -939,7 +992,7 @@ fn write_lammps_dump_frame<W: Write>(
 
             for row in 0..natoms {
                 let mut parts = Vec::with_capacity(ordered.len());
-                for (ci, &name) in ordered.iter().enumerate() {
+                for (ci, name) in ordered.iter().map(String::as_str).enumerate() {
                     let s = match col_types[ci] {
                         ColumnType::Unsigned => {
                             if let Some(arr) = atoms.get_uint_view(name) {
@@ -978,8 +1031,9 @@ fn write_lammps_dump_frame<W: Write>(
                 }
                 lines.push(parts.join(" "));
             }
-            lines
+            Ok(lines)
         })
+        .transpose()?
         .unwrap_or_default();
 
     for line in &atom_lines {
@@ -987,6 +1041,34 @@ fn write_lammps_dump_frame<W: Write>(
     }
 
     Ok(())
+}
+
+/// Resolve a caller's `dump custom` column list against the `atoms` block.
+///
+/// Names may be native (`mol`, `q`, `type`) or canonical (`mol_id`, `charge`,
+/// `type_id`); the returned keys are canonical, in the order asked for. A name
+/// the block cannot supply is an error: a dump silently missing the column the
+/// caller named is found wrong later, by whatever reads it.
+fn select_dump_columns(chosen: &[&str], col_names: &[&str]) -> std::io::Result<Vec<String>> {
+    if chosen.is_empty() {
+        return Err(err_mapper("dump column list must name at least one column"));
+    }
+    chosen
+        .iter()
+        .map(|name| {
+            let key = canonical_column_name(name);
+            if col_names.contains(&key.as_str()) {
+                Ok(key)
+            } else {
+                let have: Vec<&str> = col_names.iter().map(|n| native_column_name(n)).collect();
+                Err(err_mapper(format!(
+                    "dump column '{}' is not in the 'atoms' block (have: {})",
+                    name,
+                    have.join(" ")
+                )))
+            }
+        })
+        .collect()
 }
 
 /// Write a single frame as LAMMPS `dump local` (OVITO Load Trajectory bonds).
@@ -1216,15 +1298,21 @@ pub fn open_lammps_dump<P: AsRef<Path>>(
 /// Write frames to a LAMMPS dump file.
 ///
 /// Accepts a slice of any type implementing [`FrameAccess`], including
-/// `&[Frame]`. Existing callers continue to work without changes.
+/// `&[Frame]`.
+///
+/// `columns` is the `dump custom` column line: `Some(&["id", "element", "x",
+/// "y", "z"])` writes exactly those, in that order, and errors on a name the
+/// frame cannot supply; `None` writes every column the `atoms` block holds
+/// (`id`, `type`, then the rest sorted).
 pub fn write_lammps_dump<P: AsRef<Path>, FA: FrameAccess>(
     path: P,
     frames: &[FA],
+    columns: Option<&[&str]>,
 ) -> std::io::Result<()> {
     let file = File::create(path)?;
     let mut writer = std::io::BufWriter::new(file);
     for frame in frames {
-        write_lammps_dump_frame(&mut writer, frame)?;
+        write_lammps_dump_frame(&mut writer, frame, columns)?;
     }
     Ok(())
 }
@@ -1474,6 +1562,129 @@ ITEM: ENTRIES c_1[1] c_1[2] c_1[3]
         assert!(entries.dtype("c_1[1]").is_some());
         assert!(entries.dtype("c_1[2]").is_some());
         assert!(entries.dtype("c_1[3]").is_some());
+    }
+
+    /// `dump_modify … label BONDS` is what OVITO's LAMMPS-dump-local manual
+    /// tells users to set, so files in the wild carry it at least as often as
+    /// the LAMMPS default `ENTRIES`. Accepting only `ENTRIES` rejected exactly
+    /// the setup that manual recommends.
+    #[test]
+    fn test_dump_local_accepts_dump_modify_labels() {
+        for label in [
+            "ENTRIES",
+            "BONDS",
+            "ANGLES",
+            "DIHEDRALS",
+            "IMPROPERS",
+            "NEIGHBORS",
+        ] {
+            let dump = format!(
+                "\
+ITEM: TIMESTEP
+0
+ITEM: NUMBER OF {label}
+2
+ITEM: BOX BOUNDS pp pp pp
+0.0 10.0
+0.0 10.0
+0.0 10.0
+ITEM: {label} c_1[1] c_1[2]
+1 2
+2 3
+"
+            );
+            let mut reader = LAMMPSTrajReader::new(cursor(&dump));
+            let frames = crate::io::reader::collect_frames(&mut reader)
+                .unwrap_or_else(|e| panic!("label {label} rejected: {e}"));
+            assert_eq!(frames.len(), 1, "label {label}");
+            // Every label lands in `entries`: the label says what the rows
+            // mean, it does not make them satisfy a contract-bearing schema.
+            let entries = frames[0]
+                .get("entries")
+                .unwrap_or_else(|| panic!("label {label} produced no entries block"));
+            assert_eq!(entries.nrows(), Some(2), "label {label}");
+            assert_eq!(
+                frames[0]
+                    .meta
+                    .get("dump_local_label")
+                    .and_then(|v| v.as_str()),
+                Some(label),
+                "label {label} not recorded in meta"
+            );
+        }
+    }
+
+    /// The label is the only signal that survives default column naming, so
+    /// it must be readable even when the columns say nothing.
+    #[test]
+    fn test_dump_local_label_absent_for_per_atom_dump() {
+        let dump = "\
+ITEM: TIMESTEP
+0
+ITEM: NUMBER OF ATOMS
+1
+ITEM: BOX BOUNDS pp pp pp
+0.0 10.0
+0.0 10.0
+0.0 10.0
+ITEM: ATOMS id x y z
+1 1.0 2.0 3.0
+";
+        let mut reader = LAMMPSTrajReader::new(cursor(dump));
+        let frames = crate::io::reader::collect_frames(&mut reader).unwrap();
+        assert!(frames[0].meta.get("dump_local_label").is_none());
+    }
+
+    /// A mismatched pair — counted as BONDS, then a data header that says
+    /// ENTRIES — is a malformed file, not something to paper over.
+    #[test]
+    fn test_dump_local_label_must_match_between_header_lines() {
+        let dump = "\
+ITEM: TIMESTEP
+0
+ITEM: NUMBER OF BONDS
+1
+ITEM: BOX BOUNDS pp pp pp
+0.0 10.0
+0.0 10.0
+0.0 10.0
+ITEM: ENTRIES batom1 batom2
+1 2
+";
+        let mut reader = LAMMPSTrajReader::new(cursor(dump));
+        let err = crate::io::reader::collect_frames(&mut reader)
+            .expect_err("mismatched labels must not parse");
+        assert!(
+            err.to_string().contains("ITEM: BONDS"),
+            "error should name the expected header, got: {err}"
+        );
+    }
+
+    /// An unknown label is rejected with the accepted set named, so the
+    /// message tells the user which `dump_modify label` values work.
+    #[test]
+    fn test_dump_local_unknown_label_rejected() {
+        let dump = "\
+ITEM: TIMESTEP
+0
+ITEM: NUMBER OF WIDGETS
+1
+ITEM: BOX BOUNDS pp pp pp
+0.0 10.0
+0.0 10.0
+0.0 10.0
+ITEM: WIDGETS a b
+1 2
+";
+        let mut reader = LAMMPSTrajReader::new(cursor(dump));
+        let err = crate::io::reader::collect_frames(&mut reader)
+            .expect_err("unknown label must not parse");
+        let text = err.to_string();
+        assert!(text.contains("BONDS"), "message should list labels: {text}");
+        assert!(
+            text.contains("ENTRIES"),
+            "message should list labels: {text}"
+        );
     }
 
     #[test]
@@ -2029,5 +2240,67 @@ ITEM: ATOMS id type x y z
         assert_eq!(entries.nrows(), Some(2));
         assert!(entries.dtype("batom1").is_some());
         assert!(entries.dtype("batom2").is_some());
+    }
+
+    /// A frame carrying more than a viewer needs, for the column-choice tests.
+    fn wide_frame() -> Frame {
+        use molrs::spatial::simbox::SimBox;
+        use ndarray::{Array1, array};
+
+        let mut atoms = Block::new();
+        atoms
+            .insert("id", Array1::from_vec(vec![1 as Idx, 2]).into_dyn())
+            .unwrap();
+        atoms
+            .insert("mol_id", Array1::from_vec(vec![1 as Idx, 1]).into_dyn())
+            .unwrap();
+        atoms
+            .insert("mass", Array1::from_vec(vec![16.0 as F, 1.008]).into_dyn())
+            .unwrap();
+        insert_str(&mut atoms, "element", vec!["O".into(), "H".into()], 2).unwrap();
+        for (key, values) in [("x", [0.0 as F, 1.0]), ("y", [0.0, 2.0]), ("z", [0.0, 3.0])] {
+            atoms
+                .insert(key, Array1::from_vec(values.to_vec()).into_dyn())
+                .unwrap();
+        }
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms);
+        frame.simbox =
+            Some(SimBox::cube(10.0, array![0.0 as F, 0.0, 0.0], [true, true, true]).unwrap());
+        frame
+    }
+
+    #[test]
+    fn write_dump_columns_writes_only_what_was_asked_in_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("chosen.lammpstrj");
+        write_lammps_dump(
+            &path,
+            &[wide_frame()],
+            Some(&["id", "element", "mol", "x", "y", "z"]),
+        )
+        .unwrap();
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("ITEM: ATOMS id element mol x y z\n"));
+        assert!(!text.contains("mass"));
+        assert!(text.contains("1 O 1 0.000000 0.000000 0.000000\n"));
+    }
+
+    #[test]
+    fn write_dump_columns_rejects_a_column_the_frame_lacks() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("missing.lammpstrj");
+        let err = write_lammps_dump(&path, &[wide_frame()], Some(&["id", "q"])).unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("'q'"), "{message}");
+        assert!(message.contains("element"), "{message}");
+    }
+
+    #[test]
+    fn write_dump_columns_rejects_an_empty_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("empty.lammpstrj");
+        assert!(write_lammps_dump(&path, &[wide_frame()], Some(&[])).is_err());
     }
 }

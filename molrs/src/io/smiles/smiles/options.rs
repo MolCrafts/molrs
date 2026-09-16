@@ -4,7 +4,7 @@
 
 use molrs::system::atomistic::AtomId;
 
-/// Options for [`super::from_atomistic`].
+/// Options for [`super::from_atomistic()`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SmilesEmitOptions {
     /// Use WL [`canonical_order`](molrs::system::atomistic::Atomistic::canonical_order)

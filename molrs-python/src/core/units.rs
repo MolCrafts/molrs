@@ -4,6 +4,7 @@ use crate::error::units_error;
 use molrs::units::{Dimension, Quantity, Unit, UnitDef, UnitPreset, UnitRegistry, lookup_preset};
 use pyo3::exceptions::{PyAttributeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
+use pyo3::types::PyTuple;
 
 #[pyclass(module = "molrs", name = "Unit", frozen, skip_from_py_object)]
 #[derive(Clone)]
@@ -19,6 +20,16 @@ impl PyUnit {
 
 #[pymethods]
 impl PyUnit {
+    #[new]
+    fn py_new(factor: f64, offset: f64, dimension: [i32; 7], name: String) -> Self {
+        Self::new(Unit::from_parts(
+            factor,
+            offset,
+            Dimension::from_exponents(dimension),
+            name,
+        ))
+    }
+
     #[getter]
     fn dimension(&self) -> [i32; 7] {
         self.inner.dimension().exponents()
@@ -61,6 +72,21 @@ impl PyUnit {
     fn __repr__(&self) -> String {
         format!("<Unit('{}')>", self.inner)
     }
+
+    fn __reduce__<'py>(
+        slf: &Bound<'py, Self>,
+    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, pyo3::types::PyTuple>)> {
+        let unit = &slf.borrow().inner;
+        crate::helpers::reduce_via_type(
+            slf.as_any(),
+            (
+                unit.factor(),
+                unit.offset(),
+                unit.dimension().exponents(),
+                unit.name().to_owned(),
+            ),
+        )
+    }
 }
 
 #[pyclass(module = "molrs", name = "Quantity", frozen, skip_from_py_object)]
@@ -84,6 +110,18 @@ impl PyQuantity {
 
 #[pymethods]
 impl PyQuantity {
+    #[new]
+    fn py_new(magnitude: f64, unit: &PyUnit) -> Self {
+        Self::new(Quantity::new(magnitude, unit.inner.clone()))
+    }
+
+    fn __reduce__<'py>(
+        slf: &Bound<'py, Self>,
+    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, pyo3::types::PyTuple>)> {
+        let this = slf.borrow();
+        crate::helpers::reduce_via_type(slf.as_any(), (this.magnitude(), this.unit()))
+    }
+
     #[getter]
     fn magnitude(&self) -> f64 {
         self.inner.value()
@@ -192,6 +230,10 @@ impl PyQuantity {
     }
 }
 
+/// One unit definition the way Python hands it over — the positional shape of
+/// [`UnitDef`]: `(name, aliases, symbol, factor, offset, dimension, prefixable)`.
+type UnitDefTuple = (String, Vec<String>, String, f64, f64, [i32; 7], bool);
+
 #[pyclass(module = "molrs", name = "UnitRegistry", subclass, dict)]
 pub struct PyUnitRegistry {
     inner: UnitRegistry,
@@ -209,15 +251,34 @@ impl PyUnitRegistry {
 #[pymethods]
 impl PyUnitRegistry {
     #[new]
-    #[pyo3(signature = (*, empty = false))]
-    fn new(empty: bool) -> Self {
-        Self {
+    #[pyo3(signature = (definitions=None, *, empty=false))]
+    fn new(definitions: Option<Vec<UnitDefTuple>>, empty: bool) -> PyResult<Self> {
+        if let Some(definitions) = definitions {
+            let definitions = definitions
+                .into_iter()
+                .map(
+                    |(name, aliases, symbol, factor, offset, dimension, prefixable)| UnitDef {
+                        name,
+                        aliases,
+                        symbol,
+                        factor,
+                        offset,
+                        dimension: Dimension::from_exponents(dimension),
+                        prefixable,
+                    },
+                )
+                .collect();
+            return UnitRegistry::from_definitions(definitions)
+                .map(|inner| Self { inner })
+                .map_err(units_error);
+        }
+        Ok(Self {
             inner: if empty {
                 UnitRegistry::empty()
             } else {
                 UnitRegistry::new()
             },
-        }
+        })
     }
 
     fn parse(&self, expression: &str) -> PyResult<PyUnit> {
@@ -242,6 +303,7 @@ impl PyUnitRegistry {
     }
 
     #[pyo3(signature = (name, factor, dimension, *, aliases = Vec::new(), symbol = None, offset = 0.0, prefixable = false))]
+    #[allow(clippy::too_many_arguments, reason = "Public Python keyword arguments")]
     fn define(
         &mut self,
         name: String,
@@ -284,6 +346,32 @@ impl PyUnitRegistry {
     fn __repr__(&self) -> &'static str {
         "<molrs.UnitRegistry>"
     }
+
+    fn __reduce__<'py>(
+        slf: &Bound<'py, Self>,
+    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, PyTuple>, Bound<'py, PyAny>)> {
+        let definitions: Vec<_> = slf
+            .borrow()
+            .inner
+            .definitions()
+            .map(|definition| {
+                (
+                    definition.name.clone(),
+                    definition.aliases.clone(),
+                    definition.symbol.clone(),
+                    definition.factor,
+                    definition.offset,
+                    definition.dimension.exponents(),
+                    definition.prefixable,
+                )
+            })
+            .collect();
+        Ok((
+            slf.get_type().into_any(),
+            PyTuple::new(slf.py(), [definitions])?,
+            slf.getattr("__dict__")?,
+        ))
+    }
 }
 
 /// Named unit-system view (`"real"`, `"metal"`, …). Constants live in core;
@@ -313,6 +401,12 @@ impl PyUnitPreset {
     #[getter]
     fn name(&self) -> &str {
         self.inner.name()
+    }
+
+    fn __reduce__<'py>(
+        slf: &Bound<'py, Self>,
+    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, pyo3::types::PyTuple>)> {
+        crate::helpers::reduce_via_type(slf.as_any(), (slf.borrow().name().to_owned(),))
     }
 
     /// Boltzmann constant **in this preset's energy / temperature units**

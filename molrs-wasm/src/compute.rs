@@ -2185,7 +2185,7 @@ fn vectors3(data: &[F], name: &str) -> Result<Vec<[F; 3]>, JsValue> {
             "{name}: expected flat [x,y,z,...] length divisible by 3"
         )));
     }
-    Ok(data.chunks_exact(3).map(|v| [v[0], v[1], v[2]]).collect())
+    Ok(data.as_chunks::<3>().0.to_vec())
 }
 
 fn quats(data: &[F], name: &str) -> Result<Vec<[F; 4]>, JsValue> {
@@ -2194,17 +2194,19 @@ fn quats(data: &[F], name: &str) -> Result<Vec<[F; 4]>, JsValue> {
             "{name}: expected flat [w,x,y,z,...] length divisible by 4"
         )));
     }
-    Ok(data
-        .chunks_exact(4)
-        .map(|v| [v[0], v[1], v[2], v[3]])
-        .collect())
+    Ok(data.as_chunks::<4>().0.to_vec())
 }
 
 fn u32_pairs(data: &[u32], name: &str) -> Result<Vec<(u32, u32)>, JsValue> {
     if !data.len().is_multiple_of(2) {
         return Err(JsValue::from_str(&format!("{name}: expected pairs")));
     }
-    Ok(data.chunks_exact(2).map(|p| (p[0], p[1])).collect())
+    Ok(data
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|p| (p[0], p[1]))
+        .collect())
 }
 
 fn usize_pairs(data: &[u32], name: &str) -> Result<Vec<(usize, usize)>, JsValue> {
@@ -5347,8 +5349,11 @@ impl WasmDistanceDistribution {
     }
 
     pub fn compute(&self, frame: &Frame, pairs: &[u32]) -> Result<JsValue, JsValue> {
-        let groups = molrs::compute::distribution::AtomGroups::new(2, pairs.iter().map(|&v| v as u64).collect())
-            .map_err(|e| JsValue::from_str(&format!("DistanceDistribution groups: {e}")))?;
+        let groups = molrs::compute::distribution::AtomGroups::new(
+            2,
+            pairs.iter().map(|&v| v as u64).collect(),
+        )
+        .map_err(|e| JsValue::from_str(&format!("DistanceDistribution groups: {e}")))?;
         let calc = molrs::compute::distribution::DistributionFunction::new(
             molrs::compute::distribution::DistanceObservable,
             self.n_bins,
@@ -5373,8 +5378,11 @@ impl WasmAngleDistribution {
     }
 
     pub fn compute(&self, frame: &Frame, triples: &[u32]) -> Result<JsValue, JsValue> {
-        let groups = molrs::compute::distribution::AtomGroups::new(3, triples.iter().map(|&v| v as u64).collect())
-            .map_err(|e| JsValue::from_str(&format!("AngleDistribution groups: {e}")))?;
+        let groups = molrs::compute::distribution::AtomGroups::new(
+            3,
+            triples.iter().map(|&v| v as u64).collect(),
+        )
+        .map_err(|e| JsValue::from_str(&format!("AngleDistribution groups: {e}")))?;
         let calc = molrs::compute::distribution::DistributionFunction::over_natural_range(
             molrs::compute::distribution::AngleObservable,
             self.n_bins,
@@ -5397,8 +5405,11 @@ impl WasmDihedralDistribution {
     }
 
     pub fn compute(&self, frame: &Frame, quads: &[u32]) -> Result<JsValue, JsValue> {
-        let groups = molrs::compute::distribution::AtomGroups::new(4, quads.iter().map(|&v| v as u64).collect())
-            .map_err(|e| JsValue::from_str(&format!("DihedralDistribution groups: {e}")))?;
+        let groups = molrs::compute::distribution::AtomGroups::new(
+            4,
+            quads.iter().map(|&v| v as u64).collect(),
+        )
+        .map_err(|e| JsValue::from_str(&format!("DihedralDistribution groups: {e}")))?;
         let calc = molrs::compute::distribution::DistributionFunction::over_natural_range(
             molrs::compute::distribution::DihedralObservable,
             self.n_bins,
@@ -5914,9 +5925,11 @@ impl WasmCombinedDistribution {
                 JsValue::from_str(&format!("CombinedDistribution observable {i}: {e}"))
             })?;
             observables.push(obs);
-            atom_groups.push(AtomGroups::new(arity, raw[i].iter().map(|&v| v as u64).collect()).map_err(|e| {
-                JsValue::from_str(&format!("CombinedDistribution groups {i}: {e}"))
-            })?);
+            atom_groups.push(
+                AtomGroups::new(arity, raw[i].iter().map(|&v| v as u64).collect()).map_err(
+                    |e| JsValue::from_str(&format!("CombinedDistribution groups {i}: {e}")),
+                )?,
+            );
         }
         let calc = molrs::compute::CombinedDistribution::new(observables, self.axes.clone())
             .map_err(|e| JsValue::from_str(&format!("CombinedDistribution: {e}")))?;

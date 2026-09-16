@@ -25,7 +25,7 @@
 //! (e.g., due to any allocation). Use `copyCol*` if you need to keep
 //! the data across allocations.
 
-use js_sys::{BigUint64Array, Array as JsArray, Float32Array, Int32Array, Uint32Array};
+use js_sys::{Array as JsArray, BigUint64Array, Float32Array, Int32Array, Uint32Array};
 use ndarray::Array1;
 use wasm_bindgen::prelude::*;
 
@@ -362,11 +362,7 @@ impl Block {
 
     /// Owned i32 column. Missing with no `default` throws; wrong dtype throws.
     #[wasm_bindgen(js_name = getI32)]
-    pub fn get_i32(
-        &self,
-        key: &str,
-        default: Option<Int32Array>,
-    ) -> Result<Int32Array, JsValue> {
+    pub fn get_i32(&self, key: &str, default: Option<Int32Array>) -> Result<Int32Array, JsValue> {
         if self.has_i32(key) {
             return self.copy_col_i32(key);
         }

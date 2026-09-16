@@ -1,6 +1,6 @@
 //! Transport properties: diffusion, ionic conductivity, and dipolar
 //! relaxation — the raw [`Compute`](crate::compute::Compute) observables the
-//! [`fitting`](crate::compute::fittingting) layer turns into D, σ, and τ_D.
+//! [`fitting`](crate::compute::fitting) layer turns into D, σ, and τ_D.
 //!
 //! Every method here returns **only a raw curve + scalar metadata**; the fit
 //! step (slope, integral, Debye τ) is the analyst's explicit, parameterized

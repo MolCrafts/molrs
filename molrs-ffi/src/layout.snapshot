@@ -19,3 +19,4 @@ molrs::Block size=88 align=8
 molrs::SimBox size=280 align=8
 crate::ForceFieldRef size=8 align=8
 molrs::ff::ForceField size=96 align=8
+crate::RegionRef size=16 align=8

@@ -31,6 +31,8 @@ jobs:
           cache-dependency-glob: |
             molrs-python/pyproject.toml
             molrs-python/Cargo.toml
+      - name: Lint Python bindings
+        run: cargo clippy --manifest-path molrs-python/Cargo.toml --all-targets -- -D warnings
       # Tools only (no project install) → tox builds the wheel once.
       # Same gate as prek pre-push.
       - name: tox -e py

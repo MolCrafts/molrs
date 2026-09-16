@@ -693,8 +693,7 @@ fn write_frame(
 /// that were stored.
 #[cfg(feature = "zarr")]
 fn read_first_frame(path: &str) -> Result<Box<FrameRef>, String> {
-    let sequence =
-        open_trajectory_sequence(path).map_err(|e| format!("read_first_frame: {e}"))?;
+    let sequence = open_trajectory_sequence(path).map_err(|e| format!("read_first_frame: {e}"))?;
     let frame = sequence
         .frame(0)
         .map_err(|e| format!("read_first_frame: {e}"))?
@@ -1425,18 +1424,26 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("run.mrec");
         let path = path.to_str().unwrap();
-        let first = frame_with_elements(&[6, 1], &[0.0, 1.0], &[0.0, 0.5], &[0.0, 0.25], &[
-            10.0, 0.0, 0.0, 0.0, 10.0, 0.0, 0.0, 0.0, 10.0,
-        ])
+        let first = frame_with_elements(
+            &[6, 1],
+            &[0.0, 1.0],
+            &[0.0, 0.5],
+            &[0.0, 0.25],
+            &[10.0, 0.0, 0.0, 0.0, 10.0, 0.0, 0.0, 0.0, 10.0],
+        )
         .unwrap();
         let fref = FrameRef(molrs_ffi::FrameRef::new_standalone());
         fref.0.with_mut(|f| *f = first.clone()).unwrap();
 
         let mut writer = trajectory_writer_create(path, &fref, 0, false).unwrap();
         trajectory_writer_append(&mut writer, &fref, 10, 0.5, true).unwrap();
-        let second = frame_with_elements(&[6, 1], &[2.0, 3.0], &[0.0, 0.5], &[0.0, 0.25], &[
-            10.0, 0.0, 0.0, 0.0, 10.0, 0.0, 0.0, 0.0, 10.0,
-        ])
+        let second = frame_with_elements(
+            &[6, 1],
+            &[2.0, 3.0],
+            &[0.0, 0.5],
+            &[0.0, 0.25],
+            &[10.0, 0.0, 0.0, 0.0, 10.0, 0.0, 0.0, 0.0, 10.0],
+        )
         .unwrap();
         fref.0.with_mut(|f| *f = second).unwrap();
         trajectory_writer_append(&mut writer, &fref, 20, 1.5, true).unwrap();
@@ -1512,7 +1519,10 @@ mod tests {
             !columns.iter().any(|column| column == "type"),
             "Z is `atomic_number`; `type` is the caller's force-field label"
         );
-        assert_eq!(frame_column_u32(&frame, "atoms", "atomic_number"), [8u64, 1]);
+        assert_eq!(
+            frame_column_u32(&frame, "atoms", "atomic_number"),
+            [8u64, 1]
+        );
     }
 
     #[test]

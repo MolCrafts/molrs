@@ -1,16 +1,20 @@
-//! Geometric regions and spatial predicates.
+//! Geometric regions: shapes with a signed distance to their boundary.
 //!
-//! Pure containment geometry — **not** the periodic simulation cell. For
-//! `SimBox` (PBC / MIC / wrap), see [`crate::spatial::simbox`].
+//! A region is a solid. Every shape here describes its *inside*; "outside a
+//! sphere" is [`NotRegion`] over a [`Sphere`], a shell is a sphere `&` the
+//! complement of a smaller one. There are no `Inside*` / `Outside*` pairs.
+//!
+//! Pure geometry — **not** the periodic simulation cell. For `SimBox`
+//! (PBC / MIC / wrap), see [`crate::spatial::simbox`].
 //!
 //! Built-in shapes:
-//! - [`Sphere`], [`HollowSphere`]
+//! - [`Sphere`]
 //! - [`Cuboid`] — axis-aligned box (including cubes)
 //! - [`Parallelepiped`] — general triclinic cell volume (origin + edge matrix)
 //! - Boolean composition: [`AndRegion`], [`OrRegion`], [`NotRegion`]
 //!
 //! Type layout conventions:
-//! - Points: N×3 row-major [`FNx3`], each row is `(x, y, z)`.
+//! - Points: N×3 row-major [`FNx3`], each row is `(x, y, z)`, Å.
 //! - Bounds: 3×2 [`FNx3`], col 0 = min, col 1 = max, rows = x/y/z.
 
 use crate::math;
@@ -18,144 +22,202 @@ use crate::types::{F, F3, F3x3, FNx3};
 use ndarray::{Array1, Array2, array};
 use std::sync::Arc;
 
-/// Axis-aligned bounding box (AABB) as a 3×2 matrix.
+/// Step of the central finite difference behind the default
+/// [`Region::distance_grad`], Å.
+const FD_STEP: F = 1e-6;
+
+/// A solid with a signed distance to its boundary.
 ///
-/// Column 0 is the minimum corner, column 1 is the maximum corner.
-/// Rows correspond to x, y, z respectively:
+/// `distance` is the one method a shape has to write. It is **negative
+/// inside, positive outside, zero on the boundary**, and its sign together
+/// with the direction of [`distance_grad`](Self::distance_grad) is what every
+/// consumer relies on; the magnitude is Euclidean where a shape can afford it
+/// and documented where it is not (a lower bound is always acceptable).
+/// Containment is `distance <= 0`, so the boundary belongs to the region.
 ///
-/// [ [min_x, max_x],
-///   [min_y, max_y],
-///   [min_z, max_z] ]
-///
-/// Region trait for geometric queries.
-pub trait Region: Send + Sync {
-    /// Returns the axis-aligned bounding box of the region.
+/// Trait objects are `Arc<dyn Region + Send + Sync>`: the combinators take
+/// them, and a region is shared across threads by evaluators such as a
+/// packer's rayon loop.
+pub trait Region: Send + Sync + std::fmt::Debug {
+    /// Axis-aligned bounding box, Å.
     ///
-    /// Layout: rows = x/y/z; col 0 = min, col 1 = max.
+    /// Layout: rows = x/y/z; col 0 = min, col 1 = max. An unbounded region
+    /// reports `±∞` on its open sides.
     fn bounds(&self) -> FNx3;
 
-    /// Batched containment test for a set of 3D points.
-    ///
-    /// Returns a boolean NdArray of shape `[N]` where each entry indicates whether
-    /// the corresponding row in the N×3 array lies inside the region.
-    ///
-    /// Panics
-    /// - If `points` does not have exactly 3 columns.
-    fn contains(&self, points: &FNx3) -> Array1<bool>;
+    /// Signed distance from `point` to the boundary, Å: negative inside,
+    /// positive outside, zero on it.
+    fn distance(&self, point: &[F; 3]) -> F;
 
-    /// Single-point containment test.
+    /// Gradient of [`distance`](Self::distance) at `point` (Å/Å, a direction).
     ///
-    /// Returns true if the point at `[x, y, z]` lies inside the region.
-    /// This is more efficient than `contains()` for single-point checks as it
-    /// avoids array allocations.
+    /// Points from the inside toward the outside. The default is a central
+    /// finite difference with step `1e-6` Å; shapes with a closed form
+    /// override it.
+    fn distance_grad(&self, point: &[F; 3]) -> [F; 3] {
+        let mut g = [0.0; 3];
+        for k in 0..3 {
+            let mut plus = *point;
+            plus[k] += FD_STEP;
+            let mut minus = *point;
+            minus[k] -= FD_STEP;
+            g[k] = (self.distance(&plus) - self.distance(&minus)) / (2.0 * FD_STEP);
+        }
+        g
+    }
+
+    /// Whether `point` is inside the region: `distance(point) <= 0`.
     ///
-    /// Default implementation delegates to `contains()`.
-    /// Implementations should override with optimized versions.
+    /// Override only with a test that provably agrees with the distance.
     fn contains_point(&self, point: &[F; 3]) -> bool {
-        let arr = Array2::from_shape_vec((1, 3), vec![point[0], point[1], point[2]]).unwrap();
-        self.contains(&arr)[0]
+        self.distance(point) <= 0.0
+    }
+
+    /// Batched [`contains_point`](Self::contains_point) over the rows of an
+    /// N×3 array.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `points` does not have exactly 3 columns.
+    fn contains(&self, points: &FNx3) -> Array1<bool> {
+        assert_eq!(points.ncols(), 3, "points must have shape (N, 3)");
+        points
+            .rows()
+            .into_iter()
+            .map(|row| self.contains_point(&[row[0], row[1], row[2]]))
+            .collect()
     }
 }
 
-/// A solid sphere region.
+fn aabb(lo: [F; 3], hi: [F; 3]) -> FNx3 {
+    let mut b = Array2::zeros((3, 2));
+    for d in 0..3 {
+        b[[d, 0]] = lo[d];
+        b[[d, 1]] = hi[d];
+    }
+    b
+}
+
+/// A solid sphere.
+///
+/// `distance(x) = ‖x − c‖ − r` (exact Euclidean); the gradient is the radial
+/// unit vector, zero at the centre.
 #[derive(Debug, Clone)]
 pub struct Sphere {
-    /// Center of the sphere.
+    /// Center of the sphere, Å.
     pub center: F3,
-    /// Radius of the sphere.
+    /// Radius of the sphere, Å.
     pub radius: F,
 }
 
 impl Sphere {
-    /// Creates a sphere with a given center and radius.
+    /// Creates a sphere with a given center and radius (Å).
     pub fn new(center: F3, radius: F) -> Self {
         Self { center, radius }
     }
 
-    /// Creates a sphere centered at the origin with the given radius.
+    /// Creates a sphere centered at the origin with the given radius (Å).
     pub fn with_radius(radius: F) -> Self {
         Self {
             center: Array1::zeros(3),
             radius,
         }
     }
+
+    fn offset(&self, point: &[F; 3]) -> ([F; 3], F) {
+        let d = [
+            point[0] - self.center[0],
+            point[1] - self.center[1],
+            point[2] - self.center[2],
+        ];
+        (d, (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt())
+    }
 }
 
 impl Region for Sphere {
     fn bounds(&self) -> FNx3 {
         let r = self.radius;
-        let mut b = Array2::zeros((3, 2));
-        for d in 0..3 {
-            b[[d, 0]] = self.center[d] - r;
-            b[[d, 1]] = self.center[d] + r;
-        }
-        b
+        let c = &self.center;
+        aabb(
+            [c[0] - r, c[1] - r, c[2] - r],
+            [c[0] + r, c[1] + r, c[2] + r],
+        )
     }
 
-    fn contains(&self, points: &FNx3) -> Array1<bool> {
-        assert_eq!(points.ncols(), 3, "points must have shape (N, 3)");
-        let r2 = self.radius * self.radius;
-        let mut mask = Array1::from_elem(points.nrows(), false);
-        for (row, m) in points.rows().into_iter().zip(mask.iter_mut()) {
-            let dx = row[0] - self.center[0];
-            let dy = row[1] - self.center[1];
-            let dz = row[2] - self.center[2];
-            *m = (dx * dx + dy * dy + dz * dz) <= r2;
-        }
-        mask
+    fn distance(&self, point: &[F; 3]) -> F {
+        self.offset(point).1 - self.radius
     }
 
-    fn contains_point(&self, point: &[F; 3]) -> bool {
-        let dx = point[0] - self.center[0];
-        let dy = point[1] - self.center[1];
-        let dz = point[2] - self.center[2];
-        (dx * dx + dy * dy + dz * dz) <= self.radius * self.radius
+    fn distance_grad(&self, point: &[F; 3]) -> [F; 3] {
+        let (d, norm) = self.offset(point);
+        if norm < 1e-12 {
+            [0.0; 3]
+        } else {
+            [d[0] / norm, d[1] / norm, d[2] / norm]
+        }
     }
 }
 
-/// An axis-aligned cuboid (box) region: a point is inside when
+/// An axis-aligned cuboid (box): inside when
 /// `origin[d] <= p[d] <= origin[d] + lengths[d]` on every axis.
+///
+/// `distance(x) = max_k max(o_k − x_k, x_k − o_k − L_k)`: the perpendicular
+/// distance to the nearest face plane when the point is inside or past one
+/// face, and the largest single-axis excess past an edge or corner (a lower
+/// bound on the Euclidean distance there). The gradient is `±e_k` of the
+/// winning face.
 #[derive(Debug, Clone)]
 pub struct Cuboid {
-    /// Minimum corner (lower bound on each axis).
+    /// Minimum corner (lower bound on each axis), Å.
     pub origin: F3,
-    /// Edge lengths along x, y, z.
+    /// Edge lengths along x, y, z, Å.
     pub lengths: F3,
 }
 
 impl Cuboid {
-    /// Creates a cuboid with the given origin (min corner) and edge lengths.
+    /// Creates a cuboid with the given origin (min corner) and edge lengths (Å).
     pub fn new(origin: F3, lengths: F3) -> Self {
         Self { origin, lengths }
+    }
+
+    /// The winning face: `(distance, axis, sign)` with `sign = -1` for the
+    /// low face and `+1` for the high face of `axis`.
+    fn nearest_face(&self, point: &[F; 3]) -> (F, usize, F) {
+        let mut best = (F::NEG_INFINITY, 0usize, 1.0 as F);
+        for (k, &xk) in point.iter().enumerate() {
+            let below = self.origin[k] - xk;
+            if below > best.0 {
+                best = (below, k, -1.0);
+            }
+            let above = xk - self.origin[k] - self.lengths[k];
+            if above > best.0 {
+                best = (above, k, 1.0);
+            }
+        }
+        best
     }
 }
 
 impl Region for Cuboid {
     fn bounds(&self) -> FNx3 {
-        let mut b = Array2::zeros((3, 2));
-        for d in 0..3 {
-            b[[d, 0]] = self.origin[d];
-            b[[d, 1]] = self.origin[d] + self.lengths[d];
-        }
-        b
+        let o = &self.origin;
+        let l = &self.lengths;
+        aabb([o[0], o[1], o[2]], [o[0] + l[0], o[1] + l[1], o[2] + l[2]])
     }
 
-    fn contains(&self, points: &FNx3) -> Array1<bool> {
-        assert_eq!(points.ncols(), 3, "points must have shape (N, 3)");
-        let mut mask = Array1::from_elem(points.nrows(), false);
-        for (row, m) in points.rows().into_iter().zip(mask.iter_mut()) {
-            *m = (0..3)
-                .all(|d| row[d] >= self.origin[d] && row[d] <= self.origin[d] + self.lengths[d]);
-        }
-        mask
+    fn distance(&self, point: &[F; 3]) -> F {
+        self.nearest_face(point).0
     }
 
-    fn contains_point(&self, point: &[F; 3]) -> bool {
-        (0..3).all(|d| point[d] >= self.origin[d] && point[d] <= self.origin[d] + self.lengths[d])
+    fn distance_grad(&self, point: &[F; 3]) -> [F; 3] {
+        let (_, axis, sign) = self.nearest_face(point);
+        let mut g = [0.0; 3];
+        g[axis] = sign;
+        g
     }
 }
 
-/// A general parallelepiped (oblique box) region defined by an origin and three
+/// A general parallelepiped (oblique box) defined by an origin and three
 /// edge vectors (columns of `H`).
 ///
 /// This is the geometric counterpart of a triclinic simulation cell volume —
@@ -163,31 +225,65 @@ impl Region for Cuboid {
 /// [`crate::spatial::simbox::SimBox`].
 ///
 /// A point `p` is inside when the fractional coordinates
-/// `f = H⁻¹ · (p − origin)` satisfy `0 ≤ f_d < 1` on every axis (half-open
-/// primary cell, matching common lattice conventions).
+/// `f = H⁻¹ · (p − origin)` satisfy `0 ≤ f_d ≤ 1` on every axis.
+///
+/// `distance` is measured perpendicular to the bounding lattice planes, in
+/// Å: with `s_k = 1 / ‖row_k(H⁻¹)‖` the spacing of the `k`-th plane pair,
+/// `distance(x) = max_k max(−f_k · s_k, (f_k − 1) · s_k)`. That makes the
+/// value comparable across tilted cells and equal to the [`Cuboid`] rule on an
+/// orthorhombic `H`. The gradient is the unit outward normal of the winning
+/// plane, `±row_k(H⁻¹) / ‖row_k(H⁻¹)‖`.
 ///
 /// Axis-aligned boxes prefer [`Cuboid`] (cheaper, no inverse).
 #[derive(Debug, Clone)]
 pub struct Parallelepiped {
-    /// One corner of the parallelepiped.
+    /// One corner of the parallelepiped, Å.
     origin: F3,
-    /// Edge matrix `H` (columns are the three edge vectors).
+    /// Edge matrix `H` (columns are the three edge vectors), Å.
     h: F3x3,
     /// Cached `H⁻¹`.
     inv: F3x3,
+    /// Interplanar spacing of each face pair, Å: turns a fractional offset
+    /// into a perpendicular distance.
+    spacing: [F; 3],
+    /// Unit outward normal of each face pair: the normalised rows of `H⁻¹`.
+    normal: [[F; 3]; 3],
 }
 
 impl Parallelepiped {
-    /// Construct from edge matrix `H` (columns = edges) and `origin`.
+    /// Construct from edge matrix `H` (columns = edges, Å) and `origin` (Å).
     ///
-    /// Returns `Err` if `H` is singular (zero volume).
+    /// # Errors
+    ///
+    /// Returns `Err` if `H` is singular (zero volume) or not finite.
     pub fn new(h: F3x3, origin: F3) -> Result<Self, String> {
         let inv = math::inv3(&h)
             .ok_or_else(|| "Parallelepiped: singular edge matrix H (zero volume)".to_string())?;
-        Ok(Self { origin, h, inv })
+        let mut spacing = [0.0; 3];
+        let mut normal = [[0.0; 3]; 3];
+        for k in 0..3 {
+            let row = [inv[[k, 0]], inv[[k, 1]], inv[[k, 2]]];
+            let norm = (row[0] * row[0] + row[1] * row[1] + row[2] * row[2]).sqrt();
+            if !(norm > 0.0 && norm.is_finite()) {
+                return Err("Parallelepiped: edge matrix H is not finite".to_string());
+            }
+            spacing[k] = 1.0 / norm;
+            normal[k] = [row[0] / norm, row[1] / norm, row[2] / norm];
+        }
+        Ok(Self {
+            origin,
+            h,
+            inv,
+            spacing,
+            normal,
+        })
     }
 
-    /// Cubic region of edge length `a` with the given origin (min corner).
+    /// Cubic region of edge length `a` (Å) with the given origin (min corner).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if `a <= 0`.
     pub fn cube(a: F, origin: F3) -> Result<Self, String> {
         if a <= 0.0 {
             return Err(format!(
@@ -198,11 +294,15 @@ impl Parallelepiped {
         Self::new(h, origin)
     }
 
-    /// Axis-aligned orthorhombic region with the given edge lengths.
+    /// Axis-aligned orthorhombic region with the given edge lengths (Å).
     ///
     /// Prefer [`Cuboid`] when you only need axis-aligned containment — this
     /// constructor exists so a single `Parallelepiped` API covers cube → ortho
     /// → triclinic.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if `lengths` is not three positive numbers.
     pub fn ortho(lengths: F3, origin: F3) -> Result<Self, String> {
         if lengths.len() != 3 {
             return Err(format!(
@@ -221,23 +321,27 @@ impl Parallelepiped {
         Self::new(h, origin)
     }
 
-    /// Construct from three explicit edge vectors `a`, `b`, `c` and `origin`.
+    /// Construct from three explicit edge vectors `a`, `b`, `c` and `origin` (Å).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if the edges are coplanar.
     pub fn from_edges(a: [F; 3], b: [F; 3], c: [F; 3], origin: F3) -> Result<Self, String> {
         let h = array![[a[0], b[0], c[0]], [a[1], b[1], c[1]], [a[2], b[2], c[2]]];
         Self::new(h, origin)
     }
 
-    /// Origin corner.
+    /// Origin corner, Å.
     pub fn origin(&self) -> &F3 {
         &self.origin
     }
 
-    /// Edge matrix `H` (columns are edge vectors).
+    /// Edge matrix `H` (columns are edge vectors), Å.
     pub fn h(&self) -> &F3x3 {
         &self.h
     }
 
-    /// Signed volume `det(H)`.
+    /// Signed volume `det(H)`, Å³.
     pub fn volume(&self) -> F {
         math::det3(&self.h)
     }
@@ -248,155 +352,68 @@ impl Parallelepiped {
             point[1] - self.origin[1],
             point[2] - self.origin[2],
         ];
-        // inv is row-major F3x3 via ndarray; inv.dot(dr)
-        let f = self.inv.dot(&Array1::from_vec(vec![dr[0], dr[1], dr[2]]));
-        [f[0], f[1], f[2]]
+        let mut f = [0.0; 3];
+        for (k, fk) in f.iter_mut().enumerate() {
+            *fk = self.inv[[k, 0]] * dr[0] + self.inv[[k, 1]] * dr[1] + self.inv[[k, 2]] * dr[2];
+        }
+        f
+    }
+
+    /// The winning bounding plane: `(distance, axis, sign)` with `sign = -1`
+    /// past the `f = 0` plane and `+1` past the `f = 1` plane of `axis`.
+    fn nearest_face(&self, point: &[F; 3]) -> (F, usize, F) {
+        let f = self.frac_of(point);
+        let mut best = (F::NEG_INFINITY, 0usize, 1.0 as F);
+        for (k, &fk) in f.iter().enumerate() {
+            let below = -fk * self.spacing[k];
+            if below > best.0 {
+                best = (below, k, -1.0);
+            }
+            let above = (fk - 1.0) * self.spacing[k];
+            if above > best.0 {
+                best = (above, k, 1.0);
+            }
+        }
+        best
     }
 }
 
 impl Region for Parallelepiped {
     fn bounds(&self) -> FNx3 {
         // AABB of the eight corners: origin + Σ ε_i · edge_i, ε ∈ {0,1}.
-        let o = [&self.origin[0], &self.origin[1], &self.origin[2]];
-        // columns of H
-        let e0 = [self.h[[0, 0]], self.h[[1, 0]], self.h[[2, 0]]];
-        let e1 = [self.h[[0, 1]], self.h[[1, 1]], self.h[[2, 1]]];
-        let e2 = [self.h[[0, 2]], self.h[[1, 2]], self.h[[2, 2]]];
-        let mut lo = [*o[0], *o[1], *o[2]];
-        let mut hi = lo;
+        let o = [self.origin[0], self.origin[1], self.origin[2]];
+        let edge = |i: usize| [self.h[[0, i]], self.h[[1, i]], self.h[[2, i]]];
+        let (e0, e1, e2) = (edge(0), edge(1), edge(2));
+        let mut lo = o;
+        let mut hi = o;
         for mask in 0u8..8 {
-            let p = [
-                *o[0]
-                    + if mask & 1 != 0 { e0[0] } else { 0.0 }
-                    + if mask & 2 != 0 { e1[0] } else { 0.0 }
-                    + if mask & 4 != 0 { e2[0] } else { 0.0 },
-                *o[1]
-                    + if mask & 1 != 0 { e0[1] } else { 0.0 }
-                    + if mask & 2 != 0 { e1[1] } else { 0.0 }
-                    + if mask & 4 != 0 { e2[1] } else { 0.0 },
-                *o[2]
-                    + if mask & 1 != 0 { e0[2] } else { 0.0 }
-                    + if mask & 2 != 0 { e1[2] } else { 0.0 }
-                    + if mask & 4 != 0 { e2[2] } else { 0.0 },
-            ];
             for d in 0..3 {
-                lo[d] = lo[d].min(p[d]);
-                hi[d] = hi[d].max(p[d]);
+                let p = o[d]
+                    + if mask & 1 != 0 { e0[d] } else { 0.0 }
+                    + if mask & 2 != 0 { e1[d] } else { 0.0 }
+                    + if mask & 4 != 0 { e2[d] } else { 0.0 };
+                lo[d] = lo[d].min(p);
+                hi[d] = hi[d].max(p);
             }
         }
-        let mut b = Array2::zeros((3, 2));
-        for d in 0..3 {
-            b[[d, 0]] = lo[d];
-            b[[d, 1]] = hi[d];
-        }
-        b
+        aabb(lo, hi)
     }
 
-    fn contains(&self, points: &FNx3) -> Array1<bool> {
-        assert_eq!(points.ncols(), 3, "points must have shape (N, 3)");
-        let mut mask = Array1::from_elem(points.nrows(), false);
-        for (row, m) in points.rows().into_iter().zip(mask.iter_mut()) {
-            let p = [row[0], row[1], row[2]];
-            let f = self.frac_of(&p);
-            *m = (0..3).all(|d| f[d] >= 0.0 && f[d] < 1.0);
-        }
-        mask
+    fn distance(&self, point: &[F; 3]) -> F {
+        self.nearest_face(point).0
     }
 
-    fn contains_point(&self, point: &[F; 3]) -> bool {
-        let f = self.frac_of(point);
-        (0..3).all(|d| f[d] >= 0.0 && f[d] < 1.0)
+    fn distance_grad(&self, point: &[F; 3]) -> [F; 3] {
+        let (_, axis, sign) = self.nearest_face(point);
+        let n = self.normal[axis];
+        [sign * n[0], sign * n[1], sign * n[2]]
     }
 }
 
-/// A hollow sphere (spherical shell) region.
+/// Intersection of two regions (AND): inside iff inside both.
 ///
-/// This region represents the space between two concentric spheres:
-/// points inside the outer sphere but outside the inner sphere.
+/// `distance = max(d_a, d_b)`; the gradient is that of the larger term.
 #[derive(Debug, Clone)]
-pub struct HollowSphere {
-    /// Center of the spheres.
-    pub center: F3,
-    /// Outer radius (points must be within this distance from center).
-    pub outer_radius: F,
-    /// Inner radius (points must be beyond this distance from center).
-    pub inner_radius: F,
-}
-
-impl HollowSphere {
-    /// Creates a hollow sphere with given center and radii.
-    ///
-    /// # Panics
-    /// - If `inner_radius >= outer_radius`
-    /// - If `inner_radius < 0` or `outer_radius <= 0`
-    pub fn new(center: F3, inner_radius: F, outer_radius: F) -> Self {
-        assert!(
-            inner_radius >= 0.0,
-            "inner_radius must be non-negative, got {}",
-            inner_radius
-        );
-        assert!(
-            outer_radius > inner_radius,
-            "outer_radius must be greater than inner_radius, got outer={}, inner={}",
-            outer_radius,
-            inner_radius
-        );
-        Self {
-            center,
-            outer_radius,
-            inner_radius,
-        }
-    }
-
-    /// Creates a hollow sphere centered at the origin.
-    pub fn with_radii(inner_radius: F, outer_radius: F) -> Self {
-        Self::new(Array1::zeros(3), inner_radius, outer_radius)
-    }
-}
-
-impl Region for HollowSphere {
-    fn bounds(&self) -> FNx3 {
-        // Bounds are the same as the outer sphere
-        let r = self.outer_radius;
-        let mut b = Array2::zeros((3, 2));
-        for d in 0..3 {
-            b[[d, 0]] = self.center[d] - r;
-            b[[d, 1]] = self.center[d] + r;
-        }
-        b
-    }
-
-    fn contains(&self, points: &FNx3) -> Array1<bool> {
-        assert_eq!(points.ncols(), 3, "points must have shape (N, 3)");
-        let outer_r2 = self.outer_radius * self.outer_radius;
-        let inner_r2 = self.inner_radius * self.inner_radius;
-        let mut mask = Array1::from_elem(points.nrows(), false);
-        for (row, m) in points.rows().into_iter().zip(mask.iter_mut()) {
-            let dx = row[0] - self.center[0];
-            let dy = row[1] - self.center[1];
-            let dz = row[2] - self.center[2];
-            let dist_sq = dx * dx + dy * dy + dz * dz;
-            // Point is inside if: inner_r^2 < dist^2 <= outer_r^2
-            *m = dist_sq > inner_r2 && dist_sq <= outer_r2;
-        }
-        mask
-    }
-
-    fn contains_point(&self, point: &[F; 3]) -> bool {
-        let dx = point[0] - self.center[0];
-        let dy = point[1] - self.center[1];
-        let dz = point[2] - self.center[2];
-        let dist_sq = dx * dx + dy * dy + dz * dz;
-        let outer_r2 = self.outer_radius * self.outer_radius;
-        let inner_r2 = self.inner_radius * self.inner_radius;
-        dist_sq > inner_r2 && dist_sq <= outer_r2
-    }
-}
-
-/// Intersection of two regions (AND operation).
-///
-/// A point is inside the intersection if it is inside both regions.
-#[derive(Clone)]
 pub struct AndRegion {
     a: Arc<dyn Region + Send + Sync>,
     b: Arc<dyn Region + Send + Sync>,
@@ -416,32 +433,30 @@ impl Region for AndRegion {
         let b_bounds = self.b.bounds();
         let mut result = Array2::zeros((3, 2));
         for d in 0..3 {
-            result[[d, 0]] = a_bounds[[d, 0]].max(b_bounds[[d, 0]]); // max of mins
-            result[[d, 1]] = a_bounds[[d, 1]].min(b_bounds[[d, 1]]); // min of maxs
+            result[[d, 0]] = a_bounds[[d, 0]].max(b_bounds[[d, 0]]);
+            result[[d, 1]] = a_bounds[[d, 1]].min(b_bounds[[d, 1]]);
         }
         result
     }
 
-    fn contains(&self, points: &FNx3) -> Array1<bool> {
-        let a_mask = self.a.contains(points);
-        let b_mask = self.b.contains(points);
-        // Point is inside if it's inside both regions
-        a_mask
-            .iter()
-            .zip(b_mask.iter())
-            .map(|(a, b)| *a && *b)
-            .collect()
+    fn distance(&self, point: &[F; 3]) -> F {
+        self.a.distance(point).max(self.b.distance(point))
     }
 
-    fn contains_point(&self, point: &[F; 3]) -> bool {
-        self.a.contains_point(point) && self.b.contains_point(point)
+    fn distance_grad(&self, point: &[F; 3]) -> [F; 3] {
+        if self.a.distance(point) >= self.b.distance(point) {
+            self.a.distance_grad(point)
+        } else {
+            self.b.distance_grad(point)
+        }
     }
 }
 
-/// Complement of a region (NOT operation).
+/// Complement of a region (NOT): inside iff not inside the original.
 ///
-/// A point is inside the complement if it is NOT inside the original region.
-#[derive(Clone)]
+/// `distance = −d_a`; the gradient is negated. `bounds` reports the inner
+/// region's box, since the complement is unbounded.
+#[derive(Debug, Clone)]
 pub struct NotRegion {
     a: Arc<dyn Region + Send + Sync>,
 }
@@ -455,26 +470,23 @@ impl NotRegion {
 
 impl Region for NotRegion {
     fn bounds(&self) -> FNx3 {
-        // Complement is unbounded, but we return the original bounds for practicality
-        // (the actual constraint will be enforced by contains())
         self.a.bounds()
     }
 
-    fn contains(&self, points: &FNx3) -> Array1<bool> {
-        let a_mask = self.a.contains(points);
-        // Point is inside if it's NOT inside the original region
-        a_mask.iter().map(|x| !x).collect()
+    fn distance(&self, point: &[F; 3]) -> F {
+        -self.a.distance(point)
     }
 
-    fn contains_point(&self, point: &[F; 3]) -> bool {
-        !self.a.contains_point(point)
+    fn distance_grad(&self, point: &[F; 3]) -> [F; 3] {
+        let g = self.a.distance_grad(point);
+        [-g[0], -g[1], -g[2]]
     }
 }
 
-/// Union of two regions (OR operation).
+/// Union of two regions (OR): inside iff inside either.
 ///
-/// A point is inside the union if it is inside either region.
-#[derive(Clone)]
+/// `distance = min(d_a, d_b)`; the gradient is that of the smaller term.
+#[derive(Debug, Clone)]
 pub struct OrRegion {
     a: Arc<dyn Region + Send + Sync>,
     b: Arc<dyn Region + Send + Sync>,
@@ -494,31 +506,69 @@ impl Region for OrRegion {
         let b_bounds = self.b.bounds();
         let mut result = Array2::zeros((3, 2));
         for d in 0..3 {
-            result[[d, 0]] = a_bounds[[d, 0]].min(b_bounds[[d, 0]]); // min of mins
-            result[[d, 1]] = a_bounds[[d, 1]].max(b_bounds[[d, 1]]); // max of maxs
+            result[[d, 0]] = a_bounds[[d, 0]].min(b_bounds[[d, 0]]);
+            result[[d, 1]] = a_bounds[[d, 1]].max(b_bounds[[d, 1]]);
         }
         result
     }
 
-    fn contains(&self, points: &FNx3) -> Array1<bool> {
-        let a_mask = self.a.contains(points);
-        let b_mask = self.b.contains(points);
-        // Point is inside if it's inside either region
-        a_mask
-            .iter()
-            .zip(b_mask.iter())
-            .map(|(a, b)| *a || *b)
-            .collect()
+    fn distance(&self, point: &[F; 3]) -> F {
+        self.a.distance(point).min(self.b.distance(point))
     }
 
-    fn contains_point(&self, point: &[F; 3]) -> bool {
-        self.a.contains_point(point) || self.b.contains_point(point)
+    fn distance_grad(&self, point: &[F; 3]) -> [F; 3] {
+        if self.a.distance(point) <= self.b.distance(point) {
+            self.a.distance_grad(point)
+        } else {
+            self.b.distance_grad(point)
+        }
     }
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+
+    /// Every shape and combinator must keep `contains_point` equal to
+    /// `distance <= 0` and its analytic gradient equal to the finite
+    /// difference, off the ties where the max/min switches branch.
+    pub(crate) fn check_region_contract(region: &dyn Region, probes: &[[F; 3]]) {
+        for p in probes {
+            let d = region.distance(p);
+            assert_eq!(
+                region.contains_point(p),
+                d <= 0.0,
+                "contains_point disagrees with distance at {p:?} (d = {d})"
+            );
+            let g = region.distance_grad(p);
+            let mut fd = [0.0; 3];
+            for k in 0..3 {
+                let mut plus = *p;
+                plus[k] += FD_STEP;
+                let mut minus = *p;
+                minus[k] -= FD_STEP;
+                fd[k] = (region.distance(&plus) - region.distance(&minus)) / (2.0 * FD_STEP);
+            }
+            for k in 0..3 {
+                assert!(
+                    (g[k] - fd[k]).abs() < 1e-5,
+                    "gradient {g:?} vs finite difference {fd:?} at {p:?}"
+                );
+            }
+        }
+    }
+
+    fn sweep() -> Vec<[F; 3]> {
+        let mut probes = Vec::new();
+        for i in 0..7 {
+            for j in 0..5 {
+                let t = i as F / 6.0;
+                let u = j as F / 4.0;
+                probes.push([t * 4.0 - 0.7, u * 3.1 - 0.3, 0.9 + 0.31 * t + 0.17 * u]);
+            }
+        }
+        probes
+    }
 
     #[test]
     fn cuboid_contains_and_bounds() {
@@ -546,17 +596,38 @@ mod tests {
     }
 
     #[test]
-    fn parallelepiped_cube_matches_cuboid_half_open() {
+    fn cuboid_distance_goldens() {
+        let c = Cuboid::new(Array1::zeros(3), Array1::from_vec(vec![2.0, 4.0, 6.0]));
+        // Inside: minus the distance to the nearest face (x = 0 at 0.5).
+        assert!((c.distance(&[0.5, 2.0, 3.0]) + 0.5).abs() < 1e-12);
+        // Past one face: the perpendicular excess.
+        assert!((c.distance(&[3.0, 2.0, 3.0]) - 1.0).abs() < 1e-12);
+        assert_eq!(c.distance_grad(&[3.0, 2.0, 3.0]), [1.0, 0.0, 0.0]);
+        assert_eq!(c.distance_grad(&[-1.0, 2.0, 3.0]), [-1.0, 0.0, 0.0]);
+        // Past a corner: the largest single-axis excess, a lower bound.
+        assert!((c.distance(&[3.0, 6.0, 3.0]) - 2.0).abs() < 1e-12);
+        assert_eq!(c.distance_grad(&[3.0, 6.0, 3.0]), [0.0, 1.0, 0.0]);
+        // On a face.
+        assert_eq!(c.distance(&[2.0, 2.0, 3.0]), 0.0);
+    }
+
+    #[test]
+    fn parallelepiped_cube_matches_cuboid_closed() {
         let p = Parallelepiped::cube(2.0, Array1::zeros(3)).unwrap();
-        // half-open [0, 2): corner 2.0 is outside
         assert!(p.contains_point(&[1.0, 1.0, 1.0]));
         assert!(p.contains_point(&[0.0, 0.0, 0.0]));
-        assert!(!p.contains_point(&[2.0, 0.0, 0.0]));
+        // The boundary belongs to the region: `distance <= 0`.
+        assert!(p.contains_point(&[2.0, 0.0, 0.0]));
+        assert!(!p.contains_point(&[2.01, 0.0, 0.0]));
         assert!(!p.contains_point(&[-0.01, 0.0, 0.0]));
         let b = p.bounds();
         assert!((b[[0, 0]] - 0.0).abs() < 1e-12);
         assert!((b[[0, 1]] - 2.0).abs() < 1e-12);
         assert!((p.volume() - 8.0).abs() < 1e-12);
+        let c = Cuboid::new(Array1::zeros(3), Array1::from_vec(vec![2.0; 3]));
+        for q in sweep() {
+            assert!((p.distance(&q) - c.distance(&q)).abs() < 1e-12, "at {q:?}");
+        }
     }
 
     #[test]
@@ -581,6 +652,33 @@ mod tests {
         assert!((b[[1, 0]] - 0.0).abs() < 1e-12);
         assert!((b[[1, 1]] - 2.0).abs() < 1e-12);
         assert!((b[[2, 1]] - 3.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn parallelepiped_distance_is_perpendicular_angstrom() {
+        // Hexagonal cell a = b = c = 26 Å, γ = 120°: the `a` face pair is
+        // 26·sin(120°) apart, so fractional 1.1 along `a` is 0.1 of that.
+        let gamma = 120.0_f64.to_radians();
+        let p = Parallelepiped::from_edges(
+            [26.0, 0.0, 0.0],
+            [26.0 * gamma.cos(), 26.0 * gamma.sin(), 0.0],
+            [0.0, 0.0, 26.0],
+            Array1::zeros(3),
+        )
+        .unwrap();
+        let h = p.h().clone();
+        let frac = array![1.1, 0.5, 0.5];
+        let x = h.dot(&frac);
+        let d = p.distance(&[x[0], x[1], x[2]]);
+        assert!((d - 0.1 * 26.0 * gamma.sin()).abs() < 1e-9, "d = {d}");
+        // The gradient is the unit outward normal of the `a` face pair.
+        let g = p.distance_grad(&[x[0], x[1], x[2]]);
+        let norm = (g[0] * g[0] + g[1] * g[1] + g[2] * g[2]).sqrt();
+        assert!((norm - 1.0).abs() < 1e-12);
+        // Interior points are negative with the same perpendicular metric.
+        let inside = h.dot(&array![0.5, 0.5, 0.5]);
+        let di = p.distance(&[inside[0], inside[1], inside[2]]);
+        assert!((di + 0.5 * 26.0 * gamma.sin()).abs() < 1e-9, "d = {di}");
     }
 
     #[test]
@@ -622,38 +720,101 @@ mod tests {
     }
 
     #[test]
-    fn hollow_sphere_bounds_are_correct() {
-        let hs = HollowSphere::new(Array1::from_vec(vec![1.0, 2.0, 3.0]), 2.0, 5.0);
-        let b = hs.bounds();
-        // Bounds should match outer sphere
-        assert_eq!(b[[0, 0]], -4.0); // 1.0 - 5.0
-        assert_eq!(b[[1, 0]], -3.0); // 2.0 - 5.0
-        assert_eq!(b[[2, 0]], -2.0); // 3.0 - 5.0
-        assert_eq!(b[[0, 1]], 6.0); // 1.0 + 5.0
-        assert_eq!(b[[1, 1]], 7.0); // 2.0 + 5.0
-        assert_eq!(b[[2, 1]], 8.0); // 3.0 + 5.0
+    fn sphere_distance_goldens() {
+        let s = Sphere::with_radius(2.0);
+        assert_eq!(s.distance(&[0.0; 3]), -2.0);
+        assert_eq!(s.distance(&[2.0, 0.0, 0.0]), 0.0);
+        assert!((s.distance(&[0.0, 5.0, 0.0]) - 3.0).abs() < 1e-12);
+        assert_eq!(s.distance_grad(&[0.0, 5.0, 0.0]), [0.0, 1.0, 0.0]);
+        assert_eq!(s.distance_grad(&[0.0; 3]), [0.0; 3]);
     }
 
     #[test]
-    fn hollow_sphere_contains_points() {
-        let hs = HollowSphere::with_radii(2.0, 5.0);
-        let pts: FNx3 = Array2::from_shape_vec(
-            (5, 3),
-            vec![
-                0.0, 0.0, 0.0, // inside inner sphere (should be false)
-                1.0, 0.0, 0.0, // inside inner sphere (should be false)
-                3.0, 0.0, 0.0, // in shell (should be true)
-                5.0, 0.0, 0.0, // on outer surface (should be true)
-                5.1, 0.0, 0.0, // outside outer sphere (should be false)
-            ],
-        )
-        .unwrap();
-        let mask = hs.contains(&pts);
-        assert_eq!(mask.len(), 5);
-        assert!(!mask[0], "center should be outside (inside inner sphere)");
-        assert!(!mask[1], "point inside inner sphere should be false");
-        assert!(mask[2], "point in shell should be true");
-        assert!(mask[3], "point on outer surface should be true");
-        assert!(!mask[4], "point outside outer sphere should be false");
+    fn contains_matches_distance_and_grad_on_every_shape() {
+        let sphere: Arc<dyn Region + Send + Sync> =
+            Arc::new(Sphere::new(Array1::from_vec(vec![1.0, 1.0, 1.0]), 1.3));
+        let cuboid: Arc<dyn Region + Send + Sync> = Arc::new(Cuboid::new(
+            Array1::from_vec(vec![0.2, 0.1, 0.4]),
+            Array1::from_vec(vec![2.3, 1.7, 1.9]),
+        ));
+        let cell: Arc<dyn Region + Send + Sync> = Arc::new(
+            Parallelepiped::from_edges(
+                [2.0, 0.0, 0.0],
+                [1.0, 2.0, 0.0],
+                [0.3, 0.2, 3.0],
+                Array1::from_vec(vec![0.1, 0.2, 0.3]),
+            )
+            .unwrap(),
+        );
+        let shell = AndRegion::new(
+            sphere.clone(),
+            Arc::new(NotRegion::new(Arc::new(Sphere::new(
+                Array1::from_vec(vec![1.0, 1.0, 1.0]),
+                0.6,
+            )))),
+        );
+        let either = OrRegion::new(cuboid.clone(), cell.clone());
+        let outside = NotRegion::new(cuboid.clone());
+        let probes = sweep();
+        for region in [
+            sphere.as_ref(),
+            cuboid.as_ref(),
+            cell.as_ref(),
+            &shell,
+            &either,
+            &outside,
+        ] {
+            check_region_contract(region, &probes);
+        }
+    }
+
+    #[test]
+    fn combinators_are_max_min_and_negation() {
+        let a: Arc<dyn Region + Send + Sync> = Arc::new(Sphere::with_radius(2.0));
+        let b: Arc<dyn Region + Send + Sync> = Arc::new(Cuboid::new(
+            Array1::zeros(3),
+            Array1::from_vec(vec![3.0; 3]),
+        ));
+        let p = [1.0, 1.0, 2.5];
+        let (da, db) = (a.distance(&p), b.distance(&p));
+        assert_eq!(
+            AndRegion::new(a.clone(), b.clone()).distance(&p),
+            da.max(db)
+        );
+        assert_eq!(OrRegion::new(a.clone(), b.clone()).distance(&p), da.min(db));
+        assert_eq!(NotRegion::new(a.clone()).distance(&p), -da);
+    }
+
+    #[test]
+    fn de_morgan_holds_for_distances() {
+        let a: Arc<dyn Region + Send + Sync> = Arc::new(Sphere::with_radius(2.0));
+        let b: Arc<dyn Region + Send + Sync> = Arc::new(Cuboid::new(
+            Array1::zeros(3),
+            Array1::from_vec(vec![3.0; 3]),
+        ));
+        let not_and = NotRegion::new(Arc::new(AndRegion::new(a.clone(), b.clone())));
+        let or_not = OrRegion::new(
+            Arc::new(NotRegion::new(a.clone())),
+            Arc::new(NotRegion::new(b.clone())),
+        );
+        for p in sweep() {
+            assert_eq!(not_and.distance(&p), or_not.distance(&p), "at {p:?}");
+            assert_eq!(not_and.contains_point(&p), or_not.contains_point(&p));
+        }
+    }
+
+    #[test]
+    fn composed_bounds_intersect_and_unite() {
+        let a: Arc<dyn Region + Send + Sync> = Arc::new(Sphere::with_radius(2.0));
+        let b: Arc<dyn Region + Send + Sync> = Arc::new(Cuboid::new(
+            Array1::from_vec(vec![1.0, 1.0, 1.0]),
+            Array1::from_vec(vec![3.0; 3]),
+        ));
+        let both = AndRegion::new(a.clone(), b.clone()).bounds();
+        assert_eq!(both[[0, 0]], 1.0);
+        assert_eq!(both[[0, 1]], 2.0);
+        let either = OrRegion::new(a, b).bounds();
+        assert_eq!(either[[0, 0]], -2.0);
+        assert_eq!(either[[0, 1]], 4.0);
     }
 }

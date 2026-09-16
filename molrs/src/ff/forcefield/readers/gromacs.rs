@@ -490,7 +490,7 @@ fn parse_dihedral_section(
         .into_iter()
         .collect();
     let param_names: HashMap<&str, &[&str]> = [
-        ("periodic", &["phi0", "k", "n"][..]),
+        ("periodic", &["phase", "k", "periodicity"][..]),
         ("rb", &["c0", "c1", "c2", "c3", "c4", "c5"][..]),
         ("harmonic", &["psi0", "k"][..]),
     ]
@@ -517,11 +517,20 @@ fn parse_dihedral_section(
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| format!("dihedral params: {e}"))?;
         let names = param_names[style_name];
-        // Dihedral: no unit conversion in historical Python (raw numbers).
+        // Normalize to the canonical vocabulary at the reader boundary (spec
+        // ff-params-01): angles in radians, energies in kcal/mol. The GROMACS
+        // file spells the phase in degrees and every barrier in kJ/mol.
         let converted: Vec<(String, f64)> = names
             .iter()
             .zip(params.iter())
-            .map(|(n, v)| ((*n).to_string(), *v))
+            .map(|(n, v)| {
+                let conv = match *n {
+                    "phase" | "psi0" => v.to_radians(),
+                    "k" | "c0" | "c1" | "c2" | "c3" | "c4" | "c5" => v / KJ_PER_KCAL,
+                    _ => *v,
+                };
+                ((*n).to_string(), conv)
+            })
             .collect();
         let owned: Vec<(&str, f64)> = converted.iter().map(|(k, v)| (k.as_str(), *v)).collect();
         let iname = atom_name_at(atom_names, i)?;
@@ -542,9 +551,12 @@ fn parse_pair_section(
 ) -> Result<(), String> {
     let func_types: HashMap<&str, &str> =
         [("1", "lj12-6"), ("2", "buckingham")].into_iter().collect();
+    // GROMACS buckingham is `a  b  c6` with `b = 1/rho` (1/nm) — a different
+    // quantity from the canonical `rho`, so it is inverted here rather than
+    // stored under a third spelling (spec ff-params-01).
     let param_names: HashMap<&str, &[&str]> = [
         ("lj12-6", &["c6", "c12"][..]),
-        ("buckingham", &["A", "B", "C"][..]),
+        ("buckingham", &["a", "rho", "c"][..]),
     ]
     .into_iter()
     .collect();
@@ -570,7 +582,26 @@ fn parse_pair_section(
         let converted: Vec<(String, f64)> = names
             .iter()
             .zip(params.iter())
-            .map(|(n, v)| ((*n).to_string(), *v))
+            .map(|(n, v)| {
+                let conv = match *n {
+                    // kJ/mol → kcal/mol
+                    "a" => v / KJ_PER_KCAL,
+                    // b (1/nm) → rho (Å)
+                    "rho" => {
+                        if *v == 0.0 {
+                            0.0
+                        } else {
+                            NM_TO_ANGSTROM / v
+                        }
+                    }
+                    // kJ/mol·nm⁶ → kcal/mol·Å⁶
+                    "c" | "c6" => v / KJ_PER_KCAL * NM_TO_ANGSTROM.powi(6),
+                    // kJ/mol·nm¹² → kcal/mol·Å¹²
+                    "c12" => v / KJ_PER_KCAL * NM_TO_ANGSTROM.powi(12),
+                    _ => *v,
+                };
+                ((*n).to_string(), conv)
+            })
             .collect();
         let owned: Vec<(&str, f64)> = converted.iter().map(|(k, v)| (k.as_str(), *v)).collect();
         let iname = atom_name_at(atom_names, i)?;

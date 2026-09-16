@@ -203,17 +203,11 @@ impl ForceFieldWriter for XmlForceFieldWriter {
                         self.esc(&dt.ktom),
                         self.esc(&dt.ltom)
                     );
-                    // k{m}/n{m}/d{m} or periodicity{m}/k{m}/phase{m}
+                    // canonical per-term keys k{m}/periodicity{m}/phase{m}
                     for m in 1..10 {
                         let k = dt.params.get(&format!("k{m}"));
-                        let n = dt
-                            .params
-                            .get(&format!("n{m}"))
-                            .or_else(|| dt.params.get(&format!("periodicity{m}")));
-                        let d = dt
-                            .params
-                            .get(&format!("d{m}"))
-                            .or_else(|| dt.params.get(&format!("phase{m}")));
+                        let n = dt.params.get(&format!("periodicity{m}"));
+                        let d = dt.params.get(&format!("phase{m}"));
                         match (k, n, d) {
                             (Some(k), Some(n), Some(d)) => {
                                 attrs.push_str(&format!(
@@ -226,10 +220,13 @@ impl ForceFieldWriter for XmlForceFieldWriter {
                             _ => break,
                         }
                     }
-                    // single-term k/n/d
+                    // single-term k/periodicity/phase
                     if !attrs.contains("periodicity1=")
-                        && let (Some(k), Some(n), Some(d)) =
-                            (dt.params.get("k"), dt.params.get("n"), dt.params.get("d"))
+                        && let (Some(k), Some(n), Some(d)) = (
+                            dt.params.get("k"),
+                            dt.params.get("periodicity"),
+                            dt.params.get("phase"),
+                        )
                     {
                         attrs.push_str(&format!(
                             " periodicity1=\"{}\" k1=\"{}\" phase1=\"{}\"",
@@ -255,8 +252,8 @@ impl ForceFieldWriter for XmlForceFieldWriter {
             out.push_str("  <PeriodicImproperForce>\n");
             for it in types {
                 let k = it.params.get("k").unwrap_or(0.0);
-                let n = it.params.get("n").unwrap_or(0.0);
-                let d = it.params.get("d").unwrap_or(0.0);
+                let n = it.params.get("periodicity").unwrap_or(0.0);
+                let d = it.params.get("phase").unwrap_or(0.0);
                 out.push_str(&format!(
                     "    <Improper class1=\"{}\" class2=\"{}\" class3=\"{}\" class4=\"{}\" periodicity1=\"{}\" k1=\"{}\" phase1=\"{}\"/>\n",
                     self.esc(&it.itom),

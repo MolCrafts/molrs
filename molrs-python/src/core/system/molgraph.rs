@@ -198,6 +198,12 @@ macro_rules! graph_world_impl {
                     .collect()
             }
 
+            /// Fixed endpoint count for a registered relation kind.
+            fn kind_arity(&self, kind: &str) -> PyResult<usize> {
+                let kid = kind_id_checked(self.mol(), kind)?;
+                Ok(self.mol().arity(kid))
+            }
+
             /// Add a relation of `kind` over node handles, returning its handle.
             fn add_relation(&mut self, kind: &str, nodes: Vec<u64>) -> PyResult<u64> {
                 let kid = kind_id_checked(self.mol(), kind)?;
@@ -390,6 +396,38 @@ pub struct PyExtractedSubgraph {
 
 #[pymethods]
 impl PyExtractedSubgraph {
+    #[new]
+    fn new(
+        graph: Py<PyAny>,
+        boundary: Vec<u64>,
+        parent_of: HashMap<u64, u64>,
+        hops: HashMap<u64, i64>,
+        node_map: HashMap<u64, u64>,
+    ) -> Self {
+        Self {
+            graph,
+            boundary,
+            parent_of,
+            hops,
+            node_map,
+        }
+    }
+
+    fn __reduce__<'py>(
+        slf: &Bound<'py, Self>,
+    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, pyo3::types::PyTuple>)> {
+        crate::helpers::reduce_via_type(
+            slf.as_any(),
+            (
+                slf.getattr("graph")?,
+                slf.getattr("boundary")?,
+                slf.getattr("parent_of")?,
+                slf.getattr("hops")?,
+                slf.getattr("node_map")?,
+            ),
+        )
+    }
+
     #[getter]
     fn graph(&self, py: Python<'_>) -> Py<PyAny> {
         self.graph.clone_ref(py)
@@ -1126,6 +1164,12 @@ impl PyReaction {
         Ok(Self { inner })
     }
 
+    fn __reduce__<'py>(
+        slf: &Bound<'py, Self>,
+    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, pyo3::types::PyTuple>)> {
+        crate::helpers::reduce_via_type(slf.as_any(), (slf.borrow().inner.source().to_owned(),))
+    }
+
     /// The reactant components (LHS), one :class:`SmartsPattern` per top-level
     /// ``.`` component, for matching / pairing each independently.
     #[getter]
@@ -1225,6 +1269,10 @@ impl PyReaction {
     /// batch deletion may reuse graph slots in an order unrelated to product
     /// atom order.
     #[pyo3(signature = (mol, bindings, labels=None, refresh=true))]
+    #[allow(
+        clippy::type_complexity,
+        reason = "Python returns products and created handles as a tuple"
+    )]
     fn apply_many_detailed(
         &self,
         mol: &mut PyAtomistic,

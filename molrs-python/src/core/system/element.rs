@@ -68,6 +68,12 @@ impl PyElement {
         self.inner.z()
     }
 
+    fn __reduce__<'py>(
+        slf: &Bound<'py, Self>,
+    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, pyo3::types::PyTuple>)> {
+        crate::helpers::reduce_via_type(slf.as_any(), (slf.borrow().number(),))
+    }
+
     /// Canonical English name.
     #[getter]
     fn name(&self) -> &'static str {

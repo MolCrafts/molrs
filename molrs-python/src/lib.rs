@@ -44,11 +44,13 @@ mod store;
 mod builder;
 mod core;
 use crate::builder::{PyCarbonTubeBuilder, PyGrapheneBuilder};
+use crate::core::spatial::mesh::PyTriMesh;
 use crate::core::spatial::neighborlist::{
     PyNeighborList, PyNeighborQuery, PyNeighbors, PyVerletSkin,
 };
 use crate::core::spatial::region::{
-    PyCuboid, PyHollowSphere, PyParallelepiped, PyRegion, PySphere,
+    PyCuboid, PyCylinder, PyEllipsoid, PyHalfSpace, PyParallelepiped, PyPolyhedron, PyRegion,
+    PySphere, PySphereUnion,
 };
 use crate::core::spatial::simbox::PyBox;
 use crate::core::store::block::PyBlock;
@@ -98,13 +100,10 @@ use stream::PyControlCommand;
 #[cfg(not(target_arch = "wasm32"))]
 use stream::PyPublisher;
 
-/// Register the `keys` submodule mirroring `molrs_core::store::keys` so Python code
-/// references the field-name convention by name (`molrs.keys.X`) instead of
-/// scattering string literals.
-
 /// The FFI ABI handshake token of this build.
 ///
-/// Returns ``(abi_line, version, frameref_capsule_name, forcefield_capsule_name)``
+/// Returns ``(abi_line, version, frameref_capsule_name, forcefield_capsule_name,
+/// regionref_capsule_name)``
 /// — e.g. ``("0.14", "0.14.0", "molrs.FrameRef/0.14", "molrs.ForceFieldRef/0.14")``.
 ///
 /// A downstream extension that exchanges ``molrs_ffi`` handle capsules with
@@ -115,7 +114,7 @@ use stream::PyPublisher;
 /// undefined behavior). Patch versions may differ — layout is frozen within a
 /// minor line (see `molrs-ffi`'s layout snapshot gate).
 #[pyfunction]
-fn _ffi_abi_token() -> (&'static str, &'static str, String, String) {
+fn _ffi_abi_token() -> (&'static str, &'static str, String, String, String) {
     (
         molrs_ffi::abi::abi_line(),
         ::molrs::VERSION,
@@ -123,6 +122,9 @@ fn _ffi_abi_token() -> (&'static str, &'static str, String, String) {
             .to_string_lossy()
             .into_owned(),
         molrs_ffi::abi::forcefield_capsule_name()
+            .to_string_lossy()
+            .into_owned(),
+        molrs_ffi::abi::regionref_capsule_name()
             .to_string_lossy()
             .into_owned(),
     )
@@ -182,6 +184,7 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(io::read_xyz_trajectory, m)?)?;
     m.add_class::<io::PyXYZTrajReader>()?;
     m.add_function(wrap_pyfunction!(io::read_lammps, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_stl, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_lammps_traj, m)?)?;
     m.add_class::<io::PyLAMMPSTrajReader>()?;
     m.add_function(wrap_pyfunction!(io::read_dcd, m)?)?;
@@ -271,11 +274,16 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyScalarObservable>()?;
     m.add_class::<PyVectorObservable>()?;
 
-    // Regions
+    // Regions (and the mesh a Polyhedron is bounded by)
+    m.add_class::<PyTriMesh>()?;
     m.add_class::<PySphere>()?;
-    m.add_class::<PyHollowSphere>()?;
     m.add_class::<PyCuboid>()?;
     m.add_class::<PyParallelepiped>()?;
+    m.add_class::<PyHalfSpace>()?;
+    m.add_class::<PyCylinder>()?;
+    m.add_class::<PyEllipsoid>()?;
+    m.add_class::<PyPolyhedron>()?;
+    m.add_class::<PySphereUnion>()?;
     m.add_class::<PyRegion>()?;
 
     // Molecular graph hierarchy (base before subclasses)

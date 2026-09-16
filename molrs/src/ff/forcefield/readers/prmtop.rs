@@ -543,7 +543,7 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
                 &handles[1],
                 &handles[2],
                 &handles[3],
-                &[("k", k), ("n", n), ("d", d)],
+                &[("k", k), ("periodicity", n), ("phase", d)],
             );
         }
     }
@@ -608,8 +608,8 @@ fn terms_to_fourier_params(terms: &BTreeMap<i64, (f64, f64, f64)>) -> Vec<(Strin
     for (m, (_tid, (k, n, d))) in terms.iter().enumerate() {
         let i = m + 1;
         params.push((format!("k{i}"), *k));
-        params.push((format!("n{i}"), *n));
-        params.push((format!("d{i}"), *d));
+        params.push((format!("periodicity{i}"), *n));
+        params.push((format!("phase{i}"), *d));
     }
     params
 }

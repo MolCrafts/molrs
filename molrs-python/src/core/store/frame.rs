@@ -85,6 +85,13 @@ impl PyMetaValue {
         self.inner.dtype()
     }
 
+    fn __reduce__<'py>(
+        slf: &Bound<'py, Self>,
+    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, pyo3::types::PyTuple>)> {
+        let this = slf.borrow();
+        crate::helpers::reduce_via_type(slf.as_any(), (this.dtype(), this.value(slf.py())?))
+    }
+
     #[getter]
     fn value(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         macro_rules! scalar {
@@ -175,7 +182,8 @@ impl PyFrame {
     /// -------
     /// Frame
     #[new]
-    fn new() -> Self {
+    #[pyo3(signature = (*_args, **_kwargs))]
+    fn new(_args: &Bound<'_, PyAny>, _kwargs: Option<&Bound<'_, PyAny>>) -> Self {
         Self {
             inner: FrameRef::new_standalone(),
         }

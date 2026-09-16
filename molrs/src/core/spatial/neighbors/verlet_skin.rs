@@ -266,6 +266,17 @@ impl VerletSkin {
         self.ndanger
     }
 
+    /// Restore cadence counters from a trusted persistence snapshot.
+    ///
+    /// Geometry, edges, and the held positions must first be reconstructed via
+    /// [`new`](Self::new). This only restores progress through the rebuild
+    /// policy so a resumed run makes the same next cadence decision.
+    pub fn restore_progress(&mut self, ago: usize, rebuild_count: usize, ndanger: usize) {
+        self.ago = ago;
+        self.rebuild_count = rebuild_count;
+        self.ndanger = ndanger;
+    }
+
     /// Build radius `cutoff + skin` in Å (derived, never settable).
     pub fn r_build(&self) -> F {
         self.r_build

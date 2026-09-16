@@ -24,11 +24,12 @@ def _abi_line() -> str:
 
 class TestAbiToken:
     def test_token_shape_and_line(self) -> None:
-        line, version, frame_name, ff_name = molrs._ffi_abi_token()
+        line, version, frame_name, ff_name, region_name = molrs._ffi_abi_token()
         assert line == _abi_line()
         assert version == importlib.metadata.version("molcrafts-molrs")
         assert frame_name == f"molrs.FrameRef/{line}"
         assert ff_name == f"molrs.ForceFieldRef/{line}"
+        assert region_name == f"molrs.RegionRef/{line}"
 
 
 class TestVersionedCapsule:
@@ -56,3 +57,22 @@ class TestVersionedCapsule:
     def test_forcefield_capsule_carries_the_abi_line(self) -> None:
         cap = molrs.ff.ForceField()._ffi_forcefield_capsule()
         assert f'"molrs.ForceFieldRef/{_abi_line()}"' in repr(cap)
+
+    def test_every_region_class_exports_a_region_capsule(self) -> None:
+        import numpy as np
+
+        z = np.zeros(3)
+        sphere = molrs.Sphere(z, 1.0)
+        regions = [
+            sphere,
+            molrs.Cuboid(z, np.ones(3)),
+            molrs.Parallelepiped.cube(1.0, z),
+            molrs.HalfSpace(np.array([0.0, 0.0, 1.0]), z),
+            molrs.Cylinder(z, np.array([0.0, 0.0, 1.0]), 1.0, 2.0),
+            molrs.Ellipsoid(z, np.ones(3)),
+            molrs.SphereUnion(np.zeros((1, 3)), 1.0),
+            sphere & ~molrs.Cuboid(z, np.ones(3)),
+        ]
+        for region in regions:
+            cap = region._ffi_regionref_capsule()
+            assert f'"molrs.RegionRef/{_abi_line()}"' in repr(cap), type(region)

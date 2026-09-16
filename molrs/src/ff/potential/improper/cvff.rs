@@ -1,8 +1,9 @@
 //! CVFF improper (LAMMPS `improper_style cvff`):
 //!
-//! E(χ) = K · [1 + d · cos(n·χ)]
+//! E(χ) = k · [1 + s · cos(n·χ)]
 //!
-//! `d = ±1` and `n` is an integer multiplicity. The improper angle χ is the
+//! `sign` is s = ±1 (a sign, **not** a phase — hence its own canonical name)
+//! and `periodicity` is the integer multiplicity n. The improper angle χ is the
 //! dihedral angle defined by the quadruple I-J-K-L, so the geometry reuses the
 //! shared dihedral routines.
 
@@ -90,8 +91,11 @@ pub fn improper_cvff_ctor(
         ak.push(kc[idx] as usize);
         al.push(lc[idx] as usize);
         kk.push(p.get("k").ok_or("improper_cvff: missing k")? as F);
-        dd.push(p.get("d").ok_or("improper_cvff: missing d")? as F);
-        nn.push(p.get("n").ok_or("improper_cvff: missing n")? as F);
+        dd.push(p.get("sign").ok_or("improper_cvff: missing sign")? as F);
+        nn.push(
+            p.get("periodicity")
+                .ok_or("improper_cvff: missing periodicity")? as F,
+        );
     }
     Ok(Box::new(ImproperCvff {
         atom_i: ai,

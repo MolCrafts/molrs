@@ -6,7 +6,7 @@
 //! ```xml
 //! <ForceField name="TIP3P">
 //!   <BondStyle name="harmonic">
-//!     <Type name="OW-HW" k0="450.0" r0="0.9572" />
+//!     <Type name="OW-HW" k="450.0" r0="0.9572" />
 //!   </BondStyle>
 //! </ForceField>
 //! ```
@@ -307,10 +307,22 @@ fn numeric_attrs<'a>(node: &'a roxmltree::Node, skip: &[&str]) -> Vec<(&'a str, 
             continue;
         }
         if let Ok(v) = attr.value().parse::<f64>() {
-            result.push((attr.name(), v));
+            result.push((canonical_param(attr.name()), v));
         }
     }
     result
+}
+
+/// Map a legacy attribute spelling onto the canonical parameter name.
+///
+/// Files molrs wrote before spec ff-params-01 spell the harmonic force constant
+/// `k0`. It is the same quantity in the same convention, so it is renamed on the
+/// way in rather than kept as a second key the kernels have to know about.
+fn canonical_param(name: &str) -> &str {
+    match name {
+        "k0" => "k",
+        other => other,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -500,7 +512,7 @@ mod tests {
 
         let style = ff.get_style("bond", "harmonic").unwrap();
         let bt = style.get_bondtype("CT", "OH").unwrap();
-        assert_eq!(bt.params.get("k0"), Some(300.0));
+        assert_eq!(bt.params.get("k"), Some(300.0));
         assert_eq!(bt.params.get("r0"), Some(1.4));
     }
 

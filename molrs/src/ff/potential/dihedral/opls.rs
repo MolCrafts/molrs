@@ -100,11 +100,39 @@ pub fn dihedral_opls_ctor(
         aj.push(jc[idx] as usize);
         ak.push(kc[idx] as usize);
         al.push(lc[idx] as usize);
-        // Missing coefficients default to 0 (a sparse OPLS term is common).
-        f1.push(p.get("f1").unwrap_or(0.0) as F);
-        f2.push(p.get("f2").unwrap_or(0.0) as F);
-        f3.push(p.get("f3").unwrap_or(0.0) as F);
-        f4.push(p.get("f4").unwrap_or(0.0) as F);
+        // A sparse term is common, so an individually missing coefficient is 0.
+        // A type carrying *none* of them is not sparse, it is mis-spelled or
+        // unparameterised — and defaulting the lot to zero used to make a whole
+        // torsion vanish in silence (molnex wrote `c1..c4`, this kernel read
+        // `f1..f4`). Canonical spelling is `k1..k4`; spec ff-params-01.
+        // `Params` is flat scalars, so the multi-term `periodic` style spells
+        // its terms `k{m}`/`periodicity{m}`/`phase{m}` — the same `k1..k4` keys
+        // this style uses for the OPLS quartet, with a different meaning (LAMMPS
+        // `K_n` already carries the 1/2). A bag that also names
+        // `periodicity1`/`phase1` is a periodic bag on the wrong style, and
+        // reading it here would price a plain barrier as a half barrier, silently.
+        if p.get("periodicity1").is_some() || p.get("phase1").is_some() {
+            return Err(format!(
+                "dihedral_opls: type '{}' carries periodicity1/phase1 — that is a \
+                 `dihedral_style periodic` term table, not the OPLS quartet; \
+                 declare the periodic style for it",
+                tc[idx]
+            ));
+        }
+        if ["k1", "k2", "k3", "k4"]
+            .iter()
+            .all(|key| p.get(key).is_none())
+        {
+            return Err(format!(
+                "dihedral_opls: type '{}' carries none of k1..k4; an OPLS torsion \
+                 with no coefficient at all is unparameterised, not sparse",
+                tc[idx]
+            ));
+        }
+        f1.push(p.get("k1").unwrap_or(0.0) as F);
+        f2.push(p.get("k2").unwrap_or(0.0) as F);
+        f3.push(p.get("k3").unwrap_or(0.0) as F);
+        f4.push(p.get("k4").unwrap_or(0.0) as F);
     }
     Ok(Box::new(DihedralOPLS {
         atom_i: ai,

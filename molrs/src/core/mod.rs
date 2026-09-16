@@ -7,8 +7,9 @@
 //! - [`store`] — columnar data containers (`Block`, `Frame`, `Trajectory`, keys)
 //! - [`system`] — molecular representations (`Atomistic`, `MolGraph`, `Topology`, elements)
 //! - [`spatial`] — regions, neighbor lists, geometry
-//! - [`generate`] — structure generators (inverse of compute: parameters → coordinates)
 //! - [`math`], [`units`] — numerical and unit-system foundations
+//!
+//! Structure builders live in [`crate::builder`], above the core layer.
 //!
 //! ## Examples
 //!

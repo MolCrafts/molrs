@@ -92,4 +92,6 @@ pub use super::zarr::{open_packed, pack};
 /// The store-taking record doors: a whole record into / out of any open
 /// store, filesystem or not.
 #[doc(inline)]
-pub use super::zarr::{read_record_store, write_record_store};
+pub use super::zarr::{
+    read_frame_section_store, read_record_store, section_names_store, write_record_store,
+};

@@ -18,6 +18,7 @@ from . import fields
 from . import keys as _keys
 from ._lib import Atomistic as _RsAtomistic
 from ._lib import CoarseGrain as _RsCoarseGrain
+from ._lib import Graph as _RsGraph
 
 if TYPE_CHECKING:
     from .frame import Frame as _Frame
@@ -195,6 +196,27 @@ class _RelationData(_NodeData):
         self.world.delete_relation_prop(self.kind, self.handle, key)
 
 
+def _remap_node(world: Any, handle: int) -> int:
+    if not isinstance(world, GraphViews):
+        return handle
+    remap = world._node_remap
+    if remap is None:
+        return handle
+    return remap.get(handle, handle)
+
+
+def _remap_relation(world: Any, kind: str, handle: int) -> int:
+    if not isinstance(world, GraphViews):
+        return handle
+    remap = world._relation_remap
+    if remap is None:
+        return handle
+    kind_map = remap.get(kind)
+    if kind_map is None:
+        return handle
+    return kind_map.get(handle, handle)
+
+
 class NodeRef(_DictView):
     """A live ``(world, handle)`` node reference.
 
@@ -204,12 +226,28 @@ class NodeRef(_DictView):
 
     __slots__ = ("world", "handle", "data", "__weakref__")
 
+    def __new__(cls, world: Any, handle: int) -> NodeRef:
+        handle = _remap_node(world, handle)
+        if isinstance(world, GraphViews):
+            interned = world._node_refs.get(handle)
+            if interned is not None:
+                return interned
+        return object.__new__(cls)
+
     def __init__(self, world: Any, handle: int) -> None:
+        handle = _remap_node(world, handle)
+        if isinstance(world, GraphViews) and world._node_refs.get(handle) is self:
+            return
         if not world.has_entity(handle):
             raise ValueError(f"cannot bind node view to stale handle {handle}")
         self.world = world
         self.handle = handle
         self.data = _NodeData(world, handle)
+        if isinstance(world, GraphViews):
+            world._node_refs[handle] = self
+
+    def __reduce__(self) -> tuple[Any, tuple[Any, ...]]:
+        return type(self), (self.world, self.handle)
 
     def __repr__(self) -> str:
         return f"<{type(self).__name__} {self.handle}: {dict(self.data)}>"
@@ -222,6 +260,20 @@ class RelationRef[T: NodeRef](_DictView):
     _kind = "bonds"
     _arity: int | None = None
 
+    def __new__(
+        cls,
+        world: Any,
+        kind: str,
+        handle: int,
+        endpoints: tuple[T, ...] = (),
+    ) -> RelationRef:
+        handle = _remap_relation(world, kind, handle)
+        if isinstance(world, GraphViews):
+            interned = world._relation_refs.get(kind, {}).get(handle)
+            if interned is not None:
+                return interned
+        return object.__new__(cls)
+
     def __init__(
         self,
         world: Any,
@@ -229,6 +281,12 @@ class RelationRef[T: NodeRef](_DictView):
         handle: int,
         endpoints: tuple[T, ...],
     ) -> None:
+        handle = _remap_relation(world, kind, handle)
+        if (
+            isinstance(world, GraphViews)
+            and world._relation_refs.get(kind, {}).get(handle) is self
+        ):
+            return
         actual = tuple(world.relation_nodes(kind, handle))
         supplied = tuple(endpoint.handle for endpoint in endpoints)
         if actual != supplied or any(
@@ -242,6 +300,11 @@ class RelationRef[T: NodeRef](_DictView):
         self.handle = handle
         self.endpoints = endpoints
         self.data = _RelationData(world, kind, handle)
+        if isinstance(world, GraphViews):
+            world._relation_refs.setdefault(kind, WeakValueDictionary())[handle] = self
+
+    def __reduce__(self) -> tuple[Any, tuple[Any, ...]]:
+        return type(self), (self.world, self.kind, self.handle, self.endpoints)
 
     def __repr__(self) -> str:
         return f"<{type(self).__name__} {self.handle}: {self.endpoints}>"
@@ -266,6 +329,9 @@ class Refs[R: RefLike](list[R]):
         self._lazy_handles: list[int] | None = None
         self._lazy_intern: Any = None
         self._lazy_kind: str | None = None
+
+    def __reduce__(self) -> tuple[Any, tuple[Any, ...]]:
+        return type(self), (list(self),)
 
     @classmethod
     def from_handles(
@@ -410,18 +476,40 @@ class GraphViews:
     _node_cls: type[NodeRef] = NodeRef
     _relation_classes: dict[str, type[RelationRef]] = {}
 
-    def __init__(self, **props: Any) -> None:
+    def __init__(
+        self,
+        nodes: list[dict[str, Any]] | None = None,
+        kinds: list[tuple[str, int, list[tuple[list[int], dict[str, Any]]]]]
+        | None = None,
+        memberships: tuple[tuple[int, tuple[Any, ...]], ...]
+        | list[tuple[int, tuple[Any, ...]]] = (),
+        props: dict[str, Any] | None = None,
+        relation_classes: dict[str, Any] | None = None,
+        node_handles: list[int] | None = None,
+        **extra: Any,
+    ) -> None:
         #: Whole-graph annotations (a name, a provenance tag). These describe
         #: the graph; ``get``/``[]`` on the graph itself address the *component
         #: store*, which is a different question with a different key space, so
         #: annotations answer under their own name rather than sharing those.
-        self.props: dict[str, Any] = dict(props)
+        self.props: dict[str, Any] = {**(props or {}), **extra}
         # Registrations belong to one world.  Mutating the class dictionary would
         # make a custom relation type in one graph leak into every graph of that
         # Python class.
-        self._relation_classes = dict(type(self)._relation_classes)
+        self._relation_classes = dict(
+            relation_classes
+            if relation_classes is not None
+            else type(self)._relation_classes
+        )
         self._node_refs: WeakValueDictionary[int, NodeRef] = WeakValueDictionary()
         self._relation_refs: dict[str, WeakValueDictionary[int, RelationRef]] = {}
+        self._node_remap: dict[int, int] | None = None
+        self._relation_remap: dict[str, dict[int, int]] | None = None
+        if nodes is not None:
+            _load_graph(self, nodes, kinds or [], memberships, node_handles)
+
+    def __reduce__(self) -> tuple[Any, tuple[Any, ...]]:
+        return type(self), _graph_ctor_args(self)
 
     def to_frame(self) -> "_Frame":
         """Serialize the graph to the canonical rich :class:`~molrs.Frame`.
@@ -557,6 +645,9 @@ class RelationBuckets:
 
     def __init__(self, world: GraphViews) -> None:
         self.world = world
+
+    def __reduce__(self) -> tuple[Any, tuple[Any, ...]]:
+        return type(self), (self.world,)
 
     def all(self) -> Refs[RelationRef]:
         return self.world._all_relation_views()
@@ -744,8 +835,8 @@ class Atomistic(GraphViews, _RsAtomistic):
         "impropers": Improper,
     }
 
-    def __init__(self, **props: Any) -> None:
-        GraphViews.__init__(self, **props)
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        GraphViews.__init__(self, *args, **kwargs)
 
     @property
     def atoms(self) -> Refs[Atom]:
@@ -820,9 +911,9 @@ class CoarseGrain(GraphViews, _RsCoarseGrain):
     _node_cls = Bead
     _relation_classes = {"bonds": CGBond}
 
-    def __init__(self, **props: Any) -> None:
-        GraphViews.__init__(self, **props)
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         self._member_world: Any = None
+        GraphViews.__init__(self, *args, **kwargs)
 
     @property
     def beads(self) -> Refs[Bead]:
@@ -877,6 +968,113 @@ class CoarseGrain(GraphViews, _RsCoarseGrain):
 _GraphViews = GraphViews
 
 
+def _load_graph(
+    graph: Any,
+    nodes: list[dict[str, Any]],
+    kinds: list[tuple[str, int, list[tuple[Any, ...]]]],
+    memberships: tuple[tuple[int, tuple[Any, ...]], ...]
+    | list[tuple[int, tuple[Any, ...]]],
+    node_handles: list[int] | None = None,
+) -> None:
+    handles = []
+    for props in nodes:
+        handle = graph.spawn()
+        handles.append(handle)
+        for key, value in props.items():
+            graph.set(handle, key, value)
+    if isinstance(graph, GraphViews) and node_handles is not None:
+        graph._node_remap = dict(zip(node_handles, handles))
+    registered = set(graph.kinds())
+    relation_remap: dict[str, dict[int, int]] = {}
+    for relation_kind, arity, relations in kinds:
+        if relation_kind not in registered:
+            graph.register_kind(relation_kind, arity)
+        kind_map: dict[int, int] = {}
+        for old_id, endpoint_rows, props in relations:
+            relation = graph.add_relation(
+                relation_kind, [handles[row] for row in endpoint_rows]
+            )
+            kind_map[old_id] = relation
+            for key, value in props.items():
+                graph.set_relation_prop(relation_kind, relation, key, value)
+        relation_remap[relation_kind] = kind_map
+    if isinstance(graph, GraphViews):
+        graph._relation_remap = relation_remap
+    for row, members in memberships:
+        graph._set_bead_atoms(graph._intern_node(handles[row]), tuple(members))
+
+
+def _graph_ctor_args(graph: Any) -> tuple[Any, ...]:
+    if type(graph) is GraphViews:
+        return (None, None, (), dict(graph.props), dict(graph._relation_classes))
+    nodes, kinds, view_state, memberships, node_handles = _dump_graph(graph)
+    if isinstance(graph, GraphViews) and view_state is not None:
+        return (
+            nodes,
+            kinds,
+            tuple(memberships),
+            view_state[0],
+            view_state[1],
+            node_handles,
+        )
+    return (nodes, kinds, tuple(memberships), node_handles)
+
+
+def _dump_graph(graph: Any) -> tuple[Any, ...]:
+    handles = list(graph.entities())
+    row_of = {handle: row for row, handle in enumerate(handles)}
+    nodes = [
+        {key: graph.get(handle, key) for key in graph.node_keys(handle)}
+        for handle in handles
+    ]
+    kinds = []
+    for kind in graph.kinds():
+        relations = []
+        for relation in graph.relation_ids(kind):
+            endpoints = [row_of[node] for node in graph.relation_nodes(kind, relation)]
+            props = {
+                key: graph.get_relation_prop(kind, relation, key)
+                for key in graph.relation_keys(kind, relation)
+            }
+            relations.append((relation, endpoints, props))
+        kinds.append((kind, graph.kind_arity(kind), relations))
+    view_state = None
+    memberships: list[tuple[int, tuple[Any, ...]]] = []
+    if isinstance(graph, GraphViews):
+        view_state = (dict(graph.props), dict(graph._relation_classes))
+    if isinstance(graph, CoarseGrain):
+        for row, handle in enumerate(handles):
+            members = graph._resolve_bead_atoms(handle)
+            if members:
+                memberships.append((row, members))
+    return nodes, kinds, view_state, memberships, handles
+
+
+def _native_graph_init(
+    graph: Any,
+    nodes: list[dict[str, Any]] | None = None,
+    kinds: list[tuple[str, int, list[tuple[Any, ...]]]] | None = None,
+    memberships: tuple[tuple[int, tuple[Any, ...]], ...]
+    | list[tuple[int, tuple[Any, ...]]] = (),
+    node_handles: list[int] | None = None,
+    *_ignored: Any,
+) -> None:
+    if nodes is not None:
+        _load_graph(graph, nodes, kinds or [], memberships, node_handles)
+
+
+def _reduce_native_graph(graph: Any) -> tuple[Any, tuple[Any, ...]]:
+    return type(graph), _graph_ctor_args(graph)
+
+
+_RsGraph.__init__ = _native_graph_init  # type: ignore[method-assign, assignment]
+_RsGraph.__reduce__ = _reduce_native_graph  # type: ignore[method-assign, assignment]
+_RsAtomistic.__init__ = _native_graph_init  # type: ignore[method-assign, assignment]
+_RsAtomistic.__reduce__ = _reduce_native_graph  # type: ignore[method-assign, assignment]
+_RsCoarseGrain.__init__ = _native_graph_init  # type: ignore[method-assign, assignment]
+_RsCoarseGrain.__reduce__ = _reduce_native_graph  # type: ignore[method-assign, assignment]
+
+
 __all__ = [
     "Angle",
     "Atom",
@@ -887,9 +1085,9 @@ __all__ = [
     "CoarseGrain",
     "Dihedral",
     "DrudeParticle",
-            "GraphViews",
+    "GraphViews",
     "Improper",
-        "MasslessSite",
+    "MasslessSite",
     "NodeRef",
     "Refs",
     "RelationRef",

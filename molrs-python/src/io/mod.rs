@@ -18,6 +18,7 @@
 #[cfg(feature = "fs")]
 pub mod mrec;
 
+use crate::core::spatial::mesh::PyTriMesh;
 use crate::core::store::block::PyBlock;
 use crate::core::store::frame::PyFrame;
 use crate::core::system::molgraph::PyAtomistic;
@@ -187,6 +188,16 @@ pub fn read_xyz_trajectory(path: &str) -> PyResult<Vec<PyFrame>> {
 /// --------
 /// >>> frame = molrs.read_lammps_data("system.data")
 /// >>> atoms = frame["atoms"]
+/// Read an STL surface mesh (ASCII or binary) into a [`PyTriMesh`].
+///
+/// The file's numbers are taken as they are; convert with
+/// ``TriMesh.scaled`` when the file is not in the length unit you work in.
+#[pyfunction]
+pub fn read_stl(path: &str) -> PyResult<PyTriMesh> {
+    let mesh = molrs::io::mesh::read_stl(path).map_err(io_error_to_pyerr)?;
+    Ok(PyTriMesh { inner: mesh })
+}
+
 #[pyfunction]
 pub fn read_lammps(path: &str) -> PyResult<PyFrame> {
     let frame = read_lammps_data(path).map_err(io_error_to_pyerr)?;
@@ -1078,6 +1089,10 @@ pub fn prmtop_parse_a4_names(lines: Vec<String>) -> Vec<String> {
 
 /// Decode bond pointer tables → ``(type, i, j, K, r0)`` (atoms 1-based).
 #[pyfunction]
+#[allow(
+    clippy::type_complexity,
+    reason = "Tuple fields match the public Python record format"
+)]
 pub fn prmtop_decode_bond_params(
     pointers: Vec<i64>,
     force_k: Vec<f64>,
@@ -1088,6 +1103,10 @@ pub fn prmtop_decode_bond_params(
 
 /// Decode angle pointer tables → ``(type, i, j, k, K, theta0_deg)`` (1-based).
 #[pyfunction]
+#[allow(
+    clippy::type_complexity,
+    reason = "Tuple fields match the public Python record format"
+)]
 pub fn prmtop_decode_angle_params(
     pointers: Vec<i64>,
     force_k: Vec<f64>,
@@ -1098,6 +1117,10 @@ pub fn prmtop_decode_angle_params(
 
 /// Decode dihedral pointer tables → ``(type, i, j, k, l, K, phase, n)`` (1-based).
 #[pyfunction]
+#[allow(
+    clippy::type_complexity,
+    reason = "Tuple fields match the public Python record format"
+)]
 pub fn prmtop_decode_dihedral_params(
     pointers: Vec<i64>,
     force_k: Vec<f64>,
@@ -1120,6 +1143,7 @@ pub fn prmtop_decode_dihedral_params(
     hbond_a = vec![],
     hbond_b = vec![],
 ))]
+#[allow(clippy::too_many_arguments, reason = "Public Python keyword arguments")]
 pub fn prmtop_decode_nonbond_params(
     n_atom: usize,
     n_types: usize,
@@ -1290,10 +1314,10 @@ fn map_to_frcmod(sections: std::collections::HashMap<String, String>) -> FrcmodF
         sections: Default::default(),
     };
     for key in ["mass", "bond", "angle", "dihe", "improper", "nonbon"] {
-        if let Some(v) = sections.get(key) {
-            if !v.is_empty() {
-                file.sections.insert(key.into(), v.clone());
-            }
+        if let Some(v) = sections.get(key)
+            && !v.is_empty()
+        {
+            file.sections.insert(key.into(), v.clone());
         }
     }
     file
@@ -1646,13 +1670,25 @@ pub fn lammps_type_ids_from_frame(
 ///     Output file path.
 /// frames : list[Frame]
 ///     Frames to write.
+/// columns : list[str], optional
+///     The ``dump custom`` column line, e.g. ``["id", "element", "mol", "x",
+///     "y", "z"]``. Written in the order given; a name the frame's ``atoms``
+///     block cannot supply raises. Default writes every column it holds.
 #[pyfunction]
-pub fn write_lammps_traj(path: &str, frames: Vec<PyRef<'_, PyFrame>>) -> PyResult<()> {
+#[pyo3(signature = (path, frames, columns = None))]
+pub fn write_lammps_traj(
+    path: &str,
+    frames: Vec<PyRef<'_, PyFrame>>,
+    columns: Option<Vec<String>>,
+) -> PyResult<()> {
     let core_frames: Vec<_> = frames
         .iter()
         .map(|f| f.clone_core_frame())
         .collect::<PyResult<_>>()?;
-    write_lammps_dump(path, &core_frames).map_err(io_error_to_pyerr)
+    let chosen: Option<Vec<&str>> = columns
+        .as_ref()
+        .map(|c| c.iter().map(String::as_str).collect());
+    write_lammps_dump(path, &core_frames, chosen.as_deref()).map_err(io_error_to_pyerr)
 }
 
 /// Write Frames as LAMMPS ``dump local`` (OVITO Load Trajectory bonds).
@@ -2205,6 +2241,7 @@ impl PySmilesIR {
         multi_component = "error_if_multiple",
         organic_subset = true,
     ))]
+    #[allow(clippy::too_many_arguments, reason = "Public Python keyword arguments")]
     fn from_atomistic(
         _cls: &Bound<'_, PyType>,
         mol: &PyAtomistic,
@@ -2311,6 +2348,7 @@ fn build_smiles_emit_options(
     multi_component = "error_if_multiple",
     organic_subset = true,
 ))]
+#[allow(clippy::too_many_arguments, reason = "Public Python keyword arguments")]
 pub fn write_smiles_from_atomistic(
     mol: &PyAtomistic,
     canonical: bool,
@@ -2360,6 +2398,7 @@ pub fn write_smiles_from_atomistic(
     neighbor_style = "chain",
     canonical_neighbor_order = true,
 ))]
+#[allow(clippy::too_many_arguments, reason = "Public Python keyword arguments")]
 pub fn write_smarts(
     mol: &PyAtomistic,
     center: u64,

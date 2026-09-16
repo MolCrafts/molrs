@@ -49,6 +49,7 @@ use roxmltree::Node;
 use super::ForceFieldReader;
 use crate::ff::constants::VACUUM_DIELECTRIC;
 use crate::ff::forcefield::{ForceField, SpecialBonds};
+use crate::ff::potential::pair::Mixing;
 use molrs::units::constants::COULOMB_REAL;
 
 /// kJ/mol → kcal/mol.
@@ -149,7 +150,12 @@ impl ForceFieldReader for OplsXmlReader {
             }
         }
 
-        build_nonbonded(&mut ff, &atom_rows, &nonbonded);
+        // `combining_rule` is a force-field property, not a kernel constant:
+        // OPLS-AA mixes σ geometrically, and reading it with the kernel's
+        // Lorentz-Berthelot default shifts every cross σ silently. Absent, keep
+        // the kernel default rather than invent a rule the file never stated.
+        let combining_rule = root.attribute("combining_rule");
+        build_nonbonded(&mut ff, &atom_rows, &nonbonded, combining_rule)?;
         ensure_class_wildcards(&mut ff, &atom_rows);
         // OPLS excludes 1-2/1-3 and scales 1-4 by the <NonbondedForce> values
         // (commonly 0.5 / 0.5). Owned by the ForceField, consumed by the pair
@@ -184,8 +190,9 @@ struct NonbondedRow {
 /// Build the atom style (`full`: mass + charge per type) and the two
 /// nonbonded pair styles (`lj/cut`: per-atom ε/σ; `coul/cut`: charges come from
 /// atoms at evaluation time). Combining rules and 1-4 scaling are NOT baked here
-/// — combining is the kernel's job, and the 1-4 weights live on the
-/// ForceField's `special_bonds` (set by the caller).
+/// — the 1-4 weights live on the ForceField's `special_bonds` (set by the
+/// caller). The `<ForceField combining_rule>` attribute, when present, is
+/// recorded as the `lj/cut` style's `mixing` param for the kernel to apply.
 ///
 /// String metadata on each atom type matches molpy's reader contract:
 /// ``type_`` (type name), ``class_`` (chemical class), ``element``, ``def_``.
@@ -194,7 +201,12 @@ struct NonbondedRow {
 ///
 /// `coul/cut` is the **buffered** Coulomb `E = k·qᵢqⱼ/(D·(r + δ))`; OPLS is the
 /// unbuffered case (δ = 0, the semantic default) in vacuum, with CODATA's `k`.
-fn build_nonbonded(ff: &mut ForceField, atom_rows: &[AtomTypeRow], nonbonded: &[NonbondedRow]) {
+fn build_nonbonded(
+    ff: &mut ForceField,
+    atom_rows: &[AtomTypeRow],
+    nonbonded: &[NonbondedRow],
+    combining_rule: Option<&str>,
+) -> Result<(), String> {
     if !atom_rows.is_empty() {
         let atom = ff.def_atomstyle("full");
         for row in atom_rows {
@@ -229,6 +241,10 @@ fn build_nonbonded(ff: &mut ForceField, atom_rows: &[AtomTypeRow], nonbonded: &[
 
     if !nonbonded.is_empty() {
         let lj = ff.def_pairstyle("lj/cut", &[]);
+        if let Some(rule) = combining_rule {
+            Mixing::parse(rule).map_err(|e| format!("<ForceField combining_rule>: {e}"))?;
+            lj.params.set_str("mixing", rule);
+        }
         for r in nonbonded {
             lj.def_pairtype(&r.ty, None, &[("epsilon", r.epsilon), ("sigma", r.sigma)]);
         }
@@ -237,6 +253,7 @@ fn build_nonbonded(ff: &mut ForceField, atom_rows: &[AtomTypeRow], nonbonded: &[
             &[("coulomb", COULOMB_REAL), ("dielectric", VACUUM_DIELECTRIC)],
         );
     }
+    Ok(())
 }
 
 /// Class-only bond/angle endpoints need a placeholder AtomType with
@@ -337,8 +354,7 @@ fn parse_bonds(ff: &mut ForceField, sec: &Node) -> Result<(), String> {
         let r0 = require_f64(&b, "length")? * NM_TO_ANGSTROM;
         // kJ/mol/nm² → kcal/mol/Å² : ÷4.184 (energy) ÷100 (nm²→Å²). Same ½ form.
         let k = require_f64(&b, "k")? / (KJ_PER_KCAL * 100.0);
-        // Emit both `k` (molpy / LAMMPS surface) and `k0` (kernel alias).
-        style.def_bondtype(c1, c2, &[("k", k), ("k0", k), ("r0", r0)]);
+        style.def_bondtype(c1, c2, &[("k", k), ("r0", r0)]);
     }
     Ok(())
 }
@@ -352,8 +368,7 @@ fn parse_angles(ff: &mut ForceField, sec: &Node) -> Result<(), String> {
         let c3 = class_or_type(&a, 3)?;
         let theta0 = require_f64(&a, "angle")?; // already radians
         let k = require_f64(&a, "k")? / KJ_PER_KCAL; // kJ/mol/rad² → kcal/mol/rad²
-        // Emit both `k` (molpy surface) and `k0` (kernel alias).
-        style.def_angletype(c1, c2, c3, &[("k", k), ("k0", k), ("theta0", theta0)]);
+        style.def_angletype(c1, c2, c3, &[("k", k), ("theta0", theta0)]);
     }
     Ok(())
 }
@@ -380,7 +395,7 @@ fn parse_dihedrals(ff: &mut ForceField, sec: &Node) -> Result<(), String> {
             c2,
             c3,
             c4,
-            &[("f1", f1), ("f2", f2), ("f3", f3), ("f4", f4)],
+            &[("k1", f1), ("k2", f2), ("k3", f3), ("k4", f4)],
         );
     }
     Ok(())
@@ -410,7 +425,7 @@ fn parse_periodic_torsions(ff: &mut ForceField, sec: &Node) -> Result<(), String
             c2,
             c3,
             c4,
-            &[("f1", f1), ("f2", f2), ("f3", f3), ("f4", f4)],
+            &[("k1", f1), ("k2", f2), ("k3", f3), ("k4", f4)],
         );
     }
     Ok(())
@@ -542,17 +557,17 @@ mod tests {
         let bond = ff.get_style("bond", "harmonic").unwrap();
         let bt = bond.get_bondtype("OW", "HW").unwrap();
         assert!((bt.params.get("r0").unwrap() - 0.9572).abs() < 1e-9);
-        assert!((bt.params.get("k0").unwrap() - 502080.0 / 418.4).abs() < 1e-6);
+        assert!((bt.params.get("k").unwrap() - 502080.0 / 418.4).abs() < 1e-6);
 
         // angle: theta0 unchanged (rad); k 627.6 → /4.184 = 150.0 kcal/mol/rad².
         let angle = ff.get_style("angle", "harmonic").unwrap();
         let at = &angle_types(angle)[0];
         assert!((at.params.get("theta0").unwrap() - 1.91113553093).abs() < 1e-9);
-        assert!((at.params.get("k0").unwrap() - 627.6 / 4.184).abs() < 1e-9);
+        assert!((at.params.get("k").unwrap() - 627.6 / 4.184).abs() < 1e-9);
 
         // dihedral opls f1..f4 present.
         let dih = ff.get_style("dihedral", "opls").unwrap();
-        assert!(dihedral_types(dih)[0].params.get("f3").is_some());
+        assert!(dihedral_types(dih)[0].params.get("k3").is_some());
 
         // pair lj/cut: sigma 0.375 nm → 3.75 Å; epsilon 0.43932 kJ → /4.184 kcal.
         let lj = ff.get_style("pair", "lj/cut").unwrap();

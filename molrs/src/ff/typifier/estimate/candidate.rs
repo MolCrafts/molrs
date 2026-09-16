@@ -142,20 +142,24 @@ mod tests {
         // old by-name extractor saw nothing here.
         let mut ff = ForceField::new("gaff-shaped");
         ff.def_bondstyle("harmonic")
-            .def_bondtype("c3", "hc", &[("k0", 330.6), ("r0", 1.0969)]);
+            .def_bondtype("c3", "hc", &[("k", 330.6), ("r0", 1.0969)]);
         ff.def_dihedralstyle("periodic").def_dihedraltype(
             "X",
             "c3",
             "c3",
             "X",
-            &[("k1", 0.16), ("n1", 3.0), ("d1", 0.0)],
+            &[("k1", 0.16), ("periodicity1", 3.0), ("phase1", 0.0)],
         );
         ff.def_improperstyle("periodic").def_impropertype(
             "X",
             "X",
             "ca",
             "ha",
-            &[("k", 1.1), ("n", 2.0), ("d", std::f64::consts::PI)],
+            &[
+                ("k", 1.1),
+                ("periodicity", 2.0),
+                ("phase", std::f64::consts::PI),
+            ],
         );
 
         let set = CandidateSet::from_forcefield(&ff);

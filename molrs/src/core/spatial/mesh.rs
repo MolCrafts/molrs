@@ -18,6 +18,7 @@
 
 use std::collections::HashMap;
 
+use super::vec3::{cross, sub};
 use crate::types::F;
 
 /// Below this twice-area a face has no usable normal and no interior.
@@ -222,18 +223,6 @@ impl TriMesh {
             faces: self.faces.clone(),
         }
     }
-}
-
-fn sub(a: [F; 3], b: [F; 3]) -> [F; 3] {
-    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
-}
-
-fn cross(a: [F; 3], b: [F; 3]) -> [F; 3] {
-    [
-        a[1] * b[2] - a[2] * b[1],
-        a[2] * b[0] - a[0] * b[2],
-        a[0] * b[1] - a[1] * b[0],
-    ]
 }
 
 #[cfg(test)]

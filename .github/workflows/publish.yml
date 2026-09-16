@@ -1,6 +1,7 @@
 name: Publish
 
-# Tag on master → crates.io + npm + PyPI (desktop + Pyodide wheels).
+# Tag on master → tests → crates.io + npm + PyPI (desktop + Pyodide wheels).
+# Manual branch runs build artifacts without uploading to registries.
 on:
   push:
     tags: ["v*"]
@@ -18,8 +19,24 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Tag must match the package version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          python - <<'PY'
+          import os
+          import tomllib
+          from pathlib import Path
+
+          version = tomllib.loads(Path("Cargo.toml").read_text())["workspace"]["package"]["version"]
+          tag = os.environ["GITHUB_REF_NAME"]
+          if tag != f"v{version}":
+              raise SystemExit(f"Tag {tag!r} does not match package version {version!r}")
+          PY
       - name: Tag must be on master
-        if: github.event_name == 'push'
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
           set -euo pipefail
           git fetch origin master
@@ -28,9 +45,13 @@ jobs:
             exit 1
           fi
 
-  publish-molrs:
+  ci:
     needs: guard
-    if: github.repository == 'MolCrafts/molrs'
+    uses: ./.github/workflows/ci.yml
+
+  publish-molrs:
+    needs: [guard, ci]
+    if: github.repository == 'MolCrafts/molrs' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     environment: release
     steps:
@@ -67,7 +88,7 @@ jobs:
           exit "$CODE"
 
   publish-wasm:
-    needs: guard
+    needs: [guard, ci]
     if: github.repository == 'MolCrafts/molrs'
     runs-on: ubuntu-latest
     environment: release
@@ -108,6 +129,7 @@ jobs:
       - working-directory: molrs-wasm
         run: wasm-pack build --release --target bundler --scope molcrafts --out-name molrs
       - working-directory: molrs-wasm/pkg
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
           set -euo pipefail
           NAME=$(node -p "require('./package.json').name")
@@ -188,7 +210,7 @@ jobs:
         uses: pypa/cibuildwheel@v4.1.1
         env:
           CIBW_PLATFORM: pyodide
-          # Package requires-python >=3.14 → build for current Pyodide CPython 3.14.
+          # Desktop supports Python 3.12+; this target uses Pyodide CPython 3.14.
           # (0.27.x / emscripten 3.1.58 was for 3.12; MolVis plugin upgrade later.)
           CIBW_BUILD: cp314-pyodide_wasm32
           CIBW_TEST_SKIP: "*"
@@ -206,8 +228,8 @@ jobs:
           path: molrs-python/dist-pyodide
 
   publish-python:
-    needs: [build-python, build-python-pyodide]
-    if: github.repository == 'MolCrafts/molrs'
+    needs: [ci, build-python, build-python-pyodide]
+    if: github.repository == 'MolCrafts/molrs' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -296,9 +318,9 @@ jobs:
             molrs-capi-*.tar.gz.sha256
 
   release-capi:
-    needs: build-capi
-    # Tag pushes only — a workflow_dispatch run exercises the build+package
-    # legs above without touching any release.
+    needs: [ci, build-capi]
+    # Tags only — a branch dispatch exercises the build+package legs above
+    # without touching any release.
     if: github.repository == 'MolCrafts/molrs' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:

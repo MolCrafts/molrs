@@ -10,7 +10,7 @@
 //! - All other sections are tolerantly skipped.
 //!
 //! Multi-molecule files (repeated `@<TRIPOS>MOLECULE` blocks) are supported by
-//! repeated [`Mol2Reader::read_frame`] calls.
+//! repeated [`Mol2Reader::read`] calls.
 //!
 //! ## Output Frame
 //!

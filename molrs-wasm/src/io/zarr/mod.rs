@@ -15,7 +15,7 @@
 
 use crate::core::frame::Frame;
 use crate::core::region::simbox::Box as JsBox;
-use molrs::io::mrec::FrameSequence;
+use molrs::io::mrec::{FrameSequence, read_frame_section_store, section_names_store};
 use molrs::io::reader::TrajectoryReader;
 use std::io::Read;
 use std::sync::Arc;
@@ -94,7 +94,9 @@ impl RecordReader {
         let store = Arc::new(MemoryStore::new());
         for index in 0..archive.len() {
             let mut entry = archive.by_index(index).map_err(|e| {
-                JsValue::from_str(&format!("zip entry {index}: {e} (packed stores use stored entries only)"))
+                JsValue::from_str(&format!(
+                    "zip entry {index}: {e} (packed stores use stored entries only)"
+                ))
             })?;
             if entry.is_dir() {
                 continue;
@@ -271,7 +273,10 @@ unsafe impl Send for HostStore {}
 unsafe impl Sync for HostStore {}
 
 fn storage_err(context: &str, e: JsValue) -> StorageError {
-    StorageError::Other(format!("{context}: {}", e.as_string().unwrap_or_else(|| format!("{e:?}"))))
+    StorageError::Other(format!(
+        "{context}: {}",
+        e.as_string().unwrap_or_else(|| format!("{e:?}"))
+    ))
 }
 
 impl HostStore {
@@ -281,10 +286,9 @@ impl HostStore {
             if value.is_undefined() || value.is_null() {
                 return Ok(None);
             }
-            value
-                .dyn_into::<js_sys::Function>()
-                .map(Some)
-                .map_err(|_| JsValue::from_str(&format!("store host property {name:?} is not a function")))
+            value.dyn_into::<js_sys::Function>().map(Some).map_err(|_| {
+                JsValue::from_str(&format!("store host property {name:?} is not a function"))
+            })
         };
         let required = |name: &str| -> Result<js_sys::Function, JsValue> {
             method(name)?.ok_or_else(|| JsValue::from_str(&format!("store host lacks {name}(…)")))
@@ -369,7 +373,11 @@ impl ReadableStorageTraits for HostStore {
         self.call_get(key)
     }
 
-    fn get_partial(&self, key: &StoreKey, byte_range: ByteRange) -> Result<MaybeBytes, StorageError> {
+    fn get_partial(
+        &self,
+        key: &StoreKey,
+        byte_range: ByteRange,
+    ) -> Result<MaybeBytes, StorageError> {
         self.range(key, &byte_range)
     }
 
@@ -416,7 +424,10 @@ impl ListableStorageTraits for HostStore {
         let mut keys = Vec::new();
         let mut prefixes = std::collections::BTreeSet::new();
         for key in self.list_prefix(prefix)? {
-            let rest = key.as_str().strip_prefix(prefix.as_str()).unwrap_or(key.as_str());
+            let rest = key
+                .as_str()
+                .strip_prefix(prefix.as_str())
+                .unwrap_or(key.as_str());
             match rest.find('/') {
                 Some(slash) => {
                     let child = format!("{}{}", prefix.as_str(), &rest[..=slash]);
@@ -445,3 +456,92 @@ impl ListableStorageTraits for HostStore {
 
 #[cfg(test)]
 mod export_pin;
+
+/// Load a `Map<path, Uint8Array>` of a record's files into an in-memory store.
+///
+/// Shared by the record-shape doors below and shaped like the
+/// `TrajectoryReader` constructor: a record that is not a frame sequence is a
+/// snapshot, and a snapshot is small enough to hand over whole.
+fn memory_store_from(files: &js_sys::Map) -> Result<ReadableWritableListableStorage, JsValue> {
+    let store = Arc::new(MemoryStore::new());
+    for key_res in files.keys() {
+        let key = key_res.map_err(|e| JsValue::from_str(&format!("{:?}", e)))?;
+        let path = key
+            .as_string()
+            .ok_or_else(|| JsValue::from_str("Invalid path key"))?;
+        let content_value = files.get(&key);
+        let content = js_sys::Uint8Array::new(&content_value).to_vec();
+        let store_path = path.strip_prefix('/').unwrap_or(&path);
+        let skey = StoreKey::new(store_path).map_err(js_string_err)?;
+        store.set(&skey, content.into()).map_err(js_string_err)?;
+    }
+    Ok(store as ReadableWritableListableStorage)
+}
+
+/// The record's top-level sections (`"meta"`, `"frame"`, `"trajectory"`, …).
+///
+/// Listed, never decoded — a record's sections are independent, and asking
+/// which ones exist must not cost a read of any of them. A caller holding the
+/// store's keys already knows this and needs no call at all; this is for one
+/// holding only an opaque store.
+#[wasm_bindgen(js_name = mrecSections)]
+pub fn mrec_sections(files: js_sys::Map) -> Result<Vec<String>, JsValue> {
+    section_names_store(memory_store_from(&files)?).map_err(js_string_err)
+}
+
+/// Unpack a packed `*.mrec.zip` into an in-memory store.
+///
+/// Stored entries only, like [`RecordReader::from_zip`] — a packed record is
+/// written without compression so a reader is a container walk.
+fn memory_store_from_zip(bytes: &[u8]) -> Result<ReadableWritableListableStorage, JsValue> {
+    let cursor = std::io::Cursor::new(bytes.to_vec());
+    let mut archive = zip::ZipArchive::new(cursor).map_err(js_string_err)?;
+    let store = Arc::new(MemoryStore::new());
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index).map_err(js_string_err)?;
+        if entry.is_dir() {
+            continue;
+        }
+        let name = entry.name().to_string();
+        let mut content = Vec::with_capacity(entry.size() as usize);
+        entry.read_to_end(&mut content).map_err(js_string_err)?;
+        let skey = StoreKey::new(name.trim_start_matches('/')).map_err(js_string_err)?;
+        store.set(&skey, content.into()).map_err(js_string_err)?;
+    }
+    Ok(store as ReadableWritableListableStorage)
+}
+
+/// The `frame` section of a packed `*.mrec.zip`, or `undefined`.
+///
+/// The packed twin of [`readMrecFrame`](read_mrec_frame).
+///
+/// # Errors
+///
+/// Throws when the bytes are not a readable packed record.
+#[wasm_bindgen(js_name = readMrecFrameFromZip)]
+pub fn read_mrec_frame_from_zip(bytes: &[u8]) -> Result<Option<Frame>, JsValue> {
+    match read_frame_section_store(memory_store_from_zip(bytes)?, "frame").map_err(js_string_err)? {
+        Some(frame) => Ok(Some(Frame::from_rs(frame)?)),
+        None => Ok(None),
+    }
+}
+
+/// The `frame` section of a record — its snapshot — or `undefined`.
+///
+/// The door for a record written by [`writeFrame`-shaped producers][molpack]:
+/// molpack writes a packed configuration as `meta` + `frame/`, which
+/// `TrajectoryReader` reads as a sequence of length zero. This reads the
+/// snapshot it actually carries.
+///
+/// [molpack]: https://github.com/MolCrafts/molpack
+///
+/// # Errors
+///
+/// Throws when the files are not a readable record.
+#[wasm_bindgen(js_name = readMrecFrame)]
+pub fn read_mrec_frame(files: js_sys::Map) -> Result<Option<Frame>, JsValue> {
+    match read_frame_section_store(memory_store_from(&files)?, "frame").map_err(js_string_err)? {
+        Some(frame) => Ok(Some(Frame::from_rs(frame)?)),
+        None => Ok(None),
+    }
+}

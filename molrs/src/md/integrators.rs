@@ -13,7 +13,7 @@
 //! implementation. The integrator owns the optional
 //! [`VerletSkin`]: every force evaluation runs the skin's update policy and,
 //! after a rebuild, feeds the current pairs to the potential
-//! ([`Potential::set_pairs`]) — neighbour bookkeeping is the loop's concern,
+//! ([`Potential::calc_energy_forces_with_pairs`]) — neighbour bookkeeping is the loop's concern,
 //! never the potential's. Two schemes, two types — no `gamma=0` switch:
 //!
 //! [`Potentials`]: molrs::ff::potential::Potentials
@@ -30,7 +30,7 @@
 //! Reference:
 //!     Leimkuhler & Matthews, "Rational Construction of Stochastic Numerical
 //!     Methods for Molecular Sampling", Appl. Math. Res. Express 2013.
-//!     https://doi.org/10.1093/amrx/abs010
+//!     <https://doi.org/10.1093/amrx/abs010>
 
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Zip};
 
