@@ -1,18 +1,19 @@
 # Migrating to 0.14
 
-User-facing spelling is `molpy`. The engine is the Rust crate; application
-code imports `molpy`.
+User-facing spelling is `molrs`: the PyPI package is `molcrafts-molrs` and the
+import name is `molrs`. The spellings below are the binding surface; the
+`molpy` layer re-exports most of them under its own flat namespace.
 
 ## Units
 
 The engine no longer converts energy or Boltzmann's constant for you.
 
 ```python
-import molpy
+import molrs
 
-kb = molpy.UnitPreset("real").boltzmann()
+kb = molrs.UnitPreset("real").boltzmann()
 eps = (
-    molpy.UnitRegistry()
+    molrs.UnitRegistry()
     .quantity(0.238, "kilocalorie_per_mole")
     .to("amu * angstrom ** 2 / femtosecond ** 2")
     .value
@@ -26,9 +27,10 @@ sampling needs an explicit `kb=`.
 
 ```python
 import numpy as np
-from molpy import md
+import molrs
+from molrs import md
 
-kb = molpy.UnitPreset("real").boltzmann()
+kb = molrs.UnitPreset("real").boltzmann()
 md.MaxwellBoltzmann(kb * 300.0, seed=0)
 driver = md.MD(dtype=np.float64)
 driver.run(frame, n, dt=dt, kb=kb, thermo=100)
@@ -39,12 +41,12 @@ driver.run(frame, n, dt=dt, kb=kb, thermo=100)
 
 ## Record / Frame store
 
-There is no `molpy.Record`. Write the object you have through `molpy.io.mrec`.
+There is no `molrs.Record`. Write the object you have through `molrs.io.mrec`.
 Schema checks live in `molrs::io::mrec::schema` and are bound at
-`molpy.io.mrec.schema`.
+`molrs.io.mrec.schema`.
 
 ```python
-from molpy.io import mrec
+from molrs.io import mrec
 
 mrec.write_frame(path, frame)
 loaded = mrec.read_frame(path)
@@ -64,7 +66,7 @@ writer land whole chunks on its own cadence; `flush()` / `close()` commit
 whatever is buffered, durably by default.
 
 ```python
-from molpy.io import mrec
+from molrs.io import mrec
 
 schema = (
     mrec.SequenceSchema()
@@ -76,13 +78,13 @@ schema = (
     .declare_column("bonds", "atomj", "u64")
     .declare_meta("temp", "f64")
 )
-with mrec.TrajectoryWriter(path, schema, meta={"creator": {"name": "molpy"}}) as w:
+with mrec.TrajectoryWriter(path, schema, meta={"creator": {"name": "molrs"}}) as w:
     w.append(first_frame, step=0, time=0.0)          # atoms + bonds
     for step, frame in run:                           # atoms only: bonds carry forward
         w.append(frame, step=step, time=step * dt)
 
 reader = mrec.TrajectoryReader(path)                  # or the packed path from mrec.pack(path)
-xyz = reader.read_columns(i, [("atoms", "x"), ("atoms", "y"), ("atoms", "z")])
+sub = reader.read_columns(i, [("atoms", "x"), ("atoms", "y"), ("atoms", "z")])  # a Frame
 same_bonds = reader.block_update_at("bonds", i) == reader.block_update_at("bonds", i - 1)
 ```
 
@@ -109,15 +111,17 @@ The loop owns rebuilds. Pair MIC is computed once, in `VerletSkin.pairs_at`,
 and shared by every pair potential.
 
 ```python
-from molpy import Box, md
+from molrs import Box, NeighborList, VerletSkin, md
 
-nl = md.VerletSkin(
-    md.NeighborList(rc + skin), rc, pos, Box.cube(20.0), skin=skin
+nl = VerletSkin(
+    NeighborList(rc + skin), rc, pos, Box.cube(20.0), skin=skin
 )
 vv = md.VelocityVerlet(1.0, potential=md.LJCut(eps, 3.405, rc), neighbors=nl, mass=mass)
 ```
 
-There is one `LJCut`, re-exported at `molpy.md.LJCut`.
+`NeighborList` and `VerletSkin` are core types and stay at the top level
+(`molrs.NeighborList`, `molrs.VerletSkin`); only the integrators and potentials
+live under `molrs.md`. There is one `LJCut`, re-exported at `molrs.md.LJCut`.
 
 ## ForceField categories
 
@@ -137,13 +141,13 @@ class MyRdf:
         ...
 ```
 
-`molpy.compute.Compute` is a Protocol. Call aliases and dump helpers are not
+`molrs.compute.Compute` is a Protocol. Call aliases and dump helpers are not
 part of it.
 
 ## Typifier
 
 ```python
-typifier = molpy.ff.MMFF94Typifier()
+typifier = molrs.ff.MMFF94Typifier()
 typed = typifier.typify(mol)
 pots = typifier.forcefield().to_potentials(typed.to_frame())
 ```

@@ -7,7 +7,7 @@
 //! # Typical workflow (JavaScript)
 //!
 //! ```js
-//! import { parseSMILES, generate3D } from "molrs-wasm";
+//! import { parseSMILES, generate3D } from "@molcrafts/molrs";
 //!
 //! const ir    = parseSMILES("c1ccccc1"); // benzene
 //! const frame = ir.toFrame();            // 2D graph (no coords)

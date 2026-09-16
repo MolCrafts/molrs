@@ -8,8 +8,11 @@ those pages instead of copying signatures or rustdoc text.
 | Library (single crate) | [`molcrafts-molrs`](https://docs.rs/molcrafts-molrs) |
 | CXX bridge (source / Atomiverse) | `molcrafts-molrs-cxxapi` (not on crates.io as a separate science package) |
 
-Feature modules inside `molcrafts-molrs`: `core` (always on), `perceive`,
-`io`, `ff`, `compute`, `signal`, `conformer`, `smiles`.
+Always compiled inside `molcrafts-molrs`: `core`, `perceive`, `builder`.
+Feature-gated modules: `io`, `smiles` (inside `io`), `ff`, `conformer`,
+`compute`, `voronoi`, `signal`, `md`, `stream`. `full` bundles every one of
+those except `stream`; the crate defaults are `full`, `stream`, `filesystem`,
+`rayon`.
 
 The Packmol-aligned packing workflow lives in the separate
 [`molpack`](https://github.com/MolCrafts/molpack) repository.

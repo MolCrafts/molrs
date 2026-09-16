@@ -24,7 +24,7 @@ Downstream packages that co-release with molrs (e.g. molpy) pin the shared
 
 ```toml
 [dependencies]
-molrs = { package = "molcrafts-molrs", version = "0.12", default-features = false, features = ["ff"] }
+molrs = { package = "molcrafts-molrs", version = "0.14", default-features = false, features = ["ff"] }
 ```
 
 Then use the native types directly — no FFI, no copies. For example, building
@@ -98,7 +98,8 @@ if let Ok(atoms) = frame.block("atoms") {
 ```
 
 `molrs-ffi` exposes `FrameRef`, `BlockRef`, `ForceFieldRef` (under the `ff` feature),
-`SharedStore` / `new_shared`, `FrameId`, `BlockHandle`, and one error type `FfiError`.
+`RegionRef` (a shared `Arc<dyn Region>`), `SharedStore` / `new_shared`, `FrameId`,
+`BlockHandle`, and one error type `FfiError`.
 This snippet is compile-checked as the `molrs-ffi` crate-level doctest.
 
 ### ABI contract (cross-extension handle exchange)
@@ -117,15 +118,30 @@ PyCapsules. That is a pointer bridge, so both sides must embed a
 capsule names**:
 
 - `abi::abi_line()` — `major.minor` of the embedded molrs (e.g. `"0.14"`).
-- `abi::frameref_capsule_name()` / `abi::forcefield_capsule_name()` —
-  `molrs.FrameRef/<line>` / `molrs.ForceFieldRef/<line>`. Versioned since
+- `abi::frameref_capsule_name()` / `abi::forcefield_capsule_name()` /
+  `abi::regionref_capsule_name()` — `molrs.FrameRef/<line>` /
+  `molrs.ForceFieldRef/<line>` / `molrs.RegionRef/<line>`. Versioned since
   0.14 (older lines used the unversioned `molrs.FrameRef`), so a cross-minor
   exchange fails the capsule *name check* — a clean `ValueError` — instead of
   dereferencing a possibly drifted layout.
 - `molrs._ffi_abi_token()` (Python) — returns
-  `(abi_line, version, frameref_name, forcefield_name)`. A consumer extension
-  calls it once at import and raises a clear `ImportError` on a line mismatch
-  (molpack's `interop::check_abi` is the reference implementation).
+  `(abi_line, version, frameref_name, forcefield_name, regionref_name)`. A
+  consumer extension calls it once at import and raises a clear `ImportError`
+  on a line mismatch (molpack's `interop::check_abi` is the reference
+  implementation; it reads the first two entries, so the tuple may grow).
+
+**Regions cross as geometry the consumer evaluates.** Every molrs-python region
+object (`Sphere`, `Cuboid`, `Parallelepiped`, `HalfSpace`, `Cylinder`,
+`Ellipsoid`, `Polyhedron`, `SphereUnion`, and a composed `Region`) exports
+`_ffi_regionref_capsule()`: a capsule named `molrs.RegionRef/<line>` whose
+`void*` is `*mut *mut RegionRef`. The consumer resolves it exactly like a frame
+capsule — `capsule.pointer_checked(Some(abi::regionref_capsule_name()))`,
+dereference twice, `.clone()` the handle — and keeps `handle.region()`, an
+`Arc<dyn Region + Send + Sync>` it may share into a rayon loop. Unlike a frame,
+the handle's *code* runs in the producer's image (vtable dispatch), so the
+cross-image contract is the `[F; 3]` surface only: `distance`, `distance_grad`,
+`contains_point`, `bounds` — none panics on finite input. The batched
+`contains(&FNx3)` can panic on a malformed array and is not part of it.
 
 Enforcement on the supply side: `molrs-ffi/src/abi.rs` carries a **layout
 snapshot test** (size / align / field offsets of every FFI-crossing type,

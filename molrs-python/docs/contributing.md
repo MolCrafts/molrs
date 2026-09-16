@@ -6,8 +6,10 @@ reference pages should inject generated API docs or link to generated API docs
 instead of copying signatures by hand.
 
 For Python, keep `molrs-python/python/molrs/_lib.pyi` synchronized with the
-PyO3 module exports. The freshness guard checks that every class and function
-registered in `molrs-python/src/lib.rs` is declared in the stub.
+PyO3 module exports. `molrs-python/tests/test_stub_parity.py` is the freshness
+guard and runs in `tox -e py`: it fails when a compiled export is missing from
+the stub, and when a parameter name differs between the stub and the compiled
+signature.
 
 For WASM, build declarations with the same `wasm-pack` flags used by npm
 publishing. The generated `pkg/` directory is ignored and must not be committed.

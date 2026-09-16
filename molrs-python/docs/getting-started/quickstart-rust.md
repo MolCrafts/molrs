@@ -8,12 +8,14 @@ minimal dependency set or enable `full` while exploring.
 
 ```toml
 [dependencies]
-molrs = { package = "molcrafts-molrs", version = "0.12", features = ["full"] }
+molrs = { package = "molcrafts-molrs", version = "0.14", features = ["full"] }
 ```
 
-The `full` feature enables I/O, SMILES, compute, force-field, and embedding
-subsystems. Once you know which layers your application uses, replace `full`
-with a narrower feature list.
+The `full` feature enables I/O, SMILES, compute, force-field, conformer, MD,
+Voronoi, and signal subsystems. Once you know which layers your application
+uses, replace `full` with a narrower feature list. (`full` does not enable
+`stream`, `filesystem`, or `blas`; the crate's *default* features are
+`full`, `stream`, `filesystem`, `rayon`.)
 
 ## 2. Parse Topology and Generate Coordinates
 
@@ -45,11 +47,17 @@ The facade mirrors the workspace layout:
 | Module | Feature | Purpose |
 | --- | --- | --- |
 | `molrs::*` | always | Core `Frame`, `Block`, topology, boxes, and regions |
+| `molrs::perceive` | always | Rings, aromaticity, hydrogens, stereo, SMARTS |
+| `molrs::builder` | always | Graphene, nanotubes, lattices, self-avoiding walks |
 | `molrs::io` | `io` | File readers and writers |
-| `molrs::smiles` | `smiles` | SMILES parser and graph conversion |
-| `molrs::conformer` | `embed` | 3D coordinate generation |
+| `molrs::smiles` | `smiles` | SMILES parser and graph conversion (re-export of `io::smiles`) |
+| `molrs::conformer` | `conformer` | 3D coordinate generation |
 | `molrs::compute` | `compute` | RDF, MSD, clusters, descriptors |
 | `molrs::ff` | `ff` | Force-field typing and potentials |
+| `molrs::optimize` | `ff` | L-BFGS geometry optimization over a `Potential` |
+| `molrs::md` | `md` | In-process velocity-Verlet / Langevin dynamics |
+| `molrs::signal` | `signal` | FFT autocorrelation, windows, frequency grids |
+| `molrs::stream` | `stream` | MessagePack/JSON frames, WebSocket transport |
 
 The lower-level crates are still documented individually on docs.rs. Use the
 facade for application code; open the crate-specific references when you need
@@ -57,7 +65,8 @@ module internals or lower-level extension points.
 
 ## 4. Common Compile Errors
 
-If `molrs::smiles` or `molrs::conformer` cannot be found, the Cargo feature is not
-enabled. If code compiles but embedding fails at runtime, inspect the topology:
+If `molrs::smiles` or `molrs::conformer` cannot be found, the Cargo feature is
+not enabled (the conformer feature is spelled `conformer`, and `smiles` implies
+`io`). If code compiles but embedding fails at runtime, inspect the topology:
 embedding expects chemically meaningful atoms and bonds, not just a coordinate
 table.

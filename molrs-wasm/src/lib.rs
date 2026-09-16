@@ -34,7 +34,7 @@
 //! # Quick start (JavaScript)
 //!
 //! ```js
-//! import init, { parseSMILES, generate3D, writeFrame } from "molrs-wasm";
+//! import init, { parseSMILES, generate3D, writeFrame } from "@molcrafts/molrs";
 //!
 //! await init();
 //!

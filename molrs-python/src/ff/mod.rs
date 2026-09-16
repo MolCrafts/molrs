@@ -76,7 +76,10 @@ impl PyTypifier {
         Self
     }
 
-    fn typify(&self, _mol: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+    // The parameter is unused here, but it is the public keyword name every
+    // concrete typifier and the docs spell `mol` — so the base declares it too.
+    fn typify(&self, mol: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let _ = mol;
         Err(PyNotImplementedError::new_err(
             "Typifier.typify must be implemented by a concrete typifier",
         ))

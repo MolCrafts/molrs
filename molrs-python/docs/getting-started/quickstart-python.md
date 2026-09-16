@@ -14,14 +14,14 @@ between the graph representation (`Atomistic`) and the table representation
 `Atomistic` when you want a graph with atoms and bonds.
 
 ```python
-import molpy
+import molrs
 
-ir = molpy.io.SmilesIR("CCO")  # ethanol
+ir = molrs.io.SmilesIR("CCO")  # ethanol
 mol = ir.to_atomistic()
 
 print("components:", ir.n_components)
 print("heavy atoms:", mol.n_atoms)
-print("bonds:", mol.n_bonds)
+print("bonds:", len(mol.bonds))
 ```
 
 Expected output shape:
@@ -42,7 +42,7 @@ Embedding converts topology into coordinates. Use a seed in examples so that
 the result is reproducible across runs.
 
 ```python
-mol3d, report = molpy.conformer.Conformer(speed="fast", seed=42).generate(mol)
+mol3d, report = molrs.conformer.Conformer(speed="fast", seed=42).generate(mol)
 
 print("atoms after embedding:", mol3d.n_atoms)
 print("final energy:", report.final_energy)
@@ -80,12 +80,12 @@ periodic simulation cell.
 ```python
 import numpy as np
 
-frame.box = molpy.Box.cube(
+frame.box = molrs.Box.cube(
     20.0,
     pbc=np.array([True, True, True], dtype=np.bool_),
 )
 
-print("box lengths:", frame.box.lengths())
+print("box lengths:", frame.box.lengths)
 print("box volume:", frame.box.volume())
 ```
 
@@ -103,14 +103,14 @@ points = np.column_stack(
     [atoms.view("x"), atoms.view("y"), atoms.view("z")]
 ).astype(np.float64, copy=False)
 
-nl = molpy.NeighborList(6.0)
+nl = molrs.NeighborList(6.0)
 nl.build(points, frame.box)
 neigh = nl.neighbors()
 
 print("pairs:", neigh.n_pairs)
 print("first pairs:", neigh.query_point_indices()[:5], neigh.point_indices()[:5])
 
-from molpy.compute.density import RDF
+from molrs.compute.density import RDF
 rdf = RDF(64, 6.0)
 rdf_result = rdf.compute(frame, neigh)
 print("rdf bins:", len(rdf_result.bin_centers))
@@ -129,16 +129,16 @@ with the graph. Coordinates are then extracted from the frame as a flat `3N`
 array.
 
 ```python
-typifier = molpy.ff.MMFF94Typifier()
+typifier = molrs.ff.MMFF94Typifier()
 typed = typifier.typify(mol3d)
 typed_frame = typed.to_frame()
 print("typed blocks:", typed_frame.keys())
 
 try:
     # Non-bonded terms need an explicit pairs block (no optimizeGeometry sugar).
-    typed_frame["pairs"] = molpy.ff.intramolecular_pairs(typed_frame)
+    typed_frame["pairs"] = molrs.ff.intramolecular_pairs(typed_frame)
     potentials = typifier.forcefield().to_potentials(typed_frame)
-    coords = molpy.ff.extract_coords(typed_frame)
+    coords = molrs.ff.extract_coords(typed_frame)
 
     energy, forces = potentials.calc_energy_forces(coords)
     print("energy:", energy)
@@ -155,12 +155,12 @@ compilation is stricter because every term must resolve to a supported
 parameter — some molecules can typify successfully while compilation still
 reports incomplete coverage.
 
-When potential compilation succeeds, the coordinate shape is `(3 * n_atoms,)`,
-not `(n_atoms, 3)`. Reshape only for display:
+When potential compilation succeeds, the two arrays have different shapes on
+purpose: coordinates go in flat as `(3 * n_atoms,)`, and forces come back as
+`(n_atoms, 3)`, ready to sum per atom:
 
 ```python
-forces_xyz = forces.reshape(mol3d.n_atoms, 3)
-print("force balance:", np.abs(forces_xyz.sum(axis=0)).max())
+print("force balance:", np.abs(forces.sum(axis=0)).max())
 ```
 
 ## 7. Write an XYZ File
@@ -169,8 +169,8 @@ The I/O layer writes frames. This is the final boundary where the graph-based
 work has become a portable coordinate table.
 
 ```python
-molpy.io.write_xyz("ethanol.xyz", frame)
-roundtrip = molpy.io.read_xyz("ethanol.xyz")
+molrs.io.write_xyz("ethanol.xyz", frame)
+roundtrip = molrs.io.read_xyz("ethanol.xyz")
 print("roundtrip atoms:", roundtrip["atoms"].nrows)
 ```
 

@@ -19,12 +19,12 @@ the hosted site reserves `/reference/wasm/` for that generated reference.
     it to a frame, and inspect coordinate columns.
 
     ```python
-    import molpy
+    import molrs
 
-    ir = molpy.io.SmilesIR("CCO")
+    ir = molrs.io.SmilesIR("CCO")
     mol = ir.to_atomistic()
 
-    mol3d, _report = molpy.conformer.Conformer(speed="fast", seed=42).generate(mol)
+    mol3d, _report = molrs.conformer.Conformer(speed="fast", seed=42).generate(mol)
     frame = mol3d.to_frame()
 
     atoms = frame["atoms"]
@@ -74,10 +74,10 @@ the hosted site reserves `/reference/wasm/` for that generated reference.
     console.log(writeFrame(frame3d, "xyz"));
     ```
 
-## One data model powers every subsystem
+## What lives here
 
 - [Migrating to 0.14](getting-started/migration-0-14.md): 0.13 → 0.14
-  spellings (`UnitPreset`, `MD(dtype=)`, `Record`, `meta`).
+  spellings (`UnitPreset`, `MD(dtype=)`, the `Record` removal, `meta`).
 
 These docs cover the molrs **binding surface** only — the per-language
 quickstarts and the API reference. Task-oriented Python guides (the data model,
@@ -101,6 +101,8 @@ quickstart for your host language:
 Use [Python Reference](reference/python.md), [Rust Reference](reference/rust.md),
 and [WASM Reference](reference/wasm.md) when you need exact API details.
 
-The conceptual guides are shared across languages. They explain how frames,
-topology, simulation boxes, neighbor lists, force fields, and trajectories fit
-together, so the same mental model carries from Rust to Python to WASM.
+The data model is the same in all three: frames, topology, simulation boxes,
+neighbor lists, force fields, and trajectories mean one thing across Rust,
+Python, and WASM, so the mental model carries between them. The narrative
+explanation of that model lives in the
+[molpy documentation](https://docs.molcrafts.org/molpy/).

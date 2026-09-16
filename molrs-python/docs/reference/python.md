@@ -3,7 +3,7 @@
 Canonical import style:
 
 ```python
-import molpy as mr
+import molrs as mr
 ```
 
 This page is rendered from the installed `molrs` package by `mkdocstrings-python`.
@@ -88,13 +88,34 @@ keeps signatures visible to static tools and the docs build.
 
 ## Regions and Neighbor Search
 
-::: molrs.Sphere
+A region is a solid with a signed distance to its boundary: every class
+answers `contains`, `distance` (negative inside) and `bounds`, and composes
+with `&`, `|` and `~`. Outside a shape is `~shape`; a shell is
+`outer & ~inner`. `TriMesh` is the surface a `Polyhedron` is bounded by and
+what `molrs.io.read_stl` reads (the WASM binding reads the same file with
+`readSTL` into `Mesh`).
 
-::: molrs.HollowSphere
+::: molrs.Sphere
 
 ::: molrs.Cuboid
 
+::: molrs.Parallelepiped
+
+::: molrs.HalfSpace
+
+::: molrs.Cylinder
+
+::: molrs.Ellipsoid
+
+::: molrs.TriMesh
+
+::: molrs.Polyhedron
+
+::: molrs.SphereUnion
+
 ::: molrs.Region
+
+::: molrs.io.read_stl
 
 ::: molrs.NeighborList
 
