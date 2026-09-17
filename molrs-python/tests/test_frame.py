@@ -1,3 +1,5 @@
+from collections.abc import MutableMapping
+
 import numpy as np
 import pytest
 import molrs
@@ -24,8 +26,7 @@ class TestFrameConstruction:
         assert f["atoms"].nrows == 2
         assert list(f["atoms"].view("symbol")) == ["C", "H"]
         np.testing.assert_allclose(f["atoms"].view("x"), [0.0, 1.0])
-        assert f.meta["source"].dtype == "string"
-        assert f.meta["source"].value == "pytest"
+        assert f.meta["source"] == "pytest"
 
     def test_repr_empty(self):
         r = repr(Frame())
@@ -128,38 +129,127 @@ class TestFrameMeta:
             "temperature": MetaValue("f32", 300.0),
             "stress": MetaValue("f64x6", [1, 2, 3, 4, 5, 6]),
         }
-        assert f.meta["tag"].dtype == "i64"
-        assert f.meta["tag"].value == 9_007_199_254_740_993
-        assert f.meta["temperature"].dtype == "f32"
-        assert f.meta["stress"].dtype == "f64x6"
-        assert f.meta["stress"].value == [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+        assert f.meta["tag"] == 9_007_199_254_740_993
+        assert f.meta["temperature"] == pytest.approx(300.0)
+        assert f.meta["stress"] == [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
 
     def test_json_document_values_are_accepted(self):
         f = Frame()
         f.meta = {"legacy": "string-only", "nested": {"tool": "molrec", "run": 3}}
-        assert f.meta["legacy"].value == "string-only"
-        assert f.meta["nested"].value == {"tool": "molrec", "run": 3}
+        assert f.meta["legacy"] == "string-only"
+        assert f.meta["nested"] == {"tool": "molrec", "run": 3}
+        assert f.meta.dtype("nested") == "json"
 
     def test_set_and_get(self):
         f = Frame()
-        f.meta = {
-            "title": MetaValue("string", "test"),
-            "source": MetaValue("string", "pytest"),
-        }
+        f.meta = {"title": "test", "source": "pytest"}
         meta = f.meta
-        assert meta["title"].value == "test"
-        assert meta["source"].value == "pytest"
+        assert meta["title"] == "test"
+        assert meta["source"] == "pytest"
+        assert meta == {"title": "test", "source": "pytest"}
 
     def test_empty_meta(self):
         f = Frame()
         assert len(f.meta) == 0
+        assert dict(f.meta) == {}
 
     def test_overwrite_meta(self):
         f = Frame()
-        f.meta = {"a": MetaValue("i64", 1)}
-        f.meta = {"b": MetaValue("i64", 2)}
+        f.meta = {"a": 1}
+        f.meta = {"b": 2}
         assert "b" in f.meta
         assert "a" not in f.meta
+
+    def test_update_and_get(self):
+        f = Frame()
+        f.meta.update({"a": 1})
+        f.meta.update(b="x")
+        assert f.meta.get("a") == 1
+        assert f.meta.get("missing") is None
+        assert f.meta.get("missing", 9) == 9
+
+    def test_unsupported_value_is_rejected(self):
+        f = Frame()
+        with pytest.raises(TypeError, match="not JSON-serializable"):
+            f.meta["bad"] = object()
+
+    def test_none_is_a_json_null_not_a_rejection(self):
+        # `meta` is a JSON document, and JSON has null. Rejecting a bare None
+        # while accepting {"a": None} would be an arbitrary split.
+        f = Frame()
+        f.meta["absent"] = None
+        assert f.meta["absent"] is None
+        assert f.meta.dtype("absent") == "json"
+
+    def test_write_through(self):
+        f = Frame()
+        f.meta["title"] = "water"
+        assert f.meta["title"] == "water"
+        f.meta["title"] = "ice"
+        assert f.meta["title"] == "ice"
+        del f.meta["title"]
+        assert "title" not in f.meta
+
+    def test_existing_key_keeps_its_dtype(self):
+        f = Frame()
+        f.meta["temperature"] = MetaValue("f32", 300.0)
+        assert f.meta.dtype("temperature") == "f32"
+        f.meta["temperature"] = 310.0
+        assert f.meta.dtype("temperature") == "f32"
+        assert f.meta["temperature"] == pytest.approx(310.0)
+
+    def test_reassigning_a_read_value_is_an_identity(self):
+        f = Frame()
+        f.meta = {
+            "tag": MetaValue("i64", 9_007_199_254_740_993),
+            "stress": MetaValue("f64x6", [1, 2, 3, 4, 5, 6]),
+        }
+        before = {k: f.meta.dtype(k) for k in f.meta}
+        for key in list(f.meta):
+            f.meta[key] = f.meta[key]
+        assert {k: f.meta.dtype(k) for k in f.meta} == before
+        assert f.meta["tag"] == 9_007_199_254_740_993
+
+    def test_value_that_does_not_fit_the_slot_is_refused(self):
+        f = Frame()
+        f.meta["count"] = MetaValue("i64", 3)
+        with pytest.raises(TypeError, match="is i64"):
+            f.meta["count"] = 1.5
+
+    def test_mapping_protocol(self):
+        f = Frame()
+        f.meta = {"a": 1, "b": "two"}
+        assert isinstance(f.meta, MutableMapping)
+        assert sorted(f.meta) == ["a", "b"]
+        assert dict(f.meta) == {"a": 1, "b": "two"}
+        assert f.meta == {"a": 1, "b": "two"}
+        assert f.meta.pop("a") == 1
+        f.meta.setdefault("c", 3)
+        assert f.meta["c"] == 3
+        f.meta |= {"d": 4}
+        assert f.meta["d"] == 4
+        f.meta.clear()
+        assert len(f.meta) == 0
+
+    def test_copying_a_frame_keeps_exact_dtypes(self):
+        # dict(meta) drops the tags, so the copy path must not go through it.
+        f = Frame()
+        f.meta = {"temperature": MetaValue("f32", 300.0)}
+        rich = molrs.Frame(f)
+        assert rich.meta.dtype("temperature") == "f32"
+        assert rich.meta.copy() == {"temperature": pytest.approx(300.0)}
+        assert set(rich.meta.typed()) == {"temperature"}
+        assert rich.meta.typed()["temperature"].dtype == "f32"
+
+    def test_nested_document_is_a_snapshot(self):
+        f = Frame()
+        f.meta["run"] = {"step": 1}
+        f.meta["run"]["step"] = 2
+        assert f.meta["run"] == {"step": 1}, "in-place nested edits do not persist"
+        document = f.meta["run"]
+        document["step"] = 2
+        f.meta["run"] = document
+        assert f.meta["run"] == {"step": 2}
 
 
 class TestFrameValidation:

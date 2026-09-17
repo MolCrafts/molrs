@@ -12,7 +12,8 @@
 //! | [`EinsteinDiffusion`] | self-MSD curve | [`LinearFit`](crate::compute::fitting::LinearFit) (D = slope/2d) |
 //! | [`EinsteinConductivity`] | collective charge-dipole MSD | [`LinearFit`](crate::compute::fitting::LinearFit) (σ) |
 //! | [`GreenKuboConductivity`] | current ACF | [`CumulativeTrapezoid`](crate::compute::fitting::CumulativeTrapezoid) (σ) |
-//! | [`DebyeRelaxation`] | dipole ACF + ⟨M²⟩ + V/T/BC | [`DebyeFit`] (τ_D, amplitude) |
+//! | [`DebyeRelaxation`] | dipole ACF + ⟨M²⟩ + V/T/BC | [`DebyeFit`] (τ_D, amplitude) / [`DipoleAutocorrelationSpectrum`](crate::compute::spectroscopy::DipoleAutocorrelationSpectrum) |
+//! | [`DipoleRateCross`] | `C_{ṀM}` (FD Ṁ × M) | [`DipoleRateCrossSpectrum`](crate::compute::spectroscopy::DipoleRateCrossSpectrum) |
 //! | [`OnsagerCorrelation`] | Onsager L_ij displacement correlations | [`LinearFit`](crate::compute::fitting::LinearFit) per pair |
 //!
 //! [`VACFAccumulator`] is the streaming (frame-by-frame, bounded-memory)
@@ -25,6 +26,7 @@
 //! let d = CumulativeTrapezoid.fit((&raw.acf, dt, None))?; // D = integral/3 in MD units
 //! ```
 
+pub mod correlation;
 pub mod debye_relaxation;
 pub mod einstein_conductivity;
 pub mod einstein_diffusion;
@@ -35,6 +37,11 @@ pub mod onsager;
 pub mod vacf;
 pub mod vacf_accumulator;
 
+pub use correlation::{
+    DipoleRateCross, DipoleRateCrossArgs, DipoleRateCrossResult, apply_unbiased_norm,
+    component_means, gradient_axis0_order2, lag_times, unbiased_cartesian_acf,
+    unbiased_cartesian_acf_scaled, unbiased_cartesian_xcorr,
+};
 pub use debye_relaxation::{
     DebyeFit, DebyeFitResult, DebyeRelaxation, DebyeRelaxationArgs, DebyeRelaxationResult,
     EwaldBoundary,

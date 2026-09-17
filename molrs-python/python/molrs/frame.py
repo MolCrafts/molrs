@@ -25,7 +25,7 @@ from numpy.typing import ArrayLike, NDArray
 from ._lib import Block as _RsBlock
 from ._lib import BlockDtypeError
 from ._lib import Frame as _RsFrame
-from ._lib import MetaValue
+from ._lib import keys as _keys
 
 type BlockLike = Mapping[str, ArrayLike]
 
@@ -51,7 +51,7 @@ def _is_array_like(value: Any) -> bool:
     return isinstance(value, (list, tuple))
 
 
-def _adopt_schema_dtype(key: str, arr: "np.ndarray") -> "np.ndarray":
+def _adopt_schema_dtype(key: object, arr: "np.ndarray") -> "np.ndarray":
     """Store a canonical column at the dtype the vocabulary declares.
 
     Width is not semantics: ``np.arange(n)`` yields int64 because that is
@@ -63,7 +63,8 @@ def _adopt_schema_dtype(key: str, arr: "np.ndarray") -> "np.ndarray":
     is only ever applied to keys the schema declares; an unconstrained key is
     stored exactly as given.
     """
-    spec = _schema.column(key)
+    name = _column_name(key)
+    spec = _schema.column(name)
     if spec is None:
         return arr
     want = np.dtype(spec.numpy_dtype)
@@ -72,7 +73,7 @@ def _adopt_schema_dtype(key: str, arr: "np.ndarray") -> "np.ndarray":
     converted = arr.astype(want, casting="unsafe")
     if not np.array_equal(converted.astype(arr.dtype), arr):
         raise ValueError(
-            f"column {key!r} is declared {spec.dtype!r} by the Frame schema, and "
+            f"column {name!r} is declared {spec.dtype!r} by the Frame schema, and "
             f"the given {arr.dtype} values do not survive the conversion"
         )
     return converted
@@ -154,16 +155,57 @@ class Block(_RsBlock, MutableMapping[str, np.ndarray]):
         return self._backing()
 
     def view(self, key: str):  # type: ignore[override]
-        return _RsBlock.view(self._backing(), key)
+        return _RsBlock.view(self._backing(), _column_name(key))
 
     def insert(self, key: str, array) -> None:  # type: ignore[override]
-        _RsBlock.insert(self._backing(), key, array)
+        _RsBlock.insert(self._backing(), _column_name(key), array)
 
     def remove(self, key: str) -> None:  # type: ignore[override]
-        _RsBlock.remove(self._backing(), key)
+        _RsBlock.remove(self._backing(), _column_name(key))
 
     def dtype(self, key: str) -> str:  # type: ignore[override]
-        return _RsBlock.dtype(self._backing(), key)
+        return _RsBlock.dtype(self._backing(), _column_name(key))
+
+    def has_f32(self, key: object) -> bool:
+        return _RsBlock.has_f32(self._backing(), _column_name(key))
+
+    def has_f64(self, key: object) -> bool:
+        return _RsBlock.has_f64(self._backing(), _column_name(key))
+
+    def has_int(self, key: object) -> bool:
+        return _RsBlock.has_int(self._backing(), _column_name(key))
+
+    def has_uint(self, key: object) -> bool:
+        return _RsBlock.has_uint(self._backing(), _column_name(key))
+
+    def has_string(self, key: object) -> bool:
+        return _RsBlock.has_string(self._backing(), _column_name(key))
+
+    def get_f32(self, key: object, default: Any = None) -> Any:
+        name = _column_name(key)
+        backing = self._backing()
+        if _RsBlock.has_f32(backing, name):
+            return _RsBlock.view(backing, name)
+        if name in self:
+            raise TypeError(
+                f"column {name!r} must be f32, got {backing.dtype(name)!r}"
+            )
+        if default is not None:
+            return default
+        raise KeyError(f"column '{name}' (f32) is required")
+
+    def get_f64(self, key: object, default: Any = None) -> Any:
+        name = _column_name(key)
+        backing = self._backing()
+        if _RsBlock.has_f64(backing, name):
+            return _RsBlock.view(backing, name)
+        if name in self:
+            raise TypeError(
+                f"column {name!r} must be f64, got {backing.dtype(name)!r}"
+            )
+        if default is not None:
+            return default
+        raise KeyError(f"column '{name}' (f64) is required")
 
     def has_f32(self, key: object) -> bool:
         return _RsBlock.has_f32(self._backing(), _column_name(key))
@@ -216,8 +258,8 @@ class Block(_RsBlock, MutableMapping[str, np.ndarray]):
     def __getitem__(self, key: np.ndarray) -> "Block": ...  # type: ignore[override]
 
     def __getitem__(self, key):  # type: ignore[override]
-        if isinstance(key, str):
-            val = _RsBlock.view(self._backing(), key)
+        if isinstance(key, (str, _keys.Key)):
+            val = _RsBlock.view(self._backing(), _column_name(key))
             return np.asarray(val) if isinstance(val, list) else val
         elif isinstance(key, (int, np.integer)) and not isinstance(key, bool):
 
@@ -240,10 +282,11 @@ class Block(_RsBlock, MutableMapping[str, np.ndarray]):
             # bracket form transposes the result does not have a shortcut.
             if not key:
                 raise KeyError("Empty list not allowed for indexing")
-            for k in key:
+            names = [_column_name(k) for k in key]
+            for k in names:
                 if k not in self:
                     raise KeyError(f"Key '{k}' not found in Block")
-            arrays = [self._view_array(k) for k in key]
+            arrays = [self._view_array(k) for k in names]
             first = arrays[0]
             for i, arr in enumerate(arrays[1:], 1):
                 if arr.shape != first.shape:
@@ -281,21 +324,22 @@ class Block(_RsBlock, MutableMapping[str, np.ndarray]):
             )
 
     def __setitem__(self, key: str, value: Any) -> None:  # type: ignore[override]
+        name = _column_name(key)
         arr = np.asarray(value)
         if arr.ndim == 0:
             raise ValueError(
-                f"Block column '{key}' must be at least 1-D; got a scalar "
+                f"Block column '{name}' must be at least 1-D; got a scalar "
                 f"({value!r}). Wrap it in a sequence (e.g. [{value!r}]) or "
                 "broadcast it to the column length — scalar columns are not "
                 "stored silently."
             )
-        arr = _adopt_schema_dtype(key, arr)
-        if key in _RsBlock.keys(self._backing()):
-            _RsBlock.remove(self._backing(), key)
-        _RsBlock.insert(self._backing(), key, arr)
+        arr = _adopt_schema_dtype(name, arr)
+        if name in _RsBlock.keys(self._backing()):
+            _RsBlock.remove(self._backing(), name)
+        _RsBlock.insert(self._backing(), name, arr)
 
     def __delitem__(self, key: str) -> None:  # type: ignore[override]
-        _RsBlock.remove(self._backing(), key)
+        _RsBlock.remove(self._backing(), _column_name(key))
 
     def __iter__(self) -> Iterator[str]:  # type: ignore[override]
         yield from _RsBlock.keys(self._backing())
@@ -304,9 +348,11 @@ class Block(_RsBlock, MutableMapping[str, np.ndarray]):
         return len(_RsBlock.keys(self._backing()))
 
     def __contains__(self, key: object) -> bool:
-        if not isinstance(key, str):
+        try:
+            name = _column_name(key)
+        except TypeError:
             return False
-        return _RsBlock.__contains__(self._backing(), key)
+        return _RsBlock.__contains__(self._backing(), name)
 
     def keys(self) -> list[str]:  # type: ignore[override]
         """All column names."""
@@ -315,7 +361,7 @@ class Block(_RsBlock, MutableMapping[str, np.ndarray]):
     # --- helpers ------------------------------------------------------------
 
     def _view_array(self, key: str) -> np.ndarray:
-        val = _RsBlock.view(self._backing(), key)
+        val = _RsBlock.view(self._backing(), _column_name(key))
         return np.asarray(val) if isinstance(val, list) else val
 
     def _as_dict(self) -> dict[str, np.ndarray]:
@@ -360,17 +406,19 @@ class Block(_RsBlock, MutableMapping[str, np.ndarray]):
         otherwise.
         """
         backing = self._backing()
-        if old_key not in _RsBlock.keys(backing):
-            raise KeyError(f"Column '{old_key}' not found in Block")
+        old_name = _column_name(old_key)
+        new_name = _column_name(new_key)
+        if old_name not in _RsBlock.keys(backing):
+            raise KeyError(f"Column '{old_name}' not found in Block")
         # A format-native column carries the file's spelling *and* its width;
         # renaming it onto a canonical key adopts the canonical dtype.
-        arr = np.asarray(self._view_array(old_key))
-        converted = _adopt_schema_dtype(new_key, arr)
+        arr = np.asarray(self._view_array(old_name))
+        converted = _adopt_schema_dtype(new_name, arr)
         if converted is not arr:
-            _RsBlock.remove(backing, old_key)
-            _RsBlock.insert(backing, new_key, converted)
+            _RsBlock.remove(backing, old_name)
+            _RsBlock.insert(backing, new_name, converted)
             return
-        _RsBlock.rename(backing, old_key, new_key)
+        _RsBlock.rename(backing, old_name, new_name)
 
     def sort(self, key: str, *, reverse: bool = False) -> "Block":
         """Return a new Block sorted by *key* (original unchanged).
@@ -380,9 +428,10 @@ class Block(_RsBlock, MutableMapping[str, np.ndarray]):
         """
         if self.nrows == 0:
             return self.copy()
-        if key not in self:
-            raise KeyError(f"Variable '{key}' not found in block")
-        return Block.from_dict(_RsBlock.sort(self._backing(), key, reverse))
+        name = _column_name(key)
+        if name not in self:
+            raise KeyError(f"Variable '{name}' not found in block")
+        return Block.from_dict(_RsBlock.sort(self._backing(), name, reverse))
 
     def sort_(self, key: str, *, reverse: bool = False) -> "Self":
         """Sort the block in place by *key*; returns self."""
@@ -495,7 +544,8 @@ class Frame(_RsFrame):
             if raw_box is not None:
                 self.box = raw_box
             if blocks.meta:
-                self.meta = dict(blocks.meta)
+                # assign the view, not dict(...): the view keeps exact dtypes
+                self.meta = blocks.meta
             return
         if meta is not None:
             self.meta = meta
@@ -594,7 +644,7 @@ class Frame(_RsFrame):
             new[name] = self[name].copy()
         new.box = self.box
         if self.meta:
-            new.meta = dict(self.meta)
+            new.meta = self.meta
         return new
 
     def __repr__(self) -> str:
@@ -619,7 +669,7 @@ def _block_ctor_args(block: Any) -> tuple[Any, ...]:
 def _frame_ctor_args(frame: Any) -> tuple[Any, ...]:
     return (
         {key: _RsFrame.__getitem__(frame, key) for key in frame.keys()},
-        dict(frame.meta),
+        frame.meta.typed(),  # pickling must carry the dtype tags, not plain values
         frame.box,
     )
 

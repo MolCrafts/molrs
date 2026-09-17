@@ -27,6 +27,9 @@ pub enum WindowType {
     /// one-sided autocorrelation signals where only the right edge
     /// needs suppression.
     CosineSq,
+    /// Identity window (no taper). Required for DRS pipelines that match
+    /// literature/scripts with `window="none"`.
+    None,
 }
 
 /// Apply a window function element-wise along `axis`.
@@ -54,6 +57,9 @@ pub fn apply_window(
     }
 
     let w: Vec<f64> = match window {
+        WindowType::None => {
+            return Ok(data.clone());
+        }
         WindowType::Hann => (0..window_len)
             .map(|n| {
                 if window_len == 1 {

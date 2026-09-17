@@ -234,7 +234,7 @@ box = frame.box
 assert box is not None
 lengths = [float(x) for x in box.lengths]
 assert all(abs(L - 30.0) < 1e-9 for L in lengths)
-assert float(frame.meta["oldbeta"].value) == 90.0
+assert float(frame.meta["oldbeta"]) == 90.0
 
 star = _read(STAR4)
 d = star["dihedrals"]

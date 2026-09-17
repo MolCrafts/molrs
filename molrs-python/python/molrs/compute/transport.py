@@ -5,6 +5,8 @@ Compose yourself (same as Rust):
 * Green–Kubo σ: ``GreenKuboConductivity`` → ``CumulativeTrapezoid`` → scale
 * Einstein–Helfand σ: ``EinsteinConductivity`` → ``LinearFit`` → scale
 * Self-diffusion D: ``VACF`` / ``EinsteinDiffusion`` → fit
+* Dipole-rate cross ε(ω): ``DipoleRateCross`` → ``DipoleRateCrossSpectrum``
+* PACF ε(ω): ``DebyeRelaxation`` → ``DipoleAutocorrelationSpectrum``
 
 
 """
@@ -13,6 +15,7 @@ from molrs._lib import (
     VACF as VACF,
     DebyeFit as DebyeFit,
     DebyeRelaxation as DebyeRelaxation,
+    DipoleRateCross as DipoleRateCross,
     EinsteinConductivity as EinsteinConductivity,
     EinsteinDiffusion as EinsteinDiffusion,
     GreenKuboConductivity as GreenKuboConductivity,
@@ -41,6 +44,7 @@ __all__ = [
     "EinsteinConductivity",
     "GreenKuboConductivity",
     "DebyeRelaxation",
+    "DipoleRateCross",
     "DebyeFit",
     "Onsager",
     "Persist",

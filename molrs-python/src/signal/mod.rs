@@ -34,14 +34,33 @@ pub(crate) fn signal_apply_window<'py>(
     let wt = match window_type {
         "hann" => WindowType::Hann,
         "blackman" => WindowType::Blackman,
+        "cosine_sq" => WindowType::CosineSq,
+        "none" | "None" | "identity" => WindowType::None,
         other => {
             return Err(PyValueError::new_err(format!(
-                "unknown window type: '{other}', expected 'hann' or 'blackman'"
+                "unknown window type: '{other}', expected 'hann', 'blackman', 'cosine_sq', or 'none'"
             )));
         }
     };
     let arr = data.as_array().to_owned();
     let result = sig::apply_window(&arr, wt, axis).map_err(py_value_err)?;
+    Ok(result.into_pyarray(py))
+}
+
+/// Cross-correlation via FFT: `C[k] = Σ_t a[t]·b[t+k]` (Wiener–Khinchin).
+///
+/// For vector series pass each Cartesian component separately and sum.
+#[pyfunction]
+#[pyo3(signature = (a, b, max_lag))]
+pub(crate) fn signal_xcorr_fft<'py>(
+    py: Python<'py>,
+    a: PyReadonlyArray1<'py, f64>,
+    b: PyReadonlyArray1<'py, f64>,
+    max_lag: usize,
+) -> PyResult<Bound<'py, PyArray1<f64>>> {
+    let aa = a.as_array().to_owned();
+    let bb = b.as_array().to_owned();
+    let result = sig::xcorr_fft(&aa, &bb, max_lag).map_err(py_value_err)?;
     Ok(result.into_pyarray(py))
 }
 

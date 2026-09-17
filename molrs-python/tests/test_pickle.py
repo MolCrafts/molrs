@@ -54,7 +54,7 @@ def test_storage_units_and_observables_pickle_by_logical_state() -> None:
     restored_frame = roundtrip(frame)
     assert type(restored_frame) is molrs.Frame
     assert restored_frame["grid"].dtype("sample") == "i16"
-    assert restored_frame.meta["nested"].value == {"ok": True}
+    assert restored_frame.meta["nested"] == {"ok": True}
     assert restored_frame.box.volume() == 64.0
 
     registry = molrs.UnitRegistry()

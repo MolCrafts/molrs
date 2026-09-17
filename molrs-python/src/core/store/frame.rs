@@ -40,44 +40,9 @@ impl PyMetaValue {
     /// Construct a metadata value from a stable dtype tag and payload.
     #[new]
     fn new(dtype: &str, value: &Bound<'_, PyAny>) -> PyResult<Self> {
-        fn array<T, const N: usize>(value: &Bound<'_, PyAny>, dtype: &str) -> PyResult<[T; N]>
-        where
-            for<'a, 'py> T: FromPyObject<'a, 'py>,
-        {
-            let values: Vec<T> = value.extract()?;
-            values.try_into().map_err(|values: Vec<T>| {
-                PyTypeError::new_err(format!("{dtype} requires {N} values, got {}", values.len()))
-            })
-        }
-
-        let inner = match dtype {
-            "bool" => MetaValue::Bool(value.extract()?),
-            "i32" => MetaValue::I32(value.extract()?),
-            "i64" => MetaValue::I64(value.extract()?),
-            "u32" => MetaValue::U32(value.extract()?),
-            "u64" => MetaValue::U64(value.extract()?),
-            "f32" => MetaValue::F32(value.extract()?),
-            "f64" => MetaValue::F64(value.extract()?),
-            "string" => MetaValue::String(value.extract()?),
-            "bool3" => MetaValue::Bool3(array(value, dtype)?),
-            "i32x3" => MetaValue::I32x3(array(value, dtype)?),
-            "i64x3" => MetaValue::I64x3(array(value, dtype)?),
-            "u32x3" => MetaValue::U32x3(array(value, dtype)?),
-            "u64x3" => MetaValue::U64x3(array(value, dtype)?),
-            "f32x3" => MetaValue::F32x3(array(value, dtype)?),
-            "f64x3" => MetaValue::F64x3(array(value, dtype)?),
-            "f32x6" => MetaValue::F32x6(array(value, dtype)?),
-            "f64x6" => MetaValue::F64x6(array(value, dtype)?),
-            "f32x9" => MetaValue::F32x9(array(value, dtype)?),
-            "f64x9" => MetaValue::F64x9(array(value, dtype)?),
-            "json" => MetaValue::Json(py_to_json(value)?),
-            _ => {
-                return Err(PyTypeError::new_err(format!(
-                    "unknown metadata dtype '{dtype}'"
-                )));
-            }
-        };
-        Ok(Self { inner })
+        Ok(Self {
+            inner: meta_value_from_dtype(dtype, value)?,
+        })
     }
 
     #[getter]
@@ -94,38 +59,7 @@ impl PyMetaValue {
 
     #[getter]
     fn value(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        macro_rules! scalar {
-            ($value:expr) => {
-                $value.into_pyobject(py)?.into_any().unbind()
-            };
-        }
-        macro_rules! list {
-            ($value:expr) => {
-                PyList::new(py, $value)?.into_any().unbind()
-            };
-        }
-        Ok(match &self.inner {
-            MetaValue::Bool(v) => v.into_pyobject(py)?.to_owned().into_any().unbind(),
-            MetaValue::I32(v) => scalar!(*v),
-            MetaValue::I64(v) => scalar!(*v),
-            MetaValue::U32(v) => scalar!(*v),
-            MetaValue::U64(v) => scalar!(*v),
-            MetaValue::F32(v) => scalar!(*v),
-            MetaValue::F64(v) => scalar!(*v),
-            MetaValue::String(v) => scalar!(v),
-            MetaValue::Bool3(v) => list!(v),
-            MetaValue::I32x3(v) => list!(v),
-            MetaValue::I64x3(v) => list!(v),
-            MetaValue::U32x3(v) => list!(v),
-            MetaValue::U64x3(v) => list!(v),
-            MetaValue::F32x3(v) => list!(v),
-            MetaValue::F64x3(v) => list!(v),
-            MetaValue::F32x6(v) => list!(v),
-            MetaValue::F64x6(v) => list!(v),
-            MetaValue::F32x9(v) => list!(v),
-            MetaValue::F64x9(v) => list!(v),
-            MetaValue::Json(v) => json_to_py(py, v)?,
-        })
+        meta_value_to_py(py, &self.inner)
     }
 
     fn __repr__(&self) -> String {
@@ -134,6 +68,318 @@ impl PyMetaValue {
             self.inner.dtype(),
             self.inner
         )
+    }
+}
+
+/// Collect a mapping (or an iterable of pairs) into a fresh [`MetaMap`].
+///
+/// Used by the wholesale `frame.meta = ...` replacement, where no slot exists
+/// yet, so every dtype is either pinned by a [`MetaValue`] or inferred.
+fn mapping_to_meta_map(source: &Bound<'_, PyAny>) -> PyResult<MetaMap> {
+    // Another frame's metadata copies across whole, tags and all: going through
+    // plain values would silently widen every non-default dtype.
+    if let Ok(view) = source.extract::<PyRef<'_, PyFrameMeta>>() {
+        return view.map();
+    }
+    let mut map = MetaMap::new();
+    if source.hasattr("keys")? {
+        for key in source.call_method0("keys")?.try_iter()? {
+            let key = key?;
+            let name: String = key.extract()?;
+            map.insert(name, infer_meta_value(&source.get_item(&key)?)?);
+        }
+        return Ok(map);
+    }
+    for pair in source.try_iter()? {
+        let (name, value): (String, Bound<'_, PyAny>) = pair?.extract()?;
+        map.insert(name, infer_meta_value(&value)?);
+    }
+    Ok(map)
+}
+
+/// Live, write-through view of a frame's metadata.
+///
+/// An ordinary Python mapping: reading a key yields a plain value — scalars
+/// unwrap, fixed-length vectors become lists, JSON documents become the decoded
+/// object — and writing one lands in the frame.
+///
+/// **The dtype belongs to the key, not to the value handed in.** That is how
+/// `mrec` already models metadata (`SequenceSchema.declare_meta(key, dtype)`),
+/// so writing a plain value to a key that already exists keeps that key's
+/// dtype and refuses a value it cannot hold; `frame.meta["t"] = frame.meta["t"]`
+/// is therefore an identity. [`MetaValue`](PyMetaValue) is how a key is given a
+/// dtype other than the inferred default, and [`dtype`](Self::dtype) reads the
+/// tag back.
+///
+/// A JSON document is handed back decoded, which makes it a **snapshot**:
+/// `frame.meta["run"]["step"] = 3` mutates a copy. Read, modify, write back.
+#[pyclass(module = "molrs._lib", name = "FrameMeta", unsendable)]
+pub struct PyFrameMeta {
+    inner: FrameRef,
+}
+
+impl PyFrameMeta {
+    fn map(&self) -> PyResult<MetaMap> {
+        self.inner
+            .with(|f| f.meta.clone())
+            .map_err(ffi_error_to_pyerr)
+    }
+
+    fn tag_of(&self, key: &str) -> PyResult<Option<&'static str>> {
+        self.inner
+            .with(|f| f.meta.get(key).map(MetaValue::dtype))
+            .map_err(ffi_error_to_pyerr)
+    }
+
+    /// Typed-slot write: an existing key keeps its dtype, a new key infers one.
+    fn typed_for(&self, key: &str, value: &Bound<'_, PyAny>) -> PyResult<MetaValue> {
+        if value.extract::<PyRef<'_, PyMetaValue>>().is_ok() {
+            return infer_meta_value(value);
+        }
+        match self.tag_of(key)? {
+            Some(dtype) => meta_value_from_dtype(dtype, value).map_err(|err| {
+                PyTypeError::new_err(format!(
+                    "metadata key '{key}' is {dtype}; assign a MetaValue to change it ({err})"
+                ))
+            }),
+            None => infer_meta_value(value),
+        }
+    }
+
+    fn store(&mut self, key: &str, value: MetaValue) -> PyResult<()> {
+        self.inner
+            .with_mut(|f| {
+                f.meta.insert(key, value);
+            })
+            .map_err(ffi_error_to_pyerr)
+    }
+
+    fn take(&mut self, key: &str) -> PyResult<Option<MetaValue>> {
+        self.inner
+            .with_mut(|f| f.meta.remove(key))
+            .map_err(ffi_error_to_pyerr)
+    }
+
+    fn as_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let dict = PyDict::new(py);
+        for (key, value) in self.map()?.iter() {
+            dict.set_item(key, meta_value_to_py(py, value)?)?;
+        }
+        Ok(dict)
+    }
+
+    /// Absorb a mapping or an iterable of `(key, value)` pairs.
+    fn absorb(&mut self, other: &Bound<'_, PyAny>) -> PyResult<()> {
+        if other.hasattr("keys")? {
+            for key in other.call_method0("keys")?.try_iter()? {
+                let key = key?;
+                let name: String = key.extract()?;
+                let value = other.get_item(&key)?;
+                let typed = self.typed_for(&name, &value)?;
+                self.store(&name, typed)?;
+            }
+            return Ok(());
+        }
+        for pair in other.try_iter()? {
+            let (name, value): (String, Bound<'_, PyAny>) = pair?.extract()?;
+            let typed = self.typed_for(&name, &value)?;
+            self.store(&name, typed)?;
+        }
+        Ok(())
+    }
+}
+
+#[pymethods]
+impl PyFrameMeta {
+    fn __getitem__(&self, py: Python<'_>, key: &str) -> PyResult<Py<PyAny>> {
+        match self.map()?.get(key) {
+            Some(value) => meta_value_to_py(py, value),
+            None => Err(PyKeyError::new_err(key.to_owned())),
+        }
+    }
+
+    fn __setitem__(&mut self, key: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let typed = self.typed_for(key, value)?;
+        self.store(key, typed)
+    }
+
+    fn __delitem__(&mut self, key: &str) -> PyResult<()> {
+        match self.take(key)? {
+            Some(_) => Ok(()),
+            None => Err(PyKeyError::new_err(key.to_owned())),
+        }
+    }
+
+    fn __contains__(&self, key: &str) -> PyResult<bool> {
+        Ok(self.map()?.get(key).is_some())
+    }
+
+    fn __len__(&self) -> PyResult<usize> {
+        Ok(self.map()?.len())
+    }
+
+    fn __iter__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, pyo3::types::PyIterator>> {
+        PyList::new(py, self.keys()?)?.try_iter()
+    }
+
+    fn __eq__(&self, py: Python<'_>, other: &Bound<'_, PyAny>) -> PyResult<bool> {
+        self.as_dict(py)?.as_any().eq(other)
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        Ok(format!("{}", self.as_dict(py)?))
+    }
+
+    /// The dtype tag stored for `key`, or ``None`` when the key is absent.
+    fn dtype(&self, key: &str) -> PyResult<Option<&'static str>> {
+        self.tag_of(key)
+    }
+
+    fn keys(&self) -> PyResult<Vec<String>> {
+        let mut names: Vec<String> = self.map()?.keys().cloned().collect();
+        names.sort_unstable();
+        Ok(names)
+    }
+
+    fn values(&self, py: Python<'_>) -> PyResult<Vec<Py<PyAny>>> {
+        let map = self.map()?;
+        self.keys()?
+            .iter()
+            .map(|key| meta_value_to_py(py, map.get(key).expect("key from this map")))
+            .collect()
+    }
+
+    fn items(&self, py: Python<'_>) -> PyResult<Vec<(String, Py<PyAny>)>> {
+        let map = self.map()?;
+        self.keys()?
+            .into_iter()
+            .map(|key| {
+                let value = meta_value_to_py(py, map.get(&key).expect("key from this map"))?;
+                Ok((key, value))
+            })
+            .collect()
+    }
+
+    #[pyo3(signature = (key, default=None))]
+    fn get(&self, py: Python<'_>, key: &str, default: Option<Py<PyAny>>) -> PyResult<Py<PyAny>> {
+        match self.map()?.get(key) {
+            Some(value) => meta_value_to_py(py, value),
+            None => Ok(default.unwrap_or_else(|| py.None())),
+        }
+    }
+
+    #[pyo3(signature = (key, *default))]
+    fn pop(
+        &mut self,
+        py: Python<'_>,
+        key: &str,
+        default: &Bound<'_, pyo3::types::PyTuple>,
+    ) -> PyResult<Py<PyAny>> {
+        match self.take(key)? {
+            Some(value) => meta_value_to_py(py, &value),
+            None if default.len() == 1 => Ok(default.get_item(0)?.unbind()),
+            None => Err(PyKeyError::new_err(key.to_owned())),
+        }
+    }
+
+    fn popitem(&mut self, py: Python<'_>) -> PyResult<(String, Py<PyAny>)> {
+        let key = self
+            .keys()?
+            .pop()
+            .ok_or_else(|| PyKeyError::new_err("popitem(): metadata is empty"))?;
+        let value = self.take(&key)?.expect("key came from this map");
+        Ok((key, meta_value_to_py(py, &value)?))
+    }
+
+    fn clear(&mut self) -> PyResult<()> {
+        self.inner
+            .with_mut(|f| f.meta.clear())
+            .map_err(ffi_error_to_pyerr)
+    }
+
+    #[pyo3(signature = (key, default=None))]
+    fn setdefault(
+        &mut self,
+        py: Python<'_>,
+        key: &str,
+        default: Option<Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        if let Some(value) = self.map()?.get(key) {
+            return meta_value_to_py(py, value);
+        }
+        // `dict.setdefault(k)` inserts None; so does this, now that None is a
+        // JSON null rather than a rejection.
+        let value = match default {
+            Some(value) => value,
+            None => py.None().into_bound(py),
+        };
+        let typed = self.typed_for(key, &value)?;
+        self.store(key, typed)?;
+        self.__getitem__(py, key)
+    }
+
+    #[pyo3(signature = (other=None, **kwargs))]
+    fn update(
+        &mut self,
+        other: Option<&Bound<'_, PyAny>>,
+        kwargs: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<()> {
+        if let Some(other) = other {
+            self.absorb(other)?;
+        }
+        if let Some(kwargs) = kwargs {
+            self.absorb(kwargs.as_any())?;
+        }
+        Ok(())
+    }
+
+    /// A plain `dict` snapshot; mutating it does not touch the frame.
+    fn copy<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        self.as_dict(py)
+    }
+
+    /// The same snapshot with every dtype kept, as `dict[str, MetaValue]`.
+    ///
+    /// `dict(meta)` throws the tags away, which is the right default for
+    /// reading; this is what a copy or a pickle has to carry instead.
+    fn typed<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let dict = PyDict::new(py);
+        for (key, value) in self.map()?.iter() {
+            dict.set_item(
+                key,
+                Py::new(
+                    py,
+                    PyMetaValue {
+                        inner: value.clone(),
+                    },
+                )?,
+            )?;
+        }
+        Ok(dict)
+    }
+
+    fn __or__<'py>(
+        &self,
+        py: Python<'py>,
+        other: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let merged = self.as_dict(py)?;
+        merged.update(other.cast::<pyo3::types::PyMapping>()?)?;
+        Ok(merged)
+    }
+
+    fn __ror__<'py>(
+        &self,
+        py: Python<'py>,
+        other: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let merged = other.cast::<PyDict>()?.copy()?;
+        merged.update(self.as_dict(py)?.as_mapping())?;
+        Ok(merged)
+    }
+
+    fn __ior__(&mut self, other: &Bound<'_, PyAny>) -> PyResult<()> {
+        self.absorb(other)
     }
 }
 
@@ -341,18 +587,18 @@ impl PyFrame {
             .map_err(ffi_error_to_pyerr)
     }
 
-    /// Exact-dtype metadata dictionary (``dict[str, MetaValue]``).
+    /// Live, write-through view of this frame's metadata.
     ///
-    /// Nested JSON documents (MolRec free-form meta) round-trip as
-    /// ``MetaValue(dtype='json', ...)``.
+    /// Returns
+    /// -------
+    /// FrameMeta
+    ///     A mapping of plain Python values. Mutations persist; the dtype of an
+    ///     existing key is kept (assign a :class:`MetaValue` to change it).
     #[getter]
-    fn meta<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let dict = PyDict::new(py);
-        let meta = self.with_frame(|f| f.meta.clone())?;
-        for (k, v) in meta {
-            dict.set_item(k, Py::new(py, PyMetaValue { inner: v })?)?;
+    fn meta(&self) -> PyFrameMeta {
+        PyFrameMeta {
+            inner: self.inner.clone(),
         }
-        Ok(dict)
     }
 
     /// Replace the metadata dictionary.
@@ -360,22 +606,15 @@ impl PyFrame {
     /// Values may be :class:`MetaValue` or any JSON-serializable object
     /// (``str``, ``int``, ``float``, ``bool``, ``list``, ``dict``).
     #[setter]
-    fn set_meta(&mut self, meta: &Bound<'_, PyDict>) -> PyResult<()> {
-        let mut map = MetaMap::with_capacity(meta.len());
-        for (k, v) in meta.iter() {
-            let key: String = k.extract()?;
-            if let Ok(val) = v.extract::<PyRef<'_, PyMetaValue>>() {
-                map.insert(key, val.inner.clone());
-            } else {
-                map.insert(key, MetaValue::from_attr_value(&py_to_json(&v)?));
-            }
-        }
+    fn set_meta(&mut self, meta: &Bound<'_, PyAny>) -> PyResult<()> {
+        // Build the replacement first: `frame.meta = frame.meta` and
+        // `Frame.copy` both read the map they are about to overwrite.
+        let map = mapping_to_meta_map(meta)?;
         self.inner
             .with_mut(|f| {
                 f.meta = map;
             })
-            .map_err(ffi_error_to_pyerr)?;
-        Ok(())
+            .map_err(ffi_error_to_pyerr)
     }
 
     /// Judge this frame against the canonical Frame schema.
@@ -537,6 +776,135 @@ impl PyFrame {
     pub(crate) fn with_frame<R>(&self, f: impl FnOnce(&CoreFrame) -> R) -> PyResult<R> {
         self.inner.with(f).map_err(ffi_error_to_pyerr)
     }
+}
+
+/// The plain Python counterpart of a stored value: scalars unwrap, fixed-length
+/// vectors become lists, and a JSON document becomes the decoded object.
+fn meta_value_to_py(py: Python<'_>, value: &MetaValue) -> PyResult<Py<PyAny>> {
+    macro_rules! scalar {
+        ($value:expr) => {
+            $value.into_pyobject(py)?.into_any().unbind()
+        };
+    }
+    macro_rules! list {
+        ($value:expr) => {
+            PyList::new(py, $value)?.into_any().unbind()
+        };
+    }
+    Ok(match value {
+        MetaValue::Bool(v) => v.into_pyobject(py)?.to_owned().into_any().unbind(),
+        MetaValue::I32(v) => scalar!(*v),
+        MetaValue::I64(v) => scalar!(*v),
+        MetaValue::U32(v) => scalar!(*v),
+        MetaValue::U64(v) => scalar!(*v),
+        MetaValue::F32(v) => scalar!(*v),
+        MetaValue::F64(v) => scalar!(*v),
+        MetaValue::String(v) => scalar!(v),
+        MetaValue::Bool3(v) => list!(v),
+        MetaValue::I32x3(v) => list!(v),
+        MetaValue::I64x3(v) => list!(v),
+        MetaValue::U32x3(v) => list!(v),
+        MetaValue::U64x3(v) => list!(v),
+        MetaValue::F32x3(v) => list!(v),
+        MetaValue::F64x3(v) => list!(v),
+        MetaValue::F32x6(v) => list!(v),
+        MetaValue::F64x6(v) => list!(v),
+        MetaValue::F32x9(v) => list!(v),
+        MetaValue::F64x9(v) => list!(v),
+        MetaValue::Json(v) => json_to_py(py, v)?,
+    })
+}
+
+/// Build a [`MetaValue`] carrying an explicit dtype tag, coercing `value` into it.
+///
+/// This is the one place a tag becomes storage, so a tag read back off an
+/// existing slot ([`MetaValue::dtype`]) round-trips through it exactly.
+/// Coercion never truncates: a value the tag cannot hold raises.
+fn meta_value_from_dtype(dtype: &str, value: &Bound<'_, PyAny>) -> PyResult<MetaValue> {
+    fn array<T, const N: usize>(value: &Bound<'_, PyAny>, dtype: &str) -> PyResult<[T; N]>
+    where
+        for<'a, 'py> T: FromPyObject<'a, 'py>,
+    {
+        let values: Vec<T> = value.extract()?;
+        values.try_into().map_err(|values: Vec<T>| {
+            PyTypeError::new_err(format!("{dtype} requires {N} values, got {}", values.len()))
+        })
+    }
+
+    Ok(match dtype {
+        "bool" => MetaValue::Bool(value.extract()?),
+        "i32" => MetaValue::I32(value.extract()?),
+        "i64" => MetaValue::I64(value.extract()?),
+        "u32" => MetaValue::U32(value.extract()?),
+        "u64" => MetaValue::U64(value.extract()?),
+        "f32" => MetaValue::F32(value.extract()?),
+        "f64" => MetaValue::F64(value.extract()?),
+        "string" => MetaValue::String(value.extract()?),
+        "bool3" => MetaValue::Bool3(array(value, dtype)?),
+        "i32x3" => MetaValue::I32x3(array(value, dtype)?),
+        "i64x3" => MetaValue::I64x3(array(value, dtype)?),
+        "u32x3" => MetaValue::U32x3(array(value, dtype)?),
+        "u64x3" => MetaValue::U64x3(array(value, dtype)?),
+        "f32x3" => MetaValue::F32x3(array(value, dtype)?),
+        "f64x3" => MetaValue::F64x3(array(value, dtype)?),
+        "f32x6" => MetaValue::F32x6(array(value, dtype)?),
+        "f64x6" => MetaValue::F64x6(array(value, dtype)?),
+        "f32x9" => MetaValue::F32x9(array(value, dtype)?),
+        "f64x9" => MetaValue::F64x9(array(value, dtype)?),
+        "json" => MetaValue::Json(py_to_json(value)?),
+        _ => {
+            return Err(PyTypeError::new_err(format!(
+                "unknown metadata dtype '{dtype}'"
+            )));
+        }
+    })
+}
+
+/// Pick a dtype for a value written to a key that has none yet.
+///
+/// Scalars take their exact Python counterpart; a numeric sequence of 3, 6 or 9
+/// becomes the matching fixed-length vector — the shapes `mrec` declares — and
+/// everything else (objects, ragged or non-numeric sequences, `None`) is a JSON
+/// document. A [`MetaValue`](PyMetaValue) passes through with its tag intact.
+fn infer_meta_value(value: &Bound<'_, PyAny>) -> PyResult<MetaValue> {
+    if let Ok(typed) = value.extract::<PyRef<'_, PyMetaValue>>() {
+        return Ok(typed.inner.clone());
+    }
+    // bool before int: Python bools are ints.
+    if let Ok(v) = value.cast::<PyBool>() {
+        return Ok(MetaValue::Bool(v.is_true()));
+    }
+    if let Ok(v) = value.cast::<PyInt>() {
+        if let Ok(n) = v.extract::<i64>() {
+            return Ok(MetaValue::I64(n));
+        }
+        if let Ok(n) = v.extract::<u64>() {
+            return Ok(MetaValue::U64(n));
+        }
+        return Err(PyTypeError::new_err(
+            "integer metadata does not fit i64/u64",
+        ));
+    }
+    if let Ok(v) = value.cast::<PyFloat>() {
+        return Ok(MetaValue::F64(v.extract()?));
+    }
+    if let Ok(v) = value.cast::<PyString>() {
+        return Ok(MetaValue::String(v.extract()?));
+    }
+    if let Ok(list) = value.cast::<PyList>() {
+        let vector = match list.len() {
+            3 => Some("f64x3"),
+            6 => Some("f64x6"),
+            9 => Some("f64x9"),
+            _ => None,
+        };
+        if let Some(dtype) = vector
+            && let Ok(typed) = meta_value_from_dtype(dtype, value)
+        {
+            return Ok(typed);
+        }
+    }
+    Ok(MetaValue::Json(py_to_json(value)?))
 }
 
 fn json_to_py(py: Python<'_>, value: &JsonValue) -> PyResult<Py<PyAny>> {

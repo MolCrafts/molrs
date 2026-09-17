@@ -33,6 +33,14 @@ here. No publish helper scripts; publishing stays in the workflow.
 - SMILES/SMARTS emit: `write_smiles` / `from_atomistic` / `write_smarts` (io surface only)
 - smiles-emit-01..04 closed
 
+## v0.13.1 (2026-08-13)
+
+Patch on the 0.13 line. Land on master, tag `v0.13.1`, wait for Publish, then molpy 0.13.1.
+
+- `Frame.meta` is a write-through `FrameMeta` mapping: assign `frame.meta["timestep"] = 0` (plain Python scalars). `MetaValue` remains for explicit typed writes.
+- Python `Block` / `Frame` columns accept `molrs.keys.Key` as well as `str`.
+- NeighborList / Neighbors binders (Python + WASM) and DRS correlators already on this line since 0.13.0.
+
 ## v0.12.2 (2026-08-05)
 
 - Public Python names only: `write_smiles` / `write_smarts` (removed `write_local_smarts` export)
@@ -60,6 +68,7 @@ here. No publish helper scripts; publishing stays in the workflow.
 - `Potential` and `Compute` as `runtime_checkable` Protocols (Python)
 - `MD(dtype=)` experimental (`import molrs.md` emits `FutureWarning`)
 - Public record API is `Record` / `Trajectory.read` / `Trajectory.write` (not `MolRec` / `read_zarr`)
+- `frame.meta` is a live write-through mapping of **plain** Python values (`FrameMeta`), not a `dict` snapshot of `MetaValue` boxes. The dtype belongs to the key: writing a plain value to an existing key keeps that key's dtype and refuses one it cannot hold, so `m[k] = m[k]` is an identity; assign a `MetaValue` to give a key a different dtype and read the tag back with `meta.dtype(k)`. A JSON document is returned decoded, so nested edits are read-modify-write. `None` stores as JSON null (it used to raise). `Frame.from_dict` is removed — `Frame(blocks=..., meta=...)` covers it, and `dict(frame.meta)` round-trips.
 - One LJ pair kernel; `VerletSkin::pairs_at` is the only MIC site; PME as pair style `coul/long/pme`
 - Identity scalar `Idx = u64` (retired `U = u32`); column storage widths preserved (no f32→f64 / i64→i32 / u64→u32 narrowing)
 - WASM domain-uint columns are `BigUint64Array`; JS names stay `setColU32` / `copyColU32` / `viewColU32` / `hasU32`

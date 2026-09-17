@@ -20,6 +20,10 @@ keeps signatures visible to static tools and the docs build.
 
 ::: molrs.Frame
 
+::: molrs.FrameMeta
+
+::: molrs.MetaValue
+
 ## Topology and SMILES
 
 ::: molrs.Atomistic

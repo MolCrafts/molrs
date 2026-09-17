@@ -31,6 +31,9 @@ _GENERATED_DUNDERS = frozenset(
         "__truediv__",
         "__getitem__",
         "__setitem__",
+        "__eq__",
+        "__ror__",
+        "__ior__",
     }
 )
 

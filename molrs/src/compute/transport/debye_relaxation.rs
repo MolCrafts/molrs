@@ -2,13 +2,12 @@
 
 use molrs::store::frame_access::FrameAccess;
 use ndarray::{Array1, Array2};
-use rustfft::FftPlanner;
 
+use super::correlation::{lag_times, unbiased_cartesian_acf};
 use crate::compute::error::ComputeError;
 use crate::compute::fitting::ols_slope_intercept_r2;
 use crate::compute::result::ComputeResult;
 use crate::compute::traits::{Compute, Fit};
-use molrs::signal as sig;
 
 /// Ewald boundary condition under which the dipole fluctuations were sampled.
 ///
@@ -128,41 +127,11 @@ impl Compute for DebyeRelaxation {
         }
         let max_lag = max_correlation_time.min(n_frames - 1);
 
-        // Per-component means → fluctuation ACF so acf[0] = ⟨|δM|²⟩.
-        let mut mean = [0.0_f64; 3];
-        for t in 0..n_frames {
-            for d in 0..3 {
-                mean[d] += dipole[[t, d]];
-            }
-        }
-        for m in mean.iter_mut() {
-            *m /= n_frames as f64;
-        }
-
-        let mut planner = FftPlanner::new();
-        let mut acf = Array1::<f64>::zeros(max_lag + 1);
-        for d in 0..3 {
-            let col: Array1<f64> = (0..n_frames).map(|t| dipole[[t, d]] - mean[d]).collect();
-            let component =
-                sig::acf_fft_with_planner(&mut planner, &col, max_lag).map_err(|e| {
-                    ComputeError::OutOfRange {
-                        field: "acf_fft",
-                        value: e.to_string(),
-                    }
-                })?;
-            for k in 0..=max_lag {
-                acf[k] += component[k];
-            }
-        }
-        // Unbiased linear-ACF estimator C(k) = ⟨δM(0)·δM(k·dt)⟩.
-        for k in 0..=max_lag {
-            acf[k] /= (n_frames - k) as f64;
-        }
-
+        // Fluctuation ACF so acf[0] = ⟨|δM|²⟩ (shared cartesian helper).
+        let acf = unbiased_cartesian_acf(dipole, max_lag, true)?;
         let zero_lag_variance = acf[0];
-        let lag_times = Array1::from_iter((0..=max_lag).map(|i| i as f64 * dt));
         Ok(DebyeRelaxationResult {
-            lag_times,
+            lag_times: lag_times(max_lag, dt),
             acf,
             zero_lag_variance,
             volume: self.volume,

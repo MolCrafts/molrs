@@ -206,7 +206,7 @@ class TestSchema:
         with mrec.TrajectoryWriter(path, schema) as w:
             w.append(_frame(2, 0, bonds=False))
         r = mrec.TrajectoryReader(path)
-        assert r.read_frame(0).meta["temp"].value == 300.0
+        assert r.read_frame(0).meta["temp"] == 300.0
         assert schema.meta_keys() == [("temp", "f64")]
 
 

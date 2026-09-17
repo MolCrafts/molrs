@@ -54,7 +54,7 @@ use crate::core::spatial::region::{
 };
 use crate::core::spatial::simbox::PyBox;
 use crate::core::store::block::PyBlock;
-use crate::core::store::frame::{PyFrame, PyMetaValue};
+use crate::core::store::frame::{PyFrame, PyFrameMeta, PyMetaValue};
 use crate::core::store::trajectory::{PyScalarObservable, PyTrajectory, PyVectorObservable};
 use crate::core::system::element::PyElement;
 use crate::core::system::molgraph::{
@@ -155,6 +155,7 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Block + Frame
     m.add_class::<PyBlock>()?;
     m.add_class::<PyMetaValue>()?;
+    m.add_class::<PyFrameMeta>()?;
     m.add_class::<PyFrame>()?;
     m.add(
         "FRAME_SCHEMA_VERSION",
@@ -401,6 +402,7 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Signal processing
     m.add_function(wrap_pyfunction!(signal::signal_acf_fft, m)?)?;
+    m.add_function(wrap_pyfunction!(signal::signal_xcorr_fft, m)?)?;
     m.add_function(wrap_pyfunction!(signal::signal_apply_window, m)?)?;
     m.add_function(wrap_pyfunction!(signal::signal_frequency_grid, m)?)?;
 

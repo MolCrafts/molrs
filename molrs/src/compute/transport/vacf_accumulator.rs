@@ -100,14 +100,19 @@ impl VACFAccumulator {
         }
 
         // Lag 0 (self product) + lags 1..=K against the ring history.
-        self.acc[0] += velocities.iter().map(|v| v * v).sum::<F>();
-        for k in 1..=self.resolution.min(self.ring.len()) {
-            let past = &self.ring[self.ring.len() - k];
-            self.acc[k] += velocities
-                .iter()
-                .zip(past.iter())
-                .map(|(a, b)| a * b)
-                .sum::<F>();
+        let mut s0 = 0.0;
+        for &v in velocities {
+            s0 += v * v;
+        }
+        self.acc[0] += s0;
+        let ring_len = self.ring.len();
+        for k in 1..=self.resolution.min(ring_len) {
+            let past = &self.ring[ring_len - k];
+            let mut sk = 0.0;
+            for (a, b) in velocities.iter().zip(past.iter()) {
+                sk += a * b;
+            }
+            self.acc[k] += sk;
         }
         for (s, v) in self.dof_sum.iter_mut().zip(velocities.iter()) {
             *s += v;
@@ -115,9 +120,14 @@ impl VACFAccumulator {
         if self.head.len() < self.resolution {
             self.head.push(velocities.to_vec());
         }
-        self.ring.push_back(velocities.to_vec());
-        if self.ring.len() > self.resolution {
-            self.ring.pop_front();
+        // Reuse the slot dropped off the front once the ring is saturated —
+        // steady-state allocates zero velocity buffers per frame.
+        if self.ring.len() == self.resolution {
+            let mut buf = self.ring.pop_front().expect("ring full");
+            buf.copy_from_slice(velocities);
+            self.ring.push_back(buf);
+        } else {
+            self.ring.push_back(velocities.to_vec());
         }
         self.n_frames += 1;
         Ok(())

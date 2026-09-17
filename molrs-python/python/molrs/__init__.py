@@ -30,6 +30,7 @@ Each of those names has exactly one spelling — ``molrs.io.SmilesIR`` and
 nothing else — so there is one thing to learn, document, and grep for.
 """
 
+
 from ._lib import (
     # Public exceptions
     BlockDtypeError,
@@ -43,6 +44,7 @@ from ._lib import (
     # Block + Frame
     Block,
     MetaValue,
+    FrameMeta,
     Frame,
     FRAME_SCHEMA_VERSION,
     # FFI ABI handshake (consumed by downstream handle-bridge extensions,
@@ -86,9 +88,15 @@ from ._lib import (
 # (io readers, etc.) yields these. The shadow is safe now that molpy re-exports
 # them instead of subclassing the bare core (chain spec 04). Internal modules
 # that need the raw cores import them from ``._lib`` directly.
+from collections.abc import MutableMapping
+
 from . import keys, schema
 from . import frame  # noqa: F401
 from .frame import Block, Frame
+
+# `frame.meta` implements the full mapping protocol in Rust; this makes
+# `isinstance(frame.meta, MutableMapping)` say so too.
+MutableMapping.register(FrameMeta)
 
 from . import compute  # analysis subpackage — one module per molrs::compute domain
 from . import conformer
@@ -159,6 +167,7 @@ __all__ = [
     "VerletSkin",
     "Block",
     "MetaValue",
+    "FrameMeta",
     "Frame",
     "FRAME_SCHEMA_VERSION",
     "Unit",

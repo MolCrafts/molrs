@@ -58,6 +58,41 @@ record contract is in development `meta["molrec_version"]` is optional: an
 absent key means no version validation, a present one must be an integer in
 `1..=MOLREC_VERSION`. Writers stamp nothing; there is no brand key.
 
+### Frame metadata
+
+`frame.meta` is a mapping, and it writes through.
+
+```python
+frame.meta["title"] = "water"        # lands in the frame
+frame.meta["title"]                  # 'water' — a plain str, not a box
+dict(frame.meta)                     # plain values, ready for json.dumps
+```
+
+The dtype belongs to the key, the way `mrec` already declares it
+(`SequenceSchema.declare_meta(key, dtype)`). Writing a plain value to a key that
+already exists keeps that key's dtype and refuses a value it cannot hold, so
+`frame.meta[k] = frame.meta[k]` is an identity:
+
+```python
+frame.meta["temperature"] = molrs.MetaValue("f32", 300.0)
+frame.meta.dtype("temperature")      # 'f32'
+frame.meta["temperature"] = 310.0    # still f32
+frame.meta["temperature"] = "warm"   # TypeError: key 'temperature' is f32
+```
+
+A JSON document comes back decoded, which makes it a snapshot — nested edits are
+read-modify-write:
+
+```python
+frame.meta["run"] = {"step": 1}
+document = frame.meta["run"]
+document["step"] = 2
+frame.meta["run"] = document
+```
+
+There is no `Frame.from_dict`; `Frame(blocks=..., meta=...)` is the constructor,
+and `dict(frame.meta)` is what you feed back into it.
+
 ### Streaming trajectories
 
 A run too large to hold in memory is written frame by frame. Declare the

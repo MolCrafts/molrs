@@ -2,12 +2,11 @@
 
 use molrs::store::frame_access::FrameAccess;
 use ndarray::{Array1, Array2};
-use rustfft::FftPlanner;
 
+use super::correlation::{lag_times, unbiased_cartesian_acf};
 use crate::compute::error::ComputeError;
 use crate::compute::result::ComputeResult;
 use crate::compute::traits::Compute;
-use molrs::signal as sig;
 
 /// Raw current autocorrelation function — the raw portion of the legacy
 /// `JacfResult`, with **no** fitted sigma.
@@ -62,28 +61,13 @@ impl Compute for GreenKuboConductivity {
         }
         let max_lag = max_correlation_time.min(n_frames - 1);
 
-        // ⟨J(0)·J(τ)⟩ over time origins is the sum of the three Cartesian
-        // current autocorrelations — evaluate each with the FFT (Wiener–Khinchin)
-        // like VACF / Debye, then apply the unbiased 1/(n − τ) normalization.
-        let mut planner = FftPlanner::new();
-        let mut jacf = Array1::<f64>::zeros(max_lag + 1);
-        for d in 0..3 {
-            let col: Array1<f64> = (0..n_frames).map(|t| current[[t, d]]).collect();
-            let acf = sig::acf_fft_with_planner(&mut planner, &col, max_lag).map_err(|e| {
-                ComputeError::OutOfRange {
-                    field: "acf_fft",
-                    value: e.to_string(),
-                }
-            })?;
-            for k in 0..=max_lag {
-                jacf[k] += acf[k];
-            }
-        }
-        for tau in 0..=max_lag {
-            jacf[tau] /= (n_frames - tau) as f64;
-        }
-        let lag_times = Array1::from_iter((0..=max_lag).map(|i| i as f64 * dt));
-        Ok(GreenKuboConductivityResult { lag_times, jacf })
+        // ⟨J(0)·J(τ)⟩: Cartesian sum of component ACFs, no mean subtraction
+        // (current is already a flux; shared unbiased helper).
+        let jacf = unbiased_cartesian_acf(current, max_lag, false)?;
+        Ok(GreenKuboConductivityResult {
+            lag_times: lag_times(max_lag, dt),
+            jacf,
+        })
     }
 }
 
