@@ -4,7 +4,7 @@ named refusal of the pre-0.14 layout (0.14.15, ac-032).
 One `molrs.Trajectory` carries frames of 3 / 5 / 4 atoms with an f64 + i64 +
 bool + u32 column set and one per-step meta scalar. It is written to a `*.mrec`
 store through `molrs.io.mrec.write_trajectory` — the door record I/O moved to in
-mrec-format-03-python; `Trajectory.write` / `.read` are gone — read back through
+`io_mrec.py`; `Trajectory.write` / `.read` are gone — read back through
 `read_trajectory`, and every coordinate, column, step, time and
 meta value is compared against the literals below **bit-for-bit** — no
 tolerance: floats are compared as their IEEE-754 bit patterns, so -0.0, a NaN,
@@ -20,7 +20,7 @@ how molrs hands out columns). The file bound is arithmetic over the node layout,
 spelled out at `FILE_BOUND`. Runner:
 
     uv --directory ../molrec run python \
-        regressions/release-0-14-15-molrec-zarr-trajectory.py
+        regressions/io_mrec_trajectory.py
 
 (any environment carrying a molrs >= 0.14.15 wheel will do; 2026-08-29).
 """
@@ -197,11 +197,10 @@ with tempfile.TemporaryDirectory() as tmp:
         assert got_kind.dtype == np.uint32, f"frame {i} kind: dtype {got_kind.dtype}"
         assert_array_equal(got_kind, np.array(ATOM_KIND[i], dtype=np.uint32))
 
-        meta = dict(frame.meta)
-        assert set(meta) == {META_KEY}, f"frame {i} meta keys: {sorted(meta)}"
-        entry = meta[META_KEY]
-        assert entry.dtype == "f64", f"frame {i} meta dtype: {entry.dtype}"
-        value = float(entry.value)
+        assert set(frame.meta) == {META_KEY}, f"frame {i} meta keys: {sorted(frame.meta)}"
+        dtype = frame.meta.dtype(META_KEY)
+        assert dtype == "f64", f"frame {i} meta dtype: {dtype}"
+        value = float(frame.meta[META_KEY])
         assert value == META_TEMPERATURE[i], (
             f"frame {i} meta {META_KEY}: {value!r} != {META_TEMPERATURE[i]!r}"
         )

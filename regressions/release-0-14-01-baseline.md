@@ -72,7 +72,9 @@ cargo test -p molcrafts-molrs --lib --features full,filesystem
 cargo test --doc -p molcrafts-molrs --features full,filesystem
 ```
 
-Run cargo with `CARGO_TARGET_DIR` pointing at node-local storage if the
-checkout is on a shared filesystem: the repository's own `target/` lives on
-Lustre, where cargo has been observed blocking indefinitely on flock (9h27m
-elapsed, 0s CPU, `wchan = ldlm_flock_completion`).
+If the checkout is on a shared filesystem, make `target/` itself a symlink to
+node-local storage — do **not** set `CARGO_TARGET_DIR`, which breaks the gates
+that hard-code `target/...` paths. Cargo has been observed blocking
+indefinitely on flock under Lustre (9 h 27 m and 33 min, both with ~0 s CPU and
+no `rustc` child, `wchan = ldlm_flock_completion_ast`). See
+`.claude/notes/notes.md`, 2026-09-07.

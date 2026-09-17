@@ -9,7 +9,7 @@ scientific package is imported.
 
 Runner:
 
-    uv --directory molrs-python run python ../regressions/region-sdf-peo-void.py
+    uv --directory molrs-python run python ../regressions/region_sphere_union.py
 """
 
 from __future__ import annotations
@@ -55,7 +55,7 @@ def main() -> None:
     print(f"void fraction    : {inside.mean():.4f} (Poisson estimate {expect:.4f})")
     print(f"contains         : {t_contains / N_PROBES * 1e6:.2f} us/probe")
     print(f"distance         : {t_distance / 100_000 * 1e6:.2f} us/probe")
-    print("REGION_SDF_PEO_VOID_DONE")
+    print("region_sphere_union ok")
 
 
 if __name__ == "__main__":

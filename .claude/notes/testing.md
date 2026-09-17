@@ -21,7 +21,8 @@ cargo test -p molcrafts-molrs --lib --features md   # example: only the subsyste
 `core::test_rayon::test_pool_is_multithreaded` asserts more than one worker
 actually executed a `par_iter`. Do not set `MOLRS_TEST_THREADS=1`.
 
-There is **no** `molrs/tests/` integration-binary tree.
+The only `molrs/tests/` binary is `architecture_gate.rs`, which asserts module
+boundaries rather than behaviour. Behaviour is tested next to the code.
 
 ## Language bindings (Python / C / WASM)
 

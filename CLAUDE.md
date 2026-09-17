@@ -119,7 +119,8 @@ LAMMPS, Packmol, etc. at test time. Numerical goldens are either:
   RDKit). Generators are not kept in-tree; CI never runs them.
 
 **Prefer unit tests next to the code** (`#[cfg(test)]` in `molrs/src/**`).
-There is **no** `molrs/tests/` integration-binary tree.
+The only `molrs/tests/` binary is `architecture_gate.rs`, which asserts module
+boundaries rather than behaviour. Behaviour is tested next to the code.
 
 Default gate: `cargo test -p molcrafts-molrs --lib --features full,filesystem`, plus
 `cargo test --doc -p molcrafts-molrs --features full,filesystem` — `--lib` does not run
