@@ -79,3 +79,10 @@ uv.lock
 target-aarch64/
 **/target-aarch64/
 molrs-python/python/molrs/_lib.abi3.so.*
+
+# Per-architecture toolchain and wheel output for the GH200 build job
+.cargo-aarch64/
+.rustup-aarch64/
+.wheels-aarch64/
+scripts/molrs-aarch64-*.out
+scripts/molrs-aarch64-*.err

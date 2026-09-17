@@ -359,7 +359,7 @@ mod tests {
     #[test]
     fn induced_subgraph_path4_middle_two() {
         let (mut mol, ids) = linear_chain(4);
-        mol.generate_topology(true, false, false).unwrap();
+        mol.generate_topology(true, false, false, false).unwrap();
         assert!(mol.n_angles() >= 2);
 
         let sub = mol
@@ -523,7 +523,7 @@ mod tests {
     #[test]
     fn atomistic_extract_copy_higher_order_angles() {
         let (mut mol, ids) = linear_chain(4);
-        mol.generate_topology(true, false, false).unwrap();
+        mol.generate_topology(true, false, false, false).unwrap();
         let parent_angles = mol.n_angles();
         assert!(parent_angles > 0);
         let ext = mol
@@ -608,7 +608,7 @@ mod tests {
         // the full table scan. They may differ in which *higher-order* terms
         // they carry — never in the bonds.
         let (mut mol, ids) = linear_chain(8);
-        mol.generate_topology(true, true, false).unwrap();
+        mol.generate_topology(true, true, false, false).unwrap();
         let bond = mol.bond_kind();
 
         let indexed = mol

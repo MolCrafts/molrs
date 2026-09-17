@@ -37,7 +37,7 @@ fn bench_generate_topology(c: &mut Criterion) {
             // an un-perceived graph (build is untimed in the setup closure).
             b.iter_batched(
                 || make_chain(n).0,
-                |mut mol| mol.generate_topology(true, true, false).unwrap(),
+                |mut mol| mol.generate_topology(true, true, false, false).unwrap(),
                 BatchSize::SmallInput,
             );
         });

@@ -590,7 +590,7 @@ impl Transform {
         self.apply_after_delete(mol, binding, &mut touched, &mut created)?;
 
         if refresh {
-            mol.generate_topology(true, true, false)?;
+            mol.generate_topology(true, true, false, false)?;
             crate::perceive::aromaticity::perceive_aromaticity(mol);
         }
 
@@ -653,7 +653,7 @@ impl Transform {
             created_per_edit.push(created);
         }
         if refresh {
-            mol.generate_topology(true, true, false)?;
+            mol.generate_topology(true, true, false, false)?;
             crate::perceive::aromaticity::perceive_aromaticity(mol);
         }
         Ok((touched_per_edit, created_per_edit))

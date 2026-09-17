@@ -657,22 +657,30 @@ impl PyAtomistic {
             .map_err(molrs_error_to_pyerr)
     }
 
-    /// Perceive angle and dihedral relations from the bond graph.
+    /// Perceive angle, dihedral and improper relations from the bond graph.
     ///
     /// Angles are 2-edge paths ``i-j-k`` and proper dihedrals 3-edge paths
     /// ``i-j-k-l`` over the bonds (graph-theory via the native `Topology`-backed
-    /// ``Topology``). Idempotent; ``clear_existing`` wipes existing
-    /// angle/dihedral relations first. Returns ``(n_angles_added,
-    /// n_dihedrals_added)``.
-    #[pyo3(signature = (gen_angle=true, gen_dihedral=true, clear_existing=false))]
+    /// ``Topology``). Impropers are the molecular-mechanics reading: one
+    /// ``[centre, i, j, k]`` quartet per atom with **exactly three** neighbours,
+    /// centre first, peripherals sorted — not every 3-combination at every
+    /// centre of degree >= 3, which would hand an sp3 carbon four quartets.
+    /// Whether a trivalent centre is planar enough to carry the term is
+    /// force-field data, not a graph property, so every one is emitted.
+    ///
+    /// Idempotent; ``clear_existing`` wipes existing relations of the requested
+    /// kinds first. Returns ``(n_angles_added, n_dihedrals_added,
+    /// n_impropers_added)``.
+    #[pyo3(signature = (gen_angle=true, gen_dihedral=true, gen_improper=false, clear_existing=false))]
     fn generate_topology(
         &mut self,
         gen_angle: bool,
         gen_dihedral: bool,
+        gen_improper: bool,
         clear_existing: bool,
-    ) -> PyResult<(usize, usize)> {
+    ) -> PyResult<(usize, usize, usize)> {
         self.inner
-            .generate_topology(gen_angle, gen_dihedral, clear_existing)
+            .generate_topology(gen_angle, gen_dihedral, gen_improper, clear_existing)
             .map_err(molrs_error_to_pyerr)
     }
 

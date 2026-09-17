@@ -61,7 +61,7 @@ impl UFFTypifier {
     /// Label + bake per-instance UFF parameters.
     pub fn typify(&self, mol: &Atomistic) -> Result<Atomistic, String> {
         let mut out = mol.clone();
-        out.generate_topology(true, true, true)
+        out.generate_topology(true, true, false, true)
             .map_err(|e| e.to_string())?;
 
         let atom_ids: Vec<AtomId> = out.atoms().map(|(id, _)| id).collect();

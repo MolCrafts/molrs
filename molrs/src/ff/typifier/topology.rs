@@ -14,7 +14,7 @@ use molrs::Atomistic;
 /// out-of-plane permutations, while OPLS-style impropers are force-field-table
 /// driven.
 pub(crate) fn typify_bonded_topology(mol: &mut Atomistic) -> Result<(), String> {
-    mol.generate_topology(true, true, true)
+    mol.generate_topology(true, true, false, true)
         .map(|_| ())
         .map_err(|e| e.to_string())
 }

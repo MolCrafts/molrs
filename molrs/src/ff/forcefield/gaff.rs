@@ -454,7 +454,8 @@ pub fn gaff_forcefield(
     }
 
     // --- angles + dihedrals, enumerated from the bond graph ---
-    out.generate_topology(true, true, true).map_err(malformed)?;
+    out.generate_topology(true, true, false, true)
+        .map_err(malformed)?;
 
     let mut angle_types: BTreeMap<String, Bonded> = BTreeMap::new();
     let angles: Vec<_> = out

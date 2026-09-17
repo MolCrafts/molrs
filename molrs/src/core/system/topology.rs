@@ -280,6 +280,36 @@ impl Topology {
         result
     }
 
+    /// One improper quartet `[centre, i, j, k]` per atom with **exactly three**
+    /// neighbours, the peripherals sorted.
+    ///
+    /// This is the molecular-mechanics reading of an improper: a trivalent
+    /// centre carries one out-of-plane term. [`impropers`](Self::impropers) is
+    /// the geometric enumeration instead — every 3-combination at every centre
+    /// of degree >= 3 — which hands an sp3 carbon four quartets where a force
+    /// field wants none.
+    ///
+    /// Planarity is **not** judged here. Whether a trivalent centre actually
+    /// carries an improper is force-field data (GAFF reads the `improper_flag`
+    /// column of PARMCHK.DAT), not a property of the graph, so this returns
+    /// every trivalent centre and leaves the selection to the layer that has
+    /// the table.
+    ///
+    /// The centre is first. AMBER's slot order, with the centre third, is a
+    /// re-ordering performed by the force field that wants it.
+    pub fn trivalent_impropers(&self) -> Vec<[usize; 4]> {
+        let mut result = Vec::new();
+        for center in 0..self.n {
+            let mut neighbors: Vec<usize> = self.adj[center].clone();
+            if neighbors.len() != 3 {
+                continue;
+            }
+            neighbors.sort_unstable();
+            result.push([center, neighbors[0], neighbors[1], neighbors[2]]);
+        }
+        result
+    }
+
     // -----------------------------------------------------------------------
     // Query accessors
     // -----------------------------------------------------------------------
@@ -951,6 +981,32 @@ mod tests {
         assert_eq!(topo.n_angles(), 6);
         assert_eq!(topo.n_dihedrals(), 0);
         assert_eq!(topo.impropers().len(), 4);
+    }
+
+    #[test]
+    fn trivalent_impropers_is_one_per_three_neighbour_centre() {
+        // Formaldehyde-shaped: centre 0 bonded to 1, 2, 3.
+        let topo = Topology::from_edges(4, &[[0, 1], [0, 2], [0, 3]]);
+        assert_eq!(topo.trivalent_impropers(), vec![[0, 1, 2, 3]]);
+    }
+
+    #[test]
+    fn trivalent_impropers_skips_a_four_neighbour_centre() {
+        // Methane-shaped: the geometric enumeration gives C(4,3) = 4 quartets,
+        // the molecular-mechanics one gives none — an sp3 centre carries no
+        // out-of-plane term.
+        let topo = Topology::from_edges(5, &[[0, 1], [0, 2], [0, 3], [0, 4]]);
+        assert_eq!(topo.impropers().len(), 4);
+        assert!(topo.trivalent_impropers().is_empty());
+    }
+
+    #[test]
+    fn trivalent_impropers_puts_the_centre_first_and_sorts_the_legs() {
+        let topo = Topology::from_edges(4, &[[0, 3], [0, 1], [0, 2]]);
+        let quartets = topo.trivalent_impropers();
+        assert_eq!(quartets.len(), 1);
+        assert_eq!(quartets[0][0], 0, "centre first");
+        assert_eq!(&quartets[0][1..], &[1, 2, 3], "legs sorted");
     }
 
     #[test]
