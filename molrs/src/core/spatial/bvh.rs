@@ -128,6 +128,69 @@ impl Bvh {
         }
     }
 
+    /// The `k` items with the smallest `metric`, nearest first.
+    ///
+    /// The same descent as [`nearest`](Self::nearest) with a `k`-deep frontier
+    /// instead of a single best: a node prunes once its box is farther than
+    /// the worst of the `k` held so far, which only bites once the frontier is
+    /// full. Fewer than `k` items yields all of them.
+    pub(crate) fn knn<M>(&self, p: &[F; 3], k: usize, mut metric: M) -> Vec<(u32, F)>
+    where
+        M: FnMut(u32) -> F,
+    {
+        if k == 0 || self.order.is_empty() {
+            return Vec::new();
+        }
+        let mut top: Vec<(u32, F)> = Vec::with_capacity(k + 1);
+        self.knn_in(0, p, k, &mut metric, &mut top);
+        top
+    }
+
+    fn knn_in<M>(&self, n: usize, p: &[F; 3], k: usize, metric: &mut M, top: &mut Vec<(u32, F)>)
+    where
+        M: FnMut(u32) -> F,
+    {
+        let node = &self.nodes[n];
+        if node.count > 0 {
+            let end = (node.first + node.count) as usize;
+            for &i in &self.order[node.first as usize..end] {
+                let d = metric(i);
+                if top.len() == k && d >= top[k - 1].1 {
+                    continue;
+                }
+                let at = top.partition_point(|&(_, other)| other <= d);
+                top.insert(at, (i, d));
+                top.truncate(k);
+            }
+            return;
+        }
+        let worst = if top.len() == k {
+            top[k - 1].1
+        } else {
+            F::INFINITY
+        };
+        let left = node.first as usize;
+        let dl = box_dist(&self.nodes[left], p);
+        let dr = box_dist(&self.nodes[left + 1], p);
+        let (near, far, dnear, dfar) = if dl <= dr {
+            (left, left + 1, dl, dr)
+        } else {
+            (left + 1, left, dr, dl)
+        };
+        if dnear <= worst.max(0.0) {
+            self.knn_in(near, p, k, metric, top);
+        }
+        // `worst` may have tightened while descending the nearer child.
+        let worst = if top.len() == k {
+            top[k - 1].1
+        } else {
+            F::INFINITY
+        };
+        if dfar <= worst.max(0.0) {
+            self.knn_in(far, p, k, metric, top);
+        }
+    }
+
     /// Whether any item has `metric <= threshold`.
     ///
     /// The same descent as [`nearest`](Self::nearest) without the
@@ -492,6 +555,47 @@ mod tests {
             let brute = tris.iter().filter(|t| ray_hits(origin, dir, t)).count() as u32;
             assert_eq!(counted, brute, "at {origin:?}");
         }
+    }
+
+    #[test]
+    fn box_distance_is_zero_inside_and_euclidean_outside() {
+        let bvh = Bvh::build(&[([0.0, 0.0, 0.0], [1.0, 1.0, 1.0])]);
+        let node = &bvh.nodes[0];
+        assert!(box_dist(node, &[0.5, 0.5, 0.5]).abs() < 1e-12);
+        assert!((box_dist(node, &[2.0, 0.5, 0.5]) - 1.0).abs() < 1e-12);
+        assert!((box_dist(node, &[2.0, 2.0, 2.0]) - (3.0 as F).sqrt()).abs() < 1e-12);
+    }
+
+    #[test]
+    fn knn_matches_the_linear_scan() {
+        // Points on a line at x = 0..4; the metric is the Euclidean distance.
+        let pts: Vec<[F; 3]> = (0..5).map(|i| [i as F, 0.0, 0.0]).collect();
+        let boxes: Vec<([F; 3], [F; 3])> = pts.iter().map(|&p| (p, p)).collect();
+        let bvh = Bvh::build(&boxes);
+        let q = [0.2, 0.0, 0.0];
+        let metric = |i: u32| dist2(q, pts[i as usize]).sqrt();
+
+        let got = bvh.knn(&q, 3, metric);
+        let mut want: Vec<(u32, F)> = (0..5u32).map(|i| (i, metric(i))).collect();
+        want.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        want.truncate(3);
+        assert_eq!(got.len(), 3);
+        for (g, w) in got.iter().zip(&want) {
+            assert_eq!(g.0, w.0);
+            assert!((g.1 - w.1).abs() < 1e-12);
+        }
+    }
+
+    #[test]
+    fn knn_asking_for_more_than_there_is_returns_everything() {
+        let boxes = [
+            ([0.0, 0.0, 0.0], [0.0, 0.0, 0.0]),
+            ([1.0, 0.0, 0.0], [1.0, 0.0, 0.0]),
+        ];
+        let bvh = Bvh::build(&boxes);
+        let got = bvh.knn(&[0.0, 0.0, 0.0], 10, |i| i as F);
+        assert_eq!(got.len(), 2);
+        assert!(Bvh::build(&[]).knn(&[0.0, 0.0, 0.0], 3, |_| 0.0).is_empty());
     }
 
     #[test]

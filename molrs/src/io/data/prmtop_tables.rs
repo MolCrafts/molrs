@@ -9,6 +9,8 @@
 //! historical molpy helper contract). Structure [`Frame`](molrs::store::frame::Frame)
 //! connectivity remains 0-based.
 
+use crate::math::pair_form::lj_ab_to_sigma_epsilon;
+
 use std::collections::HashMap;
 
 /// Parse POINTERS lines into the historical molpy meta map.
@@ -209,10 +211,9 @@ pub type NonbondParamRow = (i64, f64, f64);
 
 /// Per-atom LJ σ/ε from diagonal ICO + A/B coefficients.
 ///
-/// Debt: the A/B → σ/ε closed form (`r_min = (2A/B)^{1/6}`, `ε = B²/(4A)`,
-/// `σ = 2^{-1/6} r_min`) is duplicated in
-/// `ff/forcefield/readers/prmtop.rs`. `ff` must not import `io`. Revisit at
-/// the third use.
+/// The A/B → σ/ε identity itself is
+/// [`crate::math::pair_form::lj_ab_to_sigma_epsilon`],
+/// shared with the force-field reader.
 ///
 /// `hbond_a` / `hbond_b` must be flattened coefficient lists (any non-zero → error).
 #[allow(clippy::too_many_arguments)]
@@ -252,14 +253,7 @@ pub fn decode_nonbond_params(
         let nb_idx = (nb - 1) as usize;
         let a = *acoef.get(nb_idx).unwrap_or(&0.0);
         let b = *bcoef.get(nb_idx).unwrap_or(&0.0);
-        let (sigma, epsilon) = if a == 0.0 || b == 0.0 {
-            (1.0, 0.0)
-        } else {
-            let r_min = (2.0 * a / b).powf(1.0 / 6.0);
-            let eps = 0.25 * b * b / a;
-            let sigma = 2f64.powf(-1.0 / 6.0) * r_min;
-            (sigma, eps)
-        };
+        let (sigma, epsilon) = lj_ab_to_sigma_epsilon(a, b);
         out.push(((i_atom as i64) + 1, sigma, epsilon));
     }
     Ok(out)

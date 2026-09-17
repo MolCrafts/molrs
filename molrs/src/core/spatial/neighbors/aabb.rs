@@ -50,191 +50,9 @@
 //! standalone user-facing utility for explicit ghost-atom workflows
 //! (visualisation, exports).
 
+use crate::spatial::bvh::Bvh;
 use crate::spatial::simbox::{BoxKind, SimBox};
 use crate::types::{F, FNx3, FNx3View};
-
-#[derive(Debug, Clone, Copy)]
-struct Aabb {
-    min: [F; 3],
-    max: [F; 3],
-}
-
-impl Aabb {
-    fn point(p: [F; 3]) -> Self {
-        Self { min: p, max: p }
-    }
-
-    fn union(a: Aabb, b: Aabb) -> Self {
-        Self {
-            min: [
-                a.min[0].min(b.min[0]),
-                a.min[1].min(b.min[1]),
-                a.min[2].min(b.min[2]),
-            ],
-            max: [
-                a.max[0].max(b.max[0]),
-                a.max[1].max(b.max[1]),
-                a.max[2].max(b.max[2]),
-            ],
-        }
-    }
-
-    /// Squared distance from `p` to the closest point on the AABB
-    /// (0 if `p` is inside).
-    #[inline]
-    fn dist_sq_to(&self, p: [F; 3]) -> F {
-        let mut s: F = 0.0;
-        for d in 0..3 {
-            let v = if p[d] < self.min[d] {
-                self.min[d] - p[d]
-            } else if p[d] > self.max[d] {
-                p[d] - self.max[d]
-            } else {
-                0.0
-            };
-            s += v * v;
-        }
-        s
-    }
-}
-
-#[derive(Debug, Clone)]
-enum Node {
-    Leaf { point: u32, aabb: Aabb },
-    Inner { left: u32, right: u32, aabb: Aabb },
-}
-
-impl Node {
-    fn aabb(&self) -> Aabb {
-        match *self {
-            Node::Leaf { aabb, .. } => aabb,
-            Node::Inner { aabb, .. } => aabb,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-struct AabbTree {
-    nodes: Vec<Node>,
-    root: u32,
-}
-
-impl AabbTree {
-    fn build(points: FNx3View<'_>) -> Self {
-        let n = points.nrows();
-        if n == 0 {
-            return Self::default();
-        }
-        let mut indices: Vec<u32> = (0..n as u32).collect();
-        let mut tree = AabbTree {
-            nodes: Vec::with_capacity(2 * n),
-            root: 0,
-        };
-        tree.root = tree.build_recursive(&mut indices, points);
-        tree
-    }
-
-    fn build_recursive(&mut self, idx: &mut [u32], points: FNx3View<'_>) -> u32 {
-        if idx.len() == 1 {
-            let p = [
-                points[[idx[0] as usize, 0]],
-                points[[idx[0] as usize, 1]],
-                points[[idx[0] as usize, 2]],
-            ];
-            self.nodes.push(Node::Leaf {
-                point: idx[0],
-                aabb: Aabb::point(p),
-            });
-            return (self.nodes.len() - 1) as u32;
-        }
-        let mut amin = [F::INFINITY; 3];
-        let mut amax = [F::NEG_INFINITY; 3];
-        for &i in idx.iter() {
-            for d in 0..3 {
-                let v = points[[i as usize, d]];
-                if v < amin[d] {
-                    amin[d] = v;
-                }
-                if v > amax[d] {
-                    amax[d] = v;
-                }
-            }
-        }
-        let (mut ax, mut ext) = (0usize, amax[0] - amin[0]);
-        for d in 1..3 {
-            let e = amax[d] - amin[d];
-            if e > ext {
-                ax = d;
-                ext = e;
-            }
-        }
-        idx.sort_unstable_by(|a, b| {
-            points[[*a as usize, ax]]
-                .partial_cmp(&points[[*b as usize, ax]])
-                .unwrap()
-        });
-        let mid = idx.len() / 2;
-        let (left_idx, right_idx) = idx.split_at_mut(mid);
-        let left = self.build_recursive(left_idx, points);
-        let right = self.build_recursive(right_idx, points);
-        let aabb = Aabb::union(
-            self.nodes[left as usize].aabb(),
-            self.nodes[right as usize].aabb(),
-        );
-        self.nodes.push(Node::Inner { left, right, aabb });
-        (self.nodes.len() - 1) as u32
-    }
-
-    /// Visit up to `k` nearest leaves to `p`, written into `top` as
-    /// `(d_sq, point_idx)` sorted ascending by `d_sq`. Uses branch-and-bound
-    /// with the worst-so-far distance as the prune radius.
-    fn knn(&self, p: [F; 3], k: usize, top: &mut Vec<(F, u32)>) {
-        if self.nodes.is_empty() || k == 0 {
-            return;
-        }
-        self.knn_dfs(self.root, p, k, top);
-    }
-
-    fn knn_dfs(&self, node: u32, p: [F; 3], k: usize, top: &mut Vec<(F, u32)>) {
-        let worst = if top.len() >= k {
-            top[k - 1].0
-        } else {
-            F::INFINITY
-        };
-        let aabb_d = self.nodes[node as usize].aabb().dist_sq_to(p);
-        if aabb_d > worst {
-            return;
-        }
-        match self.nodes[node as usize] {
-            Node::Leaf { point, aabb } => {
-                let d = aabb.dist_sq_to(p);
-                // Sorted insertion into top-k.
-                let mut pos = top.len();
-                while pos > 0 && top[pos - 1].0 > d {
-                    pos -= 1;
-                }
-                if pos < k {
-                    top.insert(pos, (d, point));
-                    if top.len() > k {
-                        top.truncate(k);
-                    }
-                }
-            }
-            Node::Inner { left, right, .. } => {
-                // Visit closer child first to tighten `worst` earlier.
-                let l_d = self.nodes[left as usize].aabb().dist_sq_to(p);
-                let r_d = self.nodes[right as usize].aabb().dist_sq_to(p);
-                if l_d <= r_d {
-                    self.knn_dfs(left, p, k, top);
-                    self.knn_dfs(right, p, k, top);
-                } else {
-                    self.knn_dfs(right, p, k, top);
-                    self.knn_dfs(left, p, k, top);
-                }
-            }
-        }
-    }
-}
 
 /// AABB-tree k-nearest-neighbor query.
 ///
@@ -251,7 +69,7 @@ impl AabbTree {
 pub struct AabbQuery {
     cutoff: F,
     bx: Option<SimBox>,
-    tree: AabbTree,
+    tree: Bvh,
     stored_pos: FNx3,
 }
 
@@ -271,7 +89,7 @@ impl AabbQuery {
         Self {
             cutoff,
             bx: None,
-            tree: AabbTree::default(),
+            tree: Bvh::build(&[]),
             stored_pos: FNx3::zeros((0, 3)),
         }
     }
@@ -373,7 +191,6 @@ impl AabbQuery {
 
         // Collect per-original-index minimum-distance candidate.
         let mut best_per_j: std::collections::HashMap<u32, F> = std::collections::HashMap::new();
-        let mut top: Vec<(F, u32)> = Vec::with_capacity(k + 1);
         let pts = self.stored_pos.view();
 
         for shift in &shifts {
@@ -382,9 +199,15 @@ impl AabbQuery {
                 query[1] + shift[1],
                 query[2] + shift[2],
             ];
-            top.clear();
-            self.tree.knn(shifted, k, &mut top);
-            for &(_, j) in &top {
+            let candidates = self.tree.knn(&shifted, k, |i| {
+                let q = [
+                    pts[[i as usize, 0]] - shifted[0],
+                    pts[[i as usize, 1]] - shifted[1],
+                    pts[[i as usize, 2]] - shifted[2],
+                ];
+                (q[0] * q[0] + q[1] * q[1] + q[2] * q[2]).sqrt()
+            });
+            for &(j, _) in &candidates {
                 let r_j = [
                     pts[[j as usize, 0]],
                     pts[[j as usize, 1]],
@@ -421,7 +244,15 @@ impl AabbQuery {
     /// Panics if the cutoff is not positive.
     pub fn build(&mut self, points: FNx3View<'_>, bx: &SimBox) {
         assert!(self.cutoff > 0.0, "cutoff must be positive");
-        self.tree = AabbTree::build(points);
+        // One box per point: a BVH over degenerate boxes is the point tree,
+        // and it is the same tree the mesh and sphere-union regions descend.
+        let boxes: Vec<([F; 3], [F; 3])> = (0..points.nrows())
+            .map(|i| {
+                let p = [points[[i, 0]], points[[i, 1]], points[[i, 2]]];
+                (p, p)
+            })
+            .collect();
+        self.tree = Bvh::build(&boxes);
         self.bx = Some(bx.clone());
         self.stored_pos = points.to_owned();
     }
@@ -472,17 +303,6 @@ mod tests {
         let shifts = AabbQuery::enumerate_shifts(&bx, 12.0);
         // ceil(12/10) = 2 → [-2, 2] = 5 per axis → 125 total
         assert_eq!(shifts.len(), 125);
-    }
-
-    #[test]
-    fn dist_sq_to_aabb() {
-        let a = Aabb {
-            min: [0.0_f64, 0.0, 0.0],
-            max: [1.0, 1.0, 1.0],
-        };
-        assert!(a.dist_sq_to([0.5, 0.5, 0.5]).abs() < 1e-12);
-        assert!((a.dist_sq_to([2.0, 0.5, 0.5]) - 1.0).abs() < 1e-12);
-        assert!((a.dist_sq_to([2.0, 2.0, 2.0]) - 3.0).abs() < 1e-12);
     }
 
     #[test]

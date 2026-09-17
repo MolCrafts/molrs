@@ -2256,21 +2256,40 @@ class DistributionResult:
     def angular(self) -> bool: ...
 
 class AngleDistribution:
-    """Angular distribution function (ADF) over `(i, j, k)` triplets."""
+    """Angular distribution function (ADF) over `(i, j, k)` triplets.
 
-    def __init__(self, n_bins: int, min: float = 0.0, max: float = 180.0) -> None: ...
+    Bounds are **radians**. Omit both and the observable's own range ``[0, pi]``
+    is used. Supplying exactly one is a :class:`ValueError`.
+
+    The sin-theta correction divides by a vanishing quantity at both ends, so
+    the corrected density amplifies counting noise near 0 and pi.
+    """
+
+    def __init__(
+        self, n_bins: int, min: Optional[float] = None, max: Optional[float] = None
+    ) -> None: ...
     def compute(self, frames: Frame | Sequence[Frame]) -> DistributionResult: ...
 
 class DihedralDistribution:
-    """Dihedral distribution function (DDF) over `(i, j, k, l)` quadruplets."""
+    """Dihedral distribution function (DDF) over `(i, j, k, l)` quadruplets.
+
+    Bounds are **radians**. Omit both and the observable's own range
+    ``(-pi, pi]`` is used; the default stays signed, because folding to
+    ``abs(phi)`` collapses g+ onto g- and cannot be undone. Supplying exactly
+    one bound is a :class:`ValueError`.
+    """
 
     def __init__(
-        self, n_bins: int, min: float = -180.0, max: float = 180.0
+        self, n_bins: int, min: Optional[float] = None, max: Optional[float] = None
     ) -> None: ...
     def compute(self, frames: Frame | Sequence[Frame]) -> DistributionResult: ...
 
 class DistanceDistribution:
-    """Distance distribution function over `(i, j)` pairs."""
+    """Distance distribution function over `(i, j)` pairs.
+
+    Bounds are in the coordinates' length unit and are **required**: a distance
+    has no natural range to fall back on.
+    """
 
     def __init__(self, n_bins: int, min: float, max: float) -> None: ...
     def compute(self, frames: Frame | Sequence[Frame]) -> DistributionResult: ...

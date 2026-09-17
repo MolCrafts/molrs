@@ -61,6 +61,8 @@ pub enum MolrsStatus {
     SingularCell = 12,
     /// A parse error occurred (e.g. invalid SMILES or JSON string).
     ParseError = 13,
+    /// The supplied `MolrsRegionHandle` does not refer to a live region.
+    InvalidRegionHandle = 14,
 }
 
 /// Data type discriminants for Block columns.

@@ -11,7 +11,6 @@ spec files.
 | [release-0-14-10-molpy-mirror](release-0-14-10-molpy-mirror.md) | blocked on 09 — sink the duplicated formats and Box geometry into molrs with per-format bit-identical parity |
 | [release-0-14-11-molpy-docs](release-0-14-11-molpy-docs.md) | blocked on 10 — typifier spelling sweep, molpy migration guide |
 | [release-0-14-12-joint-smoke](release-0-14-12-joint-smoke.md) | blocked on 11 — molnex chain smoke on the released wheel, then tag molpy |
-| [distribution-angular-default-range](distribution-angular-default-range.md) | open — `AngleDistribution` / `DihedralDistribution` declare degree bounds over a radian kernel, so an exact 90° angle bins at 2.5; delegate to `over_natural_range` |
 
 **Release order is fixed** (CLAUDE.md § *Release before molpy*): molrs tags and
 publishes before molpy bumps its minor pin. 09–12 do not start before 08 is green.

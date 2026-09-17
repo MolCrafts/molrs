@@ -10,6 +10,7 @@
 
 pub mod complex;
 pub mod diagonalize;
+pub mod pair_form;
 pub mod spherical_harmonics;
 pub mod wigner3j;
 pub mod wigner_d;

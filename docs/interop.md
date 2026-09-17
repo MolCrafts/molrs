@@ -168,8 +168,8 @@ re-align and ship after ("Release before molpy" iron law).
 The **only sanctioned dynamic-linking deliverable**. External C / C++ / HPC
 consumers link `libmolrs_capi` (cdylib or staticlib) against the
 cbindgen-generated `molrs.h` — a flat, handle-based C API over frames,
-blocks, sim boxes, and force fields (feature surface: always-on core +
-perceive, plus `ff`, `io`, `smiles`; storage is a global mutex-protected
+blocks, sim boxes, force fields, and regions (feature surface: always-on core
++ perceive, plus `ff`, `io`, `smiles`; storage is a global mutex-protected
 store, so treat the library as single-threaded per process).
 
 - **Download**: `molrs-capi-<version>-<platform>.tar.gz` (lib + `molrs.h` +
@@ -179,6 +179,45 @@ store, so treat the library as single-threaded per process).
   constant increments on any breaking signature / handle-semantics change
   (mirrors molrs-cxxapi's `CXX_API_VERSION`). `molrs_version()` reports the
   embedded molrs release for diagnostics.
+
+### Regions across the boundary
+
+A region is `Arc<dyn Region>` — a trait object — and it does **not** cross any
+boundary. What crosses is `molrs_ffi::RegionRef`, the same handle the Python
+capsule (`molrs.RegionRef/<abi_line>`) and the WASM binder carry; the C API
+keeps it in its store and hands back the usual two-word
+`MolrsRegionHandle`. So a region is no different from a `SimBox` or a
+`ForceField` at this seam, and the vtable stays on the Rust side where it was
+compiled.
+
+```c
+MolrsRegionHandle outer, inner, hole, shell;
+molrs_region_sphere((const molrs_float_t[3]){0, 0, 0}, 3.0, &outer);
+molrs_region_sphere((const molrs_float_t[3]){0, 0, 0}, 2.0, &inner);
+molrs_region_not(inner, &hole);
+molrs_region_and(outer, hole, &shell);          /* a shell */
+
+bool inside[1];
+molrs_region_contains(shell, (const molrs_float_t[3]){2.5, 0, 0}, 1, inside);
+
+molrs_region_drop(shell);                       /* operands stay alive */
+molrs_region_drop(hole);
+molrs_region_drop(inner);
+molrs_region_drop(outer);
+```
+
+Three questions, one answer shape on every surface: `molrs_region_distance`
+gives the signed distance (negative inside), `molrs_region_contains` is its
+sign, and `molrs_region_bounds` writes `[xmin, xmax, ymin, ymax, zmin, zmax]`.
+Composition — `and` / `or` / `not` — returns an ordinary handle, so
+compositions nest, and each handle owns its own reference: dropping a
+composition never disturbs its operands. A stale handle is reported as
+`MolrsStatus::InvalidRegionHandle`, never dereferenced.
+
+The CXX bridge carries the same surface as free functions over a
+`Box<RegionRef>` (`region_sphere`, `region_and`, `region_distance`, …), gated
+by the `CXX_CAP_REGION` capability bit so a consumer can fail loudly when it
+is linked against a bridge that predates it.
 
 In-house Rust consumers (molpack, the binders) do **not** go through this C
 ABI — they take Path A or Path B directly. How those consumers are *linked*

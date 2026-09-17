@@ -185,6 +185,31 @@ pub mod ffi {
         // ── Frame bridge (molrs.Frame via molrs-ffi FrameRef) ─────
         type FrameRef;
 
+        // ── Region bridge (molrs.Region via molrs-ffi RegionRef) ──
+        // A region answers a signed distance; `contains` is its sign and
+        // `bounds` the box it fits in. Compositions are ordinary handles, so
+        // a shell is `region_and(outer, region_not(inner))`.
+        type RegionRef;
+
+        fn region_sphere(center: &[f64], radius: f64) -> Box<RegionRef>;
+        fn region_cuboid(origin: &[f64], lengths: &[f64]) -> Box<RegionRef>;
+        fn region_half_space(normal: &[f64], point: &[f64]) -> Result<Box<RegionRef>>;
+        fn region_cylinder(
+            base: &[f64],
+            axis: &[f64],
+            radius: f64,
+            length: f64,
+        ) -> Result<Box<RegionRef>>;
+        fn region_ellipsoid(center: &[f64], semi_axes: &[f64]) -> Result<Box<RegionRef>>;
+
+        fn region_and(a: &RegionRef, b: &RegionRef) -> Box<RegionRef>;
+        fn region_or(a: &RegionRef, b: &RegionRef) -> Box<RegionRef>;
+        fn region_not(a: &RegionRef) -> Box<RegionRef>;
+
+        fn region_distance(rref: &RegionRef, points: &[f64]) -> Vec<f64>;
+        fn region_contains(rref: &RegionRef, points: &[f64]) -> Vec<u8>;
+        fn region_bounds(rref: &RegionRef) -> Vec<f64>;
+
         fn frame_schema_version() -> u32;
         fn frame_new() -> Box<FrameRef>;
 

@@ -38,8 +38,14 @@ const CXX_CAP_ELEMENT: u64 = 1 << 1;
 const CXX_CAP_AM1_BCC: u64 = 1 << 2;
 /// CXX capability bit: the streaming `*.mrec` trajectory writer is available.
 const CXX_CAP_TRAJECTORY_WRITER: u64 = 1 << 3;
-const MOLRS_CXX_API_CAPABILITIES: u64 =
-    CXX_CAP_FRAME_BLOCK_V2 | CXX_CAP_ELEMENT | CXX_CAP_AM1_BCC | CXX_CAP_TRAJECTORY_WRITER;
+
+/// Geometric regions: signed distance, membership, bounds, boolean composition.
+const CXX_CAP_REGION: u64 = 1 << 4;
+const MOLRS_CXX_API_CAPABILITIES: u64 = CXX_CAP_FRAME_BLOCK_V2
+    | CXX_CAP_ELEMENT
+    | CXX_CAP_AM1_BCC
+    | CXX_CAP_TRAJECTORY_WRITER
+    | CXX_CAP_REGION;
 
 /// Exact ABI/semantic contract version consumed by Atomiverse.
 fn cxx_api_version() -> u32 {
@@ -1412,6 +1418,155 @@ fn parse_bcc_parameter_set(name: &str) -> Result<BccParameterSet, String> {
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
+// ---------------------------------------------------------------------------
+// Region bridge
+// ---------------------------------------------------------------------------
+
+/// Bridge handle over a shared region.
+///
+/// The region is `Arc<dyn Region>` inside; the trait object never crosses the
+/// bridge. C++ holds a `Box<RegionRef>` — the same `molrs_ffi::RegionRef` the
+/// Python capsule and the C API carry, so a region built on any of those
+/// surfaces answers identically here.
+pub struct RegionRef(pub molrs_ffi::RegionRef);
+
+impl RegionRef {
+    fn wrap(region: std::sync::Arc<dyn molrs::spatial::region::Region + Send + Sync>) -> Box<Self> {
+        Box::new(RegionRef(molrs_ffi::RegionRef::new(region)))
+    }
+}
+
+fn triple(v: &[f64]) -> [f64; 3] {
+    [v[0], v[1], v[2]]
+}
+
+/// Ball of `radius` about `center` (3 values). Empty `center` yields the
+/// origin, so a malformed call cannot silently read past the slice.
+fn region_sphere(center: &[f64], radius: f64) -> Box<RegionRef> {
+    let c = if center.len() == 3 {
+        triple(center)
+    } else {
+        [0.0; 3]
+    };
+    RegionRef::wrap(std::sync::Arc::new(molrs::spatial::region::Sphere::new(
+        molrs::types::F3::from_vec(c.to_vec()),
+        radius,
+    )))
+}
+
+/// Axis-aligned box with a corner at `origin` and edge `lengths`.
+fn region_cuboid(origin: &[f64], lengths: &[f64]) -> Box<RegionRef> {
+    let o = if origin.len() == 3 {
+        triple(origin)
+    } else {
+        [0.0; 3]
+    };
+    let l = if lengths.len() == 3 {
+        triple(lengths)
+    } else {
+        [0.0; 3]
+    };
+    RegionRef::wrap(std::sync::Arc::new(molrs::spatial::region::Cuboid::new(
+        molrs::types::F3::from_vec(o.to_vec()),
+        molrs::types::F3::from_vec(l.to_vec()),
+    )))
+}
+
+/// Everything on the `normal` side of the plane through `point`.
+/// A degenerate normal yields an error, reported as an empty handle upstream.
+fn region_half_space(normal: &[f64], point: &[f64]) -> Result<Box<RegionRef>, String> {
+    if normal.len() != 3 || point.len() != 3 {
+        return Err("region_half_space: normal and point must each have 3 elements".into());
+    }
+    molrs::spatial::region::HalfSpace::new(triple(normal), triple(point))
+        .map(|r| RegionRef::wrap(std::sync::Arc::new(r)))
+        .map_err(|e| e.to_string())
+}
+
+/// Finite cylinder of `radius` and `length` from `base` along `axis`.
+fn region_cylinder(
+    base: &[f64],
+    axis: &[f64],
+    radius: f64,
+    length: f64,
+) -> Result<Box<RegionRef>, String> {
+    if base.len() != 3 || axis.len() != 3 {
+        return Err("region_cylinder: base and axis must each have 3 elements".into());
+    }
+    molrs::spatial::region::Cylinder::new(triple(base), triple(axis), radius, length)
+        .map(|r| RegionRef::wrap(std::sync::Arc::new(r)))
+        .map_err(|e| e.to_string())
+}
+
+/// Ellipsoid about `center` with the given `semi_axes`.
+fn region_ellipsoid(center: &[f64], semi_axes: &[f64]) -> Result<Box<RegionRef>, String> {
+    if center.len() != 3 || semi_axes.len() != 3 {
+        return Err("region_ellipsoid: centre and semi-axes must each have 3 elements".into());
+    }
+    molrs::spatial::region::Ellipsoid::new(triple(center), triple(semi_axes))
+        .map(|r| RegionRef::wrap(std::sync::Arc::new(r)))
+        .map_err(|e| e.to_string())
+}
+
+/// Intersection of `a` and `b`. Both stay usable.
+fn region_and(a: &RegionRef, b: &RegionRef) -> Box<RegionRef> {
+    RegionRef::wrap(std::sync::Arc::new(molrs::spatial::region::AndRegion::new(
+        a.0.region(),
+        b.0.region(),
+    )))
+}
+
+/// Union of `a` and `b`.
+fn region_or(a: &RegionRef, b: &RegionRef) -> Box<RegionRef> {
+    RegionRef::wrap(std::sync::Arc::new(molrs::spatial::region::OrRegion::new(
+        a.0.region(),
+        b.0.region(),
+    )))
+}
+
+/// Everything `a` is not. A shell is `and(outer, not(inner))`.
+fn region_not(a: &RegionRef) -> Box<RegionRef> {
+    RegionRef::wrap(std::sync::Arc::new(molrs::spatial::region::NotRegion::new(
+        a.0.region(),
+    )))
+}
+
+/// Signed distance of each point to the boundary: negative inside, positive
+/// outside. `points` is flat `[x, y, z, …]`; a ragged length yields empty.
+fn region_distance(rref: &RegionRef, points: &[f64]) -> Vec<f64> {
+    if !points.len().is_multiple_of(3) {
+        return Vec::new();
+    }
+    rref.0.with_region(|r| {
+        points
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|p| r.distance(p))
+            .collect()
+    })
+}
+
+/// `1` for each point inside the solid, `0` outside. cxx has no `Vec<bool>`.
+fn region_contains(rref: &RegionRef, points: &[f64]) -> Vec<u8> {
+    if !points.len().is_multiple_of(3) {
+        return Vec::new();
+    }
+    rref.0.with_region(|r| {
+        points
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|p| u8::from(r.contains_point(p)))
+            .collect()
+    })
+}
+
+/// Axis-aligned bounds as `[xmin, xmax, ymin, ymax, zmin, zmax]`.
+fn region_bounds(rref: &RegionRef) -> Vec<f64> {
+    rref.0.with_region(|r| r.bounds().iter().copied().collect())
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -1555,7 +1710,11 @@ mod tests {
         assert_eq!(cxx_api_version(), 1);
         assert_eq!(
             cxx_api_capabilities(),
-            CXX_CAP_FRAME_BLOCK_V2 | CXX_CAP_ELEMENT | CXX_CAP_AM1_BCC | CXX_CAP_TRAJECTORY_WRITER
+            CXX_CAP_FRAME_BLOCK_V2
+                | CXX_CAP_ELEMENT
+                | CXX_CAP_AM1_BCC
+                | CXX_CAP_TRAJECTORY_WRITER
+                | CXX_CAP_REGION
         );
         assert_eq!(frame_schema_version(), 2);
         let mut fref = frame_new();
@@ -1741,5 +1900,24 @@ mod tests {
                 "{actual} != {expected}"
             );
         }
+    }
+    #[test]
+    fn a_shell_is_and_of_outer_and_not_inner() {
+        let outer = region_sphere(&[0.0, 0.0, 0.0], 3.0);
+        let inner = region_sphere(&[0.0, 0.0, 0.0], 2.0);
+        let shell = region_and(&outer, &region_not(&inner));
+        // 2.5 is in the shell, 1.0 is in the hole, 4.0 is outside both.
+        let pts = [2.5, 0.0, 0.0, 1.0, 0.0, 0.0, 4.0, 0.0, 0.0];
+        assert_eq!(region_contains(&shell, &pts), vec![1, 0, 0]);
+        let d = region_distance(&outer, &pts);
+        assert!((d[0] + 0.5).abs() < 1e-12, "{d:?}");
+        assert_eq!(region_bounds(&outer).len(), 6);
+    }
+
+    #[test]
+    fn a_ragged_point_slice_yields_nothing_rather_than_reading_past_it() {
+        let ball = region_sphere(&[0.0, 0.0, 0.0], 1.0);
+        assert!(region_distance(&ball, &[0.0, 0.0]).is_empty());
+        assert!(region_contains(&ball, &[0.0, 0.0]).is_empty());
     }
 }

@@ -1,9 +1,12 @@
-"""`_lib.pyi` declares every compiled export, with the same parameter names.
+"""`_lib.pyi` declares every compiled export, with the same parameters.
 
 The stub is hand-maintained and is what static tools and the docs build read
 instead of the compiled module. This is the freshness guard the contributing
 guide points at: it fails when a ``#[pyclass]`` / ``#[pyfunction]`` lands
-without its declaration, and when a parameter is renamed on one side only.
+without its declaration, when a parameter is renamed on one side only, and
+when a declared default drifts from the compiled one — a stub that promises
+``min=0.0`` over a runtime ``min=None`` is how a caller learns the wrong
+contract from their editor.
 """
 
 from __future__ import annotations
@@ -77,6 +80,12 @@ class TestStubParameterNames:
         assert not mismatches
 
 
+class TestStubDefaults:
+    def test_declared_defaults_match_the_compiled_signature(self) -> None:
+        mismatches = _collect_default_mismatches()
+        assert not mismatches
+
+
 def _runtime_params(obj: object) -> tuple[list[str], list[str]] | None:
     try:
         sig = inspect.signature(obj)  # type: ignore[arg-type]
@@ -146,4 +155,63 @@ def _collect_mismatches(
                     f"{prefix}{node.name}: stub {(stub_pos, stub_kw)} != "
                     f"compiled {(rt_pos, rt_kw)}"
                 )
+    return out
+
+
+def _literal(node: ast.expr) -> tuple[bool, object]:
+    """The stub's declared default as a value, when it is a literal."""
+    try:
+        return True, ast.literal_eval(node)
+    except (ValueError, SyntaxError):
+        return False, None
+
+
+def _collect_default_mismatches(
+    body: list[ast.stmt] | None = None,
+    scope: object = _lib,
+    prefix: str = "",
+) -> list[str]:
+    if body is None:
+        body = _stub_tree().body
+    out: list[str] = []
+    for node in body:
+        if isinstance(node, ast.ClassDef):
+            nested = getattr(scope, node.name, None)
+            if nested is not None:
+                out += _collect_default_mismatches(
+                    node.body, nested, f"{prefix}{node.name}."
+                )
+        elif isinstance(node, ast.FunctionDef):
+            if _is_property_or_overload(node) or node.name in _GENERATED_DUNDERS:
+                continue
+            runtime = scope if node.name == "__init__" else getattr(scope, node.name, None)
+            if runtime is None:
+                continue
+            try:
+                sig = inspect.signature(runtime)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                continue
+            args = node.args
+            declared = args.posonlyargs + args.args
+            # defaults align to the tail of the positional parameters
+            paired = list(zip(declared[len(declared) - len(args.defaults):], args.defaults))
+            paired += [
+                (a, d) for a, d in zip(args.kwonlyargs, args.kw_defaults) if d is not None
+            ]
+            for arg, default_node in paired:
+                param = sig.parameters.get(arg.arg)
+                if param is None or param.default is inspect.Parameter.empty:
+                    continue
+                ok, value = _literal(default_node)
+                if not ok or value is Ellipsis or param.default is Ellipsis:
+                    # `...` means "there is a default, unspecified" on both
+                    # sides: it is stub syntax, and it is what PyO3 renders for
+                    # a `#[pyo3(signature = ...)]` default it cannot spell as a
+                    # literal (`"x".to_string()`).
+                    continue
+                if value != param.default:
+                    out.append(
+                        f"{prefix}{node.name}({arg.arg}=): stub {value!r} != "
+                        f"compiled {param.default!r}"
+                    )
     return out

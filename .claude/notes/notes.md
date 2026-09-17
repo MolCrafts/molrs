@@ -33,24 +33,6 @@ built from atoms in memory, no mesh file, and a lattice mask that asks the
 region about ~10⁶ sites — a BVH per query, not a scan.
 **Status:** provisional
 
-## 2026-09-14 — two BVHs after the region port
-
-**Decision:** `spatial::bvh::Bvh` (boxed items, caller-supplied metric that
-may be signed; serves `Polyhedron` and `SphereUnion`) lands beside the private
-point tree in `neighbors/aabb.rs` (`AabbQuery`, k-NN with baked MIC shifts).
-Rebasing `AabbTree` on `Bvh` is a follow-up, not part of the region chain.
-**Why:** retro-fitting triangle leaves and three query kinds onto the k-NN
-tree is a rewrite of both, and the region chain is measured by its consumer.
-**Status:** provisional
-
-## 2026-09-14 — wasm does not expose `Region` yet
-
-**Decision:** regions (and `RegionRef`) are Python-only in this line; the wasm
-binder keeps `Mesh` + `readSTL` and gains nothing. Recorded under the
-binder-surface-symmetry principle as a known asymmetry to close when molvis
-moves its ball-field / marching-cubes kernels onto molrs.
-**Status:** provisional
-
 ## 2026-09-07 — cargo needs `target/` on local disk; a symlink, not `CARGO_TARGET_DIR`
 
 **Decision:** make `<repo>/target` a symlink to node-local storage. Do **not**
@@ -121,7 +103,7 @@ no `molrs/tests/` tree while `architecture_gate.rs` sits in it — was fixed on
 **Why:** iron-law naming of rot that is out of this spec's layer or below the extract-on-second-use bar.
 **Status:** provisional
 
-1. σ/ε closed form (`r_min = (2A/B)^{1/6}`, `ε = B²/(4A)`, `σ = 2^{-1/6} r_min`) is duplicated in `ff/forcefield/readers/prmtop.rs` and `io/data/prmtop_tables.rs::decode_nonbond_params`. `ff` ↛ `io`; two call sites is below the extract bar. Revisit at the third use.
+1. ~~σ/ε closed form duplicated between `ff/forcefield/readers/prmtop.rs` and `io/data/prmtop_tables.rs`.~~ Closed 2026-09-17: both call `core::math::pair_form::lj_ab_to_sigma_epsilon`. Two call sites *is* the extract bar — CLAUDE.md § Prefer says "extract only at a second call site", which this note had mis-stated as the third.
 2. `forcefield/gaff.rs` cited `scripts/gen_gaff_energy_oracle.py` for the `AMBER_COULOMB` sander measurement; that generator is not in the tree. The value stands (`18.2223²`); the rustdoc no longer points at the missing script.
 
 
@@ -139,7 +121,7 @@ red; the next rustc bump would just repeat it.
 
 门面(公开 API)质量优先于内部实现;内部走渐进重构,不追求一步到位,不阻塞发布。
 
-**Rule**: Rust / Python / WASM 三个表面的邻居 API 必须保持对称——同名
+**Rule**: Rust / Python / WASM 三个表面的 API 必须保持对称——同名
 (`NeighborList` 引擎 / `Neighbors` 表)、同形(build/update/neighbors +
 Option 列语义)、同默认(`FULL`)。新增或改动任一绑定面时,先对照另外两面。
 

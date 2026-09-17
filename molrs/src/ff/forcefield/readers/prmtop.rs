@@ -36,6 +36,7 @@ use super::ForceFieldReader;
 use crate::ff::constants::VACUUM_DIELECTRIC;
 use crate::ff::forcefield::{ForceField, SpecialBonds};
 use crate::ff::params::amber::{AMBER_COULOMB, AMBER_SCEE, AMBER_SCNB};
+use crate::math::pair_form::lj_ab_to_sigma_epsilon;
 
 /// Reader default LJ cutoff (Å). A prmtop carries no cutoff (it lives in the
 /// mdin); this is not file data.
@@ -205,22 +206,6 @@ fn uniform_divisor(
     Ok(chosen.unwrap_or(default))
 }
 
-/// σ/ε from Amber A/B coefficients. `E = A/r¹² − B/r⁶`.
-///
-/// Debt: this closed form is duplicated at
-/// `io/data/prmtop_tables.rs::decode_nonbond_params`. `ff` must not import
-/// `io`. Revisit at the third use; do not lift into `core` for two call sites.
-fn lj_sigma_epsilon(a: f64, b: f64) -> (f64, f64) {
-    if a == 0.0 || b == 0.0 {
-        (1.0, 0.0)
-    } else {
-        let r_min = (2.0 * a / b).powf(1.0 / 6.0);
-        let eps = 0.25 * b * b / a;
-        let sigma = 2f64.powf(-1.0 / 6.0) * r_min;
-        (sigma, eps)
-    }
-}
-
 fn ico_entry(n_types: usize, iac_i: usize, iac_j: usize, nb_index: &[i64]) -> Result<i64, String> {
     let index = n_types
         .saturating_mul(iac_i.saturating_sub(1))
@@ -261,7 +246,7 @@ fn decode_lj_types(
             continue;
         }
         let idx = (nb - 1) as usize;
-        self_params[t - 1] = lj_sigma_epsilon(
+        self_params[t - 1] = lj_ab_to_sigma_epsilon(
             acoef.get(idx).copied().unwrap_or(0.0),
             bcoef.get(idx).copied().unwrap_or(0.0),
         );
@@ -273,7 +258,7 @@ fn decode_lj_types(
                 continue;
             }
             let idx = (nb - 1) as usize;
-            let (sigma, eps) = lj_sigma_epsilon(
+            let (sigma, eps) = lj_ab_to_sigma_epsilon(
                 acoef.get(idx).copied().unwrap_or(0.0),
                 bcoef.get(idx).copied().unwrap_or(0.0),
             );

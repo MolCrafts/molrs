@@ -8,6 +8,8 @@ use std::sync::Mutex;
 use molrs_capi::block::*;
 use molrs_capi::forcefield::*;
 use molrs_capi::frame::*;
+use molrs_capi::handle::MolrsRegionHandle;
+use molrs_capi::region::*;
 use molrs_capi::simbox::*;
 use molrs_capi::*;
 
@@ -512,4 +514,64 @@ fn test_full_simulation_loop() {
         molrs_box_drop(frame_sb);
         molrs_frame_drop(frame);
     }
+}
+
+#[test]
+fn test_region_shell_is_and_of_outer_and_not_inner() {
+    let _g = TEST_LOCK.lock().unwrap();
+    let centre = [0.0_f64, 0.0, 0.0];
+
+    let mut outer = MolrsRegionHandle { idx: 0, version: 0 };
+    let mut inner = MolrsRegionHandle { idx: 0, version: 0 };
+    assert_ok(unsafe { molrs_region_sphere(centre.as_ptr(), 3.0, &mut outer) });
+    assert_ok(unsafe { molrs_region_sphere(centre.as_ptr(), 2.0, &mut inner) });
+
+    let mut hole = MolrsRegionHandle { idx: 0, version: 0 };
+    let mut shell = MolrsRegionHandle { idx: 0, version: 0 };
+    assert_ok(unsafe { molrs_region_not(inner, &mut hole) });
+    assert_ok(unsafe { molrs_region_and(outer, hole, &mut shell) });
+
+    // 2.5 is in the shell, 1.0 is in the hole, 4.0 is outside both.
+    let pts = [2.5_f64, 0.0, 0.0, 1.0, 0.0, 0.0, 4.0, 0.0, 0.0];
+    let mut hits = [false; 3];
+    assert_ok(unsafe { molrs_region_contains(shell, pts.as_ptr(), 3, hits.as_mut_ptr()) });
+    assert_eq!(hits, [true, false, false]);
+
+    // The signed distance is the same question with its sign kept.
+    let mut d = [0.0_f64; 3];
+    assert_ok(unsafe { molrs_region_distance(outer, pts.as_ptr(), 3, d.as_mut_ptr()) });
+    assert!((d[0] + 0.5).abs() < 1e-12, "{d:?}");
+    assert!((d[2] - 1.0).abs() < 1e-12, "{d:?}");
+
+    let mut bounds = [0.0_f64; 6];
+    assert_ok(unsafe { molrs_region_bounds(outer, bounds.as_mut_ptr()) });
+    assert_eq!(bounds, [-3.0, 3.0, -3.0, 3.0, -3.0, 3.0]);
+
+    // Dropping a composition leaves its operands alive: each handle owns its
+    // own reference to the shared region.
+    assert_ok(unsafe { molrs_region_drop(shell) });
+    assert_ok(unsafe { molrs_region_distance(outer, pts.as_ptr(), 3, d.as_mut_ptr()) });
+
+    assert_ok(unsafe { molrs_region_drop(hole) });
+    assert_ok(unsafe { molrs_region_drop(inner) });
+    assert_ok(unsafe { molrs_region_drop(outer) });
+}
+
+#[test]
+fn test_stale_region_handle_is_named_not_dereferenced() {
+    let _g = TEST_LOCK.lock().unwrap();
+    let centre = [0.0_f64, 0.0, 0.0];
+    let mut h = MolrsRegionHandle { idx: 0, version: 0 };
+    assert_ok(unsafe { molrs_region_sphere(centre.as_ptr(), 1.0, &mut h) });
+    assert_ok(unsafe { molrs_region_drop(h) });
+
+    let mut out = [0.0_f64; 6];
+    assert_eq!(
+        unsafe { molrs_region_bounds(h, out.as_mut_ptr()) },
+        MolrsStatus::InvalidRegionHandle
+    );
+    assert_eq!(
+        unsafe { molrs_region_drop(h) },
+        MolrsStatus::InvalidRegionHandle
+    );
 }
