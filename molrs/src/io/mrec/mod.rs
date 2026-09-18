@@ -40,11 +40,21 @@
 //!   `*_file` functions, and [`open_trajectory_sequence`] need the
 //!   `filesystem` feature.
 //!
-//! Every writer creates the record root and its `meta/` group. While the
-//! contract is in development no version key is written: `molrec_version` is
-//! optional, an absent key means no version validation, and a present one
-//! must be a positive integer no newer than [`schema::MOLREC_VERSION`].
-//! Identity of a store is the `*.mrec/` path suffix plus a Zarr root.
+//! Every writer creates the record root and its `meta/` group, and stamps
+//! `molrec_version` there when the producer supplied none — so every record
+//! written by this version carries the contract it was written at. A producer
+//! that set the key keeps its value, which is how a writer for an older contract
+//! stays expressible. The key must be a positive integer no newer than
+//! [`schema::MOLREC_VERSION`].
+//!
+//! Metadata that carries any key must carry the version: the stamp makes an
+//! absent one mean "this store predates the stamp", which is worth reporting.
+//! **Empty** metadata is a different claim and stays accepted — a foreign store
+//! may have written no `meta/` group at all, and refusing to read it would cost
+//! more than the check buys.
+//!
+//! Identity of a store is the `*.mrec/` path suffix plus a Zarr root, not this
+//! key; the key says which contract wrote it.
 //!
 //! # Examples
 //!

@@ -35,17 +35,35 @@ pub fn validate_path(path: &std::path::Path) -> Result<(), MolRsError> {
 
 /// Validate the `meta` version key against the mrec contract.
 ///
-/// While the contract is in development `molrec_version` is **optional**: an
-/// absent key means no version validation at all. When present it must be an
-/// integer in `1..=`[`MOLREC_VERSION`]. Identity of a record is the `*.mrec/`
-/// path suffix plus a Zarr root, not this key.
+/// `molrec_version` is **required**, and must be an integer in
+/// `1..=`[`MOLREC_VERSION`]. Identity of a record is the `*.mrec/` path suffix
+/// plus a Zarr root, not this key; the key says which contract wrote it.
+///
+/// It was optional while the format was being built, which cost more than it
+/// saved: a reader could not tell an old store from a producer that forgot, and
+/// the writer stamped nothing, so *no* store had a version and the check never
+/// ran. The record writer now stamps every record it writes, so an
+/// absent key is a real signal — the store predates the stamp — and saying so is
+/// more useful than silently skipping the check.
 pub fn validate_meta(attrs: &JsonMap<String, JsonValue>) -> Result<(), MolRsError> {
-    let Some(value) = attrs.get("molrec_version") else {
+    // No metadata at all stays tolerated. A foreign store may carry no `meta/`
+    // group — molrs writers always create one — and "this store has no metadata"
+    // is a different claim from "this metadata forgot its version". Refusing the
+    // first would lock out readable foreign records to catch a bug that can only
+    // occur in the second.
+    if attrs.is_empty() {
         return Ok(());
+    }
+    let Some(value) = attrs.get("molrec_version") else {
+        return Err(MolRsError::zarr(format!(
+            "meta carries no molrec_version; every record is written with one \
+             (current {MOLREC_VERSION}), so this store predates the stamped format \
+             and must be rewritten"
+        )));
     };
     let version = value.as_u64().ok_or_else(|| {
         MolRsError::zarr(format!(
-            "molrec_version must be a positive integer when present, found {value}"
+            "molrec_version must be a positive integer, found {value}"
         ))
     })?;
     // Accept any version this reader is new enough to understand (`1..=N`) and
@@ -90,19 +108,29 @@ mod tests {
         validate_meta(&meta(1)).unwrap();
     }
 
-    /// Development contract: an absent version key means no version check.
+    /// Metadata that carries keys must carry its version: the writer stamps one,
+    /// so its absence means the store predates the stamp.
     #[test]
-    fn missing_molrec_version_is_accepted() {
+    fn missing_molrec_version_is_refused_when_other_keys_are_present() {
         let mut attrs = meta(1);
         attrs.remove("molrec_version");
-        validate_meta(&attrs).unwrap();
+        attrs.insert("producer".into(), "test".into());
+        let err = validate_meta(&attrs).unwrap_err().to_string();
+        assert!(err.contains("molrec_version"), "{err}");
     }
 
-    /// The retired `format_name`/`record_schema_version` keys are neither
-    /// checked nor refused; only `molrec_version` is looked at, and it is
-    /// absent here.
+    /// Empty metadata is not the same claim, and stays accepted — a foreign store
+    /// may carry no `meta/` group at all.
     #[test]
-    fn retired_brand_keys_are_ignored() {
+    fn empty_meta_is_accepted() {
+        validate_meta(&JsonMap::new()).unwrap();
+    }
+
+    /// The retired `format_name`/`record_schema_version` keys are still neither
+    /// checked nor honoured — they do not stand in for `molrec_version`, so
+    /// metadata carrying only those is refused for the version, not for them.
+    #[test]
+    fn retired_brand_keys_do_not_substitute_for_the_version() {
         let attrs = json!({
             "format_name": "mrec",
             "record_schema_version": 1,
@@ -110,7 +138,8 @@ mod tests {
         .as_object()
         .cloned()
         .unwrap();
-        validate_meta(&attrs).unwrap();
+        let err = validate_meta(&attrs).unwrap_err().to_string();
+        assert!(err.contains("molrec_version"), "{err}");
     }
 
     #[test]

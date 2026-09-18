@@ -194,20 +194,27 @@ pub fn write_record_store(
     Ok(())
 }
 
-/// Write `meta` as the producer handed it.
+/// Write `meta`, stamping `molrec_version` when the producer supplied none.
 ///
-/// No version key is stamped: during development `molrec_version` is optional
-/// and its absence means no version validation. A producer that wants one
-/// puts it in `meta` itself; [`schema::validate_meta`] checks it on the way
-/// back in.
+/// Every record this version writes carries the version it was written at, so a
+/// reader never has to guess. A producer that set the key keeps its value — that
+/// is how a writer for an older version of the contract stays expressible — and
+/// [`schema::validate_meta`] judges whatever ends up there.
+///
+/// The stamp is the reason `validate_meta` can now *require* the key: a store
+/// without one was written before the format stamped it.
 #[cfg(feature = "zarr")]
 fn write_meta(
     store: &ReadableWritableListableStorage,
     path: &str,
     meta: &JsonMap<String, JsonValue>,
 ) -> Result<(), MolRsError> {
-    schema::validate_meta(meta)?;
-    write_json_group(store, path, meta)
+    let mut stamped = meta.clone();
+    stamped
+        .entry("molrec_version".to_string())
+        .or_insert_with(|| JsonValue::from(crate::MOLREC_VERSION));
+    schema::validate_meta(&stamped)?;
+    write_json_group(store, path, &stamped)
 }
 
 #[cfg(feature = "zarr")]
@@ -950,16 +957,23 @@ mod tests {
         read_record_file(&path).unwrap()
     }
 
-    /// Development contract: the writer stamps no version key. `meta` comes
-    /// back exactly as the producer handed it — empty here.
-    /// A reader tolerates a missing `meta/` group as an empty document; every
-    /// molrs writer creates the group, but a foreign store may not.
+    /// The writer stamps the version, so a producer that supplied no metadata
+    /// still gets `molrec_version` back — and nothing else.
     #[test]
-    fn a_record_without_a_meta_group_reads_as_an_empty_document() {
+    fn a_record_written_without_meta_reads_back_carrying_only_the_version() {
         let mut rec = MolRec::new();
         rec.frame = Some(Frame::new());
         let loaded = write_then_read(&rec);
-        assert!(loaded.meta.is_empty(), "{:?}", loaded.meta);
+        assert_eq!(
+            loaded.meta.keys().collect::<Vec<_>>(),
+            vec!["molrec_version"],
+            "{:?}",
+            loaded.meta
+        );
+        assert_eq!(
+            loaded.meta["molrec_version"].as_u64(),
+            Some(schema::MOLREC_VERSION)
+        );
     }
 
     /// A producer that does write `molrec_version` keeps it, and a supported
@@ -1093,8 +1107,13 @@ mod tests {
         );
     }
 
+    /// A deleted `meta/` group still reads as an empty document. The name said
+    /// "rejected" while the body asserted the opposite; what it pins is the
+    /// tolerance for a foreign store that wrote no metadata group at all, which
+    /// survives the version becoming mandatory — "no metadata" is not
+    /// "metadata that forgot its version".
     #[test]
-    fn record_without_meta_is_rejected() {
+    fn a_deleted_meta_group_reads_as_an_empty_document() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("record.mrec");
         let mut rec = MolRec::new();
@@ -1105,8 +1124,7 @@ mod tests {
         assert!(loaded.meta.is_empty());
     }
 
-    /// An absent `molrec_version` is not validated (development contract); a
-    /// present one outside `1..=MOLREC_VERSION` is refused.
+    /// A version outside `1..=MOLREC_VERSION` is refused.
     #[test]
     fn a_present_molrec_version_outside_the_supported_range_is_rejected() {
         for version in [None, Some(0_u64), Some(2), Some(99)] {
@@ -1202,7 +1220,11 @@ mod tests {
             vec!["frame", "meta", "system"]
         );
         // The identity document is present and, with nothing handed in, empty.
-        assert!(read_meta_file(&path).unwrap().is_empty());
+        assert_eq!(
+            read_meta_file(&path).unwrap()["molrec_version"].as_u64(),
+            Some(schema::MOLREC_VERSION),
+            "the writer stamps the version even when the producer sent no meta"
+        );
 
         assert_eq!(
             read_frame_file(&path)
