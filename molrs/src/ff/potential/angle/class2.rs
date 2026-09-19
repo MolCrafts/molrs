@@ -10,8 +10,8 @@ use std::collections::HashMap;
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::Potential;
 use crate::ff::potential::geometry::{compute_angle, term_table, validate_coords};
+use crate::ff::potential::{IndexedTerms, Member, Potential};
 use molrs::store::frame::Frame;
 use molrs::types::F;
 
@@ -96,11 +96,12 @@ impl Potential for AngleClass2 {
             (self.atom_i[t], self.atom_j[t], self.atom_k[t])
         })
     }
+}
 
-    fn terms(&self) -> Option<Array2<u32>> {
-        Some(term_table(&[&self.atom_i, &self.atom_j, &self.atom_k]))
+impl IndexedTerms for AngleClass2 {
+    fn terms(&self) -> Array2<u32> {
+        term_table(&[&self.atom_i, &self.atom_j, &self.atom_k])
     }
-
     fn calc_energy_forces_with_terms(
         &self,
         coords: &[F],
@@ -126,7 +127,7 @@ pub fn angle_class2_ctor(
     _style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
+) -> Result<Member, String> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
 
     let block = frame
@@ -166,7 +167,9 @@ pub fn angle_class2_ctor(
         k4.push(need(p, "k4", label)?);
     }
 
-    Ok(Box::new(AngleClass2::new(ai, aj, ak, t0, k2, k3, k4)))
+    Ok(Member::indexed(AngleClass2::new(
+        ai, aj, ak, t0, k2, k3, k4,
+    )))
 }
 
 #[cfg(test)]

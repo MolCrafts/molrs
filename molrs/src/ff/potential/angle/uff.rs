@@ -6,9 +6,9 @@
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::Potential;
 use crate::ff::potential::angle::accumulate_angle_forces;
 use crate::ff::potential::geometry::{dot3, mag3, sub3, term_table, validate_coords};
+use crate::ff::potential::{IndexedTerms, Member, Potential};
 use molrs::store::frame::Frame;
 use molrs::types::F;
 
@@ -94,11 +94,12 @@ impl Potential for UffAngle {
             (self.atom_i[t], self.atom_j[t], self.atom_k[t])
         })
     }
+}
 
-    fn terms(&self) -> Option<Array2<u32>> {
-        Some(term_table(&[&self.atom_i, &self.atom_j, &self.atom_k]))
+impl IndexedTerms for UffAngle {
+    fn terms(&self) -> Array2<u32> {
+        term_table(&[&self.atom_i, &self.atom_j, &self.atom_k])
     }
-
     fn calc_energy_forces_with_terms(
         &self,
         coords: &[F],
@@ -123,7 +124,7 @@ pub fn uff_angle_ctor(
     _sp: &Params,
     _tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
+) -> Result<Member, String> {
     let block = frame
         .get("angles")
         .ok_or("uff_angle: missing \"angles\" block")?;
@@ -136,7 +137,7 @@ pub fn uff_angle_ctor(
     let c1 = block.get_float("c1").ok_or("uff_angle: missing c1")?;
     let c2 = block.get_float("c2").ok_or("uff_angle: missing c2")?;
     let n = i.len();
-    Ok(Box::new(UffAngle {
+    Ok(Member::indexed(UffAngle {
         atom_i: (0..n).map(|t| i[t] as usize).collect(),
         atom_j: (0..n).map(|t| j[t] as usize).collect(),
         atom_k: (0..n).map(|t| k[t] as usize).collect(),

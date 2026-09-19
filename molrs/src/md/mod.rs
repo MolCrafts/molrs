@@ -4,8 +4,12 @@
 //! `VerletSkin`). Science here:
 //!
 //! * [`crate::ff::potential::Potential`] produces energy and forces from flat
-//!   coordinates. [`crate::ff::potential::Potentials`] sums the results of its
-//!   members, including nonbonded, bonded, and external terms.
+//!   coordinates. [`crate::ff::potential::Member`] is one term of a force
+//!   evaluation with the part it plays already chosen — `Indexed` for a bonded
+//!   term that takes an index table, `Pair` for one summed over a neighbour
+//!   table, `Plain` for an external field. The providers below hold a
+//!   `Vec<Member>` and match on it, so no step re-derives which is which.
+//!   [`crate::ff::potential::Potentials`] sums them as one potential.
 //! * [`crate::ff::potential::pair::PairPotential`] defines pair-energy and
 //!   pair-force evaluation. [`crate::ff::potential::pair::LJCut`] implements
 //!   the `lj/cut` kernel. The integrator supplies current neighbour pairs via

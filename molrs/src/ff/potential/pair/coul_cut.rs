@@ -31,11 +31,11 @@
 //! charge products `qᵢqⱼ` already include any exclusion / 1-4 scaling.
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::Potential;
 use crate::ff::potential::gather_copies;
 use crate::ff::potential::geometry::validate_coords;
 use crate::ff::potential::pair::energy_forces;
 use crate::ff::potential::pair::fold_chunks;
+use crate::ff::potential::{Member, PairDriven, Potential};
 use molrs::math::Virial;
 use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame::Frame;
@@ -262,17 +262,9 @@ impl Potential for PairCoulCut {
         let (e, f, _) = self.calc_energy_forces_with_pairs_virial(coords, pairs);
         (e, f)
     }
+}
 
-    fn calc_energy_forces_with_pairs_virial(
-        &self,
-        coords: &[F],
-        pairs: &Neighbors,
-    ) -> (F, Vec<F>, Option<Virial>) {
-        let mut forces = vec![0.0; coords.len()];
-        let (e, w) = self.accumulate_pairs(coords, pairs, &[], &mut forces);
-        (e, forces, w)
-    }
-
+impl PairDriven for PairCoulCut {
     fn accumulate_pairs(
         &self,
         coords: &[F],
@@ -313,17 +305,24 @@ impl Potential for PairCoulCut {
         });
         (e, Some(w))
     }
-
+    fn binds_a_fixed_pair_list(&self) -> bool {
+        matches!(self.charges, Charges::Compiled { .. })
+    }
+    fn calc_energy_forces_with_pairs_virial(
+        &self,
+        coords: &[F],
+        pairs: &Neighbors,
+    ) -> (F, Vec<F>, Option<Virial>) {
+        let mut forces = vec![0.0; coords.len()];
+        let (e, w) = self.accumulate_pairs(coords, pairs, &[], &mut forces);
+        (e, forces, w)
+    }
     fn gather_onto_copies(&mut self, owner: &[u32]) {
         let Charges::PerAtom { q, n_owned, .. } = &mut self.charges else {
             // Nothing per atom to extend.
             return;
         };
         gather_copies(q, *n_owned, owner);
-    }
-
-    fn binds_a_fixed_pair_list(&self) -> bool {
-        matches!(self.charges, Charges::Compiled { .. })
     }
 }
 
@@ -375,7 +374,7 @@ pub fn pair_coul_cut_ctor(
     style_params: &Params,
     _type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
+) -> Result<Member, String> {
     let coulomb = required(style_params, "coulomb")?;
     let dielectric = required(style_params, "dielectric")?;
     let scale_14 = required(style_params, "coulomb14scale")?;
@@ -420,7 +419,7 @@ pub fn pair_coul_cut_ctor(
         qiqj.push(qq);
     }
 
-    Ok(Box::new(PairCoulCut::new(
+    Ok(Member::pair(PairCoulCut::new(
         atom_i, atom_j, qiqj, coulomb, dielectric, delta, cutoff,
     )))
 }
@@ -435,7 +434,7 @@ pub fn pair_coul_cut_typed_ctor(
     style_params: &Params,
     _type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
+) -> Result<Member, String> {
     let coulomb = required(style_params, "coulomb")?;
     let dielectric = required(style_params, "dielectric")?;
     let delta = style_params.get("delta").map(|d| d as F).unwrap_or(0.0);
@@ -454,7 +453,7 @@ pub fn pair_coul_cut_typed_ctor(
         .get_float("charge")
         .ok_or_else(|| "PairCoulCut: atoms block missing \"charge\" column".to_string())?;
     let q: Vec<F> = charge.iter().map(|&c| c as F).collect();
-    Ok(Box::new(PairCoulCut::typed(
+    Ok(Member::pair(PairCoulCut::typed(
         q, coulomb, dielectric, delta, cutoff,
     )))
 }

@@ -41,7 +41,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyCapsule, PyDict, PyList, PyTuple};
 
 use molrs::ff::ForceField;
-use molrs::ff::potential::{Potentials, extract_coords, write_coords};
+use molrs::ff::potential::{Member, Potentials, extract_coords, write_coords};
 use molrs::ff::typifier::mmff::{MMFF94STypifier, MMFF94Typifier};
 use molrs::ff::typifier::opls::OPLSAATypifier;
 use molrs::optimize::{LBFGS, OptReport};
@@ -164,12 +164,7 @@ impl From<OptReport> for PyOptReport {
 #[pyclass(name = "TypedPotentials", module = "molrs.ff")]
 pub struct PyTypedPotentials {
     /// Taken by the integrator that consumes it; `None` afterwards.
-    pub(crate) members: Option<
-        Vec<(
-            Box<dyn molrs::ff::potential::Potential>,
-            molrs::md::SpecialWeights,
-        )>,
-    >,
+    pub(crate) members: Option<Vec<(Member, molrs::md::SpecialWeights)>>,
 }
 
 #[pymethods]

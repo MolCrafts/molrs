@@ -168,7 +168,7 @@ pub fn accumulate_dihedral_forces(
 // ---------------------------------------------------------------------------
 
 /// Stack a kernel's per-term index columns into the `(n_terms, arity)` table
-/// [`Potential::terms`](crate::ff::potential::Potential::terms) returns.
+/// [`IndexedTerms::terms`](crate::ff::potential::IndexedTerms::terms) returns.
 ///
 /// Every bonded kernel keeps its indices as one `Vec<usize>` per position —
 /// `atom_i`, `atom_j`, … — because that is the layout its inner loop wants.

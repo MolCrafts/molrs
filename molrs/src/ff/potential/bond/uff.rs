@@ -3,9 +3,9 @@
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::Potential;
 use crate::ff::potential::geometry::term_table;
 use crate::ff::potential::geometry::validate_coords;
+use crate::ff::potential::{IndexedTerms, Member, Potential};
 use molrs::store::frame::Frame;
 use molrs::types::F;
 
@@ -60,11 +60,12 @@ impl Potential for UffBond {
             (self.atom_i[t], self.atom_j[t])
         })
     }
+}
 
-    fn terms(&self) -> Option<Array2<u32>> {
-        Some(term_table(&[&self.atom_i, &self.atom_j]))
+impl IndexedTerms for UffBond {
+    fn terms(&self) -> Array2<u32> {
+        term_table(&[&self.atom_i, &self.atom_j])
     }
-
     fn calc_energy_forces_with_terms(
         &self,
         coords: &[F],
@@ -85,7 +86,7 @@ pub fn uff_bond_ctor(
     _sp: &Params,
     _tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
+) -> Result<Member, String> {
     let block = frame
         .get("bonds")
         .ok_or("uff_bond: missing \"bonds\" block")?;
@@ -98,7 +99,7 @@ pub fn uff_bond_ctor(
         .get_float("r0")
         .ok_or("uff_bond: missing r0 (typifier must bake)")?;
     let n = i.len();
-    Ok(Box::new(UffBond {
+    Ok(Member::indexed(UffBond {
         atom_i: (0..n).map(|t| i[t] as usize).collect(),
         atom_j: (0..n).map(|t| j[t] as usize).collect(),
         kb: kb.iter().map(|&v| v as F).collect(),

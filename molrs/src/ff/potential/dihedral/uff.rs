@@ -3,8 +3,8 @@
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::Potential;
 use crate::ff::potential::geometry::{cross3, dot3, mag3, sub3, term_table, validate_coords};
+use crate::ff::potential::{IndexedTerms, Member, Potential};
 use molrs::store::frame::Frame;
 use molrs::types::F;
 
@@ -113,16 +113,12 @@ impl Potential for UffTorsion {
             )
         })
     }
+}
 
-    fn terms(&self) -> Option<Array2<u32>> {
-        Some(term_table(&[
-            &self.atom_i,
-            &self.atom_j,
-            &self.atom_k,
-            &self.atom_l,
-        ]))
+impl IndexedTerms for UffTorsion {
+    fn terms(&self) -> Array2<u32> {
+        term_table(&[&self.atom_i, &self.atom_j, &self.atom_k, &self.atom_l])
     }
-
     fn calc_energy_forces_with_terms(
         &self,
         coords: &[F],
@@ -231,7 +227,7 @@ pub fn uff_torsion_ctor(
     _sp: &Params,
     _tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
+) -> Result<Member, String> {
     let block = frame
         .get("dihedrals")
         .ok_or("uff_torsion: missing \"dihedrals\" block")?;
@@ -255,7 +251,7 @@ pub fn uff_torsion_ctor(
         .get_float("cosTerm")
         .ok_or("uff_torsion: missing cosTerm")?;
     let n = i.len();
-    Ok(Box::new(UffTorsion {
+    Ok(Member::indexed(UffTorsion {
         atom_i: (0..n).map(|t| i[t] as usize).collect(),
         atom_j: (0..n).map(|t| j[t] as usize).collect(),
         atom_k: (0..n).map(|t| k[t] as usize).collect(),

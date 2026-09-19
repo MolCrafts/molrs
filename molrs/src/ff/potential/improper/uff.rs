@@ -7,8 +7,8 @@
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::Potential;
 use crate::ff::potential::geometry::{cross3, dot3, mag3, sub3, term_table, validate_coords};
+use crate::ff::potential::{IndexedTerms, Member, Potential};
 use molrs::store::frame::Frame;
 use molrs::types::F;
 
@@ -111,16 +111,12 @@ impl Potential for UffInversion {
             )
         })
     }
+}
 
-    fn terms(&self) -> Option<Array2<u32>> {
-        Some(term_table(&[
-            &self.atom_i,
-            &self.atom_j,
-            &self.atom_k,
-            &self.atom_l,
-        ]))
+impl IndexedTerms for UffInversion {
+    fn terms(&self) -> Array2<u32> {
+        term_table(&[&self.atom_i, &self.atom_j, &self.atom_k, &self.atom_l])
     }
-
     fn calc_energy_forces_with_terms(
         &self,
         coords: &[F],
@@ -146,9 +142,9 @@ pub fn uff_inversion_ctor(
     _sp: &Params,
     _tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
+) -> Result<Member, String> {
     let Some(block) = frame.get("impropers") else {
-        return Ok(Box::new(UffInversion {
+        return Ok(Member::indexed(UffInversion {
             atom_i: vec![],
             atom_j: vec![],
             atom_k: vec![],
@@ -160,7 +156,7 @@ pub fn uff_inversion_ctor(
         }));
     };
     if block.nrows().unwrap_or(0) == 0 {
-        return Ok(Box::new(UffInversion {
+        return Ok(Member::indexed(UffInversion {
             atom_i: vec![],
             atom_j: vec![],
             atom_k: vec![],
@@ -188,7 +184,7 @@ pub fn uff_inversion_ctor(
     let c1 = block.get_float("c1").ok_or("uff_inversion: missing c1")?;
     let c2 = block.get_float("c2").ok_or("uff_inversion: missing c2")?;
     let n = i.len();
-    Ok(Box::new(UffInversion {
+    Ok(Member::indexed(UffInversion {
         atom_i: (0..n).map(|t| i[t] as usize).collect(),
         atom_j: (0..n).map(|t| j[t] as usize).collect(),
         atom_k: (0..n).map(|t| k[t] as usize).collect(),

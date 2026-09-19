@@ -8,9 +8,9 @@ use std::collections::HashMap;
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::Potential;
 use crate::ff::potential::geometry::term_table;
 use crate::ff::potential::geometry::validate_coords;
+use crate::ff::potential::{IndexedTerms, Member, Potential};
 use molrs::store::frame::Frame;
 use molrs::types::F;
 
@@ -103,11 +103,12 @@ impl Potential for BondMorse {
             (self.atom_i[t], self.atom_j[t])
         })
     }
+}
 
-    fn terms(&self) -> Option<Array2<u32>> {
-        Some(term_table(&[&self.atom_i, &self.atom_j]))
+impl IndexedTerms for BondMorse {
+    fn terms(&self) -> Array2<u32> {
+        term_table(&[&self.atom_i, &self.atom_j])
     }
-
     fn calc_energy_forces_with_terms(
         &self,
         coords: &[F],
@@ -129,7 +130,7 @@ pub fn bond_morse_ctor(
     _style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
+) -> Result<Member, String> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
 
     let block = frame
@@ -164,7 +165,7 @@ pub fn bond_morse_ctor(
         rv.push(need(p, "r0", label)?);
     }
 
-    Ok(Box::new(BondMorse::new(ai, aj, dv, av, rv)))
+    Ok(Member::indexed(BondMorse::new(ai, aj, dv, av, rv)))
 }
 
 #[cfg(test)]

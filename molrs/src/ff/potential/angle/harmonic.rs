@@ -5,8 +5,8 @@ use std::collections::HashMap;
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::Potential;
 use crate::ff::potential::geometry::{compute_angle, term_table, validate_coords};
+use crate::ff::potential::{IndexedTerms, Member, Potential};
 use molrs::store::frame::Frame;
 use molrs::types::F;
 
@@ -81,11 +81,12 @@ impl Potential for AngleHarmonic {
             (self.atom_i[t], self.atom_j[t], self.atom_k[t])
         })
     }
+}
 
-    fn terms(&self) -> Option<Array2<u32>> {
-        Some(term_table(&[&self.atom_i, &self.atom_j, &self.atom_k]))
+impl IndexedTerms for AngleHarmonic {
+    fn terms(&self) -> Array2<u32> {
+        term_table(&[&self.atom_i, &self.atom_j, &self.atom_k])
     }
-
     fn calc_energy_forces_with_terms(
         &self,
         coords: &[F],
@@ -111,7 +112,7 @@ pub fn angle_harmonic_ctor(
     _style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
+) -> Result<Member, String> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
 
     let block = frame
@@ -159,7 +160,7 @@ pub fn angle_harmonic_ctor(
         theta0_vec.push(theta0_rad);
     }
 
-    Ok(Box::new(AngleHarmonic::new(
+    Ok(Member::indexed(AngleHarmonic::new(
         atom_i, atom_j, atom_k, k_vec, theta0_vec,
     )))
 }

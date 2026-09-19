@@ -5,11 +5,11 @@
 //! atom `x1`/`D1`; this ctor combines them geometrically like RDKit).
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::Potential;
 use crate::ff::potential::gather_copies;
 use crate::ff::potential::geometry::validate_coords;
 use crate::ff::potential::pair::energy_forces;
 use crate::ff::potential::pair::fold_chunks;
+use crate::ff::potential::{Member, PairDriven, Potential};
 use molrs::math::Virial;
 use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame::Frame;
@@ -195,17 +195,9 @@ impl Potential for UffVdW {
         let (e, f, _) = self.calc_energy_forces_with_pairs_virial(coords, pairs);
         (e, f)
     }
+}
 
-    fn calc_energy_forces_with_pairs_virial(
-        &self,
-        coords: &[F],
-        pairs: &Neighbors,
-    ) -> (F, Vec<F>, Option<Virial>) {
-        let mut forces = vec![0.0; coords.len()];
-        let (e, w) = self.accumulate_pairs(coords, pairs, &[], &mut forces);
-        (e, forces, w)
-    }
-
+impl PairDriven for UffVdW {
     fn accumulate_pairs(
         &self,
         coords: &[F],
@@ -248,7 +240,18 @@ impl Potential for UffVdW {
         });
         (e, Some(w))
     }
-
+    fn binds_a_fixed_pair_list(&self) -> bool {
+        matches!(self.source, Source::Compiled { .. })
+    }
+    fn calc_energy_forces_with_pairs_virial(
+        &self,
+        coords: &[F],
+        pairs: &Neighbors,
+    ) -> (F, Vec<F>, Option<Virial>) {
+        let mut forces = vec![0.0; coords.len()];
+        let (e, w) = self.accumulate_pairs(coords, pairs, &[], &mut forces);
+        (e, forces, w)
+    }
     fn gather_onto_copies(&mut self, owner: &[u32]) {
         let Source::PerAtom {
             x1, d1, n_owned, ..
@@ -260,17 +263,9 @@ impl Potential for UffVdW {
         gather_copies(x1, *n_owned, owner);
         gather_copies(d1, *n_owned, owner);
     }
-
-    fn binds_a_fixed_pair_list(&self) -> bool {
-        matches!(self.source, Source::Compiled { .. })
-    }
 }
 
-pub fn uff_lj_ctor(
-    _sp: &Params,
-    _tp: &[(&str, &Params)],
-    frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
+pub fn uff_lj_ctor(_sp: &Params, _tp: &[(&str, &Params)], frame: &Frame) -> Result<Member, String> {
     let atoms = frame.get("atoms").ok_or("uff_lj: missing atoms")?;
     let x1 = atoms.get_float("x1").ok_or("uff_lj: missing atoms.x1")?;
     let d1 = atoms.get_float("D1").ok_or("uff_lj: missing atoms.D1")?;
@@ -279,7 +274,12 @@ pub fn uff_lj_ctor(
         .get("pairs")
         .ok_or("uff_lj: missing pairs (call intramolecular_pairs first)")?;
     if pairs.nrows().unwrap_or(0) == 0 {
-        return Ok(Box::new(UffVdW::compiled(vec![], vec![], vec![], vec![])));
+        return Ok(Member::pair(UffVdW::compiled(
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+        )));
     }
     let pi = pairs
         .get_uint("atomi")
@@ -300,7 +300,7 @@ pub fn uff_lj_ctor(
         xij.push(((x1[i] * x1[j]) as F).sqrt());
         dij.push(((d1[i] * d1[j]) as F).sqrt());
     }
-    Ok(Box::new(UffVdW::compiled(atom_i, atom_j, xij, dij)))
+    Ok(Member::pair(UffVdW::compiled(atom_i, atom_j, xij, dij)))
 }
 
 /// Construct a neighbour-driven [`UffVdW`] from per-atom parameters.
@@ -313,11 +313,11 @@ pub fn uff_lj_typed_ctor(
     _style_params: &Params,
     _type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
+) -> Result<Member, String> {
     let atoms = frame.get("atoms").ok_or("uff_lj: missing atoms")?;
     let x1 = atoms.get_float("x1").ok_or("uff_lj: missing atoms.x1")?;
     let d1 = atoms.get_float("D1").ok_or("uff_lj: missing atoms.D1")?;
-    Ok(Box::new(UffVdW::typed(
+    Ok(Member::pair(UffVdW::typed(
         x1.iter().map(|&v| v as F).collect(),
         d1.iter().map(|&v| v as F).collect(),
     )))

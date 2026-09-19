@@ -7,13 +7,13 @@ use std::collections::HashMap;
 
 use crate::ff::forcefield::Params;
 use crate::ff::forcefield::pair_type_name;
-use crate::ff::potential::Potential;
 use crate::ff::potential::gather_copies;
 use crate::ff::potential::geometry::validate_coords;
 use crate::ff::potential::pair::atom_type_index;
 use crate::ff::potential::pair::energy_forces;
 use crate::ff::potential::pair::fold_chunks;
 use crate::ff::potential::pair::type_pair;
+use crate::ff::potential::{Member, PairDriven, Potential};
 use molrs::math::Virial;
 use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame::Frame;
@@ -223,17 +223,9 @@ impl Potential for PairMorse {
         let (e, f, _) = self.calc_energy_forces_with_pairs_virial(coords, pairs);
         (e, f)
     }
+}
 
-    fn calc_energy_forces_with_pairs_virial(
-        &self,
-        coords: &[F],
-        pairs: &Neighbors,
-    ) -> (F, Vec<F>, Option<Virial>) {
-        let mut forces = vec![0.0; coords.len()];
-        let (e, w) = self.accumulate_pairs(coords, pairs, &[], &mut forces);
-        (e, forces, w)
-    }
-
+impl PairDriven for PairMorse {
     fn accumulate_pairs(
         &self,
         coords: &[F],
@@ -284,7 +276,18 @@ impl Potential for PairMorse {
         });
         (e, Some(w))
     }
-
+    fn binds_a_fixed_pair_list(&self) -> bool {
+        matches!(self.source, Source::Compiled { .. })
+    }
+    fn calc_energy_forces_with_pairs_virial(
+        &self,
+        coords: &[F],
+        pairs: &Neighbors,
+    ) -> (F, Vec<F>, Option<Virial>) {
+        let mut forces = vec![0.0; coords.len()];
+        let (e, w) = self.accumulate_pairs(coords, pairs, &[], &mut forces);
+        (e, forces, w)
+    }
     fn gather_onto_copies(&mut self, owner: &[u32]) {
         let Source::Typed {
             type_id, n_owned, ..
@@ -295,10 +298,6 @@ impl Potential for PairMorse {
         };
         gather_copies(type_id, *n_owned, owner);
     }
-
-    fn binds_a_fixed_pair_list(&self) -> bool {
-        matches!(self.source, Source::Compiled { .. })
-    }
 }
 
 /// Construct a [`PairMorse`] from style params, type params, and Frame topology.
@@ -306,7 +305,7 @@ pub fn pair_morse_ctor(
     _style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
+) -> Result<Member, String> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
 
     let block = frame
@@ -341,7 +340,7 @@ pub fn pair_morse_ctor(
         rv.push(need(p, "r0", label)?);
     }
 
-    Ok(Box::new(PairMorse::new(ai, aj, dv, av, rv)))
+    Ok(Member::pair(PairMorse::new(ai, aj, dv, av, rv)))
 }
 
 /// Construct a neighbour-driven [`PairMorse`] from per-atom parameters.
@@ -354,7 +353,7 @@ pub fn pair_morse_typed_ctor(
     _style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
+) -> Result<Member, String> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
     let (type_id, labels) = atom_type_index(frame)?;
     let ntypes = labels.len();
@@ -386,7 +385,9 @@ pub fn pair_morse_typed_ctor(
                 as F;
         }
     }
-    Ok(Box::new(PairMorse::typed(type_id, ntypes, d0, alpha, r0)))
+    Ok(Member::pair(PairMorse::typed(
+        type_id, ntypes, d0, alpha, r0,
+    )))
 }
 
 #[cfg(test)]

@@ -12,10 +12,10 @@ use std::collections::HashMap;
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::Potential;
 use crate::ff::potential::geometry::{
     accumulate_dihedral_forces, compute_dihedral, term_table, validate_coords,
 };
+use crate::ff::potential::{IndexedTerms, Member, Potential};
 use molrs::store::frame::Frame;
 use molrs::types::F;
 
@@ -69,16 +69,12 @@ impl Potential for ImproperCvff {
             )
         })
     }
+}
 
-    fn terms(&self) -> Option<Array2<u32>> {
-        Some(term_table(&[
-            &self.atom_i,
-            &self.atom_j,
-            &self.atom_k,
-            &self.atom_l,
-        ]))
+impl IndexedTerms for ImproperCvff {
+    fn terms(&self) -> Array2<u32> {
+        term_table(&[&self.atom_i, &self.atom_j, &self.atom_k, &self.atom_l])
     }
-
     fn calc_energy_forces_with_terms(
         &self,
         coords: &[F],
@@ -106,7 +102,7 @@ pub fn improper_cvff_ctor(
     _sp: &Params,
     tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
+) -> Result<Member, String> {
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
     let block = frame
         .get("impropers")
@@ -145,7 +141,7 @@ pub fn improper_cvff_ctor(
                 .ok_or("improper_cvff: missing periodicity")? as F,
         );
     }
-    Ok(Box::new(ImproperCvff {
+    Ok(Member::indexed(ImproperCvff {
         atom_i: ai,
         atom_j: aj,
         atom_k: ak,

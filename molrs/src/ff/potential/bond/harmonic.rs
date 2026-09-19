@@ -5,8 +5,8 @@ use std::collections::HashMap;
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::Potential;
 use crate::ff::potential::geometry::{term_table, validate_coords};
+use crate::ff::potential::{IndexedTerms, Member, Potential};
 use molrs::store::frame::Frame;
 use molrs::types::F;
 
@@ -88,11 +88,12 @@ impl Potential for BondHarmonic {
             (self.atom_i[t], self.atom_j[t])
         })
     }
+}
 
-    fn terms(&self) -> Option<Array2<u32>> {
-        Some(term_table(&[&self.atom_i, &self.atom_j]))
+impl IndexedTerms for BondHarmonic {
+    fn terms(&self) -> Array2<u32> {
+        term_table(&[&self.atom_i, &self.atom_j])
     }
-
     fn calc_energy_forces_with_terms(
         &self,
         coords: &[F],
@@ -114,7 +115,7 @@ pub fn bond_harmonic_ctor(
     _style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
+) -> Result<Member, String> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
 
     let block = frame
@@ -158,7 +159,9 @@ pub fn bond_harmonic_ctor(
         r0_vec.push(r0);
     }
 
-    Ok(Box::new(BondHarmonic::new(atom_i, atom_j, k_vec, r0_vec)))
+    Ok(Member::indexed(BondHarmonic::new(
+        atom_i, atom_j, k_vec, r0_vec,
+    )))
 }
 
 #[cfg(test)]

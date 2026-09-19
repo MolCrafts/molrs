@@ -21,7 +21,7 @@ use std::borrow::Cow;
 
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
 use crate::ff::potential::registry::{self, ParamSource};
-use crate::ff::potential::{Potential, Potentials, TypedKernel, TypedMember};
+use crate::ff::potential::{Member, Potentials, TypedKernel, TypedMember};
 use molrs::store::frame::Frame;
 
 impl crate::ff::forcefield::Style {
@@ -79,7 +79,7 @@ impl crate::ff::forcefield::Style {
         Ok(Some((pot, Some(special))))
     }
 
-    /// Build this style's molecule-bound [`Potential`] by **expanding** its type
+    /// Build this style's molecule-bound [`Member`] by **expanding** its type
     /// parameters against `frame`'s topology — each bond/angle/… row's string
     /// type label is resolved to its parameters and stored as per-element
     /// arrays, so the resulting potential evaluates from coordinates alone.
@@ -94,7 +94,7 @@ impl crate::ff::forcefield::Style {
         &self,
         frame: &Frame,
         special_bonds: &SpecialBonds,
-    ) -> Result<Option<Box<dyn Potential>>, String> {
+    ) -> Result<Option<Member>, String> {
         let category = self.category();
         if category == "atom" {
             return Ok(None);

@@ -21,7 +21,7 @@
 
 use ndarray::{Array2, ArrayView2};
 
-use molrs::ff::potential::Potential;
+use molrs::ff::potential::Member;
 use molrs::spatial::neighbors::Neighbors;
 use molrs::spatial::periodic::{GhostError, GhostSet};
 use molrs::spatial::simbox::SimBox;
@@ -418,12 +418,12 @@ struct TermList {
 impl BondedLists {
     /// Record each member's index table.
     ///
-    /// A member that answers `None` to [`Potential::terms`] keeps no indices
+    /// Only a [`Member::Indexed`] has one; every other member keeps no indices
     /// and is left alone.
     ///
     /// Nothing is resolved here: resolution needs the owned coordinates, and
     /// the first [`refresh`](Self::refresh) has them.
-    pub fn new(members: &[Box<dyn Potential>]) -> Self {
+    pub fn new(members: &[Member]) -> Self {
         let entries = members
             .iter()
             .map(|m| {
@@ -598,6 +598,7 @@ mod remap_tests {
 
     use molrs::ff::potential::angle::harmonic::AngleHarmonic;
     use molrs::ff::potential::bond::harmonic::BondHarmonic;
+    use molrs::ff::potential::{IndexedTerms, Potential};
     use molrs::spatial::simbox::SimBox;
     use ndarray::array;
 
@@ -607,11 +608,7 @@ mod remap_tests {
     /// is no test-only door into the remapping, because a door tests take and
     /// production does not is a door that can be right while production is
     /// wrong.
-    fn resolve_one(
-        pot: Box<dyn Potential>,
-        owned: FNx3View<'_>,
-        comm: &Comm,
-    ) -> Result<Array2<u32>, MdError> {
+    fn resolve_one(pot: Member, owned: FNx3View<'_>, comm: &Comm) -> Result<Array2<u32>, MdError> {
         let members = vec![pot];
         let mut lists = BondedLists::new(&members);
         let no_fold = Array2::<i64>::zeros((owned.nrows(), 3));
@@ -669,7 +666,7 @@ mod remap_tests {
         let comm = Comm::new(bx.clone(), owned.view(), 2.0, 0.0).unwrap();
 
         let pot = BondHarmonic::new(vec![0], vec![1], vec![100.0], vec![1.0]);
-        let terms = resolve_one(Box::new(pot), owned.view(), &comm).unwrap();
+        let terms = resolve_one(Member::indexed(pot), owned.view(), &comm).unwrap();
 
         let j = terms[[0, 1]] as usize;
         assert!(j >= 2, "atomj must now name a copy, not atom 1; got {j}");
@@ -698,7 +695,7 @@ mod remap_tests {
         let comm = Comm::new(bx.clone(), owned.view(), 3.0, 0.0).unwrap();
 
         let pot = AngleHarmonic::new(vec![0], vec![1], vec![2], vec![50.0], vec![2.9]);
-        let terms = resolve_one(Box::new(pot), owned.view(), &comm).unwrap();
+        let terms = resolve_one(Member::indexed(pot), owned.view(), &comm).unwrap();
         let (i, j, k) = (
             terms[[0, 0]] as usize,
             terms[[0, 1]] as usize,
@@ -730,7 +727,7 @@ mod remap_tests {
         let comm = Comm::new(bx, owned.view(), 2.0, 0.0).unwrap();
 
         let pot = BondHarmonic::new(vec![0], vec![1], vec![100.0], vec![1.0]);
-        let err = resolve_one(Box::new(pot), owned.view(), &comm).unwrap_err();
+        let err = resolve_one(Member::indexed(pot), owned.view(), &comm).unwrap_err();
         let msg = format!("{err}");
         assert!(msg.contains("still spans"), "{msg}");
         assert!(msg.contains("does not reach"), "{msg}");
@@ -744,8 +741,7 @@ mod remap_tests {
         let owned = array![[1.0_f64, 1.0, 1.0], [2.0, 2.0, 2.0]];
         let comm = Comm::new(bx, owned.view(), 2.0, 0.0).unwrap();
 
-        let members: Vec<Box<dyn Potential>> =
-            vec![Box::new(molrs::ff::potential::Potentials::new())];
+        let members: Vec<Member> = vec![Member::plain(molrs::ff::potential::Potentials::new())];
         let mut lists = BondedLists::new(&members);
         assert_eq!(lists.bound(), 0, "an aggregate keeps no atom indices");
         let no_fold = Array2::<i64>::zeros((owned.nrows(), 3));
@@ -842,7 +838,10 @@ mod owned_potential_tests {
             let mut e = 0.0;
             for (mi, member) in members.iter().enumerate() {
                 let terms = lists.current(mi).expect("a bond style keeps indices");
-                e += member.calc_energy_forces_with_terms(&flat, terms).0;
+                let Member::Indexed(pot) = member else {
+                    unreachable!("a bond style is an indexed member")
+                };
+                e += pot.calc_energy_forces_with_terms(&flat, terms).0;
             }
             let n_terms = lists.bound();
             let all_rows = all.nrows();
@@ -1430,6 +1429,27 @@ impl SpecialWeights {
     ///
     /// A weight is one number per pair. Handing the kernel that number is one
     /// pass over a buffer the caller keeps.
+    /// The per-pair weights for `pairs`, or an empty slice when nothing is
+    /// scaled.
+    ///
+    /// The empty slice is not a table of ones: a kernel reads it as "no weights
+    /// apply" and skips the multiply entirely, which is the common case and the
+    /// one worth not paying for. `scratch` is the caller's buffer, reused
+    /// across steps — [`fill_factors`](Self::fill_factors) is what fills it.
+    pub fn factors_for<'a>(
+        &self,
+        pairs: &Neighbors,
+        n_owned: usize,
+        owner: &[u32],
+        scratch: &'a mut Vec<F>,
+    ) -> &'a [F] {
+        if self.is_empty() {
+            return &[];
+        }
+        self.fill_factors(pairs, n_owned, owner, scratch);
+        scratch
+    }
+
     pub fn fill_factors(&self, pairs: &Neighbors, n_owned: usize, owner: &[u32], out: &mut Vec<F>) {
         let i_col = pairs.query_point_indices();
         let j_col = pairs.point_indices();

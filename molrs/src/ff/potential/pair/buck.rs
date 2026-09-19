@@ -9,13 +9,13 @@ use std::collections::HashMap;
 
 use crate::ff::forcefield::Params;
 use crate::ff::forcefield::pair_type_name;
-use crate::ff::potential::Potential;
 use crate::ff::potential::gather_copies;
 use crate::ff::potential::geometry::validate_coords;
 use crate::ff::potential::pair::atom_type_index;
 use crate::ff::potential::pair::energy_forces;
 use crate::ff::potential::pair::fold_chunks;
 use crate::ff::potential::pair::type_pair;
+use crate::ff::potential::{Member, PairDriven, Potential};
 use molrs::math::Virial;
 use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame::Frame;
@@ -227,17 +227,9 @@ impl Potential for PairBuck {
         let (e, f, _) = self.calc_energy_forces_with_pairs_virial(coords, pairs);
         (e, f)
     }
+}
 
-    fn calc_energy_forces_with_pairs_virial(
-        &self,
-        coords: &[F],
-        pairs: &Neighbors,
-    ) -> (F, Vec<F>, Option<Virial>) {
-        let mut forces = vec![0.0; coords.len()];
-        let (e, w) = self.accumulate_pairs(coords, pairs, &[], &mut forces);
-        (e, forces, w)
-    }
-
+impl PairDriven for PairBuck {
     fn accumulate_pairs(
         &self,
         coords: &[F],
@@ -288,7 +280,18 @@ impl Potential for PairBuck {
         });
         (e, Some(w))
     }
-
+    fn binds_a_fixed_pair_list(&self) -> bool {
+        matches!(self.source, Source::Compiled { .. })
+    }
+    fn calc_energy_forces_with_pairs_virial(
+        &self,
+        coords: &[F],
+        pairs: &Neighbors,
+    ) -> (F, Vec<F>, Option<Virial>) {
+        let mut forces = vec![0.0; coords.len()];
+        let (e, w) = self.accumulate_pairs(coords, pairs, &[], &mut forces);
+        (e, forces, w)
+    }
     fn gather_onto_copies(&mut self, owner: &[u32]) {
         let Source::Typed {
             type_id, n_owned, ..
@@ -299,10 +302,6 @@ impl Potential for PairBuck {
         };
         gather_copies(type_id, *n_owned, owner);
     }
-
-    fn binds_a_fixed_pair_list(&self) -> bool {
-        matches!(self.source, Source::Compiled { .. })
-    }
 }
 
 /// Construct a [`PairBuck`] from style params, type params, and Frame topology.
@@ -310,7 +309,7 @@ pub fn pair_buck_ctor(
     _style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
+) -> Result<Member, String> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
 
     let block = frame
@@ -355,7 +354,7 @@ pub fn pair_buck_ctor(
         c_vec.push(c);
     }
 
-    Ok(Box::new(PairBuck::new(
+    Ok(Member::pair(PairBuck::new(
         atom_i, atom_j, a_vec, rho_vec, c_vec,
     )))
 }
@@ -370,7 +369,7 @@ pub fn pair_buck_typed_ctor(
     _style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
+) -> Result<Member, String> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
     let (type_id, labels) = atom_type_index(frame)?;
     let ntypes = labels.len();
@@ -402,7 +401,7 @@ pub fn pair_buck_typed_ctor(
                 as F;
         }
     }
-    Ok(Box::new(PairBuck::typed(type_id, ntypes, a, rho, c)))
+    Ok(Member::pair(PairBuck::typed(type_id, ntypes, a, rho, c)))
 }
 
 #[cfg(test)]

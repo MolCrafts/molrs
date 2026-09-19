@@ -5,7 +5,7 @@ use std::time::Duration;
 use criterion::{Criterion, criterion_group};
 use molrs::Topology;
 use molrs::ff::forcefield::mixing::Mixing;
-use molrs::ff::potential::Potential;
+use molrs::ff::potential::Member;
 use molrs::ff::potential::bond::harmonic::BondHarmonic;
 use molrs::ff::potential::pair::LJCut;
 use molrs::md::{Comm, ForceProvider, GhostPairs, MicPairs, SpecialWeights};
@@ -118,13 +118,13 @@ fn bench_step(c: &mut Criterion) {
         })
     });
 
-    let mut mic = MicPairs::new(lj(n), skin_for(&bx, &pos)).unwrap();
+    let mut mic = MicPairs::new(Member::pair(lj(n)), skin_for(&bx, &pos)).unwrap();
     g.bench_function("mic/plain", |b| {
         b.iter(|| mic.compute(pos.view(), no_fold.view()).unwrap())
     });
 
     let mut mic_w = MicPairs::from_members(
-        vec![(Box::new(lj(n)) as Box<dyn Potential>, weights.clone())],
+        vec![(Member::pair(lj(n)), weights.clone())],
         skin_for(&bx, &pos),
     )
     .unwrap();
@@ -133,7 +133,7 @@ fn bench_step(c: &mut Criterion) {
     });
 
     let comm = Comm::new(bx.clone(), pos.view(), CUTOFF, SKIN).unwrap();
-    let mut ghost = GhostPairs::new(lj(n), comm).unwrap();
+    let mut ghost = GhostPairs::new(Member::pair(lj(n)), comm).unwrap();
     g.bench_function("ghost/plain", |b| {
         b.iter(|| ghost.compute(pos.view(), no_fold.view()).unwrap())
     });
@@ -142,11 +142,8 @@ fn bench_step(c: &mut Criterion) {
     let comm = Comm::new(bx.clone(), pos.view(), CUTOFF, SKIN).unwrap();
     let mut ghost_b = GhostPairs::from_members(
         vec![
-            (Box::new(lj(n)) as Box<dyn Potential>, weights.clone()),
-            (
-                Box::new(bond) as Box<dyn Potential>,
-                SpecialWeights::default(),
-            ),
+            (Member::pair(lj(n)), weights.clone()),
+            (Member::indexed(bond), SpecialWeights::default()),
         ],
         comm,
     )

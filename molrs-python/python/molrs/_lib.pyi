@@ -774,8 +774,9 @@ class Atomistic(Graph):
         self,
         gen_angle: bool = True,
         gen_dihedral: bool = True,
+        gen_improper: bool = False,
         clear_existing: bool = False,
-    ) -> tuple[int, int]: ...
+    ) -> tuple[int, int, int]: ...
     def topo_distances(
         self, source: int, max_hops: Optional[int] = None
     ) -> List[Tuple[int, int]]: ...

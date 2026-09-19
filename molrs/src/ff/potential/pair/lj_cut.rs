@@ -10,12 +10,12 @@ use std::collections::HashMap;
 
 use crate::ff::forcefield::Params;
 use crate::ff::forcefield::mixing::Mixing;
-use crate::ff::potential::Potential;
 use crate::ff::potential::gather_copies;
 use crate::ff::potential::geometry::validate_coords;
 use crate::ff::potential::pair::PairPotential;
 use crate::ff::potential::pair::atom_type_index;
 use crate::ff::potential::pair::fold_chunks;
+use crate::ff::potential::{Member, PairDriven, Potential};
 use molrs::math::Virial;
 use molrs::spatial::neighbors::{Neighbors, VerletSkin};
 use molrs::store::frame::Frame;
@@ -574,17 +574,9 @@ impl Potential for LJCut {
         let (e, f, _) = self.calc_energy_forces_with_pairs_virial(coords, pairs);
         (e, f)
     }
+}
 
-    fn calc_energy_forces_with_pairs_virial(
-        &self,
-        coords: &[F],
-        pairs: &Neighbors,
-    ) -> (F, Vec<F>, Option<Virial>) {
-        let mut forces = vec![0.0; coords.len()];
-        let (e, w) = self.accumulate_pairs(coords, pairs, &[], &mut forces);
-        (e, forces, w)
-    }
-
+impl PairDriven for LJCut {
     fn accumulate_pairs(
         &self,
         coords: &[F],
@@ -614,7 +606,18 @@ impl Potential for LJCut {
             }
         }
     }
-
+    fn binds_a_fixed_pair_list(&self) -> bool {
+        matches!(self.source, PairSource::Compiled { .. })
+    }
+    fn calc_energy_forces_with_pairs_virial(
+        &self,
+        coords: &[F],
+        pairs: &Neighbors,
+    ) -> (F, Vec<F>, Option<Virial>) {
+        let mut forces = vec![0.0; coords.len()];
+        let (e, w) = self.accumulate_pairs(coords, pairs, &[], &mut forces);
+        (e, forces, w)
+    }
     fn gather_onto_copies(&mut self, owner: &[u32]) {
         let PairSource::Typed {
             type_id, n_owned, ..
@@ -625,10 +628,6 @@ impl Potential for LJCut {
         };
         gather_copies(type_id, *n_owned, owner);
     }
-
-    fn binds_a_fixed_pair_list(&self) -> bool {
-        matches!(self.source, PairSource::Compiled { .. })
-    }
 }
 
 /// Construct a compiled [`LJCut`] from per-atom-type params + a neighbour list.
@@ -636,7 +635,7 @@ pub fn pair_lj_cut_ctor(
     style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
+) -> Result<Member, String> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
     let scale_14 = style_params.get("lj14scale").unwrap_or(1.0) as F;
     // Absent `mixing` keeps Lorentz-Berthelot, the rule every reader that does
@@ -695,7 +694,9 @@ pub fn pair_lj_cut_ctor(
         sig_vec.push(sigma);
     }
 
-    Ok(Box::new(LJCut::compiled(atom_i, atom_j, eps_vec, sig_vec)))
+    Ok(Member::pair(LJCut::compiled(
+        atom_i, atom_j, eps_vec, sig_vec,
+    )))
 }
 
 /// Construct a neighbour-driven [`LJCut`] from per-atom parameters.
@@ -708,7 +709,7 @@ pub fn pair_lj_cut_typed_ctor(
     style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
+) -> Result<Member, String> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
     let mixing = match style_params.get_str("mixing") {
         Some(name) => Mixing::parse(name).map_err(|e| format!("LJCut: {e}"))?,
@@ -738,7 +739,7 @@ pub fn pair_lj_cut_typed_ctor(
             .ok_or_else(|| format!("LJCut type '{l}': missing 'sigma'"))? as F;
         per_type.push((eps, sigma));
     }
-    Ok(Box::new(LJCut::typed(
+    Ok(Member::pair(LJCut::typed(
         type_id, &per_type, mixing, cutoff, n, m, shifted, false,
     )?))
 }

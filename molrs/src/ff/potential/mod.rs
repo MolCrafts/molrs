@@ -119,22 +119,29 @@ fn end_pairs(frame: &Frame, block: &str, col_a: &str, col_b: &str) -> HashSet<(u
 // Potential trait
 // ---------------------------------------------------------------------------
 
-/// Interface for computing potential energy and forces.
+/// Energy and forces from coordinates alone.
 ///
 /// A `Potential` is **molecule-bound**: its per-element parameters are expanded
-/// against the molecule's topology once at [`ForceField::to_potentials`](crate::ff::forcefield::ForceField::to_potentials) (string
-/// type labels resolved to per-bond/angle/… arrays). Evaluation therefore takes
-/// only coordinates — there is no per-call topology resolution.
+/// against the molecule's topology once at [`ForceField::to_potentials`](crate::ff::forcefield::ForceField::to_potentials)
+/// (string type labels resolved to per-bond/angle/… arrays). Evaluation
+/// therefore takes only coordinates — there is no per-call topology resolution.
 ///
-/// Implementors provide [`calc_energy_forces`](Potential::calc_energy_forces)
-/// (both in one pass, avoiding redundant geometry); [`calc_energy`] and
-/// [`calc_forces`] default to it.
+/// This is the whole of what every potential can do. Two capabilities that only
+/// some have are separate traits, so that a caller which needs one says so in a
+/// type instead of asking at run time:
+///
+/// * [`IndexedTerms`] — the rows are named by an index table the caller may
+///   replace. Every bonded kernel.
+/// * [`PairDriven`] — the sum runs over whatever pairs a neighbour search turns
+///   up. Every pair kernel.
+///
+/// [`Member`] is the three of them as one value, chosen when the kernel is
+/// built. It exists because a `Box<dyn Potential>` cannot be asked which of the
+/// two it also is — the question used to be put to `terms()`, whose job is to
+/// return a table and which allocated one per member per step to answer it.
 ///
 /// The geometry optimizer ([`crate::optimize::LBFGS`]) depends on this trait —
 /// not the other way around.
-///
-/// [`calc_energy`]: Potential::calc_energy
-/// [`calc_forces`]: Potential::calc_forces
 pub trait Potential: Send + Sync {
     /// Compute energy and forces (= -gradient) in one pass.
     /// Returns `(energy, forces)` where forces has length `coords.len()`.
@@ -145,11 +152,6 @@ pub trait Potential: Send + Sync {
         self.calc_energy_forces(coords).0
     }
 
-    /// Compute forces (= -gradient), a length-3N vector.
-    fn calc_forces(&self, coords: &[F]) -> Vec<F> {
-        self.calc_energy_forces(coords).1
-    }
-
     /// Evaluate with a per-step pair table the loop computed once and shares
     /// with every pair potential. Default ignores `pairs` and calls
     /// [`calc_energy_forces`](Potential::calc_energy_forces).
@@ -157,35 +159,94 @@ pub trait Potential: Send + Sync {
         let _ = pairs;
         self.calc_energy_forces(coords)
     }
+}
 
+/// A potential whose rows are named by an index table the caller can replace.
+///
+/// Implementing this is a declaration that *which atoms* is separable from
+/// *what the parameters are*: row `r` of [`terms`](IndexedTerms::terms) belongs
+/// with row `r` of the parameters, and a caller may hand back a different table
+/// naming different atoms for the same rows. That is what lets a periodic
+/// régime point a bond at a periodic copy without the kernel ever learning that
+/// copies exist.
+///
+/// Every bonded kernel implements it; no pair kernel does, because a pair
+/// kernel's rows are not fixed — they are whatever the neighbour search found.
+pub trait IndexedTerms: Potential {
     /// The atom indices this kernel resolved at construction, `(n_terms,
     /// arity)` — arity 2 for a bond, 3 for an angle, 4 for a dihedral or an
-    /// improper. `None` for a kernel whose state is not a fixed index list.
-    ///
-    /// A kernel that answers this is declaring that *which atoms* is separable
-    /// from *what the parameters are*: row `r` here belongs with row `r` of
-    /// its parameters, and a caller may hand back a different table naming
-    /// different atoms for the same rows. That is what lets a periodic régime
-    /// point a bond at a copy without the kernel learning that copies exist.
-    fn terms(&self) -> Option<Array2<u32>> {
-        None
-    }
+    /// improper.
+    fn terms(&self) -> Array2<u32>;
 
     /// Evaluate with `terms` in place of the indices resolved at construction.
     ///
-    /// `terms` must have the shape [`terms`](Potential::terms) returned: the
-    /// row *set* is fixed — it is the terms the force field declared — and
-    /// only which atoms each row names may differ. Default ignores it and
-    /// calls [`calc_energy_forces`](Potential::calc_energy_forces), which is
-    /// right for a kernel that holds no indices.
+    /// `terms` must have the shape [`terms`](IndexedTerms::terms) returned: the
+    /// row *set* is fixed — it is the terms the force field declared — and only
+    /// which atoms each row names may differ.
+    ///
+    /// There is no default. A default that ignored `terms` would be a correct
+    /// fallback for a kernel holding no indices and a silently wrong answer for
+    /// one that does, and only the second kind is in this trait.
     fn calc_energy_forces_with_terms(
         &self,
         coords: &[F],
         terms: ArrayView2<'_, u32>,
-    ) -> (F, Vec<F>) {
-        let _ = terms;
-        self.calc_energy_forces(coords)
-    }
+    ) -> (F, Vec<F>);
+}
+
+/// A potential summed over whatever pairs a neighbour search turns up.
+///
+/// Every pair kernel implements it. Nothing else should: the two required
+/// methods are the ones a caller maintaining a live neighbour table needs
+/// answered honestly, and a potential that ignores the table cannot answer
+/// them.
+pub trait PairDriven: Potential {
+    /// Add this kernel's contribution over a pair table into `out`, scaling
+    /// each pair.
+    ///
+    /// Three things at once, and each of them is the reason the other two are
+    /// here:
+    ///
+    /// * **`factor`** is one weight per pair, aligned with the table's rows, or
+    ///   empty meaning all ones. A weight of exactly zero *skips* the pair
+    ///   rather than multiplying it, because a bonded pair sits at bond length
+    ///   where a repulsive term is enormous. Carrying the weights per pair is
+    ///   what lets a caller stop rebuilding the pair table once per distinct
+    ///   weight.
+    /// * **`out`** is the caller's accumulator, `3 · n_atoms` long, added into
+    ///   rather than returned. A provider summing several members then owns one
+    ///   buffer for the whole step instead of one allocation per member per
+    ///   step — and a thread can be handed a slice of something the caller owns,
+    ///   where it cannot be handed a slice of something the callee allocates.
+    /// * **the virial** comes back with the energy, from the same loop, for the
+    ///   reason [`calc_energy_forces_with_pairs_virial`](PairDriven::calc_energy_forces_with_pairs_virial)
+    ///   gives.
+    ///
+    /// No default: this used to have one that ignored `factor`, which was right
+    /// for a potential that does not sum over the pair table and silently lost
+    /// a force field's exclusions for one that does. Only the second kind is in
+    /// this trait, so the question is now asked of every implementor.
+    fn accumulate_pairs(
+        &self,
+        coords: &[F],
+        pairs: &Neighbors,
+        factor: &[F],
+        out: &mut [F],
+    ) -> (F, Option<Virial>);
+
+    /// Whether this kernel's parameters are bound to one fixed pair list.
+    ///
+    /// Such a kernel answers for **that** list and no other. Handed a
+    /// neighbour table it does not read it — it returns the frozen sum — and
+    /// that is not a cheaper route to the same number, it is a different
+    /// question silently unanswered. Worse, the caller goes on maintaining and
+    /// reporting a live list that provably does not enter the answer.
+    ///
+    /// A periodic force path refuses such a member at construction. No default:
+    /// a kernel built from one pair list and a kernel keyed on the atoms are
+    /// the same Rust type in molrs (the list is a private source variant), so
+    /// the answer cannot be inferred and has to be given.
+    fn binds_a_fixed_pair_list(&self) -> bool;
 
     /// Energy, forces, and the virial `Σ f ⊗ r`, over a pair table.
     ///
@@ -208,67 +269,6 @@ pub trait Potential: Send + Sync {
         (e, f, None)
     }
 
-    /// Add this kernel's contribution over a pair table into `out`, scaling
-    /// each pair.
-    ///
-    /// Three things at once, and each of them is the reason the other two are
-    /// here:
-    ///
-    /// * **`factor`** is one weight per pair, aligned with the table's rows, or
-    ///   empty meaning all ones. A weight of exactly zero *skips* the pair
-    ///   rather than multiplying it, because a bonded pair sits at bond length
-    ///   where a repulsive term is enormous. Carrying the weights per pair is
-    ///   what lets a caller stop rebuilding the pair table once per distinct
-    ///   weight.
-    /// * **`out`** is the caller's accumulator, `3 · n_atoms` long, added into
-    ///   rather than returned. A provider summing several members then owns one
-    ///   buffer for the whole step instead of one allocation per member per
-    ///   step — and a thread can be handed a slice of something the caller owns,
-    ///   where it cannot be handed a slice of something the callee allocates.
-    /// * **the virial** comes back with the energy, from the same loop, for the
-    ///   reason [`calc_energy_forces_with_pairs_virial`](Potential::calc_energy_forces_with_pairs_virial)
-    ///   gives.
-    ///
-    /// Default: evaluate the ordinary way and add, **ignoring `factor`** —
-    /// which is correct for a potential that does not sum over the pair table
-    /// at all (an external field, a restraint, a constant force), and wrong for
-    /// one that does.
-    ///
-    /// **A kernel that sums over the pair table must override this.** Nothing
-    /// can check it: the default cannot tell a potential that has no pairs to
-    /// weight from one that has and forgot to say so, and every in-tree pair
-    /// kernel overrides. A third-party one that does not would silently lose
-    /// its force field's exclusions.
-    fn accumulate_pairs(
-        &self,
-        coords: &[F],
-        pairs: &Neighbors,
-        factor: &[F],
-        out: &mut [F],
-    ) -> (F, Option<Virial>) {
-        let _ = factor;
-        let (e, f, w) = self.calc_energy_forces_with_pairs_virial(coords, pairs);
-        for (acc, v) in out.iter_mut().zip(&f) {
-            *acc += v;
-        }
-        (e, w)
-    }
-
-    /// Whether this kernel's parameters are bound to one fixed pair list.
-    ///
-    /// Such a kernel answers for **that** list and no other. Handed a
-    /// neighbour table it does not read it — it returns the frozen sum — and
-    /// that is not a cheaper route to the same number, it is a different
-    /// question silently unanswered. Worse, the caller goes on maintaining and
-    /// reporting a live list that provably does not enter the answer.
-    ///
-    /// A periodic force path refuses such a member at construction. Default
-    /// `false`: a kernel that reads geometry, or one keyed on the atoms, is
-    /// bound to nothing.
-    fn binds_a_fixed_pair_list(&self) -> bool {
-        false
-    }
-
     /// Extend per-atom state onto periodic copies.
     ///
     /// `owner[g]` is the atom copy `g` is a copy of, and the copies occupy
@@ -286,6 +286,97 @@ pub trait Potential: Send + Sync {
     }
 }
 
+/// One member of a force evaluation, with its role fixed when it was built.
+///
+/// A force evaluation sums members that play different parts — a bonded term
+/// reads an index table, a pair term reads a neighbour table, an external field
+/// reads neither. Which part a member plays is settled by its constructor, and
+/// this is where that answer is kept, so no loop has to re-derive it per step
+/// and no method has to carry a default that is wrong for half its implementors.
+pub enum Member {
+    /// A bonded term: evaluated against an index table the caller supplies.
+    Indexed(Box<dyn IndexedTerms>),
+    /// A non-bonded term: evaluated against a neighbour table, with per-pair
+    /// weights.
+    Pair(Box<dyn PairDriven>),
+    /// Everything else — an external field, a restraint, a constant force.
+    /// Evaluated from coordinates alone.
+    Plain(Box<dyn Potential>),
+}
+
+impl Member {
+    /// A bonded term — one whose rows are named by an index table.
+    pub fn indexed(p: impl IndexedTerms + 'static) -> Self {
+        Member::Indexed(Box::new(p))
+    }
+
+    /// A non-bonded term — one summed over a neighbour table.
+    pub fn pair(p: impl PairDriven + 'static) -> Self {
+        Member::Pair(Box::new(p))
+    }
+
+    /// Anything else — evaluated from coordinates alone.
+    pub fn plain(p: impl Potential + 'static) -> Self {
+        Member::Plain(Box::new(p))
+    }
+
+    /// This member as a plain potential, whatever part it plays.
+    pub fn as_potential(&self) -> &dyn Potential {
+        match self {
+            Member::Indexed(p) => &**p,
+            Member::Pair(p) => &**p,
+            Member::Plain(p) => &**p,
+        }
+    }
+
+    /// The index table, for a bonded member.
+    pub fn terms(&self) -> Option<Array2<u32>> {
+        match self {
+            Member::Indexed(p) => Some(p.terms()),
+            _ => None,
+        }
+    }
+
+    /// Whether this member is bound to one fixed pair list — see
+    /// [`PairDriven::binds_a_fixed_pair_list`]. A member that reads no pair
+    /// table is bound to none.
+    pub fn binds_a_fixed_pair_list(&self) -> bool {
+        match self {
+            Member::Pair(p) => p.binds_a_fixed_pair_list(),
+            _ => false,
+        }
+    }
+
+    /// Extend per-atom state onto periodic copies. Only a pair member keeps
+    /// any; see [`PairDriven::gather_onto_copies`].
+    pub fn gather_onto_copies(&mut self, owner: &[u32]) {
+        if let Member::Pair(p) = self {
+            p.gather_onto_copies(owner);
+        }
+    }
+}
+
+impl std::fmt::Debug for Member {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Member::Indexed(_) => "Member::Indexed",
+            Member::Pair(_) => "Member::Pair",
+            Member::Plain(_) => "Member::Plain",
+        })
+    }
+}
+
+impl Potential for Member {
+    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
+        self.as_potential().calc_energy_forces(coords)
+    }
+
+    fn calc_energy_forces_with_pairs(&self, coords: &[F], pairs: &Neighbors) -> (F, Vec<F>) {
+        self.as_potential()
+            .calc_energy_forces_with_pairs(coords, pairs)
+    }
+}
+
 impl Potential for Box<dyn Potential> {
     fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
         (**self).calc_energy_forces(coords)
@@ -293,44 +384,6 @@ impl Potential for Box<dyn Potential> {
 
     fn calc_energy_forces_with_pairs(&self, coords: &[F], pairs: &Neighbors) -> (F, Vec<F>) {
         (**self).calc_energy_forces_with_pairs(coords, pairs)
-    }
-
-    fn terms(&self) -> Option<Array2<u32>> {
-        (**self).terms()
-    }
-
-    fn calc_energy_forces_with_terms(
-        &self,
-        coords: &[F],
-        terms: ArrayView2<'_, u32>,
-    ) -> (F, Vec<F>) {
-        (**self).calc_energy_forces_with_terms(coords, terms)
-    }
-
-    fn calc_energy_forces_with_pairs_virial(
-        &self,
-        coords: &[F],
-        pairs: &Neighbors,
-    ) -> (F, Vec<F>, Option<Virial>) {
-        (**self).calc_energy_forces_with_pairs_virial(coords, pairs)
-    }
-
-    fn accumulate_pairs(
-        &self,
-        coords: &[F],
-        pairs: &Neighbors,
-        factor: &[F],
-        out: &mut [F],
-    ) -> (F, Option<Virial>) {
-        (**self).accumulate_pairs(coords, pairs, factor, out)
-    }
-
-    fn binds_a_fixed_pair_list(&self) -> bool {
-        (**self).binds_a_fixed_pair_list()
-    }
-
-    fn gather_onto_copies(&mut self, owner: &[u32]) {
-        (**self).gather_onto_copies(owner)
     }
 }
 
@@ -341,7 +394,7 @@ impl Potential for Box<dyn Potential> {
 /// A kernel built for a neighbour-driven evaluation, and which of a force
 /// field's special-bonds weight sets scales it. `None` for a bonded kernel:
 /// it *is* the bonded interaction, not a scaled copy of one.
-pub type TypedKernel = (Box<dyn Potential>, Option<registry::SpecialClass>);
+pub type TypedKernel = (Member, Option<registry::SpecialClass>);
 
 /// One member of a neighbour-driven evaluation: the kernel, and the
 /// bond-distance weights its non-bonded term takes.
@@ -349,7 +402,7 @@ pub type TypedKernel = (Box<dyn Potential>, Option<registry::SpecialClass>);
 /// The weights travel with the member because a force field may scale close
 /// van-der-Waals and electrostatic neighbours differently, and in molrs those
 /// are separate kernels.
-pub type TypedMember = (Box<dyn Potential>, Option<BondDistanceWeights>);
+pub type TypedMember = (Member, Option<BondDistanceWeights>);
 
 /// Rebuild the copies' entries of a per-atom vector from their owners'.
 ///
@@ -380,15 +433,14 @@ pub(crate) fn gather_copies<T: Clone>(v: &mut Vec<T>, n_owned: usize, owner: &[u
 /// Every member evaluates in one shared unit system. Unit conversion is the
 /// caller's job (`UnitPreset`), never this type's.
 pub struct Potentials {
-    inner: Vec<Box<dyn Potential>>,
-    /// Which members hold atom indices, recorded when each was pushed.
+    /// Each member with the part it plays, settled when it was built.
     ///
-    /// `terms()` *allocates* the table it answers with, so asking it "is this a
-    /// bonded term?" once per member per step is an allocation per bonded
-    /// member per step. The question is settled when the member is. That it
-    /// had to be asked at all is a symptom: a member's *role* is being
-    /// recovered at runtime from a method whose job is to return data.
-    holds_indices: Vec<bool>,
+    /// This used to be a `Vec<Box<dyn Potential>>` beside a `Vec<bool>` saying
+    /// which of them held atom indices, because the role had to be recovered by
+    /// calling `terms()` — a method whose job is to return a table, and which
+    /// allocated one per bonded member per step to answer a question that was
+    /// settled at construction. [`Member`] is that answer, kept.
+    inner: Vec<Member>,
     /// Number of atoms the kernels were compiled against (`coords.len() / 3`).
     /// `0` when unknown (e.g. built incrementally via [`Potentials::push`]).
     n_atoms: usize,
@@ -406,14 +458,14 @@ impl Potentials {
     pub fn new() -> Self {
         Self {
             inner: Vec::new(),
-            holds_indices: Vec::new(),
             n_atoms: 0,
         }
     }
 
-    pub fn push(&mut self, pot: Box<dyn Potential>) {
-        self.holds_indices.push(pot.terms().is_some());
-        self.inner.push(pot);
+    /// Add a member. Which part it plays is [`Member`]'s to say, and its
+    /// constructor already said it.
+    pub fn push(&mut self, member: Member) {
+        self.inner.push(member);
     }
 
     pub fn len(&self) -> usize {
@@ -444,17 +496,17 @@ impl Potentials {
     /// neighbour table — needs them one at a time, because the index table a
     /// member wants is the member's own. Summing them all is what
     /// [`calc_energy_forces`](Self::calc_energy_forces) is for.
-    pub fn members(&self) -> &[Box<dyn Potential>] {
+    pub fn members(&self) -> &[Member] {
         &self.inner
     }
 
     /// Give up the members, for a caller that wants to own them individually.
-    pub fn into_members(self) -> Vec<Box<dyn Potential>> {
+    pub fn into_members(self) -> Vec<Member> {
         self.inner
     }
 
     /// The members, mutably — for the per-atom gather a periodic régime runs.
-    pub fn members_mut(&mut self) -> &mut [Box<dyn Potential>] {
+    pub fn members_mut(&mut self) -> &mut [Member] {
         &mut self.inner
     }
 
@@ -519,6 +571,61 @@ impl Potential for Potentials {
     fn calc_energy_forces_with_pairs(&self, coords: &[F], pairs: &Neighbors) -> (F, Vec<F>) {
         Potentials::calc_energy_forces_with_pairs(self, coords, pairs)
     }
+}
+
+/// An aggregate is pair-driven when it is asked to be: it forwards to the
+/// members that read a pair table and evaluates the rest the ordinary way.
+///
+/// The split used to be a `Vec<bool>` filled by calling `terms()` on every
+/// member; it is now the member's own [`Member`] variant, which its
+/// constructor chose.
+impl PairDriven for Potentials {
+    /// Every member accumulates into the same buffer, and one member that
+    /// cannot report a virial makes the aggregate's `None`.
+    ///
+    /// A per-pair weight belongs to a member that reads the pair table. A
+    /// bonded member ignores the table, and its own interaction is the thing
+    /// the weights exist to avoid double-counting — scaling it would be
+    /// scaling the wrong side of that.
+    fn accumulate_pairs(
+        &self,
+        coords: &[F],
+        pairs: &Neighbors,
+        factor: &[F],
+        out: &mut [F],
+    ) -> (F, Option<Virial>) {
+        let mut total_e: F = 0.0;
+        let mut total_w = Some(Virial::ZERO);
+        for m in &self.inner {
+            let (e, w) = match m {
+                Member::Pair(p) => p.accumulate_pairs(coords, pairs, factor, out),
+                other => {
+                    let (e, f) = other.calc_energy_forces_with_pairs(coords, pairs);
+                    for (acc, v) in out.iter_mut().zip(&f) {
+                        *acc += v;
+                    }
+                    (e, None)
+                }
+            };
+            total_e += e;
+            match (total_w.as_mut(), w) {
+                (Some(acc), Some(part)) => {
+                    for c in 0..6 {
+                        acc.components[c] += part.components[c];
+                    }
+                }
+                (_, None) => total_w = None,
+                (None, _) => {}
+            }
+        }
+        (total_e, total_w)
+    }
+
+    /// True if *any* member is. One compiled kernel is enough to make the
+    /// aggregate's answer independent of the table it is handed.
+    fn binds_a_fixed_pair_list(&self) -> bool {
+        self.inner.iter().any(Member::binds_a_fixed_pair_list)
+    }
 
     /// The members' virials, summed — and `None` the moment one of them
     /// declines to report.
@@ -535,8 +642,14 @@ impl Potential for Potentials {
         let mut total_e: F = 0.0;
         let mut total_f = vec![0.0; coords.len()];
         let mut total_w = Some(Virial::ZERO);
-        for p in &self.inner {
-            let (e, f, w) = p.calc_energy_forces_with_pairs_virial(coords, pairs);
+        for m in &self.inner {
+            let (e, f, w) = match m {
+                Member::Pair(p) => p.calc_energy_forces_with_pairs_virial(coords, pairs),
+                other => {
+                    let (e, f) = other.calc_energy_forces_with_pairs(coords, pairs);
+                    (e, f, None)
+                }
+            };
             total_e += e;
             for (t, fi) in total_f.iter_mut().zip(f.iter()) {
                 *t += fi;
@@ -558,58 +671,9 @@ impl Potential for Potentials {
     /// typed kernel's per-atom tables covering the owned atoms only, while the
     /// pair table it is handed names copies.
     fn gather_onto_copies(&mut self, owner: &[u32]) {
-        for p in &mut self.inner {
-            p.gather_onto_copies(owner);
+        for m in &mut self.inner {
+            m.gather_onto_copies(owner);
         }
-    }
-
-    /// An aggregate holds no single index table — its members' are of
-    /// different arities and different row sets — so it reports none, and the
-    /// default [`calc_energy_forces_with_terms`](Potential::calc_energy_forces_with_terms)
-    /// is then never asked for one. A caller that needs the bonded terms
-    /// rebound takes the members individually, which is what
-    /// [`into_members`](Potentials::into_members) is for.
-    fn terms(&self) -> Option<Array2<u32>> {
-        None
-    }
-
-    /// Every member accumulates into the same buffer, and one member that
-    /// cannot report a virial makes the aggregate's `None`.
-    fn accumulate_pairs(
-        &self,
-        coords: &[F],
-        pairs: &Neighbors,
-        factor: &[F],
-        out: &mut [F],
-    ) -> (F, Option<Virial>) {
-        let mut total_e: F = 0.0;
-        let mut total_w = Some(Virial::ZERO);
-        for (k, p) in self.inner.iter().enumerate() {
-            // A per-pair weight belongs to a member that reads the pair table.
-            // A member holding atom indices is a bonded term: it ignores the
-            // table, and its own interaction is the thing the weights exist to
-            // avoid double-counting — scaling it would be scaling the wrong
-            // side of that.
-            let mine: &[F] = if self.holds_indices[k] { &[] } else { factor };
-            let (e, w) = p.accumulate_pairs(coords, pairs, mine, out);
-            total_e += e;
-            match (total_w.as_mut(), w) {
-                (Some(acc), Some(part)) => {
-                    for c in 0..6 {
-                        acc.components[c] += part.components[c];
-                    }
-                }
-                (_, None) => total_w = None,
-                (None, _) => {}
-            }
-        }
-        (total_e, total_w)
-    }
-
-    /// True if *any* member is. One compiled kernel is enough to make the
-    /// aggregate's answer independent of the table it is handed.
-    fn binds_a_fixed_pair_list(&self) -> bool {
-        self.inner.iter().any(|p| p.binds_a_fixed_pair_list())
     }
 }
 
@@ -856,8 +920,11 @@ mod tests {
             let Some(terms) = member.terms() else {
                 continue;
             };
-            let (e0, f0) = member.calc_energy_forces(&coords);
-            let (e1, f1) = member.calc_energy_forces_with_terms(&coords, terms.view());
+            let Member::Indexed(pot) = member else {
+                unreachable!("only an indexed member answers with a table")
+            };
+            let (e0, f0) = pot.calc_energy_forces(&coords);
+            let (e1, f1) = pot.calc_energy_forces_with_terms(&coords, terms.view());
             assert_eq!(
                 e0.to_bits(),
                 e1.to_bits(),
@@ -924,8 +991,8 @@ mod tests {
     #[test]
     fn test_potentials_collection() {
         let mut pots = Potentials::new();
-        pots.push(Box::new(DummyPotential { value: 1.0 }));
-        pots.push(Box::new(DummyPotential { value: 2.0 }));
+        pots.push(Member::plain(DummyPotential { value: 1.0 }));
+        pots.push(Member::plain(DummyPotential { value: 2.0 }));
 
         assert_eq!(pots.len(), 2);
 
@@ -974,8 +1041,8 @@ mod tests {
             molrs::spatial::neighbors::QueryMode::SelfQuery { num_points: 3 },
         );
         let mut pots = Potentials::new();
-        pots.push(Box::new(PairCounting));
-        pots.push(Box::new(DummyPotential { value: 1.0 }));
+        pots.push(Member::plain(PairCounting));
+        pots.push(Member::plain(DummyPotential { value: 1.0 }));
         let coords: Vec<F> = vec![0.0; 9];
         let (e, _) = pots.calc_energy_forces_with_pairs(&coords, &pairs);
         assert!((e - 3.0).abs() < 1e-12);
@@ -996,12 +1063,8 @@ mod tests {
     fn register_kernel_extends_dispatch() {
         // A custom (category, name) with no built-in kernel becomes usable by
         // registering its constructor — no edit to to_potential required.
-        fn my_ctor(
-            _sp: &Params,
-            _tp: &[(&str, &Params)],
-            _f: &Frame,
-        ) -> Result<Box<dyn Potential>, String> {
-            Ok(Box::new(DummyPotential { value: 42.0 }))
+        fn my_ctor(_sp: &Params, _tp: &[(&str, &Params)], _f: &Frame) -> Result<Member, String> {
+            Ok(Member::plain(DummyPotential { value: 42.0 }))
         }
         register_kernel("pair", "test/custom", my_ctor);
 

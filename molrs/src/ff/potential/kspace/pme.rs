@@ -15,7 +15,7 @@ use rustfft::num_complex::Complex;
 use rustfft::{Fft, FftPlanner};
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::Potential;
+use crate::ff::potential::{Member, Potential};
 use molrs::store::frame::Frame;
 use molrs::types::F;
 
@@ -859,7 +859,7 @@ pub fn pme_ctor(
     style_params: &Params,
     _type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
+) -> Result<Member, String> {
     let alpha = style_params.get("alpha").ok_or("PME: missing 'alpha'")? as F;
     let cutoff = style_params.get("cutoff").ok_or("PME: missing 'cutoff'")? as F;
     let grid_x = style_params.get("grid_x").ok_or("PME: missing 'grid_x'")? as usize;
@@ -914,7 +914,7 @@ pub fn pme_ctor(
         coulomb,
     };
 
-    Ok(Box::new(PmePotential::new(
+    Ok(Member::plain(PmePotential::new(
         params,
         charges,
         box_vectors,
@@ -1099,7 +1099,7 @@ mod tests {
 
         let coords: Vec<F> = vec![2.0, 3.0, 4.0, 5.0, 3.5, 4.5, 7.0, 6.0, 5.0];
 
-        let forces = pme.calc_forces(&coords);
+        let forces = pme.calc_energy_forces(&coords).1;
 
         let eps: F = 1e-3;
         for idx in 0..9 {
@@ -1136,7 +1136,7 @@ mod tests {
         let pme = PmePotential::new(params, charges, cubic_box(box_l), exclusions);
 
         let coords: Vec<F> = vec![1.0, 2.0, 3.0, 4.0, 2.5, 3.5, 6.0, 7.0, 2.0, 8.0, 7.5, 2.5];
-        let forces = pme.calc_forces(&coords);
+        let forces = pme.calc_energy_forces(&coords).1;
 
         for dim in 0..3 {
             let sum: F = (0..4).map(|a| forces[a * 3 + dim]).sum();
@@ -1165,8 +1165,8 @@ mod tests {
         let lj = LJCut::compiled(vec![0], vec![1], vec![1.0], vec![1.0]);
 
         let mut pots = Potentials::new();
-        pots.push(Box::new(pme));
-        pots.push(Box::new(lj));
+        pots.push(Member::plain(pme));
+        pots.push(Member::pair(lj));
 
         let coords: Vec<F> = vec![
             box_l / 2.0,

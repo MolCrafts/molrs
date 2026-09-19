@@ -19,8 +19,8 @@ use crate::core::spatial::neighborlist::{PyNeighbors, PyVerletSkin};
 use crate::core::spatial::simbox::PyBox;
 use crate::ff::PyPotentials;
 use crate::helpers::NpF;
-use molrs::ff::potential::Potential;
 use molrs::ff::potential::pair::{LJCut, PairPotential};
+use molrs::ff::potential::{Member, Potential};
 use molrs::math::Virial;
 use molrs::md::{
     Direct, ForceProvider, Langevin, MDState, MaxwellBoltzmann, MdError, MicPairs, VelocityVerlet,
@@ -445,7 +445,7 @@ impl Potential for SubclassPotential {
 /// which kernel is which and how its close neighbours are scaled — because
 /// `ForceField::to_typed_potentials` decided it. Anything else is one member
 /// that scales nothing.
-pub(crate) type Members = Vec<(Box<dyn Potential>, molrs::md::SpecialWeights)>;
+pub(crate) type Members = Vec<(Member, molrs::md::SpecialWeights)>;
 
 pub(crate) fn take_members(obj: &Bound<'_, PyAny>) -> PyResult<(Members, Vec<ErrSlot>)> {
     if let Ok(typed) = obj.cast::<crate::ff::PyTypedPotentials>() {
@@ -461,20 +461,23 @@ pub(crate) fn take_members(obj: &Bound<'_, PyAny>) -> PyResult<(Members, Vec<Err
     Ok((vec![(pot, molrs::md::SpecialWeights::default())], slots))
 }
 
-pub(crate) fn take_potential(
-    obj: &Bound<'_, PyAny>,
-) -> PyResult<(Box<dyn Potential>, Vec<ErrSlot>)> {
+pub(crate) fn take_potential(obj: &Bound<'_, PyAny>) -> PyResult<(Member, Vec<ErrSlot>)> {
+    // Each arm also settles which part the member plays. A pair kernel and an
+    // aggregate of them read a neighbour table; a duck-typed Python object has
+    // only `calc_energy_forces`, so it reads coordinates and nothing else —
+    // and, being unable to tally a virial over pairs, makes the step's virial
+    // `None` rather than a number that moves with the box origin.
     if let Ok(lj) = obj.cast::<PyLJCut>() {
-        return Ok((Box::new(lj.borrow().inner.clone()), Vec::new()));
+        return Ok((Member::pair(lj.borrow().inner.clone()), Vec::new()));
     }
     if let Ok(pots) = obj.cast::<PyPotentials>() {
         let (inner, slots) = pots.borrow_mut().take_compiled()?;
-        return Ok((Box::new(inner), slots));
+        return Ok((Member::pair(inner), slots));
     }
     if obj.hasattr("calc_energy_forces")? && obj.getattr("calc_energy_forces")?.is_callable() {
         let error: ErrSlot = Arc::default();
         return Ok((
-            Box::new(SubclassPotential {
+            Member::plain(SubclassPotential {
                 obj: obj.clone().unbind(),
                 error: Arc::clone(&error),
             }),

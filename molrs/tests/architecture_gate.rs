@@ -614,8 +614,8 @@ fn ac004_param_source_is_bidirectional_on_semantics_not_spelling() {
         match (ctor(&style, empty, &frame), ctor(&style, garbage, &frame)) {
             (Ok(a), Ok(b)) => {
                 let coords = [0.0, 0.0, 0.0, 1.5, 0.0, 0.0];
-                let ea = Potential::calc_energy(&*a, &coords);
-                let eb = Potential::calc_energy(&*b, &coords);
+                let ea = Potential::calc_energy(&a, &coords);
+                let eb = Potential::calc_energy(&b, &coords);
                 if ea != 0.0 || eb != 0.0 || ea != eb {
                     failures.push(format!(
                         "coul/cut must ignore tp and give exactly 0.0 for zero charges; \
@@ -719,7 +719,7 @@ mod reverse {
             .expect("coul style → potential")
             .expect("coul style must produce a potential when pairs exist");
         let coords = extract_coords(&frame).expect("coords");
-        Potential::calc_energy(&*pot, &coords)
+        Potential::calc_energy(&pot, &coords)
     }
 
     #[test]

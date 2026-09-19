@@ -32,16 +32,15 @@ use std::collections::HashMap;
 use std::sync::{OnceLock, RwLock};
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::Potential;
+use crate::ff::potential::Member;
 use molrs::store::frame::Frame;
 
 use super::{angle, bond, dihedral, improper, kspace, pair};
 
-/// Builds a molecule-bound [`Potential`] from a style's params, its per-type
+/// Builds a molecule-bound [`Member`] from a style's params, its per-type
 /// params (`(type_label, params)`), and a typed [`Frame`]. Every kernel
 /// constructor in the crate matches this signature.
-pub type KernelConstructor =
-    fn(&Params, &[(&str, &Params)], &Frame) -> Result<Box<dyn Potential>, String>;
+pub type KernelConstructor = fn(&Params, &[(&str, &Params)], &Frame) -> Result<Member, String>;
 
 /// Where a kernel's parameters come from — the question the empty-type-params
 /// guard must ask before it rejects a style with no type rows.
@@ -413,6 +412,18 @@ fn global() -> &'static RwLock<KernelRegistry> {
 /// Register (or override) a table-driven ([`ParamSource::TypeRows`]) kernel in
 /// the global registry. The extension point for new potentials — no core
 /// dispatch edit required.
+///
+/// # No in-tree caller, by design
+///
+/// Nothing in molrs, molpack or any binder calls this; only its own unit test
+/// does. That is what an extension point looks like, and it is load-bearing
+/// rather than speculative: [`Style::to_potential`] resolves its kernel through
+/// [`lookup_kernel`] on the **global** registry, and no API accepts a
+/// [`KernelRegistry`] of the caller's own, so an out-of-tree kernel has no
+/// other door. `architecture-rules.md` names this registry as the project's
+/// open-dispatch mechanism.
+///
+/// [`Style::to_potential`]: crate::ff::forcefield::Style::to_potential
 pub fn register_kernel(category: &str, name: &str, ctor: KernelConstructor) {
     global().write().unwrap().register(category, name, ctor);
 }

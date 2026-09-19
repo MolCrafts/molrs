@@ -3,8 +3,8 @@
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::Potential;
 use crate::ff::potential::geometry::{cross3, dot3, mag3, sub3, term_table, validate_coords};
+use crate::ff::potential::{IndexedTerms, Member, Potential};
 use molrs::store::frame::Frame;
 use molrs::types::F;
 
@@ -95,16 +95,12 @@ impl Potential for MMFFOutOfPlane {
             )
         })
     }
+}
 
-    fn terms(&self) -> Option<Array2<u32>> {
-        Some(term_table(&[
-            &self.atom_i,
-            &self.atom_j,
-            &self.atom_k,
-            &self.atom_l,
-        ]))
+impl IndexedTerms for MMFFOutOfPlane {
+    fn terms(&self) -> Array2<u32> {
+        term_table(&[&self.atom_i, &self.atom_j, &self.atom_k, &self.atom_l])
     }
-
     fn calc_energy_forces_with_terms(
         &self,
         coords: &[F],
@@ -130,7 +126,7 @@ pub fn mmff_oop_ctor(
     _sp: &Params,
     _tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
+) -> Result<Member, String> {
     // Per-instance parameters: the MMFF typifier baked koop onto each improper.
     // This kernel only reads the column and evaluates.
     let block = frame
@@ -160,7 +156,7 @@ pub fn mmff_oop_ctor(
         al.push(lc[idx] as usize);
         koop.push(koopc[idx] as F);
     }
-    Ok(Box::new(MMFFOutOfPlane {
+    Ok(Member::indexed(MMFFOutOfPlane {
         atom_i: ai,
         atom_j: aj,
         atom_k: ak,

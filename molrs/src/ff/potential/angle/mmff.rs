@@ -17,10 +17,10 @@
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::Potential;
 use crate::ff::potential::geometry::{
     accumulate_angle_forces, compute_angle, mag3, sub3, term_table, validate_coords,
 };
+use crate::ff::potential::{IndexedTerms, Member, Potential};
 use molrs::store::frame::Frame;
 use molrs::types::F;
 
@@ -114,11 +114,12 @@ impl Potential for MMFFAngleBend {
             (self.atom_i[t], self.atom_j[t], self.atom_k[t])
         })
     }
+}
 
-    fn terms(&self) -> Option<Array2<u32>> {
-        Some(term_table(&[&self.atom_i, &self.atom_j, &self.atom_k]))
+impl IndexedTerms for MMFFAngleBend {
+    fn terms(&self) -> Array2<u32> {
+        term_table(&[&self.atom_i, &self.atom_j, &self.atom_k])
     }
-
     fn calc_energy_forces_with_terms(
         &self,
         coords: &[F],
@@ -149,7 +150,7 @@ pub fn mmff_angle_ctor(
     _sp: &Params,
     _tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
+) -> Result<Member, String> {
     // Per-instance parameters: the MMFF typifier baked ka and theta0 (radians)
     // onto each angle (table → equivalence → empirical). This kernel only reads
     // the columns and evaluates — no force-field-specific resolution lives here.
@@ -185,7 +186,7 @@ pub fn mmff_angle_ctor(
         th0.push(th0c[idx] as F); // radians
         lin.push(linc[idx] != 0);
     }
-    Ok(Box::new(MMFFAngleBend {
+    Ok(Member::indexed(MMFFAngleBend {
         atom_i: ai,
         atom_j: aj,
         atom_k: ak,
@@ -289,11 +290,12 @@ impl Potential for MMFFStretchBend {
             (self.atom_i[t], self.atom_j[t], self.atom_k[t])
         })
     }
+}
 
-    fn terms(&self) -> Option<Array2<u32>> {
-        Some(term_table(&[&self.atom_i, &self.atom_j, &self.atom_k]))
+impl IndexedTerms for MMFFStretchBend {
+    fn terms(&self) -> Array2<u32> {
+        term_table(&[&self.atom_i, &self.atom_j, &self.atom_k])
     }
-
     fn calc_energy_forces_with_terms(
         &self,
         coords: &[F],
@@ -330,7 +332,7 @@ pub fn mmff_stbn_ctor(
     _sp: &Params,
     _tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
+) -> Result<Member, String> {
     // Per-instance parameters: the MMFF typifier baked the stretch-bend force
     // constants (kba_ijk/kba_kji, via the dfsb period-row default-row fallback
     // that the shared-table path lacked) plus the two reference bond lengths and
@@ -381,7 +383,7 @@ pub fn mmff_stbn_ctor(
         pot.r0_kj.push(r0kj[idx] as F);
         pot.theta0.push(th0[idx] as F); // radians
     }
-    Ok(Box::new(pot))
+    Ok(Member::indexed(pot))
 }
 
 #[cfg(test)]

@@ -18,12 +18,12 @@
 use std::collections::HashMap;
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::Potential;
 use crate::ff::potential::gather_copies;
 use crate::ff::potential::geometry::validate_coords;
 use crate::ff::potential::pair::atom_type_index;
 use crate::ff::potential::pair::energy_forces;
 use crate::ff::potential::pair::fold_chunks;
+use crate::ff::potential::{Member, PairDriven, Potential};
 use molrs::math::Virial;
 use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame::Frame;
@@ -205,17 +205,9 @@ impl Potential for PairTangToennies {
         let (e, f, _) = self.calc_energy_forces_with_pairs_virial(coords, pairs);
         (e, f)
     }
+}
 
-    fn calc_energy_forces_with_pairs_virial(
-        &self,
-        coords: &[F],
-        pairs: &Neighbors,
-    ) -> (F, Vec<F>, Option<Virial>) {
-        let mut forces = vec![0.0; coords.len()];
-        let (e, w) = self.accumulate_pairs(coords, pairs, &[], &mut forces);
-        (e, forces, w)
-    }
-
+impl PairDriven for PairTangToennies {
     fn accumulate_pairs(
         &self,
         coords: &[F],
@@ -257,17 +249,24 @@ impl Potential for PairTangToennies {
         });
         (e, Some(w))
     }
-
+    fn binds_a_fixed_pair_list(&self) -> bool {
+        matches!(self.charges, Charges::Compiled { .. })
+    }
+    fn calc_energy_forces_with_pairs_virial(
+        &self,
+        coords: &[F],
+        pairs: &Neighbors,
+    ) -> (F, Vec<F>, Option<Virial>) {
+        let mut forces = vec![0.0; coords.len()];
+        let (e, w) = self.accumulate_pairs(coords, pairs, &[], &mut forces);
+        (e, forces, w)
+    }
     fn gather_onto_copies(&mut self, owner: &[u32]) {
         let Charges::PerAtom { q, n_owned, .. } = &mut self.charges else {
             // Nothing per atom to extend.
             return;
         };
         gather_copies(q, *n_owned, owner);
-    }
-
-    fn binds_a_fixed_pair_list(&self) -> bool {
-        matches!(self.charges, Charges::Compiled { .. })
     }
 }
 
@@ -280,7 +279,7 @@ pub fn pair_tang_toennies_ctor(
     style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
+) -> Result<Member, String> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
     let b = style_params.get("b").unwrap_or(4.5) as F;
     let n = style_params.get("order").unwrap_or(4.0).round() as usize;
@@ -325,7 +324,9 @@ pub fn pair_tang_toennies_ctor(
         qq.push(qi * qj);
     }
 
-    Ok(Box::new(PairTangToennies::new(atom_i, atom_j, qq, b, n, c)))
+    Ok(Member::pair(PairTangToennies::new(
+        atom_i, atom_j, qq, b, n, c,
+    )))
 }
 
 /// Construct a neighbour-driven [`PairTangToennies`] from per-atom parameters.
@@ -338,7 +339,7 @@ pub fn pair_tang_toennies_typed_ctor(
     style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
+) -> Result<Member, String> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
     let b = style_params.get("b").unwrap_or(4.5) as F;
     let n = style_params.get("order").unwrap_or(4.0).round() as usize;
@@ -357,7 +358,7 @@ pub fn pair_tang_toennies_typed_ctor(
         );
     }
     let q: Vec<F> = type_id.iter().map(|&t| per_type[t as usize]).collect();
-    Ok(Box::new(PairTangToennies::typed(q, b, n, c)))
+    Ok(Member::pair(PairTangToennies::typed(q, b, n, c)))
 }
 
 #[cfg(test)]

@@ -3,8 +3,8 @@
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::Potential;
 use crate::ff::potential::geometry::{mag3, sub3, term_table, validate_coords};
+use crate::ff::potential::{IndexedTerms, Member, Potential};
 use molrs::store::frame::Frame;
 use molrs::types::F;
 
@@ -71,11 +71,12 @@ impl Potential for MMFFBondStretch {
             (self.atom_i[t], self.atom_j[t])
         })
     }
+}
 
-    fn terms(&self) -> Option<Array2<u32>> {
-        Some(term_table(&[&self.atom_i, &self.atom_j]))
+impl IndexedTerms for MMFFBondStretch {
+    fn terms(&self) -> Array2<u32> {
+        term_table(&[&self.atom_i, &self.atom_j])
     }
-
     fn calc_energy_forces_with_terms(
         &self,
         coords: &[F],
@@ -96,7 +97,7 @@ pub fn mmff_bond_ctor(
     _sp: &Params,
     _tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
+) -> Result<Member, String> {
     // Per-instance parameters: the MMFF typifier baked `kb`/`r0` onto each bond
     // (table → equivalence fallback → empirical rules). This kernel only reads the
     // columns and evaluates — no force-field-specific resolution lives here.
@@ -129,7 +130,7 @@ pub fn mmff_bond_ctor(
         kb.push(kb_col[idx] as F);
         r0.push(r0_col[idx] as F);
     }
-    Ok(Box::new(MMFFBondStretch {
+    Ok(Member::indexed(MMFFBondStretch {
         atom_i: ai,
         atom_j: aj,
         kb,

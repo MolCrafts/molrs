@@ -3,10 +3,10 @@
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::Potential;
 use crate::ff::potential::geometry::{
     accumulate_dihedral_forces, compute_dihedral, term_table, validate_coords,
 };
+use crate::ff::potential::{IndexedTerms, Member, Potential};
 use molrs::store::frame::Frame;
 use molrs::types::F;
 
@@ -67,16 +67,12 @@ impl Potential for MMFFTorsion {
             )
         })
     }
+}
 
-    fn terms(&self) -> Option<Array2<u32>> {
-        Some(term_table(&[
-            &self.atom_i,
-            &self.atom_j,
-            &self.atom_k,
-            &self.atom_l,
-        ]))
+impl IndexedTerms for MMFFTorsion {
+    fn terms(&self) -> Array2<u32> {
+        term_table(&[&self.atom_i, &self.atom_j, &self.atom_k, &self.atom_l])
     }
-
     fn calc_energy_forces_with_terms(
         &self,
         coords: &[F],
@@ -102,7 +98,7 @@ pub fn mmff_torsion_ctor(
     _sp: &Params,
     _tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
+) -> Result<Member, String> {
     // Per-instance parameters: the MMFF typifier baked v1/v2/v3 onto each
     // dihedral (table → empirical). This kernel only reads the columns and
     // evaluates — no force-field-specific resolution lives here.
@@ -145,7 +141,7 @@ pub fn mmff_torsion_ctor(
         v2.push(v2c[idx] as F);
         v3.push(v3c[idx] as F);
     }
-    Ok(Box::new(MMFFTorsion {
+    Ok(Member::indexed(MMFFTorsion {
         atom_i: ai,
         atom_j: aj,
         atom_k: ak,

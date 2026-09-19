@@ -59,6 +59,29 @@ binders (depend on molcrafts-molrs + molrs-ffi):
 | `optimize` | LBFGS / potential-driven minimize |
 | `md` | integrators, `ForceProvider` and the minimum-image / ghost régimes, the halo (`Comm`), bonded index lists, special-bonds weights, Maxwell-Boltzmann |
 
+### Potential's three traits
+
+`ff::potential` splits the capability, not the type:
+
+- `Potential` — energy and forces from coordinates. Every kernel.
+- `IndexedTerms: Potential` — the rows are named by an index table the caller
+  may replace. Every bonded kernel; no pair kernel.
+- `PairDriven: Potential` — the sum runs over whatever pairs a neighbour search
+  turns up. Every pair kernel; nothing else (PME reads its own exclusions, so
+  it is `Member::Plain` despite registering under the `pair` category).
+
+`Member` is the three as one value, chosen by the kernel's **constructor** —
+which is why `KernelConstructor` returns `Member` and not `Box<dyn Potential>`.
+A `Box<dyn Potential>` cannot be asked which of the two it also is, and the
+question used to be put to `terms()`, a method whose job is to return a table
+and which allocated one per bonded member per step to answer it. Two
+`holds_indices: Vec<bool>` fields existed to cache that answer.
+
+**Rule**: a capability only some potentials have is its own trait, and the
+variant is decided once, at construction. A default implementation that is
+correct for half the implementors and silently wrong for the other half is the
+shape this replaced.
+
 ## Trait design principles
 
 1. **Object-safe**: no `Self` in return position, no generic methods on the trait.

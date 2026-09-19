@@ -12,10 +12,10 @@ use std::collections::HashMap;
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::Potential;
 use crate::ff::potential::geometry::{
     accumulate_dihedral_forces, compute_dihedral, term_table, validate_coords,
 };
+use crate::ff::potential::{IndexedTerms, Member, Potential};
 use molrs::store::frame::Frame;
 use molrs::types::F;
 
@@ -78,16 +78,12 @@ impl Potential for DihedralOPLS {
             )
         })
     }
+}
 
-    fn terms(&self) -> Option<Array2<u32>> {
-        Some(term_table(&[
-            &self.atom_i,
-            &self.atom_j,
-            &self.atom_k,
-            &self.atom_l,
-        ]))
+impl IndexedTerms for DihedralOPLS {
+    fn terms(&self) -> Array2<u32> {
+        term_table(&[&self.atom_i, &self.atom_j, &self.atom_k, &self.atom_l])
     }
-
     fn calc_energy_forces_with_terms(
         &self,
         coords: &[F],
@@ -115,7 +111,7 @@ pub fn dihedral_opls_ctor(
     _sp: &Params,
     tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
+) -> Result<Member, String> {
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
     let block = frame
         .get("dihedrals")
@@ -182,7 +178,7 @@ pub fn dihedral_opls_ctor(
         f3.push(p.get("k3").unwrap_or(0.0) as F);
         f4.push(p.get("k4").unwrap_or(0.0) as F);
     }
-    Ok(Box::new(DihedralOPLS {
+    Ok(Member::indexed(DihedralOPLS {
         atom_i: ai,
         atom_j: aj,
         atom_k: ak,

@@ -3,7 +3,7 @@
 //! Required pieces go in the constructor — no `bind_*` afterthoughts:
 //!
 //! ```ignore
-//! VelocityVerlet::new(dt, MicPairs::new(lj, skin).unwrap(), mass, Some(bx))?;
+//! VelocityVerlet::new(dt, MicPairs::new(Member::pair(lj), skin).unwrap(), mass, Some(bx))?;
 //! Langevin::new(dt, gamma, kbt, Direct::new(potentials), mass, seed, None)?;
 //! ```
 //!
@@ -509,7 +509,7 @@ pub fn kinetic_energy(mass: ArrayView1<'_, F>, vel: ArrayView2<'_, F>) -> Result
 mod tests {
     use ndarray::{Array2, ArrayView2, array};
 
-    use molrs::ff::potential::{Potential, Potentials};
+    use molrs::ff::potential::{Member, Potential, Potentials};
     use molrs::spatial::neighbors::{NeighborList, NeighborPolicy, VerletSkin};
     use molrs::spatial::simbox::SimBox;
 
@@ -579,7 +579,7 @@ mod tests {
             dt,
             gamma,
             kbt,
-            MicPairs::new(lj, nl).unwrap(),
+            MicPairs::new(Member::pair(lj), nl).unwrap(),
             scalar_mass(mass, 1).unwrap().view(),
             0,
             None,
@@ -650,8 +650,13 @@ mod tests {
             .unwrap()
             .velocities(pos.view(), mass.view())
             .unwrap();
-        let mut ig =
-            VelocityVerlet::new(1.0, MicPairs::new(lj, nl).unwrap(), mass.view(), None).unwrap();
+        let mut ig = VelocityVerlet::new(
+            1.0,
+            MicPairs::new(Member::pair(lj), nl).unwrap(),
+            mass.view(),
+            None,
+        )
+        .unwrap();
         let mut state = ig.initial(pos, vel).unwrap();
 
         let total = |s: &MDState| s.energy + kinetic_energy(mass.view(), s.vel.view()).unwrap();
@@ -686,7 +691,7 @@ mod tests {
         let (lj, nl, _) = soft_lj(2, 40.0);
         let nve = VelocityVerlet::new(
             0.01,
-            MicPairs::new(lj, nl).unwrap(),
+            MicPairs::new(Member::pair(lj), nl).unwrap(),
             scalar_mass(1.0, 2).unwrap().view(),
             None,
         )
@@ -697,7 +702,7 @@ mod tests {
             0.01,
             1.0,
             1.0,
-            MicPairs::new(lj, nl).unwrap(),
+            MicPairs::new(Member::pair(lj), nl).unwrap(),
             scalar_mass(1.0, 2).unwrap().view(),
             0,
             None,
@@ -712,7 +717,7 @@ mod tests {
         assert!(
             VelocityVerlet::new(
                 0.01,
-                MicPairs::new(lj, nl).unwrap(),
+                MicPairs::new(Member::pair(lj), nl).unwrap(),
                 array![-1.0, 1.0].view(),
                 None
             )
@@ -727,7 +732,7 @@ mod tests {
             0.01,
             0.0,
             1.0,
-            MicPairs::new(lj, nl).unwrap(),
+            MicPairs::new(Member::pair(lj), nl).unwrap(),
             array![1.0].view(),
             0,
             None,
@@ -746,7 +751,7 @@ mod tests {
                 0.01,
                 1.0,
                 0.0,
-                MicPairs::new(lj, nl).unwrap(),
+                MicPairs::new(Member::pair(lj), nl).unwrap(),
                 array![1.0].view(),
                 0,
                 None
@@ -763,7 +768,7 @@ mod tests {
             0.01,
             1.0,
             1.0,
-            MicPairs::new(lj, nl).unwrap(),
+            MicPairs::new(Member::pair(lj), nl).unwrap(),
             scalar_mass(1.0, 4).unwrap().view(),
             9,
             None,
@@ -774,7 +779,7 @@ mod tests {
             0.01,
             1.0,
             1.0,
-            MicPairs::new(lj, nl).unwrap(),
+            MicPairs::new(Member::pair(lj), nl).unwrap(),
             scalar_mass(1.0, 4).unwrap().view(),
             9,
             None,
@@ -794,7 +799,7 @@ mod tests {
         let (lj, nl, mut pos) = soft_lj(4, 40.0);
         let mut ig = VelocityVerlet::new(
             0.01,
-            MicPairs::new(lj, nl).unwrap(),
+            MicPairs::new(Member::pair(lj), nl).unwrap(),
             scalar_mass(1.0, 4).unwrap().view(),
             None,
         )
@@ -811,7 +816,7 @@ mod tests {
         let vel = Array2::from_elem(pos.raw_dim(), 0.01);
         let mut a = VelocityVerlet::new(
             0.01,
-            MicPairs::new(lj, nl).unwrap(),
+            MicPairs::new(Member::pair(lj), nl).unwrap(),
             scalar_mass(1.0, 4).unwrap().view(),
             None,
         )
@@ -819,7 +824,7 @@ mod tests {
         let (lj, nl, _) = soft_lj(4, 40.0);
         let mut b = VelocityVerlet::new(
             0.01,
-            MicPairs::new(lj, nl).unwrap(),
+            MicPairs::new(Member::pair(lj), nl).unwrap(),
             scalar_mass(1.0, 4).unwrap().view(),
             None,
         )
@@ -841,7 +846,7 @@ mod tests {
         let (lj, nl, pos) = soft_lj(2, 40.0);
         let mut lone = VelocityVerlet::new(
             0.01,
-            MicPairs::new(lj, nl).unwrap(),
+            MicPairs::new(Member::pair(lj), nl).unwrap(),
             scalar_mass(1.0, 2).unwrap().view(),
             None,
         )
@@ -850,14 +855,14 @@ mod tests {
 
         let (lj, nl, _) = soft_lj(2, 40.0);
         let mut pots = Potentials::new();
-        pots.push(Box::new(lj));
-        pots.push(Box::new(Uniform {
+        pots.push(Member::pair(lj));
+        pots.push(Member::plain(Uniform {
             energy: 0.25,
             fx: -1.5,
         }));
         let mut ig = VelocityVerlet::new(
             0.01,
-            MicPairs::new(pots, nl).unwrap(),
+            MicPairs::new(Member::pair(pots), nl).unwrap(),
             scalar_mass(1.0, 2).unwrap().view(),
             None,
         )
@@ -909,7 +914,7 @@ mod tests {
             let lj = LJCut::lj126(1.0, 1.0, cutoff).unwrap();
             VelocityVerlet::new(
                 0.01,
-                MicPairs::new(lj, nl).unwrap(),
+                MicPairs::new(Member::pair(lj), nl).unwrap(),
                 scalar_mass(1.0, 2).unwrap().view(),
                 None,
             )
@@ -949,6 +954,7 @@ mod tests {
 mod ghost_path_tests {
     use super::super::forces::{GhostPairs, MicPairs};
     use super::*;
+    use molrs::ff::potential::Member;
     use molrs::ff::potential::pair::LJCut;
     use molrs::spatial::neighbors::{NeighborList, NeighborPolicy, VerletSkin};
     use molrs::spatial::simbox::SimBox;
@@ -1023,7 +1029,7 @@ mod ghost_path_tests {
         .unwrap();
         let mut mic = VelocityVerlet::new(
             1.0,
-            MicPairs::new(lj(), skin_nl).unwrap(),
+            MicPairs::new(Member::pair(lj()), skin_nl).unwrap(),
             mass.view(),
             Some(bx.clone()),
         )
@@ -1033,7 +1039,7 @@ mod ghost_path_tests {
         let comm = Comm::new(bx.clone(), pos0.view(), cutoff, skin).unwrap();
         let mut gho = VelocityVerlet::new(
             1.0,
-            GhostPairs::new(lj(), comm).unwrap(),
+            GhostPairs::new(Member::pair(lj()), comm).unwrap(),
             mass.view(),
             Some(bx.clone()),
         )
@@ -1160,7 +1166,7 @@ mod ghost_path_tests {
         let mut ig = VelocityVerlet::new(
             0.2,
             GhostPairs::new(
-                LJCut::new(0.3, 3.4, cutoff, 12, 6, false, false).unwrap(),
+                Member::pair(LJCut::new(0.3, 3.4, cutoff, 12, 6, false, false).unwrap()),
                 comm,
             )
             .unwrap(),
@@ -1248,7 +1254,7 @@ mod ghost_path_tests {
             let mut ig = VelocityVerlet::new(
                 1.0,
                 GhostPairs::new(
-                    LJCut::new(0.3, 3.4, cutoff, 12, 6, false, false).unwrap(),
+                    Member::pair(LJCut::new(0.3, 3.4, cutoff, 12, 6, false, false).unwrap()),
                     comm,
                 )
                 .unwrap(),
@@ -1337,7 +1343,7 @@ mod ghost_path_tests {
             bx.clone(),
         )
         .unwrap();
-        let mic = MicPairs::new(lj(), skin)
+        let mic = MicPairs::new(Member::pair(lj()), skin)
             .unwrap()
             .compute(pos.view(), no_fold.view())
             .unwrap()
@@ -1345,7 +1351,7 @@ mod ghost_path_tests {
             .expect("a typed pair kernel tallies its virial");
 
         let comm = Comm::new(bx, pos.view(), cutoff, 0.0).unwrap();
-        let ghost = GhostPairs::new(lj(), comm)
+        let ghost = GhostPairs::new(Member::pair(lj()), comm)
             .unwrap()
             .compute(pos.view(), no_fold.view())
             .unwrap()

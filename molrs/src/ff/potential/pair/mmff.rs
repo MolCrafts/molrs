@@ -28,12 +28,12 @@ use std::collections::HashMap;
 
 use crate::ff::forcefield::Params;
 use crate::ff::mmff::da::{DA_ACCEPTOR, DA_DONOR, DA_NEITHER};
-use crate::ff::potential::Potential;
 use crate::ff::potential::gather_copies;
 use crate::ff::potential::geometry::{mag3, sub3, validate_coords};
 use crate::ff::potential::pair::atom_type_index;
 use crate::ff::potential::pair::energy_forces;
 use crate::ff::potential::pair::fold_chunks;
+use crate::ff::potential::{Member, PairDriven, Potential};
 use molrs::math::Virial;
 use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame::Frame;
@@ -228,17 +228,9 @@ impl Potential for MMFFVdW {
         let (e, f, _) = self.calc_energy_forces_with_pairs_virial(coords, pairs);
         (e, f)
     }
+}
 
-    fn calc_energy_forces_with_pairs_virial(
-        &self,
-        coords: &[F],
-        pairs: &Neighbors,
-    ) -> (F, Vec<F>, Option<Virial>) {
-        let mut forces = vec![0.0; coords.len()];
-        let (e, w) = self.accumulate_pairs(coords, pairs, &[], &mut forces);
-        (e, forces, w)
-    }
-
+impl PairDriven for MMFFVdW {
     fn accumulate_pairs(
         &self,
         coords: &[F],
@@ -275,17 +267,24 @@ impl Potential for MMFFVdW {
         });
         (e, Some(w))
     }
-
+    fn binds_a_fixed_pair_list(&self) -> bool {
+        matches!(self.source, Source::Compiled { .. })
+    }
+    fn calc_energy_forces_with_pairs_virial(
+        &self,
+        coords: &[F],
+        pairs: &Neighbors,
+    ) -> (F, Vec<F>, Option<Virial>) {
+        let mut forces = vec![0.0; coords.len()];
+        let (e, w) = self.accumulate_pairs(coords, pairs, &[], &mut forces);
+        (e, forces, w)
+    }
     fn gather_onto_copies(&mut self, owner: &[u32]) {
         let Source::PerAtom { atoms, n_owned, .. } = &mut self.source else {
             // Nothing per atom to extend.
             return;
         };
         gather_copies(atoms, *n_owned, owner);
-    }
-
-    fn binds_a_fixed_pair_list(&self) -> bool {
-        matches!(self.source, Source::Compiled { .. })
     }
 }
 
@@ -410,11 +409,7 @@ fn vdw_combining(pi: &VdwAtomParams, pj: &VdwAtomParams, sp: &VdwStyleParams) ->
 ///
 /// [`SpecialBonds`]: crate::ff::forcefield::SpecialBonds
 /// [`Style::to_potential`]: crate::ff::forcefield::Style::to_potential
-pub fn mmff_vdw_ctor(
-    sp: &Params,
-    tp: &[(&str, &Params)],
-    frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
+pub fn mmff_vdw_ctor(sp: &Params, tp: &[(&str, &Params)], frame: &Frame) -> Result<Member, String> {
     let style = VdwStyleParams::from_style(sp);
     let lj_14 = sp.get("lj14scale").unwrap_or(1.0) as F;
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
@@ -471,7 +466,7 @@ pub fn mmff_vdw_ctor(
         rs_vec.push(rs);
         eps_vec.push(eps * scale);
     }
-    Ok(Box::new(MMFFVdW::compiled(ai, aj, rs_vec, eps_vec)))
+    Ok(Member::pair(MMFFVdW::compiled(ai, aj, rs_vec, eps_vec)))
 }
 
 /// Construct a neighbour-driven [`MMFFVdW`] from per-atom parameters.
@@ -484,7 +479,7 @@ pub fn mmff_vdw_typed_ctor(
     sp: &Params,
     tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
+) -> Result<Member, String> {
     let style = VdwStyleParams::from_style(sp);
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
     let (type_id, labels) = atom_type_index(frame)?;
@@ -509,7 +504,7 @@ pub fn mmff_vdw_typed_ctor(
         .iter()
         .map(|&t| per_type[t as usize].clone())
         .collect();
-    Ok(Box::new(MMFFVdW::typed(atoms, style)))
+    Ok(Member::pair(MMFFVdW::typed(atoms, style)))
 }
 
 #[cfg(test)]

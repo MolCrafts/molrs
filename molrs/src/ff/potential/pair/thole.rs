@@ -24,12 +24,12 @@
 use std::collections::HashMap;
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::Potential;
 use crate::ff::potential::gather_copies;
 use crate::ff::potential::geometry::validate_coords;
 use crate::ff::potential::pair::atom_type_index;
 use crate::ff::potential::pair::energy_forces;
 use crate::ff::potential::pair::fold_chunks;
+use crate::ff::potential::{Member, PairDriven, Potential};
 use molrs::math::Virial;
 use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame::Frame;
@@ -216,17 +216,9 @@ impl Potential for PairThole {
         let (e, f, _) = self.calc_energy_forces_with_pairs_virial(coords, pairs);
         (e, f)
     }
+}
 
-    fn calc_energy_forces_with_pairs_virial(
-        &self,
-        coords: &[F],
-        pairs: &Neighbors,
-    ) -> (F, Vec<F>, Option<Virial>) {
-        let mut forces = vec![0.0; coords.len()];
-        let (e, w) = self.accumulate_pairs(coords, pairs, &[], &mut forces);
-        (e, forces, w)
-    }
-
+impl PairDriven for PairThole {
     fn accumulate_pairs(
         &self,
         coords: &[F],
@@ -274,7 +266,18 @@ impl Potential for PairThole {
         });
         (e, Some(w))
     }
-
+    fn binds_a_fixed_pair_list(&self) -> bool {
+        matches!(self.source, Source::Compiled { .. })
+    }
+    fn calc_energy_forces_with_pairs_virial(
+        &self,
+        coords: &[F],
+        pairs: &Neighbors,
+    ) -> (F, Vec<F>, Option<Virial>) {
+        let mut forces = vec![0.0; coords.len()];
+        let (e, w) = self.accumulate_pairs(coords, pairs, &[], &mut forces);
+        (e, forces, w)
+    }
     fn gather_onto_copies(&mut self, owner: &[u32]) {
         let Source::PerAtom {
             q,
@@ -291,10 +294,6 @@ impl Potential for PairThole {
         gather_copies(alpha, *n_owned, owner);
         gather_copies(a_thole, *n_owned, owner);
     }
-
-    fn binds_a_fixed_pair_list(&self) -> bool {
-        matches!(self.source, Source::Compiled { .. })
-    }
 }
 
 /// Construct a [`PairThole`] from per-atom-type params and Frame topology.
@@ -306,7 +305,7 @@ pub fn pair_thole_ctor(
     _style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
+) -> Result<Member, String> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
 
     let atoms = frame
@@ -365,7 +364,7 @@ pub fn pair_thole_ctor(
         qq_vec.push(qi * qj);
     }
 
-    Ok(Box::new(PairThole::new(atom_i, atom_j, s_vec, qq_vec)))
+    Ok(Member::pair(PairThole::new(atom_i, atom_j, s_vec, qq_vec)))
 }
 
 /// Construct a neighbour-driven [`PairThole`] from per-atom parameters.
@@ -378,7 +377,7 @@ pub fn pair_thole_typed_ctor(
     _style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
+) -> Result<Member, String> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
     let (type_id, labels) = atom_type_index(frame)?;
     let mut per_type = Vec::with_capacity(labels.len());
@@ -396,7 +395,7 @@ pub fn pair_thole_typed_ctor(
     let pick = |f: fn(&(F, F, F)) -> F| -> Vec<F> {
         type_id.iter().map(|&t| f(&per_type[t as usize])).collect()
     };
-    Ok(Box::new(PairThole::typed(
+    Ok(Member::pair(PairThole::typed(
         pick(|p| p.0),
         pick(|p| p.1),
         pick(|p| p.2),

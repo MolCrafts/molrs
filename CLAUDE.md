@@ -286,7 +286,7 @@ Graph-based molecular structure with atoms, bonds, stereochemistry, ring detecti
 | Trait | Crate | Purpose | Key Implementations |
 |---|---|---|---|
 | `NeighborList` engine (public; internal closed `Backend` trait) | `molrs::core::spatial::neighbors` | Neighbor search: `build`/`update`/`build_columns` own the spatial index, `for_each_pair` streams `NeighborPair`s, `neighbors(storage)` materializes a `Neighbors` table | `LinkCell` (O(N), `NeighborList::new`), `Aabb` (BVH, `NeighborList::aabb`), `BruteForce` (O(N²), `NeighborList::brute_force`) — picked by constructor, not user-implemented; cross-queries go through `NeighborQuery` |
-| `Potential` | `molrs::ff::potential` | Energy/force evaluation | Bond harmonic, MMFF bond/angle/torsion/oop/vdw/ele, LJ/cut, PME |
+| `Potential` (+ `IndexedTerms`, `PairDriven`) | `molrs::ff::potential` | Energy/force evaluation. `IndexedTerms` adds a replaceable index table (bonded kernels); `PairDriven` adds neighbour-table summation (pair kernels). `Member` is the three as one value, chosen by the kernel constructor | Bond harmonic, MMFF bond/angle/torsion/oop/vdw/ele, LJ/cut, PME |
 | `Typifier` | `molrs::ff::typifier` | MolGraph → typed Frame | `MMFF94Typifier` / `MMFF94STypifier` (one engine, two named front doors — the MMFF variant is a private field, never a constructor flag), `OPLSAATypifier`, `AtdTypifier` |
 
 Pack-related traits (`Restraint`, `Region`, `Relaxer`, `Handler`, `Objective`) now live
