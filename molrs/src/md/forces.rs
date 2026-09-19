@@ -51,7 +51,7 @@ use molrs::spatial::neighbors::VerletSkin;
 use molrs::types::{F, FNx3View};
 
 use super::error::MdError;
-use super::pairs::{BondedTopology, Comm};
+use super::pairs::{BondedLists, Comm};
 use super::types::ForceOutput;
 
 /// What an integrator asks of a force field.
@@ -202,52 +202,56 @@ impl ForceProvider for MicPairs {
 // GhostPairs
 // ---------------------------------------------------------------------------
 
-/// Whichever potential this run evaluates — never both.
-///
-/// A force field resolved against the copies *is* the potential for that run:
-/// its kernels name the copies that exist now, where the caller's own name
-/// owned atoms and would measure bonds across the cell. Making that an
-/// alternative rather than an extra field is what keeps the two from being
-/// summed twice.
-enum GhostPotential {
-    /// The caller's potential, read as geometry — right for a system with no
-    /// bonded terms.
-    Plain(Box<dyn Potential>),
-    /// The force field, kept resolved against the copies.
-    Bonded(Box<BondedTopology>),
-}
-
 /// Periodic copies: the potential sees an ordinary local cluster.
 ///
 /// Owned atoms *and their copies* go in, with plain differences; the forces
 /// come back over that extended set and are folded onto the owners before
 /// anything physical is read off them.
+///
+/// Members are evaluated one at a time rather than through an aggregate,
+/// because what each one needs differs: a member holding atom indices is
+/// handed the indices resolved against the copies that exist now, and a member
+/// reading geometry is handed the pair table. An aggregate would have to pick
+/// one table for everybody, and the bonded ones are not interchangeable — a
+/// bond list is not an angle list.
 pub struct GhostPairs {
     comm: Comm,
-    potential: GhostPotential,
+    /// The force evaluation's members, in the order the caller gave them.
+    members: Vec<Box<dyn Potential>>,
+    /// Which members keep atom indices, and what those indices are now.
+    lists: BondedLists,
 }
 
 impl GhostPairs {
-    /// Evaluate `potential` over the copies `comm` maintains, reading it as
-    /// geometry — right for a system with no bonded terms.
+    /// Evaluate one potential over the copies `comm` maintains.
     pub fn new(potential: impl Potential + 'static, comm: Comm) -> Self {
-        Self {
-            comm,
-            potential: GhostPotential::Plain(Box::new(potential)),
-        }
+        Self::from_members(vec![Box::new(potential)], comm)
     }
 
-    /// Evaluate a force field kept resolved against the copies `comm` holds.
-    pub fn bonded(bonded: BondedTopology, comm: Comm) -> Self {
+    /// Evaluate several members — what a force field compiles to — over the
+    /// copies `comm` maintains.
+    ///
+    /// The members are ordinary potentials. This takes no force field and no
+    /// frame: whichever of them hold atom indices say so through
+    /// [`Potential::terms`], and that is the whole of what MD needs to know
+    /// about a force field.
+    pub fn from_members(members: Vec<Box<dyn Potential>>, comm: Comm) -> Self {
+        let lists = BondedLists::new(&members);
         Self {
             comm,
-            potential: GhostPotential::Bonded(Box::new(bonded)),
+            members,
+            lists,
         }
     }
 
     /// The halo, for tests that read its counters.
     pub fn comm(&self) -> &Comm {
         &self.comm
+    }
+
+    /// The bonded index lists as they stand.
+    pub fn lists(&self) -> &BondedLists {
+        &self.lists
     }
 }
 
@@ -257,26 +261,38 @@ impl ForceProvider for GhostPairs {
         pos: FNx3View<'_>,
         wrap_shifts: ArrayView2<'_, i64>,
     ) -> Result<ForceOutput, MdError> {
-        // Move the copies first, then re-resolve against them, then read the
-        // pairs. Each step depends on the one before it, and doing them in one
-        // call would hide that.
+        // Move the copies first, then re-resolve the indices against them, then
+        // read the pairs. Each step depends on the one before it, and doing
+        // them in one call would hide that.
         self.comm.advance(pos, wrap_shifts)?;
-        if let GhostPotential::Bonded(b) = &mut self.potential {
-            b.refresh(&self.comm, pos, wrap_shifts)?;
-        }
+        self.lists.refresh(&self.comm, pos, wrap_shifts)?;
         let pairs = self.comm.pairs(pos)?;
         let all = self.comm.combined(pos)?;
-        let flat: Vec<F> = all.iter().copied().collect();
-        let (energy, forces) = match &self.potential {
-            GhostPotential::Plain(p) => p.calc_energy_forces_with_pairs(&flat, &pairs),
-            GhostPotential::Bonded(b) => {
-                b.potentials().calc_energy_forces_with_pairs(&flat, &pairs)
-            }
-        };
         let n_all = all.nrows();
+        let flat: Vec<F> = all.iter().copied().collect();
+
+        let mut energy = 0.0;
+        let mut forces = vec![0.0; flat.len()];
+        for (m, member) in self.members.iter().enumerate() {
+            let (e, f) = match self.lists.current(m) {
+                Some(terms) => member.calc_energy_forces_with_terms(&flat, terms),
+                None => member.calc_energy_forces_with_pairs(&flat, &pairs),
+            };
+            if f.len() != forces.len() {
+                return Err(MdError::Invalid(format!(
+                    "member {m} returned {} force components for {n_all} owned+ghost rows",
+                    f.len()
+                )));
+            }
+            energy += e;
+            for (acc, v) in forces.iter_mut().zip(&f) {
+                *acc += v;
+            }
+        }
+
         let mut f = Array2::from_shape_vec((n_all, 3), forces).map_err(|_| {
             MdError::Invalid(format!(
-                "potential returned force components for {n_all} owned+ghost rows that do not fit"
+                "force components do not fit {n_all} owned+ghost rows"
             ))
         })?;
         // Reverse accumulation: a copy's force belongs to the atom it copies.
@@ -397,6 +413,127 @@ mod tests {
             !ghosts.comm().ghosts().is_empty(),
             "this cell must actually produce copies, or the fold-back is untested"
         );
+    }
+
+    /// A molecule that straddles a face is scored exactly as the same molecule
+    /// sitting in the middle of the cell.
+    ///
+    /// This is the whole point of rebinding the indices, and it is the
+    /// assertion that the kernels stayed ignorant of periodicity while it
+    /// happened. A rigid translation of a periodic system changes nothing
+    /// physical, so the bonded energy and every force component must come back
+    /// the same — while the bookkeeping underneath is completely different:
+    /// crossing, the bond and the angle are measured through copies; centred,
+    /// they are measured between owned atoms.
+    ///
+    /// Without the rebinding the crossing case reads a bond stretched by the
+    /// width of the box, which is not a small error — it is the failure the
+    /// ghost régime exists to remove.
+    #[test]
+    fn a_molecule_across_a_face_scores_as_one_that_is_not() {
+        use molrs::ff::forcefield::ForceField;
+        use molrs::store::block::Block;
+        use molrs::store::frame::Frame;
+        use molrs::types::Idx;
+        use ndarray::Array1;
+
+        let l = 20.0_f64;
+        let bx = SimBox::cube(l, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
+
+        // A bent three-atom chain: two bonds and one angle, so both arities are
+        // exercised and the angle's anchoring matters.
+        let shape = array![[-1.0_f64, 0.0, 0.0], [0.0, 0.0, 0.0], [0.4, 0.9, 0.0]];
+
+        let frame = |_: ()| {
+            let mut f = Frame::new();
+            let mut atoms = Block::new();
+            atoms
+                .insert("type", Array1::from(vec!["a".to_string(); 3]).into_dyn())
+                .unwrap();
+            f.insert("atoms", atoms);
+            let mut bonds = Block::new();
+            bonds
+                .insert("atomi", Array1::from(vec![0 as Idx, 1]).into_dyn())
+                .unwrap();
+            bonds
+                .insert("atomj", Array1::from(vec![1 as Idx, 2]).into_dyn())
+                .unwrap();
+            bonds
+                .insert("type", Array1::from(vec!["a-a".to_string(); 2]).into_dyn())
+                .unwrap();
+            f.insert("bonds", bonds);
+            let mut angles = Block::new();
+            angles
+                .insert("atomi", Array1::from(vec![0 as Idx]).into_dyn())
+                .unwrap();
+            angles
+                .insert("atomj", Array1::from(vec![1 as Idx]).into_dyn())
+                .unwrap();
+            angles
+                .insert("atomk", Array1::from(vec![2 as Idx]).into_dyn())
+                .unwrap();
+            angles
+                .insert("type", Array1::from(vec!["a-a-a".to_string()]).into_dyn())
+                .unwrap();
+            f.insert("angles", angles);
+            f
+        };
+
+        // Rest lengths deliberately off the actual geometry, so both terms
+        // carry real energy and real force; a molecule at rest would satisfy
+        // this test by contributing nothing.
+        let mut field = ForceField::new("probe");
+        field
+            .def_bondstyle("harmonic")
+            .def_bondtype("a", "a", &[("k", 100.0), ("r0", 1.2)]);
+        field.def_anglestyle("harmonic").def_angletype(
+            "a",
+            "a",
+            "a",
+            &[("k", 40.0), ("theta0", 2.0)],
+        );
+
+        let run = |origin: [F; 3]| {
+            let mut pts = shape.clone();
+            for i in 0..pts.nrows() {
+                for k in 0..3 {
+                    pts[[i, k]] += origin[k];
+                }
+            }
+            let (wrapped, _) = bx.wrap_shifts(pts.view());
+            let comm = Comm::new(bx.clone(), wrapped.view(), 4.0, 0.0).unwrap();
+            let members = field.to_potentials(&frame(())).unwrap().into_members();
+            let mut provider = GhostPairs::from_members(members, comm);
+            // The halo was built from these coordinates, so from its point of
+            // view nothing has folded. A fold is reported exactly once, to the
+            // halo that existed before it.
+            let no_fold = Array2::<i64>::zeros((wrapped.nrows(), 3));
+            let out = provider.compute(wrapped.view(), no_fold.view()).unwrap();
+            (out.energy, out.forces)
+        };
+
+        // Straddling the low x face, and sitting in the middle.
+        let (e_cross, f_cross) = run([0.2, 10.0, 10.0]);
+        let (e_mid, f_mid) = run([10.0, 10.0, 10.0]);
+
+        assert!(
+            e_mid.abs() > 1.0,
+            "the molecule must be strained for this to assert anything; got {e_mid}"
+        );
+        assert!(
+            (e_cross - e_mid).abs() / e_mid.abs() < 1e-12,
+            "energy {e_cross} across the face vs {e_mid} in the middle"
+        );
+        for i in 0..3 {
+            for k in 0..3 {
+                assert!(
+                    (f_cross[[i, k]] - f_mid[[i, k]]).abs() < 1e-9,
+                    "force on atom {i} component {k}: {} across the face vs {} in the middle",
+                    f_cross[[i, k]],
+                    f_mid[[i, k]]
+                );
+            }
+        }
     }
 
     /// A provider that keeps no list reports no counters — not zeroes.

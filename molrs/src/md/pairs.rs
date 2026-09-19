@@ -15,20 +15,17 @@
 //!   not know to apply.
 //!
 //! This module owns the copies ([`Comm`]) and the bonded indices resolved
-//! against them ([`BondedTopology`]). Which régime an integrator runs is not a
+//! against them ([`BondedLists`]). Which régime an integrator runs is not a
 //! question this module answers — that is the provider's identity, and it is
 //! open rather than enumerated.
 
-use ndarray::ArrayView2;
+use ndarray::{Array2, ArrayView2};
 
-use molrs::ff::forcefield::ForceField;
-use molrs::ff::potential::Potentials;
+use molrs::ff::potential::Potential;
 use molrs::spatial::neighbors::Neighbors;
 use molrs::spatial::periodic::{GhostError, GhostSet};
 use molrs::spatial::simbox::SimBox;
-use molrs::store::frame::Frame;
-use molrs::types::{F, FNx3, FNx3View, Idx};
-use ndarray::Array2;
+use molrs::types::{F, FNx3, FNx3View};
 
 use super::virial::Virial;
 
@@ -235,53 +232,103 @@ fn ghost_err(e: GhostError) -> MdError {
     MdError::Invalid(e.to_string())
 }
 
-/// The force field's view of the system, kept resolved against the copies.
+/// The bonded index lists, resolved against the copies that exist now.
 ///
-/// A bonded term is a pair of *indices*, and which copy an index should name is
-/// re-decided whenever the copy list is. Left to the caller that is a cadence
-/// to get right and silent to get wrong: the kernels go on reading whatever
-/// indices they were built with, measuring bonds against copies that have moved
-/// on. This owns the cadence.
+/// A bonded kernel holds indices, not geometry: it is told *these two atoms are
+/// bonded* and takes the plain difference of their coordinates. For a bond that
+/// straddles a face those coordinates are a cell apart, so the kernel measures a
+/// bond stretched by the width of the box and answers with a force to match.
+/// Nothing raises — the number is simply wrong, and it is wrong by orders of
+/// magnitude.
 ///
-/// It is separate from [`Comm`] on purpose. `Comm` moves copies around and
-/// knows nothing about force fields; this knows about force fields and owns no
-/// copies. LAMMPS draws the same line — `Comm` communicates, and the `NTopo`
-/// classes rebuild the bonded lists against `Domain::closest_image` — and a
-/// type that did both would be answering to two masters.
-pub struct BondedTopology {
-    /// The frame as the caller gave it: owned indices, the source of truth.
-    source: Frame,
-    field: ForceField,
-    /// Built from the resolved frame against `generation`.
-    current: Potentials,
-    /// The copy-list generation `current`'s indices were resolved against.
-    generation: u64,
+/// Pointing each term at the copies that make it compact fixes that without any
+/// kernel learning that periodic boundaries exist, which is the whole point of
+/// the ghost régime.
+///
+/// This holds **no force field and no frame**. A term is a row of indices, and
+/// the parameters that belong with that row live in the kernel, aligned by row;
+/// so rebinding a term is rewriting a row, not rebuilding a force field. LAMMPS
+/// draws the line in the same place — `Comm` moves the copies, the `NTopo`
+/// classes rebuild the bonded lists against `Domain::closest_image`.
+///
+/// # Anchoring
+///
+/// Each term is resolved against **one** atom, not edge by edge:
+///
+/// * a bond `(i, j)` against `i`;
+/// * an angle `(i, j, k)` against the vertex `j`, so both arms are placed
+///   relative to the same point;
+/// * a dihedral or improper `(i, j, k, l)` against `j`, the atom the others are
+///   at most two bonds from.
+///
+/// Folding each edge against the previous atom instead can pick images that are
+/// individually closest and jointly inconsistent — the three atoms of an angle
+/// ending in three different cells — and the angle is then measured on a shape
+/// that does not exist. An anchor cannot do that: every atom is placed relative
+/// to a single point.
+///
+/// # When it refuses
+///
+/// A copy can only be chosen from the copies that exist. If the halo does not
+/// reach as far as a bonded term does — a short pair cutoff with a long
+/// molecule — the nearest available copy is still a cell away, and the term
+/// stays stretched. That is reported as [`MdError::Invalid`] rather than
+/// returned: a silently mismeasured bond is precisely the failure this type
+/// exists to remove, and swapping it for a differently-silent one would be no
+/// improvement.
+#[derive(Debug)]
+pub struct BondedLists {
+    /// One entry per member of the force evaluation, in member order. `None`
+    /// for a member that holds no atom indices — a pair style reading a
+    /// neighbour table has nothing here to rebind.
+    entries: Vec<Option<TermList>>,
+    /// The copy-list generation `current` names, or `None` before the first
+    /// resolution. A sentinel generation would be a lie a reader could not
+    /// check; absence is one they cannot misread.
+    generation: Option<u64>,
 }
 
-impl std::fmt::Debug for BondedTopology {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("BondedTopology")
-            .field("generation", &self.generation)
-            .finish_non_exhaustive()
-    }
+#[derive(Debug)]
+struct TermList {
+    /// The indices the kernel resolved at construction: owned atoms, the
+    /// source of truth. Never rewritten, so every resolution runs
+    /// owned → image and is idempotent.
+    source: Array2<u32>,
+    /// `source` resolved against the copies `generation` names.
+    current: Array2<u32>,
+    /// The column every other atom in a row is placed relative to.
+    anchor: usize,
 }
 
-impl BondedTopology {
-    /// Resolve `source` against the copies `comm` currently holds.
-    pub fn new(
-        source: Frame,
-        field: ForceField,
-        comm: &Comm,
-        owned: FNx3View<'_>,
-    ) -> Result<Self, MdError> {
-        let resolved = Self::resolve(&source, owned, comm)?;
-        let current = field.to_potentials(&resolved).map_err(MdError::Invalid)?;
-        Ok(Self {
-            source,
-            field,
-            current,
-            generation: comm.ghosts().generation(),
-        })
+impl BondedLists {
+    /// Record each member's index table.
+    ///
+    /// A member that answers `None` to [`Potential::terms`] keeps no indices
+    /// and is left alone.
+    ///
+    /// Nothing is resolved here: resolution needs the owned coordinates, and
+    /// the first [`refresh`](Self::refresh) has them.
+    pub fn new(members: &[Box<dyn Potential>]) -> Self {
+        let entries = members
+            .iter()
+            .map(|m| {
+                m.terms().map(|source| {
+                    // Arity fixes the anchor: a bond is placed from its first
+                    // atom, everything longer from the atom the rest are
+                    // nearest to.
+                    let anchor = if source.ncols() <= 2 { 0 } else { 1 };
+                    TermList {
+                        current: source.clone(),
+                        source,
+                        anchor,
+                    }
+                })
+            })
+            .collect();
+        Self {
+            entries,
+            generation: None,
+        }
     }
 
     /// Re-resolve if the copies have changed under it.
@@ -305,92 +352,40 @@ impl BondedTopology {
         wrap_shifts: ArrayView2<'_, i64>,
     ) -> Result<(), MdError> {
         let folded = wrap_shifts.iter().any(|&m| m != 0);
-        let stale = self.generation != comm.ghosts().generation();
+        let stale = self.generation != Some(comm.ghosts().generation());
         if stale || folded {
-            let resolved = Self::resolve(&self.source, owned, comm)?;
-            self.current = self
-                .field
-                .to_potentials(&resolved)
-                .map_err(MdError::Invalid)?;
-            self.generation = comm.ghosts().generation();
+            self.resolve(comm, owned)?;
+            self.generation = Some(comm.ghosts().generation());
         }
         debug_assert_eq!(
             self.generation,
-            comm.ghosts().generation(),
-            "bonded topology is resolved against a copy list that no longer exists"
+            Some(comm.ghosts().generation()),
+            "bonded lists are resolved against a copy list that no longer exists"
         );
         Ok(())
     }
 
-    /// The potentials, resolved against the current copies.
-    pub fn potentials(&self) -> &Potentials {
-        &self.current
+    /// Member `m`'s indices as they stand, or `None` if it keeps none.
+    pub fn current(&self, m: usize) -> Option<ArrayView2<'_, u32>> {
+        self.entries.get(m)?.as_ref().map(|e| e.current.view())
     }
 
-    /// The copy-list generation the indices name.
-    pub fn generation(&self) -> u64 {
+    /// The copy-list generation the indices name, or `None` before the first
+    /// resolution.
+    pub fn generation(&self) -> Option<u64> {
         self.generation
     }
 
-    /// [`resolve`](Self::resolve), reachable from tests that check the
-    /// rewriting itself rather than the potentials built from it.
-    #[cfg(test)]
-    pub fn resolve_for_test(
-        frame: &Frame,
-        owned: FNx3View<'_>,
-        comm: &Comm,
-    ) -> Result<Frame, MdError> {
-        Self::resolve(frame, owned, comm)
+    /// How many members keep indices.
+    pub fn bound(&self) -> usize {
+        self.entries.iter().filter(|e| e.is_some()).count()
     }
 
-    /// Rewrite a frame's bonded topology so every term is resolved against the
-    /// nearest periodic copy of its partners.
-    ///
-    /// A bonded kernel holds indices, not geometry: it is told *these two atoms are
-    /// bonded* and takes the plain difference of their coordinates. For a bond that
-    /// straddles a face those coordinates are a cell apart, so the kernel measures
-    /// a bond stretched by the width of the box and answers with a force to match.
-    /// Nothing raises — the number is simply wrong, and it is wrong by orders of
-    /// magnitude.
-    ///
-    /// Remapping each partner to its closest copy makes the plain difference the
-    /// right one, and leaves all twenty-one bonded kernels exactly as they are.
-    /// They never learn that periodic boundaries exist, which is the whole point of
-    /// the ghost régime.
-    ///
-    /// # Anchoring
-    ///
-    /// Each term is resolved against **one** atom, not edge by edge:
-    ///
-    /// * a bond `(i, j)` against `i`;
-    /// * an angle `(i, j, k)` against the vertex `j`, so both arms are placed
-    ///   relative to the same point;
-    /// * a dihedral or improper `(i, j, k, l)` against `j`, the atom the others are
-    ///   at most two bonds from.
-    ///
-    /// Folding each edge against the previous atom instead can pick images that are
-    /// individually closest and jointly inconsistent — the three atoms of an angle
-    /// ending in three different cells — and the angle is then measured on a shape
-    /// that does not exist. An anchor cannot do that: every atom is placed relative
-    /// to a single point.
-    ///
-    /// # When it refuses
-    ///
-    /// A copy can only be chosen from the copies that exist. If the halo does not
-    /// reach as far as a bonded term does — a short pair cutoff with a long
-    /// molecule — the nearest available copy is still a cell away, and the term
-    /// stays stretched. That is reported as [`MdError::Invalid`] rather than
-    /// returned: a silently mismeasured bond is precisely the failure this function
-    /// exists to remove, and swapping it for a differently-silent one would be no
-    /// improvement.
-    #[allow(clippy::needless_range_loop)]
-    fn resolve(frame: &Frame, owned: FNx3View<'_>, comm: &Comm) -> Result<Frame, MdError> {
-        use molrs::store::keys;
+    fn resolve(&mut self, comm: &Comm, owned: FNx3View<'_>) -> Result<(), MdError> {
         let set = comm.ghosts();
-
-        // Beyond half the smallest plane spacing the minimum image is ambiguous, so
-        // a term still that long after remapping has not been resolved — it has
-        // been guessed.
+        // Beyond half the smallest plane spacing the minimum image is
+        // ambiguous, so a term still that long after remapping has not been
+        // resolved — it has been guessed.
         let min_width = comm
             .simbox()
             .nearest_plane_distance()
@@ -398,65 +393,36 @@ impl BondedTopology {
             .copied()
             .fold(F::INFINITY, F::min);
         let limit = (0.5 * min_width).min(set.reach());
+        let all = set.combined(owned).map_err(ghost_err)?;
 
-        let mut out = frame.clone();
-        for (block_name, cols, anchor_col) in [
-            ("bonds", &[keys::ATOMI, keys::ATOMJ][..], 0usize),
-            ("angles", &[keys::ATOMI, keys::ATOMJ, keys::ATOMK][..], 1),
-            (
-                "dihedrals",
-                &[keys::ATOMI, keys::ATOMJ, keys::ATOMK, keys::ATOML][..],
-                1,
-            ),
-            (
-                "impropers",
-                &[keys::ATOMI, keys::ATOMJ, keys::ATOMK, keys::ATOML][..],
-                1,
-            ),
-        ] {
-            let Some(block) = frame.get(block_name) else {
-                continue;
-            };
-            let mut columns: Vec<Vec<Idx>> = Vec::with_capacity(cols.len());
-            for c in cols {
-                let Some(col) = block.get_uint(c) else {
-                    columns.clear();
-                    break;
-                };
-                columns.push(col.iter().copied().collect());
-            }
-            if columns.len() != cols.len() {
-                continue; // an incomplete block is not this function's to repair
-            }
-
-            let n_terms = columns[0].len();
+        for entry in self.entries.iter_mut().flatten() {
+            let (n_terms, arity) = entry.source.dim();
+            let anchor_col = entry.anchor;
             for t in 0..n_terms {
-                let anchor = columns[anchor_col][t] as usize;
-                for (c, column) in columns.iter_mut().enumerate() {
+                let anchor = entry.source[[t, anchor_col]] as usize;
+                entry.current[[t, anchor_col]] = anchor as u32;
+                for c in 0..arity {
                     if c == anchor_col {
                         continue;
                     }
-                    let partner = column[t] as usize;
+                    let partner = entry.source[[t, c]] as usize;
                     let mapped = set
                         .closest_image(owned, anchor, partner)
-                        .map_err(|e| MdError::Invalid(e.to_string()))?;
-                    column[t] = mapped as Idx;
+                        .map_err(ghost_err)?;
+                    entry.current[[t, c]] = mapped as u32;
                 }
             }
 
-            // Every term must now be compact. Checking it here, once per rebuild,
-            // is cheaper than any kernel could and catches the case no kernel can
-            // see: a halo that never reached far enough.
-            let all = set
-                .combined(owned)
-                .map_err(|e| MdError::Invalid(e.to_string()))?;
+            // Every term must now be compact. Checking it here, once per
+            // rebuild, is cheaper than any kernel could and catches the case no
+            // kernel can see: a halo that never reached far enough.
             for t in 0..n_terms {
-                let a = columns[anchor_col][t] as usize;
-                for (c, column) in columns.iter().enumerate() {
+                let a = entry.current[[t, anchor_col]] as usize;
+                for c in 0..arity {
                     if c == anchor_col {
                         continue;
                     }
-                    let p = column[t] as usize;
+                    let p = entry.current[[t, c]] as usize;
                     let d2: F = (0..3)
                         .map(|k| {
                             let d = all[[p, k]] - all[[a, k]];
@@ -465,55 +431,48 @@ impl BondedTopology {
                         .sum();
                     if d2.sqrt() > limit {
                         return Err(MdError::Invalid(format!(
-                            "{block_name} term {t} still spans {:.3} Å after remapping, \
-                             past the {limit:.3} Å at which the periodic image stops being \
-                             decidable. The halo does not reach as far as this molecule: \
-                             build it with a reach that covers the bonded extent, not only \
-                             the pair cutoff",
+                            "a bonded term still spans {:.3} Å after remapping, past the \
+                             {limit:.3} Å at which the periodic image stops being decidable. \
+                             The halo does not reach as far as this molecule: build it with \
+                             a reach that covers the bonded extent, not only the pair cutoff",
                             d2.sqrt()
                         )));
                     }
                 }
             }
-
-            let mut nb = block.clone();
-            for (c, column) in cols.iter().zip(columns) {
-                nb.insert(*c, ndarray::Array1::from(column).into_dyn())
-                    .map_err(|e| MdError::Invalid(format!("{block_name}.{c}: {e}")))?;
-            }
-            out.insert(block_name, nb);
         }
-        Ok(out)
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod remap_tests {
     use super::*;
-    use molrs::ff::potential::Potential;
+
+    use molrs::ff::potential::angle::harmonic::AngleHarmonic;
     use molrs::ff::potential::bond::harmonic::BondHarmonic;
     use molrs::spatial::simbox::SimBox;
-    use molrs::store::block::Block;
-    use ndarray::{Array1, array};
+    use ndarray::array;
 
-    fn bonds_block(i: &[Idx], j: &[Idx]) -> Block {
-        let mut b = Block::new();
-        b.insert("atomi", Array1::from(i.to_vec()).into_dyn())
-            .unwrap();
-        b.insert("atomj", Array1::from(j.to_vec()).into_dyn())
-            .unwrap();
-        b
-    }
-
-    fn angles_block(i: &[Idx], j: &[Idx], k: &[Idx]) -> Block {
-        let mut b = Block::new();
-        b.insert("atomi", Array1::from(i.to_vec()).into_dyn())
-            .unwrap();
-        b.insert("atomj", Array1::from(j.to_vec()).into_dyn())
-            .unwrap();
-        b.insert("atomk", Array1::from(k.to_vec()).into_dyn())
-            .unwrap();
-        b
+    /// Resolve one kernel's indices against a halo and hand back the table.
+    ///
+    /// This goes through the same [`BondedLists`] the force path uses — there
+    /// is no test-only door into the remapping, because a door tests take and
+    /// production does not is a door that can be right while production is
+    /// wrong.
+    fn resolve_one(
+        pot: Box<dyn Potential>,
+        owned: FNx3View<'_>,
+        comm: &Comm,
+    ) -> Result<Array2<u32>, MdError> {
+        let members = vec![pot];
+        let mut lists = BondedLists::new(&members);
+        let no_fold = Array2::<i64>::zeros((owned.nrows(), 3));
+        lists.refresh(comm, owned, no_fold.view())?;
+        Ok(lists
+            .current(0)
+            .expect("this kernel keeps indices")
+            .to_owned())
     }
 
     /// A bond whose two atoms sit on opposite sides of a face is rewritten to
@@ -523,26 +482,26 @@ mod remap_tests {
     fn a_crossing_bond_is_rewritten_to_its_closest_copy() {
         let bx = SimBox::cube(10.0, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
         let owned = array![[9.5_f64, 5.0, 5.0], [0.5, 5.0, 5.0]];
-        let mut frame = Frame::new();
-        frame.insert("bonds", bonds_block(&[0], &[1]));
-
         let comm = Comm::new(bx.clone(), owned.view(), 2.0, 0.0).unwrap();
-        let remapped = BondedTopology::resolve_for_test(&frame, owned.view(), &comm).unwrap();
 
-        let j = remapped.get("bonds").unwrap().get_uint("atomj").unwrap()[0] as usize;
+        let pot = BondHarmonic::new(vec![0], vec![1], vec![100.0], vec![1.0]);
+        let terms = resolve_one(Box::new(pot), owned.view(), &comm).unwrap();
+
+        let j = terms[[0, 1]] as usize;
         assert!(j >= 2, "atomj must now name a copy, not atom 1; got {j}");
+        assert_eq!(terms[[0, 0]], 0, "the anchor never moves");
 
-        // Straight through a real kernel, on the combined coordinates.
+        // Straight through the kernel, on the combined coordinates, with the
+        // table it was handed.
         let all = comm.ghosts().combined(owned.view()).unwrap();
         let flat: Vec<F> = all.iter().copied().collect();
-        let pot = BondHarmonic::new(vec![0], vec![j], vec![100.0], vec![1.0]);
-        let (e, _) = pot.calc_energy_forces(&flat);
+        let pot = BondHarmonic::new(vec![0], vec![1], vec![100.0], vec![1.0]);
+        let (e, _) = pot.calc_energy_forces_with_terms(&flat, terms.view());
         assert!(e.abs() < 1e-9, "the bond is at rest length; got E = {e}");
 
-        // The unrewritten frame is what the bug looks like: same kernel, same
-        // coordinates, a bond read as eight times its rest length.
-        let naive = BondHarmonic::new(vec![0], vec![1], vec![100.0], vec![1.0]);
-        assert!((naive.calc_energy_forces(&flat).0 - 3200.0).abs() < 1e-9);
+        // The unrewritten indices are what the bug looks like: same kernel,
+        // same coordinates, a bond read as eight times its rest length.
+        assert!((pot.calc_energy_forces(&flat).0 - 3200.0).abs() < 1e-9);
     }
 
     /// Both arms of an angle are resolved against the vertex, so the three
@@ -552,16 +511,14 @@ mod remap_tests {
         let bx = SimBox::cube(10.0, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
         // Vertex just inside the low face; the arms straddle it.
         let owned = array![[9.3_f64, 5.0, 5.0], [0.2, 5.0, 5.0], [1.2, 5.0, 5.0]];
-        let mut frame = Frame::new();
-        frame.insert("angles", angles_block(&[0], &[1], &[2]));
-
         let comm = Comm::new(bx.clone(), owned.view(), 3.0, 0.0).unwrap();
-        let remapped = BondedTopology::resolve_for_test(&frame, owned.view(), &comm).unwrap();
-        let blk = remapped.get("angles").unwrap();
+
+        let pot = AngleHarmonic::new(vec![0], vec![1], vec![2], vec![50.0], vec![2.9]);
+        let terms = resolve_one(Box::new(pot), owned.view(), &comm).unwrap();
         let (i, j, k) = (
-            blk.get_uint("atomi").unwrap()[0] as usize,
-            blk.get_uint("atomj").unwrap()[0] as usize,
-            blk.get_uint("atomk").unwrap()[0] as usize,
+            terms[[0, 0]] as usize,
+            terms[[0, 1]] as usize,
+            terms[[0, 2]] as usize,
         );
         assert_eq!(j, 1, "the vertex is the anchor and never moves");
         assert!(i >= 3, "the arm across the face must be a copy; got {i}");
@@ -586,25 +543,30 @@ mod remap_tests {
         let bx = SimBox::cube(30.0, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
         // Bonded, but 14 Å apart — beyond a halo built for a 2 Å pair cutoff.
         let owned = array![[1.0_f64, 5.0, 5.0], [15.0, 5.0, 5.0]];
-        let mut frame = Frame::new();
-        frame.insert("bonds", bonds_block(&[0], &[1]));
-
         let comm = Comm::new(bx, owned.view(), 2.0, 0.0).unwrap();
-        let err = BondedTopology::resolve_for_test(&frame, owned.view(), &comm).unwrap_err();
+
+        let pot = BondHarmonic::new(vec![0], vec![1], vec![100.0], vec![1.0]);
+        let err = resolve_one(Box::new(pot), owned.view(), &comm).unwrap_err();
         let msg = format!("{err}");
         assert!(msg.contains("still spans"), "{msg}");
         assert!(msg.contains("does not reach"), "{msg}");
     }
 
-    /// A frame with no bonded blocks passes through untouched — the ghost path
+    /// A member that keeps no indices has nothing to rebind — the ghost path
     /// must not require a topology it was not given.
     #[test]
-    fn a_frame_without_topology_is_unchanged() {
+    fn a_member_without_indices_is_left_alone() {
         let bx = SimBox::cube(10.0, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
         let owned = array![[1.0_f64, 1.0, 1.0], [2.0, 2.0, 2.0]];
         let comm = Comm::new(bx, owned.view(), 2.0, 0.0).unwrap();
-        let out = BondedTopology::resolve_for_test(&Frame::new(), owned.view(), &comm).unwrap();
-        assert!(out.get("bonds").is_none());
+
+        let members: Vec<Box<dyn Potential>> =
+            vec![Box::new(molrs::ff::potential::Potentials::new())];
+        let mut lists = BondedLists::new(&members);
+        assert_eq!(lists.bound(), 0, "an aggregate keeps no atom indices");
+        let no_fold = Array2::<i64>::zeros((owned.nrows(), 3));
+        lists.refresh(&comm, owned.view(), no_fold.view()).unwrap();
+        assert!(lists.current(0).is_none());
     }
 }
 
@@ -614,6 +576,8 @@ mod owned_potential_tests {
     use molrs::ff::forcefield::ForceField;
     use molrs::spatial::simbox::SimBox;
     use molrs::store::block::Block;
+    use molrs::store::frame::Frame;
+    use molrs::types::Idx;
     use ndarray::{Array1, array};
 
     /// Two atoms bonded across a face, drifting until the halo rebuilds.
@@ -669,7 +633,10 @@ mod owned_potential_tests {
 
         // A small skin, so drifting forces several rebuilds over the run.
         let mut comm = Comm::new(bx.clone(), owned.view(), 3.0, 0.2).unwrap();
-        let mut bonded = BondedTopology::new(frame, field, &comm, owned.view()).unwrap();
+        // The force field compiles once, here. Nothing below names it again:
+        // what MD carries forward is the kernels and their index lists.
+        let members = field.to_potentials(&frame).unwrap().into_members();
+        let mut lists = BondedLists::new(&members);
 
         let mut seen_rebuild = false;
         for step in 0..60 {
@@ -685,18 +652,22 @@ mod owned_potential_tests {
 
             let before = comm.rebuilds();
             comm.advance(owned.view(), m.view()).unwrap();
-            bonded.refresh(&comm, owned.view(), m.view()).unwrap();
+            lists.refresh(&comm, owned.view(), m.view()).unwrap();
             let all = comm.combined(owned.view()).unwrap();
             let flat: Vec<F> = all.iter().copied().collect();
-            let (e, _f) = bonded.potentials().calc_energy_forces(&flat);
-            let n_terms = bonded.potentials().len();
+            let mut e = 0.0;
+            for (mi, member) in members.iter().enumerate() {
+                let terms = lists.current(mi).expect("a bond style keeps indices");
+                e += member.calc_energy_forces_with_terms(&flat, terms).0;
+            }
+            let n_terms = lists.bound();
             let all_rows = all.nrows();
 
             // Without this the assertion below is satisfied by an empty
             // potential, which would prove nothing at all.
             assert!(
                 n_terms > 0,
-                "step {step}: the force field produced no terms"
+                "step {step}: the force field produced no bonded terms"
             );
 
             assert!(
@@ -757,7 +728,8 @@ mod owned_potential_tests {
         bs.def_bondtype("a", "a", &[("k", 100.0), ("r0", 1.0)]);
 
         let mut comm = Comm::new(bx.clone(), owned.view(), 3.0, 0.2).unwrap();
-        let mut bonded = BondedTopology::new(frame, field, &comm, owned.view()).unwrap();
+        let members = field.to_potentials(&frame).unwrap().into_members();
+        let mut lists = BondedLists::new(&members);
 
         let mut generations: Vec<u64> = vec![comm.ghosts().generation()];
         for _ in 0..60 {
@@ -769,11 +741,11 @@ mod owned_potential_tests {
             let (wrapped, m) = bx.wrap_shifts(owned.view());
             owned = wrapped;
             comm.advance(owned.view(), m.view()).unwrap();
-            bonded.refresh(&comm, owned.view(), m.view()).unwrap();
+            lists.refresh(&comm, owned.view(), m.view()).unwrap();
             assert_eq!(
-                bonded.generation(),
-                comm.ghosts().generation(),
-                "the topology must name copies that exist"
+                lists.generation(),
+                Some(comm.ghosts().generation()),
+                "the lists must name copies that exist"
             );
             let g = comm.ghosts().generation();
             if *generations.last().unwrap() != g {

@@ -10,10 +10,12 @@
 
 use std::collections::HashMap;
 
+use ndarray::{Array2, ArrayView2};
+
 use crate::ff::forcefield::Params;
 use crate::ff::potential::Potential;
 use crate::ff::potential::geometry::{
-    accumulate_dihedral_forces, compute_dihedral, validate_coords,
+    accumulate_dihedral_forces, compute_dihedral, term_table, validate_coords,
 };
 use molrs::store::frame::Frame;
 use molrs::types::F;
@@ -30,19 +32,23 @@ pub struct ImproperPeriodic {
     d: Vec<F>,
 }
 
-impl Potential for ImproperPeriodic {
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
+impl ImproperPeriodic {
+    /// The physics, once. Which atoms a term names is the only thing
+    /// that differs between the two entry points, so it is the only thing
+    /// passed in — a second copy of the loop would be a second place for
+    /// the force expression to drift.
+    fn fold(
+        &self,
+        coords: &[F],
+        n_terms: usize,
+        atoms: impl Fn(usize) -> (usize, usize, usize, usize),
+    ) -> (F, Vec<F>) {
         let _n = validate_coords(coords);
         let mut energy: F = 0.0;
         let mut forces = vec![0.0 as F; coords.len()];
 
-        for idx in 0..self.atom_i.len() {
-            let (i, j, k, l) = (
-                self.atom_i[idx],
-                self.atom_j[idx],
-                self.atom_k[idx],
-                self.atom_l[idx],
-            );
+        for idx in 0..n_terms {
+            let (i, j, k, l) = atoms(idx);
             let phi = compute_dihedral(coords, i, j, k, l);
             let (ki, ni, di) = (self.k[idx], self.n[idx], self.d[idx]);
             let arg = ni * phi - di;
@@ -51,6 +57,48 @@ impl Potential for ImproperPeriodic {
             accumulate_dihedral_forces(coords, i, j, k, l, de_dphi, &mut forces);
         }
         (energy, forces)
+    }
+}
+
+impl Potential for ImproperPeriodic {
+    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
+        self.fold(coords, self.atom_i.len(), |t| {
+            (
+                self.atom_i[t],
+                self.atom_j[t],
+                self.atom_k[t],
+                self.atom_l[t],
+            )
+        })
+    }
+
+    fn terms(&self) -> Option<Array2<u32>> {
+        Some(term_table(&[
+            &self.atom_i,
+            &self.atom_j,
+            &self.atom_k,
+            &self.atom_l,
+        ]))
+    }
+
+    fn calc_energy_forces_with_terms(
+        &self,
+        coords: &[F],
+        terms: ArrayView2<'_, u32>,
+    ) -> (F, Vec<F>) {
+        debug_assert_eq!(
+            terms.nrows(),
+            self.atom_i.len(),
+            "the row set is the force field's; only the atoms a row names may be rebound"
+        );
+        self.fold(coords, terms.nrows(), |t| {
+            (
+                terms[[t, 0]] as usize,
+                terms[[t, 1]] as usize,
+                terms[[t, 2]] as usize,
+                terms[[t, 3]] as usize,
+            )
+        })
     }
 }
 

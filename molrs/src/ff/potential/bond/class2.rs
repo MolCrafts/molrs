@@ -5,8 +5,11 @@
 
 use std::collections::HashMap;
 
+use ndarray::{Array2, ArrayView2};
+
 use crate::ff::forcefield::Params;
 use crate::ff::potential::Potential;
+use crate::ff::potential::geometry::term_table;
 use crate::ff::potential::geometry::validate_coords;
 use molrs::store::frame::Frame;
 use molrs::types::F;
@@ -47,15 +50,23 @@ impl BondClass2 {
     }
 }
 
-impl Potential for BondClass2 {
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
+impl BondClass2 {
+    /// The physics, once. Which atoms a term names is the only thing
+    /// that differs between the two entry points, so it is the only thing
+    /// passed in — a second copy of the loop would be a second place for
+    /// the force expression to drift.
+    fn fold(
+        &self,
+        coords: &[F],
+        n_terms: usize,
+        atoms: impl Fn(usize) -> (usize, usize),
+    ) -> (F, Vec<F>) {
         let n_atoms = validate_coords(coords);
         let mut energy: F = 0.0;
         let mut forces = vec![0.0; coords.len()];
 
-        for idx in 0..self.atom_i.len() {
-            let i = self.atom_i[idx];
-            let j = self.atom_j[idx];
+        for idx in 0..n_terms {
+            let (i, j) = atoms(idx);
             debug_assert!(i < n_atoms && j < n_atoms);
 
             let (r0, k2, k3, k4) = (self.r0[idx], self.k2[idx], self.k3[idx], self.k4[idx]);
@@ -87,6 +98,33 @@ impl Potential for BondClass2 {
         }
 
         (energy, forces)
+    }
+}
+
+impl Potential for BondClass2 {
+    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
+        self.fold(coords, self.atom_i.len(), |t| {
+            (self.atom_i[t], self.atom_j[t])
+        })
+    }
+
+    fn terms(&self) -> Option<Array2<u32>> {
+        Some(term_table(&[&self.atom_i, &self.atom_j]))
+    }
+
+    fn calc_energy_forces_with_terms(
+        &self,
+        coords: &[F],
+        terms: ArrayView2<'_, u32>,
+    ) -> (F, Vec<F>) {
+        debug_assert_eq!(
+            terms.nrows(),
+            self.atom_i.len(),
+            "the row set is the force field's; only the atoms a row names may be rebound"
+        );
+        self.fold(coords, terms.nrows(), |t| {
+            (terms[[t, 0]] as usize, terms[[t, 1]] as usize)
+        })
     }
 }
 

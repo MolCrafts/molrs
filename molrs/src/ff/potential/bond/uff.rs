@@ -1,7 +1,10 @@
 //! UFF bond stretch: E = ½ · kb · (r − r0)² (RDKit `BondStretchContrib`).
 
+use ndarray::{Array2, ArrayView2};
+
 use crate::ff::forcefield::Params;
 use crate::ff::potential::Potential;
+use crate::ff::potential::geometry::term_table;
 use crate::ff::potential::geometry::validate_coords;
 use molrs::store::frame::Frame;
 use molrs::types::F;
@@ -14,13 +17,22 @@ pub struct UffBond {
     r0: Vec<F>,
 }
 
-impl Potential for UffBond {
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
+impl UffBond {
+    /// The physics, once. Which atoms a term names is the only thing
+    /// that differs between the two entry points, so it is the only thing
+    /// passed in — a second copy of the loop would be a second place for
+    /// the force expression to drift.
+    fn fold(
+        &self,
+        coords: &[F],
+        n_terms: usize,
+        atoms: impl Fn(usize) -> (usize, usize),
+    ) -> (F, Vec<F>) {
         let _n = validate_coords(coords);
         let mut energy = 0.0 as F;
         let mut forces = vec![0.0 as F; coords.len()];
-        for idx in 0..self.atom_i.len() {
-            let (i, j) = (self.atom_i[idx], self.atom_j[idx]);
+        for idx in 0..n_terms {
+            let (i, j) = atoms(idx);
             let dx = coords[j * 3] - coords[i * 3];
             let dy = coords[j * 3 + 1] - coords[i * 3 + 1];
             let dz = coords[j * 3 + 2] - coords[i * 3 + 2];
@@ -39,6 +51,33 @@ impl Potential for UffBond {
             }
         }
         (energy, forces)
+    }
+}
+
+impl Potential for UffBond {
+    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
+        self.fold(coords, self.atom_i.len(), |t| {
+            (self.atom_i[t], self.atom_j[t])
+        })
+    }
+
+    fn terms(&self) -> Option<Array2<u32>> {
+        Some(term_table(&[&self.atom_i, &self.atom_j]))
+    }
+
+    fn calc_energy_forces_with_terms(
+        &self,
+        coords: &[F],
+        terms: ArrayView2<'_, u32>,
+    ) -> (F, Vec<F>) {
+        debug_assert_eq!(
+            terms.nrows(),
+            self.atom_i.len(),
+            "the row set is the force field's; only the atoms a row names may be rebound"
+        );
+        self.fold(coords, terms.nrows(), |t| {
+            (terms[[t, 0]] as usize, terms[[t, 1]] as usize)
+        })
     }
 }
 

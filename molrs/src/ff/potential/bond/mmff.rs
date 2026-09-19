@@ -1,8 +1,10 @@
 //! MMFF94 bond stretching: E = (1/2)*143.9325*kb*dr^2*(1 + cs*dr + 7/12*cs^2*dr^2)
 
+use ndarray::{Array2, ArrayView2};
+
 use crate::ff::forcefield::Params;
 use crate::ff::potential::Potential;
-use crate::ff::potential::geometry::{mag3, sub3, validate_coords};
+use crate::ff::potential::geometry::{mag3, sub3, term_table, validate_coords};
 use molrs::store::frame::Frame;
 use molrs::types::F;
 
@@ -17,16 +19,25 @@ pub struct MMFFBondStretch {
     r0: Vec<F>,
 }
 
-impl Potential for MMFFBondStretch {
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
+impl MMFFBondStretch {
+    /// The physics, once. Which atoms a term names is the only thing
+    /// that differs between the two entry points, so it is the only thing
+    /// passed in — a second copy of the loop would be a second place for
+    /// the force expression to drift.
+    fn fold(
+        &self,
+        coords: &[F],
+        n_terms: usize,
+        atoms: impl Fn(usize) -> (usize, usize),
+    ) -> (F, Vec<F>) {
         let _n = validate_coords(coords);
         let mut energy: F = 0.0;
         let mut forces = vec![0.0 as F; coords.len()];
         let cs = CS as F;
         let conv = MDYNE_A_TO_KCAL as F;
 
-        for idx in 0..self.atom_i.len() {
-            let (i, j) = (self.atom_i[idx], self.atom_j[idx]);
+        for idx in 0..n_terms {
+            let (i, j) = atoms(idx);
             let d = sub3(coords, j, coords, i);
             let r = mag3(d);
             let dr = r - self.r0[idx];
@@ -51,6 +62,33 @@ impl Potential for MMFFBondStretch {
             }
         }
         (energy, forces)
+    }
+}
+
+impl Potential for MMFFBondStretch {
+    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
+        self.fold(coords, self.atom_i.len(), |t| {
+            (self.atom_i[t], self.atom_j[t])
+        })
+    }
+
+    fn terms(&self) -> Option<Array2<u32>> {
+        Some(term_table(&[&self.atom_i, &self.atom_j]))
+    }
+
+    fn calc_energy_forces_with_terms(
+        &self,
+        coords: &[F],
+        terms: ArrayView2<'_, u32>,
+    ) -> (F, Vec<F>) {
+        debug_assert_eq!(
+            terms.nrows(),
+            self.atom_i.len(),
+            "the row set is the force field's; only the atoms a row names may be rebound"
+        );
+        self.fold(coords, terms.nrows(), |t| {
+            (terms[[t, 0]] as usize, terms[[t, 1]] as usize)
+        })
     }
 }
 

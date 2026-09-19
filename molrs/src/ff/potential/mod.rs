@@ -23,7 +23,7 @@ pub use registry::{
 use std::borrow::Cow;
 use std::collections::HashSet;
 
-use ndarray::Array1;
+use ndarray::{Array1, Array2, ArrayView2};
 
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
 use molrs::spatial::neighbors::Neighbors;
@@ -138,6 +138,35 @@ pub trait Potential: Send + Sync {
         let _ = pairs;
         self.calc_energy_forces(coords)
     }
+
+    /// The atom indices this kernel resolved at construction, `(n_terms,
+    /// arity)` — arity 2 for a bond, 3 for an angle, 4 for a dihedral or an
+    /// improper. `None` for a kernel whose state is not a fixed index list.
+    ///
+    /// A kernel that answers this is declaring that *which atoms* is separable
+    /// from *what the parameters are*: row `r` here belongs with row `r` of
+    /// its parameters, and a caller may hand back a different table naming
+    /// different atoms for the same rows. That is what lets a periodic régime
+    /// point a bond at a copy without the kernel learning that copies exist.
+    fn terms(&self) -> Option<Array2<u32>> {
+        None
+    }
+
+    /// Evaluate with `terms` in place of the indices resolved at construction.
+    ///
+    /// `terms` must have the shape [`terms`](Potential::terms) returned: the
+    /// row *set* is fixed — it is the terms the force field declared — and
+    /// only which atoms each row names may differ. Default ignores it and
+    /// calls [`calc_energy_forces`](Potential::calc_energy_forces), which is
+    /// right for a kernel that holds no indices.
+    fn calc_energy_forces_with_terms(
+        &self,
+        coords: &[F],
+        terms: ArrayView2<'_, u32>,
+    ) -> (F, Vec<F>) {
+        let _ = terms;
+        self.calc_energy_forces(coords)
+    }
 }
 
 impl Potential for Box<dyn Potential> {
@@ -147,6 +176,18 @@ impl Potential for Box<dyn Potential> {
 
     fn calc_energy_forces_with_pairs(&self, coords: &[F], pairs: &Neighbors) -> (F, Vec<F>) {
         (**self).calc_energy_forces_with_pairs(coords, pairs)
+    }
+
+    fn terms(&self) -> Option<Array2<u32>> {
+        (**self).terms()
+    }
+
+    fn calc_energy_forces_with_terms(
+        &self,
+        coords: &[F],
+        terms: ArrayView2<'_, u32>,
+    ) -> (F, Vec<F>) {
+        (**self).calc_energy_forces_with_terms(coords, terms)
     }
 }
 
@@ -204,6 +245,22 @@ impl Potentials {
 
     pub fn is_empty(&self) -> bool {
         self.inner.is_empty()
+    }
+
+    /// The members, in the order the force field's styles produced them.
+    ///
+    /// A caller that needs to treat members differently — a periodic régime
+    /// rebinding the bonded terms onto copies while the nonbonded one reads a
+    /// neighbour table — needs them one at a time, because the index table a
+    /// member wants is the member's own. Summing them all is what
+    /// [`calc_energy_forces`](Self::calc_energy_forces) is for.
+    pub fn members(&self) -> &[Box<dyn Potential>] {
+        &self.inner
+    }
+
+    /// Give up the members, for a caller that wants to own them individually.
+    pub fn into_members(self) -> Vec<Box<dyn Potential>> {
+        self.inner
     }
 
     /// Same as [`calc_energy_forces`](Self::calc_energy_forces) but forwards
@@ -513,6 +570,135 @@ mod tests {
             .unwrap();
         frame.insert("atoms", atoms);
         frame
+    }
+
+    /// A four-atom frame carrying one term of every bonded arity, so a single
+    /// force field produces a bond, an angle, a dihedral and an improper
+    /// kernel and the rebinding contract can be checked on all four at once.
+    fn make_all_bonded_frame() -> Frame {
+        let mut frame = Frame::new();
+        let mut atoms = Block::new();
+        // A non-planar, non-collinear arrangement: a dihedral and an improper
+        // are both undefined on degenerate geometry, and a test that fed them
+        // one would be asserting against NaN.
+        atoms
+            .insert(
+                "x",
+                Array1::from_vec(vec![0.0 as F, 1.5, 2.1, 3.4]).into_dyn(),
+            )
+            .unwrap();
+        atoms
+            .insert(
+                "y",
+                Array1::from_vec(vec![0.0 as F, 0.2, 1.4, 1.1]).into_dyn(),
+            )
+            .unwrap();
+        atoms
+            .insert(
+                "z",
+                Array1::from_vec(vec![0.0 as F, 0.9, 0.3, 1.8]).into_dyn(),
+            )
+            .unwrap();
+        atoms
+            .insert(
+                "type",
+                Array1::from_vec(vec!["A".to_string(); 4]).into_dyn(),
+            )
+            .unwrap();
+        frame.insert("atoms", atoms);
+
+        let idx = |v: Vec<Idx>| Array1::from_vec(v).into_dyn();
+        let ty = |n: usize, name: &str| Array1::from_vec(vec![name.to_string(); n]).into_dyn();
+
+        let mut bonds = Block::new();
+        bonds.insert("atomi", idx(vec![0, 1, 2])).unwrap();
+        bonds.insert("atomj", idx(vec![1, 2, 3])).unwrap();
+        bonds.insert("type", ty(3, "A-A")).unwrap();
+        frame.insert("bonds", bonds);
+
+        let mut angles = Block::new();
+        angles.insert("atomi", idx(vec![0, 1])).unwrap();
+        angles.insert("atomj", idx(vec![1, 2])).unwrap();
+        angles.insert("atomk", idx(vec![2, 3])).unwrap();
+        angles.insert("type", ty(2, "A-A-A")).unwrap();
+        frame.insert("angles", angles);
+
+        let mut dihedrals = Block::new();
+        dihedrals.insert("atomi", idx(vec![0])).unwrap();
+        dihedrals.insert("atomj", idx(vec![1])).unwrap();
+        dihedrals.insert("atomk", idx(vec![2])).unwrap();
+        dihedrals.insert("atoml", idx(vec![3])).unwrap();
+        dihedrals.insert("type", ty(1, "A-A-A-A")).unwrap();
+        frame.insert("dihedrals", dihedrals);
+
+        let mut impropers = Block::new();
+        impropers.insert("atomi", idx(vec![1])).unwrap();
+        impropers.insert("atomj", idx(vec![0])).unwrap();
+        impropers.insert("atomk", idx(vec![2])).unwrap();
+        impropers.insert("atoml", idx(vec![3])).unwrap();
+        impropers.insert("type", ty(1, "A-A-A-A")).unwrap();
+        frame.insert("impropers", impropers);
+
+        frame
+    }
+
+    /// Handing a kernel back the very indices it resolved at construction must
+    /// change nothing — bit for bit.
+    ///
+    /// This is the contract that makes a periodic régime possible: if the two
+    /// entry points can disagree on identical input, they can disagree on
+    /// remapped input too, and the difference would be indistinguishable from
+    /// physics. Bit equality rather than a tolerance because it is meant to be
+    /// the same arithmetic in the same order — a kernel that had grown a
+    /// second copy of its force expression would show up here as a few ulp.
+    #[test]
+    fn rebinding_a_kernel_to_its_own_indices_changes_nothing() {
+        let mut ff = ForceField::new("all-bonded");
+        ff.def_bondstyle("harmonic")
+            .def_type("A-A", &[("k", 300.0), ("r0", 1.5)]);
+        ff.def_anglestyle("harmonic")
+            .def_type("A-A-A", &[("k", 50.0), ("theta0", 1.911)]);
+        ff.def_dihedralstyle("opls").def_type(
+            "A-A-A-A",
+            &[("k1", 1.3), ("k2", -0.05), ("k3", 0.24), ("k4", 0.0)],
+        );
+        ff.def_improperstyle("harmonic")
+            .def_type("A-A-A-A", &[("k", 10.0), ("chi0", 0.0)]);
+
+        let frame = make_all_bonded_frame();
+        let pots = ff.to_potentials(&frame).unwrap();
+        let coords = extract_coords(&frame).unwrap();
+
+        let mut checked = 0;
+        for (m, member) in pots.members().iter().enumerate() {
+            let Some(terms) = member.terms() else {
+                continue;
+            };
+            let (e0, f0) = member.calc_energy_forces(&coords);
+            let (e1, f1) = member.calc_energy_forces_with_terms(&coords, terms.view());
+            assert_eq!(
+                e0.to_bits(),
+                e1.to_bits(),
+                "member {m}: energy {e0} vs {e1} on identical indices"
+            );
+            assert_eq!(f0.len(), f1.len(), "member {m}: force length");
+            for (c, (a, b)) in f0.iter().zip(&f1).enumerate() {
+                assert_eq!(
+                    a.to_bits(),
+                    b.to_bits(),
+                    "member {m}: force component {c}: {a} vs {b}"
+                );
+            }
+            assert!(
+                e0.is_finite() && e0 != 0.0,
+                "member {m} contributed nothing, so it asserted nothing"
+            );
+            checked += 1;
+        }
+        assert_eq!(
+            checked, 4,
+            "expected a bond, an angle, a dihedral and an improper to answer `terms()`"
+        );
     }
 
     fn make_bond_frame() -> Frame {
