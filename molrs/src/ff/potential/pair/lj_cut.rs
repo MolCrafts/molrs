@@ -79,6 +79,54 @@ enum PairSource {
         epsilon: Vec<F>,
         sigma: Vec<F>,
     },
+    /// Per-atom types plus a type-pair table.
+    ///
+    /// The difference from `Compiled` is *when* a parameter is chosen. A
+    /// compiled kernel resolved its parameters against a pair list at
+    /// construction, which is only meaningful while that exact list is the one
+    /// being evaluated — and a neighbour table is rebuilt from scratch every
+    /// few steps, with different rows in a different order. Keyed on the atoms
+    /// instead, a parameter can be found for whatever pair turns up, including
+    /// a pair that involves a periodic copy.
+    Typed {
+        /// Type index per atom. Under a ghost régime this covers the copies
+        /// too, gathered from their owners.
+        type_id: Vec<u32>,
+        ntypes: usize,
+        /// Flattened `ti * ntypes + tj`, each already mixed and each carrying
+        /// the cutoff-dependent constants that go with it.
+        sigma: Vec<F>,
+        ceps: Vec<F>,
+        e0: Vec<F>,
+        f_rc: Vec<F>,
+    },
+}
+
+/// The cutoff-dependent constants for one mixed `(ε, σ)`.
+///
+/// Shared by the style-level constructor and the type-pair table so the two
+/// cannot disagree about what shifting means.
+fn shift_constants(
+    epsilon: F,
+    sigma: F,
+    cutoff: F,
+    n: i32,
+    m: i32,
+    shifted: bool,
+    smeared: bool,
+) -> (F, F, F) {
+    let ceps = mie_c(n, m) * epsilon;
+    let sr_c = sigma / cutoff;
+    let sr_n_c = sr_c.powi(n);
+    let sr_m_c = sr_c.powi(m);
+    let u_c = ceps * (sr_n_c - sr_m_c);
+    let fac_c = ceps * ((n as F) * sr_n_c - (m as F) * sr_m_c) / (cutoff * cutoff);
+    let shift_energy = shifted || smeared;
+    (
+        ceps,
+        if shift_energy { u_c } else { 0.0 },
+        if smeared { fac_c * cutoff } else { 0.0 },
+    )
 }
 
 /// LAMMPS `pair_style lj/cut`.
@@ -123,25 +171,19 @@ impl LJCut {
             ));
         }
         let cutoff2 = cutoff * cutoff;
-        let ceps = mie_c(n, m) * epsilon;
-        let sr_c = sigma / cutoff;
-        let sr_n_c = sr_c.powi(n);
-        let sr_m_c = sr_c.powi(m);
-        let u_c = ceps * (sr_n_c - sr_m_c);
-        let fac_c = ceps * ((n as F) * sr_n_c - (m as F) * sr_m_c) / cutoff2;
-        let shift_energy = shifted || smeared;
+        let (ceps, e0, f_rc) = shift_constants(epsilon, sigma, cutoff, n, m, shifted, smeared);
         Ok(Self {
             epsilon,
             sigma,
             cutoff,
             n,
             m,
-            shifted: shift_energy,
+            shifted: shifted || smeared,
             smeared,
             cutoff2,
             ceps,
-            e0: if shift_energy { u_c } else { 0.0 },
-            f_rc: if smeared { fac_c * cutoff } else { 0.0 },
+            e0,
+            f_rc,
             source: PairSource::Loop,
         })
     }
@@ -178,6 +220,84 @@ impl LJCut {
                 sigma,
             },
         }
+    }
+
+    /// A kernel that finds its parameters from the atoms a pair names.
+    ///
+    /// `type_id` is one type index per atom — including, under a ghost régime,
+    /// the copies, which carry their owners'. `per_type` is `(ε, σ)` per type,
+    /// combined by `mixing` into the type-pair table.
+    ///
+    /// This is the form a neighbour-driven evaluation needs.
+    /// [`compiled`](Self::compiled) resolved its parameters against one fixed
+    /// pair list, so it can only answer for that list; a neighbour table is a
+    /// different list every rebuild.
+    #[allow(clippy::too_many_arguments)]
+    pub fn typed(
+        type_id: Vec<u32>,
+        per_type: &[(F, F)],
+        mixing: Mixing,
+        cutoff: F,
+        n: i32,
+        m: i32,
+        shifted: bool,
+        smeared: bool,
+    ) -> Result<Self, String> {
+        if cutoff <= 0.0 {
+            return Err("LJCut requires cutoff > 0".into());
+        }
+        if m <= 0 || n <= m {
+            return Err(format!(
+                "LJCut exponents must satisfy n > m > 0, got n={n}, m={m}"
+            ));
+        }
+        let ntypes = per_type.len();
+        if ntypes == 0 {
+            return Err("LJCut::typed needs at least one type".into());
+        }
+        if let Some(&t) = type_id.iter().max()
+            && t as usize >= ntypes
+        {
+            return Err(format!(
+                "LJCut::typed: atom type {t} has no parameters (only {ntypes} types)"
+            ));
+        }
+        let mut sigma = vec![0.0; ntypes * ntypes];
+        let mut ceps = vec![0.0; ntypes * ntypes];
+        let mut e0 = vec![0.0; ntypes * ntypes];
+        let mut f_rc = vec![0.0; ntypes * ntypes];
+        for ti in 0..ntypes {
+            for tj in 0..ntypes {
+                let (eps_ij, sig_ij) = mixing.combine(per_type[ti], per_type[tj]);
+                let (c, e, fr) = shift_constants(eps_ij, sig_ij, cutoff, n, m, shifted, smeared);
+                let t = ti * ntypes + tj;
+                sigma[t] = sig_ij;
+                ceps[t] = c;
+                e0[t] = e;
+                f_rc[t] = fr;
+            }
+        }
+        Ok(Self {
+            epsilon: 1.0,
+            sigma: 1.0,
+            cutoff,
+            n,
+            m,
+            shifted: shifted || smeared,
+            smeared,
+            cutoff2: cutoff * cutoff,
+            ceps: 0.0,
+            e0: 0.0,
+            f_rc: 0.0,
+            source: PairSource::Typed {
+                type_id,
+                ntypes,
+                sigma,
+                ceps,
+                e0,
+                f_rc,
+            },
+        })
     }
 
     pub fn epsilon(&self) -> F {
@@ -305,6 +425,77 @@ impl LJCut {
         (energy, forces)
     }
 
+    /// Fold a neighbour table with the parameters the atoms' types select.
+    ///
+    /// The only difference from [`fold_neighbors`](Self::fold_neighbors) is
+    /// where `(σ, ε)` comes from: there, one style-level pair; here, the
+    /// type-pair table. The geometry is already reduced either way — this
+    /// kernel never learns whether a neighbour is an owned atom or a copy.
+    fn fold_typed(&self, coords: &[F], pairs: &Neighbors) -> (F, Vec<F>) {
+        let mut forces = vec![0.0; coords.len()];
+        let PairSource::Typed {
+            type_id,
+            ntypes,
+            sigma,
+            ceps,
+            e0,
+            f_rc,
+        } = &self.source
+        else {
+            return (0.0, forces);
+        };
+        let Some(disp) = pairs.disp() else {
+            return (0.0, forces);
+        };
+        let i = pairs.query_point_indices();
+        let j = pairs.point_indices();
+        let d2 = pairs.dist_sq();
+        let mut energy = 0.0;
+        for p in 0..i.len() {
+            let ia = i[p] as usize;
+            let ja = j[p] as usize;
+            let (Some(&ti), Some(&tj)) = (type_id.get(ia), type_id.get(ja)) else {
+                // A pair naming an atom the type table does not cover cannot be
+                // scored. Under a ghost régime that means the copies were not
+                // gathered, which is a wiring fault and not a zero.
+                debug_assert!(
+                    false,
+                    "pair ({ia}, {ja}) is outside the {} type ids",
+                    type_id.len()
+                );
+                continue;
+            };
+            let t = ti as usize * ntypes + tj as usize;
+            let d = [disp[[p, 0]], disp[[p, 1]], disp[[p, 2]]];
+            let r2 = match d2 {
+                Some(col) => col[p],
+                None => d[0] * d[0] + d[1] * d[1] + d[2] * d[2],
+            };
+            let Some((e, f)) = self.pair_kernel_params(
+                r2,
+                d,
+                sigma[t],
+                ceps[t],
+                e0[t],
+                f_rc[t],
+                self.cutoff2,
+                self.n,
+                self.m,
+            ) else {
+                continue;
+            };
+            energy += e;
+            let (bj, bi) = (3 * ja, 3 * ia);
+            forces[bj] += f[0];
+            forces[bj + 1] += f[1];
+            forces[bj + 2] += f[2];
+            forces[bi] -= f[0];
+            forces[bi + 1] -= f[1];
+            forces[bi + 2] -= f[2];
+        }
+        (energy, forces)
+    }
+
     fn fold_neighbors(&self, coords: &[F], pairs: &Neighbors) -> (F, Vec<F>) {
         let mut forces = vec![0.0; coords.len()];
         let Some(disp) = pairs.disp() else {
@@ -372,7 +563,8 @@ impl Potential for LJCut {
     fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
         match &self.source {
             PairSource::Compiled { .. } => self.fold_compiled(coords),
-            PairSource::Loop => (0.0, vec![0.0; coords.len()]),
+            // Both need a pair table nobody handed over.
+            PairSource::Loop | PairSource::Typed { .. } => (0.0, vec![0.0; coords.len()]),
         }
     }
 
@@ -380,6 +572,7 @@ impl Potential for LJCut {
         match &self.source {
             PairSource::Compiled { .. } => self.fold_compiled(coords),
             PairSource::Loop => self.fold_neighbors(coords, pairs),
+            PairSource::Typed { .. } => self.fold_typed(coords, pairs),
         }
     }
 }
@@ -497,6 +690,109 @@ mod tests {
         );
         let (e1, _) = pot.calc_energy_forces_with_pairs(&coords, &extra);
         assert_eq!(e0, e1);
+    }
+
+    /// The typed table and the compiled list are two ways of finding the same
+    /// number, and on the same pairs they must find it bit for bit.
+    ///
+    /// This is the whole claim of the typed form: nothing about the physics
+    /// changed, only *when* a parameter is chosen. Anything else that moved
+    /// would show up here, and it is checked on identical arithmetic — same
+    /// mixing, same exponents, no cutoff, no shift — so bit equality is the
+    /// right bar rather than a tolerance.
+    ///
+    /// Free boundary on purpose: this is about the lookup, not periodicity.
+    #[test]
+    fn a_typed_kernel_scores_a_pair_exactly_as_a_compiled_one() {
+        use molrs::spatial::neighbors::{NeighborPair, NeighborsStorage, QueryMode};
+
+        // Two types, deliberately unlike each other, so a table indexed the
+        // wrong way round would give a different answer.
+        let per_type = [(0.3_f64, 3.4_f64), (0.9, 2.6)];
+        let type_id = vec![0_u32, 1, 0, 1];
+        let coords: Vec<F> = vec![
+            0.0, 0.0, 0.0, //
+            3.1, 0.4, 0.2, //
+            1.2, 2.9, 0.7, //
+            4.0, 3.3, 1.1,
+        ];
+        let links = [(0_usize, 1_usize), (0, 2), (1, 3), (2, 3)];
+        let mixing = Mixing::Arithmetic;
+
+        let mut ai = Vec::new();
+        let mut aj = Vec::new();
+        let mut eps = Vec::new();
+        let mut sig = Vec::new();
+        let mut table = Vec::new();
+        for &(i, j) in &links {
+            let (e, sg) =
+                mixing.combine(per_type[type_id[i] as usize], per_type[type_id[j] as usize]);
+            ai.push(i);
+            aj.push(j);
+            eps.push(e);
+            sig.push(sg);
+            let d = [
+                coords[j * 3] - coords[i * 3],
+                coords[j * 3 + 1] - coords[i * 3 + 1],
+                coords[j * 3 + 2] - coords[i * 3 + 2],
+            ];
+            table.push(NeighborPair {
+                i: i as u32,
+                j: j as u32,
+                dist_sq: d[0] * d[0] + d[1] * d[1] + d[2] * d[2],
+                disp: d,
+            });
+        }
+
+        let compiled = LJCut::compiled(ai, aj, eps, sig);
+        let typed =
+            LJCut::typed(type_id, &per_type, mixing, F::INFINITY, 12, 6, false, false).unwrap();
+
+        let neighbors = Neighbors::from_pairs(
+            table,
+            NeighborsStorage::FULL,
+            QueryMode::SelfQuery { num_points: 4 },
+        );
+
+        let (e_c, f_c) = compiled.calc_energy_forces(&coords);
+        let (e_t, f_t) = typed.calc_energy_forces_with_pairs(&coords, &neighbors);
+
+        assert!(
+            e_c.abs() > 1e-6,
+            "the configuration must interact for this to assert anything; got {e_c}"
+        );
+        assert_eq!(e_c.to_bits(), e_t.to_bits(), "energy {e_c} vs {e_t}");
+        assert_eq!(f_c.len(), f_t.len());
+        for (c, (a, b)) in f_c.iter().zip(&f_t).enumerate() {
+            assert_eq!(a.to_bits(), b.to_bits(), "force component {c}: {a} vs {b}");
+        }
+    }
+
+    /// A typed kernel declares its cutoff, where a compiled one has none.
+    ///
+    /// `compiled` exists for an intramolecular list with no spatial cutoff at
+    /// all — it passes `INFINITY` — and that is correct for what it is. A
+    /// neighbour-driven kernel must not inherit it: every pair inside the
+    /// cutoff interacts and nothing outside it does, which is what makes the
+    /// sum finite in a periodic system.
+    #[test]
+    fn a_typed_kernel_stops_at_its_cutoff() {
+        let typed = LJCut::typed(
+            vec![0_u32, 0],
+            &[(1.0, 1.0)],
+            Mixing::Arithmetic,
+            2.5,
+            12,
+            6,
+            false,
+            false,
+        )
+        .unwrap();
+        assert!(typed.pair_eval(4.0, [2.0, 0.0, 0.0]).is_some());
+        assert!(
+            typed.pair_eval(9.0, [3.0, 0.0, 0.0]).is_none(),
+            "3 Å is past the 2.5 Å cutoff"
+        );
     }
 
     #[test]

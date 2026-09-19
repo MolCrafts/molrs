@@ -81,6 +81,17 @@ pub trait PairPotential: Send + Sync {
     }
 }
 
+/// Index into a type-pair parameter table laid out `ti * ntypes + tj`.
+///
+/// This is LAMMPS's `pair_coeff i j` model, and it is what a neighbour-driven
+/// evaluation needs: which pairs exist is re-decided at every rebuild, so a
+/// pair's parameters have to be findable from the atoms it names rather than
+/// from the row it used to occupy.
+#[inline]
+pub(crate) fn type_pair(ti: u32, tj: u32, ntypes: usize) -> usize {
+    ti as usize * ntypes + tj as usize
+}
+
 pub mod buck;
 pub mod coul_cut;
 pub mod lj_class2;
@@ -100,3 +111,66 @@ pub use morse::{PairMorse, pair_morse_ctor};
 pub use tang_toennies::{PairTangToennies, pair_tang_toennies_ctor};
 pub use thole::{PairThole, pair_thole_ctor};
 pub use uff::{UffVdW, uff_lj_ctor};
+
+#[cfg(test)]
+pub(crate) mod testing {
+    use molrs::spatial::neighbors::{NeighborPair, Neighbors, NeighborsStorage, QueryMode};
+    use molrs::types::F;
+
+    /// A neighbour table over exactly `links`, with the displacements a
+    /// neighbour engine would have computed for them.
+    ///
+    /// Every typed kernel is checked against its compiled twin on the same
+    /// pairs, and "the same pairs" has to mean the same arithmetic too: the
+    /// compiled path takes plain coordinate differences, so the table must
+    /// carry those and not a re-derived approximation of them.
+    pub(crate) fn table_over(coords: &[F], links: &[(usize, usize)]) -> Neighbors {
+        let n_points = coords.len() / 3;
+        let pairs: Vec<NeighborPair> = links
+            .iter()
+            .map(|&(i, j)| {
+                let d = [
+                    coords[j * 3] - coords[i * 3],
+                    coords[j * 3 + 1] - coords[i * 3 + 1],
+                    coords[j * 3 + 2] - coords[i * 3 + 2],
+                ];
+                NeighborPair {
+                    i: i as u32,
+                    j: j as u32,
+                    dist_sq: d[0] * d[0] + d[1] * d[1] + d[2] * d[2],
+                    disp: d,
+                }
+            })
+            .collect();
+        Neighbors::from_pairs(
+            pairs,
+            NeighborsStorage::FULL,
+            QueryMode::SelfQuery {
+                num_points: n_points,
+            },
+        )
+    }
+
+    /// Assert two evaluations agree bit for bit, and that they said something.
+    pub(crate) fn assert_same(label: &str, a: (F, Vec<F>), b: (F, Vec<F>)) {
+        let (e_a, f_a) = a;
+        let (e_b, f_b) = b;
+        assert!(
+            e_a.abs() > 1e-9,
+            "{label}: the configuration must interact for this to assert anything; got {e_a}"
+        );
+        assert_eq!(
+            e_a.to_bits(),
+            e_b.to_bits(),
+            "{label}: energy {e_a} vs {e_b}"
+        );
+        assert_eq!(f_a.len(), f_b.len(), "{label}: force length");
+        for (c, (x, y)) in f_a.iter().zip(&f_b).enumerate() {
+            assert_eq!(
+                x.to_bits(),
+                y.to_bits(),
+                "{label}: force component {c}: {x} vs {y}"
+            );
+        }
+    }
+}

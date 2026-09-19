@@ -20,15 +20,30 @@ use std::collections::HashMap;
 use crate::ff::forcefield::Params;
 use crate::ff::potential::Potential;
 use crate::ff::potential::geometry::validate_coords;
+use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame::Frame;
 use molrs::types::F;
 
 /// Tang-Toennies damped Coulomb pair potential. `b`/`n`/`c` are style-level;
 /// `qq[idx]` is the charge product `q_i q_j` of each pair.
+/// Where a pair's charge product comes from.
+enum Charges {
+    /// Products resolved against one fixed pair list at construction.
+    Compiled {
+        atom_i: Vec<usize>,
+        atom_j: Vec<usize>,
+        qq: Vec<F>,
+    },
+    /// Per-atom charges; the product is formed when a pair turns up.
+    ///
+    /// What a neighbour-driven evaluation needs: a neighbour table is a
+    /// different list of pairs every rebuild. Under a ghost régime the vector
+    /// covers the copies too, each carrying its owner's charge.
+    PerAtom { q: Vec<F> },
+}
+
 pub struct PairTangToennies {
-    atom_i: Vec<usize>,
-    atom_j: Vec<usize>,
-    qq: Vec<F>,
+    charges: Charges,
     b: F,
     n: usize,
     c: F,
@@ -39,13 +54,64 @@ impl PairTangToennies {
         assert_eq!(atom_i.len(), atom_j.len());
         assert_eq!(atom_i.len(), qq.len());
         Self {
-            atom_i,
-            atom_j,
-            qq,
+            charges: Charges::Compiled { atom_i, atom_j, qq },
             b,
             n,
             c,
         }
+    }
+
+    /// A kernel that forms `qᵢqⱼ` from the atoms a pair names.
+    pub fn typed(q: Vec<F>, b: F, n: usize, c: F) -> Self {
+        Self {
+            charges: Charges::PerAtom { q },
+            b,
+            n,
+            c,
+        }
+    }
+
+    /// The pair term for one already-reduced separation.
+    fn pair_kernel(&self, r2: F, disp: [F; 3], qq: F) -> Option<(F, [F; 3])> {
+        if r2 < 1e-24 {
+            return None;
+        }
+        let r = r2.sqrt();
+        let (f, fp) = self.damping(r);
+        let energy = f * qq / r;
+        // V = f qq / r ; dV/dr = qq (f'/r - f/r^2)
+        // factor = -(1/r) dV/dr = qq (f/r^3 - f'/r^2)
+        let dvdr = qq * (fp / r - f / r2);
+        let factor = -dvdr / r;
+        Some((
+            energy,
+            [factor * disp[0], factor * disp[1], factor * disp[2]],
+        ))
+    }
+
+    /// The accumulation, once.
+    fn fold(
+        &self,
+        n_components: usize,
+        n_pairs: usize,
+        pair: impl Fn(usize) -> (usize, usize, F, [F; 3], F),
+    ) -> (F, Vec<F>) {
+        let mut energy: F = 0.0;
+        let mut forces = vec![0.0; n_components];
+        for idx in 0..n_pairs {
+            let (i, j, qq, disp, r2) = pair(idx);
+            let Some((e, f)) = self.pair_kernel(r2, disp, qq) else {
+                continue;
+            };
+            energy += e;
+            forces[j * 3] += f[0];
+            forces[j * 3 + 1] += f[1];
+            forces[j * 3 + 2] += f[2];
+            forces[i * 3] -= f[0];
+            forces[i * 3 + 1] -= f[1];
+            forces[i * 3 + 2] -= f[2];
+        }
+        (energy, forces)
     }
 
     /// `(f_n(r), f'_n(r))` — damping factor and its radial derivative.
@@ -69,44 +135,49 @@ impl PairTangToennies {
 impl Potential for PairTangToennies {
     fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
         let n_atoms = validate_coords(coords);
-        let mut energy: F = 0.0;
-        let mut forces = vec![0.0; coords.len()];
-
-        for idx in 0..self.atom_i.len() {
-            let i = self.atom_i[idx];
-            let j = self.atom_j[idx];
+        let Charges::Compiled { atom_i, atom_j, qq } = &self.charges else {
+            // Per-atom charges need a pair table, and nobody handed one over.
+            return (0.0, vec![0.0; coords.len()]);
+        };
+        self.fold(coords.len(), atom_i.len(), |idx| {
+            let i = atom_i[idx];
+            let j = atom_j[idx];
             debug_assert!(i < n_atoms && j < n_atoms);
+            let d = [
+                coords[j * 3] - coords[i * 3],
+                coords[j * 3 + 1] - coords[i * 3 + 1],
+                coords[j * 3 + 2] - coords[i * 3 + 2],
+            ];
+            let r2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+            (i, j, qq[idx], d, r2)
+        })
+    }
 
-            let qq = self.qq[idx];
-
-            let dx = coords[j * 3] - coords[i * 3];
-            let dy = coords[j * 3 + 1] - coords[i * 3 + 1];
-            let dz = coords[j * 3 + 2] - coords[i * 3 + 2];
-            let r2 = dx * dx + dy * dy + dz * dz;
-            if r2 < 1e-24 {
-                continue;
-            }
-            let r = r2.sqrt();
-            let (f, fp) = self.damping(r);
-            energy += f * qq / r;
-
-            // V = f qq / r ; dV/dr = qq (f'/r - f/r^2)
-            // factor = -(1/r) dV/dr = qq (f/r^3 - f'/r^2)
-            let dvdr = qq * (fp / r - f / r2);
-            let factor = -dvdr / r;
-            let fx = factor * dx;
-            let fy = factor * dy;
-            let fz = factor * dz;
-
-            forces[j * 3] += fx;
-            forces[j * 3 + 1] += fy;
-            forces[j * 3 + 2] += fz;
-            forces[i * 3] -= fx;
-            forces[i * 3 + 1] -= fy;
-            forces[i * 3 + 2] -= fz;
-        }
-
-        (energy, forces)
+    fn calc_energy_forces_with_pairs(&self, coords: &[F], pairs: &Neighbors) -> (F, Vec<F>) {
+        let Charges::PerAtom { q } = &self.charges else {
+            // A compiled kernel answers for its own list, not for this one.
+            return self.calc_energy_forces(coords);
+        };
+        let (Some(disp), Some(d2)) = (pairs.disp(), pairs.dist_sq()) else {
+            return (0.0, vec![0.0; coords.len()]);
+        };
+        let i_col = pairs.query_point_indices();
+        let j_col = pairs.point_indices();
+        self.fold(coords.len(), i_col.len(), |p| {
+            let i = i_col[p] as usize;
+            let j = j_col[p] as usize;
+            debug_assert!(
+                i < q.len() && j < q.len(),
+                "a pair names an atom the charge vector does not cover"
+            );
+            (
+                i,
+                j,
+                q[i] * q[j],
+                [disp[[p, 0]], disp[[p, 1]], disp[[p, 2]]],
+                d2[p],
+            )
+        })
     }
 }
 
@@ -169,6 +240,35 @@ pub fn pair_tang_toennies_ctor(
 
 #[cfg(test)]
 mod tests {
+
+    /// Forming `qᵢqⱼ` from the atoms is the same number as having formed it
+    /// earlier against a fixed list — bit for bit, on the same pairs.
+    #[test]
+    fn per_atom_charges_score_a_pair_exactly_as_compiled_products() {
+        use crate::ff::potential::pair::testing::{assert_same, table_over};
+
+        let q = vec![0.4_f64, -0.7, 0.3, -0.2];
+        let coords: Vec<F> = vec![
+            0.0, 0.0, 0.0, //
+            2.1, 0.4, 0.2, //
+            1.2, 1.9, 0.7, //
+            3.0, 2.3, 1.1,
+        ];
+        let links = [(0_usize, 1_usize), (0, 2), (1, 3), (2, 3)];
+        let (b, n, c) = (4.5_f64, 4_usize, 1.0_f64);
+
+        let (ai, aj): (Vec<usize>, Vec<usize>) = links.iter().copied().unzip();
+        let qq: Vec<F> = links.iter().map(|&(i, j)| q[i] * q[j]).collect();
+        let compiled = PairTangToennies::new(ai, aj, qq, b, n, c);
+        let typed = PairTangToennies::typed(q, b, n, c);
+
+        let table = table_over(&coords, &links);
+        assert_same(
+            "coul/tt",
+            compiled.calc_energy_forces(&coords),
+            typed.calc_energy_forces_with_pairs(&coords, &table),
+        );
+    }
     use super::*;
 
     fn numerical_forces(pot: &PairTangToennies, coords: &[F]) -> Vec<F> {

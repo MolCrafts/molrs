@@ -10,78 +10,197 @@ use std::collections::HashMap;
 use crate::ff::forcefield::Params;
 use crate::ff::potential::Potential;
 use crate::ff::potential::geometry::validate_coords;
+use crate::ff::potential::pair::type_pair;
+use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame::Frame;
 use molrs::types::F;
 
-/// Buckingham pair potential with pre-resolved flat arrays.
+/// Where a pair's Buckingham `(A, ρ, C)` comes from.
+enum Source {
+    /// Resolved against one fixed pair list at construction, keyed by the
+    /// `type` label on each row.
+    Compiled {
+        atom_i: Vec<usize>,
+        atom_j: Vec<usize>,
+        a: Vec<F>,
+        rho: Vec<F>,
+        c: Vec<F>,
+    },
+    /// A type-pair table, keyed by the types of the two atoms.
+    ///
+    /// The row label a compiled kernel keys on belongs to a pair list that a
+    /// neighbour engine rebuilds from scratch; the atoms' types survive it.
+    /// This is LAMMPS's `pair_coeff i j` model. Under a ghost régime `type_id`
+    /// covers the copies too, each carrying its owner's type.
+    Typed {
+        type_id: Vec<u32>,
+        ntypes: usize,
+        a: Vec<F>,
+        rho: Vec<F>,
+        c: Vec<F>,
+    },
+}
+
 pub struct PairBuck {
-    atom_i: Vec<usize>,
-    atom_j: Vec<usize>,
-    a: Vec<F>,
-    rho: Vec<F>,
-    c: Vec<F>,
+    source: Source,
 }
 
 impl PairBuck {
     pub fn new(atom_i: Vec<usize>, atom_j: Vec<usize>, a: Vec<F>, rho: Vec<F>, c: Vec<F>) -> Self {
-        assert_eq!(atom_i.len(), atom_j.len());
-        assert_eq!(atom_i.len(), a.len());
-        assert_eq!(atom_i.len(), rho.len());
-        assert_eq!(atom_i.len(), c.len());
+        let n = atom_i.len();
+        assert_eq!(atom_j.len(), n);
+        assert_eq!(a.len(), n);
+        assert_eq!(rho.len(), n);
+        assert_eq!(c.len(), n);
         Self {
-            atom_i,
-            atom_j,
-            a,
-            rho,
-            c,
+            source: Source::Compiled {
+                atom_i,
+                atom_j,
+                a,
+                rho,
+                c,
+            },
         }
+    }
+
+    /// A kernel that finds its parameters from the types of the two atoms.
+    ///
+    /// `type_id` is one type index per atom; each table is `ntypes × ntypes`
+    /// laid out `ti * ntypes + tj`. This is the form a neighbour-driven
+    /// evaluation needs.
+    ///
+    /// A neighbour table is a different list of pairs every rebuild, so a
+    /// parameter resolved against an older one belongs to different atoms.
+    /// Keyed on the atoms instead, it can be found for whatever pair turns up
+    /// — including one that names a periodic copy.
+    pub fn typed(type_id: Vec<u32>, ntypes: usize, a: Vec<F>, rho: Vec<F>, c: Vec<F>) -> Self {
+        let n_cells = ntypes * ntypes;
+        assert_eq!(n_cells, a.len(), "a must cover every type pair");
+        assert_eq!(n_cells, rho.len(), "rho must cover every type pair");
+        assert_eq!(n_cells, c.len(), "c must cover every type pair");
+        debug_assert!(
+            type_id.iter().all(|&t| (t as usize) < ntypes),
+            "an atom has a type with no parameters"
+        );
+        Self {
+            source: Source::Typed {
+                type_id,
+                ntypes,
+                a,
+                rho,
+                c,
+            },
+        }
+    }
+
+    /// The pair term for one already-reduced separation.
+    fn pair_kernel(&self, r2: F, disp: [F; 3], a: F, rho: F, c: F) -> Option<(F, [F; 3])> {
+        if r2 < 1e-24 {
+            return None;
+        }
+        let r = r2.sqrt();
+        let exp_term = a * (-r / rho).exp();
+        let r6 = r2 * r2 * r2;
+        let energy = exp_term - c / r6;
+
+        // E = A exp(-r/rho) - C r^-6
+        // dE/dr = -(A/rho) exp(-r/rho) + 6 C r^-7
+        // factor = -(1/r) dE/dr = (A/(rho r)) exp(-r/rho) - 6 C r^-8
+        let factor = exp_term / (rho * r) - 6.0 * c / (r6 * r2);
+        Some((
+            energy,
+            [factor * disp[0], factor * disp[1], factor * disp[2]],
+        ))
+    }
+
+    /// The accumulation, once. Only where the pairs and the parameters come
+    /// from differs between the two entry points.
+    fn fold(
+        &self,
+        n_components: usize,
+        n_pairs: usize,
+        pair: impl Fn(usize) -> (usize, usize, (F, F, F), [F; 3], F),
+    ) -> (F, Vec<F>) {
+        let mut energy: F = 0.0;
+        let mut forces = vec![0.0; n_components];
+        for idx in 0..n_pairs {
+            let (i, j, (a, rho, c), disp, r2) = pair(idx);
+            let Some((e, f)) = self.pair_kernel(r2, disp, a, rho, c) else {
+                continue;
+            };
+            energy += e;
+            forces[j * 3] += f[0];
+            forces[j * 3 + 1] += f[1];
+            forces[j * 3 + 2] += f[2];
+            forces[i * 3] -= f[0];
+            forces[i * 3 + 1] -= f[1];
+            forces[i * 3 + 2] -= f[2];
+        }
+        (energy, forces)
     }
 }
 
 impl Potential for PairBuck {
     fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
         let n_atoms = validate_coords(coords);
-        let mut energy: F = 0.0;
-        let mut forces = vec![0.0; coords.len()];
-
-        for idx in 0..self.atom_i.len() {
-            let i = self.atom_i[idx];
-            let j = self.atom_j[idx];
+        let Source::Compiled {
+            atom_i,
+            atom_j,
+            a,
+            rho,
+            c,
+        } = &self.source
+        else {
+            // A type table needs a pair table, and nobody handed one over.
+            return (0.0, vec![0.0; coords.len()]);
+        };
+        self.fold(coords.len(), atom_i.len(), |idx| {
+            let i = atom_i[idx];
+            let j = atom_j[idx];
             debug_assert!(i < n_atoms && j < n_atoms);
+            let d = [
+                coords[j * 3] - coords[i * 3],
+                coords[j * 3 + 1] - coords[i * 3 + 1],
+                coords[j * 3 + 2] - coords[i * 3 + 2],
+            ];
+            let r2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+            (i, j, (a[idx], rho[idx], c[idx]), d, r2)
+        })
+    }
 
-            let a = self.a[idx];
-            let rho = self.rho[idx];
-            let c = self.c[idx];
-
-            let dx = coords[j * 3] - coords[i * 3];
-            let dy = coords[j * 3 + 1] - coords[i * 3 + 1];
-            let dz = coords[j * 3 + 2] - coords[i * 3 + 2];
-            let r2 = dx * dx + dy * dy + dz * dz;
-            if r2 < 1e-24 {
-                continue;
-            }
-            let r = r2.sqrt();
-            let exp_term = a * (-r / rho).exp();
-            let r6 = r2 * r2 * r2;
-            energy += exp_term - c / r6;
-
-            // E = A exp(-r/rho) - C r^-6
-            // dE/dr = -(A/rho) exp(-r/rho) + 6 C r^-7
-            // factor = -(1/r) dE/dr = (A/(rho r)) exp(-r/rho) - 6 C r^-8
-            let factor = exp_term / (rho * r) - 6.0 * c / (r6 * r2);
-            let fx = factor * dx;
-            let fy = factor * dy;
-            let fz = factor * dz;
-
-            forces[j * 3] += fx;
-            forces[j * 3 + 1] += fy;
-            forces[j * 3 + 2] += fz;
-            forces[i * 3] -= fx;
-            forces[i * 3 + 1] -= fy;
-            forces[i * 3 + 2] -= fz;
-        }
-
-        (energy, forces)
+    fn calc_energy_forces_with_pairs(&self, coords: &[F], pairs: &Neighbors) -> (F, Vec<F>) {
+        let Source::Typed {
+            type_id,
+            ntypes,
+            a,
+            rho,
+            c,
+        } = &self.source
+        else {
+            // A compiled kernel answers for its own list, not for this one.
+            return self.calc_energy_forces(coords);
+        };
+        let (Some(disp), Some(d2)) = (pairs.disp(), pairs.dist_sq()) else {
+            return (0.0, vec![0.0; coords.len()]);
+        };
+        let i_col = pairs.query_point_indices();
+        let j_col = pairs.point_indices();
+        self.fold(coords.len(), i_col.len(), |p| {
+            let i = i_col[p] as usize;
+            let j = j_col[p] as usize;
+            debug_assert!(
+                i < type_id.len() && j < type_id.len(),
+                "a pair names an atom the type table does not cover"
+            );
+            let t = type_pair(type_id[i], type_id[j], *ntypes);
+            (
+                i,
+                j,
+                (a[t], rho[t], c[t]),
+                [disp[[p, 0]], disp[[p, 1]], disp[[p, 2]]],
+                d2[p],
+            )
+        })
     }
 }
 
@@ -142,6 +261,52 @@ pub fn pair_buck_ctor(
 
 #[cfg(test)]
 mod tests {
+
+    /// A type-pair table gives the same number as a per-row label resolved
+    /// earlier against a fixed list — bit for bit, on the same pairs.
+    ///
+    /// The row label belongs to a pair list a neighbour engine rebuilds from
+    /// scratch; the atoms' types survive it. That is the whole difference.
+    #[test]
+    fn a_type_table_scores_a_pair_exactly_as_compiled_rows() {
+        use crate::ff::potential::pair::testing::{assert_same, table_over};
+
+        let ntypes = 2_usize;
+        let type_id = vec![0_u32, 1, 0, 1];
+        let a: Vec<F> = vec![12000.0, 9000.0, 9000.0, 7000.0];
+        let rho: Vec<F> = vec![0.31, 0.29, 0.29, 0.27];
+        let c: Vec<F> = vec![280.0, 190.0, 190.0, 140.0];
+        let coords: Vec<F> = vec![
+            0.0, 0.0, 0.0, //
+            2.1, 0.4, 0.2, //
+            1.2, 1.9, 0.7, //
+            3.0, 2.3, 1.1,
+        ];
+        let links = [(0_usize, 1_usize), (0, 2), (1, 3), (2, 3)];
+
+        let (ai, aj): (Vec<usize>, Vec<usize>) = links.iter().copied().unzip();
+        let a_c: Vec<F> = links
+            .iter()
+            .map(|&(i, j)| a[type_pair(type_id[i], type_id[j], ntypes)])
+            .collect();
+        let rho_c: Vec<F> = links
+            .iter()
+            .map(|&(i, j)| rho[type_pair(type_id[i], type_id[j], ntypes)])
+            .collect();
+        let c_c: Vec<F> = links
+            .iter()
+            .map(|&(i, j)| c[type_pair(type_id[i], type_id[j], ntypes)])
+            .collect();
+        let compiled = PairBuck::new(ai, aj, a_c, rho_c, c_c);
+        let typed = PairBuck::typed(type_id, ntypes, a, rho, c);
+
+        let table = table_over(&coords, &links);
+        assert_same(
+            "buck",
+            compiled.calc_energy_forces(&coords),
+            typed.calc_energy_forces_with_pairs(&coords, &table),
+        );
+    }
     use super::*;
 
     fn numerical_forces(pot: &PairBuck, coords: &[F]) -> Vec<F> {

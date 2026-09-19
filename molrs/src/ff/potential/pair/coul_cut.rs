@@ -33,6 +33,7 @@
 use crate::ff::forcefield::Params;
 use crate::ff::potential::Potential;
 use crate::ff::potential::geometry::validate_coords;
+use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame::Frame;
 use molrs::types::F;
 
@@ -45,10 +46,7 @@ const R_MIN2: F = 1e-24;
 /// `E = k·qᵢqⱼ / (D·(r + δ))`. All four scalars come from the force field; see the
 /// module docs.
 pub struct PairCoulCut {
-    atom_i: Vec<usize>,
-    atom_j: Vec<usize>,
-    /// Per-pair charge product `qᵢqⱼ` (already scaled for 1-4 etc.).
-    qiqj: Vec<F>,
+    charges: Charges,
     /// Coulomb constant `k` in kcal·Å·mol⁻¹·e⁻² — the force field's, not the kernel's.
     coulomb: F,
     /// Dielectric constant `D` of the medium the force field was parameterised in.
@@ -57,6 +55,28 @@ pub struct PairCoulCut {
     delta: F,
     /// Distance cutoff in Å; `f64::INFINITY` disables it.
     cutoff: F,
+}
+
+/// Where a pair's charge product comes from.
+enum Charges {
+    /// Products resolved against one fixed pair list at construction, already
+    /// carrying any exclusion or 1-4 scaling.
+    Compiled {
+        atom_i: Vec<usize>,
+        atom_j: Vec<usize>,
+        qiqj: Vec<F>,
+    },
+    /// Per-atom charges; the product is formed when a pair turns up.
+    ///
+    /// This is what a neighbour-driven evaluation needs — a neighbour table is
+    /// a different list of pairs every rebuild, so a product resolved against
+    /// an older one names the wrong atoms. Under a ghost régime the vector
+    /// covers the copies too, each carrying its owner's charge.
+    ///
+    /// It carries **no** 1-4 scaling: there is nothing on a neighbour table to
+    /// carry it. Scaling close neighbours is the caller's, through the
+    /// special-bonds weights.
+    PerAtom { q: Vec<F> },
 }
 
 impl PairCoulCut {
@@ -72,69 +92,149 @@ impl PairCoulCut {
         assert_eq!(atom_i.len(), atom_j.len());
         assert_eq!(atom_i.len(), qiqj.len());
         Self {
-            atom_i,
-            atom_j,
-            qiqj,
+            charges: Charges::Compiled {
+                atom_i,
+                atom_j,
+                qiqj,
+            },
             coulomb,
             dielectric,
             delta,
             cutoff,
         }
     }
+
+    /// A kernel that forms `qᵢqⱼ` from the atoms a pair names.
+    ///
+    /// The form a neighbour-driven evaluation needs.
+    ///
+    /// A neighbour table is a different list of pairs every rebuild, so a
+    /// parameter resolved against an older one belongs to different atoms.
+    /// Keyed on the atoms instead, it can be found for whatever pair turns up
+    /// — including one that names a periodic copy.
+    pub fn typed(q: Vec<F>, coulomb: F, dielectric: F, delta: F, cutoff: F) -> Self {
+        Self {
+            charges: Charges::PerAtom { q },
+            coulomb,
+            dielectric,
+            delta,
+            cutoff,
+        }
+    }
+
+    /// The pair term: buffered Coulomb for one already-reduced separation.
+    ///
+    /// `qq` is `k·qᵢqⱼ/D` — the style constants are hoisted by the caller, once
+    /// per evaluation rather than once per pair. Returns the energy always and
+    /// the force only when the separation has a direction.
+    fn pair_kernel(&self, r2: F, disp: [F; 3], qq: F) -> Option<(F, [F; 3])> {
+        if r2 >= self.cutoff * self.cutoff {
+            return None;
+        }
+        let r = r2.sqrt();
+        let r_buf = r + self.delta;
+        // Unbuffered (δ = 0) coincident charges: `k·qᵢqⱼ/0` is undefined, so
+        // skip the pair entirely. With a buffer this cannot trigger — keeping
+        // the term finite at r = 0 is the buffer's whole purpose.
+        if r_buf <= 0.0 {
+            return None;
+        }
+        let energy = qq / r_buf;
+        // The force is `−dE/dr · r̂` with `dE/dr = −k·qᵢqⱼ/(D·(r+δ)²)`, i.e. the
+        // BUFFERED distance squared in the denominator — not `r²`. At r = 0 it
+        // has no direction (the energy above is still real), so leave it zero.
+        if r2 < R_MIN2 {
+            return Some((energy, [0.0, 0.0, 0.0]));
+        }
+        let factor = qq / (r_buf * r_buf * r);
+        Some((
+            energy,
+            [factor * disp[0], factor * disp[1], factor * disp[2]],
+        ))
+    }
+
+    /// The accumulation, once. What differs between the two entry points is
+    /// which pairs turn up and where `qᵢqⱼ` comes from — never the force.
+    fn fold(
+        &self,
+        n_components: usize,
+        n_pairs: usize,
+        pair: impl Fn(usize) -> (usize, usize, F, [F; 3], F),
+    ) -> (F, Vec<F>) {
+        let mut energy: F = 0.0;
+        let mut forces = vec![0.0; n_components];
+        for idx in 0..n_pairs {
+            let (i, j, qq, disp, r2) = pair(idx);
+            let Some((e, f)) = self.pair_kernel(r2, disp, qq) else {
+                continue;
+            };
+            energy += e;
+            forces[j * 3] += f[0];
+            forces[j * 3 + 1] += f[1];
+            forces[j * 3 + 2] += f[2];
+            forces[i * 3] -= f[0];
+            forces[i * 3 + 1] -= f[1];
+            forces[i * 3 + 2] -= f[2];
+        }
+        (energy, forces)
+    }
 }
 
 impl Potential for PairCoulCut {
     fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
         let n_atoms = validate_coords(coords);
-        let mut energy: F = 0.0;
-        let mut forces = vec![0.0; coords.len()];
-        let cut2 = self.cutoff * self.cutoff;
-        // `k/D` is a style-level constant: hoist it out of the pair loop. At D = 1
-        // this is exactly `k` (IEEE: `x / 1.0 == x`), so the δ = 0, D = 1 path stays
-        // bit-for-bit identical to the unbuffered kernel this generalizes.
+        // `k/D` is a style-level constant: hoist it out of the pair loop. At
+        // D = 1 this is exactly `k` (IEEE: `x / 1.0 == x`), so the δ = 0, D = 1
+        // path stays bit-for-bit identical to the unbuffered kernel this
+        // generalizes.
         let k_over_d = self.coulomb / self.dielectric;
-
-        for idx in 0..self.atom_i.len() {
-            let i = self.atom_i[idx];
-            let j = self.atom_j[idx];
+        let Charges::Compiled {
+            atom_i,
+            atom_j,
+            qiqj,
+        } = &self.charges
+        else {
+            // Per-atom charges need a pair table, and nobody handed one over.
+            return (0.0, vec![0.0; coords.len()]);
+        };
+        self.fold(coords.len(), atom_i.len(), |idx| {
+            let i = atom_i[idx];
+            let j = atom_j[idx];
             debug_assert!(i < n_atoms && j < n_atoms);
+            let d = [
+                coords[j * 3] - coords[i * 3],
+                coords[j * 3 + 1] - coords[i * 3 + 1],
+                coords[j * 3 + 2] - coords[i * 3 + 2],
+            ];
+            let r2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+            (i, j, k_over_d * qiqj[idx], d, r2)
+        })
+    }
 
-            let dx = coords[j * 3] - coords[i * 3];
-            let dy = coords[j * 3 + 1] - coords[i * 3 + 1];
-            let dz = coords[j * 3 + 2] - coords[i * 3 + 2];
-            let r2 = dx * dx + dy * dy + dz * dz;
-            if r2 >= cut2 {
-                continue;
-            }
-            let r = r2.sqrt();
-            let r_buf = r + self.delta;
-            // Unbuffered (δ = 0) coincident charges: `k·qᵢqⱼ/0` is undefined, so skip
-            // the pair entirely. With a buffer this cannot trigger — keeping the term
-            // finite at r = 0 is the buffer's whole purpose.
-            if r_buf <= 0.0 {
-                continue;
-            }
-            let qq = k_over_d * self.qiqj[idx];
-            energy += qq / r_buf;
-
-            // The force is `−dE/dr · r̂` with `dE/dr = −k·qᵢqⱼ/(D·(r+δ)²)`, i.e. the
-            // BUFFERED distance squared in the denominator — not `r²`. At r = 0 it has
-            // no direction (the energy above is still real), so leave it at zero.
-            if r2 < R_MIN2 {
-                continue;
-            }
-            let factor = qq / (r_buf * r_buf * r);
-            let fx = factor * dx;
-            let fy = factor * dy;
-            let fz = factor * dz;
-            forces[j * 3] += fx;
-            forces[j * 3 + 1] += fy;
-            forces[j * 3 + 2] += fz;
-            forces[i * 3] -= fx;
-            forces[i * 3 + 1] -= fy;
-            forces[i * 3 + 2] -= fz;
-        }
-        (energy, forces)
+    fn calc_energy_forces_with_pairs(&self, coords: &[F], pairs: &Neighbors) -> (F, Vec<F>) {
+        let k_over_d = self.coulomb / self.dielectric;
+        let Charges::PerAtom { q } = &self.charges else {
+            // A compiled kernel answers for its own list, not for this one.
+            return self.calc_energy_forces(coords);
+        };
+        let (Some(disp), Some(d2)) = (pairs.disp(), pairs.dist_sq()) else {
+            return (0.0, vec![0.0; coords.len()]);
+        };
+        let i_col = pairs.query_point_indices();
+        let j_col = pairs.point_indices();
+        self.fold(coords.len(), i_col.len(), |p| {
+            let i = i_col[p] as usize;
+            let j = j_col[p] as usize;
+            debug_assert!(
+                i < q.len() && j < q.len(),
+                "a pair names an atom the charge vector does not cover"
+            );
+            // Parenthesised the way the compiled path forms it: `k/D · (qᵢqⱼ)`
+            // and `(k/D · qᵢ) · qⱼ` differ in the last bit, and the two paths
+            // are meant to be the same number.
+            let qq = k_over_d * (q[i] * q[j]);
+            (i, j, qq, [disp[[p, 0]], disp[[p, 1]], disp[[p, 2]]], d2[p])
+        })
     }
 }
 
@@ -238,6 +338,39 @@ pub fn pair_coul_cut_ctor(
 
 #[cfg(test)]
 mod tests {
+    use crate::ff::potential::pair::testing::{assert_same, table_over};
+
+    /// Forming `qᵢqⱼ` from the atoms is the same number as having formed it
+    /// earlier against a fixed list — bit for bit, on the same pairs.
+    ///
+    /// The difference is only *when*, and that matters because a neighbour
+    /// table is a different list of pairs every rebuild: a product resolved
+    /// against an older one names the wrong atoms, silently.
+    #[test]
+    fn per_atom_charges_score_a_pair_exactly_as_compiled_products() {
+        let q = vec![0.4_f64, -0.7, 0.3, -0.2];
+        let coords: Vec<F> = vec![
+            0.0, 0.0, 0.0, //
+            2.1, 0.4, 0.2, //
+            1.2, 1.9, 0.7, //
+            3.0, 2.3, 1.1,
+        ];
+        let links = [(0_usize, 1_usize), (0, 2), (1, 3), (2, 3)];
+        let (k, d, delta, cutoff) = (332.0716_f64, 1.0_f64, 0.05_f64, 10.0_f64);
+
+        let (ai, aj): (Vec<usize>, Vec<usize>) = links.iter().copied().unzip();
+        let qiqj: Vec<F> = links.iter().map(|&(i, j)| q[i] * q[j]).collect();
+        let compiled = PairCoulCut::new(ai, aj, qiqj, k, d, delta, cutoff);
+        let typed = PairCoulCut::typed(q, k, d, delta, cutoff);
+
+        let table = table_over(&coords, &links);
+        assert_same(
+            "coul/cut",
+            compiled.calc_energy_forces(&coords),
+            typed.calc_energy_forces_with_pairs(&coords, &table),
+        );
+    }
+
     use super::*;
     use molrs::units::constants::COULOMB_REAL;
 
