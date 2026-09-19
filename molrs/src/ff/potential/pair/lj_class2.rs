@@ -230,6 +230,10 @@ impl Potential for PairLJClass2 {
         };
         gather_copies(type_id, *n_owned, owner);
     }
+
+    fn binds_a_fixed_pair_list(&self) -> bool {
+        matches!(self.source, Source::Compiled { .. })
+    }
 }
 
 /// Construct a [`PairLJClass2`] from style params, type params, and Frame topology.

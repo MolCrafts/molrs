@@ -163,7 +163,8 @@ impl MMFFVdW {
         }
         let rho = r + 0.07 * rs;
         let u = 1.07 * rs / rho;
-        let u7 = u * u * u * u * u * u * u;
+        let u6 = u * u * u * u * u * u;
+        let u7 = u6 * u;
         let r7 = r * r * r * r * r * r * r;
         let rs7 = rs * rs * rs * rs * rs * rs * rs;
         let v = 1.12 * rs7 / (r7 + 0.12 * rs7);
@@ -172,7 +173,11 @@ impl MMFFVdW {
 
         let du_dr = -u / rho;
         let dv_dr = -7.0 * r * r * r * r * r * r * v / (r7 + 0.12 * rs7);
-        let de_dr = eps * (7.0 * u7 / u * du_dr * (v - 2.0) + u7 * dv_dr);
+        // `7·u⁷/u` rather than `7·u⁶` was `0/0` for a zero vdW radius — a dummy
+        // site, a lone pair, an unparameterised type — and one NaN force
+        // poisons the whole trajectory in a single step. Same value, exactly,
+        // one multiplication cheaper, and defined everywhere.
+        let de_dr = eps * (7.0 * u6 * du_dr * (v - 2.0) + u7 * dv_dr);
 
         let factor = -de_dr / r;
         Some((energy, [factor * d[0], factor * d[1], factor * d[2]]))
@@ -262,6 +267,10 @@ impl Potential for MMFFVdW {
             return;
         };
         gather_copies(atoms, *n_owned, owner);
+    }
+
+    fn binds_a_fixed_pair_list(&self) -> bool {
+        matches!(self.source, Source::Compiled { .. })
     }
 }
 

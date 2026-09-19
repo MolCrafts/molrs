@@ -266,6 +266,10 @@ impl Potential for PairCoulCut {
         };
         gather_copies(q, *n_owned, owner);
     }
+
+    fn binds_a_fixed_pair_list(&self) -> bool {
+        matches!(self.charges, Charges::Compiled { .. })
+    }
 }
 
 /// Read a style param the **force field must supply**, or say which one it did not.

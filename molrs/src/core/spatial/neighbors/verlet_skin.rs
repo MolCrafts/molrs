@@ -459,6 +459,14 @@ impl VerletSkin {
         });
         self.pairs_buf.clear();
         let mic = self.simbox.mic();
+        // The stored edges reach `cutoff + skin`; the table must not. The skin
+        // is a *caching* policy — it decides how often the search runs, and it
+        // may not decide what interacts. A kernel without a cutoff of its own
+        // would otherwise score the shell, and the energy would step every time
+        // the list rebuilt: turning on a performance knob would change the
+        // physics. `GhostSet::pairs` cuts at exactly the cutoff for the same
+        // reason.
+        let cutoff2 = self.cutoff * self.cutoff;
         if let Some(pos) = positions.as_slice() {
             for edge in &self.edges {
                 let i = edge.i as usize;
@@ -471,7 +479,9 @@ impl VerletSkin {
                     pos[bj + 2] - pos[bi + 2],
                 ]);
                 let r2 = disp[0] * disp[0] + disp[1] * disp[1] + disp[2] * disp[2];
-                self.pairs_buf.push(edge.i, edge.j, r2, disp);
+                if r2 <= cutoff2 {
+                    self.pairs_buf.push(edge.i, edge.j, r2, disp);
+                }
             }
         } else {
             for edge in &self.edges {
@@ -481,7 +491,9 @@ impl VerletSkin {
                 let pj = [positions[[j, 0]], positions[[j, 1]], positions[[j, 2]]];
                 let disp = mic.apply([pj[0] - pi[0], pj[1] - pi[1], pj[2] - pi[2]]);
                 let r2 = disp[0] * disp[0] + disp[1] * disp[1] + disp[2] * disp[2];
-                self.pairs_buf.push(edge.i, edge.j, r2, disp);
+                if r2 <= cutoff2 {
+                    self.pairs_buf.push(edge.i, edge.j, r2, disp);
+                }
             }
         }
         Ok(&self.pairs_buf)

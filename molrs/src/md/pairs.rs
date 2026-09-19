@@ -85,6 +85,25 @@ impl Comm {
         if skin < 0.0 {
             return Err(MdError::Invalid(format!("skin must be >= 0 Å, got {skin}")));
         }
+        // Past half the smallest perpendicular width a pair has more than one
+        // image inside the cutoff, and the halo keeps only the first it finds
+        // (`GhostSet::pairs` dedupes on the owner pair). It would not
+        // double-count; it would *under*-count, silently. `VerletSkin::new`
+        // draws the same line for the minimum image — this is the same physics
+        // and it belongs here too.
+        let min_width = bx
+            .nearest_plane_distance()
+            .iter()
+            .copied()
+            .fold(F::INFINITY, F::min);
+        let half_width = 0.5 * min_width;
+        if !bx.is_free() && cutoff > half_width {
+            return Err(MdError::Invalid(format!(
+                "cutoff {cutoff} Å exceeds half the minimum perpendicular cell width \
+                 ({half_width:.3} Å); a pair would have more than one image inside it \
+                 and the halo keeps only one"
+            )));
+        }
         let set = GhostSet::borders(&bx, owned, cutoff + skin).map_err(ghost_err)?;
         Ok(Self {
             set,
@@ -473,6 +492,26 @@ mod remap_tests {
             .current(0)
             .expect("this kernel keeps indices")
             .to_owned())
+    }
+
+    /// A cutoff past half the smallest perpendicular width is refused.
+    ///
+    /// Beyond it a pair has more than one image inside the cutoff, and the
+    /// halo's pair table keeps one per owner pair — so it would not
+    /// double-count, it would *under*-count, and nothing downstream could tell.
+    /// `VerletSkin::new` has drawn this line for the minimum image all along;
+    /// the copies obey the same physics.
+    #[test]
+    fn a_cutoff_past_half_the_cell_is_refused() {
+        let l = 10.0_f64;
+        let bx = SimBox::cube(l, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
+        let owned = array![[1.0_f64, 1.0, 1.0], [2.0, 2.0, 2.0]];
+
+        assert!(Comm::new(bx.clone(), owned.view(), 4.9, 0.0).is_ok());
+        let err =
+            Comm::new(bx, owned.view(), 5.1, 0.0).expect_err("5.1 Å is past half of a 10 Å cell");
+        let msg = format!("{err}");
+        assert!(msg.contains("half the minimum perpendicular"), "{msg}");
     }
 
     /// A bond whose two atoms sit on opposite sides of a face is rewritten to
@@ -1245,7 +1284,16 @@ impl SpecialWeights {
         let mut groups: Vec<(F, Vec<NeighborPair>)> = Vec::new();
         for p in 0..i_col.len() {
             let (i, j) = (i_col[p] as usize, j_col[p] as usize);
-            let w = self.weight(own(i), own(j));
+            // An atom and a *copy of itself* are a real interaction, and no
+            // bond-graph weight describes it: the walk is root-inclusive, so
+            // asking for `weight(i, i)` would answer 0 — the weight of an atom
+            // with itself, which is a different question and not one this pair
+            // is asking.
+            let w = if own(i) == own(j) {
+                1.0
+            } else {
+                self.weight(own(i), own(j))
+            };
             if w == 0.0 {
                 continue;
             }

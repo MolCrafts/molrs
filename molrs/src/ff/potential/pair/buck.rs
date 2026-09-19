@@ -108,6 +108,13 @@ impl PairBuck {
         if r2 < 1e-24 {
             return None;
         }
+        // A zero `rho` is what an unparameterised entry of a type-pair table
+        // looks like. `A·exp(-r/0)` is zero and `0/(0·r)` is NaN, so the pair
+        // would contribute no energy and an undefined force — the worst of the
+        // two possible failures. It contributes nothing instead.
+        if rho <= 0.0 {
+            return None;
+        }
         let r = r2.sqrt();
         let exp_term = a * (-r / rho).exp();
         let r6 = r2 * r2 * r2;
@@ -236,6 +243,10 @@ impl Potential for PairBuck {
             return;
         };
         gather_copies(type_id, *n_owned, owner);
+    }
+
+    fn binds_a_fixed_pair_list(&self) -> bool {
+        matches!(self.source, Source::Compiled { .. })
     }
 }
 

@@ -48,11 +48,17 @@ fn check_nx3(arr: &PyReadonlyArray2<'_, NpF>, label: &str) -> PyResult<()> {
 fn provider(
     potential: Box<dyn Potential>,
     skin: Option<molrs::spatial::neighbors::VerletSkin>,
-) -> Box<dyn ForceProvider> {
-    match skin {
-        Some(s) => Box::new(MicPairs::new(potential, s)),
+) -> PyResult<Box<dyn ForceProvider>> {
+    // `MicPairs` refuses a kernel whose parameters were resolved against a
+    // fixed pair list — it would ignore the neighbour table and answer for the
+    // list it was built from, while the driver went on rebuilding and reporting
+    // that table. `ForceField.to_potentials` builds exactly such kernels, so
+    // this is the path where that mistake is made, and the error says what to
+    // build instead.
+    Ok(match skin {
+        Some(s) => Box::new(MicPairs::new(potential, s).map_err(md_err)?),
         None => Box::new(Direct::new(potential)),
-    }
+    })
 }
 
 fn extract_state(state: &Bound<'_, PyAny>) -> PyResult<MDState> {
@@ -445,7 +451,7 @@ impl PyVelocityVerlet {
             None => None,
         };
         Ok(Self {
-            inner: VelocityVerlet::new(dt, provider(boxed, skin), mass.view(), None)
+            inner: VelocityVerlet::new(dt, provider(boxed, skin)?, mass.view(), None)
                 .map_err(md_err)?,
             err_slots,
         })
@@ -556,7 +562,7 @@ impl PyLangevin {
                 dt,
                 gamma,
                 kbt,
-                provider(boxed, skin),
+                provider(boxed, skin)?,
                 mass.view(),
                 seed,
                 None,

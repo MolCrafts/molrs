@@ -3,7 +3,7 @@
 //! Required pieces go in the constructor — no `bind_*` afterthoughts:
 //!
 //! ```ignore
-//! VelocityVerlet::new(dt, MicPairs::new(lj, skin), mass, Some(bx))?;
+//! VelocityVerlet::new(dt, MicPairs::new(lj, skin).unwrap(), mass, Some(bx))?;
 //! Langevin::new(dt, gamma, kbt, Direct::new(potentials), mass, seed, None)?;
 //! ```
 //!
@@ -308,7 +308,11 @@ impl Langevin {
         let inv_mass = mass_col.column(0).mapv(|m| 1.0 / m);
         let sigma = mass_col.column(0).mapv(|m| (kbt / m).sqrt());
         let c1 = (-gamma * dt).exp();
-        let c2 = (1.0 - c1 * c1).max(0.0).sqrt();
+        // `1 − e^{−2γΔt}` written directly loses a digit for every decade
+        // that `γΔt` is below one — at `γΔt = 1e-8` the noise amplitude keeps
+        // barely half its bits, and the sampled temperature carries the error.
+        // `exp_m1` computes it to the last bit at any `γΔt`.
+        let c2 = (-(-2.0 * gamma * dt).exp_m1()).max(0.0).sqrt();
         Ok(Self {
             dt,
             gamma,
@@ -614,7 +618,7 @@ mod tests {
             dt,
             gamma,
             kbt,
-            MicPairs::new(lj, nl),
+            MicPairs::new(lj, nl).unwrap(),
             scalar_mass(mass, 1).unwrap().view(),
             0,
             None,
@@ -685,7 +689,8 @@ mod tests {
             .unwrap()
             .velocities(pos.view(), mass.view())
             .unwrap();
-        let mut ig = VelocityVerlet::new(1.0, MicPairs::new(lj, nl), mass.view(), None).unwrap();
+        let mut ig =
+            VelocityVerlet::new(1.0, MicPairs::new(lj, nl).unwrap(), mass.view(), None).unwrap();
         let mut state = ig.initial(pos, vel).unwrap();
 
         let total = |s: &MDState| s.energy + kinetic_energy(mass.view(), s.vel.view()).unwrap();
@@ -720,7 +725,7 @@ mod tests {
         let (lj, nl, _) = soft_lj(2, 40.0);
         let nve = VelocityVerlet::new(
             0.01,
-            MicPairs::new(lj, nl),
+            MicPairs::new(lj, nl).unwrap(),
             scalar_mass(1.0, 2).unwrap().view(),
             None,
         )
@@ -731,7 +736,7 @@ mod tests {
             0.01,
             1.0,
             1.0,
-            MicPairs::new(lj, nl),
+            MicPairs::new(lj, nl).unwrap(),
             scalar_mass(1.0, 2).unwrap().view(),
             0,
             None,
@@ -744,8 +749,13 @@ mod tests {
     fn mass_must_be_positive() {
         let (lj, nl, _) = soft_lj(2, 40.0);
         assert!(
-            VelocityVerlet::new(0.01, MicPairs::new(lj, nl), array![-1.0, 1.0].view(), None)
-                .is_err()
+            VelocityVerlet::new(
+                0.01,
+                MicPairs::new(lj, nl).unwrap(),
+                array![-1.0, 1.0].view(),
+                None
+            )
+            .is_err()
         );
     }
 
@@ -756,7 +766,7 @@ mod tests {
             0.01,
             0.0,
             1.0,
-            MicPairs::new(lj, nl),
+            MicPairs::new(lj, nl).unwrap(),
             array![1.0].view(),
             0,
             None,
@@ -775,7 +785,7 @@ mod tests {
                 0.01,
                 1.0,
                 0.0,
-                MicPairs::new(lj, nl),
+                MicPairs::new(lj, nl).unwrap(),
                 array![1.0].view(),
                 0,
                 None
@@ -792,7 +802,7 @@ mod tests {
             0.01,
             1.0,
             1.0,
-            MicPairs::new(lj, nl),
+            MicPairs::new(lj, nl).unwrap(),
             scalar_mass(1.0, 4).unwrap().view(),
             9,
             None,
@@ -803,7 +813,7 @@ mod tests {
             0.01,
             1.0,
             1.0,
-            MicPairs::new(lj, nl),
+            MicPairs::new(lj, nl).unwrap(),
             scalar_mass(1.0, 4).unwrap().view(),
             9,
             None,
@@ -823,7 +833,7 @@ mod tests {
         let (lj, nl, mut pos) = soft_lj(4, 40.0);
         let mut ig = VelocityVerlet::new(
             0.01,
-            MicPairs::new(lj, nl),
+            MicPairs::new(lj, nl).unwrap(),
             scalar_mass(1.0, 4).unwrap().view(),
             None,
         )
@@ -840,7 +850,7 @@ mod tests {
         let vel = Array2::from_elem(pos.raw_dim(), 0.01);
         let mut a = VelocityVerlet::new(
             0.01,
-            MicPairs::new(lj, nl),
+            MicPairs::new(lj, nl).unwrap(),
             scalar_mass(1.0, 4).unwrap().view(),
             None,
         )
@@ -848,7 +858,7 @@ mod tests {
         let (lj, nl, _) = soft_lj(4, 40.0);
         let mut b = VelocityVerlet::new(
             0.01,
-            MicPairs::new(lj, nl),
+            MicPairs::new(lj, nl).unwrap(),
             scalar_mass(1.0, 4).unwrap().view(),
             None,
         )
@@ -870,7 +880,7 @@ mod tests {
         let (lj, nl, pos) = soft_lj(2, 40.0);
         let mut lone = VelocityVerlet::new(
             0.01,
-            MicPairs::new(lj, nl),
+            MicPairs::new(lj, nl).unwrap(),
             scalar_mass(1.0, 2).unwrap().view(),
             None,
         )
@@ -886,7 +896,7 @@ mod tests {
         }));
         let mut ig = VelocityVerlet::new(
             0.01,
-            MicPairs::new(pots, nl),
+            MicPairs::new(pots, nl).unwrap(),
             scalar_mass(1.0, 2).unwrap().view(),
             None,
         )
@@ -938,7 +948,7 @@ mod tests {
             let lj = LJCut::lj126(1.0, 1.0, cutoff).unwrap();
             VelocityVerlet::new(
                 0.01,
-                MicPairs::new(lj, nl),
+                MicPairs::new(lj, nl).unwrap(),
                 scalar_mass(1.0, 2).unwrap().view(),
                 None,
             )
@@ -1052,7 +1062,7 @@ mod ghost_path_tests {
         .unwrap();
         let mut mic = VelocityVerlet::new(
             1.0,
-            MicPairs::new(lj(), skin_nl),
+            MicPairs::new(lj(), skin_nl).unwrap(),
             mass.view(),
             Some(bx.clone()),
         )
@@ -1062,7 +1072,7 @@ mod ghost_path_tests {
         let comm = Comm::new(bx.clone(), pos0.view(), cutoff, skin).unwrap();
         let mut gho = VelocityVerlet::new(
             1.0,
-            GhostPairs::new(lj(), comm),
+            GhostPairs::new(lj(), comm).unwrap(),
             mass.view(),
             Some(bx.clone()),
         )
@@ -1191,7 +1201,8 @@ mod ghost_path_tests {
             GhostPairs::new(
                 LJCut::new(0.3, 3.4, cutoff, 12, 6, false, false).unwrap(),
                 comm,
-            ),
+            )
+            .unwrap(),
             scalar_mass(12.0, pos0.nrows()).unwrap().view(),
             Some(bx.clone()),
         )
@@ -1278,7 +1289,8 @@ mod ghost_path_tests {
                 GhostPairs::new(
                     LJCut::new(0.3, 3.4, cutoff, 12, 6, false, false).unwrap(),
                     comm,
-                ),
+                )
+                .unwrap(),
                 mass.view(),
                 Some(bx.clone()),
             )
@@ -1365,6 +1377,7 @@ mod ghost_path_tests {
         )
         .unwrap();
         let mic = MicPairs::new(lj(), skin)
+            .unwrap()
             .compute(pos.view(), no_fold.view())
             .unwrap()
             .virial
@@ -1372,6 +1385,7 @@ mod ghost_path_tests {
 
         let comm = Comm::new(bx, pos.view(), cutoff, 0.0).unwrap();
         let ghost = GhostPairs::new(lj(), comm)
+            .unwrap()
             .compute(pos.view(), no_fold.view())
             .unwrap()
             .virial

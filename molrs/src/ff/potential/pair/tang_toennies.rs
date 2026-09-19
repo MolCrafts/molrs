@@ -210,6 +210,10 @@ impl Potential for PairTangToennies {
         };
         gather_copies(q, *n_owned, owner);
     }
+
+    fn binds_a_fixed_pair_list(&self) -> bool {
+        matches!(self.charges, Charges::Compiled { .. })
+    }
 }
 
 /// Construct a [`PairTangToennies`] from style params, per-atom-type charge, and topology.

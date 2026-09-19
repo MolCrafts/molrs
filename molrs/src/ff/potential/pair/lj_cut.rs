@@ -620,6 +620,10 @@ impl Potential for LJCut {
         };
         gather_copies(type_id, *n_owned, owner);
     }
+
+    fn binds_a_fixed_pair_list(&self) -> bool {
+        matches!(self.source, PairSource::Compiled { .. })
+    }
 }
 
 /// Construct a compiled [`LJCut`] from per-atom-type params + a neighbour list.

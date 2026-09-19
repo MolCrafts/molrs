@@ -205,6 +205,10 @@ impl Potential for UffVdW {
         gather_copies(x1, *n_owned, owner);
         gather_copies(d1, *n_owned, owner);
     }
+
+    fn binds_a_fixed_pair_list(&self) -> bool {
+        matches!(self.source, Source::Compiled { .. })
+    }
 }
 
 pub fn uff_lj_ctor(

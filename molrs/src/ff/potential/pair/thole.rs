@@ -236,6 +236,10 @@ impl Potential for PairThole {
         gather_copies(alpha, *n_owned, owner);
         gather_copies(a_thole, *n_owned, owner);
     }
+
+    fn binds_a_fixed_pair_list(&self) -> bool {
+        matches!(self.source, Source::Compiled { .. })
+    }
 }
 
 /// Construct a [`PairThole`] from per-atom-type params and Frame topology.

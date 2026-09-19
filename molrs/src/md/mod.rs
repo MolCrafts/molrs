@@ -44,5 +44,5 @@ pub use error::MdError;
 pub use forces::{Direct, ForceProvider, GhostPairs, MicPairs, NeighborStats};
 pub use integrators::{Langevin, VelocityVerlet, kinetic_energy, scalar_mass};
 pub use maxwell::MaxwellBoltzmann;
-pub use pairs::{BondedLists, Comm};
+pub use pairs::{BondedLists, Comm, SpecialWeights};
 pub use types::{ForceOutput, MDObservables, MDState};

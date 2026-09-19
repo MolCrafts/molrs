@@ -153,6 +153,27 @@ impl ForceProvider for Direct {
 // MicPairs
 // ---------------------------------------------------------------------------
 
+/// Refuse a member whose parameters are bound to a pair list nobody is
+/// evaluating.
+///
+/// Such a kernel ignores the table it is handed and returns a frozen sum, so
+/// the run would maintain a neighbour list, rebuild it, and report its
+/// counters, while the answer depended on none of it. A member holding atom
+/// indices is fine: it is a bonded term and is never handed the table.
+fn reject_frozen_members(members: &[(Box<dyn Potential>, SpecialWeights)]) -> Result<(), MdError> {
+    for (m, (pot, _)) in members.iter().enumerate() {
+        if pot.terms().is_none() && pot.binds_a_fixed_pair_list() {
+            return Err(MdError::Invalid(format!(
+                "member {m} resolved its parameters against a fixed pair list, so it \
+                 cannot be evaluated over a neighbour table — it would ignore the table \
+                 and answer for the list it was built from. Build it from the atoms \
+                 instead (ForceField::to_typed_potentials)"
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Minimum-image pairs over the owned atoms.
 ///
 /// The potential sees the owned atoms and a pair table whose displacements
@@ -184,7 +205,7 @@ pub struct MicPairs {
 impl MicPairs {
     /// Evaluate one potential over the pairs `skin` maintains, with no
     /// special-bonds weights.
-    pub fn new(potential: impl Potential + 'static, skin: VerletSkin) -> Self {
+    pub fn new(potential: impl Potential + 'static, skin: VerletSkin) -> Result<Self, MdError> {
         Self::from_members(
             vec![(
                 Box::new(potential) as Box<dyn Potential>,
@@ -202,15 +223,16 @@ impl MicPairs {
     pub fn from_members(
         members: Vec<(Box<dyn Potential>, SpecialWeights)>,
         skin: VerletSkin,
-    ) -> Self {
+    ) -> Result<Self, MdError> {
+        reject_frozen_members(&members)?;
         let (members, special): (Vec<Box<dyn Potential>>, Vec<_>) = members.into_iter().unzip();
         let holds_indices = members.iter().map(|m| m.terms().is_some()).collect();
-        Self {
+        Ok(Self {
             members,
             special,
             holds_indices,
             skin,
-        }
+        })
     }
 }
 
@@ -353,7 +375,7 @@ pub struct GhostPairs {
 impl GhostPairs {
     /// Evaluate one potential over the copies `comm` maintains, with no
     /// special-bonds weights — right for a system with no bonded topology.
-    pub fn new(potential: impl Potential + 'static, comm: Comm) -> Self {
+    pub fn new(potential: impl Potential + 'static, comm: Comm) -> Result<Self, MdError> {
         Self::from_members(
             vec![(
                 Box::new(potential) as Box<dyn Potential>,
@@ -376,26 +398,25 @@ impl GhostPairs {
     /// without them a bonded pair would be counted twice — once by the bonded
     /// term and once at full non-bonded strength. A bonded member takes
     /// [`SpecialWeights::default`], which scales nothing.
-    pub fn from_members(members: Vec<(Box<dyn Potential>, SpecialWeights)>, comm: Comm) -> Self {
+    pub fn from_members(
+        members: Vec<(Box<dyn Potential>, SpecialWeights)>,
+        comm: Comm,
+    ) -> Result<Self, MdError> {
+        reject_frozen_members(&members)?;
         let (members, special): (Vec<_>, Vec<_>) = members.into_iter().unzip();
         let lists = BondedLists::new(&members);
-        Self {
+        Ok(Self {
             comm,
             members,
             lists,
             special,
             gathered: None,
-        }
+        })
     }
 
     /// The halo, for tests that read its counters.
     pub fn comm(&self) -> &Comm {
         &self.comm
-    }
-
-    /// The bonded index lists as they stand.
-    pub fn lists(&self) -> &BondedLists {
-        &self.lists
     }
 }
 
@@ -572,7 +593,7 @@ mod tests {
             n
         );
 
-        let mut mic = MicPairs::new(lj(), skin(pos.view()));
+        let mut mic = MicPairs::new(lj(), skin(pos.view())).unwrap();
         assert_eq!(
             mic.compute(pos.view(), no_fold.view())
                 .unwrap()
@@ -582,7 +603,7 @@ mod tests {
         );
 
         let comm = Comm::new(cell(), pos.view(), 5.0, 0.0).unwrap();
-        let mut ghosts = GhostPairs::new(lj(), comm);
+        let mut ghosts = GhostPairs::new(lj(), comm).unwrap();
         let out = ghosts.compute(pos.view(), no_fold.view()).unwrap();
         assert_eq!(out.forces.nrows(), n);
         assert!(
@@ -683,7 +704,7 @@ mod tests {
                 .into_iter()
                 .map(|p| (p, SpecialWeights::default()))
                 .collect();
-            let mut provider = GhostPairs::from_members(members, comm);
+            let mut provider = GhostPairs::from_members(members, comm).unwrap();
             // The halo was built from these coordinates, so from its point of
             // view nothing has folded. A fold is reported exactly once, to the
             // halo that existed before it.
@@ -778,11 +799,11 @@ mod tests {
             bx.clone(),
         )
         .unwrap();
-        let mut mic = MicPairs::new(lj(), skin);
+        let mut mic = MicPairs::new(lj(), skin).unwrap();
         let mic_out = mic.compute(pos.view(), no_fold.view()).unwrap();
 
         let comm = Comm::new(bx, pos.view(), cutoff, 0.0).unwrap();
-        let mut ghosts = GhostPairs::new(lj(), comm);
+        let mut ghosts = GhostPairs::new(lj(), comm).unwrap();
         let ghost_out = ghosts.compute(pos.view(), no_fold.view()).unwrap();
 
         assert!(
@@ -855,7 +876,8 @@ mod tests {
         let comm = Comm::new(bx.clone(), pos.view(), 6.0, 0.0).unwrap();
         let no_fold = Array2::<i64>::zeros((n, 3));
         let mut with =
-            GhostPairs::from_members(vec![(Box::new(lj) as Box<dyn Potential>, special)], comm);
+            GhostPairs::from_members(vec![(Box::new(lj) as Box<dyn Potential>, special)], comm)
+                .unwrap();
         let out = with.compute(pos.view(), no_fold.view()).unwrap();
 
         assert_eq!(
@@ -882,7 +904,7 @@ mod tests {
         )
         .unwrap();
         let comm = Comm::new(bx, pos.view(), 6.0, 0.0).unwrap();
-        let mut without = GhostPairs::new(lj, comm);
+        let mut without = GhostPairs::new(lj, comm).unwrap();
         let bare = without.compute(pos.view(), no_fold.view()).unwrap();
         assert!(
             bare.energy > 100.0,
@@ -946,7 +968,8 @@ mod tests {
             let mut provider = GhostPairs::from_members(
                 vec![(Box::new(lj) as Box<dyn Potential>, special.clone())],
                 comm,
-            );
+            )
+            .unwrap();
             let no_fold = Array2::<i64>::zeros((n, 3));
             let out = provider.compute(wrapped.view(), no_fold.view()).unwrap();
             (out.energy, out.forces)
@@ -1072,7 +1095,7 @@ mod tests {
             assert_eq!(members.len(), 2, "a bond style and a pair style");
 
             let comm = Comm::new(bx.clone(), wrapped.view(), cutoff, 0.0).unwrap();
-            let mut provider = GhostPairs::from_members(members, comm);
+            let mut provider = GhostPairs::from_members(members, comm).unwrap();
             let no_fold = Array2::<i64>::zeros((n, 3));
             let out = provider.compute(wrapped.view(), no_fold.view()).unwrap();
             (out.energy, out.forces)
@@ -1147,7 +1170,8 @@ mod tests {
         )
         .unwrap();
         let mut mic =
-            MicPairs::from_members(vec![(Box::new(lj) as Box<dyn Potential>, special)], skin);
+            MicPairs::from_members(vec![(Box::new(lj) as Box<dyn Potential>, special)], skin)
+                .unwrap();
         let out = mic
             .compute(pos.view(), Array2::<i64>::zeros((n, 3)).view())
             .unwrap();
@@ -1164,6 +1188,46 @@ mod tests {
         );
     }
 
+    /// A kernel bound to a fixed pair list is refused, not quietly humoured.
+    ///
+    /// `ForceField::to_potentials` builds exactly such kernels: their
+    /// parameters were resolved against the frame's `pairs` block, and they
+    /// answer for that list whatever table they are handed. Given one, a
+    /// provider would maintain a neighbour list, rebuild it, and report its
+    /// counters, while the energy depended on none of it — and with exclusions
+    /// in play it would be evaluated once per split table and come back
+    /// multiplied.
+    ///
+    /// The refusal is at construction because a run that has started is too
+    /// late to find out.
+    #[test]
+    fn a_kernel_bound_to_a_fixed_pair_list_is_refused() {
+        let pos = four_atoms();
+        let compiled = LJCut::compiled(vec![0], vec![1], vec![0.3], vec![3.4]);
+        assert!(
+            compiled.binds_a_fixed_pair_list(),
+            "a compiled kernel must say so"
+        );
+
+        let Err(err) = MicPairs::new(compiled, skin(pos.view())) else {
+            panic!("a compiled kernel cannot be evaluated over a neighbour table")
+        };
+        let msg = format!("{err}");
+        assert!(msg.contains("fixed pair list"), "{msg}");
+        assert!(msg.contains("to_typed_potentials"), "{msg}");
+
+        let comm = Comm::new(cell(), pos.view(), 5.0, 0.0).unwrap();
+        let compiled = LJCut::compiled(vec![0], vec![1], vec![0.3], vec![3.4]);
+        assert!(
+            GhostPairs::new(compiled, comm).is_err(),
+            "and so does the halo"
+        );
+
+        // The typed form of the same style is accepted.
+        assert!(!lj().binds_a_fixed_pair_list());
+        assert!(MicPairs::new(lj(), skin(pos.view())).is_ok());
+    }
+
     /// A provider that keeps no list reports no counters — not zeroes.
     ///
     /// Zero rebuilds is a fact about a list that exists; a provider without one
@@ -1178,14 +1242,14 @@ mod tests {
             NeighborStats::default()
         );
 
-        let mic = MicPairs::new(lj(), skin(pos.view()));
+        let mic = MicPairs::new(lj(), skin(pos.view())).unwrap();
         let stats = mic.neighbor_stats();
         assert!(stats.edges.is_some());
         assert!(stats.rebuilds.is_some());
         assert!(stats.ago.is_some());
 
         let comm = Comm::new(cell(), pos.view(), 5.0, 0.0).unwrap();
-        let stats = GhostPairs::new(lj(), comm).neighbor_stats();
+        let stats = GhostPairs::new(lj(), comm).unwrap().neighbor_stats();
         assert!(stats.rebuilds.is_some(), "a halo counts its rebuilds");
         assert!(
             stats.edges.is_none(),

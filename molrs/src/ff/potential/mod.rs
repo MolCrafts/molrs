@@ -191,6 +191,21 @@ pub trait Potential: Send + Sync {
         (e, f, None)
     }
 
+    /// Whether this kernel's parameters are bound to one fixed pair list.
+    ///
+    /// Such a kernel answers for **that** list and no other. Handed a
+    /// neighbour table it does not read it — it returns the frozen sum — and
+    /// that is not a cheaper route to the same number, it is a different
+    /// question silently unanswered. Worse, the caller goes on maintaining and
+    /// reporting a live list that provably does not enter the answer.
+    ///
+    /// A periodic force path refuses such a member at construction. Default
+    /// `false`: a kernel that reads geometry, or one keyed on the atoms, is
+    /// bound to nothing.
+    fn binds_a_fixed_pair_list(&self) -> bool {
+        false
+    }
+
     /// Extend per-atom state onto periodic copies.
     ///
     /// `owner[g]` is the atom copy `g` is a copy of, and the copies occupy
@@ -235,6 +250,10 @@ impl Potential for Box<dyn Potential> {
         pairs: &Neighbors,
     ) -> (F, Vec<F>, Option<Virial>) {
         (**self).calc_energy_forces_with_pairs_virial(coords, pairs)
+    }
+
+    fn binds_a_fixed_pair_list(&self) -> bool {
+        (**self).binds_a_fixed_pair_list()
     }
 
     fn gather_onto_copies(&mut self, owner: &[u32]) {
@@ -416,6 +435,65 @@ impl Potential for Potentials {
 
     fn calc_energy_forces_with_pairs(&self, coords: &[F], pairs: &Neighbors) -> (F, Vec<F>) {
         Potentials::calc_energy_forces_with_pairs(self, coords, pairs)
+    }
+
+    /// The members' virials, summed — and `None` the moment one of them
+    /// declines to report.
+    ///
+    /// Taking the default here would have been worse than wrong: an aggregate
+    /// whose members all tally would report `None` and look like a kernel that
+    /// simply cannot, so every pressure computed through a force field would
+    /// be unavailable for no stated reason.
+    fn calc_energy_forces_with_pairs_virial(
+        &self,
+        coords: &[F],
+        pairs: &Neighbors,
+    ) -> (F, Vec<F>, Option<Virial>) {
+        let mut total_e: F = 0.0;
+        let mut total_f = vec![0.0; coords.len()];
+        let mut total_w = Some(Virial::ZERO);
+        for p in &self.inner {
+            let (e, f, w) = p.calc_energy_forces_with_pairs_virial(coords, pairs);
+            total_e += e;
+            for (t, fi) in total_f.iter_mut().zip(f.iter()) {
+                *t += fi;
+            }
+            match (total_w.as_mut(), w) {
+                (Some(acc), Some(part)) => {
+                    for c in 0..6 {
+                        acc.components[c] += part.components[c];
+                    }
+                }
+                (_, None) => total_w = None,
+                (None, _) => {}
+            }
+        }
+        (total_e, total_f, total_w)
+    }
+
+    /// Every member gathers. An aggregate that swallowed this would leave a
+    /// typed kernel's per-atom tables covering the owned atoms only, while the
+    /// pair table it is handed names copies.
+    fn gather_onto_copies(&mut self, owner: &[u32]) {
+        for p in &mut self.inner {
+            p.gather_onto_copies(owner);
+        }
+    }
+
+    /// An aggregate holds no single index table — its members' are of
+    /// different arities and different row sets — so it reports none, and the
+    /// default [`calc_energy_forces_with_terms`](Potential::calc_energy_forces_with_terms)
+    /// is then never asked for one. A caller that needs the bonded terms
+    /// rebound takes the members individually, which is what
+    /// [`into_members`](Potentials::into_members) is for.
+    fn terms(&self) -> Option<Array2<u32>> {
+        None
+    }
+
+    /// True if *any* member is. One compiled kernel is enough to make the
+    /// aggregate's answer independent of the table it is handed.
+    fn binds_a_fixed_pair_list(&self) -> bool {
+        self.inner.iter().any(|p| p.binds_a_fixed_pair_list())
     }
 }
 
