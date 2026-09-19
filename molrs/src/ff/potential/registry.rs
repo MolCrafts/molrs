@@ -48,6 +48,29 @@ pub type KernelConstructor = fn(&Params, &[(&str, &Params)], &Frame) -> Result<M
 /// A kernel constructor that binds its type-params as `_tp` (i.e. resolves
 /// nothing from them) **is not a table-driven style**, and must say so by being
 /// registered [`PerInstance`](ParamSource::PerInstance).
+/// Which `Frame` block decides whether a style has any rows to act on.
+///
+/// `Style::to_potential` skips a style whose topology is absent — a bond style
+/// with no bonds contributes nothing, and letting the kernel fault on the
+/// missing block instead would be a worse way to say so. Which block that is,
+/// is a property of the **kernel**, not of its category.
+///
+/// PME is the case that proves it: registered under `pair` because that is
+/// where an electrostatic style belongs, it reads per-atom charges and
+/// `exclusions` and never looks at `pairs`. Gated on `pairs`, it was skipped
+/// outright for any system whose caller had not built a pair list — deleting
+/// the entire long-range electrostatics, silently, to exactly zero.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RowSource {
+    /// The category's own topology block: `bonds`, `angles`, `dihedrals`,
+    /// `impropers` or `pairs`. Absent or empty means the style contributes
+    /// nothing.
+    #[default]
+    CategoryBlock,
+    /// The atoms, or rows the kernel finds for itself. Nothing gates it.
+    Atoms,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ParamSource {
     /// Parameters come from the style's type-definition rows (the `tp` slice).
@@ -84,6 +107,11 @@ pub struct KernelRegistry {
 struct Registration {
     ctor: KernelConstructor,
     source: ParamSource,
+    /// Which block's emptiness means this style contributes nothing. Reset to
+    /// the default by an override, for the reason `typed` is — a re-registered
+    /// style is a different force law and inherits none of the old one's
+    /// declarations.
+    rows: RowSource,
     /// The neighbour-driven form of a pair style, when it has one, and which
     /// special-bonds weights scale it.
     ///
@@ -131,6 +159,7 @@ impl KernelRegistry {
             Registration {
                 ctor,
                 source,
+                rows: RowSource::CategoryBlock,
                 typed: None,
             },
         );
@@ -148,6 +177,32 @@ impl KernelRegistry {
     /// form is an *alternative* way to build a style that already exists, so a
     /// silent no-op here would leave the caller believing their style works
     /// under MD when `to_typed_potential` will refuse it.
+    /// Declare where a registered style's rows come from.
+    ///
+    /// Only needed to say [`RowSource::Atoms`]; the default is the category's
+    /// topology block. Like [`register_typed`](Self::register_typed) this is a
+    /// second statement about a style that must already exist, and an override
+    /// resets it — a re-registered style is a different force law.
+    pub fn declare_rows(&mut self, category: &str, name: &str, rows: RowSource) {
+        let r = self
+            .ctors
+            .get_mut(&(category.to_owned(), name.to_owned()))
+            .unwrap_or_else(|| {
+                panic!(
+                    "declare_rows('{category}', '{name}') before the style is registered: \
+                     where a kernel's rows come from is a statement about that kernel"
+                )
+            });
+        r.rows = rows;
+    }
+
+    /// Where this style's rows come from, or `None` if it is not registered.
+    pub fn row_source(&self, category: &str, name: &str) -> Option<RowSource> {
+        self.ctors
+            .get(&(category.to_owned(), name.to_owned()))
+            .map(|r| r.rows)
+    }
+
     pub fn register_typed(
         &mut self,
         category: &str,
@@ -341,6 +396,10 @@ impl KernelRegistry {
             kspace::pme::pme_ctor,
             ParamSource::PerInstance,
         );
+        // PME sums in reciprocal space over the atoms' charges and subtracts
+        // `exclusions`; it reads no `pairs` block, so the pair category's gate
+        // must not delete it when there is none.
+        r.declare_rows("pair", "coul/long/pme", RowSource::Atoms);
         // The neighbour-driven counterparts. Same styles, parameters keyed on
         // the atoms rather than on a `pairs` block, which is what an evaluation
         // over a rebuilt neighbour table needs.
@@ -465,6 +524,11 @@ pub fn lookup_param_source(category: &str, name: &str) -> Option<ParamSource> {
     global().read().unwrap().param_source(category, name)
 }
 
+/// Where a style's rows come from, from the global registry.
+pub fn lookup_row_source(category: &str, name: &str) -> Option<RowSource> {
+    global().read().unwrap().row_source(category, name)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -521,6 +585,38 @@ mod tests {
                 "pair '{name}' lost its neighbour-driven form: a later \
                  register/register_with for the same key must come *before* \
                  its register_typed"
+            );
+        }
+        // The same ordering trap, for the other per-style declaration.
+        assert_eq!(
+            r.row_source("pair", "coul/long/pme"),
+            Some(RowSource::Atoms),
+            "PME lost its row-source declaration: a later register/register_with \
+             for the same key must come *before* its declare_rows"
+        );
+    }
+
+    /// PME survives a frame with no `pairs` block.
+    ///
+    /// It is registered under `pair` because that is where an electrostatic
+    /// style belongs, and `Style::to_potential` skips a pair style whose
+    /// `pairs` block is absent or empty — a rule that is right for every other
+    /// pair kernel and deleted PME outright. The symptom was a system with
+    /// zero long-range electrostatics and no error: the style was declared,
+    /// accepted, and dropped.
+    #[test]
+    fn pme_is_not_gated_on_a_pairs_block() {
+        let r = KernelRegistry::builtin();
+        assert_eq!(
+            r.row_source("pair", "coul/long/pme"),
+            Some(RowSource::Atoms),
+            "PME reads charges and exclusions, never `pairs`"
+        );
+        for gated in ["lj/cut", "coul/cut", "buck", "thole"] {
+            assert_eq!(
+                r.row_source("pair", gated),
+                Some(RowSource::CategoryBlock),
+                "'{gated}' does read `pairs`, so an empty one still means no work"
             );
         }
     }

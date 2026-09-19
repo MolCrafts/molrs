@@ -284,6 +284,10 @@ pub fn pair_tang_toennies_ctor(
     let b = style_params.get("b").unwrap_or(4.5) as F;
     let n = style_params.get("order").unwrap_or(4.0).round() as usize;
     let c = style_params.get("c").unwrap_or(1.0) as F;
+    // `Style::to_potential` projects the force field's `special_bonds` 1-4
+    // weight here. The energy is linear in the charge product, so scaling it
+    // is exactly scaling the pair.
+    let scale_14 = style_params.get("coulomb14scale").unwrap_or(1.0) as F;
 
     let atoms = frame
         .get("atoms")
@@ -313,6 +317,7 @@ pub fn pair_tang_toennies_ctor(
 
     let mut atom_i = Vec::with_capacity(i_col.len());
     let mut atom_j = Vec::with_capacity(i_col.len());
+    let is_14 = block.get_bool("is_14");
     let mut qq = Vec::with_capacity(i_col.len());
     for idx in 0..i_col.len() {
         let i = i_col[idx] as usize;
@@ -321,7 +326,11 @@ pub fn pair_tang_toennies_ctor(
         let qj = charge(&atom_types[j])?;
         atom_i.push(i);
         atom_j.push(j);
-        qq.push(qi * qj);
+        qq.push(if is_14.is_some_and(|b| b[idx]) {
+            qi * qj * scale_14
+        } else {
+            qi * qj
+        });
     }
 
     Ok(Member::pair(PairTangToennies::new(

@@ -306,11 +306,16 @@ impl PairDriven for PairBuck {
 
 /// Construct a [`PairBuck`] from style params, type params, and Frame topology.
 pub fn pair_buck_ctor(
-    _style_params: &Params,
+    style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
 ) -> Result<Member, String> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
+    // `Style::to_potential` projects the force field's `special_bonds` 1-4
+    // weight here. `E = A·exp(-r/rho) - C/r⁶` is linear in **both** `A` and
+    // `C`, so scaling the two is exactly scaling the pair; scaling only `A`
+    // would leave the dispersion term at full strength.
+    let scale_14 = style_params.get("lj14scale").unwrap_or(1.0) as F;
 
     let block = frame
         .get("pairs")
@@ -324,6 +329,7 @@ pub fn pair_buck_ctor(
     let type_col = block
         .get_string("type")
         .ok_or_else(|| "PairBuck: pairs block missing \"type\" column".to_string())?;
+    let is_14 = block.get_bool("is_14");
 
     let mut atom_i = Vec::with_capacity(i_col.len());
     let mut atom_j = Vec::with_capacity(i_col.len());
@@ -347,11 +353,16 @@ pub fn pair_buck_ctor(
             .get("c")
             .ok_or_else(|| format!("PairBuck type '{}': missing 'c'", label))? as F;
 
+        let w = if is_14.is_some_and(|b| b[idx]) {
+            scale_14
+        } else {
+            1.0
+        };
         atom_i.push(i_col[idx] as usize);
         atom_j.push(j_col[idx] as usize);
-        a_vec.push(a);
+        a_vec.push(a * w);
         rho_vec.push(rho);
-        c_vec.push(c);
+        c_vec.push(c * w);
     }
 
     Ok(Member::pair(PairBuck::new(
@@ -406,6 +417,84 @@ pub fn pair_buck_typed_ctor(
 
 #[cfg(test)]
 mod tests {
+
+    /// A flagged 1-4 pair is scaled by `lj14scale`, and scaled in **both**
+    /// terms.
+    ///
+    /// Buckingham is `A·exp(-r/rho) − C/r⁶`. The energy is linear in `A` and
+    /// in `C` separately, so scaling the pair means scaling both; scaling only
+    /// the repulsive `A` — the obvious half-fix — leaves the dispersion term
+    /// at full strength and gives a different number at every separation.
+    /// Halving the weight must halve the energy exactly, whatever `r` is.
+    #[test]
+    fn a_1_4_pair_is_scaled_in_both_buckingham_terms() {
+        use crate::ff::forcefield::Params;
+        use molrs::store::block::Block;
+        use molrs::store::frame::Frame;
+        use molrs::types::Idx;
+        use ndarray::Array1;
+
+        let build = |scale: f64| {
+            let mut frame = Frame::new();
+            let mut atoms = Block::new();
+            atoms
+                .insert(
+                    "type",
+                    Array1::from(vec!["a".to_string(), "a".to_string()]).into_dyn(),
+                )
+                .unwrap();
+            frame.insert("atoms", atoms);
+            let mut pairs = Block::new();
+            pairs
+                .insert("atomi", Array1::from(vec![0 as Idx]).into_dyn())
+                .unwrap();
+            pairs
+                .insert("atomj", Array1::from(vec![1 as Idx]).into_dyn())
+                .unwrap();
+            pairs
+                .insert("type", Array1::from(vec!["a-a".to_string()]).into_dyn())
+                .unwrap();
+            pairs
+                .insert("is_14", Array1::from(vec![true]).into_dyn())
+                .unwrap();
+            frame.insert("pairs", pairs);
+
+            let mut sp = Params::new();
+            sp.set("lj14scale", scale);
+            let mut tp = Params::new();
+            tp.set("a", 12000.0);
+            tp.set("rho", 0.31);
+            tp.set("c", 280.0);
+            pair_buck_ctor(&sp, &[("a-a", &tp)], &frame).expect("buck kernel")
+        };
+
+        // Two separations: one where repulsion dominates, one where dispersion
+        // does. A half-fix passes at neither, and passing at both is what makes
+        // this a statement about the pair rather than about one term.
+        for r in [1.5_f64, 4.5] {
+            let coords = vec![0.0, 0.0, 0.0, r, 0.0, 0.0];
+            let full = build(1.0).calc_energy_forces(&coords);
+            let half = build(0.5).calc_energy_forces(&coords);
+            assert!(
+                full.0.abs() > 1e-9,
+                "r = {r}: the pair must carry energy, or this proves nothing"
+            );
+            assert!(
+                (half.0 - 0.5 * full.0).abs() < 1e-12 * full.0.abs().max(1.0),
+                "r = {r}: scaled {} vs half of {}",
+                half.0,
+                full.0
+            );
+            for k in 0..full.1.len() {
+                assert!(
+                    (half.1[k] - 0.5 * full.1[k]).abs() < 1e-12 * full.1[k].abs().max(1.0),
+                    "r = {r}: force component {k}: {} vs half of {}",
+                    half.1[k],
+                    full.1[k]
+                );
+            }
+        }
+    }
 
     /// A type-pair table gives the same number as a per-row label resolved
     /// earlier against a fixed list — bit for bit, on the same pairs.

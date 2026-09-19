@@ -1278,8 +1278,14 @@ fn ensure_root_and_meta(
             .store_metadata()?;
     }
     if meta.is_some() || !group_exists(store, META_ROOT_GROUP)? {
+        // Stamped, like every other record molrs writes. Storing the
+        // producer's map verbatim made `read_meta` refuse the result, because
+        // an unstamped `meta` is how a store from before the stamped format
+        // looks — so a trajectory written *with* metadata was unreadable and
+        // one written without it was fine.
+        let attrs = super::schema::stamped_meta(&meta.cloned().unwrap_or_default())?;
         GroupBuilder::new()
-            .attributes(meta.cloned().unwrap_or_default())
+            .attributes(attrs)
             .build(store.clone(), META_ROOT_GROUP)?
             .store_metadata()?;
     }
@@ -6609,14 +6615,30 @@ mod tests {
     /// root group and an (empty) `meta/` group exist before the first append,
     /// and no version key is stamped.
     #[test]
-    fn create_writes_the_root_and_meta_groups_without_a_version_key() {
+    fn create_writes_the_root_and_a_stamped_meta_group() {
         let dir = TempDir::new().unwrap();
         let store = store_in(&dir);
         let schema = SequenceSchema::from_frame(&atoms_frame(&[1.0])).unwrap();
         let writer = FrameSequenceWriter::create(store.clone(), schema).unwrap();
         assert!(dir.path().join("zarr.json").is_file(), "root group");
         let meta = Group::open(store.clone(), "/meta").expect("meta group exists");
-        assert!(meta.attributes().is_empty(), "{:?}", meta.attributes());
+        // This used to assert the group was *empty* — the streaming writer
+        // stamped nothing, which is what made a trajectory written with
+        // metadata unreadable: `validate_meta` refuses an unstamped non-empty
+        // map, so `read_meta` rejected the writer's own output.
+        assert_eq!(
+            meta.attributes()
+                .get("molrec_version")
+                .and_then(|v| v.as_u64()),
+            Some(crate::MOLREC_VERSION),
+            "{:?}",
+            meta.attributes()
+        );
+        assert_eq!(
+            meta.attributes().len(),
+            1,
+            "and nothing the producer did not ask for"
+        );
         drop(writer);
     }
 

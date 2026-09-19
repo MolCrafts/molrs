@@ -74,6 +74,15 @@ fn insert_str_col(block: &mut Block, key: &str, vals: Vec<String>) -> Result<()>
     block.insert(key, arr).map_err(invalid_data)
 }
 
+fn insert_bool_col(block: &mut Block, key: &str, vals: Vec<bool>) -> Result<()> {
+    let n = vals.len();
+    let arr = Array1::from_vec(vals)
+        .into_shape_with_order(IxDyn(&[n]))
+        .map_err(invalid_data)?
+        .into_dyn();
+    block.insert(key, arr).map_err(invalid_data)
+}
+
 /// Strip a GROMACS inline `;` comment and trim.
 fn strip_comment(line: &str) -> &str {
     let cut = line.find(';').unwrap_or(line.len());
@@ -344,7 +353,7 @@ fn build_frame(
         frame.insert("bonds", conn2_block(&bonds)?);
     }
     if !pairs.is_empty() {
-        frame.insert("pairs", conn2_block(&pairs)?);
+        frame.insert("pairs", pairs_block(&pairs)?);
     }
     if !angles.is_empty() {
         frame.insert("angles", conn3_block(&angles)?);
@@ -371,6 +380,25 @@ fn conn2_block(rows: &[Conn2]) -> Result<Block> {
     insert_uint_col(&mut block, "atomj", atomj)?;
     // Schema key `type` is string (force-field / funct label).
     insert_str_col(&mut block, "type", funct)?;
+    Ok(block)
+}
+
+/// `[ pairs ]` as a `pairs` block — every row flagged `is_14`.
+///
+/// GROMACS defines this section as the 1-4 pair list: it is written by the
+/// topology generator for exactly the pairs separated by three bonds, which is
+/// why the section exists separately from `[ exclusions ]`. The flag is
+/// therefore not read off the file, it is what the section *means*.
+///
+/// Without it the block satisfied the schema and every pair kernel read
+/// `is_14` as absent — `is_some_and` on `None` is `false` — so a topology read
+/// from a `.top` file evaluated its 1-4 pairs at full strength while the same
+/// system built by `intramolecular_pairs` scaled them. No diagnostic either
+/// way: an optional column that is missing looks exactly like one that is
+/// present and false.
+fn pairs_block(rows: &[Conn2]) -> Result<Block> {
+    let mut block = conn2_block(rows)?;
+    insert_bool_col(&mut block, "is_14", vec![true; rows.len()])?;
     Ok(block)
 }
 
@@ -631,6 +659,48 @@ benzene  3
 [ bonds ]
 1  2  1
 "#;
+
+    /// Every row of `[ pairs ]` comes back flagged `is_14`, and `[ bonds ]`
+    /// carries no such column.
+    ///
+    /// The two sections parse through the same row type, so it is easy to give
+    /// them the same block — and that is what happened. A `pairs` block with no
+    /// `is_14` reads as "no pair is 1-4" to every kernel, silently, because the
+    /// column is optional and `is_some_and` on `None` is `false`.
+    #[test]
+    fn the_gromacs_pairs_section_is_the_1_4_list() {
+        const WITH_PAIRS: &str = r#"[ moleculetype ]
+lig  3
+
+[ atoms ]
+1  opls_135  1  LIG  C  1  -0.18  12.011
+2  opls_140  1  LIG  H  1   0.06   1.008
+3  opls_140  1  LIG  H  1   0.06   1.008
+4  opls_140  1  LIG  H  1   0.06   1.008
+
+[ bonds ]
+1  2  1
+1  3  1
+
+[ pairs ]
+2  3  1
+2  4  1
+"#;
+        let frame = read_top_frame(&mut Cursor::new(WITH_PAIRS.as_bytes())).unwrap();
+        let pairs = frame.get("pairs").expect("pairs block");
+        assert_eq!(pairs.nrows(), Some(2));
+        let is_14 = pairs
+            .get_bool("is_14")
+            .expect("`[ pairs ]` is the 1-4 list, so the flag must be there");
+        assert!(
+            is_14.iter().all(|&b| b),
+            "every row of the section is a 1-4 pair by definition"
+        );
+        assert!(
+            frame.get("bonds").unwrap().get_bool("is_14").is_none(),
+            "bonds share the parser but not the meaning"
+        );
+    }
 
     #[test]
     fn reads_atoms_and_bonds_one_based() {

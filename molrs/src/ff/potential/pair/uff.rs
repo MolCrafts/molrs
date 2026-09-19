@@ -265,14 +265,23 @@ impl PairDriven for UffVdW {
     }
 }
 
-pub fn uff_lj_ctor(_sp: &Params, _tp: &[(&str, &Params)], frame: &Frame) -> Result<Member, String> {
+pub fn uff_lj_ctor(
+    style_params: &Params,
+    _tp: &[(&str, &Params)],
+    frame: &Frame,
+) -> Result<Member, String> {
     let atoms = frame.get("atoms").ok_or("uff_lj: missing atoms")?;
     let x1 = atoms.get_float("x1").ok_or("uff_lj: missing atoms.x1")?;
     let d1 = atoms.get_float("D1").ok_or("uff_lj: missing atoms.D1")?;
+    // `Style::to_potential` projects the force field's `special_bonds` 1-4
+    // weight here. `E = D·((x/r)¹² − 2(x/r)⁶)` is linear in `D`, so scaling
+    // the well depth is exactly scaling the pair.
+    let scale_14 = style_params.get("lj14scale").unwrap_or(1.0) as F;
 
     let pairs = frame
         .get("pairs")
         .ok_or("uff_lj: missing pairs (call intramolecular_pairs first)")?;
+    let is_14 = pairs.get_bool("is_14");
     if pairs.nrows().unwrap_or(0) == 0 {
         return Ok(Member::pair(UffVdW::compiled(
             vec![],
@@ -298,7 +307,12 @@ pub fn uff_lj_ctor(_sp: &Params, _tp: &[(&str, &Params)], frame: &Frame) -> Resu
         atom_i.push(i);
         atom_j.push(j);
         xij.push(((x1[i] * x1[j]) as F).sqrt());
-        dij.push(((d1[i] * d1[j]) as F).sqrt());
+        let d = ((d1[i] * d1[j]) as F).sqrt();
+        dij.push(if is_14.is_some_and(|b| b[t]) {
+            d * scale_14
+        } else {
+            d
+        });
     }
     Ok(Member::pair(UffVdW::compiled(atom_i, atom_j, xij, dij)))
 }

@@ -292,11 +292,15 @@ impl PairDriven for PairLJClass2 {
 
 /// Construct a [`PairLJClass2`] from style params, type params, and Frame topology.
 pub fn pair_lj_class2_ctor(
-    _style_params: &Params,
+    style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
 ) -> Result<Member, String> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
+    // `Style::to_potential` projects the force field's `special_bonds` 1-4
+    // weight here. The energy is linear in this parameter, so scaling it is
+    // exactly scaling the pair.
+    let scale_14 = style_params.get("lj14scale").unwrap_or(1.0) as F;
 
     let block = frame
         .get("pairs")
@@ -307,6 +311,7 @@ pub fn pair_lj_class2_ctor(
     let j_col = block
         .get_uint("atomj")
         .ok_or_else(|| "PairLJClass2: pairs block missing \"atomj\" column".to_string())?;
+    let is_14 = block.get_bool("is_14");
     let type_col = block
         .get_string("type")
         .ok_or_else(|| "PairLJClass2: pairs block missing \"type\" column".to_string())?;
@@ -332,7 +337,11 @@ pub fn pair_lj_class2_ctor(
 
         atom_i.push(i_col[idx] as usize);
         atom_j.push(j_col[idx] as usize);
-        eps_vec.push(eps);
+        eps_vec.push(if is_14.is_some_and(|b| b[idx]) {
+            eps * scale_14
+        } else {
+            eps
+        });
         sig_vec.push(sigma);
     }
 

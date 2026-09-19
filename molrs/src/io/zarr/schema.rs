@@ -77,6 +77,29 @@ pub fn validate_meta(attrs: &JsonMap<String, JsonValue>) -> Result<(), MolRsErro
     Ok(())
 }
 
+/// The producer's `meta` with `molrec_version` stamped in, validated.
+///
+/// Every record molrs writes carries the version it was written at, so a
+/// reader never has to guess — that stamp is exactly what lets
+/// [`validate_meta`] *require* the key. A producer that set it keeps its
+/// value, which is how a writer for an older contract stays expressible.
+///
+/// Shared by the whole-record writer and the streaming one. It was the
+/// record writer's private helper while the streaming writer stored the
+/// producer's map verbatim, so handing `meta` to a `TrajectoryWriter` produced
+/// a store that `read_meta` then refused — metadata written and unreadable, in
+/// the one writer whose whole point is a long run you cannot repeat.
+pub(crate) fn stamped_meta(
+    meta: &JsonMap<String, JsonValue>,
+) -> Result<JsonMap<String, JsonValue>, MolRsError> {
+    let mut stamped = meta.clone();
+    stamped
+        .entry("molrec_version".to_string())
+        .or_insert_with(|| JsonValue::from(MOLREC_VERSION));
+    validate_meta(&stamped)?;
+    Ok(stamped)
+}
+
 /// Judge a snapshot or system-definition frame against the Frame vocabulary.
 pub fn validate_frame(frame: &Frame) -> Result<(), MolRsError> {
     frame.validate()

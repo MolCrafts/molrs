@@ -14,9 +14,22 @@ _PRERELEASE = re.compile(r"\.dev|rc\d*|(?<![a-z])a\d|(?<![a-z])b\d")
 
 
 def _manifests() -> list[Path]:
+    """Every manifest the repo owns, and none it merely caches.
+
+    The walk used to name the directories to skip, which meant it only skipped
+    the ones that existed when it was written. A local aarch64 toolchain
+    (`.rustup-aarch64/`, `.cargo-aarch64/` — see docs/interop.md) puts
+    thousands of third-party `Cargo.toml` files inside the repo, and every one
+    of them failed this test for having its own version. CI never saw it,
+    because CI checks out a clean tree; only the developer saw it, every run.
+
+    So the rule is stated instead of enumerated: build output and dot
+    directories are not ours.
+    """
     out: list[Path] = []
     for p in ROOT.rglob("Cargo.toml"):
-        if any(part in {"target", "target-aarch64", ".git"} for part in p.parts):
+        rel = p.relative_to(ROOT).parts
+        if any(part.startswith(".") or part.startswith("target") for part in rel):
             continue
         out.append(p)
     pyproject = ROOT / "molrs-python" / "pyproject.toml"

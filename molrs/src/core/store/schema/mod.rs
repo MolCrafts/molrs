@@ -447,7 +447,10 @@ pub static SCHEMA_BLOCKS: &[BlockSpec] = &[
         required: &["atomi", "atomj"],
         optional: &["is_14"],
         open: true,
-        doc: "Intramolecular non-bonded pair list. Consumer-built, not read from a file.",
+        doc: "Intramolecular non-bonded pair list. Usually consumer-built \
+              (`ff::potential::intramolecular_pairs`); GROMACS `.top` also \
+              carries one as its `[ pairs ]` section, which is by definition \
+              the 1-4 list and is read in with `is_14` set on every row.",
     },
 ];
 

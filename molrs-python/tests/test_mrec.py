@@ -64,9 +64,10 @@ class TestFrameDoors:
         assert molrs.io.mrec.sections(path) == frozenset({"meta", "frame"})
         meta = molrs.io.mrec.read_meta(path)
         molrs.io.mrec.schema.validate_meta(meta)
-        # Development contract: no version key is stamped; the document is
-        # exactly what the producer handed in (nothing here).
-        assert meta == {}
+        # Every record is stamped on write, so a producer that handed in
+        # nothing still gets the version — that stamp is what lets a reader
+        # tell a current store from one it must refuse.
+        assert meta == {"molrec_version": molrs.io.mrec.schema.MOLREC_VERSION}
 
     def test_write_frame_with_system(self, tmp_path: Path) -> None:
         path = tmp_path / "both.mrec"
@@ -118,12 +119,20 @@ class TestSchema:
         assert molrs.io.mrec.schema.MOLREC_VERSION == molrs._lib.MREC_MOLREC_VERSION
         assert molrs.io.mrec.schema.RESERVED_META_KEYS == ["molrec_version"]
 
-    def test_a_missing_molrec_version_is_not_validated(self) -> None:
-        # Development contract: absent means no version check; the retired
-        # brand keys are neither required nor refused.
-        molrs.io.mrec.schema.validate_meta(
-            {"record_schema_version": 1, "format_name": "mrec"}
-        )
+    def test_a_missing_molrec_version_is_refused(self) -> None:
+        # Every record is written with the stamp, so meta without one is a
+        # store from before the format was stamped — refused, rather than read
+        # on the assumption that it means version 1. The retired brand keys do
+        # not stand in for it.
+        with pytest.raises(ValueError, match="molrec_version"):
+            molrs.io.mrec.schema.validate_meta(
+                {"record_schema_version": 1, "format_name": "mrec"}
+            )
+        # An *empty* map still passes, and deliberately: "this store carries no
+        # metadata" is a different claim from "this metadata forgot its
+        # version", and a foreign record may legitimately have no meta group at
+        # all. Refusing it would lock out readable stores to catch a bug that
+        # can only happen in the second case.
         molrs.io.mrec.schema.validate_meta({})
 
     def test_a_present_molrec_version_out_of_range_is_refused(self) -> None:

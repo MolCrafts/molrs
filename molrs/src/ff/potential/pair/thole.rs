@@ -302,11 +302,15 @@ impl PairDriven for PairThole {
 /// carry `charge`, `alpha`, `a_thole`. Each pair's screening is resolved from
 /// its two endpoints' atom types (read from the `atoms` block `type` column).
 pub fn pair_thole_ctor(
-    _style_params: &Params,
+    style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
 ) -> Result<Member, String> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
+    // `Style::to_potential` projects the force field's `special_bonds` 1-4
+    // weight here. The energy is linear in the charge product, so scaling it
+    // is exactly scaling the pair.
+    let scale_14 = style_params.get("coulomb14scale").unwrap_or(1.0) as F;
 
     let atoms = frame
         .get("atoms")
@@ -346,6 +350,7 @@ pub fn pair_thole_ctor(
 
     let mut atom_i = Vec::with_capacity(i_col.len());
     let mut atom_j = Vec::with_capacity(i_col.len());
+    let is_14 = block.get_bool("is_14");
     let mut s_vec = Vec::with_capacity(i_col.len());
     let mut qq_vec = Vec::with_capacity(i_col.len());
 
@@ -361,7 +366,11 @@ pub fn pair_thole_ctor(
         atom_i.push(i);
         atom_j.push(j);
         s_vec.push(s);
-        qq_vec.push(qi * qj);
+        qq_vec.push(if is_14.is_some_and(|b| b[idx]) {
+            qi * qj * scale_14
+        } else {
+            qi * qj
+        });
     }
 
     Ok(Member::pair(PairThole::new(atom_i, atom_j, s_vec, qq_vec)))

@@ -1173,6 +1173,42 @@ fn shipped_force_fields_declare_only_registered_styles() {
     );
 }
 
+/// Every pair kernel reads `is_14`.
+///
+/// `Style::to_potential` projects the force field's `special_bonds` 1-4 weight
+/// into *every* pair style's params as `lj14scale` / `coulomb14scale`. Six of
+/// the nine kernels took it and never looked at it, so a 1-4 pair under `uff`,
+/// `buck`, `lj/class2`, `morse`, `coul/tt` or `thole` was evaluated at full
+/// strength with no diagnostic — the weight was there, addressed to them, and
+/// dropped.
+///
+/// A source-level inventory claim, like the gates above: it only proves the
+/// column is *named*, not that it is applied correctly. The arithmetic is
+/// pinned per kernel next to the kernel (`a_1_4_pair_is_scaled_in_both_buckingham_terms`
+/// is the awkward case, where the energy is linear in two parameters and
+/// scaling one of them passes a weaker test). What this catches is the tenth
+/// kernel, added later, that forgets the question exists.
+#[test]
+fn every_pair_kernel_reads_the_1_4_flag() {
+    let dir = src_dir().join("ff").join("potential").join("pair");
+    let mut silent: Vec<String> = Vec::new();
+    for path in walk_rs_files(&dir) {
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        if name == "mod.rs" {
+            continue;
+        }
+        let src = strip_comments(&fs::read_to_string(&path).expect("read pair kernel"));
+        if !src.contains("is_14") {
+            silent.push(name);
+        }
+    }
+    assert!(
+        silent.is_empty(),
+        "these pair kernels never read the `is_14` column, so the 1-4 weight \
+         their params carry is silently dropped: {silent:?}"
+    );
+}
+
 // ===========================================================================
 // core names no other module — the base of the graph stays the base
 // ===========================================================================

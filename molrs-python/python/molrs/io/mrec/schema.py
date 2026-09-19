@@ -3,7 +3,7 @@
 The checks live in ``molrs::io::mrec::schema``. This module is the Python
 binding, not a second implementation. While the record contract is in
 development ``meta["molrec_version"]`` is optional: an absent key means no
-version validation, a present one must be an integer in ``1..=MOLREC_VERSION``.
+version validation: it is required, and must be an integer in ``1..=MOLREC_VERSION``.
 Identity of a record is the ``*.mrec/`` path suffix plus a Zarr root.
 """
 
@@ -57,7 +57,12 @@ def validate_meta(meta: Mapping[str, Any]) -> None:
         meta: Record-level metadata mapping.
 
     Raises:
-        ValueError: If ``molrec_version`` is present and not an integer in
-            ``1..=MOLREC_VERSION``. An absent key passes.
+        ValueError: If ``molrec_version`` is absent, or is not an integer in
+            ``1..=MOLREC_VERSION``.
+
+    Every record is stamped with the version on write, so an absent key means
+    the store predates the stamped format and must be rewritten rather than
+    read on a guess. This docstring used to say an absent key passed; the Rust
+    validator it delegates to has refused it since the format was stamped.
     """
     _validate_meta(dict(meta))

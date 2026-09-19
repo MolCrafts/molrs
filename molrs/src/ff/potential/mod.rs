@@ -17,8 +17,8 @@ pub mod registry;
 pub mod soft;
 
 pub use registry::{
-    KernelConstructor, KernelRegistry, ParamSource, lookup_kernel, lookup_param_source,
-    register_kernel, register_kernel_with,
+    KernelConstructor, KernelRegistry, ParamSource, RowSource, lookup_kernel, lookup_param_source,
+    lookup_row_source, register_kernel, register_kernel_with,
 };
 
 use std::collections::HashSet;
@@ -32,6 +32,24 @@ use molrs::store::block::Block;
 use molrs::store::frame::Frame;
 use molrs::system::bond_weights::BondDistanceWeights;
 use molrs::types::{F, Idx};
+
+/// Above this many atoms, [`intramolecular_pairs`] refuses rather than
+/// enumerating.
+///
+/// The list is every pair in the molecule with no cutoff, so it is `N(N-1)/2`
+/// rows — at 50 000 atoms that is 1.2 billion rows and about 11 GiB, which
+/// arrives as an OOM kill rather than as an answer. 20 000 is where the block
+/// is still under 2 GiB and the caller is still plausibly asking for what this
+/// function is for: the intramolecular pairs of one molecule, in free space.
+/// A periodic or larger system wants a neighbour list and
+/// [`ForceField::to_typed_potentials`](crate::ff::forcefield::ForceField::to_typed_potentials).
+///
+/// molrs-wasm caps the same path at 2 000 for its own memory budget; this is
+/// the native ceiling, not a duplicate of that policy.
+pub const MAX_ATOMS_FOR_A_FULL_PAIR_LIST: usize = 20_000;
+
+/// `atomi` + `atomj` + `is_14`, as they land in the block's columns.
+const BYTES_PER_PAIR_ROW: usize = 4 + 4 + 1;
 
 /// Build the intramolecular non-bonded `pairs` block (`atomi`, `atomj`, `is_14`)
 /// from a frame's bond/angle/dihedral topology: every `i < j` pair, excluding
@@ -59,6 +77,16 @@ use molrs::types::{F, Idx};
 pub fn intramolecular_pairs(frame: &Frame, special: &SpecialBonds) -> Result<Block, String> {
     let [keep_12, keep_13] = special.compiled_inclusion()?;
     let n_atoms = frame.get("atoms").and_then(|b| b.nrows()).unwrap_or(0);
+    if n_atoms > MAX_ATOMS_FOR_A_FULL_PAIR_LIST {
+        return Err(format!(
+            "intramolecular_pairs: {n_atoms} atoms would enumerate {} pairs \
+             (~{} GiB) — this list is every pair in the molecule, with no cutoff. \
+             Above {MAX_ATOMS_FOR_A_FULL_PAIR_LIST} atoms build a neighbour list \
+             instead and evaluate through ForceField::to_typed_potentials.",
+            n_atoms * (n_atoms - 1) / 2,
+            (n_atoms * (n_atoms - 1) / 2 * BYTES_PER_PAIR_ROW) >> 30,
+        ));
+    }
     let pairs_12 = end_pairs(frame, "bonds", "atomi", "atomj");
     let pairs_13 = end_pairs(frame, "angles", "atomi", "atomk");
     let set_14 = end_pairs(frame, "dihedrals", "atomi", "atoml");
@@ -1280,5 +1308,42 @@ mod tests {
         assert_eq!(pots.len(), 0);
         let coords = extract_coords(&frame).unwrap();
         assert!(pots.calc_energy(&coords).abs() < 1e-9);
+    }
+
+    /// A frame too large for a full pair list is refused, not enumerated.
+    ///
+    /// `N(N-1)/2` with no cutoff is the shape of this list, and the failure
+    /// mode past a certain `N` is the OOM killer, which tells the caller
+    /// nothing about what to do instead. The refusal names the alternative.
+    #[test]
+    fn a_frame_too_large_for_a_full_pair_list_is_refused() {
+        use molrs::store::block::Block;
+        use ndarray::Array1;
+
+        let n = MAX_ATOMS_FOR_A_FULL_PAIR_LIST + 1;
+        let mut frame = Frame::new();
+        let mut atoms = Block::new();
+        atoms
+            .insert("type", Array1::from(vec!["a".to_string(); n]).into_dyn())
+            .unwrap();
+        frame.insert("atoms", atoms);
+
+        let err = intramolecular_pairs(&frame, &SpecialBonds::default())
+            .expect_err("a list this size is not an answer");
+        assert!(err.contains("neighbour list"), "{err}");
+        assert!(err.contains("to_typed_potentials"), "{err}");
+
+        // And one atom under the ceiling still builds, so the bound is a
+        // ceiling and not an off-by-one that refuses the supported case.
+        let mut small = Frame::new();
+        let mut atoms = Block::new();
+        atoms
+            .insert(
+                "type",
+                Array1::from(vec!["a".to_string(); MAX_ATOMS_FOR_A_FULL_PAIR_LIST]).into_dyn(),
+            )
+            .unwrap();
+        small.insert("atoms", atoms);
+        assert!(intramolecular_pairs(&small, &SpecialBonds::default()).is_ok());
     }
 }

@@ -209,12 +209,7 @@ fn write_meta(
     path: &str,
     meta: &JsonMap<String, JsonValue>,
 ) -> Result<(), MolRsError> {
-    let mut stamped = meta.clone();
-    stamped
-        .entry("molrec_version".to_string())
-        .or_insert_with(|| JsonValue::from(crate::MOLREC_VERSION));
-    schema::validate_meta(&stamped)?;
-    write_json_group(store, path, &stamped)
+    write_json_group(store, path, &schema::stamped_meta(meta)?)
 }
 
 #[cfg(feature = "zarr")]

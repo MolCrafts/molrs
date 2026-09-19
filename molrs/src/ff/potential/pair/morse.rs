@@ -302,11 +302,15 @@ impl PairDriven for PairMorse {
 
 /// Construct a [`PairMorse`] from style params, type params, and Frame topology.
 pub fn pair_morse_ctor(
-    _style_params: &Params,
+    style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
 ) -> Result<Member, String> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
+    // `Style::to_potential` projects the force field's `special_bonds` 1-4
+    // weight here. The energy is linear in this parameter, so scaling it is
+    // exactly scaling the pair.
+    let scale_14 = style_params.get("lj14scale").unwrap_or(1.0) as F;
 
     let block = frame
         .get("pairs")
@@ -317,6 +321,7 @@ pub fn pair_morse_ctor(
     let j_col = block
         .get_uint("atomj")
         .ok_or_else(|| "PairMorse: pairs block missing \"atomj\" column".to_string())?;
+    let is_14 = block.get_bool("is_14");
     let type_col = block
         .get_string("type")
         .ok_or_else(|| "PairMorse: pairs block missing \"type\" column".to_string())?;
@@ -335,7 +340,11 @@ pub fn pair_morse_ctor(
             .ok_or_else(|| format!("PairMorse: unknown pair type '{}'", label))?;
         ai.push(i_col[idx] as usize);
         aj.push(j_col[idx] as usize);
-        dv.push(need(p, "D0", label)?);
+        dv.push(if is_14.is_some_and(|b| b[idx]) {
+            need(p, "D0", label)? * scale_14
+        } else {
+            need(p, "D0", label)?
+        });
         av.push(need(p, "alpha", label)?);
         rv.push(need(p, "r0", label)?);
     }

@@ -104,7 +104,16 @@ impl crate::ff::forcefield::Style {
         // style when the neighbour list is empty (e.g. methane, whose every atom
         // pair is 1-2 or 1-3 excluded). Skip it rather than letting the kernel ctor
         // fault on the absent/empty block.
+        // Which block gates a style is the *kernel's* property, not the
+        // category's: PME is a `pair` style that reads charges and
+        // `exclusions` and never looks at `pairs`, so gating it on `pairs`
+        // deleted a system's whole long-range electrostatics whenever the
+        // caller had not built a pair list.
+        let gated = registry::lookup_row_source(category, &self.name)
+            .unwrap_or(registry::RowSource::CategoryBlock)
+            == registry::RowSource::CategoryBlock;
         let topo_block = match category {
+            _ if !gated => None,
             "bond" => Some("bonds"),
             "angle" => Some("angles"),
             "dihedral" => Some("dihedrals"),

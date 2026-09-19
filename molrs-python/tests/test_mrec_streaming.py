@@ -31,14 +31,17 @@ class TestStore:
             w.append(_frame(4, 0))
         assert (path / "zarr.json").is_file()
         assert mrec.sections(path) == frozenset({"meta", "trajectory"})
-        assert mrec.read_meta(path) == {}
+        assert mrec.read_meta(path) == {"molrec_version": mrec.schema.MOLREC_VERSION}
 
     def test_meta_is_written_when_handed_in(self, tmp_path: Path) -> None:
         path = tmp_path / "run.mrec"
         schema = mrec.SequenceSchema.from_frame(_frame(2, 0))
         with mrec.TrajectoryWriter(path, schema, meta={"creator": {"name": "test"}}) as w:
             w.append(_frame(2, 0))
-        assert mrec.read_meta(path) == {"creator": {"name": "test"}}
+        assert mrec.read_meta(path) == {
+            "creator": {"name": "test"},
+            "molrec_version": mrec.schema.MOLREC_VERSION,
+        }
 
     def test_every_array_is_sharded_with_the_index_at_the_start(self, tmp_path: Path) -> None:
         path = tmp_path / "run.mrec"
