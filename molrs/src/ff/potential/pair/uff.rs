@@ -6,6 +6,7 @@
 
 use crate::ff::forcefield::Params;
 use crate::ff::potential::Potential;
+use crate::ff::potential::gather_copies;
 use crate::ff::potential::geometry::validate_coords;
 use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame::Frame;
@@ -26,7 +27,13 @@ enum Source {
     /// different list of pairs every rebuild, so parameters combined against
     /// an older one belong to different atoms. Under a ghost régime the
     /// vectors cover the copies too, each carrying its owner's values.
-    PerAtom { x1: Vec<F>, d1: Vec<F> },
+    PerAtom {
+        x1: Vec<F>,
+        d1: Vec<F>,
+        /// How many of the entries above are atoms; the rest are copies, and
+        /// are rebuilt from their owners whenever the copy list is.
+        n_owned: usize,
+    },
 }
 
 pub struct UffVdW {
@@ -53,8 +60,9 @@ impl UffVdW {
     /// same rule [`uff_lj_ctor`] applies, and RDKit with it.
     pub fn typed(x1: Vec<F>, d1: Vec<F>) -> Self {
         assert_eq!(x1.len(), d1.len());
+        let n_owned = x1.len();
         Self {
-            source: Source::PerAtom { x1, d1 },
+            source: Source::PerAtom { x1, d1, n_owned },
         }
     }
 
@@ -144,7 +152,7 @@ impl Potential for UffVdW {
     }
 
     fn calc_energy_forces_with_pairs(&self, coords: &[F], pairs: &Neighbors) -> (F, Vec<F>) {
-        let Source::PerAtom { x1, d1 } = &self.source else {
+        let Source::PerAtom { x1, d1, .. } = &self.source else {
             // A compiled kernel answers for its own list, not for this one.
             return self.calc_energy_forces(coords);
         };
@@ -169,6 +177,18 @@ impl Potential for UffVdW {
                 d2[p],
             )
         })
+    }
+
+    fn gather_onto_copies(&mut self, owner: &[u32]) {
+        let Source::PerAtom {
+            x1, d1, n_owned, ..
+        } = &mut self.source
+        else {
+            // Nothing per atom to extend.
+            return;
+        };
+        gather_copies(x1, *n_owned, owner);
+        gather_copies(d1, *n_owned, owner);
     }
 }
 

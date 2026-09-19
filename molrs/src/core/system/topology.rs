@@ -9,6 +9,7 @@ use std::collections::{HashMap, VecDeque};
 use crate::error::MolRsError;
 use crate::store::{frame::Frame, keys};
 use crate::system::bond_weights::BondDistanceWeights;
+use crate::types::F;
 
 /// Graph-based molecular topology.
 ///
@@ -171,6 +172,61 @@ impl Topology {
                     }
                 }
                 list.sort_unstable();
+                list
+            })
+            .collect()
+    }
+
+    /// Per-atom partners whose interaction is **scaled**, with their weights.
+    ///
+    /// The generalisation of [`exclusions`](Self::exclusions): that one keeps
+    /// the partners whose weight is exactly zero, this one keeps every partner
+    /// whose weight is not one, and says what the weight is. A force field
+    /// that *excludes* 1-2 and 1-3 but *scales* 1-4 — which is most of them —
+    /// needs both facts, and an exclusion list can only carry the first.
+    ///
+    /// Each inner list is sorted by partner and contains no duplicates, so a
+    /// caller may binary-search it. It is **root-inclusive**, exactly as
+    /// [`exclusions`](Self::exclusions) is — distance 0 has weight zero — so
+    /// that one is precisely the zero-weight subset of this. Two sibling
+    /// methods that disagreed about whether an atom is its own partner would
+    /// be a trap for whoever used both.
+    ///
+    /// The walk bound is the same as [`exclusions`](Self::exclusions)': if the
+    /// table's 1-N tail is not one, the whole connected component is eligible;
+    /// otherwise the walk stops at the last distance whose weight differs from
+    /// one.
+    pub fn special_weights(&self, weights: &BondDistanceWeights) -> Vec<Vec<(usize, F)>> {
+        let tail_special = weights.as_slice().last() != Some(&1.0);
+        let cap = if tail_special {
+            None
+        } else {
+            let mut last = 0usize;
+            for d in 1..=weights.as_slice().len() {
+                if weights.weight(d) != 1.0 {
+                    last = d;
+                }
+            }
+            Some(last)
+        };
+        (0..self.n)
+            .map(|root| {
+                let dist = self.distances(root);
+                let mut list = Vec::new();
+                for (p, &hop) in dist.iter().enumerate() {
+                    if hop < 0 {
+                        continue;
+                    }
+                    let d = hop as usize;
+                    if cap.is_some_and(|c| d > c) {
+                        continue;
+                    }
+                    let w = weights.weight(d);
+                    if w != 1.0 {
+                        list.push((p, w));
+                    }
+                }
+                list.sort_unstable_by_key(|&(p, _)| p);
                 list
             })
             .collect()
@@ -843,6 +899,54 @@ fn symmetric_difference(a: &[usize], b: &[usize]) -> Vec<usize> {
 
 #[cfg(test)]
 mod tests {
+
+    /// `special_weights` says *how much*, where `exclusions` only says *which*.
+    ///
+    /// A force field that excludes 1-2 and 1-3 but scales 1-4 — which is most
+    /// of them — cannot be described by a list of partners alone, and a caller
+    /// handed only the list would either drop the 1-4 pairs or score them at
+    /// full strength. Neither is what the force field says.
+    #[test]
+    fn special_weights_carries_the_scale_an_exclusion_list_cannot() {
+        // A four-atom chain: 0-1-2-3.
+        let topo = Topology::from_edges(4, &[[0, 1], [1, 2], [2, 3]]);
+        // 1-2 and 1-3 excluded, 1-4 at half, everything beyond at full.
+        let w = BondDistanceWeights::new(vec![0.0, 0.0, 0.5, 1.0]).unwrap();
+
+        let special = topo.special_weights(&w);
+        assert_eq!(special[0], vec![(0, 0.0), (1, 0.0), (2, 0.0), (3, 0.5)]);
+        assert_eq!(special[1], vec![(0, 0.0), (1, 0.0), (2, 0.0), (3, 0.0)]);
+        assert_eq!(special[3], vec![(0, 0.5), (1, 0.0), (2, 0.0), (3, 0.0)]);
+
+        // The exclusion list is exactly the zero-weight subset, and the 1-4
+        // pair is what it cannot express.
+        for (root, list) in topo.exclusions(&w).iter().enumerate() {
+            let zeros: Vec<usize> = special[root]
+                .iter()
+                .filter(|&&(_, x)| x == 0.0)
+                .map(|&(p, _)| p)
+                .collect();
+            assert_eq!(*list, zeros, "atom {root}");
+        }
+        assert!(
+            !topo.exclusions(&w)[0].contains(&3),
+            "a scaled pair is not an excluded one"
+        );
+    }
+
+    /// Every list is sorted, because callers binary-search them.
+    #[test]
+    fn special_weights_lists_are_sorted_by_partner() {
+        let topo = Topology::from_edges(5, &[[0, 1], [1, 2], [2, 3], [3, 4], [0, 4]]);
+        let w = BondDistanceWeights::new(vec![0.0, 0.0, 0.5, 1.0]).unwrap();
+        for (root, list) in topo.special_weights(&w).iter().enumerate() {
+            assert!(
+                list.windows(2).all(|p| p[0].0 < p[1].0),
+                "atom {root}: {list:?} is not strictly sorted"
+            );
+        }
+    }
+
     use super::*;
 
     #[test]

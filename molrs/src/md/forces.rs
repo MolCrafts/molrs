@@ -51,7 +51,7 @@ use molrs::spatial::neighbors::VerletSkin;
 use molrs::types::{F, FNx3View};
 
 use super::error::MdError;
-use super::pairs::{BondedLists, Comm};
+use super::pairs::{BondedLists, Comm, SpecialWeights};
 use super::types::ForceOutput;
 
 /// What an integrator asks of a force field.
@@ -220,12 +220,19 @@ pub struct GhostPairs {
     members: Vec<Box<dyn Potential>>,
     /// Which members keep atom indices, and what those indices are now.
     lists: BondedLists,
+    /// The force field's weights on close non-bonded neighbours. Empty when
+    /// there are none, and then the pair table is used as it comes.
+    special: SpecialWeights,
+    /// The copy-list generation the members' per-atom state was gathered for,
+    /// or `None` before the first gather.
+    gathered: Option<u64>,
 }
 
 impl GhostPairs {
-    /// Evaluate one potential over the copies `comm` maintains.
+    /// Evaluate one potential over the copies `comm` maintains, with no
+    /// special-bonds weights — right for a system with no bonded topology.
     pub fn new(potential: impl Potential + 'static, comm: Comm) -> Self {
-        Self::from_members(vec![Box::new(potential)], comm)
+        Self::from_members(vec![Box::new(potential)], comm, SpecialWeights::default())
     }
 
     /// Evaluate several members — what a force field compiles to — over the
@@ -235,12 +242,23 @@ impl GhostPairs {
     /// frame: whichever of them hold atom indices say so through
     /// [`Potential::terms`], and that is the whole of what MD needs to know
     /// about a force field.
-    pub fn from_members(members: Vec<Box<dyn Potential>>, comm: Comm) -> Self {
+    ///
+    /// `special` carries the weights on close non-bonded neighbours. A
+    /// neighbour table finds every pair inside the cutoff, bonded or not, so
+    /// without them a bonded pair would be counted twice — once by the bonded
+    /// term and once at full non-bonded strength.
+    pub fn from_members(
+        members: Vec<Box<dyn Potential>>,
+        comm: Comm,
+        special: SpecialWeights,
+    ) -> Self {
         let lists = BondedLists::new(&members);
         Self {
             comm,
             members,
             lists,
+            special,
+            gathered: None,
         }
     }
 
@@ -265,28 +283,63 @@ impl ForceProvider for GhostPairs {
         // read the pairs. Each step depends on the one before it, and doing
         // them in one call would hide that.
         self.comm.advance(pos, wrap_shifts)?;
+        // A member holding anything per atom — a charge, a type index — has to
+        // cover the copies, because the pair table names them. That state is
+        // *derived* from the owners', so a rebuild invalidates it and nothing
+        // else does: a fold relabels an atom without changing what it is.
+        // (An index resolution is invalidated by both, which is why
+        // `BondedLists` below is asked every step and this is not.)
+        let generation = self.comm.ghosts().generation();
+        if self.gathered != Some(generation) {
+            let owner = self.comm.ghosts().owner();
+            for member in &mut self.members {
+                member.gather_onto_copies(owner);
+            }
+            self.gathered = Some(generation);
+        }
         self.lists.refresh(&self.comm, pos, wrap_shifts)?;
         let pairs = self.comm.pairs(pos)?;
         let all = self.comm.combined(pos)?;
         let n_all = all.nrows();
         let flat: Vec<F> = all.iter().copied().collect();
 
+        // Split once, not once per member: the weights are the force field's
+        // and the table is the halo's, and neither depends on which kernel is
+        // about to read it.
+        let (main, scaled) = if self.special.is_empty() {
+            (pairs, Vec::new())
+        } else {
+            self.special.split(&pairs, self.comm.ghosts())
+        };
+
         let mut energy = 0.0;
         let mut forces = vec![0.0; flat.len()];
-        for (m, member) in self.members.iter().enumerate() {
-            let (e, f) = match self.lists.current(m) {
-                Some(terms) => member.calc_energy_forces_with_terms(&flat, terms),
-                None => member.calc_energy_forces_with_pairs(&flat, &pairs),
-            };
+        let mut accumulate = |m: usize, (e, f): (F, Vec<F>), w: F| -> Result<(), MdError> {
             if f.len() != forces.len() {
                 return Err(MdError::Invalid(format!(
                     "member {m} returned {} force components for {n_all} owned+ghost rows",
                     f.len()
                 )));
             }
-            energy += e;
+            energy += w * e;
             for (acc, v) in forces.iter_mut().zip(&f) {
-                *acc += v;
+                *acc += w * v;
+            }
+            Ok(())
+        };
+        for (m, member) in self.members.iter().enumerate() {
+            match self.lists.current(m) {
+                // A member holding atom indices is a bonded term: it reads no
+                // pair table, so no weight applies to it.
+                Some(terms) => {
+                    accumulate(m, member.calc_energy_forces_with_terms(&flat, terms), 1.0)?
+                }
+                None => {
+                    accumulate(m, member.calc_energy_forces_with_pairs(&flat, &main), 1.0)?;
+                    for (w, table) in &scaled {
+                        accumulate(m, member.calc_energy_forces_with_pairs(&flat, table), *w)?;
+                    }
+                }
             }
         }
 
@@ -341,6 +394,7 @@ mod tests {
     use molrs::spatial::neighbors::{NeighborList, NeighborPolicy};
     use molrs::spatial::simbox::SimBox;
 
+    use super::super::pairs::SpecialWeights;
     use super::*;
 
     fn cell() -> SimBox {
@@ -503,7 +557,7 @@ mod tests {
             let (wrapped, _) = bx.wrap_shifts(pts.view());
             let comm = Comm::new(bx.clone(), wrapped.view(), 4.0, 0.0).unwrap();
             let members = field.to_potentials(&frame(())).unwrap().into_members();
-            let mut provider = GhostPairs::from_members(members, comm);
+            let mut provider = GhostPairs::from_members(members, comm, SpecialWeights::default());
             // The halo was built from these coordinates, so from its point of
             // view nothing has folded. A fold is reported exactly once, to the
             // halo that existed before it.
@@ -529,6 +583,263 @@ mod tests {
                 assert!(
                     (f_cross[[i, k]] - f_mid[[i, k]]).abs() < 1e-9,
                     "force on atom {i} component {k}: {} across the face vs {} in the middle",
+                    f_cross[[i, k]],
+                    f_mid[[i, k]]
+                );
+            }
+        }
+    }
+
+    /// A kernel that reads per-atom types gives the same answer through copies
+    /// as it does through the minimum image.
+    ///
+    /// The two régimes index differently: the minimum-image table names owned
+    /// atoms, the ghost table names `[owned | copies]`. A typed kernel looks
+    /// its parameters up *by index*, so the ghost route is only right if the
+    /// copies carry their owners' types — and if they did not, the failure
+    /// would be a wrong parameter rather than a crash: a silently different
+    /// well depth for every pair that reaches through a face.
+    ///
+    /// Two unlike types, alternating, so picking up the wrong one is visible.
+    #[test]
+    fn a_typed_kernel_reads_the_same_types_through_copies_as_through_the_image() {
+        use molrs::ff::potential::pair::lj_cut::Mixing;
+
+        let l = 12.0_f64;
+        let cutoff = 5.0;
+        let bx = SimBox::cube(l, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
+        // Eight atoms on a 4 Å cube whose every edge runs *through* a face, so
+        // every interaction is periodic and every one of them needs a copy.
+        let pos = array![
+            [11.0_f64, 11.0, 11.0],
+            [3.0, 11.0, 11.0],
+            [11.0, 3.0, 11.0],
+            [11.0, 11.0, 3.0],
+            [3.0, 3.0, 11.0],
+            [3.0, 11.0, 3.0],
+            [11.0, 3.0, 3.0],
+            [3.0, 3.0, 3.0],
+        ];
+        let n = pos.nrows();
+        let per_type = [(0.3_f64, 3.4_f64), (0.9, 2.6)];
+        let type_id: Vec<u32> = (0..n).map(|i| (i % 2) as u32).collect();
+        let lj = || {
+            LJCut::typed(
+                type_id.clone(),
+                &per_type,
+                Mixing::Arithmetic,
+                cutoff,
+                12,
+                6,
+                false,
+                false,
+            )
+            .unwrap()
+        };
+
+        let no_fold = Array2::<i64>::zeros((n, 3));
+
+        // Zero skin on both sides: a skin is a caching policy, not a periodic
+        // one, and a stale edge would be a difference this test is not about.
+        let skin = molrs::spatial::neighbors::VerletSkin::new(
+            NeighborList::new(cutoff),
+            cutoff,
+            NeighborPolicy {
+                skin: 0.0,
+                ..NeighborPolicy::default()
+            },
+            pos.view(),
+            bx.clone(),
+        )
+        .unwrap();
+        let mut mic = MicPairs::new(lj(), skin);
+        let mic_out = mic.compute(pos.view(), no_fold.view()).unwrap();
+
+        let comm = Comm::new(bx, pos.view(), cutoff, 0.0).unwrap();
+        let mut ghosts = GhostPairs::new(lj(), comm);
+        let ghost_out = ghosts.compute(pos.view(), no_fold.view()).unwrap();
+
+        assert!(
+            ghosts.comm().ghosts().len() > n,
+            "this cell must materialise copies, or the gather is untested"
+        );
+        assert!(
+            mic_out.energy.abs() > 1.0,
+            "the system must interact for this to assert anything"
+        );
+        assert!(
+            (ghost_out.energy - mic_out.energy).abs() / mic_out.energy.abs() < 1e-12,
+            "energy {} through copies vs {} through the image",
+            ghost_out.energy,
+            mic_out.energy
+        );
+        for i in 0..n {
+            for k in 0..3 {
+                assert!(
+                    (ghost_out.forces[[i, k]] - mic_out.forces[[i, k]]).abs() < 1e-10,
+                    "force on atom {i} component {k}: {} vs {}",
+                    ghost_out.forces[[i, k]],
+                    mic_out.forces[[i, k]]
+                );
+            }
+        }
+    }
+
+    /// An excluded pair contributes nothing — not a small number, nothing.
+    ///
+    /// A neighbour table finds every pair inside the cutoff, so a bonded pair
+    /// turns up in it like any other. Left alone it would be counted twice:
+    /// once by the bond term and once at full Lennard-Jones strength, at bond
+    /// length, where that term is enormous. Here every pair of the chain is
+    /// 1-2 or 1-3, so with an exclusion depth of 3 the non-bonded sum must be
+    /// exactly zero.
+    ///
+    /// Exactly, because an exclusion drops the pair rather than scaling it.
+    #[test]
+    fn a_fully_excluded_molecule_has_no_non_bonded_energy() {
+        use molrs::Topology;
+        use molrs::ff::potential::pair::lj_cut::Mixing;
+        use molrs::system::bond_weights::BondDistanceWeights;
+
+        let bx = SimBox::cube(20.0, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
+        // A bent chain, every atom well inside the 6 Å cutoff of the others.
+        let pos = array![
+            [9.0_f64, 10.0, 10.0],
+            [10.5, 10.0, 10.0],
+            [11.3, 11.2, 10.0]
+        ];
+        let n = pos.nrows();
+
+        let topo = Topology::from_edges(n, &[[0, 1], [1, 2]]);
+        let weights = BondDistanceWeights::from_exclusion_depth(3);
+        let special = SpecialWeights::new(&topo.special_weights(&weights));
+
+        let lj = LJCut::typed(
+            vec![0_u32; n],
+            &[(0.3_f64, 3.4_f64)],
+            Mixing::Arithmetic,
+            6.0,
+            12,
+            6,
+            false,
+            false,
+        )
+        .unwrap();
+
+        let comm = Comm::new(bx.clone(), pos.view(), 6.0, 0.0).unwrap();
+        let no_fold = Array2::<i64>::zeros((n, 3));
+        let mut with = GhostPairs::from_members(vec![Box::new(lj)], comm, special);
+        let out = with.compute(pos.view(), no_fold.view()).unwrap();
+
+        assert_eq!(
+            out.energy, 0.0,
+            "every pair of this chain is 1-2 or 1-3, so nothing may be left"
+        );
+        assert!(
+            out.forces.iter().all(|&f| f == 0.0),
+            "an excluded pair exerts no force either"
+        );
+
+        // Without the weights the same configuration is enormous — which is
+        // what the exclusion is preventing, and what a silent failure would
+        // have contributed instead.
+        let lj = LJCut::typed(
+            vec![0_u32; n],
+            &[(0.3_f64, 3.4_f64)],
+            Mixing::Arithmetic,
+            6.0,
+            12,
+            6,
+            false,
+            false,
+        )
+        .unwrap();
+        let comm = Comm::new(bx, pos.view(), 6.0, 0.0).unwrap();
+        let mut without = GhostPairs::new(lj, comm);
+        let bare = without.compute(pos.view(), no_fold.view()).unwrap();
+        assert!(
+            bare.energy > 100.0,
+            "the unexcluded sum should be large; got {}",
+            bare.energy
+        );
+    }
+
+    /// The exclusions follow a molecule through a face.
+    ///
+    /// A pair naming a copy has to be weighted as the atom the copy is of — a
+    /// bond graph knows owners, and a copy is the same atom seen through a
+    /// face. If the lookup used the copy's index instead, the weight would come
+    /// back as 1.0 and a bonded pair would be scored at full strength, but only
+    /// for molecules near a boundary: a bug that hides everywhere except where
+    /// it matters.
+    #[test]
+    fn exclusions_follow_a_molecule_through_a_face() {
+        use molrs::Topology;
+        use molrs::ff::potential::pair::lj_cut::Mixing;
+        use molrs::system::bond_weights::BondDistanceWeights;
+
+        let l = 20.0_f64;
+        let cutoff = 6.0;
+        let bx = SimBox::cube(l, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
+
+        // Two bent chains: one straddles the low x face, the other does not.
+        let shape = array![
+            [-1.5_f64, 0.0, 0.0],
+            [0.0, 0.0, 0.0],
+            [0.8, 1.2, 0.0],
+            [4.6, 0.3, 0.4],
+            [6.1, 0.3, 0.4],
+            [6.9, 1.5, 0.4],
+        ];
+        let n = shape.nrows();
+        let topo = Topology::from_edges(n, &[[0, 1], [1, 2], [3, 4], [4, 5]]);
+        let weights = BondDistanceWeights::from_exclusion_depth(3);
+        let special = SpecialWeights::new(&topo.special_weights(&weights));
+
+        let run = |origin: F| {
+            let mut pts = shape.clone();
+            for i in 0..pts.nrows() {
+                pts[[i, 0]] += origin;
+                pts[[i, 1]] += 10.0;
+                pts[[i, 2]] += 10.0;
+            }
+            let (wrapped, _) = bx.wrap_shifts(pts.view());
+            let lj = LJCut::typed(
+                vec![0_u32; n],
+                &[(0.3_f64, 3.4_f64)],
+                Mixing::Arithmetic,
+                cutoff,
+                12,
+                6,
+                false,
+                false,
+            )
+            .unwrap();
+            let comm = Comm::new(bx.clone(), wrapped.view(), cutoff, 0.0).unwrap();
+            let mut provider = GhostPairs::from_members(vec![Box::new(lj)], comm, special.clone());
+            let no_fold = Array2::<i64>::zeros((n, 3));
+            let out = provider.compute(wrapped.view(), no_fold.view()).unwrap();
+            (out.energy, out.forces)
+        };
+
+        // Straddling (atom 0 lands at −0.5 and wraps), and shifted a third of
+        // a cell so nothing crosses.
+        let (e_cross, f_cross) = run(1.0);
+        let (e_mid, f_mid) = run(1.0 + l / 3.0);
+
+        assert!(
+            e_mid.abs() > 1e-3,
+            "the two chains must see each other for this to assert anything; got {e_mid}"
+        );
+        assert!(
+            (e_cross - e_mid).abs() / e_mid.abs() < 1e-12,
+            "energy {e_cross} across the face vs {e_mid} away from it"
+        );
+        for i in 0..n {
+            for k in 0..3 {
+                assert!(
+                    (f_cross[[i, k]] - f_mid[[i, k]]).abs() < 1e-9,
+                    "force on atom {i} component {k}: {} vs {}",
                     f_cross[[i, k]],
                     f_mid[[i, k]]
                 );

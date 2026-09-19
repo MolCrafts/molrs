@@ -9,6 +9,7 @@ use std::collections::HashMap;
 
 use crate::ff::forcefield::Params;
 use crate::ff::potential::Potential;
+use crate::ff::potential::gather_copies;
 use crate::ff::potential::geometry::validate_coords;
 use crate::ff::potential::pair::type_pair;
 use molrs::spatial::neighbors::Neighbors;
@@ -38,6 +39,9 @@ enum Source {
         a: Vec<F>,
         rho: Vec<F>,
         c: Vec<F>,
+        /// How many of the entries above are atoms; the rest are copies, and
+        /// are rebuilt from their owners whenever the copy list is.
+        n_owned: usize,
     },
 }
 
@@ -82,6 +86,7 @@ impl PairBuck {
             type_id.iter().all(|&t| (t as usize) < ntypes),
             "an atom has a type with no parameters"
         );
+        let n_owned = type_id.len();
         Self {
             source: Source::Typed {
                 type_id,
@@ -89,6 +94,7 @@ impl PairBuck {
                 a,
                 rho,
                 c,
+                n_owned,
             },
         }
     }
@@ -175,6 +181,7 @@ impl Potential for PairBuck {
             a,
             rho,
             c,
+            ..
         } = &self.source
         else {
             // A compiled kernel answers for its own list, not for this one.
@@ -201,6 +208,17 @@ impl Potential for PairBuck {
                 d2[p],
             )
         })
+    }
+
+    fn gather_onto_copies(&mut self, owner: &[u32]) {
+        let Source::Typed {
+            type_id, n_owned, ..
+        } = &mut self.source
+        else {
+            // Nothing per atom to extend.
+            return;
+        };
+        gather_copies(type_id, *n_owned, owner);
     }
 }
 

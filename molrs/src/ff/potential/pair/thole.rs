@@ -25,6 +25,7 @@ use std::collections::HashMap;
 
 use crate::ff::forcefield::Params;
 use crate::ff::potential::Potential;
+use crate::ff::potential::gather_copies;
 use crate::ff::potential::geometry::validate_coords;
 use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame::Frame;
@@ -53,6 +54,9 @@ enum Source {
         q: Vec<F>,
         alpha: Vec<F>,
         a_thole: Vec<F>,
+        /// How many of the entries above are atoms; the rest are copies, and
+        /// are rebuilt from their owners whenever the copy list is.
+        n_owned: usize,
     },
 }
 
@@ -80,8 +84,14 @@ impl PairThole {
     pub fn typed(q: Vec<F>, alpha: Vec<F>, a_thole: Vec<F>) -> Self {
         assert_eq!(q.len(), alpha.len());
         assert_eq!(q.len(), a_thole.len());
+        let n_owned = q.len();
         Self {
-            source: Source::PerAtom { q, alpha, a_thole },
+            source: Source::PerAtom {
+                q,
+                alpha,
+                a_thole,
+                n_owned,
+            },
         }
     }
 
@@ -162,7 +172,10 @@ impl Potential for PairThole {
     }
 
     fn calc_energy_forces_with_pairs(&self, coords: &[F], pairs: &Neighbors) -> (F, Vec<F>) {
-        let Source::PerAtom { q, alpha, a_thole } = &self.source else {
+        let Source::PerAtom {
+            q, alpha, a_thole, ..
+        } = &self.source
+        else {
             // A compiled kernel answers for its own list, not for this one.
             return self.calc_energy_forces(coords);
         };
@@ -189,6 +202,23 @@ impl Potential for PairThole {
                 d2[p],
             )
         })
+    }
+
+    fn gather_onto_copies(&mut self, owner: &[u32]) {
+        let Source::PerAtom {
+            q,
+            alpha,
+            a_thole,
+            n_owned,
+            ..
+        } = &mut self.source
+        else {
+            // Nothing per atom to extend.
+            return;
+        };
+        gather_copies(q, *n_owned, owner);
+        gather_copies(alpha, *n_owned, owner);
+        gather_copies(a_thole, *n_owned, owner);
     }
 }
 

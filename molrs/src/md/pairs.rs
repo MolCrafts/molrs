@@ -22,7 +22,7 @@
 use ndarray::{Array2, ArrayView2};
 
 use molrs::ff::potential::Potential;
-use molrs::spatial::neighbors::Neighbors;
+use molrs::spatial::neighbors::{NeighborPair, Neighbors, NeighborsStorage, QueryMode};
 use molrs::spatial::periodic::{GhostError, GhostSet};
 use molrs::spatial::simbox::SimBox;
 use molrs::types::{F, FNx3, FNx3View};
@@ -1137,5 +1137,132 @@ mod virial_tests {
             right.trace(),
             wrong.trace()
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Special-bonds weights on the neighbour-driven path
+// ---------------------------------------------------------------------------
+
+/// The weights a force field puts on close non-bonded neighbours.
+///
+/// A bonded pair's non-bonded term is not wanted at full strength: 1-2 and 1-3
+/// are normally excluded outright and 1-4 scaled, because the bonded terms
+/// already describe those interactions. A compiled intramolecular list carries
+/// that by *omitting* the excluded rows and baking the 1-4 factor into the
+/// parameters — which works only while that exact list is the one being
+/// evaluated. A neighbour table has no such memory: it finds every pair inside
+/// the cutoff, bonded or not.
+///
+/// So the weights have to be applied at evaluation time, and this holds them.
+/// Build it from [`Topology::special_weights`](molrs::Topology::special_weights),
+/// which walks the bond graph.
+///
+/// # Why it splits the table rather than scaling in the kernel
+///
+/// Energy is a sum over pairs, so scaling a group of pairs and scaling their
+/// contribution are the same number — which means the weights can be applied
+/// *outside* the kernels, and no kernel has to learn that a force field has
+/// exclusions.
+///
+/// The obvious cheaper trick — evaluate everything, then subtract what should
+/// not have been counted — is not available. A 1-2 pair sits at bond length,
+/// where a Lennard-Jones term is enormous; subtracting it from a total of
+/// ordinary size cancels away the very digits the answer is made of.
+#[derive(Clone, Debug, Default)]
+pub struct SpecialWeights {
+    /// Per owned atom, its special partners sorted by index, with weights.
+    per_atom: Vec<Vec<(u32, F)>>,
+}
+
+impl SpecialWeights {
+    /// Take the per-atom lists a bond-graph walk produced.
+    pub fn new(special: &[Vec<(usize, F)>]) -> Self {
+        Self {
+            per_atom: special
+                .iter()
+                .map(|l| l.iter().map(|&(p, w)| (p as u32, w)).collect())
+                .collect(),
+        }
+    }
+
+    /// The weight on the pair `(i, j)`, both owned indices. `1.0` when the two
+    /// are far enough apart in the bond graph to interact normally.
+    pub fn weight(&self, i: usize, j: usize) -> F {
+        let Some(list) = self.per_atom.get(i) else {
+            return 1.0;
+        };
+        match list.binary_search_by_key(&(j as u32), |&(p, _)| p) {
+            Ok(k) => list[k].1,
+            Err(_) => 1.0,
+        }
+    }
+
+    /// True when nothing is scaled, so a caller can skip the split entirely.
+    pub fn is_empty(&self) -> bool {
+        self.per_atom.iter().all(|l| l.is_empty())
+    }
+
+    /// Split a pair table into the full-strength pairs and the scaled groups.
+    ///
+    /// A pair naming a copy is weighted as the atom that copy is of: a bond
+    /// graph knows owners, and a copy is the same atom seen through a face.
+    /// Pairs weighted zero appear in neither output — they are gone, not
+    /// scaled, which is what keeps a bond-length Lennard-Jones term out of the
+    /// sum in the first place.
+    pub fn split(&self, pairs: &Neighbors, set: &GhostSet) -> (Neighbors, Vec<(F, Neighbors)>) {
+        let n_owned = set.n_owned();
+        let owner = set.owner();
+        let n_all = n_owned + set.len();
+        let mode = QueryMode::CrossQuery {
+            num_query_points: n_owned,
+            num_points: n_all,
+        };
+        let own = |a: usize| {
+            if a < n_owned {
+                a
+            } else {
+                owner[a - n_owned] as usize
+            }
+        };
+
+        let (Some(disp), Some(d2)) = (pairs.disp(), pairs.dist_sq()) else {
+            return (Neighbors::empty(mode, NeighborsStorage::FULL), Vec::new());
+        };
+        let i_col = pairs.query_point_indices();
+        let j_col = pairs.point_indices();
+
+        let mut full: Vec<NeighborPair> = Vec::with_capacity(i_col.len());
+        // At most a handful of distinct weights, so a linear scan beats a map
+        // — and `F` is not hashable anyway.
+        let mut groups: Vec<(F, Vec<NeighborPair>)> = Vec::new();
+        for p in 0..i_col.len() {
+            let (i, j) = (i_col[p] as usize, j_col[p] as usize);
+            let w = self.weight(own(i), own(j));
+            if w == 0.0 {
+                continue;
+            }
+            let pair = NeighborPair {
+                i: i as u32,
+                j: j as u32,
+                dist_sq: d2[p],
+                disp: [disp[[p, 0]], disp[[p, 1]], disp[[p, 2]]],
+            };
+            if w == 1.0 {
+                full.push(pair);
+            } else if let Some(slot) = groups.iter_mut().find(|(gw, _)| *gw == w) {
+                slot.1.push(pair);
+            } else {
+                groups.push((w, vec![pair]));
+            }
+        }
+
+        (
+            Neighbors::from_pairs(full, NeighborsStorage::FULL, mode),
+            groups
+                .into_iter()
+                .map(|(w, v)| (w, Neighbors::from_pairs(v, NeighborsStorage::FULL, mode)))
+                .collect(),
+        )
     }
 }

@@ -28,6 +28,7 @@ use std::collections::HashMap;
 
 use crate::ff::forcefield::Params;
 use crate::ff::potential::Potential;
+use crate::ff::potential::gather_copies;
 use crate::ff::potential::geometry::{mag3, sub3, validate_coords};
 use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame::Frame;
@@ -107,6 +108,9 @@ enum Source {
     PerAtom {
         atoms: Vec<VdwAtomParams>,
         style: VdwStyleParams,
+        /// How many of the entries above are atoms; the rest are copies, and
+        /// are rebuilt from their owners whenever the copy list is.
+        n_owned: usize,
     },
 }
 
@@ -138,8 +142,13 @@ impl MMFFVdW {
     /// Per-atom vdW parameters, combined when a pair turns up by the same
     /// rule [`mmff_vdw_ctor`] applies.
     pub fn typed(atoms: Vec<VdwAtomParams>, style: VdwStyleParams) -> Self {
+        let n_owned = atoms.len();
         Self {
-            source: Source::PerAtom { atoms, style },
+            source: Source::PerAtom {
+                atoms,
+                style,
+                n_owned,
+            },
         }
     }
 
@@ -210,7 +219,7 @@ impl Potential for MMFFVdW {
     }
 
     fn calc_energy_forces_with_pairs(&self, coords: &[F], pairs: &Neighbors) -> (F, Vec<F>) {
-        let Source::PerAtom { atoms, style } = &self.source else {
+        let Source::PerAtom { atoms, style, .. } = &self.source else {
             // A compiled kernel answers for its own list, not for this one.
             return self.calc_energy_forces(coords);
         };
@@ -229,6 +238,14 @@ impl Potential for MMFFVdW {
             let (rs, eps) = vdw_combining(&atoms[i], &atoms[j], style);
             (i, j, rs, eps, [disp[[p, 0]], disp[[p, 1]], disp[[p, 2]]])
         })
+    }
+
+    fn gather_onto_copies(&mut self, owner: &[u32]) {
+        let Source::PerAtom { atoms, n_owned, .. } = &mut self.source else {
+            // Nothing per atom to extend.
+            return;
+        };
+        gather_copies(atoms, *n_owned, owner);
     }
 }
 

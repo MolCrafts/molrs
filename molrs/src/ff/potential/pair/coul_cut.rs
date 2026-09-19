@@ -32,6 +32,7 @@
 
 use crate::ff::forcefield::Params;
 use crate::ff::potential::Potential;
+use crate::ff::potential::gather_copies;
 use crate::ff::potential::geometry::validate_coords;
 use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame::Frame;
@@ -76,7 +77,12 @@ enum Charges {
     /// It carries **no** 1-4 scaling: there is nothing on a neighbour table to
     /// carry it. Scaling close neighbours is the caller's, through the
     /// special-bonds weights.
-    PerAtom { q: Vec<F> },
+    PerAtom {
+        q: Vec<F>,
+        /// How many of the entries above are atoms; the rest are copies, and
+        /// are rebuilt from their owners whenever the copy list is.
+        n_owned: usize,
+    },
 }
 
 impl PairCoulCut {
@@ -113,8 +119,9 @@ impl PairCoulCut {
     /// Keyed on the atoms instead, it can be found for whatever pair turns up
     /// — including one that names a periodic copy.
     pub fn typed(q: Vec<F>, coulomb: F, dielectric: F, delta: F, cutoff: F) -> Self {
+        let n_owned = q.len();
         Self {
-            charges: Charges::PerAtom { q },
+            charges: Charges::PerAtom { q, n_owned },
             coulomb,
             dielectric,
             delta,
@@ -213,7 +220,7 @@ impl Potential for PairCoulCut {
 
     fn calc_energy_forces_with_pairs(&self, coords: &[F], pairs: &Neighbors) -> (F, Vec<F>) {
         let k_over_d = self.coulomb / self.dielectric;
-        let Charges::PerAtom { q } = &self.charges else {
+        let Charges::PerAtom { q, .. } = &self.charges else {
             // A compiled kernel answers for its own list, not for this one.
             return self.calc_energy_forces(coords);
         };
@@ -235,6 +242,14 @@ impl Potential for PairCoulCut {
             let qq = k_over_d * (q[i] * q[j]);
             (i, j, qq, [disp[[p, 0]], disp[[p, 1]], disp[[p, 2]]], d2[p])
         })
+    }
+
+    fn gather_onto_copies(&mut self, owner: &[u32]) {
+        let Charges::PerAtom { q, n_owned, .. } = &mut self.charges else {
+            // Nothing per atom to extend.
+            return;
+        };
+        gather_copies(q, *n_owned, owner);
     }
 }
 

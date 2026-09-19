@@ -10,6 +10,7 @@ use std::collections::HashMap;
 
 use crate::ff::forcefield::Params;
 use crate::ff::potential::Potential;
+use crate::ff::potential::gather_copies;
 use crate::ff::potential::geometry::validate_coords;
 use crate::ff::potential::pair::PairPotential;
 use molrs::spatial::neighbors::{Neighbors, VerletSkin};
@@ -99,6 +100,9 @@ enum PairSource {
         ceps: Vec<F>,
         e0: Vec<F>,
         f_rc: Vec<F>,
+        /// How many of the entries above are atoms; the rest are copies, and
+        /// are rebuilt from their owners whenever the copy list is.
+        n_owned: usize,
     },
 }
 
@@ -277,6 +281,7 @@ impl LJCut {
                 f_rc[t] = fr;
             }
         }
+        let n_owned = type_id.len();
         Ok(Self {
             epsilon: 1.0,
             sigma: 1.0,
@@ -296,6 +301,7 @@ impl LJCut {
                 ceps,
                 e0,
                 f_rc,
+                n_owned,
             },
         })
     }
@@ -440,6 +446,7 @@ impl LJCut {
             ceps,
             e0,
             f_rc,
+            ..
         } = &self.source
         else {
             return (0.0, forces);
@@ -574,6 +581,17 @@ impl Potential for LJCut {
             PairSource::Loop => self.fold_neighbors(coords, pairs),
             PairSource::Typed { .. } => self.fold_typed(coords, pairs),
         }
+    }
+
+    fn gather_onto_copies(&mut self, owner: &[u32]) {
+        let PairSource::Typed {
+            type_id, n_owned, ..
+        } = &mut self.source
+        else {
+            // Nothing per atom to extend.
+            return;
+        };
+        gather_copies(type_id, *n_owned, owner);
     }
 }
 

@@ -167,6 +167,22 @@ pub trait Potential: Send + Sync {
         let _ = terms;
         self.calc_energy_forces(coords)
     }
+
+    /// Extend per-atom state onto periodic copies.
+    ///
+    /// `owner[g]` is the atom copy `g` is a copy of, and the copies occupy
+    /// rows `n_owned + g` of the coordinates a periodic régime evaluates over.
+    /// A kernel that keeps anything per atom — a charge, a type index, a
+    /// parameter record — has to cover those rows, because a pair table over
+    /// copies will name them.
+    ///
+    /// Idempotent: the owned entries are the truth and the copies are derived
+    /// from them, so calling this twice with the same map is the same as
+    /// calling it once. Default does nothing, which is right for a kernel that
+    /// keeps nothing per atom.
+    fn gather_onto_copies(&mut self, owner: &[u32]) {
+        let _ = owner;
+    }
 }
 
 impl Potential for Box<dyn Potential> {
@@ -189,11 +205,39 @@ impl Potential for Box<dyn Potential> {
     ) -> (F, Vec<F>) {
         (**self).calc_energy_forces_with_terms(coords, terms)
     }
+
+    fn gather_onto_copies(&mut self, owner: &[u32]) {
+        (**self).gather_onto_copies(owner)
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Potentials collection
 // ---------------------------------------------------------------------------
+
+/// Rebuild the copies' entries of a per-atom vector from their owners'.
+///
+/// `v` holds one entry per atom for the first `n_owned`, then one per copy.
+/// The owned entries are the truth; the copies are derived, so this truncates
+/// before extending and is therefore idempotent — which matters, because a
+/// periodic régime calls it again every time the copy list is rebuilt and has
+/// no way to know whether the last call took.
+pub(crate) fn gather_copies<T: Clone>(v: &mut Vec<T>, n_owned: usize, owner: &[u32]) {
+    debug_assert!(
+        v.len() >= n_owned,
+        "a per-atom vector shorter than the atoms it describes"
+    );
+    v.truncate(n_owned);
+    v.reserve(owner.len());
+    for &o in owner {
+        debug_assert!(
+            (o as usize) < n_owned,
+            "a copy names an owner that is not an atom"
+        );
+        let x = v[o as usize].clone();
+        v.push(x);
+    }
+}
 
 /// Aggregates multiple potentials; energy/forces are summed.
 ///
@@ -261,6 +305,11 @@ impl Potentials {
     /// Give up the members, for a caller that wants to own them individually.
     pub fn into_members(self) -> Vec<Box<dyn Potential>> {
         self.inner
+    }
+
+    /// The members, mutably — for the per-atom gather a periodic régime runs.
+    pub fn members_mut(&mut self) -> &mut [Box<dyn Potential>] {
+        &mut self.inner
     }
 
     /// Same as [`calc_energy_forces`](Self::calc_energy_forces) but forwards
@@ -575,6 +624,33 @@ mod tests {
     /// A four-atom frame carrying one term of every bonded arity, so a single
     /// force field produces a bond, an angle, a dihedral and an improper
     /// kernel and the rebinding contract can be checked on all four at once.
+    /// Gathering twice is gathering once.
+    ///
+    /// A periodic régime calls this again every time the copy list is rebuilt
+    /// and has no way to check whether the last call took — so appending
+    /// rather than rebuilding would grow the vector without bound, and every
+    /// index past the first rebuild would name the wrong atom.
+    #[test]
+    fn gathering_onto_copies_is_idempotent() {
+        let owned = vec![10_u8, 20, 30];
+        let owner = [2_u32, 0, 2];
+
+        let mut v = owned.clone();
+        gather_copies(&mut v, owned.len(), &owner);
+        assert_eq!(v, vec![10, 20, 30, 30, 10, 30]);
+
+        gather_copies(&mut v, owned.len(), &owner);
+        assert_eq!(
+            v,
+            vec![10, 20, 30, 30, 10, 30],
+            "a second gather changed it"
+        );
+
+        // A shorter copy list shrinks it back rather than leaving a tail.
+        gather_copies(&mut v, owned.len(), &owner[..1]);
+        assert_eq!(v, vec![10, 20, 30, 30]);
+    }
+
     fn make_all_bonded_frame() -> Frame {
         let mut frame = Frame::new();
         let mut atoms = Block::new();
