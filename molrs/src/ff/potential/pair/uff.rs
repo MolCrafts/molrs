@@ -267,7 +267,9 @@ pub fn uff_lj_typed_ctor(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ff::potential::pair::testing::{assert_same, table_over};
+    use crate::ff::potential::pair::testing::{
+        assert_same, assert_virial_matches_forces, table_over,
+    };
 
     /// Combining `x1`/`D1` when a pair turns up is the same number as having
     /// combined them earlier against a fixed list — bit for bit, on the same
@@ -305,6 +307,11 @@ mod tests {
             "uff_lj",
             compiled.calc_energy_forces(&coords),
             typed.calc_energy_forces_with_pairs(&coords, &table),
+        );
+        assert_virial_matches_forces(
+            "uff_lj",
+            &coords,
+            typed.calc_energy_forces_with_pairs_virial(&coords, &table),
         );
     }
 }

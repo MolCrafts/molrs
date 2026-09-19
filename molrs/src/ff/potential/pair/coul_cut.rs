@@ -402,7 +402,9 @@ pub fn pair_coul_cut_typed_ctor(
 
 #[cfg(test)]
 mod tests {
-    use crate::ff::potential::pair::testing::{assert_same, table_over};
+    use crate::ff::potential::pair::testing::{
+        assert_same, assert_virial_matches_forces, table_over,
+    };
 
     /// Forming `qᵢqⱼ` from the atoms is the same number as having formed it
     /// earlier against a fixed list — bit for bit, on the same pairs.
@@ -432,6 +434,11 @@ mod tests {
             "coul/cut",
             compiled.calc_energy_forces(&coords),
             typed.calc_energy_forces_with_pairs(&coords, &table),
+        );
+        assert_virial_matches_forces(
+            "coul/cut",
+            &coords,
+            typed.calc_energy_forces_with_pairs_virial(&coords, &table),
         );
     }
 

@@ -495,7 +495,9 @@ mod tests {
     /// number as having run them earlier against a fixed list — bit for bit.
     #[test]
     fn per_atom_parameters_score_a_pair_exactly_as_compiled_ones() {
-        use crate::ff::potential::pair::testing::{assert_same, table_over};
+        use crate::ff::potential::pair::testing::{
+            assert_same, assert_virial_matches_forces, table_over,
+        };
 
         let style = VdwStyleParams {
             b: 0.2,
@@ -542,6 +544,11 @@ mod tests {
             "mmff_vdw",
             compiled.calc_energy_forces(&coords),
             typed.calc_energy_forces_with_pairs(&coords, &table),
+        );
+        assert_virial_matches_forces(
+            "mmff_vdw",
+            &coords,
+            typed.calc_energy_forces_with_pairs_virial(&coords, &table),
         );
     }
     use super::*;

@@ -856,6 +856,12 @@ mod tests {
         for (c, (a, b)) in f_c.iter().zip(&f_t).enumerate() {
             assert_eq!(a.to_bits(), b.to_bits(), "force component {c}: {a} vs {b}");
         }
+
+        crate::ff::potential::pair::testing::assert_virial_matches_forces(
+            "lj/cut",
+            &coords,
+            typed.calc_energy_forces_with_pairs_virial(&coords, &neighbors),
+        );
     }
 
     /// A typed kernel declares its cutoff, where a compiled one has none.

@@ -189,6 +189,49 @@ pub(crate) mod testing {
         )
     }
 
+    /// A kernel's own virial must equal `Σ_a f_a ⊗ x_a` over the coordinates
+    /// it was handed — whenever the pair displacements *are* coordinate
+    /// differences, which on a free boundary they are.
+    ///
+    /// Under periodic boundaries the two differ, and that difference is the
+    /// whole reason a kernel tallies its own: the atom-weighted sum depends on
+    /// where the cell's origin falls once a pair reaches through a face. On a
+    /// free-boundary configuration there is no such pair, so they must agree —
+    /// which makes this the cheapest possible check that a kernel got its sign
+    /// convention right, and it is one a kernel accumulating forces the other
+    /// way round (UFF does) is easy to fail.
+    pub(crate) fn assert_virial_matches_forces(
+        label: &str,
+        coords: &[F],
+        out: (F, Vec<F>, Option<molrs::math::Virial>),
+    ) {
+        let (_, forces, virial) = out;
+        let virial = virial.unwrap_or_else(|| panic!("{label}: this kernel must tally a virial"));
+        let mut from_forces = molrs::math::Virial::ZERO;
+        for a in 0..coords.len() / 3 {
+            from_forces.add_outer(
+                [forces[a * 3], forces[a * 3 + 1], forces[a * 3 + 2]],
+                [coords[a * 3], coords[a * 3 + 1], coords[a * 3 + 2]],
+            );
+        }
+        let scale = from_forces
+            .components
+            .iter()
+            .fold(1.0_f64, |m, c| m.max(c.abs()));
+        assert!(
+            scale > 1e-6,
+            "{label}: the virial must be non-trivial for this to assert anything"
+        );
+        for c in 0..6 {
+            assert!(
+                (virial.components[c] - from_forces.components[c]).abs() / scale < 1e-12,
+                "{label}: component {c}: kernel says {}, the forces say {}",
+                virial.components[c],
+                from_forces.components[c]
+            );
+        }
+    }
+
     /// Assert two evaluations agree bit for bit, and that they said something.
     pub(crate) fn assert_same(label: &str, a: (F, Vec<F>), b: (F, Vec<F>)) {
         let (e_a, f_a) = a;

@@ -351,7 +351,9 @@ mod tests {
     /// combined them earlier against a fixed list — bit for bit.
     #[test]
     fn per_atom_parameters_score_a_pair_exactly_as_compiled_ones() {
-        use crate::ff::potential::pair::testing::{assert_same, table_over};
+        use crate::ff::potential::pair::testing::{
+            assert_same, assert_virial_matches_forces, table_over,
+        };
 
         let q = vec![0.4_f64, -0.7, 0.3, -0.2];
         let alpha = vec![1.1_f64, 0.8, 1.4, 0.6];
@@ -381,6 +383,11 @@ mod tests {
             "thole",
             compiled.calc_energy_forces(&coords),
             typed.calc_energy_forces_with_pairs(&coords, &table),
+        );
+        assert_virial_matches_forces(
+            "thole",
+            &coords,
+            typed.calc_energy_forces_with_pairs_virial(&coords, &table),
         );
     }
     use super::*;

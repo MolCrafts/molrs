@@ -308,7 +308,9 @@ mod tests {
     /// earlier against a fixed list — bit for bit, on the same pairs.
     #[test]
     fn per_atom_charges_score_a_pair_exactly_as_compiled_products() {
-        use crate::ff::potential::pair::testing::{assert_same, table_over};
+        use crate::ff::potential::pair::testing::{
+            assert_same, assert_virial_matches_forces, table_over,
+        };
 
         let q = vec![0.4_f64, -0.7, 0.3, -0.2];
         let coords: Vec<F> = vec![
@@ -330,6 +332,11 @@ mod tests {
             "coul/tt",
             compiled.calc_energy_forces(&coords),
             typed.calc_energy_forces_with_pairs(&coords, &table),
+        );
+        assert_virial_matches_forces(
+            "coul/tt",
+            &coords,
+            typed.calc_energy_forces_with_pairs_virial(&coords, &table),
         );
     }
     use super::*;

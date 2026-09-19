@@ -335,7 +335,9 @@ mod tests {
     /// scratch; the atoms' types survive it. That is the whole difference.
     #[test]
     fn a_type_table_scores_a_pair_exactly_as_compiled_rows() {
-        use crate::ff::potential::pair::testing::{assert_same, table_over};
+        use crate::ff::potential::pair::testing::{
+            assert_same, assert_virial_matches_forces, table_over,
+        };
 
         let ntypes = 2_usize;
         let type_id = vec![0_u32, 1, 0, 1];
@@ -366,6 +368,11 @@ mod tests {
             "lj/class2",
             compiled.calc_energy_forces(&coords),
             typed.calc_energy_forces_with_pairs(&coords, &table),
+        );
+        assert_virial_matches_forces(
+            "lj/class2",
+            &coords,
+            typed.calc_energy_forces_with_pairs_virial(&coords, &table),
         );
     }
     use super::*;
