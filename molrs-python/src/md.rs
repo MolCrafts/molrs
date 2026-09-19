@@ -20,7 +20,8 @@ use crate::ff::PyPotentials;
 use crate::helpers::NpF;
 use molrs::ff::potential::Potential;
 use molrs::md::{
-    LJCut, Langevin, MDState, MaxwellBoltzmann, MdError, PairPotential, PairSource, VelocityVerlet,
+    Direct, ForceProvider, LJCut, Langevin, MDState, MaxwellBoltzmann, MdError, MicPairs,
+    PairPotential, VelocityVerlet, Virial,
 };
 use molrs::types::F;
 use ndarray::{Array1, Array2};
@@ -42,12 +43,15 @@ fn check_nx3(arr: &PyReadonlyArray2<'_, NpF>, label: &str) -> PyResult<()> {
     Ok(())
 }
 
-/// A Python-side neighbour argument becomes the minimum-image source; the
+/// A Python-side neighbour argument picks the minimum-image provider; the
 /// ghost régime is not bound yet.
-fn skin_source(skin: Option<molrs::spatial::neighbors::VerletSkin>) -> PairSource {
+fn provider(
+    potential: Box<dyn Potential>,
+    skin: Option<molrs::spatial::neighbors::VerletSkin>,
+) -> Box<dyn ForceProvider> {
     match skin {
-        Some(s) => PairSource::mic(s),
-        None => PairSource::None,
+        Some(s) => Box::new(MicPairs::new(potential, s)),
+        None => Box::new(Direct::new(potential)),
     }
 }
 
@@ -65,6 +69,7 @@ fn extract_state(state: &Bound<'_, PyAny>) -> PyResult<MDState> {
         vel: vel.as_array().to_owned(),
         forces: forces.as_array().to_owned(),
         energy,
+        virial: None,
     })
 }
 
@@ -110,6 +115,7 @@ impl PyMDState {
                 vel: vel.as_array().to_owned(),
                 forces: forces.as_array().to_owned(),
                 energy,
+                virial: None,
             },
         })
     }
@@ -129,6 +135,16 @@ impl PyMDState {
     #[getter]
     fn energy(&self) -> F {
         self.inner.energy
+    }
+
+    /// Virial `Σ f ⊗ r` as ``(xx, yy, zz, xy, xz, yz)``, or ``None``.
+    ///
+    /// ``None`` means the force provider does not tally one — not that it is
+    /// zero. A pressure computed from a fabricated zero is wrong and looks
+    /// entirely plausible.
+    #[getter]
+    fn virial(&self) -> Option<[F; 6]> {
+        self.inner.virial.map(|w: Virial| w.components)
     }
 
     #[setter]
@@ -429,7 +445,7 @@ impl PyVelocityVerlet {
             None => None,
         };
         Ok(Self {
-            inner: VelocityVerlet::new(dt, boxed, skin_source(skin), mass.view(), None)
+            inner: VelocityVerlet::new(dt, provider(boxed, skin), mass.view(), None)
                 .map_err(md_err)?,
             err_slots,
         })
@@ -448,28 +464,19 @@ impl PyVelocityVerlet {
     /// Number of pair edges in the current list (``None`` without neighbors).
     #[getter]
     fn num_edges(&self) -> Option<usize> {
-        match self.inner.neighbors() {
-            PairSource::Mic(skin) => Some(skin.num_edges()),
-            _ => None,
-        }
+        self.inner.forces().neighbor_stats().edges
     }
 
     /// Neighbour-list rebuilds since construction (``None`` without neighbors).
     #[getter]
     fn rebuild_count(&self) -> Option<usize> {
-        match self.inner.neighbors() {
-            PairSource::Mic(skin) => Some(skin.rebuild_count()),
-            _ => None,
-        }
+        self.inner.forces().neighbor_stats().rebuilds
     }
 
     /// Updates since the last rebuild (``None`` without neighbors).
     #[getter]
     fn ago(&self) -> Option<usize> {
-        match self.inner.neighbors() {
-            PairSource::Mic(skin) => Some(skin.ago()),
-            _ => None,
-        }
+        self.inner.forces().neighbor_stats().ago
     }
 
     fn initial(
@@ -549,8 +556,7 @@ impl PyLangevin {
                 dt,
                 gamma,
                 kbt,
-                boxed,
-                skin_source(skin),
+                provider(boxed, skin),
                 mass.view(),
                 seed,
                 None,
@@ -602,28 +608,19 @@ impl PyLangevin {
     /// Number of pair edges in the current list (``None`` without neighbors).
     #[getter]
     fn num_edges(&self) -> Option<usize> {
-        match self.inner.neighbors() {
-            PairSource::Mic(skin) => Some(skin.num_edges()),
-            _ => None,
-        }
+        self.inner.forces().neighbor_stats().edges
     }
 
     /// Neighbour-list rebuilds since construction (``None`` without neighbors).
     #[getter]
     fn rebuild_count(&self) -> Option<usize> {
-        match self.inner.neighbors() {
-            PairSource::Mic(skin) => Some(skin.rebuild_count()),
-            _ => None,
-        }
+        self.inner.forces().neighbor_stats().rebuilds
     }
 
     /// Updates since the last rebuild (``None`` without neighbors).
     #[getter]
     fn ago(&self) -> Option<usize> {
-        match self.inner.neighbors() {
-            PairSource::Mic(skin) => Some(skin.ago()),
-            _ => None,
-        }
+        self.inner.forces().neighbor_stats().ago
     }
 
     fn initial(

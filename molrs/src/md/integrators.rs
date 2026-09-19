@@ -3,21 +3,20 @@
 //! Required pieces go in the constructor — no `bind_*` afterthoughts:
 //!
 //! ```ignore
-//! VelocityVerlet::new(dt, lj, Some(neighbors), mass)?;
-//! Langevin::new(dt, gamma, kbt, potentials, None, mass, seed)?;
+//! VelocityVerlet::new(dt, MicPairs::new(lj, skin), mass, Some(bx))?;
+//! Langevin::new(dt, gamma, kbt, Direct::new(potentials), mass, seed, None)?;
 //! ```
 //!
-//! `potential` is anything implementing [`Potential`] (boxed internally):
-//! [`super::LJCut`] as the nonbond term, a [`Potentials`] collection to merge
-//! several terms (bonded + nonbond + external), or any external
-//! implementation. The integrator owns the optional
-//! [`VerletSkin`](molrs::spatial::neighbors::VerletSkin): every force
-//! evaluation runs the skin's update policy and,
-//! after a rebuild, feeds the current pairs to the potential
-//! ([`Potential::calc_energy_forces_with_pairs`]) — neighbour bookkeeping is the loop's concern,
-//! never the potential's. Two schemes, two types — no `gamma=0` switch:
+//! The second argument is a [`ForceProvider`],
+//! and it is the only thing an integrator knows about force fields. The
+//! potential, the neighbour bookkeeping and the periodic régime all live behind
+//! it: [`Direct`](super::forces::Direct) hands the potential raw coordinates,
+//! [`MicPairs`](super::forces::MicPairs) gives it minimum-image pairs, and
+//! [`GhostPairs`](super::forces::GhostPairs) gives it periodic copies and folds
+//! the forces back. An integrator holds no skin, no halo and no potential, so
+//! adding a fourth way to make a force changes nothing here.
 //!
-//! [`Potentials`]: molrs::ff::potential::Potentials
+//! Two schemes, two types — no `gamma=0` switch:
 //!
 //! * [`VelocityVerlet`] — NVE (B-A-A-B; the two half-drifts stay as separate
 //!   adds).
@@ -37,8 +36,7 @@ use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Zip};
 
 use molrs::spatial::simbox::SimBox;
 
-use super::pairs::PairSource;
-use molrs::ff::potential::Potential;
+use super::forces::ForceProvider;
 use molrs::types::{F, FNx3};
 
 use super::error::MdError;
@@ -49,86 +47,6 @@ fn as_mass_col(mass: ArrayView1<'_, F>) -> Result<Array2<F>, MdError> {
         return Err(MdError::Invalid("mass must be strictly positive".into()));
     }
     Ok(mass.to_owned().insert_axis(ndarray::Axis(1)))
-}
-
-/// One force evaluation: materialize the current pair table once and share it.
-///
-/// The two periodic régimes differ in what the potential is shown, not in what
-/// it is asked. Under [`PairSource::Mic`] it sees the owned atoms and pairs
-/// whose displacements have been folded; under [`PairSource::Ghosts`] it sees
-/// owned atoms *and their copies*, with ordinary differences — and the forces
-/// come back over that extended set, so they are folded onto the owners before
-/// anything physical is read off them. Neither route asks the potential to know
-/// which one it is in.
-fn eval_potential(
-    potential: &dyn Potential,
-    neighbors: &mut PairSource,
-    pos: ArrayView2<'_, F>,
-    wrap_shifts: ArrayView2<'_, i64>,
-) -> Result<ForceOutput, MdError> {
-    let n_atoms = pos.nrows();
-    let (energy, forces) = match neighbors {
-        PairSource::Mic(skin) => {
-            let pairs = skin.pairs_at(pos)?;
-            match pos.as_slice() {
-                Some(flat) => potential.calc_energy_forces_with_pairs(flat, pairs),
-                None => {
-                    let flat: Vec<F> = pos.iter().copied().collect();
-                    potential.calc_energy_forces_with_pairs(&flat, pairs)
-                }
-            }
-        }
-        PairSource::Ghosts { comm, bonded } => {
-            // Move the copies first, then re-resolve the topology against them,
-            // then read the pairs. Each step depends on the one before it, and
-            // doing them in one call would hide that.
-            comm.advance(pos, wrap_shifts)?;
-            if let Some(b) = bonded.as_mut() {
-                b.refresh(comm, pos, wrap_shifts)?;
-            }
-            let pairs = comm.pairs(pos)?;
-            let all = comm.combined(pos)?;
-            let flat: Vec<F> = all.iter().copied().collect();
-            // A resolved topology *is* the potential for this run: it names the
-            // copies that exist now, where the integrator's own names owned
-            // atoms and would measure bonds across the cell.
-            let (energy, forces) = match bonded.as_ref() {
-                Some(b) => b.potentials().calc_energy_forces_with_pairs(&flat, &pairs),
-                None => potential.calc_energy_forces_with_pairs(&flat, &pairs),
-            };
-            let n_all = all.nrows();
-            let mut f = Array2::from_shape_vec((n_all, 3), forces).map_err(|_| {
-                MdError::Invalid(format!(
-                    "potential returned force components for {n_all} owned+ghost rows that do not fit"
-                ))
-            })?;
-            // Reverse accumulation: a copy's force belongs to the atom it
-            // copies. After this the ghost rows are zero and the owned rows are
-            // the physical force.
-            comm.ghosts()
-                .reverse_comm(&mut f)
-                .map_err(|e| MdError::Invalid(e.to_string()))?;
-            f.slice_collapse(ndarray::s![..n_atoms, ..]);
-            return Ok(ForceOutput {
-                energy,
-                forces: f.to_owned(),
-            });
-        }
-        PairSource::None => match pos.as_slice() {
-            Some(flat) => potential.calc_energy_forces(flat),
-            None => {
-                let flat: Vec<F> = pos.iter().copied().collect();
-                potential.calc_energy_forces(&flat)
-            }
-        },
-    };
-    let n_components = forces.len();
-    let forces = Array2::from_shape_vec((n_atoms, 3), forces).map_err(|_| {
-        MdError::Invalid(format!(
-            "potential returned {n_components} force components for {n_atoms} atoms"
-        ))
-    })?;
-    Ok(ForceOutput { energy, forces })
 }
 
 /// Fold the drifted positions back into the cell and bank the crossings.
@@ -182,12 +100,12 @@ fn check_state_shape(
 
 /// NVE velocity-Verlet (B-A-A-B).
 ///
-/// Construct with timestep, a [`Potential`], the [`PairSource`] the
-/// loop runs for the nonbond term, and mass.
+/// Construct with timestep, the [`ForceProvider`] the loop evaluates, and
+/// mass.
 pub struct VelocityVerlet {
     dt: F,
-    potential: Box<dyn Potential>,
-    neighbors: PairSource,
+    /// Everything that makes a force, behind one seam.
+    forces: Box<dyn ForceProvider>,
     /// Cell the positions are folded into each step; `None` is free boundary.
     simbox: Option<SimBox>,
     mass_col: Array2<F>,
@@ -201,8 +119,7 @@ impl VelocityVerlet {
     /// boundary, no wrapping and image flags stay zero).
     pub fn new(
         dt: F,
-        potential: impl Potential + 'static,
-        neighbors: PairSource,
+        forces: impl ForceProvider + 'static,
         mass: ArrayView1<'_, F>,
         simbox: Option<SimBox>,
     ) -> Result<Self, MdError> {
@@ -210,18 +127,16 @@ impl VelocityVerlet {
         let inv_mass = mass_col.column(0).mapv(|m| 1.0 / m);
         Ok(Self {
             dt,
-            potential: Box::new(potential),
-            neighbors,
+            forces: Box::new(forces),
             simbox,
             mass_col,
             inv_mass,
         })
     }
 
-    /// Read-only view of the integrator-owned Verlet skin (rebuild counters,
-    /// edge count); `None` when constructed without neighbour state.
-    pub fn neighbors(&self) -> &PairSource {
-        &self.neighbors
+    /// The force provider, for the counters it chooses to expose.
+    pub fn forces(&self) -> &dyn ForceProvider {
+        &*self.forces
     }
 
     /// Timestep Δt in fs.
@@ -247,21 +162,21 @@ impl VelocityVerlet {
     /// Energy and forces at `pos` (runs the neighbour update policy first).
     pub fn eval_force(&mut self, pos: ArrayView2<'_, F>) -> Result<ForceOutput, MdError> {
         let no_fold = Array2::zeros((pos.nrows(), 3));
-        eval_potential(&*self.potential, &mut self.neighbors, pos, no_fold.view())
+        self.forces.compute(pos, no_fold.view())
     }
 
     /// Energy and forces right after a fold, carrying the shift it applied.
     ///
     /// A ghost halo has to reconcile that fold in the same breath — see
-    /// [`Comm::pairs_at`](super::pairs::Comm::pairs_at) — which
-    /// is why the step path cannot go through the public
+    /// [`ForceProvider::compute`](super::forces::ForceProvider::compute) —
+    /// which is why the step path cannot go through the public
     /// [`eval_force`](Self::eval_force), whose caller has not folded anything.
     fn eval_force_after_fold(
         &mut self,
         pos: ArrayView2<'_, F>,
         shifts: ArrayView2<'_, i64>,
     ) -> Result<ForceOutput, MdError> {
-        eval_potential(&*self.potential, &mut self.neighbors, pos, shifts)
+        self.forces.compute(pos, shifts)
     }
 
     /// Seed an [`MDState`], evaluating the entry force.
@@ -278,12 +193,14 @@ impl VelocityVerlet {
             vel,
             forces: FNx3::zeros((n_atoms, 3)),
             energy: 0.0,
+            virial: None,
         };
         let folded = wrap_and_bank(self.simbox.as_ref(), &mut state);
         state.images.fill(0);
         let seeded = self.eval_force_after_fold(state.pos.view(), folded.view())?;
         state.forces = seeded.forces;
         state.energy = seeded.energy;
+        state.virial = seeded.virial;
         Ok(state)
     }
 
@@ -324,6 +241,7 @@ impl VelocityVerlet {
                 v[2] += half_dt * f[2] * im;
             });
         state.energy = out.energy;
+        state.virial = out.virial;
         Ok(state)
     }
 
@@ -350,8 +268,8 @@ pub struct Langevin {
     c1: F,
     c2: F,
     kbt: F,
-    potential: Box<dyn Potential>,
-    neighbors: PairSource,
+    /// Everything that makes a force, behind one seam.
+    forces: Box<dyn ForceProvider>,
     /// Cell the positions are folded into each step; `None` is free boundary.
     simbox: Option<SimBox>,
     mass_col: Array2<F>,
@@ -363,19 +281,17 @@ pub struct Langevin {
 impl Langevin {
     /// BAOAB integrator with all required pieces at construction.
     ///
-    /// Eight arguments is the cost of this module's rule that required pieces
+    /// Seven arguments is the cost of this module's rule that required pieces
     /// go in the constructor rather than into `bind_*` setters afterwards: a
     /// half-built integrator is a state nobody should be able to hold.
     ///
     /// `seed` fixes the internal noise stream, so [`advance`](Self::advance)
     /// is deterministic given the seed.
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         dt: F,
         gamma: F,
         kbt: F,
-        potential: impl Potential + 'static,
-        neighbors: PairSource,
+        forces: impl ForceProvider + 'static,
         mass: ArrayView1<'_, F>,
         seed: u64,
         simbox: Option<SimBox>,
@@ -399,8 +315,7 @@ impl Langevin {
             c1,
             c2,
             kbt,
-            potential: Box::new(potential),
-            neighbors,
+            forces: Box::new(forces),
             simbox,
             mass_col,
             inv_mass,
@@ -409,10 +324,9 @@ impl Langevin {
         })
     }
 
-    /// Read-only view of the integrator-owned Verlet skin (rebuild counters,
-    /// edge count); `None` when constructed without neighbour state.
-    pub fn neighbors(&self) -> &PairSource {
-        &self.neighbors
+    /// The force provider, for the counters it chooses to expose.
+    pub fn forces(&self) -> &dyn ForceProvider {
+        &*self.forces
     }
 
     /// Timestep Δt in fs.
@@ -458,21 +372,21 @@ impl Langevin {
     /// Energy and forces at `pos` (runs the neighbour update policy first).
     pub fn eval_force(&mut self, pos: ArrayView2<'_, F>) -> Result<ForceOutput, MdError> {
         let no_fold = Array2::zeros((pos.nrows(), 3));
-        eval_potential(&*self.potential, &mut self.neighbors, pos, no_fold.view())
+        self.forces.compute(pos, no_fold.view())
     }
 
     /// Energy and forces right after a fold, carrying the shift it applied.
     ///
     /// A ghost halo has to reconcile that fold in the same breath — see
-    /// [`Comm::pairs_at`](super::pairs::Comm::pairs_at) — which
-    /// is why the step path cannot go through the public
+    /// [`ForceProvider::compute`](super::forces::ForceProvider::compute) —
+    /// which is why the step path cannot go through the public
     /// [`eval_force`](Self::eval_force), whose caller has not folded anything.
     fn eval_force_after_fold(
         &mut self,
         pos: ArrayView2<'_, F>,
         shifts: ArrayView2<'_, i64>,
     ) -> Result<ForceOutput, MdError> {
-        eval_potential(&*self.potential, &mut self.neighbors, pos, shifts)
+        self.forces.compute(pos, shifts)
     }
 
     /// Seed an [`MDState`], evaluating the entry force.
@@ -489,12 +403,14 @@ impl Langevin {
             vel,
             forces: FNx3::zeros((n_atoms, 3)),
             energy: 0.0,
+            virial: None,
         };
         let folded = wrap_and_bank(self.simbox.as_ref(), &mut state);
         state.images.fill(0);
         let seeded = self.eval_force_after_fold(state.pos.view(), folded.view())?;
         state.forces = seeded.forces;
         state.energy = seeded.energy;
+        state.virial = seeded.virial;
         Ok(state)
     }
 
@@ -565,6 +481,7 @@ impl Langevin {
                 v[2] += half_dt * f[2] * im;
             });
         state.energy = out.energy;
+        state.virial = out.virial;
         Ok(state)
     }
 
@@ -627,7 +544,7 @@ pub fn kinetic_energy(mass: ArrayView1<'_, F>, vel: ArrayView2<'_, F>) -> Result
 mod tests {
     use ndarray::{Array2, ArrayView2, array};
 
-    use molrs::ff::potential::Potentials;
+    use molrs::ff::potential::{Potential, Potentials};
     use molrs::spatial::neighbors::{NeighborList, NeighborPolicy, VerletSkin};
     use molrs::spatial::simbox::SimBox;
 
@@ -635,6 +552,7 @@ mod tests {
     use molrs::units::constants::BOLTZMANN;
 
     use super::super::LJCut;
+    use super::super::forces::{Direct, MicPairs};
     use super::super::maxwell::MaxwellBoltzmann;
     use super::*;
 
@@ -696,8 +614,7 @@ mod tests {
             dt,
             gamma,
             kbt,
-            lj,
-            PairSource::mic(nl),
+            MicPairs::new(lj, nl),
             scalar_mass(mass, 1).unwrap().view(),
             0,
             None,
@@ -768,7 +685,7 @@ mod tests {
             .unwrap()
             .velocities(pos.view(), mass.view())
             .unwrap();
-        let mut ig = VelocityVerlet::new(1.0, lj, PairSource::mic(nl), mass.view(), None).unwrap();
+        let mut ig = VelocityVerlet::new(1.0, MicPairs::new(lj, nl), mass.view(), None).unwrap();
         let mut state = ig.initial(pos, vel).unwrap();
 
         let total = |s: &MDState| s.energy + kinetic_energy(mass.view(), s.vel.view()).unwrap();
@@ -803,8 +720,7 @@ mod tests {
         let (lj, nl, _) = soft_lj(2, 40.0);
         let nve = VelocityVerlet::new(
             0.01,
-            lj,
-            PairSource::mic(nl),
+            MicPairs::new(lj, nl),
             scalar_mass(1.0, 2).unwrap().view(),
             None,
         )
@@ -815,8 +731,7 @@ mod tests {
             0.01,
             1.0,
             1.0,
-            lj,
-            PairSource::mic(nl),
+            MicPairs::new(lj, nl),
             scalar_mass(1.0, 2).unwrap().view(),
             0,
             None,
@@ -829,14 +744,8 @@ mod tests {
     fn mass_must_be_positive() {
         let (lj, nl, _) = soft_lj(2, 40.0);
         assert!(
-            VelocityVerlet::new(
-                0.01,
-                lj,
-                PairSource::mic(nl),
-                array![-1.0, 1.0].view(),
-                None
-            )
-            .is_err()
+            VelocityVerlet::new(0.01, MicPairs::new(lj, nl), array![-1.0, 1.0].view(), None)
+                .is_err()
         );
     }
 
@@ -847,8 +756,7 @@ mod tests {
             0.01,
             0.0,
             1.0,
-            lj,
-            PairSource::mic(nl),
+            MicPairs::new(lj, nl),
             array![1.0].view(),
             0,
             None,
@@ -867,8 +775,7 @@ mod tests {
                 0.01,
                 1.0,
                 0.0,
-                lj,
-                PairSource::mic(nl),
+                MicPairs::new(lj, nl),
                 array![1.0].view(),
                 0,
                 None
@@ -885,8 +792,7 @@ mod tests {
             0.01,
             1.0,
             1.0,
-            lj,
-            PairSource::mic(nl),
+            MicPairs::new(lj, nl),
             scalar_mass(1.0, 4).unwrap().view(),
             9,
             None,
@@ -897,8 +803,7 @@ mod tests {
             0.01,
             1.0,
             1.0,
-            lj,
-            PairSource::mic(nl),
+            MicPairs::new(lj, nl),
             scalar_mass(1.0, 4).unwrap().view(),
             9,
             None,
@@ -918,8 +823,7 @@ mod tests {
         let (lj, nl, mut pos) = soft_lj(4, 40.0);
         let mut ig = VelocityVerlet::new(
             0.01,
-            lj,
-            PairSource::mic(nl),
+            MicPairs::new(lj, nl),
             scalar_mass(1.0, 4).unwrap().view(),
             None,
         )
@@ -936,8 +840,7 @@ mod tests {
         let vel = Array2::from_elem(pos.raw_dim(), 0.01);
         let mut a = VelocityVerlet::new(
             0.01,
-            lj,
-            PairSource::mic(nl),
+            MicPairs::new(lj, nl),
             scalar_mass(1.0, 4).unwrap().view(),
             None,
         )
@@ -945,8 +848,7 @@ mod tests {
         let (lj, nl, _) = soft_lj(4, 40.0);
         let mut b = VelocityVerlet::new(
             0.01,
-            lj,
-            PairSource::mic(nl),
+            MicPairs::new(lj, nl),
             scalar_mass(1.0, 4).unwrap().view(),
             None,
         )
@@ -968,8 +870,7 @@ mod tests {
         let (lj, nl, pos) = soft_lj(2, 40.0);
         let mut lone = VelocityVerlet::new(
             0.01,
-            lj,
-            PairSource::mic(nl),
+            MicPairs::new(lj, nl),
             scalar_mass(1.0, 2).unwrap().view(),
             None,
         )
@@ -985,8 +886,7 @@ mod tests {
         }));
         let mut ig = VelocityVerlet::new(
             0.01,
-            pots,
-            PairSource::mic(nl),
+            MicPairs::new(pots, nl),
             scalar_mass(1.0, 2).unwrap().view(),
             None,
         )
@@ -1004,8 +904,7 @@ mod tests {
         let pos = array![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
         let mut ig = VelocityVerlet::new(
             0.01,
-            Potentials::new(),
-            PairSource::None,
+            Direct::new(Potentials::new()),
             scalar_mass(1.0, 2).unwrap().view(),
             None,
         )
@@ -1039,8 +938,7 @@ mod tests {
             let lj = LJCut::lj126(1.0, 1.0, cutoff).unwrap();
             VelocityVerlet::new(
                 0.01,
-                lj,
-                PairSource::mic(nl),
+                MicPairs::new(lj, nl),
                 scalar_mass(1.0, 2).unwrap().view(),
                 None,
             )
@@ -1054,10 +952,11 @@ mod tests {
             let pos = array![[0.0, 0.0, 0.0], [x, 0.0, 0.0]];
             last = Some(ig.eval_force(pos.view()).unwrap());
         }
-        let PairSource::Mic(skin) = ig.neighbors() else {
-            panic!("this integrator was built with a minimum-image skin")
-        };
-        let rebuilds = skin.rebuild_count();
+        let rebuilds = ig
+            .forces()
+            .neighbor_stats()
+            .rebuilds
+            .expect("this integrator was built with a minimum-image skin");
         assert!(
             rebuilds >= 2,
             "expected repeated rebuilds on a moving system, got {rebuilds}"
@@ -1077,6 +976,7 @@ mod tests {
 
 #[cfg(test)]
 mod ghost_path_tests {
+    use super::super::forces::{GhostPairs, MicPairs};
     use super::*;
     use molrs::ff::potential::pair::LJCut;
     use molrs::spatial::neighbors::{NeighborList, NeighborPolicy, VerletSkin};
@@ -1152,8 +1052,7 @@ mod ghost_path_tests {
         .unwrap();
         let mut mic = VelocityVerlet::new(
             1.0,
-            lj(),
-            PairSource::mic(skin_nl),
+            MicPairs::new(lj(), skin_nl),
             mass.view(),
             Some(bx.clone()),
         )
@@ -1163,8 +1062,7 @@ mod ghost_path_tests {
         let comm = Comm::new(bx.clone(), pos0.view(), cutoff, skin).unwrap();
         let mut gho = VelocityVerlet::new(
             1.0,
-            lj(),
-            PairSource::ghosts(comm),
+            GhostPairs::new(lj(), comm),
             mass.view(),
             Some(bx.clone()),
         )
@@ -1230,10 +1128,12 @@ mod ghost_path_tests {
             crossed > 0,
             "no atom crossed a face; the test proves nothing"
         );
-        let PairSource::Ghosts { comm: d, .. } = gho.neighbors() else {
-            unreachable!()
-        };
-        assert!(d.rebuilds() > 0, "the halo was never rebuilt");
+        let rebuilds = gho
+            .forces()
+            .neighbor_stats()
+            .rebuilds
+            .expect("a ghost provider counts its rebuilds");
+        assert!(rebuilds > 0, "the halo was never rebuilt");
     }
 
     /// A halo that outlives a fold has to be reconciled with it, and the
@@ -1288,8 +1188,10 @@ mod ghost_path_tests {
         // signal this test is looking for.
         let mut ig = VelocityVerlet::new(
             0.2,
-            LJCut::new(0.3, 3.4, cutoff, 12, 6, false, false).unwrap(),
-            PairSource::ghosts(comm),
+            GhostPairs::new(
+                LJCut::new(0.3, 3.4, cutoff, 12, 6, false, false).unwrap(),
+                comm,
+            ),
             scalar_mass(12.0, pos0.nrows()).unwrap().view(),
             Some(bx.clone()),
         )
@@ -1324,18 +1226,141 @@ mod ghost_path_tests {
         // 3.9 do not. Four folds are what this exercises.
         let crossed: i64 = state.images.iter().map(|&m| m.abs()).sum();
         assert!(crossed >= 4, "atoms should have crossed; got {crossed}");
-        let PairSource::Ghosts { comm: d, .. } = ig.neighbors() else {
-            unreachable!()
-        };
+        let rebuilds = ig
+            .forces()
+            .neighbor_stats()
+            .rebuilds
+            .expect("a ghost provider counts its rebuilds");
         assert!(
-            d.rebuilds() < 200,
+            rebuilds < 200,
             "the halo must survive some folds, or the reconciliation is never reached"
+        );
+    }
+
+    /// The virial reaches the integrator, and it is a property of the
+    /// configuration rather than of where the cell's origin happens to fall.
+    ///
+    /// A rigid translation of a periodic system is a symmetry: the same atoms
+    /// at the same separations, so the same physics. It is emphatically *not*
+    /// the same bookkeeping — moving everything a third of a cell puts a
+    /// different set of atoms near the faces, so a different set of copies is
+    /// materialised and the pairs are found through different images. A virial
+    /// that moved under it would be reporting the halo instead of the physics.
+    ///
+    /// The translation is deliberately not a lattice vector. Shifting by a
+    /// whole cell and wrapping gives back bit-identical coordinates, which
+    /// asserts nothing about the halo at all.
+    #[test]
+    fn the_integrator_reports_a_virial_that_a_rigid_translation_cannot_move() {
+        let l = 12.0_f64;
+        let cutoff = 5.0;
+        let bx = SimBox::cube(l, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
+        let base = array![
+            [11.0_f64, 11.0, 11.0],
+            [3.0, 11.0, 11.0],
+            [11.0, 3.0, 11.0],
+            [11.0, 11.0, 3.0],
+            [3.0, 3.0, 11.0],
+            [3.0, 11.0, 3.0],
+            [11.0, 3.0, 3.0],
+            [3.0, 3.0, 3.0],
+        ];
+        let n = base.nrows();
+        let mass = scalar_mass(12.0, n).unwrap();
+
+        let virial_after_one_step = |shift: F| {
+            let mut pts = base.clone();
+            pts.iter_mut().for_each(|x| *x += shift);
+            let (wrapped, _m) = bx.wrap_shifts(pts.view());
+            let comm = Comm::new(bx.clone(), wrapped.view(), cutoff, 0.0).unwrap();
+            let mut ig = VelocityVerlet::new(
+                1.0,
+                GhostPairs::new(
+                    LJCut::new(0.3, 3.4, cutoff, 12, 6, false, false).unwrap(),
+                    comm,
+                ),
+                mass.view(),
+                Some(bx.clone()),
+            )
+            .unwrap();
+            let state = ig.initial(wrapped, FNx3::zeros((n, 3))).unwrap();
+            state
+                .virial
+                .expect("the ghost provider tallies a virial, and the state keeps it")
+        };
+
+        let a = virial_after_one_step(0.0);
+        let b = virial_after_one_step(l / 3.0);
+        let scale = a.components.iter().fold(1.0_f64, |m, c| m.max(c.abs()));
+        assert!(
+            scale > 1.0,
+            "the virial must be non-trivial for this test to mean anything"
+        );
+        for c in 0..6 {
+            assert!(
+                (a.components[c] - b.components[c]).abs() / scale < 1e-10,
+                "component {c}: {} vs {} after a rigid translation",
+                a.components[c],
+                b.components[c]
+            );
+        }
+    }
+
+    /// A provider that cannot tally a virial says so, rather than reporting a
+    /// zero that would pass for one.
+    ///
+    /// The minimum-image route would need the per-pair forces to sum
+    /// `Σ f_ij ⊗ r_ij`, and `Potential` does not expose them. `None` is the
+    /// honest answer; a fabricated zero would make every pressure computed
+    /// from it wrong and entirely plausible.
+    #[test]
+    fn the_minimum_image_route_reports_no_virial_rather_than_a_zero() {
+        let l = 12.0_f64;
+        let cutoff = 5.0;
+        let bx = SimBox::cube(l, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
+        let pos = array![
+            [11.0_f64, 11.0, 11.0],
+            [3.0, 11.0, 11.0],
+            [11.0, 3.0, 11.0],
+            [3.0, 3.0, 11.0],
+        ];
+        let n = pos.nrows();
+        let skin = VerletSkin::new(
+            NeighborList::new(cutoff),
+            cutoff,
+            NeighborPolicy {
+                skin: 0.0,
+                ..NeighborPolicy::default()
+            },
+            pos.view(),
+            bx.clone(),
+        )
+        .unwrap();
+        let mut ig = VelocityVerlet::new(
+            1.0,
+            MicPairs::new(
+                LJCut::new(0.3, 3.4, cutoff, 12, 6, false, false).unwrap(),
+                skin,
+            ),
+            scalar_mass(12.0, n).unwrap().view(),
+            Some(bx),
+        )
+        .unwrap();
+        let state = ig.initial(pos, FNx3::zeros((n, 3))).unwrap();
+        assert!(
+            state.virial.is_none(),
+            "the MIC route cannot see per-pair forces, so it must not claim a virial"
+        );
+        assert!(
+            state.energy != 0.0,
+            "the run must be doing real work for the assertion above to mean anything"
         );
     }
 }
 
 #[cfg(test)]
 mod wrapped_state_tests {
+    use super::super::forces::Direct;
     use super::*;
     use molrs::ff::potential::Potentials;
     use molrs::spatial::simbox::SimBox;
@@ -1360,8 +1385,7 @@ mod wrapped_state_tests {
         let vx = 0.25; // Å/fs -> 0.25 Å per step
         let mut ig = VelocityVerlet::new(
             dt,
-            Potentials::new(),
-            PairSource::None,
+            Direct::new(Potentials::new()),
             scalar_mass(1.0, 1).unwrap().view(),
             Some(bx.clone()),
         )
@@ -1418,8 +1442,7 @@ mod wrapped_state_tests {
     fn free_boundary_leaves_positions_and_flags_alone() {
         let mut ig = VelocityVerlet::new(
             1.0,
-            Potentials::new(),
-            PairSource::None,
+            Direct::new(Potentials::new()),
             scalar_mass(1.0, 1).unwrap().view(),
             None,
         )
@@ -1445,8 +1468,7 @@ mod wrapped_state_tests {
         let run = |start: FNx3| {
             let mut ig = VelocityVerlet::new(
                 1.0,
-                Potentials::new(),
-                PairSource::None,
+                Direct::new(Potentials::new()),
                 scalar_mass(1.0, 2).unwrap().view(),
                 Some(bx.clone()),
             )

@@ -15,6 +15,7 @@ use molrs::store::keys;
 use molrs::types::{F, FNx3, I};
 
 use super::error::MdError;
+use super::virial::Virial;
 
 /// Energy + forces from one integrator force evaluation.
 ///
@@ -26,6 +27,13 @@ pub struct ForceOutput {
     pub energy: F,
     /// Per-atom forces `(N, 3)`.
     pub forces: FNx3,
+    /// `Σ f ⊗ r` at `pos`, when the provider tallies one.
+    ///
+    /// `None` is not zero. A provider that does not tally says so, because a
+    /// pressure computed from a fabricated zero is wrong and looks entirely
+    /// plausible — the same distinction `Neighbors::disp` draws, for the same
+    /// reason.
+    pub virial: Option<Virial>,
 }
 
 /// Dynamical state advanced one step by an integrator.
@@ -59,6 +67,12 @@ pub struct MDState {
     pub forces: FNx3,
     /// Cached scalar energy at `pos`.
     pub energy: F,
+    /// Cached virial at `pos`, from the same evaluation as `forces`.
+    ///
+    /// It belongs to the force cache under the same invariant: the forces, the
+    /// energy and the virial at `pos` all come from one evaluation, or the
+    /// pressure and the trajectory describe different configurations.
+    pub virial: Option<Virial>,
 }
 
 /// Per-observation thermodynamic snapshot handed to MD hooks.
@@ -91,6 +105,7 @@ mod tests {
         let out = ForceOutput {
             energy: 1.0,
             forces: array![[0.0, 0.0, 0.0]],
+            virial: None,
         };
         assert_eq!(out.forces.nrows(), 1);
         let state = MDState {
@@ -99,6 +114,7 @@ mod tests {
             vel: array![[0.0, 0.0, 0.0]],
             forces: array![[1.0, 0.0, 0.0]],
             energy: 0.0,
+            virial: None,
         };
         assert_eq!(state.forces[[0, 0]], 1.0);
     }
@@ -221,6 +237,7 @@ mod persistence_tests {
             vel: Array2::zeros((2, 3)),
             forces: Array2::zeros((2, 3)),
             energy: 0.0,
+            virial: None,
         };
         let mut frame = frame_with(2);
         state.write_to(&mut frame).unwrap();
@@ -256,6 +273,7 @@ mod persistence_tests {
             vel: Array2::zeros((1, 3)),
             forces: Array2::zeros((1, 3)),
             energy: 0.0,
+            virial: None,
         };
         assert!((state.unwrapped(&bx)[[0, 0]] - 32.0).abs() < 1e-12);
 
@@ -287,6 +305,7 @@ mod persistence_tests {
             vel: Array2::zeros((1, 3)),
             forces: Array2::zeros((1, 3)),
             energy: 0.0,
+            virial: None,
         };
         let mut frame = frame_with(3);
         let err = state.write_to(&mut frame).unwrap_err();

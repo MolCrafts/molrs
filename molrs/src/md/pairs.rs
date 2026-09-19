@@ -1,26 +1,29 @@
-//! Where an integrator gets its non-bonded pairs.
+//! The periodic half of a force evaluation: copies, and the topology that
+//! names them.
 //!
-//! Two periodic régimes reach the same physics by different routes, and an MD
-//! run picks one:
+//! Two periodic régimes reach the same physics by different routes, and a run
+//! picks one by picking a [`ForceProvider`](super::forces::ForceProvider):
 //!
-//! * [`PairSource::Mic`] keeps `N` atoms and fixes up every displacement with
-//!   the minimum-image convention. Cheapest, and correct for any potential that
-//!   consumes edge vectors.
-//! * [`PairSource::Ghosts`] materialises the periodic copies and hands the
-//!   potential an ordinary, non-periodic cluster. It costs the copies, and it
-//!   is the only route that is correct for a potential reading *positions* —
-//!   a many-body or machine-learned model cannot be told about a minimum-image
-//!   fix-up it does not know to apply.
+//! * [`MicPairs`](super::forces::MicPairs) keeps `N` atoms and fixes up every
+//!   displacement with the minimum-image convention. Cheapest, and correct for
+//!   any potential that consumes edge vectors.
+//! * [`GhostPairs`](super::forces::GhostPairs) materialises the periodic copies
+//!   — [`Comm`] owns their lifecycle — and hands the potential an ordinary,
+//!   non-periodic cluster. It costs the copies, and it is the only route that
+//!   is correct for a potential reading *positions*: a many-body or
+//!   machine-learned model cannot be told about a minimum-image fix-up it does
+//!   not know to apply.
 //!
-//! They are variants of one enum rather than two optional fields because an
-//! integrator has exactly one source: a pair of `Option`s would make "both" and
-//! "neither, but configured" writable states that mean nothing.
+//! This module owns the copies ([`Comm`]) and the bonded indices resolved
+//! against them ([`BondedTopology`]). Which régime an integrator runs is not a
+//! question this module answers — that is the provider's identity, and it is
+//! open rather than enumerated.
 
 use ndarray::ArrayView2;
 
 use molrs::ff::forcefield::ForceField;
 use molrs::ff::potential::Potentials;
-use molrs::spatial::neighbors::{Neighbors, VerletSkin};
+use molrs::spatial::neighbors::Neighbors;
 use molrs::spatial::periodic::{GhostError, GhostSet};
 use molrs::spatial::simbox::SimBox;
 use molrs::store::frame::Frame;
@@ -38,7 +41,7 @@ use super::error::MdError;
 /// snapshot has gone stale, rebuilds it, moves it every step, and hands out the
 /// pair table and the re-resolved topology that follow. It is the ghost
 /// régime's counterpart to
-/// [`VerletSkin`] and answers the same
+/// [`VerletSkin`](molrs::spatial::neighbors::VerletSkin) and answers the same
 /// question: has anything moved far enough that what was frozen at the last
 /// rebuild is no longer complete?
 ///
@@ -228,97 +231,8 @@ impl Comm {
 // Bonded topology through the ghost halo
 // ---------------------------------------------------------------------------
 
-/// Rewrite a frame's bonded topology so every term is resolved against the
-/// nearest periodic copy of its partners.
-///
-/// A bonded kernel holds indices, not geometry: it is told *these two atoms are
-/// bonded* and takes the plain difference of their coordinates. For a bond that
-/// straddles a face those coordinates are a cell apart, so the kernel measures
-/// a bond stretched by the width of the box and answers with a force to match.
-/// Nothing raises — the number is simply wrong, and it is wrong by orders of
-/// magnitude.
-///
-/// Remapping each partner to its closest copy makes the plain difference the
-/// right one, and leaves all twenty-one bonded kernels exactly as they are.
-/// They never learn that periodic boundaries exist, which is the whole point of
-/// the ghost régime.
-///
-/// # Anchoring
-///
-/// Each term is resolved against **one** atom, not edge by edge:
-///
-/// * a bond `(i, j)` against `i`;
-/// * an angle `(i, j, k)` against the vertex `j`, so both arms are placed
-///   relative to the same point;
-/// * a dihedral or improper `(i, j, k, l)` against `j`, the atom the others are
-///   at most two bonds from.
-///
-/// Folding each edge against the previous atom instead can pick images that are
-/// individually closest and jointly inconsistent — the three atoms of an angle
-/// ending in three different cells — and the angle is then measured on a shape
-/// that does not exist. An anchor cannot do that: every atom is placed relative
-/// to a single point.
-///
-/// # When it refuses
-///
-/// A copy can only be chosen from the copies that exist. If the halo does not
-/// reach as far as a bonded term does — a short pair cutoff with a long
-/// molecule — the nearest available copy is still a cell away, and the term
-/// stays stretched. That is reported as [`MdError::Invalid`] rather than
-/// returned: a silently mismeasured bond is precisely the failure this function
-/// exists to remove, and swapping it for a differently-silent one would be no
-/// improvement.
 fn ghost_err(e: GhostError) -> MdError {
     MdError::Invalid(e.to_string())
-}
-
-/// The pair source an integrator evaluates forces through.
-///
-/// The variants differ in size by a wide margin — a halo carries its copies, an
-/// empty source carries nothing — so each is boxed and the enum stays one
-/// pointer wide. An integrator holds one for the length of a run, so the
-/// indirection is paid once and never in the step loop.
-pub enum PairSource {
-    /// No neighbour list — the potential enumerates its own pairs.
-    None,
-    /// Minimum-image pairs over the owned atoms.
-    Mic(Box<VerletSkin>),
-    /// Ghost atoms: the potential sees an ordinary local cluster.
-    ///
-    /// `bonded` is the force field resolved against the copies. When it is
-    /// present it **is** the potential for this run: the integrator evaluates
-    /// it and ignores the one it was constructed with, which is what keeps the
-    /// two from being summed twice. Without it the integrator's own potential
-    /// is used, which is right for a system with no bonded terms.
-    Ghosts {
-        /// The copies, and their lifecycle.
-        comm: Box<Comm>,
-        /// The force field, resolved against those copies.
-        bonded: Option<Box<BondedTopology>>,
-    },
-}
-
-impl PairSource {
-    /// Minimum-image pairs from a Verlet-skinned neighbour list.
-    pub fn mic(skin: VerletSkin) -> Self {
-        Self::Mic(Box::new(skin))
-    }
-
-    /// Ghost-atom pairs, with the potential left to the integrator.
-    pub fn ghosts(comm: Comm) -> Self {
-        Self::Ghosts {
-            comm: Box::new(comm),
-            bonded: None,
-        }
-    }
-
-    /// Ghost-atom pairs, with the force field resolved against the copies.
-    pub fn bonded_ghosts(comm: Comm, bonded: BondedTopology) -> Self {
-        Self::Ghosts {
-            comm: Box::new(comm),
-            bonded: Some(Box::new(bonded)),
-        }
-    }
 }
 
 /// The force field's view of the system, kept resolved against the copies.
@@ -429,6 +343,46 @@ impl BondedTopology {
         Self::resolve(frame, owned, comm)
     }
 
+    /// Rewrite a frame's bonded topology so every term is resolved against the
+    /// nearest periodic copy of its partners.
+    ///
+    /// A bonded kernel holds indices, not geometry: it is told *these two atoms are
+    /// bonded* and takes the plain difference of their coordinates. For a bond that
+    /// straddles a face those coordinates are a cell apart, so the kernel measures
+    /// a bond stretched by the width of the box and answers with a force to match.
+    /// Nothing raises — the number is simply wrong, and it is wrong by orders of
+    /// magnitude.
+    ///
+    /// Remapping each partner to its closest copy makes the plain difference the
+    /// right one, and leaves all twenty-one bonded kernels exactly as they are.
+    /// They never learn that periodic boundaries exist, which is the whole point of
+    /// the ghost régime.
+    ///
+    /// # Anchoring
+    ///
+    /// Each term is resolved against **one** atom, not edge by edge:
+    ///
+    /// * a bond `(i, j)` against `i`;
+    /// * an angle `(i, j, k)` against the vertex `j`, so both arms are placed
+    ///   relative to the same point;
+    /// * a dihedral or improper `(i, j, k, l)` against `j`, the atom the others are
+    ///   at most two bonds from.
+    ///
+    /// Folding each edge against the previous atom instead can pick images that are
+    /// individually closest and jointly inconsistent — the three atoms of an angle
+    /// ending in three different cells — and the angle is then measured on a shape
+    /// that does not exist. An anchor cannot do that: every atom is placed relative
+    /// to a single point.
+    ///
+    /// # When it refuses
+    ///
+    /// A copy can only be chosen from the copies that exist. If the halo does not
+    /// reach as far as a bonded term does — a short pair cutoff with a long
+    /// molecule — the nearest available copy is still a cell away, and the term
+    /// stays stretched. That is reported as [`MdError::Invalid`] rather than
+    /// returned: a silently mismeasured bond is precisely the failure this function
+    /// exists to remove, and swapping it for a differently-silent one would be no
+    /// improvement.
     #[allow(clippy::needless_range_loop)]
     fn resolve(frame: &Frame, owned: FNx3View<'_>, comm: &Comm) -> Result<Frame, MdError> {
         use molrs::store::keys;

@@ -2606,6 +2606,13 @@ class md:
         @forces.setter
         def forces(self, value: ArrayF) -> None: ...
         @property
+        def virial(self) -> tuple[float, float, float, float, float, float] | None:
+            """Virial ``Sigma f (x) r`` as ``(xx, yy, zz, xy, xz, yz)``, or ``None``.
+
+            ``None`` means the force provider does not tally one -- not that it
+            is zero. Only the ghost regime tallies a virial today.
+            """
+        @property
         def energy(self) -> float: ...
         @energy.setter
         def energy(self, value: float) -> None: ...
