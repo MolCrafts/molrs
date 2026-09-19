@@ -218,11 +218,15 @@ pub struct GhostPairs {
     comm: Comm,
     /// The force evaluation's members, in the order the caller gave them.
     members: Vec<Box<dyn Potential>>,
+    /// Per member, the weights on its close non-bonded neighbours.
+    ///
+    /// Per member and not one shared table, because a force field may scale
+    /// van der Waals and electrostatics differently — Amber uses `1/2` and
+    /// `1/1.2` — and in molrs those are separate kernels. One table would have
+    /// to be wrong for one of them.
+    special: Vec<SpecialWeights>,
     /// Which members keep atom indices, and what those indices are now.
     lists: BondedLists,
-    /// The force field's weights on close non-bonded neighbours. Empty when
-    /// there are none, and then the pair table is used as it comes.
-    special: SpecialWeights,
     /// The copy-list generation the members' per-atom state was gathered for,
     /// or `None` before the first gather.
     gathered: Option<u64>,
@@ -232,7 +236,13 @@ impl GhostPairs {
     /// Evaluate one potential over the copies `comm` maintains, with no
     /// special-bonds weights — right for a system with no bonded topology.
     pub fn new(potential: impl Potential + 'static, comm: Comm) -> Self {
-        Self::from_members(vec![Box::new(potential)], comm, SpecialWeights::default())
+        Self::from_members(
+            vec![(
+                Box::new(potential) as Box<dyn Potential>,
+                SpecialWeights::default(),
+            )],
+            comm,
+        )
     }
 
     /// Evaluate several members — what a force field compiles to — over the
@@ -243,15 +253,13 @@ impl GhostPairs {
     /// [`Potential::terms`], and that is the whole of what MD needs to know
     /// about a force field.
     ///
-    /// `special` carries the weights on close non-bonded neighbours. A
-    /// neighbour table finds every pair inside the cutoff, bonded or not, so
+    /// Each member comes with the weights on its close non-bonded neighbours.
+    /// A neighbour table finds every pair inside the cutoff, bonded or not, so
     /// without them a bonded pair would be counted twice — once by the bonded
-    /// term and once at full non-bonded strength.
-    pub fn from_members(
-        members: Vec<Box<dyn Potential>>,
-        comm: Comm,
-        special: SpecialWeights,
-    ) -> Self {
+    /// term and once at full non-bonded strength. A bonded member takes
+    /// [`SpecialWeights::default`], which scales nothing.
+    pub fn from_members(members: Vec<(Box<dyn Potential>, SpecialWeights)>, comm: Comm) -> Self {
+        let (members, special): (Vec<_>, Vec<_>) = members.into_iter().unzip();
         let lists = BondedLists::new(&members);
         Self {
             comm,
@@ -303,15 +311,6 @@ impl ForceProvider for GhostPairs {
         let n_all = all.nrows();
         let flat: Vec<F> = all.iter().copied().collect();
 
-        // Split once, not once per member: the weights are the force field's
-        // and the table is the halo's, and neither depends on which kernel is
-        // about to read it.
-        let (main, scaled) = if self.special.is_empty() {
-            (pairs, Vec::new())
-        } else {
-            self.special.split(&pairs, self.comm.ghosts())
-        };
-
         let mut energy = 0.0;
         let mut forces = vec![0.0; flat.len()];
         let mut accumulate = |m: usize, (e, f): (F, Vec<F>), w: F| -> Result<(), MdError> {
@@ -334,7 +333,11 @@ impl ForceProvider for GhostPairs {
                 Some(terms) => {
                     accumulate(m, member.calc_energy_forces_with_terms(&flat, terms), 1.0)?
                 }
+                None if self.special[m].is_empty() => {
+                    accumulate(m, member.calc_energy_forces_with_pairs(&flat, &pairs), 1.0)?
+                }
                 None => {
+                    let (main, scaled) = self.special[m].split(&pairs, self.comm.ghosts());
                     accumulate(m, member.calc_energy_forces_with_pairs(&flat, &main), 1.0)?;
                     for (w, table) in &scaled {
                         accumulate(m, member.calc_energy_forces_with_pairs(&flat, table), *w)?;
@@ -557,7 +560,11 @@ mod tests {
             let (wrapped, _) = bx.wrap_shifts(pts.view());
             let comm = Comm::new(bx.clone(), wrapped.view(), 4.0, 0.0).unwrap();
             let members = field.to_potentials(&frame(())).unwrap().into_members();
-            let mut provider = GhostPairs::from_members(members, comm, SpecialWeights::default());
+            let members = members
+                .into_iter()
+                .map(|p| (p, SpecialWeights::default()))
+                .collect();
+            let mut provider = GhostPairs::from_members(members, comm);
             // The halo was built from these coordinates, so from its point of
             // view nothing has folded. A fold is reported exactly once, to the
             // halo that existed before it.
@@ -728,7 +735,8 @@ mod tests {
 
         let comm = Comm::new(bx.clone(), pos.view(), 6.0, 0.0).unwrap();
         let no_fold = Array2::<i64>::zeros((n, 3));
-        let mut with = GhostPairs::from_members(vec![Box::new(lj)], comm, special);
+        let mut with =
+            GhostPairs::from_members(vec![(Box::new(lj) as Box<dyn Potential>, special)], comm);
         let out = with.compute(pos.view(), no_fold.view()).unwrap();
 
         assert_eq!(
@@ -816,7 +824,10 @@ mod tests {
             )
             .unwrap();
             let comm = Comm::new(bx.clone(), wrapped.view(), cutoff, 0.0).unwrap();
-            let mut provider = GhostPairs::from_members(vec![Box::new(lj)], comm, special.clone());
+            let mut provider = GhostPairs::from_members(
+                vec![(Box::new(lj) as Box<dyn Potential>, special.clone())],
+                comm,
+            );
             let no_fold = Array2::<i64>::zeros((n, 3));
             let out = provider.compute(wrapped.view(), no_fold.view()).unwrap();
             (out.energy, out.forces)
@@ -830,6 +841,130 @@ mod tests {
         assert!(
             e_mid.abs() > 1e-3,
             "the two chains must see each other for this to assert anything; got {e_mid}"
+        );
+        assert!(
+            (e_cross - e_mid).abs() / e_mid.abs() < 1e-12,
+            "energy {e_cross} across the face vs {e_mid} away from it"
+        );
+        for i in 0..n {
+            for k in 0..3 {
+                assert!(
+                    (f_cross[[i, k]] - f_mid[[i, k]]).abs() < 1e-9,
+                    "force on atom {i} component {k}: {} vs {}",
+                    f_cross[[i, k]],
+                    f_mid[[i, k]]
+                );
+            }
+        }
+    }
+
+    /// The whole path, from a force field to a periodic force: bonded terms
+    /// resolved onto copies, non-bonded ones found by a neighbour search and
+    /// weighted by the force field's own exclusions.
+    ///
+    /// A rigid translation of a periodic system is a symmetry, so every number
+    /// must come back the same — while underneath, one run measures two of its
+    /// three bonds through copies and finds half its pairs through a face, and
+    /// the other measures nothing through anything.
+    ///
+    /// This is the test that says the front door exists: nothing here builds a
+    /// kernel by hand or knows which member is which.
+    #[test]
+    fn a_force_field_drives_a_periodic_evaluation_end_to_end() {
+        use molrs::Topology;
+        use molrs::ff::forcefield::ForceField;
+        use molrs::store::block::Block;
+        use molrs::store::frame::Frame;
+        use molrs::types::Idx;
+        use ndarray::Array1;
+
+        let l = 20.0_f64;
+        let cutoff = 6.0;
+        let bx = SimBox::cube(l, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
+
+        // Two bent chains close enough to see each other.
+        let shape = array![
+            [-1.5_f64, 0.0, 0.0],
+            [0.0, 0.0, 0.0],
+            [0.8, 1.2, 0.0],
+            [4.6, 0.3, 0.4],
+            [6.1, 0.3, 0.4],
+            [6.9, 1.5, 0.4],
+        ];
+        let n = shape.nrows();
+        let bonds = [[0usize, 1], [1, 2], [3, 4], [4, 5]];
+        let topo = Topology::from_edges(n, &bonds);
+
+        let mut frame = Frame::new();
+        let mut atoms = Block::new();
+        atoms
+            .insert("type", Array1::from(vec!["a".to_string(); n]).into_dyn())
+            .unwrap();
+        frame.insert("atoms", atoms);
+        let mut blk = Block::new();
+        blk.insert(
+            "atomi",
+            Array1::from(bonds.iter().map(|b| b[0] as Idx).collect::<Vec<_>>()).into_dyn(),
+        )
+        .unwrap();
+        blk.insert(
+            "atomj",
+            Array1::from(bonds.iter().map(|b| b[1] as Idx).collect::<Vec<_>>()).into_dyn(),
+        )
+        .unwrap();
+        blk.insert(
+            "type",
+            Array1::from(vec!["a-a".to_string(); bonds.len()]).into_dyn(),
+        )
+        .unwrap();
+        frame.insert("bonds", blk);
+
+        // Rest length off the actual bond length, so the bonded term carries
+        // real energy and a mis-resolved bond would be loud.
+        let mut field = ForceField::new("probe");
+        field
+            .def_bondstyle("harmonic")
+            .def_bondtype("a", "a", &[("k", 100.0), ("r0", 1.2)]);
+        field
+            .def_pairstyle("lj/cut", &[("cutoff", cutoff)])
+            .def_type("a", &[("epsilon", 0.3), ("sigma", 3.4)]);
+
+        let run = |origin: F| {
+            let mut pts = shape.clone();
+            for i in 0..pts.nrows() {
+                pts[[i, 0]] += origin;
+                pts[[i, 1]] += 10.0;
+                pts[[i, 2]] += 10.0;
+            }
+            let (wrapped, _) = bx.wrap_shifts(pts.view());
+
+            // The front door: no kernel built by hand, no member identified.
+            let members: Vec<(Box<dyn Potential>, SpecialWeights)> = field
+                .to_typed_potentials(&frame)
+                .unwrap()
+                .into_iter()
+                .map(|(pot, weights)| {
+                    let special = weights
+                        .map(|w| SpecialWeights::new(&topo.special_weights(&w)))
+                        .unwrap_or_default();
+                    (pot, special)
+                })
+                .collect();
+            assert_eq!(members.len(), 2, "a bond style and a pair style");
+
+            let comm = Comm::new(bx.clone(), wrapped.view(), cutoff, 0.0).unwrap();
+            let mut provider = GhostPairs::from_members(members, comm);
+            let no_fold = Array2::<i64>::zeros((n, 3));
+            let out = provider.compute(wrapped.view(), no_fold.view()).unwrap();
+            (out.energy, out.forces)
+        };
+
+        let (e_cross, f_cross) = run(1.0);
+        let (e_mid, f_mid) = run(1.0 + l / 3.0);
+
+        assert!(
+            e_mid.abs() > 1.0,
+            "the system must be strained and interacting; got {e_mid}"
         );
         assert!(
             (e_cross - e_mid).abs() / e_mid.abs() < 1e-12,

@@ -59,11 +59,42 @@ pub enum ParamSource {
     PerInstance,
 }
 
+/// Which of a force field's special-bonds weight sets scales a pair style.
+///
+/// A force field may scale close van-der-Waals and electrostatic neighbours
+/// differently — Amber uses `1/2` and `1/1.2` — and in molrs those are
+/// separate kernels, so each has to say which set is its own. Declared at
+/// registration rather than guessed from the style's name: a name is a label,
+/// and this is a fact about the physics.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SpecialClass {
+    /// Scaled by the force field's van-der-Waals weights.
+    Vdw,
+    /// Scaled by its electrostatic weights.
+    Coulomb,
+}
+
 /// Maps `(category, style_name)` to the constructor that builds its potential
 /// and the [`ParamSource`] it resolves parameters from.
 #[derive(Default)]
 pub struct KernelRegistry {
-    ctors: HashMap<(String, String), (KernelConstructor, ParamSource)>,
+    ctors: HashMap<(String, String), Registration>,
+}
+
+/// What is known about one `(category, style_name)`.
+struct Registration {
+    ctor: KernelConstructor,
+    source: ParamSource,
+    /// The neighbour-driven form of a pair style, when it has one, and which
+    /// special-bonds weights scale it.
+    ///
+    /// The registered constructor resolves its parameters against a **pair
+    /// list** and can only answer for that list. A neighbour table is a
+    /// different list every rebuild, so an evaluation driven by one needs a
+    /// kernel that finds its parameters from the atoms instead. Same
+    /// signature, different question — so it is a second registration rather
+    /// than a flag on the first.
+    typed: Option<(KernelConstructor, SpecialClass)>,
 }
 
 impl KernelRegistry {
@@ -91,22 +122,62 @@ impl KernelRegistry {
         ctor: KernelConstructor,
         source: ParamSource,
     ) {
-        self.ctors
-            .insert((category.to_owned(), name.to_owned()), (ctor, source));
+        let typed = self
+            .ctors
+            .get(&(category.to_owned(), name.to_owned()))
+            .and_then(|r| r.typed);
+        self.ctors.insert(
+            (category.to_owned(), name.to_owned()),
+            Registration {
+                ctor,
+                source,
+                typed,
+            },
+        );
+    }
+
+    /// Register the neighbour-driven form of an already-registered pair style.
+    ///
+    /// A style without one cannot be evaluated over a neighbour table at all,
+    /// and [`ForceField::to_typed_potentials`](crate::ff::forcefield::ForceField::to_typed_potentials)
+    /// says so rather than quietly falling back to the compiled form, whose
+    /// parameters would belong to a pair list nobody is evaluating.
+    pub fn register_typed(
+        &mut self,
+        category: &str,
+        name: &str,
+        ctor: KernelConstructor,
+        special: SpecialClass,
+    ) {
+        if let Some(r) = self.ctors.get_mut(&(category.to_owned(), name.to_owned())) {
+            r.typed = Some((ctor, special));
+        }
     }
 
     /// The constructor registered for `(category, name)`, if any.
     pub fn get(&self, category: &str, name: &str) -> Option<KernelConstructor> {
         self.ctors
             .get(&(category.to_owned(), name.to_owned()))
-            .map(|(ctor, _)| *ctor)
+            .map(|r| r.ctor)
+    }
+
+    /// The neighbour-driven constructor for `(category, name)` and the weight
+    /// set that scales it, if it has one.
+    pub fn get_typed(
+        &self,
+        category: &str,
+        name: &str,
+    ) -> Option<(KernelConstructor, SpecialClass)> {
+        self.ctors
+            .get(&(category.to_owned(), name.to_owned()))
+            .and_then(|r| r.typed)
     }
 
     /// The [`ParamSource`] declared for `(category, name)`, if it is registered.
     pub fn param_source(&self, category: &str, name: &str) -> Option<ParamSource> {
         self.ctors
             .get(&(category.to_owned(), name.to_owned()))
-            .map(|(_, source)| *source)
+            .map(|r| r.source)
     }
 
     /// Number of registered kernels.
@@ -170,6 +241,64 @@ impl KernelRegistry {
             pair::coul_cut::pair_coul_cut_ctor,
             ParamSource::PerInstance,
         );
+        // The neighbour-driven counterparts. Same styles, parameters keyed on
+        // the atoms rather than on a `pairs` block, which is what an evaluation
+        // over a rebuilt neighbour table needs.
+        r.register_typed(
+            "pair",
+            "lj/cut",
+            pair::lj_cut::pair_lj_cut_typed_ctor,
+            SpecialClass::Vdw,
+        );
+        r.register_typed(
+            "pair",
+            "lj/class2",
+            pair::lj_class2::pair_lj_class2_typed_ctor,
+            SpecialClass::Vdw,
+        );
+        r.register_typed(
+            "pair",
+            "buck",
+            pair::buck::pair_buck_typed_ctor,
+            SpecialClass::Vdw,
+        );
+        r.register_typed(
+            "pair",
+            "morse",
+            pair::morse::pair_morse_typed_ctor,
+            SpecialClass::Vdw,
+        );
+        r.register_typed(
+            "pair",
+            "uff_lj",
+            pair::uff::uff_lj_typed_ctor,
+            SpecialClass::Vdw,
+        );
+        r.register_typed(
+            "pair",
+            "mmff_vdw",
+            pair::mmff::mmff_vdw_typed_ctor,
+            SpecialClass::Vdw,
+        );
+        r.register_typed(
+            "pair",
+            "coul/cut",
+            pair::coul_cut::pair_coul_cut_typed_ctor,
+            SpecialClass::Coulomb,
+        );
+        r.register_typed(
+            "pair",
+            "coul/tt",
+            pair::tang_toennies::pair_tang_toennies_typed_ctor,
+            SpecialClass::Coulomb,
+        );
+        r.register_typed(
+            "pair",
+            "thole",
+            pair::thole::pair_thole_typed_ctor,
+            SpecialClass::Coulomb,
+        );
+
         // MMFF94 — five per-instance BONDED styles. Their kernels read the columns
         // the typifier bakes (`kb`/`r0`, `ka`/`theta0`, `kba_*`, `v1`/`v2`/`v3`,
         // `koop`), never a type row: MMFF's context rules (aromaticity, ring size,
@@ -294,6 +423,15 @@ pub fn register_kernel_with(
 /// Look up a kernel constructor in the global registry.
 pub fn lookup_kernel(category: &str, name: &str) -> Option<KernelConstructor> {
     global().read().unwrap().get(category, name)
+}
+
+/// Look up the neighbour-driven kernel a pair style declared, and the weight
+/// set that scales it.
+pub fn lookup_typed_kernel(
+    category: &str,
+    name: &str,
+) -> Option<(KernelConstructor, SpecialClass)> {
+    global().read().unwrap().get_typed(category, name)
 }
 
 /// Look up the [`ParamSource`] a style's kernel declared.

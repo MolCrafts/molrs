@@ -30,6 +30,7 @@ use crate::ff::forcefield::Params;
 use crate::ff::potential::Potential;
 use crate::ff::potential::gather_copies;
 use crate::ff::potential::geometry::{mag3, sub3, validate_coords};
+use crate::ff::potential::pair::atom_type_index;
 use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame::Frame;
 use molrs::types::F;
@@ -432,6 +433,44 @@ pub fn mmff_vdw_ctor(
         eps_vec.push(eps * scale);
     }
     Ok(Box::new(MMFFVdW::compiled(ai, aj, rs_vec, eps_vec)))
+}
+
+/// Construct a neighbour-driven [`MMFFVdW`] from per-atom parameters.
+///
+/// The counterpart of [`mmff_vdw_ctor`]: the same force field, keyed on the atoms
+/// instead of on a pair list, so it can answer for whatever pairs a neighbour
+/// search turns up. It reads no `pairs` block — there is none to read when the
+/// list is rebuilt every few steps.
+pub fn mmff_vdw_typed_ctor(
+    sp: &Params,
+    tp: &[(&str, &Params)],
+    frame: &Frame,
+) -> Result<Box<dyn Potential>, String> {
+    let style = VdwStyleParams::from_style(sp);
+    let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
+    let (type_id, labels) = atom_type_index(frame)?;
+    let mut per_type = Vec::with_capacity(labels.len());
+    for l in &labels {
+        let p = type_map
+            .get(l.as_str())
+            .ok_or_else(|| format!("mmff_vdw: unknown atom type '{l}'"))?;
+        let get = |k: &str| {
+            p.get(k)
+                .ok_or_else(|| format!("mmff_vdw type '{l}': missing '{k}'"))
+        };
+        per_type.push(VdwAtomParams {
+            alpha: get("alpha")?,
+            n_eff: get("n_eff")?,
+            a_i: get("a_i")?,
+            g_i: get("g_i")?,
+            da: p.get("da").unwrap_or(f64::from(DA_NEITHER)) as u8,
+        });
+    }
+    let atoms = type_id
+        .iter()
+        .map(|&t| per_type[t as usize].clone())
+        .collect();
+    Ok(Box::new(MMFFVdW::typed(atoms, style)))
 }
 
 #[cfg(test)]

@@ -21,6 +21,7 @@ use crate::ff::forcefield::Params;
 use crate::ff::potential::Potential;
 use crate::ff::potential::gather_copies;
 use crate::ff::potential::geometry::validate_coords;
+use crate::ff::potential::pair::atom_type_index;
 use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame::Frame;
 use molrs::types::F;
@@ -251,6 +252,38 @@ pub fn pair_tang_toennies_ctor(
     }
 
     Ok(Box::new(PairTangToennies::new(atom_i, atom_j, qq, b, n, c)))
+}
+
+/// Construct a neighbour-driven [`PairTangToennies`] from per-atom parameters.
+///
+/// The counterpart of [`pair_tang_toennies_ctor`]: the same force field, keyed on the atoms
+/// instead of on a pair list, so it can answer for whatever pairs a neighbour
+/// search turns up. It reads no `pairs` block — there is none to read when the
+/// list is rebuilt every few steps.
+pub fn pair_tang_toennies_typed_ctor(
+    style_params: &Params,
+    type_params: &[(&str, &Params)],
+    frame: &Frame,
+) -> Result<Box<dyn Potential>, String> {
+    let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
+    let b = style_params.get("b").unwrap_or(4.5) as F;
+    let n = style_params.get("order").unwrap_or(4.0).round() as usize;
+    let c = style_params.get("c").unwrap_or(1.0) as F;
+
+    let (type_id, labels) = atom_type_index(frame)?;
+    let mut per_type = Vec::with_capacity(labels.len());
+    for l in &labels {
+        let p = type_map
+            .get(l.as_str())
+            .ok_or_else(|| format!("PairTangToennies: unknown atom type '{l}'"))?;
+        per_type.push(
+            p.get("charge")
+                .ok_or_else(|| format!("PairTangToennies type '{l}': missing 'charge'"))?
+                as F,
+        );
+    }
+    let q: Vec<F> = type_id.iter().map(|&t| per_type[t as usize]).collect();
+    Ok(Box::new(PairTangToennies::typed(q, b, n, c)))
 }
 
 #[cfg(test)]

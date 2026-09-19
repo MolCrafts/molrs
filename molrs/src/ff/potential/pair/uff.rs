@@ -229,6 +229,26 @@ pub fn uff_lj_ctor(
     Ok(Box::new(UffVdW::compiled(atom_i, atom_j, xij, dij)))
 }
 
+/// Construct a neighbour-driven [`UffVdW`] from per-atom parameters.
+///
+/// The counterpart of [`uff_lj_ctor`]: the same force field, keyed on the atoms
+/// instead of on a pair list, so it can answer for whatever pairs a neighbour
+/// search turns up. It reads no `pairs` block — there is none to read when the
+/// list is rebuilt every few steps.
+pub fn uff_lj_typed_ctor(
+    _style_params: &Params,
+    _type_params: &[(&str, &Params)],
+    frame: &Frame,
+) -> Result<Box<dyn Potential>, String> {
+    let atoms = frame.get("atoms").ok_or("uff_lj: missing atoms")?;
+    let x1 = atoms.get_float("x1").ok_or("uff_lj: missing atoms.x1")?;
+    let d1 = atoms.get_float("D1").ok_or("uff_lj: missing atoms.D1")?;
+    Ok(Box::new(UffVdW::typed(
+        x1.iter().map(|&v| v as F).collect(),
+        d1.iter().map(|&v| v as F).collect(),
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

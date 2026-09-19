@@ -29,6 +29,7 @@ use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
 use molrs::spatial::neighbors::Neighbors;
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
+use molrs::system::bond_weights::BondDistanceWeights;
 use molrs::types::{F, Idx};
 
 /// Build the intramolecular non-bonded `pairs` block (`atomi`, `atomj`, `is_14`)
@@ -215,6 +216,19 @@ impl Potential for Box<dyn Potential> {
 // Potentials collection
 // ---------------------------------------------------------------------------
 
+/// A kernel built for a neighbour-driven evaluation, and which of a force
+/// field's special-bonds weight sets scales it. `None` for a bonded kernel:
+/// it *is* the bonded interaction, not a scaled copy of one.
+pub type TypedKernel = (Box<dyn Potential>, Option<registry::SpecialClass>);
+
+/// One member of a neighbour-driven evaluation: the kernel, and the
+/// bond-distance weights its non-bonded term takes.
+///
+/// The weights travel with the member because a force field may scale close
+/// van-der-Waals and electrostatic neighbours differently, and in molrs those
+/// are separate kernels.
+pub type TypedMember = (Box<dyn Potential>, Option<BondDistanceWeights>);
+
 /// Rebuild the copies' entries of a per-atom vector from their owners'.
 ///
 /// `v` holds one entry per atom for the first `n_owned`, then one per copy.
@@ -391,6 +405,60 @@ impl crate::ff::forcefield::Style {
     /// The `(category, name)` → constructor mapping lives in the [`registry`]; a
     /// new potential is added by registering its kernel, not by editing this
     /// dispatch.
+    /// Build this style's kernel for a **neighbour-driven** evaluation, and
+    /// say which special-bonds weights scale it.
+    ///
+    /// The counterpart of [`to_potential`](Self::to_potential). A bonded style
+    /// is built identically — it reads indices, and a neighbour table does not
+    /// concern it. A pair style is built in its typed form, which reads no
+    /// `pairs` block: there is none to read when the list is rebuilt every few
+    /// steps, and a kernel whose parameters were resolved against an older one
+    /// would be naming different atoms.
+    ///
+    /// A pair style with no typed form is an [`Err`], not a fallback to the
+    /// compiled one. Falling back would hand back a kernel whose parameters
+    /// belong to a pair list nobody is evaluating, and it would answer.
+    pub fn to_typed_potential(&self, frame: &Frame) -> Result<Option<TypedKernel>, String> {
+        let category = self.category();
+        if category == "atom" {
+            return Ok(None);
+        }
+        if category != "pair" {
+            // Bonded styles are unchanged, and take no special-bonds weight:
+            // the term *is* the bonded interaction, not a scaled copy of it.
+            // `special_bonds` is irrelevant to them, so a default is honest.
+            return Ok(self
+                .to_potential(frame, &SpecialBonds::default())?
+                .map(|p| (p, None)));
+        }
+        // No `pairs` gate: a typed pair kernel is built from the atoms, and a
+        // frame with atoms always has those.
+        let type_params = self.defs.collect_type_params();
+        let param_source =
+            registry::lookup_param_source(category, &self.name).unwrap_or(ParamSource::TypeRows);
+        if type_params.is_empty() && param_source == ParamSource::TypeRows {
+            return Err(format!(
+                "Style '{}' ({}) has no type definitions",
+                self.name, category
+            ));
+        }
+        let type_refs: Vec<(&str, &Params)> = type_params
+            .iter()
+            .map(|(name, params)| (name.as_str(), params))
+            .collect();
+        let (ctor, special) =
+            registry::lookup_typed_kernel(category, &self.name).ok_or_else(|| {
+                format!(
+                    "pair style '{}' has no neighbour-driven form, so it cannot be \
+                     evaluated over a neighbour list; its compiled form answers only \
+                     for the pair list it was built from",
+                    self.name
+                )
+            })?;
+        let pot = ctor(&self.params, &type_refs, frame)?;
+        Ok(Some((pot, Some(special))))
+    }
+
     pub fn to_potential(
         &self,
         frame: &Frame,
@@ -553,6 +621,59 @@ impl ForceField {
     /// and evaluate from coordinates alone. Styles with no kernel (atom styles)
     /// are skipped. This is the molpy-style `ForceField → Potentials` conversion;
     /// there is no separate "compile" step.
+    /// Build the members of a **neighbour-driven** force evaluation, each with
+    /// the bond-distance weights its non-bonded term takes.
+    ///
+    /// The counterpart of [`to_potentials`](Self::to_potentials), and what
+    /// periodic MD needs. That one resolves every pair style against the
+    /// frame's `pairs` block — a fixed list, finite by construction and with no
+    /// spatial cutoff, which is right for a free-boundary molecule and wrong
+    /// for a periodic system. This one resolves them against the **atoms**, so
+    /// the kernels can answer for whatever pairs a neighbour search turns up,
+    /// and reads no `pairs` block at all.
+    ///
+    /// The weights come back per member rather than once, because a force field
+    /// may scale close van-der-Waals and electrostatic neighbours differently —
+    /// Amber uses `1/2` and `1/1.2` — and in molrs those are separate kernels.
+    /// A bonded member takes `None`: it *is* the bonded interaction, not a
+    /// scaled copy of it.
+    ///
+    /// # Why the weights matter here and not there
+    ///
+    /// A compiled list carries the exclusions by leaving the excluded rows out
+    /// and baking the 1-4 factor into the parameters. A neighbour table has no
+    /// such memory — it finds every pair inside the cutoff, bonded or not — so
+    /// without the weights a bonded pair is counted twice: once by the bond
+    /// term and once at full non-bonded strength, at bond length.
+    pub fn to_typed_potentials(&self, frame: &Frame) -> Result<Vec<TypedMember>, String> {
+        let mut out = Vec::new();
+        for style in self.styles() {
+            // A bonded style contributes nothing when the molecule carries no
+            // topology of its kind. A pair style is never skipped: which pairs
+            // exist is the neighbour search's answer, not the frame's.
+            let block = match style.category() {
+                "bond" => Some("bonds"),
+                "angle" => Some("angles"),
+                "dihedral" => Some("dihedrals"),
+                "improper" => Some("impropers"),
+                _ => None,
+            };
+            if let Some(b) = block
+                && frame.get(b).is_none()
+            {
+                continue;
+            }
+            if let Some((pot, special)) = style.to_typed_potential(frame)? {
+                let weights = special.map(|c| match c {
+                    registry::SpecialClass::Vdw => self.special_bonds().lj_weights(),
+                    registry::SpecialClass::Coulomb => self.special_bonds().coul_weights(),
+                });
+                out.push((pot, weights));
+            }
+        }
+        Ok(out)
+    }
+
     pub fn to_potentials(&self, frame: &Frame) -> Result<Potentials, String> {
         let mut pots = Potentials::new();
         for style in self.styles() {

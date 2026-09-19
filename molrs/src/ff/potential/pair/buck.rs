@@ -8,9 +8,11 @@
 use std::collections::HashMap;
 
 use crate::ff::forcefield::Params;
+use crate::ff::forcefield::pair_type_name;
 use crate::ff::potential::Potential;
 use crate::ff::potential::gather_copies;
 use crate::ff::potential::geometry::validate_coords;
+use crate::ff::potential::pair::atom_type_index;
 use crate::ff::potential::pair::type_pair;
 use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame::Frame;
@@ -275,6 +277,51 @@ pub fn pair_buck_ctor(
     Ok(Box::new(PairBuck::new(
         atom_i, atom_j, a_vec, rho_vec, c_vec,
     )))
+}
+
+/// Construct a neighbour-driven [`PairBuck`] from per-atom parameters.
+///
+/// The counterpart of [`pair_buck_ctor`]: the same force field, keyed on the atoms
+/// instead of on a pair list, so it can answer for whatever pairs a neighbour
+/// search turns up. It reads no `pairs` block — there is none to read when the
+/// list is rebuilt every few steps.
+pub fn pair_buck_typed_ctor(
+    _style_params: &Params,
+    type_params: &[(&str, &Params)],
+    frame: &Frame,
+) -> Result<Box<dyn Potential>, String> {
+    let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
+    let (type_id, labels) = atom_type_index(frame)?;
+    let ntypes = labels.len();
+    let mut a = vec![0.0 as F; ntypes * ntypes];
+    let mut rho = vec![0.0 as F; ntypes * ntypes];
+    let mut c = vec![0.0 as F; ntypes * ntypes];
+    for ti in 0..ntypes {
+        for tj in 0..ntypes {
+            // A cross-pair may be declared either way round; a self-pair is
+            // named by the atom type alone.
+            let forward = pair_type_name(&labels[ti], &labels[tj]);
+            let reverse = pair_type_name(&labels[tj], &labels[ti]);
+            let p = type_map
+                .get(forward.as_str())
+                .or_else(|| type_map.get(reverse.as_str()))
+                .ok_or_else(|| format!("PairBuck: unknown pair type '{forward}'"))?;
+            let t = type_pair(ti as u32, tj as u32, ntypes);
+            a[t] = p
+                .get("a")
+                .ok_or_else(|| format!("PairBuck type '{forward}': missing 'a'"))?
+                as F;
+            rho[t] = p
+                .get("rho")
+                .ok_or_else(|| format!("PairBuck type '{forward}': missing 'rho'"))?
+                as F;
+            c[t] = p
+                .get("c")
+                .ok_or_else(|| format!("PairBuck type '{forward}': missing 'c'"))?
+                as F;
+        }
+    }
+    Ok(Box::new(PairBuck::typed(type_id, ntypes, a, rho, c)))
 }
 
 #[cfg(test)]

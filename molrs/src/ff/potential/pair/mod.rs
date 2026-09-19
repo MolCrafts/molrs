@@ -3,6 +3,7 @@
 use ndarray::{Array2, ArrayView2};
 
 use molrs::spatial::neighbors::Neighbors;
+use molrs::store::frame::Frame;
 use molrs::types::F;
 
 /// Pair kernel: already-reduced geometry in, energy / force on `j` out.
@@ -79,6 +80,33 @@ pub trait PairPotential: Send + Sync {
             neighbors.dist_sq(),
         )
     }
+}
+
+/// Map each atom to a dense type index, and hand back the labels in that order.
+///
+/// A neighbour-driven kernel keys its parameters on the atoms, so it needs the
+/// types as small integers it can index a table with — not as the strings the
+/// frame carries. The labels come back so the caller can look each type's
+/// parameters up once, rather than once per atom.
+pub(crate) fn atom_type_index(frame: &Frame) -> Result<(Vec<u32>, Vec<String>), String> {
+    let atoms = frame
+        .get("atoms")
+        .ok_or_else(|| "typed pair kernel: frame missing \"atoms\" block".to_string())?;
+    let types = atoms
+        .get_string("type")
+        .ok_or_else(|| "typed pair kernel: atoms block missing \"type\" column".to_string())?;
+    let mut labels: Vec<String> = Vec::new();
+    let mut index = std::collections::HashMap::new();
+    let mut type_id = Vec::with_capacity(types.len());
+    for t in types.iter() {
+        let next = labels.len() as u32;
+        let id = *index.entry(t.clone()).or_insert_with(|| {
+            labels.push(t.clone());
+            next
+        });
+        type_id.push(id);
+    }
+    Ok((type_id, labels))
 }
 
 /// Index into a type-pair parameter table laid out `ti * ntypes + tj`.

@@ -6,9 +6,11 @@
 use std::collections::HashMap;
 
 use crate::ff::forcefield::Params;
+use crate::ff::forcefield::pair_type_name;
 use crate::ff::potential::Potential;
 use crate::ff::potential::gather_copies;
 use crate::ff::potential::geometry::validate_coords;
+use crate::ff::potential::pair::atom_type_index;
 use crate::ff::potential::pair::type_pair;
 use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame::Frame;
@@ -266,6 +268,51 @@ pub fn pair_morse_ctor(
     }
 
     Ok(Box::new(PairMorse::new(ai, aj, dv, av, rv)))
+}
+
+/// Construct a neighbour-driven [`PairMorse`] from per-atom parameters.
+///
+/// The counterpart of [`pair_morse_ctor`]: the same force field, keyed on the atoms
+/// instead of on a pair list, so it can answer for whatever pairs a neighbour
+/// search turns up. It reads no `pairs` block — there is none to read when the
+/// list is rebuilt every few steps.
+pub fn pair_morse_typed_ctor(
+    _style_params: &Params,
+    type_params: &[(&str, &Params)],
+    frame: &Frame,
+) -> Result<Box<dyn Potential>, String> {
+    let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
+    let (type_id, labels) = atom_type_index(frame)?;
+    let ntypes = labels.len();
+    let mut d0 = vec![0.0 as F; ntypes * ntypes];
+    let mut alpha = vec![0.0 as F; ntypes * ntypes];
+    let mut r0 = vec![0.0 as F; ntypes * ntypes];
+    for ti in 0..ntypes {
+        for tj in 0..ntypes {
+            // A cross-pair may be declared either way round; a self-pair is
+            // named by the atom type alone.
+            let forward = pair_type_name(&labels[ti], &labels[tj]);
+            let reverse = pair_type_name(&labels[tj], &labels[ti]);
+            let p = type_map
+                .get(forward.as_str())
+                .or_else(|| type_map.get(reverse.as_str()))
+                .ok_or_else(|| format!("PairMorse: unknown pair type '{forward}'"))?;
+            let t = type_pair(ti as u32, tj as u32, ntypes);
+            d0[t] = p
+                .get("d0")
+                .ok_or_else(|| format!("PairMorse type '{forward}': missing 'd0'"))?
+                as F;
+            alpha[t] = p
+                .get("alpha")
+                .ok_or_else(|| format!("PairMorse type '{forward}': missing 'alpha'"))?
+                as F;
+            r0[t] = p
+                .get("r0")
+                .ok_or_else(|| format!("PairMorse type '{forward}': missing 'r0'"))?
+                as F;
+        }
+    }
+    Ok(Box::new(PairMorse::typed(type_id, ntypes, d0, alpha, r0)))
 }
 
 #[cfg(test)]

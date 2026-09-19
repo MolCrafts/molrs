@@ -15,6 +15,7 @@ pub mod xml;
 use std::collections::{HashMap, HashSet};
 
 use molrs::store::frame::Frame;
+use molrs::system::bond_weights::BondDistanceWeights;
 
 // ---------------------------------------------------------------------------
 // Params
@@ -464,6 +465,20 @@ fn join_endpoints(parts: &[&str]) -> String {
     parts.join(sep)
 }
 
+/// The type-definition label a pair style uses for atom types `a` and `b`.
+///
+/// Mirrors [`Style::def_pairtype`]'s naming: a self-pair is just the atom
+/// type's own label, a cross-pair is the two joined. A neighbour-driven kernel
+/// builds its type-pair table by asking this for every ordered pair, so the two
+/// must not drift apart.
+pub(crate) fn pair_type_name(a: &str, b: &str) -> String {
+    if a == b {
+        a.to_owned()
+    } else {
+        join_endpoints(&[a, b])
+    }
+}
+
 /// Inverse of [`join_endpoints`]: split on `::` first, else on `-`.
 fn split_endpoints(name: &str) -> Vec<&str> {
     if name.contains("::") {
@@ -702,6 +717,30 @@ impl SpecialBonds {
     /// The Coulomb 1-4 scale weight (the `[2]` entry of [`Self::coul`]).
     pub fn coul_14(&self) -> f64 {
         self.coul[2]
+    }
+
+    /// The LJ weights as a bond-distance table, full strength past 1-4.
+    ///
+    /// What a neighbour-driven evaluation needs. A compiled intramolecular
+    /// list carried these by *omitting* the excluded rows and baking the 1-4
+    /// factor into the parameters, so only `[2]` was ever read; a neighbour
+    /// table finds every pair inside the cutoff and needs all three.
+    pub fn lj_weights(&self) -> BondDistanceWeights {
+        Self::table(self.lj)
+    }
+
+    /// The Coulomb weights as a bond-distance table, full strength past 1-4.
+    ///
+    /// Separate from [`lj_weights`](Self::lj_weights) because a force field may
+    /// scale the two differently — Amber uses `1/2` for van der Waals and
+    /// `1/1.2` for electrostatics — and in molrs they are separate kernels.
+    pub fn coul_weights(&self) -> BondDistanceWeights {
+        Self::table(self.coul)
+    }
+
+    fn table(w: [f64; 3]) -> BondDistanceWeights {
+        BondDistanceWeights::new(vec![w[0], w[1], w[2], 1.0])
+            .expect("a four-entry weight table is always well formed")
     }
 }
 

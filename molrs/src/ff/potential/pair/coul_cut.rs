@@ -351,6 +351,40 @@ pub fn pair_coul_cut_ctor(
     )))
 }
 
+/// Construct a neighbour-driven [`PairCoulCut`] from per-atom parameters.
+///
+/// The counterpart of [`pair_coul_cut_ctor`]: the same force field, keyed on the atoms
+/// instead of on a pair list, so it can answer for whatever pairs a neighbour
+/// search turns up. It reads no `pairs` block — there is none to read when the
+/// list is rebuilt every few steps.
+pub fn pair_coul_cut_typed_ctor(
+    style_params: &Params,
+    _type_params: &[(&str, &Params)],
+    frame: &Frame,
+) -> Result<Box<dyn Potential>, String> {
+    let coulomb = required(style_params, "coulomb")?;
+    let dielectric = required(style_params, "dielectric")?;
+    let delta = style_params.get("delta").map(|d| d as F).unwrap_or(0.0);
+    let cutoff = style_params
+        .get("cutoff")
+        .map(|c| c as F)
+        .unwrap_or(F::INFINITY);
+    // `coulomb14scale` is deliberately not read here. On this path the 1-4
+    // weight is applied to the pair table, not baked into a charge product, so
+    // requiring the kernel to know it would be asking it a question it no
+    // longer answers.
+    let atoms = frame
+        .get("atoms")
+        .ok_or_else(|| "PairCoulCut: frame missing \"atoms\" block".to_string())?;
+    let charge = atoms
+        .get_float("charge")
+        .ok_or_else(|| "PairCoulCut: atoms block missing \"charge\" column".to_string())?;
+    let q: Vec<F> = charge.iter().map(|&c| c as F).collect();
+    Ok(Box::new(PairCoulCut::typed(
+        q, coulomb, dielectric, delta, cutoff,
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use crate::ff::potential::pair::testing::{assert_same, table_over};

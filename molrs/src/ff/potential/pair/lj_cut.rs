@@ -13,6 +13,7 @@ use crate::ff::potential::Potential;
 use crate::ff::potential::gather_copies;
 use crate::ff::potential::geometry::validate_coords;
 use crate::ff::potential::pair::PairPotential;
+use crate::ff::potential::pair::atom_type_index;
 use molrs::spatial::neighbors::{Neighbors, VerletSkin};
 use molrs::store::frame::Frame;
 use molrs::types::F;
@@ -660,6 +661,51 @@ pub fn pair_lj_cut_ctor(
     }
 
     Ok(Box::new(LJCut::compiled(atom_i, atom_j, eps_vec, sig_vec)))
+}
+
+/// Construct a neighbour-driven [`LJCut`] from per-atom parameters.
+///
+/// The counterpart of [`pair_lj_cut_ctor`]: the same force field, keyed on the atoms
+/// instead of on a pair list, so it can answer for whatever pairs a neighbour
+/// search turns up. It reads no `pairs` block — there is none to read when the
+/// list is rebuilt every few steps.
+pub fn pair_lj_cut_typed_ctor(
+    style_params: &Params,
+    type_params: &[(&str, &Params)],
+    frame: &Frame,
+) -> Result<Box<dyn Potential>, String> {
+    let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
+    let mixing = match style_params.get_str("mixing") {
+        Some(name) => Mixing::parse(name).map_err(|e| format!("LJCut: {e}"))?,
+        None => Mixing::Arithmetic,
+    };
+    // Required, where the compiled form has no cutoff at all: an intramolecular
+    // list is finite by construction, a periodic neighbour sum is not.
+    let cutoff = style_params
+        .get("cutoff")
+        .ok_or_else(|| "LJCut: a neighbour-driven pair style must declare 'cutoff'".to_string())?
+        as F;
+    let n = style_params.get("n").unwrap_or(12.0).round() as i32;
+    let m = style_params.get("m").unwrap_or(6.0).round() as i32;
+    let shifted = style_params.get("shift").unwrap_or(0.0) != 0.0;
+
+    let (type_id, labels) = atom_type_index(frame)?;
+    let mut per_type = Vec::with_capacity(labels.len());
+    for l in &labels {
+        let p = type_map
+            .get(l.as_str())
+            .ok_or_else(|| format!("LJCut: unknown atom type '{l}'"))?;
+        let eps = p
+            .get("epsilon")
+            .ok_or_else(|| format!("LJCut type '{l}': missing 'epsilon'"))? as F;
+        let sigma = p
+            .get("sigma")
+            .ok_or_else(|| format!("LJCut type '{l}': missing 'sigma'"))? as F;
+        per_type.push((eps, sigma));
+    }
+    Ok(Box::new(LJCut::typed(
+        type_id, &per_type, mixing, cutoff, n, m, shifted, false,
+    )?))
 }
 
 #[cfg(test)]

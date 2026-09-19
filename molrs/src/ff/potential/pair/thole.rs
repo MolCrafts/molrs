@@ -27,6 +27,7 @@ use crate::ff::forcefield::Params;
 use crate::ff::potential::Potential;
 use crate::ff::potential::gather_copies;
 use crate::ff::potential::geometry::validate_coords;
+use crate::ff::potential::pair::atom_type_index;
 use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame::Frame;
 use molrs::types::F;
@@ -291,6 +292,41 @@ pub fn pair_thole_ctor(
     }
 
     Ok(Box::new(PairThole::new(atom_i, atom_j, s_vec, qq_vec)))
+}
+
+/// Construct a neighbour-driven [`PairThole`] from per-atom parameters.
+///
+/// The counterpart of [`pair_thole_ctor`]: the same force field, keyed on the atoms
+/// instead of on a pair list, so it can answer for whatever pairs a neighbour
+/// search turns up. It reads no `pairs` block — there is none to read when the
+/// list is rebuilt every few steps.
+pub fn pair_thole_typed_ctor(
+    _style_params: &Params,
+    type_params: &[(&str, &Params)],
+    frame: &Frame,
+) -> Result<Box<dyn Potential>, String> {
+    let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
+    let (type_id, labels) = atom_type_index(frame)?;
+    let mut per_type = Vec::with_capacity(labels.len());
+    for l in &labels {
+        let p = type_map
+            .get(l.as_str())
+            .ok_or_else(|| format!("PairThole: unknown atom type '{l}'"))?;
+        let get = |k: &str| {
+            p.get(k)
+                .ok_or_else(|| format!("PairThole type '{l}': missing '{k}'"))
+                .map(|v| v as F)
+        };
+        per_type.push((get("charge")?, get("alpha")?, get("a_thole")?));
+    }
+    let pick = |f: fn(&(F, F, F)) -> F| -> Vec<F> {
+        type_id.iter().map(|&t| f(&per_type[t as usize])).collect()
+    };
+    Ok(Box::new(PairThole::typed(
+        pick(|p| p.0),
+        pick(|p| p.1),
+        pick(|p| p.2),
+    )))
 }
 
 #[cfg(test)]
