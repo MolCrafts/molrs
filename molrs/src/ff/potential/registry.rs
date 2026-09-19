@@ -122,16 +122,17 @@ impl KernelRegistry {
         ctor: KernelConstructor,
         source: ParamSource,
     ) {
-        let typed = self
-            .ctors
-            .get(&(category.to_owned(), name.to_owned()))
-            .and_then(|r| r.typed);
+        // A registration is one unit. Keeping the previous `typed` across an
+        // override would leave `to_potentials` and `to_typed_potentials`
+        // evaluating *different force fields* for the same style name, with
+        // nothing to say so — so an override clears it and the caller
+        // re-registers both.
         self.ctors.insert(
             (category.to_owned(), name.to_owned()),
             Registration {
                 ctor,
                 source,
-                typed,
+                typed: None,
             },
         );
     }
@@ -142,6 +143,12 @@ impl KernelRegistry {
     /// and [`ForceField::to_typed_potentials`](crate::ff::forcefield::ForceField::to_typed_potentials)
     /// says so rather than quietly falling back to the compiled form, whose
     /// parameters would belong to a pair list nobody is evaluating.
+    /// # Panics
+    ///
+    /// If `(category, name)` has no compiled registration. A neighbour-driven
+    /// form is an *alternative* way to build a style that already exists, so a
+    /// silent no-op here would leave the caller believing their style works
+    /// under MD when `to_typed_potential` will refuse it.
     pub fn register_typed(
         &mut self,
         category: &str,
@@ -149,9 +156,17 @@ impl KernelRegistry {
         ctor: KernelConstructor,
         special: SpecialClass,
     ) {
-        if let Some(r) = self.ctors.get_mut(&(category.to_owned(), name.to_owned())) {
-            r.typed = Some((ctor, special));
-        }
+        let r = self
+            .ctors
+            .get_mut(&(category.to_owned(), name.to_owned()))
+            .unwrap_or_else(|| {
+                panic!(
+                    "register_typed('{category}', '{name}') before the style is registered: \
+                     a neighbour-driven form is an alternative to a compiled one, not a \
+                     registration of its own"
+                )
+            });
+        r.typed = Some((ctor, special));
     }
 
     /// The constructor registered for `(category, name)`, if any.
@@ -241,64 +256,6 @@ impl KernelRegistry {
             pair::coul_cut::pair_coul_cut_ctor,
             ParamSource::PerInstance,
         );
-        // The neighbour-driven counterparts. Same styles, parameters keyed on
-        // the atoms rather than on a `pairs` block, which is what an evaluation
-        // over a rebuilt neighbour table needs.
-        r.register_typed(
-            "pair",
-            "lj/cut",
-            pair::lj_cut::pair_lj_cut_typed_ctor,
-            SpecialClass::Vdw,
-        );
-        r.register_typed(
-            "pair",
-            "lj/class2",
-            pair::lj_class2::pair_lj_class2_typed_ctor,
-            SpecialClass::Vdw,
-        );
-        r.register_typed(
-            "pair",
-            "buck",
-            pair::buck::pair_buck_typed_ctor,
-            SpecialClass::Vdw,
-        );
-        r.register_typed(
-            "pair",
-            "morse",
-            pair::morse::pair_morse_typed_ctor,
-            SpecialClass::Vdw,
-        );
-        r.register_typed(
-            "pair",
-            "uff_lj",
-            pair::uff::uff_lj_typed_ctor,
-            SpecialClass::Vdw,
-        );
-        r.register_typed(
-            "pair",
-            "mmff_vdw",
-            pair::mmff::mmff_vdw_typed_ctor,
-            SpecialClass::Vdw,
-        );
-        r.register_typed(
-            "pair",
-            "coul/cut",
-            pair::coul_cut::pair_coul_cut_typed_ctor,
-            SpecialClass::Coulomb,
-        );
-        r.register_typed(
-            "pair",
-            "coul/tt",
-            pair::tang_toennies::pair_tang_toennies_typed_ctor,
-            SpecialClass::Coulomb,
-        );
-        r.register_typed(
-            "pair",
-            "thole",
-            pair::thole::pair_thole_typed_ctor,
-            SpecialClass::Coulomb,
-        );
-
         // MMFF94 — five per-instance BONDED styles. Their kernels read the columns
         // the typifier bakes (`kb`/`r0`, `ka`/`theta0`, `kba_*`, `v1`/`v2`/`v3`,
         // `koop`), never a type row: MMFF's context rules (aromaticity, ring size,
@@ -385,6 +342,64 @@ impl KernelRegistry {
             kspace::pme::pme_ctor,
             ParamSource::PerInstance,
         );
+        // The neighbour-driven counterparts. Same styles, parameters keyed on
+        // the atoms rather than on a `pairs` block, which is what an evaluation
+        // over a rebuilt neighbour table needs.
+        r.register_typed(
+            "pair",
+            "lj/cut",
+            pair::lj_cut::pair_lj_cut_typed_ctor,
+            SpecialClass::Vdw,
+        );
+        r.register_typed(
+            "pair",
+            "lj/class2",
+            pair::lj_class2::pair_lj_class2_typed_ctor,
+            SpecialClass::Vdw,
+        );
+        r.register_typed(
+            "pair",
+            "buck",
+            pair::buck::pair_buck_typed_ctor,
+            SpecialClass::Vdw,
+        );
+        r.register_typed(
+            "pair",
+            "morse",
+            pair::morse::pair_morse_typed_ctor,
+            SpecialClass::Vdw,
+        );
+        r.register_typed(
+            "pair",
+            "uff_lj",
+            pair::uff::uff_lj_typed_ctor,
+            SpecialClass::Vdw,
+        );
+        r.register_typed(
+            "pair",
+            "mmff_vdw",
+            pair::mmff::mmff_vdw_typed_ctor,
+            SpecialClass::Vdw,
+        );
+        r.register_typed(
+            "pair",
+            "coul/cut",
+            pair::coul_cut::pair_coul_cut_typed_ctor,
+            SpecialClass::Coulomb,
+        );
+        r.register_typed(
+            "pair",
+            "coul/tt",
+            pair::tang_toennies::pair_tang_toennies_typed_ctor,
+            SpecialClass::Coulomb,
+        );
+        r.register_typed(
+            "pair",
+            "thole",
+            pair::thole::pair_thole_typed_ctor,
+            SpecialClass::Coulomb,
+        );
+
         r
     }
 }
@@ -464,5 +479,58 @@ mod tests {
         // re-registering the same key overrides, not duplicates
         r.register("pair", "lj/cut", pair::buck::pair_buck_ctor);
         assert_eq!(r.len(), 1);
+    }
+
+    /// Every neighbour-driven form registered by [`KernelRegistry::builtin`] is
+    /// still there when `builtin` returns.
+    ///
+    /// Re-registering a style clears its typed entry on purpose — an override
+    /// replaces the force law, and a stale neighbour-driven form would make
+    /// `to_potentials` and `to_typed_potentials` evaluate different physics for
+    /// the same name. That makes registration **order-sensitive**: a
+    /// `register_typed` followed later by a `register` for the same key drops
+    /// the typed form silently, and the only symptom is `to_typed_potentials`
+    /// reporting a style it was told about as unknown. This pins the order.
+    #[test]
+    fn every_typed_registration_survives_builtin() {
+        let r = KernelRegistry::builtin();
+        for name in [
+            "lj/cut",
+            "lj/class2",
+            "buck",
+            "morse",
+            "uff_lj",
+            "mmff_vdw",
+            "coul/cut",
+            "coul/tt",
+            "thole",
+        ] {
+            assert!(
+                r.get_typed("pair", name).is_some(),
+                "pair '{name}' lost its neighbour-driven form: a later \
+                 register/register_with for the same key must come *before* \
+                 its register_typed"
+            );
+        }
+    }
+
+    /// An override drops the neighbour-driven form rather than keeping a form
+    /// built for the force law that was just replaced.
+    #[test]
+    fn re_registering_a_style_clears_its_typed_form() {
+        let mut r = KernelRegistry::new();
+        r.register("pair", "lj/cut", pair::lj_cut::pair_lj_cut_ctor);
+        r.register_typed(
+            "pair",
+            "lj/cut",
+            pair::lj_cut::pair_lj_cut_typed_ctor,
+            SpecialClass::Vdw,
+        );
+        assert!(r.get_typed("pair", "lj/cut").is_some());
+        r.register("pair", "lj/cut", pair::buck::pair_buck_ctor);
+        assert!(
+            r.get_typed("pair", "lj/cut").is_none(),
+            "the typed form was built for lj/cut's parameters, not buck's"
+        );
     }
 }

@@ -601,17 +601,6 @@ impl Potential for Potentials {
 // ---------------------------------------------------------------------------
 
 impl crate::ff::forcefield::Style {
-    /// Build this style's molecule-bound [`Potential`] by **expanding** its type
-    /// parameters against `frame`'s topology — each bond/angle/… row's string
-    /// type label is resolved to its parameters and stored as per-element
-    /// arrays, so the resulting potential evaluates from coordinates alone.
-    ///
-    /// Returns `Ok(None)` for a style that carries no pairwise kernel (an atom
-    /// style — types/charges only), `Err` for an unknown `(category, name)`.
-    ///
-    /// The `(category, name)` → constructor mapping lives in the [`registry`]; a
-    /// new potential is added by registering its kernel, not by editing this
-    /// dispatch.
     /// Build this style's kernel for a **neighbour-driven** evaluation, and
     /// say which special-bonds weights scale it.
     ///
@@ -666,6 +655,17 @@ impl crate::ff::forcefield::Style {
         Ok(Some((pot, Some(special))))
     }
 
+    /// Build this style's molecule-bound [`Potential`] by **expanding** its type
+    /// parameters against `frame`'s topology — each bond/angle/… row's string
+    /// type label is resolved to its parameters and stored as per-element
+    /// arrays, so the resulting potential evaluates from coordinates alone.
+    ///
+    /// Returns `Ok(None)` for a style that carries no pairwise kernel (an atom
+    /// style — types/charges only), `Err` for an unknown `(category, name)`.
+    ///
+    /// The `(category, name)` → constructor mapping lives in the [`registry`]; a
+    /// new potential is added by registering its kernel, not by editing this
+    /// dispatch.
     pub fn to_potential(
         &self,
         frame: &Frame,
@@ -819,15 +819,6 @@ pub fn write_coords(frame: &mut Frame, coords: &[F]) -> Result<(), String> {
 }
 
 impl ForceField {
-    /// Build evaluable [`Potentials`] by expanding every style against a
-    /// typed [`Frame`].
-    ///
-    /// Each style's `to_potential` resolves its string type labels to per-element
-    /// parameter arrays (see [`Style::to_potential`](crate::ff::forcefield::Style::to_potential)),
-    /// so the resulting potentials are **molecule-bound**: they retain no Frame
-    /// and evaluate from coordinates alone. Styles with no kernel (atom styles)
-    /// are skipped. This is the molpy-style `ForceField → Potentials` conversion;
-    /// there is no separate "compile" step.
     /// Build the members of a **neighbour-driven** force evaluation, each with
     /// the bond-distance weights its non-bonded term takes.
     ///
@@ -881,6 +872,15 @@ impl ForceField {
         Ok(out)
     }
 
+    /// Build evaluable [`Potentials`] by expanding every style against a
+    /// typed [`Frame`].
+    ///
+    /// Each style's `to_potential` resolves its string type labels to per-element
+    /// parameter arrays (see [`Style::to_potential`](crate::ff::forcefield::Style::to_potential)),
+    /// so the resulting potentials are **molecule-bound**: they retain no Frame
+    /// and evaluate from coordinates alone. Styles with no kernel (atom styles)
+    /// are skipped. This is the molpy-style `ForceField → Potentials` conversion;
+    /// there is no separate "compile" step.
     pub fn to_potentials(&self, frame: &Frame) -> Result<Potentials, String> {
         let mut pots = Potentials::new();
         for style in self.styles() {
