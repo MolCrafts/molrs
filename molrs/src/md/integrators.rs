@@ -1306,25 +1306,53 @@ mod ghost_path_tests {
         }
     }
 
-    /// A provider that cannot tally a virial says so, rather than reporting a
-    /// zero that would pass for one.
+    /// The two régimes agree on the virial, having derived it two different
+    /// ways.
     ///
-    /// The minimum-image route would need the per-pair forces to sum
-    /// `Σ f_ij ⊗ r_ij`, and `Potential` does not expose them. `None` is the
-    /// honest answer; a fabricated zero would make every pressure computed
-    /// from it wrong and entirely plausible.
+    /// The ghost route sums `Σ_a f_a ⊗ x_a` over owned atoms *and copies*,
+    /// each at its own position, before the copies' forces are folded back.
+    /// The minimum-image route never has a copy: each pair kernel tallies
+    /// `Σ f_ij ⊗ r_ij` inside the loop that made the forces, from the folded
+    /// displacement. Those are the same tensor by an identity, not by
+    /// construction — so agreeing is evidence, where a shared code path would
+    /// have been none.
     #[test]
-    fn the_minimum_image_route_reports_no_virial_rather_than_a_zero() {
+    fn the_two_regimes_derive_the_same_virial() {
+        use molrs::ff::potential::pair::lj_cut::Mixing;
+
         let l = 12.0_f64;
         let cutoff = 5.0;
         let bx = SimBox::cube(l, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
+        // Every edge of this cube runs through a face, so every pair is found
+        // through a periodic image and the two derivations have to work for it.
         let pos = array![
             [11.0_f64, 11.0, 11.0],
             [3.0, 11.0, 11.0],
             [11.0, 3.0, 11.0],
+            [11.0, 11.0, 3.0],
             [3.0, 3.0, 11.0],
+            [3.0, 11.0, 3.0],
+            [11.0, 3.0, 3.0],
+            [3.0, 3.0, 3.0],
         ];
         let n = pos.nrows();
+        let per_type = [(0.3_f64, 3.4_f64), (0.9, 2.6)];
+        let type_id: Vec<u32> = (0..n).map(|i| (i % 2) as u32).collect();
+        let lj = || {
+            LJCut::typed(
+                type_id.clone(),
+                &per_type,
+                Mixing::Arithmetic,
+                cutoff,
+                12,
+                6,
+                false,
+                false,
+            )
+            .unwrap()
+        };
+        let no_fold = Array2::<i64>::zeros((n, 3));
+
         let skin = VerletSkin::new(
             NeighborList::new(cutoff),
             cutoff,
@@ -1336,25 +1364,32 @@ mod ghost_path_tests {
             bx.clone(),
         )
         .unwrap();
-        let mut ig = VelocityVerlet::new(
-            1.0,
-            MicPairs::new(
-                LJCut::new(0.3, 3.4, cutoff, 12, 6, false, false).unwrap(),
-                skin,
-            ),
-            scalar_mass(12.0, n).unwrap().view(),
-            Some(bx),
-        )
-        .unwrap();
-        let state = ig.initial(pos, FNx3::zeros((n, 3))).unwrap();
+        let mic = MicPairs::new(lj(), skin)
+            .compute(pos.view(), no_fold.view())
+            .unwrap()
+            .virial
+            .expect("a typed pair kernel tallies its virial");
+
+        let comm = Comm::new(bx, pos.view(), cutoff, 0.0).unwrap();
+        let ghost = GhostPairs::new(lj(), comm)
+            .compute(pos.view(), no_fold.view())
+            .unwrap()
+            .virial
+            .expect("the halo tallies one too");
+
+        let scale = mic.components.iter().fold(1.0_f64, |m, c| m.max(c.abs()));
         assert!(
-            state.virial.is_none(),
-            "the MIC route cannot see per-pair forces, so it must not claim a virial"
+            scale > 1.0,
+            "the virial must be non-trivial for this to assert anything"
         );
-        assert!(
-            state.energy != 0.0,
-            "the run must be doing real work for the assertion above to mean anything"
-        );
+        for c in 0..6 {
+            assert!(
+                (mic.components[c] - ghost.components[c]).abs() / scale < 1e-12,
+                "component {c}: {} through the image vs {} through copies",
+                mic.components[c],
+                ghost.components[c]
+            );
+        }
     }
 }
 

@@ -31,6 +31,8 @@ use crate::ff::potential::Potential;
 use crate::ff::potential::gather_copies;
 use crate::ff::potential::geometry::{mag3, sub3, validate_coords};
 use crate::ff::potential::pair::atom_type_index;
+use crate::ff::potential::pair::energy_forces;
+use molrs::math::Virial;
 use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame::Frame;
 use molrs::types::F;
@@ -182,21 +184,23 @@ impl MMFFVdW {
         n_components: usize,
         n_pairs: usize,
         pair: impl Fn(usize) -> (usize, usize, F, F, [F; 3]),
-    ) -> (F, Vec<F>) {
+    ) -> (F, Vec<F>, Virial) {
         let mut energy: F = 0.0;
         let mut forces = vec![0.0 as F; n_components];
+        let mut virial = Virial::ZERO;
         for idx in 0..n_pairs {
             let (i, j, rs, eps, d) = pair(idx);
             let Some((e, f)) = self.pair_kernel(d, rs, eps) else {
                 continue;
             };
             energy += e;
+            virial.add_outer(f, d);
             for dim in 0..3 {
                 forces[j * 3 + dim] += f[dim];
                 forces[i * 3 + dim] -= f[dim];
             }
         }
-        (energy, forces)
+        (energy, forces, virial)
     }
 }
 
@@ -213,23 +217,33 @@ impl Potential for MMFFVdW {
             // Per-atom parameters need a pair table, and nobody handed one over.
             return (0.0, vec![0.0 as F; coords.len()]);
         };
-        self.fold(coords.len(), atom_i.len(), |idx| {
+        energy_forces(self.fold(coords.len(), atom_i.len(), |idx| {
             let (i, j) = (atom_i[idx], atom_j[idx]);
             (i, j, r_star[idx], epsilon[idx], sub3(coords, j, coords, i))
-        })
+        }))
     }
 
     fn calc_energy_forces_with_pairs(&self, coords: &[F], pairs: &Neighbors) -> (F, Vec<F>) {
+        let (e, f, _) = self.calc_energy_forces_with_pairs_virial(coords, pairs);
+        (e, f)
+    }
+
+    fn calc_energy_forces_with_pairs_virial(
+        &self,
+        coords: &[F],
+        pairs: &Neighbors,
+    ) -> (F, Vec<F>, Option<Virial>) {
         let Source::PerAtom { atoms, style, .. } = &self.source else {
             // A compiled kernel answers for its own list, not for this one.
-            return self.calc_energy_forces(coords);
+            let (e, f) = self.calc_energy_forces(coords);
+            return (e, f, None);
         };
         let Some(disp) = pairs.disp() else {
-            return (0.0, vec![0.0 as F; coords.len()]);
+            return (0.0, vec![0.0 as F; coords.len()], None);
         };
         let i_col = pairs.query_point_indices();
         let j_col = pairs.point_indices();
-        self.fold(coords.len(), i_col.len(), |p| {
+        let (e, f, w) = self.fold(coords.len(), i_col.len(), |p| {
             let i = i_col[p] as usize;
             let j = j_col[p] as usize;
             debug_assert!(
@@ -238,7 +252,8 @@ impl Potential for MMFFVdW {
             );
             let (rs, eps) = vdw_combining(&atoms[i], &atoms[j], style);
             (i, j, rs, eps, [disp[[p, 0]], disp[[p, 1]], disp[[p, 2]]])
-        })
+        });
+        (e, f, Some(w))
     }
 
     fn gather_onto_copies(&mut self, owner: &[u32]) {

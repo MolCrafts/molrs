@@ -22,12 +22,12 @@
 use ndarray::{Array2, ArrayView2};
 
 use molrs::ff::potential::Potential;
-use molrs::spatial::neighbors::{NeighborPair, Neighbors, NeighborsStorage, QueryMode};
+use molrs::spatial::neighbors::{NeighborPair, Neighbors};
 use molrs::spatial::periodic::{GhostError, GhostSet};
 use molrs::spatial::simbox::SimBox;
 use molrs::types::{F, FNx3, FNx3View};
 
-use super::virial::Virial;
+use molrs::math::Virial;
 
 use super::error::MdError;
 
@@ -1205,19 +1205,26 @@ impl SpecialWeights {
 
     /// Split a pair table into the full-strength pairs and the scaled groups.
     ///
-    /// A pair naming a copy is weighted as the atom that copy is of: a bond
-    /// graph knows owners, and a copy is the same atom seen through a face.
+    /// `owner` maps a periodic copy to the atom it copies — index `a` is a
+    /// copy when `a >= n_owned`, and its owner is `owner[a - n_owned]`. A pair
+    /// naming a copy is weighted as that owner: a bond graph knows atoms, and a
+    /// copy is the same atom seen through a face. Pass an empty slice when the
+    /// table names atoms directly, as a minimum-image one does.
+    ///
     /// Pairs weighted zero appear in neither output — they are gone, not
     /// scaled, which is what keeps a bond-length Lennard-Jones term out of the
     /// sum in the first place.
-    pub fn split(&self, pairs: &Neighbors, set: &GhostSet) -> (Neighbors, Vec<(F, Neighbors)>) {
-        let n_owned = set.n_owned();
-        let owner = set.owner();
-        let n_all = n_owned + set.len();
-        let mode = QueryMode::CrossQuery {
-            num_query_points: n_owned,
-            num_points: n_all,
-        };
+    ///
+    /// The outputs carry the input's query mode and storage, so a kernel
+    /// cannot tell a split table from the one it came from.
+    pub fn split(
+        &self,
+        pairs: &Neighbors,
+        n_owned: usize,
+        owner: &[u32],
+    ) -> (Neighbors, Vec<(F, Neighbors)>) {
+        let mode = pairs.mode();
+        let storage = pairs.storage();
         let own = |a: usize| {
             if a < n_owned {
                 a
@@ -1227,7 +1234,7 @@ impl SpecialWeights {
         };
 
         let (Some(disp), Some(d2)) = (pairs.disp(), pairs.dist_sq()) else {
-            return (Neighbors::empty(mode, NeighborsStorage::FULL), Vec::new());
+            return (Neighbors::empty(mode, storage), Vec::new());
         };
         let i_col = pairs.query_point_indices();
         let j_col = pairs.point_indices();
@@ -1258,10 +1265,10 @@ impl SpecialWeights {
         }
 
         (
-            Neighbors::from_pairs(full, NeighborsStorage::FULL, mode),
+            Neighbors::from_pairs(full, storage, mode),
             groups
                 .into_iter()
-                .map(|(w, v)| (w, Neighbors::from_pairs(v, NeighborsStorage::FULL, mode)))
+                .map(|(w, v)| (w, Neighbors::from_pairs(v, storage, mode)))
                 .collect(),
         )
     }

@@ -15,7 +15,7 @@ use molrs::store::keys;
 use molrs::types::{F, FNx3, I};
 
 use super::error::MdError;
-use super::virial::Virial;
+use molrs::math::Virial;
 
 /// Energy + forces from one integrator force evaluation.
 ///

@@ -26,6 +26,7 @@ use std::collections::HashSet;
 use ndarray::{Array1, Array2, ArrayView2};
 
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
+use molrs::math::Virial;
 use molrs::spatial::neighbors::Neighbors;
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
@@ -169,6 +170,27 @@ pub trait Potential: Send + Sync {
         self.calc_energy_forces(coords)
     }
 
+    /// Energy, forces, and the virial `Σ f ⊗ r`, over a pair table.
+    ///
+    /// The virial cannot be recovered from the forces afterwards. Under
+    /// periodic boundaries `Σ_a f_a ⊗ x_a` over the stored coordinates depends
+    /// on where the cell's origin happens to be, and a sum over separations
+    /// does not — so a kernel that can tally one tallies it *here*, in the same
+    /// loop that made the forces, where both terms of each pair are still in
+    /// hand.
+    ///
+    /// Default: evaluate normally and report none. `None` is not zero: a
+    /// pressure computed from a fabricated zero is wrong and looks entirely
+    /// plausible.
+    fn calc_energy_forces_with_pairs_virial(
+        &self,
+        coords: &[F],
+        pairs: &Neighbors,
+    ) -> (F, Vec<F>, Option<Virial>) {
+        let (e, f) = self.calc_energy_forces_with_pairs(coords, pairs);
+        (e, f, None)
+    }
+
     /// Extend per-atom state onto periodic copies.
     ///
     /// `owner[g]` is the atom copy `g` is a copy of, and the copies occupy
@@ -205,6 +227,14 @@ impl Potential for Box<dyn Potential> {
         terms: ArrayView2<'_, u32>,
     ) -> (F, Vec<F>) {
         (**self).calc_energy_forces_with_terms(coords, terms)
+    }
+
+    fn calc_energy_forces_with_pairs_virial(
+        &self,
+        coords: &[F],
+        pairs: &Neighbors,
+    ) -> (F, Vec<F>, Option<Virial>) {
+        (**self).calc_energy_forces_with_pairs_virial(coords, pairs)
     }
 
     fn gather_onto_copies(&mut self, owner: &[u32]) {

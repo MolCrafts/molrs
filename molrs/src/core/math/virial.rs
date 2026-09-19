@@ -1,6 +1,6 @@
 //! The virial tensor, and the one thing about it that is easy to get wrong.
 
-use molrs::types::F;
+use crate::types::F;
 
 /// The virial tensor `W = Σ f ⊗ r`, symmetric, in kcal/mol.
 ///

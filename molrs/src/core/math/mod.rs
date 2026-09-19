@@ -12,8 +12,11 @@ pub mod complex;
 pub mod diagonalize;
 pub mod pair_form;
 pub mod spherical_harmonics;
+pub mod virial;
 pub mod wigner3j;
 pub mod wigner_d;
+
+pub use virial::Virial;
 
 use ndarray::{Array2, ArrayView2, array};
 

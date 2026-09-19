@@ -82,6 +82,16 @@ pub trait PairPotential: Send + Sync {
     }
 }
 
+/// Drop the virial from a fold's result.
+///
+/// The accumulation loop always has both terms of a pair in hand, so tallying
+/// `Σ f ⊗ r` there is free; the entry points that do not report one say so by
+/// discarding it here rather than by keeping a second loop that does not.
+#[inline]
+pub(crate) fn energy_forces((e, f, _): (F, Vec<F>, molrs::math::Virial)) -> (F, Vec<F>) {
+    (e, f)
+}
+
 /// Map each atom to a dense type index, and hand back the labels in that order.
 ///
 /// A neighbour-driven kernel keys its parameters on the atoms, so it needs the

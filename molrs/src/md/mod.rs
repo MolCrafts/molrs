@@ -33,14 +33,16 @@ pub mod integrators;
 pub mod maxwell;
 pub mod pairs;
 pub mod types;
-pub mod virial;
 
 pub use crate::ff::potential::pair::{LJCut, PairPotential};
 pub use crate::ff::potential::{Potential, Potentials};
+/// The virial tensor. It lives in [`crate::math`] because it is a property of
+/// a force evaluation, not of the loop that runs one — a pair kernel tallies
+/// it, and a kernel may not name `md`.
+pub use crate::math::Virial;
 pub use error::MdError;
 pub use forces::{Direct, ForceProvider, GhostPairs, MicPairs, NeighborStats};
 pub use integrators::{Langevin, VelocityVerlet, kinetic_energy, scalar_mass};
 pub use maxwell::MaxwellBoltzmann;
 pub use pairs::{BondedLists, Comm};
 pub use types::{ForceOutput, MDObservables, MDState};
-pub use virial::Virial;

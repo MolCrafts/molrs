@@ -47,6 +47,7 @@
 use ndarray::{Array2, ArrayView2};
 
 use molrs::ff::potential::Potential;
+use molrs::math::Virial;
 use molrs::spatial::neighbors::VerletSkin;
 use molrs::types::{F, FNx3View};
 
@@ -157,16 +158,57 @@ impl ForceProvider for Direct {
 /// The potential sees the owned atoms and a pair table whose displacements
 /// have already been folded — it is never asked to know that a boundary
 /// exists.
+///
+/// Members are evaluated one at a time, as under [`GhostPairs`], and for the
+/// same reason: what each one needs differs. A member holding atom indices is
+/// a bonded term and reads no pair table; the rest read the table, weighted by
+/// the force field's exclusions.
+///
+/// # What this route cannot do
+///
+/// A bonded term here is measured on the **stored** coordinates, so a molecule
+/// that straddles a face is measured across the cell. The minimum image fixes
+/// up *pair* displacements and nothing else. A system whose molecules cross
+/// boundaries wants [`GhostPairs`], which resolves the bonded indices onto
+/// copies.
 pub struct MicPairs {
-    potential: Box<dyn Potential>,
+    /// The force evaluation's members, in the order the caller gave them.
+    members: Vec<Box<dyn Potential>>,
+    /// Per member, the weights on its close non-bonded neighbours.
+    special: Vec<SpecialWeights>,
+    /// Which members hold atom indices, and so take no pair table.
+    holds_indices: Vec<bool>,
     skin: VerletSkin,
 }
 
 impl MicPairs {
-    /// Evaluate `potential` over the pairs `skin` maintains.
+    /// Evaluate one potential over the pairs `skin` maintains, with no
+    /// special-bonds weights.
     pub fn new(potential: impl Potential + 'static, skin: VerletSkin) -> Self {
+        Self::from_members(
+            vec![(
+                Box::new(potential) as Box<dyn Potential>,
+                SpecialWeights::default(),
+            )],
+            skin,
+        )
+    }
+
+    /// Evaluate several members — what a force field compiles to — over the
+    /// pairs `skin` maintains.
+    ///
+    /// Each member comes with the weights on its close non-bonded neighbours;
+    /// a bonded member takes [`SpecialWeights::default`], which scales nothing.
+    pub fn from_members(
+        members: Vec<(Box<dyn Potential>, SpecialWeights)>,
+        skin: VerletSkin,
+    ) -> Self {
+        let (members, special): (Vec<Box<dyn Potential>>, Vec<_>) = members.into_iter().unzip();
+        let holds_indices = members.iter().map(|m| m.terms().is_some()).collect();
         Self {
-            potential: Box::new(potential),
+            members,
+            special,
+            holds_indices,
             skin,
         }
     }
@@ -178,15 +220,91 @@ impl ForceProvider for MicPairs {
         pos: FNx3View<'_>,
         _wrap_shifts: ArrayView2<'_, i64>,
     ) -> Result<ForceOutput, MdError> {
+        let n_atoms = pos.nrows();
         let pairs = self.skin.pairs_at(pos)?;
-        let (energy, forces) = match pos.as_slice() {
-            Some(flat) => self.potential.calc_energy_forces_with_pairs(flat, pairs),
-            None => {
-                let flat: Vec<F> = pos.iter().copied().collect();
-                self.potential.calc_energy_forces_with_pairs(&flat, pairs)
-            }
+        let flat: Vec<F> = match pos.as_slice() {
+            Some(s) => s.to_vec(),
+            None => pos.iter().copied().collect(),
         };
-        owned_output(energy, forces, pos.nrows())
+
+        let mut energy = 0.0;
+        let mut forces = vec![0.0; flat.len()];
+        // `None` the moment any member declines to report one: a virial missing
+        // a term is not a small error, it is a different quantity.
+        let mut virial = Some(Virial::ZERO);
+        let mut accumulate =
+            |m: usize, (e, f, w_pair): (F, Vec<F>, Option<Virial>), w: F| -> Result<(), MdError> {
+                if f.len() != forces.len() {
+                    return Err(MdError::Invalid(format!(
+                        "member {m} returned {} force components for {n_atoms} atoms",
+                        f.len()
+                    )));
+                }
+                energy += w * e;
+                for (acc, v) in forces.iter_mut().zip(&f) {
+                    *acc += w * v;
+                }
+                match (virial.as_mut(), w_pair) {
+                    (Some(total), Some(part)) => {
+                        for c in 0..6 {
+                            total.components[c] += w * part.components[c];
+                        }
+                    }
+                    // One member that cannot tally makes the whole sum
+                    // unreportable; it does not make it smaller.
+                    (_, None) => virial = None,
+                    (None, _) => {}
+                }
+                Ok(())
+            };
+        for (m, member) in self.members.iter().enumerate() {
+            if self.holds_indices[m] {
+                // A bonded term reads its own indices, not the pair table — and
+                // it needs no kernel-side tally. Its forces sum to zero term by
+                // term and no periodic image entered the geometry, so
+                // `Σ_a f_a ⊗ x_a` over the stored coordinates *is* its virial,
+                // and is independent of where the cell's origin falls.
+                let (e, f) = member.calc_energy_forces(&flat);
+                let mut w_term = Virial::ZERO;
+                for a in 0..n_atoms {
+                    w_term.add_outer(
+                        [f[a * 3], f[a * 3 + 1], f[a * 3 + 2]],
+                        [flat[a * 3], flat[a * 3 + 1], flat[a * 3 + 2]],
+                    );
+                }
+                accumulate(m, (e, f, Some(w_term)), 1.0)?;
+            } else if self.special[m].is_empty() {
+                accumulate(
+                    m,
+                    member.calc_energy_forces_with_pairs_virial(&flat, pairs),
+                    1.0,
+                )?;
+            } else {
+                // No copies here, so an index *is* its own owner.
+                let (main, scaled) = self.special[m].split(pairs, n_atoms, &[]);
+                accumulate(
+                    m,
+                    member.calc_energy_forces_with_pairs_virial(&flat, &main),
+                    1.0,
+                )?;
+                for (w, table) in &scaled {
+                    accumulate(
+                        m,
+                        member.calc_energy_forces_with_pairs_virial(&flat, table),
+                        *w,
+                    )?;
+                }
+            }
+        }
+
+        let forces = Array2::from_shape_vec((n_atoms, 3), forces).map_err(|_| {
+            MdError::Invalid(format!("force components do not fit {n_atoms} atoms"))
+        })?;
+        Ok(ForceOutput {
+            energy,
+            forces,
+            virial,
+        })
     }
 
     fn neighbor_stats(&self) -> NeighborStats {
@@ -337,7 +455,8 @@ impl ForceProvider for GhostPairs {
                     accumulate(m, member.calc_energy_forces_with_pairs(&flat, &pairs), 1.0)?
                 }
                 None => {
-                    let (main, scaled) = self.special[m].split(&pairs, self.comm.ghosts());
+                    let set = self.comm.ghosts();
+                    let (main, scaled) = self.special[m].split(&pairs, set.n_owned(), set.owner());
                     accumulate(m, member.calc_energy_forces_with_pairs(&flat, &main), 1.0)?;
                     for (w, table) in &scaled {
                         accumulate(m, member.calc_energy_forces_with_pairs(&flat, table), *w)?;
@@ -980,6 +1099,69 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The exclusions work the same without copies to map through.
+    ///
+    /// Under the minimum image an index is already its own owner, so the split
+    /// runs with an empty owner map. That identity case is easy to get wrong in
+    /// a way that only shows up here: a mapping that assumed copies exist would
+    /// index past the end of an empty slice, or quietly weight the wrong pair.
+    #[test]
+    fn the_minimum_image_route_excludes_the_same_pairs() {
+        use molrs::Topology;
+        use molrs::ff::potential::pair::lj_cut::Mixing;
+        use molrs::system::bond_weights::BondDistanceWeights;
+
+        let bx = SimBox::cube(20.0, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
+        let pos = array![
+            [9.0_f64, 10.0, 10.0],
+            [10.5, 10.0, 10.0],
+            [11.3, 11.2, 10.0]
+        ];
+        let n = pos.nrows();
+        let topo = Topology::from_edges(n, &[[0, 1], [1, 2]]);
+        let weights = BondDistanceWeights::from_exclusion_depth(3);
+        let special = SpecialWeights::new(&topo.special_weights(&weights));
+
+        let lj = LJCut::typed(
+            vec![0_u32; n],
+            &[(0.3_f64, 3.4_f64)],
+            Mixing::Arithmetic,
+            6.0,
+            12,
+            6,
+            false,
+            false,
+        )
+        .unwrap();
+        let skin = molrs::spatial::neighbors::VerletSkin::new(
+            NeighborList::new(6.0),
+            6.0,
+            NeighborPolicy {
+                skin: 0.0,
+                ..NeighborPolicy::default()
+            },
+            pos.view(),
+            bx,
+        )
+        .unwrap();
+        let mut mic =
+            MicPairs::from_members(vec![(Box::new(lj) as Box<dyn Potential>, special)], skin);
+        let out = mic
+            .compute(pos.view(), Array2::<i64>::zeros((n, 3)).view())
+            .unwrap();
+
+        assert_eq!(
+            out.energy, 0.0,
+            "every pair of this chain is 1-2 or 1-3, so nothing may be left"
+        );
+        assert!(out.forces.iter().all(|&f| f == 0.0));
+        assert_eq!(
+            out.virial.expect("a typed kernel tallies one").components,
+            [0.0; 6],
+            "no pairs, no virial"
+        );
     }
 
     /// A provider that keeps no list reports no counters — not zeroes.

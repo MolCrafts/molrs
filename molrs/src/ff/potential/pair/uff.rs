@@ -8,6 +8,8 @@ use crate::ff::forcefield::Params;
 use crate::ff::potential::Potential;
 use crate::ff::potential::gather_copies;
 use crate::ff::potential::geometry::validate_coords;
+use crate::ff::potential::pair::energy_forces;
+use molrs::math::Virial;
 use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame::Frame;
 use molrs::types::F;
@@ -106,15 +108,17 @@ impl UffVdW {
         n_components: usize,
         n_pairs: usize,
         pair: impl Fn(usize) -> (usize, usize, F, F, [F; 3], F),
-    ) -> (F, Vec<F>) {
+    ) -> (F, Vec<F>, Virial) {
         let mut energy = 0.0 as F;
         let mut forces = vec![0.0 as F; n_components];
+        let mut virial = Virial::ZERO;
         for idx in 0..n_pairs {
             let (i, j, xij, dij, disp, r2) = pair(idx);
             let Some((e, f)) = self.pair_kernel(r2, disp, xij, dij) else {
                 continue;
             };
             energy += e;
+            virial.add_outer(f, [-disp[0], -disp[1], -disp[2]]);
             forces[i * 3] += f[0];
             forces[i * 3 + 1] += f[1];
             forces[i * 3 + 2] += f[2];
@@ -122,7 +126,7 @@ impl UffVdW {
             forces[j * 3 + 1] -= f[1];
             forces[j * 3 + 2] -= f[2];
         }
-        (energy, forces)
+        (energy, forces, virial)
     }
 }
 
@@ -139,7 +143,7 @@ impl Potential for UffVdW {
             // Per-atom parameters need a pair table, and nobody handed one over.
             return (0.0, vec![0.0 as F; coords.len()]);
         };
-        self.fold(coords.len(), atom_i.len(), |idx| {
+        energy_forces(self.fold(coords.len(), atom_i.len(), |idx| {
             let (i, j) = (atom_i[idx], atom_j[idx]);
             let d = [
                 coords[j * 3] - coords[i * 3],
@@ -148,20 +152,30 @@ impl Potential for UffVdW {
             ];
             let r2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
             (i, j, xij[idx], dij[idx], d, r2)
-        })
+        }))
     }
 
     fn calc_energy_forces_with_pairs(&self, coords: &[F], pairs: &Neighbors) -> (F, Vec<F>) {
+        let (e, f, _) = self.calc_energy_forces_with_pairs_virial(coords, pairs);
+        (e, f)
+    }
+
+    fn calc_energy_forces_with_pairs_virial(
+        &self,
+        coords: &[F],
+        pairs: &Neighbors,
+    ) -> (F, Vec<F>, Option<Virial>) {
         let Source::PerAtom { x1, d1, .. } = &self.source else {
             // A compiled kernel answers for its own list, not for this one.
-            return self.calc_energy_forces(coords);
+            let (e, f) = self.calc_energy_forces(coords);
+            return (e, f, None);
         };
         let (Some(disp), Some(d2)) = (pairs.disp(), pairs.dist_sq()) else {
-            return (0.0, vec![0.0 as F; coords.len()]);
+            return (0.0, vec![0.0 as F; coords.len()], None);
         };
         let i_col = pairs.query_point_indices();
         let j_col = pairs.point_indices();
-        self.fold(coords.len(), i_col.len(), |p| {
+        let (e, f, w) = self.fold(coords.len(), i_col.len(), |p| {
             let i = i_col[p] as usize;
             let j = j_col[p] as usize;
             debug_assert!(
@@ -176,7 +190,8 @@ impl Potential for UffVdW {
                 [disp[[p, 0]], disp[[p, 1]], disp[[p, 2]]],
                 d2[p],
             )
-        })
+        });
+        (e, f, Some(w))
     }
 
     fn gather_onto_copies(&mut self, owner: &[u32]) {
