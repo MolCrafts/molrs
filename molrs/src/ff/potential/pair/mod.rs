@@ -119,6 +119,98 @@ pub(crate) fn atom_type_index(frame: &Frame) -> Result<(Vec<u32>, Vec<String>), 
     Ok((type_id, labels))
 }
 
+/// Split a per-pair fold into fixed chunks, run in parallel when that is
+/// worth it, with a result that does not depend on the thread count.
+///
+/// `run(acc, rows)` folds one contiguous range of pairs into `acc`.
+///
+/// # Why the chunk *size* is fixed, and why the serial path chunks too
+///
+/// Floating-point addition is not associative, so the answer depends on how
+/// the pairs are grouped. Grouping by "one chunk per thread" makes it depend
+/// on the thread count — which is what the first version of this did, and the
+/// test caught it between one thread and two. The grouping here is a fixed
+/// number of pairs per chunk, decided by nothing but `n_pairs`, and the
+/// partials are merged in chunk order. The serial path walks the same chunks
+/// and merges them the same way; it has to, or running on one thread would
+/// give a different number from running on four.
+///
+/// A scatter needs one accumulator per chunk, and below the threshold those
+/// cost more to allocate and merge than the fold costs to run — so a small
+/// table stays serial and touches no pool.
+pub(crate) fn fold_chunks<R>(out: &mut [F], n_pairs: usize, run: R) -> (F, molrs::math::Virial)
+where
+    R: Fn(&mut [F], std::ops::Range<usize>) -> (F, molrs::math::Virial) + Sync,
+{
+    use molrs::math::Virial;
+    /// Pairs per chunk. Fixed, because it decides the grouping of a
+    /// floating-point sum and so is part of the answer.
+    const CHUNK: usize = 4_096;
+    // Splitting costs one accumulator per chunk, and merging one costs
+    // `out.len()` adds — a number that has nothing to do with how many pairs
+    // there are. Under a ghost régime `out` covers the copies as well as the
+    // atoms, so a table can be big enough to want splitting and still lose to
+    // the merge. Both of these are properties of the configuration and not of
+    // the machine, so the grouping stays the same however many threads run.
+    let split = n_pairs >= CHUNK && n_pairs >= 3 * out.len();
+    let nchunks = if split { n_pairs.div_ceil(CHUNK) } else { 1 };
+    let bounds = |c: usize| (c * CHUNK)..((c + 1) * CHUNK).min(n_pairs);
+
+    // One chunk is the whole fold, and both paths run it straight into `out`.
+    // Small tables therefore pay nothing at all for any of this.
+    if nchunks == 1 {
+        return run(out, 0..n_pairs);
+    }
+
+    #[cfg(feature = "rayon")]
+    {
+        use rayon::prelude::*;
+        if nchunks > 1 && rayon::current_num_threads() > 1 {
+            let parts: Vec<(Vec<F>, F, Virial)> = (0..nchunks)
+                .into_par_iter()
+                .map(|c| {
+                    let mut local = vec![0.0; out.len()];
+                    let (e, w) = run(&mut local, bounds(c));
+                    (local, e, w)
+                })
+                .collect();
+            let mut energy = 0.0;
+            let mut virial = Virial::ZERO;
+            for (local, e, w) in &parts {
+                energy += e;
+                for k in 0..6 {
+                    virial.components[k] += w.components[k];
+                }
+                for (dst, v) in out.iter_mut().zip(local) {
+                    *dst += v;
+                }
+            }
+            return (energy, virial);
+        }
+    }
+
+    // Serial, over the same chunks and merged the same way — including the
+    // per-chunk buffer, which is not an optimisation here but a requirement:
+    // a chunk that accumulated straight into `out` would add its terms to
+    // whatever was already there, where a parallel chunk sums them from zero
+    // first. Those are different sums, and one thread would disagree with four.
+    let mut local = vec![0.0; out.len()];
+    let mut energy = 0.0;
+    let mut virial = Virial::ZERO;
+    for c in 0..nchunks {
+        local.fill(0.0);
+        let (e, w) = run(&mut local, bounds(c));
+        energy += e;
+        for k in 0..6 {
+            virial.components[k] += w.components[k];
+        }
+        for (dst, v) in out.iter_mut().zip(&local) {
+            *dst += v;
+        }
+    }
+    (energy, virial)
+}
+
 /// Index into a type-pair parameter table laid out `ti * ntypes + tj`.
 ///
 /// This is LAMMPS's `pair_coeff i j` model, and it is what a neighbour-driven

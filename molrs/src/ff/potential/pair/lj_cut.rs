@@ -14,6 +14,7 @@ use crate::ff::potential::gather_copies;
 use crate::ff::potential::geometry::validate_coords;
 use crate::ff::potential::pair::PairPotential;
 use crate::ff::potential::pair::atom_type_index;
+use crate::ff::potential::pair::fold_chunks;
 use molrs::math::Virial;
 use molrs::spatial::neighbors::{Neighbors, VerletSkin};
 use molrs::store::frame::Frame;
@@ -440,6 +441,19 @@ impl LJCut {
     /// type-pair table. The geometry is already reduced either way — this
     /// kernel never learns whether a neighbour is an owned atom or a copy.
     fn fold_typed(&self, out: &mut [F], factor: &[F], pairs: &Neighbors) -> (F, Virial) {
+        let n_pairs = pairs.query_point_indices().len();
+        fold_chunks(out, n_pairs, |acc, rows| {
+            self.fold_typed_rows(acc, factor, pairs, rows)
+        })
+    }
+
+    fn fold_typed_rows(
+        &self,
+        out: &mut [F],
+        factor: &[F],
+        pairs: &Neighbors,
+        rows: std::ops::Range<usize>,
+    ) -> (F, Virial) {
         let mut virial = Virial::ZERO;
         let PairSource::Typed {
             type_id,
@@ -460,7 +474,7 @@ impl LJCut {
         let j = pairs.point_indices();
         let d2 = pairs.dist_sq();
         let mut energy = 0.0;
-        for p in 0..i.len() {
+        for p in rows {
             let w = if factor.is_empty() { 1.0 } else { factor[p] };
             // Exactly zero skips: a bonded pair sits at bond length,
             // where this term is enormous.
@@ -514,6 +528,19 @@ impl LJCut {
     }
 
     fn fold_neighbors(&self, out: &mut [F], factor: &[F], pairs: &Neighbors) -> (F, Virial) {
+        let n_pairs = pairs.query_point_indices().len();
+        fold_chunks(out, n_pairs, |acc, rows| {
+            self.fold_neighbors_rows(acc, factor, pairs, rows)
+        })
+    }
+
+    fn fold_neighbors_rows(
+        &self,
+        out: &mut [F],
+        factor: &[F],
+        pairs: &Neighbors,
+        rows: std::ops::Range<usize>,
+    ) -> (F, Virial) {
         let mut virial = Virial::ZERO;
         let Some(disp) = pairs.disp() else {
             return (0.0, virial);
@@ -522,7 +549,7 @@ impl LJCut {
         let j = pairs.point_indices();
         let d2 = pairs.dist_sq();
         let mut energy = 0.0;
-        for p in 0..i.len() {
+        for p in rows {
             let w = if factor.is_empty() { 1.0 } else { factor[p] };
             // Exactly zero skips: a bonded pair sits at bond length,
             // where this term is enormous.
@@ -768,6 +795,94 @@ pub fn pair_lj_cut_typed_ctor(
 
 #[cfg(test)]
 mod tests {
+
+    /// The fold gives the same number, bit for bit, however many threads ran.
+    ///
+    /// Above a pair-count threshold the fold is split across threads, and a
+    /// sum of floats is not associative — so the split has to be by a fixed
+    /// arithmetic boundary and the partials merged in chunk order. rayon's own
+    /// adaptive split would reorder the additions and move the last bits of
+    /// every energy, force and virial with them. This asserts the property
+    /// rather than the intent: the table here is deliberately larger than the
+    /// threshold, so the parallel path is the one being measured.
+    #[cfg(feature = "rayon")]
+    #[test]
+    fn the_fold_does_not_depend_on_the_thread_count() {
+        use molrs::spatial::neighbors::{NeighborList, NeighborPolicy, VerletSkin};
+        use molrs::spatial::simbox::SimBox;
+
+        // 10³ atoms at 3 Å with a 6 Å cutoff clears 8192 pairs comfortably.
+        let side = 10_usize;
+        let n = side * side * side;
+        let l = side as F * 3.0;
+        let bx = SimBox::cube(l, ndarray::array![0.0, 0.0, 0.0], [true; 3]).unwrap();
+        let pos = ndarray::Array2::from_shape_fn((n, 3), |(a, k)| {
+            let (i, j, m) = (a % side, (a / side) % side, a / (side * side));
+            let base = [i, j, m][k] as F * 3.0;
+            // A deterministic jitter, so no two separations coincide and a
+            // reordering cannot be masked by equal terms.
+            base + ((a * 7 + k * 13) as F * 0.618).fract() * 0.4
+        });
+        let mut skin = VerletSkin::new(
+            NeighborList::new(6.0),
+            6.0,
+            NeighborPolicy {
+                skin: 0.0,
+                ..NeighborPolicy::default()
+            },
+            pos.view(),
+            bx,
+        )
+        .unwrap();
+        let table = skin.pairs_at(pos.view()).unwrap().clone();
+        assert!(
+            table.query_point_indices().len() > 8_192,
+            "the fixture must cross the parallel threshold"
+        );
+
+        let kernel = LJCut::typed(
+            (0..n).map(|i| (i % 2) as u32).collect(),
+            &[(0.3, 3.4), (0.5, 3.0)],
+            Mixing::Arithmetic,
+            6.0,
+            12,
+            6,
+            false,
+            false,
+        )
+        .unwrap();
+        let flat: Vec<F> = pos.iter().copied().collect();
+
+        let run = |threads: usize| {
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build()
+                .unwrap();
+            pool.install(|| {
+                let mut out = vec![0.0; flat.len()];
+                let (e, w) = kernel.accumulate_pairs(&flat, &table, &[], &mut out);
+                (e, out, w.unwrap())
+            })
+        };
+
+        let (e1, f1, w1) = run(1);
+        assert!(e1.abs() > 1.0, "the fixture must interact");
+        for threads in [2, 4, 8] {
+            let (e, f, w) = run(threads);
+            assert_eq!(e1.to_bits(), e.to_bits(), "{threads} threads: energy");
+            for (k, (a, b)) in f1.iter().zip(&f).enumerate() {
+                assert_eq!(a.to_bits(), b.to_bits(), "{threads} threads: force {k}");
+            }
+            for c in 0..6 {
+                assert_eq!(
+                    w1.components[c].to_bits(),
+                    w.components[c].to_bits(),
+                    "{threads} threads: virial {c}"
+                );
+            }
+        }
+    }
+
     use super::*;
 
     #[test]

@@ -62,6 +62,17 @@ fn bench_fold(c: &mut Criterion) {
     g.sample_size(10);
     g.throughput(criterion::Throughput::Elements(n_pairs as u64));
 
+    // What the fold is fed. If a step costs much more than these two together,
+    // the difference is the provider's own bookkeeping and not the physics.
+    g.bench_function("mic_table", |b| {
+        b.iter(|| {
+            skin.pairs_at(pos.view())
+                .unwrap()
+                .query_point_indices()
+                .len()
+        })
+    });
+
     g.bench_function("lj_cut/fold", |b| {
         b.iter(|| {
             out.fill(0.0);

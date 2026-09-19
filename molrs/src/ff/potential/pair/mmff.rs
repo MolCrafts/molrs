@@ -32,6 +32,7 @@ use crate::ff::potential::gather_copies;
 use crate::ff::potential::geometry::{mag3, sub3, validate_coords};
 use crate::ff::potential::pair::atom_type_index;
 use crate::ff::potential::pair::energy_forces;
+use crate::ff::potential::pair::fold_chunks;
 use molrs::math::Virial;
 use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame::Frame;
@@ -188,7 +189,7 @@ impl MMFFVdW {
         &self,
         n_components: usize,
         n_pairs: usize,
-        pair: impl Fn(usize) -> (usize, usize, F, F, [F; 3]),
+        pair: impl Fn(usize) -> (usize, usize, F, F, [F; 3]) + Sync,
     ) -> (F, Vec<F>, Virial) {
         let mut forces = vec![0.0; n_components];
         let (energy, virial) = self.fold_into(&mut forces, &[], n_pairs, pair);
@@ -201,11 +202,25 @@ impl MMFFVdW {
         out: &mut [F],
         factor: &[F],
         n_pairs: usize,
-        pair: impl Fn(usize) -> (usize, usize, F, F, [F; 3]),
+        pair: impl Fn(usize) -> (usize, usize, F, F, [F; 3]) + Sync,
+    ) -> (F, Virial) {
+        fold_chunks(out, n_pairs, |acc, rows| {
+            self.fold_rows(acc, factor, rows, &pair)
+        })
+    }
+
+    /// One contiguous range of pairs, into `out`. The whole fold when it runs
+    /// serially; one chunk of it when it does not.
+    fn fold_rows(
+        &self,
+        out: &mut [F],
+        factor: &[F],
+        rows: std::ops::Range<usize>,
+        pair: &(impl Fn(usize) -> (usize, usize, F, F, [F; 3]) + Sync),
     ) -> (F, Virial) {
         let mut energy: F = 0.0;
         let mut virial = Virial::ZERO;
-        for idx in 0..n_pairs {
+        for idx in rows {
             let w = if factor.is_empty() { 1.0 } else { factor[idx] };
             // Exactly zero *skips*: a bonded pair sits at bond length,
             // where a repulsive term is enormous, and scaling it by zero

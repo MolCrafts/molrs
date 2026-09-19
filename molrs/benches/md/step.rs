@@ -105,6 +105,19 @@ fn bench_step(c: &mut Criterion) {
     g.measurement_time(Duration::from_millis(600));
     g.sample_size(10);
 
+    // The table this step is fed, at the step's own skin — so the difference
+    // between this and `mic/plain` is the provider's own work and nothing else.
+    let mut bare_skin = skin_for(&bx, &pos);
+    g.bench_function("mic/table_only", |b| {
+        b.iter(|| {
+            bare_skin
+                .pairs_at(pos.view())
+                .unwrap()
+                .query_point_indices()
+                .len()
+        })
+    });
+
     let mut mic = MicPairs::new(lj(n), skin_for(&bx, &pos)).unwrap();
     g.bench_function("mic/plain", |b| {
         b.iter(|| mic.compute(pos.view(), no_fold.view()).unwrap())

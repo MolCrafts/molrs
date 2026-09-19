@@ -130,6 +130,15 @@ pub struct VerletSkin {
     danger_ago: usize,
     x_hold: FNx3,
     pairs_buf: Neighbors,
+    /// Per-edge squared distance and displacement, reused across steps.
+    ///
+    /// The displacement pass is the expensive half of building a table — a
+    /// random gather into the coordinates for every stored edge — and it is the
+    /// half that parallelises without touching determinism, because every entry
+    /// is written by exactly one thread at a fixed index. Keeping the scratch
+    /// here is what lets that happen without an allocation per step.
+    scratch_r2: Vec<F>,
+    scratch_disp: Vec<F>,
 }
 
 impl VerletSkin {
@@ -229,6 +238,8 @@ impl VerletSkin {
                 },
                 NeighborsStorage::FULL,
             ),
+            scratch_r2: Vec::new(),
+            scratch_disp: Vec::new(),
         };
         skin.write_edges();
         skin.hold(positions);
@@ -454,46 +465,78 @@ impl VerletSkin {
     /// in the MD loop that computes a minimum image.
     pub fn pairs_at(&mut self, positions: ArrayView2<'_, F>) -> Result<&Neighbors, SkinError> {
         self.update(positions)?;
+        let n_edges = self.edges.len();
+        self.scratch_r2.resize(n_edges, 0.0);
+        self.scratch_disp.resize(n_edges * 3, 0.0);
+
+        // Pass one: the geometry. A random gather per stored edge, which is
+        // what this costs, and every result written at its own index — so this
+        // is the half that takes threads without taking the answer's
+        // reproducibility with it.
+        let owned_copy: Vec<F>;
+        let pos: &[F] = match positions.as_slice() {
+            Some(sl) => sl,
+            None => {
+                owned_copy = positions.iter().copied().collect();
+                &owned_copy
+            }
+        };
+        let mic = self.simbox.mic();
+        let edges = &self.edges;
+        let r2s = &mut self.scratch_r2;
+        let disps = &mut self.scratch_disp;
+        let one = |edge: &SkinPair, r2: &mut F, d: &mut [F]| {
+            let bi = 3 * edge.i as usize;
+            let bj = 3 * edge.j as usize;
+            let dr = mic.apply([
+                pos[bj] - pos[bi],
+                pos[bj + 1] - pos[bi + 1],
+                pos[bj + 2] - pos[bi + 2],
+            ]);
+            *r2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
+            d.copy_from_slice(&dr);
+        };
+
+        #[cfg(feature = "rayon")]
+        {
+            use rayon::prelude::*;
+            // Below this the fork/join costs more than the work it splits.
+            const PAR_MIN_EDGES: usize = 4_096;
+            if n_edges >= PAR_MIN_EDGES {
+                r2s.par_iter_mut()
+                    .zip(disps.par_chunks_mut(3))
+                    .zip(edges.par_iter())
+                    .for_each(|((r2, d), edge)| one(edge, r2, d));
+            } else {
+                for ((r2, d), edge) in r2s.iter_mut().zip(disps.chunks_mut(3)).zip(edges.iter()) {
+                    one(edge, r2, d);
+                }
+            }
+        }
+        #[cfg(not(feature = "rayon"))]
+        for ((r2, d), edge) in r2s.iter_mut().zip(disps.chunks_mut(3)).zip(edges.iter()) {
+            one(edge, r2, d);
+        }
+
+        // Pass two: the selection, in edge order. The stored edges reach
+        // `cutoff + skin`; the table must not. The skin is a *caching* policy —
+        // it decides how often the search runs, and it may not decide what
+        // interacts. A kernel without a cutoff of its own would otherwise score
+        // the shell, and the energy would step every time the list rebuilt.
+        // `GhostSet::fill_pairs` cuts at the cutoff for the same reason.
+        //
+        // Serial, and deliberately: the rows come out in the order of the
+        // edges, and a parallel append would let scheduling decide it.
         self.pairs_buf.set_mode(QueryMode::SelfQuery {
             num_points: positions.nrows(),
         });
         self.pairs_buf.clear();
-        let mic = self.simbox.mic();
-        // The stored edges reach `cutoff + skin`; the table must not. The skin
-        // is a *caching* policy — it decides how often the search runs, and it
-        // may not decide what interacts. A kernel without a cutoff of its own
-        // would otherwise score the shell, and the energy would step every time
-        // the list rebuilt: turning on a performance knob would change the
-        // physics. `GhostSet::pairs` cuts at exactly the cutoff for the same
-        // reason.
         let cutoff2 = self.cutoff * self.cutoff;
-        if let Some(pos) = positions.as_slice() {
-            for edge in &self.edges {
-                let i = edge.i as usize;
-                let j = edge.j as usize;
-                let bi = 3 * i;
-                let bj = 3 * j;
-                let disp = mic.apply([
-                    pos[bj] - pos[bi],
-                    pos[bj + 1] - pos[bi + 1],
-                    pos[bj + 2] - pos[bi + 2],
-                ]);
-                let r2 = disp[0] * disp[0] + disp[1] * disp[1] + disp[2] * disp[2];
-                if r2 <= cutoff2 {
-                    self.pairs_buf.push(edge.i, edge.j, r2, disp);
-                }
-            }
-        } else {
-            for edge in &self.edges {
-                let i = edge.i as usize;
-                let j = edge.j as usize;
-                let pi = [positions[[i, 0]], positions[[i, 1]], positions[[i, 2]]];
-                let pj = [positions[[j, 0]], positions[[j, 1]], positions[[j, 2]]];
-                let disp = mic.apply([pj[0] - pi[0], pj[1] - pi[1], pj[2] - pi[2]]);
-                let r2 = disp[0] * disp[0] + disp[1] * disp[1] + disp[2] * disp[2];
-                if r2 <= cutoff2 {
-                    self.pairs_buf.push(edge.i, edge.j, r2, disp);
-                }
+        for (k, edge) in self.edges.iter().enumerate() {
+            let r2 = self.scratch_r2[k];
+            if r2 <= cutoff2 {
+                let d = &self.scratch_disp[k * 3..k * 3 + 3];
+                self.pairs_buf.push(edge.i, edge.j, r2, [d[0], d[1], d[2]]);
             }
         }
         Ok(&self.pairs_buf)
@@ -502,6 +545,68 @@ impl VerletSkin {
 
 #[cfg(test)]
 mod tests {
+
+    /// The table is the same, bit for bit, however many threads built it.
+    ///
+    /// The displacement pass is parallel. That is safe only because every entry
+    /// is written at a fixed index by exactly one thread and the rows are then
+    /// selected in edge order — no summation, no append, nothing for a
+    /// scheduler to decide. This asserts it rather than trusting the argument:
+    /// a reordering would change the order of `energy += e` in every kernel
+    /// downstream, and the last bits of an MD trajectory with it.
+    #[cfg(feature = "rayon")]
+    #[test]
+    fn the_pair_table_does_not_depend_on_the_thread_count() {
+        let n = 24_usize;
+        let bx = cube(20.0);
+        let pos = Array2::from_shape_fn((n, 3), |(a, k)| {
+            // Deterministic scatter, not a lattice: equal distances would let a
+            // reordering go unnoticed.
+            let x = (a * 7 + k * 13) as F;
+            (x * 0.618).fract() * 20.0
+        });
+        let build = |threads: usize| {
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build()
+                .unwrap();
+            pool.install(|| {
+                let mut skin = VerletSkin::new(
+                    NeighborList::new(8.0),
+                    8.0,
+                    NeighborPolicy {
+                        skin: 0.0,
+                        ..NeighborPolicy::default()
+                    },
+                    pos.view(),
+                    bx.clone(),
+                )
+                .unwrap();
+                let t = skin.pairs_at(pos.view()).unwrap();
+                (
+                    t.query_point_indices().to_vec(),
+                    t.point_indices().to_vec(),
+                    t.dist_sq().unwrap().to_vec(),
+                    t.disp().unwrap().to_owned(),
+                )
+            })
+        };
+
+        let one = build(1);
+        assert!(!one.0.is_empty(), "the fixture must produce pairs");
+        for threads in [2, 4, 8] {
+            let many = build(threads);
+            assert_eq!(one.0, many.0, "{threads} threads reordered the i column");
+            assert_eq!(one.1, many.1, "{threads} threads reordered the j column");
+            for (k, (a, b)) in one.2.iter().zip(&many.2).enumerate() {
+                assert_eq!(a.to_bits(), b.to_bits(), "{threads} threads: dist_sq[{k}]");
+            }
+            for (k, (a, b)) in one.3.iter().zip(many.3.iter()).enumerate() {
+                assert_eq!(a.to_bits(), b.to_bits(), "{threads} threads: disp[{k}]");
+            }
+        }
+    }
+
     use ndarray::{Array2, array};
 
     use super::*;
