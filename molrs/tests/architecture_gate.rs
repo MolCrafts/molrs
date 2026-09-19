@@ -1074,3 +1074,62 @@ fn ff_never_names_optimize() {
          never by exempting a file here."
     );
 }
+
+// ===========================================================================
+// core names no other module — the base of the graph stays the base
+// ===========================================================================
+
+/// `core` is the always-on foundation every other module is allowed to import,
+/// so it must import none of them.
+///
+/// The rule is old (`architecture-rules.md`, "core depends on no other molrs
+/// module"); the gate is new, because the rule was enforced by review and
+/// review missed it: a virial tensor defined in `md` was referenced from
+/// `core/spatial/periodic`, and it compiled, because a module boundary inside
+/// one crate is a convention and not a barrier.
+///
+/// Like the other gates here this is an **inventory claim over one subtree**.
+/// It scans comment-stripped source under `molrs/src/core/` for the other
+/// modules' paths. A re-export elsewhere under a name that does not contain the
+/// module's own would pass; none exists today. It can also fire on an innocent
+/// identifier that happens to contain one of these words, which is resolved by
+/// renaming the identifier and never by adding an exception — an exception set
+/// is what turns a gate into a comment.
+#[test]
+fn core_names_no_other_module() {
+    // `compute` is absent on purpose: `core` legitimately contains the word in
+    // ordinary prose-free code (`compute_spline`, `recompute`), so scanning for
+    // it would fire constantly. The layering it would catch is instead visible
+    // in `Cargo.toml`'s feature graph.
+    let forbidden = [
+        "crate::ff",
+        "crate::io",
+        "crate::md",
+        "crate::optimize",
+        "crate::conformer",
+        "crate::perceive",
+        "crate::signal",
+        "molrs::ff::",
+        "molrs::io::",
+        "molrs::md::",
+        "molrs::optimize::",
+        "molrs::conformer::",
+    ];
+    let mut hits: Vec<String> = Vec::new();
+    for path in walk_rs_files(&src_dir().join("core")) {
+        let src = strip_comments(&fs::read_to_string(&path).expect("read core source"));
+        for (n, line) in src.lines().enumerate() {
+            for needle in forbidden {
+                if line.contains(needle) {
+                    hits.push(format!("{}:{} names {needle}", path.display(), n + 1));
+                }
+            }
+        }
+    }
+    assert!(
+        hits.is_empty(),
+        "core is the base of the module graph and must import nothing above it; \
+         hits: {hits:?}. Move the shared item down into core, or move the code \
+         that needs it up out of core — never exempt a file here."
+    );
+}
