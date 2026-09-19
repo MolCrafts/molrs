@@ -1800,9 +1800,9 @@ fn write_lammps_data_frame<W: Write>(
         writeln!(writer)?;
     }
 
-    let has_image = frame.get_int("atoms", "ix").is_some()
-        && frame.get_int("atoms", "iy").is_some()
-        && frame.get_int("atoms", "iz").is_some();
+    let has_image = frame.get_int("atoms", keys::IX).is_some()
+        && frame.get_int("atoms", keys::IY).is_some()
+        && frame.get_int("atoms", keys::IZ).is_some();
 
     writeln!(writer, "Atoms # {style_name}")?;
     writeln!(writer)?;
@@ -1819,9 +1819,9 @@ fn write_lammps_data_frame<W: Write>(
             write_atom_field_value(writer, frame, field, i, &row_masses)?;
         }
         if has_image {
-            let ix = frame.get_int("atoms", "ix").unwrap();
-            let iy = frame.get_int("atoms", "iy").unwrap();
-            let iz = frame.get_int("atoms", "iz").unwrap();
+            let ix = frame.get_int("atoms", keys::IX).unwrap();
+            let iy = frame.get_int("atoms", keys::IY).unwrap();
+            let iz = frame.get_int("atoms", keys::IZ).unwrap();
             write!(writer, " {} {} {}", ix[[i]], iy[[i]], iz[[i]])?;
         }
         writeln!(writer)?;
@@ -2059,7 +2059,7 @@ mod atom_style_tests {
         let frame = parse_text(text);
         assert_eq!(frame.get_uint("atoms", keys::MOL_ID).unwrap()[0], 42);
         assert_eq!(xyz(&frame, 0), (1.5, 2.5, 3.5));
-        assert_eq!(frame.get_int("atoms", "iz").unwrap()[0], 1);
+        assert_eq!(frame.get_int("atoms", keys::IZ).unwrap()[0], 1);
         assert!(frame.get_float("atoms", keys::CHARGE).is_none());
     }
 

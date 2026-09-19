@@ -111,7 +111,7 @@ impl SphereUnion {
         let centers: Vec<[F; 3]> = centers
             .rows()
             .into_iter()
-            .map(|r| bx.wrap_point([r[0], r[1], r[2]]))
+            .map(|r| bx.wrap_row([r[0], r[1], r[2]]))
             .collect();
         let radii = radii.to_vec();
         let boxes: Vec<_> = centers
@@ -241,7 +241,7 @@ impl SphereUnion {
     /// The nearest sphere over every periodic image: `(index, shifted query,
     /// signed distance)`.
     fn nearest(&self, point: &[F; 3]) -> (usize, [F; 3], F) {
-        let w = self.bx.wrap_point(*point);
+        let w = self.bx.wrap_row(*point);
         let mut best = (usize::MAX, w, F::INFINITY);
         for s in &self.shifts {
             let q = add(w, *s);
@@ -281,7 +281,7 @@ impl Region for SphereUnion {
     /// Inside as soon as any image of any sphere reaches the point — a
     /// threshold query that stops at the first hit.
     fn contains_point(&self, point: &[F; 3]) -> bool {
-        let w = self.bx.wrap_point(*point);
+        let w = self.bx.wrap_row(*point);
         self.shifts.iter().any(|s| {
             let q = add(w, *s);
             self.bvh.any_within(&q, 0.0, |i| {

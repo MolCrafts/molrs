@@ -40,13 +40,28 @@ Enables contiguous access and auto-vectorization.
 
 ## Neighbor Lists
 
-`LinkCell` (default) is O(N) build + O(N·k) traversal. Rules:
+Three backends behind the `NeighborList` engine, picked by constructor:
 
-- Cell size ≥ cutoff so only 27 neighboring cells are scanned.
+| Backend | Build | Use when |
+|---|---|---|
+| `LinkCell` (`NeighborList::new`) | O(N) | **Default.** Roughly uniform density and one dominant cutoff. |
+| `Aabb` (`NeighborList::aabb`) | O(N log N) | Non-uniform density, or particle sizes spread wide enough that one cutoff makes cells coarse. |
+| `BruteForce` (`NeighborList::brute_force`) | O(N²) | Test oracle only, never production. |
+
+Rules:
+
+- `LinkCell` cell size ≥ cutoff so only 27 neighboring cells are scanned. A
+  tilted cell must size from `SimBox::nearest_plane_distance`, never
+  `lengths()` — `|a_k|` over-estimates the width and pairs go missing.
 - Use `PairVisitor` callback for zero-allocation traversal.
 - Apply Verlet skin distance — do **not** rebuild every step.
-- `BruteForce` is O(N²) — testing only, never production.
 - Rayon-parallel build is feature-gated.
+
+**Owed measurement.** The `LinkCell`-vs-`Aabb` crossover above is the
+freud-derived rationale, not a molrs benchmark — nothing here has been measured
+on this codebase yet. Until `neighbors/build` in `core_benchmarks` carries a
+non-uniform-density case, treat the "use when" column as a hypothesis and keep
+`LinkCell` as the default.
 
 ## Optimization Rules
 

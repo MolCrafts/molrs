@@ -25,6 +25,7 @@
 pub mod error;
 pub mod integrators;
 pub mod maxwell;
+pub mod pairs;
 pub mod types;
 
 pub use crate::ff::potential::pair::{LJCut, PairPotential};
@@ -32,4 +33,5 @@ pub use crate::ff::potential::{Potential, Potentials};
 pub use error::MdError;
 pub use integrators::{Langevin, VelocityVerlet, kinetic_energy, scalar_mass};
 pub use maxwell::MaxwellBoltzmann;
+pub use pairs::{BondedTopology, Comm, PairSource};
 pub use types::{ForceOutput, MDObservables, MDState};

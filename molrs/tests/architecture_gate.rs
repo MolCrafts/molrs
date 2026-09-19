@@ -1022,3 +1022,55 @@ mod regex_lite {
         }
     }
 }
+
+// ===========================================================================
+// ff never names optimize — the module edge runs one way only
+// ===========================================================================
+
+/// `optimize` is built on `ff`, so `ff` must never reach back up.
+///
+/// The needle is the case-insensitive substring `optimiz` rather than the two
+/// literal paths `crate::optimize` / `molrs::optimize`, because a nested use
+/// tree (`use crate::{ff::…, optimize::LBFGS};`), a relative `super::super::`
+/// route and a `use … as` alias all name the module without either literal.
+///
+/// This is an **inventory claim over one subtree, not a proof**. It can fire on
+/// two things and the reader has to tell them apart:
+///
+/// 1. a genuine residual `ff -> optimize` reference, under any spelling — the
+///    reason the gate exists;
+/// 2. an innocent local binding such as `let optimized = …`, which is
+///    acceptable collateral for a substring scan. Resolve that by renaming the
+///    binding, **never** by adding an exception here — an exception set is what
+///    turns a gate into a comment.
+///
+/// It can still be evaded: a crate-root re-export under a name containing no
+/// `optimiz` substring would pass. None exists today (`molrs/src/lib.rs`
+/// declares `pub mod optimize;` with no root re-export of an optimizer symbol),
+/// and adding one is the change that would have to defeat this on purpose.
+///
+/// Comments are stripped first, so the prose references to the optimizer in
+/// `ff/potential/mod.rs` are out of scope by construction: the claim is about
+/// code.
+#[test]
+fn ff_never_names_optimize() {
+    // A plain literal: unlike the gates above, this one scans `src/ff` and
+    // never its own source, so there is nothing to hide the needle from.
+    let needle = "optimiz";
+    let mut hits: Vec<String> = Vec::new();
+    for path in walk_rs_files(&src_dir().join("ff")) {
+        let src = strip_comments(&fs::read_to_string(&path).expect("read ff source"));
+        for (n, line) in src.lines().enumerate() {
+            if line.to_ascii_lowercase().contains(needle) {
+                hits.push(format!("{}:{}", path.display(), n + 1));
+            }
+        }
+    }
+    assert!(
+        hits.is_empty(),
+        "ff must never name optimize (optimize depends on ff, never the reverse); \
+         hits: {hits:?}. A genuine reference is the defect this gate exists for; \
+         an innocent `let optimized = ...` is resolved by renaming the binding, \
+         never by exempting a file here."
+    );
+}

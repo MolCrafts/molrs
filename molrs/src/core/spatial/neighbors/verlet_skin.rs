@@ -9,9 +9,21 @@
 //!
 //! The list is built at `r_build = cutoff + skin` and stays complete out to
 //! `cutoff` while no atom has moved more than `skin/2` since the last build
-//! (strict `>`). Displacements use the **raw** difference `x - x_hold`, never
-//! a minimum image. Crossing half the smallest perpendicular cell width
-//! raises — positions must stay unwrapped.
+//! (strict `>`).
+//!
+//! **Positions may be wrapped.** Displacements are measured as the
+//! *minimum-image* difference from the held coordinates, which is exact here
+//! rather than merely convenient: the constructor already refuses a
+//! `r_build` above half the smallest perpendicular cell width, and the rebuild
+//! threshold is `skin/2 < r_build/2`, so a displacement the skin tolerates is
+//! always far inside the range where the minimum image is unambiguous. An atom
+//! that crosses a face therefore reads as the small step it actually took, not
+//! as a jump of one cell.
+//!
+//! A displacement that *does* reach half the smallest perpendicular width still
+//! raises, but the meaning has changed: the minimum image can no longer tell
+//! which copy it came from, so the number is not a displacement at all. That is
+//! a blow-up or a cell change, not a wrap.
 //!
 //! Force / analysis callers must use [`for_each_pair_at`](VerletSkin::for_each_pair_at)
 //! (or the stored `(i, j)` edges plus a fresh MIC). Never stream the inner
@@ -112,7 +124,9 @@ pub struct VerletSkin {
     ago: usize,
     ndanger: usize,
     half_skin_sq: F,
-    wrap_guard_sq: F,
+    /// Half the minimum perpendicular cell width, squared: beyond it the
+    /// minimum image is ambiguous and a displacement cannot be read.
+    ambiguity_guard_sq: F,
     danger_ago: usize,
     x_hold: FNx3,
     pairs_buf: Neighbors,
@@ -206,7 +220,7 @@ impl VerletSkin {
             ago: 0,
             ndanger: 0,
             half_skin_sq: (0.5 * policy.skin) * (0.5 * policy.skin),
-            wrap_guard_sq: half_width * half_width,
+            ambiguity_guard_sq: half_width * half_width,
             danger_ago: policy.every.max(policy.delay),
             x_hold: Array2::zeros((n_atoms, 3)),
             pairs_buf: Neighbors::empty(
@@ -360,25 +374,31 @@ impl VerletSkin {
             self.rebuild(positions)?;
             return Ok(true);
         }
+        // Minimum-image displacement, so a wrapped crossing reads as the step
+        // the atom took rather than as a jump of one cell. Exact in every
+        // configuration this type accepts — see the module documentation.
+        let mic = self.simbox.mic();
         let mut max_d2 = 0.0;
         for i in 0..positions.nrows() {
-            let mut d2 = 0.0;
-            for k in 0..3 {
-                let d = positions[[i, k]] - self.x_hold[[i, k]];
-                d2 += d * d;
-            }
+            let d = mic.apply([
+                positions[[i, 0]] - self.x_hold[[i, 0]],
+                positions[[i, 1]] - self.x_hold[[i, 1]],
+                positions[[i, 2]] - self.x_hold[[i, 2]],
+            ]);
+            let d2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
             if d2 > max_d2 {
                 max_d2 = d2;
             }
         }
-        if max_d2 >= self.wrap_guard_sq && !self.simbox.is_free() {
+        if max_d2 >= self.ambiguity_guard_sq && !self.simbox.is_free() {
             return Err(SkinError::Guard(format!(
-                "positions are no longer unwrapped: displacement {:.3} Å \
-                 >= half min perpendicular cell width ({:.3} Å). \
-                 The frozen neighbour index holds only for continuously drifting \
-                 coordinates. Wrap, cell change, or blow-up are fatal.",
+                "displacement {:.3} Å >= half the minimum perpendicular cell \
+                 width ({:.3} Å): the minimum image can no longer identify which \
+                 copy this atom came from, so the number is not a displacement. \
+                 A cell change or a blow-up, not a wrap — wrapped coordinates are \
+                 expected and handled.",
                 max_d2.sqrt(),
-                self.wrap_guard_sq.sqrt()
+                self.ambiguity_guard_sq.sqrt()
             )));
         }
         if max_d2 > self.half_skin_sq {
@@ -612,8 +632,39 @@ mod tests {
         assert!((r2_live - 1.4 * 1.4).abs() < 1e-12);
     }
 
+    /// An atom that crosses a face is displaced by the step it took, not by a
+    /// cell. This is the invariant that lets MD keep wrapped coordinates: the
+    /// raw difference here is 9.8 Å, the true motion is 0.2 Å, and the skin
+    /// must see the latter and stay quiet.
     #[test]
-    fn wrap_guard_fires_on_large_raw_displacement() {
+    fn a_wrapped_crossing_is_not_a_displacement() {
+        let pos0 = array![[0.1_f64, 0.0, 0.0], [5.0, 0.0, 0.0]];
+        let mut nl = skin_link(
+            2.0,
+            NeighborPolicy {
+                skin: 1.0,
+                ..NeighborPolicy::default()
+            },
+            pos0.view(),
+            10.0,
+        );
+        // Atom 0 steps -0.2 Å through the origin face and comes back at 9.9.
+        let pos1 = array![[9.9_f64, 0.0, 0.0], [5.0, 0.0, 0.0]];
+        let rebuilt = nl
+            .update(pos1.view())
+            .expect("a wrapped crossing must not be an error");
+        assert!(
+            !rebuilt,
+            "0.2 Å of motion is far inside skin/2 = 0.5 Å; no rebuild is owed"
+        );
+    }
+
+    /// The guard survives, with a different meaning: past half the minimum
+    /// perpendicular width the minimum image cannot say which copy an atom came
+    /// from, so the number is not a displacement. That is a blow-up, and it
+    /// still raises.
+    #[test]
+    fn ambiguous_displacement_still_raises() {
         let pos0 = two_atoms(1.0);
         let mut nl = skin_link(
             2.0,
@@ -624,13 +675,22 @@ mod tests {
             pos0.view(),
             10.0,
         );
-        let pos1 = array![[0.0, 0.0, 0.0], [7.0, 0.0, 0.0]];
+        // 5.0 Å on a 10 Å cube is exactly half the perpendicular width.
+        let pos1 = array![[5.0_f64, 0.0, 0.0], [1.0, 0.0, 0.0]];
         let err = nl.update(pos1.view()).unwrap_err();
-        assert!(format!("{err}").contains("unwrapped"));
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("minimum image can no longer identify"),
+            "{msg}"
+        );
+        assert!(
+            !msg.contains("unwrapped"),
+            "the old contract is gone; wrapped coordinates are expected: {msg}"
+        );
     }
 
     #[test]
-    fn check_false_skips_wrap_guard_and_rebuilds_on_cadence() {
+    fn check_false_skips_the_guard_and_rebuilds_on_cadence() {
         let pos0 = two_atoms(1.0);
         let mut nl = skin_link(
             2.0,

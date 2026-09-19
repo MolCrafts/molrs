@@ -11,7 +11,8 @@
 //! [`super::LJCut`] as the nonbond term, a [`Potentials`] collection to merge
 //! several terms (bonded + nonbond + external), or any external
 //! implementation. The integrator owns the optional
-//! [`VerletSkin`]: every force evaluation runs the skin's update policy and,
+//! [`VerletSkin`](molrs::spatial::neighbors::VerletSkin): every force
+//! evaluation runs the skin's update policy and,
 //! after a rebuild, feeds the current pairs to the potential
 //! ([`Potential::calc_energy_forces_with_pairs`]) — neighbour bookkeeping is the loop's concern,
 //! never the potential's. Two schemes, two types — no `gamma=0` switch:
@@ -34,8 +35,10 @@
 
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Zip};
 
+use molrs::spatial::simbox::SimBox;
+
+use super::pairs::PairSource;
 use molrs::ff::potential::Potential;
-use molrs::spatial::neighbors::VerletSkin;
 use molrs::types::{F, FNx3};
 
 use super::error::MdError;
@@ -49,29 +52,75 @@ fn as_mass_col(mass: ArrayView1<'_, F>) -> Result<Array2<F>, MdError> {
 }
 
 /// One force evaluation: materialize the current pair table once and share it.
+///
+/// The two periodic régimes differ in what the potential is shown, not in what
+/// it is asked. Under [`PairSource::Mic`] it sees the owned atoms and pairs
+/// whose displacements have been folded; under [`PairSource::Ghosts`] it sees
+/// owned atoms *and their copies*, with ordinary differences — and the forces
+/// come back over that extended set, so they are folded onto the owners before
+/// anything physical is read off them. Neither route asks the potential to know
+/// which one it is in.
 fn eval_potential(
     potential: &dyn Potential,
-    neighbors: &mut Option<VerletSkin>,
+    neighbors: &mut PairSource,
     pos: ArrayView2<'_, F>,
+    wrap_shifts: ArrayView2<'_, i64>,
 ) -> Result<ForceOutput, MdError> {
     let n_atoms = pos.nrows();
-    let (energy, forces) = if let Some(skin) = neighbors.as_mut() {
-        let pairs = skin.pairs_at(pos)?;
-        match pos.as_slice() {
-            Some(flat) => potential.calc_energy_forces_with_pairs(flat, pairs),
-            None => {
-                let flat: Vec<F> = pos.iter().copied().collect();
-                potential.calc_energy_forces_with_pairs(&flat, pairs)
+    let (energy, forces) = match neighbors {
+        PairSource::Mic(skin) => {
+            let pairs = skin.pairs_at(pos)?;
+            match pos.as_slice() {
+                Some(flat) => potential.calc_energy_forces_with_pairs(flat, pairs),
+                None => {
+                    let flat: Vec<F> = pos.iter().copied().collect();
+                    potential.calc_energy_forces_with_pairs(&flat, pairs)
+                }
             }
         }
-    } else {
-        match pos.as_slice() {
+        PairSource::Ghosts { comm, bonded } => {
+            // Move the copies first, then re-resolve the topology against them,
+            // then read the pairs. Each step depends on the one before it, and
+            // doing them in one call would hide that.
+            comm.advance(pos, wrap_shifts)?;
+            if let Some(b) = bonded.as_mut() {
+                b.refresh(comm, pos, wrap_shifts)?;
+            }
+            let pairs = comm.pairs(pos)?;
+            let all = comm.combined(pos)?;
+            let flat: Vec<F> = all.iter().copied().collect();
+            // A resolved topology *is* the potential for this run: it names the
+            // copies that exist now, where the integrator's own names owned
+            // atoms and would measure bonds across the cell.
+            let (energy, forces) = match bonded.as_ref() {
+                Some(b) => b.potentials().calc_energy_forces_with_pairs(&flat, &pairs),
+                None => potential.calc_energy_forces_with_pairs(&flat, &pairs),
+            };
+            let n_all = all.nrows();
+            let mut f = Array2::from_shape_vec((n_all, 3), forces).map_err(|_| {
+                MdError::Invalid(format!(
+                    "potential returned force components for {n_all} owned+ghost rows that do not fit"
+                ))
+            })?;
+            // Reverse accumulation: a copy's force belongs to the atom it
+            // copies. After this the ghost rows are zero and the owned rows are
+            // the physical force.
+            comm.ghosts()
+                .reverse_comm(&mut f)
+                .map_err(|e| MdError::Invalid(e.to_string()))?;
+            f.slice_collapse(ndarray::s![..n_atoms, ..]);
+            return Ok(ForceOutput {
+                energy,
+                forces: f.to_owned(),
+            });
+        }
+        PairSource::None => match pos.as_slice() {
             Some(flat) => potential.calc_energy_forces(flat),
             None => {
                 let flat: Vec<F> = pos.iter().copied().collect();
                 potential.calc_energy_forces(&flat)
             }
-        }
+        },
     };
     let n_components = forces.len();
     let forces = Array2::from_shape_vec((n_atoms, 3), forces).map_err(|_| {
@@ -80,6 +129,28 @@ fn eval_potential(
         ))
     })?;
     Ok(ForceOutput { energy, forces })
+}
+
+/// Fold the drifted positions back into the cell and bank the crossings.
+///
+/// This runs after **every** position update, not only at a neighbour rebuild.
+/// LAMMPS remaps at reneighbouring because its `exchange`/`borders` transaction
+/// is bound to that point; here the cost is one pass that touches only the
+/// atoms that actually crossed — `SimBox::wrap` returns an in-cell point
+/// untouched to the bit — and in exchange the coordinates never grow past the
+/// cell, so nothing downstream has to reason about how far they might have
+/// drifted.
+///
+/// `m` is the shift the wrap actually applied, so the flags cannot disagree
+/// with the positions they belong to.
+fn wrap_and_bank(simbox: Option<&SimBox>, state: &mut MDState) -> Array2<i64> {
+    let Some(bx) = simbox else {
+        return Array2::zeros((state.pos.nrows(), 3));
+    };
+    let (wrapped, m) = bx.wrap_shifts(state.pos.view());
+    state.pos = wrapped;
+    state.images += &m;
+    m
 }
 
 fn check_state_shape(
@@ -111,24 +182,29 @@ fn check_state_shape(
 
 /// NVE velocity-Verlet (B-A-A-B).
 ///
-/// Construct with timestep, a [`Potential`], the optional [`VerletSkin`] the
+/// Construct with timestep, a [`Potential`], the [`PairSource`] the
 /// loop runs for the nonbond term, and mass.
 pub struct VelocityVerlet {
     dt: F,
     potential: Box<dyn Potential>,
-    neighbors: Option<VerletSkin>,
+    neighbors: PairSource,
+    /// Cell the positions are folded into each step; `None` is free boundary.
+    simbox: Option<SimBox>,
     mass_col: Array2<F>,
     /// Per-atom 1/m (`(N,)`).
     inv_mass: Array1<F>,
 }
 
 impl VelocityVerlet {
-    /// `dt` (fs), potential, optional neighbour state, per-atom mass `(N,)`.
+    /// `dt` (fs), potential, optional neighbour state, per-atom mass `(N,)`,
+    /// and the cell positions are folded into each step (`None` = free
+    /// boundary, no wrapping and image flags stay zero).
     pub fn new(
         dt: F,
         potential: impl Potential + 'static,
-        neighbors: Option<VerletSkin>,
+        neighbors: PairSource,
         mass: ArrayView1<'_, F>,
+        simbox: Option<SimBox>,
     ) -> Result<Self, MdError> {
         let mass_col = as_mass_col(mass)?;
         let inv_mass = mass_col.column(0).mapv(|m| 1.0 / m);
@@ -136,6 +212,7 @@ impl VelocityVerlet {
             dt,
             potential: Box::new(potential),
             neighbors,
+            simbox,
             mass_col,
             inv_mass,
         })
@@ -143,8 +220,8 @@ impl VelocityVerlet {
 
     /// Read-only view of the integrator-owned Verlet skin (rebuild counters,
     /// edge count); `None` when constructed without neighbour state.
-    pub fn neighbors(&self) -> Option<&VerletSkin> {
-        self.neighbors.as_ref()
+    pub fn neighbors(&self) -> &PairSource {
+        &self.neighbors
     }
 
     /// Timestep Δt in fs.
@@ -169,19 +246,45 @@ impl VelocityVerlet {
 
     /// Energy and forces at `pos` (runs the neighbour update policy first).
     pub fn eval_force(&mut self, pos: ArrayView2<'_, F>) -> Result<ForceOutput, MdError> {
-        eval_potential(&*self.potential, &mut self.neighbors, pos)
+        let no_fold = Array2::zeros((pos.nrows(), 3));
+        eval_potential(&*self.potential, &mut self.neighbors, pos, no_fold.view())
+    }
+
+    /// Energy and forces right after a fold, carrying the shift it applied.
+    ///
+    /// A ghost halo has to reconcile that fold in the same breath — see
+    /// [`Comm::pairs_at`](super::pairs::Comm::pairs_at) — which
+    /// is why the step path cannot go through the public
+    /// [`eval_force`](Self::eval_force), whose caller has not folded anything.
+    fn eval_force_after_fold(
+        &mut self,
+        pos: ArrayView2<'_, F>,
+        shifts: ArrayView2<'_, i64>,
+    ) -> Result<ForceOutput, MdError> {
+        eval_potential(&*self.potential, &mut self.neighbors, pos, shifts)
     }
 
     /// Seed an [`MDState`], evaluating the entry force.
     pub fn initial(&mut self, pos: FNx3, vel: FNx3) -> Result<MDState, MdError> {
         check_state_shape(pos.view(), vel.view(), self.mass_col.nrows())?;
-        let out = self.eval_force(pos.view())?;
-        Ok(MDState {
+        // Fold the entry configuration too, so step 0 already satisfies the
+        // invariant every later step maintains. Flags start at zero: they count
+        // crossings *during this run*, and an atom's history before it is not
+        // this integrator's to claim.
+        let n_atoms = pos.nrows();
+        let mut state = MDState {
             pos,
+            images: Array2::zeros((n_atoms, 3)),
             vel,
-            forces: out.forces,
-            energy: out.energy,
-        })
+            forces: FNx3::zeros((n_atoms, 3)),
+            energy: 0.0,
+        };
+        let folded = wrap_and_bank(self.simbox.as_ref(), &mut state);
+        state.images.fill(0);
+        let seeded = self.eval_force_after_fold(state.pos.view(), folded.view())?;
+        state.forces = seeded.forces;
+        state.energy = seeded.energy;
+        Ok(state)
     }
 
     /// One NVE step from the cached entry force (in-place arithmetic).
@@ -206,7 +309,10 @@ impl VelocityVerlet {
                     p[2] += half_dt * v[2];
                 });
         }
-        let out = self.eval_force(state.pos.view())?;
+        // Periodic remap: the drift is done, so fold and bank before anything
+        // downstream reads a coordinate.
+        let folded = wrap_and_bank(self.simbox.as_ref(), &mut state);
+        let out = self.eval_force_after_fold(state.pos.view(), folded.view())?;
         state.forces = out.forces;
         // B
         Zip::from(state.vel.rows_mut())
@@ -245,7 +351,9 @@ pub struct Langevin {
     c2: F,
     kbt: F,
     potential: Box<dyn Potential>,
-    neighbors: Option<VerletSkin>,
+    neighbors: PairSource,
+    /// Cell the positions are folded into each step; `None` is free boundary.
+    simbox: Option<SimBox>,
     mass_col: Array2<F>,
     inv_mass: Array1<F>,
     sigma: Array1<F>,
@@ -255,16 +363,22 @@ pub struct Langevin {
 impl Langevin {
     /// BAOAB integrator with all required pieces at construction.
     ///
+    /// Eight arguments is the cost of this module's rule that required pieces
+    /// go in the constructor rather than into `bind_*` setters afterwards: a
+    /// half-built integrator is a state nobody should be able to hold.
+    ///
     /// `seed` fixes the internal noise stream, so [`advance`](Self::advance)
     /// is deterministic given the seed.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         dt: F,
         gamma: F,
         kbt: F,
         potential: impl Potential + 'static,
-        neighbors: Option<VerletSkin>,
+        neighbors: PairSource,
         mass: ArrayView1<'_, F>,
         seed: u64,
+        simbox: Option<SimBox>,
     ) -> Result<Self, MdError> {
         if gamma <= 0.0 {
             return Err(MdError::Invalid(
@@ -287,6 +401,7 @@ impl Langevin {
             kbt,
             potential: Box::new(potential),
             neighbors,
+            simbox,
             mass_col,
             inv_mass,
             sigma,
@@ -296,8 +411,8 @@ impl Langevin {
 
     /// Read-only view of the integrator-owned Verlet skin (rebuild counters,
     /// edge count); `None` when constructed without neighbour state.
-    pub fn neighbors(&self) -> Option<&VerletSkin> {
-        self.neighbors.as_ref()
+    pub fn neighbors(&self) -> &PairSource {
+        &self.neighbors
     }
 
     /// Timestep Δt in fs.
@@ -342,19 +457,45 @@ impl Langevin {
 
     /// Energy and forces at `pos` (runs the neighbour update policy first).
     pub fn eval_force(&mut self, pos: ArrayView2<'_, F>) -> Result<ForceOutput, MdError> {
-        eval_potential(&*self.potential, &mut self.neighbors, pos)
+        let no_fold = Array2::zeros((pos.nrows(), 3));
+        eval_potential(&*self.potential, &mut self.neighbors, pos, no_fold.view())
+    }
+
+    /// Energy and forces right after a fold, carrying the shift it applied.
+    ///
+    /// A ghost halo has to reconcile that fold in the same breath — see
+    /// [`Comm::pairs_at`](super::pairs::Comm::pairs_at) — which
+    /// is why the step path cannot go through the public
+    /// [`eval_force`](Self::eval_force), whose caller has not folded anything.
+    fn eval_force_after_fold(
+        &mut self,
+        pos: ArrayView2<'_, F>,
+        shifts: ArrayView2<'_, i64>,
+    ) -> Result<ForceOutput, MdError> {
+        eval_potential(&*self.potential, &mut self.neighbors, pos, shifts)
     }
 
     /// Seed an [`MDState`], evaluating the entry force.
     pub fn initial(&mut self, pos: FNx3, vel: FNx3) -> Result<MDState, MdError> {
         check_state_shape(pos.view(), vel.view(), self.mass_col.nrows())?;
-        let out = self.eval_force(pos.view())?;
-        Ok(MDState {
+        // Fold the entry configuration too, so step 0 already satisfies the
+        // invariant every later step maintains. Flags start at zero: they count
+        // crossings *during this run*, and an atom's history before it is not
+        // this integrator's to claim.
+        let n_atoms = pos.nrows();
+        let mut state = MDState {
             pos,
+            images: Array2::zeros((n_atoms, 3)),
             vel,
-            forces: out.forces,
-            energy: out.energy,
-        })
+            forces: FNx3::zeros((n_atoms, 3)),
+            energy: 0.0,
+        };
+        let folded = wrap_and_bank(self.simbox.as_ref(), &mut state);
+        state.images.fill(0);
+        let seeded = self.eval_force_after_fold(state.pos.view(), folded.view())?;
+        state.forces = seeded.forces;
+        state.energy = seeded.energy;
+        Ok(state)
     }
 
     /// One BAOAB step with caller-supplied standard-normal `noise` `(N, 3)`.
@@ -409,7 +550,10 @@ impl Langevin {
                 p[1] += half_dt * v[1];
                 p[2] += half_dt * v[2];
             });
-        let out = self.eval_force(state.pos.view())?;
+        // Periodic remap: the drift is done, so fold and bank before anything
+        // downstream reads a coordinate.
+        let folded = wrap_and_bank(self.simbox.as_ref(), &mut state);
+        let out = self.eval_force_after_fold(state.pos.view(), folded.view())?;
         state.forces = out.forces;
         // B
         Zip::from(state.vel.rows_mut())
@@ -553,9 +697,10 @@ mod tests {
             gamma,
             kbt,
             lj,
-            Some(nl),
+            PairSource::mic(nl),
             scalar_mass(mass, 1).unwrap().view(),
             0,
+            None,
         )
         .unwrap();
         assert!((ig.c1() - (-gamma * dt).exp()).abs() < 1e-15);
@@ -623,7 +768,7 @@ mod tests {
             .unwrap()
             .velocities(pos.view(), mass.view())
             .unwrap();
-        let mut ig = VelocityVerlet::new(1.0, lj, Some(nl), mass.view()).unwrap();
+        let mut ig = VelocityVerlet::new(1.0, lj, PairSource::mic(nl), mass.view(), None).unwrap();
         let mut state = ig.initial(pos, vel).unwrap();
 
         let total = |s: &MDState| s.energy + kinetic_energy(mass.view(), s.vel.view()).unwrap();
@@ -656,8 +801,14 @@ mod tests {
     #[test]
     fn removed_dof_follows_the_scheme() {
         let (lj, nl, _) = soft_lj(2, 40.0);
-        let nve =
-            VelocityVerlet::new(0.01, lj, Some(nl), scalar_mass(1.0, 2).unwrap().view()).unwrap();
+        let nve = VelocityVerlet::new(
+            0.01,
+            lj,
+            PairSource::mic(nl),
+            scalar_mass(1.0, 2).unwrap().view(),
+            None,
+        )
+        .unwrap();
         assert_eq!(nve.removed_dof(), 3);
         let (lj, nl, _) = soft_lj(2, 40.0);
         let lgv = Langevin::new(
@@ -665,9 +816,10 @@ mod tests {
             1.0,
             1.0,
             lj,
-            Some(nl),
+            PairSource::mic(nl),
             scalar_mass(1.0, 2).unwrap().view(),
             0,
+            None,
         )
         .unwrap();
         assert_eq!(lgv.removed_dof(), 0);
@@ -676,13 +828,31 @@ mod tests {
     #[test]
     fn mass_must_be_positive() {
         let (lj, nl, _) = soft_lj(2, 40.0);
-        assert!(VelocityVerlet::new(0.01, lj, Some(nl), array![-1.0, 1.0].view()).is_err());
+        assert!(
+            VelocityVerlet::new(
+                0.01,
+                lj,
+                PairSource::mic(nl),
+                array![-1.0, 1.0].view(),
+                None
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn langevin_rejects_gamma_zero() {
         let (lj, nl, _) = soft_lj(1, 20.0);
-        let err = Langevin::new(0.01, 0.0, 1.0, lj, Some(nl), array![1.0].view(), 0);
+        let err = Langevin::new(
+            0.01,
+            0.0,
+            1.0,
+            lj,
+            PairSource::mic(nl),
+            array![1.0].view(),
+            0,
+            None,
+        );
         match err {
             Err(e) => assert!(e.to_string().contains("VelocityVerlet")),
             Ok(_) => panic!("expected Langevin gamma=0 to fail"),
@@ -692,7 +862,19 @@ mod tests {
     #[test]
     fn langevin_rejects_nonpositive_kbt() {
         let (lj, nl, _) = soft_lj(1, 20.0);
-        assert!(Langevin::new(0.01, 1.0, 0.0, lj, Some(nl), array![1.0].view(), 0).is_err());
+        assert!(
+            Langevin::new(
+                0.01,
+                1.0,
+                0.0,
+                lj,
+                PairSource::mic(nl),
+                array![1.0].view(),
+                0,
+                None
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -704,9 +886,10 @@ mod tests {
             1.0,
             1.0,
             lj,
-            Some(nl),
+            PairSource::mic(nl),
             scalar_mass(1.0, 4).unwrap().view(),
             9,
+            None,
         )
         .unwrap();
         let (lj, nl, _) = soft_lj(4, 40.0);
@@ -715,9 +898,10 @@ mod tests {
             1.0,
             1.0,
             lj,
-            Some(nl),
+            PairSource::mic(nl),
             scalar_mass(1.0, 4).unwrap().view(),
             9,
+            None,
         )
         .unwrap();
         let sa = a.initial(pos.clone(), vel.clone()).unwrap();
@@ -732,8 +916,14 @@ mod tests {
     fn force_caching_one_eval_per_step() {
         // Skin with check: force changes when atoms move inside half-skin.
         let (lj, nl, mut pos) = soft_lj(4, 40.0);
-        let mut ig =
-            VelocityVerlet::new(0.01, lj, Some(nl), scalar_mass(1.0, 4).unwrap().view()).unwrap();
+        let mut ig = VelocityVerlet::new(
+            0.01,
+            lj,
+            PairSource::mic(nl),
+            scalar_mass(1.0, 4).unwrap().view(),
+            None,
+        )
+        .unwrap();
         let f0 = ig.eval_force(pos.view()).unwrap().forces;
         pos[[1, 0]] += 0.05;
         let f1 = ig.eval_force(pos.view()).unwrap().forces;
@@ -744,11 +934,23 @@ mod tests {
     fn advance_n_matches_manual_advance_loop() {
         let (lj, nl, pos) = soft_lj(4, 40.0);
         let vel = Array2::from_elem(pos.raw_dim(), 0.01);
-        let mut a =
-            VelocityVerlet::new(0.01, lj, Some(nl), scalar_mass(1.0, 4).unwrap().view()).unwrap();
+        let mut a = VelocityVerlet::new(
+            0.01,
+            lj,
+            PairSource::mic(nl),
+            scalar_mass(1.0, 4).unwrap().view(),
+            None,
+        )
+        .unwrap();
         let (lj, nl, _) = soft_lj(4, 40.0);
-        let mut b =
-            VelocityVerlet::new(0.01, lj, Some(nl), scalar_mass(1.0, 4).unwrap().view()).unwrap();
+        let mut b = VelocityVerlet::new(
+            0.01,
+            lj,
+            PairSource::mic(nl),
+            scalar_mass(1.0, 4).unwrap().view(),
+            None,
+        )
+        .unwrap();
         let s0 = a.initial(pos.clone(), vel.clone()).unwrap();
         let end_a = a.advance_n(s0, 5).unwrap();
         let mut state = b.initial(pos, vel).unwrap();
@@ -764,8 +966,14 @@ mod tests {
         // A Potentials collection [LJCut, Uniform] through the integrator
         // must equal the lone LJ evaluation plus the uniform offsets.
         let (lj, nl, pos) = soft_lj(2, 40.0);
-        let mut lone =
-            VelocityVerlet::new(0.01, lj, Some(nl), scalar_mass(1.0, 2).unwrap().view()).unwrap();
+        let mut lone = VelocityVerlet::new(
+            0.01,
+            lj,
+            PairSource::mic(nl),
+            scalar_mass(1.0, 2).unwrap().view(),
+            None,
+        )
+        .unwrap();
         let base = lone.eval_force(pos.view()).unwrap();
 
         let (lj, nl, _) = soft_lj(2, 40.0);
@@ -775,8 +983,14 @@ mod tests {
             energy: 0.25,
             fx: -1.5,
         }));
-        let mut ig =
-            VelocityVerlet::new(0.01, pots, Some(nl), scalar_mass(1.0, 2).unwrap().view()).unwrap();
+        let mut ig = VelocityVerlet::new(
+            0.01,
+            pots,
+            PairSource::mic(nl),
+            scalar_mass(1.0, 2).unwrap().view(),
+            None,
+        )
+        .unwrap();
         let out = ig.eval_force(pos.view()).unwrap();
         assert!((out.energy - (base.energy + 0.25)).abs() < 1e-12);
         for i in 0..2 {
@@ -791,8 +1005,9 @@ mod tests {
         let mut ig = VelocityVerlet::new(
             0.01,
             Potentials::new(),
-            None,
+            PairSource::None,
             scalar_mass(1.0, 2).unwrap().view(),
+            None,
         )
         .unwrap();
         let out = ig.eval_force(pos.view()).unwrap();
@@ -822,7 +1037,14 @@ mod tests {
             )
             .unwrap();
             let lj = LJCut::lj126(1.0, 1.0, cutoff).unwrap();
-            VelocityVerlet::new(0.01, lj, Some(nl), scalar_mass(1.0, 2).unwrap().view()).unwrap()
+            VelocityVerlet::new(
+                0.01,
+                lj,
+                PairSource::mic(nl),
+                scalar_mass(1.0, 2).unwrap().view(),
+                None,
+            )
+            .unwrap()
         };
         let mut ig = make(pos0.view());
         let mut x = 1.1;
@@ -832,7 +1054,10 @@ mod tests {
             let pos = array![[0.0, 0.0, 0.0], [x, 0.0, 0.0]];
             last = Some(ig.eval_force(pos.view()).unwrap());
         }
-        let rebuilds = ig.neighbors().unwrap().rebuild_count();
+        let PairSource::Mic(skin) = ig.neighbors() else {
+            panic!("this integrator was built with a minimum-image skin")
+        };
+        let rebuilds = skin.rebuild_count();
         assert!(
             rebuilds >= 2,
             "expected repeated rebuilds on a moving system, got {rebuilds}"
@@ -847,5 +1072,406 @@ mod tests {
             reference.forces.view(),
             1e-12
         ));
+    }
+}
+
+#[cfg(test)]
+mod ghost_path_tests {
+    use super::*;
+    use molrs::ff::potential::pair::LJCut;
+    use molrs::spatial::neighbors::{NeighborList, NeighborPolicy, VerletSkin};
+    use molrs::spatial::simbox::SimBox;
+    use ndarray::array;
+
+    use super::super::pairs::Comm;
+
+    /// The two periodic régimes are two ways of computing one thing, and this
+    /// is the assertion that says so: the same system, the same steps, once
+    /// through the minimum image and once through ghost atoms, has to produce
+    /// the same trajectory.
+    ///
+    /// If it does not, one of them is wrong — and the ghost route is the one MD
+    /// will use for potentials that read positions, so a disagreement here is a
+    /// disagreement about physics, not about bookkeeping.
+    #[test]
+    fn the_ghost_route_and_the_mic_route_are_the_same_trajectory() {
+        let l = 12.0_f64;
+        let cutoff = 5.0;
+        // Zero skin on both sides, deliberately. A Verlet skin is a *caching*
+        // policy, not a periodic one: it hands back the edges frozen at the
+        // last rebuild, so a pair that closes from `cutoff + skin` to `cutoff`
+        // between rebuilds is invisible until the next one. The ghost route as
+        // written searches afresh every step and has no such staleness, so with
+        // a skin the two disagree by that approximation — a real difference,
+        // and not the one under test here. Setting it to zero makes both exact
+        // every step and leaves only the question this test asks: do the two
+        // periodic régimes compute the same physics?
+        let skin = 0.0;
+        let bx = SimBox::cube(l, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
+
+        // Eight atoms on a 4 Å cube whose every edge runs *through* a face:
+        // 11.0 to 3.0 is 4 Å the short way round in a 12 Å cell. Nearest
+        // neighbours sit at 4 Å, just past the LJ minimum (2^(1/6)·σ = 3.82 Å),
+        // so the system is bound rather than exploding, and face diagonals at
+        // 5.66 Å fall outside the 5 Å cutoff. Every interaction is periodic.
+        let pos0 = array![
+            [11.0_f64, 11.0, 11.0],
+            [3.0, 11.0, 11.0],
+            [11.0, 3.0, 11.0],
+            [11.0, 11.0, 3.0],
+            [3.0, 3.0, 11.0],
+            [3.0, 11.0, 3.0],
+            [11.0, 3.0, 3.0],
+            [3.0, 3.0, 3.0],
+        ];
+        let vel0 = array![
+            [0.020_f64, -0.008, 0.012],
+            [-0.016, 0.010, 0.006],
+            [0.004, 0.018, -0.014],
+            [-0.012, -0.006, 0.016],
+            [0.008, 0.014, -0.004],
+            [-0.018, 0.002, 0.010],
+            [0.006, -0.016, -0.008],
+            [0.014, 0.004, 0.018],
+        ];
+        let n = pos0.nrows();
+        let lj = || LJCut::new(0.3, 3.4, cutoff, 12, 6, false, false).unwrap();
+        let mass = scalar_mass(12.0, n).unwrap();
+
+        // --- minimum image ---
+        let skin_nl = VerletSkin::new(
+            NeighborList::new(cutoff + skin),
+            cutoff,
+            NeighborPolicy {
+                skin,
+                ..NeighborPolicy::default()
+            },
+            pos0.view(),
+            bx.clone(),
+        )
+        .unwrap();
+        let mut mic = VelocityVerlet::new(
+            1.0,
+            lj(),
+            PairSource::mic(skin_nl),
+            mass.view(),
+            Some(bx.clone()),
+        )
+        .unwrap();
+
+        // --- ghosts ---
+        let comm = Comm::new(bx.clone(), pos0.view(), cutoff, skin).unwrap();
+        let mut gho = VelocityVerlet::new(
+            1.0,
+            lj(),
+            PairSource::ghosts(comm),
+            mass.view(),
+            Some(bx.clone()),
+        )
+        .unwrap();
+
+        let mut a = mic.initial(pos0.clone(), vel0.clone()).unwrap();
+        let mut b = gho.initial(pos0.clone(), vel0.clone()).unwrap();
+
+        let scale = a.energy.abs().max(1.0);
+        assert!(
+            (a.energy - b.energy).abs() / scale < 1e-11,
+            "entry energy: mic {} vs ghosts {}",
+            a.energy,
+            b.energy
+        );
+
+        // Molecular dynamics is chaotic, so two routes that are mathematically
+        // identical but sum the same pairs in different orders separate
+        // exponentially: ~1e-16 of relative disagreement per step, amplified by
+        // the Lyapunov instability of the trajectory itself. The bar is
+        // therefore tight early, where a real defect would already show, and
+        // loose later, where only the amplification remains. A missing or
+        // double-counted pair moves the energy by O(0.1) kcal/mol and fails
+        // either bar immediately.
+        for step in 1..=150 {
+            a = mic.advance(a).unwrap();
+            b = gho.advance(b).unwrap();
+
+            let (tol_e, tol_x) = if step <= 20 {
+                (1e-12, 1e-11)
+            } else {
+                (1e-7, 1e-7)
+            };
+
+            let scale = a.energy.abs().max(1.0);
+            assert!(
+                (a.energy - b.energy).abs() / scale < tol_e,
+                "step {step} energy: mic {} vs ghosts {}",
+                a.energy,
+                b.energy
+            );
+            for i in 0..n {
+                for k in 0..3 {
+                    assert!(
+                        (a.pos[[i, k]] - b.pos[[i, k]]).abs() < tol_x,
+                        "step {step} atom {i} axis {k}: mic {} vs ghosts {}",
+                        a.pos[[i, k]],
+                        b.pos[[i, k]]
+                    );
+                }
+                assert_eq!(
+                    a.images.row(i).to_vec(),
+                    b.images.row(i).to_vec(),
+                    "step {step} atom {i}: image flags must agree"
+                );
+            }
+        }
+
+        // The run actually exercised the periodic machinery rather than
+        // trivially agreeing: atoms crossed, and the halo was rebuilt.
+        let crossed: i64 = a.images.iter().map(|&m| m.abs()).sum();
+        assert!(
+            crossed > 0,
+            "no atom crossed a face; the test proves nothing"
+        );
+        let PairSource::Ghosts { comm: d, .. } = gho.neighbors() else {
+            unreachable!()
+        };
+        assert!(d.rebuilds() > 0, "the halo was never rebuilt");
+    }
+
+    /// A halo that outlives a fold has to be reconciled with it, and the
+    /// observable consequence is that nothing happens: the energy does not jump
+    /// when an atom crosses a face.
+    ///
+    /// This is deliberately *not* a comparison against the minimum-image route.
+    /// A skin makes the two differ by list staleness, and with the skin set to
+    /// zero — as the comparison test must — the halo is rebuilt every step and
+    /// the reconciliation is never reached. So the property is asserted on its
+    /// own terms: a crossing is not a physical event, so no physical quantity
+    /// may notice one.
+    ///
+    /// Without `s_g += m` a copy jumps a whole cell when its owner folds, pairs
+    /// appear and vanish, and the energy steps by kcal/mol between one
+    /// femtosecond and the next.
+    #[test]
+    fn crossing_a_face_does_not_disturb_the_energy() {
+        let l = 12.0_f64;
+        let cutoff = 5.0;
+        let bx = SimBox::cube(l, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
+
+        // Sitting a tenth of an Ångström inside the +x face, so the crossing
+        // happens within the first few steps and the configuration has no time
+        // to evolve far from where it started. Neighbours are still 4 Å apart
+        // the short way round (12 − 11.9 + 3.9).
+        let pos0 = array![
+            [11.9_f64, 11.9, 11.9],
+            [3.9, 11.9, 11.9],
+            [11.9, 3.9, 11.9],
+            [11.9, 11.9, 3.9],
+            [3.9, 3.9, 11.9],
+            [3.9, 11.9, 3.9],
+            [11.9, 3.9, 3.9],
+            [3.9, 3.9, 3.9],
+        ];
+        // A uniform drift along +x, so every atom crosses. The
+        // lattice is not in equilibrium — on each axis an atom has a neighbour
+        // at 4 Å one way and 8 Å the other — so the potential energy genuinely
+        // evolves, and asserting it is *constant* would be wrong. What must
+        // hold is that the total energy is conserved: NVE has no term that
+        // could absorb a pair appearing or vanishing.
+        let drift = 0.02_f64;
+        let vel0 =
+            FNx3::from_shape_fn((pos0.nrows(), 3), |(_, k)| if k == 0 { drift } else { 0.0 });
+
+        // A skin large enough that the halo survives many steps, so folds
+        // happen *between* rebuilds — the case the reconciliation exists for.
+        let comm = Comm::new(bx.clone(), pos0.view(), cutoff, 0.8).unwrap();
+        // 0.2 fs: at 1 fs the velocity-Verlet truncation error on this LJ
+        // lattice is itself 1e-4 of the total energy, which would swamp the
+        // signal this test is looking for.
+        let mut ig = VelocityVerlet::new(
+            0.2,
+            LJCut::new(0.3, 3.4, cutoff, 12, 6, false, false).unwrap(),
+            PairSource::ghosts(comm),
+            scalar_mass(12.0, pos0.nrows()).unwrap().view(),
+            Some(bx.clone()),
+        )
+        .unwrap();
+
+        let mass = scalar_mass(12.0, pos0.nrows()).unwrap();
+        let mut state = ig.initial(pos0.clone(), vel0).unwrap();
+        let total = |st: &MDState| st.energy + kinetic_energy(mass.view(), st.vel.view()).unwrap();
+        let e0 = total(&state);
+        let scale = e0.abs().max(1.0);
+
+        for step in 1..=200 {
+            state = ig.advance(state).unwrap();
+            let drift = (total(&state) - e0).abs() / scale;
+            // The bar is set by what the defect does, not by what looks tidy.
+            // A copy that jumps a cell removes or adds a pair worth ~0.1
+            // kcal/mol from a total near 4, i.e. ~2.5e-2 of relative change in
+            // a single step — twenty-five times this bound. What remains below
+            // it is the integrator's own truncation error, which is a property
+            // of velocity-Verlet and not of the ghost layer.
+            assert!(
+                drift < 1e-3,
+                "step {step}: total energy drifted by {drift} (relative). \
+                 A copy that jumped a cell makes pairs appear and vanish, and \
+                 NVE has nothing to absorb that"
+            );
+        }
+
+        // The run has to have exercised the thing it claims to test.
+        // The drift carries the run 0.8 Å along +x, so the four atoms that
+        // start a tenth of an Ångström inside the face cross and the four at
+        // 3.9 do not. Four folds are what this exercises.
+        let crossed: i64 = state.images.iter().map(|&m| m.abs()).sum();
+        assert!(crossed >= 4, "atoms should have crossed; got {crossed}");
+        let PairSource::Ghosts { comm: d, .. } = ig.neighbors() else {
+            unreachable!()
+        };
+        assert!(
+            d.rebuilds() < 200,
+            "the halo must survive some folds, or the reconciliation is never reached"
+        );
+    }
+}
+
+#[cfg(test)]
+mod wrapped_state_tests {
+    use super::*;
+    use molrs::ff::potential::Potentials;
+    use molrs::spatial::simbox::SimBox;
+    use ndarray::array;
+
+    /// Validation A of the wrapped+image design: one atom driven straight
+    /// through the boundary many times over.
+    ///
+    /// Three things have to hold together, and only together do they mean the
+    /// state is canonical: the stored coordinate stays in the cell however long
+    /// the run goes, the flag counts the crossings, and the reconstruction
+    /// `pos + H·images` is the continuous line the atom actually travelled.
+    /// Any two of the three can be satisfied by an implementation that is
+    /// quietly wrong about the third.
+    #[test]
+    fn an_atom_driven_through_the_boundary_stays_wrapped_and_stays_continuous() {
+        let l = 10.0_f64;
+        let bx = SimBox::cube(l, array![0.0, 0.0, 0.0], [true, true, true]).unwrap();
+        // No forces: the trajectory is exactly known, so any drift is the
+        // bookkeeping's fault and not the dynamics'.
+        let dt = 1.0;
+        let vx = 0.25; // Å/fs -> 0.25 Å per step
+        let mut ig = VelocityVerlet::new(
+            dt,
+            Potentials::new(),
+            PairSource::None,
+            scalar_mass(1.0, 1).unwrap().view(),
+            Some(bx.clone()),
+        )
+        .unwrap();
+
+        let mut state = ig
+            .initial(array![[0.5, 5.0, 5.0]], array![[vx, 0.0, 0.0]])
+            .unwrap();
+        assert_eq!(
+            state.images.row(0).to_vec(),
+            vec![0_i64; 3],
+            "flags start clean"
+        );
+
+        let steps = 400; // 100 Å of travel = ten crossings
+        for n in 1..=steps {
+            state = ig.advance(state).unwrap();
+
+            // (1) the stored coordinate never leaves the cell
+            let f = bx.to_frac(state.pos.view());
+            for d in 0..3 {
+                assert!(
+                    (0.0..1.0).contains(&f[[0, d]]),
+                    "step {n}: fractional {} escaped [0, 1)",
+                    f[[0, d]]
+                );
+            }
+
+            // (2) the reconstruction is the line the atom actually travelled
+            let travelled = 0.5 + vx * dt * n as F;
+            let u = bx.unwrap(state.pos.view(), state.images.view());
+            assert!(
+                (u[[0, 0]] - travelled).abs() < 1e-9,
+                "step {n}: unwrapped {} vs travelled {travelled}",
+                u[[0, 0]]
+            );
+        }
+
+        // (3) the flag counted the crossings rather than drifting on its own
+        let expected = ((0.5 + vx * dt * steps as F) / l).floor() as i64;
+        assert_eq!(
+            state.images[[0, 0]],
+            expected,
+            "after {steps} steps the atom is {expected} cells downstream"
+        );
+        assert_eq!(state.images[[0, 1]], 0);
+        assert_eq!(state.images[[0, 2]], 0);
+    }
+
+    /// A free-boundary run has no cell to fold into, so nothing is wrapped and
+    /// the flags stay zero — the same integrator, with the periodic layer
+    /// switched off rather than special-cased downstream.
+    #[test]
+    fn free_boundary_leaves_positions_and_flags_alone() {
+        let mut ig = VelocityVerlet::new(
+            1.0,
+            Potentials::new(),
+            PairSource::None,
+            scalar_mass(1.0, 1).unwrap().view(),
+            None,
+        )
+        .unwrap();
+        let mut state = ig
+            .initial(array![[0.0, 0.0, 0.0]], array![[3.0, 0.0, 0.0]])
+            .unwrap();
+        for _ in 0..50 {
+            state = ig.advance(state).unwrap();
+        }
+        assert!(state.pos[[0, 0]] > 100.0, "nothing folded it back");
+        assert_eq!(state.images.row(0).to_vec(), vec![0_i64; 3]);
+    }
+
+    /// Wrapping must not change the physics: the same run, started from a
+    /// configuration shifted by a whole cell, produces the same wrapped
+    /// coordinates and the same energies. The flags differ by exactly that
+    /// shift, which is what tells the two runs apart.
+    #[test]
+    fn a_lattice_shifted_start_is_the_same_trajectory() {
+        let l = 10.0_f64;
+        let bx = SimBox::cube(l, array![0.0, 0.0, 0.0], [true, true, true]).unwrap();
+        let run = |start: FNx3| {
+            let mut ig = VelocityVerlet::new(
+                1.0,
+                Potentials::new(),
+                PairSource::None,
+                scalar_mass(1.0, 2).unwrap().view(),
+                Some(bx.clone()),
+            )
+            .unwrap();
+            let mut st = ig
+                .initial(start, array![[0.3, 0.0, 0.0], [-0.2, 0.1, 0.0]])
+                .unwrap();
+            for _ in 0..120 {
+                st = ig.advance(st).unwrap();
+            }
+            st
+        };
+
+        let a = run(array![[1.0, 5.0, 5.0], [6.0, 5.0, 5.0]]);
+        // The same configuration, three cells over in x and one in y.
+        let b = run(array![[31.0, 15.0, 5.0], [36.0, 15.0, 5.0]]);
+
+        for i in 0..2 {
+            for d in 0..3 {
+                assert!(
+                    (a.pos[[i, d]] - b.pos[[i, d]]).abs() < 1e-9,
+                    "atom {i} axis {d}: wrapped positions must agree"
+                );
+            }
+        }
+        assert!((a.energy - b.energy).abs() < 1e-12);
     }
 }

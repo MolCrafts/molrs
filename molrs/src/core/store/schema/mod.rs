@@ -81,10 +81,10 @@ macro_rules! col {
 }
 
 use ColShape::Scalar;
-// No canonical column is `Int`: every identifier is unsigned and every
-// physical quantity is float. `Int` returns to this list the day a signed
-// integer quantity is genuinely needed.
-use DType::{Float, String as Str, UInt};
+// Identifiers are unsigned and physical quantities are float. `Int` is here for
+// the one kind of value that is neither: a periodic image flag, which counts
+// cell crossings and must be able to count them backwards.
+use DType::{Float, Int, String as Str, UInt};
 
 /// Every canonical column, sorted by key.
 ///
@@ -187,6 +187,30 @@ pub static SCHEMA_COLUMNS: &[ColumnSpec] = &[
         Scalar,
         "",
         "Whether a non-bonded pair is a 1-4 (third-neighbour) pair."
+    ),
+    col!(
+        "ix",
+        "IX",
+        Int,
+        Scalar,
+        "",
+        "Periodic image flag along the first lattice vector: how many cells this atom has crossed. The continuous position is `xyz + H·(ix, iy, iz)`; the stored coordinate itself stays wrapped. Signed, because an atom can cross back."
+    ),
+    col!(
+        "iy",
+        "IY",
+        Int,
+        Scalar,
+        "",
+        "Periodic image flag along the second lattice vector. See `ix`."
+    ),
+    col!(
+        "iz",
+        "IZ",
+        Int,
+        Scalar,
+        "",
+        "Periodic image flag along the third lattice vector. See `ix`."
     ),
     col!("mass", "MASS", Float, Scalar, "amu", "Atomic mass."),
     col!(
@@ -457,6 +481,18 @@ pub mod consts {
     pub const Z: &str = "z";
     /// The three Cartesian coordinate keys, in axis order.
     pub const COORDS: [&str; 3] = [X, Y, Z];
+    /// Periodic image flag along the first lattice vector.
+    pub const IX: &str = "ix";
+    /// Periodic image flag along the second lattice vector.
+    pub const IY: &str = "iy";
+    /// Periodic image flag along the third lattice vector.
+    pub const IZ: &str = "iz";
+    /// The three image-flag keys, in lattice-vector order.
+    ///
+    /// They travel with [`COORDS`]: a wrapped coordinate without its flags has
+    /// lost the atom's history, and a reader that finds one without the other
+    /// cannot reconstruct a continuous trajectory.
+    pub const IMAGES: [&str; 3] = [IX, IY, IZ];
     /// Element symbol.
     pub const ELEMENT: &str = "element";
     /// Atomic number Z.
@@ -625,6 +661,9 @@ mod tests {
             consts::X,
             consts::Y,
             consts::Z,
+            consts::IX,
+            consts::IY,
+            consts::IZ,
             consts::ELEMENT,
             consts::ATOMIC_NUMBER,
             consts::BEAD_TYPE,

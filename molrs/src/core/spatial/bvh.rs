@@ -223,6 +223,53 @@ impl Bvh {
             || self.any_within_in(left + 1, p, threshold, metric)
     }
 
+    /// Visit every item whose metric is within `radius`.
+    ///
+    /// The same descent as [`any_within`](Self::any_within) without the
+    /// short-circuit: a cutoff search wants all of them, not the first. The
+    /// visitor is called once per item that passes, in whatever order the
+    /// descent reaches it — a BVH walk owes no ordering, and a cutoff pair
+    /// table does not depend on one.
+    pub(crate) fn for_each_within<M, V>(&self, p: &[F; 3], radius: F, mut metric: M, mut visit: V)
+    where
+        M: FnMut(u32) -> F,
+        V: FnMut(u32, F),
+    {
+        if !self.order.is_empty() {
+            self.for_each_within_in(0, p, radius, &mut metric, &mut visit);
+        }
+    }
+
+    fn for_each_within_in<M, V>(
+        &self,
+        n: usize,
+        p: &[F; 3],
+        radius: F,
+        metric: &mut M,
+        visit: &mut V,
+    ) where
+        M: FnMut(u32) -> F,
+        V: FnMut(u32, F),
+    {
+        let node = &self.nodes[n];
+        if box_dist(node, p) > radius.max(0.0) {
+            return;
+        }
+        if node.count > 0 {
+            let end = (node.first + node.count) as usize;
+            for &i in &self.order[node.first as usize..end] {
+                let d = metric(i);
+                if d <= radius {
+                    visit(i, d);
+                }
+            }
+            return;
+        }
+        let left = node.first as usize;
+        self.for_each_within_in(left, p, radius, metric, visit);
+        self.for_each_within_in(left + 1, p, radius, metric, visit);
+    }
+
     /// How many items `hit` reports along the ray from `origin`.
     ///
     /// `inv` is the componentwise reciprocal of the direction; the caller owns

@@ -7,7 +7,7 @@ Project standard for molrs scientific correctness. Applied by the
 
 - Classical MD force fields: LJ, Coulomb, harmonic bonds/angles, MMFF94, OPLS-AA, AMBER
 - Integration algorithms: velocity-Verlet, RESPA
-- Neighbor list algorithms: cell list, Verlet list
+- Neighbor list algorithms: cell list, bounding-volume hierarchy (AABB), Verlet list
 - Periodic boundary conditions: minimum image, triclinic cells
 - Constraint algorithms: SHAKE, RATTLE, LINCS
 - Statistical mechanics: thermostats, barostats, ensemble averages

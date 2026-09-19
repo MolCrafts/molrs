@@ -6,16 +6,22 @@
 //! Primary entry: [`crate::optimize::Optimizer::run`] on a [`Frame`].
 //! [`crate::optimize::LBFGS`] is the default limited-memory BFGS implementation.
 //! Soft packing rebuilds go through
-//! [`SoftSpec::into_optimizer`](crate::ff::potential::soft::SoftSpec::into_optimizer).
+//! [`crate::optimize::SoftLbfgs::new`] over a
+//! [`crate::optimize::SoftSpec`].
 
 pub mod lbfgs;
+pub mod soft;
+
+pub use soft::SoftSpec;
 
 use std::sync::Arc;
 
+use crate::spatial::simbox::BoxKind;
+
+use crate::ff::potential::Potential;
+use crate::store::frame::Frame;
+use crate::types::F;
 use lbfgs::{Converge, fmax_from_grad, minimize_core};
-use molrs::ff::potential::Potential;
-use molrs::store::frame::Frame;
-use molrs::types::F;
 use ndarray::Array1;
 
 pub use lbfgs::{MinResult, minimize_lbfgs_rms};
@@ -346,21 +352,21 @@ impl Optimizer for LBFGS {
 
 /// SoftSpec-backed optimizer: rebuilds non-bonded pairs from the Frame each run.
 pub struct SoftLbfgs {
-    spec: crate::ff::potential::soft::SoftSpec,
+    spec: soft::SoftSpec,
     fmax: F,
     max_steps: usize,
     max_step: F,
     memory: usize,
     /// Cached bonded terms (r0/a0 + shifts) from the first run.
     bonded: Option<(
-        Vec<crate::ff::potential::soft::HarmTerm>,
-        Vec<crate::ff::potential::soft::HarmTerm>,
+        Vec<molrs::ff::potential::soft::HarmTerm>,
+        Vec<molrs::ff::potential::soft::HarmTerm>,
     )>,
 }
 
 impl SoftLbfgs {
     pub fn new(
-        spec: crate::ff::potential::soft::SoftSpec,
+        spec: soft::SoftSpec,
         fmax: F,
         max_steps: usize,
         max_step: F,
@@ -376,7 +382,7 @@ impl SoftLbfgs {
         }
     }
 
-    pub fn with_defaults(spec: crate::ff::potential::soft::SoftSpec) -> Self {
+    pub fn with_defaults(spec: soft::SoftSpec) -> Self {
         Self::new(spec, 0.05, 500, 0.2, 8)
     }
 }
@@ -401,7 +407,7 @@ impl Optimizer for SoftLbfgs {
         }
         let (bonds, angles) = self.bonded.as_ref().unwrap().clone();
         let nb = self.spec.build_nb(&xyz, box_edge);
-        let pot = crate::ff::potential::soft::SoftPotential::new(
+        let pot = molrs::ff::potential::soft::SoftPotential::new(
             bonds,
             angles,
             nb,
@@ -445,6 +451,13 @@ fn frame_free_mask(frame: &Frame, n_atoms: usize) -> Result<Option<Vec<bool>>, S
 
 fn frame_box_edge(frame: &Frame) -> Option<F> {
     let sb = frame.simbox.as_ref()?;
+    // Equal lattice-vector lengths do not make a cell cubic: a rhombohedral
+    // cell has three equal edges and three non-right angles, and feeding its
+    // edge to the cubic minimum image below would fold displacements against a
+    // box that is not there. Only an orthorhombic cell can answer this.
+    if !matches!(sb.kind(), BoxKind::Ortho { .. }) {
+        return None;
+    }
     // Use the first lattice length as cubic edge when available.
     let lengths = sb.lengths();
     let l0 = lengths[0];
@@ -477,7 +490,7 @@ pub fn set_free_mask(frame: &mut Frame, free: &[bool]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::store::block::Block;
+    use crate::store::block::Block;
     use std::sync::Arc;
 
     struct HarmonicBond {

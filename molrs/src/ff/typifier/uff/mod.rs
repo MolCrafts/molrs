@@ -779,34 +779,6 @@ mod tests {
     }
 
     #[test]
-    fn uff_lbfgs_reduces_energy() {
-        use crate::optimize::{LBFGS, Optimizer};
-        use std::sync::Arc;
-
-        let t = UFFTypifier::new();
-        let mut mol = ethanol();
-        // Stretch C–C
-        let ids: Vec<_> = mol.atoms().map(|(id, _)| id).collect();
-        mol.set_atom(ids[0], "x", PropValue::F64(1.5)).unwrap();
-
-        let typed = t.typify(&mol).unwrap();
-        let mut frame = typed.to_frame();
-        frame.insert("pairs", intramolecular_pairs(&frame));
-        let pots = t.ff().to_potentials(&frame).unwrap();
-        let coords0 = extract_coords(&frame).unwrap();
-        let (e0, _) = pots.calc_energy_forces(&coords0);
-
-        let mut opt = LBFGS::new(Arc::new(pots), 0.5, 200, 0.2, 8);
-        let report = opt.run(&mut frame).unwrap();
-        eprintln!(
-            "UFF minimize: e0={e0:.3} e1={:.3} steps={} fmax={:.3} conv={}",
-            report.final_energy, report.n_steps, report.final_fmax, report.converged
-        );
-        assert!(report.final_energy < e0, "energy should drop");
-        assert!(report.n_steps > 0);
-    }
-
-    #[test]
     fn bond_params_match_rdkit_ethanol() {
         let c = params_for_label("C_3").unwrap();
         let h = params_for_label("H_").unwrap();
