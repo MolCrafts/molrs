@@ -364,6 +364,14 @@ pub(crate) fn gather_copies<T: Clone>(v: &mut Vec<T>, n_owned: usize, owner: &[u
 /// caller's job (`UnitPreset`), never this type's.
 pub struct Potentials {
     inner: Vec<Box<dyn Potential>>,
+    /// Which members hold atom indices, recorded when each was pushed.
+    ///
+    /// `terms()` *allocates* the table it answers with, so asking it "is this a
+    /// bonded term?" once per member per step is an allocation per bonded
+    /// member per step. The question is settled when the member is. That it
+    /// had to be asked at all is a symptom: a member's *role* is being
+    /// recovered at runtime from a method whose job is to return data.
+    holds_indices: Vec<bool>,
     /// Number of atoms the kernels were compiled against (`coords.len() / 3`).
     /// `0` when unknown (e.g. built incrementally via [`Potentials::push`]).
     n_atoms: usize,
@@ -381,11 +389,13 @@ impl Potentials {
     pub fn new() -> Self {
         Self {
             inner: Vec::new(),
+            holds_indices: Vec::new(),
             n_atoms: 0,
         }
     }
 
     pub fn push(&mut self, pot: Box<dyn Potential>) {
+        self.holds_indices.push(pot.terms().is_some());
         self.inner.push(pot);
     }
 
@@ -557,13 +567,13 @@ impl Potential for Potentials {
     ) -> (F, Option<Virial>) {
         let mut total_e: F = 0.0;
         let mut total_w = Some(Virial::ZERO);
-        for p in &self.inner {
+        for (k, p) in self.inner.iter().enumerate() {
             // A per-pair weight belongs to a member that reads the pair table.
             // A member holding atom indices is a bonded term: it ignores the
             // table, and its own interaction is the thing the weights exist to
             // avoid double-counting — scaling it would be scaling the wrong
             // side of that.
-            let mine: &[F] = if p.terms().is_some() { &[] } else { factor };
+            let mine: &[F] = if self.holds_indices[k] { &[] } else { factor };
             let (e, w) = p.accumulate_pairs(coords, pairs, mine, out);
             total_e += e;
             match (total_w.as_mut(), w) {
