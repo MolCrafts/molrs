@@ -190,22 +190,43 @@ impl MMFFVdW {
         n_pairs: usize,
         pair: impl Fn(usize) -> (usize, usize, F, F, [F; 3]),
     ) -> (F, Vec<F>, Virial) {
+        let mut forces = vec![0.0; n_components];
+        let (energy, virial) = self.fold_into(&mut forces, &[], n_pairs, pair);
+        (energy, forces, virial)
+    }
+
+    /// The accumulation, adding into the caller's buffer and scaling each pair.
+    fn fold_into(
+        &self,
+        out: &mut [F],
+        factor: &[F],
+        n_pairs: usize,
+        pair: impl Fn(usize) -> (usize, usize, F, F, [F; 3]),
+    ) -> (F, Virial) {
         let mut energy: F = 0.0;
-        let mut forces = vec![0.0 as F; n_components];
         let mut virial = Virial::ZERO;
         for idx in 0..n_pairs {
+            let w = if factor.is_empty() { 1.0 } else { factor[idx] };
+            // Exactly zero *skips*: a bonded pair sits at bond length,
+            // where a repulsive term is enormous, and scaling it by zero
+            // would be arithmetic on a number that should never have been
+            // computed.
+            if w == 0.0 {
+                continue;
+            }
             let (i, j, rs, eps, d) = pair(idx);
             let Some((e, f)) = self.pair_kernel(d, rs, eps) else {
                 continue;
             };
-            energy += e;
+            let f = [w * f[0], w * f[1], w * f[2]];
+            energy += w * e;
             virial.add_outer(f, d);
             for dim in 0..3 {
-                forces[j * 3 + dim] += f[dim];
-                forces[i * 3 + dim] -= f[dim];
+                out[j * 3 + dim] += f[dim];
+                out[i * 3 + dim] -= f[dim];
             }
         }
-        (energy, forces, virial)
+        (energy, virial)
     }
 }
 
@@ -238,17 +259,36 @@ impl Potential for MMFFVdW {
         coords: &[F],
         pairs: &Neighbors,
     ) -> (F, Vec<F>, Option<Virial>) {
+        let mut forces = vec![0.0; coords.len()];
+        let (e, w) = self.accumulate_pairs(coords, pairs, &[], &mut forces);
+        (e, forces, w)
+    }
+
+    fn accumulate_pairs(
+        &self,
+        coords: &[F],
+        pairs: &Neighbors,
+        factor: &[F],
+        out: &mut [F],
+    ) -> (F, Option<Virial>) {
         let Source::PerAtom { atoms, style, .. } = &self.source else {
             // A compiled kernel answers for its own list, not for this one.
+            // A compiled kernel cannot read the table, so it cannot read a
+            // per-pair weight either. Both providers refuse one, so this is
+            // the free-boundary path and `factor` is empty.
+            debug_assert!(factor.is_empty());
             let (e, f) = self.calc_energy_forces(coords);
-            return (e, f, None);
+            for (acc, v) in out.iter_mut().zip(&f) {
+                *acc += v;
+            }
+            return (e, None);
         };
         let Some(disp) = pairs.disp() else {
-            return (0.0, vec![0.0 as F; coords.len()], None);
+            return (0.0, None);
         };
         let i_col = pairs.query_point_indices();
         let j_col = pairs.point_indices();
-        let (e, f, w) = self.fold(coords.len(), i_col.len(), |p| {
+        let (e, w) = self.fold_into(out, factor, i_col.len(), |p| {
             let i = i_col[p] as usize;
             let j = j_col[p] as usize;
             debug_assert!(
@@ -258,7 +298,7 @@ impl Potential for MMFFVdW {
             let (rs, eps) = vdw_combining(&atoms[i], &atoms[j], style);
             (i, j, rs, eps, [disp[[p, 0]], disp[[p, 1]], disp[[p, 2]]])
         });
-        (e, f, Some(w))
+        (e, Some(w))
     }
 
     fn gather_onto_copies(&mut self, owner: &[u32]) {

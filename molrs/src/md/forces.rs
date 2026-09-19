@@ -49,7 +49,7 @@ use ndarray::{Array2, ArrayView2};
 use molrs::ff::potential::Potential;
 use molrs::math::Virial;
 use molrs::spatial::neighbors::VerletSkin;
-use molrs::types::{F, FNx3View};
+use molrs::types::{F, FNx3, FNx3View};
 
 use super::error::MdError;
 use super::pairs::{BondedLists, Comm, SpecialWeights};
@@ -200,6 +200,11 @@ pub struct MicPairs {
     /// Which members hold atom indices, and so take no pair table.
     holds_indices: Vec<bool>,
     skin: VerletSkin,
+    /// Force accumulator, reused across steps. Every member adds into it, so
+    /// a step allocates one of these rather than one per member.
+    acc: FNx3,
+    /// Per-pair weights for the member being evaluated, reused across steps.
+    factors: Vec<F>,
 }
 
 impl MicPairs {
@@ -232,6 +237,8 @@ impl MicPairs {
             special,
             holds_indices,
             skin,
+            acc: FNx3::zeros((0, 3)),
+            factors: Vec::new(),
         })
     }
 }
@@ -244,49 +251,46 @@ impl ForceProvider for MicPairs {
     ) -> Result<ForceOutput, MdError> {
         let n_atoms = pos.nrows();
         let pairs = self.skin.pairs_at(pos)?;
-        let flat: Vec<F> = match pos.as_slice() {
-            Some(s) => s.to_vec(),
-            None => pos.iter().copied().collect(),
+        // Borrowed, not copied: a standard-layout `(N, 3)` view *is* the flat
+        // `[x0, y0, z0, x1, …]` a kernel wants, so there is nothing to convert.
+        let owned_copy: Vec<F>;
+        let flat: &[F] = match pos.as_slice() {
+            Some(sl) => sl,
+            None => {
+                owned_copy = pos.iter().copied().collect();
+                &owned_copy
+            }
         };
 
+        if self.acc.nrows() != n_atoms {
+            self.acc = Array2::zeros((n_atoms, 3));
+        } else {
+            self.acc.fill(0.0);
+        }
+        let acc = self
+            .acc
+            .as_slice_mut()
+            .expect("a freshly shaped array is standard layout");
+
         let mut energy = 0.0;
-        let mut forces = vec![0.0; flat.len()];
         // `None` the moment any member declines to report one: a virial missing
         // a term is not a small error, it is a different quantity.
         let mut virial = Some(Virial::ZERO);
-        let mut accumulate =
-            |m: usize, (e, f, w_pair): (F, Vec<F>, Option<Virial>), w: F| -> Result<(), MdError> {
-                if f.len() != forces.len() {
-                    return Err(MdError::Invalid(format!(
-                        "member {m} returned {} force components for {n_atoms} atoms",
-                        f.len()
-                    )));
-                }
-                energy += w * e;
-                for (acc, v) in forces.iter_mut().zip(&f) {
-                    *acc += w * v;
-                }
-                match (virial.as_mut(), w_pair) {
-                    (Some(total), Some(part)) => {
-                        for c in 0..6 {
-                            total.components[c] += w * part.components[c];
-                        }
-                    }
-                    // One member that cannot tally makes the whole sum
-                    // unreportable; it does not make it smaller.
-                    (_, None) => virial = None,
-                    (None, _) => {}
-                }
-                Ok(())
-            };
-        for (m, member) in self.members.iter().enumerate() {
-            if self.holds_indices[m] {
+        for m in 0..self.members.len() {
+            let member = &self.members[m];
+            let (e, part) = if self.holds_indices[m] {
                 // A bonded term reads its own indices, not the pair table — and
                 // it needs no kernel-side tally. Its forces sum to zero term by
                 // term and no periodic image entered the geometry, so
                 // `Σ_a f_a ⊗ x_a` over the stored coordinates *is* its virial,
                 // and is independent of where the cell's origin falls.
-                let (e, f) = member.calc_energy_forces(&flat);
+                let (e, f) = member.calc_energy_forces(flat);
+                if f.len() != acc.len() {
+                    return Err(MdError::Invalid(format!(
+                        "member {m} returned {} force components for {n_atoms} atoms",
+                        f.len()
+                    )));
+                }
                 let mut w_term = Virial::ZERO;
                 for a in 0..n_atoms {
                     w_term.add_outer(
@@ -294,37 +298,32 @@ impl ForceProvider for MicPairs {
                         [flat[a * 3], flat[a * 3 + 1], flat[a * 3 + 2]],
                     );
                 }
-                accumulate(m, (e, f, Some(w_term)), 1.0)?;
+                for (dst, v) in acc.iter_mut().zip(&f) {
+                    *dst += v;
+                }
+                (e, Some(w_term))
             } else if self.special[m].is_empty() {
-                accumulate(
-                    m,
-                    member.calc_energy_forces_with_pairs_virial(&flat, pairs),
-                    1.0,
-                )?;
+                member.accumulate_pairs(flat, pairs, &[], acc)
             } else {
                 // No copies here, so an index *is* its own owner.
-                let (main, scaled) = self.special[m].split(pairs, n_atoms, &[]);
-                accumulate(
-                    m,
-                    member.calc_energy_forces_with_pairs_virial(&flat, &main),
-                    1.0,
-                )?;
-                for (w, table) in &scaled {
-                    accumulate(
-                        m,
-                        member.calc_energy_forces_with_pairs_virial(&flat, table),
-                        *w,
-                    )?;
+                self.special[m].fill_factors(pairs, n_atoms, &[], &mut self.factors);
+                member.accumulate_pairs(flat, pairs, &self.factors, acc)
+            };
+            energy += e;
+            match (virial.as_mut(), part) {
+                (Some(total), Some(p)) => {
+                    for c in 0..6 {
+                        total.components[c] += p.components[c];
+                    }
                 }
+                (_, None) => virial = None,
+                (None, _) => {}
             }
         }
 
-        let forces = Array2::from_shape_vec((n_atoms, 3), forces).map_err(|_| {
-            MdError::Invalid(format!("force components do not fit {n_atoms} atoms"))
-        })?;
         Ok(ForceOutput {
             energy,
-            forces,
+            forces: self.acc.clone(),
             virial,
         })
     }
@@ -370,6 +369,10 @@ pub struct GhostPairs {
     /// The copy-list generation the members' per-atom state was gathered for,
     /// or `None` before the first gather.
     gathered: Option<u64>,
+    /// Force accumulator over `[owned | ghost]`, reused across steps.
+    acc: FNx3,
+    /// Per-pair weights for the member being evaluated, reused across steps.
+    factors: Vec<F>,
 }
 
 impl GhostPairs {
@@ -411,6 +414,8 @@ impl GhostPairs {
             lists,
             special,
             gathered: None,
+            acc: FNx3::zeros((0, 3)),
+            factors: Vec::new(),
         })
     }
 
@@ -434,8 +439,6 @@ impl ForceProvider for GhostPairs {
         // cover the copies, because the pair table names them. That state is
         // *derived* from the owners', so a rebuild invalidates it and nothing
         // else does: a fold relabels an atom without changing what it is.
-        // (An index resolution is invalidated by both, which is why
-        // `BondedLists` below is asked every step and this is not.)
         let generation = self.comm.ghosts().generation();
         if self.gathered != Some(generation) {
             let owner = self.comm.ghosts().owner();
@@ -445,60 +448,79 @@ impl ForceProvider for GhostPairs {
             self.gathered = Some(generation);
         }
         self.lists.refresh(&self.comm, pos, wrap_shifts)?;
-        let pairs = self.comm.pairs(pos)?;
-        let all = self.comm.combined(pos)?;
-        let n_all = all.nrows();
-        let flat: Vec<F> = all.iter().copied().collect();
 
-        let mut energy = 0.0;
-        let mut forces = vec![0.0; flat.len()];
-        let mut accumulate = |m: usize, (e, f): (F, Vec<F>), w: F| -> Result<(), MdError> {
-            if f.len() != forces.len() {
-                return Err(MdError::Invalid(format!(
-                    "member {m} returned {} force components for {n_all} owned+ghost rows",
-                    f.len()
-                )));
+        // Both are reads: `advance` filled them.
+        let pairs = self.comm.pairs();
+        let all = self.comm.combined();
+        let n_all = all.nrows();
+        let owned_copy: Vec<F>;
+        let flat: &[F] = match all.as_slice() {
+            Some(sl) => sl,
+            None => {
+                owned_copy = all.iter().copied().collect();
+                &owned_copy
             }
-            energy += w * e;
-            for (acc, v) in forces.iter_mut().zip(&f) {
-                *acc += w * v;
-            }
-            Ok(())
         };
-        for (m, member) in self.members.iter().enumerate() {
-            match self.lists.current(m) {
+
+        if self.acc.nrows() != n_all {
+            self.acc = Array2::zeros((n_all, 3));
+        } else {
+            self.acc.fill(0.0);
+        }
+        let acc = self
+            .acc
+            .as_slice_mut()
+            .expect("a freshly shaped array is standard layout");
+
+        let set = self.comm.ghosts();
+        let mut energy = 0.0;
+        for m in 0..self.members.len() {
+            let member = &self.members[m];
+            let e = match self.lists.current(m) {
                 // A member holding atom indices is a bonded term: it reads no
                 // pair table, so no weight applies to it.
                 Some(terms) => {
-                    accumulate(m, member.calc_energy_forces_with_terms(&flat, terms), 1.0)?
+                    let (e, f) = member.calc_energy_forces_with_terms(flat, terms);
+                    if f.len() != acc.len() {
+                        return Err(MdError::Invalid(format!(
+                            "member {m} returned {} force components for {n_all} \
+                             owned+ghost rows",
+                            f.len()
+                        )));
+                    }
+                    for (dst, v) in acc.iter_mut().zip(&f) {
+                        *dst += v;
+                    }
+                    e
                 }
                 None if self.special[m].is_empty() => {
-                    accumulate(m, member.calc_energy_forces_with_pairs(&flat, &pairs), 1.0)?
+                    member.accumulate_pairs(flat, pairs, &[], acc).0
                 }
                 None => {
-                    let set = self.comm.ghosts();
-                    let (main, scaled) = self.special[m].split(&pairs, set.n_owned(), set.owner());
-                    accumulate(m, member.calc_energy_forces_with_pairs(&flat, &main), 1.0)?;
-                    for (w, table) in &scaled {
-                        accumulate(m, member.calc_energy_forces_with_pairs(&flat, table), *w)?;
-                    }
+                    self.special[m].fill_factors(
+                        pairs,
+                        set.n_owned(),
+                        set.owner(),
+                        &mut self.factors,
+                    );
+                    member.accumulate_pairs(flat, pairs, &self.factors, acc).0
                 }
-            }
+            };
+            energy += e;
         }
 
-        let mut f = Array2::from_shape_vec((n_all, 3), forces).map_err(|_| {
-            MdError::Invalid(format!(
-                "force components do not fit {n_all} owned+ghost rows"
-            ))
-        })?;
         // Reverse accumulation: a copy's force belongs to the atom it copies.
         // The virial is tallied from the copy forces *before* they are reduced
-        // — afterwards the information it needs is gone.
-        let virial = self.comm.reverse_comm_with_virial(&mut f, all.view())?;
-        f.slice_collapse(ndarray::s![..pos.nrows(), ..]);
+        // — afterwards the information it needs is gone. This covers every
+        // member, bonded included, which is why the kernels' own tallies are
+        // not summed here.
+        let virial = self
+            .comm
+            .reverse_comm_with_virial(&mut self.acc, all.view())?;
+        let forces = self.acc.slice(ndarray::s![..pos.nrows(), ..]).to_owned();
         Ok(ForceOutput {
             energy,
-            forces: f.to_owned(),
+            forces,
             virial: Some(virial),
         })
     }

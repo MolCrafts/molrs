@@ -439,8 +439,7 @@ impl LJCut {
     /// where `(σ, ε)` comes from: there, one style-level pair; here, the
     /// type-pair table. The geometry is already reduced either way — this
     /// kernel never learns whether a neighbour is an owned atom or a copy.
-    fn fold_typed(&self, coords: &[F], pairs: &Neighbors) -> (F, Vec<F>, Virial) {
-        let mut forces = vec![0.0; coords.len()];
+    fn fold_typed(&self, out: &mut [F], factor: &[F], pairs: &Neighbors) -> (F, Virial) {
         let mut virial = Virial::ZERO;
         let PairSource::Typed {
             type_id,
@@ -452,16 +451,22 @@ impl LJCut {
             ..
         } = &self.source
         else {
-            return (0.0, forces, virial);
+            return (0.0, virial);
         };
         let Some(disp) = pairs.disp() else {
-            return (0.0, forces, virial);
+            return (0.0, virial);
         };
         let i = pairs.query_point_indices();
         let j = pairs.point_indices();
         let d2 = pairs.dist_sq();
         let mut energy = 0.0;
         for p in 0..i.len() {
+            let w = if factor.is_empty() { 1.0 } else { factor[p] };
+            // Exactly zero skips: a bonded pair sits at bond length,
+            // where this term is enormous.
+            if w == 0.0 {
+                continue;
+            }
             let ia = i[p] as usize;
             let ja = j[p] as usize;
             let (Some(&ti), Some(&tj)) = (type_id.get(ia), type_id.get(ja)) else {
@@ -494,30 +499,36 @@ impl LJCut {
             ) else {
                 continue;
             };
-            energy += e;
+            let f = [w * f[0], w * f[1], w * f[2]];
+            energy += w * e;
             virial.add_outer(f, d);
             let (bj, bi) = (3 * ja, 3 * ia);
-            forces[bj] += f[0];
-            forces[bj + 1] += f[1];
-            forces[bj + 2] += f[2];
-            forces[bi] -= f[0];
-            forces[bi + 1] -= f[1];
-            forces[bi + 2] -= f[2];
+            out[bj] += f[0];
+            out[bj + 1] += f[1];
+            out[bj + 2] += f[2];
+            out[bi] -= f[0];
+            out[bi + 1] -= f[1];
+            out[bi + 2] -= f[2];
         }
-        (energy, forces, virial)
+        (energy, virial)
     }
 
-    fn fold_neighbors(&self, coords: &[F], pairs: &Neighbors) -> (F, Vec<F>, Virial) {
-        let mut forces = vec![0.0; coords.len()];
+    fn fold_neighbors(&self, out: &mut [F], factor: &[F], pairs: &Neighbors) -> (F, Virial) {
         let mut virial = Virial::ZERO;
         let Some(disp) = pairs.disp() else {
-            return (0.0, forces, virial);
+            return (0.0, virial);
         };
         let i = pairs.query_point_indices();
         let j = pairs.point_indices();
         let d2 = pairs.dist_sq();
         let mut energy = 0.0;
         for p in 0..i.len() {
+            let w = if factor.is_empty() { 1.0 } else { factor[p] };
+            // Exactly zero skips: a bonded pair sits at bond length,
+            // where this term is enormous.
+            if w == 0.0 {
+                continue;
+            }
             let ia = i[p] as usize;
             let ja = j[p] as usize;
             let d = [disp[[p, 0]], disp[[p, 1]], disp[[p, 2]]];
@@ -528,18 +539,19 @@ impl LJCut {
             let Some((e, f)) = self.pair_kernel(r2, d) else {
                 continue;
             };
-            energy += e;
+            let f = [w * f[0], w * f[1], w * f[2]];
+            energy += w * e;
             virial.add_outer(f, d);
             let bj = 3 * ja;
             let bi = 3 * ia;
-            forces[bj] += f[0];
-            forces[bj + 1] += f[1];
-            forces[bj + 2] += f[2];
-            forces[bi] -= f[0];
-            forces[bi + 1] -= f[1];
-            forces[bi + 2] -= f[2];
+            out[bj] += f[0];
+            out[bj + 1] += f[1];
+            out[bj + 2] += f[2];
+            out[bi] -= f[0];
+            out[bi + 1] -= f[1];
+            out[bi + 2] -= f[2];
         }
-        (energy, forces, virial)
+        (energy, virial)
     }
 
     /// Compose `pairs_at` + table fold. Neighbour search stays the caller's.
@@ -591,21 +603,37 @@ impl Potential for LJCut {
         coords: &[F],
         pairs: &Neighbors,
     ) -> (F, Vec<F>, Option<Virial>) {
+        let mut forces = vec![0.0; coords.len()];
+        let (e, w) = self.accumulate_pairs(coords, pairs, &[], &mut forces);
+        (e, forces, w)
+    }
+
+    fn accumulate_pairs(
+        &self,
+        coords: &[F],
+        pairs: &Neighbors,
+        factor: &[F],
+        out: &mut [F],
+    ) -> (F, Option<Virial>) {
         match &self.source {
             // A compiled list is an intramolecular sum with no cutoff and no
             // periodicity; a virial from its raw differences would be a number
-            // about nothing.
+            // about nothing, and it cannot read a per-pair weight either.
             PairSource::Compiled { .. } => {
+                debug_assert!(factor.is_empty());
                 let (e, f) = self.fold_compiled(coords);
-                (e, f, None)
+                for (acc, v) in out.iter_mut().zip(&f) {
+                    *acc += v;
+                }
+                (e, None)
             }
             PairSource::Loop => {
-                let (e, f, w) = self.fold_neighbors(coords, pairs);
-                (e, f, Some(w))
+                let (e, w) = self.fold_neighbors(out, factor, pairs);
+                (e, Some(w))
             }
             PairSource::Typed { .. } => {
-                let (e, f, w) = self.fold_typed(coords, pairs);
-                (e, f, Some(w))
+                let (e, w) = self.fold_typed(out, factor, pairs);
+                (e, Some(w))
             }
         }
     }

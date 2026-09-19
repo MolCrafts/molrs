@@ -191,6 +191,52 @@ pub trait Potential: Send + Sync {
         (e, f, None)
     }
 
+    /// Add this kernel's contribution over a pair table into `out`, scaling
+    /// each pair.
+    ///
+    /// Three things at once, and each of them is the reason the other two are
+    /// here:
+    ///
+    /// * **`factor`** is one weight per pair, aligned with the table's rows, or
+    ///   empty meaning all ones. A weight of exactly zero *skips* the pair
+    ///   rather than multiplying it, because a bonded pair sits at bond length
+    ///   where a repulsive term is enormous. Carrying the weights per pair is
+    ///   what lets a caller stop rebuilding the pair table once per distinct
+    ///   weight.
+    /// * **`out`** is the caller's accumulator, `3 · n_atoms` long, added into
+    ///   rather than returned. A provider summing several members then owns one
+    ///   buffer for the whole step instead of one allocation per member per
+    ///   step — and a thread can be handed a slice of something the caller owns,
+    ///   where it cannot be handed a slice of something the callee allocates.
+    /// * **the virial** comes back with the energy, from the same loop, for the
+    ///   reason [`calc_energy_forces_with_pairs_virial`](Potential::calc_energy_forces_with_pairs_virial)
+    ///   gives.
+    ///
+    /// Default: evaluate the ordinary way and add, **ignoring `factor`** —
+    /// which is correct for a potential that does not sum over the pair table
+    /// at all (an external field, a restraint, a constant force), and wrong for
+    /// one that does.
+    ///
+    /// **A kernel that sums over the pair table must override this.** Nothing
+    /// can check it: the default cannot tell a potential that has no pairs to
+    /// weight from one that has and forgot to say so, and every in-tree pair
+    /// kernel overrides. A third-party one that does not would silently lose
+    /// its force field's exclusions.
+    fn accumulate_pairs(
+        &self,
+        coords: &[F],
+        pairs: &Neighbors,
+        factor: &[F],
+        out: &mut [F],
+    ) -> (F, Option<Virial>) {
+        let _ = factor;
+        let (e, f, w) = self.calc_energy_forces_with_pairs_virial(coords, pairs);
+        for (acc, v) in out.iter_mut().zip(&f) {
+            *acc += v;
+        }
+        (e, w)
+    }
+
     /// Whether this kernel's parameters are bound to one fixed pair list.
     ///
     /// Such a kernel answers for **that** list and no other. Handed a
@@ -250,6 +296,16 @@ impl Potential for Box<dyn Potential> {
         pairs: &Neighbors,
     ) -> (F, Vec<F>, Option<Virial>) {
         (**self).calc_energy_forces_with_pairs_virial(coords, pairs)
+    }
+
+    fn accumulate_pairs(
+        &self,
+        coords: &[F],
+        pairs: &Neighbors,
+        factor: &[F],
+        out: &mut [F],
+    ) -> (F, Option<Virial>) {
+        (**self).accumulate_pairs(coords, pairs, factor, out)
     }
 
     fn binds_a_fixed_pair_list(&self) -> bool {
@@ -488,6 +544,39 @@ impl Potential for Potentials {
     /// [`into_members`](Potentials::into_members) is for.
     fn terms(&self) -> Option<Array2<u32>> {
         None
+    }
+
+    /// Every member accumulates into the same buffer, and one member that
+    /// cannot report a virial makes the aggregate's `None`.
+    fn accumulate_pairs(
+        &self,
+        coords: &[F],
+        pairs: &Neighbors,
+        factor: &[F],
+        out: &mut [F],
+    ) -> (F, Option<Virial>) {
+        let mut total_e: F = 0.0;
+        let mut total_w = Some(Virial::ZERO);
+        for p in &self.inner {
+            // A per-pair weight belongs to a member that reads the pair table.
+            // A member holding atom indices is a bonded term: it ignores the
+            // table, and its own interaction is the thing the weights exist to
+            // avoid double-counting — scaling it would be scaling the wrong
+            // side of that.
+            let mine: &[F] = if p.terms().is_some() { &[] } else { factor };
+            let (e, w) = p.accumulate_pairs(coords, pairs, mine, out);
+            total_e += e;
+            match (total_w.as_mut(), w) {
+                (Some(acc), Some(part)) => {
+                    for c in 0..6 {
+                        acc.components[c] += part.components[c];
+                    }
+                }
+                (_, None) => total_w = None,
+                (None, _) => {}
+            }
+        }
+        (total_e, total_w)
     }
 
     /// True if *any* member is. One compiled kernel is enough to make the

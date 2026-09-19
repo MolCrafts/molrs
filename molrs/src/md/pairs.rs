@@ -22,7 +22,7 @@
 use ndarray::{Array2, ArrayView2};
 
 use molrs::ff::potential::Potential;
-use molrs::spatial::neighbors::{NeighborPair, Neighbors};
+use molrs::spatial::neighbors::Neighbors;
 use molrs::spatial::periodic::{GhostError, GhostSet};
 use molrs::spatial::simbox::SimBox;
 use molrs::types::{F, FNx3, FNx3View};
@@ -68,6 +68,18 @@ pub struct Comm {
     /// Owned positions at the last halo build, for the displacement test.
     x_hold: FNx3,
     rebuilds: usize,
+    /// `[owned | ghost]` coordinates, refilled each step rather than rebuilt.
+    all: FNx3,
+    /// Candidate pairs out to `cutoff + skin`, from the last halo rebuild.
+    ///
+    /// This is the halo's Verlet skin, and it is the whole reason the `skin`
+    /// argument earns its place. Without it the halo's membership was stable
+    /// across steps while its *pair table* was rediscovered from scratch every
+    /// one — a spatial search, a hash of every pair and several allocations, to
+    /// find a list that had not changed.
+    edges: Vec<(u32, u32)>,
+    /// The candidates inside the cutoff now, refilled from `edges`.
+    table: Neighbors,
 }
 
 impl Comm {
@@ -97,22 +109,91 @@ impl Comm {
             .copied()
             .fold(F::INFINITY, F::min);
         let half_width = 0.5 * min_width;
-        if !bx.is_free() && cutoff > half_width {
+        // The *search* radius, not the cutoff: the candidate list is built at
+        // `cutoff + skin` and de-duplicated on owner pairs, so two images of
+        // one pair inside that radius would leave whichever was found first
+        // rather than whichever is closest when the table is filled.
+        // `VerletSkin::new` bounds `cutoff + skin` for the same reason.
+        if !bx.is_free() && cutoff + skin > half_width {
             return Err(MdError::Invalid(format!(
-                "cutoff {cutoff} Å exceeds half the minimum perpendicular cell width \
-                 ({half_width:.3} Å); a pair would have more than one image inside it \
-                 and the halo keeps only one"
+                "cutoff {cutoff} Å + skin {skin} Å exceeds half the minimum perpendicular \
+                 cell width ({half_width:.3} Å); a pair would have more than one image \
+                 inside the search radius and the halo keeps only one"
             )));
         }
         let set = GhostSet::borders(&bx, owned, cutoff + skin).map_err(ghost_err)?;
-        Ok(Self {
+        let table = set.empty_table();
+        let mut out = Self {
+            all: set.combined(owned).map_err(ghost_err)?,
             set,
             bx,
             cutoff,
             skin,
             x_hold: owned.to_owned(),
             rebuilds: 0,
-        })
+            edges: Vec::new(),
+            table,
+        };
+        out.research()?;
+        out.refill();
+        Ok(out)
+    }
+
+    /// Redo the spatial search behind the pair table. Halo-rebuild cadence.
+    fn research(&mut self) -> Result<(), MdError> {
+        self.edges = self
+            .set
+            .candidate_edges(self.all.view(), self.cutoff + self.skin)
+            .map_err(ghost_err)?;
+        self.table = self.set.empty_table();
+        Ok(())
+    }
+
+    /// Repair the candidate list after a fold. Fold cadence.
+    ///
+    /// A fold does not move an atom, it relabels it — so the *set* of owner
+    /// pairs within reach is exactly what it was, and the search does not need
+    /// to run again. What does change is which copy realises a pair: a folded
+    /// atom's stored coordinate has jumped a lattice vector, so a pair that was
+    /// direct is now a cell apart and its replacement is an image that was too
+    /// far to be a candidate before.
+    ///
+    /// Re-resolving only the partners of the atoms that actually folded costs
+    /// each of them its handful of copies. Researching costs a spatial build
+    /// and a hash of every pair — and in a dense system something folds almost
+    /// every step, so the difference is the difference between a cached table
+    /// and no cache at all.
+    fn reimage(
+        &mut self,
+        owned: FNx3View<'_>,
+        wrap_shifts: ArrayView2<'_, i64>,
+    ) -> Result<(), MdError> {
+        let n_owned = self.set.n_owned();
+        let folded: Vec<bool> = (0..n_owned)
+            .map(|a| {
+                wrap_shifts[[a, 0]] != 0 || wrap_shifts[[a, 1]] != 0 || wrap_shifts[[a, 2]] != 0
+            })
+            .collect();
+        let set = &self.set;
+        for e in &mut self.edges {
+            let (i, j) = (e.0 as usize, e.1 as usize);
+            let owner = if j < n_owned {
+                j
+            } else {
+                set.owner()[j - n_owned] as usize
+            };
+            if !folded[i] && !folded[owner] {
+                continue;
+            }
+            e.1 = set.closest_image(owned, i, owner).map_err(ghost_err)? as u32;
+        }
+        Ok(())
+    }
+
+    /// Recompute which candidates are inside the cutoff now. Per step.
+    fn refill(&mut self) {
+        self.set
+            .fill_pairs(self.all.view(), &self.edges, self.cutoff, &mut self.table);
     }
 
     /// The cell the copies are generated from.
@@ -154,23 +235,38 @@ impl Comm {
                 max_d2 = d2;
             }
         }
-        if max_d2 > half_skin_sq {
+        let rebuilt = max_d2 > half_skin_sq;
+        if rebuilt {
             self.set =
                 GhostSet::borders(&self.bx, owned, self.cutoff + self.skin).map_err(ghost_err)?;
             self.x_hold = owned.to_owned();
             self.rebuilds += 1;
         }
+        if rebuilt {
+            // New copies, new indices: the candidate list names positions in a
+            // list that no longer exists.
+            self.all = self.set.combined(owned).map_err(ghost_err)?;
+            self.research()?;
+        } else if wrap_shifts.iter().any(|&m| m != 0) {
+            self.reimage(owned, wrap_shifts)?;
+            self.all = self.set.combined(owned).map_err(ghost_err)?;
+        } else {
+            self.all = self.set.combined(owned).map_err(ghost_err)?;
+        }
+        self.refill();
         Ok(())
     }
 
     /// The half-shell pair table over `[owned | ghost]`, centred on owned atoms.
-    pub fn pairs(&self, owned: FNx3View<'_>) -> Result<Neighbors, MdError> {
-        self.set.pairs(owned, self.cutoff).map_err(ghost_err)
+    ///
+    /// As of the last [`advance`](Self::advance) — this is a read, not a build.
+    pub fn pairs(&self) -> &Neighbors {
+        &self.table
     }
 
     /// The `[owned | ghost]` coordinates the pair table indexes.
-    pub fn combined(&self, owned: FNx3View<'_>) -> Result<FNx3, MdError> {
-        self.set.combined(owned).map_err(ghost_err)
+    pub fn combined(&self) -> &FNx3 {
+        &self.all
     }
 
     /// How many times the halo has been rebuilt.
@@ -370,11 +466,17 @@ impl BondedLists {
         owned: FNx3View<'_>,
         wrap_shifts: ArrayView2<'_, i64>,
     ) -> Result<(), MdError> {
-        let folded = wrap_shifts.iter().any(|&m| m != 0);
         let stale = self.generation != Some(comm.ghosts().generation());
-        if stale || folded {
-            self.resolve(comm, owned)?;
+        if stale {
+            self.resolve(comm, owned, None)?;
             self.generation = Some(comm.ghosts().generation());
+        } else if wrap_shifts.iter().any(|&m| m != 0) {
+            let mask: Vec<bool> = (0..owned.nrows())
+                .map(|a| {
+                    wrap_shifts[[a, 0]] != 0 || wrap_shifts[[a, 1]] != 0 || wrap_shifts[[a, 2]] != 0
+                })
+                .collect();
+            self.resolve(comm, owned, Some(&mask))?;
         }
         debug_assert_eq!(
             self.generation,
@@ -400,7 +502,23 @@ impl BondedLists {
         self.entries.iter().filter(|e| e.is_some()).count()
     }
 
-    fn resolve(&mut self, comm: &Comm, owned: FNx3View<'_>) -> Result<(), MdError> {
+    /// Re-resolve the terms, or only those that a fold can have disturbed.
+    ///
+    /// `folded` is `None` for a rebuild — every index names a position in a
+    /// copy list that no longer exists, so every term has to be redone. For a
+    /// fold it is the per-atom mask of who actually crossed: a fold relabels
+    /// an atom without moving it, so a term none of whose atoms folded is
+    /// resolved against exactly the geometry it was resolved against before,
+    /// and redoing it would produce the same numbers at the cost of a copy
+    /// search per partner. In a dense system something folds almost every
+    /// step, so this is the difference between O(all terms) per step and
+    /// O(terms touching the handful that crossed).
+    fn resolve(
+        &mut self,
+        comm: &Comm,
+        owned: FNx3View<'_>,
+        folded: Option<&[bool]>,
+    ) -> Result<(), MdError> {
         let set = comm.ghosts();
         // Beyond half the smallest plane spacing the minimum image is
         // ambiguous, so a term still that long after remapping has not been
@@ -412,12 +530,19 @@ impl BondedLists {
             .copied()
             .fold(F::INFINITY, F::min);
         let limit = (0.5 * min_width).min(set.reach());
-        let all = set.combined(owned).map_err(ghost_err)?;
+        let all = comm.combined();
+        let touched = |row: ndarray::ArrayView1<'_, u32>| match folded {
+            None => true,
+            Some(mask) => row.iter().any(|&a| mask[a as usize]),
+        };
 
         for entry in self.entries.iter_mut().flatten() {
             let (n_terms, arity) = entry.source.dim();
             let anchor_col = entry.anchor;
             for t in 0..n_terms {
+                if !touched(entry.source.row(t)) {
+                    continue;
+                }
                 let anchor = entry.source[[t, anchor_col]] as usize;
                 entry.current[[t, anchor_col]] = anchor as u32;
                 for c in 0..arity {
@@ -436,6 +561,9 @@ impl BondedLists {
             // rebuild, is cheaper than any kernel could and catches the case no
             // kernel can see: a halo that never reached far enough.
             for t in 0..n_terms {
+                if !touched(entry.source.row(t)) {
+                    continue;
+                }
                 let a = entry.current[[t, anchor_col]] as usize;
                 for c in 0..arity {
                     if c == anchor_col {
@@ -692,7 +820,7 @@ mod owned_potential_tests {
             let before = comm.rebuilds();
             comm.advance(owned.view(), m.view()).unwrap();
             lists.refresh(&comm, owned.view(), m.view()).unwrap();
-            let all = comm.combined(owned.view()).unwrap();
+            let all = comm.combined().clone();
             let flat: Vec<F> = all.iter().copied().collect();
             let mut e = 0.0;
             for (mi, member) in members.iter().enumerate() {
@@ -1052,10 +1180,10 @@ mod virial_tests {
         let bx = SimBox::cube(30.0, array![0.0_f64, 0.0, 0.0], [false; 3]).unwrap();
         let owned = array![[10.0_f64, 10.0, 10.0], [14.0, 10.0, 10.0]];
         let comm = Comm::new(bx, owned.view(), 5.0, 0.0).unwrap();
-        let all = comm.combined(owned.view()).unwrap();
+        let all = comm.combined().clone();
         assert_eq!(all.nrows(), 2, "a free box makes no copies");
 
-        let pairs = comm.pairs(owned.view()).unwrap();
+        let pairs = comm.pairs().clone();
         let flat: Vec<F> = all.iter().copied().collect();
         let (_e, f) = lj(5.0).calc_energy_forces_with_pairs(&flat, &pairs);
         let mut f = Array2::from_shape_vec((2, 3), f).unwrap();
@@ -1108,8 +1236,8 @@ mod virial_tests {
             }
             let (wrapped, _m) = bx.wrap_shifts(pts.view());
             let comm = Comm::new(bx.clone(), wrapped.view(), cutoff, 0.0).unwrap();
-            let all = comm.combined(wrapped.view()).unwrap();
-            let pairs = comm.pairs(wrapped.view()).unwrap();
+            let all = comm.combined().clone();
+            let pairs = comm.pairs().clone();
             let flat: Vec<F> = all.iter().copied().collect();
             let (_e, f) = lj(cutoff).calc_energy_forces_with_pairs(&flat, &pairs);
             let mut f = Array2::from_shape_vec((all.nrows(), 3), f).unwrap();
@@ -1148,8 +1276,8 @@ mod virial_tests {
             [11.0, 11.0, 3.0],
         ];
         let comm = Comm::new(bx, owned.view(), cutoff, 0.0).unwrap();
-        let all = comm.combined(owned.view()).unwrap();
-        let pairs = comm.pairs(owned.view()).unwrap();
+        let all = comm.combined().clone();
+        let pairs = comm.pairs().clone();
         let flat: Vec<F> = all.iter().copied().collect();
         let (_e, f0) = lj(cutoff).calc_energy_forces_with_pairs(&flat, &pairs);
 
@@ -1212,16 +1340,20 @@ mod virial_tests {
 pub struct SpecialWeights {
     /// Per owned atom, its special partners sorted by index, with weights.
     per_atom: Vec<Vec<(u32, F)>>,
+    /// Whether every list is empty. A fact about the table, not about a step.
+    nothing_scaled: bool,
 }
 
 impl SpecialWeights {
     /// Take the per-atom lists a bond-graph walk produced.
     pub fn new(special: &[Vec<(usize, F)>]) -> Self {
+        let per_atom: Vec<Vec<(u32, F)>> = special
+            .iter()
+            .map(|l| l.iter().map(|&(p, w)| (p as u32, w)).collect())
+            .collect();
         Self {
-            per_atom: special
-                .iter()
-                .map(|l| l.iter().map(|&(p, w)| (p as u32, w)).collect())
-                .collect(),
+            nothing_scaled: per_atom.iter().all(|l| l.is_empty()),
+            per_atom,
         }
     }
 
@@ -1237,33 +1369,39 @@ impl SpecialWeights {
         }
     }
 
-    /// True when nothing is scaled, so a caller can skip the split entirely.
+    /// True when nothing is scaled, so a caller can skip the weights entirely.
+    ///
+    /// Answered from a flag set at construction: it is a property of the table
+    /// and was being recomputed by scanning every atom, once per member, once
+    /// per step.
     pub fn is_empty(&self) -> bool {
-        self.per_atom.iter().all(|l| l.is_empty())
+        self.nothing_scaled
     }
 
-    /// Split a pair table into the full-strength pairs and the scaled groups.
+    /// Fill `out` with one weight per row of `pairs`.
     ///
-    /// `owner` maps a periodic copy to the atom it copies — index `a` is a
-    /// copy when `a >= n_owned`, and its owner is `owner[a - n_owned]`. A pair
+    /// `owner` maps a periodic copy to the atom it copies — index `a` is a copy
+    /// when `a >= n_owned`, and its owner is `owner[a - n_owned]`. A pair
     /// naming a copy is weighted as that owner: a bond graph knows atoms, and a
     /// copy is the same atom seen through a face. Pass an empty slice when the
     /// table names atoms directly, as a minimum-image one does.
     ///
-    /// Pairs weighted zero appear in neither output — they are gone, not
-    /// scaled, which is what keeps a bond-length Lennard-Jones term out of the
-    /// sum in the first place.
+    /// # Why a column and not a split
     ///
-    /// The outputs carry the input's query mode and storage, so a kernel
-    /// cannot tell a split table from the one it came from.
-    pub fn split(
-        &self,
-        pairs: &Neighbors,
-        n_owned: usize,
-        owner: &[u32],
-    ) -> (Neighbors, Vec<(F, Neighbors)>) {
-        let mode = pairs.mode();
-        let storage = pairs.storage();
+    /// This used to partition the table into a full-strength one and a group
+    /// per distinct weight, because energy is a sum over pairs and scaling a
+    /// group is the same as scaling its contribution. That is true, and it cost
+    /// the table being rebuilt — allocated, re-pushed column by column — once
+    /// per weight per member per step. Measured at 4 096 atoms it was four
+    /// times the kernel it was preparing input for, and thirty megabytes a step.
+    ///
+    /// A weight is one number per pair. Handing the kernel that number is one
+    /// pass over a buffer the caller keeps.
+    pub fn fill_factors(&self, pairs: &Neighbors, n_owned: usize, owner: &[u32], out: &mut Vec<F>) {
+        let i_col = pairs.query_point_indices();
+        let j_col = pairs.point_indices();
+        out.clear();
+        out.reserve(i_col.len());
         let own = |a: usize| {
             if a < n_owned {
                 a
@@ -1271,17 +1409,6 @@ impl SpecialWeights {
                 owner[a - n_owned] as usize
             }
         };
-
-        let (Some(disp), Some(d2)) = (pairs.disp(), pairs.dist_sq()) else {
-            return (Neighbors::empty(mode, storage), Vec::new());
-        };
-        let i_col = pairs.query_point_indices();
-        let j_col = pairs.point_indices();
-
-        let mut full: Vec<NeighborPair> = Vec::with_capacity(i_col.len());
-        // At most a handful of distinct weights, so a linear scan beats a map
-        // — and `F` is not hashable anyway.
-        let mut groups: Vec<(F, Vec<NeighborPair>)> = Vec::new();
         for p in 0..i_col.len() {
             let (i, j) = (i_col[p] as usize, j_col[p] as usize);
             // An atom and a *copy of itself* are a real interaction, and no
@@ -1289,35 +1416,8 @@ impl SpecialWeights {
             // asking for `weight(i, i)` would answer 0 — the weight of an atom
             // with itself, which is a different question and not one this pair
             // is asking.
-            let w = if own(i) == own(j) {
-                1.0
-            } else {
-                self.weight(own(i), own(j))
-            };
-            if w == 0.0 {
-                continue;
-            }
-            let pair = NeighborPair {
-                i: i as u32,
-                j: j as u32,
-                dist_sq: d2[p],
-                disp: [disp[[p, 0]], disp[[p, 1]], disp[[p, 2]]],
-            };
-            if w == 1.0 {
-                full.push(pair);
-            } else if let Some(slot) = groups.iter_mut().find(|(gw, _)| *gw == w) {
-                slot.1.push(pair);
-            } else {
-                groups.push((w, vec![pair]));
-            }
+            let (oi, oj) = (own(i), own(j));
+            out.push(if oi == oj { 1.0 } else { self.weight(oi, oj) });
         }
-
-        (
-            Neighbors::from_pairs(full, storage, mode),
-            groups
-                .into_iter()
-                .map(|(w, v)| (w, Neighbors::from_pairs(v, storage, mode)))
-                .collect(),
-        )
     }
 }

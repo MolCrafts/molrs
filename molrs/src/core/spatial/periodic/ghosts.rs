@@ -58,6 +58,16 @@ pub struct GhostSet {
     /// nothing else, so an index into this set can be checked against the set
     /// it was taken from.
     generation: u64,
+    /// CSR over `owner`: atom `a`'s copies are
+    /// `by_owner[copies_start[a]..copies_start[a + 1]]`.
+    ///
+    /// "Which copies does this atom have" is asked once per bonded partner per
+    /// resolution and once per folded edge; answering it by scanning the whole
+    /// copy list makes those O(n_ghost) each, which is O(N^{5/3}) over a step
+    /// and is what made the ghost régime unusable above a few thousand atoms.
+    /// A counting sort at build time turns every one of them into a handful.
+    copies_start: Vec<u32>,
+    by_owner: Vec<u32>,
 }
 
 impl GhostSet {
@@ -111,9 +121,38 @@ impl GhostSet {
             n_owned,
             reach,
             generation: NEXT_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            copies_start: Vec::new(),
+            by_owner: Vec::new(),
         };
+        set.index_by_owner();
         set.place(bx, owned)?;
         Ok(set)
+    }
+
+    /// Build the owner → copies index by counting sort. Once per membership.
+    fn index_by_owner(&mut self) {
+        let n = self.n_owned;
+        self.copies_start = vec![0; n + 1];
+        for &o in &self.owner {
+            self.copies_start[o as usize + 1] += 1;
+        }
+        for a in 0..n {
+            self.copies_start[a + 1] += self.copies_start[a];
+        }
+        let mut cursor = self.copies_start.clone();
+        self.by_owner = vec![0; self.owner.len()];
+        for (g, &o) in self.owner.iter().enumerate() {
+            let slot = &mut cursor[o as usize];
+            self.by_owner[*slot as usize] = g as u32;
+            *slot += 1;
+        }
+    }
+
+    /// The rows of this set that copy `atom`.
+    pub fn copies_of(&self, atom: usize) -> &[u32] {
+        let lo = self.copies_start[atom] as usize;
+        let hi = self.copies_start[atom + 1] as usize;
+        &self.by_owner[lo..hi]
     }
 
     /// Move the ghosts to follow their owners, reconciling a wrap in the same
@@ -301,32 +340,63 @@ impl GhostSet {
     /// *imaged* separations of a pair not to both fall inside it, which would
     /// double-count in a way no tie-break can see.
     pub fn pairs(&self, owned: FNx3View<'_>, cutoff: F) -> Result<Neighbors, GhostError> {
-        if cutoff > self.reach {
-            return Err(GhostError::InvalidReach(cutoff));
-        }
         let all = self.combined(owned)?;
-        let n_owned = self.n_owned;
-        let n_all = all.nrows();
+        let edges = self.candidate_edges(all.view(), cutoff)?;
+        let mut table = self.empty_table();
+        self.fill_pairs(all.view(), &edges, cutoff, &mut table);
+        Ok(table)
+    }
 
-        let mut table = Neighbors::empty(
+    /// An empty pair table shaped for this halo, ready to be filled.
+    pub fn empty_table(&self) -> Neighbors {
+        Neighbors::empty(
             QueryMode::CrossQuery {
-                num_query_points: n_owned,
-                num_points: n_all,
+                num_query_points: self.n_owned,
+                num_points: self.n_owned + self.len(),
             },
             NeighborsStorage::FULL,
-        );
+        )
+    }
+
+    /// Candidate pairs out to `reach`, as indices into the combined view.
+    ///
+    /// This is the search and the de-duplication — everything that depends on
+    /// *which copies exist* rather than on where the atoms are right now. A
+    /// caller that keeps the result across steps pays the search once per halo
+    /// rebuild and only recomputes displacements in between, which is exactly
+    /// what a Verlet skin does for the minimum image. Recomputing it every step
+    /// is a spatial search, a hash of every pair, and several allocations, to
+    /// rediscover a list that did not change.
+    ///
+    /// # Precondition
+    ///
+    /// `reach` must not exceed the halo's [`reach`](Self::reach), **or half the
+    /// smallest plane spacing**. Past the latter a pair of owners can have two
+    /// images inside `reach`, and the de-duplication below — which keys on the
+    /// owners — would keep whichever was found first rather than whichever is
+    /// closest when the table is next filled.
+    pub fn candidate_edges(
+        &self,
+        all: FNx3View<'_>,
+        reach: F,
+    ) -> Result<Vec<(u32, u32)>, GhostError> {
+        if reach > self.reach {
+            return Err(GhostError::InvalidReach(reach));
+        }
+        let n_owned = self.n_owned;
+        let n_all = all.nrows();
+        let mut edges = Vec::new();
         if n_all == 0 {
-            return Ok(table);
+            return Ok(edges);
         }
 
         // A free box: the copies are the periodicity, so the search must not
         // add any of its own.
-        let free = SimBox::free(all.view(), cutoff + 1.0).expect("free box over finite points");
-        let mut nl = NeighborList::new(cutoff);
-        nl.build(all.view(), &free);
+        let free = SimBox::free(all, reach + 1.0).expect("free box over finite points");
+        let mut nl = NeighborList::new(reach);
+        nl.build(all, &free);
 
-        let cutoff2 = cutoff * cutoff;
-        // Keyed on owner indices. With `cutoff` inside half the smallest plane
+        // Keyed on owner indices. With `reach` inside half the smallest plane
         // spacing a pair has at most one image in range, so the pair of owners
         // identifies it completely.
         //
@@ -357,17 +427,41 @@ impl GhostSet {
             } else if !seen.insert((i.min(j), i.max(j))) {
                 return;
             }
+            edges.push((i as u32, j as u32));
+        });
+        Ok(edges)
+    }
+
+    /// Fill `out` with the candidate pairs that are inside `cutoff` now.
+    ///
+    /// The displacements are plain differences: a copy already carries its
+    /// translation, so there is no minimum image to apply and nothing here
+    /// knows that periodic boundaries exist.
+    pub fn fill_pairs(
+        &self,
+        all: FNx3View<'_>,
+        edges: &[(u32, u32)],
+        cutoff: F,
+        out: &mut Neighbors,
+    ) {
+        out.set_mode(QueryMode::CrossQuery {
+            num_query_points: self.n_owned,
+            num_points: self.n_owned + self.len(),
+        });
+        out.clear();
+        let cutoff2 = cutoff * cutoff;
+        for &(i, j) in edges {
+            let (ia, ja) = (i as usize, j as usize);
             let dr = [
-                all[[j, 0]] - all[[i, 0]],
-                all[[j, 1]] - all[[i, 1]],
-                all[[j, 2]] - all[[i, 2]],
+                all[[ja, 0]] - all[[ia, 0]],
+                all[[ja, 1]] - all[[ia, 1]],
+                all[[ja, 2]] - all[[ia, 2]],
             ];
             let d2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
             if d2 <= cutoff2 {
-                table.push(i as u32, j as u32, d2, dr);
+                out.push(i, j, d2, dr);
             }
-        });
-        Ok(table)
+        }
     }
 
     /// The index, in the combined view, of the copy of `partner` that lies
@@ -431,10 +525,8 @@ impl GhostSet {
             owned[[partner, 1]],
             owned[[partner, 2]],
         ]);
-        for g in 0..self.owner.len() {
-            if self.owner[g] as usize != partner {
-                continue;
-            }
+        for &g in self.copies_of(partner) {
+            let g = g as usize;
             let cand = d2([
                 self.positions[[g, 0]],
                 self.positions[[g, 1]],
