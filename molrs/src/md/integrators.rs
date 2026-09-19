@@ -102,7 +102,15 @@ fn check_state_shape(
 ///
 /// Construct with timestep, the [`ForceProvider`] the loop evaluates, and
 /// mass.
-pub struct VelocityVerlet {
+/// The mechanics both schemes share.
+///
+/// [`VelocityVerlet`] and [`Langevin`] differ in which moves they make and in
+/// what order — B-A-A-B against B-A-O-A-B — and in nothing else. Everything
+/// else was two copies: the force seam, the cell, the masses, the entry
+/// evaluation, the half kick, the half drift, and the fold that has to sit
+/// between the last drift and the force. Two copies of a thing that must agree
+/// is two places to change it and one place to forget.
+struct Stepper {
     dt: F,
     /// Everything that makes a force, behind one seam.
     forces: Box<dyn ForceProvider>,
@@ -113,11 +121,8 @@ pub struct VelocityVerlet {
     inv_mass: Array1<F>,
 }
 
-impl VelocityVerlet {
-    /// `dt` (fs), potential, optional neighbour state, per-atom mass `(N,)`,
-    /// and the cell positions are folded into each step (`None` = free
-    /// boundary, no wrapping and image flags stay zero).
-    pub fn new(
+impl Stepper {
+    fn new(
         dt: F,
         forces: impl ForceProvider + 'static,
         mass: ArrayView1<'_, F>,
@@ -134,53 +139,14 @@ impl VelocityVerlet {
         })
     }
 
-    /// The force provider, for the counters it chooses to expose.
-    pub fn forces(&self) -> &dyn ForceProvider {
-        &*self.forces
-    }
-
-    /// Timestep Δt in fs.
-    pub fn dt(&self) -> F {
-        self.dt
-    }
-
-    /// Per-atom mass column `(N, 1)`.
-    pub fn mass(&self) -> &Array2<F> {
-        &self.mass_col
-    }
-
-    /// Inverse mass `(N,)`.
-    pub fn inv_mass(&self) -> &Array1<F> {
-        &self.inv_mass
-    }
-
-    /// Degrees of freedom the temperature estimator must not count (`3N − 3`).
-    pub fn removed_dof(&self) -> usize {
-        3
-    }
-
-    /// Energy and forces at `pos` (runs the neighbour update policy first).
-    pub fn eval_force(&mut self, pos: ArrayView2<'_, F>) -> Result<ForceOutput, MdError> {
+    /// Energy and forces at `pos`, for a caller that has not folded anything.
+    fn eval_force(&mut self, pos: ArrayView2<'_, F>) -> Result<ForceOutput, MdError> {
         let no_fold = Array2::zeros((pos.nrows(), 3));
         self.forces.compute(pos, no_fold.view())
     }
 
-    /// Energy and forces right after a fold, carrying the shift it applied.
-    ///
-    /// A ghost halo has to reconcile that fold in the same breath — see
-    /// [`ForceProvider::compute`](super::forces::ForceProvider::compute) —
-    /// which is why the step path cannot go through the public
-    /// [`eval_force`](Self::eval_force), whose caller has not folded anything.
-    fn eval_force_after_fold(
-        &mut self,
-        pos: ArrayView2<'_, F>,
-        shifts: ArrayView2<'_, i64>,
-    ) -> Result<ForceOutput, MdError> {
-        self.forces.compute(pos, shifts)
-    }
-
     /// Seed an [`MDState`], evaluating the entry force.
-    pub fn initial(&mut self, pos: FNx3, vel: FNx3) -> Result<MDState, MdError> {
+    fn initial(&mut self, pos: FNx3, vel: FNx3) -> Result<MDState, MdError> {
         check_state_shape(pos.view(), vel.view(), self.mass_col.nrows())?;
         // Fold the entry configuration too, so step 0 already satisfies the
         // invariant every later step maintains. Flags start at zero: they count
@@ -197,17 +163,15 @@ impl VelocityVerlet {
         };
         let folded = wrap_and_bank(self.simbox.as_ref(), &mut state);
         state.images.fill(0);
-        let seeded = self.eval_force_after_fold(state.pos.view(), folded.view())?;
+        let seeded = self.forces.compute(state.pos.view(), folded.view())?;
         state.forces = seeded.forces;
         state.energy = seeded.energy;
         state.virial = seeded.virial;
         Ok(state)
     }
 
-    /// One NVE step from the cached entry force (in-place arithmetic).
-    pub fn step(&mut self, mut state: MDState) -> Result<MDState, MdError> {
-        let half_dt = 0.5 * self.dt;
-        // B
+    /// **B** — half kick, `v += (Δt/2)·f/m`.
+    fn kick(&self, state: &mut MDState, half_dt: F) {
         Zip::from(state.vel.rows_mut())
             .and(state.forces.rows())
             .and(&self.inv_mass)
@@ -216,32 +180,100 @@ impl VelocityVerlet {
                 v[1] += half_dt * f[1] * im;
                 v[2] += half_dt * f[2] * im;
             });
-        // A, A — two separate half-drifts (not fused to `dt * vel`)
-        for _ in 0..2 {
-            Zip::from(state.pos.rows_mut())
-                .and(state.vel.rows())
-                .for_each(|mut p, v| {
-                    p[0] += half_dt * v[0];
-                    p[1] += half_dt * v[1];
-                    p[2] += half_dt * v[2];
-                });
-        }
-        // Periodic remap: the drift is done, so fold and bank before anything
-        // downstream reads a coordinate.
-        let folded = wrap_and_bank(self.simbox.as_ref(), &mut state);
-        let out = self.eval_force_after_fold(state.pos.view(), folded.view())?;
+    }
+
+    /// **A** — half drift, `x += (Δt/2)·v`. The two halves of a full drift stay
+    /// separate adds rather than one `dt * v`.
+    fn drift(&self, state: &mut MDState, half_dt: F) {
+        Zip::from(state.pos.rows_mut())
+            .and(state.vel.rows())
+            .for_each(|mut p, v| {
+                p[0] += half_dt * v[0];
+                p[1] += half_dt * v[1];
+                p[2] += half_dt * v[2];
+            });
+    }
+
+    /// Fold the drifted positions back into the cell and evaluate the force
+    /// there, caching both on `state`.
+    ///
+    /// The fold has to happen after the last drift and before the force, and
+    /// this is the only place either scheme does it. A halo has to reconcile
+    /// that fold in the same breath — which is why the shift is handed to
+    /// [`ForceProvider::compute`] rather than re-derived from the positions,
+    /// where it cannot be seen: a fold relabels an atom without moving it.
+    fn refold_and_eval(&mut self, state: &mut MDState) -> Result<(), MdError> {
+        let folded = wrap_and_bank(self.simbox.as_ref(), state);
+        let out = self.forces.compute(state.pos.view(), folded.view())?;
         state.forces = out.forces;
-        // B
-        Zip::from(state.vel.rows_mut())
-            .and(state.forces.rows())
-            .and(&self.inv_mass)
-            .for_each(|mut v, f, &im| {
-                v[0] += half_dt * f[0] * im;
-                v[1] += half_dt * f[1] * im;
-                v[2] += half_dt * f[2] * im;
-            });
         state.energy = out.energy;
         state.virial = out.virial;
+        Ok(())
+    }
+}
+
+pub struct VelocityVerlet {
+    inner: Stepper,
+}
+
+impl VelocityVerlet {
+    /// `dt` (fs), the force provider, per-atom mass `(N,)`, and the cell
+    /// positions are folded into each step (`None` = free boundary, no
+    /// wrapping and image flags stay zero).
+    pub fn new(
+        dt: F,
+        forces: impl ForceProvider + 'static,
+        mass: ArrayView1<'_, F>,
+        simbox: Option<SimBox>,
+    ) -> Result<Self, MdError> {
+        Ok(Self {
+            inner: Stepper::new(dt, forces, mass, simbox)?,
+        })
+    }
+
+    /// The force provider, for the counters it chooses to expose.
+    pub fn forces(&self) -> &dyn ForceProvider {
+        &*self.inner.forces
+    }
+
+    /// Timestep Δt in fs.
+    pub fn dt(&self) -> F {
+        self.inner.dt
+    }
+
+    /// Per-atom mass column `(N, 1)`.
+    pub fn mass(&self) -> &Array2<F> {
+        &self.inner.mass_col
+    }
+
+    /// Inverse mass `(N,)`.
+    pub fn inv_mass(&self) -> &Array1<F> {
+        &self.inner.inv_mass
+    }
+
+    /// Degrees of freedom the temperature estimator must not count (`3N − 3`).
+    pub fn removed_dof(&self) -> usize {
+        3
+    }
+
+    /// Energy and forces at `pos` (runs the neighbour update policy first).
+    pub fn eval_force(&mut self, pos: ArrayView2<'_, F>) -> Result<ForceOutput, MdError> {
+        self.inner.eval_force(pos)
+    }
+
+    /// Seed an [`MDState`], evaluating the entry force.
+    pub fn initial(&mut self, pos: FNx3, vel: FNx3) -> Result<MDState, MdError> {
+        self.inner.initial(pos, vel)
+    }
+
+    /// One NVE step from the cached entry force: **B-A-A-B**.
+    pub fn step(&mut self, mut state: MDState) -> Result<MDState, MdError> {
+        let half_dt = 0.5 * self.inner.dt;
+        self.inner.kick(&mut state, half_dt);
+        self.inner.drift(&mut state, half_dt);
+        self.inner.drift(&mut state, half_dt);
+        self.inner.refold_and_eval(&mut state)?;
+        self.inner.kick(&mut state, half_dt);
         Ok(state)
     }
 
@@ -263,17 +295,11 @@ impl VelocityVerlet {
 ///
 /// NVE is [`VelocityVerlet`] — not this type with `gamma=0`.
 pub struct Langevin {
-    dt: F,
+    inner: Stepper,
     gamma: F,
     c1: F,
     c2: F,
     kbt: F,
-    /// Everything that makes a force, behind one seam.
-    forces: Box<dyn ForceProvider>,
-    /// Cell the positions are folded into each step; `None` is free boundary.
-    simbox: Option<SimBox>,
-    mass_col: Array2<F>,
-    inv_mass: Array1<F>,
     sigma: Array1<F>,
     rng: rand::rngs::StdRng,
 }
@@ -304,25 +330,20 @@ impl Langevin {
         if kbt <= 0.0 {
             return Err(MdError::Invalid("Langevin requires kbt > 0".into()));
         }
-        let mass_col = as_mass_col(mass)?;
-        let inv_mass = mass_col.column(0).mapv(|m| 1.0 / m);
-        let sigma = mass_col.column(0).mapv(|m| (kbt / m).sqrt());
+        let inner = Stepper::new(dt, forces, mass, simbox)?;
+        let sigma = inner.mass_col.column(0).mapv(|m| (kbt / m).sqrt());
         let c1 = (-gamma * dt).exp();
-        // `1 − e^{−2γΔt}` written directly loses a digit for every decade
-        // that `γΔt` is below one — at `γΔt = 1e-8` the noise amplitude keeps
-        // barely half its bits, and the sampled temperature carries the error.
+        // `1 − e^{−2γΔt}` written directly loses a digit for every decade that
+        // `γΔt` is below one — at `γΔt = 1e-8` the noise amplitude keeps barely
+        // half its bits, and the sampled temperature carries the error.
         // `exp_m1` computes it to the last bit at any `γΔt`.
         let c2 = (-(-2.0 * gamma * dt).exp_m1()).max(0.0).sqrt();
         Ok(Self {
-            dt,
+            inner,
             gamma,
             c1,
             c2,
             kbt,
-            forces: Box::new(forces),
-            simbox,
-            mass_col,
-            inv_mass,
             sigma,
             rng: rand::SeedableRng::seed_from_u64(seed),
         })
@@ -330,92 +351,64 @@ impl Langevin {
 
     /// The force provider, for the counters it chooses to expose.
     pub fn forces(&self) -> &dyn ForceProvider {
-        &*self.forces
+        &*self.inner.forces
     }
 
     /// Timestep Δt in fs.
     pub fn dt(&self) -> F {
-        self.dt
+        self.inner.dt
     }
 
-    /// Langevin friction γ in fs⁻¹.
+    /// Friction γ (1/fs).
     pub fn gamma(&self) -> F {
         self.gamma
     }
 
+    /// `c1 = e^{−γΔt}` — the velocity damping of the O step.
     pub fn c1(&self) -> F {
         self.c1
     }
 
+    /// `c2 = √(1 − c1²)` — the noise amplitude of the O step.
     pub fn c2(&self) -> F {
         self.c2
     }
 
-    /// Thermostat temperature k_B T in MD energy units.
+    /// Target `k_B T` in the caller's energy units.
     pub fn kbt(&self) -> F {
         self.kbt
     }
 
+    /// Per-atom mass column `(N, 1)`.
     pub fn mass(&self) -> &Array2<F> {
-        &self.mass_col
+        &self.inner.mass_col
     }
 
+    /// Per-atom `σ = √(k_BT/m)` `(N,)`.
     pub fn sigma(&self) -> &Array1<F> {
         &self.sigma
     }
 
+    /// Inverse mass `(N,)`.
     pub fn inv_mass(&self) -> &Array1<F> {
-        &self.inv_mass
+        &self.inner.inv_mass
     }
 
-    /// `0` — the O step agitates all 3N DoF, COM included.
+    /// Degrees of freedom the temperature estimator must not count.
+    ///
+    /// Zero: the thermostat does not conserve momentum, so nothing is removed.
     pub fn removed_dof(&self) -> usize {
         0
     }
 
     /// Energy and forces at `pos` (runs the neighbour update policy first).
     pub fn eval_force(&mut self, pos: ArrayView2<'_, F>) -> Result<ForceOutput, MdError> {
-        let no_fold = Array2::zeros((pos.nrows(), 3));
-        self.forces.compute(pos, no_fold.view())
-    }
-
-    /// Energy and forces right after a fold, carrying the shift it applied.
-    ///
-    /// A ghost halo has to reconcile that fold in the same breath — see
-    /// [`ForceProvider::compute`](super::forces::ForceProvider::compute) —
-    /// which is why the step path cannot go through the public
-    /// [`eval_force`](Self::eval_force), whose caller has not folded anything.
-    fn eval_force_after_fold(
-        &mut self,
-        pos: ArrayView2<'_, F>,
-        shifts: ArrayView2<'_, i64>,
-    ) -> Result<ForceOutput, MdError> {
-        self.forces.compute(pos, shifts)
+        self.inner.eval_force(pos)
     }
 
     /// Seed an [`MDState`], evaluating the entry force.
     pub fn initial(&mut self, pos: FNx3, vel: FNx3) -> Result<MDState, MdError> {
-        check_state_shape(pos.view(), vel.view(), self.mass_col.nrows())?;
-        // Fold the entry configuration too, so step 0 already satisfies the
-        // invariant every later step maintains. Flags start at zero: they count
-        // crossings *during this run*, and an atom's history before it is not
-        // this integrator's to claim.
-        let n_atoms = pos.nrows();
-        let mut state = MDState {
-            pos,
-            images: Array2::zeros((n_atoms, 3)),
-            vel,
-            forces: FNx3::zeros((n_atoms, 3)),
-            energy: 0.0,
-            virial: None,
-        };
-        let folded = wrap_and_bank(self.simbox.as_ref(), &mut state);
-        state.images.fill(0);
-        let seeded = self.eval_force_after_fold(state.pos.view(), folded.view())?;
-        state.forces = seeded.forces;
-        state.energy = seeded.energy;
-        state.virial = seeded.virial;
-        Ok(state)
+        self.inner.initial(pos, vel)
     }
 
     /// One BAOAB step with caller-supplied standard-normal `noise` `(N, 3)`.
@@ -433,27 +426,20 @@ impl Langevin {
                 state.vel.shape()
             )));
         }
-        let half_dt = 0.5 * self.dt;
-        let c1 = self.c1;
-        let c2 = self.c2;
-        // B
-        Zip::from(state.vel.rows_mut())
-            .and(state.forces.rows())
-            .and(&self.inv_mass)
-            .for_each(|mut v, f, &im| {
-                v[0] += half_dt * f[0] * im;
-                v[1] += half_dt * f[1] * im;
-                v[2] += half_dt * f[2] * im;
-            });
-        // A
-        Zip::from(state.pos.rows_mut())
-            .and(state.vel.rows())
-            .for_each(|mut p, v| {
-                p[0] += half_dt * v[0];
-                p[1] += half_dt * v[1];
-                p[2] += half_dt * v[2];
-            });
-        // O
+        let half_dt = 0.5 * self.inner.dt;
+        self.inner.kick(&mut state, half_dt);
+        self.inner.drift(&mut state, half_dt);
+        self.ornstein_uhlenbeck(&mut state, noise);
+        self.inner.drift(&mut state, half_dt);
+        self.inner.refold_and_eval(&mut state)?;
+        self.inner.kick(&mut state, half_dt);
+        Ok(state)
+    }
+
+    /// **O** — `v ← c1·v + c2·σ·ξ`. The only move `VelocityVerlet` does not
+    /// make, and the only reason these are two types.
+    fn ornstein_uhlenbeck(&self, state: &mut MDState, noise: ArrayView2<'_, F>) {
+        let (c1, c2) = (self.c1, self.c2);
         Zip::from(state.vel.rows_mut())
             .and(&self.sigma)
             .and(noise.rows())
@@ -462,31 +448,6 @@ impl Langevin {
                 v[1] = c1 * v[1] + c2 * sig * xi[1];
                 v[2] = c1 * v[2] + c2 * sig * xi[2];
             });
-        // A
-        Zip::from(state.pos.rows_mut())
-            .and(state.vel.rows())
-            .for_each(|mut p, v| {
-                p[0] += half_dt * v[0];
-                p[1] += half_dt * v[1];
-                p[2] += half_dt * v[2];
-            });
-        // Periodic remap: the drift is done, so fold and bank before anything
-        // downstream reads a coordinate.
-        let folded = wrap_and_bank(self.simbox.as_ref(), &mut state);
-        let out = self.eval_force_after_fold(state.pos.view(), folded.view())?;
-        state.forces = out.forces;
-        // B
-        Zip::from(state.vel.rows_mut())
-            .and(state.forces.rows())
-            .and(&self.inv_mass)
-            .for_each(|mut v, f, &im| {
-                v[0] += half_dt * f[0] * im;
-                v[1] += half_dt * f[1] * im;
-                v[2] += half_dt * f[2] * im;
-            });
-        state.energy = out.energy;
-        state.virial = out.virial;
-        Ok(state)
     }
 
     /// Draw `(n_atoms, 3)` standard normals from the seeded internal RNG.
@@ -498,13 +459,13 @@ impl Langevin {
         noise
     }
 
-    /// One BAOAB step, noise drawn from the seeded internal RNG.
+    /// One step with noise drawn from the seeded internal RNG.
     pub fn advance(&mut self, state: MDState) -> Result<MDState, MdError> {
-        let n = state.vel.nrows();
-        let noise = self.draw_noise(n);
+        let noise = self.draw_noise(state.vel.nrows());
         self.step(state, noise.view())
     }
 
+    /// Advance `n_steps` eagerly.
     pub fn advance_n(&mut self, mut state: MDState, n_steps: usize) -> Result<MDState, MdError> {
         for _ in 0..n_steps {
             state = self.advance(state)?;
@@ -555,10 +516,10 @@ mod tests {
     use molrs::units::UnitRegistry;
     use molrs::units::constants::BOLTZMANN;
 
-    use super::super::LJCut;
     use super::super::forces::{Direct, MicPairs};
     use super::super::maxwell::MaxwellBoltzmann;
     use super::*;
+    use molrs::ff::potential::pair::LJCut;
 
     fn cube(a: F) -> SimBox {
         SimBox::cube(a, array![0.0, 0.0, 0.0], [true, true, true]).unwrap()

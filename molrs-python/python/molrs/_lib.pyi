@@ -1529,6 +1529,7 @@ class ForceField:
     def set_special_bonds(self, lj: Any, coul: Any) -> None: ...
     def style_names(self) -> list[str]: ...
     def to_potentials(self, frame: Frame) -> Potentials: ...
+    def to_typed_potentials(self, frame: Frame) -> TypedPotentials: ...
 
 class OptReport:
     """Outcome of a geometry optimization (energy minimization)."""
@@ -1541,6 +1542,23 @@ class OptReport:
     def final_energy(self) -> float: ...
     @property
     def final_fmax(self) -> float: ...
+
+class TypedPotentials:
+
+    """Kernels for a neighbour-driven evaluation, each with its special-bonds weights.
+
+
+    Opaque: hand it to an integrator. Taking it apart would mean
+
+    re-deciding which member is which and how its close neighbours are
+
+    scaled -- the two things ``to_typed_potentials`` decides once.
+
+    """
+
+
+    def __len__(self) -> int: ...
+
 
 class Potentials:
     """Composite of the one ``Potential`` concept — itself a potential.
@@ -2610,8 +2628,14 @@ class md:
             """Virial ``Sigma f (x) r`` as ``(xx, yy, zz, xy, xz, yz)``, or ``None``.
 
             ``None`` means the force provider does not tally one -- not that it
-            is zero. Only the ghost regime tallies a virial today.
+            is zero. A kernel resolved against a fixed pair list declines, and
+            one member declining makes the whole sum ``None``.
             """
+        @property
+        def images(self) -> ArrayI64: ...
+        @images.setter
+        def images(self, value: ArrayI64) -> None: ...
+        def pressure(self, kinetic: float, volume: float) -> float | None: ...
         @property
         def energy(self) -> float: ...
         @energy.setter
@@ -2692,9 +2716,10 @@ class md:
             self,
             dt: float,
             *,
-            potential: Union["md.LJCut", Potentials, "md.Potential"],
+            potential: Union["md.LJCut", Potentials, TypedPotentials, "md.Potential"],
             neighbors: Optional[VerletSkin] = None,
             mass: Union[float, ArrayF],
+            simbox: Optional[Box] = None,
         ) -> None: ...
         @property
         def dt(self) -> float: ...
@@ -2723,10 +2748,11 @@ class md:
             *,
             gamma: float,
             kbt: float,
-            potential: Union["md.LJCut", Potentials, "md.Potential"],
+            potential: Union["md.LJCut", Potentials, TypedPotentials, "md.Potential"],
             neighbors: Optional[VerletSkin] = None,
             mass: Union[float, ArrayF],
             seed: int = 0,
+            simbox: Optional[Box] = None,
         ) -> None: ...
         @property
         def dt(self) -> float: ...

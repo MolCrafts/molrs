@@ -1133,3 +1133,38 @@ fn core_names_no_other_module() {
          that needs it up out of core — never exempt a file here."
     );
 }
+
+/// `ff` sits below `md` and must not name it.
+///
+/// A pair kernel tallies a virial and a bonded kernel takes an index table —
+/// both of them things the MD loop needs — and the temptation each time is to
+/// reach up for the type that already exists there. `Virial` was defined in
+/// `md` when the kernels started tallying it, and moved down into
+/// `core::math` for exactly this reason; without a gate the next one would go
+/// the other way.
+///
+/// `optimize` is checked too: it depends on `ff`, so an edge from there to
+/// `md` would make the force-field layer transitively need the loop.
+#[test]
+fn ff_never_names_md() {
+    let forbidden = ["crate::md", "molrs::md::", "use molrs::md"];
+    let mut hits: Vec<String> = Vec::new();
+    for dir in ["ff", "optimize"] {
+        for path in walk_rs_files(&src_dir().join(dir)) {
+            let src = strip_comments(&fs::read_to_string(&path).expect("read source"));
+            for (n, line) in src.lines().enumerate() {
+                for needle in forbidden {
+                    if line.contains(needle) {
+                        hits.push(format!("{}:{} names {needle}", path.display(), n + 1));
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        hits.is_empty(),
+        "ff is below md: a kernel may not name the loop that runs it. If the \
+         shared item is a value type (a virial, a weight table), move it down \
+         into core; if it is a policy, pass it in. Hits: {hits:?}"
+    );
+}

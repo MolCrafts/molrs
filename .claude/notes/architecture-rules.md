@@ -15,6 +15,7 @@ molrs/src modules:
   core (always) ──► perceive (always)
                  ├── io (feature)
                  ├── ff (feature) ──► optimize (with ff)
+                 │                 └─► md (feature → ff)
                  └── conformer (feature → ff)
   compute (feature) ──► signal
   stream / serialize (optional)
@@ -31,6 +32,11 @@ binders (depend on molcrafts-molrs + molrs-ffi):
 - `compute` depends on `signal` (+ `core` for Frame access).
 - `conformer` requires `ff`.
 - `optimize` is behind `ff` (not always-on).
+- `md` requires `ff`, and may depend on `core` + `ff` only. **`ff` must never
+  name `md`** — a pair kernel tallies a virial and a bonded kernel takes an
+  index table, and neither may reach up to the loop that runs it. Gated by
+  `ff_names_no_md` beside `core_names_no_other_module`; a `md`-defined `Virial`
+  leaked into `core` once already, which is why both gates exist.
 - No cyclic module edges in library code.
 
 ### Binder rules
@@ -51,6 +57,7 @@ binders (depend on molcrafts-molrs + molrs-ffi):
 | `compute` | RDF, MSD, transport, dielectric, spectra, shape, cluster, … |
 | `conformer` | distance geometry / ETKDG-style pipeline |
 | `optimize` | LBFGS / potential-driven minimize |
+| `md` | integrators, `ForceProvider` and the minimum-image / ghost régimes, the halo (`Comm`), bonded index lists, special-bonds weights, Maxwell-Boltzmann |
 
 ## Trait design principles
 

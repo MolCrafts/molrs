@@ -192,76 +192,31 @@ class MD:
         """Updates since the last rebuild (``None`` without neighbors)."""
         return None if self._integrator is None else self._integrator.ago
 
-    def _pair_kernels(self, frame: object, config: dict) -> tuple[list, float]:
-        """``pair:lj/cut`` styles → ``LJCut`` kernels + the force cutoff (Å).
+    def _force_cutoff(self, config: dict) -> float:
+        """The force cutoff (Å) the neighbour list must cover.
 
-        Parameters are taken exactly as the force field states them — no unit
-        conversion. Per style: exactly one ``(epsilon, sigma)`` set may be
-        in use by this frame; the force cutoff is the first of
-        ``set_neighbors(cutoff=…)`` > the style-level ``cutoff`` param > the
-        per-type maximum > a prebuilt skin's own cutoff.
+        First of: ``set_neighbors(cutoff=…)``, the largest style-level
+        ``cutoff`` the force field declares, a prebuilt skin's own cutoff.
+        A neighbour-driven pair style must declare one — ``to_typed_potentials``
+        refuses it otherwise — so the second of those is normally the answer.
         """
+        if config["cutoff"] is not None:
+            return float(config["cutoff"])
         ff = self._forcefield
-        pair_names = [
-            cat_name.split(":", 1)[1]
+        declared = [
+            dict(ff.style_params("pair", cat_name.split(":", 1)[1])).get("cutoff")
             for cat_name in ff.style_names()
             if cat_name.split(":", 1)[0] == "pair"
         ]
-        if not pair_names:
-            return [], 0.0
-        mini = ff.subset(frame)
-        kernels: list = []
-        cutoffs: list[float] = []
-        for name in pair_names:
-            if name != "lj/cut":
-                raise NotImplementedError(
-                    f"the MD driver derives nonbond kernels for pair style "
-                    f"'lj/cut' only; got '{name}'. Precompile Potentials over "
-                    "a consumer-built pairs block and use set_potential."
-                )
-            rows = mini.types("pair", name)
-            if not rows:
-                raise ValueError(
-                    f"pair style '{name}' has no types used by this frame; "
-                    "check the atoms block's 'type' column"
-                )
-            try:
-                distinct = {
-                    (float(params["epsilon"]), float(params["sigma"]))
-                    for _, params in rows
-                }
-            except KeyError as exc:
-                raise ValueError(
-                    f"pair style '{name}' types must carry 'epsilon' and 'sigma'"
-                ) from exc
-            if len(distinct) != 1:
-                raise NotImplementedError(
-                    f"pair style '{name}' carries {len(distinct)} distinct "
-                    "(epsilon, sigma) sets for this frame; the MD driver "
-                    "builds one uniform kernel (single atom-type parameter "
-                    "set only — no per-type mixing yet). Precompile "
-                    "Potentials over a consumer-built pairs block and use "
-                    "set_potential."
-                )
-            cutoff = config["cutoff"]
-            if cutoff is None:
-                cutoff = dict(ff.style_params("pair", name)).get("cutoff")
-            if cutoff is None:
-                type_cutoffs = [params.get("cutoff") for _, params in rows]
-                if type_cutoffs and all(c is not None for c in type_cutoffs):
-                    cutoff = max(type_cutoffs)
-            if cutoff is None and self._skin is not None:
-                cutoff = float(self._skin.cutoff)
-            if cutoff is None:
-                raise ValueError(
-                    f"cannot derive a force cutoff for pair style '{name}': "
-                    "no 'cutoff' param at style or type level. Call "
-                    "set_neighbors(cutoff=<Å>, skin=<Å>) before run."
-                )
-            ((epsilon, sigma),) = distinct
-            kernels.append(_md.LJCut(epsilon, sigma, float(cutoff)))
-            cutoffs.append(float(cutoff))
-        return kernels, (max(cutoffs) if cutoffs else 0.0)
+        found = [float(c) for c in declared if c is not None]
+        if found:
+            return max(found)
+        if self._skin is not None:
+            return float(self._skin.cutoff)
+        raise ValueError(
+            "cannot derive a force cutoff: no pair style declares 'cutoff'. "
+            "Call set_neighbors(cutoff=<A>, skin=<A>) before run."
+        )
 
     def _build_skin(
         self, frame: object, pos: NDArray[np.float64], force_cutoff: float | None
@@ -314,12 +269,13 @@ class MD:
     ) -> _md.VelocityVerlet:
         """Wire one run. This single step does exactly:
 
-        1. **Compile the potential.** ``set_forcefield`` path: the non-pair
-           styles compile once through ``to_potentials(frame)``
-           (coordinate-independent topology); every ``pair:lj/cut`` style
-           becomes an ``LJCut`` kernel (:meth:`_pair_kernels`) **pushed into
-           the same collection**. ``set_potential`` path: adopt the attached
-           potential as-is (caller owns units).
+        1. **Compile the potential.** ``set_forcefield`` path with a pair
+           style: ``to_typed_potentials(frame)`` — kernels keyed on the atoms
+           rather than on a ``pairs`` block, each carrying the force field's
+           own ``special_bonds`` weights. Without a pair style:
+           ``to_potentials(frame)``, which is the bonded-only case.
+           ``set_potential`` path: adopt the attached potential as-is (caller
+           owns units).
         2. **Build the neighbour state.** With a nonbond term: a fresh
            ``VerletSkin(NeighborList(rc + skin), rc, pos, frame.box, …)``
            from the :meth:`set_neighbors` kwargs (defaults otherwise), or
@@ -332,30 +288,18 @@ class MD:
         """
         if self._forcefield is not None:
             ff = self._forcefield
-            config = self._neighbor_config or dict(_NEIGHBOR_DEFAULTS)
-            kernels, force_cutoff = self._pair_kernels(frame, config)
-            if kernels:
-                if "bonds" in frame and frame["bonds"].nrows > 0:
-                    raise ValueError(
-                        "pair-style MD over a bonded topology needs "
-                        "special_bonds exclusions, which the neighbour-driven "
-                        "pair path does not apply yet: every pair within the "
-                        "cutoff would interact, double-counting bonded "
-                        "1-2/1-3/1-4 neighbours. Precompile Potentials over a "
-                        "consumer-built pairs block and use set_potential for "
-                        "molecular systems."
-                    )
-                mini = ff.subset(frame)
-                for cat_name in ff.style_names():
-                    category, _, name = cat_name.partition(":")
-                    if category == "pair":
-                        mini.remove_style("pair", name)
-                pots = (
-                    mini.to_potentials(frame) if mini.style_names() else Potentials()
-                )
-                for kernel in kernels:
-                    pots.push(kernel)
-                neighbors = self._build_skin(frame, pos, force_cutoff)
+            has_pair = any(
+                cat_name.split(":", 1)[0] == "pair" for cat_name in ff.style_names()
+            )
+            if has_pair:
+                # One call decides which kernel each style needs and how its
+                # close neighbours are scaled. The driver used to re-derive both
+                # here, in Python, for `lj/cut` alone and one (epsilon, sigma)
+                # set — and refused a bonded topology outright because it had no
+                # way to apply special_bonds to a neighbour table.
+                config = self._neighbor_config or dict(_NEIGHBOR_DEFAULTS)
+                pots = ff.to_typed_potentials(frame)
+                neighbors = self._build_skin(frame, pos, self._force_cutoff(config))
             else:
                 pots = ff.to_potentials(frame)
                 if len(pots) == 0:
@@ -373,7 +317,14 @@ class MD:
         else:
             raise RuntimeError("set_forcefield or set_potential before run")
         return _md.VelocityVerlet(
-            float(dt), potential=pots, neighbors=neighbors, mass=mass
+            float(dt),
+            potential=pots,
+            neighbors=neighbors,
+            mass=mass,
+            # The cell the positions are folded into each step. Without it
+            # `MDState.images` stays zero and the wrapped coordinates lose the
+            # history that makes them readable as a trajectory.
+            simbox=getattr(frame, "box", None),
         )
 
     def run(

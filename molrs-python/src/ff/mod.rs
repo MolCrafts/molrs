@@ -154,6 +154,32 @@ impl From<OptReport> for PyOptReport {
 /// >>> frame["pairs"] = molrs.intramolecular_pairs(frame)
 /// >>> potentials = typifier.forcefield().to_potentials(frame)
 /// >>> energy, forces = potentials.eval(coords)
+/// The kernels of a neighbour-driven force evaluation, each with the
+/// special-bonds weights that scale it.
+///
+/// Opaque on purpose: what a caller does with this is hand it to an
+/// integrator. Taking it apart in Python would mean re-deciding which member
+/// is which and how its close neighbours are scaled — the two things
+/// :meth:`ForceField.to_typed_potentials` exists to decide once.
+#[pyclass(name = "TypedPotentials", module = "molrs.ff")]
+pub struct PyTypedPotentials {
+    /// Taken by the integrator that consumes it; `None` afterwards.
+    pub(crate) members: Option<
+        Vec<(
+            Box<dyn molrs::ff::potential::Potential>,
+            molrs::md::SpecialWeights,
+        )>,
+    >,
+}
+
+#[pymethods]
+impl PyTypedPotentials {
+    /// How many kernels this carries.
+    fn __len__(&self) -> usize {
+        self.members.as_ref().map_or(0, |m| m.len())
+    }
+}
+
 #[pyclass(module = "molrs.ff", name = "Potentials")]
 pub struct PyPotentials {
     inner: PotBacking,
@@ -1357,6 +1383,42 @@ impl PyForceField {
     /// ValueError
     ///     If (when binding) a style has no registered kernel, a topology block
     ///     is missing, or a type label is unknown.
+    /// Build the kernels for a **neighbour-driven** evaluation, with the
+    /// special-bonds weights each one takes.
+    ///
+    /// The counterpart of :meth:`to_potentials`, and what periodic MD needs.
+    /// That one resolves every pair style against the frame's ``pairs`` block —
+    /// a fixed list with no spatial cutoff, right for a free-boundary molecule
+    /// and wrong for a periodic system. This one resolves them against the
+    /// **atoms**, reads no ``pairs`` block, and requires the style's declared
+    /// cutoff.
+    ///
+    /// The weights come from the force field's ``special_bonds`` walked over
+    /// the frame's bond graph. Without them a neighbour table would count a
+    /// bonded pair twice: once by the bond term and once at full non-bonded
+    /// strength, at bond length.
+    fn to_typed_potentials(&self, frame: &PyFrame) -> PyResult<PyTypedPotentials> {
+        let core = frame.clone_core_frame()?;
+        let topo = molrs::Topology::from_frame(&core)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        let members = self
+            .inner
+            .to_typed_potentials(&core)
+            .map_err(pyo3::exceptions::PyValueError::new_err)?;
+        let bound = members
+            .into_iter()
+            .map(|(pot, weights)| {
+                let special = weights
+                    .map(|w| molrs::md::SpecialWeights::new(&topo.special_weights(&w)))
+                    .unwrap_or_default();
+                (pot, special)
+            })
+            .collect();
+        Ok(PyTypedPotentials {
+            members: Some(bound),
+        })
+    }
+
     #[pyo3(signature = (frame = None))]
     fn to_potentials(&self, frame: Option<&PyFrame>) -> PyResult<PyPotentials> {
         match frame {

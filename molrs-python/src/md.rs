@@ -16,12 +16,14 @@
 use std::sync::{Arc, Mutex};
 
 use crate::core::spatial::neighborlist::{PyNeighbors, PyVerletSkin};
+use crate::core::spatial::simbox::PyBox;
 use crate::ff::PyPotentials;
 use crate::helpers::NpF;
 use molrs::ff::potential::Potential;
+use molrs::ff::potential::pair::{LJCut, PairPotential};
+use molrs::math::Virial;
 use molrs::md::{
-    Direct, ForceProvider, LJCut, Langevin, MDState, MaxwellBoltzmann, MdError, MicPairs,
-    PairPotential, VelocityVerlet, Virial,
+    Direct, ForceProvider, Langevin, MDState, MaxwellBoltzmann, MdError, MicPairs, VelocityVerlet,
 };
 use molrs::types::F;
 use ndarray::{Array1, Array2};
@@ -46,7 +48,7 @@ fn check_nx3(arr: &PyReadonlyArray2<'_, NpF>, label: &str) -> PyResult<()> {
 /// A Python-side neighbour argument picks the minimum-image provider; the
 /// ghost régime is not bound yet.
 fn provider(
-    potential: Box<dyn Potential>,
+    members: Members,
     skin: Option<molrs::spatial::neighbors::VerletSkin>,
 ) -> PyResult<Box<dyn ForceProvider>> {
     // `MicPairs` refuses a kernel whose parameters were resolved against a
@@ -56,8 +58,21 @@ fn provider(
     // this is the path where that mistake is made, and the error says what to
     // build instead.
     Ok(match skin {
-        Some(s) => Box::new(MicPairs::new(potential, s).map_err(md_err)?),
-        None => Box::new(Direct::new(potential)),
+        Some(s) => Box::new(MicPairs::from_members(members, s).map_err(md_err)?),
+        None => {
+            if members.len() != 1 {
+                return Err(PyValueError::new_err(
+                    "several members need a neighbour table to share; pass neighbors=",
+                ));
+            }
+            let (pot, special) = members.into_iter().next().expect("checked above");
+            if !special.is_empty() {
+                return Err(PyValueError::new_err(
+                    "special-bonds weights apply to a pair table; pass neighbors=",
+                ));
+            }
+            Box::new(Direct::new(pot))
+        }
     })
 }
 
@@ -141,6 +156,37 @@ impl PyMDState {
     #[getter]
     fn energy(&self) -> F {
         self.inner.energy
+    }
+
+    /// Accumulated box crossings ``(N, 3)``, one signed count per lattice
+    /// vector.
+    ///
+    /// A wrapped coordinate on its own has lost the atom's history. `pos +
+    /// H·images` is the continuous position, and mean-squared displacement,
+    /// diffusion and any other path-dependent quantity read that, not `pos`.
+    #[getter]
+    fn images<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<i64>> {
+        self.inner.images.clone().into_pyarray(py)
+    }
+
+    #[setter]
+    fn set_images(&mut self, value: PyReadonlyArray2<'_, i64>) -> PyResult<()> {
+        let v = value.as_array();
+        if v.ncols() != 3 || v.nrows() != self.inner.pos.nrows() {
+            return Err(PyValueError::new_err(
+                "images must have shape (N, 3) matching pos",
+            ));
+        }
+        self.inner.images = v.to_owned();
+        Ok(())
+    }
+
+    /// Scalar pressure from the virial, a kinetic energy and a cell volume.
+    ///
+    /// ``None`` when no virial was tallied — not zero. Units are the caller's,
+    /// as everywhere in MD: the result is in whatever `energy / volume` is.
+    fn pressure(&self, kinetic: F, volume: F) -> Option<F> {
+        self.inner.virial.map(|w| w.pressure(kinetic, volume))
     }
 
     /// Virial `Σ f ⊗ r` as ``(xx, yy, zz, xy, xz, yz)``, or ``None``.
@@ -393,6 +439,28 @@ impl Potential for SubclassPotential {
 /// Arm order is a hard invariant: concrete Rust types first, duck-typed
 /// fallback last. Putting the fallback first would wrap every `Potentials`
 /// as a Python dispatch object.
+/// The members a provider will evaluate, with the weights each one takes.
+///
+/// A [`TypedPotentials`](crate::ff::PyTypedPotentials) already knows both —
+/// which kernel is which and how its close neighbours are scaled — because
+/// `ForceField::to_typed_potentials` decided it. Anything else is one member
+/// that scales nothing.
+pub(crate) type Members = Vec<(Box<dyn Potential>, molrs::md::SpecialWeights)>;
+
+pub(crate) fn take_members(obj: &Bound<'_, PyAny>) -> PyResult<(Members, Vec<ErrSlot>)> {
+    if let Ok(typed) = obj.cast::<crate::ff::PyTypedPotentials>() {
+        let members = typed.borrow_mut().members.take().ok_or_else(|| {
+            PyValueError::new_err(
+                "these TypedPotentials were already given to an integrator; \
+                 build them again from the force field",
+            )
+        })?;
+        return Ok((members, Vec::new()));
+    }
+    let (pot, slots) = take_potential(obj)?;
+    Ok((vec![(pot, molrs::md::SpecialWeights::default())], slots))
+}
+
 pub(crate) fn take_potential(
     obj: &Bound<'_, PyAny>,
 ) -> PyResult<(Box<dyn Potential>, Vec<ErrSlot>)> {
@@ -431,12 +499,13 @@ pub struct PyVelocityVerlet {
 #[pymethods]
 impl PyVelocityVerlet {
     #[new]
-    #[pyo3(signature = (dt, *, potential, neighbors=None, mass))]
+    #[pyo3(signature = (dt, *, potential, neighbors=None, mass, simbox=None))]
     fn new(
         dt: F,
         potential: &Bound<'_, PyAny>,
         neighbors: Option<&Bound<'_, PyVerletSkin>>,
         mass: Bound<'_, PyAny>,
+        simbox: Option<PyBox>,
     ) -> PyResult<Self> {
         if potential.cast::<PyLJCut>().is_ok() && neighbors.is_none() {
             return Err(PyValueError::new_err(
@@ -445,14 +514,19 @@ impl PyVelocityVerlet {
         }
         // Validate mass before moving the potential / neighbour state in.
         let mass = mass_from(&mass)?;
-        let (boxed, err_slots) = take_potential(potential)?;
+        let (members, err_slots) = take_members(potential)?;
         let skin = match neighbors {
             Some(nl) => Some(nl.borrow_mut().take()?),
             None => None,
         };
         Ok(Self {
-            inner: VelocityVerlet::new(dt, provider(boxed, skin)?, mass.view(), None)
-                .map_err(md_err)?,
+            inner: VelocityVerlet::new(
+                dt,
+                provider(members, skin)?,
+                mass.view(),
+                simbox.map(|b| b.inner),
+            )
+            .map_err(md_err)?,
             err_slots,
         })
     }
@@ -527,7 +601,8 @@ pub struct PyLangevin {
 #[pymethods]
 impl PyLangevin {
     #[new]
-    #[pyo3(signature = (dt, *, gamma, kbt, potential, neighbors=None, mass, seed=0))]
+    #[pyo3(signature = (dt, *, gamma, kbt, potential, neighbors=None, mass, seed=0, simbox=None))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         dt: F,
         gamma: F,
@@ -536,6 +611,7 @@ impl PyLangevin {
         neighbors: Option<&Bound<'_, PyVerletSkin>>,
         mass: Bound<'_, PyAny>,
         seed: u64,
+        simbox: Option<PyBox>,
     ) -> PyResult<Self> {
         if potential.cast::<PyLJCut>().is_ok() && neighbors.is_none() {
             return Err(PyValueError::new_err(
@@ -552,7 +628,7 @@ impl PyLangevin {
             return Err(PyValueError::new_err("Langevin requires kbt > 0"));
         }
         let mass = mass_from(&mass)?;
-        let (boxed, err_slots) = take_potential(potential)?;
+        let (members, err_slots) = take_members(potential)?;
         let skin = match neighbors {
             Some(nl) => Some(nl.borrow_mut().take()?),
             None => None,
@@ -562,10 +638,10 @@ impl PyLangevin {
                 dt,
                 gamma,
                 kbt,
-                provider(boxed, skin)?,
+                provider(members, skin)?,
                 mass.view(),
                 seed,
-                None,
+                simbox.map(|b| b.inner),
             )
             .map_err(md_err)?,
             err_slots,

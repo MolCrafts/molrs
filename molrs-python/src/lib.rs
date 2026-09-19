@@ -78,7 +78,7 @@ use ff::atd::PyAtdTypifier;
 use ff::charge::{PyBccModel, PyGasteigerModel, PyMullikenModel};
 use ff::{
     PyForceField, PyLBFGS, PyMMFF94STypifier, PyMMFF94Typifier, PyOPLSAATypifier, PyOptReport,
-    PyPotentials, PyTypifier,
+    PyPotentials, PyTypedPotentials, PyTypifier,
 };
 
 mod compute;
@@ -329,6 +329,7 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyOPLSAATypifier>()?;
     m.add_class::<PyAtdTypifier>()?;
     m.add_class::<PyPotentials>()?;
+    m.add_class::<PyTypedPotentials>()?;
 
     // Charge models — Python's first native AM1-BCC. One calling convention:
     // `needs_equivalencing()` + `assign(mol, qm=None)`; `BccModel` adds `correct`.

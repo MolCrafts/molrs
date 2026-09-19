@@ -622,6 +622,23 @@ mod remap_tests {
             .to_owned())
     }
 
+    /// The default scales nothing, and says so.
+    ///
+    /// `nothing_scaled` caches an answer, and a cached fact that disagrees with
+    /// the thing it caches is worse than no cache: a derived `bool` default is
+    /// `false`, so an empty table claimed to have weights and a provider with
+    /// no neighbour list refused to build. The Python suite found it; this
+    /// keeps it found.
+    #[test]
+    fn an_empty_weight_table_scales_nothing() {
+        assert!(SpecialWeights::default().is_empty());
+        assert!(SpecialWeights::new(&[]).is_empty());
+        assert!(SpecialWeights::new(&[vec![], vec![]]).is_empty());
+        assert!(!SpecialWeights::new(&[vec![(1_usize, 0.5_f64)], vec![]]).is_empty());
+        // And an absent entry still answers full strength.
+        assert_eq!(SpecialWeights::default().weight(0, 1), 1.0);
+    }
+
     /// A cutoff past half the smallest perpendicular width is refused.
     ///
     /// Beyond it a pair has more than one image inside the cutoff, and the
@@ -1336,12 +1353,28 @@ mod virial_tests {
 /// not have been counted — is not available. A 1-2 pair sits at bond length,
 /// where a Lennard-Jones term is enormous; subtracting it from a total of
 /// ordinary size cancels away the very digits the answer is made of.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct SpecialWeights {
     /// Per owned atom, its special partners sorted by index, with weights.
     per_atom: Vec<Vec<(u32, F)>>,
     /// Whether every list is empty. A fact about the table, not about a step.
     nothing_scaled: bool,
+}
+
+/// Nothing scaled — the right default, and not the one `derive` would give.
+///
+/// `nothing_scaled` is a cached answer, and a derived `bool` default is
+/// `false`: an empty table would have claimed to scale something. It cost only
+/// a slower path, because an empty lookup answers 1.0 for every pair — but a
+/// cached fact that disagrees with the thing it caches is a trap whoever
+/// trusts it next will fall into.
+impl Default for SpecialWeights {
+    fn default() -> Self {
+        Self {
+            per_atom: Vec::new(),
+            nothing_scaled: true,
+        }
+    }
 }
 
 impl SpecialWeights {

@@ -1,9 +1,17 @@
 //! Typed array containers for the MD engine.
 //!
-//! [`ForceOutput`], [`MDState`] and [`MDObservables`] are the only data
-//! contract crossing component boundaries (potential → integrator →
-//! runner → hook). Frame topology stays at the composer; the hot step sees
-//! these three structs.
+//! [`ForceOutput`] and [`MDState`] are the data contract crossing the
+//! component boundary: a force evaluation hands back energy, forces and
+//! virial, and the state carries them at `pos` alongside the coordinates and
+//! their image flags. Frame topology stays at the composer; the hot step sees
+//! these two structs.
+//!
+//! There was a third, `MDObservables`, for a runner's hooks. It had no
+//! consumer and could not have had a correct one: `kinetic`, `total` and
+//! `temperature` need a mass array, a `k_B` and a removed-degrees-of-freedom
+//! count that it did not carry, and the only object with all three is the
+//! runner that does not exist yet. It will be designed with that runner, when
+//! there is something to hand it to.
 
 use ndarray::Array2;
 
@@ -75,25 +83,6 @@ pub struct MDState {
     pub virial: Option<Virial>,
 }
 
-/// Per-observation thermodynamic snapshot handed to MD hooks.
-#[derive(Clone, Debug)]
-pub struct MDObservables {
-    /// Positions `(N, 3)` in Å.
-    pub pos: FNx3,
-    /// Velocities `(N, 3)` in Å/fs.
-    pub vel: FNx3,
-    /// Forces `(N, 3)` at `pos`.
-    pub forces: FNx3,
-    /// Scalar potential energy.
-    pub potential: F,
-    /// Scalar kinetic energy.
-    pub kinetic: F,
-    /// `potential + kinetic`.
-    pub total: F,
-    /// Instantaneous temperature in kelvin (for the runner's default `k_B`).
-    pub temperature: F,
-}
-
 #[cfg(test)]
 mod tests {
     use ndarray::array;
@@ -117,20 +106,6 @@ mod tests {
             virial: None,
         };
         assert_eq!(state.forces[[0, 0]], 1.0);
-    }
-
-    #[test]
-    fn observables_cover_the_hook_contract() {
-        let obs = MDObservables {
-            pos: array![[0.0, 0.0, 0.0]],
-            vel: array![[0.0, 0.0, 0.0]],
-            forces: array![[0.0, 0.0, 0.0]],
-            potential: 1.0,
-            kinetic: 2.0,
-            total: 3.0,
-            temperature: 300.0,
-        };
-        assert!((obs.total - (obs.potential + obs.kinetic)).abs() < 1e-15);
     }
 }
 
