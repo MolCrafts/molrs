@@ -156,6 +156,12 @@ path = "benches/core/main.rs"
 harness = false
 
 [[bench]]
+name = "md_benchmarks"
+path = "benches/md/main.rs"
+harness = false
+required-features = ["md"]
+
+[[bench]]
 name = "compute_benchmarks"
 path = "benches/compute/main.rs"
 harness = false
