@@ -331,7 +331,7 @@ CXX bridge to Atomiverse C++. Zero-copy I/O via `FrameView` (borrowed) into exis
 
 ### Consuming molrs from other projects
 
-See `docs/interop.md` for the two as-built paths — **native Rust** (depend on `molcrafts-molrs`, use `molrs::Frame` / `molrs::ff::ForceField` directly; what molpack does) and **Python/WASM** (the `molrs-ffi` handle API: `FrameRef` / `BlockRef` / `ForceFieldRef` / `SharedStore`) — plus the shared data contract: **uint** atom indices, the `atomi/atomj/is_14` pairs-block schema, `special_bonds` weights on `ForceField`, and the consumer- or optimizer-built pairs neighbour list (`intramolecular_pairs` / topology bruteforce). No hand-written CHANGELOG — history is git tags. Downstream (molpy) pins major.minor only.
+See `docs/interop.md` for the two as-built paths — **native Rust** (depend on `molcrafts-molrs`, use `molrs::Frame` / `molrs::ff::ForceField` directly; what molpack does) and **Python/WASM** (the `molrs-ffi` handle API: `FrameRef` / `BlockRef` / `ForceFieldRef` / `SharedStore`) — plus the shared data contract: **uint** atom indices, the `atomi/atomj/is_14` pairs-block schema, `special_bonds` weights on `ForceField`, and the consumer- or optimizer-built pairs neighbour list (`intramolecular_pairs(&frame, ff.special_bonds())` / topology bruteforce). No hand-written CHANGELOG — history is git tags. Downstream (molpy) pins major.minor only.
 
 ## Critical Conventions
 

@@ -141,7 +141,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n--- Compile & Evaluate ---\n");
 
     let mut frame = frame;
-    frame.insert("pairs", intramolecular_pairs(&frame));
+    frame.insert(
+        "pairs",
+        intramolecular_pairs(&frame, typifier.ff().special_bonds())?,
+    );
 
     match typifier.ff().to_potentials(&frame) {
         Ok(potentials) => {

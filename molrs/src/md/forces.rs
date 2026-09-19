@@ -772,7 +772,7 @@ mod tests {
     /// Two unlike types, alternating, so picking up the wrong one is visible.
     #[test]
     fn a_typed_kernel_reads_the_same_types_through_copies_as_through_the_image() {
-        use molrs::ff::potential::pair::lj_cut::Mixing;
+        use molrs::ff::forcefield::mixing::Mixing;
 
         let l = 12.0_f64;
         let cutoff = 5.0;
@@ -867,7 +867,7 @@ mod tests {
     #[test]
     fn a_fully_excluded_molecule_has_no_non_bonded_energy() {
         use molrs::Topology;
-        use molrs::ff::potential::pair::lj_cut::Mixing;
+        use molrs::ff::forcefield::mixing::Mixing;
         use molrs::system::bond_weights::BondDistanceWeights;
 
         let bx = SimBox::cube(20.0, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
@@ -946,7 +946,7 @@ mod tests {
     #[test]
     fn exclusions_follow_a_molecule_through_a_face() {
         use molrs::Topology;
-        use molrs::ff::potential::pair::lj_cut::Mixing;
+        use molrs::ff::forcefield::mixing::Mixing;
         use molrs::system::bond_weights::BondDistanceWeights;
 
         let l = 20.0_f64;
@@ -1146,6 +1146,119 @@ mod tests {
         }
     }
 
+    /// The compiled door and the neighbour-driven door agree on a force field
+    /// that *keeps* its 1-3 neighbours.
+    ///
+    /// LAMMPS's `special_bonds fene` is `[0, 1, 1]`: 1-2 excluded, 1-3 at full
+    /// strength — a bead-spring chain has nothing else holding it open. The
+    /// compiled list used to exclude 1-3 whatever the force field said, so this
+    /// comparison had one side evaluating a different force field from the
+    /// other, silently. Both doors now read the weights.
+    #[test]
+    fn both_doors_keep_the_1_3_pairs_a_fene_field_asks_for() {
+        use molrs::Topology;
+        use molrs::ff::forcefield::{ForceField, SpecialBonds};
+        use molrs::ff::potential::intramolecular_pairs;
+        use molrs::store::block::Block;
+        use molrs::store::frame::Frame;
+        use molrs::types::Idx;
+        use ndarray::Array1;
+
+        // Three beads, 0-1-2: (0,1) and (1,2) are 1-2, (0,2) is 1-3.
+        let pts = array![
+            [9.0_f64, 10.0, 10.0],
+            [10.0, 10.0, 10.0],
+            [10.6, 10.9, 10.0]
+        ];
+        let n = pts.nrows();
+        let bonds = [[0usize, 1], [1, 2]];
+        let topo = Topology::from_edges(n, &bonds);
+
+        let mut frame = Frame::new();
+        let mut atoms = Block::new();
+        atoms
+            .insert("type", Array1::from(vec!["a".to_string(); n]).into_dyn())
+            .unwrap();
+        frame.insert("atoms", atoms);
+        let mut blk = Block::new();
+        blk.insert(
+            "atomi",
+            Array1::from(bonds.iter().map(|b| b[0] as Idx).collect::<Vec<_>>()).into_dyn(),
+        )
+        .unwrap();
+        blk.insert(
+            "atomj",
+            Array1::from(bonds.iter().map(|b| b[1] as Idx).collect::<Vec<_>>()).into_dyn(),
+        )
+        .unwrap();
+        frame.insert("bonds", blk);
+        let mut ang = Block::new();
+        ang.insert("atomi", Array1::from(vec![0 as Idx]).into_dyn())
+            .unwrap();
+        ang.insert("atomj", Array1::from(vec![1 as Idx]).into_dyn())
+            .unwrap();
+        ang.insert("atomk", Array1::from(vec![2 as Idx]).into_dyn())
+            .unwrap();
+        frame.insert("angles", ang);
+
+        let mut field = ForceField::new("fene-probe");
+        field
+            .def_pairstyle("lj/cut", &[("cutoff", 6.0_f64)])
+            .def_type("a", &[("epsilon", 0.3), ("sigma", 3.4)]);
+        field.set_special_bonds(SpecialBonds {
+            lj: [0.0, 1.0, 1.0],
+            coul: [0.0, 1.0, 1.0],
+        });
+
+        // The compiled door.
+        let pairs =
+            intramolecular_pairs(&frame, field.special_bonds()).expect("fene is expressible");
+        assert_eq!(
+            pairs.nrows(),
+            Some(1),
+            "the 1-3 pair (0,2) stays and the two 1-2 pairs go"
+        );
+        let mut compiled_frame = frame.clone();
+        compiled_frame.insert("pairs", pairs);
+        let pots = field.to_potentials(&compiled_frame).unwrap();
+        let mut compiled = Direct::new(pots);
+        let no_fold = Array2::<i64>::zeros((n, 3));
+        let a = compiled.compute(pts.view(), no_fold.view()).unwrap();
+        assert!(a.energy.abs() > 1e-6, "the 1-3 pair must carry energy");
+
+        // The neighbour-driven door, over a table holding *every* pair.
+        let members: Vec<(Box<dyn Potential>, SpecialWeights)> = field
+            .to_typed_potentials(&frame)
+            .unwrap()
+            .into_iter()
+            .map(|(pot, weights)| {
+                let special = weights
+                    .map(|w| SpecialWeights::new(&topo.special_weights(&w)))
+                    .unwrap_or_default();
+                (pot, special)
+            })
+            .collect();
+        let mut driven = MicPairs::from_members(members, skin(pts.view())).unwrap();
+        let b = driven.compute(pts.view(), no_fold.view()).unwrap();
+
+        assert!(
+            (a.energy - b.energy).abs() < 1e-12,
+            "compiled {} vs neighbour-driven {}",
+            a.energy,
+            b.energy
+        );
+        for i in 0..n {
+            for k in 0..3 {
+                assert!(
+                    (a.forces[[i, k]] - b.forces[[i, k]]).abs() < 1e-12,
+                    "force on {i} component {k}: {} vs {}",
+                    a.forces[[i, k]],
+                    b.forces[[i, k]]
+                );
+            }
+        }
+    }
+
     /// The exclusions work the same without copies to map through.
     ///
     /// Under the minimum image an index is already its own owner, so the split
@@ -1155,7 +1268,7 @@ mod tests {
     #[test]
     fn the_minimum_image_route_excludes_the_same_pairs() {
         use molrs::Topology;
-        use molrs::ff::potential::pair::lj_cut::Mixing;
+        use molrs::ff::forcefield::mixing::Mixing;
         use molrs::system::bond_weights::BondDistanceWeights;
 
         let bx = SimBox::cube(20.0, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();

@@ -365,9 +365,12 @@ fn mmff_cleanup(mol: &Atomistic, coords3d: &mut [f64]) -> Result<(f64, usize, bo
     let mut frame = typifier.typify(&staged)?.to_frame();
     // The neighbour list is the consumer's to build — and here the consumer is the
     // minimizer. Bonded terms and the 1-2/1-3 exclusions are topological, so this
-    // list stays valid across the relaxation.
-    frame.insert("pairs", intramolecular_pairs(&frame));
-    let potentials = typifier.ff().to_potentials(&frame)?;
+    // list stays valid across the relaxation. Which close neighbours belong in
+    // it is MMFF's call, so the list is built from MMFF's own weights rather
+    // than from an assumption about them.
+    let ff = typifier.ff();
+    frame.insert("pairs", intramolecular_pairs(&frame, ff.special_bonds())?);
+    let potentials = ff.to_potentials(&frame)?;
 
     // RDKit's MMFFOptimizeMolecule runs a full BFGS minimization to a
     // gradient-norm tolerance. Mirror that with L-BFGS to an RMS-gradient

@@ -10,7 +10,7 @@
 //! ```ignore
 //! let t = UFFTypifier::new();
 //! let mut frame = t.typify(&mol)?.to_frame();
-//! frame.insert("pairs", intramolecular_pairs(&frame));
+//! frame.insert("pairs", intramolecular_pairs(&frame, t.ff().special_bonds())?);
 //! let pots = t.ff().to_potentials(&frame)?;
 //! ```
 //!
@@ -716,7 +716,10 @@ mod tests {
         let t = UFFTypifier::new();
         let typed = t.typify(&ethanol()).unwrap();
         let mut frame = typed.to_frame();
-        frame.insert("pairs", intramolecular_pairs(&frame));
+        frame.insert(
+            "pairs",
+            intramolecular_pairs(&frame, t.ff().special_bonds()).unwrap(),
+        );
         let pots = t.ff().to_potentials(&frame).unwrap();
         let coords = extract_coords(&frame).unwrap();
         let (e, f) = pots.calc_energy_forces(&coords);
@@ -740,7 +743,10 @@ mod tests {
         for (name, mol) in [("ethanol", ethanol()), ("formaldehyde", formaldehyde())] {
             let typed = t.typify(&mol).unwrap();
             let mut frame = typed.to_frame();
-            frame.insert("pairs", intramolecular_pairs(&frame));
+            frame.insert(
+                "pairs",
+                intramolecular_pairs(&frame, t.ff().special_bonds()).unwrap(),
+            );
             let pots = t.ff().to_potentials(&frame).unwrap();
             let coords = extract_coords(&frame).unwrap();
             let (_, f) = pots.calc_energy_forces(&coords);

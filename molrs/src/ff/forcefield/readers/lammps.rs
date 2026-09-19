@@ -48,9 +48,9 @@
 use super::ForceFieldReader;
 use crate::ff::constants::VACUUM_DIELECTRIC;
 use crate::ff::forcefield::lammps_units::{LammpsFfUnits, lammps_k_to_molrs_half_k, parse_style};
+use crate::ff::forcefield::mixing::Mixing;
 use crate::ff::forcefield::{ForceField, SpecialBonds};
 use crate::ff::params::amber::{AMBER_SCEE, AMBER_SCNB};
-use crate::ff::potential::pair::Mixing;
 use molrs::units::constants::COULOMB_REAL;
 use std::collections::BTreeMap;
 

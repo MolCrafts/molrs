@@ -591,7 +591,14 @@ fn ac004_param_source_is_bidirectional_on_semantics_not_spelling() {
         let _i1 = mol.add_atom(a1);
         // No bond → intramolecular_pairs will include (0,1) as a non-1-4 pair.
         let mut frame = mol.to_frame();
-        frame.insert("pairs", molrs::ff::potential::intramolecular_pairs(&frame));
+        frame.insert(
+            "pairs",
+            molrs::ff::potential::intramolecular_pairs(
+                &frame,
+                &molrs::ff::forcefield::SpecialBonds::default(),
+            )
+            .unwrap(),
+        );
 
         let mut style = Params::new();
         style.set("coulomb", 332.0716);
@@ -699,7 +706,10 @@ mod reverse {
 
         let mut frame = frame.clone();
         if frame.get("pairs").is_none() {
-            frame.insert("pairs", intramolecular_pairs(&frame));
+            frame.insert(
+                "pairs",
+                intramolecular_pairs(&frame, typifier_ff.special_bonds()).unwrap(),
+            );
         }
         let style = typifier_ff
             .get_style("pair", "coul/cut")
@@ -840,8 +850,14 @@ mod reverse {
 
         let mut f94 = t94.typify(&mol).expect("typify 94").to_frame();
         let mut f94s = t94s.typify(&mol).expect("typify 94s").to_frame();
-        f94.insert("pairs", intramolecular_pairs(&f94));
-        f94s.insert("pairs", intramolecular_pairs(&f94s));
+        f94.insert(
+            "pairs",
+            intramolecular_pairs(&f94, t94.ff().special_bonds()).unwrap(),
+        );
+        f94s.insert(
+            "pairs",
+            intramolecular_pairs(&f94s, t94s.ff().special_bonds()).unwrap(),
+        );
 
         let pots94 = t94.ff().to_potentials(&f94).expect("potentials 94");
         let pots94s = t94s.ff().to_potentials(&f94s).expect("potentials 94s");
@@ -1072,6 +1088,88 @@ fn ff_never_names_optimize() {
          hits: {hits:?}. A genuine reference is the defect this gate exists for; \
          an innocent `let optimized = ...` is resolved by renaming the binding, \
          never by exempting a file here."
+    );
+}
+
+/// `ff::forcefield` never names `ff::potential`.
+///
+/// Parameters flow one way: a force field **declares** styles and constants, a
+/// potential **is built from** them. The reverse edge existed anyway — the
+/// LAMMPS and OPLS readers imported `Mixing` out of the LJ kernel and the XML
+/// reader imported MMFF's `encode_da` — so the two submodules named each other
+/// and `ForceField` had an inherent impl in each. Both moved to where their
+/// data lives (`forcefield::mixing`, `mmff::da`), and this keeps them there.
+///
+/// An inventory claim over one subtree, like the gates above: it scans
+/// comment-stripped source under `molrs/src/ff/forcefield/` for `potential`
+/// paths. A cross-layer assertion belongs here, in the gate, not in a reader's
+/// unit test — which is where `pair_styles_are_registered_lj_cut_and_coul_cut`
+/// was keeping a `KernelRegistry` import alive.
+#[test]
+fn forcefield_never_names_potential() {
+    let forbidden = ["crate::ff::potential", "molrs::ff::potential"];
+    let mut hits: Vec<String> = Vec::new();
+    for path in walk_rs_files(&src_dir().join("ff").join("forcefield")) {
+        let src = strip_comments(&fs::read_to_string(&path).expect("read source"));
+        for (n, line) in src.lines().enumerate() {
+            for needle in forbidden {
+                if line.contains(needle) {
+                    hits.push(format!("{}:{} names {needle}", path.display(), n + 1));
+                }
+            }
+        }
+    }
+    assert!(
+        hits.is_empty(),
+        "ff::forcefield is below ff::potential: a force field declares parameters, \
+         a potential is built from them, and the edge runs one way. If the shared \
+         item is force-field vocabulary (a combining rule, a column encoding), move \
+         it down beside the data it describes. Hits: {hits:?}"
+    );
+}
+
+/// Every pair style the shipped force fields declare has a registered kernel.
+///
+/// A reader that emits a style name nothing can build produces a `ForceField`
+/// that only fails at `to_potentials`, one layer and one stack frame away from
+/// the typo. This used to be asserted for the Amber prmtop reader alone, inside
+/// that reader's own unit tests — which is what made `ff::forcefield` import
+/// `KernelRegistry`. It is a cross-layer claim, so it lives here, and it now
+/// covers every force field molrs ships rather than one reader's fixture.
+#[test]
+fn shipped_force_fields_declare_only_registered_styles() {
+    use molrs::ff::potential::KernelRegistry;
+    use molrs::ff::typifier::mmff::{MMFF94STypifier, MMFF94Typifier};
+    use molrs::ff::typifier::opls::OPLSAATypifier;
+    use molrs::ff::typifier::uff::UFFTypifier;
+
+    let registry = KernelRegistry::builtin();
+    let fields: Vec<(&str, molrs::ff::forcefield::ForceField)> = vec![
+        ("MMFF94", MMFF94Typifier::new().ff().clone()),
+        ("MMFF94s", MMFF94STypifier::new().ff().clone()),
+        (
+            "OPLS-AA",
+            OPLSAATypifier::oplsaa()
+                .expect("embedded OPLS-AA")
+                .ff()
+                .clone(),
+        ),
+        ("UFF", UFFTypifier::new().ff().clone()),
+    ];
+    let mut missing: Vec<String> = Vec::new();
+    for (name, ff) in &fields {
+        for category in ["bond", "angle", "dihedral", "improper", "pair"] {
+            for style in ff.get_styles(category) {
+                if registry.get(category, &style.name).is_none() {
+                    missing.push(format!("{name}: {category} style '{}'", style.name));
+                }
+            }
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "a shipped force field declares a style with no kernel — it would compile \
+         and then fail at to_potentials: {missing:?}"
     );
 }
 

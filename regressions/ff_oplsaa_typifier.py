@@ -24,9 +24,10 @@ mol.generate_topology(gen_angle=True, gen_dihedral=True)
 
 typifier = molrs.ff.OPLSAATypifier()
 frame = typifier.typify(mol).to_frame()
-frame["pairs"] = molrs.ff.intramolecular_pairs(frame)
+ff = typifier.forcefield()
+frame["pairs"] = molrs.ff.intramolecular_pairs(frame, ff)
 
-potentials = typifier.forcefield().to_potentials(frame)
+potentials = ff.to_potentials(frame)
 coords = molrs.ff.extract_coords(frame)
 energy, forces = potentials.calc_energy_forces(coords)
 

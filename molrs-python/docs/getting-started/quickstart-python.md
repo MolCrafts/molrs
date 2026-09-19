@@ -136,8 +136,9 @@ print("typed blocks:", typed_frame.keys())
 
 try:
     # Non-bonded terms need an explicit pairs block (no optimizeGeometry sugar).
-    typed_frame["pairs"] = molrs.ff.intramolecular_pairs(typed_frame)
-    potentials = typifier.forcefield().to_potentials(typed_frame)
+    ff = typifier.forcefield()
+    typed_frame["pairs"] = molrs.ff.intramolecular_pairs(typed_frame, ff)
+    potentials = ff.to_potentials(typed_frame)
     coords = molrs.ff.extract_coords(typed_frame)
 
     energy, forces = potentials.calc_energy_forces(coords)

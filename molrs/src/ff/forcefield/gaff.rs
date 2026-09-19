@@ -393,7 +393,7 @@ impl std::error::Error for GaffError {}
 /// }
 ///
 /// let mut frame = labelled.to_frame();
-/// let pairs = intramolecular_pairs(&frame);
+/// let pairs = intramolecular_pairs(&frame, ff.special_bonds())?;
 /// frame.insert("pairs", pairs);
 /// let potentials = ff.to_potentials(&frame)?;
 /// # Ok(())

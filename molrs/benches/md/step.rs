@@ -4,10 +4,10 @@ use std::time::Duration;
 
 use criterion::{Criterion, criterion_group};
 use molrs::Topology;
+use molrs::ff::forcefield::mixing::Mixing;
 use molrs::ff::potential::Potential;
 use molrs::ff::potential::bond::harmonic::BondHarmonic;
 use molrs::ff::potential::pair::LJCut;
-use molrs::ff::potential::pair::lj_cut::Mixing;
 use molrs::md::{Comm, ForceProvider, GhostPairs, MicPairs, SpecialWeights};
 use molrs::spatial::neighbors::{NeighborList, NeighborPolicy, VerletSkin};
 use molrs::spatial::simbox::SimBox;

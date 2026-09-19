@@ -27,6 +27,7 @@
 use std::collections::HashMap;
 
 use crate::ff::forcefield::Params;
+use crate::ff::mmff::da::{DA_ACCEPTOR, DA_DONOR, DA_NEITHER};
 use crate::ff::potential::Potential;
 use crate::ff::potential::gather_copies;
 use crate::ff::potential::geometry::{mag3, sub3, validate_coords};
@@ -37,47 +38,6 @@ use molrs::math::Virial;
 use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame::Frame;
 use molrs::types::F;
-
-// ---------------------------------------------------------------------------
-// Donor / acceptor encoding (MMFF94.PAR's `DA` column)
-// ---------------------------------------------------------------------------
-
-/// Neither hydrogen-bond donor nor acceptor (`DA` = `"-"`).
-pub const DA_NEITHER: u8 = 0;
-/// Hydrogen-bond **donor** (`DA` = `"D"`) — polar hydrogen.
-pub const DA_DONOR: u8 = 1;
-/// Hydrogen-bond **acceptor** (`DA` = `"A"`).
-pub const DA_ACCEPTOR: u8 = 2;
-
-/// Encode MMFF's `DA` column (`"D"` / `"A"` / `"-"`) as the small integer code
-/// stored in a `mmff_vdw` [`PairType`](crate::ff::forcefield::PairType) row's
-/// `da` param.
-///
-/// [`Params`] is a numeric bag, so a reader transcribes the letter here and
-/// [`vdw_combining`] decodes it — one encoding, owned by its consumer. Anything
-/// unrecognised is [`DA_NEITHER`], which is also MMFF's own default for the
-/// 80-odd non-hydrogen-bonding types.
-pub(crate) fn encode_da(raw: &str) -> f64 {
-    match raw {
-        "D" => DA_DONOR,
-        "A" => DA_ACCEPTOR,
-        _ => DA_NEITHER,
-    }
-    .into()
-}
-
-/// [`encode_da`] for the compiled table, whose `da` column is the letter's ASCII
-/// byte ([`MmffVdW::da`](crate::ff::params::mmff::MmffVdW::da), as RDKit stores
-/// it) rather than a string. Same three codes, same default — one mapping, two
-/// spellings of the letter.
-pub(crate) fn encode_da_byte(code: u8) -> f64 {
-    match code {
-        b'D' => DA_DONOR,
-        b'A' => DA_ACCEPTOR,
-        _ => DA_NEITHER,
-    }
-    .into()
-}
 
 // ---------------------------------------------------------------------------
 // MMFFVdW: Buffered 14-7 potential

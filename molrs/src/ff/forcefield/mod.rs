@@ -8,6 +8,7 @@
 
 pub mod gaff;
 pub mod lammps_units;
+pub mod mixing;
 pub mod readers;
 pub mod writers;
 pub mod xml;
@@ -684,11 +685,24 @@ impl Style {
 /// `From` / `Into` between the two types.
 ///
 /// A weight of `0.0` fully excludes that neighbour class; `1.0` leaves it at
-/// full strength. molrs realises 1-2 / 1-3 *exclusion* by **omitting** those
-/// pairs from the neighbour list (`intramolecular_pairs`), so the pair kernels
-/// consume only the 1-4 weight (`[2]`) today; the 1-2 / 1-3 entries are stored
-/// for completeness and for force fields that *scale* (rather than exclude)
-/// close neighbours.
+/// full strength.
+///
+/// # Two doors, two expressive powers
+///
+/// A **compiled** pair list (`intramolecular_pairs` → `to_potentials`) carries
+/// the 1-2 / 1-3 weights by *presence*: the row is there or it is not. That is
+/// one bit, so it expresses `0.0` and `1.0` and nothing between, and it
+/// expresses only weights the van-der-Waals and Coulomb kernels **share** —
+/// one list feeds both. [`compiled_inclusion`](Self::compiled_inclusion) is
+/// that judgement, and both doors on that path call it rather than assume.
+///
+/// A **neighbour-driven** evaluation (`to_typed_potentials`) carries them as a
+/// per-pair factor ([`lj_weights`](Self::lj_weights) /
+/// [`coul_weights`](Self::coul_weights)), so it expresses every weight, and
+/// the two kernels independently.
+///
+/// The 1-4 weight `[2]` is not part of this: both doors scale it inside the
+/// kernel, so a fraction is fine there.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SpecialBonds {
     /// LJ / van-der-Waals `[1-2, 1-3, 1-4]` scale weights.
@@ -736,6 +750,54 @@ impl SpecialBonds {
     /// `1/1.2` for electrostatics — and in molrs they are separate kernels.
     pub fn coul_weights(&self) -> BondDistanceWeights {
         Self::table(self.coul)
+    }
+
+    /// Whether a compiled `pairs` list can carry the 1-2 and 1-3 weights, and
+    /// if so whether each class belongs *in* the list.
+    ///
+    /// `Ok([keep_12, keep_13])` — `false` means omit those rows (the class is
+    /// excluded), `true` means emit them unflagged (full strength). `Err` means
+    /// the weights are outside what a presence/absence list can say, and the
+    /// caller must use the neighbour-driven door instead of quietly rounding.
+    ///
+    /// Two ways to fall outside:
+    ///
+    /// * a **fraction** — `lj[1] == 0.5` scales 1-3 pairs to half strength, and
+    ///   a row that is merely present cannot say "half";
+    /// * a **split** — `lj[1] == 1.0` with `coul[1] == 0.0` wants the row for
+    ///   one kernel and not for the other, and there is one list for both.
+    ///
+    /// LAMMPS's own presets exercise both the accepted values: `amber`,
+    /// `charmm` and `dreiding` exclude 1-3 (`false`), `fene` keeps it
+    /// (`[0, 1, 1]` → `true`).
+    pub fn compiled_inclusion(&self) -> Result<[bool; 2], String> {
+        let mut keep = [false; 2];
+        for (k, slot) in keep.iter_mut().enumerate() {
+            let class = if k == 0 { "1-2" } else { "1-3" };
+            let (lj, coul) = (self.lj[k], self.coul[k]);
+            if lj != coul {
+                return Err(format!(
+                    "special_bonds {class}: lj {lj} and coul {coul} differ, and a \
+                     compiled pairs list is shared by both kernels — it can include \
+                     the row or omit it, not do one for van der Waals and the other \
+                     for Coulomb. Use ForceField::to_typed_potentials, which carries \
+                     a per-pair weight per kernel."
+                ));
+            }
+            *slot = if lj == 0.0 {
+                false
+            } else if lj == 1.0 {
+                true
+            } else {
+                return Err(format!(
+                    "special_bonds {class} weight {lj}: a compiled pairs list carries \
+                     this class by whether the row is present, so it expresses 0 or 1 \
+                     and nothing between. Use ForceField::to_typed_potentials, which \
+                     carries a per-pair weight."
+                ));
+            };
+        }
+        Ok(keep)
     }
 
     fn table(w: [f64; 3]) -> BondDistanceWeights {
@@ -1451,6 +1513,12 @@ mod tests {
         assert_eq!(pairs, HashSet::from(["CT", "OH", "CT-OH"]));
     }
 
+    /// `kspace` is not a category a force field can declare a type under.
+    ///
+    /// Where PME actually *is* registered — `pair/coul/long/pme`, and nothing
+    /// under `kspace` — is a registry claim, and `registry.rs` asserts it. It
+    /// was asserted here too, which is the only reason this module reached into
+    /// `ff::potential` at all.
     #[test]
     fn kspace_is_not_a_style_category() {
         let mut ff = ForceField::new("test");
@@ -1458,7 +1526,47 @@ mod tests {
             ff.def_type("kspace", "pme", "X", &[]),
             Err(DefTypeError::UnknownCategory(_))
         ));
-        assert!(crate::ff::potential::lookup_kernel("pair", "coul/long/pme").is_some());
-        assert!(crate::ff::potential::lookup_kernel("kspace", "pme").is_none());
+    }
+
+    /// The two values a presence/absence list can say, and the two ways to
+    /// fall outside them.
+    #[test]
+    fn a_compiled_pair_list_says_only_in_or_out() {
+        // The default and every Amber-family reader: both classes excluded.
+        assert_eq!(
+            SpecialBonds::default().compiled_inclusion(),
+            Ok([false, false])
+        );
+        // LAMMPS `special_bonds fene`: 1-3 stays, at full strength.
+        let fene = SpecialBonds {
+            lj: [0.0, 1.0, 1.0],
+            coul: [0.0, 1.0, 1.0],
+        };
+        assert_eq!(fene.compiled_inclusion(), Ok([false, true]));
+
+        // A fraction is not expressible by a row that is merely there.
+        let half = SpecialBonds {
+            lj: [0.0, 0.5, 0.5],
+            coul: [0.0, 0.5, 0.5],
+        };
+        let err = half.compiled_inclusion().unwrap_err();
+        assert!(err.contains("1-3"), "{err}");
+        assert!(err.contains("to_typed_potentials"), "{err}");
+
+        // Neither is a class one kernel wants and the other does not.
+        let split = SpecialBonds {
+            lj: [0.0, 1.0, 1.0],
+            coul: [0.0, 0.0, 1.0],
+        };
+        let err = split.compiled_inclusion().unwrap_err();
+        assert!(err.contains("lj 1 and coul 0 differ"), "{err}");
+
+        // The 1-4 weight is not part of this judgement: both doors scale it
+        // inside the kernel, so a fraction there is ordinary.
+        let amber = SpecialBonds {
+            lj: [0.0, 0.0, 0.5],
+            coul: [0.0, 0.0, 1.0 / 1.2],
+        };
+        assert_eq!(amber.compiled_inclusion(), Ok([false, false]));
     }
 }

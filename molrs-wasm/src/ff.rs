@@ -244,7 +244,7 @@ impl LBFGS {
         let report = frame
             .inner
             .with_mut(|rs| -> Result<molrs::optimize::OptReport, String> {
-                install_pairs(rs, &self.pairs)?;
+                install_pairs(rs, &self.pairs, self.ff.special_bonds())?;
                 let compiled = self
                     .ff
                     .to_potentials(rs)
@@ -310,7 +310,11 @@ impl OptReport {
 
 // ── pair install ────────────────────────────────────────────────────────────
 
-fn install_pairs(frame: &mut RsFrame, source: &PairSource) -> Result<(), String> {
+fn install_pairs(
+    frame: &mut RsFrame,
+    source: &PairSource,
+    special: &molrs::ff::forcefield::SpecialBonds,
+) -> Result<(), String> {
     let block = match source {
         PairSource::BruteForceTopology => {
             let n = frame.get("atoms").and_then(|b| b.nrows()).unwrap_or(0);
@@ -322,7 +326,7 @@ fn install_pairs(frame: &mut RsFrame, source: &PairSource) -> Result<(), String>
                      force-field nonbonded shell."
                 ));
             }
-            topology_pairs(frame)
+            topology_pairs(frame, special)?
         }
         PairSource::Neighbors { i, j } => pairs_from_indices(frame, i, j)?,
     };

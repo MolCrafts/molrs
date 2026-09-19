@@ -1291,7 +1291,7 @@ mod ghost_path_tests {
     /// have been none.
     #[test]
     fn the_two_regimes_derive_the_same_virial() {
-        use molrs::ff::potential::pair::lj_cut::Mixing;
+        use molrs::ff::forcefield::mixing::Mixing;
 
         let l = 12.0_f64;
         let cutoff = 5.0;

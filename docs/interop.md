@@ -39,9 +39,12 @@ use molrs::ff::typifier::mmff::MMFF94Typifier;
 let mol = Atomistic::new();                              // build or load your molecule
 let typifier = MMFF94Typifier::new();
 
+let ff = typifier.ff();
 let mut frame = typifier.typify(&mol)?.to_frame();       // labels + charges
-frame.insert("pairs", intramolecular_pairs(&frame));     // the consumer's neighbour list
-let potentials = typifier.ff().to_potentials(&frame)?;   // the standard compile path
+// The consumer's neighbour list — built from the force field's own
+// special_bonds, which decide whether 1-2 / 1-3 neighbours belong in it.
+frame.insert("pairs", intramolecular_pairs(&frame, ff.special_bonds())?);
+let potentials = ff.to_potentials(&frame)?;              // the standard compile path
 
 let coords: Vec<f64> = Vec::new();                       // flat [x,y,z, ...]
 let (energy, _forces) = potentials.calc_energy_forces(&coords);
@@ -416,8 +419,13 @@ Whichever path you take, molrs data follows these conventions:
   is `[0, 0, 0, 1]`. There is no `From`/`Into` between the two types.
 - **The neighbour list is the consumer's job.** `ForceField` holds parameters +
   `special_bonds` only; the optimizer / integrator builds the intramolecular pair
-  list (`molrs::ff::potential::intramolecular_pairs(&frame) → atomi/atomj/is_14`)
-  and inserts it before calling `to_potentials`.
+  list (`molrs::ff::potential::intramolecular_pairs(&frame, ff.special_bonds())
+  → atomi/atomj/is_14`) and inserts it before calling `to_potentials`. The
+  weights are an argument because they decide the rows: `special_bonds fene`
+  (`[0, 1, 1]`) keeps 1-3 pairs. A list of rows expresses a 1-2 / 1-3 weight of
+  `0` or `1` and nothing else, so a force field that *scales* those classes —
+  or scales them differently for van der Waals and Coulomb — is an `Err` here
+  and belongs on `to_typed_potentials`, which carries a per-pair weight.
 
 ## Which path?
 

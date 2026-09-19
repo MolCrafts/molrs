@@ -23,8 +23,9 @@
 //! # fn run(mol: &molrs::Atomistic) -> Result<(), String> {
 //! let typifier = MMFF94Typifier::new();
 //! let mut frame = typifier.typify(mol)?.to_frame();       // labels + charges
-//! frame.insert("pairs", intramolecular_pairs(&frame));    // consumer's neighbour list
-//! let potentials = typifier.ff().to_potentials(&frame)?;  // the standard route
+//! let ff = typifier.ff();
+//! frame.insert("pairs", intramolecular_pairs(&frame, ff.special_bonds())?);
+//! let potentials = ff.to_potentials(&frame)?;              // the standard route
 //! # let _ = potentials; Ok(())
 //! # }
 //! ```
@@ -50,6 +51,7 @@
 pub(crate) mod aromaticity;
 pub(crate) mod atomtype;
 pub(crate) mod charges;
+pub mod da;
 mod hybrid;
 pub(crate) mod resolve;
 pub(crate) mod topo;

@@ -34,7 +34,7 @@
 use std::collections::HashMap;
 
 use super::{ForceField, PairType, Params, SpecialBonds, StyleDefs};
-use crate::ff::potential::pair::mmff::encode_da;
+use crate::ff::mmff::da::encode_da;
 use crate::ff::typifier::mmff::{MMFFAtomProp, MMFFParams};
 use crate::ff::typifier::opls::{OplsTypeRow, OplsTypingMeta};
 

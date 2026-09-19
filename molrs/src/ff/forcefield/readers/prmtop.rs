@@ -604,7 +604,6 @@ mod tests {
     use super::*;
     use crate::ff::forcefield::writers::ForceFieldWriter;
     use crate::ff::forcefield::writers::lammps::{LammpsFfWriter, LammpsWriteOptions};
-    use crate::ff::potential::KernelRegistry;
 
     #[test]
     fn empty_prmtop_errors() {
@@ -806,15 +805,6 @@ c3  c3  c3  hc
             ff.get_style("pair", "lj/cut/coul/long").is_none(),
             "combined lj/cut/coul/long must not be registered"
         );
-
-        let registry = KernelRegistry::builtin();
-        for style in ff.get_styles("pair") {
-            assert!(
-                registry.get("pair", &style.name).is_some(),
-                "pair style {} missing from KernelRegistry::builtin()",
-                style.name
-            );
-        }
 
         let coulomb = coul.params.get("coulomb").expect("coulomb");
         let dielectric = coul.params.get("dielectric").expect("dielectric");

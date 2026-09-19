@@ -43,7 +43,7 @@
 //!     │          fallbacks)
 //!     │
 //!     ├─ .to_frame()                   → typed Frame
-//!     ├─ frame["pairs"] = intramolecular_pairs(&frame)   (the consumer's list)
+//!     ├─ frame["pairs"] = intramolecular_pairs(&frame, ff.special_bonds())
 //!     │
 //!     └─ typifier.ff().to_potentials(&frame)  → Potentials (pre-resolved SoA)
 //!           │
@@ -196,7 +196,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut frame = typifier.typify(&ethane)?.to_frame();
     // The neighbour list is the consumer's to build; add it now so the Frame below
     // is the complete input `to_potentials` (Part 7) is handed.
-    frame.insert("pairs", intramolecular_pairs(&frame));
+    frame.insert(
+        "pairs",
+        intramolecular_pairs(&frame, typifier.ff().special_bonds())?,
+    );
 
     let atoms = frame.get("atoms").expect("atoms block");
     let bonds = frame.get("bonds").expect("bonds block");

@@ -1945,9 +1945,15 @@ pub fn write_lammps_data_coeffs_py(
 ///
 /// Returns a :class:`Block` with ``atomi`` / ``atomj`` / ``is_14`` columns — the
 /// exact list :meth:`ForceField.to_potentials` consumes for the pair (van der
-/// Waals + Coulomb) kernels. 1-2 and 1-3 neighbours are excluded (from the
-/// frame's ``bonds`` / ``angles`` blocks); 1-4 pairs (from ``dihedrals``) are
-/// flagged so the kernels apply the force field's special-bonds scaling.
+/// Waals + Coulomb) kernels. 1-4 pairs (from ``dihedrals``) are flagged so the
+/// kernels apply the force field's 1-4 scaling.
+///
+/// Which 1-2 / 1-3 neighbours belong in the list is the **force field's**
+/// decision, so pass it: LAMMPS ``special_bonds fene`` (``[0, 1, 1]``) keeps
+/// 1-3 pairs at full strength, and a bead-spring chain without them has
+/// nothing holding it open. Omitting ``forcefield`` excludes both classes —
+/// what every Amber-family force field wants, and what this function always
+/// did before it could be told otherwise.
 ///
 /// Insert the result as the frame's ``"pairs"`` block before
 /// :meth:`ForceField.to_potentials` when you need the non-bonded terms — e.g. a
@@ -1960,13 +1966,37 @@ pub fn write_lammps_data_coeffs_py(
 /// frame : Frame
 ///     A typed frame with ``atoms`` and the topology blocks
 ///     (``bonds`` / ``angles`` / ``dihedrals``) used for exclusions.
+/// forcefield : ForceField, optional
+///     The force field whose ``special_bonds`` decide the 1-2 / 1-3 rows.
+///     Defaults to excluding both.
 ///
 /// Returns
 /// -------
 /// Block
+///
+/// Raises
+/// ------
+/// ValueError
+///     The force field scales 1-2 or 1-3 neighbours by a fraction, or scales
+///     them differently for van der Waals and Coulomb. A list of rows cannot
+///     say either; use :meth:`ForceField.to_typed_potentials`, which carries a
+///     per-pair weight.
 #[pyfunction]
-#[pyo3(name = "intramolecular_pairs")]
-pub fn intramolecular_pairs_py(frame: &PyFrame) -> PyResult<PyBlock> {
+#[pyo3(name = "intramolecular_pairs", signature = (frame, forcefield = None))]
+pub fn intramolecular_pairs_py(
+    frame: &PyFrame,
+    forcefield: Option<&PyForceField>,
+) -> PyResult<PyBlock> {
     let core = frame.clone_core_frame()?;
-    PyBlock::from_core_block(molrs::ff::potential::intramolecular_pairs(&core))
+    let owned;
+    let special = match forcefield {
+        Some(ff) => ff.inner.special_bonds(),
+        None => {
+            owned = molrs::ff::forcefield::SpecialBonds::default();
+            &owned
+        }
+    };
+    let block = molrs::ff::potential::intramolecular_pairs(&core, special)
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    PyBlock::from_core_block(block)
 }

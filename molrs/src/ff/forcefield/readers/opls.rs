@@ -48,8 +48,8 @@ use roxmltree::Node;
 
 use super::ForceFieldReader;
 use crate::ff::constants::VACUUM_DIELECTRIC;
+use crate::ff::forcefield::mixing::Mixing;
 use crate::ff::forcefield::{ForceField, SpecialBonds};
-use crate::ff::potential::pair::Mixing;
 use molrs::units::constants::COULOMB_REAL;
 
 /// kJ/mol → kcal/mol.
