@@ -66,6 +66,28 @@ pub trait Region: Send + Sync + std::fmt::Debug {
         g
     }
 
+    /// Does the region repeat along `shift` — is it the same set of points
+    /// after being translated by it?
+    ///
+    /// A half-space `z > 5` repeats along any shift in x or y, and not along
+    /// one in z. A sphere, a box, a mesh — anything bounded — repeats along
+    /// nothing: translating it moves it.
+    ///
+    /// This is what makes a region usable under periodic boundaries along a
+    /// lattice vector `a`. A region that neither repeats along `a` nor is
+    /// contained in one image has no well-defined inside there: which side of
+    /// it a point falls on would depend on which image the point was wrapped
+    /// into.
+    ///
+    /// The default is `false` — a shape that has not thought about it does
+    /// not claim to repeat. Overriding it is a claim about the *set*, not
+    /// about the distance function: `distance` may legitimately differ while
+    /// the region is the same.
+    fn repeats_along(&self, shift: [F; 3]) -> bool {
+        let _ = shift;
+        false
+    }
+
     /// Whether `point` is inside the region: `distance(point) <= 0`.
     ///
     /// Override only with a test that provably agrees with the distance.
@@ -427,6 +449,11 @@ impl AndRegion {
 }
 
 impl Region for AndRegion {
+    /// An intersection repeats along a shift both members repeat along.
+    fn repeats_along(&self, shift: [F; 3]) -> bool {
+        self.a.repeats_along(shift) && self.b.repeats_along(shift)
+    }
+
     fn bounds(&self) -> FNx3 {
         // Intersection bounds: max of mins, min of maxs
         let a_bounds = self.a.bounds();
@@ -469,6 +496,11 @@ impl NotRegion {
 }
 
 impl Region for NotRegion {
+    /// A complement repeats exactly where the region it complements does.
+    fn repeats_along(&self, shift: [F; 3]) -> bool {
+        self.a.repeats_along(shift)
+    }
+
     fn bounds(&self) -> FNx3 {
         self.a.bounds()
     }
@@ -500,6 +532,11 @@ impl OrRegion {
 }
 
 impl Region for OrRegion {
+    /// A union repeats along a shift both members repeat along.
+    fn repeats_along(&self, shift: [F; 3]) -> bool {
+        self.a.repeats_along(shift) && self.b.repeats_along(shift)
+    }
+
     fn bounds(&self) -> FNx3 {
         // Union bounds: min of mins, max of maxs
         let a_bounds = self.a.bounds();
@@ -530,9 +567,11 @@ pub(crate) mod tests {
     use super::*;
 
     /// Every shape and combinator must keep `contains_point` equal to
-    /// `distance <= 0` and its analytic gradient equal to the finite
-    /// difference, off the ties where the max/min switches branch.
+    /// `distance <= 0`, its analytic gradient equal to the finite
+    /// difference (off the ties where the max/min switches branch), and
+    /// every `repeats_along` claim true of the set it describes.
     pub(crate) fn check_region_contract(region: &dyn Region, probes: &[[F; 3]]) {
+        check_repeat_claims(region, probes);
         for p in probes {
             let d = region.distance(p);
             assert_eq!(
@@ -556,6 +595,97 @@ pub(crate) mod tests {
                 );
             }
         }
+    }
+
+    /// A claim to repeat along a shift is a claim about membership: every
+    /// point must keep its side when translated by it, and by a few
+    /// multiples of it. A shape that does not claim to repeat is not
+    /// checked — the claim is what carries the obligation.
+    pub(crate) fn check_repeat_claims(region: &dyn Region, probes: &[[F; 3]]) {
+        let shifts = [
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.7, -0.3, 0.2],
+            [-2.4, 0.0, 0.0],
+        ];
+        for shift in shifts {
+            if !region.repeats_along(shift) {
+                continue;
+            }
+            for p in probes {
+                for n in [1.0, 2.0, -3.0] {
+                    let q = [
+                        p[0] + n * shift[0],
+                        p[1] + n * shift[1],
+                        p[2] + n * shift[2],
+                    ];
+                    assert_eq!(
+                        region.contains_point(p),
+                        region.contains_point(&q),
+                        "claims to repeat along {shift:?}, but {p:?} and {q:?} \
+                         (shifted by {n}x) are on opposite sides"
+                    );
+                }
+            }
+        }
+    }
+
+    /// A bounded shape repeats along nothing: translating it moves it.
+    #[test]
+    fn a_bounded_shape_repeats_along_nothing() {
+        let sphere = Sphere::new(Array1::from_vec(vec![0.0, 0.0, 0.0]), 2.0);
+        let cuboid = Cuboid::new(
+            Array1::from_vec(vec![0.0, 0.0, 0.0]),
+            Array1::from_vec(vec![2.0, 2.0, 2.0]),
+        );
+        for shift in [[1.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.5, 0.5, 0.5]] {
+            assert!(!sphere.repeats_along(shift), "sphere, {shift:?}");
+            assert!(!cuboid.repeats_along(shift), "cuboid, {shift:?}");
+        }
+    }
+
+    /// A composition repeats only where every member does — and a complement
+    /// repeats exactly where the region it complements does, since swapping
+    /// inside for outside does not move the boundary.
+    #[test]
+    fn a_composition_repeats_where_every_member_does() {
+        use super::super::half_space::HalfSpace;
+
+        let slab_lo: Arc<dyn Region + Send + Sync> =
+            Arc::new(HalfSpace::new([0.0, 0.0, 1.0], [0.0, 0.0, 5.0]).expect("plane"));
+        let slab_hi: Arc<dyn Region + Send + Sync> =
+            Arc::new(HalfSpace::new([0.0, 0.0, -1.0], [0.0, 0.0, 1.0]).expect("plane"));
+        let wall: Arc<dyn Region + Send + Sync> =
+            Arc::new(HalfSpace::new([1.0, 0.0, 0.0], [3.0, 0.0, 0.0]).expect("plane"));
+        let ball: Arc<dyn Region + Send + Sync> =
+            Arc::new(Sphere::new(Array1::from_vec(vec![0.0, 0.0, 0.0]), 2.0));
+
+        // A slab: two planes with the same normal, so it still repeats in x/y.
+        let slab = AndRegion::new(Arc::clone(&slab_lo), slab_hi);
+        assert!(slab.repeats_along([2.0, 0.0, 0.0]));
+        assert!(slab.repeats_along([0.0, 1.0, 0.0]));
+        assert!(!slab.repeats_along([0.0, 0.0, 1.0]));
+
+        // Add a wall across x and the x direction stops repeating.
+        let boxed_in = AndRegion::new(Arc::new(slab), wall);
+        assert!(!boxed_in.repeats_along([2.0, 0.0, 0.0]));
+        assert!(boxed_in.repeats_along([0.0, 1.0, 0.0]));
+
+        // A bounded member removes every direction, in a union as in an
+        // intersection.
+        let with_ball = OrRegion::new(Arc::clone(&slab_lo), ball);
+        assert!(!with_ball.repeats_along([0.0, 1.0, 0.0]));
+
+        // The complement keeps the claim.
+        let outside = NotRegion::new(Arc::clone(&slab_lo));
+        assert!(outside.repeats_along([0.0, 1.0, 0.0]));
+        assert!(!outside.repeats_along([0.0, 0.0, 1.0]));
+
+        let probes = sweep();
+        check_repeat_claims(&boxed_in, &probes);
+        check_repeat_claims(&with_ball, &probes);
+        check_repeat_claims(&outside, &probes);
     }
 
     fn sweep() -> Vec<[F; 3]> {

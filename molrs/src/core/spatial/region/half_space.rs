@@ -48,6 +48,22 @@ impl HalfSpace {
 }
 
 impl Region for HalfSpace {
+    /// A half-space repeats along every shift that runs parallel to its
+    /// plane: translating by one moves no point across the boundary. The
+    /// normal is a unit vector, so `n · shift` is the component of the shift
+    /// that crosses the plane, and the comparison is scaled by the shift's
+    /// own length.
+    fn repeats_along(&self, shift: [F; 3]) -> bool {
+        let len2 = shift[0] * shift[0] + shift[1] * shift[1] + shift[2] * shift[2];
+        if len2 == 0.0 {
+            // The identity translation moves nothing.
+            return true;
+        }
+        let crossing =
+            self.normal[0] * shift[0] + self.normal[1] * shift[1] + self.normal[2] * shift[2];
+        crossing.abs() <= 1e-9 * len2.sqrt()
+    }
+
     /// Unbounded: `±∞` on every axis, except that an axis-aligned normal
     /// closes its own axis at the plane.
     fn bounds(&self) -> FNx3 {
@@ -92,6 +108,41 @@ mod tests {
         assert_eq!(b[[2, 1]], 5.0);
         assert_eq!(b[[2, 0]], F::NEG_INFINITY);
         assert_eq!(b[[0, 1]], F::INFINITY);
+    }
+
+    /// A half-space repeats along every direction parallel to its plane,
+    /// and along none that crosses it — which is what decides whether it can
+    /// be used along a periodic lattice vector.
+    #[test]
+    fn repeats_parallel_to_its_plane_and_nowhere_else() {
+        let h = HalfSpace::new([0.0, 0.0, 1.0], [0.0, 0.0, 5.0]).unwrap();
+        assert!(h.repeats_along([3.0, 0.0, 0.0]), "in-plane x");
+        assert!(h.repeats_along([0.0, -7.5, 0.0]), "in-plane y");
+        assert!(h.repeats_along([2.0, 4.0, 0.0]), "any in-plane direction");
+        assert!(!h.repeats_along([0.0, 0.0, 1.0]), "along the normal");
+        assert!(
+            !h.repeats_along([3.0, 0.0, 0.001]),
+            "a slight crossing still crosses"
+        );
+        assert!(
+            h.repeats_along([0.0, 0.0, 0.0]),
+            "the identity moves nothing"
+        );
+
+        // An oblique normal: the plane, not the axes, is what matters.
+        let o = HalfSpace::new([1.0, 1.0, 0.0], [1.0, 1.0, 0.0]).unwrap();
+        assert!(o.repeats_along([1.0, -1.0, 0.0]), "in-plane diagonal");
+        assert!(o.repeats_along([0.0, 0.0, 9.0]), "the free axis");
+        assert!(
+            !o.repeats_along([1.0, 0.0, 0.0]),
+            "x crosses an oblique plane"
+        );
+
+        let probes: Vec<[F; 3]> = (0..10)
+            .map(|i| [i as F * 0.9 - 2.0, 1.5 - i as F * 0.4, i as F * 0.7 - 1.0])
+            .collect();
+        super::super::region::tests::check_repeat_claims(&h, &probes);
+        super::super::region::tests::check_repeat_claims(&o, &probes);
     }
 
     #[test]
