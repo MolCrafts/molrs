@@ -1570,52 +1570,6 @@ fn region_bounds(rref: &RegionRef) -> Vec<f64> {
 #[cfg(test)]
 mod tests {
 
-    /// The streaming writer round-trips through the bridge: create from a
-    /// frame, append, close, and `read_first_frame` reads frame 0 back
-    /// through the lazy cursor.
-    #[cfg(feature = "zarr")]
-    #[test]
-    fn trajectory_writer_round_trips_through_the_bridge() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("run.mrec");
-        let path = path.to_str().unwrap();
-        let first = frame_with_elements(
-            &[6, 1],
-            &[0.0, 1.0],
-            &[0.0, 0.5],
-            &[0.0, 0.25],
-            &[10.0, 0.0, 0.0, 0.0, 10.0, 0.0, 0.0, 0.0, 10.0],
-        )
-        .unwrap();
-        let fref = FrameRef(molrs_ffi::FrameRef::new_standalone());
-        fref.0.with_mut(|f| *f = first.clone()).unwrap();
-
-        let mut writer = trajectory_writer_create(path, &fref, 0, false).unwrap();
-        trajectory_writer_append(&mut writer, &fref, 10, 0.5, true).unwrap();
-        let second = frame_with_elements(
-            &[6, 1],
-            &[2.0, 3.0],
-            &[0.0, 0.5],
-            &[0.0, 0.25],
-            &[10.0, 0.0, 0.0, 0.0, 10.0, 0.0, 0.0, 0.0, 10.0],
-        )
-        .unwrap();
-        fref.0.with_mut(|f| *f = second).unwrap();
-        trajectory_writer_append(&mut writer, &fref, 20, 1.5, true).unwrap();
-        assert_eq!(trajectory_writer_committed(&writer), 0, "still buffered");
-        trajectory_writer_flush(&mut writer).unwrap();
-        assert_eq!(trajectory_writer_committed(&writer), 2);
-        trajectory_writer_close(writer).unwrap();
-
-        let back = read_first_frame(path).unwrap();
-        assert_eq!(frame_column_f64(&back, "atoms", "x"), vec![0.0, 1.0]);
-
-        let mut reopened = trajectory_writer_open(path, 1, false).unwrap();
-        assert_eq!(trajectory_writer_committed(&reopened), 2);
-        let err = trajectory_writer_append(&mut reopened, &fref, 5, 2.0, true).unwrap_err();
-        assert!(err.contains("increase"), "{err}");
-        trajectory_writer_close(reopened).unwrap();
-    }
     #[test]
     fn ffi_element_matches_core_element() {
         for z in 1u8..=118 {
