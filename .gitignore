@@ -46,9 +46,6 @@ AGENTS.md
 # Claude Code scheduler lock
 .claude/scheduled_tasks.lock
 
-# test data (cloned by scripts/fetch-test-data.sh, binding-neutral root location)
-/tests-data/
-
 # Example output files
 *.xyz
 !molrs-python/tests/data/*.xyz

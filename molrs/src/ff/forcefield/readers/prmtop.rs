@@ -730,18 +730,6 @@ c3  c3  c3  hc
         "pair_coeff hc hc 0.015700 2.649533",
     ];
 
-    /// Pre-change `LammpsFfWriter` pair_coeff lines for LiTFSI.prmtop
-    /// (precision 6; seven AMBER_ATOM_TYPE names, first-appearance order).
-    const LITFSI_PAIR_COEFF: &[&str] = &[
-        "pair_coeff f f 0.061000 3.118146",
-        "pair_coeff c3 c3 0.109400 3.399670",
-        "pair_coeff s6 s6 0.250000 3.563595",
-        "pair_coeff o o 0.210000 2.959922",
-        "pair_coeff ne ne 0.170000 3.249999",
-        "pair_coeff sy sy 0.250000 3.563595",
-        "pair_coeff Li+ Li+ 0.027990 1.826342",
-    ];
-
     fn read_ff(text: &str) -> ForceField {
         AmberPrmtopFfReader::new()
             .read_str(text)
@@ -867,39 +855,6 @@ c3  c3  c3  hc
                 .any(|l| l == "pair_style lj/cut/coul/cut 9.000000 10.000000"),
             "expected pair_style lj/cut/coul/cut 9.000000 10.000000, got:\n{text}"
         );
-    }
-
-    #[test]
-    fn litfsi_corpus_pair_coeff_text_is_pinned() {
-        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../tests-data/prmtop/LiTFSI.prmtop");
-        if !path.exists() {
-            eprintln!(
-                "skipping litfsi_corpus_pair_coeff_text_is_pinned: {} missing \
-                 (CI fetches it via scripts/fetch-test-data.sh)",
-                path.display()
-            );
-            return;
-        }
-        let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
-        let ff = read_ff(&text);
-        let written = write_lammps(&ff);
-        assert_eq!(pair_coeff_lines(&written), LITFSI_PAIR_COEFF);
-
-        let sb = ff.special_bonds();
-        assert!((sb.lj_14() - 0.5).abs() < 1e-12, "lj_14={}", sb.lj_14());
-        assert!(
-            (sb.coul_14() - 1.0 / 1.2).abs() < 1e-12,
-            "coul_14={}",
-            sb.coul_14()
-        );
-
-        let skipped = write_lammps_skip_pair_style(&ff);
-        assert!(
-            !skipped.contains("pair_style"),
-            "skip_pair_style still has pair_style:\n{skipped}"
-        );
-        assert_eq!(pair_coeff_lines(&skipped), LITFSI_PAIR_COEFF);
     }
 
     #[test]

@@ -1263,10 +1263,6 @@ END
         );
     }
 
-    // Real-file PDB reads (water elements, CONECT bonds) live in the
-    // integration suite at `tests/io/pdb.rs`, which iterates every file in
-    // `tests-data/pdb/`. Inline unit tests stay pure (no `tests-data/` reads).
-
     // -----------------------------------------------------------------
     // Streaming index tests
     // -----------------------------------------------------------------

@@ -21,7 +21,6 @@ cargo clippy --manifest-path molrs-python/Cargo.toml --all-targets -- -D warning
 cargo clippy --manifest-path molrs-capi/Cargo.toml --all-targets -- -D warnings
 cargo clippy --manifest-path molrs-wasm/Cargo.toml --target wasm32-unknown-unknown --all-targets -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc -p molcrafts-molrs --no-deps --features full,filesystem,stream
-bash scripts/fetch-test-data.sh
 cargo test -p molcrafts-molrs --features full,filesystem,stream
 cargo test --manifest-path molrs-ffi/Cargo.toml
 cargo test --manifest-path molrs-cxxapi/Cargo.toml

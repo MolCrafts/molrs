@@ -106,7 +106,6 @@ helper script on the first run:
 git clone https://github.com/MolCrafts/molrs.git
 cd molrs
 cargo build --workspace            # compile all native crates
-bash scripts/fetch-test-data.sh    # fetch test fixtures (first run only)
 cargo test --all-features          # run the test suite
 ```
 

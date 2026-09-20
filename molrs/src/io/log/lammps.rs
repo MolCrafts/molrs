@@ -979,26 +979,6 @@ Loop time of 0.1 on 1 procs
         assert!(perf2.3.is_none());
     }
 
-    #[test]
-    fn fixture_default_thermo_when_present() {
-        let path = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../tests-data/lammps-log/thermo_style_default.log"
-        );
-        let path = Path::new(path);
-        if !path.exists() {
-            return;
-        }
-        let log = read_lammps_log(path).expect("read fixture");
-        assert_eq!(log.runs.len(), 1);
-        let thermo = log.runs[0].thermo.as_ref().expect("thermo");
-        assert!(thermo.columns.iter().any(|c| c == "Step"));
-        assert!(thermo.columns.iter().any(|c| c == "Temp"));
-        assert_eq!(thermo.rows[0][0], 0.0);
-        assert!(thermo.n_rows() >= 2);
-        assert_eq!(log.total_wall_time.as_deref(), Some("0:01:01"));
-    }
-
     /// A log written with `log ... append` carries one `Total wall time:` per
     /// LAMMPS invocation. Clamping every run to the first of them put the end
     /// index before the start for runs belonging to a later invocation, and

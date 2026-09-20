@@ -48,8 +48,7 @@ repos:
       - id: cargo-test-unit
         name: Rust tests (core + FFI + CXX)
         entry: >-
-          sh -c 'bash scripts/fetch-test-data.sh
-          && cargo test -p molcrafts-molrs --lib --features full,filesystem,stream
+          sh -c 'cargo test -p molcrafts-molrs --lib --features full,filesystem,stream
           && cargo test --doc -p molcrafts-molrs --features full,filesystem,stream
           && cargo test --manifest-path molrs-ffi/Cargo.toml
           && cargo test --manifest-path molrs-cxxapi/Cargo.toml'

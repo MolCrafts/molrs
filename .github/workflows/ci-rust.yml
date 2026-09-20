@@ -44,7 +44,6 @@ jobs:
         with:
           shared-key: unit
           workspaces: ". -> target"
-      - run: bash scripts/fetch-test-data.sh
       - run: cargo test -p molcrafts-molrs --lib --features full,filesystem,stream
       # --lib does not run rustdoc examples; a renamed public item otherwise
       # goes unnoticed until a human opens docs.rs.

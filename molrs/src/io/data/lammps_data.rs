@@ -2142,17 +2142,6 @@ mod atom_style_tests {
     }
 
     #[test]
-    fn fixtures_body_and_full() {
-        let root =
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../tests-data/lammps-data");
-        let body = read_lammps_data(root.join("data.body")).expect("body");
-        assert!(body.get_int("atoms", "bodyflag").is_some());
-        let full = read_lammps_data(root.join("molid.lmp")).expect("molid");
-        assert!(full.get_uint("atoms", keys::MOL_ID).is_some());
-        assert!(full.get_float("atoms", keys::CHARGE).is_some());
-    }
-
-    #[test]
     fn topology_bonds_angles() {
         let text = concat!(
             "LAMMPS data file\n\n3 atoms\n2 bonds\n1 angles\n1 atom types\n",

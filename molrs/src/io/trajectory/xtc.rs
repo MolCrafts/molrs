@@ -31,8 +31,8 @@
 //! The compression codec (`magicints` table, `receivebits`/`receiveints`
 //! decode, `sendbits`/`sendints` encode) is a clean-room reimplementation of
 //! the documented `xdr3dfcoord` algorithm — not transcribed from xdrfile or
-//! any GPL source. It is validated behaviourally against the real chemfiles
-//! `tests-data/xtc/` fixtures.
+//! any GPL source. Its unit tests round-trip hand-built frames through the
+//! encoder and decoder.
 //!
 //! # Output Frame
 //!

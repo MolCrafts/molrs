@@ -131,11 +131,8 @@ round-trip types). Science / format corpus depth lives in the Rust unit tests.
 Python IO fixtures are written in-process by molrs writers. A tiny
 `include_str!` fixture in a Rust unit test is OK for a parser edge-case.
 
-Format-corpus fixtures live in `tests-data/` (gitignored clone of
-`MolCrafts/tests-data`). **CI and pre-push fetch them before unit tests**
-via `bash scripts/fetch-test-data.sh` (see `ci-rust.yml` + pre-commit
-`cargo-test-unit`). Prefer inline strings for pure parser unit tests;
-use `tests-data/` only when the corpus file is the assertion.
+Format fixtures are inline strings in the unit tests; there is no fixture
+corpus to fetch.
 ## Build cache
 
 All workspace roots in this repo (root, `molrs-ffi`, `molrs-python`,

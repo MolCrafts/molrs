@@ -104,7 +104,6 @@ them automatically on the first build.
 git clone https://github.com/MolCrafts/molrs.git
 cd molrs
 cargo build --workspace            # compile the Rust library
-bash scripts/fetch-test-data.sh    # fetch test fixtures (first run only)
 cargo test --features full,filesystem,stream  # unit tests, architecture gate, doctests
 ```
 
