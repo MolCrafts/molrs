@@ -335,32 +335,78 @@ macro_rules! graph_world_impl {
 
             // ---- zero-copy columns ----
 
-            /// Zero-copy numpy view of the `f64` component column `key`, aligned to
-            /// row order (length == `n_nodes`). Writes through to the world:
-            /// `col[i] = v` updates the entity at row `i`.
+            /// The component column `key`, aligned to row order (length ==
+            /// `n_nodes`), as a numpy array of the column's own element type.
             ///
-            /// The view borrows the world's storage; structural mutation
-            /// (`spawn`/`despawn`) may reallocate or reorder the column and
-            /// invalidate an outstanding view — re-fetch after such ops.
+            /// A `f64` column is a **zero-copy view** that writes through to the
+            /// world (`col[i] = v` updates the entity at row `i`); `i32`, `bool`
+            /// and `str` columns are copied. The view borrows the world's storage;
+            /// structural mutation (`spawn`/`despawn`) may reallocate or reorder
+            /// the column and invalidate an outstanding view — re-fetch after
+            /// such ops.
+            ///
+            /// Every entity must carry the component: a column with a hole is a
+            /// `KeyError` naming how many entities lack it, never a silently
+            /// zero-filled array. Use :meth:`validity` to find the holes and
+            /// :meth:`get` for entity-wise reads.
             fn column<'py>(
                 slf: Bound<'py, $ty>,
                 key: &Bound<'_, PyAny>,
-            ) -> PyResult<Bound<'py, numpy::PyArray1<f64>>> {
+            ) -> PyResult<Bound<'py, PyAny>> {
+                use molrs::system::entity_table::Column;
+
                 let key = crate::schema::extract_column_key(key)?;
-                let (ptr, len) = {
-                    let this = slf.borrow();
-                    let (data, _valid) = this
-                        .mol()
-                        .node_table()
-                        .column_f64(&key)
-                        .map_err(molrs_error_to_pyerr)?;
-                    (data.as_ptr(), data.len())
-                };
-                // SAFETY: `slf` owns the backing Vec and is held as the array's base
-                // object, so the memory stays valid for the array's lifetime; the
-                // documented contract forbids structural mutation while held.
-                let view = unsafe { numpy::ndarray::ArrayView1::from_shape_ptr(len, ptr) };
-                Ok(unsafe { numpy::PyArray1::borrow_from_array(&view, slf.into_any()) })
+                let py = slf.py();
+                let this = slf.borrow();
+                let table = this.mol().node_table();
+                let validity = table.col_validity(&key).ok_or_else(|| {
+                    pyo3::exceptions::PyKeyError::new_err(format!(
+                        "component '{key}' is absent from every entity"
+                    ))
+                })?;
+                let holes = validity.as_slice().iter().filter(|v| !**v).count();
+                if holes > 0 {
+                    return Err(pyo3::exceptions::PyKeyError::new_err(format!(
+                        "component '{key}' is absent on {holes} of {} entities; a column \
+                         needs it on every one (see validity())",
+                        validity.len()
+                    )));
+                }
+                let column = table.column(&key).ok_or_else(|| {
+                    pyo3::exceptions::PyKeyError::new_err(format!(
+                        "component '{key}' is absent from every entity"
+                    ))
+                })?;
+                match column {
+                    Column::F64(data, _) => {
+                        let (ptr, len) = (data.as_ptr(), data.len());
+                        drop(this);
+                        // SAFETY: `slf` owns the backing Vec and is held as the array's base
+                        // object, so the memory stays valid for the array's lifetime; the
+                        // documented contract forbids structural mutation while held.
+                        let view = unsafe { numpy::ndarray::ArrayView1::from_shape_ptr(len, ptr) };
+                        Ok(
+                            unsafe { numpy::PyArray1::borrow_from_array(&view, slf.into_any()) }
+                                .into_any(),
+                        )
+                    }
+                    Column::I32(data, _) => Ok(numpy::PyArray1::from_slice(py, data).into_any()),
+                    Column::Bool(data, _) => Ok(numpy::PyArray1::from_slice(py, data).into_any()),
+                    Column::Str(data, _) => {
+                        let list = pyo3::types::PyList::new(py, data.iter().map(String::as_str))?;
+                        py.import("numpy")?.call_method1("array", (list,))
+                    }
+                }
+            }
+
+            /// Names of every component column registered on the node table
+            /// (a component set on at least one entity), in no particular order.
+            fn columns(&self) -> Vec<String> {
+                self.mol()
+                    .node_table()
+                    .columns()
+                    .map(str::to_owned)
+                    .collect()
             }
 
             /// Validity mask (numpy `bool` array, copied) of component column `key`,
