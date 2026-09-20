@@ -1,0 +1,82 @@
+name: CI Snapshot
+
+# Measures one run and publishes its tests and coverage to the MolCrafts CI
+# index, whose push rebuilds the engineering dashboard.
+#
+# Separate from ci-rust.yml on purpose. That workflow is the gate: it decides
+# whether molrs is releasable, and it must not be slowed down or made to fail
+# by instrumentation. This one only reports.
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  snapshot:
+    name: Publish tests + coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # cargo-llvm-cov needs it; without it the tool stops to ask, and a
+          # CI runner has nobody to answer.
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: snapshot
+          workspaces: ". -> target"
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest,cargo-llvm-cov
+      # The adapter is a Python tool; uv runs it from git without a checkout,
+      # and molpy's snapshot job uses the same mechanism.
+      - uses: astral-sh/setup-uv@v9.0.0
+
+      # One command produces both records: nextest writes the JUnit report
+      # that becomes `tests`, llvm-cov writes the tracefile that becomes
+      # `coverage`. Running them separately would compile the crate twice.
+      #
+      # `|| true` keeps a red suite from failing this job — the gate already
+      # decided that, and a run whose tests failed is exactly the run whose
+      # test record is worth keeping.
+      #
+      # Scope note: nextest does not run doctests, so `cargo test --doc` in
+      # ci-rust.yml is not counted here, and molrs-ffi and molrs-cxxapi are
+      # standalone workspace roots that this crate's run never reaches.
+      - name: Measure this run
+        if: ${{ !cancelled() }}
+        run: |
+          # cargo-llvm-cov does not create the parent of --output-path. Without
+          # this the report step fails, and `|| true` hides it until the next
+          # step trips over a tracefile that was never written.
+          mkdir -p .ci-out
+          cargo llvm-cov nextest \
+            -p molcrafts-molrs --lib --features full,filesystem,stream \
+            --profile ci \
+            --lcov --output-path .ci-out/lcov.info || true
+
+      # `--track` waits on MOLCRAFTS_APP_ID as well as the branch: until the
+      # MolCrafts App is configured there is no credential to push with, so the
+      # snapshots are built and uploaded as an artifact but never published,
+      # and CI stays green. Configuring the App turns publishing on with no
+      # edit here.
+      - name: Build snapshots
+        if: ${{ !cancelled() && hashFiles('target/nextest/ci/junit.xml') != '' }}
+        run: |
+          uvx --from git+https://github.com/MolCrafts/molcrafts-ci@master molci snapshot \
+            --out .ci-out/snapshots \
+            --junit target/nextest/ci/junit.xml \
+            --coverage .ci-out/lcov.info --coverage-format lcov \
+            --tests-producer cargo-nextest \
+            --coverage-producer cargo-llvm-cov \
+            ${{ (github.event_name == 'push' && github.ref == 'refs/heads/master' && vars.MOLCRAFTS_APP_ID != '') && '--track' || '' }}
+
+      - name: Publish to molcrafts-ci
+        if: ${{ !cancelled() && hashFiles('.ci-out/snapshots/*.json') != '' }}
+        uses: MolCrafts/molcrafts-ci/actions/submit@master
+        with:
+          snapshot-path: .ci-out/snapshots/*.json
+          project: molrs
+          app-id: ${{ vars.MOLCRAFTS_APP_ID }}
+          private-key: ${{ secrets.MOLCRAFTS_APP_PRIVATE_KEY }}
