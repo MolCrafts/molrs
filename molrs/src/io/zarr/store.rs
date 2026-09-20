@@ -3,17 +3,21 @@
 //! A Zarr *store* is the key-value layer under an array: the codec hands it
 //! `(key, bytes)` and, for an append, `(key, offset, bytes)`. [`FilesystemStore`]
 //! maps keys to files under a root directory. This module wraps it with one
-//! change — the offset form is written straight at that offset with
-//! [`std::os::unix::fs::FileExt::write_all_at`] instead of being emulated by
-//! reading the whole file back, patching it in memory and rewriting it.
-//! [`PositionalWriteStore`] carries the measurement that makes the difference
-//! matter.
+//! change — the offset form is written straight at that offset instead of being
+//! emulated by reading the whole file back, patching it in memory and rewriting
+//! it. [`PositionalWriteStore`] carries the measurement that makes the
+//! difference matter.
 //!
-//! Unix only, because that is where positional writes live.
+//! Both platforms can do that, under different names: `write_all_at` on Unix
+//! and `seek_write` on Windows. [`write_positional`] is the one-line shim over
+//! the pair.
 
 use std::collections::BTreeSet;
 use std::fs::{File, OpenOptions};
+#[cfg(unix)]
 use std::os::unix::fs::FileExt;
+#[cfg(windows)]
+use std::os::windows::fs::FileExt;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -26,6 +30,43 @@ use zarrs::storage::{
     ReadableStorageTraits, StorageError, StoreKey, StoreKeys, StoreKeysPrefixes, StorePrefix,
     WritableStorageTraits,
 };
+
+/// Write `buf` at `offset`, moving nothing else and reading nothing back.
+///
+/// `std` offers this on both platforms under different names and with
+/// different contracts: Unix `write_all_at` already loops until the buffer is
+/// drained, while Windows `seek_write` is one `WriteFile` call that may write
+/// less, so the loop lives here. Writing past the end extends the file on both,
+/// and the gap reads back as zeros — the same bytes the read-modify-write path
+/// produced when it resized its buffer.
+#[cfg(unix)]
+fn write_positional(file: &File, buf: &[u8], offset: u64) -> std::io::Result<()> {
+    file.write_all_at(buf, offset)
+}
+
+/// Windows arm of [`write_positional`]: `seek_write` until the buffer is drained.
+#[cfg(windows)]
+fn write_positional(file: &File, buf: &[u8], offset: u64) -> std::io::Result<()> {
+    let mut buf = buf;
+    let mut offset = offset;
+    while !buf.is_empty() {
+        match file.seek_write(buf, offset) {
+            Ok(0) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::WriteZero,
+                    "positional write made no progress",
+                ));
+            }
+            Ok(n) => {
+                buf = &buf[n..];
+                offset += n as u64;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
+}
 
 /// A [`FilesystemStore`] whose partial writes land where they are aimed.
 ///
@@ -50,7 +91,7 @@ use zarrs::storage::{
 /// the two apart — `get` and the file length are identical either way.
 ///
 /// Unix only: the positional write is
-/// [`std::os::unix::fs::FileExt::write_all_at`].
+/// [`write_positional`].
 ///
 /// Two more disk-level guarantees live here, because the sequence writer's
 /// commit protocol needs them and no store trait spells them:
@@ -273,7 +314,7 @@ impl WritableStorageTraits for PositionalWriteStore {
 
         let mut written = 0u64;
         for (offset, value) in offset_values {
-            file.write_all_at(&value, offset)?;
+            write_positional(&file, &value, offset)?;
             written += value.len() as u64;
         }
         self.mark_dirty(path);
