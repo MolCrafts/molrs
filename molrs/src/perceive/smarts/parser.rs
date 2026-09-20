@@ -774,3 +774,42 @@ fn primitive_for_element(sym: &str, aromatic: bool) -> Option<AtomQuery> {
     };
     Some(AtomQuery::Prim(prim))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_chain_has_one_bond_per_link_and_ring_closures_add_bonds() {
+        let chain = parse("CCC").unwrap();
+        assert_eq!((chain.atoms.len(), chain.bonds.len()), (3, 2));
+        let ring = parse("C1CC1").unwrap();
+        assert_eq!((ring.atoms.len(), ring.bonds.len()), (3, 3));
+        let branched = parse("C(C)(C)C").unwrap();
+        assert_eq!((branched.atoms.len(), branched.bonds.len()), (4, 3));
+    }
+
+    #[test]
+    fn recursive_subpatterns_are_compiled_separately() {
+        let q = parse("[$(C=O)]N").unwrap();
+        assert_eq!(q.atoms.len(), 2);
+        assert_eq!(q.recursives.len(), 1);
+        assert_eq!(q.recursives[0].atoms.len(), 2);
+    }
+
+    #[test]
+    fn malformed_input_is_an_error() {
+        assert!(parse("").is_err());
+        assert!(parse("C(C").is_err());
+        assert!(parse("[C").is_err());
+        assert!(parse("C1CC").is_err(), "an unclosed ring closure");
+    }
+
+    #[test]
+    fn max_bond_depth_counts_bonds_from_the_first_atom() {
+        assert_eq!(parse("C").unwrap().max_bond_depth(), 0);
+        assert_eq!(parse("CCCC").unwrap().max_bond_depth(), 3);
+        // The depth is the graph diameter: branch tip to branch tip is two bonds.
+        assert_eq!(parse("C(C)(C)C").unwrap().max_bond_depth(), 2);
+    }
+}

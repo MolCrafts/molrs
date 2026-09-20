@@ -525,3 +525,68 @@ impl<'de> Deserialize<'de> for Frame {
         Ok(frame)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::core::spatial::simbox::SimBox;
+    use crate::core::store::block::Block;
+    use crate::core::store::frame::Frame;
+    use crate::core::store::meta::MetaValue;
+    use ndarray::{Array1, array};
+
+    fn atoms() -> Block {
+        let mut b = Block::new();
+        b.insert("x", Array1::from_vec(vec![0.5, -1.25, 3.0]).into_dyn())
+            .unwrap();
+        b.insert("seq", Array1::from_vec(vec![1i32, 2, 3]).into_dyn())
+            .unwrap();
+        b.insert(
+            "name",
+            Array1::from_vec(vec!["O".to_string(), "H".to_string(), "Ω".to_string()]).into_dyn(),
+        )
+        .unwrap();
+        b
+    }
+
+    #[test]
+    fn a_block_round_trips_every_column_at_its_dtype() {
+        let json = serde_json::to_string(&atoms()).unwrap();
+        let back: Block = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.nrows(), Some(3));
+        assert_eq!(
+            back.get_float("x").unwrap().as_slice().unwrap(),
+            &[0.5, -1.25, 3.0]
+        );
+        assert_eq!(back.get_int("seq").unwrap().as_slice().unwrap(), &[1, 2, 3]);
+        assert_eq!(back.get_string("name").unwrap()[2], "Ω");
+    }
+
+    #[test]
+    fn a_frame_keeps_its_blocks_typed_meta_and_box() {
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms());
+        frame.meta.insert("timestep", MetaValue::I64(42));
+        frame.meta.insert("label", MetaValue::String("run".into()));
+        frame.simbox =
+            Some(SimBox::cube(10.0, array![1.0, 2.0, 3.0], [true, true, false]).unwrap());
+
+        let json = serde_json::to_string(&frame).unwrap();
+        let back: Frame = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.get("atoms").unwrap().nrows(), Some(3));
+        assert_eq!(back.meta.get("timestep"), Some(&MetaValue::I64(42)));
+        assert_eq!(
+            back.meta.get("label"),
+            Some(&MetaValue::String("run".into()))
+        );
+        let bx = back.simbox.as_ref().expect("box survives");
+        assert_eq!(bx.pbc(), [true, true, false]);
+        assert_eq!(bx.origin_view(), array![1.0, 2.0, 3.0].view());
+        assert_eq!(bx.lengths(), array![10.0, 10.0, 10.0]);
+    }
+
+    #[test]
+    fn a_column_with_a_bad_dtype_tag_is_refused() {
+        let json = r#"{"dtype":"quaternion","shape":[1],"data":[0]}"#;
+        assert!(serde_json::from_str::<crate::core::store::block::Column>(json).is_err());
+    }
+}

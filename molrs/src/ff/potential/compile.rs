@@ -280,3 +280,104 @@ impl ForceField {
         Ok(pots)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use molrs::store::block::Block;
+    use molrs::types::Idx;
+    use ndarray::Array1;
+
+    fn two_atoms() -> Frame {
+        let mut atoms = Block::new();
+        for (key, v) in [("x", [0.0, 1.6]), ("y", [0.0, 0.0]), ("z", [0.0, 0.0])] {
+            atoms
+                .insert(key, Array1::from_vec(v.to_vec()).into_dyn())
+                .unwrap();
+        }
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms);
+        frame
+    }
+
+    fn with_bond(mut frame: Frame, label: &str) -> Frame {
+        let mut bonds = Block::new();
+        bonds
+            .insert("atomi", Array1::from_vec(vec![0 as Idx]).into_dyn())
+            .unwrap();
+        bonds
+            .insert("atomj", Array1::from_vec(vec![1 as Idx]).into_dyn())
+            .unwrap();
+        bonds
+            .insert("type", Array1::from_vec(vec![label.to_string()]).into_dyn())
+            .unwrap();
+        frame.insert("bonds", bonds);
+        frame
+    }
+
+    fn bond_ff() -> ForceField {
+        let mut ff = ForceField::new("t");
+        ff.def_bondstyle("harmonic")
+            .def_type("CT-CT", &[("k", 300.0), ("r0", 1.5)]);
+        ff
+    }
+
+    #[test]
+    fn an_atom_style_carries_no_kernel() {
+        let mut ff = ForceField::new("t");
+        ff.def_atomstyle("full").def_type("CT", &[("mass", 12.0)]);
+        let style = &ff.styles()[0];
+        let frame = two_atoms();
+        assert!(
+            style
+                .to_potential(&frame, &SpecialBonds::default())
+                .unwrap()
+                .is_none()
+        );
+        assert!(style.to_typed_potential(&frame).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_bonded_style_is_skipped_without_its_block_and_built_with_it() {
+        let ff = bond_ff();
+        let style = &ff.styles()[0];
+        let bare = two_atoms();
+        assert!(
+            style
+                .to_potential(&bare, &SpecialBonds::default())
+                .unwrap()
+                .is_none()
+        );
+        assert!(ff.to_potentials(&bare).unwrap().members().is_empty());
+
+        let bonded = with_bond(two_atoms(), "CT-CT");
+        let pots = ff.to_potentials(&bonded).unwrap();
+        assert_eq!(pots.members().len(), 1);
+        // ½·300·(1.6 − 1.5)² = 1.5 kcal/mol
+        let e = pots.calc_energy(&[0.0, 0.0, 0.0, 1.6, 0.0, 0.0]);
+        assert!((e - 1.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn an_unknown_type_label_in_a_present_block_is_an_error() {
+        let ff = bond_ff();
+        let frame = with_bond(two_atoms(), "XX-XX");
+        assert!(ff.to_potentials(&frame).is_err());
+    }
+
+    #[test]
+    fn a_pair_style_without_a_neighbour_driven_form_is_refused_by_the_typed_door() {
+        let mut ff = ForceField::new("t");
+        ff.def_pairstyle(
+            "coul/long/pme",
+            &[
+                ("coulomb", 332.06371),
+                ("dielectric", 1.0),
+                ("coulomb14scale", 0.5),
+            ],
+        );
+        let style = &ff.styles()[0];
+        let err = style.to_typed_potential(&two_atoms()).unwrap_err();
+        assert!(err.contains("neighbour-driven"), "{err}");
+    }
+}
