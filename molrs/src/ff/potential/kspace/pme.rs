@@ -71,6 +71,10 @@ struct PmeScratch {
     grid: Vec<Complex<F>>,        // Kx*Ky*Kz complex grid
     buf: Vec<Complex<F>>,         // temp for 1D FFT rows
     fft_scratch: Vec<Complex<F>>, // rustfft scratch
+    /// One atom's B-spline weights (`order` entries), reused across atoms.
+    spline: Vec<[F; 3]>,
+    /// Their derivatives, same shape.
+    dspline: Vec<[F; 3]>,
 }
 
 // ---------------------------------------------------------------------------
@@ -152,6 +156,8 @@ impl PmePotential {
             grid: vec![zero; grid_len],
             buf: vec![zero; max_dim],
             fft_scratch: vec![zero; max_fft_scratch],
+            spline: vec![[0.0; 3]; params.order],
+            dspline: vec![[0.0; 3]; params.order],
         });
 
         Self {
@@ -309,20 +315,20 @@ impl PmePotential {
         let mut scratch = self.scratch.lock().unwrap();
         let sqrt_coulomb = self.params.coulomb.sqrt();
 
-        // Zero the grid
-        let zero = Complex::new(0.0, 0.0);
-        for c in scratch.grid.iter_mut() {
-            *c = zero;
-        }
+        scratch.grid.fill(Complex::new(0.0, 0.0));
 
         // Spread charges onto grid
-        self.spread_charges(coords, &mut scratch.grid, sqrt_coulomb);
+        {
+            let PmeScratch { grid, spline, .. } = &mut *scratch;
+            self.spread_charges(coords, grid, spline, sqrt_coulomb);
+        }
 
         // Forward 3D FFT — destructure to satisfy borrow checker
         let PmeScratch {
             ref mut grid,
             ref mut buf,
             ref mut fft_scratch,
+            ..
         } = *scratch;
         self.fft_3d_forward(grid, buf, fft_scratch);
 
@@ -335,14 +341,13 @@ impl PmePotential {
         let mut scratch = self.scratch.lock().unwrap();
         let sqrt_coulomb = self.params.coulomb.sqrt();
 
-        // Zero the grid
-        let zero = Complex::new(0.0, 0.0);
-        for c in scratch.grid.iter_mut() {
-            *c = zero;
-        }
+        scratch.grid.fill(Complex::new(0.0, 0.0));
 
         // Spread charges
-        self.spread_charges(coords, &mut scratch.grid, sqrt_coulomb);
+        {
+            let PmeScratch { grid, spline, .. } = &mut *scratch;
+            self.spread_charges(coords, grid, spline, sqrt_coulomb);
+        }
 
         // Forward FFT
         {
@@ -350,6 +355,7 @@ impl PmePotential {
                 ref mut grid,
                 ref mut buf,
                 ref mut fft_scratch,
+                ..
             } = *scratch;
             self.fft_3d_forward(grid, buf, fft_scratch);
         }
@@ -363,24 +369,37 @@ impl PmePotential {
                 ref mut grid,
                 ref mut buf,
                 ref mut fft_scratch,
+                ..
             } = *scratch;
             self.fft_3d_inverse(grid, buf, fft_scratch);
         }
 
         // Interpolate forces from grid
-        self.interpolate_forces(coords, &scratch.grid, sqrt_coulomb, grad);
+        let PmeScratch {
+            grid,
+            spline,
+            dspline,
+            ..
+        } = &mut *scratch;
+        self.interpolate_forces(coords, grid, spline, dspline, sqrt_coulomb, grad);
     }
 
     // -----------------------------------------------------------------------
     // Charge spreading
     // -----------------------------------------------------------------------
 
-    fn spread_charges(&self, coords: &[F], grid: &mut [Complex<F>], sqrt_coulomb: F) {
+    fn spread_charges(
+        &self,
+        coords: &[F],
+        grid: &mut [Complex<F>],
+        data: &mut [[F; 3]],
+        sqrt_coulomb: F,
+    ) {
         let [kx, ky, kz] = self.params.grid_size;
         let order = self.params.order;
 
         for atom in 0..self.n_atoms {
-            let (grid_index, data) = self.compute_spline(coords, atom);
+            let grid_index = self.compute_spline(coords, atom, data);
 
             for ix in 0..order {
                 let xindex = (grid_index[0] + ix) % kx;
@@ -406,6 +425,8 @@ impl PmePotential {
         &self,
         coords: &[F],
         grid: &[Complex<F>],
+        data: &mut [[F; 3]],
+        ddata: &mut [[F; 3]],
         sqrt_coulomb: F,
         grad: &mut [F],
     ) {
@@ -413,7 +434,7 @@ impl PmePotential {
         let order = self.params.order;
 
         for atom in 0..self.n_atoms {
-            let (grid_index, data, ddata) = self.compute_spline_with_deriv(coords, atom);
+            let grid_index = self.compute_spline_with_deriv(coords, atom, data, ddata);
 
             let mut dpos = [0.0 as F; 3];
             for ix in 0..order {
@@ -604,8 +625,9 @@ impl PmePotential {
     // B-spline computation
     // -----------------------------------------------------------------------
 
-    /// Compute B-spline coefficients for an atom. Returns `(grid_index[3], data[order][3])`.
-    fn compute_spline(&self, coords: &[F], atom: usize) -> ([usize; 3], Vec<[F; 3]>) {
+    /// Fill `data` (`order` rows) with an atom's B-spline coefficients and
+    /// return its grid index.
+    fn compute_spline(&self, coords: &[F], atom: usize, data: &mut [[F; 3]]) -> [usize; 3] {
         let order = self.params.order;
         let gs = self.params.grid_size;
         let pos = [coords[atom * 3], coords[atom * 3 + 1], coords[atom * 3 + 2]];
@@ -632,19 +654,19 @@ impl PmePotential {
             grid_index[i] = ti % gs[i];
         }
 
-        // B-spline coefficients
-        let mut data = vec![[0.0 as F; 3]; order];
-        bspline_fill(&mut data, &dr, order);
-
-        (grid_index, data)
+        bspline_fill(data, &dr, order);
+        grid_index
     }
 
-    /// Compute B-spline coefficients AND derivatives for an atom.
+    /// Like [`compute_spline`](Self::compute_spline), also filling `ddata`
+    /// with the derivatives.
     fn compute_spline_with_deriv(
         &self,
         coords: &[F],
         atom: usize,
-    ) -> ([usize; 3], Vec<[F; 3]>, Vec<[F; 3]>) {
+        data: &mut [[F; 3]],
+        ddata: &mut [[F; 3]],
+    ) -> [usize; 3] {
         let order = self.params.order;
         let gs = self.params.grid_size;
         let pos = [coords[atom * 3], coords[atom * 3 + 1], coords[atom * 3 + 2]];
@@ -669,11 +691,8 @@ impl PmePotential {
             grid_index[i] = ti % gs[i];
         }
 
-        let mut data = vec![[0.0 as F; 3]; order];
-        let mut ddata = vec![[0.0 as F; 3]; order];
-        bspline_fill_with_deriv(&mut data, &mut ddata, &dr, order);
-
-        (grid_index, data, ddata)
+        bspline_fill_with_deriv(data, ddata, &dr, order);
+        grid_index
     }
 
     // -----------------------------------------------------------------------
