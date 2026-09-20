@@ -16,6 +16,7 @@
 //! | AMBER prmtop (structure) | [`read_amber_prmtop`] | — |
 
 #[cfg(feature = "fs")]
+pub mod log;
 pub mod mrec;
 
 use crate::core::spatial::mesh::PyTriMesh;
@@ -1452,9 +1453,9 @@ pub fn write_xsf(path: &str, frame: &PyFrame) -> PyResult<()> {
 ///
 /// Returns
 /// -------
-/// dict
-///     Nested mapping with ``path``, ``version``, ``header``, ``runs``,
-///     ``total_wall_time``, ``warnings``, ``raw_text``, and ``style``.
+/// LammpsLog
+///     Structured log: ``header``, one ``LammpsRun`` per ``run`` (thermo
+///     table, timing, warnings), ``total_wall_time`` and ``warnings``.
 ///
 /// Raises
 /// ------
@@ -1464,13 +1465,9 @@ pub fn write_xsf(path: &str, frame: &PyFrame) -> PyResult<()> {
 ///     On other I/O failures.
 #[pyfunction]
 #[pyo3(signature = (path, style = "default"))]
-pub fn read_lammps_log<'py>(
-    py: Python<'py>,
-    path: &str,
-    style: &str,
-) -> PyResult<Bound<'py, PyDict>> {
+pub fn read_lammps_log(path: &str, style: &str) -> PyResult<log::PyLammpsLog> {
     let log = read_lammps_log_rs(path, style).map_err(lammps_log_io_error)?;
-    lammps_log_to_pydict(py, &log)
+    Ok(log::PyLammpsLog::new(log))
 }
 
 /// Parse a LAMMPS log from an in-memory string (no filesystem access).
@@ -1486,18 +1483,12 @@ pub fn read_lammps_log<'py>(
 ///
 /// Returns
 /// -------
-/// dict
-///     Same nested shape as :func:`read_lammps_log`.
+/// LammpsLog
+///     Same structure as :func:`read_lammps_log`.
 #[pyfunction]
 #[pyo3(signature = (text, path = "<string>", style = "default"))]
-pub fn parse_lammps_log_text<'py>(
-    py: Python<'py>,
-    text: &str,
-    path: &str,
-    style: &str,
-) -> PyResult<Bound<'py, PyDict>> {
-    let log = parse_lammps_log_text_rs(text, path, style);
-    lammps_log_to_pydict(py, &log)
+pub fn parse_lammps_log_text(text: &str, path: &str, style: &str) -> log::PyLammpsLog {
+    log::PyLammpsLog::new(parse_lammps_log_text_rs(text, path, style))
 }
 
 fn lammps_log_io_error(e: std::io::Error) -> PyErr {
@@ -1508,7 +1499,7 @@ fn lammps_log_io_error(e: std::io::Error) -> PyErr {
     }
 }
 
-fn lammps_log_to_pydict<'py>(
+pub(crate) fn lammps_log_to_pydict<'py>(
     py: Python<'py>,
     log: &molrs::io::log::LammpsLog,
 ) -> PyResult<Bound<'py, PyDict>> {

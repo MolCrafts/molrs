@@ -32,6 +32,19 @@ from typing import Any, Union, overload
 
 from . import raw
 from . import mrec
+from .._lib import LammpsCpuUse as LammpsCpuUse
+from .._lib import LammpsLoadBalance as LammpsLoadBalance
+from .._lib import LammpsLog as LammpsLog
+from .._lib import LammpsLogHeader as LammpsLogHeader
+from .._lib import LammpsLoopTime as LammpsLoopTime
+from .._lib import LammpsMemoryUsage as LammpsMemoryUsage
+from .._lib import LammpsNeighborStatistics as LammpsNeighborStatistics
+from .._lib import LammpsPerformance as LammpsPerformance
+from .._lib import LammpsRun as LammpsRun
+from .._lib import LammpsThermo as LammpsThermo
+from .._lib import LammpsTimingBreakdown as LammpsTimingBreakdown
+from .._lib import LammpsTimingRow as LammpsTimingRow
+from .._lib import LammpsWarning as LammpsWarning
 from .._lib import SmilesIR as SmilesIR
 from .._lib import (
     read_stl as read_stl,
@@ -796,8 +809,8 @@ def read_xtc_trajectory(file: PathInput | Sequence[PathInput]) -> TrajectoryRead
 def read_lammps_log(
     file: PathInput,
     style: str = "default",
-) -> dict[str, Any]:
-    """Read a LAMMPS log file into a nested plain dict.
+) -> LammpsLog:
+    """Read a LAMMPS log file into a structured :class:`LammpsLog`.
 
     Parses thermo tables, loop timing, performance, CPU/MPI timing,
     load-balance stats, neighbor statistics, and warnings. Unrecognized
@@ -808,8 +821,9 @@ def read_lammps_log(
         style: Thermo style. Only ``"default"`` is currently parsed.
 
     Returns:
-        Nested mapping suitable for JSON / dataclass hydration. Thermo
-        rows are ``list[list[float]]``.
+        ``LammpsLog`` with one :class:`LammpsRun` per ``run``; a run's
+        ``thermo["Step"]`` is a float64 column and ``to_dict()`` gives the
+        JSON-friendly nested form.
 
     Raises:
         FileNotFoundError: If ``file`` does not exist.
@@ -821,7 +835,7 @@ def parse_lammps_log_text(
     text: str,
     path: str = "<string>",
     style: str = "default",
-) -> dict[str, Any]:
+) -> LammpsLog:
     """Parse a LAMMPS log from an in-memory string (no filesystem access).
 
     Args:
@@ -830,7 +844,7 @@ def parse_lammps_log_text(
         style: Thermo style. Only ``"default"`` is currently parsed.
 
     Returns:
-        Same nested shape as :func:`read_lammps_log`.
+        Same structure as :func:`read_lammps_log`.
     """
     return _parse_lammps_log_text(text, path, style)
 
@@ -966,6 +980,19 @@ __all__ = [
     "read_lammps_molecule",
     "read_lammps_log",
     "parse_lammps_log_text",
+    "LammpsLog",
+    "LammpsRun",
+    "LammpsThermo",
+    "LammpsLogHeader",
+    "LammpsMemoryUsage",
+    "LammpsLoopTime",
+    "LammpsPerformance",
+    "LammpsCpuUse",
+    "LammpsTimingRow",
+    "LammpsTimingBreakdown",
+    "LammpsLoadBalance",
+    "LammpsNeighborStatistics",
+    "LammpsWarning",
     "read_xsf",
     "read_trr",
     "read_xtc",
