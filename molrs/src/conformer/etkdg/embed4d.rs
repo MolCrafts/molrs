@@ -64,7 +64,12 @@ pub fn compute_initial_coords<R: RngExt + ?Sized>(
         sq[k] = dist[k] * dist[k];
         sum_sq += sq[k];
     }
-    sum_sq /= (n * n) as f64;
+    // RDKit accumulates its `SymmMatrix`'s stored triangle once, so its
+    // `sumSqD2` is half of this full-matrix sum: the centroid term is
+    // (1/(2N²)) Σ_jk D²_jk. Subtracting the full sum shifted every sqD0i down
+    // by that much, which tripped the small-sqD0i refusal for atoms near the
+    // centroid and put a spurious negative eigenvalue on the Gram matrix.
+    sum_sq /= 2.0 * (n * n) as f64;
 
     // sqD0i[i] = mean_j sq[i][j] − sum_sq   (RDKit sqD0i).
     let mut sq_d0i = vec![0.0; n];
@@ -228,4 +233,69 @@ fn jacobi_eigen(a: &[f64], n: usize) -> (Vec<f64>, Vec<f64>) {
         }
     }
     (eigvals, eigvecs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rand::SeedableRng;
+    use rand::rngs::StdRng;
+
+    /// Bounds that pin an equilateral triangle of side 1.
+    fn triangle() -> BoundsMatrix {
+        let mut b = BoundsMatrix::new(3, 0.0);
+        for (i, j) in [(0, 1), (1, 2), (0, 2)] {
+            b.set_lower(i, j, 1.0);
+            b.set_upper(i, j, 1.0);
+        }
+        b
+    }
+
+    #[test]
+    fn sampled_distances_stay_inside_their_bounds_and_are_symmetric() {
+        let mut b = BoundsMatrix::new(4, 0.0);
+        for i in 1..4 {
+            for j in 0..i {
+                b.set_lower(i, j, 1.0 + j as f64);
+                b.set_upper(i, j, 2.0 + j as f64);
+            }
+        }
+        let mut rng = StdRng::seed_from_u64(7);
+        let d = pick_random_dist_mat(&b, &mut rng);
+        for i in 1..4 {
+            for j in 0..i {
+                assert_eq!(d[i * 4 + j], d[j * 4 + i]);
+                assert!(d[i * 4 + j] >= b.lower(i, j) && d[i * 4 + j] < b.upper(i, j));
+            }
+        }
+        for i in 0..4 {
+            assert_eq!(d[i * 4 + i], 0.0);
+        }
+    }
+
+    #[test]
+    fn the_embedding_reproduces_the_pinned_distances() {
+        let b = triangle();
+        let mut rng = StdRng::seed_from_u64(1);
+        let d = pick_random_dist_mat(&b, &mut rng);
+        let coords = compute_initial_coords(&d, 3, 3, &mut rng, false, 2).expect("embeds");
+        assert_eq!(coords.len(), 9);
+        for (i, j) in [(0, 1), (1, 2), (0, 2)] {
+            let mut s = 0.0;
+            for k in 0..3 {
+                let diff = coords[i * 3 + k] - coords[j * 3 + k];
+                s += diff * diff;
+            }
+            assert!((s.sqrt() - 1.0).abs() < 1e-9, "|{i}-{j}| = {}", s.sqrt());
+        }
+    }
+
+    #[test]
+    fn random_coordinates_fill_the_box_symmetrically() {
+        let mut rng = StdRng::seed_from_u64(3);
+        let coords = compute_random_coords(50, 4, 2.0, &mut rng);
+        assert_eq!(coords.len(), 200);
+        assert!(coords.iter().all(|c| (-1.0..1.0).contains(c)));
+        assert!(coords.iter().any(|&c| c < 0.0) && coords.iter().any(|&c| c > 0.0));
+    }
 }

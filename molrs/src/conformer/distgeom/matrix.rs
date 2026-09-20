@@ -118,3 +118,40 @@ impl BoundsMatrix {
             .collect()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn upper_lives_above_the_diagonal_and_lower_below() {
+        let mut b = BoundsMatrix::new(3, 0.0);
+        b.set_upper(2, 0, 4.0);
+        b.set_lower(2, 0, 1.0);
+        assert_eq!(b.raw(0, 2), 4.0);
+        assert_eq!(b.raw(2, 0), 1.0);
+        assert_eq!(b.upper(0, 2), b.upper(2, 0));
+        assert_eq!(b.lower(0, 2), b.lower(2, 0));
+    }
+
+    #[test]
+    fn check_valid_sees_a_crossed_pair() {
+        let mut b = BoundsMatrix::new(2, 0.0);
+        b.set_upper(0, 1, 1.0);
+        b.set_lower(0, 1, 0.5);
+        assert!(b.check_valid());
+        b.set_lower(0, 1, 2.0);
+        assert!(!b.check_valid());
+    }
+
+    #[test]
+    fn to_dense_is_the_raw_square() {
+        let mut b = BoundsMatrix::new(2, 7.0);
+        b.set_upper(0, 1, 2.0);
+        b.set_lower(0, 1, 1.0);
+        assert_eq!(b.to_dense(), vec![vec![7.0, 2.0], vec![1.0, 7.0]]);
+        assert_eq!(b.len(), 2);
+        assert!(!b.is_empty());
+        assert!(BoundsMatrix::new(0, 0.0).is_empty());
+    }
+}
