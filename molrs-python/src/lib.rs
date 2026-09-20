@@ -221,21 +221,26 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(io::write_lammps_molecule, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_xsf, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_xsf, m)?)?;
-    m.add_function(wrap_pyfunction!(io::read_lammps_log, m)?)?;
-    m.add_function(wrap_pyfunction!(io::parse_lammps_log_text, m)?)?;
-    m.add_class::<io::log::PyLammpsLog>()?;
-    m.add_class::<io::log::PyLammpsRun>()?;
-    m.add_class::<io::log::PyLammpsThermo>()?;
-    m.add_class::<io::log::PyLammpsLogHeader>()?;
-    m.add_class::<io::log::PyLammpsMemoryUsage>()?;
-    m.add_class::<io::log::PyLammpsLoopTime>()?;
-    m.add_class::<io::log::PyLammpsPerformance>()?;
-    m.add_class::<io::log::PyLammpsCpuUse>()?;
-    m.add_class::<io::log::PyLammpsTimingRow>()?;
-    m.add_class::<io::log::PyLammpsTimingBreakdown>()?;
-    m.add_class::<io::log::PyLammpsLoadBalance>()?;
-    m.add_class::<io::log::PyLammpsNeighborStatistics>()?;
-    m.add_class::<io::log::PyLammpsWarning>()?;
+    // LAMMPS log doors. Native-only: the parser reads a path, and the whole
+    // module is behind `fs` for the same reason the mrec block below is.
+    #[cfg(feature = "fs")]
+    {
+        m.add_function(wrap_pyfunction!(io::read_lammps_log, m)?)?;
+        m.add_function(wrap_pyfunction!(io::parse_lammps_log_text, m)?)?;
+        m.add_class::<io::log::PyLammpsLog>()?;
+        m.add_class::<io::log::PyLammpsRun>()?;
+        m.add_class::<io::log::PyLammpsThermo>()?;
+        m.add_class::<io::log::PyLammpsLogHeader>()?;
+        m.add_class::<io::log::PyLammpsMemoryUsage>()?;
+        m.add_class::<io::log::PyLammpsLoopTime>()?;
+        m.add_class::<io::log::PyLammpsPerformance>()?;
+        m.add_class::<io::log::PyLammpsCpuUse>()?;
+        m.add_class::<io::log::PyLammpsTimingRow>()?;
+        m.add_class::<io::log::PyLammpsTimingBreakdown>()?;
+        m.add_class::<io::log::PyLammpsLoadBalance>()?;
+        m.add_class::<io::log::PyLammpsNeighborStatistics>()?;
+        m.add_class::<io::log::PyLammpsWarning>()?;
+    }
     // Writers
     m.add_function(wrap_pyfunction!(io::write_gro, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_pdb, m)?)?;
