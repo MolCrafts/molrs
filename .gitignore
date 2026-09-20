@@ -70,6 +70,8 @@ molrs-cxxapi/src/bridge.rs
 # pins nothing downstream; CI resolves fresh and catches upstream breakage.
 Cargo.lock
 uv.lock
+# The Python dev environment is pinned like the five Cargo.lock files.
+!molrs-python/uv.lock
 
 .tox/
 
