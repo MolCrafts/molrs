@@ -304,13 +304,17 @@ impl PyLJCut {
         check_nx3(&pos, "pos")?;
         let view = pos.as_array();
         let n = view.nrows();
-        let mut flat = Vec::with_capacity(n * 3);
-        for i in 0..n {
-            flat.push(view[[i, 0]]);
-            flat.push(view[[i, 1]]);
-            flat.push(view[[i, 2]]);
-        }
-        let (energy, forces) = Potential::calc_energy_forces(&self.inner, &flat);
+        // A standard-layout `(N, 3)` array *is* the flat `[x0, y0, z0, …]` a
+        // kernel wants; only a strided view is copied.
+        let owned: Vec<F>;
+        let flat: &[F] = match view.as_slice() {
+            Some(slice) => slice,
+            None => {
+                owned = view.iter().copied().collect();
+                &owned
+            }
+        };
+        let (energy, forces) = Potential::calc_energy_forces(&self.inner, flat);
         let arr = Array2::from_shape_vec((n, 3), forces)
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
         Ok((energy, arr.into_pyarray(py)))
