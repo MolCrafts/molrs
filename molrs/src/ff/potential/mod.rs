@@ -1347,3 +1347,25 @@ mod tests {
         assert!(intramolecular_pairs(&small, &SpecialBonds::default()).is_ok());
     }
 }
+
+#[cfg(test)]
+pub(crate) mod test_util {
+    use super::Potential;
+    use molrs::types::F;
+
+    /// Central-difference check that every force component is `-dE/dx`.
+    pub(crate) fn assert_forces_are_negative_gradient(pot: &dyn Potential, coords: &[F], tol: F) {
+        let h: F = 1e-6;
+        let (_, f) = pot.calc_energy_forces(coords);
+        let mut worst: F = 0.0;
+        for i in 0..coords.len() {
+            let mut plus = coords.to_vec();
+            let mut minus = coords.to_vec();
+            plus[i] += h;
+            minus[i] -= h;
+            let numeric = -(pot.calc_energy(&plus) - pot.calc_energy(&minus)) / (2.0 * h);
+            worst = worst.max((f[i] - numeric).abs());
+        }
+        assert!(worst < tol, "max |F + dE/dx| = {worst:.3e}");
+    }
+}

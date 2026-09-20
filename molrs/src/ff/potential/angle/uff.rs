@@ -148,3 +148,44 @@ pub fn uff_angle_ctor(
         c2: c2.iter().map(|&v| v as F).collect(),
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ff::potential::test_util::assert_forces_are_negative_gradient;
+
+    fn bent(order: u8, c: [F; 3]) -> UffAngle {
+        UffAngle {
+            atom_i: vec![0],
+            atom_j: vec![1],
+            atom_k: vec![2],
+            ka: vec![100.0],
+            order: vec![order],
+            c0: vec![c[0]],
+            c1: vec![c[1]],
+            c2: vec![c[2]],
+        }
+    }
+
+    /// A right angle at the centre atom.
+    fn right_angle() -> Vec<F> {
+        vec![1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0]
+    }
+
+    #[test]
+    fn fourier_order_zero_is_ka_times_the_cosine_series() {
+        // c0 + c1·cosθ + c2·cos2θ at θ = 90° is c0 − c2.
+        let pot = bent(0, [0.75, 0.3, 0.25]);
+        let (e, _) = pot.calc_energy_forces(&right_angle());
+        assert!((e - 100.0 * (0.75 - 0.25)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn forces_are_the_negative_energy_gradient_for_every_order() {
+        let coords = vec![1.1, 0.2, -0.1, 0.0, 0.0, 0.0, -0.3, 1.2, 0.4];
+        for order in 0..=4 {
+            let pot = bent(order, [0.75, 0.3, 0.25]);
+            assert_forces_are_negative_gradient(&pot, &coords, 1e-5);
+        }
+    }
+}

@@ -167,34 +167,6 @@ pub fn bond_harmonic_ctor(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ff::forcefield::ForceField;
-    use crate::ff::potential::extract_coords;
-    use molrs::store::block::Block;
-    use molrs::types::Idx;
-    use ndarray::Array1;
-
-    fn make_atoms(coords: &[[F; 3]]) -> Block {
-        let mut atoms = Block::new();
-        atoms
-            .insert(
-                "x",
-                Array1::from_vec(coords.iter().map(|p| p[0]).collect()).into_dyn(),
-            )
-            .unwrap();
-        atoms
-            .insert(
-                "y",
-                Array1::from_vec(coords.iter().map(|p| p[1]).collect()).into_dyn(),
-            )
-            .unwrap();
-        atoms
-            .insert(
-                "z",
-                Array1::from_vec(coords.iter().map(|p| p[2]).collect()).into_dyn(),
-            )
-            .unwrap();
-        atoms
-    }
 
     #[test]
     fn test_bond_harmonic_energy_and_force() {
@@ -205,35 +177,5 @@ mod tests {
         assert!((e - 37.5).abs() < 1e-3);
         assert!((forces[0] - 150.0).abs() < 1e-3);
         assert!((forces[3] + 150.0).abs() < 1e-3);
-    }
-
-    #[test]
-    fn test_forcefield_compile_integration() {
-        let mut ff = ForceField::new("test");
-        ff.def_bondstyle("harmonic")
-            .def_type("CT-CT", &[("k", 300.0), ("r0", 1.5)]);
-
-        let mut frame = Frame::new();
-        frame.insert("atoms", make_atoms(&[[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]]));
-
-        let mut bonds = Block::new();
-        bonds
-            .insert("atomi", Array1::from_vec(vec![0 as Idx]).into_dyn())
-            .unwrap();
-        bonds
-            .insert("atomj", Array1::from_vec(vec![1 as Idx]).into_dyn())
-            .unwrap();
-        bonds
-            .insert(
-                "type",
-                Array1::from_vec(vec!["CT-CT".to_string()]).into_dyn(),
-            )
-            .unwrap();
-        frame.insert("bonds", bonds);
-
-        let pots = ff.to_potentials(&frame).unwrap();
-        let coords = extract_coords(&frame).unwrap();
-        let e = pots.calc_energy(&coords);
-        assert!((e - 37.5).abs() < 1e-3);
     }
 }

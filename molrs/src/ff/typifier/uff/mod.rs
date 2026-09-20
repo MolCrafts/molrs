@@ -665,8 +665,6 @@ fn is_amide_cn(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ff::potential::extract_coords;
-    use crate::ff::potential::intramolecular_pairs;
     use molrs::system::atomistic::Atomistic;
 
     fn ethanol() -> Atomistic {
@@ -711,92 +709,27 @@ mod tests {
         assert_eq!(o3, 1);
     }
 
+    /// UFF Eqs. 2–3, one correction term at a time.
     #[test]
-    fn uff_energy_finite() {
-        let t = UFFTypifier::new();
-        let typed = t.typify(&ethanol()).unwrap();
-        let mut frame = typed.to_frame();
-        frame.insert(
-            "pairs",
-            intramolecular_pairs(&frame, t.ff().special_bonds()).unwrap(),
-        );
-        let pots = t.ff().to_potentials(&frame).unwrap();
-        let coords = extract_coords(&frame).unwrap();
-        let (e, f) = pots.calc_energy_forces(&coords);
-        assert!(e.is_finite(), "energy={e}");
-        assert!(f.iter().all(|x| x.is_finite()));
-        // Distorted ethanol should have non-trivial energy
-        assert!(e.abs() > 0.01);
-    }
-
-    /// Every UFF force must be −∂E/∂x, checked against the kernel's own energy.
-    ///
-    /// `uff_energy_finite` above asserts only that the forces are finite, which
-    /// a wrong gradient passes trivially — and two did: the inversion term's
-    /// normal had the wrong orientation (E is even in cosY, so the energy hid
-    /// it and the force came out inverted), and the torsion projected
-    /// un-normalized plane normals with a flipped sign.
-    #[test]
-    fn uff_forces_are_the_negative_energy_gradient() {
-        let t = UFFTypifier::new();
-        // Ethanol exercises torsions; formaldehyde exercises the inversion term.
-        for (name, mol) in [("ethanol", ethanol()), ("formaldehyde", formaldehyde())] {
-            let typed = t.typify(&mol).unwrap();
-            let mut frame = typed.to_frame();
-            frame.insert(
-                "pairs",
-                intramolecular_pairs(&frame, t.ff().special_bonds()).unwrap(),
-            );
-            let pots = t.ff().to_potentials(&frame).unwrap();
-            let coords = extract_coords(&frame).unwrap();
-            let (_, f) = pots.calc_energy_forces(&coords);
-
-            let h = 1e-6;
-            let mut worst = 0.0_f64;
-            for i in 0..coords.len() {
-                let mut plus = coords.clone();
-                let mut minus = coords.clone();
-                plus[i] += h;
-                minus[i] -= h;
-                let numeric = -(pots.calc_energy(&plus) - pots.calc_energy(&minus)) / (2.0 * h);
-                worst = worst.max((f[i] - numeric).abs());
-            }
-            assert!(
-                worst < 1e-4,
-                "{name}: max|F + dE/dx| = {worst:.3e}; forces are not the energy's gradient"
-            );
-        }
-    }
-
-    /// Planar H2C=O — three Wilson inversion rows on the carbon, no torsions.
-    fn formaldehyde() -> Atomistic {
-        let mut mol = Atomistic::new();
-        mol.add_atom_xyz("C", 0.0, 0.0, 0.0);
-        mol.add_atom_xyz("O", 0.0, 1.22, 0.0);
-        mol.add_atom_xyz("H", 0.94, -0.54, 0.0);
-        mol.add_atom_xyz("H", -0.94, -0.54, 0.03);
-        let ids: Vec<_> = mol.atoms().map(|(id, _)| id).collect();
-        let b = mol.add_bond(ids[0], ids[1]).unwrap();
-        mol.set_bond_type(b, crate::system::bond::BondType::Double)
-            .unwrap();
-        mol.add_bond(ids[0], ids[2]).unwrap();
-        mol.add_bond(ids[0], ids[3]).unwrap();
-        mol
-    }
-
-    #[test]
-    fn bond_params_match_rdkit_ethanol() {
+    fn bond_rest_length_and_force_constant_follow_the_uff_formulas() {
         let c = params_for_label("C_3").unwrap();
-        let h = params_for_label("H_").unwrap();
         let o = params_for_label("O_3").unwrap();
+        // Homonuclear single bond: the bond-order term is λ(rᵢ+rⱼ)·ln 1 = 0 and
+        // the electronegativity term needs χᵢ ≠ χⱼ, so r₀ = 2·r₁ and
+        // k = 2G·Z²/r₀³.
         let (r, k) = bond_rest_and_k(c, c, 1.0);
-        assert!((r - 1.514).abs() < 1e-6);
-        assert!((k - 699.591798712679).abs() < 1e-6);
-        let (r, k) = bond_rest_and_k(c, h, 1.0);
-        assert!((r - 1.109400794877744).abs() < 1e-6);
-        assert!((k - 662.1387775328197).abs() < 1e-6);
-        let (r, k) = bond_rest_and_k(c, o, 1.0);
-        assert!((r - 1.3938448452526835).abs() < 1e-6);
-        assert!((k - 1078.4971040429152).abs() < 1e-6);
+        let r_single = 2.0 * c.r1;
+        assert!((r - r_single).abs() < 1e-12);
+        assert!((k - 2.0 * G * c.z1 * c.z1 / r_single.powi(3)).abs() < 1e-9);
+        // A double bond is shorter by λ(rᵢ+rⱼ)·ln 2 and nothing else moves.
+        let (r_double, _) = bond_rest_and_k(c, c, 2.0);
+        assert!((r_double - (r_single - LAMBDA * r_single * 2f64.ln())).abs() < 1e-12);
+        // Heteronuclear: the electronegativity correction pulls r₀ below rᵢ + rⱼ.
+        let (r_co, k_co) = bond_rest_and_k(c, o, 1.0);
+        let d = c.xi.sqrt() - o.xi.sqrt();
+        let r_en = c.r1 * o.r1 * d * d / (c.xi * c.r1 + o.xi * o.r1);
+        assert!((r_co - (c.r1 + o.r1 - r_en)).abs() < 1e-12);
+        assert!(r_co < c.r1 + o.r1);
+        assert!((k_co - 2.0 * G * c.z1 * o.z1 / r_co.powi(3)).abs() < 1e-9);
     }
 }

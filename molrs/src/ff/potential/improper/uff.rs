@@ -195,3 +195,52 @@ pub fn uff_inversion_ctor(
         c2: c2.iter().map(|&v| v as F).collect(),
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ff::potential::test_util::assert_forces_are_negative_gradient;
+
+    fn inversion(c: [F; 3]) -> UffInversion {
+        UffInversion {
+            atom_i: vec![0],
+            atom_j: vec![1],
+            atom_k: vec![2],
+            atom_l: vec![3],
+            k: vec![6.0],
+            c0: vec![c[0]],
+            c1: vec![c[1]],
+            c2: vec![c[2]],
+        }
+    }
+
+    /// Centre atom `j` at the origin with three planar neighbours.
+    fn planar() -> Vec<F> {
+        vec![
+            1.2, 0.0, 0.0, 0.0, 0.0, 0.0, -0.6, 1.0, 0.0, -0.6, -1.0, 0.0,
+        ]
+    }
+
+    #[test]
+    fn the_sp2_series_is_zero_in_the_plane_and_positive_out_of_it() {
+        // E = K·(c0 + c1·sinY + c2·cos2W): in the plane the fourth bond is
+        // perpendicular to the normal, sinY = 1, and (1, −1, 0) gives zero.
+        let pot = inversion([1.0, -1.0, 0.0]);
+        let (e_flat, _) = pot.calc_energy_forces(&planar());
+        assert!(e_flat.abs() < 1e-9);
+        let mut lifted = planar();
+        lifted[11] = 0.4;
+        let (e_up, _) = pot.calc_energy_forces(&lifted);
+        assert!(e_up > 1e-3);
+    }
+
+    #[test]
+    fn forces_are_the_negative_energy_gradient() {
+        let mut coords = planar();
+        coords[2] = 0.15;
+        coords[8] = -0.25;
+        coords[11] = 0.35;
+        assert_forces_are_negative_gradient(&inversion([1.0, -1.0, 0.0]), &coords, 1e-5);
+        assert_forces_are_negative_gradient(&inversion([0.5, 0.2, 0.3]), &coords, 1e-5);
+    }
+}

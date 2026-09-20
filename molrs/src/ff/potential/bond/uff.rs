@@ -106,3 +106,49 @@ pub fn uff_bond_ctor(
         r0: r0.iter().map(|&v| v as F).collect(),
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ff::potential::test_util::assert_forces_are_negative_gradient;
+
+    fn stretched(kb: F, r0: F, r: F) -> (UffBond, Vec<F>) {
+        let pot = UffBond {
+            atom_i: vec![0],
+            atom_j: vec![1],
+            kb: vec![kb],
+            r0: vec![r0],
+        };
+        (pot, vec![0.0, 0.0, 0.0, r, 0.0, 0.0])
+    }
+
+    #[test]
+    fn energy_is_half_kb_times_the_squared_stretch() {
+        let (pot, coords) = stretched(700.0, 1.5, 1.6);
+        let (e, f) = pot.calc_energy_forces(&coords);
+        assert!((e - 0.5 * 700.0 * 0.01).abs() < 1e-9);
+        // The pull is along x, opposite on the two atoms.
+        assert!((f[0] - 700.0 * 0.1).abs() < 1e-9);
+        assert!((f[3] + 700.0 * 0.1).abs() < 1e-9);
+    }
+
+    #[test]
+    fn energy_and_force_vanish_at_the_rest_length() {
+        let (pot, coords) = stretched(700.0, 1.5, 1.5);
+        let (e, f) = pot.calc_energy_forces(&coords);
+        assert_eq!(e, 0.0);
+        assert!(f.iter().all(|x| x.abs() < 1e-12));
+    }
+
+    #[test]
+    fn forces_are_the_negative_energy_gradient() {
+        let pot = UffBond {
+            atom_i: vec![0],
+            atom_j: vec![1],
+            kb: vec![700.0],
+            r0: vec![1.5],
+        };
+        let coords = vec![0.1, -0.2, 0.3, 1.4, 0.5, -0.6];
+        assert_forces_are_negative_gradient(&pot, &coords, 1e-5);
+    }
+}

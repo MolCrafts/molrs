@@ -261,3 +261,44 @@ pub fn uff_torsion_ctor(
         cos_term: cos_term.iter().map(|&x| x as F).collect(),
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ff::potential::test_util::assert_forces_are_negative_gradient;
+
+    fn torsion(v: F, order: u8, cos_term: F) -> UffTorsion {
+        UffTorsion {
+            atom_i: vec![0],
+            atom_j: vec![1],
+            atom_k: vec![2],
+            atom_l: vec![3],
+            v: vec![v],
+            order: vec![order],
+            cos_term: vec![cos_term],
+        }
+    }
+
+    /// Planar anti arrangement: φ = 180°.
+    fn anti() -> Vec<F> {
+        vec![0.0, 0.0, 0.0, 1.5, 0.0, 0.0, 2.1, 1.4, 0.0, 3.6, 1.4, 0.0]
+    }
+
+    #[test]
+    fn energy_is_half_v_times_one_minus_cos_term_cos_n_phi() {
+        // cos(3·180°) = −1, so E = V/2·(1 + cosTerm).
+        let (e_plus, _) = torsion(4.0, 3, 1.0).calc_energy_forces(&anti());
+        let (e_minus, _) = torsion(4.0, 3, -1.0).calc_energy_forces(&anti());
+        assert!((e_plus - 4.0).abs() < 1e-9);
+        assert!(e_minus.abs() < 1e-9);
+    }
+
+    #[test]
+    fn forces_are_the_negative_energy_gradient() {
+        // A skew chain, no three atoms collinear, nothing planar.
+        let coords = vec![0.0, 0.1, 0.2, 1.5, 0.0, 0.0, 2.1, 1.4, 0.3, 3.4, 1.7, 1.1];
+        for (order, cos_term) in [(3, 1.0), (2, -1.0), (6, 1.0)] {
+            assert_forces_are_negative_gradient(&torsion(4.0, order, cos_term), &coords, 1e-5);
+        }
+    }
+}
