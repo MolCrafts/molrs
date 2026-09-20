@@ -4,8 +4,7 @@ title: release-0-14-08-ship-molrs — molrs 先 tag：v0.14.0 落 master、发�
 status: approved
 grilled: true
 created: 2026-08-25
-depends_on:
-  - release-0-14-07-surface-hygiene
+depends_on: []
 ---
 
 # release-0-14-08-ship-molrs — molrs 先发

@@ -2,7 +2,7 @@
 
 > Generated for 0.14.0. Refresh with `/mol:map` when the tree drifts.
 
-**Inventory date:** 2026-08-25
+**Inventory date:** 2026-09-20
 **Layout:** single published crate `molcrafts-molrs` + binder workspaces.
 
 ## Workspace members
@@ -34,7 +34,9 @@ stream / serialize (optional)
 | `perceive` | rings, aromaticity, SMARTS, stereo, hydrogens, bond types |
 | `io` | readers/writers, SMILES, trajectory, Record store adapter (`io::zarr`) |
 | `ff` | ForceField, potentials, typifiers (MMFF, OPLS, UFF, ATD), charge; pair styles include `coul/long/pme` |
-| `md` | VelocityVerlet / Langevin, `LJCut` re-export, MaxwellBoltzmann(`kbt`) |
+| `md` | VelocityVerlet / Langevin, `ForceProvider` (MIC + ghost régimes), `Comm` halo, MaxwellBoltzmann(`kbt`); re-exports nothing from `ff` |
+| `builder` | graphene, carbon nanotubes, FCC lattices, self-avoiding walks (feature `builder`, in `full`) |
+| `stream` | MessagePack / JSON frame codec + native WebSocket publisher (feature `stream`, not in `default`) |
 | `compute` | transport, MSD, RDF, dielectric, spectra, shape, … |
 | `signal` | ACF FFT primitives |
 | `conformer` | ETKDG-style 3D generation |

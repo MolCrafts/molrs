@@ -26,8 +26,8 @@ Project standard for molrs scientific correctness. Applied by the
 | Charge | e | elementary |
 | Temperature | K | |
 
-Precision: `F = f64` throughout (always). The `f64` feature flag is deprecated
-and ignored.
+Precision: `F = f64` throughout (always). There is no precision feature flag;
+the former `f64` / `i64` / `u64` features were removed.
 
 ### Key constants & conversions
 

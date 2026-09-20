@@ -104,12 +104,11 @@ them automatically on the first build.
 git clone https://github.com/MolCrafts/molrs.git
 cd molrs
 cargo build --workspace            # compile the Rust library
-cargo test --features full,filesystem,stream  # unit tests, architecture gate, doctests
+cargo test --features full,filesystem,stream  # unit tests and doctests
 ```
 
 Binding crates are standalone workspaces. Build each with
-`cargo build --manifest-path <crate>/Cargo.toml`. The optional `blas` feature
-needs a system BLAS/LAPACK installation and is outside the default test gate.
+`cargo build --manifest-path <crate>/Cargo.toml`.
 
 **Python bindings** are built from the `molrs-python` crate with
 [maturin](https://www.maturin.rs/). `maturin develop` compiles the PyO3

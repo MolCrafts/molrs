@@ -29,8 +29,7 @@ cargo package --manifest-path molrs/Cargo.toml
 
 `cargo package` compiles the unpacked archive, catching files accidentally
 omitted from the release. Inspect `cargo package --list --manifest-path
-molrs/Cargo.toml` as well. `--all-features` includes `blas` and `slow-tests`;
-those require a separate setup and are outside the default CI gate.
+molrs/Cargo.toml` as well.
 
 Verify the installed Python wheel, browser bindings, and C ABI:
 
@@ -43,12 +42,6 @@ cmake -S molrs-capi/tests/cpp -B molrs-capi/build-test -DCARGO_PROFILE=release
 cmake --build molrs-capi/build-test
 ctest --test-dir molrs-capi/build-test --output-on-failure
 ```
-
-Native artifacts use static Rust linkage by default. Run
-`regressions/link-mode-static-default.py` in an environment containing the
-new wheel. Changes to the optional shared-library integration also need
-`bash scripts/verify-shared-dylib.sh` and a compatible sibling molpack checkout;
-see [interop.md](interop.md).
 
 CI additionally checks each independent feature with defaults disabled. Check
 version metadata across all manifests before tagging; downstream molpy pins the

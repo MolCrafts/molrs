@@ -11,7 +11,7 @@ and `/mol:review`.
 4. **GENCAN inner loop** — objective + gradient evaluation (now in the
    standalone `MolCrafts/molpack` repo; kept here for historical context).
 
-Known hot-path files: `molrs/src/ff/potential/**`, `molrs/src/core/neighbors/**`
+Known hot-path files: `molrs/src/ff/potential/**`, `molrs/src/core/spatial/neighbors/**`
 (plus `objective.rs` / `packer.rs` in the molpack repo).
 
 ## Memory Layout
@@ -58,10 +58,8 @@ Rules:
 - Rayon-parallel build is feature-gated.
 
 **Owed measurement.** The `LinkCell`-vs-`Aabb` crossover above is the
-freud-derived rationale, not a molrs benchmark — nothing here has been measured
-on this codebase yet. Until `neighbors/build` in `core_benchmarks` carries a
-non-uniform-density case, treat the "use when" column as a hypothesis and keep
-`LinkCell` as the default.
+freud-derived rationale, not a molrs measurement — treat the "use when" column
+as a hypothesis and keep `LinkCell` as the default.
 
 ## Optimization Rules
 
@@ -124,95 +122,43 @@ let mask = (dist < cutoff) as u32 as F;
 energy += mask * lj(dist);
 ```
 
-## Benchmarking
+## Measurement
 
-Two bench targets exist, both criterion (`harness = false`):
-`core_benchmarks` (45 benchmarks) and `compute_benchmarks` (53, gated on the
-`compute` feature). There is **no** `potential` target — the commands below are
-the ones that actually run, each verified 2026-08-23.
+There are no benchmark targets in this repo; the benchmark and regression
+systems are being redesigned. Until they land, a performance change is
+verified for **correctness only** (the unit suite) and its speed claim is
+recorded as owed, not asserted.
 
-```bash
-# See what exists before filtering — ids are criterion group paths
-cargo bench -p molcrafts-molrs --bench core_benchmarks -- --list
-cargo bench -p molcrafts-molrs --bench compute_benchmarks --features compute -- --list
+## Owed (2026-09-20)
 
-# Whole target (this is the canonical one, same as CLAUDE.md and bench.yml)
-cargo bench -p molcrafts-molrs --bench core_benchmarks
+Hot-path findings recorded during the 0.14 cleanup and not yet acted on:
 
-# Filter by group id. Real ids include frame/get, graph/find_rings,
-# neighbors/build, core/simbox/shortest_vector, ndarray_vs_vec/matmul.
-cargo bench -p molcrafts-molrs --bench core_benchmarks -- 'neighbors/build'
-
-# Profile one target (needs `cargo install flamegraph`)
-cargo flamegraph --bench core_benchmarks -p molcrafts-molrs
-
-# Local comparisons only — never for numbers you intend to record, since
-# target-cpu=native is not what CI or a release build uses
-RUSTFLAGS="-C target-cpu=native" cargo bench -p molcrafts-molrs --bench core_benchmarks
-```
-
-What to benchmark — a wish list, **not** an inventory. Only the second line is
-covered today (`neighbors/*` in `core_benchmarks`); the other two have no
-benchmark in either target, so do not go looking for one:
-
-- Potential kernel eval vs atom count (scaling) — *not covered*
-- Neighbor list build vs atom count — covered
-- Full MD step (all-inclusive) — *not covered*
-- GENCAN objective + gradient eval (molpack repo)
-
-## Benchmarking during refactors
-
-When extracting pure functions from a monolith (common in `molrs/src/ff/`
-kernel extractions and `molrs/src/core/` neighbor rewrites — modules, not
-crates, since the single-crate merge; historically also the objective/packer
-splits now living in molpack), **do not rely on end-to-end
-benchmarks to guard the extraction**. Macro-level noise (allocator, cache, OS
-scheduler) routinely produces ±3% drift independent of the change, which masks
-real per-function regressions and makes tight gates statistically meaningless.
-
-**Discipline per extraction** (every extracted function is its own atomic commit):
-
-1. Before moving the function body, add `#[cfg(bench)] #[inline(never)] fn
-   F_sentinel(...)` holding the pre-extraction behavior in the same module. The
-   sentinel compiles only under the `bench` cfg and does not ship in release
-   binaries.
-2. In the same commit as the extraction, land:
-   - A unit test pinning the function's observable behavior against the
-     sentinel (or against a known-good reference).
-   - A criterion microbench of the extracted function.
-   - A criterion microbench of the *caller* (catches indirection / vtable /
-     inlining-boundary costs that the function microbench cannot see).
-3. Gates:
-   - Function microbench: extracted ≤ +1% vs. `F_sentinel`, or improvement.
-   - Caller microbench: ≤ +2% vs. pre-extraction snapshot.
-4. Delete `F_sentinel` once the extraction has been on main for one follow-up
-   refactor cycle. The microbench itself stays permanently as a
-   future-regression guard.
-
-**End-to-end benches** are kept only as a **catastrophic-regression alarm**
-(> 10% blocks the merge). They are not the primary gate for per-extraction
-changes. A single representative end-to-end bench per crate is usually enough
-for this role — do not build matrix baselines (`{1k,10k,100k} × {1,4,16}`) as
-per-PR gates; the signal-to-noise ratio does not justify the runtime cost.
-
-Rationale: a 17 ms monolithic bench cannot localize which of 12 extracted
-functions regressed 2%. Per-function microbenches can. This matters whenever
-the refactor goal states "zero performance loss".
-
-Do **not** approve an extraction on the basis of an end-to-end bench alone —
-its noise floor (±3%) is the same magnitude as the gate and carries no
-per-function signal.
-
-## Performance Budget
-
-- Newly-extracted pure functions MUST include a criterion microbench in the
-  same commit as the extraction. New kernels MUST include a criterion
-  microbench.
-- Per-extraction microbench gate: extracted ≤ +1% vs. `#[inline(never)]`
-  sentinel; caller ≤ +2%.
-- End-to-end bench gate: ≤ +10% (catastrophic alarm only); sustained
-  incremental drift above +5% requires a profiler report and HPC review.
-- O(N²) algorithms require justification (testing-only).
+- `core/spatial/neighbors/mod.rs` — `Backend::visit_pairs(&mut dyn PairVisitor)`
+  makes `for_each_pair` pay a virtual call per pair; add a monomorphised
+  `visit_pairs_with<V: PairVisitor>` sibling.
+- `core/spatial/neighbors/verlet_skin.rs` — the pass-two table fill is serial
+  per step for edge order; the fixed-chunk `fold_chunks` pattern from
+  `ff/potential/pair/mod.rs` would keep the order and parallelise it.
+- `ff/potential/kspace/pme.rs` — `Mutex<PmeScratch>` serialises every
+  evaluation; use `&mut self` or thread-local scratch. PME and every bonded
+  kernel are sequential while offline `compute/` has 60 rayon sites.
+- `ff/potential/pair/mod.rs` — `fold_chunks` allocates one full-width buffer
+  per chunk; `map_init` (as in `compute/voronoi/radical.rs`) keeps the
+  semantics without the allocations.
+- `core/spatial/neighbors/{mod,aabb,filter}.rs` — no `with_capacity` on
+  materialisation, a `HashMap` per k-NN query, one `Vec` per query point in
+  the filter; CSR as in `compute/cluster/mod.rs`.
+- `compute/distribution/observable.rs`, `compute/voronoi/radical.rs`,
+  `compute/diffraction/diffraction_pattern.rs`, `compute/msd/mod.rs` — per-frame
+  column copies, a `Vec` per spatial bin, an `FftPlanner` per call.
+- `md/forces.rs` — `ForceOutput` owns its forces, so `MicPairs` clones its
+  accumulator every step.
+- `md/` (5 k lines) has no rayon at all.
+- Three minimum-image implementations (`verlet_skin.rs`, `linkcell.rs`,
+  `pme.rs`); unify on `SimBox::mic()`.
+- O(N²) loops without a stated justification:
+  `compute/environment/angular_separation.rs`, `compute/voronoi/radical.rs`,
+  `compute/diffraction/direct.rs`.
 
 ## Compliance Checklist
 
@@ -223,11 +169,5 @@ per-function signal.
 - [ ] No `BruteForce` in production paths
 - [ ] `PairVisitor` used for pair traversal
 - [ ] SIMD-friendly loop structure (no branches)
-- [ ] Benchmark included for new kernels
-- [ ] No regression in existing benchmarks
-- [ ] For extractions from hot-path monoliths: `#[cfg(bench)]
-      #[inline(never)]` sentinel + function microbench + caller microbench all
-      landed in the same commit as the extraction
-- [ ] Per-extraction microbench gate ≤ +1% vs. sentinel; caller gate ≤ +2%
-- [ ] End-to-end catastrophic alarm bench present where monolithic paths still
-      exist (≤ +10% gate)
+- [ ] Kernels fold into the caller's buffer (`Potential::accumulate`), not a
+      fresh `Vec` per call

@@ -14,8 +14,8 @@ molrs = { package = "molcrafts-molrs", version = "0.14", features = ["full"] }
 The `full` feature enables I/O, SMILES, compute, force-field, conformer, MD,
 Voronoi, and signal subsystems. Once you know which layers your application
 uses, replace `full` with a narrower feature list. (`full` does not enable
-`stream`, `filesystem`, or `blas`; the crate's *default* features are
-`full`, `stream`, `filesystem`, `rayon`.)
+`stream` or `filesystem`; the crate's *default* features are `full`,
+`filesystem`, `rayon`.)
 
 ## 2. Parse Topology and Generate Coordinates
 

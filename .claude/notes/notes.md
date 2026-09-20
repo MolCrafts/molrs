@@ -47,13 +47,10 @@ CPU — no `rustc` child in either case, `wchan = ldlm_flock_completion_ast`, an
 fingerprint scan over a large artifact tree.
 
 `CARGO_TARGET_DIR=/tmp/...` does unblock cargo, and that is what an earlier
-version of this note recommended — but it silently breaks the `link-static`
-pre-push hook, which does `rm -rf target/wheels`, runs `maturin build`, and then
-installs `target/wheels/*.whl`. With the variable set, maturin writes the wheel
-under the override and the hook fails with `libmolrs_ffi.so could not be
-located`. The symlink keeps every committed path (`target/wheels`,
-`target/release/libmolrs_capi.so`, the CMake `CARGO_TARGET_DIR` default) pointing
-at one real directory.
+version of this note recommended — but every committed path (`target/wheels`,
+`target/release/libmolrs_capi.so`, the CMake `CARGO_TARGET_DIR` default) assumes
+the one shared target dir; the symlink keeps them all pointing at one real
+directory.
 
 ```bash
 mv target target.lustre-cache        # keep or delete; it is only a cache
@@ -140,52 +137,14 @@ Option 列语义)、同默认(`FULL`)。新增或改动任一绑定面时,先对
 **Status:** active
 
 <!-- mol:note:topic:md-experimental-ship-0.14 -->
-## 2026-05-28 — BLAS/LAPACK backend selection is the binary's job, not molrs's
+## 2026-09-20 — no BLAS feature; the 3x3 helpers are closed-form only
 
-**Decision:** `molrs-core/Cargo.toml` keeps `ndarray-linalg = "0.18"` with
-no backend feature pre-selected (`openblas-system` / `netlib-static` /
-`intel-mkl-*` / etc.). Picking a backend is the responsibility of the
-top-level binary that consumes molrs (test runner, downstream app), not
-of molrs-core itself.
-
-**Why:**
-- ndarray-linalg README, verbatim: "If you are creating a library
-  depending on this crate, we encourage you not to link any backend."
-  Cargo features are additive — if molrs-core picks `openblas-system`,
-  every downstream is forced onto OpenBLAS forever.
-- ndarray-linalg 0.18 backends: `openblas-{system,static}`,
-  `netlib-{system,static}`, `intel-mkl-*` variants. **No `accelerate`
-  feature**; Apple Silicon + Accelerate.framework is not officially
-  supported by ndarray-linalg in this version.
-- Consequence: `cargo test --all-features` on a fresh checkout will
-  fail to link with `Undefined symbols: _cblas_sgemv, _dgetrf_, ...`
-  unless the developer provides a backend externally.
-
-**How to actually run `--all-features` tests locally:**
-
-Either (a) the canonical `blas-src` / `lapack-src` dev-dependency
-pattern in the test crate, e.g. in `molrs-core/Cargo.toml`:
-
-```toml
-[dev-dependencies]
-openblas-src = { version = "0.10", features = ["system"] }
-```
-
-plus `#[cfg(test)] extern crate openblas_src;` at the top of
-`molrs-core/src/lib.rs`, plus `brew install openblas` (it provides
-CBLAS, unlike `brew install lapack` which is Fortran-ABI only).
-
-Or (b) opt-in via CLI on the developer's machine without touching
-Cargo.toml — but cargo doesn't have a clean per-invocation override
-for downstream features; (a) is the canonical path.
-
-**Action item (not blocking):** the `cargo test --all-features` line in
-`CLAUDE.md` is misleading because it won't run on a clean checkout. We
-should either drop `--all-features` from CLAUDE.md's quick-start, or
-adopt option (a) and document `brew install openblas` as prerequisite.
-
-**Status:** provisional — captured during `frame-block-subclass` impl
-when the user's local `cargo test --all-features` couldn't link;
-unrelated to that spec; not blocking.
-
-<!-- mol:note:topic:binder-surface-symmetry -->
+**Decision:** the `blas` feature and `ndarray-linalg` are gone. `core::math`
+keeps the hand-written `det3` / `inv3` and a single-body `matmul` that `rayon`
+parallelises by row.
+**Why:** the LAPACK path served only a 3×3 determinant and inverse — slower
+than the cofactor forms next to it — and it `.expect()`-panicked on a singular
+matrix where the default build returned a value, so enabling an
+"optimisation" feature changed panic semantics. No consumer in any sibling
+repo enabled it. The 2026-05-28 entry about backend selection is superseded.
+**Status:** locked

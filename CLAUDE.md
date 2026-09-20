@@ -77,7 +77,7 @@ leaving rot you already saw.
   than one coherent responsibility.
 - **All-in-one façade APIs.** No public `run_everything` /
   `compute_all` / `pipeline` that hides multi-step work. Composition
-  is the **caller's** job (scripts, docs examples, `regressions/`).
+  is the **caller's** job (scripts, docs examples).
   The library exposes primitives only.
 
 ### Shape check (before adding a public symbol)
@@ -90,11 +90,9 @@ leaving rot you already saw.
 
 ### Tests (default)
 
-- Unit tests under the crate `tests/` tree and `#[cfg(test)]` pure-logic
-  modules; path mirrors source modules. Single-function unit tests — no
-  e2e under unit suites. Public-API / format scenarios use real fixtures
-  (see **IO Testing Rules** below) and hard-coded goldens where applicable.
-  Details: `tester` agent and `.claude/notes/testing.md`.
+- Unit tests live in `#[cfg(test)]` modules next to the code. Single-function
+  unit tests only — no end-to-end scenarios, no external-oracle goldens, no
+  source-text gates. Details: `tester` agent and `.claude/notes/testing.md`.
 
 <!-- mol:bootstrap:managed end -->
 
@@ -109,69 +107,46 @@ molrs is a Rust workspace for molecular simulation: core data structures, file I
 
 ## Testing Rules (MANDATORY)
 
-**No third-party scientific software in the default test gate** — not even as
-optional oracles. That means no RDKit, AmberTools/antechamber, freud, OpenMM,
-LAMMPS, Packmol, etc. at test time. Numerical goldens are either:
+**No third-party scientific software in the test gate** — no RDKit,
+AmberTools/antechamber, freud, OpenMM, LAMMPS, Packmol, etc. at test time, and
+no numbers *captured* from them either. A test asserts something the code
+under test is responsible for, with inputs written by hand: a closed form, a
+limit, an invariant (`F = -dE/dx`, symmetry, exactness), or a hand-derived
+expectation. A table asserting its own rows, a snapshot of another program's
+output, or a run of several stages in sequence is not a unit test and does not
+belong in the suite.
 
-- pure unit checks with hand-written numbers, or
-- **committed** static data (e.g. `molrs-cxxapi/tests/antechamber_oracle.rs`)
-  regenerated offline on a developer machine that has those tools (AmberTools /
-  RDKit). Generators are not kept in-tree; CI never runs them.
+**Unit tests live next to the code** (`#[cfg(test)]` in `molrs/src/**`); there
+is no `molrs/tests/` tree. Fixtures are inline strings (a tiny `include_str!`
+literal is fine); tests that need a file write it into a `tempfile` directory.
+There is no fixture corpus to fetch.
 
-**Prefer unit tests next to the code** (`#[cfg(test)]` in `molrs/src/**`).
-The only `molrs/tests/` binary is `architecture_gate.rs`, which asserts module
-boundaries rather than behaviour. Behaviour is tested next to the code.
-
-Default gate: `cargo test -p molcrafts-molrs --lib --features full,filesystem,stream`, plus
-`cargo test --doc -p molcrafts-molrs --features full,filesystem,stream` — `--lib` does not run
-doctests, so a rustdoc example can rot against a renamed API without CI noticing.
+Default gate: `cargo test -p molcrafts-molrs --lib --features full,filesystem,stream`
+plus `cargo test --doc -p molcrafts-molrs --features full,filesystem,stream` —
+`--lib` does not run doctests, so a rustdoc example can rot against a renamed
+API without CI noticing. `stream` is named explicitly because it is not in
+`default`.
 
 **Bindings (Python / C / WASM)** only smoke the FFI seam (construct, call,
-round-trip types). Science / format corpus depth lives in the Rust unit tests.
-Python IO fixtures are written in-process by molrs writers. A tiny
-`include_str!` fixture in a Rust unit test is OK for a parser edge-case.
+round-trip types, dtype at the boundary, error mapping). Science depth lives in
+the Rust unit tests; a binding test that re-derives a number the Rust suite
+already proves is a duplicate.
 
-Format fixtures are inline strings in the unit tests; there is no fixture
-corpus to fetch.
 ## Build cache
 
 All workspace roots in this repo (root, `molrs-ffi`, `molrs-python`,
-`molrs-wasm`, `molrs-capi`) share **one** `<repo>/target` via the committed
-`.cargo/config.toml` (`build.target-dir` is config-relative), so molrs and its
-dependency tree compile once per (rustc, features, profile) instead of once
-per root. The sibling molpack repo points its target dir here too. Do not
-re-introduce per-root `target/` dirs or per-workflow `CARGO_TARGET_DIR`.
-CI additionally runs sccache (GHA cache backend). Optional local sccache:
+`molrs-wasm`, `molrs-capi`, `molrs-cxxapi`) share **one** `<repo>/target` via the
+committed `.cargo/config.toml` (`build.target-dir` is config-relative), so molrs
+and its dependency tree compile once per (rustc, features, profile) instead of
+once per root. The sibling molpack repo points its target dir here too. Do not
+re-introduce per-root `target/` dirs or per-workflow `CARGO_TARGET_DIR`. CI
+additionally runs sccache (GHA cache backend). Optional local sccache:
 `brew install sccache`, then in `~/.cargo/config.toml` (user-level, never
 committed): `[build] rustc-wrapper = "sccache"`.
 
-**Static is the zero-argument default; dynamic is a command-line opt-in.** A
-plain build injects no rustflags at all — `.cargo/config.toml` carries only
-`[build] target-dir` — so every native consumer links molrs in statically and
-local, CI and publish build from the same (empty) parameters. `lto = "thin"`
-therefore lives in the committed `[profile.release]` of all seven native roots.
-The dynamic form — all native consumers sharing one `libmolrs_ffi` dylib, i.e.
-one molrs image per process — is typed on the command line and never committed,
-but it is *not* the same two flags for every build tool. The `lto` override
-rides `--config` everywhere (rustc rejects LTO once a Rust dylib is in a
-cdylib's graph); the dynamic-link rustflag reaches a bare `cargo` build through
-`--config`, yet a **maturin** build must be handed it as cargo's own
-`RUSTFLAGS` — maturin sets `CARGO_ENCODED_RUSTFLAGS` unconditionally, and
-env-level rustflags replace config-level ones wholesale, so a `--config`
-rustflag never reaches rustc there (measured: the wheel silently links the rlib
-and the gate fails). Copy the exact forms from `docs/interop.md`;
-`scripts/verify-shared-dylib.sh` is the only file that carries them, so the
-pre-push gate still proves that form alive. No project-invented environment
-variable exists anywhere — `RUSTFLAGS` is cargo's own. That one image is only
-real while every native root resolves the *same* molrs unit — maintained by
-`scripts/sync-dylib-locks.sh` and gated by `verify-shared-dylib.sh` above.
-Caveat **for anyone taking the opt-in**: the static and dynamic régimes
-overwrite each other's hashless `libmolrs_ffi`, so mixing a bare
-`cargo build --release` of `molrs-ffi` with a maturin wheel build makes the
-loser fail loudly with
-`error[E0463]: can't find crate for molrs_ffi` — recovered by
-`touch molrs-ffi/src/lib.rs` and rebuilding in the régime you want. Full
-contract: `docs/interop.md`.
+Every consumer links molrs statically; `.cargo/config.toml` carries only
+`[build] target-dir`, and `lto = "thin"` lives in the committed
+`[profile.release]` of every root (a standalone workspace does not inherit it).
 
 ## Build & Test Commands
 
@@ -189,17 +164,17 @@ cargo test --doc -p molcrafts-molrs --features full,filesystem,stream
 # Lint & Format
 cargo fmt --all
 cargo clippy -p molcrafts-molrs --all-targets --features full,filesystem,stream -- -D warnings
-
-# Benchmarks (criterion) — .github/workflows/bench.yml, not PR CI
-cargo bench -p molcrafts-molrs --bench core_benchmarks
 ```
+
+There are no benchmark targets; the benchmark and regression systems are being
+redesigned outside this repo.
 
 ## Crate Structure & Modules
 
 molrs is a **single published crate** `molcrafts-molrs` (lib name `molrs`, dir
 `molrs/`). Sub-systems are modules under `molrs/src/`. **Two are always
 compiled** — `core`, `perceive` — and the rest gate on a matching feature.
-`optimize` gates with `ff` (not always-on). `core` and `perceive` are re-exported
+`optimize` gates with `ff` (not always-on); `md` gates on `md` (→ `ff`). `core` and `perceive` are re-exported
 at the crate root (so `molrs::Frame`, `molrs::system::…`, `molrs::find_rings`,
 `molrs::SmartsPattern` resolve). The dependency spine is
 `core → perceive → {io, ff} → conformer` (`compute` → `signal`, `conformer` →
@@ -217,9 +192,11 @@ at the crate root (so `molrs::Frame`, `molrs::system::…`, `molrs::find_rings`,
 | `stream` | `stream` | Frame/Block serde + MessagePack/JSON `frame_to_bytes` |
 | `ff` | `ff` | Force fields, potentials (KernelRegistry), atom typifier |
 | `conformer` | `conformer` (→ `ff`) | 3D conformer generation: ETKDGv3 distance geometry, experimental-torsion refinement, MMFF94 cleanup, stereo guards |
+| `md` | `md` (→ `ff`) | In-process MD: `VelocityVerlet` / `Langevin`, `ForceProvider` (minimum-image and ghost régimes), the halo (`Comm`), bonded index lists, special-bonds weights, Maxwell–Boltzmann. `ff` never names `md` |
+| `builder` | `builder` | Structure generators: graphene, carbon nanotubes, FCC lattices, self-avoiding walks |
 
 The umbrella feature `full` enables every gated sub-system module; core knobs are
-`rayon` (default), `zarr`, `filesystem`, `blas`, `voronoi`.
+`rayon` (default), `zarr`, `zarr-codecs`, `filesystem`, `serde`, `stream`.
 
 **Why `perceive` is always-on rather than feature-gated:** `core` is always
 compiled and this code used to live *inside* it, so every consumer configuration
@@ -232,10 +209,7 @@ to shrink the WASM bundle is a legitimate, separately-measured follow-up.)
 (`molcrafts-molrs-cxxapi`, a `staticlib` CXX bridge to Atomiverse C++ via
 `FrameView`) — is a **separate workspace** with its own `[workspace]`, and each
 depends on `molcrafts-molrs` with the features it needs. Address a binder by
-`--manifest-path <dir>/Cargo.toml`, never `-p`: membership changes the unit
-flavour molrs is built under, and cxxapi's former membership silently
-overwrote the hashless `libmolrs_ffi` dylib that the dynamic opt-in has every
-native consumer share (`docs/interop.md`).
+`--manifest-path <dir>/Cargo.toml`, never `-p`.
 
 Molecular packing (Packmol port) used to live here as `molrs-pack`; it now lives in the
 standalone repo `MolCrafts/molpack` (crates.io: `molcrafts-molpack`, PyPI:
@@ -245,14 +219,19 @@ standalone repo `MolCrafts/molpack` (crates.io: `molcrafts-molpack`, PyPI:
 
 All on the single `molcrafts-molrs` crate (`molrs/Cargo.toml`):
 
-- Sub-system modules: `io`, `signal`, `compute` (→ `signal`), `ff`,
-  `conformer` (→ `ff`), `smiles` (→ `io`); `full` enables
-  all of them. Each gates its module **and** its unique optional deps, so a build
-  with a sub-system off does not compile that sub-system's dependency.
-- Core knobs: `rayon` (default; parallel neighbor lists / potentials),
-  `zarr` (Zarr V3 + `From<zarrs::*Error>` conversions), `filesystem`
-  (→ `zarr`, filesystem store), `blas` (BLAS via `ndarray-linalg`),
-  `slow-tests` (expensive integration tests).
+- Sub-system modules: `io`, `signal`, `compute` (→ `signal`), `voronoi`
+  (→ `compute`), `ff`, `md` (→ `ff`), `conformer` (→ `ff`), `smiles` (→ `io`),
+  `builder`; `full` enables all of them. Each gates its module **and** its
+  unique optional deps, so a build with a sub-system off does not compile that
+  sub-system's dependency.
+- Core knobs: `rayon` (default; parallel neighbor lists / potentials), `zarr`
+  (Zarr V3 + `From<zarrs::*Error>` conversions), `zarr-codecs` (zstd / blosc,
+  native only), `filesystem` (→ `zarr`, `zarr-codecs`, filesystem store, zip
+  packing), `serde` (serde impls for the core model), `stream` (MessagePack /
+  JSON frames + native WebSocket publisher; **not** in `default` — molrs-python
+  enables it itself).
+- `default = ["full", "filesystem", "rayon"]`. wasm / Pyodide opt down with
+  `default-features = false`.
 
 ## Core Data Model
 
@@ -328,7 +307,15 @@ CXX bridge to Atomiverse C++. Zero-copy I/O via `FrameView` (borrowed) into exis
 
 ### Consuming molrs from other projects
 
-See `docs/interop.md` for the two as-built paths — **native Rust** (depend on `molcrafts-molrs`, use `molrs::Frame` / `molrs::ff::ForceField` directly; what molpack does) and **Python/WASM** (the `molrs-ffi` handle API: `FrameRef` / `BlockRef` / `ForceFieldRef` / `SharedStore`) — plus the shared data contract: **uint** atom indices, the `atomi/atomj/is_14` pairs-block schema, `special_bonds` weights on `ForceField`, and the consumer- or optimizer-built pairs neighbour list (`intramolecular_pairs(&frame, ff.special_bonds())` / topology bruteforce). No hand-written CHANGELOG — history is git tags. Downstream (molpy) pins major.minor only.
+See `docs/interop.md` for the two as-built paths — **native Rust** (depend on
+`molcrafts-molrs`, use `molrs::Frame` / `molrs::ff::ForceField` directly; what
+molpack does) and **Python/WASM** (the `molrs-ffi` handle API: `FrameRef` /
+`BlockRef` / `ForceFieldRef` / `SharedStore`) — plus the shared data contract:
+**uint** atom indices, the `atomi/atomj/is_14` pairs-block schema,
+`special_bonds` weights on `ForceField`, and the consumer- or optimizer-built
+pairs neighbour list (`intramolecular_pairs(&frame, ff.special_bonds())` /
+topology bruteforce). Every consumer links molrs statically. No hand-written
+CHANGELOG — history is git tags. Downstream (molpy) pins major.minor only.
 
 ## Critical Conventions
 

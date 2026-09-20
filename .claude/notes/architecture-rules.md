@@ -34,9 +34,14 @@ binders (depend on molcrafts-molrs + molrs-ffi):
 - `optimize` is behind `ff` (not always-on).
 - `md` requires `ff`, and may depend on `core` + `ff` only. **`ff` must never
   name `md`** — a pair kernel tallies a virial and a bonded kernel takes an
-  index table, and neither may reach up to the loop that runs it. Gated by
-  `ff_names_no_md` beside `core_names_no_other_module`; a `md`-defined `Virial`
-  leaked into `core` once already, which is why both gates exist.
+  index table, and neither may reach up to the loop that runs it. A
+  `md`-defined `Virial` leaked into `core` once already, which is why the rule
+  is written down.
+- `builder` depends on `core` only.
+- These rules are checked by grep at review time (`grep -rn "crate::md" molrs/src/ff`,
+  `grep -rn "crate::" molrs/src/core | grep -v core::`), not by a test binary.
+  Test modules may build fixtures through `io::smiles`; that is the one
+  test-only exception.
 - No cyclic module edges in library code.
 
 ### Binder rules
