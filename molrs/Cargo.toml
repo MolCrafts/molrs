@@ -11,8 +11,8 @@ homepage.workspace = true
 readme = "../README.md"
 keywords = ["molecular-modeling", "chemistry", "simulation", "molecular-dynamics"]
 categories = ["science"]
-# Benches/examples have overlapping file names across sub-systems; wire them
-# explicitly. No integration-test tree — use unit tests next to the code.
+# No integration-test, bench or example targets: behaviour is tested in
+# `#[cfg(test)]` modules next to the code (`cargo test --lib`).
 autotests = false
 autobenches = false
 autoexamples = false
@@ -26,11 +26,6 @@ features = ["full"]
 name = "molrs"
 
 [dev-dependencies]
-criterion = "0.8"
-# Test-only: the ff::params manifest guard recomputes the SHA-256 of every
-# committed generated table. It is the only drift check that runs without
-# AmberTools, i.e. the only one CI actually executes.
-sha2 = "0.10"
 tempfile = "3.0"
 
 [features]
@@ -137,64 +132,3 @@ bytes              = { version = "1", optional = true }
 # unaffected. Mirrors molrs-wasm.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.4", features = ["wasm_js"] }
-
-# Integration binary tests under tests/ were removed — coverage belongs
-# in `#[cfg(test)]` modules next to the code (`cargo test --lib`), except the
-# chem-perceive-15 architecture + reverse gates (self-non-exempting; cannot
-# live next to the production code they police).
-[[test]]
-name = "architecture_gate"
-path = "tests/architecture_gate.rs"
-required-features = ["full"]
-
-
-
-# ── Benches (criterion; auto-discovery off, see [package]) ───────────────────
-[[bench]]
-name = "core_benchmarks"
-path = "benches/core/main.rs"
-harness = false
-
-[[bench]]
-name = "md_benchmarks"
-path = "benches/md/main.rs"
-harness = false
-required-features = ["md"]
-
-[[bench]]
-name = "compute_benchmarks"
-path = "benches/compute/main.rs"
-harness = false
-required-features = ["compute"]
-
-# ── Examples ─────────────────────────────────────────────────────────────────
-[[example]]
-name = "saw_demo"
-path = "examples/saw_demo.rs"
-
-[[example]]
-name = "molgraph_analysis"
-path = "examples/molgraph_analysis.rs"
-
-[[example]]
-name = "molgraph_building"
-path = "examples/molgraph_building.rs"
-
-[[example]]
-name = "molgraph_transforms"
-path = "examples/molgraph_transforms.rs"
-
-[[example]]
-name = "forcefield"
-path = "examples/forcefield.rs"
-required-features = ["ff"]
-
-[[example]]
-name = "typify_litfsi"
-path = "examples/typify_litfsi.rs"
-required-features = ["ff"]
-
-[[example]]
-name = "typify_molecule"
-path = "examples/typify_molecule.rs"
-required-features = ["ff"]

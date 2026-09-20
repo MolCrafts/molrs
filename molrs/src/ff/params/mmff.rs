@@ -18,9 +18,9 @@
 //!   constants;
 //! * the style skeleton and the two style-level constant blocks at the foot of
 //!   this file ([`MMFF_STYLES`], [`MMFF_VDW_STYLE`], [`MMFF_ELE_STYLE`]) are
-//!   transcribed from the retired `molrs/data/mmff94.xml`
-//!   (sha256 `9d9c41db…`, recorded in `ff/params/MANIFEST.sha256`), which molrs
-//!   used to `include_str!` and re-parse on every typifier construction.
+//!   transcribed from the retired `molrs/data/mmff94.xml` (sha256
+//!   `9d9c41db…`; `git show <rev>:molrs/data/mmff94.xml` restores it), which
+//!   molrs used to `include_str!` and re-parse on every typifier construction.
 //!
 //! # Why there is no `mmff94s` table
 //!

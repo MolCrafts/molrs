@@ -1,8 +1,8 @@
 //! The estimator's two constant tables — the lookups, not a second copy.
 //!
 //! Both tables are [`ff::params`](crate::ff::params) data: typed Rust `const`s
-//! emitted by `scripts/gen_param_tables.py` and guarded by `MANIFEST.sha256`, the
-//! same path `gaff.dat` and the seven `ATOMTYPE_*.DEF` take. Nothing here is
+//! emitted by `scripts/gen_param_tables.py`, the same path `gaff.dat` and the
+//! seven `ATOMTYPE_*.DEF` take. Nothing here is
 //! parsed at runtime; a malformed table is a **compile** error.
 //!
 //! - [`ParmchkTable`] ([`PARMCHK`]) — `PARMCHK.DAT`: parmchk2's atom-type

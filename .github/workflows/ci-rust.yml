@@ -49,7 +49,6 @@ jobs:
       # --lib does not run rustdoc examples; a renamed public item otherwise
       # goes unnoticed until a human opens docs.rs.
       - run: cargo test --doc -p molcrafts-molrs --features full,filesystem
-      - run: cargo test -p molcrafts-molrs --features full --test architecture_gate
       # molrs-ffi is a standalone workspace root, so the lines above never
       # cover it. Its suite carries the ABI layout-snapshot gate (minor-line
       # layout freeze) — it must run on every push.

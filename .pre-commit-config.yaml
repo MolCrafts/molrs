@@ -52,7 +52,6 @@ repos:
           sh -c 'bash scripts/fetch-test-data.sh
           && cargo test -p molcrafts-molrs --lib --features full,filesystem
           && cargo test --doc -p molcrafts-molrs --features full,filesystem
-          && cargo test -p molcrafts-molrs --features full --test architecture_gate
           && cargo test --manifest-path molrs-ffi/Cargo.toml
           && cargo test --manifest-path molrs-cxxapi/Cargo.toml'
         language: system

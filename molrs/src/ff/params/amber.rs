@@ -2,8 +2,7 @@
 //! properties of the universe.
 //!
 //! Hand-maintained sibling of [`super::mmff`] / [`super::clpol`] / [`super::uff`]:
-//! not emitted by `scripts/gen_param_tables.py`, not listed in
-//! `ff/params/MANIFEST.sha256`. Shared by every consumer of an AMBER-family
+//! not emitted by `scripts/gen_param_tables.py`. Shared by every consumer of an AMBER-family
 //! topology (GAFF/GAFF2 typifier force fields, ff14SB/GLYCAM prmtops).
 
 /// AMBER electrostatic constant, kcal·Å·mol⁻¹·e⁻².

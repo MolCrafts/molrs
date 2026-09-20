@@ -12,8 +12,8 @@
 //! d997039c15e24f63272bcee55d0f27622d5d11d00f78e572dea364b405c09af2
 //! ```
 //!
-//! which `MANIFEST.sha256` records, and which is now the sole surviving account
-//! of where these numbers came from. `git show <rev>:molrs/data/oplsaa.xml`
+//! which is the sole surviving account of where these numbers came from.
+//! `git show <rev>:molrs/data/oplsaa.xml`
 //! restores the bytes; re-running the generator with the file in place re-emits
 //! this table byte for byte.
 
