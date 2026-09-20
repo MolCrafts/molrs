@@ -18,25 +18,13 @@ homepage = "https://github.com/MolCrafts/molrs"
 name = "molrs_cxxapi"
 crate-type = ["staticlib", "rlib"]
 
-# Standalone workspace root, like every other binder crate. Being a MEMBER of
-# the root workspace was a unit-identity defect (axis 4): a member builds molrs
-# under a different unit flavour than a path dependency does, and because this
-# crate depends on molrs-ffi it wrote that flavour into the hashless
-# target/debug/deps/libmolrs_ffi.dylib, overwriting the copy the other roots
-# link. Lint/build it with `--manifest-path molrs-cxxapi/Cargo.toml`.
+# Standalone workspace root, like every other binder crate. Lint/build it with
+# `--manifest-path molrs-cxxapi/Cargo.toml`.
 [workspace]
 
 # Standalone workspace root: does NOT inherit the repo root's [profile.release].
-# Keep in sync with ../Cargo.toml so this staticlib gets the same optimization.
-#
-# All four keys are byte-identical across the seven native roots in
-# scripts/sync-dylib-locks.sh's ROOTS array — profile is part of cargo's unit
-# fingerprint, so a lone edit here re-mints molrs for this root only.
-#
-# LTO stays on: static is the default link form, and this staticlib takes the
-# rlib path in either case. The opt-in dynamic form still has to turn LTO off,
-# because a Rust dylib in a cdylib's graph makes rustc reject it — see
-# ../docs/interop.md.
+# Keep the four keys identical to ../Cargo.toml so every root ships the same
+# optimisation.
 [profile.release]
 codegen-units = 1
 lto = "thin"
@@ -48,10 +36,9 @@ default = ["zarr"]
 zarr = ["molrs/filesystem"]
 
 [dependencies]
-# The merged crate, imported under the extern name `molrs`, on its default
-# feature union (the shared-dylib precondition). The explicit io/compute/ff list
-# is additive and idempotent with the union — it records what this bridge relies
-# on regardless of what `default` happens to carry.
+# The merged crate, imported under the extern name `molrs`, on its defaults.
+# The explicit io/compute/ff list is additive; it records what this bridge
+# relies on regardless of what `default` happens to carry.
 molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.14.0", features = ["io", "compute", "ff"] }
 molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.14.0" }
 cxx = "1"

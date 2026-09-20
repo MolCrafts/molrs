@@ -29,14 +29,11 @@ name = "molrs"
 tempfile = "3.0"
 
 [features]
-# The ONE feature union every native consumer graph resolves — molrs-ffi,
-# molrs-capi, molrs-cxxapi, molrs-python and molpack all land here. That is the
-# shared-dylib precondition, not an optimization: Rust has no stable ABI, so two
-# graphs disagreeing on a single feature get two differently-fingerprinted molrs
-# images and each binder silently embeds its own. Only `blas` (needs a system
-# BLAS) and `slow-tests` stay out. wasm / Pyodide opt down with
+# Native default: every sub-system plus filesystem-backed zarr and rayon.
+# `stream` (tokio + WebSocket) is opt-in — molrs-python turns it on itself.
+# `blas` needs a system BLAS. wasm / Pyodide opt down with
 # `default-features = false`.
-default = ["full", "stream", "filesystem", "rayon"]
+default = ["full", "filesystem", "rayon"]
 # Full bundle (every sub-system).
 full = ["io", "compute", "smiles", "ff", "conformer", "signal", "voronoi", "md"]
 
@@ -80,7 +77,6 @@ zarr       = ["dep:zarrs", "zarrs/gzip", "zarrs/crc32c", "zarrs/sharding", "zarr
 zarr-codecs = ["zarr", "zarrs/zstd", "zarrs/blosc"]
 filesystem = ["zarr", "zarr-codecs", "zarrs/filesystem", "dep:zip", "dep:zarrs_zip"]
 blas       = ["dep:ndarray-linalg"]
-slow-tests = []
 
 [dependencies]
 # Always-on (core foundation).

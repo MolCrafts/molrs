@@ -1,16 +1,8 @@
 [workspace]
 members = ["molrs"]
-# Every binder crate — molrs-ffi, molrs-python, molrs-capi, molrs-wasm and now
+# Every binder crate — molrs-ffi, molrs-python, molrs-capi, molrs-wasm and
 # molrs-cxxapi — is a standalone workspace root with its own `[workspace]`.
-#
-# molrs-cxxapi used to be a member, which was a unit-identity defect, not just a
-# compile-cost one (axis 4): a workspace MEMBER builds under a different unit
-# flavour than a path dependency, so building it minted its own molrs and —
-# since it depends on molrs-ffi — wrote that flavour into the hashless
-# deps/libmolrs_ffi.dylib, overwriting whatever the other roots had put there.
-# With cxxapi out, no command in this workspace has molrs-ffi in its graph at
-# all, so this root can never touch that dylib.
-# Lint it via `--manifest-path molrs-cxxapi/Cargo.toml`, never `-p`.
+# Address them by `--manifest-path <dir>/Cargo.toml`, never `-p`.
 exclude = ["molrs-ffi"]
 resolver = "3"
 
@@ -25,20 +17,8 @@ authors = ["MolCrafts"]
 repository = "https://github.com/MolCrafts/molrs"
 homepage = "https://github.com/MolCrafts/molrs"
 
-# (workspace.dependencies removed: its only inheritor was molrs-cxxapi, which
-# left the workspace in the ffi-shared-dylib eviction — every binder now
-# declares its molcrafts-molrs dependency directly.)
-
-# These four keys are byte-identical across the seven native roots enumerated by
-# scripts/sync-dylib-locks.sh's ROOTS array — profile is part of cargo's unit
-# fingerprint, and a mismatch would put two libmolrs_ffi builds behind the one
-# hashless install_name that @rpath resolves at runtime. Edit them in all seven
-# or in none.
-#
-# LTO is on because the default link form is static — local, CI and publish now
-# build with the same (empty) set of flags. Only the opt-in dynamic form has to
-# turn it back off, since a Rust dylib in a cdylib's graph makes rustc reject
-# LTO; docs/interop.md is the one place that documents how to ask for it.
+# Every binder root repeats these four keys verbatim (a standalone workspace
+# does not inherit them), so released wheels, C libs and the crate build alike.
 [profile.release]
 codegen-units = 1
 lto = "thin"

@@ -5,8 +5,8 @@ mol_project:
   stage: experimental
   build:
     install: "cargo build"
-    check: "cargo fmt --check && cargo clippy -p molcrafts-molrs --all-targets --features full,filesystem -- -D warnings && cargo clippy --manifest-path molrs-cxxapi/Cargo.toml --all-targets -- -D warnings"
-    test: "cargo test -p molcrafts-molrs --lib --features full,filesystem"
+    check: "cargo fmt --check && cargo clippy -p molcrafts-molrs --all-targets --features full,filesystem,stream -- -D warnings && cargo clippy --manifest-path molrs-cxxapi/Cargo.toml --all-targets -- -D warnings"
+    test: "cargo test -p molcrafts-molrs --lib --features full,filesystem,stream"
     test_single: "cargo test {path}"
   ci:
     # Local pre-push mirrors default CI + docs (not optional Full).
@@ -122,8 +122,8 @@ LAMMPS, Packmol, etc. at test time. Numerical goldens are either:
 The only `molrs/tests/` binary is `architecture_gate.rs`, which asserts module
 boundaries rather than behaviour. Behaviour is tested next to the code.
 
-Default gate: `cargo test -p molcrafts-molrs --lib --features full,filesystem`, plus
-`cargo test --doc -p molcrafts-molrs --features full,filesystem` — `--lib` does not run
+Default gate: `cargo test -p molcrafts-molrs --lib --features full,filesystem,stream`, plus
+`cargo test --doc -p molcrafts-molrs --features full,filesystem,stream` — `--lib` does not run
 doctests, so a rustdoc example can rot against a renamed API without CI noticing.
 
 **Bindings (Python / C / WASM)** only smoke the FFI seam (construct, call,
@@ -183,15 +183,15 @@ contract: `docs/interop.md`.
 cargo build
 
 # Default gate (mirrors CI): function-level unit tests only — should be seconds
-cargo test -p molcrafts-molrs --lib --features full,filesystem
+cargo test -p molcrafts-molrs --lib --features full,filesystem,stream
 
 # Doctests are NOT covered by --lib. Run them too: a rustdoc example is public
 # API that compiles, and a renamed constant breaks it invisibly otherwise.
-cargo test --doc -p molcrafts-molrs --features full,filesystem
+cargo test --doc -p molcrafts-molrs --features full,filesystem,stream
 
 # Lint & Format
 cargo fmt --all
-cargo clippy -p molcrafts-molrs --all-targets --features full,filesystem -- -D warnings
+cargo clippy -p molcrafts-molrs --all-targets --features full,filesystem,stream -- -D warnings
 
 # Benchmarks (criterion) — .github/workflows/bench.yml, not PR CI
 cargo bench -p molcrafts-molrs --bench core_benchmarks

@@ -15,16 +15,8 @@ crate-type = ["cdylib", "staticlib", "lib"]
 [workspace]
 
 # Standalone workspace root: does NOT inherit the repo root's [profile.release].
-# Keep in sync with ../Cargo.toml so released C libs get the same optimization.
-#
-# All four keys are byte-identical across the seven native roots in
-# scripts/sync-dylib-locks.sh's ROOTS array — profile is part of cargo's unit
-# fingerprint.
-#
-# LTO stays on: static is the default link form, so the released C libs are built
-# exactly as a local `--release` builds them. Only the opt-in dynamic form has to
-# turn LTO off (a Rust dylib in a cdylib's graph makes rustc reject it) — see
-# ../docs/interop.md.
+# Keep the four keys identical to ../Cargo.toml so every root ships the same
+# optimisation.
 [profile.release]
 codegen-units = 1
 lto = "thin"
@@ -35,10 +27,8 @@ strip = "symbols"
 default = []
 
 [dependencies]
-# The merged crate on its default feature union (the shared-dylib precondition),
-# plus the explicit ff + io + smiles modules this C API exposes. The explicit
-# list is additive and idempotent with the union — it documents what this crate
-# actually needs, and would still hold if the union ever shrank.
+# The merged crate on its defaults, plus the explicit ff + io + smiles modules
+# this C API exposes (additive; documents what the crate actually needs).
 molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.14.0", features = ["ff", "io", "smiles"] }
 molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.14.0" }
 slotmap = "1.0"

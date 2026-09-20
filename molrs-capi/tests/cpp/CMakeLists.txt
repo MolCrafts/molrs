@@ -45,11 +45,8 @@ FetchContent_MakeAvailable(googletest)
 # Build Rust library (custom target)
 # --------------------------------------------------------------------------
 # The cdylib, not the staticlib: this test must exercise the same artifact a C
-# consumer loads. That matters most under the opt-in dynamic link form, where
-# the cdylib resolves molrs through one shared libmolrs_ffi and a C++ test that
-# statically embedded its own molrs would be testing a second image; under the
-# static default the cdylib is simply the shipped shape. Suffix/prefix come
-# from CMake because ci-capi runs ubuntu (.so), not macOS (.dylib).
+# consumer loads. Suffix/prefix come from CMake because ci-capi runs ubuntu
+# (.so), not macOS (.dylib).
 set(MOLRS_SHARED_LIB
     "${MOLRS_TARGET_DIR}/${CMAKE_SHARED_LIBRARY_PREFIX}molrs_capi${CMAKE_SHARED_LIBRARY_SUFFIX}")
 
@@ -92,11 +89,8 @@ target_link_libraries(test_molrs_capi
 
 # The only rpath this binary needs: libmolrs_capi's own directory. On ELF its
 # SONAME is the bare `libmolrs_capi.so`, so the loader has to be told where to
-# look. Everything below it is already self-locating — under the static default
-# libmolrs_capi carries molrs inside itself, and under the dynamic opt-in it
-# resolves libmolrs_ffi by the hashless absolute install_name of the shared
-# target dir; either way it carries the libstd rpath injected by
-# molrs-capi/build.rs.
+# look. Everything below it is already self-locating: libmolrs_capi carries
+# molrs inside itself.
 set_target_properties(test_molrs_capi PROPERTIES
     BUILD_RPATH "${MOLRS_TARGET_DIR}"
     INSTALL_RPATH "${MOLRS_TARGET_DIR}"

@@ -1,6 +1,5 @@
 # prek: pre-commit = rustfmt + clippy + rustdoc; pre-push = unit + python + wasm
-# + link form (static default + shared dylib) + capi
-# Mirrors ci.yml (rust / wasm / python / capi / link-form). No wrapper scripts.
+# + capi. Mirrors ci.yml (rust / wasm / python / capi). No wrapper scripts.
 
 default_install_hook_types: [pre-commit, pre-push]
 default_stages: [pre-commit, pre-push]
@@ -35,12 +34,12 @@ repos:
       - id: cargo-clippy
         name: clippy
         entry: >-
-          sh -c 'cargo clippy -p molcrafts-molrs --all-targets --features full,filesystem -- -D warnings
+          sh -c 'cargo clippy -p molcrafts-molrs --all-targets --features full,filesystem,stream -- -D warnings
           && cargo clippy --manifest-path molrs-cxxapi/Cargo.toml --all-targets -- -D warnings
           && cargo clippy --manifest-path molrs-python/Cargo.toml --all-targets -- -D warnings
           && cargo clippy --manifest-path molrs-capi/Cargo.toml --all-targets -- -D warnings
           && cargo clippy --manifest-path molrs-wasm/Cargo.toml --target wasm32-unknown-unknown --all-targets -- -D warnings
-          && RUSTDOCFLAGS="-D warnings" cargo doc -p molcrafts-molrs --no-deps --features full,filesystem'
+          && RUSTDOCFLAGS="-D warnings" cargo doc -p molcrafts-molrs --no-deps --features full,filesystem,stream'
         language: system
         pass_filenames: false
         always_run: true
@@ -50,8 +49,8 @@ repos:
         name: Rust tests (core + FFI + CXX)
         entry: >-
           sh -c 'bash scripts/fetch-test-data.sh
-          && cargo test -p molcrafts-molrs --lib --features full,filesystem
-          && cargo test --doc -p molcrafts-molrs --features full,filesystem
+          && cargo test -p molcrafts-molrs --lib --features full,filesystem,stream
+          && cargo test --doc -p molcrafts-molrs --features full,filesystem,stream
           && cargo test --manifest-path molrs-ffi/Cargo.toml
           && cargo test --manifest-path molrs-cxxapi/Cargo.toml'
         language: system
@@ -81,44 +80,6 @@ repos:
           rustup target add wasm32-unknown-unknown 2>/dev/null || true;
           cd molrs-wasm;
           wasm-pack build --release --target bundler --scope molcrafts --out-name molrs'
-        language: system
-        pass_filenames: false
-        always_run: true
-        stages: [pre-push]
-
-      # Link-form pair, first half — and the half that had no local gate. This
-      # one asserts the PUBLISHED default: a wheel built with nothing typed and
-      # nothing exported links molrs statically (zero libmolrs_ffi entries).
-      # verify-shared-dylib below asserts the opt-in dynamic form still works
-      # (one shared libmolrs_ffi). The two assert OPPOSITE things and must never
-      # be swapped, nor either edited into the other — see
-      # regressions/link-mode-static-default.py and docs/interop.md. Mirrors the
-      # ci.yml `link-form` / `static:` job: no flags and no env of any kind,
-      # because the absence is the proposition under test. target/wheels is
-      # dropped first — the wheel filename is version-stable, so an earlier
-      # build's wheel would otherwise be the one inspected. The throwaway venv
-      # lives under target/ (already gitignored) and is recreated every run.
-      - id: link-static
-        name: static link form
-        entry: >-
-          bash -c 'set -euo pipefail;
-          rm -rf target/wheels target/link-static-venv;
-          (cd molrs-python; maturin build --release);
-          uv venv target/link-static-venv;
-          uv pip install --python target/link-static-venv/bin/python
-          target/wheels/molcrafts_molrs-*.whl;
-          target/link-static-venv/bin/python
-          regressions/link-mode-static-default.py'
-        language: system
-        pass_filenames: false
-        always_run: true
-        stages: [pre-push]
-
-      # Cross-repo unit-identity gate: needs the molpack sibling (override with
-      # MOLPACK_ROOT); refuses and explains when it is absent, by design.
-      - id: verify-shared-dylib
-        name: shared libmolrs_ffi
-        entry: bash scripts/verify-shared-dylib.sh
         language: system
         pass_filenames: false
         always_run: true
