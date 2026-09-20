@@ -1,7 +1,5 @@
-//! Small linear algebra helpers with optional BLAS-backed implementation.
-//!
-//! Default: hand-written 3x3 routines (WASM-friendly, zero external deps).
-//! Feature `blas`: use ndarray-linalg for determinant and inverse (requires LAPACK backend).
+//! Small linear algebra helpers: hand-written 3x3 routines (WASM-friendly,
+//! zero external deps).
 //!
 //! Specialised numerical sub-modules for spherical harmonics, Wigner symbols,
 //! and the symmetric 3×3 eigensolver live alongside the linear-algebra core
@@ -42,7 +40,6 @@ pub fn cross3(a: &F3, b: &F3) -> F3 {
     ]
 }
 
-#[cfg(not(feature = "blas"))]
 pub fn det3(m: &F3x3) -> F {
     let m = |r: usize, c: usize| m[[r, c]];
     m(0, 0) * (m(1, 1) * m(2, 2) - m(1, 2) * m(2, 1))
@@ -50,7 +47,6 @@ pub fn det3(m: &F3x3) -> F {
         + m(0, 2) * (m(1, 0) * m(2, 1) - m(1, 1) * m(2, 0))
 }
 
-#[cfg(not(feature = "blas"))]
 pub fn inv3(m: &F3x3) -> Option<F3x3> {
     let m = |r: usize, c: usize| m[[r, c]];
     let c00 = m(1, 1) * m(2, 2) - m(1, 2) * m(2, 1);
@@ -78,83 +74,51 @@ pub fn inv3(m: &F3x3) -> Option<F3x3> {
     ])
 }
 
-#[cfg(feature = "blas")]
-pub fn det3(m: &F3x3) -> F {
-    use ndarray_linalg::Determinant;
-    m.det()
-        .expect("Matrix determinant calculation failed (singular matrix)")
-}
-
-#[cfg(feature = "blas")]
-pub fn inv3(m: &F3x3) -> Option<F3x3> {
-    use ndarray_linalg::{Determinant, Inverse};
-    // LAPACK getri does not reliably report singularity, so guard explicitly on
-    // the determinant to match the non-blas contract (`None` when singular).
-    let det = m.det().ok()?;
-    let eps: F = 1e-8;
-    if det.abs() <= eps {
-        return None;
-    }
-    m.inv().ok()
-}
-
 /// General matrix multiplication: C = A x B
 /// - A: (m x k) view
 /// - B: (k x n) owned or borrowable
 /// - Returns C: (m x n) owned
 ///
-/// Path selection:
-/// - With feature `blas` enabled: use ndarray's optimized dot (BLAS/LAPACK backend if linked)
-/// - Else if feature `rayon` enabled: parallel row-by-row multiply
-/// - Else: serial multiply
+/// One row kernel; with the `rayon` feature the rows are filled in parallel.
 pub fn matmul(a: ArrayView2<F>, b: &Array2<F>) -> Array2<F> {
-    let (_m, k_a) = a.dim();
-    let (k_b, _n) = b.dim();
+    let (m, k_a) = a.dim();
+    let (k_b, n) = b.dim();
     assert_eq!(
         k_a, k_b,
         "matmul: inner dims must match: got {} vs {}",
         k_a, k_b
     );
 
-    #[cfg(feature = "blas")]
-    {
-        // ndarray's .dot is backed by optimized kernels; with proper backend it will leverage BLAS
-        a.dot(b)
-    }
+    let fill_row = |i: usize, row: &mut [F]| {
+        for (j, out) in row.iter_mut().enumerate() {
+            let mut sum: F = 0.0;
+            for k in 0..k_a {
+                sum += a[[i, k]] * b[[k, j]];
+            }
+            *out = sum;
+        }
+    };
 
-    #[cfg(all(not(feature = "blas"), feature = "rayon"))]
+    let mut c = Array2::<F>::zeros((m, n));
+    let c_slice = c.as_slice_mut().expect("c must be contiguous");
+    #[cfg(feature = "rayon")]
     {
         #[cfg(test)]
         super::test_rayon::ensure();
         use rayon::prelude::*;
-        let mut c = Array2::<F>::zeros((_m, _n));
-        let c_slice = c.as_slice_mut().expect("c must be contiguous");
-        c_slice.par_chunks_mut(_n).enumerate().for_each(|(i, row)| {
-            for j in 0.._n {
-                let mut sum: F = 0.0;
-                for k in 0..k_a {
-                    sum += a[[i, k]] * b[[k, j]];
-                }
-                row[j] = sum;
-            }
-        });
-        c
+        c_slice
+            .par_chunks_mut(n)
+            .enumerate()
+            .for_each(|(i, row)| fill_row(i, row));
     }
-
-    #[cfg(all(not(feature = "blas"), not(feature = "rayon")))]
+    #[cfg(not(feature = "rayon"))]
     {
-        let mut c = Array2::<F>::zeros((_m, _n));
-        for i in 0.._m {
-            for j in 0.._n {
-                let mut sum: F = 0.0;
-                for k in 0..k_a {
-                    sum += a[[i, k]] * b[[k, j]];
-                }
-                c[[i, j]] = sum;
-            }
-        }
-        c
+        c_slice
+            .chunks_mut(n)
+            .enumerate()
+            .for_each(|(i, row)| fill_row(i, row));
     }
+    c
 }
 
 #[cfg(test)]

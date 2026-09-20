@@ -44,10 +44,10 @@ use molrs::store::frame::Frame;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::Idx;
 use molrs::types::{F, I};
-use once_cell::sync::OnceCell;
 use std::fs::File;
 use std::io::{BufRead, Seek, SeekFrom, Write};
 use std::path::Path;
+use std::sync::OnceLock;
 
 // ============================================================================
 // Helpers
@@ -708,7 +708,7 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
 /// ```
 pub struct LAMMPSTrajReader<R: BufRead> {
     reader: R,
-    index: OnceCell<FrameIndex>,
+    index: OnceLock<FrameIndex>,
 }
 
 impl<R: BufRead + Seek> LAMMPSTrajReader<R> {
@@ -716,7 +716,7 @@ impl<R: BufRead + Seek> LAMMPSTrajReader<R> {
     pub fn new(reader: R) -> Self {
         Self {
             reader,
-            index: OnceCell::new(),
+            index: OnceLock::new(),
         }
     }
 

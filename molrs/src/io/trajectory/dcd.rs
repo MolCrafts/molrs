@@ -51,10 +51,10 @@ use molrs::store::frame::Frame;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::{F, Idx, Pbc3};
 use ndarray::{Array1, Array2, IxDyn, array};
-use once_cell::sync::OnceCell;
 use std::fs::File;
 use std::io::{BufRead, Cursor, Read, Seek, SeekFrom, Write};
 use std::path::Path;
+use std::sync::OnceLock;
 
 // ============================================================================
 // Helpers
@@ -296,6 +296,7 @@ struct HeaderPartial {
     byte_order: ByteOrder,
     marker_size: MarkerSize,
     charmm_ver: i32,
+    /// Parsed for header fidelity; the frame count comes from the file scan.
     #[allow(dead_code)]
     nset_hint: u32,
     istart: i32,
@@ -957,7 +958,7 @@ fn parse_frame_at<R: BufRead + Seek>(
 /// needs it. This keeps `Reader::new` infallible.
 pub struct DcdReader<R: BufRead + Seek> {
     reader: R,
-    header: OnceCell<DcdHeader>,
+    header: OnceLock<DcdHeader>,
     cursor: usize,
 }
 
@@ -966,7 +967,7 @@ impl<R: BufRead + Seek> DcdReader<R> {
     pub fn new(reader: R) -> Self {
         Self {
             reader,
-            header: OnceCell::new(),
+            header: OnceLock::new(),
             cursor: 0,
         }
     }

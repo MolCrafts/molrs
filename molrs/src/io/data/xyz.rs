@@ -7,9 +7,9 @@ use molrs::store::frame_access::FrameAccess;
 use molrs::store::meta::MetaValue;
 use molrs::types::{F, I, Idx};
 use ndarray::{Array1, Array2, ArrayD};
-use once_cell::sync::OnceCell;
 use std::collections::HashMap;
 use std::io::{BufRead, Seek, SeekFrom, Write};
+use std::sync::OnceLock;
 
 // XYZ now produces a core::Frame consisting of blocks of NdArray columns
 
@@ -915,7 +915,7 @@ fn meta_to_extxyz(value: &MetaValue) -> String {
 /// ```
 pub struct XYZReader<R: BufRead> {
     reader: R,
-    index: OnceCell<FrameIndex>,
+    index: OnceLock<FrameIndex>,
 }
 
 impl<R: BufRead + Seek> XYZReader<R> {
@@ -923,7 +923,7 @@ impl<R: BufRead + Seek> XYZReader<R> {
     pub fn new(reader: R) -> Self {
         Self {
             reader,
-            index: OnceCell::new(),
+            index: OnceLock::new(),
         }
     }
 
@@ -1030,7 +1030,7 @@ impl<R: BufRead + Seek> Reader for XYZReader<R> {
     fn new(reader: Self::R) -> Self {
         Self {
             reader,
-            index: OnceCell::new(),
+            index: OnceLock::new(),
         }
     }
 }

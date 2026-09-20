@@ -20,7 +20,6 @@
 
 mod embed4d;
 mod etmin;
-mod mmff_min;
 mod retry;
 
 use std::sync::OnceLock;
@@ -378,7 +377,9 @@ fn mmff_cleanup(mol: &Atomistic, coords3d: &mut [f64]) -> Result<(f64, usize, bo
     // `MMFFOptimizeMolecule` grad tol) under a generous iteration cap, so the
     // freshly-embedded geometry is relaxed all the way to the MMFF minimum.
     let (e, _grad_rms, steps, conv) =
-        mmff_min::minimize_lbfgs(coords3d, 1000, 1e-3, |p| potentials.calc_energy_forces(p));
+        crate::optimize::minimize_lbfgs_rms(coords3d, 1000, 1e-3, |p| {
+            potentials.calc_energy_forces(p)
+        });
     Ok((e, steps, conv))
 }
 

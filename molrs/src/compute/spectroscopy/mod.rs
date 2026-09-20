@@ -226,27 +226,6 @@ pub(crate) fn central_diff_series(series: &Array2<f64>, dt: f64) -> Array2<f64> 
     out
 }
 
-/// Central-difference of one column into a pre-sized buffer of length `n−2`.
-#[allow(dead_code)] // crate API for ad-hoc single-column flux work
-pub(crate) fn fill_central_diff_col(series: &Array2<f64>, col: usize, dt: f64, out: &mut [f64]) {
-    let n = series.shape()[0];
-    debug_assert_eq!(out.len(), n.saturating_sub(2));
-    let inv_2dt = 0.5 / dt;
-    for (o, t) in (1..n - 1).enumerate() {
-        out[o] = (series[[t + 1, col]] - series[[t - 1, col]]) * inv_2dt;
-    }
-}
-
-/// One-column convenience wrapper (allocates). Prefer
-/// [`fill_central_diff_col`] / [`central_diff_series`] in hot paths.
-#[allow(dead_code)] // crate API; multi-column paths use `central_diff_series`
-pub(crate) fn central_diff_col(series: &Array2<f64>, col: usize, dt: f64) -> Array1<f64> {
-    let n = series.shape()[0];
-    let mut out = vec![0.0; n.saturating_sub(2)];
-    fill_central_diff_col(series, col, dt, &mut out);
-    Array1::from_vec(out)
-}
-
 /// Unnormalized sum of per-column linear ACFs:
 /// `C[k] = Σ_d Σ_τ series[τ,d]·series[τ+k,d]` (no `1/(n−k)`).
 ///
@@ -320,22 +299,6 @@ pub(crate) fn sum_column_xcorr(a: &Array2<f64>, b: &Array2<f64>, max_lag: usize)
             .expect("sum_column_xcorr: max_lag < n by construction");
     }
     out
-}
-
-/// Linear cross-correlation `C_ab[t] = Σ_τ a[τ]·b[τ+t]` for `t = 0..=max_lag`.
-///
-/// Thin wrapper over [`sig::xcorr_fft_with_planner`] for call sites that need a
-/// fresh `Array1`. Multi-component hot paths prefer [`sum_column_xcorr`] or
-/// [`xcorr_accumulate_into`].
-#[allow(dead_code)] // crate API; ROA/VCD use accumulate paths now
-pub(crate) fn cross_correlate(
-    planner: &mut FftPlanner<f64>,
-    a: &Array1<f64>,
-    b: &Array1<f64>,
-    max_lag: usize,
-) -> Array1<f64> {
-    sig::xcorr_fft_with_planner(planner, a, b, max_lag)
-        .expect("cross_correlate: equal-length inputs with max_lag < n by construction")
 }
 
 /// Cross-correlate two equal-length slices and add `weight * C` into `out`.

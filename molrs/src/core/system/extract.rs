@@ -567,7 +567,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(unused_variables)]
     fn materialize_does_not_need_atom_payload_import() {
         let mut g = MolGraph::new();
         let n = g.add_node_with(Atom::new());

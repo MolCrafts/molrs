@@ -35,10 +35,10 @@
 //! - `full`      — everything above
 //! - `stream`    — MessagePack/JSON frames and native WebSocket streaming (not in `full`)
 //!
-//! Defaults: `full`, `stream`, `filesystem`, `rayon`. Use
+//! Defaults: `full`, `filesystem`, `rayon`. Use
 //! `default-features = false` to select a smaller build.
 //! Storage and compute flags: `serde`, `rayon`, `zarr`, `zarr-codecs`,
-//! `filesystem`, `blas` (requires system BLAS/LAPACK).
+//! `filesystem`.
 //!
 //! ## Molecular packing
 //!

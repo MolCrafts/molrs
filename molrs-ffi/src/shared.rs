@@ -47,6 +47,9 @@ use crate::store::Store;
 /// Single-threaded shared ownership of a [`Store`].
 pub type SharedStore = Rc<RefCell<Store>>;
 
+/// An owned numeric column as `(values, shape)`, or `None` when absent.
+pub type OwnedColumn<T> = Option<(Vec<T>, Vec<usize>)>;
+
 /// Create a new empty [`SharedStore`].
 pub fn new_shared() -> SharedStore {
     Rc::new(RefCell::new(Store::new()))
@@ -306,17 +309,17 @@ impl BlockRef {
     // ---- Owned copies of numeric columns ----
 
     /// Owned copy of an `F` column. Same dtype semantics as [`borrow_f`].
-    pub fn copy_f(&self, key: &str) -> Result<Option<(Vec<F>, Vec<usize>)>, FfiError> {
+    pub fn copy_f(&self, key: &str) -> Result<OwnedColumn<F>, FfiError> {
         self.borrow_f(key, |slice, shape| (slice.to_vec(), shape.to_vec()))
     }
 
     /// Owned copy of an `I` column.
-    pub fn copy_i(&self, key: &str) -> Result<Option<(Vec<I>, Vec<usize>)>, FfiError> {
+    pub fn copy_i(&self, key: &str) -> Result<OwnedColumn<I>, FfiError> {
         self.borrow_i(key, |slice, shape| (slice.to_vec(), shape.to_vec()))
     }
 
     /// Owned copy of a `U` column.
-    pub fn copy_u(&self, key: &str) -> Result<Option<(Vec<Idx>, Vec<usize>)>, FfiError> {
+    pub fn copy_u(&self, key: &str) -> Result<OwnedColumn<Idx>, FfiError> {
         self.borrow_u(key, |slice, shape| (slice.to_vec(), shape.to_vec()))
     }
 }

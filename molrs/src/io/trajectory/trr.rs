@@ -71,10 +71,10 @@ use molrs::store::frame::Frame;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::{F, Idx};
 use ndarray::{Array1, Array2, IxDyn, array};
-use once_cell::sync::OnceCell;
 use std::fs::File;
 use std::io::{BufRead, BufWriter, Cursor, Read, Result, Seek, SeekFrom, Write};
 use std::path::Path;
+use std::sync::OnceLock;
 
 const TRR_MAGIC: i32 = 1993;
 const TRR_VERSION: &str = "GMX_trn_file";
@@ -404,7 +404,7 @@ fn scan_offsets<R: BufRead + Seek>(r: &mut R) -> Result<Vec<u64>> {
 ///   on demand for random access and known length.
 pub struct TrrReader<R: BufRead + Seek> {
     reader: R,
-    offsets: OnceCell<Vec<u64>>,
+    offsets: OnceLock<Vec<u64>>,
     cursor: usize,
 }
 
@@ -413,7 +413,7 @@ impl<R: BufRead + Seek> TrrReader<R> {
     pub fn new(reader: R) -> Self {
         Self {
             reader,
-            offsets: OnceCell::new(),
+            offsets: OnceLock::new(),
             cursor: 0,
         }
     }

@@ -17,8 +17,7 @@ autotests = false
 autobenches = false
 autoexamples = false
 
-# docs.rs builds the public API with every sub-system enabled (`full`), but NOT
-# the `blas` feature — that needs a system BLAS/LAPACK the docs.rs sandbox lacks.
+# docs.rs builds the public API with every sub-system enabled.
 [package.metadata.docs.rs]
 features = ["full"]
 
@@ -31,14 +30,13 @@ tempfile = "3.0"
 [features]
 # Native default: every sub-system plus filesystem-backed zarr and rayon.
 # `stream` (tokio + WebSocket) is opt-in — molrs-python turns it on itself.
-# `blas` needs a system BLAS. wasm / Pyodide opt down with
-# `default-features = false`.
+# wasm / Pyodide opt down with `default-features = false`.
 default = ["full", "filesystem", "rayon"]
 # Full bundle (every sub-system).
 full = ["io", "compute", "smiles", "ff", "conformer", "signal", "voronoi", "md"]
 
 # Sub-system modules (each gates its module + its unique optional deps).
-io        = ["dep:flate2", "dep:once_cell"]
+io        = ["dep:flate2"]
 # `smiles` lives inside the `io` module.
 smiles    = ["io"]
 signal    = ["dep:rustfft"]
@@ -49,7 +47,7 @@ compute   = ["signal"]
 voronoi   = ["compute"]
 ff        = ["dep:rustfft", "dep:roxmltree"]
 # `conformer` depends on the `ff` module.
-conformer = ["ff", "dep:once_cell"]
+conformer = ["ff"]
 # In-process MD (integrators, shifted LJ). Science only; pair search is
 # core NeighborList. Python composer / hooks live in molrs-python. Consumes
 # the one `ff::potential::Potential`/`Potentials` seam, so it enables `ff`.
@@ -76,7 +74,6 @@ rayon      = ["dep:rayon"]
 zarr       = ["dep:zarrs", "zarrs/gzip", "zarrs/crc32c", "zarrs/sharding", "zarrs/transpose"]
 zarr-codecs = ["zarr", "zarrs/zstd", "zarrs/blosc"]
 filesystem = ["zarr", "zarr-codecs", "zarrs/filesystem", "dep:zip", "dep:zarrs_zip"]
-blas       = ["dep:ndarray-linalg"]
 
 [dependencies]
 # Always-on (core foundation).
@@ -85,6 +82,8 @@ slotmap    = "1"
 smallvec   = "1"
 serde      = { version = "1", features = ["derive"] }
 serde_json = "1"
+# `lgamma` (Wigner / spherical harmonics) and `erf`/`erfc` (PME) — none of
+# them is in Rust's std on any target.
 libm       = "0.2"
 # Storage-width scalars for columns. Distinct from [`F`]/[`I`]/[`Idx`]: those
 # are domain aliases (compute scalar, small integer, identifier). A column
@@ -99,9 +98,7 @@ rand       = "0.10"
 # that sub-system's unique dependency.
 rayon          = { version = "1.12", optional = true }                                              # core/ff/compute parallelism (default)
 zarrs          = { version = "0.23", optional = true, default-features = false, features = ["ndarray"] }  # zarr trajectories (core+io)
-ndarray-linalg = { version = "0.18", optional = true, default-features = true }                     # blas
 flate2         = { version = "1.1", optional = true, features = ["rust_backend"] }                  # io (compressed formats)
-once_cell      = { version = "1.21", optional = true }                                              # io + conformer
 rustfft        = { version = "6", optional = true }                                                 # signal + ff + compute
 roxmltree      = { version = "0.21", optional = true }                                              # ff (XML force-field readers)
 rmp-serde      = { version = "1", optional = true }                                                 # stream (MessagePack wire encoding)

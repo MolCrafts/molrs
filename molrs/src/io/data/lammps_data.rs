@@ -25,11 +25,11 @@ use molrs::store::frame::Frame;
 use molrs::store::frame_access::FrameAccess;
 use molrs::store::keys;
 use molrs::types::{F, I, Idx, Pbc3};
-use once_cell::sync::OnceCell;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Cursor, Seek, SeekFrom, Write};
 use std::path::Path;
+use std::sync::OnceLock;
 
 // ============================================================================
 // Header
@@ -1122,7 +1122,7 @@ fn is_section_header(trimmed: &str) -> bool {
 
 pub struct LAMMPSDataReader<R: BufRead + Seek> {
     reader: R,
-    frame: OnceCell<Option<Frame>>,
+    frame: OnceLock<Option<Frame>>,
     returned: bool,
 }
 
@@ -1130,7 +1130,7 @@ impl<R: BufRead + Seek> LAMMPSDataReader<R> {
     pub fn new(reader: R) -> Self {
         Self {
             reader,
-            frame: OnceCell::new(),
+            frame: OnceLock::new(),
             returned: false,
         }
     }
