@@ -180,6 +180,22 @@ pub trait Potential: Send + Sync {
         self.calc_energy_forces(coords).0
     }
 
+    /// Add this potential's forces into `out` (length `coords.len()`) and
+    /// return its energy.
+    ///
+    /// The default goes through [`calc_energy_forces`](Potential::calc_energy_forces)
+    /// and so allocates once; a kernel overrides it to fold straight into the
+    /// caller's buffer, which is what lets an aggregate own one accumulator for
+    /// a whole step instead of one allocation per member per step.
+    fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
+        let (energy, forces) = self.calc_energy_forces(coords);
+        debug_assert_eq!(forces.len(), out.len());
+        for (o, f) in out.iter_mut().zip(&forces) {
+            *o += f;
+        }
+        energy
+    }
+
     /// Evaluate with a per-step pair table the loop computed once and shares
     /// with every pair potential. Default ignores `pairs` and calls
     /// [`calc_energy_forces`](Potential::calc_energy_forces).
@@ -220,6 +236,17 @@ pub trait IndexedTerms: Potential {
         coords: &[F],
         terms: ArrayView2<'_, u32>,
     ) -> (F, Vec<F>);
+
+    /// [`calc_energy_forces_with_terms`](IndexedTerms::calc_energy_forces_with_terms)
+    /// folded into the caller's buffer; see [`Potential::accumulate`].
+    fn accumulate_with_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, out: &mut [F]) -> F {
+        let (energy, forces) = self.calc_energy_forces_with_terms(coords, terms);
+        debug_assert_eq!(forces.len(), out.len());
+        for (o, f) in out.iter_mut().zip(&forces) {
+            *o += f;
+        }
+        energy
+    }
 }
 
 /// A potential summed over whatever pairs a neighbour search turns up.
@@ -399,6 +426,10 @@ impl Potential for Member {
         self.as_potential().calc_energy_forces(coords)
     }
 
+    fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
+        self.as_potential().accumulate(coords, out)
+    }
+
     fn calc_energy_forces_with_pairs(&self, coords: &[F], pairs: &Neighbors) -> (F, Vec<F>) {
         self.as_potential()
             .calc_energy_forces_with_pairs(coords, pairs)
@@ -408,6 +439,10 @@ impl Potential for Member {
 impl Potential for Box<dyn Potential> {
     fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
         (**self).calc_energy_forces(coords)
+    }
+
+    fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
+        (**self).accumulate(coords, out)
     }
 
     fn calc_energy_forces_with_pairs(&self, coords: &[F], pairs: &Neighbors) -> (F, Vec<F>) {
@@ -556,19 +591,15 @@ impl Potentials {
 
     /// Compute total energy and forces in one pass over all potentials.
     pub fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
-        let n = coords.len();
-        let mut total_e: F = 0.0;
-        let mut total_f = vec![0.0; n];
-
-        for p in &self.inner {
-            let (e, f) = p.calc_energy_forces(coords);
-            total_e += e;
-            for (t, fi) in total_f.iter_mut().zip(f.iter()) {
-                *t += fi;
-            }
-        }
-
+        let mut total_f = vec![0.0; coords.len()];
+        let total_e = self.accumulate(coords, &mut total_f);
         (total_e, total_f)
+    }
+
+    /// Add every member's forces into `out` and return the summed energy —
+    /// one buffer for the whole aggregate, no allocation per member.
+    pub fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
+        self.inner.iter().map(|p| p.accumulate(coords, out)).sum()
     }
 
     /// Total potential energy (kcal/mol).
@@ -594,6 +625,10 @@ impl Default for Potentials {
 impl Potential for Potentials {
     fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
         Potentials::calc_energy_forces(self, coords)
+    }
+
+    fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
+        Potentials::accumulate(self, coords, out)
     }
 
     fn calc_energy_forces_with_pairs(&self, coords: &[F], pairs: &Neighbors) -> (F, Vec<F>) {

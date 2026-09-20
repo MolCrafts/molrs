@@ -338,7 +338,8 @@ impl LJCut {
         )
     }
 
-    fn fold_compiled(&self, coords: &[F]) -> (F, Vec<F>) {
+    /// Fold the compiled intramolecular list into `forces`, returning the energy.
+    fn fold_compiled(&self, coords: &[F], forces: &mut [F]) -> F {
         let PairSource::Compiled {
             atom_i,
             atom_j,
@@ -346,11 +347,10 @@ impl LJCut {
             sigma,
         } = &self.source
         else {
-            return (0.0, vec![0.0; coords.len()]);
+            return 0.0;
         };
         let n_atoms = validate_coords(coords);
         let mut energy = 0.0;
-        let mut forces = vec![0.0; coords.len()];
         for idx in 0..atom_i.len() {
             let i = atom_i[idx];
             let j = atom_j[idx];
@@ -381,7 +381,7 @@ impl LJCut {
             forces[i * 3 + 1] -= f[1];
             forces[i * 3 + 2] -= f[2];
         }
-        (energy, forces)
+        energy
     }
 
     /// Fold a neighbour table with the parameters the atoms' types select.
@@ -563,10 +563,16 @@ impl PairPotential for LJCut {
 
 impl Potential for LJCut {
     fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
+        let mut out = vec![0.0; coords.len()];
+        let energy = self.accumulate(coords, &mut out);
+        (energy, out)
+    }
+
+    fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
         match &self.source {
-            PairSource::Compiled { .. } => self.fold_compiled(coords),
-            // Both need a pair table nobody handed over.
-            PairSource::Loop | PairSource::Typed { .. } => (0.0, vec![0.0; coords.len()]),
+            PairSource::Compiled { .. } => self.fold_compiled(coords, out),
+            // Both need a pair table nobody handed over: nothing to add.
+            PairSource::Loop | PairSource::Typed { .. } => 0.0,
         }
     }
 
@@ -590,11 +596,7 @@ impl PairDriven for LJCut {
             // about nothing, and it cannot read a per-pair weight either.
             PairSource::Compiled { .. } => {
                 debug_assert!(factor.is_empty());
-                let (e, f) = self.fold_compiled(coords);
-                for (acc, v) in out.iter_mut().zip(&f) {
-                    *acc += v;
-                }
-                (e, None)
+                (self.fold_compiled(coords, out), None)
             }
             PairSource::Loop => {
                 let (e, w) = self.fold_neighbors(out, factor, pairs);

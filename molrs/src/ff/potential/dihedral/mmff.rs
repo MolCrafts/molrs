@@ -28,12 +28,13 @@ impl MMFFTorsion {
     fn fold(
         &self,
         coords: &[F],
+        out: &mut [F],
         n_terms: usize,
         atoms: impl Fn(usize) -> (usize, usize, usize, usize),
-    ) -> (F, Vec<F>) {
+    ) -> F {
         let _n = validate_coords(coords);
         let mut energy: F = 0.0;
-        let mut forces = vec![0.0 as F; coords.len()];
+        let forces = out;
 
         for idx in 0..n_terms {
             let (i, j, k, l) = atoms(idx);
@@ -50,15 +51,21 @@ impl MMFFTorsion {
 
             let de_dphi =
                 0.5 * (-self.v1[idx] * s1 + 2.0 * self.v2[idx] * s2 - 3.0 * self.v3[idx] * s3);
-            accumulate_dihedral_forces(coords, i, j, k, l, de_dphi, &mut forces);
+            accumulate_dihedral_forces(coords, i, j, k, l, de_dphi, forces);
         }
-        (energy, forces)
+        energy
     }
 }
 
 impl Potential for MMFFTorsion {
     fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
-        self.fold(coords, self.atom_i.len(), |t| {
+        let mut out = vec![0.0; coords.len()];
+        let energy = self.accumulate(coords, &mut out);
+        (energy, out)
+    }
+
+    fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
+        self.fold(coords, out, self.atom_i.len(), |t| {
             (
                 self.atom_i[t],
                 self.atom_j[t],
@@ -78,12 +85,18 @@ impl IndexedTerms for MMFFTorsion {
         coords: &[F],
         terms: ArrayView2<'_, u32>,
     ) -> (F, Vec<F>) {
+        let mut out = vec![0.0; coords.len()];
+        let energy = self.accumulate_with_terms(coords, terms, &mut out);
+        (energy, out)
+    }
+
+    fn accumulate_with_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, out: &mut [F]) -> F {
         debug_assert_eq!(
             terms.nrows(),
             self.atom_i.len(),
             "the row set is the force field's; only the atoms a row names may be rebound"
         );
-        self.fold(coords, terms.nrows(), |t| {
+        self.fold(coords, out, terms.nrows(), |t| {
             (
                 terms[[t, 0]] as usize,
                 terms[[t, 1]] as usize,

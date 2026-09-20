@@ -75,12 +75,13 @@ impl MMFFAngleBend {
     fn fold(
         &self,
         coords: &[F],
+        out: &mut [F],
         n_terms: usize,
         atoms: impl Fn(usize) -> (usize, usize, usize),
-    ) -> (F, Vec<F>) {
+    ) -> F {
         let _n = validate_coords(coords);
         let mut energy: F = 0.0;
-        let mut forces = vec![0.0 as F; coords.len()];
+        let forces = out;
         let conv = MDYNE_A_TO_KCAL as F;
         let cb = CB_RAD as F;
 
@@ -102,15 +103,21 @@ impl MMFFAngleBend {
                 energy += 0.5 * conv * ka * dth * dth * (1.0 + cb * dth);
                 conv * ka * dth * (1.0 + 1.5 * cb * dth)
             };
-            accumulate_angle_forces(coords, i, j, k, de_dth, &mut forces);
+            accumulate_angle_forces(coords, i, j, k, de_dth, forces);
         }
-        (energy, forces)
+        energy
     }
 }
 
 impl Potential for MMFFAngleBend {
     fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
-        self.fold(coords, self.atom_i.len(), |t| {
+        let mut out = vec![0.0; coords.len()];
+        let energy = self.accumulate(coords, &mut out);
+        (energy, out)
+    }
+
+    fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
+        self.fold(coords, out, self.atom_i.len(), |t| {
             (self.atom_i[t], self.atom_j[t], self.atom_k[t])
         })
     }
@@ -125,12 +132,18 @@ impl IndexedTerms for MMFFAngleBend {
         coords: &[F],
         terms: ArrayView2<'_, u32>,
     ) -> (F, Vec<F>) {
+        let mut out = vec![0.0; coords.len()];
+        let energy = self.accumulate_with_terms(coords, terms, &mut out);
+        (energy, out)
+    }
+
+    fn accumulate_with_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, out: &mut [F]) -> F {
         debug_assert_eq!(
             terms.nrows(),
             self.atom_i.len(),
             "the row set is the force field's; only the atoms a row names may be rebound"
         );
-        self.fold(coords, terms.nrows(), |t| {
+        self.fold(coords, out, terms.nrows(), |t| {
             (
                 terms[[t, 0]] as usize,
                 terms[[t, 1]] as usize,
@@ -239,12 +252,13 @@ impl MMFFStretchBend {
     fn fold(
         &self,
         coords: &[F],
+        out: &mut [F],
         n_terms: usize,
         atoms: impl Fn(usize) -> (usize, usize, usize),
-    ) -> (F, Vec<F>) {
+    ) -> F {
         let _n = validate_coords(coords);
         let mut energy: F = 0.0;
-        let mut forces = vec![0.0 as F; coords.len()];
+        let forces = out;
         let conv = MDYNE_A_TO_KCAL as F;
 
         for idx in 0..n_terms {
@@ -262,7 +276,7 @@ impl MMFFStretchBend {
             energy += conv * term * dth;
 
             // dE/ddth = conv * term
-            accumulate_angle_forces(coords, i, j, k, conv * term, &mut forces);
+            accumulate_angle_forces(coords, i, j, k, conv * term, forces);
             // dE/dr_ij = conv * kba_ijk * dth
             if rij > 1e-12 as F {
                 let f_r = -conv * self.kba_ijk[idx] * dth / rij;
@@ -280,13 +294,19 @@ impl MMFFStretchBend {
                 }
             }
         }
-        (energy, forces)
+        energy
     }
 }
 
 impl Potential for MMFFStretchBend {
     fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
-        self.fold(coords, self.atom_i.len(), |t| {
+        let mut out = vec![0.0; coords.len()];
+        let energy = self.accumulate(coords, &mut out);
+        (energy, out)
+    }
+
+    fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
+        self.fold(coords, out, self.atom_i.len(), |t| {
             (self.atom_i[t], self.atom_j[t], self.atom_k[t])
         })
     }
@@ -301,12 +321,18 @@ impl IndexedTerms for MMFFStretchBend {
         coords: &[F],
         terms: ArrayView2<'_, u32>,
     ) -> (F, Vec<F>) {
+        let mut out = vec![0.0; coords.len()];
+        let energy = self.accumulate_with_terms(coords, terms, &mut out);
+        (energy, out)
+    }
+
+    fn accumulate_with_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, out: &mut [F]) -> F {
         debug_assert_eq!(
             terms.nrows(),
             self.atom_i.len(),
             "the row set is the force field's; only the atoms a row names may be rebound"
         );
-        self.fold(coords, terms.nrows(), |t| {
+        self.fold(coords, out, terms.nrows(), |t| {
             (
                 terms[[t, 0]] as usize,
                 terms[[t, 1]] as usize,

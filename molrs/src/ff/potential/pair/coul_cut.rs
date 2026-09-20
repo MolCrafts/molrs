@@ -33,7 +33,6 @@
 use crate::ff::forcefield::Params;
 use crate::ff::potential::gather_copies;
 use crate::ff::potential::geometry::validate_coords;
-use crate::ff::potential::pair::energy_forces;
 use crate::ff::potential::pair::fold_chunks;
 use crate::ff::potential::{Member, PairDriven, Potential};
 use molrs::math::Virial;
@@ -163,19 +162,6 @@ impl PairCoulCut {
         ))
     }
 
-    /// The accumulation, once. What differs between the two entry points is
-    /// which pairs turn up and where `qᵢqⱼ` comes from — never the force.
-    fn fold(
-        &self,
-        n_components: usize,
-        n_pairs: usize,
-        pair: impl Fn(usize) -> (usize, usize, F, [F; 3], F) + Sync,
-    ) -> (F, Vec<F>, Virial) {
-        let mut forces = vec![0.0; n_components];
-        let (energy, virial) = self.fold_into(&mut forces, &[], n_pairs, pair);
-        (energy, forces, virial)
-    }
-
     /// The accumulation, adding into the caller's buffer and scaling each pair.
     fn fold_into(
         &self,
@@ -229,6 +215,12 @@ impl PairCoulCut {
 
 impl Potential for PairCoulCut {
     fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
+        let mut out = vec![0.0; coords.len()];
+        let energy = self.accumulate(coords, &mut out);
+        (energy, out)
+    }
+
+    fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
         let n_atoms = validate_coords(coords);
         // `k/D` is a style-level constant: hoist it out of the pair loop. At
         // D = 1 this is exactly `k` (IEEE: `x / 1.0 == x`), so the δ = 0, D = 1
@@ -242,9 +234,9 @@ impl Potential for PairCoulCut {
         } = &self.charges
         else {
             // Per-atom charges need a pair table, and nobody handed one over.
-            return (0.0, vec![0.0; coords.len()]);
+            return 0.0;
         };
-        energy_forces(self.fold(coords.len(), atom_i.len(), |idx| {
+        let (energy, _) = self.fold_into(out, &[], atom_i.len(), |idx| {
             let i = atom_i[idx];
             let j = atom_j[idx];
             debug_assert!(i < n_atoms && j < n_atoms);
@@ -255,7 +247,8 @@ impl Potential for PairCoulCut {
             ];
             let r2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
             (i, j, k_over_d * qiqj[idx], d, r2)
-        }))
+        });
+        energy
     }
 
     fn calc_energy_forces_with_pairs(&self, coords: &[F], pairs: &Neighbors) -> (F, Vec<F>) {

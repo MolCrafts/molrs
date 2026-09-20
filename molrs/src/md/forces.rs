@@ -211,6 +211,9 @@ pub struct MicPairs {
     acc: FNx3,
     /// Per-pair weights for the member being evaluated, reused across steps.
     factors: Vec<F>,
+    /// One bonded member's forces, reused across steps: its virial is tallied
+    /// from them before they are folded into `acc`.
+    term: Vec<F>,
 }
 
 impl MicPairs {
@@ -237,6 +240,7 @@ impl MicPairs {
             skin,
             acc: FNx3::zeros((0, 3)),
             factors: Vec::new(),
+            term: Vec::new(),
         })
     }
 }
@@ -290,8 +294,10 @@ impl ForceProvider for MicPairs {
                 // `Σ_a f_a ⊗ x_a` over the stored coordinates *is* its virial,
                 // and is independent of where the cell's origin falls.
                 Member::Indexed(pot) => {
-                    let (e, f) = pot.calc_energy_forces(flat);
-                    let f = check_len(m, f, acc.len(), n_atoms)?;
+                    self.term.clear();
+                    self.term.resize(acc.len(), 0.0);
+                    let e = pot.accumulate(flat, &mut self.term);
+                    let f = &self.term;
                     let mut w_term = Virial::ZERO;
                     for a in 0..n_atoms {
                         w_term.add_outer(
@@ -299,7 +305,7 @@ impl ForceProvider for MicPairs {
                             [flat[a * 3], flat[a * 3 + 1], flat[a * 3 + 2]],
                         );
                     }
-                    for (dst, v) in acc.iter_mut().zip(&f) {
+                    for (dst, v) in acc.iter_mut().zip(f) {
                         *dst += v;
                     }
                     (e, Some(w_term))
@@ -310,14 +316,7 @@ impl ForceProvider for MicPairs {
                 // makes the whole step's virial `None`, which is the honest
                 // answer: the pressure of a system being pushed on from outside
                 // is not the sum of its pair terms.
-                Member::Plain(pot) => {
-                    let (e, f) = pot.calc_energy_forces(flat);
-                    let f = check_len(m, f, acc.len(), n_atoms)?;
-                    for (dst, v) in acc.iter_mut().zip(&f) {
-                        *dst += v;
-                    }
-                    (e, None)
-                }
+                Member::Plain(pot) => (pot.accumulate(flat, acc), None),
             };
             energy += e;
             match (virial.as_mut(), part) {
@@ -490,12 +489,7 @@ impl ForceProvider for GhostPairs {
                     let terms = self.lists.current(m).ok_or_else(|| {
                         MdError::Invalid(format!("member {m} holds indices but has no list"))
                     })?;
-                    let (e, f) = pot.calc_energy_forces_with_terms(flat, terms);
-                    let f = check_len(m, f, acc.len(), n_all)?;
-                    for (dst, v) in acc.iter_mut().zip(&f) {
-                        *dst += v;
-                    }
-                    e
+                    pot.accumulate_with_terms(flat, terms, acc)
                 }
                 Member::Pair(pot) => {
                     let factors = self.special[m].factors_for(
@@ -509,14 +503,7 @@ impl ForceProvider for GhostPairs {
                 // Reads coordinates only — over `[owned | ghost]`, so its
                 // forces land on the copies and the reverse pass folds them
                 // back onto the owners like any other member's.
-                Member::Plain(pot) => {
-                    let (e, f) = pot.calc_energy_forces(flat);
-                    let f = check_len(m, f, acc.len(), n_all)?;
-                    for (dst, v) in acc.iter_mut().zip(&f) {
-                        *dst += v;
-                    }
-                    e
-                }
+                Member::Plain(pot) => pot.accumulate(flat, acc),
             };
             energy += e;
         }
@@ -544,17 +531,6 @@ impl ForceProvider for GhostPairs {
             ago: None,
         }
     }
-}
-
-/// A member's force vector must cover every row the accumulator does.
-fn check_len(m: usize, f: Vec<F>, expected: usize, n_rows: usize) -> Result<Vec<F>, MdError> {
-    if f.len() != expected {
-        return Err(MdError::Invalid(format!(
-            "member {m} returned {} force components for {n_rows} rows",
-            f.len()
-        )));
-    }
-    Ok(f)
 }
 
 /// Shape a flat force vector into the owned `(N, 3)` block, or say why it does

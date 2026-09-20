@@ -31,12 +31,13 @@ impl UffAngle {
     fn fold(
         &self,
         coords: &[F],
+        out: &mut [F],
         n_terms: usize,
         atoms: impl Fn(usize) -> (usize, usize, usize),
-    ) -> (F, Vec<F>) {
+    ) -> F {
         let _n = validate_coords(coords);
         let mut energy = 0.0 as F;
-        let mut forces = vec![0.0 as F; coords.len()];
+        let forces = out;
 
         for idx in 0..n_terms {
             let (i, j, k) = atoms(idx);
@@ -82,15 +83,21 @@ impl UffAngle {
             };
 
             energy += ka * term;
-            accumulate_angle_forces(coords, i, j, k, d_e_d_theta, &mut forces);
+            accumulate_angle_forces(coords, i, j, k, d_e_d_theta, forces);
         }
-        (energy, forces)
+        energy
     }
 }
 
 impl Potential for UffAngle {
     fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
-        self.fold(coords, self.atom_i.len(), |t| {
+        let mut out = vec![0.0; coords.len()];
+        let energy = self.accumulate(coords, &mut out);
+        (energy, out)
+    }
+
+    fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
+        self.fold(coords, out, self.atom_i.len(), |t| {
             (self.atom_i[t], self.atom_j[t], self.atom_k[t])
         })
     }
@@ -105,12 +112,18 @@ impl IndexedTerms for UffAngle {
         coords: &[F],
         terms: ArrayView2<'_, u32>,
     ) -> (F, Vec<F>) {
+        let mut out = vec![0.0; coords.len()];
+        let energy = self.accumulate_with_terms(coords, terms, &mut out);
+        (energy, out)
+    }
+
+    fn accumulate_with_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, out: &mut [F]) -> F {
         debug_assert_eq!(
             terms.nrows(),
             self.atom_i.len(),
             "the row set is the force field's; only the atoms a row names may be rebound"
         );
-        self.fold(coords, terms.nrows(), |t| {
+        self.fold(coords, out, terms.nrows(), |t| {
             (
                 terms[[t, 0]] as usize,
                 terms[[t, 1]] as usize,
