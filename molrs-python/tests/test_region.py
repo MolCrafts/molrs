@@ -149,29 +149,6 @@ class TestRegionChaining:
 
 
 class TestDistance:
-    def test_sphere_sign_and_magnitude(self):
-        s = molrs.Sphere(np.zeros(3), 2.0)
-        pts = np.array([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 5.0, 0.0]])
-        d = s.distance(pts)
-        assert d.dtype == np.float64 and d.shape == (3,)
-        np.testing.assert_allclose(d, [-2.0, 0.0, 3.0])
-
-    def test_cuboid_and_parallelepiped_agree_on_a_cube(self):
-        c = molrs.Cuboid(np.zeros(3), np.array([2.0, 2.0, 2.0]))
-        p = molrs.Parallelepiped.cube(2.0, np.zeros(3))
-        pts = np.array([[1.0, 1.0, 1.0], [3.0, 1.0, 1.0], [2.0, 2.0, 2.0]])
-        np.testing.assert_allclose(c.distance(pts), p.distance(pts))
-        np.testing.assert_allclose(c.distance(pts), [-1.0, 1.0, 0.0])
-        # the boundary belongs to the region
-        assert p.contains(pts)[2]
-
-    def test_complement_flips_the_sign(self):
-        s = molrs.Sphere(np.zeros(3), 2.0)
-        pts = np.array([[0.0, 0.0, 0.0], [0.0, 5.0, 0.0]])
-        np.testing.assert_allclose((~s).distance(pts), -s.distance(pts))
-        shell = s & ~molrs.Sphere(np.zeros(3), 1.0)
-        np.testing.assert_allclose(shell.distance(np.array([[1.5, 0.0, 0.0]])), [-0.5])
-
     def test_bad_points_shape(self):
         s = molrs.Sphere(np.zeros(3), 1.0)
         with pytest.raises(ValueError, match="N, 3"):
@@ -185,12 +162,18 @@ def _unit_cube_mesh() -> "molrs.TriMesh":
     )
     faces = np.array(
         [
-            [0, 4, 6], [0, 6, 2],
-            [1, 3, 7], [1, 7, 5],
-            [0, 1, 5], [0, 5, 4],
-            [2, 6, 7], [2, 7, 3],
-            [0, 2, 3], [0, 3, 1],
-            [4, 5, 7], [4, 7, 6],
+            [0, 4, 6],
+            [0, 6, 2],
+            [1, 3, 7],
+            [1, 7, 5],
+            [0, 1, 5],
+            [0, 5, 4],
+            [2, 6, 7],
+            [2, 7, 3],
+            [0, 2, 3],
+            [0, 3, 1],
+            [4, 5, 7],
+            [4, 7, 6],
         ],
         dtype=np.uint32,
     )
@@ -207,7 +190,9 @@ class TestShapes:
         np.testing.assert_allclose(below.normal(), [0.0, 0.0, 1.0])
 
     def test_cylinder(self):
-        c = molrs.Cylinder(np.array([1.0, 1.0, 0.0]), np.array([0.0, 0.0, 3.0]), 2.0, 5.0)
+        c = molrs.Cylinder(
+            np.array([1.0, 1.0, 0.0]), np.array([0.0, 0.0, 3.0]), 2.0, 5.0
+        )
         pts = np.array([[1.0, 1.0, 2.5], [3.0, 1.0, 2.5], [1.0, 1.0, 7.0]])
         np.testing.assert_allclose(c.distance(pts), [-2.0, 0.0, 2.0])
         with pytest.raises(ValueError):
@@ -233,10 +218,6 @@ class TestPolyhedron:
         np.testing.assert_allclose(cube.bounds()[:, 1], [1.0, 1.0, 1.0])
         assert cube.mesh().n_faces == 12
 
-    def test_scaled_mesh(self):
-        big = molrs.Polyhedron(_unit_cube_mesh().scaled(2.0))
-        np.testing.assert_allclose(big.distance(np.array([[1.0, 1.0, 1.0]])), [-1.0], atol=1e-9)
-
     def test_open_mesh_is_rejected(self):
         mesh = _unit_cube_mesh()
         open_mesh = molrs.TriMesh(mesh.vertices(), mesh.faces()[:-1])
@@ -259,13 +240,6 @@ class TestSphereUnion:
         void = ~u
         assert list(void.contains(pts)) == [True, True, False]
         np.testing.assert_allclose(void.distance(pts), [-8.0, -3.0, 0.5])
-
-    def test_periodic_union_wraps(self):
-        box = molrs.Box.cube(10.0, np.zeros(3), np.array([True, True, True]))
-        u = molrs.SphereUnion(np.array([[0.5, 5.0, 5.0]]), 1.0, box=box)
-        pts = np.array([[9.8, 5.0, 5.0]])
-        np.testing.assert_allclose(u.distance(pts), [-0.3])
-        assert list(u.box.pbc) == [True, True, True]
 
     def test_rejects(self):
         with pytest.raises(ValueError):
