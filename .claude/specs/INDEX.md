@@ -6,11 +6,32 @@ spec files.
 
 | Spec | State |
 |------|-------|
-| [release-0-14-08-ship-molrs](release-0-14-08-ship-molrs.md) | in progress — merge to `master`, tag `v0.14.0`, publish to crates.io / npm / PyPI, replace the molnex `.dev1` wheel |
-| [release-0-14-09-molpy-rebase](release-0-14-09-molpy-rebase.md) | blocked on 08 — re-branch molpy from `upstream/master`, pin `>=0.14.0,<0.15` |
-| [release-0-14-10-molpy-mirror](release-0-14-10-molpy-mirror.md) | blocked on 09 — sink the duplicated formats and Box geometry into molrs with per-format bit-identical parity |
-| [release-0-14-11-molpy-docs](release-0-14-11-molpy-docs.md) | blocked on 10 — typifier spelling sweep, molpy migration guide |
-| [release-0-14-12-joint-smoke](release-0-14-12-joint-smoke.md) | blocked on 11 — molnex chain smoke on the released wheel, then tag molpy |
+| — | no live spec |
 
-**Release order is fixed** (CLAUDE.md § *Release before molpy*): molrs tags and
-publishes before molpy bumps its minor pin. 09–12 do not start before 08 is green.
+## release-0-14 chain — closed 2026-09-20
+
+The five release specs (08 ship molrs, 09 molpy rebase, 10 molpy mirror,
+11 molpy docs, 12 joint smoke) are closed. Everything in them that is code or
+docs has landed on molrs `chore/test-orthogonalization` and molpy
+`ci/precommit-uv-parity`; what remains is release mechanics, kept as the
+manual checklist in `.claude/notes/release.md` § v0.14.0.
+
+- **08** merge to `master`, tag `v0.14.0`, publish (crates.io / npm / PyPI),
+  swap the molnex `.dev1` wheel — operator-run, see release.md.
+- **09** molpy branch and pin bump — operator-run; the pin
+  `molcrafts-molrs>=0.14.0,<0.15` is already in molpy's pyproject.
+- **10** the shared formats (pdb, top, amber, lammps data / molecule / log,
+  force-field xml) and Box geometry are molrs-backed and `molpy.md` re-exports
+  `molrs.md` by identity. The "bit-parity on a committed corpus" acceptance
+  was dropped with the corpus: the test suites are unit-only
+  (`.claude/notes/testing.md`). Still open, as its own public-API decision:
+  molpy's callable `compute.base.Compute` shells versus the molrs `Compute`
+  Protocol (`compute(...)`) — the verb-unification question
+  (assemble / build / apply / run / typify / compute).
+- **11** typifier spellings fixed, user-facing "molrs" wording replaced,
+  `docs/getting-started/migration-0-14.md` written and in the nav. molpy has
+  no `docs/zh/` tree, so the bilingual criterion is void. The spelling and
+  parity *gates* it asked for are not written: source-text gates are not unit
+  tests.
+- **12** the full-import and warning-scope gates are not unit tests and are
+  not written; the molnex smoke and the molpy tag are release mechanics.

@@ -76,3 +76,23 @@ Patch on the 0.13 line. Land on master, tag `v0.13.1`, wait for Publish, then mo
 - `Region` trait gains `distance` / `distance_grad` (negative inside); one type per shape, outside is `NotRegion` — `HollowSphere` removed (`Sphere & ~Sphere`; molpy's `__init__` re-export dropped in lockstep, 2026-09-14); boundaries closed (`Parallelepiped` was half-open); new `HalfSpace`, `Cylinder`, `Ellipsoid`, `Polyhedron` (watertight `TriMesh`), `SphereUnion` (atoms as a region, periodic minimum image); Python `TriMesh`, `io.read_stl`, `distance` on every region class, composed-`Region` pickling as an object tree (was a JSON recipe)
 - `molrs_ffi::RegionRef` + capsule `molrs.RegionRef/<abi_line>` (`_ffi_regionref_capsule()` on every region class); `_ffi_abi_token()` is a 5-tuple (consumers read indices 0–1)
 - prmtop-derived force fields declare `lj/cut` + `coul/cut` with explicit `coulomb`/`dielectric`/`cutoff` (`AMBER_COULOMB = 18.2223²`). A LAMMPS include written **with** its header changes from `pair_style lj/cut/coul/long 10 10` to `pair_style lj/cut/coul/cut 9 10`; `pair_coeff` lines are unchanged. NBFIX / 12-6-4 / multi-term-improper / non-uniform-SCEE prmtops are refused.
+
+
+## v0.14.0 (pending — prepared 2026-09-20)
+
+Prepared on molrs `chore/test-orthogonalization` (over `dev`) and molpy
+`ci/precommit-uv-parity`; nothing pushed. Gates at HEAD: molrs
+`cargo test --lib` 2068, doctests 74, molrs-python 557; molpy pytest 1188,
+`tox -e lint` green.
+
+1. molrs — merge the branch into `dev`, then `dev` → `master`; tag
+   `v0.14.0`; push the tag (the publish workflow does crates.io, npm, PyPI).
+2. molnex — replace the `.dev1` wheel under `.wheels-gh200` with the released
+   0.14.0 wheel and run the chain import in the aarch64 venv.
+3. molpy — rebase `ci/precommit-uv-parity` onto `upstream/master`; the pin is
+   already `molcrafts-molrs>=0.14.0,<0.15`; `uv sync --extra dev` against the
+   published wheel (drop or keep the `[tool.uv.sources]` path for dev);
+   `pytest tests/ -n auto` and `tox -e lint`; tag `0.14.0` **after** the molrs
+   tag; push.
+4. molpy — `.pre-commit/check_molrs_pin_on_pypi.py` self-skips while the path
+   source is active; confirm it runs once the wheel is on PyPI.
