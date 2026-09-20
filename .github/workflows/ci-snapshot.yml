@@ -56,11 +56,10 @@ jobs:
             --profile ci \
             --lcov --output-path .ci-out/lcov.info || true
 
-      # `--track` waits on MOLCRAFTS_APP_ID as well as the branch: until the
-      # MolCrafts App is configured there is no credential to push with, so the
-      # snapshots are built and uploaded as an artifact but never published,
-      # and CI stays green. Configuring the App turns publishing on with no
-      # edit here.
+      # `--track` waits on the credential as well as the branch: without
+      # MOLCRAFTS_CI_SSH_KEY there is nothing to push with, so the snapshots are
+      # built and uploaded as an artifact but never published, and CI stays
+      # green. Fork pull requests, which get no secrets, stay on that path.
       - name: Build snapshots
         if: ${{ !cancelled() && hashFiles('target/nextest/ci/junit.xml') != '' }}
         run: |
@@ -70,7 +69,7 @@ jobs:
             --coverage .ci-out/lcov.info --coverage-format lcov \
             --tests-producer cargo-nextest \
             --coverage-producer cargo-llvm-cov \
-            ${{ (github.event_name == 'push' && github.ref == 'refs/heads/master' && vars.MOLCRAFTS_APP_ID != '') && '--track' || '' }}
+            ${{ (github.event_name == 'push' && github.ref == 'refs/heads/master' && secrets.MOLCRAFTS_CI_SSH_KEY != '') && '--track' || '' }}
 
       - name: Publish to molcrafts-ci
         if: ${{ !cancelled() && hashFiles('.ci-out/snapshots/*.json') != '' }}
@@ -78,5 +77,5 @@ jobs:
         with:
           snapshot-path: .ci-out/snapshots/*.json
           project: molrs
-          app-id: ${{ vars.MOLCRAFTS_APP_ID }}
-          private-key: ${{ secrets.MOLCRAFTS_APP_PRIVATE_KEY }}
+          # A deploy key on molcrafts-ci: one repository, git only.
+          ssh-key: ${{ secrets.MOLCRAFTS_CI_SSH_KEY }}
