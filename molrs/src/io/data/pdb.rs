@@ -501,7 +501,7 @@ fn add_simbox_from_cryst1(frame: &mut Frame, cryst1: Option<&Cryst1Record>) {
     }
 }
 
-pub fn build_frame(
+fn build_frame(
     atoms: &[AtomRecord],
     cryst1: Option<&Cryst1Record>,
     conects: &[ConectRecord],

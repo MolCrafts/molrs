@@ -107,7 +107,7 @@ pub fn generate_3d_impl(
     // SMARTS engine (`molrs::perceive::smarts`), reproducing RDKit
     // `getExperimentalTorsions`. See `distgeom::torsion_prefs`.
     let version = EtkdgVersion::Etkdgv3;
-    let constraints = distgeom::build_constraints(&work, version)?;
+    let constraints = distgeom::DgConstraints::from_graph(&work, version)?;
 
     // --- Retry loop ------------------------------------------------------
     let max_iters = retry::effective_max_iterations(opts.max_iterations_internal(), n);

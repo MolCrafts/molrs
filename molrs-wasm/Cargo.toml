@@ -17,7 +17,9 @@ name = "molwasm"
 [features]
 # Default build = full (all subsystems). Each forwards to the merged crate's
 # matching module feature.
-default = ["smiles", "io", "compute", "conformer", "voronoi", "stream"]
+default = ["smiles", "io", "compute", "conformer", "voronoi", "stream", "builder"]
+# Graphene / nanotube / walk generators behind `generate.rs`.
+builder = ["molrs/builder"]
 smiles  = ["io", "molrs/smiles"]
 io      = ["molrs/io"]
 # Live-stream wire encoding (MessagePack / JSON). On wasm32 this pulls only

@@ -72,9 +72,11 @@ pub use crate::core::*;
 
 /// Structure builders (graphene, nanotubes, self-avoiding walks, …).
 ///
-/// Always compiled — builders sit above `core` and produce frames / paths
-/// without depending on feature-gated analysis or force fields.
+/// Builders sit above `core` and produce frames / paths without depending on
+/// feature-gated analysis or force fields; `full` includes them.
+#[cfg(feature = "builder")]
 pub mod builder;
+#[cfg(feature = "builder")]
 pub use crate::builder::{
     CarbonTubeBuilder, CarbonTubeError, FccLattice, GrapheneBuilder, GrapheneError, GrowthStrategy,
     OccupancyMode, OffLattice, SelfAvoidingWalk, WalkError, WalkOutput,

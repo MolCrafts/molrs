@@ -81,6 +81,6 @@ jobs:
       - name: Check core and independent features without native defaults
         run: |
           cargo check -p molcrafts-molrs --no-default-features
-          for feature in io smiles signal compute ff conformer md serde stream zarr filesystem voronoi full; do
+          for feature in io smiles signal compute ff conformer md builder serde stream zarr filesystem voronoi full; do
             cargo check -p molcrafts-molrs --no-default-features --features "$feature"
           done

@@ -35,9 +35,15 @@ pub struct KnowledgeTorsion {
     pub force_constants: [f64; 6],
 }
 
-/// Build the flat sp2-ring planarising torsions (RDKit basic-knowledge ring
-/// loop). Rings smaller than 4 or larger than 6 are skipped, exactly as RDKit.
-pub fn build_flat_ring_torsions(p: &Perceived) -> Vec<KnowledgeTorsion> {
+impl Perceived {
+    /// The flat sp2-ring planarising torsions (RDKit basic-knowledge ring
+    /// loop). Rings smaller than 4 or larger than 6 are skipped, exactly as RDKit.
+    pub fn flat_ring_torsions(&self) -> Vec<KnowledgeTorsion> {
+        flat_ring_torsions(self)
+    }
+}
+
+fn flat_ring_torsions(p: &Perceived) -> Vec<KnowledgeTorsion> {
     let mut out = Vec::new();
     let mut done_bonds: std::collections::HashSet<(usize, usize)> =
         std::collections::HashSet::new();

@@ -83,53 +83,52 @@ pub fn experimental_torsions_with_provenance(mol: &Atomistic) -> Vec<AssignedTor
     assign_with_provenance(mol, &p)
 }
 
-/// Build the unsmoothed topological bounds matrix for `mol`
-/// (RDKit `setTopolBounds`, `set15bounds=true, scaleVDW=false`).
-pub fn build_bounds(mol: &Atomistic) -> Result<BoundsMatrix, MolRsError> {
-    let n = mol.n_atoms();
-    if n == 0 {
-        return Err(MolRsError::validation("molecule has no atoms"));
+impl BoundsMatrix {
+    /// The unsmoothed topological bounds matrix for `mol`
+    /// (RDKit `setTopolBounds`, `set15bounds=true, scaleVDW=false`).
+    pub fn from_graph(mol: &Atomistic) -> Result<Self, MolRsError> {
+        if mol.n_atoms() == 0 {
+            return Err(MolRsError::validation("molecule has no atoms"));
+        }
+        let p = mol_features::perceive(mol);
+        Ok(bounds::set_topol_bounds(&p))
     }
-    let p = mol_features::perceive(mol);
-    Ok(bounds::set_topol_bounds(&p))
 }
 
-/// Build the complete ETKDGv3 constraint set: topological bounds (then
-/// triangle-smoothed in place), experimental torsions, knowledge terms,
-/// chiral and improper constraints.
-///
-/// `version` gates the knowledge layers: `Etdg` emits bounds only;
-/// `Etkdgv2` / `Etkdgv3` additionally emit torsion / chiral / improper
-/// constraints. (v2 vs v3 differ only in small-ring/macrocycle torsion data,
-/// which is part of the documented experimental-torsion partial.)
-pub fn build_constraints(
-    mol: &Atomistic,
-    version: EtkdgVersion,
-) -> Result<DgConstraints, MolRsError> {
-    let n = mol.n_atoms();
-    if n == 0 {
-        return Err(MolRsError::validation("molecule has no atoms"));
+impl DgConstraints {
+    /// The complete ETKDGv3 constraint set for `mol`: topological bounds
+    /// (triangle-smoothed in place), experimental torsions, knowledge terms,
+    /// chiral and improper constraints.
+    ///
+    /// `version` gates the knowledge layers: `Etdg` emits bounds only;
+    /// `Etkdgv2` / `Etkdgv3` additionally emit torsion / chiral / improper
+    /// constraints. (v2 vs v3 differ only in small-ring/macrocycle torsion
+    /// data, which is part of the documented experimental-torsion partial.)
+    pub fn from_graph(mol: &Atomistic, version: EtkdgVersion) -> Result<Self, MolRsError> {
+        if mol.n_atoms() == 0 {
+            return Err(MolRsError::validation("molecule has no atoms"));
+        }
+        let p = mol_features::perceive(mol);
+
+        let mut bounds = bounds::set_topol_bounds(&p);
+        smooth::smooth_bounds(&mut bounds)?;
+
+        let (experimental_torsions, flat_ring_torsions, chiral, improper) = match version {
+            EtkdgVersion::Etdg => (Vec::new(), Vec::new(), Vec::new(), Vec::new()),
+            EtkdgVersion::Etkdgv2 | EtkdgVersion::Etkdgv3 => (
+                torsion_prefs::assign_experimental_torsions(mol, &p),
+                p.flat_ring_torsions(),
+                p.chiral_constraints(mol),
+                p.improper_constraints(),
+            ),
+        };
+
+        Ok(Self {
+            bounds,
+            experimental_torsions,
+            flat_ring_torsions,
+            chiral,
+            improper,
+        })
     }
-    let p = mol_features::perceive(mol);
-
-    let mut bounds = bounds::set_topol_bounds(&p);
-    smooth::smooth_bounds(&mut bounds)?;
-
-    let (experimental_torsions, flat_ring_torsions, chiral, improper) = match version {
-        EtkdgVersion::Etdg => (Vec::new(), Vec::new(), Vec::new(), Vec::new()),
-        EtkdgVersion::Etkdgv2 | EtkdgVersion::Etkdgv3 => (
-            torsion_prefs::assign_experimental_torsions(mol, &p),
-            knowledge::build_flat_ring_torsions(&p),
-            chirality::build_chiral(mol, &p),
-            chirality::build_improper(&p),
-        ),
-    };
-
-    Ok(DgConstraints {
-        bounds,
-        experimental_torsions,
-        flat_ring_torsions,
-        chiral,
-        improper,
-    })
 }

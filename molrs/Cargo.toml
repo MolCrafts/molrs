@@ -33,9 +33,11 @@ tempfile = "3.0"
 # wasm / Pyodide opt down with `default-features = false`.
 default = ["full", "filesystem", "rayon"]
 # Full bundle (every sub-system).
-full = ["io", "compute", "smiles", "ff", "conformer", "signal", "voronoi", "md"]
+full = ["io", "compute", "smiles", "ff", "conformer", "signal", "voronoi", "md", "builder"]
 
 # Sub-system modules (each gates its module + its unique optional deps).
+# Structure builders (graphene, nanotubes, self-avoiding walks); no unique deps.
+builder   = []
 io        = ["dep:flate2"]
 # `smiles` lives inside the `io` module.
 smiles    = ["io"]
