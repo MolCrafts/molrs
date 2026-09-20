@@ -944,9 +944,7 @@ fn write_lammps_molecule_json<P: AsRef<Path>>(path: P, frame: &Frame) -> Result<
 mod tests {
     use super::*;
 
-    #[test]
-    fn native_water_roundtrip_shape() {
-        let text = r#"# Water molecule. TIP3P geometry
+    const WATER: &str = r#"# Water molecule. TIP3P geometry
 3 atoms
 2 bonds
 1 angles
@@ -978,19 +976,40 @@ Angles
 
 1   1      2      1      3
 "#;
-        let dir = std::env::temp_dir();
-        let path = dir.join("molrs_water_test.mol");
-        std::fs::write(&path, text).unwrap();
+
+    #[test]
+    fn read_native_water_molecule() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("water.mol");
+        std::fs::write(&path, WATER).unwrap();
         let frame = read_lammps_molecule(&path).unwrap();
-        assert_eq!(frame.get("atoms").unwrap().nrows(), Some(3));
+        let atoms = frame.get("atoms").unwrap();
+        assert_eq!(atoms.nrows(), Some(3));
         assert_eq!(frame.get("bonds").unwrap().nrows(), Some(2));
         assert_eq!(frame.get("angles").unwrap().nrows(), Some(1));
-        assert!(frame.get("atoms").unwrap().contains_key("charge"));
-        let out = dir.join("molrs_water_out.mol");
+        let charge = atoms.get_float("charge").expect("Charges section");
+        assert_eq!(
+            charge.iter().copied().collect::<Vec<_>>(),
+            vec![-0.834, 0.417, 0.417]
+        );
+    }
+
+    #[test]
+    fn native_write_then_read_keeps_every_section() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("water.mol");
+        std::fs::write(&path, WATER).unwrap();
+        let frame = read_lammps_molecule(&path).unwrap();
+        let out = dir.path().join("water_out.mol");
         write_lammps_molecule(&out, &frame, "native").unwrap();
-        let frame2 = read_lammps_molecule(&out).unwrap();
-        assert_eq!(frame2.get("atoms").unwrap().nrows(), Some(3));
-        let _ = std::fs::remove_file(&path);
-        let _ = std::fs::remove_file(&out);
+        let back = read_lammps_molecule(&out).unwrap();
+        for (block, rows) in [("atoms", 3), ("bonds", 2), ("angles", 1)] {
+            assert_eq!(back.get(block).unwrap().nrows(), Some(rows), "{block}");
+        }
+        let charge = back.get("atoms").unwrap().get_float("charge").unwrap();
+        assert_eq!(
+            charge.iter().copied().collect::<Vec<_>>(),
+            vec![-0.834, 0.417, 0.417]
+        );
     }
 }

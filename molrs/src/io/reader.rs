@@ -393,7 +393,6 @@ mod tests {
     use flate2::Compression;
     use flate2::write::GzEncoder;
     use std::io::{BufRead, Write};
-    use std::path::PathBuf;
 
     /// Number of frames the store-less reader below pretends to hold.
     const STORELESS_FRAMES: usize = 2;
@@ -430,26 +429,21 @@ mod tests {
         }
     }
 
-    fn temp_path(name: &str) -> PathBuf {
-        let mut path = std::env::temp_dir();
-        path.push(format!("molrs_reader_test_{}", name));
-        path
-    }
-
     #[test]
     fn open_seekable_plain_text() {
-        let path = temp_path("plain.txt");
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("plain.txt");
         std::fs::write(&path, b"hello\n").expect("write temp");
         let mut reader = open_seekable(&path).expect("open seekable");
         let mut line = String::new();
         reader.read_line(&mut line).expect("read line");
         assert_eq!(line, "hello\n");
-        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
     fn open_streaming_gz() {
-        let path = temp_path("data.txt.gz");
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("data.txt.gz");
         let file = std::fs::File::create(&path).expect("create gz");
         let mut encoder = GzEncoder::new(file, Compression::default());
         encoder.write_all(b"hello\n").expect("write gz");
@@ -459,7 +453,6 @@ mod tests {
         let mut line = String::new();
         reader.read_line(&mut line).expect("read line");
         assert_eq!(line, "hello\n");
-        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
