@@ -17,6 +17,9 @@
 
 #[cfg(feature = "fs")]
 pub mod log;
+// Both doors need the filesystem store in the core crate; without `fs` the
+// module bodies reference items that are configured out.
+#[cfg(feature = "fs")]
 pub mod mrec;
 
 use crate::core::spatial::mesh::PyTriMesh;
@@ -59,6 +62,7 @@ use molrs::io::data::prmtop_tables::{
 use molrs::io::data::top::{read_top as read_top_rs, write_top as write_top_rs};
 use molrs::io::data::xsf::{read_xsf as read_xsf_rs, write_xsf as write_xsf_rs};
 use molrs::io::data::xyz::{XYZReader, read_xyz_frame, read_xyz_traj, write_xyz_frame};
+#[cfg(feature = "fs")]
 use molrs::io::log::lammps::{
     parse_lammps_log_text as parse_lammps_log_text_rs,
     read_lammps_log_with_style as read_lammps_log_rs,
@@ -77,7 +81,9 @@ use molrs::io::trajectory::trr::{
 use molrs::io::trajectory::xtc::{
     XtcReader, open_xtc, read_xtc as read_xtc_rs, write_xtc as write_xtc_rs,
 };
-use pyo3::exceptions::{PyFileNotFoundError, PyIOError, PyIndexError, PyValueError};
+#[cfg(feature = "fs")]
+use pyo3::exceptions::{PyFileNotFoundError, PyIOError};
+use pyo3::exceptions::{PyIndexError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use pyo3::types::{PyDict, PyList, PySlice, PyType};
@@ -1463,6 +1469,7 @@ pub fn write_xsf(path: &str, frame: &PyFrame) -> PyResult<()> {
 ///     If ``path`` does not exist.
 /// OSError
 ///     On other I/O failures.
+#[cfg(feature = "fs")]
 #[pyfunction]
 #[pyo3(signature = (path, style = "default"))]
 pub fn read_lammps_log(path: &str, style: &str) -> PyResult<log::PyLammpsLog> {
@@ -1485,12 +1492,14 @@ pub fn read_lammps_log(path: &str, style: &str) -> PyResult<log::PyLammpsLog> {
 /// -------
 /// LammpsLog
 ///     Same structure as :func:`read_lammps_log`.
+#[cfg(feature = "fs")]
 #[pyfunction]
 #[pyo3(signature = (text, path = "<string>", style = "default"))]
 pub fn parse_lammps_log_text(text: &str, path: &str, style: &str) -> log::PyLammpsLog {
     log::PyLammpsLog::new(parse_lammps_log_text_rs(text, path, style))
 }
 
+#[cfg(feature = "fs")]
 fn lammps_log_io_error(e: std::io::Error) -> PyErr {
     if e.kind() == std::io::ErrorKind::NotFound {
         PyFileNotFoundError::new_err(e.to_string())
@@ -1499,6 +1508,7 @@ fn lammps_log_io_error(e: std::io::Error) -> PyErr {
     }
 }
 
+#[cfg(feature = "fs")]
 pub(crate) fn lammps_log_to_pydict<'py>(
     py: Python<'py>,
     log: &molrs::io::log::LammpsLog,

@@ -153,19 +153,28 @@ jobs:
           - os: ubuntu-latest
             target: ""
             artifact: linux-x64
+            manylinux: auto
           - os: ubuntu-latest
             # Cross-compile manylinux aarch64 (Graviton / arm64 servers).
+            # 2_28, not the `auto` default: zarrs pulls blosc-src → snappy_src,
+            # whose C++ wants -std=c++14, and the aarch64 cross g++ in the
+            # manylinux2014 image does not know that flag. The 2_28 cross image
+            # ships a modern GCC. Cost: the aarch64 wheel needs glibc >= 2.28.
             target: aarch64-unknown-linux-gnu
             artifact: linux-aarch64
+            manylinux: "2_28"
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact: macos-arm64
+            manylinux: auto
           - os: macos-latest
             target: x86_64-apple-darwin
             artifact: macos-x64
+            manylinux: auto
           - os: windows-latest
             target: ""
             artifact: windows
+            manylinux: auto
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -179,7 +188,7 @@ jobs:
         with:
           working-directory: molrs-python
           target: ${{ matrix.target }}
-          manylinux: auto
+          manylinux: ${{ matrix.manylinux }}
           command: build
           # default features include `fs` (host filesystem zarr I/O)
           args: --release --out dist
