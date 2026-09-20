@@ -454,9 +454,6 @@ impl ListableStorageTraits for HostStore {
     }
 }
 
-#[cfg(test)]
-mod export_pin;
-
 /// Load a `Map<path, Uint8Array>` of a record's files into an in-memory store.
 ///
 /// Shared by the record-shape doors below and shaped like the

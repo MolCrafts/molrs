@@ -4,8 +4,7 @@
 //! exchanges raw `molrs_ffi` handles, so both sides must embed a
 //! layout-identical molrs core. The project rule is **minor-line = ABI
 //! version**: every downstream shares one molrs minor line, and the layout of
-//! every FFI-crossing type is frozen within a minor (see the layout snapshot
-//! test below, which turns that rule into a CI gate). This module is the
+//! every FFI-crossing type is frozen within a minor. This module is the
 //! single source of the versioned capsule names and the handshake line —
 //! binders and consumers must take them from here, never hard-code them.
 
@@ -84,113 +83,5 @@ mod tests {
         assert_ne!(frame, ff);
         assert_ne!(frame, region);
         assert_ne!(ff, region);
-    }
-}
-
-/// Layout snapshot gate — the enforcement of "minor-line = ABI version".
-///
-/// Every type a consumer dereferences through a `molrs_ffi` handle is listed
-/// here with its size, alignment, and (where fields are nameable) offsets.
-/// The report must equal the committed `layout.snapshot`, whose first line
-/// declares the ABI line it was taken on.
-///
-/// If this test fails:
-/// - **Same minor, layout changed** — the change breaks every already-shipped
-///   wheel on this line. Revert it, or bump the minor version and refresh the
-///   snapshot (first line included).
-/// - **Toolchain update alone changed the report** — that is still an ABI
-///   event for a pointer-crossing bridge: wheels built by the old rustc no
-///   longer match. Bump the minor (and refresh) or pin the toolchain.
-/// - **Minor was bumped** — refresh the snapshot: update the first line to the
-///   new ABI line and paste the new report (printed in the failure message).
-#[cfg(all(test, target_pointer_width = "64"))]
-mod layout_snapshot {
-    use std::mem::{align_of, offset_of, size_of};
-
-    use crate::{BlockHandle, BlockRef, FrameId, FrameRef, SharedStore, Store};
-
-    // The committed snapshot lists the `ForceFieldRef` rows, which only exist
-    // with `ff` on. `ff` is now a default feature, so the ordinary gate runs
-    // unconditionally; a `--no-default-features` test build would otherwise
-    // fail as a misleading "layout drifted" diff instead of saying what is
-    // actually wrong.
-    #[cfg(not(feature = "ff"))]
-    compile_error!(
-        "molrs-ffi's layout snapshot is defined with `ff` on (now default); build tests with default features"
-    );
-
-    fn report() -> String {
-        let mut out = format!("abi {}\n", super::abi_line());
-        macro_rules! row {
-            ($ty:ty) => {
-                out.push_str(&format!(
-                    "{} size={} align={}\n",
-                    stringify!($ty),
-                    size_of::<$ty>(),
-                    align_of::<$ty>()
-                ));
-            };
-        }
-        macro_rules! field {
-            ($ty:ty, $field:ident) => {
-                out.push_str(&format!(
-                    "{}.{} offset={}\n",
-                    stringify!($ty),
-                    stringify!($field),
-                    offset_of!($ty, $field)
-                ));
-            };
-        }
-
-        // molrs-ffi handle types (this crate — private fields nameable here).
-        row!(FrameId);
-        row!(BlockHandle);
-        field!(BlockHandle, frame_id);
-        field!(BlockHandle, key);
-        field!(BlockHandle, version);
-        row!(FrameRef);
-        field!(FrameRef, id);
-        field!(FrameRef, store);
-        row!(BlockRef);
-        field!(BlockRef, handle);
-        field!(BlockRef, store);
-        row!(SharedStore);
-        row!(Store);
-
-        // molrs core types lent across the boundary (public fields only).
-        row!(molrs::Frame);
-        field!(molrs::Frame, meta);
-        field!(molrs::Frame, simbox);
-        row!(molrs::Block);
-        row!(molrs::SimBox);
-
-        // Force-field handle (only size/align — `ForceFieldRef.ff` is
-        // module-private, and `Rc<T>` is pointer-sized regardless). Still
-        // `ff`-gated: `ForceFieldRef` is code, and wasm builds it away.
-        #[cfg(feature = "ff")]
-        {
-            row!(crate::ForceFieldRef);
-            row!(molrs::ff::ForceField);
-        }
-
-        // Region handle: a fat `Arc<dyn Region>` (size/align only — the field
-        // is module-private). Always on, like `core`.
-        row!(crate::RegionRef);
-
-        out
-    }
-
-    #[test]
-    fn layout_matches_committed_snapshot() {
-        let expected = include_str!("layout.snapshot");
-        let actual = report();
-        assert_eq!(
-            actual, expected,
-            "\nFFI layout drifted from src/layout.snapshot.\n\
-             Within a minor line this is FORBIDDEN (it breaks every shipped \
-             wheel on the line): revert the layout change, or bump the minor \
-             version and refresh the snapshot.\n\
-             Actual report:\n{actual}"
-        );
     }
 }

@@ -60,7 +60,7 @@ extern crate self as molrs;
 /// ABI line of any FFI handle the binary mints — `molrs_ffi::abi` derives the
 /// versioned capsule names and the handshake token from it. Downstream pins
 /// major.minor only; layout of the FFI-crossing types is frozen within a minor
-/// line (enforced by `molrs-ffi/tests/layout_snapshot.rs`).
+/// line.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 // Core is always compiled and its public surface is re-exported at the crate

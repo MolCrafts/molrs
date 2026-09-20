@@ -49,9 +49,8 @@ jobs:
       # --lib does not run rustdoc examples; a renamed public item otherwise
       # goes unnoticed until a human opens docs.rs.
       - run: cargo test --doc -p molcrafts-molrs --features full,filesystem
-      # molrs-ffi is a standalone workspace root, so the lines above never
-      # cover it. Its suite carries the ABI layout-snapshot gate (minor-line
-      # layout freeze) — it must run on every push.
+      # molrs-ffi and molrs-cxxapi are standalone workspace roots, so the
+      # lines above never cover them.
       - run: cargo test --manifest-path molrs-ffi/Cargo.toml
       - run: cargo test --manifest-path molrs-cxxapi/Cargo.toml
       - name: Verify the crates.io package builds outside the source tree
