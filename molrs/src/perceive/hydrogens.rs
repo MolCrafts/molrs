@@ -573,8 +573,8 @@ mod tests {
         assert_eq!(count, 4);
     }
 
-    /// Build a single charged heavy atom (no heavy neighbours) and check its
-    /// implicit-H count against RDKit's `GetTotalNumHs()`.
+    /// Build a single charged heavy atom (no heavy neighbours) and return its
+    /// implicit-H count.
     fn charged_atom_h(sym: &str, fc: f64) -> u32 {
         let mut g = Atomistic::new();
         let mut a = Atom::new();
@@ -585,10 +585,7 @@ mod tests {
     }
 
     #[test]
-    fn test_rdkit_charged_valence_parity() {
-        // Expected hydrogen counts baked in from RDKit 2026.03.2:
-        //   for smi in [...]: Chem.MolFromSmiles(smi); atom.GetTotalNumHs()
-        //
+    fn charged_single_atoms_take_their_valence_hydrogens() {
         // Charged single-heavy-atom species (the cases the old
         // bond_order_sum - formal_charge rule got wrong for group-13/14):
         assert_eq!(charged_atom_h("C", 1.0), 3, "[CH3+] -> 3 H");
@@ -621,7 +618,7 @@ mod tests {
 
     #[test]
     fn test_int_formal_charge_parity() {
-        // Same expectations as `test_rdkit_charged_valence_parity`, but the
+        // Same expectations as `charged_single_atoms_take_their_valence_hydrogens`, but the
         // charge is an Int prop (the real on-graph representation), not f64.
         assert_eq!(charged_atom_h_int("N", -1), 2, "[NH2-] (int fc) -> 2 H");
         assert_eq!(charged_atom_h_int("N", 1), 4, "[NH4+] (int fc) -> 4 H");
@@ -653,7 +650,7 @@ mod tests {
     }
 
     #[test]
-    fn test_rdkit_multi_atom_parity() {
+    fn bonded_atoms_take_their_remaining_valence_hydrogens() {
         // ethane CC: each C has bos 1 -> 3 H
         let mut g = Atomistic::new();
         let c1 = g.add_atom(atom("C"));
