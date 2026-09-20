@@ -268,32 +268,30 @@ impl Compute for SpatialDistribution {
         // orientation field the per-voxel vector sum is floating and order-sensitive,
         // so that case stays serial to keep results exactly reproducible.
         #[cfg(feature = "rayon")]
-        const PAR_THRESHOLD: usize = 4;
-
-        #[cfg(feature = "rayon")]
-        if self.orientation.is_none() && frames.len() >= PAR_THRESHOLD {
-            use rayon::prelude::*;
-            let partials: Result<Vec<Array3<F>>, ComputeError> = frames
-                .par_iter()
-                .map(|frame| {
-                    let mut c = Array3::<F>::zeros((nx, ny, nz));
-                    self.accumulate_frame(*frame, &mut c, None)?;
-                    Ok(c)
-                })
-                .collect();
-            for partial in partials? {
-                counts += &partial;
+        let parallel = self.orientation.is_none() && frames.len() >= 4;
+        #[cfg(not(feature = "rayon"))]
+        let parallel = false;
+        if parallel {
+            #[cfg(feature = "rayon")]
+            {
+                use rayon::prelude::*;
+                let partials: Result<Vec<Array3<F>>, ComputeError> = frames
+                    .par_iter()
+                    .map(|frame| {
+                        let mut c = Array3::<F>::zeros((nx, ny, nz));
+                        self.accumulate_frame(*frame, &mut c, None)?;
+                        Ok(c)
+                    })
+                    .collect();
+                for partial in partials? {
+                    counts += &partial;
+                }
             }
         } else {
             for frame in frames {
                 let orient = orient_sum.as_mut().zip(orient_count.as_mut());
                 self.accumulate_frame(*frame, &mut counts, orient)?;
             }
-        }
-        #[cfg(not(feature = "rayon"))]
-        for frame in frames {
-            let orient = orient_sum.as_mut().zip(orient_count.as_mut());
-            self.accumulate_frame(*frame, &mut counts, orient)?;
         }
 
         let mut result = SpatialDistributionResult {

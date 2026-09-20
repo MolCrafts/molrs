@@ -497,25 +497,24 @@ impl VerletSkin {
             d.copy_from_slice(&dr);
         };
 
+        // Below this the fork/join costs more than the work it splits.
         #[cfg(feature = "rayon")]
-        {
-            use rayon::prelude::*;
-            // Below this the fork/join costs more than the work it splits.
-            const PAR_MIN_EDGES: usize = 4_096;
-            if n_edges >= PAR_MIN_EDGES {
+        let parallel = n_edges >= 4_096;
+        #[cfg(not(feature = "rayon"))]
+        let parallel = false;
+        if parallel {
+            #[cfg(feature = "rayon")]
+            {
+                use rayon::prelude::*;
                 r2s.par_iter_mut()
                     .zip(disps.par_chunks_mut(3))
                     .zip(edges.par_iter())
                     .for_each(|((r2, d), edge)| one(edge, r2, d));
-            } else {
-                for ((r2, d), edge) in r2s.iter_mut().zip(disps.chunks_mut(3)).zip(edges.iter()) {
-                    one(edge, r2, d);
-                }
             }
-        }
-        #[cfg(not(feature = "rayon"))]
-        for ((r2, d), edge) in r2s.iter_mut().zip(disps.chunks_mut(3)).zip(edges.iter()) {
-            one(edge, r2, d);
+        } else {
+            for ((r2, d), edge) in r2s.iter_mut().zip(disps.chunks_mut(3)).zip(edges.iter()) {
+                one(edge, r2, d);
+            }
         }
 
         // Pass two: the selection, in edge order. The stored edges reach

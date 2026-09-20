@@ -217,28 +217,24 @@ impl Compute for HBonds {
         // so fan out over frames. `collect::<Result<Vec<_>>>()` on `par_iter`
         // keeps the per-frame order and short-circuits on the first error, so
         // the bond lists are identical to the serial pass.
+        let serial = || {
+            frames
+                .iter()
+                .map(|frame| self.detect_frame(*frame))
+                .collect::<Result<Vec<_>, _>>()
+        };
         #[cfg(feature = "rayon")]
-        const PAR_THRESHOLD: usize = 4;
-
-        #[cfg(feature = "rayon")]
-        let per_frame: Vec<Vec<HBond>> = if frames.len() >= PAR_THRESHOLD {
+        let per_frame: Vec<Vec<HBond>> = if frames.len() >= 4 {
             use rayon::prelude::*;
             frames
                 .par_iter()
                 .map(|frame| self.detect_frame(*frame))
                 .collect::<Result<Vec<_>, _>>()?
         } else {
-            frames
-                .iter()
-                .map(|frame| self.detect_frame(*frame))
-                .collect::<Result<Vec<_>, _>>()?
+            serial()?
         };
-
         #[cfg(not(feature = "rayon"))]
-        let per_frame: Vec<Vec<HBond>> = frames
-            .iter()
-            .map(|frame| self.detect_frame(*frame))
-            .collect::<Result<Vec<_>, _>>()?;
+        let per_frame: Vec<Vec<HBond>> = serial()?;
 
         let counts = per_frame.iter().map(Vec::len).collect();
         Ok(HBondsResult { per_frame, counts })
