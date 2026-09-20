@@ -1,0 +1,5 @@
+# `ci` exists so a CI run emits a JUnit report, which is what the MolCrafts CI
+# snapshot adapter reads. The default profile is untouched, so local
+# `cargo nextest run` behaves exactly as before.
+[profile.ci.junit]
+path = "junit.xml"

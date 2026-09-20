@@ -24,3 +24,10 @@ jobs:
   capi:
     name: C API
     uses: ./.github/workflows/ci-capi.yml
+
+  snapshot:
+    name: Snapshot
+    uses: ./.github/workflows/ci-snapshot.yml
+    # A called workflow gets no secrets unless they are handed over, and this
+    # one needs the MolCrafts App key to publish.
+    secrets: inherit
