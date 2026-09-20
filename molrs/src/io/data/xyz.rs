@@ -592,7 +592,10 @@ fn connct_block(value: &ExtValue, n_atoms: usize) -> Result<Option<Block>, Strin
 /// `Origin` defaults to `[0, 0, 0]` when absent, matching the extxyz convention.
 fn parse_simbox(lattice: &ExtValue, origin: Option<&ExtValue>) -> Option<SimBox> {
     let h_vals = parse_lattice_values(lattice)?;
-    let h = Array2::from_shape_vec((3, 3), h_vals).ok()?;
+    // extxyz lists the three lattice vectors one after another (R1 R2 R3);
+    // `SimBox` keeps them as the *columns* of H, so the row-major reshape is
+    // transposed.
+    let h = Array2::from_shape_vec((3, 3), h_vals).ok()?.t().to_owned();
     let origin_arr = origin
         .and_then(parse_origin_values)
         .map(|o| ndarray::array![o[0], o[1], o[2]])
@@ -1308,6 +1311,38 @@ impl FrameIndexBuilder for XyzIndexBuilder {
 mod tests {
     use super::*;
 
+    /// extxyz `Lattice="R1 R2 R3"` lists the vectors in sequence; `SimBox`
+    /// keeps them as the columns of H.
+    #[test]
+    fn lattice_vectors_become_the_box_columns() {
+        let frame = parse_xyz_frame_str(
+            "1\nLattice=\"10 0 0 2 11 0 3 4 12\" Properties=species:S:1:pos:R:3\nH 0 0 0\n",
+        )
+        .expect("parse XYZ");
+        let simbox = frame.simbox.as_ref().expect("Lattice sets the box");
+        assert_eq!(simbox.lattice(0).to_vec(), vec![10.0, 0.0, 0.0]);
+        assert_eq!(simbox.lattice(1).to_vec(), vec![2.0, 11.0, 0.0]);
+        assert_eq!(simbox.lattice(2).to_vec(), vec![3.0, 4.0, 12.0]);
+    }
+
+    #[test]
+    fn writer_lists_the_lattice_vectors_in_sequence() {
+        let mut frame = parse_xyz_frame_str(
+            "1\nLattice=\"10 0 0 2 11 0 3 4 12\" Properties=species:S:1:pos:R:3\nH 0 0 0\n",
+        )
+        .expect("parse XYZ");
+        let h = ndarray::array![[10.0, 2.0, 3.0], [0.0, 11.0, 4.0], [0.0, 0.0, 12.0]];
+        frame.simbox =
+            Some(SimBox::new(h, ndarray::array![0.0, 0.0, 0.0], [true, true, true]).expect("cell"));
+        let mut output = Vec::new();
+        write_xyz_frame(&mut output, &frame).expect("write XYZ");
+        let output = String::from_utf8(output).expect("UTF-8 XYZ");
+        assert!(
+            output.contains("Lattice=\"10 0 0 2 11 0 3 4 12\""),
+            "comment line: {output}"
+        );
+    }
+
     #[test]
     fn parse_properties_triplets() {
         let line = "Properties=species:S:1:pos:R:3:mass:R:1";
@@ -1841,9 +1876,10 @@ pub fn write_xyz_frame<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> st
     if let Some(simbox) = frame.simbox_ref() {
         let h = simbox.h_view();
         let mut lattice_values = Vec::with_capacity(9);
-        for i in 0..3 {
+        // Column k of H is lattice vector k; extxyz writes R1 R2 R3 in sequence.
+        for k in 0..3 {
             for j in 0..3 {
-                lattice_values.push(format!("{}", h[[i, j]]));
+                lattice_values.push(format!("{}", h[[j, k]]));
             }
         }
         comment_parts.push(format!("Lattice=\"{}\"", lattice_values.join(" ")));
