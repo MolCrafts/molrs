@@ -5,8 +5,8 @@ mol_project:
   stage: experimental
   build:
     install: "cargo build"
-    check: "cargo fmt --check && cargo clippy -p molcrafts-molrs --all-targets --features full,filesystem -- -D warnings && cargo clippy -p molcrafts-molrs-cxxapi --all-targets -- -D warnings"
-    test: "cargo test -p molcrafts-molrs --lib --features full,filesystem"
+    check: "cargo fmt --check && cargo clippy -p molcrafts-molrs --all-targets --features full,filesystem,stream -- -D warnings && cargo clippy --manifest-path molrs-cxxapi/Cargo.toml --all-targets -- -D warnings"
+    test: "cargo test -p molcrafts-molrs --lib --features full,filesystem,stream"
     test_single: "cargo test {path}"
   ci:
     # Local pre-push mirrors default CI + docs (not optional Full).
@@ -77,7 +77,7 @@ leaving rot you already saw.
   than one coherent responsibility.
 - **All-in-one façade APIs.** No public `run_everything` /
   `compute_all` / `pipeline` that hides multi-step work. Composition
-  is the **caller's** job (scripts, docs examples, `regressions/`).
+  is the **caller's** job (scripts, docs examples).
   The library exposes primitives only.
 
 ### Shape check (before adding a public symbol)
@@ -90,11 +90,9 @@ leaving rot you already saw.
 
 ### Tests (default)
 
-- Unit tests under the crate `tests/` tree and `#[cfg(test)]` pure-logic
-  modules; path mirrors source modules. Single-function unit tests — no
-  e2e under unit suites. Public-API / format scenarios use real fixtures
-  (see **IO Testing Rules** below) and hard-coded goldens where applicable.
-  Details: `tester` agent and `.claude/notes/testing.md`.
+- Unit tests live in `#[cfg(test)]` modules next to the code. Single-function
+  unit tests only — no end-to-end scenarios, no external-oracle goldens, no
+  source-text gates. Details: `tester` agent and `.claude/notes/testing.md`.
 
 <!-- mol:bootstrap:managed end -->
 
@@ -109,32 +107,47 @@ molrs is a Rust workspace for molecular simulation: core data structures, file I
 
 ## Testing Rules (MANDATORY)
 
-**No third-party scientific software in the default test gate** — not even as
-optional oracles. That means no RDKit, AmberTools/antechamber, freud, OpenMM,
-LAMMPS, Packmol, etc. at test time. Numerical goldens are either:
+**No third-party scientific software in the test gate** — no RDKit,
+AmberTools/antechamber, freud, OpenMM, LAMMPS, Packmol, etc. at test time, and
+no numbers *captured* from them either. A test asserts something the code
+under test is responsible for, with inputs written by hand: a closed form, a
+limit, an invariant (`F = -dE/dx`, symmetry, exactness), or a hand-derived
+expectation. A table asserting its own rows, a snapshot of another program's
+output, or a run of several stages in sequence is not a unit test and does not
+belong in the suite.
 
-- pure unit checks with hand-written numbers, or
-- **committed** static data (e.g. `molrs-cxxapi/tests/antechamber_oracle.rs`)
-  regenerated offline on a developer machine that has those tools (AmberTools /
-  RDKit). Generators are not kept in-tree; CI never runs them.
+**Unit tests live next to the code** (`#[cfg(test)]` in `molrs/src/**`); there
+is no `molrs/tests/` tree. Fixtures are inline strings (a tiny `include_str!`
+literal is fine); tests that need a file write it into a `tempfile` directory.
+There is no fixture corpus to fetch.
 
-**Prefer unit tests next to the code** (`#[cfg(test)]` in `molrs/src/**`).
-There is **no** `molrs/tests/` integration-binary tree.
-
-Default gate: `cargo test -p molcrafts-molrs --lib --features full,filesystem`, plus
-`cargo test --doc -p molcrafts-molrs --features full,filesystem` — `--lib` does not run
-doctests, so a rustdoc example can rot against a renamed API without CI noticing.
+Default gate: `cargo test -p molcrafts-molrs --lib --features full,filesystem,stream`
+plus `cargo test --doc -p molcrafts-molrs --features full,filesystem,stream` —
+`--lib` does not run doctests, so a rustdoc example can rot against a renamed
+API without CI noticing. `stream` is named explicitly because it is not in
+`default`.
 
 **Bindings (Python / C / WASM)** only smoke the FFI seam (construct, call,
-round-trip types). Science / format corpus depth lives in the Rust unit tests.
-Python IO fixtures are written in-process by molrs writers. A tiny
-`include_str!` fixture in a Rust unit test is OK for a parser edge-case.
+round-trip types, dtype at the boundary, error mapping). Science depth lives in
+the Rust unit tests; a binding test that re-derives a number the Rust suite
+already proves is a duplicate.
 
-Format-corpus fixtures live in `tests-data/` (gitignored clone of
-`MolCrafts/tests-data`). **CI and pre-push fetch them before unit tests**
-via `bash scripts/fetch-test-data.sh` (see `ci-rust.yml` + pre-commit
-`cargo-test-unit`). Prefer inline strings for pure parser unit tests;
-use `tests-data/` only when the corpus file is the assertion.
+## Build cache
+
+All workspace roots in this repo (root, `molrs-ffi`, `molrs-python`,
+`molrs-wasm`, `molrs-capi`, `molrs-cxxapi`) share **one** `<repo>/target` via the
+committed `.cargo/config.toml` (`build.target-dir` is config-relative), so molrs
+and its dependency tree compile once per (rustc, features, profile) instead of
+once per root. The sibling molpack repo points its target dir here too. Do not
+re-introduce per-root `target/` dirs or per-workflow `CARGO_TARGET_DIR`. CI
+additionally runs sccache (GHA cache backend). Optional local sccache:
+`brew install sccache`, then in `~/.cargo/config.toml` (user-level, never
+committed): `[build] rustc-wrapper = "sccache"`.
+
+Every consumer links molrs statically; `.cargo/config.toml` carries only
+`[build] target-dir`, and `lto = "thin"` lives in the committed
+`[profile.release]` of every root (a standalone workspace does not inherit it).
+
 ## Build & Test Commands
 
 ```bash
@@ -142,26 +155,26 @@ use `tests-data/` only when the corpus file is the assertion.
 cargo build
 
 # Default gate (mirrors CI): function-level unit tests only — should be seconds
-cargo test -p molcrafts-molrs --lib --features full,filesystem
+cargo test -p molcrafts-molrs --lib --features full,filesystem,stream
 
 # Doctests are NOT covered by --lib. Run them too: a rustdoc example is public
 # API that compiles, and a renamed constant breaks it invisibly otherwise.
-cargo test --doc -p molcrafts-molrs --features full,filesystem
+cargo test --doc -p molcrafts-molrs --features full,filesystem,stream
 
 # Lint & Format
 cargo fmt --all
-cargo clippy -p molcrafts-molrs --all-targets --features full,filesystem -- -D warnings
-
-# Benchmarks (criterion) — .github/workflows/bench.yml, not PR CI
-cargo bench -p molcrafts-molrs --bench core_benchmarks
+cargo clippy -p molcrafts-molrs --all-targets --features full,filesystem,stream -- -D warnings
 ```
+
+There are no benchmark targets; the benchmark and regression systems are being
+redesigned outside this repo.
 
 ## Crate Structure & Modules
 
 molrs is a **single published crate** `molcrafts-molrs` (lib name `molrs`, dir
 `molrs/`). Sub-systems are modules under `molrs/src/`. **Two are always
 compiled** — `core`, `perceive` — and the rest gate on a matching feature.
-`optimize` gates with `ff` (not always-on). `core` and `perceive` are re-exported
+`optimize` gates with `ff` (not always-on); `md` gates on `md` (→ `ff`). `core` and `perceive` are re-exported
 at the crate root (so `molrs::Frame`, `molrs::system::…`, `molrs::find_rings`,
 `molrs::SmartsPattern` resolve). The dependency spine is
 `core → perceive → {io, ff} → conformer` (`compute` → `signal`, `conformer` →
@@ -170,18 +183,20 @@ at the crate root (so `molrs::Frame`, `molrs::system::…`, `molrs::find_rings`,
 
 | Module (`molrs/src/`) | Feature | Purpose |
 |---|---|---|
-| `core` | always on | Frame/Block/Grid/MolGraph/MolRec/Topology/Element, neighbors, math, SimBox (spatial), geometric regions, graph hash, atom-type mapping, structure generators (`generate` / SARW) |
+| `core` | always on | Frame/Block/Grid/MolGraph/Record/Topology/Element, neighbors, math, SimBox (spatial), geometric regions, triangle meshes (`spatial::TriMesh`), graph hash, atom-type mapping, structure generators (`generate` / SARW) |
 | `perceive` | always on | **Chemical perception**, one layer above `core` and below `ff`/`io`/`conformer`: rings (SSSR), aromaticity, hydrogen perception, stereochemistry, rotatable bonds, SMARTS/SMIRKS. Builder API `Perceive::new().find_*(&MolGraph) -> MolGraph` (graph-in/graph-out, non-mutating). **Gasteiger charges live in `ff::charge`**, re-exported at crate root under `ff`. |
 | `optimize` | `ff` | Geometry optimizers (`Optimizer`, `LBFGS`); depends on `ff::potential::Potential` |
-| `io` | `io` | File I/O: PDB, XYZ, LAMMPS data/dump, CHGCAR/POSCAR, Gaussian Cube, CIF, mol2, SDF, GRO, DCD, GROMACS TRR/XTC, Zarr V3 trajectories; SMILES parsing in `io/smiles/` (gated by `smiles`). **SMARTS lives in `perceive/smarts/`, not here** |
+| `io` | `io` | File I/O: PDB, XYZ, LAMMPS data/dump, CHGCAR/POSCAR, Gaussian Cube, CIF, mol2, SDF, GRO, DCD, GROMACS TRR/XTC, Zarr V3 trajectories; STL surface meshes in `io/mesh/` (reads a `TriMesh`, not a `Frame`); SMILES parsing in `io/smiles/` (gated by `smiles`). **SMARTS lives in `perceive/smarts/`, not here** |
 | `signal` | `signal` | Signal processing: FFT-based autocorrelation, window functions, frequency grids |
 | `compute` | `compute` (→ `signal`) | Trajectory analysis: RDF, MSD, clustering, gyration/inertia tensors |
 | `stream` | `stream` | Frame/Block serde + MessagePack/JSON `frame_to_bytes` |
 | `ff` | `ff` | Force fields, potentials (KernelRegistry), atom typifier |
 | `conformer` | `conformer` (→ `ff`) | 3D conformer generation: ETKDGv3 distance geometry, experimental-torsion refinement, MMFF94 cleanup, stereo guards |
+| `md` | `md` (→ `ff`) | In-process MD: `VelocityVerlet` / `Langevin`, `ForceProvider` (minimum-image and ghost régimes), the halo (`Comm`), bonded index lists, special-bonds weights, Maxwell–Boltzmann. `ff` never names `md` |
+| `builder` | `builder` | Structure generators: graphene, carbon nanotubes, FCC lattices, self-avoiding walks |
 
 The umbrella feature `full` enables every gated sub-system module; core knobs are
-`rayon` (default), `zarr`, `filesystem`, `blas`, `voronoi`.
+`rayon` (default), `zarr`, `zarr-codecs`, `filesystem`, `serde`, `stream`.
 
 **Why `perceive` is always-on rather than feature-gated:** `core` is always
 compiled and this code used to live *inside* it, so every consumer configuration
@@ -189,11 +204,12 @@ already compiled it. Keeping it unconditional reproduces the existing build grap
 exactly — gating it would be a behaviour change, not a refactor. (Gating it later
 to shrink the WASM bundle is a legitimate, separately-measured follow-up.)
 
-The other workspace member is `molrs-cxxapi` (`molcrafts-molrs-cxxapi`, a
-`staticlib` CXX bridge to Atomiverse C++ via `FrameView`); it depends on the
-merged crate with `features = ["io"]`. The binder crates `molrs-ffi`,
-`molrs-wasm`, `molrs-python`, and `molrs-capi` are **separate workspaces** (not
-members) and each depend on `molcrafts-molrs` with the features they need.
+`molrs` is the root workspace's **only** member. Every binder crate —
+`molrs-ffi`, `molrs-wasm`, `molrs-python`, `molrs-capi` and `molrs-cxxapi`
+(`molcrafts-molrs-cxxapi`, a `staticlib` CXX bridge to Atomiverse C++ via
+`FrameView`) — is a **separate workspace** with its own `[workspace]`, and each
+depends on `molcrafts-molrs` with the features it needs. Address a binder by
+`--manifest-path <dir>/Cargo.toml`, never `-p`.
 
 Molecular packing (Packmol port) used to live here as `molrs-pack`; it now lives in the
 standalone repo `MolCrafts/molpack` (crates.io: `molcrafts-molpack`, PyPI:
@@ -203,14 +219,19 @@ standalone repo `MolCrafts/molpack` (crates.io: `molcrafts-molpack`, PyPI:
 
 All on the single `molcrafts-molrs` crate (`molrs/Cargo.toml`):
 
-- Sub-system modules: `io`, `signal`, `compute` (→ `signal`), `ff`,
-  `conformer` (→ `ff`), `smiles` (→ `io`); `full` enables
-  all of them. Each gates its module **and** its unique optional deps, so a build
-  with a sub-system off does not compile that sub-system's dependency.
-- Core knobs: `rayon` (default; parallel neighbor lists / potentials),
-  `zarr` (Zarr V3 + `From<zarrs::*Error>` conversions), `filesystem`
-  (→ `zarr`, filesystem store), `blas` (BLAS via `ndarray-linalg`),
-  `slow-tests` (expensive integration tests).
+- Sub-system modules: `io`, `signal`, `compute` (→ `signal`), `voronoi`
+  (→ `compute`), `ff`, `md` (→ `ff`), `conformer` (→ `ff`), `smiles` (→ `io`),
+  `builder`; `full` enables all of them. Each gates its module **and** its
+  unique optional deps, so a build with a sub-system off does not compile that
+  sub-system's dependency.
+- Core knobs: `rayon` (default; parallel neighbor lists / potentials), `zarr`
+  (Zarr V3 + `From<zarrs::*Error>` conversions), `zarr-codecs` (zstd / blosc,
+  native only), `filesystem` (→ `zarr`, `zarr-codecs`, filesystem store, zip
+  packing), `serde` (serde impls for the core model), `stream` (MessagePack /
+  JSON frames + native WebSocket publisher; **not** in `default` — molrs-python
+  enables it itself).
+- `default = ["full", "filesystem", "rayon"]`. wasm / Pyodide opt down with
+  `default-features = false`.
 
 ## Core Data Model
 
@@ -226,11 +247,11 @@ Key type aliases: `F3 = Array1<F>`, `F3x3 = Array2<F>`, `FN = Array1<F>`, `FNx3 
 
 ### Block (heterogeneous column store)
 
-`Block` maps string keys to typed ndarray columns (f32, f64, i64, bool). Enforces consistent `nrows` across all columns. Type-safe access via `get_float()`, `get_int()`, `get_bool()`, `get_uint()`, `get_u8()`, `get_string()`. (`molrs/src/core/store/block/`).
+`Block` maps string keys to typed ndarray columns (f64, i64, bool, …). Enforces consistent `nrows` across all columns. Type-safe access via `get_float()`, `get_int()`, `get_bool()`, `get_uint()`, `get_u8()`, `get_string()`. (`molrs/src/core/store/block/`). `F = f64` is invariant.
 
 ### Frame (hierarchical data container)
 
-`Frame` maps string keys (e.g. "atoms", "bonds", "angles") to `Block`s. Contains optional `SimBox` for periodic boundaries and a metadata hashmap. No forced cross-block row consistency — caller responsibility.
+`Frame` maps string keys (e.g. "atoms", "bonds", "angles") to `Block`s. Contains optional `SimBox` for periodic boundaries and a `meta` hashmap. No forced cross-block row consistency — caller responsibility.
 
 ### MolGraph (molecular topology)
 
@@ -240,8 +261,8 @@ Graph-based molecular structure with atoms, bonds, stereochemistry, ring detecti
 
 | Trait | Crate | Purpose | Key Implementations |
 |---|---|---|---|
-| `NeighborList` engine (public; internal closed `Backend` trait) | `molrs::core::spatial::neighbors` | Neighbor search: `build`/`update`/`build_columns` own the spatial index, `for_each_pair` streams `NeighborPair`s, `neighbors(storage)` materializes a `Neighbors` table | `LinkCell` (O(N), `NeighborList::new`), `BruteForce` (O(N²), `NeighborList::brute_force`) — picked by constructor, not user-implemented; cross-queries go through `NeighborQuery` |
-| `Potential` | `molrs::ff::potential` | Energy/force evaluation | Bond harmonic, MMFF bond/angle/torsion/oop/vdw/ele, LJ/cut, PME |
+| `NeighborList` engine (public; internal closed `Backend` trait) | `molrs::core::spatial::neighbors` | Neighbor search: `build`/`update`/`build_columns` own the spatial index, `for_each_pair` streams `NeighborPair`s, `neighbors(storage)` materializes a `Neighbors` table | `LinkCell` (O(N), `NeighborList::new`), `Aabb` (BVH, `NeighborList::aabb`), `BruteForce` (O(N²), `NeighborList::brute_force`) — picked by constructor, not user-implemented; cross-queries go through `NeighborQuery` |
+| `Potential` (+ `IndexedTerms`, `PairDriven`) | `molrs::ff::potential` | Energy/force evaluation. `IndexedTerms` adds a replaceable index table (bonded kernels); `PairDriven` adds neighbour-table summation (pair kernels). `Member` is the three as one value, chosen by the kernel constructor | Bond harmonic, MMFF bond/angle/torsion/oop/vdw/ele, LJ/cut, PME |
 | `Typifier` | `molrs::ff::typifier` | MolGraph → typed Frame | `MMFF94Typifier` / `MMFF94STypifier` (one engine, two named front doors — the MMFF variant is a private field, never a constructor flag), `OPLSAATypifier`, `AtdTypifier` |
 
 Pack-related traits (`Restraint`, `Region`, `Relaxer`, `Handler`, `Objective`) now live
@@ -251,7 +272,7 @@ in the standalone `molcrafts-molpack` crate.
 
 ### Potential System (molrs/src/ff/potential/)
 
-`KernelRegistry` maps `(category, style_name)` → `KernelConstructor`. Categories: bonds, angles, dihedrals, impropers, pairs, kspace. `ForceField::to_potentials(frame)` (with `Style::to_potential`) resolves topology and constructs `Potentials` (aggregate sum) — frame-free, deferred potentials that bind topology and coordinates at evaluation time. Coordinate format: flat `[x0,y0,z0, x1,y1,z1, ...]` (3N elements).
+`KernelRegistry` maps `(category, style_name)` → `KernelConstructor`. Categories: bonds, angles, dihedrals, impropers, pairs. PME is the pair style `coul/long/pme` (`ff/potential/kspace` is the FFT compilation unit, not a category). `ForceField::to_potentials(frame)` (with `Style::to_potential`) resolves topology and constructs `Potentials` (aggregate sum) — frame-free, deferred potentials that bind topology and coordinates at evaluation time. Coordinate format: flat `[x0,y0,z0, x1,y1,z1, ...]` (3N elements).
 
 **Every parameter table is committed Rust, in one place.** `molrs/src/ff/params/` holds them all, flat — GAFF/GAFF2, the seven `ATOMTYPE_*.DEF` sets, BCCPARM, GASPARM, MMFF, OPLS-AA, UFF. Nothing parses parameter text at runtime, so a malformed table is a **compile** error, not a runtime one. `molrs/data/` and `molrs::data::*_XML` no longer exist. How a table *arrived* lives in its header doc (AmberTools `.DAT`/`.DEF`, RDKit `Params.cpp` for MMFF / UFF) — never in its name.
 
@@ -259,9 +280,11 @@ in the standalone `molcrafts-molpack` crate.
 
 **MMFF owns no kernel.** Its electrostatics is a buffered Coulomb — `pair/coul/cut` parameterised by `MMFF_ELE_STYLE` (`E = k·qᵢqⱼ / (D·(r+δ))`, δ = 0.05 Å; δ = 0 degenerates to the textbook form). A force field must **declare** the constants it means: a style that omits `coulomb` / `dielectric` / `coulomb14scale` is an `Err`, never a silent default. A kernel that supplies the force field's own constants is not reading the force field.
 
-### AabbQuery (k-nearest neighbors)
+### AabbQuery (shared BVH: cutoff and k-nearest)
 
-`AabbQuery` (`molrs::core::spatial::neighbors::aabb`) answers k-NN queries (`query_knn`) over a tree on unwrapped coordinates — a capability the cell-list `NeighborList` engine does not express. Cutoff-based searches go through `NeighborList`; `AabbQuery` exists for k-NN.
+`AabbQuery` (`molrs::core::spatial::neighbors::aabb`) is a bounding-volume tree that answers **both** cutoff searches — as the `Aabb` backend of the `NeighborList` engine — and k-NN queries (`query_knn`), which have no radius and which a fixed cutoff cannot express. This follows freud, where one tree serves both. `LinkCell` remains the default backend; `Aabb` is opt-in per construction.
+
+Its image enumeration must size from `SimBox::nearest_plane_distance`, never from `SimBox::lengths` — on a tilted cell `|a_k|` over-estimates the usable width, so edge-length sizing silently **misses** pairs.
 
 ### Free-Boundary Support
 
@@ -284,7 +307,15 @@ CXX bridge to Atomiverse C++. Zero-copy I/O via `FrameView` (borrowed) into exis
 
 ### Consuming molrs from other projects
 
-See `docs/interop.md` for the two as-built paths — **native Rust** (depend on `molcrafts-molrs`, use `molrs::Frame` / `molrs::ff::ForceField` directly; what molpack does) and **Python/WASM** (the `molrs-ffi` handle API: `FrameRef` / `BlockRef` / `ForceFieldRef` / `SharedStore`) — plus the shared data contract: **uint** atom indices, the `atomi/atomj/is_14` pairs-block schema, `special_bonds` weights on `ForceField`, and the consumer- or optimizer-built pairs neighbour list (`intramolecular_pairs` / topology bruteforce). No hand-written CHANGELOG — history is git tags. Downstream (molpy) pins major.minor only.
+See `docs/interop.md` for the two as-built paths — **native Rust** (depend on
+`molcrafts-molrs`, use `molrs::Frame` / `molrs::ff::ForceField` directly; what
+molpack does) and **Python/WASM** (the `molrs-ffi` handle API: `FrameRef` /
+`BlockRef` / `ForceFieldRef` / `SharedStore`) — plus the shared data contract:
+**uint** atom indices, the `atomi/atomj/is_14` pairs-block schema,
+`special_bonds` weights on `ForceField`, and the consumer- or optimizer-built
+pairs neighbour list (`intramolecular_pairs(&frame, ff.special_bonds())` /
+topology bruteforce). Every consumer links molrs statically. No hand-written
+CHANGELOG — history is git tags. Downstream (molpy) pins major.minor only.
 
 ## Critical Conventions
 

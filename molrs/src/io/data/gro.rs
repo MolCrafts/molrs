@@ -10,7 +10,7 @@
 //! line 3+n : box vectors (3 floats orthorhombic; 9 floats triclinic; nm)
 //! ```
 //!
-//! Multi-frame `.gro` files concatenate this layout. [`GroReader::read_frame`]
+//! Multi-frame `.gro` files concatenate this layout. [`GroReader::read`]
 //! returns one frame per call.
 //!
 //! ## Atom record columns (1-indexed)
@@ -36,14 +36,14 @@
 //! ## Output Frame
 //!
 //! - `"atoms"` block: `res_id` (uint), `resname` (str), `atom_name` (str),
-//!   `element` (str, inferred — see [`element_from_atom_name`]), `id` (uint),
+//!   `element` (str, inferred from the atom name), `id` (uint),
 //!   `x`/`y`/`z` (F, **Å**), and optional `vx`/`vy`/`vz` (F, **Å/ps**).
 //! - `frame.simbox`: triclinic [`SimBox`] from the box-vector line, in Å.
 //! - `frame.meta["title"]`.
 //!
 //! ## Units
 //!
-//! GRO is nm; molrs is Å. The reader multiplies by [`NM_TO_ANGSTROM`] and the
+//! GRO is nm; molrs is Å. The reader multiplies by 10 and the
 //! writer divides by it, so a frame in memory is never in nm and no consumer
 //! has to ask where it came from. There is no `gro_units` tag: a unit that is
 //! normalised at the boundary is not a property of the frame.
@@ -56,7 +56,7 @@ use ndarray::{Array1, Array2, IxDyn, array};
 use molrs::spatial::simbox::SimBox;
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
-use molrs::types::{F, I};
+use molrs::types::{F, I, Idx};
 
 use crate::io::reader::{FrameReader, Reader};
 use crate::io::writer::{FrameWriter, Writer};
@@ -150,10 +150,10 @@ fn insert_float_col(block: &mut Block, key: &str, vals: Vec<F>) -> Result<()> {
 /// Insert an unsigned column, rejecting negatives with a message that names
 /// the key — used for the canonical identifier columns.
 fn insert_uint_col(block: &mut Block, key: &str, vals: Vec<I>) -> Result<()> {
-    let unsigned: Vec<molrs::types::U> = vals
+    let unsigned: Vec<molrs::types::Idx> = vals
         .iter()
         .map(|&v| {
-            u32::try_from(v).map_err(|_| {
+            Idx::try_from(v).map_err(|_| {
                 invalid_data(format!(
                     "GRO column '{key}' is unsigned in the Frame schema, got {v}"
                 ))
@@ -538,7 +538,7 @@ pub fn write_gro_frame<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
             .unwrap_or("X");
         let aid = atom_id
             .map(|c| c[[i]])
-            .unwrap_or((i as molrs::types::U) + 1);
+            .unwrap_or((i as molrs::types::Idx) + 1);
         // GROMACS truncates the residue number and atom number at 5 digits via modulo.
         let r_mod = r.rem_euclid(100_000);
         let aid_mod = aid.rem_euclid(100_000);

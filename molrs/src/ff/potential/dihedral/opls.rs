@@ -9,11 +9,13 @@
 
 use std::collections::HashMap;
 
+use ndarray::{Array2, ArrayView2};
+
 use crate::ff::forcefield::Params;
-use crate::ff::potential::Potential;
 use crate::ff::potential::geometry::{
-    accumulate_dihedral_forces, compute_dihedral, validate_coords,
+    accumulate_dihedral_forces, compute_dihedral, term_table, validate_coords,
 };
+use crate::ff::potential::{IndexedTerms, Member, Potential};
 use molrs::store::frame::Frame;
 use molrs::types::F;
 
@@ -29,19 +31,24 @@ pub struct DihedralOPLS {
     f4: Vec<F>,
 }
 
-impl Potential for DihedralOPLS {
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
+impl DihedralOPLS {
+    /// The physics, once. Which atoms a term names is the only thing
+    /// that differs between the two entry points, so it is the only thing
+    /// passed in — a second copy of the loop would be a second place for
+    /// the force expression to drift.
+    fn fold(
+        &self,
+        coords: &[F],
+        out: &mut [F],
+        n_terms: usize,
+        atoms: impl Fn(usize) -> (usize, usize, usize, usize),
+    ) -> F {
         let _n = validate_coords(coords);
         let mut energy: F = 0.0;
-        let mut forces = vec![0.0 as F; coords.len()];
+        let forces = out;
 
-        for idx in 0..self.atom_i.len() {
-            let (i, j, k, l) = (
-                self.atom_i[idx],
-                self.atom_j[idx],
-                self.atom_k[idx],
-                self.atom_l[idx],
-            );
+        for idx in 0..n_terms {
+            let (i, j, k, l) = atoms(idx);
             let phi = compute_dihedral(coords, i, j, k, l);
 
             let (s1, c1) = phi.sin_cos();
@@ -55,9 +62,59 @@ impl Potential for DihedralOPLS {
 
             // dE/dφ = ½[ −F1 sinφ + 2F2 sin2φ − 3F3 sin3φ + 4F4 sin4φ ]
             let de_dphi = 0.5 * (-f1 * s1 + 2.0 * f2 * s2 - 3.0 * f3 * s3 + 4.0 * f4 * s4);
-            accumulate_dihedral_forces(coords, i, j, k, l, de_dphi, &mut forces);
+            accumulate_dihedral_forces(coords, i, j, k, l, de_dphi, forces);
         }
-        (energy, forces)
+        energy
+    }
+}
+
+impl Potential for DihedralOPLS {
+    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
+        let mut out = vec![0.0; coords.len()];
+        let energy = self.accumulate(coords, &mut out);
+        (energy, out)
+    }
+
+    fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
+        self.fold(coords, out, self.atom_i.len(), |t| {
+            (
+                self.atom_i[t],
+                self.atom_j[t],
+                self.atom_k[t],
+                self.atom_l[t],
+            )
+        })
+    }
+}
+
+impl IndexedTerms for DihedralOPLS {
+    fn terms(&self) -> Array2<u32> {
+        term_table(&[&self.atom_i, &self.atom_j, &self.atom_k, &self.atom_l])
+    }
+    fn calc_energy_forces_with_terms(
+        &self,
+        coords: &[F],
+        terms: ArrayView2<'_, u32>,
+    ) -> (F, Vec<F>) {
+        let mut out = vec![0.0; coords.len()];
+        let energy = self.accumulate_with_terms(coords, terms, &mut out);
+        (energy, out)
+    }
+
+    fn accumulate_with_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, out: &mut [F]) -> F {
+        debug_assert_eq!(
+            terms.nrows(),
+            self.atom_i.len(),
+            "the row set is the force field's; only the atoms a row names may be rebound"
+        );
+        self.fold(coords, out, terms.nrows(), |t| {
+            (
+                terms[[t, 0]] as usize,
+                terms[[t, 1]] as usize,
+                terms[[t, 2]] as usize,
+                terms[[t, 3]] as usize,
+            )
+        })
     }
 }
 
@@ -67,7 +124,7 @@ pub fn dihedral_opls_ctor(
     _sp: &Params,
     tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
+) -> Result<Member, String> {
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
     let block = frame
         .get("dihedrals")
@@ -100,13 +157,41 @@ pub fn dihedral_opls_ctor(
         aj.push(jc[idx] as usize);
         ak.push(kc[idx] as usize);
         al.push(lc[idx] as usize);
-        // Missing coefficients default to 0 (a sparse OPLS term is common).
-        f1.push(p.get("f1").unwrap_or(0.0) as F);
-        f2.push(p.get("f2").unwrap_or(0.0) as F);
-        f3.push(p.get("f3").unwrap_or(0.0) as F);
-        f4.push(p.get("f4").unwrap_or(0.0) as F);
+        // A sparse term is common, so an individually missing coefficient is 0.
+        // A type carrying *none* of them is not sparse, it is mis-spelled or
+        // unparameterised — and defaulting the lot to zero used to make a whole
+        // torsion vanish in silence (molnex wrote `c1..c4`, this kernel read
+        // `f1..f4`). Canonical spelling is `k1..k4`; spec ff-params-01.
+        // `Params` is flat scalars, so the multi-term `periodic` style spells
+        // its terms `k{m}`/`periodicity{m}`/`phase{m}` — the same `k1..k4` keys
+        // this style uses for the OPLS quartet, with a different meaning (LAMMPS
+        // `K_n` already carries the 1/2). A bag that also names
+        // `periodicity1`/`phase1` is a periodic bag on the wrong style, and
+        // reading it here would price a plain barrier as a half barrier, silently.
+        if p.get("periodicity1").is_some() || p.get("phase1").is_some() {
+            return Err(format!(
+                "dihedral_opls: type '{}' carries periodicity1/phase1 — that is a \
+                 `dihedral_style periodic` term table, not the OPLS quartet; \
+                 declare the periodic style for it",
+                tc[idx]
+            ));
+        }
+        if ["k1", "k2", "k3", "k4"]
+            .iter()
+            .all(|key| p.get(key).is_none())
+        {
+            return Err(format!(
+                "dihedral_opls: type '{}' carries none of k1..k4; an OPLS torsion \
+                 with no coefficient at all is unparameterised, not sparse",
+                tc[idx]
+            ));
+        }
+        f1.push(p.get("k1").unwrap_or(0.0) as F);
+        f2.push(p.get("k2").unwrap_or(0.0) as F);
+        f3.push(p.get("k3").unwrap_or(0.0) as F);
+        f4.push(p.get("k4").unwrap_or(0.0) as F);
     }
-    Ok(Box::new(DihedralOPLS {
+    Ok(Member::indexed(DihedralOPLS {
         atom_i: ai,
         atom_j: aj,
         atom_k: ak,

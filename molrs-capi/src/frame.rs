@@ -26,8 +26,8 @@ use molrs::store::meta::MetaValue;
 
 use crate::error::{self, MolrsStatus, ffi_err_to_status};
 use crate::handle::{
-    MolrsBlockHandle, MolrsFrameHandle, MolrsBoxHandle, block_handle_to_c, frame_id_to_handle,
-    handle_to_frame_id, handle_to_box_key, box_key_to_handle,
+    MolrsBlockHandle, MolrsBoxHandle, MolrsFrameHandle, block_handle_to_c, box_key_to_handle,
+    frame_id_to_handle, handle_to_box_key, handle_to_frame_id,
 };
 use crate::store::lock_store;
 use crate::{ffi_try, null_check};
@@ -709,6 +709,13 @@ fn meta_to_c(value: &MetaValue) -> Result<MolrsMetaValue, MolrsStatus> {
         MetaValue::F64x9(v) => {
             let mut out = base!(F64x9);
             out.f64x9 = *v;
+            out
+        }
+        MetaValue::Json(v) => {
+            let mut out = base!(String);
+            let owned =
+                CString::new(v.to_string()).unwrap_or_else(|_| CString::new("null").unwrap());
+            out.string_value = owned.into_raw();
             out
         }
     })

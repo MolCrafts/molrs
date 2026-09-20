@@ -6,20 +6,24 @@
 //! the paper GAFF itself was parameterised in, Eqs. 3 and 5). **No ab-initio /
 //! QM fitting is ever performed.**
 //!
-//! # Units, and the one convention that is not molrs's
+//! # Units
 //!
-//! Angles are **radians**, lengths Å — molrs's own conventions, and what the
-//! candidate tables must present.
+//! Angles are **radians**, lengths Å — molrs's own conventions.
 //!
-//! Force constants are **not** halved. These formulas are calibrated to
-//! reproduce `gaff.dat`'s own numbers, and AMBER writes a harmonic term as
-//! `E = K·(x − x₀)²` where molrs's kernels write `E = ½k₀·(x − x₀)²`. So an
-//! empirical `K` is in exactly the convention of the table it stands in for, and
-//! a consumer that halves its force constants (see
-//! [`forcefield::gaff`](crate::ff::forcefield::gaff), which is the boundary where
-//! that happens) applies the same factor it applies to a row it looked up. Doing
-//! the conversion here instead would make an estimate and a table hit disagree by
-//! a factor of two.
+//! These functions return AMBER's **un-halved** `K`, because they are calibrated
+//! to reproduce `gaff.dat`'s own numbers and AMBER writes a harmonic term as
+//! `E = K·(x − x₀)²` where molrs's kernels write `E = ½k·(x − x₀)²`. The caller
+//! doubles: the private `cascade` module's `empirical_bond` / `empirical_angle`
+//! apply the ×2 exactly as [`forcefield::gaff`](crate::ff::forcefield::gaff)'s
+//! `bond_params` / `angle_params` apply it to a row it looked up, so a formula
+//! and a table hit reach a consumer in the same convention.
+//!
+//! That symmetry is the whole point, and it used to be achieved the other way
+//! round — nobody converted, and the AMBER convention travelled all the way to
+//! the consumer under the same name the kernels read. It survived only because
+//! the one consumer that mattered, `gaff()`, doubled at the end; an estimate
+//! handed to anything else (the OPLS typifier's estimator seam, which writes
+//! params straight onto a molecule's terms) was silently half strength.
 
 /// 143.9 prefactor in the empirical angle force-constant formula (Wang 2004,
 /// Eq. 5). Units bake out to kcal/mol/rad².

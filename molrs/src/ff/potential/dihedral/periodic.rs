@@ -1,26 +1,28 @@
 //! Periodic / Fourier proper dihedral (AMBER / GAFF):
 //!
-//! E(φ) = Σ_m K_m · [1 + cos(n_m·φ − d_m)]
+//! E(φ) = Σ_m k_m · [1 + cos(n_m·φ − γ_m)]
 //!
 //! AMBER-family torsions are a sum of cosine terms per quadruple. The parameter
-//! encoding is **per-term indexed keys** `k{m}`, `n{m}`, `d{m}` (1-indexed, `d`
-//! the phase in radians — readers normalize at their boundary), scanned upward
-//! from `m = 1` until a term is absent. A single
-//! unindexed `k`/`n`/`d` triple is accepted as the one-term case (the common
+//! encoding is **per-term indexed keys** `k{m}`, `periodicity{m}`, `phase{m}`
+//! (1-indexed, the phase in radians — readers normalize at their boundary),
+//! scanned upward from `m = 1` until a term is absent. A single unindexed
+//! `k`/`periodicity`/`phase` triple is accepted as the one-term case (the common
 //! GAFF default), keeping the form identical to one CHARMM term. This is the
 //! canonical encoding the molpy → molrs ForceField bridge emits.
 
 use std::collections::HashMap;
 
+use ndarray::{Array2, ArrayView2};
+
 use crate::ff::forcefield::Params;
-use crate::ff::potential::Potential;
 use crate::ff::potential::geometry::{
-    accumulate_dihedral_forces, compute_dihedral, validate_coords,
+    accumulate_dihedral_forces, compute_dihedral, term_table, validate_coords,
 };
+use crate::ff::potential::{IndexedTerms, Member, Potential};
 use molrs::store::frame::Frame;
 use molrs::types::F;
 
-/// One cosine term `K·[1 + cos(n·φ − d)]` with the phase `d` in radians.
+/// One cosine term `k·[1 + cos(n·φ − γ)]` with the phase `γ` in radians.
 #[derive(Clone, Copy)]
 struct Term {
     k: F,
@@ -38,19 +40,24 @@ pub struct DihedralPeriodic {
     terms: Vec<Vec<Term>>,
 }
 
-impl Potential for DihedralPeriodic {
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
+impl DihedralPeriodic {
+    /// The physics, once. Which atoms a term names is the only thing
+    /// that differs between the two entry points, so it is the only thing
+    /// passed in — a second copy of the loop would be a second place for
+    /// the force expression to drift.
+    fn fold(
+        &self,
+        coords: &[F],
+        out: &mut [F],
+        n_terms: usize,
+        atoms: impl Fn(usize) -> (usize, usize, usize, usize),
+    ) -> F {
         let _n = validate_coords(coords);
         let mut energy: F = 0.0;
-        let mut forces = vec![0.0 as F; coords.len()];
+        let forces = out;
 
-        for idx in 0..self.atom_i.len() {
-            let (i, j, k, l) = (
-                self.atom_i[idx],
-                self.atom_j[idx],
-                self.atom_k[idx],
-                self.atom_l[idx],
-            );
+        for idx in 0..n_terms {
+            let (i, j, k, l) = atoms(idx);
             let phi = compute_dihedral(coords, i, j, k, l);
             let mut de_dphi: F = 0.0;
             for t in &self.terms[idx] {
@@ -58,14 +65,65 @@ impl Potential for DihedralPeriodic {
                 energy += t.k * (1.0 + arg.cos());
                 de_dphi += -t.k * t.n * arg.sin();
             }
-            accumulate_dihedral_forces(coords, i, j, k, l, de_dphi, &mut forces);
+            accumulate_dihedral_forces(coords, i, j, k, l, de_dphi, forces);
         }
-        (energy, forces)
+        energy
+    }
+}
+
+impl Potential for DihedralPeriodic {
+    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
+        let mut out = vec![0.0; coords.len()];
+        let energy = self.accumulate(coords, &mut out);
+        (energy, out)
+    }
+
+    fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
+        self.fold(coords, out, self.atom_i.len(), |t| {
+            (
+                self.atom_i[t],
+                self.atom_j[t],
+                self.atom_k[t],
+                self.atom_l[t],
+            )
+        })
+    }
+}
+
+impl IndexedTerms for DihedralPeriodic {
+    fn terms(&self) -> Array2<u32> {
+        term_table(&[&self.atom_i, &self.atom_j, &self.atom_k, &self.atom_l])
+    }
+    fn calc_energy_forces_with_terms(
+        &self,
+        coords: &[F],
+        terms: ArrayView2<'_, u32>,
+    ) -> (F, Vec<F>) {
+        let mut out = vec![0.0; coords.len()];
+        let energy = self.accumulate_with_terms(coords, terms, &mut out);
+        (energy, out)
+    }
+
+    fn accumulate_with_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, out: &mut [F]) -> F {
+        debug_assert_eq!(
+            terms.nrows(),
+            self.atom_i.len(),
+            "the row set is the force field's; only the atoms a row names may be rebound"
+        );
+        self.fold(coords, out, terms.nrows(), |t| {
+            (
+                terms[[t, 0]] as usize,
+                terms[[t, 1]] as usize,
+                terms[[t, 2]] as usize,
+                terms[[t, 3]] as usize,
+            )
+        })
     }
 }
 
 /// Collect the cosine terms from a per-type [`Params`] using the indexed
-/// `k{m}`/`n{m}`/`d{m}` encoding, falling back to a single `k`/`n`/`d` triple.
+/// `k{m}`/`periodicity{m}`/`phase{m}` encoding, falling back to a single
+/// `k`/`periodicity`/`phase` triple.
 fn collect_terms(p: &Params, label: &str) -> Result<Vec<Term>, String> {
     let mut terms = Vec::new();
     let mut m = 1;
@@ -75,9 +133,9 @@ fn collect_terms(p: &Params, label: &str) -> Result<Vec<Term>, String> {
             break;
         }
         let n = p
-            .get(&format!("n{m}"))
-            .ok_or_else(|| format!("dihedral_periodic[{label}]: missing n{m}"))?;
-        let d = p.get(&format!("d{m}")).unwrap_or(0.0);
+            .get(&format!("periodicity{m}"))
+            .ok_or_else(|| format!("dihedral_periodic[{label}]: missing periodicity{m}"))?;
+        let d = p.get(&format!("phase{m}")).unwrap_or(0.0);
         terms.push(Term {
             k: kk.unwrap() as F,
             n: n as F,
@@ -89,9 +147,9 @@ fn collect_terms(p: &Params, label: &str) -> Result<Vec<Term>, String> {
         // single-term fallback
         if let Some(k) = p.get("k") {
             let n = p
-                .get("n")
-                .ok_or_else(|| format!("dihedral_periodic[{label}]: missing n"))?;
-            let d = p.get("d").unwrap_or(0.0);
+                .get("periodicity")
+                .ok_or_else(|| format!("dihedral_periodic[{label}]: missing periodicity"))?;
+            let d = p.get("phase").unwrap_or(0.0);
             terms.push(Term {
                 k: k as F,
                 n: n as F,
@@ -99,7 +157,8 @@ fn collect_terms(p: &Params, label: &str) -> Result<Vec<Term>, String> {
             });
         } else {
             return Err(format!(
-                "dihedral_periodic[{label}]: no terms (need k1/n1/d1… or k/n/d)"
+                "dihedral_periodic[{label}]: no terms \
+                 (need k1/periodicity1/phase1… or k/periodicity/phase)"
             ));
         }
     }
@@ -112,7 +171,7 @@ pub fn dihedral_periodic_ctor(
     _sp: &Params,
     tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
+) -> Result<Member, String> {
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
     let block = frame
         .get("dihedrals")
@@ -142,7 +201,7 @@ pub fn dihedral_periodic_ctor(
         al.push(lc[idx] as usize);
         terms.push(collect_terms(p, tc[idx].as_str())?);
     }
-    Ok(Box::new(DihedralPeriodic {
+    Ok(Member::indexed(DihedralPeriodic {
         atom_i: ai,
         atom_j: aj,
         atom_k: ak,
@@ -199,17 +258,17 @@ mod tests {
     fn collect_terms_indexed_and_single() {
         let mut p = Params::new();
         p.set("k1", 1.0);
-        p.set("n1", 1.0);
-        p.set("d1", 0.0);
+        p.set("periodicity1", 1.0);
+        p.set("phase1", 0.0);
         p.set("k2", 0.5);
-        p.set("n2", 2.0);
-        p.set("d2", 180.0);
+        p.set("periodicity2", 2.0);
+        p.set("phase2", 180.0);
         let t = collect_terms(&p, "x").unwrap();
         assert_eq!(t.len(), 2);
 
         let mut q = Params::new();
         q.set("k", 2.0);
-        q.set("n", 3.0);
+        q.set("periodicity", 3.0);
         let t2 = collect_terms(&q, "y").unwrap();
         assert_eq!(t2.len(), 1);
         assert_eq!(t2[0].n, 3.0);

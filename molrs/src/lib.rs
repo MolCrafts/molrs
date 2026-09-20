@@ -5,15 +5,21 @@
 //! `ff`, `conformer`, and `signal`.
 //!
 //! ```toml
-//! molcrafts-molrs = { version = "0.12", features = ["io", "smiles"] }
+//! molcrafts-molrs = { version = "0.14", default-features = false, features = ["io", "smiles"] }
 //! ```
 //!
 //! Then:
 //!
-//! ```ignore
-//! use molrs::Frame;              // core (always available)
-//! use molrs::io::read_xyz;       // feature = "io"
-//! use molrs::smiles::parse;      // feature = "smiles"
+//! ```
+//! # #[cfg(feature = "smiles")]
+//! # {
+//! use molrs::smiles::{parse_smiles, to_atomistic};
+//!
+//! let ir = parse_smiles("CCO")?;
+//! let molecule = to_atomistic(&ir)?;
+//! assert_eq!(molecule.n_atoms(), 3);
+//! # }
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
 //! ## Features
@@ -24,11 +30,15 @@
 //! - `ff`        — force fields (MMFF94, PME, typifier)
 //! - `conformer` — 3D conformer generation
 //! - `signal`    — signal processing (FFT-based ACF, windowing, frequency grids)
+//! - `md`        — in-process molecular dynamics (enables `ff`)
+//! - `voronoi`   — radical Voronoi tessellation (enables `compute`)
 //! - `full`      — everything above
-//! - `stream`    — MessagePack/JSON `Frame` wire encoding (not in `full`)
-//! - `net`       — WebSocket Frame streaming + control commands (not in `full`)
+//! - `stream`    — MessagePack/JSON frames and native WebSocket streaming (not in `full`)
 //!
-//! Core flags: `rayon` (default), `zarr`, `filesystem`, `blas`.
+//! Defaults: `full`, `filesystem`, `rayon`. Use
+//! `default-features = false` to select a smaller build.
+//! Storage and compute flags: `serde`, `rayon`, `zarr`, `zarr-codecs`,
+//! `filesystem`.
 //!
 //! ## Molecular packing
 //!
@@ -44,6 +54,15 @@
 // `molrs-*` member crates and rely on this alias for their cross-module paths.
 extern crate self as molrs;
 
+/// The version of the `molcrafts-molrs` crate compiled into this binary.
+///
+/// This is the crate every binder statically links, so its major.minor is the
+/// ABI line of any FFI handle the binary mints — `molrs_ffi::abi` derives the
+/// versioned capsule names and the handshake token from it. Downstream pins
+/// major.minor only; layout of the FFI-crossing types is frozen within a minor
+/// line.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 // Core is always compiled and its public surface is re-exported at the crate
 // root, so `molrs::Frame`, `molrs::system::…`, `molrs::error::…` resolve exactly
 // as they did when core was a separate crate.
@@ -53,9 +72,11 @@ pub use crate::core::*;
 
 /// Structure builders (graphene, nanotubes, self-avoiding walks, …).
 ///
-/// Always compiled — builders sit above `core` and produce frames / paths
-/// without depending on feature-gated analysis or force fields.
+/// Builders sit above `core` and produce frames / paths without depending on
+/// feature-gated analysis or force fields; `full` includes them.
+#[cfg(feature = "builder")]
 pub mod builder;
+#[cfg(feature = "builder")]
 pub use crate::builder::{
     CarbonTubeBuilder, CarbonTubeError, FccLattice, GrapheneBuilder, GrapheneError, GrowthStrategy,
     OccupancyMode, OffLattice, SelfAvoidingWalk, WalkError, WalkOutput,
@@ -65,7 +86,7 @@ pub use crate::builder::{
 // Always compiled — every consumer configuration already compiled these modules
 // when they lived inside `core`, so keeping them unconditional reproduces the
 // existing build graph exactly (feature-gating them would be a behaviour change,
-// not a refactor). `optimize` above is the same shape: always on, no feature.
+// not a refactor).
 pub mod perceive;
 
 // The crate-root surface that this layer used to publish via `pub use core::*`.
@@ -103,6 +124,15 @@ pub mod ff;
 /// never the reverse.
 #[cfg(feature = "ff")]
 pub mod optimize;
+
+/// In-process MD: velocity-Verlet / Langevin and shifted Lennard-Jones.
+/// Consumes the one [`ff::potential::Potential`]/[`ff::potential::Potentials`]
+/// seam (the `md` feature therefore enables `ff`) — required pieces go in the
+/// constructor (`VelocityVerlet::new(dt, potential, neighbors, mass)`); pair
+/// search is core [`spatial::neighbors::VerletSkin`]. Frame/`ForceField`
+/// wiring lives in molpy / molrs-python.
+#[cfg(feature = "md")]
+pub mod md;
 
 /// Gasteiger/PEOE partial charges, at the crate root — `molrs::compute_gasteiger_charges`.
 ///

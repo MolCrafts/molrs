@@ -359,7 +359,7 @@ impl PyClusterResult {
     /// Empty for spatial clustering; one key per cluster for `keys=`-based
     /// grouping.
     #[getter]
-    fn cluster_keys(&self) -> Vec<Vec<u32>> {
+    fn cluster_keys(&self) -> Vec<Vec<u64>> {
         self.inner.cluster_keys.clone()
     }
 
@@ -415,12 +415,12 @@ impl PyCluster {
             let keys_i: Vec<i64> = keys_obj
                 .extract()
                 .map_err(|_| PyValueError::new_err("keys must be a 1-D sequence of integers"))?;
-            let mut keys_u: Vec<u32> = Vec::with_capacity(keys_i.len());
+            let mut keys_u: Vec<u64> = Vec::with_capacity(keys_i.len());
             for k in keys_i {
                 if k < 0 {
                     return Err(PyValueError::new_err("keys must be non-negative"));
                 }
-                keys_u.push(k as u32);
+                keys_u.push(k as u64);
             }
             self.inner
                 .compute_keyed(&refs, &keys_u)

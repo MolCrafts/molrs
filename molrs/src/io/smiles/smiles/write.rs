@@ -1,6 +1,6 @@
 //! Write [`SmilesIR`] back to SMILES / SMARTS strings.
 //!
-//! Pure syntax: no chemical policy. Graph → IR lives in [`super::from_atomistic`].
+//! Pure syntax: no chemical policy. Graph → IR lives in [`super::from_atomistic()`].
 
 use crate::io::smiles::chem::ast::*;
 use crate::io::smiles::error::{SmilesError, SmilesErrorKind};

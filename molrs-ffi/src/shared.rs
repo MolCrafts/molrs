@@ -38,7 +38,7 @@ use std::rc::Rc;
 use molrs::spatial::simbox::SimBox;
 use molrs::store::block::{Block, DType};
 use molrs::store::frame::Frame;
-use molrs::types::{F, I, U};
+use molrs::types::{F, I, Idx};
 
 use crate::error::FfiError;
 use crate::handle::{BlockHandle, FrameId};
@@ -46,6 +46,9 @@ use crate::store::Store;
 
 /// Single-threaded shared ownership of a [`Store`].
 pub type SharedStore = Rc<RefCell<Store>>;
+
+/// An owned numeric column as `(values, shape)`, or `None` when absent.
+pub type OwnedColumn<T> = Option<(Vec<T>, Vec<usize>)>;
 
 /// Create a new empty [`SharedStore`].
 pub fn new_shared() -> SharedStore {
@@ -184,15 +187,7 @@ impl BlockRef {
     /// columns this is `[nrows]`; multi-dim columns (if any) carry their
     /// full shape.
     pub fn shape(&self, key: &str) -> Result<Option<Vec<usize>>, FfiError> {
-        self.with(|b| match b.dtype(key) {
-            None => None,
-            Some(DType::Float) => b.get_float(key).map(|a| a.shape().to_vec()),
-            Some(DType::Int) => b.get_int(key).map(|a| a.shape().to_vec()),
-            Some(DType::UInt) => b.get_uint(key).map(|a| a.shape().to_vec()),
-            Some(DType::U8) => b.get_u8(key).map(|a| a.shape().to_vec()),
-            Some(DType::Bool) => b.get_bool(key).map(|a| a.shape().to_vec()),
-            Some(DType::String) => b.get_string(key).map(|a| a.shape().to_vec()),
-        })
+        self.with(|b| b.get(key).map(|c| c.shape().to_vec()))
     }
 
     /// Deep-clone the block data out of the store.
@@ -266,7 +261,7 @@ impl BlockRef {
     pub fn borrow_u<R>(
         &self,
         key: &str,
-        f: impl FnOnce(&[U], &[usize]) -> R,
+        f: impl FnOnce(&[Idx], &[usize]) -> R,
     ) -> Result<Option<R>, FfiError> {
         self.with(|b| -> Result<Option<R>, FfiError> {
             match b.dtype(key) {
@@ -314,17 +309,17 @@ impl BlockRef {
     // ---- Owned copies of numeric columns ----
 
     /// Owned copy of an `F` column. Same dtype semantics as [`borrow_f`].
-    pub fn copy_f(&self, key: &str) -> Result<Option<(Vec<F>, Vec<usize>)>, FfiError> {
+    pub fn copy_f(&self, key: &str) -> Result<OwnedColumn<F>, FfiError> {
         self.borrow_f(key, |slice, shape| (slice.to_vec(), shape.to_vec()))
     }
 
     /// Owned copy of an `I` column.
-    pub fn copy_i(&self, key: &str) -> Result<Option<(Vec<I>, Vec<usize>)>, FfiError> {
+    pub fn copy_i(&self, key: &str) -> Result<OwnedColumn<I>, FfiError> {
         self.borrow_i(key, |slice, shape| (slice.to_vec(), shape.to_vec()))
     }
 
     /// Owned copy of a `U` column.
-    pub fn copy_u(&self, key: &str) -> Result<Option<(Vec<U>, Vec<usize>)>, FfiError> {
+    pub fn copy_u(&self, key: &str) -> Result<OwnedColumn<Idx>, FfiError> {
         self.borrow_u(key, |slice, shape| (slice.to_vec(), shape.to_vec()))
     }
 }

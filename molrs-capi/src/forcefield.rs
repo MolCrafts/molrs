@@ -1,7 +1,7 @@
 //! `extern "C"` functions for ForceField operations.
 //!
 //! A **ForceField** is a collection of interaction styles (atom, bond,
-//! angle, dihedral, improper, pair, kspace) and per-type parameter sets.
+//! angle, dihedral, improper, pair) and per-type parameter sets.
 //! This module exposes functions to build a force field programmatically
 //! from C, serialize/deserialize it as JSON, and query its contents.
 //!
@@ -827,7 +827,6 @@ fn ff_from_json_string(json: &str) -> Result<ForceField, String> {
             "dihedral" => ff.def_dihedralstyle(style_name),
             "improper" => ff.def_improperstyle(style_name),
             "pair" => ff.def_pairstyle(style_name, &style_params),
-            "kspace" => ff.def_kspacestyle(style_name, &style_params),
             _ => return Err(format!("unknown category: {category}")),
         };
 

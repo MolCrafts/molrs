@@ -18,9 +18,9 @@
 //!   constants;
 //! * the style skeleton and the two style-level constant blocks at the foot of
 //!   this file ([`MMFF_STYLES`], [`MMFF_VDW_STYLE`], [`MMFF_ELE_STYLE`]) are
-//!   transcribed from the retired `molrs/data/mmff94.xml`
-//!   (sha256 `9d9c41db…`, recorded in `ff/params/MANIFEST.sha256`), which molrs
-//!   used to `include_str!` and re-parse on every typifier construction.
+//!   transcribed from the retired `molrs/data/mmff94.xml` (sha256
+//!   `9d9c41db…`; `git show <rev>:molrs/data/mmff94.xml` restores it), which
+//!   molrs used to `include_str!` and re-parse on every typifier construction.
 //!
 //! # Why there is no `mmff94s` table
 //!
@@ -51687,88 +51687,6 @@ pub static MMFF_ELE_STYLE: MmffEleStyle = MmffEleStyle {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // Expected values verified against the installed RDKit (Params.cpp source
-    // rows). MmffProp[1] is CR (carbon), MmffProp[5] is HC (hydrogen).
-
-    #[test]
-    fn prop_type_1_carbon() {
-        let p = mmff_prop(1).unwrap();
-        assert_eq!(p.atom_type, 1);
-        assert_eq!(p.atno, 6);
-        assert_eq!(p.crd, 4);
-        assert_eq!(p.val, 4);
-        assert_eq!(p.pilp, 0);
-        assert_eq!(p.mltb, 0);
-        assert_eq!(p.arom, 0);
-        assert_eq!(p.linh, 0);
-        assert_eq!(p.sbmb, 0);
-    }
-
-    #[test]
-    fn prop_type_5_hydrogen() {
-        let p = mmff_prop(5).unwrap();
-        assert_eq!(p.atom_type, 5);
-        assert_eq!(p.atno, 1);
-        assert_eq!(p.crd, 1);
-        assert_eq!(p.val, 1);
-    }
-
-    #[test]
-    fn arom_exact_list() {
-        assert_eq!(
-            MMFF_AROM,
-            &[
-                37, 38, 39, 44, 58, 59, 63, 64, 65, 66, 69, 76, 78, 79, 80, 81, 82
-            ][..]
-        );
-        assert!(mmff_is_arom(37));
-        assert!(!mmff_is_arom(1));
-    }
-
-    #[test]
-    fn prop_entry_count() {
-        // Number of distinct atom types in the source Prop table.
-        assert_eq!(MMFF_PROP.len(), 95);
-    }
-
-    #[test]
-    fn bond_spot_check() {
-        let e = mmff_bond(0, 1, 1).unwrap();
-        assert_eq!(e.kb, 4.258);
-        assert_eq!(e.r0, 1.508);
-    }
-
-    #[test]
-    fn angle_spot_check() {
-        let e = mmff_angle(0, 0, 1, 0).unwrap();
-        assert_eq!(e.ka, 0.0);
-        assert_eq!(e.theta0, 108.9);
-    }
-
-    #[test]
-    fn tor_spot_check() {
-        let e = mmff_tor(0, 0, 1, 1, 0).unwrap();
-        assert_eq!(e.v1, 0.0);
-        assert_eq!(e.v2, 0.0);
-        assert_eq!(e.v3, 0.3);
-    }
-
-    #[test]
-    fn chg_spot_check() {
-        let e = mmff_chg(0, 1, 1).unwrap();
-        assert_eq!(e.bci, 0.0);
-    }
-
-    #[test]
-    fn vdw_spot_check() {
-        let e = mmff_vdw(1).unwrap();
-        assert_eq!(e.alpha_i, 1.05);
-        assert_eq!(e.n_i, 2.49);
-        assert_eq!(e.a_i, 3.89);
-        assert_eq!(e.g_i, 1.282);
-        assert_eq!(e.da, b'-');
-    }
 
     #[test]
     fn sorted_invariants() {

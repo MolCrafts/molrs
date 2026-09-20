@@ -185,3 +185,87 @@ pub fn rvdw(z: u8) -> f64 {
         _ => 2.0,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use molrs::Element;
+
+    fn atom(element: Element, hybridization: Hybridization, aromatic: bool) -> PerceivedAtom {
+        PerceivedAtom {
+            element,
+            hybridization,
+            aromatic,
+            conjugated: false,
+            degree: 0,
+            total_valence: 0.0,
+        }
+    }
+
+    #[test]
+    fn labels_follow_element_and_hybridization() {
+        assert_eq!(
+            atom_label(&atom(Element::H, Hybridization::Sp3, false)).unwrap(),
+            "H_"
+        );
+        assert_eq!(
+            atom_label(&atom(Element::Cl, Hybridization::Sp3, false)).unwrap(),
+            "Cl"
+        );
+        assert_eq!(
+            atom_label(&atom(Element::C, Hybridization::Sp3, false)).unwrap(),
+            "C_3"
+        );
+        assert_eq!(
+            atom_label(&atom(Element::C, Hybridization::Sp2, false)).unwrap(),
+            "C_2"
+        );
+        assert_eq!(
+            atom_label(&atom(Element::C, Hybridization::Sp2, true)).unwrap(),
+            "C_R"
+        );
+        assert_eq!(
+            atom_label(&atom(Element::N, Hybridization::Sp, false)).unwrap(),
+            "N_1"
+        );
+    }
+
+    #[test]
+    fn sulfur_carries_its_valence_as_a_charge_flag() {
+        let mut s = atom(Element::S, Hybridization::Sp3, false);
+        s.total_valence = 2.0;
+        assert_eq!(atom_label(&s).unwrap(), "S_3+2");
+        s.total_valence = 6.0;
+        assert_eq!(atom_label(&s).unwrap(), "S_3+6");
+    }
+
+    #[test]
+    fn effective_order_prefers_amide_then_aromatic() {
+        assert_eq!(effective_bond_order(1.0, false, true), 1.41);
+        assert_eq!(effective_bond_order(1.0, true, false), 1.5);
+        assert_eq!(effective_bond_order(2.0, false, false), 2.0);
+    }
+
+    #[test]
+    fn a_typed_pair_gets_the_uff_rest_length_and_an_untyped_one_the_vdw_guess() {
+        let c = atom(Element::C, Hybridization::Sp3, false);
+        let (r_cc, typed) = bond_rest_length(&c, &c, 1.0);
+        assert!(typed);
+        // Homonuclear single bond: no order term, no electronegativity term.
+        assert!((r_cc - 2.0 * 0.757).abs() < 1e-12);
+        let (r_double, _) = bond_rest_length(&c, &c, 2.0);
+        assert!(r_double < r_cc, "a double bond is shorter");
+        // Boron is outside the embedded table.
+        let b = atom(Element::B, Hybridization::Sp3, false);
+        let (r_bc, typed) = bond_rest_length(&b, &c, 1.0);
+        assert!(!typed);
+        assert!((r_bc - 0.5 * (rvdw(5) + rvdw(6))).abs() < 1e-12);
+    }
+
+    #[test]
+    fn rvdw_is_rdkits_table_with_a_two_angstrom_default() {
+        assert_eq!(rvdw(6), 1.7);
+        assert_eq!(rvdw(1), 1.2);
+        assert_eq!(rvdw(26), 2.0);
+    }
+}

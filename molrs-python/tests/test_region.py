@@ -42,42 +42,6 @@ class TestSphere:
         assert "5.00" in r
 
 
-class TestHollowSphere:
-    def test_contains(self):
-        hs = molrs.HollowSphere(
-            np.array([0.0, 0.0, 0.0], dtype=np.float64), 2.0, 5.0
-        )
-        pts = np.array(
-            [
-                [0.0, 0.0, 0.0],  # center - inside inner
-                [1.0, 0.0, 0.0],  # inside inner
-                [3.0, 0.0, 0.0],  # in shell
-                [5.0, 0.0, 0.0],  # on outer surface
-                [5.1, 0.0, 0.0],  # outside
-            ],
-            dtype=np.float64,
-        )
-        mask = hs.contains(pts)
-        assert not mask[0] and not mask[1]
-        assert mask[2] and mask[3]
-        assert not mask[4]
-
-    def test_bounds(self):
-        hs = molrs.HollowSphere(
-            np.array([0.0, 0.0, 0.0], dtype=np.float64), 2.0, 5.0
-        )
-        b = hs.bounds()
-        assert b.shape == (3, 2)
-        np.testing.assert_allclose(b[:, 0], [-5.0, -5.0, -5.0], atol=1e-5)
-
-    def test_repr(self):
-        hs = molrs.HollowSphere(
-            np.array([0.0, 0.0, 0.0], dtype=np.float64), 2.0, 5.0
-        )
-        assert "HollowSphere" in repr(hs)
-        assert "2.00" in repr(hs)
-
-
 class TestRegionAnd:
     def test_sphere_and_sphere(self):
         s1 = molrs.Sphere(np.array([0.0, 0.0, 0.0], dtype=np.float64), 3.0)
@@ -95,12 +59,10 @@ class TestRegionAnd:
         mask = intersection.contains(pts)
         assert mask[0] and not mask[1] and not mask[2]
 
-    def test_hollow_and_sphere(self):
-        hs = molrs.HollowSphere(
-            np.array([0.0, 0.0, 0.0], dtype=np.float64), 1.0, 5.0
-        )
+    def test_sphere_and_cuboid(self):
+        c = molrs.Cuboid(np.zeros(3), np.array([5.0, 5.0, 5.0]))
         s = molrs.Sphere(np.array([3.0, 0.0, 0.0], dtype=np.float64), 3.0)
-        result = hs & s
+        result = c & s
         assert isinstance(result, molrs.Region)
 
 
@@ -137,11 +99,9 @@ class TestRegionNot:
         mask = complement.contains(pts)
         assert not mask[0] and mask[1]
 
-    def test_not_hollow_sphere(self):
-        hs = molrs.HollowSphere(
-            np.array([0.0, 0.0, 0.0], dtype=np.float64), 2.0, 5.0
-        )
-        result = ~hs
+    def test_not_cuboid(self):
+        c = molrs.Cuboid(np.zeros(3), np.ones(3))
+        result = ~c
         assert isinstance(result, molrs.Region)
 
 
@@ -186,3 +146,105 @@ class TestRegionChaining:
         s = molrs.Sphere(np.array([0.0, 0.0, 0.0], dtype=np.float64), 1.0)
         with pytest.raises(TypeError):
             s & "not_a_region"
+
+
+class TestDistance:
+    def test_bad_points_shape(self):
+        s = molrs.Sphere(np.zeros(3), 1.0)
+        with pytest.raises(ValueError, match="N, 3"):
+            s.distance(np.ones((3, 2), dtype=np.float64))
+
+
+def _unit_cube_mesh() -> "molrs.TriMesh":
+    v = np.array(
+        [[x, y, z] for z in (0.0, 1.0) for y in (0.0, 1.0) for x in (0.0, 1.0)],
+        dtype=np.float64,
+    )
+    faces = np.array(
+        [
+            [0, 4, 6],
+            [0, 6, 2],
+            [1, 3, 7],
+            [1, 7, 5],
+            [0, 1, 5],
+            [0, 5, 4],
+            [2, 6, 7],
+            [2, 7, 3],
+            [0, 2, 3],
+            [0, 3, 1],
+            [4, 5, 7],
+            [4, 7, 6],
+        ],
+        dtype=np.uint32,
+    )
+    return molrs.TriMesh(v, faces)
+
+
+class TestShapes:
+    def test_half_space_and_its_complement(self):
+        below = molrs.HalfSpace(np.array([0.0, 0.0, 1.0]), np.array([0.0, 0.0, 5.0]))
+        pts = np.array([[0.0, 0.0, 2.0], [0.0, 0.0, 9.0]])
+        np.testing.assert_allclose(below.distance(pts), [-3.0, 4.0])
+        assert list(below.contains(pts)) == [True, False]
+        assert list((~below).contains(pts)) == [False, True]
+        np.testing.assert_allclose(below.normal(), [0.0, 0.0, 1.0])
+
+    def test_cylinder(self):
+        c = molrs.Cylinder(
+            np.array([1.0, 1.0, 0.0]), np.array([0.0, 0.0, 3.0]), 2.0, 5.0
+        )
+        pts = np.array([[1.0, 1.0, 2.5], [3.0, 1.0, 2.5], [1.0, 1.0, 7.0]])
+        np.testing.assert_allclose(c.distance(pts), [-2.0, 0.0, 2.0])
+        with pytest.raises(ValueError):
+            molrs.Cylinder(np.zeros(3), np.zeros(3), 1.0, 1.0)
+
+    def test_ellipsoid(self):
+        e = molrs.Ellipsoid(np.zeros(3), np.array([2.0, 3.0, 1.0]))
+        pts = np.array([[0.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 2.5]])
+        np.testing.assert_allclose(e.distance(pts), [-1.0, 0.0, 1.5])
+        with pytest.raises(ValueError, match="semi-axes"):
+            molrs.Ellipsoid(np.zeros(3), np.array([1.0, 0.0, 1.0]))
+
+
+class TestPolyhedron:
+    def test_unit_cube(self):
+        mesh = _unit_cube_mesh()
+        assert mesh.is_watertight()
+        assert (mesh.n_vertices, mesh.n_faces) == (8, 12)
+        cube = molrs.Polyhedron(mesh)
+        pts = np.array([[0.5, 0.5, 0.5], [2.0, 0.5, 0.5], [1.0, 0.5, 0.5]])
+        np.testing.assert_allclose(cube.distance(pts), [-0.5, 1.0, 0.0], atol=1e-9)
+        assert list(cube.contains(pts)) == [True, False, True]
+        np.testing.assert_allclose(cube.bounds()[:, 1], [1.0, 1.0, 1.0])
+        assert cube.mesh().n_faces == 12
+
+    def test_open_mesh_is_rejected(self):
+        mesh = _unit_cube_mesh()
+        open_mesh = molrs.TriMesh(mesh.vertices(), mesh.faces()[:-1])
+        assert not open_mesh.is_watertight()
+        with pytest.raises(ValueError, match="watertight"):
+            molrs.Polyhedron(open_mesh)
+
+    def test_bad_face_index_is_rejected(self):
+        with pytest.raises(ValueError, match="vertex table"):
+            molrs.TriMesh(np.zeros((3, 3)), np.array([[0, 1, 7]], dtype=np.uint32))
+
+
+class TestSphereUnion:
+    def test_free_union_and_its_void(self):
+        centers = np.array([[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]])
+        u = molrs.SphereUnion(centers, np.array([1.0, 2.0]))
+        assert u.n_spheres == 2
+        pts = np.array([[20.0, 0.0, 0.0], [5.0, 0.0, 0.0], [0.5, 0.0, 0.0]])
+        np.testing.assert_allclose(u.distance(pts), [8.0, 3.0, -0.5])
+        void = ~u
+        assert list(void.contains(pts)) == [True, True, False]
+        np.testing.assert_allclose(void.distance(pts), [-8.0, -3.0, 0.5])
+
+    def test_rejects(self):
+        with pytest.raises(ValueError):
+            molrs.SphereUnion(np.zeros((0, 3)), 1.0)
+        with pytest.raises(ValueError):
+            molrs.SphereUnion(np.zeros((2, 3)), np.array([1.0]))
+        with pytest.raises(ValueError):
+            molrs.SphereUnion(np.zeros((1, 3)), 0.0)

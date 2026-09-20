@@ -76,9 +76,21 @@ fn signed_volume(p0: [f64; 3], p1: [f64; 3], p2: [f64; 3], p3: [f64; 3]) -> f64 
     a[0] * cross[0] + a[1] * cross[1] + a[2] * cross[2]
 }
 
-/// Build chiral constraints (RDKit `findChiralSets`, restricted to tetrahedral
-/// C/N centres) using the input 3D coordinates to fix the volume sign.
-pub fn build_chiral(mol: &Atomistic, p: &Perceived) -> Vec<ChiralConstraint> {
+impl Perceived {
+    /// Chiral constraints (RDKit `findChiralSets`, restricted to tetrahedral
+    /// C/N centres), using the input 3D coordinates to fix the volume sign.
+    pub fn chiral_constraints(&self, mol: &Atomistic) -> Vec<ChiralConstraint> {
+        chiral_constraints(mol, self)
+    }
+
+    /// Improper (out-of-plane) constraints for sp2 C/N/O centres with three
+    /// neighbours (RDKit basic-knowledge inversion terms).
+    pub fn improper_constraints(&self) -> Vec<ImproperConstraint> {
+        improper_constraints(self)
+    }
+}
+
+fn chiral_constraints(mol: &Atomistic, p: &Perceived) -> Vec<ChiralConstraint> {
     let mut out = Vec::new();
     for (i, atom) in p.atoms.iter().enumerate() {
         let z = atom.element.z();
@@ -139,9 +151,7 @@ pub fn build_chiral(mol: &Atomistic, p: &Perceived) -> Vec<ChiralConstraint> {
     out
 }
 
-/// Build improper (out-of-plane) constraints for sp2 C/N/O centres with three
-/// neighbours (RDKit basic-knowledge inversion terms).
-pub fn build_improper(p: &Perceived) -> Vec<ImproperConstraint> {
+fn improper_constraints(p: &Perceived) -> Vec<ImproperConstraint> {
     let mut out = Vec::new();
     for (i, atom) in p.atoms.iter().enumerate() {
         let z = atom.element.z();

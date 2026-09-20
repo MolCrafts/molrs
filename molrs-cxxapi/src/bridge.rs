@@ -185,6 +185,31 @@ pub mod ffi {
         // ── Frame bridge (molrs.Frame via molrs-ffi FrameRef) ─────
         type FrameRef;
 
+        // ── Region bridge (molrs.Region via molrs-ffi RegionRef) ──
+        // A region answers a signed distance; `contains` is its sign and
+        // `bounds` the box it fits in. Compositions are ordinary handles, so
+        // a shell is `region_and(outer, region_not(inner))`.
+        type RegionRef;
+
+        fn region_sphere(center: &[f64], radius: f64) -> Box<RegionRef>;
+        fn region_cuboid(origin: &[f64], lengths: &[f64]) -> Box<RegionRef>;
+        fn region_half_space(normal: &[f64], point: &[f64]) -> Result<Box<RegionRef>>;
+        fn region_cylinder(
+            base: &[f64],
+            axis: &[f64],
+            radius: f64,
+            length: f64,
+        ) -> Result<Box<RegionRef>>;
+        fn region_ellipsoid(center: &[f64], semi_axes: &[f64]) -> Result<Box<RegionRef>>;
+
+        fn region_and(a: &RegionRef, b: &RegionRef) -> Box<RegionRef>;
+        fn region_or(a: &RegionRef, b: &RegionRef) -> Box<RegionRef>;
+        fn region_not(a: &RegionRef) -> Box<RegionRef>;
+
+        fn region_distance(rref: &RegionRef, points: &[f64]) -> Vec<f64>;
+        fn region_contains(rref: &RegionRef, points: &[f64]) -> Vec<u8>;
+        fn region_bounds(rref: &RegionRef) -> Vec<f64>;
+
         fn frame_schema_version() -> u32;
         fn frame_new() -> Box<FrameRef>;
 
@@ -204,7 +229,7 @@ pub mod ffi {
         // readers — owned copies (RefCell precludes returning borrowed slices)
         fn frame_column_f64(fref: &FrameRef, block: &str, col: &str) -> Vec<f64>;
         fn frame_column_i32(fref: &FrameRef, block: &str, col: &str) -> Vec<i32>;
-        fn frame_column_u32(fref: &FrameRef, block: &str, col: &str) -> Vec<u32>;
+        fn frame_column_u32(fref: &FrameRef, block: &str, col: &str) -> Vec<u64>;
         fn frame_column_str(fref: &FrameRef, block: &str, col: &str) -> Vec<String>;
         fn frame_box(fref: &FrameRef) -> Vec<f64>;
 
@@ -225,7 +250,7 @@ pub mod ffi {
             fref: &mut FrameRef,
             block: &str,
             col: &str,
-            data: &[u32],
+            data: &[u64],
         ) -> Result<()>;
         fn frame_set_column_str(
             fref: &mut FrameRef,
@@ -280,7 +305,7 @@ pub mod ffi {
         ) -> Result<()>;
         // Write one frame + named per-atom fields (field_data reshaped
         // [n_fields, n_atoms]) to a single-frame Zarr store.
-        fn write_frame_zarr(
+        fn write_frame(
             path: &str,
             type_id: &[i32],
             x: &[f64],
@@ -290,7 +315,36 @@ pub mod ffi {
             field_names: Vec<String>,
             field_data: &[f64],
         ) -> Result<()>;
-        fn read_frame_zarr_first(path: &str) -> Result<Box<FrameRef>>;
+        fn read_first_frame(path: &str) -> Result<Box<FrameRef>>;
+
+        // ── Streaming trajectory writer (`*.mrec`, append-first) ──
+        // The engine's output path: one writer per run, one frame per
+        // append; complete inner chunks land on their own, `flush` commits
+        // (durably when `durable`), `close` ends the run. `flush_every == 0`
+        // leaves the landing cadence to the writer. `schema_from` pins the
+        // blocks/columns every later frame must stay inside.
+        type TrajectoryWriterRef;
+        fn trajectory_writer_create(
+            path: &str,
+            schema_from: &FrameRef,
+            flush_every: u64,
+            durable: bool,
+        ) -> Result<Box<TrajectoryWriterRef>>;
+        fn trajectory_writer_open(
+            path: &str,
+            flush_every: u64,
+            durable: bool,
+        ) -> Result<Box<TrajectoryWriterRef>>;
+        fn trajectory_writer_append(
+            writer: &mut TrajectoryWriterRef,
+            fref: &FrameRef,
+            step: i64,
+            time: f64,
+            has_time: bool,
+        ) -> Result<()>;
+        fn trajectory_writer_flush(writer: &mut TrajectoryWriterRef) -> Result<()>;
+        fn trajectory_writer_committed(writer: &TrajectoryWriterRef) -> u64;
+        fn trajectory_writer_close(writer: Box<TrajectoryWriterRef>) -> Result<()>;
         // Read the first frame of an (ext)XYZ file into a materialize-ready
         // FrameRef (atoms.{x,y,z,type} + simbox). `type` is derived from the
         // required ExtXYZ species column (Z). All XYZ parsing lives in molrs.

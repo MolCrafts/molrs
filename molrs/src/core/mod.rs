@@ -7,8 +7,9 @@
 //! - [`store`] — columnar data containers (`Block`, `Frame`, `Trajectory`, keys)
 //! - [`system`] — molecular representations (`Atomistic`, `MolGraph`, `Topology`, elements)
 //! - [`spatial`] — regions, neighbor lists, geometry
-//! - [`generate`] — structure generators (inverse of compute: parameters → coordinates)
 //! - [`math`], [`units`] — numerical and unit-system foundations
+//!
+//! Structure builders live in [`crate::builder`], above the core layer.
 //!
 //! ## Examples
 //!
@@ -50,6 +51,9 @@ pub mod math;
 pub mod types;
 pub mod units;
 
+#[cfg(all(test, feature = "rayon"))]
+pub(crate) mod test_rayon;
+
 // NOTE: chemical perception (rings, aromaticity, hydrogens, stereo, rotatable,
 // Gasteiger, SMARTS) used to live here as `core::chem`. It now sits one layer up
 // in `crate::perceive` — above `core`, below `ff`. Its crate-root re-exports moved
@@ -64,19 +68,20 @@ pub use store::frame::Frame;
 pub use store::frame_access::FrameAccess;
 pub use store::frame_view::FrameView;
 pub use store::meta::{MetaMap, MetaValue};
-pub use store::record::{
-    MolRec, Observables, RECORD_FORMAT_NAME, RECORD_SCHEMA_VERSION, RESERVED_META_KEYS,
-};
+pub use store::record::{MOLREC_VERSION, MolRec as Record, Observables, RESERVED_META_KEYS};
 pub use store::trajectory::{
     ObservableData, ObservableKind, ObservableRecord, SchemaValue, Trajectory,
 };
 pub use system::atomistic::{
     AngleId, AtomId, Atomistic, Bond, BondId, DihedralId, ExtractedAtomistic, ImproperId,
 };
+pub use system::bond_weights::BondDistanceWeights;
 pub use system::coarsegrain::{CoarseGrain, ExtractedCoarseGrain};
 pub use system::extract::{ExtractedBall, InducedSubgraph};
 pub use system::graph_hash::{canonical_order, is_isomorphic, structural_hash};
 pub use system::mapping::{CGMapping, WeightScheme};
 pub use system::molgraph::{Atom, Bead, KindId, MolGraph, NodeId, PropValue, Relation};
 pub use system::topology::{Topology, TopologyRingInfo};
-pub use units::{Dimension, Quantity, Unit, UnitDef, UnitRegistry, UnitsError};
+pub use units::{
+    Dimension, Quantity, Unit, UnitDef, UnitPreset, UnitPresetRegistry, UnitRegistry, UnitsError,
+};

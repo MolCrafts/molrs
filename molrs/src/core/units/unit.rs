@@ -35,6 +35,30 @@ impl Unit {
         }
     }
 
+    /// Rebuild a resolved unit from its complete, registry-independent state.
+    ///
+    /// This is primarily useful for persistence layers. Normal callers should
+    /// obtain units from [`UnitRegistry`](super::UnitRegistry), which validates
+    /// names and compound expressions.
+    pub fn from_parts(factor: F, offset: F, dimension: Dimension, name: String) -> Unit {
+        Unit::new(factor, offset, dimension, name)
+    }
+
+    /// Multiplicative factor from this unit to its SI base representation.
+    pub fn factor(&self) -> F {
+        self.factor
+    }
+
+    /// Additive offset in the SI base representation.
+    pub fn offset(&self) -> F {
+        self.offset
+    }
+
+    /// Canonical display name retained by this resolved unit.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
     /// The dimension of this unit.
     pub fn dimension(&self) -> Dimension {
         self.dimension

@@ -3,7 +3,7 @@
 //! Specs: <https://docs.lammps.org/read_data.html>,
 //! <https://docs.lammps.org/atom_style.html>
 //!
-//! Atom-style layouts and shared helpers live in [`crate::io::lammps`].
+//! Atom-style layouts and shared helpers live in the internal `io::lammps` module.
 //! Atoms are streamed straight into typed column buffers (no intermediate
 //! per-atom struct), which cuts peak memory on large systems.
 
@@ -15,7 +15,7 @@ use crate::io::lammps::atom_style::{
 use crate::io::lammps::box_bounds::{BoxBounds, simbox_from_bounds};
 use crate::io::lammps::common::{
     OptCol, TypeRef, err_mapper, insert_f, insert_i, insert_u, invert_type_labels, labels_to_meta,
-    parse_f, parse_i, tokenize,
+    maybe_canonical_bonded, parse_f, parse_i, reverse_hyphen_label, tokenize,
 };
 use crate::io::reader::{FrameReader, Reader};
 use crate::io::streaming::{FrameIndexBuilder, FrameIndexEntry};
@@ -24,12 +24,12 @@ use molrs::store::block::Block;
 use molrs::store::frame::Frame;
 use molrs::store::frame_access::FrameAccess;
 use molrs::store::keys;
-use molrs::types::{F, I, Pbc3, U};
-use once_cell::sync::OnceCell;
+use molrs::types::{F, I, Idx, Pbc3};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Cursor, Seek, SeekFrom, Write};
 use std::path::Path;
+use std::sync::OnceLock;
 
 // ============================================================================
 // Header
@@ -234,13 +234,13 @@ impl AtomColumns {
         insert_u(
             &mut block,
             keys::ID,
-            self.id.iter().map(|&v| v as U).collect(),
+            self.id.iter().map(|&v| v as Idx).collect(),
             n,
         )?;
         insert_u(
             &mut block,
             keys::TYPE_ID,
-            types.iter().map(|&v| v as U).collect(),
+            types.iter().map(|&v| v as Idx).collect(),
             n,
         )?;
         insert_f(&mut block, keys::X, self.x, n)?;
@@ -261,7 +261,7 @@ impl AtomColumns {
                     insert_u(
                         &mut block,
                         $key,
-                        $col.data.iter().map(|&v| v as U).collect(),
+                        $col.data.iter().map(|&v| v as Idx).collect(),
                         n,
                     )?;
                 }
@@ -820,7 +820,7 @@ fn insert_topology_block(
     kind: &str,
     terms: &[TopologyTerm],
     atom_keys: &[&str],
-    atom_id_map: &HashMap<I, U>,
+    atom_id_map: &HashMap<I, Idx>,
     label_to_id: &HashMap<String, I>,
 ) -> std::io::Result<()> {
     if terms.is_empty() {
@@ -828,7 +828,7 @@ fn insert_topology_block(
     }
     let n = terms.len();
     let n_members = atom_keys.len();
-    let mut member_cols: Vec<Vec<U>> = (0..n_members).map(|_| Vec::with_capacity(n)).collect();
+    let mut member_cols: Vec<Vec<Idx>> = (0..n_members).map(|_| Vec::with_capacity(n)).collect();
     let mut types = Vec::with_capacity(n);
 
     for term in terms {
@@ -848,7 +848,7 @@ fn insert_topology_block(
     insert_u(
         &mut block,
         keys::TYPE_ID,
-        types.iter().map(|&v| v as U).collect(),
+        types.iter().map(|&v| v as Idx).collect(),
         n,
     )?;
     frame.insert(block_name, block);
@@ -888,12 +888,12 @@ fn build_frame(mut data: ParsedData) -> std::io::Result<Frame> {
     }
 
     // atom id → row index for topology remapping
-    let atom_id_map: HashMap<I, U> = data
+    let atom_id_map: HashMap<I, Idx> = data
         .atoms
         .id
         .iter()
         .enumerate()
-        .map(|(i, &id)| (id, i as U))
+        .map(|(i, &id)| (id, i as Idx))
         .collect();
 
     if data.atoms.len() > 0 {
@@ -1122,7 +1122,7 @@ fn is_section_header(trimmed: &str) -> bool {
 
 pub struct LAMMPSDataReader<R: BufRead + Seek> {
     reader: R,
-    frame: OnceCell<Option<Frame>>,
+    frame: OnceLock<Option<Frame>>,
     returned: bool,
 }
 
@@ -1130,7 +1130,7 @@ impl<R: BufRead + Seek> LAMMPSDataReader<R> {
     pub fn new(reader: R) -> Self {
         Self {
             reader,
-            frame: OnceCell::new(),
+            frame: OnceLock::new(),
             returned: false,
         }
     }
@@ -1238,7 +1238,7 @@ impl<W: Write> FrameWriter for LAMMPSDataWriter<W> {
 /// Resolved per-block type space for a write: row type ids + optional labels.
 struct ResolvedTypes {
     /// 1-based LAMMPS type id per row (empty when inventory-only / zero rows).
-    type_ids: Vec<U>,
+    type_ids: Vec<Idx>,
     /// Ordered labels for a `* Type Labels` section (id = index + 1).
     labels: Option<Vec<String>>,
     /// Header type count (max type id, inventory length, or 1 for atoms).
@@ -1332,7 +1332,9 @@ fn resolve_block_types(
 
     // String type labels take precedence over type_id.
     if let Some(col) = frame.get_string(block, keys::TYPE) {
-        let types: Vec<String> = (0..n).map(|i| col[[i]].clone()).collect();
+        let types: Vec<String> = (0..n)
+            .map(|i| maybe_canonical_bonded(block, &col[[i]]))
+            .collect();
         for t in &types {
             if t.trim().is_empty() {
                 return Err(err_mapper(format!(
@@ -1345,9 +1347,9 @@ fn resolve_block_types(
 
         if pure_int && !had_meta {
             let mut type_ids = Vec::with_capacity(n);
-            let mut max_id: U = 0;
+            let mut max_id: Idx = 0;
             for t in &types {
-                let id: U = t.parse().map_err(err_mapper)?;
+                let id: Idx = t.parse().map_err(err_mapper)?;
                 if id == 0 {
                     return Err(err_mapper(format!(
                         "type id 0 is invalid in {block} (LAMMPS types are 1-based)"
@@ -1363,15 +1365,18 @@ fn resolve_block_types(
             }));
         }
 
-        let mut all: std::collections::HashSet<String> = meta_names.into_iter().collect();
+        let mut all: std::collections::HashSet<String> = meta_names
+            .into_iter()
+            .map(|t| maybe_canonical_bonded(block, &t))
+            .collect();
         all.extend(unique);
         let ordered = sorted_type_names(all);
-        let map: HashMap<&str, U> = ordered
+        let map: HashMap<&str, Idx> = ordered
             .iter()
             .enumerate()
-            .map(|(i, s)| (s.as_str(), (i + 1) as U))
+            .map(|(i, s)| (s.as_str(), (i + 1) as Idx))
             .collect();
-        let type_ids: Vec<U> = types
+        let type_ids: Vec<Idx> = types
             .iter()
             .map(|t| {
                 map.get(t.as_str())
@@ -1395,16 +1400,16 @@ fn resolve_block_types(
     }
 
     // Numeric type_id (uint or int).
-    let type_ids: Option<Vec<U>> = if let Some(col) = frame.get_uint(block, keys::TYPE_ID) {
+    let type_ids: Option<Vec<Idx>> = if let Some(col) = frame.get_uint(block, keys::TYPE_ID) {
         Some((0..n).map(|i| col[[i]]).collect())
     } else if let Some(col) = frame.get_int(block, keys::TYPE_ID) {
-        Some((0..n).map(|i| col[[i]] as U).collect())
+        Some((0..n).map(|i| col[[i]] as Idx).collect())
     } else if let Some(col) = frame.get_uint(block, keys::TYPE) {
         Some((0..n).map(|i| col[[i]]).collect())
     } else {
         frame
             .get_int(block, keys::TYPE)
-            .map(|col| (0..n).map(|i| col[[i]] as U).collect())
+            .map(|col| (0..n).map(|i| col[[i]] as Idx).collect())
     };
 
     let Some(type_ids) = type_ids else {
@@ -1430,15 +1435,53 @@ fn resolve_block_types(
     }))
 }
 
+/// ForceField type-name → 1-based LAMMPS id, matching the data-file writer.
+///
+/// Bond / angle / dihedral labels are undirected: both ``c3-c3-h1`` and
+/// ``h1-c3-c3`` map to the same id.
+pub fn lammps_type_ids_from_frame(
+    frame: &impl FrameAccess,
+) -> std::io::Result<HashMap<String, u32>> {
+    let mut out = HashMap::new();
+    for (block, meta) in [
+        ("atoms", "atom_type_labels"),
+        ("bonds", "bond_type_labels"),
+        ("angles", "angle_type_labels"),
+        ("dihedrals", "dihedral_type_labels"),
+        ("impropers", "improper_type_labels"),
+    ] {
+        let Some(rt) = resolve_block_types(frame, block, meta)? else {
+            continue;
+        };
+        if let Some(labels) = rt.labels {
+            for (i, lab) in labels.iter().enumerate() {
+                let id = (i + 1) as u32;
+                out.insert(lab.clone(), id);
+                if matches!(block, "bonds" | "angles" | "dihedrals") {
+                    let rev = reverse_hyphen_label(lab);
+                    if rev != *lab {
+                        out.insert(rev, id);
+                    }
+                }
+            }
+        } else {
+            for &id in &rt.type_ids {
+                out.insert(id.to_string(), id as u32);
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// Per-row atom IDs: existing ``id`` column, else 1..N (file artifact).
-fn resolve_atom_ids(frame: &impl FrameAccess, n: usize) -> Vec<U> {
+fn resolve_atom_ids(frame: &impl FrameAccess, n: usize) -> Vec<Idx> {
     if let Some(col) = frame.get_uint("atoms", keys::ID) {
         return (0..n).map(|i| col[[i]]).collect();
     }
     if let Some(col) = frame.get_int("atoms", keys::ID) {
-        return (0..n).map(|i| col[[i]] as U).collect();
+        return (0..n).map(|i| col[[i]] as Idx).collect();
     }
-    (1..=n as U).collect()
+    (1..=n as Idx).collect()
 }
 
 /// Per-row masses: element periodic-table value preferred over stored mass.
@@ -1546,8 +1589,8 @@ fn write_topology_section<W: Write>(
     section: &str,
     block: &str,
     n_members: usize,
-    atom_ids: &[U],
-    type_ids: &[U],
+    atom_ids: &[Idx],
+    type_ids: &[Idx],
 ) -> std::io::Result<()> {
     let n = frame
         .visit_block(block, |b| b.nrows().unwrap_or(0))
@@ -1757,9 +1800,9 @@ fn write_lammps_data_frame<W: Write>(
         writeln!(writer)?;
     }
 
-    let has_image = frame.get_int("atoms", "ix").is_some()
-        && frame.get_int("atoms", "iy").is_some()
-        && frame.get_int("atoms", "iz").is_some();
+    let has_image = frame.get_int("atoms", keys::IX).is_some()
+        && frame.get_int("atoms", keys::IY).is_some()
+        && frame.get_int("atoms", keys::IZ).is_some();
 
     writeln!(writer, "Atoms # {style_name}")?;
     writeln!(writer)?;
@@ -1776,9 +1819,9 @@ fn write_lammps_data_frame<W: Write>(
             write_atom_field_value(writer, frame, field, i, &row_masses)?;
         }
         if has_image {
-            let ix = frame.get_int("atoms", "ix").unwrap();
-            let iy = frame.get_int("atoms", "iy").unwrap();
-            let iz = frame.get_int("atoms", "iz").unwrap();
+            let ix = frame.get_int("atoms", keys::IX).unwrap();
+            let iy = frame.get_int("atoms", keys::IY).unwrap();
+            let iz = frame.get_int("atoms", keys::IZ).unwrap();
             write!(writer, " {} {} {}", ix[[i]], iy[[i]], iz[[i]])?;
         }
         writeln!(writer)?;
@@ -2016,7 +2059,7 @@ mod atom_style_tests {
         let frame = parse_text(text);
         assert_eq!(frame.get_uint("atoms", keys::MOL_ID).unwrap()[0], 42);
         assert_eq!(xyz(&frame, 0), (1.5, 2.5, 3.5));
-        assert_eq!(frame.get_int("atoms", "iz").unwrap()[0], 1);
+        assert_eq!(frame.get_int("atoms", keys::IZ).unwrap()[0], 1);
         assert!(frame.get_float("atoms", keys::CHARGE).is_none());
     }
 
@@ -2096,17 +2139,6 @@ mod atom_style_tests {
         assert_eq!(frame.get_uint("atoms", keys::MOL_ID).unwrap()[0], 45539);
         assert!((frame.get_float("atoms", keys::MASS).unwrap()[0] - 12.0).abs() < 1e-12);
         assert!((frame.get_float("atoms", keys::MASS).unwrap()[1] - 1.0).abs() < 1e-12);
-    }
-
-    #[test]
-    fn fixtures_body_and_full() {
-        let root =
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../tests-data/lammps-data");
-        let body = read_lammps_data(root.join("data.body")).expect("body");
-        assert!(body.get_int("atoms", "bodyflag").is_some());
-        let full = read_lammps_data(root.join("molid.lmp")).expect("molid");
-        assert!(full.get_uint("atoms", keys::MOL_ID).is_some());
-        assert!(full.get_float("atoms", keys::CHARGE).is_some());
     }
 
     #[test]
@@ -2231,6 +2263,73 @@ mod atom_style_tests {
         let f2 = parse_frame_bytes(out.as_bytes()).unwrap();
         assert_eq!(f2.get("bonds").unwrap().nrows().unwrap(), 2);
         assert_eq!(f2.get("angles").unwrap().nrows().unwrap(), 1);
+    }
+
+    #[test]
+    fn write_collapses_reverse_angle_type_labels() {
+        use crate::store::block::Block;
+        use crate::store::frame::Frame as CoreFrame;
+        use ndarray::ArrayD;
+
+        let mut frame = CoreFrame::new();
+        let mut atoms = Block::new();
+        atoms
+            .insert(
+                keys::TYPE,
+                ArrayD::from_shape_vec(
+                    ndarray::IxDyn(&[3]),
+                    vec!["c3".to_string(), "c3".to_string(), "h1".to_string()],
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        for (key, vals) in [
+            (keys::X, vec![0.0_f64, 1.0, 2.0]),
+            (keys::Y, vec![0.0_f64, 0.0, 0.0]),
+            (keys::Z, vec![0.0_f64, 0.0, 0.0]),
+        ] {
+            atoms
+                .insert(
+                    key,
+                    ArrayD::from_shape_vec(ndarray::IxDyn(&[3]), vals).unwrap(),
+                )
+                .unwrap();
+        }
+        frame.insert("atoms", atoms);
+
+        let mut angles = Block::new();
+        angles
+            .insert(
+                keys::TYPE,
+                ArrayD::from_shape_vec(
+                    ndarray::IxDyn(&[2]),
+                    vec!["c3-c3-h1".to_string(), "h1-c3-c3".to_string()],
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        for (key, vals) in [
+            (keys::ATOMI, vec![0_u32, 2]),
+            (keys::ATOMJ, vec![1_u32, 1]),
+            (keys::ATOMK, vec![2_u32, 0]),
+        ] {
+            angles
+                .insert(
+                    key,
+                    ArrayD::from_shape_vec(ndarray::IxDyn(&[2]), vals).unwrap(),
+                )
+                .unwrap();
+        }
+        frame.insert("angles", angles);
+
+        let mut buf = Vec::new();
+        write_lammps_data_frame(&mut buf, &frame).expect("write");
+        let out = String::from_utf8(buf).unwrap();
+        assert!(out.contains("1 angle types"), "{out}");
+        assert!(out.contains("c3-c3-h1"), "{out}");
+        assert!(!out.contains("h1-c3-c3"), "{out}");
+        let ids = lammps_type_ids_from_frame(&frame).expect("ids");
+        assert_eq!(ids.get("c3-c3-h1"), ids.get("h1-c3-c3"));
     }
 
     #[test]

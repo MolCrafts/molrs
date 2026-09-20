@@ -4,7 +4,7 @@
 
 use molrs::store::block::Column;
 use molrs::store::trajectory::{ObservableData, ObservableRecord, Trajectory as CoreTrajectory};
-use molrs::types::{F, I, U};
+use molrs::types::{F, I, Idx};
 use ndarray::{ArrayD, IxDyn};
 use numpy::{IntoPyArray, PyArrayDyn, PyReadonlyArray1, PyReadonlyArrayDyn};
 use pyo3::exceptions::{PyIndexError, PyTypeError};
@@ -108,29 +108,20 @@ impl PyTrajectory {
         })
     }
 
-    /// Read a frame-sequence Zarr archive into a `Trajectory`.
-    ///
-    /// Requires the ``fs`` feature (default on desktop; omitted for Pyodide).
-    #[staticmethod]
-    #[cfg(feature = "fs")]
-    fn read_zarr(path: &str) -> PyResult<Self> {
-        let inner =
-            molrs::io::store::zarr::read_trajectory_file(path).map_err(molrs_error_to_pyerr)?;
-        Ok(Self { inner })
-    }
-
-    /// Write this trajectory to a frame-sequence Zarr archive.
-    ///
-    /// Requires the ``fs`` feature (default on desktop; omitted for Pyodide).
-    #[cfg(feature = "fs")]
-    fn write_zarr(&self, path: &str) -> PyResult<()> {
-        molrs::io::store::zarr::write_trajectory_file(path, &self.inner)
-            .map_err(molrs_error_to_pyerr)
-    }
-
     /// Number of frames in the trajectory.
     fn count_frames(&self) -> usize {
         self.inner.frames.len()
+    }
+
+    fn __reduce__<'py>(
+        slf: &Bound<'py, Self>,
+    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, pyo3::types::PyTuple>)> {
+        let py = slf.py();
+        let this = slf.borrow();
+        crate::helpers::reduce_via_type(
+            slf.as_any(),
+            (this.frames()?, this.step(py), this.time(py)),
+        )
     }
 }
 
@@ -176,6 +167,61 @@ impl PyScalarObservable {
     fn kind(&self) -> &'static str {
         "scalar"
     }
+
+    #[getter]
+    fn description(&self) -> String {
+        self.inner.description.clone()
+    }
+
+    #[getter]
+    fn unit(&self) -> Option<String> {
+        self.inner.unit.clone()
+    }
+
+    #[getter]
+    fn axes(&self) -> Vec<String> {
+        self.inner.axes.clone()
+    }
+
+    #[getter]
+    fn time_dependent(&self) -> bool {
+        self.inner.time_dependent
+    }
+
+    #[getter]
+    fn sampling(&self) -> Option<String> {
+        self.inner.sampling.clone()
+    }
+
+    #[getter]
+    fn domain(&self) -> Option<String> {
+        self.inner.domain.clone()
+    }
+
+    #[getter]
+    fn target(&self) -> Option<String> {
+        self.inner.target.clone()
+    }
+
+    fn __reduce__<'py>(
+        slf: &Bound<'py, Self>,
+    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, pyo3::types::PyTuple>)> {
+        let this = slf.borrow();
+        crate::helpers::reduce_via_type(
+            slf.as_any(),
+            (
+                this.name(),
+                this.data(slf.py())?,
+                this.description(),
+                this.unit(),
+                this.axes(),
+                this.time_dependent(),
+                this.sampling(),
+                this.domain(),
+                this.target(),
+            ),
+        )
+    }
 }
 
 #[pymethods]
@@ -219,6 +265,61 @@ impl PyVectorObservable {
     #[getter]
     fn kind(&self) -> &'static str {
         "vector"
+    }
+
+    #[getter]
+    fn description(&self) -> String {
+        self.inner.description.clone()
+    }
+
+    #[getter]
+    fn unit(&self) -> Option<String> {
+        self.inner.unit.clone()
+    }
+
+    #[getter]
+    fn axes(&self) -> Vec<String> {
+        self.inner.axes.clone()
+    }
+
+    #[getter]
+    fn time_dependent(&self) -> bool {
+        self.inner.time_dependent
+    }
+
+    #[getter]
+    fn sampling(&self) -> Option<String> {
+        self.inner.sampling.clone()
+    }
+
+    #[getter]
+    fn domain(&self) -> Option<String> {
+        self.inner.domain.clone()
+    }
+
+    #[getter]
+    fn target(&self) -> Option<String> {
+        self.inner.target.clone()
+    }
+
+    fn __reduce__<'py>(
+        slf: &Bound<'py, Self>,
+    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, pyo3::types::PyTuple>)> {
+        let this = slf.borrow();
+        crate::helpers::reduce_via_type(
+            slf.as_any(),
+            (
+                this.name(),
+                this.data(slf.py())?,
+                this.description(),
+                this.unit(),
+                this.axes(),
+                this.time_dependent(),
+                this.sampling(),
+                this.domain(),
+                this.target(),
+            ),
+        )
     }
 }
 
@@ -314,12 +415,12 @@ fn py_any_to_column(value: &Bound<'_, PyAny>) -> PyResult<Column> {
     }
     if let Ok(arr) = value.extract::<PyReadonlyArrayDyn<'_, u32>>() {
         return Ok(Column::from_uint(
-            arr.as_array().mapv(|v| v as U).into_dyn(),
+            arr.as_array().mapv(|v| v as Idx).into_dyn(),
         ));
     }
     if let Ok(arr) = value.extract::<PyReadonlyArrayDyn<'_, u64>>() {
         return Ok(Column::from_uint(
-            arr.as_array().mapv(|v| v as U).into_dyn(),
+            arr.as_array().mapv(|v| v as Idx).into_dyn(),
         ));
     }
     if let Ok(arr) = value.extract::<PyReadonlyArrayDyn<'_, bool>>() {
@@ -337,7 +438,7 @@ fn py_any_to_column(value: &Bound<'_, PyAny>) -> PyResult<Column> {
         return Ok(Column::from_int(ArrayD::from_elem(IxDyn(&[]), v as I)));
     }
     if let Ok(v) = value.extract::<u64>() {
-        return Ok(Column::from_uint(ArrayD::from_elem(IxDyn(&[]), v as U)));
+        return Ok(Column::from_uint(ArrayD::from_elem(IxDyn(&[]), v as Idx)));
     }
     if let Ok(v) = value.extract::<bool>() {
         return Ok(Column::from_bool(ArrayD::from_elem(IxDyn(&[]), v)));
@@ -365,14 +466,19 @@ fn column_to_pyobject(py: Python<'_>, column: &Column) -> PyResult<Py<PyAny>> {
             .into_pyarray(py)
             .into_any()
             .unbind()),
-        // For non-Float columns the caller expects an owned numpy array, so we
-        // deep-clone the inner ArrayD out of the holder. `.array().clone()`
-        // takes &ArrayD<T> and calls ArrayD::clone (deep-copy), detaching from
-        // any foreign-backed holder as a side effect.
+        Column::Float16(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
+        Column::Float32(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
         Column::Int(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
+        Column::Int8(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
+        Column::Int16(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
+        Column::Int64(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
         Column::UInt(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
         Column::Bool(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
         Column::U8(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
+        Column::UInt16(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
+        Column::UInt32(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
+        Column::Complex64(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
+        Column::Complex128(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
         Column::String(array) => {
             if array.ndim() == 0 {
                 let value = array.iter().next().cloned().unwrap_or_default();

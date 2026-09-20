@@ -79,12 +79,21 @@ impl Serialize for Column {
 
 fn dtype_from_tag(tag: &str) -> Option<DType> {
     Some(match tag {
-        "float" => DType::Float,
-        "int" => DType::Int,
+        "float" | "f64" => DType::Float,
+        "f16" => DType::Float16,
+        "f32" => DType::Float32,
+        "int" | "i32" => DType::Int,
+        "i8" => DType::Int8,
+        "i16" => DType::Int16,
+        "i64" => DType::Int64,
         "bool" => DType::Bool,
-        "uint" => DType::UInt,
+        "uint" | "u64" => DType::UInt,
         "u8" => DType::U8,
+        "u16" => DType::UInt16,
+        "u32" => DType::UInt32,
         "string" => DType::String,
+        "c64" => DType::Complex64,
+        "c128" => DType::Complex128,
         _ => return None,
     })
 }
@@ -263,14 +272,47 @@ fn build_column(dtype: DType, shape: &[usize], data: ColData) -> Result<Column, 
                 ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
             ))
         }
+        (DType::Float16, ColData::Bytes(b)) => {
+            let v = le::<2, _>(&b, n, half::f16::from_le_bytes)?;
+            Ok(Column::from_f16(
+                ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
+            ))
+        }
+        (DType::Float32, ColData::Bytes(b)) => {
+            let v = le::<4, _>(&b, n, f32::from_le_bytes)?;
+            Ok(Column::from_f32(
+                ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
+            ))
+        }
         (DType::Int, ColData::Bytes(b)) => {
             let v = le::<4, _>(&b, n, i32::from_le_bytes)?;
             Ok(Column::from_int(
                 ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
             ))
         }
+        (DType::Int8, ColData::Bytes(b)) => {
+            if b.len() != n {
+                return Err(shape_err("i8"));
+            }
+            let v: Vec<i8> = b.iter().map(|&x| x as i8).collect();
+            Ok(Column::from_i8(
+                ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
+            ))
+        }
+        (DType::Int16, ColData::Bytes(b)) => {
+            let v = le::<2, _>(&b, n, i16::from_le_bytes)?;
+            Ok(Column::from_i16(
+                ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
+            ))
+        }
+        (DType::Int64, ColData::Bytes(b)) => {
+            let v = le::<8, _>(&b, n, i64::from_le_bytes)?;
+            Ok(Column::from_i64(
+                ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
+            ))
+        }
         (DType::UInt, ColData::Bytes(b)) => {
-            let v = le::<4, _>(&b, n, u32::from_le_bytes)?;
+            let v = le::<8, _>(&b, n, u64::from_le_bytes)?;
             Ok(Column::from_uint(
                 ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
             ))
@@ -281,6 +323,18 @@ fn build_column(dtype: DType, shape: &[usize], data: ColData) -> Result<Column, 
             }
             Ok(Column::from_u8(
                 ArrayD::from_shape_vec(ix, b).map_err(|e| e.to_string())?,
+            ))
+        }
+        (DType::UInt16, ColData::Bytes(b)) => {
+            let v = le::<2, _>(&b, n, u16::from_le_bytes)?;
+            Ok(Column::from_u16(
+                ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
+            ))
+        }
+        (DType::UInt32, ColData::Bytes(b)) => {
+            let v = le::<4, _>(&b, n, u32::from_le_bytes)?;
+            Ok(Column::from_u32(
+                ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
             ))
         }
         (DType::Bool, ColData::Bytes(b)) => {
@@ -300,6 +354,28 @@ fn build_column(dtype: DType, shape: &[usize], data: ColData) -> Result<Column, 
                 ArrayD::from_shape_vec(ix, s).map_err(|e| e.to_string())?,
             ))
         }
+        (DType::Complex64, ColData::Bytes(b)) => {
+            let v = le::<8, _>(&b, n, |bytes| {
+                num_complex::Complex::<f32>::new(
+                    f32::from_le_bytes(bytes[..4].try_into().unwrap()),
+                    f32::from_le_bytes(bytes[4..].try_into().unwrap()),
+                )
+            })?;
+            Ok(Column::from_c64(
+                ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
+            ))
+        }
+        (DType::Complex128, ColData::Bytes(b)) => {
+            let v = le::<16, _>(&b, n, |bytes| {
+                num_complex::Complex::<f64>::new(
+                    f64::from_le_bytes(bytes[..8].try_into().unwrap()),
+                    f64::from_le_bytes(bytes[8..].try_into().unwrap()),
+                )
+            })?;
+            Ok(Column::from_c128(
+                ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
+            ))
+        }
         _ => Err("dtype does not match its data payload".to_string()),
     }
 }
@@ -317,10 +393,7 @@ fn le<const N: usize, T>(
             n * N
         ));
     }
-    Ok(bytes
-        .chunks_exact(N)
-        .map(|c| read(c.try_into().unwrap()))
-        .collect())
+    Ok(bytes.as_chunks::<N>().0.iter().map(|c| read(*c)).collect())
 }
 
 // ===== Block ================================================================
@@ -450,5 +523,70 @@ impl<'de> Deserialize<'de> for Frame {
         frame.meta.extend(r.meta);
         frame.simbox = r.simbox;
         Ok(frame)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::core::spatial::simbox::SimBox;
+    use crate::core::store::block::Block;
+    use crate::core::store::frame::Frame;
+    use crate::core::store::meta::MetaValue;
+    use ndarray::{Array1, array};
+
+    fn atoms() -> Block {
+        let mut b = Block::new();
+        b.insert("x", Array1::from_vec(vec![0.5, -1.25, 3.0]).into_dyn())
+            .unwrap();
+        b.insert("seq", Array1::from_vec(vec![1i32, 2, 3]).into_dyn())
+            .unwrap();
+        b.insert(
+            "name",
+            Array1::from_vec(vec!["O".to_string(), "H".to_string(), "Ω".to_string()]).into_dyn(),
+        )
+        .unwrap();
+        b
+    }
+
+    #[test]
+    fn a_block_round_trips_every_column_at_its_dtype() {
+        let json = serde_json::to_string(&atoms()).unwrap();
+        let back: Block = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.nrows(), Some(3));
+        assert_eq!(
+            back.get_float("x").unwrap().as_slice().unwrap(),
+            &[0.5, -1.25, 3.0]
+        );
+        assert_eq!(back.get_int("seq").unwrap().as_slice().unwrap(), &[1, 2, 3]);
+        assert_eq!(back.get_string("name").unwrap()[2], "Ω");
+    }
+
+    #[test]
+    fn a_frame_keeps_its_blocks_typed_meta_and_box() {
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms());
+        frame.meta.insert("timestep", MetaValue::I64(42));
+        frame.meta.insert("label", MetaValue::String("run".into()));
+        frame.simbox =
+            Some(SimBox::cube(10.0, array![1.0, 2.0, 3.0], [true, true, false]).unwrap());
+
+        let json = serde_json::to_string(&frame).unwrap();
+        let back: Frame = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.get("atoms").unwrap().nrows(), Some(3));
+        assert_eq!(back.meta.get("timestep"), Some(&MetaValue::I64(42)));
+        assert_eq!(
+            back.meta.get("label"),
+            Some(&MetaValue::String("run".into()))
+        );
+        let bx = back.simbox.as_ref().expect("box survives");
+        assert_eq!(bx.pbc(), [true, true, false]);
+        assert_eq!(bx.origin_view(), array![1.0, 2.0, 3.0].view());
+        assert_eq!(bx.lengths(), array![10.0, 10.0, 10.0]);
+    }
+
+    #[test]
+    fn a_column_with_a_bad_dtype_tag_is_refused() {
+        let json = r#"{"dtype":"quaternion","shape":[1],"data":[0]}"#;
+        assert!(serde_json::from_str::<crate::core::store::block::Column>(json).is_err());
     }
 }

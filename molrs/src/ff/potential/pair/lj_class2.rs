@@ -7,88 +7,300 @@
 use std::collections::HashMap;
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::Potential;
+use crate::ff::forcefield::pair_type_name;
+use crate::ff::potential::gather_copies;
 use crate::ff::potential::geometry::validate_coords;
+use crate::ff::potential::pair::atom_type_index;
+use crate::ff::potential::pair::energy_forces;
+use crate::ff::potential::pair::fold_chunks;
+use crate::ff::potential::pair::type_pair;
+use crate::ff::potential::{Member, PairDriven, Potential};
+use molrs::math::Virial;
+use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame::Frame;
 use molrs::types::F;
 
-/// Class2 (9-6) LJ pair potential with pre-resolved flat arrays.
+/// Where a pair's class2 `(ε, σ)` comes from.
+enum Source {
+    /// Resolved against one fixed pair list at construction, keyed by the
+    /// `type` label on each row.
+    Compiled {
+        atom_i: Vec<usize>,
+        atom_j: Vec<usize>,
+        epsilon: Vec<F>,
+        sigma: Vec<F>,
+    },
+    /// A type-pair table, keyed by the types of the two atoms.
+    ///
+    /// The row label a compiled kernel keys on belongs to a pair list that a
+    /// neighbour engine rebuilds from scratch; the atoms' types survive it.
+    /// This is LAMMPS's `pair_coeff i j` model. Under a ghost régime `type_id`
+    /// covers the copies too, each carrying its owner's type.
+    Typed {
+        type_id: Vec<u32>,
+        ntypes: usize,
+        epsilon: Vec<F>,
+        sigma: Vec<F>,
+        /// How many of the entries above are atoms; the rest are copies, and
+        /// are rebuilt from their owners whenever the copy list is.
+        n_owned: usize,
+    },
+}
+
 pub struct PairLJClass2 {
-    atom_i: Vec<usize>,
-    atom_j: Vec<usize>,
-    epsilon: Vec<F>,
-    sigma: Vec<F>,
+    source: Source,
 }
 
 impl PairLJClass2 {
     pub fn new(atom_i: Vec<usize>, atom_j: Vec<usize>, epsilon: Vec<F>, sigma: Vec<F>) -> Self {
-        assert_eq!(atom_i.len(), atom_j.len());
-        assert_eq!(atom_i.len(), epsilon.len());
-        assert_eq!(atom_i.len(), sigma.len());
+        let n = atom_i.len();
+        assert_eq!(atom_j.len(), n);
+        assert_eq!(epsilon.len(), n);
+        assert_eq!(sigma.len(), n);
         Self {
-            atom_i,
-            atom_j,
-            epsilon,
-            sigma,
+            source: Source::Compiled {
+                atom_i,
+                atom_j,
+                epsilon,
+                sigma,
+            },
         }
+    }
+
+    /// A kernel that finds its parameters from the types of the two atoms.
+    ///
+    /// `type_id` is one type index per atom; each table is `ntypes × ntypes`
+    /// laid out `ti * ntypes + tj`. This is the form a neighbour-driven
+    /// evaluation needs.
+    ///
+    /// A neighbour table is a different list of pairs every rebuild, so a
+    /// parameter resolved against an older one belongs to different atoms.
+    /// Keyed on the atoms instead, it can be found for whatever pair turns up
+    /// — including one that names a periodic copy.
+    pub fn typed(type_id: Vec<u32>, ntypes: usize, epsilon: Vec<F>, sigma: Vec<F>) -> Self {
+        let n_cells = ntypes * ntypes;
+        assert_eq!(n_cells, epsilon.len(), "epsilon must cover every type pair");
+        assert_eq!(n_cells, sigma.len(), "sigma must cover every type pair");
+        debug_assert!(
+            type_id.iter().all(|&t| (t as usize) < ntypes),
+            "an atom has a type with no parameters"
+        );
+        let n_owned = type_id.len();
+        Self {
+            source: Source::Typed {
+                type_id,
+                ntypes,
+                epsilon,
+                sigma,
+                n_owned,
+            },
+        }
+    }
+
+    /// The pair term for one already-reduced separation.
+    fn pair_kernel(&self, r2: F, disp: [F; 3], eps: F, sigma: F) -> Option<(F, [F; 3])> {
+        if r2 < 1e-24 {
+            return None;
+        }
+        let r = r2.sqrt();
+        let u = sigma / r; // sigma/r
+        let u3 = u * u * u;
+        let u6 = u3 * u3;
+        let u9 = u6 * u3;
+        let energy = eps * (2.0 * u9 - 3.0 * u6);
+
+        // E = eps(2 u^9 - 3 u^6), u = sigma/r, du/dr = -u/r
+        // dE/dr = eps(18 u^8 - 18 u^5)(-u/r) = -18 eps (u^9 - u^6)/r
+        // factor = -(1/r) dE/dr = 18 eps (u^9 - u^6)/r^2
+        let factor = 18.0 * eps * (u9 - u6) / r2;
+        Some((
+            energy,
+            [factor * disp[0], factor * disp[1], factor * disp[2]],
+        ))
+    }
+
+    /// The accumulation, once. Only where the pairs and the parameters come
+    /// from differs between the two entry points.
+    fn fold(
+        &self,
+        n_components: usize,
+        n_pairs: usize,
+        pair: impl Fn(usize) -> (usize, usize, (F, F), [F; 3], F) + Sync,
+    ) -> (F, Vec<F>, Virial) {
+        let mut forces = vec![0.0; n_components];
+        let (energy, virial) = self.fold_into(&mut forces, &[], n_pairs, pair);
+        (energy, forces, virial)
+    }
+
+    /// The accumulation, adding into the caller's buffer and scaling each pair.
+    fn fold_into(
+        &self,
+        out: &mut [F],
+        factor: &[F],
+        n_pairs: usize,
+        pair: impl Fn(usize) -> (usize, usize, (F, F), [F; 3], F) + Sync,
+    ) -> (F, Virial) {
+        fold_chunks(out, n_pairs, |acc, rows| {
+            self.fold_rows(acc, factor, rows, &pair)
+        })
+    }
+
+    /// One contiguous range of pairs, into `out`. The whole fold when it runs
+    /// serially; one chunk of it when it does not.
+    fn fold_rows(
+        &self,
+        out: &mut [F],
+        factor: &[F],
+        rows: std::ops::Range<usize>,
+        pair: &(impl Fn(usize) -> (usize, usize, (F, F), [F; 3], F) + Sync),
+    ) -> (F, Virial) {
+        let mut energy: F = 0.0;
+        let mut virial = Virial::ZERO;
+        for idx in rows {
+            let w = if factor.is_empty() { 1.0 } else { factor[idx] };
+            // Exactly zero *skips*: a bonded pair sits at bond length,
+            // where a repulsive term is enormous, and scaling it by zero
+            // would be arithmetic on a number that should never have been
+            // computed.
+            if w == 0.0 {
+                continue;
+            }
+            let (i, j, (eps, sigma), disp, r2) = pair(idx);
+            let Some((e, f)) = self.pair_kernel(r2, disp, eps, sigma) else {
+                continue;
+            };
+            let f = [w * f[0], w * f[1], w * f[2]];
+            energy += w * e;
+            virial.add_outer(f, disp);
+            out[j * 3] += f[0];
+            out[j * 3 + 1] += f[1];
+            out[j * 3 + 2] += f[2];
+            out[i * 3] -= f[0];
+            out[i * 3 + 1] -= f[1];
+            out[i * 3 + 2] -= f[2];
+        }
+        (energy, virial)
     }
 }
 
 impl Potential for PairLJClass2 {
     fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
         let n_atoms = validate_coords(coords);
-        let mut energy: F = 0.0;
-        let mut forces = vec![0.0; coords.len()];
-
-        for idx in 0..self.atom_i.len() {
-            let i = self.atom_i[idx];
-            let j = self.atom_j[idx];
+        let Source::Compiled {
+            atom_i,
+            atom_j,
+            epsilon,
+            sigma,
+        } = &self.source
+        else {
+            // A type table needs a pair table, and nobody handed one over.
+            return (0.0, vec![0.0; coords.len()]);
+        };
+        energy_forces(self.fold(coords.len(), atom_i.len(), |idx| {
+            let i = atom_i[idx];
+            let j = atom_j[idx];
             debug_assert!(i < n_atoms && j < n_atoms);
+            let d = [
+                coords[j * 3] - coords[i * 3],
+                coords[j * 3 + 1] - coords[i * 3 + 1],
+                coords[j * 3 + 2] - coords[i * 3 + 2],
+            ];
+            let r2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+            (i, j, (epsilon[idx], sigma[idx]), d, r2)
+        }))
+    }
 
-            let eps = self.epsilon[idx];
-            let sigma = self.sigma[idx];
+    fn calc_energy_forces_with_pairs(&self, coords: &[F], pairs: &Neighbors) -> (F, Vec<F>) {
+        let (e, f, _) = self.calc_energy_forces_with_pairs_virial(coords, pairs);
+        (e, f)
+    }
+}
 
-            let dx = coords[j * 3] - coords[i * 3];
-            let dy = coords[j * 3 + 1] - coords[i * 3 + 1];
-            let dz = coords[j * 3 + 2] - coords[i * 3 + 2];
-            let r2 = dx * dx + dy * dy + dz * dz;
-            if r2 < 1e-24 {
-                continue;
+impl PairDriven for PairLJClass2 {
+    fn accumulate_pairs(
+        &self,
+        coords: &[F],
+        pairs: &Neighbors,
+        factor: &[F],
+        out: &mut [F],
+    ) -> (F, Option<Virial>) {
+        let Source::Typed {
+            type_id,
+            ntypes,
+            epsilon,
+            sigma,
+            ..
+        } = &self.source
+        else {
+            // A compiled kernel answers for its own list, not for this one.
+            // A compiled kernel cannot read the table, so it cannot read a
+            // per-pair weight either. Both providers refuse one, so this is
+            // the free-boundary path and `factor` is empty.
+            debug_assert!(factor.is_empty());
+            let (e, f) = self.calc_energy_forces(coords);
+            for (acc, v) in out.iter_mut().zip(&f) {
+                *acc += v;
             }
-            let r = r2.sqrt();
-            let u = sigma / r; // sigma/r
-            let u3 = u * u * u;
-            let u6 = u3 * u3;
-            let u9 = u6 * u3;
-            energy += eps * (2.0 * u9 - 3.0 * u6);
-
-            // E = eps(2 u^9 - 3 u^6), u = sigma/r, du/dr = -u/r
-            // dE/dr = eps(18 u^8 - 18 u^5)(-u/r) = -18 eps (u^9 - u^6)/r
-            // factor = -(1/r) dE/dr = 18 eps (u^9 - u^6)/r^2
-            let factor = 18.0 * eps * (u9 - u6) / r2;
-            let fx = factor * dx;
-            let fy = factor * dy;
-            let fz = factor * dz;
-
-            forces[j * 3] += fx;
-            forces[j * 3 + 1] += fy;
-            forces[j * 3 + 2] += fz;
-            forces[i * 3] -= fx;
-            forces[i * 3 + 1] -= fy;
-            forces[i * 3 + 2] -= fz;
-        }
-
-        (energy, forces)
+            return (e, None);
+        };
+        let (Some(disp), Some(d2)) = (pairs.disp(), pairs.dist_sq()) else {
+            return (0.0, None);
+        };
+        let i_col = pairs.query_point_indices();
+        let j_col = pairs.point_indices();
+        let (e, w) = self.fold_into(out, factor, i_col.len(), |p| {
+            let i = i_col[p] as usize;
+            let j = j_col[p] as usize;
+            debug_assert!(
+                i < type_id.len() && j < type_id.len(),
+                "a pair names an atom the type table does not cover"
+            );
+            let t = type_pair(type_id[i], type_id[j], *ntypes);
+            (
+                i,
+                j,
+                (epsilon[t], sigma[t]),
+                [disp[[p, 0]], disp[[p, 1]], disp[[p, 2]]],
+                d2[p],
+            )
+        });
+        (e, Some(w))
+    }
+    fn binds_a_fixed_pair_list(&self) -> bool {
+        matches!(self.source, Source::Compiled { .. })
+    }
+    fn calc_energy_forces_with_pairs_virial(
+        &self,
+        coords: &[F],
+        pairs: &Neighbors,
+    ) -> (F, Vec<F>, Option<Virial>) {
+        let mut forces = vec![0.0; coords.len()];
+        let (e, w) = self.accumulate_pairs(coords, pairs, &[], &mut forces);
+        (e, forces, w)
+    }
+    fn gather_onto_copies(&mut self, owner: &[u32]) {
+        let Source::Typed {
+            type_id, n_owned, ..
+        } = &mut self.source
+        else {
+            // Nothing per atom to extend.
+            return;
+        };
+        gather_copies(type_id, *n_owned, owner);
     }
 }
 
 /// Construct a [`PairLJClass2`] from style params, type params, and Frame topology.
 pub fn pair_lj_class2_ctor(
-    _style_params: &Params,
+    style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
+) -> Result<Member, String> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
+    // `Style::to_potential` projects the force field's `special_bonds` 1-4
+    // weight here. The energy is linear in this parameter, so scaling it is
+    // exactly scaling the pair.
+    let scale_14 = style_params.get("lj14scale").unwrap_or(1.0) as F;
 
     let block = frame
         .get("pairs")
@@ -99,6 +311,7 @@ pub fn pair_lj_class2_ctor(
     let j_col = block
         .get_uint("atomj")
         .ok_or_else(|| "PairLJClass2: pairs block missing \"atomj\" column".to_string())?;
+    let is_14 = block.get_bool("is_14");
     let type_col = block
         .get_string("type")
         .ok_or_else(|| "PairLJClass2: pairs block missing \"type\" column".to_string())?;
@@ -124,17 +337,111 @@ pub fn pair_lj_class2_ctor(
 
         atom_i.push(i_col[idx] as usize);
         atom_j.push(j_col[idx] as usize);
-        eps_vec.push(eps);
+        eps_vec.push(if is_14.is_some_and(|b| b[idx]) {
+            eps * scale_14
+        } else {
+            eps
+        });
         sig_vec.push(sigma);
     }
 
-    Ok(Box::new(PairLJClass2::new(
+    Ok(Member::pair(PairLJClass2::new(
         atom_i, atom_j, eps_vec, sig_vec,
+    )))
+}
+
+/// Construct a neighbour-driven [`PairLJClass2`] from per-atom parameters.
+///
+/// The counterpart of [`pair_lj_class2_ctor`]: the same force field, keyed on the atoms
+/// instead of on a pair list, so it can answer for whatever pairs a neighbour
+/// search turns up. It reads no `pairs` block — there is none to read when the
+/// list is rebuilt every few steps.
+pub fn pair_lj_class2_typed_ctor(
+    _style_params: &Params,
+    type_params: &[(&str, &Params)],
+    frame: &Frame,
+) -> Result<Member, String> {
+    let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
+    let (type_id, labels) = atom_type_index(frame)?;
+    let ntypes = labels.len();
+    let mut epsilon = vec![0.0 as F; ntypes * ntypes];
+    let mut sigma = vec![0.0 as F; ntypes * ntypes];
+    for ti in 0..ntypes {
+        for tj in 0..ntypes {
+            // A cross-pair may be declared either way round; a self-pair is
+            // named by the atom type alone.
+            let forward = pair_type_name(&labels[ti], &labels[tj]);
+            let reverse = pair_type_name(&labels[tj], &labels[ti]);
+            let p = type_map
+                .get(forward.as_str())
+                .or_else(|| type_map.get(reverse.as_str()))
+                .ok_or_else(|| format!("PairLJClass2: unknown pair type '{forward}'"))?;
+            let t = type_pair(ti as u32, tj as u32, ntypes);
+            epsilon[t] = p
+                .get("epsilon")
+                .ok_or_else(|| format!("PairLJClass2 type '{forward}': missing 'epsilon'"))?
+                as F;
+            sigma[t] = p
+                .get("sigma")
+                .ok_or_else(|| format!("PairLJClass2 type '{forward}': missing 'sigma'"))?
+                as F;
+        }
+    }
+    Ok(Member::pair(PairLJClass2::typed(
+        type_id, ntypes, epsilon, sigma,
     )))
 }
 
 #[cfg(test)]
 mod tests {
+
+    /// A type-pair table gives the same number as a per-row label resolved
+    /// earlier against a fixed list — bit for bit, on the same pairs.
+    ///
+    /// The row label belongs to a pair list a neighbour engine rebuilds from
+    /// scratch; the atoms' types survive it. That is the whole difference.
+    #[test]
+    fn a_type_table_scores_a_pair_exactly_as_compiled_rows() {
+        use crate::ff::potential::pair::testing::{
+            assert_same, assert_virial_matches_forces, table_over,
+        };
+
+        let ntypes = 2_usize;
+        let type_id = vec![0_u32, 1, 0, 1];
+        let epsilon: Vec<F> = vec![0.12, 0.09, 0.09, 0.17];
+        let sigma: Vec<F> = vec![3.4, 3.1, 3.1, 2.9];
+        let coords: Vec<F> = vec![
+            0.0, 0.0, 0.0, //
+            2.1, 0.4, 0.2, //
+            1.2, 1.9, 0.7, //
+            3.0, 2.3, 1.1,
+        ];
+        let links = [(0_usize, 1_usize), (0, 2), (1, 3), (2, 3)];
+
+        let (ai, aj): (Vec<usize>, Vec<usize>) = links.iter().copied().unzip();
+        let epsilon_c: Vec<F> = links
+            .iter()
+            .map(|&(i, j)| epsilon[type_pair(type_id[i], type_id[j], ntypes)])
+            .collect();
+        let sigma_c: Vec<F> = links
+            .iter()
+            .map(|&(i, j)| sigma[type_pair(type_id[i], type_id[j], ntypes)])
+            .collect();
+        let compiled = PairLJClass2::new(ai, aj, epsilon_c, sigma_c);
+        let typed = PairLJClass2::typed(type_id, ntypes, epsilon, sigma);
+
+        let table = table_over(&coords, &links);
+        assert_same(
+            "lj/class2",
+            compiled.calc_energy_forces(&coords),
+            typed.calc_energy_forces_with_pairs(&coords, &table),
+        );
+        assert_virial_matches_forces(
+            "lj/class2",
+            &coords,
+            typed.calc_energy_forces_with_pairs_virial(&coords, &table),
+        );
+    }
     use super::*;
 
     fn numerical_forces(pot: &PairLJClass2, coords: &[F]) -> Vec<F> {

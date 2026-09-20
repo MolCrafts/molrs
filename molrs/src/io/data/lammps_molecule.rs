@@ -22,7 +22,7 @@ use serde_json::{Value as JsonValue, json};
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
 use molrs::store::meta::MetaValue;
-use molrs::types::{F, I, U};
+use molrs::types::{F, I, Idx};
 
 fn invalid_data<E: std::fmt::Display>(e: E) -> Error {
     Error::new(ErrorKind::InvalidData, e.to_string())
@@ -37,7 +37,7 @@ fn insert_float_col(block: &mut Block, key: &str, vals: Vec<F>) -> Result<()> {
     block.insert(key, arr).map_err(invalid_data)
 }
 
-fn insert_uint_col(block: &mut Block, key: &str, vals: Vec<U>) -> Result<()> {
+fn insert_uint_col(block: &mut Block, key: &str, vals: Vec<Idx>) -> Result<()> {
     let n = vals.len();
     let arr = Array1::from_vec(vals)
         .into_shape_with_order(IxDyn(&[n]))
@@ -281,11 +281,13 @@ fn section_name(line: &str) -> Option<String> {
     None
 }
 
-fn parse_native_atoms(sections: &HashMap<String, Vec<String>>) -> Result<(Block, HashMap<U, U>)> {
+fn parse_native_atoms(
+    sections: &HashMap<String, Vec<String>>,
+) -> Result<(Block, HashMap<Idx, Idx>)> {
     let types_lines = sections
         .get("Types")
         .ok_or_else(|| invalid_data("Native molecule file must contain Types section"))?;
-    let mut ids: Vec<U> = Vec::new();
+    let mut ids: Vec<Idx> = Vec::new();
     let mut types: Vec<String> = Vec::new();
     for line in types_lines {
         let parts: Vec<&str> = line
@@ -302,10 +304,10 @@ fn parse_native_atoms(sections: &HashMap<String, Vec<String>>) -> Result<(Block,
     if ids.is_empty() {
         return Err(invalid_data("Types section is empty"));
     }
-    let id_to_idx: HashMap<U, U> = ids
+    let id_to_idx: HashMap<Idx, Idx> = ids
         .iter()
         .enumerate()
-        .map(|(i, &id)| (id, i as U))
+        .map(|(i, &id)| (id, i as Idx))
         .collect();
     let n = ids.len();
     let mut block = Block::new();
@@ -324,7 +326,7 @@ fn parse_native_atoms(sections: &HashMap<String, Vec<String>>) -> Result<(Block,
                 .split_whitespace()
                 .collect();
             if parts.len() >= 4 {
-                let id: U = parts[0].parse().map_err(invalid_data)?;
+                let id: Idx = parts[0].parse().map_err(invalid_data)?;
                 if let Some(&idx) = id_to_idx.get(&id) {
                     let i = idx as usize;
                     x[i] = parts[1].parse().map_err(invalid_data)?;
@@ -353,7 +355,7 @@ fn parse_native_atoms(sections: &HashMap<String, Vec<String>>) -> Result<(Block,
                     .split_whitespace()
                     .collect();
                 if parts.len() >= 2 {
-                    let id: U = parts[0].parse().map_err(invalid_data)?;
+                    let id: Idx = parts[0].parse().map_err(invalid_data)?;
                     if let Some(&idx) = id_to_idx.get(&id) {
                         vals[idx as usize] = parts[1].parse().map_err(invalid_data)?;
                     }
@@ -363,7 +365,7 @@ fn parse_native_atoms(sections: &HashMap<String, Vec<String>>) -> Result<(Block,
         }
     }
     if let Some(lines) = sections.get("Molecules") {
-        let mut vals = vec![0_u32; n];
+        let mut vals = vec![0_u64; n];
         for line in lines {
             let parts: Vec<&str> = line
                 .split('#')
@@ -372,7 +374,7 @@ fn parse_native_atoms(sections: &HashMap<String, Vec<String>>) -> Result<(Block,
                 .split_whitespace()
                 .collect();
             if parts.len() >= 2 {
-                let id: U = parts[0].parse().map_err(invalid_data)?;
+                let id: Idx = parts[0].parse().map_err(invalid_data)?;
                 if let Some(&idx) = id_to_idx.get(&id) {
                     vals[idx as usize] = parts[1].parse().map_err(invalid_data)?;
                 }
@@ -387,7 +389,7 @@ fn parse_native_connectivity(
     sections: &HashMap<String, Vec<String>>,
     section: &str,
     arity: usize,
-    id_to_idx: &HashMap<U, U>,
+    id_to_idx: &HashMap<Idx, Idx>,
 ) -> Result<Option<Block>> {
     let Some(lines) = sections.get(section) else {
         return Ok(None);
@@ -397,7 +399,7 @@ fn parse_native_connectivity(
     }
     let mut ids = Vec::new();
     let mut types = Vec::new();
-    let mut members: Vec<Vec<U>> = vec![Vec::new(); arity];
+    let mut members: Vec<Vec<Idx>> = vec![Vec::new(); arity];
     for line in lines {
         let parts: Vec<&str> = line
             .split('#')
@@ -409,10 +411,10 @@ fn parse_native_connectivity(
         if parts.len() < 2 + arity {
             continue;
         }
-        ids.push(parts[0].parse::<U>().map_err(invalid_data)?);
+        ids.push(parts[0].parse::<Idx>().map_err(invalid_data)?);
         types.push(parts[1].to_string());
         for (k, mcol) in members.iter_mut().enumerate() {
-            let atom_id: U = parts[2 + k].parse().map_err(invalid_data)?;
+            let atom_id: Idx = parts[2 + k].parse().map_err(invalid_data)?;
             let idx = *id_to_idx
                 .get(&atom_id)
                 .ok_or_else(|| invalid_data(format!("unknown atom id {atom_id} in {section}")))?;
@@ -553,16 +555,16 @@ fn write_lammps_molecule_native<P: AsRef<Path>>(path: P, frame: &Frame) -> Resul
         }
         writeln!(w, "{}", capitalize(name))?;
         writeln!(w)?;
-        let item_ids: Vec<U> = if block.contains_key("id") {
+        let item_ids: Vec<Idx> = if block.contains_key("id") {
             if let Some(col) = block.get_uint("id") {
                 (0..nb).map(|i| col[[i]]).collect()
             } else if let Some(col) = block.get_int("id") {
-                (0..nb).map(|i| col[[i]] as U).collect()
+                (0..nb).map(|i| col[[i]] as Idx).collect()
             } else {
                 return Err(invalid_data("id"));
             }
         } else {
-            (1..=nb as U).collect()
+            (1..=nb as Idx).collect()
         };
         let t_ids = type_ids_for_block(block)?;
         let member_keys = ["atomi", "atomj", "atomk", "atoml"];
@@ -596,15 +598,15 @@ fn capitalize(s: &str) -> String {
     }
 }
 
-fn atom_ids(atoms: &Block) -> Vec<U> {
+fn atom_ids(atoms: &Block) -> Vec<Idx> {
     let n = atoms.nrows().unwrap_or(0);
     if let Some(col) = atoms.get_uint("id") {
         return (0..n).map(|i| col[[i]]).collect();
     }
     if let Some(col) = atoms.get_int("id") {
-        return (0..n).map(|i| col[[i]] as U).collect();
+        return (0..n).map(|i| col[[i]] as Idx).collect();
     }
-    (1..=n as U).collect()
+    (1..=n as Idx).collect()
 }
 
 fn type_ids_for_block(block: &Block) -> Result<Vec<I>> {
@@ -674,7 +676,7 @@ fn read_lammps_molecule_json(path: &Path) -> Result<Frame> {
         let a = entry
             .as_array()
             .ok_or_else(|| invalid_data("types data entry must be array"))?;
-        ids.push(a[0].as_i64().ok_or_else(|| invalid_data("atom id"))? as U);
+        ids.push(a[0].as_i64().ok_or_else(|| invalid_data("atom id"))? as Idx);
         let t = if let Some(s) = a[1].as_str() {
             s.to_string()
         } else if let Some(n) = a[1].as_i64() {
@@ -684,10 +686,10 @@ fn read_lammps_molecule_json(path: &Path) -> Result<Frame> {
         };
         types.push(t);
     }
-    let id_to_idx: HashMap<U, U> = ids
+    let id_to_idx: HashMap<Idx, Idx> = ids
         .iter()
         .enumerate()
-        .map(|(i, &id)| (id, i as U))
+        .map(|(i, &id)| (id, i as Idx))
         .collect();
     let n = ids.len();
     let mut atoms = Block::new();
@@ -700,7 +702,7 @@ fn read_lammps_molecule_json(path: &Path) -> Result<Frame> {
         let mut z = vec![0.0; n];
         for entry in coords {
             let a = entry.as_array().ok_or_else(|| invalid_data("coords row"))?;
-            let id = a[0].as_i64().ok_or_else(|| invalid_data("id"))? as U;
+            let id = a[0].as_i64().ok_or_else(|| invalid_data("id"))? as Idx;
             let idx = *id_to_idx.get(&id).ok_or_else(|| invalid_data("id"))? as usize;
             x[idx] = a[1].as_f64().ok_or_else(|| invalid_data("x"))?;
             y[idx] = a[2].as_f64().ok_or_else(|| invalid_data("y"))?;
@@ -721,19 +723,19 @@ fn read_lammps_molecule_json(path: &Path) -> Result<Frame> {
             .and_then(|v| v.as_array())
         {
             if as_int {
-                let mut vals = vec![0_u32; n];
+                let mut vals = vec![0_u64; n];
                 for entry in rows {
                     let a = entry.as_array().ok_or_else(|| invalid_data(json_key))?;
-                    let id = a[0].as_i64().ok_or_else(|| invalid_data("id"))? as U;
+                    let id = a[0].as_i64().ok_or_else(|| invalid_data("id"))? as Idx;
                     let idx = *id_to_idx.get(&id).ok_or_else(|| invalid_data("id"))? as usize;
-                    vals[idx] = a[1].as_i64().ok_or_else(|| invalid_data(col))? as u32;
+                    vals[idx] = a[1].as_i64().ok_or_else(|| invalid_data(col))? as u64;
                 }
                 insert_uint_col(&mut atoms, col, vals)?;
             } else {
                 let mut vals = vec![0.0_f64; n];
                 for entry in rows {
                     let a = entry.as_array().ok_or_else(|| invalid_data(json_key))?;
-                    let id = a[0].as_i64().ok_or_else(|| invalid_data("id"))? as U;
+                    let id = a[0].as_i64().ok_or_else(|| invalid_data("id"))? as Idx;
                     let idx = *id_to_idx.get(&id).ok_or_else(|| invalid_data("id"))? as usize;
                     vals[idx] = a[1].as_f64().ok_or_else(|| invalid_data(col))?;
                 }
@@ -758,10 +760,10 @@ fn read_lammps_molecule_json(path: &Path) -> Result<Frame> {
             }
             let mut cids = Vec::new();
             let mut ctypes = Vec::new();
-            let mut members: Vec<Vec<U>> = vec![Vec::new(); arity];
+            let mut members: Vec<Vec<Idx>> = vec![Vec::new(); arity];
             for (i, entry) in rows.iter().enumerate() {
                 let a = entry.as_array().ok_or_else(|| invalid_data(key))?;
-                cids.push((i + 1) as U);
+                cids.push((i + 1) as Idx);
                 let t = if let Some(s) = a[0].as_str() {
                     s.to_string()
                 } else if let Some(n) = a[0].as_i64() {
@@ -771,7 +773,7 @@ fn read_lammps_molecule_json(path: &Path) -> Result<Frame> {
                 };
                 ctypes.push(t);
                 for k in 0..arity {
-                    let atom_id = a[1 + k].as_i64().ok_or_else(|| invalid_data("atom id"))? as U;
+                    let atom_id = a[1 + k].as_i64().ok_or_else(|| invalid_data("atom id"))? as Idx;
                     let idx = *id_to_idx
                         .get(&atom_id)
                         .ok_or_else(|| invalid_data(format!("unknown atom {atom_id}")))?;
@@ -942,9 +944,7 @@ fn write_lammps_molecule_json<P: AsRef<Path>>(path: P, frame: &Frame) -> Result<
 mod tests {
     use super::*;
 
-    #[test]
-    fn native_water_roundtrip_shape() {
-        let text = r#"# Water molecule. TIP3P geometry
+    const WATER: &str = r#"# Water molecule. TIP3P geometry
 3 atoms
 2 bonds
 1 angles
@@ -976,19 +976,40 @@ Angles
 
 1   1      2      1      3
 "#;
-        let dir = std::env::temp_dir();
-        let path = dir.join("molrs_water_test.mol");
-        std::fs::write(&path, text).unwrap();
+
+    #[test]
+    fn read_native_water_molecule() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("water.mol");
+        std::fs::write(&path, WATER).unwrap();
         let frame = read_lammps_molecule(&path).unwrap();
-        assert_eq!(frame.get("atoms").unwrap().nrows(), Some(3));
+        let atoms = frame.get("atoms").unwrap();
+        assert_eq!(atoms.nrows(), Some(3));
         assert_eq!(frame.get("bonds").unwrap().nrows(), Some(2));
         assert_eq!(frame.get("angles").unwrap().nrows(), Some(1));
-        assert!(frame.get("atoms").unwrap().contains_key("charge"));
-        let out = dir.join("molrs_water_out.mol");
+        let charge = atoms.get_float("charge").expect("Charges section");
+        assert_eq!(
+            charge.iter().copied().collect::<Vec<_>>(),
+            vec![-0.834, 0.417, 0.417]
+        );
+    }
+
+    #[test]
+    fn native_write_then_read_keeps_every_section() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("water.mol");
+        std::fs::write(&path, WATER).unwrap();
+        let frame = read_lammps_molecule(&path).unwrap();
+        let out = dir.path().join("water_out.mol");
         write_lammps_molecule(&out, &frame, "native").unwrap();
-        let frame2 = read_lammps_molecule(&out).unwrap();
-        assert_eq!(frame2.get("atoms").unwrap().nrows(), Some(3));
-        let _ = std::fs::remove_file(&path);
-        let _ = std::fs::remove_file(&out);
+        let back = read_lammps_molecule(&out).unwrap();
+        for (block, rows) in [("atoms", 3), ("bonds", 2), ("angles", 1)] {
+            assert_eq!(back.get(block).unwrap().nrows(), Some(rows), "{block}");
+        }
+        let charge = back.get("atoms").unwrap().get_float("charge").unwrap();
+        assert_eq!(
+            charge.iter().copied().collect::<Vec<_>>(),
+            vec![-0.834, 0.417, 0.417]
+        );
     }
 }

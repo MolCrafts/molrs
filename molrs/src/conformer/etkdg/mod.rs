@@ -20,7 +20,6 @@
 
 mod embed4d;
 mod etmin;
-mod mmff_min;
 mod retry;
 
 use std::sync::OnceLock;
@@ -108,7 +107,7 @@ pub fn generate_3d_impl(
     // SMARTS engine (`molrs::perceive::smarts`), reproducing RDKit
     // `getExperimentalTorsions`. See `distgeom::torsion_prefs`.
     let version = EtkdgVersion::Etkdgv3;
-    let constraints = distgeom::build_constraints(&work, version)?;
+    let constraints = distgeom::DgConstraints::from_graph(&work, version)?;
 
     // --- Retry loop ------------------------------------------------------
     let max_iters = retry::effective_max_iterations(opts.max_iterations_internal(), n);
@@ -365,9 +364,12 @@ fn mmff_cleanup(mol: &Atomistic, coords3d: &mut [f64]) -> Result<(f64, usize, bo
     let mut frame = typifier.typify(&staged)?.to_frame();
     // The neighbour list is the consumer's to build — and here the consumer is the
     // minimizer. Bonded terms and the 1-2/1-3 exclusions are topological, so this
-    // list stays valid across the relaxation.
-    frame.insert("pairs", intramolecular_pairs(&frame));
-    let potentials = typifier.ff().to_potentials(&frame)?;
+    // list stays valid across the relaxation. Which close neighbours belong in
+    // it is MMFF's call, so the list is built from MMFF's own weights rather
+    // than from an assumption about them.
+    let ff = typifier.ff();
+    frame.insert("pairs", intramolecular_pairs(&frame, ff.special_bonds())?);
+    let potentials = ff.to_potentials(&frame)?;
 
     // RDKit's MMFFOptimizeMolecule runs a full BFGS minimization to a
     // gradient-norm tolerance. Mirror that with L-BFGS to an RMS-gradient
@@ -375,7 +377,9 @@ fn mmff_cleanup(mol: &Atomistic, coords3d: &mut [f64]) -> Result<(f64, usize, bo
     // `MMFFOptimizeMolecule` grad tol) under a generous iteration cap, so the
     // freshly-embedded geometry is relaxed all the way to the MMFF minimum.
     let (e, _grad_rms, steps, conv) =
-        mmff_min::minimize_lbfgs(coords3d, 1000, 1e-3, |p| potentials.calc_energy_forces(p));
+        crate::optimize::minimize_lbfgs_rms(coords3d, 1000, 1e-3, |p| {
+            potentials.calc_energy_forces(p)
+        });
     Ok((e, steps, conv))
 }
 

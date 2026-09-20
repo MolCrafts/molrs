@@ -32,6 +32,9 @@ pub enum MetaValue {
     F32x9([f32; 9]),
     /// Row-major 3x3 tensor.
     F64x9([f64; 9]),
+    /// Nested JSON document value. Frame group attributes are a document,
+    /// not a typed scalar map: objects, arrays, and nulls land here.
+    Json(serde_json::Value),
 }
 
 impl MetaValue {
@@ -57,6 +60,7 @@ impl MetaValue {
             Self::F64x6(_) => "f64x6",
             Self::F32x9(_) => "f32x9",
             Self::F64x9(_) => "f64x9",
+            Self::Json(_) => "json",
         }
     }
 
@@ -140,8 +144,55 @@ impl MetaValue {
             Self::F64x6(v) => json!(v),
             Self::F32x9(v) => json!(v),
             Self::F64x9(v) => json!(v),
+            Self::Json(v) => v.clone(),
         };
         json!({ "dtype": self.dtype(), "value": value })
+    }
+
+    /// JSON as stored on a Zarr group attribute: the payload, not the typed
+    /// `{dtype, value}` envelope. The MolRec document contract is raw JSON.
+    pub fn to_attr_value(&self) -> serde_json::Value {
+        use serde_json::{Value, json};
+        match self {
+            Self::Bool(v) => json!(v),
+            Self::I32(v) => json!(v),
+            Self::I64(v) => json!(v),
+            Self::U32(v) => json!(v),
+            Self::U64(v) => json!(v),
+            Self::F32(v) => json!(v),
+            Self::F64(v) => json!(v),
+            Self::String(v) => Value::String(v.clone()),
+            Self::Bool3(v) => json!(v),
+            Self::I32x3(v) => json!(v),
+            Self::I64x3(v) => json!(v),
+            Self::U32x3(v) => json!(v),
+            Self::U64x3(v) => json!(v),
+            Self::F32x3(v) => json!(v),
+            Self::F64x3(v) => json!(v),
+            Self::F32x6(v) => json!(v),
+            Self::F64x6(v) => json!(v),
+            Self::F32x9(v) => json!(v),
+            Self::F64x9(v) => json!(v),
+            Self::Json(v) => v.clone(),
+        }
+    }
+
+    /// Decode a document attribute: raw JSON only.
+    ///
+    /// The typed `{dtype, value}` envelope is [`Self::from_json_value`]'s
+    /// alone. A document attribute that happens to be shaped like the
+    /// envelope is still ordinary user JSON, so every JSON object arriving
+    /// here becomes [`Self::Json`] verbatim rather than being speculatively
+    /// unwrapped into a scalar.
+    pub fn from_attr_value(value: &serde_json::Value) -> Self {
+        match value {
+            serde_json::Value::Bool(v) => Self::Bool(*v),
+            serde_json::Value::Number(n) if n.is_i64() => Self::I64(n.as_i64().unwrap()),
+            serde_json::Value::Number(n) if n.is_u64() => Self::U64(n.as_u64().unwrap()),
+            serde_json::Value::Number(n) => Self::F64(n.as_f64().unwrap_or(f64::NAN)),
+            serde_json::Value::String(v) => Self::String(v.clone()),
+            other => Self::Json(other.clone()),
+        }
     }
 
     /// Decode the exact JSON object emitted by [`Self::to_json_value`].
@@ -209,6 +260,7 @@ impl MetaValue {
             "f64x6" => array!(f64, 6, F64x6),
             "f32x9" => array!(f32, 9, F32x9),
             "f64x9" => array!(f64, 9, F64x9),
+            "json" => Ok(Self::Json(payload.clone())),
             other => Err(format!("unknown metadata dtype `{other}`")),
         }
     }
@@ -348,6 +400,36 @@ mod tests {
     #[test]
     fn untyped_json_is_rejected() {
         assert!(MetaValue::from_json_value(&serde_json::json!("legacy")).is_err());
+    }
+
+    #[test]
+    fn envelope_shaped_user_json_survives_verbatim() {
+        // A document key whose value happens to look like the MessagePack
+        // envelope is still ordinary user JSON on a Zarr attribute.
+        let raw = serde_json::json!({"dtype": "f64", "value": 1.5});
+        assert_eq!(
+            MetaValue::from_attr_value(&raw),
+            MetaValue::Json(serde_json::json!({"dtype": "f64", "value": 1.5}))
+        );
+    }
+
+    #[test]
+    fn unknown_dtype_object_survives_verbatim() {
+        let raw = serde_json::json!({"dtype": "not-a-dtype", "value": 1});
+        assert_eq!(
+            MetaValue::from_attr_value(&raw),
+            MetaValue::Json(serde_json::json!({"dtype": "not-a-dtype", "value": 1}))
+        );
+    }
+
+    #[test]
+    fn serde_path_still_decodes_the_typed_envelope() {
+        // The path split: `from_json_value` owns the envelope, so
+        // `from_attr_value` does not have to speculate about one.
+        assert_eq!(
+            MetaValue::from_json_value(&serde_json::json!({"dtype": "f64", "value": 1.5})).unwrap(),
+            MetaValue::F64(1.5)
+        );
     }
 
     #[test]

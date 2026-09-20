@@ -375,16 +375,25 @@ impl Atomistic {
     /// `i-j-k-l` (each central edge once). `Atomistic` is just the domain leaf
     /// that names the graph-theoretic result.
     ///
-    /// Idempotent: an angle/dihedral already present (by canonical endpoints)
-    /// is not duplicated. With `clear_existing`, all existing angle/dihedral
+    /// Impropers follow the molecular-mechanics reading —
+    /// [`Topology::trivalent_impropers`](crate::system::topology::Topology::trivalent_impropers),
+    /// one `[centre, i, j, k]` quartet per
+    /// atom with exactly three neighbours — not the geometric enumeration of
+    /// every 3-combination. Whether such a centre is planar enough to deserve
+    /// the term is force-field data, not a graph property, so every trivalent
+    /// centre is emitted and the selection belongs to the layer with the table.
+    ///
+    /// Idempotent: an angle/dihedral/improper already present (by canonical
+    /// endpoints) is not duplicated. With `clear_existing`, all existing
     /// relations of the requested kinds are removed first. Returns
-    /// `(n_angles_added, n_dihedrals_added)`.
+    /// `(n_angles_added, n_dihedrals_added, n_impropers_added)`.
     pub fn generate_topology(
         &mut self,
         gen_angle: bool,
         gen_dihedral: bool,
+        gen_improper: bool,
         clear_existing: bool,
-    ) -> Result<(usize, usize), MolRsError> {
+    ) -> Result<(usize, usize, usize), MolRsError> {
         use crate::system::topology::Topology;
 
         if clear_existing {
@@ -398,6 +407,12 @@ impl Atomistic {
                 let ids: Vec<_> = self.graph.relation_ids(self.dihedral).collect();
                 for id in ids {
                     self.graph.remove_relation(self.dihedral, id)?;
+                }
+            }
+            if gen_improper {
+                let ids: Vec<_> = self.graph.relation_ids(self.improper).collect();
+                for id in ids {
+                    self.graph.remove_relation(self.improper, id)?;
                 }
             }
         }
@@ -417,6 +432,7 @@ impl Atomistic {
 
         let mut n_ang = 0usize;
         let mut n_dih = 0usize;
+        let mut n_imp = 0usize;
 
         if gen_angle {
             let mut seen: std::collections::HashSet<Vec<NodeId>> = std::collections::HashSet::new();
@@ -448,7 +464,23 @@ impl Atomistic {
             }
         }
 
-        Ok((n_ang, n_dih))
+        if gen_improper {
+            let mut seen: std::collections::HashSet<Vec<NodeId>> = std::collections::HashSet::new();
+            for id in self.graph.relation_ids(self.improper) {
+                seen.insert(canonical_improper(
+                    &self.graph.relation_nodes(self.improper, id)?,
+                ));
+            }
+            for q in topo.trivalent_impropers() {
+                let nodes = [atoms[q[0]], atoms[q[1]], atoms[q[2]], atoms[q[3]]];
+                if seen.insert(canonical_improper(&nodes)) {
+                    self.add_improper(nodes[0], nodes[1], nodes[2], nodes[3])?;
+                    n_imp += 1;
+                }
+            }
+        }
+
+        Ok((n_ang, n_dih, n_imp))
     }
 
     /// BFS shortest-path distances over the bond graph from `source`, as
@@ -648,7 +680,7 @@ impl Atomistic {
         )?;
         let mut atomistic = Atomistic::try_from_molgraph(ball.graph)?;
         if regenerate_topology {
-            atomistic.generate_topology(true, true, false)?;
+            atomistic.generate_topology(true, true, false, false)?;
         }
         Ok(ExtractedAtomistic {
             graph: atomistic,
@@ -699,6 +731,20 @@ impl Atomistic {
 /// sequence: the lexicographically smaller of the sequence and its reverse.
 /// Matches the canonicalization in
 /// [`MolGraph::paths_of_length`](crate::system::molgraph::MolGraph::paths_of_length).
+/// Canonical key of an improper: the centre stays first, the peripherals are a
+/// set. An improper is symmetric under permuting its outer legs, not under
+/// reversal, so [`canonical_path`] is the wrong key for one.
+fn canonical_improper(nodes: &[NodeId]) -> Vec<NodeId> {
+    if nodes.is_empty() {
+        return Vec::new();
+    }
+    let mut out = vec![nodes[0]];
+    let mut rest = nodes[1..].to_vec();
+    rest.sort_unstable();
+    out.extend(rest);
+    out
+}
+
 fn canonical_path(nodes: &[NodeId]) -> Vec<NodeId> {
     let fwd = nodes.to_vec();
     let mut rev = fwd.clone();
@@ -788,7 +834,7 @@ mod tests {
     #[test]
     fn generate_topology_ethane_counts() {
         let mut mol = ethane();
-        let (n_ang, n_dih) = mol.generate_topology(true, true, false).unwrap();
+        let (n_ang, n_dih, _) = mol.generate_topology(true, true, false, false).unwrap();
         // Angles: C0 centre C(1,2,3) -> C(4,2,3)... 2 C-centres each with 4
         // neighbours -> 2*C(4,2)=12. Dihedrals across the C0-C1 bond: 3*3 = 9.
         assert_eq!(n_ang, 12, "ethane angles");
@@ -800,9 +846,9 @@ mod tests {
     #[test]
     fn generate_topology_is_idempotent() {
         let mut mol = ethane();
-        mol.generate_topology(true, true, false).unwrap();
+        mol.generate_topology(true, true, false, false).unwrap();
         // Second call adds nothing (already present).
-        let (n_ang, n_dih) = mol.generate_topology(true, true, false).unwrap();
+        let (n_ang, n_dih, _) = mol.generate_topology(true, true, false, false).unwrap();
         assert_eq!((n_ang, n_dih), (0, 0));
         assert_eq!(mol.n_angles(), 12);
         assert_eq!(mol.n_dihedrals(), 9);
@@ -811,18 +857,71 @@ mod tests {
     #[test]
     fn generate_topology_clear_existing_regenerates() {
         let mut mol = ethane();
-        mol.generate_topology(true, true, false).unwrap();
-        let (n_ang, n_dih) = mol.generate_topology(true, true, true).unwrap();
+        mol.generate_topology(true, true, false, false).unwrap();
+        let (n_ang, n_dih, _) = mol.generate_topology(true, true, false, true).unwrap();
         // clear_existing wipes then regenerates the identical set.
         assert_eq!((n_ang, n_dih), (12, 9));
         assert_eq!(mol.n_angles(), 12);
         assert_eq!(mol.n_dihedrals(), 9);
     }
 
+    /// A trivalent centre: C bonded to O, H, H.
+    fn formaldehyde() -> Atomistic {
+        let mut mol = Atomistic::new();
+        let atoms: Vec<AtomId> = ["C", "O", "H", "H"]
+            .iter()
+            .map(|e| mol.add_atom_bare(e))
+            .collect();
+        for (i, j) in [(0, 1), (0, 2), (0, 3)] {
+            mol.add_bond(atoms[i], atoms[j]).unwrap();
+        }
+        mol
+    }
+
+    #[test]
+    fn generate_topology_improper_at_a_trivalent_centre() {
+        let mut mol = formaldehyde();
+        let (_, _, n_imp) = mol.generate_topology(false, false, true, false).unwrap();
+        assert_eq!(n_imp, 1);
+        assert_eq!(mol.n_impropers(), 1);
+    }
+
+    #[test]
+    fn generate_topology_emits_no_improper_at_an_sp3_centre() {
+        // Ethane's carbons have four neighbours each. The geometric
+        // enumeration would give C(4,3) = 4 quartets per carbon; a force field
+        // wants none.
+        let mut mol = ethane();
+        let (_, _, n_imp) = mol.generate_topology(false, false, true, false).unwrap();
+        assert_eq!(n_imp, 0);
+        assert_eq!(mol.n_impropers(), 0);
+    }
+
+    #[test]
+    fn generate_topology_improper_is_idempotent() {
+        let mut mol = formaldehyde();
+        mol.generate_topology(false, false, true, false).unwrap();
+        let (_, _, n_imp) = mol.generate_topology(false, false, true, false).unwrap();
+        assert_eq!(n_imp, 0, "an improper already present is not duplicated");
+        assert_eq!(mol.n_impropers(), 1);
+    }
+
+    #[test]
+    fn generate_topology_improper_dedup_ignores_leg_order() {
+        // An improper is symmetric under permuting its outer legs, so one
+        // written with the legs in another order is the same relation.
+        let mut mol = formaldehyde();
+        let ids: Vec<AtomId> = mol.atoms().map(|(id, _)| id).collect();
+        mol.add_improper(ids[0], ids[3], ids[1], ids[2]).unwrap();
+        let (_, _, n_imp) = mol.generate_topology(false, false, true, false).unwrap();
+        assert_eq!(n_imp, 0);
+        assert_eq!(mol.n_impropers(), 1);
+    }
+
     #[test]
     fn generate_topology_selective() {
         let mut mol = ethane();
-        let (n_ang, n_dih) = mol.generate_topology(true, false, false).unwrap();
+        let (n_ang, n_dih, _) = mol.generate_topology(true, false, false, false).unwrap();
         assert_eq!(n_ang, 12);
         assert_eq!(n_dih, 0);
         assert_eq!(mol.n_dihedrals(), 0);
@@ -982,10 +1081,10 @@ mod tests {
         }
         let mut bonds = Block::new();
         bonds
-            .insert("atomi", Array1::from_vec(vec![0u32, 1]).into_dyn())
+            .insert("atomi", Array1::from_vec(vec![0u64, 1]).into_dyn())
             .unwrap();
         bonds
-            .insert("atomj", Array1::from_vec(vec![1u32, 2]).into_dyn())
+            .insert("atomj", Array1::from_vec(vec![1u64, 2]).into_dyn())
             .unwrap();
         let mut frame = Frame::new();
         frame.insert("atoms", atoms);
@@ -1017,13 +1116,13 @@ mod tests {
         }
         let mut bonds = Block::new();
         bonds
-            .insert("atomi", Array1::from_vec(vec![0u32, 1, 2]).into_dyn())
+            .insert("atomi", Array1::from_vec(vec![0u64, 1, 2]).into_dyn())
             .unwrap();
         bonds
-            .insert("atomj", Array1::from_vec(vec![1u32, 2, 3]).into_dyn())
+            .insert("atomj", Array1::from_vec(vec![1u64, 2, 3]).into_dyn())
             .unwrap();
         bonds
-            .insert("bond_type", Array1::from_vec(vec![2u32, 4, 0]).into_dyn())
+            .insert("bond_type", Array1::from_vec(vec![2u64, 4, 0]).into_dyn())
             .unwrap();
         let mut frame = Frame::new();
         frame.insert("atoms", atoms);

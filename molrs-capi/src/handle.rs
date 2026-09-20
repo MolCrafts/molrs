@@ -23,6 +23,11 @@ new_key_type! {
     pub struct FFKey;
 }
 
+new_key_type! {
+    /// Key for Region entries in the CStore.
+    pub struct RegionKey;
+}
+
 // --- repr(C) handle structs ---
 
 /// Opaque handle to a Frame stored in the global object store.
@@ -100,6 +105,29 @@ pub struct MolrsBlockHandle {
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct MolrsBoxHandle {
+    /// Slot index (opaque).
+    pub idx: u32,
+    /// Generation counter (opaque).
+    pub version: u32,
+}
+
+/// Opaque handle to a Region in the global store.
+///
+/// Obtained from any `molrs_region_*` constructor, or from a boolean
+/// composition of two regions. Freed with
+/// [`molrs_region_drop`](crate::region::molrs_region_drop).
+///
+/// # Layout (C)
+///
+/// ```c
+/// typedef struct {
+///     uint32_t idx;
+///     uint32_t version;
+/// } MolrsRegionHandle;
+/// ```
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct MolrsRegionHandle {
     /// Slot index (opaque).
     pub idx: u32,
     /// Generation counter (opaque).
@@ -206,4 +234,17 @@ pub(crate) fn c_to_block_handle(
         key_str.to_owned(),
         ch.block_version,
     ))
+}
+
+pub(crate) fn region_key_to_handle(key: RegionKey) -> MolrsRegionHandle {
+    let ffi = key.data().as_ffi();
+    MolrsRegionHandle {
+        idx: ffi as u32,
+        version: (ffi >> 32) as u32,
+    }
+}
+
+pub(crate) fn handle_to_region_key(h: MolrsRegionHandle) -> RegionKey {
+    let ffi = (h.version as u64) << 32 | h.idx as u64;
+    RegionKey::from(slotmap::KeyData::from_ffi(ffi))
 }

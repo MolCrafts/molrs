@@ -1,32 +1,48 @@
 [package]
 name = "molcrafts-molrs-cxxapi"
-version.workspace = true
-edition.workspace = true
-rust-version.workspace = true
-authors.workspace = true
-license.workspace = true
+publish = false
+# Literal, not `.workspace = true`: this crate left the root workspace (see
+# [workspace] below), so there is no workspace.package to inherit from. Keep
+# these in step with ../Cargo.toml's [workspace.package] by hand — same rule the
+# other standalone binder roots already live by.
+version = "0.14.0"
+edition = "2024"
+rust-version = "1.91"
+authors = ["MolCrafts"]
+license = "BSD-3-Clause"
 description = "CXX bridge for Atomiverse C++ integration"
-repository.workspace = true
-homepage.workspace = true
+repository = "https://github.com/MolCrafts/molrs"
+homepage = "https://github.com/MolCrafts/molrs"
 
 [lib]
 name = "molrs_cxxapi"
 crate-type = ["staticlib", "rlib"]
+
+# Standalone workspace root, like every other binder crate. Lint/build it with
+# `--manifest-path molrs-cxxapi/Cargo.toml`.
+[workspace]
+
+# Standalone workspace root: does NOT inherit the repo root's [profile.release].
+# Keep the four keys identical to ../Cargo.toml so every root ships the same
+# optimisation.
+[profile.release]
+codegen-units = 1
+lto = "thin"
+opt-level = 3
+strip = "symbols"
 
 [features]
 default = ["zarr"]
 zarr = ["molrs/filesystem"]
 
 [dependencies]
-# The merged crate, imported under the extern name `molrs`; `io` gives the file
-# I/O module this bridge relies on.
-molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.13.2", default-features = false, features = ["io", "compute", "ff"] }
-molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.13.2" }
+# The merged crate, imported under the extern name `molrs`, on its defaults.
+# The explicit io/compute/ff list is additive; it records what this bridge
+# relies on regardless of what `default` happens to carry.
+molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.14.0", features = ["io", "compute", "ff"] }
+molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.14.0" }
 cxx = "1"
 ndarray = "0.17"
 
 [build-dependencies]
 cxx-build = "1"
-# Compiles the C++ translation unit the integration tests call the bridge from
-# (tests/cxx/bridge_probe.cc). Test support only — `src/` builds nothing with it.
-cc = "1"

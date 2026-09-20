@@ -17,7 +17,7 @@ use crate::stream::{MessageFormat, StreamError};
 pub enum ControlCommand {
     /// Pause the producing simulation loop (interpretation is caller-defined).
     Pause,
-    /// Resume after [`Pause`].
+    /// Resume after [`Self::Pause`].
     Resume,
     /// Request a maximum stream rate in frames per second.
     SetFrameRate {

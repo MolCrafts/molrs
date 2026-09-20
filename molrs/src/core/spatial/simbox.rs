@@ -7,7 +7,7 @@
 
 use crate::math;
 use crate::types::{F, F3, F3View, F3x3, FNx3, FNx3View, Pbc3};
-use ndarray::{Array1, Array2, Array3, ArrayView1, ArrayView2, array};
+use ndarray::{Array1, Array2, Array3, ArrayView1, ArrayView2, Zip, array};
 
 /// Box geometry kind, detected once at construction.
 #[derive(Debug, Clone, PartialEq)]
@@ -56,6 +56,12 @@ pub enum BoxError {
 }
 
 impl SimBox {
+    /// Refinement passes [`wrap`](Self::wrap) may take to land a crossed atom
+    /// strictly inside the cell. Two is already generous: the first pass fixes
+    /// the ordinary "rounded onto the far face" landing, the second covers a
+    /// triclinic cross-axis perturbation. More would only mask a real defect.
+    const WRAP_REFINE_PASSES: usize = 2;
+
     /// Construct from triclinic cell matrix `H`, origin `O`, and per-axis PBC flags
     pub fn new(h: F3x3, origin: F3, pbc: Pbc3) -> Result<Self, BoxError> {
         Self::new_cell(h, origin, pbc, true)
@@ -379,8 +385,15 @@ impl SimBox {
         array![angle(&b, &c), angle(&a, &c), angle(&a, &b)]
     }
 
-    /// Nearest plane distance (half the box size along each axis)
-    /// For triclinic boxes, this is the perpendicular distance to each face
+    /// Spacing between the two parallel faces normal to each reciprocal
+    /// direction: `d_k = V / ||a_i x a_j|| = 1 / ||(H^-1)_{k,:}||`.
+    ///
+    /// This is the **full** width, not half of it: for a cube of side `L` it
+    /// returns `L`. Callers that need the minimum-image validity bound halve it
+    /// themselves (see [`crate::spatial::neighbors::VerletSkin`]). For a tilted
+    /// cell `|a_k|` *overestimates* this width, so any cutoff or image-range
+    /// calculation must size from here and never from
+    /// [`lengths`](Self::lengths) — otherwise pairs are silently missed.
     pub fn nearest_plane_distance(&self) -> F3 {
         let v = self.volume();
         let a1 = self.lattice(0);
@@ -439,7 +452,7 @@ impl SimBox {
 
     /// Fractional coordinates **without** the wrap into `[0, 1)`.
     ///
-    /// [`make_fractional_fast_arr3`](Self::make_fractional_fast_arr3) folds
+    /// [`make_fractional_fast`](Self::make_fractional_fast) folds
     /// every axis back into the primitive cell unconditionally, which is right
     /// for a fully periodic box but destroys the information a caller needs on
     /// a **non-periodic** axis: a point above the box must stay above it, so
@@ -716,28 +729,240 @@ impl SimBox {
         )
     }
 
-    /// Wrap Cartesian points into the unit cell according to PBC
-    pub fn wrap(&self, xyz: FNx3View<'_>) -> FNx3 {
-        let mut frac = self.to_frac(xyz);
-        let n = frac.nrows();
-        for i in 0..n {
-            for d in 0..3 {
-                if self.pbc[d] {
-                    frac[[i, d]] -= frac[[i, d]].floor();
+    /// The accumulated shift as exact integers. Every component is a whole
+    /// number by construction — it only ever gains `floor` or `round` results.
+    #[inline]
+    fn as_i64(n: [F; 3]) -> [i64; 3] {
+        [n[0] as i64, n[1] as i64, n[2] as i64]
+    }
+
+    /// Shift `r` by the integer lattice vector `n`, always from the original
+    /// point so repeated refinement never accumulates rounding.
+    #[inline]
+    fn shifted_by_images(&self, r: [F; 3], n: [F; 3]) -> [F; 3] {
+        let mut out = r;
+        for (d, nd) in n.iter().enumerate() {
+            if *nd != 0.0 {
+                for (k, o) in out.iter_mut().enumerate() {
+                    *o -= nd * self.h[[k, d]];
                 }
             }
         }
-        self.to_cart(frac.view())
+        out
     }
 
-    /// Integer periodic images for Cartesian points.
+    /// Per-row kernel of [`wrap`](Self::wrap) — one point, no allocation.
+    ///
+    /// Not public: `wrap` is the wrapping API. This exists so single-point hot
+    /// queries inside the crate (region membership, nearest-image search) skip
+    /// the `(1, 3)` array round-trip. It is the *same* arithmetic `wrap` runs
+    /// per row, so the two agree bit for bit by construction, not by luck.
+    #[inline]
+    pub(crate) fn wrap_row_shift(&self, r: [F; 3]) -> ([F; 3], [i64; 3]) {
+        let f = self.make_fractional_raw_arr3(r);
+        let mut n = [0.0; 3];
+        let mut crossed = false;
+        for d in 0..3 {
+            if self.pbc[d] {
+                n[d] = f[d].floor();
+                if n[d] != 0.0 {
+                    crossed = true;
+                }
+            }
+        }
+        // A point already in the cell is returned untouched, bit for bit: no
+        // arithmetic is performed on it at all.
+        if !crossed {
+            return (r, [0; 3]);
+        }
+
+        let mut out = self.shifted_by_images(r, n);
+        // Subtracting whole lattice vectors is exact in real arithmetic but not
+        // in floating point: a coordinate a hair below the origin gains one
+        // lattice vector and can land *exactly* on the far face (`f == 1.0`),
+        // outside the `[0, 1)` postcondition. In a triclinic cell it is worse —
+        // shifting along one axis perturbs all three fractional components, so
+        // a single correction pass is not enough.
+        //
+        // Refine the integer shift instead of the point: each pass re-derives
+        // the shift from `out` but rebuilds `out` from the original `r`, so the
+        // answer is one rounding away from exact however many passes it takes.
+        // MD wraps every step for 10^8 steps, so "rare" here means "often".
+        for _ in 0..Self::WRAP_REFINE_PASSES {
+            let g = self.make_fractional_raw_arr3(out);
+            let mut adjusted = false;
+            for d in 0..3 {
+                if !self.pbc[d] {
+                    continue;
+                }
+                let m = g[d].floor();
+                if m != 0.0 {
+                    n[d] += m;
+                    adjusted = true;
+                }
+            }
+            if !adjusted {
+                return (out, Self::as_i64(n));
+            }
+            out = self.shifted_by_images(r, n);
+        }
+
+        // The refinement can fail to converge, and not because it is wrong: for
+        // a point a hair below the origin the true wrapped value (`L - 1e-18`)
+        // is simply **not representable** — `ulp(10 A) = 1.8e-15`. Both
+        // candidates, the original point (`f < 0`) and the shifted one
+        // (`f == 1.0`), sit outside the cell, so no integer shift satisfies the
+        // postcondition and the two alternate forever.
+        //
+        // Decide it instead of looping: snap to the origin face. The atom moves
+        // by less than one ulp of a cell edge — the error already inherent in
+        // the shift — and `f == 0` is inside where `f == 1.0` is not.
+        let (snapped, absorbed) = self.snap_to_origin_face(out);
+        for d in 0..3 {
+            n[d] += absorbed[d];
+        }
+        (snapped, Self::as_i64(n))
+    }
+
+    /// Per-row kernel of [`wrap`](Self::wrap), discarding the shift.
+    #[inline]
+    pub(crate) fn wrap_row(&self, r: [F; 3]) -> [F; 3] {
+        self.wrap_row_shift(r).0
+    }
+
+    /// Last-resort clamp for a point the integer refinement could not land
+    /// inside: force every escaped periodic axis onto the origin face.
+    #[inline]
+    ///
+    /// Returns the snapped point **and the integer lattice shift the snap
+    /// absorbed**, because the snap is not always a sub-ulp nudge. The case it
+    /// exists for — a point a hair below the origin, shifted up to land exactly
+    /// on the far face (`f == 1.0`) — is pinned back to the origin face, which
+    /// moves it by a whole lattice vector. A caller accumulating image flags
+    /// that missed that would have its flags disagree with its positions by a
+    /// full cell, and nothing would say so until an unwrapped trajectory came
+    /// back wrong. The adjustment is `round(f)`, not `floor(f)`: `f == 1.0` is
+    /// one cell out, while `f == -5e-17` is the origin seen from below and is
+    /// zero cells out.
+    fn snap_to_origin_face(&self, out: [F; 3]) -> ([F; 3], [F; 3]) {
+        let g = self.make_fractional_raw_arr3(out);
+        let escaped = (0..3).any(|d| self.pbc[d] && !(0.0..1.0).contains(&g[d]));
+        if !escaped {
+            return (out, [0.0; 3]);
+        }
+        let mut absorbed = [0.0; 3];
+        for d in 0..3 {
+            if self.pbc[d] && !(0.0..1.0).contains(&g[d]) {
+                absorbed[d] = g[d].round();
+            }
+        }
+        match &self.kind {
+            // Orthorhombic: axes are independent, so pinning the offending
+            // component to the origin is exact — the recomputed fractional
+            // coordinate is 0.0 to the bit, with no cross-axis perturbation.
+            BoxKind::Ortho { .. } => {
+                let mut snapped = out;
+                for d in 0..3 {
+                    if self.pbc[d] && !(0.0..1.0).contains(&g[d]) {
+                        snapped[d] = self.origin[d];
+                    }
+                }
+                (snapped, absorbed)
+            }
+            // Triclinic: the axes are coupled, so the clamp has to go through
+            // fractional space and costs one reconstruction. Only points within
+            // an ulp of a face ever reach here.
+            BoxKind::Triclinic => {
+                let mut frac = g;
+                for (d, fd) in frac.iter_mut().enumerate() {
+                    if !self.pbc[d] {
+                        continue;
+                    }
+                    *fd -= fd.floor();
+                    if !(0.0..1.0).contains(fd) {
+                        *fd = 0.0;
+                    }
+                }
+                let fv = ArrayView1::from_shape(3, &frac).expect("snap frac shape");
+                let cart = self.make_cartesian(fv);
+                ([cart[0], cart[1], cart[2]], absorbed)
+            }
+        }
+    }
+
+    /// Wrap Cartesian points into the unit cell on the periodic axes.
+    ///
+    /// Whole lattice vectors are subtracted from the Cartesian coordinate, so a
+    /// point **already inside the cell is returned bit for bit** and only the
+    /// atoms that actually crossed a face are touched. A non-periodic axis is
+    /// left alone.
+    ///
+    /// This is deliberately *not* a `to_frac` → fold → `to_cart` round-trip.
+    /// That form rewrites every coordinate of every atom through two matrix
+    /// products, so it perturbs points that never left the cell by a rounding
+    /// error each call. MD wraps after every integration step, which would turn
+    /// that into a per-step perturbation of the whole system.
+    pub fn wrap(&self, xyz: FNx3View<'_>) -> FNx3 {
+        let mut out = xyz.to_owned();
+        Zip::from(out.rows_mut()).for_each(|mut row| {
+            let w = self.wrap_row([row[0], row[1], row[2]]);
+            row[0] = w[0];
+            row[1] = w[1];
+            row[2] = w[2];
+        });
+        out
+    }
+
+    /// Wrap into the cell **and** report the integer lattice shift applied.
+    ///
+    /// Returns `(wrapped, m)` with `wrapped = r - H·m`, so a caller maintaining
+    /// canonical MD state accumulates `n += m` each step and reconstructs the
+    /// continuous trajectory as `r^u = wrapped + H·n` ([`unwrap`](Self::unwrap)).
+    /// The position half is bit-identical to [`wrap`](Self::wrap) — both call
+    /// one kernel, so they cannot drift apart.
+    ///
+    /// `m` is the shift **actually applied**, not `floor(H⁻¹r)` recomputed. The
+    /// two differ: the kernel refines the shift and may finish by snapping a
+    /// point off an exactly-representable far face, and a caller that derived
+    /// `m` independently would accumulate flags that disagree with the
+    /// positions they belong to — silently, until an unwrapped trajectory is
+    /// read back.
+    ///
+    /// A point already inside the cell yields `m = [0, 0, 0]` and comes back
+    /// untouched to the bit; only atoms that actually crossed are arithmetic.
+    pub fn wrap_shifts(&self, xyz: FNx3View<'_>) -> (FNx3, Array2<i64>) {
+        let n = xyz.nrows();
+        let mut out = xyz.to_owned();
+        let mut shifts = Array2::<i64>::zeros((n, 3));
+        for i in 0..n {
+            let (w, m) = self.wrap_row_shift([xyz[[i, 0]], xyz[[i, 1]], xyz[[i, 2]]]);
+            for d in 0..3 {
+                out[[i, d]] = w[d];
+                shifts[[i, d]] = m[d];
+            }
+        }
+        (out, shifts)
+    }
+
+    /// Integer periodic images for Cartesian points, read off in one shot.
+    ///
+    /// This is the **import-time** helper: it recovers the flags of a
+    /// configuration that arrived as continuous coordinates, from a file or
+    /// from an analysis that never wrapped. The MD path does not use it — there
+    /// the flags are accumulated a step at a time from
+    /// [`wrap_shifts`](Self::wrap_shifts), which reports the shift actually
+    /// applied and therefore cannot disagree with the position it belongs to.
+    ///
+    /// Reconstructing from a position alone is only possible because a
+    /// continuous coordinate carries its own history; a wrapped one does not,
+    /// and calling this on wrapped input correctly returns all zeros.
     pub fn images(&self, xyz: FNx3View<'_>) -> Array2<i64> {
         let frac = self.to_frac(xyz);
         let mut images = Array2::zeros((frac.nrows(), 3));
         for i in 0..frac.nrows() {
             for d in 0..3 {
                 if self.pbc[d] {
-                    images[[i, d]] = (frac[[i, d]] + 1e-8).floor() as i64;
+                    images[[i, d]] = frac[[i, d]].floor() as i64;
                 }
             }
         }
@@ -946,6 +1171,288 @@ mod tests {
         let frac = bx.to_frac(pts.view());
         let cart = bx.to_cart(frac.view());
         assert!((&pts - &cart).iter().all(|v| v.abs() < 1e-5));
+    }
+
+    #[test]
+    fn wrap_row_matches_wrap_on_every_axis_kind() {
+        let bx = SimBox::from_bounds(
+            array![[0.0, 0.0, 0.0], [4.0, 5.0, 6.0]].view(),
+            [0.0; 3],
+            [true, false, true],
+        )
+        .unwrap();
+        for r in [[4.5, 5.5, -0.5], [-1.0, 2.0, 13.0], [1.0, 1.0, 1.0]] {
+            let one = bx.wrap_row(r);
+            let many = bx.wrap(array![[r[0], r[1], r[2]]].view());
+            // Same arithmetic, so the kernel and the array form agree exactly —
+            // not merely to a tolerance.
+            for d in 0..3 {
+                assert_eq!(one[d], many[[0, d]], "{r:?} axis {d}");
+            }
+        }
+        // The non-periodic axis passes through untouched.
+        assert_eq!(bx.wrap_row([4.5, 5.5, -0.5])[1], 5.5);
+    }
+
+    /// The property MD depends on: wrapping runs after every integration step,
+    /// so an atom that never left the cell must come back with its coordinate
+    /// unchanged to the last bit. A `to_frac` → fold → `to_cart` round-trip
+    /// fails this.
+    #[test]
+    fn wrap_is_bit_exact_for_points_already_inside() {
+        for bx in [
+            SimBox::cube(10.0, array![0.0, 0.0, 0.0], [true, true, true]).unwrap(),
+            SimBox::ortho(
+                array![7.0, 11.0, 13.0],
+                array![-3.0, 0.5, 2.0],
+                [true, true, true],
+            )
+            .unwrap(),
+            SimBox::new(
+                SimBox::matrix_from_lengths_angles([10.0, 11.0, 12.0], [70.0, 80.0, 65.0]).unwrap(),
+                array![0.0, 0.0, 0.0],
+                [true, true, true],
+            )
+            .unwrap(),
+        ] {
+            // Fractional points strictly inside the cell, mapped to Cartesian.
+            let frac = array![
+                [0.1, 0.2, 0.3],
+                [0.5, 0.5, 0.5],
+                [0.999_999, 0.000_001, 0.7],
+                [0.123_456_789, 0.987_654_321, 0.314_159_265],
+            ];
+            let pts = bx.to_cart(frac.view());
+            assert_eq!(bx.wrap(pts.view()), pts);
+        }
+    }
+
+    /// A coordinate a hair below the origin must not come back sitting exactly
+    /// on the far face. The naive `r - floor(f)*L` rounds `-1e-18 + L` up to
+    /// `L`, i.e. `f == 1.0` — outside the cell, and on the next step it leaves
+    /// through the opposite face. `wrap` owes a strict `f in [0, 1)`.
+    #[test]
+    fn wrap_postcondition_holds_just_below_the_origin() {
+        for bx in [
+            SimBox::cube(10.0, array![0.0, 0.0, 0.0], [true, true, true]).unwrap(),
+            SimBox::ortho(
+                array![7.0, 11.0, 13.0],
+                array![-3.0, 0.5, 2.0],
+                [true, true, true],
+            )
+            .unwrap(),
+            SimBox::new(
+                SimBox::matrix_from_lengths_angles([10.0, 11.0, 12.0], [70.0, 80.0, 65.0]).unwrap(),
+                array![0.0, 0.0, 0.0],
+                [true, true, true],
+            )
+            .unwrap(),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let (bi, bx) = (bx.0, bx.1);
+            let origin = bx.origin_view().to_owned();
+            for eps in [1e-18, 1e-16, 1e-13, F::MIN_POSITIVE] {
+                let below = array![[origin[0] - eps, origin[1] - eps, origin[2] - eps]];
+                let wrapped = bx.wrap(below.view());
+                let frac = bx.to_frac(wrapped.view());
+                for d in 0..3 {
+                    let f = frac[[0, d]];
+                    assert!(
+                        (0.0..1.0).contains(&f),
+                        "box {bi} eps {eps:e} axis {d}: f = {f:?} escaped [0, 1)"
+                    );
+                }
+                // And it is still inside by the box's own predicate.
+                assert!(bx.isin(wrapped.view())[0], "box {bi} eps {eps:e} not isin");
+            }
+        }
+    }
+
+    /// The postcondition has to hold for *every* atom, not for the cases a
+    /// hand-written test happens to pick. Sweep a deterministic pseudo-random
+    /// cloud spanning many cells, including coordinates pushed right up against
+    /// a face, over all three box kinds.
+    #[test]
+    fn wrap_postcondition_holds_over_a_random_cloud() {
+        let boxes = [
+            SimBox::cube(10.0, array![0.0, 0.0, 0.0], [true, true, true]).unwrap(),
+            SimBox::ortho(
+                array![7.0, 11.0, 13.0],
+                array![-3.0, 0.5, 2.0],
+                [true, true, true],
+            )
+            .unwrap(),
+            SimBox::new(
+                SimBox::matrix_from_lengths_angles([10.0, 11.0, 12.0], [70.0, 80.0, 65.0]).unwrap(),
+                array![0.0, 0.0, 0.0],
+                [true, true, true],
+            )
+            .unwrap(),
+        ];
+        // xorshift64* — deterministic, no dev-dependency.
+        let mut state: u64 = 0x2545_F491_4F6C_DD1D;
+        let mut next = move || {
+            state ^= state >> 12;
+            state ^= state << 25;
+            state ^= state >> 27;
+            (state.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 11) as F / (1u64 << 53) as F
+        };
+
+        for (bi, bx) in boxes.iter().enumerate() {
+            let lengths = bx.lengths();
+            for k in 0..20_000 {
+                // Span ~±50 cells, and every 4th point is pinned within a few
+                // ulps of a face — the only regime where this can break.
+                let mut r = [0.0; 3];
+                for (d, rd) in r.iter_mut().enumerate() {
+                    let cells = (next() - 0.5) * 100.0;
+                    *rd = bx.origin_view()[d] + cells * lengths[d];
+                    if k % 4 == 0 {
+                        let face = (cells.round()) * lengths[d];
+                        *rd = bx.origin_view()[d] + face;
+                        for _ in 0..(k % 3) {
+                            *rd = rd.next_down();
+                        }
+                    }
+                }
+                let pts = array![[r[0], r[1], r[2]]];
+                let w = bx.wrap(pts.view());
+                let frac = bx.to_frac(w.view());
+                for d in 0..3 {
+                    let f = frac[[0, d]];
+                    assert!(
+                        (0.0..1.0).contains(&f),
+                        "box {bi} point {k} {r:?} axis {d}: f = {f:?} escaped [0, 1)"
+                    );
+                }
+                // The wrapped point differs from the input by a whole number of
+                // cells, to within the rounding the shift itself carries.
+                let back = bx.to_frac(pts.view());
+                for d in 0..3 {
+                    let shift = back[[0, d]] - frac[[0, d]];
+                    assert!(
+                        (shift - shift.round()).abs() < 1e-9,
+                        "box {bi} point {k} axis {d}: shift {shift} is not integral"
+                    );
+                }
+            }
+        }
+    }
+
+    /// `wrap_shifts` agrees with `wrap` on the position, to the bit, and its
+    /// shift reconstructs the input — including through the refine-and-snap
+    /// path, which is the one place the two can silently diverge.
+    #[test]
+    fn wrap_shifts_reconstructs_the_input() {
+        for bx in [
+            SimBox::cube(10.0, array![0.0, 0.0, 0.0], [true, true, true]).unwrap(),
+            SimBox::ortho(
+                array![7.0, 11.0, 13.0],
+                array![-3.0, 0.5, 2.0],
+                [true, true, true],
+            )
+            .unwrap(),
+            SimBox::new(
+                SimBox::matrix_from_lengths_angles([10.0, 11.0, 12.0], [70.0, 80.0, 65.0]).unwrap(),
+                array![0.0, 0.0, 0.0],
+                [true, true, true],
+            )
+            .unwrap(),
+        ] {
+            let o = bx.origin_view().to_owned();
+            // Row 0 is built in *fractional* space so it is genuinely inside
+            // every box kind: a Cartesian point near the origin can fall
+            // outside a skewed cell.
+            let inside = bx.to_cart(array![[0.1_f64, 0.2, 0.3]].view());
+            let pts = array![
+                [inside[[0, 0]], inside[[0, 1]], inside[[0, 2]]],
+                [o[0] + 43.7, o[1] - 19.2, o[2] + 101.5],
+                [o[0] - 1e-18, o[1] - 1e-18, o[2] - 1e-18],
+                [o[0] - 1e-13, o[1] + 55.0, o[2] - 77.7],
+                [o[0] - F::MIN_POSITIVE, o[1], o[2]],
+            ];
+
+            let (w, m) = bx.wrap_shifts(pts.view());
+            assert_eq!(w, bx.wrap(pts.view()), "position half must match wrap()");
+
+            // The shift is the one that was applied: putting it back returns
+            // the input. A shift derived independently as floor(H^-1 r) would
+            // be off by a whole cell on the snapped row.
+            let back = bx.unwrap(w.view(), m.view());
+            for i in 0..pts.nrows() {
+                for d in 0..3 {
+                    assert!(
+                        (back[[i, d]] - pts[[i, d]]).abs() < 1e-9,
+                        "row {i} axis {d}: {} vs {}",
+                        back[[i, d]],
+                        pts[[i, d]]
+                    );
+                }
+            }
+
+            // In-cell points are untouched and carry no shift.
+            assert_eq!(m.row(0).to_vec(), vec![0_i64; 3]);
+        }
+    }
+
+    /// `images` reads the flag off the fractional coordinate with no fudge.
+    ///
+    /// It used to add `1e-8` before flooring. On a *fractional* coordinate that
+    /// is not a small number: it moves the boundary by `1e-8 · L`, which is
+    /// 5e-7 Å in a 50 Å cell. Every atom in the half-open band just below a
+    /// face was then reported one cell further along than it is, and the
+    /// reconstruction `xyz + H·images` put it a whole cell away from where it
+    /// started. A tolerance that shifts a boundary is not a tolerance.
+    #[test]
+    fn images_has_no_boundary_fudge() {
+        let l = 50.0_f64;
+        let bx = SimBox::cube(l, array![0.0, 0.0, 0.0], [true, true, true]).unwrap();
+
+        // Fractional coordinates inside the band the old epsilon swallowed:
+        // just below 1.0, i.e. just inside the far face of cell 0.
+        for eps_frac in [1e-9_f64, 5e-9, 9e-9] {
+            let pts = array![[(1.0 - eps_frac) * l, 0.5 * l, 0.5 * l]];
+            let im = bx.images(pts.view());
+            assert_eq!(
+                im[[0, 0]],
+                0,
+                "a point {eps_frac} of a cell below the face is still in cell 0"
+            );
+            // And the round trip puts it back where it was, not a cell away.
+            let back = bx.unwrap(bx.wrap(pts.view()).view(), im.view());
+            assert!(
+                (back[[0, 0]] - pts[[0, 0]]).abs() < 1e-9,
+                "round trip moved it from {} to {}",
+                pts[[0, 0]],
+                back[[0, 0]]
+            );
+        }
+
+        // The ordinary cases are unaffected.
+        let pts = array![[-0.5 * l, 1.5 * l, 2.5 * l]];
+        let im = bx.images(pts.view());
+        assert_eq!(im.row(0).to_vec(), vec![-1_i64, 1, 2]);
+    }
+
+    /// Wrapping is idempotent: a second pass moves nothing, bit for bit.
+    #[test]
+    fn wrap_is_idempotent() {
+        let bx = SimBox::new(
+            SimBox::matrix_from_lengths_angles([10.0, 11.0, 12.0], [70.0, 80.0, 65.0]).unwrap(),
+            array![0.0, 0.0, 0.0],
+            [true, true, true],
+        )
+        .unwrap();
+        let pts = array![
+            [43.7, -19.2, 101.5],
+            [-0.000_1, 55.0, -77.7],
+            [3.0, 4.0, 5.0],
+        ];
+        let once = bx.wrap(pts.view());
+        let twice = bx.wrap(once.view());
+        assert_eq!(once, twice);
     }
 
     #[test]

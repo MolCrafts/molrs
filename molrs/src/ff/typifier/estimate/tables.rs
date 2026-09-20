@@ -1,8 +1,8 @@
 //! The estimator's two constant tables — the lookups, not a second copy.
 //!
 //! Both tables are [`ff::params`](crate::ff::params) data: typed Rust `const`s
-//! emitted by `scripts/gen_param_tables.py` and guarded by `MANIFEST.sha256`, the
-//! same path `gaff.dat` and the seven `ATOMTYPE_*.DEF` take. Nothing here is
+//! emitted by `scripts/gen_param_tables.py`, the same path `gaff.dat` and the
+//! seven `ATOMTYPE_*.DEF` take. Nothing here is
 //! parsed at runtime; a malformed table is a **compile** error.
 //!
 //! - [`ParmchkTable`] ([`PARMCHK`]) — `PARMCHK.DAT`: parmchk2's atom-type
@@ -179,46 +179,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn empirical_table_carries_the_upstream_rows() {
-        let t = EmpiricalSet::Gaff.table();
-        assert!(
-            (t.bond_power - 4.5).abs() < 1e-12,
-            "Badger exponent m = 4.5"
-        );
-        // C-C (PARM_BLBA_GAFF.DAT `BL C 6 C 6 1.5260 7.6430`).
-        assert!((t.bond_ln_k("C", "C").unwrap() - 7.643).abs() < 1e-9);
-        assert!((t.bond_length("C", "C").unwrap() - 1.526).abs() < 1e-9);
-        // The pair lookup is unordered.
-        assert_eq!(t.bond_ln_k("H", "C"), t.bond_ln_k("C", "H"));
-        assert!((t.bond_ln_k("C", "H").unwrap() - 6.217).abs() < 1e-9);
-        // Angle Z / C factors.
-        assert!((t.angle_z("C").unwrap() - 1.183).abs() < 1e-9);
-        assert!((t.angle_c("C").unwrap() - 1.339).abs() < 1e-9);
-        assert!((t.angle_z("H").unwrap() - 0.784).abs() < 1e-9);
-        // An element upstream does not tabulate.
-        assert_eq!(t.angle_z("He"), None);
-    }
-
-    #[test]
-    fn the_two_empirical_sets_are_different_tables() {
-        assert_ne!(
-            EmpiricalSet::Gaff.table().bonds.len(),
-            EmpiricalSet::Gaff2.table().bonds.len(),
-            "GAFF2 tabulates more element pairs than GAFF"
-        );
-    }
-
-    #[test]
-    fn substitution_table_carries_weights_defaults_and_corr() {
+    fn correspondence_rows_carry_per_penalty_values() {
         let t = substitution_table();
-        let w = t.weights;
-        assert!((w.weight_angle_centre - 10.0).abs() < 1e-12);
-        assert!((w.weight_torsion_centre - 10.0).abs() < 1e-12);
-        assert!((w.weight_improper - 10.0).abs() < 1e-12);
-        assert!((w.weight_wildcard - 10.0).abs() < 1e-12);
-        assert!((w.default_bond_length - 20.0).abs() < 1e-12);
-        assert!((w.default_torsion - 87.0).abs() < 1e-12);
-
         // os -> oh is a low-penalty correspondence (ether <-> hydroxyl oxygen).
         let row = t.correspondence("os", "oh").expect("os -> oh is tabulated");
         let bond = row

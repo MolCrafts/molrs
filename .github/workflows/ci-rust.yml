@@ -4,32 +4,35 @@ on:
   workflow_call:
   workflow_dispatch:
 
-jobs:
-  fmt:
-    name: rustfmt
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-      - run: cargo fmt --check
+# Toolchain is rust-toolchain.toml `stable` (always latest). Local `rustup
+# update` and CI `dtolnay/rust-toolchain@stable` must stay on the same channel.
 
-  clippy:
-    name: clippy
+jobs:
+  lint:
+    name: fmt + clippy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: clippy
+          shared-key: lint
           workspaces: ". -> target"
+      - name: Format every workspace root
+        run: |
+          cargo fmt --all --check
+          for crate in molrs-ffi molrs-python molrs-wasm molrs-capi molrs-cxxapi; do
+            cargo fmt --manifest-path "$crate/Cargo.toml" --check
+          done
       - run: |
-          cargo clippy -p molcrafts-molrs --all-targets --features full,filesystem -- -D warnings
-          cargo clippy -p molcrafts-molrs-cxxapi --all-targets -- -D warnings
+          cargo clippy -p molcrafts-molrs --all-targets --features full,filesystem,stream -- -D warnings
+          cargo clippy --manifest-path molrs-cxxapi/Cargo.toml --all-targets -- -D warnings
+      - name: Build public API documentation
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc -p molcrafts-molrs --no-deps --features full,filesystem,stream
 
   test:
     name: unit
@@ -41,5 +44,43 @@ jobs:
         with:
           shared-key: unit
           workspaces: ". -> target"
-      - run: bash scripts/fetch-test-data.sh
-      - run: cargo test -p molcrafts-molrs --lib --features full,filesystem
+      - run: cargo test -p molcrafts-molrs --lib --features full,filesystem,stream
+      # --lib does not run rustdoc examples; a renamed public item otherwise
+      # goes unnoticed until a human opens docs.rs.
+      - run: cargo test --doc -p molcrafts-molrs --features full,filesystem,stream
+      # molrs-ffi and molrs-cxxapi are standalone workspace roots, so the
+      # lines above never cover them.
+      - run: cargo test --manifest-path molrs-ffi/Cargo.toml
+      - run: cargo test --manifest-path molrs-cxxapi/Cargo.toml
+      - name: Verify the crates.io package builds outside the source tree
+        run: |
+          cargo package --manifest-path molrs/Cargo.toml
+          python3 - <<'PY'
+          from pathlib import Path
+          import tarfile
+          import tomllib
+
+          version = tomllib.loads(Path("Cargo.toml").read_text())["workspace"]["package"]["version"]
+          name = f"molcrafts-molrs-{version}"
+          with tarfile.open(f"target/package/{name}.crate") as package:
+              license_file = package.extractfile(f"{name}/LICENSE")
+              assert license_file is not None, "Package is missing LICENSE"
+              assert license_file.read() == Path("LICENSE").read_bytes(), "Package license differs from repository license"
+          PY
+
+  features:
+    name: Feature isolation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: features
+          workspaces: ". -> target"
+      - name: Check core and independent features without native defaults
+        run: |
+          cargo check -p molcrafts-molrs --no-default-features
+          for feature in io smiles signal compute ff conformer md builder serde stream zarr filesystem voronoi full; do
+            cargo check -p molcrafts-molrs --no-default-features --features "$feature"
+          done

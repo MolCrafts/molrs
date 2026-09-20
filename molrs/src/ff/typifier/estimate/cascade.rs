@@ -463,7 +463,7 @@ impl Parmchk2Estimator {
     /// directly ([`forcefield::gaff`](crate::ff::forcefield::gaff)) wants to hear
     /// that the torsion is missing, not to be handed a placeholder for it.
     pub(super) fn no_torsion(&self) -> Params {
-        Params::from_pairs(&[("f1", 0.0), ("f2", 0.0), ("f3", 0.0), ("f4", 0.0)])
+        Params::from_pairs(&[("k1", 0.0), ("k2", 0.0), ("k3", 0.0), ("k4", 0.0)])
     }
 
     /// The penalty charged for [`no_torsion`](Self::no_torsion).
@@ -519,8 +519,8 @@ impl Parmchk2Estimator {
                 let (barrier, phase_deg, periodicity) = DEFAULT_IMPROPER;
                 let params = Params::from_pairs(&[
                     ("k", barrier),
-                    ("n", f64::from(periodicity)),
-                    ("d", phase_deg.to_radians()),
+                    ("periodicity", f64::from(periodicity)),
+                    ("phase", phase_deg.to_radians()),
                 ]);
                 Estimate::estimated(params, Provenance::wildcard(0.0, ""))
             }
@@ -612,9 +612,12 @@ impl Parmchk2Estimator {
         let e2 = self.element_of(&types[1])?;
         let ln_kij = self.empirical.bond_ln_k(&e1, &e2)?;
         let rref = self.empirical.bond_length(&e1, &e2)?;
-        let k0 = empirical::bond_k(ln_kij, rref, self.empirical.bond_power);
+        // ×2: the formula reproduces `gaff.dat`'s own un-halved `K`, and every
+        // candidate table presents molrs's `E = ½k(x−x₀)²` convention, so an
+        // estimate must arrive in it too (spec ff-params-01).
+        let k = 2.0 * empirical::bond_k(ln_kij, rref, self.empirical.bond_power);
         Some(Estimate::estimated(
-            Params::from_pairs(&[("k0", k0), ("r0", rref)]),
+            Params::from_pairs(&[("k", k), ("r0", rref)]),
             Provenance::empirical(self.default_penalty(Arity::Bond)),
         ))
     }
@@ -633,16 +636,17 @@ impl Parmchk2Estimator {
             self.element_of(b)?,
             self.element_of(c)?,
         );
-        let k0 = empirical::angle_k(
-            self.empirical.angle_z(&ea)?,
-            self.empirical.angle_c(&eb)?,
-            self.empirical.angle_z(&ec)?,
-            self.empirical.bond_length(&ea, &eb)?,
-            self.empirical.bond_length(&eb, &ec)?,
-            theta0,
-        );
+        let k = 2.0
+            * empirical::angle_k(
+                self.empirical.angle_z(&ea)?,
+                self.empirical.angle_c(&eb)?,
+                self.empirical.angle_z(&ec)?,
+                self.empirical.bond_length(&ea, &eb)?,
+                self.empirical.bond_length(&eb, &ec)?,
+                theta0,
+            );
         Some(Estimate::estimated(
-            Params::from_pairs(&[("k0", k0), ("theta0", theta0)]),
+            Params::from_pairs(&[("k", k), ("theta0", theta0)]),
             Provenance::empirical(self.default_penalty(Arity::Angle)),
         ))
     }

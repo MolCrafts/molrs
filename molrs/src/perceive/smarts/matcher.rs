@@ -13,8 +13,6 @@
 //! query atom, so candidates are generated from the neighbourhood of the
 //! anchor's image.
 
-use std::collections::HashMap;
-
 use crate::system::atomistic::{AtomId, Atomistic};
 
 use super::ast::{BondFacts, MolContext, RecursiveEval};
@@ -68,6 +66,11 @@ impl RecursiveEval for RecursiveEvaluator<'_> {
 /// (used for recursive SMARTS). `visit` is called for every complete match
 /// with the assignment vector (indexed by query-atom); returning `false`
 /// stops the enumeration early.
+///
+/// Query atoms are placed in index order, so "already placed" is "lower
+/// index": the anchor of atom `q` is its lowest-indexed neighbour below `q`,
+/// and the mol atoms in use are exactly `assign[..depth]`. Neither needs a
+/// map, and the search allocates only the two vectors below, once.
 fn enumerate_matches(
     query: &QueryGraph,
     ctx: &MolContext,
@@ -81,78 +84,29 @@ fn enumerate_matches(
     let rec = RecursiveEvaluator {
         recursives: &query.recursives,
     };
-
-    // Precompute, for each query atom (>0), the already-earlier query atom it
-    // bonds to plus the bond query — the "anchor". The parser always connects
-    // a new atom to a prior atom, and ring closures add extra bonds among
-    // earlier atoms; we treat the first-seen connection as the anchor and the
-    // rest as additional constraints checked at placement time.
-    let order: Vec<usize> = (0..n).collect();
-    let anchors = build_anchors(query, &order);
-
-    let mol_atoms: Vec<AtomId> = match root_fix {
-        Some(root) => vec![root],
-        None => ctx.mol.atoms().map(|(id, _)| id).collect(),
-    };
-
     let mut assign: Vec<Option<AtomId>> = vec![None; n];
-    let mut used: HashMap<AtomId, bool> = HashMap::new();
-
-    backtrack(
-        query,
-        ctx,
-        &rec,
-        &order,
-        &anchors,
-        &mol_atoms,
-        root_fix,
-        0,
-        &mut assign,
-        &mut used,
-        visit,
-    );
+    let mut full: Vec<AtomId> = Vec::with_capacity(n);
+    backtrack(query, ctx, &rec, root_fix, 0, &mut assign, &mut full, visit);
 }
 
-/// For each position in `order`, the anchor = the earliest placed query atom
-/// it is bonded to (or None for the first atom).
-fn build_anchors(query: &QueryGraph, order: &[usize]) -> Vec<Option<usize>> {
-    let pos_of: HashMap<usize, usize> = order.iter().enumerate().map(|(p, &q)| (q, p)).collect();
-    let mut anchors = vec![None; order.len()];
-    for &qa in order {
-        let mut best: Option<usize> = None;
-        for b in &query.bonds {
-            let other = if b.a == qa {
-                Some(b.b)
-            } else if b.b == qa {
-                Some(b.a)
-            } else {
-                None
-            };
-            if let Some(o) = other
-                && pos_of[&o] < pos_of[&qa]
-            {
-                best = Some(match best {
-                    Some(cur) if pos_of[&cur] <= pos_of[&o] => cur,
-                    _ => o,
-                });
-            }
-        }
-        anchors[pos_of[&qa]] = best;
-    }
-    anchors
-}
-
-/// All query bonds connecting `qa` to query atoms already placed (position < this).
-fn earlier_bonds<'q>(
-    query: &'q QueryGraph,
-    qa: usize,
-    placed: &[bool],
-) -> Vec<&'q super::parser::QueryBond> {
+/// The earliest-placed query atom `qa` is bonded to, i.e. its lowest-indexed
+/// neighbour below `qa`. The parser always connects a new atom to a prior
+/// one, so every non-root atom has one.
+fn anchor_of(query: &QueryGraph, qa: usize) -> Option<usize> {
     query
         .bonds
         .iter()
-        .filter(|b| (b.a == qa && placed[b.b]) || (b.b == qa && placed[b.a]))
-        .collect()
+        .filter_map(|b| {
+            let other = if b.a == qa {
+                b.b
+            } else if b.b == qa {
+                b.a
+            } else {
+                return None;
+            };
+            (other < qa).then_some(other)
+        })
+        .min()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -160,87 +114,91 @@ fn backtrack(
     query: &QueryGraph,
     ctx: &MolContext,
     rec: &dyn RecursiveEval,
-    order: &[usize],
-    anchors: &[Option<usize>],
-    mol_atoms: &[AtomId],
     root_fix: Option<AtomId>,
     depth: usize,
-    assign: &mut Vec<Option<AtomId>>,
-    used: &mut HashMap<AtomId, bool>,
+    assign: &mut [Option<AtomId>],
+    full: &mut Vec<AtomId>,
     visit: &mut dyn FnMut(&[AtomId]) -> bool,
 ) -> bool {
-    if depth == order.len() {
-        let full: Vec<AtomId> = assign.iter().map(|o| o.unwrap()).collect();
-        return visit(&full);
+    if depth == query.atoms.len() {
+        full.clear();
+        full.extend(
+            assign
+                .iter()
+                .map(|a| a.expect("every query atom is placed at a leaf")),
+        );
+        return visit(full);
     }
 
-    let qa = order[depth];
-    let placed: Vec<bool> = assign.iter().map(|o| o.is_some()).collect();
-
-    // Candidate molecule atoms for this query atom.
-    let candidates: Vec<AtomId> = if depth == 0 {
-        match root_fix {
-            Some(id) => vec![id],
-            None => mol_atoms.to_vec(),
-        }
-    } else {
-        // Generate from the anchor's image neighbourhood.
-        let anchor = anchors[depth].expect("non-root query atom must have an anchor");
-        let anchor_img = assign[anchor].expect("anchor must be assigned");
-        ctx.mol.neighbors(anchor_img).collect()
-    };
-
-    for cand in candidates {
-        if *used.get(&cand).unwrap_or(&false) {
-            continue;
-        }
-        // Atom primitive must match.
-        if !query.atoms[qa].query.eval(ctx, cand, rec) {
-            continue;
-        }
-        // Every query bond from qa to an already-placed atom must be
-        // satisfied by an actual molecule bond matching the bond query.
-        let mut bonds_ok = true;
-        for qb in earlier_bonds(query, qa, &placed) {
-            let other_q = if qb.a == qa { qb.b } else { qb.a };
-            let other_img = assign[other_q].unwrap();
-            match bond_facts(ctx, cand, other_img) {
-                Some(facts) if qb.query.eval(&facts) => {}
-                _ => {
-                    bonds_ok = false;
-                    break;
+    match (depth, root_fix) {
+        (0, Some(id)) => try_place(query, ctx, rec, root_fix, depth, id, assign, full, visit),
+        (0, None) => {
+            for (id, _) in ctx.mol.atoms() {
+                if !try_place(query, ctx, rec, root_fix, depth, id, assign, full, visit) {
+                    return false;
                 }
             }
+            true
         }
-        if !bonds_ok {
-            continue;
-        }
-
-        assign[qa] = Some(cand);
-        used.insert(cand, true);
-
-        let keep_going = backtrack(
-            query,
-            ctx,
-            rec,
-            order,
-            anchors,
-            mol_atoms,
-            root_fix,
-            depth + 1,
-            assign,
-            used,
-            visit,
-        );
-
-        assign[qa] = None;
-        used.insert(cand, false);
-
-        if !keep_going {
-            return false;
+        _ => {
+            // Candidates come from the anchor's image neighbourhood.
+            let anchor = anchor_of(query, depth).expect("non-root query atom must have an anchor");
+            let anchor_img = assign[anchor].expect("anchor must be assigned");
+            for cand in ctx.mol.neighbors(anchor_img) {
+                if !try_place(query, ctx, rec, root_fix, depth, cand, assign, full, visit) {
+                    return false;
+                }
+            }
+            true
         }
     }
-    true
+}
+
+/// Try `cand` as the image of query atom `depth`, recursing on success.
+/// Returns `false` only when the visitor asked to stop.
+#[allow(clippy::too_many_arguments)]
+fn try_place(
+    query: &QueryGraph,
+    ctx: &MolContext,
+    rec: &dyn RecursiveEval,
+    root_fix: Option<AtomId>,
+    depth: usize,
+    cand: AtomId,
+    assign: &mut [Option<AtomId>],
+    full: &mut Vec<AtomId>,
+    visit: &mut dyn FnMut(&[AtomId]) -> bool,
+) -> bool {
+    if assign[..depth].contains(&Some(cand)) {
+        return true;
+    }
+    // Atom primitive must match.
+    if !query.atoms[depth].query.eval(ctx, cand, rec) {
+        return true;
+    }
+    // Every query bond from this atom to an already-placed atom must be
+    // satisfied by an actual molecule bond matching the bond query.
+    for qb in &query.bonds {
+        let other = if qb.a == depth {
+            qb.b
+        } else if qb.b == depth {
+            qb.a
+        } else {
+            continue;
+        };
+        if other >= depth {
+            continue;
+        }
+        let other_img = assign[other].expect("earlier query atoms are placed");
+        match bond_facts(ctx, cand, other_img) {
+            Some(facts) if qb.query.eval(&facts) => {}
+            _ => return true,
+        }
+    }
+
+    assign[depth] = Some(cand);
+    let keep_going = backtrack(query, ctx, rec, root_fix, depth + 1, assign, full, visit);
+    assign[depth] = None;
+    keep_going
 }
 
 /// Find every non-uniquified embedding of `query` in `mol`.
@@ -286,4 +244,96 @@ pub(crate) fn find_in_context(
 pub fn has_match(query: &QueryGraph, mol: &Atomistic, mut options: MatchOptions<'_>) -> bool {
     options.limit = Some(1);
     !find(query, mol, options).is_empty()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::perceive::smarts::MatchOptions;
+    use crate::system::bond::BondType;
+
+    /// Ethanol without hydrogens: C0–C1–O2, single bonds.
+    fn ethanol() -> Atomistic {
+        let mut mol = Atomistic::new();
+        let c0 = mol.add_atom_bare("C");
+        let c1 = mol.add_atom_bare("C");
+        let o = mol.add_atom_bare("O");
+        mol.add_bond(c0, c1).unwrap();
+        mol.add_bond(c1, o).unwrap();
+        mol
+    }
+
+    fn matches(smarts: &str, mol: &Atomistic) -> Vec<Vec<usize>> {
+        let ids: Vec<AtomId> = mol.atoms().map(|(id, _)| id).collect();
+        let q = super::super::parser::parse(smarts).unwrap();
+        find(&q, mol, MatchOptions::default())
+            .into_iter()
+            .map(|m| {
+                m.atoms
+                    .iter()
+                    .map(|a| ids.iter().position(|id| id == a).unwrap())
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn every_embedding_is_reported_in_query_atom_order() {
+        let mol = ethanol();
+        // C–C matches both directions; C–O only one way round.
+        assert_eq!(matches("CC", &mol), vec![vec![0, 1], vec![1, 0]]);
+        assert_eq!(matches("CO", &mol), vec![vec![1, 2]]);
+        assert_eq!(matches("CCO", &mol), vec![vec![0, 1, 2]]);
+    }
+
+    #[test]
+    fn an_atom_is_never_used_twice_in_one_embedding() {
+        let mol = ethanol();
+        // A three-membered ring cannot embed into a chain.
+        assert!(matches("C1CO1", &mol).is_empty());
+    }
+
+    #[test]
+    fn bond_primitives_are_checked_against_the_molecule() {
+        let mut mol = ethanol();
+        let bonds: Vec<_> = mol.bonds().map(|(id, _)| id).collect();
+        mol.set_bond_type(bonds[1], BondType::Double).unwrap();
+        assert_eq!(matches("C=O", &mol).len(), 1);
+        assert!(matches("C-O", &mol).is_empty());
+        assert_eq!(matches("C~O", &mol).len(), 1, "`~` is any bond");
+    }
+
+    #[test]
+    fn a_root_pin_and_a_limit_narrow_the_enumeration() {
+        let mol = ethanol();
+        let ids: Vec<AtomId> = mol.atoms().map(|(id, _)| id).collect();
+        let q = super::super::parser::parse("C").unwrap();
+        let rooted = find(
+            &q,
+            &mol,
+            MatchOptions {
+                root: Some(ids[1]),
+                ..MatchOptions::default()
+            },
+        );
+        assert_eq!(rooted.len(), 1);
+        assert_eq!(rooted[0].atoms, vec![ids[1]]);
+        let limited = find(
+            &q,
+            &mol,
+            MatchOptions {
+                limit: Some(1),
+                ..MatchOptions::default()
+            },
+        );
+        assert_eq!(limited.len(), 1);
+        assert!(has_match(&q, &mol, MatchOptions::default()));
+    }
+
+    #[test]
+    fn a_recursive_primitive_is_rooted_at_the_candidate() {
+        let mol = ethanol();
+        // The carbon bonded to oxygen, and only that one.
+        assert_eq!(matches("[C;$(CO)]", &mol), vec![vec![1]]);
+    }
 }

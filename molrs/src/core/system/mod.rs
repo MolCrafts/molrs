@@ -4,6 +4,7 @@
 
 pub mod atomistic;
 pub mod bond;
+pub mod bond_weights;
 pub mod coarsegrain;
 pub(crate) mod element;
 pub mod entity_table;
@@ -14,4 +15,5 @@ pub mod molgraph;
 pub mod topology;
 
 pub use bond::{BondNumber, BondType};
+pub use bond_weights::BondDistanceWeights;
 pub use extract::{ExtractedBall, InducedSubgraph};

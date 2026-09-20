@@ -18,7 +18,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use super::ForceFieldReader;
-use crate::ff::forcefield::ForceField;
+use crate::ff::forcefield::{ForceField, SpecialBonds};
 
 const KJ_PER_KCAL: f64 = 4.184;
 const NM_TO_ANGSTROM: f64 = 10.0;
@@ -251,8 +251,54 @@ fn angle_params_to_internal(style: &str, values: &[f64]) -> Result<Vec<(String, 
 // Build
 // ---------------------------------------------------------------------------
 
+fn parse_defaults_section(lines: &[String]) -> Result<SpecialBonds, String> {
+    for line in lines {
+        let t = line.trim();
+        if t.is_empty() || t.starts_with(';') {
+            continue;
+        }
+        let cols: Vec<&str> = t.split_whitespace().collect();
+        if cols.len() < 5 {
+            return Err("[ defaults ] is missing fudgeLJ or fudgeQQ".into());
+        }
+        let nbfunc: i32 = cols[0]
+            .parse()
+            .map_err(|_| format!("[ defaults ] nbfunc is not an integer: {}", cols[0]))?;
+        if nbfunc != 1 {
+            return Err(format!("[ defaults ] nbfunc {nbfunc} is not supported"));
+        }
+        if cols[1] != "2" {
+            return Err(format!(
+                "[ defaults ] comb-rule {} is not supported",
+                cols[1]
+            ));
+        }
+        if cols[2] != "yes" {
+            return Err("[ defaults ] gen-pairs must be yes".into());
+        }
+        let fudge_lj: f64 = cols[3]
+            .parse()
+            .map_err(|_| format!("[ defaults ] fudgeLJ is not a number: {}", cols[3]))?;
+        let fudge_qq: f64 = cols[4]
+            .parse()
+            .map_err(|_| format!("[ defaults ] fudgeQQ is not a number: {}", cols[4]))?;
+        return Ok(SpecialBonds {
+            lj: [0.0, 0.0, fudge_lj],
+            coul: [0.0, 0.0, fudge_qq],
+        });
+    }
+    Err("[ defaults ] section is empty".into())
+}
+
 fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceField, String> {
     let mut ff = ForceField::new("GROMACS");
+    match sections.get("defaults") {
+        Some(lines) => ff.set_special_bonds(parse_defaults_section(lines)?),
+        None if sections.contains_key("pairs") => {
+            return Err("[ defaults ] is required when [ pairs ] is present".into());
+        }
+        None => {}
+    }
 
     // Atom rows → atom types (one per row, strings for non-float metadata).
     let atom_lines = sections.get("atoms").cloned().unwrap_or_default();
@@ -444,7 +490,7 @@ fn parse_dihedral_section(
         .into_iter()
         .collect();
     let param_names: HashMap<&str, &[&str]> = [
-        ("periodic", &["phi0", "k", "n"][..]),
+        ("periodic", &["phase", "k", "periodicity"][..]),
         ("rb", &["c0", "c1", "c2", "c3", "c4", "c5"][..]),
         ("harmonic", &["psi0", "k"][..]),
     ]
@@ -471,11 +517,20 @@ fn parse_dihedral_section(
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| format!("dihedral params: {e}"))?;
         let names = param_names[style_name];
-        // Dihedral: no unit conversion in historical Python (raw numbers).
+        // Normalize to the canonical vocabulary at the reader boundary (spec
+        // ff-params-01): angles in radians, energies in kcal/mol. The GROMACS
+        // file spells the phase in degrees and every barrier in kJ/mol.
         let converted: Vec<(String, f64)> = names
             .iter()
             .zip(params.iter())
-            .map(|(n, v)| ((*n).to_string(), *v))
+            .map(|(n, v)| {
+                let conv = match *n {
+                    "phase" | "psi0" => v.to_radians(),
+                    "k" | "c0" | "c1" | "c2" | "c3" | "c4" | "c5" => v / KJ_PER_KCAL,
+                    _ => *v,
+                };
+                ((*n).to_string(), conv)
+            })
             .collect();
         let owned: Vec<(&str, f64)> = converted.iter().map(|(k, v)| (k.as_str(), *v)).collect();
         let iname = atom_name_at(atom_names, i)?;
@@ -496,9 +551,12 @@ fn parse_pair_section(
 ) -> Result<(), String> {
     let func_types: HashMap<&str, &str> =
         [("1", "lj12-6"), ("2", "buckingham")].into_iter().collect();
+    // GROMACS buckingham is `a  b  c6` with `b = 1/rho` (1/nm) — a different
+    // quantity from the canonical `rho`, so it is inverted here rather than
+    // stored under a third spelling (spec ff-params-01).
     let param_names: HashMap<&str, &[&str]> = [
         ("lj12-6", &["c6", "c12"][..]),
-        ("buckingham", &["A", "B", "C"][..]),
+        ("buckingham", &["a", "rho", "c"][..]),
     ]
     .into_iter()
     .collect();
@@ -524,7 +582,26 @@ fn parse_pair_section(
         let converted: Vec<(String, f64)> = names
             .iter()
             .zip(params.iter())
-            .map(|(n, v)| ((*n).to_string(), *v))
+            .map(|(n, v)| {
+                let conv = match *n {
+                    // kJ/mol → kcal/mol
+                    "a" => v / KJ_PER_KCAL,
+                    // b (1/nm) → rho (Å)
+                    "rho" => {
+                        if *v == 0.0 {
+                            0.0
+                        } else {
+                            NM_TO_ANGSTROM / v
+                        }
+                    }
+                    // kJ/mol·nm⁶ → kcal/mol·Å⁶
+                    "c" | "c6" => v / KJ_PER_KCAL * NM_TO_ANGSTROM.powi(6),
+                    // kJ/mol·nm¹² → kcal/mol·Å¹²
+                    "c12" => v / KJ_PER_KCAL * NM_TO_ANGSTROM.powi(12),
+                    _ => *v,
+                };
+                ((*n).to_string(), conv)
+            })
             .collect();
         let owned: Vec<(&str, f64)> = converted.iter().map(|(k, v)| (k.as_str(), *v)).collect();
         let iname = atom_name_at(atom_names, i)?;

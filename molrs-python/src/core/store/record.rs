@@ -1,5 +1,8 @@
-// PyO3 bindings for the MolRec record aggregate.
-// Hosts `molrs.MolRec` and the `molrs.Observables` view.
+// PyO3 bindings for the in-memory record aggregate.
+// Kept as crate-internal working-set types; not registered on the Python
+// module. Public I/O is `molrs.io.mrec.write_frame` / `write_system` /
+// `write_trajectory`.
+#![allow(dead_code)]
 
 use molrs::store::record::{MolRec as CoreMolRec, Observables as CoreObservables};
 use molrs::store::trajectory::{ObservableKind, ObservableRecord};
@@ -12,7 +15,7 @@ use crate::core::store::frame::PyFrame;
 use crate::core::store::trajectory::{PyScalarObservable, PyTrajectory, PyVectorObservable};
 use crate::helpers::molrs_error_to_pyerr;
 
-#[pyclass(module = "molrs", name = "MolRec", subclass)]
+#[pyclass(module = "molrs", name = "Record", subclass)]
 pub struct PyMolRec {
     pub(crate) inner: CoreMolRec,
 }
@@ -152,24 +155,6 @@ impl PyMolRec {
     fn set_metrics(&mut self, value: &Bound<'_, PyDict>) -> PyResult<()> {
         self.inner.metrics = dict_to_json_map(value)?;
         Ok(())
-    }
-
-    /// Read a MolRec record from a Zarr root.
-    ///
-    /// Requires the ``fs`` feature (default on desktop; omitted for Pyodide).
-    #[staticmethod]
-    #[cfg(feature = "fs")]
-    fn read_zarr(path: &str) -> PyResult<Self> {
-        let inner = molrs::io::store::zarr::read_record_file(path).map_err(molrs_error_to_pyerr)?;
-        Ok(Self { inner })
-    }
-
-    /// Write this record to a Zarr root.
-    ///
-    /// Requires the ``fs`` feature (default on desktop; omitted for Pyodide).
-    #[cfg(feature = "fs")]
-    fn write_zarr(&self, path: &str) -> PyResult<()> {
-        molrs::io::store::zarr::write_record_file(path, &self.inner).map_err(molrs_error_to_pyerr)
     }
 }
 

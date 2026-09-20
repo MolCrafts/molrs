@@ -1718,11 +1718,11 @@ impl WasmTopology {
                 use molrs::store::block::BlockDtype;
                 let col_i = bonds
                     .get("i")
-                    .and_then(|c| <u32 as BlockDtype>::from_column(c))
+                    .and_then(|c| <u64 as BlockDtype>::from_column(c))
                     .and_then(|a| a.as_slice());
                 let col_j = bonds
                     .get("j")
-                    .and_then(|c| <u32 as BlockDtype>::from_column(c))
+                    .and_then(|c| <u64 as BlockDtype>::from_column(c))
                     .and_then(|a| a.as_slice());
 
                 if let (Some(is), Some(js)) = (col_i, col_j) {
@@ -2185,7 +2185,7 @@ fn vectors3(data: &[F], name: &str) -> Result<Vec<[F; 3]>, JsValue> {
             "{name}: expected flat [x,y,z,...] length divisible by 3"
         )));
     }
-    Ok(data.chunks_exact(3).map(|v| [v[0], v[1], v[2]]).collect())
+    Ok(data.as_chunks::<3>().0.to_vec())
 }
 
 fn quats(data: &[F], name: &str) -> Result<Vec<[F; 4]>, JsValue> {
@@ -2194,17 +2194,19 @@ fn quats(data: &[F], name: &str) -> Result<Vec<[F; 4]>, JsValue> {
             "{name}: expected flat [w,x,y,z,...] length divisible by 4"
         )));
     }
-    Ok(data
-        .chunks_exact(4)
-        .map(|v| [v[0], v[1], v[2], v[3]])
-        .collect())
+    Ok(data.as_chunks::<4>().0.to_vec())
 }
 
 fn u32_pairs(data: &[u32], name: &str) -> Result<Vec<(u32, u32)>, JsValue> {
     if !data.len().is_multiple_of(2) {
         return Err(JsValue::from_str(&format!("{name}: expected pairs")));
     }
-    Ok(data.chunks_exact(2).map(|p| (p[0], p[1])).collect())
+    Ok(data
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|p| (p[0], p[1]))
+        .collect())
 }
 
 fn usize_pairs(data: &[u32], name: &str) -> Result<Vec<(usize, usize)>, JsValue> {
@@ -2564,6 +2566,8 @@ struct ComputeCatalog {
     analyses: Vec<ComputeCatalogEntry>,
 }
 
+// One catalog row per call; the positional form mirrors the table it fills.
+#[allow(clippy::too_many_arguments)]
 fn entry(
     id: &'static str,
     category: &'static str,
@@ -4588,6 +4592,9 @@ pub struct WasmSpatialDistribution {
 
 #[wasm_bindgen(js_class = WasmSpatialDistribution)]
 impl WasmSpatialDistribution {
+    // The JS constructor is positional by wasm-bindgen's design; molvis calls
+    // it with these ten arguments, so the shape is the public contract.
+    #[allow(clippy::too_many_arguments)]
     #[wasm_bindgen(constructor)]
     pub fn new(
         reference: &[u32],
@@ -4792,6 +4799,12 @@ impl WasmHexatic {
 
 #[wasm_bindgen(js_name = WasmNematic)]
 pub struct WasmNematic;
+
+impl Default for WasmNematic {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[wasm_bindgen(js_class = WasmNematic)]
 impl WasmNematic {
@@ -5336,8 +5349,11 @@ impl WasmDistanceDistribution {
     }
 
     pub fn compute(&self, frame: &Frame, pairs: &[u32]) -> Result<JsValue, JsValue> {
-        let groups = molrs::compute::distribution::AtomGroups::new(2, pairs.to_vec())
-            .map_err(|e| JsValue::from_str(&format!("DistanceDistribution groups: {e}")))?;
+        let groups = molrs::compute::distribution::AtomGroups::new(
+            2,
+            pairs.iter().map(|&v| v as u64).collect(),
+        )
+        .map_err(|e| JsValue::from_str(&format!("DistanceDistribution groups: {e}")))?;
         let calc = molrs::compute::distribution::DistributionFunction::new(
             molrs::compute::distribution::DistanceObservable,
             self.n_bins,
@@ -5362,8 +5378,11 @@ impl WasmAngleDistribution {
     }
 
     pub fn compute(&self, frame: &Frame, triples: &[u32]) -> Result<JsValue, JsValue> {
-        let groups = molrs::compute::distribution::AtomGroups::new(3, triples.to_vec())
-            .map_err(|e| JsValue::from_str(&format!("AngleDistribution groups: {e}")))?;
+        let groups = molrs::compute::distribution::AtomGroups::new(
+            3,
+            triples.iter().map(|&v| v as u64).collect(),
+        )
+        .map_err(|e| JsValue::from_str(&format!("AngleDistribution groups: {e}")))?;
         let calc = molrs::compute::distribution::DistributionFunction::over_natural_range(
             molrs::compute::distribution::AngleObservable,
             self.n_bins,
@@ -5386,8 +5405,11 @@ impl WasmDihedralDistribution {
     }
 
     pub fn compute(&self, frame: &Frame, quads: &[u32]) -> Result<JsValue, JsValue> {
-        let groups = molrs::compute::distribution::AtomGroups::new(4, quads.to_vec())
-            .map_err(|e| JsValue::from_str(&format!("DihedralDistribution groups: {e}")))?;
+        let groups = molrs::compute::distribution::AtomGroups::new(
+            4,
+            quads.iter().map(|&v| v as u64).collect(),
+        )
+        .map_err(|e| JsValue::from_str(&format!("DihedralDistribution groups: {e}")))?;
         let calc = molrs::compute::distribution::DistributionFunction::over_natural_range(
             molrs::compute::distribution::DihedralObservable,
             self.n_bins,
@@ -5547,6 +5569,12 @@ impl WasmHBondLifetime {
 
 #[wasm_bindgen(js_name = WasmHBondNetwork)]
 pub struct WasmHBondNetwork;
+
+impl Default for WasmHBondNetwork {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[wasm_bindgen(js_class = WasmHBondNetwork)]
 impl WasmHBondNetwork {
@@ -5897,9 +5925,11 @@ impl WasmCombinedDistribution {
                 JsValue::from_str(&format!("CombinedDistribution observable {i}: {e}"))
             })?;
             observables.push(obs);
-            atom_groups.push(AtomGroups::new(arity, raw[i].clone()).map_err(|e| {
-                JsValue::from_str(&format!("CombinedDistribution groups {i}: {e}"))
-            })?);
+            atom_groups.push(
+                AtomGroups::new(arity, raw[i].iter().map(|&v| v as u64).collect()).map_err(
+                    |e| JsValue::from_str(&format!("CombinedDistribution groups {i}: {e}")),
+                )?,
+            );
         }
         let calc = molrs::compute::CombinedDistribution::new(observables, self.axes.clone())
             .map_err(|e| JsValue::from_str(&format!("CombinedDistribution: {e}")))?;

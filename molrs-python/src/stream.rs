@@ -258,7 +258,7 @@ mod server {
                 max_frame_rate: 0.0,
                 token,
             };
-            let address_for_error = address.clone();
+            let address_for_error = address;
             let server = Publisher::bind_with(address, config).map_err(io_error_to_pyerr)?;
             // A bound server always has one; `local_addr` is Option only
             // because a dialed publisher has no address to hand out.

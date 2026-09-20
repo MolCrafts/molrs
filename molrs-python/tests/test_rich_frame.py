@@ -211,7 +211,7 @@ class TestBlockIteration:
         assert list(Block().itertuples()) == []
 
 
-# --- ac-006: copy/shape/nrows/to_dict/from_dict/rename/view -----------------
+# --- ac-006: copy/shape/nrows/to_dict/rename/view -----------------
 
 
 class TestBlockShapeAndSerialization:
@@ -340,28 +340,15 @@ class TestRichFrame:
         f.meta = {**f.meta, "step": 5}
         assert f.meta["step"] == 5
 
-    def test_to_dict_from_dict(self):
+    def test_to_dict_roundtrip_via_init(self):
         f = Frame(
             {"atoms": {"x": [1.0, 2.0]}},
             meta={"title": molrs.MetaValue("string", "t")},
         )
         d = f.to_dict()
         assert "blocks" in d and "meta" in d
-        f2 = Frame.from_dict(d)
+        f2 = Frame(d["blocks"], meta=d["meta"])
         np.testing.assert_allclose(f2["atoms"]["x"], [1.0, 2.0])
-
-    @pytest.mark.parametrize(
-        "data",
-        [
-            {"blocks": {}},
-            {"blocks": {}, "metadata": {}},
-            {"blocks": {}, "meta": {}, "metadata": {}},
-            {"atoms": {}},
-        ],
-    )
-    def test_from_dict_rejects_noncanonical_envelopes(self, data):
-        with pytest.raises(ValueError, match="exactly 'blocks' and 'meta'"):
-            Frame.from_dict(data)
 
     def test_copy_is_independent(self):
         f = Frame({"atoms": {"x": [1.0, 2.0]}})

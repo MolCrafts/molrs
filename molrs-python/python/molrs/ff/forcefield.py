@@ -540,17 +540,16 @@ class ForceField(_RsForceField):
         ``class_`` / ``type_`` / ``element`` metadata survives the wrap.
         """
         ff = cls(name=raw.name)
+        ff.set_special_bonds(
+            list(raw.special_bonds_lj),
+            list(raw.special_bonds_coul),
+        )
         for cat_name in raw.style_names():
             category, sname = cat_name.split(":", 1)
             if category == "pair":
                 _RsForceField.def_pairstyle(
                     ff, sname, raw.style_params(category, sname)
                 )
-            elif category == "kspace":
-                _RsForceField.def_kspacestyle(
-                    ff, sname, raw.style_params(category, sname)
-                )
-                continue  # kspace has no per-type defs
             else:
                 ff._ensure_style(category, sname)
             for tname, params in raw.types(category, sname):
@@ -695,10 +694,24 @@ class ForceField(_RsForceField):
         return [s for s in self._styles() if isinstance(s, category_or_cls)]
 
     def get_types(self, category_or_cls: Any) -> list[Type]:
-        """Types of a category (str) or by :class:`Type` subclass, across styles."""
+        """Types in a category.
+
+        Pass a category string (``"angle"``), a :class:`Type` subclass
+        (``AngleType``), or a :class:`Style` subclass (``AngleStyle``). A
+        style class selects that category's types — not an empty list.
+        """
         if isinstance(category_or_cls, str):
             cats = {category_or_cls}
             type_cls: type[Type] = Type
+        elif isinstance(category_or_cls, type) and issubclass(category_or_cls, Style):
+            cats = {
+                c
+                for c, sc in _STYLE_CLASSES.items()
+                if issubclass(category_or_cls, sc) or issubclass(sc, category_or_cls)
+            }
+            type_cls = (
+                _TYPE_CLASSES[next(iter(cats))] if len(cats) == 1 else Type
+            )
         else:
             type_cls = category_or_cls
             cats = {c for c, tc in _TYPE_CLASSES.items() if issubclass(tc, type_cls)}
@@ -712,8 +725,6 @@ class ForceField(_RsForceField):
     def _ensure_style(self, category: str, name: str) -> None:
         if category == "pair":
             _RsForceField.def_pairstyle(self, name, {})
-        elif category == "kspace":
-            _RsForceField.def_kspacestyle(self, name, {})
         else:
             getattr(_RsForceField, f"def_{category}style")(self, name)
 
@@ -775,8 +786,6 @@ class ForceField(_RsForceField):
         for cat_name in other.style_names():
             category, sname = cat_name.split(":", 1)
             self._ensure_style(category, sname)
-            if category == "kspace":
-                continue
             for tname, params in other.types(category, sname):
                 endpoints = other.type_endpoints(category, sname, tname)
                 self._replay_type(
@@ -922,6 +931,7 @@ def write_lammps_forcefield(
     *,
     precision: int = 6,
     skip_pair_style: bool = False,
+    skip_units: bool = False,
     units: str = "real",
     atom_types: set[str] | None = None,
     bond_types: set[str] | None = None,
@@ -946,6 +956,7 @@ def write_lammps_forcefield(
         forcefield,
         precision=precision,
         skip_pair_style=skip_pair_style,
+        skip_units=skip_units,
         units=units,
         atom_types=atom_types,
         bond_types=bond_types,
@@ -961,6 +972,7 @@ def write_lammps_forcefield_str(
     *,
     precision: int = 6,
     skip_pair_style: bool = False,
+    skip_units: bool = False,
     units: str = "real",
     atom_types: set[str] | None = None,
     bond_types: set[str] | None = None,
@@ -974,6 +986,7 @@ def write_lammps_forcefield_str(
         forcefield,
         precision=precision,
         skip_pair_style=skip_pair_style,
+        skip_units=skip_units,
         units=units,
         atom_types=atom_types,
         bond_types=bond_types,

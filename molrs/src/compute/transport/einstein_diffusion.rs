@@ -14,14 +14,14 @@ pub struct EinsteinDiffusionResult {
     /// Lag times τ = i·dt, length `n_frames`. Units: `[dt]`.
     pub lag_times: Array1<f64>,
     /// System-average MSD per lag, identical to
-    /// [`MSD`](crate::compute::MSD) in `Window` mode's per-lag mean. Units: `[length]²`.
+    /// [`MSD`] in `Window` mode's per-lag mean. Units: `[length]²`.
     pub msd: Array1<f64>,
 }
 
 impl ComputeResult for EinsteinDiffusionResult {}
 
 /// Raw self-MSD compute. Delegates to
-/// [`MSD`](crate::compute::MSD) in `Window` mode — MSD math is **not** re-derived here.
+/// [`MSD`] in `Window` mode — MSD math is **not** re-derived here.
 /// `D = slope/(2d)` is then a [`LinearFit`](crate::compute::fitting::LinearFit) +
 /// scale step.
 #[derive(Debug, Clone, Copy, Default)]

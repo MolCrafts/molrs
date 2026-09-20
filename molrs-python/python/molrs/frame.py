@@ -31,14 +31,10 @@ type BlockLike = Mapping[str, ArrayLike]
 
 
 def _column_name(key: object) -> str:
-    """Canonical column name from a ``str`` or :class:`molrs.keys.Key`."""
+    """Canonical column name from a ``str`` or any Key-like object."""
     if isinstance(key, str):
         return key
-    if isinstance(key, _keys.Key):
-        return key.key
-    raise TypeError(
-        f"column key must be str or molrs.keys.Key, got {type(key).__name__}"
-    )
+    return str(key)
 
 
 def _is_array_like(value: Any) -> bool:
@@ -98,10 +94,20 @@ class Block(_RsBlock, MutableMapping[str, np.ndarray]):
     # No __slots__ — PyO3 base classes forbid subclass slot layouts; the single
     # Python-only attribute (_source) lives on __dict__.
 
-    def __new__(cls, vars_: BlockLike | None = None) -> "Block":
+    def __new__(
+        cls,
+        vars_: BlockLike | None = None,
+        nrows: int | None = None,
+        shape: list[int] | None = None,
+    ) -> "Block":
         return super().__new__(cls)
 
-    def __init__(self, vars_: BlockLike | None = None) -> None:
+    def __init__(
+        self,
+        vars_: BlockLike | None = None,
+        nrows: int | None = None,
+        shape: list[int] | None = None,
+    ) -> None:
         super().__init__()
         # When set, numeric ops route through this external molrs.Block (a live
         # alias into a parent Frame's store) so frame[key][col] = arr writes
@@ -130,6 +136,13 @@ class Block(_RsBlock, MutableMapping[str, np.ndarray]):
                     raise ValueError(
                         f"Value must be array-like for key {k!r}, got {type(v)}"
                     ) from e
+        elif nrows:
+            _RsBlock.resize(self, nrows)
+        if shape is not None:
+            _RsBlock.set_shape(self, shape)
+
+    def __reduce__(self):
+        return type(self), _block_ctor_args(self)
 
     # --- write-through routing ---------------------------------------------
 
@@ -190,6 +203,43 @@ class Block(_RsBlock, MutableMapping[str, np.ndarray]):
             raise TypeError(
                 f"column {name!r} must be f64, got {backing.dtype(name)!r}"
             )
+        if default is not None:
+            return default
+        raise KeyError(f"column '{name}' (f64) is required")
+
+    def has_f32(self, key: object) -> bool:
+        return _RsBlock.has_f32(self._backing(), _column_name(key))
+
+    def has_f64(self, key: object) -> bool:
+        return _RsBlock.has_f64(self._backing(), _column_name(key))
+
+    def has_int(self, key: object) -> bool:
+        return _RsBlock.has_int(self._backing(), _column_name(key))
+
+    def has_uint(self, key: object) -> bool:
+        return _RsBlock.has_uint(self._backing(), _column_name(key))
+
+    def has_string(self, key: object) -> bool:
+        return _RsBlock.has_string(self._backing(), _column_name(key))
+
+    def get_f32(self, key: object, default: Any = None) -> Any:
+        name = _column_name(key)
+        backing = self._backing()
+        if _RsBlock.has_f32(backing, name):
+            return _RsBlock.view(backing, name)
+        if name in self:
+            raise TypeError(f"column {name!r} must be f32, got {backing.dtype(name)!r}")
+        if default is not None:
+            return default
+        raise KeyError(f"column '{name}' (f32) is required")
+
+    def get_f64(self, key: object, default: Any = None) -> Any:
+        name = _column_name(key)
+        backing = self._backing()
+        if _RsBlock.has_f64(backing, name):
+            return _RsBlock.view(backing, name)
+        if name in self:
+            raise TypeError(f"column {name!r} must be f64, got {backing.dtype(name)!r}")
         if default is not None:
             return default
         raise KeyError(f"column '{name}' (f64) is required")
@@ -465,21 +515,38 @@ class Frame(_RsFrame):
     by every ``molrs.*`` API with no conversion. ``__getitem__`` upgrades the
     stored block to a rich :class:`Block`. The ``box`` is the native
     ``molrs.Box`` (inherited). Frame has no CSV methods — CSV belongs to Block.
+
+    Construct with ``Frame(blocks, meta=...)``. Passing an existing core or
+    rich Frame copies its blocks, box, and meta into the new instance.
     """
 
     def __new__(
         cls,
-        blocks: "dict[str, Block | BlockLike] | None" = None,
-        meta: "Mapping[str, Any] | None" = None,
+        blocks: "dict[str, Block | BlockLike] | _RsFrame | None" = None,
+        meta: "dict[str, MetaValue] | None" = None,
+        box: Any = None,
     ) -> "Frame":
         return super().__new__(cls)
 
     def __init__(
         self,
-        blocks: "dict[str, Block | BlockLike] | None" = None,
-        meta: "Mapping[str, Any] | None" = None,
+        blocks: "dict[str, Block | BlockLike] | _RsFrame | None" = None,
+        meta: "dict[str, MetaValue] | None" = None,
+        box: Any = None,
     ) -> None:
         super().__init__()
+        if isinstance(blocks, _RsFrame):
+            if meta is not None:
+                raise TypeError("meta cannot be passed when wrapping a Frame")
+            for name in _RsFrame.keys(blocks):
+                self[name] = _RsFrame.__getitem__(blocks, name)
+            raw_box = _RsFrame.box.__get__(blocks, type(blocks))
+            if raw_box is not None:
+                self.box = raw_box
+            if blocks.meta:
+                # assign the view, not dict(...): the view keeps exact dtypes
+                self.meta = blocks.meta
+            return
         if meta is not None:
             self.meta = meta
         if blocks is not None:
@@ -488,7 +555,12 @@ class Frame(_RsFrame):
             for key, value in blocks.items():
                 if not isinstance(key, str):
                     raise ValueError(f"Block keys must be strings, got {type(key)}")
-                self[key] = value if isinstance(value, Block) else Block(value)
+                self[key] = value
+        if box is not None:
+            self.box = box
+
+    def __reduce__(self):
+        return type(self), _frame_ctor_args(self)
 
     def __getitem__(self, key: str) -> Block:  # type: ignore[override]
         """Return the named block as a rich :class:`Block` (live view)."""
@@ -552,38 +624,18 @@ class Frame(_RsFrame):
         }
 
     @classmethod
-    def from_dict(cls, data: "dict[str, Any] | _RsFrame") -> "Frame":
-        """Build a Frame from a dict, or upgrade a bare ``molrs.Frame``."""
-        if isinstance(data, cls):
-            return data
-        if isinstance(data, _RsFrame):
-            frame = cls()
-            for name in _RsFrame.keys(data):
-                frame[name] = _RsFrame.__getitem__(data, name)
-            raw_box = _RsFrame.box.__get__(data, type(data))
-            if raw_box is not None:
-                frame.box = raw_box
-            if data.meta:
-                frame.meta = data.meta
-            return frame
-        if set(data) != {"blocks", "meta"}:
-            raise ValueError("frame dict must contain exactly 'blocks' and 'meta'")
-        blocks = {name: Block.from_dict(blk) for name, blk in data["blocks"].items()}
-        return cls(blocks=blocks, meta=data["meta"])
-
-    @classmethod
     def _from_ffi_frameref_capsule(cls, capsule: Any) -> "Frame":
         """Build a rich ``Frame`` from a ``"molrs.FrameRef"`` capsule.
 
         The **return path** for a downstream Rust consumer (e.g. molpack hands a
         packed frame back as an FFI capsule): the Rust base resolves the capsule
-        to a bare ``_RsFrame`` sharing the producer's store, then ``from_dict``
-        upgrades it to this rich subclass so callers get an ``isinstance``-correct
+        to a bare ``_RsFrame`` sharing the producer's store, then the rich
+        constructor upgrades it so callers get an ``isinstance``-correct
         ``molrs.Frame``. Shadows the base ``_RsFrame`` staticmethod of the same
-        name, the way ``from_dict`` adds the rich-layer wrapping.
+        name.
         """
         base = _RsFrame._from_ffi_frameref_capsule(capsule)
-        return cls.from_dict(base)
+        return cls(base)
 
     def copy(self) -> "Frame":
         """Deep copy (blocks copied into new storage; box + metadata copied)."""
@@ -602,3 +654,65 @@ class Frame(_RsFrame):
             for k in blk.keys():
                 txt.append(f"  [{name}] {k}: shape={blk[k].shape}")
         return "\n".join(txt) + "\n)"
+
+
+def _block_ctor_args(block: Any) -> tuple[Any, ...]:
+    backing = block._backing() if isinstance(block, Block) else block
+    columns = {key: _RsBlock.view(backing, key) for key in _RsBlock.keys(backing)}
+    return (
+        columns or None,
+        None if columns else backing.nrows,
+        backing.structural_shape,
+    )
+
+
+def _frame_ctor_args(frame: Any) -> tuple[Any, ...]:
+    return (
+        {key: _RsFrame.__getitem__(frame, key) for key in frame.keys()},
+        frame.meta.typed(),  # pickling must carry the dtype tags, not plain values
+        frame.box,
+    )
+
+
+def _rs_block_init(
+    block: Any,
+    columns: dict[str, Any] | None = None,
+    nrows: int | None = None,
+    shape: list[int] | None = None,
+) -> None:
+    if columns:
+        for key, value in columns.items():
+            _RsBlock.insert(block, key, value)
+    elif nrows:
+        _RsBlock.resize(block, nrows)
+    if shape is not None:
+        _RsBlock.set_shape(block, shape)
+
+
+def _rs_frame_init(
+    frame: Any,
+    blocks: dict[str, Any] | None = None,
+    meta: dict[str, Any] | None = None,
+    box: Any = None,
+) -> None:
+    if blocks:
+        for key, block in blocks.items():
+            _RsFrame.__setitem__(frame, key, block)
+    if meta:
+        frame.meta = meta
+    if box is not None:
+        frame.box = box
+
+
+def _reduce_rs_block(block: Any) -> tuple[Any, tuple[Any, ...]]:
+    return type(block), _block_ctor_args(block)
+
+
+def _reduce_rs_frame(frame: Any) -> tuple[Any, tuple[Any, ...]]:
+    return type(frame), _frame_ctor_args(frame)
+
+
+_RsBlock.__init__ = _rs_block_init  # type: ignore[method-assign, assignment]
+_RsBlock.__reduce__ = _reduce_rs_block  # type: ignore[method-assign, assignment]
+_RsFrame.__init__ = _rs_frame_init  # type: ignore[method-assign, assignment]
+_RsFrame.__reduce__ = _reduce_rs_frame  # type: ignore[method-assign, assignment]

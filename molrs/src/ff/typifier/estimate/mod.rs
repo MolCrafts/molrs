@@ -289,12 +289,12 @@ impl Parmchk2Estimator {
 
     // -- the cascade, as an interpolation seam ------------------------------
 
-    /// Estimate bond parameters (`k0` / `r0`) for an uncovered bond, or `None`.
+    /// Estimate bond parameters (`k` / `r0`) for an uncovered bond, or `None`.
     pub fn estimate_bond(&self, types: &[String; 2]) -> Option<Params> {
         Some(self.bond(types)?.into_params())
     }
 
-    /// Estimate angle parameters (`k0` / `theta0`, radians) for an uncovered angle,
+    /// Estimate angle parameters (`k` / `theta0`, radians) for an uncovered angle,
     /// or `None`.
     pub fn estimate_angle(&self, types: &[String; 3]) -> Option<Params> {
         Some(self.angle(types)?.into_params())
@@ -528,12 +528,14 @@ mod tests {
             .empirical
             .bond_length("H", "Br")
             .expect("tabulated");
-        let want_k = empirical::bond_k(ln_k, want_r, estimator.empirical.bond_power);
+        // ×2: the formula yields AMBER's un-halved `K`, and every candidate table
+        // and estimate presents molrs's `E = ½k(r−r₀)²` convention (ff-params-01).
+        let want_k = 2.0 * empirical::bond_k(ln_k, want_r, estimator.empirical.bond_power);
         let r0 = bond.params().get("r0").expect("r0");
-        let k0 = bond.params().get("k0").expect("k0");
+        let k = bond.params().get("k").expect("k");
         assert!((r0 - want_r).abs() < 1e-12, "r₀ is the reference length");
-        assert!((k0 - want_k).abs() < 1e-9, "K = exp(ln Kij) / r^m");
-        assert!(k0 > 0.0, "an empirical force constant is positive");
+        assert!((k - want_k).abs() < 1e-9, "k = 2·exp(ln Kij) / r^m");
+        assert!(k > 0.0, "an empirical force constant is positive");
     }
 
     // --- impropers ---------------------------------------------------------

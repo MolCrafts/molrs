@@ -5,9 +5,12 @@
 
 use std::collections::HashMap;
 
+use ndarray::{Array2, ArrayView2};
+
 use crate::ff::forcefield::Params;
-use crate::ff::potential::Potential;
+use crate::ff::potential::geometry::term_table;
 use crate::ff::potential::geometry::validate_coords;
+use crate::ff::potential::{IndexedTerms, Member, Potential};
 use molrs::store::frame::Frame;
 use molrs::types::F;
 
@@ -43,15 +46,24 @@ impl BondMorse {
     }
 }
 
-impl Potential for BondMorse {
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
+impl BondMorse {
+    /// The physics, once. Which atoms a term names is the only thing
+    /// that differs between the two entry points, so it is the only thing
+    /// passed in — a second copy of the loop would be a second place for
+    /// the force expression to drift.
+    fn fold(
+        &self,
+        coords: &[F],
+        out: &mut [F],
+        n_terms: usize,
+        atoms: impl Fn(usize) -> (usize, usize),
+    ) -> F {
         let n_atoms = validate_coords(coords);
         let mut energy: F = 0.0;
-        let mut forces = vec![0.0; coords.len()];
+        let forces = out;
 
-        for idx in 0..self.atom_i.len() {
-            let i = self.atom_i[idx];
-            let j = self.atom_j[idx];
+        for idx in 0..n_terms {
+            let (i, j) = atoms(idx);
             debug_assert!(i < n_atoms && j < n_atoms);
 
             let (d, alpha, r0) = (self.d[idx], self.alpha[idx], self.r0[idx]);
@@ -82,7 +94,47 @@ impl Potential for BondMorse {
             forces[i * 3 + 2] -= fz;
         }
 
-        (energy, forces)
+        energy
+    }
+}
+
+impl Potential for BondMorse {
+    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
+        let mut out = vec![0.0; coords.len()];
+        let energy = self.accumulate(coords, &mut out);
+        (energy, out)
+    }
+
+    fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
+        self.fold(coords, out, self.atom_i.len(), |t| {
+            (self.atom_i[t], self.atom_j[t])
+        })
+    }
+}
+
+impl IndexedTerms for BondMorse {
+    fn terms(&self) -> Array2<u32> {
+        term_table(&[&self.atom_i, &self.atom_j])
+    }
+    fn calc_energy_forces_with_terms(
+        &self,
+        coords: &[F],
+        terms: ArrayView2<'_, u32>,
+    ) -> (F, Vec<F>) {
+        let mut out = vec![0.0; coords.len()];
+        let energy = self.accumulate_with_terms(coords, terms, &mut out);
+        (energy, out)
+    }
+
+    fn accumulate_with_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, out: &mut [F]) -> F {
+        debug_assert_eq!(
+            terms.nrows(),
+            self.atom_i.len(),
+            "the row set is the force field's; only the atoms a row names may be rebound"
+        );
+        self.fold(coords, out, terms.nrows(), |t| {
+            (terms[[t, 0]] as usize, terms[[t, 1]] as usize)
+        })
     }
 }
 
@@ -91,7 +143,7 @@ pub fn bond_morse_ctor(
     _style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
+) -> Result<Member, String> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
 
     let block = frame
@@ -126,7 +178,7 @@ pub fn bond_morse_ctor(
         rv.push(need(p, "r0", label)?);
     }
 
-    Ok(Box::new(BondMorse::new(ai, aj, dv, av, rv)))
+    Ok(Member::indexed(BondMorse::new(ai, aj, dv, av, rv)))
 }
 
 #[cfg(test)]

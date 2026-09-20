@@ -5,11 +5,11 @@ use molrs::store::block::Block;
 use molrs::store::frame::Frame;
 use molrs::store::frame_access::FrameAccess;
 use molrs::store::meta::MetaValue;
-use molrs::types::{F, I, U};
+use molrs::types::{F, I, Idx};
 use ndarray::{Array1, Array2, ArrayD};
-use once_cell::sync::OnceCell;
 use std::collections::HashMap;
 use std::io::{BufRead, Seek, SeekFrom, Write};
+use std::sync::OnceLock;
 
 // XYZ now produces a core::Frame consisting of blocks of NdArray columns
 
@@ -423,10 +423,10 @@ fn build_block_from_props(
                 if molrs::store::schema::column(&name).map(|c| c.dtype)
                     == Some(molrs::store::block::DType::UInt)
                 {
-                    let unsigned: Vec<molrs::types::U> = v
+                    let unsigned: Vec<molrs::types::Idx> = v
                         .iter()
                         .map(|&x| {
-                            u32::try_from(x).map_err(|_| {
+                            Idx::try_from(x).map_err(|_| {
                                 format!("column '{name}' is unsigned in the Frame schema, got {x}")
                             })
                         })
@@ -514,7 +514,7 @@ fn parse_origin_values(v: &ExtValue) -> Option<[F; 3]> {
 /// `Connct="[0,1,0,2]"` describes bonds 0-1 and 0-2. Bond order is implicitly
 /// one. Brackets are required by the public convention but are accepted
 /// leniently here so older hand-written inputs remain readable.
-fn parse_connct(value: &ExtValue, n_atoms: usize) -> Result<Vec<(U, U)>, String> {
+fn parse_connct(value: &ExtValue, n_atoms: usize) -> Result<Vec<(Idx, Idx)>, String> {
     fn append_primitive(raw: &mut String, value: &Primitive) -> Result<(), String> {
         if !raw.is_empty() {
             raw.push(',');
@@ -545,7 +545,7 @@ fn parse_connct(value: &ExtValue, n_atoms: usize) -> Result<Vec<(U, U)>, String>
         .filter(|token| !token.is_empty())
         .map(|token| {
             token
-                .parse::<U>()
+                .parse::<Idx>()
                 .map_err(|_| format!("Connct contains invalid atom index '{token}'"))
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -558,7 +558,7 @@ fn parse_connct(value: &ExtValue, n_atoms: usize) -> Result<Vec<(U, U)>, String>
     }
 
     let mut pairs = Vec::with_capacity(indices.len() / 2);
-    for pair in indices.chunks_exact(2) {
+    for pair in indices.as_chunks::<2>().0 {
         let (atomi, atomj) = (pair[0], pair[1]);
         if atomi as usize >= n_atoms || atomj as usize >= n_atoms {
             return Err(format!(
@@ -576,7 +576,7 @@ fn connct_block(value: &ExtValue, n_atoms: usize) -> Result<Option<Block>, Strin
         return Ok(None);
     }
 
-    let (atomi, atomj): (Vec<U>, Vec<U>) = pairs.into_iter().unzip();
+    let (atomi, atomj): (Vec<Idx>, Vec<Idx>) = pairs.into_iter().unzip();
     let mut block = Block::new();
     block
         .insert("atomi", Array1::from_vec(atomi).into_dyn())
@@ -592,7 +592,10 @@ fn connct_block(value: &ExtValue, n_atoms: usize) -> Result<Option<Block>, Strin
 /// `Origin` defaults to `[0, 0, 0]` when absent, matching the extxyz convention.
 fn parse_simbox(lattice: &ExtValue, origin: Option<&ExtValue>) -> Option<SimBox> {
     let h_vals = parse_lattice_values(lattice)?;
-    let h = Array2::from_shape_vec((3, 3), h_vals).ok()?;
+    // extxyz lists the three lattice vectors one after another (R1 R2 R3);
+    // `SimBox` keeps them as the *columns* of H, so the row-major reshape is
+    // transposed.
+    let h = Array2::from_shape_vec((3, 3), h_vals).ok()?.t().to_owned();
     let origin_arr = origin
         .and_then(parse_origin_values)
         .map(|o| ndarray::array![o[0], o[1], o[2]])
@@ -865,6 +868,7 @@ fn meta_to_extxyz(value: &MetaValue) -> String {
         MetaValue::F64x6(v) => joined!(v),
         MetaValue::F32x9(v) => joined!(v),
         MetaValue::F64x9(v) => joined!(v),
+        MetaValue::Json(v) => v.to_string(),
     };
     if raw.contains(char::is_whitespace) {
         format!("\"{raw}\"")
@@ -914,7 +918,7 @@ fn meta_to_extxyz(value: &MetaValue) -> String {
 /// ```
 pub struct XYZReader<R: BufRead> {
     reader: R,
-    index: OnceCell<FrameIndex>,
+    index: OnceLock<FrameIndex>,
 }
 
 impl<R: BufRead + Seek> XYZReader<R> {
@@ -922,7 +926,7 @@ impl<R: BufRead + Seek> XYZReader<R> {
     pub fn new(reader: R) -> Self {
         Self {
             reader,
-            index: OnceCell::new(),
+            index: OnceLock::new(),
         }
     }
 
@@ -1029,7 +1033,7 @@ impl<R: BufRead + Seek> Reader for XYZReader<R> {
     fn new(reader: Self::R) -> Self {
         Self {
             reader,
-            index: OnceCell::new(),
+            index: OnceLock::new(),
         }
     }
 }
@@ -1307,6 +1311,38 @@ impl FrameIndexBuilder for XyzIndexBuilder {
 mod tests {
     use super::*;
 
+    /// extxyz `Lattice="R1 R2 R3"` lists the vectors in sequence; `SimBox`
+    /// keeps them as the columns of H.
+    #[test]
+    fn lattice_vectors_become_the_box_columns() {
+        let frame = parse_xyz_frame_str(
+            "1\nLattice=\"10 0 0 2 11 0 3 4 12\" Properties=species:S:1:pos:R:3\nH 0 0 0\n",
+        )
+        .expect("parse XYZ");
+        let simbox = frame.simbox.as_ref().expect("Lattice sets the box");
+        assert_eq!(simbox.lattice(0).to_vec(), vec![10.0, 0.0, 0.0]);
+        assert_eq!(simbox.lattice(1).to_vec(), vec![2.0, 11.0, 0.0]);
+        assert_eq!(simbox.lattice(2).to_vec(), vec![3.0, 4.0, 12.0]);
+    }
+
+    #[test]
+    fn writer_lists_the_lattice_vectors_in_sequence() {
+        let mut frame = parse_xyz_frame_str(
+            "1\nLattice=\"10 0 0 2 11 0 3 4 12\" Properties=species:S:1:pos:R:3\nH 0 0 0\n",
+        )
+        .expect("parse XYZ");
+        let h = ndarray::array![[10.0, 2.0, 3.0], [0.0, 11.0, 4.0], [0.0, 0.0, 12.0]];
+        frame.simbox =
+            Some(SimBox::new(h, ndarray::array![0.0, 0.0, 0.0], [true, true, true]).expect("cell"));
+        let mut output = Vec::new();
+        write_xyz_frame(&mut output, &frame).expect("write XYZ");
+        let output = String::from_utf8(output).expect("UTF-8 XYZ");
+        assert!(
+            output.contains("Lattice=\"10 0 0 2 11 0 3 4 12\""),
+            "comment line: {output}"
+        );
+    }
+
     #[test]
     fn parse_properties_triplets() {
         let line = "Properties=species:S:1:pos:R:3:mass:R:1";
@@ -1450,7 +1486,7 @@ mod tests {
         use ndarray::Array1;
 
         let floats = |v: [f64; 3]| Array1::from_vec(v.to_vec()).into_dyn();
-        let uints = |v: [u32; 3]| Array1::from_vec(v.to_vec()).into_dyn();
+        let uints = |v: [u64; 3]| Array1::from_vec(v.to_vec()).into_dyn();
         let strings = |v: [&str; 3]| {
             Array1::from_vec(v.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>()).into_dyn()
         };
@@ -1529,11 +1565,11 @@ mod tests {
         );
         assert_eq!(
             atoms.get_uint("id").unwrap().as_slice().unwrap(),
-            &[1_u32, 2, 3]
+            &[1_u64, 2, 3]
         );
         assert_eq!(
             atoms.get_uint("res_id").unwrap().as_slice().unwrap(),
-            &[1_u32, 1, 1]
+            &[1_u64, 1, 1]
         );
     }
 
@@ -1760,8 +1796,19 @@ pub fn write_xyz_frame<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> st
 
         let dtype_to_char = |dt: DType| -> &'static str {
             match dt {
-                DType::Float => "R",
-                DType::Int | DType::UInt | DType::U8 => "I",
+                DType::Float
+                | DType::Float16
+                | DType::Float32
+                | DType::Complex64
+                | DType::Complex128 => "R",
+                DType::Int
+                | DType::Int8
+                | DType::Int16
+                | DType::Int64
+                | DType::UInt
+                | DType::U8
+                | DType::UInt16
+                | DType::UInt32 => "I",
                 DType::Bool => "L",
                 DType::String => "S",
             }
@@ -1798,55 +1845,8 @@ pub fn write_xyz_frame<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> st
         for i in 0..n {
             let mut line_parts = Vec::new();
             for k in &columns {
-                match atoms.column_dtype(k).expect("retained above") {
-                    DType::Float => {
-                        if let Some(arr) = atoms.get_float_view(k) {
-                            let row = arr.index_axis(ndarray::Axis(0), i);
-                            for val in row.iter() {
-                                line_parts.push(format!("{}", val));
-                            }
-                        }
-                    }
-                    DType::Int => {
-                        if let Some(arr) = atoms.get_int_view(k) {
-                            let row = arr.index_axis(ndarray::Axis(0), i);
-                            for val in row.iter() {
-                                line_parts.push(format!("{}", val));
-                            }
-                        }
-                    }
-                    DType::Bool => {
-                        if let Some(arr) = atoms.get_bool_view(k) {
-                            let row = arr.index_axis(ndarray::Axis(0), i);
-                            for val in row.iter() {
-                                line_parts.push(if *val { "T" } else { "F" }.to_string());
-                            }
-                        }
-                    }
-                    DType::UInt => {
-                        if let Some(arr) = atoms.get_uint_view(k) {
-                            let row = arr.index_axis(ndarray::Axis(0), i);
-                            for val in row.iter() {
-                                line_parts.push(format!("{}", val));
-                            }
-                        }
-                    }
-                    DType::U8 => {
-                        if let Some(arr) = atoms.get_u8_view(k) {
-                            let row = arr.index_axis(ndarray::Axis(0), i);
-                            for val in row.iter() {
-                                line_parts.push(format!("{}", val));
-                            }
-                        }
-                    }
-                    DType::String => {
-                        if let Some(arr) = atoms.get_string_view(k) {
-                            let row = arr.index_axis(ndarray::Axis(0), i);
-                            for val in row.iter() {
-                                line_parts.push(val.clone());
-                            }
-                        }
-                    }
+                if let Some(tokens) = atoms.xyz_row_tokens(k, i) {
+                    line_parts.extend(tokens);
                 }
             }
             row_values.push(line_parts);
@@ -1876,9 +1876,10 @@ pub fn write_xyz_frame<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> st
     if let Some(simbox) = frame.simbox_ref() {
         let h = simbox.h_view();
         let mut lattice_values = Vec::with_capacity(9);
-        for i in 0..3 {
+        // Column k of H is lattice vector k; extxyz writes R1 R2 R3 in sequence.
+        for k in 0..3 {
             for j in 0..3 {
-                lattice_values.push(format!("{}", h[[i, j]]));
+                lattice_values.push(format!("{}", h[[j, k]]));
             }
         }
         comment_parts.push(format!("Lattice=\"{}\"", lattice_values.join(" ")));

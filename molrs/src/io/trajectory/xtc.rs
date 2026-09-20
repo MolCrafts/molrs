@@ -31,8 +31,8 @@
 //! The compression codec (`magicints` table, `receivebits`/`receiveints`
 //! decode, `sendbits`/`sendints` encode) is a clean-room reimplementation of
 //! the documented `xdr3dfcoord` algorithm — not transcribed from xdrfile or
-//! any GPL source. It is validated behaviourally against the real chemfiles
-//! `tests-data/xtc/` fixtures.
+//! any GPL source. Its unit tests round-trip hand-built frames through the
+//! encoder and decoder.
 //!
 //! # Output Frame
 //!
@@ -48,12 +48,12 @@ use molrs::spatial::simbox::SimBox;
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
 use molrs::store::frame_access::FrameAccess;
-use molrs::types::{F, U};
+use molrs::types::{F, Idx};
 use ndarray::{Array1, Array2, IxDyn, array};
-use once_cell::sync::OnceCell;
 use std::fs::File;
 use std::io::{BufRead, BufWriter, Cursor, Read, Result, Seek, SeekFrom, Write};
 use std::path::Path;
+use std::sync::OnceLock;
 
 /// Classic XTC magic number.
 const XTC_MAGIC: i32 = 1995;
@@ -252,16 +252,18 @@ fn decompress_coords(
         sizeint[d] = (maxint[d] - minint[d]) as u32 + 1;
     }
 
-    let mut bitsizeint = [0i32; 3];
-    let bitsize: i32;
-    if (sizeint[0] | sizeint[1] | sizeint[2]) > 0x00ff_ffff {
-        bitsizeint[0] = sizeofint(sizeint[0]);
-        bitsizeint[1] = sizeofint(sizeint[1]);
-        bitsizeint[2] = sizeofint(sizeint[2]);
-        bitsize = 0;
+    let (bitsize, bitsizeint) = if (sizeint[0] | sizeint[1] | sizeint[2]) > 0x00ff_ffff {
+        (
+            0,
+            [
+                sizeofint(sizeint[0]),
+                sizeofint(sizeint[1]),
+                sizeofint(sizeint[2]),
+            ],
+        )
     } else {
-        bitsize = sizeofints(DIM, &sizeint);
-    }
+        (sizeofints(DIM, &sizeint), [0i32; 3])
+    };
 
     let mut smallidx = smallidx_init;
     let init_smaller_idx = FIRSTIDX.max(smallidx - 1);
@@ -529,16 +531,18 @@ fn compress_coords(coords: &[f64], natoms: usize, precision: f32) -> Result<Comp
     for d in 0..DIM {
         sizeint[d] = (maxint[d] as i64 - minint[d] as i64) as u32 + 1;
     }
-    let mut bitsizeint = [0i32; 3];
-    let bitsize: i32;
-    if (sizeint[0] | sizeint[1] | sizeint[2]) > 0x00ff_ffff {
-        bitsizeint[0] = sizeofint(sizeint[0]);
-        bitsizeint[1] = sizeofint(sizeint[1]);
-        bitsizeint[2] = sizeofint(sizeint[2]);
-        bitsize = 0;
+    let (bitsize, bitsizeint) = if (sizeint[0] | sizeint[1] | sizeint[2]) > 0x00ff_ffff {
+        (
+            0,
+            [
+                sizeofint(sizeint[0]),
+                sizeofint(sizeint[1]),
+                sizeofint(sizeint[2]),
+            ],
+        )
     } else {
-        bitsize = sizeofints(DIM, &sizeint);
-    }
+        (sizeofints(DIM, &sizeint), [0i32; 3])
+    };
 
     let mut smallidx = FIRSTIDX;
     while smallidx < LASTIDX && (MAGICINTS[(smallidx + 1) as usize] as i64) < mindiff {
@@ -788,7 +792,7 @@ fn parse_frame_here<R: Read>(r: &mut R) -> Result<Option<Frame>> {
     let (coords, precision) = read_coords(r, natoms, hdr.wide_nbytes)?;
 
     let mut atoms = Block::new();
-    let id_arr = Array1::from_iter(1..=natoms as U)
+    let id_arr = Array1::from_iter(1..=natoms as Idx)
         .into_shape_with_order(IxDyn(&[natoms]))
         .map_err(invalid)?;
     atoms.insert("id", id_arr).map_err(invalid)?;
@@ -877,7 +881,7 @@ fn scan_offsets<R: BufRead + Seek>(r: &mut R) -> Result<Vec<u64>> {
 /// XTC trajectory reader: true sequential stream *or* O(1) indexed random access.
 pub struct XtcReader<R: BufRead + Seek> {
     reader: R,
-    offsets: OnceCell<Vec<u64>>,
+    offsets: OnceLock<Vec<u64>>,
     cursor: usize,
 }
 
@@ -886,7 +890,7 @@ impl<R: BufRead + Seek> XtcReader<R> {
     pub fn new(reader: R) -> Self {
         Self {
             reader,
-            offsets: OnceCell::new(),
+            offsets: OnceLock::new(),
             cursor: 0,
         }
     }
@@ -1184,12 +1188,7 @@ fn try_xtc_frame_len(bytes: &[u8]) -> Result<Option<u32>> {
 /// Parse exactly one XTC frame from a tightly-bounded byte slice.
 pub fn parse_frame_bytes(bytes: &[u8]) -> Result<Frame> {
     let mut cursor = Cursor::new(bytes);
-    parse_frame_here(&mut cursor)?.ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::UnexpectedEof,
-            "XTC frame slice is empty or truncated",
-        )
-    })
+    parse_frame_at(&mut cursor, 0)
 }
 
 /// Streaming frame indexer for XTC files. Frames are self-describing;
@@ -1313,7 +1312,7 @@ mod tests {
 
     fn xtc_frame(natoms: usize, x0: f64) -> Frame {
         let mut atoms = Block::new();
-        let ids: Vec<U> = (1..=natoms as U).collect();
+        let ids: Vec<Idx> = (1..=natoms as Idx).collect();
         let mut xs = vec![0.0; natoms];
         let ys = vec![0.0; natoms];
         let zs = vec![0.0; natoms];

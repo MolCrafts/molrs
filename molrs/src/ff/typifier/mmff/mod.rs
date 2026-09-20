@@ -35,8 +35,9 @@
 //! let typifier = MMFF94Typifier::new();
 //!
 //! let mut frame = typifier.typify(&mol)?.to_frame();      // labels + charges
-//! frame.insert("pairs", intramolecular_pairs(&frame));    // the consumer's neighbour list
-//! let potentials = typifier.ff().to_potentials(&frame)?;  // the standard compile path
+//! let ff = typifier.ff();
+//! frame.insert("pairs", intramolecular_pairs(&frame, ff.special_bonds())?);
+//! let potentials = ff.to_potentials(&frame)?;              // the standard compile path
 //!
 //! let coords: Vec<f64> = Vec::new();                      // flat [x,y,z, ...]
 //! let (energy, _forces) = potentials.calc_energy_forces(&coords);

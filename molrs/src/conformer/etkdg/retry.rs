@@ -34,3 +34,22 @@ pub fn attempt_seed(base_seed: u64, attempt: usize) -> u64 {
     z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
     z ^ (z >> 31)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zero_means_ten_per_atom_and_never_zero() {
+        assert_eq!(effective_max_iterations(0, 7), 70);
+        assert_eq!(effective_max_iterations(0, 0), 1);
+        assert_eq!(effective_max_iterations(3, 7), 3);
+    }
+
+    #[test]
+    fn attempt_seeds_are_reproducible_and_distinct() {
+        assert_eq!(attempt_seed(42, 0), attempt_seed(42, 0));
+        assert_ne!(attempt_seed(42, 0), attempt_seed(42, 1));
+        assert_ne!(attempt_seed(42, 0), attempt_seed(43, 0));
+    }
+}

@@ -117,3 +117,79 @@ impl Backend for BruteForce {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ndarray::array;
+
+    struct Collect(Vec<(u32, u32, F, [F; 3])>);
+
+    impl PairVisitor for Collect {
+        fn visit_pair(&mut self, i: u32, j: u32, dist_sq: F, diff: [F; 3]) {
+            self.0.push((i, j, dist_sq, diff));
+        }
+    }
+
+    fn pairs(bf: &BruteForce) -> Vec<(u32, u32, F, [F; 3])> {
+        let mut out = Collect(Vec::new());
+        bf.visit_pairs(&mut out);
+        out.0
+    }
+
+    /// Three points on the x axis of a 10 Å cube: 0, 1 and 9.
+    fn line() -> FNx3 {
+        array![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [9.0, 0.0, 0.0]]
+    }
+
+    fn cube(pbc: bool) -> SimBox {
+        SimBox::cube(10.0, array![0.0, 0.0, 0.0], [pbc; 3]).unwrap()
+    }
+
+    #[test]
+    fn visits_every_pair_within_the_cutoff_once_with_i_less_than_j() {
+        let mut bf = BruteForce::new(1.5);
+        bf.build_index(line().view(), &cube(true));
+        let got = pairs(&bf);
+        // (0,1) directly and (0,2) through the periodic image; (1,2) is 2 Å apart.
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0], (0, 1, 1.0, [1.0, 0.0, 0.0]));
+        assert_eq!(
+            got[1],
+            (0, 2, 1.0, [-1.0, 0.0, 0.0]),
+            "minimum image, not the raw +9"
+        );
+    }
+
+    #[test]
+    fn the_cutoff_is_inclusive() {
+        let mut bf = BruteForce::new(1.0);
+        bf.build_index(line().view(), &cube(true));
+        assert_eq!(pairs(&bf).len(), 2, "d == cutoff is kept");
+        let mut bf = BruteForce::new(0.999);
+        bf.build_index(line().view(), &cube(true));
+        assert!(pairs(&bf).is_empty());
+    }
+
+    #[test]
+    fn a_non_periodic_axis_does_not_wrap() {
+        let mut bf = BruteForce::new(1.5);
+        bf.build_index(line().view(), &cube(false));
+        let got = pairs(&bf);
+        assert_eq!(got.len(), 1);
+        assert_eq!((got[0].0, got[0].1), (0, 1));
+    }
+
+    #[test]
+    fn nothing_is_visited_before_an_index_call() {
+        let bf = BruteForce::new(1.5);
+        assert!(pairs(&bf).is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "cutoff must be positive")]
+    fn a_non_positive_cutoff_is_refused_at_index_time() {
+        let mut bf = BruteForce::new(0.0);
+        bf.build_index(line().view(), &cube(true));
+    }
+}

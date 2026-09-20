@@ -60,7 +60,7 @@ use crate::store::block::Block;
 use crate::store::frame::Frame;
 use crate::store::keys;
 use crate::system::entity_table::{Cell, EntityTable};
-use crate::types::{F, I, U};
+use crate::types::{F, I, Idx};
 
 // ---------------------------------------------------------------------------
 // PropValue
@@ -159,10 +159,10 @@ fn emit_column<K: Key>(
         block.insert(key, Array1::from_vec(data.to_vec()).into_dyn())
     } else if let Ok((data, _)) = table.column_i32(key) {
         if keys::canonical_dtype(key) == Some(DType::UInt) {
-            let unsigned: Vec<U> = data
+            let unsigned: Vec<Idx> = data
                 .iter()
                 .map(|&v| {
-                    U::try_from(v).map_err(|_| {
+                    Idx::try_from(v).map_err(|_| {
                         MolRsError::validation(format!(
                             "'{key}' is declared unsigned by the Frame schema; got {v}"
                         ))
@@ -187,7 +187,7 @@ fn emit_column<K: Key>(
 /// Narrow one value of a frame's unsigned column to the signed [`I`] the entity
 /// table stores, refusing the values that would wrap into a negative rather
 /// than storing an identifier the next [`MolGraph::to_frame`] cannot re-widen.
-fn narrow_uint(key: &str, v: U) -> Result<I, MolRsError> {
+fn narrow_uint(key: &str, v: Idx) -> Result<I, MolRsError> {
     I::try_from(v).map_err(|_| {
         MolRsError::validation(format!(
             "'{key}' value {v} exceeds the signed range the graph stores"
@@ -993,9 +993,9 @@ impl MolGraph {
             let mut block = Block::new();
 
             for pos in 0..arity {
-                let col: Vec<U> = rids
+                let col: Vec<Idx> = rids
                     .iter()
-                    .map(|rid| id_to_row[&k.endpoints[*rid][pos]] as U)
+                    .map(|rid| id_to_row[&k.endpoints[*rid][pos]] as Idx)
                     .collect();
                 let _ = block.insert(rel_col_name(pos), Array1::from_vec(col).into_dyn());
             }
@@ -1032,7 +1032,7 @@ impl MolGraph {
         // them here would drop exactly the identifiers a round-trip must carry.
         let mut float_cols: Vec<(&str, &ndarray::ArrayD<F>)> = Vec::new();
         let mut i64_cols: Vec<(&str, &ndarray::ArrayD<I>)> = Vec::new();
-        let mut uint_cols: Vec<(&str, &ndarray::ArrayD<U>)> = Vec::new();
+        let mut uint_cols: Vec<(&str, &ndarray::ArrayD<Idx>)> = Vec::new();
         let mut str_cols: Vec<(&str, &ndarray::ArrayD<String>)> = Vec::new();
         let mut bool_cols: Vec<(&str, &ndarray::ArrayD<bool>)> = Vec::new();
         for key in &col_keys {
@@ -1083,7 +1083,7 @@ impl MolGraph {
             let Some(block) = frame.get(&block_name) else {
                 continue;
             };
-            let mut endpoint_cols: Vec<&ndarray::ArrayD<U>> = Vec::with_capacity(arity);
+            let mut endpoint_cols: Vec<&ndarray::ArrayD<Idx>> = Vec::with_capacity(arity);
             let mut ok = true;
             for pos in 0..arity {
                 match block.get_uint(&rel_col_name(pos)) {
@@ -1105,7 +1105,7 @@ impl MolGraph {
             // `is_14` flag), not just floats.
             let mut prop_f: Vec<(String, &ndarray::ArrayD<F>)> = Vec::new();
             let mut prop_i: Vec<(String, &ndarray::ArrayD<I>)> = Vec::new();
-            let mut prop_u: Vec<(String, &ndarray::ArrayD<U>)> = Vec::new();
+            let mut prop_u: Vec<(String, &ndarray::ArrayD<Idx>)> = Vec::new();
             let mut prop_s: Vec<(String, &ndarray::ArrayD<String>)> = Vec::new();
             let mut prop_b: Vec<(String, &ndarray::ArrayD<bool>)> = Vec::new();
             for k in block.keys() {
@@ -1453,7 +1453,7 @@ mod tests {
                 .expect("'id' reaches the frame")
                 .iter()
                 .copied()
-                .collect::<Vec<U>>(),
+                .collect::<Vec<Idx>>(),
             vec![1, 2]
         );
         assert_eq!(
@@ -1462,7 +1462,7 @@ mod tests {
                 .expect("'mol_id' reaches the frame")
                 .iter()
                 .copied()
-                .collect::<Vec<U>>(),
+                .collect::<Vec<Idx>>(),
             vec![7, 7]
         );
     }

@@ -14,6 +14,23 @@ import pytest
 import molrs
 
 
+class TestAmberAliasDeleted:
+    def test_read_prmtop_and_read_inpcrd_are_gone(self):
+        assert not hasattr(molrs.io, "read_prmtop")
+        assert not hasattr(molrs.io, "read_inpcrd")
+        assert "read_prmtop" not in molrs.io.__all__
+        assert not hasattr(molrs.io.raw, "read_prmtop")
+        assert not hasattr(molrs._lib, "read_prmtop")
+        assert callable(molrs.io.read_amber_prmtop)
+        assert callable(molrs.io.read_amber_inpcrd)
+
+
+class TestErrorMessages:
+    def test_pyo3_type_error_names_the_argument(self):
+        with pytest.raises(TypeError, match="center"):
+            molrs.Sphere("not-an-array", 1.0)
+
+
 class TestReadPdb:
     def test_basic(self, water_pdb):
         frame = molrs.io.raw.read_pdb(str(water_pdb))
@@ -30,6 +47,10 @@ class TestReadPdb:
     def test_missing_file_raises_os_error(self):
         with pytest.raises(OSError):
             molrs.io.raw.read_pdb("/nonexistent/path.pdb")
+
+    def test_missing_file_names_the_path(self):
+        with pytest.raises(OSError, match="missing.pdb"):
+            molrs.io.read_pdb("missing.pdb")
 
 
 class TestReadGro:
@@ -94,3 +115,30 @@ class TestReadXyz:
     def test_missing_file_raises_os_error(self):
         with pytest.raises(OSError):
             molrs.io.raw.read_xyz("/nonexistent/path.xyz")
+
+
+def test_read_stl_gives_a_watertight_mesh(tmp_path) -> None:
+    import numpy as np
+
+    # A closed tetrahedron in ASCII STL, written in-process.
+    verts = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+    faces = [[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]]
+    lines = ["solid tet"]
+    for f in faces:
+        lines.append("  facet normal 0 0 0")
+        lines.append("    outer loop")
+        for i in f:
+            lines.append("      vertex {} {} {}".format(*verts[i]))
+        lines.append("    endloop")
+        lines.append("  endfacet")
+    lines.append("endsolid tet")
+    path = tmp_path / "tet.stl"
+    path.write_text("\n".join(lines) + "\n")
+
+    mesh = molrs.io.read_stl(str(path))
+    assert isinstance(mesh, molrs.TriMesh)
+    assert mesh.n_faces == 4 and mesh.n_vertices == 4
+    assert mesh.is_watertight()
+    tet = molrs.Polyhedron(mesh.scaled(2.0))
+    assert tet.contains(np.array([[0.2, 0.2, 0.2]]))[0]
+    assert not tet.contains(np.array([[3.0, 3.0, 3.0]]))[0]

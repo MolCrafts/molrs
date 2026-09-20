@@ -8,7 +8,7 @@
 
 use molrs::store::frame_access::FrameAccess;
 use molrs::store::keys;
-use molrs::types::{F, U};
+use molrs::types::{F, Idx};
 
 use crate::compute::error::ComputeError;
 use crate::compute::util::{MicHelper, Positions, get_positions_ref};
@@ -22,14 +22,14 @@ use crate::compute::util::{MicHelper, Positions, get_positions_ref};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AtomGroups {
     arity: usize,
-    flat: Vec<u32>,
+    flat: Vec<Idx>,
 }
 
 impl AtomGroups {
     /// Build from row-major flat indices. Returns
     /// [`ComputeError::BadShape`] if `flat.len()` is not a multiple of `arity`,
     /// or [`ComputeError::OutOfRange`] if `arity` is 0.
-    pub fn new(arity: usize, flat: Vec<u32>) -> Result<Self, ComputeError> {
+    pub fn new(arity: usize, flat: Vec<Idx>) -> Result<Self, ComputeError> {
         if arity == 0 {
             return Err(ComputeError::OutOfRange {
                 field: "AtomGroups::arity",
@@ -67,7 +67,7 @@ impl AtomGroups {
         if !frame.contains_block(block) {
             return Err(ComputeError::MissingBlock { name: block });
         }
-        let mut columns: Vec<Vec<U>> = Vec::with_capacity(arity);
+        let mut columns: Vec<Vec<Idx>> = Vec::with_capacity(arity);
         for &col in &keys::ENDPOINTS[..arity] {
             let view = frame
                 .get_uint(block, col)
@@ -91,7 +91,7 @@ impl AtomGroups {
     }
 
     /// Convenience: pairs (arity 2) from `[(i, j), ...]`.
-    pub fn pairs(tuples: &[(u32, u32)]) -> Self {
+    pub fn pairs(tuples: &[(Idx, Idx)]) -> Self {
         let mut flat = Vec::with_capacity(tuples.len() * 2);
         for &(i, j) in tuples {
             flat.push(i);
@@ -101,7 +101,7 @@ impl AtomGroups {
     }
 
     /// Convenience: triples (arity 3) from `[(i, j, k), ...]` with `j` the vertex.
-    pub fn triples(tuples: &[(u32, u32, u32)]) -> Self {
+    pub fn triples(tuples: &[(Idx, Idx, Idx)]) -> Self {
         let mut flat = Vec::with_capacity(tuples.len() * 3);
         for &(i, j, k) in tuples {
             flat.push(i);
@@ -112,7 +112,7 @@ impl AtomGroups {
     }
 
     /// Convenience: quadruples (arity 4) from `[(i, j, k, l), ...]`.
-    pub fn quads(tuples: &[(u32, u32, u32, u32)]) -> Self {
+    pub fn quads(tuples: &[(Idx, Idx, Idx, Idx)]) -> Self {
         let mut flat = Vec::with_capacity(tuples.len() * 4);
         for &(i, j, k, l) in tuples {
             flat.push(i);
@@ -137,7 +137,7 @@ impl AtomGroups {
     }
 
     /// The `i`-th tuple as a slice of length `arity`.
-    pub fn tuple(&self, i: usize) -> &[u32] {
+    pub fn tuple(&self, i: usize) -> &[Idx] {
         &self.flat[i * self.arity..(i + 1) * self.arity]
     }
 }
@@ -282,13 +282,13 @@ mod tests {
         let mut frame = Frame::new();
         let mut angles = Block::new();
         angles
-            .insert("atomi", Array1::from_vec(vec![0 as U, 3]).into_dyn())
+            .insert("atomi", Array1::from_vec(vec![0 as Idx, 3]).into_dyn())
             .unwrap();
         angles
-            .insert("atomj", Array1::from_vec(vec![1 as U, 4]).into_dyn())
+            .insert("atomj", Array1::from_vec(vec![1 as Idx, 4]).into_dyn())
             .unwrap();
         angles
-            .insert("atomk", Array1::from_vec(vec![2 as U, 5]).into_dyn())
+            .insert("atomk", Array1::from_vec(vec![2 as Idx, 5]).into_dyn())
             .unwrap();
         frame.insert("angles", angles);
 

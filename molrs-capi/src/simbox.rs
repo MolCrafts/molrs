@@ -20,7 +20,7 @@ use molrs::spatial::simbox::SimBox;
 
 use crate::F;
 use crate::error::{self, MolrsStatus};
-use crate::handle::{MolrsBoxHandle, handle_to_box_key, box_key_to_handle};
+use crate::handle::{MolrsBoxHandle, box_key_to_handle, handle_to_box_key};
 use crate::store::lock_store;
 use crate::{ffi_try, null_check};
 

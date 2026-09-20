@@ -10,7 +10,7 @@ use crate::store::block::access::BlockAccess;
 use crate::store::frame::Frame;
 use crate::store::frame_view::FrameView;
 use crate::store::meta::MetaMap;
-use crate::types::{F, I, U};
+use crate::types::{F, I, Idx};
 
 /// Unified read-only access for [`Frame`] and [`FrameView`].
 ///
@@ -24,7 +24,7 @@ pub trait FrameAccess {
     /// Gets a bool array view from a column inside a block.
     fn get_bool(&self, block_key: &str, col_key: &str) -> Option<ArrayViewD<'_, bool>>;
     /// Gets a uint array view from a column inside a block.
-    fn get_uint(&self, block_key: &str, col_key: &str) -> Option<ArrayViewD<'_, U>>;
+    fn get_uint(&self, block_key: &str, col_key: &str) -> Option<ArrayViewD<'_, Idx>>;
     /// Gets a u8 array view from a column inside a block.
     fn get_u8(&self, block_key: &str, col_key: &str) -> Option<ArrayViewD<'_, u8>>;
     /// Gets a string array view from a column inside a block.
@@ -65,7 +65,7 @@ impl FrameAccess for Frame {
             .map(|a| a.view())
     }
 
-    fn get_uint(&self, block_key: &str, col_key: &str) -> Option<ArrayViewD<'_, U>> {
+    fn get_uint(&self, block_key: &str, col_key: &str) -> Option<ArrayViewD<'_, Idx>> {
         self.get(block_key)
             .and_then(|b| b.get_uint(col_key))
             .map(|a| a.view())
@@ -125,7 +125,7 @@ impl FrameAccess for FrameView<'_> {
         self.get(block_key).and_then(|b| b.get_bool(col_key))
     }
 
-    fn get_uint(&self, block_key: &str, col_key: &str) -> Option<ArrayViewD<'_, U>> {
+    fn get_uint(&self, block_key: &str, col_key: &str) -> Option<ArrayViewD<'_, Idx>> {
         self.get(block_key).and_then(|b| b.get_uint(col_key))
     }
 
@@ -170,7 +170,7 @@ impl FrameAccess for FrameView<'_> {
 mod tests {
     use super::*;
     use crate::store::block::Block;
-    use crate::types::{F, U};
+    use crate::types::{F, Idx};
     use ndarray::Array1;
 
     fn make_frame() -> Frame {
@@ -180,7 +180,7 @@ mod tests {
             .insert("x", Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn())
             .unwrap();
         atoms
-            .insert("id", Array1::from_vec(vec![10 as U, 20, 30]).into_dyn())
+            .insert("id", Array1::from_vec(vec![10 as Idx, 20, 30]).into_dyn())
             .unwrap();
         frame.insert("atoms", atoms);
         frame.meta.insert("title", "Test");

@@ -1,6 +1,6 @@
 [package]
 name = "molrs-python"
-version = "0.13.2"
+version = "0.14.0"
 edition = "2024"
 rust-version = "1.91"
 authors = ["MolCrafts"]
@@ -19,28 +19,47 @@ pyo3 = { version = "0.28", features = [
     "abi3-py312",
     "multiple-pymethods",
 ] }
-numpy = "0.28"
+numpy = { version = "0.28", features = ["half"] }
+half = { version = "2", default-features = false, features = ["num-traits", "std"] }
+num-complex = "0.4"
 ndarray = "0.17"
 serde_json = "1"
 # `ff` exposes `molrs_ffi::ForceFieldRef`, the stable handle behind
 # `ForceField._ffi_forcefield_capsule()` (the force-field analogue of the frame
-# capsule). molrs-python already pulls `molrs/ff` via `full`, so this only turns
-# on the matching molrs-ffi handle.
-molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.13.2", features = ["ff"] }
+# capsule). `default-features = false` is the same Pyodide exemption as the
+# molrs dep below: a transitive default cannot be switched off from here.
+molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.14.0", default-features = false, features = ["ff"] }
 # Base: full (no zarr). Host zarr + path I/O is optional (`fs` feature) so
 # Pyodide builds can omit zarrs/libz-sys (emscripten cannot link host zlib).
 #
-# `net` is unconditional, not a Cargo feature here: molrs declares tokio /
+# `stream` is unconditional here: molrs declares tokio /
 # tungstenite under `cfg(not(target_arch = "wasm32"))` and gates
-# `molrs::stream::server` the same way, so a Pyodide (wasm32-emscripten) build
+# `molrs::stream::publisher` the same way, so a Pyodide (wasm32-emscripten) build
 # compiles only the WASM-clean `ControlCommand` wire types and links no
-# networking stack. `net` pulls in `stream` (the MessagePack/JSON Frame codec).
-molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.13.2", default-features = false, features = ["full", "stream"] }
+# networking stack, while retaining the MessagePack/JSON Frame codec.
+#
+# `default-features = false` here is a DELIBERATE Pyodide exemption: emscripten
+# cannot link host zlib or a thread pool, so the minimal `full + stream` base
+# must remain reachable via `maturin … --no-default-features`; `fs` and `rayon`
+# below add the native pieces back.
+molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.14.0", default-features = false, features = ["full", "stream"] }
 
 [features]
-default = ["fs"]
+default = ["fs", "rayon"]
 # Desktop/native: path-based zarr trajectory I/O (`molrs/filesystem` → zarr).
 # Off for Pyodide: `maturin … --no-default-features`.
 fs = ["molrs/filesystem"]
+# Desktop/native parallelism. Pyodide's `--no-default-features` drops it
+# together with `fs`.
+rayon = ["molrs/rayon"]
 
 [workspace]
+
+# Standalone workspace root: does NOT inherit the repo root's [profile.release].
+# Keep the four keys identical to ../Cargo.toml so every root ships the same
+# optimisation.
+[profile.release]
+codegen-units = 1
+lto = "thin"
+opt-level = 3
+strip = "symbols"

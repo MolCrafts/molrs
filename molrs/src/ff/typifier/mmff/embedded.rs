@@ -13,8 +13,8 @@
 use std::collections::HashMap;
 
 use crate::ff::forcefield::{ForceField, SpecialBonds};
+use crate::ff::mmff::da::encode_da_byte;
 use crate::ff::params::mmff::{MMFF_ELE_STYLE, MMFF_PROP, MMFF_STYLES, MMFF_VDW, MMFF_VDW_STYLE};
-use crate::ff::potential::pair::mmff::encode_da_byte;
 
 use super::params::{MMFFAtomProp, MMFFParams};
 

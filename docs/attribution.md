@@ -10,7 +10,7 @@ for molrs.**
 | Project | SPDX | Copyright | molrs modules | Upstream |
 |---|---|---|---|---|
 | **RDKit** | `BSD-3-Clause` | © 2006–2015 Rational Discovery LLC, Greg Landrum, Julie Penzotti and others | `core/chem/aromaticity.rs`, `core/chem/gasteiger.rs`, `optimize/lbfgs.rs`, `conformer/distgeom/**`, `conformer/etkdg/**`, `ff/mmff/**`, `ff/constants.rs` | [rdkit/rdkit](https://github.com/rdkit/rdkit) |
-| **freud** | `BSD-3-Clause` | © 2010–2026 The Regents of the University of Michigan | `compute/density/**`, `compute/diffraction/**`, `compute/environment/**`, `compute/order/**`, `compute/pmft/**`, `compute/rdf/**`, `compute/msd/**`, `core/spatial/neighbors/{aabb,filter,periodic_buffer,mod,query}.rs`, `core/math/{wigner3j,spherical_harmonics,diagonalize,mod}.rs` | [glotzerlab/freud](https://github.com/glotzerlab/freud) |
+| **freud** | `BSD-3-Clause` | © 2010–2026 The Regents of the University of Michigan | `compute/density/**`, `compute/diffraction/**`, `compute/environment/**`, `compute/order/**`, `compute/pmft/**`, `compute/rdf/**`, `compute/msd/**`, `core/spatial/neighbors/{aabb,filter,mod,query}.rs`, `core/math/{wigner3j,spherical_harmonics,diagonalize,mod}.rs` | [glotzerlab/freud](https://github.com/glotzerlab/freud) |
 | **voro++** | `BSD-3-Clause-LBNL` | © 2008 The Regents of the University of California, through Lawrence Berkeley National Laboratory (Chris Rycroft) | `compute/voronoi/{radical,cell,mod}.rs` (radical/Laguerre tessellation) | [chr1shr/voro](https://github.com/chr1shr/voro) |
 | **tame** | `BSD-3-Clause` | © Yunqi Shao | `compute/jacf.rs`, `compute/onsager.rs`, `compute/persist.rs`, `molrs-python/src/transport.rs` — Green–Kubo / Onsager / pair-persistence recipes | [yqshao-archive/tame](https://github.com/yqshao-archive/tame) (archived) |
 
@@ -32,7 +32,6 @@ tables that hold them now.
 |---|---|---|
 | `molrs/src/ff/params/oplsaa.rs` (was `molrs/data/oplsaa.xml`) | OPLS-AA atom types & typing definitions from **foyer** | `MIT` (foyer) |
 | `molrs/src/ff/params/mmff.rs` (was `molrs/src/ff/mmff/tables.rs` + `molrs/data/mmff94{,s}.xml`; workspace-root `data/` copies remain) | ported from **RDKit** `Code/ForceField/MMFF/Params.cpp` (MMFF94/94s tables) | `BSD-3-Clause` (RDKit); MMFF94 parameters © Merck / T. A. Halgren, *J. Comput. Chem.* **17**, 490 (1996) |
-| `tests-data/` (fetched at build via `scripts/fetch-test-data.sh`) | **chemfiles** integration-test fixtures (mirrored at MolCrafts/tests-data) | `CC0-1.0` (public domain) |
 
 ## Formula / method references (papers, no code copied)
 

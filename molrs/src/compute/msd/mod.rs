@@ -256,27 +256,24 @@ impl MSD {
         // arithmetic, so rayon's task-submission overhead (~5-10 µs)
         // dominates until we have ~8+ frames. Fall back to serial below
         // that threshold.
+        let serial = || {
+            frames
+                .iter()
+                .map(|frame| msd_vs_reference(*frame, &ref_x, &ref_y, &ref_z))
+                .collect::<Result<Vec<_>, _>>()
+        };
         #[cfg(feature = "rayon")]
-        const PAR_THRESHOLD: usize = 8;
-
-        #[cfg(feature = "rayon")]
-        let results: Vec<MSDResult> = if frames.len() >= PAR_THRESHOLD {
+        let results: Vec<MSDResult> = if frames.len() >= 8 {
             use rayon::prelude::*;
             frames
                 .par_iter()
                 .map(|frame| msd_vs_reference(*frame, &ref_x, &ref_y, &ref_z))
                 .collect::<Result<Vec<_>, _>>()?
         } else {
-            frames
-                .iter()
-                .map(|frame| msd_vs_reference(*frame, &ref_x, &ref_y, &ref_z))
-                .collect::<Result<Vec<_>, _>>()?
+            serial()?
         };
         #[cfg(not(feature = "rayon"))]
-        let results: Vec<MSDResult> = frames
-            .iter()
-            .map(|frame| msd_vs_reference(*frame, &ref_x, &ref_y, &ref_z))
-            .collect::<Result<Vec<_>, _>>()?;
+        let results: Vec<MSDResult> = serial()?;
 
         Ok(MSDTimeSeries::new(results))
     }

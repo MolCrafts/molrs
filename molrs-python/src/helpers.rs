@@ -8,11 +8,28 @@ use molrs::spatial::simbox::BoxError;
 use molrs::types::F;
 use ndarray::{Array1, array};
 use numpy::PyReadonlyArray1;
+use pyo3::conversion::IntoPyObjectExt;
 use pyo3::exceptions::{PyIOError, PyValueError};
 use pyo3::prelude::*;
+use pyo3::types::PyTuple;
 
 /// Numpy float type matching the `F` alias — always `f64`.
 pub type NpF = f64;
+
+/// Pickle protocol: reconstruct with ``type(self)(*args)``.
+pub fn reduce_via_type<'py>(
+    slf: &Bound<'py, PyAny>,
+    args: impl IntoPyObject<'py>,
+) -> PyResult<(Bound<'py, PyAny>, Bound<'py, PyTuple>)> {
+    let py = slf.py();
+    let packed = args.into_bound_py_any(py)?;
+    let tuple = if let Ok(tuple) = packed.cast::<PyTuple>() {
+        tuple.to_owned()
+    } else {
+        PyTuple::new(py, [packed])?
+    };
+    Ok((slf.get_type().into_any(), tuple))
+}
 
 /// Parse an optional origin array, defaulting to `[0, 0, 0]`.
 ///

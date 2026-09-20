@@ -17,6 +17,10 @@ the Python path and the Rust path are the same word:
 * :mod:`molrs.ff` — force fields, typifiers, charge models, potentials.
 * :mod:`molrs.optimize` — geometry optimizers.
 * :mod:`molrs.conformer` — 3D conformer generation.
+* :mod:`molrs.md` — in-process molecular dynamics: ``LJCut`` +
+  velocity-Verlet/Langevin integrators, the ``Potential`` base class, the
+  ``MD`` driver. Loaded lazily so a compiled ``_lib`` without ``md`` still
+  imports.
 * :mod:`molrs.builder` — structure builders (graphene, nanotubes, SARW paths).
 * :mod:`molrs.compute` — analysis, one subpackage per ``molrs::compute`` domain.
 * :mod:`molrs.signal` — FFT autocorrelation, windows, frequency grids.
@@ -26,7 +30,6 @@ Each of those names has exactly one spelling — ``molrs.io.SmilesIR`` and
 nothing else — so there is one thing to learn, document, and grep for.
 """
 
-from collections.abc import MutableMapping
 
 from ._lib import (
     # Public exceptions
@@ -37,25 +40,33 @@ from ._lib import (
     NeighborList,
     Neighbors,
     NeighborQuery,
+    VerletSkin,
     # Block + Frame
     Block,
     MetaValue,
     FrameMeta,
     Frame,
     FRAME_SCHEMA_VERSION,
+    # FFI ABI handshake (consumed by downstream handle-bridge extensions,
+    # e.g. molpack, at their import time)
+    _ffi_abi_token,
     Unit,
     Quantity,
     UnitRegistry,
+    UnitPreset,
     Trajectory,
     ScalarObservable,
     VectorObservable,
-    MolRec,
-    Observables,
     # Regions
+    TriMesh,
     Sphere,
-    HollowSphere,
     Cuboid,
     Parallelepiped,
+    HalfSpace,
+    Cylinder,
+    Ellipsoid,
+    Polyhedron,
+    SphereUnion,
     Region,
     # Molecular graph hierarchy
     Element,
@@ -69,10 +80,6 @@ from ._lib import (
     rotate,
     scale,
     align_direction,
-    # Field-name convention + the Frame vocabulary, both projected from the
-    # committed Rust tables.
-    keys,
-    schema,
 )
 
 # Rich Python Frame/Block layer (pandas-style API; CSV engine in Rust on the
@@ -81,9 +88,14 @@ from ._lib import (
 # (io readers, etc.) yields these. The shadow is safe now that molpy re-exports
 # them instead of subclassing the bare core (chain spec 04). Internal modules
 # that need the raw cores import them from ``._lib`` directly.
+from collections.abc import MutableMapping
+
+from . import keys, schema
 from . import frame  # noqa: F401
 from .frame import Block, Frame
 
+# `frame.meta` implements the full mapping protocol in Rust; this makes
+# `isinstance(frame.meta, MutableMapping)` say so too.
 MutableMapping.register(FrameMeta)
 
 from . import compute  # analysis subpackage — one module per molrs::compute domain
@@ -95,6 +107,25 @@ from . import stream
 from . import optimize
 from . import perceive
 from . import signal
+
+
+def __getattr__(name: str):
+    """PEP 562 lazy loader for :mod:`molrs.md`.
+
+    Loading it lazily keeps plain ``import molrs`` working against a compiled
+    ``_lib`` that predates the ``md`` submodule.
+    """
+    if name == "md":
+        import importlib
+
+        return importlib.import_module(".md", __name__)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | {"md"})
+
+
 from .views import (
     Angle,
     Atom,
@@ -121,6 +152,7 @@ __all__ = [
     "ff",
     "builder",
     "io",
+    "md",
     "stream",
     "optimize",
     "perceive",
@@ -132,6 +164,7 @@ __all__ = [
     "NeighborList",
     "Neighbors",
     "NeighborQuery",
+    "VerletSkin",
     "Block",
     "MetaValue",
     "FrameMeta",
@@ -140,15 +173,19 @@ __all__ = [
     "Unit",
     "Quantity",
     "UnitRegistry",
+    "UnitPreset",
     "Trajectory",
     "ScalarObservable",
     "VectorObservable",
-    "MolRec",
-    "Observables",
+    "TriMesh",
     "Sphere",
-    "HollowSphere",
     "Cuboid",
     "Parallelepiped",
+    "HalfSpace",
+    "Cylinder",
+    "Ellipsoid",
+    "Polyhedron",
+    "SphereUnion",
     "Region",
     "Element",
     "Graph",

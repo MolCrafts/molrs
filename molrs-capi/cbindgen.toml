@@ -6,8 +6,10 @@ style = "both"
 cpp_compat = true
 documentation = false
 
-[defines]
-"feature = f64" = "MOLRS_F64"
+# (No [defines]: the numeric-width cargo features were removed long ago —
+# widths are fixed, F is double unconditionally — so there is nothing for
+# cbindgen to map onto a C macro; the old mapping died with the dead CMake
+# switch of the same name.)
 
 [export]
 prefix = ""

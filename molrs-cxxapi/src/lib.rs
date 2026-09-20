@@ -12,7 +12,9 @@ use molrs::Element;
 use molrs::ff::charge::{BccModel, BccParameterSet};
 use molrs::io::data::xyz::write_xyz_frame;
 #[cfg(feature = "zarr")]
-use molrs::io::store::zarr::{read_trajectory_file, write_trajectory_file};
+use molrs::io::mrec::{
+    FrameSequenceWriter, SequenceSchema, open_trajectory_sequence, write_trajectory_file,
+};
 use molrs::spatial::simbox::SimBox;
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
@@ -34,7 +36,16 @@ const CXX_CAP_FRAME_BLOCK_V2: u64 = 1 << 0;
 const CXX_CAP_ELEMENT: u64 = 1 << 1;
 /// CXX capability bit: AM1 base-charge to BCC assignment is available.
 const CXX_CAP_AM1_BCC: u64 = 1 << 2;
-const MOLRS_CXX_API_CAPABILITIES: u64 = CXX_CAP_FRAME_BLOCK_V2 | CXX_CAP_ELEMENT | CXX_CAP_AM1_BCC;
+/// CXX capability bit: the streaming `*.mrec` trajectory writer is available.
+const CXX_CAP_TRAJECTORY_WRITER: u64 = 1 << 3;
+
+/// Geometric regions: signed distance, membership, bounds, boolean composition.
+const CXX_CAP_REGION: u64 = 1 << 4;
+const MOLRS_CXX_API_CAPABILITIES: u64 = CXX_CAP_FRAME_BLOCK_V2
+    | CXX_CAP_ELEMENT
+    | CXX_CAP_AM1_BCC
+    | CXX_CAP_TRAJECTORY_WRITER
+    | CXX_CAP_REGION;
 
 /// Exact ABI/semantic contract version consumed by Atomiverse.
 fn cxx_api_version() -> u32 {
@@ -648,7 +659,7 @@ fn write_frame_xyz_typed(
 /// Replaces the old per-record Zarr writer (Atomiverse's polyethylene checkpoint).
 #[cfg(feature = "zarr")]
 #[allow(clippy::too_many_arguments)]
-fn write_frame_zarr(
+fn write_frame(
     path: &str,
     type_id: &[i32],
     x: &[f64],
@@ -669,36 +680,146 @@ fn write_frame_zarr(
                         name.as_str(),
                         Array1::from_vec(field_data[base..base + n].to_vec()).into_dyn(),
                     )
-                    .map_err(|e| format!("write_frame_zarr insert {name}: {e}"))?;
+                    .map_err(|e| format!("write_frame insert {name}: {e}"))?;
             }
         }
     }
     let traj = Trajectory::from_frames(vec![frame]);
-    write_trajectory_file(path, &traj).map_err(|e| format!("write_frame_zarr: {e}"))
+    write_trajectory_file(path, &traj).map_err(|e| format!("write_frame: {e}"))
 }
 
-/// Read the first frame of a Zarr store into a fresh `FrameRef`.
+/// Read the first frame of a store into a fresh `FrameRef`.
 ///
 /// Used by Atomiverse checkpoint reload (`cpu::ZarrReader`): stage 1 of a long
-/// bench writes its end-state via [`write_frame_zarr`], then later debug
-/// iterations call this to skip stage 1. The returned `FrameRef` is populated
-/// via `with_mut` on a fresh standalone store — readers (`frame_column_f64`,
-/// `frame_box`, etc.) see exactly the columns and simbox that were stored.
+/// bench writes its end-state via [`write_frame`], then later debug
+/// iterations call this to skip stage 1. Only frame 0 is decoded — the store
+/// is opened as a lazy cursor, never materialized. The returned `FrameRef` is
+/// populated via `with_mut` on a fresh standalone store — readers
+/// (`frame_column_f64`, `frame_box`, etc.) see exactly the columns and simbox
+/// that were stored.
 #[cfg(feature = "zarr")]
-fn read_frame_zarr_first(path: &str) -> Result<Box<FrameRef>, String> {
-    let traj = read_trajectory_file(path).map_err(|e| format!("read_frame_zarr_first: {e}"))?;
-    let frame = traj
-        .frames
-        .into_iter()
-        .next()
-        .ok_or_else(|| "read_frame_zarr_first: empty trajectory".to_string())?;
+fn read_first_frame(path: &str) -> Result<Box<FrameRef>, String> {
+    let sequence = open_trajectory_sequence(path).map_err(|e| format!("read_first_frame: {e}"))?;
+    let frame = sequence
+        .frame(0)
+        .map_err(|e| format!("read_first_frame: {e}"))?
+        .ok_or_else(|| "read_first_frame: empty trajectory".to_string())?;
     let inner = molrs_ffi::FrameRef::new_standalone();
     inner
         .with_mut(|f| {
             *f = frame;
         })
-        .map_err(|e| format!("read_frame_zarr_first: populate: {e}"))?;
+        .map_err(|e| format!("read_first_frame: populate: {e}"))?;
     Ok(Box::new(FrameRef(inner)))
+}
+
+/// The engine's streaming trajectory writer: a `FrameSequenceWriter` behind
+/// an opaque CXX handle. `None` once closed, so a use after close is an error
+/// rather than a panic across the seam.
+pub struct TrajectoryWriterRef(Option<FrameSequenceWriter>);
+
+#[cfg(feature = "zarr")]
+fn configure_writer(
+    writer: FrameSequenceWriter,
+    flush_every: u64,
+    durable: bool,
+) -> Result<FrameSequenceWriter, String> {
+    let writer = writer.with_durable(durable);
+    if flush_every == 0 {
+        return Ok(writer);
+    }
+    writer
+        .with_flush_every(flush_every)
+        .map_err(|e| format!("trajectory_writer: {e}"))
+}
+
+/// Mint a `*.mrec` trajectory at `path`, pinned to the blocks and columns of
+/// `schema_from`.
+#[cfg(feature = "zarr")]
+fn trajectory_writer_create(
+    path: &str,
+    schema_from: &FrameRef,
+    flush_every: u64,
+    durable: bool,
+) -> Result<Box<TrajectoryWriterRef>, String> {
+    let schema = schema_from
+        .0
+        .with(SequenceSchema::from_frame)
+        .map_err(|e| format!("trajectory_writer_create: {e}"))?
+        .map_err(|e| format!("trajectory_writer_create: {e}"))?;
+    let writer = FrameSequenceWriter::create_at(path, schema)
+        .map_err(|e| format!("trajectory_writer_create: {e}"))?;
+    Ok(Box::new(TrajectoryWriterRef(Some(configure_writer(
+        writer,
+        flush_every,
+        durable,
+    )?))))
+}
+
+/// Reattach to the trajectory at `path` and continue after its last committed
+/// frame; whatever a crash left past the commit marker is rolled back first.
+#[cfg(feature = "zarr")]
+fn trajectory_writer_open(
+    path: &str,
+    flush_every: u64,
+    durable: bool,
+) -> Result<Box<TrajectoryWriterRef>, String> {
+    let writer =
+        FrameSequenceWriter::open_at(path).map_err(|e| format!("trajectory_writer_open: {e}"))?;
+    Ok(Box::new(TrajectoryWriterRef(Some(configure_writer(
+        writer,
+        flush_every,
+        durable,
+    )?))))
+}
+
+/// Buffer one frame at `step` (with `time` in fs when `has_time`).
+#[cfg(feature = "zarr")]
+fn trajectory_writer_append(
+    writer: &mut TrajectoryWriterRef,
+    fref: &FrameRef,
+    step: i64,
+    time: f64,
+    has_time: bool,
+) -> Result<(), String> {
+    let inner = writer
+        .0
+        .as_mut()
+        .ok_or_else(|| "trajectory_writer_append: writer is closed".to_string())?;
+    let time = has_time.then_some(time);
+    fref.0
+        .with(|frame| inner.append_at(frame, step, time))
+        .map_err(|e| format!("trajectory_writer_append: {e}"))?
+        .map_err(|e| format!("trajectory_writer_append: {e}"))
+}
+
+/// Commit every buffered frame (durably, unless the writer was opened with
+/// `durable == false`).
+#[cfg(feature = "zarr")]
+fn trajectory_writer_flush(writer: &mut TrajectoryWriterRef) -> Result<(), String> {
+    writer
+        .0
+        .as_mut()
+        .ok_or_else(|| "trajectory_writer_flush: writer is closed".to_string())?
+        .flush()
+        .map_err(|e| format!("trajectory_writer_flush: {e}"))
+}
+
+/// Frames committed so far (0 for a closed writer).
+#[cfg(feature = "zarr")]
+fn trajectory_writer_committed(writer: &TrajectoryWriterRef) -> u64 {
+    writer.0.as_ref().map_or(0, FrameSequenceWriter::committed)
+}
+
+/// Commit whatever is buffered and release the writer.
+#[cfg(feature = "zarr")]
+fn trajectory_writer_close(writer: Box<TrajectoryWriterRef>) -> Result<(), String> {
+    match writer.0 {
+        Some(inner) => inner
+            .close()
+            .map_err(|e| format!("trajectory_writer_close: {e}")),
+        None => Ok(()),
+    }
 }
 
 /// Atomic number for a chemical symbol — inverse of [`symbol_for_z`].
@@ -731,9 +852,9 @@ fn xyz_read_first_frame(path: &str) -> Result<Box<FrameRef>, String> {
     let species = atoms.get_string("species").ok_or_else(|| {
         "xyz_read_first_frame: atoms block has no ExtXYZ species column".to_string()
     })?;
-    let zs: Result<Vec<u32>, String> = species
+    let zs: Result<Vec<u64>, String> = species
         .iter()
-        .map(|symbol| z_for_symbol(symbol).map(|z| z as u32))
+        .map(|symbol| z_for_symbol(symbol).map(|z| z as u64))
         .collect();
     let zs = zs?;
     atoms
@@ -795,7 +916,9 @@ fn frame_new() -> Box<FrameRef> {
 ///
 /// This is the cross-extension ingress point. molrs-python's
 /// `Frame._ffi_frameref_capsule()` produces a `PyCapsule` named
-/// `"molrs.FrameRef"`. PyO3 heap-boxes the capsule payload, and that payload
+/// `molrs_ffi::abi::frameref_capsule_name()` — `"molrs.FrameRef/<major.minor>"`,
+/// carrying the ABI line (builds before 0.14 used the unversioned
+/// `"molrs.FrameRef"`). PyO3 heap-boxes the capsule payload, and that payload
 /// is a `#[repr(transparent)]` `FrameRefPtr` — itself a `*mut FrameRef`
 /// (a clone of the Python frame's handle). The capsule's `void*` is
 /// therefore `*mut *mut molrs_ffi::FrameRef`.
@@ -810,8 +933,12 @@ fn frame_new() -> Box<FrameRef> {
 /// # Safety
 ///
 /// `addr` must be the pointer returned by `PyCapsule_GetPointer` on a
-/// `"molrs.FrameRef"` capsule from `molrs.Frame._ffi_frameref_capsule()`,
-/// valid for the duration of this call. The molrs FFI store is
+/// capsule from `molrs.Frame._ffi_frameref_capsule()`, named with this
+/// build's `molrs_ffi::abi::frameref_capsule_name()` (the caller must pass
+/// that exact name to `PyCapsule_GetPointer` — query it via
+/// `molrs._ffi_abi_token()`), valid for the duration of this call. The name
+/// carries the molrs minor line, so a cross-minor producer fails the name
+/// check instead of being dereferenced here. The molrs FFI store is
 /// single-threaded and GIL-guarded; the caller must hold the GIL (or
 /// otherwise guarantee exclusive access) while calling.
 ///
@@ -919,6 +1046,7 @@ fn frame_meta_entries(fref: &FrameRef) -> Vec<bridge::ffi::MetaEntry> {
                         MetaValue::F64x6(_) => MetaType::F64x6,
                         MetaValue::F32x9(_) => MetaType::F32x9,
                         MetaValue::F64x9(_) => MetaType::F64x9,
+                        MetaValue::Json(_) => MetaType::String,
                     };
                     let mut entry = empty_meta_entry(key.clone(), dtype);
                     match value {
@@ -943,6 +1071,7 @@ fn frame_meta_entries(fref: &FrameRef) -> Vec<bridge::ffi::MetaEntry> {
                         MetaValue::F64x6(v) => entry.f64_values = v.to_vec(),
                         MetaValue::F32x9(v) => entry.f32_values = v.to_vec(),
                         MetaValue::F64x9(v) => entry.f64_values = v.to_vec(),
+                        MetaValue::Json(v) => entry.string_value = v.to_string(),
                     }
                     entry
                 })
@@ -1037,13 +1166,13 @@ fn frame_column_i32(fref: &FrameRef, block: &str, col: &str) -> Vec<i32> {
     }
 }
 
-/// Copy a `u32` column out of a block.
+/// Copy a domain-uint (`u64` / `Idx`) column out of a block.
 ///
 /// @param fref  frame handle
 /// @param block block key
 /// @param col   column key
 /// @return owned column data; empty if the block or column is absent
-fn frame_column_u32(fref: &FrameRef, block: &str, col: &str) -> Vec<u32> {
+fn frame_column_u32(fref: &FrameRef, block: &str, col: &str) -> Vec<u64> {
     match fref.0.block(block) {
         Ok(blk) => match blk.copy_u(col) {
             Ok(Some((data, _shape))) => data,
@@ -1140,7 +1269,7 @@ fn frame_set_column_i32(
         .map_err(|e| format!("frame_set_column_i32: {e}"))?
 }
 
-/// Create or overwrite a `u32` column on a block.
+/// Create or overwrite a domain-uint (`u64` / `Idx`) column on a block.
 ///
 /// @param fref  frame handle
 /// @param block block key (created if absent)
@@ -1150,7 +1279,7 @@ fn frame_set_column_u32(
     fref: &mut FrameRef,
     block: &str,
     col: &str,
-    data: &[u32],
+    data: &[u64],
 ) -> Result<(), String> {
     fref.0
         .with_mut(|frame| {
@@ -1289,8 +1418,158 @@ fn parse_bcc_parameter_set(name: &str) -> Result<BccParameterSet, String> {
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
+// ---------------------------------------------------------------------------
+// Region bridge
+// ---------------------------------------------------------------------------
+
+/// Bridge handle over a shared region.
+///
+/// The region is `Arc<dyn Region>` inside; the trait object never crosses the
+/// bridge. C++ holds a `Box<RegionRef>` — the same `molrs_ffi::RegionRef` the
+/// Python capsule and the C API carry, so a region built on any of those
+/// surfaces answers identically here.
+pub struct RegionRef(pub molrs_ffi::RegionRef);
+
+impl RegionRef {
+    fn wrap(region: std::sync::Arc<dyn molrs::spatial::region::Region + Send + Sync>) -> Box<Self> {
+        Box::new(RegionRef(molrs_ffi::RegionRef::new(region)))
+    }
+}
+
+fn triple(v: &[f64]) -> [f64; 3] {
+    [v[0], v[1], v[2]]
+}
+
+/// Ball of `radius` about `center` (3 values). Empty `center` yields the
+/// origin, so a malformed call cannot silently read past the slice.
+fn region_sphere(center: &[f64], radius: f64) -> Box<RegionRef> {
+    let c = if center.len() == 3 {
+        triple(center)
+    } else {
+        [0.0; 3]
+    };
+    RegionRef::wrap(std::sync::Arc::new(molrs::spatial::region::Sphere::new(
+        molrs::types::F3::from_vec(c.to_vec()),
+        radius,
+    )))
+}
+
+/// Axis-aligned box with a corner at `origin` and edge `lengths`.
+fn region_cuboid(origin: &[f64], lengths: &[f64]) -> Box<RegionRef> {
+    let o = if origin.len() == 3 {
+        triple(origin)
+    } else {
+        [0.0; 3]
+    };
+    let l = if lengths.len() == 3 {
+        triple(lengths)
+    } else {
+        [0.0; 3]
+    };
+    RegionRef::wrap(std::sync::Arc::new(molrs::spatial::region::Cuboid::new(
+        molrs::types::F3::from_vec(o.to_vec()),
+        molrs::types::F3::from_vec(l.to_vec()),
+    )))
+}
+
+/// Everything on the `normal` side of the plane through `point`.
+/// A degenerate normal yields an error, reported as an empty handle upstream.
+fn region_half_space(normal: &[f64], point: &[f64]) -> Result<Box<RegionRef>, String> {
+    if normal.len() != 3 || point.len() != 3 {
+        return Err("region_half_space: normal and point must each have 3 elements".into());
+    }
+    molrs::spatial::region::HalfSpace::new(triple(normal), triple(point))
+        .map(|r| RegionRef::wrap(std::sync::Arc::new(r)))
+        .map_err(|e| e.to_string())
+}
+
+/// Finite cylinder of `radius` and `length` from `base` along `axis`.
+fn region_cylinder(
+    base: &[f64],
+    axis: &[f64],
+    radius: f64,
+    length: f64,
+) -> Result<Box<RegionRef>, String> {
+    if base.len() != 3 || axis.len() != 3 {
+        return Err("region_cylinder: base and axis must each have 3 elements".into());
+    }
+    molrs::spatial::region::Cylinder::new(triple(base), triple(axis), radius, length)
+        .map(|r| RegionRef::wrap(std::sync::Arc::new(r)))
+        .map_err(|e| e.to_string())
+}
+
+/// Ellipsoid about `center` with the given `semi_axes`.
+fn region_ellipsoid(center: &[f64], semi_axes: &[f64]) -> Result<Box<RegionRef>, String> {
+    if center.len() != 3 || semi_axes.len() != 3 {
+        return Err("region_ellipsoid: centre and semi-axes must each have 3 elements".into());
+    }
+    molrs::spatial::region::Ellipsoid::new(triple(center), triple(semi_axes))
+        .map(|r| RegionRef::wrap(std::sync::Arc::new(r)))
+        .map_err(|e| e.to_string())
+}
+
+/// Intersection of `a` and `b`. Both stay usable.
+fn region_and(a: &RegionRef, b: &RegionRef) -> Box<RegionRef> {
+    RegionRef::wrap(std::sync::Arc::new(molrs::spatial::region::AndRegion::new(
+        a.0.region(),
+        b.0.region(),
+    )))
+}
+
+/// Union of `a` and `b`.
+fn region_or(a: &RegionRef, b: &RegionRef) -> Box<RegionRef> {
+    RegionRef::wrap(std::sync::Arc::new(molrs::spatial::region::OrRegion::new(
+        a.0.region(),
+        b.0.region(),
+    )))
+}
+
+/// Everything `a` is not. A shell is `and(outer, not(inner))`.
+fn region_not(a: &RegionRef) -> Box<RegionRef> {
+    RegionRef::wrap(std::sync::Arc::new(molrs::spatial::region::NotRegion::new(
+        a.0.region(),
+    )))
+}
+
+/// Signed distance of each point to the boundary: negative inside, positive
+/// outside. `points` is flat `[x, y, z, …]`; a ragged length yields empty.
+fn region_distance(rref: &RegionRef, points: &[f64]) -> Vec<f64> {
+    if !points.len().is_multiple_of(3) {
+        return Vec::new();
+    }
+    rref.0.with_region(|r| {
+        points
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|p| r.distance(p))
+            .collect()
+    })
+}
+
+/// `1` for each point inside the solid, `0` outside. cxx has no `Vec<bool>`.
+fn region_contains(rref: &RegionRef, points: &[f64]) -> Vec<u8> {
+    if !points.len().is_multiple_of(3) {
+        return Vec::new();
+    }
+    rref.0.with_region(|r| {
+        points
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|p| u8::from(r.contains_point(p)))
+            .collect()
+    })
+}
+
+/// Axis-aligned bounds as `[xmin, xmax, ymin, ymax, zmin, zmax]`.
+fn region_bounds(rref: &RegionRef) -> Vec<f64> {
+    rref.0.with_region(|r| r.bounds().iter().copied().collect())
+}
+
 #[cfg(test)]
 mod tests {
+
     #[test]
     fn ffi_element_matches_core_element() {
         for z in 1u8..=118 {
@@ -1349,7 +1628,10 @@ mod tests {
             !columns.iter().any(|column| column == "type"),
             "Z is `atomic_number`; `type` is the caller's force-field label"
         );
-        assert_eq!(frame_column_u32(&frame, "atoms", "atomic_number"), [8, 1]);
+        assert_eq!(
+            frame_column_u32(&frame, "atoms", "atomic_number"),
+            [8u64, 1]
+        );
     }
 
     #[test]
@@ -1382,7 +1664,11 @@ mod tests {
         assert_eq!(cxx_api_version(), 1);
         assert_eq!(
             cxx_api_capabilities(),
-            CXX_CAP_FRAME_BLOCK_V2 | CXX_CAP_ELEMENT | CXX_CAP_AM1_BCC
+            CXX_CAP_FRAME_BLOCK_V2
+                | CXX_CAP_ELEMENT
+                | CXX_CAP_AM1_BCC
+                | CXX_CAP_TRAJECTORY_WRITER
+                | CXX_CAP_REGION
         );
         assert_eq!(frame_schema_version(), 2);
         let mut fref = frame_new();
@@ -1393,7 +1679,7 @@ mod tests {
         // the bridge failing.
         let xs: Vec<f64> = vec![0.0, 1.5, -2.25];
         let spins: Vec<i32> = vec![-1, 0, 1];
-        let ids: Vec<u32> = vec![10, 20, 30];
+        let ids: Vec<u64> = vec![10, 20, 30];
         let elems: Vec<String> = vec!["H".into(), "H".into(), "O".into()];
 
         frame_set_column_f64(&mut fref, "atoms", "x", &xs).unwrap();
@@ -1568,5 +1854,24 @@ mod tests {
                 "{actual} != {expected}"
             );
         }
+    }
+    #[test]
+    fn a_shell_is_and_of_outer_and_not_inner() {
+        let outer = region_sphere(&[0.0, 0.0, 0.0], 3.0);
+        let inner = region_sphere(&[0.0, 0.0, 0.0], 2.0);
+        let shell = region_and(&outer, &region_not(&inner));
+        // 2.5 is in the shell, 1.0 is in the hole, 4.0 is outside both.
+        let pts = [2.5, 0.0, 0.0, 1.0, 0.0, 0.0, 4.0, 0.0, 0.0];
+        assert_eq!(region_contains(&shell, &pts), vec![1, 0, 0]);
+        let d = region_distance(&outer, &pts);
+        assert!((d[0] + 0.5).abs() < 1e-12, "{d:?}");
+        assert_eq!(region_bounds(&outer).len(), 6);
+    }
+
+    #[test]
+    fn a_ragged_point_slice_yields_nothing_rather_than_reading_past_it() {
+        let ball = region_sphere(&[0.0, 0.0, 0.0], 1.0);
+        assert!(region_distance(&ball, &[0.0, 0.0]).is_empty());
+        assert!(region_contains(&ball, &[0.0, 0.0]).is_empty());
     }
 }

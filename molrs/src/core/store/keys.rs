@@ -21,7 +21,7 @@ pub use crate::store::schema::consts::*;
 
 /// Canonical storage dtype for a key, if the vocabulary declares one.
 ///
-/// Thin forwarder to [`crate::store::schema::column`]. Unlike the old
+/// Thin forwarder to [`crate::store::schema::column()`]. Unlike the old
 /// hand-written table, this cannot disagree with what
 /// [`Block::insert`](crate::store::block::Block::insert) enforces: both read the
 /// same specs.

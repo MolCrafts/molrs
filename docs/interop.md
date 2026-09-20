@@ -24,7 +24,7 @@ Downstream packages that co-release with molrs (e.g. molpy) pin the shared
 
 ```toml
 [dependencies]
-molrs = { package = "molcrafts-molrs", version = "0.13", default-features = false, features = ["ff"] }
+molrs = { package = "molcrafts-molrs", version = "0.14", default-features = false, features = ["ff"] }
 ```
 
 Then use the native types directly — no FFI, no copies. For example, building
@@ -39,9 +39,12 @@ use molrs::ff::typifier::mmff::MMFF94Typifier;
 let mol = Atomistic::new();                              // build or load your molecule
 let typifier = MMFF94Typifier::new();
 
+let ff = typifier.ff();
 let mut frame = typifier.typify(&mol)?.to_frame();       // labels + charges
-frame.insert("pairs", intramolecular_pairs(&frame));     // the consumer's neighbour list
-let potentials = typifier.ff().to_potentials(&frame)?;   // the standard compile path
+// The consumer's neighbour list — built from the force field's own
+// special_bonds, which decide whether 1-2 / 1-3 neighbours belong in it.
+frame.insert("pairs", intramolecular_pairs(&frame, ff.special_bonds())?);
+let potentials = ff.to_potentials(&frame)?;              // the standard compile path
 
 let coords: Vec<f64> = Vec::new();                       // flat [x,y,z, ...]
 let (energy, _forces) = potentials.calc_energy_forces(&coords);
@@ -98,8 +101,130 @@ if let Ok(atoms) = frame.block("atoms") {
 ```
 
 `molrs-ffi` exposes `FrameRef`, `BlockRef`, `ForceFieldRef` (under the `ff` feature),
-`SharedStore` / `new_shared`, `FrameId`, `BlockHandle`, and one error type `FfiError`.
+`RegionRef` (a shared `Arc<dyn Region>`), `SharedStore` / `new_shared`, `FrameId`,
+`BlockHandle`, and one error type `FfiError`.
 This snippet is compile-checked as the `molrs-ffi` crate-level doctest.
+
+### ABI contract (cross-extension handle exchange)
+
+Two separately compiled extensions (e.g. the `molcrafts-molrs` wheel and the
+`molcrafts-molpack` wheel) may exchange raw `molrs_ffi` handles through
+PyCapsules. That is a pointer bridge, so both sides must embed a
+**layout-identical** molrs core. The rule — decided project-wide — is:
+
+> **Minor-line = ABI version.** Every downstream shares one molrs minor line.
+> Within a minor line the layout of every FFI-crossing type is frozen; a
+> layout change requires a minor bump. When molrs moves to a new minor,
+> downstream is obliged to re-align.
+
+`molrs_ffi::abi` is the single source of the contract; **never hard-code the
+capsule names**:
+
+- `abi::abi_line()` — `major.minor` of the embedded molrs (e.g. `"0.14"`).
+- `abi::frameref_capsule_name()` / `abi::forcefield_capsule_name()` /
+  `abi::regionref_capsule_name()` — `molrs.FrameRef/<line>` /
+  `molrs.ForceFieldRef/<line>` / `molrs.RegionRef/<line>`. Versioned since
+  0.14 (older lines used the unversioned `molrs.FrameRef`), so a cross-minor
+  exchange fails the capsule *name check* — a clean `ValueError` — instead of
+  dereferencing a possibly drifted layout.
+- `molrs._ffi_abi_token()` (Python) — returns
+  `(abi_line, version, frameref_name, forcefield_name, regionref_name)`. A
+  consumer extension calls it once at import and raises a clear `ImportError`
+  on a line mismatch (molpack's `interop::check_abi` is the reference
+  implementation; it reads the first two entries, so the tuple may grow).
+
+**Regions cross as geometry the consumer evaluates.** Every molrs-python region
+object (`Sphere`, `Cuboid`, `Parallelepiped`, `HalfSpace`, `Cylinder`,
+`Ellipsoid`, `Polyhedron`, `SphereUnion`, and a composed `Region`) exports
+`_ffi_regionref_capsule()`: a capsule named `molrs.RegionRef/<line>` whose
+`void*` is `*mut *mut RegionRef`. The consumer resolves it exactly like a frame
+capsule — `capsule.pointer_checked(Some(abi::regionref_capsule_name()))`,
+dereference twice, `.clone()` the handle — and keeps `handle.region()`, an
+`Arc<dyn Region + Send + Sync>` it may share into a rayon loop. Unlike a frame,
+the handle's *code* runs in the producer's image (vtable dispatch), so the
+cross-image contract is the `[F; 3]` surface only: `distance`, `distance_grad`,
+`contains_point`, `bounds` — none panics on finite input. The batched
+`contains(&FNx3)` can panic on a malformed array and is not part of it.
+
+Enforcement on the supply side: `molrs-ffi/src/abi.rs` carries a **layout
+snapshot test** (size / align / field offsets of every FFI-crossing type,
+committed as `src/layout.snapshot`). Changing any of those layouts within a
+minor fails CI; a toolchain update that alone changes the report is treated
+the same way (the bridge crosses compiled layouts, not source).
+
+Version combinations:
+
+| producer (molrs wheel) | consumer (e.g. molpack) | outcome |
+|---|---|---|
+| same minor, any patch | same minor, any patch | **supported** — layout frozen by the snapshot gate |
+| ≥0.14 line X | line Y ≠ X | `ImportError` at consumer import (token mismatch) |
+| ≥0.14 | pre-handshake (≤0.13) consumer | capsule name mismatch → clean `ValueError` at first resolve |
+| ≤0.13 | ≥0.14 consumer | `ImportError` at import (wheel lacks `_ffi_abi_token`) |
+
+Release ordering is unchanged: molrs ships a new minor first; molpy / molpack
+re-align and ship after ("Release before molpy" iron law).
+
+---
+
+## Path C — C ABI (`libmolrs_capi`)
+
+The **only sanctioned dynamic-linking deliverable**. External C / C++ / HPC
+consumers link `libmolrs_capi` (cdylib or staticlib) against the
+cbindgen-generated `molrs.h` — a flat, handle-based C API over frames,
+blocks, sim boxes, force fields, and regions (feature surface: always-on core
++ perceive, plus `ff`, `io`, `smiles`; storage is a global mutex-protected
+store, so treat the library as single-threaded per process).
+
+- **Download**: `molrs-capi-<version>-<platform>.tar.gz` (lib + `molrs.h` +
+  LICENSE + sha256) attached to each GitHub Release on `v*` tags.
+- **Handshake**: before any other call, compare `molrs_c_api_version()`
+  against the `MOLRS_C_API_VERSION` your header was compiled with; the
+  constant increments on any breaking signature / handle-semantics change
+  (mirrors molrs-cxxapi's `CXX_API_VERSION`). `molrs_version()` reports the
+  embedded molrs release for diagnostics.
+
+### Regions across the boundary
+
+A region is `Arc<dyn Region>` — a trait object — and it does **not** cross any
+boundary. What crosses is `molrs_ffi::RegionRef`, the same handle the Python
+capsule (`molrs.RegionRef/<abi_line>`) and the WASM binder carry; the C API
+keeps it in its store and hands back the usual two-word
+`MolrsRegionHandle`. So a region is no different from a `SimBox` or a
+`ForceField` at this seam, and the vtable stays on the Rust side where it was
+compiled.
+
+```c
+MolrsRegionHandle outer, inner, hole, shell;
+molrs_region_sphere((const molrs_float_t[3]){0, 0, 0}, 3.0, &outer);
+molrs_region_sphere((const molrs_float_t[3]){0, 0, 0}, 2.0, &inner);
+molrs_region_not(inner, &hole);
+molrs_region_and(outer, hole, &shell);          /* a shell */
+
+bool inside[1];
+molrs_region_contains(shell, (const molrs_float_t[3]){2.5, 0, 0}, 1, inside);
+
+molrs_region_drop(shell);                       /* operands stay alive */
+molrs_region_drop(hole);
+molrs_region_drop(inner);
+molrs_region_drop(outer);
+```
+
+Three questions, one answer shape on every surface: `molrs_region_distance`
+gives the signed distance (negative inside), `molrs_region_contains` is its
+sign, and `molrs_region_bounds` writes `[xmin, xmax, ymin, ymax, zmin, zmax]`.
+Composition — `and` / `or` / `not` — returns an ordinary handle, so
+compositions nest, and each handle owns its own reference: dropping a
+composition never disturbs its operands. A stale handle is reported as
+`MolrsStatus::InvalidRegionHandle`, never dereferenced.
+
+The CXX bridge carries the same surface as free functions over a
+`Box<RegionRef>` (`region_sphere`, `region_and`, `region_distance`, …), gated
+by the `CXX_CAP_REGION` capability bit so a consumer can fail loudly when it
+is linked against a bridge that predates it.
+
+In-house Rust consumers (molpack, the binders) do **not** go through this C
+ABI — they take Path A or Path B directly, and every one of them links molrs
+statically.
 
 ---
 
@@ -117,10 +242,19 @@ Whichever path you take, molrs data follows these conventions:
 - **`special_bonds` weights live on the `ForceField`**, not in the neighbour list.
   The force field carries the 1-2 / 1-3 / 1-4 LJ and Coulomb scale factors
   (e.g. amber `0/0/0.5` LJ, `0/0/0.8333` Coulomb); a reader fills them.
+- **`BondDistanceWeights` is the core geometric table** (Cassandra 1-N tail,
+  always-on, one vector). It is not `ForceField::special_bonds`. A length-3
+  vector here is a zero-or-full tail, not a LAMMPS triple: charmm `0 0 0`
+  is `[0, 0, 0, 1]`. There is no `From`/`Into` between the two types.
 - **The neighbour list is the consumer's job.** `ForceField` holds parameters +
   `special_bonds` only; the optimizer / integrator builds the intramolecular pair
-  list (`molrs::ff::potential::intramolecular_pairs(&frame) → atomi/atomj/is_14`)
-  and inserts it before calling `to_potentials`.
+  list (`molrs::ff::potential::intramolecular_pairs(&frame, ff.special_bonds())
+  → atomi/atomj/is_14`) and inserts it before calling `to_potentials`. The
+  weights are an argument because they decide the rows: `special_bonds fene`
+  (`[0, 1, 1]`) keeps 1-3 pairs. A list of rows expresses a 1-2 / 1-3 weight of
+  `0` or `1` and nothing else, so a force field that *scales* those classes —
+  or scales them differently for van der Waals and Coulomb — is an `Err` here
+  and belongs on `to_typed_potentials`, which carries a per-pair weight.
 
 ## Which path?
 

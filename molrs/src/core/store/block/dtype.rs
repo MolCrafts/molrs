@@ -1,37 +1,101 @@
 //! Data type enumeration and trait for Block columns.
 
 use ndarray::ArrayD;
+use num_complex::Complex;
 
 use super::column::Column;
-use crate::types::{F, I, U};
+use crate::types::{F, I, Idx};
 
 /// Supported data types for Block columns.
+///
+/// Domain aliases [`F`] / [`I`] / [`Idx`] stay on [`DType::Float`] /
+/// [`DType::Int`] / [`DType::UInt`]. Every other variant is a storage width:
+/// a column that arrived as `f32` or `i64` has to leave as that width, not as
+/// the compute scalar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum DType {
-    /// Floating point using the compile-time scalar type [`F`].
+    /// IEEE binary16.
+    Float16,
+    /// IEEE binary32.
+    Float32,
+    /// Floating point using the compute scalar [`F`] (`f64`).
     Float,
-    /// Signed integer using the compile-time scalar type [`I`].
+    /// Signed 8-bit integer.
+    Int8,
+    /// Signed 16-bit integer.
+    Int16,
+    /// Signed integer using the domain scalar [`I`] (`i32`).
     Int,
+    /// Signed 64-bit integer.
+    Int64,
     /// Boolean
     Bool,
-    /// Unsigned integer using the compile-time scalar type [`U`].
+    /// Unsigned integer using the identifier scalar [`Idx`] (`u64`).
     UInt,
     /// 8-bit unsigned integer
     U8,
+    /// 16-bit unsigned integer.
+    UInt16,
+    /// 32-bit unsigned integer.
+    UInt32,
     /// String
     String,
+    /// Complex pair of `f32` (numpy `complex64`).
+    Complex64,
+    /// Complex pair of `f64` (numpy `complex128`).
+    Complex128,
 }
 
 impl DType {
     /// Returns the name of the data type as a string.
     pub fn name(&self) -> &'static str {
         match self {
+            DType::Float16 => "f16",
+            DType::Float32 => "f32",
             DType::Float => "float",
+            DType::Int8 => "i8",
+            DType::Int16 => "i16",
             DType::Int => "int",
+            DType::Int64 => "i64",
             DType::Bool => "bool",
             DType::UInt => "uint",
             DType::U8 => "u8",
+            DType::UInt16 => "u16",
+            DType::UInt32 => "u32",
             DType::String => "string",
+            DType::Complex64 => "c64",
+            DType::Complex128 => "c128",
+        }
+    }
+
+    /// Bytes one element of this dtype occupies in storage, or `None` for
+    /// [`DType::String`].
+    ///
+    /// The widths are the ones [`Column::raw_bytes`] already emits — `Bool` is
+    /// one byte per element, `Complex64` a pair of `f32`, `Complex128` a pair
+    /// of `f64` — and the `None` mirrors the `None` that method returns for a
+    /// string column: variable-length elements have no fixed byte width, so
+    /// anything sizing storage by bytes has to branch on their absence.
+    ///
+    /// [`Column::raw_bytes`]: super::column::Column::raw_bytes
+    pub fn itemsize(&self) -> Option<usize> {
+        match self {
+            DType::Float16 => Some(2),
+            DType::Float32 => Some(4),
+            DType::Float => Some(8),
+            DType::Int8 => Some(1),
+            DType::Int16 => Some(2),
+            DType::Int => Some(4),
+            DType::Int64 => Some(8),
+            DType::Bool => Some(1),
+            DType::UInt => Some(8),
+            DType::U8 => Some(1),
+            DType::UInt16 => Some(2),
+            DType::UInt32 => Some(4),
+            DType::String => None,
+            DType::Complex64 => Some(8),
+            DType::Complex128 => Some(16),
         }
     }
 }
@@ -60,110 +124,130 @@ pub trait BlockDtype: Sized + 'static {
     fn from_column_mut(col: &mut Column) -> Option<&mut ArrayD<Self>>;
 }
 
-impl BlockDtype for F {
-    fn dtype() -> DType {
-        DType::Float
-    }
-
-    fn into_column(arr: ArrayD<Self>) -> Column {
-        Column::from_float(arr)
-    }
-
-    fn from_column(col: &Column) -> Option<&ArrayD<Self>> {
-        col.as_float()
-    }
-
-    fn from_column_mut(col: &mut Column) -> Option<&mut ArrayD<Self>> {
-        col.as_float_mut()
-    }
+macro_rules! impl_block_dtype {
+    ($ty:ty, $dtype:expr, $into:ident, $as_ref:ident, $as_mut:ident) => {
+        impl BlockDtype for $ty {
+            fn dtype() -> DType {
+                $dtype
+            }
+            fn into_column(arr: ArrayD<Self>) -> Column {
+                Column::$into(arr)
+            }
+            fn from_column(col: &Column) -> Option<&ArrayD<Self>> {
+                col.$as_ref()
+            }
+            fn from_column_mut(col: &mut Column) -> Option<&mut ArrayD<Self>> {
+                col.$as_mut()
+            }
+        }
+    };
 }
 
-impl BlockDtype for I {
-    fn dtype() -> DType {
-        DType::Int
+impl_block_dtype!(half::f16, DType::Float16, from_f16, as_f16, as_f16_mut);
+impl_block_dtype!(f32, DType::Float32, from_f32, as_f32, as_f32_mut);
+impl_block_dtype!(F, DType::Float, from_float, as_float, as_float_mut);
+impl_block_dtype!(i8, DType::Int8, from_i8, as_i8, as_i8_mut);
+impl_block_dtype!(i16, DType::Int16, from_i16, as_i16, as_i16_mut);
+impl_block_dtype!(I, DType::Int, from_int, as_int, as_int_mut);
+impl_block_dtype!(i64, DType::Int64, from_i64, as_i64, as_i64_mut);
+impl_block_dtype!(bool, DType::Bool, from_bool, as_bool, as_bool_mut);
+impl_block_dtype!(Idx, DType::UInt, from_uint, as_uint, as_uint_mut);
+impl_block_dtype!(u8, DType::U8, from_u8, as_u8, as_u8_mut);
+impl_block_dtype!(u16, DType::UInt16, from_u16, as_u16, as_u16_mut);
+impl_block_dtype!(u32, DType::UInt32, from_u32, as_u32, as_u32_mut);
+impl_block_dtype!(String, DType::String, from_string, as_string, as_string_mut);
+impl_block_dtype!(Complex<f32>, DType::Complex64, from_c64, as_c64, as_c64_mut);
+impl_block_dtype!(
+    Complex<f64>,
+    DType::Complex128,
+    from_c128,
+    as_c128,
+    as_c128_mut
+);
+
+#[cfg(test)]
+mod tests {
+    use super::DType;
+
+    /// Every fixed-width variant paired with the bytes one element occupies.
+    ///
+    /// These are the storage widths [`Column::raw_bytes`] already emits
+    /// (`block/column.rs:428`): `Bool` is one byte per element, `Complex64` is
+    /// a pair of `f32` and `Complex128` a pair of `f64`. The three domain
+    /// aliases carry their concrete scalars from `core/types.rs` — `F = f64`
+    /// (8), `I = i32` (4), `Idx = u64` (8) — not the width their name suggests.
+    ///
+    /// [`Column::raw_bytes`]: super::column::Column::raw_bytes
+    const FIXED_WIDTH: [(DType, usize); 14] = [
+        (DType::Float16, 2),
+        (DType::Float32, 4),
+        (DType::Float, 8),
+        (DType::Int8, 1),
+        (DType::Int16, 2),
+        (DType::Int, 4),
+        (DType::Int64, 8),
+        (DType::Bool, 1),
+        (DType::UInt, 8),
+        (DType::U8, 1),
+        (DType::UInt16, 2),
+        (DType::UInt32, 4),
+        (DType::Complex64, 8),
+        (DType::Complex128, 16),
+    ];
+
+    #[test]
+    fn fixed_width_variants_report_their_byte_width() {
+        for (dtype, width) in FIXED_WIDTH {
+            assert_eq!(dtype.itemsize(), Some(width), "itemsize of {dtype}");
+        }
     }
 
-    fn into_column(arr: ArrayD<Self>) -> Column {
-        Column::from_int(arr)
+    #[test]
+    fn string_has_no_itemsize() {
+        // Variable-length elements have no fixed byte representation. This is
+        // the same absence `Column::raw_bytes` reports for a string column, and
+        // it is what a byte-target chunk planner has to branch on.
+        assert_eq!(DType::String.itemsize(), None);
     }
 
-    fn from_column(col: &Column) -> Option<&ArrayD<Self>> {
-        col.as_int()
-    }
+    #[test]
+    fn the_width_table_covers_every_variant() {
+        // `DType` is `#[non_exhaustive]`, but inside the defining crate this
+        // match is exhaustive: a new variant stops this module compiling until
+        // someone decides whether it has a fixed width.
+        fn is_fixed_width(dtype: DType) -> bool {
+            match dtype {
+                DType::String => false,
+                DType::Float16
+                | DType::Float32
+                | DType::Float
+                | DType::Int8
+                | DType::Int16
+                | DType::Int
+                | DType::Int64
+                | DType::Bool
+                | DType::UInt
+                | DType::U8
+                | DType::UInt16
+                | DType::UInt32
+                | DType::Complex64
+                | DType::Complex128 => true,
+            }
+        }
 
-    fn from_column_mut(col: &mut Column) -> Option<&mut ArrayD<Self>> {
-        col.as_int_mut()
-    }
-}
-
-impl BlockDtype for bool {
-    fn dtype() -> DType {
-        DType::Bool
-    }
-
-    fn into_column(arr: ArrayD<Self>) -> Column {
-        Column::from_bool(arr)
-    }
-
-    fn from_column(col: &Column) -> Option<&ArrayD<Self>> {
-        col.as_bool()
-    }
-
-    fn from_column_mut(col: &mut Column) -> Option<&mut ArrayD<Self>> {
-        col.as_bool_mut()
-    }
-}
-
-impl BlockDtype for U {
-    fn dtype() -> DType {
-        DType::UInt
-    }
-
-    fn into_column(arr: ArrayD<Self>) -> Column {
-        Column::from_uint(arr)
-    }
-
-    fn from_column(col: &Column) -> Option<&ArrayD<Self>> {
-        col.as_uint()
-    }
-
-    fn from_column_mut(col: &mut Column) -> Option<&mut ArrayD<Self>> {
-        col.as_uint_mut()
-    }
-}
-
-impl BlockDtype for u8 {
-    fn dtype() -> DType {
-        DType::U8
-    }
-
-    fn into_column(arr: ArrayD<Self>) -> Column {
-        Column::from_u8(arr)
-    }
-
-    fn from_column(col: &Column) -> Option<&ArrayD<Self>> {
-        col.as_u8()
-    }
-
-    fn from_column_mut(col: &mut Column) -> Option<&mut ArrayD<Self>> {
-        col.as_u8_mut()
-    }
-}
-
-impl BlockDtype for String {
-    fn dtype() -> DType {
-        DType::String
-    }
-
-    fn into_column(arr: ArrayD<Self>) -> Column {
-        Column::from_string(arr)
-    }
-
-    fn from_column(col: &Column) -> Option<&ArrayD<Self>> {
-        col.as_string()
-    }
-
-    fn from_column_mut(col: &mut Column) -> Option<&mut ArrayD<Self>> {
-        col.as_string_mut()
+        let mut named: Vec<&str> = FIXED_WIDTH.iter().map(|(d, _)| d.name()).collect();
+        named.sort_unstable();
+        named.dedup();
+        assert_eq!(
+            named.len(),
+            FIXED_WIDTH.len(),
+            "FIXED_WIDTH lists a variant twice"
+        );
+        for (dtype, _) in FIXED_WIDTH {
+            assert!(is_fixed_width(dtype), "{dtype} is not a fixed-width dtype");
+        }
+        // 14 fixed-width rows plus `String` is the whole enum, so a variant
+        // missing from the table cannot hide behind the loop above.
+        assert!(!is_fixed_width(DType::String));
     }
 }

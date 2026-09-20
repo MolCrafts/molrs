@@ -7,14 +7,14 @@
 //!
 //! ```
 //! use molrs::store::block::Block;
-//! use molrs::types::{F, U};
+//! use molrs::types::{F, Idx};
 //! use ndarray::{Array1, ArrayD};
 //!
 //! let mut block = Block::new();
 //!
 //! // Insert different types - generic dispatch handles the conversion
 //! let pos = Array1::from_vec(vec![1.0 as F, 2.0 as F, 3.0 as F]).into_dyn();
-//! let ids = Array1::from_vec(vec![10 as U, 20 as U, 30 as U]).into_dyn();
+//! let ids = Array1::from_vec(vec![10 as Idx, 20 as Idx, 30 as Idx]).into_dyn();
 //!
 //! block.insert("pos", pos).unwrap();
 //! block.insert("id", ids).unwrap();
@@ -110,6 +110,15 @@ impl Block {
         self.nrows
     }
 
+    /// Explicit N-D structural shape, if one was declared.
+    ///
+    /// `None` for a plain row table. Distinct from [`shape`](Self::shape),
+    /// which reports `vec![nrows]` when this is unset.
+    #[inline]
+    pub fn structural_shape(&self) -> Option<&[usize]> {
+        self.shape.as_deref()
+    }
+
     /// Returns the structural shape of the block.
     ///
     /// - For plain row tables (atoms, bonds): `vec![nrows]` — a single
@@ -185,7 +194,7 @@ impl Block {
     ///
     /// ```
     /// use molrs::store::block::Block;
-    /// use molrs::types::{F, I, U};
+    /// use molrs::types::{F, I, Idx};
     /// use ndarray::Array1;
     ///
     /// let mut block = Block::new();
@@ -195,7 +204,7 @@ impl Block {
     /// block.insert("x", arr_float).unwrap();
     ///
     /// // Insert int array with same nrows
-    /// let arr_int = Array1::from_vec(vec![10 as U, 20 as U]).into_dyn();
+    /// let arr_int = Array1::from_vec(vec![10 as Idx, 20 as Idx]).into_dyn();
     /// block.insert("id", arr_int).unwrap();
     ///
     /// // `id` is UInt in the Frame schema, so a signed column is refused —
@@ -242,7 +251,7 @@ impl Block {
             }
         }
 
-        let col = T::into_column(arr);
+        let col = promote_canonical_uint(&key, T::into_column(arr));
         self.map.insert(key, col);
         Ok(())
     }
@@ -255,15 +264,15 @@ impl Block {
     /// blocks or re-inserting a clone.
     pub fn insert_column(&mut self, key: impl Into<String>, col: Column) -> Result<(), BlockError> {
         let key = key.into();
-        let shape = col.shape();
+        let shape = col.shape().to_vec();
 
         if shape.is_empty() {
             return Err(BlockError::RankZero { key });
         }
 
-        check_schema(&key, col.dtype(), shape)?;
-
+        check_schema(&key, col.dtype(), &shape)?;
         let len0 = shape[0];
+        let col = promote_canonical_uint(&key, col);
 
         match self.nrows {
             None => {
@@ -316,16 +325,44 @@ impl Block {
                 let v: Vec<crate::types::F> = h.array().iter().copied().collect();
                 order.sort_by(|&i, &j| v[i].total_cmp(&v[j]));
             }
+            Column::Float16(h) => {
+                let v: Vec<half::f16> = h.array().iter().copied().collect();
+                order.sort_by(|&i, &j| v[i].total_cmp(&v[j]));
+            }
+            Column::Float32(h) => {
+                let v: Vec<f32> = h.array().iter().copied().collect();
+                order.sort_by(|&i, &j| v[i].total_cmp(&v[j]));
+            }
             Column::Int(h) => {
                 let v: Vec<crate::types::I> = h.array().iter().copied().collect();
                 order.sort_by_key(|&i| v[i]);
             }
+            Column::Int8(h) => {
+                let v: Vec<i8> = h.array().iter().copied().collect();
+                order.sort_by_key(|&i| v[i]);
+            }
+            Column::Int16(h) => {
+                let v: Vec<i16> = h.array().iter().copied().collect();
+                order.sort_by_key(|&i| v[i]);
+            }
+            Column::Int64(h) => {
+                let v: Vec<i64> = h.array().iter().copied().collect();
+                order.sort_by_key(|&i| v[i]);
+            }
             Column::UInt(h) => {
-                let v: Vec<crate::types::U> = h.array().iter().copied().collect();
+                let v: Vec<crate::types::Idx> = h.array().iter().copied().collect();
                 order.sort_by_key(|&i| v[i]);
             }
             Column::U8(h) => {
                 let v: Vec<u8> = h.array().iter().copied().collect();
+                order.sort_by_key(|&i| v[i]);
+            }
+            Column::UInt16(h) => {
+                let v: Vec<u16> = h.array().iter().copied().collect();
+                order.sort_by_key(|&i| v[i]);
+            }
+            Column::UInt32(h) => {
+                let v: Vec<u32> = h.array().iter().copied().collect();
                 order.sort_by_key(|&i| v[i]);
             }
             Column::Bool(h) => {
@@ -335,6 +372,22 @@ impl Block {
             Column::String(h) => {
                 let v: Vec<&String> = h.array().iter().collect();
                 order.sort_by(|&i, &j| v[i].cmp(v[j]));
+            }
+            Column::Complex64(h) => {
+                let v: Vec<_> = h.array().iter().copied().collect();
+                order.sort_by(|&i, &j| {
+                    v[i].re
+                        .total_cmp(&v[j].re)
+                        .then_with(|| v[i].im.total_cmp(&v[j].im))
+                });
+            }
+            Column::Complex128(h) => {
+                let v: Vec<_> = h.array().iter().copied().collect();
+                order.sort_by(|&i, &j| {
+                    v[i].re
+                        .total_cmp(&v[j].re)
+                        .then_with(|| v[i].im.total_cmp(&v[j].im))
+                });
             }
         }
         if reverse {
@@ -409,12 +462,12 @@ impl Block {
     // Type-specific getters for the compile-time unsigned integer scalar.
 
     /// Gets an immutable reference to a uint array for `key` if present and of correct type.
-    pub fn get_uint(&self, key: &str) -> Option<&ArrayD<crate::types::U>> {
+    pub fn get_uint(&self, key: &str) -> Option<&ArrayD<crate::types::Idx>> {
         self.get(key).and_then(|c| c.as_uint())
     }
 
     /// Gets a mutable reference to a uint array for `key` if present and of correct type.
-    pub fn get_uint_mut(&mut self, key: &str) -> Option<&mut ArrayD<crate::types::U>> {
+    pub fn get_uint_mut(&mut self, key: &str) -> Option<&mut ArrayD<crate::types::Idx>> {
         self.get_mut(key).and_then(|c| c.as_uint_mut())
     }
 
@@ -437,16 +490,16 @@ impl Block {
         self.get(key).and_then(|c| c.as_string())
     }
 
-    /// `key` exists and this build stores floats as `f32`.
+    /// `key` exists and is an `f32` storage column.
     #[inline]
     pub fn has_f32(&self, key: &str) -> bool {
-        self.get_float(key).is_some() && std::mem::size_of::<crate::types::F>() == 4
+        matches!(self.get(key), Some(Column::Float32(_)))
     }
 
-    /// `key` exists and this build stores floats as `f64`.
+    /// `key` exists and is an `f64` storage column.
     #[inline]
     pub fn has_f64(&self, key: &str) -> bool {
-        self.get_float(key).is_some() && std::mem::size_of::<crate::types::F>() == 8
+        matches!(self.get(key), Some(Column::Float(_)))
     }
 
     /// `key` exists and is a signed-int column.
@@ -637,9 +690,6 @@ impl Block {
     /// assert_eq!(block1.nrows(), Some(4));
     /// ```
     pub fn merge(&mut self, other: &Block) -> Result<(), BlockError> {
-        use ndarray::Axis;
-        use ndarray::concatenate;
-
         // If other is empty, nothing to do
         if other.is_empty() {
             return Ok(());
@@ -683,58 +733,47 @@ impl Block {
             // Concatenate based on dtype
             let merged_col = match (self_col, other_col) {
                 (Column::Float(a), Column::Float(b)) => {
-                    let merged = concatenate(Axis(0), &[a.view(), b.view()]).map_err(|e| {
-                        BlockError::validation(format!(
-                            "Failed to concatenate float column '{}': {}",
-                            key, e
-                        ))
-                    })?;
-                    Column::from_float(merged)
+                    concat_pair(a, b, key, "float", Column::from_float)?
+                }
+                (Column::Float16(a), Column::Float16(b)) => {
+                    concat_pair(a, b, key, "f16", Column::from_f16)?
+                }
+                (Column::Float32(a), Column::Float32(b)) => {
+                    concat_pair(a, b, key, "f32", Column::from_f32)?
                 }
                 (Column::Int(a), Column::Int(b)) => {
-                    let merged = concatenate(Axis(0), &[a.view(), b.view()]).map_err(|e| {
-                        BlockError::validation(format!(
-                            "Failed to concatenate int column '{}': {}",
-                            key, e
-                        ))
-                    })?;
-                    Column::from_int(merged)
+                    concat_pair(a, b, key, "int", Column::from_int)?
+                }
+                (Column::Int8(a), Column::Int8(b)) => {
+                    concat_pair(a, b, key, "i8", Column::from_i8)?
+                }
+                (Column::Int16(a), Column::Int16(b)) => {
+                    concat_pair(a, b, key, "i16", Column::from_i16)?
+                }
+                (Column::Int64(a), Column::Int64(b)) => {
+                    concat_pair(a, b, key, "i64", Column::from_i64)?
                 }
                 (Column::UInt(a), Column::UInt(b)) => {
-                    let merged = concatenate(Axis(0), &[a.view(), b.view()]).map_err(|e| {
-                        BlockError::validation(format!(
-                            "Failed to concatenate uint column '{}': {}",
-                            key, e
-                        ))
-                    })?;
-                    Column::from_uint(merged)
+                    concat_pair(a, b, key, "uint", Column::from_uint)?
                 }
-                (Column::U8(a), Column::U8(b)) => {
-                    let merged = concatenate(Axis(0), &[a.view(), b.view()]).map_err(|e| {
-                        BlockError::validation(format!(
-                            "Failed to concatenate u8 column '{}': {}",
-                            key, e
-                        ))
-                    })?;
-                    Column::from_u8(merged)
+                (Column::U8(a), Column::U8(b)) => concat_pair(a, b, key, "u8", Column::from_u8)?,
+                (Column::UInt16(a), Column::UInt16(b)) => {
+                    concat_pair(a, b, key, "u16", Column::from_u16)?
+                }
+                (Column::UInt32(a), Column::UInt32(b)) => {
+                    concat_pair(a, b, key, "u32", Column::from_u32)?
                 }
                 (Column::Bool(a), Column::Bool(b)) => {
-                    let merged = concatenate(Axis(0), &[a.view(), b.view()]).map_err(|e| {
-                        BlockError::validation(format!(
-                            "Failed to concatenate bool column '{}': {}",
-                            key, e
-                        ))
-                    })?;
-                    Column::from_bool(merged)
+                    concat_pair(a, b, key, "bool", Column::from_bool)?
                 }
                 (Column::String(a), Column::String(b)) => {
-                    let merged = concatenate(Axis(0), &[a.view(), b.view()]).map_err(|e| {
-                        BlockError::validation(format!(
-                            "Failed to concatenate string column '{}': {}",
-                            key, e
-                        ))
-                    })?;
-                    Column::from_string(merged)
+                    concat_pair(a, b, key, "string", Column::from_string)?
+                }
+                (Column::Complex64(a), Column::Complex64(b)) => {
+                    concat_pair(a, b, key, "c64", Column::from_c64)?
+                }
+                (Column::Complex128(a), Column::Complex128(b)) => {
+                    concat_pair(a, b, key, "c128", Column::from_c128)?
                 }
                 _ => unreachable!("dtype mismatch already checked"),
             };
@@ -771,6 +810,20 @@ impl IndexMut<&str> for Block {
     }
 }
 
+fn concat_pair<T: Clone>(
+    a: &ColumnHolder<T>,
+    b: &ColumnHolder<T>,
+    key: &str,
+    kind: &str,
+    into: fn(ArrayD<T>) -> Column,
+) -> Result<Column, BlockError> {
+    use ndarray::{Axis, concatenate};
+    let merged = concatenate(Axis(0), &[a.view(), b.view()]).map_err(|e| {
+        BlockError::validation(format!("Failed to concatenate {kind} column '{key}': {e}"))
+    })?;
+    Ok(into(merged))
+}
+
 /// Reject a write that violates the canonical column vocabulary.
 ///
 /// Keyed by column name alone, which is what lets this fire from `Block` —
@@ -778,11 +831,46 @@ impl IndexMut<&str> for Block {
 /// `bonds`, but `atomi` is `UInt` in either. See
 /// [`crate::store::schema`] for why a key that seems to need two dtypes is
 /// two keys.
+/// Identifiers (`id`, `atomi`, `type_id`, …) are [`Idx`]. A caller that
+/// hands us a narrower unsigned array is naming the same quantity; store it
+/// at identifier width so `get_uint` and the writers that consume it agree.
+fn promote_canonical_uint(key: &str, col: Column) -> Column {
+    use crate::types::Idx;
+    let Some(spec) = crate::store::schema::column(key) else {
+        return col;
+    };
+    if spec.dtype != DType::UInt {
+        return col;
+    }
+    match col {
+        Column::UInt(_) => col,
+        Column::U8(h) => Column::from_uint(h.array().mapv(Idx::from)),
+        Column::UInt16(h) => Column::from_uint(h.array().mapv(Idx::from)),
+        Column::UInt32(h) => Column::from_uint(h.array().mapv(Idx::from)),
+        other => other,
+    }
+}
+
+fn schema_dtype_admits(expected: DType, got: DType) -> bool {
+    // The vocabulary names a quantity, not a storage width. `x` is a float
+    // coordinate: f16/f32/f64 are all that quantity. Silent *family* changes
+    // (float to int) stay illegal.
+    match expected {
+        DType::Float => matches!(got, DType::Float | DType::Float16 | DType::Float32),
+        DType::Int => matches!(got, DType::Int | DType::Int8 | DType::Int16 | DType::Int64),
+        DType::UInt => matches!(got, DType::UInt | DType::U8 | DType::UInt16 | DType::UInt32),
+        DType::Complex64 | DType::Complex128 => {
+            matches!(got, DType::Complex64 | DType::Complex128)
+        }
+        other => other == got,
+    }
+}
+
 fn check_schema(key: &str, dtype: DType, shape: &[usize]) -> Result<(), BlockError> {
     let Some(spec) = crate::store::schema::column(key) else {
         return Ok(());
     };
-    if spec.dtype != dtype {
+    if !schema_dtype_admits(spec.dtype, dtype) {
         return Err(BlockError::SchemaDtype {
             key: key.to_string(),
             expected: spec.dtype,
@@ -802,13 +890,13 @@ fn check_schema(key: &str, dtype: DType, shape: &[usize]) -> Result<(), BlockErr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{F, I, U};
+    use crate::types::{F, I, Idx};
     use ndarray::Array1;
 
     #[test]
     fn test_select_rows_and_sort() {
         let mut b = Block::new();
-        b.insert("id", Array1::from_vec(vec![3 as U, 1, 2]).into_dyn())
+        b.insert("id", Array1::from_vec(vec![3 as Idx, 1, 2]).into_dyn())
             .unwrap();
         b.insert("x", Array1::from_vec(vec![3.5 as F, 1.5, 2.5]).into_dyn())
             .unwrap();
@@ -1094,14 +1182,14 @@ mod tests {
             .insert("x", Array1::from_vec(vec![1.0 as F, 2.0 as F]).into_dyn())
             .unwrap();
         block1
-            .insert("id", Array1::from_vec(vec![10 as U, 20]).into_dyn())
+            .insert("id", Array1::from_vec(vec![10 as Idx, 20]).into_dyn())
             .unwrap();
 
         block2
             .insert("x", Array1::from_vec(vec![3.0 as F, 4.0 as F]).into_dyn())
             .unwrap();
         block2
-            .insert("id", Array1::from_vec(vec![30 as U, 40]).into_dyn())
+            .insert("id", Array1::from_vec(vec![30 as Idx, 40]).into_dyn())
             .unwrap();
 
         block1.merge(&block2).unwrap();
@@ -1150,7 +1238,7 @@ mod tests {
             .insert("x", Array1::from_vec(vec![1.0 as F, 2.0 as F]).into_dyn())
             .unwrap();
         block
-            .insert("id", Array1::from_vec(vec![1 as U, 2]).into_dyn())
+            .insert("id", Array1::from_vec(vec![1 as Idx, 2]).into_dyn())
             .unwrap();
         block
             .insert("res_seq", Array1::from_vec(vec![1 as I, 2]).into_dyn())
@@ -1183,7 +1271,10 @@ mod tests {
             )
             .unwrap();
         block
-            .insert("id", Array1::from_vec(vec![10 as U, 20, 30, 40]).into_dyn())
+            .insert(
+                "id",
+                Array1::from_vec(vec![10 as Idx, 20, 30, 40]).into_dyn(),
+            )
             .unwrap();
 
         block.resize(2).unwrap();
@@ -1202,7 +1293,7 @@ mod tests {
             .insert("x", Array1::from_vec(vec![1.0 as F, 2.0]).into_dyn())
             .unwrap();
         block
-            .insert("id", Array1::from_vec(vec![10 as U, 20]).into_dyn())
+            .insert("id", Array1::from_vec(vec![10 as Idx, 20]).into_dyn())
             .unwrap();
 
         block.resize(4).unwrap();
@@ -1286,7 +1377,7 @@ mod tests {
             .insert("x", Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn())
             .unwrap();
         block
-            .insert("id", Array1::from_vec(vec![10 as U, 20, 30]).into_dyn())
+            .insert("id", Array1::from_vec(vec![10 as Idx, 20, 30]).into_dyn())
             .unwrap();
         block
             .insert("mask", Array1::from_vec(vec![true, false, true]).into_dyn())

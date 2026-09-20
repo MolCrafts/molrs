@@ -1,18 +1,21 @@
 //! CVFF improper (LAMMPS `improper_style cvff`):
 //!
-//! E(χ) = K · [1 + d · cos(n·χ)]
+//! E(χ) = k · [1 + s · cos(n·χ)]
 //!
-//! `d = ±1` and `n` is an integer multiplicity. The improper angle χ is the
+//! `sign` is s = ±1 (a sign, **not** a phase — hence its own canonical name)
+//! and `periodicity` is the integer multiplicity n. The improper angle χ is the
 //! dihedral angle defined by the quadruple I-J-K-L, so the geometry reuses the
 //! shared dihedral routines.
 
 use std::collections::HashMap;
 
+use ndarray::{Array2, ArrayView2};
+
 use crate::ff::forcefield::Params;
-use crate::ff::potential::Potential;
 use crate::ff::potential::geometry::{
-    accumulate_dihedral_forces, compute_dihedral, validate_coords,
+    accumulate_dihedral_forces, compute_dihedral, term_table, validate_coords,
 };
+use crate::ff::potential::{IndexedTerms, Member, Potential};
 use molrs::store::frame::Frame;
 use molrs::types::F;
 
@@ -27,27 +30,82 @@ pub struct ImproperCvff {
     n: Vec<F>,
 }
 
-impl Potential for ImproperCvff {
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
+impl ImproperCvff {
+    /// The physics, once. Which atoms a term names is the only thing
+    /// that differs between the two entry points, so it is the only thing
+    /// passed in — a second copy of the loop would be a second place for
+    /// the force expression to drift.
+    fn fold(
+        &self,
+        coords: &[F],
+        out: &mut [F],
+        n_terms: usize,
+        atoms: impl Fn(usize) -> (usize, usize, usize, usize),
+    ) -> F {
         let _n = validate_coords(coords);
         let mut energy: F = 0.0;
-        let mut forces = vec![0.0 as F; coords.len()];
+        let forces = out;
 
-        for idx in 0..self.atom_i.len() {
-            let (i, j, k, l) = (
-                self.atom_i[idx],
-                self.atom_j[idx],
-                self.atom_k[idx],
-                self.atom_l[idx],
-            );
+        for idx in 0..n_terms {
+            let (i, j, k, l) = atoms(idx);
             let chi = compute_dihedral(coords, i, j, k, l);
             let (ki, di, ni) = (self.k[idx], self.d[idx], self.n[idx]);
             energy += ki * (1.0 + di * (ni * chi).cos());
             // dE/dχ = −K·d·n·sin(n·χ)
             let de_dchi = -ki * di * ni * (ni * chi).sin();
-            accumulate_dihedral_forces(coords, i, j, k, l, de_dchi, &mut forces);
+            accumulate_dihedral_forces(coords, i, j, k, l, de_dchi, forces);
         }
-        (energy, forces)
+        energy
+    }
+}
+
+impl Potential for ImproperCvff {
+    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
+        let mut out = vec![0.0; coords.len()];
+        let energy = self.accumulate(coords, &mut out);
+        (energy, out)
+    }
+
+    fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
+        self.fold(coords, out, self.atom_i.len(), |t| {
+            (
+                self.atom_i[t],
+                self.atom_j[t],
+                self.atom_k[t],
+                self.atom_l[t],
+            )
+        })
+    }
+}
+
+impl IndexedTerms for ImproperCvff {
+    fn terms(&self) -> Array2<u32> {
+        term_table(&[&self.atom_i, &self.atom_j, &self.atom_k, &self.atom_l])
+    }
+    fn calc_energy_forces_with_terms(
+        &self,
+        coords: &[F],
+        terms: ArrayView2<'_, u32>,
+    ) -> (F, Vec<F>) {
+        let mut out = vec![0.0; coords.len()];
+        let energy = self.accumulate_with_terms(coords, terms, &mut out);
+        (energy, out)
+    }
+
+    fn accumulate_with_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, out: &mut [F]) -> F {
+        debug_assert_eq!(
+            terms.nrows(),
+            self.atom_i.len(),
+            "the row set is the force field's; only the atoms a row names may be rebound"
+        );
+        self.fold(coords, out, terms.nrows(), |t| {
+            (
+                terms[[t, 0]] as usize,
+                terms[[t, 1]] as usize,
+                terms[[t, 2]] as usize,
+                terms[[t, 3]] as usize,
+            )
+        })
     }
 }
 
@@ -57,7 +115,7 @@ pub fn improper_cvff_ctor(
     _sp: &Params,
     tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
+) -> Result<Member, String> {
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
     let block = frame
         .get("impropers")
@@ -90,10 +148,13 @@ pub fn improper_cvff_ctor(
         ak.push(kc[idx] as usize);
         al.push(lc[idx] as usize);
         kk.push(p.get("k").ok_or("improper_cvff: missing k")? as F);
-        dd.push(p.get("d").ok_or("improper_cvff: missing d")? as F);
-        nn.push(p.get("n").ok_or("improper_cvff: missing n")? as F);
+        dd.push(p.get("sign").ok_or("improper_cvff: missing sign")? as F);
+        nn.push(
+            p.get("periodicity")
+                .ok_or("improper_cvff: missing periodicity")? as F,
+        );
     }
-    Ok(Box::new(ImproperCvff {
+    Ok(Member::indexed(ImproperCvff {
         atom_i: ai,
         atom_j: aj,
         atom_k: ak,

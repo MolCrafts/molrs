@@ -73,3 +73,48 @@ pub fn smooth_bounds_tol(bounds: &mut BoundsMatrix, tol: f64) -> Result<(), MolR
 pub fn smooth_bounds(bounds: &mut BoundsMatrix) -> Result<(), MolRsError> {
     smooth_bounds_tol(bounds, 0.0)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Three points: (0,1) and (1,2) tightly bounded, (0,2) wide open.
+    fn open_triangle() -> BoundsMatrix {
+        let mut b = BoundsMatrix::new(3, 0.0);
+        b.set_lower(0, 1, 1.0);
+        b.set_upper(0, 1, 1.0);
+        b.set_lower(1, 2, 2.0);
+        b.set_upper(1, 2, 2.0);
+        b.set_lower(0, 2, 0.0);
+        b.set_upper(0, 2, 100.0);
+        b
+    }
+
+    #[test]
+    fn the_triangle_inequality_closes_the_open_pair() {
+        let mut b = open_triangle();
+        smooth_bounds(&mut b).unwrap();
+        // upper(0,2) ≤ upper(0,1) + upper(1,2); lower(0,2) ≥ lower(1,2) − upper(0,1).
+        assert_eq!(b.upper(0, 2), 3.0);
+        assert_eq!(b.lower(0, 2), 1.0);
+        // The tight pairs are untouched.
+        assert_eq!((b.lower(0, 1), b.upper(0, 1)), (1.0, 1.0));
+        assert_eq!((b.lower(1, 2), b.upper(1, 2)), (2.0, 2.0));
+    }
+
+    #[test]
+    fn inconsistent_bounds_are_an_error() {
+        let mut b = open_triangle();
+        // (0,2) must be at least 5 apart, but the path 0-1-2 spans at most 3.
+        b.set_lower(0, 2, 5.0);
+        assert!(smooth_bounds(&mut b).is_err());
+    }
+
+    #[test]
+    fn a_small_inversion_inside_the_tolerance_is_snapped_not_refused() {
+        let mut b = open_triangle();
+        b.set_lower(0, 2, 3.01);
+        assert!(smooth_bounds_tol(&mut b, 0.01).is_ok());
+        assert_eq!(b.upper(0, 2), b.lower(0, 2));
+    }
+}

@@ -14,7 +14,7 @@ use molrs::compute::distribution::{
     DistributionResult,
 };
 use molrs::compute::{
-    Acf, AcfResult, DensityGrid, DistKind, DomainAnalysis, GridSpec, HBondCriterion, HBonds,
+    AcfResult, DensityGrid, DistKind, DomainAnalysis, GridSpec, HBondCriterion, HBonds,
     HBondsResult, LegendreReorientation, LegendreReorientationResult, MolecularMoments,
     RadicalVoronoi, SpatialDistribution, SpatialDistributionResult, VanHove, VanHoveResult,
     VoidAnalysis, VoronoiCells, VoronoiIntegration, polarizability_finite_field,
@@ -94,6 +94,13 @@ impl PyDistributionResult {
 
 /// Angular distribution function (ADF) over atom triplets (angle at the middle
 /// atom). Ported from the reference implementation; the sin θ correction is exposed separately.
+///
+/// Bounds are **radians**. Omit both and the observable's own range `[0, π]` is
+/// used — an unsigned angle between two vectors cannot exceed π.
+///
+/// The sin θ correction divides by a vanishing quantity at both ends, so the
+/// corrected density amplifies counting noise near θ = 0 and θ = π: at
+/// `n_bins=180` the first bin divides by `sin(0.5°) = 0.0087`, a 115× gain.
 #[pyclass(module = "molrs.compute.distribution", name = "AngleDistribution")]
 pub struct PyAngleDistribution {
     inner: DistributionFunction<AngleObservable>,
@@ -102,10 +109,19 @@ pub struct PyAngleDistribution {
 #[pymethods]
 impl PyAngleDistribution {
     #[new]
-    #[pyo3(signature = (n_bins, min=0.0, max=180.0))]
-    fn new(n_bins: usize, min: NpF, max: NpF) -> PyResult<Self> {
-        let inner =
-            DistributionFunction::new(AngleObservable, n_bins, min, max).map_err(py_value_err)?;
+    #[pyo3(signature = (n_bins, min=None, max=None))]
+    fn new(n_bins: usize, min: Option<NpF>, max: Option<NpF>) -> PyResult<Self> {
+        let inner = match (min, max) {
+            (None, None) => DistributionFunction::over_natural_range(AngleObservable, n_bins),
+            (Some(min), Some(max)) => DistributionFunction::new(AngleObservable, n_bins, min, max),
+            _ => {
+                return Err(PyValueError::new_err(
+                    "AngleDistribution: supply both `min` and `max` (radians), or neither \
+                     to use the observable's natural range [0, pi]",
+                ));
+            }
+        }
+        .map_err(py_value_err)?;
         Ok(Self { inner })
     }
 
@@ -125,6 +141,14 @@ impl PyAngleDistribution {
 }
 
 /// Dihedral distribution function (DDF) over atom quadruplets.
+///
+/// Bounds are **radians**. Omit both and the observable's own range `(−π, π]`
+/// is used. The default stays **signed**: folding to `|φ|` would collapse g+
+/// onto g− and destroy chirality-sensitive conformer populations, and the fold
+/// cannot be undone.
+///
+/// No sin correction applies — at fixed bond geometry the residual freedom is
+/// SO(2), whose invariant measure is `dφ`.
 #[pyclass(module = "molrs.compute.distribution", name = "DihedralDistribution")]
 pub struct PyDihedralDistribution {
     inner: DistributionFunction<DihedralObservable>,
@@ -133,10 +157,21 @@ pub struct PyDihedralDistribution {
 #[pymethods]
 impl PyDihedralDistribution {
     #[new]
-    #[pyo3(signature = (n_bins, min=-180.0, max=180.0))]
-    fn new(n_bins: usize, min: NpF, max: NpF) -> PyResult<Self> {
-        let inner = DistributionFunction::new(DihedralObservable, n_bins, min, max)
-            .map_err(py_value_err)?;
+    #[pyo3(signature = (n_bins, min=None, max=None))]
+    fn new(n_bins: usize, min: Option<NpF>, max: Option<NpF>) -> PyResult<Self> {
+        let inner = match (min, max) {
+            (None, None) => DistributionFunction::over_natural_range(DihedralObservable, n_bins),
+            (Some(min), Some(max)) => {
+                DistributionFunction::new(DihedralObservable, n_bins, min, max)
+            }
+            _ => {
+                return Err(PyValueError::new_err(
+                    "DihedralDistribution: supply both `min` and `max` (radians), or neither \
+                     to use the observable's natural range (-pi, pi]",
+                ));
+            }
+        }
+        .map_err(py_value_err)?;
         Ok(Self { inner })
     }
 
@@ -432,15 +467,13 @@ impl PyAcfResult {
 /// --------
 /// >>> molrs.Acf().compute(velocities, max_lag=50).acf
 #[pyclass(module = "molrs.compute.dynamics", name = "Acf")]
-pub struct PyAcf {
-    inner: Acf,
-}
+pub struct PyAcf;
 
 #[pymethods]
 impl PyAcf {
     #[new]
     fn new() -> Self {
-        Self { inner: Acf }
+        Self
     }
 
     /// Compute ``C(t)`` for a ``(n_frames, n_entities, n_components)`` series.
@@ -510,7 +543,7 @@ impl PyLegendreReorientation {
         let tuples: Vec<(u32, u32)> = (0..groups.len())
             .map(|i| {
                 let t = groups.tuple(i);
-                (t[0], t[1])
+                (t[0] as u32, t[1] as u32)
             })
             .collect();
         let inner = self.inner.compute(&refs, &tuples).map_err(py_value_err)?;

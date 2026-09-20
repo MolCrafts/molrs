@@ -171,8 +171,8 @@ impl NeighborQuery {
     /// full per-point neighborhood for cross), so no re-sort happens.
     ///
     /// A caller that only ever asks this question should hold a
-    /// [`NeighborList`] instead: it can re-index moved coordinates with
-    /// [`update`](NeighborList::update), stream pairs without materializing a
+    /// [`super::NeighborList`] instead: it can re-index moved coordinates with
+    /// [`update`](super::NeighborList::update), stream pairs without materializing a
     /// table, and choose which columns a table keeps.
     pub fn query_self(&self) -> Neighbors {
         let mut out = Neighbors::empty(

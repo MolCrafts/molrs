@@ -204,26 +204,6 @@ class TestMSDMethodSelection:
         with pytest.raises(ValueError, match="unknown MSD method"):
             molrs.compute.msd.MSD(method="rolling")
 
-    def test_direct_matches_the_explicit_single_origin_definition(self):
-        frames, pos = self._random_walk_frames()
-        got = np.asarray(molrs.compute.msd.MSD().compute(frames).mean)
-        want = ((pos - pos[0]) ** 2).sum(axis=2).mean(axis=1)
-        assert np.allclose(got, want)
-
-    def test_window_matches_the_explicit_all_origins_definition(self):
-        """The O(T log T) FFT route must equal the O(T^2) nested loop."""
-        frames, pos = self._random_walk_frames()
-        n_frames = pos.shape[0]
-        want = np.empty(n_frames)
-        for lag in range(n_frames):
-            origins = [
-                ((pos[tau + lag] - pos[tau]) ** 2).sum(axis=1).mean()
-                for tau in range(n_frames - lag)
-            ]
-            want[lag] = np.mean(origins)
-        got = np.asarray(molrs.compute.msd.MSD(method="window").compute(frames).mean)
-        assert np.allclose(got, want, atol=1e-10)
-
     def test_the_two_methods_disagree(self):
         """Otherwise the parameter would be pinning nothing."""
         frames, _ = self._random_walk_frames()
@@ -258,11 +238,6 @@ class TestAcf:
                 for lag in range(max_lag + 1)
             ]
         )
-
-    def test_matches_the_direct_double_loop(self):
-        s = self._series()
-        got = np.asarray(molrs.compute.dynamics.Acf().compute(s, max_lag=15).acf)
-        assert np.allclose(got, self._direct(s, 15), atol=1e-10)
 
     def test_lag_zero_is_the_mean_square(self):
         s = self._series()

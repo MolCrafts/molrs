@@ -4,10 +4,10 @@
 //! correction, and reciprocal-space (via 3D FFT built from 1D `rustfft`).
 //!
 //! Registered in [`KernelRegistry`](crate::ff::potential::KernelRegistry) as
-//! `("kspace", "pme")`.
+//! `("pair", "coul/long/pme")`.
 //! The constructor reads charges from `frame["atoms"]["charge"]` (float),
 //! box vectors from style_params (`box_xx`, `box_yy`, `box_zz`, etc.),
-//! and exclusion pairs from `frame["exclusions"]` (i, j columns).
+//! and exclusion pairs from `frame["exclusions"]` (`atomi`, `atomj` columns).
 
 use std::sync::{Arc, Mutex};
 
@@ -15,7 +15,8 @@ use rustfft::num_complex::Complex;
 use rustfft::{Fft, FftPlanner};
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::Potential;
+use crate::ff::potential::{Member, Potential};
+use molrs::spatial::simbox::Mic;
 use molrs::store::frame::Frame;
 use molrs::types::F;
 
@@ -71,6 +72,10 @@ struct PmeScratch {
     grid: Vec<Complex<F>>,        // Kx*Ky*Kz complex grid
     buf: Vec<Complex<F>>,         // temp for 1D FFT rows
     fft_scratch: Vec<Complex<F>>, // rustfft scratch
+    /// One atom's B-spline weights (`order` entries), reused across atoms.
+    spline: Vec<[F; 3]>,
+    /// Their derivatives, same shape.
+    dspline: Vec<[F; 3]>,
 }
 
 // ---------------------------------------------------------------------------
@@ -90,6 +95,9 @@ pub struct PmePotential {
     bspline_moduli: [Vec<F>; 3],
     fft_plans: FftPlans,
     scratch: Mutex<PmeScratch>,
+    /// Minimum-image convention of the box, the same kernel every other
+    /// pair loop in molrs uses (`SimBox::mic`).
+    mic: Mic,
 }
 
 impl PmePotential {
@@ -109,6 +117,28 @@ impl PmePotential {
         let h = box_vectors;
         let recip_h = invert_box_vectors(&h);
         let volume = h[0][0] * h[1][1] * h[2][2]; // lower-triangular determinant
+        // `h` keeps the lattice vectors as rows; `Mic` wants them as columns.
+        let mic = if h[1][0] == 0.0 && h[2][0] == 0.0 && h[2][1] == 0.0 {
+            Mic::Ortho {
+                len: [h[0][0], h[1][1], h[2][2]],
+                inv_len: [1.0 / h[0][0], 1.0 / h[1][1], 1.0 / h[2][2]],
+                pbc: [true; 3],
+            }
+        } else {
+            let mut hc = [0.0; 9];
+            let mut inv = [0.0; 9];
+            for i in 0..3 {
+                for j in 0..3 {
+                    hc[3 * i + j] = h[j][i];
+                    inv[3 * i + j] = recip_h[j][i];
+                }
+            }
+            Mic::Triclinic {
+                h: hc,
+                inv,
+                pbc: [true; 3],
+            }
+        };
 
         // Self energy: -α/√π * C * Σq²
         let sum_q2: F = charges.iter().map(|q| q * q).sum();
@@ -152,6 +182,8 @@ impl PmePotential {
             grid: vec![zero; grid_len],
             buf: vec![zero; max_dim],
             fft_scratch: vec![zero; max_fft_scratch],
+            spline: vec![[0.0; 3]; params.order],
+            dspline: vec![[0.0; 3]; params.order],
         });
 
         Self {
@@ -166,6 +198,7 @@ impl PmePotential {
             bspline_moduli,
             fft_plans,
             scratch,
+            mic,
         }
     }
 
@@ -309,20 +342,20 @@ impl PmePotential {
         let mut scratch = self.scratch.lock().unwrap();
         let sqrt_coulomb = self.params.coulomb.sqrt();
 
-        // Zero the grid
-        let zero = Complex::new(0.0, 0.0);
-        for c in scratch.grid.iter_mut() {
-            *c = zero;
-        }
+        scratch.grid.fill(Complex::new(0.0, 0.0));
 
         // Spread charges onto grid
-        self.spread_charges(coords, &mut scratch.grid, sqrt_coulomb);
+        {
+            let PmeScratch { grid, spline, .. } = &mut *scratch;
+            self.spread_charges(coords, grid, spline, sqrt_coulomb);
+        }
 
         // Forward 3D FFT — destructure to satisfy borrow checker
         let PmeScratch {
             ref mut grid,
             ref mut buf,
             ref mut fft_scratch,
+            ..
         } = *scratch;
         self.fft_3d_forward(grid, buf, fft_scratch);
 
@@ -335,14 +368,13 @@ impl PmePotential {
         let mut scratch = self.scratch.lock().unwrap();
         let sqrt_coulomb = self.params.coulomb.sqrt();
 
-        // Zero the grid
-        let zero = Complex::new(0.0, 0.0);
-        for c in scratch.grid.iter_mut() {
-            *c = zero;
-        }
+        scratch.grid.fill(Complex::new(0.0, 0.0));
 
         // Spread charges
-        self.spread_charges(coords, &mut scratch.grid, sqrt_coulomb);
+        {
+            let PmeScratch { grid, spline, .. } = &mut *scratch;
+            self.spread_charges(coords, grid, spline, sqrt_coulomb);
+        }
 
         // Forward FFT
         {
@@ -350,6 +382,7 @@ impl PmePotential {
                 ref mut grid,
                 ref mut buf,
                 ref mut fft_scratch,
+                ..
             } = *scratch;
             self.fft_3d_forward(grid, buf, fft_scratch);
         }
@@ -363,24 +396,37 @@ impl PmePotential {
                 ref mut grid,
                 ref mut buf,
                 ref mut fft_scratch,
+                ..
             } = *scratch;
             self.fft_3d_inverse(grid, buf, fft_scratch);
         }
 
         // Interpolate forces from grid
-        self.interpolate_forces(coords, &scratch.grid, sqrt_coulomb, grad);
+        let PmeScratch {
+            grid,
+            spline,
+            dspline,
+            ..
+        } = &mut *scratch;
+        self.interpolate_forces(coords, grid, spline, dspline, sqrt_coulomb, grad);
     }
 
     // -----------------------------------------------------------------------
     // Charge spreading
     // -----------------------------------------------------------------------
 
-    fn spread_charges(&self, coords: &[F], grid: &mut [Complex<F>], sqrt_coulomb: F) {
+    fn spread_charges(
+        &self,
+        coords: &[F],
+        grid: &mut [Complex<F>],
+        data: &mut [[F; 3]],
+        sqrt_coulomb: F,
+    ) {
         let [kx, ky, kz] = self.params.grid_size;
         let order = self.params.order;
 
         for atom in 0..self.n_atoms {
-            let (grid_index, data) = self.compute_spline(coords, atom);
+            let grid_index = self.compute_spline(coords, atom, data);
 
             for ix in 0..order {
                 let xindex = (grid_index[0] + ix) % kx;
@@ -406,6 +452,8 @@ impl PmePotential {
         &self,
         coords: &[F],
         grid: &[Complex<F>],
+        data: &mut [[F; 3]],
+        ddata: &mut [[F; 3]],
         sqrt_coulomb: F,
         grad: &mut [F],
     ) {
@@ -413,7 +461,7 @@ impl PmePotential {
         let order = self.params.order;
 
         for atom in 0..self.n_atoms {
-            let (grid_index, data, ddata) = self.compute_spline_with_deriv(coords, atom);
+            let grid_index = self.compute_spline_with_deriv(coords, atom, data, ddata);
 
             let mut dpos = [0.0 as F; 3];
             for ix in 0..order {
@@ -604,8 +652,9 @@ impl PmePotential {
     // B-spline computation
     // -----------------------------------------------------------------------
 
-    /// Compute B-spline coefficients for an atom. Returns `(grid_index[3], data[order][3])`.
-    fn compute_spline(&self, coords: &[F], atom: usize) -> ([usize; 3], Vec<[F; 3]>) {
+    /// Fill `data` (`order` rows) with an atom's B-spline coefficients and
+    /// return its grid index.
+    fn compute_spline(&self, coords: &[F], atom: usize, data: &mut [[F; 3]]) -> [usize; 3] {
         let order = self.params.order;
         let gs = self.params.grid_size;
         let pos = [coords[atom * 3], coords[atom * 3 + 1], coords[atom * 3 + 2]];
@@ -632,19 +681,19 @@ impl PmePotential {
             grid_index[i] = ti % gs[i];
         }
 
-        // B-spline coefficients
-        let mut data = vec![[0.0 as F; 3]; order];
-        bspline_fill(&mut data, &dr, order);
-
-        (grid_index, data)
+        bspline_fill(data, &dr, order);
+        grid_index
     }
 
-    /// Compute B-spline coefficients AND derivatives for an atom.
+    /// Like [`compute_spline`](Self::compute_spline), also filling `ddata`
+    /// with the derivatives.
     fn compute_spline_with_deriv(
         &self,
         coords: &[F],
         atom: usize,
-    ) -> ([usize; 3], Vec<[F; 3]>, Vec<[F; 3]>) {
+        data: &mut [[F; 3]],
+        ddata: &mut [[F; 3]],
+    ) -> [usize; 3] {
         let order = self.params.order;
         let gs = self.params.grid_size;
         let pos = [coords[atom * 3], coords[atom * 3 + 1], coords[atom * 3 + 2]];
@@ -669,11 +718,8 @@ impl PmePotential {
             grid_index[i] = ti % gs[i];
         }
 
-        let mut data = vec![[0.0 as F; 3]; order];
-        let mut ddata = vec![[0.0 as F; 3]; order];
-        bspline_fill_with_deriv(&mut data, &mut ddata, &dr, order);
-
-        (grid_index, data, ddata)
+        bspline_fill_with_deriv(data, ddata, &dr, order);
+        grid_index
     }
 
     // -----------------------------------------------------------------------
@@ -682,24 +728,12 @@ impl PmePotential {
 
     /// Minimum-image displacement vector from atom i to atom j.
     fn min_image_delta(&self, coords: &[F], i: usize, j: usize) -> (F, F, F) {
-        let mut dx = coords[j * 3] - coords[i * 3];
-        let mut dy = coords[j * 3 + 1] - coords[i * 3 + 1];
-        let mut dz = coords[j * 3 + 2] - coords[i * 3 + 2];
-
-        // Apply minimum image convention for lower-triangular box
-        let sz = (dz / self.h[2][2]).round();
-        dx -= sz * self.h[2][0];
-        dy -= sz * self.h[2][1];
-        dz -= sz * self.h[2][2];
-
-        let sy = (dy / self.h[1][1]).round();
-        dx -= sy * self.h[1][0];
-        dy -= sy * self.h[1][1];
-
-        let sx = (dx / self.h[0][0]).round();
-        dx -= sx * self.h[0][0];
-
-        (dx, dy, dz)
+        let d = self.mic.apply([
+            coords[j * 3] - coords[i * 3],
+            coords[j * 3 + 1] - coords[i * 3 + 1],
+            coords[j * 3 + 2] - coords[i * 3 + 2],
+        ]);
+        (d[0], d[1], d[2])
     }
 
     /// Raw displacement from atom i to atom j (no minimum image).
@@ -854,12 +888,12 @@ fn compute_bspline_moduli(grid_size: usize, order: usize) -> Vec<F> {
 ///
 /// **`frame`** blocks:
 /// - `"atoms"` with `"charge"` column (f64/f32) — per-atom charges.
-/// - `"exclusions"` with `"i"`, `"j"` columns (u32) — exclusion pairs.
+/// - `"exclusions"` with `"atomi"`, `"atomj"` columns (u32) — exclusion pairs.
 pub fn pme_ctor(
     style_params: &Params,
     _type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
+) -> Result<Member, String> {
     let alpha = style_params.get("alpha").ok_or("PME: missing 'alpha'")? as F;
     let cutoff = style_params.get("cutoff").ok_or("PME: missing 'cutoff'")? as F;
     let grid_x = style_params.get("grid_x").ok_or("PME: missing 'grid_x'")? as usize;
@@ -914,7 +948,7 @@ pub fn pme_ctor(
         coulomb,
     };
 
-    Ok(Box::new(PmePotential::new(
+    Ok(Member::plain(PmePotential::new(
         params,
         charges,
         box_vectors,
@@ -1099,7 +1133,7 @@ mod tests {
 
         let coords: Vec<F> = vec![2.0, 3.0, 4.0, 5.0, 3.5, 4.5, 7.0, 6.0, 5.0];
 
-        let forces = pme.calc_forces(&coords);
+        let forces = pme.calc_energy_forces(&coords).1;
 
         let eps: F = 1e-3;
         for idx in 0..9 {
@@ -1136,7 +1170,7 @@ mod tests {
         let pme = PmePotential::new(params, charges, cubic_box(box_l), exclusions);
 
         let coords: Vec<F> = vec![1.0, 2.0, 3.0, 4.0, 2.5, 3.5, 6.0, 7.0, 2.0, 8.0, 7.5, 2.5];
-        let forces = pme.calc_forces(&coords);
+        let forces = pme.calc_energy_forces(&coords).1;
 
         for dim in 0..3 {
             let sum: F = (0..4).map(|a| forces[a * 3 + dim]).sum();
@@ -1149,7 +1183,7 @@ mod tests {
     #[test]
     fn test_pme_in_potentials_collection() {
         use crate::ff::potential::Potentials;
-        use crate::ff::potential::pair::lj_cut::PairLJCut;
+        use crate::ff::potential::pair::lj_cut::LJCut;
 
         let box_l: F = 10.0;
         let params = PmeParams {
@@ -1162,11 +1196,11 @@ mod tests {
         let charges = vec![0.5, -0.5];
         let pme = PmePotential::new(params, charges, cubic_box(box_l), vec![]);
 
-        let lj = PairLJCut::new(vec![0], vec![1], vec![1.0], vec![1.0]);
+        let lj = LJCut::compiled(vec![0], vec![1], vec![1.0], vec![1.0]);
 
         let mut pots = Potentials::new();
-        pots.push(Box::new(pme));
-        pots.push(Box::new(lj));
+        pots.push(Member::plain(pme));
+        pots.push(Member::pair(lj));
 
         let coords: Vec<F> = vec![
             box_l / 2.0,

@@ -19,6 +19,7 @@ callers reach for; the submodule path stays available when you need to say
 from __future__ import annotations
 
 from . import charge, forcefield, potential, typifier
+from .potential import Potential
 from .._lib import (
     FragmentScaling as FragmentScaling,
     Potentials as Potentials,
@@ -83,6 +84,7 @@ __all__ = [
     "forcefield",
     "potential",
     "typifier",
+    "Potential",
     # force field + its handle views
     "ForceField",
     "Style",

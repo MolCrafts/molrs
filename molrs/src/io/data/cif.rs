@@ -3,7 +3,7 @@
 //! This implementation covers the CIF subset most molecular work needs:
 //!
 //! - `data_<id>` blocks. Multi-block files yield one [`Frame`] per
-//!   [`CifReader::read_frame`] call.
+//!   [`CifReader::read`] call.
 //! - Key-value pairs `_key  value`, including parenthesized esd (`5.917(3)`).
 //! - `loop_` tables. Only `_atom_site_*` (small-molecule CIF) and
 //!   `_atom_site.*` (mmCIF) loops are extracted into an atoms block — all
@@ -33,7 +33,7 @@ use molrs::spatial::simbox::SimBox;
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
 use molrs::store::meta::MetaMap;
-use molrs::types::{F, I, U};
+use molrs::types::{F, I, Idx};
 
 use crate::io::reader::{FrameReader, Reader};
 use crate::io::writer::{FrameWriter, Writer};
@@ -73,7 +73,7 @@ fn insert_i32_col(block: &mut Block, key: &str, vals: Vec<I>) -> Result<()> {
     block.insert(key, arr).map_err(invalid_data)
 }
 
-fn insert_u32_col(block: &mut Block, key: &str, vals: Vec<U>) -> Result<()> {
+fn insert_u32_col(block: &mut Block, key: &str, vals: Vec<Idx>) -> Result<()> {
     let n = vals.len();
     let arr = Array1::from_vec(vals)
         .into_shape_with_order(IxDyn(&[n]))
@@ -519,12 +519,12 @@ fn column_i32(map: &HashMap<String, Vec<String>>, keys: &[&str], missing: I) -> 
     None
 }
 
-fn column_u32(map: &HashMap<String, Vec<String>>, keys: &[&str]) -> Option<Vec<U>> {
+fn column_u32(map: &HashMap<String, Vec<String>>, keys: &[&str]) -> Option<Vec<Idx>> {
     for k in keys {
         if let Some(col) = map.get(*k) {
             return Some(
                 col.iter()
-                    .map(|s| s.trim().parse::<U>().unwrap_or(0))
+                    .map(|s| s.trim().parse::<Idx>().unwrap_or(0))
                     .collect(),
             );
         }

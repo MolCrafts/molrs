@@ -278,6 +278,12 @@ impl<K: Key> EntityTable<K> {
         self.cols.get(key).map(Column::validity)
     }
 
+    /// The typed column `key` together with its validity, or `None` when no
+    /// entity has ever carried the component.
+    pub fn column(&self, key: &str) -> Option<&Column> {
+        self.cols.get(key)
+    }
+
     /// Spawn a new entity: appends a null row across all existing columns and
     /// returns its stable handle. O(n_columns).
     pub fn spawn(&mut self) -> K {

@@ -16,8 +16,8 @@
 use wasm_bindgen::prelude::*;
 
 use molrs::perceive::Perceive as RsPerceive;
-use molrs::system::atomistic::Atomistic;
 use molrs::remove_hydrogens;
+use molrs::system::atomistic::Atomistic;
 
 use crate::core::frame::Frame;
 

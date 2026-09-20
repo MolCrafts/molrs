@@ -126,6 +126,23 @@ pub struct UnitRegistry {
 static GLOBAL_REGISTRY: OnceLock<UnitRegistry> = OnceLock::new();
 
 impl UnitRegistry {
+    /// Rebuild a registry from an exact definition snapshot.
+    ///
+    /// Unlike [`empty`](Self::empty), this starts with no implicit SI base
+    /// definitions. Callers should therefore pass the complete snapshot from
+    /// [`definitions`](Self::definitions). This pair is intended for durable
+    /// language-binding serialization.
+    pub fn from_definitions(defs: Vec<UnitDef>) -> Result<UnitRegistry, UnitsError> {
+        let mut registry = UnitRegistry {
+            defs: Vec::new(),
+            index: HashMap::new(),
+        };
+        for definition in defs {
+            registry.define(definition)?;
+        }
+        Ok(registry)
+    }
+
     /// Preloaded with SI + molecular-simulation units.
     ///
     /// Covers the SI base set plus the MD working set: `angstrom`, `bohr`,
@@ -440,6 +457,8 @@ fn md_defs() -> Vec<UnitDef> {
         // Time (exact).
         def("minute", "min", &[], 60.0, 0.0, Dimension::TIME, false),
         def("hour", "h", &[], 3600.0, 0.0, Dimension::TIME, false),
+        // Frequency (SI derived, exact). Prefixable: MHz, GHz, THz.
+        def("hertz", "Hz", &[], 1.0, 0.0, Dimension::FREQUENCY, true),
         // Mass. dalton: CODATA 2018; prefixable for kDa.
         def(
             "dalton",
@@ -660,6 +679,22 @@ mod tests {
         assert!(r.parse("hartree").is_ok());
         assert!(r.parse("bohr").is_ok());
         assert!(r.parse("atm").is_ok());
+    }
+
+    #[test]
+    fn hertz_is_prefixable_inverse_time() {
+        let r = UnitRegistry::new();
+        for spelling in ["Hz", "hertz", "GHz", "gigahertz", "THz"] {
+            assert!(r.parse(spelling).is_ok(), "{spelling} must parse");
+        }
+        // 1 GHz = 1 ns⁻¹ (exact).
+        let ghz = r.quantity(1.0, "GHz").unwrap();
+        let per_ns = ghz.to(&r.parse("1/ns").unwrap()).unwrap();
+        assert!(
+            (per_ns.value() - 1.0).abs() < 1e-12,
+            "1 GHz = {} / ns",
+            per_ns.value()
+        );
     }
 
     #[test]

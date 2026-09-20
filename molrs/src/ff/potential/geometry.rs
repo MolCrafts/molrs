@@ -162,3 +162,31 @@ pub fn accumulate_dihedral_forces(
         forces[l * 3 + dim] += fl[dim];
     }
 }
+
+// ---------------------------------------------------------------------------
+// Term index tables
+// ---------------------------------------------------------------------------
+
+/// Stack a kernel's per-term index columns into the `(n_terms, arity)` table
+/// [`IndexedTerms::terms`](crate::ff::potential::IndexedTerms::terms) returns.
+///
+/// Every bonded kernel keeps its indices as one `Vec<usize>` per position —
+/// `atom_i`, `atom_j`, … — because that is the layout its inner loop wants.
+/// The table is the layout a *caller* wants: one row per term, so a row can be
+/// rewritten to name a periodic copy without the caller knowing which column
+/// belongs to which position.
+pub fn term_table(columns: &[&[usize]]) -> ndarray::Array2<u32> {
+    let arity = columns.len();
+    let n_terms = columns.first().map_or(0, |c| c.len());
+    debug_assert!(
+        columns.iter().all(|c| c.len() == n_terms),
+        "a term's index columns must all have one entry per term"
+    );
+    let mut out = ndarray::Array2::<u32>::zeros((n_terms, arity));
+    for (a, col) in columns.iter().enumerate() {
+        for (t, &v) in col.iter().enumerate() {
+            out[[t, a]] = v as u32;
+        }
+    }
+    out
+}

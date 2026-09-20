@@ -1,10 +1,12 @@
-//! Harmonic angle potential: E = 0.5 * k0 * (theta - theta0)^2
+//! Harmonic angle potential: E = 0.5 * k * (theta - theta0)^2
 
 use std::collections::HashMap;
 
+use ndarray::{Array2, ArrayView2};
+
 use crate::ff::forcefield::Params;
-use crate::ff::potential::Potential;
-use crate::ff::potential::geometry::{compute_angle, validate_coords};
+use crate::ff::potential::geometry::{compute_angle, term_table, validate_coords};
+use crate::ff::potential::{IndexedTerms, Member, Potential};
 use molrs::store::frame::Frame;
 use molrs::types::F;
 
@@ -14,7 +16,7 @@ pub struct AngleHarmonic {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,
     atom_k: Vec<usize>,
-    k0: Vec<F>,
+    k: Vec<F>,
     theta0: Vec<F>,
 }
 
@@ -23,46 +25,98 @@ impl AngleHarmonic {
         atom_i: Vec<usize>,
         atom_j: Vec<usize>,
         atom_k: Vec<usize>,
-        k0: Vec<F>,
+        k: Vec<F>,
         theta0: Vec<F>,
     ) -> Self {
         let n = atom_i.len();
         assert_eq!(atom_j.len(), n);
         assert_eq!(atom_k.len(), n);
-        assert_eq!(k0.len(), n);
+        assert_eq!(k.len(), n);
         assert_eq!(theta0.len(), n);
         Self {
             atom_i,
             atom_j,
             atom_k,
-            k0,
+            k,
             theta0,
         }
     }
 }
 
-impl Potential for AngleHarmonic {
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
+impl AngleHarmonic {
+    /// The physics, once. Which atoms a term names is the only thing
+    /// that differs between the two entry points, so it is the only thing
+    /// passed in — a second copy of the loop would be a second place for
+    /// the force expression to drift.
+    fn fold(
+        &self,
+        coords: &[F],
+        out: &mut [F],
+        n_terms: usize,
+        atoms: impl Fn(usize) -> (usize, usize, usize),
+    ) -> F {
         let _n_atoms = validate_coords(coords);
         let mut energy: F = 0.0;
-        let mut forces = vec![0.0; coords.len()];
+        let forces = out;
 
-        for idx in 0..self.atom_i.len() {
-            let i = self.atom_i[idx];
-            let j = self.atom_j[idx];
-            let k = self.atom_k[idx];
-            let k_spring = self.k0[idx];
+        for idx in 0..n_terms {
+            let (i, j, k) = atoms(idx);
+            let k_spring = self.k[idx];
             let theta0 = self.theta0[idx];
 
             let theta = compute_angle(coords, i, j, k);
             let dtheta = theta - theta0;
             energy += 0.5 * k_spring * dtheta * dtheta;
 
-            // dE/dtheta = k0 (theta - theta0)
-            super::accumulate_angle_forces(coords, i, j, k, k_spring * dtheta, &mut forces);
+            // dE/dtheta = k (theta - theta0)
+            super::accumulate_angle_forces(coords, i, j, k, k_spring * dtheta, forces);
         }
 
-        (energy, forces)
+        energy
+    }
+}
+
+impl Potential for AngleHarmonic {
+    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
+        let mut out = vec![0.0; coords.len()];
+        let energy = self.accumulate(coords, &mut out);
+        (energy, out)
+    }
+
+    fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
+        self.fold(coords, out, self.atom_i.len(), |t| {
+            (self.atom_i[t], self.atom_j[t], self.atom_k[t])
+        })
+    }
+}
+
+impl IndexedTerms for AngleHarmonic {
+    fn terms(&self) -> Array2<u32> {
+        term_table(&[&self.atom_i, &self.atom_j, &self.atom_k])
+    }
+    fn calc_energy_forces_with_terms(
+        &self,
+        coords: &[F],
+        terms: ArrayView2<'_, u32>,
+    ) -> (F, Vec<F>) {
+        let mut out = vec![0.0; coords.len()];
+        let energy = self.accumulate_with_terms(coords, terms, &mut out);
+        (energy, out)
+    }
+
+    fn accumulate_with_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, out: &mut [F]) -> F {
+        debug_assert_eq!(
+            terms.nrows(),
+            self.atom_i.len(),
+            "the row set is the force field's; only the atoms a row names may be rebound"
+        );
+        self.fold(coords, out, terms.nrows(), |t| {
+            (
+                terms[[t, 0]] as usize,
+                terms[[t, 1]] as usize,
+                terms[[t, 2]] as usize,
+            )
+        })
     }
 }
 
@@ -71,7 +125,7 @@ pub fn angle_harmonic_ctor(
     _style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
+) -> Result<Member, String> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
 
     let block = frame
@@ -93,7 +147,7 @@ pub fn angle_harmonic_ctor(
     let mut atom_i = Vec::with_capacity(i_col.len());
     let mut atom_j = Vec::with_capacity(i_col.len());
     let mut atom_k = Vec::with_capacity(i_col.len());
-    let mut k0_vec = Vec::with_capacity(i_col.len());
+    let mut k_vec = Vec::with_capacity(i_col.len());
     let mut theta0_vec = Vec::with_capacity(i_col.len());
 
     for idx in 0..i_col.len() {
@@ -101,12 +155,10 @@ pub fn angle_harmonic_ctor(
         let params = type_map
             .get(label.as_str())
             .ok_or_else(|| format!("AngleHarmonic: unknown angle type '{}'", label))?;
-        // Accept `k` (LAMMPS / hand-built) or its `k0` alias (the OPLS XML
-        // reader emits `k0`/`theta0`). Either spelling is the force const.
-        let k0 = params
+        // `k` is the one spelling (spec ff-params-01); the `k0` alias is gone.
+        let k = params
             .get("k")
-            .or_else(|| params.get("k0"))
-            .ok_or_else(|| format!("AngleHarmonic type '{}': missing 'k' (or 'k0')", label))?
+            .ok_or_else(|| format!("AngleHarmonic type '{}': missing 'k'", label))?
             as F;
         // theta0 is consumed in radians; readers normalize at their boundary.
         let theta0_rad = params
@@ -117,12 +169,12 @@ pub fn angle_harmonic_ctor(
         atom_i.push(i_col[idx] as usize);
         atom_j.push(j_col[idx] as usize);
         atom_k.push(k_col[idx] as usize);
-        k0_vec.push(k0);
+        k_vec.push(k);
         theta0_vec.push(theta0_rad);
     }
 
-    Ok(Box::new(AngleHarmonic::new(
-        atom_i, atom_j, atom_k, k0_vec, theta0_vec,
+    Ok(Member::indexed(AngleHarmonic::new(
+        atom_i, atom_j, atom_k, k_vec, theta0_vec,
     )))
 }
 

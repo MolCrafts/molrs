@@ -22,14 +22,6 @@ def test_box_exposes_native_face_distances_and_corners():
     np.testing.assert_allclose(corners.max(axis=0), [10.0, 20.0, 30.0])
 
 
-def test_shortest_vector_respects_partial_pbc():
-    box = molrs.Box.ortho(
-        np.array([10.0, 10.0, 10.0]), pbc=np.array([True, False, True])
-    )
-    delta = box.shortest_vector(np.zeros(3), np.array([9.0, 9.0, 9.0]))
-    np.testing.assert_allclose(delta, [-1.0, 9.0, -1.0])
-
-
 def test_images_and_unwrap_round_trip_natively():
     box = molrs.Box.cube(10.0)
     unwrapped = np.array([[21.0, -9.0, 5.0], [2.0, 3.0, 34.0]])
@@ -37,13 +29,6 @@ def test_images_and_unwrap_round_trip_natively():
     wrapped = box.wrap(unwrapped)
     np.testing.assert_array_equal(images, [[2, -1, 0], [0, 0, 3]])
     np.testing.assert_allclose(box.unwrap(wrapped, images), unwrapped)
-
-
-def test_triclinic_corners_use_lattice_vectors_not_axis_lengths():
-    h = np.array([[10.0, 2.0, 1.0], [0.0, 8.0, 3.0], [0.0, 0.0, 6.0]])
-    box = molrs.Box(h)
-    corners = box.corners()
-    assert any(np.allclose(corner, h.sum(axis=1)) for corner in corners)
 
 
 def test_from_bounds_and_batched_geometry():

@@ -21,10 +21,12 @@
 //! }
 //! ```
 
+pub mod abi;
 mod error;
 #[cfg(feature = "ff")]
 mod forcefield;
 mod handle;
+mod region;
 mod shared;
 mod store;
 
@@ -32,5 +34,6 @@ pub use error::FfiError;
 #[cfg(feature = "ff")]
 pub use forcefield::ForceFieldRef;
 pub use handle::{BlockHandle, FrameId};
+pub use region::RegionRef;
 pub use shared::{BlockRef, FrameRef, SharedStore, new_shared};
 pub use store::Store;

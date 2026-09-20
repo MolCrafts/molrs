@@ -38,12 +38,16 @@ pub mod constants;
 pub mod dimension;
 pub mod error;
 mod parse;
+pub mod preset;
 pub mod quantity;
 pub mod registry;
 pub mod unit;
 
 pub use dimension::Dimension;
 pub use error::UnitsError;
+pub use preset::{
+    PRESET_DIMENSIONS, UnitPreset, UnitPresetRegistry, lookup_preset, register_preset,
+};
 pub use quantity::Quantity;
 pub use registry::{UnitDef, UnitRegistry};
 pub use unit::Unit;

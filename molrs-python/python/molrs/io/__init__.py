@@ -31,8 +31,23 @@ from pathlib import Path
 from typing import Any, Union, overload
 
 from . import raw
+from . import mrec
+from .._lib import LammpsCpuUse as LammpsCpuUse
+from .._lib import LammpsLoadBalance as LammpsLoadBalance
+from .._lib import LammpsLog as LammpsLog
+from .._lib import LammpsLogHeader as LammpsLogHeader
+from .._lib import LammpsLoopTime as LammpsLoopTime
+from .._lib import LammpsMemoryUsage as LammpsMemoryUsage
+from .._lib import LammpsNeighborStatistics as LammpsNeighborStatistics
+from .._lib import LammpsPerformance as LammpsPerformance
+from .._lib import LammpsRun as LammpsRun
+from .._lib import LammpsThermo as LammpsThermo
+from .._lib import LammpsTimingBreakdown as LammpsTimingBreakdown
+from .._lib import LammpsTimingRow as LammpsTimingRow
+from .._lib import LammpsWarning as LammpsWarning
 from .._lib import SmilesIR as SmilesIR
 from .._lib import (
+    read_stl as read_stl,
     write_smiles as write_smiles,
     write_smarts as write_smarts,
 )
@@ -89,11 +104,15 @@ from .._lib import (
     read_xsf as _read_xsf,
     write_gro as _write_gro,
     write_lammps as _write_lammps,
+    write_lammps_traj as _write_lammps_traj,
+    write_lammps_dump_local as _write_lammps_dump_local,
+    lammps_type_ids_from_frame as lammps_type_ids_from_frame,
     write_cube_file as _write_cube,
     write_mol2 as _write_mol2,
     write_lammps_molecule as _write_lammps_molecule,
     write_pdb as _write_pdb,
     write_pdb_trajectory as _write_pdb_trajectory,
+    write_dcd as _write_dcd,
     write_trr as _write_trr,
     write_xtc as _write_xtc,
     write_xyz as _write_xyz,
@@ -118,7 +137,7 @@ def _wrap(frame: Any) -> Frame:
     Zero-copy: the rich Frame views the same Rust-backed Block buffers (no
     column data is copied). Already-rich frames pass through unchanged.
     """
-    return Frame.from_dict(frame)
+    return Frame(frame)
 
 
 def read_lammps_data(
@@ -297,11 +316,6 @@ def read_amber_inpcrd(file: str | PathLike[str], frame: Any = None) -> Any:
     return _wrap(_read_amber_inpcrd(str(file)))
 
 
-def read_inpcrd(file: str | PathLike[str], frame: Any = None) -> Any:
-    """Alias for :func:`read_amber_inpcrd`."""
-    return read_amber_inpcrd(file, frame=frame)
-
-
 def read_amber_prmtop(file: str | PathLike[str], frame: Any = None) -> Any:
     """Read an AMBER prmtop **structure** file into a Frame.
 
@@ -330,11 +344,6 @@ def read_amber_prmtop(file: str | PathLike[str], frame: Any = None) -> Any:
             "it always returns a new Frame."
         )
     return _wrap(_read_amber_prmtop(str(file)))
-
-
-def read_prmtop(file: str | PathLike[str], frame: Any = None) -> Any:
-    """Alias for :func:`read_amber_prmtop`."""
-    return read_amber_prmtop(file, frame=frame)
 
 
 def write_mol2(file: str | PathLike[str], frame: Any) -> None:
@@ -466,6 +475,34 @@ def write_lammps_data(
     _write_lammps(str(file), frame)
 
 
+def write_lammps_traj(
+    file: str | PathLike[str],
+    frames: Sequence[Any],
+    columns: Sequence[str] | None = None,
+) -> None:
+    """Write Frames to a LAMMPS dump custom / atom trajectory (``.lammpstrj``).
+
+    ``columns`` is the ``dump custom`` column line, e.g. ``["id", "element",
+    "mol", "x", "y", "z"]``: written in that order, and a name the frame's
+    ``atoms`` block cannot supply raises. Names may be LAMMPS-native
+    (``mol``, ``q``, ``type``) or canonical (``mol_id``, ``charge``,
+    ``type_id``). The default writes every column the block holds.
+    """
+    _write_lammps_traj(
+        str(file), list(frames), None if columns is None else list(columns)
+    )
+
+
+def write_lammps_dump_local(file: str | PathLike[str], frames: Sequence[Any]) -> None:
+    """Write Frames as LAMMPS ``dump local`` (OVITO Load Trajectory bonds).
+
+    Emits ``ITEM: NUMBER OF ENTRIES`` with columns ``batom1`` ``batom2``
+    (and ``btype`` when present) so OVITO auto-maps Particle Identifiers.
+    See https://www.ovito.org/manual/reference/pipelines/modifiers/load_trajectory.html
+    """
+    _write_lammps_dump_local(str(file), list(frames))
+
+
 def write_pdb(file: str | PathLike[str], frame: Any) -> None:
     """Write a PDB file.
 
@@ -535,6 +572,14 @@ def write_trr(file: str | PathLike[str], frames: Any) -> None:
     ``fx``/``fy``/``fz`` are written when present.
     """
     _write_trr(str(file), list(frames))
+
+
+def write_dcd(file: str | PathLike[str], frames: Any) -> None:
+    """Write a list of Frames to a NAMD-compatible DCD trajectory.
+
+    Same door as :func:`molrs.io.raw.write_dcd`.
+    """
+    _write_dcd(str(file), list(frames))
 
 
 def write_xtc(file: str | PathLike[str], frames: Any) -> None:
@@ -764,8 +809,8 @@ def read_xtc_trajectory(file: PathInput | Sequence[PathInput]) -> TrajectoryRead
 def read_lammps_log(
     file: PathInput,
     style: str = "default",
-) -> dict[str, Any]:
-    """Read a LAMMPS log file into a nested plain dict.
+) -> LammpsLog:
+    """Read a LAMMPS log file into a structured :class:`LammpsLog`.
 
     Parses thermo tables, loop timing, performance, CPU/MPI timing,
     load-balance stats, neighbor statistics, and warnings. Unrecognized
@@ -776,8 +821,9 @@ def read_lammps_log(
         style: Thermo style. Only ``"default"`` is currently parsed.
 
     Returns:
-        Nested mapping suitable for JSON / dataclass hydration. Thermo
-        rows are ``list[list[float]]``.
+        ``LammpsLog`` with one :class:`LammpsRun` per ``run``; a run's
+        ``thermo["Step"]`` is a float64 column and ``to_dict()`` gives the
+        JSON-friendly nested form.
 
     Raises:
         FileNotFoundError: If ``file`` does not exist.
@@ -789,7 +835,7 @@ def parse_lammps_log_text(
     text: str,
     path: str = "<string>",
     style: str = "default",
-) -> dict[str, Any]:
+) -> LammpsLog:
     """Parse a LAMMPS log from an in-memory string (no filesystem access).
 
     Args:
@@ -798,7 +844,7 @@ def parse_lammps_log_text(
         style: Thermo style. Only ``"default"`` is currently parsed.
 
     Returns:
-        Same nested shape as :func:`read_lammps_log`.
+        Same structure as :func:`read_lammps_log`.
     """
     return _parse_lammps_log_text(text, path, style)
 
@@ -917,7 +963,6 @@ __all__ = [
     "read_mol2",
     "read_top",
     "read_amber_inpcrd",
-    "read_inpcrd",
     "read_amber_prmtop",
     "read_ac",
     "read_frcmod",
@@ -932,14 +977,29 @@ __all__ = [
     "prmtop_decode_angle_params",
     "prmtop_decode_dihedral_params",
     "prmtop_decode_nonbond_params",
-    "read_prmtop",
     "read_lammps_molecule",
     "read_lammps_log",
     "parse_lammps_log_text",
+    "LammpsLog",
+    "LammpsRun",
+    "LammpsThermo",
+    "LammpsLogHeader",
+    "LammpsMemoryUsage",
+    "LammpsLoopTime",
+    "LammpsPerformance",
+    "LammpsCpuUse",
+    "LammpsTimingRow",
+    "LammpsTimingBreakdown",
+    "LammpsLoadBalance",
+    "LammpsNeighborStatistics",
+    "LammpsWarning",
     "read_xsf",
     "read_trr",
     "read_xtc",
     "write_lammps_data",
+    "write_lammps_traj",
+    "write_lammps_dump_local",
+    "lammps_type_ids_from_frame",
     "write_pdb",
     "write_pdb_trajectory",
     "write_xyz",
@@ -950,6 +1010,7 @@ __all__ = [
     "write_lammps_molecule",
     "write_xsf",
     "write_trr",
+    "write_dcd",
     "write_xtc",
     "write_smiles",
     "write_smarts",

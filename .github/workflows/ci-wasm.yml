@@ -1,5 +1,7 @@
 name: CI WASM
 
+# Nothing to configure: a zero-argument build already IS the static release
+# form, on wasm32 as everywhere else (see docs/interop.md).
 on:
   workflow_call:
   workflow_dispatch:
@@ -14,15 +16,14 @@ jobs:
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt
           targets: wasm32-unknown-unknown
 
+      # Single entry: the committed .cargo/config.toml routes molrs-wasm's
+      # build into <repo>/target too.
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: wasm
-          workspaces: |
-            . -> target
-            molrs-wasm -> target
+          workspaces: ". -> target"
 
       - name: Setup Node
         uses: actions/setup-node@v7
@@ -35,16 +36,25 @@ jobs:
         with:
           tool: wasm-pack
 
-      # molrs-wasm release profile runs wasm-opt -O1 (see Cargo.toml metadata).
-      # apt binaryen is too old for current rustc wasm (misc opcode 17); pin a
-      # GitHub release that understands LLVM 19+ output (matches local brew).
+      # apt binaryen is too old for current rustc wasm (misc opcode 17).
+      # Latest GitHub release — same policy as rust-toolchain.toml `stable`.
       - name: Install binaryen (wasm-opt)
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          VER=version_123
-          curl -fsSL "https://github.com/WebAssembly/binaryen/releases/download/${VER}/binaryen-${VER}-x86_64-linux.tar.gz" \
+          VER=$(gh api repos/WebAssembly/binaryen/releases/latest --jq .tag_name)
+          case "$(uname -m)" in
+            x86_64) BIN=x86_64-linux ;;
+            aarch64|arm64) BIN=aarch64-linux ;;
+            *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
+          esac
+          curl -fsSL "https://github.com/WebAssembly/binaryen/releases/download/${VER}/binaryen-${VER}-${BIN}.tar.gz" \
             | sudo tar -xz -C /usr/local --strip-components=1
           wasm-opt --version
+
+      - name: Lint WASM bindings
+        run: cargo clippy --manifest-path molrs-wasm/Cargo.toml --target wasm32-unknown-unknown --all-targets -- -D warnings
 
       - name: Build wasm
         working-directory: molrs-wasm

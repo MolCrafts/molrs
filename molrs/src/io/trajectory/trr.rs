@@ -69,12 +69,12 @@ use molrs::spatial::simbox::SimBox;
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
 use molrs::store::frame_access::FrameAccess;
-use molrs::types::{F, U};
+use molrs::types::{F, Idx};
 use ndarray::{Array1, Array2, IxDyn, array};
-use once_cell::sync::OnceCell;
 use std::fs::File;
 use std::io::{BufRead, BufWriter, Cursor, Read, Result, Seek, SeekFrom, Write};
 use std::path::Path;
+use std::sync::OnceLock;
 
 const TRR_MAGIC: i32 = 1993;
 const TRR_VERSION: &str = "GMX_trn_file";
@@ -326,7 +326,7 @@ fn parse_frame_here<R: Read>(r: &mut R) -> Result<Option<Frame>> {
     };
 
     let mut atoms = Block::new();
-    let id_arr = Array1::from_iter(1..=natoms as U)
+    let id_arr = Array1::from_iter(1..=natoms as Idx)
         .into_shape_with_order(IxDyn(&[natoms]))
         .map_err(invalid)?;
     atoms.insert("id", id_arr).map_err(invalid)?;
@@ -400,11 +400,11 @@ fn scan_offsets<R: BufRead + Seek>(r: &mut R) -> Result<Vec<u64>> {
 ///
 /// - [`FrameReader::read`] streams forward from the current file position and
 ///   does **not** build the offset index (one pass over the file).
-/// - [`TrajectoryReader::read_step`] / [`len`] build the index on demand for
-///   random access and known length.
+/// - [`TrajectoryReader::read_step`] / [`TrajectoryReader::len`] build the index
+///   on demand for random access and known length.
 pub struct TrrReader<R: BufRead + Seek> {
     reader: R,
-    offsets: OnceCell<Vec<u64>>,
+    offsets: OnceLock<Vec<u64>>,
     cursor: usize,
 }
 
@@ -413,7 +413,7 @@ impl<R: BufRead + Seek> TrrReader<R> {
     pub fn new(reader: R) -> Self {
         Self {
             reader,
-            offsets: OnceCell::new(),
+            offsets: OnceLock::new(),
             cursor: 0,
         }
     }
@@ -698,12 +698,7 @@ fn try_trr_frame_len(bytes: &[u8]) -> Result<Option<u32>> {
 /// Parse exactly one TRR frame from a tightly-bounded byte slice.
 pub fn parse_frame_bytes(bytes: &[u8]) -> Result<Frame> {
     let mut cursor = Cursor::new(bytes);
-    parse_frame_here(&mut cursor)?.ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::UnexpectedEof,
-            "TRR frame slice is empty or truncated",
-        )
-    })
+    parse_frame_at(&mut cursor, 0)
 }
 
 /// Streaming frame indexer for TRR files. Each frame header carries the
@@ -805,7 +800,7 @@ mod tests {
     fn trr_frame(x0: f64) -> Frame {
         let mut atoms = Block::new();
         atoms
-            .insert("id", Array1::from(vec![1u32, 2]).into_dyn())
+            .insert("id", Array1::from(vec![1u64, 2]).into_dyn())
             .unwrap();
         atoms
             .insert("x", Array1::from(vec![x0, x0 + 1.0]).into_dyn())

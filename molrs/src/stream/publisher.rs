@@ -3,7 +3,7 @@
 //! The accept loop and per-client I/O run on a background `std::thread` that
 //! owns a multi-thread tokio runtime. The simulation loop stays synchronous:
 //! [`Publisher::send`] never blocks on network writes; when the bounded
-//! crossbeam buffer is full the oldest payload is dropped.
+//! broadcast buffer is full the oldest payload is dropped.
 
 use std::io;
 use std::net::SocketAddr;
@@ -12,11 +12,11 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use bytes::Bytes;
-use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded};
 use futures_util::{SinkExt, StreamExt};
+use std::sync::mpsc::{self, SyncSender, TryRecvError};
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, oneshot};
+use tokio_tungstenite::tungstenite::Bytes;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::protocol::CloseFrame;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
@@ -103,11 +103,10 @@ impl From<StreamError> for SendError {
 
 struct Shared {
     format: MessageFormat,
-    /// Simulation → background bridge (payload already encoded).
-    frame_tx: Mutex<Option<Sender<Bytes>>>,
-    /// Competing receiver used only to drop the oldest frame when full.
-    drop_rx: Mutex<Option<Receiver<Bytes>>>,
-    cmd_rx: Receiver<ControlCommand>,
+    /// Simulation → clients (payload already encoded). A broadcast channel
+    /// overwrites its oldest entry when full, which is the drop policy.
+    frame_tx: Mutex<Option<broadcast::Sender<Bytes>>>,
+    cmd_rx: Mutex<mpsc::Receiver<ControlCommand>>,
     client_count: Arc<AtomicUsize>,
     local_addr: Option<SocketAddr>,
     shutting_down: AtomicBool,
@@ -176,9 +175,9 @@ impl Publisher {
         let format = config.format;
         let token = config.token.clone();
 
-        let (frame_tx, frame_rx) = bounded::<Bytes>(buffer_size);
-        let drop_rx = frame_rx.clone();
-        let (cmd_tx, cmd_rx) = bounded::<ControlCommand>(64);
+        let (frame_tx, _) = broadcast::channel::<Bytes>(buffer_size);
+        let bcast_tx = frame_tx.clone();
+        let (cmd_tx, cmd_rx) = mpsc::sync_channel::<ControlCommand>(64);
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
         let client_count = Arc::new(AtomicUsize::new(0));
@@ -197,7 +196,7 @@ impl Publisher {
                 };
                 rt.block_on(run_dialed(
                     url,
-                    frame_rx,
+                    bcast_tx,
                     cmd_tx,
                     client_count_thread,
                     format,
@@ -210,8 +209,7 @@ impl Publisher {
             shared: Arc::new(Shared {
                 format,
                 frame_tx: Mutex::new(Some(frame_tx)),
-                drop_rx: Mutex::new(Some(drop_rx)),
-                cmd_rx,
+                cmd_rx: Mutex::new(cmd_rx),
                 client_count,
                 local_addr: None,
                 shutting_down: AtomicBool::new(false),
@@ -228,10 +226,9 @@ impl Publisher {
         let format = config.format;
         let token = config.token.clone();
 
-        let (frame_tx, frame_rx) = bounded::<Bytes>(buffer_size);
-        // Second receiver competes for messages so send() can free a slot when full.
-        let drop_rx = frame_rx.clone();
-        let (cmd_tx, cmd_rx) = bounded::<ControlCommand>(64);
+        let (frame_tx, _) = broadcast::channel::<Bytes>(buffer_size);
+        let bcast_tx = frame_tx.clone();
+        let (cmd_tx, cmd_rx) = mpsc::sync_channel::<ControlCommand>(64);
         let (ready_tx, ready_rx) = std::sync::mpsc::channel::<io::Result<SocketAddr>>();
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
@@ -273,7 +270,7 @@ impl Publisher {
 
                     run_bound(
                         listener,
-                        frame_rx,
+                        bcast_tx,
                         cmd_tx,
                         client_count_thread,
                         format,
@@ -292,8 +289,7 @@ impl Publisher {
             shared: Arc::new(Shared {
                 format,
                 frame_tx: Mutex::new(Some(frame_tx)),
-                drop_rx: Mutex::new(Some(drop_rx)),
-                cmd_rx,
+                cmd_rx: Mutex::new(cmd_rx),
                 client_count,
                 local_addr: Some(local_addr),
                 shutting_down: AtomicBool::new(false),
@@ -334,7 +330,11 @@ impl Publisher {
     /// runtime (not only the server's background runtime).
     pub async fn recv_command(&self) -> Option<ControlCommand> {
         loop {
-            match self.shared.cmd_rx.try_recv() {
+            let polled = match self.shared.cmd_rx.lock() {
+                Ok(rx) => rx.try_recv(),
+                Err(_) => return None,
+            };
+            match polled {
                 Ok(cmd) => return Some(cmd),
                 Err(TryRecvError::Disconnected) => return None,
                 Err(TryRecvError::Empty) => {
@@ -366,10 +366,11 @@ impl Publisher {
     ///
     /// [`send`]: Self::send
     pub fn recv_command_blocking(&self, timeout: Duration) -> Option<ControlCommand> {
+        let rx = self.shared.cmd_rx.lock().ok()?;
         if timeout.is_zero() {
-            return self.shared.cmd_rx.try_recv().ok();
+            return rx.try_recv().ok();
         }
-        self.shared.cmd_rx.recv_timeout(timeout).ok()
+        rx.recv_timeout(timeout).ok()
     }
 
     /// Signal the accept loop to stop and join the background thread.
@@ -387,9 +388,6 @@ impl Publisher {
         if let Ok(mut guard) = self.shared.frame_tx.lock() {
             *guard = None;
         }
-        if let Ok(mut guard) = self.shared.drop_rx.lock() {
-            *guard = None;
-        }
         if let Ok(mut guard) = self.shared.shutdown_tx.lock()
             && let Some(tx) = guard.take()
         {
@@ -400,24 +398,9 @@ impl Publisher {
     fn send_bytes(&self, bytes: Bytes) -> Result<(), SendError> {
         let tx_guard = self.shared.frame_tx.lock().map_err(|_| SendError::Closed)?;
         let tx = tx_guard.as_ref().ok_or(SendError::Closed)?;
-
-        let mut item = bytes;
-        // Bound the spin so a theoretical race cannot hang the simulation.
-        for _ in 0..64 {
-            match tx.try_send(item) {
-                Ok(()) => return Ok(()),
-                Err(TrySendError::Disconnected(_)) => return Err(SendError::Closed),
-                Err(TrySendError::Full(v)) => {
-                    if let Ok(drop_guard) = self.shared.drop_rx.lock()
-                        && let Some(drop_rx) = drop_guard.as_ref()
-                    {
-                        let _ = drop_rx.try_recv();
-                    }
-                    item = v;
-                }
-            }
-        }
-        // Last attempt: drop the new frame rather than block.
+        // A full broadcast buffer overwrites its oldest entry; a send with no
+        // subscriber is simply a frame nobody was attached to receive.
+        let _ = tx.send(bytes);
         Ok(())
     }
 }
@@ -441,24 +424,13 @@ impl Drop for Publisher {
 
 async fn run_bound(
     listener: TcpListener,
-    frame_rx: Receiver<Bytes>,
-    cmd_tx: Sender<ControlCommand>,
+    bcast_tx: broadcast::Sender<Bytes>,
+    cmd_tx: SyncSender<ControlCommand>,
     client_count: Arc<AtomicUsize>,
     format: MessageFormat,
     token: Option<String>,
     mut shutdown_rx: oneshot::Receiver<()>,
 ) {
-    let (bcast_tx, _) = broadcast::channel::<Bytes>(16);
-
-    // Bridge crossbeam → tokio broadcast on a blocking task.
-    let bcast_bridge = bcast_tx.clone();
-    let bridge = tokio::task::spawn_blocking(move || {
-        while let Ok(payload) = frame_rx.recv() {
-            // Ignore "no receivers" — normal when no clients are connected.
-            let _ = bcast_bridge.send(payload);
-        }
-    });
-
     loop {
         tokio::select! {
             _ = &mut shutdown_rx => break,
@@ -479,9 +451,6 @@ async fn run_bound(
             }
         }
     }
-
-    drop(bcast_tx);
-    let _ = bridge.await;
 }
 
 use tokio_tungstenite::WebSocketStream;
@@ -548,23 +517,13 @@ async fn authenticate(
 /// attached, exactly as it does for a bound publisher with no viewers.
 async fn run_dialed(
     url: String,
-    frame_rx: Receiver<Bytes>,
-    cmd_tx: Sender<ControlCommand>,
+    bcast_tx: broadcast::Sender<Bytes>,
+    cmd_tx: SyncSender<ControlCommand>,
     client_count: Arc<AtomicUsize>,
     format: MessageFormat,
     token: Option<String>,
     mut shutdown_rx: oneshot::Receiver<()>,
 ) {
-    let (bcast_tx, _) = broadcast::channel::<Bytes>(16);
-
-    // Same crossbeam -> broadcast bridge the bound path uses.
-    let bridge_tx = bcast_tx.clone();
-    let bridge = tokio::task::spawn_blocking(move || {
-        while let Ok(payload) = frame_rx.recv() {
-            let _ = bridge_tx.send(payload);
-        }
-    });
-
     loop {
         let dialed = tokio::select! {
             _ = &mut shutdown_rx => break,
@@ -599,7 +558,6 @@ async fn run_dialed(
     }
 
     drop(bcast_tx);
-    bridge.abort();
 }
 
 /// Present the shared secret, as the dialing end.
@@ -629,7 +587,7 @@ where
 async fn handle_client(
     ws: WsStream,
     bcast_rx: broadcast::Receiver<Bytes>,
-    cmd_tx: Sender<ControlCommand>,
+    cmd_tx: SyncSender<ControlCommand>,
     format: MessageFormat,
     token: Option<String>,
 ) {
@@ -651,7 +609,7 @@ async fn pump<S>(
     mut write: futures_util::stream::SplitSink<WebSocketStream<S>, Message>,
     mut read: futures_util::stream::SplitStream<WebSocketStream<S>>,
     mut bcast_rx: broadcast::Receiver<Bytes>,
-    cmd_tx: Sender<ControlCommand>,
+    cmd_tx: SyncSender<ControlCommand>,
     format: MessageFormat,
 ) where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,

@@ -49,12 +49,12 @@ use molrs::spatial::simbox::SimBox;
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
 use molrs::store::frame_access::FrameAccess;
-use molrs::types::{F, Pbc3, U};
+use molrs::types::{F, Idx, Pbc3};
 use ndarray::{Array1, Array2, IxDyn, array};
-use once_cell::sync::OnceCell;
 use std::fs::File;
 use std::io::{BufRead, Cursor, Read, Seek, SeekFrom, Write};
 use std::path::Path;
+use std::sync::OnceLock;
 
 // ============================================================================
 // Helpers
@@ -296,6 +296,7 @@ struct HeaderPartial {
     byte_order: ByteOrder,
     marker_size: MarkerSize,
     charmm_ver: i32,
+    /// Parsed for header fidelity; the frame count comes from the file scan.
     #[allow(dead_code)]
     nset_hint: u32,
     istart: i32,
@@ -558,7 +559,11 @@ fn resolve_frame_layout(
     let coord_rec_full = 2 * m + coord_marker_full;
     let coord_rec_eff = 2 * m + u64::from(natoms - namnf) * 4;
 
-    let mut candidates: Vec<(bool, bool, u64, u64)> = Vec::new();
+    // (has_box, has_4d, f_first, f_rest, missing_bytes_of_next_frame)
+    // missing == 0 → file ends on a frame boundary. Otherwise the last
+    // frame is truncated (killed dump, incomplete copy). Do not reject the
+    // whole file: keep every complete frame.
+    let mut candidates: Vec<(bool, bool, u64, u64, u64)> = Vec::new();
     for &has_box_candidate in &[true, false] {
         let box_part = if has_box_candidate { 2 * m + 48 } else { 0 };
         let predicted_first = if has_box_candidate {
@@ -577,10 +582,15 @@ fn resolve_frame_layout(
                 continue;
             }
             let after_first = trailing - f_first;
-            if !after_first.is_multiple_of(f_rest) {
-                continue;
-            }
-            candidates.push((has_box_candidate, has_4d_candidate, f_first, f_rest));
+            let rem = after_first % f_rest;
+            let missing = if rem == 0 { 0 } else { f_rest - rem };
+            candidates.push((
+                has_box_candidate,
+                has_4d_candidate,
+                f_first,
+                f_rest,
+                missing,
+            ));
         }
     }
     if candidates.is_empty() {
@@ -589,10 +599,10 @@ fn resolve_frame_layout(
             trailing, natoms, namnf, first_marker
         )));
     }
-    // When multiple candidates fit, prefer the simpler one: no 4D, then no
-    // box. In practice ambiguity is rare (it requires natoms == 12).
-    candidates.sort_by_key(|&(hb, h4, _, _)| (h4 as u8, hb as u8));
-    let (has_box, has_4d, frame_size_first, frame_size_rest) = candidates[0];
+    // Exact end-of-file first. Then the layout whose leftover is closest to
+    // a truncated next frame (smallest missing). Tie-break: no 4D, then no box.
+    candidates.sort_by_key(|&(hb, h4, _, _, missing)| (missing, h4 as u8, hb as u8));
+    let (has_box, has_4d, frame_size_first, frame_size_rest, _) = candidates[0];
     let actual_nset = 1 + (trailing - frame_size_first) / frame_size_rest;
     Ok(FrameLayout {
         has_box,
@@ -865,7 +875,7 @@ fn parse_one_frame<R: Read>(
 
     let natoms = header.natoms as usize;
     let mut atoms = Block::new();
-    let id_arr = Array1::from_iter(1..=natoms as U)
+    let id_arr = Array1::from_iter(1..=natoms as Idx)
         .into_shape_with_order(IxDyn(&[natoms]))
         .map_err(err_mapper)?;
     atoms.insert("id", id_arr).map_err(err_mapper)?;
@@ -948,7 +958,7 @@ fn parse_frame_at<R: BufRead + Seek>(
 /// needs it. This keeps `Reader::new` infallible.
 pub struct DcdReader<R: BufRead + Seek> {
     reader: R,
-    header: OnceCell<DcdHeader>,
+    header: OnceLock<DcdHeader>,
     cursor: usize,
 }
 
@@ -957,7 +967,7 @@ impl<R: BufRead + Seek> DcdReader<R> {
     pub fn new(reader: R) -> Self {
         Self {
             reader,
-            header: OnceCell::new(),
+            header: OnceLock::new(),
             cursor: 0,
         }
     }
@@ -2119,7 +2129,7 @@ mod tests {
     fn two_atom_frame(x0: f64, with_box: bool) -> Frame {
         let mut atoms = Block::new();
         atoms
-            .insert("id", Array1::from(vec![1u32, 2]).into_dyn())
+            .insert("id", Array1::from(vec![1u64, 2]).into_dyn())
             .unwrap();
         atoms
             .insert("x", Array1::from(vec![x0, x0 + 1.0]).into_dyn())
@@ -2202,6 +2212,36 @@ mod tests {
         .expect("parse nopbc frame 0");
         assert!(f0.simbox.is_none());
         assert_eq!(f0.get("atoms").unwrap().nrows().unwrap(), 2);
+    }
+
+    #[test]
+    fn dcd_truncated_last_frame_keeps_complete_frames() {
+        let frames = [
+            two_atom_frame(0.0, true),
+            two_atom_frame(0.5, true),
+            two_atom_frame(1.0, true),
+        ];
+        let full = write_dcd_mem(&frames);
+        let full_entries = dcd_index_chunked(&full, full.len());
+        assert_eq!(
+            full_entries.len(),
+            3,
+            "fixture must write 3 complete frames"
+        );
+        let last = &full_entries[2];
+        let mut bytes = full;
+        bytes.truncate((last.byte_offset + u64::from(last.byte_len) / 2) as usize);
+        let entries = dcd_index_chunked(&bytes, bytes.len());
+        assert_eq!(
+            entries.len(),
+            2,
+            "truncated last frame must not drop the complete ones"
+        );
+        let mut reader = DcdReader::new(Cursor::new(bytes));
+        assert_eq!(reader.len().expect("len"), 2);
+        assert!(reader.read_step(0).expect("frame 0").is_some());
+        assert!(reader.read_step(1).expect("frame 1").is_some());
+        assert!(reader.read_step(2).expect("frame 2").is_none());
     }
 
     #[test]

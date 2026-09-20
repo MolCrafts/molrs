@@ -15,6 +15,7 @@ molrs/src modules:
   core (always) ──► perceive (always)
                  ├── io (feature)
                  ├── ff (feature) ──► optimize (with ff)
+                 │                 └─► md (feature → ff)
                  └── conformer (feature → ff)
   compute (feature) ──► signal
   stream / serialize (optional)
@@ -31,6 +32,16 @@ binders (depend on molcrafts-molrs + molrs-ffi):
 - `compute` depends on `signal` (+ `core` for Frame access).
 - `conformer` requires `ff`.
 - `optimize` is behind `ff` (not always-on).
+- `md` requires `ff`, and may depend on `core` + `ff` only. **`ff` must never
+  name `md`** — a pair kernel tallies a virial and a bonded kernel takes an
+  index table, and neither may reach up to the loop that runs it. A
+  `md`-defined `Virial` leaked into `core` once already, which is why the rule
+  is written down.
+- `builder` depends on `core` only.
+- These rules are checked by grep at review time (`grep -rn "crate::md" molrs/src/ff`,
+  `grep -rn "crate::" molrs/src/core | grep -v core::`), not by a test binary.
+  Test modules may build fixtures through `io::smiles`; that is the one
+  test-only exception.
 - No cyclic module edges in library code.
 
 ### Binder rules
@@ -51,6 +62,30 @@ binders (depend on molcrafts-molrs + molrs-ffi):
 | `compute` | RDF, MSD, transport, dielectric, spectra, shape, cluster, … |
 | `conformer` | distance geometry / ETKDG-style pipeline |
 | `optimize` | LBFGS / potential-driven minimize |
+| `md` | integrators, `ForceProvider` and the minimum-image / ghost régimes, the halo (`Comm`), bonded index lists, special-bonds weights, Maxwell-Boltzmann |
+
+### Potential's three traits
+
+`ff::potential` splits the capability, not the type:
+
+- `Potential` — energy and forces from coordinates. Every kernel.
+- `IndexedTerms: Potential` — the rows are named by an index table the caller
+  may replace. Every bonded kernel; no pair kernel.
+- `PairDriven: Potential` — the sum runs over whatever pairs a neighbour search
+  turns up. Every pair kernel; nothing else (PME reads its own exclusions, so
+  it is `Member::Plain` despite registering under the `pair` category).
+
+`Member` is the three as one value, chosen by the kernel's **constructor** —
+which is why `KernelConstructor` returns `Member` and not `Box<dyn Potential>`.
+A `Box<dyn Potential>` cannot be asked which of the two it also is, and the
+question used to be put to `terms()`, a method whose job is to return a table
+and which allocated one per bonded member per step to answer it. Two
+`holds_indices: Vec<bool>` fields existed to cache that answer.
+
+**Rule**: a capability only some potentials have is its own trait, and the
+variant is decided once, at construction. A default implementation that is
+correct for half the implementors and silently wrong for the other half is the
+shape this replaced.
 
 ## Trait design principles
 

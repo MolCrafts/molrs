@@ -11,14 +11,13 @@ homepage.workspace = true
 readme = "../README.md"
 keywords = ["molecular-modeling", "chemistry", "simulation", "molecular-dynamics"]
 categories = ["science"]
-# Benches/examples have overlapping file names across sub-systems; wire them
-# explicitly. No integration-test tree — use unit tests next to the code.
+# No integration-test, bench or example targets: behaviour is tested in
+# `#[cfg(test)]` modules next to the code (`cargo test --lib`).
 autotests = false
 autobenches = false
 autoexamples = false
 
-# docs.rs builds the public API with every sub-system enabled (`full`), but NOT
-# the `blas` feature — that needs a system BLAS/LAPACK the docs.rs sandbox lacks.
+# docs.rs builds the public API with every sub-system enabled.
 [package.metadata.docs.rs]
 features = ["full"]
 
@@ -26,20 +25,20 @@ features = ["full"]
 name = "molrs"
 
 [dev-dependencies]
-criterion = "0.8"
-# Test-only: the ff::params manifest guard recomputes the SHA-256 of every
-# committed generated table. It is the only drift check that runs without
-# AmberTools, i.e. the only one CI actually executes.
-sha2 = "0.10"
 tempfile = "3.0"
 
 [features]
-default = ["rayon"]
+# Native default: every sub-system plus filesystem-backed zarr and rayon.
+# `stream` (tokio + WebSocket) is opt-in — molrs-python turns it on itself.
+# wasm / Pyodide opt down with `default-features = false`.
+default = ["full", "filesystem", "rayon"]
 # Full bundle (every sub-system).
-full = ["io", "compute", "smiles", "ff", "conformer", "signal", "voronoi"]
+full = ["io", "compute", "smiles", "ff", "conformer", "signal", "voronoi", "md", "builder"]
 
 # Sub-system modules (each gates its module + its unique optional deps).
-io        = ["dep:flate2", "dep:once_cell"]
+# Structure builders (graphene, nanotubes, self-avoiding walks); no unique deps.
+builder   = []
+io        = ["dep:flate2"]
 # `smiles` lives inside the `io` module.
 smiles    = ["io"]
 signal    = ["dep:rustfft"]
@@ -50,23 +49,33 @@ compute   = ["signal"]
 voronoi   = ["compute"]
 ff        = ["dep:rustfft", "dep:roxmltree"]
 # `conformer` depends on the `ff` module.
-conformer = ["ff", "dep:once_cell"]
+conformer = ["ff"]
+# In-process MD (integrators, shifted LJ). Science only; pair search is
+# core NeighborList. Python composer / hooks live in molrs-python. Consumes
+# the one `ff::potential::Potential`/`Potentials` seam, so it enables `ff`.
+md        = ["ff"]
 # serde `Serialize`/`Deserialize` for the core model (Frame/Block/Column/SimBox).
 # No new deps — serde is already always-on; the feature just enables the impls.
 serde     = []
-# Live Frame streaming — MolRec-aligned transport encoding (MessagePack/JSON)
-# over the `serde`-serializable model. WASM-clean; intentionally NOT in `full`.
-stream    = ["serde", "dep:rmp-serde", "dep:tokio", "dep:tokio-tungstenite", "dep:crossbeam-channel", "dep:futures-util", "dep:bytes"]
-# WebSocket Frame streaming + bidirectional control. Heavy networking deps
-# (tokio multi-thread runtime, tungstenite); intentionally NOT in `full`.
-# Reuses `stream` for wire encoding; `message` is WASM-clean, `server` is not.
+# Live Frame streaming — MolRec-aligned MessagePack/JSON encoding, plus native
+# WebSocket transport. On WASM only the wire codec is compiled. Not in `full`.
+stream    = ["serde", "dep:rmp-serde", "dep:tokio", "dep:tokio-tungstenite", "dep:futures-util"]
 
 # Core knobs.
 rayon      = ["dep:rayon"]
-zarr       = ["dep:zarrs"]
-filesystem = ["zarr", "zarrs/filesystem"]
-blas       = ["dep:ndarray-linalg"]
-slow-tests = []
+# Codecs are contract surface, not a nicety. Every other Zarr implementation
+# compresses by default -- zarr-python writes zstd -- so a build without them
+# cannot read the ecosystem it belongs to, whatever the layout says. Two
+# tiers, because the C-backed ones cannot cross-compile to wasm32:
+#
+#   zarr         base + the pure-Rust codecs. Everywhere, wasm included.
+#   zarr-codecs  adds zstd and blosc, which bind C. Native only.
+#
+# `sharding` is in the base tier deliberately: molrec bounds a store's file
+# count with it, and a reader that cannot open a shard cannot open the store.
+zarr       = ["dep:zarrs", "zarrs/gzip", "zarrs/crc32c", "zarrs/sharding", "zarrs/transpose"]
+zarr-codecs = ["zarr", "zarrs/zstd", "zarrs/blosc"]
+filesystem = ["zarr", "zarr-codecs", "zarrs/filesystem", "dep:zip", "dep:zarrs_zip"]
 
 [dependencies]
 # Always-on (core foundation).
@@ -75,7 +84,14 @@ slotmap    = "1"
 smallvec   = "1"
 serde      = { version = "1", features = ["derive"] }
 serde_json = "1"
+# `lgamma` (Wigner / spherical harmonics) and `erf`/`erfc` (PME) — none of
+# them is in Rust's std on any target.
 libm       = "0.2"
+# Storage-width scalars for columns. Distinct from [`F`]/[`I`]/[`Idx`]: those
+# are domain aliases (compute scalar, small integer, identifier). A column
+# that arrived as f32 or i64 has to leave as the same width.
+half        = { version = "2", default-features = false, features = ["num-traits", "std"] }
+num-complex = "0.4"
 # Seeded RNG for structure builders (`builder` SARW) and for
 # compute/conformer stochastic paths. Always-on so `builder` is always compiled.
 rand       = "0.10"
@@ -84,80 +100,28 @@ rand       = "0.10"
 # that sub-system's unique dependency.
 rayon          = { version = "1.12", optional = true }                                              # core/ff/compute parallelism (default)
 zarrs          = { version = "0.23", optional = true, default-features = false, features = ["ndarray"] }  # zarr trajectories (core+io)
-ndarray-linalg = { version = "0.18", optional = true, default-features = true }                     # blas
 flate2         = { version = "1.1", optional = true, features = ["rust_backend"] }                  # io (compressed formats)
-once_cell      = { version = "1.21", optional = true }                                              # io + conformer
 rustfft        = { version = "6", optional = true }                                                 # signal + ff + compute
 roxmltree      = { version = "0.21", optional = true }                                              # ff (XML force-field readers)
 rmp-serde      = { version = "1", optional = true }                                                 # stream (MessagePack wire encoding)
+# `io/zarr/pack.rs` and nothing else: `zip` writes the `.zarr.zip` a closed
+# directory store packs into, `zarrs_zip` reads it back. Both hang on
+# `filesystem`, so a build without that feature compiles neither — which is
+# what keeps them out of the wasm graph. `zip` is built with default-features
+# off: only method 0 (Stored) is ever written, so none of its compression
+# backends (bzip2/lzma/zstd/aes) are compiled.
+zip            = { version = "6", optional = true, default-features = false }                       # filesystem (pack.rs)
+zarrs_zip      = { version = "0.5", optional = true }                                               # filesystem (pack.rs)
 
-# net — WebSocket streaming is native-only. Declared under not-wasm so
-# `cargo check --target wasm32-unknown-unknown --features net` still builds
-# the WASM-clean `message` module without pulling tokio/tungstenite.
+# WebSocket streaming is native-only. On wasm32, `--no-default-features
+# --features stream` builds the wire codec without pulling tokio/tungstenite.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio              = { version = "1", optional = true, default-features = false, features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
 tokio-tungstenite  = { version = "0.26", optional = true }
-crossbeam-channel  = { version = "0.5", optional = true }
 futures-util       = { version = "0.3", optional = true, default-features = false, features = ["sink"] }
-bytes              = { version = "1", optional = true }
 
 # wasm32 has no OS RNG: `rand`'s transitive `getrandom` needs the `wasm_js`
 # backend to build for the browser target. Target-gated so native builds are
 # unaffected. Mirrors molrs-wasm.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.4", features = ["wasm_js"] }
-
-# Integration binary tests under tests/ were removed — coverage belongs
-# in `#[cfg(test)]` modules next to the code (`cargo test --lib`), except the
-# chem-perceive-15 architecture + reverse gates (self-non-exempting; cannot
-# live next to the production code they police).
-[[test]]
-name = "architecture_gate"
-path = "tests/architecture_gate.rs"
-required-features = ["full"]
-
-
-
-# ── Benches (criterion; auto-discovery off, see [package]) ───────────────────
-[[bench]]
-name = "core_benchmarks"
-path = "benches/core/main.rs"
-harness = false
-
-[[bench]]
-name = "compute_benchmarks"
-path = "benches/compute/main.rs"
-harness = false
-required-features = ["compute"]
-
-# ── Examples ─────────────────────────────────────────────────────────────────
-[[example]]
-name = "saw_demo"
-path = "examples/saw_demo.rs"
-
-[[example]]
-name = "molgraph_analysis"
-path = "examples/molgraph_analysis.rs"
-
-[[example]]
-name = "molgraph_building"
-path = "examples/molgraph_building.rs"
-
-[[example]]
-name = "molgraph_transforms"
-path = "examples/molgraph_transforms.rs"
-
-[[example]]
-name = "forcefield"
-path = "examples/forcefield.rs"
-required-features = ["ff"]
-
-[[example]]
-name = "typify_litfsi"
-path = "examples/typify_litfsi.rs"
-required-features = ["ff"]
-
-[[example]]
-name = "typify_molecule"
-path = "examples/typify_molecule.rs"
-required-features = ["ff"]

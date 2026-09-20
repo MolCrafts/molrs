@@ -39,16 +39,18 @@ By becoming the dependable core the rest of the MolCrafts ecosystem builds on, m
 ## Capabilities
 
 One crate, `molcrafts-molrs`, whose sub-systems are feature-gated modules
-(`core` is always on; `full` enables everything):
+(`core`, `perceive`, and `builder` are always on):
 
 | Module (feature) | Capability |
 |------------------|------------|
-| `core` *(always on)* | Frame / Block column store, MolGraph topology, elements, `SimBox` + MIC, spatial regions, neighbor search, SARW / generate |
+| `core`, `perceive`, `builder` *(always on)* | Frame / Block column store, MolGraph topology, elements, `SimBox` + MIC, spatial regions, neighbor search, chemical perception, structure builders |
 | `io` | Readers / writers for PDB, XYZ, mol2, SDF, CIF, GRO, POSCAR, CHGCAR, Cube, LAMMPS data/dump, DCD, Zarr V3 trajectories (SMILES/SMARTS parser under the `smiles` feature) |
 | `compute` | Trajectory analysis: RDF, MSD, clustering, gyration / inertia tensors, PCA, k-means, density, diffraction, PMFT, order parameters, dielectric, environment matching |
 | `ff` | Force fields and potentials — MMFF94 / OPLS-AA / GAFF typing, LJ, PME; LAMMPS `*.ff` include read/write (`LammpsFfReader` / `LammpsFfWriter`); L-BFGS geometry optimization over a `Potential` |
 | `conformer` | 3D conformer generation: ETKDGv3 distance geometry, experimental-torsion refinement, MMFF94 cleanup, stereo guards |
 | `signal` | Signal processing — FFT-based autocorrelation, window functions, frequency grids |
+| `md` | In-process molecular dynamics: velocity-Verlet and Langevin integration over force-field potentials |
+| `stream` | MessagePack/JSON frame transport and native WebSocket streaming |
 
 A separate `molcrafts-molrs-cxxapi` crate (built from source, not published)
 provides a CXX bridge for zero-copy integration with Atomiverse C++.
@@ -59,10 +61,13 @@ provides a CXX bridge for zero-copy integration with Atomiverse C++.
 cargo add molcrafts-molrs
 ```
 
-Opt into sub-systems via feature flags; `full` enables everything:
+The default build enables `full`, `stream`, `filesystem`, and `rayon`.
+`full` bundles the scientific modules, including `md` and `voronoi`; it does
+not enable streaming, filesystem access, or BLAS. For a smaller build, disable
+defaults and select the modules you need:
 
 ```toml
-molcrafts-molrs = { version = "0.13", features = ["io", "smiles", "conformer"] }
+molcrafts-molrs = { version = "0.14", default-features = false, features = ["io", "smiles", "conformer"] }
 ```
 
 | Environment | Install | Import / use |
@@ -71,6 +76,7 @@ molcrafts-molrs = { version = "0.13", features = ["io", "smiles", "conformer"] }
 | **Python (desktop)** | `pip install molcrafts-molrs` | `import molrs` |
 | **Python (browser / Pyodide)** | `await micropip.install("molcrafts-molrs")` | `import molrs` |
 | **JS (browser)** | `npm install @molcrafts/molrs` | wasm-bindgen API (not `import molrs`) |
+| **C / C++** | `molrs-capi-*.tar.gz` from [GitHub Releases](https://github.com/MolCrafts/molrs/releases) | link `libmolrs_capi` + `#include "molrs.h"` — see `docs/interop.md`, Path C |
 
 PyPI ships **desktop** wheels (manylinux / macOS / Windows) and a **Pyodide
 (Emscripten)** wheel for micropip. The npm package is a separate **wasm-bindgen**
@@ -89,18 +95,20 @@ import molrs
 
 ## Build from source
 
-Building from source needs the Rust toolchain. The pinned channel, the
-`rustfmt` / `clippy` components, and the `wasm32-unknown-unknown` target are all
-declared in `rust-toolchain.toml`, so [`rustup`](https://rustup.rs/) selects
+Building from source needs the Rust toolchain. The channel is `stable` (always
+the latest rustc / rustfmt / clippy), plus the `wasm32-unknown-unknown` target,
+all declared in `rust-toolchain.toml`, so [`rustup`](https://rustup.rs/) selects
 them automatically on the first build.
 
 ```bash
 git clone https://github.com/MolCrafts/molrs.git
 cd molrs
-cargo build --workspace            # compile the library + the C bridge crate
-bash scripts/fetch-test-data.sh    # fetch test fixtures (first run only)
-cargo test --all-features          # run the test suite
+cargo build --workspace            # compile the Rust library
+cargo test --features full,filesystem,stream  # unit tests and doctests
 ```
+
+Binding crates are standalone workspaces. Build each with
+`cargo build --manifest-path <crate>/Cargo.toml`.
 
 **Python bindings** are built from the `molrs-python` crate with
 [maturin](https://www.maturin.rs/). `maturin develop` compiles the PyO3
@@ -143,7 +151,9 @@ Python and JavaScript/TypeScript quickstarts live in the documentation.
 
 - [Documentation site](https://docs.molcrafts.org/molrs/) — guides and references
 - [Getting started](https://docs.molcrafts.org/molrs/getting-started/installation/) — Rust, Python, and WASM quickstarts
-- [Guides](https://docs.molcrafts.org/molrs/guides/data-model/) — data model, SMILES, neighbor search, 3D embedding, force fields, I/O, trajectory analysis
+- [Migrating to 0.14](https://docs.molcrafts.org/molrs/getting-started/migration-0-14/) — 0.13 → 0.14 spellings
+- [Python reference](https://docs.molcrafts.org/molrs/reference/python/) — the binding surface, rendered from the installed package
+- [Task-oriented guides](https://docs.molcrafts.org/molpy/) — data model, SMILES, neighbor search, 3D embedding, force fields, I/O, trajectory analysis (molpy, the Python library built on molrs)
 - [Rust API reference](https://docs.rs/molcrafts-molrs) — full rustdoc on docs.rs
 
 ## MolCrafts ecosystem
@@ -166,6 +176,8 @@ Python and JavaScript/TypeScript quickstarts live in the documentation.
 ## Contributing
 
 See [CONTRIBUTING](https://docs.molcrafts.org/molrs/contributing/) for development setup and guidelines.
+The [release checklist](docs/releasing.md) covers local verification, package
+inspection, and the tag-triggered publishing workflow.
 
 ## License
 

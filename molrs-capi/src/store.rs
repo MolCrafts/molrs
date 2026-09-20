@@ -14,9 +14,10 @@ use std::sync::{LazyLock, Mutex, MutexGuard};
 
 use molrs::ff::ForceField;
 use molrs::spatial::simbox::SimBox;
+use molrs_ffi::RegionRef;
 use slotmap::SlotMap;
 
-use crate::handle::{FFKey, BoxKey};
+use crate::handle::{BoxKey, FFKey, RegionKey};
 
 /// Central store owning all C-API state.
 ///
@@ -40,6 +41,11 @@ pub(crate) struct CStore {
 
     /// Standalone ForceField instances, keyed by [`FFKey`].
     pub forcefields: SlotMap<FFKey, ForceField>,
+
+    /// Shared regions, keyed by [`RegionKey`]. The value is the same
+    /// `molrs_ffi::RegionRef` the Python and WASM binders hold, so the trait
+    /// object never crosses the C boundary — only the two-word handle does.
+    pub regions: SlotMap<RegionKey, RegionRef>,
 }
 
 impl CStore {
@@ -50,6 +56,7 @@ impl CStore {
             key_to_id: HashMap::new(),
             simboxes: SlotMap::with_key(),
             forcefields: SlotMap::with_key(),
+            regions: SlotMap::with_key(),
         }
     }
 

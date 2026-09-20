@@ -200,17 +200,19 @@ impl FirstStageField {
         ];
         let vol = v1[0] * v2xv3[0] + v1[1] * v2xv3[1] + v1[2] * v2xv3[2];
 
-        let pre;
-        let energy;
-        if vol < c.vol_lower {
-            energy = c.weight * (vol - c.vol_lower) * (vol - c.vol_lower);
-            pre = c.weight * (vol - c.vol_lower);
+        let (energy, pre) = if vol < c.vol_lower {
+            (
+                c.weight * (vol - c.vol_lower) * (vol - c.vol_lower),
+                c.weight * (vol - c.vol_lower),
+            )
         } else if vol > c.vol_upper {
-            energy = c.weight * (vol - c.vol_upper) * (vol - c.vol_upper);
-            pre = c.weight * (vol - c.vol_upper);
+            (
+                c.weight * (vol - c.vol_upper) * (vol - c.vol_upper),
+                c.weight * (vol - c.vol_upper),
+            )
         } else {
             return (0.0, ());
-        }
+        };
 
         // Gradient (RDKit ChiralViolationContribs::getGrad, 12 components).
         grad[dim * i1] += pre * (v2[1] * v3[2] - v3[1] * v2[2]);
@@ -589,4 +591,49 @@ where
         }
     }
     (energy, converged, iters)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A right-handed tetrahedron: apex above the origin, base on the axes.
+    fn tetrahedron(dim: usize) -> Vec<f64> {
+        let pts = [
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, 0.0],
+        ];
+        let mut p = vec![0.0; 4 * dim];
+        for (a, xyz) in pts.iter().enumerate() {
+            p[a * dim..a * dim + 3].copy_from_slice(xyz);
+        }
+        p
+    }
+
+    #[test]
+    fn the_chiral_volume_is_the_triple_product_about_the_fourth_point() {
+        // v1 = e_x, v2 = e_y, v3 = e_z relative to the origin: e_x · (e_y × e_z) = 1.
+        assert_eq!(calc_chiral_volume(&tetrahedron(3), [0, 1, 2, 3], 3), 1.0);
+        // Swapping two substituents flips the sign.
+        assert_eq!(calc_chiral_volume(&tetrahedron(3), [1, 0, 2, 3], 3), -1.0);
+    }
+
+    #[test]
+    fn the_stride_skips_the_fourth_dimension() {
+        let mut p = tetrahedron(4);
+        for a in 0..4 {
+            p[a * 4 + 3] = 9.0 * a as f64; // anything in dimension 4 is ignored
+        }
+        assert_eq!(calc_chiral_volume(&p, [0, 1, 2, 3], 4), 1.0);
+    }
+
+    #[test]
+    fn coplanar_points_have_no_volume() {
+        let mut p = tetrahedron(3);
+        p[2] = 0.0; // put the apex into the z = 0 plane
+        p[8] = 0.0;
+        assert_eq!(calc_chiral_volume(&p, [0, 1, 2, 3], 3), 0.0);
+    }
 }

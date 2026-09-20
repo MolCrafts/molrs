@@ -59,7 +59,7 @@ impl ToFrame for crate::system::atomistic::Atomistic {
 
 /// Check a frame against the Frame schema before writing it.
 ///
-/// Every [`FrameWriter::write_frame`] calls this first.
+/// Every [`FrameWriter::write`] calls this first.
 pub fn check_before_write<F: crate::store::frame_access::FrameAccess>(frame: &F) -> Result<()> {
     crate::store::schema::Validator::canonical()
         .validate(frame)

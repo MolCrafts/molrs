@@ -28,7 +28,7 @@ use molrs::optimize::{LBFGS as RsLBFGS, Optimizer, set_free_mask};
 use molrs::store::block::Block as RsBlock;
 use molrs::store::frame::Frame as RsFrame;
 use molrs::system::atomistic::Atomistic;
-use molrs::types::U;
+use molrs::types::Idx;
 use ndarray::Array1;
 
 use crate::compute::Neighbors;
@@ -244,7 +244,7 @@ impl LBFGS {
         let report = frame
             .inner
             .with_mut(|rs| -> Result<molrs::optimize::OptReport, String> {
-                install_pairs(rs, &self.pairs)?;
+                install_pairs(rs, &self.pairs, self.ff.special_bonds())?;
                 let compiled = self
                     .ff
                     .to_potentials(rs)
@@ -259,10 +259,10 @@ impl LBFGS {
                 let mut opt = RsLBFGS::new(pot, self.fmax, max_steps, self.max_step, self.memory);
                 let report = Optimizer::run(&mut opt, rs)?;
 
-                if fixed.is_some() {
-                    if let Some(atoms) = rs.get_mut("atoms") {
-                        let _ = atoms.remove("free");
-                    }
+                if fixed.is_some()
+                    && let Some(atoms) = rs.get_mut("atoms")
+                {
+                    let _ = atoms.remove("free");
                 }
                 Ok(report)
             })
@@ -310,7 +310,11 @@ impl OptReport {
 
 // ── pair install ────────────────────────────────────────────────────────────
 
-fn install_pairs(frame: &mut RsFrame, source: &PairSource) -> Result<(), String> {
+fn install_pairs(
+    frame: &mut RsFrame,
+    source: &PairSource,
+    special: &molrs::ff::forcefield::SpecialBonds,
+) -> Result<(), String> {
     let block = match source {
         PairSource::BruteForceTopology => {
             let n = frame.get("atoms").and_then(|b| b.nrows()).unwrap_or(0);
@@ -322,7 +326,7 @@ fn install_pairs(frame: &mut RsFrame, source: &PairSource) -> Result<(), String>
                      force-field nonbonded shell."
                 ));
             }
-            topology_pairs(frame)
+            topology_pairs(frame, special)?
         }
         PairSource::Neighbors { i, j } => pairs_from_indices(frame, i, j)?,
     };
@@ -344,8 +348,8 @@ fn pairs_from_indices(frame: &RsFrame, i: &[u32], j: &[u32]) -> Result<RsBlock, 
     let excluded_13 = end_pairs(frame, "angles", "atomi", "atomk");
     let set_14 = end_pairs(frame, "dihedrals", "atomi", "atoml");
 
-    let mut pi: Vec<U> = Vec::new();
-    let mut pj: Vec<U> = Vec::new();
+    let mut pi: Vec<Idx> = Vec::new();
+    let mut pj: Vec<Idx> = Vec::new();
     let mut p14: Vec<bool> = Vec::new();
     let mut seen = HashSet::new();
 
@@ -358,8 +362,8 @@ fn pairs_from_indices(frame: &RsFrame, i: &[u32], j: &[u32]) -> Result<RsBlock, 
         if excluded_12.contains(&key) || excluded_13.contains(&key) {
             continue;
         }
-        pi.push(lo as U);
-        pj.push(hi as U);
+        pi.push(lo as Idx);
+        pj.push(hi as Idx);
         p14.push(set_14.contains(&key));
     }
 

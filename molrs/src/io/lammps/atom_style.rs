@@ -540,3 +540,78 @@ pub(crate) fn infer_write_style(
     }
     (best_name, best)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accelerator_suffixes_are_stripped_and_real_slashes_are_kept() {
+        assert_eq!(normalize_atom_style(" Full/kk "), "full");
+        assert_eq!(normalize_atom_style("charge/omp"), "charge");
+        assert_eq!(normalize_atom_style("bpm/sphere"), "bpm/sphere");
+    }
+
+    #[test]
+    fn the_style_hint_is_the_first_token_after_the_hash() {
+        assert_eq!(
+            parse_atoms_style_hint("Atoms # charge").as_deref(),
+            Some("charge")
+        );
+        assert_eq!(
+            parse_atoms_style_hint("Atoms # full/gpu extra").as_deref(),
+            Some("full")
+        );
+        assert_eq!(parse_atoms_style_hint("Atoms"), None);
+        assert_eq!(parse_atoms_style_hint("Atoms #"), None);
+    }
+
+    #[test]
+    fn layouts_follow_the_read_data_table() {
+        let full = layout_for_atom_style("full").unwrap();
+        assert_eq!(
+            full.fields,
+            &[
+                DataField::Id,
+                DataField::Mol,
+                DataField::Type,
+                DataField::Charge,
+                DataField::X,
+                DataField::Y,
+                DataField::Z
+            ]
+        );
+        assert_eq!(full.min_cols(), 7);
+        assert!(!full.flexible_tail);
+        assert!(
+            layout_for_atom_style("hybrid full charge")
+                .unwrap()
+                .flexible_tail
+        );
+        assert!(layout_for_atom_style("no-such-style").is_none());
+    }
+
+    #[test]
+    fn column_counts_map_to_the_common_layouts_and_reject_the_rest() {
+        assert_eq!(layout_from_column_count(5).unwrap().fields, ATOMIC);
+        assert_eq!(
+            layout_from_column_count(8).unwrap().fields,
+            ATOMIC,
+            "with image flags"
+        );
+        assert_eq!(layout_from_column_count(6).unwrap().fields, CHARGE);
+        assert_eq!(layout_from_column_count(7).unwrap().fields, FULL);
+        assert!(layout_from_column_count(4).is_err());
+        assert!(layout_from_column_count(11).is_err());
+    }
+
+    #[test]
+    fn integer_tokens_allow_one_leading_sign_only() {
+        assert!(is_int_token("42"));
+        assert!(is_int_token("-1"));
+        assert!(is_int_token("+7"));
+        assert!(!is_int_token(""));
+        assert!(!is_int_token("1.0"));
+        assert!(!is_int_token("--1"));
+    }
+}

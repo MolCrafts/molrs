@@ -14,11 +14,13 @@
 //! stretch-bend coupling entirely. The typifier bakes a `linear` flag on each
 //! angle row (from the *central* atom's `linh`) and both kernels below read it.
 
+use ndarray::{Array2, ArrayView2};
+
 use crate::ff::forcefield::Params;
-use crate::ff::potential::Potential;
 use crate::ff::potential::geometry::{
-    accumulate_angle_forces, compute_angle, mag3, sub3, validate_coords,
+    accumulate_angle_forces, compute_angle, mag3, sub3, term_table, validate_coords,
 };
+use crate::ff::potential::{IndexedTerms, Member, Potential};
 use molrs::store::frame::Frame;
 use molrs::types::F;
 
@@ -65,16 +67,26 @@ pub struct MMFFAngleBend {
     linear: Vec<bool>,
 }
 
-impl Potential for MMFFAngleBend {
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
+impl MMFFAngleBend {
+    /// The physics, once. Which atoms a term names is the only thing
+    /// that differs between the two entry points, so it is the only thing
+    /// passed in — a second copy of the loop would be a second place for
+    /// the force expression to drift.
+    fn fold(
+        &self,
+        coords: &[F],
+        out: &mut [F],
+        n_terms: usize,
+        atoms: impl Fn(usize) -> (usize, usize, usize),
+    ) -> F {
         let _n = validate_coords(coords);
         let mut energy: F = 0.0;
-        let mut forces = vec![0.0 as F; coords.len()];
+        let forces = out;
         let conv = MDYNE_A_TO_KCAL as F;
         let cb = CB_RAD as F;
 
-        for idx in 0..self.atom_i.len() {
-            let (i, j, k) = (self.atom_i[idx], self.atom_j[idx], self.atom_k[idx]);
+        for idx in 0..n_terms {
+            let (i, j, k) = atoms(idx);
             let theta = compute_angle(coords, i, j, k);
             let ka = self.ka[idx];
 
@@ -91,9 +103,53 @@ impl Potential for MMFFAngleBend {
                 energy += 0.5 * conv * ka * dth * dth * (1.0 + cb * dth);
                 conv * ka * dth * (1.0 + 1.5 * cb * dth)
             };
-            accumulate_angle_forces(coords, i, j, k, de_dth, &mut forces);
+            accumulate_angle_forces(coords, i, j, k, de_dth, forces);
         }
-        (energy, forces)
+        energy
+    }
+}
+
+impl Potential for MMFFAngleBend {
+    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
+        let mut out = vec![0.0; coords.len()];
+        let energy = self.accumulate(coords, &mut out);
+        (energy, out)
+    }
+
+    fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
+        self.fold(coords, out, self.atom_i.len(), |t| {
+            (self.atom_i[t], self.atom_j[t], self.atom_k[t])
+        })
+    }
+}
+
+impl IndexedTerms for MMFFAngleBend {
+    fn terms(&self) -> Array2<u32> {
+        term_table(&[&self.atom_i, &self.atom_j, &self.atom_k])
+    }
+    fn calc_energy_forces_with_terms(
+        &self,
+        coords: &[F],
+        terms: ArrayView2<'_, u32>,
+    ) -> (F, Vec<F>) {
+        let mut out = vec![0.0; coords.len()];
+        let energy = self.accumulate_with_terms(coords, terms, &mut out);
+        (energy, out)
+    }
+
+    fn accumulate_with_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, out: &mut [F]) -> F {
+        debug_assert_eq!(
+            terms.nrows(),
+            self.atom_i.len(),
+            "the row set is the force field's; only the atoms a row names may be rebound"
+        );
+        self.fold(coords, out, terms.nrows(), |t| {
+            (
+                terms[[t, 0]] as usize,
+                terms[[t, 1]] as usize,
+                terms[[t, 2]] as usize,
+            )
+        })
     }
 }
 
@@ -107,7 +163,7 @@ pub fn mmff_angle_ctor(
     _sp: &Params,
     _tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
+) -> Result<Member, String> {
     // Per-instance parameters: the MMFF typifier baked ka and theta0 (radians)
     // onto each angle (table → equivalence → empirical). This kernel only reads
     // the columns and evaluates — no force-field-specific resolution lives here.
@@ -143,7 +199,7 @@ pub fn mmff_angle_ctor(
         th0.push(th0c[idx] as F); // radians
         lin.push(linc[idx] != 0);
     }
-    Ok(Box::new(MMFFAngleBend {
+    Ok(Member::indexed(MMFFAngleBend {
         atom_i: ai,
         atom_j: aj,
         atom_k: ak,
@@ -188,15 +244,25 @@ pub struct MMFFStretchBend {
     theta0: Vec<F>,
 }
 
-impl Potential for MMFFStretchBend {
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
+impl MMFFStretchBend {
+    /// The physics, once. Which atoms a term names is the only thing
+    /// that differs between the two entry points, so it is the only thing
+    /// passed in — a second copy of the loop would be a second place for
+    /// the force expression to drift.
+    fn fold(
+        &self,
+        coords: &[F],
+        out: &mut [F],
+        n_terms: usize,
+        atoms: impl Fn(usize) -> (usize, usize, usize),
+    ) -> F {
         let _n = validate_coords(coords);
         let mut energy: F = 0.0;
-        let mut forces = vec![0.0 as F; coords.len()];
+        let forces = out;
         let conv = MDYNE_A_TO_KCAL as F;
 
-        for idx in 0..self.atom_i.len() {
-            let (i, j, k) = (self.atom_i[idx], self.atom_j[idx], self.atom_k[idx]);
+        for idx in 0..n_terms {
+            let (i, j, k) = atoms(idx);
             let rij_vec = sub3(coords, i, coords, j);
             let rkj_vec = sub3(coords, k, coords, j);
             let rij = mag3(rij_vec);
@@ -210,7 +276,7 @@ impl Potential for MMFFStretchBend {
             energy += conv * term * dth;
 
             // dE/ddth = conv * term
-            accumulate_angle_forces(coords, i, j, k, conv * term, &mut forces);
+            accumulate_angle_forces(coords, i, j, k, conv * term, forces);
             // dE/dr_ij = conv * kba_ijk * dth
             if rij > 1e-12 as F {
                 let f_r = -conv * self.kba_ijk[idx] * dth / rij;
@@ -228,7 +294,51 @@ impl Potential for MMFFStretchBend {
                 }
             }
         }
-        (energy, forces)
+        energy
+    }
+}
+
+impl Potential for MMFFStretchBend {
+    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
+        let mut out = vec![0.0; coords.len()];
+        let energy = self.accumulate(coords, &mut out);
+        (energy, out)
+    }
+
+    fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
+        self.fold(coords, out, self.atom_i.len(), |t| {
+            (self.atom_i[t], self.atom_j[t], self.atom_k[t])
+        })
+    }
+}
+
+impl IndexedTerms for MMFFStretchBend {
+    fn terms(&self) -> Array2<u32> {
+        term_table(&[&self.atom_i, &self.atom_j, &self.atom_k])
+    }
+    fn calc_energy_forces_with_terms(
+        &self,
+        coords: &[F],
+        terms: ArrayView2<'_, u32>,
+    ) -> (F, Vec<F>) {
+        let mut out = vec![0.0; coords.len()];
+        let energy = self.accumulate_with_terms(coords, terms, &mut out);
+        (energy, out)
+    }
+
+    fn accumulate_with_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, out: &mut [F]) -> F {
+        debug_assert_eq!(
+            terms.nrows(),
+            self.atom_i.len(),
+            "the row set is the force field's; only the atoms a row names may be rebound"
+        );
+        self.fold(coords, out, terms.nrows(), |t| {
+            (
+                terms[[t, 0]] as usize,
+                terms[[t, 1]] as usize,
+                terms[[t, 2]] as usize,
+            )
+        })
     }
 }
 
@@ -248,7 +358,7 @@ pub fn mmff_stbn_ctor(
     _sp: &Params,
     _tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
+) -> Result<Member, String> {
     // Per-instance parameters: the MMFF typifier baked the stretch-bend force
     // constants (kba_ijk/kba_kji, via the dfsb period-row default-row fallback
     // that the shared-table path lacked) plus the two reference bond lengths and
@@ -299,7 +409,7 @@ pub fn mmff_stbn_ctor(
         pot.r0_kj.push(r0kj[idx] as F);
         pot.theta0.push(th0[idx] as F); // radians
     }
-    Ok(Box::new(pot))
+    Ok(Member::indexed(pot))
 }
 
 #[cfg(test)]

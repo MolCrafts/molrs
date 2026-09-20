@@ -8,7 +8,7 @@
 //! (default) or JSON.
 
 //! Beyond the encoding this module also carries the live transport that uses
-//! it: [`ControlCommand`] (WASM-clean) and [`Publisher`] (native only). They
+//! it: [`crate::stream::ControlCommand`] (WASM-clean) and [`crate::stream::Publisher`] (native only). They
 //! live here rather than under `io` because they pull third-party runtime
 //! dependencies — tokio, tungstenite, rmp-serde — that `io` must not acquire.
 
@@ -83,7 +83,7 @@ mod tests {
     use super::*;
     use crate::core::spatial::simbox::SimBox;
     use crate::core::store::block::Block;
-    use crate::types::{F, I, U};
+    use crate::types::{F, I, Idx};
     use ndarray::{Array1, array};
 
     /// Build a full Frame used by the net-streaming lossless round-trip contract
@@ -120,10 +120,10 @@ mod tests {
 
         let mut bonds = Block::new();
         bonds
-            .insert("i", Array1::from_vec(vec![0 as U, 1 as U]).into_dyn())
+            .insert("i", Array1::from_vec(vec![0 as Idx, 1 as Idx]).into_dyn())
             .unwrap();
         bonds
-            .insert("j", Array1::from_vec(vec![1 as U, 2 as U]).into_dyn())
+            .insert("j", Array1::from_vec(vec![1 as Idx, 2 as Idx]).into_dyn())
             .unwrap();
         bonds
             .insert("order", Array1::from_vec(vec![1u8, 1u8]).into_dyn())

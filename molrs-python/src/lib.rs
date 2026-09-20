@@ -44,14 +44,17 @@ mod store;
 mod builder;
 mod core;
 use crate::builder::{PyCarbonTubeBuilder, PyGrapheneBuilder};
-use crate::core::spatial::neighborlist::{PyNeighborList, PyNeighborQuery, PyNeighbors};
+use crate::core::spatial::mesh::PyTriMesh;
+use crate::core::spatial::neighborlist::{
+    PyNeighborList, PyNeighborQuery, PyNeighbors, PyVerletSkin,
+};
 use crate::core::spatial::region::{
-    PyCuboid, PyHollowSphere, PyParallelepiped, PyRegion, PySphere,
+    PyCuboid, PyCylinder, PyEllipsoid, PyHalfSpace, PyParallelepiped, PyPolyhedron, PyRegion,
+    PySphere, PySphereUnion,
 };
 use crate::core::spatial::simbox::PyBox;
 use crate::core::store::block::PyBlock;
 use crate::core::store::frame::{PyFrame, PyFrameMeta, PyMetaValue};
-use crate::core::store::record::{PyMolRec, PyObservables};
 use crate::core::store::trajectory::{PyScalarObservable, PyTrajectory, PyVectorObservable};
 use crate::core::system::element::PyElement;
 use crate::core::system::molgraph::{
@@ -59,7 +62,7 @@ use crate::core::system::molgraph::{
     PySmartsPattern,
 };
 use crate::core::system::molgraph::{PyRingInfo, align_direction, rotate, scale, translate};
-use crate::core::units::{PyQuantity, PyUnit, PyUnitRegistry};
+use crate::core::units::{PyQuantity, PyUnit, PyUnitPreset, PyUnitRegistry};
 
 mod io;
 
@@ -75,7 +78,7 @@ use ff::atd::PyAtdTypifier;
 use ff::charge::{PyBccModel, PyGasteigerModel, PyMullikenModel};
 use ff::{
     PyForceField, PyLBFGS, PyMMFF94STypifier, PyMMFF94Typifier, PyOPLSAATypifier, PyOptReport,
-    PyPotentials, PyTypifier,
+    PyPotentials, PyTypedPotentials, PyTypifier,
 };
 
 mod compute;
@@ -86,6 +89,7 @@ use compute::{
     PyRadiusOfGyration,
 };
 
+mod md;
 mod signal;
 
 // Live Frame streaming (`molrs::stream`). `ControlCommand` is portable;
@@ -96,9 +100,35 @@ use stream::PyControlCommand;
 #[cfg(not(target_arch = "wasm32"))]
 use stream::PyPublisher;
 
-/// Register the `keys` submodule mirroring `molrs_core::store::keys` so Python code
-/// references the field-name convention by name (`molrs.keys.X`) instead of
-/// scattering string literals.
+/// The FFI ABI handshake token of this build.
+///
+/// Returns ``(abi_line, version, frameref_capsule_name, forcefield_capsule_name,
+/// regionref_capsule_name)``
+/// — e.g. ``("0.14", "0.14.0", "molrs.FrameRef/0.14", "molrs.ForceFieldRef/0.14")``.
+///
+/// A downstream extension that exchanges ``molrs_ffi`` handle capsules with
+/// this wheel (e.g. molpack) calls this once at import and compares
+/// ``abi_line`` against the line of the molrs it statically embeds; a mismatch
+/// is raised as a clear ``ImportError`` instead of surfacing later as a
+/// capsule-name ``ValueError`` (or, before capsule names were versioned,
+/// undefined behavior). Patch versions may differ — layout is frozen within a
+/// minor line (see `molrs-ffi`'s layout snapshot gate).
+#[pyfunction]
+fn _ffi_abi_token() -> (&'static str, &'static str, String, String, String) {
+    (
+        molrs_ffi::abi::abi_line(),
+        ::molrs::VERSION,
+        molrs_ffi::abi::frameref_capsule_name()
+            .to_string_lossy()
+            .into_owned(),
+        molrs_ffi::abi::forcefield_capsule_name()
+            .to_string_lossy()
+            .into_owned(),
+        molrs_ffi::abi::regionref_capsule_name()
+            .to_string_lossy()
+            .into_owned(),
+    )
+}
 
 /// Root Python module for the molrs library.
 ///
@@ -107,11 +137,13 @@ use stream::PyPublisher;
 #[pymodule]
 #[pyo3(name = "_lib")]
 fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(_ffi_abi_token, m)?)?;
     // SimBox + neighbors
     m.add_class::<PyBox>()?;
     m.add_class::<PyNeighborList>()?;
     m.add_class::<PyNeighbors>()?;
     m.add_class::<PyNeighborQuery>()?;
+    m.add_class::<PyVerletSkin>()?;
 
     // Public exceptions
     m.add(
@@ -139,6 +171,7 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyUnit>()?;
     m.add_class::<PyQuantity>()?;
     m.add_class::<PyUnitRegistry>()?;
+    m.add_class::<PyUnitPreset>()?;
 
     // I/O + SMILES
     // Readers
@@ -152,6 +185,7 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(io::read_xyz_trajectory, m)?)?;
     m.add_class::<io::PyXYZTrajReader>()?;
     m.add_function(wrap_pyfunction!(io::read_lammps, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_stl, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_lammps_traj, m)?)?;
     m.add_class::<io::PyLAMMPSTrajReader>()?;
     m.add_function(wrap_pyfunction!(io::read_dcd, m)?)?;
@@ -169,9 +203,7 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(io::read_top, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_top, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_amber_inpcrd, m)?)?;
-    m.add_function(wrap_pyfunction!(io::read_inpcrd, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_amber_prmtop, m)?)?;
-    m.add_function(wrap_pyfunction!(io::read_prmtop, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_ac, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_frcmod, m)?)?;
     m.add_function(wrap_pyfunction!(io::parse_frcmod, m)?)?;
@@ -191,13 +223,28 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(io::write_xsf, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_lammps_log, m)?)?;
     m.add_function(wrap_pyfunction!(io::parse_lammps_log_text, m)?)?;
+    m.add_class::<io::log::PyLammpsLog>()?;
+    m.add_class::<io::log::PyLammpsRun>()?;
+    m.add_class::<io::log::PyLammpsThermo>()?;
+    m.add_class::<io::log::PyLammpsLogHeader>()?;
+    m.add_class::<io::log::PyLammpsMemoryUsage>()?;
+    m.add_class::<io::log::PyLammpsLoopTime>()?;
+    m.add_class::<io::log::PyLammpsPerformance>()?;
+    m.add_class::<io::log::PyLammpsCpuUse>()?;
+    m.add_class::<io::log::PyLammpsTimingRow>()?;
+    m.add_class::<io::log::PyLammpsTimingBreakdown>()?;
+    m.add_class::<io::log::PyLammpsLoadBalance>()?;
+    m.add_class::<io::log::PyLammpsNeighborStatistics>()?;
+    m.add_class::<io::log::PyLammpsWarning>()?;
     // Writers
     m.add_function(wrap_pyfunction!(io::write_gro, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_pdb, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_pdb_trajectory, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_xyz, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_lammps, m)?)?;
+    m.add_function(wrap_pyfunction!(io::lammps_type_ids_from_frame, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_lammps_traj, m)?)?;
+    m.add_function(wrap_pyfunction!(io::write_lammps_dump_local, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_dcd, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_trr, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_xtc, m)?)?;
@@ -206,20 +253,51 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(io::write_smiles_from_atomistic, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_smarts, m)?)?;
 
+    // Scientific-record (*.mrec) path doors. Native-only (filesystem store).
+    // Class is MrecTrajectoryReader on _lib so it does not collide with the
+    // dump concatenator; python/molrs/io/mrec.py aliases it TrajectoryReader.
+    #[cfg(feature = "fs")]
+    {
+        m.add_function(wrap_pyfunction!(io::mrec::read_frame, m)?)?;
+        m.add_function(wrap_pyfunction!(io::mrec::write_frame, m)?)?;
+        m.add_function(wrap_pyfunction!(io::mrec::read_system, m)?)?;
+        m.add_function(wrap_pyfunction!(io::mrec::write_system, m)?)?;
+        m.add_function(wrap_pyfunction!(io::mrec::read_trajectory, m)?)?;
+        m.add_function(wrap_pyfunction!(io::mrec::write_trajectory, m)?)?;
+        m.add_function(wrap_pyfunction!(io::mrec::read_meta, m)?)?;
+        m.add_function(wrap_pyfunction!(io::mrec::section_names, m)?)?;
+        m.add_function(wrap_pyfunction!(io::mrec::pack, m)?)?;
+        m.add_function(wrap_pyfunction!(io::mrec::mrec_validate_path, m)?)?;
+        m.add_function(wrap_pyfunction!(io::mrec::mrec_validate_meta, m)?)?;
+        m.add_function(wrap_pyfunction!(io::mrec::mrec_validate_frame, m)?)?;
+        m.add_class::<io::mrec::PyMrecTrajectoryReader>()?;
+        m.add_class::<io::mrec::PyMrecSequenceSchema>()?;
+        m.add_class::<io::mrec::PyMrecTrajectoryWriter>()?;
+        m.setattr(
+            "MREC_MOLREC_VERSION",
+            molrs::io::mrec::schema::MOLREC_VERSION,
+        )?;
+        m.setattr(
+            "MREC_RESERVED_META_KEYS",
+            molrs::io::mrec::schema::RESERVED_META_KEYS,
+        )?;
+    }
+
     // Trajectory (frame sequence) + observable records
     m.add_class::<PyTrajectory>()?;
     m.add_class::<PyScalarObservable>()?;
     m.add_class::<PyVectorObservable>()?;
 
-    // MolRec record aggregate
-    m.add_class::<PyMolRec>()?;
-    m.add_class::<PyObservables>()?;
-
-    // Regions
+    // Regions (and the mesh a Polyhedron is bounded by)
+    m.add_class::<PyTriMesh>()?;
     m.add_class::<PySphere>()?;
-    m.add_class::<PyHollowSphere>()?;
     m.add_class::<PyCuboid>()?;
     m.add_class::<PyParallelepiped>()?;
+    m.add_class::<PyHalfSpace>()?;
+    m.add_class::<PyCylinder>()?;
+    m.add_class::<PyEllipsoid>()?;
+    m.add_class::<PyPolyhedron>()?;
+    m.add_class::<PySphereUnion>()?;
     m.add_class::<PyRegion>()?;
 
     // Molecular graph hierarchy (base before subclasses)
@@ -264,6 +342,7 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyOPLSAATypifier>()?;
     m.add_class::<PyAtdTypifier>()?;
     m.add_class::<PyPotentials>()?;
+    m.add_class::<PyTypedPotentials>()?;
 
     // Charge models — Python's first native AM1-BCC. One calling convention:
     // `needs_equivalencing()` + `assign(mol, qm=None)`; `BccModel` adds `correct`.
@@ -272,6 +351,10 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyGasteigerModel>()?;
     m.add_class::<PyOptReport>()?;
     m.add_class::<PyLBFGS>()?;
+
+    let md = PyModule::new(m.py(), "md")?;
+    md::register(&md)?;
+    m.add_submodule(&md)?;
     m.add_function(wrap_pyfunction!(ff::read_forcefield_xml_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::read_forcefield_xml_str_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::read_opls_xml_py, m)?)?;

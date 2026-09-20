@@ -4,7 +4,7 @@
 use ndarray::Array1;
 
 use crate::compute::result::ComputeResult;
-use molrs::types::U;
+use molrs::types::Idx;
 
 /// Result of a cluster analysis on one frame.
 #[derive(Debug, Clone)]
@@ -19,7 +19,7 @@ pub struct ClusterResult {
     /// (freud's `cluster_keys`). Empty when clustering without keys; for
     /// key-based grouping each entry holds the single key defining that
     /// cluster.
-    pub cluster_keys: Vec<Vec<U>>,
+    pub cluster_keys: Vec<Vec<Idx>>,
 }
 
 impl ComputeResult for ClusterResult {}

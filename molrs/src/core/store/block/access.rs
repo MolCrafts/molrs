@@ -11,7 +11,7 @@ use super::block_view::BlockView;
 use super::column::Column;
 use super::column_view::ColumnView;
 use super::dtype::DType;
-use crate::types::{F, I, U};
+use crate::types::{F, I, Idx};
 
 /// Unified read-only access for [`Column`] and [`ColumnView`].
 pub trait ColumnAccess {
@@ -22,7 +22,7 @@ pub trait ColumnAccess {
     /// Returns a bool array view, or `None` if the column is not `Bool`.
     fn as_bool_view(&self) -> Option<ArrayViewD<'_, bool>>;
     /// Returns a uint array view, or `None` if the column is not `UInt`.
-    fn as_uint_view(&self) -> Option<ArrayViewD<'_, U>>;
+    fn as_uint_view(&self) -> Option<ArrayViewD<'_, Idx>>;
     /// Returns a u8 array view, or `None` if the column is not `U8`.
     fn as_u8_view(&self) -> Option<ArrayViewD<'_, u8>>;
     /// Returns a string array view, or `None` if the column is not `String`.
@@ -48,7 +48,7 @@ impl ColumnAccess for Column {
         self.as_bool().map(|a| a.view())
     }
 
-    fn as_uint_view(&self) -> Option<ArrayViewD<'_, U>> {
+    fn as_uint_view(&self) -> Option<ArrayViewD<'_, Idx>> {
         self.as_uint().map(|a| a.view())
     }
 
@@ -86,7 +86,7 @@ impl ColumnAccess for ColumnView<'_> {
         self.as_bool()
     }
 
-    fn as_uint_view(&self) -> Option<ArrayViewD<'_, U>> {
+    fn as_uint_view(&self) -> Option<ArrayViewD<'_, Idx>> {
         self.as_uint()
     }
 
@@ -120,7 +120,7 @@ pub trait BlockAccess {
     /// Gets a bool array view for `key` if present and of correct type.
     fn get_bool_view(&self, key: &str) -> Option<ArrayViewD<'_, bool>>;
     /// Gets a uint array view for `key` if present and of correct type.
-    fn get_uint_view(&self, key: &str) -> Option<ArrayViewD<'_, U>>;
+    fn get_uint_view(&self, key: &str) -> Option<ArrayViewD<'_, Idx>>;
     /// Gets a u8 array view for `key` if present and of correct type.
     fn get_u8_view(&self, key: &str) -> Option<ArrayViewD<'_, u8>>;
     /// Gets a string array view for `key` if present and of correct type.
@@ -139,6 +139,8 @@ pub trait BlockAccess {
     fn column_dtype(&self, key: &str) -> Option<DType>;
     /// Returns the shape of the column with the given key, if it exists.
     fn column_shape(&self, key: &str) -> Option<Vec<usize>>;
+    /// EXTXYZ tokens for one row of `key`.
+    fn xyz_row_tokens(&self, key: &str, row: usize) -> Option<Vec<String>>;
 }
 
 impl BlockAccess for Block {
@@ -154,7 +156,7 @@ impl BlockAccess for Block {
         self.get_bool(key).map(|a| a.view())
     }
 
-    fn get_uint_view(&self, key: &str) -> Option<ArrayViewD<'_, U>> {
+    fn get_uint_view(&self, key: &str) -> Option<ArrayViewD<'_, Idx>> {
         self.get_uint(key).map(|a| a.view())
     }
 
@@ -193,6 +195,10 @@ impl BlockAccess for Block {
     fn column_shape(&self, key: &str) -> Option<Vec<usize>> {
         self.get(key).map(|col| col.shape().to_vec())
     }
+
+    fn xyz_row_tokens(&self, key: &str, row: usize) -> Option<Vec<String>> {
+        self.get(key).map(|col| col.xyz_tokens(row))
+    }
 }
 
 impl BlockAccess for BlockView<'_> {
@@ -208,7 +214,7 @@ impl BlockAccess for BlockView<'_> {
         self.get_bool(key)
     }
 
-    fn get_uint_view(&self, key: &str) -> Option<ArrayViewD<'_, U>> {
+    fn get_uint_view(&self, key: &str) -> Option<ArrayViewD<'_, Idx>> {
         self.get_uint(key)
     }
 
@@ -247,12 +253,16 @@ impl BlockAccess for BlockView<'_> {
     fn column_shape(&self, key: &str) -> Option<Vec<usize>> {
         self.get(key).map(|col_view| col_view.shape().to_vec())
     }
+
+    fn xyz_row_tokens(&self, key: &str, row: usize) -> Option<Vec<String>> {
+        self.get(key).map(|col_view| col_view.xyz_tokens(row))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::U;
+    use crate::types::Idx;
     use ndarray::Array1;
 
     fn make_block() -> Block {
@@ -261,7 +271,7 @@ mod tests {
             .insert("x", Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn())
             .unwrap();
         block
-            .insert("id", Array1::from_vec(vec![10 as U, 20, 30]).into_dyn())
+            .insert("id", Array1::from_vec(vec![10 as Idx, 20, 30]).into_dyn())
             .unwrap();
         block
     }

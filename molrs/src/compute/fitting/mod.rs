@@ -14,7 +14,8 @@
 //! | [`LinearFit`] | `(x, y)` curve | [`LinearFitResult`] (slope/intercept/r²) | Einstein–Helfand conductivity OLS |
 //! | [`CumulativeTrapezoid`] | curve + dt | [`CumulativeTrapezoidResult`] (cumulative trapezoid) | Green–Kubo conductivity trapezoid |
 //! | [`Plateau`] | curve | [`PlateauResult`] (windowed mean/std) | new |
-//! | [`DebyeFit`] | normalized Φ(t) + dt | [`DebyeFitResult`] (τ, amplitude) | molpy ad-hoc DebyeFit |
+//!
+//! Debye relaxation fitting lives in [`crate::compute::transport::DebyeFit`].
 //!
 //! # Shared numerical primitives
 //!

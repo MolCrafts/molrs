@@ -7,9 +7,11 @@
 
 use std::collections::HashMap;
 
+use ndarray::{Array2, ArrayView2};
+
 use crate::ff::forcefield::Params;
-use crate::ff::potential::Potential;
-use crate::ff::potential::geometry::{compute_angle, validate_coords};
+use crate::ff::potential::geometry::{compute_angle, term_table, validate_coords};
+use crate::ff::potential::{IndexedTerms, Member, Potential};
 use molrs::store::frame::Frame;
 use molrs::types::F;
 
@@ -54,14 +56,24 @@ impl AngleClass2 {
     }
 }
 
-impl Potential for AngleClass2 {
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
+impl AngleClass2 {
+    /// The physics, once. Which atoms a term names is the only thing
+    /// that differs between the two entry points, so it is the only thing
+    /// passed in — a second copy of the loop would be a second place for
+    /// the force expression to drift.
+    fn fold(
+        &self,
+        coords: &[F],
+        out: &mut [F],
+        n_terms: usize,
+        atoms: impl Fn(usize) -> (usize, usize, usize),
+    ) -> F {
         let _n_atoms = validate_coords(coords);
         let mut energy: F = 0.0;
-        let mut forces = vec![0.0; coords.len()];
+        let forces = out;
 
-        for idx in 0..self.atom_i.len() {
-            let (i, j, k) = (self.atom_i[idx], self.atom_j[idx], self.atom_k[idx]);
+        for idx in 0..n_terms {
+            let (i, j, k) = atoms(idx);
             let (k2, k3, k4) = (self.k2[idx], self.k3[idx], self.k4[idx]);
             let theta0 = self.theta0[idx];
 
@@ -72,10 +84,54 @@ impl Potential for AngleClass2 {
 
             // dE/dtheta = 2 k2 dt + 3 k3 dt^2 + 4 k4 dt^3
             let de_dtheta = 2.0 * k2 * dt + 3.0 * k3 * dt2 + 4.0 * k4 * dt2 * dt;
-            super::accumulate_angle_forces(coords, i, j, k, de_dtheta, &mut forces);
+            super::accumulate_angle_forces(coords, i, j, k, de_dtheta, forces);
         }
 
-        (energy, forces)
+        energy
+    }
+}
+
+impl Potential for AngleClass2 {
+    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
+        let mut out = vec![0.0; coords.len()];
+        let energy = self.accumulate(coords, &mut out);
+        (energy, out)
+    }
+
+    fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
+        self.fold(coords, out, self.atom_i.len(), |t| {
+            (self.atom_i[t], self.atom_j[t], self.atom_k[t])
+        })
+    }
+}
+
+impl IndexedTerms for AngleClass2 {
+    fn terms(&self) -> Array2<u32> {
+        term_table(&[&self.atom_i, &self.atom_j, &self.atom_k])
+    }
+    fn calc_energy_forces_with_terms(
+        &self,
+        coords: &[F],
+        terms: ArrayView2<'_, u32>,
+    ) -> (F, Vec<F>) {
+        let mut out = vec![0.0; coords.len()];
+        let energy = self.accumulate_with_terms(coords, terms, &mut out);
+        (energy, out)
+    }
+
+    fn accumulate_with_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, out: &mut [F]) -> F {
+        debug_assert_eq!(
+            terms.nrows(),
+            self.atom_i.len(),
+            "the row set is the force field's; only the atoms a row names may be rebound"
+        );
+        self.fold(coords, out, terms.nrows(), |t| {
+            (
+                terms[[t, 0]] as usize,
+                terms[[t, 1]] as usize,
+                terms[[t, 2]] as usize,
+            )
+        })
     }
 }
 
@@ -84,7 +140,7 @@ pub fn angle_class2_ctor(
     _style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
+) -> Result<Member, String> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
 
     let block = frame
@@ -124,7 +180,9 @@ pub fn angle_class2_ctor(
         k4.push(need(p, "k4", label)?);
     }
 
-    Ok(Box::new(AngleClass2::new(ai, aj, ak, t0, k2, k3, k4)))
+    Ok(Member::indexed(AngleClass2::new(
+        ai, aj, ak, t0, k2, k3, k4,
+    )))
 }
 
 #[cfg(test)]

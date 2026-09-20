@@ -21,7 +21,7 @@ use molrs::Element;
 use molrs::spatial::simbox::SimBox;
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
-use molrs::types::{F, I, U};
+use molrs::types::{F, I, Idx};
 
 // ---------------------------------------------------------------------------
 // Error helpers
@@ -40,7 +40,7 @@ fn insert_float_col(block: &mut Block, key: &str, vals: Vec<F>) -> Result<()> {
     block.insert(key, arr).map_err(invalid_data)
 }
 
-fn insert_uint_col(block: &mut Block, key: &str, vals: Vec<U>) -> Result<()> {
+fn insert_uint_col(block: &mut Block, key: &str, vals: Vec<Idx>) -> Result<()> {
     let n = vals.len();
     let arr = Array1::from_vec(vals)
         .into_shape_with_order(IxDyn(&[n]))
@@ -92,7 +92,7 @@ pub fn read_xsf_from_reader<R: BufRead>(mut reader: R) -> Result<Frame> {
     let mut structure_type: Option<&str> = None;
     let mut primvec: Option<[[F; 3]; 3]> = None;
     let mut convvec: Option<[[F; 3]; 3]> = None;
-    let mut atomic_numbers: Vec<U> = Vec::new();
+    let mut atomic_numbers: Vec<Idx> = Vec::new();
     let mut xs: Vec<F> = Vec::new();
     let mut ys: Vec<F> = Vec::new();
     let mut zs: Vec<F> = Vec::new();
@@ -211,7 +211,7 @@ fn parse_vectors(lines: &[String]) -> Result<[[F; 3]; 3]> {
 
 fn parse_atoms(
     lines: &[String],
-    atomic_numbers: &mut Vec<U>,
+    atomic_numbers: &mut Vec<Idx>,
     xs: &mut Vec<F>,
     ys: &mut Vec<F>,
     zs: &mut Vec<F>,
@@ -231,7 +231,7 @@ fn parse_atoms(
         if z < 0 {
             return Err(invalid_data(format!("Invalid atom data: {line}")));
         }
-        let z_u = z as U;
+        let z_u = z as Idx;
         let x: F = parts[1]
             .parse()
             .map_err(|_| invalid_data(format!("Invalid atom data: {line}")))?;

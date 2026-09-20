@@ -7,7 +7,7 @@ Project standard for molrs scientific correctness. Applied by the
 
 - Classical MD force fields: LJ, Coulomb, harmonic bonds/angles, MMFF94, OPLS-AA, AMBER
 - Integration algorithms: velocity-Verlet, RESPA
-- Neighbor list algorithms: cell list, Verlet list
+- Neighbor list algorithms: cell list, bounding-volume hierarchy (AABB), Verlet list
 - Periodic boundary conditions: minimum image, triclinic cells
 - Constraint algorithms: SHAKE, RATTLE, LINCS
 - Statistical mechanics: thermostats, barostats, ensemble averages
@@ -21,13 +21,13 @@ Project standard for molrs scientific correctness. Applied by the
 | Length | Å | |
 | Energy | kcal/mol | |
 | Force | kcal/(mol·Å) | |
-| Time | fs | |
+| Time | fs | analysis `dt` / lag use fs; there is no parallel ps unit |
 | Mass | g/mol (amu) | |
 | Charge | e | elementary |
 | Temperature | K | |
 
-Precision: `F = f64` throughout (always). The `f64` feature flag is deprecated
-and ignored.
+Precision: `F = f64` throughout (always). There is no precision feature flag;
+the former `f64` / `i64` / `u64` features were removed.
 
 ### Key constants & conversions
 

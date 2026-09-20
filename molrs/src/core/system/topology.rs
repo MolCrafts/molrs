@@ -6,11 +6,17 @@
 
 use std::collections::{HashMap, VecDeque};
 
+use crate::error::MolRsError;
+use crate::store::{frame::Frame, keys};
+use crate::system::bond_weights::BondDistanceWeights;
+use crate::types::F;
+
 /// Graph-based molecular topology.
 ///
 /// Holds a native adjacency snapshot where vertices are contiguous atom
 /// indices `0..n` and edges are bonds. Angles, dihedrals, and impropers are
 /// detected automatically from bond connectivity using neighbor traversal.
+#[derive(Debug, Clone)]
 pub struct Topology {
     /// Node count.
     n: usize,
@@ -50,6 +56,180 @@ impl Topology {
             topo.adj[e[1]].push(e[0]);
         }
         topo
+    }
+
+    /// Read connectivity from a [`Frame`]'s `atoms` / `bonds` blocks.
+    ///
+    /// Atom count comes from `atoms.nrows()`. Edges come from uint
+    /// [`keys::ATOMI`] / [`keys::ATOMJ`] columns and are replayed through
+    /// [`from_edges`](Self::from_edges), so neighbour slices follow bonds-block
+    /// insertion order and are **never sorted**. Sorting them would reshape a
+    /// consumer's growth tree (molpack picks the first neighbour).
+    ///
+    /// Coordinates are not read. A fixture with only an `id` column is valid.
+    /// Binders must not invent an `i`/`j` column vocabulary; this reader
+    /// recognizes `atomi` / `atomj` only.
+    ///
+    /// In-range self-loops `(a, a)` are dropped before `from_edges` (a
+    /// `from_frame`-only policy). Endpoints are range-checked first: `(n, n)`
+    /// on an `n`-atom frame is a validation error, not a dropped loop.
+    ///
+    /// A missing or empty `bonds` block is `Ok` with zero edges. A present
+    /// non-empty bonds block that lacks `atomi`/`atomj` is a named error, not
+    /// a silent empty graph.
+    ///
+    /// # Errors
+    ///
+    /// - no `atoms` block → [`MolRsError::NotFound`]
+    /// - `atoms` with `nrows() == None` → [`MolRsError::Validation`]
+    /// - bond endpoint outside the frame, including `(n, n)` → Validation
+    /// - non-empty `bonds` missing `atomi` and/or `atomj` → Validation
+    pub fn from_frame(frame: &Frame) -> Result<Self, MolRsError> {
+        let atoms = frame
+            .get("atoms")
+            .ok_or_else(|| MolRsError::not_found("atoms", "frame has no atoms block"))?;
+        let n = atoms.nrows().ok_or_else(|| {
+            MolRsError::validation("atoms block has no nrows (empty block, no columns)")
+        })?;
+        let Some(bonds) = frame.get("bonds") else {
+            return Ok(Self::from_edges(n, &[]));
+        };
+        match bonds.nrows() {
+            None | Some(0) => return Ok(Self::from_edges(n, &[])),
+            Some(_) => {}
+        }
+        let Some(atomi) = bonds.get_uint(keys::ATOMI) else {
+            return Err(MolRsError::validation(
+                "bonds block is missing uint column atomi",
+            ));
+        };
+        let Some(atomj) = bonds.get_uint(keys::ATOMJ) else {
+            return Err(MolRsError::validation(
+                "bonds block is missing uint column atomj",
+            ));
+        };
+        let mut edges = Vec::with_capacity(atomi.len());
+        for (&a, &b) in atomi.iter().zip(atomj.iter()) {
+            let a = a as usize;
+            let b = b as usize;
+            if a >= n || b >= n {
+                return Err(MolRsError::validation(format!(
+                    "bond ({a}, {b}) references an atom outside the frame (n_atoms = {n})"
+                )));
+            }
+            if a == b {
+                continue;
+            }
+            edges.push([a, b]);
+        }
+        Ok(Self::from_edges(n, &edges))
+    }
+
+    /// Per-atom partners whose bond-distance weight is exactly `0.0`.
+    ///
+    /// Each inner list is root-inclusive and sorted ascending. Exemption is
+    /// `weights.weight(distance) == 0.0` (distance 0 is always the root).
+    ///
+    /// Walk bound: if the table's last entry (the 1-N tail) is `0.0`, BFS the
+    /// connected component; otherwise do not expand past the last distance
+    /// whose weight is `0`, then keep partners iff `weight(d) == 0.0`. A hole
+    /// table such as `[0, 0.5, 0, 1]` therefore lists 1-4 and not 1-3.
+    ///
+    /// This method does not read or write `frame["exclusions"]` (that schema
+    /// block is a PME/prmtop pair list, a different authority). There is no
+    /// `exclusions(&self, depth)` entry point; write
+    /// `BondDistanceWeights::from_exclusion_depth(3)` instead.
+    ///
+    /// `molrs::ff::potential::intramolecular_pairs` derives 1-2/1-3 skip pairs
+    /// from declared angles/dihedrals blocks and is a different authority.
+    pub fn exclusions(&self, weights: &BondDistanceWeights) -> Vec<Vec<usize>> {
+        let tail_zero = weights.as_slice().last() == Some(&0.0);
+        let cap = if tail_zero {
+            None
+        } else {
+            let mut last_zero = 0usize;
+            for d in 1..=weights.as_slice().len() {
+                if weights.weight(d) == 0.0 {
+                    last_zero = d;
+                }
+            }
+            Some(last_zero)
+        };
+        (0..self.n)
+            .map(|root| {
+                let dist = self.distances(root);
+                let mut list = Vec::new();
+                for (p, &hop) in dist.iter().enumerate() {
+                    if hop < 0 {
+                        continue;
+                    }
+                    let d = hop as usize;
+                    if cap.is_some_and(|c| d > c) {
+                        continue;
+                    }
+                    if weights.weight(d) == 0.0 {
+                        list.push(p);
+                    }
+                }
+                list.sort_unstable();
+                list
+            })
+            .collect()
+    }
+
+    /// Per-atom partners whose interaction is **scaled**, with their weights.
+    ///
+    /// The generalisation of [`exclusions`](Self::exclusions): that one keeps
+    /// the partners whose weight is exactly zero, this one keeps every partner
+    /// whose weight is not one, and says what the weight is. A force field
+    /// that *excludes* 1-2 and 1-3 but *scales* 1-4 — which is most of them —
+    /// needs both facts, and an exclusion list can only carry the first.
+    ///
+    /// Each inner list is sorted by partner and contains no duplicates, so a
+    /// caller may binary-search it. It is **root-inclusive**, exactly as
+    /// [`exclusions`](Self::exclusions) is — distance 0 has weight zero — so
+    /// that one is precisely the zero-weight subset of this. Two sibling
+    /// methods that disagreed about whether an atom is its own partner would
+    /// be a trap for whoever used both.
+    ///
+    /// The walk bound is the same as [`exclusions`](Self::exclusions)': if the
+    /// table's 1-N tail is not one, the whole connected component is eligible;
+    /// otherwise the walk stops at the last distance whose weight differs from
+    /// one.
+    pub fn special_weights(&self, weights: &BondDistanceWeights) -> Vec<Vec<(usize, F)>> {
+        let tail_special = weights.as_slice().last() != Some(&1.0);
+        let cap = if tail_special {
+            None
+        } else {
+            let mut last = 0usize;
+            for d in 1..=weights.as_slice().len() {
+                if weights.weight(d) != 1.0 {
+                    last = d;
+                }
+            }
+            Some(last)
+        };
+        (0..self.n)
+            .map(|root| {
+                let dist = self.distances(root);
+                let mut list = Vec::new();
+                for (p, &hop) in dist.iter().enumerate() {
+                    if hop < 0 {
+                        continue;
+                    }
+                    let d = hop as usize;
+                    if cap.is_some_and(|c| d > c) {
+                        continue;
+                    }
+                    let w = weights.weight(d);
+                    if w != 1.0 {
+                        list.push((p, w));
+                    }
+                }
+                list.sort_unstable_by_key(|&(p, _)| p);
+                list
+            })
+            .collect()
     }
 
     // -----------------------------------------------------------------------
@@ -152,6 +332,36 @@ impl Topology {
                     }
                 }
             }
+        }
+        result
+    }
+
+    /// One improper quartet `[centre, i, j, k]` per atom with **exactly three**
+    /// neighbours, the peripherals sorted.
+    ///
+    /// This is the molecular-mechanics reading of an improper: a trivalent
+    /// centre carries one out-of-plane term. [`impropers`](Self::impropers) is
+    /// the geometric enumeration instead — every 3-combination at every centre
+    /// of degree >= 3 — which hands an sp3 carbon four quartets where a force
+    /// field wants none.
+    ///
+    /// Planarity is **not** judged here. Whether a trivalent centre actually
+    /// carries an improper is force-field data (GAFF reads the `improper_flag`
+    /// column of PARMCHK.DAT), not a property of the graph, so this returns
+    /// every trivalent centre and leaves the selection to the layer that has
+    /// the table.
+    ///
+    /// The centre is first. AMBER's slot order, with the centre third, is a
+    /// re-ordering performed by the force field that wants it.
+    pub fn trivalent_impropers(&self) -> Vec<[usize; 4]> {
+        let mut result = Vec::new();
+        for center in 0..self.n {
+            let mut neighbors: Vec<usize> = self.adj[center].clone();
+            if neighbors.len() != 3 {
+                continue;
+            }
+            neighbors.sort_unstable();
+            result.push([center, neighbors[0], neighbors[1], neighbors[2]]);
         }
         result
     }
@@ -689,6 +899,54 @@ fn symmetric_difference(a: &[usize], b: &[usize]) -> Vec<usize> {
 
 #[cfg(test)]
 mod tests {
+
+    /// `special_weights` says *how much*, where `exclusions` only says *which*.
+    ///
+    /// A force field that excludes 1-2 and 1-3 but scales 1-4 — which is most
+    /// of them — cannot be described by a list of partners alone, and a caller
+    /// handed only the list would either drop the 1-4 pairs or score them at
+    /// full strength. Neither is what the force field says.
+    #[test]
+    fn special_weights_carries_the_scale_an_exclusion_list_cannot() {
+        // A four-atom chain: 0-1-2-3.
+        let topo = Topology::from_edges(4, &[[0, 1], [1, 2], [2, 3]]);
+        // 1-2 and 1-3 excluded, 1-4 at half, everything beyond at full.
+        let w = BondDistanceWeights::new(vec![0.0, 0.0, 0.5, 1.0]).unwrap();
+
+        let special = topo.special_weights(&w);
+        assert_eq!(special[0], vec![(0, 0.0), (1, 0.0), (2, 0.0), (3, 0.5)]);
+        assert_eq!(special[1], vec![(0, 0.0), (1, 0.0), (2, 0.0), (3, 0.0)]);
+        assert_eq!(special[3], vec![(0, 0.5), (1, 0.0), (2, 0.0), (3, 0.0)]);
+
+        // The exclusion list is exactly the zero-weight subset, and the 1-4
+        // pair is what it cannot express.
+        for (root, list) in topo.exclusions(&w).iter().enumerate() {
+            let zeros: Vec<usize> = special[root]
+                .iter()
+                .filter(|&&(_, x)| x == 0.0)
+                .map(|&(p, _)| p)
+                .collect();
+            assert_eq!(*list, zeros, "atom {root}");
+        }
+        assert!(
+            !topo.exclusions(&w)[0].contains(&3),
+            "a scaled pair is not an excluded one"
+        );
+    }
+
+    /// Every list is sorted, because callers binary-search them.
+    #[test]
+    fn special_weights_lists_are_sorted_by_partner() {
+        let topo = Topology::from_edges(5, &[[0, 1], [1, 2], [2, 3], [3, 4], [0, 4]]);
+        let w = BondDistanceWeights::new(vec![0.0, 0.0, 0.5, 1.0]).unwrap();
+        for (root, list) in topo.special_weights(&w).iter().enumerate() {
+            assert!(
+                list.windows(2).all(|p| p[0].0 < p[1].0),
+                "atom {root}: {list:?} is not strictly sorted"
+            );
+        }
+    }
+
     use super::*;
 
     #[test]
@@ -827,6 +1085,32 @@ mod tests {
         assert_eq!(topo.n_angles(), 6);
         assert_eq!(topo.n_dihedrals(), 0);
         assert_eq!(topo.impropers().len(), 4);
+    }
+
+    #[test]
+    fn trivalent_impropers_is_one_per_three_neighbour_centre() {
+        // Formaldehyde-shaped: centre 0 bonded to 1, 2, 3.
+        let topo = Topology::from_edges(4, &[[0, 1], [0, 2], [0, 3]]);
+        assert_eq!(topo.trivalent_impropers(), vec![[0, 1, 2, 3]]);
+    }
+
+    #[test]
+    fn trivalent_impropers_skips_a_four_neighbour_centre() {
+        // Methane-shaped: the geometric enumeration gives C(4,3) = 4 quartets,
+        // the molecular-mechanics one gives none — an sp3 centre carries no
+        // out-of-plane term.
+        let topo = Topology::from_edges(5, &[[0, 1], [0, 2], [0, 3], [0, 4]]);
+        assert_eq!(topo.impropers().len(), 4);
+        assert!(topo.trivalent_impropers().is_empty());
+    }
+
+    #[test]
+    fn trivalent_impropers_puts_the_centre_first_and_sorts_the_legs() {
+        let topo = Topology::from_edges(4, &[[0, 3], [0, 1], [0, 2]]);
+        let quartets = topo.trivalent_impropers();
+        assert_eq!(quartets.len(), 1);
+        assert_eq!(quartets[0][0], 0, "centre first");
+        assert_eq!(&quartets[0][1..], &[1, 2, 3], "legs sorted");
     }
 
     #[test]
@@ -1192,5 +1476,388 @@ mod tests {
         assert!(!topo.are_bonded(0, 1));
         assert!(topo.are_bonded(1, 2));
         assert!(topo.are_bonded(2, 3));
+    }
+
+    use crate::MolRsError;
+    use crate::store::{block::Block, frame::Frame};
+    use crate::system::bond_weights::BondDistanceWeights;
+    use ndarray::Array1;
+
+    fn atoms_id_only(n: usize) -> Block {
+        let mut atoms = Block::new();
+        atoms
+            .insert(
+                "id",
+                Array1::from_vec((0u64..n as u64).collect::<Vec<_>>()).into_dyn(),
+            )
+            .unwrap();
+        atoms
+    }
+
+    fn bonds_pairs(pairs: &[[u64; 2]]) -> Block {
+        let mut bonds = Block::new();
+        bonds
+            .insert(
+                "atomi",
+                Array1::from_vec(pairs.iter().map(|p| p[0]).collect()).into_dyn(),
+            )
+            .unwrap();
+        bonds
+            .insert(
+                "atomj",
+                Array1::from_vec(pairs.iter().map(|p| p[1]).collect()).into_dyn(),
+            )
+            .unwrap();
+        bonds
+    }
+
+    fn frame_from_parts(atoms: Block, bonds: Option<Block>) -> Frame {
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms);
+        if let Some(b) = bonds {
+            frame.insert("bonds", b);
+        }
+        frame
+    }
+
+    fn c12_chain_pairs() -> Vec<[u64; 2]> {
+        (0..11).map(|i| [i, i + 1]).collect()
+    }
+
+    #[test]
+    fn from_frame_c12_chain_counts_atoms_and_bonds_without_coordinates() {
+        let frame = frame_from_parts(atoms_id_only(12), Some(bonds_pairs(&c12_chain_pairs())));
+        let topo = Topology::from_frame(&frame).unwrap();
+        assert_eq!(topo.n_atoms(), 12);
+        assert_eq!(topo.n_bonds(), 11);
+    }
+
+    #[test]
+    fn from_frame_neighbor_order_follows_bonds_block_insertion() {
+        let mut pairs = vec![[5u64, 6], [4, 5]];
+        for i in 0..11u64 {
+            if !matches!((i, i + 1), (5, 6) | (4, 5)) {
+                pairs.push([i, i + 1]);
+            }
+        }
+        let topo = Topology::from_frame(&frame_from_parts(
+            atoms_id_only(12),
+            Some(bonds_pairs(&pairs)),
+        ))
+        .unwrap();
+        assert_eq!(topo.neighbors(5), vec![6, 4]);
+        let topo = Topology::from_frame(&frame_from_parts(
+            atoms_id_only(12),
+            Some(bonds_pairs(&c12_chain_pairs())),
+        ))
+        .unwrap();
+        assert_eq!(topo.neighbors(5), vec![4, 6]);
+    }
+
+    #[test]
+    fn from_frame_missing_atoms_block_is_not_found() {
+        let mut frame = Frame::new();
+        frame.insert("bonds", bonds_pairs(&[[0, 1]]));
+        assert!(matches!(
+            Topology::from_frame(&frame),
+            Err(MolRsError::NotFound {
+                entity: "atoms",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn from_frame_atoms_without_nrows_is_validation() {
+        let mut frame = Frame::new();
+        frame.insert("atoms", Block::new());
+        match Topology::from_frame(&frame) {
+            Err(MolRsError::Validation { message }) => {
+                assert!(
+                    message.contains("atoms") && message.contains("nrows"),
+                    "{message}"
+                );
+            }
+            other => panic!("expected Validation, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn from_frame_out_of_range_bond_is_validation() {
+        match Topology::from_frame(&frame_from_parts(
+            atoms_id_only(12),
+            Some(bonds_pairs(&[[0, 12]])),
+        )) {
+            Err(MolRsError::Validation { message }) => {
+                assert!(message.contains('0') && message.contains("12"), "{message}");
+            }
+            other => panic!("expected Validation, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn from_frame_self_loop_at_n_is_validation() {
+        assert!(matches!(
+            Topology::from_frame(&frame_from_parts(
+                atoms_id_only(12),
+                Some(bonds_pairs(&[[12, 12]]))
+            )),
+            Err(MolRsError::Validation { .. })
+        ));
+    }
+
+    #[test]
+    fn from_frame_in_range_self_loop_is_dropped() {
+        let topo = Topology::from_frame(&frame_from_parts(
+            atoms_id_only(3),
+            Some(bonds_pairs(&[[1, 1], [0, 1]])),
+        ))
+        .unwrap();
+        assert_eq!(topo.n_bonds(), 1);
+    }
+
+    #[test]
+    fn from_frame_missing_bonds_block_is_ok_zero_edges() {
+        let topo = Topology::from_frame(&frame_from_parts(atoms_id_only(3), None)).unwrap();
+        assert_eq!((topo.n_atoms(), topo.n_bonds()), (3, 0));
+    }
+
+    #[test]
+    fn from_frame_empty_bonds_block_is_ok_zero_edges() {
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms_id_only(3));
+        frame.insert("bonds", Block::new());
+        assert_eq!(Topology::from_frame(&frame).unwrap().n_bonds(), 0);
+    }
+
+    #[test]
+    fn from_frame_bonds_with_i_j_columns_is_validation() {
+        let mut bonds = Block::new();
+        bonds
+            .insert("i", Array1::from_vec(vec![0u64]).into_dyn())
+            .unwrap();
+        bonds
+            .insert("j", Array1::from_vec(vec![1u64]).into_dyn())
+            .unwrap();
+        match Topology::from_frame(&frame_from_parts(atoms_id_only(2), Some(bonds))) {
+            Err(MolRsError::Validation { message }) => {
+                assert!(
+                    message.contains("atomi") || message.contains("atomj"),
+                    "{message}"
+                );
+            }
+            other => panic!("expected Validation, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn from_frame_isolated_atom_is_own_component() {
+        let topo = Topology::from_frame(&frame_from_parts(
+            atoms_id_only(3),
+            Some(bonds_pairs(&[[0, 1]])),
+        ))
+        .unwrap();
+        assert_eq!(topo.n_components(), 2);
+    }
+
+    #[test]
+    fn from_frame_branched_star() {
+        let topo = Topology::from_frame(&frame_from_parts(
+            atoms_id_only(4),
+            Some(bonds_pairs(&[[0, 1], [0, 2], [0, 3]])),
+        ))
+        .unwrap();
+        assert_eq!(topo.neighbors(0), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn from_frame_six_ring_plus_tail() {
+        let pairs = [[0u64, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 0], [5, 6]];
+        let topo = Topology::from_frame(&frame_from_parts(
+            atoms_id_only(7),
+            Some(bonds_pairs(&pairs)),
+        ))
+        .unwrap();
+        assert_eq!(
+            (topo.n_atoms(), topo.n_bonds(), topo.n_components()),
+            (7, 7, 1)
+        );
+    }
+
+    #[test]
+    fn exclusions_c12_depth_three_literals() {
+        let topo = Topology::from_frame(&frame_from_parts(
+            atoms_id_only(12),
+            Some(bonds_pairs(&c12_chain_pairs())),
+        ))
+        .unwrap();
+        let ex = topo.exclusions(&BondDistanceWeights::from_exclusion_depth(3));
+        assert_eq!(ex[0], vec![0, 1, 2, 3]);
+        assert_eq!(ex[5], vec![2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(ex[11], vec![8, 9, 10, 11]);
+    }
+
+    #[test]
+    fn exclusions_c12_depth_one_at_midchain() {
+        let topo = Topology::from_frame(&frame_from_parts(
+            atoms_id_only(12),
+            Some(bonds_pairs(&c12_chain_pairs())),
+        ))
+        .unwrap();
+        assert_eq!(
+            topo.exclusions(&BondDistanceWeights::from_exclusion_depth(1))[5],
+            vec![4, 5, 6]
+        );
+    }
+
+    #[test]
+    fn exclusions_c12_depth_two_at_midchain() {
+        let topo = Topology::from_frame(&frame_from_parts(
+            atoms_id_only(12),
+            Some(bonds_pairs(&c12_chain_pairs())),
+        ))
+        .unwrap();
+        assert_eq!(
+            topo.exclusions(&BondDistanceWeights::from_exclusion_depth(2))[5],
+            vec![3, 4, 5, 6, 7]
+        );
+    }
+
+    #[test]
+    fn exclusions_every_list_contains_root_and_is_sorted() {
+        let topo = Topology::from_frame(&frame_from_parts(
+            atoms_id_only(12),
+            Some(bonds_pairs(&c12_chain_pairs())),
+        ))
+        .unwrap();
+        for (root, list) in topo
+            .exclusions(&BondDistanceWeights::from_exclusion_depth(3))
+            .iter()
+            .enumerate()
+        {
+            assert!(list.contains(&root));
+            let mut sorted = list.clone();
+            sorted.sort_unstable();
+            assert_eq!(list, &sorted);
+        }
+    }
+
+    #[test]
+    fn exclusions_amber_one_four_weight_is_not_exemption() {
+        let topo = Topology::from_frame(&frame_from_parts(
+            atoms_id_only(12),
+            Some(bonds_pairs(&c12_chain_pairs())),
+        ))
+        .unwrap();
+        let w = BondDistanceWeights::new(vec![0.0, 0.0, 0.5, 1.0]).unwrap();
+        let ex = topo.exclusions(&w);
+        for (root, list) in ex.iter().enumerate() {
+            for (p, &d) in topo.distances(root).iter().enumerate() {
+                if d == 3 {
+                    assert!(!list.contains(&p));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn exclusions_zero_tail_reaches_far_end() {
+        let topo = Topology::from_frame(&frame_from_parts(
+            atoms_id_only(12),
+            Some(bonds_pairs(&c12_chain_pairs())),
+        ))
+        .unwrap();
+        assert!(topo.exclusions(&BondDistanceWeights::new(vec![0.0]).unwrap())[0].contains(&11));
+    }
+
+    #[test]
+    fn exclusions_one_then_zero_tail_skips_one_two() {
+        let topo = Topology::from_frame(&frame_from_parts(
+            atoms_id_only(12),
+            Some(bonds_pairs(&c12_chain_pairs())),
+        ))
+        .unwrap();
+        let ex = topo.exclusions(&BondDistanceWeights::new(vec![1.0, 0.0]).unwrap());
+        assert!(ex[0].contains(&11));
+        assert!(!ex[0].contains(&1));
+    }
+
+    #[test]
+    fn exclusions_hole_table_lists_one_four_not_one_three() {
+        let topo = Topology::from_frame(&frame_from_parts(
+            atoms_id_only(12),
+            Some(bonds_pairs(&c12_chain_pairs())),
+        ))
+        .unwrap();
+        let ex = topo.exclusions(&BondDistanceWeights::new(vec![0.0, 0.5, 0.0, 1.0]).unwrap());
+        assert!(ex[0].contains(&3));
+        assert!(!ex[0].contains(&2));
+    }
+
+    #[test]
+    fn exclusions_zero_tail_stays_in_component() {
+        let topo = Topology::from_frame(&frame_from_parts(
+            atoms_id_only(5),
+            Some(bonds_pairs(&[[0, 1], [1, 2], [3, 4]])),
+        ))
+        .unwrap();
+        let ex = topo.exclusions(&BondDistanceWeights::new(vec![0.0]).unwrap());
+        assert!(!ex[0].contains(&3) && !ex[0].contains(&4));
+        assert!(ex[0].contains(&2));
+    }
+
+    #[test]
+    fn exclusions_partner_iff_zero_weight_at_distance() {
+        let topo = Topology::from_frame(&frame_from_parts(
+            atoms_id_only(12),
+            Some(bonds_pairs(&c12_chain_pairs())),
+        ))
+        .unwrap();
+        let tables = [
+            BondDistanceWeights::from_exclusion_depth(3),
+            BondDistanceWeights::new(vec![0.0, 0.5, 0.0, 1.0]).unwrap(),
+            BondDistanceWeights::new(vec![1.0, 0.0]).unwrap(),
+        ];
+        for w in &tables {
+            let ex = topo.exclusions(w);
+            for (r, list) in ex.iter().enumerate() {
+                let dist = topo.distances(r);
+                for (p, &hop) in dist.iter().enumerate() {
+                    let should = hop >= 0 && w.weight(hop as usize) == 0.0;
+                    assert_eq!(list.contains(&p), should, "r={r} p={p} hop={hop}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn exclusions_six_ring_plus_tail_is_root_inclusive_sorted() {
+        let pairs = [[0u64, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 0], [5, 6]];
+        let topo = Topology::from_frame(&frame_from_parts(
+            atoms_id_only(7),
+            Some(bonds_pairs(&pairs)),
+        ))
+        .unwrap();
+        for (root, list) in topo
+            .exclusions(&BondDistanceWeights::from_exclusion_depth(2))
+            .iter()
+            .enumerate()
+        {
+            assert!(list.contains(&root));
+            let mut sorted = list.clone();
+            sorted.sort_unstable();
+            assert_eq!(list, &sorted);
+        }
+    }
+
+    #[test]
+    fn exclusions_branched_template_is_root_inclusive_sorted() {
+        let topo = Topology::from_frame(&frame_from_parts(
+            atoms_id_only(4),
+            Some(bonds_pairs(&[[0, 1], [0, 2], [0, 3]])),
+        ))
+        .unwrap();
+        let ex = topo.exclusions(&BondDistanceWeights::from_exclusion_depth(1));
+        assert_eq!(ex[0], vec![0, 1, 2, 3]);
     }
 }

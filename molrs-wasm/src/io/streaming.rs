@@ -41,19 +41,19 @@ use wasm_bindgen::prelude::*;
 // Per-format builders + parsers. We re-import each format's
 // `parse_frame_bytes` under a local alias so the macro can dispatch.
 use molrs::io::data::lammps_data::{
-    parse_frame_bytes as parse_lammps_data_frame_bytes, LammpsDataIndexBuilder,
+    LammpsDataIndexBuilder, parse_frame_bytes as parse_lammps_data_frame_bytes,
 };
-use molrs::io::data::pdb::{parse_frame_bytes as parse_pdb_frame_bytes, PdbIndexBuilder};
-use molrs::io::data::sdf::{parse_frame_bytes as parse_sdf_frame_bytes, SdfIndexBuilder};
-use molrs::io::data::xyz::{parse_frame_bytes as parse_xyz_frame_bytes, XyzIndexBuilder};
+use molrs::io::data::pdb::{PdbIndexBuilder, parse_frame_bytes as parse_pdb_frame_bytes};
+use molrs::io::data::sdf::{SdfIndexBuilder, parse_frame_bytes as parse_sdf_frame_bytes};
+use molrs::io::data::xyz::{XyzIndexBuilder, parse_frame_bytes as parse_xyz_frame_bytes};
 use molrs::io::trajectory::dcd::{
-    parse_frame_bytes as parse_dcd_frame_bytes, parse_frame_with_decoder_context, DcdIndexBuilder,
+    DcdIndexBuilder, parse_frame_bytes as parse_dcd_frame_bytes, parse_frame_with_decoder_context,
 };
 use molrs::io::trajectory::lammps_dump::{
-    parse_frame_bytes as parse_lammps_dump_frame_bytes, LammpsDumpIndexBuilder,
+    LammpsDumpIndexBuilder, parse_frame_bytes as parse_lammps_dump_frame_bytes,
 };
-use molrs::io::trajectory::trr::{parse_frame_bytes as parse_trr_frame_bytes, TrrIndexBuilder};
-use molrs::io::trajectory::xtc::{parse_frame_bytes as parse_xtc_frame_bytes, XtcIndexBuilder};
+use molrs::io::trajectory::trr::{TrrIndexBuilder, parse_frame_bytes as parse_trr_frame_bytes};
+use molrs::io::trajectory::xtc::{XtcIndexBuilder, parse_frame_bytes as parse_xtc_frame_bytes};
 
 fn parse_dump_stream(
     bytes: &[u8],
@@ -227,15 +227,21 @@ fn column_access<'a>(
 fn dtype_str(dtype: DType) -> &'static str {
     match dtype {
         DType::Float => "f64",
+        DType::Float16 => "f16",
+        DType::Float32 => "f32",
         DType::Int => "i32",
-        DType::UInt => "u32",
+        DType::Int8 => "i8",
+        DType::Int16 => "i16",
+        DType::Int64 => "i64",
+        DType::UInt => "u64",
         DType::String => "string",
-        // The five streaming formats only emit Float / Int / UInt / String
-        // columns; bool / u8 are not produced by any current parser, but if
-        // they show up we still report the underlying dtype so the JS side
-        // can at least decide to skip the column rather than misinterpret it.
         DType::Bool => "bool",
         DType::U8 => "u8",
+        DType::UInt16 => "u16",
+        DType::UInt32 => "u32",
+        DType::Complex64 => "c64",
+        DType::Complex128 => "c128",
+        _ => dtype.name(),
     }
 }
 
@@ -556,7 +562,7 @@ macro_rules! impl_wasm_traj_stream {
             /// **Lifetime**: valid only until the next non-trivial wasm
             /// call. See the module-level memory-grow contract.
             #[wasm_bindgen(js_name = columnPtrU32)]
-            pub fn column_ptr_u32(&self, block_idx: usize, col_idx: usize) -> *const u32 {
+            pub fn column_ptr_u32(&self, block_idx: usize, col_idx: usize) -> *const u64 {
                 let Some(frame) = self.output.as_ref() else {
                     return std::ptr::null();
                 };

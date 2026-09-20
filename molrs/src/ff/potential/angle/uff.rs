@@ -3,10 +3,12 @@
 //! Per-instance columns: `ka`, `order` (0–4), and for `order==0` the Fourier
 //! coefficients `c0`/`c1`/`c2` derived from θ₀.
 
+use ndarray::{Array2, ArrayView2};
+
 use crate::ff::forcefield::Params;
-use crate::ff::potential::Potential;
 use crate::ff::potential::angle::accumulate_angle_forces;
-use crate::ff::potential::geometry::{dot3, mag3, sub3, validate_coords};
+use crate::ff::potential::geometry::{dot3, mag3, sub3, term_table, validate_coords};
+use crate::ff::potential::{IndexedTerms, Member, Potential};
 use molrs::store::frame::Frame;
 use molrs::types::F;
 
@@ -21,14 +23,24 @@ pub struct UffAngle {
     c2: Vec<F>,
 }
 
-impl Potential for UffAngle {
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
+impl UffAngle {
+    /// The physics, once. Which atoms a term names is the only thing
+    /// that differs between the two entry points, so it is the only thing
+    /// passed in — a second copy of the loop would be a second place for
+    /// the force expression to drift.
+    fn fold(
+        &self,
+        coords: &[F],
+        out: &mut [F],
+        n_terms: usize,
+        atoms: impl Fn(usize) -> (usize, usize, usize),
+    ) -> F {
         let _n = validate_coords(coords);
         let mut energy = 0.0 as F;
-        let mut forces = vec![0.0 as F; coords.len()];
+        let forces = out;
 
-        for idx in 0..self.atom_i.len() {
-            let (i, j, k) = (self.atom_i[idx], self.atom_j[idx], self.atom_k[idx]);
+        for idx in 0..n_terms {
+            let (i, j, k) = atoms(idx);
             let rji = sub3(coords, i, coords, j);
             let rjk = sub3(coords, k, coords, j);
             let d1 = mag3(rji);
@@ -71,9 +83,53 @@ impl Potential for UffAngle {
             };
 
             energy += ka * term;
-            accumulate_angle_forces(coords, i, j, k, d_e_d_theta, &mut forces);
+            accumulate_angle_forces(coords, i, j, k, d_e_d_theta, forces);
         }
-        (energy, forces)
+        energy
+    }
+}
+
+impl Potential for UffAngle {
+    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
+        let mut out = vec![0.0; coords.len()];
+        let energy = self.accumulate(coords, &mut out);
+        (energy, out)
+    }
+
+    fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
+        self.fold(coords, out, self.atom_i.len(), |t| {
+            (self.atom_i[t], self.atom_j[t], self.atom_k[t])
+        })
+    }
+}
+
+impl IndexedTerms for UffAngle {
+    fn terms(&self) -> Array2<u32> {
+        term_table(&[&self.atom_i, &self.atom_j, &self.atom_k])
+    }
+    fn calc_energy_forces_with_terms(
+        &self,
+        coords: &[F],
+        terms: ArrayView2<'_, u32>,
+    ) -> (F, Vec<F>) {
+        let mut out = vec![0.0; coords.len()];
+        let energy = self.accumulate_with_terms(coords, terms, &mut out);
+        (energy, out)
+    }
+
+    fn accumulate_with_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, out: &mut [F]) -> F {
+        debug_assert_eq!(
+            terms.nrows(),
+            self.atom_i.len(),
+            "the row set is the force field's; only the atoms a row names may be rebound"
+        );
+        self.fold(coords, out, terms.nrows(), |t| {
+            (
+                terms[[t, 0]] as usize,
+                terms[[t, 1]] as usize,
+                terms[[t, 2]] as usize,
+            )
+        })
     }
 }
 
@@ -81,7 +137,7 @@ pub fn uff_angle_ctor(
     _sp: &Params,
     _tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
+) -> Result<Member, String> {
     let block = frame
         .get("angles")
         .ok_or("uff_angle: missing \"angles\" block")?;
@@ -94,7 +150,7 @@ pub fn uff_angle_ctor(
     let c1 = block.get_float("c1").ok_or("uff_angle: missing c1")?;
     let c2 = block.get_float("c2").ok_or("uff_angle: missing c2")?;
     let n = i.len();
-    Ok(Box::new(UffAngle {
+    Ok(Member::indexed(UffAngle {
         atom_i: (0..n).map(|t| i[t] as usize).collect(),
         atom_j: (0..n).map(|t| j[t] as usize).collect(),
         atom_k: (0..n).map(|t| k[t] as usize).collect(),
@@ -104,4 +160,45 @@ pub fn uff_angle_ctor(
         c1: c1.iter().map(|&v| v as F).collect(),
         c2: c2.iter().map(|&v| v as F).collect(),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ff::potential::test_util::assert_forces_are_negative_gradient;
+
+    fn bent(order: u8, c: [F; 3]) -> UffAngle {
+        UffAngle {
+            atom_i: vec![0],
+            atom_j: vec![1],
+            atom_k: vec![2],
+            ka: vec![100.0],
+            order: vec![order],
+            c0: vec![c[0]],
+            c1: vec![c[1]],
+            c2: vec![c[2]],
+        }
+    }
+
+    /// A right angle at the centre atom.
+    fn right_angle() -> Vec<F> {
+        vec![1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0]
+    }
+
+    #[test]
+    fn fourier_order_zero_is_ka_times_the_cosine_series() {
+        // c0 + c1·cosθ + c2·cos2θ at θ = 90° is c0 − c2.
+        let pot = bent(0, [0.75, 0.3, 0.25]);
+        let (e, _) = pot.calc_energy_forces(&right_angle());
+        assert!((e - 100.0 * (0.75 - 0.25)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn forces_are_the_negative_energy_gradient_for_every_order() {
+        let coords = vec![1.1, 0.2, -0.1, 0.0, 0.0, 0.0, -0.3, 1.2, 0.4];
+        for order in 0..=4 {
+            let pot = bent(order, [0.75, 0.3, 0.25]);
+            assert_forces_are_negative_gradient(&pot, &coords, 1e-5);
+        }
+    }
 }

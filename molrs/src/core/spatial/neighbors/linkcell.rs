@@ -427,6 +427,8 @@ impl LinkCell {
         mode: crate::spatial::neighbors::QueryMode,
         storage: crate::spatial::neighbors::NeighborsStorage,
     ) -> Neighbors {
+        #[cfg(test)]
+        crate::core::test_rayon::ensure();
         use rayon::prelude::*;
 
         let cutoff2 = self.cutoff * self.cutoff;
@@ -886,11 +888,9 @@ mod tests {
 /// [`NeighborList::brute_force`](super::NeighborList::brute_force) the O(N²)
 /// reference.
 ///
-/// The oracle is a direct double loop over
-/// [`SimBox::shortest_vector_impl`] — it shares no cell-assignment or stencil
-/// code with the algorithm under test, so a defect in either cannot cancel out.
-/// The reference backend is checked against the same oracle, which keeps the
-/// oracle itself honest.
+/// The reference shares no cell-assignment or stencil code with the algorithm
+/// under test, so a defect in either cannot cancel out; its own contract is
+/// pinned in `bruteforce.rs`.
 ///
 /// Both traversal modes are exercised. They fail differently: the pair path's
 /// forward filter covers an unordered cell pair from whichever side is cheaper,
@@ -984,23 +984,6 @@ mod equivalence {
         pts
     }
 
-    fn oracle_self(pts: &Array2<F>, bx: &SimBox, cutoff: F) -> BTreeMap<(u32, u32), F> {
-        let c2 = cutoff * cutoff;
-        let mut out = BTreeMap::new();
-        for i in 0..pts.nrows() {
-            let pi = [pts[[i, 0]], pts[[i, 1]], pts[[i, 2]]];
-            for j in (i + 1)..pts.nrows() {
-                let pj = [pts[[j, 0]], pts[[j, 1]], pts[[j, 2]]];
-                let dr = bx.shortest_vector_impl(pi, pj);
-                let d2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
-                if d2 <= c2 {
-                    out.insert((i as u32, j as u32), d2);
-                }
-            }
-        }
-        out
-    }
-
     fn oracle_cross(
         query: &Array2<F>,
         refs: &Array2<F>,
@@ -1078,7 +1061,9 @@ mod equivalence {
                     seen_dims.extend(CellGrid::for_cutoff(&bx, cutoff).celldim());
                     configs += 1;
 
-                    let want = oracle_self(&pts, &bx, cutoff);
+                    let mut bf = NeighborList::brute_force(cutoff);
+                    bf.build(pts.view(), &bx);
+                    let (want, _) = collect(&bf.neighbors(NeighborsStorage::FULL));
 
                     let mut lc = NeighborList::new(cutoff);
                     lc.build(pts.view(), &bx);
@@ -1097,16 +1082,6 @@ mod equivalence {
                             want[key]
                         );
                     }
-
-                    // Keep the oracle honest against the reference algorithm.
-                    let mut bf = NeighborList::brute_force(cutoff);
-                    bf.build(pts.view(), &bx);
-                    let (bf_pairs, _) = collect(&bf.neighbors(NeighborsStorage::FULL));
-                    assert_eq!(
-                        bf_pairs.keys().collect::<Vec<_>>(),
-                        want.keys().collect::<Vec<_>>(),
-                        "{tag}: oracle disagrees with BruteForce"
-                    );
                 }
             }
         }

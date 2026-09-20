@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// CXX bridge interface schema — single source of truth.
 ///
@@ -75,6 +75,31 @@ __MOLRS_ELEMENT_VARIANTS__    }
         // ── Frame bridge (molrs.Frame via molrs-ffi FrameRef) ─────
         type FrameRef;
 
+        // ── Region bridge (molrs.Region via molrs-ffi RegionRef) ──
+        // A region answers a signed distance; `contains` is its sign and
+        // `bounds` the box it fits in. Compositions are ordinary handles, so
+        // a shell is `region_and(outer, region_not(inner))`.
+        type RegionRef;
+
+        fn region_sphere(center: &[f64], radius: f64) -> Box<RegionRef>;
+        fn region_cuboid(origin: &[f64], lengths: &[f64]) -> Box<RegionRef>;
+        fn region_half_space(normal: &[f64], point: &[f64]) -> Result<Box<RegionRef>>;
+        fn region_cylinder(
+            base: &[f64],
+            axis: &[f64],
+            radius: f64,
+            length: f64,
+        ) -> Result<Box<RegionRef>>;
+        fn region_ellipsoid(center: &[f64], semi_axes: &[f64]) -> Result<Box<RegionRef>>;
+
+        fn region_and(a: &RegionRef, b: &RegionRef) -> Box<RegionRef>;
+        fn region_or(a: &RegionRef, b: &RegionRef) -> Box<RegionRef>;
+        fn region_not(a: &RegionRef) -> Box<RegionRef>;
+
+        fn region_distance(rref: &RegionRef, points: &[f64]) -> Vec<f64>;
+        fn region_contains(rref: &RegionRef, points: &[f64]) -> Vec<u8>;
+        fn region_bounds(rref: &RegionRef) -> Vec<f64>;
+
         fn frame_schema_version() -> u32;
         fn frame_new() -> Box<FrameRef>;
 
@@ -94,7 +119,7 @@ __MOLRS_ELEMENT_VARIANTS__    }
         // readers — owned copies (RefCell precludes returning borrowed slices)
         fn frame_column_f64(fref: &FrameRef, block: &str, col: &str) -> Vec<f64>;
         fn frame_column_i32(fref: &FrameRef, block: &str, col: &str) -> Vec<i32>;
-        fn frame_column_u32(fref: &FrameRef, block: &str, col: &str) -> Vec<u32>;
+        fn frame_column_u32(fref: &FrameRef, block: &str, col: &str) -> Vec<u64>;
         fn frame_column_str(fref: &FrameRef, block: &str, col: &str) -> Vec<String>;
         fn frame_box(fref: &FrameRef) -> Vec<f64>;
 
@@ -115,7 +140,7 @@ __MOLRS_ELEMENT_VARIANTS__    }
             fref: &mut FrameRef,
             block: &str,
             col: &str,
-            data: &[u32],
+            data: &[u64],
         ) -> Result<()>;
         fn frame_set_column_str(
             fref: &mut FrameRef,
@@ -170,7 +195,7 @@ __MOLRS_ELEMENT_VARIANTS__    }
         ) -> Result<()>;
         // Write one frame + named per-atom fields (field_data reshaped
         // [n_fields, n_atoms]) to a single-frame Zarr store.
-        fn write_frame_zarr(
+        fn write_frame(
             path: &str,
             type_id: &[i32],
             x: &[f64],
@@ -180,7 +205,36 @@ __MOLRS_ELEMENT_VARIANTS__    }
             field_names: Vec<String>,
             field_data: &[f64],
         ) -> Result<()>;
-        fn read_frame_zarr_first(path: &str) -> Result<Box<FrameRef>>;
+        fn read_first_frame(path: &str) -> Result<Box<FrameRef>>;
+
+        // ── Streaming trajectory writer (`*.mrec`, append-first) ──
+        // The engine's output path: one writer per run, one frame per
+        // append; complete inner chunks land on their own, `flush` commits
+        // (durably when `durable`), `close` ends the run. `flush_every == 0`
+        // leaves the landing cadence to the writer. `schema_from` pins the
+        // blocks/columns every later frame must stay inside.
+        type TrajectoryWriterRef;
+        fn trajectory_writer_create(
+            path: &str,
+            schema_from: &FrameRef,
+            flush_every: u64,
+            durable: bool,
+        ) -> Result<Box<TrajectoryWriterRef>>;
+        fn trajectory_writer_open(
+            path: &str,
+            flush_every: u64,
+            durable: bool,
+        ) -> Result<Box<TrajectoryWriterRef>>;
+        fn trajectory_writer_append(
+            writer: &mut TrajectoryWriterRef,
+            fref: &FrameRef,
+            step: i64,
+            time: f64,
+            has_time: bool,
+        ) -> Result<()>;
+        fn trajectory_writer_flush(writer: &mut TrajectoryWriterRef) -> Result<()>;
+        fn trajectory_writer_committed(writer: &TrajectoryWriterRef) -> u64;
+        fn trajectory_writer_close(writer: Box<TrajectoryWriterRef>) -> Result<()>;
         // Read the first frame of an (ext)XYZ file into a materialize-ready
         // FrameRef (atoms.{x,y,z,type} + simbox). `type` is derived from the
         // required ExtXYZ species column (Z). All XYZ parsing lives in molrs.
@@ -394,96 +448,7 @@ fn main() {
         .std("c++20")
         .compile("molrs_cxxapi");
 
-    compile_test_probe(&out_dir);
-
     println!("cargo::rerun-if-changed=build.rs");
     println!("cargo::rerun-if-changed={}", api_version_path.display());
     println!("cargo::rerun-if-changed={}", element_path.display());
-}
-
-/// Compile `tests/cxx/bridge_probe.cc` — the C++ caller the integration tests
-/// need — against the header cxx just generated.
-///
-/// The tests own a criterion that is a claim about C++ (chem-perceive-12 ac-001:
-/// a chemistry error must arrive on the C++ side as a catchable `rust::Error`,
-/// and must not abort the process), so a C++ translation unit has to exist for a
-/// Rust test to observe it. This is that unit's build step; it is test support
-/// only, and nothing in `src/` calls into it.
-///
-/// **The compile is allowed to fail.** On failure the probe is simply absent, the
-/// `cxx_probe` cfg is not set, and the tests that need it fail with an
-/// explanation (`tests/am1bcc_bridge.rs`). The alternative — letting a bad probe
-/// abort the build script — would take the whole workspace down with it: no crate
-/// would compile and no other test could run, which is the wrong failure for a
-/// test fixture that has drifted from the bridge.
-fn compile_test_probe(out_dir: &Path) {
-    println!("cargo::rustc-check-cfg=cfg(cxx_probe)");
-
-    let probe = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap())
-        .join("tests")
-        .join("cxx")
-        .join("bridge_probe.cc");
-    println!("cargo::rerun-if-changed={}", probe.display());
-    if !probe.is_file() {
-        return; // e.g. a packaged crate built without its tests
-    }
-
-    // cxx nests the generated header under a path derived from the (absolute)
-    // bridge source path, so the include dir is found rather than reconstructed.
-    let include_root = out_dir.join("cxxbridge").join("include");
-    let Some(header) = find_file(&include_root, "bridge.rs.h") else {
-        println!(
-            "cargo::warning=molrs-cxxapi: generated bridge.rs.h not found; C++ test probe skipped"
-        );
-        return;
-    };
-
-    // `cargo_metadata(false)`: this archive must NOT become a `-l` for every
-    // target of the crate. The crate's headline artifact is a `staticlib`, and
-    // rustc bundles native static libs into it — the test probe would be shipped
-    // inside the very library Atomiverse links against. Instead the archive is
-    // handed to the linker of the TEST targets only, below.
-    const LIB: &str = "molrs_cxxapi_test_probe";
-    let result = cc::Build::new()
-        .cpp(true)
-        .std("c++20")
-        .cargo_metadata(false)
-        .include(header.parent().expect("the header has a parent dir"))
-        .include(&include_root)
-        .file(&probe)
-        .try_compile(LIB);
-
-    match result {
-        Ok(()) => {
-            // The C++ stdlib is already linked for every target by the cxx_build
-            // compile above, so the archive alone is enough here.
-            println!(
-                "cargo::rustc-link-arg-tests={}",
-                out_dir.join(format!("lib{LIB}.a")).display()
-            );
-            println!("cargo::rustc-cfg=cxx_probe");
-        }
-        Err(err) => {
-            println!(
-                "cargo::warning=molrs-cxxapi: the C++ test probe did not compile against the \
-                 generated bridge header ({err}). The AM1-BCC bridge tests will fail with an \
-                 explanation; rebuild with `-vv` for the compiler diagnostic."
-            );
-        }
-    }
-}
-
-/// The first file named `name` anywhere under `dir`.
-fn find_file(dir: &Path, name: &str) -> Option<PathBuf> {
-    let entries = std::fs::read_dir(dir).ok()?;
-    let mut dirs = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            dirs.push(path);
-        } else if path.file_name().and_then(|f| f.to_str()) == Some(name) {
-            return Some(path);
-        }
-    }
-    dirs.iter().find_map(|d| find_file(d, name))
 }

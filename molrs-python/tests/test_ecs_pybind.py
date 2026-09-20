@@ -98,6 +98,47 @@ def test_validity_mask_reflects_set_components():
     assert v.tolist() == [True, False]
 
 
+def test_column_with_a_hole_is_a_key_error_not_a_zero_fill():
+    a = molrs.Atomistic()
+    h0 = a.add_atom("C", 0.0, 0.0, 0.0)
+    a.add_atom("O", 0.0, 0.0, 0.0)
+    a.set(h0, molrs.keys.CHARGE, -0.5)
+
+    with pytest.raises(KeyError, match="1 of 2"):
+        a.column(molrs.keys.CHARGE)
+    with pytest.raises(KeyError):
+        a.column("never_set")
+
+
+def test_column_comes_back_in_the_component_type():
+    a = molrs.Atomistic()
+    h0 = a.add_atom("C", 0.0, 0.0, 0.0)
+    h1 = a.add_atom("O", 0.0, 0.0, 0.0)
+    for h, n, flag in ((h0, 3, True), (h1, -1, False)):
+        a.set(h, "n", n)
+        a.set(h, "flag", flag)
+
+    assert a.column(molrs.keys.ELEMENT).tolist() == ["C", "O"]
+    ints = a.column("n")
+    assert ints.dtype == np.int32 and ints.tolist() == [3, -1]
+    flags = a.column("flag")
+    assert flags.dtype == np.bool_ and flags.tolist() == [True, False]
+    # Non-f64 columns are copies: writing them does not reach the world.
+    ints[0] = 99
+    assert a.get(h0, "n") == 3
+
+
+def test_columns_lists_every_registered_component():
+    a = molrs.Atomistic()
+    h0 = a.add_atom("C", 0.0, 0.0, 0.0)
+    a.set(h0, molrs.keys.CHARGE, -0.5)  # partial columns are listed too
+
+    cols = a.columns()
+    assert isinstance(cols, list)
+    assert {molrs.keys.X.key, molrs.keys.ELEMENT.key, molrs.keys.CHARGE.key} <= set(cols)
+    assert molrs.Atomistic().columns() == []
+
+
 def test_get_missing_component_returns_none_and_type_conflict_raises():
     g = molrs.Graph()
     e = g.spawn()

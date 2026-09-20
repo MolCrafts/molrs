@@ -1,20 +1,22 @@
 //! CHARMM proper dihedral:
 //!
-//! E(φ) = K·[1 + cos(n·φ − d)]
+//! E(φ) = k·[1 + cos(n·φ − γ)]
 //!
-//! `K` is the force constant (kcal/mol), `n` the integer multiplicity, and `d`
-//! the phase in radians (readers normalize at their boundary; the LAMMPS
+//! `k` is the force constant (kcal/mol), `periodicity` the integer multiplicity,
+//! and `phase` the phase γ in radians (readers normalize at their boundary; the LAMMPS
 //! `dihedral_style charmm` degree value is converted at read). The 1-4
 //! pair weight `w` is a non-bonded scaling factor handled by the pair term, not
 //! the torsion energy, so it is read but does not enter this kernel.
 
 use std::collections::HashMap;
 
+use ndarray::{Array2, ArrayView2};
+
 use crate::ff::forcefield::Params;
-use crate::ff::potential::Potential;
 use crate::ff::potential::geometry::{
-    accumulate_dihedral_forces, compute_dihedral, validate_coords,
+    accumulate_dihedral_forces, compute_dihedral, term_table, validate_coords,
 };
+use crate::ff::potential::{IndexedTerms, Member, Potential};
 use molrs::store::frame::Frame;
 use molrs::types::F;
 
@@ -30,28 +32,83 @@ pub struct DihedralCharmm {
     d: Vec<F>,
 }
 
-impl Potential for DihedralCharmm {
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
+impl DihedralCharmm {
+    /// The physics, once. Which atoms a term names is the only thing
+    /// that differs between the two entry points, so it is the only thing
+    /// passed in — a second copy of the loop would be a second place for
+    /// the force expression to drift.
+    fn fold(
+        &self,
+        coords: &[F],
+        out: &mut [F],
+        n_terms: usize,
+        atoms: impl Fn(usize) -> (usize, usize, usize, usize),
+    ) -> F {
         let _n = validate_coords(coords);
         let mut energy: F = 0.0;
-        let mut forces = vec![0.0 as F; coords.len()];
+        let forces = out;
 
-        for idx in 0..self.atom_i.len() {
-            let (i, j, k, l) = (
-                self.atom_i[idx],
-                self.atom_j[idx],
-                self.atom_k[idx],
-                self.atom_l[idx],
-            );
+        for idx in 0..n_terms {
+            let (i, j, k, l) = atoms(idx);
             let phi = compute_dihedral(coords, i, j, k, l);
             let (ki, ni, di) = (self.k[idx], self.n[idx], self.d[idx]);
             let arg = ni * phi - di;
             energy += ki * (1.0 + arg.cos());
             // dE/dφ = −K·n·sin(n·φ − d)
             let de_dphi = -ki * ni * arg.sin();
-            accumulate_dihedral_forces(coords, i, j, k, l, de_dphi, &mut forces);
+            accumulate_dihedral_forces(coords, i, j, k, l, de_dphi, forces);
         }
-        (energy, forces)
+        energy
+    }
+}
+
+impl Potential for DihedralCharmm {
+    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
+        let mut out = vec![0.0; coords.len()];
+        let energy = self.accumulate(coords, &mut out);
+        (energy, out)
+    }
+
+    fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
+        self.fold(coords, out, self.atom_i.len(), |t| {
+            (
+                self.atom_i[t],
+                self.atom_j[t],
+                self.atom_k[t],
+                self.atom_l[t],
+            )
+        })
+    }
+}
+
+impl IndexedTerms for DihedralCharmm {
+    fn terms(&self) -> Array2<u32> {
+        term_table(&[&self.atom_i, &self.atom_j, &self.atom_k, &self.atom_l])
+    }
+    fn calc_energy_forces_with_terms(
+        &self,
+        coords: &[F],
+        terms: ArrayView2<'_, u32>,
+    ) -> (F, Vec<F>) {
+        let mut out = vec![0.0; coords.len()];
+        let energy = self.accumulate_with_terms(coords, terms, &mut out);
+        (energy, out)
+    }
+
+    fn accumulate_with_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, out: &mut [F]) -> F {
+        debug_assert_eq!(
+            terms.nrows(),
+            self.atom_i.len(),
+            "the row set is the force field's; only the atoms a row names may be rebound"
+        );
+        self.fold(coords, out, terms.nrows(), |t| {
+            (
+                terms[[t, 0]] as usize,
+                terms[[t, 1]] as usize,
+                terms[[t, 2]] as usize,
+                terms[[t, 3]] as usize,
+            )
+        })
     }
 }
 
@@ -61,7 +118,7 @@ pub fn dihedral_charmm_ctor(
     _sp: &Params,
     tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Box<dyn Potential>, String> {
+) -> Result<Member, String> {
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
     let block = frame
         .get("dihedrals")
@@ -94,10 +151,13 @@ pub fn dihedral_charmm_ctor(
         ak.push(kc[idx] as usize);
         al.push(lc[idx] as usize);
         kk.push(p.get("k").ok_or("dihedral_charmm: missing k")? as F);
-        nn.push(p.get("n").ok_or("dihedral_charmm: missing n")? as F);
-        dd.push(p.get("d").unwrap_or(0.0) as F); // radians (normalized at read)
+        nn.push(
+            p.get("periodicity")
+                .ok_or("dihedral_charmm: missing periodicity")? as F,
+        );
+        dd.push(p.get("phase").unwrap_or(0.0) as F); // radians (normalized at read)
     }
-    Ok(Box::new(DihedralCharmm {
+    Ok(Member::indexed(DihedralCharmm {
         atom_i: ai,
         atom_j: aj,
         atom_k: ak,

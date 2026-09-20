@@ -54,7 +54,9 @@ pub type MinResult = (f64, f64, usize, bool);
 /// (never the case for atomic coordinates).
 #[inline]
 pub(crate) fn fmax_from_grad(grad: &[f64]) -> f64 {
-    grad.chunks_exact(3)
+    grad.as_chunks::<3>()
+        .0
+        .iter()
         .map(|g| (g[0] * g[0] + g[1] * g[1] + g[2] * g[2]).sqrt())
         .fold(0.0_f64, f64::max)
 }

@@ -125,7 +125,7 @@ struct Candidate {
     pattern: Vec<String>,
     /// Overlay layer = max layer over the pattern's classes (CL&P / CL&Pol).
     layer: u32,
-    /// Numeric params (e.g. `k0`/`r0`) to copy onto the matched term.
+    /// Numeric params (e.g. `k`/`r0`) to copy onto the matched term.
     params: Params,
 }
 
@@ -315,7 +315,7 @@ pub fn typify_bonded(
 /// 1. resolve each endpoint atom's `(type, class)`;
 /// 2. scan the matching candidate table for the highest `(score, layer)`;
 /// 3. on a match, copy the winning type's numeric params onto the term (e.g.
-///    `k0`/`r0` for bonds, `k0`/`theta0` for angles, `f1..f4` for dihedrals),
+///    `k`/`r0` for bonds, `k`/`theta0` for angles, `f1..f4` for dihedrals),
 ///    matching molpy's `term.data.update(**type.params.kwargs)`;
 /// 4. on no match, ask `estimator` (if any); if it declines or is absent, apply
 ///    `policy`.
@@ -439,7 +439,7 @@ fn write_match(out: &mut Atomistic, kind: BondedKind, m: &Match<'_>) -> Result<(
 
 /// Copy every param onto the bonded term (no `type` label; used by the
 /// [`Estimator`] path, which synthesizes params with no force-field type name).
-/// Both the numeric params (`k0`/`r0`/…) and any string params are written — the
+/// Both the numeric params (`k`/`r0`/…) and any string params are written — the
 /// latter carries an estimator's provenance convention (e.g. `estimate_method` /
 /// `estimate_analog`) when one is supplied.
 fn write_params(out: &mut Atomistic, kind: BondedKind, params: &Params) -> Result<(), String> {
@@ -559,12 +559,12 @@ mod tests {
 
     // --- ranking: specificity beats wildcard; layer breaks ties ------------
 
-    fn cand(pattern: &[&str], layer: u32, k0: f64) -> Candidate {
+    fn cand(pattern: &[&str], layer: u32, k: f64) -> Candidate {
         Candidate {
             name: pattern.join("-"),
             pattern: pattern.iter().map(|s| s.to_string()).collect(),
             layer,
-            params: Params::from_pairs(&[("k0", k0)]),
+            params: Params::from_pairs(&[("k", k)]),
         }
     }
 
@@ -576,7 +576,7 @@ mod tests {
         let atoms = [("opls_135", Some("CT")), ("opls_140", Some("HC"))];
         let best = CandidateTables::best(&table, &atoms).expect("a match");
         assert_eq!(
-            best.params.get("k0"),
+            best.params.get("k"),
             Some(2.0),
             "fully-resolved candidate wins"
         );
@@ -590,7 +590,7 @@ mod tests {
         let atoms = [("opls_135", Some("CT")), ("opls_140", Some("HC"))];
         let best = CandidateTables::best(&table, &atoms).expect("a match");
         assert_eq!(
-            best.params.get("k0"),
+            best.params.get("k"),
             Some(9.0),
             "higher-layer candidate wins"
         );

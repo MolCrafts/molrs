@@ -47,16 +47,20 @@
 //!   the row order of a materialized table is unspecified.
 //!   [`NeighborList::for_each_pair`] stays single-threaded: it hands pairs to
 //!   an `FnMut` visitor, which cannot be shared across threads.
+//! - [`AabbQuery`] (via [`NeighborList::aabb`]) — a **bounding-volume
+//!   hierarchy**: a binary tree of axis-aligned boxes, descended once per
+//!   lattice image, pruning any subtree whose box is out of reach. `O(N log N)`
+//!   to build. It earns that over the cell list where a cell cannot be sized
+//!   well — markedly non-uniform density, or particle sizes spread wide enough
+//!   that one cutoff makes the cells coarse and the scan mostly empty.
 //! - [`BruteForce`] (via [`NeighborList::brute_force`]) — O(N²) all-pairs
 //!   reference: a test oracle, and adequate for very small systems.
 //!
-//! Two neighboring questions have their own types. [`NeighborQuery`] runs a
-//! **cross-query**, searching one point set against a separate reference set.
-//! [`AabbQuery`] is a bounding-volume tree that answers k-nearest-neighbor
-//! queries ([`AabbQuery::query_knn`]) — *which `k` points are closest*, a
-//! question that has no radius and that a fixed cutoff therefore cannot
-//! express. It is the only reason that type exists: cutoff searches belong to
-//! [`NeighborList`].
+//! [`NeighborQuery`] runs a **cross-query**, searching one point set against a
+//! separate reference set. [`AabbQuery`] answers the one question a cutoff
+//! cannot express — *which `k` points are closest*, which has no radius — via
+//! [`AabbQuery::query_knn`]; it is the same tree that serves as the `Aabb`
+//! backend above, so one index answers both.
 //!
 //! ## Streaming a pair versus materializing a table
 //!
@@ -128,7 +132,7 @@
 //! | `NeighborList.vectors` | [`Neighbors::disp()`] | same unnormalized MIC vector `r_j - r_i` |
 //! | (both always present) | [`NeighborsStorage`] | freud always carries distances and vectors; molrs returns `None` for a column the search was told not to store |
 //! | `freud.locality.LinkCell` | [`NeighborList`] (its [`LinkCell`] backend) | — |
-//! | `freud.locality.AABBQuery` | [`AabbQuery`] | freud's tree answers both cutoff and k-nearest queries; molrs keeps the cutoff search in [`NeighborList`] and leaves [`AabbQuery`] the k-nearest one |
+//! | `freud.locality.AABBQuery` | [`AabbQuery`] | one tree, both questions: the `Aabb` backend of [`NeighborList`] for cutoff searches, [`AabbQuery::query_knn`] for k-nearest |
 //! | `freud.locality.FilterSANN` / `FilterRAD` | [`filter_sann`] / [`filter_rad`] | — |
 
 use crate::spatial::simbox::SimBox;
@@ -140,16 +144,16 @@ pub mod bruteforce;
 pub mod filter;
 pub mod grid;
 mod linkcell;
-pub mod periodic_buffer;
 mod query;
+mod verlet_skin;
 
 pub use aabb::AabbQuery;
 pub use bruteforce::BruteForce;
 pub use filter::{filter_rad, filter_sann};
 pub use grid::CellGrid;
 pub use linkcell::LinkCell;
-pub use periodic_buffer::{PeriodicBufferResult, periodic_buffer};
 pub use query::NeighborQuery;
+pub use verlet_skin::{NeighborPolicy, SkinError, SkinPair, VerletSkin};
 
 // NeighborsStorage and NeighborPair are defined below next to Neighbors.
 
@@ -432,6 +436,23 @@ impl NeighborList {
         Self::with_backend(Box::new(LinkCell::new().cutoff(cutoff)))
     }
 
+    /// A search with the bounding-volume-hierarchy backend.
+    ///
+    /// Same pair set as [`new`](Self::new) — a backend changes which pairs are
+    /// *visited*, never which exist. The tree costs `O(N log N)` to build
+    /// against the cell list's `O(N)`, and earns that back when a cell list
+    /// cannot be sized well: a cell must be at least one cutoff wide, so a
+    /// system with markedly non-uniform density, or with particle sizes spread
+    /// wide enough that one cutoff makes the cells coarse, leaves a cell list
+    /// scanning mostly-empty volume. `LinkCell` remains the default.
+    ///
+    /// # Panics
+    /// Panics if `cutoff` is not positive.
+    pub fn aabb(cutoff: F) -> Self {
+        assert!(cutoff > 0.0, "cutoff must be positive");
+        Self::with_backend(Box::new(AabbQuery::new(cutoff)))
+    }
+
     /// A search with the O(N²) all-pairs backend.
     ///
     /// Same results as [`new`](Self::new) — that is what makes it useful as a
@@ -467,6 +488,12 @@ impl NeighborList {
     #[inline]
     pub fn is_built(&self) -> bool {
         self.bx.is_some()
+    }
+
+    /// Box captured by the last [`build`](Self::build), if any.
+    #[inline]
+    pub fn simbox(&self) -> Option<&SimBox> {
+        self.bx.as_ref()
     }
 
     /// Index `points` in `bx` — coordinates **and** box.
@@ -854,6 +881,17 @@ impl Neighbors {
             disp_flat: Vec::new(),
             mode,
         }
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.idx_i.clear();
+        self.idx_j.clear();
+        self.dist_sq.clear();
+        self.disp_flat.clear();
+    }
+
+    pub(crate) fn set_mode(&mut self, mode: QueryMode) {
+        self.mode = mode;
     }
 
     /// Storage policy for optional columns — equivalently, which of
@@ -1832,6 +1870,14 @@ mod engine_tests {
     /// fallback, which is the point: both branches owe the identical pair set.
     #[test]
     fn engine_parallel_materialize_matches_brute_force() {
+        #[cfg(feature = "rayon")]
+        crate::core::test_rayon::ensure();
+        #[cfg(feature = "rayon")]
+        assert!(
+            rayon::current_num_threads() >= 2,
+            "parallel materialization must run on a multithreaded pool \
+             (set MOLRS_TEST_THREADS>=2)"
+        );
         use std::collections::BTreeSet;
 
         /// Index pairs of a table, sorted — row order is not part of the

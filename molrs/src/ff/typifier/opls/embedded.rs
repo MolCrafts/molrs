@@ -29,7 +29,7 @@ pub(super) fn force_field() -> ForceField {
 
     let bonds = ff.def_bondstyle("harmonic");
     for row in OPLSAA_BONDS {
-        bonds.def_bondtype(row.i, row.j, &[("k0", row.k0), ("r0", row.r0)]);
+        bonds.def_bondtype(row.i, row.j, &[("k", row.force_constant), ("r0", row.r0)]);
     }
 
     let angles = ff.def_anglestyle("harmonic");
@@ -38,7 +38,7 @@ pub(super) fn force_field() -> ForceField {
             row.i,
             row.j,
             row.k,
-            &[("k0", row.k0), ("theta0", row.theta0)],
+            &[("k", row.force_constant), ("theta0", row.theta0)],
         );
     }
 
@@ -50,10 +50,10 @@ pub(super) fn force_field() -> ForceField {
             row.k,
             row.l,
             &[
-                ("f1", row.f1),
-                ("f2", row.f2),
-                ("f3", row.f3),
-                ("f4", row.f4),
+                ("k1", row.f1),
+                ("k2", row.f2),
+                ("k3", row.f3),
+                ("k4", row.f4),
             ],
         );
     }

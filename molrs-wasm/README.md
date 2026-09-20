@@ -16,9 +16,7 @@ npm install @molcrafts/molrs
 ## Quick start
 
 ```js
-import init, { parseSMILES, generate3D, writeFrame } from "@molcrafts/molrs";
-
-await init();
+import { parseSMILES, generate3D, writeFrame } from "@molcrafts/molrs";
 
 // Parse SMILES → 3D coordinates → XYZ string
 const ir = parseSMILES("CCO");
@@ -26,6 +24,10 @@ const frame = ir.toFrame();
 const mol3d = generate3D(frame, "fast");
 console.log(writeFrame(mol3d, "xyz"));
 ```
+
+The published package uses wasm-pack's `bundler` target: configure your bundler
+to load WebAssembly modules. A custom `--target web` build instead exports an
+async `init()` function that must be awaited before calling the API.
 
 ## API
 
@@ -40,7 +42,6 @@ console.log(writeFrame(mol3d, "xyz"));
 - `parseSMILES(smiles)` → `SmilesIR` → `.toFrame()`
 - `XYZReader`, `PDBReader`, `LAMMPSReader` — file format parsers
 - `writeFrame(frame, "xyz" | "pdb" | "lammps-data" | "lammps-dump")` — serialize to string
-- `MolRecReader` — MolRec Zarr V3 reader
 
 ### 3D generation
 
@@ -72,7 +73,7 @@ nl.build(frame);                          // index only — no pair table
 const nlist = nl.neighbors();             // materialize: distSq + disp
 
 const rdf = new RDF(100, 5.0);
-const result = rdf.compute(frame, nlist);
+const result = rdf.compute(frame);        // streams its own neighbor search
 console.log(result.binCenters(), result.rdf());
 ```
 
@@ -95,7 +96,9 @@ fabricated zero array. `disp` is the unnormalized minimum-image displacement
 - **`MSD`** — mean squared displacement
 - **`Cluster`** — distance-based cluster analysis
 
-Frames without a simulation box are supported — a non-periodic bounding box is auto-generated.
+Neighbor searches support frames without a simulation box. RDF additionally
+needs a normalization volume: for a frame without a box, pass it as the fourth
+constructor argument, e.g. `new RDF(100, 5.0, undefined, 1000.0)`.
 
 ### Block column conventions
 
@@ -105,11 +108,42 @@ Frames without a simulation box are supported — a non-periodic bounding box is
 | `atoms` | `x`, `y`, `z` | `F` | Cartesian coordinates |
 | `atoms` | `mass` | `F` | Atomic mass |
 | `atoms` | `charge` | `F` | Partial charge |
-| `bonds` | `i`, `j` | `u32` | Atom indices |
+| `bonds` | `i`, `j` | `u64` | Atom indices (`BigUint64Array`) |
 | `bonds` | `bond_type` | `U32` | 0 unknown, 1 single, 2 double, 3 triple, 4 aromatic |
 | `bonds` | `bond_number` | `U32` | Localized Lewis/Kekulé integer (never fractional) |
 
 `F` is the molrs core float type — always `f64`.
+
+## Trajectory stores (`*.mrec`)
+
+`TrajectoryReader` opens a MolRec trajectory (Zarr V3) and decodes one frame
+per call; consecutive frames of the same chunk are slices, not decodes.
+
+```js
+import { TrajectoryReader } from "@molcrafts/molrs";
+
+// (a) every file in memory
+const reader = new TrajectoryReader(files);            // Map<path, Uint8Array>
+// (b) a packed store
+const zipped = TrajectoryReader.fromZip(bytes);        // Uint8Array of *.mrec.zip
+// (c) served on demand — only touched chunks cross into wasm
+const lazy = TrajectoryReader.fromStore({
+  get: (key) => ...,                                   // Uint8Array | null
+  getRange: (key, offset, length) => ...,              // length -1 = to end
+  size: (key) => ...,                                  // number | null
+  list: (prefix) => [...],                             // keys under prefix
+});
+
+reader.countFrames();
+const frame = reader.readFrame(t);                     // Frame | undefined
+const xyz = reader.readColumns(t, ["atoms/x", "atoms/y", "atoms/z"]);
+reader.blockUpdateAt("bonds", t);                      // same value ⇒ same rows
+reader.boxAt(t);
+```
+
+The host callbacks of `fromStore` are synchronous: in a Worker that is
+`FileReaderSync` over `File` handles or a synchronous range request; on the
+main thread hand the reader a `Map` instead.
 
 ## Build from source
 
@@ -133,7 +167,7 @@ needed.
 
 ### Variants (optional)
 
-Default build compiles all subsystems (`smiles`, `io`, `compute`, `embed`). To
+Default features are `smiles`, `io`, `compute`, `conformer`, `voronoi`, and `stream`. To
 build a smaller wasm containing only a subset, use Cargo features:
 
 ```bash

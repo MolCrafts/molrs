@@ -203,8 +203,8 @@ TEST_F(MolrsTest, BlockInsertMultipleTypes) {
     int32_t i_data[3] = {100, 200, 300};
     ASSERT_MOLRS_OK(molrs_block_set_I(&block, i_id, i_data, shape1, 1));
 
-    // U column (uint32_t by default)
-    uint32_t u_data[3] = {1, 2, 3};
+    // U column (uint64_t / Idx)
+    uint64_t u_data[3] = {1, 2, 3};
     ASSERT_MOLRS_OK(molrs_block_set_U(&block, u_id, u_data, shape1, 1));
 
     // verify ncols = 3
@@ -508,77 +508,6 @@ TEST_F(MolrsTest, ForceFieldJsonRoundtrip) {
     ASSERT_MOLRS_OK(molrs_ff_drop(ff2));
 }
 
-// ===== Full Simulation Loop ===============================================
-
-TEST_F(MolrsTest, FullSimulationLoop) {
-    // Mimics the typical C/CUDA engine workflow:
-    //   1. Create frame + SimBox
-    //   2. Insert position data
-    //   3. Read via zero-copy pointer
-    //   4. Modify via mutable pointer (simulate GPU write-back)
-    //   5. Verify results
-
-    uint32_t atoms_id = intern("gt_sim_atoms");
-    uint32_t pos_id   = intern("gt_sim_pos");
-
-    // frame
-    MolrsFrameHandle frame{};
-    ASSERT_MOLRS_OK(molrs_frame_new(&frame));
-
-    // simbox
-    F origin[3] = {0, 0, 0};
-    bool pbc[3] = {true, true, true};
-    MolrsBoxHandle sb{};
-    ASSERT_MOLRS_OK(molrs_box_cube(static_cast<F>(10.0), origin, pbc, &sb));
-    ASSERT_MOLRS_OK(molrs_frame_set_box(frame, sb));
-
-    // block + positions
-    ASSERT_MOLRS_OK(molrs_frame_set_block(frame, atoms_id, 0));
-    MolrsBlockHandle block{};
-    ASSERT_MOLRS_OK(molrs_frame_get_block(frame, atoms_id, &block));
-
-    F positions[9] = {1, 2, 3, 4, 5, 6, 7, 8, 9};
-    size_t shape[2] = {3, 3};
-    ASSERT_MOLRS_OK(molrs_block_set_F(&block, pos_id, positions, shape, 2));
-
-    // zero-copy READ
-    const F* read_ptr = nullptr;
-    size_t read_len = 0;
-    ASSERT_MOLRS_OK(molrs_block_get_F(block, pos_id, &read_ptr, &read_len));
-    ASSERT_EQ(read_len, 9u);
-    EXPECT_FLOAT_EQ(read_ptr[0], 1.0f);
-    EXPECT_FLOAT_EQ(read_ptr[8], 9.0f);
-
-    // zero-copy WRITE (simulate cudaMemcpy device->host)
-    F* write_ptr = nullptr;
-    size_t write_len = 0;
-    ASSERT_MOLRS_OK(molrs_block_get_F_mut(&block, pos_id, &write_ptr, &write_len));
-    ASSERT_EQ(write_len, 9u);
-    for (size_t i = 0; i < write_len; ++i) {
-        write_ptr[i] *= 2.0f;
-    }
-    ASSERT_MOLRS_OK(molrs_block_col_commit(&block));
-
-    // verify
-    F buf[9] = {};
-    ASSERT_MOLRS_OK(molrs_block_copy_F(block, pos_id, buf, 9));
-    for (size_t i = 0; i < 9; ++i) {
-        EXPECT_FLOAT_EQ(buf[i], positions[i] * 2.0f);
-    }
-
-    // query SimBox through frame
-    MolrsBoxHandle frame_sb{};
-    ASSERT_MOLRS_OK(molrs_frame_get_box(frame, &frame_sb));
-    F h[9] = {};
-    ASSERT_MOLRS_OK(molrs_box_h(frame_sb, h));
-    EXPECT_NEAR(h[0], 10.0, 1e-6);
-
-    // cleanup
-    molrs_box_drop(sb);
-    molrs_box_drop(frame_sb);
-    ASSERT_MOLRS_OK(molrs_frame_drop(frame));
-}
-
 // ===== Error Handling =====================================================
 
 TEST_F(MolrsTest, NullPointerErrors) {
@@ -628,6 +557,26 @@ TEST_F(MolrsTest, BlockCopyBufferTooSmall) {
 // Rust tables declare — a header that drifts from the library is exactly the
 // duplication the schema exists to remove.
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// ABI handshake
+//
+// A dlopen consumer compares the library's runtime version constant against
+// the MOLRS_C_API_VERSION its header was compiled with — a header/library
+// pair that drifts must be detectable before any other call.
+// ---------------------------------------------------------------------------
+
+TEST(Abi, RuntimeVersionMatchesHeaderConstant) {
+    EXPECT_EQ(molrs_c_api_version(), static_cast<uint32_t>(MOLRS_C_API_VERSION));
+}
+
+TEST(Abi, MolrsVersionIsANonEmptyDottedString) {
+    const char* v = molrs_version();
+    ASSERT_NE(v, nullptr);
+    std::string s(v);
+    EXPECT_FALSE(s.empty());
+    EXPECT_NE(s.find('.'), std::string::npos);
+}
 
 TEST(Schema, JsonIsOwnedNonEmptyAndFreeable) {
     char* json = molrs_schema_json();

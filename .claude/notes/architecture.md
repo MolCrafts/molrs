@@ -1,8 +1,8 @@
 # Project blueprint — molrs
 
-> Generated for 0.12.0 release prep (release-0-12-01-harness). Refresh with `/mol:map` when the tree drifts.
+> Generated for 0.14.0. Refresh with `/mol:map` when the tree drifts.
 
-**Inventory date:** 2026-08-04
+**Inventory date:** 2026-09-20
 **Layout:** single published crate `molcrafts-molrs` + binder workspaces.
 
 ## Workspace members
@@ -22,6 +22,7 @@
 core (always) ──► perceive (always)
                 ├── io (feature)
                 ├── ff (feature) ──► optimize (with ff)
+                │                 └── md (feature, needs ff)
                 └── conformer (feature, needs ff)
 compute (feature) ──► signal
 stream / serialize (optional)
@@ -29,10 +30,13 @@ stream / serialize (optional)
 
 | Module | Public surface (summary) |
 |---|---|
-| `core` | Frame, Block, MolGraph, Atomistic, Box, schema, generate, units |
+| `core` | Frame, Block, MolGraph, Atomistic, Box, schema, generate, units, `UnitPreset` |
 | `perceive` | rings, aromaticity, SMARTS, stereo, hydrogens, bond types |
-| `io` | readers/writers, SMILES, trajectory, Zarr/MolRec |
-| `ff` | ForceField, potentials, typifiers (MMFF, OPLS, UFF, ATD), charge |
+| `io` | readers/writers, SMILES, trajectory, Record store adapter (`io::zarr`) |
+| `ff` | ForceField, potentials, typifiers (MMFF, OPLS, UFF, ATD), charge; pair styles include `coul/long/pme` |
+| `md` | VelocityVerlet / Langevin, `ForceProvider` (MIC + ghost régimes), `Comm` halo, MaxwellBoltzmann(`kbt`); re-exports nothing from `ff` |
+| `builder` | graphene, carbon nanotubes, FCC lattices, self-avoiding walks (feature `builder`, in `full`) |
+| `stream` | MessagePack / JSON frame codec + native WebSocket publisher (feature `stream`, not in `default`) |
 | `compute` | transport, MSD, RDF, dielectric, spectra, shape, … |
 | `signal` | ACF FFT primitives |
 | `conformer` | ETKDG-style 3D generation |
@@ -41,7 +45,7 @@ stream / serialize (optional)
 ## Python package layout (`molrs-python/python/molrs`)
 
 - Top level: core only (`Frame`, `Block`, `Atomistic`, …)
-- Subpackages: `ff/`, `io/`, `compute/`, `conformer`, `perceive`, `generate`, `optimize`, `signal`
+- Subpackages: `ff/`, `io/`, `compute/`, `conformer`, `perceive`, `md` (experimental), `optimize`, `signal`
 - No flat free functions for SMILES/perceive; use `molrs.io.SmilesIR`, `molrs.perceive.Perceive`
 
 ## Layer rules (import direction)

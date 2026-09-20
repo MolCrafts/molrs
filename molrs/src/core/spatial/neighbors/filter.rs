@@ -46,8 +46,6 @@
 //! search with [`NeighborsStorage::FULL`](crate::spatial::neighbors::NeighborsStorage::FULL)
 //! instead.
 
-use std::collections::HashMap;
-
 use crate::spatial::neighbors::Neighbors;
 use crate::types::F;
 
@@ -106,14 +104,7 @@ use crate::types::F;
 /// table. Neither can be reconstructed from indices, and substituting zeros
 /// would fabricate physically meaningful values — see the module documentation.
 pub fn filter_sann(nlist: &Neighbors) -> Neighbors {
-    // Group pair indices by query point.
-    let mut by_query: HashMap<u32, Vec<usize>> = HashMap::new();
-    for k in 0..nlist.n_pairs() {
-        by_query
-            .entry(nlist.query_point_indices()[k])
-            .or_default()
-            .push(k);
-    }
+    let (offsets, mut order) = pairs_by_query(nlist);
 
     let mut out = Neighbors::empty(nlist.mode(), nlist.storage());
     let dist_sq = nlist
@@ -124,16 +115,18 @@ pub fn filter_sann(nlist: &Neighbors) -> Neighbors {
         .expect("filter_sann needs the disp column; rerun the search with it stored");
     let j_idx = nlist.point_indices();
 
-    // For deterministic output, walk query indices in ascending order.
-    let mut qs: Vec<u32> = by_query.keys().copied().collect();
-    qs.sort_unstable();
-    for q in qs {
-        let mut pair_ks = by_query.remove(&q).unwrap();
+    // Query points come out in ascending index order: the grouping is a
+    // counting sort, so the output is deterministic.
+    for q in 0..offsets.len().saturating_sub(1) {
+        let pair_ks = &mut order[offsets[q]..offsets[q + 1]];
+        if pair_ks.is_empty() {
+            continue;
+        }
         pair_ks.sort_unstable_by(|&a, &b| dist_sq[a].partial_cmp(&dist_sq[b]).unwrap());
-        let m = sann_cutoff(&pair_ks, dist_sq);
+        let m = sann_cutoff(pair_ks, dist_sq);
         for &k in &pair_ks[..m] {
             out.push(
-                q,
+                q as u32,
                 j_idx[k],
                 dist_sq[k],
                 [vectors[[k, 0]], vectors[[k, 1]], vectors[[k, 2]]],
@@ -141,6 +134,28 @@ pub fn filter_sann(nlist: &Neighbors) -> Neighbors {
         }
     }
     out
+}
+
+/// Pair rows grouped by query point, as CSR: `order[offsets[q]..offsets[q + 1]]`
+/// are the rows of query `q`, in ascending row order. A counting sort — one
+/// pass to count, one to place — with no per-query allocation.
+fn pairs_by_query(nlist: &Neighbors) -> (Vec<usize>, Vec<usize>) {
+    let queries = nlist.query_point_indices();
+    let n_queries = queries.iter().map(|&q| q as usize + 1).max().unwrap_or(0);
+    let mut offsets = vec![0usize; n_queries + 1];
+    for &q in queries {
+        offsets[q as usize + 1] += 1;
+    }
+    for q in 0..n_queries {
+        offsets[q + 1] += offsets[q];
+    }
+    let mut next = offsets.clone();
+    let mut order = vec![0usize; queries.len()];
+    for (row, &q) in queries.iter().enumerate() {
+        order[next[q as usize]] = row;
+        next[q as usize] += 1;
+    }
+    (offsets, order)
 }
 
 /// Find the smallest `m ≥ 3` with `R(m) = (Σ_{i=1..m} r_i) / (m - 2) < r_{m+1}`
@@ -209,13 +224,7 @@ fn sann_cutoff(pair_ks_sorted: &[usize], dist_sq: &[F]) -> usize {
 /// column is a panic rather than an empty result.
 pub fn filter_rad(nlist: &Neighbors, acceptance: F) -> Neighbors {
     let cos_thresh = acceptance.cos();
-    let mut by_query: HashMap<u32, Vec<usize>> = HashMap::new();
-    for k in 0..nlist.n_pairs() {
-        by_query
-            .entry(nlist.query_point_indices()[k])
-            .or_default()
-            .push(k);
-    }
+    let (offsets, mut order) = pairs_by_query(nlist);
 
     let mut out = Neighbors::empty(nlist.mode(), nlist.storage());
     let dist_sq = nlist
@@ -226,16 +235,17 @@ pub fn filter_rad(nlist: &Neighbors, acceptance: F) -> Neighbors {
         .expect("filter_rad needs the disp column; rerun the search with it stored");
     let j_idx = nlist.point_indices();
 
-    let mut qs: Vec<u32> = by_query.keys().copied().collect();
-    qs.sort_unstable();
-    for q in qs {
-        let mut pair_ks = by_query.remove(&q).unwrap();
+    for q in 0..offsets.len().saturating_sub(1) {
+        let pair_ks = &mut order[offsets[q]..offsets[q + 1]];
+        if pair_ks.is_empty() {
+            continue;
+        }
         pair_ks.sort_unstable_by(|&a, &b| dist_sq[a].partial_cmp(&dist_sq[b]).unwrap());
 
         // Walk neighbors in increasing distance and accept those that are
         // not "shadowed" by an already-accepted closer one.
         let mut accepted: Vec<[F; 3]> = Vec::new();
-        for &k in &pair_ks {
+        for &k in pair_ks.iter() {
             let r = dist_sq[k].sqrt();
             if r == 0.0 {
                 continue;
@@ -254,7 +264,7 @@ pub fn filter_rad(nlist: &Neighbors, acceptance: F) -> Neighbors {
             if !shadowed {
                 accepted.push([nx, ny, nz]);
                 out.push(
-                    q,
+                    q as u32,
                     j_idx[k],
                     dist_sq[k],
                     [vectors[[k, 0]], vectors[[k, 1]], vectors[[k, 2]]],

@@ -1,26 +1,15 @@
 [workspace]
-members = [
-    "molrs",
-    "molrs-cxxapi",
-]
-# molrs-ffi declares its own `[workspace]` (it is a standalone crate shared by
-# molrs-python and molrs-cxxapi). It is a path dependency of molrs-cxxapi but
-# must not be folded into this workspace — exclude it so cargo treats it as a
-# separate workspace root.
+members = ["molrs"]
+# Every binder crate — molrs-ffi, molrs-python, molrs-capi, molrs-wasm and
+# molrs-cxxapi — is a standalone workspace root with its own `[workspace]`.
+# Address them by `--manifest-path <dir>/Cargo.toml`, never `-p`.
 exclude = ["molrs-ffi"]
 resolver = "3"
 
 [workspace.package]
-# BREAKING (0.6.0): freud-style `compute` reorganization into per-category
-# folders (transport / spectroscopy / shape / ml / dynamics / dielectric) —
-# crate-root re-exports of every relocated type are preserved, only
-# fully-qualified `compute::<old_submodule>::` paths change. Removed the native
-# GAFF/AMBER parameter estimator (`ParameterEstimator`, the `estimate` module,
-# and its `gaff_*.json` data) — parameter estimation for uncovered bonded terms
-# is delegated to embedded reference; the FF-agnostic `Estimator`/`assign_bonded_with`
-# seam is kept. molrs / molcrafts-molrs / PyPI / molpy share one version line;
-# downstream exact-pins update to 0.12.0. Release notes live in git log / tags.
-version = "0.13.2"
+# Keep standalone binding manifests and Python metadata on this version.
+# Downstream consumers pin the major.minor ABI line; release history is in tags.
+version = "0.14.0"
 edition = "2024"
 rust-version = "1.91"
 license = "BSD-3-Clause"
@@ -28,13 +17,10 @@ authors = ["MolCrafts"]
 repository = "https://github.com/MolCrafts/molrs"
 homepage = "https://github.com/MolCrafts/molrs"
 
-# The merged crate. Binders (molrs-cxxapi here, plus the excluded molrs-ffi /
-# molrs-wasm / molrs-python) depend on it directly with the features they need.
-[workspace.dependencies]
-molcrafts-molrs = { path = "molrs", version = "0.13.2", default-features = false }
-
+# Every binder root repeats these four keys verbatim (a standalone workspace
+# does not inherit them), so released wheels, C libs and the crate build alike.
 [profile.release]
-lto = "thin"
 codegen-units = 1
+lto = "thin"
 opt-level = 3
 strip = "symbols"

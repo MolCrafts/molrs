@@ -5,6 +5,7 @@ Self-contained fixtures written by molrs. No external corpus.
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 import molrs
@@ -74,6 +75,65 @@ class TestTrajectoryReaderSurface:
             assert reader.n_frames > 0
         with pytest.raises(ValueError):
             reader.read_frame(0)
+
+
+class TestDumpLocalWrite:
+    def test_write_bonds_roundtrip(self, tmp_path):
+        atoms = molrs.Block()
+        atoms["id"] = np.array([1, 2, 3], dtype=np.uint64)
+        atoms["x"] = np.array([0.0, 1.0, 2.0])
+        atoms["y"] = np.zeros(3)
+        atoms["z"] = np.zeros(3)
+        bonds = molrs.Block()
+        bonds["atomi"] = np.array([0, 1], dtype=np.uint64)
+        bonds["atomj"] = np.array([1, 2], dtype=np.uint64)
+        frame = molrs.Frame()
+        frame["atoms"] = atoms
+        frame["bonds"] = bonds
+        frame.box = molrs.Box.cube(10.0)
+        path = tmp_path / "bonds.dump.local"
+        molrs.io.write_lammps_dump_local(path, [frame])
+        text = path.read_text()
+        assert "ITEM: NUMBER OF ENTRIES" in text
+        assert "batom1 batom2" in text
+        loaded = molrs.io.raw.read_lammps_traj(str(path))
+        assert loaded[0]["entries"].nrows == 2
+
+
+class TestDumpColumnChoice:
+    @staticmethod
+    def _frame():
+        atoms = molrs.Block()
+        atoms["id"] = np.array([1, 2], dtype=np.uint64)
+        atoms["mol_id"] = np.array([1, 1], dtype=np.uint64)
+        atoms["mass"] = np.array([16.0, 1.008])
+        atoms["element"] = ["O", "H"]
+        atoms["x"] = np.array([0.0, 1.0])
+        atoms["y"] = np.array([0.0, 2.0])
+        atoms["z"] = np.array([0.0, 3.0])
+        frame = molrs.Frame()
+        frame["atoms"] = atoms
+        frame.box = molrs.Box.cube(10.0)
+        return frame
+
+    def test_writes_only_the_named_columns_in_order(self, tmp_path):
+        path = tmp_path / "chosen.lammpstrj"
+        molrs.io.write_lammps_traj(
+            path, [self._frame()], columns=["id", "element", "mol", "x", "y", "z"]
+        )
+        text = path.read_text()
+        assert "ITEM: ATOMS id element mol x y z" in text
+        assert "mass" not in text
+
+    def test_default_writes_every_column(self, tmp_path):
+        path = tmp_path / "all.lammpstrj"
+        molrs.io.write_lammps_traj(path, [self._frame()])
+        assert "ITEM: ATOMS id element mass mol x y z" in path.read_text()
+
+    def test_rejects_a_column_the_frame_lacks(self, tmp_path):
+        path = tmp_path / "missing.lammpstrj"
+        with pytest.raises(OSError, match="'q'"):
+            molrs.io.write_lammps_traj(path, [self._frame()], columns=["id", "q"])
 
 
 class TestMultiFile:

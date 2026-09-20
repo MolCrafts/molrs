@@ -31,11 +31,12 @@
 use crate::core::spatial::simbox::PyBox;
 use crate::helpers::NpF;
 use molrs::spatial::neighbors::{
-    NeighborList as RsNeighborList, NeighborQuery as RsNeighborQuery, Neighbors as RsNeighbors,
-    NeighborsStorage, QueryMode,
+    NeighborList as RsNeighborList, NeighborPair, NeighborPolicy, NeighborQuery as RsNeighborQuery,
+    Neighbors as RsNeighbors, NeighborsStorage, QueryMode, SkinError, VerletSkin as RsVerletSkin,
 };
-use ndarray::ArrayView1;
-use numpy::{PyArray1, PyArray2, PyReadonlyArray2};
+use molrs::spatial::simbox::SimBox;
+use ndarray::{Array2, ArrayView1};
+use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray2};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
@@ -115,6 +116,76 @@ pub struct PyNeighbors {
 
 #[pymethods]
 impl PyNeighbors {
+    #[new]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "Pair-table constructor arguments"
+    )]
+    #[pyo3(signature = (is_self_query, num_points, num_query_points, idx_i, idx_j, dist_sq=None, disp=None))]
+    fn new(
+        is_self_query: bool,
+        num_points: usize,
+        num_query_points: usize,
+        idx_i: Vec<u32>,
+        idx_j: Vec<u32>,
+        dist_sq: Option<Vec<NpF>>,
+        disp: Option<Vec<[NpF; 3]>>,
+    ) -> PyResult<Self> {
+        let n = idx_i.len();
+        if idx_j.len() != n
+            || dist_sq.as_ref().is_some_and(|values| values.len() != n)
+            || disp.as_ref().is_some_and(|values| values.len() != n)
+        {
+            return Err(PyValueError::new_err(
+                "inconsistent Neighbors pickle columns",
+            ));
+        }
+        let storage = NeighborsStorage {
+            dist_sq: dist_sq.is_some(),
+            disp: disp.is_some(),
+        };
+        let mode = if is_self_query {
+            QueryMode::SelfQuery { num_points }
+        } else {
+            QueryMode::CrossQuery {
+                num_query_points,
+                num_points,
+            }
+        };
+        let pairs = (0..n).map(|row| NeighborPair {
+            i: idx_i[row],
+            j: idx_j[row],
+            dist_sq: dist_sq.as_ref().map_or(0.0, |values| values[row]),
+            disp: disp.as_ref().map_or([0.0; 3], |values| values[row]),
+        });
+        Ok(Self {
+            inner: RsNeighbors::from_pairs(pairs, storage, mode),
+        })
+    }
+
+    fn __reduce__<'py>(
+        slf: &Bound<'py, Self>,
+    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, pyo3::types::PyTuple>)> {
+        let inner = &slf.borrow().inner;
+        crate::helpers::reduce_via_type(
+            slf.as_any(),
+            (
+                matches!(inner.mode(), QueryMode::SelfQuery { .. }),
+                inner.num_points(),
+                inner.num_query_points(),
+                inner.query_point_indices().to_vec(),
+                inner.point_indices().to_vec(),
+                inner.dist_sq().map(|values| values.to_vec()),
+                inner.disp().map(|values| {
+                    values
+                        .outer_iter()
+                        .map(|row| [row[0], row[1], row[2]])
+                        .collect::<Vec<_>>()
+                }),
+            ),
+        )
+    }
+
     /// Query-point indices ``i``, one per pair.
     ///
     /// Zero-copy numpy view into the underlying Rust ``Vec<u32>``, pinned alive
@@ -250,6 +321,10 @@ impl PyNeighbors {
 /// ValueError
 ///     If ``cutoff`` is not positive.
 ///
+/// Passing the engine into :class:`VerletSkin` **moves** it: the list is
+/// consumed, and every later method call on it raises ``ValueError`` — build a
+/// new ``NeighborList`` instead.
+///
 /// Examples
 /// --------
 /// >>> nl = molrs.NeighborList(3.0)          # O(N) cell-list backend
@@ -259,18 +334,56 @@ impl PyNeighbors {
 /// >>> nl.update(moved_points)               # re-index in the same box
 #[pyclass(module = "molrs", name = "NeighborList")]
 pub struct PyNeighborList {
-    inner: RsNeighborList,
+    pub(crate) inner: Option<RsNeighborList>,
+    brute_force: bool,
+    points: Option<Array2<NpF>>,
+    simbox: Option<SimBox>,
+}
+
+fn engine_moved_err() -> PyErr {
+    PyValueError::new_err("NeighborList has been moved into a VerletSkin; build a new NeighborList")
+}
+
+impl PyNeighborList {
+    pub(crate) fn take(&mut self) -> PyResult<RsNeighborList> {
+        self.inner.take().ok_or_else(engine_moved_err)
+    }
+
+    fn get(&self) -> PyResult<&RsNeighborList> {
+        self.inner.as_ref().ok_or_else(engine_moved_err)
+    }
+
+    fn get_mut(&mut self) -> PyResult<&mut RsNeighborList> {
+        self.inner.as_mut().ok_or_else(engine_moved_err)
+    }
 }
 
 #[pymethods]
 impl PyNeighborList {
     /// Build an engine with the O(N) cell-list backend — the production choice.
     #[new]
-    fn new(cutoff: NpF) -> PyResult<Self> {
+    #[pyo3(signature = (cutoff, points=None, simbox=None, brute_force=false))]
+    fn new(
+        cutoff: NpF,
+        points: Option<PyReadonlyArray2<'_, NpF>>,
+        simbox: Option<&PyBox>,
+        brute_force: bool,
+    ) -> PyResult<Self> {
         check_cutoff(cutoff)?;
-        Ok(Self {
-            inner: RsNeighborList::new(cutoff),
-        })
+        let mut neighbors = Self {
+            inner: Some(if brute_force {
+                RsNeighborList::brute_force(cutoff)
+            } else {
+                RsNeighborList::new(cutoff)
+            }),
+            brute_force,
+            points: None,
+            simbox: None,
+        };
+        if let (Some(points), Some(simbox)) = (points, simbox) {
+            neighbors.build(points, simbox)?;
+        }
+        Ok(neighbors)
     }
 
     /// Build an engine with the O(N²) all-pairs backend.
@@ -288,16 +401,13 @@ impl PyNeighborList {
     ///     If ``cutoff`` is not positive.
     #[staticmethod]
     fn brute_force(cutoff: NpF) -> PyResult<Self> {
-        check_cutoff(cutoff)?;
-        Ok(Self {
-            inner: RsNeighborList::brute_force(cutoff),
-        })
+        Self::new(cutoff, None, None, true)
     }
 
     /// The cutoff distance (Å) fixed at construction.
     #[getter]
-    fn cutoff(&self) -> NpF {
-        self.inner.cutoff()
+    fn cutoff(&self) -> PyResult<NpF> {
+        Ok(self.get()?.cutoff())
     }
 
     /// Index ``points`` in ``box`` — coordinates **and** box.
@@ -321,7 +431,9 @@ impl PyNeighborList {
     ///     If ``points`` does not have shape ``(N, 3)``.
     fn build(&mut self, points: PyReadonlyArray2<'_, NpF>, r#box: &PyBox) -> PyResult<()> {
         check_points(&points, "points")?;
-        self.inner.build(points.as_array(), &r#box.inner);
+        self.get_mut()?.build(points.as_array(), &r#box.inner);
+        self.points = Some(points.as_array().to_owned());
+        self.simbox = Some(r#box.inner.clone());
         Ok(())
     }
 
@@ -345,16 +457,18 @@ impl PyNeighborList {
     ///     minimum images against a box the caller never named.
     fn update(&mut self, points: PyReadonlyArray2<'_, NpF>) -> PyResult<()> {
         check_points(&points, "points")?;
+        let engine = self.get_mut()?;
         // The core panics on an update before a build (the box is unknown);
         // a panic must not cross this seam, so check the engine's own state
         // and raise instead.
-        if !self.inner.is_built() {
+        if !engine.is_built() {
             return Err(PyValueError::new_err(
                 "NeighborList.update reuses the box of the previous build: \
                  call build(points, box) first",
             ));
         }
-        self.inner.update(points.as_array());
+        engine.update(points.as_array());
+        self.points = Some(points.as_array().to_owned());
         Ok(())
     }
 
@@ -379,17 +493,38 @@ impl PyNeighborList {
     /// -------
     /// Neighbors
     #[pyo3(signature = (dist_sq=true, disp=true))]
-    fn neighbors(&self, dist_sq: bool, disp: bool) -> PyNeighbors {
-        PyNeighbors {
-            inner: self.inner.neighbors(NeighborsStorage { dist_sq, disp }),
-        }
+    fn neighbors(&self, dist_sq: bool, disp: bool) -> PyResult<PyNeighbors> {
+        Ok(PyNeighbors {
+            inner: self.get()?.neighbors(NeighborsStorage { dist_sq, disp }),
+        })
     }
 
     fn __repr__(&self) -> String {
-        format!(
-            "NeighborList(cutoff={}, built={})",
-            self.inner.cutoff(),
-            self.inner.is_built(),
+        match &self.inner {
+            Some(engine) => format!(
+                "NeighborList(cutoff={}, built={})",
+                engine.cutoff(),
+                engine.is_built(),
+            ),
+            None => "NeighborList(<moved into VerletSkin>)".into(),
+        }
+    }
+
+    fn __reduce__<'py>(
+        slf: &Bound<'py, Self>,
+    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, pyo3::types::PyTuple>)> {
+        let py = slf.py();
+        let this = slf.borrow();
+        crate::helpers::reduce_via_type(
+            slf.as_any(),
+            (
+                this.cutoff()?,
+                this.points
+                    .as_ref()
+                    .map(|points| points.clone().into_pyarray(py)),
+                this.simbox.as_ref().cloned().map(|inner| PyBox { inner }),
+                this.brute_force,
+            ),
         )
     }
 }
@@ -507,6 +642,204 @@ impl PyNeighborQuery {
             "NeighborQuery(num_points={}, cutoff={})",
             self.inner.points().nrows(),
             self.inner.cutoff(),
+        )
+    }
+
+    fn __reduce__<'py>(
+        slf: &Bound<'py, Self>,
+    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, pyo3::types::PyTuple>)> {
+        let py = slf.py();
+        let this = slf.borrow();
+        crate::helpers::reduce_via_type(
+            slf.as_any(),
+            (
+                PyBox {
+                    inner: this.inner.simbox().clone(),
+                },
+                this.inner.points().to_owned().into_pyarray(py),
+                this.inner.cutoff(),
+            ),
+        )
+    }
+}
+
+fn skin_err(err: SkinError) -> PyErr {
+    PyValueError::new_err(err.to_string())
+}
+
+/// A :class:`NeighborList` with Verlet skin — ``VerletSkin(NeighborList, …)``.
+///
+/// Constructed from a search engine whose cutoff is ``cutoff + skin``. The
+/// engine is **moved** into this object. Passing the skin into
+/// ``VelocityVerlet(..., neighbors=skin)`` moves it again into the integrator.
+#[pyclass(module = "molrs", name = "VerletSkin")]
+pub struct PyVerletSkin {
+    pub(crate) inner: Option<RsVerletSkin>,
+    brute_force: bool,
+    x_hold: Array2<NpF>,
+    simbox: SimBox,
+    every: usize,
+    delay: usize,
+    check: bool,
+}
+
+impl PyVerletSkin {
+    pub(crate) fn take(&mut self) -> PyResult<RsVerletSkin> {
+        self.inner
+            .take()
+            .ok_or_else(|| PyValueError::new_err("VerletSkin has already been moved"))
+    }
+
+    fn get(&self) -> PyResult<&RsVerletSkin> {
+        self.inner
+            .as_ref()
+            .ok_or_else(|| PyValueError::new_err("VerletSkin has already been moved"))
+    }
+
+    pub(crate) fn get_mut(&mut self) -> PyResult<&mut RsVerletSkin> {
+        self.inner
+            .as_mut()
+            .ok_or_else(|| PyValueError::new_err("VerletSkin has already been moved"))
+    }
+}
+
+#[pymethods]
+impl PyVerletSkin {
+    /// Wrap ``neighbors`` (cutoff must equal ``cutoff + skin``) with Verlet policy.
+    #[new]
+    #[pyo3(signature = (neighbors, cutoff, positions, r#box, skin=0.0, every=1, delay=0, check=true, ago=0, rebuild_count=0, ndanger=0))]
+    #[allow(clippy::too_many_arguments, reason = "Public Python keyword arguments")]
+    fn new(
+        neighbors: &mut PyNeighborList,
+        cutoff: NpF,
+        positions: PyReadonlyArray2<'_, NpF>,
+        r#box: &PyBox,
+        skin: NpF,
+        every: usize,
+        delay: usize,
+        check: bool,
+        ago: usize,
+        rebuild_count: usize,
+        ndanger: usize,
+    ) -> PyResult<Self> {
+        check_points(&positions, "positions")?;
+        if cutoff <= 0.0 {
+            return Err(PyValueError::new_err("cutoff must be > 0 Å"));
+        }
+        // Move the engine out; the emptied NeighborList raises on any later use.
+        let search = neighbors.take()?;
+        let policy = NeighborPolicy {
+            skin,
+            every,
+            delay,
+            check,
+        };
+        let mut inner = RsVerletSkin::new(
+            search,
+            cutoff,
+            policy,
+            positions.as_array(),
+            r#box.inner.clone(),
+        )
+        .map_err(skin_err)?;
+        if ago != 0 || rebuild_count != 0 || ndanger != 0 {
+            inner.restore_progress(ago, rebuild_count, ndanger);
+        }
+        Ok(Self {
+            inner: Some(inner),
+            brute_force: neighbors.brute_force,
+            x_hold: positions.as_array().to_owned(),
+            simbox: r#box.inner.clone(),
+            every,
+            delay,
+            check,
+        })
+    }
+
+    #[getter]
+    fn cutoff(&self) -> PyResult<NpF> {
+        Ok(self.get()?.cutoff())
+    }
+
+    #[getter]
+    fn skin(&self) -> PyResult<NpF> {
+        Ok(self.get()?.skin())
+    }
+
+    #[getter]
+    fn num_edges(&self) -> PyResult<usize> {
+        Ok(self.get()?.num_edges())
+    }
+
+    #[getter]
+    fn rebuild_count(&self) -> PyResult<usize> {
+        Ok(self.get()?.rebuild_count())
+    }
+
+    #[getter]
+    fn ago(&self) -> PyResult<usize> {
+        Ok(self.get()?.ago())
+    }
+
+    fn update(&mut self, positions: PyReadonlyArray2<'_, NpF>) -> PyResult<bool> {
+        check_points(&positions, "positions")?;
+        let rebuilt = self
+            .get_mut()?
+            .update(positions.as_array())
+            .map_err(skin_err)?;
+        if rebuilt {
+            self.x_hold = positions.as_array().to_owned();
+        }
+        Ok(rebuilt)
+    }
+
+    fn rebuild(&mut self, positions: PyReadonlyArray2<'_, NpF>) -> PyResult<()> {
+        check_points(&positions, "positions")?;
+        self.get_mut()?
+            .rebuild(positions.as_array())
+            .map_err(skin_err)?;
+        self.x_hold = positions.as_array().to_owned();
+        Ok(())
+    }
+
+    fn __repr__(&self) -> String {
+        match &self.inner {
+            Some(s) => format!(
+                "VerletSkin(cutoff={}, skin={}, edges={}, rebuilds={})",
+                s.cutoff(),
+                s.skin(),
+                s.num_edges(),
+                s.rebuild_count()
+            ),
+            None => "VerletSkin(<moved>)".into(),
+        }
+    }
+
+    fn __reduce__<'py>(
+        slf: &Bound<'py, Self>,
+    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, pyo3::types::PyTuple>)> {
+        let py = slf.py();
+        let this = slf.borrow();
+        let inner = this.get()?;
+        let neighbors =
+            PyNeighborList::new(inner.cutoff() + inner.skin(), None, None, this.brute_force)?;
+        crate::helpers::reduce_via_type(
+            slf.as_any(),
+            (
+                neighbors,
+                inner.cutoff(),
+                this.x_hold.clone().into_pyarray(py),
+                PyBox {
+                    inner: this.simbox.clone(),
+                },
+                inner.skin(),
+                this.every,
+                this.delay,
+                this.check,
+                inner.ago(),
+                inner.rebuild_count(),
+                inner.ndanger(),
+            ),
         )
     }
 }

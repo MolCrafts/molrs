@@ -8,6 +8,7 @@
 
 pub mod gaff;
 pub mod lammps_units;
+pub mod mixing;
 pub mod readers;
 pub mod writers;
 pub mod xml;
@@ -15,6 +16,7 @@ pub mod xml;
 use std::collections::{HashMap, HashSet};
 
 use molrs::store::frame::Frame;
+use molrs::system::bond_weights::BondDistanceWeights;
 
 // ---------------------------------------------------------------------------
 // Params
@@ -64,6 +66,10 @@ impl Params {
 
     pub fn set_str(&mut self, key: &str, value: &str) {
         self.strings.insert(key.to_owned(), value.to_owned());
+    }
+
+    pub fn get_str(&self, key: &str) -> Option<&str> {
+        self.strings.get(key).map(String::as_str)
     }
 
     pub fn iter_strings(&self) -> impl Iterator<Item = (&str, &str)> + '_ {
@@ -141,8 +147,6 @@ pub enum StyleDefs {
     Dihedral(Vec<DihedralType>),
     Improper(Vec<ImproperType>),
     Pair(Vec<PairType>),
-    /// K-space styles (e.g. PME) have no per-type defs; all params at style level.
-    KSpace,
 }
 
 impl StyleDefs {
@@ -155,7 +159,6 @@ impl StyleDefs {
             Self::Dihedral(_) => "dihedral",
             Self::Improper(_) => "improper",
             Self::Pair(_) => "pair",
-            Self::KSpace => "kspace",
         }
     }
 
@@ -186,8 +189,6 @@ impl StyleDefs {
                 .iter()
                 .map(|t| (t.name.clone(), t.params.clone()))
                 .collect(),
-            // KSpace has no per-type defs; return a dummy entry so the compile loop works.
-            Self::KSpace => vec![("*".into(), Params::new())],
         }
     }
 }
@@ -445,7 +446,6 @@ impl Style {
                 }
                 _ => return Err(arity("A\" or \"A-B")),
             },
-            "kspace" => return Err(DefTypeError::Unsupported(category)),
             other => return Err(DefTypeError::UnknownCategory(other.to_string())),
         }
         Ok(())
@@ -464,6 +464,20 @@ fn join_endpoints(parts: &[&str]) -> String {
         "-"
     };
     parts.join(sep)
+}
+
+/// The type-definition label a pair style uses for atom types `a` and `b`.
+///
+/// Mirrors [`Style::def_pairtype`]'s naming: a self-pair is just the atom
+/// type's own label, a cross-pair is the two joined. A neighbour-driven kernel
+/// builds its type-pair table by asking this for every ordered pair, so the two
+/// must not drift apart.
+pub(crate) fn pair_type_name(a: &str, b: &str) -> String {
+    if a == b {
+        a.to_owned()
+    } else {
+        join_endpoints(&[a, b])
+    }
 }
 
 /// Inverse of [`join_endpoints`]: split on `::` first, else on `-`.
@@ -486,7 +500,7 @@ pub enum DefTypeError {
         name: String,
         got: usize,
     },
-    /// The category accepts no per-type definitions (e.g. `kspace`).
+    /// The category accepts no per-type definitions.
     Unsupported(&'static str),
     /// Unknown style category string.
     UnknownCategory(String),
@@ -521,7 +535,7 @@ impl std::error::Error for DefTypeError {}
 /// through these). Each operates on the type identified by its dash-form name.
 impl Style {
     /// Endpoint atom-type names of the type named `name` (e.g. `["CT","CT"]`),
-    /// or `None` if no such type. Atom/kspace styles return an empty vec.
+    /// or `None` if no such type. Atom styles return an empty vec.
     pub fn type_endpoints(&self, name: &str) -> Option<Vec<String>> {
         match &self.defs {
             StyleDefs::Atom(v) => v.iter().find(|t| t.name == name).map(|_| Vec::new()),
@@ -553,7 +567,6 @@ impl Style {
                 .iter()
                 .find(|t| t.name == name)
                 .map(|t| vec![t.itom.clone(), t.jtom.clone()]),
-            StyleDefs::KSpace => None,
         }
     }
 
@@ -575,7 +588,6 @@ impl Style {
             StyleDefs::Dihedral(v) => set_on!(v),
             StyleDefs::Improper(v) => set_on!(v),
             StyleDefs::Pair(v) => set_on!(v),
-            StyleDefs::KSpace => {}
         }
         false
     }
@@ -598,7 +610,6 @@ impl Style {
             StyleDefs::Dihedral(v) => set_on!(v),
             StyleDefs::Improper(v) => set_on!(v),
             StyleDefs::Pair(v) => set_on!(v),
-            StyleDefs::KSpace => {}
         }
         false
     }
@@ -622,7 +633,6 @@ impl Style {
             StyleDefs::Dihedral(v) => rename_in!(v),
             StyleDefs::Improper(v) => rename_in!(v),
             StyleDefs::Pair(v) => rename_in!(v),
-            StyleDefs::KSpace => 0,
         }
     }
 
@@ -642,7 +652,6 @@ impl Style {
             StyleDefs::Dihedral(v) => remove_in!(v),
             StyleDefs::Improper(v) => remove_in!(v),
             StyleDefs::Pair(v) => remove_in!(v),
-            StyleDefs::KSpace => 0,
         }
     }
 }
@@ -660,7 +669,7 @@ impl Style {
 ///
 /// let mut ff = ForceField::new("example");
 /// ff.def_bondstyle("harmonic")
-///     .def_type("A-B", &[("k0", 300.0), ("r0", 1.5)]);
+///     .def_type("A-B", &[("k", 300.0), ("r0", 1.5)]);
 /// ff.def_pairstyle("lj/cut", &[("cutoff", 10.0)])
 ///     .def_type("A", &[("epsilon", 0.5), ("sigma", 1.0)]);
 ///
@@ -670,12 +679,30 @@ impl Style {
 /// Per-nonbonded-kind 1-2 / 1-3 / 1-4 interaction scale weights — LAMMPS
 /// `special_bonds` semantics, owned by the [`ForceField`].
 ///
+/// The always-on geometric table is [`crate::BondDistanceWeights`]: one
+/// arbitrary-length vector with an explicit 1-N tail. A LAMMPS triple is not
+/// a transcription (`charmm 0 0 0` is `[0, 0, 0, 1]` there). There is no
+/// `From` / `Into` between the two types.
+///
 /// A weight of `0.0` fully excludes that neighbour class; `1.0` leaves it at
-/// full strength. molrs realises 1-2 / 1-3 *exclusion* by **omitting** those
-/// pairs from the neighbour list (`intramolecular_pairs`), so the pair kernels
-/// consume only the 1-4 weight (`[2]`) today; the 1-2 / 1-3 entries are stored
-/// for completeness and for force fields that *scale* (rather than exclude)
-/// close neighbours.
+/// full strength.
+///
+/// # Two doors, two expressive powers
+///
+/// A **compiled** pair list (`intramolecular_pairs` → `to_potentials`) carries
+/// the 1-2 / 1-3 weights by *presence*: the row is there or it is not. That is
+/// one bit, so it expresses `0.0` and `1.0` and nothing between, and it
+/// expresses only weights the van-der-Waals and Coulomb kernels **share** —
+/// one list feeds both. [`compiled_inclusion`](Self::compiled_inclusion) is
+/// that judgement, and both doors on that path call it rather than assume.
+///
+/// A **neighbour-driven** evaluation (`to_typed_potentials`) carries them as a
+/// per-pair factor ([`lj_weights`](Self::lj_weights) /
+/// [`coul_weights`](Self::coul_weights)), so it expresses every weight, and
+/// the two kernels independently.
+///
+/// The 1-4 weight `[2]` is not part of this: both doors scale it inside the
+/// kernel, so a fraction is fine there.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SpecialBonds {
     /// LJ / van-der-Waals `[1-2, 1-3, 1-4]` scale weights.
@@ -704,6 +731,78 @@ impl SpecialBonds {
     /// The Coulomb 1-4 scale weight (the `[2]` entry of [`Self::coul`]).
     pub fn coul_14(&self) -> f64 {
         self.coul[2]
+    }
+
+    /// The LJ weights as a bond-distance table, full strength past 1-4.
+    ///
+    /// What a neighbour-driven evaluation needs. A compiled intramolecular
+    /// list carried these by *omitting* the excluded rows and baking the 1-4
+    /// factor into the parameters, so only `[2]` was ever read; a neighbour
+    /// table finds every pair inside the cutoff and needs all three.
+    pub fn lj_weights(&self) -> BondDistanceWeights {
+        Self::table(self.lj)
+    }
+
+    /// The Coulomb weights as a bond-distance table, full strength past 1-4.
+    ///
+    /// Separate from [`lj_weights`](Self::lj_weights) because a force field may
+    /// scale the two differently — Amber uses `1/2` for van der Waals and
+    /// `1/1.2` for electrostatics — and in molrs they are separate kernels.
+    pub fn coul_weights(&self) -> BondDistanceWeights {
+        Self::table(self.coul)
+    }
+
+    /// Whether a compiled `pairs` list can carry the 1-2 and 1-3 weights, and
+    /// if so whether each class belongs *in* the list.
+    ///
+    /// `Ok([keep_12, keep_13])` — `false` means omit those rows (the class is
+    /// excluded), `true` means emit them unflagged (full strength). `Err` means
+    /// the weights are outside what a presence/absence list can say, and the
+    /// caller must use the neighbour-driven door instead of quietly rounding.
+    ///
+    /// Two ways to fall outside:
+    ///
+    /// * a **fraction** — `lj[1] == 0.5` scales 1-3 pairs to half strength, and
+    ///   a row that is merely present cannot say "half";
+    /// * a **split** — `lj[1] == 1.0` with `coul[1] == 0.0` wants the row for
+    ///   one kernel and not for the other, and there is one list for both.
+    ///
+    /// LAMMPS's own presets exercise both the accepted values: `amber`,
+    /// `charmm` and `dreiding` exclude 1-3 (`false`), `fene` keeps it
+    /// (`[0, 1, 1]` → `true`).
+    pub fn compiled_inclusion(&self) -> Result<[bool; 2], String> {
+        let mut keep = [false; 2];
+        for (k, slot) in keep.iter_mut().enumerate() {
+            let class = if k == 0 { "1-2" } else { "1-3" };
+            let (lj, coul) = (self.lj[k], self.coul[k]);
+            if lj != coul {
+                return Err(format!(
+                    "special_bonds {class}: lj {lj} and coul {coul} differ, and a \
+                     compiled pairs list is shared by both kernels — it can include \
+                     the row or omit it, not do one for van der Waals and the other \
+                     for Coulomb. Use ForceField::to_typed_potentials, which carries \
+                     a per-pair weight per kernel."
+                ));
+            }
+            *slot = if lj == 0.0 {
+                false
+            } else if lj == 1.0 {
+                true
+            } else {
+                return Err(format!(
+                    "special_bonds {class} weight {lj}: a compiled pairs list carries \
+                     this class by whether the row is present, so it expresses 0 or 1 \
+                     and nothing between. Use ForceField::to_typed_potentials, which \
+                     carries a per-pair weight."
+                ));
+            };
+        }
+        Ok(keep)
+    }
+
+    fn table(w: [f64; 3]) -> BondDistanceWeights {
+        BondDistanceWeights::new(vec![w[0], w[1], w[2], 1.0])
+            .expect("a four-entry weight table is always well formed")
     }
 }
 
@@ -779,10 +878,6 @@ impl ForceField {
         )
     }
 
-    pub fn def_kspacestyle(&mut self, name: &str, params: &[(&str, f64)]) -> &mut Style {
-        self.def_style(StyleDefs::KSpace, name, Params::from_pairs(params))
-    }
-
     /// Define a type in one call: ensure the `category` style named `style`
     /// exists, then add the type whose dash-form `name` is validated against
     /// the category's arity. Owns the type-name grammar so bindings forward the
@@ -803,7 +898,6 @@ impl ForceField {
             "dihedral" => self.def_dihedralstyle(style),
             "improper" => self.def_improperstyle(style),
             "pair" => self.def_pairstyle(style, &[]),
-            "kspace" => return Err(DefTypeError::Unsupported("kspace")),
             other => return Err(DefTypeError::UnknownCategory(other.to_string())),
         };
         target.try_def_type(name, params)
@@ -1019,7 +1113,6 @@ impl ForceField {
                         .cloned()
                         .collect(),
                 ),
-                StyleDefs::KSpace => StyleDefs::KSpace,
             };
 
             let keep = match &defs {
@@ -1029,7 +1122,6 @@ impl ForceField {
                 StyleDefs::Dihedral(t) => !t.is_empty(),
                 StyleDefs::Improper(t) => !t.is_empty(),
                 StyleDefs::Pair(t) => !t.is_empty(),
-                StyleDefs::KSpace => true,
             };
             if keep {
                 out.styles
@@ -1051,8 +1143,8 @@ mod tests {
 
     #[test]
     fn test_params() {
-        let p = Params::from_pairs(&[("k0", 300.0), ("r0", 1.5)]);
-        assert_eq!(p.get("k0"), Some(300.0));
+        let p = Params::from_pairs(&[("k", 300.0), ("r0", 1.5)]);
+        assert_eq!(p.get("k"), Some(300.0));
         assert_eq!(p.get("r0"), Some(1.5));
         assert_eq!(p.get("missing"), None);
     }
@@ -1079,8 +1171,8 @@ mod tests {
     fn test_def_bondstyle_and_types() {
         let mut ff = ForceField::new("test");
         let style = ff.def_bondstyle("harmonic");
-        style.def_bondtype("CT", "CT", &[("k0", 268.0), ("r0", 1.529)]);
-        style.def_bondtype("CT", "HC", &[("k0", 340.0), ("r0", 1.09)]);
+        style.def_bondtype("CT", "CT", &[("k", 268.0), ("r0", 1.529)]);
+        style.def_bondtype("CT", "HC", &[("k", 340.0), ("r0", 1.09)]);
 
         let style = ff.get_style("bond", "harmonic").unwrap();
         let StyleDefs::Bond(types) = &style.defs else {
@@ -1089,7 +1181,7 @@ mod tests {
         assert_eq!(types.len(), 2);
 
         let bt = style.get_bondtype("CT", "CT").unwrap();
-        assert_eq!(bt.params.get("k0"), Some(268.0));
+        assert_eq!(bt.params.get("k"), Some(268.0));
 
         // Order-independent lookup
         let bt2 = style.get_bondtype("HC", "CT").unwrap();
@@ -1100,7 +1192,7 @@ mod tests {
     fn test_def_anglestyle_and_types() {
         let mut ff = ForceField::new("test");
         let style = ff.def_anglestyle("harmonic");
-        style.def_angletype("HC", "CT", "HC", &[("k0", 33.0), ("theta0", 107.8)]);
+        style.def_angletype("HC", "CT", "HC", &[("k", 33.0), ("theta0", 107.8)]);
 
         let types = ff.get_angletypes();
         assert_eq!(types.len(), 1);
@@ -1135,11 +1227,11 @@ mod tests {
     fn test_duplicate_style_returns_existing() {
         let mut ff = ForceField::new("test");
         ff.def_bondstyle("harmonic")
-            .def_bondtype("A", "B", &[("k0", 1.0), ("r0", 1.0)]);
+            .def_bondtype("A", "B", &[("k", 1.0), ("r0", 1.0)]);
 
         // Second call returns the same style, not a new one
         ff.def_bondstyle("harmonic")
-            .def_bondtype("C", "D", &[("k0", 2.0), ("r0", 2.0)]);
+            .def_bondtype("C", "D", &[("k", 2.0), ("r0", 2.0)]);
 
         let styles = ff.get_styles("bond");
         assert_eq!(styles.len(), 1);
@@ -1168,12 +1260,12 @@ mod tests {
     fn test_def_type_bond() {
         let mut ff = ForceField::new("test");
         let style = ff.def_bondstyle("harmonic");
-        style.def_type("CT-OH", &[("k0", 300.0), ("r0", 1.4)]);
+        style.def_type("CT-OH", &[("k", 300.0), ("r0", 1.4)]);
 
         let bt = style.get_bondtype("CT", "OH").unwrap();
         assert_eq!(bt.itom, "CT");
         assert_eq!(bt.jtom, "OH");
-        assert_eq!(bt.params.get("k0"), Some(300.0));
+        assert_eq!(bt.params.get("k"), Some(300.0));
         assert_eq!(bt.params.get("r0"), Some(1.4));
     }
 
@@ -1181,7 +1273,7 @@ mod tests {
     fn test_def_type_angle() {
         let mut ff = ForceField::new("test");
         let style = ff.def_anglestyle("harmonic");
-        style.def_type("HC-CT-HC", &[("k0", 33.0), ("theta0", 107.8)]);
+        style.def_type("HC-CT-HC", &[("k", 33.0), ("theta0", 107.8)]);
 
         let StyleDefs::Angle(types) = &style.defs else {
             panic!("expected Angle defs");
@@ -1235,8 +1327,8 @@ mod tests {
         let mut ff = ForceField::new("test");
         let style = ff.def_bondstyle("harmonic");
         style
-            .def_type("A-B", &[("k0", 1.0), ("r0", 1.0)])
-            .def_type("C-D", &[("k0", 2.0), ("r0", 2.0)]);
+            .def_type("A-B", &[("k", 1.0), ("r0", 1.0)])
+            .def_type("C-D", &[("k", 2.0), ("r0", 2.0)]);
 
         let StyleDefs::Bond(types) = &style.defs else {
             panic!("expected Bond defs");
@@ -1249,7 +1341,7 @@ mod tests {
     fn test_def_type_bond_invalid_format() {
         let mut ff = ForceField::new("test");
         let style = ff.def_bondstyle("harmonic");
-        style.def_type("CT", &[("k0", 300.0), ("r0", 1.4)]);
+        style.def_type("CT", &[("k", 300.0), ("r0", 1.4)]);
     }
 
     #[test]
@@ -1261,7 +1353,7 @@ mod tests {
         style.def_atomtype("OH", &[("mass", 16.0)]);
 
         let style = ff.def_bondstyle("harmonic");
-        style.def_bondtype("CT", "OH", &[("k0", 300.0), ("r0", 1.4)]);
+        style.def_bondtype("CT", "OH", &[("k", 300.0), ("r0", 1.4)]);
 
         assert_eq!(ff.get_atomtypes().len(), 2);
         assert_eq!(ff.get_bondtypes().len(), 1);
@@ -1281,11 +1373,11 @@ mod tests {
         a.def_atomtype("HC", &[("mass", 1.008)]);
         a.def_atomtype("OH", &[("mass", 15.999)]);
         let b = ff.def_bondstyle("harmonic");
-        b.def_bondtype("CT", "HC", &[("k0", 340.0), ("r0", 1.09)]);
-        b.def_bondtype("CT", "OH", &[("k0", 320.0), ("r0", 1.41)]);
+        b.def_bondtype("CT", "HC", &[("k", 340.0), ("r0", 1.09)]);
+        b.def_bondtype("CT", "OH", &[("k", 320.0), ("r0", 1.41)]);
         let ang = ff.def_anglestyle("harmonic");
-        ang.def_angletype("HC", "CT", "HC", &[("k0", 33.0), ("theta0", 107.8)]);
-        ang.def_angletype("HC", "CT", "OH", &[("k0", 35.0), ("theta0", 109.5)]);
+        ang.def_angletype("HC", "CT", "HC", &[("k", 33.0), ("theta0", 107.8)]);
+        ang.def_angletype("HC", "CT", "OH", &[("k", 35.0), ("theta0", 109.5)]);
         let dih = ff.def_dihedralstyle("opls");
         dih.def_dihedraltype("HC", "CT", "CT", "HC", &[("k1", 0.0)]);
         let imp = ff.def_improperstyle("cvff");
@@ -1419,5 +1511,62 @@ mod tests {
             .map(|t| t.name.as_str())
             .collect();
         assert_eq!(pairs, HashSet::from(["CT", "OH", "CT-OH"]));
+    }
+
+    /// `kspace` is not a category a force field can declare a type under.
+    ///
+    /// Where PME actually *is* registered — `pair/coul/long/pme`, and nothing
+    /// under `kspace` — is a registry claim, and `registry.rs` asserts it. It
+    /// was asserted here too, which is the only reason this module reached into
+    /// `ff::potential` at all.
+    #[test]
+    fn kspace_is_not_a_style_category() {
+        let mut ff = ForceField::new("test");
+        assert!(matches!(
+            ff.def_type("kspace", "pme", "X", &[]),
+            Err(DefTypeError::UnknownCategory(_))
+        ));
+    }
+
+    /// The two values a presence/absence list can say, and the two ways to
+    /// fall outside them.
+    #[test]
+    fn a_compiled_pair_list_says_only_in_or_out() {
+        // The default and every Amber-family reader: both classes excluded.
+        assert_eq!(
+            SpecialBonds::default().compiled_inclusion(),
+            Ok([false, false])
+        );
+        // LAMMPS `special_bonds fene`: 1-3 stays, at full strength.
+        let fene = SpecialBonds {
+            lj: [0.0, 1.0, 1.0],
+            coul: [0.0, 1.0, 1.0],
+        };
+        assert_eq!(fene.compiled_inclusion(), Ok([false, true]));
+
+        // A fraction is not expressible by a row that is merely there.
+        let half = SpecialBonds {
+            lj: [0.0, 0.5, 0.5],
+            coul: [0.0, 0.5, 0.5],
+        };
+        let err = half.compiled_inclusion().unwrap_err();
+        assert!(err.contains("1-3"), "{err}");
+        assert!(err.contains("to_typed_potentials"), "{err}");
+
+        // Neither is a class one kernel wants and the other does not.
+        let split = SpecialBonds {
+            lj: [0.0, 1.0, 1.0],
+            coul: [0.0, 0.0, 1.0],
+        };
+        let err = split.compiled_inclusion().unwrap_err();
+        assert!(err.contains("lj 1 and coul 0 differ"), "{err}");
+
+        // The 1-4 weight is not part of this judgement: both doors scale it
+        // inside the kernel, so a fraction there is ordinary.
+        let amber = SpecialBonds {
+            lj: [0.0, 0.0, 0.5],
+            coul: [0.0, 0.0, 1.0 / 1.2],
+        };
+        assert_eq!(amber.compiled_inclusion(), Ok([false, false]));
     }
 }

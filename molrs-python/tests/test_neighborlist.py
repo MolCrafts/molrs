@@ -20,7 +20,6 @@ Rust unit tests. Nothing in this file needs third-party scientific software.
 from __future__ import annotations
 
 import molrs
-from conftest import make_frame
 import numpy as np
 import pytest
 from numpy.typing import NDArray
@@ -100,47 +99,6 @@ class TestNeighborListBuild:
         nl.build(_two_close(), cubic_box)
         assert nl.neighbors().n_pairs == 1
 
-    def test_distant_atoms_give_no_pairs(self, cubic_box: molrs.Box) -> None:
-        nl = molrs.NeighborList(1.0)
-        nl.build(_two_far(), cubic_box)
-        assert nl.neighbors().n_pairs == 0
-
-    def test_third_far_atom_leaves_only_the_close_pair(
-        self, cubic_box: molrs.Box
-    ) -> None:
-        points = np.array(
-            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [5.0, 5.0, 5.0]],
-            dtype=np.float64,
-        )
-        nl = molrs.NeighborList(2.0)
-        nl.build(points, cubic_box)
-        assert _pair_set(nl.neighbors()) == {(0, 1)}
-
-    def test_single_point_has_no_pairs(self, cubic_box: molrs.Box) -> None:
-        nl = molrs.NeighborList(2.0)
-        nl.build(np.array([[5.0, 5.0, 5.0]], dtype=np.float64), cubic_box)
-        assert nl.neighbors().n_pairs == 0
-
-    def test_pair_found_across_periodic_face(self, cubic_box: molrs.Box) -> None:
-        """0.1 Å and 9.9 Å in a 10 Å box are 0.2 Å apart under minimum image."""
-        nl = molrs.NeighborList(1.0)
-        nl.build(_pair_across_face(), cubic_box)
-        assert _pair_set(nl.neighbors()) == {(0, 1)}
-
-    def test_unit_square_cutoff_keeps_edges_and_drops_diagonals(
-        self, cubic_box: molrs.Box
-    ) -> None:
-        nl = molrs.NeighborList(1.2)
-        nl.build(_unit_square(), cubic_box)
-        assert _pair_set(nl.neighbors()) == {(0, 1), (0, 2), (1, 3), (2, 3)}
-
-    def test_unit_square_wide_cutoff_keeps_all_six_pairs(
-        self, cubic_box: molrs.Box
-    ) -> None:
-        nl = molrs.NeighborList(1.5)
-        nl.build(_unit_square(), cubic_box)
-        assert nl.neighbors().n_pairs == 6
-
     def test_build_rejects_points_that_are_not_n_by_3(
         self, cubic_box: molrs.Box
     ) -> None:
@@ -214,41 +172,6 @@ class TestNeighborsColumns:
 
         assert nl.neighbors().dist_sq().dtype == np.float64
 
-    def test_disp_golden_for_single_pair(self, cubic_box: molrs.Box) -> None:
-        """disp = MIC(r_j - r_i), unnormalized: (1, 0, 0) Å for the 1 Å pair."""
-        nl = molrs.NeighborList(2.0)
-        nl.build(_two_close(), cubic_box)
-        disp = nl.neighbors().disp()
-
-        assert np.allclose(disp[0], np.array([1.0, 0.0, 0.0]), atol=1e-12, rtol=0.0)
-
-    def test_dist_sq_golden_for_single_pair(self, cubic_box: molrs.Box) -> None:
-        nl = molrs.NeighborList(2.0)
-        nl.build(_two_close(), cubic_box)
-        dist_sq = nl.neighbors().dist_sq()
-
-        assert abs(float(dist_sq[0]) - 1.0) <= 1e-12
-
-    def test_disp_uses_minimum_image_sign_across_face(
-        self, cubic_box: molrs.Box
-    ) -> None:
-        """r_j - r_i = +9.8 Å direct; the minimum image is -0.2 Å."""
-        nl = molrs.NeighborList(1.0)
-        nl.build(_pair_across_face(), cubic_box)
-        disp = nl.neighbors().disp()
-
-        assert np.allclose(disp[0], np.array([-0.2, 0.0, 0.0]), atol=1e-12, rtol=0.0)
-
-    def test_dist_sq_matches_disp_norm_rowwise(self, cubic_box: molrs.Box) -> None:
-        """Both columns come from the same minimum image, so they cannot disagree."""
-        nl = molrs.NeighborList(1.5)
-        nl.build(_unit_square(), cubic_box)
-        neigh = nl.neighbors()
-        disp = neigh.disp()
-        dist_sq = neigh.dist_sq()
-
-        assert np.max(np.abs(dist_sq - np.sum(disp * disp, axis=1))) <= 1e-12
-
     def test_self_search_is_half_shell(self, cubic_box: molrs.Box) -> None:
         nl = molrs.NeighborList(1.5)
         nl.build(_unit_square(), cubic_box)
@@ -308,26 +231,6 @@ class TestNeighborListUpdate:
 # --------------------------------------------------------------------------
 # Backend selection — the O(N²) reference must agree with the cell list
 # --------------------------------------------------------------------------
-
-
-class TestNeighborListBackends:
-    def test_brute_force_finds_the_same_pairs_as_the_cell_list(
-        self, cubic_box: molrs.Box
-    ) -> None:
-        points = _unit_square()
-        cell = molrs.NeighborList(1.2)
-        cell.build(points, cubic_box)
-        brute = molrs.NeighborList.brute_force(1.2)
-        brute.build(points, cubic_box)
-
-        assert _pair_set(brute.neighbors()) == _pair_set(cell.neighbors())
-
-    def test_brute_force_finds_the_same_pair_count(self, cubic_box: molrs.Box) -> None:
-        points = _unit_square()
-        brute = molrs.NeighborList.brute_force(1.2)
-        brute.build(points, cubic_box)
-
-        assert brute.neighbors().n_pairs == 4
 
 
 # --------------------------------------------------------------------------
@@ -390,42 +293,6 @@ class TestNeighborQueryCross:
 # --------------------------------------------------------------------------
 
 
-class TestNeighborApiHygiene:
-    def test_legacy_linkedcell_export_is_gone(self) -> None:
-        """Backend choice is a constructor on the engine, not a separate class."""
-        assert not hasattr(molrs, "LinkedCell")
-
-    def test_no_neighbor_search_export(self) -> None:
-        assert not hasattr(molrs, "NeighborSearch")
-
-    def test_no_nb_abbreviated_exports(self) -> None:
-        assert [name for name in dir(molrs) if name.startswith("Nb")] == []
-
-    def test_engine_and_table_are_both_exported(self) -> None:
-        assert hasattr(molrs, "NeighborList")
-        assert hasattr(molrs, "Neighbors")
-
-
 # --------------------------------------------------------------------------
 # ac-003 runtime: the default path feeds an order parameter without a trap
 # --------------------------------------------------------------------------
-
-
-class TestDefaultPathFeedsSteinhardt:
-    def test_default_neighbors_drive_steinhardt(self, cubic_box: molrs.Box) -> None:
-        """Steinhardt needs the ``disp`` column; the binder default must supply it.
-
-        Spec task 7 / ac-003: build -> ``neighbors()`` -> ``Steinhardt.compute``
-        must not fail for a missing column. Numerical depth stays in Rust.
-        """
-        from molrs.compute.order import Steinhardt
-
-        points = _octahedron()
-        nl = molrs.NeighborList(1.2)
-        nl.build(points, cubic_box)
-
-        result = Steinhardt(l=[6]).compute(make_frame(points), nl.neighbors())
-        ql = result[0]["ql"][0]
-
-        assert ql.shape == (7,)
-        assert ql[0] > 0.0

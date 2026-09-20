@@ -287,7 +287,7 @@ pub fn find_kekule_orders(mol: &Atomistic) -> Atomistic {
 ///
 /// This is the Kekulé standardization the standard defines: **ensure every
 /// aromatic subgraph carries a legal localized integer**. It is *in place* and
-/// deliberately narrow — see [`Perceive::find_kekule_orders`] for the
+/// deliberately narrow — see [`crate::perceive::Perceive::find_kekule_orders`] for the
 /// graph-in/graph-out face.
 ///
 /// The guarantees, and where each comes from:
