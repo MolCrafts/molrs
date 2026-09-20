@@ -39,8 +39,8 @@ language = "en"
 # molcrafts-zensical-theme needs to change to restyle molrs.
 [project.extra.molcrafts]
 product = "molrs"
-accent = "#c2410c"                       # primary (主) — molrs signature colour
-accent_soft = "rgba(194, 65, 12, 0.14)"  # secondary (副) — soft fill behind it
+accent = "#c2410c"                       # primary — molrs signature colour
+accent_soft = "rgba(194, 65, 12, 0.14)"  # secondary — soft fill behind it
 
 [[project.extra.social]]
 icon = "fontawesome/brands/github"

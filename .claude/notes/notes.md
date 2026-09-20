@@ -114,25 +114,31 @@ is out of scope until 0.14 lands on `dev`.
 red; the next rustc bump would just repeat it.
 **Status:** active
 
-## [2026-08-10] 绑定面对称原则(neighborlist 链后定调)
+## [2026-08-10] Binding-surface symmetry (settled after the neighborlist chain)
 
-门面(公开 API)质量优先于内部实现;内部走渐进重构,不追求一步到位,不阻塞发布。
+The quality of the facade (the public API) outranks the internal implementation;
+internals are refactored incrementally, without chasing a single sweep and without
+blocking a release.
 
-**Rule**: Rust / Python / WASM 三个表面的 API 必须保持对称——同名
-(`NeighborList` 引擎 / `Neighbors` 表)、同形(build/update/neighbors +
-Option 列语义)、同默认(`FULL`)。新增或改动任一绑定面时,先对照另外两面。
+**Rule**: the Rust / Python / WASM surfaces must stay symmetric — same names
+(`NeighborList` the engine / `Neighbors` the table), same shape (build / update /
+neighbors + the Option column semantics), same defaults (`FULL`). Before adding to
+or changing any one binding surface, check it against the other two.
 
-已知不对称(内部重构优先序):
+Known asymmetries (in internal-refactor priority order):
 
-1. **wasm `NeighborQuery` 对称门改期到 0.15**（2026-08-25）。删除不在选项内：
-   in-tree consumers are `compute/hbond/detect.rs` (`from_columns` /
-   `free_columns`, `QueryMode::CrossQuery`), `compute/rdf/mod.rs`,
-   `compute/dynamics/van_hove.rs`, `ff/potential/soft.rs`. wasm 尚无消费者
-   （facade-first），0.14 不补对称门、也不删引擎类型。
-2. `LinkedCell` / `BruteForce` 别名仅为 molvis 链接暂留(默认 FULL,安全);
-   molvis 迁移到引擎 API 后**删除**,不长期维护双门。
-3. 其余路由项按需慢做:core SoA `update_columns`、`neighbors/mod.rs` 拆
-   `table.rs`(纯移动)。`Compute::Args` 借用化已完成(2026-08-10)。
+1. **The wasm `NeighborQuery` symmetry gate is deferred to 0.15** (2026-08-25).
+   Deletion is not among the options: in-tree consumers are
+   `compute/hbond/detect.rs` (`from_columns` / `free_columns`,
+   `QueryMode::CrossQuery`), `compute/rdf/mod.rs`, `compute/dynamics/van_hove.rs`
+   and `ff/potential/soft.rs`. wasm has no consumer yet (facade-first), so 0.14
+   neither adds the symmetry gate nor deletes the engine type.
+2. The `LinkedCell` / `BruteForce` aliases survive only for the molvis link
+   (default `FULL`, safe); once molvis moves to the engine API they are **deleted**
+   — two doors are not maintained long-term.
+3. The remaining routed items are done slowly, as needed: core SoA
+   `update_columns`, splitting `neighbors/mod.rs` into `table.rs` (a pure move).
+   Borrowing `Compute::Args` is done (2026-08-10).
 
 **Status:** active
 

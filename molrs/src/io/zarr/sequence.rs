@@ -4533,7 +4533,7 @@ impl TrajectoryReader for FrameSequence {
 /// [`X`], with non-repeating values, so a mis-sliced CSR row range is a
 /// mismatch rather than a coincidence.
 ///
-/// **What is pinned on disk.** The layout of Design §一 is the contract, so
+/// **What is pinned on disk.** The layout of Design § 1 is the contract, so
 /// these tests read `trajectory/step`, `trajectory/<block>/offset`,
 /// `trajectory/<block>/step_index`, `trajectory/box/step_index` and
 /// `trajectory/meta/<key>` directly through `zarrs`, in addition to reading
@@ -5116,8 +5116,8 @@ mod tests {
     /// A frame whose rows straddle an inner chunk boundary reads back bit
     /// exact (ac-014).
     ///
-    /// Frames are **not** rounded up to whole chunks (Design §一: "帧可以跨
-    /// chunk"), which is what lets a million-atom frame work at all. With
+    /// Frames are **not** rounded up to whole chunks (Design § 1: "a frame may
+    /// span chunks"), which is what lets a million-atom frame work at all. With
     /// `R = 4` and three-row frames, frame 1 occupies rows 3..6 and therefore
     /// spans the boundary at row 4.
     #[test]
