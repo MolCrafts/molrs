@@ -131,34 +131,62 @@ recorded as owed, not asserted.
 
 ## Owed (2026-09-20)
 
-Hot-path findings recorded during the 0.14 cleanup and not yet acted on:
+Hot-path findings from the 0.14 cleanup, with what was done about each.
 
-- `core/spatial/neighbors/mod.rs` — `Backend::visit_pairs(&mut dyn PairVisitor)`
-  makes `for_each_pair` pay a virtual call per pair; add a monomorphised
-  `visit_pairs_with<V: PairVisitor>` sibling.
-- `core/spatial/neighbors/verlet_skin.rs` — the pass-two table fill is serial
-  per step for edge order; the fixed-chunk `fold_chunks` pattern from
-  `ff/potential/pair/mod.rs` would keep the order and parallelise it.
-- `ff/potential/kspace/pme.rs` — `Mutex<PmeScratch>` serialises every
-  evaluation; use `&mut self` or thread-local scratch. PME and every bonded
-  kernel are sequential while offline `compute/` has 60 rayon sites.
-- `ff/potential/pair/mod.rs` — `fold_chunks` allocates one full-width buffer
-  per chunk; `map_init` (as in `compute/voronoi/radical.rs`) keeps the
-  semantics without the allocations.
-- `core/spatial/neighbors/{mod,aabb,filter}.rs` — no `with_capacity` on
-  materialisation, a `HashMap` per k-NN query, one `Vec` per query point in
-  the filter; CSR as in `compute/cluster/mod.rs`.
-- `compute/distribution/observable.rs`, `compute/voronoi/radical.rs`,
-  `compute/diffraction/diffraction_pattern.rs`, `compute/msd/mod.rs` — per-frame
-  column copies, a `Vec` per spatial bin, an `FftPlanner` per call.
-- `md/forces.rs` — `ForceOutput` owns its forces, so `MicPairs` clones its
-  accumulator every step.
-- `md/` (5 k lines) has no rayon at all.
-- Three minimum-image implementations (`verlet_skin.rs`, `linkcell.rs`,
-  `pme.rs`); unify on `SimBox::mic()`.
-- O(N²) loops without a stated justification:
-  `compute/environment/angular_separation.rs`, `compute/voronoi/radical.rs`,
-  `compute/diffraction/direct.rs`.
+**Fixed**
+
+- `md/forces.rs` — `ForceProvider::compute_into(pos, shifts, &mut ForceOutput)`:
+  `MicPairs` swaps its accumulator with the caller's array instead of cloning
+  it; `GhostPairs` copies the owned prefix into the caller's array (its
+  accumulator also covers the copies); the integrators lend `state.forces`
+  and take it back, so a step allocates nothing. `compute()` stays as the
+  allocating convenience.
+- `ff/potential/kspace/pme.rs` — the exclusion-correction minimum image goes
+  through `SimBox`'s `Mic` (orthogonal fast path, triclinic general form);
+  PME no longer carries its own. `Mic` and `SimBox::shortest_vector_impl`
+  are one kernel, so there is one minimum-image implementation left.
+- `core/spatial/neighbors/filter.rs` — pairs are grouped by query point with
+  a counting sort (CSR), no `HashMap<u32, Vec>` per call.
+- `core/spatial/neighbors/aabb.rs` — `query_knn` collects `(point, d²)` hits
+  into one Vec and reduces by sort + dedup; no `HashMap` per query, and equal
+  distances tie-break on the point index (deterministic where the map was not).
+- `compute/voronoi/radical.rs` — the cell grid is CSR (`cell_start` /
+  `members`): one allocation instead of one Vec per bin, same iteration order.
+- `compute/environment/angular_separation.rs`, `compute/diffraction/direct.rs`
+  — the quadratic loops state their justification (the observable *is* the
+  full matrix; the direct estimator is defined as the sum).
+
+**Decided, not changed**
+
+- `Backend::visit_pairs(&mut dyn PairVisitor)` — the backend sits behind
+  `Box<dyn Backend>`, so a monomorphised visitor needs an enum-dispatched
+  backend. The indirect call is ~1 ns against a ~10 ns MIC-plus-distance body
+  and only the streaming path (`for_each_pair`) pays it; materialisation is
+  unaffected. Not worth an enum until a measurement says so.
+- `verlet_skin.rs` pass two — serial by contract: rows come out in edge order.
+  A chunked parallel fill needs a `Neighbors` API that writes rows at fixed
+  offsets; the pass is one branch per edge and pass one (the geometry) is
+  already parallel.
+- `pme.rs` `Mutex<PmeScratch>` — `Potential` evaluates through `&self`; the
+  lock is uncontended (one evaluation at a time) and costs one atomic per
+  call. Thread-local scratch buys nothing until PME evaluations run
+  concurrently.
+- `pair/mod.rs` `fold_chunks` — the per-chunk buffers are the point: partial
+  sums merge in chunk order so the answer does not depend on the thread
+  count. `map_init` would let a worker fold several chunks into one buffer in
+  scheduling order and break that.
+- `compute/distribution/observable.rs`, `compute/msd/mod.rs` — the copies are
+  one-time (index build, reference frame), not per frame;
+  `compute/diffraction/diffraction_pattern.rs` — a `FftPlanner` per call is
+  microseconds against an n×n FFT.
+- `core/spatial/neighbors/mod.rs` `Neighbors::empty` — there is no size hint
+  before the search; a guessed capacity is a guess.
+
+**Open (needs its own spec)**
+
+- `md/` has no rayon: bonded kernels and PME are sequential. Parallelising
+  the MD force path is a design task (per-thread accumulators, deterministic
+  reduction), not a local fix.
 
 ## Compliance Checklist
 

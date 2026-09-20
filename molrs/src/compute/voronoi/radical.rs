@@ -255,8 +255,10 @@ struct CellGrid {
     l: [F; 3],
     /// Wrapped atom positions in `[0, L)`.
     wrapped: Vec<[F; 3]>,
-    /// Atom indices per grid bin, row-major over `nb`.
-    bins: Vec<Vec<u32>>,
+    /// Bin membership as CSR: atoms of bin `b` are
+    /// `members[cell_start[b]..cell_start[b + 1]]`, in ascending atom order.
+    cell_start: Vec<u32>,
+    members: Vec<u32>,
 }
 
 impl CellGrid {
@@ -267,8 +269,9 @@ impl CellGrid {
             ((l[1] / r_cut).floor() as usize).max(1),
             ((l[2] / r_cut).floor() as usize).max(1),
         ];
-        let mut bins = vec![Vec::new(); nb[0] * nb[1] * nb[2]];
+        let n_bins = nb[0] * nb[1] * nb[2];
         let mut wrapped = Vec::with_capacity(n);
+        let mut bin_of_atom = Vec::with_capacity(n);
         for j in 0..n {
             let mut w = [0.0; 3];
             let mut cell = [0usize; 3];
@@ -283,15 +286,35 @@ impl CellGrid {
                 cell[a] = c.min(nb[a] - 1);
             }
             wrapped.push(w);
-            let idx = (cell[0] * nb[1] + cell[1]) * nb[2] + cell[2];
-            bins[idx].push(j as u32);
+            bin_of_atom.push((cell[0] * nb[1] + cell[1]) * nb[2] + cell[2]);
+        }
+        // Counting sort into CSR: one allocation for the whole grid instead
+        // of one Vec per bin, and the same ascending-atom order within a bin.
+        let mut cell_start = vec![0u32; n_bins + 1];
+        for &b in &bin_of_atom {
+            cell_start[b + 1] += 1;
+        }
+        for b in 0..n_bins {
+            cell_start[b + 1] += cell_start[b];
+        }
+        let mut next = cell_start.clone();
+        let mut members = vec![0u32; n];
+        for (j, &b) in bin_of_atom.iter().enumerate() {
+            members[next[b] as usize] = j as u32;
+            next[b] += 1;
         }
         CellGrid {
             nb,
             l: *l,
             wrapped,
-            bins,
+            cell_start,
+            members,
         }
+    }
+
+    #[inline]
+    fn members(&self, bin: usize) -> &[u32] {
+        &self.members[self.cell_start[bin] as usize..self.cell_start[bin + 1] as usize]
     }
 
     #[inline]
@@ -331,7 +354,7 @@ impl CellGrid {
                     let (cz, iz) = wrap_cell(base[2] + dcz, self.nb[2]);
                     let oz = iz as F * l[2];
                     let idx = (cx * self.nb[1] + cy) * self.nb[2] + cz;
-                    for &ju in &self.bins[idx] {
+                    for &ju in self.members(idx) {
                         let j = ju as usize;
                         let w = &self.wrapped[j];
                         let dr = [w[0] + ox - giw[0], w[1] + oy - giw[1], w[2] + oz - giw[2]];

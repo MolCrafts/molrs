@@ -204,7 +204,17 @@ impl Stepper {
     /// where it cannot be seen: a fold relabels an atom without moving it.
     fn refold_and_eval(&mut self, state: &mut MDState) -> Result<(), MdError> {
         let folded = wrap_and_bank(self.simbox.as_ref(), state);
-        let out = self.forces.compute(state.pos.view(), folded.view())?;
+        // Lend the state's force array to the provider and take it back: a
+        // provider that accumulates in place swaps rather than clones, so the
+        // step allocates nothing. On `Err` the state is left with an empty
+        // array, which is fine — a failed force evaluation ends the run.
+        let mut out = ForceOutput {
+            energy: 0.0,
+            forces: std::mem::replace(&mut state.forces, FNx3::zeros((0, 3))),
+            virial: None,
+        };
+        self.forces
+            .compute_into(state.pos.view(), folded.view(), &mut out)?;
         state.forces = out.forces;
         state.energy = out.energy;
         state.virial = out.virial;

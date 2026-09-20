@@ -16,6 +16,7 @@ use rustfft::{Fft, FftPlanner};
 
 use crate::ff::forcefield::Params;
 use crate::ff::potential::{Member, Potential};
+use molrs::spatial::simbox::Mic;
 use molrs::store::frame::Frame;
 use molrs::types::F;
 
@@ -94,6 +95,9 @@ pub struct PmePotential {
     bspline_moduli: [Vec<F>; 3],
     fft_plans: FftPlans,
     scratch: Mutex<PmeScratch>,
+    /// Minimum-image convention of the box, the same kernel every other
+    /// pair loop in molrs uses (`SimBox::mic`).
+    mic: Mic,
 }
 
 impl PmePotential {
@@ -113,6 +117,28 @@ impl PmePotential {
         let h = box_vectors;
         let recip_h = invert_box_vectors(&h);
         let volume = h[0][0] * h[1][1] * h[2][2]; // lower-triangular determinant
+        // `h` keeps the lattice vectors as rows; `Mic` wants them as columns.
+        let mic = if h[1][0] == 0.0 && h[2][0] == 0.0 && h[2][1] == 0.0 {
+            Mic::Ortho {
+                len: [h[0][0], h[1][1], h[2][2]],
+                inv_len: [1.0 / h[0][0], 1.0 / h[1][1], 1.0 / h[2][2]],
+                pbc: [true; 3],
+            }
+        } else {
+            let mut hc = [0.0; 9];
+            let mut inv = [0.0; 9];
+            for i in 0..3 {
+                for j in 0..3 {
+                    hc[3 * i + j] = h[j][i];
+                    inv[3 * i + j] = recip_h[j][i];
+                }
+            }
+            Mic::Triclinic {
+                h: hc,
+                inv,
+                pbc: [true; 3],
+            }
+        };
 
         // Self energy: -α/√π * C * Σq²
         let sum_q2: F = charges.iter().map(|q| q * q).sum();
@@ -172,6 +198,7 @@ impl PmePotential {
             bspline_moduli,
             fft_plans,
             scratch,
+            mic,
         }
     }
 
@@ -701,24 +728,12 @@ impl PmePotential {
 
     /// Minimum-image displacement vector from atom i to atom j.
     fn min_image_delta(&self, coords: &[F], i: usize, j: usize) -> (F, F, F) {
-        let mut dx = coords[j * 3] - coords[i * 3];
-        let mut dy = coords[j * 3 + 1] - coords[i * 3 + 1];
-        let mut dz = coords[j * 3 + 2] - coords[i * 3 + 2];
-
-        // Apply minimum image convention for lower-triangular box
-        let sz = (dz / self.h[2][2]).round();
-        dx -= sz * self.h[2][0];
-        dy -= sz * self.h[2][1];
-        dz -= sz * self.h[2][2];
-
-        let sy = (dy / self.h[1][1]).round();
-        dx -= sy * self.h[1][0];
-        dy -= sy * self.h[1][1];
-
-        let sx = (dx / self.h[0][0]).round();
-        dx -= sx * self.h[0][0];
-
-        (dx, dy, dz)
+        let d = self.mic.apply([
+            coords[j * 3] - coords[i * 3],
+            coords[j * 3 + 1] - coords[i * 3 + 1],
+            coords[j * 3 + 2] - coords[i * 3 + 2],
+        ]);
+        (d[0], d[1], d[2])
     }
 
     /// Raw displacement from atom i to atom j (no minimum image).

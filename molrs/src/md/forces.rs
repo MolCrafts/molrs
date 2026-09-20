@@ -72,11 +72,33 @@ pub trait ForceProvider: Send + Sync {
     /// parameter rather than something the provider re-derives because a fold
     /// *relabels* an atom without moving it: no displacement test can see one,
     /// and a provider holding copies must reconcile it in the same breath.
+    ///
+    /// The result lands in `out`. Its `forces` array is the caller's buffer:
+    /// a provider that accumulates into its own array swaps the two, so a
+    /// step that hands back the array it was given last step allocates
+    /// nothing. Whatever shape `out.forces` arrives in, it leaves as
+    /// `(pos.nrows(), 3)`.
+    fn compute_into(
+        &mut self,
+        pos: FNx3View<'_>,
+        wrap_shifts: ArrayView2<'_, i64>,
+        out: &mut ForceOutput,
+    ) -> Result<(), MdError>;
+
+    /// [`compute_into`](Self::compute_into) into a fresh [`ForceOutput`].
     fn compute(
         &mut self,
         pos: FNx3View<'_>,
         wrap_shifts: ArrayView2<'_, i64>,
-    ) -> Result<ForceOutput, MdError>;
+    ) -> Result<ForceOutput, MdError> {
+        let mut out = ForceOutput {
+            energy: 0.0,
+            forces: FNx3::zeros((0, 3)),
+            virial: None,
+        };
+        self.compute_into(pos, wrap_shifts, &mut out)?;
+        Ok(out)
+    }
 
     /// Neighbour-bookkeeping counters, for logs and tests — never for physics.
     fn neighbor_stats(&self) -> NeighborStats {
@@ -85,6 +107,15 @@ pub trait ForceProvider: Send + Sync {
 }
 
 impl ForceProvider for Box<dyn ForceProvider> {
+    fn compute_into(
+        &mut self,
+        pos: FNx3View<'_>,
+        wrap_shifts: ArrayView2<'_, i64>,
+        out: &mut ForceOutput,
+    ) -> Result<(), MdError> {
+        (**self).compute_into(pos, wrap_shifts, out)
+    }
+
     fn compute(
         &mut self,
         pos: FNx3View<'_>,
@@ -133,11 +164,12 @@ impl Direct {
 }
 
 impl ForceProvider for Direct {
-    fn compute(
+    fn compute_into(
         &mut self,
         pos: FNx3View<'_>,
         _wrap_shifts: ArrayView2<'_, i64>,
-    ) -> Result<ForceOutput, MdError> {
+        out: &mut ForceOutput,
+    ) -> Result<(), MdError> {
         let (energy, forces) = match pos.as_slice() {
             Some(flat) => self.potential.calc_energy_forces(flat),
             None => {
@@ -145,7 +177,10 @@ impl ForceProvider for Direct {
                 self.potential.calc_energy_forces(&flat)
             }
         };
-        owned_output(energy, forces, pos.nrows())
+        // The potential hands back a fresh Vec, so this route allocates per
+        // step by construction; the Vec becomes the array without a copy.
+        *out = owned_output(energy, forces, pos.nrows())?;
+        Ok(())
     }
 }
 
@@ -246,11 +281,12 @@ impl MicPairs {
 }
 
 impl ForceProvider for MicPairs {
-    fn compute(
+    fn compute_into(
         &mut self,
         pos: FNx3View<'_>,
         _wrap_shifts: ArrayView2<'_, i64>,
-    ) -> Result<ForceOutput, MdError> {
+        out: &mut ForceOutput,
+    ) -> Result<(), MdError> {
         let n_atoms = pos.nrows();
         let pairs = self.skin.pairs_at(pos)?;
         // Borrowed, not copied: a standard-layout `(N, 3)` view *is* the flat
@@ -264,7 +300,9 @@ impl ForceProvider for MicPairs {
             }
         };
 
-        if self.acc.nrows() != n_atoms {
+        // `acc` is whatever the caller handed back last step (see the swap
+        // below), so its shape and layout are checked, not assumed.
+        if self.acc.nrows() != n_atoms || !self.acc.is_standard_layout() {
             self.acc = Array2::zeros((n_atoms, 3));
         } else {
             self.acc.fill(0.0);
@@ -330,11 +368,12 @@ impl ForceProvider for MicPairs {
             }
         }
 
-        Ok(ForceOutput {
-            energy,
-            forces: self.acc.clone(),
-            virial,
-        })
+        // Hand the accumulator over and keep the caller's array as next
+        // step's accumulator: no clone, no allocation, in steady state.
+        std::mem::swap(&mut out.forces, &mut self.acc);
+        out.energy = energy;
+        out.virial = virial;
+        Ok(())
     }
 
     fn neighbor_stats(&self) -> NeighborStats {
@@ -430,11 +469,12 @@ impl GhostPairs {
 }
 
 impl ForceProvider for GhostPairs {
-    fn compute(
+    fn compute_into(
         &mut self,
         pos: FNx3View<'_>,
         wrap_shifts: ArrayView2<'_, i64>,
-    ) -> Result<ForceOutput, MdError> {
+        out: &mut ForceOutput,
+    ) -> Result<(), MdError> {
         // Move the copies first, then re-resolve the indices against them, then
         // read the pairs. Each step depends on the one before it, and doing
         // them in one call would hide that.
@@ -516,12 +556,18 @@ impl ForceProvider for GhostPairs {
         let virial = self
             .comm
             .reverse_comm_with_virial(&mut self.acc, all.view())?;
-        let forces = self.acc.slice(ndarray::s![..pos.nrows(), ..]).to_owned();
-        Ok(ForceOutput {
-            energy,
-            forces,
-            virial: Some(virial),
-        })
+        // The owned block is a prefix of `acc`, which also covers the copies,
+        // so it is copied out — into the caller's array when that already has
+        // the shape, so the copy is the only cost in steady state.
+        let n_owned = pos.nrows();
+        if out.forces.nrows() != n_owned || !out.forces.is_standard_layout() {
+            out.forces = Array2::zeros((n_owned, 3));
+        }
+        out.forces
+            .assign(&self.acc.slice(ndarray::s![..n_owned, ..]));
+        out.energy = energy;
+        out.virial = Some(virial);
+        Ok(())
     }
 
     fn neighbor_stats(&self) -> NeighborStats {

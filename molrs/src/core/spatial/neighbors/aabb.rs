@@ -224,8 +224,10 @@ impl AabbQuery {
         // circumradius — an upper bound on any minimum-image separation.
         let shifts = Self::enumerate_shifts(bx, Self::circumradius(bx));
 
-        // Collect per-original-index minimum-distance candidate.
-        let mut best_per_j: std::collections::HashMap<u32, F> = std::collections::HashMap::new();
+        // Every (point, image) hit, reduced below to the nearest image of
+        // each point. A flat Vec sorted once beats a map keyed per hit: the
+        // candidate count is `k × n_shifts`, small and known.
+        let mut found: Vec<(u32, F)> = Vec::with_capacity(k * shifts.len());
         let pts = self.stored_pos.view();
 
         for shift in &shifts {
@@ -250,20 +252,17 @@ impl AabbQuery {
                 ];
                 let dr = bx.shortest_vector_impl(query, r_j);
                 let d2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
-                best_per_j
-                    .entry(j)
-                    .and_modify(|prev| {
-                        if d2 < *prev {
-                            *prev = d2;
-                        }
-                    })
-                    .or_insert(d2);
+                found.push((j, d2));
             }
         }
-        let mut out: Vec<(u32, F)> = best_per_j.into_iter().collect();
-        out.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-        out.truncate(k);
-        out
+        // Nearest image per point, then by distance with the point index as
+        // the tie-break — so equal distances come out in the same order on
+        // every run.
+        found.sort_unstable_by(|a, b| a.0.cmp(&b.0).then(a.1.partial_cmp(&b.1).unwrap()));
+        found.dedup_by_key(|c| c.0);
+        found.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        found.truncate(k);
+        found
     }
 
     /// Build the bounding-volume hierarchy over `points` in `bx`.

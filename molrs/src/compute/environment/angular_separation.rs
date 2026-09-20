@@ -123,6 +123,9 @@ impl Compute for AngularSeparationGlobal {
         let n_global = args.global.len();
         let mut out = Vec::with_capacity(frames.len());
         for _ in frames {
+            // O(n_query × n_global) by definition: the observable *is* the
+            // full matrix of pairwise angular distances, every entry of which
+            // is returned.
             let mut a = Array2::<F>::zeros((n_query, n_global));
             for i in 0..n_query {
                 for j in 0..n_global {

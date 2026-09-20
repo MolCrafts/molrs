@@ -92,6 +92,8 @@ impl StaticStructureFactorDirect {
         let mut kmags = Array1::<F>::zeros(k_vecs.len());
         for (idx, k) in k_vecs.iter().enumerate() {
             kmags[idx] = (k[0] * k[0] + k[1] * k[1] + k[2] * k[2]).sqrt();
+            // Direct summation Σ_j exp(i k·r_j) for every k: O(N × N_k) by
+            // definition of the estimator. The FFT route is `diffraction_pattern`.
             let mut re: F = 0.0;
             let mut im: F = 0.0;
             for j in 0..n {
@@ -155,6 +157,7 @@ impl StaticStructureFactorDirect {
                         continue;
                     }
                     let bin = ((kmag / dk) as usize).min(n_bins - 1);
+                    // Same direct sum over the reciprocal lattice: O(N × N_k).
                     let mut re: F = 0.0;
                     let mut im: F = 0.0;
                     for j in 0..n_atoms {
