@@ -33,6 +33,7 @@ use super::equivalence::{EQUIV_CLASS, EquivalenceOptions};
 use super::stereo::{BondStereo, TetrahedralStereo};
 use super::{aromaticity, bond_type, equivalence, hydrogens, rings, rotatable, stereo};
 use crate::system::atomistic::{AtomId, Atomistic, BondId};
+use molrs::error::MolRsError;
 
 /// Atom / bond prop: `1` when the atom / bond lies on at least one SSSR ring.
 const IS_IN_RING: &str = "is_in_ring";
@@ -164,7 +165,14 @@ impl Perceive {
     ///
     /// A new graph: the heavy-atom skeleton of `mol` plus the perceived
     /// hydrogens and their bonds.
-    pub fn find_hydrogens(&self, mol: &Atomistic) -> Atomistic {
+    ///
+    /// # Errors
+    ///
+    /// Whatever [`hydrogens::add_hydrogens`] returns: a [`MolRsError`] when the
+    /// graph holds a stale atom handle, which no public constructor of
+    /// [`Atomistic`] can produce. The `Result` keeps that invariant a returned
+    /// value rather than a panic.
+    pub fn find_hydrogens(&self, mol: &Atomistic) -> Result<Atomistic, MolRsError> {
         hydrogens::add_hydrogens(mol)
     }
 

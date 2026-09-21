@@ -291,7 +291,13 @@ impl MolGraph {
             let mapped: smallvec::SmallVec<[NodeId; 4]> =
                 rel.nodes.iter().map(|n| node_map[n]).collect();
             if let Ok(new_rid) = graph.add_relation(self_kind, &mapped) {
-                graph.write_relation_props(self_kind, new_rid, &rel.props);
+                // The props were just read out of `self`'s own columns into a
+                // graph whose kinds mirror `self`'s, so every key arrives at
+                // the one element type it has there: a conflict would mean the
+                // subgraph stopped mirroring the parent mid-copy.
+                graph
+                    .write_relation_props(self_kind, new_rid, &rel.props)
+                    .expect("induced subgraph mirrors the parent's component types");
             }
         };
 

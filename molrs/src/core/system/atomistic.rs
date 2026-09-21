@@ -708,7 +708,14 @@ impl Atomistic {
 
     /// Structural merge of `other` into `self`. Returns `handle in other → handle
     /// in self`. Handles are remapped (not identity-preserving).
-    pub fn merge(&mut self, other: Atomistic) -> HashMap<AtomId, AtomId> {
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::Validation`] when an atom or bond property of `other`
+    /// contradicts the element type `self` holds for that key — see
+    /// [`MolGraph::merge`](crate::system::molgraph::MolGraph::merge), whose
+    /// partial-write contract this inherits.
+    pub fn merge(&mut self, other: Atomistic) -> Result<HashMap<AtomId, AtomId>, MolRsError> {
         self.graph.merge(other.graph)
     }
 
@@ -770,7 +777,10 @@ fn canonical_path(nodes: &[NodeId]) -> Vec<NodeId> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store::block::Block;
     use crate::system::molgraph::Atom;
+    use crate::types::{I, Idx};
+    use ndarray::Array1;
     use std::collections::HashSet;
 
     #[test]
@@ -785,7 +795,7 @@ mod tests {
         let h = b.add_atom_bare("H");
         b.add_bond(o, h).unwrap();
 
-        let map = a.merge(b);
+        let map = a.merge(b).expect("merge succeeds on compatible graphs");
         assert_eq!(map.len(), 2);
         assert_eq!(a.n_atoms(), 4);
         assert_eq!(a.n_bonds(), 2);
@@ -1220,6 +1230,159 @@ mod tests {
             mol.n_relations(ports),
             1,
             "add_bond must not write into the foreign kind"
+        );
+    }
+
+    // ---- nullable columns: a partially set component keeps its mask ----
+
+    /// Three atoms, one of them labelled: the column is emitted with the
+    /// mask the entity table holds, so the two unlabelled atoms read as
+    /// "no value" rather than as fragment instance zero.
+    fn partly_labelled() -> (Atomistic, AtomId) {
+        let mut mol = Atomistic::new();
+        let a0 = mol.add_atom_bare("C");
+        mol.add_atom_bare("C");
+        mol.add_atom_bare("C");
+        (mol, a0)
+    }
+
+    #[test]
+    fn to_frame_masks_a_partially_set_int_column() {
+        let (mut mol, a0) = partly_labelled();
+        mol.set_atom(a0, "frag_id", PropValue::Int(7 as I)).unwrap();
+        let frame = mol.to_frame();
+        let atoms = frame.get("atoms").expect("atoms block");
+        assert_eq!(atoms.validity("frag_id"), Some(&[true, false, false][..]));
+    }
+
+    #[test]
+    fn to_frame_masks_a_partially_set_float_column() {
+        let (mut mol, a0) = partly_labelled();
+        mol.set_atom(a0, "charge", -0.5_f64).unwrap();
+        let frame = mol.to_frame();
+        let atoms = frame.get("atoms").expect("atoms block");
+        assert_eq!(atoms.validity("charge"), Some(&[true, false, false][..]));
+    }
+
+    #[test]
+    fn to_frame_masks_a_partially_set_string_column() {
+        let (mut mol, a0) = partly_labelled();
+        mol.set_atom(a0, "name", "CA").unwrap();
+        let frame = mol.to_frame();
+        let atoms = frame.get("atoms").expect("atoms block");
+        assert_eq!(atoms.validity("name"), Some(&[true, false, false][..]));
+    }
+
+    #[test]
+    fn to_frame_leaves_a_fully_populated_column_unmasked() {
+        let (mol, _a0) = partly_labelled();
+        let frame = mol.to_frame();
+        let atoms = frame.get("atoms").expect("atoms block");
+        assert_eq!(atoms.validity("element"), None);
+    }
+
+    #[test]
+    fn from_frame_leaves_a_masked_int_cell_unset() {
+        let (mut mol, a0) = partly_labelled();
+        mol.set_atom(a0, "frag_id", PropValue::Int(7 as I)).unwrap();
+        let back = Atomistic::from_frame(&mol.to_frame()).expect("an atomistic frame reads back");
+        let read: Vec<Option<I>> = back.atoms().map(|(_, a)| a.get_int("frag_id")).collect();
+        assert_eq!(read, vec![Some(7 as I), None, None]);
+    }
+
+    #[test]
+    fn from_frame_leaves_a_masked_float_cell_unset() {
+        let (mut mol, a0) = partly_labelled();
+        mol.set_atom(a0, "charge", -0.5_f64).unwrap();
+        let back = Atomistic::from_frame(&mol.to_frame()).expect("an atomistic frame reads back");
+        let read: Vec<Option<f64>> = back.atoms().map(|(_, a)| a.get_f64("charge")).collect();
+        assert_eq!(read, vec![Some(-0.5), None, None]);
+    }
+
+    #[test]
+    fn from_frame_leaves_a_masked_string_cell_unset() {
+        let (mut mol, a0) = partly_labelled();
+        mol.set_atom(a0, "name", "CA").unwrap();
+        let back = Atomistic::from_frame(&mol.to_frame()).expect("an atomistic frame reads back");
+        let read: Vec<Option<String>> = back
+            .atoms()
+            .map(|(_, a)| a.get_str("name").map(str::to_owned))
+            .collect();
+        assert_eq!(read, vec![Some("CA".to_owned()), None, None]);
+    }
+
+    // ---- Contract B: a relation block that cannot be read is refused ----
+
+    /// An `angles` block carrying only two of the kind's three endpoint
+    /// columns is unreadable, and skipping it hands back a molecule whose
+    /// angle the frame plainly stated. The error names the block and the
+    /// column that is missing.
+    #[test]
+    fn from_frame_rejects_a_relation_block_missing_an_endpoint_column() {
+        let mut atoms = Block::new();
+        atoms
+            .insert(
+                "element",
+                Array1::from_vec(vec!["C".to_owned(), "C".to_owned(), "C".to_owned()]).into_dyn(),
+            )
+            .unwrap();
+        let mut angles = Block::new();
+        angles
+            .insert("atomi", Array1::from_vec(vec![0 as Idx]).into_dyn())
+            .unwrap();
+        angles
+            .insert("atomj", Array1::from_vec(vec![1 as Idx]).into_dyn())
+            .unwrap();
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms);
+        frame.insert("angles", angles);
+
+        let err = Atomistic::from_frame(&frame)
+            .expect_err("an angles block without 'atomk' cannot be read, so it is not skipped");
+        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
+        let msg = err.to_string();
+        assert!(msg.contains("angles"), "{msg}");
+        assert!(msg.contains("atomk"), "{msg}");
+    }
+
+    /// A `bonds` row whose endpoint addresses an atom past the end of the
+    /// `atoms` block states a bond over an atom the frame never gave — a
+    /// truncated file, or a 1-based index written into a 0-based column. The
+    /// row cannot be read, and dropping it hands back a molecule missing a
+    /// bond the frame plainly stated, so the read is refused. The error names
+    /// the block and the offending index.
+    #[test]
+    fn from_frame_rejects_a_relation_row_addressing_a_missing_atom() {
+        let mut atoms = Block::new();
+        atoms
+            .insert(
+                "element",
+                Array1::from_vec(vec!["C".to_owned(), "C".to_owned()]).into_dyn(),
+            )
+            .unwrap();
+        let mut bonds = Block::new();
+        bonds
+            .insert("atomi", Array1::from_vec(vec![0 as Idx]).into_dyn())
+            .unwrap();
+        bonds
+            .insert("atomj", Array1::from_vec(vec![5 as Idx]).into_dyn())
+            .unwrap();
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms);
+        frame.insert("bonds", bonds);
+
+        let err = Atomistic::from_frame(&frame).expect_err(
+            "a bond onto atom 5 of a 2-atom frame cannot be read, so it is not skipped",
+        );
+        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("bonds"),
+            "the refusal must name the block: {msg}"
+        );
+        assert!(
+            msg.contains('5'),
+            "the refusal must name the endpoint index it could not resolve: {msg}"
         );
     }
 

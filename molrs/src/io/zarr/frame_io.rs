@@ -488,6 +488,18 @@ pub(crate) const BOX_GROUP: &str = "box";
 /// The group carries **no** schema-version attribute: `meta/molrec_version`
 /// at the record root is the sole version key of the MolRec contract, and a
 /// parallel per-frame version is forbidden by it.
+///
+/// # A nullable column is written as its filled values
+///
+/// A block column may carry a [validity
+/// mask](crate::store::block::Block::validity); a Zarr group has no place to
+/// put one. Persisting it would mean a sibling boolean array per masked
+/// column, which the reader would have to tell apart from a real column —
+/// i.e. a reserved name in the MolRec block namespace, which is a change to
+/// the stored contract and not a writer detail. Until that is designed, a
+/// frame group round-trip loses the masks and returns the defaults the
+/// columns hold under them; the [`crate::stream`] transport encoding keeps
+/// them.
 pub(crate) fn write_frame_group(
     store: &ReadableWritableListableStorage,
     prefix: &str,

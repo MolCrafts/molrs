@@ -334,8 +334,15 @@ impl CoarseGrain {
 
     /// Structural merge. Returns `handle in other → handle in self`. Remaps bead
     /// membership keys; foreign atom handles inside membership stay as-is.
-    pub fn merge(&mut self, other: CoarseGrain) -> HashMap<BeadId, BeadId> {
-        let node_map = self.graph.merge(other.graph);
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::Validation`] when a bead or relation property of `other`
+    /// contradicts the element type `self` holds for that key — see
+    /// [`MolGraph::merge`](crate::system::molgraph::MolGraph::merge), whose
+    /// partial-write contract this inherits.
+    pub fn merge(&mut self, other: CoarseGrain) -> Result<HashMap<BeadId, BeadId>, MolRsError> {
+        let node_map = self.graph.merge(other.graph)?;
         for (old_bead, members) in other.members {
             if let Some(&new_bead) = node_map.get(&old_bead)
                 && !members.is_empty()
@@ -343,7 +350,7 @@ impl CoarseGrain {
                 self.members.insert(new_bead, members);
             }
         }
-        node_map
+        Ok(node_map)
     }
 
     /// Independent deep copy. **Handles are preserved**.

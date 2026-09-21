@@ -15,11 +15,15 @@
 //! `&PyAtomistic` (a shared borrow) and returns a **new** `Atomistic`, so the shape
 //! is enforced by the borrow checker rather than by convention.
 //!
-//! The free functions this layer also publishes (`molrs.perceive_aromaticity`,
-//! `molrs.add_hydrogens`, `molrs.find_rings`) are unchanged and stay where they are
-//! registered, in [`crate::core::system::molgraph`] — the builder does not replace
-//! them: `find_rings` the free function returns the ring **list**, `Perceive`'s
-//! returns the annotated **graph**, and a graph composes with the next finder.
+//! No perception step is bound as a free function: Python reaches every one of
+//! them through a method — `molrs.perceive.Perceive.find_hydrogens`,
+//! `.find_aromaticity`, `.find_rings` and the rest of the `find_*` family. The
+//! layer's other two classes are registered in
+//! [`crate::core::system::molgraph`] and are not replaced by the builder:
+//! `molrs.perceive.RingInfo` answers a different question — it *reports* the
+//! ring list, where `Perceive.find_rings` hands back the annotated graph
+//! that composes with the next finder — and `molrs.perceive.SmartsPattern`
+//! matches a query against a perceived graph.
 //!
 //! Perception is all-atom, so every method is typed against `Atomistic`; a
 //! `CoarseGrain` leaf is a `TypeError` from PyO3's own extraction, not a wrong
@@ -30,6 +34,7 @@ use pyo3::prelude::*;
 use molrs::perceive::Perceive;
 
 use crate::core::system::molgraph::PyAtomistic;
+use crate::helpers::molrs_error_to_pyerr;
 
 /// Chemical perception, as a builder — `molrs.Perceive`.
 ///
@@ -139,8 +144,18 @@ impl PyPerceive {
     /// Atomistic
     ///     A new graph: the heavy-atom skeleton of ``mol`` plus the perceived
     ///     hydrogens and their bonds.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If repletion reports a stale atom handle on the graph it built — an
+    ///     invariant no molecule built through this package can break.
     fn find_hydrogens(&self, py: Python<'_>, mol: &PyAtomistic) -> PyResult<Py<PyAtomistic>> {
-        PyAtomistic::from_core(py, self.inner.find_hydrogens(mol.core()))
+        let out = self
+            .inner
+            .find_hydrogens(mol.core())
+            .map_err(molrs_error_to_pyerr)?;
+        PyAtomistic::from_core(py, out)
     }
 
     /// Perceive stereochemistry from 3-D coordinates and project it onto the graph.

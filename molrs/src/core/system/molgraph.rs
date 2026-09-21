@@ -52,6 +52,7 @@
 use std::collections::{HashMap, HashSet};
 use std::ops::{Index, IndexMut};
 
+use ndarray::ArrayD;
 use slotmap::{Key, KeyData, SecondaryMap, SlotMap, new_key_type};
 use smallvec::SmallVec;
 
@@ -59,7 +60,7 @@ use crate::error::MolRsError;
 use crate::store::block::Block;
 use crate::store::frame::Frame;
 use crate::store::keys;
-use crate::system::entity_table::{Cell, EntityTable};
+use crate::system::entity_table::{Cell, EntityTable, Validity};
 use crate::types::{F, I, Idx};
 
 // ---------------------------------------------------------------------------
@@ -138,13 +139,20 @@ fn coerce_canonical(key: &str, pv: PropValue) -> Result<PropValue, MolRsError> {
 }
 
 /// Materialize `table`'s column `key` into `block` at the dtype the Frame
-/// schema declares for that key.
+/// schema declares for that key, carrying the column's validity mask.
 ///
 /// [`EntityTable`] has no unsigned column, so a canonical unsigned field
 /// (`id`, `mol_id`, `type_id`, …) lives in the store as [`I`] and has to be
 /// re-typed on the way out: [`Block::insert`] validates the key against the
 /// schema vocabulary, so handing it the signed column is *rejected* — and the
 /// column would vanish from the frame instead of reaching the caller.
+///
+/// A component is set per entity, so a column is in general partial: the rows
+/// no entity ever wrote hold the element type's default. Emitting them as
+/// values would state a `frag_id` of instance zero, a charge of zero, an empty
+/// name — so the mask travels with the column through
+/// [`Block::insert_nullable`], which normalises the fully-populated case back
+/// to a plain column.
 ///
 /// Returns `false` when `key` names no column of `table`.
 fn emit_column<K: Key>(
@@ -155,9 +163,9 @@ fn emit_column<K: Key>(
     use crate::store::block::DType;
     use ndarray::Array1;
 
-    let inserted = if let Ok((data, _)) = table.column_f64(key) {
-        block.insert(key, Array1::from_vec(data.to_vec()).into_dyn())
-    } else if let Ok((data, _)) = table.column_i32(key) {
+    let inserted = if let Ok((data, valid)) = table.column_f64(key) {
+        block.insert_nullable(key, Array1::from_vec(data.to_vec()).into_dyn(), mask(valid))
+    } else if let Ok((data, valid)) = table.column_i32(key) {
         if keys::canonical_dtype(key) == Some(DType::UInt) {
             let unsigned: Vec<Idx> = data
                 .iter()
@@ -169,19 +177,138 @@ fn emit_column<K: Key>(
                     })
                 })
                 .collect::<Result<_, _>>()?;
-            block.insert(key, Array1::from_vec(unsigned).into_dyn())
+            block.insert_nullable(key, Array1::from_vec(unsigned).into_dyn(), mask(valid))
         } else {
-            block.insert(key, Array1::from_vec(data.to_vec()).into_dyn())
+            block.insert_nullable(key, Array1::from_vec(data.to_vec()).into_dyn(), mask(valid))
         }
-    } else if let Ok((data, _)) = table.column_str(key) {
-        block.insert(key, Array1::from_vec(data.to_vec()).into_dyn())
-    } else if let Ok((data, _)) = table.column_bool(key) {
-        block.insert(key, Array1::from_vec(data.to_vec()).into_dyn())
+    } else if let Ok((data, valid)) = table.column_str(key) {
+        block.insert_nullable(key, Array1::from_vec(data.to_vec()).into_dyn(), mask(valid))
+    } else if let Ok((data, valid)) = table.column_bool(key) {
+        block.insert_nullable(key, Array1::from_vec(data.to_vec()).into_dyn(), mask(valid))
     } else {
         return Ok(false);
     };
     inserted.map_err(|e| MolRsError::validation(e.to_string()))?;
     Ok(true)
+}
+
+/// The block-side form of an [`EntityTable`] validity mask.
+fn mask(valid: &Validity) -> Vec<bool> {
+    valid.as_slice().to_vec()
+}
+
+/// A [`Block`]'s columns split by element type, each paired with its validity
+/// mask — the reading counterpart of [`emit_column`].
+///
+/// Both halves of [`MolGraph::read_frame`] need the same thing: walk a block's
+/// columns once, then ask each row for the properties it actually carries. A
+/// masked-off cell holds the element type's default, which is a value like any
+/// other to the block, so the mask is what keeps an unset `frag_id` from
+/// arriving as instance zero.
+struct MaskedColumns<'a> {
+    float: Vec<MaskedColumn<'a, F>>,
+    int: Vec<MaskedColumn<'a, I>>,
+    uint: Vec<MaskedColumn<'a, Idx>>,
+    string: Vec<MaskedColumn<'a, String>>,
+    boolean: Vec<MaskedColumn<'a, bool>>,
+}
+
+/// One column of a [`Block`] as [`MaskedColumns`] reads it: its key, its dense
+/// values, and its validity mask — `None` when every row holds a value.
+type MaskedColumn<'a, T> = (&'a str, &'a ArrayD<T>, Option<&'a [bool]>);
+
+impl<'a> MaskedColumns<'a> {
+    /// Split `block`'s columns, skipping the keys in `skip` (a relation
+    /// block's endpoint columns, which are structure rather than properties).
+    ///
+    /// Unsigned columns are kept apart from signed ones because the canonical
+    /// `id` / `mol_id` / `type_id` fields are UInt in the Frame schema and the
+    /// graph stores them signed: they need narrowing, not a cast.
+    fn of(block: &'a Block, skip: &[String]) -> Self {
+        let mut cols = MaskedColumns {
+            float: Vec::new(),
+            int: Vec::new(),
+            uint: Vec::new(),
+            string: Vec::new(),
+            boolean: Vec::new(),
+        };
+        for key in block.keys() {
+            if skip.iter().any(|s| s == key) {
+                continue;
+            }
+            let mask = block.validity(key);
+            if let Some(arr) = block.get_float(key) {
+                cols.float.push((key, arr, mask));
+            } else if let Some(arr) = block.get_int(key) {
+                cols.int.push((key, arr, mask));
+            } else if let Some(arr) = block.get_uint(key) {
+                cols.uint.push((key, arr, mask));
+            } else if let Some(arr) = block.get_string(key) {
+                cols.string.push((key, arr, mask));
+            } else if let Some(arr) = block.get_bool(key) {
+                cols.boolean.push((key, arr, mask));
+            }
+        }
+        cols
+    }
+
+    /// The properties row `row` carries: one entry per column whose mask marks
+    /// the row as holding a value, in no particular order.
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::Validation`] when an unsigned value exceeds the signed
+    /// range the graph stores it in.
+    fn cells(&self, row: usize) -> Result<Vec<(&'a str, PropValue)>, MolRsError> {
+        let mut out: Vec<(&'a str, PropValue)> = Vec::new();
+        for &(key, arr, mask) in &self.float {
+            if is_set(mask, row) {
+                #[allow(clippy::unnecessary_cast)]
+                out.push((key, PropValue::F64(arr[[row]] as f64)));
+            }
+        }
+        for &(key, arr, mask) in &self.int {
+            if is_set(mask, row) {
+                out.push((key, PropValue::Int(arr[[row]])));
+            }
+        }
+        for &(key, arr, mask) in &self.uint {
+            if is_set(mask, row) {
+                out.push((key, PropValue::Int(narrow_uint(key, arr[[row]])?)));
+            }
+        }
+        for &(key, arr, mask) in &self.string {
+            if is_set(mask, row) {
+                out.push((key, PropValue::Str(arr[[row]].clone())));
+            }
+        }
+        for &(key, arr, mask) in &self.boolean {
+            if is_set(mask, row) {
+                out.push((key, PropValue::Bool(arr[[row]])));
+            }
+        }
+        Ok(out)
+    }
+}
+
+/// Whether row `row` of a column with mask `mask` holds a value. A column with
+/// no mask is fully valid — see [`Block::validity`].
+fn is_set(mask: Option<&[bool]>, row: usize) -> bool {
+    mask.is_none_or(|mask| mask[row])
+}
+
+/// The node handles a relation row addresses, or `None` when one of its
+/// endpoint columns points past the rows the `"atoms"` block had.
+fn endpoints_at(
+    cols: &[&ArrayD<Idx>],
+    row: usize,
+    node_ids: &[NodeId],
+) -> Option<SmallVec<[NodeId; 4]>> {
+    let mut nodes: SmallVec<[NodeId; 4]> = SmallVec::new();
+    for col in cols {
+        nodes.push(*node_ids.get(col[[row]] as usize)?);
+    }
+    Some(nodes)
 }
 
 /// Narrow one value of a frame's unsigned column to the signed [`I`] the entity
@@ -546,9 +673,21 @@ impl MolGraph {
     }
 
     /// Insert a node carrying a property bag, returning its stable handle.
+    ///
+    /// # Panics
+    ///
+    /// Panics when a value of `payload` contradicts the element type an
+    /// existing node column holds for that key (a string `tag` into an `i32`
+    /// `tag` column). The caller of this constructor *built* the bag, so that
+    /// is a defect in the caller and not a data condition — it was already a
+    /// `debug_assert` before it was a panic. Callers holding **foreign**
+    /// property bags — [`merge`](Self::merge) from another graph, the leaves'
+    /// `from_frame` from a file — have an error channel and return the
+    /// conflict instead.
     pub fn add_node_with(&mut self, payload: Atom) -> NodeId {
         let id = self.add_node();
-        self.write_atom(id, &payload);
+        self.write_atom(id, &payload)
+            .expect("node property bag contradicts an existing node column");
         id
     }
 
@@ -656,17 +795,25 @@ impl MolGraph {
     }
 
     /// Write an [`Atom`]'s properties into node `id`'s columns.
-    fn write_atom(&mut self, id: NodeId, atom: &Atom) {
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::Validation`] when a value's element type contradicts the
+    /// component the table already holds for that key, or when the value does
+    /// not fit the dtype the Frame schema declares for a canonical key. The
+    /// property is *not* written in that case, which is precisely why the
+    /// error is returned rather than swallowed: a dropped property is a
+    /// molecule that quietly lost a label.
+    fn write_atom(&mut self, id: NodeId, atom: &Atom) -> Result<(), MolRsError> {
         for (key, val) in atom.iter() {
-            let r = coerce_canonical(key, val.clone()).and_then(|pv| match pv {
+            coerce_canonical(key, val.clone()).and_then(|pv| match pv {
                 PropValue::F64(v) => self.nodes.set_f64(id, key, v),
                 PropValue::Int(v) => self.nodes.set_i32(id, key, v),
                 PropValue::Str(s) => self.nodes.set_str(id, key, &s),
                 PropValue::Bool(v) => self.nodes.set_bool(id, key, v),
-            });
-            debug_assert!(r.is_ok(), "component type conflict writing '{key}'");
-            let _ = r;
+            })?;
         }
+        Ok(())
     }
 
     /// Materialize node `id`'s set components into an [`Atom`].
@@ -878,23 +1025,30 @@ impl MolGraph {
     }
 
     /// Write a property bag into a relation's columns.
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::Validation`] when a value's element type contradicts the
+    /// component the kind already holds for that key, or when the value does
+    /// not fit the dtype the Frame schema declares for a canonical key. As on
+    /// the node side, the property is not written, so the error is the only
+    /// thing standing between the caller and a silently dropped bond label.
     pub(crate) fn write_relation_props(
         &mut self,
         kind: KindId,
         id: RelationId,
         props: &HashMap<String, PropValue>,
-    ) {
+    ) -> Result<(), MolRsError> {
         let k = &mut self.kinds[kind.0 as usize];
         for (key, val) in props {
-            let r = coerce_canonical(key, val.clone()).and_then(|pv| match pv {
+            coerce_canonical(key, val.clone()).and_then(|pv| match pv {
                 PropValue::F64(v) => k.props.set_f64(id, key, v),
                 PropValue::Int(v) => k.props.set_i32(id, key, v),
                 PropValue::Str(s) => k.props.set_str(id, key, &s),
                 PropValue::Bool(v) => k.props.set_bool(id, key, v),
-            });
-            debug_assert!(r.is_ok(), "component type conflict writing '{key}'");
-            let _ = r;
+            })?;
         }
+        Ok(())
     }
 
     /// Remove an arity-2 relation from the adjacency lists of its endpoints.
@@ -940,11 +1094,25 @@ impl MolGraph {
     /// **Handle contract:** every node of `other` is remapped to a fresh handle in
     /// `self`. Returns the map `NodeId in other → NodeId in self`. (By contrast,
     /// [`Clone`] **preserves** handles in the independent copy.)
-    pub fn merge(&mut self, other: MolGraph) -> HashMap<NodeId, NodeId> {
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::Validation`] when a property of `other` cannot be written
+    /// into `self` — an incoming string `tag` where `self` holds an `i32`
+    /// `tag`, say. `other`'s properties are foreign data to `self`, so the two
+    /// vocabularies can genuinely disagree; the merged graph would otherwise
+    /// come back missing exactly the properties the caller handed over. The
+    /// merge is *not* rolled back: `self` keeps what was written before the
+    /// conflict, as it does for any other partial write.
+    pub fn merge(&mut self, other: MolGraph) -> Result<HashMap<NodeId, NodeId>, MolRsError> {
         let mut node_map: HashMap<NodeId, NodeId> = HashMap::new();
         for old_id in other.nodes.handles() {
             let payload = other.read_atom(old_id);
-            let new_id = self.add_node_with(payload);
+            // Not `add_node_with`: that constructor panics on a conflict,
+            // which is right for a bag the caller built and wrong for one
+            // read out of another graph.
+            let new_id = self.add_node();
+            self.write_atom(new_id, &payload)?;
             node_map.insert(old_id, new_id);
         }
 
@@ -958,11 +1126,11 @@ impl MolGraph {
                 let rel = other.read_relation(okid, orid);
                 let mapped: SmallVec<[NodeId; 4]> = rel.nodes.iter().map(|n| node_map[n]).collect();
                 if let Ok(rid) = self.add_relation(self_kind, &mapped) {
-                    self.write_relation_props(self_kind, rid, &rel.props);
+                    self.write_relation_props(self_kind, rid, &rel.props)?;
                 }
             }
         }
-        node_map
+        Ok(node_map)
     }
 
     // =====================================================================
@@ -981,8 +1149,6 @@ impl MolGraph {
     /// block (named by the kind) with `atomi`/`atomj`/… columns referencing node
     /// row order plus one column per relation property — registry-driven.
     pub(crate) fn to_frame(&self) -> Frame {
-        use ndarray::Array1;
-
         let mut frame = Frame::new();
 
         let node_ids: Vec<NodeId> = self.nodes.handles().collect();
@@ -1014,36 +1180,72 @@ impl MolGraph {
         // ---- one block per non-empty relation kind ----
         for kid in self.kind_ids() {
             let kidx = kid.0 as usize;
-            let k = &self.kinds[kidx];
-            if k.props.is_empty() {
+            if self.kinds[kidx].props.is_empty() {
                 continue;
             }
-            let arity = self.kind_arity[kidx];
-            // Relation row order: shared by the endpoint columns and the (already
-            // aligned, dense) property columns.
-            let rids: Vec<RelationId> = k.props.handles().collect();
-            let mut block = Block::new();
-
-            for pos in 0..arity {
-                let col: Vec<Idx> = rids
-                    .iter()
-                    .map(|rid| id_to_row[&k.endpoints[*rid][pos]] as Idx)
-                    .collect();
-                let _ = block.insert(rel_col_name(pos), Array1::from_vec(col).into_dyn());
+            // `relation_block` reports the two conditions a `Block` write can
+            // fail on — a column of the wrong row count, and a canonical key
+            // written at a dtype the Frame schema forbids — and neither is
+            // reachable from here: the endpoint and property columns are built
+            // from one relation row order, and every value entered the graph
+            // through `coerce_canonical`. `to_frame` therefore has no error
+            // channel to offer, and the branch exists to name the invariant
+            // that broke rather than to drop the block, which is what the
+            // discarded `Result` used to do.
+            match self.relation_block(kid, &id_to_row) {
+                Ok(block) => {
+                    frame.insert(&self.kind_name[kidx], block);
+                }
+                Err(e) => unreachable!(
+                    "relation block '{}' is dense, row-aligned and canonically typed: {e}",
+                    self.kind_name[kidx]
+                ),
             }
-
-            // Property columns read straight from the column table.
-            let mut prop_keys: Vec<String> = k.props.columns().map(|s| s.to_owned()).collect();
-            prop_keys.sort();
-            for key in &prop_keys {
-                emit_column(&mut block, &k.props, key)
-                    .expect("relation column is dense, row-aligned and canonically typed");
-            }
-
-            frame.insert(&self.kind_name[kidx], block);
         }
 
         frame
+    }
+
+    /// The [`Frame`] block of one relation kind: the `atomi`/`atomj`/… endpoint
+    /// columns in position order, addressing nodes by the row order
+    /// `id_to_row` fixes, plus one column per relation property.
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::Validation`] if a column is refused by the block — see the
+    /// call site in [`to_frame`](Self::to_frame) for why that cannot happen
+    /// there.
+    fn relation_block(
+        &self,
+        kind: KindId,
+        id_to_row: &HashMap<NodeId, usize>,
+    ) -> Result<Block, MolRsError> {
+        use ndarray::Array1;
+
+        let kidx = kind.0 as usize;
+        let k = &self.kinds[kidx];
+        // Relation row order: shared by the endpoint columns and the (already
+        // aligned, dense) property columns.
+        let rids: Vec<RelationId> = k.props.handles().collect();
+        let mut block = Block::new();
+
+        for pos in 0..self.kind_arity[kidx] {
+            let col: Vec<Idx> = rids
+                .iter()
+                .map(|rid| id_to_row[&k.endpoints[*rid][pos]] as Idx)
+                .collect();
+            block
+                .insert(rel_col_name(pos), Array1::from_vec(col).into_dyn())
+                .map_err(|e| MolRsError::validation(e.to_string()))?;
+        }
+
+        // Property columns read straight from the column table.
+        let mut prop_keys: Vec<String> = k.props.columns().map(|s| s.to_owned()).collect();
+        prop_keys.sort();
+        for key in &prop_keys {
+            emit_column(&mut block, &k.props, key)?;
+        }
+        Ok(block)
     }
 
     /// Read a [`Frame`] into `self`: the `"atoms"` block becomes nodes; each
@@ -1062,68 +1264,34 @@ impl MolGraph {
     /// `Fragment`'s frame used to drop every `ports` row exactly this way and
     /// return a molecule indistinguishable from one that never had any. Such a
     /// block is an error naming itself, so the caller can register the kind or
-    /// pick the leaf type that owns it.
+    /// pick the leaf type that owns it. A block that *does* name a registered
+    /// kind but carries fewer endpoint columns than that kind's arity — an
+    /// `angles` block with `atomi` and `atomj` and no `atomk` — is unreadable
+    /// in the same way and refused in the same way.
     ///
     /// Blocks that are not relation blocks — metadata, a box, a grid — carry
     /// no endpoint column and are left alone: a frame may legitimately hold
     /// more than a graph reads.
     ///
+    /// # Null cells
+    ///
+    /// A column's [validity mask](Block::validity) is honoured: a row the mask
+    /// marks as null sets no property, so the unlabelled atoms of a partially
+    /// labelled frame come back unlabelled rather than carrying the default
+    /// the column had to store for them.
+    ///
     /// # Errors
     ///
     /// [`MolRsError::Parse`] when the frame has no `"atoms"` block, and
     /// [`MolRsError::Validation`] when a column value does not fit its
-    /// canonical type, or when the frame carries an unreadable relation block.
+    /// canonical type, when a column's dtype contradicts a component `self`
+    /// already holds under that key, or when the frame carries an unreadable
+    /// relation block.
     pub(crate) fn read_frame(&mut self, frame: &Frame) -> Result<(), MolRsError> {
         let atoms_block = frame
             .get("atoms")
             .ok_or_else(|| MolRsError::parse("Frame missing 'atoms' block"))?;
-
-        let nrows = atoms_block.nrows().unwrap_or(0);
-        let col_keys: Vec<String> = atoms_block.keys().map(|k| k.to_owned()).collect();
-
-        // Unsigned and bool columns are read back too: the canonical `id` /
-        // `mol_id` / `type_id` fields are UInt in the Frame schema, so skipping
-        // them here would drop exactly the identifiers a round-trip must carry.
-        let mut float_cols: Vec<(&str, &ndarray::ArrayD<F>)> = Vec::new();
-        let mut i64_cols: Vec<(&str, &ndarray::ArrayD<I>)> = Vec::new();
-        let mut uint_cols: Vec<(&str, &ndarray::ArrayD<Idx>)> = Vec::new();
-        let mut str_cols: Vec<(&str, &ndarray::ArrayD<String>)> = Vec::new();
-        let mut bool_cols: Vec<(&str, &ndarray::ArrayD<bool>)> = Vec::new();
-        for key in &col_keys {
-            if let Some(arr) = atoms_block.get_float(key) {
-                float_cols.push((key.as_str(), arr));
-            } else if let Some(arr) = atoms_block.get_int(key) {
-                i64_cols.push((key.as_str(), arr));
-            } else if let Some(arr) = atoms_block.get_uint(key) {
-                uint_cols.push((key.as_str(), arr));
-            } else if let Some(arr) = atoms_block.get_string(key) {
-                str_cols.push((key.as_str(), arr));
-            } else if let Some(arr) = atoms_block.get_bool(key) {
-                bool_cols.push((key.as_str(), arr));
-            }
-        }
-
-        let mut node_ids: Vec<NodeId> = Vec::with_capacity(nrows);
-        for row in 0..nrows {
-            let mut node = Atom::new();
-            for &(key, arr) in &float_cols {
-                #[allow(clippy::unnecessary_cast)]
-                node.set(key, arr[[row]] as f64);
-            }
-            for &(key, arr) in &i64_cols {
-                node.set(key, PropValue::Int(arr[[row]]));
-            }
-            for &(key, arr) in &uint_cols {
-                node.set(key, PropValue::Int(narrow_uint(key, arr[[row]])?));
-            }
-            for &(key, arr) in &str_cols {
-                node.set(key, PropValue::Str(arr[[row]].clone()));
-            }
-            for &(key, arr) in &bool_cols {
-                node.set(key, PropValue::Bool(arr[[row]]));
-            }
-            node_ids.push(self.add_node_with(node));
-        }
+        let node_ids = self.read_node_rows(atoms_block)?;
 
         let kind_specs: Vec<(KindId, String, usize)> = self
             .kind_ids()
@@ -1137,86 +1305,94 @@ impl MolGraph {
             let Some(block) = frame.get(&block_name) else {
                 continue;
             };
-            let mut endpoint_cols: Vec<&ndarray::ArrayD<Idx>> = Vec::with_capacity(arity);
-            let mut ok = true;
-            for pos in 0..arity {
-                match block.get_uint(&rel_col_name(pos)) {
-                    Some(c) => endpoint_cols.push(c),
-                    None => {
-                        ok = false;
-                        break;
-                    }
-                }
-            }
-            if !ok {
-                continue;
-            }
-            let nrel = block.nrows().unwrap_or(0);
-            let endpoint_names: Vec<String> = (0..arity).map(rel_col_name).collect();
-            // Collect non-endpoint relation property columns by element type so
-            // a to_frame -> read_frame round-trip restores every dtype the
-            // frame can carry (a string bond label, a UInt `type_id`, an
-            // `is_14` flag), not just floats.
-            let mut prop_f: Vec<(String, &ndarray::ArrayD<F>)> = Vec::new();
-            let mut prop_i: Vec<(String, &ndarray::ArrayD<I>)> = Vec::new();
-            let mut prop_u: Vec<(String, &ndarray::ArrayD<Idx>)> = Vec::new();
-            let mut prop_s: Vec<(String, &ndarray::ArrayD<String>)> = Vec::new();
-            let mut prop_b: Vec<(String, &ndarray::ArrayD<bool>)> = Vec::new();
-            for k in block.keys() {
-                if endpoint_names.iter().any(|e| e == k) {
-                    continue;
-                }
-                if let Some(a) = block.get_float(k) {
-                    prop_f.push((k.to_owned(), a));
-                } else if let Some(a) = block.get_int(k) {
-                    prop_i.push((k.to_owned(), a));
-                } else if let Some(a) = block.get_uint(k) {
-                    prop_u.push((k.to_owned(), a));
-                } else if let Some(a) = block.get_string(k) {
-                    prop_s.push((k.to_owned(), a));
-                } else if let Some(a) = block.get_bool(k) {
-                    prop_b.push((k.to_owned(), a));
-                }
-            }
-
-            for row in 0..nrel {
-                let mut nodes: SmallVec<[NodeId; 4]> = SmallVec::new();
-                let mut valid = true;
-                for col in &endpoint_cols {
-                    let idx = col[[row]] as usize;
-                    if idx >= node_ids.len() {
-                        valid = false;
-                        break;
-                    }
-                    nodes.push(node_ids[idx]);
-                }
-                if !valid {
-                    continue;
-                }
-                if let Ok(rid) = self.add_relation(kid, &nodes) {
-                    for (k, arr) in &prop_f {
-                        #[allow(clippy::unnecessary_cast)]
-                        let _ = self.set_relation_prop(kid, rid, k, arr[[row]] as f64);
-                    }
-                    for (k, arr) in &prop_i {
-                        let _ = self.set_relation_prop(kid, rid, k, PropValue::Int(arr[[row]]));
-                    }
-                    for (k, arr) in &prop_u {
-                        let v = narrow_uint(k, arr[[row]])?;
-                        let _ = self.set_relation_prop(kid, rid, k, PropValue::Int(v));
-                    }
-                    for (k, arr) in &prop_s {
-                        let _ =
-                            self.set_relation_prop(kid, rid, k, PropValue::Str(arr[[row]].clone()));
-                    }
-                    for (k, arr) in &prop_b {
-                        let _ = self.set_relation_prop(kid, rid, k, PropValue::Bool(arr[[row]]));
-                    }
-                }
-            }
+            self.read_relation_block(kid, &block_name, arity, block, &node_ids)?;
         }
 
         self.reject_unreadable_relation_blocks(frame)
+    }
+
+    /// Add one node per row of the `"atoms"` block, in row order, and return
+    /// the handles at that order — the addressing every relation block's
+    /// endpoint columns use.
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::Validation`] when a column value does not fit its
+    /// canonical type, or when a property contradicts a component `self`
+    /// already holds under that key.
+    fn read_node_rows(&mut self, atoms: &Block) -> Result<Vec<NodeId>, MolRsError> {
+        let nrows = atoms.nrows().unwrap_or(0);
+        let columns = MaskedColumns::of(atoms, &[]);
+        let mut node_ids: Vec<NodeId> = Vec::with_capacity(nrows);
+        for row in 0..nrows {
+            let mut node = Atom::new();
+            for (key, value) in columns.cells(row)? {
+                node.set(key, value);
+            }
+            // Not `add_node_with`: a frame is foreign data, so a property that
+            // contradicts an existing column is a data condition to report,
+            // not a caller defect to panic on.
+            let id = self.add_node();
+            self.write_atom(id, &node)?;
+            node_ids.push(id);
+        }
+        Ok(node_ids)
+    }
+
+    /// Read one relation block into the kind it names: each row becomes a
+    /// relation over the nodes its endpoint columns address, carrying every
+    /// other column of the block as a property.
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::Validation`] when the block carries fewer endpoint columns
+    /// than the kind's arity — the rows cannot be read at all, and reading on
+    /// would hand back a graph missing relations the frame plainly stated —
+    /// and when a property column's dtype contradicts the component the kind
+    /// already holds under that key.
+    fn read_relation_block(
+        &mut self,
+        kind: KindId,
+        block_name: &str,
+        arity: usize,
+        block: &Block,
+        node_ids: &[NodeId],
+    ) -> Result<(), MolRsError> {
+        let endpoint_names: Vec<String> = (0..arity).map(rel_col_name).collect();
+        let mut endpoint_cols: Vec<&ndarray::ArrayD<Idx>> = Vec::with_capacity(arity);
+        for name in &endpoint_names {
+            let col = block.get_uint(name).ok_or_else(|| {
+                MolRsError::validation(format!(
+                    "Frame block '{block_name}' names the relation kind '{block_name}' of arity \
+                     {arity} but carries no '{name}' endpoint column, so its rows cannot be read"
+                ))
+            })?;
+            endpoint_cols.push(col);
+        }
+
+        // Non-endpoint columns are properties, read back at every dtype the
+        // frame can carry (a string bond label, a UInt `type_id`, an `is_14`
+        // flag), each honouring its validity mask.
+        let props = MaskedColumns::of(block, &endpoint_names);
+
+        for row in 0..block.nrows().unwrap_or(0) {
+            let Some(nodes) = endpoints_at(&endpoint_cols, row, node_ids) else {
+                let stated: Vec<Idx> = endpoint_cols.iter().map(|col| col[[row]]).collect();
+                return Err(MolRsError::validation(format!(
+                    "block '{block_name}' row {row} names an atom index outside the atoms \
+                     block: endpoints {stated:?}, {} atoms",
+                    node_ids.len()
+                )));
+            };
+            // Every rejection `add_relation` knows is unreachable here (the kind is
+            // registered, the arity matches by construction, the handles were just
+            // minted), so a failure is surfaced rather than dropped with the row.
+            let rid = self.add_relation(kind, &nodes)?;
+            for (key, value) in props.cells(row)? {
+                self.set_relation_prop(kind, rid, key, value)?;
+            }
+        }
+        Ok(())
     }
 
     /// Refuse every relation block of `frame` that names no registered kind.
@@ -1626,7 +1802,7 @@ mod tests {
         let f = dst.add_node();
         dst.add_relation(dbond, &[e, f]).unwrap();
 
-        let map = dst.merge(src);
+        let map = dst.merge(src).expect("merge succeeds on compatible graphs");
         assert_eq!(dst.n_nodes(), 6);
         assert_eq!(dst.n_relations(dbond), 2);
         assert_eq!(dst.n_relations(dimp), 1, "merge must carry impropers");
@@ -1658,6 +1834,100 @@ mod tests {
         g.set_node(id, "x", 99.0).unwrap();
         assert_eq!(g2.get_node(id).unwrap().get_f64("x"), Some(0.0));
         assert_eq!(g2.n_nodes(), 2);
+    }
+
+    // ----- Contract B: read_frame and the node/relation writers keep data -----
+
+    /// A relation property column whose dtype contradicts the component the
+    /// kind already holds cannot be stored, and dropping the value hands back
+    /// a graph whose bonds silently lost the label the frame carried.
+    #[test]
+    fn read_frame_rejects_a_relation_prop_whose_dtype_conflicts_with_the_kind() {
+        use ndarray::Array1;
+
+        let mut graph = MolGraph::new();
+        let bonds = graph.register_kind("bonds", 2);
+        let a = graph.add_node_with(Atom::new());
+        let b = graph.add_node_with(Atom::new());
+        let rid = graph.add_relation(bonds, &[a, b]).unwrap();
+        graph
+            .set_relation_prop(bonds, rid, "tag", PropValue::Int(1 as I))
+            .unwrap();
+
+        let mut atoms = Block::new();
+        atoms
+            .insert(
+                "element",
+                Array1::from_vec(vec!["C".to_owned(), "C".to_owned()]).into_dyn(),
+            )
+            .unwrap();
+        let mut bonds_block = Block::new();
+        bonds_block
+            .insert("atomi", Array1::from_vec(vec![0 as Idx]).into_dyn())
+            .unwrap();
+        bonds_block
+            .insert("atomj", Array1::from_vec(vec![1 as Idx]).into_dyn())
+            .unwrap();
+        bonds_block
+            .insert(
+                "tag",
+                Array1::from_vec(vec!["single".to_owned()]).into_dyn(),
+            )
+            .unwrap();
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms);
+        frame.insert("bonds", bonds_block);
+
+        let err = graph
+            .read_frame(&frame)
+            .expect_err("a str 'tag' cannot enter an int 'tag' component");
+        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
+    }
+
+    /// `merge` moves node property bags into `self`'s columns. A bag whose
+    /// dtype contradicts an existing column cannot be written, and dropping it
+    /// returns a merged graph missing a property the caller handed over.
+    #[test]
+    fn merge_rejects_a_node_prop_whose_dtype_conflicts_with_an_existing_column() {
+        let mut dst = MolGraph::new();
+        let kept = dst.add_node_with(Atom::new());
+        dst.set_node(kept, "tag", PropValue::Int(1 as I)).unwrap();
+
+        let mut src = MolGraph::new();
+        let mut incoming = Atom::new();
+        incoming.set("tag", "single");
+        src.add_node_with(incoming);
+
+        let err = dst
+            .merge(src)
+            .expect_err("a str 'tag' cannot enter an int 'tag' component");
+        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
+    }
+
+    /// The same rule on the relation side: `merge` writes the incoming
+    /// relation's property bag into the kind it matched by name.
+    #[test]
+    fn merge_rejects_a_relation_prop_whose_dtype_conflicts_with_an_existing_component() {
+        let mut dst = MolGraph::new();
+        let bonds = dst.register_kind("bonds", 2);
+        let a = dst.add_node_with(Atom::new());
+        let b = dst.add_node_with(Atom::new());
+        let rid = dst.add_relation(bonds, &[a, b]).unwrap();
+        dst.set_relation_prop(bonds, rid, "tag", PropValue::Int(1 as I))
+            .unwrap();
+
+        let mut src = MolGraph::new();
+        let src_bonds = src.register_kind("bonds", 2);
+        let c = src.add_node_with(Atom::new());
+        let d = src.add_node_with(Atom::new());
+        let src_rid = src.add_relation(src_bonds, &[c, d]).unwrap();
+        src.set_relation_prop(src_bonds, src_rid, "tag", "single")
+            .unwrap();
+
+        let err = dst
+            .merge(src)
+            .expect_err("a str 'tag' cannot enter an int 'tag' component");
+        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
     }
 
     // ----- Reserved containment axis -----

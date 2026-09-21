@@ -205,8 +205,8 @@ pub struct Port {
 ///   validates the three descriptor props only — will still read it back.
 ///   Hydrogen-stripping passes are the practical hazard: removing a fragment's
 ///   hydrogens removes its handles, and the ports left behind are dangling.
-/// * `frag_id` is emitted to a [`Frame`] **all or nothing** (see
-///   [`to_frame`](Self::to_frame)).
+/// * A `frag_id` an atom does not carry is emitted to a [`Frame`] as a null
+///   cell, not as fragment instance zero (see [`to_frame`](Self::to_frame)).
 ///
 /// The open props this type reserves — `frag_id`, `port_kind`, `port_label`,
 /// `port_order` and the `ports` block — are listed in the module docs.
@@ -558,19 +558,16 @@ impl Fragment {
     /// nothing to rename. A zero-port fragment's frame is therefore byte-for-
     /// byte an atomistic frame.
     ///
-    /// **`frag_id` is all or nothing.** A frame column has no null cell to
-    /// spell "unassigned" — an absent value is written as the default `0`, i.e.
-    /// as instance zero — so the column is emitted only when *every* atom
-    /// carries a `frag_id`. A partially labelled fragment round-trips as
-    /// unlabelled; a caller that wants the labels in the frame calls
-    /// [`inherit_frag_ids`](Self::inherit_frag_ids) (or assigns them) first.
+    /// **A partially labelled `frag_id` round-trips exactly.** The column
+    /// carries the block's [validity mask](crate::store::block::Block::validity),
+    /// so an atom with no `frag_id` is a null cell rather than the default `0`
+    /// — which would read back as fragment instance zero — and
+    /// [`from_frame`](Self::from_frame) leaves it unassigned again. A caller
+    /// that wants every atom labelled assigns the labels (or calls
+    /// [`inherit_frag_ids`](Self::inherit_frag_ids)) before emitting; the
+    /// frame no longer decides that for it.
     pub fn to_frame(&self) -> Frame {
-        let mut frame = self.graph.to_frame();
-        let fully_labelled = self.graph.node_ids().all(|a| self.frag_id(a).is_some());
-        if !fully_labelled && let Some(atoms) = frame.get_mut("atoms") {
-            atoms.remove("frag_id");
-        }
-        frame
+        self.graph.to_frame()
     }
 
     /// Build a fragment from the [`Frame`] emitted by [`Self::to_frame`].
@@ -967,23 +964,19 @@ mod tests {
     }
 
     #[test]
-    fn to_frame_omits_frag_id_when_partially_labelled() {
-        let (mut frag, c0, c1, h) = ch_template();
+    fn to_frame_masks_unlabelled_frag_id() {
+        let (mut frag, c0, _c1, _h) = ch_template();
         frag.set_frag_id(c0, 1).unwrap();
-        let atoms = frag.to_frame();
-        let atoms = atoms.get("atoms").expect("atoms block");
-        assert!(
-            !atoms.contains_key("frag_id"),
-            "an unassigned frag_id must not round-trip as the default 0"
-        );
-
-        frag.set_frag_id(c1, 1).unwrap();
-        frag.set_frag_id(h, 1).unwrap();
-        let atoms = frag.to_frame();
-        let atoms = atoms.get("atoms").expect("atoms block");
+        let frame = frag.to_frame();
+        let atoms = frame.get("atoms").expect("atoms block");
         assert!(
             atoms.contains_key("frag_id"),
-            "a fully labelled fragment carries the column"
+            "the label of the one labelled atom reaches the frame"
+        );
+        assert_eq!(
+            atoms.validity("frag_id"),
+            Some(&[true, false, false][..]),
+            "an unassigned frag_id is a null cell, not fragment instance 0"
         );
     }
 
@@ -1019,6 +1012,19 @@ mod tests {
 
         let ids: Vec<Option<u32>> = restored.node_ids().map(|n| restored.frag_id(n)).collect();
         assert_eq!(ids, vec![Some(2), Some(2), Some(2)]);
+    }
+
+    /// The partially labelled counterpart of
+    /// `from_frame_restores_ports_bonds_and_frag_id`: the labelled atom keeps
+    /// its id and the unlabelled ones come back unlabelled.
+    #[test]
+    fn from_frame_restores_a_partially_labelled_frag_id() {
+        let (mut frag, c0, _c1, _h) = ch_template();
+        frag.set_frag_id(c0, 2).unwrap();
+
+        let restored = Fragment::from_frame(&frag.to_frame()).expect("a fragment frame reads back");
+        let ids: Vec<Option<u32>> = restored.node_ids().map(|n| restored.frag_id(n)).collect();
+        assert_eq!(ids, vec![Some(2), None, None]);
     }
 
     #[test]

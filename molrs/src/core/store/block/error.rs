@@ -44,6 +44,21 @@ pub enum BlockError {
         /// Shape the caller supplied.
         got: Vec<usize>,
     },
+    /// A validity mask does not cover exactly the rows of the column it was
+    /// given for.
+    ///
+    /// A mask is read positionally against the column, so a shorter or longer
+    /// one does not describe "some rows are null" — it describes nothing at
+    /// all, and accepting it would leave the block reporting nullability for
+    /// rows that are not there.
+    ValidityLength {
+        /// The column the mask was given for.
+        key: String,
+        /// Number of rows the column has.
+        expected: usize,
+        /// Number of entries the mask carries.
+        got: usize,
+    },
     /// General validation error
     Validation {
         /// Error message
@@ -72,6 +87,11 @@ impl fmt::Display for BlockError {
             BlockError::RaggedAxis0 { key, expected, got } => write!(
                 f,
                 "array for key '{}' has axis-0 length {} but block expects {}",
+                key, got, expected
+            ),
+            BlockError::ValidityLength { key, expected, got } => write!(
+                f,
+                "validity mask for key '{}' has {} entr(ies) but the column has {} row(s)",
                 key, got, expected
             ),
             BlockError::Validation { message } => write!(f, "{}", message),

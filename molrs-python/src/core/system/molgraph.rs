@@ -901,20 +901,30 @@ impl PyAtomistic {
     ///
     /// Consumes ``other``'s storage (``other`` is left empty). Every node handle
     /// from ``other`` is remapped; returns ``{old_handle: new_handle}``.
-    fn merge(&mut self, other: &mut Self) -> HashMap<u64, u64> {
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If a property of ``other`` contradicts the type this graph holds
+    ///     for that key (a string ``tag`` into an int ``tag`` column).
+    fn merge(&mut self, other: &mut Self) -> PyResult<HashMap<u64, u64>> {
         let taken = std::mem::take(&mut other.inner);
-        self.inner
+        Ok(self
+            .inner
             .merge(taken)
+            .map_err(molrs_error_to_pyerr)?
             .into_iter()
             .map(|(k, v)| (node_to_u64(k), node_to_u64(v)))
-            .collect()
+            .collect())
     }
 
     /// Build ``n`` native copies in one graph. The source is unchanged.
     fn replicate(&self, py: Python<'_>, n: usize) -> PyResult<Py<PyAtomistic>> {
         let mut output = Atomistic::new();
         for _ in 0..n {
-            output.merge(self.inner.clone());
+            output
+                .merge(self.inner.clone())
+                .map_err(molrs_error_to_pyerr)?;
         }
         PyAtomistic::from_core(py, output)
     }
@@ -1551,20 +1561,30 @@ impl PyCoarseGrain {
 
     /// Structural merge of ``other`` into ``self``; ``other`` is emptied.
     /// Returns ``{old_handle: new_handle}``.
-    fn merge(&mut self, other: &mut Self) -> HashMap<u64, u64> {
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If a property of ``other`` contradicts the type this graph holds
+    ///     for that key (a string ``tag`` into an int ``tag`` column).
+    fn merge(&mut self, other: &mut Self) -> PyResult<HashMap<u64, u64>> {
         let taken = std::mem::take(&mut other.inner);
-        self.inner
+        Ok(self
+            .inner
             .merge(taken)
+            .map_err(molrs_error_to_pyerr)?
             .into_iter()
             .map(|(k, v)| (node_to_u64(k), node_to_u64(v)))
-            .collect()
+            .collect())
     }
 
     /// Build ``n`` native copies in one coarse-grained graph.
     fn replicate(&self, py: Python<'_>, n: usize) -> PyResult<Py<PyCoarseGrain>> {
         let mut output = CoarseGrain::new();
         for _ in 0..n {
-            output.merge(self.inner.clone());
+            output
+                .merge(self.inner.clone())
+                .map_err(molrs_error_to_pyerr)?;
         }
         PyCoarseGrain::from_core(py, output)
     }
@@ -1861,9 +1881,9 @@ impl PyFragment {
 
     /// Export to a tabular :class:`~molrs.Frame` (atoms + bonds + ports).
     ///
-    /// ``frag_id`` is emitted all or nothing: a frame column has no null cell
-    /// to spell *unassigned*, so a partially labelled fragment round-trips as
-    /// unlabelled.
+    /// An atom with no ``frag_id`` is emitted as a null cell of the column
+    /// rather than as fragment instance ``0``, so a partially labelled
+    /// fragment round-trips exactly.
     ///
     /// Returns
     /// -------

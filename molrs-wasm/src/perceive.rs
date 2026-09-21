@@ -59,11 +59,15 @@ impl Perceive {
     ///
     /// # Errors
     ///
-    /// Throws if the frame cannot be read as an atomistic molecule.
+    /// Throws if the frame cannot be read as an atomistic molecule, or if
+    /// repletion reports a stale atom handle on the graph it built.
     #[wasm_bindgen(js_name = findHydrogens)]
     pub fn find_hydrogens(&self, frame: &Frame) -> Result<Frame, JsValue> {
         let mol = frame_to_atomistic(frame)?;
-        let out = self.inner.find_hydrogens(&mol);
+        let out = self
+            .inner
+            .find_hydrogens(&mol)
+            .map_err(|e| JsValue::from_str(&format!("findHydrogens: {e}")))?;
         Frame::from_rs(out.to_frame())
     }
 
@@ -112,11 +116,13 @@ impl Perceive {
     ///
     /// # Errors
     ///
-    /// Throws if the frame cannot be read as an atomistic molecule.
+    /// Throws if the frame cannot be read as an atomistic molecule, or if
+    /// stripping reports a stale atom handle on the graph it built.
     #[wasm_bindgen(js_name = removeHydrogens)]
     pub fn remove_hydrogens(&self, frame: &Frame) -> Result<Frame, JsValue> {
         let mol = frame_to_atomistic(frame)?;
-        let out = remove_hydrogens(&mol);
+        let out = remove_hydrogens(&mol)
+            .map_err(|e| JsValue::from_str(&format!("removeHydrogens: {e}")))?;
         Frame::from_rs(out.to_frame())
     }
 }

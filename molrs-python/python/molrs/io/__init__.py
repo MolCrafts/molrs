@@ -45,6 +45,18 @@ the notation does not spell out keep lowercase variant names:
 (``"single"``, ``"aromatic"``, …) and ``PairEnd.end`` is ``"sub"`` or
 ``"body"``.
 
+Every refusal raised by this family of notations — by the parser, by the
+expansion of a CGsmiles string, or by an emit — is a :class:`SmilesError`, one
+class carrying the four facts the Rust error owns: ``kind``, the variant name
+of the rule that was broken (``"UnclosedBranch"``, ``"UnexpectedEnd"``,
+``"CgNotExpandable"``, …); ``span``, the byte range of the offending text as a
+``(start, end)`` pair whose end is clamped to ``len(input)``; ``input``, the
+offending string, empty for the errors raised past the parser, which are handed
+an IR and never see the text it came from; and ``notation``, lowercase
+``"smiles"``, ``"smarts"`` or ``"cgsmiles"``. It subclasses
+:class:`ValueError`, so ``except ValueError`` keeps catching it, and
+``str(e)`` is the message Rust renders, caret line included.
+
 There is no ``CGSmilesReader``, deliberately: "Reader" in this module means a
 lazy, path-backed trajectory cursor (:class:`TrajectoryReader`, and the
 ``*TrajReader`` classes of :mod:`molrs.io.raw`), and a text-in / IR-out parser
@@ -84,6 +96,7 @@ from .._lib import LammpsTimingRow as LammpsTimingRow
 from .._lib import LammpsWarning as LammpsWarning
 from .._lib import PairEnd as PairEnd
 from .._lib import ResolvedPair as ResolvedPair
+from .._lib import SmilesError as SmilesError
 from .._lib import SmilesIR as SmilesIR
 from .._lib import (
     read_stl as read_stl,
@@ -992,6 +1005,9 @@ __all__ = [
     "read_frame_bytes",
     "write_frame_bytes",
     "SmilesIR",
+    # The one refusal of the SMILES / SMARTS / CGsmiles surface; a
+    # ``ValueError`` subclass — see the module docstring.
+    "SmilesError",
     # CGsmiles: one front door plus the read-only records it hands out. No
     # `CGSmilesReader` — see the module docstring.
     "CGSmilesIR",

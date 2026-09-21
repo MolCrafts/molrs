@@ -151,6 +151,7 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m.py().get_type::<error::BlockDtypeError>(),
     )?;
     m.add("UnitsError", m.py().get_type::<error::UnitsError>())?;
+    m.add("SmilesError", m.py().get_type::<error::SmilesError>())?;
 
     // Block + Frame
     m.add_class::<PyBlock>()?;

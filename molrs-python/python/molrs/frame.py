@@ -99,6 +99,7 @@ class Block(_RsBlock, MutableMapping[str, np.ndarray]):
         vars_: BlockLike | None = None,
         nrows: int | None = None,
         shape: list[int] | None = None,
+        validity: Mapping[str, ArrayLike] | None = None,
     ) -> "Block":
         return super().__new__(cls)
 
@@ -107,7 +108,24 @@ class Block(_RsBlock, MutableMapping[str, np.ndarray]):
         vars_: BlockLike | None = None,
         nrows: int | None = None,
         shape: list[int] | None = None,
+        validity: Mapping[str, ArrayLike] | None = None,
     ) -> None:
+        """Build a block from columns, optionally with per-column hole masks.
+
+        Parameters
+        ----------
+        vars_ : Mapping[str, ArrayLike], optional
+            Column name -> array. Every column must have the same length.
+        nrows : int, optional
+            Row count for a block with no columns yet.
+        shape : list[int], optional
+            Declared N-D structural shape.
+        validity : Mapping[str, ArrayLike], optional
+            Column name -> 1-D bool mask, ``False`` where that row holds no
+            value. Only columns with holes need an entry; a column absent here
+            is dense. This is what carries a mask through pickling, where the
+            ctor arguments are the whole of the block.
+        """
         super().__init__()
         # When set, numeric ops route through this external molrs.Block (a live
         # alias into a parent Frame's store) so frame[key][col] = arr writes
@@ -138,6 +156,13 @@ class Block(_RsBlock, MutableMapping[str, np.ndarray]):
                     ) from e
         elif nrows:
             _RsBlock.resize(self, nrows)
+        if validity:
+            # Columns first, masks second: a mask is read positionally against
+            # a column that must already be there, and re-inserting the stored
+            # array under its mask is the only way to attach one.
+            for name, mask in validity.items():
+                key = _column_name(name)
+                self.insert_nullable(key, self._view_array(key), mask)
         if shape is not None:
             _RsBlock.set_shape(self, shape)
 
@@ -157,8 +182,29 @@ class Block(_RsBlock, MutableMapping[str, np.ndarray]):
     def view(self, key: str):  # type: ignore[override]
         return _RsBlock.view(self._backing(), _column_name(key))
 
+    def validity(self, key: str):  # type: ignore[override]
+        """The hole mask of column *key*, or ``None`` when it has none.
+
+        ``None`` means "every cell of this column is a stated value"; a *key*
+        that names no column raises ``KeyError``, as :meth:`view` and
+        :meth:`dtype` do.
+        """
+        # Like every other column read, this must reach the aliased storage:
+        # an aliasing wrapper holds no columns of its own, so asking `self`
+        # answers "no mask" for a column that has one.
+        return _RsBlock.validity(self._backing(), _column_name(key))
+
     def insert(self, key: str, array) -> None:  # type: ignore[override]
         _RsBlock.insert(self._backing(), _column_name(key), array)
+
+    def insert_nullable(self, key: str, array, validity) -> None:  # type: ignore[override]
+        """Store a column together with its 1-D bool hole mask.
+
+        ``validity[i]`` is ``False`` where row ``i`` holds no value; an
+        all-``True`` mask is dropped, so :meth:`validity` keeps answering
+        ``None`` for it.
+        """
+        _RsBlock.insert_nullable(self._backing(), _column_name(key), array, validity)
 
     def remove(self, key: str) -> None:  # type: ignore[override]
         _RsBlock.remove(self._backing(), _column_name(key))
@@ -388,10 +434,21 @@ class Block(_RsBlock, MutableMapping[str, np.ndarray]):
         return cls({k: np.asarray(v) for k, v in data.items()})
 
     def copy(self) -> "Block":
-        """Deep copy (data copied into a new Rust Store)."""
+        """Deep copy (data copied into a new Rust Store).
+
+        A column's hole mask is part of the column: copying through ``view``
+        alone would hand the copy the dense buffer, in which every hole reads
+        as a stated zero.
+        """
         new = Block()
-        for k in _RsBlock.keys(self._backing()):
-            new[k] = np.asarray(self._view_array(k))
+        backing = self._backing()
+        for k in _RsBlock.keys(backing):
+            column = np.asarray(self._view_array(k))
+            mask = _RsBlock.validity(backing, k)
+            if mask is None:
+                new[k] = column
+            else:
+                new.insert_nullable(k, column, mask)
         return new
 
     def rename(self, old_key: str, new_key: str) -> None:
@@ -659,10 +716,15 @@ class Frame(_RsFrame):
 def _block_ctor_args(block: Any) -> tuple[Any, ...]:
     backing = block._backing() if isinstance(block, Block) else block
     columns = {key: _RsBlock.view(backing, key) for key in _RsBlock.keys(backing)}
+    # A mask is the only record that a cell is a hole rather than a zero, so it
+    # travels with the column it belongs to; dense columns contribute nothing.
+    masks = {key: _RsBlock.validity(backing, key) for key in columns}
+    validity = {key: mask for key, mask in masks.items() if mask is not None}
     return (
         columns or None,
         None if columns else backing.nrows,
         backing.structural_shape,
+        validity or None,
     )
 
 
@@ -679,12 +741,17 @@ def _rs_block_init(
     columns: dict[str, Any] | None = None,
     nrows: int | None = None,
     shape: list[int] | None = None,
+    validity: dict[str, Any] | None = None,
 ) -> None:
     if columns:
         for key, value in columns.items():
             _RsBlock.insert(block, key, value)
     elif nrows:
         _RsBlock.resize(block, nrows)
+    if validity:
+        # Columns first, masks second — see ``Block.__init__``.
+        for key, mask in validity.items():
+            _RsBlock.insert_nullable(block, key, _RsBlock.view(block, key), mask)
     if shape is not None:
         _RsBlock.set_shape(block, shape)
 

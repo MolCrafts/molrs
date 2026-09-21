@@ -306,39 +306,53 @@ table follows. The last block of a multi-block string is atomistic by position
 <!-- mol:note:topic:cgsmiles-deferred-fix -->
 ## 2026-09-21 — deferred to `/mol:fix` (found by the cgsmiles chain; fixed items struck)
 
-Fixed on 2026-09-21 (same-day fix batch, see the `fix:` commit after 5e1ede5d):
+Fixed on 2026-09-21 in the two same-day fix commits after 5e1ede5d:
 `[#6]` via `Element::by_number`; SMILES `%n` → `InvalidRingMarker`; the six
 discarded `Result`s and the `InvalidElement` mislabel on the SMILES build path
-(→ `SmilesErrorKind::Build`); unmatched ring closures refused at parse by both
-SMILES entry points; the CGsmiles repeat-count cap (65535); the coarse-body
-scanner bounded by the body; `remove_hydrogens` bonds-only degree with an
-explicit port-handle exemption; the `1.008` mass literal and the redundant
-`set_bond_type` in `add_hydrogens`; `read_frame` refusing an unregistered
-relation block; the binder's sixteen private intra-doc links;
-`views.Atomistic.def_bond` stamping both bond facts.
+(→ `SmilesErrorKind::Build`); unmatched ring closures and unknown bracket
+elements refused at parse by both SMILES entry points; the CGsmiles
+repeat-count cap (65535); the coarse-body scanner bounded by the body;
+`remove_hydrogens` bonds-only degree with an explicit port-handle exemption;
+the `1.008` mass literal and the redundant `set_bond_type` in `add_hydrogens`;
+`add_hydrogens` / `remove_hydrogens` / `Perceive::find_hydrogens` returning
+`Result` (no invariant asserted by panic); `read_frame` refusing an
+unregistered relation block, a registered block missing an endpoint column and
+a relation prop whose dtype conflicts, and split into ≤ 80-line helpers;
+`MolGraph::merge` returning `Result` (the writers no longer `debug_assert!`
+and discard a dtype conflict); **nullable Frame columns** (`Block::insert_nullable`
+/ `validity`, masks maintained through `remove`/`select_rows`/`resize`/`merge`,
+serialized on the transport path; `to_frame` emits partial columns with their
+mask, `read_frame` honours it — the all-or-nothing `frag_id` rule is gone and
+an undeclared `h_count` survives a round trip); `Block.validity` /
+`Block.insert_nullable` in Python with masks carried through the rich
+`Block.copy`, `Block.__init__(validity=)` and Block/Frame pickling
+(`validity` on an absent key raises `KeyError` like `view`); the relation
+reader refusing an endpoint index past the atoms block;
+`molrs.io.SmilesError` (`kind`/`span`/`input`/`notation`, a `ValueError`
+subclass); the binder's private intra-doc links; `views.Atomistic.def_bond`.
 
 Still open:
-- `perceive/hydrogens.rs`: `add_hydrogens` `expect`s that both endpoints of the
-  H bond it just created are live, and `remove_hydrogens` marks `remove_atom`
-  on an id read from the same graph `unreachable!`. Both are internal
-  invariants (never reachable from the seam); a `Result`-returning
-  `remove_hydrogens` would remove them, at the cost of its one wasm caller.
-- `read_frame` silently skips a block whose name matches a registered kind but
-  which lacks an endpoint column (`ok = false; continue`, molgraph.rs ~:1147);
-  and five `let _ = self.set_relation_prop(…)` discards in `read_frame`
-  (~:1199-1213) plus `to_frame`'s (~:668, :896, :1032) drop a relation prop
-  whose column type conflicts — same silent-loss class, one level down.
-  `read_frame` is 145 lines; the split and the discards go together
-  (`/mol:refactor` on molgraph.rs:1076-1220).
-- `emit_column` drops the validity mask (nulls become `0`): a `Block` column has
-  no null representation, so the fix is nullable columns in `store::block`, a
-  feature, not a patch. `Fragment::to_frame`'s all-or-nothing `frag_id` guard
-  stands in until then.
-- `molrs-python/src/helpers.rs::smiles_error_to_pyerr` flattens kind, span and
-  input into one `ValueError` string; the fix is a typed exception via
-  `create_exception!` applied to the whole `io::smiles` error surface.
+- The zarr Frame writers (`io/zarr/frame_io.rs::write_frame_group`,
+  `io/zarr/sequence.rs`) persist column values but not validity masks: a
+  sibling boolean array needs a reserved name in the MolRec block namespace
+  that `read_frame_group` and the pinned sequence schema must recognise — a
+  stored-contract change read by molrec/molvis, not a writer detail. Documented
+  in place at `frame_io.rs:~485` and `sequence.rs:~3414`.
+- `MolGraph::add_node_with` keeps its infallible signature (48 call sites) and
+  now `.expect`s a node-prop dtype conflict (documented `# Panics`): release
+  builds agree with debug instead of silently dropping the property, but the
+  honest end state is a fallible `add_node_with`. `extract.rs:~294` likewise
+  `.expect`s `write_relation_props` on an induced subgraph.
+- `Block::merge` (`block/mod.rs:~845`) is 106 lines; `MolGraph::to_frame`
+  handles `Block::insert`'s provably unreachable failure with an
+  `unreachable!` arm listing the three conditions.
 - `CgParser::read_repeat_count`'s cap is a molrs rule the notation does not
   state; it still owes the small spec that names it.
+- `molrs-python/python/molrs/frame.py` defines `Block.has_f32` / `has_f64` /
+  `get_f32` / `get_f64` twice each (the first definitions are shadowed) and is
+  not ruff-governed (~470 pre-existing findings; never run `ruff format` on it).
+- `parse_atom_primitive` (io/smiles/parser.rs) is 224 lines; `generate_3d_impl`
+  (conformer/etkdg/mod.rs) 206 — pre-existing, `/mol:refactor`.
 
 <!-- mol:note:topic:cgsmiles-pairing-order -->
 ## 2026-09-21 — descriptor pairing: parse-order edges, per-atom entities, greedy scan

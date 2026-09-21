@@ -68,7 +68,7 @@ pub fn generate_3d_impl(
 
     // --- Preprocess: hydrogen handling -----------------------------------
     let work = if opts.add_hydrogens {
-        add_hydrogens(mol)
+        add_hydrogens(mol)?
     } else {
         mol.clone()
     };

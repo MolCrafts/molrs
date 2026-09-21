@@ -619,7 +619,10 @@ fn perception_alone_never_needs_hydrogens_added() {
     let p = Perceive::new();
     for (name, smiles) in MATRIX {
         let heavy = standardize(smiles);
-        let with_h = p.find_aromaticity(&p.find_hydrogens(&parse(smiles)));
+        let repleted = p
+            .find_hydrogens(&parse(smiles))
+            .expect("repletion succeeds on a well-formed graph");
+        let with_h = p.find_aromaticity(&repleted);
         assert_eq!(
             aromatic_bonds(&heavy).len(),
             aromatic_bonds(&with_h).len(),

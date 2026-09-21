@@ -56,9 +56,22 @@ use std::ops::{Index, IndexMut};
 /// columns of axis-0 length `Nx * Ny * Nz` — `shape` only tells consumers
 /// how to unflatten that index. When `shape` is `None`, the block is a
 /// plain row table and `block.shape()` reports `vec![nrows]`.
+///
+/// # Nullable columns
+///
+/// A [`Column`] is dense: every row carries a value of the column's type.
+/// A column written through [`insert_nullable`](Self::insert_nullable) keeps,
+/// *beside* the values, a per-row validity mask saying which of those values
+/// mean anything — the mask lives in a side map on the block, not in the
+/// column, so a consumer that knows nothing about nullability reads the filled
+/// values exactly as it did before. Ask [`validity`](Self::validity) for the
+/// mask; it is `Some` iff at least one row of that column is null.
 #[derive(Default, Clone)]
 pub struct Block {
     map: HashMap<String, Column>,
+    /// Per-column validity masks, each of length `nrows`. A column absent from
+    /// this map is fully valid; see [`Block::insert_nullable`].
+    validity: HashMap<String, Vec<bool>>,
     nrows: Option<usize>,
     shape: Option<Vec<usize>>,
 }
@@ -67,7 +80,14 @@ impl std::fmt::Debug for Block {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut map = f.debug_map();
         for (k, v) in &self.map {
-            map.entry(k, &format!("{}(shape={:?})", v.dtype(), v.shape()));
+            let dtype_shape = format!("{}(shape={:?})", v.dtype(), v.shape());
+            match self.validity.get(k) {
+                Some(mask) => {
+                    let nulls = mask.iter().filter(|&&valid| !valid).count();
+                    map.entry(k, &format!("{dtype_shape} nulls={nulls}"))
+                }
+                None => map.entry(k, &dtype_shape),
+            };
         }
         map.finish()
     }
@@ -78,6 +98,7 @@ impl Block {
     pub fn new() -> Self {
         Self {
             map: HashMap::new(),
+            validity: HashMap::new(),
             nrows: None,
             shape: None,
         }
@@ -87,6 +108,7 @@ impl Block {
     pub fn with_capacity(cap: usize) -> Self {
         Self {
             map: HashMap::with_capacity(cap),
+            validity: HashMap::new(),
             nrows: None,
             shape: None,
         }
@@ -252,8 +274,115 @@ impl Block {
         }
 
         let col = promote_canonical_uint(&key, T::into_column(arr));
+        // A plain insert replaces the column outright, mask included: the
+        // rows it describes are gone.
+        self.validity.remove(&key);
         self.map.insert(key, col);
         Ok(())
+    }
+
+    /// Inserts an array under `key` together with a per-row validity mask.
+    ///
+    /// `validity[i] == false` marks row `i` as holding *no* value. The array
+    /// still carries something at that row — whatever the caller put there,
+    /// typically the type's default — and every reader that does not ask for
+    /// the mask sees that filled value, exactly as it did before nullable
+    /// columns existed. The mask is the only place the distinction lives.
+    ///
+    /// **Normalisation.** An all-`true` mask states nothing that
+    /// [`insert`](Self::insert) does not, so it is dropped rather than stored:
+    /// [`validity`](Self::validity) returns `Some` **iff** at least one row of
+    /// `key` is null.
+    ///
+    /// # Errors
+    ///
+    /// Everything [`insert`](Self::insert) refuses, plus
+    /// [`BlockError::ValidityLength`] when `validity` does not have exactly one
+    /// entry per row of `arr`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use molrs::store::block::Block;
+    /// use molrs::types::I;
+    /// use ndarray::Array1;
+    ///
+    /// let mut block = Block::new();
+    /// let frag = Array1::from_vec(vec![7 as I, 0, 0]).into_dyn();
+    /// block.insert_nullable("frag_id", frag, vec![true, false, false]).unwrap();
+    ///
+    /// assert_eq!(block.validity("frag_id"), Some(&[true, false, false][..]));
+    /// // The values stay readable: row 1 reads as the filled 0.
+    /// assert_eq!(block.get_int("frag_id").unwrap()[[1]], 0);
+    /// ```
+    pub fn insert_nullable<T: BlockDtype>(
+        &mut self,
+        key: impl Into<String>,
+        arr: ArrayD<T>,
+        validity: Vec<bool>,
+    ) -> Result<(), BlockError> {
+        let key = key.into();
+        // A rank-0 array has no rows to mask; `insert` names that condition.
+        if let Some(&rows) = arr.shape().first()
+            && validity.len() != rows
+        {
+            return Err(BlockError::ValidityLength {
+                key,
+                expected: rows,
+                got: validity.len(),
+            });
+        }
+        self.insert(key.clone(), arr)?;
+        self.put_validity(key, validity);
+        Ok(())
+    }
+
+    /// The validity mask of column `key`, or `None` when the column is absent
+    /// or every one of its rows holds a value.
+    ///
+    /// `mask[i] == false` means row `i` holds no value; see
+    /// [`insert_nullable`](Self::insert_nullable).
+    #[inline]
+    pub fn validity(&self, key: &str) -> Option<&[bool]> {
+        self.validity.get(key).map(Vec::as_slice)
+    }
+
+    /// Attach `mask` to the already-inserted column `key`.
+    ///
+    /// The transport path: a decoder rebuilds the columns first (it holds
+    /// [`Column`] values, not typed arrays) and restores the masks afterwards.
+    ///
+    /// # Errors
+    ///
+    /// [`BlockError::Validation`] if `key` names no column, and
+    /// [`BlockError::ValidityLength`] if `mask` does not cover the block's rows.
+    #[cfg(feature = "serde")]
+    pub(crate) fn set_validity(&mut self, key: &str, mask: Vec<bool>) -> Result<(), BlockError> {
+        if !self.map.contains_key(key) {
+            return Err(BlockError::validation(format!(
+                "validity mask for '{key}' names no column of this block"
+            )));
+        }
+        let rows = self.nrows.unwrap_or(0);
+        if mask.len() != rows {
+            return Err(BlockError::ValidityLength {
+                key: key.to_owned(),
+                expected: rows,
+                got: mask.len(),
+            });
+        }
+        self.put_validity(key.to_owned(), mask);
+        Ok(())
+    }
+
+    /// Record `mask` for `key`, dropping it when it marks no row null — the
+    /// normalisation [`validity`](Self::validity) documents.
+    fn put_validity(&mut self, key: String, mask: Vec<bool>) {
+        if mask.iter().all(|&valid| valid) {
+            self.validity.remove(&key);
+        } else {
+            self.validity.insert(key, mask);
+        }
     }
 
     /// Insert a pre-built [`Column`] under `key`, validating axis-0 length.
@@ -289,6 +418,7 @@ impl Block {
             }
         }
 
+        self.validity.remove(&key);
         self.map.insert(key, col);
         Ok(())
     }
@@ -296,6 +426,9 @@ impl Block {
     /// New Block with rows gathered at `indices` (along axis 0), preserving the
     /// column set and dtypes. Errors if any index is out of range. This is the
     /// Rust-native row select/gather backing the Python `Block[rows]` path.
+    ///
+    /// Validity masks are gathered with their columns, so a null cell stays
+    /// null wherever the gather moved it.
     pub fn select_rows(&self, indices: &[usize]) -> Result<Block, BlockError> {
         let nrows = self.nrows.unwrap_or(0);
         if let Some(&bad) = indices.iter().find(|&&i| i >= nrows) {
@@ -306,6 +439,9 @@ impl Block {
         let mut out = Block::with_capacity(self.map.len());
         for (k, col) in &self.map {
             out.insert_column(k.clone(), col.select_rows(indices))?;
+        }
+        for (k, mask) in &self.validity {
+            out.put_validity(k.clone(), indices.iter().map(|&i| mask[i]).collect());
         }
         Ok(out)
     }
@@ -527,9 +663,12 @@ impl Block {
 
     /// Removes and returns the column for `key`, if present.
     ///
+    /// The column's validity mask goes with it.
+    ///
     /// If the Block becomes empty after removal, resets `nrows` and
     /// `shape` to `None`.
     pub fn remove(&mut self, key: &str) -> Option<Column> {
+        self.validity.remove(key);
         let out = self.map.remove(key);
         if self.map.is_empty() {
             self.nrows = None;
@@ -577,12 +716,17 @@ impl Block {
 
         let column = self.map.remove(old_key).expect("checked above");
         self.map.insert(new_key.to_string(), column);
+        // The rows did not move, so neither did their nullability.
+        if let Some(mask) = self.validity.remove(old_key) {
+            self.validity.insert(new_key.to_string(), mask);
+        }
         Ok(())
     }
 
     /// Clears the Block, removing all keys and resetting `nrows` / `shape`.
     pub fn clear(&mut self) {
         self.map.clear();
+        self.validity.clear();
         self.nrows = None;
         self.shape = None;
     }
@@ -653,6 +797,15 @@ impl Block {
         for col in self.map.values_mut() {
             col.resize(new_nrows);
         }
+        // A grown row carries the type's default, which is the one thing a
+        // mask exists to distinguish from a value, so it is grown as null;
+        // a shrunk row's mask entry goes with the row.
+        let masks: Vec<String> = self.validity.keys().cloned().collect();
+        for key in masks {
+            let mut mask = self.validity.remove(&key).unwrap_or_default();
+            mask.resize(new_nrows, false);
+            self.put_validity(key, mask);
+        }
         self.nrows = Some(new_nrows);
         // N-D shape becomes meaningless once axis-0 row count is changed
         // by a 1D resize. Callers that want to preserve a grid shape must
@@ -698,6 +851,7 @@ impl Block {
         // If self is empty, clone other
         if self.is_empty() {
             self.map = other.map.clone();
+            self.validity = other.validity.clone();
             self.nrows = other.nrows;
             self.shape = other.shape.clone();
             return Ok(());
@@ -784,12 +938,38 @@ impl Block {
         // Update nrows. As with `resize`, an explicit N-D shape becomes
         // meaningless once axis-0 grows; the merged block falls back to a
         // plain row table unless the caller re-declares a shape.
-        let new_nrows = self.nrows.unwrap() + other.nrows.unwrap();
+        let self_rows = self.nrows.unwrap();
+        let other_rows = other.nrows.unwrap();
+        let new_nrows = self_rows + other_rows;
         self.map = new_map;
         self.nrows = Some(new_nrows);
         self.shape = None;
+        self.concat_validity(other, self_rows, other_rows);
 
         Ok(())
+    }
+
+    /// Concatenate `other`'s validity masks onto `self`'s, mirroring the column
+    /// concatenation [`merge`](Self::merge) just performed.
+    ///
+    /// A column masked on one side only is fully valid on the other, so that
+    /// half of the joint mask is materialised as `true` rather than lost.
+    fn concat_validity(&mut self, other: &Block, self_rows: usize, other_rows: usize) {
+        let keys: Vec<String> = self.map.keys().cloned().collect();
+        for key in keys {
+            if !self.validity.contains_key(&key) && !other.validity.contains_key(&key) {
+                continue;
+            }
+            let mut mask = match self.validity.get(&key) {
+                Some(mask) => mask.clone(),
+                None => vec![true; self_rows],
+            };
+            match other.validity.get(&key) {
+                Some(tail) => mask.extend_from_slice(tail),
+                None => mask.extend(std::iter::repeat_n(true, other_rows)),
+            }
+            self.put_validity(key, mask);
+        }
     }
 }
 
@@ -1426,5 +1606,67 @@ mod tests {
         let name = block.get_string("name").unwrap();
         assert_eq!(name[[0]], "a");
         assert_eq!(name[[1]], "b");
+    }
+
+    // ---- nullable columns -------------------------------------------------
+
+    #[test]
+    fn insert_nullable_refuses_a_mask_that_does_not_cover_every_row() {
+        let mut block = Block::new();
+        let arr = Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn();
+        assert!(block.insert_nullable("x", arr, vec![true, false]).is_err());
+    }
+
+    #[test]
+    fn insert_nullable_records_the_mask_it_was_given() {
+        let mut block = Block::new();
+        block
+            .insert_nullable(
+                "x",
+                Array1::from_vec(vec![1.0 as F, 0.0, 3.0]).into_dyn(),
+                vec![true, false, true],
+            )
+            .unwrap();
+        assert_eq!(block.validity("x"), Some(&[true, false, true][..]));
+    }
+
+    #[test]
+    fn insert_leaves_the_column_without_a_mask() {
+        let mut block = Block::new();
+        block
+            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn())
+            .unwrap();
+        assert_eq!(block.validity("x"), None);
+    }
+
+    #[test]
+    fn remove_drops_the_mask_with_the_column() {
+        let mut block = Block::new();
+        block
+            .insert_nullable(
+                "x",
+                Array1::from_vec(vec![1.0 as F, 0.0, 3.0]).into_dyn(),
+                vec![true, false, true],
+            )
+            .unwrap();
+        block.remove("x");
+        block
+            .insert("x", Array1::from_vec(vec![4.0 as F, 5.0, 6.0]).into_dyn())
+            .unwrap();
+        assert_eq!(block.validity("x"), None);
+    }
+
+    #[test]
+    fn clone_keeps_the_mask() {
+        let mut block = Block::new();
+        block
+            .insert_nullable(
+                "x",
+                Array1::from_vec(vec![1.0 as F, 0.0, 3.0]).into_dyn(),
+                vec![true, false, true],
+            )
+            .unwrap();
+        let copy = block.clone();
+        assert_eq!(copy.validity("x"), Some(&[true, false, true][..]));
     }
 }

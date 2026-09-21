@@ -8,7 +8,10 @@
 //! On-wire shape (the general MolRec model, no privileged fields):
 //!
 //! - `Frame`  -> `{ version: 2, blocks: { <name>: Block }, meta: { k: {dtype,value} }, box?: SimBox }`
-//! - `Block`  -> `{ shape: [usize], columns: { <name>: Column } }`
+//! - `Block`  -> `{ shape: [usize], columns: { <name>: Column },
+//!   validity?: { <name>: [bool] } }` — `validity` carries the per-row masks
+//!   of the nullable columns only, and is omitted when no column has one, so
+//!   a payload without it reads back as a block whose every cell is filled.
 //! - `Column` -> `{ dtype, shape: [usize], data }` — `data` is raw
 //!   little-endian bytes for numeric dtypes, or a string list for `string`.
 //! - `SimBox` -> `{ vectors: [[f64;3];3], origin, boundary, cell_defined }`
@@ -400,10 +403,23 @@ fn le<const N: usize, T>(
 
 impl Serialize for Block {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        let mut st = s.serialize_struct("Block", 2)?;
+        // A validity mask is part of the column's data: dropping it here would
+        // turn "this cell holds nothing" into the filled default on the far
+        // side. The field is written only when some column carries a mask, so
+        // a payload from a block with none is byte-for-byte what it was before
+        // nullable columns existed — and a payload written then still reads,
+        // because an absent `validity` means no masks.
+        let masks: BTreeMap<&str, &[bool]> = self
+            .keys()
+            .filter_map(|key| self.validity(key).map(|mask| (key, mask)))
+            .collect();
+        let mut st = s.serialize_struct("Block", if masks.is_empty() { 2 } else { 3 })?;
         st.serialize_field("shape", &self.shape())?;
         let columns: BTreeMap<&str, &Column> = self.iter().collect();
         st.serialize_field("columns", &columns)?;
+        if !masks.is_empty() {
+            st.serialize_field("validity", &masks)?;
+        }
         st.end()
     }
 }
@@ -414,6 +430,8 @@ struct BlockRepr {
     shape: Vec<usize>,
     #[serde(default)]
     columns: BTreeMap<String, Column>,
+    #[serde(default)]
+    validity: BTreeMap<String, Vec<bool>>,
 }
 
 impl<'de> Deserialize<'de> for Block {
@@ -430,6 +448,11 @@ impl<'de> Deserialize<'de> for Block {
         // schema-only table needs its explicit row count restored.
         if !shape.is_empty() && (!has_columns || shape.len() > 1) {
             block.set_shape(&shape).map_err(de::Error::custom)?;
+        }
+        // Masks are restored after the columns, which is what `set_validity`
+        // exists for: the decoder holds `Column` values, not typed arrays.
+        for (name, mask) in r.validity {
+            block.set_validity(&name, mask).map_err(de::Error::custom)?;
         }
         Ok(block)
     }
@@ -582,6 +605,24 @@ mod tests {
         assert_eq!(bx.pbc(), [true, true, false]);
         assert_eq!(bx.origin_view(), array![1.0, 2.0, 3.0].view());
         assert_eq!(bx.lengths(), array![10.0, 10.0, 10.0]);
+    }
+
+    /// A validity mask is part of the column's data, not a view over it: a
+    /// frame that travelled through the transport encoding must still spell
+    /// "this cell holds nothing" the same way.
+    #[test]
+    fn a_nullable_column_keeps_its_validity_mask() {
+        let mut block = Block::new();
+        block
+            .insert_nullable(
+                "x",
+                Array1::from_vec(vec![0.5, 0.0, 3.0]).into_dyn(),
+                vec![true, false, true],
+            )
+            .unwrap();
+        let json = serde_json::to_string(&block).unwrap();
+        let back: Block = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.validity("x"), Some(&[true, false, true][..]));
     }
 
     #[test]

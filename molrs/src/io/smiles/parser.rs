@@ -41,6 +41,7 @@ use crate::io::smiles::chem::ast::*;
 use crate::io::smiles::chem::scanner::Scanner;
 use crate::io::smiles::chem::validation::{validate_descriptor, validate_ring_closures};
 use crate::io::smiles::error::{SmilesError, SmilesErrorKind};
+use crate::io::smiles::smiles::is_element_symbol;
 use molrs::Element;
 
 /// Maximum recursion depth for SMARTS `$(...)` expressions.
@@ -59,13 +60,13 @@ const ORGANIC_SUBSET: &[&str] = &[
 /// closures — is accepted. SMARTS query brackets and the fragment dialect's
 /// bonding descriptors are refused rather than reinterpreted.
 ///
-/// Ring-closure digits are paired here, by the parser that read them: an
-/// unclosed marker is a syntax error of the string, so `C1CC` is refused by
-/// this function rather than surviving into an IR that only callers running
-/// [`validate_smiles`](crate::io::smiles::validate_smiles) would reject. What
-/// is still left to `validate_smiles` is the meaning of a bracket atom's
-/// element symbol, which the grammar cannot decide; it re-pairs the ring
-/// closures too, harmlessly, so that a hand-built IR is checked as well.
+/// Everything the string itself decides is decided here, by the stage that
+/// read it, rather than surviving into an IR that only callers running
+/// [`validate_smiles`](crate::io::smiles::validate_smiles) would reject: a
+/// ring-closure digit opened and never closed (`C1CC`), and a bracket symbol
+/// that names no element (`[Xx]`) — the same lookup `validate_smiles` uses,
+/// so the two agree on every symbol. `validate_smiles` keeps both checks for
+/// the IRs nobody parsed, built by hand or edited afterwards.
 ///
 /// # Errors
 ///
@@ -77,8 +78,10 @@ const ORGANIC_SUBSET: &[&str] = &[
 /// digits, [`SmilesErrorKind::UnmatchedRingClosure`] for a ring digit opened
 /// and never closed, [`SmilesErrorKind::TrailingCharacters`],
 /// [`SmilesErrorKind::InvalidElement`] for a letter outside the organic
-/// subset, and [`SmilesErrorKind::DescriptorInPlainSmiles`] for a bonding
-/// descriptor, whose message points at [`parse_fragment_smiles`].
+/// subset or a bracket symbol that names no element (`[Xx]`, payload `"Xx"`,
+/// span covering the bracket atom), and
+/// [`SmilesErrorKind::DescriptorInPlainSmiles`] for a bonding descriptor,
+/// whose message points at [`parse_fragment_smiles`].
 pub fn parse_smiles(input: &str) -> Result<SmilesIR, SmilesError> {
     parse_paired(input, Dialect::Smiles)
 }
@@ -173,7 +176,9 @@ pub fn parse_smarts(input: &str) -> Result<SmilesIR, SmilesError> {
 /// [`SmilesErrorKind::AtomAnnotationUnsupported`] for a `CGsmiles` atom-level
 /// annotation (`[C;0.5]`), and — as in [`parse_smiles`], whose ring grammar
 /// this dialect shares unchanged — [`SmilesErrorKind::UnmatchedRingClosure`]
-/// for a marker opened and never closed.
+/// for a marker opened and never closed and
+/// [`SmilesErrorKind::InvalidElement`] for a bracket symbol that names no
+/// element.
 pub fn parse_fragment_smiles(input: &str) -> Result<SmilesIR, SmilesError> {
     parse_paired(input, Dialect::FragmentSmiles)
 }
@@ -789,6 +794,17 @@ impl<'a> Parser<'a> {
         }
         self.scanner.advance(); // consume ']'
 
+        let span = self.scanner.span_from(start);
+        // What the brackets hold is the parser's business: it read the symbol,
+        // so it is the stage that knows `Xx` names no element. The span covers
+        // the whole bracket atom, which is the token the writer must fix.
+        if let BracketSymbol::Element { symbol, .. } = &symbol
+            && !is_element_symbol(symbol)
+        {
+            let kind = SmilesErrorKind::InvalidElement(symbol.clone());
+            return Err(self.error_at(kind, span));
+        }
+
         Ok(AtomNode {
             spec: AtomSpec::Bracket {
                 isotope,
@@ -798,7 +814,7 @@ impl<'a> Parser<'a> {
                 charge,
                 atom_class,
             },
-            span: self.scanner.span_from(start),
+            span,
             descriptors: Vec::new(),
         })
     }
@@ -1760,6 +1776,67 @@ mod tests {
     fn test_trailing_characters() {
         let err = parse_smiles("CC)").unwrap_err();
         assert!(matches!(err.kind, SmilesErrorKind::TrailingCharacters));
+    }
+
+    // -- bracket element symbols --------------------------------------------
+
+    /// A bracket symbol that is not an element is a fact about the string,
+    /// not about the graph built from it: the parser reads it, so the parser
+    /// refuses it. Before this, `[Xx]` parsed into an IR and only a caller
+    /// that also ran `validate_smiles` ever learnt that `Xx` is not an
+    /// element — `to_atomistic` happily built an atom with that element.
+    ///
+    /// Kind and payload are the ones `validate_smiles` already uses for the
+    /// same rule (`smiles/validate.rs::validate_symbol`): the symbol exactly
+    /// as it was written.
+    #[test]
+    fn test_unknown_bracket_element_is_refused_by_parse_smiles() {
+        let err = parse_smiles("[Xx]").expect_err("Xx is not an element");
+        match &err.kind {
+            SmilesErrorKind::InvalidElement(symbol) => {
+                assert_eq!(symbol, "Xx", "payload names the offending symbol");
+            }
+            other => panic!("expected InvalidElement, got {other:?}"),
+        }
+    }
+
+    /// The span locates the bracket atom that carries the bad symbol, not the
+    /// whole string: `CC[Xx]O` points at `[Xx]`, four bytes in.
+    #[test]
+    fn test_unknown_bracket_element_span_covers_the_bracket_atom() {
+        const INPUT: &str = "CC[Xx]O";
+        let err = parse_smiles(INPUT).expect_err("Xx is not an element");
+        let text = &INPUT[err.span.start..err.span.end];
+        assert!(
+            text.starts_with('[') && text.contains("Xx"),
+            "span {:?} selected {text:?}",
+            err.span
+        );
+    }
+
+    /// The fragment dialect is plain SMILES widened with descriptors, so it
+    /// reads bracket symbols by the same rule and refuses the same ones.
+    #[test]
+    fn test_unknown_bracket_element_is_refused_by_parse_fragment_smiles() {
+        let err = parse_fragment_smiles("[$][Xx]").expect_err("Xx is not an element");
+        match &err.kind {
+            SmilesErrorKind::InvalidElement(symbol) => {
+                assert_eq!(symbol, "Xx", "payload names the offending symbol");
+            }
+            other => panic!("expected InvalidElement, got {other:?}"),
+        }
+    }
+
+    /// The element check must not narrow what a bracket atom may hold: an
+    /// isotope, a charge, an aromatic lowercase symbol and the `*` wildcard
+    /// (which names no element at all) all stay acceptable.
+    #[test]
+    fn test_valid_bracket_symbols_still_parse() {
+        for input in ["[Na+]", "[13CH4]", "[se]", "[*]"] {
+            let mol = parse_smiles(input)
+                .unwrap_or_else(|e| panic!("parse_smiles({input:?}) must succeed, got {e}"));
+            assert_eq!(atom_count(&mol), 1, "{input}: one bracket atom");
+        }
     }
 
     // -- real molecules -----------------------------------------------------

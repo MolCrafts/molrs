@@ -168,7 +168,8 @@ impl CGSmilesIR {
     ///
     /// [`SmilesErrorKind::CgBuild`] if the stamp cannot be written, if the
     /// instance index does not fit the [`PropValue::Int`] the key is stored
-    /// as, or if the merge did not carry a port atom across.
+    /// as, if the merge refuses a property of the body, or if the merge did
+    /// not carry a port atom across.
     fn merge_instance(
         &self,
         mol: &mut Atomistic,
@@ -183,7 +184,9 @@ impl CGSmilesIR {
             body.set_atom(atom, "frag_id", PropValue::Int(id))
                 .map_err(|e| self.build_error(format!("frag_id on instance {instance}: {e}")))?;
         }
-        let handles = mol.merge(body);
+        let handles = mol
+            .merge(body)
+            .map_err(|e| self.build_error(format!("merging instance {instance}: {e}")))?;
         ports
             .iter()
             .enumerate()

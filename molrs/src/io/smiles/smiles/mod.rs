@@ -26,6 +26,8 @@ pub use to_atomistic::{fragment_to_atomistic, to_atomistic};
 pub use validate::validate_smiles;
 pub use write::{write_fragment_smiles, write_smarts, write_smiles};
 
+use molrs::Element;
+
 /// The element symbol a SMILES atom symbol denotes.
 ///
 /// SMILES writes aromatic atoms in lowercase (`c`, `n`, `se`); that is
@@ -39,4 +41,16 @@ pub(crate) fn canonical_element_symbol(symbol: &str) -> String {
         None => String::new(),
         Some(first) => first.to_ascii_uppercase().to_string() + chars.as_str(),
     }
+}
+
+/// Whether `symbol`, as written in a SMILES atom, names a real element.
+///
+/// The lookup is on the canonical capitalisation, so the aromatic lowercase
+/// `se` is the element `Se` and `[Xx]` is nothing at all. Both stages that
+/// decide this question ask here — [`parse_smiles`] when it reads a bracket
+/// atom, and [`validate_smiles`] when it re-checks an IR it did not build —
+/// so the parser and the validator cannot drift into two answers about the
+/// same symbol.
+pub(crate) fn is_element_symbol(symbol: &str) -> bool {
+    Element::by_symbol(&canonical_element_symbol(symbol)).is_some()
 }

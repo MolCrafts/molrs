@@ -155,7 +155,7 @@ impl CGSmilesIR {
     /// // four: C0 has O + handle and gains 2 H, C2 likewise, the ether oxygen
     /// // is already satisfied — 5 + 4 = 9 atoms.
     /// let skeleton = Atomistic::try_from_molgraph(peo.into_inner())?;
-    /// let repleted = add_hydrogens(&skeleton);
+    /// let repleted = add_hydrogens(&skeleton)?;
     /// assert_eq!(repleted.n_atoms(), 9);
     ///
     /// // The ports survive the round trip, and every handle is still terminal.

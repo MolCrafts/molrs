@@ -3412,6 +3412,13 @@ impl FrameSequenceWriter {
     }
 
     /// Check `frame` against the pinned schema.
+    ///
+    /// The schema pins a dtype and trailing shape per column and nothing else,
+    /// so a column's [validity
+    /// mask](crate::store::block::Block::validity) is neither declared here nor
+    /// written by [`commit`](Self::commit): a sequence round-trip returns the
+    /// values a masked column holds, without the mask. Carrying it would take
+    /// a schema-level declaration, not a writer change.
     fn validate(&self, frame: &Frame) -> Result<(), MolRsError> {
         for (name, block) in frame.iter() {
             let Some(declared) = self.schema.blocks.get(name) else {

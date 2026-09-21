@@ -11,8 +11,7 @@
 use crate::io::smiles::chem::ast::*;
 use crate::io::smiles::chem::validation::validate_ring_closures;
 use crate::io::smiles::error::{Notation, SmilesError, SmilesErrorKind};
-use crate::io::smiles::smiles::canonical_element_symbol;
-use molrs::Element;
+use crate::io::smiles::smiles::is_element_symbol;
 
 /// Validate a parsed SMILES molecule.
 ///
@@ -36,6 +35,11 @@ pub fn validate_smiles(mol: &SmilesIR, input: &str) -> Result<(), SmilesError> {
 // ---------------------------------------------------------------------------
 
 /// Validate that all element symbols refer to real elements.
+///
+/// [`parse_smiles`](crate::io::smiles::parse_smiles) refuses an unknown
+/// symbol itself, by this same lookup, so on a parsed IR this pass has
+/// nothing left to find; it stands for the IRs nobody parsed — built by hand
+/// or edited after parsing.
 fn validate_elements(mol: &SmilesIR, input: &str) -> Result<(), SmilesError> {
     for component in &mol.components {
         validate_chain_elements(component, input)?;
@@ -93,9 +97,7 @@ fn validate_atom_element(atom: &AtomNode, input: &str) -> Result<(), SmilesError
 }
 
 fn validate_symbol(symbol: &str, span: Span, input: &str) -> Result<(), SmilesError> {
-    let lookup = Element::by_symbol(&canonical_element_symbol(symbol));
-
-    if lookup.is_none() {
+    if !is_element_symbol(symbol) {
         return Err(SmilesError::new(
             SmilesErrorKind::InvalidElement(symbol.to_owned()),
             span,
@@ -170,6 +172,49 @@ mod tests {
         let mol = unmatched_ring_ir();
         let err = validate_smiles(&mol, "CCCC1").unwrap_err();
         assert!(matches!(err.kind, SmilesErrorKind::UnmatchedRingClosure(1)));
+    }
+
+    /// Hand-built IR for `[Xx]` — a bracket atom whose symbol is not an
+    /// element.
+    ///
+    /// `parse_smiles` refuses this string itself, so this unit is reached
+    /// only with an IR built directly (as a hand-built IR or a future
+    /// notation could still carry one).
+    fn unknown_element_ir() -> SmilesIR {
+        SmilesIR {
+            components: vec![Chain {
+                head: AtomNode {
+                    spec: AtomSpec::Bracket {
+                        isotope: None,
+                        symbol: BracketSymbol::Element {
+                            symbol: "Xx".to_owned(),
+                            aromatic: false,
+                        },
+                        chirality: None,
+                        hcount: None,
+                        charge: None,
+                        atom_class: None,
+                    },
+                    span: Span::new(0, 4),
+                    descriptors: Vec::new(),
+                },
+                tail: Vec::new(),
+            }],
+            span: Span::new(0, 4),
+        }
+    }
+
+    /// The payload is the symbol exactly as written, which is the same kind
+    /// and payload `parse_smiles` reports for the same rule
+    /// (`parser.rs::test_unknown_bracket_element_is_refused_by_parse_smiles`).
+    #[test]
+    fn test_unknown_bracket_element_is_an_invalid_element() {
+        let mol = unknown_element_ir();
+        let err = validate_smiles(&mol, "[Xx]").unwrap_err();
+        match &err.kind {
+            SmilesErrorKind::InvalidElement(symbol) => assert_eq!(symbol, "Xx"),
+            other => panic!("expected InvalidElement, got {other:?}"),
+        }
     }
 
     #[test]

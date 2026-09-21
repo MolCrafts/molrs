@@ -22,8 +22,8 @@ use molrs::types::{F, I, Idx};
 use molrs_ffi::BlockRef;
 use ndarray::{Array1, ArrayD, IxDyn};
 use num_complex::Complex;
-use numpy::{PyArrayDyn, PyArrayMethods, PyUntypedArrayMethods};
-use pyo3::exceptions::{PyKeyError, PyValueError};
+use numpy::{IntoPyArray, PyArray1, PyArrayDyn, PyArrayMethods, PyUntypedArrayMethods};
+use pyo3::exceptions::{PyKeyError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 
 use crate::store::ffi_error_to_pyerr;
@@ -46,6 +46,10 @@ use crate::store::ffi_error_to_pyerr;
 /// rows (axis-0 length). The underlying storage lives in an FFI `Store` and is
 /// accessed through a version-tracked [`BlockHandle`].
 ///
+/// A column is dense, so a per-row component that only some rows carry is
+/// stored alongside a validity mask: `Block.validity(key)` returns it, or
+/// `None` when every cell of that column is a real value.
+///
 /// # Python Examples
 ///
 /// ```python
@@ -58,6 +62,7 @@ use crate::store::ffi_error_to_pyerr;
 /// assert b.nrows == 3
 /// assert "x" in b
 /// arr = b.view("x")        # zero-copy numpy view
+/// assert b.validity("x") is None   # no holes in that column
 /// ```
 #[pyclass(
     module = "molrs._lib",
@@ -121,52 +126,64 @@ impl PyBlock {
     /// >>> b.insert("x", np.zeros(10, dtype=np.float32))
     /// >>> b.insert("y", np.ones(10, dtype=np.float32))
     fn insert(&mut self, key: &str, array: &Bound<'_, pyo3::types::PyAny>) -> PyResult<()> {
-        // numpy-only Store contract: reject object-kind arrays (object dtype,
-        // None-bearing, ragged/mixed — numpy renders all of these as kind 'O')
-        // up front, before the typed-cast / Vec<String> extraction below, so
-        // even an empty object array fails fast instead of slipping through as
-        // an empty string column. Python lists (the list[str] path) carry no
-        // `.dtype` and are untouched here.
-        if let Ok(dtype) = array.getattr("dtype")
-            && let Ok(kind) = dtype.getattr("kind").and_then(|k| k.extract::<String>())
-            && kind == "O"
-        {
-            return Err(crate::error::dtype_reject(key, array));
-        }
+        self.insert_any(key, array, None)
+    }
 
-        // Matched-dtype, C-contiguous numpy arrays get forged into a
-        // foreign-backed Column (zero memcpy). When the layout forbids
-        // forging, the same numpy array is copied into a Rust-owned column.
-        // Widths are preserved: f32 stays f32, i64 stays i64.
-        macro_rules! try_exact {
-            ($t:ty, $holder:expr) => {
-                if let Ok(pyarr) = array.cast::<PyArrayDyn<$t>>() {
-                    if let Some(col) = try_forge_foreign_column(pyarr, $holder) {
-                        return self.insert_column(key, col);
-                    }
-                    return self.insert_array::<$t>(key, pyarr.readonly().as_array().to_owned());
-                }
-            };
-        }
-        try_exact!(F, Column::from_float_holder);
-        try_exact!(f32, Column::from_f32_holder);
-        try_exact!(f16, Column::from_f16_holder);
-        try_exact!(I, Column::from_int_holder);
-        try_exact!(i64, Column::from_i64_holder);
-        try_exact!(i16, Column::from_i16_holder);
-        try_exact!(i8, Column::from_i8_holder);
-        try_exact!(Idx, Column::from_uint_holder);
-        try_exact!(u32, Column::from_u32_holder);
-        try_exact!(u16, Column::from_u16_holder);
-        try_exact!(u8, Column::from_u8_holder);
-        try_exact!(bool, Column::from_bool_holder);
-        try_exact!(Complex<f64>, Column::from_c128_holder);
-        try_exact!(Complex<f32>, Column::from_c64_holder);
-
-        if let Ok(strings) = array.extract::<Vec<String>>() {
-            return self.insert_array::<String>(key, Array1::from(strings).into_dyn());
-        }
-        Err(crate::error::dtype_reject(key, array))
+    /// Insert a named column together with a per-row validity mask.
+    ///
+    /// The write side of :meth:`validity`. ``validity[i]`` is ``False`` where
+    /// row ``i`` of ``array`` is a hole: the array still carries something
+    /// there — whatever the caller put in, typically a zero — and the mask is
+    /// the only place that says it is not a stated value.
+    ///
+    /// An all-``True`` mask states nothing :meth:`insert` does not, so it is
+    /// dropped rather than stored and :meth:`validity` keeps answering
+    /// ``None``. Apart from the mask this is :meth:`insert`, with the same
+    /// accepted dtypes and the same row-count rule.
+    ///
+    /// Parameters
+    /// ----------
+    /// key : str
+    ///     Column name (e.g. ``"frag_id"``).
+    /// array : numpy.ndarray | list[str]
+    ///     Column data; see :meth:`insert` for the accepted dtypes.
+    /// validity : numpy.ndarray | Sequence[bool]
+    ///     1-D boolean mask in row order, one entry per row of ``array``.
+    ///
+    /// Raises
+    /// ------
+    /// TypeError
+    ///     If the array dtype is not supported, or ``validity`` is not a 1-D
+    ///     bool array or a sequence of bools.
+    /// ValueError
+    ///     If the row count does not match existing columns, or ``validity``
+    ///     does not have exactly one entry per row of ``array``.
+    ///
+    /// Examples
+    /// --------
+    /// >>> b = Block()
+    /// >>> b.insert_nullable("frag_id", np.array([7, 0, 0]), [True, False, False])
+    /// >>> b.validity("frag_id")
+    /// array([ True, False, False])
+    fn insert_nullable(
+        &mut self,
+        key: &str,
+        array: &Bound<'_, pyo3::types::PyAny>,
+        validity: &Bound<'_, pyo3::types::PyAny>,
+    ) -> PyResult<()> {
+        // numpy hands out `np.bool_`, which is not a Python `bool`, so the
+        // array cast is tried before the generic sequence extraction.
+        let mask = if let Ok(arr) = validity.cast::<PyArray1<bool>>() {
+            arr.readonly().as_array().to_vec()
+        } else {
+            validity.extract::<Vec<bool>>().map_err(|_| {
+                PyTypeError::new_err(format!(
+                    "validity for column '{key}' must be a 1-D bool array or a \
+                     sequence of bools"
+                ))
+            })?
+        };
+        self.insert_any(key, array, Some(mask))
     }
 
     /// Return a zero-copy numpy view of the column data.
@@ -236,6 +253,61 @@ impl PyBlock {
                 }
             })
             .map_err(ffi_error_to_pyerr)?
+    }
+
+    /// The validity mask of a column, or ``None`` when the column has no holes.
+    ///
+    /// A block column is dense, so a component that only some rows carry —
+    /// ``frag_id`` on a partially labelled molecule, ``h_count`` declared on
+    /// one bracket atom — needs a second array saying which cells are real.
+    /// ``None`` is the common case and means "every cell is a stated value";
+    /// it is not an all-``True`` array, and a caller must not read a missing
+    /// mask as "all holes". A key that names no column is a different question
+    /// and raises ``KeyError``, as :meth:`view` and :meth:`dtype` do — were it
+    /// to answer ``None``, a misspelled key would read as a dense column.
+    ///
+    /// Parameters
+    /// ----------
+    /// key : str
+    ///     Column name.
+    ///
+    /// Returns
+    /// -------
+    /// numpy.ndarray | None
+    ///     A 1-D ``bool`` array in row order — ``True`` where the cell holds a
+    ///     real value, ``False`` where it is a hole — or ``None`` when the
+    ///     column carries no mask.
+    ///
+    /// Raises
+    /// ------
+    /// KeyError
+    ///     If ``key`` does not exist in this block.
+    ///
+    /// Examples
+    /// --------
+    /// >>> block.validity("x") is None      # dense column
+    /// True
+    /// >>> frame["atoms"].validity("frag_id")
+    /// array([ True, False, False])
+    fn validity<'py>(
+        &self,
+        py: Python<'py>,
+        key: &str,
+    ) -> PyResult<Option<Bound<'py, PyArray1<bool>>>> {
+        // The mask is borrowed from inside the store, so it is copied out
+        // before the borrow ends; it is one byte per row and, unlike a column,
+        // has no `Arc` to hand numpy for a zero-copy view.
+        let mask = self.with_block(|b| {
+            if !b.contains_key(key) {
+                let names: Vec<&str> = b.keys().collect();
+                return Err(PyKeyError::new_err(format!(
+                    "no column {key:?}; available: {}",
+                    names.join(", ")
+                )));
+            }
+            Ok(b.validity(key).map(<[bool]>::to_vec))
+        })??;
+        Ok(mask.map(|m| Array1::from(m).into_pyarray(py)))
     }
 
     /// Number of rows (axis-0 length), or ``None`` if the block has no columns.
@@ -550,16 +622,88 @@ impl PyBlock {
         self.inner.with(f).map_err(ffi_error_to_pyerr)
     }
 
-    /// Insert a typed ndarray column, validating row count.
+    /// Shared body of [`insert`](Self::insert) and
+    /// [`insert_nullable`](Self::insert_nullable): dispatch a Python value to
+    /// its typed column, optionally carrying a validity mask.
+    ///
+    /// A masked insert skips the zero-copy forge path — `Block::insert_nullable`
+    /// takes a typed array, not a pre-built `Column`, so the numpy buffer is
+    /// copied into a Rust-owned column instead of aliased.
+    fn insert_any(
+        &mut self,
+        key: &str,
+        array: &Bound<'_, pyo3::types::PyAny>,
+        validity: Option<Vec<bool>>,
+    ) -> PyResult<()> {
+        // numpy-only Store contract: reject object-kind arrays (object dtype,
+        // None-bearing, ragged/mixed — numpy renders all of these as kind 'O')
+        // up front, before the typed-cast / Vec<String> extraction below, so
+        // even an empty object array fails fast instead of slipping through as
+        // an empty string column. Python lists (the list[str] path) carry no
+        // `.dtype` and are untouched here.
+        if let Ok(dtype) = array.getattr("dtype")
+            && let Ok(kind) = dtype.getattr("kind").and_then(|k| k.extract::<String>())
+            && kind == "O"
+        {
+            return Err(crate::error::dtype_reject(key, array));
+        }
+
+        // Matched-dtype, C-contiguous numpy arrays get forged into a
+        // foreign-backed Column (zero memcpy). When the layout forbids
+        // forging, the same numpy array is copied into a Rust-owned column.
+        // Widths are preserved: f32 stays f32, i64 stays i64.
+        macro_rules! try_exact {
+            ($t:ty, $holder:expr) => {
+                if let Ok(pyarr) = array.cast::<PyArrayDyn<$t>>() {
+                    if validity.is_none()
+                        && let Some(col) = try_forge_foreign_column(pyarr, $holder)
+                    {
+                        return self.insert_column(key, col);
+                    }
+                    return self.insert_array::<$t>(
+                        key,
+                        pyarr.readonly().as_array().to_owned(),
+                        validity,
+                    );
+                }
+            };
+        }
+        try_exact!(F, Column::from_float_holder);
+        try_exact!(f32, Column::from_f32_holder);
+        try_exact!(f16, Column::from_f16_holder);
+        try_exact!(I, Column::from_int_holder);
+        try_exact!(i64, Column::from_i64_holder);
+        try_exact!(i16, Column::from_i16_holder);
+        try_exact!(i8, Column::from_i8_holder);
+        try_exact!(Idx, Column::from_uint_holder);
+        try_exact!(u32, Column::from_u32_holder);
+        try_exact!(u16, Column::from_u16_holder);
+        try_exact!(u8, Column::from_u8_holder);
+        try_exact!(bool, Column::from_bool_holder);
+        try_exact!(Complex<f64>, Column::from_c128_holder);
+        try_exact!(Complex<f32>, Column::from_c64_holder);
+
+        if let Ok(strings) = array.extract::<Vec<String>>() {
+            return self.insert_array::<String>(key, Array1::from(strings).into_dyn(), validity);
+        }
+        Err(crate::error::dtype_reject(key, array))
+    }
+
+    /// Insert a typed ndarray column, validating row count and — when a
+    /// validity mask is given — that the mask covers exactly those rows.
     fn insert_array<T: BlockDtype>(
         &mut self,
         key: &str,
         array: ndarray::ArrayD<T>,
+        validity: Option<Vec<bool>>,
     ) -> PyResult<()> {
         self.inner
             .with_mut(|b| {
-                b.insert(key, array)
-                    .map_err(|e| PyValueError::new_err(e.to_string()))
+                match validity {
+                    Some(mask) => b.insert_nullable(key, array, mask),
+                    None => b.insert(key, array),
+                }
+                .map_err(|e| PyValueError::new_err(e.to_string()))
             })
             .map_err(ffi_error_to_pyerr)??;
         Ok(())

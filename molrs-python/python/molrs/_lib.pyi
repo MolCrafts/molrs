@@ -232,18 +232,79 @@ class VerletSkin:
 # ---------------------------------------------------------------------------
 
 class Block:
-    """Heterogeneous column store (dict of typed numpy arrays)."""
+    """Heterogeneous column store (dict of typed numpy arrays).
+
+    Columns are dense. A per-row component that only some rows carry is stored
+    with a validity mask beside it, read back with :meth:`validity`.
+    """
 
     def __init__(
         self,
         columns: dict[str, Any] | None = None,
         nrows: int | None = None,
         shape: list[int] | None = None,
+        validity: dict[str, ArrayBool] | None = None,
     ) -> None: ...
     def insert(self, key: str, array: npt.NDArray | Sequence[str]) -> None:
         """Store a column. Raises ``BlockDtypeError`` for object/None/ragged."""
         ...
+    def insert_nullable(
+        self,
+        key: str,
+        array: npt.NDArray | Sequence[str],
+        validity: ArrayBool | Sequence[bool],
+    ) -> None:
+        """Store a column together with a per-row validity mask.
+
+        The write side of :meth:`validity`, and otherwise :meth:`insert`: same
+        dtypes, same row-count rule.
+
+        Parameters
+        ----------
+        key : str
+            Column name.
+        array : numpy.ndarray | Sequence[str]
+            Column data.
+        validity : numpy.ndarray | Sequence[bool]
+            1-D bool mask, one entry per row of *array*; ``False`` marks a row
+            that holds no value. An all-``True`` mask states nothing
+            :meth:`insert` does not and is dropped.
+
+        Raises
+        ------
+        TypeError
+            If the array dtype is unsupported, or *validity* is neither a 1-D
+            bool array nor a sequence of bools.
+        ValueError
+            If the row count does not match existing columns, or *validity*
+            does not cover exactly the rows of *array*.
+        """
+        ...
     def view(self, key: str) -> npt.NDArray | list[str]: ...
+    def validity(self, key: str) -> Optional[ArrayBool]:
+        """The validity mask of a column, or ``None`` when it has no holes.
+
+        Parameters
+        ----------
+        key : str
+            Column name.
+
+        Returns
+        -------
+        numpy.ndarray | None
+            A 1-D ``bool`` array in row order — ``True`` where the cell holds a
+            real value, ``False`` where it is a hole — or ``None`` when the
+            column carries no mask. ``None`` means "every cell is a stated
+            value", not "every cell is a hole".
+
+        Raises
+        ------
+        KeyError
+            If ``key`` names no column of this block — the same answer
+            :meth:`view` and :meth:`dtype` give, so a misspelled key cannot
+            read as a dense column.
+        """
+        ...
     def __getitem__(self, key: str) -> npt.NDArray | list[str]: ...
     def __setitem__(self, key: str, array: npt.NDArray | Sequence[str]) -> None: ...
     def __delitem__(self, key: str) -> None: ...
@@ -578,6 +639,35 @@ class Element:
     def get_atomic_number(cls, identifier: str | int) -> int: ...
 
 class UnitsError(ValueError): ...
+
+class SmilesError(ValueError):
+    """Raised when a SMILES / SMARTS / CGsmiles string is refused.
+
+    Subclasses ``ValueError``; ``str(e)`` is the message the Rust error
+    renders, caret line included. The four attributes are set on every
+    instance.
+
+    Attributes
+    ----------
+    kind : str
+        Variant name of the rule that was broken, payload dropped —
+        ``"UnclosedBranch"``, ``"UnexpectedEnd"``, ``"CgNotExpandable"``, ...
+    span : tuple[int, int]
+        Byte range of the offending text within ``input``; the end is clamped
+        to ``len(input)``, since the scanner reports end-of-input one byte
+        past the text.
+    input : str
+        The offending string, empty for errors raised past the parser (the
+        expansion and emit stages are handed an IR, not the text).
+    notation : str
+        Which notation was being read or written: ``"smiles"``, ``"smarts"``
+        or ``"cgsmiles"``.
+    """
+
+    kind: str
+    span: tuple[int, int]
+    input: str
+    notation: str
 
 class Unit:
     def __init__(
