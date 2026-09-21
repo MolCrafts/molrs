@@ -228,8 +228,10 @@ residue key earmarked for the pending schema-vocabulary spec.
 
 **Rule**: write fragment-instance membership as the open node prop `frag_id`
 (`Int`), all-or-nothing per Frame column; do not reuse `res_id` or `mol_id`.
-Two writers exist by construction (`Fragment::set_frag_id` and 01d's raw stamp
-on `Atomistic`); the schema-vocabulary spec gives the key one validated owner.
+Two writers exist by construction: `CGSmilesIR::to_atomistic` stamps it on
+every expanded atom (`cgsmiles/to_atomistic.rs`, landed in cgsmiles-01d) and
+02a's `Fragment::set_frag_id`; the schema-vocabulary spec gives the key one
+validated owner.
 
 <!-- mol:note:topic:cgsmiles-v1-refusals -->
 ## 2026-09-21 — CGsmiles v1 refusals and conventions
@@ -258,6 +260,15 @@ table follows. The last block of a multi-block string is atomistic by position
 - Pre-existing over-limit functions in touched files: `parse_atom_primitive`
   (237 lines), `write_primitive`, `build_tree`, `build_recursive_env`;
   `SmilesErrorKind::message` grows with every notation.
+- `cgsmiles/resolve.rs::last_level_ports` and `cgsmiles/to_atomistic.rs::to_atomistic`
+  repeat the same definition lookup (`defs.get` → refuse a coarse body →
+  `FragmentCache::get_or_build`) with different error kinds; second call site,
+  extract when a third appears or when the error-kind split is decided.
+- `FragmentCache` lives in `resolve.rs` but is consumed by `to_atomistic.rs`;
+  promote to `cgsmiles/fragment_cache.rs` on a third caller.
+- `BondType` has no quadruple variant (`core/system/bond.rs:28-38`), so
+  `BondKind::bond_type` maps `Quadruple` to `Double` (the number stays
+  `BondNumber::Quadruple`); widening `BondType` is its own spec.
 
 <!-- mol:note:topic:cgsmiles-deferred-fix -->
 ## 2026-09-21 — deferred to `/mol:fix` (found by the cgsmiles chain)
@@ -277,3 +288,52 @@ table follows. The last block of a multi-block string is atomistic by position
 - Recorded contract change: `parse_smiles("CC(")` / `parse_fragment_smiles`
   now report `UnclosedBranch` at the `(` (as `CC(O` always did) instead of
   `UnexpectedEnd` — a consistency fix made in cgsmiles-01c on 01a's surface.
+- `CgParser::parse_body` bounds only its inter-token loop by `body.end`; a body
+  with an unclosed `[` (`{[#A]}.{#A=[#B;k=1}.{#B=[$]C}`) lets
+  `read_annotation_fields` / `read_descriptor` scan into the next block. Every
+  traced path still errors (`CgMalformedAnnotation` / `BondInsideDescriptor`),
+  so the defect is span/kind quality, not a wrong parse; needs a targeted test.
+- `parse_fragment_smiles` does not run `validate_ring_closures` (only
+  `validate_smiles` does), so a last-block body with an unmatched ring marker
+  is caught by the builder inside `resolve`, not by the parser; 01d re-bases and
+  boxes it as `CgLastBlockNotAtomistic`, but the earlier check is the better home.
+
+<!-- mol:note:topic:cgsmiles-pairing-order -->
+## 2026-09-21 — descriptor pairing: parse-order edges, per-atom entities, greedy scan
+
+The CGsmiles reference (`resolve.py` @ 910c9ee `match_bonding_descriptors`)
+scans source entities × target entities × source descriptors × target
+descriptors, first free compatible pair wins, both consumed. Its entities are
+graph nodes: child beads at an intermediate level, **atoms** at the atomistic
+level. Grouping an instance's whole port list as one entity changes the scan
+order and can bond a different atom (`{[#A][#B]}.{#A=[$][>]CCC,#B=[<]CCO[$]}`
+pairs `>`/`<` on C0–C0 in the reference, `$`/`$` on C0–O under per-instance
+grouping).
+
+**Rule**: `cgsmiles/resolve.rs` builds one port entity per child node at an
+intermediate level and one per port-carrying atom (walker order) at the last
+level; edges are iterated in **parse order** (ring closures last), which is
+where molrs and the reference (networkx adjacency order) legitimately differ —
+only the unlabelled connectivity of the expansion is promised isomorphic, not
+atom indices. Compatibility is `flip(kind) == kind && label == label &&
+effective order == effective order` with `flip` a total involution
+(Left↔Right, Symmetric, Shared); `None` ≡ `Single`, so `[$]` pairs `-[$]` and
+`=[$]` never pairs `[$]`. An edge with no free compatible pair is
+`CgUnmatchableEdge { level, edge }`, never a silent skip.
+
+<!-- mol:note:topic:cgsmiles-bond-class-precedence -->
+## 2026-09-21 — inter-fragment bond class follows Daylight, not the reference's 1.5
+
+The reference sets bond order 1.5 whenever both endpoint atoms are aromatic,
+even over a written symbol (biphenyl `-[$]` and `=`/`=` both become 1.5
+there). molrs has no 1.5: `BondKind::Aromatic` maps to `BondType::Aromatic` +
+`BondNumber::Unknown`, because the notation declares delocalisation, not a
+Kekulé phase.
+
+**Rule**: a written descriptor order wins; absence between two *written*-aromatic
+ports (the `is_aromatic` stamp `Builder` wrote, read off a freshly converted,
+never-perceived body — the `FragmentCache` no-perception invariant) is
+`Aromatic`; everything else is `Single`. A Kekulé-spelled ring
+(`[$]C1=CC=CC=C1`) therefore bonds `Single`. A coarse edge of multiplicity n
+is n separate bonds, never a multiple bond (Martini cyclohexane
+`{[#SC3]=[#SC3]}` → two singles).
