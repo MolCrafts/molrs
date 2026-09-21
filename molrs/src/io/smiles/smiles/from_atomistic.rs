@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::io::smiles::chem::ast::*;
-use crate::io::smiles::error::{SmilesError, SmilesErrorKind};
+use crate::io::smiles::error::{Notation, SmilesError, SmilesErrorKind};
 use crate::io::smiles::smiles::options::{
     AromaticEmit, HydrogenEmit, MultiComponentEmit, SmilesEmitOptions,
 };
@@ -91,7 +91,12 @@ pub fn write_atomistic_smiles(
 }
 
 fn emit_err(msg: impl Into<String>) -> SmilesError {
-    SmilesError::new(SmilesErrorKind::Emit(msg.into()), Span::new(0, 0), "")
+    SmilesError::new(
+        SmilesErrorKind::Emit(msg.into()),
+        Span::new(0, 0),
+        "",
+        Notation::Smiles,
+    )
 }
 
 fn is_hydrogen(mol: &Atomistic, id: AtomId) -> bool {

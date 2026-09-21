@@ -1,4 +1,5 @@
-//! SMILES serialization plus the SMILES/SMARTS syntax vocabulary they share.
+//! SMILES serialization, the `CGsmiles` coarse-graph notation, and the syntax
+//! vocabulary they share with SMARTS.
 //!
 //! SMILES (Simplified Molecular Input Line Entry System) writes a molecule as
 //! a single line of text: `CCO` is ethanol, `c1ccccc1` benzene. SMARTS (SMILES
@@ -7,8 +8,8 @@
 //! a *class* of substructures instead of one molecule.
 //!
 //! This module hosts the SMILES serialization pipeline and, in [`chem`], the
-//! syntax vocabulary both line notations share: the abstract-syntax-tree (AST)
-//! types, the byte scanner, and grammar validation.
+//! syntax vocabulary those two atomistic notations share: the
+//! abstract-syntax-tree (AST) types, the byte scanner, and grammar validation.
 //!
 //! The [`smiles`] submodule owns the serialization format itself: parse a
 //! string into an intermediate representation (IR), validate it, and convert
@@ -18,6 +19,19 @@
 //! callers that want a SMARTS pattern as an IR. It is **not** the frontend of
 //! the matching engine in [`crate::perceive::smarts`]: that engine has its own
 //! parser and never consumes this one. Neither module depends on the other.
+//!
+//! [`parse_cgsmiles`] reads the third notation this module hosts. `CGsmiles`
+//! writes a molecule at a *coarse-grained* resolution: one node per whole
+//! group of atoms — a **bead**, named after the fragment it stands for —
+//! instead of one node per atom. It parses such a block, `{[#PEO][#PEO]}`
+//! being a two-bead chain, into the [`CGSmilesIR`] of the private
+//! `cgsmiles` submodule. What it shares with the two atomistic notations is
+//! the scanner, the [`Span`], the [`SmilesError`] and the
+//! [`BondingDescriptor`] vocabulary — not the grammar and not the AST. The
+//! token vocabularies overlap adversarially (`[#NAME]` against the SMARTS
+//! `[#6]`, `$` against both a bond order and a descriptor), so these are two
+//! parsers, not one parser with a mode: a missed check in a mode-switching
+//! parser would read one notation as the other instead of failing.
 //!
 //! The fragment entry points [`parse_fragment_smiles`],
 //! [`fragment_to_atomistic`] and [`write_fragment_smiles`] accept and emit a
@@ -45,6 +59,12 @@
 //!
 //! ```text
 //! fragment body → parse_fragment_smiles() → SmilesIR → fragment_to_atomistic() → (Atomistic, descriptor map)
+//! ```
+//!
+//! # Pipeline (CGsmiles)
+//!
+//! ```text
+//! CGsmiles string → parse_cgsmiles() → CGSmilesIR
 //! ```
 //!
 //! # Examples
@@ -84,20 +104,28 @@ pub mod smiles;
 // this parser) and is re-exported straight from here.
 mod parser;
 
+// The `CGsmiles` coarse-graph notation: private like `parser`, reaching
+// callers through the re-exports below.
+mod cgsmiles;
+
 // ---------------------------------------------------------------------------
 // Public re-exports (stable surface — downstream callers depend on these).
 //
-// Three groups: the AST vocabulary (including `BondingDescriptor` /
-// `DescriptorKind`, which a fragment caller reads off the descriptor map), the
-// error type and its variants, and the per-stage entry points — one set for
-// plain SMILES, one for SMARTS syntax, one for fragment bodies.
+// Four groups, in the order they appear below: the `CGsmiles` coarse-graph IR
+// and the entry point that builds it; the AST vocabulary of the two atomistic
+// notations (including `BondingDescriptor` / `DescriptorKind`, which a
+// fragment caller reads off the descriptor map); the error type, its variants
+// and the `Notation` that says which of the three languages raised one; and
+// the per-stage entry points — one set for plain SMILES, one for SMARTS
+// syntax, one for fragment bodies.
 // ---------------------------------------------------------------------------
 
+pub use cgsmiles::{CGBondOrder, CGEdge, CGGraph, CGNode, CGSmilesIR, parse_cgsmiles};
 pub use chem::ast::{
     AtomNode, AtomPrimitive, AtomQuery, AtomSpec, BondKind, BondQuery, BondingDescriptor,
     BracketSymbol, Chain, ChainElement, Chirality, DescriptorKind, SmilesIR, Span,
 };
-pub use error::{SmilesError, SmilesErrorKind};
+pub use error::{Notation, SmilesError, SmilesErrorKind};
 pub use parser::parse_smarts;
 pub use smiles::{
     AromaticEmit, HydrogenEmit, LocalSmartsOptions, MultiComponentEmit, NeighborStyle,

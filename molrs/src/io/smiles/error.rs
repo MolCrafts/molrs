@@ -1,9 +1,50 @@
-//! Error types for SMILES / SMARTS parsing.
+//! Error types shared by the three line notations this module family reads
+//! and writes: SMILES, SMARTS and `CGsmiles`.
+//!
+//! There is one error struct, [`SmilesError`], one list of reasons,
+//! [`SmilesErrorKind`], and one field, [`Notation`], saying which language the
+//! offending text was meant to be — because many reasons (`TrailingCharacters`
+//! and friends) are raised by all three, and the entry point is the only place
+//! that knows which was being parsed.
 
 use std::fmt;
 
 use crate::io::smiles::chem::ast::{BondKind, Span};
 use molrs::error::MolRsError;
+
+/// Which line notation was being read or written when an error was raised.
+///
+/// One error type serves all three notations, so the notation is a *fact owned
+/// by the entry point* rather than something a reader could infer from the
+/// variant name: `TrailingCharacters` is raised by `parse_smiles`,
+/// `parse_smarts` and `parse_cgsmiles` alike, and only the entry point knows
+/// which language the offending text was meant to be. Every construction site
+/// therefore states it — see [`SmilesError::new`].
+///
+/// [`Display`](fmt::Display) renders the conventional spelling of each
+/// notation (`SMILES`, `SMARTS`, `CGsmiles`), which is the prefix of every
+/// rendered [`SmilesError`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Notation {
+    /// SMILES, including the SMILES fragment body (the fragment dialect is
+    /// SMILES widened with bonding descriptors, not a notation of its own).
+    Smiles,
+    /// SMARTS, the SMILES query language.
+    Smarts,
+    /// `CGsmiles`, the coarse-grained resolution notation.
+    CGsmiles,
+}
+
+impl fmt::Display for Notation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = match self {
+            Notation::Smiles => "SMILES",
+            Notation::Smarts => "SMARTS",
+            Notation::CGsmiles => "CGsmiles",
+        };
+        f.write_str(name)
+    }
+}
 
 /// Error produced by any stage of the line-notation pipeline: the parser, the
 /// validator, the IR → graph walker, or the writer.
@@ -19,9 +60,23 @@ pub struct SmilesError {
     /// error was raised away from the parser — by the IR → graph walker or the
     /// writer, which are handed an IR and never see the text it came from.
     pub input: String,
+    /// Which notation was being parsed or written, as the rendered message
+    /// names it. Stamped by the entry point, never derived from [`kind`]:
+    /// several kinds are shared by all three notations.
+    ///
+    /// [`kind`]: SmilesError::kind
+    pub notation: Notation,
 }
 
-/// Specific error variants.
+/// Why a string was refused: the rule that was broken, with the offending
+/// text as payload where naming it helps.
+///
+/// A variant says *what* went wrong, never *which notation* was being read —
+/// most of the first group below is raised by all three — so a caller that
+/// wants the language reads [`SmilesError::notation`] instead. The variants
+/// fall into three groups: the shared grammar rules, the bonding-descriptor
+/// rules of the SMILES fragment dialect (`DescriptorInPlainSmiles` onwards),
+/// and the coarse-graph rules of `CGsmiles` (`Cg*`).
 #[derive(Debug, Clone, PartialEq)]
 pub enum SmilesErrorKind {
     /// A character was encountered that is not valid in the current context.
@@ -97,31 +152,94 @@ pub enum SmilesErrorKind {
     /// only; `parse_smiles("[C;0.5]")` still reports
     /// [`SmilesErrorKind::UnclosedBracket`].
     AtomAnnotationUnsupported(String),
+
+    // -- CGsmiles coarse-graph kinds ----------------------------------------
+    /// A `CGsmiles` block contains nothing: `{}`. The reference implementation
+    /// skips such a block silently; molrs names it, because a resolution level
+    /// with no node is never what the writer meant.
+    CgEmptyBlock,
+    /// A node annotation could not be read as a `key=value` pair or as a
+    /// positional field: `[#A;]`, `[#A;=1]`, `[#A;q=x]`, or a fourth
+    /// positional slot (the table has three: the name, `q` and `w`). The
+    /// payload is the offending annotation text.
+    CgMalformedAnnotation(String),
+    /// A node annotation was read but molrs does not model it yet: a
+    /// non-default weight (`[#A;w=2]`, `[#A;0;0.5]`) or a chirality
+    /// (`[#A;x=S]`). The payload names the key and the value that was written.
+    CgUnsupportedAnnotation {
+        /// The annotation key, after positional binding (`w`, `x`, …).
+        key: String,
+        /// The value as written.
+        value: String,
+    },
+    /// An annotation was written on the wildcard node `[#*;…]`, which stands
+    /// for "any fragment" and therefore has no properties of its own. The
+    /// payload is the annotation text.
+    CgAnnotationOnWildcard(String),
+    /// A symbol in bond position is not one of `-`, `=`, `#`, `$`, or a second
+    /// bond symbol was written before the first had anything to bond
+    /// (`{[#A]=-[#B]}`). The refused symbols include `.`, the zero-order
+    /// (virtual) edge, which the notation permits and molrs declines to model.
+    CgInvalidBondOrder,
+    /// The count after `|` is not a positive decimal integer: `{[#A]|0}`,
+    /// `{[#A]|x}`. The payload is the text that was read as the count.
+    CgInvalidRepeatCount(String),
+    /// A ring closure would repeat an edge the graph already has, or would
+    /// bond a node to itself. The coarse graph is a *simple* graph — at most
+    /// one edge per pair of nodes, and no self-loops — so a second bond
+    /// between the same two nodes is written with a bond-order symbol, not
+    /// with a second ring marker. Checked once the block has been read, so
+    /// `i` and `j` are final node indices.
+    CgDuplicateEdge {
+        /// Index of the node that opened the marker.
+        i: usize,
+        /// Index of the node that closed it.
+        j: usize,
+    },
+    /// `|` was written where the unit to repeat is not a single well-formed
+    /// subgraph: inside an open branch, or after a node carrying more than one
+    /// branch.
+    CgRepeatOnBranchedNode,
+    /// A ring marker was opened or closed inside a repeated unit. A marker is
+    /// a one-shot identity — [`SmilesErrorKind::CgDuplicateEdge`] forbids two
+    /// closures of one marker — so replaying it is either a silent overwrite
+    /// or a self-bond.
+    CgRepeatOnRingMarker,
+    /// A bond symbol has nothing on one side to bond to: written immediately
+    /// before the closing `}` of a block (`{[#A]=}`), before the `)` that ends
+    /// a branch (`{[#A]([#B]=)}`), or before the first node of the block
+    /// (`{=[#A]}`). The input is not exhausted in any of these, so
+    /// `UnexpectedEnd` would be a false report.
+    CgDanglingBond,
+    /// A ring marker is malformed: `%` not followed by exactly two digits, as
+    /// in `{[#A]%1}`, or a marker number of zero. Zero is refused in both
+    /// spellings — a bare `0` and `%00` — so one-digit markers run `1`..`9`
+    /// and the two-digit form spans `%01`..`%99`.
+    CgInvalidRingMarker,
 }
 
 impl SmilesError {
-    /// Convenience constructor.
-    pub fn new(kind: SmilesErrorKind, span: Span, input: &str) -> Self {
+    /// Build an error at `span` within `input`, reported as an error of
+    /// `notation`.
+    ///
+    /// `notation` has no default on purpose: several kinds are shared by all
+    /// three notations, so a defaulted [`Notation::Smiles`] would silently
+    /// mislabel every SMARTS and `CGsmiles` diagnostic that reuses one.
+    pub fn new(kind: SmilesErrorKind, span: Span, input: &str, notation: Notation) -> Self {
         Self {
             kind,
             span,
             input: input.to_owned(),
+            notation,
         }
     }
 }
 
-/// Renders as one message line, `SMILES parse error at position <n>: <reason>`,
-/// optionally followed by two context lines: the input, and a caret under the
-/// byte the span starts at.
-///
-/// The context lines are skipped when there is no input text to point into —
-/// errors raised by the IR → graph walker and by the writer carry none — and
-/// when the input is longer than 120 bytes, where a caret under a wrapped line
-/// helps nobody.
-impl fmt::Display for SmilesError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let pos = self.span.start;
-        let msg = match &self.kind {
+impl SmilesErrorKind {
+    /// The one-line reason this kind reports, without the notation prefix or
+    /// the caret context that `Display for SmilesError` wraps it in.
+    fn message(&self) -> String {
+        match self {
             SmilesErrorKind::UnexpectedChar(c) => format!("unexpected character '{c}'"),
             SmilesErrorKind::UnexpectedEnd => "unexpected end of input".to_owned(),
             SmilesErrorKind::UnclosedBracket => "unclosed bracket '['".to_owned(),
@@ -167,8 +285,60 @@ impl fmt::Display for SmilesError {
             SmilesErrorKind::AtomAnnotationUnsupported(s) => {
                 format!("atom annotation ';{s}' is unsupported")
             }
-        };
-        write!(f, "SMILES parse error at position {pos}: {msg}")?;
+            SmilesErrorKind::CgEmptyBlock => {
+                "empty coarse-graph block '{}' — a resolution level needs at least one node"
+                    .to_owned()
+            }
+            SmilesErrorKind::CgMalformedAnnotation(s) => {
+                format!("malformed node annotation '{s}'")
+            }
+            SmilesErrorKind::CgUnsupportedAnnotation { key, value } => {
+                format!("node annotation '{key}={value}' is not supported")
+            }
+            SmilesErrorKind::CgAnnotationOnWildcard(s) => {
+                format!("annotation '{s}' written on the wildcard node '[#*]'")
+            }
+            SmilesErrorKind::CgInvalidBondOrder => {
+                "invalid coarse bond order — write one of '-', '=', '#', '$'".to_owned()
+            }
+            SmilesErrorKind::CgInvalidRepeatCount(s) => {
+                format!("invalid repeat count '{s}' — '|' takes a positive integer")
+            }
+            SmilesErrorKind::CgDuplicateEdge { i, j } => format!(
+                "nodes {i} and {j} are already joined — use bond order symbols instead of a \
+                 second edge"
+            ),
+            SmilesErrorKind::CgRepeatOnBranchedNode => {
+                "'|' cannot repeat a unit with an open branch or with more than one branch"
+                    .to_owned()
+            }
+            SmilesErrorKind::CgRepeatOnRingMarker => {
+                "'|' cannot repeat a unit that opens or closes a ring marker".to_owned()
+            }
+            SmilesErrorKind::CgDanglingBond => {
+                "bond symbol with nothing to bond to before the end of the block".to_owned()
+            }
+            SmilesErrorKind::CgInvalidRingMarker => {
+                "invalid ring marker — '%' takes exactly two digits".to_owned()
+            }
+        }
+    }
+}
+
+/// Renders as one message line, `<notation> parse error at position <n>:
+/// <reason>`, optionally followed by two context lines: the input, and a caret
+/// under the byte the span starts at. The prefix is [`SmilesError::notation`]
+/// as the entry point stamped it — `SMILES`, `SMARTS` or `CGsmiles`.
+///
+/// The context lines are skipped when there is no input text to point into —
+/// errors raised by the IR → graph walker and by the writer carry none — and
+/// when the input is longer than 120 bytes, where a caret under a wrapped line
+/// helps nobody.
+impl fmt::Display for SmilesError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let pos = self.span.start;
+        let msg = self.kind.message();
+        write!(f, "{} parse error at position {pos}: {msg}", self.notation)?;
 
         // Caret-style context line, when there is an input to point into and
         // it is short enough to be useful. Errors raised away from the scanner
@@ -206,6 +376,7 @@ mod tests {
             SmilesErrorKind::UnexpectedChar('X'),
             Span::new(3, 4),
             "CC(X)O",
+            Notation::Smiles,
         );
         let s = err.to_string();
         assert!(s.contains("position 3"));
@@ -216,7 +387,12 @@ mod tests {
 
     #[test]
     fn test_into_molrs_error() {
-        let err = SmilesError::new(SmilesErrorKind::EmptyInput, Span::new(0, 0), "");
+        let err = SmilesError::new(
+            SmilesErrorKind::EmptyInput,
+            Span::new(0, 0),
+            "",
+            Notation::Smiles,
+        );
         let molrs: MolRsError = err.into();
         let msg = format!("{molrs}");
         assert!(msg.contains("empty input"));
@@ -229,7 +405,7 @@ mod tests {
     /// The message body of a rendered error: the first line after the
     /// `"… position N: "` prefix that every variant shares.
     fn message(kind: SmilesErrorKind) -> String {
-        let rendered = SmilesError::new(kind, Span::new(0, 3), "[$]").to_string();
+        let rendered = SmilesError::new(kind, Span::new(0, 3), "[$]", Notation::Smiles).to_string();
         let first = rendered.lines().next().expect("rendered error is empty");
         match first.split_once(": ") {
             Some((_, body)) => body.to_owned(),
@@ -305,6 +481,181 @@ mod tests {
             message(SmilesErrorKind::InvalidDescriptorOrder(BondKind::Aromatic)),
             message(SmilesErrorKind::DanglingDescriptor),
             message(SmilesErrorKind::AtomAnnotationUnsupported("0.5".to_owned())),
+        ];
+        let mut sorted = messages.to_vec();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), messages.len(), "messages were {messages:?}");
+    }
+
+    // -- notation prefix ----------------------------------------------------
+
+    /// The full text of a `CGsmiles` error over `{[#PEO][#PEO]}[#X]`, whose
+    /// trailing block starts at byte 14.
+    fn cgsmiles_trailing_rendered() -> String {
+        SmilesError::new(
+            SmilesErrorKind::TrailingCharacters,
+            Span::new(14, 15),
+            "{[#PEO][#PEO]}[#X]",
+            Notation::CGsmiles,
+        )
+        .to_string()
+    }
+
+    #[test]
+    fn test_display_cgsmiles_reused_kind_names_the_cgsmiles_notation() {
+        let rendered = cgsmiles_trailing_rendered();
+        assert!(
+            rendered.starts_with("CGsmiles parse error at position 14"),
+            "rendered error was {rendered:?}"
+        );
+    }
+
+    #[test]
+    fn test_display_cgsmiles_caret_points_at_the_column_of_the_full_input() {
+        let rendered = cgsmiles_trailing_rendered();
+        let caret = rendered.lines().nth(2).expect("caret line is missing");
+        assert_eq!(caret, format!("  {}^", " ".repeat(14)));
+    }
+
+    #[test]
+    fn test_display_smiles_notation_renders_the_smiles_prefix() {
+        let rendered = SmilesError::new(
+            SmilesErrorKind::UnclosedBranch,
+            Span::new(2, 3),
+            "CC(",
+            Notation::Smiles,
+        )
+        .to_string();
+        assert!(
+            rendered.starts_with("SMILES parse error"),
+            "rendered error was {rendered:?}"
+        );
+    }
+
+    #[test]
+    fn test_display_smarts_notation_renders_the_smarts_prefix() {
+        let rendered = SmilesError::new(
+            SmilesErrorKind::InvalidQueryPrimitive("Q".to_owned()),
+            Span::new(1, 2),
+            "[Q]",
+            Notation::Smarts,
+        )
+        .to_string();
+        assert!(
+            rendered.starts_with("SMARTS parse error"),
+            "rendered error was {rendered:?}"
+        );
+    }
+
+    // -- CGsmiles coarse-graph variants -------------------------------------
+
+    /// The message body of a `CGsmiles` error, the counterpart of
+    /// [`message`] for the coarse-graph kinds.
+    fn cg_message(kind: SmilesErrorKind) -> String {
+        let rendered =
+            SmilesError::new(kind, Span::new(0, 6), "{[#A]}", Notation::CGsmiles).to_string();
+        let first = rendered.lines().next().expect("rendered error is empty");
+        match first.split_once(": ") {
+            Some((_, body)) => body.to_owned(),
+            None => first.to_owned(),
+        }
+    }
+
+    #[test]
+    fn test_display_cg_empty_block_is_non_empty() {
+        let msg = cg_message(SmilesErrorKind::CgEmptyBlock);
+        assert!(!msg.is_empty());
+        assert!(msg.to_lowercase().contains("empty"), "message was {msg:?}");
+    }
+
+    #[test]
+    fn test_display_cg_malformed_annotation_shows_the_annotation() {
+        let msg = cg_message(SmilesErrorKind::CgMalformedAnnotation("q=x".to_owned()));
+        assert!(msg.contains("q=x"), "message was {msg:?}");
+    }
+
+    #[test]
+    fn test_display_cg_unsupported_annotation_shows_key_and_value() {
+        let msg = cg_message(SmilesErrorKind::CgUnsupportedAnnotation {
+            key: "w".to_owned(),
+            value: "0.5".to_owned(),
+        });
+        assert!(msg.contains('w'), "message was {msg:?}");
+        assert!(msg.contains("0.5"), "message was {msg:?}");
+    }
+
+    #[test]
+    fn test_display_cg_annotation_on_wildcard_shows_the_annotation() {
+        let msg = cg_message(SmilesErrorKind::CgAnnotationOnWildcard("q=1".to_owned()));
+        assert!(msg.contains("q=1"), "message was {msg:?}");
+    }
+
+    #[test]
+    fn test_display_cg_invalid_bond_order_is_non_empty() {
+        let msg = cg_message(SmilesErrorKind::CgInvalidBondOrder);
+        assert!(!msg.is_empty());
+        assert!(msg.to_lowercase().contains("bond"), "message was {msg:?}");
+    }
+
+    #[test]
+    fn test_display_cg_invalid_repeat_count_shows_the_count() {
+        let msg = cg_message(SmilesErrorKind::CgInvalidRepeatCount("0".to_owned()));
+        assert!(msg.contains('0'), "message was {msg:?}");
+    }
+
+    #[test]
+    fn test_display_cg_duplicate_edge_names_both_nodes() {
+        let msg = cg_message(SmilesErrorKind::CgDuplicateEdge { i: 0, j: 1 });
+        assert!(msg.contains('0'), "message was {msg:?}");
+        assert!(msg.contains('1'), "message was {msg:?}");
+    }
+
+    #[test]
+    fn test_display_cg_repeat_on_branched_node_is_non_empty() {
+        let msg = cg_message(SmilesErrorKind::CgRepeatOnBranchedNode);
+        assert!(!msg.is_empty());
+        assert!(msg.to_lowercase().contains("branch"), "message was {msg:?}");
+    }
+
+    #[test]
+    fn test_display_cg_repeat_on_ring_marker_is_non_empty() {
+        let msg = cg_message(SmilesErrorKind::CgRepeatOnRingMarker);
+        assert!(!msg.is_empty());
+        assert!(msg.to_lowercase().contains("ring"), "message was {msg:?}");
+    }
+
+    #[test]
+    fn test_display_cg_dangling_bond_is_non_empty() {
+        let msg = cg_message(SmilesErrorKind::CgDanglingBond);
+        assert!(!msg.is_empty());
+        assert!(msg.to_lowercase().contains("bond"), "message was {msg:?}");
+    }
+
+    #[test]
+    fn test_display_cg_invalid_ring_marker_is_non_empty() {
+        let msg = cg_message(SmilesErrorKind::CgInvalidRingMarker);
+        assert!(!msg.is_empty());
+        assert!(msg.to_lowercase().contains("ring"), "message was {msg:?}");
+    }
+
+    #[test]
+    fn test_display_cg_messages_are_pairwise_distinct() {
+        let messages = [
+            cg_message(SmilesErrorKind::CgEmptyBlock),
+            cg_message(SmilesErrorKind::CgMalformedAnnotation("q=x".to_owned())),
+            cg_message(SmilesErrorKind::CgUnsupportedAnnotation {
+                key: "w".to_owned(),
+                value: "0.5".to_owned(),
+            }),
+            cg_message(SmilesErrorKind::CgAnnotationOnWildcard("q=1".to_owned())),
+            cg_message(SmilesErrorKind::CgInvalidBondOrder),
+            cg_message(SmilesErrorKind::CgInvalidRepeatCount("0".to_owned())),
+            cg_message(SmilesErrorKind::CgDuplicateEdge { i: 0, j: 1 }),
+            cg_message(SmilesErrorKind::CgRepeatOnBranchedNode),
+            cg_message(SmilesErrorKind::CgRepeatOnRingMarker),
+            cg_message(SmilesErrorKind::CgDanglingBond),
+            cg_message(SmilesErrorKind::CgInvalidRingMarker),
         ];
         let mut sorted = messages.to_vec();
         sorted.sort();

@@ -10,7 +10,7 @@
 
 use crate::io::smiles::chem::ast::*;
 use crate::io::smiles::chem::validation::validate_ring_closures;
-use crate::io::smiles::error::{SmilesError, SmilesErrorKind};
+use crate::io::smiles::error::{Notation, SmilesError, SmilesErrorKind};
 use crate::io::smiles::smiles::canonical_element_symbol;
 use molrs::Element;
 
@@ -69,6 +69,7 @@ fn validate_atom_element(atom: &AtomNode, input: &str) -> Result<(), SmilesError
             SmilesErrorKind::DescriptorInPlainSmiles,
             atom.span,
             input,
+            Notation::Smiles,
         ));
     }
 
@@ -99,6 +100,7 @@ fn validate_symbol(symbol: &str, span: Span, input: &str) -> Result<(), SmilesEr
             SmilesErrorKind::InvalidElement(symbol.to_owned()),
             span,
             input,
+            Notation::Smiles,
         ));
     }
     Ok(())

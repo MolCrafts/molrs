@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use crate::io::smiles::chem::ast::{
     BondKind, BondingDescriptor, Chain, ChainElement, SmilesIR, Span,
 };
-use crate::io::smiles::error::{SmilesError, SmilesErrorKind};
+use crate::io::smiles::error::{Notation, SmilesError, SmilesErrorKind};
 
 /// Ensure every ring-closure digit is opened and closed exactly once.
 ///
@@ -30,7 +30,8 @@ use crate::io::smiles::error::{SmilesError, SmilesErrorKind};
 /// Returns [`SmilesErrorKind::UnmatchedRingClosure`] carrying the ring number
 /// of a digit that was opened and never closed; the span points at the
 /// unmatched digit. Which unmatched digit is reported, when several are, is
-/// unspecified.
+/// unspecified. The error is stamped [`Notation::Smiles`]: ring closures are
+/// validated on the SMILES-family post-parse path only.
 pub(crate) fn validate_ring_closures(mol: &SmilesIR, input: &str) -> Result<(), SmilesError> {
     let mut open: HashMap<u16, Span> = HashMap::new();
 
@@ -43,6 +44,7 @@ pub(crate) fn validate_ring_closures(mol: &SmilesIR, input: &str) -> Result<(), 
             SmilesErrorKind::UnmatchedRingClosure(rnum),
             span,
             input,
+            Notation::Smiles,
         ));
     }
 
@@ -64,6 +66,15 @@ pub(crate) fn validate_ring_closures(mol: &SmilesIR, input: &str) -> Result<(), 
 /// `span` covers the descriptor bracket and `input` is the whole parsed
 /// string, so the returned error carries the usual caret context.
 ///
+/// `notation` is the notation the error is stamped with. It is a parameter
+/// because the check is shared and its callers are not: the SMILES-family
+/// parser passes its dialect's own notation ([`Dialect::notation`]), the
+/// `CGsmiles` parser passes [`Notation::CGsmiles`]. The notation is a fact
+/// owned by the entry point, and passing it in is how this check learns it
+/// without guessing.
+///
+/// [`Dialect::notation`]: crate::io::smiles::chem::Dialect::notation
+///
 /// # Errors
 ///
 /// Returns [`SmilesErrorKind::InvalidDescriptorLabel`] for a non-alphanumeric
@@ -73,12 +84,14 @@ pub(crate) fn validate_descriptor(
     desc: &BondingDescriptor,
     span: Span,
     input: &str,
+    notation: Notation,
 ) -> Result<(), SmilesError> {
     if !desc.label.chars().all(|c| c.is_ascii_alphanumeric()) {
         return Err(SmilesError::new(
             SmilesErrorKind::InvalidDescriptorLabel(desc.label.clone()),
             span,
             input,
+            notation,
         ));
     }
 
@@ -92,6 +105,7 @@ pub(crate) fn validate_descriptor(
             SmilesErrorKind::InvalidDescriptorOrder(order),
             span,
             input,
+            notation,
         ));
     }
 
@@ -134,13 +148,13 @@ mod tests {
     #[test]
     fn test_validate_descriptor_accepts_alphanumeric_label_with_double_order() {
         let desc = descriptor("a1", Some(BondKind::Double));
-        assert!(validate_descriptor(&desc, Span::new(0, 3), "[$]").is_ok());
+        assert!(validate_descriptor(&desc, Span::new(0, 3), "[$]", Notation::Smiles).is_ok());
     }
 
     #[test]
     fn test_validate_descriptor_rejects_non_alphanumeric_label() {
         let desc = descriptor("a-", None);
-        let err = validate_descriptor(&desc, Span::new(0, 3), "[$]").unwrap_err();
+        let err = validate_descriptor(&desc, Span::new(0, 3), "[$]", Notation::Smiles).unwrap_err();
         assert!(matches!(
             err.kind,
             SmilesErrorKind::InvalidDescriptorLabel(_)
@@ -150,7 +164,7 @@ mod tests {
     #[test]
     fn test_validate_descriptor_rejects_aromatic_order() {
         let desc = descriptor("", Some(BondKind::Aromatic));
-        let err = validate_descriptor(&desc, Span::new(0, 3), "[$]").unwrap_err();
+        let err = validate_descriptor(&desc, Span::new(0, 3), "[$]", Notation::Smiles).unwrap_err();
         assert!(matches!(
             err.kind,
             SmilesErrorKind::InvalidDescriptorOrder(BondKind::Aromatic)
@@ -160,7 +174,7 @@ mod tests {
     #[test]
     fn test_validate_descriptor_rejects_directional_order() {
         let desc = descriptor("", Some(BondKind::Up));
-        let err = validate_descriptor(&desc, Span::new(0, 3), "[$]").unwrap_err();
+        let err = validate_descriptor(&desc, Span::new(0, 3), "[$]", Notation::Smiles).unwrap_err();
         assert!(matches!(
             err.kind,
             SmilesErrorKind::InvalidDescriptorOrder(BondKind::Up)

@@ -56,7 +56,7 @@ binders (depend on molcrafts-molrs + molrs-ffi):
 |---|---|
 | `core` | Frame, Block, MolGraph, MolRec, Topology, Element, SimBox, neighbors, schema, generate, units |
 | `perceive` | rings, aromaticity, SMARTS, stereo, hydrogens, bond types, equivalence |
-| `io` | format readers/writers, SMILES, trajectory, Zarr/MolRec |
+| `io` | format readers/writers, SMILES, CGsmiles, trajectory, Zarr/MolRec |
 | `ff` | ForceField, potentials, typifiers, charge (Gasteiger/BCC), scale_lj |
 | `signal` | FFT ACF, windows, frequency grids |
 | `compute` | RDF, MSD, transport, dielectric, spectra, shape, cluster, … |

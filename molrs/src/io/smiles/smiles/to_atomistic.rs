@@ -18,7 +18,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::io::smiles::chem::ast::*;
-use crate::io::smiles::error::{SmilesError, SmilesErrorKind};
+use crate::io::smiles::error::{Notation, SmilesError, SmilesErrorKind};
 use crate::io::smiles::smiles::canonical_element_symbol;
 use molrs::system::atomistic::{AtomId, Atomistic};
 use molrs::system::bond::{BondNumber, BondType};
@@ -162,6 +162,7 @@ fn bond_query_to_kind(q: Option<&BondQuery>) -> Result<Option<BondKind>, SmilesE
             ),
             crate::io::smiles::chem::ast::Span::new(0, 0),
             "",
+            Notation::Smarts,
         )),
     }
 }
@@ -252,6 +253,7 @@ impl<'a> Builder<'a> {
                 SmilesErrorKind::DescriptorsUnconvertible,
                 node.span,
                 "", // input not available here; span is enough
+                Notation::Smiles,
             ));
         }
 
@@ -316,6 +318,7 @@ impl<'a> Builder<'a> {
                 ),
                 node.span,
                 "", // input not available here; span is enough
+                Notation::Smarts,
             )),
         }?;
 
@@ -338,6 +341,7 @@ impl<'a> Builder<'a> {
                 SmilesErrorKind::InvalidElement(e.to_string()),
                 self.ir.span,
                 "",
+                Notation::Smiles,
             )
         })?;
 
@@ -395,6 +399,7 @@ impl<'a> Builder<'a> {
                         SmilesErrorKind::RingBondConflict { rnum },
                         span,
                         "",
+                        Notation::Smiles,
                     ));
                 }
                 (Some(a), _) => Some(a),
@@ -422,6 +427,7 @@ impl<'a> Builder<'a> {
                 SmilesErrorKind::UnmatchedRingClosure(rnum),
                 pending.span,
                 "",
+                Notation::Smiles,
             ));
         }
         Ok(())

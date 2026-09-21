@@ -85,6 +85,7 @@ fn write_ir(ir: &SmilesIR, dialect: Dialect) -> Result<String, SmilesError> {
             SmilesErrorKind::Emit("empty SmilesIR".into()),
             ir.span,
             "",
+            dialect.notation(),
         ));
     }
     let mut out = String::new();
@@ -199,6 +200,7 @@ fn write_atom(out: &mut String, node: &AtomNode, dialect: Dialect) -> Result<(),
                     )),
                     node.span,
                     "",
+                    dialect.notation(),
                 ));
             }
             out.push('[');
@@ -241,6 +243,7 @@ fn write_descriptors(
             SmilesErrorKind::DescriptorInPlainSmiles,
             node.span,
             "",
+            dialect.notation(),
         ));
     }
     for desc in &node.descriptors {
@@ -257,6 +260,7 @@ fn write_descriptors(
                     SmilesErrorKind::InvalidDescriptorOrder(k),
                     node.span,
                     "",
+                    dialect.notation(),
                 ));
             }
         }
@@ -500,6 +504,7 @@ fn bond_query_err(dialect: Dialect) -> SmilesError {
         )),
         Span::new(0, 0),
         "",
+        dialect.notation(),
     )
 }
 

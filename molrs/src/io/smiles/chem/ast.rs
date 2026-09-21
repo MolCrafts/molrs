@@ -123,6 +123,12 @@ pub enum AtomSpec {
         symbol: BracketSymbol,
         chirality: Option<Chirality>,
         hcount: Option<u8>,
+        /// Formal charge as written, `[NH4+]` giving `Some(1)`: a whole number
+        /// of elementary charges assigned by the valence bookkeeping of the
+        /// notation. It is **not** a partial charge — the fractional
+        /// force-field charge of a coarse-grained bead is
+        /// [`CGNode::charge`](crate::io::smiles::CGNode::charge), an `f64` in
+        /// elementary charge units `e`.
         charge: Option<i8>,
         atom_class: Option<u16>,
     },

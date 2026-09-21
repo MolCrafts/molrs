@@ -12,7 +12,8 @@
 //!   (Zarr V3 on disk; Cargo feature `zarr`, adapter crate-private)
 //! - [`reader`] / [`writer`] / [`streaming`] — shared traits and the
 //!   chunk-based frame-indexing infrastructure
-//! - [`smiles`] — SMILES/SMARTS notation parsing (feature `smiles`)
+//! - [`smiles`] — SMILES/SMARTS and CGsmiles notation parsing (feature
+//!   `smiles`)
 
 pub mod csv;
 pub mod data;

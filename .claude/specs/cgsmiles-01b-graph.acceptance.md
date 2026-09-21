@@ -7,22 +7,26 @@ criteria:
     summary: "The notation is a required field on SmilesError, stamped at every construction site"
     type: code
     pass_when: "molrs/src/io/smiles/error.rs defines `pub enum Notation { Smiles, Smarts, CGsmiles }` and `SmilesError` has a public `notation: Notation` field that is a required argument of `SmilesError::new` (no `Default`, no defaulted `Smiles`); `Scanner::new(input, notation)` stamps it and `error`/`error_at` use it; every non-scanner `SmilesError::new` call site (chem/validation.rs, smiles/to_atomistic.rs, smiles/write.rs, smiles/from_atomistic.rs, smiles/validate.rs, smiles/local_smarts.rs) passes its notation explicitly, with `Smarts` at write.rs's SMARTS emit path and local_smarts.rs; `Parser` derives the notation from its `Dialect` by a total mapping (`Smiles | FragmentSmiles → Smiles`, `Smarts → Smarts`) and holds no second notation field."
-    status: pending
+    status: verified
+    last_checked: 2026-09-21
   - id: ac-002
     summary: "Display renders the notation prefix for all three notations, guarded by tests"
     type: code
     pass_when: "Tests in error.rs assert that a CGsmiles error of a reused kind (`TrailingCharacters`) renders `\"CGsmiles parse error at position N\"` with the caret under column N of the full input, that a `parse_smiles` error renders `\"SMILES parse error …\"`, and that a `parse_smarts` error renders `\"SMARTS parse error …\"` (previously mislabelled as SMILES); one test per new `Cg*` kind asserts its message text; `test_display_with_caret` is unchanged."
-    status: pending
+    status: verified
+    last_checked: 2026-09-21
   - id: ac-003
     summary: "The CG IR lives in cgsmiles/ast.rs with the frozen field names and no public constructor"
     type: code
     pass_when: "molrs/src/io/smiles/cgsmiles/ast.rs defines `CGSmilesIR { levels: Vec<CGGraph>, span }`, `CGGraph { nodes, edges }`, `CGNode { name, charge: Option<F>, annotations: Vec<(String, String)>, descriptors: Vec<BondingDescriptor>, span }` with no `instance` field, `CGEdge { i, j, order: CGBondOrder, span }` and `#[derive(Debug, Clone, Copy, PartialEq, Eq)] enum CGBondOrder { Single, Double, Triple, Quadruple }` with `multiplicity(&self) -> u8` returning 1, 2, 3, 4 (tested in that file); `CGSmilesIR` has no public constructor; nothing CG-related is added under chem/; the `CGNode.charge` rustdoc says \"partial charge in e (CGsmiles `q`, positional slot 2), not a formal charge\"."
-    status: pending
+    status: verified
+    last_checked: 2026-09-21
   - id: ac-004
     summary: "One private module, one public path, no generalized Parser"
     type: code
     pass_when: "molrs/src/io/smiles/mod.rs declares `mod cgsmiles;` without `pub` and re-exports `parse_cgsmiles`, `CGSmilesIR`, `CGGraph`, `CGNode`, `CGEdge`, `CGBondOrder` and `Notation`; cgsmiles/mod.rs holds `pub fn parse_cgsmiles(text: &str) -> Result<CGSmilesIR, SmilesError>` and `pub use` re-exports of its types; `CgParser` in cgsmiles/parser.rs is private; molrs/src/io/smiles/parser.rs gains no CG dialect or mode and changes only to pass the notation to `Scanner::new`."
-    status: pending
+    status: verified
+    last_checked: 2026-09-21
   - id: ac-005
     summary: "The core grammar reproduces the F1 fixtures exactly"
     type: scientific
@@ -37,22 +41,26 @@ criteria:
     summary: "Every refused input names its exact kind"
     type: code
     pass_when: "One test per rejection asserts the exact `SmilesErrorKind` by `matches!`, never by message substring: `{}` → `CgEmptyBlock`; `{[#A;]}`, `{[#A;=1]}`, `{[#A;q=x]}` → `CgMalformedAnnotation`; `{[#*;q=1]}` → `CgAnnotationOnWildcard`; `{[#A].[#B]}` → `CgInvalidBondOrder`; `{[#A]=}` → `CgDanglingBond`; `{[#A]%1}` → `CgInvalidRingMarker`; `{[#A]1[#B]1[#A]}` → `CgDuplicateEdge { i: 0, j: 1 }`; `{[#A]1[#B]}` → `UnmatchedRingClosure`; `{[#A]|0}` and `{[#A]|x}` → `CgInvalidRepeatCount`; `{[#A]1|2[#B]1}` and `{[#A]1[#B]1|2}` → `CgRepeatOnRingMarker`; `{[#A](|2[#B])}` and `{[#A]([#B])([#C])|3}` → `CgRepeatOnBranchedNode`; `{[#PEO][#PEO]}[#X]` → `TrailingCharacters` in a test named `second_block_is_trailing_characters`; every error has `notation == Notation::CGsmiles`."
-    status: pending
+    status: verified
+    last_checked: 2026-09-21
   - id: ac-008
     summary: "|n replay rewinds the same scanner over the full input"
     type: code
-    pass_when: "Tests assert F1.4 four nodes / three `Single` edges; F1.9 five nodes with both branch copies anchored on node 0; F1.13 `{[#A]([#B][#B])|3}` 9 nodes / 8 edges and `{[#A][#B]([#C])|3}` 7 nodes / 6 edges; `{[#A][$1]|3}` yields three nodes each with one `Symmetric` descriptor labelled `1`; a bond symbol before `|` is promoted to the chaining edge order (R2.22); an error raised inside a replayed copy has `err.span.start` within the original string and `err.input` equal to the full text; cgsmiles/parser.rs never constructs a `Scanner` over a substring."
-    status: pending
+    pass_when: "Tests assert F1.4 four nodes / three `Single` edges; F1.9 `{[#A]([#B][#C])|2}` six nodes / five edges in parse order `[(0,1),(1,2),(3,4),(4,5),(0,3)]` (the unit is copied anchor-included per R2.20 and the chaining edge is pushed after the copy's internal edges; fixture ratified by the orchestrator on 2026-09-21 after the original five-node expectation was found to contradict R2.20); F1.13 `{[#A]([#B][#B])|3}` 9 nodes / 8 edges and `{[#A][#B]([#C])|3}` 7 nodes / 6 edges; `{[#A][$1]|3}` yields three nodes each with one `Symmetric` descriptor labelled `1`; a bond symbol before `|` is promoted to the chaining edge order (R2.22); an error raised while a repeated unit is parsed has `err.span.start` within the original string and `err.input` equal to the full text (there is no replay-only error path: every construct in a unit is validated on the first pass, so the test is named for what it proves); cgsmiles/parser.rs never constructs a `Scanner` over a substring."
+    status: verified
+    last_checked: 2026-09-21
   - id: ac-009
     summary: "Scanner::seek clamps and keeps spans well-formed"
     type: code
     pass_when: "`pub fn seek(&mut self, pos: usize)` exists in chem/scanner.rs with tests showing that seeking back to an earlier offset re-reads the same bytes and `error()` at the re-read position reports that position in the full input, that `seek(len + 1)` lands at `len` (asserted by value, no `debug_assert!`), and that a span minted after a backward seek satisfies `start <= end`."
-    status: pending
+    status: verified
+    last_checked: 2026-09-21
   - id: ac-010
     summary: "Public-API doctest parses F1.2 through the public path"
     type: runtime
     pass_when: "`cargo test --doc -p molcrafts-molrs --features full,filesystem,stream` passes and the cgsmiles/mod.rs doctest uses only `molrs::io::smiles::parse_cgsmiles` to parse `{[#PEO][#PEO][#PEO]}` and asserts the hard-coded values three nodes, `levels[0].edges.len() == 2` and `edges[0].order.multiplicity() == 1`."
-    status: pending
+    status: verified
+    last_checked: 2026-09-21
   - id: ac-011
     summary: "Module docs, table rows and deferred items are recorded; notes.md untouched"
     type: docs
@@ -62,7 +70,8 @@ criteria:
     summary: "Full gate green"
     type: runtime
     pass_when: "`cargo fmt --check`, `cargo clippy -p molcrafts-molrs --all-targets --features full,filesystem,stream -- -D warnings`, `cargo test -p molcrafts-molrs --lib --features full,filesystem,stream` and `cargo test --doc -p molcrafts-molrs --features full,filesystem,stream` all exit 0."
-    status: pending
+    status: verified
+    last_checked: 2026-09-21
 out_of_scope:
   - "Multi-block strings, fragment bodies, levels.len() > 1 (01c)"
   - "Descriptor pairing, pairs, atom expansion (01d)"

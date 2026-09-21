@@ -181,7 +181,10 @@ enum AdjacentBracket {
 impl<'a> Parser<'a> {
     fn new(input: &'a str, dialect: Dialect) -> Self {
         Self {
-            scanner: Scanner::new(input),
+            // The notation every diagnostic of this parse is labelled with is
+            // the dialect's own (`Dialect::notation`), so it is stated once,
+            // here, and the parser keeps no second field for it.
+            scanner: Scanner::new(input, dialect.notation()),
             dialect,
             depth: 0,
         }
@@ -303,7 +306,7 @@ impl<'a> Parser<'a> {
             if index == ordered {
                 desc.order = order;
             }
-            validate_descriptor(&desc, span, self.scanner.input())?;
+            validate_descriptor(&desc, span, self.scanner.input(), self.dialect.notation())?;
             descriptors.push(desc);
         }
         Ok(descriptors)
@@ -1372,6 +1375,7 @@ impl<'a> Parser<'a> {
 mod tests {
     use super::*;
     use crate::io::smiles::chem::test_support::atom_nodes;
+    use crate::io::smiles::error::Notation;
 
     // -- helpers ------------------------------------------------------------
 
@@ -2194,5 +2198,25 @@ mod tests {
             nodes[0].descriptors,
             vec![descriptor(DescriptorKind::Shared, "a", None)]
         );
+    }
+
+    // -- notation stamped at the entry point --------------------------------
+
+    #[test]
+    fn test_parse_smiles_error_is_stamped_smiles() {
+        let err = parse_smiles("CC(").expect_err("an unclosed branch must be refused");
+        assert_eq!(err.notation, Notation::Smiles);
+    }
+
+    #[test]
+    fn test_parse_fragment_smiles_error_is_stamped_smiles() {
+        let err = parse_fragment_smiles("[$]").expect_err("a dangling descriptor must be refused");
+        assert_eq!(err.notation, Notation::Smiles);
+    }
+
+    #[test]
+    fn test_parse_smarts_error_is_stamped_smarts() {
+        let err = parse_smarts("[C").expect_err("an unclosed bracket must be refused");
+        assert_eq!(err.notation, Notation::Smarts);
     }
 }

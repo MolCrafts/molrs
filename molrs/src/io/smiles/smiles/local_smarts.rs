@@ -3,7 +3,7 @@
 use std::collections::{HashMap, VecDeque};
 
 use crate::io::smiles::chem::ast::*;
-use crate::io::smiles::error::{SmilesError, SmilesErrorKind};
+use crate::io::smiles::error::{Notation, SmilesError, SmilesErrorKind};
 use crate::io::smiles::smiles::options::{LocalSmartsOptions, NeighborStyle};
 use crate::io::smiles::smiles::write::write_smarts;
 use crate::perceive::rings::find_rings;
@@ -75,7 +75,12 @@ pub fn write_local_smarts(
 }
 
 fn emit_err(msg: impl Into<String>) -> SmilesError {
-    SmilesError::new(SmilesErrorKind::Emit(msg.into()), Span::new(0, 0), "")
+    SmilesError::new(
+        SmilesErrorKind::Emit(msg.into()),
+        Span::new(0, 0),
+        "",
+        Notation::Smarts,
+    )
 }
 
 fn is_h(mol: &Atomistic, id: AtomId) -> bool {
