@@ -67,7 +67,7 @@ not enable streaming, filesystem access, or BLAS. For a smaller build, disable
 defaults and select the modules you need:
 
 ```toml
-molcrafts-molrs = { version = "0.14", default-features = false, features = ["io", "smiles", "conformer"] }
+molcrafts-molrs = { version = "0.15", default-features = false, features = ["io", "smiles", "conformer"] }
 ```
 
 | Environment | Install | Import / use |

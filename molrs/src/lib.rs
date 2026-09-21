@@ -5,7 +5,7 @@
 //! `ff`, `conformer`, and `signal`.
 //!
 //! ```toml
-//! molcrafts-molrs = { version = "0.14", default-features = false, features = ["io", "smiles"] }
+//! molcrafts-molrs = { version = "0.15", default-features = false, features = ["io", "smiles"] }
 //! ```
 //!
 //! Then:

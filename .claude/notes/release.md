@@ -117,3 +117,67 @@ longer holds.
 4. molpy — `.pre-commit/check_molrs_pin_on_pypi.py` self-skips while the path
    source is active; it starts gating once the source is dropped and the wheel
    is on PyPI.
+
+## v0.15.0 (releasing — 2026-09-21)
+
+Prepared on molrs `feat/cgsmiles` (over `origin/master`, v0.14). The chain
+`cgsmiles-01a` … `cgsmiles-02d` landed as five link commits plus one batch
+commit; this section records what shipped, not what was noticed (the deferred
+items live under the `cgsmiles-*` topics in `notes.md`).
+
+- CGsmiles reader: `io::smiles::parse_cgsmiles` → `CGSmilesIR` (`levels`,
+  `fragments`, `pairs`, resolved at parse time), `CGSmilesIR::to_atomistic`
+  (per-atom `frag_id`) and `CGSmilesIR::to_fragment` (one template per
+  atomistic definition); Python `molrs.io.CGSmilesIR` with the seven frozen
+  record classes (`CGGraph`, `CGNode`, `CGEdge`, `CGFragmentDef`,
+  `ResolvedPair`, `PairEnd`, `BondingDescriptor`). No `CGSmilesReader` in
+  molrs: the reader-shaped API is molpy's.
+- Fragment SMILES dialect: `parse_fragment_smiles`, `fragment_to_atomistic`,
+  `write_fragment_smiles`; `BondingDescriptor` / `DescriptorKind` on the AST.
+- `core::Fragment` — the third `MolGraph` leaf — with `Port`, `PortId`,
+  `PortKind` (`$ < > !`), per-atom `frag_id`, `inherit_frag_ids`, Frame round
+  trip; Python `molrs.Fragment`, `views.Port` (`anchor` / `handle_atom`),
+  `views.Fragment` (`def_bond` / `def_port` through the native writers).
+- `conformer::ElementGraph`; `Conformer::generate<M: ElementGraph>` returns the
+  leaf type it was given (`Atomistic` or `Fragment`); Python
+  `Conformer.generate` accepts either.
+- `Atomistic` / `CoarseGrain::try_from_molgraph` resolve their standard kinds
+  by name with an arity check (`MolGraph::try_register_kind`) instead of the
+  dense-id fallback that aliased a foreign first-registered kind onto `bonds`.
+- **Breaking (Rust):** `SmilesError::new` takes a fourth `notation` argument
+  and `SmilesError` carries `.notation`; `SmilesErrorKind` gains the
+  descriptor and `Cg*` variants (exhaustive matches must be extended);
+  `core::system::mapping` (`CGMapping`, `WeightScheme`) is deleted — zero
+  consumers in molrs or any sibling repo.
+- **Breaking (Python stubs only):** 17 stub declarations that mirrored no
+  `_lib` class (`Parameters`, `Type`, the `*Type` / `*Style` view classes,
+  `ChargeModel`, `Compute`) are removed from `_lib.pyi`;
+  `tests/test_stub_parity.py` now guards class-name parity.
+- Re-deferred: the wasm `NeighborQuery` symmetry gate (`notes.md` § Known
+  asymmetries, promised "to 0.15" on 2026-08-25) does not ship in 0.15.0 —
+  wasm still has no consumer (facade-first), and deletion stays ruled out
+  because `compute/hbond/detect.rs`, `compute/rdf/mod.rs`,
+  `compute/dynamics/van_hove.rs` and `ff/potential/soft.rs` consume the engine
+  type. Carried to the next minor.
+
+Gates measured at the tree to be tagged (`docs/releasing.md:9-64`):
+
+| Gate | Command | Result |
+|---|---|---|
+| molrs lib + doctests | `cargo test -p molcrafts-molrs --features full,filesystem,stream` | 2430 lib passed; 80 doctests passed, 11 ignored |
+| molrs-ffi / molrs-cxxapi | `cargo test --manifest-path …` | 17 + 1 passed; 11 passed |
+| fmt × 6, clippy × 5, rustdoc `-D warnings` | per `releasing.md` | all green |
+| `cargo package` | `--manifest-path molrs/Cargo.toml` | packaged; `--list` inspected |
+| molrs-python | `tox -e py` | 616 passed |
+| molrs-wasm | `wasm-pack build` + `wasm-pack test --node` | build ok; 39 node tests passed |
+| molrs-capi | `cmake` + `ctest` | configured, built; 1/1 ctest passed |
+
+1. molrs — open the PR `feat/cgsmiles` → `master`, merge green, tag
+   `v0.15.0` (must equal `Cargo.toml:12`), push the tag; Publish does
+   crates.io, npm, PyPI (incl. Pyodide) and the C API assets.
+2. molpy — after Publish, move `pyproject.toml:34` to
+   `molcrafts-molrs>=0.15.0,<0.16` in the `backmap-` chain.
+3. molpack — `molpack/Cargo.toml:26`, `molpack/python/Cargo.toml:22,28` pin
+   `^0.14` on **path** dependencies into this checkout and hard-fail from the
+   bump commit onward; move them to `^0.15` and rebuild against the 0.15
+   `_ffi_abi_token` handshake line.
