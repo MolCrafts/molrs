@@ -3,12 +3,16 @@
 //! [`SmilesIR`] is a pure syntax tree that captures the notation faithfully
 //! without committing to atomistic or coarse-grained semantics.
 //! SMARTS is modelled as a superset: [`AtomSpec::Query`] and [`BondQuery`]
-//! extend the SMILES-only variants without breaking existing consumers.
+//! extend the SMILES-only variants without breaking existing consumers. The
+//! fragment dialect is a second extension: [`AtomNode::descriptors`] carries
+//! the `CGsmiles` / `BigSMILES` bonding descriptors and is empty for the two
+//! plain dialects.
 //!
-//! This module lives under `chem/` because the AST is the shared vocabulary
-//! for both the SMILES and SMARTS systems. Language-specific processing
-//! (parsing entry points, validation, graph conversion, matching) lives in
-//! the `smiles/` and `smarts/` sibling modules.
+//! This module lives under `chem/` because the AST is the shared vocabulary of
+//! all three dialects. Language-specific processing — parsing entry points,
+//! validation and graph conversion — lives in the sibling `smiles/` module.
+//! (SMARTS *matching* is a separate engine, [`crate::perceive::smarts`], with
+//! its own parser; it does not consume this AST.)
 
 // ---------------------------------------------------------------------------
 // Span
@@ -91,8 +95,21 @@ pub enum ChainElement {
 /// An atom node carrying its specification and source span.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AtomNode {
+    /// What the notation wrote at this position: an organic-subset symbol, a
+    /// bracket atom, `*`, or a SMARTS query expression.
     pub spec: AtomSpec,
+    /// Byte range of the atom's own text in the parsed input, used for error
+    /// carets. Descriptor brackets written next to it are *not* covered.
     pub span: Span,
+    /// Bonding descriptors anchored on this atom, in written order.
+    ///
+    /// A descriptor binds to the node written immediately before it — or, when
+    /// it is written before any atom of its chain, to that chain's head atom —
+    /// so this vector holds the descriptors the notation attached to *this*
+    /// atom, in the order they appear in the text: `[>][$1]C` gives the carbon
+    /// a `>` first and a `$` labelled `1` second. Empty for plain SMILES and
+    /// SMARTS, which have no such notation.
+    pub descriptors: Vec<BondingDescriptor>,
 }
 
 /// Atom specification — the extensibility point for SMARTS.
@@ -151,6 +168,16 @@ pub enum BondKind {
     /// `#` triple bond.
     Triple,
     /// `$` quadruple bond.
+    ///
+    /// The `$` glyph is overloaded with [`DescriptorKind::Symmetric`] and is
+    /// disambiguated only by bracket position: outside a bracket it is this
+    /// bond kind (`C$C` is two carbons joined by a quadruple bond), inside one
+    /// it is a bonding descriptor (`C[$]C`). A bond symbol written immediately
+    /// *before* a descriptor bracket annotates that descriptor instead of
+    /// joining two atoms, so in the fragment dialect `C$[$]C` is two carbons
+    /// with an unannotated bond between them and a `$` descriptor of order
+    /// `Quadruple` on the first — the quadruple bond is the one that
+    /// descriptor's future pairing will create, not one present in the string.
     Quadruple,
     /// `:` aromatic bond.
     Aromatic,
@@ -165,12 +192,96 @@ pub enum BondKind {
 }
 
 /// SMARTS bond query with logical operators.
+///
+/// A SMILES bond is one concrete kind; a SMARTS bond may be a logical
+/// combination of kinds, which is why every bond slot in the AST holds this
+/// rather than a bare [`BondKind`]. SMILES and fragment inputs only ever
+/// produce [`BondQuery::Kind`].
 #[derive(Debug, Clone, PartialEq)]
 pub enum BondQuery {
+    /// One concrete bond kind — the only variant a non-SMARTS parse produces.
     Kind(BondKind),
+    /// `!expr` — matches any bond the inner query does not.
     Not(Box<BondQuery>),
+    /// `expr & expr` — matches a bond satisfying every listed query.
     And(Vec<BondQuery>),
+    /// `expr , expr` — matches a bond satisfying at least one listed query.
     Or(Vec<BondQuery>),
+}
+
+// ---------------------------------------------------------------------------
+// Bonding descriptors (CGsmiles / BigSMILES)
+// ---------------------------------------------------------------------------
+
+/// A bonding descriptor anchored on an atom: `[$]`, `[<]`, `[>]`, `[!]`.
+///
+/// A descriptor marks a site where the fragment can be joined to another
+/// fragment: `[$]COC[$]` is a C-O-C ether unit offering one joining site on
+/// each of its carbons. It is notation of the `CGsmiles` / `BigSMILES` fragment dialect,
+/// not of plain SMILES, so plain-SMILES nodes carry none. The descriptor is
+/// only *data* here — matching two descriptors up and creating the bond
+/// between their atoms is a later step, outside this module.
+///
+/// References: cgsmiles.readthedocs.io (fragments page); Lin, T.-S. et al.,
+/// *BigSMILES: A Structurally-Based Line Notation for Describing
+/// Macromolecules*, ACS Cent. Sci. **5**, 1523–1531 (2019).
+/// DOI: 10.1021/acscentsci.9b00476
+#[derive(Debug, Clone, PartialEq)]
+pub struct BondingDescriptor {
+    /// Which operator was written, and hence which descriptors it may pair with.
+    pub kind: DescriptorKind,
+    /// Label distinguishing descriptor classes of the same kind, `""` when the
+    /// descriptor is unnamed (`[$]` vs `[$a]`).
+    ///
+    /// `BigSMILES` restricts labels to positive integers; `CGsmiles` widens them
+    /// to alphanumerics, which is what this field holds.
+    pub label: String,
+    /// Bond order written next to the bracket, outside it (`CC=[$]`).
+    ///
+    /// `None` means no bond symbol was written next to the bracket; `Some(k)`
+    /// means `k` was written. The effective order of the bond formed when two
+    /// descriptors pair is [`BondKind::Single`] when this is `None`.
+    ///
+    /// The distinction between `None` and `Some(BondKind::Single)` is not
+    /// cosmetic, which is why the field is an `Option` rather than a plain
+    /// [`BondKind`]. SMILES promotes a bond between two aromatic atoms to
+    /// [`BondKind::Aromatic`] when — and only when — the notation wrote no
+    /// bond symbol at all (the Daylight rule: `c1ccccc1` is a ring of aromatic
+    /// bonds, while the explicit `-` of biphenyl's `c1ccccc1-c1ccccc1` stays
+    /// single). A descriptor that will one day form a bond between two
+    /// aromatic atoms therefore has to keep "nothing was written" and "`-` was
+    /// written" apart, because they promote differently.
+    pub order: Option<BondKind>,
+}
+
+/// Which bonding-descriptor operator an atom carries.
+///
+/// Variants are named for the pairing role, not for the glyph, matching the
+/// in-file precedent of [`BondKind`] and [`Chirality`]. Pairing itself is not
+/// performed here; these are the rules the pairing step enforces.
+///
+/// References: cgsmiles.readthedocs.io (fragments page); Lin, T.-S. et al.,
+/// *BigSMILES: A Structurally-Based Line Notation for Describing
+/// Macromolecules*, ACS Cent. Sci. **5**, 1523–1531 (2019).
+/// DOI: 10.1021/acscentsci.9b00476
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DescriptorKind {
+    /// `$` — the AA-type (self-complementary) operator: a `$` bonds only to
+    /// another `$` carrying the same label, so one descriptor class describes
+    /// both ends of the junction (`[$]COC[$]` polymerises with itself).
+    Symmetric,
+    /// `<` — the left half of the AB-type (two-role) operator pair: a `<`
+    /// bonds only to a [`DescriptorKind::Right`] of the same label, never to
+    /// another `<`.
+    Left,
+    /// `>` — the right half of the AB-type (two-role) operator pair: a `>`
+    /// bonds only to a [`DescriptorKind::Left`] of the same label, never to
+    /// another `>`.
+    Right,
+    /// `!` — the `CGsmiles` squash operator: instead of forming a bond it
+    /// merges (squashes) the two nodes it joins into one. Only the notation is
+    /// modelled here; no stage of this module performs the merge.
+    Shared,
 }
 
 // ---------------------------------------------------------------------------

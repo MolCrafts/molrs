@@ -15,16 +15,16 @@ pub mod to_atomistic;
 pub mod validate;
 pub mod write;
 
-pub use crate::io::smiles::parser::parse_smiles;
+pub use crate::io::smiles::parser::{parse_fragment_smiles, parse_smiles};
 pub use from_atomistic::{from_atomistic, write_atomistic_smiles};
 pub use local_smarts::{local_smarts_ir, write_local_smarts};
 pub use options::{
     AromaticEmit, HydrogenEmit, LocalSmartsOptions, MultiComponentEmit, NeighborStyle,
     SmilesEmitOptions,
 };
-pub use to_atomistic::to_atomistic;
+pub use to_atomistic::{fragment_to_atomistic, to_atomistic};
 pub use validate::validate_smiles;
-pub use write::{write_smarts, write_smiles};
+pub use write::{write_fragment_smiles, write_smarts, write_smiles};
 
 /// The element symbol a SMILES atom symbol denotes.
 ///

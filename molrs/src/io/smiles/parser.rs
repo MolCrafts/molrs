@@ -1,4 +1,5 @@
-//! Recursive-descent parser for SMILES and SMARTS notation.
+//! Recursive-descent parser for the three line-notation dialects: SMILES,
+//! SMARTS, and the SMILES fragment body.
 //!
 //! The parser directly mirrors the LL(1) grammar:
 //!
@@ -15,19 +16,31 @@
 //! bond         → '-' | '=' | '#' | '$' | '/' | '\' | ':' | '~' | '@'
 //! rnum         → digit | '%' digit digit
 //! ```
+//!
+//! The fragment dialect adds one production and two placements for it,
+//! accepted only by [`parse_fragment_smiles`]:
+//!
+//! ```text
+//! descriptor   → '[' ('$' | '<' | '>' | '!') label? ']'
+//! label        → alnum*
+//! leading_run  → descriptor+ bond?     // before the chain's first atom
+//! anchored_run → bond? descriptor+     // anywhere after it
+//! ```
+//!
+//! A descriptor is not a node: it binds to the atom written before it (or, at
+//! the start of a chain, to that chain's head), so it is consumed at the
+//! `atom` call sites and folded into [`AtomNode::descriptors`] rather than
+//! appearing in the tree on its own. The optional `bond` in each run is the
+//! order that descriptor annotates, and it takes the only side available: in
+//! a leading run there is no atom yet to write it in front of, so it follows
+//! the bracket (`[$]=CCC`); everywhere else it precedes it (`CC=[$]`), and a
+//! bond written after the bracket is an ordinary bond to the next atom.
 
+use crate::io::smiles::chem::Dialect;
 use crate::io::smiles::chem::ast::*;
 use crate::io::smiles::chem::scanner::Scanner;
+use crate::io::smiles::chem::validation::validate_descriptor;
 use crate::io::smiles::error::{SmilesError, SmilesErrorKind};
-
-/// Controls which grammar extensions are enabled.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ParserMode {
-    /// Standard SMILES — only concrete atoms and bonds.
-    Smiles,
-    /// SMARTS — adds query primitives, logical operators, wildcard/ring bonds.
-    Smarts,
-}
 
 /// Maximum recursion depth for SMARTS `$(...)` expressions.
 const MAX_RECURSION_DEPTH: usize = 16;
@@ -39,14 +52,104 @@ const ORGANIC_SUBSET: &[&str] = &[
     "B", "C", "N", "O", "P", "S", "F", "Cl", "Br", "I", "At", "Ts", "b", "c", "n", "o", "p", "s",
 ];
 
-/// Parse a SMILES string into an AST.
+/// Parse a plain SMILES string into the shared IR.
+///
+/// Strict by design: only concrete notation — atoms, bonds, branches and ring
+/// closures — is accepted. SMARTS query brackets and the fragment dialect's
+/// bonding descriptors are refused rather than reinterpreted. Parsing is
+/// syntax only: a bracket atom's element symbol and the pairing of ring
+/// digits are checked afterwards, by
+/// [`validate_smiles`](crate::io::smiles::validate_smiles).
+///
+/// # Errors
+///
+/// Returns a [`SmilesError`] for anything the plain grammar does not accept:
+/// [`SmilesErrorKind::EmptyInput`], [`SmilesErrorKind::UnexpectedChar`],
+/// [`SmilesErrorKind::UnexpectedEnd`], [`SmilesErrorKind::UnclosedBracket`],
+/// [`SmilesErrorKind::UnclosedBranch`],
+/// [`SmilesErrorKind::TrailingCharacters`],
+/// [`SmilesErrorKind::InvalidElement`] for a letter outside the organic
+/// subset, and [`SmilesErrorKind::DescriptorInPlainSmiles`] for a bonding
+/// descriptor, whose message points at [`parse_fragment_smiles`].
 pub fn parse_smiles(input: &str) -> Result<SmilesIR, SmilesError> {
-    Parser::new(input, ParserMode::Smiles).parse_molecule()
+    Parser::new(input, Dialect::Smiles).parse_molecule()
 }
 
-/// Parse a SMARTS string into an AST.
+/// Parse a SMARTS pattern into the shared IR.
+///
+/// This yields SMARTS *syntax* as an IR, for callers that want the pattern as
+/// a tree. It is not the frontend of the substructure-matching engine in
+/// [`crate::perceive::smarts`], which has a parser of its own and never
+/// consumes this one.
+///
+/// # Errors
+///
+/// Returns a [`SmilesError`] for anything the SMARTS grammar does not accept:
+/// [`SmilesErrorKind::EmptyInput`], [`SmilesErrorKind::UnexpectedChar`],
+/// [`SmilesErrorKind::UnexpectedEnd`], [`SmilesErrorKind::UnclosedBracket`],
+/// [`SmilesErrorKind::UnclosedBranch`],
+/// [`SmilesErrorKind::TrailingCharacters`],
+/// [`SmilesErrorKind::InvalidQueryPrimitive`] for an unrecognised query atom,
+/// [`SmilesErrorKind::UnclosedRecursive`] for a `$(` with no `)`, and
+/// [`SmilesErrorKind::RecursionLimit`] when `$(...)` nests deeper than the
+/// parser's limit.
 pub fn parse_smarts(input: &str) -> Result<SmilesIR, SmilesError> {
-    Parser::new(input, ParserMode::Smarts).parse_molecule()
+    Parser::new(input, Dialect::Smarts).parse_molecule()
+}
+
+/// Parse a SMILES fragment body with `CGsmiles` / `BigSMILES` bonding
+/// descriptors into an AST.
+///
+/// A *fragment body* is one SMILES string standing for a piece of a larger
+/// molecule — a monomer, a bead, a building block — with the sites at which it
+/// will later be joined to other pieces marked by bonding descriptors. The
+/// dialect is therefore plain SMILES plus the descriptor brackets `[$]`,
+/// `[<]`, `[>]` and `[!]`, each optionally labelled (`[$a]`) and optionally
+/// carrying a bond order written outside the bracket (`CC=[$]`).
+///
+/// [`parse_smiles`] is the plain sibling of this function and stays strict: it
+/// refuses descriptor brackets outright, so no `.smi` line can silently lose
+/// one.
+///
+/// # Where a descriptor lands
+///
+/// A descriptor is not a node of the chain; it binds to a node and is stored
+/// in [`AtomNode::descriptors`](crate::io::smiles::AtomNode). The atom it
+/// binds to is the one written immediately before it, or — when it is written
+/// before any atom of its chain — that chain's head atom, so `[$]COC[$]`
+/// carries a `$` on the first carbon and another on the last. A `(` is not a
+/// node either, so a descriptor just inside a branch binds to the atom before
+/// the `(`: `N([>])C` puts `>` on the nitrogen. Several descriptors may sit on
+/// one atom and are kept in written order: `[>][$1]COC[<]` gives the first
+/// carbon the list `[>, $1]`. No valence check is made.
+///
+/// # Where the bond order is read from
+///
+/// The order a descriptor annotates is written next to its bracket, not inside
+/// it, and which side counts depends on whether any atom of the chain has been
+/// parsed yet. Before the first atom there is nothing to the left, so a bond
+/// symbol *after* the bracket is the descriptor's order: `[$]=CCC` is a
+/// double-bond-annotated `$` on the first carbon over an otherwise single
+/// C-C-C chain. Once an atom exists the symbol before the bracket is the
+/// order and a symbol after it is an ordinary bond to the next atom, so
+/// `CC=[$]` is a double-annotated `$` while `C[$]=CC` is an unannotated `$` on
+/// the first carbon plus a double C=C bond. The leading form is strictly the
+/// less expressive of the two — it cannot spell `C[$]=CC` — which is why
+/// [`write_fragment_smiles`](crate::io::smiles::write_fragment_smiles) emits
+/// the trailing form only.
+///
+/// # Errors
+///
+/// Returns a [`SmilesError`] for any syntax the dialect does not accept,
+/// including [`SmilesErrorKind::DanglingDescriptor`] for a descriptor with no
+/// atom to bind to, [`SmilesErrorKind::BondInsideDescriptor`] for the
+/// `BigSMILES` in-bracket order (`[<=1]`),
+/// [`SmilesErrorKind::InvalidDescriptorLabel`],
+/// [`SmilesErrorKind::InvalidDescriptorOrder`], and
+/// [`SmilesErrorKind::AtomAnnotationUnsupported`] for a `CGsmiles` atom-level
+/// annotation (`[C;0.5]`).
+pub fn parse_fragment_smiles(input: &str) -> Result<SmilesIR, SmilesError> {
+    Parser::new(input, Dialect::FragmentSmiles).parse_molecule()
 }
 
 // ---------------------------------------------------------------------------
@@ -55,15 +158,15 @@ pub fn parse_smarts(input: &str) -> Result<SmilesIR, SmilesError> {
 
 struct Parser<'a> {
     scanner: Scanner<'a>,
-    mode: ParserMode,
+    dialect: Dialect,
     depth: usize,
 }
 
 impl<'a> Parser<'a> {
-    fn new(input: &'a str, mode: ParserMode) -> Self {
+    fn new(input: &'a str, dialect: Dialect) -> Self {
         Self {
             scanner: Scanner::new(input),
-            mode,
+            dialect,
             depth: 0,
         }
     }
@@ -91,6 +194,160 @@ impl<'a> Parser<'a> {
     /// True if `ch` can start an atom.
     fn is_atom_start(ch: char) -> bool {
         ch == '[' || ch == '*' || ch.is_ascii_alphabetic()
+    }
+
+    /// The plain bond kind a parsed bond slot holds, if it holds one.
+    ///
+    /// A SMARTS bond query (`!-`, `-,=`) has no single kind; it also never
+    /// annotates a descriptor, since the SMARTS dialect has no descriptors.
+    fn bond_query_kind(bond: Option<&BondQuery>) -> Option<BondKind> {
+        match bond {
+            Some(BondQuery::Kind(kind)) => Some(*kind),
+            _ => None,
+        }
+    }
+
+    // -- bonding descriptors (fragment dialect) ------------------------------
+
+    /// True when the cursor sits on a bonding-descriptor bracket: `[`
+    /// followed by one of `$ < > !`.
+    ///
+    /// The lookahead itself runs in every dialect — what to do with it is
+    /// [`Parser::take_descriptor_run`]'s decision. Running it in
+    /// `Dialect::Smiles` too is what lets plain SMILES name the fragment entry
+    /// point, instead of dying on an unexpected `$` inside the bracket parser.
+    fn at_descriptor(&self) -> bool {
+        self.scanner.peek() == Some('[')
+            && matches!(self.scanner.peek_next(), Some('$' | '<' | '>' | '!'))
+    }
+
+    /// Consume the run of descriptor brackets at the cursor, if one starts
+    /// there.
+    ///
+    /// Each descriptor comes back with the span of its bracket and with no
+    /// order yet: the order is written *outside* the bracket, and whether the
+    /// symbol next to the run is one depends on the call site, so
+    /// [`Parser::finish_descriptor_run`] applies and validates it.
+    ///
+    /// `Ok(None)` means there is nothing here to consume — either the cursor
+    /// is not on a descriptor bracket, or the dialect is SMARTS, where
+    /// `[$(...)]` is recursive SMARTS and `[!C]` is negation and both belong
+    /// to the bracket-query parser.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SmilesErrorKind::DescriptorInPlainSmiles`] in
+    /// `Dialect::Smiles`, which has no descriptor notation.
+    fn take_descriptor_run(
+        &mut self,
+    ) -> Result<Option<Vec<(BondingDescriptor, Span)>>, SmilesError> {
+        if !self.at_descriptor() {
+            return Ok(None);
+        }
+        match self.dialect {
+            Dialect::Smarts => Ok(None),
+            Dialect::Smiles => Err(self.error(SmilesErrorKind::DescriptorInPlainSmiles)),
+            Dialect::FragmentSmiles => {
+                let mut run = vec![self.parse_descriptor()?];
+                while self.at_descriptor() {
+                    run.push(self.parse_descriptor()?);
+                }
+                Ok(Some(run))
+            }
+        }
+    }
+
+    /// Anchor `order` on the run's first descriptor and validate the run.
+    ///
+    /// Only the first descriptor takes the order: the bond symbol is written
+    /// adjacent to one bracket, and in a run (`[>][$1]`) that is the first.
+    /// This is the single construction site of every [`BondingDescriptor`] the
+    /// parser emits, so `validate_descriptor` runs here and nowhere else.
+    ///
+    /// # Errors
+    ///
+    /// Returns whatever `validate_descriptor` rejects: an invalid label or an
+    /// order no created bond can take.
+    fn finish_descriptor_run(
+        &self,
+        run: Vec<(BondingDescriptor, Span)>,
+        order: Option<BondKind>,
+    ) -> Result<Vec<BondingDescriptor>, SmilesError> {
+        let mut descriptors = Vec::with_capacity(run.len());
+        for (index, (mut desc, span)) in run.into_iter().enumerate() {
+            if index == 0 {
+                desc.order = order;
+            }
+            validate_descriptor(&desc, span, self.scanner.input())?;
+            descriptors.push(desc);
+        }
+        Ok(descriptors)
+    }
+
+    /// Parse one descriptor bracket: `[` glyph label? `]`.
+    fn parse_descriptor(&mut self) -> Result<(BondingDescriptor, Span), SmilesError> {
+        let start = self.scanner.pos();
+        self.scanner.expect('[')?;
+
+        let kind = match self.scanner.advance() {
+            Some('$') => DescriptorKind::Symmetric,
+            Some('<') => DescriptorKind::Left,
+            Some('>') => DescriptorKind::Right,
+            Some('!') => DescriptorKind::Shared,
+            Some(c) => return Err(self.error(SmilesErrorKind::UnexpectedChar(c))),
+            None => return Err(self.error(SmilesErrorKind::UnexpectedEnd)),
+        };
+
+        let label_start = self.scanner.pos();
+        loop {
+            match self.scanner.peek() {
+                Some(']') => break,
+                // The order is written outside the bracket (`CC=[$]`);
+                // accepting the `BigSMILES` in-bracket spelling `[<=1]` would
+                // make two notations mean one thing.
+                Some(c) if Self::is_bond_char(c) => {
+                    return Err(self.error(SmilesErrorKind::BondInsideDescriptor));
+                }
+                Some(_) => {
+                    self.scanner.advance();
+                }
+                None => {
+                    return Err(self.error_at(
+                        SmilesErrorKind::UnclosedBracket,
+                        self.scanner.span_from(start),
+                    ));
+                }
+            }
+        }
+        // The whole run up to `]` is the label; `validate_descriptor` decides
+        // whether it is one, so `[$a+]` names the bad label rather than the
+        // character.
+        let label = self.scanner.input()[label_start..self.scanner.pos()].to_owned();
+        self.scanner.advance(); // consume ']'
+
+        Ok((
+            BondingDescriptor {
+                kind,
+                label,
+                order: None,
+            },
+            self.scanner.span_from(start),
+        ))
+    }
+
+    /// The atom a mid-chain descriptor binds to: the most recent bonded atom,
+    /// else the chain head.
+    ///
+    /// `Branch` and `RingClosure` do not advance it — in `CC(=O)[<]` the `<`
+    /// belongs to the carbonyl carbon, not to the branch oxygen — mirroring
+    /// how the IR → graph walker tracks its current atom.
+    fn anchor<'c>(head: &'c mut AtomNode, tail: &'c mut [ChainElement]) -> &'c mut AtomNode {
+        for elem in tail.iter_mut().rev() {
+            if let ChainElement::BondedAtom { atom, .. } = elem {
+                return atom;
+            }
+        }
+        head
     }
 
     // -- molecule -----------------------------------------------------------
@@ -121,21 +378,105 @@ impl<'a> Parser<'a> {
 
     // -- chain --------------------------------------------------------------
 
+    /// Parse the descriptor run written before any atom of a chain (R4.2).
+    ///
+    /// Returns the descriptors that bind to the chain's head atom, empty when
+    /// the chain does not open with a run. No atom of the chain exists yet, so
+    /// a bond symbol *after* the bracket is the run's order (`[$]=CCC` is a
+    /// double-bonded `$` on the first carbon over a single C-C chain), not a
+    /// bond to the head — the mirror image of the mid-chain rule.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SmilesErrorKind::DanglingDescriptor`] when no atom follows the
+    /// run, plus whatever [`Parser::finish_descriptor_run`] rejects.
+    fn parse_leading_descriptors(&mut self) -> Result<Vec<BondingDescriptor>, SmilesError> {
+        let Some(run) = self.take_descriptor_run()? else {
+            return Ok(Vec::new());
+        };
+        let order = if self.scanner.peek().is_some_and(Self::is_bond_char) {
+            self.parse_bond_kind()?
+        } else {
+            None
+        };
+        let descriptors = self.finish_descriptor_run(run, order)?;
+        if !self.scanner.peek().is_some_and(Self::is_atom_start) {
+            return Err(self.error(SmilesErrorKind::DanglingDescriptor));
+        }
+        Ok(descriptors)
+    }
+
+    /// Consume a mid-chain descriptor run, if one starts at the cursor, and
+    /// fold it onto the atom it binds to.
+    ///
+    /// `order` is the bond kind written *before* the run (`CC=[$]`, R4.4), or
+    /// `None` where no bond symbol preceded it. The returned flag says whether
+    /// a run was consumed, which is what tells the chain loop to go round again
+    /// instead of reading the cursor as a bond, a branch or an atom.
+    ///
+    /// # Errors
+    ///
+    /// Returns whatever [`Parser::take_descriptor_run`] and
+    /// [`Parser::finish_descriptor_run`] reject.
+    fn take_anchored_descriptors(
+        &mut self,
+        head: &mut AtomNode,
+        tail: &mut [ChainElement],
+        order: Option<BondKind>,
+    ) -> Result<bool, SmilesError> {
+        let Some(run) = self.take_descriptor_run()? else {
+            return Ok(false);
+        };
+        let descriptors = self.finish_descriptor_run(run, order)?;
+        Self::anchor(head, tail).descriptors.extend(descriptors);
+        Ok(true)
+    }
+
     fn parse_chain(&mut self) -> Result<Chain, SmilesError> {
-        let head = self.parse_atom()?;
+        // R4.2: descriptors written before any atom of this chain bind to its
+        // head atom.
+        let leading = self.parse_leading_descriptors()?;
+
+        let mut head = self.parse_atom()?;
+        head.descriptors = leading;
         let mut tail = Vec::new();
 
         loop {
+            // Mid-chain descriptor: any order was written before the bracket
+            // and is therefore consumed by the bond arm below, not here.
+            if self.take_anchored_descriptors(&mut head, &mut tail, None)? {
+                continue;
+            }
             match self.scanner.peek() {
-                Some('(') => tail.push(self.parse_branch()?),
+                Some('(') => {
+                    let (parent, element) = self.parse_branch()?;
+                    if let Some(element) = element {
+                        tail.push(element);
+                    }
+                    // `(` is not a node, so the branch's leading descriptors
+                    // belong to this chain's anchor — which a branch never
+                    // advances, so pushing first changes nothing.
+                    Self::anchor(&mut head, &mut tail)
+                        .descriptors
+                        .extend(parent);
+                }
                 Some(c) if c.is_ascii_digit() || c == '%' => {
                     tail.push(self.parse_ring_closure(None)?);
                 }
                 Some(c)
                     if Self::is_bond_char(c)
-                        || (self.mode == ParserMode::Smarts && Self::is_bond_char_smarts(c)) =>
+                        || (self.dialect == Dialect::Smarts && Self::is_bond_char_smarts(c)) =>
                 {
                     let bond = self.parse_bond()?;
+                    // A bond symbol immediately before a descriptor bracket is
+                    // that descriptor's order (`CC=[$]`, R4.4).
+                    if self.take_anchored_descriptors(
+                        &mut head,
+                        &mut tail,
+                        Self::bond_query_kind(bond.as_ref()),
+                    )? {
+                        continue;
+                    }
                     // After a bond: expect atom, ring closure, or (rare) another bond
                     match self.scanner.peek() {
                         Some(c) if c.is_ascii_digit() || c == '%' => {
@@ -163,19 +504,42 @@ impl<'a> Parser<'a> {
 
     // -- branch -------------------------------------------------------------
 
-    fn parse_branch(&mut self) -> Result<ChainElement, SmilesError> {
+    /// Parse a parenthesised branch.
+    ///
+    /// Returns the descriptors that belong to the **parent** chain's anchor,
+    /// and the branch element itself when the branch held anything besides
+    /// them. `(` is not a node, so a descriptor written straight after it
+    /// binds to the atom before the `(` (R4.2): `N([>])C` puts `>` on the
+    /// nitrogen and leaves no branch element at all, while `C([>]N)C` puts it
+    /// on the first carbon and still branches to N. An empty branch `C()` is
+    /// the error it has always been.
+    fn parse_branch(
+        &mut self,
+    ) -> Result<(Vec<BondingDescriptor>, Option<ChainElement>), SmilesError> {
         let start = self.scanner.pos();
         self.scanner.expect('(')?;
 
         // Optional bond at the start of a branch.
-        let bond = if self.scanner.peek().is_some_and(|c| {
+        let mut bond = if self.scanner.peek().is_some_and(|c| {
             Self::is_bond_char(c)
-                || (self.mode == ParserMode::Smarts && Self::is_bond_char_smarts(c))
+                || (self.dialect == Dialect::Smarts && Self::is_bond_char_smarts(c))
         }) {
             self.parse_bond()?
         } else {
             None
         };
+
+        let mut parent = Vec::new();
+        if let Some(run) = self.take_descriptor_run()? {
+            // That opening bond annotates the descriptor, not the branch:
+            // `C(=[>])C` is a double-bonded `>` on the first carbon.
+            parent = self.finish_descriptor_run(run, Self::bond_query_kind(bond.as_ref()))?;
+            bond = None;
+            if self.scanner.peek() == Some(')') {
+                self.scanner.advance(); // consume ')'
+                return Ok((parent, None));
+            }
+        }
 
         let chain = self.parse_chain()?;
 
@@ -187,11 +551,14 @@ impl<'a> Parser<'a> {
         }
         self.scanner.advance(); // consume ')'
 
-        Ok(ChainElement::Branch {
-            bond,
-            chain,
-            span: self.scanner.span_from(start),
-        })
+        Ok((
+            parent,
+            Some(ChainElement::Branch {
+                bond,
+                chain,
+                span: self.scanner.span_from(start),
+            }),
+        ))
     }
 
     // -- ring closure -------------------------------------------------------
@@ -239,6 +606,7 @@ impl<'a> Parser<'a> {
                 Ok(AtomNode {
                     spec: AtomSpec::Wildcard,
                     span: self.scanner.span_from(start),
+                    descriptors: Vec::new(),
                 })
             }
             Some(c) if c.is_ascii_alphabetic() => self.parse_organic_atom(start),
@@ -263,6 +631,7 @@ impl<'a> Parser<'a> {
                         aromatic,
                     },
                     span: self.scanner.span_from(start),
+                    descriptors: Vec::new(),
                 });
             }
         }
@@ -277,6 +646,7 @@ impl<'a> Parser<'a> {
                     aromatic,
                 },
                 span: self.scanner.span_from(start),
+                descriptors: Vec::new(),
             });
         }
 
@@ -289,7 +659,7 @@ impl<'a> Parser<'a> {
     fn parse_bracket_atom(&mut self, start: usize) -> Result<AtomNode, SmilesError> {
         self.scanner.expect('[')?;
 
-        if self.mode == ParserMode::Smarts {
+        if self.dialect == Dialect::Smarts {
             return self.parse_bracket_atom_smarts(start);
         }
 
@@ -302,6 +672,23 @@ impl<'a> Parser<'a> {
         let atom_class = self.parse_atom_class()?;
 
         if self.scanner.peek() != Some(']') {
+            // `CGsmiles` hangs atom-level annotations off a `;` here — weights
+            // `[C;0.5]`, chirality `[C;1;S]`, wildcard overloading
+            // `[*;s=C,0]`. The fragment dialect does not support them, and
+            // this parser is the one place that has already lexed the bracket,
+            // so it names the feature rather than claiming a missing `]`.
+            if self.dialect == Dialect::FragmentSmiles && self.scanner.peek() == Some(';') {
+                self.scanner.advance(); // consume ';'
+                let text_start = self.scanner.pos();
+                while self.scanner.peek().is_some_and(|c| c != ']') {
+                    self.scanner.advance();
+                }
+                let text = self.scanner.input()[text_start..self.scanner.pos()].to_owned();
+                return Err(self.error_at(
+                    SmilesErrorKind::AtomAnnotationUnsupported(text),
+                    self.scanner.span_from(start),
+                ));
+            }
             return Err(self.error_at(
                 SmilesErrorKind::UnclosedBracket,
                 self.scanner.span_from(start),
@@ -319,6 +706,7 @@ impl<'a> Parser<'a> {
                 atom_class,
             },
             span: self.scanner.span_from(start),
+            descriptors: Vec::new(),
         })
     }
 
@@ -473,11 +861,11 @@ impl<'a> Parser<'a> {
                 self.scanner.advance();
                 Ok(Some(BondKind::Down))
             }
-            Some('~') if self.mode == ParserMode::Smarts => {
+            Some('~') if self.dialect == Dialect::Smarts => {
                 self.scanner.advance();
                 Ok(Some(BondKind::Any))
             }
-            Some('@') if self.mode == ParserMode::Smarts => {
+            Some('@') if self.dialect == Dialect::Smarts => {
                 self.scanner.advance();
                 Ok(Some(BondKind::Ring))
             }
@@ -490,7 +878,7 @@ impl<'a> Parser<'a> {
     /// represented faithfully; SMILES inputs always yield
     /// `Some(BondQuery::Kind(_))` or `None`.
     fn parse_bond(&mut self) -> Result<Option<BondQuery>, SmilesError> {
-        if self.mode == ParserMode::Smarts {
+        if self.dialect == Dialect::Smarts {
             self.parse_bond_or()
         } else {
             Ok(self.parse_bond_kind()?.map(BondQuery::Kind))
@@ -574,6 +962,7 @@ impl<'a> Parser<'a> {
         Ok(AtomNode {
             spec,
             span: self.scanner.span_from(start),
+            descriptors: Vec::new(),
         })
     }
 
@@ -941,6 +1330,7 @@ impl<'a> Parser<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::io::smiles::chem::test_support::atom_nodes;
 
     // -- helpers ------------------------------------------------------------
 
@@ -1354,5 +1744,381 @@ mod tests {
             }
             _ => panic!("expected Recursive"),
         }
+    }
+
+    // -- fragment dialect: helpers ------------------------------------------
+
+    fn fragment(input: &str) -> SmilesIR {
+        parse_fragment_smiles(input)
+            .unwrap_or_else(|e| panic!("parse_fragment_smiles({input:?}) failed: {e}"))
+    }
+
+    fn descriptor(kind: DescriptorKind, label: &str, order: Option<BondKind>) -> BondingDescriptor {
+        BondingDescriptor {
+            kind,
+            label: label.to_owned(),
+            order,
+        }
+    }
+
+    // -- fragment dialect: anchoring (R4.2 / R4.3) --------------------------
+
+    #[test]
+    fn test_fragment_symmetric_descriptors_anchor_on_first_and_last_atom() {
+        let mol = fragment("[$]COC[$]");
+        let nodes = atom_nodes(&mol);
+        assert_eq!(nodes.len(), 3);
+        let expected = vec![descriptor(DescriptorKind::Symmetric, "", None)];
+        assert_eq!(nodes[0].descriptors, expected);
+        assert!(nodes[1].descriptors.is_empty());
+        assert_eq!(nodes[2].descriptors, expected);
+    }
+
+    #[test]
+    fn test_fragment_directional_descriptors_anchor_on_chain_atoms() {
+        // head N, C, carbonyl C (the anchor the trailing `[<]` binds to), O.
+        let mol = fragment("[>]NCC(=O)[<]");
+        let nodes = atom_nodes(&mol);
+        assert_eq!(nodes.len(), 4);
+        assert_eq!(
+            nodes[0].descriptors,
+            vec![descriptor(DescriptorKind::Right, "", None)]
+        );
+        assert!(nodes[1].descriptors.is_empty());
+        assert_eq!(
+            nodes[2].descriptors,
+            vec![descriptor(DescriptorKind::Left, "", None)]
+        );
+        assert!(nodes[3].descriptors.is_empty());
+    }
+
+    #[test]
+    fn test_fragment_descriptor_labels_are_kept_per_atom() {
+        let mol = fragment("Clc[$a]c[$b]");
+        let nodes = atom_nodes(&mol);
+        assert_eq!(nodes.len(), 3);
+        assert_eq!(
+            nodes[1].descriptors,
+            vec![descriptor(DescriptorKind::Symmetric, "a", None)]
+        );
+        assert_eq!(
+            nodes[2].descriptors,
+            vec![descriptor(DescriptorKind::Symmetric, "b", None)]
+        );
+    }
+
+    #[test]
+    fn test_fragment_multiple_descriptors_keep_written_order() {
+        let mol = fragment("[>][$1]COC[<]");
+        let nodes = atom_nodes(&mol);
+        assert_eq!(
+            nodes[0].descriptors,
+            vec![
+                descriptor(DescriptorKind::Right, "", None),
+                descriptor(DescriptorKind::Symmetric, "1", None),
+            ]
+        );
+    }
+
+    // -- fragment dialect: out-of-bracket bond order (R4.4) -----------------
+
+    #[test]
+    fn test_fragment_bond_before_descriptor_is_the_descriptor_order() {
+        let mol = fragment("CC=[$]");
+        let nodes = atom_nodes(&mol);
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(
+            nodes[1].descriptors,
+            vec![descriptor(
+                DescriptorKind::Symmetric,
+                "",
+                Some(BondKind::Double)
+            )]
+        );
+    }
+
+    #[test]
+    fn test_fragment_bond_after_leading_descriptor_is_the_descriptor_order() {
+        let mol = fragment("[$]=CCC");
+        let nodes = atom_nodes(&mol);
+        assert_eq!(nodes.len(), 3);
+        assert_eq!(
+            nodes[0].descriptors,
+            vec![descriptor(
+                DescriptorKind::Symmetric,
+                "",
+                Some(BondKind::Double)
+            )]
+        );
+    }
+
+    #[test]
+    fn test_fragment_leading_descriptor_order_leaves_chain_bonds_single() {
+        let mol = fragment("[$]=CCC");
+        for elem in &mol.components[0].tail {
+            match elem {
+                ChainElement::BondedAtom { bond, .. } => assert!(
+                    matches!(bond, None | Some(BondQuery::Kind(BondKind::Single))),
+                    "expected a single C-C bond, got {bond:?}"
+                ),
+                other => panic!("expected BondedAtom, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_fragment_midchain_descriptor_takes_no_order_from_following_bond() {
+        // Spec-local disambiguation: mid-chain, a bond after the bracket is an
+        // ordinary bond to the next atom, not the descriptor's order.
+        let mol = fragment("C[$]=CC");
+        let nodes = atom_nodes(&mol);
+        assert_eq!(
+            nodes[0].descriptors,
+            vec![descriptor(DescriptorKind::Symmetric, "", None)]
+        );
+    }
+
+    #[test]
+    fn test_fragment_midchain_bond_after_descriptor_bonds_the_next_atom() {
+        let mol = fragment("C[$]=CC");
+        match &mol.components[0].tail[0] {
+            ChainElement::BondedAtom { bond, .. } => {
+                assert_eq!(*bond, Some(BondQuery::Kind(BondKind::Double)));
+            }
+            other => panic!("expected BondedAtom, got {other:?}"),
+        }
+    }
+
+    // -- fragment dialect: branches -----------------------------------------
+
+    #[test]
+    fn test_fragment_branch_descriptor_anchors_on_the_parent_atom() {
+        let mol = fragment("N([>])C");
+        let nodes = atom_nodes(&mol);
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(
+            nodes[0].descriptors,
+            vec![descriptor(DescriptorKind::Right, "", None)]
+        );
+        assert!(nodes[1].descriptors.is_empty());
+    }
+
+    #[test]
+    fn test_fragment_descriptor_only_branch_emits_no_chain_element() {
+        let mol = fragment("N([>])C");
+        let tail = &mol.components[0].tail;
+        assert_eq!(tail.len(), 1);
+        assert!(matches!(tail[0], ChainElement::BondedAtom { .. }));
+    }
+
+    #[test]
+    fn test_fragment_symmetric_branch_descriptor_anchors_on_the_parent_atom() {
+        let mol = fragment("C([$])O");
+        let nodes = atom_nodes(&mol);
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(
+            nodes[0].descriptors,
+            vec![descriptor(DescriptorKind::Symmetric, "", None)]
+        );
+    }
+
+    #[test]
+    fn test_fragment_descriptor_in_mixed_branch_anchors_on_the_parent_atom() {
+        // `>` lands on the first C, not on the branch atom N.
+        let mol = fragment("C([>]N)C");
+        let nodes = atom_nodes(&mol);
+        assert_eq!(nodes.len(), 3);
+        assert_eq!(
+            nodes[0].descriptors,
+            vec![descriptor(DescriptorKind::Right, "", None)]
+        );
+        assert!(nodes[1].descriptors.is_empty());
+    }
+
+    #[test]
+    fn test_fragment_branch_bond_before_descriptor_is_the_descriptor_order() {
+        let mol = fragment("C(=[>])C");
+        let nodes = atom_nodes(&mol);
+        assert_eq!(
+            nodes[0].descriptors,
+            vec![descriptor(
+                DescriptorKind::Right,
+                "",
+                Some(BondKind::Double)
+            )]
+        );
+    }
+
+    #[test]
+    fn test_fragment_empty_branch_is_still_an_error() {
+        assert!(parse_fragment_smiles("C()").is_err());
+    }
+
+    // -- fragment dialect: the `$` glyph overload ---------------------------
+
+    #[test]
+    fn test_fragment_quadruple_bond_is_not_a_descriptor() {
+        let mol = fragment("C$C");
+        let nodes = atom_nodes(&mol);
+        assert_eq!(nodes.len(), 2);
+        assert!(nodes.iter().all(|n| n.descriptors.is_empty()));
+        match &mol.components[0].tail[0] {
+            ChainElement::BondedAtom { bond, .. } => {
+                assert_eq!(*bond, Some(BondQuery::Kind(BondKind::Quadruple)));
+            }
+            other => panic!("expected BondedAtom, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_plain_smiles_quadruple_bond_is_unchanged() {
+        let mol = smiles("C$C");
+        assert_eq!(atom_count(&mol), 2);
+        match &mol.components[0].tail[0] {
+            ChainElement::BondedAtom { bond, .. } => {
+                assert_eq!(*bond, Some(BondQuery::Kind(BondKind::Quadruple)));
+            }
+            other => panic!("expected BondedAtom, got {other:?}"),
+        }
+    }
+
+    // -- dialect isolation ---------------------------------------------------
+
+    #[test]
+    fn test_plain_smiles_rejects_descriptors() {
+        let err = parse_smiles("[$]COC[$]").unwrap_err();
+        assert!(matches!(err.kind, SmilesErrorKind::DescriptorInPlainSmiles));
+    }
+
+    #[test]
+    fn test_plain_smiles_rejects_recursive_smarts_bracket_as_descriptor() {
+        let err = parse_smiles("[$(C)]").unwrap_err();
+        assert!(matches!(err.kind, SmilesErrorKind::DescriptorInPlainSmiles));
+    }
+
+    #[test]
+    fn test_plain_smiles_bracket_atom_unchanged_by_descriptor_lookahead() {
+        let mol = smiles("[NH4+]");
+        assert_eq!(atom_count(&mol), 1);
+        match &mol.components[0].head.spec {
+            AtomSpec::Bracket {
+                symbol,
+                hcount,
+                charge,
+                ..
+            } => {
+                assert!(matches!(symbol, BracketSymbol::Element { symbol, .. } if symbol == "N"));
+                assert_eq!(*hcount, Some(4));
+                assert_eq!(*charge, Some(1));
+            }
+            other => panic!("expected Bracket, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_smarts_negation_unchanged_by_descriptor_lookahead() {
+        let mol = smarts("[!C]");
+        assert!(matches!(
+            &mol.components[0].head.spec,
+            AtomSpec::Query(AtomQuery::Not(_))
+        ));
+    }
+
+    #[test]
+    fn test_smarts_recursive_unchanged_by_descriptor_lookahead() {
+        let mol = smarts("[$(C)]");
+        assert!(matches!(
+            &mol.components[0].head.spec,
+            AtomSpec::Query(AtomQuery::Primitive(AtomPrimitive::Recursive(_)))
+        ));
+    }
+
+    // -- fragment dialect: rejections ---------------------------------------
+
+    #[test]
+    fn test_fragment_bigsmiles_in_bracket_order_is_rejected() {
+        let err = parse_fragment_smiles("[<=1]").unwrap_err();
+        assert!(matches!(err.kind, SmilesErrorKind::BondInsideDescriptor));
+    }
+
+    #[test]
+    fn test_fragment_in_bracket_single_bond_is_rejected() {
+        let err = parse_fragment_smiles("[$-]").unwrap_err();
+        assert!(matches!(err.kind, SmilesErrorKind::BondInsideDescriptor));
+    }
+
+    #[test]
+    fn test_fragment_descriptor_without_any_atom_is_dangling() {
+        let err = parse_fragment_smiles("[$]").unwrap_err();
+        assert!(matches!(err.kind, SmilesErrorKind::DanglingDescriptor));
+    }
+
+    #[test]
+    fn test_fragment_descriptor_in_empty_component_is_dangling() {
+        let err = parse_fragment_smiles("C.[$]").unwrap_err();
+        assert!(matches!(err.kind, SmilesErrorKind::DanglingDescriptor));
+    }
+
+    #[test]
+    fn test_fragment_non_alphanumeric_label_is_rejected() {
+        let err = parse_fragment_smiles("[$a+]").unwrap_err();
+        assert!(matches!(
+            err.kind,
+            SmilesErrorKind::InvalidDescriptorLabel(_)
+        ));
+    }
+
+    #[test]
+    fn test_fragment_aromatic_descriptor_order_is_rejected() {
+        let err = parse_fragment_smiles("c:[$]").unwrap_err();
+        assert!(matches!(
+            err.kind,
+            SmilesErrorKind::InvalidDescriptorOrder(BondKind::Aromatic)
+        ));
+    }
+
+    #[test]
+    fn test_fragment_atom_weight_annotation_is_unsupported() {
+        let err = parse_fragment_smiles("[C;0.5]").unwrap_err();
+        match &err.kind {
+            SmilesErrorKind::AtomAnnotationUnsupported(text) => assert_eq!(text, "0.5"),
+            other => panic!("expected AtomAnnotationUnsupported, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_fragment_wildcard_overloading_annotation_is_unsupported() {
+        let err = parse_fragment_smiles("[*;s=C,0]").unwrap_err();
+        assert!(matches!(
+            err.kind,
+            SmilesErrorKind::AtomAnnotationUnsupported(_)
+        ));
+    }
+
+    #[test]
+    fn test_plain_smiles_annotation_still_reports_unclosed_bracket() {
+        let err = parse_smiles("[C;0.5]").unwrap_err();
+        assert!(matches!(err.kind, SmilesErrorKind::UnclosedBracket));
+    }
+
+    #[test]
+    fn test_fragment_shared_descriptor_is_representable() {
+        // `[!]` is the shared (kind-agnostic) descriptor: it anchors on its
+        // neighbouring atom exactly like `$`/`<`/`>`, with or without a label.
+        let mol = fragment("[!]C");
+        let nodes = atom_nodes(&mol);
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(
+            nodes[0].descriptors,
+            vec![descriptor(DescriptorKind::Shared, "", None)]
+        );
+
+        let labelled = fragment("C[!a]");
+        let nodes = atom_nodes(&labelled);
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(
+            nodes[0].descriptors,
+            vec![descriptor(DescriptorKind::Shared, "a", None)]
+        );
     }
 }

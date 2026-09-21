@@ -17,6 +17,14 @@ use molrs::Element;
 /// Validate a parsed SMILES molecule.
 ///
 /// Returns `Ok(())` if valid, or the first validation error found.
+///
+/// # Errors
+///
+/// Returns [`SmilesErrorKind::UnmatchedRingClosure`] for an unpaired ring
+/// digit, [`SmilesErrorKind::InvalidElement`] for a symbol that is not an
+/// element, and [`SmilesErrorKind::DescriptorInPlainSmiles`] for a node
+/// carrying a bonding descriptor: this is the plain-SMILES validator, and a
+/// fragment body belongs to the fragment dialect.
 pub fn validate_smiles(mol: &SmilesIR, input: &str) -> Result<(), SmilesError> {
     validate_ring_closures(mol, input)?;
     validate_elements(mol, input)?;
@@ -52,6 +60,18 @@ fn validate_chain_elements(chain: &Chain, input: &str) -> Result<(), SmilesError
 }
 
 fn validate_atom_element(atom: &AtomNode, input: &str) -> Result<(), SmilesError> {
+    // Plain SMILES has no bonding-descriptor notation, so a node carrying one
+    // reached this validator through the fragment dialect (or a hand-built
+    // IR). Refusing here keeps `validate_smiles` symmetric with
+    // `to_atomistic`: neither plain-path stage ever drops a descriptor.
+    if !atom.descriptors.is_empty() {
+        return Err(SmilesError::new(
+            SmilesErrorKind::DescriptorInPlainSmiles,
+            atom.span,
+            input,
+        ));
+    }
+
     match &atom.spec {
         AtomSpec::Organic { symbol, .. } => {
             validate_symbol(symbol, atom.span, input)?;
@@ -128,5 +148,17 @@ mod tests {
     fn test_disconnected_valid() {
         let mol = parse_smiles("[Na+].[Cl-]").unwrap();
         assert!(validate_smiles(&mol, "[Na+].[Cl-]").is_ok());
+    }
+
+    #[test]
+    fn test_descriptor_bearing_ir_is_rejected_by_the_plain_validator() {
+        let mut mol = parse_smiles("CCO").unwrap();
+        mol.components[0].head.descriptors.push(BondingDescriptor {
+            kind: DescriptorKind::Symmetric,
+            label: String::new(),
+            order: None,
+        });
+        let err = validate_smiles(&mol, "CCO").unwrap_err();
+        assert!(matches!(err.kind, SmilesErrorKind::DescriptorInPlainSmiles));
     }
 }

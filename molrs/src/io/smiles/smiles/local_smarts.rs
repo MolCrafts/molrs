@@ -285,6 +285,7 @@ fn build_chain_env(
         let head = AtomNode {
             spec: AtomSpec::Query(q),
             span: Span::new(0, 0),
+            descriptors: Vec::new(),
         };
         let nbs = ordered_neighbors(mol, id, depth, opts, parent);
         if nbs.is_empty() {
@@ -369,6 +370,7 @@ fn build_recursive_env(
                 head: AtomNode {
                     spec: AtomSpec::Query(leaf),
                     span: Span::new(0, 0),
+                    descriptors: Vec::new(),
                 },
                 tail: vec![],
             }
@@ -392,6 +394,7 @@ fn build_recursive_env(
         head: AtomNode {
             spec: AtomSpec::Query(q),
             span: Span::new(0, 0),
+            descriptors: Vec::new(),
         },
         tail: vec![],
     })

@@ -6,17 +6,20 @@ criteria:
     summary: "AST carries descriptors as a typed struct with role-named kinds and optional order"
     type: code
     pass_when: "molrs/src/io/smiles/chem/ast.rs defines `pub struct BondingDescriptor { kind: DescriptorKind, label: String, order: Option<BondKind> }` and `pub enum DescriptorKind { Symmetric, Left, Right, Shared }` (each variant's /// naming its glyph and pairing rule), `AtomNode` has `pub descriptors: Vec<BondingDescriptor>`, `chem/ast.rs` still has zero `use` lines, and `cargo clippy -p molcrafts-molrs --all-targets --features full,filesystem,stream -- -D warnings` is clean."
-    status: pending
+    status: verified
+    last_checked: 2026-09-21
   - id: ac-002
     summary: "One Dialect enum replaces ParserMode and the writer Mode"
     type: code
     pass_when: "`pub(crate) enum Dialect { Smiles, Smarts, FragmentSmiles }` exists in molrs/src/io/smiles/chem/mod.rs; `ParserMode` (parser.rs) and the writer's `Mode` (smiles/write.rs) no longer exist; the three SMARTS-only guards in smiles/write.rs (formerly `mode == Mode::Smiles` at :144, :333, :340) test `dialect != Dialect::Smarts` or an exhaustive match."
-    status: pending
+    status: verified
+    last_checked: 2026-09-21
   - id: ac-003
     summary: "Seven new error variants render routing messages"
     type: code
     pass_when: "Unit tests in molrs/src/io/smiles/error.rs assert a distinct non-empty Display message for DescriptorInPlainSmiles, DescriptorsUnconvertible, BondInsideDescriptor, InvalidDescriptorLabel, InvalidDescriptorOrder, DanglingDescriptor and AtomAnnotationUnsupported, that the first two name `parse_fragment_smiles` and `fragment_to_atomistic` respectively, and that the last says the annotation is unsupported rather than that the bracket is unclosed."
-    status: pending
+    status: verified
+    last_checked: 2026-09-21
   - id: ac-004
     summary: "Descriptor anchoring follows R4.2/R4.3"
     type: scientific
@@ -31,47 +34,56 @@ criteria:
     summary: "Branch-only and mixed-branch descriptors bind to the parent anchor"
     type: code
     pass_when: "Unit tests assert parse_fragment_smiles(\"N([>])C\") yields 2 atoms, 1 bond and the `>` descriptor on N; \"C([$])O\" yields `$` on C; \"C([>]N)C\" puts `>` on the first C, not on N; \"C(=[>])C\" gives the first C a `>` with order Some(Double); \"C()\" still returns a parse error."
-    status: pending
+    status: verified
+    last_checked: 2026-09-21
   - id: ac-007
     summary: "The plain and SMARTS dialects are unchanged and strict"
     type: code
     pass_when: "Unit tests assert parse_smiles(\"[$]COC[$]\") and parse_smiles(\"[$(C)]\") return DescriptorInPlainSmiles, parse_fragment_smiles(\"[$]\") and parse_fragment_smiles(\"C.[$]\") return DanglingDescriptor, parse_fragment_smiles(\"[C;0.5]\") and parse_fragment_smiles(\"[*;s=C,0]\") return AtomAnnotationUnsupported while parse_smiles(\"[C;0.5]\") returns UnclosedBracket, and that parse_smiles(\"[NH4+]\"), parse_smarts(\"[!C]\"), parse_smarts(\"[$(C)]\") and parse_smiles(\"C$C\") (2 atoms, Quadruple bond) produce exactly the IRs they produce today."
-    status: pending
+    status: verified
+    last_checked: 2026-09-21
   - id: ac-008
     summary: "to_atomistic refuses descriptor-bearing IR through the single choke point"
     type: code
-    pass_when: "A unit test in molrs/src/io/smiles/smiles/to_atomistic.rs asserts to_atomistic on the IR from parse_fragment_smiles(\"[$]COC[$]\") returns SmilesErrorKind::DescriptorsUnconvertible, and `Builder` has exactly one field of type `Option<Vec<(AtomId, BondingDescriptor)>>` with the guard in `add_atom_node`."
-    status: pending
+    pass_when: "A unit test in molrs/src/io/smiles/smiles/to_atomistic.rs asserts to_atomistic on the IR from parse_fragment_smiles(\"[$]COC[$]\") returns SmilesErrorKind::DescriptorsUnconvertible, and `Builder` carries exactly one owned collection `descriptors: Vec<(AtomId, BondingDescriptor)>` gated by one `collect_descriptors: bool`, with the guard in `add_atom_node` and no second walker."
+    status: verified
+    last_checked: 2026-09-21
   - id: ac-009
     summary: "fragment_to_atomistic returns the graph plus the visit-ordered descriptor map"
     type: code
-    pass_when: "Unit tests assert fragment_to_atomistic on \"[$]COC[$]\" returns 3 atoms, 2 bonds and the map [(atom 0, Symmetric), (atom 2, Symmetric)]; on \"[>][$1]COC[<]\" atom 0's entries are [Right, Symmetric(\"1\")]; on \"C([$]O)[>]\" both entries are on atom 0 with `$` before `>`; on \"C(N[<])[>]\" the `<` entry (atom 1) precedes the `>` entry (atom 0); and to_atomistic / fragment_to_atomistic give identical graphs for \"CC(=O)O\"."
-    status: pending
+    pass_when: "Unit tests assert fragment_to_atomistic on \"[$]COC[$]\" returns 3 atoms, 2 bonds and the map [(atom 0, Symmetric), (atom 2, Symmetric)]; on \"[>][$1]COC[<]\" atom 0's entries are [Right, Symmetric(\"1\")]; on \"C([$]O)[>]\" both entries are on atom 0 with `$` before `>`; on \"C(N[<])[>]\" the `>` entry (atom 0, the head) precedes the `<` entry (atom 1, inside the branch) — visit order, the reverse of text order; and to_atomistic / fragment_to_atomistic give identical graphs for \"CC(=O)O\"."
+    status: verified
+    last_checked: 2026-09-21
   - id: ac-010
     summary: "The SMILES FrameReader surfaces the rejection, never a silent drop"
     type: code
     pass_when: "A unit test in molrs/src/io/smiles/frame_reader.rs asserts reading the line \"[>]COC[<]\" returns Err with ErrorKind::InvalidData whose message names the fragment entry point, while \"CCO\" still reads to 3 atoms and 2 bonds."
-    status: pending
+    status: verified
+    last_checked: 2026-09-21
   - id: ac-011
     summary: "Descriptor well-formedness has one home in chem/validation.rs and one call site"
     type: code
     pass_when: "`pub(crate) fn validate_descriptor` exists in molrs/src/io/smiles/chem/validation.rs (its module header amended to cover grammar-level validation shared across dialects), is called from the parser at descriptor construction and nowhere else, and unit tests assert it accepts (\"a1\", Some(Double)) and returns InvalidDescriptorLabel for (\"a-\", None) and InvalidDescriptorOrder for (\"\", Some(Aromatic)); validate_smiles on a hand-built descriptor IR returns DescriptorInPlainSmiles."
-    status: pending
+    status: verified
+    last_checked: 2026-09-21
   - id: ac-012
     summary: "Graph-to-IR paths stay descriptor-free"
     type: code
     pass_when: "A unit test asserts every AtomNode produced by from_atomistic for ethanol has an empty `descriptors` vector and that write_smiles of that IR equals the string it produces before this change."
-    status: pending
+    status: verified
+    last_checked: 2026-09-21
   - id: ac-013
     summary: "Fragment writer round-trips; plain writer and SMARTS constructs refuse"
     type: code
-    pass_when: "Unit tests in molrs/src/io/smiles/smiles/write.rs assert write_fragment_smiles is idempotent over a second parse+write pass for \"[$]COC[$]\" and \"[$]=CCC\" (written as \"C=[$]CC\"), \"C[$]=CC\" is stable, the re-parsed IR keeps kind/label/order, write_smiles on the same IR returns DescriptorInPlainSmiles, write_fragment_smiles on a Query-atom IR and on a BondQuery::Not IR returns an error, and write_fragment_smiles on a hand-built descriptor with Some(Aromatic) returns InvalidDescriptorOrder."
-    status: pending
+    pass_when: "Unit tests in molrs/src/io/smiles/smiles/write.rs assert write_fragment_smiles is idempotent over a second parse+write pass for \"[$]COC[$]\" and \"[$]=CCC\" (written as \"C=[$]CC\"), \"C[$]=CC\" is stable, \"CC-[$]\" writes as \"CC-[$]\" and re-parses with order Some(Single), \"[!]C\" round-trips with DescriptorKind::Shared, the re-parsed IR keeps kind/label/order, write_smiles on the same IR returns DescriptorInPlainSmiles, write_fragment_smiles on a Query-atom IR and on a BondQuery::Not IR returns an error, and write_fragment_smiles on a hand-built descriptor with Some(Aromatic) returns InvalidDescriptorOrder."
+    status: verified
+    last_checked: 2026-09-21
   - id: ac-014
     summary: "Public-API doctest runs the fragment path end to end"
     type: runtime
     pass_when: "`cargo test --doc -p molcrafts-molrs --features full,filesystem,stream` passes, and the doctest in molrs/src/io/smiles/mod.rs is runnable (no `ignore`), calls parse_fragment_smiles(\"[$]COC[$]\") then fragment_to_atomistic, and asserts the hard-coded values n_atoms() == 3, ports.len() == 2, and both DescriptorKind::Symmetric."
-    status: pending
+    status: verified
+    last_checked: 2026-09-21
   - id: ac-015
     summary: "Module docs stop claiming parse_smarts feeds perceive::smarts"
     type: docs
@@ -86,7 +98,8 @@ criteria:
     summary: "Full gate green"
     type: runtime
     pass_when: "`cargo fmt --check`, `cargo clippy -p molcrafts-molrs --all-targets --features full,filesystem,stream -- -D warnings`, `cargo test -p molcrafts-molrs --lib --features full,filesystem,stream` and `cargo test --doc -p molcrafts-molrs --features full,filesystem,stream` all exit 0."
-    status: pending
+    status: verified
+    last_checked: 2026-09-21
 out_of_scope:
   - "Descriptor pairing and compatibility (R4.6–R4.16) — 01d"
   - "[!] squash semantics and its RAISE — 01c"

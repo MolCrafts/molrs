@@ -1,19 +1,36 @@
-//! Shared post-parse validation helpers used by both SMILES and SMARTS.
+//! Grammar-level validation helpers shared across the dialects.
 //!
-//! Validation that depends only on the shared AST vocabulary lives here.
-//! Language-specific checks (element-symbol validity for SMILES, query-primitive
-//! well-formedness for SMARTS) live in the sibling `smiles::validate` and
-//! `smarts::validate` modules.
+//! Validation that depends only on the shared AST vocabulary lives here — the
+//! checks that read the same way whichever dialect wrote the string. Checks
+//! specific to one dialect, such as element-symbol validity, live with that
+//! dialect: for SMILES that is the sibling
+//! [`smiles::validate`](crate::io::smiles::smiles::validate) module.
+//!
+//! Two of these helpers run at different times, which is worth keeping
+//! straight: [`validate_ring_closures`] is a post-parse pass over a finished
+//! IR, while [`validate_descriptor`] runs during the parse, at the one site
+//! that constructs a descriptor.
 
 use std::collections::HashMap;
 
-use crate::io::smiles::chem::ast::{Chain, ChainElement, SmilesIR, Span};
+use crate::io::smiles::chem::ast::{
+    BondKind, BondingDescriptor, Chain, ChainElement, SmilesIR, Span,
+};
 use crate::io::smiles::error::{SmilesError, SmilesErrorKind};
 
 /// Ensure every ring-closure digit is opened and closed exactly once.
 ///
-/// This check applies equally to SMILES and SMARTS because ring closure is a
-/// syntactic construct of the shared grammar.
+/// A ring closure is the pair of matching digits that tells the notation two
+/// non-adjacent atoms are bonded (`c1ccccc1` closes ring 1 between the first
+/// and last carbon). The check applies equally to every dialect, because ring
+/// closure is a construct of the shared grammar.
+///
+/// # Errors
+///
+/// Returns [`SmilesErrorKind::UnmatchedRingClosure`] carrying the ring number
+/// of a digit that was opened and never closed; the span points at the
+/// unmatched digit. Which unmatched digit is reported, when several are, is
+/// unspecified.
 pub(crate) fn validate_ring_closures(mol: &SmilesIR, input: &str) -> Result<(), SmilesError> {
     let mut open: HashMap<u16, Span> = HashMap::new();
 
@@ -24,6 +41,55 @@ pub(crate) fn validate_ring_closures(mol: &SmilesIR, input: &str) -> Result<(), 
     if let Some((&rnum, &span)) = open.iter().next() {
         return Err(SmilesError::new(
             SmilesErrorKind::UnmatchedRingClosure(rnum),
+            span,
+            input,
+        ));
+    }
+
+    Ok(())
+}
+
+/// Ensure a bonding descriptor is well formed, before it reaches the AST.
+///
+/// Two rules, both from the `CGsmiles` grammar:
+///
+/// * the label is ASCII alphanumeric or empty — `BigSMILES` allows positive
+///   integers, `CGsmiles` widens that to alphanumerics and no further;
+/// * the out-of-bracket bond order, when one was written, is one of
+///   `Single | Double | Triple | Quadruple`. A descriptor annotates the order
+///   of the bond its pairing will create, and aromatic (`c:[$]`), directional
+///   (`/`, `\`), wildcard (`~`) and ring (`@`) are not orders a created bond
+///   can take.
+///
+/// `span` covers the descriptor bracket and `input` is the whole parsed
+/// string, so the returned error carries the usual caret context.
+///
+/// # Errors
+///
+/// Returns [`SmilesErrorKind::InvalidDescriptorLabel`] for a non-alphanumeric
+/// label, and [`SmilesErrorKind::InvalidDescriptorOrder`] for an order outside
+/// the four allowed kinds.
+pub(crate) fn validate_descriptor(
+    desc: &BondingDescriptor,
+    span: Span,
+    input: &str,
+) -> Result<(), SmilesError> {
+    if !desc.label.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Err(SmilesError::new(
+            SmilesErrorKind::InvalidDescriptorLabel(desc.label.clone()),
+            span,
+            input,
+        ));
+    }
+
+    if let Some(order) = desc.order
+        && !matches!(
+            order,
+            BondKind::Single | BondKind::Double | BondKind::Triple | BondKind::Quadruple
+        )
+    {
+        return Err(SmilesError::new(
+            SmilesErrorKind::InvalidDescriptorOrder(order),
             span,
             input,
         ));
@@ -45,5 +111,59 @@ fn collect_ring_closures(chain: &Chain, open: &mut HashMap<u16, Span>) {
             }
             ChainElement::BondedAtom { .. } => {}
         }
+    }
+}
+
+// ==========================================================================
+// Tests
+// ==========================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::io::smiles::chem::ast::{BondKind, BondingDescriptor, DescriptorKind};
+
+    fn descriptor(label: &str, order: Option<BondKind>) -> BondingDescriptor {
+        BondingDescriptor {
+            kind: DescriptorKind::Symmetric,
+            label: label.to_owned(),
+            order,
+        }
+    }
+
+    #[test]
+    fn test_validate_descriptor_accepts_alphanumeric_label_with_double_order() {
+        let desc = descriptor("a1", Some(BondKind::Double));
+        assert!(validate_descriptor(&desc, Span::new(0, 3), "[$]").is_ok());
+    }
+
+    #[test]
+    fn test_validate_descriptor_rejects_non_alphanumeric_label() {
+        let desc = descriptor("a-", None);
+        let err = validate_descriptor(&desc, Span::new(0, 3), "[$]").unwrap_err();
+        assert!(matches!(
+            err.kind,
+            SmilesErrorKind::InvalidDescriptorLabel(_)
+        ));
+    }
+
+    #[test]
+    fn test_validate_descriptor_rejects_aromatic_order() {
+        let desc = descriptor("", Some(BondKind::Aromatic));
+        let err = validate_descriptor(&desc, Span::new(0, 3), "[$]").unwrap_err();
+        assert!(matches!(
+            err.kind,
+            SmilesErrorKind::InvalidDescriptorOrder(BondKind::Aromatic)
+        ));
+    }
+
+    #[test]
+    fn test_validate_descriptor_rejects_directional_order() {
+        let desc = descriptor("", Some(BondKind::Up));
+        let err = validate_descriptor(&desc, Span::new(0, 3), "[$]").unwrap_err();
+        assert!(matches!(
+            err.kind,
+            SmilesErrorKind::InvalidDescriptorOrder(BondKind::Up)
+        ));
     }
 }

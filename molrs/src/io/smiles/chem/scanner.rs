@@ -37,6 +37,17 @@ impl<'a> Scanner<'a> {
         self.bytes.get(self.pos).map(|&b| b as char)
     }
 
+    /// Look at the byte one position beyond the cursor as a `char`, without
+    /// consuming anything.
+    ///
+    /// `None` when the cursor is already on the last byte or past the end.
+    /// This is the one-character lookahead a two-token decision needs (is
+    /// this `[` the start of a bracket atom or of a bonding descriptor?);
+    /// [`Scanner::peek`] reads the byte *at* the cursor.
+    pub fn peek_next(&self) -> Option<char> {
+        self.bytes.get(self.pos + 1).map(|&b| b as char)
+    }
+
     /// Consume the current byte and return it as a `char`.
     pub fn advance(&mut self) -> Option<char> {
         if self.pos < self.bytes.len() {
@@ -49,6 +60,12 @@ impl<'a> Scanner<'a> {
     }
 
     /// Consume the current byte if it matches `expected`, otherwise return an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SmilesErrorKind::UnexpectedChar`] when another byte sits at
+    /// the cursor and [`SmilesErrorKind::UnexpectedEnd`] at end of input; in
+    /// both cases the cursor does not move.
     pub fn expect(&mut self, expected: char) -> Result<(), SmilesError> {
         match self.peek() {
             Some(c) if c == expected => {
@@ -58,6 +75,17 @@ impl<'a> Scanner<'a> {
             Some(c) => Err(self.error(SmilesErrorKind::UnexpectedChar(c))),
             None => Err(self.error(SmilesErrorKind::UnexpectedEnd)),
         }
+    }
+
+    /// The whole input the scanner runs over.
+    ///
+    /// The scanner already borrows the string it scans, so a caller that needs
+    /// token text (`&scanner.input()[start..scanner.pos()]`) or the error
+    /// context a [`SmilesError`] carries takes it from here instead of holding
+    /// a second copy of the same `&str` alongside the scanner. The returned
+    /// borrow lives as long as the input, not as long as the scanner.
+    pub fn input(&self) -> &'a str {
+        self.input
     }
 
     /// Consume and return a run of ASCII digits. Returns an empty slice if
@@ -116,6 +144,16 @@ mod tests {
         assert_eq!(s.advance(), Some('C'));
         assert_eq!(s.advance(), None);
         assert!(s.is_done());
+    }
+
+    #[test]
+    fn test_peek_next() {
+        let mut s = Scanner::new("ab");
+        assert_eq!(s.peek_next(), Some('b'));
+        s.advance();
+        assert_eq!(s.peek_next(), None);
+        s.advance();
+        assert_eq!(s.peek_next(), None);
     }
 
     #[test]

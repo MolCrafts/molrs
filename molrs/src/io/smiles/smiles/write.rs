@@ -1,27 +1,85 @@
-//! Write [`SmilesIR`] back to SMILES / SMARTS strings.
+//! Write [`SmilesIR`] back to SMILES, SMARTS or fragment-body strings.
+//!
+//! One emitter serves all three dialects, branching on the crate-internal
+//! `Dialect`: each entry point refuses the constructs its own dialect cannot
+//! spell, instead of emitting text the matching parser would reject.
 //!
 //! Pure syntax: no chemical policy. Graph → IR lives in [`super::from_atomistic()`].
 
+use crate::io::smiles::chem::Dialect;
 use crate::io::smiles::chem::ast::*;
 use crate::io::smiles::error::{SmilesError, SmilesErrorKind};
 
-/// Write a concrete SMILES string. Query atoms / SMARTS-only bond ops → Err.
+/// Write a plain SMILES string from the IR.
+///
+/// Strict: the constructs plain SMILES cannot spell — SMARTS query atoms,
+/// SMARTS bond operators, and fragment-dialect bonding descriptors — are
+/// refused rather than emitted as text
+/// [`parse_smiles`](crate::io::smiles::parse_smiles) would then reject.
+///
+/// # Errors
+///
+/// Returns [`SmilesErrorKind::Emit`] for an IR with no components,
+/// [`SmilesErrorKind::InvalidQueryPrimitive`] for a SMARTS query atom
+/// ([`AtomSpec::Query`]) or a SMARTS bond query (`!`, `&`, `,`), and
+/// [`SmilesErrorKind::DescriptorInPlainSmiles`] for a node carrying a bonding
+/// descriptor — write that IR with [`write_fragment_smiles`] instead.
 pub fn write_smiles(ir: &SmilesIR) -> Result<String, SmilesError> {
-    write_ir(ir, Mode::Smiles)
+    write_ir(ir, Dialect::Smiles)
 }
 
-/// Write a SMARTS string (SMILES is a subset).
+/// Write a SMARTS string from the IR.
+///
+/// SMILES is a subset of SMARTS, so every IR [`write_smiles`] accepts is
+/// writable here too, plus query atoms and the bond operators `!`, `&` and
+/// `,`.
+///
+/// # Errors
+///
+/// Returns [`SmilesErrorKind::Emit`] for an IR with no components, and
+/// [`SmilesErrorKind::DescriptorInPlainSmiles`] for a node carrying a bonding
+/// descriptor: descriptors are fragment notation, and SMARTS has no spelling
+/// for them either.
 pub fn write_smarts(ir: &SmilesIR) -> Result<String, SmilesError> {
-    write_ir(ir, Mode::Smarts)
+    write_ir(ir, Dialect::Smarts)
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Mode {
-    Smiles,
-    Smarts,
+/// Write a SMILES **fragment** body: SMILES plus `CGsmiles` / `BigSMILES`
+/// bonding descriptors.
+///
+/// The fragment-dialect sibling of [`write_smiles`], which refuses a
+/// descriptor-bearing IR rather than emit text its own parser rejects; this
+/// function is where such an IR is meant to go.
+///
+/// Descriptors are written in the canonical **trailing** form: the atom, then
+/// each of its descriptors preceded by the bond order it carries, as in
+/// `C=[$]CC`. An explicit single order is written out (`CC-[$]`): unlike a
+/// chain bond, where `-` is the omitted default, a descriptor with no bond
+/// symbol next to it is the distinct `order: None` state, which re-reads
+/// differently. `None` therefore emits no symbol at all, and the two states
+/// survive a write-then-parse round trip.
+///
+/// The input *text* is not preserved — the IR is. The leading form `[$]=CCC`
+/// annotates the head carbon with a double-bond order, so it is written as
+/// `C=[$]CC`, which parses back to the same IR; a second parse-and-write pass
+/// is then stable.
+///
+/// # Errors
+///
+/// Returns [`SmilesErrorKind::Emit`] for an empty IR,
+/// [`SmilesErrorKind::InvalidDescriptorOrder`] for a descriptor order outside
+/// `Single`, `Double`, `Triple` and `Quadruple` (no parser produces one, but a
+/// hand-built IR can carry it), and
+/// [`SmilesErrorKind::InvalidQueryPrimitive`] for SMARTS query atoms or bond
+/// queries, which are not fragment notation.
+///
+/// It never returns [`SmilesErrorKind::DescriptorInPlainSmiles`]: that is the
+/// plain writers' refusal of the input this one exists to accept.
+pub fn write_fragment_smiles(ir: &SmilesIR) -> Result<String, SmilesError> {
+    write_ir(ir, Dialect::FragmentSmiles)
 }
 
-fn write_ir(ir: &SmilesIR, mode: Mode) -> Result<String, SmilesError> {
+fn write_ir(ir: &SmilesIR, dialect: Dialect) -> Result<String, SmilesError> {
     if ir.components.is_empty() {
         return Err(SmilesError::new(
             SmilesErrorKind::Emit("empty SmilesIR".into()),
@@ -34,7 +92,7 @@ fn write_ir(ir: &SmilesIR, mode: Mode) -> Result<String, SmilesError> {
         if i > 0 {
             out.push('.');
         }
-        write_chain(&mut out, chain, mode, /*in_branch*/ false)?;
+        write_chain(&mut out, chain, dialect, /*in_branch*/ false)?;
     }
     Ok(out)
 }
@@ -42,24 +100,29 @@ fn write_ir(ir: &SmilesIR, mode: Mode) -> Result<String, SmilesError> {
 fn write_chain(
     out: &mut String,
     chain: &Chain,
-    mode: Mode,
+    dialect: Dialect,
     _in_branch: bool,
 ) -> Result<(), SmilesError> {
-    write_atom(out, &chain.head, mode)?;
+    write_atom(out, &chain.head, dialect)?;
     for elem in &chain.tail {
         match elem {
             ChainElement::BondedAtom { bond, atom } => {
-                write_bond(out, bond.as_ref(), mode, /*omit_default_single*/ true)?;
-                write_atom(out, atom, mode)?;
+                write_bond(
+                    out,
+                    bond.as_ref(),
+                    dialect,
+                    /*omit_default_single*/ true,
+                )?;
+                write_atom(out, atom, dialect)?;
             }
             ChainElement::Branch { bond, chain, .. } => {
                 out.push('(');
-                write_bond(out, bond.as_ref(), mode, true)?;
-                write_chain(out, chain, mode, true)?;
+                write_bond(out, bond.as_ref(), dialect, true)?;
+                write_chain(out, chain, dialect, true)?;
                 out.push(')');
             }
             ChainElement::RingClosure { bond, rnum, .. } => {
-                write_bond(out, bond.as_ref(), mode, true)?;
+                write_bond(out, bond.as_ref(), dialect, true)?;
                 write_rnum(out, *rnum);
             }
         }
@@ -76,7 +139,7 @@ fn write_rnum(out: &mut String, rnum: u16) {
     }
 }
 
-fn write_atom(out: &mut String, node: &AtomNode, mode: Mode) -> Result<(), SmilesError> {
+fn write_atom(out: &mut String, node: &AtomNode, dialect: Dialect) -> Result<(), SmilesError> {
     match &node.spec {
         AtomSpec::Organic { symbol, aromatic } => {
             if *aromatic {
@@ -104,20 +167,7 @@ fn write_atom(out: &mut String, node: &AtomNode, mode: Mode) -> Result<(), Smile
             if let Some(iso) = isotope {
                 out.push_str(&iso.to_string());
             }
-            match symbol {
-                BracketSymbol::Element { symbol, aromatic } => {
-                    if *aromatic {
-                        for c in symbol.chars() {
-                            out.push(c.to_ascii_lowercase());
-                        }
-                    } else {
-                        out.push_str(symbol);
-                    }
-                }
-                BracketSymbol::Any => out.push('*'),
-                BracketSymbol::Aliphatic => out.push('A'),
-                BracketSymbol::Aromatic => out.push('a'),
-            }
+            write_bracket_symbol(out, symbol);
             if let Some(ch) = chirality {
                 match ch {
                     Chirality::CounterClockwise => out.push('@'),
@@ -141,11 +191,12 @@ fn write_atom(out: &mut String, node: &AtomNode, mode: Mode) -> Result<(), Smile
             Ok(())
         }
         AtomSpec::Query(q) => {
-            if mode == Mode::Smiles {
+            if dialect != Dialect::Smarts {
                 return Err(SmilesError::new(
-                    SmilesErrorKind::InvalidQueryPrimitive(
-                        "SMARTS query atoms cannot be written as SMILES".into(),
-                    ),
+                    SmilesErrorKind::InvalidQueryPrimitive(format!(
+                        "SMARTS query atoms cannot be written as {}",
+                        dialect_name(dialect)
+                    )),
                     node.span,
                     "",
                 ));
@@ -155,6 +206,92 @@ fn write_atom(out: &mut String, node: &AtomNode, mode: Mode) -> Result<(), Smile
             out.push(']');
             Ok(())
         }
+    }?;
+
+    write_descriptors(out, node, dialect)
+}
+
+/// Write `node`'s bonding descriptors in the canonical trailing form.
+///
+/// `C=[$]`, never `[$]=C`: each descriptor follows the atom it is anchored on,
+/// preceded by the bond order it carries. An order of `Single` is written `-`
+/// rather than omitted — a descriptor with no bond symbol next to it parses
+/// back as `order: None`, which is a different IR, not the same one spelled
+/// shorter (the omitted default applies to chain bonds only).
+///
+/// A node with no descriptors writes nothing and is accepted in every dialect,
+/// which is what keeps plain output byte-identical to what it was before the
+/// field existed.
+///
+/// # Errors
+///
+/// Returns [`SmilesErrorKind::DescriptorInPlainSmiles`] in any dialect but
+/// `FragmentSmiles`, and [`SmilesErrorKind::InvalidDescriptorOrder`] for an
+/// order outside `Single`, `Double`, `Triple` and `Quadruple`.
+fn write_descriptors(
+    out: &mut String,
+    node: &AtomNode,
+    dialect: Dialect,
+) -> Result<(), SmilesError> {
+    if node.descriptors.is_empty() {
+        return Ok(());
+    }
+    if dialect != Dialect::FragmentSmiles {
+        return Err(SmilesError::new(
+            SmilesErrorKind::DescriptorInPlainSmiles,
+            node.span,
+            "",
+        ));
+    }
+    for desc in &node.descriptors {
+        match desc.order {
+            // No bond symbol was written next to the bracket.
+            None => {}
+            Some(
+                k @ (BondKind::Single | BondKind::Double | BondKind::Triple | BondKind::Quadruple),
+            ) => write_bond_kind(out, k, /*omit_default_single*/ false),
+            // A hand-built IR can carry an order no parser produces; emitting
+            // it would write text this dialect's own parser rejects.
+            Some(k) => {
+                return Err(SmilesError::new(
+                    SmilesErrorKind::InvalidDescriptorOrder(k),
+                    node.span,
+                    "",
+                ));
+            }
+        }
+        out.push('[');
+        out.push(match desc.kind {
+            DescriptorKind::Symmetric => '$',
+            DescriptorKind::Left => '<',
+            DescriptorKind::Right => '>',
+            DescriptorKind::Shared => '!',
+        });
+        out.push_str(&desc.label);
+        out.push(']');
+    }
+    Ok(())
+}
+
+/// Write the symbol slot of a bracket atom: `[<here>H2+]`.
+///
+/// Aromaticity is notation here, not a property: a declared-aromatic element
+/// is written lowercase, which is the only thing that distinguishes `[cH]`
+/// from `[CH]`.
+fn write_bracket_symbol(out: &mut String, symbol: &BracketSymbol) {
+    match symbol {
+        BracketSymbol::Element { symbol, aromatic } => {
+            if *aromatic {
+                for c in symbol.chars() {
+                    out.push(c.to_ascii_lowercase());
+                }
+            } else {
+                out.push_str(symbol);
+            }
+        }
+        BracketSymbol::Any => out.push('*'),
+        BracketSymbol::Aliphatic => out.push('A'),
+        BracketSymbol::Aromatic => out.push('a'),
     }
 }
 
@@ -184,11 +321,9 @@ fn write_atom_query(out: &mut String, q: &AtomQuery) -> Result<(), SmilesError> 
             write_atom_query(out, inner)
         }
         AtomQuery::And(parts) => {
-            for (i, p) in parts.iter().enumerate() {
-                if i > 0 {
-                    // implicit AND is fine between primitives; use & for clarity
-                    // only when needed — Daylight allows juxtaposition.
-                }
+            // High-precedence AND is written by juxtaposition; no separator is
+            // emitted between terms — Daylight allows the bare spelling.
+            for p in parts {
                 write_atom_query(out, p)?;
             }
             Ok(())
@@ -318,7 +453,7 @@ fn write_primitive(out: &mut String, p: &AtomPrimitive) -> Result<(), SmilesErro
 fn write_bond(
     out: &mut String,
     bond: Option<&BondQuery>,
-    mode: Mode,
+    dialect: Dialect,
     omit_default_single: bool,
 ) -> Result<(), SmilesError> {
     let Some(q) = bond else {
@@ -330,15 +465,15 @@ fn write_bond(
             Ok(())
         }
         BondQuery::Not(inner) => {
-            if mode == Mode::Smiles {
-                return Err(smiles_bond_err());
+            if dialect != Dialect::Smarts {
+                return Err(bond_query_err(dialect));
             }
             out.push('!');
-            write_bond(out, Some(inner), mode, false)
+            write_bond(out, Some(inner), dialect, false)
         }
         BondQuery::And(parts) | BondQuery::Or(parts) => {
-            if mode == Mode::Smiles {
-                return Err(smiles_bond_err());
+            if dialect != Dialect::Smarts {
+                return Err(bond_query_err(dialect));
             }
             let sep = if matches!(q, BondQuery::And(_)) {
                 '&'
@@ -349,21 +484,32 @@ fn write_bond(
                 if i > 0 {
                     out.push(sep);
                 }
-                write_bond(out, Some(p), mode, false)?;
+                write_bond(out, Some(p), dialect, false)?;
             }
             Ok(())
         }
     }
 }
 
-fn smiles_bond_err() -> SmilesError {
+/// The error a SMARTS bond query earns in a dialect that cannot spell it.
+fn bond_query_err(dialect: Dialect) -> SmilesError {
     SmilesError::new(
-        SmilesErrorKind::InvalidQueryPrimitive(
-            "SMARTS bond query cannot be written as SMILES".into(),
-        ),
+        SmilesErrorKind::InvalidQueryPrimitive(format!(
+            "SMARTS bond query cannot be written as {}",
+            dialect_name(dialect)
+        )),
         Span::new(0, 0),
         "",
     )
+}
+
+/// How a dialect names itself in a rejection message.
+fn dialect_name(dialect: Dialect) -> &'static str {
+    match dialect {
+        Dialect::Smiles => "SMILES",
+        Dialect::Smarts => "SMARTS",
+        Dialect::FragmentSmiles => "a SMILES fragment",
+    }
 }
 
 fn write_bond_kind(out: &mut String, k: BondKind, omit_default_single: bool) {
@@ -384,6 +530,7 @@ fn write_bond_kind(out: &mut String, k: BondKind, omit_default_single: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::io::smiles::chem::test_support::descriptors;
     use crate::io::smiles::parser::parse_smarts;
     use crate::io::smiles::smiles::parse_smiles;
 
@@ -422,5 +569,135 @@ mod tests {
             let ir2 = parse_smarts(&s).unwrap();
             let _ = write_smarts(&ir2).unwrap();
         }
+    }
+
+    // -- fragment dialect: bonding descriptors ------------------------------
+
+    fn fragment(input: &str) -> SmilesIR {
+        crate::io::smiles::smiles::parse_fragment_smiles(input)
+            .unwrap_or_else(|e| panic!("parse_fragment_smiles({input:?}) failed: {e}"))
+    }
+
+    #[test]
+    fn write_fragment_smiles_round_trips_descriptors() {
+        // The text is not preserved, the IR is: re-parsing the written string
+        // must give back the same descriptor kinds, labels and orders.
+        let ir = fragment("[$]COC[$]");
+        let written = write_fragment_smiles(&ir).unwrap();
+        let reparsed = fragment(&written);
+        assert_eq!(descriptors(&reparsed), descriptors(&ir));
+    }
+
+    #[test]
+    fn write_fragment_smiles_is_idempotent() {
+        let s1 = write_fragment_smiles(&fragment("[$]COC[$]")).unwrap();
+        let s2 = write_fragment_smiles(&fragment(&s1)).unwrap();
+        assert_eq!(s2, s1);
+    }
+
+    #[test]
+    fn write_fragment_smiles_emits_the_canonical_trailing_form() {
+        // `[$]=CCC` is a double-bond-annotated `$` on the first carbon over a
+        // single-bonded C-C-C chain (R4.4); the canonical form writes the
+        // descriptor after its atom, so the leading input form is not kept.
+        assert_eq!(
+            write_fragment_smiles(&fragment("[$]=CCC")).unwrap(),
+            "C=[$]CC"
+        );
+    }
+
+    #[test]
+    fn write_fragment_smiles_trailing_form_is_stable() {
+        let s1 = write_fragment_smiles(&fragment("[$]=CCC")).unwrap();
+        let s2 = write_fragment_smiles(&fragment(&s1)).unwrap();
+        assert_eq!(s2, s1);
+    }
+
+    #[test]
+    fn write_fragment_smiles_keeps_input_already_in_trailing_form() {
+        assert_eq!(
+            write_fragment_smiles(&fragment("C[$]=CC")).unwrap(),
+            "C[$]=CC"
+        );
+    }
+
+    #[test]
+    fn write_smiles_rejects_descriptors() {
+        // Plain SMILES has no descriptor notation, so writing one would emit
+        // text its own parser refuses.
+        let err = write_smiles(&fragment("[$]COC[$]")).unwrap_err();
+        assert!(matches!(err.kind, SmilesErrorKind::DescriptorInPlainSmiles));
+    }
+
+    #[test]
+    fn write_smarts_rejects_descriptors() {
+        let err = write_smarts(&fragment("[$]COC[$]")).unwrap_err();
+        assert!(matches!(err.kind, SmilesErrorKind::DescriptorInPlainSmiles));
+    }
+
+    #[test]
+    fn write_fragment_smiles_rejects_query_atoms() {
+        // The fragment dialect is SMILES plus descriptors — not SMARTS: a
+        // query atom must not leak into a fragment string.
+        let ir = parse_smarts("[!C]").unwrap();
+        assert!(
+            write_fragment_smiles(&ir).is_err(),
+            "wrote {:?}",
+            write_fragment_smiles(&ir)
+        );
+    }
+
+    #[test]
+    fn write_fragment_smiles_rejects_bond_queries() {
+        let ir = parse_smarts("C!=C").unwrap();
+        assert!(
+            write_fragment_smiles(&ir).is_err(),
+            "wrote {:?}",
+            write_fragment_smiles(&ir)
+        );
+    }
+
+    #[test]
+    fn write_fragment_smiles_rejects_an_illegal_descriptor_order() {
+        // `BondingDescriptor` has public fields, so an aromatic order — which
+        // no parser produces (R4.5) — can reach the writer; it must refuse
+        // rather than emit `C:[$]`, text its own parser rejects.
+        let mut ir = fragment("C");
+        ir.components[0].head.descriptors.push(BondingDescriptor {
+            kind: DescriptorKind::Symmetric,
+            label: String::new(),
+            order: Some(BondKind::Aromatic),
+        });
+        let err = write_fragment_smiles(&ir).unwrap_err();
+        assert!(matches!(
+            err.kind,
+            SmilesErrorKind::InvalidDescriptorOrder(BondKind::Aromatic)
+        ));
+    }
+
+    #[test]
+    fn write_fragment_smiles_keeps_an_explicit_single_order() {
+        // `-` before a descriptor is an *explicit* single order, which 01d's
+        // pairing rule distinguishes from "no symbol at all"; dropping it on
+        // write silently rewrites the IR into `order: None`.
+        let ir = fragment("CC-[$]");
+        assert_eq!(
+            descriptors(&ir),
+            vec![BondingDescriptor {
+                kind: DescriptorKind::Symmetric,
+                label: String::new(),
+                order: Some(BondKind::Single),
+            }],
+        );
+        let written = write_fragment_smiles(&ir).unwrap();
+        assert_eq!(written, "CC-[$]");
+        assert_eq!(descriptors(&fragment(&written)), descriptors(&ir));
+    }
+
+    #[test]
+    fn write_fragment_smiles_emits_the_shared_glyph() {
+        // `[!]` is the shared descriptor; like every other kind it is written
+        // in the canonical trailing form, after its anchor atom.
+        assert_eq!(write_fragment_smiles(&fragment("[!]C")).unwrap(), "C[!]");
     }
 }

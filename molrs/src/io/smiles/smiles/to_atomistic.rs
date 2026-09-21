@@ -9,6 +9,11 @@
 //! The conversion walks the IR tree, creates atoms with element symbols, creates
 //! bonds from the chain structure and ring closures, and sets properties
 //! (charge, isotope, chirality, hydrogen count).
+//!
+//! [`fragment_to_atomistic`] is the fragment-dialect entry point and shares
+//! that one walk: it additionally hands back the bonding descriptors the
+//! notation anchored on each atom, which [`to_atomistic`] refuses rather than
+//! drops.
 
 use std::collections::{HashMap, HashSet};
 
@@ -47,8 +52,13 @@ use molrs::system::molgraph::PropValue;
 ///
 /// # Errors
 ///
-/// Returns an error if ring closures are unmatched or if the IR contains
-/// SMARTS query atoms (which have no single atomistic interpretation).
+/// Returns [`SmilesErrorKind::UnmatchedRingClosure`] for a ring digit that is
+/// never closed, [`SmilesErrorKind::InvalidQueryPrimitive`] for SMARTS query
+/// atoms and bond queries (which have no single atomistic interpretation), and
+/// [`SmilesErrorKind::DescriptorsUnconvertible`] for a node carrying a bonding
+/// descriptor — this is the plain conversion, and dropping the descriptor
+/// silently is the one outcome it will not produce; use
+/// [`fragment_to_atomistic`] instead.
 ///
 /// # Examples
 ///
@@ -61,7 +71,7 @@ use molrs::system::molgraph::PropValue;
 /// assert_eq!(mol.n_bonds(), 2);
 /// ```
 pub fn to_atomistic(ir: &SmilesIR) -> Result<Atomistic, SmilesError> {
-    let mut builder = Builder::new(ir);
+    let mut builder = Builder::new(ir, /*collect_descriptors*/ false);
 
     for component in &ir.components {
         builder.build_chain(component, None)?;
@@ -70,6 +80,61 @@ pub fn to_atomistic(ir: &SmilesIR) -> Result<Atomistic, SmilesError> {
     builder.close_rings()?;
 
     Ok(builder.mol)
+}
+
+/// Convert a parsed SMILES **fragment** IR into an [`Atomistic`] graph plus the
+/// descriptor map.
+///
+/// The input is a SMILES fragment body with `CGsmiles` / `BigSMILES` bonding
+/// descriptors, as produced by
+/// [`parse_fragment_smiles`](crate::io::smiles::parse_fragment_smiles); this is
+/// the fragment-dialect sibling of [`to_atomistic`], which refuses
+/// descriptor-bearing input rather than drop it. The graph is built by the same
+/// walk, so descriptor-free input gives the same atoms, bonds and properties
+/// through either entry point.
+///
+/// The second return value pairs each descriptor with the [`AtomId`] of the
+/// atom it binds to. Its order is a contract, not an accident: the later
+/// stages that turn descriptors into *ports* — the named joining sites a
+/// fragment offers — index this vector, so the order is fixed as atom-visit
+/// order first, then each atom's own descriptor-list order. That is not text
+/// order: in `C(N[<])[>]` the `>` the parser folded onto the head carbon
+/// precedes the `<` on the branch nitrogen, because the walk reaches the head
+/// carbon before it descends into the branch. Inputs with several
+/// `.`-separated components are walked component by component, in written
+/// order.
+///
+/// Descriptors are data, not atoms: no hydrogens are added, and an unpaired
+/// descriptor creates neither an atom nor a bond here. Filling open sites — by
+/// pairing them with another fragment's, or by capping them with hydrogen — is
+/// a later step that reads this map.
+///
+/// Descriptors are passed through, not re-checked: the parser validated every
+/// descriptor at its single construction site, so a hand-built IR carrying a
+/// label or order no parser would have produced is returned as given.
+///
+/// # Errors
+///
+/// Returns [`SmilesErrorKind::UnmatchedRingClosure`] for a ring digit that is
+/// never closed and [`SmilesErrorKind::InvalidQueryPrimitive`] for SMARTS
+/// query atoms and bond queries (which have no single atomistic
+/// interpretation). A bonding descriptor is *not* an error here — carrying it
+/// out to the caller is what this entry point is for.
+pub fn fragment_to_atomistic(
+    ir: &SmilesIR,
+) -> Result<(Atomistic, Vec<(AtomId, BondingDescriptor)>), SmilesError> {
+    let mut builder = Builder::new(ir, /*collect_descriptors*/ true);
+
+    for component in &ir.components {
+        builder.build_chain(component, None)?;
+    }
+
+    builder.close_rings()?;
+
+    let Builder {
+        mol, descriptors, ..
+    } = builder;
+    Ok((mol, descriptors))
 }
 
 // ---------------------------------------------------------------------------
@@ -110,15 +175,26 @@ struct Builder<'a> {
     aromatic_atoms: HashSet<AtomId>,
     /// Reference to the original IR for error messages.
     ir: &'a SmilesIR,
+    /// Which entry point this walk serves: `true` on the fragment path, which
+    /// records every descriptor against its atom; `false` on the plain path,
+    /// where a node carrying one is an error rather than a silent loss.
+    collect_descriptors: bool,
+    /// Each descriptor against the atom it binds to, in visit order. Empty on
+    /// the plain path, which never gets past the guard in
+    /// [`Builder::add_atom_node`]. Owned, not borrowed: the map is returned by
+    /// value.
+    descriptors: Vec<(AtomId, BondingDescriptor)>,
 }
 
 impl<'a> Builder<'a> {
-    fn new(ir: &'a SmilesIR) -> Self {
+    fn new(ir: &'a SmilesIR, collect_descriptors: bool) -> Self {
         Self {
             mol: Atomistic::new(),
             open_rings: HashMap::new(),
             aromatic_atoms: HashSet::new(),
             ir,
+            collect_descriptors,
+            descriptors: Vec::new(),
         }
     }
 
@@ -166,8 +242,20 @@ impl<'a> Builder<'a> {
     }
 
     /// Create an atom from an [`AtomNode`] and return its id.
+    ///
+    /// Every atom of every chain, branch and component flows through here, so
+    /// this is also where bonding descriptors are either refused (plain path)
+    /// or recorded against their atom (fragment path).
     fn add_atom_node(&mut self, node: &AtomNode) -> Result<AtomId, SmilesError> {
-        match &node.spec {
+        if !self.collect_descriptors && !node.descriptors.is_empty() {
+            return Err(SmilesError::new(
+                SmilesErrorKind::DescriptorsUnconvertible,
+                node.span,
+                "", // input not available here; span is enough
+            ));
+        }
+
+        let id = match &node.spec {
             AtomSpec::Organic { symbol, aromatic } => {
                 let id = self.mol.add_atom_bare(&canonical_element_symbol(symbol));
                 if *aromatic {
@@ -229,7 +317,14 @@ impl<'a> Builder<'a> {
                 node.span,
                 "", // input not available here; span is enough
             )),
+        }?;
+
+        if self.collect_descriptors {
+            self.descriptors
+                .extend(node.descriptors.iter().map(|desc| (id, desc.clone())));
         }
+
+        Ok(id)
     }
 
     fn add_bond(
@@ -383,7 +478,7 @@ fn bond_kind_to_number(kind: BondKind) -> BondNumber {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::io::smiles::parse_smiles;
+    use crate::io::smiles::{parse_fragment_smiles, parse_smiles};
 
     fn smiles_to_mol(input: &str) -> Atomistic {
         let ir = parse_smiles(input).unwrap();
@@ -659,5 +754,146 @@ mod tests {
         let ir = crate::io::smiles::parse_smarts("[!C]").unwrap();
         let err = to_atomistic(&ir);
         assert!(err.is_err());
+    }
+
+    // -- fragment dialect: bonding descriptors ------------------------------
+
+    fn fragment_to_mol(input: &str) -> (Atomistic, Vec<(AtomId, BondingDescriptor)>) {
+        let ir = parse_fragment_smiles(input).unwrap();
+        fragment_to_atomistic(&ir)
+            .unwrap_or_else(|e| panic!("fragment_to_atomistic({input:?}) failed: {e}"))
+    }
+
+    /// Atom ids in the order the walker created them.
+    fn atom_ids(mol: &Atomistic) -> Vec<AtomId> {
+        mol.atoms().map(|(id, _)| id).collect()
+    }
+
+    /// Element symbols in creation order.
+    fn elements(mol: &Atomistic) -> Vec<String> {
+        mol.atoms()
+            .filter_map(|(_, a)| a.get_str("element").map(str::to_owned))
+            .collect()
+    }
+
+    /// Declared bond class (`bond_type`, `bond_number`) in creation order.
+    fn bond_classes(mol: &Atomistic) -> Vec<(Option<PropValue>, Option<PropValue>)> {
+        mol.bonds()
+            .map(|(_, b)| {
+                (
+                    b.props.get("bond_type").cloned(),
+                    b.props.get("bond_number").cloned(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_to_atomistic_rejects_a_descriptor_bearing_ir() {
+        // The plain entry point routes the caller instead of silently dropping
+        // the descriptors the fragment dialect parsed.
+        let ir = parse_fragment_smiles("[$]COC[$]").unwrap();
+        let err = to_atomistic(&ir).unwrap_err();
+        assert!(matches!(
+            err.kind,
+            SmilesErrorKind::DescriptorsUnconvertible
+        ));
+    }
+
+    #[test]
+    fn test_fragment_to_atomistic_builds_the_heavy_atom_graph() {
+        // `[$]COC[$]` is three heavy atoms and two bonds; descriptors are not
+        // atoms and add neither.
+        let (mol, _) = fragment_to_mol("[$]COC[$]");
+        assert_eq!(mol.n_atoms(), 3);
+        assert_eq!(mol.n_bonds(), 2);
+    }
+
+    #[test]
+    fn test_fragment_to_atomistic_maps_each_descriptor_to_its_atom() {
+        // R4.2: the leading `$` binds to the first carbon, the trailing one to
+        // the last, and the map lists them in that (visit) order.
+        let (mol, ports) = fragment_to_mol("[$]COC[$]");
+        let ids = atom_ids(&mol);
+        assert_eq!(ports.len(), 2);
+        assert_eq!(
+            (ports[0].0, ports[0].1.kind),
+            (ids[0], DescriptorKind::Symmetric)
+        );
+        assert_eq!(
+            (ports[1].0, ports[1].1.kind),
+            (ids[2], DescriptorKind::Symmetric)
+        );
+    }
+
+    #[test]
+    fn test_fragment_to_atomistic_keeps_per_atom_descriptor_order() {
+        // R4.3: atom 0 carries `[>]` then `[$1]` in written order, so the map
+        // emits both before moving on to the next atom's descriptors.
+        let (mol, ports) = fragment_to_mol("[>][$1]COC[<]");
+        let ids = atom_ids(&mol);
+        assert_eq!(ports.len(), 3);
+        assert_eq!(
+            (ports[0].0, ports[0].1.kind, ports[0].1.label.as_str()),
+            (ids[0], DescriptorKind::Right, "")
+        );
+        assert_eq!(
+            (ports[1].0, ports[1].1.kind, ports[1].1.label.as_str()),
+            (ids[0], DescriptorKind::Symmetric, "1")
+        );
+        assert_eq!(
+            (ports[2].0, ports[2].1.kind, ports[2].1.label.as_str()),
+            (ids[2], DescriptorKind::Left, "")
+        );
+    }
+
+    #[test]
+    fn test_fragment_to_atomistic_map_follows_the_atom_descriptor_list() {
+        // `C([$]O)[>]`: `(` is not a node, so the branch's leading `$` and the
+        // trailing `>` both anchor on the first carbon; the map keeps that
+        // atom's list order, `$` before `>`.
+        let (mol, ports) = fragment_to_mol("C([$]O)[>]");
+        let ids = atom_ids(&mol);
+        assert_eq!(ports.len(), 2);
+        assert_eq!(
+            (ports[0].0, ports[0].1.kind),
+            (ids[0], DescriptorKind::Symmetric)
+        );
+        assert_eq!(
+            (ports[1].0, ports[1].1.kind),
+            (ids[0], DescriptorKind::Right)
+        );
+    }
+
+    #[test]
+    fn test_fragment_to_atomistic_map_is_visit_order_not_text_position() {
+        // `C(N[<])[>]`: `<` anchors on the branch nitrogen (atom 1), `>` on the
+        // head carbon (atom 0), which the parser folds on after the branch. The
+        // walker visits the head before the branch, so the `>` entry comes
+        // first — the reverse of the text, where `[<]` precedes `[>]`.
+        let (mol, ports) = fragment_to_mol("C(N[<])[>]");
+        let ids = atom_ids(&mol);
+        assert_eq!(ports.len(), 2);
+        assert_eq!(
+            (ports[0].0, ports[0].1.kind),
+            (ids[0], DescriptorKind::Right)
+        );
+        assert_eq!(
+            (ports[1].0, ports[1].1.kind),
+            (ids[1], DescriptorKind::Left)
+        );
+    }
+
+    #[test]
+    fn test_fragment_to_atomistic_matches_to_atomistic_without_descriptors() {
+        // One walker behind two entry points: descriptor-free input must give
+        // the same graph through either, and an empty map.
+        let plain = to_atomistic(&parse_smiles("CC(=O)O").unwrap()).unwrap();
+        let (fragment, ports) = fragment_to_mol("CC(=O)O");
+        assert!(ports.is_empty());
+        assert_eq!(fragment.n_atoms(), plain.n_atoms());
+        assert_eq!(fragment.n_bonds(), plain.n_bonds());
+        assert_eq!(elements(&fragment), elements(&plain));
+        assert_eq!(bond_classes(&fragment), bond_classes(&plain));
     }
 }
