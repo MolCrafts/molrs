@@ -20,6 +20,27 @@ canonical field names. The ``molrs.io.raw`` counterparts return eagerly.
 :class:`SmilesIR` is here because SMILES is a *format*: text in, molecule out,
 exactly like PDB or XYZ. SMARTS is not — a pattern is a query over a perceived
 graph — so it lives in :mod:`molrs.perceive`.
+
+:class:`CGSmilesIR` is the same kind of door onto the CGsmiles notation, which
+writes a molecule at one or more *coarse-grained* resolutions — a resolution
+at which one particle, a *bead*, stands in for a whole group of atoms: text
+in, one :class:`CGGraph` per resolution level plus the fragment tables that
+resolve them out, and ``to_atomistic()`` expands the lowest level into atoms.
+That expansion is topology only — atoms, bonds and the per-atom ``frag_id``
+saying which bead each atom came from. A line notation states no geometry, so
+coordinates, hydrogens and perception remain separate steps. The records it
+hands out — :class:`CGGraph`, :class:`CGNode`, :class:`CGEdge`,
+:class:`CGFragmentDef`, :class:`ResolvedPair`, :class:`PairEnd` and
+:class:`BondingDescriptor` — are read-only views over the parsed value, so no
+fact of the notation has to be re-parsed, decoded or unpacked from a bare
+tuple position on the Python side.
+
+There is no ``CGSmilesReader``, deliberately: "Reader" in this module means a
+lazy, path-backed trajectory cursor (:class:`TrajectoryReader`, and the
+``*TrajReader`` classes of :mod:`molrs.io.raw`), and a text-in / IR-out parser
+is not that object. A reader-shaped ``read()`` API over CGsmiles belongs to
+molpy, which wraps :class:`CGSmilesIR` exactly as its ``SmilesReader`` wraps
+:class:`SmilesIR`.
 """
 
 from __future__ import annotations
@@ -32,6 +53,12 @@ from typing import Any, Union, overload
 
 from . import raw
 from . import mrec
+from .._lib import BondingDescriptor as BondingDescriptor
+from .._lib import CGEdge as CGEdge
+from .._lib import CGFragmentDef as CGFragmentDef
+from .._lib import CGGraph as CGGraph
+from .._lib import CGNode as CGNode
+from .._lib import CGSmilesIR as CGSmilesIR
 from .._lib import LammpsCpuUse as LammpsCpuUse
 from .._lib import LammpsLoadBalance as LammpsLoadBalance
 from .._lib import LammpsLog as LammpsLog
@@ -45,6 +72,8 @@ from .._lib import LammpsThermo as LammpsThermo
 from .._lib import LammpsTimingBreakdown as LammpsTimingBreakdown
 from .._lib import LammpsTimingRow as LammpsTimingRow
 from .._lib import LammpsWarning as LammpsWarning
+from .._lib import PairEnd as PairEnd
+from .._lib import ResolvedPair as ResolvedPair
 from .._lib import SmilesIR as SmilesIR
 from .._lib import (
     read_stl as read_stl,
@@ -953,6 +982,16 @@ __all__ = [
     "read_frame_bytes",
     "write_frame_bytes",
     "SmilesIR",
+    # CGsmiles: one front door plus the read-only records it hands out. No
+    # `CGSmilesReader` — see the module docstring.
+    "CGSmilesIR",
+    "CGGraph",
+    "CGNode",
+    "CGEdge",
+    "CGFragmentDef",
+    "ResolvedPair",
+    "PairEnd",
+    "BondingDescriptor",
     "read_lammps_data",
     "read_pdb",
     "read_pdb_trajectory",

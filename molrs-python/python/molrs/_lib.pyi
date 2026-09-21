@@ -14,7 +14,6 @@ from typing import (
     List,
     Literal,
     Optional,
-    Protocol,
     Sequence,
     Tuple,
     TypeVar,
@@ -1059,10 +1058,197 @@ class keys:
 # ---------------------------------------------------------------------------
 
 class SmilesIR:
-    """Intermediate representation of a parsed SMILES string."""
+    """Intermediate representation of a parsed SMILES or SMARTS string.
 
+    ``to_atomistic()`` is the plain conversion: it refuses SMARTS query atoms
+    and, since it will not drop them silently, any node carrying a bonding
+    descriptor — which is what a ``CGFragmentDef.body`` from the last CGsmiles
+    block holds. Expand those through ``CGSmilesIR.to_atomistic`` instead.
+    """
+
+    def __init__(self, smiles: str) -> None: ...
     @property
     def n_components(self) -> int: ...
+    def to_atomistic(self) -> Atomistic: ...
+    def components(self) -> list[Atomistic]: ...
+    def write_smiles(self) -> str: ...
+    def write_smarts(self) -> str: ...
+    @classmethod
+    def from_atomistic(
+        cls,
+        mol: Atomistic,
+        *,
+        canonical: bool = True,
+        root: Optional[int] = None,
+        aromatic: Literal["as_marked", "kekule_only"] = "as_marked",
+        hydrogens: Literal[
+            "organic_subset", "explicit_all", "as_stored"
+        ] = "organic_subset",
+        include_stereo: bool = False,
+        multi_component: Literal[
+            "error_if_multiple", "join_dot", "first_only"
+        ] = "error_if_multiple",
+        organic_subset: bool = True,
+    ) -> SmilesIR: ...
+
+# ---------------------------------------------------------------------------
+# CGsmiles — one front door plus the read-only records it hands out
+#
+# `CGSmilesIR` parses; every other class here is a read-only view over one
+# record of the value it returns and has no constructor of its own. There is
+# no `CGSmilesReader`: "Reader" here means a lazy, path-backed trajectory
+# cursor, and a text-in / IR-out parser is not that — see the `molrs.io`
+# module docstring.
+#
+# Every enum crosses as the lowercase spelling of its Rust variant, except a
+# coarse edge's multiplicity, which *is* a count and crosses as one. Names,
+# not the numeric storage codes: those codes are not injective over these
+# enums, so a number could not be read back as what the notation wrote.
+# ---------------------------------------------------------------------------
+
+# The nine lowercase `BondKind` spellings — shared by `BondingDescriptor.order`
+# and `ResolvedPair.kind`, which name the same enum.
+BondKindName = Literal[
+    "single", "double", "triple", "quadruple", "aromatic", "up", "down", "any", "ring"
+]
+
+class BondingDescriptor:
+    """One bonding descriptor: a site at which a fragment may later be joined.
+
+    ``kind`` is the operator written (``[$]`` symmetric, ``[<]`` left, ``[>]``
+    right); a left pairs only with a right, a symmetric only with a symmetric,
+    and the labels must match exactly. ``order`` is the bond order written
+    beside the bracket, ``None`` when none was — which counts as ``"single"``
+    for pairing.
+    """
+
+    @property
+    def kind(self) -> Literal["symmetric", "left", "right", "shared"]: ...
+    @property
+    def label(self) -> str: ...
+    @property
+    def order(self) -> Optional[BondKindName]: ...
+
+class CGNode:
+    """One coarse-grained node: ``[#PEO]``, ``[#A;q=-0.5]``.
+
+    ``charge`` is a *partial* charge in elementary-charge units ``e`` (the
+    ``q`` annotation), never a formal charge. ``parent`` indexes the previous
+    level's ``nodes``, and is ``None`` in ``levels[0]`` and in a fragment body.
+    """
+
+    @property
+    def name(self) -> str: ...
+    @property
+    def charge(self) -> Optional[float]: ...
+    @property
+    def annotations(self) -> list[tuple[str, str]]: ...
+    @property
+    def descriptors(self) -> list[BondingDescriptor]: ...
+    @property
+    def parent(self) -> Optional[int]: ...
+
+class CGEdge:
+    """One coarse edge, joining ``nodes[i]`` and ``nodes[j]`` of its level.
+
+    ``multiplicity`` is how many bonds the edge stands for (1–4, from ``-``
+    ``=`` ``#`` ``$``), never a bond kind. ``derived_from`` is the
+    ``(level, pair)`` of the resolved pair that induced the edge, or ``None``
+    when the notation wrote it; a derived edge always has multiplicity 1.
+    """
+
+    @property
+    def i(self) -> int: ...
+    @property
+    def j(self) -> int: ...
+    @property
+    def multiplicity(self) -> int: ...
+    @property
+    def derived_from(self) -> Optional[tuple[int, int]]: ...
+
+class CGGraph:
+    """One resolution level: coarse-grained nodes and the edges between them.
+
+    Both lists are in parse order — nodes as their brackets were read, edges
+    as the notation formed them, with every derived edge appended after the
+    written ones. A node is addressed by its index in ``nodes``.
+    """
+
+    @property
+    def nodes(self) -> list[CGNode]: ...
+    @property
+    def edges(self) -> list[CGEdge]: ...
+
+class CGFragmentDef:
+    """One entry of a fragment block: ``#PEO=[$]COC[$]``.
+
+    ``body`` is a ``CGGraph`` in an intermediate block and a ``SmilesIR`` in
+    the last one — the Python type is the tag, so dispatch with ``isinstance``.
+    A ``SmilesIR`` body keeps its bonding descriptors, so its own
+    ``to_atomistic()`` refuses it; expand through ``CGSmilesIR.to_atomistic``.
+    Its ``repr`` echoes the fragment-table entry as written —
+    ``#PEO=[$]COC[$]``, name and ``=`` included — not a bare SMILES, because
+    the entry's span is the text the IR records.
+    """
+
+    @property
+    def name(self) -> str: ...
+    @property
+    def body(self) -> Union[CGGraph, SmilesIR]: ...
+
+class PairEnd:
+    """One end of a :class:`ResolvedPair`: the port, and who offered it.
+
+    For a pair read from ``ir.pairs[k]``: when ``end == "sub"`` ``index``
+    indexes ``levels[k + 1].nodes`` (the child node carrying the port) and
+    ``port`` indexes that node's ``descriptors``; when ``end == "body"``
+    ``index`` indexes ``levels[k].nodes`` and ``port`` indexes that node's
+    atomistic body's descriptor map.
+    """
+
+    @property
+    def end(self) -> Literal["sub", "body"]: ...
+    @property
+    def index(self) -> int: ...
+    @property
+    def port(self) -> int: ...
+
+class ResolvedPair:
+    """One bond a written coarse edge stands for, with the ports it consumed.
+
+    ``kind`` is the chemistry of that bond as a lowercase bond-kind name: the
+    order written on either descriptor, ``"aromatic"`` when neither wrote one
+    and both port atoms are written aromatic, ``"single"`` otherwise.
+    """
+
+    @property
+    def edge(self) -> int: ...
+    @property
+    def bond(self) -> int: ...
+    @property
+    def src(self) -> PairEnd: ...
+    @property
+    def dst(self) -> PairEnd: ...
+    @property
+    def kind(self) -> BondKindName: ...
+
+class CGSmilesIR:
+    """Intermediate representation of a parsed CGsmiles string.
+
+    Constructing it parses, validates, expands and resolves the whole string;
+    the value is then read, not built. ``levels`` are the resolution levels
+    (coarsest first), ``fragments[k]`` resolves the names of ``levels[k]``, and
+    ``to_atomistic()`` expands the lowest level into a topology-only graph
+    whose atoms carry ``frag_id``.
+    """
+
+    def __init__(self, text: str) -> None: ...
+    @property
+    def levels(self) -> list[CGGraph]: ...
+    @property
+    def fragments(self) -> list[dict[str, CGFragmentDef]]: ...
+    @property
+    def pairs(self) -> list[list[ResolvedPair]]: ...
     def to_atomistic(self) -> Atomistic: ...
 
 # ---------------------------------------------------------------------------
@@ -1330,202 +1516,12 @@ def align_direction(
 ) -> None: ...
 
 # ---------------------------------------------------------------------------
-# Force field — Style / Type / Parameters model
+# Force field
 #
-# A ForceField owns category-keyed Styles; each Style owns named Types; each
-# Type carries a Parameters view. The classes below are handle *views* over a
-# parent ForceField — they read/write through to it rather than holding owned
-# state.
+# Only the native handle is declared here. The style and parameter views a
+# caller reaches through it are pure Python and are declared in
+# `molrs/ff/forcefield.py`, beside the code that defines them.
 # ---------------------------------------------------------------------------
-
-class Parameters:
-    """The parameter view of a :class:`Type` — keyword access plus the
-    ``.kwargs`` mapping consumers read. The model is keyword-only, so ``.args``
-    is always empty.
-    """
-
-    @property
-    def args(self) -> list[Any]: ...
-    @property
-    def kwargs(self) -> dict[str, Any]: ...
-    def get(self, key: str) -> Any: ...
-    def keys(self) -> list[str]: ...
-    def values(self) -> list[Any]: ...
-    def items(self) -> list[tuple[str, Any]]: ...
-
-class Type:
-    """Handle view of one force-field type over a :class:`ForceField`."""
-
-    @property
-    def name(self) -> str: ...
-    @property
-    def category(self) -> str: ...
-    @property
-    def endpoints(self) -> tuple["AtomType", ...]: ...
-    @property
-    def params(self) -> Parameters: ...
-    def get(self, key: str) -> Any: ...
-    def keys(self) -> list[str]: ...
-    def items(self) -> list[tuple[str, Any]]: ...
-
-class AtomType(Type):
-    """A single atom type (endpoints only — no bonded arity)."""
-
-class BondType(Type):
-    """A bond type spanning two atom-type endpoints ``itom``-``jtom``."""
-
-    @property
-    def itom(self) -> AtomType: ...
-    @property
-    def jtom(self) -> AtomType: ...
-    def matches(self, at1: str, at2: str) -> bool:
-        """Test whether endpoint atom-type names ``at1``-``at2`` match this type."""
-        ...
-
-class AngleType(Type):
-    """An angle type spanning three atom-type endpoints ``itom``-``jtom``-``ktom``."""
-
-    @property
-    def itom(self) -> AtomType: ...
-    @property
-    def jtom(self) -> AtomType: ...
-    @property
-    def ktom(self) -> AtomType: ...
-    def matches(self, at1: str, at2: str, at3: str) -> bool:
-        """Test whether endpoint atom-type names match this type."""
-        ...
-
-class DihedralType(Type):
-    """A dihedral type spanning four atom-type endpoints ``itom``-``jtom``-``ktom``-``ltom``."""
-
-    @property
-    def itom(self) -> AtomType: ...
-    @property
-    def jtom(self) -> AtomType: ...
-    @property
-    def ktom(self) -> AtomType: ...
-    @property
-    def ltom(self) -> AtomType: ...
-    def matches(self, at1: str, at2: str, at3: str, at4: str) -> bool:
-        """Test whether endpoint atom-type names match this type."""
-        ...
-
-class ImproperType(Type):
-    """An improper type spanning four atom-type endpoints ``itom``-``jtom``-``ktom``-``ltom``."""
-
-    @property
-    def itom(self) -> AtomType: ...
-    @property
-    def jtom(self) -> AtomType: ...
-    @property
-    def ktom(self) -> AtomType: ...
-    @property
-    def ltom(self) -> AtomType: ...
-    def matches(self, at1: str, at2: str, at3: str, at4: str) -> bool:
-        """Test whether endpoint atom-type names match this type."""
-        ...
-
-class PairType(Type):
-    """A pair (non-bonded) type spanning two atom-type endpoints ``itom``-``jtom``."""
-
-    @property
-    def itom(self) -> AtomType: ...
-    @property
-    def jtom(self) -> AtomType: ...
-    def matches(self, at1: str, at2: str) -> bool:
-        """Test whether endpoint atom-type names ``at1``-``at2`` match this type."""
-        ...
-
-class Style:
-    """Handle view of one style over a :class:`ForceField`."""
-
-    @property
-    def name(self) -> str: ...
-    @property
-    def category(self) -> str: ...
-    @property
-    def types(self) -> list[Type]: ...
-    def get_types(self) -> list[Type]: ...
-    def get_type_by_name(self, name: str) -> Optional[Type]: ...
-
-class AtomStyle(Style):
-    """Atom style — defines :class:`AtomType` entries.
-
-    ``types`` / ``get_types`` / ``get_type_by_name`` are inherited from
-    :class:`Style` and yield :class:`AtomType` instances at runtime.
-    """
-
-    def def_type(
-        self, name: str, params: Optional[dict[str, Any]] = None
-    ) -> AtomType: ...
-
-class BondStyle(Style):
-    """Bond style — defines :class:`BondType` entries.
-
-    ``types`` / ``get_types`` / ``get_type_by_name`` are inherited from
-    :class:`Style` and yield :class:`BondType` instances at runtime.
-    """
-
-    def def_type(
-        self, itom: str, jtom: str, params: Optional[dict[str, Any]] = None
-    ) -> BondType: ...
-
-class AngleStyle(Style):
-    """Angle style — defines :class:`AngleType` entries.
-
-    ``types`` / ``get_types`` / ``get_type_by_name`` are inherited from
-    :class:`Style` and yield :class:`AngleType` instances at runtime.
-    """
-
-    def def_type(
-        self, itom: str, jtom: str, ktom: str, params: Optional[dict[str, Any]] = None
-    ) -> AngleType: ...
-
-class DihedralStyle(Style):
-    """Dihedral style — defines :class:`DihedralType` entries.
-
-    ``types`` / ``get_types`` / ``get_type_by_name`` are inherited from
-    :class:`Style` and yield :class:`DihedralType` instances at runtime.
-    """
-
-    def def_type(
-        self,
-        itom: str,
-        jtom: str,
-        ktom: str,
-        ltom: str,
-        params: Optional[dict[str, Any]] = None,
-    ) -> DihedralType: ...
-
-class ImproperStyle(Style):
-    """Improper style — defines :class:`ImproperType` entries.
-
-    ``types`` / ``get_types`` / ``get_type_by_name`` are inherited from
-    :class:`Style` and yield :class:`ImproperType` instances at runtime.
-    """
-
-    def def_type(
-        self,
-        itom: str,
-        jtom: str,
-        ktom: str,
-        ltom: str,
-        params: Optional[dict[str, Any]] = None,
-    ) -> ImproperType: ...
-
-class PairStyle(Style):
-    """Pair (non-bonded) style — defines :class:`PairType` entries.
-
-    ``types`` / ``get_types`` / ``get_type_by_name`` are inherited from
-    :class:`Style` and yield :class:`PairType` instances at runtime.
-    """
-
-    def def_type(
-        self,
-        itom: str,
-        jtom: Optional[str] = None,
-        params: Optional[dict[str, Any]] = None,
-    ) -> PairType: ...
 
 class ForceField:
     @property
@@ -1872,18 +1868,17 @@ class AtdTypifier(Typifier[Atomistic]):
     def typify(self, mol: Atomistic) -> Atomistic: ...
 
 # ---------------------------------------------------------------------------
-# Charge models — one trait, one calling convention
+# Charge models — one calling convention
+#
+# Each model below takes a molecule (and optionally QM base charges) and
+# returns one float64 charge per atom: `needs_equivalencing()` then
+# `assign(mol, qm=None)`. That is a shared shape, not a shared base — the
+# native classes inherit from nothing.
 # ---------------------------------------------------------------------------
 
 BccParameterSet = Literal["bcc", "abcg2"]
 
-class ChargeModel(Protocol):
-    """molecule (and optionally QM base charges) in, one float64 charge per atom out."""
-
-    def needs_equivalencing(self) -> bool: ...
-    def assign(self, mol: Atomistic, qm: Optional[ArrayF] = None) -> ArrayF: ...
-
-class BccModel(ChargeModel):
+class BccModel:
     """AM1-BCC / ABCG2 bond-charge corrections.
 
     ``assign`` is the whole model: it averages the raw QM charges over the
@@ -1899,14 +1894,14 @@ class BccModel(ChargeModel):
     def assign(self, mol: Atomistic, qm: Optional[ArrayF] = None) -> ArrayF: ...
     def correct(self, mol: Atomistic, am1: ArrayF) -> ArrayF: ...
 
-class MullikenModel(ChargeModel):
+class MullikenModel:
     """The pass-through: the QM charges it was handed, bit for bit."""
 
     def __init__(self) -> None: ...
     def needs_equivalencing(self) -> bool: ...
     def assign(self, mol: Atomistic, qm: Optional[ArrayF] = None) -> ArrayF: ...
 
-class GasteigerModel(ChargeModel):
+class GasteigerModel:
     """Gasteiger / PEOE charges (``antechamber -c gas``) — no QM input needed.
 
     ``qm`` is accepted and ignored, so that a caller holding an unknown model can
@@ -2176,9 +2171,11 @@ def pack(path: str) -> str: ...
 # ---------------------------------------------------------------------------
 # Analysis (compute)
 #
-# The Rust crate's unified `Compute` trait consumes batches of frames. Python
-# wrappers accept either a single `Frame` or a `list[Frame]`; single-frame
-# arguments return single results, lists return lists of results (aligned).
+# Every analysis below answers one call, `compute(...)`, over batches of
+# frames: it accepts either a single `Frame` or a `list[Frame]`; a single-frame
+# argument returns a single result, a list returns a list of results (aligned).
+# The structural protocol stating that contract is pure Python and is declared
+# in `molrs/compute/protocol.py`.
 # ---------------------------------------------------------------------------
 
 class RDFResult:
@@ -2200,11 +2197,6 @@ class RDFResult:
     def n_points(self) -> int: ...
     @property
     def n_frames(self) -> int: ...
-
-class Compute(Protocol):
-    """The one analysis contract: ``compute(...)``. Presence-only (PEP 544)."""
-
-    def compute(self, *args: Any, **kwargs: Any) -> Any: ...
 
 class RDF:
     def __init__(self, n_bins: int, r_max: float, r_min: float = 0.0) -> None: ...
@@ -3209,7 +3201,7 @@ class RingInfo:
 
     Examples
     --------
-    >>> rings = molrs.RingInfo(molrs.SmilesIR("c1ccccc1").to_atomistic())
+    >>> rings = molrs.perceive.RingInfo(molrs.io.SmilesIR("c1ccccc1").to_atomistic())
     >>> rings.num_rings()
     1
     >>> rings.ring_sizes()

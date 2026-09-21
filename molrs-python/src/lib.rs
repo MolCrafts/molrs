@@ -258,6 +258,17 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(io::write_smiles_from_atomistic, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_smarts, m)?)?;
 
+    // CGsmiles. One front door (`CGSmilesIR`) plus the read-only records it
+    // hands out; no reader class and no free parse function.
+    m.add_class::<io::cgsmiles::PyCGSmilesIR>()?;
+    m.add_class::<io::cgsmiles::PyCGGraph>()?;
+    m.add_class::<io::cgsmiles::PyCGNode>()?;
+    m.add_class::<io::cgsmiles::PyCGEdge>()?;
+    m.add_class::<io::cgsmiles::PyCGFragmentDef>()?;
+    m.add_class::<io::cgsmiles::PyResolvedPair>()?;
+    m.add_class::<io::cgsmiles::PyPairEnd>()?;
+    m.add_class::<io::cgsmiles::PyBondingDescriptor>()?;
+
     // Scientific-record (*.mrec) path doors. Native-only (filesystem store).
     // Class is MrecTrajectoryReader on _lib so it does not collide with the
     // dump concatenator; python/molrs/io/mrec.py aliases it TrajectoryReader.

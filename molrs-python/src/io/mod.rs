@@ -1,5 +1,5 @@
 //! I/O functions for reading and writing molecular data files, and parsing
-//! SMILES notation.
+//! SMILES and CGsmiles notation.
 //!
 //! ## Supported formats
 //!
@@ -14,7 +14,11 @@
 //! | XSF | [`read_xsf`] | [`write_xsf`] |
 //! | AMBER inpcrd | [`read_amber_inpcrd`] | — |
 //! | AMBER prmtop (structure) | [`read_amber_prmtop`] | — |
+//! | CGsmiles (text in, IR out) | [`cgsmiles`] | — |
 
+// `CGsmiles` is pure text: no filesystem store, hence no `fs` gate, unlike the
+// two path-backed families below.
+pub mod cgsmiles;
 #[cfg(feature = "fs")]
 pub mod log;
 // Both doors need the filesystem store in the core crate; without `fs` the
@@ -2093,7 +2097,7 @@ pub fn write_xtc(path: &str, frames: Vec<PyRef<'_, PyFrame>>) -> PyResult<()> {
 ///
 /// Examples
 /// --------
-/// >>> ir = molrs.parse_smiles("CCO")
+/// >>> ir = molrs.io.SmilesIR("CCO")
 /// >>> ir.n_components
 /// 1
 /// >>> mol = ir.to_atomistic()
@@ -2103,6 +2107,26 @@ pub fn write_xtc(path: &str, frames: Vec<PyRef<'_, PyFrame>>) -> PyResult<()> {
 pub struct PySmilesIR {
     inner: molrs::io::smiles::SmilesIR,
     input: String,
+}
+
+impl PySmilesIR {
+    /// Wrap an existing core [`SmilesIR`] as a Python `SmilesIR` object.
+    ///
+    /// Exists because one binding hands out an IR it did not parse from a
+    /// bare SMILES string: `CGFragmentDef.body` (`io::cgsmiles`) returns the
+    /// atomistic body a `CGsmiles` fragment table already holds, and the only
+    /// alternative — writing that body back to text and re-parsing it — would
+    /// make a second parse the price of reading a field.
+    ///
+    /// `input` is the source text the IR came from; it feeds `__repr__` only
+    /// and is never re-parsed. Not a `#[pymethods]` entry, so this adds
+    /// nothing to the Python surface — the same shape as `PyLammpsLog::new`
+    /// in `io::log`.
+    ///
+    /// [`SmilesIR`]: molrs::io::smiles::SmilesIR
+    pub(crate) fn from_core(inner: molrs::io::smiles::SmilesIR, input: String) -> Self {
+        Self { inner, input }
+    }
 }
 
 #[pymethods]
@@ -2121,7 +2145,7 @@ impl PySmilesIR {
     ///
     /// Examples
     /// --------
-    /// >>> molrs.SmilesIR("CCO").to_atomistic().n_atoms
+    /// >>> molrs.io.SmilesIR("CCO").to_atomistic().n_atoms
     /// 3
     #[new]
     fn new(smiles: &str) -> PyResult<Self> {
@@ -2160,11 +2184,17 @@ impl PySmilesIR {
     /// Raises
     /// ------
     /// ValueError
-    ///     If the IR contains invalid ring-closure or stereochemistry data.
+    ///     If a ring-closure digit is never closed, if the IR holds SMARTS
+    ///     query atoms or query bonds (which have no single atomistic
+    ///     reading), or if any node carries a bonding descriptor — the mark a
+    ///     `CGsmiles` fragment body writes to say where it may be joined.
+    ///     This is the plain conversion and it will not drop a descriptor
+    ///     silently; expand such a body through
+    ///     :meth:`CGSmilesIR.to_atomistic` instead.
     ///
     /// Examples
     /// --------
-    /// >>> mol = parse_smiles("c1ccccc1").to_atomistic()
+    /// >>> mol = molrs.io.SmilesIR("c1ccccc1").to_atomistic()
     /// >>> mol.n_atoms
     /// 6
     fn to_atomistic(&self, py: Python<'_>) -> PyResult<Py<PyAtomistic>> {
@@ -2185,7 +2215,7 @@ impl PySmilesIR {
     ///
     /// Examples
     /// --------
-    /// >>> len(molrs.SmilesIR("CCO.O").components())
+    /// >>> len(molrs.io.SmilesIR("CCO.O").components())
     /// 2
     fn components(&self, py: Python<'_>) -> PyResult<Vec<Py<PyAtomistic>>> {
         self.inner

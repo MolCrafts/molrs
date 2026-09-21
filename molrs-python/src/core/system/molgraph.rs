@@ -1676,7 +1676,7 @@ pub fn align_direction(
 ///
 /// Examples
 /// --------
-/// >>> rings = molrs.RingInfo(molrs.SmilesIR("c1ccccc1").to_atomistic())
+/// >>> rings = molrs.perceive.RingInfo(molrs.io.SmilesIR("c1ccccc1").to_atomistic())
 /// >>> rings.num_rings()
 /// 1
 /// >>> rings.ring_sizes()

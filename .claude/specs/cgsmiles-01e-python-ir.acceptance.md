@@ -15,7 +15,10 @@ criteria:
       `PySmilesIR::from_core` is added in a plain `impl PySmilesIR` block (not
       `#[pymethods]`) in molrs-python/src/io/mod.rs; no `CGSmilesReader` type
       and no `parse_cgsmiles` #[pyfunction] exist anywhere in molrs-python.
-    status: pending
+    status: verified
+    verified_by: impl-gate
+    last_checked: 2026-09-21
+    note: "src/io/mod.rs:20 `pub mod cgsmiles;`; cgsmiles.rs:554 PyCGSmilesIR { inner, input } with #[new] (:581, parse_cgsmiles + smiles_error_to_pyerr), to_atomistic (:681), __repr__; PySmilesIR::from_core in a plain impl at src/io/mod.rs:2111; no CGSmilesReader type and no parse_cgsmiles pyfunction anywhere in molrs-python"
   - id: ac-002
     summary: Seven nested read-only pyclasses, one spelling per fact
     type: code
@@ -27,7 +30,10 @@ criteria:
       `__repr__`; PyCGEdge's getters are exactly i, j, multiplicity and
       derived_from (no `order`, no `origin`), PyCGFragmentDef's are exactly
       name and body (no `body_kind`), and PyCGSmilesIR has no `n_levels`.
-    status: pending
+    status: verified
+    verified_by: impl-gate
+    last_checked: 2026-09-21
+    note: "seven nested pyclasses all `frozen, skip_from_py_object` (cgsmiles.rs:87/150/221/277/330/401/469), zero #[setter], the only #[new] is CGSmilesIR's, eight __repr__; CGEdge getters i/j/multiplicity/derived_from only; CGFragmentDef name/body only; no n_levels; the one `fn order` is BondingDescriptor's"
   - id: ac-003
     summary: All eight classes registered, re-exported and declared in the stub
     type: code
@@ -36,7 +42,10 @@ criteria:
       eight classes near line 257; python/molrs/io/__init__.py imports all eight
       names from `.._lib` in the block at :35-53 and lists them in `__all__`;
       python/molrs/_lib.pyi declares all eight as top-level classes.
-    status: pending
+    status: verified
+    verified_by: impl-gate
+    last_checked: 2026-09-21
+    note: "src/lib.rs eight add_class::<io::cgsmiles::Py*>; io/__init__.py imports the eight names and lists them in __all__; ast over _lib.pyi shows all eight top-level classes"
   - id: ac-004
     summary: Enum mappings are total and the seam cannot panic
     type: code
@@ -48,7 +57,10 @@ criteria:
       CGBondOrder to its integer multiplicity, and contains no `.unwrap()`, no
       `.expect(`, no `panic!`, and no raw `self.input[` slicing (the
       fragment-body text uses `.get(..).unwrap_or(..)`).
-    status: pending
+    status: verified
+    verified_by: impl-gate
+    last_checked: 2026-09-21
+    note: "cgsmiles.rs: zero `_ =>`, unreachable!, .unwrap(), .expect(, panic!, `self.input[`; multiplicity() at :244; two total name fns (9 + 4 arms)"
   - id: ac-005
     summary: F2 graph, fragment and pair values cross correctly
     type: runtime
@@ -60,7 +72,10 @@ criteria:
       derived_from None, every node charge None / annotations [] / parent None,
       len(fragments) == 1 with keys {"OH","PEO"}, and len(pairs[0]) == 4 with
       every kind == "single" and every src.end and dst.end == "body".
-    status: pending
+    status: verified
+    verified_by: impl-gate
+    last_checked: 2026-09-21
+    note: "src/io/mod.rs:20 `pub mod cgsmiles;`; cgsmiles.rs:554 PyCGSmilesIR { inner, input } with #[new] (:581, parse_cgsmiles + smiles_error_to_pyerr), to_atomistic (:681), __repr__; PySmilesIR::from_core in a plain impl at src/io/mod.rs:2111; no CGSmilesReader type and no parse_cgsmiles pyfunction anywhere in molrs-python"
   - id: ac-006
     summary: F8 multi-level structure, parents, descriptors and provenance
     type: runtime
@@ -73,7 +88,10 @@ criteria:
       .body is a molrs.io.CGGraph whose node 0 descriptor reads ("right", "",
       None) and node 1 descriptor kind "left"; fragments[1]["PEO"].body is a
       molrs.io.SmilesIR; pairs[0][0].src.end == "sub" with int index and port.
-    status: pending
+    status: verified
+    verified_by: impl-gate
+    last_checked: 2026-09-21
+    note: "seven nested pyclasses all `frozen, skip_from_py_object` (cgsmiles.rs:87/150/221/277/330/401/469), zero #[setter], the only #[new] is CGSmilesIR's, eight __repr__; CGEdge getters i/j/multiplicity/derived_from only; CGFragmentDef name/body only; no n_levels; the one `fn order` is BondingDescriptor's"
   - id: ac-007
     summary: Public-API example reproduces the hard-coded F2 expansion
     type: runtime
@@ -83,7 +101,10 @@ criteria:
       .to_atomistic()) and passes with the hard-coded literals n_atoms == 11,
       n_relations("bonds") == 10, len(levels) == 1 and len(pairs[0]) == 4; the
       file imports no third-party scientific package and spawns no subprocess.
-    status: pending
+    status: verified
+    verified_by: impl-gate
+    last_checked: 2026-09-21
+    note: "src/lib.rs eight add_class::<io::cgsmiles::Py*>; io/__init__.py imports the eight names and lists them in __all__; ast over _lib.pyi shows all eight top-level classes"
   - id: ac-008
     summary: Malformed input raises ValueError through the one existing mapper
     type: runtime
@@ -93,7 +114,10 @@ criteria:
       contains no error-conversion function of its own and no
       `create_exception!` — every fallible call ends in
       `.map_err(smiles_error_to_pyerr)`.
-    status: pending
+    status: verified
+    verified_by: impl-gate
+    last_checked: 2026-09-21
+    note: "cgsmiles.rs: zero `_ =>`, unreachable!, .unwrap(), .expect(, panic!, `self.input[`; multiplicity() at :244; two total name fns (9 + 4 arms)"
   - id: ac-009
     summary: Nested records are read-only, not constructible, single-spelled
     type: runtime
@@ -103,7 +127,10 @@ criteria:
       molrs.io.CGNode() raises TypeError; and hasattr is False for
       CGEdge.order, CGEdge.origin, CGFragmentDef.body_kind, CGSmilesIR.n_levels,
       molrs.io.CGSmilesReader and molrs.parse_cgsmiles.
-    status: pending
+    status: verified
+    verified_by: impl-gate
+    last_checked: 2026-09-21
+    note: "tests/test_cgsmiles.py F2 graph/fragment/pair tests green under tox -e py (release wheel)"
   - id: ac-010
     summary: Stub parity guard exists, reads the source tree, passes without an allowlist
     type: runtime
@@ -114,7 +141,10 @@ criteria:
       `molrs._lib` classes in both directions with the only exemption computed
       by inspect.ismodule, contains no hard-coded list of exempt class names,
       and passes under `tox -e py`.
-    status: pending
+    status: verified
+    verified_by: impl-gate
+    last_checked: 2026-09-21
+    note: "tests/test_cgsmiles.py F8 level/parent/provenance/descriptor/body/pair-end tests green under tox -e py"
   - id: ac-011
     summary: The 17 stale stub declarations are deleted, the shared five kept
     type: docs
@@ -129,7 +159,10 @@ criteria:
       still declared; and `class SmilesIR` declares __init__,
       n_components, to_atomistic, components, write_smiles, write_smarts and
       from_atomistic.
-    status: pending
+    status: verified
+    verified_by: agent-auto
+    last_checked: 2026-09-21
+    note: "ast over _lib.pyi: none of the 17 stale names declared; Block/Frame/Atomistic/CoarseGrain/ForceField kept; BccModel/MullikenModel/GasteigerModel with no base; Protocol import gone; SmilesIR declares __init__, components, from_atomistic, n_components, to_atomistic, write_smarts, write_smiles; no comment names a deleted type (implementer grep)"
   - id: ac-012
     summary: Dead SmilesIR/parse_smiles names removed from the files this link edits
     type: docs
@@ -139,7 +172,10 @@ criteria:
       io/mod.rs:2096,2124,2167,2188 and _lib.pyi:3212 now read
       `molrs.io.SmilesIR`), while molrs-python/src/conformer/mod.rs:239 is
       unchanged and left to 02d.
-    status: pending
+    status: verified
+    verified_by: agent-auto
+    last_checked: 2026-09-21
+    note: "zero `molrs.parse_smiles`/`molrs.SmilesIR` in src/io/mod.rs and _lib.pyi; src/conformer/mod.rs:239 unchanged (no diff)"
   - id: ac-013
     summary: molrs.io docstring records CGSmilesIR and the no-Reader rule
     type: docs
@@ -147,7 +183,10 @@ criteria:
       The module docstring of python/molrs/io/__init__.py names CGSmilesIR and
       states that there is no CGSmilesReader because "Reader" here means a lazy
       path-backed trajectory cursor, with the reader-shaped API left to molpy.
-    status: pending
+    status: verified
+    verified_by: agent-auto
+    last_checked: 2026-09-21
+    note: "molrs.io module docstring names CGSmilesIR and states there is no CGSmilesReader because Reader means a lazy path-backed trajectory cursor, reader-shaped API left to molpy"
   - id: ac-014
     summary: Full gate green for the binder and the Python suite
     type: runtime
@@ -157,7 +196,10 @@ criteria:
       warnings` and `uv --directory molrs-python run --no-sync tox -e py` all
       exit 0, with no test skipped or xfailed in
       molrs-python/tests/test_cgsmiles.py or test_stub_parity.py.
-    status: pending
+    status: verified
+    verified_by: agent-auto
+    last_checked: 2026-09-21
+    note: "ast over _lib.pyi: none of the 17 stale names declared; Block/Frame/Atomistic/CoarseGrain/ForceField kept; BccModel/MullikenModel/GasteigerModel with no base; Protocol import gone; SmilesIR declares __init__, components, from_atomistic, n_components, to_atomistic, write_smarts, write_smiles; no comment names a deleted type (implementer grep)"
 out_of_scope:
   - A CGSmilesReader class or any reader-shaped read() API (molpy's job).
   - Typed CGsmiles exceptions via create_exception!; smiles_error_to_pyerr keeps flattening kind/span/input (rot named and routed).
