@@ -70,6 +70,23 @@ def test_factories_return_interned_live_refs() -> None:
     assert bond["order"] == 2.0
 
 
+def test_atomistic_def_bond_stamps_both_bond_facts() -> None:
+    """A Python-built bond carries the same two facts a native one does.
+
+    ``Fragment.def_bond`` already routes through the native writer, which
+    stamps ``bond_type = 1`` and ``bond_number = 1``; ``Atomistic.def_bond``
+    owns the same bond kind and must not write a classless bond.
+    """
+    graph = molrs.Atomistic()
+    carbon = graph.def_atom(element="C", x=0.0, y=0.0, z=0.0)
+    other = graph.def_atom(element="C", x=1.5, y=0.0, z=0.0)
+    graph.def_bond(carbon, other)
+
+    bond = graph.bonds[0]
+    assert bond["bond_type"] == 1
+    assert bond["bond_number"] == 1
+
+
 def test_refs_have_no_detached_constructor_form() -> None:
     with pytest.raises(TypeError):
         molrs.Atom(element="C")  # type: ignore[call-arg]

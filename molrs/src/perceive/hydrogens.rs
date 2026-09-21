@@ -5,7 +5,8 @@
 //! bond orders) and returns a **new** [`Atomistic`] with explicit H atoms added.
 //!
 //! [`remove_hydrogens`] does the inverse: it returns a new [`Atomistic`] with
-//! all terminal explicit hydrogen atoms removed.
+//! all terminal explicit hydrogen atoms removed — terminal by `bonds`-kind
+//! degree, and never a hydrogen that is the handle of a port.
 //!
 //! # Immutability
 //! The original `MolGraph` is never mutated; a clone is returned.
@@ -25,10 +26,19 @@
 //! late atoms N/O/F the two formulations happen to agree, but for early atoms
 //! (B, C, Si, …) they diverge, which is exactly the bug this rule fixes.
 
+use std::collections::HashSet;
+
 use crate::system::atomistic::{AtomId, Atomistic, BondId};
 use crate::system::bond::BondType;
 use crate::system::molgraph::Atom;
 use molrs::Element;
+
+/// Name of the relation kind whose members mark a fragment attachment point.
+///
+/// The same kind [`Fragment`](crate::system::fragment::Fragment) registers; it
+/// is matched by name here because a port may ride on a bare
+/// [`Atomistic`] that was never promoted to a fragment.
+const PORTS_KIND: &str = "ports";
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -48,6 +58,11 @@ use molrs::Element;
 /// new H atoms and bonds are appended, so parent angles/dihedrals remain.
 pub fn add_hydrogens(mol: &Atomistic) -> Atomistic {
     let mut new_mol = mol.clone();
+
+    // Mass (amu) of the hydrogens this call appends, read once from the
+    // periodic table: a literal is a second home for a number `Element` owns.
+    let hydrogen = Element::by_symbol("H").expect("H is an element");
+    let h_mass = f64::from(hydrogen.atomic_mass());
 
     // Collect (atom_id, n_implicit_h) for all heavy atoms up front so that
     // we don't hold a borrow while mutating.
@@ -98,16 +113,21 @@ pub fn add_hydrogens(mol: &Atomistic) -> Atomistic {
         for pos in positions.iter().take(n as usize) {
             let mut h = Atom::new();
             h.set("element", "H");
-            h.set("mass", 1.008_f64);
+            h.set("mass", h_mass);
             if place_coords {
                 h.set("x", pos[0]);
                 h.set("y", pos[1]);
                 h.set("z", pos[2]);
             }
             let h_id = new_mol.add_atom(h);
-            if let Ok(bid) = new_mol.add_bond(heavy_id, h_id) {
-                let _ = new_mol.set_bond_type(bid, BondType::Single);
-            }
+            // `Atomistic::add_bond` already stamps the bond Single/Single, so
+            // there is nothing left to set. Both endpoints exist (one is the
+            // atom just added), so the only error `add_bond` has — an unknown
+            // endpoint — is a broken invariant, and swallowing it would leave
+            // the new hydrogen floating unbonded.
+            new_mol
+                .add_bond(heavy_id, h_id)
+                .expect("both endpoints of a freshly added H bond are live");
         }
     }
 
@@ -237,30 +257,82 @@ fn cap_directions(existing: &[[f64; 3]], k: usize) -> Vec<[f64; 3]> {
 
 /// Return a new [`Atomistic`] with all terminal explicit hydrogen atoms removed.
 ///
-/// Only hydrogen atoms with exactly one neighbor (degree == 1) are removed,
-/// which is the standard cheminformatics convention for "non-bridging" H.
-/// Incident bonds, angles, and dihedrals are cascade-deleted by
-/// [`Atomistic::remove_atom`].
+/// # The rule
+///
+/// An explicit hydrogen is stripped when **both** hold:
+///
+/// 1. its degree is exactly one, counted over the `bonds` kind alone
+///    ([`Atomistic::neighbor_bonds`]) — the standard cheminformatics
+///    convention for a "non-bridging" H;
+/// 2. it takes part in no relation of the kind named `ports`.
+///
+/// # Why the degree is counted over `bonds` only
+///
+/// [`MolGraph::neighbors`](crate::system::molgraph::MolGraph::neighbors) is
+/// kind-blind: it walks every arity-2 relation on the graph, so a hydrogen
+/// that a caller also recorded in some other 2-ary kind reads as degree two
+/// and is spared for a reason that has nothing to do with its bonding. The
+/// question clause 1 asks is chemical — how many bonds does this hydrogen
+/// have — so it is asked of the bond kind.
+///
+/// # Why a port handle is kept
+///
+/// A port is `(anchor, handle)`: the handle is a real bonded hydrogen that
+/// *also* carries the attachment point where another fragment joins. Removing
+/// it would cascade-delete the port row and leave the fragment with no
+/// recorded join site, so the handle is kept however few bonds it has.
+///
+/// The two clauses are independent on purpose. Before they were separated,
+/// handles survived only as a side effect of clause 1 being kind-blind: the
+/// port relation inflated a handle's neighbour count to two. That made an
+/// ordinary repletion hydrogen on a ported anchor and a port handle
+/// indistinguishable to anyone reading the code, and tied the survival of
+/// every port to the arity of the kind that records it.
+///
+/// Incident bonds, angles, and dihedrals of a removed hydrogen are
+/// cascade-deleted by [`Atomistic::remove_atom`].
 ///
 /// The original `MolGraph` is never mutated; a clone is returned.
 pub fn remove_hydrogens(mol: &Atomistic) -> Atomistic {
     let mut new_mol = mol.clone();
+
+    // Every node named by a `ports` relation, gathered before the first
+    // removal. The relations are scanned rather than the adjacency index
+    // because that index holds arity-2 kinds only, and "participates in a
+    // port" must not depend on how wide a port row happens to be.
+    let port_nodes: HashSet<AtomId> = match new_mol.kind_id(PORTS_KIND) {
+        Some(kind) => new_mol
+            .relations(kind)
+            .flat_map(|(_, rel)| rel.nodes.into_iter())
+            .collect(),
+        None => HashSet::new(),
+    };
+
     let h_ids: Vec<AtomId> = new_mol
         .atoms()
         .filter_map(|(id, atom)| {
             let sym = atom.get_str("element")?;
-            if !sym.eq_ignore_ascii_case("H") {
+            if !sym.eq_ignore_ascii_case("H") || port_nodes.contains(&id) {
                 return None;
             }
-            if new_mol.neighbors(id).count() == 1 {
+            if new_mol.neighbor_bonds(id).count() == 1 {
                 Some(id)
             } else {
                 None
             }
         })
         .collect();
+
     for h_id in h_ids {
-        let _ = new_mol.remove_atom(h_id);
+        match new_mol.remove_atom(h_id) {
+            Ok(_) => {}
+            // `h_id` was read out of this same graph a moment ago, the handles
+            // in `h_ids` are distinct, and removing one node never despawns
+            // another — so `remove_atom`'s only failure, an unknown handle, is
+            // unreachable. Getting here would mean the node table lost a live
+            // handle: a broken invariant, not a data condition.
+            Err(e) => unreachable!("remove_hydrogens: atom {h_id:?} vanished from its graph: {e}"),
+        }
     }
     new_mol
 }
@@ -431,14 +503,15 @@ mod tests {
     }
 
     fn bond_with_order(mol: &mut Atomistic, a: AtomId, b: AtomId, order: f64) {
-        if let Ok(bid) = mol.add_bond(a, b) {
-            // The old float encoding, expressed in the two facts it conflated:
-            // 1.5 meant "aromatic", every integer meant a localized count.
-            let _ = if (order - 1.5).abs() < 1e-6 {
-                mol.set_bond_class(bid, BondType::Aromatic, BondNumber::Unknown)
-            } else {
-                mol.set_bond_type(bid, BondType::from_code(order.round() as u32))
-            };
+        let bid = mol.add_bond(a, b).expect("fixture bond");
+        // The old float encoding, expressed in the two facts it conflated:
+        // 1.5 meant "aromatic", every integer meant a localized count.
+        if (order - 1.5).abs() < 1e-6 {
+            mol.set_bond_class(bid, BondType::Aromatic, BondNumber::Unknown)
+                .expect("fixture bond class");
+        } else {
+            mol.set_bond_type(bid, BondType::from_code(order.round() as u32))
+                .expect("fixture bond type");
         }
     }
 
@@ -446,7 +519,7 @@ mod tests {
     fn test_methane_skeleton() {
         // Isolated C — should get 4 H.
         let mut g = Atomistic::new();
-        let c = g.add_atom(atom("C"));
+        g.add_atom(atom("C"));
         let result = add_hydrogens(&g);
         // original unchanged
         assert_eq!(g.n_atoms(), 1);
@@ -458,7 +531,6 @@ mod tests {
             .filter(|(_, a)| a.get_str("element") == Some("H"))
             .count();
         assert_eq!(n_h, 4);
-        let _ = c; // suppress unused warning
     }
 
     #[test]
@@ -544,7 +616,7 @@ mod tests {
     fn test_water() {
         // Isolated O → 2 H
         let mut g = Atomistic::new();
-        let _o = g.add_atom(atom("O"));
+        g.add_atom(atom("O"));
         let result = add_hydrogens(&g);
         assert_eq!(result.n_atoms(), 3);
     }
@@ -744,7 +816,7 @@ mod tests {
         g.add_atom(atom("C"));
         let with_h = add_hydrogens(&g);
         let before = with_h.n_atoms();
-        let _stripped = remove_hydrogens(&with_h);
+        remove_hydrogens(&with_h);
         assert_eq!(with_h.n_atoms(), before);
     }
 
@@ -780,7 +852,7 @@ mod tests {
     #[test]
     fn test_add_hydrogens_places_coords_when_heavy_has_xyz() {
         let mut g = Atomistic::new();
-        let c = g.add_atom_xyz("C", 0.0, 0.0, 0.0);
+        g.add_atom_xyz("C", 0.0, 0.0, 0.0);
         let result = add_hydrogens(&g);
         assert_eq!(result.n_atoms(), 5);
         let mut n_h = 0;
@@ -799,7 +871,6 @@ mod tests {
             );
         }
         assert_eq!(n_h, 4);
-        let _ = c;
     }
 
     #[test]
@@ -839,6 +910,29 @@ mod tests {
         c.set("h_count", 2.0_f64);
         let id = g.add_atom(c);
         assert_eq!(implicit_h_count(&g, id), Some(2));
+    }
+
+    /// An added hydrogen's mass is the element's mass, read from the periodic
+    /// table rather than written out as a literal, so the two can never drift.
+    #[test]
+    fn added_hydrogen_carries_the_element_mass() {
+        let mut g = Atomistic::new();
+        g.add_atom(atom("C"));
+        let result = add_hydrogens(&g);
+
+        let expected = f64::from(
+            Element::by_symbol("H")
+                .expect("H is an element")
+                .atomic_mass(),
+        );
+        let mut checked = 0;
+        for (_, a) in result.atoms() {
+            if a.get_str("element") == Some("H") {
+                assert_eq!(a.get_f64("mass"), Some(expected));
+                checked += 1;
+            }
+        }
+        assert_eq!(checked, 4, "methane's four hydrogens were all checked");
     }
 
     // ---- ports ride along untouched ---------------------------------------
@@ -908,6 +1002,65 @@ mod tests {
             added += 1;
         }
         assert_eq!(added, 4, "two on C0, two on C1, none on the hydroxyl O");
+    }
+
+    /// The rule: degree is counted over the `bonds` kind **only**, and an H
+    /// that is the handle of a port is kept whatever that degree says.
+    ///
+    /// C0-C1-O2 with two port handles (H3 on C0, H4 on O2 — real bonded H
+    /// additionally recorded as 2-ary `ports` relations) and two plain
+    /// repletion hydrogens (H5 on C0, H6 on C1). H5 shares its anchor with the
+    /// handle H3, so the fixture separates the two halves of the rule: a
+    /// kind-blind degree keeps H5 out of the removal set only by accident of
+    /// the port relation, and a bonds-only degree without the port exemption
+    /// strips H3 and H4 along with it. Only "bonds-only degree **plus** port
+    /// exemption" leaves exactly the two handles.
+    #[test]
+    fn remove_hydrogens_keeps_port_handles_and_strips_a_plain_h_on_the_same_anchor() {
+        let mut g = Atomistic::new();
+        let c0 = g.add_atom(atom("C"));
+        let c1 = g.add_atom(atom("C"));
+        let o2 = g.add_atom(atom("O"));
+        let h3 = g.add_atom(atom("H"));
+        let h4 = g.add_atom(atom("H"));
+        let h5 = g.add_atom(atom("H"));
+        let h6 = g.add_atom(atom("H"));
+        bond_with_order(&mut g, c0, c1, 1.0);
+        bond_with_order(&mut g, c1, o2, 1.0);
+        bond_with_order(&mut g, c0, h3, 1.0);
+        bond_with_order(&mut g, o2, h4, 1.0);
+        bond_with_order(&mut g, c0, h5, 1.0);
+        bond_with_order(&mut g, c1, h6, 1.0);
+
+        let ports = g.register_kind("ports", 2);
+        g.add_relation(ports, &[c0, h3])
+            .expect("(anchor, handle) is a 2-ary relation");
+        g.add_relation(ports, &[o2, h4])
+            .expect("(anchor, handle) is a 2-ary relation");
+
+        let result = remove_hydrogens(&g);
+
+        assert_eq!(g.n_atoms(), 7, "the input graph is never mutated");
+        assert_eq!(result.n_atoms(), 5, "3 heavy + 2 handles");
+        assert_eq!(
+            result.n_bonds(),
+            4,
+            "C0-C1, C1-O2 and the two handle bonds survive"
+        );
+        let n_h = result
+            .atoms()
+            .filter(|(_, a)| a.get_str("element") == Some("H"))
+            .count();
+        assert_eq!(n_h, 2, "both handles kept, both plain hydrogens removed");
+
+        let ports_after = result
+            .kind_id("ports")
+            .expect("the ports kind survives remove_hydrogens");
+        assert_eq!(
+            result.n_relations(ports_after),
+            2,
+            "no port row was cascade-deleted with a removed handle"
+        );
     }
 }
 

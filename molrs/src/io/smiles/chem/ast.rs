@@ -385,6 +385,27 @@ pub enum DescriptorKind {
     Shared,
 }
 
+impl DescriptorKind {
+    /// The notation glyph this operator is written as: `$`, `<`, `>` or `!`.
+    ///
+    /// This is the same string
+    /// [`core::PortKind::as_str`](crate::core::system::fragment::PortKind::as_str)
+    /// returns for the port role the descriptor is stored as, so a user reads
+    /// and writes one spelling per role whether the value came from the
+    /// notation side or from the stored side. The two enums stay distinct by
+    /// design — this one names what was written, `PortKind` names what is
+    /// stored — and this method is what keeps their single user-facing
+    /// spelling in step.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DescriptorKind::Symmetric => "$",
+            DescriptorKind::Left => "<",
+            DescriptorKind::Right => ">",
+            DescriptorKind::Shared => "!",
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // SMARTS query algebra
 // ---------------------------------------------------------------------------
@@ -540,6 +561,20 @@ mod tests {
     fn test_written_aromatic_is_false_for_a_query_atom() {
         let spec = AtomSpec::Query(AtomQuery::Primitive(AtomPrimitive::Aromatic));
         assert!(!spec.written_aromatic());
+    }
+
+    // -- DescriptorKind::as_str ---------------------------------------------
+
+    /// The whole glyph table, every variant pinned. The glyphs are the four
+    /// operators of the `CGsmiles` / `BigSMILES` grammar, so this table is the
+    /// notation-side mirror of `core::PortKind::as_str` and the two must keep
+    /// spelling the same role the same way.
+    #[test]
+    fn test_descriptor_kind_as_str_is_the_notation_glyph() {
+        assert_eq!(DescriptorKind::Symmetric.as_str(), "$");
+        assert_eq!(DescriptorKind::Left.as_str(), "<");
+        assert_eq!(DescriptorKind::Right.as_str(), ">");
+        assert_eq!(DescriptorKind::Shared.as_str(), "!");
     }
 
     // -- BondKind::bond_type / bond_number ----------------------------------

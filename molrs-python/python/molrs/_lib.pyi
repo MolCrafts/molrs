@@ -1141,10 +1141,17 @@ class SmilesIR:
 # cursor, and a text-in / IR-out parser is not that — see the `molrs.io`
 # module docstring.
 #
-# Every enum crosses as the lowercase spelling of its Rust variant, except a
-# coarse edge's multiplicity, which *is* a count and crosses as one. Names,
-# not the numeric storage codes: those codes are not injective over these
-# enums, so a number could not be read back as what the notation wrote.
+# Every enum crosses as a name, not as its numeric storage code: those codes
+# are not injective over these enums, so a number could not be read back as
+# what the notation wrote. The exception is a coarse edge's multiplicity,
+# which *is* a count and crosses as one.
+#
+# A descriptor kind crosses as its grammar glyph (`$`, `<`, `>`, `!`) — the
+# spelling a user writes and the one a stored port's `port_kind` holds, so
+# there is no third vocabulary between notation, column and boundary. The
+# enums the notation does not spell out (`BondingDescriptor.order`,
+# `ResolvedPair.kind`, `PairEnd.end`) cross as the lowercase spelling of their
+# Rust variant.
 # ---------------------------------------------------------------------------
 
 # The nine lowercase `BondKind` spellings — shared by `BondingDescriptor.order`
@@ -1156,15 +1163,15 @@ BondKindName = Literal[
 class BondingDescriptor:
     """One bonding descriptor: a site at which a fragment may later be joined.
 
-    ``kind`` is the operator written (``[$]`` symmetric, ``[<]`` left, ``[>]``
-    right); a left pairs only with a right, a symmetric only with a symmetric,
-    and the labels must match exactly. ``order`` is the bond order written
-    beside the bracket, ``None`` when none was — which counts as ``"single"``
-    for pairing.
+    ``kind`` is the operator written, as the glyph itself — the same spelling
+    a stored port's ``port_kind`` uses. A ``"<"`` pairs only with a ``">"``, a
+    ``"$"`` only with a ``"$"``, and the labels must match exactly. ``order``
+    is the bond order written beside the bracket, ``None`` when none was —
+    which counts as ``"single"`` for pairing.
     """
 
     @property
-    def kind(self) -> Literal["symmetric", "left", "right", "shared"]: ...
+    def kind(self) -> Literal["$", "<", ">", "!"]: ...
     @property
     def label(self) -> str: ...
     @property

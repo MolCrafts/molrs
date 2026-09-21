@@ -10,6 +10,12 @@ pub(crate) struct Scanner<'a> {
     input: &'a str,
     bytes: &'a [u8],
     pos: usize,
+    /// Byte offset the cursor treats as end of input.
+    ///
+    /// `bytes.len()` unless [`Scanner::set_limit`] narrowed it. Every read
+    /// stops here, so a parser reading one slice of a larger string cannot
+    /// wander out of it while still reporting absolute positions.
+    limit: usize,
     notation: Notation,
 }
 
@@ -28,8 +34,29 @@ impl<'a> Scanner<'a> {
             input,
             bytes: input.as_bytes(),
             pos: 0,
+            limit: input.len(),
             notation,
         }
+    }
+
+    /// Treat byte offset `end` as end of input, clamped to the real end.
+    ///
+    /// A `CGsmiles` string is a sequence of `{…}` blocks and each block a
+    /// sequence of `#NAME=body` entries, so several parsers read *slices* of
+    /// one input while reporting absolute positions — which is why they seek
+    /// into the whole string rather than scanning a substring. Seeking alone
+    /// bounds only where a scan starts: a token left open at the slice's end
+    /// (`{[#A]}.{#A=[#B;k=1}.{#B=[$]C}`, whose `[` is never closed) would run
+    /// on into the next block and report a span covering text it has no
+    /// business reading. Narrowing the limit makes the slice's end behave
+    /// exactly like end of input, so such a token is refused where it was
+    /// written.
+    ///
+    /// [`Scanner::seek`] is deliberately *not* bounded by the limit: a caller
+    /// that has finished a slice moves the cursor past it before widening or
+    /// dropping the bound.
+    pub fn set_limit(&mut self, end: usize) {
+        self.limit = end.min(self.bytes.len());
     }
 
     /// Current byte offset.
@@ -39,12 +66,21 @@ impl<'a> Scanner<'a> {
 
     /// True when all input has been consumed.
     pub fn is_done(&self) -> bool {
-        self.pos >= self.bytes.len()
+        self.pos >= self.limit
     }
 
     /// Look at the current byte as a `char` without consuming it.
     pub fn peek(&self) -> Option<char> {
-        self.bytes.get(self.pos).map(|&b| b as char)
+        self.byte_at(self.pos).map(|b| b as char)
+    }
+
+    /// The byte at `at`, or `None` at or past the limit.
+    fn byte_at(&self, at: usize) -> Option<u8> {
+        if at < self.limit {
+            self.bytes.get(at).copied()
+        } else {
+            None
+        }
     }
 
     /// Look at the byte one position beyond the cursor as a `char`, without
@@ -55,18 +91,14 @@ impl<'a> Scanner<'a> {
     /// this `[` the start of a bracket atom or of a bonding descriptor?);
     /// [`Scanner::peek`] reads the byte *at* the cursor.
     pub fn peek_next(&self) -> Option<char> {
-        self.bytes.get(self.pos + 1).map(|&b| b as char)
+        self.byte_at(self.pos + 1).map(|b| b as char)
     }
 
     /// Consume the current byte and return it as a `char`.
     pub fn advance(&mut self) -> Option<char> {
-        if self.pos < self.bytes.len() {
-            let ch = self.bytes[self.pos] as char;
-            self.pos += 1;
-            Some(ch)
-        } else {
-            None
-        }
+        let ch = self.byte_at(self.pos)? as char;
+        self.pos += 1;
+        Some(ch)
     }
 
     /// Consume the current byte if it matches `expected`, otherwise return an error.
@@ -102,7 +134,7 @@ impl<'a> Scanner<'a> {
     /// the current byte is not a digit.
     pub fn eat_digits(&mut self) -> &'a str {
         let start = self.pos;
-        while self.pos < self.bytes.len() && self.bytes[self.pos].is_ascii_digit() {
+        while self.byte_at(self.pos).is_some_and(|b| b.is_ascii_digit()) {
             self.pos += 1;
         }
         &self.input[start..self.pos]
@@ -171,8 +203,8 @@ impl<'a> Scanner<'a> {
     }
 
     /// Peek at the raw byte at the current position (for two-character symbol lookahead).
-    pub fn peek_byte(&self) -> Option<&u8> {
-        self.bytes.get(self.pos)
+    pub fn peek_byte(&self) -> Option<u8> {
+        self.byte_at(self.pos)
     }
 }
 

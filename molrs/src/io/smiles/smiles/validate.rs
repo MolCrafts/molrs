@@ -121,10 +121,54 @@ mod tests {
         assert!(validate_smiles(&mol, "C1CCCCC1").is_ok());
     }
 
+    /// Hand-built IR for `CCCC1` — a chain of four carbons whose last element
+    /// is a ring digit that never closes.
+    ///
+    /// The parser refuses an unmatched ring closure itself, so this unit can
+    /// only be reached with an IR built directly.
+    fn unmatched_ring_ir() -> SmilesIR {
+        fn carbon(start: usize) -> AtomNode {
+            AtomNode {
+                spec: AtomSpec::Organic {
+                    symbol: "C".to_owned(),
+                    aromatic: false,
+                },
+                span: Span::new(start, start + 1),
+                descriptors: Vec::new(),
+            }
+        }
+
+        SmilesIR {
+            components: vec![Chain {
+                head: carbon(0),
+                tail: vec![
+                    ChainElement::BondedAtom {
+                        bond: None,
+                        atom: carbon(1),
+                    },
+                    ChainElement::BondedAtom {
+                        bond: None,
+                        atom: carbon(2),
+                    },
+                    ChainElement::BondedAtom {
+                        bond: None,
+                        atom: carbon(3),
+                    },
+                    ChainElement::RingClosure {
+                        bond: None,
+                        rnum: 1,
+                        span: Span::new(4, 5),
+                    },
+                ],
+            }],
+            span: Span::new(0, 5),
+        }
+    }
+
     #[test]
     fn test_unmatched_ring_closure() {
-        let mol = parse_smiles("CC1CC").unwrap();
-        let err = validate_smiles(&mol, "CC1CC").unwrap_err();
+        let mol = unmatched_ring_ir();
+        let err = validate_smiles(&mol, "CCCC1").unwrap_err();
         assert!(matches!(err.kind, SmilesErrorKind::UnmatchedRingClosure(1)));
     }
 

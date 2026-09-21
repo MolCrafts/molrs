@@ -66,6 +66,17 @@ type FragmentTable = BTreeMap<String, CGFragmentDef>;
 /// refused rather than silently dropped.
 const DEFAULT_WEIGHT: F = 1.0;
 
+/// The largest `|n` repeat count the parser accepts.
+///
+/// A **molrs** rule, not a `CGsmiles` one: the notation states no limit, and
+/// `n` is the number of copies of the unit that end up in the level, so
+/// `{[#A]|900000000}` asks for nine hundred million nodes and the reader dies
+/// of memory exhaustion — an abort where a refusal was owed, and a process
+/// kill rather than an exception for every binding that calls in. The cap is
+/// `u16::MAX`, the same ceiling the notation's own ring markers carry, so one
+/// number bounds both counted constructs.
+const MAX_REPEAT_COUNT: usize = u16::MAX as usize;
+
 /// A node's annotations after the dialect's reserved keys have been read out
 /// of them.
 struct BoundAnnotations {
@@ -478,13 +489,20 @@ impl<'a> CgParser<'a> {
 
     /// Read one `{…}` block as a coarse graph, `block` being its absolute byte
     /// range, braces included.
+    ///
+    /// The cursor is bounded at the closing `}` for the same reason
+    /// [`CgParser::parse_body`] bounds it at the body's end: a token left open
+    /// inside the block must be refused where it was written, not chased into
+    /// whatever follows.
     fn parse_block(mut self, block: Span) -> Result<CGGraph, SmilesError> {
         self.scanner.seek(block.start);
+        self.scanner.set_limit(block.end - 1);
         self.scanner.expect('{')?;
         while self.scanner.pos() < block.end - 1 {
             self.step()?;
         }
         self.check_finished()?;
+        self.scanner.set_limit(self.scanner.input().len());
         self.scanner.seek(block.end); // past '}'
         if self.nodes.is_empty() {
             return Err(self.scanner.error_at(SmilesErrorKind::CgEmptyBlock, block));
@@ -500,8 +518,14 @@ impl<'a> CgParser<'a> {
     /// diagnostic raised inside a body keep spans into the string the caller
     /// passed in. A `|n` written as the body's last token therefore works,
     /// which the reference implementation crashes on (R2.24).
+    ///
+    /// Seeking sets where the read *starts*; the cursor is bounded at
+    /// `body.end` as well, so a token left open at the body's last byte — the
+    /// `[` of `{[#A]}.{#A=[#B;k=1}.{#B=[$]C}` — is reported inside this body
+    /// instead of scanning on into the block that follows it.
     fn parse_body(mut self, body: Span) -> Result<CGGraph, SmilesError> {
         self.scanner.seek(body.start);
+        self.scanner.set_limit(body.end);
         while self.scanner.pos() < body.end {
             self.step()?;
         }
@@ -1094,7 +1118,14 @@ impl<'a> CgParser<'a> {
     }
 
     /// The count after `|`: a positive decimal integer, `1` being the
-    /// identity (one copy, no chaining edge).
+    /// identity (one copy, no chaining edge), at most
+    /// [`MAX_REPEAT_COUNT`].
+    ///
+    /// The upper bound is molrs's own — see [`MAX_REPEAT_COUNT`] — and is
+    /// reported exactly like `0` and `x` are, as
+    /// [`SmilesErrorKind::CgInvalidRepeatCount`] carrying the digits that were
+    /// written: one rule about what a count may be, stated at both ends of the
+    /// range.
     fn read_repeat_count(&mut self) -> Result<usize, SmilesError> {
         let start = self.scanner.pos();
         let digits = self.scanner.eat_digits();
@@ -1103,7 +1134,7 @@ impl<'a> CgParser<'a> {
             return Err(self.invalid_count(text, start));
         }
         match digits.parse::<usize>() {
-            Ok(count) if count >= 1 => Ok(count),
+            Ok(count) if (1..=MAX_REPEAT_COUNT).contains(&count) => Ok(count),
             _ => Err(self.invalid_count(digits.to_owned(), start)),
         }
     }
@@ -1732,6 +1763,27 @@ mod tests {
 
     /// The annotation run swallows the block's `}` and hits end of input, which
     /// is a missing `]`, not a missing `}`.
+    /// A body is bounded by its own block: an unclosed `[` inside one must be
+    /// reported *within* that block, never by scanning on into the next one.
+    /// The assertion is on the bound rather than on the kind, because which
+    /// rule the truncated body breaks is the parser's to choose — running past
+    /// the `}` is what is forbidden.
+    #[test]
+    fn test_unclosed_bracket_in_a_body_does_not_scan_into_the_next_block() {
+        let text = "{[#A]}.{#A=[#B;k=1}.{#B=[$]C}";
+        let second_block_end = text
+            .find("}.{#B")
+            .expect("the second block closes before the third opens")
+            + 1;
+        let err = err_of(text);
+        assert!(
+            err.span.end <= second_block_end,
+            "span {:?} of {:?} runs past the second block, which ends at {second_block_end}",
+            err.span,
+            err.kind
+        );
+    }
+
     #[test]
     fn test_node_bracket_left_open_after_an_annotation_is_refused() {
         assert!(matches!(
@@ -1744,6 +1796,25 @@ mod tests {
     fn test_zero_repeat_count_is_refused() {
         assert!(matches!(
             kind_of("{[#A]|0}"),
+            SmilesErrorKind::CgInvalidRepeatCount(_)
+        ));
+    }
+
+    /// The cap is a notation rule, not an allocation detail: `|n` replays the
+    /// unit `n` times, so an uncapped count is a memory bomb written in four
+    /// characters. `65535` is the last count that parses.
+    #[test]
+    fn test_repeat_count_at_the_cap_is_accepted() {
+        let graph = level0("{[#A]|65535}");
+        assert_eq!(graph.nodes.len(), 65535);
+    }
+
+    /// One past the cap is a bad count, reported like `0` and `x` — the same
+    /// rule, stated at the other end of the range.
+    #[test]
+    fn test_repeat_count_past_the_cap_is_refused() {
+        assert!(matches!(
+            kind_of("{[#A]|65536}"),
             SmilesErrorKind::CgInvalidRepeatCount(_)
         ));
     }

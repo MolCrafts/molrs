@@ -6,25 +6,25 @@
 //!
 //! # Module Layout
 //!
-//! | Python class         | Rust wrapper      | Purpose                                    |
-//! |----------------------|-------------------|--------------------------------------------|
-//! | `Block`              | [`PyBlock`]       | Heterogeneous column store (numpy arrays)  |
-//! | `Frame`              | [`PyFrame`]       | Collection of named `Block`s + `SimBox`    |
-//! | `Box`                | [`PyBox`]         | Simulation box / periodic boundaries       |
-//! | `NeighborList`       | [`PyNeighborList`]| Neighbor-search engine (build / update)    |
-//! | `Neighbors`          | [`PyNeighbors`]   | Materialized pair table (read-only columns)|
-//! | `NeighborQuery`      | [`PyNeighborQuery`]| Cross-query against a reference point set |
-//! | `Atomistic`          | [`PyAtomistic`]   | All-atom molecular graph                   |
-//! | `Perceive`           | [`PyPerceive`]    | Chemical perception (graph in / graph out) |
-//! | `MMFF94Typifier`     | [`PyMMFF94Typifier`]| MMFF94 atom-type assignment              |
-//! | `MMFF94STypifier`    | [`PyMMFF94STypifier`]| MMFF94s (static) atom-type assignment   |
-//! | `OPLSAATypifier`     | [`PyOPLSAATypifier`]| OPLS-AA atom-type + bonded assignment    |
-//! | `AtdTypifier`        | [`PyAtdTypifier`] | antechamber atom types (7 `-at` tables)    |
-//! | `BccModel`           | [`PyBccModel`]    | AM1-BCC / ABCG2 bond-charge corrections    |
-//! | `MullikenModel`      | [`PyMullikenModel`]| QM Mulliken charges, unchanged            |
-//! | `GasteigerModel`     | [`PyGasteigerModel`]| Gasteiger / PEOE charges (no QM input)   |
-//! | `Potentials`         | [`PyPotentials`]  | Compiled energy/force evaluator            |
-//! | `RDF` / `MSD` / `Cluster` |              | Structural analysis                        |
+//! | Python class              | Rust wrapper        | Purpose                                     |
+//! |---------------------------|---------------------|---------------------------------------------|
+//! | `Block`                   | `PyBlock`           | Heterogeneous column store (numpy arrays)   |
+//! | `Frame`                   | `PyFrame`           | Collection of named `Block`s + `SimBox`     |
+//! | `Box`                     | `PyBox`             | Simulation box / periodic boundaries        |
+//! | `NeighborList`            | `PyNeighborList`    | Neighbor-search engine (build / update)     |
+//! | `Neighbors`               | `PyNeighbors`       | Materialized pair table (read-only columns) |
+//! | `NeighborQuery`           | `PyNeighborQuery`   | Cross-query against a reference point set   |
+//! | `Atomistic`               | `PyAtomistic`       | All-atom molecular graph                    |
+//! | `Perceive`                | `PyPerceive`        | Chemical perception (graph in / graph out)  |
+//! | `MMFF94Typifier`          | `PyMMFF94Typifier`  | MMFF94 atom-type assignment                 |
+//! | `MMFF94STypifier`         | `PyMMFF94STypifier` | MMFF94s (static) atom-type assignment       |
+//! | `OPLSAATypifier`          | `PyOPLSAATypifier`  | OPLS-AA atom-type + bonded assignment       |
+//! | `AtdTypifier`             | `PyAtdTypifier`     | antechamber atom types (7 `-at` tables)     |
+//! | `BccModel`                | `PyBccModel`        | AM1-BCC / ABCG2 bond-charge corrections     |
+//! | `MullikenModel`           | `PyMullikenModel`   | QM Mulliken charges, unchanged              |
+//! | `GasteigerModel`          | `PyGasteigerModel`  | Gasteiger / PEOE charges (no QM input)      |
+//! | `Potentials`              | `PyPotentials`      | Compiled energy/force evaluator             |
+//! | `RDF` / `MSD` / `Cluster` |                     | Structural analysis                         |
 //!
 //! # Float Precision
 //!

@@ -28,20 +28,33 @@
 //! An enum that *is* a count crosses as the count: [`PyCGEdge::multiplicity`]
 //! is `CGBondOrder` read through
 //! [`CGBondOrder::multiplicity`](molrs::io::smiles::CGBondOrder::multiplicity),
-//! a dimensionless `1..=4`. Every other enum crosses as the lowercase
-//! spelling of its Rust variant — a *name*, never the small integer `core`
-//! stores such a value as (`BondType::code`: 0 unknown, 1 single, 2 double,
-//! 3 triple, 4 aromatic). The storage codes are a column encoding, not a
-//! boundary encoding, and they are not injective over the enums crossing
-//! here: `BondKind::{Up, Down, Any, Ring}` all store as single and
-//! `Quadruple` as double, so a caller could not read the written notation
-//! back out of a number. Names are also what the parent module `io` already
-//! uses at this boundary — `build_smiles_emit_options` reads exactly such
-//! lowercase spellings back into Rust enums.
+//! a dimensionless `1..=4`. Every other enum crosses as a *name*, never as
+//! the small integer `core` stores such a value as (`BondType::code`: 0
+//! unknown, 1 single, 2 double, 3 triple, 4 aromatic). The storage codes are
+//! a column encoding, not a boundary encoding, and they are not injective
+//! over the enums crossing here: `BondKind::{Up, Down, Any, Ring}` all store
+//! as single and `Quadruple` as double, so a caller could not read the
+//! written notation back out of a number.
 //!
-//! The two mapping functions, [`bond_kind_name`] and [`descriptor_kind_name`],
-//! list every variant explicitly: no input can panic across the seam, and a
-//! new variant upstream is a compile error rather than a runtime one.
+//! Which name depends on whether the notation itself already spells the
+//! variant. A descriptor kind does: `$`, `<`, `>`, `!` is what a user types
+//! and what a stored port's `port_kind` prop holds
+//! ([`PortKind::as_str`](molrs::core::system::PortKind::as_str)), so
+//! [`PyBondingDescriptor::kind`] crosses as that same glyph — one spelling
+//! for the notation, the column and the boundary, with no third vocabulary to
+//! translate between them. The enums the notation does *not* spell out cross
+//! as the lowercase spelling of their Rust variant instead:
+//! [`PyBondingDescriptor::order`] and [`PyResolvedPair::kind`] are bond-kind
+//! names (`"single"`, `"aromatic"`, …) and [`PyPairEnd::end`] is `"sub"` or
+//! `"body"`. Lowercase names are what the parent module `io` already uses at
+//! this boundary — `build_smiles_emit_options` reads exactly such spellings
+//! back into Rust enums.
+//!
+//! [`bond_kind_name`] lists every variant explicitly, and
+//! [`descriptor_kind_name`] delegates to
+//! [`DescriptorKind::as_str`](molrs::io::smiles::DescriptorKind::as_str),
+//! which does: no input can panic across the seam, and a new variant upstream
+//! is a compile error rather than a runtime one.
 
 use molrs::io::smiles::{
     BondKind, BondingDescriptor, CGEdge, CGFragmentDef, CGGraph, CGNode, CGSmilesIR,
@@ -75,19 +88,25 @@ fn bond_kind_name(kind: BondKind) -> &'static str {
     }
 }
 
-/// The lowercase Python spelling of a [`DescriptorKind`].
+/// The Python spelling of a [`DescriptorKind`] — the grammar glyph.
 ///
-/// Total by construction, for the same reason as [`bond_kind_name`].
-/// `"shared"` (the squash operator `[!]`) cannot reach Python today — the
-/// reader refuses it — and is spelled anyway, so the mapping stays a function
-/// of the enum rather than of what the reader currently admits.
+/// The glyph is the only spelling a user ever writes (`[$]COC[$]`) and the
+/// one a stored port carries in its `port_kind` prop
+/// ([`PortKind::as_str`](molrs::core::system::PortKind::as_str)), so the
+/// boundary adds no third vocabulary: a kind read off a descriptor here can
+/// be handed straight to [`PyFragment::add_port`] or compared against a port
+/// column without a lookup table on the Python side.
+///
+/// The glyph table itself lives on the enum, as
+/// [`DescriptorKind::as_str`](molrs::io::smiles::DescriptorKind::as_str), so
+/// this boundary reads the notation's own spelling instead of keeping a second
+/// copy of it that could drift from `PortKind::as_str`. It is total there, for
+/// the same reason [`bond_kind_name`] is here. `"!"` (the squash operator)
+/// cannot reach Python today — the reader refuses it — and is spelled anyway,
+/// so the mapping stays a function of the enum rather than of what the reader
+/// currently admits.
 fn descriptor_kind_name(kind: DescriptorKind) -> &'static str {
-    match kind {
-        DescriptorKind::Symmetric => "symmetric",
-        DescriptorKind::Left => "left",
-        DescriptorKind::Right => "right",
-        DescriptorKind::Shared => "shared",
-    }
+    kind.as_str()
 }
 
 /// One bonding descriptor: a site at which a fragment may later be joined.
@@ -99,12 +118,13 @@ fn descriptor_kind_name(kind: DescriptorKind) -> &'static str {
 ///
 /// Attributes
 /// ----------
-/// kind : {"symmetric", "left", "right", "shared"}
-///     Which operator was written: ``"symmetric"`` is ``[$]``, ``"left"`` is
-///     ``[<]``, ``"right"`` is ``[>]``, ``"shared"`` is the squash operator
-///     ``[!]``. A symmetric descriptor pairs only with a symmetric one, a
-///     left only with a right (and the other way round). ``"shared"`` never
-///     reaches Python: the reader refuses ``[!]`` outright.
+/// kind : {"$", "<", ">", "!"}
+///     Which operator was written, as the glyph itself — the same spelling a
+///     stored port's ``port_kind`` uses, so it needs no translation to reach
+///     :meth:`Fragment.def_port`. A ``"$"`` pairs only with a ``"$"``, a
+///     ``"<"`` only with a ``">"`` (and the other way round). ``"!"`` is the
+///     squash operator and never reaches Python: the reader refuses ``[!]``
+///     outright.
 /// label : str
 ///     Label distinguishing descriptor classes of the same kind, ``""`` when
 ///     the descriptor is unnamed (``[$]`` against ``[$a]``). Labels must
@@ -130,7 +150,8 @@ pub struct PyBondingDescriptor {
 
 #[pymethods]
 impl PyBondingDescriptor {
-    /// Which operator was written, lowercased.
+    /// Which operator was written, as its glyph (``"$"``, ``"<"``, ``">"``,
+    /// ``"!"``) — the spelling a port's `port_kind` also uses.
     #[getter]
     fn kind(&self) -> &'static str {
         descriptor_kind_name(self.inner.kind)

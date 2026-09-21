@@ -1049,8 +1049,30 @@ impl MolGraph {
     /// Read a [`Frame`] into `self`: the `"atoms"` block becomes nodes; each
     /// **already-registered** kind's block (matched by name) becomes relations
     /// via its `atomi`/`atomj`/… columns, with any extra columns read back as
-    /// props. Kinds not registered on `self` are skipped (a bare graph keeps
-    /// only nodes; register kinds first to read their relations).
+    /// props.
+    ///
+    /// # An unreadable relation block is refused, not skipped
+    ///
+    /// A registered kind with no block in the frame is fine — the frame simply
+    /// carries no relations of that kind. The reverse is not: a *relation*
+    /// block (one carrying the endpoint columns
+    /// [`to_frame`](Self::to_frame) emits) whose name matches no registered
+    /// kind has nowhere to go, and reading on would hand back a graph missing
+    /// rows the frame plainly stated. `Atomistic::from_frame` on a
+    /// `Fragment`'s frame used to drop every `ports` row exactly this way and
+    /// return a molecule indistinguishable from one that never had any. Such a
+    /// block is an error naming itself, so the caller can register the kind or
+    /// pick the leaf type that owns it.
+    ///
+    /// Blocks that are not relation blocks — metadata, a box, a grid — carry
+    /// no endpoint column and are left alone: a frame may legitimately hold
+    /// more than a graph reads.
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::Parse`] when the frame has no `"atoms"` block, and
+    /// [`MolRsError::Validation`] when a column value does not fit its
+    /// canonical type, or when the frame carries an unreadable relation block.
     pub(crate) fn read_frame(&mut self, frame: &Frame) -> Result<(), MolRsError> {
         let atoms_block = frame
             .get("atoms")
@@ -1193,7 +1215,44 @@ impl MolGraph {
                 }
             }
         }
-        Ok(())
+
+        self.reject_unreadable_relation_blocks(frame)
+    }
+
+    /// Refuse every relation block of `frame` that names no registered kind.
+    ///
+    /// [`to_frame`](Self::to_frame) writes a relation block's endpoints into
+    /// the canonical columns [`atomi`](crate::store::keys::ATOMI),
+    /// `atomj`, … in position order, so a block carrying `atomi` is a relation
+    /// block whoever wrote it — including `ports`, which is outside the
+    /// [`Frame`] vocabulary. That column is therefore the test, rather than a
+    /// lookup in the block schema, which would miss every kind a caller
+    /// registers under a name of its own.
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::Validation`] naming every offending block. The names are
+    /// sorted so the message does not depend on the frame's hash order.
+    fn reject_unreadable_relation_blocks(&self, frame: &Frame) -> Result<(), MolRsError> {
+        let mut unreadable: Vec<&str> = frame
+            .iter()
+            .filter(|(name, block)| {
+                !self.name_to_kind.contains_key(*name)
+                    && block.get_uint(crate::store::keys::ATOMI).is_some()
+            })
+            .map(|(name, _)| name)
+            .collect();
+        if unreadable.is_empty() {
+            return Ok(());
+        }
+        unreadable.sort_unstable();
+        Err(MolRsError::validation(format!(
+            "Frame block(s) [{}] carry relation endpoints but name no relation \
+             kind registered on this graph, so their rows cannot be read; \
+             register the kind first, or read the frame into the leaf type \
+             that owns it",
+            unreadable.join(", ")
+        )))
     }
 }
 

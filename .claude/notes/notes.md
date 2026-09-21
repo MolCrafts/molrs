@@ -219,14 +219,14 @@ AST names what was written, `core` names what is stored — the same split as
 mapping may appear. `PortKind`'s stored form is the glyph (`Str` column
 `port_kind`), a recorded departure from `BondType::code()`.
 
-Open at the Python seam (2026-09-21, architect review of cgsmiles-01e): the IR
-side crosses `BondingDescriptor.kind` as the lowercase role name
-(`"symmetric" | "left" | "right" | "shared"`, the grill-ratified 01e rule
-"a name enum crosses as its lowercase name"), while 02a/02d cross a stored
-port's kind as the glyph (`"$" | "<" | ">" | "!"`, the Frame column). Two
-spellings of the same four roles, one per door. Both were user decisions;
-reconcile them in the schema-vocabulary spec (or by a user call before 02d
-lands) rather than by documenting the difference.
+Resolved at the Python seam (user decision 2026-09-21): **the glyph is the one
+spelling for the four roles everywhere a user reads or writes them** —
+`BondingDescriptor.kind` in `molrs.io` crosses as `"$" | "<" | ">" | "!"`,
+the same string a stored port's `port_kind` column and `views.Port` carry;
+`DescriptorKind::as_str()` and `PortKind::as_str()` return the same glyphs. The
+01e rule "a name enum crosses as its lowercase name" still holds for
+`BondingDescriptor.order`, `ResolvedPair.kind` and `PairEnd.end`, which have
+no notation glyph. The two Rust enums stay separate (AST vs core).
 
 <!-- mol:note:topic:cgsmiles-frag-id -->
 ## 2026-09-21 — `frag_id` is the provisional per-atom fragment-instance key
@@ -304,50 +304,41 @@ table follows. The last block of a multi-block string is atomistic by position
   into any gate, so Python-side drift is invisible.
 
 <!-- mol:note:topic:cgsmiles-deferred-fix -->
-## 2026-09-21 — deferred to `/mol:fix` (found by the cgsmiles chain)
+## 2026-09-21 — deferred to `/mol:fix` (found by the cgsmiles chain; fixed items struck)
 
-- `io/smiles/parser.rs` stores `[#6]` as `AtomPrimitive::Element { symbol: "#6" }`
-  although `Element::by_number` exists (`core/system/element.rs:1128`).
-- The SMILES parser reports a malformed `%n` as `UnexpectedEnd`; CGsmiles
-  reports `CgInvalidRingMarker`.
-- Six discarded `Result`s (`let _ =`) in `smiles/to_atomistic.rs` on
-  `set_bond_class` / `set_bond_prop` / `set_atom`; `add_bond_with` wraps a bond
-  failure as `InvalidElement`.
-- `perceive/hydrogens.rs` writes the literal `1.008` where
-  `Element::atomic_mass()` exists and re-writes a bond class `add_bond` already
-  wrote, behind `let _ =`.
-- `read_frame` silently skips blocks for unregistered kinds; `emit_column`
-  drops the validity mask (nulls become `0`).
-- Recorded contract change: `parse_smiles("CC(")` / `parse_fragment_smiles`
-  now report `UnclosedBranch` at the `(` (as `CC(O` always did) instead of
-  `UnexpectedEnd` — a consistency fix made in cgsmiles-01c on 01a's surface.
-- `CgParser::parse_body` bounds only its inter-token loop by `body.end`; a body
-  with an unclosed `[` (`{[#A]}.{#A=[#B;k=1}.{#B=[$]C}`) lets
-  `read_annotation_fields` / `read_descriptor` scan into the next block. Every
-  traced path still errors (`CgMalformedAnnotation` / `BondInsideDescriptor`),
-  so the defect is span/kind quality, not a wrong parse; needs a targeted test.
-- `perceive/hydrogens.rs::remove_hydrogens` decides by `MolGraph::neighbors`, which
-  is kind-blind over every arity-2 relation, so a port handle (one `bonds` + one
-  `ports` relation) counts as degree 2 and survives while repletion hydrogens
-  are stripped: a port relation is counted as a bond. Filter by the `bonds` kind.
-- `perceive/hydrogens.rs:263` discards `remove_atom`'s `Result` (`let _ =`).
-- `parse_fragment_smiles` does not run `validate_ring_closures` (only
-  `validate_smiles` does), so a last-block body with an unmatched ring marker
-  is caught by the builder inside `resolve`, not by the parser; 01d re-bases and
-  boxes it as `CgLastBlockNotAtomistic`, but the earlier check is the better home.
-- `CgParser::read_repeat_count` accepts any `u32`, so `{[#A]|900000000}` replays
-  the unit until memory runs out — now reachable from Python as an abort, not a
-  `ValueError`. Cap the count (its own small spec: the limit is a notation rule).
+Fixed on 2026-09-21 (same-day fix batch, see the `fix:` commit after 5e1ede5d):
+`[#6]` via `Element::by_number`; SMILES `%n` → `InvalidRingMarker`; the six
+discarded `Result`s and the `InvalidElement` mislabel on the SMILES build path
+(→ `SmilesErrorKind::Build`); unmatched ring closures refused at parse by both
+SMILES entry points; the CGsmiles repeat-count cap (65535); the coarse-body
+scanner bounded by the body; `remove_hydrogens` bonds-only degree with an
+explicit port-handle exemption; the `1.008` mass literal and the redundant
+`set_bond_type` in `add_hydrogens`; `read_frame` refusing an unregistered
+relation block; the binder's sixteen private intra-doc links;
+`views.Atomistic.def_bond` stamping both bond facts.
+
+Still open:
+- `perceive/hydrogens.rs`: `add_hydrogens` `expect`s that both endpoints of the
+  H bond it just created are live, and `remove_hydrogens` marks `remove_atom`
+  on an id read from the same graph `unreachable!`. Both are internal
+  invariants (never reachable from the seam); a `Result`-returning
+  `remove_hydrogens` would remove them, at the cost of its one wasm caller.
+- `read_frame` silently skips a block whose name matches a registered kind but
+  which lacks an endpoint column (`ok = false; continue`, molgraph.rs ~:1147);
+  and five `let _ = self.set_relation_prop(…)` discards in `read_frame`
+  (~:1199-1213) plus `to_frame`'s (~:668, :896, :1032) drop a relation prop
+  whose column type conflicts — same silent-loss class, one level down.
+  `read_frame` is 145 lines; the split and the discards go together
+  (`/mol:refactor` on molgraph.rs:1076-1220).
+- `emit_column` drops the validity mask (nulls become `0`): a `Block` column has
+  no null representation, so the fix is nullable columns in `store::block`, a
+  feature, not a patch. `Fragment::to_frame`'s all-or-nothing `frag_id` guard
+  stands in until then.
 - `molrs-python/src/helpers.rs::smiles_error_to_pyerr` flattens kind, span and
   input into one `ValueError` string; the fix is a typed exception via
   `create_exception!` applied to the whole `io::smiles` error surface.
-- `molrs-python/src/lib.rs:11-26` "Module Layout" table links sixteen private
-  items, so `RUSTDOCFLAGS="-D warnings" cargo doc` fails for the binder; the
-  pre-commit clippy hook documents only `molcrafts-molrs`, never a binder.
-- `molrs-python/python/molrs/views.py` `Atomistic.def_bond` writes a classless bond
-  (no `bond_type`/`bond_number`), so the Python and Rust doors disagree for
-  `Atomistic`; `views.Fragment.def_bond` routes through the native writer and
-  stamps both facts — align `Atomistic` the same way.
+- `CgParser::read_repeat_count`'s cap is a molrs rule the notation does not
+  state; it still owes the small spec that names it.
 
 <!-- mol:note:topic:cgsmiles-pairing-order -->
 ## 2026-09-21 — descriptor pairing: parse-order edges, per-atom entities, greedy scan
@@ -403,7 +394,8 @@ over this class, as molpy's `SmilesReader` wraps `molrs.io.SmilesIR`.
 the `LammpsLog` house style: `frozen, skip_from_py_object`, getters only, no
 `#[new]`, values handed out by cloning. An enum that *is* a count crosses as
 the count (`CGEdge.multiplicity`, no `order`); a name enum crosses as its
-lowercase variant name through a total mapping fn (no `_ =>`); a sum whose
+lowercase variant name through a total mapping fn (no `_ =>`) — except the
+descriptor kind, which crosses as its notation glyph like `port_kind`; a sum whose
 payload types already distinguish the variants has no tag (`CGFragmentDef.body`
 is a `CGGraph` or a `SmilesIR`; `CGEdge.derived_from` is `(level, pair) | None`),
 one whose payloads do not gets a tagged pyclass (`PairEnd.end/index/port`).

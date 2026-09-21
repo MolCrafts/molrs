@@ -569,6 +569,13 @@ class GraphViews:
             raise
         return ref
 
+    def _check_endpoints(self, *endpoints: NodeRef) -> None:
+        # Kept explicitly rather than left to the native writer: a slotmap
+        # handle from a foreign graph can alias a live one rather than fail,
+        # so the writer would happily bond the wrong nodes.
+        if any(endpoint.world is not self for endpoint in endpoints):
+            raise ValueError("relation endpoints must belong to this graph")
+
     def _create_relation(
         self,
         kind: str,
@@ -578,9 +585,28 @@ class GraphViews:
         cls: type[RelationRef] | None = None,
         **attrs: Any,
     ) -> RelationRef:
-        if any(endpoint.world is not self for endpoint in endpoints):
-            raise ValueError("relation endpoints must belong to this graph")
+        self._check_endpoints(*endpoints)
         handle = self.add_relation(kind, [endpoint.handle for endpoint in endpoints])
+        try:
+            ref = self._intern_relation(kind, handle, cls)
+            ref.update(attrs)
+        except Exception:
+            self._relation_refs.get(kind, {}).pop(handle, None)
+            self.remove_relation(kind, handle)
+            raise
+        return ref
+
+    def _adopt_relation(
+        self,
+        kind: str,
+        handle: int,
+        cls: type[RelationRef],
+        attrs: dict[str, Any],
+    ) -> RelationRef:
+        # Interning half of ``_create_relation``, for a relation a *native*
+        # writer has already created. The native writer is what stamps the
+        # facts a kind carries beyond its endpoints, so it cannot be replaced
+        # by ``add_relation``; only the bookkeeping after it is shared.
         try:
             ref = self._intern_relation(kind, handle, cls)
             ref.update(attrs)
@@ -918,9 +944,33 @@ class Atomistic(GraphViews, _RsAtomistic):
         return self._create_node(mapping, cls=kind, **attrs)  # type: ignore[return-value]
 
     def def_bond(self, a: Atom, b: Atom, /, **attrs: Any) -> Bond:
-        return self._create_relation(  # type: ignore[return-value]
-            "bonds", (a, b), cls=Bond, **attrs
-        )
+        """Add a single bond between two atoms of this graph.
+
+        Routes through the native writer, so a Python-built bond carries both
+        bond facts — ``bond_type = 1`` and ``bond_number = 1`` — exactly as one
+        built in Rust does. The generic relation path would write neither, and
+        an unclassed bond reads back as *unknown*, which a valence count treats
+        as zero.
+
+        Parameters
+        ----------
+        a, b : Atom
+            Endpoints, both belonging to this graph.
+        **attrs
+            Extra relation props, applied after the class is stamped.
+
+        Returns
+        -------
+        Bond
+
+        Raises
+        ------
+        ValueError
+            If an endpoint belongs to another graph, or an attr is rejected.
+        """
+        self._check_endpoints(a, b)
+        handle = self.add_bond(a.handle, b.handle)
+        return self._adopt_relation("bonds", handle, Bond, attrs)  # type: ignore[return-value]
 
     def def_angle(self, a: Atom, b: Atom, c: Atom, /, **attrs: Any) -> Angle:
         return self._create_relation(  # type: ignore[return-value]
@@ -1092,14 +1142,7 @@ class Fragment(GraphViews, _RsFragment):
         """
         self._check_endpoints(a, b)
         handle = self.add_bond(a.handle, b.handle)
-        try:
-            ref = self._intern_relation("bonds", handle, cls=Bond)
-            ref.update(attrs)
-        except Exception:
-            self._relation_refs.get("bonds", {}).pop(handle, None)
-            self.remove_relation("bonds", handle)
-            raise
-        return ref  # type: ignore[return-value]
+        return self._adopt_relation("bonds", handle, Bond, attrs)  # type: ignore[return-value]
 
     def def_port(
         self,
@@ -1145,13 +1188,6 @@ class Fragment(GraphViews, _RsFragment):
         self._check_endpoints(anchor, handle_atom)
         handle = self.add_port(anchor.handle, handle_atom.handle, kind, label, order)
         return self._intern_relation("ports", handle, cls=Port)  # type: ignore[return-value]
-
-    def _check_endpoints(self, *endpoints: Atom) -> None:
-        # Kept explicitly rather than inherited from ``_create_relation``: a
-        # slotmap handle from a foreign graph can alias a live one rather than
-        # fail, so a native writer would happily bond the wrong atoms.
-        if any(endpoint.world is not self for endpoint in endpoints):
-            raise ValueError("relation endpoints must belong to this graph")
 
 
 _GraphViews = GraphViews

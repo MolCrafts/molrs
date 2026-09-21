@@ -27,6 +27,11 @@ F8 = (
     "{#PEO=[>]COC[<],#PE=[>]CC[<]}"
 )
 
+# A symmetric-descriptor fixture. Only a *coarse* body exposes its bonding
+# descriptors to Python (``SmilesIR`` publishes none), so the ``[$]`` under
+# test is written on the intermediate table's body, not on F2's atomistic one.
+F_SYM = "{[#A][#A]}.{#A=[$][#B][#B][$]}.{#B=[$]CC[$]}"
+
 # The eight classes this binding publishes, all from ``molrs.io``.
 CG_NAMES = (
     "CGSmilesIR",
@@ -39,7 +44,9 @@ CG_NAMES = (
     "BondingDescriptor",
 )
 
-# Documented value sets for the enums that cross as lowercase names.
+# Documented value sets for the enums at the seam. Three of them cross as the
+# lowercase spelling of their Rust variant; a bonding descriptor's kind crosses
+# as the notation glyph instead, exactly as a stored port's ``port_kind`` does.
 BOND_KINDS = frozenset(
     {
         "single",
@@ -53,7 +60,9 @@ BOND_KINDS = frozenset(
         "ring",
     }
 )
-DESCRIPTOR_KINDS = frozenset({"symmetric", "left", "right", "shared"})
+# The four notation glyphs: ``[$]`` symmetric, ``[<]`` left, ``[>]`` right,
+# ``[!]`` shared.
+DESCRIPTOR_KINDS = frozenset({"$", "<", ">", "!"})
 PAIR_END_TAGS = frozenset({"sub", "body"})
 
 
@@ -202,14 +211,17 @@ def test_f8_coarse_fragment_body_is_a_cg_graph() -> None:
 def test_f8_coarse_body_opens_with_an_unlabelled_orderless_right_descriptor() -> None:
     body = molrs.io.CGSmilesIR(F8).fragments[0]["B1"].body
     descriptor = body.nodes[0].descriptors[0]
-    assert descriptor.kind == "right"
-    assert descriptor.label == ""
-    assert descriptor.order is None
+    assert (descriptor.kind, descriptor.label, descriptor.order) == (">", "", None)
 
 
 def test_f8_coarse_body_closes_with_a_left_descriptor() -> None:
     body = molrs.io.CGSmilesIR(F8).fragments[0]["B1"].body
-    assert body.nodes[1].descriptors[0].kind == "left"
+    assert body.nodes[1].descriptors[0].kind == "<"
+
+
+def test_symmetric_descriptor_crosses_as_the_dollar_glyph() -> None:
+    body = molrs.io.CGSmilesIR(F_SYM).fragments[0]["A"].body
+    assert body.nodes[0].descriptors[0].kind == "$"
 
 
 def test_f8_last_fragment_table_holds_atomistic_bodies() -> None:
@@ -232,7 +244,9 @@ def test_f8_level_zero_pairs_reach_into_the_child_level() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_every_enum_crosses_as_a_lowercase_documented_name() -> None:
+def test_every_enum_crosses_as_its_documented_spelling() -> None:
+    """Bond kinds and pair-end tags cross as lowercase variant names; a
+    descriptor kind crosses as the glyph the notation wrote."""
     ir = molrs.io.CGSmilesIR(F8)
     seen = 0
     for level_pairs in ir.pairs:
@@ -355,7 +369,7 @@ def test_nested_records_reject_attribute_assignment() -> None:
         (level.nodes[0], "name", "X"),
         (level.edges[0], "i", 0),
         (definition, "name", "X"),
-        (definition.body.nodes[0].descriptors[0], "kind", "left"),
+        (definition.body.nodes[0].descriptors[0], "kind", "<"),
         (resolved, "kind", "double"),
         (resolved.src, "end", "body"),
     ]

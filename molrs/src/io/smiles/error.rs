@@ -90,6 +90,16 @@ pub enum SmilesErrorKind {
     UnclosedBranch,
     /// A ring-closure digit was opened but never paired.
     UnmatchedRingClosure(u16),
+    /// A `%` in a plain SMILES or SMARTS string is not followed by exactly
+    /// two digits: `C%1C` stops after one, and a trailing `C%` has none.
+    ///
+    /// OpenSMILES §3.4 spells a two-digit ring marker `%nn` and fixes its
+    /// width at two, so `%1` is not marker 1 written short — it is a marker
+    /// whose second digit is missing. `CGsmiles` reads `%` differently (there
+    /// it takes the whole digit run that follows, `%123` being marker 123) and
+    /// so has its own [`SmilesErrorKind::CgInvalidRingMarker`]; the two rules
+    /// are different rules, and each notation reports its own.
+    InvalidRingMarker,
     /// The element symbol is not recognised.
     InvalidElement(String),
     /// A charge specification could not be parsed.
@@ -111,6 +121,16 @@ pub enum SmilesErrorKind {
     RingBondConflict { rnum: u16 },
     /// Graph → IR / IR → string emit failure (message is the reason).
     Emit(String),
+    /// An IR → graph construction step failed — an internal invariant of the
+    /// SMILES builder was violated, not a rule the input broke. The payload is
+    /// the reason, usually the message of the underlying
+    /// [`MolRsError`].
+    ///
+    /// This is the plain-SMILES twin of [`SmilesErrorKind::CgBuild`]: the same
+    /// "no input can reach this state, so report it by value rather than
+    /// panicking" contract, raised by the atomistic builder instead of by the
+    /// `CGsmiles` reader.
+    Build(String),
     /// A bonding descriptor (`[$]`, `[<]`, `[>]`, `[!]`) met a stage that
     /// speaks plain SMILES, which has no such notation: `parse_smiles` on a
     /// descriptor bracket, `validate_smiles` on a node carrying one, or
@@ -330,6 +350,9 @@ impl SmilesErrorKind {
             SmilesErrorKind::UnmatchedRingClosure(n) => {
                 format!("unmatched ring closure {n}")
             }
+            SmilesErrorKind::InvalidRingMarker => {
+                "invalid ring marker — '%' takes exactly two digits, as in '%12'".to_owned()
+            }
             SmilesErrorKind::InvalidElement(s) => format!("invalid element '{s}'"),
             SmilesErrorKind::InvalidCharge => "invalid charge specification".to_owned(),
             SmilesErrorKind::EmptyInput => "empty input".to_owned(),
@@ -343,6 +366,7 @@ impl SmilesErrorKind {
                 format!("conflicting bond types on ring closure {rnum}")
             }
             SmilesErrorKind::Emit(s) => format!("emit error: {s}"),
+            SmilesErrorKind::Build(s) => format!("graph construction failed: {s}"),
             SmilesErrorKind::DescriptorInPlainSmiles => {
                 "bonding descriptor is not plain SMILES notation \
                  — parse a fragment body with parse_fragment_smiles"
@@ -955,6 +979,50 @@ mod tests {
                  descriptors to form it"
             ),
             "message was {msg:?}"
+        );
+    }
+
+    // -- graph construction and ring markers --------------------------------
+
+    /// `Build` carries the reason construction failed, and the reason is the
+    /// whole point of the payload: a message that dropped it would say only
+    /// that something went wrong.
+    #[test]
+    fn test_display_build_shows_the_reason() {
+        let msg = message(SmilesErrorKind::Build(
+            "bond 0-1 could not be added".to_owned(),
+        ));
+        assert!(
+            msg.contains("bond 0-1 could not be added"),
+            "message was {msg:?}"
+        );
+    }
+
+    /// The SMILES rule is `%nn`: `%` followed by exactly two digits. The
+    /// message states it, so a reader of `C%1C` learns what to write instead.
+    #[test]
+    fn test_display_invalid_ring_marker_states_the_percent_rule() {
+        let msg = message(SmilesErrorKind::InvalidRingMarker);
+        let lower = msg.to_lowercase();
+        assert!(msg.contains('%'), "message was {msg:?}");
+        assert!(lower.contains("ring marker"), "message was {msg:?}");
+        assert!(lower.contains("two digits"), "message was {msg:?}");
+    }
+
+    /// Each of the two new kinds has a `CGsmiles` twin whose rule is a
+    /// different one — `%` takes the whole digit run there, and `CgBuild`
+    /// reports a resolution failure — so the two messages must not read alike.
+    #[test]
+    fn test_display_new_kinds_do_not_read_like_their_cgsmiles_twins() {
+        assert_ne!(
+            message(SmilesErrorKind::InvalidRingMarker),
+            cg_message(SmilesErrorKind::CgInvalidRingMarker)
+        );
+        assert_ne!(
+            message(SmilesErrorKind::Build("no definition for 'B1'".to_owned())),
+            cg_message(SmilesErrorKind::CgBuild(
+                "no definition for 'B1'".to_owned()
+            ))
         );
     }
 

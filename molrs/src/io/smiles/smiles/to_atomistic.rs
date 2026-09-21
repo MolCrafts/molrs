@@ -20,6 +20,7 @@ use std::collections::{HashMap, HashSet};
 use crate::io::smiles::chem::ast::*;
 use crate::io::smiles::error::{Notation, SmilesError, SmilesErrorKind};
 use crate::io::smiles::smiles::canonical_element_symbol;
+use molrs::error::MolRsError;
 use molrs::system::atomistic::{AtomId, Atomistic};
 use molrs::system::molgraph::PropValue;
 
@@ -260,7 +261,7 @@ impl<'a> Builder<'a> {
             AtomSpec::Organic { symbol, .. } => {
                 let id = self.mol.add_atom_bare(&canonical_element_symbol(symbol));
                 if node.spec.written_aromatic() {
-                    self.mark_aromatic(id);
+                    self.mark_aromatic(id, node.span)?;
                 }
                 Ok(id)
             }
@@ -281,26 +282,26 @@ impl<'a> Builder<'a> {
                 let id = self.mol.add_atom_bare(&canonical_element_symbol(&sym));
 
                 if node.spec.written_aromatic() {
-                    self.mark_aromatic(id);
+                    self.mark_aromatic(id, node.span)?;
                 }
                 if let Some(iso) = isotope {
-                    self.set_prop(id, "isotope", *iso as f64);
+                    self.set_prop(id, "isotope", *iso as f64, node.span)?;
                 }
                 if let Some(ch) = chirality {
                     let s = match ch {
                         Chirality::CounterClockwise => "CCW",
                         Chirality::Clockwise => "CW",
                     };
-                    self.set_prop_str(id, "stereo", s);
+                    self.set_prop_str(id, "stereo", s, node.span)?;
                 }
                 // A bracket atom states its hydrogen count exactly; an omitted
                 // count means zero, not "fill the valence".
-                self.set_prop(id, "h_count", hcount.unwrap_or(0) as f64);
+                self.set_prop(id, "h_count", hcount.unwrap_or(0) as f64, node.span)?;
                 if let Some(c) = charge {
-                    self.set_prop(id, "formal_charge", *c as f64);
+                    self.set_prop(id, "formal_charge", *c as f64, node.span)?;
                 }
                 if let Some(cls) = atom_class {
-                    self.set_prop(id, "atom_class", *cls as f64);
+                    self.set_prop(id, "atom_class", *cls as f64, node.span)?;
                 }
 
                 Ok(id)
@@ -333,14 +334,10 @@ impl<'a> Builder<'a> {
         b: AtomId,
         bond: Option<BondKind>,
     ) -> Result<(), SmilesError> {
-        let bid = self.mol.add_bond(a, b).map_err(|e| {
-            SmilesError::new(
-                SmilesErrorKind::InvalidElement(e.to_string()),
-                self.ir.span,
-                "",
-                Notation::Smiles,
-            )
-        })?;
+        let bid = self
+            .mol
+            .add_bond(a, b)
+            .map_err(|e| self.build_error(&e, self.ir.span))?;
 
         // A bond with no symbol between two aromatic atoms is aromatic — that
         // is what makes `c1ccccc1` a ring of 1.5-order bonds rather than six
@@ -351,32 +348,54 @@ impl<'a> Builder<'a> {
         });
 
         if let Some(kind) = kind {
-            let _ = self
-                .mol
-                .set_bond_class(bid, kind.bond_type(), kind.bond_number());
-            match kind {
-                BondKind::Up => {
-                    let _ = self
-                        .mol
-                        .set_bond_prop(bid, "stereo", PropValue::Str("up".to_owned()));
-                }
-                BondKind::Down => {
-                    let _ =
-                        self.mol
-                            .set_bond_prop(bid, "stereo", PropValue::Str("down".to_owned()));
-                }
-                _ => {}
+            self.mol
+                .set_bond_class(bid, kind.bond_type(), kind.bond_number())
+                .map_err(|e| self.build_error(&e, self.ir.span))?;
+            let stereo = match kind {
+                BondKind::Up => Some("up"),
+                BondKind::Down => Some("down"),
+                _ => None,
+            };
+            if let Some(stereo) = stereo {
+                self.mol
+                    .set_bond_prop(bid, "stereo", PropValue::Str(stereo.to_owned()))
+                    .map_err(|e| self.build_error(&e, self.ir.span))?;
             }
         }
 
         Ok(())
     }
 
+    /// Wrap a graph-write failure as [`SmilesErrorKind::Build`] at `span`.
+    ///
+    /// Every write this builder makes is to a node or relation it has just
+    /// created, with a key and a value the grammar fixes, so a failure is an
+    /// internal invariant of the builder rather than anything the input said.
+    /// Reporting it by value is what keeps the walk free of discarded
+    /// `Result`s: a silently dropped write would leave an `Atomistic` missing
+    /// a component the conversion promised to set, and no caller would learn.
+    /// The input text is not available at this stage, so the error carries the
+    /// span alone.
+    fn build_error(&self, e: &MolRsError, span: Span) -> SmilesError {
+        SmilesError::new(
+            SmilesErrorKind::Build(e.to_string()),
+            span,
+            "",
+            Notation::Smiles,
+        )
+    }
+
     /// Record the notation's aromatic declaration on `id`, using the same
     /// `is_aromatic` marker that [`crate::perceive::aromaticity`] writes.
-    fn mark_aromatic(&mut self, id: AtomId) {
+    ///
+    /// # Errors
+    ///
+    /// [`SmilesErrorKind::Build`] at `span` when the marker cannot be written.
+    fn mark_aromatic(&mut self, id: AtomId, span: Span) -> Result<(), SmilesError> {
         self.aromatic_atoms.insert(id);
-        let _ = self.mol.set_atom(id, "is_aromatic", PropValue::Int(1));
+        self.mol
+            .set_atom(id, "is_aromatic", PropValue::Int(1))
+            .map_err(|e| self.build_error(&e, span))
     }
 
     fn handle_ring_closure(
@@ -430,12 +449,32 @@ impl<'a> Builder<'a> {
         Ok(())
     }
 
-    fn set_prop(&mut self, id: AtomId, key: &str, val: f64) {
-        let _ = self.mol.set_atom(id, key, val);
+    /// Write one numeric component on `id`.
+    ///
+    /// # Errors
+    ///
+    /// [`SmilesErrorKind::Build`] at `span` — see [`Builder::build_error`].
+    fn set_prop(&mut self, id: AtomId, key: &str, val: f64, span: Span) -> Result<(), SmilesError> {
+        self.mol
+            .set_atom(id, key, val)
+            .map_err(|e| self.build_error(&e, span))
     }
 
-    fn set_prop_str(&mut self, id: AtomId, key: &str, val: &str) {
-        let _ = self.mol.set_atom(id, key, val);
+    /// Write one string component on `id`.
+    ///
+    /// # Errors
+    ///
+    /// [`SmilesErrorKind::Build`] at `span` — see [`Builder::build_error`].
+    fn set_prop_str(
+        &mut self,
+        id: AtomId,
+        key: &str,
+        val: &str,
+        span: Span,
+    ) -> Result<(), SmilesError> {
+        self.mol
+            .set_atom(id, key, val)
+            .map_err(|e| self.build_error(&e, span))
     }
 }
 
@@ -710,9 +749,53 @@ mod tests {
 
     // -- error cases --------------------------------------------------------
 
+    /// Hand-built IR for `CCCC1` — a chain of four carbons whose last element
+    /// is a ring digit that never closes.
+    ///
+    /// The parser refuses an unmatched ring closure itself, so this unit can
+    /// only be reached with an IR built directly.
+    fn unmatched_ring_ir() -> SmilesIR {
+        fn carbon(start: usize) -> AtomNode {
+            AtomNode {
+                spec: AtomSpec::Organic {
+                    symbol: "C".to_owned(),
+                    aromatic: false,
+                },
+                span: Span::new(start, start + 1),
+                descriptors: Vec::new(),
+            }
+        }
+
+        SmilesIR {
+            components: vec![Chain {
+                head: carbon(0),
+                tail: vec![
+                    ChainElement::BondedAtom {
+                        bond: None,
+                        atom: carbon(1),
+                    },
+                    ChainElement::BondedAtom {
+                        bond: None,
+                        atom: carbon(2),
+                    },
+                    ChainElement::BondedAtom {
+                        bond: None,
+                        atom: carbon(3),
+                    },
+                    ChainElement::RingClosure {
+                        bond: None,
+                        rnum: 1,
+                        span: Span::new(4, 5),
+                    },
+                ],
+            }],
+            span: Span::new(0, 5),
+        }
+    }
+
     #[test]
     fn test_unmatched_ring() {
-        let ir = parse_smiles("CC1CC").unwrap();
+        let ir = unmatched_ring_ir();
         let err = to_atomistic(&ir).unwrap_err();
         assert!(matches!(err.kind, SmilesErrorKind::UnmatchedRingClosure(1)));
     }

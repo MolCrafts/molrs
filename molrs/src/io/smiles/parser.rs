@@ -39,8 +39,9 @@
 use crate::io::smiles::chem::Dialect;
 use crate::io::smiles::chem::ast::*;
 use crate::io::smiles::chem::scanner::Scanner;
-use crate::io::smiles::chem::validation::validate_descriptor;
+use crate::io::smiles::chem::validation::{validate_descriptor, validate_ring_closures};
 use crate::io::smiles::error::{SmilesError, SmilesErrorKind};
+use molrs::Element;
 
 /// Maximum recursion depth for SMARTS `$(...)` expressions.
 const MAX_RECURSION_DEPTH: usize = 16;
@@ -56,10 +57,15 @@ const ORGANIC_SUBSET: &[&str] = &[
 ///
 /// Strict by design: only concrete notation — atoms, bonds, branches and ring
 /// closures — is accepted. SMARTS query brackets and the fragment dialect's
-/// bonding descriptors are refused rather than reinterpreted. Parsing is
-/// syntax only: a bracket atom's element symbol and the pairing of ring
-/// digits are checked afterwards, by
-/// [`validate_smiles`](crate::io::smiles::validate_smiles).
+/// bonding descriptors are refused rather than reinterpreted.
+///
+/// Ring-closure digits are paired here, by the parser that read them: an
+/// unclosed marker is a syntax error of the string, so `C1CC` is refused by
+/// this function rather than surviving into an IR that only callers running
+/// [`validate_smiles`](crate::io::smiles::validate_smiles) would reject. What
+/// is still left to `validate_smiles` is the meaning of a bracket atom's
+/// element symbol, which the grammar cannot decide; it re-pairs the ring
+/// closures too, harmlessly, so that a hand-built IR is checked as well.
 ///
 /// # Errors
 ///
@@ -67,12 +73,27 @@ const ORGANIC_SUBSET: &[&str] = &[
 /// [`SmilesErrorKind::EmptyInput`], [`SmilesErrorKind::UnexpectedChar`],
 /// [`SmilesErrorKind::UnexpectedEnd`], [`SmilesErrorKind::UnclosedBracket`],
 /// [`SmilesErrorKind::UnclosedBranch`],
-/// [`SmilesErrorKind::TrailingCharacters`],
+/// [`SmilesErrorKind::InvalidRingMarker`] for a `%` not followed by two
+/// digits, [`SmilesErrorKind::UnmatchedRingClosure`] for a ring digit opened
+/// and never closed, [`SmilesErrorKind::TrailingCharacters`],
 /// [`SmilesErrorKind::InvalidElement`] for a letter outside the organic
 /// subset, and [`SmilesErrorKind::DescriptorInPlainSmiles`] for a bonding
 /// descriptor, whose message points at [`parse_fragment_smiles`].
 pub fn parse_smiles(input: &str) -> Result<SmilesIR, SmilesError> {
-    Parser::new(input, Dialect::Smiles).parse_molecule()
+    parse_paired(input, Dialect::Smiles)
+}
+
+/// Parse `input` as `dialect` and pair the ring closures of the result.
+///
+/// The body of both SMILES-family entry points: the fragment dialect is plain
+/// SMILES widened with descriptors, so the two pair ring markers by the same
+/// rule at the same stage. SMARTS is not routed here — a recursive `$(...)`
+/// sub-pattern is parsed as a molecule of its own and may legitimately leave a
+/// marker for the enclosing pattern to close.
+fn parse_paired(input: &str, dialect: Dialect) -> Result<SmilesIR, SmilesError> {
+    let mol = Parser::new(input, dialect).parse_molecule()?;
+    validate_ring_closures(&mol, input)?;
+    Ok(mol)
 }
 
 /// Parse a SMARTS pattern into the shared IR.
@@ -150,9 +171,11 @@ pub fn parse_smarts(input: &str) -> Result<SmilesIR, SmilesError> {
 /// [`SmilesErrorKind::InvalidDescriptorLabel`],
 /// [`SmilesErrorKind::InvalidDescriptorOrder`], and
 /// [`SmilesErrorKind::AtomAnnotationUnsupported`] for a `CGsmiles` atom-level
-/// annotation (`[C;0.5]`).
+/// annotation (`[C;0.5]`), and — as in [`parse_smiles`], whose ring grammar
+/// this dialect shares unchanged — [`SmilesErrorKind::UnmatchedRingClosure`]
+/// for a marker opened and never closed.
 pub fn parse_fragment_smiles(input: &str) -> Result<SmilesIR, SmilesError> {
-    Parser::new(input, Dialect::FragmentSmiles).parse_molecule()
+    parse_paired(input, Dialect::FragmentSmiles)
 }
 
 // ---------------------------------------------------------------------------
@@ -633,18 +656,28 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// Read a ring-closure number: a single digit, or `%` followed by exactly
+    /// two (OpenSMILES §3.4).
+    ///
+    /// A `%` with fewer than two digits after it is
+    /// [`SmilesErrorKind::InvalidRingMarker`], spanned at the `%` rather than
+    /// at wherever the digits ran out: the rule that was broken is the
+    /// marker's, and `C%1C` has not exhausted its input at all, so
+    /// `UnexpectedEnd` would be a false report. `CGsmiles` reads `%` by a
+    /// different rule and has its own kind.
     fn parse_rnum(&mut self) -> Result<u16, SmilesError> {
         match self.scanner.peek() {
             Some('%') => {
+                let marker_start = self.scanner.pos();
                 self.scanner.advance(); // consume '%'
-                let d1 = self
-                    .scanner
-                    .eat_digit()
-                    .ok_or_else(|| self.error(SmilesErrorKind::UnexpectedEnd))?;
-                let d2 = self
-                    .scanner
-                    .eat_digit()
-                    .ok_or_else(|| self.error(SmilesErrorKind::UnexpectedEnd))?;
+                let invalid = |this: &Self| {
+                    this.error_at(
+                        SmilesErrorKind::InvalidRingMarker,
+                        this.scanner.span_from(marker_start),
+                    )
+                };
+                let d1 = self.scanner.eat_digit().ok_or_else(|| invalid(self))?;
+                let d2 = self.scanner.eat_digit().ok_or_else(|| invalid(self))?;
                 Ok(u16::from(d1) * 10 + u16::from(d2))
             }
             Some(c) if c.is_ascii_digit() => {
@@ -680,7 +713,7 @@ impl<'a> Parser<'a> {
         let first = self.scanner.advance().unwrap();
 
         // Check two-character organic symbols.
-        if let Some(&second) = self.scanner.peek_byte() {
+        if let Some(second) = self.scanner.peek_byte() {
             let two = format!("{first}{}", second as char);
             if ORGANIC_SUBSET.contains(&two.as_str()) {
                 self.scanner.advance();
@@ -1144,6 +1177,37 @@ impl<'a> Parser<'a> {
             || ch == ':'
     }
 
+    /// Parse the SMARTS atomic-number primitive `#<n>` (Daylight §3.1).
+    ///
+    /// The number names an element, so it is resolved here through
+    /// [`Element::by_number`] and stored as that element's own symbol: `[#6]`
+    /// and `[C]` are the same element, and a consumer of the IR must not have
+    /// to re-parse the notation text `"#6"` to learn so. Aromaticity is not
+    /// part of the spelling — `[#6]` matches an aromatic carbon too — so the
+    /// stored primitive is the aliphatic-cased symbol with `aromatic: false`,
+    /// exactly as an unqualified query element.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SmilesErrorKind::InvalidQueryPrimitive`] naming the written
+    /// primitive when the digits are absent, do not fit an atomic number, or
+    /// name no element (`[#0]`, `[#200]`): the periodic table runs 1..=118.
+    fn parse_atomic_number_primitive(&mut self) -> Result<AtomPrimitive, SmilesError> {
+        self.scanner.advance(); // consume '#'
+        let digits = self.scanner.eat_digits();
+        let element = digits
+            .parse::<u8>()
+            .ok()
+            .and_then(Element::by_number)
+            .ok_or_else(|| {
+                self.error(SmilesErrorKind::InvalidQueryPrimitive(format!("#{digits}")))
+            })?;
+        Ok(AtomPrimitive::Element {
+            symbol: element.symbol().to_owned(),
+            aromatic: false,
+        })
+    }
+
     fn parse_atom_primitive(&mut self) -> Result<AtomPrimitive, SmilesError> {
         match self.scanner.peek() {
             Some(':') => {
@@ -1159,20 +1223,7 @@ impl<'a> Parser<'a> {
                 self.scanner.advance();
                 Ok(AtomPrimitive::Wildcard)
             }
-            Some('#') => {
-                // Atomic number: #6 means carbon
-                self.scanner.advance();
-                let digits = self.scanner.eat_digits();
-                let _num: u8 = digits.parse().map_err(|_| {
-                    self.error(SmilesErrorKind::InvalidQueryPrimitive(format!("#{digits}")))
-                })?;
-                // Resolve to element symbol (would need Element::by_number).
-                // For now, store as element with the number.
-                Ok(AtomPrimitive::Element {
-                    symbol: format!("#{digits}"),
-                    aromatic: false,
-                })
-            }
+            Some('#') => self.parse_atomic_number_primitive(),
             Some('$') => {
                 // Recursive SMARTS: $(...)
                 self.scanner.advance();
@@ -1746,6 +1797,53 @@ mod tests {
         assert_eq!(atom_count(&mol), 1);
     }
 
+    /// The element symbol a one-primitive SMARTS bracket resolved to,
+    /// whichever of the two shapes the bracket parser left it in: a single
+    /// concrete element is simplified to `AtomSpec::Bracket`, anything else
+    /// stays an `AtomSpec::Query`. The symbol is the behaviour under test; the
+    /// shape is not.
+    fn bracket_element_symbol(mol: &SmilesIR) -> String {
+        match &mol.components[0].head.spec {
+            AtomSpec::Bracket {
+                symbol: BracketSymbol::Element { symbol, .. },
+                ..
+            } => symbol.clone(),
+            AtomSpec::Query(AtomQuery::Primitive(AtomPrimitive::Element { symbol, .. })) => {
+                symbol.clone()
+            }
+            other => panic!("expected a concrete element, got {other:?}"),
+        }
+    }
+
+    /// `[#6]` is the atomic-number spelling of carbon, so it resolves through
+    /// `Element::by_number` to the element's own symbol. Storing the notation
+    /// text `"#6"` as a symbol would leave every consumer to re-parse it, and
+    /// `[#6]` and `[C]` would name two different elements.
+    #[test]
+    fn test_smarts_atomic_number_six_is_stored_as_carbon() {
+        assert_eq!(bracket_element_symbol(&smarts("[#6]")), "C");
+    }
+
+    /// The same rule at a second number, so the table is a lookup and not a
+    /// special case for carbon.
+    #[test]
+    fn test_smarts_atomic_number_eight_is_stored_as_oxygen() {
+        assert_eq!(bracket_element_symbol(&smarts("[#8]")), "O");
+    }
+
+    /// `Element::by_number` is defined on 1..=118; a number past it names no
+    /// element, so the primitive is refused rather than stored as text.
+    #[test]
+    fn test_smarts_atomic_number_past_the_periodic_table_is_refused() {
+        let err = parse_smarts("[#200]").expect_err("200 is not an atomic number");
+        match &err.kind {
+            SmilesErrorKind::InvalidQueryPrimitive(text) => {
+                assert!(text.contains("200"), "primitive text was {text:?}");
+            }
+            other => panic!("expected InvalidQueryPrimitive, got {other:?}"),
+        }
+    }
+
     #[test]
     fn test_smarts_not() {
         let mol = smarts("[!C]");
@@ -2240,6 +2338,62 @@ mod tests {
         assert_eq!(
             nodes[0].descriptors,
             vec![descriptor(DescriptorKind::Shared, "a", None)]
+        );
+    }
+
+    // -- malformed ring markers ---------------------------------------------
+
+    /// `%` opens the two-digit spelling of a ring marker, so `%1` names no
+    /// marker: the string is malformed, not exhausted, and `UnexpectedEnd`
+    /// would be a false report about text that has not run out.
+    #[test]
+    fn test_percent_ring_marker_with_one_digit_is_an_invalid_ring_marker() {
+        let err = parse_smiles("C%1C").expect_err("'%1' is not a two-digit ring marker");
+        assert!(
+            matches!(err.kind, SmilesErrorKind::InvalidRingMarker),
+            "kind was {:?}",
+            err.kind
+        );
+        assert_eq!(err.span.start, 1, "the marker starts at the '%'");
+    }
+
+    /// The same rule where the input really does end: the complaint is still
+    /// about the marker, which is the rule that was broken.
+    #[test]
+    fn test_trailing_percent_is_an_invalid_ring_marker() {
+        let err = parse_smiles("C%").expect_err("a bare '%' names no ring marker");
+        assert!(
+            matches!(err.kind, SmilesErrorKind::InvalidRingMarker),
+            "kind was {:?}",
+            err.kind
+        );
+        assert_eq!(err.span.start, 1, "the marker starts at the '%'");
+    }
+
+    // -- ring closures are paired by the parser ------------------------------
+
+    /// A ring marker opened and never closed is a syntax error of the string,
+    /// so the parser that read the marker is the one that reports it — not a
+    /// later validation pass some callers run and some do not.
+    #[test]
+    fn test_unclosed_ring_marker_is_refused_by_parse_smiles() {
+        let err = parse_smiles("C1CC").expect_err("ring 1 is opened and never closed");
+        assert!(
+            matches!(err.kind, SmilesErrorKind::UnmatchedRingClosure(1)),
+            "kind was {:?}",
+            err.kind
+        );
+    }
+
+    /// The fragment dialect is plain SMILES widened with descriptors, so it
+    /// pairs ring markers by exactly the same rule and at the same stage.
+    #[test]
+    fn test_unclosed_ring_marker_is_refused_by_parse_fragment_smiles() {
+        let err = parse_fragment_smiles("[$]C1CC").expect_err("ring 1 is never closed");
+        assert!(
+            matches!(err.kind, SmilesErrorKind::UnmatchedRingClosure(1)),
+            "kind was {:?}",
+            err.kind
         );
     }
 

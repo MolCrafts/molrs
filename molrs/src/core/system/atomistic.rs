@@ -1151,6 +1151,35 @@ mod tests {
         );
     }
 
+    /// A `Fragment`'s frame carries a `ports` block, and `Atomistic` has no
+    /// such kind: reading the frame anyway would drop every joining site on
+    /// the floor and hand back a molecule that silently is not the fragment.
+    /// The refusal names the block it could not read.
+    #[test]
+    fn from_frame_refuses_a_frame_carrying_a_ports_block() {
+        use crate::system::bond::BondNumber;
+        use crate::system::fragment::{Fragment, PortKind};
+
+        let mut frag = Fragment::new();
+        let c0 = frag.add_atom_xyz("C", 0.0, 0.0, 0.0);
+        let c1 = frag.add_atom_xyz("C", 1.54, 0.0, 0.0);
+        let h = frag.add_atom_bare("H");
+        frag.add_bond(c0, c1).unwrap();
+        frag.add_bond(c0, h).unwrap();
+        frag.add_port(c0, h, PortKind::Symmetric, "A", BondNumber::Single)
+            .expect("a bonded H handle on its anchor is a legal port");
+
+        let frame = frag.to_frame();
+        assert!(frame.contains_key("ports"), "the fixture carries the block");
+
+        let err = Atomistic::from_frame(&frame)
+            .expect_err("a frame with a ports block is not an atomistic frame");
+        assert!(
+            format!("{err}").contains("ports"),
+            "the refusal must name the block it could not read, got {err}"
+        );
+    }
+
     #[test]
     fn test_try_from_molgraph_missing_element() {
         let mut g = MolGraph::new();
