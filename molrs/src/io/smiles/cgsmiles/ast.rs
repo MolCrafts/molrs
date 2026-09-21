@@ -18,28 +18,97 @@
 //! mutation — the same shape as
 //! [`SmilesIR`](crate::io::smiles::SmilesIR).
 
-use crate::core::types::F;
-use crate::io::smiles::chem::ast::{BondingDescriptor, Span};
+use std::collections::BTreeMap;
 
-/// A parsed `CGsmiles` string: one graph per resolution level.
+use crate::core::types::F;
+use crate::io::smiles::chem::ast::{BondingDescriptor, SmilesIR, Span};
+
+/// A parsed `CGsmiles` string: the blocks that were written, and the levels
+/// they denote.
 ///
 /// A *resolution level* is one view of the same molecule: the coarse level
 /// names beads, and a finer level names what each bead is made of. A
-/// `CGsmiles` string may carry several, written as several `{…}` blocks.
+/// `CGsmiles` string carries one base block and any number of **fragment
+/// blocks** after it, each mapping the names used one level up to the bodies
+/// that replace them.
 ///
-/// # Invariant (this version)
+/// # Authority
 ///
-/// `levels.len() == 1`. One block is one resolution level, and
-/// [`parse_cgsmiles`](crate::io::smiles::parse_cgsmiles) currently accepts
-/// exactly one block; the vector shape is already here because resolving
-/// fragments will append further levels to the same value.
+/// `fragments[k]` is the **authority** for a fragment's shape: it is what the
+/// string wrote. `levels[k + 1]` is the **expansion** that table denotes — one
+/// disjoint copy of a body per node of `levels[k]` — a derived representation
+/// the reader produces once. Editing one would not update the other, which is
+/// why there is no public constructor and no supported mutation: a value of
+/// this type is read, not built.
+///
+/// # Alignment invariant
+///
+/// A base-only string has no fragment table and one level:
+/// `fragments.is_empty() && levels.len() == 1`. Otherwise `fragments.len()` is
+/// the number of fragment blocks that were written and
+/// `levels.len() == fragments.len()` — one fewer level than one might expect,
+/// because the **last** block is atomistic and builds no coarse level. That
+/// asymmetry is intentional: levels are graphs of beads, and atoms are not
+/// [`CGNode`]s. The last table's bodies stay
+/// [`FragmentBody::Smiles`](FragmentBody::Smiles) values with their bonding
+/// descriptors intact.
+///
+/// # A value the reader returns is finished
+///
+/// Every `CGSmilesIR` returned by
+/// [`parse_cgsmiles`](crate::io::smiles::parse_cgsmiles) is **fully
+/// instantiated and validated**: every name used at a level has a definition,
+/// every intermediate table has been expanded into the next level, and every
+/// refusal this version makes (starting with the squash operator `[!]`) has
+/// already been raised. The reader hands out no half-resolved state. The
+/// fields are `pub`, so the type does not enforce this for a hand-built value
+/// — the reader is the only supported source.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CGSmilesIR {
-    /// Resolution levels, coarsest first. Level 0 is the block that was
-    /// written.
+    /// Resolution levels, coarsest first. Level 0 is the base block that was
+    /// written; every later level is the expansion of the table above it.
     pub levels: Vec<CGGraph>,
+    /// Fragment tables, coarsest first, each keyed by the fragment name
+    /// written after `#`. `fragments[k]` resolves the names of `levels[k]`.
+    ///
+    /// [`BTreeMap`] rather than a hash map so iteration — and therefore any
+    /// diagnostic or example that walks a table — is in name order, the way
+    /// the crate already keys name tables.
+    pub fragments: Vec<BTreeMap<String, CGFragmentDef>>,
     /// Byte range of the whole parsed string.
     pub span: Span,
+}
+
+/// One entry of a fragment block: `#PEO=[$]COC[$]`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CGFragmentDef {
+    /// The fragment name written after `#`, without the sigil.
+    pub name: String,
+    /// What the name stands for: a coarse graph of the next level's nodes, or
+    /// an atomistic SMILES fragment body.
+    pub body: FragmentBody,
+    /// Byte range of the whole entry — name, `=` and body — in the parsed
+    /// input.
+    pub span: Span,
+}
+
+/// The two shapes a fragment body may take, told apart by the block's
+/// **position** rather than by any syntax: the last block's bodies are
+/// atomistic, every earlier block's are coarse.
+///
+/// The notation marks neither (the reference implementation passes its reader
+/// a `last_all_atom` flag instead), so a string whose deepest resolution is
+/// meant to stay coarse-grained cannot be written — the limitation that
+/// positional dispatch buys.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FragmentBody {
+    /// A coarse graph over the *next* level's `[#X]` nodes, as written in an
+    /// intermediate block: `#B1=[>][#PEO][#PEO][<]`.
+    Graph(CGGraph),
+    /// An atomistic OpenSMILES body with bonding descriptors, as written in
+    /// the last block: `#PEO=[>]COC[<]`. It is kept as the parser returned
+    /// it — never expanded into atoms here.
+    Smiles(SmilesIR),
 }
 
 /// One resolution level: coarse-grained nodes and the edges between them.
@@ -67,10 +136,12 @@ pub struct CGNode {
     /// The fragment name written after `#`, without the sigil: `PEO`, or `*`
     /// for the wildcard node.
     pub name: String,
-    /// Partial charge in elementary charge units `e` (`CGsmiles` `q`,
-    /// positional slot 2), `None` when the notation wrote none.
+    /// Partial charge in `e` (`CGsmiles` `q`, positional slot 2), `None` when
+    /// the notation wrote none.
     ///
-    /// This is **not** a formal charge: the formal charge of an atom is
+    /// The unit is the molrs convention — the notation states none — and the
+    /// field is a **partial**, not a formal, charge: the formal charge of an
+    /// atom is
     /// [`AtomSpec::Bracket`](crate::io::smiles::AtomSpec::Bracket)'s
     /// `charge: Option<i8>`, an integer count of elementary charges written
     /// `[NH4+]`. This one is a fractional force-field charge attached to a
@@ -99,6 +170,15 @@ pub struct CGNode {
     /// unit it copies into every copy, while it refuses to replay a ring
     /// marker (a one-shot identity).
     pub descriptors: Vec<BondingDescriptor>,
+    /// Index into the *previous* level's `nodes` of the node this one was
+    /// instantiated from.
+    ///
+    /// `None` in `levels[0]` — nothing above the base graph instantiated it —
+    /// and `None` in every [`FragmentBody::Graph`] body, which is a template
+    /// rather than an instance. It is **set by instantiation, never
+    /// inherited**: the copies of one body used by two different nodes carry
+    /// the two different parents, not the body's own value.
+    pub parent: Option<usize>,
     /// Byte range of the node's own text within the parsed input.
     ///
     /// Spans in a [`CGGraph`] are neither disjoint nor monotonic: the copies

@@ -3,7 +3,7 @@
 //!
 //! There is one error struct, [`SmilesError`], one list of reasons,
 //! [`SmilesErrorKind`], and one field, [`Notation`], saying which language the
-//! offending text was meant to be — because many reasons (`TrailingCharacters`
+//! offending text was meant to be — because many reasons (`UnclosedBracket`
 //! and friends) are raised by all three, and the entry point is the only place
 //! that knows which was being parsed.
 
@@ -16,10 +16,10 @@ use molrs::error::MolRsError;
 ///
 /// One error type serves all three notations, so the notation is a *fact owned
 /// by the entry point* rather than something a reader could infer from the
-/// variant name: `TrailingCharacters` is raised by `parse_smiles`,
-/// `parse_smarts` and `parse_cgsmiles` alike, and only the entry point knows
-/// which language the offending text was meant to be. Every construction site
-/// therefore states it — see [`SmilesError::new`].
+/// variant name: `UnclosedBracket` is raised by `parse_smiles`, `parse_smarts`
+/// and `parse_cgsmiles` alike, and only the entry point knows which language
+/// the offending text was meant to be. Every construction site therefore
+/// states it — see [`SmilesError::new`].
 ///
 /// [`Display`](fmt::Display) renders the conventional spelling of each
 /// notation (`SMILES`, `SMARTS`, `CGsmiles`), which is the prefix of every
@@ -76,7 +76,8 @@ pub struct SmilesError {
 /// wants the language reads [`SmilesError::notation`] instead. The variants
 /// fall into three groups: the shared grammar rules, the bonding-descriptor
 /// rules of the SMILES fragment dialect (`DescriptorInPlainSmiles` onwards),
-/// and the coarse-graph rules of `CGsmiles` (`Cg*`).
+/// and the rules of `CGsmiles` (`Cg*`) — first those of one coarse graph,
+/// then those of the fragment blocks that resolve it into a finer one.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SmilesErrorKind {
     /// A character was encountered that is not valid in the current context.
@@ -95,7 +96,10 @@ pub enum SmilesErrorKind {
     InvalidCharge,
     /// An empty string was passed to the parser.
     EmptyInput,
-    /// Characters remain after the molecule was fully parsed.
+    /// Characters remain after the molecule was fully parsed. Raised by the
+    /// atomistic parsers only: a `CGsmiles` string with text after its last
+    /// block is [`SmilesErrorKind::CgExpectedBlock`], which says what was
+    /// expected there instead of only that something was left over.
     TrailingCharacters,
     /// A SMARTS query primitive is not recognised.
     InvalidQueryPrimitive(String),
@@ -211,11 +215,61 @@ pub enum SmilesErrorKind {
     /// (`{=[#A]}`). The input is not exhausted in any of these, so
     /// `UnexpectedEnd` would be a false report.
     CgDanglingBond,
-    /// A ring marker is malformed: `%` not followed by exactly two digits, as
-    /// in `{[#A]%1}`, or a marker number of zero. Zero is refused in both
-    /// spellings — a bare `0` and `%00` — so one-digit markers run `1`..`9`
-    /// and the two-digit form spans `%01`..`%99`.
+    /// A ring marker is malformed: `%` with no digit run after it, as in
+    /// `{[#A]%}`, or a marker number past `u16::MAX`. `%` takes the *whole*
+    /// digit run that follows it — `%1` is marker 1 and `%123` is marker 123 —
+    /// and zero is a marker like any other in both spellings (`0`, `%00`).
     CgInvalidRingMarker,
+
+    // -- CGsmiles fragment-block kinds --------------------------------------
+    /// A `{…}` block was expected and not found: a `.` separator not followed
+    /// by `{` (`{[#A]}.#A=[$]C[$]`), a second block written with no separator
+    /// before it (`{[#PEO][#PEO]}[#X]`), or text left over after the last `}`
+    /// (`{[#A]}.{#A=CC}}`). A `CGsmiles` string is a `.`-separated sequence of
+    /// blocks and nothing else.
+    CgExpectedBlock,
+    /// An entry of a fragment block does not read as `#NAME=body`: it does not
+    /// open with `#` (`{[#A]}.{A=CC}`), carries no `=` (`{[#A]}.{#A}`), names
+    /// nothing between the two (`{[#A]}.{#=CC}`), or spells the name with a
+    /// character a node bracket could not spell (`{[#A]}.{#A-1=CC}`; a
+    /// fragment name is ASCII alphanumeric, or the single wildcard `*`, the
+    /// same alphabet `[#NAME]` accepts).
+    CgMalformedFragmentEntry,
+    /// A fragment entry defines an empty body: `{[#A]}.{#A=}`. The name is
+    /// written, the `=` is written, and nothing follows it before the `,` or
+    /// the `}`.
+    CgEmptyFragmentBody,
+    /// One fragment block defines the same name twice:
+    /// `{[#A]}.{#A=CC,#A=CCC}`. The payload is the repeated name. The
+    /// reference implementation keeps the first definition and drops the rest
+    /// silently; molrs names the collision, because which of two bodies was
+    /// meant is not something a reader may guess.
+    CgDuplicateFragment(String),
+    /// A node name used at one resolution has no definition in the fragment
+    /// block that resolves it: `{[#A][#B]}.{#A=CC}` never defines `B`. The
+    /// payload is the missing name, and the span is the node that referenced
+    /// it.
+    CgUndefinedFragment(String),
+    /// The squash operator `[!]` was written. It is the only `CGsmiles`
+    /// syntax that places one atom in two beads, and molrs does not model that
+    /// yet — so it is refused wherever it appears (base graph, coarse fragment
+    /// body or atomistic fragment body) by one structural rule, rather than
+    /// parsed into a graph that quietly loses the sharing.
+    CgSquashUnsupported,
+    /// A body of the **last** block failed to parse as an atomistic
+    /// (OpenSMILES) fragment body. The payload is the inner reason, kept
+    /// rather than discarded, so `{[#A]}.{#A=[#X][#X]}` names the molrs rule
+    /// and then the `UnexpectedChar('#')` that proved it broken.
+    ///
+    /// The last block is atomistic **by position**: the notation carries no
+    /// flag for it (the reference implementation passes one to its reader), so
+    /// a string whose deepest resolution is meant to stay coarse-grained
+    /// cannot be written.
+    CgLastBlockNotAtomistic(Box<SmilesErrorKind>),
+    /// An internal invariant of the reader was violated — a state no input
+    /// can reach, reported by value rather than by panicking. The payload
+    /// says which invariant.
+    CgBuild(String),
 }
 
 impl SmilesError {
@@ -285,6 +339,37 @@ impl SmilesErrorKind {
             SmilesErrorKind::AtomAnnotationUnsupported(s) => {
                 format!("atom annotation ';{s}' is unsupported")
             }
+            SmilesErrorKind::CgEmptyBlock
+            | SmilesErrorKind::CgMalformedAnnotation(_)
+            | SmilesErrorKind::CgUnsupportedAnnotation { .. }
+            | SmilesErrorKind::CgAnnotationOnWildcard(_)
+            | SmilesErrorKind::CgInvalidBondOrder
+            | SmilesErrorKind::CgInvalidRepeatCount(_)
+            | SmilesErrorKind::CgDuplicateEdge { .. }
+            | SmilesErrorKind::CgRepeatOnBranchedNode
+            | SmilesErrorKind::CgRepeatOnRingMarker
+            | SmilesErrorKind::CgDanglingBond
+            | SmilesErrorKind::CgInvalidRingMarker
+            | SmilesErrorKind::CgExpectedBlock
+            | SmilesErrorKind::CgMalformedFragmentEntry
+            | SmilesErrorKind::CgEmptyFragmentBody
+            | SmilesErrorKind::CgDuplicateFragment(_)
+            | SmilesErrorKind::CgUndefinedFragment(_)
+            | SmilesErrorKind::CgSquashUnsupported
+            | SmilesErrorKind::CgLastBlockNotAtomistic(_)
+            | SmilesErrorKind::CgBuild(_) => self.cg_message(),
+        }
+    }
+
+    /// The reason a `Cg*` kind reports: the `CGsmiles` half of
+    /// [`SmilesErrorKind::message`], split off so neither function has to be
+    /// read past its own notation.
+    ///
+    /// Reached only through `message`, whose match routes exactly the `Cg*`
+    /// kinds here and answers every other kind itself — which is why the
+    /// remaining kinds are unreachable rather than handled.
+    fn cg_message(&self) -> String {
+        match self {
             SmilesErrorKind::CgEmptyBlock => {
                 "empty coarse-graph block '{}' — a resolution level needs at least one node"
                     .to_owned()
@@ -304,6 +389,9 @@ impl SmilesErrorKind {
             SmilesErrorKind::CgInvalidRepeatCount(s) => {
                 format!("invalid repeat count '{s}' — '|' takes a positive integer")
             }
+            SmilesErrorKind::CgDuplicateEdge { i, j } if i == j => {
+                format!("node {i} is bonded to itself — a coarse graph has no self-loops")
+            }
             SmilesErrorKind::CgDuplicateEdge { i, j } => format!(
                 "nodes {i} and {j} are already joined — use bond order symbols instead of a \
                  second edge"
@@ -319,8 +407,39 @@ impl SmilesErrorKind {
                 "bond symbol with nothing to bond to before the end of the block".to_owned()
             }
             SmilesErrorKind::CgInvalidRingMarker => {
-                "invalid ring marker — '%' takes exactly two digits".to_owned()
+                "invalid ring marker — '%' must be followed by digits; marker numbers up to 65535"
+                    .to_owned()
             }
+            SmilesErrorKind::CgExpectedBlock => {
+                "expected a '{…}' resolution block — blocks are separated by '.', and nothing \
+                 may follow the last one"
+                    .to_owned()
+            }
+            SmilesErrorKind::CgMalformedFragmentEntry => {
+                "malformed fragment entry — write '#NAME=body', entries separated by ','".to_owned()
+            }
+            SmilesErrorKind::CgEmptyFragmentBody => {
+                "empty fragment body — '#NAME=' defines nothing".to_owned()
+            }
+            SmilesErrorKind::CgDuplicateFragment(name) => {
+                format!("fragment '{name}' is defined twice — each name must be unique")
+            }
+            SmilesErrorKind::CgUndefinedFragment(name) => {
+                format!("fragment '{name}' is used but never defined")
+            }
+            SmilesErrorKind::CgSquashUnsupported => {
+                "the squash operator '[!]' is not supported — molrs does not model an atom \
+                 shared by two beads"
+                    .to_owned()
+            }
+            SmilesErrorKind::CgLastBlockNotAtomistic(inner) => format!(
+                "the last block must be an atomistic (OpenSMILES) body: {}",
+                inner.message()
+            ),
+            SmilesErrorKind::CgBuild(reason) => {
+                format!("an internal invariant of the reader was violated: {reason}")
+            }
+            kind => unreachable!("{kind:?} is not a CGsmiles error kind"),
         }
     }
 }
@@ -490,8 +609,11 @@ mod tests {
 
     // -- notation prefix ----------------------------------------------------
 
-    /// The full text of a `CGsmiles` error over `{[#PEO][#PEO]}[#X]`, whose
-    /// trailing block starts at byte 14.
+    /// The full text of a kind shared with the atomistic notations, stamped
+    /// `CGsmiles` and spanned at byte 14 of `{[#PEO][#PEO]}[#X]` — the `[` that
+    /// follows the only block. The value is built by hand to exercise
+    /// `Display`'s notation prefix on a non-`Cg*` kind; `parse_cgsmiles` itself
+    /// reports [`SmilesErrorKind::CgExpectedBlock`] for that string.
     fn cgsmiles_trailing_rendered() -> String {
         SmilesError::new(
             SmilesErrorKind::TrailingCharacters,
@@ -639,6 +761,107 @@ mod tests {
         assert!(msg.to_lowercase().contains("ring"), "message was {msg:?}");
     }
 
+    // -- 01c fragment-block variants ----------------------------------------
+    //
+    // The eight kinds `.claude/specs/cgsmiles-01c-fragments.md` § Design adds
+    // for the multi-block grammar. Each message is hand-written from the rule
+    // it reports; nothing here is captured from another program.
+
+    #[test]
+    fn test_display_cg_expected_block_names_the_missing_block() {
+        let msg = cg_message(SmilesErrorKind::CgExpectedBlock);
+        assert!(!msg.is_empty());
+        assert!(msg.to_lowercase().contains("block"), "message was {msg:?}");
+    }
+
+    /// The caret of a block-structure error points at the offending byte of
+    /// the whole `CGsmiles` string — byte 14, where the second block of
+    /// `{[#PEO][#PEO]}[#X]` should have started with a separator.
+    #[test]
+    fn test_display_cg_expected_block_caret_points_at_the_offending_byte() {
+        let rendered = SmilesError::new(
+            SmilesErrorKind::CgExpectedBlock,
+            Span::new(14, 15),
+            "{[#PEO][#PEO]}[#X]",
+            Notation::CGsmiles,
+        )
+        .to_string();
+        let caret = rendered.lines().nth(2).expect("caret line is missing");
+        assert_eq!(caret, format!("  {}^", " ".repeat(14)));
+    }
+
+    #[test]
+    fn test_display_cg_malformed_fragment_entry_names_the_entry_grammar() {
+        let msg = cg_message(SmilesErrorKind::CgMalformedFragmentEntry);
+        assert!(!msg.is_empty());
+        assert!(
+            msg.to_lowercase().contains("fragment"),
+            "message was {msg:?}"
+        );
+    }
+
+    #[test]
+    fn test_display_cg_empty_fragment_body_names_the_empty_body() {
+        let msg = cg_message(SmilesErrorKind::CgEmptyFragmentBody);
+        assert!(msg.to_lowercase().contains("empty"), "message was {msg:?}");
+        assert!(msg.to_lowercase().contains("body"), "message was {msg:?}");
+    }
+
+    #[test]
+    fn test_display_cg_duplicate_fragment_shows_the_name() {
+        let msg = cg_message(SmilesErrorKind::CgDuplicateFragment("PEO".to_owned()));
+        assert!(msg.contains("PEO"), "message was {msg:?}");
+    }
+
+    #[test]
+    fn test_display_cg_undefined_fragment_shows_the_name() {
+        let msg = cg_message(SmilesErrorKind::CgUndefinedFragment("PEO".to_owned()));
+        assert!(msg.contains("PEO"), "message was {msg:?}");
+    }
+
+    #[test]
+    fn test_display_cg_squash_unsupported_names_the_squash_operator() {
+        let msg = cg_message(SmilesErrorKind::CgSquashUnsupported);
+        assert!(!msg.is_empty());
+        assert!(msg.contains("[!]"), "message was {msg:?}");
+    }
+
+    #[test]
+    fn test_display_cg_build_shows_the_reason() {
+        let msg = cg_message(SmilesErrorKind::CgBuild(
+            "no definition for 'B1'".to_owned(),
+        ));
+        assert!(
+            msg.contains("no definition for 'B1'"),
+            "message was {msg:?}"
+        );
+    }
+
+    /// The boxed inner kind is reported, not discarded: the message states the
+    /// molrs rule ("the last block must be an atomistic (OpenSMILES) body")
+    /// and then the inner reason, so `{[#A]}.{#A=CC(}` names both.
+    #[test]
+    fn test_display_cg_last_block_not_atomistic_states_the_rule() {
+        let msg = cg_message(SmilesErrorKind::CgLastBlockNotAtomistic(Box::new(
+            SmilesErrorKind::UnclosedBranch,
+        )));
+        let lower = msg.to_lowercase();
+        assert!(lower.contains("last block"), "message was {msg:?}");
+        assert!(lower.contains("atomistic"), "message was {msg:?}");
+    }
+
+    #[test]
+    fn test_display_cg_last_block_not_atomistic_appends_the_inner_message() {
+        let inner = cg_message(SmilesErrorKind::UnclosedBranch);
+        let msg = cg_message(SmilesErrorKind::CgLastBlockNotAtomistic(Box::new(
+            SmilesErrorKind::UnclosedBranch,
+        )));
+        assert!(
+            msg.ends_with(&inner),
+            "message was {msg:?}, inner message was {inner:?}"
+        );
+    }
+
     #[test]
     fn test_display_cg_messages_are_pairwise_distinct() {
         let messages = [
@@ -656,6 +879,18 @@ mod tests {
             cg_message(SmilesErrorKind::CgRepeatOnRingMarker),
             cg_message(SmilesErrorKind::CgDanglingBond),
             cg_message(SmilesErrorKind::CgInvalidRingMarker),
+            cg_message(SmilesErrorKind::CgExpectedBlock),
+            cg_message(SmilesErrorKind::CgMalformedFragmentEntry),
+            cg_message(SmilesErrorKind::CgEmptyFragmentBody),
+            cg_message(SmilesErrorKind::CgDuplicateFragment("PEO".to_owned())),
+            cg_message(SmilesErrorKind::CgUndefinedFragment("PEO".to_owned())),
+            cg_message(SmilesErrorKind::CgSquashUnsupported),
+            cg_message(SmilesErrorKind::CgBuild(
+                "no definition for 'B1'".to_owned(),
+            )),
+            cg_message(SmilesErrorKind::CgLastBlockNotAtomistic(Box::new(
+                SmilesErrorKind::UnclosedBranch,
+            ))),
         ];
         let mut sorted = messages.to_vec();
         sorted.sort();

@@ -4,9 +4,12 @@
 //! `{…}` of named **beads** — single nodes each standing for a whole fragment
 //! of the molecule — joined like atoms in SMILES. `{[#PEO][#PEO][#PEO]}` is a
 //! three-bead trimer of poly(ethylene oxide); each `#NAME` is a fragment name
-//! that a later stage resolves into atoms. This module parses one such block
-//! into a [`CGSmilesIR`] and does nothing else — no fragment resolution, no
-//! atoms, no `MolGraph`.
+//! that a later block resolves. A whole string is a `.`-separated sequence of
+//! blocks: block 0 is the coarsest graph, and every block after it is a
+//! *fragment table* naming the bodies of the nodes written one level up. This
+//! module reads all of them into a [`CGSmilesIR`], and expands each
+//! intermediate table into the level it denotes — but it builds no atoms and
+//! no `MolGraph`.
 //!
 //! # What the block grammar says
 //!
@@ -20,10 +23,12 @@
 //!   bracket, where it becomes the order the descriptor's later pairing will
 //!   take.
 //! * `( … )` branches and nests, attaching to the node written before `(`.
-//! * A bare digit `1`..`9`, or `%` and exactly two digits, opens a ring marker
-//!   that its second occurrence closes; the ring bond takes the order written
-//!   before the *opening* marker, and a marker number is reusable once closed.
-//!   A different order written before the *closing* marker is a conflict
+//! * A bare digit, or `%` and the whole digit run that follows it (`%1` is
+//!   marker 1, `%123` is marker 123, up to 65535), opens a ring marker that
+//!   its second occurrence closes; a marker number is reusable once closed.
+//!   The closure's bond order may be written at *either* end — an order
+//!   belongs to the bond, not to the end it was written at — and two
+//!   **differing** explicit symbols are a conflict
 //!   ([`SmilesErrorKind::RingBondConflict`]), not an override.
 //! * `|n` repeats the preceding unit `n` times in total, chaining the copies.
 //!   After `)` the unit is the whole branch **including its anchor**, so
@@ -37,6 +42,42 @@
 //! Units: `charge` is a **partial charge in elementary charge units `e`**, not
 //! a formal charge (`.claude/notes/science.md`); `w` is dimensionless; a bond
 //! order is a dimensionless multiplicity 1..=4.
+//!
+//! # What the fragment blocks say
+//!
+//! A block after the first is a table, `{#NAME=body,#NAME=body}`: entries are
+//! separated by `,` and each splits on its **first** `=`, so a body may carry
+//! further ones (`#A=C=C` is a double bond). A name must be defined exactly
+//! once in its table and every name used one level up must be defined —
+//! [`SmilesErrorKind::CgDuplicateFragment`] and
+//! [`SmilesErrorKind::CgUndefinedFragment`] otherwise. The converse is not an
+//! error: a table may define more than the level above it uses, which is how a
+//! shared library block is written.
+//!
+//! **The wildcard bead `[#*]` is an ordinary fragment name**, not a
+//! match-anything pattern: `*` is simply a name character, so `{[#*][#A]}` is
+//! a base-only string over the two names `*` and `A`. Name coverage treats it
+//! like any other name — `{[#*]}.{#A=CC}` is
+//! [`SmilesErrorKind::CgUndefinedFragment`] carrying `"*"`, because the table
+//! defines `A` and no table defines `*`.
+//!
+//! **The last block is atomistic, by position.** Its bodies are OpenSMILES
+//! fragment bodies, kept as [`FragmentBody::Smiles`] with their bonding
+//! descriptors; every earlier block's bodies are coarse graphs over the next
+//! level's `[#X]` nodes, kept as [`FragmentBody::Graph`]. Nothing in the
+//! notation marks which is which — the reference implementation passes its
+//! reader a `last_all_atom` flag instead — so dispatch here is positional and
+//! flag-free. The **limitation** that follows is stated rather than worked
+//! around: a string whose deepest resolution is meant to stay coarse-grained
+//! cannot be written, and a coarse body in the last block is
+//! [`SmilesErrorKind::CgLastBlockNotAtomistic`].
+//!
+//! **Levels and tables do not line up one-to-one, on purpose.** Each
+//! intermediate table is expanded into the next level — one disjoint copy of a
+//! body per node that names it, with [`CGNode::parent`] pointing back — while
+//! the last table builds no level at all, because a level is a graph of beads
+//! and atoms are not [`CGNode`]s. A base-only string therefore has no table
+//! and one level; otherwise `levels.len() == fragments.len()`.
 //!
 //! # Refusals of valid notation (choices of this first implementation)
 //!
@@ -59,12 +100,25 @@
 //!   [`SmilesErrorKind::CgUnsupportedAnnotation`], because a coarse-grained
 //!   bead has no stereocentre for molrs to place and silently keeping the key
 //!   as free text would claim otherwise.
+//! * **The squash operator `[!]`** (`{[#A][!]}`), the one bonding descriptor
+//!   that puts a single atom in two beads at once rather than marking a site
+//!   where two fragments may later be joined: refused with
+//!   [`SmilesErrorKind::CgSquashUnsupported`] wherever it is written — base
+//!   graph, coarse fragment body or atomistic fragment body, all three caught
+//!   by the one structural rule. No specification in the chain lifts it yet;
+//!   parsing it as an ordinary descriptor would keep the glyph and lose the
+//!   sharing it stands for.
 //!
 //! # Invariants and caveats
 //!
-//! * **One block, one level.** This version of the parser accepts exactly one
-//!   block, so `levels.len() == 1`; text after the closing `}` is
-//!   [`SmilesErrorKind::TrailingCharacters`].
+//! * **Alignment.** `fragments[k]` is the authority for a fragment's shape and
+//!   `levels[k + 1]` is the expansion it denotes. A base-only string has
+//!   `fragments.is_empty() && levels.len() == 1`; otherwise
+//!   `levels.len() == fragments.len()`, one level short of the number of
+//!   tables because the last one is atomistic.
+//! * **Inter-fragment bonds are not formed here.** Expansion copies a body's
+//!   own edges and nothing else: pairing the bonding descriptors *between* two
+//!   copies belongs to the resolution step a later `cgsmiles-*` link adds.
 //! * **Replayed spans are shared.** `|n` re-reads the unit's bytes by
 //!   rewinding the one scanner over the full input, so every copy carries the
 //!   *template's* [`Span`](crate::io::smiles::Span): spans within a level are
@@ -80,6 +134,43 @@
 //!   library's adjacency order, so a ring-bearing string indexes edges
 //!   differently there.
 //!
+//! # Three reference behaviours this reader does not mirror
+//!
+//! Each is a place where `CGsmiles @ 910c9ee` accepts or drops something
+//! silently and molrs refuses it instead, so the difference is recorded rather
+//! than discovered:
+//!
+//! * two definitions of one name — the reference keeps the first and drops the
+//!   rest; this reader raises [`SmilesErrorKind::CgDuplicateFragment`];
+//! * an empty block `{}` — the reference's block regular expression skips it;
+//!   this reader raises [`SmilesErrorKind::CgEmptyBlock`], in any position;
+//! * `|n` written as a body's last token (`{#B1=[#PEO]|4}`) — the reference
+//!   crashes there; this reader replays it like any other repeat.
+//!
+//! # Example
+//!
+//! Three resolutions: beads of blocks, blocks of beads, beads of atoms. Level
+//! 1 is the expansion of the first table — two `[#PEO]` copies per `[#B1]`
+//! node, each remembering the node it came from — while the last table's
+//! bodies stay atomistic.
+//!
+//! ```
+//! use molrs::io::smiles::{FragmentBody, parse_cgsmiles};
+//!
+//! let ir = parse_cgsmiles(
+//!     "{[#B1][#B2][#B1]}.\
+//!      {#B1=[>][#PEO][#PEO][<],#B2=[>][#PE][#PE][<]}.\
+//!      {#PEO=[>]COC[<],#PE=[>]CC[<]}",
+//! )
+//! .unwrap();
+//!
+//! assert_eq!(ir.levels.len(), 2);
+//! assert_eq!(ir.levels[0].nodes.len(), 3);
+//! assert_eq!(ir.levels[1].nodes.len(), 6);
+//! assert_eq!(ir.levels[1].nodes[3].parent, Some(1));
+//! assert!(matches!(ir.fragments[1]["PEO"].body, FragmentBody::Smiles(_)));
+//! ```
+//!
 //! # References
 //!
 //! Primary source: the `CGsmiles` documentation, cgsmiles.readthedocs.io,
@@ -91,21 +182,33 @@
 //! not readable when this module was written, so no rule above rests on it.
 //!
 //! [`SmilesErrorKind::CgInvalidBondOrder`]: crate::io::smiles::SmilesErrorKind::CgInvalidBondOrder
-//! [`SmilesErrorKind::CgUnsupportedAnnotation`]: crate::io::smiles::SmilesErrorKind::CgUnsupportedAnnotation
-//! [`SmilesErrorKind::CgRepeatOnRingMarker`]: crate::io::smiles::SmilesErrorKind::CgRepeatOnRingMarker
+//! [`SmilesErrorKind::CgUnsupportedAnnotation`]:
+//!     crate::io::smiles::SmilesErrorKind::CgUnsupportedAnnotation
+//! [`SmilesErrorKind::CgRepeatOnRingMarker`]:
+//!     crate::io::smiles::SmilesErrorKind::CgRepeatOnRingMarker
 //! [`SmilesErrorKind::RingBondConflict`]: crate::io::smiles::SmilesErrorKind::RingBondConflict
-//! [`SmilesErrorKind::TrailingCharacters`]: crate::io::smiles::SmilesErrorKind::TrailingCharacters
+//! [`SmilesErrorKind::CgDuplicateFragment`]:
+//!     crate::io::smiles::SmilesErrorKind::CgDuplicateFragment
+//! [`SmilesErrorKind::CgUndefinedFragment`]:
+//!     crate::io::smiles::SmilesErrorKind::CgUndefinedFragment
+//! [`SmilesErrorKind::CgLastBlockNotAtomistic`]:
+//!     crate::io::smiles::SmilesErrorKind::CgLastBlockNotAtomistic
+//! [`SmilesErrorKind::CgEmptyBlock`]: crate::io::smiles::SmilesErrorKind::CgEmptyBlock
+//! [`SmilesErrorKind::CgSquashUnsupported`]:
+//!     crate::io::smiles::SmilesErrorKind::CgSquashUnsupported
 
 mod ast;
+mod instantiate;
 mod parser;
+mod validate;
 
 use crate::io::smiles::error::SmilesError;
 use parser::CgParser;
 
-pub use ast::{CGBondOrder, CGEdge, CGGraph, CGNode, CGSmilesIR};
+pub use ast::{CGBondOrder, CGEdge, CGFragmentDef, CGGraph, CGNode, CGSmilesIR, FragmentBody};
 
-/// Parse one `CGsmiles` coarse-graph block into its intermediate
-/// representation.
+/// Parse a `CGsmiles` string — every resolution block it writes — into its
+/// intermediate representation.
 ///
 /// `CGsmiles` is a line notation that writes a molecule at a *coarse-grained*
 /// resolution: where SMILES names atoms, `CGsmiles` names **beads**, each one
@@ -113,15 +216,28 @@ pub use ast::{CGBondOrder, CGEdge, CGGraph, CGNode, CGSmilesIR};
 /// resolution level, so `{[#PEO][#PEO][#PEO]}` is a chain of three beads of
 /// the fragment called `PEO`. Inside a block, `[#NAME]` is a node, adjacency
 /// is a bond, the symbols `-`, `=`, `#` and `$` write bond multiplicities
-/// 1..=4 (the default is 1), `( … )` branches, a bare digit `1`..`9` or `%`
-/// and two digits opens a ring marker that its second occurrence closes, `|n`
-/// repeats the preceding unit `n` times in total, and `;`-separated
-/// annotations decorate a node — `[#A;q=-0.5]`, or positionally `[#A;-0.5]`,
-/// since annotation slot 2 is `q`.
+/// 1..=4 (the default is 1), `( … )` branches, a bare digit or `%` and a digit
+/// run opens a ring marker that its second occurrence closes, `|n` repeats the
+/// preceding unit `n` times in total, and `;`-separated annotations decorate a
+/// node — `[#A;q=-0.5]`, or positionally `[#A;-0.5]`, since annotation slot 2
+/// is `q`.
 ///
-/// The result is that one block and nothing more: node names are **not**
-/// resolved to fragments, nothing is expanded into atoms, and no molecular
-/// graph or frame is built.
+/// Blocks are separated by `.`, and every block after the first is a
+/// **fragment table** — `{#PEO=[>]COC[<],#PE=[>]CC[<]}` — naming the bodies of
+/// the nodes written one level up. Each intermediate table is expanded here
+/// into the level it denotes: one disjoint copy of a body per node that names
+/// it, each copy's [`parent`](CGNode::parent) pointing back at that node, and
+/// no edge between two copies (pairing the bonding descriptors that would form
+/// one belongs to a later `cgsmiles-*` link).
+///
+/// The **last** block is atomistic by position — the notation marks it
+/// nowhere — so its bodies are parsed as OpenSMILES fragment bodies and kept
+/// as [`FragmentBody::Smiles`], descriptors intact, without being expanded
+/// into atoms. The limitation this buys is real and not worked around: a
+/// string whose deepest resolution is meant to stay coarse-grained cannot be
+/// written, and a coarse body in the last block is refused with
+/// [`CgLastBlockNotAtomistic`]. Nothing here builds a molecular graph or a
+/// frame.
 ///
 /// Units: a node's [`charge`](CGNode::charge) is a **partial charge in
 /// elementary charge units `e`** — the fractional force-field charge carried
@@ -130,20 +246,25 @@ pub use ast::{CGBondOrder, CGEdge, CGGraph, CGNode, CGSmilesIR};
 ///
 /// # Valid notation this parser refuses
 ///
-/// Three constructs are legal `CGsmiles` that molrs does not yet model, and
+/// Four constructs are legal `CGsmiles` that molrs does not yet model, and
 /// are refused loudly rather than dropped silently: bond order 0, written `.`
 /// (`{[#A].[#B]}`), which denotes a virtual edge between virtual particles;
 /// a mapping weight `w` at any value other than its default 1, keyword
-/// (`[#A;w=2]`) or positional (`[#A;0;0.5]`); and a chirality annotation
-/// (`[#A;x=S]`), a coarse bead having no stereocentre to place. Everything
+/// (`[#A;w=2]`) or positional (`[#A;0;0.5]`); a chirality annotation
+/// (`[#A;x=S]`), a coarse bead having no stereocentre to place; and the squash
+/// operator `[!]` (`{[#A][!]}`), the one descriptor that shares a single atom
+/// between two beads instead of marking a site for a later join. Everything
 /// else the annotation table does not reserve is kept verbatim in
 /// [`CGNode::annotations`].
 ///
-/// # Invariant and caveats
+/// # Invariants and caveats
 ///
-/// This version of the parser accepts exactly one block, so
-/// `levels.len() == 1`, and text after the closing `}` is
-/// [`TrailingCharacters`]. Nodes and edges are in parse order, a ring-closure
+/// `fragments[k]` is the authority for a fragment's shape and `levels[k + 1]`
+/// is the expansion it denotes. A base-only string has
+/// `fragments.is_empty() && levels.len() == 1`; otherwise
+/// `levels.len() == fragments.len()` — one level short of the number of
+/// tables, because the last table is atomistic and a level is a graph of
+/// beads. Nodes and edges are in parse order, a ring-closure
 /// edge appearing where its closing marker was read — the reference
 /// implementation orders edges by its graph library's adjacency instead, so a
 /// ring-bearing string indexes edges differently there. The copies `|n` makes
@@ -168,34 +289,64 @@ pub use ast::{CGBondOrder, CGEdge, CGGraph, CGNode, CGSmilesIR};
 /// the whole of `text`, so the rendered message reads `CGsmiles parse error at
 /// position N: …` with a caret under column N.
 ///
-/// Eleven kinds name inputs only this notation has: [`CgEmptyBlock`] (`{}`),
-/// [`CgMalformedAnnotation`] (`{[#A;]}`, `{[#A;=1]}`, `{[#A;q=x]}`, or a
-/// fourth positional field), [`CgUnsupportedAnnotation`] (the weight and
-/// chirality refusals above), [`CgAnnotationOnWildcard`] (`{[#*;q=1]}`, the
+/// Nineteen kinds name inputs only this notation has: [`CgEmptyBlock`] (`{}`,
+/// in any position), [`CgMalformedAnnotation`] (`{[#A;]}`, `{[#A;=1]}`,
+/// `{[#A;q=x]}`, or a fourth positional field), [`CgUnsupportedAnnotation`]
+/// (the weight and chirality refusals above),
+/// [`CgAnnotationOnWildcard`] (`{[#*;q=1]}`, the
 /// wildcard bead standing for *any* fragment and so having no properties of
 /// its own), [`CgInvalidBondOrder`] (`.`, or any other non-bond character in
 /// bond position), [`CgInvalidRepeatCount`] (`{[#A]|0}`, `{[#A]|x}`),
 /// [`CgDuplicateEdge`] (a ring closure re-forming a pair the graph already
 /// has, or bonding a node to itself), [`CgRepeatOnBranchedNode`] (`|` inside
 /// an open branch, or after a node carrying two branches),
-/// [`CgRepeatOnRingMarker`], [`CgDanglingBond`] (`{[#A]=}`) and
-/// [`CgInvalidRingMarker`] (`%` not followed by exactly two digits).
+/// [`CgRepeatOnRingMarker`], [`CgDanglingBond`] (`{[#A]=}`),
+/// [`CgInvalidRingMarker`] (`%` with no digits after it, or a number past
+/// 65535), [`CgExpectedBlock`] (`{[#A]}.#A=CC`, `{[#A]}{#A=CC}`, or anything
+/// after the last `}`), [`CgMalformedFragmentEntry`] (`{[#A]}.{#A}`),
+/// [`CgEmptyFragmentBody`] (`{[#A]}.{#A=}`), [`CgDuplicateFragment`]
+/// (`{[#A]}.{#A=CC,#A=CCC}`), [`CgUndefinedFragment`] (`{[#A][#B]}.{#A=CC}`),
+/// [`CgSquashUnsupported`] (the squash operator `[!]` at any level, the
+/// shortest such string being `{[#A][!]}`), [`CgLastBlockNotAtomistic`]
+/// (`{[#A]}.{#A=[#X][#X]}`, boxing the reason the body did not read as
+/// OpenSMILES) and [`CgBuild`] (an internal invariant of the reader,
+/// unreachable from user input).
 ///
-/// Eight kinds are shared with SMILES and SMARTS, and are told apart from them
+/// Seven kinds are shared with SMILES and SMARTS, and are told apart from them
 /// by [`SmilesError::notation`] rather than by their name: [`EmptyInput`] (an
 /// empty `text`), [`UnexpectedChar`], [`UnexpectedEnd`] (the block never
 /// closes), [`UnclosedBracket`] (a `[…]` never closes), [`UnclosedBranch`],
-/// [`UnmatchedRingClosure`] (a marker still open at `}`),
-/// [`RingBondConflict`] and [`TrailingCharacters`].
+/// [`UnmatchedRingClosure`] (a marker still open at `}`) and
+/// [`RingBondConflict`].
+///
+/// A body of the last block is parsed by
+/// [`parse_fragment_smiles`](crate::io::smiles::parse_fragment_smiles), and
+/// its diagnostic is **re-based** before it leaves this function: the span is
+/// shifted by the body's offset, the input is the whole `CGsmiles` string and
+/// the notation is `CGsmiles`, so the caret lands on the offending token of
+/// the string the caller passed in. The kind is kept, boxed inside
+/// [`CgLastBlockNotAtomistic`] — except
+/// [`AtomAnnotationUnsupported`](crate::io::smiles::SmilesErrorKind::AtomAnnotationUnsupported)
+/// (`[C;0.5]`, `[*;s=C,0]`), which already names an unsupported feature and
+/// propagates un-wrapped.
 ///
 /// A bonding descriptor written beside a node is checked by the same grammar
 /// rules the SMILES fragment dialect uses, so [`BondInsideDescriptor`]
 /// (`{[#A][$=]}`), [`InvalidDescriptorLabel`] (`{[#A][$a+]}`) and
-/// [`DanglingDescriptor`] (`{[$][#A]}`) can be raised too, stamped as
-/// `CGsmiles`.
+/// [`DanglingDescriptor`] can be raised too, stamped as `CGsmiles`. The last
+/// of those takes a graph with no node in it at all (`{[$]}`): a descriptor
+/// written *before* the first node waits for that node and binds to it, so
+/// `{[$][#A]}` is a `$` on `[#A]` and not an error.
 ///
-/// [`TrailingCharacters`]: crate::io::smiles::SmilesErrorKind::TrailingCharacters
 /// [`CgEmptyBlock`]: crate::io::smiles::SmilesErrorKind::CgEmptyBlock
+/// [`CgExpectedBlock`]: crate::io::smiles::SmilesErrorKind::CgExpectedBlock
+/// [`CgMalformedFragmentEntry`]: crate::io::smiles::SmilesErrorKind::CgMalformedFragmentEntry
+/// [`CgEmptyFragmentBody`]: crate::io::smiles::SmilesErrorKind::CgEmptyFragmentBody
+/// [`CgDuplicateFragment`]: crate::io::smiles::SmilesErrorKind::CgDuplicateFragment
+/// [`CgUndefinedFragment`]: crate::io::smiles::SmilesErrorKind::CgUndefinedFragment
+/// [`CgSquashUnsupported`]: crate::io::smiles::SmilesErrorKind::CgSquashUnsupported
+/// [`CgLastBlockNotAtomistic`]: crate::io::smiles::SmilesErrorKind::CgLastBlockNotAtomistic
+/// [`CgBuild`]: crate::io::smiles::SmilesErrorKind::CgBuild
 /// [`CgMalformedAnnotation`]: crate::io::smiles::SmilesErrorKind::CgMalformedAnnotation
 /// [`CgUnsupportedAnnotation`]: crate::io::smiles::SmilesErrorKind::CgUnsupportedAnnotation
 /// [`CgAnnotationOnWildcard`]: crate::io::smiles::SmilesErrorKind::CgAnnotationOnWildcard

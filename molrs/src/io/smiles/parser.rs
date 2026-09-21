@@ -553,6 +553,13 @@ impl<'a> Parser<'a> {
     /// deliberate narrowing relative to the `CGsmiles` reference, which reads
     /// that `=` as the run's order. Both readings are spellable here anyway:
     /// `C(=[$]N)C` annotates the descriptor, `C(=N)[$]` bonds the branch.
+    ///
+    /// # Errors
+    ///
+    /// [`SmilesErrorKind::UnclosedBranch`], spanned at the `(` that was
+    /// opened, both when the input simply ends inside the branch (`CC(`) and
+    /// when it ends after some of the branch was read (`CC(O`) — the complaint
+    /// is the branch that never closes, not the atom that never came.
     fn parse_branch(
         &mut self,
     ) -> Result<(Vec<BondingDescriptor>, Option<ChainElement>), SmilesError> {
@@ -583,6 +590,15 @@ impl<'a> Parser<'a> {
                 self.scanner.advance(); // consume ')'
                 return Ok((parent, None));
             }
+        }
+
+        // End of input here is the branch that never closed, not a missing
+        // atom, so it takes the same arm as the unbalanced `)` check below.
+        if self.scanner.is_done() {
+            return Err(self.error_at(
+                SmilesErrorKind::UnclosedBranch,
+                self.scanner.span_from(start),
+            ));
         }
 
         let chain = self.parse_chain()?;
@@ -1660,6 +1676,33 @@ mod tests {
     fn test_unclosed_branch() {
         let err = parse_smiles("CC(O").unwrap_err();
         assert!(matches!(err.kind, SmilesErrorKind::UnclosedBranch));
+    }
+
+    /// Input that ends right after the `(`: the complaint is the branch that
+    /// never closed, not the atom that never came, and it is spanned at the
+    /// `(` — the same reading `CC(O` gets.
+    #[test]
+    fn test_unclosed_branch_at_end_of_input_reports_unclosed_branch() {
+        let err = parse_smiles("CC(").unwrap_err();
+        assert!(
+            matches!(err.kind, SmilesErrorKind::UnclosedBranch),
+            "kind was {:?}",
+            err.kind
+        );
+        assert_eq!(err.span.start, 2, "span was {:?}", err.span);
+    }
+
+    /// The fragment dialect reads the same branch production, so `CC(` is
+    /// refused there with the same kind at the same offset.
+    #[test]
+    fn test_fragment_unclosed_branch_at_end_of_input() {
+        let err = parse_fragment_smiles("CC(").unwrap_err();
+        assert!(
+            matches!(err.kind, SmilesErrorKind::UnclosedBranch),
+            "kind was {:?}",
+            err.kind
+        );
+        assert_eq!(err.span.start, 2, "span was {:?}", err.span);
     }
 
     #[test]

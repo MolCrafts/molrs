@@ -23,11 +23,12 @@
 //! [`parse_cgsmiles`] reads the third notation this module hosts. `CGsmiles`
 //! writes a molecule at a *coarse-grained* resolution: one node per whole
 //! group of atoms — a **bead**, named after the fragment it stands for —
-//! instead of one node per atom. It parses such a block, `{[#PEO][#PEO]}`
-//! being a two-bead chain, into the [`CGSmilesIR`] of the private
-//! `cgsmiles` submodule. What it shares with the two atomistic notations is
-//! the scanner, the [`Span`], the [`SmilesError`] and the
-//! [`BondingDescriptor`] vocabulary — not the grammar and not the AST. The
+//! instead of one node per atom. It parses such a string — one `{…}` block per
+//! resolution, `{[#PEO][#PEO]}` being a two-bead chain and every block after
+//! the first a table of the fragment bodies named one level up — into the
+//! [`CGSmilesIR`] of the private `cgsmiles` submodule. What it shares with the
+//! two atomistic notations is the scanner, the [`Span`], the [`SmilesError`]
+//! and the [`BondingDescriptor`] vocabulary — not the grammar, not the AST. The
 //! token vocabularies overlap adversarially (`[#NAME]` against the SMARTS
 //! `[#6]`, `$` against both a bond order and a descriptor), so these are two
 //! parsers, not one parser with a mode: a missed check in a mode-switching
@@ -58,7 +59,8 @@
 //! # Pipeline (SMILES fragment)
 //!
 //! ```text
-//! fragment body → parse_fragment_smiles() → SmilesIR → fragment_to_atomistic() → (Atomistic, descriptor map)
+//! fragment body → parse_fragment_smiles() → SmilesIR
+//!     → fragment_to_atomistic() → (Atomistic, descriptor map)
 //! ```
 //!
 //! # Pipeline (CGsmiles)
@@ -112,15 +114,20 @@ mod cgsmiles;
 // Public re-exports (stable surface — downstream callers depend on these).
 //
 // Four groups, in the order they appear below: the `CGsmiles` coarse-graph IR
-// and the entry point that builds it; the AST vocabulary of the two atomistic
-// notations (including `BondingDescriptor` / `DescriptorKind`, which a
-// fragment caller reads off the descriptor map); the error type, its variants
+// — the levels (`CGGraph` / `CGNode` / `CGEdge` / `CGBondOrder`) together with
+// the fragment tables that resolve them (`CGFragmentDef`, and `FragmentBody`
+// for the two shapes a body may take) — and the entry point that builds it;
+// the AST vocabulary of the two atomistic notations (including
+// `BondingDescriptor` / `DescriptorKind`, which a fragment caller reads off
+// the descriptor map); the error type, its variants
 // and the `Notation` that says which of the three languages raised one; and
 // the per-stage entry points — one set for plain SMILES, one for SMARTS
 // syntax, one for fragment bodies.
 // ---------------------------------------------------------------------------
 
-pub use cgsmiles::{CGBondOrder, CGEdge, CGGraph, CGNode, CGSmilesIR, parse_cgsmiles};
+pub use cgsmiles::{
+    CGBondOrder, CGEdge, CGFragmentDef, CGGraph, CGNode, CGSmilesIR, FragmentBody, parse_cgsmiles,
+};
 pub use chem::ast::{
     AtomNode, AtomPrimitive, AtomQuery, AtomSpec, BondKind, BondQuery, BondingDescriptor,
     BracketSymbol, Chain, ChainElement, Chirality, DescriptorKind, SmilesIR, Span,
