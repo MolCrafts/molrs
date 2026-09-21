@@ -6,7 +6,6 @@ spec files.
 
 | Spec | State |
 |------|-------|
-| [cgsmiles-01a-descriptors](cgsmiles-01a-descriptors.md) — fragment SMILES dialect: bonding descriptors on bracket atoms, `parse_fragment_smiles` / `fragment_to_atomistic` / `write_fragment_smiles`, one `Dialect` enum | approved |
 | [cgsmiles-01b-graph](cgsmiles-01b-graph.md) — coarse-graph parser `parse_cgsmiles` → `CGSmilesIR` (one block: nodes, annotations, bonds, branches, rings, `|n`), `SmilesError.notation` | approved |
 | [cgsmiles-01c-fragments](cgsmiles-01c-fragments.md) — multi-block fragment tables, per-level instantiation with `parent`, squash/annotation refusals | approved |
 | [cgsmiles-01d-resolve](cgsmiles-01d-resolve.md) — descriptor pairing at parse time (`pairs`, `EdgeOrigin::Derived`) and `CGSmilesIR::to_atomistic` with per-atom `frag_id` | approved |
