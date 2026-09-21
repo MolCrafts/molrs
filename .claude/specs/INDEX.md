@@ -6,7 +6,6 @@ spec files.
 
 | Spec | State |
 |------|-------|
-| [cgsmiles-01b-graph](cgsmiles-01b-graph.md) — coarse-graph parser `parse_cgsmiles` → `CGSmilesIR` (one block: nodes, annotations, bonds, branches, rings, `|n`), `SmilesError.notation` | approved |
 | [cgsmiles-01c-fragments](cgsmiles-01c-fragments.md) — multi-block fragment tables, per-level instantiation with `parent`, squash/annotation refusals | approved |
 | [cgsmiles-01d-resolve](cgsmiles-01d-resolve.md) — descriptor pairing at parse time (`pairs`, `EdgeOrigin::Derived`) and `CGSmilesIR::to_atomistic` with per-atom `frag_id` | approved |
 | [cgsmiles-01e-python-ir](cgsmiles-01e-python-ir.md) — Python `molrs.io.CGSmilesIR` and its read-only nested records; class-level stub-parity guard | approved |
