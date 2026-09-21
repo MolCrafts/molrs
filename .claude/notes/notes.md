@@ -154,3 +154,126 @@ matrix where the default build returned a value, so enabling an
 "optimisation" feature changed panic semantics. No consumer in any sibling
 repo enabled it. The 2026-05-28 entry about backend selection is superseded.
 **Status:** locked
+
+<!-- mol:note:topic:cgsmiles-reader-shape -->
+## 2026-09-21 — `parse_cgsmiles` is one public door over private steps (Shape check #2 bent, recorded)
+
+A `CGSmilesIR` that exists is fully instantiated and validated (and, once
+`cgsmiles-01d` lands, fully resolved): port pairing is resolved once, by the
+reader, and pairing at an intermediate level is only definable over an
+instantiated level, so an un-instantiated IR is not a state any caller may
+hold. Exposing `parse` / `instantiate` / `validate` as separate public
+primitives would make that illegal state representable.
+
+**Rule**: keep `io::smiles::parse_cgsmiles` the single public entry for the
+notation; `split_blocks`, `parse_block`, `parse_body`, `check_coverage`,
+`instantiate`, `validate_ir` (and 01d's `resolve`) stay private free functions
+in `io/smiles/cgsmiles/`, never methods on `CGGraph` and never re-exported.
+`fragments[k]` is the authority for a fragment's shape; `levels[k+1]` is its
+expansion, produced once by the reader.
+
+<!-- mol:note:topic:cgsmiles-descriptor-order -->
+## 2026-09-21 — a descriptor's bond order is the symbol adjacent to its bracket
+
+Matches the CGsmiles reference (`read_fragments.py:148-157` @ 910c9ee), which
+processes brackets one at a time. The mid-chain form `C[$]=CC` (order `None`
+on the descriptor, C0=C1 double) is reference-verified, not an inference.
+
+**Rule**: a bond symbol preceding a descriptor run belongs to the run's first
+descriptor; a symbol following a leading run belongs to its last; mid-chain a
+symbol after a bracket is an ordinary bond to the next atom. `[<=1]` (BigSMILES
+v1.0 in-bracket order) is `BondInsideDescriptor`, never accepted silently.
+
+<!-- mol:note:topic:cgsmiles-writer-single-order -->
+## 2026-09-21 — `write_fragment_smiles` writes an explicit single order as `-`
+
+`Some(BondKind::Single)` and `None` are different IR values: 01d's pairing rule
+promotes a bond between two written-aromatic ports to aromatic only when no
+symbol was written (Daylight, biphenyl's `-`).
+
+**Rule**: the writer's omit-default-single policy applies to chain bonds only;
+a descriptor order is always emitted when `Some`, so `CC-[$]` round-trips.
+
+<!-- mol:note:topic:cgsmiles-ring-markers -->
+## 2026-09-21 — CGsmiles ring markers: any digit run after `%`, marker 0 valid
+
+Grünewald et al., JCIM 2025 (DOI 10.1021/acs.jcim.5c00064) §2.1.4: unlike
+OpenSMILES, `%123` is one marker. OpenSMILES §3.4: marker 0 is valid and a
+bond symbol may sit at either end of a closure.
+
+**Rule**: `%` + any digit run is one marker (`u16`; overflow →
+`CgInvalidRingMarker`, as is a bare `%`); `0` and `%00` are valid; a symbol at
+one end sets the ring order, the same symbol at both ends is fine, differing
+symbols are `RingBondConflict`. The SMILES parser's own `%n` handling still
+reports `UnexpectedEnd` (see cgsmiles-deferred-fix).
+
+<!-- mol:note:topic:cgsmiles-port-vs-descriptor -->
+## 2026-09-21 — `io::smiles::DescriptorKind` and `core::PortKind` are two enums by design
+
+Same four roles (`$ < > !` → Symmetric / Left / Right / Shared), two homes: the
+AST names what was written, `core` names what is stored — the same split as
+`BondKind` vs `BondType`/`BondNumber`.
+
+**Rule**: the only conversion site is `io/smiles/cgsmiles/to_fragment.rs`
+(cgsmiles-02b); `core` never names `io`, and no second `DescriptorKind → PortKind`
+mapping may appear. `PortKind`'s stored form is the glyph (`Str` column
+`port_kind`), a recorded departure from `BondType::code()`.
+
+<!-- mol:note:topic:cgsmiles-frag-id -->
+## 2026-09-21 — `frag_id` is the provisional per-atom fragment-instance key
+
+Mirrors the reference implementation's `fragid`. `mol_id` groups atoms into
+molecules (a fragment instance is sub-molecular); `res_id` is the biopolymer
+residue key earmarked for the pending schema-vocabulary spec.
+
+**Rule**: write fragment-instance membership as the open node prop `frag_id`
+(`Int`), all-or-nothing per Frame column; do not reuse `res_id` or `mol_id`.
+Two writers exist by construction (`Fragment::set_frag_id` and 01d's raw stamp
+on `Atomistic`); the schema-vocabulary spec gives the key one validated owner.
+
+<!-- mol:note:topic:cgsmiles-v1-refusals -->
+## 2026-09-21 — CGsmiles v1 refusals and conventions
+
+**Rule**: refuse, never drop, these notation features in v1: `[!]` squash
+(`CgSquashUnsupported`), non-default `w` weights and chirality `x`
+(`CgUnsupportedAnnotation`), order-0 `.` bonds (`CgInvalidBondOrder`),
+atom-level `;` annotations (`AtomAnnotationUnsupported`, raised by the fragment
+SMILES dialect, not by a second lexer). `CGNode.charge` is a partial charge in
+`e` by molrs convention (the notation states no unit). A wildcard bead `[#*]`
+resolves like any other name and is `CgUndefinedFragment("*")` once a fragment
+table follows. The last block of a multi-block string is atomistic by position
+(no flag).
+
+<!-- mol:note:topic:cgsmiles-deferred-refactor -->
+## 2026-09-21 — deferred to `/mol:refactor` (found by the cgsmiles chain)
+
+- `io/smiles/parser.rs` and `perceive/smarts/` each parse SMARTS with their own
+  AST; `io::smiles::parse_smarts` has zero non-test in-repo consumers, but the
+  cross-repo audit (molpy, molpack, Atomiverse, binders) has not run — do not
+  delete before it does.
+- `io::smiles` names a notation family yet contains an inner `smiles` module
+  (`#[allow(clippy::module_inception)]`).
+- `pub mod error` / `chem` / `smiles` under `io/smiles` give every entry point
+  two public paths; the flat re-export is meant to be the only one.
+- Pre-existing over-limit functions in touched files: `parse_atom_primitive`
+  (237 lines), `write_primitive`, `build_tree`, `build_recursive_env`;
+  `SmilesErrorKind::message` grows with every notation.
+
+<!-- mol:note:topic:cgsmiles-deferred-fix -->
+## 2026-09-21 — deferred to `/mol:fix` (found by the cgsmiles chain)
+
+- `io/smiles/parser.rs` stores `[#6]` as `AtomPrimitive::Element { symbol: "#6" }`
+  although `Element::by_number` exists (`core/system/element.rs:1128`).
+- The SMILES parser reports a malformed `%n` as `UnexpectedEnd`; CGsmiles
+  reports `CgInvalidRingMarker`.
+- Six discarded `Result`s (`let _ =`) in `smiles/to_atomistic.rs` on
+  `set_bond_class` / `set_bond_prop` / `set_atom`; `add_bond_with` wraps a bond
+  failure as `InvalidElement`.
+- `perceive/hydrogens.rs` writes the literal `1.008` where
+  `Element::atomic_mass()` exists and re-writes a bond class `add_bond` already
+  wrote, behind `let _ =`.
+- `read_frame` silently skips blocks for unregistered kinds; `emit_column`
+  drops the validity mask (nulls become `0`).
+- Recorded contract change: `parse_smiles("CC(")` / `parse_fragment_smiles`
+  now report `UnclosedBranch` at the `(` (as `CC(O` always did) instead of
+  `UnexpectedEnd` — a consistency fix made in cgsmiles-01c on 01a's surface.

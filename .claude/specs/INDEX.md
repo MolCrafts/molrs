@@ -6,7 +6,6 @@ spec files.
 
 | Spec | State |
 |------|-------|
-| [cgsmiles-01c-fragments](cgsmiles-01c-fragments.md) — multi-block fragment tables, per-level instantiation with `parent`, squash/annotation refusals | approved |
 | [cgsmiles-01d-resolve](cgsmiles-01d-resolve.md) — descriptor pairing at parse time (`pairs`, `EdgeOrigin::Derived`) and `CGSmilesIR::to_atomistic` with per-atom `frag_id` | approved |
 | [cgsmiles-01e-python-ir](cgsmiles-01e-python-ir.md) — Python `molrs.io.CGSmilesIR` and its read-only nested records; class-level stub-parity guard | approved |
 | [cgsmiles-02a-fragment-core](cgsmiles-02a-fragment-core.md) — `core::Fragment` newtype with `PortKind` ports and `frag_id`; by-name kind resolution fix; `mapping.rs` deleted | approved |
