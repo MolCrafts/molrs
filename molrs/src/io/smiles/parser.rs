@@ -133,8 +133,11 @@ pub fn parse_smarts(input: &str) -> Result<SmilesIR, SmilesError> {
 /// C-C-C chain. Once an atom exists the symbol before the bracket is the
 /// order and a symbol after it is an ordinary bond to the next atom, so
 /// `CC=[$]` is a double-annotated `$` while `C[$]=CC` is an unannotated `$` on
-/// the first carbon plus a double C=C bond. The leading form is strictly the
-/// less expressive of the two — it cannot spell `C[$]=CC` — which is why
+/// the first carbon plus a double C=C bond. Of a run of brackets only the one
+/// the symbol is written against takes the order, so `[>][$1]=CCC` annotates
+/// `$1` and `CC=[$][>]` annotates `$`; the rest of the run carries none. The
+/// leading form is strictly the less expressive of the two — it cannot spell
+/// `C[$]=CC` — which is why
 /// [`write_fragment_smiles`](crate::io::smiles::write_fragment_smiles) emits
 /// the trailing form only.
 ///
@@ -160,6 +163,19 @@ struct Parser<'a> {
     scanner: Scanner<'a>,
     dialect: Dialect,
     depth: usize,
+}
+
+/// Which bracket of a descriptor run the out-of-bracket bond symbol touches.
+///
+/// The order is written outside the brackets, so in a run (`[>][$1]`) only the
+/// bracket the symbol is written against takes it: `First` for a symbol before
+/// the run (`CC=[$][>]`), `Last` for one after a leading run (`[>][$1]=CCC`).
+/// The reader this mirrors processes brackets one at a time, which is the same
+/// rule stated position by position.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum AdjacentBracket {
+    First,
+    Last,
 }
 
 impl<'a> Parser<'a> {
@@ -257,12 +273,16 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Anchor `order` on the run's first descriptor and validate the run.
+    /// Anchor `order` on the descriptor `adjacent` names and validate the run.
     ///
-    /// Only the first descriptor takes the order: the bond symbol is written
-    /// adjacent to one bracket, and in a run (`[>][$1]`) that is the first.
-    /// This is the single construction site of every [`BondingDescriptor`] the
-    /// parser emits, so `validate_descriptor` runs here and nowhere else.
+    /// The order belongs to the one bracket the bond symbol is written against,
+    /// and which end of the run that is depends on the side the symbol sits on:
+    /// a symbol *before* the run annotates its first bracket (`CC=[$][>]`
+    /// carries the double on `$`), one *after* a leading run annotates its last
+    /// (`[>][$1]=CCC` carries it on `$1`). Every other descriptor of the run
+    /// keeps `order: None`. This is the single construction site of every
+    /// [`BondingDescriptor`] the parser emits, so `validate_descriptor` runs
+    /// here and nowhere else.
     ///
     /// # Errors
     ///
@@ -272,10 +292,15 @@ impl<'a> Parser<'a> {
         &self,
         run: Vec<(BondingDescriptor, Span)>,
         order: Option<BondKind>,
+        adjacent: AdjacentBracket,
     ) -> Result<Vec<BondingDescriptor>, SmilesError> {
+        let ordered = match adjacent {
+            AdjacentBracket::First => 0,
+            AdjacentBracket::Last => run.len().saturating_sub(1),
+        };
         let mut descriptors = Vec::with_capacity(run.len());
         for (index, (mut desc, span)) in run.into_iter().enumerate() {
-            if index == 0 {
+            if index == ordered {
                 desc.order = order;
             }
             validate_descriptor(&desc, span, self.scanner.input())?;
@@ -382,9 +407,11 @@ impl<'a> Parser<'a> {
     ///
     /// Returns the descriptors that bind to the chain's head atom, empty when
     /// the chain does not open with a run. No atom of the chain exists yet, so
-    /// a bond symbol *after* the bracket is the run's order (`[$]=CCC` is a
-    /// double-bonded `$` on the first carbon over a single C-C chain), not a
-    /// bond to the head — the mirror image of the mid-chain rule.
+    /// a bond symbol *after* the run is an order (`[$]=CCC` is a double-bonded
+    /// `$` on the first carbon over a single C-C chain), not a bond to the
+    /// head — the mirror image of the mid-chain rule. It annotates the bracket
+    /// it is written against, which here is the run's **last**: `[>][$1]=CCC`
+    /// puts the double on `$1` and leaves `>` unannotated.
     ///
     /// # Errors
     ///
@@ -399,7 +426,7 @@ impl<'a> Parser<'a> {
         } else {
             None
         };
-        let descriptors = self.finish_descriptor_run(run, order)?;
+        let descriptors = self.finish_descriptor_run(run, order, AdjacentBracket::Last)?;
         if !self.scanner.peek().is_some_and(Self::is_atom_start) {
             return Err(self.error(SmilesErrorKind::DanglingDescriptor));
         }
@@ -410,9 +437,12 @@ impl<'a> Parser<'a> {
     /// fold it onto the atom it binds to.
     ///
     /// `order` is the bond kind written *before* the run (`CC=[$]`, R4.4), or
-    /// `None` where no bond symbol preceded it. The returned flag says whether
-    /// a run was consumed, which is what tells the chain loop to go round again
-    /// instead of reading the cursor as a bond, a branch or an atom.
+    /// `None` where no bond symbol preceded it. Written before, it annotates
+    /// the bracket it touches, which is the run's **first**: `CC=[$][>]` puts
+    /// the double on `$` and leaves `>` unannotated. The returned flag says
+    /// whether a run was consumed, which is what tells the chain loop to go
+    /// round again instead of reading the cursor as a bond, a branch or an
+    /// atom.
     ///
     /// # Errors
     ///
@@ -427,7 +457,7 @@ impl<'a> Parser<'a> {
         let Some(run) = self.take_descriptor_run()? else {
             return Ok(false);
         };
-        let descriptors = self.finish_descriptor_run(run, order)?;
+        let descriptors = self.finish_descriptor_run(run, order, AdjacentBracket::First)?;
         Self::anchor(head, tail).descriptors.extend(descriptors);
         Ok(true)
     }
@@ -513,6 +543,13 @@ impl<'a> Parser<'a> {
     /// nitrogen and leaves no branch element at all, while `C([>]N)C` puts it
     /// on the first carbon and still branches to N. An empty branch `C()` is
     /// the error it has always been.
+    ///
+    /// The order of such a run is written *before* it — `C(=[>])C` is a
+    /// double-bonded `>` on the first carbon. A bond symbol written *after* a
+    /// branch-leading run is **not** accepted (`C([$]=N)C` is an error), a
+    /// deliberate narrowing relative to the `CGsmiles` reference, which reads
+    /// that `=` as the run's order. Both readings are spellable here anyway:
+    /// `C(=[$]N)C` annotates the descriptor, `C(=N)[$]` bonds the branch.
     fn parse_branch(
         &mut self,
     ) -> Result<(Vec<BondingDescriptor>, Option<ChainElement>), SmilesError> {
@@ -533,7 +570,11 @@ impl<'a> Parser<'a> {
         if let Some(run) = self.take_descriptor_run()? {
             // That opening bond annotates the descriptor, not the branch:
             // `C(=[>])C` is a double-bonded `>` on the first carbon.
-            parent = self.finish_descriptor_run(run, Self::bond_query_kind(bond.as_ref()))?;
+            parent = self.finish_descriptor_run(
+                run,
+                Self::bond_query_kind(bond.as_ref()),
+                AdjacentBracket::First,
+            )?;
             bond = None;
             if self.scanner.peek() == Some(')') {
                 self.scanner.advance(); // consume ')'
@@ -1838,6 +1879,22 @@ mod tests {
     }
 
     #[test]
+    fn test_fragment_preceding_run_order_goes_to_the_adjacent_bracket() {
+        // A run written *after* the bond symbol: `=` is adjacent to `[$]`, the
+        // first bracket of the run, so `$` carries the order and `>` none.
+        let mol = fragment("CC=[$][>]");
+        let nodes = atom_nodes(&mol);
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(
+            nodes[1].descriptors,
+            vec![
+                descriptor(DescriptorKind::Symmetric, "", Some(BondKind::Double)),
+                descriptor(DescriptorKind::Right, "", None),
+            ]
+        );
+    }
+
+    #[test]
     fn test_fragment_bond_after_leading_descriptor_is_the_descriptor_order() {
         let mol = fragment("[$]=CCC");
         let nodes = atom_nodes(&mol);
@@ -1849,6 +1906,23 @@ mod tests {
                 "",
                 Some(BondKind::Double)
             )]
+        );
+    }
+
+    #[test]
+    fn test_fragment_leading_run_order_goes_to_the_adjacent_bracket() {
+        // A leading run written *before* the bond symbol: `=` is adjacent to
+        // `[$1]`, the last bracket of the run, so `$1` carries the order and
+        // `>` none.
+        let mol = fragment("[>][$1]=CCC");
+        let nodes = atom_nodes(&mol);
+        assert_eq!(nodes.len(), 3);
+        assert_eq!(
+            nodes[0].descriptors,
+            vec![
+                descriptor(DescriptorKind::Right, "", None),
+                descriptor(DescriptorKind::Symmetric, "1", Some(BondKind::Double)),
+            ]
         );
     }
 

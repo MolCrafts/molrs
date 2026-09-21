@@ -24,12 +24,16 @@ criteria:
     summary: "Descriptor anchoring follows R4.2/R4.3"
     type: scientific
     pass_when: "Unit tests in molrs/src/io/smiles/parser.rs assert parse_fragment_smiles gives: \"[$]COC[$]\" -> descriptor on atom 0 and atom 2 only, order None; \"[>]NCC(=O)[<]\" -> `>` on atom 0 and `<` on the last chain atom; \"Clc[$a]c[$b]\" -> labels \"a\" and \"b\" on the two aromatic carbons; \"[>][$1]COC[<]\" -> atom 0 carries [Right, Symmetric(\"1\")] in that written order."
-    status: pending
+    status: verified
+    verified_by: scientist
+    last_checked: 2026-09-21
   - id: ac-005
     summary: "Bond order is read outside the bracket on both junction forms"
     type: scientific
     pass_when: "Unit tests assert order Some(Double) for the descriptor in both \"CC=[$]\" and \"[$]=CCC\" (with C-C-C left single in the latter), order None with a double C0=C1 bond for \"C[$]=CC\", and errors BondInsideDescriptor for \"[<=1]\" and \"[$-]\" and InvalidDescriptorOrder for \"c:[$]\"."
-    status: pending
+    status: verified
+    verified_by: scientist
+    last_checked: 2026-09-21
   - id: ac-006
     summary: "Branch-only and mixed-branch descriptors bind to the parent anchor"
     type: code
