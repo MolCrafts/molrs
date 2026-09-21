@@ -6,7 +6,18 @@ spec files.
 
 | Spec | State |
 |------|-------|
-| — | no live spec |
+| [cgsmiles-01a-descriptors](cgsmiles-01a-descriptors.md) — fragment SMILES dialect: bonding descriptors on bracket atoms, `parse_fragment_smiles` / `fragment_to_atomistic` / `write_fragment_smiles`, one `Dialect` enum | approved |
+| [cgsmiles-01b-graph](cgsmiles-01b-graph.md) — coarse-graph parser `parse_cgsmiles` → `CGSmilesIR` (one block: nodes, annotations, bonds, branches, rings, `|n`), `SmilesError.notation` | approved |
+| [cgsmiles-01c-fragments](cgsmiles-01c-fragments.md) — multi-block fragment tables, per-level instantiation with `parent`, squash/annotation refusals | approved |
+| [cgsmiles-01d-resolve](cgsmiles-01d-resolve.md) — descriptor pairing at parse time (`pairs`, `EdgeOrigin::Derived`) and `CGSmilesIR::to_atomistic` with per-atom `frag_id` | approved |
+| [cgsmiles-01e-python-ir](cgsmiles-01e-python-ir.md) — Python `molrs.io.CGSmilesIR` and its read-only nested records; class-level stub-parity guard | approved |
+| [cgsmiles-02a-fragment-core](cgsmiles-02a-fragment-core.md) — `core::Fragment` newtype with `PortKind` ports and `frag_id`; by-name kind resolution fix; `mapping.rs` deleted | approved |
+| [cgsmiles-02b-to-fragment](cgsmiles-02b-to-fragment.md) — `CGSmilesIR::to_fragment`: instance-free templates with hydrogen handles and ports | approved |
+| [cgsmiles-02c-conformer-fragment](cgsmiles-02c-conformer-fragment.md) — `ElementGraph` trait; generic `Conformer::generate` over `Atomistic` and `Fragment` | approved |
+| [cgsmiles-02d-python-fragment](cgsmiles-02d-python-fragment.md) — Python `molrs.Fragment`, `views.Port`, `Conformer.generate(Fragment)`, `CGSmilesIR.to_fragment()`; shared `from_core` helper | approved |
+| [cgsmiles-03-release](cgsmiles-03-release.md) — release molrs 0.15.0: version literals, release notes, full gate, tag, Publish | approved |
+
+The ten `cgsmiles-*` links are one chain (molrs half of the CG→all-atom backmapping plan, 2026-09-21); they land in chain order and 03 ships 0.15.0, after which molpy's `backmap-*` chain may start.
 
 ## release-0-14 chain — closed 2026-09-20
 
