@@ -58,8 +58,8 @@ use crate::core::store::frame::{PyFrame, PyFrameMeta, PyMetaValue};
 use crate::core::store::trajectory::{PyScalarObservable, PyTrajectory, PyVectorObservable};
 use crate::core::system::element::PyElement;
 use crate::core::system::molgraph::{
-    PyAtomistic, PyCoarseGrain, PyExtractedSubgraph, PyGraph, PyReaction, PySmartsMatch,
-    PySmartsPattern,
+    PyAtomistic, PyCoarseGrain, PyExtractedSubgraph, PyFragment, PyGraph, PyReaction,
+    PySmartsMatch, PySmartsPattern,
 };
 use crate::core::system::molgraph::{PyRingInfo, align_direction, rotate, scale, translate};
 use crate::core::units::{PyQuantity, PyUnit, PyUnitPreset, PyUnitRegistry};
@@ -321,6 +321,7 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyGraph>()?;
     m.add_class::<PyAtomistic>()?;
     m.add_class::<PyCoarseGrain>()?;
+    m.add_class::<PyFragment>()?;
     m.add_class::<PyExtractedSubgraph>()?;
     m.add_class::<PySmartsMatch>()?;
     m.add_class::<PySmartsPattern>()?;

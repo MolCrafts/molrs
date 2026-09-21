@@ -235,6 +235,14 @@ Mirrors the reference implementation's `fragid`. `mol_id` groups atoms into
 molecules (a fragment instance is sub-molecular); `res_id` is the biopolymer
 residue key earmarked for the pending schema-vocabulary spec.
 
+Landed 2026-09-21 (cgsmiles-02a): `core::Fragment` is the third `MolGraph` leaf;
+`Atomistic`/`CoarseGrain`/`Fragment::try_from_molgraph` resolve their standard
+kinds through `MolGraph::try_register_kind(name, arity)` — by name with an arity
+check that returns `MolRsError::validation` instead of `register_kind`'s assert,
+replacing the `unwrap_or(KindId(0..3))` aliasing that let a foreign
+first-registered kind pose as `bonds`. `mapping.rs` (`CGMapping`,
+`WeightScheme`) is deleted.
+
 **Rule**: write fragment-instance membership as the open node prop `frag_id`
 (`Int`), all-or-nothing per Frame column; do not reuse `res_id` or `mol_id`.
 Two writers exist by construction: `CGSmilesIR::to_atomistic` stamps it on
@@ -275,6 +283,9 @@ table follows. The last block of a multi-block string is atomistic by position
   extract when a third appears or when the error-kind split is decided.
 - `FragmentCache` lives in `resolve.rs` but is consumed by `to_atomistic.rs`;
   promote to `cgsmiles/fragment_cache.rs` on a third caller.
+- Two `Port` structs: the public `core::system::fragment::Port` (02a) and 01d's
+  private port-table entry `cgsmiles/resolve.rs::Port`; different modules, no
+  conflict, but one name for two things — rename the private one.
 - `BondType` has no quadruple variant (`core/system/bond.rs:28-38`), so
   `BondKind::bond_type` maps `Quadruple` to `Double` (the number stays
   `BondNumber::Quadruple`); widening `BondType` is its own spec.
@@ -283,6 +294,9 @@ table follows. The last block of a multi-block string is atomistic by position
   two `u32` codes (`set_bond_class` / `bond_type`, `molgraph.rs:808,829`) that
   have no code for `up`/`down`/`any`/`ring`. Reconciling is a breaking Python
   API change with its own spec.
+- One count, four spellings at the Python seam: `n_nodes` / `n_atoms` / `n_beads` /
+  `n_ports`; and `views.py` now carries four `__init__`/`__reduce__` monkey-patch
+  pairs (one per leaf) that a single shadow-class lookup could replace.
 - `_lib.pyi` parity is guarded at class-name level only
   (`tests/test_stub_parity.py`); method- and parameter-level parity, which the
   stub header claims, is unguarded. No doctest runner executes the binder's
@@ -312,6 +326,11 @@ table follows. The last block of a multi-block string is atomistic by position
   `read_annotation_fields` / `read_descriptor` scan into the next block. Every
   traced path still errors (`CgMalformedAnnotation` / `BondInsideDescriptor`),
   so the defect is span/kind quality, not a wrong parse; needs a targeted test.
+- `perceive/hydrogens.rs::remove_hydrogens` decides by `MolGraph::neighbors`, which
+  is kind-blind over every arity-2 relation, so a port handle (one `bonds` + one
+  `ports` relation) counts as degree 2 and survives while repletion hydrogens
+  are stripped: a port relation is counted as a bond. Filter by the `bonds` kind.
+- `perceive/hydrogens.rs:263` discards `remove_atom`'s `Result` (`let _ =`).
 - `parse_fragment_smiles` does not run `validate_ring_closures` (only
   `validate_smiles` does), so a last-block body with an unmatched ring marker
   is caught by the builder inside `resolve`, not by the parser; 01d re-bases and
@@ -325,8 +344,10 @@ table follows. The last block of a multi-block string is atomistic by position
 - `molrs-python/src/lib.rs:11-26` "Module Layout" table links sixteen private
   items, so `RUSTDOCFLAGS="-D warnings" cargo doc` fails for the binder; the
   pre-commit clippy hook documents only `molcrafts-molrs`, never a binder.
-- `molrs-python/src/conformer/mod.rs:239` still reads `parse_smiles("CCO")` —
-  the last dead `molrs.SmilesIR`-family name; cgsmiles-02d owns that file.
+- `molrs-python/python/molrs/views.py` `Atomistic.def_bond` writes a classless bond
+  (no `bond_type`/`bond_number`), so the Python and Rust doors disagree for
+  `Atomistic`; `views.Fragment.def_bond` routes through the native writer and
+  stamps both facts — align `Atomistic` the same way.
 
 <!-- mol:note:topic:cgsmiles-pairing-order -->
 ## 2026-09-21 — descriptor pairing: parse-order edges, per-atom entities, greedy scan
@@ -389,3 +410,21 @@ one whose payloads do not gets a tagged pyclass (`PairEnd.end/index/port`).
 Errors go through the one `smiles_error_to_pyerr`. `tests/test_stub_parity.py`
 keeps `_lib.pyi` and `molrs._lib` equal at class-name level with
 `inspect.ismodule` as the only exemption — never an allowlist.
+
+<!-- mol:note:topic:trait-principle-1-static-dispatch -->
+## 2026-09-21 — trait principle 1 (provisional amendment): static-dispatch bounds may name `Self` or be generic
+
+`architecture-rules.md` § Trait design states principle 1 absolutely ("no `Self`
+in return position, no generic methods"). Three in-tree traits contradict it and
+are never used as trait objects: `io::reader::FromFrame` (`Self`-returning
+constructor, `io/reader.rs:69`), `FrameAccess::visit_block<R>` (generic method,
+`core/store/frame_access.rs:46`), and `conformer::ElementGraph` (cgsmiles-02c:
+`try_from_molgraph(MolGraph) -> Result<Self>`, the bound of
+`Conformer::generate<M: ElementGraph>`).
+
+**Rule** (provisional until promoted into `architecture-rules.md`): a trait must
+be object-safe when it is used as a trait object; a trait that exists only as a
+static-dispatch bound beside its one consumer may name `Self` in return position
+or carry generic methods. `ElementGraph` lives in `conformer/element_graph.rs`
+because that generic function is its only consumer; `CoarseGrain` deliberately
+does not implement it (bead types are not elements).

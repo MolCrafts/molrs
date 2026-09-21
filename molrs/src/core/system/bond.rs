@@ -18,11 +18,13 @@
 //! averages) are real quantities, but they are *computed properties* with their
 //! own keys — never these two.
 
-use crate::system::molgraph::PropValue;
+use crate::error::MolRsError;
+use crate::store::keys;
+use crate::system::molgraph::{KindId, MolGraph, PropValue, RelationId};
 
 /// The chemical class of a bond.
 ///
-/// Stored under [`keys::BOND_TYPE`](crate::store::keys::BOND_TYPE) as its
+/// Stored under [`keys::BOND_TYPE`] as its
 /// [`code`](BondType::code).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, PartialOrd, Ord)]
 pub enum BondType {
@@ -39,7 +41,7 @@ pub enum BondType {
 
 /// The integer bond number of a localized Lewis / Kekulé structure.
 ///
-/// Stored under [`keys::BOND_NUMBER`](crate::store::keys::BOND_NUMBER) as its
+/// Stored under [`keys::BOND_NUMBER`] as its
 /// [`code`](BondNumber::code).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, PartialOrd, Ord)]
 pub enum BondNumber {
@@ -162,9 +164,67 @@ impl From<BondNumber> for PropValue {
     }
 }
 
+/// Stamp both facts about a bond — its class and its localized number — onto
+/// relation `id` of `kind` in `graph`.
+///
+/// The two keys are written together because they are only meaningful together:
+/// a class without a number leaves the bond un-standardized, and a number
+/// without a class leaves a renderer no way to tell aromatic from double. It
+/// lives here, beside the vocabulary, because two leaves write it —
+/// [`Atomistic::set_bond_class`](crate::system::atomistic::Atomistic::set_bond_class)
+/// and [`Fragment::add_bond`](crate::system::fragment::Fragment::add_bond).
+///
+/// # Errors
+///
+/// Returns [`MolRsError::NotFound`] when `kind` is unregistered or `id` names
+/// no live relation of it, and [`MolRsError::Validation`] when the store
+/// refuses either value.
+pub(crate) fn write_bond_class(
+    graph: &mut MolGraph,
+    kind: KindId,
+    id: RelationId,
+    bond_type: BondType,
+    bond_number: BondNumber,
+) -> Result<(), MolRsError> {
+    graph.set_relation_prop(kind, id, keys::BOND_TYPE, bond_type)?;
+    graph.set_relation_prop(kind, id, keys::BOND_NUMBER, bond_number)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store::keys;
+    use crate::system::molgraph::MolGraph;
+
+    /// The two-key write is one function because a class without a number
+    /// leaves the bond un-standardized: both keys land, or neither does.
+    #[test]
+    fn write_bond_class_stamps_both_keys() {
+        let mut graph = MolGraph::new();
+        let kind = graph.register_kind("bonds", 2);
+        let a = graph.add_node();
+        let b = graph.add_node();
+        let bid = graph.add_relation(kind, &[a, b]).unwrap();
+
+        write_bond_class(
+            &mut graph,
+            kind,
+            bid,
+            BondType::Aromatic,
+            BondNumber::Double,
+        )
+        .expect("both props are writable on a live relation");
+
+        let rel = graph.get_relation(kind, bid).unwrap();
+        assert_eq!(
+            BondType::from_prop(rel.props.get(keys::BOND_TYPE)),
+            BondType::Aromatic
+        );
+        assert_eq!(
+            BondNumber::from_prop(rel.props.get(keys::BOND_NUMBER)),
+            BondNumber::Double
+        );
+    }
 
     #[test]
     fn aromatic_is_a_type_not_a_number() {

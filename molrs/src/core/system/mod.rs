@@ -1,6 +1,10 @@
-//! Molecular system representations: atomistic and coarse-grained entities,
-//! topology, the [`MolGraph`](molgraph::MolGraph) molecular graph, element
-//! data, and CG mapping.
+//! Molecular system representations: the domain-agnostic
+//! [`MolGraph`](molgraph::MolGraph) and its three newtype leaves — all-atom
+//! [`Atomistic`](atomistic::Atomistic), coarse-grained
+//! [`CoarseGrain`](coarsegrain::CoarseGrain) and
+//! [`Fragment`], a graph with named attachment points —
+//! plus the bond vocabulary, connectivity [`Topology`](topology::Topology),
+//! subgraph extraction, graph hashing and element data.
 
 pub mod atomistic;
 pub mod bond;
@@ -9,11 +13,12 @@ pub mod coarsegrain;
 pub(crate) mod element;
 pub mod entity_table;
 pub mod extract;
+pub mod fragment;
 pub mod graph_hash;
-pub mod mapping;
 pub mod molgraph;
 pub mod topology;
 
 pub use bond::{BondNumber, BondType};
 pub use bond_weights::BondDistanceWeights;
 pub use extract::{ExtractedBall, InducedSubgraph};
+pub use fragment::{Fragment, Port, PortId, PortKind};

@@ -18,6 +18,7 @@ from . import fields
 from . import keys as _keys
 from ._lib import Atomistic as _RsAtomistic
 from ._lib import CoarseGrain as _RsCoarseGrain
+from ._lib import Fragment as _RsFragment
 from ._lib import Graph as _RsGraph
 
 if TYPE_CHECKING:
@@ -819,6 +820,50 @@ class CGBond(RelationRef[Bead]):
         return self.endpoints[1]
 
 
+class Port(RelationRef[Atom]):
+    """A live view over one unsatisfied valence of a :class:`Fragment`.
+
+    A port is the ordered pair ``(anchor, handle_atom)``: the **anchor** keeps
+    its place in the product molecule and the **handle atom** is the capping
+    hydrogen bonded to it that a paired descriptor's bond replaces. The
+    descriptor itself rides the inherited mapping as the three props
+    ``port_kind`` (the notation glyph ``$``, ``<``, ``>`` or ``!``),
+    ``port_label`` (``""`` when unnamed) and ``port_order``.
+
+    Notes
+    -----
+    The second endpoint is ``handle_atom``, **not** ``handle``:
+    :class:`RelationRef` already owns a ``handle`` slot holding the *port's own*
+    relation handle, so a property of that name would shadow the slot
+    descriptor and make every ``Port`` construction raise ``AttributeError``.
+    The two answer different questions and both are needed.
+
+    Examples
+    --------
+    >>> port = frag.ports[0]
+    >>> port.anchor["element"], port.handle_atom["element"]
+    ('O', 'H')
+    >>> port["port_kind"]
+    '$'
+    >>> port.handle is port.handle_atom.handle  # two different questions
+    False
+    """
+
+    __slots__ = ()
+    _kind = "ports"
+    _arity = 2
+
+    @property
+    def anchor(self) -> Atom:
+        """The atom that keeps its place in the product molecule."""
+        return self.endpoints[0]
+
+    @property
+    def handle_atom(self) -> Atom:
+        """The capping hydrogen this descriptor sits on."""
+        return self.endpoints[1]
+
+
 class Atomistic(GraphViews, _RsAtomistic):
     """Public all-atom graph with live node and relation views.
 
@@ -965,6 +1010,150 @@ class CoarseGrain(GraphViews, _RsCoarseGrain):
             self._remove_relation(link)
 
 
+class Fragment(GraphViews, _RsFragment):
+    """Public fragment graph with live atom, bond and port views.
+
+    A *fragment* is a molecular graph that is deliberately incomplete: beside
+    atoms and bonds it owns a ``ports`` kind, one entry per valence that is
+    satisfied only when the fragment is joined to a neighbour. Its nodes are
+    atoms and its bonds are atom bonds, so :class:`Atom` and :class:`Bond` are
+    reused unchanged; :class:`Port` is the one new relation view.
+
+    The native PyO3 leaf remains the storage owner and first base. Coordinates
+    are ångström (Å) and ``frag_id`` is a dimensionless per-atom instance
+    ordinal.
+
+    Notes
+    -----
+    This is a molecular graph, unrelated to the CL&Pol sense of "fragment" in
+    :class:`molrs.ff.FragmentScaling`, which is a polarizability-scaling
+    record.
+
+    Removing a port is the generic door — ``frag.remove_relation("ports", h)``.
+    There is no ``remove_port``: core ships none for a writer to validate, and
+    a relation needs no typed remover.
+
+    Examples
+    --------
+    >>> frag = molrs.Fragment()
+    >>> oxygen = frag.def_atom(element="O", x=0.0, y=0.0, z=0.0)
+    >>> hydrogen = frag.def_atom(element="H", x=0.96, y=0.0, z=0.0)
+    >>> _ = frag.def_bond(oxygen, hydrogen)
+    >>> port = frag.def_port(oxygen, hydrogen, "$")
+    >>> port.anchor is oxygen, port.handle_atom is hydrogen
+    (True, True)
+    """
+
+    _node_cls = Atom
+    _relation_classes = {"bonds": Bond, "ports": Port}
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        GraphViews.__init__(self, *args, **kwargs)
+
+    @property
+    def atoms(self) -> Refs[Atom]:
+        return self._node_views()  # type: ignore[return-value]
+
+    @property
+    def bonds(self) -> Refs[Bond]:
+        return self._relation_views("bonds")  # type: ignore[return-value]
+
+    @property
+    def ports(self) -> Refs[Port]:
+        return self._relation_views("ports")  # type: ignore[return-value]
+
+    def def_atom(self, mapping: Any = None, /, **attrs: Any) -> Atom:
+        """Add an atom. A node carries no class to stamp, so this is the
+        generic node path, exactly as :meth:`Atomistic.def_atom` is."""
+        return self._create_node(mapping, cls=Atom, **attrs)  # type: ignore[return-value]
+
+    def def_bond(self, a: Atom, b: Atom, /, **attrs: Any) -> Bond:
+        """Add a single bond between two atoms of this fragment.
+
+        Routes through the native writer, so a Python-built bond carries both
+        bond facts — ``bond_type = 1`` and ``bond_number = 1`` — exactly as one
+        built in Rust does. The generic relation path would write neither.
+
+        Parameters
+        ----------
+        a, b : Atom
+            Endpoints, both belonging to this fragment.
+        **attrs
+            Extra relation props, applied after the class is stamped.
+
+        Returns
+        -------
+        Bond
+
+        Raises
+        ------
+        ValueError
+            If an endpoint belongs to another graph, or an attr is rejected.
+        """
+        self._check_endpoints(a, b)
+        handle = self.add_bond(a.handle, b.handle)
+        try:
+            ref = self._intern_relation("bonds", handle, cls=Bond)
+            ref.update(attrs)
+        except Exception:
+            self._relation_refs.get("bonds", {}).pop(handle, None)
+            self.remove_relation("bonds", handle)
+            raise
+        return ref  # type: ignore[return-value]
+
+    def def_port(
+        self,
+        anchor: Atom,
+        handle_atom: Atom,
+        kind: str,
+        label: str = "",
+        order: int = 1,
+    ) -> Port:
+        """Record a bonding descriptor on the ``(anchor, handle_atom)`` valence.
+
+        Routes through the native writer, which is where the validation lives:
+        the roles, the hydrogen check, the anchor--handle bond check, the glyph
+        parse and the order check are all core's. The generic relation path
+        would write an unchecked ``port_kind`` and call it a port. There is no
+        ``**attrs``: a port's three props *are* the validated arguments.
+
+        Parameters
+        ----------
+        anchor : Atom
+            The atom that keeps its place in the product molecule.
+        handle_atom : Atom
+            The capping hydrogen bonded to `anchor`; see :class:`Port` for why
+            it is not spelled ``handle``.
+        kind : str
+            The notation glyph -- one of ``"$"``, ``"<"``, ``">"``, ``"!"``.
+        label : str, optional
+            Descriptor label; ``""`` (the default) means unnamed.
+        order : int, optional
+            Multiplicity of the bond this port will form, ``1`` to ``4``.
+
+        Returns
+        -------
+        Port
+
+        Raises
+        ------
+        ValueError
+            If an endpoint belongs to another graph, if `kind` is not one of
+            the four glyphs, if `handle_atom` is not a hydrogen bonded to
+            `anchor`, or if `order` is not a definite bond number.
+        """
+        self._check_endpoints(anchor, handle_atom)
+        handle = self.add_port(anchor.handle, handle_atom.handle, kind, label, order)
+        return self._intern_relation("ports", handle, cls=Port)  # type: ignore[return-value]
+
+    def _check_endpoints(self, *endpoints: Atom) -> None:
+        # Kept explicitly rather than inherited from ``_create_relation``: a
+        # slotmap handle from a foreign graph can alias a live one rather than
+        # fail, so a native writer would happily bond the wrong atoms.
+        if any(endpoint.world is not self for endpoint in endpoints):
+            raise ValueError("relation endpoints must belong to this graph")
+
+
 _GraphViews = GraphViews
 
 
@@ -1073,6 +1262,8 @@ _RsAtomistic.__init__ = _native_graph_init  # type: ignore[method-assign, assign
 _RsAtomistic.__reduce__ = _reduce_native_graph  # type: ignore[method-assign, assignment]
 _RsCoarseGrain.__init__ = _native_graph_init  # type: ignore[method-assign, assignment]
 _RsCoarseGrain.__reduce__ = _reduce_native_graph  # type: ignore[method-assign, assignment]
+_RsFragment.__init__ = _native_graph_init  # type: ignore[method-assign, assignment]
+_RsFragment.__reduce__ = _reduce_native_graph  # type: ignore[method-assign, assignment]
 
 
 __all__ = [
@@ -1085,10 +1276,12 @@ __all__ = [
     "CoarseGrain",
     "Dihedral",
     "DrudeParticle",
+    "Fragment",
     "GraphViews",
     "Improper",
     "MasslessSite",
     "NodeRef",
+    "Port",
     "Refs",
     "RelationRef",
     "VirtualSite",

@@ -30,6 +30,8 @@ keeps signatures visible to static tools and the docs build.
 
 ::: molrs.CoarseGrain
 
+::: molrs.Fragment
+
 ::: molrs.Graph
 
 ::: molrs.io.SmilesIR

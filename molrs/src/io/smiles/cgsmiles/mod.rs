@@ -13,7 +13,13 @@
 //! **Reading builds no atoms.** What the reader produces is the coarse levels,
 //! their fragment tables and the descriptor pairing over them — no `Frame`, no
 //! `MolGraph`. Turning the lowest level into real atoms and bonds is a second
-//! step the caller asks for by name, [`CGSmilesIR::to_atomistic`].
+//! step the caller asks for by name, [`CGSmilesIR::to_atomistic`]. Beside it
+//! stands [`CGSmilesIR::to_fragment`], which builds the *pieces* rather than
+//! the whole: one instance-free
+//! [`Fragment`](crate::system::Fragment) **template** per definition of the
+//! last fragment table, each open valence made explicit as a capping hydrogen
+//! carrying a port. Expansion is the molecule the string states; a template is
+//! what a builder places, many times, without re-reading the string.
 //!
 //! # What the block grammar says
 //!
@@ -234,6 +240,7 @@ mod resolve;
 #[cfg(test)]
 pub(super) mod test_support;
 mod to_atomistic;
+mod to_fragment;
 mod validate;
 
 use crate::io::smiles::error::SmilesError;

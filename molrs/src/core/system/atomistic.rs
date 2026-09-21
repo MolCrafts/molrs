@@ -29,7 +29,7 @@ use std::ops::{Deref, DerefMut};
 use crate::error::MolRsError;
 use crate::store::frame::Frame;
 use crate::store::keys;
-use crate::system::bond::{BondNumber, BondType};
+use crate::system::bond::{BondNumber, BondType, write_bond_class};
 use crate::system::molgraph::{Atom, KindId, MolGraph, NodeId, PropValue, Relation, RelationId};
 
 /// Result of [`Atomistic::extract_subgraph`].
@@ -203,14 +203,17 @@ impl Atomistic {
     /// They are set together because they are only meaningful together: a class
     /// without a number leaves the bond un-standardized, and a number without a
     /// class leaves a renderer no way to tell aromatic from double.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MolRsError::NotFound`] when `id` names no live bond.
     pub fn set_bond_class(
         &mut self,
         id: BondId,
         bond_type: BondType,
         bond_number: BondNumber,
     ) -> Result<(), MolRsError> {
-        self.set_bond_prop(id, keys::BOND_TYPE, bond_type)?;
-        self.set_bond_prop(id, keys::BOND_NUMBER, bond_number)
+        write_bond_class(&mut self.graph, self.bond, id, bond_type, bond_number)
     }
 
     /// Set a plain (non-aromatic) bond, whose class implies its number.
@@ -602,8 +605,20 @@ impl Atomistic {
     // ---- conversions ----
 
     /// Promote from a [`MolGraph`], validating all atoms have [`keys::ELEMENT`].
-    /// The graph's relation kinds are re-registered to the standard set.
-    pub fn try_from_molgraph(mol: MolGraph) -> Result<Self, MolRsError> {
+    ///
+    /// The graph's relation kinds are re-registered to the standard set **by
+    /// name**: an existing `bonds` / `angles` / `dihedrals` / `impropers` kind
+    /// of the right arity keeps its id, and a missing one is registered fresh.
+    /// Resolving by dense id instead would report a foreign kind's relations as
+    /// this molecule's bonds whenever the graph registered something else first
+    /// (a `ports` kind, say), and the next `add_bond` would write into it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MolRsError::Validation`] when an atom carries no
+    /// [`keys::ELEMENT`], and when the graph already spells one of the standard
+    /// kind names at a different arity (naming the kind and both arities).
+    pub fn try_from_molgraph(mut mol: MolGraph) -> Result<Self, MolRsError> {
         for (id, atom) in mol.nodes() {
             if atom.get_str(keys::ELEMENT).is_none() {
                 return Err(MolRsError::validation(format!(
@@ -613,10 +628,10 @@ impl Atomistic {
                 )));
             }
         }
-        let bond = mol.kind_id("bonds").unwrap_or(KindId(0));
-        let angle = mol.kind_id("angles").unwrap_or(KindId(1));
-        let dihedral = mol.kind_id("dihedrals").unwrap_or(KindId(2));
-        let improper = mol.kind_id("impropers").unwrap_or(KindId(3));
+        let bond = mol.try_register_kind("bonds", 2)?;
+        let angle = mol.try_register_kind("angles", 3)?;
+        let dihedral = mol.try_register_kind("dihedrals", 4)?;
+        let improper = mol.try_register_kind("impropers", 4)?;
         Ok(Self {
             graph: mol,
             bond,
@@ -1153,5 +1168,41 @@ mod tests {
         // generic MolGraph methods via Deref
         assert_eq!(mol.n_nodes(), 2);
         assert_eq!(mol.neighbors(c1).count(), 1);
+    }
+
+    /// A graph whose *first* registered kind is not `bonds` — what a fragment
+    /// graph looks like — must not have that foreign kind's relations reported
+    /// as its bonds, nor be written into by the next `add_bond`.
+    #[test]
+    fn try_from_molgraph_resolves_bonds_by_name_not_kind_zero() {
+        let mut graph = MolGraph::new();
+        let ports = graph.register_kind("ports", 2);
+        let c = graph.add_node_with(Atom::xyz("C", 0.0, 0.0, 0.0));
+        let h = graph.add_node_with(Atom::xyz("H", 1.09, 0.0, 0.0));
+        graph.add_relation(ports, &[c, h]).unwrap();
+
+        let mut mol = Atomistic::try_from_molgraph(graph).expect("elements are present");
+        let ports = mol.kind_id("ports").expect("the foreign kind survives");
+        assert_eq!(mol.n_bonds(), 0, "a port relation is not a bond");
+
+        mol.add_bond(c, h).expect("a bond can still be added");
+        assert_eq!(mol.n_bonds(), 1);
+        assert_eq!(
+            mol.n_relations(ports),
+            1,
+            "add_bond must not write into the foreign kind"
+        );
+    }
+
+    /// A caller-supplied graph that spells `bonds` at another arity is a data
+    /// condition, so the promotion returns an error instead of aborting the
+    /// process inside `register_kind`.
+    #[test]
+    fn try_from_molgraph_rejects_conflicting_arity() {
+        let mut graph = MolGraph::new();
+        graph.register_kind("bonds", 3);
+        let err = Atomistic::try_from_molgraph(graph)
+            .expect_err("a 3-ary 'bonds' kind conflicts with the standard set");
+        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
     }
 }

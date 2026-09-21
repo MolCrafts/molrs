@@ -120,8 +120,8 @@ impl From<String> for PropValue {
 /// Coerce a value to the canonical dtype registered for `key` (if any) so a
 /// field's column type stays stable across writers.
 ///
-/// Width is not semantics: an `Int` written to a float field (e.g. `x` /
-/// `charge` / bond `order` as `1`) is widened to `F64`. A *sign* is semantics,
+/// Width is not semantics: an `Int` written to a float field (e.g. `x` or
+/// `charge` as `1`) is widened to `F64`. A *sign* is semantics,
 /// so a negative under a `UInt` field (`id`, `mol_id`, `type_id`, …) is refused
 /// here rather than silently dropped by [`MolGraph::to_frame`], which must
 /// re-type the column to the declared dtype to satisfy the Frame schema. This
@@ -479,6 +479,38 @@ impl MolGraph {
         self.kind_name.push(name.to_owned());
         self.name_to_kind.insert(name.to_owned(), kid);
         kid
+    }
+
+    /// Register a relation kind the way a `Result`-returning constructor must:
+    /// idempotent on a matching name + arity, an error — never a panic — on a
+    /// conflicting one.
+    ///
+    /// [`register_kind`](Self::register_kind) asserts on an arity conflict
+    /// because a leaf constructor registers fixed kinds, which is a programming
+    /// error. A promotion such as
+    /// [`Atomistic::try_from_molgraph`](crate::system::atomistic::Atomistic::try_from_molgraph)
+    /// registers its standard kinds onto a **caller-supplied** graph, where a
+    /// conflicting arity is a data condition and must come back as an `Err`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MolRsError::Validation`] when `name` is already registered at
+    /// an arity other than `arity`, naming the kind and both arities.
+    pub(crate) fn try_register_kind(
+        &mut self,
+        name: &str,
+        arity: usize,
+    ) -> Result<KindId, MolRsError> {
+        if let Some(kid) = self.kind_id(name) {
+            let found = self.arity(kid);
+            if found != arity {
+                return Err(MolRsError::validation(format!(
+                    "kind '{name}' is registered with arity {found}, but {arity} is required"
+                )));
+            }
+            return Ok(kid);
+        }
+        Ok(self.register_kind(name, arity))
     }
 
     /// Resolve a kind name to its registered [`KindId`], if any.

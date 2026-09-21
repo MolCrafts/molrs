@@ -38,6 +38,24 @@ def test_public_coarse_grain_factories_and_graph_out_paths() -> None:
         assert len(result.beads) == 2
 
 
+def test_public_fragment_factories_and_graph_out_paths() -> None:
+    graph = molrs.Fragment()
+    anchor = graph.def_atom(element="O", x=0.0, y=0.0, z=0.0)
+    handle = graph.def_atom(element="H", x=0.96, y=0.0, z=0.0)
+    graph.def_bond(anchor, handle)
+    port = graph.def_port(anchor, handle, "$")
+
+    assert graph.atoms[0] is anchor
+    assert graph.ports[0] is port
+    assert port.anchor is anchor
+    assert port.handle_atom is handle
+    for result in (graph.copy(), molrs.Fragment.from_frame(graph.to_frame())):
+        assert type(result) is molrs.Fragment
+        assert isinstance(result, molrs.GraphViews)
+        assert len(result.atoms) == 2
+        assert len(result.ports) == 1
+
+
 def test_factories_return_interned_live_refs() -> None:
     graph = molrs.Atomistic()
     carbon = graph.def_atom(element="C", x=0.0, y=0.0, z=0.0)

@@ -183,7 +183,7 @@ at the crate root (so `molrs::Frame`, `molrs::system::…`, `molrs::find_rings`,
 
 | Module (`molrs/src/`) | Feature | Purpose |
 |---|---|---|
-| `core` | always on | Frame/Block/Grid/MolGraph/Record/Topology/Element, neighbors, math, SimBox (spatial), geometric regions, triangle meshes (`spatial::TriMesh`), graph hash, atom-type mapping, structure generators (`generate` / SARW) |
+| `core` | always on | Frame/Block/Grid/MolGraph/Record/Topology/Element, neighbors, math, SimBox (spatial), geometric regions, triangle meshes (`spatial::TriMesh`), graph hash, structure generators (`generate` / SARW) |
 | `perceive` | always on | **Chemical perception**, one layer above `core` and below `ff`/`io`/`conformer`: rings (SSSR), aromaticity, hydrogen perception, stereochemistry, rotatable bonds, SMARTS/SMIRKS. Builder API `Perceive::new().find_*(&MolGraph) -> MolGraph` (graph-in/graph-out, non-mutating). **Gasteiger charges live in `ff::charge`**, re-exported at crate root under `ff`. |
 | `optimize` | `ff` | Geometry optimizers (`Optimizer`, `LBFGS`); depends on `ff::potential::Potential` |
 | `io` | `io` | File I/O: PDB, XYZ, LAMMPS data/dump, CHGCAR/POSCAR, Gaussian Cube, CIF, mol2, SDF, GRO, DCD, GROMACS TRR/XTC, Zarr V3 trajectories; STL surface meshes in `io/mesh/` (reads a `TriMesh`, not a `Frame`); SMILES and CGsmiles parsing in `io/smiles/` (gated by `smiles`). **SMARTS lives in `perceive/smarts/`, not here** |
@@ -292,7 +292,7 @@ Its image enumeration must size from `SimBox::nearest_plane_distance`, never fro
 
 ### Conformer Pipeline (molrs/src/conformer/)
 
-Multi-stage 3D coordinate generation: ETKDGv3 constraints → 4D distance-geometry embedding → experimental-torsion refinement → MMFF94 cleanup → stereo guards. Public API: `Conformer::new(opts).generate(mol) -> Result<(Atomistic, ConformerReport)>`.
+Multi-stage 3D coordinate generation: ETKDGv3 constraints → 4D distance-geometry embedding → experimental-torsion refinement → MMFF94 cleanup → stereo guards. Public API: `Conformer::new(opts).generate(mol) -> Result<(M, ConformerReport)>`, generic over `M: ElementGraph` (`molrs::conformer::ElementGraph`) so the embedding returns the type it was given; the implementors are `Atomistic` and `Fragment` (a `Fragment` keeps its ports and `frag_id` labels, and the caller relabels the added hydrogens with `Fragment::inherit_frag_ids`).
 
 ### Packing
 

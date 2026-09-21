@@ -875,6 +875,47 @@ class CoarseGrain(Graph):
     def canonical_order(self) -> list[int]: ...
     def is_isomorphic(self, other: "CoarseGrain") -> bool: ...
 
+class Fragment(Graph):
+    """Fragment leaf — holds a core ``Fragment`` from construction.
+
+    A molecular graph with named, unsatisfied valences: registers the ``bonds``
+    and ``ports`` kinds and adds the three validating writers beside the
+    generic :class:`Graph` world API. Ports are ordinary relations, so
+    ``relation_ids("ports")`` reads them and ``remove_relation("ports", h)``
+    removes one. Owns its :meth:`to_frame` / :meth:`from_frame`.
+
+    Unrelated to the CL&Pol ``FragmentScaling`` sense of the word.
+    """
+
+    def __init__(self, *args: object, **kwargs: object) -> None: ...
+    def add_atom(
+        self,
+        symbol: str,
+        x: Optional[float] = None,
+        y: Optional[float] = None,
+        z: Optional[float] = None,
+    ) -> int: ...
+    def add_bond(self, a: int, b: int) -> int: ...
+    def add_port(
+        self,
+        anchor: int,
+        handle: int,
+        kind: str,
+        label: str = "",
+        order: int = 1,
+    ) -> int: ...
+    @property
+    def n_ports(self) -> int: ...
+    @property
+    def n_atoms(self) -> int: ...
+    def set_frag_id(self, atom: int, id: int) -> None: ...
+    def frag_id(self, atom: int) -> Optional[int]: ...
+    def inherit_frag_ids(self) -> int: ...
+    def copy(self) -> "Fragment": ...
+    def to_frame(self) -> Frame: ...
+    @staticmethod
+    def from_frame(frame: Frame) -> "Fragment": ...
+
 class SmartsMatch:
     """One SMARTS embedding."""
 
@@ -1504,7 +1545,10 @@ class Conformer:
         add_hydrogens: bool = True,
         seed: Optional[int] = None,
     ) -> None: ...
+    @overload
     def generate(self, mol: Atomistic) -> tuple[Atomistic, ConformerReport]: ...
+    @overload
+    def generate(self, mol: Fragment) -> tuple[Fragment, ConformerReport]: ...
 
 def align_direction(
     mol: Graph,

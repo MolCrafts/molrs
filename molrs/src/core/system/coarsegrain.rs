@@ -240,7 +240,19 @@ impl CoarseGrain {
     }
 
     /// Promote from a [`MolGraph`], validating all nodes have `"bead_type"`.
-    pub fn try_from_molgraph(mol: MolGraph) -> Result<Self, MolRsError> {
+    ///
+    /// The CG `bonds` kind is re-registered **by name**: an existing `bonds`
+    /// kind of arity 2 keeps its id, and a missing one is registered fresh.
+    /// Resolving by dense id instead would report a foreign kind's relations as
+    /// this system's CG bonds whenever the graph registered something else
+    /// first, and the next `add_bond` would write into it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MolRsError::Validation`] when a node carries no `"bead_type"`,
+    /// and when the graph already spells `bonds` at an arity other than 2
+    /// (naming the kind and both arities).
+    pub fn try_from_molgraph(mut mol: MolGraph) -> Result<Self, MolRsError> {
         for (id, atom) in mol.nodes() {
             if atom.get_str("bead_type").is_none() {
                 return Err(MolRsError::validation(format!(
@@ -249,7 +261,7 @@ impl CoarseGrain {
                 )));
             }
         }
-        let bond = mol.kind_id("bonds").unwrap_or(KindId(0));
+        let bond = mol.try_register_kind("bonds", 2)?;
         Ok(Self {
             graph: mol,
             bond,
@@ -405,6 +417,44 @@ mod tests {
         g.register_kind("bonds", 2);
         g.add_node_with(Atom::new());
         assert!(CoarseGrain::try_from_molgraph(g).is_err());
+    }
+
+    /// A graph whose *first* registered kind is not `bonds` — what a fragment
+    /// graph looks like — must not have that foreign kind's relations reported
+    /// as its CG bonds, nor be written into by the next `add_bond`.
+    #[test]
+    fn try_from_molgraph_resolves_bonds_by_name_not_kind_zero() {
+        let mut graph = MolGraph::new();
+        let ports = graph.register_kind("ports", 2);
+        let mut bead = Atom::new();
+        bead.set("bead_type", "W");
+        let b1 = graph.add_node_with(bead.clone());
+        let b2 = graph.add_node_with(bead);
+        graph.add_relation(ports, &[b1, b2]).unwrap();
+
+        let mut cg = CoarseGrain::try_from_molgraph(graph).expect("bead types are present");
+        let ports = cg.kind_id("ports").expect("the foreign kind survives");
+        assert_eq!(cg.n_bonds(), 0, "a port relation is not a CG bond");
+
+        cg.add_bond(b1, b2).expect("a bond can still be added");
+        assert_eq!(cg.n_bonds(), 1);
+        assert_eq!(
+            cg.n_relations(ports),
+            1,
+            "add_bond must not write into the foreign kind"
+        );
+    }
+
+    /// A caller-supplied graph that spells `bonds` at another arity is a data
+    /// condition, so the promotion returns an error instead of aborting the
+    /// process inside `register_kind`.
+    #[test]
+    fn try_from_molgraph_rejects_conflicting_arity() {
+        let mut graph = MolGraph::new();
+        graph.register_kind("bonds", 3);
+        let err = CoarseGrain::try_from_molgraph(graph)
+            .expect_err("a 3-ary 'bonds' kind conflicts with the CG bond kind");
+        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
     }
 
     #[test]

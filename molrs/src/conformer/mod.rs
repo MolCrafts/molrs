@@ -6,16 +6,33 @@
 //! coordinate build -> coarse minimization -> rotor sampling -> final
 //! minimization -> stereo sanity checks.
 //!
+//! [`Conformer::generate`] is generic over [`ElementGraph`], so it returns the
+//! same type it was handed: an [`Atomistic`] in, an `Atomistic` out; a
+//! [`Fragment`](molrs::system::fragment::Fragment) in, a `Fragment` out with
+//! its ports and `frag_id` labels intact. The hydrogens the pipeline adds
+//! belong to no input fragment, so relabelling them is the caller's own step.
+//!
 //! ```no_run
 //! use molrs::conformer::{Conformer, ConformerOptions};
-//! # fn run(mol: &molrs::system::atomistic::Atomistic) -> Result<(), molrs::error::MolRsError> {
-//! let (mol_3d, report) = Conformer::new(ConformerOptions::default()).generate(mol)?;
-//! # let _ = (mol_3d, report);
+//! use molrs::system::atomistic::Atomistic;
+//! use molrs::system::fragment::Fragment;
+//! # fn run(mol: &Atomistic, frag: &Fragment) -> Result<(), molrs::error::MolRsError> {
+//! let conformer = Conformer::new(ConformerOptions::default());
+//!
+//! // An `Atomistic` in, an `Atomistic` out.
+//! let (mol_3d, report) = conformer.generate(mol)?;
+//! println!("{} atoms, {} stages", mol_3d.n_atoms(), report.stages.len());
+//!
+//! // A `Fragment` in, a `Fragment` out — then label the added hydrogens.
+//! let (mut frag_3d, _report) = conformer.generate(frag)?;
+//! let labelled = frag_3d.inherit_frag_ids();
+//! println!("{labelled} of {} atoms inherited a frag_id", frag_3d.n_atoms());
 //! # Ok(())
 //! # }
 //! ```
 
 pub mod distgeom;
+mod element_graph;
 mod graph;
 mod options;
 mod report;
@@ -23,6 +40,7 @@ mod report;
 /// ETKDGv3 conformer-embedding pipeline (the active [`Conformer`] backend).
 pub mod etkdg;
 
+pub use element_graph::ElementGraph;
 pub use options::{ConformerOptions, ConformerSpeed, ForceFieldKind};
 pub use report::{ConformerReport, ConformerStageReport, StageKind};
 
@@ -51,20 +69,52 @@ impl Conformer {
         &self.opts
     }
 
-    /// Generate 3D coordinates for an all-atom molecular graph.
+    /// Generate 3D coordinates for an element-bearing molecular graph.
     ///
-    /// Returns the generated molecule (with 3D coordinates) and a
-    /// stage-by-stage report. The input molecule is not modified.
+    /// Generic over [`ElementGraph`], so **the returned type is the input
+    /// type**: an [`Atomistic`] in, an `Atomistic` out; a
+    /// [`Fragment`](molrs::system::fragment::Fragment) in, a `Fragment` out.
+    /// That bound is what the embedding actually requires — every node carries
+    /// an `element`, which the pipeline reads for bond-length estimation, ring
+    /// geometry and force-field selection. Coordinates are written in Å, and
+    /// the input molecule is never modified.
     ///
-    /// Requires [`Atomistic`] (not raw `MolGraph`) because conformer
-    /// generation depends on element symbols for bond-length estimation, ring
-    /// geometry, and force-field selection.
-    pub fn generate(&self, mol: &Atomistic) -> Result<(Atomistic, ConformerReport), MolRsError> {
-        // The ETKDG pipeline operates on (and returns) an `Atomistic` directly:
-        // it only adds atoms via `add_hydrogens` (which sets "element") and
-        // never removes "element" from existing atoms, so the chemistry
-        // invariant is preserved end to end.
-        etkdg::generate_3d_impl(mol, &self.opts)
+    /// # What survives
+    ///
+    /// Every node, relation and property of the input graph, including a
+    /// `Fragment`'s `ports` relations and its `frag_id` properties: no stage of
+    /// the pipeline removes a node, a relation or a property. The embed only
+    /// appends hydrogen atoms and their bonds and writes `x` / `y` / `z`. The
+    /// `ports` kind also rides through the MMFF staging `Frame` as an **unread
+    /// block** — that frame is emitted one block per non-empty kind, and the
+    /// potential compiler selects blocks by category name, so a `ports` block
+    /// is carried across and never read.
+    ///
+    /// # `frag_id` on the hydrogens this adds
+    ///
+    /// With hydrogen addition on (the default) the output carries hydrogens
+    /// that existed in no input fragment and therefore carry no `frag_id`.
+    /// Labelling them is the caller's visible step, not a hidden hook inside
+    /// this method: call `Fragment::inherit_frag_ids` on the result, as the
+    /// [module example](self) shows.
+    ///
+    /// # Cost
+    ///
+    /// Two clones of the graph where one existed: the promotion into the
+    /// working [`Atomistic`] here, plus the clone hydrogen perception already
+    /// made inside the pipeline. Both sit ahead of the distance-geometry solve
+    /// that dominates the run, and neither is inside the retry loop; unwrapping
+    /// and both promotions are moves.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MolRsError`] when the input graph is not element-bearing, when
+    /// the embedding itself fails, and when the embedded graph cannot be
+    /// promoted back into `M`.
+    pub fn generate<M: ElementGraph>(&self, mol: &M) -> Result<(M, ConformerReport), MolRsError> {
+        let work = Atomistic::try_from_molgraph(mol.as_molgraph().clone())?;
+        let (out, report) = etkdg::generate_3d_impl(&work, &self.opts)?;
+        Ok((M::try_from_molgraph(out.into_inner())?, report))
     }
 }
 

@@ -223,8 +223,21 @@ def test_graphs_views_and_extraction_pickle_as_one_object_graph() -> None:
     assert len(extracted.graph.atoms) == 3
     assert set(extracted.parent_of) == set(extracted.graph.entities())
 
+    fragment = molrs.Fragment()
+    fragment_anchor = fragment.def_atom(element="O")
+    fragment_handle = fragment.def_atom(element="H")
+    fragment.def_bond(fragment_anchor, fragment_handle)
+    fragment.def_port(fragment_anchor, fragment_handle, "$")
+    fragment.set_frag_id(fragment_anchor.handle, 2)
+    restored_fragment = roundtrip(fragment)
+    assert type(restored_fragment) is molrs.Fragment
+    assert restored_fragment.n_ports == 1
+    assert restored_fragment.ports[0]["port_kind"] == "$"
+    assert restored_fragment.frag_id(restored_fragment.atoms[0].handle) == 2
+
     assert type(roundtrip(_lib.Atomistic())) is _lib.Atomistic
     assert type(roundtrip(_lib.CoarseGrain())) is _lib.CoarseGrain
+    assert type(roundtrip(_lib.Fragment())) is _lib.Fragment
     assert type(roundtrip(molrs.GraphViews())) is molrs.GraphViews
     assert roundtrip(molrs.Reaction("[C:1]>>[C:1]")).forming_bonds == []
 

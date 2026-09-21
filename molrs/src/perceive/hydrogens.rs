@@ -840,6 +840,75 @@ mod tests {
         let id = g.add_atom(c);
         assert_eq!(implicit_h_count(&g, id), Some(2));
     }
+
+    // ---- ports ride along untouched ---------------------------------------
+
+    #[test]
+    fn add_hydrogens_keeps_the_ports_kind_and_caps_a_ported_c_c_o() {
+        // C0-C1-O2 with two handle hydrogens: H3 on C0, H4 on O2. Each handle
+        // is a real bonded H that is *additionally* recorded as a 2-ary `ports`
+        // relation `[anchor, handle]`. No `h_count` / `formal_charge` is set,
+        // so the valence model runs.
+        //
+        // Hand-derived atom count (every bond is single, and `valence_demand`
+        // bills each bond at least 1, so the result does not depend on the
+        // bond class):
+        //   C0: C1 + H3 = 2 bonds, valence 4 -> 2 new H
+        //   C1: C0 + O2 = 2 bonds, valence 4 -> 2 new H
+        //   O2: C1 + H4 = 2 bonds, valence 2 -> 0 new H
+        //   total = 3 heavy + 2 handles + 4 added = 9 atoms
+        let mut g = Atomistic::new();
+        let c0 = g.add_atom(atom("C"));
+        let c1 = g.add_atom(atom("C"));
+        let o2 = g.add_atom(atom("O"));
+        let h3 = g.add_atom(atom("H"));
+        let h4 = g.add_atom(atom("H"));
+        bond_with_order(&mut g, c0, c1, 1.0);
+        bond_with_order(&mut g, c1, o2, 1.0);
+        bond_with_order(&mut g, c0, h3, 1.0);
+        bond_with_order(&mut g, o2, h4, 1.0);
+
+        // The `ports` kind rides on the underlying `MolGraph` (a `Fragment`
+        // would own it); this test asserts on that graph and never promotes.
+        let ports = g.register_kind("ports", 2);
+        g.add_relation(ports, &[c0, h3])
+            .expect("(anchor, handle) is a 2-ary relation");
+        g.add_relation(ports, &[o2, h4])
+            .expect("(anchor, handle) is a 2-ary relation");
+
+        let before: Vec<AtomId> = g.atoms().map(|(id, _)| id).collect();
+        let result = add_hydrogens(&g);
+
+        assert_eq!(result.n_atoms(), 9, "3 heavy + 2 handles + 4 added");
+
+        let ports_after = result
+            .kind_id("ports")
+            .expect("the ports kind survives add_hydrogens");
+        assert_eq!(
+            result.n_relations(ports_after),
+            2,
+            "no added H bond was written into the ports kind"
+        );
+
+        let mut added = 0;
+        for (id, a) in result.atoms() {
+            if before.contains(&id) {
+                continue;
+            }
+            assert_eq!(
+                a.get_str("element"),
+                Some("H"),
+                "add_hydrogens only appends hydrogens"
+            );
+            assert_eq!(
+                result.neighbor_bonds(id).count(),
+                1,
+                "each added H carries exactly one bond"
+            );
+            added += 1;
+        }
+        assert_eq!(added, 4, "two on C0, two on C1, none on the hydroxyl O");
+    }
 }
 
 // ---------------------------------------------------------------------------

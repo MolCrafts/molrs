@@ -50,7 +50,7 @@ use molrs::io::smiles::{
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use crate::core::system::molgraph::PyAtomistic;
+use crate::core::system::molgraph::{PyAtomistic, PyFragment};
 use crate::helpers::smiles_error_to_pyerr;
 use crate::io::PySmilesIR;
 
@@ -819,6 +819,48 @@ impl PyCGSmilesIR {
     fn to_atomistic(&self, py: Python<'_>) -> PyResult<Py<PyAtomistic>> {
         let mol = self.inner.to_atomistic().map_err(smiles_error_to_pyerr)?;
         PyAtomistic::from_core(py, mol)
+    }
+
+    /// Read the last fragment table as named :class:`~molrs.Fragment` bodies.
+    ///
+    /// One entry per fragment the table defines, keyed by the name written
+    /// after ``#``. Each body keeps its own atoms and bonds and carries one
+    /// ``port`` per bonding descriptor the body wrote — the unsatisfied
+    /// valences that joining the fragment to a neighbour consumes. This is
+    /// the *template* view of the string, the counterpart of
+    /// :meth:`to_atomistic`, which instead expands the whole molecule and
+    /// consumes those descriptors as bonds.
+    ///
+    /// **Topology only.** A line notation states no geometry, so no atom
+    /// carries a position; coordinates come from a separate
+    /// :class:`molrs.conformer.Conformer` step, in ångström (Å).
+    ///
+    /// Returns
+    /// -------
+    /// dict of (str, Fragment)
+    ///     Fragment bodies in name order.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If the string defines no fragment table: a base-only string
+    ///     (``"{[#A][#B]}"``) writes beads and never says what they are made
+    ///     of, so there is no body to read.
+    ///
+    /// Examples
+    /// --------
+    /// >>> ir = molrs.io.CGSmilesIR("{[#OH][#PEO]|3[#OH]}.{#OH=[$]O,#PEO=[$]COC[$]}")
+    /// >>> sorted(ir.to_fragment())
+    /// ['OH', 'PEO']
+    /// >>> ir.to_fragment()["PEO"].n_ports
+    /// 2
+    fn to_fragment<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let templates = self.inner.to_fragment().map_err(smiles_error_to_pyerr)?;
+        let out = PyDict::new(py);
+        for (name, fragment) in templates {
+            out.set_item(name, PyFragment::from_core(py, fragment)?)?;
+        }
+        Ok(out)
     }
 
     /// ``CGSmilesIR('…', levels=…)``, quoting the string that was parsed.
