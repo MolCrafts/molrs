@@ -19,7 +19,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::io::smiles::cgsmiles::ast::{CGEdge, CGGraph};
+use crate::io::smiles::cgsmiles::ast::{CGEdge, CGGraph, EdgeOrigin};
 use crate::io::smiles::error::{Notation, SmilesError, SmilesErrorKind};
 
 /// Build the level `parent` denotes, one disjoint copy of a fragment graph per
@@ -68,6 +68,9 @@ pub(super) fn instantiate(
                 j: edge.j + offset,
                 order: edge.order,
                 span: edge.span,
+                // A body's edges are what the table wrote; only resolution
+                // derives an edge, and it runs after instantiation.
+                origin: EdgeOrigin::Written,
             });
         }
     }
@@ -81,8 +84,8 @@ mod tests {
     use std::collections::BTreeMap;
 
     use crate::io::smiles::{
-        BondingDescriptor, CGBondOrder, CGEdge, CGGraph, CGNode, DescriptorKind, SmilesErrorKind,
-        Span,
+        BondingDescriptor, CGBondOrder, CGEdge, CGGraph, CGNode, DescriptorKind, EdgeOrigin,
+        SmilesErrorKind, Span,
     };
 
     // Every expectation here is hand-derived from R4.10 ("every node of the
@@ -127,6 +130,7 @@ mod tests {
             j,
             order: CGBondOrder::Single,
             span: Span::new(0, 0),
+            origin: EdgeOrigin::Written,
         }
     }
 

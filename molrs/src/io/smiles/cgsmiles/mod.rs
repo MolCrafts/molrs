@@ -8,8 +8,12 @@
 //! blocks: block 0 is the coarsest graph, and every block after it is a
 //! *fragment table* naming the bodies of the nodes written one level up. This
 //! module reads all of them into a [`CGSmilesIR`], and expands each
-//! intermediate table into the level it denotes — but it builds no atoms and
-//! no `MolGraph`.
+//! intermediate table into the level it denotes.
+//!
+//! **Reading builds no atoms.** What the reader produces is the coarse levels,
+//! their fragment tables and the descriptor pairing over them — no `Frame`, no
+//! `MolGraph`. Turning the lowest level into real atoms and bonds is a second
+//! step the caller asks for by name, [`CGSmilesIR::to_atomistic`].
 //!
 //! # What the block grammar says
 //!
@@ -116,9 +120,35 @@
 //!   `fragments.is_empty() && levels.len() == 1`; otherwise
 //!   `levels.len() == fragments.len()`, one level short of the number of
 //!   tables because the last one is atomistic.
-//! * **Inter-fragment bonds are not formed here.** Expansion copies a body's
-//!   own edges and nothing else: pairing the bonding descriptors *between* two
-//!   copies belongs to the resolution step a later `cgsmiles-*` link adds.
+//! * **Descriptor pairing is finished before the IR is handed out.**
+//!   Instantiation copies a body's own edges and nothing else; the step that
+//!   pairs the bonding descriptors *between* two copies runs straight after
+//!   it, and records every match in [`CGSmilesIR::pairs`]. **Why pairing is
+//!   parse-stage while SMILES ring closure is build-stage:** a ring closure is
+//!   intra-body and only means anything once atoms exist, so it belongs to the
+//!   builder, whereas descriptor pairs are needed at coarse levels that never
+//!   become atoms at all — a reader of the coarse graph reads `pairs` without
+//!   expanding anything — so they have to be finished before the value is
+//!   returned.
+//! * **Pairing follows parse order, and only the graph is contracted.** Edges
+//!   are paired in the order the notation formed them, while the reference
+//!   implementation follows its graph library's adjacency order: for
+//!   `{[#A]1[#B][#C]1}` that is (0,1), (1,2), (0,2) here against (0,1), (0,2),
+//!   (1,2) there. A ring-bearing string can therefore consume different ports
+//!   and, once expanded, number its atoms differently. What is contracted is
+//!   the **connectivity**: the expansion
+//!   ([`CGSmilesIR::to_atomistic`]) is isomorphic to the reference's and to
+//!   what the molpy builder builds from the same string as an unlabelled
+//!   graph; atom indices are not part of that contract, and neither are bond
+//!   classes. The reference sets order 1.5 whenever both endpoint atoms are
+//!   aromatic, over a written symbol as well, so its biphenyl `-[$]` bond is
+//!   1.5 where molrs writes [`BondKind::Single`](crate::io::smiles::BondKind)
+//!   and its `=`/`=` pair is 1.5 where molrs writes `Double`; molrs follows
+//!   the Daylight Theory Manual, *SMILES* § 3.2.2, where a written symbol is
+//!   the bond's order.
+//! * **Ports left free are dropped.** A descriptor no edge needed creates
+//!   neither a bond nor an atom; filling the valence it leaves open at the
+//!   atomistic level is a later hydrogen-repletion step the caller composes.
 //! * **Replayed spans are shared.** `|n` re-reads the unit's bytes by
 //!   rewinding the one scanner over the full input, so every copy carries the
 //!   *template's* [`Span`](crate::io::smiles::Span): spans within a level are
@@ -200,12 +230,20 @@
 mod ast;
 mod instantiate;
 mod parser;
+mod resolve;
+#[cfg(test)]
+pub(super) mod test_support;
+mod to_atomistic;
 mod validate;
 
 use crate::io::smiles::error::SmilesError;
 use parser::CgParser;
+use resolve::resolve;
 
-pub use ast::{CGBondOrder, CGEdge, CGFragmentDef, CGGraph, CGNode, CGSmilesIR, FragmentBody};
+pub use ast::{
+    CGBondOrder, CGEdge, CGFragmentDef, CGGraph, CGNode, CGSmilesIR, EdgeOrigin, FragmentBody,
+    PairEnd, ResolvedPair,
+};
 
 /// Parse a `CGsmiles` string — every resolution block it writes — into its
 /// intermediate representation.
@@ -226,9 +264,11 @@ pub use ast::{CGBondOrder, CGEdge, CGFragmentDef, CGGraph, CGNode, CGSmilesIR, F
 /// **fragment table** — `{#PEO=[>]COC[<],#PE=[>]CC[<]}` — naming the bodies of
 /// the nodes written one level up. Each intermediate table is expanded here
 /// into the level it denotes: one disjoint copy of a body per node that names
-/// it, each copy's [`parent`](CGNode::parent) pointing back at that node, and
-/// no edge between two copies (pairing the bonding descriptors that would form
-/// one belongs to a later `cgsmiles-*` link).
+/// it, each copy's [`parent`](CGNode::parent) pointing back at that node. The
+/// bonding descriptors the copies carry are then paired — every written edge
+/// matched to a concrete pair of free compatible ports, recorded in
+/// [`CGSmilesIR::pairs`], and each pair of an intermediate level appended to
+/// the level below as a [`Derived`](EdgeOrigin::Derived) edge.
 ///
 /// The **last** block is atomistic by position — the notation marks it
 /// nowhere — so its bodies are parsed as OpenSMILES fragment bodies and kept
@@ -289,7 +329,7 @@ pub use ast::{CGBondOrder, CGEdge, CGFragmentDef, CGGraph, CGNode, CGSmilesIR, F
 /// the whole of `text`, so the rendered message reads `CGsmiles parse error at
 /// position N: …` with a caret under column N.
 ///
-/// Nineteen kinds name inputs only this notation has: [`CgEmptyBlock`] (`{}`,
+/// Twenty-one kinds name inputs only this notation has: [`CgEmptyBlock`] (`{}`,
 /// in any position), [`CgMalformedAnnotation`] (`{[#A;]}`, `{[#A;=1]}`,
 /// `{[#A;q=x]}`, or a fourth positional field), [`CgUnsupportedAnnotation`]
 /// (the weight and chirality refusals above),
@@ -309,8 +349,12 @@ pub use ast::{CGBondOrder, CGEdge, CGFragmentDef, CGGraph, CGNode, CGSmilesIR, F
 /// [`CgSquashUnsupported`] (the squash operator `[!]` at any level, the
 /// shortest such string being `{[#A][!]}`), [`CgLastBlockNotAtomistic`]
 /// (`{[#A]}.{#A=[#X][#X]}`, boxing the reason the body did not read as
-/// OpenSMILES) and [`CgBuild`] (an internal invariant of the reader,
-/// unreachable from user input).
+/// OpenSMILES), [`CgUnmatchableEdge`] (a written bond whose two fragments
+/// offer no free pair of compatible bonding descriptors,
+/// `{[#A][#B]}.{#A=[$a]C,#B=[$b]C}`), [`CgNotExpandable`] (raised by
+/// [`CGSmilesIR::to_atomistic`], not by this function: a string with no
+/// atomistic body to expand) and [`CgBuild`] (an internal invariant of the
+/// reader, unreachable from user input).
 ///
 /// Seven kinds are shared with SMILES and SMARTS, and are told apart from them
 /// by [`SmilesError::notation`] rather than by their name: [`EmptyInput`] (an
@@ -330,6 +374,12 @@ pub use ast::{CGBondOrder, CGEdge, CGFragmentDef, CGGraph, CGNode, CGSmilesIR, F
 /// (`[C;0.5]`, `[*;s=C,0]`), which already names an unsupported feature and
 /// propagates un-wrapped.
 ///
+/// A body that parses and then fails to **build** gets that same treatment:
+/// parsing a fragment body leaves its ring closures unchecked, so
+/// `{[#A][#B]}.{#A=[$]C1CC,#B=[$]C}` is refused when resolution converts the
+/// body, as [`CgLastBlockNotAtomistic`] boxing
+/// [`UnmatchedRingClosure`] and spanned at the marker inside the `#A=` body.
+///
 /// A bonding descriptor written beside a node is checked by the same grammar
 /// rules the SMILES fragment dialect uses, so [`BondInsideDescriptor`]
 /// (`{[#A][$=]}`), [`InvalidDescriptorLabel`] (`{[#A][$a+]}`) and
@@ -347,6 +397,8 @@ pub use ast::{CGBondOrder, CGEdge, CGFragmentDef, CGGraph, CGNode, CGSmilesIR, F
 /// [`CgSquashUnsupported`]: crate::io::smiles::SmilesErrorKind::CgSquashUnsupported
 /// [`CgLastBlockNotAtomistic`]: crate::io::smiles::SmilesErrorKind::CgLastBlockNotAtomistic
 /// [`CgBuild`]: crate::io::smiles::SmilesErrorKind::CgBuild
+/// [`CgUnmatchableEdge`]: crate::io::smiles::SmilesErrorKind::CgUnmatchableEdge
+/// [`CgNotExpandable`]: crate::io::smiles::SmilesErrorKind::CgNotExpandable
 /// [`CgMalformedAnnotation`]: crate::io::smiles::SmilesErrorKind::CgMalformedAnnotation
 /// [`CgUnsupportedAnnotation`]: crate::io::smiles::SmilesErrorKind::CgUnsupportedAnnotation
 /// [`CgAnnotationOnWildcard`]: crate::io::smiles::SmilesErrorKind::CgAnnotationOnWildcard
@@ -382,5 +434,7 @@ pub use ast::{CGBondOrder, CGEdge, CGFragmentDef, CGGraph, CGNode, CGSmilesIR, F
 /// assert_eq!(ir.levels[0].edges[0].order.multiplicity(), 1);
 /// ```
 pub fn parse_cgsmiles(text: &str) -> Result<CGSmilesIR, SmilesError> {
-    CgParser::new(text).parse()
+    let mut ir = CgParser::new(text).parse()?;
+    resolve(&mut ir, text)?;
+    Ok(ir)
 }

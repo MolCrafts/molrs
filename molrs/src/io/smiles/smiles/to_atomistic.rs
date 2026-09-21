@@ -21,7 +21,6 @@ use crate::io::smiles::chem::ast::*;
 use crate::io::smiles::error::{Notation, SmilesError, SmilesErrorKind};
 use crate::io::smiles::smiles::canonical_element_symbol;
 use molrs::system::atomistic::{AtomId, Atomistic};
-use molrs::system::bond::{BondNumber, BondType};
 use molrs::system::molgraph::PropValue;
 
 /// Convert a parsed SMILES IR into an [`Atomistic`] molecular graph.
@@ -258,9 +257,9 @@ impl<'a> Builder<'a> {
         }
 
         let id = match &node.spec {
-            AtomSpec::Organic { symbol, aromatic } => {
+            AtomSpec::Organic { symbol, .. } => {
                 let id = self.mol.add_atom_bare(&canonical_element_symbol(symbol));
-                if *aromatic {
+                if node.spec.written_aromatic() {
                     self.mark_aromatic(id);
                 }
                 Ok(id)
@@ -279,11 +278,9 @@ impl<'a> Builder<'a> {
                     BracketSymbol::Aliphatic | BracketSymbol::Aromatic => "*".to_owned(),
                 };
 
-                let aromatic = matches!(symbol, BracketSymbol::Element { aromatic: true, .. });
-
                 let id = self.mol.add_atom_bare(&canonical_element_symbol(&sym));
 
-                if aromatic {
+                if node.spec.written_aromatic() {
                     self.mark_aromatic(id);
                 }
                 if let Some(iso) = isotope {
@@ -354,9 +351,9 @@ impl<'a> Builder<'a> {
         });
 
         if let Some(kind) = kind {
-            let _ =
-                self.mol
-                    .set_bond_class(bid, bond_kind_to_type(kind), bond_kind_to_number(kind));
+            let _ = self
+                .mol
+                .set_bond_class(bid, kind.bond_type(), kind.bond_number());
             match kind {
                 BondKind::Up => {
                     let _ = self
@@ -439,41 +436,6 @@ impl<'a> Builder<'a> {
 
     fn set_prop_str(&mut self, id: AtomId, key: &str, val: &str) {
         let _ = self.mol.set_atom(id, key, val);
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/// Map a [`BondKind`] to the bond's chemical class.
-///
-/// `Aromatic` is its own class, not a number: the notation declares the ring
-/// delocalized and says nothing about which Kekulé structure to pick. The
-/// localized [`BondNumber`] is left `Unknown` for kekulization to decide.
-fn bond_kind_to_type(kind: BondKind) -> BondType {
-    match kind {
-        BondKind::Single | BondKind::Up | BondKind::Down => BondType::Single,
-        BondKind::Double => BondType::Double,
-        BondKind::Triple => BondType::Triple,
-        // A quadruple bond has no aromatic character; it is a plain class whose
-        // number the notation states outright.
-        BondKind::Quadruple => BondType::Double,
-        BondKind::Aromatic => BondType::Aromatic,
-        BondKind::Any | BondKind::Ring => BondType::Single,
-    }
-}
-
-/// The localized number a [`BondKind`] states, when it states one.
-fn bond_kind_to_number(kind: BondKind) -> BondNumber {
-    match kind {
-        BondKind::Single | BondKind::Up | BondKind::Down => BondNumber::Single,
-        BondKind::Double => BondNumber::Double,
-        BondKind::Triple => BondNumber::Triple,
-        BondKind::Quadruple => BondNumber::Quadruple,
-        // The notation declares delocalization, not a Kekulé phase.
-        BondKind::Aromatic => BondNumber::Unknown,
-        BondKind::Any | BondKind::Ring => BondNumber::Single,
     }
 }
 

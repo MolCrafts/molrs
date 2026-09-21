@@ -270,6 +270,35 @@ pub enum SmilesErrorKind {
     /// can reach, reported by value rather than by panicking. The payload
     /// says which invariant.
     CgBuild(String),
+    /// A written coarse edge could not be matched to a free pair of compatible
+    /// bonding descriptors: `{[#A][#B]}.{#A=[$a]C,#B=[$b]C}` writes a bond
+    /// between two fragments whose only ports carry different labels. `level`
+    /// is the resolution level being resolved and `edge` indexes
+    /// `levels[level].edges`.
+    ///
+    /// The reference implementation drops such an edge silently; molrs refuses
+    /// it, because a bond the user wrote and the reader cannot form is not a
+    /// fact either of them may discard.
+    ///
+    /// The span is the edge's own. For a **derived** edge — one resolution
+    /// created from a pair of the level above
+    /// ([`EdgeOrigin::Derived`](crate::io::smiles::EdgeOrigin::Derived)) —
+    /// that span is a copy of the coarse edge's, so the caret lands on the
+    /// bond that created it rather than on text that does not exist.
+    CgUnmatchableEdge {
+        /// The resolution level being resolved.
+        level: usize,
+        /// Index into that level's edge list of the edge that cannot be
+        /// formed.
+        edge: usize,
+    },
+    /// A `CGsmiles` string has no atomistic body to expand into atoms: either
+    /// the lowest level's bodies are coarse graphs, or the string wrote no
+    /// fragment table at all. The payload is what could not be expanded — a
+    /// fragment name, or the phrase `base-only string (no fragment table)`
+    /// when there is no fragment to name — and the message reads
+    /// `<payload>: no atomistic body to expand` for both.
+    CgNotExpandable(String),
 }
 
 impl SmilesError {
@@ -357,17 +386,20 @@ impl SmilesErrorKind {
             | SmilesErrorKind::CgUndefinedFragment(_)
             | SmilesErrorKind::CgSquashUnsupported
             | SmilesErrorKind::CgLastBlockNotAtomistic(_)
-            | SmilesErrorKind::CgBuild(_) => self.cg_message(),
+            | SmilesErrorKind::CgBuild(_)
+            | SmilesErrorKind::CgUnmatchableEdge { .. }
+            | SmilesErrorKind::CgNotExpandable(_) => self.cg_message(),
         }
     }
 
-    /// The reason a `Cg*` kind reports: the `CGsmiles` half of
+    /// The reason a **structural** `Cg*` kind reports: the `CGsmiles` half of
     /// [`SmilesErrorKind::message`], split off so neither function has to be
     /// read past its own notation.
     ///
     /// Reached only through `message`, whose match routes exactly the `Cg*`
-    /// kinds here and answers every other kind itself — which is why the
-    /// remaining kinds are unreachable rather than handled.
+    /// kinds here and answers every other kind itself. The kinds the
+    /// resolution stage raises are answered by `cg_resolution_message`, which
+    /// this function delegates to.
     fn cg_message(&self) -> String {
         match self {
             SmilesErrorKind::CgEmptyBlock => {
@@ -436,10 +468,34 @@ impl SmilesErrorKind {
                 "the last block must be an atomistic (OpenSMILES) body: {}",
                 inner.message()
             ),
+            _ => self.cg_resolution_message(),
+        }
+    }
+
+    /// The reason a `Cg*` kind of the **resolution** stage reports: descriptor
+    /// pairing, atomistic expansion, and the internal-invariant kind they
+    /// share with the reader's earlier stages.
+    ///
+    /// Split from `cg_message` along the line the reader itself draws — the
+    /// kinds above name notation a string got wrong, the kinds here name
+    /// something the reader could not do with a string it accepted — so
+    /// neither function has to be read past its own stage.
+    ///
+    /// Reached only through `cg_message`, which answers every structural kind
+    /// itself; the remaining kinds are unreachable rather than handled.
+    fn cg_resolution_message(&self) -> String {
+        match self {
+            SmilesErrorKind::CgUnmatchableEdge { level, edge } => format!(
+                "edge {edge} of resolution level {level} has no free pair of compatible \
+                 bonding descriptors to form it"
+            ),
+            SmilesErrorKind::CgNotExpandable(what) => {
+                format!("{what}: no atomistic body to expand")
+            }
             SmilesErrorKind::CgBuild(reason) => {
                 format!("an internal invariant of the reader was violated: {reason}")
             }
-            kind => unreachable!("{kind:?} is not a CGsmiles error kind"),
+            kind => unreachable!("{kind:?} is not a CGsmiles resolution error kind"),
         }
     }
 }
@@ -862,6 +918,46 @@ mod tests {
         );
     }
 
+    /// `CgNotExpandable`'s one arm serves two payload shapes; this is the
+    /// fragment-name one, `{0}: no atomistic body to expand`.
+    #[test]
+    fn test_display_cg_not_expandable_names_the_fragment() {
+        let msg = cg_message(SmilesErrorKind::CgNotExpandable("PEO".to_owned()));
+        assert!(
+            msg.contains("PEO: no atomistic body to expand"),
+            "message was {msg:?}"
+        );
+    }
+
+    /// The second shape, the phrase `to_fragment` (link 02b) reuses for a
+    /// string that names no fragment at all. The same arm has to read
+    /// correctly for it, which is why the payload is a whole phrase rather
+    /// than a name the arm decorates.
+    #[test]
+    fn test_display_cg_not_expandable_reads_correctly_for_the_base_only_phrase() {
+        let msg = cg_message(SmilesErrorKind::CgNotExpandable(
+            "base-only string (no fragment table)".to_owned(),
+        ));
+        assert!(
+            msg.contains("base-only string (no fragment table): no atomistic body to expand"),
+            "message was {msg:?}"
+        );
+    }
+
+    /// An unmatchable edge is reported by its two indices: which level was
+    /// being resolved, and which of that level's edges could not be formed.
+    #[test]
+    fn test_display_cg_unmatchable_edge_names_the_level_and_the_edge() {
+        let msg = cg_message(SmilesErrorKind::CgUnmatchableEdge { level: 1, edge: 4 });
+        assert!(
+            msg.contains(
+                "edge 4 of resolution level 1 has no free pair of compatible bonding \
+                 descriptors to form it"
+            ),
+            "message was {msg:?}"
+        );
+    }
+
     #[test]
     fn test_display_cg_messages_are_pairwise_distinct() {
         let messages = [
@@ -891,6 +987,8 @@ mod tests {
             cg_message(SmilesErrorKind::CgLastBlockNotAtomistic(Box::new(
                 SmilesErrorKind::UnclosedBranch,
             ))),
+            cg_message(SmilesErrorKind::CgUnmatchableEdge { level: 1, edge: 4 }),
+            cg_message(SmilesErrorKind::CgNotExpandable("PEO".to_owned())),
         ];
         let mut sorted = messages.to_vec();
         sorted.sort();

@@ -47,7 +47,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::core::types::F;
 use crate::io::smiles::cgsmiles::ast::{
-    CGBondOrder, CGEdge, CGFragmentDef, CGGraph, CGNode, CGSmilesIR, FragmentBody,
+    CGBondOrder, CGEdge, CGFragmentDef, CGGraph, CGNode, CGSmilesIR, EdgeOrigin, FragmentBody,
 };
 use crate::io::smiles::cgsmiles::instantiate::instantiate;
 use crate::io::smiles::cgsmiles::validate::validate_ir;
@@ -201,9 +201,14 @@ impl<'a> CgParser<'a> {
             fragments.push(self.parse_fragment_block(*block, index == last)?);
         }
         let levels = Self::build_levels(base, &fragments, input)?;
+        // One empty pair list per level: this parser reads syntax, and
+        // pairing descriptors is `resolve`'s step, run by `parse_cgsmiles`
+        // once the levels exist.
+        let pairs = vec![Vec::new(); levels.len()];
         let ir = CGSmilesIR {
             levels,
             fragments,
+            pairs,
             span: Span::new(0, input.len()),
         };
         validate_ir(&ir, input)?;
@@ -452,7 +457,12 @@ impl<'a> CgParser<'a> {
     /// dialect raises for a `;` annotation inside a bracket atom. It already
     /// says "this notation feature is unsupported" and is no evidence that the
     /// block is the wrong resolution.
-    fn rebase(err: SmilesError, offset: usize, input: &str) -> SmilesError {
+    ///
+    /// Visible to the module because the body's *conversion*, run by the
+    /// `resolve` step, catches what parsing a body does not check — an
+    /// unmatched ring closure inside it — and that failure class has to reach
+    /// the reader one way, not two.
+    pub(super) fn rebase(err: SmilesError, offset: usize, input: &str) -> SmilesError {
         let span = Span::new(err.span.start + offset, err.span.end + offset);
         let kind = match err.kind {
             annotation @ SmilesErrorKind::AtomAnnotationUnsupported(_) => annotation,
@@ -871,6 +881,7 @@ impl<'a> CgParser<'a> {
                     j: index,
                     order,
                     span,
+                    origin: EdgeOrigin::Written,
                 });
             }
             None => {
@@ -1052,6 +1063,7 @@ impl<'a> CgParser<'a> {
             j: node,
             order,
             span,
+            origin: EdgeOrigin::Written,
         });
         Ok(())
     }
@@ -1157,6 +1169,7 @@ impl<'a> CgParser<'a> {
             j: anchor,
             order,
             span: Span::new(at, at + 1),
+            origin: EdgeOrigin::Written,
         });
         Ok(anchor)
     }
@@ -1166,8 +1179,8 @@ impl<'a> CgParser<'a> {
 mod tests {
     use crate::io::smiles::chem::test_support::{atom_nodes, descriptors};
     use crate::io::smiles::{
-        CGBondOrder, CGGraph, CGNode, CGSmilesIR, DescriptorKind, FragmentBody, Notation,
-        SmilesError, SmilesErrorKind, SmilesIR, parse_cgsmiles,
+        CGBondOrder, CGGraph, CGNode, CGSmilesIR, DescriptorKind, EdgeOrigin, FragmentBody,
+        Notation, SmilesError, SmilesErrorKind, SmilesIR, parse_cgsmiles,
     };
 
     // -- helpers ------------------------------------------------------------
@@ -2003,11 +2016,20 @@ mod tests {
         );
     }
 
+    /// Expansion writes one edge inside each copy and nothing else; the
+    /// edges 01d derives from the level above are pinned by
+    /// `resolve.rs::test_f8_appends_one_derived_edge_per_level_zero_pair`.
     #[test]
-    fn test_f8_level_one_has_three_single_intra_fragment_edges() {
+    fn test_f8_level_one_has_three_single_written_intra_fragment_edges() {
         let ir = ir_of(F8);
+        let written: Vec<(usize, usize, CGBondOrder)> = ir.levels[1]
+            .edges
+            .iter()
+            .filter(|e| e.origin == EdgeOrigin::Written)
+            .map(|e| (e.i, e.j, e.order))
+            .collect();
         assert_eq!(
-            edges(&ir.levels[1]),
+            written,
             vec![
                 (0, 1, CGBondOrder::Single),
                 (2, 3, CGBondOrder::Single),
@@ -2016,18 +2038,24 @@ mod tests {
         );
     }
 
-    /// Pairing descriptors across copies is 01d's job; expansion joins nothing.
+    /// Pairing descriptors across copies is 01d's job: every edge the
+    /// notation *wrote* at this level stays inside one copy, and the ones
+    /// that cross are the derived edges 01d appends.
     #[test]
-    fn test_f8_level_one_has_no_edge_between_two_copies() {
+    fn test_f8_level_one_has_no_written_edge_between_two_copies() {
         let ir = ir_of(F8);
         let level = &ir.levels[1];
         let crossing: Vec<(usize, usize)> = level
             .edges
             .iter()
+            .filter(|e| e.origin == EdgeOrigin::Written)
             .filter(|e| level.nodes[e.i].parent != level.nodes[e.j].parent)
             .map(|e| (e.i, e.j))
             .collect();
-        assert!(crossing.is_empty(), "inter-copy edges were {crossing:?}");
+        assert!(
+            crossing.is_empty(),
+            "inter-copy written edges were {crossing:?}"
+        );
     }
 
     #[test]
@@ -2083,13 +2111,14 @@ mod tests {
     /// reference implementation crashes there).
     #[test]
     fn test_repeat_as_the_last_token_of_a_body_is_replayed() {
-        let ir = ir_of("{[#A]}.{#A=[#B]|3}.{#B=CC}");
+        let ir = ir_of("{[#A]}.{#A=[#B]|3}.{#B=[>]CC[<]}");
         assert_eq!(ir.levels[1].nodes.len(), 3);
     }
 
     /// The replay re-scans the full input, so a diagnostic raised inside a
-    /// body points at the body's own bytes — here inside `[#B]1[#C]1|2`,
-    /// which starts at byte 11 and ends at byte 23.
+    /// body points at the body's own bytes: the `|` of `[#B]1[#C]1|2` is byte
+    /// 21 of `{[#A]}.{#A=[#B]1[#C]1|2}.{#B=CC,#C=CC}`, counted by hand —
+    /// `{[#A]}.` is 7 bytes, `{#A=` four more, `[#B]1[#C]1` ten more.
     #[test]
     fn test_body_level_repeat_over_a_ring_marker_spans_the_full_input() {
         let text = "{[#A]}.{#A=[#B]1[#C]1|2}.{#B=CC,#C=CC}";
@@ -2099,11 +2128,7 @@ mod tests {
             "kind was {:?}",
             err.kind
         );
-        assert!(
-            (11..23).contains(&err.span.start),
-            "span was {:?} in {text:?}",
-            err.span
-        );
+        assert_eq!(err.span.start, 21, "span was {:?} in {text:?}", err.span);
     }
 
     /// The converse of coverage is not an error: a library block may define
@@ -2165,7 +2190,7 @@ mod tests {
     /// yields copies with different parents.
     #[test]
     fn test_body_used_twice_yields_copies_with_different_parents() {
-        let ir = ir_of("{[#A][#A]}.{#A=[#B][#B]}.{#B=CC}");
+        let ir = ir_of("{[#A][#A]}.{#A=[>][#B][#B][<]}.{#B=[>]CC[<]}");
         assert_eq!(
             parents(&ir.levels[1]),
             vec![Some(0), Some(0), Some(1), Some(1)]
@@ -2236,6 +2261,28 @@ mod tests {
             kind_of("{[#A][!]}"),
             SmilesErrorKind::CgSquashUnsupported
         ));
+    }
+
+    /// The third position the one structural rule covers: a `[!]` written in
+    /// an **intermediate** (coarse-graph) body, which is neither the base
+    /// graph nor the atomistic last block. The refusal carries the whole
+    /// string and the `CGsmiles` notation, and its caret lands inside it.
+    #[test]
+    fn test_squash_descriptor_in_a_graph_body_is_refused() {
+        let text = "{[#A]}.{#A=[!][#X]}.{#X=[$]C[$]}";
+        let err = err_of(text);
+        assert!(
+            matches!(err.kind, SmilesErrorKind::CgSquashUnsupported),
+            "kind was {:?}",
+            err.kind
+        );
+        assert_eq!(err.input, text);
+        assert_eq!(err.notation, Notation::CGsmiles);
+        assert!(
+            err.span.start < text.len(),
+            "span was {:?} in {text:?}",
+            err.span
+        );
     }
 
     // -- must-raise: atom annotations propagate un-wrapped (R5.5) -----------

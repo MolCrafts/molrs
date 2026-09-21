@@ -14,6 +14,8 @@
 //! (SMARTS *matching* is a separate engine, [`crate::perceive::smarts`], with
 //! its own parser; it does not consume this AST.)
 
+use molrs::system::bond::{BondNumber, BondType};
+
 // ---------------------------------------------------------------------------
 // Span
 // ---------------------------------------------------------------------------
@@ -138,6 +140,43 @@ pub enum AtomSpec {
     Query(AtomQuery),
 }
 
+impl AtomSpec {
+    /// Whether the **notation wrote this atom aromatic** — a lowercase organic
+    /// symbol (`c`, `n`) or a lowercase bracket element (`[nH]`).
+    ///
+    /// This is a question about the text, not about the molecule: it reports
+    /// the aromaticity the string *declares*, before any perception step has
+    /// looked at rings. A Kekulé-spelled benzene (`C1=CC=CC=C1`) writes no
+    /// aromatic atom and answers `false` for every one of its carbons, however
+    /// aromatic [`crate::perceive::aromaticity`] would later find the ring.
+    ///
+    /// The SMARTS primitives `a` ([`BracketSymbol::Aromatic`]) and
+    /// [`AtomSpec::Query`] answer `false`: a query *asks* whether an atom is
+    /// aromatic, and asking is not declaring. [`AtomSpec::Wildcard`] declares
+    /// no element at all, so it declares no aromaticity either.
+    ///
+    /// The one implementation of the predicate, and one evaluator of it: the
+    /// SMILES builder asks it here and records the answer as the atom property
+    /// `is_aromatic`. The `CGsmiles` resolver — which promotes a bond written
+    /// with no symbol between two written-aromatic atoms to an aromatic one —
+    /// never holds an `AtomSpec` of its own, and reads that stamp instead, off
+    /// a fragment body just converted and never perceived, where the stamp can
+    /// only say what the notation wrote.
+    ///
+    /// Reference: Daylight Theory Manual, *SMILES*, § 3 (aromatic atoms are
+    /// written in lower case).
+    pub(crate) fn written_aromatic(&self) -> bool {
+        match self {
+            AtomSpec::Organic { aromatic, .. } => *aromatic,
+            AtomSpec::Bracket {
+                symbol: BracketSymbol::Element { aromatic, .. },
+                ..
+            } => *aromatic,
+            AtomSpec::Bracket { .. } | AtomSpec::Wildcard | AtomSpec::Query(_) => false,
+        }
+    }
+}
+
 /// Symbol inside a bracket atom.
 #[derive(Debug, Clone, PartialEq)]
 pub enum BracketSymbol {
@@ -195,6 +234,62 @@ pub enum BondKind {
     Any,
     /// `@` ring bond (SMARTS).
     Ring,
+}
+
+impl BondKind {
+    /// The bond's **chemical class**, as
+    /// [`Atomistic::set_bond_class`](crate::system::atomistic::Atomistic::set_bond_class)
+    /// records it.
+    ///
+    /// `Aromatic` is a class of its own rather than a number: the notation
+    /// declares the ring delocalized and says nothing about which Kekulé
+    /// structure to pick, so [`BondKind::bond_number`] leaves that `Unknown`.
+    /// The directional kinds `/` and `\` and the SMARTS wildcards `~` and `@`
+    /// are structurally single bonds — the direction is stereochemistry
+    /// recorded elsewhere, and a wildcard states no order at all.
+    ///
+    /// # Approximation
+    ///
+    /// [`BondKind::Quadruple`] maps to [`BondType::Double`], because
+    /// [`BondType`](crate::system::bond::BondType) has no quadruple variant
+    /// (`core/system/bond.rs`). The number is exact —
+    /// [`BondKind::bond_number`] answers [`BondNumber::Quadruple`] — so no
+    /// count is lost, only the class is coarsened. Widening `BondType` is a
+    /// change to the core bond vocabulary and is not made here.
+    ///
+    /// Reference: Daylight Theory Manual, *SMILES*, § 3 (bond symbols).
+    pub(crate) fn bond_type(self) -> BondType {
+        match self {
+            BondKind::Single | BondKind::Up | BondKind::Down => BondType::Single,
+            BondKind::Double => BondType::Double,
+            BondKind::Triple => BondType::Triple,
+            // A quadruple bond has no aromatic character; it is a plain class whose
+            // number the notation states outright.
+            BondKind::Quadruple => BondType::Double,
+            BondKind::Aromatic => BondType::Aromatic,
+            BondKind::Any | BondKind::Ring => BondType::Single,
+        }
+    }
+
+    /// The **localized (Kekulé) number** this kind states, when it states one.
+    ///
+    /// [`BondKind::Aromatic`] states none — it declares delocalization, not a
+    /// Kekulé phase — and answers [`BondNumber::Unknown`], which kekulization
+    /// later replaces. Every other kind, including the quadruple bond the
+    /// class approximates, states its own count.
+    ///
+    /// Reference: Daylight Theory Manual, *SMILES*, § 3 (bond symbols).
+    pub(crate) fn bond_number(self) -> BondNumber {
+        match self {
+            BondKind::Single | BondKind::Up | BondKind::Down => BondNumber::Single,
+            BondKind::Double => BondNumber::Double,
+            BondKind::Triple => BondNumber::Triple,
+            BondKind::Quadruple => BondNumber::Quadruple,
+            // The notation declares delocalization, not a Kekulé phase.
+            BondKind::Aromatic => BondNumber::Unknown,
+            BondKind::Any | BondKind::Ring => BondNumber::Single,
+        }
+    }
 }
 
 /// SMARTS bond query with logical operators.
@@ -350,4 +445,159 @@ pub enum AtomQuery {
     Or(Vec<AtomQuery>),
     /// `expr ; expr` — low-precedence AND.
     LowAnd(Vec<AtomQuery>),
+}
+
+// ==========================================================================
+// Tests
+// ==========================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Every expectation below is hand-written from the notation itself: the
+    // Daylight Theory Manual § SMILES (lowercase symbols are the *written*
+    // aromatic declaration; a SMARTS primitive is a query, not a declaration)
+    // and the `BondKind` → `(BondType, BondNumber)` table already in use at
+    // `io/smiles/smiles/to_atomistic.rs`. No external program produced any
+    // value here.
+
+    /// A bracket atom carrying nothing but `symbol`.
+    fn bracket(symbol: BracketSymbol) -> AtomSpec {
+        AtomSpec::Bracket {
+            isotope: None,
+            symbol,
+            chirality: None,
+            hcount: None,
+            charge: None,
+            atom_class: None,
+        }
+    }
+
+    // -- AtomSpec::written_aromatic -----------------------------------------
+
+    #[test]
+    fn test_written_aromatic_is_true_for_a_lowercase_organic_atom() {
+        let spec = AtomSpec::Organic {
+            symbol: "c".to_owned(),
+            aromatic: true,
+        };
+        assert!(spec.written_aromatic());
+    }
+
+    #[test]
+    fn test_written_aromatic_is_false_for_an_uppercase_organic_atom() {
+        let spec = AtomSpec::Organic {
+            symbol: "C".to_owned(),
+            aromatic: false,
+        };
+        assert!(!spec.written_aromatic());
+    }
+
+    #[test]
+    fn test_written_aromatic_is_true_for_an_aromatic_bracket_element() {
+        let spec = bracket(BracketSymbol::Element {
+            symbol: "n".to_owned(),
+            aromatic: true,
+        });
+        assert!(spec.written_aromatic());
+    }
+
+    #[test]
+    fn test_written_aromatic_is_false_for_an_aliphatic_bracket_element() {
+        let spec = bracket(BracketSymbol::Element {
+            symbol: "N".to_owned(),
+            aromatic: false,
+        });
+        assert!(!spec.written_aromatic());
+    }
+
+    #[test]
+    fn test_written_aromatic_is_false_for_the_any_bracket_symbol() {
+        assert!(!bracket(BracketSymbol::Any).written_aromatic());
+    }
+
+    #[test]
+    fn test_written_aromatic_is_false_for_the_aliphatic_bracket_symbol() {
+        assert!(!bracket(BracketSymbol::Aliphatic).written_aromatic());
+    }
+
+    /// The SMARTS primitive `a` asks a *question* about an atom; it does not
+    /// declare one aromatic, so it is not a written aromatic atom.
+    #[test]
+    fn test_written_aromatic_is_false_for_the_aromatic_bracket_symbol() {
+        assert!(!bracket(BracketSymbol::Aromatic).written_aromatic());
+    }
+
+    #[test]
+    fn test_written_aromatic_is_false_for_the_wildcard() {
+        assert!(!AtomSpec::Wildcard.written_aromatic());
+    }
+
+    /// Same reason as [`BracketSymbol::Aromatic`]: a query is not a
+    /// declaration, whatever primitive it holds.
+    #[test]
+    fn test_written_aromatic_is_false_for_a_query_atom() {
+        let spec = AtomSpec::Query(AtomQuery::Primitive(AtomPrimitive::Aromatic));
+        assert!(!spec.written_aromatic());
+    }
+
+    // -- BondKind::bond_type / bond_number ----------------------------------
+
+    /// The whole class table, every variant pinned: the directional and
+    /// wildcard kinds are structurally single bonds, and `Aromatic` is its own
+    /// class rather than a number.
+    #[test]
+    fn test_bond_type_maps_every_kind_to_its_class() {
+        assert_eq!(BondKind::Single.bond_type(), BondType::Single);
+        assert_eq!(BondKind::Double.bond_type(), BondType::Double);
+        assert_eq!(BondKind::Triple.bond_type(), BondType::Triple);
+        assert_eq!(BondKind::Quadruple.bond_type(), BondType::Double);
+        assert_eq!(BondKind::Aromatic.bond_type(), BondType::Aromatic);
+        assert_eq!(BondKind::Up.bond_type(), BondType::Single);
+        assert_eq!(BondKind::Down.bond_type(), BondType::Single);
+        assert_eq!(BondKind::Any.bond_type(), BondType::Single);
+        assert_eq!(BondKind::Ring.bond_type(), BondType::Single);
+    }
+
+    /// The whole number table, every variant pinned.
+    #[test]
+    fn test_bond_number_maps_every_kind_to_its_number() {
+        assert_eq!(BondKind::Single.bond_number(), BondNumber::Single);
+        assert_eq!(BondKind::Double.bond_number(), BondNumber::Double);
+        assert_eq!(BondKind::Triple.bond_number(), BondNumber::Triple);
+        assert_eq!(BondKind::Quadruple.bond_number(), BondNumber::Quadruple);
+        assert_eq!(BondKind::Aromatic.bond_number(), BondNumber::Unknown);
+        assert_eq!(BondKind::Up.bond_number(), BondNumber::Single);
+        assert_eq!(BondKind::Down.bond_number(), BondNumber::Single);
+        assert_eq!(BondKind::Any.bond_number(), BondNumber::Single);
+        assert_eq!(BondKind::Ring.bond_number(), BondNumber::Single);
+    }
+
+    /// `BondType` has no quadruple variant, so the class is the documented
+    /// approximation `Double` while the number states the quadruple outright.
+    /// Pinned as a pair so the approximation cannot be widened silently.
+    #[test]
+    fn test_quadruple_is_the_documented_double_class_with_a_quadruple_number() {
+        assert_eq!(
+            (
+                BondKind::Quadruple.bond_type(),
+                BondKind::Quadruple.bond_number()
+            ),
+            (BondType::Double, BondNumber::Quadruple)
+        );
+    }
+
+    /// The notation declares delocalization, not a Kekulé phase: an aromatic
+    /// bond has no localized number until kekulization picks one.
+    #[test]
+    fn test_aromatic_is_an_aromatic_class_with_an_unknown_number() {
+        assert_eq!(
+            (
+                BondKind::Aromatic.bond_type(),
+                BondKind::Aromatic.bond_number()
+            ),
+            (BondType::Aromatic, BondNumber::Unknown)
+        );
+    }
 }

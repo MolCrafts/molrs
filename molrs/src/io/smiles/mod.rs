@@ -26,7 +26,11 @@
 //! instead of one node per atom. It parses such a string — one `{…}` block per
 //! resolution, `{[#PEO][#PEO]}` being a two-bead chain and every block after
 //! the first a table of the fragment bodies named one level up — into the
-//! [`CGSmilesIR`] of the private `cgsmiles` submodule. What it shares with the
+//! [`CGSmilesIR`] of the private `cgsmiles` submodule. Expanding that IR into
+//! real atoms is a separate step on the value itself,
+//! [`CGSmilesIR::to_atomistic`]: it replaces every bead of the lowest
+//! resolution with a copy of its fragment body and turns each descriptor pair
+//! the reader resolved into one bond. What it shares with the
 //! two atomistic notations is the scanner, the [`Span`], the [`SmilesError`]
 //! and the [`BondingDescriptor`] vocabulary — not the grammar, not the AST. The
 //! token vocabularies overlap adversarially (`[#NAME]` against the SMARTS
@@ -67,6 +71,7 @@
 //!
 //! ```text
 //! CGsmiles string → parse_cgsmiles() → CGSmilesIR
+//!     → CGSmilesIR::to_atomistic() → Atomistic
 //! ```
 //!
 //! # Examples
@@ -114,9 +119,12 @@ mod cgsmiles;
 // Public re-exports (stable surface — downstream callers depend on these).
 //
 // Four groups, in the order they appear below: the `CGsmiles` coarse-graph IR
-// — the levels (`CGGraph` / `CGNode` / `CGEdge` / `CGBondOrder`) together with
-// the fragment tables that resolve them (`CGFragmentDef`, and `FragmentBody`
-// for the two shapes a body may take) — and the entry point that builds it;
+// — the levels (`CGGraph` / `CGNode` / `CGEdge` / `CGBondOrder`, an edge
+// carrying `EdgeOrigin` to say whether the notation wrote it or resolution
+// derived it) together with the fragment tables that resolve them
+// (`CGFragmentDef`, and `FragmentBody` for the two shapes a body may take) and
+// the descriptor pairing over them (`ResolvedPair` / `PairEnd`) — and the
+// entry point that builds it;
 // the AST vocabulary of the two atomistic notations (including
 // `BondingDescriptor` / `DescriptorKind`, which a fragment caller reads off
 // the descriptor map); the error type, its variants
@@ -126,7 +134,8 @@ mod cgsmiles;
 // ---------------------------------------------------------------------------
 
 pub use cgsmiles::{
-    CGBondOrder, CGEdge, CGFragmentDef, CGGraph, CGNode, CGSmilesIR, FragmentBody, parse_cgsmiles,
+    CGBondOrder, CGEdge, CGFragmentDef, CGGraph, CGNode, CGSmilesIR, EdgeOrigin, FragmentBody,
+    PairEnd, ResolvedPair, parse_cgsmiles,
 };
 pub use chem::ast::{
     AtomNode, AtomPrimitive, AtomQuery, AtomSpec, BondKind, BondQuery, BondingDescriptor,

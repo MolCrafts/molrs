@@ -179,6 +179,7 @@ mod tests {
         let ir = CGSmilesIR {
             levels: vec![one_node("A", &[], Span::new(1, 5))],
             fragments: vec![table("A", FragmentBody::Graph(body), Span::new(8, 18))],
+            pairs: vec![Vec::new()],
             span: Span::new(0, text.len()),
         };
         let err = validate_ir(&ir, text).expect_err("a squash descriptor must be refused");
@@ -204,6 +205,7 @@ mod tests {
         let ir = CGSmilesIR {
             levels: vec![one_node("A", &[], Span::new(1, 5))],
             fragments: vec![table("A", FragmentBody::Smiles(body), Span::new(8, 19))],
+            pairs: vec![Vec::new()],
             span: Span::new(0, text.len()),
         };
         let err = validate_ir(&ir, text).expect_err("a squash descriptor must be refused");
@@ -227,6 +229,7 @@ mod tests {
         let ir = CGSmilesIR {
             levels: vec![one_node("A", &[DescriptorKind::Shared], Span::new(1, 5))],
             fragments: Vec::new(),
+            pairs: vec![Vec::new()],
             span: Span::new(0, text.len()),
         };
         let err = validate_ir(&ir, text).expect_err("a squash descriptor must be refused");
@@ -250,6 +253,7 @@ mod tests {
         let ir = CGSmilesIR {
             levels: vec![one_node("A", &[DescriptorKind::Symmetric], Span::new(1, 5))],
             fragments: Vec::new(),
+            pairs: vec![Vec::new()],
             span: Span::new(0, text.len()),
         };
         assert_eq!(validate_ir(&ir, text), Ok(()));
